@@ -3,6 +3,10 @@ import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import {
+  installUfoCueRecorder,
+  type UfoCueRecorder,
+} from '../../test/collectorDroneFixtures';
+import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_RESPAWN_INVULNERABLE,
@@ -21,6 +25,8 @@ import {
   type CombatDrop,
   type CombatEnemyBullet,
 } from './CombatCoreScene';
+import * as muzzleFlashModule from '../../vfx/muzzleFlash';
+import { BULLET_COLORS, WEAPON_CATALOGUE } from '../../utils/weapons';
 import { expectRangedClear } from '../../test/powerUpEffectFixtures';
 
 // These base tests exercise the fourDirectional input mapping; the app
@@ -510,6 +516,221 @@ describe('CombatCoreScene — shared base class', () => {
     expect(rapidBullet!.tail).toBeGreaterThan(0);
     expect(rapidBullet!.impactFx).toBeDefined();
     expect(rapidBullet!.impactFx?.cue).toBe('playRapidImpactSound');
+  });
+
+  // ── Shard Swarm launch cue (AH-0MVV0WMTE0007NGS) ─────────────────
+
+  it('AH-0MVV0WMTE0007NGS — a shard swarm shot spawns one lime muzzle flash at the muzzle through the shared core path', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('shard_swarm');
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.shard_swarm.muzzleFlash!;
+    const limeCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    // One launch flash per shard_swarm shot — a five-bullet fan is one shot,
+    // so the flash count matches the number of fired shots, not the bullets.
+    const shardBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.shard_swarm);
+    expect(shardBullets.length).toBeGreaterThan(0);
+    expect(limeCalls).toHaveLength(shardBullets.length / 5);
+    // The flash is anchored at the ship's muzzle with the declared lime spec.
+    expect(limeCalls[0][1]).toBeCloseTo(100, 5);
+    expect(limeCalls[0][2]).toBeCloseTo(100, 5);
+    expect(limeCalls[0][4]).toEqual({
+      color: spec.color,
+      radius: spec.radius,
+      duration: spec.duration,
+      registry: expect.anything(),
+    });
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  it('AH-0MVV0WMTE0007NGS — a weapon without muzzleFlash metadata spawns no launch flash', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('shard_swarm');
+
+    // The existing seam contract: `_autoFire` only spawns when the resolved
+    // definition declares `muzzleFlash`. Drive the same shard_swarm weapon
+    // with the launch spec removed to prove the shared core, not a
+    // per-weapon special case, decides.
+    const original = player.getWeaponDef.bind(player);
+    vi.spyOn(player, 'getWeaponDef').mockImplementation((id) => {
+      const def = original(id);
+      return id === 'shard_swarm' ? { ...def, muzzleFlash: undefined } : def;
+    });
+
+    scene.runAutoFire(10);
+
+    const limeCalls = flash.mock.calls.filter(
+      (call) =>
+        (call[4] as { color?: number }).color ===
+        BULLET_COLORS.shard_swarm,
+    );
+    expect(limeCalls).toHaveLength(0);
+    // The shards still fire — only the launch cue is absent.
+    expect(
+      scene
+        .getPlayerBullets()
+        .some((b) => b.color === BULLET_COLORS.shard_swarm),
+    ).toBe(true);
+  });
+
+  // ── Rear Guard launch cue (AH-0MVV0WN96007TU9J) ──────────────────
+
+  it('AH-0MVV0WN96007TU9J — a rear guard shot spawns one compact rose muzzle flash at the muzzle through the shared core path', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('rear_guard');
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.rear_guard.muzzleFlash!;
+    const roseCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    // The Rear Guard fires one pellet per shot, so the launch flash count
+    // matches the fired pellets exactly — no flash is emitted for the
+    // backward direction beyond the shared `_autoFire` path.
+    const pellets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.rear_guard);
+    expect(pellets.length).toBeGreaterThan(0);
+    expect(roseCalls).toHaveLength(pellets.length);
+    // The flash is anchored at the ship with the declared compact rose spec.
+    expect(roseCalls[0][1]).toBeCloseTo(100, 5);
+    expect(roseCalls[0][2]).toBeCloseTo(100, 5);
+    expect(roseCalls[0][4]).toEqual({
+      color: spec.color,
+      radius: spec.radius,
+      duration: spec.duration,
+      registry: expect.anything(),
+    });
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  // ── Broadside launch cue (AH-0MVV0WNOX0078G9G) ──────────────
+
+  it('AH-0MVV0WNOX0078G9G — a broadside shot spawns exactly one wide teal muzzle flash for the pair, not one per dart', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('broadside');
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.broadside.muzzleFlash!;
+    const tealCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    // The two-sided read comes from the pair of darts plus the baked cue and
+    // the wide radius — the shared `_autoFire` path spawns **one** flash per
+    // shot input, so the flash count is half the dart count (never one flash
+    // per dart).
+    const darts = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.broadside);
+    expect(darts.length).toBeGreaterThan(0);
+    expect(darts.length % 2).toBe(0);
+    expect(tealCalls).toHaveLength(darts.length / 2);
+    // The flash is anchored at the ship with the declared wide teal spec.
+    expect(tealCalls[0][1]).toBeCloseTo(100, 5);
+    expect(tealCalls[0][2]).toBeCloseTo(100, 5);
+    expect(spec.radius).toBeGreaterThan(WEAPON_CATALOGUE.cannon.muzzleFlash!.radius);
+    expect(tealCalls[0][4]).toEqual({
+      color: spec.color,
+      radius: spec.radius,
+      duration: spec.duration,
+      registry: expect.anything(),
+    });
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  it('AH-0MVV0WNOX0078G9G — a levelled broadside still spawns one flash per shot input when the pair grows to 4/6 darts', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Collect the Broadside three times so `projectileCount` widens the pair.
+    player.equipWeapon('broadside');
+    player.equipWeapon('broadside');
+    player.equipWeapon('broadside');
+    const resolved = player.getWeaponDef('broadside');
+    expect(resolved.offsets.length).toBeGreaterThan(2);
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.broadside.muzzleFlash!;
+    const tealCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    const darts = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.broadside);
+    const shots = darts.length / resolved.offsets.length;
+    expect(Number.isInteger(shots)).toBe(true);
+    expect(shots).toBeGreaterThan(0);
+    // One launch flash per shot **input**: the wider fan must not multiply the
+    // flash count (the same metadata survives level resolution — pinned in
+    // `weaponLevels.test.ts`).
+    expect(tealCalls).toHaveLength(shots);
+  });
+
+  // ── Heavy Slug launch cue (AH-0MVV0WO4M001KEDG) ──────────────
+
+  it('AH-0MVV0WO4M001KEDG — a heavy slug shot spawns exactly one deep-red muzzle flash, the largest of the set', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('heavy_slug');
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.heavy_slug.muzzleFlash!;
+    const redCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    // The launch flash is spawned once per **shot input** from the metadata —
+    // never once per projectile — so when `projectileCount` widens the shot
+    // into a small fan the flash count stays at one per shot.
+    const resolved = player.getWeaponDef('heavy_slug');
+    const slugs = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.heavy_slug);
+    const shots = slugs.length / resolved.offsets.length;
+    expect(Number.isInteger(shots)).toBe(true);
+    expect(shots).toBeGreaterThan(0);
+    expect(redCalls).toHaveLength(shots);
+    // The flash is anchored at the ship with the declared deep-red spec.
+    expect(redCalls[0][1]).toBeCloseTo(100, 5);
+    expect(redCalls[0][2]).toBeCloseTo(100, 5);
+    expect(redCalls[0][4]).toEqual({
+      color: spec.color,
+      radius: spec.radius,
+      duration: spec.duration,
+      registry: expect.anything(),
+    });
+    // The launch flash is the largest of the set (a documented tie with the
+    // Wave Laser at the 12 px shipped ceiling).
+    expect(spec.radius).toBe(12);
+    expect(spec.radius).toBeGreaterThanOrEqual(
+      WEAPON_CATALOGUE.wave_laser.muzzleFlash!.radius,
+    );
+    expect(spec.duration).toBeLessThanOrEqual(0.16);
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
   });
 
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {
@@ -1017,32 +1238,52 @@ describe('CombatCoreScene — collector-drone spawn wiring (AH-0MVBMQ04X0051002)
     expect(scene.getDrones()).toHaveLength(1);
   });
 
-  it('the permanent reward re-spawns a drone on the resolved interval (AC4)', async () => {
+  it('the permanent reward spawns one drone per regenerated charge, spending the shared pool (F6)', async () => {
     const scene = await bootDroneScene();
     scene.addPlayer({ x: 320, y: 240 });
 
     scene.effects.applyCollect('mystery_ufo', true);
     const interval = scene.effects.mysteryUfoSpawnInterval();
     expect(scene.effects.isMysteryUfoPermanent()).toBe(true);
-    // 30 s at the curve base, descending 2 s per level: level 1 → 28 s.
+    // A consumable hold-full reward never levels the kind (parent AC1) and
+    // grants exactly one charge (cap 1 at level 0).
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(1);
     expect(interval).toBe(
-      resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoSpawnInterval,
+      resolvePowerUpAtLevel('mystery_ufo', 0).mysteryUfoSpawnInterval,
     );
-    expect(interval).toBeLessThan(30);
 
-    // The first permanent spawn lands one interval after the reward. The
-    // arming step runs on the first call and does not consume `dt`.
+    // Holding a charge arms one drone immediately; the spawn spends it.
     scene.runUpdateDroneSpawning(1 / 60);
-    advance(scene, interval - 0.05);
-    expect(scene.getDrones()).toHaveLength(0);
-    advance(scene, 0.1);
+    expect(scene.getDrones()).toHaveLength(1);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(0);
+
+    // With no charge, no amount of scene time spawns a second drone — there
+    // is no scene-local repeating timer (F6 AC1): the pool is the only
+    // budget, and it regenerates only through the shared registry tick.
+    scene.runUpdateDroneSpawning(1 / 60);
+    scene.runUpdateDroneSpawning(120);
     expect(scene.getDrones()).toHaveLength(1);
 
-    // And again on the next interval.
-    advance(scene, interval - 0.1);
-    expect(scene.getDrones()).toHaveLength(1);
-    advance(scene, 0.2);
+    // One charge regenerates per level-derived interval through the shared
+    // tick; the next spawn can then happen and spends the charge again.
+    scene.effects.tick(interval + 0.1);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(1);
+    scene.runUpdateDroneSpawning(1 / 60);
     expect(scene.getDrones()).toHaveLength(2);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(0);
+  });
+
+  it('a permanent Mystery UFO never exceeds the level-derived charge cap (F6)', async () => {
+    const scene = await bootDroneScene();
+    scene.addPlayer({ x: 320, y: 240 });
+
+    scene.effects.applyCollect('mystery_ufo', true);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(1);
+    // A second hold-full grant while the pool is full is discarded by the
+    // shared pool (parent AC2: no banking while full), so a level-0 UFO can
+    // never field more than one drone per regeneration interval.
+    scene.effects.applyCollect('mystery_ufo', true);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(1);
   });
 
   it('does not spawn without a ship and leaves the request queued', async () => {
@@ -1059,6 +1300,30 @@ describe('CombatCoreScene — collector-drone spawn wiring (AH-0MVBMQ04X0051002)
     scene.addPlayer({ x: 320, y: 240 });
     scene.runUpdateDroneSpawning(1 / 60);
     expect(scene.getDrones()).toHaveLength(1);
+  });
+
+  // The warble's teardown terminal lives in the shared core teardown (every
+  // game and gym inherits it) — a scene shutdown must never leak the loop.
+  it('scene teardown stops the sortie warble and clears the drone list', async () => {
+    const recorder: UfoCueRecorder = installUfoCueRecorder();
+    try {
+      const scene = await bootDroneScene();
+      scene.addPlayer({ x: 320, y: 240 });
+      scene.effects.applyCollect('mystery_ufo');
+      scene.runUpdateDroneSpawning(1 / 60);
+      expect(scene.getDrones()).toHaveLength(1);
+      expect(recorder.ufoEventNames()).toEqual(['warble-start']);
+
+      scene.runTeardownRunState();
+
+      expect(recorder.ufoEventNames()).toEqual([
+        'warble-start',
+        'warble-stop',
+      ]);
+      expect(scene.getDrones()).toHaveLength(0);
+    } finally {
+      recorder.dispose();
+    }
   });
 });
 

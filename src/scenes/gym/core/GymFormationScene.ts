@@ -22,10 +22,11 @@
  *
  * **Shared mineral kill-drop rule:** the gym's mineral layer seeds and
  * collects minerals, and its destruction paths (`onEnemyDestroyed` and the
- * EXPLODE button) call the shared `resolveMineralKillDrops` rule from
+ * EXPLODE button) call the shared `resolveMineralKillPayout` seam from
  * `src/scenes/core/mineralKillDrops.ts` — the *same code* the game runs —
- * so a small asteroid drops one mineral and a non-asteroid enemy re-drops a
- * fraction of the minerals it absorbed, exactly as in `PlayScene`.
+ * so a small asteroid drops one mineral, a non-asteroid enemy re-drops a
+ * fraction of the minerals it absorbed and a wreck resolving ≥ 10 leaves one
+ * red deposit worth 10 (AH-0MVJ79739008396I), exactly as in `PlayScene`.
  *
  * **Shared power-up drop layer:** the opt-in power-up layer runs the same
  * lifecycle, collection gate, Magnet magnet and per-type pickup cues as the
@@ -133,6 +134,7 @@ import {
   type WeaponDropId,
 } from '../../../powerups/types';
 import { HUD } from '../../../ui/HUD';
+import { combatHudOptions } from '../../core/hudWiring';
 import { Mineral } from '../../../entities/Mineral';
 import { Asteroid } from '../../../entities/Asteroid';
 import {
@@ -140,8 +142,7 @@ import {
   advanceWrappingBullets,
 } from '../../core/bulletLifecycle';
 import {
-  resolveMineralKillDrops,
-  scatterSalvageMineralDrops,
+  resolveMineralKillPayout,
   type MineralKillDropEntity,
 } from '../../core/mineralKillDrops';
 import {
@@ -160,7 +161,7 @@ import {
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../../../powerups/choice';
-import { type WeaponId } from '../../../utils/weapons';
+import { buildOwnedLoadout } from '../../../powerups/ownedLoadout';
 import { applySceneSetup, resolveSetupSeed, type SceneSetupState } from '../../core/sceneSetup';
 import { createSeededRng } from '../../../core/rng';
 import {
@@ -174,6 +175,7 @@ import {
   updateSpawnEmergence,
   type SpawnAnimatable,
 } from '../../../vfx/wormholeSpawn';
+import { gymBackgroundLevel } from './gymBackground';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -699,10 +701,32 @@ export class GymFormationScene<
     if (seed !== null) this._sceneRng = createSeededRng(seed);
   }
 
+  /**
+   * The gym family's background level — inherited by every formation gym.
+   *
+   * Gyms adopt the game's shared backdrop but pin the representative level-1
+   * photo and never swap/warp it: the one documented decision for the whole
+   * family lives in `src/scenes/gym/core/gymBackground.ts` (slice
+   * AH-0MVSEC0J0004YNJC), so a formation gym has no background code of its
+   * own.
+   */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
-    this.resetRunState();    const { config } = this;
+    this.resetRunState();
+
+    // Shared background layer (parent AH-0MVIB7PD50029ZY1, slice
+    // AH-0MVSEC0J0004YNJC): the game's backdrop at the fixed representative
+    // level, through the same core seam `PlayScene` uses. Created before the
+    // player/formation so the backdrop sits behind everything; the layer's
+    // depth already guarantees that ordering.
+    this._createSceneBackground();
+
+    const { config } = this;
 
     // ── Player ship (optional per-scene opt-in) ────────────────────
     // The ship and its capture setup are created **before** the formation so
@@ -1002,11 +1026,13 @@ export class GymFormationScene<
     // so it is already clean here; only the standalone HUD is rebuilt per
     // scene start (lives visible so Extra Life is observable). Sharing the one
     // reset path stops the registry drifting on restart (gap 10).
-    this.hud = new HUD(this, this.effectsRegistry, {
-      showLives: true,
-      // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
-      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
-    });
+    // Weapon levels and the six-slot state come from the one shared HUD
+    // wiring (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: true }),
+    );
 
     // One drop on screen immediately so the layer is observable at boot.
     this._spawnPowerUpDrop();
@@ -1385,11 +1411,11 @@ export class GymFormationScene<
     this.mineralChoiceOptions = [];
     this.mineralsSeeded = 0;
     if (!this.hud) {
-      this.hud = new HUD(this, this.effectsRegistry, {
-        showLives: false,
-        // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
-        getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
-      });
+      this.hud = new HUD(
+        this,
+        this.effectsRegistry,
+        combatHudOptions(() => this.player, { showLives: false }),
+      );
     }
     this._syncMineralHud();
     this.seedMinerals(100);
@@ -1416,14 +1442,18 @@ export class GymFormationScene<
       this.minerals,
       this.player,
       absorbers,
-      () => this._collectMineral(),
+      (mineral) => this._collectMineral(mineral),
       { playerPhased: this.isPlayerPhased() },
     );
   }
 
-  /** Collects a mineral into the shared hold; opens the choice when full. */
-  private _collectMineral(): void {
-    this.mineralHoldModel.collect();
+  /**
+   * Collects a mineral into the shared hold, crediting its **worth** (an
+   * ordinary dot is 1; a red deposit is `MINERAL_DEPOSIT_VALUE` = 10, paid in
+   * one pickup — AH-0MVJ79739008396I); opens the choice when full.
+   */
+  private _collectMineral(mineral: Mineral): void {
+    this.mineralHoldModel.collect(mineral.value);
     this._syncMineralHud();
     if (this.mineralHoldModel.isFull) this.openMineralChoice();
   }
@@ -1443,13 +1473,17 @@ export class GymFormationScene<
    */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    // The run's permanent snapshots, read once: the offer pool and the
+    // top-left owned-loadout panel must never disagree (AH-0MVCRKAPL000L68Y).
+    const weaponLevels = this.player?.getWeaponLevels() ?? [];
+    const powerUpLevels = this.player?.getPowerUpLevels() ?? [];
     this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, undefined, {
       // Offer level-ups for weapons the player already owns (parent
       // AH-0MUPMPCB2009J54J); an unarmed player falls back to the base pool.
-      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      weaponLevels,
       // Offer level-ups for power-ups the player already owns (parent
       // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
-      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      powerUpLevels,
       // Temporary (field-pickup) stacks hold a slot too, so the gate in the
       // shared builder sees the identical state as the game (gym↔game parity,
       // parent AH-0MVLIJT3M005HPHF producer Q4a/Q6a).
@@ -1463,6 +1497,9 @@ export class GymFormationScene<
     this.fadeThrusterHumForHoldFull();
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Top-left permanent loadout panel, from the same permanent snapshots
+      // the offers were priced from (AH-0MVCRKAPL000L68Y · gym↔game parity).
+      ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels),
       // Frozen player-fire schedule so the reduced-volume ghost fire
       // continues on the same grid while paused — same payload as PlayScene
       // (AH-0MV55O9R5005W6J0 · gym↔game parity).
@@ -1986,32 +2023,28 @@ export class GymFormationScene<
   }
 
   /**
-   * Applies the shared mineral kill-drop rule to a destroyed entity and adds
+   * Applies the shared mineral kill-payout rule to a destroyed entity and adds
    * the resulting minerals to this gym's live mineral field.
+   *
+   * The Salvage bounty (AH-0MVH80ZJ7009W18Z) is folded into the same seam: an
+   * active bounty counts toward the red-deposit threshold and its orange
+   * scatter is suppressed when the deposit fires (AH-0MVJ79739008396I).
+   * Asteroids are not bounty targets.
    */
   private _dropMineralsForKill(entity: TEntity): void {
-    const drops = resolveMineralKillDrops(
+    const isAsteroid =
+      typeof (entity as unknown as { getSizeTier?: unknown }).getSizeTier ===
+      'function';
+    const salvageBonus = isAsteroid
+      ? 0
+      : this.getEffectsRegistry().salvageBonusMinerals();
+    const drops = resolveMineralKillPayout(
       this,
       entity as unknown as MineralKillDropEntity,
+      salvageBonus,
       this._sceneRng,
     );
     if (drops.length > 0) this.minerals.push(...drops);
-    // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
-    // the wreck of a destroyed enemy ship (asteroids are not bounty targets).
-    // The shared seam renders them orange so the payout is visible against
-    // ordinary gold drops (AH-0MVJ72I8O0009T09) — identical to the game.
-    const salvageBonus = this.getEffectsRegistry().salvageBonusMinerals();
-    if (salvageBonus > 0 && typeof (entity as unknown as { getSizeTier?: unknown }).getSizeTier !== 'function') {
-      this.minerals.push(
-        ...scatterSalvageMineralDrops(
-          this,
-          entity.x,
-          entity.y,
-          salvageBonus,
-          this._sceneRng,
-        ),
-      );
-    }
   }
 
   /** Advances player bullets and removes those whose lifetime has elapsed. */

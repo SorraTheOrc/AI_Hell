@@ -99,7 +99,12 @@ ToneForge module is imported into the browser entry graph.
 
 ## Recipes
 
-Seed block **32100–32199** is reserved for game-specific recipes. One-shots use
+Seed block **32100–32299** is reserved for game-specific recipes (widened from
+`32100–32199` once the net-new unlock-pool weapon seeds reached 32286; no shipped
+seed was renumbered, and `manifest.json`'s `seedBlock` records the same range).
+New recipes take the **next free seed above the current manifest maximum** and
+reserve a contiguous pair up front, so two items authoring cues in parallel cannot
+collide. One-shots use
 a single seed; cues whose original character used per-invocation pitch jitter
 (`EXPLOSION_PITCH_JITTER` ±15 %) use a **seed range** so repeated kills still
 vary (the recipe declares `startFreq`/`endFreq` parameters whose values are
@@ -135,6 +140,16 @@ derived from the render seed).
 | `aihell-mortar-fire.yaml` | `playMortarFireSound` | Muffled triangle 220→90 Hz + barrel tick | 32215 |
 | `aihell-mortar-detonation.yaml` | `playMortarDetonationSound` | Heavy saw 180→40 Hz + LP noise wash | 32216 |
 | `aihell-arc-fire.yaml` | `playArcFireSound` | Square zap 1400→500→1120 Hz + HP crackle | 32217 |
+| `aihell-railgun-fire.yaml` | `playRailgunFireSound` | Heavy electromagnetic discharge: saw slam 220→55 Hz + square snap + HP noise crack (AH-0MVMIGVCE004VSNA) | 32277 |
+| `aihell-railgun-impact.yaml` | `playRailgunImpactSound` | Short metallic crack 1400→240 Hz + brief 1760 Hz ring + HP noise tick, ~0.14 s (AH-0MVMIGVCE004VSNA) | 32278 |
+| `aihell-shard-swarm-fire.yaml` | `playShardSwarmFireSound` | Tight multi-shard chk burst: three HP noise ticks (0 / 0.03 / 0.06 s) + glassy triangle 2600→1700 Hz + brittle square edge (AH-0MVV0WMTE0007NGS) | 32279 |
+| `aihell-shard-swarm-impact.yaml` | `playShardSwarmImpactSound` | Bright glassy lime tink: triangle 2800→1900 Hz + 4200 Hz sine overtone + HP noise contact tick, ~0.10 s (AH-0MVV0WMTE0007NGS) | 32280 |
+| `aihell-rear-guard-fire.yaml` | `playRearGuardFireSound` | Muted rearward thup: low-passed saw body 260→70 Hz (600 Hz LP) + 500 Hz LP noise air + 90 Hz sine, no square click, ~0.14 s (AH-0MVV0WN96007TU9J) | 32281 |
+| `aihell-rear-guard-impact.yaml` | `playRearGuardImpactSound` | Soft rose pop: rounded triangle 380→190 Hz + quiet 760 Hz sine + 700 Hz LP noise contact tick, no square click, ~0.12 s (AH-0MVV0WN96007TU9J) | 32282 |
+| `aihell-broadside-fire.yaml` | `playBroadsideFireSound` | Wide two-sided swish: two band-passed noise sweeps 40 ms apart (900→3200 Hz rising then 3200→900 Hz falling) + glassy teal-toned triangle tail 1800→1200 Hz, ~0.16 s (AH-0MVV0WNOX0078G9G) | 32283 |
+| `aihell-broadside-impact.yaml` | `playBroadsideImpactSound` | Short teal dart tick: triangle 2400→1600 Hz + quiet 3600 Hz sine + 3000 Hz HP noise contact tick, no square click, ~0.10 s (AH-0MVV0WNOX0078G9G) | 32284 |
+| `aihell-heavy-slug-fire.yaml` | `playHeavySlugFireSound` | Heaviest single shot: low saw boom 110→55 Hz + metallic square clank 1800→900 Hz + 60→40 Hz sine sub + LP noise air, ~0.26 s — deepest fundamental and longest decay of the packaged weapons; never aliases the aihell-mortar-detonation 0.32 s boom (metallic clank + shorter sustain) (AH-0MVV0WO4M001KEDG) | 32285 |
+| `aihell-heavy-slug-impact.yaml` | `playHeavySlugImpactSound` | Dull red thud: low triangle 220→60 Hz + quiet 110 Hz sine + 700 Hz LP noise debris burst, no square edge, ~0.15 s — duller/lower than the aihell-mortar-impact dry crack (AH-0MVV0WO4M001KEDG) | 32286 |
 | `aihell-pickup-spread.yaml` | `playSpreadPickupSound` | Triangle 500→1500→800 Hz | 32220 |
 | `aihell-pickup-dual.yaml` | `playDualPickupSound` | Two saw drops 1000→500 / 1200→700 Hz | 32221 |
 | `aihell-pickup-rapid.yaml` | `playRapidPickupSound` | Triangle rise 400→1600 Hz | 32222 |

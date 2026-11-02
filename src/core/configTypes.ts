@@ -32,7 +32,8 @@ export type EnemyFormationKind =
 // Two orthogonal, wave-design-facing groupings that sit above the
 // low-level `formationKind` / `shotPattern` axes. They describe each
 // archetype's movement/attack role and are consumed by the wave balance
-// rules (R1–R3; AH-0MV29XQ0H009P9WP) in `src/core/waveBalance.ts`.
+// rules (R1–R4; AH-0MV29XQ0H009P9WP, AH-0MVSE6XIO007BXYM) in
+// `src/core/waveBalance.ts`.
 
 /**
  * Coarse behavioural movement class of an enemy archetype

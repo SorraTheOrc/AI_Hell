@@ -28,6 +28,7 @@ import {
   runEvaluation,
   compareRecordings,
   type BatchOutput,
+  type BatchRunSink,
 } from './engine';
 import {
   assertSameSweep,
@@ -357,7 +358,25 @@ export function defaultOptions(): CliOptions {
  * calls it twice — once before, once after the declarative CSV edit — so the
  * baseline and candidate use the identical sweep configuration (parent AC1).
  */
-export function runBalanceBatch(options: CliOptions): BatchOutput {
+/**
+ * Optional hooks forwarded to the batch sweep (AH-0MVSE1OPF008G1SB).
+ * `onRun` is the same per-run sink {@link runBatch} already accepts — the
+ * tune shell uses it for progress output without a divergent sweep copy.
+ */
+export interface BalanceBatchHooks {
+  /** Called once per completed run with its policy, seed and telemetry. */
+  readonly onRun?: (run: BatchRunSink) => void;
+}
+
+/**
+ * Runs the balance sweep the tune loop compares (baseline and candidate).
+ * `hooks.onRun` is forwarded to `runBatch`, so a caller can observe progress
+ * through the shared per-run sink; omitting `hooks` keeps historic behaviour.
+ */
+export function runBalanceBatch(
+  options: CliOptions,
+  hooks: BalanceBatchHooks | null = null,
+): BatchOutput {
   const policyFactories = (
     options.policies.length > 0 ? options.policies : [options.policy]
   ).map((name) => resolvePolicyFactory(name));
@@ -372,6 +391,7 @@ export function runBalanceBatch(options: CliOptions): BatchOutput {
     scaleLevels: options.scaleLevels,
     forceFields: options.forceFields,
     campaign: options.campaign,
+    onRun: hooks?.onRun,
   });
 }
 

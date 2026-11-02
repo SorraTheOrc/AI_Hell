@@ -24,7 +24,19 @@
  * the shared `CombatCoreScene._updateP4Bomb` path. This scene supplies only
  * the kill-chance spawn *source* (AH-0MUII3CXX0023H24, gap 4).
  *
- * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`.
+ * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`. A **hangar-war
+ * deployment** (AH-0MVUXCBBK004EJIP) ends in `DefenceReportScene` instead:
+ * the run's between-sortie frontier tick is resolved and its record is the
+ * report's content, so the player sees the numbers behind every hold and fall
+ * before returning to the map. The arcade run is unchanged.
+ *
+ * **Hangar-war deployments (AH-0MVUXC2DD003HN0I).** `init()` also accepts a
+ * `hangarWar` launch payload from the hangar screen. A deployment runs this
+ * **same** scene and shared core — only the loadout (hull lives/speed and
+ * starting weapons) and the hex-aggression-selected start level are inputs —
+ * so there is no divergent copy of the run. The two modes never share session
+ * state: a deployment writes no arcade checkpoint and clears none, while Play
+ * Game and Continue keep their existing untouched behaviour.
  *
  * Determinism: `update()` delegates to the public `tick(dt)` step, which
  * tests call directly to drive collisions and transitions without real
@@ -36,6 +48,7 @@ import Phaser from 'phaser';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  LEVEL_TRANSITION_SECONDS,
   PLAYER_BULLET_RADIUS,
   PLAYER_HIT_SCALE_PEAK,
   PLAYER_HIT_SCALE_PULSE_DURATION,
@@ -58,7 +71,11 @@ import {
 } from '../core/rules';
 import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
 import type { MineralChoiceScene } from './MineralChoiceScene';
-import { applySceneSetup, type SceneSetupState } from './core/sceneSetup';
+import {
+  applySceneSetup,
+  resolveSceneSetupState,
+  type SceneSetupState,
+} from './core/sceneSetup';
 import {
   playDestructionSound,
   playSpawnSound,
@@ -111,6 +128,10 @@ import {
   type SpawnAnimatable,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
+import {
+  createBackgroundWarp,
+  type BackgroundWarp,
+} from '../vfx/backgroundWarp';
 import { getExplosionVfxCounts } from '../vfx/explosionParticles';
 import {
   ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS,
@@ -120,29 +141,63 @@ import {
 import { EffectsRegistry } from '../powerups/effects';
 import {
   CHOICE_POOL,
+  buildOwnedLevelUpOptions,
   randomChoiceStrategy,
   toChoiceOption,
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../powerups/choice';
+import { buildOwnedLoadout } from '../powerups/ownedLoadout';
 import {
   filterOptionsWithinSlotPool,
   resolvePlayerSlotState,
   type PowerUpSlotState,
 } from '../powerups/slots';
 import {
-  buildUpgradeOptions,
-  initialUnlockState,
-  lockedWeaponIds,
-  unlockWeapon,
-  type MiniBossUnlockState,
-} from '../powerups/unlocks';
-import {
   CHECKPOINT_VERSION,
   loadCheckpoint,
   saveCheckpoint,
   type Checkpoint,
 } from '../core/checkpointStore';
+import {
+  bankSalvage,
+  bankedSalvageFromHangar,
+  runSalvageFromRun,
+  type BankedSalvage,
+  type RunSalvage,
+  type SalvageAmounts,
+} from '../core/hangarWar/salvageBanking';
+import {
+  resolveDeploymentDefeat,
+  resolveHexCapture,
+  type HexCaptureResult,
+} from '../core/hangarWar/captureCycle';
+import {
+  buildHexBossProfile,
+  type HexBossProfile,
+} from '../core/hangarWar/hexBoss';
+import {
+  frontierClockFor,
+  runFrontierTick,
+  type FrontierTickResult,
+} from '../core/hangarWar/hexDefence';
+import type { HangarWarPayload } from '../core/hangarWar/types';
+import { DEFENCE_REPORT_SCENE_KEY } from './DefenceReportScene';
+import {
+  HEX_RING_DEFINITIONS,
+  findHexRingDefinition,
+} from '../data/hexRingDefinitions';
+import {
+  createDefaultPayload,
+  loadHangarWarPayload,
+  saveHangarWarPayload,
+} from '../core/hangarWar/hangarWarStore';
+import {
+  applyHangarWarDeployment,
+  applyHullSpeedToShipConfig,
+  readHangarWarDeployment,
+  type HangarWarDeployment,
+} from './hangarWar/hangarDeployment';
 import { PowerUp } from '../powerups/PowerUp';
 import { EXTRA_LIFE_DROP_ID, getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
@@ -152,6 +207,7 @@ import {
 } from '../powerups/collectAnimation';
 import { type PowerUpSpawner } from '../powerups/spawner';
 import { HUD } from '../ui/HUD';
+import { combatHudOptions } from './core/hudWiring';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
@@ -166,7 +222,10 @@ import {
   toCompetentOverrides,
   toHumanOverrides,
 } from '../ai/tuningFields';
-import { getCurrentBotTuningConfig } from '../core/botTuningStore';
+import {
+  getBotTuningConfig,
+  getCurrentBotTuningConfig,
+} from '../core/botTuningStore';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { enemyForceFieldHits } from '../core/enemyForceField';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
@@ -189,10 +248,12 @@ import {
   clearDevScenarioHandle,
   installDevScenarioHandle,
   isDevScenarioEnabled,
-  resolveDevScenario,
   resolveDevSeed,
+  resolveEnabledDevScenario,
+  type DevPromoScenario,
   type DevScenario,
 } from '../core/devScenario';
+import { getPromoLevel } from '../../scripts/promo-scenarios.mjs';
 import {
   DEFAULT_BINDINGS,
   keyFor,
@@ -266,8 +327,8 @@ import {
   advanceWrappingBullets,
 } from './core/bulletLifecycle';
 import {
-  resolveMineralKillDrops,
-  scatterSalvageMineralDrops,
+  createMineralDeposit,
+  resolveMineralKillPayout,
 } from './core/mineralKillDrops';
 import {
   rollAsteroidExtraLife,
@@ -376,8 +437,16 @@ export const BOSS_PHASE_SCORES: Record<number, number> = {
 
 // ── Tuning constants ────────────────────────────────────────────────
 
-/** Seconds between a wave/level wipe and the next spawn. */
-export const LEVEL_TRANSITION_SECONDS = 1.5;
+/**
+ * Seconds between a wave/level wipe and the next spawn.
+ *
+ * Relocated to `src/core/constants.ts` (AH-0MVSEBCNC005G7XW) and re-exported
+ * here unchanged so every existing importer keeps compiling untouched. It
+ * moved so VFX modules — which `PlayScene` imports, and which therefore must
+ * never import this scene — can derive their durations from the same single
+ * source; `src/vfx/backgroundWarp.ts` is exactly this long.
+ */
+export { LEVEL_TRANSITION_SECONDS };
 
 /**
  * Seconds a level/wave announcement banner stays on screen before it
@@ -429,13 +498,6 @@ export const VICTORY_TRANSITION_HOLD_MS = ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS
  * HUD ({@link HUD_DEPTH} 1000) and the banner/score text (500).
  */
 export const VICTORY_FIREWORK_DEPTH = 300;
-
-/**
- * Background depth for the play scene. Set well below the juice layers
- * (negative −10…−7) so the in-run celebration renders above the playfield
- * backdrop instead of behind it (mirrors `GameOverScene`'s −100 background).
- */
-const PLAYSCENE_BACKGROUND_DEPTH = -1000;
 
 /** Neon-cyan level/score text colour. */
 const HUD_TEXT_COLOR = '#00ffff';
@@ -629,6 +691,26 @@ export class PlayScene extends CombatScene<
    */
   private appliedBotTuningName: string | null = null;
 
+  /**
+   * The dev-gated **promo scenario** this run was started from
+   * (AH-0MVSDM8SE0081WU7), or `null` for every other run — including every
+   * production run, because the resolution is dev-gated.
+   *
+   * Resolved in `init()` so the scenario's campaign, bot-tuning preset and
+   * run seed are all live before `create()` applies bot tuning and starts the
+   * campaign. Read by `_applyBotTuning()` (preset), `_initRunSeed()` (seed)
+   * and the campaign injection in `create()`.
+   */
+  private promoScenario: DevPromoScenario | null = null;
+
+  /**
+   * Whether this scene instance's `WaveManager` campaign was injected by a
+   * promo scenario on a previous run (AH-0MVSDM8SE0081WU7). The scene instance
+   * is reused across restarts, so a following **normal** run must clear the
+   * promo injection before it resolves the shipped campaign.
+   */
+  private promoCampaignApplied = false;
+
   /** Session state (lives, score, level). */
   private gameState: GameState;
   /** Wave/level progression state machine. */
@@ -689,20 +771,61 @@ export class PlayScene extends CombatScene<
   /** Total mini-bosses defeated this run (AC3: exactly one hook per defeat). */
   private miniBossDefeats = 0;
 
-  /**
-   * Run-scoped mini-boss unlock state (AH-0MVCRBNO6003E1CH): which initially
-   * locked weapons this run has unlocked. The checkpoint feature persists it.
-   */
-  private miniBossUnlockState: MiniBossUnlockState = initialUnlockState();
-
   /** True while the mini-boss reward choice overlay is open. */
   private miniBossRewardOpen = false;
 
   /** Whether `create()` should resume from the persisted checkpoint. */
   private resumeFromCheckpoint = false;
 
+  /**
+   * The validated hangar-war deployment launch data, or `null` for the shipped
+   * arcade run (AH-0MVUXC2DD003HN0I). Present ⇒ the run carries the
+   * hangar-resolved loadout and the hex-aggression difficulty, and never
+   * writes or clears the arcade checkpoint.
+   */
+  private hangarWarDeployment: HangarWarDeployment | null = null;
+
+  /**
+   * This run's working hangar-war payload (AH-0MVUXCBBK004EJIP).
+   *
+   * Seeded from the deployment's carried payload (the war the map showed) and
+   * advanced in place by the capture cycle and the between-sortie tick, so the
+   * two resolutions always build on each other instead of each re-reading a
+   * stale copy. `null` until first needed.
+   */
+  private hangarWarState: HangarWarPayload | null = null;
+
+  /**
+   * The hex boss variant this deployment's final encounter runs with
+   * (AH-0MVUXCAW0001VUM6), or `null` for the shipped arcade run. A **variant**
+   * on the shared boss path (colour/demonstrated-weapon/hit pool), never a
+   * separate boss implementation.
+   */
+  private hexBossProfile: HexBossProfile | null = null;
+
+  /**
+   * The last capture-cycle resolution (win path or defensive refusal), kept as
+   * the scene's test/UI seam. `null` until a deployment's boss is defeated.
+   */
+  private lastCapture: HexCaptureResult | null = null;
+
   /** The checkpoint loaded in `init()`, applied once the run exists. */
   private pendingResumeCheckpoint: Checkpoint | null = null;
+
+  /**
+   * Salvage banking for the current run (AH-0MVUXC118004B4OX): the persistent
+   * balance plus this run's idempotence watermark. `null` until the first bank
+   * (or a resume aligned with its checkpoint), so the first bank is seeded from
+   * the stored hangar balance rather than assuming a fresh campaign.
+   */
+  private salvageBank: BankedSalvage | null = null;
+
+  /**
+   * Salvage the last lost run forfeited — what it earned after its last bank
+   * (AH-0MVUXC118004B4OX AC2). The persistent balance is never reduced; this is
+   * the end-of-run summary seam.
+   */
+  private forfeitedSalvage: SalvageAmounts = { minerals: 0, cores: 0 };
 
   /** The options offered by the open mini-boss reward overlay. */
   private miniBossRewardOptions: ChoiceOption[] = [];
@@ -759,6 +882,16 @@ export class PlayScene extends CombatScene<
   private readonly reanchor = new FormationReanchorController();
 
   private transitionTimer = 0;
+
+  /**
+   * The in-flight level-change hyperspace warp (AH-0MVSEBW8L009O3JD), or
+   * null between/after transitions. Created at `_startTransition(true)` time
+   * for a level change, advanced from the scene's own tick (never wall-clock
+   * tweens) so it stays locked to the same 1.5 s schedule as the transition
+   * pause, and torn down on completion, shutdown or restart so a stop
+   * mid-warp leaves no display object or timer behind (AC5).
+   */
+  private backgroundWarp: BackgroundWarp | null = null;
 
   /**
    * Registry for the in-run victory celebration display objects (the shared
@@ -981,6 +1114,14 @@ export class PlayScene extends CombatScene<
      * (AH-0MVTPP7SX000JTWJ). Ignored in production builds.
      */
     startBoss?: boolean;
+    /**
+     * Hangar-war deployment payload from the hangar screen
+     * (AH-0MVUXC2DD003HN0I): the hangar-resolved loadout plus the target hex's
+     * aggression-selected difficulty. Absent/`null` ⇒ the unchanged arcade
+     * run; present ⇒ a hex deployment that never touches the arcade
+     * checkpoint.
+     */
+    hangarWar?: HangarWarDeployment | null;
   }): void {
     this.demoMode = data?.demo === true;
     // Continue from the last checkpoint (AH-0MVCRBTNF000DK51). It is loaded
@@ -993,10 +1134,43 @@ export class PlayScene extends CombatScene<
     if (this.pendingResumeCheckpoint) {
       this.injectedRunSeed = this.pendingResumeCheckpoint.runSeed;
     }
+    // A hangar-war deployment is a separate session (AH-0MVUXC2DD003HN0I): it
+    // never resumes the arcade checkpoint, and it seeds the run from the war's
+    // deterministic deployment seed. The two modes share run code, never
+    // session/checkpoint state.
+    this.hangarWarDeployment = readHangarWarDeployment(data?.hangarWar);
+    // A fresh run starts from its own carried payload (never a previous run's).
+    this.hangarWarState = null;
+    this.hexBossProfile = this.hangarWarDeployment?.hexId
+      ? buildHexBossProfile(
+          {
+            id: this.hangarWarDeployment.hexId,
+            aggression: this.hangarWarDeployment.aggression,
+          },
+          findHexRingDefinition(this.hangarWarDeployment.hexId),
+        )
+      : null;
+    if (this.hangarWarDeployment) {
+      this.resumeFromCheckpoint = false;
+      this.pendingResumeCheckpoint = null;
+      this.injectedRunSeed = this.hangarWarDeployment.seed;
+    }
     // The bot seam is inert outside demo mode; clear any name applied by a
     // previous demo so a normal (re)start never reports a stale config
     // (AH-0MV6MFDYG001E6PL).
     if (!this.demoMode) this.appliedBotTuningName = null;
+    // Promo scenario (AH-0MVSDM8SE0081WU7): a promo capture is **bot-flown**
+    // and carries an injected campaign, a named tuning preset and a
+    // deterministic seed — all of which must be live from the first frame. The
+    // scenario is therefore resolved here, before `create()` applies bot
+    // tuning (`_applyBotTuning`) and starts the campaign (`beginGame`), and a
+    // promo run forces demo-mode flight: the recorder starts an ordinary
+    // `Play Game` run, so nothing else would put the bot in control.
+    // `resolveEnabledDevScenario` is the single runtime gate, so the promo
+    // path is inert in a production build and — with no promo scenario
+    // requested — `promoScenario` stays `null` and a normal run is unchanged.
+    this.promoScenario = this._resolvePromoScenarioFromUrl();
+    if (this.promoScenario) this.demoMode = true;
     this.demoDwellMs = data?.demoDwellMs;
     // Dev-gated start level (AH-0MVE01EY0008QEVX AC3): a generated-level
     // capture starts a fresh run at a campaign level the same way checkpoint
@@ -1011,9 +1185,11 @@ export class PlayScene extends CombatScene<
     if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
     // Capture configuration is dev-gated exactly like `startLevel`: a shipped
     // build folds the gate to `false` and can never apply launch-data state.
-    this.sceneSetup = isRunProgressEnabled() && data?.setup
-      ? (data.setup as SceneSetupState)
-      : null;
+    // The one guard on the capture-setup slot-cap divergence: a setup is
+    // applied only behind the dev run-progress gate (AH-0MVVJS34M00551ES AC3).
+    this.sceneSetup = resolveSceneSetupState(data?.setup, {
+      devEnabled: isRunProgressEnabled(),
+    });
     // Start position is dev-gated exactly like `startLevel`: a shipped build
     // always begins the campaign at level 1, wave 1, before the boss.
     this.devStartWave = isRunProgressEnabled()
@@ -1050,10 +1226,15 @@ export class PlayScene extends CombatScene<
     // injected one. Records the run header + `run_start` event.
     this._initTelemetry();
 
-    this.add
-      .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
-      .setOrigin(0)
-      .setDepth(PLAYSCENE_BACKGROUND_DEPTH);
+    // Shared background layer (parent AH-0MVIB7PD50029ZY1): full-canvas photo
+    // plus readability dim overlay, or the solid GAME_BACKGROUND_COLOR
+    // fallback while the level's bundled JPEG loads at runtime
+    // (AH-0MVVL4Q2E00934MS — the shared layer requests the texture without
+    // blocking this create()). The lifecycle lives once in the shared core;
+    // the level itself is applied below once the WaveManager knows the run's
+    // starting level. `_createSceneBackground()` reads the initial level from
+    // {@link PlayScene.backgroundLevel} — the same seam every gym uses.
+    this._createSceneBackground();
 
     // Player ship (auto-fire, weapons, effects).
     //
@@ -1067,10 +1248,16 @@ export class PlayScene extends CombatScene<
     // own config/toggle-driven scheme.
     const shipConfig = loadShipConfig();
     const playerScheme = resolvePlayerControlScheme(loadStoredControlScheme(), shipConfig);
+    // A hangar-war deployment's hull scales the shared ship tuning at spawn
+    // (AH-0MVUXC2DD003HN0I); the per-frame Speed Boost multiplier composes on
+    // top of this base, so a slower hull stays slower with or without a boost.
+    const playerShipConfig = this.hangarWarDeployment
+      ? applyHullSpeedToShipConfig(shipConfig, this.hangarWarDeployment)
+      : shipConfig;
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT - 80,
-      config: { ...shipConfig, controlScheme: playerScheme },
+      config: { ...playerShipConfig, controlScheme: playerScheme },
     });
     this.add.existing(this.player);
     // Capture configuration (AH-0MVTNTHE0008UT2C): apply the dev-gated setup
@@ -1100,11 +1287,14 @@ export class PlayScene extends CombatScene<
     this.thornsAura.setDepth(52);
 
     // HUD (lives counter + active effects).
-    this.hud = new HUD(this, this.effectsRegistry, {
-      showLives: true,
-      // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
-      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
-    });
+    // Weapon levels and the six-slot state come from the one shared HUD
+    // wiring, so the game and every gym present the same loadout budget
+    // (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: true }),
+    );
 
     this._buildHudText();
 
@@ -1137,6 +1327,23 @@ export class PlayScene extends CombatScene<
     // Start the run.
     this.gameState.startGame();
     this.effectsRegistry.setLives(this.gameState.lives);
+    // Hangar-war deployment (AH-0MVUXC2DD003HN0I): apply the hull's run stats
+    // and the hangar-resolved starting loadout through the shared deployment
+    // applier, after the run defaults are in place (so the hull's lives are
+    // not overwritten by `startGame()`). The arcade run passes no deployment
+    // and is completely unchanged.
+    if (this.hangarWarDeployment) {
+      applyHangarWarDeployment(
+        {
+          getPlayer: () => this.player,
+          setStartingLives: (lives) => {
+            this.gameState.lives = lives;
+            this.effectsRegistry.setLives(lives);
+          },
+        },
+        this.hangarWarDeployment,
+      );
+    }
     // Hold capacity (first hold) and its growth multiplier come from the
     // game-rules config, so the game and every gym progress identically
     // (GDD §4.5, AH-0MUKC6IML0082ZR4).
@@ -1144,6 +1351,27 @@ export class PlayScene extends CombatScene<
     this.gameState.mineralHoldGrowthMultiplier =
       rules.mineralHoldGrowthMultiplier;
     this._syncMineralHud();
+    // A previous run in this (reused) scene instance may have injected the
+    // promo campaign; hand ownership back before the campaign block below so
+    // a following normal run resolves the shipped campaign again
+    // (AH-0MVSDM8SE0081WU7). The block below overwrites this placeholder.
+    if (!this.promoScenario && this.promoCampaignApplied) {
+      this.waveManager.setLevels(LEVELS, { injected: false });
+      this.promoCampaignApplied = false;
+    }
+    // Promo scenario campaign (AH-0MVSDM8SE0081WU7): a promo run plays the
+    // scenario's hand-authored promo level as the whole campaign, injected
+    // through the same `setLevels` seam callers use. Applied before the
+    // shipped campaign resolution and `beginGame` so the promo level is the
+    // campaign from the first frame; the injected-campaign guard below then
+    // leaves it untouched.
+    if (this.promoScenario) {
+      this.waveManager.setLevels(
+        [getPromoLevel(this.promoScenario.promoLevel)],
+        { injected: true },
+      );
+      this.promoCampaignApplied = true;
+    }
     // Campaign source (AH-0MVLJF30O000E3J3): always resolve through
     // `resolveCampaignLevels`, which applies the level enemy-count scaling
     // exactly once to the static `LEVELS` campaign and to the sequenced one.
@@ -1162,16 +1390,26 @@ export class PlayScene extends CombatScene<
     }
     // Checkpoint resume (AH-0MVCRBTNF000DK51): start at the saved level and
     // restore the run stats/permanent progress before the first wave spawns.
+    // A hangar deployment selects its level from the target hex's aggression
+    // (AH-0MVUXC2DD003HN0I) through the same shipped difficulty curves; it is
+    // honoured in production, unlike the dev-gated `startLevel` seam, because
+    // it is a shipped mode rather than a capture tool.
     const resume = this.pendingResumeCheckpoint;
     this.pendingResumeCheckpoint = null;
     this.resumeFromCheckpoint = false;
     this.waveManager.beginGame(
-      resume?.level ?? this.devStartLevel,
+      resume?.level
+        ?? this.hangarWarDeployment?.startLevel
+        ?? this.devStartLevel,
       resume ? 1 : this.devStartWave,
     );
     // Publish the live run position for a generated-level capture driver
     // (AH-0MVE01EY0008QEVX AC3); dev builds only.
     this._publishRunProgress(false);
+    // The backdrop follows the run's actual starting level (a checkpoint
+    // resume or a hangar deployment can start above level 1). Idempotent for
+    // level 1, where the layer already shows that background.
+    this._setBackgroundLevel(this.waveManager.level);
     if (resume) this._restoreCheckpoint(resume);
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();
@@ -1283,11 +1521,13 @@ export class PlayScene extends CombatScene<
     this.miniBoss = null;
     this.miniBossDefeats = 0;
     this.miniBossSpawnedLevel = null;
-    this.miniBossUnlockState = initialUnlockState();
     this.miniBossRewardOpen = false;
     this.miniBossRewardOptions = [];
     this.miniBossSweepHandle = null;
     this.miniBossSweepTargets = [];
+    this.salvageBank = null;
+    this.lastCapture = null;
+    this.forfeitedSalvage = { minerals: 0, cores: 0 };
     this.driftX = 0;
     this.driftDir = 1;
     this.reanchor.reset();
@@ -1384,6 +1624,11 @@ export class PlayScene extends CombatScene<
     for (const effect of this.victoryEffects) effect.destroy();
     this.victoryEffects = [];
 
+    // Destroy a level-change warp still mid-flight at shutdown/restart so no
+    // container or stale handle leaks into the next run (AC5 —
+    // AH-0MVSEBW8L009O3JD).
+    this._destroyBackgroundWarp();
+
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.reanchor.reset();
 
@@ -1426,6 +1671,10 @@ export class PlayScene extends CombatScene<
     const transitioning = this.transitionTimer > 0;
     if (transitioning) {
       this.transitionTimer = Math.max(0, this.transitionTimer - dt);
+      // The level-change warp advances from the scene's own tick so it stays
+      // locked to the transition pause's schedule (AC2 —
+      // AH-0MVSEBW8L009O3JD).
+      this._advanceBackgroundWarp(dt);
       // The transition banner is shown once at `_startTransition()`; its own
       // timer then governs how long it stays up, so it outlives the 1.5 s
       // pause and is no longer hidden when the transition completes
@@ -2623,9 +2872,7 @@ export class PlayScene extends CombatScene<
         this._startTransition();
         return;
       case 'levelCleared':
-        this.runTelemetry.levelCleared(this.waveManager.level);
-        this._announceLevel();
-        this._startTransition();
+        this._onLevelCleared();
         return;
       case 'bossTriggered':
         this.runTelemetry.bossTriggered();
@@ -2636,18 +2883,96 @@ export class PlayScene extends CombatScene<
     }
   }
 
-  /** Begins the brief pause before the next wave/level spawns. */
-  private _startTransition(): void {
+  /**
+   * Begins the brief pause before the next wave/level spawns.
+   *
+   * A level change (`levelChanged` true) additionally swaps the backdrop to
+   * the incoming level and starts the one-shot hyperspace warp; wave-cleared
+   * and boss transitions pass no flag, so they never swap or warp
+   * (AC1/AC4 — AH-0MVSEBW8L009O3JD). The WaveManager has already advanced
+   * the level by the time `'levelCleared'` arrives, so
+   * {@link WaveManager.level} names the incoming level during the transition.
+   */
+  private _startTransition(levelChanged = false): void {
     // Close any wormhole still open (e.g. a timeout/carry-over began
     // mid-spawn): the normal close tick is gated behind the non-transition
     // branch, so the close must happen at transition start (AC4 —
     // AH-0MV9KHLV8006GMX6).
     this._wormhole.close(this.wormholeEffects);
     this.transitionTimer = LEVEL_TRANSITION_SECONDS;
+    // Never stack a stale warp across transitions (a restart/re-entrant clear
+    // can leave a completed handle around; destroying it is idempotent).
+    this._destroyBackgroundWarp();
     // The time-limit is paused/hidden while the transition runs; the next
     // wave restarts a fresh countdown (AH-0MU7JTG9R002ZWA6).
     this._hideWaveTimer();
     this._updateTransitionBanner();
+    if (levelChanged) this._beginLevelChangeWarp();
+  }
+
+  /**
+   * The shipped game's starting backdrop level.
+   *
+   * A run opens on level 1 and {@link PlayScene._onLevelCleared} then follows
+   * the live campaign level through
+   * {@link CombatCoreScene._setBackgroundLevel} (plus the level-change warp),
+   * so this hook names only the *initial* level. Gyms override the same hook
+   * with their family's fixed representative level and never swap — the
+   * documented divergence in `src/scenes/gym/core/gymBackground.ts`.
+   */
+  protected override backgroundLevel(): number | null {
+    return 1;
+  }
+
+  /**
+   * Swaps the backdrop to the incoming level and starts the hyperspace warp
+   * for a level change (AH-0MVSEBW8L009O3JD AC1/AC2).
+   *
+   * `waveManager.level` was advanced before `'levelCleared'` arrived, so it
+   * already names the incoming level: the swap target is
+   * `backgroundForLevel(waveManager.level)` and the warp's deterministic
+   * geometry is seeded from `(incoming - 1, incoming)`.
+   */
+  private _beginLevelChangeWarp(): void {
+    const toLevel = this.waveManager.level;
+    this._setBackgroundLevel(toLevel);
+    this.backgroundWarp = createBackgroundWarp(this, {
+      fromLevel: toLevel - 1,
+      toLevel,
+    });
+  }
+
+  /**
+   * Advances the level-change warp from the scene's own tick so it finishes
+   * exactly when the transition pause does (both are driven by the same
+   * delta). A completed warp has already torn its container down; the handle
+   * is released here so no completed warp outlives its transition.
+   */
+  private _advanceBackgroundWarp(dt: number): void {
+    const warp = this.backgroundWarp;
+    if (warp === null) return;
+    warp.update(dt);
+    if (warp.isComplete()) this._destroyBackgroundWarp();
+  }
+
+  /** Destroys and releases the level-change warp; idempotent. */
+  private _destroyBackgroundWarp(): void {
+    this.backgroundWarp?.destroy();
+    this.backgroundWarp = null;
+  }
+
+  /**
+   * The single `'levelCleared'` handler (AH-0MVSEBW8L009O3JD AC1): records,
+   * announces and transitions exactly as both old paths did, plus the
+   * backdrop swap and warp. Called from the kill path
+   * ({@link _handleWaveEvent}) and the wave-timeout path
+   * ({@link _advanceAfterTimeout}) so a timeout-cleared level gets the same
+   * background/warp treatment with no duplicated logic between them.
+   */
+  private _onLevelCleared(): void {
+    this.runTelemetry.levelCleared(this.waveManager.level);
+    this._announceLevel();
+    this._startTransition(true);
   }
 
   /**
@@ -2747,6 +3072,10 @@ export class PlayScene extends CombatScene<
     // The banner is intentionally NOT hidden here: its own transient timer
     // (`_advanceBanner`) expires it so the announcement stays readable after
     // the next wave spawns (AH-0MV8BQ75V005QNZ1).
+    // Release the level-change warp handle — by this tick it has completed
+    // and torn its own container down (`_advanceBackgroundWarp`); the call
+    // is idempotent for any other path that reaches here (AH-0MVSEBW8L009O3JD).
+    this._destroyBackgroundWarp();
   }
 
   /**
@@ -2780,6 +3109,12 @@ export class PlayScene extends CombatScene<
    * (AH-0MVTNTHE0008UT2C) is the `initialHp` default, so any spawn path — the
    * normal encounter or a scripted teaser beat — previews the boss close to
    * death without changing the entity's total hit pool.
+   *
+   * A hangar-war deployment spawns the **hex boss variant**
+   * (AH-0MVUXCAW0001VUM6): the same `Boss` entity and phase machinery, with the
+   * hex's identity colour (the demonstrated weapon's own colour), its
+   * aggression-perturbed hit pool and its authored boss identity. The arcade
+   * run passes no profile and is byte-for-byte unchanged.
    */
   protected spawnBoss(
     options: {
@@ -2788,6 +3123,7 @@ export class PlayScene extends CombatScene<
       spawnMinions?: boolean;
     } = {},
   ): void {
+    const hexBoss = this.hexBossProfile;
     this.boss = new Boss(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2 - 80,
@@ -2795,14 +3131,37 @@ export class PlayScene extends CombatScene<
       rng: this.rng,
       initialHp: options.initialHp ?? this.sceneSetup?.bossHitsRemaining,
       initialPhase: options.initialPhase,
+      // The hex boss wears the granted weapon's colour (Rule 2's visible
+      // demonstration); the shipped boss keeps its own defaults without one.
+      bodyColor: hexBoss?.bodyColor,
+      desperationColor: hexBoss?.desperationColor,
+      // Rule 2 — the boss wields it first: a hex boss opens the encounter by
+      // firing the volley of the weapon it grants (fan pattern, bullet colour
+      // and shape from the shared weapon catalogue). A hex with no weapon
+      // grant, and the classic campaign boss, demonstrate nothing.
+      demonstratedWeapon:
+        hexBoss?.demonstration === null || hexBoss?.demonstration === undefined
+          ? undefined
+          : {
+              color: hexBoss.demonstration.color,
+              offsets: hexBoss.demonstration.offsets,
+              speed: hexBoss.demonstration.speed,
+              shape: hexBoss.demonstration.shape,
+              length: hexBoss.demonstration.length,
+            },
       // The final boss strengthens with the player's permanent upgrades
       // exactly like the mini-bosses (AH-0MVH87A3L004VOLD). Dev scenarios
       // that pin `initialHp` keep their explicit pool.
       hitPointsPerPhase:
         options.initialHp === undefined
-          ? scaledEncounterHp(
-              BOSS_HIT_POINTS_PER_PHASE,
-              this.getPlayerPowerScore(),
+          ? Math.max(
+              1,
+              Math.round(
+                scaledEncounterHp(
+                  BOSS_HIT_POINTS_PER_PHASE,
+                  this.getPlayerPowerScore(),
+                ) * (hexBoss?.hpMultiplier ?? 1),
+              ),
             )
           : undefined,
     });
@@ -2947,14 +3306,30 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Resolves the URL-selected **promo** dev scenario, or `null`
+   * (AH-0MVSDM8SE0081WU7).
+   *
+   * Uses `resolveEnabledDevScenario` — the single runtime gate — so a promo
+   * URL is ignored in a production build. Only a promo scenario is resolved
+   * this early: it changes the campaign, the bot tuning and the run seed, all
+   * of which `create()` must see from the first frame. The boss and defeat
+   * kinds are applied by {@link _applyDevScenarioFromUrl} at the end of
+   * `create()`, exactly as before.
+   */
+  private _resolvePromoScenarioFromUrl(): DevPromoScenario | null {
+    if (typeof window === 'undefined') return null;
+    const scenario = resolveEnabledDevScenario(window.location?.search ?? '');
+    return scenario?.kind === 'promo' ? scenario : null;
+  }
+
+  /**
    * Applies a URL-selected dev scenario at the end of {@link create} when the
    * dev flag is on. No-op in production and for an absent/unknown scenario, so
    * a normal run is byte-for-byte unchanged.
    */
   private _applyDevScenarioFromUrl(): void {
-    if (!isDevScenarioEnabled()) return;
     if (typeof window === 'undefined') return;
-    const scenario: DevScenario | null = resolveDevScenario(
+    const scenario: DevScenario | null = resolveEnabledDevScenario(
       window.location?.search ?? '',
     );
     if (!scenario) return;
@@ -2963,6 +3338,9 @@ export class PlayScene extends CombatScene<
     } else if (scenario.kind === 'defeat') {
       this.startDevDefeatScenario();
     }
+    // A promo scenario needs no end-of-create action: it was applied from
+    // `init()` (campaign injected, preset selected and RNG seeded before the
+    // first frame, AH-0MVSDM8SE0081WU7) and the run simply plays.
   }
 
   /** Spawns the minion wave for the given boss phase (GDD §4.3). */
@@ -3007,6 +3385,12 @@ export class PlayScene extends CombatScene<
       // flying (AC3); the beat clock keeps advancing (AC4); the celebration and
       // the delayed `GameOverScene` transition are untouched (AC7).
       this.runFinished = true;
+      // A hangar-war deployment resolves its **capture cycle** here
+      // (AH-0MVUXCAW0001VUM6): bank the run's salvage, mark the hex held +
+      // boss-defeated, grant its authored entry into the hangar (Rule 2) and
+      // leave the deployment hull as the defending bot. Securing the last hex
+      // opens the next ring. The arcade run resolves nothing here.
+      this._resolveHangarWarCapture();
       this._triggerVictoryCelebration(deathX, deathY);
       this._finishRunWithPurpose(true);
       return;
@@ -3208,18 +3592,28 @@ export class PlayScene extends CombatScene<
 
   /**
    * Opens the mini-boss reward choice (AH-0MVCRBNO6003E1CH): one choice —
-   * upgrade an owned permanent weapon/power-up by one level, OR unlock a
-   * weapon from the initially-locked pool. Reuses the shared
+   * upgrade an owned permanent weapon/power-up by one level. Reuses the shared
    * `MineralChoiceScene` overlay (launcher-agnostic) and pauses play exactly
    * like the hold-full choice.
+   *
+   * The mini-boss reward no longer offers weapon **unlocks** (parent
+   * AH-0MVLISU03006WDOD AC5): the run-scoped unlock feature was removed when the
+   * reward became the upgrade wheel, so the menu offers level-ups of kinds the
+   * player already holds — never a brand-new weapon kind.
+   *
+   * **A mini-boss always pays out** (parent AH-0MVLISU03006WDOD AC4). When the
+   * run holds nothing to upgrade — possible at the level-1 mini-boss — the
+   * reward falls back to the same three-option hold-full-style choice, so the
+   * paused overlay can never open empty and soft-lock the run.
    *
    * @param _context - The defeated mini-boss's context (level/wave/name).
    * @returns The offered options.
    */
   openMiniBossReward(_context: MiniBossDefeatContext): ChoiceOption[] {
     if (this.miniBossRewardOpen) return [...this.miniBossRewardOptions];
-    // Option A — upgrade any one owned permanent weapon/power-up.
-    const owned: ChoiceOption[] = buildUpgradeOptions({
+    // One offer per owned permanent weapon/power-up — the same shared builder
+    // the hold-full choice uses, so the two surfaces can never drift.
+    const owned: ChoiceOption[] = buildOwnedLevelUpOptions({
       weaponLevels: this.player?.getWeaponLevels() ?? [],
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
       // The mini-boss reward reads the same six-slot view as the hold-full
@@ -3227,32 +3621,25 @@ export class PlayScene extends CombatScene<
       tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
       tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
-    // Option B — unlock one weapon still in the initially-locked pool.
-    const unlocks: ChoiceOption[] = lockedWeaponIds(
-      this.miniBossUnlockState,
-    ).map((weaponId) => toChoiceOption(weaponId as DropId));
-    // Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4). The unlock half is a
-    // base-entry offer built outside `buildChoiceCandidates`, so it must consult
-    // the shared pool itself: at six held kinds a mini-boss unlock of a
-    // brand-new weapon kind would be a seventh slot — the path the producer
-    // reported. Only an unlock for a kind held *temporarily* survives (taking
-    // it makes it permanent without adding a kind); upgrade options name kinds
-    // already held permanently, so they always survive. Below the cap the gate
-    // is inert and the offer is unchanged.
+    // Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4). Every offer here names a
+    // kind the player already holds (permanently or temporarily), so it is
+    // admissible by construction; the shared predicate is still applied so the
+    // reward surface keeps consulting the single source of truth rather than a
+    // scene-local copy of the rule.
     const slotState = resolvePlayerSlotState(this.player);
-    const candidates = [...owned, ...unlocks];
-    const admissible = filterOptionsWithinSlotPool(candidates, slotState);
+    const admissible = filterOptionsWithinSlotPool(owned, slotState);
     // The overlay pauses play, so it must never open with nothing to pick — an
     // empty offer would stall the run. At a full pool the held kinds themselves
     // are always admissible (taking one makes a temporarily-held kind
-    // permanent), so fall back to those rather than re-admitting a seventh
-    // kind. Below the cap the unfiltered list is already admissible.
+    // permanent), so fall back to those rather than opening with no options;
+    // with nothing held at all, fall back to the hold-full-style three-option
+    // choice so the mini-boss still pays out (parent AC4).
     const options =
       admissible.length > 0
         ? admissible
         : slotState.isFull
           ? this._heldKindRewardOptions(slotState)
-          : candidates;
+          : this._holdFullStyleRewardOptions();
     this.miniBossRewardOptions = options;
     this.miniBossRewardOpen = true;
     this.mineralChoiceOpen = true;
@@ -3301,6 +3688,25 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * The last-resort mini-boss reward when the run owns nothing to upgrade
+   * (parent AH-0MVLISU03006WDOD AC4): the same three-option hold-full-style
+   * choice the hold-full overlay offers.
+   *
+   * Reusing the shared choice strategy keeps one definition of "what a reward
+   * may offer" — the base pool, the owned level-ups and the six-slot gate are
+   * all applied by the strategy itself, so this fallback cannot drift from the
+   * hold-full choice.
+   */
+  private _holdFullStyleRewardOptions(): ChoiceOption[] {
+    return this.mineralChoiceStrategy.choose(3, this.rng, {
+      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
+    });
+  }
+
+  /**
    * The demo bot's random mini-boss reward pick: a uniform index into the
    * currently offered reward options, drawn from the run-seeded RNG so a given
    * seed reproduces the same reward (AH-0MVJ8U79V0056I2F · AC2). The result is
@@ -3316,9 +3722,11 @@ export class PlayScene extends CombatScene<
 
   /**
    * Resolves the mini-boss reward: applies the chosen option through the
-   * shared reward seam (permanent upgrade or weapon unlock), records any
-   * unlock, resumes play and closes the overlay. Exactly one option is
-   * consumed per mini-boss (AC4).
+   * shared reward seam (a permanent upgrade), resumes play and closes the
+   * overlay. Exactly one option is consumed per mini-boss (AC4).
+   *
+   * Nothing is recorded against a run-scoped unlock state because the feature
+   * is gone (parent AH-0MVLISU03006WDOD AC5).
    *
    * @returns The chosen option, or null for an out-of-range index.
    */
@@ -3326,14 +3734,6 @@ export class PlayScene extends CombatScene<
     const option = this.miniBossRewardOptions[index];
     if (!option) return null;
     applyMineralChoiceReward(option, this.effectsRegistry, this.player);
-    // An unlock option names a locked weapon: record it so the run (and the
-    // checkpoint) knows the weapon is now available.
-    if (option.kind === 'weapon') {
-      this.miniBossUnlockState = unlockWeapon(
-        option.id as WeaponId,
-        this.miniBossUnlockState,
-      );
-    }
     this.miniBossRewardOpen = false;
     this.miniBossRewardOptions = [];
     this.mineralChoiceOpen = false;
@@ -3353,22 +3753,228 @@ export class PlayScene extends CombatScene<
    * progression the run had earned (schema v2, AH-0MVT1DYO5004UC4P).
    */
   private _saveCheckpoint(context: MiniBossDefeatContext): void {
-    const resumeLevel = Math.min(context.level + 1, MAX_LEVEL);
-    const checkpoint: Checkpoint = {
-      version: CHECKPOINT_VERSION,
-      level: resumeLevel,
-      wave: 1,
-      lives: this.gameState.lives,
-      score: this.gameState.score,
+    // A hangar-war deployment is a separate session (AH-0MVUXC2DD003HN0I): it
+    // must never write the arcade checkpoint, so Continue can only ever belong
+    // to the shipped arcade run. The checkpoint *moment* still banks salvage —
+    // that is the hangar economy both modes share (AH-0MVUXC118004B4OX).
+    if (!this.hangarWarDeployment) {
+      const resumeLevel = Math.min(context.level + 1, MAX_LEVEL);
+      const checkpoint: Checkpoint = {
+        version: CHECKPOINT_VERSION,
+        level: resumeLevel,
+        wave: 1,
+        lives: this.gameState.lives,
+        score: this.gameState.score,
+        minerals: this.gameState.minerals,
+        mineralHoldCapacity: this.gameState.mineralCapacity,
+        weaponLevels: this.player?.getWeaponLevels() ?? [],
+        powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+        runSeed: this.getRunSeed(),
+        savedAt: new Date().toISOString(),
+      };
+      saveCheckpoint(checkpoint);
+    }
+    // The same checkpoint moment banks the run's salvage into the persistent
+    // hangar economy (AH-0MVUXC118004B4OX): one shared seam for the arcade run
+    // and a hex deployment, no divergent copy.
+    this._bankSalvageAtCheckpoint(context);
+  }
+
+  /**
+   * The run's stable salvage-banking identity (AH-0MVUXC118004B4OX). The run
+   * seed uniquely names a run, so a fresh run banks afresh while a resumed run
+   * keeps the same identity.
+   */
+  private _salvageRunId(): string {
+    return `run-${this.getRunSeed()}`;
+  }
+
+  /** The run's cumulative salvage snapshot at one checkpoint moment. */
+  private _salvageSnapshot(checkpointId: string): RunSalvage {
+    return runSalvageFromRun({
+      runId: this._salvageRunId(),
+      checkpointId,
+      // The run economy is untouched: banking copies the held minerals and the
+      // cores the run's mini-boss defeats have earned, never withdraws them.
       minerals: this.gameState.minerals,
-      mineralHoldCapacity: this.gameState.mineralCapacity,
-      weaponLevels: this.player?.getWeaponLevels() ?? [],
-      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
-      unlockedWeapons: this.getUnlockedWeapons(),
-      runSeed: this.getRunSeed(),
-      savedAt: new Date().toISOString(),
+      cores: this.miniBossDefeats,
+    });
+  }
+
+  /**
+   * Banks the run's salvage at the checkpoint that was just written
+   * (AH-0MVUXC118004B4OX AC1). Adds only what this run earned since its last
+   * bank, so reaching a checkpoint twice can never double-count, and persists
+   * the balance through the versioned hangar-war store.
+   */
+  private _bankSalvageAtCheckpoint(context: MiniBossDefeatContext): void {
+    const payload = this._hangarWarPayload();
+    const bank = this.salvageBank ?? bankedSalvageFromHangar(payload.hangar);
+    const next = bankSalvage(
+      bank,
+      this._salvageSnapshot(`checkpoint-${context.level}-${this.miniBossDefeats}`),
+    );
+    this.salvageBank = next;
+    if (next.minerals === bank.minerals && next.cores === bank.cores) return;
+    payload.hangar.bankedMinerals = next.minerals;
+    payload.hangar.bankedCores = next.cores;
+    this._saveHangarWarPayload(payload);
+  }
+
+  /**
+   * Resolves a hangar-war deployment's boss victory into a captured hex
+   * (AH-0MVUXCAW0001VUM6): banks the run's salvage, marks the hex held +
+   * boss-defeated, grants its authored entry into the hangar (Rule 2) and
+   * leaves the deployment's chosen hull as the defending bot. Securing the last
+   * hex opens the next ring.
+   *
+   * The pure capture cycle owns every rule; this method only supplies the run's
+   * inputs (the deployment hull + the run's salvage watermark) and persists the
+   * next payload through the versioned store. The arcade run is a no-op.
+   */
+  private _resolveHangarWarCapture(): void {
+    const deployment = this.hangarWarDeployment;
+    if (!deployment || !deployment.hexId) return;
+    const payload = this._hangarWarPayload();
+    const result = resolveHexCapture(payload, {
+      hexId: deployment.hexId,
+      defenderHullId: deployment.hullId,
+      salvage: this._salvageSnapshot('boss-victory'),
+      definitions: HEX_RING_DEFINITIONS,
+      banked: this.salvageBank ?? bankedSalvageFromHangar(payload.hangar),
+    });
+    this.lastCapture = result;
+    this.salvageBank = result.banked;
+    // A victorious deployment always extracts its salvage, so the payload is
+    // written even when the hex itself could not be held (defender refused).
+    this._saveHangarWarPayload(result.payload);
+  }
+
+  /**
+   * Settles a lost run (AH-0MVUXC118004B4OX AC2): the run forfeits only the
+   * salvage it earned after its last bank, and the persistent balance (and the
+   * ring it lives beside) is left untouched. Recorded for the end-of-run
+   * summary; nothing is written.
+   *
+   * Delegates to the capture cycle's loss path
+   * (AH-0MVUXCAW0001VUM6) so the win and loss rules live in one module.
+   */
+  private _forfeitUnbankedSalvage(): void {
+    const payload = this._hangarWarPayload();
+    const outcome = resolveDeploymentDefeat(payload, {
+      salvage: this._salvageSnapshot('run-end'),
+      banked: this.salvageBank ?? bankedSalvageFromHangar(payload.hangar),
+    });
+    this.salvageBank = outcome.banked;
+    this.forfeitedSalvage = outcome.forfeited;
+  }
+
+  /**
+   * This run's working hangar-war payload (AH-0MVUXCBBK004EJIP).
+   *
+   * Resolution order: the deployment's **carried** payload (the war the map
+   * showed, which a test or the attract traversal may have injected) → the
+   * versioned store → a fresh war seeded from the run. Cached, so the capture
+   * cycle and the between-sortie tick build on each other rather than each
+   * re-reading a stale copy.
+   */
+  private _hangarWarPayload(): HangarWarPayload {
+    if (this.hangarWarState === null) {
+      this.hangarWarState =
+        this.hangarWarDeployment?.payload
+        ?? loadHangarWarPayload()
+        ?? createDefaultPayload(this.getRunSeed());
+    }
+    return this.hangarWarState;
+  }
+
+  /**
+   * Caches the run's next war payload and persists it through the versioned
+   * store — except in demo mode, where a demonstration must never overwrite the
+   * player's war (the same rule that keeps a demo run off the leaderboard).
+   */
+  private _saveHangarWarPayload(payload: HangarWarPayload): void {
+    this.hangarWarState = payload;
+    if (this.demoMode) return;
+    saveHangarWarPayload(payload);
+  }
+
+  /**
+   * Runs the **between-sortie frontier tick** (AH-0MVUXCBBK004EJIP).
+   *
+   * This is the "between runs" moment the design names: one tick raises border
+   * aggression and lets the AI attack a held hex, resolved purely from stored
+   * numbers. The tick's record is what the defence report renders, and the
+   * advanced payload is persisted (outside demo mode) so the next run starts
+   * from the risen frontier. The arcade run is a no-op.
+   *
+   * @returns the tick's payload/clock/record, or `null` for the arcade run.
+   */
+  private _resolveBetweenSortieTick(): FrontierTickResult | null {
+    if (!this.hangarWarDeployment) return null;
+    const payload = this._hangarWarPayload();
+    const result = runFrontierTick(payload, {
+      // The payload carries its own frontier position, so a tick always resumes
+      // this war's clock.
+      clock: frontierClockFor(payload),
+    });
+    this._saveHangarWarPayload(result.payload);
+    return result;
+  }
+
+  /** The banked salvage balance the current run has produced (test/UI seam). */
+  getBankedSalvage(): SalvageAmounts {
+    return {
+      minerals: this.salvageBank?.minerals ?? 0,
+      cores: this.salvageBank?.cores ?? 0,
     };
-    saveCheckpoint(checkpoint);
+  }
+
+  /** The salvage the last lost run forfeited (end-of-run summary seam). */
+  getForfeitedSalvage(): SalvageAmounts {
+    return { ...this.forfeitedSalvage };
+  }
+
+  /**
+   * Whether this run is a hangar-war deployment rather than the shipped
+   * arcade run (AH-0MVUXC2DD003HN0I). Exposed so tests can pin the mode
+   * separation without reading private state.
+   */
+  isHangarWarRun(): boolean {
+    return this.hangarWarDeployment !== null;
+  }
+
+  /**
+   * The hangar-war deployment this run launched with, or `null` for the arcade
+   * run (AH-0MVUXC2DD003HN0I). A detached copy, so callers cannot mutate the
+   * run's launch data.
+   */
+  getHangarWarDeployment(): HangarWarDeployment | null {
+    return this.hangarWarDeployment === null
+      ? null
+      : { ...this.hangarWarDeployment };
+  }
+
+  /**
+   * The hex boss variant this deployment's final encounter ran with (or `null`
+   * for the arcade run) — the capture-cycle test/UI seam
+   * (AH-0MVUXCAW0001VUM6). A detached copy.
+   */
+  getHexBossProfile(): HexBossProfile | null {
+    return this.hexBossProfile === null
+      ? null
+      : (JSON.parse(JSON.stringify(this.hexBossProfile)) as HexBossProfile);
+  }
+
+  /**
+   * The last capture-cycle resolution for this deployment, or `null` before the
+   * boss is defeated. The payload itself is persisted through the store; this
+   * seam exposes the outcome (grant, defender, ring secured/advanced).
+   */
+  getLastCapture(): HexCaptureResult | null {
+    return this.lastCapture === null
+      ? null
+      : (JSON.parse(JSON.stringify(this.lastCapture)) as HexCaptureResult);
   }
 
   /**
@@ -3426,9 +4032,21 @@ export class PlayScene extends CombatScene<
     // value is applied last and pushed into the store the HUD reads.
     this.gameState.lives = checkpoint.lives;
     this.effectsRegistry.setLives(checkpoint.lives);
-    const unlocked = new Set<WeaponId>(this.miniBossUnlockState.unlockedWeapons);
-    for (const weaponId of checkpoint.unlockedWeapons) unlocked.add(weaponId);
-    this.miniBossUnlockState = { unlockedWeapons: unlocked };
+    // A resumed run must not re-bank the salvage its checkpoint already
+    // extracted before the previous death: align the run's watermark with the
+    // restored snapshot so only salvage earned from here on is banked
+    // (AH-0MVUXC118004B4OX AC2). A legacy save with no hangar payload yet is
+    // left as a fresh run, so its restored salvage still banks normally.
+    const payload = loadHangarWarPayload();
+    if (payload) {
+      this.salvageBank = {
+        minerals: payload.hangar.bankedMinerals,
+        cores: payload.hangar.bankedCores,
+        runId: this._salvageRunId(),
+        bankedThisRun: { minerals: checkpoint.minerals, cores: 0 },
+        lastCheckpointId: null,
+      };
+    }
     this._syncMineralHud();
     this._refreshHudText();
   }
@@ -3458,11 +4076,6 @@ export class PlayScene extends CombatScene<
    */
   getMiniBossSweepTargets(): readonly MiniBossSweepTarget[] {
     return [...this.miniBossSweepTargets];
-  }
-
-  /** The weapons this run has unlocked through mini-boss rewards. */
-  getUnlockedWeapons(): WeaponId[] {
-    return [...this.miniBossUnlockState.unlockedWeapons];
   }
 
   /**
@@ -3533,7 +4146,15 @@ export class PlayScene extends CombatScene<
    */
   private _applyBotTuning(): void {
     if (!this.demoMode) return;
-    const config = getCurrentBotTuningConfig();
+    // A promo run flies the scenario's preset **by name**
+    // (AH-0MVSDM8SE0081WU7); every other demo run flies the persisted current
+    // selection. A preset the local store does not have (e.g. a
+    // `localStorage` blob predating the curated presets) falls back to the
+    // current selection so a promo run always has a usable bot.
+    const config = this.promoScenario
+      ? getBotTuningConfig(this.promoScenario.preset)
+        ?? getCurrentBotTuningConfig()
+      : getCurrentBotTuningConfig();
     this.appliedBotTuningName = config.name;
     const values = coerceTuningValues(config.values);
     this.botBrain = createCompetentBotBrain({ tunables: toCompetentOverrides(values) });
@@ -3855,7 +4476,7 @@ export class PlayScene extends CombatScene<
       this.minerals,
       this.player,
       absorbers,
-      () => this._collectMineral(),
+      (mineral) => this._collectMineral(mineral),
       { playerPhased: this.isPlayerPhased() && !transitioning },
     );
   }
@@ -3898,29 +4519,24 @@ export class PlayScene extends CombatScene<
     ) {
       this.spawnPowerUpDrop('extra_life', s.entity.x, s.entity.y);
     }
-    // Mineral drops (GDD §4.5): the shared kill-drop rule decides — a small
+    // Mineral drops (GDD §4.5): the shared kill-payout seam decides — a small
     // asteroid leaves one mineral at the site, large/medium asteroids do not
     // (their small split children do), and a non-asteroid enemy re-drops a
-    // fraction of the minerals it absorbed while alive.
-    this.minerals.push(
-      ...resolveMineralKillDrops(this, s.entity, this.rng),
-    );
+    // fraction of the minerals it absorbed. At the deposit threshold the
+    // wreck leaves a single red deposit worth `MINERAL_DEPOSIT_VALUE` instead
+    // of the whole scatter (AH-0MVJ79739008396I).
+    //
     // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
     // the wreck of a destroyed enemy ship (hazards excluded — they are not
-    // bounty targets). The shared seam renders them orange so the payout is
-    // visible against ordinary gold drops (AH-0MVJ72I8O0009T09).
-    const salvageBonus = this.effectsRegistry.salvageBonusMinerals();
-    if (salvageBonus > 0 && !isNonBlockingHazard(s.enemyKey)) {
-      this.minerals.push(
-        ...scatterSalvageMineralDrops(
-          this,
-          s.entity.x,
-          s.entity.y,
-          salvageBonus,
-          this.rng,
-        ),
-      );
-    }
+    // bounty targets). The bonus is folded into the deposit threshold and its
+    // orange scatter is suppressed when the deposit fires, so one wreck always
+    // produces exactly one payout shape (AH-0MVJ79739008396I).
+    const salvageBonus = isNonBlockingHazard(s.enemyKey)
+      ? 0
+      : this.effectsRegistry.salvageBonusMinerals();
+    this.minerals.push(
+      ...resolveMineralKillPayout(this, s.entity, salvageBonus, this.rng),
+    );
     // Non-blocking hazards (asteroids, lane traffic) are not wave-accounted
     // (AH-0MUJM746P000QAEO, AH-0MV01EPM40008N8T): destroying one must not
     // advance the wave. Only non-hazard enemy ships drive wave/level/boss
@@ -4030,14 +4646,14 @@ export class PlayScene extends CombatScene<
 
   /**
    * Updates effect visuals each tick: the Shield shield bubble is drawn around
-   * the ship while shielded (shared helper — continuously pulsing rim +
-   * low-alpha fill, radius SHIP_SIZE × 1.6, with the shared ending fade in
-   * the final second, mirrors GymPowerUpsCombat) and cleared otherwise, and
-   * the Phase Shift phase ghost alpha is applied when phased.
+   * the ship while the pool holds a charge (shared helper — steady bright rim
+   * + low-alpha fill, radius SHIP_SIZE × 1.6; the timed-window ending fade is
+   * retired, AH-0MVVD8TCJ004RLXP) and cleared otherwise, and the Phase Shift
+   * phase ghost alpha is applied when phased.
    */
   private _updateVisuals(): void {
-    // Shield bubble: drawn around the ship while Shield is active (shared helper,
-    // including the continuous rim pulse and ending fade).
+    // Shield bubble: drawn around the ship while Shield is active (shared
+    // helper; the steady-bright-rim look is drawn for every armed state).
     if (this.shieldBubble) {
       this.shieldBubbleDrawn = drawShieldBubble(
         this.shieldBubble,
@@ -4292,9 +4908,7 @@ export class PlayScene extends CombatScene<
         this._startTransition();
         return event;
       case 'levelCleared':
-        this.runTelemetry.levelCleared(wm.level);
-        this._announceLevel();
-        this._startTransition();
+        this._onLevelCleared();
         return event;
       case 'bossTriggered':
         this.runTelemetry.bossTriggered();
@@ -4420,6 +5034,9 @@ export class PlayScene extends CombatScene<
   }
 
   private _finishRun(won: boolean): void {
+    // A lost run forfeits only its unbanked salvage; the hangar balance and the
+    // ring survive the game over (AH-0MVUXC118004B4OX AC2).
+    if (!won) this._forfeitUnbankedSalvage();
     // Run end (win/lose) is a discrete telemetry event (AH-0MUY08VVQ007HSSH).
     this.runTelemetry.runEnd(won, this.gameState.score);
     // Dev-gated end-of-run signal (AH-0MUXZ4BXK001QCEK), emitted *before* the
@@ -4434,6 +5051,29 @@ export class PlayScene extends CombatScene<
     // Fire-and-forget: the flush + POST must never block or crash run end, so
     // the scene transitions below happen regardless of its outcome.
     void this.flushAndUploadDevTelemetry();
+    if (this.hangarWarDeployment) {
+      // A hex deployment ends in the **between-sortie defence report**
+      // (AH-0MVUXCBBK004EJIP): run the frontier tick — one tick of risen
+      // aggression and a purely algorithmic attack — and hand its record to the
+      // report, which renders the numbers that produced every hold and fall.
+      // There is no defence battle to fly or watch, so this transition can never
+      // stall the demo.
+      const tick = this._resolveBetweenSortieTick();
+      const wasDemo = this.demoMode;
+      if (wasDemo) {
+        this.demoMode = false;
+        this._disableDemoTakeOver();
+      }
+      this.scene.start(DEFENCE_REPORT_SCENE_KEY, {
+        payload: tick?.payload ?? this._hangarWarPayload(),
+        record: tick?.record,
+        won,
+        score: this.gameState.score,
+        demo: wasDemo,
+        demoDwellMs: this.demoDwellMs,
+      });
+      return;
+    }
     if (this.demoMode) {
       // Non-scoring demo (AC2): start the shared GameOverScene in demo mode so
       // it renders VICTORY/DEFEAT + final score without leaderboard
@@ -4831,6 +5471,18 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Spawns a red mineral **deposit** at (x, y) and registers it on the field.
+   * The deposit is worth `MINERAL_DEPOSIT_VALUE` (10) in a single pickup and
+   * is built through the shared `createMineralDeposit` seam, so its colour and
+   * value can never drift from the kill-drop rule (AH-0MVJ79739008396I).
+   */
+  spawnMineralDepositAt(x: number, y: number): Mineral {
+    const deposit = createMineralDeposit(this, x, y);
+    this.minerals.push(deposit);
+    return deposit;
+  }
+
+  /**
    * Spawns an asteroid of the given size tier at (x, y). Asteroids are NOT
    * registered with the WaveManager (AH-0MUJM746P000QAEO): they do not gate
    * wave completion and persist in the field across wave/level transitions.
@@ -4896,13 +5548,18 @@ export class PlayScene extends CombatScene<
    */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    // The run's permanent snapshots, read once: the offer pool and the
+    // top-left owned-loadout panel must never disagree about what the player
+    // owns (AH-0MVCRKAPL000L68Y · AC2/AC3).
+    const weaponLevels = this.player?.getWeaponLevels() ?? [];
+    const powerUpLevels = this.player?.getPowerUpLevels() ?? [];
     this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, this.rng, {
       // Offer level-ups for weapons the player already owns (parent
       // AH-0MUPMPCB2009J54J); an unarmed player falls back to the base pool.
-      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      weaponLevels,
       // Offer level-ups for power-ups the player already owns (parent
       // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
-      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      powerUpLevels,
       // Field pickups occupy a slot while they last, so the six-slot gate must
       // see the temporary half of the run's holdings (parent AH-0MVLIJT3M005HPHF
       // producer Q4a/Q6a: at full slots only offer items currently in the slots).
@@ -4935,6 +5592,9 @@ export class PlayScene extends CombatScene<
       this.scene.launch('MineralChoiceScene', {
         origin: 'PlayScene',
         options: [...this.mineralChoiceOptions],
+        // Top-left permanent loadout panel, built from the same permanent
+        // snapshots the offers were priced from (AH-0MVCRKAPL000L68Y).
+        ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels),
         // Frozen player-fire schedule: the active player weapons + beat-grid
         // phase at the moment the overlay opens, so the reduced-volume ghost
         // fire continues on the same grid while paused (AH-0MV55O9R5005W6J0).
@@ -5015,9 +5675,16 @@ export class PlayScene extends CombatScene<
     applyMineralChoiceReward(option, this.effectsRegistry, this.player);
   }
 
-  /** Collects a mineral: adds it to the hold and opens the choice when full. */
-  private _collectMineral(): void {
-    this.gameState.addMinerals(loadRules().mineralCollectAmount);
+  /**
+   * Collects a mineral: credits its **worth** to the hold and opens the choice
+   * when full. An ordinary dot is worth `mineralCollectAmount` (1); a red
+   * deposit is worth `MINERAL_DEPOSIT_VALUE` (10) and pays out in this single
+   * pickup (AH-0MVJ79739008396I).
+   *
+   * @param mineral — the collected mineral whose `value` is credited.
+   */
+  private _collectMineral(mineral: Mineral): void {
+    this.gameState.addMinerals(mineral.value);
     this.runTelemetry.mineralCollected(this.gameState.minerals);
     this._syncMineralHud();
     if (this.gameState.isHoldFull()) this.openMineralChoice();
@@ -5264,7 +5931,14 @@ export class PlayScene extends CombatScene<
    * 3. mirror the seed onto `GameState` for telemetry.
    */
   private _initRunSeed(): void {
-    const seed = this.injectedRunSeed ?? this._devRunSeed() ?? randomSeed();
+    // Precedence: an explicitly injected seed (launch data, checkpoint resume
+    // or a hangar deployment) wins, then a promo scenario's authored seed
+    // (AH-0MVSDM8SE0081WU7), then the dev `seed` URL parameter, then a fresh
+    // random seed.
+    const seed = this.injectedRunSeed
+      ?? this.promoScenario?.seed
+      ?? this._devRunSeed()
+      ?? randomSeed();
     this.runSeed = seed;
     if (!this.rngInjected) {
       this.rng = createSeededRng(seed);

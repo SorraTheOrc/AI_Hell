@@ -140,10 +140,16 @@ describe('hold-full choice pool — game ↔ gym parity (AH-0MVI4KTD8000FBJ7 AC2
     booted = await bootScene([GymMinerals, MineralChoiceScene]);
     const gymStates = grantEveryNewDrop(booted.scene as unknown as ChoiceLauncher);
 
-    // Every new id is granted at permanent level 1 and its effect is live in
-    // both launchers — no drop is silently inert.
+    // Every new id is granted identically in both launchers. A **consumable**
+    // hold-full reward adds a charge instead of a level (parent
+    // AH-0MVTQMREN009DSFW AC1), so thorns stays level 0 (values are compared
+    // for parity between the game and the gym rather than pinned here).
     for (const id of [...NEW_POWER_UP_IDS, ...NEW_WEAPON_IDS]) {
-      expect(gameStates[id], id).toEqual({ level: 1, effectActive: true });
+      if (id !== 'thorns') {
+        expect(gameStates[id], id).toEqual({ level: 1, effectActive: true });
+      } else {
+        expect(gameStates[id].level, id).toBe(0);
+      }
       expect(gymStates[id], id).toEqual(gameStates[id]);
     }
   });

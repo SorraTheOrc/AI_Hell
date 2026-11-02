@@ -22,6 +22,7 @@ import {
 import {
   DEFAULT_GYM_LEVEL_WEAPONS,
   applySceneSetup,
+  resolveSceneSetupState,
   resolveSetupSeed,
   type SceneSetupPlayer,
 } from './sceneSetup';
@@ -318,5 +319,41 @@ describe('scene setup — scripted-video arc fields (AH-0MVRMFMJP0070KTS)', () =
     expect(module.resolveMineralReward({}, randomChoice)).toBe('shield');
     expect(module.resolveMineralReward(null, randomChoice)).toBe('shield');
     expect(randomChoice).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── The dev-gate guard on the slot-cap divergence (AH-0MVVJS34M00551ES) ──
+//
+// A capture setup may pre-grant more than six counted kinds (documented
+// divergence: scripted video / gym beats). What must never happen is that a
+// *shipped* build applies one, so the applier is reachable only through the
+// run-progress dev gate. These cases pin that guard.
+
+describe('resolveSceneSetupState — the capture setup never reaches normal play', () => {
+  /** A scripted loadout larger than the six-slot cap. */
+  const OVER_CAP_SETUP = {
+    player: {
+      weapons: ['spread', 'dual', 'rapid', 'broadside', 'wave_laser', 'ricochet'],
+    },
+    powerUps: { shield: 2 },
+  };
+
+  it('returns null when the run-progress dev gate is off (shipped build)', () => {
+    expect(
+      resolveSceneSetupState(OVER_CAP_SETUP, { devEnabled: false }),
+    ).toBeNull();
+  });
+
+  it('returns the setup unchanged when the gate is on (capture/gym only)', () => {
+    expect(
+      resolveSceneSetupState(OVER_CAP_SETUP, { devEnabled: true }),
+    ).toEqual(OVER_CAP_SETUP);
+  });
+
+  it('ignores absent and malformed payloads even with the gate on', () => {
+    expect(resolveSceneSetupState(undefined, { devEnabled: true })).toBeNull();
+    expect(resolveSceneSetupState(null, { devEnabled: true })).toBeNull();
+    expect(resolveSceneSetupState('setup', { devEnabled: true })).toBeNull();
+    expect(resolveSceneSetupState(42, { devEnabled: true })).toBeNull();
   });
 });

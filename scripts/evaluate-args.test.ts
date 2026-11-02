@@ -207,4 +207,30 @@ describe('--tune flags (AH-0MVBNITA0005VQGN)', () => {
       /Missing value for --set/,
     );
   });
+
+  it('defaults the watchdog off and parses --watchdog <seconds> (AH-0MVSE1OPF008G1SB)', () => {
+    expect(parseEvaluateArgs(['--tune', '--set', 'enemy-configs.csv', 'boss.health=6']).watchdog).toBe(0);
+    const armed = parseEvaluateArgs([
+      '--tune',
+      '--set',
+      'enemy-configs.csv',
+      'boss.health=6',
+      '--watchdog',
+      '900',
+    ]);
+    expect(armed.watchdog).toBe(900);
+    // The value is passed through verbatim; `main()` rejects a non-finite or
+    // negative budget with exit 2, so a fractional budget stays possible.
+    expect(
+      parseEvaluateArgs(['--tune', '--set', 'enemy-configs.csv', 'boss.health=6', '--watchdog', '0.5'])
+        .watchdog,
+    ).toBe(0.5);
+  });
+
+  it('advertises --watchdog, its default and its exit code in the help text (AC6)', () => {
+    expect(EVALUATE_USAGE).toContain('--watchdog <secs>');
+    expect(EVALUATE_USAGE).toMatch(/default 0 = off/);
+    expect(EVALUATE_USAGE).toMatch(/exit 124/);
+    expect(EVALUATE_USAGE).toMatch(/cannot be interrupted|blocking synchronous/);
+  });
 });

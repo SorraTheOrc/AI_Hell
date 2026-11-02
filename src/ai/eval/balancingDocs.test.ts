@@ -158,6 +158,69 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     expect(doc).toMatch(/checkout hygiene|Checkout hygiene/);
   });
 
+  it('documents the fail-fast input validation and its exit code (AH-0MVSE18XX006ZG5I)', () => {
+    expect(doc).toContain('AH-0MVSE18XX006ZG5I');
+    expect(doc).toMatch(/Fail-fast input validation/);
+    expect(doc).toContain('output directory not writable');
+    expect(doc).toContain('tune CSV not readable');
+    // The guarantee that makes it fail *fast*: before the core boots or a sweep runs.
+    expect(doc).toMatch(/before the SSR core\s+boots or any sweep runs/);
+    expect(doc).toMatch(/exit code `2`/);
+    // The reason a plain mkdir is insufficient is part of the contract.
+    expect(doc).toMatch(/existing.*read-only\s+directory|read-only\s+directory/i);
+  });
+
+  it('documents the pseudo-filesystem guard for --out (AH-0MVWLQQKB0075A1U)', () => {
+    expect(doc).toContain('AH-0MVWLQQKB0075A1U');
+    expect(doc).toMatch(/pseudo-filesystem/i);
+    expect(doc).toContain('unsupported filesystem type 0x');
+    expect(doc).toContain('procfs');
+    expect(doc).toContain('statfsSync');
+    // The documented negative probe must be named as the reason.
+    expect(doc).toContain('/proc/nope/x');
+    // Fail-open is part of the guarantee (no regression on normal filesystems).
+    expect(doc).toMatch(/fail-open/i);
+  });
+
+  it('documents the crash-safe edit journal and its repair path (AH-0MVSE1A7O002PXAO)', () => {
+    expect(doc).toContain('AH-0MVSE1A7O002PXAO');
+    expect(doc).toMatch(/Crash-safe edit journal/);
+    expect(doc).toContain('.tune-journal');
+    // The automatic recovery path (next invocation) and the manual one.
+    expect(doc).toMatch(/reconciles a stale journal/);
+    expect(doc).toContain('jq -r .originalBase64');
+    expect(doc).toContain('base64 -d');
+    // Git-ignored, so a crashed run leaves no worktree change.
+    expect(doc).toContain('src/data/*.tune-journal');
+  });
+
+  it('documents the per-run progress and the opt-in watchdog (AH-0MVSE1OPF008G1SB)', () => {
+    expect(doc).toContain('AH-0MVSE1OPF008G1SB');
+    expect(doc).toMatch(/Progress output and the runtime bound/);
+    expect(doc).toContain('[tune] baseline 1/2 seed=1 policy=competent');
+    // The guarantee: progress is on stderr, stdout parity is preserved.
+    expect(doc).toMatch(/reports its progress on \*\*stderr\*\*/);
+    expect(doc).toMatch(/stdout keeps exactly the report/);
+    // The flag surface and its default.
+    expect(doc).toContain('--watchdog <secs>');
+    expect(doc).toMatch(/default `0` = off/);
+    // The distinct exit code and the accepted limitation.
+    expect(doc).toContain('124');
+    expect(doc).toContain('tune watchdog expired after');
+    expect(doc).toMatch(/blocking\* synchronous sweep that never yields|cannot be interrupted/);
+  });
+
+  it('names the tune-loop safety test files (AH-0MVSE1PG7006XBZ9)', () => {
+    for (const file of [
+      'scripts/evaluate-failfast.test.ts',
+      'scripts/csvEditJournal.test.ts',
+      'scripts/evaluate-tune-progress.test.ts',
+      'scripts/tune-verify.e2e.test.ts',
+    ]) {
+      expect(doc).toContain(file);
+    }
+  });
+
   it('is cross-linked from the README and EVALUATION.md flags', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
     const evaluation = fs.readFileSync(EVALUATION_PATH, 'utf8');

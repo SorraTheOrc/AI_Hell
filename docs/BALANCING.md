@@ -309,11 +309,106 @@ cap shapes what a run can become.
   pickup, hold-full choice, mini-boss upgrade and mini-boss unlock). A gated
   reward that would offer nothing falls back to base picks of the held kinds, so
   the rule can never stall a paused overlay.
+- **What the player sees: a slot budget and marked non-slot rows
+  (AH-0MVVJRRN10038VFR).** The HUD upgrade list is a *display* list, not the
+  loadout, so it can legitimately show rows that hold no slot: an exempt entry
+  (Mystery UFO — `always available`) and a Phase Shift / Teleport row that
+  survives on remaining charges after its temporary window expired
+  (`charges only`). To keep the cap legible the HUD renders an explicit
+  **`Loadout n/6`** budget from the shared model
+  (`resolvePlayerSlotState(player)`), marks those non-slot rows, and renders
+  them **dimmed** (`NON_SLOT_ROW_ALPHA`, half opacity) so the slot-counted
+  rows are the ones a player counts — a non-slot row cannot be mistaken for a
+  seventh upgrade (AH-0MVZ0GGW1004502H). It also gives every
+  slot-held kind a row — including a temporary one-shot that previously showed
+  none. The slot-counted rows therefore equal the model's `used` and never
+  exceed `POWER_UP_SLOT_CAP`, and the same wiring (`combatHudOptions`) feeds
+  `PlayScene` and every gym, so gym↔game parity holds for the display too.
+  The row classes worth knowing: an exempt entry (Mystery UFO,
+  `always available`) and a charge pool surviving its expired window
+  (`charges only`, including a Phase Shift row opened by a Teleport arrival)
+  hold **no** slot; Extra Life has **no** row (the lives counter carries it);
+  a temporary one-shot (Orbital Strike, Smart Bomb) holds a slot while its
+  window is open and therefore renders a countdown row. A temporary **field
+  pickup** must have a slot to fill: below the cap it opens a new counted
+  slot, but at the cap a brand-new kind is refused by the shared collection
+  gate (`isWithinSlotPool`) and only a pickup of a kind already held is
+  admitted — it levels that kind's existing slot rather than opening a
+  seventh.
+- **Capture/scripted setups and the checkpoint save are handled explicitly
+  (AH-0MVVJS34M00551ES).** Two surfaces are worth naming because they look like
+  cap breaches. (1) The capture/gym `setup` payload
+  ([`src/scenes/core/sceneSetup.ts`](../src/scenes/core/sceneSetup.ts)) may
+  pre-grant **more than six counted kinds** — deliberate, because the scripted
+  video beats exist to show a full late-game ship; it is contained by the
+  run-progress dev gate (`resolveSceneSetupState`, folded off in a shipped
+  build) so normal play can never inherit it. (2) A checkpoint is bounded on
+  **save** (`capCheckpointLoadout` in
+  [`src/core/checkpointStore.ts`](../src/core/checkpointStore.ts)) through the
+  shared predicate, so `Continue` restores at most six counted kinds and exempt
+  entries still come back; the replay itself restores a hand-written payload
+  verbatim, by design (the resumed run must match the saved run exactly).
+- **How a "> six equipped" report is triaged (AH-0MVVF0POV001JNKX).** Because
+  rows are not slots, a report is classified from a recording, not a row count:
+  capture the run (a stock `npm run dev` auto-records to
+  `recordings/session-<timestamp>.jsonl`; or `npm run record -- --auto`, stopping
+  the recorder with Ctrl+C in its own terminal — closing the browser loses the
+  buffer, recorder defect **AH-0MVVH57LL00038WQ**), replay it against
+  `resolveSlotState(...)` (permanent kinds from the tick vector, temporary
+  holdings from the `pickup` events plus each kind's TTL) and classify every row
+  as slot-counted or not. A counted kind above six is a real gate bug on a named
+  acquisition surface; a `always available` / `charges only` row is the
+  documented presentation, not a seventh slot.
 - **Evidence scope.** Existing bot/batch evidence was recorded before the cap,
   so a late-game campaign run now sees a different loadout. Re-running and
   re-recording the bot batches is **out of scope** for the cap work item; it
   becomes a linked follow-up only if a gate fails. Recorded user stories and the
   producer decisions live on the parent work item (AH-0MVLIJT3M005HPHF).
+
+### Per-upgrade temporary TTLs — how long a field pickup lasts
+
+A field pickup is a **temporary** level (GDD §4.4.3): it reverts when its own
+temporary window expires. The window length (TTL) is **balance data**, a
+property of the upgrade item rather than one global constant, resolved by the
+single `resolveTemporaryWindow` helper in
+[`src/powerups/powerUpLevels.ts`](../src/powerups/powerUpLevels.ts). Two
+families share the rule:
+
+- **Timed kinds** keep their existing level-resolved effect duration as the
+  TTL, so the window levels up with the effect (Speed Boost 10 s → 20 s,
+  Frenzy 8 s → 16 s, …). Nothing to tune separately.
+- **Instant kinds** declare a per-entry TTL in the catalogue
+  ([`src/powerups/types.ts`](../src/powerups/types.ts),
+  `PowerUpEntry.temporaryWindow`). Retuning one of these is a **data edit** —
+  no code change is needed:
+
+| Instant kind | TTL (s) | Rationale |
+|---|---:|---|
+| Bomb | 10 | Mirrors the established 10 s weapon window (`WEAPON_TIMEOUT_MS`). |
+| Smart Bomb | 10 | As Bomb — a one-shot screen pulse with the weapon-style window. |
+| Orbital Strike | 10 | As Bomb — a one-shot bolt with the weapon-style window. |
+| Phase Shift | 15 | Defensive kind: the shield-style 15 s window. |
+| Teleport | 15 | Defensive kind: the shield-style 15 s window. |
+| Extra Life | 10 | Weapon-style 10 s window; the **life itself is kept** when the level reverts. |
+| Mystery UFO | 15 | Spans a full 5–8 s drone sortie, so the granted drone outlives its window. |
+| Shield | 15 | Absorbed-hit kind: the former level-scaled bubble window was retired, so the flat producer-approved TTL (Q-A2=a) applies instead (AH-0MVVD8SXO004QLZW). |
+| Thorn Field | 8 | Absorbed-hit kind: the former level-scaled ram window was retired, so the flat producer-approved TTL (Q-A2=a) applies instead (AH-0MVVD8SXO004QLZW). |
+| Force Field | 8 | Absorbed-hit kind: the former level-scaled bubble window was retired, so the flat producer-approved TTL (Q-A2=a) applies instead (AH-0MVVD8SXO004QLZW). |
+
+Weapons obey the same rule with their own 10 s TTL, surfaced as
+`resolveWeaponTemporaryWindow`. The values are deliberately short so a
+temporary level can never compound across a wave, and they are **not** scaled
+by the campaign-level supply curves above (those shape drop frequency, not
+window length).
+
+**Consumables are never clawed back.** Lives, Phase Shift charges and
+Teleport uses already granted by a temporary pickup survive the level revert
+and never carry a timer of their own (producer Q2 on AH-0MVSTKGC3003OMAC).
+Occupancy of a six-slot loadout still follows the window: the slot is released
+when the TTL expires (see the loadout subsection above).
+
+> The AH-0MUX802450085VZZ *"Resolved decision 4"* exception (instant kinds
+> had no window at all) is **superseded** by AH-0MVSTKGC3003OMAC.
 
 ### Evidence: same-seed baseline vs post-change batches
 
@@ -661,12 +756,99 @@ artifact instead).
 | `--set <file> <assignment>` | The single declarative edit, e.g. `--set enemy-configs.csv boss.health=6` (`<rowKey>.<field>=<value>`, or `<field>=<value>` for single-row files such as `ship-config.csv`). | — |
 | `--threshold <pct>` | Relative significance threshold in percent. | `10` (±10 %) |
 | `--keep-edit` | Keep the CSV edit after the run instead of restoring it. | off (restore) |
+| `--watchdog <secs>` | Bounded-runtime guard: abort the run (exit `124`) once the budget is spent, restoring the CSV first. | `0` (off) |
 
 The batch sweep itself uses the usual flags (`--games`, `--policies`,
 `--ticks`, `--dt`, `--sample-every`, `--out`).
 
+### Progress output and the runtime bound (AH-0MVSE1OPF008G1SB)
+
+Every `--tune` run reports its progress on **stderr**, one line per completed
+run plus the phase transitions:
+
+```
+[tune] baseline 1/2 seed=1 policy=competent
+[tune] baseline 2/2 seed=2 policy=competent
+[tune] edit applied: enemy-configs.csv boss.health 1 -> 7
+[tune] candidate 1/2 seed=1 policy=competent
+[tune] candidate 2/2 seed=2 policy=competent
+[tune] comparing baseline and candidate
+[tune] restoring the edited CSV
+```
+
+stdout keeps exactly the report it printed before, so artifact/print parity and
+the determinism tests are unaffected. The lines come from the shared
+`runBatch` per-run hook (`runBalanceBatch(options, {onRun})`), not a second
+progress mechanism.
+
+`--watchdog <secs>` (default `0` = off) bounds the run. The deadline is checked
+at every phase boundary — hydrating the config, the baseline sweep, the edit,
+the re-hydrate, the candidate sweep — and a timer records an expiry reached
+while the run yields to the event loop. On expiry the CLI prints
+`tune watchdog expired after <n> s during <phase>`, restores the CSV (and clears
+the journal) and exits with code **`124`** — distinct from the fail-fast/usage
+code `2` — so a scripted caller can tell a bound-trip from a validation error.
+
+**Accepted limitation:** a *blocking* synchronous sweep that never yields to
+the event loop cannot be interrupted by a timer. Such a stall is caught when
+the sweep returns (the boundary check then trips), and the per-run progress
+lines are the primary signal while it runs. The known 2026-10-21 hang is
+removed by the fail-fast validation above rather than by the watchdog.
+
 ### Guards and guarantees
 
+- **Fail-fast input validation (AH-0MVSE18XX006ZG5I):** before the SSR core
+  boots or any sweep runs, `--out` is probed by creating the directory (when
+  missing) and writing, fsyncing and unlinking a sentinel file, and the
+  `--tune` CSV target is probed with a read. An invalid path therefore fails in
+  well under a second with exit code `2` instead of after a full baseline and
+  candidate sweep:
+
+  ```
+  output directory not writable: <dir> (<ERRNO>)   # e.g. EACCES, ENOTDIR, EROFS
+  tune CSV not readable: <path> (<ERRNO>)          # e.g. ENOENT
+  ```
+
+  The write probe (not just a `mkdir`) is what catches an **existing** read-only
+  directory, which accepts a recursive `mkdir` and only fails on the first
+  write. A **pseudo-filesystem** target (procfs, sysfs, debugfs, tracefs,
+  cgroup/cgroup2, devpts, securityfs, configfs, bpf, nsfs) is refused *before*
+  it is touched, because a recursive `mkdir` there blocks for ever
+  (AH-0MVWLQQKB0075A1U): the probe reads the filesystem type of the nearest
+  existing ancestor with `statfsSync` and reports
+  `output directory not writable: <dir> (unsupported filesystem type 0x<magic>)`
+  — so the documented negative probe `--out /proc/nope/x` fails in ~0.3 s
+  instead of hanging. The guard is fail-open: when `statfsSync` is unavailable
+  or fails, the `mkdir` probe runs unchanged. The late `mkdirSync` before the
+  artifact writes remains as an idempotent safety net. The measured pre-fix
+  cost of the same invalid path was 4.31 s at 10 games × 2000 ticks and 11.82 s
+  at 40 games × 2000 ticks (and 166.6 minutes for `/proc/nope/x`, which blocked
+  the `mkdir` after both sweeps had already run).
+- **Crash-safe edit journal (AH-0MVSE1A7O002PXAO):** before the first edited
+  byte is written, the pre-edit bytes are persisted to
+  `src/data/<file>.tune-journal` (written to a sibling temp file, `fsync`ed and
+  atomically renamed, so a kill at any moment leaves either no journal or a
+  complete one). The journal is removed after a successful restore, and with
+  `--keep-edit` it is removed **without** restoring. It is git-ignored
+  (`src/data/*.tune-journal`), so a crashed run leaves no worktree change.
+
+  A `SIGKILL` (OOM, an external timeout kill) runs no `finally`, so the
+  in-memory restore cannot help — the journal is what makes the edit
+  recoverable. The **next** `--tune` invocation reconciles a stale journal for
+  its CSV target *before* validating anything, prints
+  `warning: restored <csv> from a stale tune journal (…)` and continues, so the
+  normal recovery needs no manual step.
+
+  If the CLI is never run again, or the journal is unreadable (the CLI then
+  refuses to run with `tune journal not reconcilable: …` and exit code `2`),
+  restore it without Node:
+
+  ```bash
+  jq -r .originalBase64 src/data/enemy-configs.csv.tune-journal \
+    | base64 -d > src/data/enemy-configs.csv
+  rm src/data/enemy-configs.csv.tune-journal
+  git diff --exit-code src/data/enemy-configs.csv   # empty == restored exactly
+  ```
 - **Same-sweep guard:** the comparison refuses to diff two batches whose
   sweep configuration (`policies`, `seeds`, `ticks`, `dt`,
   `sampleEveryTicks`) differs — refused **before** any delta is computed.
@@ -772,7 +954,21 @@ pixel-accurate, full-stack verification use the browser capture path
 - `src/utils/csvEdit.test.ts` and `scripts/csvEdit-shell.test.ts` — the
   declarative `--set` editor and guaranteed byte-identical restore on
   success/failure paths (`--keep-edit` opt-out).
+- `scripts/evaluate-failfast.test.ts` — the up-front `--out` / `--tune` CSV
+  probes, the CLI exit codes for each failure path, and the proof that the
+  validation runs **before** the SSR core boots (a mocked `vite` boot is never
+  attempted) (AH-0MVSE18XX006ZG5I).
+- `scripts/csvEditJournal.test.ts` — the crash-safe journal: atomic write,
+  restore-from-journal, `--keep-edit` clear, the unreadable-journal refusal, a
+  real `SIGKILL`ed editing child whose CSV is restored byte-identically, the
+  reconcile-before-validate behaviour of the next `--tune` run, and the
+  `.gitignore` guard (AH-0MVSE1A7O002PXAO).
+- `scripts/evaluate-tune-progress.test.ts` — the per-run progress lines on
+  stderr (stdout parity), the opt-in `--watchdog` exit `124` with a restored
+  CSV, and the rejected budgets (AH-0MVSE1OPF008G1SB).
 - `src/ai/eval/balancingDocs.test.ts` — this document's contract.
+- `scripts/tune-verify.e2e.test.ts` — the gated end-to-end tune loop
+  (`/skill:test --type e2e`).
 
 ## Acceptance-verification run (2026-10-14, AH-0MV81Z9EI005TQMB)
 

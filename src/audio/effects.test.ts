@@ -22,6 +22,7 @@ import {
   CUE_MANIFEST,
   RETIRED_CUES,
   assetUrlFor,
+  cueAssetUrl,
   type CueManifestEntry,
 } from './cueManifest';
 import {
@@ -153,6 +154,86 @@ describe('cue → baked asset mapping', () => {
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe(
       'audio/sfx/aihell-arc-impact.32275.wav',
+    );
+  });
+
+  it('playRailgunImpactSound resolves to the baked railgun-impact asset (AH-0MVMIGVCE004VSNA)', () => {
+    effects.playRailgunImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-railgun-impact.32278.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the railgun impact cue (AH-0MVMIGVCE004VSNA)', () => {
+    effects.playWeaponImpactCue('playRailgunImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-railgun-impact.32278.wav',
+    );
+  });
+
+  it('playShardSwarmImpactSound resolves to the baked shard-swarm-impact asset (AH-0MVV0WMTE0007NGS)', () => {
+    effects.playShardSwarmImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-shard-swarm-impact.32280.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the shard swarm impact cue (AH-0MVV0WMTE0007NGS)', () => {
+    effects.playWeaponImpactCue('playShardSwarmImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-shard-swarm-impact.32280.wav',
+    );
+  });
+
+  it('playRearGuardImpactSound resolves to the baked rear-guard-impact asset (AH-0MVV0WN96007TU9J)', () => {
+    effects.playRearGuardImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rear-guard-impact.32282.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the rear guard impact cue (AH-0MVV0WN96007TU9J)', () => {
+    effects.playWeaponImpactCue('playRearGuardImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rear-guard-impact.32282.wav',
+    );
+  });
+
+  it('playBroadsideImpactSound resolves to the baked broadside-impact asset (AH-0MVV0WNOX0078G9G)', () => {
+    effects.playBroadsideImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-broadside-impact.32284.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the broadside impact cue (AH-0MVV0WNOX0078G9G)', () => {
+    effects.playWeaponImpactCue('playBroadsideImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-broadside-impact.32284.wav',
+    );
+  });
+
+  it('playHeavySlugImpactSound resolves to the baked heavy-slug-impact asset (AH-0MVV0WO4M001KEDG)', () => {
+    effects.playHeavySlugImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-heavy-slug-impact.32286.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the heavy slug impact cue (AH-0MVV0WO4M001KEDG)', () => {
+    effects.playWeaponImpactCue('playHeavySlugImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-heavy-slug-impact.32286.wav',
     );
   });
 
@@ -473,6 +554,11 @@ describe('playWeaponFireSound — shared player-fire path', () => {
       ['ricochet', 'playRicochetFireSound'],
       ['cluster', 'playClusterFireSound'],
       ['options', 'playOptionsFireSound'],
+      ['railgun', 'playRailgunFireSound'],
+      ['shard_swarm', 'playShardSwarmFireSound'],
+      ['rear_guard', 'playRearGuardFireSound'],
+      ['broadside', 'playBroadsideFireSound'],
+      ['heavy_slug', 'playHeavySlugFireSound'],
     ];
     for (const [weaponId, cue] of cases) {
       recording.plays.length = 0;
@@ -521,6 +607,164 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/aihell-options-fire.32271.wav');
   });
+
+  it('plays the baked railgun fire cue (AH-0MVMIGVCE004VSNA)', () => {
+    effects.playWeaponFireSound('railgun');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-railgun-fire.32277.wav',
+    );
+  });
+
+  it('routes the railgun metronome ghost fire at the reduced volume', () => {
+    effects.playWeaponFireSound('railgun', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('plays the baked shard swarm fire cue (AH-0MVV0WMTE0007NGS)', () => {
+    effects.playWeaponFireSound('shard_swarm');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-shard-swarm-fire.32279.wav',
+    );
+  });
+
+  it('routes the shard swarm metronome ghost fire at the reduced volume (AH-0MVV0WMTE0007NGS)', () => {
+    // The hold-full metronome resolves the identical asset as live fire and
+    // only scales the volume, so a five-shard weapon cannot drift between the
+    // two paths.
+    effects.playWeaponFireSound('shard_swarm', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-shard-swarm-fire.32279.wav',
+    );
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('the shard swarm cues are distinct assets from the cannon\u2019s (AH-0MVV0WMTE0007NGS)', () => {
+    // Distinctness is asserted through the public dispatch API: the Shard
+    // Swarm cannot alias the Cannon's fire thump or impact smack.
+    effects.playWeaponFireSound('cannon');
+    effects.playWeaponFireSound('shard_swarm');
+    effects.playWeaponImpactCue('playCannonImpactSound');
+    effects.playWeaponImpactCue('playShardSwarmImpactSound');
+    expect(recording.plays).toHaveLength(4);
+    expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
+    expect(recording.plays[3].url).not.toBe(recording.plays[2].url);
+  });
+
+  it('plays the baked rear guard fire cue (AH-0MVV0WN96007TU9J)', () => {
+    effects.playWeaponFireSound('rear_guard');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rear-guard-fire.32281.wav',
+    );
+  });
+
+  it('routes the rear guard metronome ghost fire at the reduced volume (AH-0MVV0WN96007TU9J)', () => {
+    // The hold-full metronome resolves the identical asset as live fire and
+    // only scales the volume, so the rearward cue cannot drift between the two
+    // paths.
+    effects.playWeaponFireSound('rear_guard', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rear-guard-fire.32281.wav',
+    );
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('the rear guard cues are distinct assets from the cannon\u2019s (AH-0MVV0WN96007TU9J)', () => {
+    // Distinctness is asserted through the public dispatch API: the Rear Guard
+    // cannot alias the Cannon's forward fire thump or impact crack, so the
+    // backward shot stays identifiable by ear.
+    effects.playWeaponFireSound('cannon');
+    effects.playWeaponFireSound('rear_guard');
+    effects.playWeaponImpactCue('playCannonImpactSound');
+    effects.playWeaponImpactCue('playRearGuardImpactSound');
+    expect(recording.plays).toHaveLength(4);
+    expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
+    expect(recording.plays[3].url).not.toBe(recording.plays[2].url);
+  });
+
+  it('plays the baked broadside fire cue (AH-0MVV0WNOX0078G9G)', () => {
+    effects.playWeaponFireSound('broadside');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-broadside-fire.32283.wav',
+    );
+  });
+
+  it('routes the broadside metronome ghost fire at the reduced volume (AH-0MVV0WNOX0078G9G)', () => {
+    // The hold-full metronome resolves the identical asset as live fire and
+    // only scales the volume, so the two-sided cue cannot drift between the two
+    // paths.
+    effects.playWeaponFireSound('broadside', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-broadside-fire.32283.wav',
+    );
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('a broadside shot plays the two-sided pair cue once, not once per dart (AH-0MVV0WNOX0078G9G)', () => {
+    // One shot fires two perpendicular darts but dispatches a **single** baked
+    // cue that already contains the pair — the seam must not double-dispatch
+    // (which is what would make it sound like two Cannons).
+    effects.playWeaponFireSound('broadside');
+    expect(recording.plays).toHaveLength(1);
+  });
+
+  it('the broadside cues are distinct assets from the cannon\u2019s (AH-0MVV0WNOX0078G9G)', () => {
+    effects.playWeaponFireSound('cannon');
+    effects.playWeaponFireSound('broadside');
+    effects.playWeaponImpactCue('playCannonImpactSound');
+    effects.playWeaponImpactCue('playBroadsideImpactSound');
+    expect(recording.plays).toHaveLength(4);
+    expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
+    expect(recording.plays[3].url).not.toBe(recording.plays[2].url);
+  });
+
+  it('plays the baked heavy slug fire cue (AH-0MVV0WO4M001KEDG)', () => {
+    effects.playWeaponFireSound('heavy_slug');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-heavy-slug-fire.32285.wav',
+    );
+  });
+
+  it('routes the heavy slug metronome ghost fire at the reduced volume (AH-0MVV0WO4M001KEDG)', () => {
+    // The hold-full metronome resolves the identical asset as live fire and
+    // only scales the volume, so the heaviest cue cannot drift between the two
+    // paths.
+    effects.playWeaponFireSound('heavy_slug', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-heavy-slug-fire.32285.wav',
+    );
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('a heavy slug shot dispatches its single-shot cue exactly once (AH-0MVV0WO4M001KEDG)', () => {
+    // One shot fires one huge shell — the seam must dispatch the baked cue
+    // once per shot, never once per sub-projectile.
+    effects.playWeaponFireSound('heavy_slug');
+    expect(recording.plays).toHaveLength(1);
+  });
+
+  it('the heavy slug cues are distinct assets from the mortar\u2019s (AH-0MVV0WO4M001KEDG)', () => {
+    // The heaviest launch must not alias the Mortar's detonation/impact: the
+    // baked assets are separate, so a player hears which weapon fired. The
+    // Mortar impact cue is compared through its direct export (it is an AOE
+    // weapon and so deliberately absent from `PLAYER_WEAPON_IMPACT_CUES`).
+    effects.playWeaponFireSound('heavy_slug');
+    effects.playWeaponFireSound('mortar');
+    effects.playHeavySlugImpactSound();
+    effects.playMortarImpactSound();
+    expect(recording.plays).toHaveLength(4);
+    expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
+    expect(recording.plays[3].url).not.toBe(recording.plays[2].url);
+  });
 });
 
 // ── 4. Dive-sound lifecycle ─────────────────────────────────────────
@@ -540,6 +784,56 @@ describe('sustained dive sound', () => {
   it('stopDiveSound is a safe no-op when nothing plays', () => {
     expect(() => effects.stopDiveSound()).not.toThrow();
     expect(recording.stops).toBe(0);
+  });
+});
+
+// ── 4b. Mystery UFO feel cues (AH-0MVSAJMLL00835T8) ────────────────
+//
+// The UFO feel slices consume these four baked cues plus the warble's stop
+// control companion. This slice only ships the wrappers, so the assertions
+// pin the delivery contract: the warble is a single shared **looping** voice
+// with a stop companion, and the three one-shots play their own asset
+// immediately (they are fired in sync with VFX/spill, never beat-delayed).
+
+describe('Mystery UFO feel cues', () => {
+  it('the warble shares one looping voice and stops cleanly', () => {
+    effects.playMysteryUfoWarbleSound();
+    effects.playMysteryUfoWarbleSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      cueAssetUrl('playMysteryUfoWarbleSound'),
+    );
+    expect(recording.plays[0].loop).toBe(true);
+    expect(effects._getMysteryUfoWarbleSoundStateForTests()).not.toBeNull();
+
+    effects.stopMysteryUfoWarbleSound();
+    expect(recording.stops).toBe(1);
+    expect(effects._getMysteryUfoWarbleSoundStateForTests()).toBeNull();
+  });
+
+  it('stopMysteryUfoWarbleSound is a safe no-op when nothing plays', () => {
+    expect(() => effects.stopMysteryUfoWarbleSound()).not.toThrow();
+    expect(recording.stops).toBe(0);
+  });
+
+  it('clearing the audio layer releases the active warble voice', () => {
+    effects.playMysteryUfoWarbleSound();
+    effects._resetAudioContextForTests();
+    expect(effects._getMysteryUfoWarbleSoundStateForTests()).toBeNull();
+  });
+
+  it('the reward, destroy and tinkle cues play their own asset immediately', () => {
+    effects.playMysteryUfoRewardSound();
+    effects.playMysteryUfoDestroySound();
+    effects.playMineralTinkleSound();
+
+    expect(recording.plays.map((play) => play.url)).toEqual([
+      cueAssetUrl('playMysteryUfoRewardSound'),
+      cueAssetUrl('playMysteryUfoDestroySound'),
+      cueAssetUrl('playMineralTinkleSound'),
+    ]);
+    expect(recording.plays.every((play) => play.delay === 0)).toBe(true);
+    expect(recording.plays.every((play) => play.loop === false)).toBe(true);
   });
 });
 
@@ -662,6 +956,39 @@ describe('beat-synchronised explosion accents', () => {
     clock.advance(SIXTEENTH_MS);
     effects.playDestructionSound();
     expect(recording.plays[0].delay).toBe(0);
+  });
+
+  it('honours an explicit delay instead of quantising a scheduled cascade', () => {
+    // A scripted display (the mini-boss death sweep) owns its own rhythm: an
+    // explicit `delay` must be played as given, not moved onto the beat grid.
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100); // the accent grid would move this to 87.5 ms
+
+    effects.playDestructionSound({ delay: 0.25, volume: 0.3 });
+    effects.playBossDestructionSound({ delay: 0.5, volume: 0.65 });
+
+    expect(recording.plays).toHaveLength(2);
+    expect(recording.plays[0].delay).toBe(0.25);
+    expect(recording.plays[0].volume).toBe(0.3);
+    expect(recording.plays[1].delay).toBe(0.5);
+    expect(recording.plays[1].volume).toBe(0.65);
+  });
+
+  it('does not spend the per-tick accent cap on explicitly scheduled bursts', () => {
+    // The cascade schedules its own cues; it must not exhaust the mass-kill
+    // accent budget that a real simultaneous kill still needs.
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100);
+
+    for (let i = 0; i < effects.EXPLOSION_PER_TICK_CAP + 4; i += 1) {
+      effects.playDestructionSound({ delay: i * 0.01 });
+    }
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 4);
+
+    effects.playDestructionSound();
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 5);
   });
 
   it('stacks several kills in one window onto the same tick (one accent)', () => {

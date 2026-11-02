@@ -6,6 +6,12 @@
  */
 
 import type { SceneSetup } from './capture-scenes.mjs';
+import type {
+  CapturePromoScenario,
+  CaptureScenario,
+  CaptureScenarioKind,
+  EditorialCategory,
+} from './capture-scenario-schema.mjs';
 
 export interface CaptureOptions {
   durationMs: number;
@@ -54,6 +60,54 @@ export interface CaptureOptions {
 
 /** Which capture path the options select. */
 export type CaptureMode = 'demo' | 'scripted' | 'scenario';
+
+/**
+ * The lifecycle a planned capture follows: the demo/scripted modes, a frozen
+ * jump scenario released through the page handle (`jump`), or a continuous
+ * bot-flown promo run (`promo`).
+ */
+export type ScenarioLifecycle = CaptureMode | 'jump' | 'promo';
+
+/**
+ * One scenario as `--list-scenarios` reports it: the base fields every entry
+ * has, plus the promo metadata a `kind: 'promo'` entry carries
+ * (AH-0MVSDMAC0006DS25).
+ */
+export interface ScenarioListing {
+  name: string;
+  effect: string;
+  kind: CaptureScenarioKind;
+  /** Promo entries only: the bot-tuning preset the run flies. */
+  preset?: string;
+  /** Promo entries only: the promo wave module level reference. */
+  promoLevel?: string;
+  /** Promo entries only: editorial categories the scenario evidences. */
+  categories?: EditorialCategory[];
+  /** Promo entries only: the deterministic run seed, when declared. */
+  seed?: number;
+}
+
+/**
+ * How one capture starts, waits and ends, derived from the selected
+ * scenario's registry kind (AH-0MVSDMAC0006DS25).
+ */
+export interface ScenarioLaunchPlan {
+  /** The capture mode the launch starts in. */
+  mode: CaptureMode;
+  /** Registry-normalised scenario name, or null for a no-scenario run. */
+  scenario: string | null;
+  /** Registry kind, or null when no/unknown scenario was requested. */
+  kind: CaptureScenarioKind | null;
+  lifecycle: ScenarioLifecycle;
+  /** Ordered start keys with their inter-key delays. */
+  startPlan: CaptureStartStep[];
+  /** Whether the clip ends on the run-ended signal (not a fixed duration). */
+  waitsForRunEnd: boolean;
+  /** Whether the recorder must call `window.__aiHellScenario.resume()`. */
+  releaseScenarioHandle: boolean;
+  /** Whether the run is flown by the game's demo bot (demo/promo). */
+  botFlown: boolean;
+}
 
 /** One capture-start key and the delay to apply after dispatching it. */
 export interface CaptureStartStep {
@@ -194,17 +248,39 @@ export interface RunEndedListenerStore {
 }
 
 export function parseCaptureArgs(argv?: string[]): CaptureOptions;
-/** Lists the implemented dev capture scenarios (fresh registry copies). */
-export function listScenarios(): Array<{ name: string; effect: string }>;
+/** Lists the implemented dev capture scenarios with their richer metadata. */
+export function listScenarios(scenarios?: readonly CaptureScenario[]): ScenarioListing[];
+/** Renders one scenario as its single maintainer-facing listing line. */
+export function describeScenario(
+  scenario: ScenarioListing | CaptureScenario,
+): string;
 /** Formats the registered scenarios as readable human lines (one per line). */
 export function formatScenarioList(
-  scenarios?: Array<{ name: string; effect: string }>,
+  scenarios?: Array<ScenarioListing | CaptureScenario>,
 ): string;
 /** Renders the listing as a JSON array under `--json`, else the human form. */
 export function renderScenarioListing(
   options?: { json?: boolean },
-  scenarios?: Array<{ name: string; effect: string }>,
+  scenarios?: Array<ScenarioListing | CaptureScenario>,
 ): string;
+/** Finds the registry entry a `--scenario` value selects, or null. */
+export function findCapturedScenario(
+  name: unknown,
+  scenarios?: readonly CaptureScenario[],
+): CaptureScenario | null;
+/**
+ * Plans the launch, wait and release step from the selected scenario's
+ * registry kind: jump scenarios are released through the page handle, promo
+ * scenarios are bot-flown continuous runs with no release step.
+ */
+export function planScenarioLaunch(
+  options?: {
+    scripted?: boolean;
+    scenario?: string | null;
+    fixedDuration?: boolean;
+  },
+  scenarios?: readonly CaptureScenario[],
+): ScenarioLaunchPlan;
 /** Validates a `--count` value into a positive integer, or throws. */
 export function parseCaptureCount(value: unknown): number;
 /** Resolves the N output paths for a `--count` batch (indexed when > 1). */
@@ -229,6 +305,16 @@ export interface CapturePlanItem {
   scenario: string | null;
   /** The scenario's one-line effect (all-scenarios items only). */
   effect?: string;
+  /** The registry kind of the scenario (all-scenarios items only). */
+  kind?: CaptureScenarioKind;
+  /** Promo entries only: the bot-tuning preset the item's run flies. */
+  preset?: string;
+  /** Promo entries only: the promo wave module level reference. */
+  promoLevel?: string;
+  /** Promo entries only: editorial categories the item evidences. */
+  categories?: EditorialCategory[];
+  /** Promo entries only: the deterministic run seed, when declared. */
+  seed?: number;
   /** Absolute output path for this item. */
   outputPath: string;
 }
@@ -240,7 +326,7 @@ export interface CapturePlanItem {
  * adds a per-scenario iteration suffix to the names).
  */
 export function buildScenarioCapturePlan(params?: {
-  scenarios?: Array<{ name: string; effect: string }>;
+  scenarios?: Array<ScenarioListing | CaptureScenario>;
   output?: string | null;
   /** Repeats per scenario (`N x all`); defaults to `DEFAULT_CAPTURE_COUNT`. */
   count?: number;

@@ -24,9 +24,27 @@
  *   node scripts/evaluate.mjs --help
  */
 
-import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
-import { basename as pathBasename, resolve as resolvePath } from 'node:path';
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statfsSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
+import { basename as pathBasename, dirname as pathDirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import {
+  clearJournal,
+  journalPathFor,
+  reconcileJournal,
+  writeJournal,
+} from './csvEditJournal.mjs';
 
 /** Parses `process.argv`-style flags into a plain options object. */
 export function parseEvaluateArgs(argv = process.argv.slice(2)) {
@@ -54,6 +72,7 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     tuneAssignment: null,
     threshold: 10,
     keepEdit: false,
+    watchdog: 0,
     level: null,
     scaleLevels: true,
     forceFields: true,
@@ -134,6 +153,9 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
       case '--threshold':
         options.threshold = Number(next());
         break;
+      case '--watchdog':
+        options.watchdog = Number(next());
+        break;
       case '--keep-edit':
         options.keepEdit = true;
         break;
@@ -189,6 +211,10 @@ Options:
   --set <file> <a>     The declarative edit for --tune, e.g. --set enemy-configs.csv boss.health=6
   --threshold <pct>    Relative significance threshold for --tune (default 10 = ±10%%)
   --keep-edit          Keep the --set CSV edit after the tune run (default: restore)
+  --watchdog <secs>    Bounded-runtime guard for --tune (default 0 = off): aborts with exit 124
+                       when the run exceeds the budget, restoring the CSV. Checked between
+                       phases and on a timer; a blocking synchronous sweep that never yields
+                       cannot be interrupted (see docs/BALANCING.md).
   --games <count>      Games (seeds 1..count) in batch mode (default 100)
   --policies <a,b>     Comma-separated policies to sweep in batch mode
   --ticks <n>          Max ticks per run (default 18000 for a full-campaign batch,
@@ -210,6 +236,27 @@ Options:
   --video              Also emit the side-by-side capture plan (AC4)
   --json               Print the machine-readable report instead of text
   --help               Show this help
+
+Exit codes:
+  0                    Success.
+  1                    Unexpected runtime error.
+  2                    Usage error, or the fail-fast input validation failed.
+                       The validation runs before the SSR core boots and before
+                       any sweep, so an invalid path fails in well under a
+                       second (AH-0MVSE18XX006ZG5I). Diagnostics:
+                         output directory not writable: <dir> (<ERRNO>)
+                         tune CSV not readable: <path> (<ERRNO>)
+                       A pseudo-filesystem (procfs/sysfs/…) is refused before it
+                       is touched, because a mkdir there blocks for ever:
+                       output directory not writable: <dir> (unsupported
+                       filesystem type 0x<magic>)
+
+Crash safety:
+  --tune journals the pre-edit CSV bytes to <csv>.tune-journal before editing
+  and removes it after the restore, so a hard kill (SIGKILL/OOM) cannot leave
+  the balance CSV edited: the next --tune invocation restores it first and
+  prints a warning. Manual repair: jq -r .originalBase64 <csv>.tune-journal |
+  base64 -d > <csv> (see docs/BALANCING.md).
 `;
 
 /** Resolves the seeds list from parsed options. */export function resolveSeeds(options) {
@@ -228,6 +275,238 @@ Options:
 /** Joins an output directory and an artifact name. */
 export function resolveArtifactPath(dir, name) {
   return dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`;
+}
+
+/** Diagnostic prefix for an unwritable `--out` directory. */
+export const OUTPUT_DIR_NOT_WRITABLE = 'output directory not writable';
+
+/** Diagnostic prefix for an unreadable `--tune` CSV target. */
+export const TUNE_CSV_NOT_READABLE = 'tune CSV not readable';
+
+/**
+ * Formats a filesystem error for the fail-fast diagnostics: the errno code
+ * when Node supplies one (`EACCES`, `ENOTDIR`, …), the message otherwise, so a
+ * consumer always sees an actionable cause rather than a bare sentence.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+function describeFsError(error) {
+  if (error && typeof error === 'object' && typeof (/** @type {{code?: unknown}} */ (error)).code === 'string') {
+    return /** @type {{code: string}} */ (error).code;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Linux pseudo-filesystem magic numbers whose `mkdir`/`stat` can block or lie
+ * (AH-0MVWLQQKB0075A1U). A recursive `mkdir` under procfs in a container
+ * blocks indefinitely (measured: 60 s+ until an external kill), so the `--out`
+ * write probe must never call it. Values are the standard super-block magic
+ * numbers (see `man 2 statfs` and `linux/magic.h`).
+ */
+export const UNSUPPORTED_OUTPUT_FS_TYPES = Object.freeze({
+  procfs: 0x9fa0,
+  sysfs: 0x62656572,
+  debugfs: 0x64626720,
+  tracefs: 0x74726163,
+  cgroup: 0x27e0eb,
+  cgroup2: 0x63677270,
+  devpts: 0x1cd1,
+  securityfs: 0x73636673,
+  configfs: 0x62656570,
+  bpf: 0xca7baf3d,
+  nsfs: 0x6e736673,
+});
+
+/** Set of the magic numbers {@link isUnsupportedOutputFsType} rejects. */
+const UNSUPPORTED_FS_MAGIC = new Set(Object.values(UNSUPPORTED_OUTPUT_FS_TYPES));
+
+/**
+ * True when `type` is a known pseudo-filesystem the write probe must refuse
+ * before touching it. Exported for tests (`statfsSync` reports `.type`).
+ *
+ * @param {unknown} type
+ * @returns {boolean}
+ */
+export function isUnsupportedOutputFsType(type) {
+  return typeof type === 'number' && UNSUPPORTED_FS_MAGIC.has(type);
+}
+
+/**
+ * Filesystem type of the nearest **existing** ancestor of `dir`, or `null`
+ * when it cannot be resolved (fail-open — a normal filesystem is never
+ * affected by a `statfsSync` problem). Walking up the path means
+ * `/proc/nope/x` resolves against `/proc` (procfs) while a plain tmpdir
+ * resolves against tmpfs.
+ *
+ * @param {string} dir
+ * @returns {number | null}
+ */
+export function nearestExistingFsType(dir) {
+  if (typeof statfsSync !== 'function') return null;
+  let candidate = resolvePath(dir);
+  for (let depth = 0; depth < 128; depth += 1) {
+    try {
+      statSync(candidate);
+      return statfsSync(candidate).type;
+    } catch {
+      // Walk up toward the root; the loop terminates at the path root.
+    }
+    const parent = pathDirname(candidate);
+    if (parent === candidate) return null;
+    candidate = parent;
+  }
+  return null;
+}
+
+/**
+ * Proves `dir` can be created (when missing) and written to, **before** the
+ * SSR core boots or any sweep runs (AH-0MVSE18XX006ZG5I, parent
+ * AH-0MVIKLOOJ0058Z9B).
+ *
+ * The 2026-10-21 negative probe (`--out /proc/nope/x`) ran both sweeps and
+ * then stalled for 166.6 minutes because the output directory was only touched
+ * at artifact-write time; this probe makes an invalid `--out` cost
+ * milliseconds instead.
+ *
+ * `mkdirSync` alone is not enough: an **existing** read-only directory accepts
+ * the `mkdir` (recursive, already exists) and only fails on the first write, so
+ * the probe writes, fsyncs and unlinks a sentinel file. And a **pseudo**
+ * filesystem (procfs/sysfs/…) blocks the `mkdir` itself for ever
+ * (AH-0MVWLQQKB0075A1U), so such targets are refused up front via
+ * {@link nearestExistingFsType} — never touched. Never throws — the caller
+ * renders `reason` verbatim.
+ *
+ * @param {string} dir
+ * @returns {{ok: true} | {ok: false, reason: string}}
+ */
+export function ensureWritableOutputDir(dir) {
+  const fsType = nearestExistingFsType(dir);
+  if (fsType !== null && isUnsupportedOutputFsType(fsType)) {
+    return {
+      ok: false,
+      reason: `${OUTPUT_DIR_NOT_WRITABLE}: ${dir} (unsupported filesystem type 0x${fsType.toString(16)})`,
+    };
+  }
+  const probePath = resolveArtifactPath(dir, `.evaluate-write-probe-${process.pid}`);
+  let fd = null;
+  try {
+    mkdirSync(dir, { recursive: true });
+    fd = openSync(probePath, 'w');
+    writeSync(fd, 'write-probe');
+    fsyncSync(fd);
+  } catch (error) {
+    return { ok: false, reason: `${OUTPUT_DIR_NOT_WRITABLE}: ${dir} (${describeFsError(error)})` };
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // best effort — the probe verdict is already decided
+      }
+      try {
+        unlinkSync(probePath);
+      } catch {
+        // best effort — a leftover sentinel must not mask the verdict
+      }
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Resolves the `--tune` CSV target from the shell's own root, so the fail-fast
+ * validation and `executeTune` can never disagree about which file is edited.
+ *
+ * @param {{tuneFile?: string | null}} options
+ * @returns {string}
+ */
+export function resolveTuneCsvPath(options) {
+  const root = resolvePath(import.meta.dirname, '..');
+  return resolvePath(root, 'src/data', options.tuneFile ?? '');
+}
+
+/**
+ * Proves the `--tune` CSV target is readable **before** the baseline sweep
+ * (AH-0MVSE18XX006ZG5I). Without it a missing/unreadable CSV only surfaces
+ * after the baseline batch has already run, and a `--set` edit would then be
+ * applied to a file the shell could not read. Never throws.
+ *
+ * @param {string} csvPath
+ * @returns {{ok: true} | {ok: false, reason: string}}
+ */
+export function ensureReadableTuneCsv(csvPath) {
+  try {
+    readFileSync(csvPath);
+  } catch (error) {
+    return { ok: false, reason: `${TUNE_CSV_NOT_READABLE}: ${csvPath} (${describeFsError(error)})` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Internal error thrown when the opt-in `--watchdog` deadline expires
+ * (AH-0MVSE1OPF008G1SB). Caught inside `executeTune` so the restore `finally`
+ * runs first and the run exits with code `124` instead of a killed-
+ * but-dirty worktree.
+ */
+export class TuneWatchdogError extends Error {
+  constructor(phase, elapsedMs) {
+    super(`tune watchdog expired after ${(elapsedMs / 1000).toFixed(1)} s during ${phase}`);
+    this.name = 'TuneWatchdogError';
+    this.phase = phase;
+    this.elapsedMs = elapsedMs;
+  }
+}
+
+/**
+ * The bounded-runtime guard for `--tune` (AH-0MVSE1OPF008G1SB).
+ *
+ * The deadline is checked at every phase boundary (around each sweep, the edit
+ * and the compare), and a timer records the expiry for stalls that yield to the
+ * event loop (e.g. the SSR config hydration `await`); the next boundary check
+ * then raises {@link TuneWatchdogError}. Accepted, documented limitation: a
+ * **blocking** synchronous sweep that never yields cannot be interrupted by a
+ * timer — the boundary check fires when it returns, and the per-run progress
+ * lines remain the primary signal for such a stall.
+ *
+ * `seconds <= 0` disables the guard entirely (the default).
+ *
+ * @param {number} seconds
+ * @param {{err: {write(s: string): void}}} io
+ * @returns {{check(phase: string): void, dispose(): void}}
+ */
+export function createTuneWatchdog(seconds, io) {
+  const startedAt = Date.now();
+  const budgetMs = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+  let currentPhase = 'preparing';
+  let timer = null;
+  if (budgetMs > 0) {
+    // Records the trip as soon as the event loop is free; the async stack is
+    // unwound at the next boundary check, which raises the error.
+    timer = setTimeout(() => {
+      currentPhase = `${currentPhase} (deadline exceeded)`;
+    }, budgetMs);
+  }
+  return {
+    /**
+     * Raises {@link TuneWatchdogError} when the budget has been consumed.
+     * @param {string} phase
+     */
+    check(phase) {
+      currentPhase = phase;
+      if (budgetMs > 0 && Date.now() - startedAt >= budgetMs) {
+        throw new TuneWatchdogError(currentPhase, Date.now() - startedAt);
+      }
+    },
+    dispose() {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
 }
 
 /**
@@ -347,8 +626,8 @@ export async function restoreCsvFile(
  */
 export async function executeTune(options, io) {
   const { server, core } = await loadCore();
-  const root = resolvePath(import.meta.dirname, '..');
-  const csvPath = resolvePath(root, 'src/data', options.tuneFile);
+  const csvPath = resolveTuneCsvPath(options);
+  const watchdog = createTuneWatchdog(options.watchdog ?? 0, io);
   const sweep = {
     ...options,
     batch: false,
@@ -357,27 +636,53 @@ export async function executeTune(options, io) {
     humanRecordingText: null,
     humanSeed: null,
   };
+  // Total runs for the progress lines (= seeds x resolved policies; an empty
+  // `--policies` falls back to the single `--policy` inside runBalanceBatch).
+  const totalRuns = sweep.seeds.length
+    * (sweep.policies.length > 0 ? sweep.policies.length : 1);
+  const progressFor = (phase) => {
+    let done = 0;
+    return (run) => {
+      done += 1;
+      io.err.write(`[tune] ${phase} ${done}/${totalRuns} seed=${run.seed} policy=${run.policy}\n`);
+    };
+  };
+  let attempt = null;
   try {
+    watchdog.check('hydrating the balance config');
     await core.hydrateBalanceConfig();
-    const baseline = core.runBalanceBatch(sweep);
+    watchdog.check('baseline sweep');
+    const baseline = core.runBalanceBatch(sweep, { onRun: progressFor('baseline') });
+    watchdog.check('baseline sweep');
 
     // Apply the single declarative edit and refresh the store so the re-run
     // reads the edited values through the shared loaders (never a divergent
     // copy). `attempt` carries the original text for the restore below.
-    let attempt = null;
     try {
+      // Crash-safety (AH-0MVSE1A7O002PXAO): persist the pre-edit bytes beside
+      // the CSV **before** the first edited byte is written. The `finally`
+      // below restores from memory on the normal paths, but a SIGKILL runs no
+      // `finally` — the journal is what makes the edit recoverable then (the
+      // next `--tune` invocation reconciles it in `main()`).
+      writeJournal(csvPath, readFileSync(csvPath));
+      watchdog.check('applying the CSV edit');
       attempt = await applyCsvEditFile(
         csvPath,
         options.tuneAssignment,
         { applyCsvEdit: core.applyCsvEdit, parseEditSpec: core.parseEditSpec },
       );
+      io.err.write(`[tune] edit applied: ${attempt.fileName} ${attempt.spec.rowKey ?? ''}${attempt.spec.rowKey ? '.' : ''}${attempt.spec.field} ${attempt.previousValue} -> ${attempt.newValue}\n`);
       // The SSR config store reads the CSVs bundled at build/load time.
       // Invalidate the Vite module graph so the re-hydrate below re-reads
       // the just-edited CSV files (the re-run consumes the edited values
       // through the shared loaders — single source of truth, parent AC1).
       server.moduleGraph?.invalidateAll?.();
+      watchdog.check('rehydrating after the edit');
       await core.hydrateBalanceConfig();
-      const candidate = core.runBalanceBatch(sweep);
+      watchdog.check('candidate sweep');
+      const candidate = core.runBalanceBatch(sweep, { onRun: progressFor('candidate') });
+      watchdog.check('candidate sweep');
+      io.err.write('[tune] comparing baseline and candidate\n');
 
       const artifacts = core.buildTuneComparisonArtifacts({
         baseline,
@@ -407,10 +712,25 @@ export async function executeTune(options, io) {
       return 0;
     } finally {
       if (attempt) {
+        io.err.write('[tune] restoring the edited CSV\n');
         await restoreCsvFile(csvPath, attempt.originalText, options.keepEdit);
+        // The restore succeeded (or `--keep-edit` kept the edit): the journal
+        // has served its purpose. If the restore above throws, this line is
+        // never reached and the journal is deliberately kept for recovery.
+        clearJournal(csvPath);
       }
     }
+  } catch (error) {
+    if (error instanceof TuneWatchdogError) {
+      io.err.write(`${error.message}\n`);
+      io.err.write('tune watchdog: aborting with exit code 124 (the CSV has been restored)\n');
+      // exitCode (not exit()) so pending stderr drains and pipes cannot mask it.
+      process.exitCode = 124;
+      return 124;
+    }
+    throw error;
   } finally {
+    watchdog.dispose();
     await server.close();
   }
 }
@@ -426,6 +746,50 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
   if (options.tune) {
     if (!options.tuneFile || !options.tuneAssignment) {
       io.err.write('--tune requires --set <file> <assignment> (e.g. --set enemy-configs.csv boss.health=6)\n');
+      return 2;
+    }
+
+    if (!Number.isFinite(options.watchdog) || options.watchdog < 0) {
+      io.err.write('--watchdog expects a non-negative number of seconds (default 0 = off)\n');
+      return 2;
+    }
+
+    // Reconcile a journal left by a hard-killed run **before** anything else
+    // (AH-0MVSE1A7O002PXAO): a SIGKILL runs no `finally`, so the CSV can still
+    // carry the previous run's edit. Restoring it here means the normal
+    // recovery needs no manual step.
+    const tuneCsvPath = resolveTuneCsvPath(options);
+    try {
+      const reconciled = reconcileJournal(tuneCsvPath);
+      if (reconciled.action === 'restored') {
+        io.err.write(
+          `warning: restored ${tuneCsvPath} from a stale tune journal `
+            + `(${journalPathFor(tuneCsvPath)}) — a previous --tune run was killed before it could restore\n`,
+        );
+      }
+    } catch (error) {
+      io.err.write(
+        `tune journal not reconcilable: ${journalPathFor(tuneCsvPath)} (${describeFsError(error)}) — `
+          + 'repair manually: jq -r .originalBase64 <journal> | base64 -d > <csv> (see docs/BALANCING.md)\n',
+      );
+      return 2;
+    }
+  }
+
+  // Fail-fast input validation (AH-0MVSE18XX006ZG5I, parent
+  // AH-0MVIKLOOJ0058Z9B): both probes run **before** `loadCore()` boots Vite
+  // SSR and before any baseline/candidate sweep, so an invalid path exits 2 in
+  // well under a second instead of after a full sweep (measured pre-fix:
+  // 4.31 s at 10 games x 2000 ticks, 11.82 s at 40 games x 2000 ticks).
+  const outputProbe = ensureWritableOutputDir(options.outputDir);
+  if (!outputProbe.ok) {
+    io.err.write(`${outputProbe.reason}\n`);
+    return 2;
+  }
+  if (options.tune) {
+    const csvProbe = ensureReadableTuneCsv(resolveTuneCsvPath(options));
+    if (!csvProbe.ok) {
+      io.err.write(`${csvProbe.reason}\n`);
       return 2;
     }
     return await executeTune(options, io);

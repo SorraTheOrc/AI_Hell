@@ -53,9 +53,14 @@
  * @module scenes/gym/spawnParity (AH-0MVRMHJZS001Z6CX)
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
+
+// Two real Phaser scenes are booted per case; under host load the default 5 s
+// per-test timeout is not enough (observed 5.2–9.0 s at load ≈ 20), so the
+// parity sweep declares its own bound instead of flaking.
+vi.setConfig({ testTimeout: 30000 });
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { DEFAULT_ENEMY_CONFIGS } from '../../core/enemyConfig';
 import { RULES_STORAGE_KEY } from '../../core/rules';
@@ -1028,6 +1033,12 @@ describe('GymLevel × PlayScene — spawner-delivered content parity (D3)', () =
   ];
 
   for (const testCase of cases) {
+    // Each case boots two full Phaser scenes and steps 1600 deterministic
+    // frames, so its worst-case cost under host contention exceeds vitest's
+    // default 5 s timeout (measured ==5050 ms Robotron horde and ==5162 ms
+    // Pac-Man ghost group on a loaded host; AH-0MVWCFS7K000RIWI). Give every
+    // case the same explicit 30 s bound here — one shared place, no
+    // behavioural change.
     it(
       `an identical dt sequence releases the same ${testCase.label} in the gym and the game`,
       async () => {
@@ -1082,6 +1093,9 @@ describe('GymLevel × PlayScene — spawner-delivered content parity (D3)', () =
           ).toBe(testCase.count(play.scene));
         }
       },
+      // 30 s: comfortably above the measured worst-case cost under host
+      // contention (see the file header note at the case loop).
+      30_000,
     );
   }
 });

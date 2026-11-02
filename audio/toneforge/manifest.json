@@ -4,7 +4,7 @@
   "recipeDirectory": "recipes",
   "outputDirectory": "public/audio/sfx",
   "checksumsFile": "public/audio/sfx/checksums.json",
-  "seedBlock": "32100-32199",
+  "seedBlock": "32100-32299",
   "defaultExistingRecipeSeed": 1,
   "retiredCues": [
     "playMajorExplosionSound",
@@ -13,7 +13,8 @@
   ],
   "controlCues": [
     "stopDiveSound",
-    "stopThrusterSound"
+    "stopThrusterSound",
+    "stopMysteryUfoWarbleSound"
   ],
   "cues": [
     {
@@ -385,6 +386,86 @@
       ]
     },
     {
+      "cue": "playRailgunFireSound",
+      "recipe": "aihell-railgun-fire",
+      "delivery": "baked",
+      "seeds": [
+        32277
+      ]
+    },
+    {
+      "cue": "playRailgunImpactSound",
+      "recipe": "aihell-railgun-impact",
+      "delivery": "baked",
+      "seeds": [
+        32278
+      ]
+    },
+    {
+      "cue": "playShardSwarmFireSound",
+      "recipe": "aihell-shard-swarm-fire",
+      "delivery": "baked",
+      "seeds": [
+        32279
+      ]
+    },
+    {
+      "cue": "playShardSwarmImpactSound",
+      "recipe": "aihell-shard-swarm-impact",
+      "delivery": "baked",
+      "seeds": [
+        32280
+      ]
+    },
+    {
+      "cue": "playRearGuardFireSound",
+      "recipe": "aihell-rear-guard-fire",
+      "delivery": "baked",
+      "seeds": [
+        32281
+      ]
+    },
+    {
+      "cue": "playRearGuardImpactSound",
+      "recipe": "aihell-rear-guard-impact",
+      "delivery": "baked",
+      "seeds": [
+        32282
+      ]
+    },
+    {
+      "cue": "playBroadsideFireSound",
+      "recipe": "aihell-broadside-fire",
+      "delivery": "baked",
+      "seeds": [
+        32283
+      ]
+    },
+    {
+      "cue": "playBroadsideImpactSound",
+      "recipe": "aihell-broadside-impact",
+      "delivery": "baked",
+      "seeds": [
+        32284
+      ]
+    },
+    {
+      "cue": "playHeavySlugFireSound",
+      "recipe": "aihell-heavy-slug-fire",
+      "delivery": "baked",
+      "seeds": [
+        32285
+      ]
+    },
+    {
+      "cue": "playHeavySlugImpactSound",
+      "recipe": "aihell-heavy-slug-impact",
+      "delivery": "baked",
+      "seeds": [
+        32286
+      ]
+    },
+    {
       "cue": "playWaveLaserFireSound",
       "recipe": "aihell-wave-laser-fire",
       "delivery": "baked",
@@ -563,6 +644,38 @@
       "delivery": "baked",
       "seeds": [
         32264
+      ]
+    },
+    {
+      "cue": "playMysteryUfoWarbleSound",
+      "recipe": "aihell-mystery-ufo-warble",
+      "delivery": "baked",
+      "seeds": [
+        32287
+      ]
+    },
+    {
+      "cue": "playMysteryUfoRewardSound",
+      "recipe": "aihell-mystery-ufo-reward",
+      "delivery": "baked",
+      "seeds": [
+        32288
+      ]
+    },
+    {
+      "cue": "playMysteryUfoDestroySound",
+      "recipe": "aihell-mystery-ufo-destroy",
+      "delivery": "baked",
+      "seeds": [
+        32289
+      ]
+    },
+    {
+      "cue": "playMineralTinkleSound",
+      "recipe": "aihell-mineral-tinkle",
+      "delivery": "baked",
+      "seeds": [
+        32290
       ]
     },
     {

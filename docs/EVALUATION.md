@@ -91,6 +91,20 @@ Artifacts are written under `--out` (default `eval-output/`, git-ignored):
 | `--set <file> <assignment>` | The single declarative edit for `--tune`, e.g. `--set enemy-configs.csv boss.health=6`. | — |
 | `--threshold <pct>` | Relative significance threshold for `--tune`. | `10` |
 | `--keep-edit` | Keep the `--tune` CSV edit after the run (default: restore). | off |
+| `--watchdog <secs>` | Bounded-runtime guard for `--tune`: abort with exit `124` once the budget is spent, restoring the CSV first (see `docs/BALANCING.md`). | `0` (off) |
+
+### Exit codes and fail-fast validation
+
+`0` success, `1` unexpected runtime error, `2` usage error **or** the fail-fast input
+validation failed, `124` the `--tune` watchdog expired.
+
+`--out` and the `--tune` CSV target are validated **before** the SSR core boots or any
+sweep runs, so an invalid path fails in well under a second with
+`output directory not writable: <dir> (<ERRNO>)` or
+`tune CSV not readable: <path> (<ERRNO>)` instead of after a full sweep
+(AH-0MVSE18XX006ZG5I). The full contract — plus the crash-safe CSV journal that survives a
+`SIGKILL` and the per-run progress lines on stderr — is in
+[`docs/BALANCING.md`](./BALANCING.md) §Tuning loop.
 
 ## How it works
 
@@ -284,6 +298,102 @@ report is a directional signal rather than a full-stack simulation. See
 [`docs/BALANCING.md`](./BALANCING.md#full-campaign-runs-the-batch-default)
 and `--skirmish` above for the opt-out.
 
+## Ring timing harness
+
+The Hangar War's outer loop is budgeted as **an evening's play per ring**
+(`docs/OUTER_LOOP_CANDIDATES.md` § Session shape): the one-ring MVP targets
+**40–60 minutes** and ring 2 (12 hexes) **≈70–100 minutes**. Those numbers are
+**measured**, not guessed, by
+[`src/ai/eval/ringTiming.ts`](../src/ai/eval/ringTiming.ts) — a thin driver over
+the same headless arena described above.
+
+```bash
+# measure both rings for both playstyle lines (seeds 1–3)
+npm run ring-timing
+
+# machine-readable evidence (the committed baseline)
+npm run ring-timing -- --json --out docs/dev/ring-timing-baseline.json
+
+# one ring, one line, one seed
+npm run ring-timing -- --ring 2 --strategy grind --seed 7
+```
+
+### What is measured
+
+A hex deployment is "a normal run at that hex's aggression": the classic
+campaign started at the hex's aggression-selected level and played to its end
+(`PlayScene.beginGame(startLevel)`). The harness reproduces exactly that —
+`runArena` in full-campaign mode over the campaign **slice** from that level —
+and sums each run's measured duration (`ticksSimulated × dt`, a ≈5-minute
+deployment window). The aggression → level mapping is the shipped
+`hexDifficultyProfile`; the campaign and difficulty come from the shipped
+builders and `difficulty-curves.csv`. Nothing in the measurement is invented.
+
+### What is modelled (and why)
+
+Around the measured deployments the harness models what the arena cannot see,
+with every allowance an explicit, documented default:
+
+| Allowance | Default | Why |
+|---|---|---|
+| Between-sortie time | 2 min | Hangar shopping, salvage banking, the map and the defence report between runs. |
+| Retry per lost deployment | 1 × 5 min | A run that ends before its window (the player died) is a **loss**; a real player replays it, so one full deployment is charged. |
+| Exposed-hex re-capture | frontier attack chance (70 %) | The **rush** line pushes into the next ring with the current one partly held, so each unheld hex costs its expected re-capture work. The chance is the shipped frontier clock's `attackChancePercent`. |
+
+### The two playstyle lines
+
+- **grind** — secure the ring first: every hex, **weakest aggression first**, so
+the single weapon hex (the ring's hardest) is taken last. Slower, but the ring
+is secured and the rear is never exposed.
+- **rush** — take the **weapon hex first**, then push into the next ring with the
+rest of this ring unheld. Faster (one deployment here), but the unheld hexes
+are exposed and the ring is not secured.
+
+### Measured baseline
+
+Committed evidence:
+[`docs/dev/ring-timing-baseline.json`](./dev/ring-timing-baseline.json)
+(seeds 1–3, competent bot, regeneration command above).
+
+| Ring | Line | Measured runs | Total (mean, min–max) | Losses | Expected losses | Budget |
+|---|---|---|---|---|---|---|
+| 1 (6 hexes) | grind | 15.7 min | **46.0 min** (43.7–50.3) | 3.7 | 3.7 | 40–60 min · **in-window** |
+| 1 (6 hexes) | rush | 0.4 min | **31.9 min** (31.8–32.0) | 1.0 | 4.5 | not applicable (ring not secured) |
+| 2 (12 hexes) | grind | 7.6 min | **91.6 min** (90.3–93.4) | 12.0 | 12.0 | 70–100 min · **in-window** |
+| 2 (12 hexes) | rush | 0.8 min | **61.7 min** (61.5–62.0) | 1.0 | 8.7 | not applicable (ring not secured) |
+
+Reading the baseline:
+
+- **The budgets land.** The one-ring MVP measures **46.0 min** inside 40–60, and
+ring 2 **91.6 min** inside 70–100; the budget assertion states a **10 %
+tolerance** (±2 min for ring 1, ±3 min for ring 2).
+- **The playstyle trade is real.** The rush line is **faster** (31.9 vs 46.0 min
+for ring 1) but **riskier** — it leaves five hexes exposed (≈3.5 expected
+retakes), forfeits the salvage of its failed attempts and does not secure the
+ring, while the grind secures it. Neither line dominates.
+- **Ring 2 is all-losses.** Its authored aggression floor (3 → campaign level 4)
+puts every hex in the enemy-fire band, where the competent bot loses the run
+even though it survives the full deployment window at levels 1–3. The ring-2
+total is therefore dominated by the modelled retry allowance (60 of 91.6 min),
+which is why the design's "10–40 minutes of builds and losses" estimate does
+not hold at ring 2's authored aggressions. It is recorded as a follow-up
+tuning risk rather than hidden by widening the window.
+
+### Confidence and fidelity boundary
+
+- **Determinism.** Same seeds, same hexes, same allowances ⇒ identical report
+  (asserted by a test); the harness never reads the wall clock.
+- **Evidence quality.** The arena is a closed-loop model, not a human playtest
+  (intake assumption A1 / Q4): its run durations and capture/loss verdicts are
+  the measurement, and the build/retry allowances are explicit model
+  parameters, not observations. A recorded human playtest remains desirable and
+  is not a gate for the recorded target.
+- **Aggression growth.** Each ring is measured from its **authored base
+  aggressions** — the numbers the map publishes and the design's budget
+  arithmetic uses. The frontier's between-sortie rise is a separate risk
+  mechanic; `aggressionRisePerSortie` is an explicit sensitivity knob (default
+  `0`) rather than a hidden assumption.
+
 ## Testing
 
 - `src/ai/eval/arena.test.ts` — determinism, telemetry shape, parser
@@ -302,6 +412,11 @@ and `--skirmish` above for the opt-out.
 - `src/ai/eval/experienceTargets.test.ts` — the intended-experience targets
   schema, the pure comparator and the validation report
   ([`docs/EXPERIENCE_VALIDATION.md`](./EXPERIENCE_VALIDATION.md)).
+- `src/ai/eval/ringTiming.test.ts` — the ring-timing harness: deployment plan,
+  modelled allowances, budget verdicts, determinism against the real arena, the
+  two ring budgets and the rush-vs-grind comparison (this document's
+  [Ring timing harness](#ring-timing-harness) section).
+- `scripts/ring-timing.test.ts` — the ring-timing CLI shell's argument parsing.
 - `scripts/validate-experience.test.ts` — the validation CLI shell
   (artifacts, exit codes, determinism).
 

@@ -38,6 +38,8 @@
 
 export {
   runArena,
+  buildArenaCampaign,
+  campaignFromLevel,
 } from './arena';
 export {
   hydrateBalanceConfig,
@@ -71,6 +73,35 @@ export {
   type TuneMetricDelta,
   type TuneThresholds,
 } from './types';
+export {
+  DEFAULT_BETWEEN_SORTIE_MINUTES,
+  DEFAULT_RETAKE_CHANCE_PERCENT,
+  DEFAULT_RETRIES_PER_LOSS,
+  DEFAULT_RETRY_MINUTES,
+  DEFAULT_RING_TIMING_DT,
+  RING_DEPLOYMENT_TICKS,
+  RING_TIMING_STRATEGIES,
+  RING_TIMING_TARGETS,
+  RING_TIMING_TOLERANCE_PERCENT,
+  createArenaDeploymentRunner,
+  evaluateRingTimingBudget,
+  formatRingTimingReport,
+  planRingDeployments,
+  ringTimingHexes,
+  simulateRingTiming,
+  type RingDeploymentRequest,
+  type RingDeploymentResult,
+  type RingDeploymentRunner,
+  type RingTimingBudgetVerdict,
+  type RingTimingDeployment,
+  type RingTimingOptions,
+  type RingTimingReport,
+  type RingTimingRun,
+  type RingTimingStats,
+  type RingTimingStrategy,
+  type RingTimingSummary,
+  type RingTimingTarget,
+} from './ringTiming';
 export {
   compareExperience,
   buildExperienceValidationReport,

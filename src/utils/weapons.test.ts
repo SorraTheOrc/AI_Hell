@@ -44,6 +44,10 @@ import {
   WEAPON_NOVA_FIRE_RATE,
   WEAPON_MORTAR_FIRE_RATE,
   WEAPON_ARC_FIRE_RATE,
+  WEAPON_SHARD_SWARM_FIRE_RATE,
+  WEAPON_REAR_GUARD_FIRE_RATE,
+  WEAPON_BROADSIDE_FIRE_RATE,
+  WEAPON_HEAVY_SLUG_FIRE_RATE,
   WEAPON_CANNON_SUBDIVISION,
   WEAPON_SPREAD_SUBDIVISION,
   WEAPON_DUAL_SUBDIVISION,
@@ -1080,6 +1084,93 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
     expect(bullets[0].angleDeg).toBeCloseTo(180);
   });
 
+  test('Rear Guard declares a compact rose launch flash behind the ship (AH-0MVV0WN96007TU9J)', () => {
+    const def = WEAPON_CATALOGUE.rear_guard;
+    // A single rearward pellet launches with a small rose pop, shorter and
+    // smaller than the Cannon's forward flash, so the backward shot reads as a
+    // muted push rather than a second forward weapon.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.rear_guard);
+    expect(def.muzzleFlash!.radius).toBe(6);
+    expect(def.muzzleFlash!.radius).toBeLessThan(
+      WEAPON_CATALOGUE.cannon.muzzleFlash!.radius,
+    );
+    expect(def.muzzleFlash!.duration).toBeGreaterThanOrEqual(0.1);
+    expect(def.muzzleFlash!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('Rear Guard declares rose impact feedback routed through its baked pop cue (AH-0MVV0WN96007TU9J)', () => {
+    const def = WEAPON_CATALOGUE.rear_guard;
+    // The connect is colour-matched to the rose pellet and audible through the
+    // shared impact seam instead of the generic warm-white fallback flash.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.rear_guard);
+    expect(def.impactFx!.cue).toBe('playRearGuardImpactSound');
+    expect(def.impactFx!.radius).toBe(8);
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.14);
+    // Softer than the Cannon's crack, matching the single compact pellet.
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(
+      WEAPON_CATALOGUE.cannon.impactFx!.duration,
+    );
+  });
+
+  test('the Rear Guard feel package changes no behaviour or balance values (AH-0MVV0WN96007TU9J)', () => {
+    const def = WEAPON_CATALOGUE.rear_guard;
+    // The metadata-only package must leave the only rearward firing identity
+    // exactly as shipped.
+    expect(def.fireRateMs).toBe(WEAPON_REAR_GUARD_FIRE_RATE);
+    expect(def.offsets).toEqual([Math.PI]);
+    expect(def.bulletColor).toBe(BULLET_COLORS.rear_guard);
+    expect(def.bulletShape).toBe('pellet');
+    expect(def.bulletRim).toBe(0xffd0e0);
+    expect(def.bulletTrail).toBe(1.6);
+    expect(def.bulletSize).toBe(0.9);
+    expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.rear_guard);
+  });
+
+  test('Broadside declares a wide teal launch flash for the perpendicular pair (AH-0MVV0WNOX0078G9G)', () => {
+    const def = WEAPON_CATALOGUE.broadside;
+    // The pair leaves the hull left and right, so the launch flash is wider
+    // than the Cannon's 7 px forward pop (and inside the 12 px ceiling); one
+    // flash per shot input is spawned by the shared combat-core path.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.broadside);
+    expect(def.muzzleFlash!.radius).toBe(9);
+    expect(def.muzzleFlash!.radius).toBeGreaterThan(
+      WEAPON_CATALOGUE.cannon.muzzleFlash!.radius,
+    );
+    expect(def.muzzleFlash!.radius).toBeLessThanOrEqual(12);
+    expect(def.muzzleFlash!.duration).toBeGreaterThan(0);
+    expect(def.muzzleFlash!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('Broadside declares teal impact feedback routed through its baked dart tick (AH-0MVV0WNOX0078G9G)', () => {
+    const def = WEAPON_CATALOGUE.broadside;
+    // The connect is colour-matched to the teal dart and audible through the
+    // shared impact seam instead of the generic warm-white fallback flash.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.broadside);
+    expect(def.impactFx!.cue).toBe('playBroadsideImpactSound');
+    expect(def.impactFx!.radius).toBe(8);
+    expect(def.impactFx!.duration).toBeGreaterThan(0);
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('the Broadside feel package changes no behaviour or balance values (AH-0MVV0WNOX0078G9G)', () => {
+    const def = WEAPON_CATALOGUE.broadside;
+    // The metadata-only package must leave the perpendicular pair and the dart
+    // identity exactly as shipped — no forward shot is introduced.
+    expect(def.fireRateMs).toBe(WEAPON_BROADSIDE_FIRE_RATE);
+    expect(def.offsets).toEqual([(-90 * Math.PI) / 180, (90 * Math.PI) / 180]);
+    expect(def.bulletColor).toBe(BULLET_COLORS.broadside);
+    expect(def.bulletShape).toBe('dart');
+    expect(def.bulletShapeLength).toBe(2.4);
+    expect(def.bulletThickness).toBe(1.4);
+    expect(def.bulletTrail).toBe(1.4);
+    expect(def.bulletSize).toBe(0.9);
+    expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.broadside);
+  });
+
   test('Broadside fires one bullet to each side and none forward', () => {
     const bullets = createBulletsFromHeading(WEAPON_CATALOGUE.broadside, 0, 0, 0);
     expect(bullets).toHaveLength(2);
@@ -1103,6 +1194,37 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
     );
   });
 
+  test('Railgun declares sky-blue impact feedback routed through its baked hit cue (AH-0MVMIGVCE004VSNA)', () => {
+    const def = WEAPON_CATALOGUE.railgun;
+    // The tracer's connect is colour-matched to its sky-blue silhouette and
+    // audible through the shared impact seam, instead of falling back to the
+    // generic warm-white flash with no hit cue.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.railgun);
+    expect(def.impactFx!.cue).toBe('playRailgunImpactSound');
+    // Sized to the heavy single shot: at least the cannon's impact flash, and
+    // no flash longer than the shipped 0.16 s ceiling (epic AC8).
+    expect(def.impactFx!.radius).toBeGreaterThanOrEqual(
+      WEAPON_CATALOGUE.cannon.impactFx!.radius,
+    );
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.16);
+  });
+
+  test('Railgun declares a heavy sky-blue launch flash between the cannon and the wave laser (AH-0MVQ6C1YL003HU9K)', () => {
+    const def = WEAPON_CATALOGUE.railgun;
+    // The launch cue completes the Railgun's feel package: a sky-blue flash at
+    // the hull sized for a heavy single shot — bigger than the cannon's pop,
+    // smaller than the wave laser's wide flare.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.railgun);
+    const cannon = WEAPON_CATALOGUE.cannon.muzzleFlash!;
+    const waveLaser = WEAPON_CATALOGUE.wave_laser.muzzleFlash!;
+    expect(def.muzzleFlash!.radius).toBeGreaterThan(cannon.radius);
+    expect(def.muzzleFlash!.radius).toBeLessThan(waveLaser.radius);
+    expect(def.muzzleFlash!.duration).toBeGreaterThan(cannon.duration);
+    expect(def.muzzleFlash!.duration).toBeLessThan(waveLaser.duration);
+  });
+
   test('Shard Swarm fires a symmetric five-way fan within ±15°', () => {
     const offsetsDeg = WEAPON_CATALOGUE.shard_swarm.offsets.map(
       (o) => (o * 180) / Math.PI,
@@ -1115,6 +1237,107 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
     // Symmetric about the heading.
     expect(offsetsDeg[0]).toBeCloseTo(-offsetsDeg[offsetsDeg.length - 1]);
     expect(offsetsDeg[1]).toBeCloseTo(-offsetsDeg[offsetsDeg.length - 2]);
+  });
+
+  test('Shard Swarm declares a lime launch flash sized for a five-shard burst (AH-0MVV0WMTE0007NGS)', () => {
+    const def = WEAPON_CATALOGUE.shard_swarm;
+    // The launch cue is colour-matched to the lime shards and a touch larger
+    // than the cannon's single-shot pop, so the fan reads as a burst without
+    // leaving the shipped 5–12 px / 0.07–0.16 s band.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.shard_swarm);
+    expect(def.muzzleFlash!.radius).toBe(8);
+    expect(def.muzzleFlash!.radius).toBeGreaterThan(
+      WEAPON_CATALOGUE.cannon.muzzleFlash!.radius,
+    );
+    expect(def.muzzleFlash!.radius).toBeLessThanOrEqual(12);
+    expect(def.muzzleFlash!.duration).toBeGreaterThanOrEqual(0.07);
+    expect(def.muzzleFlash!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('Shard Swarm declares lime impact feedback routed through its baked hit cue (AH-0MVV0WMTE0007NGS)', () => {
+    const def = WEAPON_CATALOGUE.shard_swarm;
+    // The connect is colour-matched to the lime shards and audible through the
+    // shared impact seam instead of the generic warm-white fallback flash.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.shard_swarm);
+    expect(def.impactFx!.cue).toBe('playShardSwarmImpactSound');
+    expect(def.impactFx!.radius).toBe(8);
+    // A five-shard volley connects in one frame: keep the flash short so the
+    // hits read as one lime impact (epic AC8 ceiling 0.16 s, brief ≤ 0.12 s).
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('the Shard Swarm feel package changes no behaviour or balance values (AH-0MVV0WMTE0007NGS)', () => {
+    const def = WEAPON_CATALOGUE.shard_swarm;
+    // The metadata-only package must leave the five-shard firing identity
+    // exactly as shipped.
+    expect(def.fireRateMs).toBe(WEAPON_SHARD_SWARM_FIRE_RATE);
+    expect(def.offsets).toEqual([
+      (-15 * Math.PI) / 180,
+      (-7.5 * Math.PI) / 180,
+      0,
+      (7.5 * Math.PI) / 180,
+      (15 * Math.PI) / 180,
+    ]);
+    expect(def.bulletColor).toBe(BULLET_COLORS.shard_swarm);
+    expect(def.bulletShape).toBe('shard');
+    expect(def.bulletShapeLength).toBe(1.6);
+    expect(def.bulletSize).toBe(0.72);
+    expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.shard_swarm);
+  });
+
+  test('Heavy Slug declares the largest deep-red launch flash in the catalogue (AH-0MVV0WO4M001KEDG)', () => {
+    const def = WEAPON_CATALOGUE.heavy_slug;
+    // One huge slow round needs the heaviest launch cue: the largest flash of
+    // the set, at the shipped 12 px ceiling (epic AC8 — no value above the
+    // budget). A documented tie with the Wave Laser's 12 px flare is
+    // acceptable and is pinned explicitly below.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.heavy_slug);
+    expect(def.muzzleFlash!.radius).toBe(12);
+    expect(def.muzzleFlash!.duration).toBe(0.16);
+    const others = Object.entries(WEAPON_CATALOGUE).filter(
+      ([id, w]) => id !== 'heavy_slug' && w.muzzleFlash,
+    );
+    for (const [id, w] of others) {
+      expect(w.muzzleFlash!.radius, id).toBeLessThanOrEqual(
+        def.muzzleFlash!.radius,
+      );
+    }
+    // The documented tie: the Wave Laser is also at the 12 px ceiling.
+    expect(WEAPON_CATALOGUE.wave_laser.muzzleFlash!.radius).toBe(12);
+    expect(def.muzzleFlash!.radius).toBeLessThanOrEqual(12);
+    expect(def.muzzleFlash!.duration).toBeLessThanOrEqual(0.16);
+  });
+
+  test('Heavy Slug declares deep-red impact feedback routed through its baked thud (AH-0MVV0WO4M001KEDG)', () => {
+    const def = WEAPON_CATALOGUE.heavy_slug;
+    // The connect is colour-matched to the deep-red shell and audible through
+    // the shared impact seam instead of the generic warm-white fallback flash.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.heavy_slug);
+    expect(def.impactFx!.cue).toBe('playHeavySlugImpactSound');
+    // The largest impact radius of the set, at the 12 px ceiling.
+    expect(def.impactFx!.radius).toBe(12);
+    expect(def.impactFx!.radius).toBeLessThanOrEqual(12);
+    expect(def.impactFx!.duration).toBe(0.16);
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.16);
+  });
+
+  test('the Heavy Slug feel package changes no behaviour or balance values (AH-0MVV0WO4M001KEDG)', () => {
+    const def = WEAPON_CATALOGUE.heavy_slug;
+    // The metadata-only package must leave the single huge shell exactly as
+    // shipped — cadence, offsets, colour, silhouette and lifetime unchanged.
+    expect(def.fireRateMs).toBe(WEAPON_HEAVY_SLUG_FIRE_RATE);
+    expect(def.offsets).toEqual([0]);
+    expect(def.bulletColor).toBe(BULLET_COLORS.heavy_slug);
+    expect(def.bulletShape).toBe('heavy-shell');
+    expect(def.bulletThickness).toBe(3);
+    expect(def.bulletRim).toBe(0xffb0b0);
+    expect(def.bulletTrail).toBe(2.4);
+    expect(def.bulletSize).toBe(1.7);
+    expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.heavy_slug);
   });
 
   test('Heavy Slug is the largest, slowest single round in the catalogue', () => {

@@ -1,0 +1,21 @@
+# Hex ring 2 seed data (AH-0MVUXC9KG008G80Y, Build Candidate D — Hangar War).
+# One row per hex of the second ring (12 hexes, `6 × n` rule). Ring 2 is
+# generated from these definitions, not hand-placed in code. This file mirrors
+# `HEX_RING_DEFINITIONS` in `src/data/hexRingDefinitions.ts`; the parity test in
+# `src/data/hexRingDefinitions.test.ts` fails if the two drift.
+#
+# Columns (identical to hex-ring-1.csv; list fields are `|`-separated):
+#   id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,baseAggression
+id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,baseAggression
+hex-r2-1,-2,0,2,the-siege-leviathan,mortar,waveLaser,arc,false,4
+hex-r2-2,-2,1,2,cinder-praetor,arc,nova,broadside,false,3
+hex-r2-3,-2,2,2,the-void-marshall,nova,rapid,hull-3,false,5
+hex-r2-4,-1,-1,2,ghost-colonel,rapid,arc,rapid,false,3
+hex-r2-5,-1,2,2,the-furnace-king,ricochet,spread,dual,false,5
+hex-r2-6,0,-2,2,cobalt-siege,dual,mortar,hull-2,false,4
+hex-r2-7,0,2,2,the-static-prophet,spread,ricochet,extra-life,false,4
+hex-r2-8,1,-2,2,the-bone-sibyl,cannon,dual,armour-plating,false,5
+hex-r2-9,1,1,2,the-rusted-harbinger,waveLaser,cannon,systems-upgrade,false,6
+hex-r2-10,2,-2,2,pit-warden,mortar,waveLaser,firepower-up,false,4
+hex-r2-11,2,-1,2,the-ashen-judge,rapid,mortar,ricochet,false,5
+hex-r2-12,2,0,2,the-worldbreaker,nova|arc,spread|dual,nova,true,8

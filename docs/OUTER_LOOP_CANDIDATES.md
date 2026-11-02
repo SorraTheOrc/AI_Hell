@@ -3,20 +3,21 @@
 > **Work item:** AH-0MVTE4EOS008RMQ7 — Add Candidate D (Hangar War) and the discovery-progression rules
 > **Parent:** AH-0MVNSSY9L001P1CC — We need an outer loop
 > **Slices (complete):** AH-0MVRNIWHG0099ZS3 (framing + guard), AH-0MVRNJ0SL000RNHR (candidates + comparison), AH-0MVRNJ6BB009IGZX (cross-links + verification)
-> **Status:** **Design only, not scheduled — the producer chose Candidate D (2026-10-29).** Build-out: AH-0MVU3VNJI00066YE
+> **Status:** **Candidate D chosen (2026-10-29) and shipped (2026-10-31).** Phase A — the hangar slice, Candidate B's MVP — is specified in GDD §8.1; phase B — the first hex ring, with ring 2 playable — is specified in GDD §8.2. Build-out: AH-0MVU3VNJI00066YE; documentation of record: AH-0MVUXCC5J0028OGQ
 
 This document is the decision-ready catalogue of candidate **outer loops** for
 AI_Hell. Four candidates are written up on the same footing. The producer
 **chose Candidate D — Hangar War on 2026-10-29**; the choice is recorded in the
 [Producer decision record](#producer-decision-record), summarised in GDD §8, and
-scheduled by work item **AH-0MVU3VNJI00066YE** (build the hangar slice first,
-then the first hex ring).
+was built by work item **AH-0MVU3VNJI00066YE** (hangar slice first, then the
+first hex ring).
 
-> **Design only.** Nothing in this document is scheduled, and none of it
-> changes gameplay: no gameplay code, no persistence-schema change and no new
-> scene is implemented here. The chosen loop's GDD write-up is a follow-on work
-> item. Every candidate below is therefore marked **design only, not
-> scheduled**.
+> **Design first, then built.** Every candidate was authored design-only, and
+> none of them was scheduled at authoring time: no gameplay code, no
+> persistence-schema change and no new scene existed here. **Candidate D has
+> since been implemented and shipped** (see its *Build status*), while
+> Candidates A, B and C remain **design only, not scheduled**. The design
+> rationale below is kept unchanged as the record of what was decided and why.
 
 **Cross-references:**
 
@@ -689,8 +690,47 @@ if it does not, more entries will not fix it.
 ## Candidate D — Hangar War
 
 > Merges Candidate A's map war with Candidate B's hangar progression (producer
-> proposal, 2026-10-29). Two outer-loop axes at once. **Design only, not
-> scheduled.**
+> proposal, 2026-10-29). Two outer-loop axes at once. **Implemented and
+> shipped** (see *Build status*).
+
+### Build status
+
+**Implemented and shipped on 2026-10-31** by **AH-0MVU3VNJI00066YE**, in the
+shipping order this document recommends (B's shape first):
+
+- **Phase A — the hangar slice (Candidate B's MVP), shipped:** the additive
+  `🛠 Hangar War` menu entry with `Play Game`/`Continue` unchanged, the versioned
+  `ai_hell_hangar_war` store, salvage banking at the existing mini-boss
+  checkpoints, the hangar economy and unlock tree, and the hangar screen with
+  its deployment/loadout selector. Playable specification: GDD §8.1.
+- **Phase B — the first hex ring, shipped:** the hex ring model and generator
+  with authored ring 1 (6 hexes) and **ring 2 (12 hexes, playable)**, the hex
+  map with known-ahead intel, the capture cycle (hex boss, boss-granted
+  discovery, defending bot, ring secured), the pure defence resolver and
+  frontier aggression clock, the between-sortie defence report with
+  attract-mode traversal, and the measured ring timing/playstyle validation.
+  Playable specification: GDD §8.2.
+- **Gym coverage:** `GymHangar` and `GymHexWar` render the same model/renderer
+  pairs the game does, with current rows in
+  [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
+
+**Deliberately deferred (with its work item).** The *States* section below is
+the design of record; the shipped MVP narrows it by producer decision
+(2026-10-30, Q2 = a) — the ring is **secured when every hex of the current ring
+is held**, and there is no hangar assault pass and no hangar-falls lose state.
+The massed counter-attack on the hangar and the campaign loss are tracked by
+**AH-0MVUVL2O2006W4QK**.
+
+**Post-MVP mitigation backlog (design captured, scheduled separately).** Each
+of these adds a choice rather than a chore, and each is out of scope for the
+shipped build:
+
+- **Special missions** with special rewards — e.g. a new hull type with extra
+  hit points or extra upgrade bays: **AH-0MVWZYIWX0008C55**.
+- **Upgraded defending bots** with special skills that are more effective
+  against certain enemy or boss types: **AH-0MVWZYJ740037EZ1**.
+- **Hex variety** — per-hex personalities, contracts and ring landmarks:
+  **AH-0MVWZYQN8007SXIG**.
 
 ### Fantasy / pitch
 
@@ -1123,8 +1163,26 @@ a one-line deferral reason each, so the pool can be revisited later:
 | Candidate D — Hangar War | **accepted — chosen** | 2026-10-29 | Chosen by the producer. Build-out: **AH-0MVU3VNJI00066YE** (hangar slice first, then the first hex ring). Ring timing set at **40–60 minutes** for the one-ring MVP, with ring 2 at 12 hexes; boss/weapon strength **known ahead** is MVP; special missions and upgraded bots are post-MVP |
 
 The producer's choice is recorded above. Writing the chosen loop into the GDD as
-playable specification is the **follow-on work item**
-**AH-0MVU3VNJI00066YE**; GDD §8 now records the choice and the design
-adjustments agreed at the decision (ring timing, known-ahead intel, supported
-playstyles, and the clarification that the shipped run loadout — six slots plus
-Extra Life and Mystery UFO — is untouched).
+playable specification was the **follow-on work item**
+**AH-0MVU3VNJI00066YE**, and it is now done: GDD §8 keeps the decision and the
+design adjustments agreed at the decision (ring timing, known-ahead intel,
+supported playstyles, and the clarification that the shipped run loadout — six
+slots plus Extra Life and Mystery UFO — is untouched), while **§8.1** specifies
+the shipped hangar slice and **§8.2** specifies the shipped first hex ring
+(ring 2 playable, the resolver and frontier-tick numbers, the defence report and
+the measured ring timings). The documentation of record was published by
+**AH-0MVUXCC5J0028OGQ**.
+
+### Build status — entry surfaces gated (AH-0MVZ0VGGQ0032KDP)
+
+The build is shipped but the Hangar War **currently does not work**, so its
+player-visible entry surfaces are temporarily **gated behind a default-OFF
+feature flag** (`ai_hell_feature_flags.hangarWar`, resolved through
+`src/core/featureFlags.ts`): the menu entry and the idle-attract Hangar War
+traversal are hidden, while the Hangar War scenes stay registered for the dev
+gyms and the capture pipeline. The flag resolves OFF in every production build
+regardless of any stored value; only a dev build can turn it on (the
+pointer-only `🛠 Hangar War (dev): ON/OFF` footer toggle). Nothing in the design
+of record above changes — the gate is an interim containment measure until the
+defects are fixed, at which point the flag is turned on (or removed) by a
+follow-on work item.

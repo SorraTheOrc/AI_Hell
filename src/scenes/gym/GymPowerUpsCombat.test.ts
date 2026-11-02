@@ -75,7 +75,7 @@ async function bootCombat(): Promise<GymPowerUpsCombat> {
  */
 function collectCombatDrop(
   scene: GymPowerUpsCombat,
-  id: 'shield' | 'bomb' | 'phase_shift' | 'teleport' | 'smart_bomb' | 'force_field',
+  id: 'shield' | 'bomb' | 'phase_shift' | 'teleport' | 'smart_bomb' | 'force_field' | 'thorns',
 ): void {
   const player = scene.getPlayer()!;
   player.setPosition(480, 270);
@@ -445,25 +445,28 @@ describe('GymPowerUpsCombat — Force Field reflector (AH-0MV1BIX1W006XF95)', ()
     expect(registry.forceFieldRemaining()).toBe(0);
   });
 
-  it('only reflects while active: after the window the bullet damages the ship again', async () => {
+  it('only reflects while a charge is held: a spent pickup pool lets the bullet through', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
     const registry = scene.getEffectsRegistry();
     registry.applyCollect('force_field');
 
-    // While active, a hull-overlapping bullet is reflected, not a hit.
+    // A pickup grants exactly one charge and no effect window; while that
+    // charge is held a hull-overlapping bullet is reflected, not a hit.
+    expect(registry.forceFieldRemaining()).toBe(1);
     scene.spawnEnemyBullet(480, 270, -100, 0);
     resolveCollisions(scene);
     expect(scene.getPlayerHitCount()).toBe(0);
 
-    // Let the timed window expire; the bubble ends and reflection stops.
-    registry.tick((registry.remaining('force_field') ?? 0) + 0.1);
+    // The one reflection spends the sole charge: a pickup-only pool never
+    // regenerates (Q-A1=b), so the bubble pops and the ship is exposed.
+    expect(registry.forceFieldRemaining()).toBe(0);
     expect(registry.isForceFieldActive()).toBe(false);
 
     // Clear the reflected bullet from the earlier frame (in a real run it
-    // travels away) so it cannot intercept the post-expiry shot, then fire
-    // another enemy bullet into the unshielded ship.
+    // travels away) so it cannot intercept the next shot, then fire another
+    // enemy bullet into the unshielded ship.
     playerBullets(scene).length = 0;
     player.setPosition(480, 270);
     scene.spawnEnemyBullet(480, 270, 0, 0);
@@ -566,18 +569,72 @@ describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
     expect(registry.isHitImmune).toBe(false);
   });
 
-  it('shield refreshes on re-collect (timer back to POWER_UP_LIFETIME)', async () => {
+  it('shield re-collect grants a second charge into the pool', async () => {
     const scene = await bootCombat();
     collectCombatDrop(scene, 'shield');
     const registry = scene.getEffectsRegistry();
+    const store = scene.getEffectsRegistry().levelStore();
 
-    // 10 s after collect, shield has ~5 s remaining; re-collect refreshes.
-    registry.tick(10);
-    const before = registry.remaining('shield')!;
-    expect(before).toBeGreaterThan(0);
+    expect(registry.consumableCharges('shield')).toBe(1);
+    expect(registry.remaining('shield')).toBeUndefined(); // no effect window
     collectCombatDrop(scene, 'shield'); // re-collect
-    expect(registry.remaining('shield')).toBeGreaterThan(before); // refreshed
-    expect(registry.remaining('shield')).toBeGreaterThan(14.5); // ~15 s full
+    expect(registry.consumableCharges('shield')).toBe(2);
+    expect(store.getTempStacks('shield')).toBe(2);
+  });
+});
+
+// ── Field pickup → charge → event cycle (AH-0MVVD8U6F0011UOG AC5) ──
+//
+// The same pickup→charge→event cycle is asserted against `PlayScene` in
+// `src/scenes/core/consumableChargeParity.test.ts`; here the gym pins it on
+// its own drop seam. A field pickup of each absorbed-hit kind grants exactly
+// one charge, opens no effect window and adds one temporary level stack, and
+// that sole charge resolves exactly one event (one absorbed hit, one free
+// ram, one reflected bullet) before the pool stays inert.
+
+describe('GymPowerUpsCombat — absorbed-hit field pickup cycle (AH-0MVVD8U6F0011UOG AC5)', () => {
+  it('a field pickup of each absorbed-hit kind grants exactly one charge, no window and one temporary stack', async () => {
+    const scene = await bootCombat();
+    const registry = scene.getEffectsRegistry();
+    const store = registry.levelStore();
+
+    for (const id of ['shield', 'thorns', 'force_field'] as const) {
+      collectCombatDrop(scene, id);
+      expect(registry.consumableCharges(id), `${id} one charge`).toBe(1);
+      expect(registry.remaining(id), `${id} no effect window`).toBeUndefined();
+      expect(store.getTempStacks(id), `${id} temporary stack`).toBe(1);
+      expect(store.consumableRegenCeiling(id), `${id} pickup never regenerates`).toBe(0);
+    }
+  });
+
+  it('one charge resolves exactly one event and the pickup pool never refills', async () => {
+    const scene = await bootCombat();
+    const registry = scene.getEffectsRegistry();
+
+    // Shield: one absorbed hit spends the sole charge.
+    collectCombatDrop(scene, 'shield');
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+    expect(registry.tryAbsorbShield()).toBe(true);
+    expect(registry.consumableCharges('shield')).toBe(0);
+    expect(registry.isShielded).toBe(false);
+
+    // Thorns: one free ram spends the sole charge.
+    collectCombatDrop(scene, 'thorns');
+    expect(registry.tryConsumeThornsRam()).toBe(true);
+    expect(registry.consumableCharges('thorns')).toBe(0);
+
+    // Force Field: one reflected bullet spends the sole charge.
+    collectCombatDrop(scene, 'force_field');
+    expect(registry.tryConsumeForceFieldReflect()).toBe(true);
+    expect(registry.consumableCharges('force_field')).toBe(0);
+    expect(registry.isForceFieldActive()).toBe(false);
+
+    // Inert: however long the shared recharge clock runs, pickup-only
+    // charges never regenerate (Q-A1=b).
+    registry.tick(10_000);
+    for (const id of ['shield', 'thorns', 'force_field'] as const) {
+      expect(registry.consumableCharges(id), `${id} stays inert`).toBe(0);
+    }
   });
 });
 

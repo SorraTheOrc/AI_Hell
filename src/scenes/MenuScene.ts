@@ -4,6 +4,15 @@
  * The boot scene that greets the player with buttons:
  * - **Play Game** — starts a new game session at Level 1 and initializes
  *   the Phaser Audio context (Web Audio autoplay policy compliance, GDD §6.7).
+ * - **Hangar War** — opens the hangar screen (`HangarScene`), the additive
+ *   outer-loop entry of Build Candidate D (AH-0MVUXC2DD003HN0I). Play Game
+ *   keeps starting the shipped classic campaign and Continue keeps resuming
+ *   the arcade checkpoint; a hex deployment launched from the hangar is a
+ *   separate session that never touches that checkpoint. The feature is
+ *   **gated behind a default-OFF feature flag** while it does not work
+ *   (AH-0MVZ0VGGQ0032KDP): the control is absent unless the flag resolves ON,
+ *   which is only possible in a dev build. Dev builds additionally render a
+ *   pointer-only `Hangar War (dev): ON/OFF` toggle (never in production).
  * - **Settings** — opens the shared settings screen (audio + controls)
  *   before starting a session (parent AH-0MU9LPZ0G0015292).
  * - **Gym Scene Index** — navigates to the existing `GymIndex` dev scene
@@ -49,11 +58,23 @@ import {
   type TelemetryEnv,
 } from '../telemetry';
 import { LEVEL_COUNT } from '../waves/Formations';
+import {
+  isDevBuild,
+  resolveHangarWarEnabled,
+  toggleHangarWarEnabled,
+} from '../core/featureFlags';
+import { HEX_MAP_SCENE_KEY } from './HexMapScene';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
 const MENU_TEXT_COLOR = '#00ffff';
 /** Secondary text colour for the dev tool button. */
 const DEV_TEXT_COLOR = '#888888';
+
+/**
+ * Display label of the Hangar War entry control (AH-0MVZ0VGGQ0032KDP).
+ * Exported so tests assert the gated control by its exact label.
+ */
+export const HANGAR_WAR_LABEL = '🛠  Hangar War';
 
 /** Display label for the footer GitHub link (AH-0MUZI83EO003WVTG). */
 const GITHUB_LINK_LABEL = 'GitHub';
@@ -127,6 +148,16 @@ export function shouldShowTelemetryConsentPrompt(
 }
 
 /**
+ * Label of the dev-only Hangar War feature-flag toggle
+ * (AH-0MVZ0VGGQ0032KDP). Single source for the rendered text and the tests.
+ *
+ * @param enabled - The current effective flag value.
+ */
+export function hangarWarFlagLabel(enabled: boolean): string {
+  return `🛠  Hangar War (dev): ${enabled ? 'ON' : 'OFF'}`;
+}
+
+/**
  * Resumes the Web Audio context if it is suspended (autoplay policy
  * compliance, GDD §6.7). No-op for sound managers without a WebAudio
  * context (HTML5 / NoAudio fallbacks). Returns true when a resume was
@@ -166,6 +197,27 @@ export class MenuScene extends Phaser.Scene {
   private attractTimeoutMs = ATTRACT_IDLE_TIMEOUT_MS;
 
   /**
+   * How many idle-attract demos this menu instance has started
+   * (AH-0MVUXCBBK004EJIP).
+   *
+   * The attract cycle alternates: the first demo is the shipped arcade run, the
+   * next is the Hangar War traversal (map → deployment → defence report → map →
+   * hangar), so every new screen is demonstrated without a player present. The
+   * counter lives on the scene instance, which Phaser reuses across menu
+   * re-entry, so the cycle continues instead of restarting. When the Hangar
+   * War feature flag is OFF the alternation collapses to the arcade demo only
+   * (AH-0MVZ0VGGQ0032KDP).
+   */
+  private demoCycleIndex = 0;
+
+  /**
+   * Effective Hangar War feature flag for this menu render
+   * (AH-0MVZ0VGGQ0032KDP). Resolved once in {@link create} from the persisted
+   * flag through the dev-build gate, so a production build is always `false`.
+   */
+  private hangarWarEnabled = false;
+
+  /**
    * Rendered official GitHub mark next to the footer link, or null until the
    * vendored image finishes decoding (AH-0MV1BI9I70048V7M AC1). Read by the
    * hover handlers and tests.
@@ -180,6 +232,10 @@ export class MenuScene extends Phaser.Scene {
     this.focusManager = new FocusManager();
     this.controls = [];
     this.githubLogo = null;
+    // Feature flag: the Hangar War entry surfaces are hidden unless the flag
+    // resolves ON, which the dev-build gate limits to dev builds
+    // (AH-0MVZ0VGGQ0032KDP).
+    this.hangarWarEnabled = resolveHangarWarEnabled();
 
     // Production telemetry is opt-in (AH-0MUY08Y9P005ER7A, AC1): ask once,
     // before the menu, when the build records to a remote sink and the player
@@ -285,12 +341,53 @@ export class MenuScene extends Phaser.Scene {
 
     this.controls.push({ label: '▶  Play Game', text: playButton });
 
+    // ── Hangar War button (outer-loop entry) ─────────────────────
+    // Opens the hangar screen (AH-0MVUXC2DD003HN0I, producer decision
+    // 2026-10-30 Q1 = a): the additive entry keeps Play Game on the shipped
+    // classic campaign and Continue on the arcade checkpoint, so adding the
+    // outer loop cannot put the shipped game at risk. The hangar screen owns
+    // the deployment path; this control only navigates.
+    //
+    // Gated behind a default-OFF feature flag while the feature does not work
+    // (AH-0MVZ0VGGQ0032KDP). When the flag is OFF the control is not created
+    // at all, so it is absent from the scene and from the FocusManager cycle
+    // (the remaining controls keep their relative order).
+    let hangarWarButton: Phaser.GameObjects.Text | null = null;
+    if (this.hangarWarEnabled) {
+      hangarWarButton = this.add.text(
+        GAME_WIDTH / 2,
+        265,
+        '🛠  Hangar War',
+        {
+          fontFamily: 'monospace',
+          fontSize: '20px',
+          color: MENU_TEXT_COLOR,
+          backgroundColor: '#111111',
+          padding: { x: 14, y: 7 },
+        },
+      ).setOrigin(0.5);
+      hangarWarButton.setInteractive({ useHandCursor: true });
+
+      hangarWarButton.on('pointerover', () => {
+        hangarWarButton!.setStyle({ color: '#88ffff' });
+      });
+      hangarWarButton.on('pointerout', () => {
+        hangarWarButton!.setStyle({ color: MENU_TEXT_COLOR });
+      });
+
+      hangarWarButton.on('pointerdown', () => {
+        this.scene.start('HangarScene');
+      });
+
+      this.controls.push({ label: HANGAR_WAR_LABEL, text: hangarWarButton });
+    }
+
     // ── Watch Demo button (attract/demo mode) ────────────────────
     // Starts the shipped bot-driven demo (AH-0MUX4966Z0009P9Q AC1/AC2).
     // Initialising the audio context on the gesture keeps GDD §6.7 intact.
     const demoButton = this.add.text(
       GAME_WIDTH / 2,
-      265,
+      310,
       '👁  Watch Demo',
       {
         fontFamily: 'monospace',
@@ -322,7 +419,7 @@ export class MenuScene extends Phaser.Scene {
     // context on the gesture keeps GDD §6.7 autoplay compliance intact.
     const settingsButton = this.add.text(
       GAME_WIDTH / 2,
-      315,
+      355,
       '⚙  Settings',
       {
         fontFamily: 'monospace',
@@ -352,7 +449,7 @@ export class MenuScene extends Phaser.Scene {
     // Opens the shared, full leaderboard view (AH-0MU9LJ52C00613RX).
     const leaderboardButton = this.add.text(
       GAME_WIDTH / 2,
-      365,
+      400,
       '🏆  Leaderboard',
       {
         fontFamily: 'monospace',
@@ -494,6 +591,43 @@ export class MenuScene extends Phaser.Scene {
 
     this.controls.push({ label: '⚙  Gym Scene Index (dev)', text: devButton });
 
+    // ── Hangar War feature-flag toggle (dev tool) ────────────────
+    // The enable surface for the gated Hangar War entry
+    // (AH-0MVZ0VGGQ0032KDP). Rendered in **dev builds only** — the toggle
+    // itself never exists in a production build, where the flag resolves OFF
+    // regardless of the stored value. Deliberately pointer-only and not
+    // registered with the FocusManager: the keyboard focus cycle is unchanged
+    // whether the flag is on or off (AC2).
+    if (isDevBuild()) {
+      const flagToggle = this.add.text(
+        GAME_WIDTH - 16,
+        GAME_HEIGHT - 44,
+        hangarWarFlagLabel(this.hangarWarEnabled),
+        {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: DEV_TEXT_COLOR,
+          backgroundColor: '#1a1a1a',
+          padding: { x: 10, y: 5 },
+        },
+      ).setOrigin(1, 1);
+      flagToggle.setInteractive({ useHandCursor: true });
+
+      flagToggle.on('pointerover', () => {
+        flagToggle.setStyle({ color: '#aaaaaa' });
+      });
+      flagToggle.on('pointerout', () => {
+        flagToggle.setStyle({ color: DEV_TEXT_COLOR });
+      });
+
+      flagToggle.on('pointerdown', () => {
+        // Persist the flipped flag and re-render the menu so the gated entry
+        // appears/disappears immediately.
+        toggleHangarWarEnabled();
+        this.scene.restart();
+      });
+    }
+
     // ── Subtitle ─────────────────────────────────────────────────
     this.add.text(GAME_WIDTH / 2, 450, `Defeat ${LEVEL_COUNT} levels then the Central AI`, {
       fontFamily: 'monospace',
@@ -505,7 +639,8 @@ export class MenuScene extends Phaser.Scene {
     // Register controls in visual order; the first is focused by default.
     // Without a checkpoint that is Play Game; with a checkpoint the Continue
     // control was already registered above (AH-0MVSHH20J003YXDN), so it
-    // takes the default focus and Play Game follows it. The action callbacks
+    // takes the default focus and Play Game follows it. Hangar War follows
+    // Play Game (AH-0MVUXC2DD003HN0I). The action callbacks
     // mirror the pointerdown handlers so activation behaves identically for
     // keyboard and pointer input. The shared FocusManager owns Tab / arrow
     // cycling and Enter / Space activation — the scene contains no ad-hoc
@@ -516,6 +651,11 @@ export class MenuScene extends Phaser.Scene {
       // normal start after a demo never inherits `{ demo: true }`.
       this.scene.start('PlayScene', { demo: false });
     });
+    if (hangarWarButton) {
+      this.focusManager.register(hangarWarButton, () => {
+        this.scene.start('HangarScene');
+      });
+    }
     this.focusManager.register(demoButton, () => {
       resumeAudioContext(this.sound);
       this.startDemo();
@@ -572,6 +712,15 @@ export class MenuScene extends Phaser.Scene {
   }
 
   /**
+   * Whether the Hangar War entry surfaces are enabled for this menu render
+   * (AH-0MVZ0VGGQ0032KDP). Exposed so tests assert the gate without poking at
+   * the scene's internals.
+   */
+  isHangarWarEnabled(): boolean {
+    return this.hangarWarEnabled;
+  }
+
+  /**
    * Starts the bot-driven attract/demo run (AC2). The `{ demo: true }` flag
    * is the only difference from a normal start, so the engine owns all demo
    * behaviour.
@@ -592,6 +741,32 @@ export class MenuScene extends Phaser.Scene {
   }
 
   /**
+   * Starts the bot-driven **Hangar War** attract traversal
+   * (AH-0MVUXCBBK004EJIP).
+   *
+   * Enters the outer loop at its hub — the hex map — with `{ demo: true }`, so
+   * every Hangar War screen applies its pure traversal decision
+   * (`src/ai/hangarWarTraversal.ts`) and advances itself: the map deploys at the
+   * weakest adjacent hex, the finished deployment's defence report auto-continues
+   * to the map, and the hangar buys the cheapest useful unlock and deploys.
+   * Nothing here starts a defence battle, because a defence is resolved
+   * algorithmically before its report renders.
+   *
+   * This is the programmatic traversal seam (used by the attract timer once the
+   * feature flag is ON, by the capture pipeline, and by the traversal
+   * integration tests); the player-visible gating lives at the call sites
+   * (the menu control and {@link scheduleAttractTimer}), so the shipped
+   * traversal itself is never forked or duplicated
+   * (AH-0MVZ0VGGQ0032KDP).
+   *
+   * `demoDwellMs` optionally overrides the per-screen dwell forwarded to the
+   * traversal screens (tests drive a short one instead of waiting in real time).
+   */
+  startHangarWarDemo(demoDwellMs?: number): void {
+    this.scene.start(HEX_MAP_SCENE_KEY, { demo: true, demoDwellMs });
+  }
+
+  /**
    * (Re)schedules the idle-attract timer (AC1/AC4). Called on create and on
    * any input so the countdown restarts; the default timeout is the
    * single-source {@link ATTRACT_IDLE_TIMEOUT_MS}. Exposed so tests can drive
@@ -602,7 +777,17 @@ export class MenuScene extends Phaser.Scene {
     this.attractTimer?.remove(false);
     this.attractTimer = this.time.delayedCall(timeoutMs, () => {
       // Guard: only start while this menu is still the active scene (AC4).
-      if (this.sys.isActive()) this.startDemo();
+      if (!this.sys.isActive()) return;
+      // Alternate the shipped arcade demo with the Hangar War traversal, so a
+      // full attract cycle demonstrates every new screen (AH-0MVUXCBBK004EJIP).
+      // While the Hangar War flag is OFF (its default) the alternation
+      // collapses to the arcade demo only (AH-0MVZ0VGGQ0032KDP, AC3).
+      this.demoCycleIndex += 1;
+      if (this.hangarWarEnabled && this.demoCycleIndex % 2 === 0) {
+        this.startHangarWarDemo();
+        return;
+      }
+      this.startDemo();
     });
   }
 }

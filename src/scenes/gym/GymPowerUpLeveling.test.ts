@@ -22,8 +22,10 @@ import { discoverGymScenes } from '../../utils/gymDiscovery';
 import {
   POWER_UP_LEVEL_IDS,
   POWER_UP_LEVEL_SPECS,
+  isConsumablePowerUpId,
   resolvePowerUpAtLevel,
 } from '../../powerups/powerUpLevels';
+import { grantPermanentPowerUp } from '../../powerups/choiceReward';
 import { getPowerUpById, type PowerUpId } from '../../powerups/types';
 
 // Boots a fresh Phaser game per scene (slow under parallel load) — give the
@@ -92,6 +94,29 @@ describe('GymPowerUpLeveling', () => {
     }
   });
 
+  it('the hold-full overlay lists the run permanent loadout, weapons included (AH-0MVCRKAPL000L68Y)', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    // This gym's offer pool stays power-ups-only, but the owned-loadout panel
+    // reports the run's true permanent loadout — including weapons (recorded
+    // plan default; producer did not overrule it).
+    grantPermanentPowerUp('shield', scene.getEffectsRegistry());
+    player.equipWeapon('spread', true);
+    // A temporary field pickup never reaches the panel.
+    player.collectPowerUp('bomb');
+
+    scene.openMineralChoice();
+    await advanceGame(booted!.game, 80);
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+
+    expect(overlay.getOwnedUpgradeLines()).toEqual([
+      'Spread Shot Lv.1',
+      'Shield Lv.1',
+    ]);
+  });
+
   it('AC4 — the hold-full choice permanently levels an owned power-up', async () => {
     const scene = await boot();
     const player = scene.getPlayer()!;
@@ -102,7 +127,11 @@ describe('GymPowerUpLeveling', () => {
     scene.tick(0.016);
     const first = scene.getMineralChoiceOptions();
     expect(first.length).toBeGreaterThan(0);
-    const fresh = first.find((o) => o.kind === 'powerup' && o.isNew);
+    // Pick a kind that still levels: a consumable hold-full reward adds a
+    // charge instead of a level (parent AH-0MVTQMREN009DSFW AC1).
+    const fresh = first.find(
+      (o) => o.kind === 'powerup' && o.isNew && !isConsumablePowerUpId(o.id as PowerUpId),
+    );
     expect(fresh).toBeDefined();
     const freshId = fresh!.id as PowerUpId;
     scene.selectMineralChoice(first.indexOf(fresh!));
@@ -125,6 +154,61 @@ describe('GymPowerUpLeveling', () => {
     // Permanent: a temporary-window expiry never claws the grant back.
     store.clearTemporary(freshId);
     expect(player.getPowerUpLevel(freshId)).toBe(2);
+  });
+
+  it('AC1 — a field pickup of an instant and a timed kind on a permanent base reverts through the scene tick', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    const registry = scene.getEffectsRegistry();
+
+    const windows: Array<{ id: PowerUpId; remaining: number }> = [];
+
+    // One instant kind (`bomb`, no timed effect of its own) and one timed
+    // kind (`shield`) land on an existing permanent base. Both then take a
+    // field pickup through the shared drop path, collected by the scene tick.
+    for (const id of ['bomb', 'shield'] as PowerUpId[]) {
+      // Hold-full reward → permanent base, through the shared grant seam.
+      grantPermanentPowerUp(id, registry);
+      // Shield is a consumable: the reward owns it and banks a charge, but
+      // never raises its level (parent AH-0MVTQMREN009DSFW AC1).
+      const base = isConsumablePowerUpId(id) ? 0 : 1;
+      expect(store.getPermanentLevel(id), `${id} permanent base`).toBe(base);
+
+      scene.spawnDrop(id, player.x, player.y);
+      scene.tick(0.1);
+
+      expect(store.getTempStacks(id), `${id} temporary stack`).toBe(1);
+      expect(player.getPowerUpLevel(id), `${id} raised`).toBe(base + 1);
+
+      const remaining = registry.powerUpTemporaryRemaining(id);
+      expect(remaining, `${id} window open`).toBeGreaterThan(0);
+      windows.push({ id, remaining: remaining! });
+    }
+
+    // Expire both windows through the same scene tick — never the registry
+    // API directly — so the assertion covers the real per-frame consumer.
+    scene.tick(Math.max(...windows.map((w) => w.remaining)) + 0.5);
+
+    for (const { id } of windows) {
+      const base = isConsumablePowerUpId(id) ? 0 : 1;
+      expect(store.getTempStacks(id), `${id} temporary cleared`).toBe(0);
+      expect(player.getPowerUpLevel(id), `${id} reverted`).toBe(base);
+      expect(store.getPermanentLevel(id), `${id} permanent retained`).toBe(base);
+      expect(
+        registry.powerUpTemporaryRemaining(id),
+        `${id} window closed`,
+      ).toBeUndefined();
+    }
+
+    // The permanent shield effect window is gone in this conversion (parent
+    // AH-0MVUVSW4J0009QUW): the pool is the whole model, so the permanent
+    // base stays armed through its held charge rather than an effect window;
+    // what changed here is the **store**: the kind is owned and holds one
+    // charge without being levelled.
+    expect(registry.isShielded).toBe(true);
+    expect(store.isConsumableOwned('shield')).toBe(true);
+    expect(store.consumableCharges('shield')).toBe(1);
   });
 
   it('AC3/AC4 — the readout matches the shared resolver at base / first upgrade / mid / cap', async () => {
@@ -194,15 +278,16 @@ describe('GymPowerUpLeveling', () => {
     const player = scene.getPlayer()!;
     const store = player.getPowerUpLevelStore();
 
-    // Mix field pickups (no timed window) and a permanent grant.
+    // Mix field pickups (each with its own per-upgrade TTL) and a permanent
+    // grant.
     player.collectPowerUp('teleport');
     player.collectPowerUp('extra_life');
     player.collectPowerUp('extra_life', true);
     expect(player.getPowerUpLevel('teleport')).toBe(1);
     expect(player.getPowerUpLevel('extra_life')).toBe(2);
 
-    // Advancing time (timed windows would expire) never resets the levels —
-    // only the run-restart seam does.
+    // Advancing a little time (well inside every TTL) never resets the levels
+    // — only the run-restart seam does.
     scene.tick(1000);
     expect(player.getPowerUpLevel('teleport')).toBe(1);
     expect(player.getPowerUpLevel('extra_life')).toBe(2);
@@ -234,7 +319,9 @@ describe('GymPowerUpLeveling', () => {
     scene.tick(0.1);
     scene.refreshReadout();
     expect(levelEl('shield')!.textContent).toContain('Lv 1');
-    expect(statsEl('shield')!.textContent).toContain('Shield time');
+    // The readout renders the shared specs — exactly the two retained axes
+    // (the retired bubble-window axis is gone, AH-0MVVD8SXO004QLZW).
+    expect(statsEl('shield')!.textContent).toContain('Shield recharge');
     expect(statsEl('shield')!.textContent).toContain('Shield hits');
   });
 

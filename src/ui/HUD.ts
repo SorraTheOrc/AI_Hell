@@ -16,17 +16,42 @@
  * - a fixed-length, hollow-outlined hold bar that fills proportionally as
  *   minerals are collected (replaces the former `Minerals: n/20` text).
  *
- * Consumable counts that the level alone does not convey (Shield shield
- * remaining absorptions, Phase Shift phase charges, Teleport teleport uses) are appended to
- * the label as ` ×N` so the value column stays strictly `∞`/countdown. A
- * recharging consumable (the Thorn Field, AH-0MVJ8YKR70096C6T) also appends
- * its `next in Ns` recharge countdown to the label.
+ * Consumable charge counts that the level alone does not convey (Shield
+ * absorptions, Thorn Field rams, Phase Shift charges, Teleport uses, Force
+ * Field reflects, Mystery UFO drones) are appended to the label as ` ×N` so
+ * the value column stays strictly `∞`/countdown. Every consumable row
+ * (`powerups/types.ts` `CONSUMABLE_POWER_UP_IDS`, the one catalogue source of
+ * truth) also appends a live `next in Ns` countdown to its next regenerating
+ * charge while one is owed — `undefined` while the pool is full — through the
+ * shared `buildHUDLabel` formatter (parent AH-0MVTQMREN009DSFW AC4). The
+ * value column stays `∞` for the three absorbed-hit kinds (Shield, Thorn
+ * Field, Force Field): their field pickup opens only a temporary-*level*
+ * window, never a timed cover, so a `Ns` value would be a countdown the
+ * charge alone cannot honour (parent AH-0MVUVSW4J0009QUW AC3).
  *
- * A charge-based power-up the player **owns** but whose pool is currently
- * **empty** stays visible as a greyed-out row (icon + label + value all in
- * the shared grey from `powerups/icons.ts`) instead of being hidden, so the
- * recharging pool is always legible (AH-0MV82I97Y007MB6M). A power-up the
- * player has never owned is still hidden.
+ * A consumable the player **owns** but whose pool is currently **empty** stays
+ * visible as a greyed-out row (icon + label + value all in the shared grey
+ * from `powerups/icons.ts`) instead of being hidden, so the recharging pool is
+ * always legible (AH-0MV82I97Y007MB6M, generalised to every consumable by
+ * AH-0MVTQMREN009DSFW AC4). A power-up the player has never owned is still
+ * hidden.
+ *
+ * ## Slot budget and non-slot rows (AH-0MVVJRRN10038VFR)
+ *
+ * The row list is **not** the loadout: the six-slot model
+ * (`powerups/slots.ts`) counts distinct kinds a run holds, while a row is a
+ * display entry — and two row classes never hold a slot (exempt entries such
+ * as the Mystery UFO, and Phase Shift / Teleport charge pools that outlive a
+ * temporary window). When a scene supplies `HUDOptions.getSlotState`
+ * (`resolvePlayerSlotState(player)`, wired once through
+ * `scenes/core/hudWiring.ts`), the HUD:
+ *
+ * - renders an explicit `Loadout n/6` budget read-out;
+ * - marks every non-slot row (`always available` / `charges only`); and
+ * - renders a row for every slot-held kind, including a temporary one-shot
+ *   (Orbital Strike, Smart Bomb) whose pre-existing rule hid it.
+ *
+ * Without a provider (standalone use) the HUD behaves exactly as before.
  *
  * Contains NO gym-specific imports or logic — it depends only on the
  * engine-agnostic power-up modules (`powerups/effects.ts`, `powerups/types.ts`,
@@ -41,7 +66,10 @@ import {
   WeaponEffect,
 } from '../powerups/effects';
 import { getPowerUpById, type PowerUpId } from '../powerups/types';
-import { POWER_UP_LEVEL_IDS } from '../powerups/powerUpLevels';
+import {
+  POWER_UP_LEVEL_IDS,
+  isConsumablePowerUpId,
+} from '../powerups/powerUpLevels';
 import {
   drawPowerUpIcon,
   drawWeaponIcon,
@@ -49,7 +77,11 @@ import {
   POWER_UP_GREY_COLOUR_CSS,
 } from '../powerups/icons';
 import type { WeaponDropIconId } from '../powerups/icons';
-import { HUD_DEPTH } from '../core/constants';
+import { HUD_DEPTH, POWER_UP_SLOT_CAP } from '../core/constants';
+import {
+  isSlotCountedHeldKind,
+  type PowerUpSlotState,
+} from '../powerups/slots';
 
 // Re-export for consumers wiring depth at construction.
 export { HUD_DEPTH };
@@ -72,6 +104,36 @@ const LIVES_GAP = 4;
 const ICON_X = 10;
 const NAME_X = 24;
 const VALUE_X = 160;
+/**
+ * Horizontal offset of the non-slot marker column. Sits right of the value
+ * column so a marker never shifts a row's label or value (the existing
+ * `∞`/countdown contract) — the marker is additional information.
+ */
+const MARKER_X = 210;
+
+/** Name of the slot-budget read-out Text object (test/debug access). */
+export const SLOT_BUDGET_NAME = 'hud-slot-budget';
+
+/** Marker on a row whose kind never consumes a slot because it is exempt. */
+export const SLOT_MARKER_ALWAYS_AVAILABLE = 'always available';
+
+/**
+ * Marker on a row kept visible by remaining consumable charges after its
+ * temporary level window expired — the row is a charge pool, not a slot.
+ */
+export const SLOT_MARKER_CHARGES_ONLY = 'charges only';
+
+/**
+ * Opacity applied to a non-slot row (icon, label and value) so it visually
+ * recedes below the six slot-counted rows. A player counting the upgrade list
+ * must be able to see at a glance that only `used` rows are the loadout, so a
+ * residual charge-pool / always-available row is de-emphasised rather than
+ * rendered at the same weight as an equipped upgrade (AH-0MVZ0GGW1004502H).
+ *
+ * The grey marker text keeps full opacity so the reason it is not a slot
+ * ("always available" / "charges only") stays readable.
+ */
+export const NON_SLOT_ROW_ALPHA = 0.5;
 
 /**
  * Mineral hold bar geometry (px). The bar keeps a fixed length at all
@@ -121,15 +183,21 @@ export interface HUDEntry {
   value: string;
   /** Current effective level (`permanent + temporary`). */
   level: number;
-  /** True while a temporary level-up window is active. */
+  /**
+   * True while a temporary level-up window is active. Always `false` for the
+   * three absorbed-hit kinds (Shield / Force Field / Thorn Field), whose
+   * level window never drives a value countdown (parent
+   * AH-0MVUVSW4J0009QUW AC3).
+   */
   temporary: boolean;
-  /** Consumable count (Shield absorptions, Phase Shift charges, Teleport teleports), if any. */
+  /** Consumable charge count (Shield absorptions, Thorn Field rams, Phase Shift charges, Teleport teleports, Force Field reflects, Mystery UFO drones), if any. */
   stacks?: number;
   /**
-   * Seconds until the next automatic recharge for a recharging consumable
-   * (Thorn Field), or `undefined` when nothing is recharging. Rendered in the
-   * label as `next in Ns` so the row is never an inert bare label
-   * (AH-0MVJ8YKR70096C6T).
+   * Seconds until the next regenerating charge of a consumable, or
+   * `undefined` when nothing is owed (the pool is full, no timer is running,
+   * or the row is not a consumable). Rendered in the label as `next in Ns` so
+   * the row is never an inert bare label (AH-0MVJ8YKR70096C6T, generalised to
+   * every consumable by parent AH-0MVTQMREN009DSFW AC4).
    */
   recharge?: number;
   /**
@@ -139,6 +207,19 @@ export interface HUDEntry {
    * non-charge rows.
    */
   greyed: boolean;
+  /**
+   * True when the row's kind holds one of the six loadout slots, derived from
+   * the shared slot model (`resolvePlayerSlotState`) — never counted in the
+   * HUD. `true` when no slot-state provider is wired (standalone use), so the
+   * pre-existing "every rendered row is equipped" reading is preserved.
+   */
+  slotCounted?: boolean;
+  /**
+   * Non-slot marker rendered to the right of the row when the kind holds no
+   * slot (an exempt entry, or a charge pool outliving its window). Absent on
+   * slot-counted rows (AH-0MVVJRRN10038VFR).
+   */
+  marker?: string;
 }
 
 /**
@@ -191,6 +272,15 @@ export interface HUDOptions {
    * falls back to 0 (standalone use).
    */
   getWeaponLevel?: (weaponId: string) => number;
+  /**
+   * Reads the live six-slot state — `resolvePlayerSlotState(player)`, the one
+   * shared seam (game and every gym). When provided, the HUD renders the slot
+   * budget (`Loadout n/6`), marks rows that hold no slot, and renders a row for
+   * every slot-held kind (including a temporary one-shot that previously had
+   * none) so the displayed loadout agrees with the model
+   * (AH-0MVVJRRN10038VFR). Without a provider the HUD is unchanged.
+   */
+  getSlotState?: () => PowerUpSlotState | null;
 }
 
 export class HUD extends Phaser.GameObjects.Container {
@@ -200,8 +290,12 @@ export class HUD extends Phaser.GameObjects.Container {
   private _rows: HUDEntry[] = [];
   private _rowObjects: Phaser.GameObjects.GameObject[] = [];
   private _iconGraphics: Phaser.GameObjects.Graphics;
+  private _budgetLabel: Phaser.GameObjects.Text;
   private _showLives: boolean;
   private _getWeaponLevel?: (weaponId: string) => number;
+  private _getSlotState?: () => PowerUpSlotState | null;
+  /** Weapon rows rendered this frame (id + label), for the loadout read-out. */
+  private _weaponRows: Array<{ id: string; label: string }> = [];
   private _minerals = 0;
   private _mineralCapacity = 0;
 
@@ -212,6 +306,7 @@ export class HUD extends Phaser.GameObjects.Container {
 
     this._showLives = options?.showLives ?? true;
     this._getWeaponLevel = options?.getWeaponLevel;
+    this._getSlotState = options?.getSlotState;
 
     this._iconGraphics = new Phaser.GameObjects.Graphics(scene);
     this._livesLabel = new Phaser.GameObjects.Text(
@@ -225,7 +320,21 @@ export class HUD extends Phaser.GameObjects.Container {
     this._mineralBar = new Phaser.GameObjects.Graphics(scene);
     this._mineralBar.name = MINERAL_BAR_NAME;
     this._mineralBar.setVisible(false);
-    this.add([this._iconGraphics, this._livesLabel, this._mineralBar]);
+    this._budgetLabel = new Phaser.GameObjects.Text(
+      scene,
+      ICON_X,
+      ROW_HEIGHT * 0.25,
+      '',
+      TEXT_STYLE,
+    );
+    this._budgetLabel.name = SLOT_BUDGET_NAME;
+    this._budgetLabel.setVisible(false);
+    this.add([
+      this._iconGraphics,
+      this._livesLabel,
+      this._mineralBar,
+      this._budgetLabel,
+    ]);
 
     this._registry = registry;
     if (registry) {
@@ -285,6 +394,8 @@ export class HUD extends Phaser.GameObjects.Container {
     }
     this._rowObjects = [];
     this._rows = [];
+    this._weaponRows = [];
+    this._drawSlotBudget();
 
     if (this._registry) {
       let row = 0;
@@ -331,7 +442,49 @@ export class HUD extends Phaser.GameObjects.Container {
   private _rowY(row: number): number {
     const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
     const mineralOffset = this._mineralCapacity > 0 ? ROW_HEIGHT : 0;
-    return livesOffset + mineralOffset + row * ROW_HEIGHT;
+    return (
+      livesOffset +
+      mineralOffset +
+      this._budgetOffset() +
+      row * ROW_HEIGHT
+    );
+  }
+
+  /**
+   * Extra offset reserved for the slot-budget read-out. A wired slot-state
+   * provider (every game/gym scene) reserves the row so the budget never
+   * shifts as the ship spawns; a standalone HUD without one keeps its exact
+   * pre-existing layout (AH-0MVVJRRN10038VFR AC4).
+   */
+  private _budgetOffset(): number {
+    return this._getSlotState ? ROW_HEIGHT : 0;
+  }
+
+  /** The live slot state, or `null` when unwired / no player yet. */
+  private _slotState(): PowerUpSlotState | null {
+    return this._getSlotState?.() ?? null;
+  }
+
+  /**
+   * Draws the `Loadout n/6` slot-budget read-out from the shared model.
+   * Inert (invisible, empty) when no provider is wired or no player exists
+   * yet, so a scene before the ship spawns never shows a false occupancy.
+   */
+  private _drawSlotBudget(): void {
+    const state = this._slotState();
+    if (!state) {
+      this._budgetLabel.setText('');
+      this._budgetLabel.setVisible(false);
+      return;
+    }
+    const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
+    const mineralOffset = this._mineralCapacity > 0 ? ROW_HEIGHT : 0;
+    this._budgetLabel.setPosition(
+      ICON_X,
+      livesOffset + mineralOffset + ROW_HEIGHT * 0.25,
+    );
+    this._budgetLabel.setText(`Loadout ${state.used}/${POWER_UP_SLOT_CAP}`);
+    this._budgetLabel.setVisible(true);
   }
 
   /**
@@ -424,9 +577,33 @@ export class HUD extends Phaser.GameObjects.Container {
       value.setColor(POWER_UP_GREY_COLOUR_CSS);
     }
 
+    // A non-slot row (exempt entry or residual charge pool) is not part of
+    // the six-slot loadout. De-emphasise it so the slot-counted rows are the
+    // ones a player counts; the marker below names why it holds no slot.
+    if (entry.slotCounted === false) {
+      icon.setAlpha(NON_SLOT_ROW_ALPHA);
+      name.setAlpha(NON_SLOT_ROW_ALPHA);
+      value.setAlpha(NON_SLOT_ROW_ALPHA);
+    }
+
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
     this._rows.push(entry);
+
+    // Non-slot marker: tells the player the row is not one of the six
+    // loadout slots (exempt entry / charge pool) without changing the label
+    // or value the rest of the HUD contract pins.
+    if (entry.marker) {
+      const marker = new Phaser.GameObjects.Text(
+        this.scene,
+        MARKER_X,
+        y + ROW_HEIGHT * 0.25,
+        entry.marker,
+        { ...TEXT_STYLE, color: POWER_UP_GREY_COLOUR_CSS },
+      );
+      this.add(marker);
+      this._rowObjects.push(marker);
+    }
   }
 
   // ── Power-up row model ────────────────────────────────────────────
@@ -443,16 +620,26 @@ export class HUD extends Phaser.GameObjects.Container {
     const reg = this._registry;
     if (!reg) return [];
     const rows: HUDEntry[] = [];
+    const state = this._slotState();
     for (const id of POWER_UP_LEVEL_IDS) {
       if (id === 'extra_life') continue; // lives are shown by the dedicated counter
-      if (!this._isPowerUpRowVisible(id)) continue;
+      // A kind that holds a slot always gets a row, even when the
+      // pre-existing visibility rule hides it (a temporary one-shot such as
+      // Orbital Strike): otherwise the list would under-report the loadout
+      // (tick 4540 of the RCA recording).
+      const heldByModel = state !== null && state.heldIds.has(id);
+      if (!this._isPowerUpRowVisible(id) && !heldByModel) continue;
       const entry = getPowerUpById(id);
-      const level = reg.powerUpLevel(id);
-      const remaining = reg.powerUpTemporaryRemaining(id);
+      // An owned consumable holds level 0 (a hold-full reward adds a charge,
+      // never a level — parent AH-0MVTQMREN009DSFW AC1); it is displayed at
+      // its base level 1 so the row still reads as a levelled item.
+      const level = Math.max(1, reg.powerUpLevel(id));
+      const remaining = this._valueWindowRemaining(id);
       const temporary = remaining !== undefined;
       const stacks = this._powerUpStacks(id);
       const recharge = this._powerUpRecharge(id);
       const greyed = this._isPowerUpGreyed(id);
+      const marker = state ? this._slotMarker(id, state) : undefined;
       rows.push({
         id,
         name: entry.name,
@@ -462,35 +649,71 @@ export class HUD extends Phaser.GameObjects.Container {
         level,
         temporary,
         greyed,
+        slotCounted: state ? isSlotCountedHeldKind(id, state) : true,
         ...(stacks !== undefined ? { stacks } : {}),
         ...(recharge !== undefined ? { recharge } : {}),
+        ...(marker !== undefined ? { marker } : {}),
       });
     }
     return rows;
   }
 
+  /**
+   * The non-slot marker for a rendered row, or `undefined` when the kind
+   * holds a slot. Derived from the shared model, never from row knowledge:
+   *
+   * - exempt entries (`availableWhenSlotsFull`) → "always available";
+   * - anything else held-only by a consumable pool (a Phase Shift / Teleport
+   *   row kept alive by remaining charges after its window expired) →
+   *   "charges only".
+   */
+  private _slotMarker(
+    id: PowerUpId,
+    state: PowerUpSlotState,
+  ): string | undefined {
+    if (isSlotCountedHeldKind(id, state)) return undefined;
+    return getPowerUpById(id).availableWhenSlotsFull === true
+      ? SLOT_MARKER_ALWAYS_AVAILABLE
+      : SLOT_MARKER_CHARGES_ONLY;
+  }
+
   /** Whether a power-up currently warrants a row (pre-existing rules). */
   private _isPowerUpRowVisible(id: PowerUpId): boolean {
     const reg = this._registry!;
+    // Generalised consumable visibility (parent AH-0MVTQMREN009DSFW AC4): a
+    // consumable row appears whenever the player owns it — permanently or via
+    // a live pickup window — or holds a charge, so a greyed recharging pool
+    // never disappears. The three absorbed-hit kinds (Shield / Force Field /
+    // Thorn Field) rely on this rule for every visible state — their former
+    // live-effect-window reads were retired with the charge-pool pickup model
+    // (parent AH-0MVUVSW4J0009QUW AC3) — and every other kind keeps its
+    // pre-existing rule below, whose live-effect reads (e.g. `isActive`) still
+    // mean what they always meant for kinds with a real effect window.
+    if (
+      isConsumablePowerUpId(id) &&
+      (this._ownsChargePool(id) || reg.consumableCharges(id) > 0)
+    ) {
+      return true;
+    }
     switch (id) {
       case 'shield':
-        return reg.isActive('shield');
+        // Absorbed-hit kinds are fully covered by the generalised consumable
+        // rule above (ownership or charge); the former bubble-window live
+        // check (`isActive('shield')`) is retired with the charge-pool pickup
+        // model (parent AH-0MVUVSW4J0009QUW AC3).
+        return false;
       case 'bomb':
         return reg.isBombPermanent();
       case 'speed_boost':
         return reg.isActive('speed_boost');
       case 'phase_shift':
-        return (
-          reg.isPhasePermanent() ||
-          reg.phaseCharges() > 0 ||
-          reg.isActive('phase_shift') ||
-          // Owned (permanent or field pickup) but spent: the recharging pool
-          // keeps the row visible (greyed) rather than hiding it
-          // (AH-0MV82I97Y007MB6M).
-          this._ownsChargePool(id)
-        );
+        // A live phase boundary keeps its row; ownership and the finite
+        // recharging pool are handled by the consumable rule above
+        // (AH-0MV82I97Y007MB6M).
+        return reg.isActive('phase_shift');
       case 'teleport':
-        return reg.teleportStacks() > 0 || this._ownsChargePool(id);
+        // Only the charge pool keeps a Teleport row alive — handled above.
+        return false;
       case 'magnet':
         return reg.isMagnetActive();
       case 'mineral_scoop':
@@ -500,16 +723,18 @@ export class HUD extends Phaser.GameObjects.Container {
         // field pickup is a one-shot and leaves no row (AH-0MV1BIWP9003EHRQ).
         return reg.isSmartBombPermanent();
       case 'force_field':
-        // Show the row while the reflect bubble is active (field pickup or
-        // permanent reward) so the remaining reflect budget is visible
-        // (AH-0MV1BIX1W006XF95).
-        return reg.isForceFieldActive();
+        // Absorbed-hit kinds are fully covered by the generalised consumable
+        // rule above (ownership or charge); the former reflect-bubble
+        // live-window check (`isForceFieldActive`) is retired with the
+        // charge-pool pickup model (parent AH-0MVUVSW4J0009QUW AC3).
+        return false;
       case 'mystery_ufo':
-        // The Mystery UFO is a visible collector drone with no timed window, so
-        // show its row for as long as the player owns it (any collection
-        // advanced its level); the row renders the effective level (drone
-        // lifetime/capacity/radius) and ∞ (AH-0MV9G113S009B37I).
-        return reg.powerUpLevel('mystery_ufo') > 0;
+        // The Mystery UFO is a visible collector drone with no timed effect of
+        // its own; ownership (a hold-full charge grant or a field-pickup
+        // level) keeps its row visible through the consumable rule above, and
+        // the row renders the effective level and the window countdown or ∞
+        // (AH-0MV9G113S009B37I, parent AH-0MVTQMREN009DSFW AC1).
+        return false;
       case 'frenzy':
       case 'chrono':
       case 'salvage':
@@ -517,9 +742,11 @@ export class HUD extends Phaser.GameObjects.Container {
         // their window is active, so the player can read the countdown.
         return reg.isActive(id);
       case 'thorns':
-        // Thorn Field: visible while active OR a ram budget remains (the
-        // budget is the informative part, like the Force Field absorb row).
-        return reg.isActive('thorns') || reg.thornsRemaining() > 0;
+        // Absorbed-hit kinds are fully covered by the generalised consumable
+        // rule above (ownership or charge); the former ram-window live check
+        // (`isActive('thorns')`) is retired with the charge-pool pickup model
+        // (parent AH-0MVUVSW4J0009QUW AC3).
+        return false;
       case 'strike':
         // Orbital Strike: a permanent bolt is a run-scoped active effect; a
         // field pickup is a one-shot and leaves no row (mirrors Smart Bomb).
@@ -530,88 +757,127 @@ export class HUD extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Consumable count for a power-up (appended to the label), or `undefined`
-   * when the level alone conveys the state. A zero count is never surfaced.
+   * Consumable charge count for a power-up (appended to the label), or
+   * `undefined` when the level alone conveys the state. A zero count is never
+   * surfaced (` ×0` is never rendered — parent AC1).
+   *
+   * Every consumable reads the shared pool through its per-kind projection:
+   * the budget accessors (`shieldAbsorptionsRemaining`, `thornsRemaining`,
+   * `forceFieldRemaining`) report the pooled charges for every acquisition
+   * path — a field pickup grants exactly one charge and opens no effect
+   * window under the absorbed-hit model (parent AH-0MVUVSW4J0009QUW), so the
+   * pool is never misread from a parallel window counter. Phase Shift,
+   * Teleport and Mystery UFO have no separate window budget and read the
+   * pool directly.
+   *
+   * Non-consumable kinds surface no count (their level alone is the state).
    */
   private _powerUpStacks(id: PowerUpId): number | undefined {
+    if (!isConsumablePowerUpId(id)) return undefined;
+    return this._consumableCharges(id) || undefined;
+  }
+
+  /**
+   * Charges (or the live field-pickup budget) a consumable row surfaces — the
+   * one reading used by both the ` ×N` label and the empty-pool grey-out, so
+   * the two can never disagree.
+   */
+  private _consumableCharges(id: PowerUpId): number {
     const reg = this._registry!;
     switch (id) {
       case 'shield':
-        return reg.shieldAbsorptionsRemaining() || undefined;
-      case 'phase_shift':
-        // The finite recharging pool is surfaced even for the permanent
-        // reward, which is no longer an unlimited supply
-        // (AH-0MV82I97Y007MB6M).
-        return reg.phaseCharges() || undefined;
-      case 'teleport':
-        return reg.teleportStacks() || undefined;
-      case 'force_field':
-        return reg.forceFieldRemaining() || undefined;
+        return reg.shieldAbsorptionsRemaining();
       case 'thorns':
-        // Thorn Field carries its remaining ram absorbs so the HUD renders
-        // `Thorn Field xN` and updates as rams are absorbed.
-        return reg.thornsRemaining() || undefined;
+        return reg.thornsRemaining();
+      case 'force_field':
+        return reg.forceFieldRemaining();
       default:
-        return undefined;
+        // Phase Shift / Teleport / Mystery UFO: the pool is the whole budget.
+        return reg.consumableCharges(id);
     }
   }
 
   /**
-   * Seconds until the next automatic recharge for a recharging consumable, or
-   * `undefined` when nothing is recharging. Only the Thorn Field recharges
-   * today (AH-0MVJ8YKR70096C6T); an armed field with a spent budget — and, in
-   * particular, a permanent (hold-full) field sitting at zero charges — shows
-   * its countdown so the row never reads as an inert bare label.
+   * Seconds for the value-column window countdown while a temporary level-up
+   * window is open, or `undefined` when the row renders the ∞ glyph.
+   *
+   * The three absorbed-hit kinds (the `regenRequiresOwnership` consumables —
+   * Shield, Thorn Field, Force Field) never render a window countdown: a
+   * field pickup opens only a temporary-**level** window while the effect is
+   * the granted charge pool, so a `Ns` value would promise a timed cover the
+   * pool alone cannot honour (parent AH-0MVUVSW4J0009QUW AC3). Every other
+   * kind keeps the parent's live countdown-while-open rule
+   * (AH-0MVTQMREN009DSFW AC4).
+   */
+  private _valueWindowRemaining(id: PowerUpId): number | undefined {
+    if (getPowerUpById(id).regenRequiresOwnership === true) return undefined;
+    return this._registry!.powerUpTemporaryRemaining(id);
+  }
+
+  /**
+   * Seconds until the next regenerating charge for a recharging consumable, or
+   * `undefined` when nothing is owed (parent AH-0MVTQMREN009DSFW AC4). Every
+   * consumable reads its regeneration countdown from the shared registry
+   * accessors — no countdown while the pool is full, and only a live (`> 0`)
+   * timer is ever reported, so the label never shows a stalled `next in 0s`.
+   * A pickup-only charge of the absorbed-hit kinds opens no timer (the
+   * `regenRequiresOwnership` ceiling), so their row never renders a countdown
+   * it cannot honour (parent AH-0MVUVSW4J0009QUW AC3).
    *
    * The permanent Orbital Strike row also carries a countdown to its next bolt
-   * (AH-0MVS2T40T006QL7H): a multi-second interval (6.75 s at the first grant,
-   * AH-0MVRE6N08001TE4V) otherwise reads as an inert power-up. The registry
-   * owns the clock; the HUD only projects it through the same `next in Ns`
-   * label formatter, so there is one formatting path.
+   * (AH-0MVS2T40T006QL7H). The registry owns every clock; the HUD only
+   * projects it through the same `next in Ns` label formatter, so there is one
+   * formatting path.
    */
   private _powerUpRecharge(id: PowerUpId): number | undefined {
     const reg = this._registry!;
     switch (id) {
-      case 'thorns': {
-        const seconds = reg.thornsRechargeRemaining();
-        return seconds > 0 ? seconds : undefined;
-      }
       case 'strike':
         // `undefined` when no permanent strike is armed (field pickup: no row)
         // or a bolt is latched/landing, so the label never shows a stalled or
         // negative countdown.
         return reg.strikeNextBoltSeconds();
       default:
-        return undefined;
+        // Every consumable regenerates through the shared pool clock — the
+        // Thorn Field special case that predated the charge pool is retired
+        // (parent AH-0MVUVSW4J0009QUW AC3): `thornsRechargeRemaining()` is
+        // exactly this projection, and a pickup-only charge opens no timer.
+        return isConsumablePowerUpId(id)
+          ? reg.consumableRechargeRemaining(id)
+          : undefined;
     }
   }
 
   /**
-   * Whether the player **owns** a charge-based pool (`phase_shift` /
-   * `teleport`) this run — permanent grants and field-pickup stacks both
-   * count (`powerUpLevel` is their sum, 0 when never picked up). Used to keep
-   * an owned-but-empty pool visible (greyed) instead of hiding it
-   * (AH-0MV82I97Y007MB6M).
+   * Whether the player **owns** a consumable's charge pool this run — the
+   * hold-full ownership flag and a field-pickup level both count, while a
+   * never-collected kind does not. Used to keep an owned-but-empty pool
+   * visible (greyed) instead of hiding it (AH-0MV82I97Y007MB6M), generalised
+   * from the Phase Shift / Teleport pair to the whole catalogue consumable set
+   * (parent AH-0MVTQMREN009DSFW AC4) — no per-kind special case.
    */
   private _ownsChargePool(id: PowerUpId): boolean {
-    return this._registry!.powerUpLevel(id) > 0;
+    if (!isConsumablePowerUpId(id)) return false;
+    // A consumable hold-full reward never raises the level (parent
+    // AH-0MVTQMREN009DSFW AC1): ownership is the per-kind flag, so an owned
+    // kind stays visible (greyed) while its empty pool regenerates.
+    return (
+      this._registry!.isConsumableOwned(id) ||
+      this._registry!.powerUpLevel(id) > 0
+    );
   }
 
   /**
    * Whether a row should render greyed-out/inactive: the player owns the
-   * charge-based pool but has zero available charges/stacks
-   * (AH-0MV82I97Y007MB6M). Non-charge rows are never greyed.
+   * consumable but has zero available charges (AH-0MV82I97Y007MB6M, generalised
+   * to every consumable by parent AH-0MVTQMREN009DSFW AC4). The check reads the
+   * same charge projection the label uses, so a live field-pickup budget can
+   * never grey a row that still has charges. Non-consumable rows are never
+   * greyed.
    */
   private _isPowerUpGreyed(id: PowerUpId): boolean {
-    const reg = this._registry!;
-    switch (id) {
-      case 'phase_shift':
-        return this._ownsChargePool(id) && reg.phaseCharges() === 0;
-      case 'teleport':
-        return this._ownsChargePool(id) && reg.teleportStacks() === 0;
-      default:
-        return false;
-    }
+    if (!this._ownsChargePool(id)) return false;
+    return this._consumableCharges(id) === 0;
   }
 
   // ── Test accessors (public model) ─────────────────────────────────
@@ -619,6 +885,48 @@ export class HUD extends Phaser.GameObjects.Container {
   /** Current display rows (one merged entry per power-up/weapon). */
   getRows(): HUDEntry[] {
     return [...this._rows];
+  }
+
+  /**
+   * The slot budget the HUD displays, from the shared model only: `used` is
+   * `resolvePlayerSlotState(...).used` and `cap` is `POWER_UP_SLOT_CAP`.
+   * Inert (`0/6`) when no provider is wired or no player exists yet.
+   */
+  getSlotBudget(): { used: number; cap: number } {
+    const state = this._slotState();
+    return { used: state?.used ?? 0, cap: POWER_UP_SLOT_CAP };
+  }
+
+  /** Rendered slot-budget text (e.g. `Loadout 5/6`), empty when inert. */
+  getSlotBudgetLabel(): string {
+    return this._budgetLabel.text;
+  }
+
+  /**
+   * Every rendered loadout row (power-ups **and** weapons) with its slot
+   * classification, so a non-slot row is marked rather than silently counted
+   * as equipped (AH-0MVVJRRN10038VFR AC2).
+   */
+  getLoadoutRows(): Array<{
+    id: string;
+    label: string;
+    slotCounted: boolean;
+    marker?: string;
+  }> {
+    const state = this._slotState();
+    return [
+      ...this._rows.map((row) => ({
+        id: row.id,
+        label: row.label,
+        slotCounted: row.slotCounted ?? true,
+        ...(row.marker !== undefined ? { marker: row.marker } : {}),
+      })),
+      ...this._weaponRows.map((row) => ({
+        id: row.id,
+        label: row.label,
+        slotCounted: state ? isSlotCountedHeldKind(row.id, state) : true,
+      })),
+    ];
   }
 
   /** Current lives value from the registry (0 when unattached). */
@@ -673,5 +981,6 @@ export class HUD extends Phaser.GameObjects.Container {
 
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
+    this._weaponRows.push({ id: weapon.weaponId, label });
   }
 }

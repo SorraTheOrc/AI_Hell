@@ -15,6 +15,68 @@ export const GAME_WIDTH = 960;
 export const GAME_HEIGHT = 540;
 export const GAME_BACKGROUND_COLOR = '#000000';
 
+// ── Shared background layer (parent AH-0MVIB7PD50029ZY1) ────────────
+
+/**
+ * Render depth of the full-canvas background (photo or solid fallback).
+ *
+ * Well below the gameplay layer (depth 0) and the juice layers (−10…−7) so the
+ * neon vector art, every bullet and the player always draw on top of the
+ * backdrop (parent AC1/AC4).
+ */
+export const BACKGROUND_DEPTH = -1000;
+
+/**
+ * Render depth of the readability dim overlay: above the photo
+ * ({@link BACKGROUND_DEPTH}) and below the juice layers (−10) and gameplay
+ * (0), so the dimming never covers enemies, bullets or the ship.
+ */
+export const BACKGROUND_DIM_DEPTH = -950;
+
+/** Alpha of the readability dim overlay drawn over the background photo. */
+export const BACKGROUND_DIM_ALPHA = 0.45;
+
+/** Colour of the readability dim overlay (`#rrggbb`). */
+export const BACKGROUND_DIM_COLOR = '#000000';
+
+/**
+ * Solid colour drawn when a level's background texture is unavailable (null
+ * = no solid fallback; the scene's configured background shows through).
+ *
+ * Deliberately the same constant the game config uses, so a scene that has no
+ * photo shows exactly the background colour it always had.
+ */
+export const BACKGROUND_FALLBACK_COLOR: string | null =
+  GAME_BACKGROUND_COLOR;
+
+/**
+ * Render depth of the hyperspace warp transition layers
+ * (parent AH-0MVIB7PD50029ZY1, slice AH-0MVSEBCNC005G7XW).
+ *
+ * Above the background photo ({@link BACKGROUND_DEPTH}) and its dim overlay
+ * ({@link BACKGROUND_DIM_DEPTH}) but below the juice layers (−10) and gameplay
+ * (0): the converging streaks, the distortion rings and the white flash read as
+ * part of the backdrop, so enemies, bullets and the ship always stay legible on
+ * top of the warp.
+ */
+export const BACKGROUND_WARP_DEPTH = -900;
+
+// ── Level transitions ───────────────────────────────────────────────
+
+/**
+ * Seconds between a wave/level wipe and the next spawn (GDD §3 — level
+ * structure).
+ *
+ * This is the single source of truth: `PlayScene` re-exports it for its
+ * existing importers, and VFX modules derive their own durations from it (the
+ * hyperspace warp, `src/vfx/backgroundWarp.ts`, is exactly
+ * `LEVEL_TRANSITION_SECONDS` long) so the effect can never outlive the
+ * transition pause. It lives here rather than in `PlayScene` because scenes
+ * import VFX modules, so a VFX module importing `PlayScene` would create an
+ * import cycle (AH-0MVSEBCNC005G7XW AC1).
+ */
+export const LEVEL_TRANSITION_SECONDS = 1.5;
+
 // ── Movement Physics (GDD §2.2) — default values ───────────────────
 // `config.ts` derives `DEFAULT_CONFIG` from these literals (kept here as a
 // leaf module so the CSV-backed config store can import the config modules
@@ -218,6 +280,12 @@ export const WEAPON_COLLECTION_THRESHOLD = POWER_UP_COLLECTION_THRESHOLD;
  * after collection before it times out and stops firing (GDD §4.4).
  * 10 000 ms = 10 s, from the moment of collection, per weapon. The
  * permanent cannon has no timer and never expires.
+ *
+ * This is the **default** field-pickup weapon temporary window; it is
+ * surfaced through `resolveWeaponTemporaryWindow` in
+ * `src/powerups/powerUpLevels.ts` (alongside the power-up per-upgrade TTL
+ * resolver) so a future weapon definition can declare its own window
+ * (AH-0MVUGI3Q4009MW6A). The value itself is unchanged.
  */
 export const WEAPON_TIMEOUT_MS = 10000;
 
@@ -371,6 +439,38 @@ export const MINERAL_COLOR = 0xffdd44;
  * reads as a distinct "carrot" orange on the black starfield.
  */
 export const MINERAL_SALVAGE_COLOR = 0xff7a2e;
+
+/**
+ * Red mineral **deposit** body colour (hex, AH-0MVJ79739008396I).
+ *
+ * A destroyed ship whose resolved re-drop count reaches
+ * {@link MINERAL_DEPOSIT_THRESHOLD} leaves a single red deposit instead of a
+ * scatter of gold dots: the deposit replaces the whole payout and is worth
+ * {@link MINERAL_DEPOSIT_VALUE} minerals. Red is otherwise unused by the
+ * mineral economy (gold `MINERAL_COLOR`, orange `MINERAL_SALVAGE_COLOR`), so a
+ * red dot uniquely means "one big payout".
+ */
+export const MINERAL_DEPOSIT_COLOR = 0xff1744;
+
+/**
+ * Resolved re-drop count at which a destroyed ship leaves one red
+ * {@link MINERAL_DEPOSIT_COLOR} deposit instead of individual gold minerals
+ * (AH-0MVJ79739008396I).
+ *
+ * The comparison uses the **post-bonus** resolved count —
+ * `mineralRedropCount(rng)` (absorbed minerals plus the random additive bonus,
+ * rounded) and, while the Salvage bounty window is active, its level-resolved
+ * bonus. At or above this threshold the single deposit replaces the **entire**
+ * payout, so any surplus is intentionally lost.
+ */
+export const MINERAL_DEPOSIT_THRESHOLD = 10;
+
+/**
+ * Minerals a single red deposit is worth when collected by the player or
+ * absorbed by an enemy (AH-0MVJ79739008396I). Fixed — deliberately not a
+ * `rules.ts` tunable, so the deposit needs no persisted-rules migration.
+ */
+export const MINERAL_DEPOSIT_VALUE = 10;
 
 /**
  * Render depth for mineral collectables — above regular gameplay

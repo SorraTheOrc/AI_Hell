@@ -13,7 +13,8 @@
  * with each owned item's base entry replaced by its level-up offer (see
  * {@link buildChoiceCandidates}) — degrading gracefully (returning fewer
  * options) when the list cannot supply the requested count. Owned level-up
- * offers (`weapon-level`/`power-up-level`) carry a 1.35× weight
+ * offers (`weapon-level`/`power-up-level`/`power-up-charge`) carry a 1.35×
+ * weight
  * ({@link OWNED_UPGRADE_BONUS_WEIGHT}) while unowned base entries keep 1.0×,
  * so an owned upgrade appears 35% more often than it would under a uniform
  * draw (AH-0MUY47W62005FF74; retuned 1.1×→1.25× then 1.25×→1.35× by
@@ -31,7 +32,7 @@ import {
 } from './types';
 import type { WeaponId } from '../utils/weapons';
 import { summariseWeaponLevelChange } from '../utils/weaponLevels';
-import { summarisePowerUpLevelChange } from './powerUpLevels';
+import { summarisePowerUpLevelChange, isConsumablePowerUpId, resolveConsumableRechargeTime } from './powerUpLevels';
 import { getDropDescription } from './dropDescriptions';
 import { isWithinSlotPool, resolveSlotState } from './slots';
 
@@ -96,13 +97,20 @@ export const CHOICE_POOL: readonly DropId[] = [
  * - `'weapon-level'` — a permanent level-up of a weapon the player already
  *   owns (parent AH-0MUPMPCB2009J54J),
  * - `'power-up-level'` — a permanent level-up of a power-up the player
- *   already owns (parent AH-0MUU2QJE2007JNR6).
+ *   already owns (parent AH-0MUU2QJE2007JNR6),
+ * - `'power-up-charge'` — **one charge** of a permanently-owned **consumable**
+ *   (Shield, Thorn Field, Phase Shift, Teleport, Force Field, Mystery UFO).
+ *   A consumable never levels up: its charge pool regenerates on a
+ *   level-derived interval, so the hold-full pool offers a charge instead of
+ *   a `'power-up-level'` option for that kind (parent AH-0MVTQMREN009DSFW AC5,
+ *   child AH-0MVUXH35J002WSAB AC1).
  */
 export type ChoiceOptionKind =
   | 'powerup'
   | 'weapon'
   | 'weapon-level'
-  | 'power-up-level';
+  | 'power-up-level'
+  | 'power-up-charge';
 
 /** One option offered by the hold-full choice. */
 export interface ChoiceOption {
@@ -114,13 +122,17 @@ export interface ChoiceOption {
   kind: ChoiceOptionKind;
   /**
    * For `'weapon-level'`/`'power-up-level'` options: the level this option
-   * grants (the current level + 1). Absent for power-up/weapon options.
+   * grants (the current level + 1). Absent for power-up/weapon options, and
+   * deliberately absent for `'power-up-charge'`: a charge grants no level
+   * (AH-0MVUXH35J002WSAB AC3).
    */
   level?: number;
   /**
    * Optional change summary describing what improves at this level
    * (e.g. `"+1 Projectiles, +15% Bullet size"`). Populated for
-   * weapon-level, power-up-level and owned base-pool offers.
+   * weapon-level, power-up-level and owned base-pool offers, and for the
+   * consumable charge offer, where it states the granted charge and its
+   * level-derived regeneration interval (AH-0MVUXH35J002WSAB AC2).
    */
   changeSummary?: string;
   /**
@@ -249,17 +261,89 @@ export function toChoiceOption(id: DropId): ChoiceOption {
 // ── Level-up option builder ─────────────────────────────────────────
 
 /**
+ * Formats a regeneration interval for offer copy (`45 s`, `12.5 s`).
+ *
+ * @param seconds - The level-derived interval in seconds.
+ */
+function formatIntervalSeconds(seconds: number): string {
+  const rounded = Math.round(seconds * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} s`;
+}
+
+/**
+ * Builds the charge-grant offer for a **permanently-owned consumable**
+ * (AH-0MVUXH35J002WSAB AC1/AC2).
+ *
+ * A consumable never levels up — a hold-full reward adds one charge to a pool
+ * that regenerates on a level-derived interval — so the offer is a
+ * `'power-up-charge'`, not a `'power-up-level'`. The copy states both facts:
+ * the shared catalogue description names the one-event effect ("one charge
+ * absorbs one hit", …) and the detail line states the granted charge and the
+ * interval the store will actually use, resolved through the store-free
+ * `resolveConsumableRechargeTime` at the same resolver level
+ * (`getUpgradeLevel`, i.e. reported level − 1) so copy and mechanics cannot
+ * drift.
+ *
+ * @param id - The consumable power-up id.
+ * @param level - The item's reported (effective) level, ≥ 1.
+ * @returns The `'power-up-charge'` option.
+ */
+export function buildChargeOption(
+  id: PowerUpId,
+  level: number,
+): ChoiceOption {
+  const resolverLevel = Math.max(0, Math.floor(level) - 1);
+  const interval = resolveConsumableRechargeTime(id, resolverLevel);
+  const name = `${POWER_UP_CATALOGUE[id].name} Charge`;
+  return {
+    id,
+    name,
+    kind: 'power-up-charge',
+    description: getDropDescription(id),
+    changeSummary:
+      interval > 0
+        ? `+1 charge, regenerates every ${formatIntervalSeconds(interval)}`
+        : '+1 charge',
+  };
+}
+
+/**
+ * Builds the option offered for an already-owned **power-up** (AH-0MVUXH35J002WSAB).
+ *
+ * Dispatches on the catalogue's `consumable` flag: a consumable is offered as
+ * one **charge** ({@link buildChargeOption}), every other power-up as a
+ * `'power-up-level'` (via {@link buildLevelUpOption}). The dispatch lives here
+ * so no caller (hold-full pool, mini-boss reward) can re-derive it.
+ */
+function buildOwnedPowerUpOffer(
+  id: PowerUpId,
+  level: number,
+): ChoiceOption | undefined {
+  if (!Number.isFinite(level) || level < 1) return undefined;
+  if (!POWER_UP_CATALOGUE[id]) return undefined;
+  return isConsumablePowerUpId(id)
+    ? buildChargeOption(id, level)
+    : buildLevelUpOption(id, level);
+}
+
+/**
  * Builds the single level-up option for an owned item, offering
  * `level + 1`.
  *
  * This is the **one** code path that turns an owned permanent level into a
- * player-facing offer: the hold-full choice ({@link buildChoiceCandidates})
- * and the mini-boss reward (`buildUpgradeOptions` in `./unlocks`) both use
- * it, so the offered level, item description and change summary can never
- * drift between the two surfaces (gym↔game parity — AH-0MVL9P2SF009QFON AC3).
+ * player-facing offer: the hold-full choice ({@link buildChoiceCandidates}),
+ * the mini-boss reward ({@link buildOwnedLevelUpOptions}) and the mini-boss
+ * wheel all use it, so the offered level, item description and change summary
+ * can never drift between the surfaces (gym↔game parity — AH-0MVL9P2SF009QFON
+ * AC3).
  *
- * Returns `undefined` when the id cannot be levelled as a drop: the
- * permanent cannon, the Reset utility, unknown power-ups, or a level below 1.
+ * A **consumable** has no endless level to offer: its own-offer dispatch
+ * ({@link buildOwnedPowerUpOffer}) returns a `'power-up-charge'` instead, while
+ * this builder keeps describing the level curve the consumable's
+ * level-derived axes (cap, regeneration interval) descend with.
+ *
+ * Returns `undefined` when the id cannot be levelled as a drop: the permanent
+ * cannon, the Reset utility, unknown power-ups, or a level below 1.
  *
  * @param id - The weapon drop or power-up id being upgraded.
  * @param level - The item's current permanent level (≥ 1).
@@ -304,11 +388,16 @@ export function buildLevelUpOption(
  * in `context` — weapons first, then power-ups, matching the order both
  * callers present.
  *
- * Shared by the hold-full choice and the mini-boss reward so both surfaces
- * offer exactly the same options (AH-0MVL9P2SF009QFON AC1/AC3).
+ * A permanently-owned **consumable** is offered as a **charge** grant
+ * (`'power-up-charge'`) instead of a level-up, because a consumable never
+ * levels up (AH-0MVUXH35J002WSAB AC1). Every other owned kind is unchanged.
+ *
+ * Shared by the hold-full choice, the mini-boss reward and the checkpoint
+ * reward path so every surface offers exactly the same options
+ * (AH-0MVL9P2SF009QFON AC1/AC3).
  *
  * @param context - The run's owned weapon/power-up levels.
- * @returns One option per levellable owned item.
+ * @returns One option per owned item.
  */
 export function buildOwnedLevelUpOptions(
   context?: ChoiceContext,
@@ -323,8 +412,16 @@ export function buildOwnedLevelUpOptions(
   }
 
   for (const { id, level } of context?.powerUpLevels ?? []) {
-    const option = buildLevelUpOption(id, level);
-    if (option?.kind === 'power-up-level') options.push(option);
+    const option = buildOwnedPowerUpOffer(id, level);
+    // Exactly one powered offer per owned power-up: a levellable kind yields
+    // `power-up-level`, a consumable yields `power-up-charge`
+    // (AH-0MVUXH35J002WSAB AC1).
+    if (
+      option?.kind === 'power-up-level' ||
+      option?.kind === 'power-up-charge'
+    ) {
+      options.push(option);
+    }
   }
 
   return options;
@@ -333,12 +430,15 @@ export function buildOwnedLevelUpOptions(
 // ── Weighting ───────────────────────────────────────────────────────
 
 /**
- * Weight multiplier applied to an owned level-up offer (`weapon-level` or
- * `power-up-level`) during candidate selection. Unowned base-pool entries keep
- * a weight of 1.0, so an owned upgrade is 1.35× as likely to be drawn as an
- * unowned item — a 35% bias toward continuing an existing build (retuned
- * from 1.1×/10% to 1.25×/25%, then to 1.35×/35% by AH-0MVCFB00Y004AQ2Z after
- * a producer audit asked for "another 10 points").
+ * Weight multiplier applied to an owned offer (`weapon-level`,
+ * `power-up-level` or `power-up-charge`) during candidate selection. Unowned
+ * base-pool entries keep a weight of 1.0, so an owned upgrade is 1.35× as
+ * likely to be drawn as an unowned item — a 35% bias toward continuing an
+ * existing build (retuned from 1.1×/10% to 1.25×/25%, then to 1.35×/35% by
+ * AH-0MVCFB00Y004AQ2Z after a producer audit asked for "another 10 points").
+ * A consumable's charge grant replaces its owned level-up offer, so it keeps
+ * the same owned bias rather than silently dropping to 1.0×
+ * (AH-0MVUXH35J002WSAB AC4).
  *
  * Named and exported so the bias can be tuned without hunting for a magic
  * number (AH-0MUY47W62005FF74 AC4).
@@ -347,11 +447,14 @@ export const OWNED_UPGRADE_BONUS_WEIGHT = 1.35;
 
 /**
  * Selection weight for a candidate option (AH-0MUY47W62005FF74 AC1). Owned
- * level-up offers receive {@link OWNED_UPGRADE_BONUS_WEIGHT}; every other
- * (unowned base-pool) option retains a weight of 1.0.
+ * offers (`weapon-level`, `power-up-level`, `power-up-charge`) receive
+ * {@link OWNED_UPGRADE_BONUS_WEIGHT}; every other (unowned base-pool) option
+ * retains a weight of 1.0.
  */
 export function choiceCandidateWeight(option: ChoiceOption): number {
-  return option.kind === 'weapon-level' || option.kind === 'power-up-level'
+  return option.kind === 'weapon-level' ||
+    option.kind === 'power-up-level' ||
+    option.kind === 'power-up-charge'
     ? OWNED_UPGRADE_BONUS_WEIGHT
     : 1;
 }
@@ -525,7 +628,8 @@ function drawWeightedWithoutReplacement(
 
 /**
  * Creates a strategy that draws `count` distinct options at **weighted**
- * random from `pool` — owned `weapon-level`/`power-up-level` offers carry a
+ * random from `pool` — owned `weapon-level`/`power-up-level`/`power-up-charge`
+ * offers carry a
  * {@link OWNED_UPGRADE_BONUS_WEIGHT} (1.35×) bias, unowned base entries 1.0× —
  * with each owned item's base-pool entry suppressed and its level-up offer
  * appended (see {@link buildChoiceCandidates}). When the candidate list holds

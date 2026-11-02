@@ -73,6 +73,7 @@
 import Phaser from 'phaser';
 
 import { CombatScene } from '../core/CombatScene';
+import { gymBackgroundLevel } from './core/gymBackground';
 import type { SceneSetupState } from '../core/sceneSetup';
 import { advanceWrappingBullets } from '../core/bulletLifecycle';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
@@ -101,6 +102,7 @@ import {
 } from '../core/spawnTransit';
 import { fireForEnemy } from '../../entities/enemyFire';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
@@ -212,10 +214,18 @@ export class GymPowerUpsCombat extends CombatScene<
     super({ key: 'GymPowerUpsCombat' });
   }
 
+  /** Gym family background decision: fixed representative level, no warp. */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(data?: SceneSetupState): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
+    // Shared background layer at the gym family's pinned level (see
+    // `core/gymBackground.ts`, AH-0MVSEC0J0004YNJC).
+    this._createSceneBackground();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -246,7 +256,11 @@ export class GymPowerUpsCombat extends CombatScene<
     });
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
-    this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: false }),
+    );
 
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
@@ -572,8 +586,9 @@ export class GymPowerUpsCombat extends CombatScene<
   }
 
   private _updateVisuals(): void {
-    // Shield bubble: drawn around the ship while Shield is active (shared helper,
-    // including the continuous rim pulse and ending fade).
+    // Shield bubble: drawn around the ship while Shield is active (shared
+    // helper; steady bright rim — the timed-window ending fade is retired,
+    // AH-0MVVD8TCJ004RLXP).
     if (this.shieldBubble) {
       drawShieldBubble(this.shieldBubble, this.player, this.effectsRegistry);
     }

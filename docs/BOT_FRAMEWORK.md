@@ -848,6 +848,40 @@ baseline (`src/data/bot-tuning.json`) → built-in `Default`. A user who saves a
 configuration locally keeps it locally; every other context sees the shipped
 baseline.
 
+**Curated promo presets (AH-0MVSDM5T1007KBB8):** the bundled baseline also ships
+a small catalogue of named presets that the dev-only promo scenarios
+([gameplay capture](dev/gameplay-capture.md#promo-scenario-wave-definitions))
+select **by name** at run start, so footage varies across scenarios without a
+new ShipConfig row (producer answer Q1 = b on AH-0MVI5XI73000ZVYA). Each preset
+is authored as a **sparse override map** — only the keys it changes are in the
+file, and `coerceTuningValues` fills the rest from `Default` — and `Default`
+stays the current selection, so the Watch Demo is unchanged.
+
+| Preset | One-line intent | Distinctive tuning |
+|---|---|---|
+| `Default` | The shipped tuned bot; the current selection everywhere. | — |
+| `aggressive-hunter` | Closes in and picks fights sooner across the whole screen. | higher `enemyBase`/`enemySeekRange`/`enemyWavePressurePort`, tighter `engagementRange`, lower `mineralBase` |
+| `cautious-collector` | Collection-first: long mineral/life/power-up reach with a wide safety margin. | higher `mineralBase`/`powerUpBase`, longer `mineralSeekRange`/`powerUpSeekRange`/`lifeSeekRange`, wider `dangerMargin` |
+| `evasive` | Survival above all: a wide threat bubble and room to retreat. | higher `survivalBase`/`survivalUrgencyPort`, wider `dangerMargin`/`threatRadius`/`wallMargin`, longer `reverseRetreatRange` |
+| `glass-cannon` | All-out offence at point-blank range with thin defence. | higher `enemyBase`, much tighter `engagementRange`, lower `clearanceWeight`/`dangerMargin`/`survivalBase`, precise aim |
+| `relentless-hunter` | The promo opener: hunts across the screen with a wide threat bubble and retreat room. | higher `enemyBase`/`enemySeekRange`, wider `dangerMargin`/`threatRadius`/`reverseRetreatRange`, longer reaction time |
+| `barrage-dodger` | The promo crossfire: survival above all against an orbital threat bubble. | high `survivalUrgencyPort`, wide `dangerMargin`/`threatRadius`, long `hazardPredictionHorizon` |
+| `cordon-breaker` | The promo cordon: kites the player-targeting duo at long standoff range. | high `survivalBase`, wide `reverseRetreatRange`/`dangerMargin`, patient engagement |
+| `gauntlet-runner` | The promo finale: outlasts the every-showcase gauntlet between dense waves. | high `survivalBase`, wide `dangerMargin`, long `reverseRetreatRange` |
+
+The four `promo-*`-facing presets (`relentless-hunter`, `barrage-dodger`,
+`cordon-breaker`, `gauntlet-runner`) were calibrated with the hermetic
+survival check in `src/waves/promoScenario.survival.test.ts` so every promo
+scenario sustains ≥45 s of bot-flown action before the run ends
+(AH-0MVSDMDA1003ARV5).
+
+The catalogue is pinned by `src/data/bot-tuning.test.ts` (preset lookup, sparse
+authoring, deterministic coercion, slider bounds, distinctness from `Default`)
+and `src/core/botTuningStore.test.ts` (every preset is served by
+`getBotTuningConfig`); the same test cross-checks that every `preset` a
+registered promo scenario names exists in the bundled state, so a typo in an
+scenario entry fails the suite instead of producing a run with the wrong bot.
+
 **Refresh workflow (dev server: Save to repo):** with `npm run dev` running,
 tune in the gym and click **Save to repo**. The button PUTs the current store
 state to the dev-only endpoint (`PUT /api/bot-tuning/src/data/bot-tuning.json`,
@@ -862,9 +896,11 @@ has no endpoint and the button is disabled).
 
 **Refresh workflow (no dev server: tune → Export → commit):** without a dev
 server (e.g. a static preview), click **Export** (`bot-tuning.json`) and
-overwrite `src/data/bot-tuning.json` with that exact file (the Export output is
-byte-equivalent to `serialiseBotTuningState()`, and the file adds only the
-trailing newline), then commit. Both paths produce the same bytes. The GitHub
+overwrite `src/data/bot-tuning.json` with that exact file, then commit. Export
+writes every configuration fully coerced, whereas the committed curated
+presets are authored as sparse overrides (see above), so re-sparsify the
+presets after an Export round-trip — the two files describe the same tuning
+state either way. The GitHub
 Pages alpha is cut from release tags, so a baseline committed to `dev` reaches
 it at the next `dev` → `main` release.
 

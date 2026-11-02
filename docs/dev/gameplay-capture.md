@@ -53,7 +53,8 @@ npm run capture -- --all-scenarios --output clips          # clips/<scenario>.we
 npm run capture:scenes -- --config scenes.json             # capture-output/scenes-<timestamp>.webm
 
 # investigate a long-run crash (off by default; writes <stem>.diagnostics.json)
-npm run capture -- --diagnostics --duration 420000 --output /tmp/soak.webm
+# write inside the repo root so a >32 MiB clip uses the streamed probe
+npm run capture -- --diagnostics --duration 420000 --output capture-output/soak.webm
 
 # compile the captured pool into a promo + showreel + highlight clips
 # (needs a full ffmpeg — see Compiling a promo package below)
@@ -127,9 +128,12 @@ one actionable message (see
 9. Streams every encoded chunk to Node over an `exposeFunction` binding and
    writes it **straight to disk as it arrives** into `<stem>.partial.webm`
    (see [Streaming the recording to disk](#streaming-the-recording-to-disk-bounded-chunk-sink)).
-   A successful clip renames it to `<stem>.webm`; any pipe/browser/recorder
-   failure leaves the partial in place and prints one actionable salvage
-   message (see [Failure and salvage](#failure-and-salvage-of-streamed-bytes)).
+   A successful clip renames it to `<stem>.webm` and then makes it **seekable**
+   with a packet-preserving seek-index remux, so VLC can fast-forward and scrub
+   it (see [Seekable output](#seekable-output-fast-forward-and-scrubbing)); any
+   pipe/browser/recorder failure leaves the partial in place and prints one
+   actionable salvage message (see
+   [Failure and salvage](#failure-and-salvage-of-streamed-bytes)).
 10. Before the game boots, opts the page **into telemetry**
     (`VITE_TELEMETRY_ENABLED=true`, `VITE_TELEMETRY_SINK=jsonl` — the same
     flags `scripts/record-session.mjs` uses) so the run's per-tick
@@ -385,6 +389,16 @@ Every output is validated before the run is reported as successful
   count meet the targets above, so a thin pool fails loudly instead of
   shipping a 5 s showreel.
 
+The gated end-to-end smoke test (`scripts/compile-promo.e2e.test.ts`, run with
+`/skill:test --type e2e`) compiles a deliberately short **synthetic** package
+with the real encoder, so it asserts the per-deliverable gates and the pace
+band strictly and asserts the size gate's **expected rejection** (its ~5 s
+fixture cannot meet the 45–60 s / > 2 min / 5-clip targets, and lengthening it
+is ruled out by the gated suite's cost budget). Editorial sizing on real
+footage is verified by `npm run compile:promo` against a real capture pool and
+by the `assessTargets` unit tests — see
+[docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo).
+
 The per-cut intensities and features are printed in the report, and the
 summary line names the measured duration, resolution, audio, cut count, mean
 intensity, pace verdict and target verdict — so a package can be reviewed
@@ -448,9 +462,23 @@ making it the cheap way to discover scenarios before a capture run
 # human-readable, one line per scenario (value — effect)
 npm run capture -- --list-scenarios
 
-# machine-readable array [ { "name": ..., "effect": ... } ]
+# machine-readable array: every entry has name/effect/kind; a promo entry
+# also carries preset/promoLevel/categories (and seed when declared)
 npm run capture -- --list-scenarios --json
 ```
+
+Every entry appears, including the `kind: 'promo'` catalogue. A promo entry's
+human line additionally names its bot-tuning `preset` and the editorial
+`categories` it evidences, on the same single line, e.g.
+
+```text
+  promo-blitz-hook — Dense opening hook. [promo: preset relentless-hunter; categories weapons, enemies]
+```
+
+so `--list-scenarios` alone shows why each promo is in the catalogue; the
+`--json` form carries the same metadata as structured fields
+(`{ "name", "effect", "kind", "preset", "promoLevel", "categories", "seed"? }`)
+without dropping the original `name`/`effect` fields.
 
 When `--list-scenarios` is passed, every other flag is ignored: all other
 options describe a capture run, and the listing returns instead without
@@ -466,9 +494,178 @@ capture releases it through the page-side scenario handle
 (`window.__aiHellScenario.resume()`), so no keystroke is simulated and the
 release is deterministic.
 
+### Promo scenarios (`kind: 'promo'`)
+
+A registry entry whose `kind` is `'promo'` is a **curated promo-video run**
+(AH-0MVI5XI73000ZVYA): the recorder starts an ordinary `Play Game` run and
+`PlayScene` turns it into the scenario, all through existing seams — the run
+is bot-flown, plays the scenario's hand-authored promo level as its whole
+campaign, flies the scenario's bot-tuning preset **by name** and seeds its RNG
+from the scenario's seed. Nothing about the shipped campaign, the bot tuning
+or the RNG changes for any other run.
+
+The catalogue is authored in `scripts/capture-scenarios.mjs` (the single
+source of truth) with its wave content in `scripts/promo-scenarios.mjs`, and
+this table mirrors it one-to-one: the `scenario` value, the one-line `effect`
+`--list-scenarios` prints, the bot-tuning `preset` the run flies and the
+editorial `categories` the scenario was authored to evidence.
+
+| `scenario` | Effect | `preset` | Categories |
+|---|---|---|---|
+| `promo-blitz-hook` | Open on a dense fleet and a wide swarm sweep: the high-intensity hook. | `relentless-hunter` | weapons, enemies |
+| `promo-swarm-saturation` | Saturate the screen with swarm walls for maximal shots and drops. | `cautious-collector` | weapons, pickups |
+| `promo-tank-wall` | Grind through heavy tank phalanxes and chase the drops they leave. | `glass-cannon` | weapons, pickups |
+| `promo-march-columns` | Hold the line against reversing Space-Invaders march columns. | `aggressive-hunter` | enemies, weapons |
+| `promo-centipede-tunnel` | Thread the centipede chain as it winds through a scout screen. | `evasive` | enemies |
+| `promo-ghost-hunt` | Outrun Pac-Man pursuers hunting between non-targeting escorts. | `evasive` | enemies |
+| `promo-horde-siege` | Survive the homing-horde rush pouring in from the arena edges. | `aggressive-hunter` | enemies, weapons |
+| `promo-lane-runner` | Weave lane traffic while farming the fleet for drops. | `cautious-collector` | enemies, pickups |
+| `promo-orbital-barrage` | Crossfire of orbital phasers and telegraphed strike arcs. | `barrage-dodger` | weapons, enemies |
+| `promo-capture-cordon` | Break a tractor-pull and attack-run cordon with a hard silhouette. | `cordon-breaker` | enemies |
+| `promo-boss-prelude` | Pressure waves into a mini-boss cordon: the boss-category footage. | `glass-cannon` | boss, enemies |
+| `promo-final-gauntlet` | Every showcase at once, closing on a double-raider mini-boss. | `gauntlet-runner` | weapons, pickups, enemies, boss |
+
+**Catalogue ordering is deliberate** (parent AC3): the list opens with
+`promo-blitz-hook`, the dense fleet-plus-swarm scene with the highest action
+intensity, because `--all-scenarios` records in registry order — so the first
+clip captured (and the first cut of a promo) has no dead air. The twelve
+promo entries then run through the editorial categories and close with
+`promo-final-gauntlet`, which evidences all four; the three original capture
+shortcuts (`boss`, `boss-four-hits`, `defeat`) stay **after** the promo
+catalogue so they never displace the hook.
+
+A promo entry is resolved from the shared registry entry itself, so once the
+catalogue registers one it is selectable exactly like the boss scenarios:
+
+```bash
+npm run capture -- --list-scenarios                  # discover the registered promos
+npm run capture -- --scenario promo-blitz-hook       # record the opening hook
+npm run capture -- --all-scenarios --output promo/   # one clip per scenario
+```
+
+The application order matters and is fixed: `PlayScene.init()` resolves the
+promo scenario (the single `resolveEnabledDevScenario` dev gate), forces
+demo-mode flight, selects the named preset and seeds the run **before**
+`create()` applies bot tuning and starts the campaign — so the preset, the
+promo level and the seed are live from the first frame. The campaign is
+injected with `WaveManager.setLevels(...)`, so the shipped
+`resolveCampaignLevels` path leaves it untouched; a later normal run in the
+same scene instance drops the promo injection and resolves the shipped
+campaign again. Promo scenarios never freeze the run (that is a boss/defeat
+behaviour) and, like every dev scenario, are **inert in a production build**
+and when no promo URL parameter is present.
+
+Because a promo run is continuous, the capture plans its lifecycle from the
+scenario's registry `kind` (`planScenarioLaunch`): Play Game is activated
+with **Enter** and the clip records until the game's run-ended signal (or the
+`--max-duration` cap), exactly like the default demo path. There is **no
+page-side freeze/release step** — `window.__aiHellScenario` is only installed
+by the boss/defeat jump scenarios, so the recorder never waits for or calls
+`resume()` for a promo. `--all-scenarios` therefore records one clean clip
+per registered scenario, promo entries included, with each clip taking the
+lifecycle its kind requires.
+
 Everything is gated behind `import.meta.env.DEV`: a production build ignores
 the query parameter (`resolveDevScenario` is never consulted), so the shipped
 bundle and normal runs are unchanged.
+
+### Promo scenario wave definitions
+
+A promo scenario (`kind: 'promo'`) pairs a curated bot-tuning preset with a
+**hand-authored promo level** (producer answer Q2 = c on AH-0MVI5XI73000ZVYA).
+The levels live in `scripts/promo-scenarios.mjs` — one entry per catalogue
+slot — and a registry entry references one by id through its `promoLevel`
+field. The module is plain ESM (no Node APIs, no DOM, one dependency-free
+schema import), so the capture CLI and the Vite game build import the same
+bytes, with types in `scripts/promo-scenarios.d.mts`.
+
+The bot's personality comes from the curated presets in
+`src/data/bot-tuning.json` (`aggressive-hunter`, `cautious-collector`,
+`evasive`, `glass-cannon`, the scenario-calibrated `relentless-hunter`,
+`barrage-dodger`, `cordon-breaker` and `gauntlet-runner`, plus the shipped
+`Default`), selected **by name** through the entry's `preset` field. Each
+preset is a sparse override map the store completes with
+`coerceTuningValues`, and the catalogue and its intents are documented in
+[BOT_FRAMEWORK](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym).
+A hermetic test (`src/data/bot-tuning.test.ts`) asserts every preset a
+registered scenario names exists in the bundled state, so a typo fails the
+suite rather than silently flying `Default`.
+
+| `promoLevel` | Level content |
+|---|---|
+| `promo-blitz-hook` | Dense opening hook (the catalogue opener) |
+| `promo-swarm-saturation` | Swarm wall, maximal shots and drops |
+| `promo-tank-wall` | Heavy rectangular phalanxes |
+| `promo-march-columns` | Space-Invaders `march` columns |
+| `promo-centipede-tunnel` | Centipede chain through a screen |
+| `promo-ghost-hunt` | Pac-Man pursuers between escorts |
+| `promo-horde-siege` | Robotron homing-horde rush |
+| `promo-lane-runner` | Frogger lane traffic over a fleet |
+| `promo-orbital-barrage` | Orbital Phasers plus strike arcs |
+| `promo-capture-cordon` | Tractor pull and attack runs |
+| `promo-boss-prelude` | Pressure waves then a mini-boss cordon |
+| `promo-final-gauntlet` | Both spawner showcases then a double-raider mini-boss |
+
+The scenario → preset → editorial-category mapping for the same twelve slots
+is the catalogue table above; a level's `categories` here and the scenario's
+`categories` in the registry are the same authored vocabulary, checked by
+`scripts/promo-scenarios.test.ts` and `scripts/capture-scenarios.test.ts`.
+
+Promo waves are **content, not behaviour**: every group uses an archetype the
+shipped campaign already places as a wave group (`scout`, `diver`, `tank`,
+`phaser`, `swarm`, `march`, `capturer`, `raider`) with the shipped formation
+builders, and every spawner opt-in is one `WaveDefinition` already understands
+(`ghosts`, `centipede`, `horde`, `laneTraffic`, `miniBoss`). Nothing new is
+spawned, so the gym↔game parity rule and the duplicate-body guard are not
+triggered. Automatic hazards (asteroids, harvesters, orbital strikes) keep
+their shipped scene schedules.
+
+Waves are static, authored data; everything that varies per run (spawn
+positions inside a group's range, firing, drops) comes from the run RNG, so a
+promo run is a **pure function of the scenario's seed** — the same seed plans
+the same spawns. Every level declares `level: 1`: a promo scenario is a
+single-level injected campaign, and level 1 is the identity of the campaign
+count-scaling curve, so the authored counts are played as authored.
+
+The module validates itself as it loads (unknown archetype/formation/flag,
+empty category set, over-declared `single` group, or a level number other than
+1 all throw with the level, wave and group named), and
+`scripts/promo-scenarios.test.ts` additionally runs `WaveManager`'s
+own wave-group validation and the real spawn planner over every authored
+wave. The tests also pin the archetype/formation/flag whitelists to the
+shipped campaign data and assert every editorial category is evidenced by at
+least one level.
+
+### Sustained footage: the ≥45 s survival check
+
+A promo clip is only usable if the bot **survives and keeps producing action**
+long enough to cut, so every scenario is measured headlessly
+(AH-0MVSDMDA1003ARV5): `src/waves/promoSurvival.ts` plays each registered
+promo level as the whole campaign through the shipped evaluation harness
+(`src/ai/eval/arena.ts`), flown by the competent bot configured with the
+scenario's preset and seeded with the scenario's seed — the same code path a
+promo capture runs, without a browser or Phaser. The measured **action
+duration** is `ticksSimulated × dt` before the run ends (death, campaign
+clear, or the bounded 100 s tick budget).
+
+The hermetic check lives in `src/waves/promoScenario.survival.test.ts`: it
+fails, naming the scenario and its measured duration, when any scenario
+sustains less than **45 s**. The suite is deterministic per scenario seed and
+bounded (≃100 s simulated per scenario, a few seconds of wall clock in the
+unit project), so it runs as part of the standard suite.
+
+Calibration (AC3) used only the two data knobs this section describes:
+
+- **wave composition** — `promo-tank-wall` grew to six phalanx waves and
+  `promo-boss-prelude` to three pressure waves before its mini-boss cordon,
+  both composed from the existing group vocabulary; and
+- **preset tuning** — `relentless-hunter`, `barrage-dodger`,
+  `cordon-breaker` and `gauntlet-runner` are survival-calibrated variants of
+the aggressive/evasive presets for the four scenarios that were dying below
+the target.
+
+No spawner, movement class or enemy config was added, so the gym↔game parity
+rule and the duplicate-body guard are untouched.
 
 ## Full-run capture (default)
 
@@ -568,8 +765,12 @@ store Export plus a trailing newline):
   (see [BOT_FRAMEWORK.md §12](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym)),
   then commit.
 
-The file is byte-equivalent to the gym's Export output, so it is safe to
-overwrite it wholesale with an Export download.
+The file is semantically equivalent to the gym's Export output, so it is safe
+to overwrite it wholesale with an Export download. Export writes every
+configuration fully coerced, while the committed curated presets are authored
+as **sparse overrides** completed by `coerceTuningValues`; after an Export
+round-trip, re-sparsify the presets (keep only the keys that differ from
+`Default`) so the catalogue stays readable (AH-0MVSDM5T1007KBB8).
 
 Because the committed file originally equalled the built-in factory `Default`,
 an un-wired build looked identical to a wired one — a test that compares the
@@ -761,10 +962,24 @@ additionally reports its measurement bounds additively:
 is reported through those fields and/or `audioDecodeError` — never silently
 passed. Each clip result also carries an additive `probeSource`
 (`'stream' | 'in-page'`) and `probeSourceReason`, so a soak run can confirm
-which source produced the verdicts. A clip too large for the page but whose
-file cannot be served (e.g. `--output` outside the repo) falls back to the
-in-page prefix probe and reports why, instead of failing or widening into a
-new dependency.
+which source produced the verdicts.
+
+**The streamed probe needs the output inside the served repository root.**
+The capture dev server serves the repository root, so a clip above the
+threshold is streamed back over HTTP only when its file resolves under that
+root (e.g. `capture-output/…`). An output written outside the root (e.g.
+`--output /tmp/soak.webm`) cannot be served, so the probe **falls back to the
+in-page prefix probe** and records why in `probeSourceReason` instead of
+failing the clip or widening into a new dependency. That fallback is the
+documented residual path, never a silent one.
+
+The fallback is **not** the cause of the long-run memory peak. A controlled
+A/B on 2026-11-01 (same 420 s scripted workload, one clip per arm) measured
+the in-page fallback at only **~+14 MiB** during the probe window and
+**~+33 MiB** after it versus the streamed in-root arm; the dominant peak was
+path-independent process startup (see
+[Long-run memory budget](#long-run-memory-budget-and-failure-salvage)).
+Provenance for the A/B is the measurement comment on **AH-0MVOJ76MJ0039HNE**.
 
 ### Long-run memory budget and failure salvage
 
@@ -795,9 +1010,31 @@ the streaming sink, the 32 MiB prefix budget and the upload cap remove. The
 long-run (30-minute) confirmation is a separate manual soak, not a CI test
 (see [Estimated CI cost](#estimated-ci-cost)).
 
-To reproduce: `npm run capture -- --diagnostics --duration 420000 --output
-/tmp/soak.webm`, then read `transport.maxMessageBytes`, `node.peakRssBytes`,
-`page.heapUsedBytes` and `chunks.maxBytes` from `/tmp/soak.diagnostics.json`.
+**What the `< 512 MiB` target measures (and what it does not).** The node
+figure in the table is the heartbeat-sampled `process.memoryUsage().rss`
+reported as `node.peakRssBytes` **during recording** — the window the recorder
+and the streaming sink are active. It does not measure the whole process
+lifetime: a follow-up A/B on 2026-11-01 (same 420 s scripted workload, one clip
+per arm) found that the whole-process high-water mark (~**767–784 MiB**) is
+reached at **Vite server boot (~3.1–3.3 s)**, before recording starts, and is
+the same for an in-root streamed clip and an outside-root in-page fallback.
+That startup term is a tooling/host baseline, not recording growth and not the
+in-page fallback; it is recorded here so a soak operator does not mistake it
+for a regression. The budget is **not** raised. A fresh idle-host baseline is
+still required before publishing a whole-process number: the 2026-11-01 host
+was loaded (~0.7 fps under SwiftShader), so the figures are directional.
+Provenance: the A/B on **AH-0MVOJ76MJ0039HNE**.
+
+To reproduce the streamed-path figure, write **inside the repository root**
+(so a clip above 32 MiB uses the streamed probe) and read the diagnostics
+artefact next to it: `npm run capture -- --diagnostics --duration 420000
+--output capture-output/soak.webm`, then read `transport.maxMessageBytes`,
+`node.peakRssBytes`, `page.heapUsedBytes` and `chunks.maxBytes` from
+`capture-output/soak.diagnostics.json`.
+
+To exercise the residual fallback deliberately, use `--output /tmp/soak.webm`;
+that path is expected to report `probeSource: 'in-page'` with an outside-root
+reason.
 
 ### Failure and salvage of streamed bytes
 
@@ -838,6 +1075,83 @@ sidecars, and its last GOP may be incomplete, so it can lose a fraction of a
 second at the tail. Treat it as recoverable footage, not as a capture result.
 The salvage seam lives in `scripts/capture-salvage.mjs`
 (AH-0MVNT29MC008BQPY).
+
+### Seekable output (fast-forward and scrubbing)
+
+Chromium's `MediaRecorder` writes a WebM whose Segment Info has **no
+Duration**, and whose clusters have **no SeekHead and no Cues** (the seek
+index). Players tolerate it; VLC does not — fast-forward/seek do nothing,
+`ffprobe` reports `duration=N/A`, and the timeline is unusable
+(AH-0MVMIK8EM001JAYR).
+
+Every successful capture is therefore made seekable at the single finalise
+seam (`recording.finalise({ success: true })`, see
+`scripts/capture-recording-pipeline.mjs`) — the same seam every path uses, so
+single clips, `--count` batches, `--all-scenarios` clips and the
+`capture:scenes` multi-scene WebM all get it:
+
+```text
+ffmpeg -i <stem>.webm -c copy <stem>.seekable.webm   # packet-preserving
+```
+
+`-c copy` copies the VP9 and Opus packets **bit for bit** — there is no
+re-encode, no encoder in the command line at all, so quality, codecs, stream
+layout and timeline content are unchanged. Only the container's index metadata
+(Duration, SeekHead → Info/Tracks/Cues, Cues) is added.
+
+**ffmpeg resolution order (deterministic, and still no *system* dependency):**
+
+1. `FFMPEG_BIN`, when set and present on disk;
+2. the **Playwright-bundled** ffmpeg, resolved through the Playwright
+   registry (installed by the documented `npm run capture:install`) — so the
+   capture path still never *requires* a system ffmpeg;
+3. `ffmpeg` on `PATH`.
+
+Candidates are **attempted**, not merely found: Playwright ffmpeg revisions
+before `1013` lack the `vp9_superframe` bitstream filter, so `-c copy` fails
+with `Unknown bitstream filter 'vp9_superframe'` and the next candidate is
+tried. **Graceful degradation:** when no candidate produces a verified
+seekable file the capture still **succeeds** and delivers the current
+unseekable WebM, preceded by a warning that names the consequence, the fix and
+how to enable it:
+
+```text
+[capture] WARNING: clip is NOT seekable — Chromium writes no Duration/Cues/SeekHead,
+so VLC cannot fast-forward it. Fix: install a full ffmpeg with VP9 support
+(sudo apt-get install ffmpeg (Debian/Ubuntu); brew install ffmpeg (macOS); or point
+FFMPEG_BIN at a full ffmpeg build) and re-run the capture. Attempts: …
+```
+
+**Verification before delivery.** The remux is written to
+`<stem>.seekable.webm` and checked *before* it replaces the clip:
+`ffprobe -show_entries format=duration` must report a finite non-zero duration
+(when ffprobe is unavailable the container's own Info/Duration element is used
+instead), and the EBML structure must contain a Cues index plus a SeekHead
+referencing Info, Tracks and Cues. Only a verified file is renamed over the
+clip, so a failed or half-written remux can **never** destroy the raw capture —
+the same rename discipline as the `.partial.webm` sink.
+
+**Known limits.**
+
+- **A second pass over the clip.** The remux reads and re-writes the whole
+  file, so it needs temporary space for one extra clip
+  (`<stem>.seekable.webm`, removed on failure) and adds roughly one read+write
+  pass to the end of a capture. It streams through the ffmpeg child: node
+  memory stays O(one chunk), so a 1.8 GB long run is bounded exactly as before.
+- **The probe is unaffected.** Probing happens before finalising, from the
+  streamed `.partial` file or the retained in-page prefix; the remux does not
+  change the decoded frames, so the probe verdict describes the delivered clip.
+- **Salvaged `.partial.webm` files are not remuxed.** A failed capture is
+  recoverable footage, not a deliverable, so it keeps whatever index Chromium
+  wrote (none). Remux one by hand if you need to scrub it:
+  `ffmpeg -i clip.partial.webm -c copy clip.webm`.
+- **No backfill.** Clips captured before this change stay unseekable; the same
+  one-line `ffmpeg -c copy` remux fixes any of them.
+
+The remux itself lives in `scripts/capture-seekable.mjs`
+(AH-0MVMIK8EM001JAYR); its hermetic tests are
+`scripts/capture-seekable.test.ts` and the real-binary verification is
+`scripts/capture-seekable.e2e.test.ts` (`/skill:test --type e2e`).
 
 ### Run-end telemetry upload cap
 
@@ -888,8 +1202,13 @@ crash where Playwright's CDP pipe transport (`pipeTransport._dispatch`) throws
 
 ```bash
 # a diagnostic soak: fixed 7-minute clip, diagnostics artefacts next to it
-npm run capture -- --diagnostics --duration 420000 --output /tmp/soak.webm
+# (write inside the repo root so a >32 MiB clip uses the streamed probe)
+npm run capture -- --diagnostics --duration 420000 --output capture-output/soak.webm
 ```
+
+Writing to `/tmp/soak.webm` instead is still supported, but that path takes the
+documented in-page fallback for a clip above 32 MiB (see
+[Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
 
 While enabled it records:
 
@@ -1205,9 +1524,10 @@ capture framing), recorded with their reason in
 [`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8).
 
 **Every gym is representable in `examples/scenes.json`.** The shipped example
-carries one scripted entry for every gym scene — all 14, including the
+carries one scripted entry for every gym scene — all 16, including the
 parameterised `GymLevel`/`GymFodderEnemies`, the boss gyms (`GymBoss`,
-`GymMiniBoss`) and the curve editor. The seven-beat excitement-curve teaser
+`GymMiniBoss`), the curve editor, the read-only `GymHangar` payload view and
+the read-only `GymHexWar` ring harness. The seven-beat excitement-curve teaser
 lives in its own file, `examples/teaserVideoScript.json`, and records the
 shipped game scene rather than a gym (AH-0MVTNTHTI0041QIF); the two files are
 kept separate so neither duplicates the other. `scripts/capture-scenes.test.ts`
@@ -1426,9 +1746,10 @@ Two config files ship with the repo, each with one purpose:
   pinned `seed` and a `playMs`/`captureMs` window, so its loadout and its
   on-camera pay-off are deterministic (AH-0MVTNTHTI0041QIF).
 - **`examples/scenes.json`** — the **gym showcase**: one scripted entry for
-  every gym scene under `src/scenes/gym/` (all 14, including the parameterised
-  `GymLevel`/`GymFodderEnemies`, the boss gyms and the curve editor), each
-  carrying a copy-paste `setup`.
+  every gym scene under `src/scenes/gym/` (all 16, including the parameterised
+  `GymLevel`/`GymFodderEnemies`, the boss gyms, the curve editor, the
+  read-only `GymHangar` payload view and the read-only `GymHexWar` ring
+  harness), each carrying a copy-paste `setup`.
 
 The teaser arc, in order:
 
@@ -1544,9 +1865,9 @@ examples/scenes.json`; `--json` reports each scene's timings and seeds
 (`Gym<Name>`), minus the two **parameterised** scenes that cannot start
 without a caller-supplied parameter:
 
-`GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymMinerals`,
-`GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`, `GymPowerUpsCombat`,
-`GymPowerUpsUtility`, `GymWeaponLeveling`, `GymWeapons`.
+`GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymHangar`,
+`GymHexWar`, `GymMinerals`, `GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`,
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymWeaponLeveling`, `GymWeapons`.
 
 `GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
 setup) are **rejected** with `unsupported-target` when no setup is supplied;
@@ -1559,6 +1880,36 @@ asserts that partition against the gym files on disk. The registry is the
 **single source of truth** shared by the CLI's pre-boot validation and the
 page-side director's `start(key)` guard, so adding or removing a gym scene
 without updating it fails the suite instead of silently drifting.
+
+#### Hangar-war gym scenes
+
+`GymHangar` and `GymHexWar` are the two watchable scenes of the Hangar War
+(GDD §8.1/§8.2). Both are **read-only** views of shipped code — they render the
+same model/renderer pair the game's screens render and own no rule of their own,
+so a capture shows exactly what a player sees:
+
+- **`GymHangar`** — the hangar screen. It calls the game's own
+  `buildHangarScreenModel` + `renderHangarScreen`
+  (`src/scenes/hangarWar/hangarScreen.ts`) against an injected hangar-war
+  payload: banked minerals and cores, ring progress, the unlock tree
+  (cost/owned/gated) and the hull / starting-weapon / modifier deployment
+  selector with its `▶ DEPLOY` row. No handlers are attached, so a purchase
+  cannot be triggered from the gym.
+- **`GymHexWar`** — the hex ring. It renders the shipped hex map
+  (`buildHexMapModel` + `renderHexMap`) — the hangar at the centre, the ring
+  around it and every hex's known-ahead intel — and, with `{ "view":
+  "report" }` (or the `showDefenceReport()` control surface), the shipped
+  **defence report** (`buildDefenceReport` + `renderDefenceReport`) built from
+the **shipped** frontier tick's record (`runFrontierTick`). Its control surface
+drives `take hex → leave bot → tick` through the documented deterministic
+harness double (`src/core/hangarWar/fakeFrontierClock.ts`), so a capture can
+show a hold, a fall and the report without simulating a battle.
+
+Both scenes consume the shared capture `setup` seam as a documented no-op (they
+have no player) and use `setup.seed` for their deterministic sample payload; a
+supplied `payload` wins. They are listed in `WATCHABLE_GYM_SCENE_KEYS`, carry
+current rows in [`docs/GYM_PARITY.md`](../GYM_PARITY.md#hangar-war-rows-ah-0mvuxcc5j0028ogq)
+and their parity is pinned by `src/scenes/core/gymParityDocs.test.ts`.
 
 ### Validation (before anything boots)
 
@@ -1762,7 +2113,9 @@ records the game's own **attract/demo mode** — the survival-first bot in
 external input. The capture only starts the demo (Tab → Enter on **Watch
 Demo**) and records it. `resolveCaptureMode` / `captureStartKeys` in
 `scripts/capture-gameplay.mjs` select this path (default) versus the scripted
-fallback. This is the higher-quality clip and exercises the same code that
+fallback; `planScenarioLaunch` additionally selects the per-kind dev-scenario
+lifecycle (jump vs bot-flown promo) when `--scenario` is used. This is the
+higher-quality clip and exercises the same code that
 ships.
 
 **Fallback: the scripted sweep plan.** `scripts/capture-bot.mjs` owns the
@@ -1972,10 +2325,17 @@ separately.
 ### No MP4 output (ffmpeg)
 
 Capture writes **WebM only**. Playwright's bundled ffmpeg is a minimal build
-(VP8 only, no VP9/H.264 encoder), so it cannot transcode VP9 or extract
-frames, and the capture path never invokes a system ffmpeg. The **audio tap**
-deliberately needs no full `ffmpeg`: the game's Opus track is muxed in-browser
-by `MediaRecorder`.
+(no VP9/H.264 *encoder*), so it cannot transcode or extract frames, and the
+capture path never requires a system ffmpeg. The **audio tap** deliberately
+needs no full `ffmpeg`: the game's Opus track is muxed in-browser by
+`MediaRecorder`.
+
+The one place capture invokes an ffmpeg is the **packet-preserving
+seek-index remux** that makes the delivered WebM seekable — `-c copy` only, no
+encoder, no transcode (see
+[Seekable output](#seekable-output-fast-forward-and-scrubbing)). It prefers
+the Playwright-bundled binary and degrades to delivering the unseekable clip
+with a warning, so `npm run capture` still works with no ffmpeg at all.
 
 A full `ffmpeg` is required only by the **promo compiler**
 (`npm run compile:promo`, see
@@ -2008,7 +2368,9 @@ knowing before a soak:
   [Long-run memory budget and failure salvage](#long-run-memory-budget-and-failure-salvage)).
   The price is that the page can only reconstruct the **head** of a long clip;
   that is why a clip above the threshold is probed by reading the written file
-  back over HTTP ([Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
+  back over HTTP when the output is inside the served repository root — an
+  outside-root output falls back to the in-page prefix probe
+  ([Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
 - **Caps are overflow defences, not tuning knobs.** `MAX_CAPTURE_CHUNK_BYTES`
   (16 MiB), the 32 MiB prefix budget and the 8 MiB telemetry-upload cap all sit
   far below V8's 512 MiB string limit so no single CDP message can approach it.
@@ -2020,6 +2382,11 @@ knowing before a soak:
   fraction of a second at the tail, so it is recovered footage rather than a
   capture result (see
   [Failure and salvage of streamed bytes](#failure-and-salvage-of-streamed-bytes)).
+- **The remux needs disk, not memory.** Making a delivered clip seekable is a
+  second `-c copy` pass through ffmpeg into `<stem>.seekable.webm` (renamed
+  over the clip once verified), so a long run needs temporary disk space for
+  one extra clip but never extra node memory (see
+  [Seekable output](#seekable-output-fast-forward-and-scrubbing)).
 - **The probe is bounded too.** Audio peak/RMS for a streamed clip is measured
   from a 32 MiB prefix and reported as such (`audioProbeBytes` /
   `audioProbeCapped`), so a long clip's audio verdict describes its opening, not
@@ -2095,12 +2462,18 @@ full`) or `npm run build`.
 | `scripts/capture-scenes.test.ts` | Hermetic tests for config validation, the scene/fade plan, the payload, fade-sample verification and the watchable-scene registry |
 | `src/core/captureDirector.ts` | Dev-gated `window.__aiHellCaptureDirector` in-page scene director (key validation shared with the CLI, no navigation); inert in production |
 | `src/core/captureDirector.test.ts` | Unit tests for the director's key validation, discovery and dev gate |
-| `scripts/capture-series.mjs` | Pure §7.2 series serialiser + §7.5 join-anchor builder + telemetry extraction (shared with the action-intensity export) |
+| `scripts/capture-scenarios.mjs` | Shared dev-capture scenario registry (single source of truth for the game resolver and the capture CLI) |
+| `scripts/capture-scenarios.d.mts` | Types for the shared scenario registry |
+| `scripts/capture-scenario-schema.mjs` | Dependency-free enriched-entry schema and validation (kinds, promo metadata, editorial vocabulary) |
+| `scripts/capture-scenario-schema.d.mts` | Types for the enriched-entry schema |
+| `scripts/promo-scenarios.mjs` | Hand-authored promo wave definitions: 12 branded promo levels keyed by `promoLevel`, built only from shipped archetypes/flags; self-validating data module |
+| `scripts/promo-scenarios.d.mts` | Types for the promo wave definitions (`PromoLevelDefinition` extends `LevelDefinition`) |
+| `scripts/promo-scenarios.test.ts` | Hermetic tests: WaveManager validation over every promo wave, archetype/formation/flag whitelists pinned to shipped content, per-seed determinism, editorial-category coverage, bare-Node import, and the authoring validator |
 | `scripts/capture-series.d.mts` | Types for the series/anchor module |
 | `scripts/compile-promo.mjs` | Promo compiler + ffmpeg driver: edit plan from the recorded series, cut cadence, deliverable sizing, manifests, output validation and pace verification |
 | `scripts/compile-promo.d.mts` | Types for the promo compiler |
 | `scripts/compile-promo.test.ts` | Hermetic tests for the plan/selection/cadence/validation logic (no ffmpeg, no browser) |
-| `scripts/compile-promo.e2e.test.ts` | Gated end-to-end smoke test that compiles synthetic footage with real `ffmpeg`/`ffprobe` (skipped when absent) |
+| `scripts/compile-promo.e2e.test.ts` | Gated end-to-end smoke test that compiles synthetic footage with real `ffmpeg`/`ffprobe` (skipped when absent); asserts per-deliverable validation, the pace band and the *expected* size-gate rejection for its deliberately short fixture |
 | `scripts/list-capture-pool.mjs` | Capture-pool inventory: retains WebM + series + anchor triples, reports excluded runs and per-run feature evidence |
 | `scripts/list-capture-pool.d.mts` | Types for the pool inventory lister |
 | `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |

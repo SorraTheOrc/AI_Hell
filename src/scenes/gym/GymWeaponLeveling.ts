@@ -40,6 +40,7 @@ import {
   type CombatEnemyEntity,
 } from '../core/CombatCoreScene';
 import { CombatScene } from '../core/CombatScene';
+import { gymBackgroundLevel } from './core/gymBackground';
 import type { SceneSetupState } from '../core/sceneSetup';
 import { Player } from '../../entities/Player';
 import { advancePlayerBullets } from '../core/bulletLifecycle';
@@ -71,6 +72,7 @@ import { RoundRobinSpawner } from '../../powerups/spawner';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 import { Mineral } from '../../entities/Mineral';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { MineralHold } from '../../core/mineralHold';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
 import {
@@ -78,6 +80,7 @@ import {
   CHOICE_POOL,
 } from '../../powerups/choice';
 import { applyMineralChoiceReward } from '../core/mineralLayer';
+import { buildOwnedLoadout } from '../../powerups/ownedLoadout';
 
 /** The weapon-drop types this gym cycles (everything except Reset). */
 const LEVELING_DROP_ORDER: readonly WeaponDropId[] = [
@@ -186,8 +189,16 @@ export class GymWeaponLeveling extends CombatScene<
     super({ key: 'GymWeaponLeveling' });
   }
 
+  /** Gym family background decision: fixed representative level, no warp. */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(data?: SceneSetupState): void {
     this.resetRunState();
+    // Shared background layer at the gym family's pinned level (see
+    // `core/gymBackground.ts`, AH-0MVSEC0J0004YNJC).
+    this._createSceneBackground();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT - 80,
@@ -208,11 +219,14 @@ export class GymWeaponLeveling extends CombatScene<
       'W,A,S,D',
     ) as WasdKeysLike | undefined;
 
-    // HUD with the per-weapon level readout wired to the live player.
-    this.hud = new HUD(this, this.effectsRegistry, {
-      showLives: false,
-      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
-    });
+    // HUD with the per-weapon level readout and the six-slot budget wired to
+    // the live player through the one shared wiring
+    // (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: false }),
+    );
     this.hud.setMineralStore(this.hold.store, this.hold.capacity);
 
     this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 18, GYM_WEAPON_LEVELING_HINT, {
@@ -386,10 +400,14 @@ export class GymWeaponLeveling extends CombatScene<
   /** Opens the hold-full choice overlay. Public test seam. */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    // The run's permanent snapshots, read once: the offer pool and the
+    // top-left owned-loadout panel must never disagree (AH-0MVCRKAPL000L68Y).
+    const weaponLevels = this.player?.getWeaponLevels() ?? [];
+    const powerUpLevels = this.player?.getPowerUpLevels() ?? [];
     this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, undefined, {
-      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      weaponLevels,
       // Offer level-ups for power-ups the player already owns (AH-0MUV5CLVO002ZHS9).
-      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      powerUpLevels,
       // Temporary stacks hold a slot; the shared gate must see them (parent
       // AH-0MVLIJT3M005HPHF, gym↔game parity).
       tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
@@ -402,6 +420,9 @@ export class GymWeaponLeveling extends CombatScene<
     this.fadeThrusterHumForHoldFull();
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Top-left permanent loadout panel, from the same permanent snapshots
+      // the offers were priced from (AH-0MVCRKAPL000L68Y · gym↔game parity).
+      ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels),
       // Reduced-volume ghost fire on the frozen beat grid, matching PlayScene
       // and the formation gym (AH-0MV55O9R5005W6J0 · gym↔game parity).
       fireSchedule: buildHoldFullFireSchedule(this.player),

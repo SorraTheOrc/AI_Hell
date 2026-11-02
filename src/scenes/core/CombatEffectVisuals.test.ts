@@ -10,6 +10,7 @@ import Phaser from 'phaser';
 
 import { SHIP_SIZE } from '../../core/constants';
 import { EffectsRegistry } from '../../powerups/effects';
+import { resolvePowerUpAtLevel } from '../../powerups/powerUpLevels';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import {
   applyPhaseGhost,
@@ -43,15 +44,9 @@ import {
   THORNS_AURA_RADIUS_FACTOR,
   THORNS_AURA_SPIKES_PER_CHARGE,
   SHIELD_BUBBLE_COLOR,
-  SHIELD_BUBBLE_ENDING_FILL_ALPHA,
-  SHIELD_BUBBLE_ENDING_SECONDS,
   SHIELD_BUBBLE_FILL_ALPHA,
   SHIELD_BUBBLE_LINE_WIDTH,
-  SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER,
-  SHIELD_BUBBLE_PULSE_RATE,
   SHIELD_BUBBLE_RADIUS_FACTOR,
-  SHIELD_BUBBLE_SHRINK_MIN_FACTOR,
-  SHIELD_BUBBLE_SHRINK_SECONDS,
   SHIELD_BUBBLE_STROKE_ALPHA,
 } from './CombatEffectVisuals';
 
@@ -130,29 +125,12 @@ function graphics(g: FakeGraphics): Phaser.GameObjects.Graphics {
 }
 
 /**
- * Minimal registry stub that reports an exact Shield remaining time, so the
- * time-based ending animation can be driven deterministically (no floating
- * point drift from ticking a real registry).
- */
-function shieldAt(remaining: number, shielded = true): EffectsRegistry {
-  return {
-    isShielded: shielded,
-    remaining: (id: string) => (id === 'shield' ? remaining : undefined),
-  } as unknown as EffectsRegistry;
-}
-
-/**
- * Minimal registry stub reporting an active Force Field with a fixed temporary
- * window (`undefined` = permanent base with no window), radius and reflect
- * budget, so the bubble visual can be driven deterministically.
- *
- * The temporary window is exposed through `powerUpTemporaryRemaining` (the
- * gate the bubble must use). `remaining('force_field')` is deliberately `0`
- * for a permanent-only field — the old draw gate — so a regression back to
- * that gate fails the permanent-persistence tests (AH-0MVRDMG0N000Y03Z).
+ * Minimal registry stub reporting an active Force Field with a shared reflect
+ * budget, so the bubble visual can be driven deterministically. The bubble's
+ * armed gate is pool/permanence (`isForceFieldActive`), never a temporary
+ * window (AH-0MVVD8TCJ004RLXP).
  */
 function forceFieldAt(
-  tempRemaining: number | undefined,
   active = true,
   radius = SHIP_SIZE * 1.8,
   budget = 3,
@@ -161,10 +139,6 @@ function forceFieldAt(
     isForceFieldActive: () => active,
     forceFieldRadius: () => radius,
     forceFieldRemaining: () => budget,
-    powerUpTemporaryRemaining: (id: string) =>
-      id === 'force_field' ? tempRemaining : undefined,
-    remaining: (id: string) =>
-      id === 'force_field' ? (tempRemaining ?? 0) : undefined,
   } as unknown as EffectsRegistry;
 }
 
@@ -178,18 +152,6 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
     expect(PHASE_GHOST_ALPHA).toBe(0.45);
   });
 
-  it('pins the ending-animation tuning surface', () => {
-    expect(SHIELD_BUBBLE_ENDING_SECONDS).toBe(1.0);
-    expect(SHIELD_BUBBLE_SHRINK_SECONDS).toBe(0.5);
-    expect(SHIELD_BUBBLE_ENDING_FILL_ALPHA).toBeGreaterThan(SHIELD_BUBBLE_FILL_ALPHA);
-    expect(SHIELD_BUBBLE_ENDING_FILL_ALPHA).toBeLessThanOrEqual(1);
-    // Below 0.5 (SHIP_SIZE / 2) so the shrinking fill reads as inside the hull.
-    expect(SHIELD_BUBBLE_SHRINK_MIN_FACTOR).toBeLessThan(0.5);
-    expect(SHIELD_BUBBLE_PULSE_RATE).toBeGreaterThan(0);
-    expect(SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER).toBeGreaterThan(0);
-    expect(SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER).toBeLessThan(1);
-  });
-
   it('draws the bubble at the shared colour/width/radius and steady fill while shielded', () => {
     const registry = new EffectsRegistry();
     registry.applyCollect('shield');
@@ -201,10 +163,10 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
     expect(g.cleared).toBe(1);
     expect(g.lineStyleCalls[0][0]).toBe(SHIELD_BUBBLE_LINE_WIDTH);
     expect(g.lineStyleCalls[0][1]).toBe(SHIELD_BUBBLE_COLOR);
-    // The rim pulses for the whole shield lifetime (operator clarification,
-    // AH-0MUAYB5HR001HDYC), so its alpha is an oscillation within bounds.
-    expect(g.lineStyleCalls[0][2]).toBeGreaterThan(0);
-    expect(g.lineStyleCalls[0][2]).toBeLessThanOrEqual(SHIELD_BUBBLE_STROKE_ALPHA);
+    // The rim is a steady bright line at the armed baseline — the timed-window
+    // countdown-driven pulse is retired with the wind-down
+    // (AH-0MVVD8TCJ004RLXP).
+    expect(g.lineStyleCalls[0][2]).toBe(SHIELD_BUBBLE_STROKE_ALPHA);
     expect(g.strokeCircleCalls).toEqual([[100, 50, SHIP_SIZE * 1.6]]);
     expect(g.fillStyleCalls).toEqual([[SHIELD_BUBBLE_COLOR, SHIELD_BUBBLE_FILL_ALPHA]]);
     expect(g.fillCircleCalls).toEqual([[100, 50, SHIP_SIZE * 1.6]]);
@@ -262,113 +224,85 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
   });
 });
 
-describe('CombatEffectVisuals — P3 shield ending animation (AH-0MUAYB5HR001HDYC)', () => {
-  it('keeps the steady fill and full radius while the rim pulses continuously above one second', () => {
-    const strokeAlphas = new Set<number>();
-    for (const remaining of [15, 12, 8, 5, 3, 2, 1.5, 1.01]) {
-      const g = new FakeGraphics();
-      const drawn = drawShieldBubble(graphics(g), { x: 10, y: 20 }, shieldAt(remaining));
+describe('CombatEffectVisuals — shield bubble armed by the charge pool (AH-0MVVD8TCJ004RLXP)', () => {
+  it('draws a steady bright rim + steady fill while a pickup holds its one charge', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('shield'); // field pickup: one charge, level-window only
+    expect(registry.isShielded).toBe(true);
 
-      expect(drawn).toBe(true);
-      expect(g.cleared).toBe(1);
-      // Fill and radius stay at their steady values outside the ending window.
-      expect(g.fillStyleCalls).toEqual([[SHIELD_BUBBLE_COLOR, SHIELD_BUBBLE_FILL_ALPHA]]);
-      expect(g.fillCircleCalls).toEqual([[10, 20, SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR]]);
-      expect(g.strokeCircleCalls).toEqual([[10, 20, SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR]]);
-      // Rim alpha stays a visible, bounded oscillation.
-      const strokeAlpha = g.lineStyleCalls[0][2];
-      expect(strokeAlpha).toBeGreaterThan(0);
-      expect(strokeAlpha).toBeLessThanOrEqual(SHIELD_BUBBLE_STROKE_ALPHA);
-      strokeAlphas.add(strokeAlpha);
-    }
-    // Continuous pulse: the rim alpha must vary across the whole lifetime.
-    expect(strokeAlphas.size).toBeGreaterThan(1);
-  });
-
-  it('pulses the rim and ramps the fill opaque during the final second', () => {
-    const strokeAlphas = new Set<number>();
-    for (let remaining = 0.95; remaining > 0; remaining -= 0.05) {
-      const g = new FakeGraphics();
-      const drawn = drawShieldBubble(graphics(g), { x: 0, y: 0 }, shieldAt(remaining));
-
-      expect(drawn).toBe(true);
-      // Fill is more opaque than the steady state (AC2).
-      expect(g.fillStyleCalls[0][1]).toBeGreaterThan(SHIELD_BUBBLE_FILL_ALPHA);
-      // Rim alpha stays a visible, bounded oscillation.
-      const strokeAlpha = g.lineStyleCalls[0][2];
-      expect(strokeAlpha).toBeGreaterThan(0);
-      expect(strokeAlpha).toBeLessThanOrEqual(SHIELD_BUBBLE_STROKE_ALPHA);
-      strokeAlphas.add(strokeAlpha);
-    }
-    // The rim pulses for the whole second, so the alpha must vary.
-    expect(strokeAlphas.size).toBeGreaterThan(1);
-  });
-
-  it('reaches the documented opaque fill alpha at expiry', () => {
     const g = new FakeGraphics();
-    drawShieldBubble(graphics(g), { x: 0, y: 0 }, shieldAt(0.001));
-    expect(g.fillStyleCalls[0][1]).toBeGreaterThan(0.59);
-  });
+    const drawn = drawShieldBubble(graphics(g), { x: 10, y: 20 }, registry);
 
-  it('shrinks the fill below the hull radius across the final half second, monotonically', () => {
-    const full = SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR;
-    const fillRadiusAt = (remaining: number): number => {
-      const g = new FakeGraphics();
-      drawShieldBubble(graphics(g), { x: 0, y: 0 }, shieldAt(remaining));
-      return g.fillCircleCalls[0][2];
-    };
-
-    // The shrink window opens at the full bubble radius.
-    expect(fillRadiusAt(SHIELD_BUBBLE_SHRINK_SECONDS)).toBeCloseTo(full, 6);
-
-    const r45 = fillRadiusAt(0.45);
-    const r25 = fillRadiusAt(0.25);
-    const r05 = fillRadiusAt(0.05);
-    expect(r45).toBeLessThan(full);
-    expect(r25).toBeLessThan(r45);
-    expect(r05).toBeLessThan(r25);
-    // By expiry the fill is inside the hull (SHIP_SIZE / 2) — reads as ineffective.
-    expect(r05).toBeLessThan(SHIP_SIZE / 2);
-    expect(r05).toBeGreaterThanOrEqual(SHIP_SIZE * SHIELD_BUBBLE_SHRINK_MIN_FACTOR - 1e-9);
-
-    // The pulsing rim keeps its full radius; only the fill shrinks.
-    const g = new FakeGraphics();
-    drawShieldBubble(graphics(g), { x: 0, y: 0 }, shieldAt(0.05));
-    expect(g.strokeCircleCalls[0][2]).toBeCloseTo(full, 6);
-  });
-
-  it('clears and draws nothing at expiry', () => {
-    const g = new FakeGraphics();
-    const drawn = drawShieldBubble(graphics(g), { x: 0, y: 0 }, shieldAt(0));
-
-    expect(drawn).toBe(false);
+    expect(drawn).toBe(true);
     expect(g.cleared).toBe(1);
-    expect(g.lineStyleCalls).toEqual([]);
-    expect(g.strokeCircleCalls).toEqual([]);
-    expect(g.fillStyleCalls).toEqual([]);
-    expect(g.fillCircleCalls).toEqual([]);
+    // The timed-window ending fade is retired: every armed state draws the
+    // same steady bright rim and translucent fill (dead-code decision
+    // recorded on AH-0MVVD8TCJ004RLXP).
+    expect(g.lineStyleCalls).toEqual([
+      [SHIELD_BUBBLE_LINE_WIDTH, SHIELD_BUBBLE_COLOR, SHIELD_BUBBLE_STROKE_ALPHA],
+    ]);
+    expect(g.strokeCircleCalls).toEqual([[10, 20, SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR]]);
+    expect(g.fillStyleCalls).toEqual([[SHIELD_BUBBLE_COLOR, SHIELD_BUBBLE_FILL_ALPHA]]);
+    expect(g.fillCircleCalls).toEqual([[10, 20, SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR]]);
   });
 
-  it('is a pure function of the remaining time (deterministic)', () => {
-    const drawAt = (remaining: number) => {
-      const g = new FakeGraphics();
-      drawShieldBubble(graphics(g), { x: 7, y: 9 }, shieldAt(remaining));
-      return {
-        lineStyle: g.lineStyleCalls,
-        stroke: g.strokeCircleCalls,
-        fillStyle: g.fillStyleCalls,
-        fill: g.fillCircleCalls,
-      };
-    };
+  it('is steady — two draws with different level-window states are identical', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('shield');
+    const a = new FakeGraphics();
+    drawShieldBubble(graphics(a), { x: 7, y: 9 }, registry);
 
-    expect(drawAt(0.37)).toEqual(drawAt(0.37));
+    // Advance the shared clock: the temporary level window counts down but
+    // the granted charge is never clawed back, so the bubble must not change.
+    registry.tick(3);
+    const b = new FakeGraphics();
+    drawShieldBubble(graphics(b), { x: 7, y: 9 }, registry);
+
+    expect(b.lineStyleCalls).toEqual(a.lineStyleCalls);
+    expect(b.fillStyleCalls).toEqual(a.fillStyleCalls);
+    expect(b.strokeCircleCalls).toEqual(a.strokeCircleCalls);
   });
 
-  it('is safe with no graphics or no player during the ending window', () => {
-    expect(drawShieldBubble(null, { x: 1, y: 2 }, shieldAt(0.2))).toBe(false);
+  it('keeps the bubble through the temporary-level TTL expiry while the charge is held', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('shield'); // pickup: one charge, level TTL 15 s
+    expect(registry.powerUpTemporaryRemaining('shield')).toBeGreaterThan(0);
+
+    // The level window expires: the temporary stack reverts but the granted
+    // charge stays — the bubble must stay up because the pool, not the level,
+    // is the arm signal (AH-0MVVD8TCJ004RLXP).
+    registry.tick((registry.powerUpTemporaryRemaining('shield') ?? 0) + 1);
+    expect(registry.powerUpTemporaryRemaining('shield')).toBeUndefined();
+    expect(registry.isShielded).toBe(true);
 
     const g = new FakeGraphics();
-    expect(drawShieldBubble(graphics(g), null, shieldAt(0.2))).toBe(false);
+    expect(drawShieldBubble(graphics(g), { x: 0, y: 0 }, registry)).toBe(true);
+    expect(g.strokeCircleCalls).toEqual([[0, 0, SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR]]);
+  });
+
+  it('pops when the last charge is spent and re-arms when a permanent shield recharges', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('shield', true); // hold-full: owned + one charge
+    expect(registry.tryAbsorbShield()).toBe(true);
+    expect(registry.isShielded).toBe(false);
+
+    const popped = new FakeGraphics();
+    expect(drawShieldBubble(graphics(popped), { x: 1, y: 2 }, registry)).toBe(false);
+    expect(popped.strokeCircleCalls).toEqual([]);
+
+    registry.tick((resolvePowerUpAtLevel('shield', 0).shieldRecharge ?? 0) + 0.1);
+    expect(registry.isShielded).toBe(true);
+    const rearmed = new FakeGraphics();
+    expect(drawShieldBubble(graphics(rearmed), { x: 1, y: 2 }, registry)).toBe(true);
+  });
+
+  it('is safe with no graphics or no player (and clears when only the player is missing)', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('shield');
+    expect(drawShieldBubble(null, { x: 1, y: 2 }, registry)).toBe(false);
+
+    const g = new FakeGraphics();
+    expect(drawShieldBubble(graphics(g), null, registry)).toBe(false);
     expect(g.cleared).toBe(1);
     expect(g.strokeCircleCalls).toEqual([]);
   });
@@ -391,7 +325,7 @@ describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF9
     const drawn = drawForceFieldBubble(
       graphics(g),
       { x: 100, y: 50 },
-      forceFieldAt(5, true, radius),
+      forceFieldAt(true, radius),
     );
 
     expect(drawn).toBe(true);
@@ -407,21 +341,10 @@ describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF9
     const drawn = drawForceFieldBubble(
       graphics(g),
       { x: 1, y: 2 },
-      forceFieldAt(5, false),
+      forceFieldAt(false),
     );
     expect(drawn).toBe(false);
     expect(g.cleared).toBe(1);
-    expect(g.pathCommands).toBe(0);
-  });
-
-  it('clears and draws nothing at temporary-window expiry (countdown 0)', () => {
-    const g = new FakeGraphics();
-    const drawn = drawForceFieldBubble(
-      graphics(g),
-      { x: 1, y: 2 },
-      forceFieldAt(0),
-    );
-    expect(drawn).toBe(false);
     expect(g.pathCommands).toBe(0);
   });
 
@@ -432,9 +355,9 @@ describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF9
     expect(FORCE_FIELD_SPENT_FILL_ALPHA).toBeLessThan(FORCE_FIELD_FILL_ALPHA);
   });
 
-  it('draws a permanent-only field (no temporary window) every frame', () => {
+  it('draws a permanent-only field every frame', () => {
     const radius = SHIP_SIZE * 1.8;
-    const registry = forceFieldAt(undefined, true, radius);
+    const registry = forceFieldAt(true, radius);
     const first = new FakeGraphics();
     const second = new FakeGraphics();
 
@@ -450,65 +373,35 @@ describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF9
     const drawn = drawForceFieldBubble(
       graphics(g),
       { x: 1, y: 2 },
-      forceFieldAt(undefined, true, SHIP_SIZE * 1.8, 0),
+      forceFieldAt(true, SHIP_SIZE * 1.8, 0),
     );
 
     expect(drawn).toBe(true);
     expect(g.cleared).toBe(1);
-    expect(g.lineStyleCalls[0]?.[2]).toBeCloseTo(FORCE_FIELD_SPENT_STROKE_ALPHA);
+    expect(g.lineStyleCalls[0]?.[2]).toBe(FORCE_FIELD_SPENT_STROKE_ALPHA);
     expect(g.fillStyleCalls[0]).toEqual([0x33ffcc, FORCE_FIELD_SPENT_FILL_ALPHA]);
 
-    // A permanent-only field has no countdown, so its pulse phase is constant:
-    // two draws are identical (never a last-second brighten).
+    // The retired timed-window ending cues mean the bubble is steady: two
+    // draws are identical (never a last-second brighten).
     const later = new FakeGraphics();
     drawForceFieldBubble(
       graphics(later),
       { x: 1, y: 2 },
-      forceFieldAt(undefined, true, SHIP_SIZE * 1.8, 0),
+      forceFieldAt(true, SHIP_SIZE * 1.8, 0),
     );
     expect(later.lineStyleCalls).toEqual(g.lineStyleCalls);
     expect(later.fillStyleCalls).toEqual(g.fillStyleCalls);
   });
 
-  it('dims a spent temporary field but keeps its final-second brighten on the spent baseline', () => {
-    const steady = new FakeGraphics();
-    drawForceFieldBubble(
-      graphics(steady),
-      { x: 1, y: 2 },
-      forceFieldAt(3, true, SHIP_SIZE * 1.8, 0),
-    );
-    const ending = new FakeGraphics();
-    drawForceFieldBubble(
-      graphics(ending),
-      { x: 1, y: 2 },
-      forceFieldAt(0.5, true, SHIP_SIZE * 1.8, 0),
-    );
-
-    expect(steady.fillStyleCalls[0]).toEqual([0x33ffcc, FORCE_FIELD_SPENT_FILL_ALPHA]);
-    expect(ending.fillStyleCalls[0][1]).toBeGreaterThan(FORCE_FIELD_SPENT_FILL_ALPHA);
-  });
-
-  it('keeps the active temporary-window brighten on the active baseline', () => {
-    const g = new FakeGraphics();
-    drawForceFieldBubble(
-      graphics(g),
-      { x: 1, y: 2 },
-      forceFieldAt(0.5, true, SHIP_SIZE * 1.8, 3),
-    );
-
-    expect(g.fillStyleCalls[0][0]).toBe(0x33ffcc);
-    expect(g.fillStyleCalls[0][1]).toBeGreaterThan(FORCE_FIELD_FILL_ALPHA);
-  });
-
-  it('keeps a real permanent field drawn after a temp window on top of it expires', () => {
+  it('keeps a real permanent field drawn after its temporary level window expires', () => {
     const registry = new EffectsRegistry();
     registry.applyCollect('force_field', true); // hold-full reward
-    registry.applyCollect('force_field'); // field pickup opens a temp window
+    registry.applyCollect('force_field'); // field pickup: one charge + level window
     expect(registry.powerUpTemporaryRemaining('force_field')).toBeGreaterThan(0);
 
-    // The window expires back to the permanent base: still active, but the
-    // temporary-window accessor reads `undefined` again (effects.test.ts pins
-    // the store side; this pins the draw gate on top of it).
+    // The level window expires but the granted charge is never clawed back,
+    // so the field stays armed and the bubble keeps drawing — the arm signal
+    // is the pool/permanence, never the countdown (AH-0MVVD8TCJ004RLXP).
     registry.tick((registry.powerUpTemporaryRemaining('force_field') ?? 0) + 0.1);
     expect(registry.isForceFieldActive()).toBe(true);
     expect(registry.powerUpTemporaryRemaining('force_field')).toBeUndefined();
@@ -532,10 +425,33 @@ describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF9
     expect(g.fillStyleCalls[0]).toEqual([0x33ffcc, FORCE_FIELD_SPENT_FILL_ALPHA]);
   });
 
+  it('draws a steady bright bubble while a pickup holds its one charge and pops on the last spend', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('force_field'); // pickup: one charge, level-window only
+    expect(registry.isForceFieldActive()).toBe(true);
+    expect(registry.forceFieldRemaining()).toBe(1);
+
+    const armed = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(armed), { x: 0, y: 0 }, registry)).toBe(true);
+    expect(armed.lineStyleCalls[0][2]).toBe(FORCE_FIELD_STROKE_ALPHA);
+    expect(armed.fillStyleCalls[0]).toEqual([0x33ffcc, FORCE_FIELD_FILL_ALPHA]);
+
+    // One reflected bullet spends the pickup's only charge. A pickup-only
+    // field is NOT owned, so `isForceFieldActive` turns false and the bubble
+    // pops — reconciling the spent-dim rule with "armed means holds a charge"
+    // (AH-0MVVD8TCJ004RLXP).
+    expect(registry.tryConsumeForceFieldReflect()).toBe(true);
+    expect(registry.isForceFieldActive()).toBe(false);
+
+    const popped = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(popped), { x: 0, y: 0 }, registry)).toBe(false);
+    expect(popped.pathCommands).toBe(0);
+  });
+
   it('is safe with no graphics or no player (and clears when only the player is missing)', () => {
-    expect(drawForceFieldBubble(null, { x: 1, y: 2 }, forceFieldAt(5))).toBe(false);
+    expect(drawForceFieldBubble(null, { x: 1, y: 2 }, forceFieldAt(true))).toBe(false);
     const g = new FakeGraphics();
-    expect(drawForceFieldBubble(graphics(g), null, forceFieldAt(5))).toBe(false);
+    expect(drawForceFieldBubble(graphics(g), null, forceFieldAt(true))).toBe(false);
     expect(g.cleared).toBe(1);
   });
 });
@@ -573,6 +489,8 @@ describe('CombatEffectVisuals — Thorn Field aura (AH-0MVJ8YKR70096C6T)', () =>
 
   it('scales the spike count with the remaining ram budget', () => {
     const full = new EffectsRegistry();
+    // Two hold-full grants fill the level-0 pool (cap 2).
+    full.applyCollect('thorns', true);
     full.applyCollect('thorns', true);
     const gFull = new FakeGraphics();
     drawThornsAura(graphics(gFull), { x: 0, y: 0 }, full);
@@ -638,6 +556,29 @@ describe('CombatEffectVisuals — Thorn Field aura (AH-0MVJ8YKR70096C6T)', () =>
     const g = new FakeGraphics();
     expect(drawThornsAura(graphics(g), null, registry)).toBe(false);
     expect(g.cleared).toBe(1);
+  });
+
+  it('draws a pickup aura while its charge is held, through the level-TTL expiry, and pops on the last free ram', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('thorns'); // pickup: one charge, level-window only
+    expect(registry.hasThornsRam()).toBe(true);
+
+    // The level window expires but the charge is never clawed back: the aura
+    // stays up because the pool, not the level, is the arm signal.
+    registry.tick((registry.powerUpTemporaryRemaining('thorns') ?? 0) + 1);
+    expect(registry.powerUpTemporaryRemaining('thorns')).toBeUndefined();
+    expect(registry.hasThornsRam()).toBe(true);
+
+    const armed = new FakeGraphics();
+    expect(drawThornsAura(graphics(armed), { x: 10, y: 20 }, registry)).toBe(true);
+    expect(armed.pathCommands).toBeGreaterThan(0);
+
+    // The last free ram spends the pickup's one charge: the aura pops.
+    expect(registry.tryConsumeThornsRam()).toBe(true);
+    expect(registry.hasThornsRam()).toBe(false);
+    const popped = new FakeGraphics();
+    expect(drawThornsAura(graphics(popped), { x: 10, y: 20 }, registry)).toBe(false);
+    expect(popped.pathCommands).toBe(0);
   });
 });
 
@@ -779,5 +720,111 @@ describe('CombatEffectVisuals — enemy force-field break flash (AH-0MVM8GW7W004
     (config.onComplete as () => void)();
     expect(registry).not.toContain(flash);
     expect(flash.active).toBe(false);
+  });
+});
+
+// ── Permanent consumable charge visuals (AH-0MVUXH3X60078QR3,  F6) ──
+//
+// A permanently-owned consumable (hold-full reward) is armed only while its
+// shared charge pool holds a charge (parent AH-0MVTQMREN009DSFW AC1/AC3).
+// These tests pin the armed/empty rendering for the three kinds with an
+// in-world look (Shield bubble, Thorn aura, Force Field bubble): an empty
+// permanent pool must never render an always-on armed visual, and the look
+// must return when the charge regenerates through the shared tick.
+
+describe('CombatEffectVisuals — permanent consumable charge visuals (AH-0MVUXH3X60078QR3)', () => {
+  it('draws the Shield bubble while a permanent Shield holds a charge, clears when spent, and returns on recharge', () => {
+    const registry = new EffectsRegistry();
+    const player = { x: 100, y: 50 };
+
+    // A hold-full reward adds exactly one charge and never levels (parent
+    // AC1): the shield is armed only while that pool is non-empty.
+    registry.applyCollect('shield', true);
+    expect(registry.consumableCharges('shield')).toBe(1);
+
+    const armed = new FakeGraphics();
+    expect(drawShieldBubble(graphics(armed), player, registry)).toBe(true);
+    expect(armed.strokeCircleCalls).toEqual([[100, 50, SHIP_SIZE * 1.6]]);
+
+    // One absorbed hit spends the charge: an empty permanent pool renders no
+    // always-on armed bubble (AC4).
+    expect(registry.tryAbsorbShield()).toBe(true);
+    expect(registry.consumableCharges('shield')).toBe(0);
+
+    const empty = new FakeGraphics();
+    expect(drawShieldBubble(graphics(empty), player, registry)).toBe(false);
+    expect(empty.lineStyleCalls).toEqual([]);
+    expect(empty.strokeCircleCalls).toEqual([]);
+
+    // The charge regenerates on the level-derived interval through the shared
+    // tick, and the armed visual returns with it (AC4).
+    registry.tick((resolvePowerUpAtLevel('shield', 0).shieldRecharge ?? 0) + 0.1);
+    expect(registry.consumableCharges('shield')).toBe(1);
+
+    const rearmed = new FakeGraphics();
+    expect(drawShieldBubble(graphics(rearmed), player, registry)).toBe(true);
+    expect(rearmed.strokeCircleCalls).toEqual([[100, 50, SHIP_SIZE * 1.6]]);
+  });
+
+  it('draws the Thorn aura only while a permanent field holds charges and returns on recharge', () => {
+    const registry = new EffectsRegistry();
+    // Two hold-full grants fill the level-0 pool (cap 2).
+    registry.applyCollect('thorns', true);
+    registry.applyCollect('thorns', true);
+    expect(registry.thornsRemaining()).toBe(2);
+
+    const armed = new FakeGraphics();
+    expect(drawThornsAura(graphics(armed), { x: 10, y: 20 }, registry)).toBe(true);
+    expect(armed.pathCommands).toBeGreaterThan(0);
+
+    // Two free rams spend the pool: the aura must clear (no always-on halo).
+    expect(registry.tryConsumeThornsRam()).toBe(true);
+    expect(registry.tryConsumeThornsRam()).toBe(true);
+    expect(registry.thornsRemaining()).toBe(0);
+
+    const empty = new FakeGraphics();
+    expect(drawThornsAura(graphics(empty), { x: 10, y: 20 }, registry)).toBe(false);
+    expect(empty.pathCommands).toBe(0);
+
+    registry.tick((resolvePowerUpAtLevel('thorns', 0).thornsRecharge ?? 0) + 0.1);
+    // Both spent charges owned a timer of the same interval, so both elapse
+    // together and the pool returns to the full cap in one cycle (per-charge
+    // regeneration, parent AC2): the aura re-arms with the full halo.
+    expect(registry.thornsRemaining()).toBe(2);
+    const rearmed = new FakeGraphics();
+    expect(drawThornsAura(graphics(rearmed), { x: 10, y: 20 }, registry)).toBe(true);
+    expect(rearmed.pathCommands).toBeGreaterThan(0);
+  });
+
+  it('dims the Force Field bubble while a permanent field is empty and re-arms when a charge returns', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('force_field', true);
+    expect(registry.isForceFieldActive()).toBe(true);
+    expect(registry.consumableCharges('force_field')).toBe(1);
+
+    const armed = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(armed), { x: 0, y: 0 }, registry)).toBe(true);
+    // Bright (armed) baseline.
+    expect(armed.lineStyleCalls[0][2]).toBe(FORCE_FIELD_STROKE_ALPHA);
+    expect(armed.fillStyleCalls[0][1]).toBe(FORCE_FIELD_FILL_ALPHA);
+
+    // One reflected bullet spends the charge: the bubble stays up but dims
+    // (Q1 = b — a spent permanent field reads as inert, never as gone).
+    expect(registry.tryConsumeForceFieldReflect()).toBe(true);
+    expect(registry.consumableCharges('force_field')).toBe(0);
+
+    const empty = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(empty), { x: 0, y: 0 }, registry)).toBe(true);
+    expect(empty.lineStyleCalls[0][2]).toBe(FORCE_FIELD_SPENT_STROKE_ALPHA);
+    expect(empty.fillStyleCalls[0][1]).toBe(FORCE_FIELD_SPENT_FILL_ALPHA);
+
+    // The charge regenerates on the level-derived interval: the bubble
+    // brightens back to its armed baseline (AC4 re-arm).
+    registry.tick((resolvePowerUpAtLevel('force_field', 0).forceFieldRecharge ?? 0) + 0.1);
+    expect(registry.consumableCharges('force_field')).toBe(1);
+    const rearmed = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(rearmed), { x: 0, y: 0 }, registry)).toBe(true);
+    expect(rearmed.lineStyleCalls[0][2]).toBe(FORCE_FIELD_STROKE_ALPHA);
+    expect(rearmed.fillStyleCalls[0][1]).toBe(FORCE_FIELD_FILL_ALPHA);
   });
 });

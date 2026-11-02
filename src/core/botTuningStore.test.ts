@@ -45,17 +45,18 @@ describe('bot tuning store (AH-0MV4D7LAD009XYR0)', () => {
     window.localStorage.clear();
   });
 
-  it('starts with only the built-in Default configuration selected', () => {
-    expect(listBotTuningNames()).toEqual([DEFAULT_BOT_TUNING_NAME]);
+  it('starts from the bundled baseline with Default selected', () => {
+    expect(listBotTuningNames()).toContain(DEFAULT_BOT_TUNING_NAME);
     expect(getCurrentBotTuningName()).toBe(DEFAULT_BOT_TUNING_NAME);
     expect(getCurrentBotTuningConfig().values.competent).toBeTypeOf('object');
   });
 
   it('Save overwrites the current configuration', () => {
+    const namesBeforeSave = listBotTuningNames();
     saveBotTuningCurrent(markedValues(321));
     expect(getBotTuningConfig(DEFAULT_BOT_TUNING_NAME)?.values.competent['mineralSeekRange']).toBe(321);
-    // Still exactly one configuration: Save does not create a new one.
-    expect(listBotTuningNames()).toEqual([DEFAULT_BOT_TUNING_NAME]);
+    // Save does not create a new configuration; the set is unchanged.
+    expect(listBotTuningNames()).toEqual(namesBeforeSave);
   });
 
   it('Save As creates a named configuration and makes it current', () => {
@@ -92,11 +93,12 @@ describe('bot tuning store (AH-0MV4D7LAD009XYR0)', () => {
     ).toBe(555);
   });
 
-  it('falls back to Default when the persisted blob is corrupt', async () => {
+  it('falls back to the bundled baseline when the persisted blob is corrupt', async () => {
     window.localStorage.setItem(BOT_TUNING_STORAGE_KEY, '{ this is not json');
     const fresh = await loadFreshStore();
     expect(fresh.getCurrentBotTuningName()).toBe(DEFAULT_BOT_TUNING_NAME);
-    expect(fresh.listBotTuningNames()).toEqual([DEFAULT_BOT_TUNING_NAME]);
+    const baseline = JSON.parse(bundledBotTuningJson) as BotTuningState;
+    expect(fresh.listBotTuningNames()).toEqual(baseline.configs.map((c) => c.name));
   });
 
   it('falls back to Default when the schema version is unknown', async () => {
@@ -181,6 +183,28 @@ describe('bot tuning store — bundled baseline fallback (AH-0MV9GZD2C005IIU3)',
     // The currently-selected config carries the bundled values.
     const expected = baseline.configs.find((c) => c.name === baseline.current)!;
     expect(fresh.getCurrentBotTuningConfig().values).toEqual(expected.values);
+  });
+
+  it('AC3 — serves every curated promo preset by name (AH-0MVSDM5T1007KBB8)', async () => {
+    const fresh = await loadFreshStore();
+    const baseline = bundledBaselineState();
+    const presetNames = baseline.configs
+      .map((config) => config.name)
+      .filter((name) => name !== DEFAULT_BOT_TUNING_NAME);
+    // The curated promo preset catalogue ships with the baseline.
+    expect(presetNames.length).toBeGreaterThanOrEqual(4);
+    for (const name of presetNames) {
+      const config = fresh.getBotTuningConfig(name);
+      expect(config?.name, `missing bundled preset "${name}"`).toBe(name);
+      // The store serves fully coerced values, so a sparse authored preset is
+      // complete by the time a scenario applies it.
+      expect(config?.values.competent).toBeTypeOf('object');
+      expect(config?.values.human).toBeTypeOf('object');
+    }
+    // A preset is loadable/selectable through the same path a scenario uses,
+    // and selecting one does not disturb the localStorage → bundled priority.
+    expect(fresh.selectBotTuning(presetNames[0])?.name).toBe(presetNames[0]);
+    expect(fresh.getCurrentBotTuningName()).toBe(presetNames[0]);
   });
 
   it('AC2 — a saved localStorage selection wins locally over the bundled baseline', async () => {

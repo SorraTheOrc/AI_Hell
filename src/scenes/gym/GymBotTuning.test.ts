@@ -342,6 +342,66 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     expect(input.value).toBe('750');
   });
 
+  // ── Level restart seam (AH-0MVWOERDM000YZN0) ─────────────────────
+
+  /** A one-wave level probe that completes as soon as its enemies are gone. */
+  const singleWaveProbe = {
+    level: 10,
+    name: 'Single-wave probe',
+    waves: [
+      {
+        groups: [
+          {
+            enemyKey: 'scout' as const,
+            formation: 'v' as const,
+            count: 1,
+            spacingX: 30,
+            spacingY: 26,
+            startX: 200,
+            startY: 150,
+          },
+        ],
+        shootEnabled: false,
+      },
+    ],
+  };
+
+  /** Clears the probe level and returns once the scene reports completion. */
+  function completeLevel(scene: GymBotTuning): void {
+    scene.getEnemies().forEach((enemy) => enemy.destroySelf());
+    scene.tick(0.016);
+    expect(scene.isLevelComplete(), 'probe level completed').toBe(true);
+  }
+
+  it('AC — a completed level restarts a fresh random level, and the seam suppresses that', async () => {
+    // Default behaviour: the completion dwell elapses and a fresh random level
+    // starts (a restarted level re-resolves its supply cadence from its own
+    // level curve — the reason the parity probe must be able to pin it).
+    const restarting = await bootTuning({ seed: 555, level: singleWaveProbe });
+    const levelCadence = restarting.getDropSpawnInterval();
+    completeLevel(restarting);
+    for (let i = 0; i < 8; i += 1) restarting.tick(0.25); // 2 s > 1.2 s dwell
+    expect(restarting.isLevelComplete(), 'default restart happened').toBe(
+      false,
+    );
+    // The fresh level is a generated level 1, so its cadence is re-resolved.
+    expect(
+      restarting.getDropSpawnInterval(),
+      'restart re-resolves the cadence',
+    ).not.toBeCloseTo(levelCadence, 6);
+
+    // With the seam off the completed level stays on the field, so the level's
+    // resolved cadence (and everything else the scene resolved for it)
+    // survives an observation window longer than the restart dwell.
+    const held = await bootTuning({ seed: 555, level: singleWaveProbe });
+    expect(held.getDropSpawnInterval()).toBeCloseTo(levelCadence, 6);
+    held.setLevelRestartEnabled(false);
+    completeLevel(held);
+    for (let i = 0; i < 8; i += 1) held.tick(0.25);
+    expect(held.isLevelComplete(), 'seam suppressed the restart').toBe(true);
+    expect(held.getDropSpawnInterval()).toBeCloseTo(levelCadence, 6);
+  });
+
   // ── AC11 — shared supply layer (producer-audit fix) ─────────────
 
   it('seeds the shared mineral field and exposes the live supplies to the bot snapshot', async () => {

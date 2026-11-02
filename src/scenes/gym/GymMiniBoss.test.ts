@@ -9,10 +9,12 @@
  *  - config-summoned minions join the shared collision pass.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import Phaser from 'phaser';
+
+import * as effectsModule from '../../audio/effects';
 
 import {
   advanceGame,
@@ -280,6 +282,23 @@ describe('GymMiniBoss — config-driven mini-boss gym (AH-0MVCRAYSH0014BQJ)', ()
       // No second sweep is armed and the captured targets are unchanged.
       expect(scene.isMiniBossSweepActive()).toBe(false);
       expect(scene.getMiniBossSweepTargets()).toEqual(targetsAfterFirst);
+    });
+
+    it('plays the sweep explosion SFX (same shared cue routing as the game)', async () => {
+      const scene = await bootMinionGym();
+      const destruction = vi.spyOn(effectsModule, 'playDestructionSound');
+      const bossDestruction = vi.spyOn(effectsModule, 'playBossDestructionSound');
+
+      scene.explodeRandom();
+
+      // Parity with PlayScene: every swept burst schedules a cue, and the
+      // finale pairs use the boss-destruction boom — the gym never runs a
+      // silent copy of the display.
+      expect(destruction.mock.calls.length).toBeGreaterThan(0);
+      const scheduledBossBooms = bossDestruction.mock.calls.filter(
+        ([options]) => (options?.delay ?? 0) > 0,
+      );
+      expect(scheduledBossBooms).toHaveLength(20);
     });
 
   });

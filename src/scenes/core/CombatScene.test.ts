@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
+import * as bulletImpactModule from '../../vfx/bulletImpact';
+import * as muzzleFlashModule from '../../vfx/muzzleFlash';
 import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import {
   FORCE_FIELD_COLOR,
@@ -24,6 +26,7 @@ import { isOnGrid } from '../../utils/beat';
 import {
   WEAPON_BULLET_LIFETIME,
   WEAPON_CATALOGUE,
+  BULLET_COLORS,
   OPTIONS_MAX_PODS,
   OPTIONS_ORBIT_RADIUS,
   OPTIONS_POD_BULLET_SPEED,
@@ -1133,6 +1136,344 @@ describe('CombatScene — shared combat core hook contract', () => {
 
     expect(enemy.alive).toBe(false);
     expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  // ── Railgun impact feedback (AH-0MVMIGVCE004VSNA) ────────────────
+
+  it('AH-0MVMIGVCE004VSNA — an auto-fired railgun bullet carries the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('railgun');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.railgun);
+    expect(shot).toBeDefined();
+    // The shared core copied the weapon's declared impact feedback onto the
+    // shot, so the connect routes through the shared seam with no per-scene
+    // code.
+    expect(shot!.impactFx).toEqual(WEAPON_CATALOGUE.railgun.impactFx);
+  });
+
+  it('AH-0MVQ6C1YL003HU9K — an auto-fired railgun spawns its launch flash through the shared core path', async () => {
+    const scene = await boot();
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('railgun');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    // `_autoFire` spawns the muzzle flash from the weapon's `muzzleFlash`
+    // metadata through the one shared spawn path, so the game, GymWeapons and
+    // GymWeaponLeveling all show the identical sky-blue launch cue with no
+    // per-scene code.
+    expect(flash).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.railgun,
+        radius: WEAPON_CATALOGUE.railgun.muzzleFlash!.radius,
+        duration: WEAPON_CATALOGUE.railgun.muzzleFlash!.duration,
+      }),
+    );
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  it('AH-0MVMIGVCE004VSNA — a railgun connect plays its baked hit cue and sky-blue impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = { ...WEAPON_CATALOGUE.railgun.impactFx! };
+
+    scene.runCollisions();
+
+    // The connect is audible (baked hit cue) and colour-matched to the sky
+    // blue tracer instead of the generic warm-white fallback flash.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playRailgunImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ color: BULLET_COLORS.railgun }),
+    );
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  // ── Shard Swarm impact feedback (AH-0MVV0WMTE0007NGS) ─────────────
+
+  it('AH-0MVV0WMTE0007NGS — an auto-fired shard swarm bullet carries the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('shard_swarm');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.shard_swarm);
+    expect(shot).toBeDefined();
+    // Every shard in the five-way fan carries the declared lime impact
+    // feedback, so each connect routes through the shared seam with no
+    // per-scene code.
+    expect(shot!.impactFx).toEqual(WEAPON_CATALOGUE.shard_swarm.impactFx);
+  });
+
+  it('AH-0MVV0WMTE0007NGS — a shard swarm connect plays its baked hit cue and lime impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('shard_swarm');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    // Drive a real auto-fired shard into an enemy. Keep one bullet from the
+    // fan so the connect count is unambiguous; the five-in-one-frame case is
+    // bounded by the shipped cue voice limiter, not by a new throttle.
+    const bullets = scene.getPlayerBullets();
+    const shot = bullets.find(
+      (b) => b.color === BULLET_COLORS.shard_swarm,
+    );
+    expect(shot).toBeDefined();
+    for (let i = bullets.length - 1; i >= 0; i -= 1) {
+      if (bullets[i] !== shot) bullets.splice(i, 1);
+    }
+    const enemy = new ToughStubEnemy(scene, shot!.x, shot!.y, 10, 3);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    // The connect is audible through the Shard Swarm's baked cue and
+    // colour-matched to the lime shards — the generic warm-white 0xfff2a0
+    // fallback flash no longer applies to this weapon.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playShardSwarmImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.shard_swarm,
+        radius: WEAPON_CATALOGUE.shard_swarm.impactFx!.radius,
+        duration: WEAPON_CATALOGUE.shard_swarm.impactFx!.duration,
+      }),
+    );
+    expect(impact.mock.calls[0][3]).not.toMatchObject({ color: 0xfff2a0 });
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  // ── Rear Guard impact feedback (AH-0MVV0WN96007TU9J) ──────────────
+
+  it('AH-0MVV0WN96007TU9J — an auto-fired rear guard pellet carries the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('rear_guard');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    // The Rear Guard fires backwards, so the pellet sits behind the ship —
+    // located by its rose colour, not a direction assumption.
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.rear_guard);
+    expect(shot).toBeDefined();
+    // The pellet carries the declared rose impact feedback, so its connect
+    // routes through the shared seam with no per-scene code.
+    expect(shot!.impactFx).toEqual(WEAPON_CATALOGUE.rear_guard.impactFx);
+  });
+
+  it('AH-0MVV0WN96007TU9J — a rear guard connect plays its baked pop cue and rose impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('rear_guard');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.rear_guard);
+    expect(shot).toBeDefined();
+    // Keep one pellet so the connect count is unambiguous — comparable shots
+    // may spawn at the same place and also overlap the stub enemy.
+    const pellets = scene.getPlayerBullets();
+    for (let i = pellets.length - 1; i >= 0; i -= 1) {
+      if (pellets[i] !== shot) pellets.splice(i, 1);
+    }
+    const enemy = new ToughStubEnemy(scene, shot!.x, shot!.y, 10, 3);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    // The connect is audible through the Rear Guard's baked pop cue and
+    // colour-matched to the rose pellet — the generic warm-white 0xfff2a0
+    // fallback flash no longer applies to this weapon.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playRearGuardImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.rear_guard,
+        radius: WEAPON_CATALOGUE.rear_guard.impactFx!.radius,
+        duration: WEAPON_CATALOGUE.rear_guard.impactFx!.duration,
+      }),
+    );
+    expect(impact.mock.calls[0][3]).not.toMatchObject({ color: 0xfff2a0 });
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  // ── Broadside impact feedback (AH-0MVV0WNOX0078G9G) ──────────────
+
+  it('AH-0MVV0WNOX0078G9G — auto-fired broadside darts carry the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('broadside');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    // Both perpendicular darts carry the declared teal impact feedback, so a
+    // connect on either side routes through the shared seam with no per-scene
+    // code.
+    const darts = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.broadside);
+    expect(darts).toHaveLength(2);
+    for (const dart of darts) {
+      expect(dart.impactFx).toEqual(WEAPON_CATALOGUE.broadside.impactFx);
+    }
+  });
+
+  it('AH-0MVV0WNOX0078G9G — a broadside connect plays its baked dart tick and teal impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('broadside');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.broadside);
+    expect(shot).toBeDefined();
+    // Keep one dart so the connect count is unambiguous — the other dart of
+    // the pair may spawn nearby and also overlap the stub enemy.
+    const darts = scene.getPlayerBullets();
+    for (let i = darts.length - 1; i >= 0; i -= 1) {
+      if (darts[i] !== shot) darts.splice(i, 1);
+    }
+    const enemy = new ToughStubEnemy(scene, shot!.x, shot!.y, 10, 3);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    // The connect is audible through the Broadside's baked dart tick and
+    // colour-matched to the teal dart — the generic warm-white 0xfff2a0
+    // fallback flash no longer applies to this weapon.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playBroadsideImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.broadside,
+        radius: WEAPON_CATALOGUE.broadside.impactFx!.radius,
+        duration: WEAPON_CATALOGUE.broadside.impactFx!.duration,
+      }),
+    );
+    expect(impact.mock.calls[0][3]).not.toMatchObject({ color: 0xfff2a0 });
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  // ── Heavy Slug impact feedback (AH-0MVV0WO4M001KEDG) ──────────────
+
+  it('AH-0MVV0WO4M001KEDG — auto-fired heavy slugs carry the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('heavy_slug');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    // The single forward shell carries the declared deep-red impact feedback,
+    // so a connect routes through the shared seam with no per-scene code.
+    const slugs = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.heavy_slug);
+    expect(slugs.length).toBeGreaterThan(0);
+    for (const slug of slugs) {
+      expect(slug.impactFx).toEqual(WEAPON_CATALOGUE.heavy_slug.impactFx);
+    }
+  });
+
+  it('AH-0MVV0WO4M001KEDG — a heavy slug connect plays its baked thud and deep-red impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('heavy_slug');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.heavy_slug);
+    expect(shot).toBeDefined();
+    // Keep one slug so the connect count is unambiguous — the cannon may also
+    // have spawned a bullet nearby.
+    const slugs = scene.getPlayerBullets();
+    for (let i = slugs.length - 1; i >= 0; i -= 1) {
+      if (slugs[i] !== shot) slugs.splice(i, 1);
+    }
+    const enemy = new ToughStubEnemy(scene, shot!.x, shot!.y, 10, 3);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    // The connect is audible through the Heavy Slug's baked thud and
+    // colour-matched to the deep-red shell — the generic warm-white 0xfff2a0
+    // fallback flash no longer applies to this weapon.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playHeavySlugImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.heavy_slug,
+        radius: WEAPON_CATALOGUE.heavy_slug.impactFx!.radius,
+        duration: WEAPON_CATALOGUE.heavy_slug.impactFx!.duration,
+      }),
+    );
+    expect(impact.mock.calls[0][3]).not.toMatchObject({ color: 0xfff2a0 });
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
@@ -2454,9 +2795,10 @@ describe('CombatScene — force-field ram absorption (AH-0MVM8GTG7002IRTL)', () 
     expect(scene.getPlayerHitCount()).toBe(0);
     expect(scene.hooks).not.toContain('onPlayerHit');
     expect(scene.getThornsAbsorbEffects().length).toBeGreaterThan(0);
-    // Precedence: one thorn ram budget spent, and the enemy shield is
-    // untouched by the same contact.
-    expect(scene.effects.thornsRemaining()).toBe(1);
+    // Precedence: the one level-0 thorn charge is spent (the pool is empty),
+    // and the enemy shield is untouched by the same contact
+    // (parent AH-0MVTQMREN009DSFW AC2).
+    expect(scene.effects.thornsRemaining()).toBe(0);
     expect(enemy.forceFieldHits).toBe(2);
   });
 });
@@ -2518,6 +2860,9 @@ describe('CombatScene — Force Field reflect feedback (AH-0MVRDMMYO002SC5V)', (
   it('AC5/AC6 — two intercepted bullets produce two flashes and two cue calls', async () => {
     const scene = await boot();
     const player = armField(scene);
+    // A field pickup grants exactly one charge (parent AH-0MVUVSW4J0009QUW),
+    // so arm a second reflect for the two-bullet test.
+    scene.effects.applyCollect('force_field');
     const cue = vi.spyOn(effectsModule, 'playForceFieldReflectSound');
     const first = new StubBullet(scene, player.x + 20, player.y);
     const second = new StubBullet(scene, player.x, player.y + 24);

@@ -377,6 +377,31 @@ describe('GymWeapons AC2: cumulative collection + reset', () => {
     expect(bullets.at(-1)!.color).toBe(0x00ffff); // cannon cyan only
   });
 
+  it('the registry weapon row expires on the same scene tick as the ship (gym↔game parity)', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const registry = scene.getEffectsRegistry();
+
+    // A field pickup opens a temporary registry window, exactly as in the game.
+    scene.spawnDrop('spread', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
+    expect(
+      registry.activeWeapons().map((weapon) => weapon.weaponId),
+    ).toContain('spread');
+
+    // The scene tick is the single timer owner: `EffectsRegistry.tick` removes
+    // the row at the shared 10 s weapon timeout, in step with the ship's own
+    // `tickWeaponTimers`. Before the parity fix the gym never ticked the
+    // registry, so a stale row outlived the weapon (AH-0MVUGI5AS0084I1H).
+    scene.tick(10.1);
+    expect(
+      registry.activeWeapons().map((weapon) => weapon.weaponId),
+    ).not.toContain('spread');
+    expect(player.hasWeapon('spread')).toBe(false);
+  });
+
   it('collecting a Reset power-up preserves all timed weapons (AC4)', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;

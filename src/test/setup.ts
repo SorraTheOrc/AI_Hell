@@ -16,7 +16,15 @@
  * (`vitest.config.ts`, `setupFiles`); the `unit` project runs with
  * `environment: 'node'` and never loads it. It is still a no-op when no DOM
  * globals exist (defensive, e.g. a Node-only import of a scene module).
+ *
+ * It also installs the **hermetic CSV fetch guard** (AH-0MVS9UEHS009QH6J,
+ * parent AH-0MVKYQWSW0067F12): an un-bridged relative `/api/csv/...` fetch in
+ * this project would resolve against the happy-dom origin
+ * (`http://localhost:3000`) and could reach a stray dev server rooted at
+ * another checkout. See `./csvFetchBridge.ts`.
  */
+
+import { installCsvFetchGuard } from './csvFetchBridge';
 
 const hasDom =
   typeof window !== 'undefined' &&
@@ -67,4 +75,13 @@ if (hasDom) {
       },
     });
   }
+}
+
+// ── Hermetic CSV fetch guard (AH-0MVS9UEHS009QH6J) ──────────────────
+// Installed for every integration test file. Non-CSV requests pass straight
+// through; CSV requests must use `installCsvFetchBridge(baseUrl)` (or a
+// per-test `vi.stubGlobal('fetch', ...)`) and are otherwise refused with no
+// network I/O.
+if (typeof fetch === 'function') {
+  installCsvFetchGuard();
 }

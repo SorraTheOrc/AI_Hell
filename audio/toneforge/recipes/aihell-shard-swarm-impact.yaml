@@ -1,0 +1,103 @@
+# AI Hell cue: aihell-shard-swarm-impact — Player Shard Swarm connect — a bright
+# glassy lime tink, ≤ 0.12 s.
+#
+# (AH-0MVV0WMTE0007NGS) A five-shard volley can connect in a single frame, so
+# the impact cue must be bright, short and glassy so overlapping hits read as
+# one shimmering lime tink rather than a low thud or a machine-gun stutter. A
+# fast triangle 2800 → 1900 Hz carries the glass body, a short 4200 Hz sine
+# adds the brittle "tink" overtone and a high-passed noise tick supplies the
+# contact transient. Total 0.10 s — comfortably under the 0.12 s ceiling — so
+# the shipped per-cue voice limiter (4 voices / 150 ms) is enough with no added
+# throttling. Deliberately higher, glassier and shorter than the Cannon's
+# 520 → 90 Hz impact thump.
+#
+# Seed 32280 is drawn from the game-specific reservation block (the Shard Swarm
+# pair 32279/32280; docs/AUDIO_TONEFORGE_CUE_MAPPING.md) and baked via
+# scripts/build-audio.sh.
+version: "0.1"
+meta:
+  name: aihell-shard-swarm-impact
+  description: Player Shard Swarm connect — a bright glassy lime tink of a fast triangle 2800 to 1900 Hz with a 4200 Hz sine overtone and a high-passed noise contact tick, 0.10 s. High, glassy and short so a five-shard volley reads as one shimmering lime hit, clearly distinct from the Cannon's 520 to 90 Hz thump.
+  category: AIHell
+  tags:
+    - weapon
+    - hit
+  duration: 0.1
+nodes:
+  # v0 — glassy lime body: fast triangle falling 2800 → 1900 Hz.
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 2800
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 2800
+        - kind: exponentialRamp
+          time: 0.09
+          value: 1900
+  e0:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.09
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.14
+  # v1 — brittle tink overtone.
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 4200
+  e1:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.05
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.07
+  # n0 — contact transient: high-pass noise tick.
+  n0:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f0:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 3800
+      Q: 1
+  e2:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.028
+      sustain: 0
+      release: 0
+  g2:
+    kind: gain
+    params:
+      gain: 0.1
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [n0, f0, e2, g2, mix]
+  - from: mix
+    to: out

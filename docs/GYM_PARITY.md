@@ -16,7 +16,8 @@ Governing rule: [`AGENTS.md` § Game Architecture Conventions](../AGENTS.md#game
 | Fix item | AH-0MVRMHWNC002H4B5 (consumes the `divergence to fix` rows) |
 | Audited at commit | `1e335eb0` (2026-10-29) |
 | Divergences fixed by | AH-0MVRMHWNC002H4B5 (D1–D4, all rows now `parity`) |
-| Scope | every production scene under `src/scenes/gym/` (14) plus the generic base `src/scenes/gym/core/GymFormationScene.ts` |
+| Hangar War rows refreshed by | AH-0MVUXCC5J0028OGQ (the Hangar War ring specification, GDD §8.2): the `GymHangar` and `GymHexWar` rows were re-checked against the shipped hangar screen, hex map and defence report, so the enabled-objects and reason cells name the same model/renderer pairs the game runs |
+| Scope | every production scene under `src/scenes/gym/` (16) plus the generic base `src/scenes/gym/core/GymFormationScene.ts` |
 | Automated guard | [`src/scenes/core/gymParityDocs.test.ts`](../src/scenes/core/gymParityDocs.test.ts) fails if a gym scene has no row here, or if a row loses its verdict or evidence |
 
 ## How to re-audit
@@ -41,8 +42,21 @@ The next sweep is cheap because most of the matrix is guarded mechanically.
   (level-launch orbital transit `:354`, fire cadence `:496`, march block `:557`,
   and `GymBotTuning` inheritance `:690`),
   [`src/scenes/gym/levelParity.test.ts`](../src/scenes/gym/levelParity.test.ts)
-  (level-scaled counts `:158`, level-resolved supply cadence `:262`, level-gym
-  inheritance `:344`, documented flat formation cadence `:406`), and the
+  (level-scaled counts `:215`, level-resolved supply cadence `:319`, level-gym
+  inheritance `:403`, documented flat formation cadence `:475`) — each cadence
+  probe pins the interval the scene **resolved**
+  (`GymLevel.getDropSpawnInterval()`) as well as its timed effect, and the
+  `GymBotTuning` probe suppresses that scene's completion-driven random-level
+  restart (which legitimately re-resolves the cadence for the fresh level) so
+  the timed window measures the level-10 cadence only (AH-0MVWOERDM000YZN0),
+  [`src/scenes/gym/backgroundParity.test.ts`](../src/scenes/gym/backgroundParity.test.ts)
+  (shared layer adoption + identical depth/dim/non-interactive invariants, the
+  fixed level-1 backdrop and the absent level-change warp — divergence 11),
+  [`src/scenes/core/consumableChargeParity.test.ts`](../src/scenes/core/consumableChargeParity.test.ts)
+  (permanent consumables spend → empty → regenerate → re-use identically in
+  `PlayScene` and `GymPowerUpsCombat`, driven through the shared
+  `_handleCollisions` pass and the shared charge pool — F6 of the
+  consumable-upgrades parent, see the consumable charge section below), and the
   `*.equivalence.test.ts` / `*.parity.test.ts` suites under `src/scenes/core/`
   (combat, drops, minerals, AOE, power-up and weapon leveling).
 - **Capture registry** — `src/core/captureDirector.test.ts` pins
@@ -67,21 +81,44 @@ column). No other verdict is accepted by the guard.
 
 | Scene | Derives from | Enabled shipped objects | Spawn seam | Combat loop inherited | Verdict | Reason / evidence |
 |---|---|---|---|---|---|---|
-| `GymFormationScene` (generic base) | `CombatScene` (`src/scenes/gym/core/GymFormationScene.ts:502`) | every config-driven formation entity (`createEnemyFromConfig`), shared mineral layer + kill drops, opt-in power-up/weapon drop layer, shared wave timeout | `_spawnFormation` → `placeWavePortal` + `resolveSpawnTransitTarget` + `startSpawnAnimation` + single-live `WormholeController` (`:1790`, `:1848`, `:1861`) | yes — `_tickPlayer` `:1692`, `_updateAutoDefence` `:1698`, `_handleCollisions` `:1701`, `_advanceWaveTimeout` `:1726`, `applyPostMotionWrapAll` `:1671` | `parity` | Diver re-anchor + glide are applied (`:1644`, `:1662`, `:1898`). Intentional: flat `rules.powerUpSpawnInterval` cadence (`:982`, §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`), gym HUD/controls and demonstration mineral seeding (`:1371`), no run telemetry (game only, `src/scenes/core/runTelemetry.ts`) |
+| `GymFormationScene` (generic base) | `CombatScene` (`src/scenes/gym/core/GymFormationScene.ts:502`) | every config-driven formation entity (`createEnemyFromConfig`), shared mineral layer + kill drops, opt-in power-up/weapon drop layer, shared wave timeout, shared background layer (`_createSceneBackground` → `createBackgroundLayer`) | `_spawnFormation` → `placeWavePortal` + `resolveSpawnTransitTarget` + `startSpawnAnimation` + single-live `WormholeController` (`:1790`, `:1848`, `:1861`) | yes — `_tickPlayer` `:1692`, `_updateAutoDefence` `:1698`, `_handleCollisions` `:1701`, `_advanceWaveTimeout` `:1726`, `applyPostMotionWrapAll` `:1671` | `parity` | Diver re-anchor + glide are applied (`:1644`, `:1662`, `:1898`). Intentional: flat `rules.powerUpSpawnInterval` cadence (`:982`, §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`), gym HUD/controls and demonstration mineral seeding (`:1371`), no run telemetry (game only, `src/scenes/core/runTelemetry.ts`), fixed level-1 backdrop and no level-change warp (`src/scenes/gym/core/gymBackground.ts`, divergence 11 below) |
 | `GymBoss` | `GymFormationScene` (`src/scenes/gym/GymBoss.ts:149`) | `Boss` (all four phases), phase minions via shared `planMinionSpawns`, shared `fireForEnemy` dispatcher | Boss in place (matches `PlayScene.spawnBoss`); minions in place through the shared transit exemption (`transit:false` `:287`) + `startSpawnAnimation` (`:295`) | yes — inherits `CombatScene`/`CombatCoreScene`; Boss advances through the shared `_advanceBoss` hook | `parity` | **D1 closed by AH-0MVRMHWNC002H4B5** — the per-phase hit pool is `scaledEncounterHp(BOSS_HIT_POINTS_PER_PHASE, playerPowerScore(...))` from the shared `src/core/difficultyScaling.ts`, resolved from the live setup-upgraded player (`src/scenes/gym/GymBoss.ts:115`); pinned by `src/scenes/gym/GymBoss.test.ts` (D1 parity). Intentional: gym-only health bar, DAMAGE and SHOOT controls (`GymBoss.ts:186`), no wave timer (same as the game's boss) |
 | `GymBotTuning` | `GymLevel` (`src/scenes/gym/GymBotTuning.ts:173`) | shared bot brain/governor (`createCompetentBotBrain` `:179`, `getBotInput` `:231`), random generated levels (`generateRandomLevel` `:212`), inherited supply layer, asteroid hazard, wave clock and spawner-delivered content | inherited from `GymLevel` (`src/scenes/gym/GymLevel.ts:359`) | yes — inherited `CombatScene` loop plus the shared bot input seam | `parity` | **D2/D3 closed by AH-0MVRMHWNC002H4B5** (fixed in the inherited `GymLevel`: shared `formationReanchor` controller and shared `dynamicSpawnPlan`); pinned by `src/scenes/gym/spawnParity.test.ts` (D2, D3). Intentional: gym-only tuning panel/export and the random-level scenario, no run telemetry |
 | `GymCentipede` | `GymFormationScene` (`src/scenes/gym/GymCentipede.ts:41`) | `Centipede` + shared `CentipedeChain` (`src/scenes/gym/core/centipedeFormation.ts:87`); segments never fire by entity override | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Chain construction matches the game's direct `new Centipede` spawn (`PlayScene.ts:2196`); classic `wrapAware:false` exclusion applied (`centipedeFormation.ts:87`). Segments never fire in the game either (`src/entities/Centipede.ts:170`) |
 | `GymCurveSequencer` | `Phaser.Scene` (`src/scenes/gym/GymCurveSequencer.ts:443`) | none (curve editor UI); launches `GymLevel` with the edited curve/level (`:638`, `:646`) | n/a — no gameplay objects | n/a — not a combat scene | `intentional divergence` | Editor/sequencer UI only; consumes the shared setup seam as a documented no-op and forwards the loadout/seed to the launched `GymLevel` (setup-capable in the capture registry since AH-0MVRMI0Q7001KG4Y), and recorded as the parameterised-launch path for `GymLevel` (`docs/dev/gameplay-capture.md`) |
-| `GymFodderEnemies` | `GymFormationScene` (`src/scenes/gym/GymFodderEnemies.ts:343`) | every non-boss `EnemyConfig` via the shared factory (`:276`, `:916`), shared `fireForEnemy` dispatcher (`:246`), shared asteroid split/mineral layers, centipede option | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Intentional (documented): editor/tuning panel, boss excluded from the dropdown (`src/scenes/gym/GymFodderEnemies.ts:652`) and the wave timeout (`:270`), and force-field sliders set hits directly with no campaign level (`:283`, `:431`) |
+| `GymHangar` | `Phaser.Scene` (`src/scenes/gym/GymHangar.ts:139`) | none — renders the **shipped** hangar screen (`buildHangarScreenModel` + `renderHangarScreen`, `src/scenes/hangarWar/hangarScreen.ts`) against an injected hangar-war payload: banked salvage, ring progress, the unlock tree (cost/owned/gated), the hull/starting-weapon/modifier deployment selector and the ▶ DEPLOY row; the economy, banking, deployment-payload and ring resolvers are pure modules under `src/core/hangarWar/` and `src/scenes/hangarWar/hangarDeployment.ts` exercised by this scene | n/a — no gameplay objects | n/a — not a combat scene | `intentional divergence` | One screen code path: the gym calls the same model builder and renderer as the game's `HangarScene`, with **no handlers**, so it is read-only by construction (no purchase, banking or resolver logic in the scene). Consumes the shared setup seam as a documented no-op (no player) and uses the setup seed for its deterministic sample payload (`src/scenes/gym/GymHangar.ts:1`, `docs/dev/gameplay-capture.md`) |
+| `GymHexWar` | `Phaser.Scene` (`src/scenes/gym/GymHexWar.ts:1`) | none — renders the **shipped hex-map screen** (`buildHexMapModel` + `renderHexMap`, `src/core/hangarWar/hexIntel.ts` / `src/scenes/hangarWar/hexMap.ts`) against an injected hangar-war ring payload, read-only: the hangar at the centre, the ring around it, and every hex's known-ahead intel (held/unheld, aggression, boss, strengths, weaknesses, grant, defender, queued attack); also exposes the `take hex → leave bot → tick` control surface **and a `report` view** that renders the shipped **defence report** (`buildDefenceReport` + `renderDefenceReport`, `src/core/hangarWar/defenceReport.ts` / `src/scenes/hangarWar/defenceReport.ts`) from the **shipped** frontier tick's record (`runFrontierTick`, `src/core/hangarWar/hexDefence.ts`). The control-surface tick still uses the deterministic harness double in `src/core/hangarWar/fakeFrontierClock.ts` and the ring fixtures live in `src/core/hangarWar/__fixtures__/ringFixtures.ts` | n/a — no gameplay objects | n/a — not a combat scene | `intentional divergence` | Verification harness for the pure ring logic: the scene owns **no resolver, map or report rule** — each control-surface tick delegates to the documented harness double, the map is the same model/renderer pair the game's `HexMapScene` uses, and the report view is the same model/renderer pair the game's `DefenceReportScene` uses (both with no handlers, so every row is non-actionable). The report's record comes from the shipped resolver, so the numbers the gym shows are the numbers the game shows, and the gym exercises `take hex → leave bot → tick → holds or falls` and `attacks → defence report` without a browser boot. Consumes the shared setup seam as a documented no-op (no player) and uses the setup seed for its deterministic sample payload (`src/scenes/gym/GymHexWar.ts:1`, `src/core/hangarWar/fakeFrontierClock.ts:1`, `docs/dev/gameplay-capture.md`) |
+| `GymFodderEnemies` | `GymFormationScene` (`src/scenes/gym/GymFodderEnemies.ts:343`) | every non-boss `EnemyConfig` via the shared factory (`:276`, `:916`), shared `fireForEnemy` dispatcher (`:246`), shared asteroid split/mineral layers, centipede option | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Intentional (documented): editor/tuning panel, boss excluded from the dropdown (`src/scenes/gym/GymFodderEnemies.ts:652`) and the wave timeout (`:270`), and force-field sliders set hits directly with no campaign level (`:283`, `:431`). The slider is the **enemy** force-field axis (`forceFieldStartHits`, resolved by `enemyForceFieldHits` in `src/core/enemyForceField.ts`), untouched by the player's absorbed-hit Force Field conversion (`src/powerups/effects.ts`, AH-0MVVD8SIT000CO9H) |
 | `GymLevel` | `CombatScene` (`src/scenes/gym/GymLevel.ts:509`) | wave-group enemies via the shared factory + `fireForEnemy`, march block, supply layer (minerals/drops), asteroid hazard, spawner-delivered ghosts/centipede/horde/lane traffic/orbital strikes, shared wave timeout | `spawnWave` → `resolveSpawnTransitTarget` + `startSpawnAnimation` + `WormholeController`; `shootEnabled` hand-off, march and the shared `formationReanchor` controller; dynamic content planned/released through shared `dynamicSpawnPlan` (`src/scenes/gym/GymLevel.ts:946`, `:981`) | yes — `_tickPlayer`, `_handleCollisions`, shared wrap and shared boss hooks | `parity` | **D2/D3 closed by AH-0MVRMHWNC002H4B5** — the Diver group uses the shared `FormationReanchorController` (`src/scenes/core/formationReanchor.ts`) and the per-wave dynamic content uses the shared `dynamicSpawnPlan` planners + `releaseDueSpawns`; pinned by `src/scenes/gym/spawnParity.test.ts` (D2, D3). Intentional: full-hold reward resolves without a modal pause so an autonomous bot keeps playing (`:1144`, `:1312`); mineral field seeded for the demo (`:1176`) |
 | `GymMinerals` | `GymFormationScene` (`src/scenes/gym/GymMinerals.ts:89`) | `Asteroid` (+ shared `splitAsteroid` `:80`), shared mineral kill drops/hold/choice, shared per-kill Extra Life roll | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Asteroid construction matches the game's `new Asteroid` hazard spawn (`PlayScene.ts:4738`); intentional: asteroids-only field with 3 seeded rocks (`GymMinerals.ts:69`) and the base class's 100 demonstration minerals (`GymFormationScene.ts:1371`) |
 | `GymMiniBoss` | `GymFormationScene` (`src/scenes/gym/GymMiniBoss.ts:174`) | `MiniBoss` through the shared design helper (`:156`), shared minion planner/factory/fire seam, shared `miniBossDeathSweep` | inherited `_spawnFormation` (`GymFormationScene.ts:1790`); `MiniBoss` has no spawning seam so it spawns in place, exactly as `PlayScene` spawns it (`PlayScene.ts:1618`) | yes — inherited `CombatScene`/`_advanceBoss` loop | `parity` | Intentional (documented): gym-only fixed hit pool for fast phase stepping (`MINI_BOSS_GYM_HP_PER_PHASE`, `GymMiniBoss.ts:78`), DAMAGE/EXPLODE/SHOOT controls; the shared death sweep is used for EXPLODE (`GymMiniBoss.ts:267`) |
 | `GymPlayer` | `CombatScene` (`src/scenes/gym/GymPlayer.ts:152`) | `Player`, `PlayerBullet`, shared auto-fire/input/collision lifecycle; `Obstacle` (shared entity, gym-only scenario) | n/a — no enemy spawn | yes — `_tickPlayer` `:574`, `_handleCollisions` `:584`; only the destruction hooks are overridden | `intentional divergence` | Obstacle course is the documented gym-only training scenario (`GymPlayer.ts:23`; §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). The obstacle entity and the collision/auto-fire code are shared |
-| `GymPowerUpLeveling` | `CombatScene` (`src/scenes/gym/GymPowerUpLeveling.ts:185`) | `Player` + every power-up through the shared `EffectsRegistry`/`resolvePowerUpAtLevel`, shared drop layer, minerals, `MineralHold` and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:306`, shared drop/mineral/hold-full passes | `parity` | Intentional: gym-only round-robin drop source (no kills to roll) and the level/stats readout panel (`src/scenes/gym/GymPowerUpLeveling.ts:185`, `gym-powerup-level-readout`); the level curve and effects are shared, not copied |
-| `GymPowerUpsCombat` | `CombatScene` (`src/scenes/gym/GymPowerUpsCombat.ts:171`) | `Scout` threat formation + shared `fireForEnemy` (`:554`), Shield/Bomb/Phase Shift/Teleport through the shared `EffectsRegistry`, shared drop layer, shared teleport/auto-defence seams | `_spawnScoutFormation` → `createEnemyFromConfig` + `resolveSpawnTransitTarget({transit:false})` + `startSpawnAnimation`/`updateSpawnEmergence` (`src/scenes/gym/GymPowerUpsCombat.ts:405`), matching the shared factory + in-place spawn presentation | yes — `_tickPlayer` `:333`, `_handleCollisions` `:361` | `parity` | **D4 closed by AH-0MVRMHWNC002H4B5** — threats are built through the shared factory (the active `scout` `EnemyConfig` reaches them) and grow from 1 px behind the shared spawn protection, in place; pinned by `src/scenes/gym/GymPowerUpsCombat.test.ts` (D4 parity). Intentional: auto-fire disabled (`:317`) so the defensive power-ups, not player fire, are the demonstration; HUD is gym-only |
+| `GymPowerUpLeveling` | `CombatScene` (`src/scenes/gym/GymPowerUpLeveling.ts:185`) | `Player` + every power-up through the shared `EffectsRegistry`/`resolvePowerUpAtLevel`, shared drop layer, minerals, `MineralHold` and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:306`, shared drop/mineral/hold-full passes | `parity` | Intentional: gym-only round-robin drop source (no kills to roll) and the level/stats readout panel (`src/scenes/gym/GymPowerUpLeveling.ts:185`, `gym-powerup-level-readout`); the level curve and effects are shared, not copied; the leveling gym asserts the absorbed-hit charge/lifetime grants through the shared store — `consumableCharges('shield')`, field-pickup levelling, no dedicated pickup window (AH-0MVVD8U6F0011UOG, `GymPowerUpLeveling.test.ts`) |
+| `GymPowerUpsCombat` | `CombatScene` (`src/scenes/gym/GymPowerUpsCombat.ts:171`) | `Scout` threat formation + shared `fireForEnemy` (`:554`), Shield/Bomb/Phase Shift/Teleport/Thorn Field/Force Field through the shared `EffectsRegistry`, shared drop layer, shared teleport/auto-defence seams | `_spawnScoutFormation` → `createEnemyFromConfig` + `resolveSpawnTransitTarget({transit:false})` + `startSpawnAnimation`/`updateSpawnEmergence` (`src/scenes/gym/GymPowerUpsCombat.ts:405`), matching the shared factory + in-place spawn presentation | yes — `_tickPlayer` `:333`, `_handleCollisions` `:361` | `parity` | **D4 closed by AH-0MVRMHWNC002H4B5** — threats are built through the shared factory (the active `scout` `EnemyConfig` reaches them) and grow from 1 px behind the shared spawn protection, in place; pinned by `src/scenes/gym/GymPowerUpsCombat.test.ts` (D4 parity). Intentional: auto-fire disabled (`:317`) so the defensive power-ups, not player fire, are the demonstration; HUD is gym-only. The absorbed-hit pickup→charge→event cycle is pinned here and against `PlayScene` (`GymPowerUpsCombat.test.ts` + `src/scenes/core/consumableChargeParity.test.ts`, AH-0MVVD8U6F0011UOG) |
 | `GymPowerUpsUtility` | `CombatCoreScene` (`src/scenes/gym/GymPowerUpsUtility.ts:116`) | `Player` + Speed Boost/Extra Life/Magnet/Mineral Scoop/Mystery UFO through the shared `EffectsRegistry`, shared drop layer, `MineralHold` and mineral scoop | no enemy spawn; round-robin drop source | partial — `CombatCoreScene` only (`_tickPlayer` `:247`, input/auto-fire/drop passes); no collision pass because the scene is threat-free | `parity` | Intentional: threat-free utility gallery (no enemy objects to collide with), auto-fire disabled (`src/scenes/gym/GymPowerUpsUtility.ts:232`), gym-only round-robin source and 40 seeded minerals (`:176`). Disabling a feature is a permitted difference; no enabled object runs divergent code |
 | `GymWeaponLeveling` | `CombatScene` (`src/scenes/gym/GymWeaponLeveling.ts:145`) | `Player` + every weapon through the shared `EffectsRegistry`/level resolver, shared AOE dispatch/VFX, shared drop layer, minerals and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:250`, shared effect/drop/mineral passes | `parity` | Intentional: gym-only round-robin drop source and level readout; weapon behaviour lives once in the shared arsenal (`src/utils/weapons.ts`, `src/powerups/effects.ts`) |
 | `GymWeapons` | `CombatScene` (`src/scenes/gym/GymWeapons.ts:200`) | `Player` + cannon/Spread/Dual/Rapid/Nova/Mortar/Arc through the shared combat core, shared AOE dispatch/VFX, shared drop layer | no enemy spawn; `TrainingTarget` fixtures only (`:171`, `:504`) | yes — `_tickPlayer` `:303`, `_handleCollisions` inherited | `intentional divergence` | AOE practice targets are the documented gym-only divergence (F6 AC5, `GymWeapons.ts:120`, `:165`; §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). The AOE resolution and VFX are shared, not copied |
+
+## Hangar War rows (AH-0MVUXCC5J0028OGQ)
+
+The Hangar War is specified in GDD §8.1 (the hangar slice) and §8.2 (the first
+hex ring). Neither gym scene runs a run of its own: `GymHangar` and `GymHexWar`
+are read-only views of the shipped hangar screen, hex map and defence report, and
+the ring's capture cycle, resolver and frontier tick are pure modules under
+`src/core/hangarWar/` that the game's scenes consume directly. The
+control-surface tick is the one documented divergence (a deterministic harness
+double, so the harness can drive `take hex → leave bot → tick` without owning
+resolver state); the report view deliberately renders the **shipped** resolver's
+record so the numbers cannot drift. The `GymHangar` and `GymHexWar` rows above
+were re-checked against that shipped code by this item.
+
+**Entry-surface gating does not change parity (AH-0MVZ0VGGQ0032KDP).** While
+the Hangar War does not work it is hidden behind the default-OFF feature flag
+`ai_hell_feature_flags.hangarWar`, which only gates the **menu entry and the
+idle-attract Hangar War traversal**. The scenes stay registered, so `GymHangar`
+and `GymHexWar` keep rendering the same shipped model/renderer pairs as the
+game — the rows above are unchanged by the flag and no gym divergence is
+introduced.
 
 ## Scripted-scene setup adoption (AH-0MVRMHYJR000Y9H8)
 
@@ -148,6 +185,19 @@ total), so setup-less gym behaviour is unchanged.
   level/wave are interactive editor launch parameters, not setup fields, and
   the recorded editor segment is the editor UI by design.
 
+- **`GymHangar`** — consumes `player`, `powerUps` and `seed`. The hangar
+  payload view has no player and no intrinsic content RNG, so
+  `applySceneSetup` is a documented no-op there; the seed is consumed by
+  `init` to generate the deterministic sample payload it renders (a
+  payload injected as launch data wins). Pinned by
+  `src/scenes/gym/GymHangar.test.ts`.
+
+- **`GymHexWar`** — consumes `player`, `powerUps` and `seed`. The ring harness
+  view has no player and no intrinsic content RNG, so `applySceneSetup` is a
+  documented no-op there; the seed is consumed by `init` to build the
+  deterministic sample payload it renders (a payload injected as launch data
+  wins, and `ringIndex` selects ring 1 or 2). Pinned by
+  `src/scenes/gym/GymHexWar.test.ts`.
 Adoption is pinned by `src/scenes/gym/gymSceneSetupAdoption.test.ts`: per gym,
 a supplied setup's loadout/levels are live in the first observed frame, a
 supplied seed reproduces the content, and no setup keeps the historical
@@ -336,7 +386,65 @@ the duplicate-body guard.
 | 5 | Absence of run telemetry | all gyms | Telemetry is a shipped-run concern only (`src/scenes/core/runTelemetry.ts`, used by `PlayScene.ts:838`); a gym has no run to report |
 | 6 | Curve-editor scene is not a combat scene | `GymCurveSequencer` | The editor launches `GymLevel` instead of duplicating combat; recorded in `src/scenes/gym/GymCurveSequencer.ts:1` and `scripts/capture-scenes.mjs:407` |
 | 7 | Auto-fire disabled in threat-free/demonstration gyms | `GymPowerUpsCombat`, `GymPowerUpsUtility` | Disabling a player capability is a permitted difference (a disabled feature, never a divergent copy); the defensive power-ups are the demonstration. Recorded at `GymPowerUpsCombat.ts:317` and `GymPowerUpsUtility.ts:232` |
-| 8 | Force-field sliders set hits directly in `GymFodderEnemies` | `GymFodderEnemies` | A formation gym has no campaign level, so the level curve cannot be evaluated; the game and `GymLevel` always use the shared curve. Recorded in `src/scenes/gym/GymFodderEnemies.ts:283`, `:431` |
+| 8 | Force-field sliders set hits directly in `GymFodderEnemies` | `GymFodderEnemies` | A formation gym has no campaign level, so the level curve cannot be evaluated; the game and `GymLevel` always use the shared curve. These are **enemy** force-field hits (`forceFieldStartHits`, the enemy-field axis resolved by `enemyForceFieldHits` in `src/core/enemyForceField.ts`) — **not** the player's absorbed-hit Force Field, whose pickup conversion (`AH-0MVVD8SIT000CO9H`) lives entirely in the shared core. Recorded in `src/scenes/gym/GymFodderEnemies.ts:283`, `:431` |
+| 9 | Hangar-war payload view is not a combat scene | `GymHangar` | The gym renders the shipped hangar screen (`src/scenes/hangarWar/hangarScreen.ts`) against an injected hangar-war payload, read-only; economy, banking, defence and frontier resolution are pure modules under `src/core/hangarWar/`, so there is no gameplay object to demonstrate and no divergent copy. Recorded in `src/scenes/gym/GymHangar.ts:1` and `scripts/capture-scenes.mjs` |
+| 10 | Ring-war harness is not a combat scene | `GymHexWar` | The gym renders the shipped hex-map model/renderer (`src/core/hangarWar/hexIntel.ts`, `src/scenes/hangarWar/hexMap.ts`) against an injected ring payload, read-only, and drives the deterministic frontier-tick harness; the defence resolver and frontier clock are pure modules (B3's `src/core/hangarWar/hexDefence.ts`) exercised through this scene via the documented harness double (`src/core/hangarWar/fakeFrontierClock.ts`), and its `report` view renders the shipped defence report (`src/core/hangarWar/defenceReport.ts`, `src/scenes/hangarWar/defenceReport.ts`) from the shipped resolver's own record, so there is no gameplay object to demonstrate and no divergent copy. Recorded in `src/scenes/gym/GymHexWar.ts:1` and `scripts/capture-scenes.mjs` |
+| 11 | Fixed level-1 backdrop and no level-change warp | all combat gyms (`GymFormationScene` + subclasses, `GymLevel`/`GymBotTuning`, `GymPlayer`, `GymWeapons`, `GymWeaponLeveling`, `GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymPowerUpLeveling`) | The backdrop itself is the shipped object rendered by the shared layer (`CombatCoreScene._createSceneBackground` → `createBackgroundLayer`), so depth/dim/non-interactivity are the game's. A gym pins `backgroundForLevel(1)` so silhouettes are compared against a constant and tuning screenshots are reproducible, and never calls `_setBackgroundLevel`, so the level-change warp never runs — a gym has no campaign level-change flow. `GymLevel` previews a level's enemies but keeps the constant backdrop. Recorded in `src/scenes/gym/core/gymBackground.ts`, §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` and pinned by `src/scenes/gym/backgroundParity.test.ts` |
+
+## Consumable charge parity (AH-0MVUXH3X60078QR3, F6 of AH-0MVTQMREN009DSFW)
+
+The consumable upgrade parent made a permanently-owned consumable (Shield,
+Thorn Field, Phase Shift, Teleport, Force Field, Mystery UFO) a **charge pool
+of one-event uses**: a hold-full reward adds one charge (never a level), one
+charge buys one event (one absorbed hit, one free ram, one reflected bullet,
+one warp, one phase, one drone spawn), and the pool regenerates on the
+level-derived interval through the shared `EffectsRegistry.tick(dt)` clock.
+No scene keeps a consumption counter or a regeneration timer of its own — the
+spends and recharges below are the **shared seams** the game and every gym
+run, so they cannot drift.
+
+| Consumable spend | Shared seam (game + every gym) | Armed/empty look |
+|---|---|---|
+| Shield — one absorbed hit spends one charge | `EffectsRegistry.tryAbsorbShield()` → shared `CombatScene.tryAbsorbPlayerHit` | Shield bubble (`drawShieldBubble` in `src/scenes/core/CombatEffectVisuals.ts`): armed while the pool holds at least one charge — pickup and permanent alike — and pops on the last absorb; an empty permanent pool clears it and it returns on recharge |
+| Thorn Field — one free ram spends one charge | `EffectsRegistry.tryConsumeThornsRam()` → shared `CombatScene._handleCollisions` ram branch | Thorn aura (`drawThornsAura`): armed while `hasThornsRam()` — the pool, pickup and permanent alike — holds a charge, and pops on the last free ram; empty clears it |
+| Force Field — one reflected bullet spends one charge | `EffectsRegistry.tryConsumeForceFieldReflect()` → shared `CombatScene` reflect branch | Force bubble (`drawForceFieldBubble`): a **pickup** bubble pops on its last spend (an unowned field reads inactive at zero); an **owned** field stays up but **dimmed** while the pool is empty, bright again on recharge (Q1 = b) |
+| Mystery UFO — one drone spawn spends one charge | `EffectsRegistry.consumeMysteryUfoCharge()` → shared `CombatCoreScene._updateDroneSpawning` (registered in `EPIC_SHARED_METHODS` in `CombatScene.equivalence.test.ts`); a **field pickup** keeps its queued one-shot (`consumeMysteryUfoSpawns`) and spends no charge | the drone itself (spawned through `spawnDrone` in `src/scenes/core/combatDrone.ts`) |
+
+Gyms that exercise the consumables: `GymPowerUpsCombat` (Shield/Bomb/Phase
+Shift/Teleport/Force Field through the shared `EffectsRegistry`), `GymPowerUpLeveling`
+(every power-up through the shared registry) and `GymPowerUpsUtility` (Mystery
+UFO field pickup → one shared drone spawn). All three already route through the
+shared seams; the parity matrix rows above record their per-scene divergences
+(round-robin drop sources, gym-only HUDs, silenced/auto-fire-off scenarios —
+all **disabled features**, never divergent copies of the charge model).
+
+The pickup conversion (AH-0MVVD8SIT000CO9H / AH-0MVVD8SXO004QLZW) retired the
+three kinds' timed-budget windows, so there is no retained field-pickup
+window divergence left here: a field pickup grants exactly **one pool charge**
+(no effect window) and every consumption above is pool-backed and shared. The
+bubble/aura arm signals read the shared pool — pickup and permanent alike —
+and the Shield wind-down and Force Field countdown-driven pulse are retired
+(AH-0MVVD8TCJ004RLXP). The one deliberate asymmetry (producer decision
+Q-A1=b): a **pickup-only charge never regenerates** — the pool's regenerating
+ceiling is 0 until a hold-full reward owns the kind, so a pickup and a
+permanent grant differ only in whether the pool refills. The three rows above
+(`GymPowerUpsCombat`,
+`GymPowerUpLeveling`, `GymFodderEnemies`) were re-checked by the pickup-parity
+pin (AH-0MVVD8U6F0011UOG): no retained divergence changed — the
+`GymFodderEnemies` editors expose the **enemy** force-field axis
+(`forceFieldStartHits`), which the pickup conversion never touches.
+
+Pinned by `src/scenes/core/consumableChargeParity.test.ts` (the same spend →
+empty → regenerate → re-use cycle in `PlayScene` and `GymPowerUpsCombat`, plus
+the **field-pickup cycle** — pickup → one charge → one event → inert, no
+regeneration from a pickup-only charge, re-collect re-arms, temporary-window
+expiry never claws the charge back — asserted identically in both scenes
+through the shared drop-seam and registry accessors), `src/scenes/gym/GymPowerUpsCombat.test.ts`
+(the gym-side absorbed-hit pickup cycle on its own drop seam),
+`src/scenes/gym/GymPowerUpLeveling.test.ts` (the leveling gym's charge grants
+alongside its level readout), `src/scenes/core/CombatEffectVisuals.test.ts`
+(armed/empty rendering per kind) and `src/scenes/core/CombatCoreScene.test.ts`
+(charge-budgeted drone spawning, no scene-local timer).
 
 ## Maintenance contract
 

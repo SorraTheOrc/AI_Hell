@@ -60,6 +60,7 @@ import {
   type CombatEnemyEntity,
 } from '../core/CombatCoreScene';
 import { CombatScene } from '../core/CombatScene';
+import { gymBackgroundLevel } from './core/gymBackground';
 import type { SceneSetupState } from '../core/sceneSetup';
 import { Player } from '../../entities/Player';
 import { advancePlayerBullets } from '../core/bulletLifecycle';
@@ -230,10 +231,18 @@ export class GymWeapons extends CombatScene<
     super({ key: 'GymWeapons' });
   }
 
+  /** Gym family background decision: fixed representative level, no warp. */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(data?: SceneSetupState): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
+    // Shared background layer at the gym family's pinned level (see
+    // `core/gymBackground.ts`, AH-0MVSEC0J0004YNJC).
+    this._createSceneBackground();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -355,6 +364,15 @@ export class GymWeapons extends CombatScene<
     this.collectOverlapping();
     // Advance the absorb VFX for collected drops (cosmetic only).
     this._updateCollectAnimations(dt);
+
+    // ── Shared effect/weapon timers ────────────────────────────────
+    // Advance the same `EffectsRegistry` every other gameplay scene ticks:
+    // the registry's weapon rows (and any power-up window) expire on the one
+    // shared `tick` path, exactly as in `PlayScene`. The ship's own weapon
+    // timers are advanced by `_tickPlayer`; this only keeps the registry
+    // state that the HUD/readouts consume in step with it (gym↔game parity,
+    // AH-0MVUGI5AS0084I1H).
+    this.effectsRegistry.tick(dt);
 
     // Respawn the practice targets a short delay after the AOE weapons
     // have cleared them, so every AOE weapon can be demonstrated again

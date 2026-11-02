@@ -1,0 +1,104 @@
+# AI Hell cue: aihell-heavy-slug-impact — Player Heavy Slug connect — a dull
+# red thud with debris noise, ≤ 0.16 s.
+#
+# (AH-0MVV0WO4M001KEDG) The catalogue's heaviest round lands: a low triangle
+# 220 → 60 Hz thud body, a quiet 110 Hz sine reinforcement and a low-passed
+# noise debris burst. Total ≈ 0.15 s — the heaviest, bluntest impact of the
+# set and comfortably inside the 0.16 s ceiling (epic AC8).
+#
+# Deliberately **not the Mortar impact** (`aihell-mortar-impact` is a bright
+# dry shell crack whose triangle drops 900 → 150 Hz with a dry noise smack):
+# the Heavy Slug thud is much duller and lower (220 → 60 Hz body, low-passed
+# debris instead of the dry crack, no square edge), so the slug reads as the
+# round settling into the hull rather than a shell cracking open.
+#
+# Seed 32286 is drawn from the game-specific reservation block (the Heavy Slug
+# pair 32285/32286; docs/AUDIO_TONEFORGE_CUE_MAPPING.md) and baked via
+# scripts/build-audio.sh.
+version: "0.1"
+meta:
+  name: aihell-heavy-slug-impact
+  description: Player Heavy Slug connect — a dull red thud of a low triangle 220 to 60 Hz with a quiet 110 Hz sine reinforcement and a low-passed noise debris burst, ~0.15 s. Much duller and lower than the aihell-mortar-impact dry shell crack (900 to 150 Hz), no square edge, inside the 0.16 s impact ceiling.
+  category: AIHell
+  tags:
+    - weapon
+    - hit
+  duration: 0.15
+nodes:
+  # v0 — dull thud body: low triangle 220 → 60 Hz, blunt and heavy.
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 220
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 220
+        - kind: exponentialRamp
+          time: 0.13
+          value: 60
+  e0:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.14
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.2
+  # v1 — quiet sine reinforcement under the body.
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 110
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.12
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.08
+  # n0 — debris: a short low-passed noise burst (dust and shell fragments).
+  n0:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f0:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 700
+      Q: 1
+  e2:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.06
+      sustain: 0
+      release: 0
+  g2:
+    kind: gain
+    params:
+      gain: 0.12
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [n0, f0, e2, g2, mix]
+  - from: mix
+    to: out

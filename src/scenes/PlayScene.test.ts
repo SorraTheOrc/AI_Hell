@@ -6,6 +6,18 @@
  * observable behaviour: wave spawning, formation placement, player
  * integration, collisions (bullet/enemy/player), power-up collection,
  * level transitions, and the game-over flow.
+ *
+ * **Deterministic-boot rule (file-wide, AH-0MVXWEEJM00813GK):** every `boot*`
+ * helper in this file that boots a `PlayScene` must obtain its scene through
+ * the shared `bootDeterministic()` helper (doc block above its definition),
+ * so the run seed is explicit and the harness's resumed live
+ * `requestAnimationFrame` loop is stopped while the test asserts. Do not boot
+ * a new helper straight from `bootScene()`/`bootSceneWithLevels()` — an
+ * unseeded boot or a live frame is exactly the load-dependent flake class
+ * this file was fixed to remove (AH-0MVX2DKC8001RRM4). Exceptions, if any,
+ * must be documented in the helper with the reason. How to reproduce a
+ * failure with a suspect seed, and when to use `setRunSeed` versus `setRng`,
+ * are documented on `bootDeterministic()`.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +27,9 @@ import {
   GAME_HEIGHT,
   GAME_WIDTH,
   MINERAL_COLOR,
+  MINERAL_DEPOSIT_COLOR,
+  MINERAL_DEPOSIT_THRESHOLD,
+  MINERAL_DEPOSIT_VALUE,
   MINERAL_REDROP_SCATTER_RADIUS,
   MINERAL_SALVAGE_COLOR,
   POWER_UP_DROP_MIN_SEPARATION,
@@ -107,11 +122,12 @@ import {
 } from '../core/levelScaling';
 import { miniBossConfigForLevel, miniBossDesignForLevel } from '../waves/miniBossDesigns';
 import { scaledEncounterHp } from '../core/difficultyScaling';
-import {
-  MINI_BOSS_LOCKED_WEAPONS,
-  lockedWeaponIds,
-} from '../powerups/unlocks';
 import { CHECKPOINT_STORAGE_KEY, loadCheckpoint } from '../core/checkpointStore';
+import {
+  HANGAR_WAR_STORAGE_KEY,
+  loadHangarWarPayload,
+} from '../core/hangarWar/hangarWarStore';
+import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
 import {
   POWER_UP_CATALOGUE,
   type DropId,
@@ -216,7 +232,7 @@ function clearMiniBossWave(scene: PlayScene): void {
  * the explicit lifespan + stagger timer) — and both advance through the
  * Phaser game step, not through `scene.tick()`, so a deterministic
  * fixed-delta game-step walk is required. Bounded well above the sweep's
- * ~1 s maximum display window.
+ * ~3 s maximum display window (cascade + scatter + the 20-burst finale).
  */
 function finishMiniBossSweep(scene: PlayScene): void {
   stepGameUntil(
@@ -319,6 +335,35 @@ function finishTransition(scene: PlayScene): void {
 }
 
 /**
+ * Asserts the active wave's spawn window is fully released and quiescent
+ * before an exact alive count is asserted (AH-0MVXWEF0V003F7CV).
+ *
+ * `getAliveCount()` counts spawned-and-alive entities, while
+ * `finishSpawnAnimations()` only completes the wormhole transit of entities
+ * the wave has **already released** — a group still pending on the wave timer
+ * is not counted yet. An exact `getAliveCount() === waveEnemyCount()`
+ * assertion is therefore only meaningful once every released enemy has
+ * finished its wormhole transit and nothing is still spawning (the
+ * 8-of-9 shortfall class recorded by AH-0MVXWEDOH002LO1M). Stating the
+ * precondition at the call site means the exact count can never silently
+ * start measuring an in-flight (legitimately short) state.
+ */
+function expectSpawnWindowReleased(scene: PlayScene): void {
+  const stillSpawning = scene
+    .getEnemies()
+    .filter(
+      (e) =>
+        e.alive && (e as unknown as { isSpawning?: boolean }).isSpawning === true,
+    );
+  expect(
+    stillSpawning.length,
+    `spawn window is not quiescent: ${stillSpawning.length} enemy/enemies are ` +
+      'still in the wormhole transit — drain it with finishSpawnAnimations() ' +
+      'before asserting an exact alive count (AH-0MVXWEF0V003F7CV)',
+  ).toBe(0);
+}
+
+/**
  * Deterministic regression guard (AH-0MUHA0MMP001DZ5C): asserts the
  * wave-clear path actually started a transition. It drives the scene with
  * bounded deterministic ticks and polls `isTransitioning()` instead of
@@ -403,18 +448,36 @@ function reachBoss(scene: PlayScene): void {
 }
 
 /**
- * Fires `BOSS_HIT_POINTS_PER_PHASE` player bullets at the boss, one per tick,
- * depleting exactly one health phase (AH-0MUTV3J7T006MZ4K).
+ * Advances the boss by exactly **one** health phase, regardless of active
+ * multi-hit effects (AH-0MUTV3J7T006MZ4K; AH-0MVXXKCOZ003E1UH).
+ *
+ * The phase boundary is driven from **observed boss state**: player bullets
+ * are fired one per tick until `getPhaseNumber()` increments (or the boss
+ * dies on the final phase), bounded by a guard that fails loudly instead of
+ * looping forever. Firing a fixed pool-sized batch assumed one HP per
+ * bullet — but an active Frenzy bonus makes each bullet remove `1 +
+ * frenzyBonusHits()` phase hits, so a pool-sized batch would deplete **two**
+ * phases and land `getPhaseNumber()` one ahead (the `expected 3 to be 2`
+ * boss-encounter flake, seeds 8/16/33/36/86 with `frenzyBonusHits() === 1`;
+ * AH-0MVXWEDOH002LO1M).
  *
  * The batch is isolated from the boss's minions — which spawn on phase
  * depletion and would otherwise intercept test bullets and be killed for
- * score — and from the player's auto-fire, so the boss takes exactly one hit
- * per spawned bullet. Minions already alive are left untouched, so callers
- * can still assert the minion waves that accumulate after each phase (AC3).
+ * score — and from the player's auto-fire, so every spawned bullet lands on
+ * the boss (the helper's `getEnemyEntities()` / `autoFireEnabled()`
+ * isolation is preserved). Minions already alive are left untouched, so
+ * callers can still assert the minion waves that accumulate after each
+ * phase (AC3).
  */
 function damageBossPhase(
   scene: PlayScene,
-  boss: { x: number; y: number; getHitPointsPerPhase(): number },
+  boss: {
+    x: number;
+    y: number;
+    alive: boolean;
+    getHitPointsPerPhase(): number;
+    getPhaseNumber(): number;
+  },
 ): void {
   const isolated = scene as unknown as {
     getEnemyEntities(): readonly unknown[];
@@ -425,11 +488,23 @@ function damageBossPhase(
   isolated.getEnemyEntities = () => [];
   isolated.autoFireEnabled = () => false;
   try {
-    // The encounter's effective pool (power-scaled — AH-0MVH87A3L004VOLD).
-    for (let i = 0; i < boss.getHitPointsPerPhase(); i++) {
+    const startPhase = boss.getPhaseNumber();
+    // Fire until the observed phase advances (or the boss dies on the final
+    // phase). The guard is the no-multi-hit worst case (one bullet per phase
+    // hit) plus a one-bullet margin for the depleting hit to land; with an
+    // active bonus hit fewer bullets are needed, so a live boss that never
+    // advances past `startPhase` after the guard is a genuine stuck state
+    // and fails loudly instead of hiding an assertion failure behind a pass.
+    const guard = boss.getHitPointsPerPhase() + 1;
+    for (let hit = 0; hit < guard; hit++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
+      if (!boss.alive || boss.getPhaseNumber() !== startPhase) return;
     }
+    throw new Error(
+      `damageBossPhase: boss phase did not advance from ${startPhase} ` +
+        `after ${guard} bullets (alive=${boss.alive})`,
+    );
   } finally {
     isolated.getEnemyEntities = originalGetEnemyEntities;
     isolated.autoFireEnabled = originalAutoFireEnabled;
@@ -535,6 +610,34 @@ function findAsteroids(scene: PlayScene): Asteroid[] {
     .filter((e): e is Asteroid => e instanceof Asteroid && e.alive);
 }
 
+/**
+ * File-wide deterministic-boot rollout (AH-0MVXWEEJM00813GK; flake parent
+ * AH-0MVX2DKC8001RRM4).
+ *
+ * Every `boot*` helper in this file that boots a `PlayScene` obtains its
+ * scene through the shared `bootDeterministic` helper, so the run seed is
+ * explicit and the resumed live rAF loop stays stopped while a test asserts.
+ *
+ * - **Before (pre-rollout):** only `bootPlayWithAsteroid()` pinned the scene
+ *   RNG and stopped the live loop itself, and only `bootWithHordeWave()`
+ *   injected a run seed via `setRunSeed` (when its `seed` argument was
+ *   given). Every other helper booted with a fresh `randomSeed()` and left
+ *   the harness's resumed live loop running.
+ * - **After (this item):** helpers that own their raw boot route directly
+ *   through `bootDeterministic` (`bootPlay` in every copy, `bootWithForcedRoll`,
+ *   `bootToggleScene`, `bootAtLevel`, `bootDemo`, `bootWithGhostWave`,
+ *   `bootWithCentipedeWave`, `bootWithHordeWave`, `bootWithRaiderWave`,
+ *   `bootWithLaneTrafficWave`, `bootDropScene`, `bootGatedScene`), while
+ *   helpers that delegate to `bootSceneWithLevels()` are covered by it
+ *   routing through the shared helper (`bootPlayWithAsteroid` in all three
+ *   copies, `bootCustom`, `bootReanchorScene`, `bootPortalScene`,
+ *   `bootPlayAtBoss` in all three copies, `bootMarch`, `bootCarryDrift`,
+ *   `bootCarryMarch`, `bootStrikeScene`, `bootPhaserWave`,
+ *   `bootMiniBossCampaign`, `bootSweepScene`, `bootCampaign`). There is one
+ *   policy: the shared helper pins `DETERMINISTIC_RUN_SEED` (or the helper's
+ *   explicit override) before the restart and stops the resumed live loop.
+ */
+
 /** Boots the PlayScene with a custom campaign and restarts it so `create()`
  * re-runs against the injected levels. Asteroid-dependent integration tests
  * use this to keep their own campaign fixtures independent of the built-in
@@ -555,22 +658,135 @@ async function bootSceneWithLevels(
     RULES_STORAGE_KEY,
     JSON.stringify({ sequencedWavesEnabled: false }),
   );
-  const game = await bootScene([
-    PlayScene,
-    ...(options.extraScenes ?? []),
-    GameOverScene,
-    MenuScene,
-  ]);
-  const scene = game.scene as PlayScene;
-  scene.getWaveManager().setLevels(levels);
-  if (options.asteroidSpawner === false) {
-    // Disable before restarting so the restarted `create()` does not plan
-    // (or auto-update-release) any random asteroids.
-    scene.setAsteroidSpawnerEnabled(false);
-  }
+  // Route through the shared deterministic boot (AH-0MVXWEE3L004SPTC): the
+  // run seed is pinned before the restart and the resumed live loop stays
+  // stopped, so every helper that boots through this function (and every
+  // wrapper that delegates to it) observes identical state on every run.
+  return bootDeterministic(async () => {
+    const game = await bootScene([
+      PlayScene,
+      ...(options.extraScenes ?? []),
+      GameOverScene,
+      MenuScene,
+    ]);
+    const scene = game.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    if (options.asteroidSpawner === false) {
+      // Disable before restarting so the restarted `create()` does not plan
+      // (or auto-update-release) any random asteroids.
+      scene.setAsteroidSpawnerEnabled(false);
+    }
+    return { booted: game, scene };
+  });
+}
+
+/**
+ * The run seed pinned for every deterministic `PlayScene` boot in this file
+ * (AH-0MVXWEE3L004SPTC; flake parent AH-0MVX2DKC8001RRM4). Seed `1` sits
+ * outside the reproduction set recorded by AH-0MVXWEDOH002LO1M (seeds
+ * `8`/`16`/`33`/`36`/`86` reproduce the boss phase-advance failure via an
+ * active frenzy bonus hit), so every suite boots identical state on every
+ * run and every host load.
+ *
+ * This is the one seed policy for the whole file: do not add a second pinned
+ * constant or a per-suite seed. A suite that needs a different seed passes it
+ * explicitly through `bootDeterministic(..., { seed })` (see the reproduction
+ * recipe on that helper) rather than defining its own default. Changing this
+ * value changes the initial state of every suite here, so re-verify the whole
+ * file (the seeded boot is what makes the exact-count assertions exact).
+ *
+ * The boss-encounter exact-count assertions no longer **depend** on the seed
+ * avoiding Frenzy: `damageBossPhase()` advances the boss from observed phase
+ * state, and the Frenzy regression test (both in the boss-encounter describe)
+ * pins the multi-hit condition fail-first, so a future seed/effect change
+ * cannot re-introduce the phase-overshoot flake (AH-0MVXXKCOZ003E1UH AC1/AC2).
+ */
+const DETERMINISTIC_RUN_SEED = 1;
+
+/**
+ * One shared deterministic boot for `PlayScene` (AH-0MVXWEE3L004SPTC; flake
+ * parent AH-0MVX2DKC8001RRM4).
+ *
+ * The harness boots deterministically (fixed deltas) but **resumes** the live
+ * `requestAnimationFrame` loop afterwards (`advanceGame` restarts it,
+ * `src/test/gameHarness.ts`), so a real frame with a wall-clock delta can run
+ * between a test's `await` points on a loaded host — the flake class this
+ * helper exists to remove. The helper closes both halves of the
+ * deterministic-boot contract, combining the two precedents already in the
+ * file:
+ *
+ * - `bootWithHordeWave()`'s `setRunSeed` before the restart: `setRunSeed` is
+ *   only read at the next `create()` (`PlayScene._initRunSeed`), so the seed
+ *   is injected *before* `scene.scene.restart()`. The restarted `create()`
+ *   installs the seeded RNG stream `_initRunSeed()` would otherwise draw
+ *   from `Math.random()` — the stream behind wave/spawn planning and drop
+ *   rolls, which is exactly the variety that made the boss phase-advance
+ *   assertion flaky (seed `8` fails with an active frenzy bonus hit, see
+ *   AH-0MVXWEDOH002LO1M);
+ * - `bootPlayWithAsteroid()`'s `game.loop.stop()` (AH-0MVG23LT7000CG4R):
+ *   stopping the resumed loop means no live frame can advance the wave
+ *   timer between the test's `await` points — the mechanism behind the
+ *   level-advance alive-count shortfall (8 of 9 planned enemies released).
+ *
+ * `{ seed }` overrides the pinned `DETERMINISTIC_RUN_SEED`, so a suspected
+ * failure can be reproduced with the seed that produced it (see "Reproducing
+ * a failure" below) without editing this file.
+ *
+ * ## Seed versus RNG — which seam to use
+ *
+ * - `setRunSeed(seed)` (used here) pins the **run** seed for the whole scene.
+ *   It is only read at the next `create()`, so it must be injected *before*
+ *   the restart, and it governs every seed-derived gameplay draw: wave and
+ *   spawn planning, enemy behaviour, and drop rolls. Use it whenever a test
+ *   needs "this scene, booted reproducibly" — which is every `boot*` helper
+ *   in this file.
+ * - `setRng(rng)` injects a **specific scene-RNG function** for a suite that
+ *   asserts one particular draw (e.g. the asteroid drift-heading fixture
+ *   below). An injected RNG is not overwritten by `create()`'s seed-derived
+ *   stream, so it survives the restart. It is a targeted fixture, not a
+ *   substitute for the run seed: the rest of that scene still boots from the
+ *   `setRunSeed` value, so the helper must still pin it.
+ *
+ * ## Reproducing a failure with a different seed
+ *
+ * A failing exact-count assertion is only evidence once it reproduces with a
+ * recorded seed (the convention in this file: AH-0MVG23LT7000CG4R,
+ * AH-0MVMEI9V1005H0LU). Pass the suspect seed explicitly — no environment
+ * flag, no edit to the constant:
+ *
+ * ```ts
+ * const { scene } = await bootDeterministic(
+ *   () => bootSceneWithLevels(singleLevelCampaign(), { asteroidSpawner: false }),
+ *   { seed: 8 }, // 8/16/33/36/86 reproduced the boss phase-advance failure
+ * );
+ * ```
+ *
+ * Known-bad seeds from the original reproduction (AH-0MVXWEDOH002LO1M) are
+ * `8`, `16`, `33`, `36` and `86` (boss phase index advanced by an active
+ * frenzy bonus hit). A green re-run on the default seed is not evidence of a
+ * fix when the reported failure carried a seed: reproduce first, then reason
+ * about the cause.
+ *
+ * @param boot — boots the scene and applies any pre-restart configuration
+ *   (injected levels, spawner isolation) before the deterministic restart;
+ *   the returned scene must be a `PlayScene`.
+ * @param options.seed — run seed to inject before the restart (defaults to
+ *   `DETERMINISTIC_RUN_SEED`).
+ */
+async function bootDeterministic(
+  boot: () => Promise<{ booted: BootedGame; scene: PlayScene }>,
+  options: { seed?: number } = {},
+): Promise<{ booted: BootedGame; scene: PlayScene }> {
+  const { booted, scene } = await boot();
+  // `setRunSeed` is only read at the next `create()`, so it must be injected
+  // before the restart, not after the boot settles.
+  scene.setRunSeed(options.seed ?? DETERMINISTIC_RUN_SEED);
   scene.scene.restart();
   await advanceGame(scene.game, 200);
-  return { booted: game, scene };
+  // Stop the live rAF loop the harness resumed at the end of `bootScene()`;
+  // a real frame can no longer run between the test's `await` points.
+  scene.game.loop.stop();
+  return { booted, scene };
 }
 
 /**
@@ -612,6 +828,75 @@ function singleLevelCampaign(): LevelDefinition[] {
   ];
 }
 
+describe('PlayScene — deterministic boot helper (AH-0MVXWEE3L004SPTC)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    // Same static-campaign baseline as the rest of the file: the sequenced
+    // campaign would otherwise override the booted levels per run.
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  it('AC3 — two boots through the shared helper observe the same seeded wave state, with no live loop', async () => {
+    // Boot twice through `bootDeterministic`; the two boots must be
+    // indistinguishable — the same run seed, the same enemy/wave composition
+    // after the same deterministic tick sequence — and the live rAF loop must
+    // not be running for the duration of the test.
+    async function bootOnce(): Promise<{ scene: PlayScene; game: Phaser.Game }> {
+      const result = await bootDeterministic(async () => {
+        const bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
+        const bootedScene = bootedGame.scene as PlayScene;
+        // Isolate from the random asteroid spawner (mirrors `bootPlay`) so
+        // the composition observed below is exactly the wave definition's.
+        bootedScene.setAsteroidSpawnerEnabled(false);
+        return { booted: bootedGame, scene: bootedScene };
+      });
+      booted = result.booted;
+      return { scene: result.scene, game: result.booted.game };
+    }
+
+    // The same deterministic tick sequence every boot goes through.
+    const fingerprint = (scene: PlayScene): string => {
+      scene.finishSpawnAnimations();
+      scene.tick(0.016);
+      const wm = scene.getWaveManager();
+      const composition = scene
+        .getEnemies()
+        .map((e) => `${e.constructor.name}@${e.x.toFixed(2)},${e.y.toFixed(2)}`)
+        .join('|');
+      return `${wm.level}.${wm.waveNumber}.${wm.enemiesAlive}:${composition}`;
+    };
+
+    const first = await bootOnce();
+    const firstSeed = first.scene.getRunSeed();
+    expect(firstSeed).toBe(DETERMINISTIC_RUN_SEED);
+    // The live loop is not running for the duration of the test (AC3).
+    expect(first.game.loop.running).toBe(false);
+    const firstFingerprint = fingerprint(first.scene);
+    expect(firstFingerprint).not.toBe('');
+
+    // Tear the first game down before booting the second — two Phaser games
+    // cannot share the harness's canvas container.
+    booted = null;
+    first.game.destroy(true);
+
+    const second = await bootOnce();
+    expect(second.scene.getRunSeed()).toBe(firstSeed);
+    // The live loop stays stopped for the whole test.
+    expect(second.game.loop.running).toBe(false);
+    expect(fingerprint(second.scene)).toBe(firstFingerprint);
+  });
+});
+
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   let booted: BootedGame | null = null;
 
@@ -648,12 +933,20 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    // This suite predates the dynamic spawner and asserts deterministic
-    // wave/banner/transition behaviour; isolate it from random asteroid
-    // spawns (the spawner is covered by its own integration suites).
-    (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
-    return booted.scene as PlayScene;
+    // Deterministic boot through the shared helper (AH-0MVXWEE3L004SPTC):
+    // the run seed is pinned before the restart and the resumed live loop is
+    // stopped, so the suite can never see a random seed or a live frame.
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      // This suite predates the dynamic spawner and asserts deterministic
+      // wave/banner/transition behaviour; isolate it from random asteroid
+      // spawns (the spawner is covered by its own integration suites).
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
+    return scene;
   }
 
   /**
@@ -663,7 +956,13 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
    * the whole ten-level campaign.
    */
   async function bootPlayAtBoss(): Promise<PlayScene> {
-    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    // `bootSceneWithLevels` routes through the shared deterministic helper
+    // (AH-0MVXWEE3L004SPTC): pinned seed before the restart, resumed live
+    // loop stopped (file-wide rollout AH-0MVXWEEJM00813GK).
+    const { booted: game, scene } = await bootSceneWithLevels(
+      singleLevelCampaign(),
+      { asteroidSpawner: false },
+    );
     booted = game;
     scene.setAsteroidSpawnerEnabled(false);
     return scene;
@@ -682,6 +981,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // restarts so these asteroid-behaviour tests are not perturbed by random
     // spawns, then place one deterministic large asteroid through the public
     // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
+    // `bootSceneWithLevels` routes through the shared deterministic helper
+    // (AH-0MVXWEE3L004SPTC): the run seed is pinned before the restart and
+    // the resumed live loop stays stopped for the whole test (file-wide
+    // rollout AH-0MVXWEEJM00813GK; the local `loop.stop()` that used to be
+    // here is now redundant).
     const result = await bootSceneWithLevels(
       plainCampaign(),
       { asteroidSpawner: false },
@@ -693,12 +997,6 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // full-suite parallel load, AH-0MVG23LT7000CG4R). A fixed seed keeps the
     // heading (and the wave-1..N spawn plans) identical on every run.
     result.scene.setRng(FIXED_RNG);
-    // These tests drive every step explicitly (the kill/clear/transition
-    // helpers all use `scene.tick`), so stop the live rAF loop the harness
-    // resumes at the end of `bootScene()`. Otherwise an unpredictable real
-    // frame can run between the test's `await` points (e.g. inside
-    // `bootSceneWithLevels`'s `advanceGame`) with a large real-time delta.
-    result.booted.game.loop.stop();
     result.scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
     return result.scene;
   }
@@ -1100,6 +1398,21 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
     expect(wm.level).toBe(2);
     expect(wm.waveNumber).toBe(1);
+    // Exact, not tolerant — by recorded decision (AH-0MVXWEF0V003F7CV).
+    // `getAliveCount()` counts spawned-and-alive entities, while
+    // `finishSpawnAnimations()` (via `finishTransition` above) only completes
+    // the wormhole transit of entities the wave has already released, so the
+    // full complement is the only correct count once the spawn window is
+    // quiescent. The recorded 8-of-9 flake was **not** a lost spawn or a
+    // seed effect: a 100-seed sweep with the loop stopped reproduced it zero
+    // times (every run asserted the exact full complement), and only the
+    // resumed live rAF loop — real wall-clock frames advancing the wave timer
+    // between `await` points — produced 8 of 9 (AH-0MVXWEDOH002LO1M). The
+    // deterministic boot now pins
+    // the seed and stops that loop (AH-0MVXWEE3L004SPTC), which makes this
+    // exact count reproducible — keep it exact: it is what catches a
+    // genuinely lost spawn.
+    expectSpawnWindowReleased(scene);
     expect(scene.getAliveCount()).toBe(wm.waveEnemyCount());
   });
 
@@ -1939,6 +2252,16 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     booted?.game.destroy(true);
     booted = null;
     localStorage.clear();
+    // Per-test spy isolation (flake parent AH-0MVWZYGDS0015W1F): the repo's
+    // Vitest config restores no mocks between tests, and `vi.clearAllMocks()`
+    // clears calls without removing the spy. Restore here so no boss-hit cue
+    // or hit-effect spy from one test leaks into the next — even when a test
+    // throws before its own cleanup.
+    // Re-verified under host load (verification child AH-0MVXUAT9S003NZ3K):
+    // after the deterministic-boot/spy-isolation fix, repeated sanctioned
+    // changed-scope runs — one under deliberate concurrent host load — and
+    // the dev-push full-suite gate stayed green; assertions are unchanged.
+    vi.restoreAllMocks();
   });
 
   /**
@@ -1948,7 +2271,17 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
    * the other nine levels. Same encounter, ~1/10 the simulated waves.
    */
   async function bootPlayAtBoss(): Promise<PlayScene> {
-    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    // Deterministic boot (flake parent AH-0MVWZYGDS0015W1F): `bootSceneWithLevels`
+    // routes through the shared `bootDeterministic` helper, which pins
+    // `DETERMINISTIC_RUN_SEED` before the restart (same power-up drops and
+    // spawn plans every run) and stops the resumed live rAF loop (precedent:
+    // AH-0MVG23LT7000CG4R). Without the seed, the boss walk's drop rolls
+    // differed run to run; with a live frame, a wall-clock delta could advance
+    // the wave mid-test.
+    const { booted: game, scene } = await bootSceneWithLevels(
+      singleLevelCampaign(),
+      { asteroidSpawner: false },
+    );
     booted = game;
     // Isolate the deterministic boss walk from the random asteroid spawner:
     // a timeout walk simulates a lot of game time, and freely spawning
@@ -1961,6 +2294,11 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   /** Boots with a deterministic large asteroid placed outside the wave
    * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    // Deterministic boot (flake parent AH-0MVWZYGDS0015W1F): `bootSceneWithLevels`
+    // routes through the shared `bootDeterministic` helper, so `DETERMINISTIC_RUN_SEED`
+    // is pinned before the restart and the resumed live loop stays stopped
+    // (precedent: AH-0MVG23LT7000CG4R) — the asteroid composition and the
+    // spawn plan are identical on every run.
     // Isolate the asteroid: disable the dynamic spawner from before the scene
     // restarts so these asteroid-behaviour tests are not perturbed by random
     // spawns, then place one deterministic large asteroid through the public
@@ -2019,7 +2357,18 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     expect(boss.getPhaseNumber()).toBe(1);
 
-    // One phase requires the encounter's effective per-phase hit pool.
+    // Exact, not tolerant — by recorded decision (AH-0MVXWEF0V003F7CV).
+    // One `damageBossPhase()` call delivers exactly one phase's hit pool, so
+    // the phase index must advance by exactly one; a phase that skips from 1
+    // to 3 is the double-advance regression this assertion exists for. The
+    // recorded flake was **not** looseness in the phase math: seeds
+    // 8/16/33/36/86 hold an active `frenzy` effect at the boss (a
+    // seed-determined power-up drop state) which grants a bonus hit, so the
+    // pool-sized batch advanced two phases (AH-0MVXWEDOH002LO1M).
+    // `damageBossPhase()` now drives the phase boundary from observed boss
+    // state (`getPhaseNumber()`), so the exact advance holds even
+    // with a multi-hit effect active — the same count the Frenzy regression
+    // test (below) pins fail-first (AH-0MVXXKCOZ003E1UH AC2).
     damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(scene.getBossPhase()).toBe(2);
@@ -2034,6 +2383,37 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
 
+    const divers = scene.getEnemies().filter(
+      (e) => e.alive && e.constructor.name === 'Diver',
+    );
+    expect(divers.length).toBeGreaterThan(0);
+  });
+
+  it('AC2 — a frenzy-boosted hit pool still advances exactly one phase (regression AH-0MVXXKCOZ003E1UH)', async () => {
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Force the recorded reproduction condition: an active frenzy effect at
+    // the boss grants `frenzyBonusHits() === 1`, so each player bullet
+    // applies **two** phase hits (every recorded reproduction seed
+    // 8/16/33/36/86 from AH-0MVXWEDOH002LO1M carried this exact state). A
+    // pool-sized batch would then deplete two phases — the
+    // `expected 3 to be 2` boss phase-advance flake this item pins. The
+    // deterministic boot seeds the power-up drops, but the helper's
+    // contract must hold regardless of which seed the drops resolve to.
+    registry.applyCollect('frenzy', true);
+    expect(registry.frenzyBonusHits()).toBe(1);
+
+    // One `damageBossPhase()` call must still advance exactly one phase —
+    // and summon that phase's minion wave — regardless of the bonus hits.
+    damageBossPhase(scene, boss);
+    expect(boss.getPhaseNumber()).toBe(2);
+    expect(scene.getBossPhase()).toBe(2);
+
+    // Phase 2's Firestorm divers arrive from the top as with the
+    // frenzy-free boot.
     const divers = scene.getEnemies().filter(
       (e) => e.alive && e.constructor.name === 'Diver',
     );
@@ -2326,16 +2706,39 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     booted?.game.destroy(true);
     booted = null;
     localStorage.clear();
+    // Per-test spy isolation (flake parent AH-0MVWZYGDS0015W1F): the repo's
+    // Vitest config restores no mocks between tests, and `vi.clearAllMocks()`
+    // clears calls without removing the spy. Restore here so a destruction-
+    // audio or pickup-cue spy from one test never leaks into the next — even
+    // when a test throws before its own cleanup.
+    // Re-verified under host load (verification child AH-0MVXUAT9S003NZ3K):
+    // three consecutive sanctioned changed-scope runs (one under deliberate
+    // concurrent host load) and the dev-push full-suite gate stayed green;
+    // assertions are unchanged.
+    vi.restoreAllMocks();
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    // Deterministic boot (flake parent AH-0MVWZYGDS0015W1F): the shared
+    // `bootDeterministic` helper pins `DETERMINISTIC_RUN_SEED` before the
+    // restart (same wave/enemy composition and drop rolls every run) and
+    // stops the resumed live rAF loop (precedent: AH-0MVG23LT7000CG4R).
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   /** Boots with a deterministic large asteroid placed outside the wave
    * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    // Deterministic boot (flake parent AH-0MVWZYGDS0015W1F): `bootSceneWithLevels`
+    // routes through the shared `bootDeterministic` helper, so `DETERMINISTIC_RUN_SEED`
+    // is pinned before the restart and the resumed live loop stays stopped
+    // (precedent: AH-0MVG23LT7000CG4R) — the asteroid composition and the
+    // spawn plan are identical on every run.
     // Isolate the asteroid: disable the dynamic spawner from before the scene
     // restarts so these asteroid-behaviour tests are not perturbed by random
     // spawns, then place one deterministic large asteroid through the public
@@ -3156,7 +3559,6 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   }
 
   it('bullet kill of a Diver plays the diver destruction sound', async () => {
-    vi.restoreAllMocks(); // fresh spies (config does not restore between tests)
     const scene = await bootPlay();
 
     // Walk to a wave containing an entity with the destruction-audio seam
@@ -3189,7 +3591,6 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('a generic enemy (Scout) plays the generic destruction sound', async () => {
-    vi.restoreAllMocks();
     const scene = await bootPlay();
     finishSpawnSequence(scene);
     const enemy = scene.getEnemies().find((e) => !(e as { playDestructionAudio?: unknown }).playDestructionAudio)!;
@@ -3203,7 +3604,6 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('player-body-vs-enemy collision plays the entity destruction audio exactly once', async () => {
-    vi.restoreAllMocks();
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
 
@@ -3327,10 +3727,14 @@ describe('PlayScene — asteroid Extra Life kill drop (AH-0MV6M2M9P0078N4S)', ()
         asteroidExtraLifeDropChance: 1,
       }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.setRng(() => 0.99);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      bootedScene.setRng(() => 0.99);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     return scene;
   }
 
@@ -3400,8 +3804,12 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, PauseScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, PauseScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   /** A faked Phaser key exposing only `isDown`. */
@@ -3535,8 +3943,12 @@ describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () 
   const SEED = 20260925;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   async function bootCustom(levels: LevelDefinition[]): Promise<PlayScene> {
@@ -3767,8 +4179,12 @@ describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)
   const SEED = 424242;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   async function bootCustom(levels: LevelDefinition[]): Promise<PlayScene> {
@@ -4164,8 +4580,12 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
   });
 
   async function bootToggleScene(): Promise<PlayScene> {
-    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return toggleBooted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    toggleBooted = game;
+    return scene;
   }
 
   it('runs the static campaign when the toggle is explicitly disabled', async () => {
@@ -4281,11 +4701,13 @@ describe('PlayScene — campaign Harvester roaming spawns (F6)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     return scene;
   }
 
@@ -4391,9 +4813,14 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
+    return scene;
   }
 
   it('AC1 — spawns a wormhole when the wave spawns', async () => {
@@ -4945,8 +5372,12 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   /**
@@ -5335,8 +5766,15 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   describe('Narrowed demo take-over (AH-0MUYP6M6W006Z1AY)', () => {
     /** Boots a live game and starts the demo, returning the PlayScene. */
     async function bootDemo(): Promise<PlayScene> {
-      booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-      const scene = booted.scene as PlayScene;
+      const { booted: game, scene } = await bootDeterministic(async () => {
+        const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+        return { booted: result, scene: result.scene as PlayScene };
+      });
+      booted = game;
+      // Re-start the scene in demo mode after the deterministic boot: the
+      // injected run seed is read again at the next `create()` and the live
+      // loop stays stopped, so the demo walk starts from the same seeded
+      // state (AH-0MVXWEEJM00813GK).
       scene.scene.start('PlayScene', { demo: true });
       await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
@@ -5936,12 +6374,14 @@ describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.setGhostSpawnerEnabled(true);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      bootedScene.setGhostSpawnerEnabled(true);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     return scene;
   }
 
@@ -6099,16 +6539,18 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.setCentipedeSpawnerEnabled(true);
-    // Isolate the centipede accounting from the random asteroid spawner (the
-    // same isolation `bootSceneWithLevels` applies for the asteroid suite): a
-    // released asteroid can absorb a player bullet meant for a segment.
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      bootedScene.setCentipedeSpawnerEnabled(true);
+      // Isolate the centipede accounting from the random asteroid spawner (the
+      // same isolation `bootSceneWithLevels` applies for the asteroid suite): a
+      // released asteroid can absorb a player bullet meant for a segment.
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     return scene;
   }
 
@@ -6269,14 +6711,14 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.setHordeSpawnerEnabled(true);
-    // Inject before the restart: `_initRunSeed()` reads it during `create()`.
-    if (seed !== undefined) scene.setRunSeed(seed);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      bootedScene.setHordeSpawnerEnabled(true);
+      return { booted: result, scene: bootedScene };
+    }, { seed });
+    booted = game;
     return scene;
   }
 
@@ -6549,11 +6991,13 @@ describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     // Complete the wormhole spawn so the raider is collision-active immediately
     // (the spawn animation protects spawning enemies).
     scene.finishSpawnAnimations();
@@ -6835,13 +7279,15 @@ describe('PlayScene — Frogger lane traffic (AH-0MV01EPM40008N8T)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.setLaneTrafficSpawnerEnabled(true);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      bootedScene.setLaneTrafficSpawnerEnabled(true);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     scene.finishSpawnAnimations();
     return scene;
   }
@@ -7182,8 +7628,15 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
   async function bootMiniBossCampaign(
     levelCount = 2,
   ): Promise<PlayScene> {
+    // Disable the random asteroid spawner **before** the restart, like the
+    // other helpers in this file: an asteroid spawned during boot is a live
+    // body in `getEnemies()` and the Orbital Strike deliberately never
+    // targets one (`isOrbitalStrikeTarget`, AH-0MVU3341U001B40T), so leaving
+    // it on made "the nearest enemy" assertions depend on boot timing
+    // (AH-0MVU9IC7I002PPP9).
     const { booted: game, scene } = await bootSceneWithLevels(
       miniBossCampaign(levelCount),
+      { asteroidSpawner: false },
     );
     booted = game;
     scene.setAsteroidSpawnerEnabled(false);
@@ -7324,7 +7777,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(miniBoss.getHpFraction()).toBeLessThan(1);
   });
 
-  it('AC1/AC4 — a defeat offers exactly one upgrade-or-unlock choice', async () => {
+  it('AC1/AC4 — a defeat offers exactly one upgrade choice (no unlock options)', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
     // Collect/own a weapon so the upgrade option set is non-empty.
@@ -7334,17 +7787,12 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
 
     const options = scene.getMiniBossRewardOptions();
     expect(options.length).toBeGreaterThan(0);
-    // Both option families are present: owned-item upgrades and locked
-    // weapon unlocks.
+    // The reward is a level-up surface only (parent AH-0MVLISU03006WDOD AC5):
+    // every offer upgrades an owned permanent item, and no option adds a
+    // brand-new weapon kind.
+    expect(options.every((option) => option.kind === 'weapon-level' || option.kind === 'power-up-level')).toBe(true);
     expect(options.some((option) => option.kind === 'weapon-level')).toBe(true);
-    expect(options.some((option) => option.kind === 'weapon')).toBe(true);
-    // The unlock candidates are exactly the still-locked weapons.
-    const unlockIds = options
-      .filter((option) => option.kind === 'weapon')
-      .map((option) => option.id);
-    expect(unlockIds.sort()).toEqual(
-      [...lockedWeaponIds({ unlockedWeapons: new Set() })].sort(),
-    );
+    expect(options.some((option) => option.kind === 'weapon')).toBe(false);
   });
 
   it('AC2/AC4 — choosing an upgrade raises an owned permanent item by one level', async () => {
@@ -7374,33 +7822,23 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(scene.selectMiniBossReward(upgradeIndex)).toBeNull();
   });
 
-  it('AC3/AC4 — choosing an unlock makes that locked weapon available for the run', async () => {
+  it('AC5 — the removed unlock feature leaves no unlock option and no persisted unlock state', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
-    expect(scene.getUnlockedWeapons()).toEqual([]);
+    scene.getPlayer()!.equipWeapon('spread', true);
+    localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
 
     killMiniBoss(scene, false);
     const options = scene.getMiniBossRewardOptions();
-    const unlockIndex = options.findIndex(
-      (option) => option.kind === 'weapon' && option.id === 'railgun',
-    );
-    expect(unlockIndex).toBeGreaterThanOrEqual(0);
+    // A previously locked weapon can never be picked up from the reward…
+    expect(options.some((option) => option.id === 'railgun')).toBe(false);
 
-    scene.selectMiniBossReward(unlockIndex);
-    expect(scene.getUnlockedWeapons()).toEqual(['railgun']);
-    // The unlocked weapon is genuinely equipped through the shared seam.
-    expect(
-      scene
-        .getPlayer()!
-        .getWeaponLevels()
-        .some((entry) => entry.id === 'railgun'),
-    ).toBe(true);
-    // And it is no longer offered as an unlock by the next encounter.
-    const stillLocked = lockedWeaponIds({
-      unlockedWeapons: new Set(scene.getUnlockedWeapons()),
-    });
-    expect(stillLocked).not.toContain('railgun');
-    expect(MINI_BOSS_LOCKED_WEAPONS).toContain('railgun');
+    scene.selectMiniBossReward(0);
+    // …and the checkpoint no longer carries a `unlockedWeapons` field, so the
+    // removed feature cannot leak back through Continue.
+    const persisted = loadCheckpoint()!;
+    expect(persisted).not.toBeNull();
+    expect(persisted).not.toHaveProperty('unlockedWeapons');
   });
 
   // ── Six-slot cap on the reward offer (parent AH-0MVLIJT3M005HPHF AC4) ──
@@ -7445,7 +7883,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     }
   });
 
-  it('AH-0MVLIJT3M005HPHF AC4 — a kind held only temporarily can still be made permanent at the cap', async () => {
+  it('AH-0MVLIJT3M005HPHF AC4 — a temporarily-held kind is no longer offered as an unlock', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
     const player = scene.getPlayer()!;
@@ -7455,17 +7893,17 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift'] as const) {
       player.collectPowerUp(id, true);
     }
-    // The sixth slot is a field pickup of a still-locked weapon, so taking the
-    // unlock adds no new kind — it makes an already-slotted kind permanent.
+    // The sixth slot is a field pickup of a previously locked weapon.
     player.equipWeapon('railgun', false);
 
     killMiniBoss(scene, false);
 
-    const unlockIds = scene
-      .getMiniBossRewardOptions()
-      .filter((option) => option.kind === 'weapon')
-      .map((option) => option.id);
-    expect(unlockIds).toEqual(['railgun']);
+    const options = scene.getMiniBossRewardOptions();
+    // The unlock half is gone, so the temporarily-held weapon is not offered as
+    // an acquisition; the reward offers only the permanently-owned kinds.
+    expect(options.some((option) => option.kind === 'weapon')).toBe(false);
+    expect(options.map((option) => option.id)).not.toContain('railgun');
+    expect(options.map((option) => option.id)).toContain('spread');
   });
 
   it('AH-0MVLIJT3M005HPHF AC4 — a full pool never opens an empty reward (no soft-lock)', async () => {
@@ -7501,6 +7939,28 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(scene.isMiniBossRewardOpen()).toBe(false);
   });
 
+  it('AH-0MVLISU03006WDOD AC4 — a mini-boss always pays out (empty loadout fallback)', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    // Nothing owned, nothing held: the level-1 mini-boss case that used to be
+    // covered by the (now removed) unlock half.
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+
+    killMiniBoss(scene, false);
+
+    const options = scene.getMiniBossRewardOptions();
+    // The reward falls back to the hold-full-style three-option choice, so the
+    // paused overlay never opens empty…
+    expect(options.length).toBeGreaterThan(0);
+    expect(options.map((option) => option.id)).not.toContain('reset');
+    // …and it resolves, so play resumes (no soft-lock).
+    expect(scene.selectMiniBossReward(0)).not.toBeNull();
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+  });
+
   it('AC2 — a mini-boss defeat auto-saves the run checkpoint', async () => {
     localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
     const scene = await bootMiniBossCampaign();
@@ -7525,6 +7985,67 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(saved!.mineralHoldCapacity).toBe(20);
     expect(saved!.runSeed).toBe(scene.getRunSeed());
     expect(saved!.weaponLevels.some((entry) => entry.id === 'spread')).toBe(true);
+  });
+
+  it('AH-0MVUXC118004B4OX AC1 — each checkpoint banks only the salvage earned since the previous one', async () => {
+    localStorage.removeItem(HANGAR_WAR_STORAGE_KEY);
+    const scene = await bootMiniBossCampaign();
+    // A roomy hold keeps the walk free of hold-full pauses, so the minerals
+    // asserted here are exactly the ones the checkpoint sees.
+    scene.getGameState().mineralCapacity = 20;
+    advanceToMiniBoss(scene);
+    scene.getGameState().minerals = 5;
+
+    killMiniBoss(scene);
+
+    // The first checkpoint banks the run's held minerals and its mini-boss core.
+    const first = loadHangarWarPayload();
+    expect(first).not.toBeNull();
+    expect(first!.hangar.bankedMinerals).toBe(5);
+    expect(first!.hangar.bankedCores).toBe(1);
+
+    // Earning two more minerals before the next checkpoint banks only those
+    // two (the balance becomes 7, never 5 + 7), and the second core.
+    advanceToMiniBoss(scene);
+    scene.getGameState().minerals = 7;
+    killMiniBoss(scene);
+
+    const second = loadHangarWarPayload();
+    expect(second!.hangar.bankedMinerals).toBe(7);
+    expect(second!.hangar.bankedCores).toBe(2);
+    expect(scene.getBankedSalvage()).toEqual({ minerals: 7, cores: 2 });
+  });
+
+  it('AH-0MVUXC118004B4OX AC2 — a game over forfeits only the unbanked salvage and keeps the hangar and ring', async () => {
+    // A pre-existing save with a partial ring proves the game over can neither
+    // reduce the balance nor drop the ring state.
+    localStorage.setItem(
+      HANGAR_WAR_STORAGE_KEY,
+      JSON.stringify(VALID_HANGAR_WAR_PAYLOAD),
+    );
+    const scene = await bootMiniBossCampaign();
+    scene.getGameState().mineralCapacity = 20;
+    advanceToMiniBoss(scene);
+    scene.getGameState().minerals = 4;
+    const bankedMinerals = VALID_HANGAR_WAR_PAYLOAD.hangar.bankedMinerals;
+    const bankedCores = VALID_HANGAR_WAR_PAYLOAD.hangar.bankedCores;
+
+    killMiniBoss(scene);
+    expect(loadHangarWarPayload()!.hangar.bankedMinerals).toBe(
+      bankedMinerals + 4,
+    );
+    expect(loadHangarWarPayload()!.hangar.bankedCores).toBe(bankedCores + 1);
+
+    // Three minerals (and no core) earned after the bank are forfeit when the
+    // run dies before another checkpoint — the banked balance is untouched.
+    scene.getGameState().minerals = 7;
+    (scene as unknown as { _finishRun(won: boolean): void })._finishRun(false);
+
+    const afterDeath = loadHangarWarPayload();
+    expect(afterDeath!.hangar.bankedMinerals).toBe(bankedMinerals + 4);
+    expect(afterDeath!.hangar.bankedCores).toBe(bankedCores + 1);
+    expect(afterDeath!.ring).toEqual(VALID_HANGAR_WAR_PAYLOAD.ring);
+    expect(scene.getForfeitedSalvage()).toEqual({ minerals: 3, cores: 0 });
   });
 
   it('AH-0MVH85XXZ008INE2 — a defeated mini-boss leaves no graphics behind', async () => {
@@ -7814,6 +8335,40 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     }
   });
 
+  it('AH-0MVJ79739008396I AC7 — the Salvage bonus folds into one red deposit and suppresses the orange scatter', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    scene.finishSpawnAnimations();
+    const enemies = scene.getEnemies().filter((e) => e.alive);
+
+    // Level Salvage up (permanent, so the window never expires mid-test).
+    for (let i = 0; i < 8; i += 1) registry.applyCollect('salvage', true);
+    const bonus = registry.salvageBonusMinerals();
+    expect(bonus).toBeGreaterThan(0);
+
+    // The wreck's own tally only reaches the threshold with the bounty's help.
+    const target = enemies[0];
+    for (let i = 0; i < MINERAL_DEPOSIT_THRESHOLD - bonus; i += 1)
+      target.collectMineral();
+    // rng() = 0 ⇒ the resolved count is exactly tally + bounty = threshold.
+    scene.setRng(() => 0);
+
+    const before = scene.getMinerals().length;
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0);
+    const drops = scene.getMinerals().slice(before);
+
+    // One wreck, one payout shape: a single red deposit at the wreck.
+    expect(drops).toHaveLength(1);
+    expect(drops[0].color).toBe(MINERAL_DEPOSIT_COLOR);
+    expect(drops[0].value).toBe(MINERAL_DEPOSIT_VALUE);
+    expect(drops[0].x).toBe(target.x);
+    expect(drops[0].y).toBe(target.y);
+    // The orange bounty scatter is suppressed alongside the deposit.
+    expect(drops.some((m) => m.color === MINERAL_SALVAGE_COLOR)).toBe(false);
+    expect(drops.some((m) => m.color === MINERAL_COLOR)).toBe(false);
+  });
+
   it('AH-0MVH80ZJ7009W18Z — Orbital Strike damages the nearest enemy on pickup', async () => {
     const scene = await bootMiniBossCampaign();
     const registry = scene.getEffectsRegistry();
@@ -7853,8 +8408,11 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     const scene = await bootMiniBossCampaign();
     const player = scene.getPlayer()!;
     for (let i = 0; i < 4; i += 1) player.equipWeapon('railgun', true);
+    // Permanent upgrades raise the score. Shield is a **consumable**, so a
+    // hold-full reward adds a charge instead of a level (parent
+    // AH-0MVTQMREN009DSFW AC1) — use a levelling power-up for the 3 levels.
     for (let i = 0; i < 3; i += 1) {
-      scene.getEffectsRegistry().applyCollect('shield', true);
+      scene.getEffectsRegistry().applyCollect('speed_boost', true);
     }
     const score = scene.getPlayerPowerScore();
     expect(score).toBe(7);
@@ -8192,6 +8750,35 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     expect(scene.isMineralChoiceOpen()).toBe(false);
     expect(scene.isPaused()).toBe(false);
   });
+
+  it('AC3 — every sweep burst schedules its explosion SFX (no silent explosions)', async () => {
+    const scene = await bootSweepScene();
+    advanceToMiniBoss(scene);
+    const destruction = vi.spyOn(effectsModule, 'playDestructionSound');
+    const bossDestruction = vi.spyOn(effectsModule, 'playBossDestructionSound');
+
+    hitMiniBossUntilDead(scene);
+
+    const targets = scene.getMiniBossSweepTargets();
+    // The swept enemies, the `max(0, 30 - n)` scatter bursts and the 10
+    // anchored bursts share the enemy-destruction cue, each scheduled at its
+    // own burst delay (producer audit: explosions were silent).
+    expect(destruction.mock.calls.length).toBeGreaterThanOrEqual(
+      targets.length + 10,
+    );
+    expect(
+      destruction.mock.calls.some(([options]) => (options?.delay ?? 0) > 0),
+    ).toBe(true);
+    // The 20-burst finale is the mini-boss's own heavy boss-destruction boom
+    // (the mini-boss's single death cue, when routed through its
+    // `playDestructionAudio` seam, is unscheduled and therefore not counted).
+    const scheduledBossBooms = bossDestruction.mock.calls.filter(
+      ([options]) => (options?.delay ?? 0) > 0,
+    );
+    expect(scheduledBossBooms).toHaveLength(20);
+
+    finishMiniBossSweep(scene);
+  });
 });
 
 /**
@@ -8298,12 +8885,14 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = bootedGame.scene as PlayScene;
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.getWaveManager().setLevels(levels);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      bootedScene.getWaveManager().setLevels(levels);
+      return { booted: result, scene: bootedScene };
+    });
+    bootedGame = game;
     return scene;
   }
 
@@ -8753,11 +9342,13 @@ describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = bootedGame.scene as PlayScene;
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      return { booted: result, scene: bootedScene };
+    });
+    bootedGame = game;
     return scene;
   }
 

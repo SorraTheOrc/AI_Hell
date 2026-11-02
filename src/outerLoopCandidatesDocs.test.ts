@@ -36,6 +36,12 @@
  *   ring 2 is 12 hexes), the anti-checklist mitigations and the playstyles the
  *   loop must support are documented, and the build-out work item is
  *   cross-referenced from the decision record and the GDD.
+ * - Build status (AH-0MVUXCC5J0028OGQ): Candidate D records that it is
+ *   **implemented and shipped** (not design-only), names the deferred ring-win
+ *   item and the post-MVP backlog items with their work-item ids, and GDD §8.2
+ *   carries the playable ring specification — ring model and growth, the
+ *   capture cycle, the resolver and frontier-tick numbers, the defence report,
+ *   the measured ring timings and the supported playstyles.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -391,6 +397,51 @@ const gddFutureScope = (): string => {
   return nextHeading ? rest.slice(0, nextHeading.index) : rest;
 };
 
+/** Candidate D's body, up to the next level-2 heading (build status guard). */
+const candidateDBody = (): string =>
+  candidateSection(doc, CANDIDATES[3].heading);
+
+/** AC of AH-0MVUXCC5J0028OGQ: the build status and the deferred backlog ids. */
+describe('Candidate D records its build status (AH-0MVUXCC5J0028OGQ)', () => {
+  it('records Candidate D as implemented and shipped', () => {
+    const body = candidateDBody();
+    expect(body).toMatch(/build status/i);
+    expect(body).toMatch(/implemented/i);
+    expect(body).toMatch(/shipped/i);
+    // The stale "design only, not scheduled" marker is gone from the built
+    // candidate's own section; the other three candidates keep theirs.
+    expect(body).not.toMatch(/design only, not scheduled/i);
+  });
+
+  it('records the deferred ring-win item with its work-item id', () => {
+    const body = candidateDBody();
+    expect(body).toContain('AH-0MVUVL2O2006W4QK');
+    expect(body).toMatch(/massed/i);
+    expect(body).toMatch(/hangar[- ]falls/i);
+  });
+
+  it('records the post-MVP backlog items with their work-item ids', () => {
+    const body = candidateDBody();
+    // Special missions, upgraded bots and hex variety.
+    expect(body).toContain('AH-0MVWZYIWX0008C55');
+    expect(body).toContain('AH-0MVWZYJ740037EZ1');
+    expect(body).toContain('AH-0MVWZYQN8007SXIG');
+    expect(body).toMatch(/special missions/i);
+    expect(body).toMatch(/upgraded bots/i);
+  });
+
+  it('keeps the design-only framing for the candidates that are not built', () => {
+    expect(doc).toMatch(/design[- ]only/i);
+    expect(doc).toMatch(/not scheduled/i);
+    // A/B/C remain unbuilt; D is the shipped one.
+    expect(doc).toMatch(/Candidates? A[^\n]*\bnot scheduled\b/i);
+  });
+
+  it('points at the playable ring specification in GDD §8.2', () => {
+    expect(candidateDBody()).toMatch(/§8\.2/);
+  });
+});
+
 /** AC16: the decision of record, its timing and its cross-references. */
 describe('The chosen loop is recorded in the GDD (AC16)', () => {
   it('names Candidate D as the chosen outer loop', () => {
@@ -423,5 +474,119 @@ describe('The chosen loop is recorded in the GDD (AC16)', () => {
   it('points at the work item that builds the chosen loop', () => {
     expect(gddFutureScope()).toContain(BUILD_OUT_ITEM_ID);
     expect(doc).toContain(BUILD_OUT_ITEM_ID);
+  });
+});
+
+/** The GDD's §8.2 ring specification (up to the next level-2 heading). */
+const gddRingSpec = (): string => {
+  const text = fs.readFileSync(GDD_PATH, 'utf8');
+  const heading = /^###\s*8\.2\s+Hangar War[^\n]*$/im.exec(text);
+  if (!heading || heading.index === undefined) return '';
+  const rest = text.slice(heading.index + heading[0].length);
+  const nextHeading = /\n##\s/.exec(rest);
+  return nextHeading ? rest.slice(0, nextHeading.index) : rest;
+};
+
+/** The subsections the playable ring specification must carry. */
+const RING_SPEC_SECTIONS = [
+  'Entry surface and the ring screens',
+  'The hangar and its economy',
+  'The hex ring and ring growth',
+  'The capture cycle',
+  'The defence resolver and the frontier tick',
+  'The defence report',
+  'Measured ring timings',
+  'Supported playstyles',
+  'Persistence: one key for hangar and ring',
+  'Gym coverage and parity',
+];
+
+/** AH-0MVUXCC5J0028OGQ: the ring is documented as a playable mode. */
+describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028OGQ)', () => {
+  it('has a §8.2 ring specification section', () => {
+    expect(gddRingSpec().trim().length).toBeGreaterThan(0);
+  });
+
+  it.each(RING_SPEC_SECTIONS)('carries the "%s" subsection', (section) => {
+    expect(gddRingSpec()).toMatch(
+      new RegExp(`^####\\s+${escapeRegExp(section)}\\s*$`, 'im'),
+    );
+  });
+
+  it('states the ring model and the 6 × n growth rule', () => {
+    const spec = gddRingSpec();
+    expect(spec).toMatch(/6\s*[×x*]\s*n/);
+    expect(spec).toMatch(/ring 1[^\n]*\b6\b|\b6\b[^\n]*ring 1/i);
+    expect(spec).toMatch(/ring 2[^\n]*\b12\b|\b12\b[^\n]*ring 2/i);
+    // Exactly one weapon hex, and it is the ring's hardest.
+    expect(spec).toMatch(/weapon hex/i);
+    expect(spec).toMatch(/hardest/i);
+  });
+
+  it('states the capture cycle end to end', () => {
+    const spec = gddRingSpec();
+    expect(spec).toMatch(/capture cycle/i);
+    expect(spec).toMatch(/salvage/i);
+    expect(spec).toMatch(/boss/i);
+    expect(spec).toMatch(/defend/i);
+    expect(spec).toMatch(/ring secured/i);
+  });
+
+  it('states the shipped resolver and frontier-tick numbers', () => {
+    const spec = gddRingSpec();
+    // Aggression rises 1–2 a tick to a ceiling of 9.
+    expect(spec).toMatch(/1\s*[–—-]\s*2/);
+    expect(spec).toMatch(/\b9\b/);
+    // +15 % per point of aggression, ±10 % seeded jitter, 70 % attack chance.
+    expect(spec).toMatch(/15\s*%/);
+    expect(spec).toMatch(/±\s*10\s*%/);
+    expect(spec).toMatch(/70\s*%/);
+    // Attack force 2 + the origin neighbour's aggression.
+    expect(spec).toMatch(/force\s*\*{0,2}2\*{0,2}/i);
+    expect(spec).toMatch(/neighbour'?s aggression/i);
+    // A tie holds the line.
+    expect(spec).toMatch(/tie holds/i);
+  });
+
+  it('states that defence is algorithmic, never a simulated battle', () => {
+    const spec = gddRingSpec();
+    expect(spec).toMatch(/no battle was simulated|never (a )?simulated/i);
+    expect(spec).toMatch(/stored numbers/i);
+  });
+
+  it('records the measured ring timings and their tolerance', () => {
+    const spec = gddRingSpec();
+    // Ring 1 grind mean and ring 2 grind mean, measured with the arena.
+    expect(spec).toMatch(/46\.0/);
+    expect(spec).toMatch(/91\.6/);
+    // The rush line is faster: ring 1 and ring 2.
+    expect(spec).toMatch(/31\.9/);
+    expect(spec).toMatch(/61\.7/);
+    // Budget windows and the stated tolerance.
+    expect(spec).toMatch(/40\s*[–—-]\s*60/);
+    expect(spec).toMatch(/70\s*[–—-]\s*100/);
+    expect(spec).toMatch(/±\s*2\s*min/i);
+    expect(spec).toMatch(/±\s*3\s*min/i);
+    // The measurement is reproducible from the committed artifact.
+    expect(spec).toContain('docs/dev/ring-timing-baseline.json');
+  });
+
+  it('records the supported playstyles and that neither dominates', () => {
+    const spec = gddRingSpec();
+    expect(spec).toMatch(/rush/i);
+    expect(spec).toMatch(/grind/i);
+    expect(spec).toMatch(/neither (line )?dominates/i);
+  });
+
+  it('names the gym scenes and the parity matrix', () => {
+    const spec = gddRingSpec();
+    expect(spec).toContain('GymHangar');
+    expect(spec).toContain('GymHexWar');
+    expect(spec).toContain('docs/GYM_PARITY.md');
+  });
+
+  it('keeps the producer decision record', () => {
+    expect(gddFutureScope()).toMatch(/producer/i);
+    expect(gddFutureScope()).toMatch(/2026-10-2\d/);
   });
 });

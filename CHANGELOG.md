@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.1.17 (2026-11-02)
+> **Release focus:** This release focuses on making combat and progression feel more varied and readable, with mixed enemy waves, distinct level backdrops, and richer audio-visual feedback for weapons, bosses, and rewards. It also rebalances temporary and permanent pickups so effects are limited rather than endless, and fixes several save-data, boss-fight, and test-reliability issues.
+### Features
+- Waves now mix up enemy types so no two in a row feel the same, while each level keeps its signature style. (AH-0MVI5XXOU00954EA)
+- Defeating a mini-boss now triggers a huge explosion chain, with the reward screen waiting until the fireworks finish. (AH-0MVOFGB6K003YD0Z)
+- The unfinished Hangar War mode is now hidden from the main menu until it's ready. (AH-0MVZ0VGGQ0032KDP)
+- The Mystery UFO now warbles, sparkles, and explodes with sound and effects, making every reward feel alive. (AH-0MVI4J8R4002WTT6)
+- Unlock-pool weapons now have matching fire sounds, muzzle flashes and impact effects. (AH-0MVMJMCQK004BE9T)
+- Big ship wrecks now leave a red deposit worth 10 minerals in one pickup. (AH-0MVJ79739008396I)
+- The Railgun now has its own launch and hit sounds, so every shot feels powerful and easy to pick out. (AH-0MVMIGVCE004VSNA)
+- The upgrade screen now shows your permanent weapons and power-ups, so you can pick upgrades that fit your build. (AH-0MVCRKAPL000L68Y)
+- Each level now has its own NASA space backdrop, with a warp jump effect between levels. (AH-0MVIB7PD50029ZY1)
+- Brand-new power-up offers now stand out with a bold, pulsing "New" marker so you can spot them instantly. (AH-0MVCFH6I4000AWRI)
+- Shield, Thorn Field and Force Field drops now grant one guaranteed use instead of a timer. (AH-0MVUVSW4J0009QUW)
+- Railgun shots now flash sky-blue when fired, making each heavy shot feel more powerful. (AH-0MVQ6C1YL003HU9K)
+### Bug Fixes
+- Shard bullets now render with a glowing tinted blade and white-hot core as intended. (AH-0MVVE2QFP002HSUD)
+- Temporary pickups now always expire, so your upgrades no longer become permanently stronger. (AH-0MVSTKGC3003OMAC)
+- Recovered the game data after a crash so your progress and saves are safe again. (AH-0MVVNKP1B00701HR)
+- The promo compiler's end-to-end check now reports exactly which deliverable fails, so real encoder problems are caught instead of hidden behind a known false alarm. (AH-0MVWN4I95005HBJG)
+- Fixed a flaky test so gym level scaling stays reliable. (AH-0MVWOERDM000YZN0)
+- Permanent consumables now give limited recharging charges instead of endless effects. (AH-0MVTQMREN009DSFW)
+- Boss phase transitions now trigger the correct minion wave every time, even with Frenzy active. (AH-0MVXXKCOZ003E1UH)
+- Boss fights and asteroid collisions now behave consistently, so hits, sounds and scores are always counted correctly. (AH-0MVWZYGDS0015W1F)
+- Upgrade counts now match what your ship actually carries, so the HUD and upgrade screen always agree. (AH-0MVZ0GGW1004502H)
+- The game's release build is unblocked after repairing corrupted save data from an unclean shutdown. (AH-0MVZ6GSMY000VJMH)
+- Test runs no longer overwrite your saved ship settings. (AH-0MVKYQWSW0067F12)
+- Tuning runs now fail instantly on bad output paths and never leave balance data corrupted. (AH-0MVIKLOOJ0058Z9B)
+- Capture docs now correctly explain the memory budget for long recordings. (AH-0MVOJ76MJ0039HNE)
+- Empty worktrees no longer trigger unnecessary finish runs, so idle sessions won't fail. (AH-0MVFBCVIS007BN81)
+### Other
+- Test runs are now more reliable on busy machines, so you won't see false test failures. (AH-0MVWCFS7K000RIWI)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.16 (2026-10-29)
 > **Release focus:** This release focuses on making late-game runs more challenging and readable, capping builds at six slots and ensuring phase shift and wormhole effects are clearly visible. It also strengthens run continuity with carry-over campaign progress and fixes for continuing saved runs, while improving enemy edge behavior and overall test reliability.
 ### Features

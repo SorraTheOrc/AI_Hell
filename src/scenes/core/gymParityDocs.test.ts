@@ -220,13 +220,15 @@ describe('docs/GYM_PARITY.md records every gym scene (AH-0MVRMHUOG005P38A)', () 
   const matrix = fs.readFileSync(GYM_PARITY_MATRIX, 'utf8');
   const sceneKeys = gymSceneKeys(GYM_SCENE_DIR);
 
-  it('audits the 14 production gym scenes (AC1)', () => {
+  it('audits the 16 production gym scenes (AC1)', () => {
     expect(sceneKeys).toEqual([
       'GymBoss',
       'GymBotTuning',
       'GymCentipede',
       'GymCurveSequencer',
       'GymFodderEnemies',
+      'GymHangar',
+      'GymHexWar',
       'GymLevel',
       'GymMinerals',
       'GymMiniBoss',
@@ -335,6 +337,50 @@ describe('docs/GYM_PARITY.md records every gym scene (AH-0MVRMHUOG005P38A)', () 
     expect(matrix).toMatch(/absence of run telemetry/i);
     expect(matrix).toContain('docs/BALANCING.md');
     expect(matrix).toContain('ENEMY_DESIGN_AND_IMPLEMENTATION.md');
+  });
+});
+
+// ── Hangar-war gym rows (AH-0MVUXCC5J0028OGQ) ────────────────────
+//
+// The Hangar War's two gym scenes are read-only views of shipped screens. The
+// docs item (B8) refreshes their rows so the matrix keeps naming the same
+// model/renderer pair the game runs, rather than the scaffolding they started
+// from.
+
+describe('docs/GYM_PARITY.md carries current Hangar War rows (AH-0MVUXCC5J0028OGQ)', () => {
+  const matrix = fs.readFileSync(GYM_PARITY_MATRIX, 'utf8');
+
+  /** Raw cells of one scene's matrix row (empty when absent). */
+  const rowCells = (scene: string): string[] =>
+    matrixRows(matrix).find((cells) => cells[1].trim() === `\`${scene}\``) ?? [];
+
+  it('records the Hangar War specification refresh', () => {
+    expect(matrix).toContain('AH-0MVUXCC5J0028OGQ');
+    expect(matrix).toMatch(/Hangar War/i);
+    expect(matrix).toMatch(/ring specification/i);
+  });
+
+  it('points GymHangar at the shipped hangar screen and its game scene', () => {
+    const cells = rowCells('GymHangar');
+    expect(cells.length).toBeGreaterThan(7);
+    // Enabled objects: the same model builder + renderer the game renders.
+    expect(cells[3]).toContain('buildHangarScreenModel');
+    expect(cells[3]).toContain('renderHangarScreen');
+    // Reason: the game scene it mirrors.
+    expect(cells[7]).toContain('HangarScene');
+    // Verdict stays a documented divergence (a non-combat harness).
+    expect(rowVerdict(cells)).toBe('intentional divergence');
+  });
+
+  it('points GymHexWar at the shipped map, frontier tick and report code', () => {
+    const cells = rowCells('GymHexWar');
+    expect(cells.length).toBeGreaterThan(7);
+    expect(cells[3]).toContain('buildHexMapModel');
+    expect(cells[3]).toContain('runFrontierTick');
+    expect(cells[3]).toContain('buildDefenceReport');
+    expect(cells[7]).toContain('HexMapScene');
+    expect(cells[7]).toContain('DefenceReportScene');
+    expect(rowVerdict(cells)).toBe('intentional divergence');
   });
 });
 

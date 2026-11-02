@@ -1272,3 +1272,109 @@ describe('Boss — desperation burst projectile identity (AH-0MV822FTS00156F5)',
     }
   });
 });
+
+/**
+ * Demonstrated-weapon volley (AH-0MVXSGXF4000GDRQ — AC5 gap).
+ *
+ * A hex boss opens the encounter by wielding the weapon it grants: the
+ * configured demonstration's fan offsets decide the opening volley, and a
+ * boss configured without one keeps the shipped phase-1 spread byte-for-byte.
+ */
+describe('Boss — demonstrated weapon volley (AH-0MVXSGXF4000GDRQ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  function makeBoss(config: {
+    demonstratedWeapon?: {
+      color: number;
+      offsets: readonly number[];
+      speed: number;
+      shape: 'circle' | 'diamond' | 'line' | 'spark' | 'missile';
+      length?: number;
+      size?: number;
+    };
+    hitPointsPerPhase?: number;
+  } = {}): Boss {
+    return new Boss(booted!.scene, {
+      x: 480,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+      ...config,
+    });
+  }
+
+  it('opens the encounter with the demonstrated weapon’s volley', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss({
+      demonstratedWeapon: {
+        color: 0x33ffcc,
+        offsets: [-0.5, 0, 0.5],
+        speed: 240,
+        shape: 'line',
+        length: 7,
+        size: 1.2,
+      },
+    });
+    boss._simulateTelegraphElapsed();
+
+    const bullets = boss.update(1_000_000, 0, 960, 540);
+
+    // One bullet per catalogue offset — three, not the shipped seven-pellet spread.
+    expect(bullets).toHaveLength(3);
+    // The volley wears the demonstrated weapon's own colour.
+    expect(bullets.every((bullet) => bullet.color === 0x33ffcc)).toBe(true);
+    // The centre shot travels down the demonstration's heading (straight down).
+    const centre = bullets.find((bullet) => Math.abs(bullet.vx) < 1e-6);
+    expect(centre).toBeDefined();
+    expect(centre!.vy).toBeGreaterThan(0);
+  });
+
+  it('keeps the shipped patterns after the opening phase', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss({
+      hitPointsPerPhase: 1,
+      demonstratedWeapon: {
+        color: 0x33ffcc,
+        offsets: [0],
+        speed: 240,
+        shape: 'line',
+      },
+    });
+
+    boss._simulateTelegraphElapsed();
+    expect(boss.update(1_000_000, 0, 960, 540)).toHaveLength(1);
+
+    // One hit advances to phase 2, which keeps the shipped spiral volley.
+    expect(boss.takeDamage().phaseAdvanced).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(2);
+    boss._simulateTelegraphElapsed();
+    expect(boss.update(2_000_000, 0, 960, 540)).toHaveLength(12);
+  });
+
+  it('fires the shipped spread when no weapon is demonstrated', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    boss._simulateTelegraphElapsed();
+
+    expect(boss.update(1_000_000, 0, 960, 540)).toHaveLength(7);
+  });
+
+  it('the telegraph still gates the demonstrated volley', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss({
+      demonstratedWeapon: {
+        color: 0x33ffcc,
+        offsets: [0, 0.4],
+        speed: 240,
+        shape: 'line',
+      },
+    });
+    boss.startTelegraph(1_000_000);
+
+    expect(boss.update(1_000_000, 0, 960, 540)).toEqual([]);
+  });
+});

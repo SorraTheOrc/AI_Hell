@@ -9,6 +9,9 @@ import {
   GAME_HEIGHT,
   GAME_WIDTH,
   MINERAL_COLOR,
+  MINERAL_DEPOSIT_COLOR,
+  MINERAL_DEPOSIT_THRESHOLD,
+  MINERAL_DEPOSIT_VALUE,
   MINERAL_REDROP_SCATTER_RADIUS,
   MINERAL_SALVAGE_COLOR,
   POWER_UP_DROP_SIZE,
@@ -2749,9 +2752,10 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     clearField(scene);
     expect(scene.getMinerals()).toHaveLength(0);
 
-    for (let i = 0; i < 10; i += 1) enemy.collectMineral();
+    // Below `MINERAL_DEPOSIT_THRESHOLD` so the ordinary scatter applies.
+    for (let i = 0; i < 5; i += 1) enemy.collectMineral();
     const collected = enemy.mineralCount;
-    expect(collected).toBeGreaterThanOrEqual(10);
+    expect(collected).toBe(5);
 
     // Inject a deterministic RNG for the re-drop, then destroy the enemy
     // through the EXPLODE path (which bypasses `onEnemyDestroyed`).
@@ -2770,6 +2774,61 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
         Math.hypot(mineral.x - ex, mineral.y - ey),
       ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
     }
+  });
+
+  it('a wreck resolving at least the threshold leaves one red deposit (AH-0MVJ79739008396I)', async () => {
+    const scene = await bootMineralGym();
+    const enemy = scene.formationEntities[0];
+    clearField(scene);
+    // Zero the tally so the precondition is deterministic (the boot loop can
+    // let the lone enemy absorb a seeded mineral before `clearField`).
+    (enemy as unknown as { _mineralCount: number })._mineralCount = 0;
+
+    for (let i = 0; i < MINERAL_DEPOSIT_THRESHOLD; i += 1) enemy.collectMineral();
+    expect(enemy.mineralRedropCount(() => 0)).toBe(MINERAL_DEPOSIT_THRESHOLD);
+
+    // rng() = 0 keeps the resolved count at exactly the threshold.
+    scene.setSceneRng(() => 0);
+    const ex = enemy.x;
+    const ey = enemy.y;
+    scene.explodeRandom();
+
+    const minerals = scene.getMinerals();
+    // The deposit replaces the whole payout: one dot, no gold scatter.
+    expect(minerals).toHaveLength(1);
+    expect(minerals[0].color).toBe(MINERAL_DEPOSIT_COLOR);
+    expect(minerals[0].value).toBe(MINERAL_DEPOSIT_VALUE);
+    expect(minerals[0].x).toBe(ex);
+    expect(minerals[0].y).toBe(ey);
+  });
+
+  it('an active Salvage bonus folds into the deposit threshold and suppresses the orange scatter (AC7)', async () => {
+    const scene = await bootMineralGym();
+    const enemy = scene.formationEntities[0];
+    clearField(scene);
+
+    // Deterministic base tally (the boot loop can leave a stray absorption).
+    (enemy as unknown as { _mineralCount: number })._mineralCount = 0;
+
+    const registry = scene.getEffectsRegistry();
+    for (let i = 0; i < 8; i += 1) registry.applyCollect('salvage', true);
+    const bonus = registry.salvageBonusMinerals();
+    expect(bonus).toBeGreaterThan(0);
+
+    // The base tally only reaches the threshold with the bounty's help.
+    for (let i = 0; i < MINERAL_DEPOSIT_THRESHOLD - bonus; i += 1)
+      enemy.collectMineral();
+    scene.setSceneRng(() => 0);
+
+    scene.explodeRandom();
+
+    const minerals = scene.getMinerals();
+    expect(minerals).toHaveLength(1);
+    expect(minerals[0].color).toBe(MINERAL_DEPOSIT_COLOR);
+    expect(minerals[0].value).toBe(MINERAL_DEPOSIT_VALUE);
+    // Exactly one payout shape: no orange bounty dots alongside the deposit.
+    expect(minerals.some((m) => m.color === MINERAL_SALVAGE_COLOR)).toBe(false);
+    expect(minerals.some((m) => m.color === MINERAL_COLOR)).toBe(false);
   });
 
   it('an enemy that absorbed nothing may occasionally drop a mineral (AC2)', async () => {
