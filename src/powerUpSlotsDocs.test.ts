@@ -161,6 +161,11 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVLIJT3M005HPH
   // reward is an owned-level-up surface only), so the docs must say so and pin
   // the shared-pool consult rather than describe a surface that no longer
   // exists.
+  // The reward surface is now the spin-the-wheel upgrade reward
+  // (AH-0MVLISU03006WDOD): the guards below pin the invariants that still
+  // matter — no unlock half, level-ups of kinds the player already holds, and
+  // an overlay that can never open empty (the empty-owned fallback is the
+  // hold-full-style three-option choice, not base picks).
   it('the GDD records that the mini-boss reward has no unlock half and is gated', () => {
     const section = slotsSection(gdd);
     expect(section).toMatch(/mini-boss/i);

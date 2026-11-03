@@ -305,10 +305,10 @@ cap shapes what a run can become.
   so `PlayScene` and every gym behave identically (gym↔game parity) and a gym
   run is a valid place to observe the rule.
 - **No reward screen can breach the cap.** The mini-boss reward (§4.4.4) is
-  the spin-the-wheel upgrade reward: its wedges are built from the kinds the
-  player already holds, and it has **no unlock half** (the run-scoped unlock
-  feature was removed with the wheel rework, parent AH-0MVLISU03006WDOD AC5),
-  so it can never grant a brand-new kind. The wheel population reads the same
+  the spin-the-wheel upgrade reward: its wedges are built from the **held
+  kinds** (`resolvePlayerSlotState(...).ownedIds`), and it has **no unlock
+  half** (the run-scoped unlock feature was removed with the wheel rework,
+  parent AH-0MVLISU03006WDOD AC5), so it can never grant a brand-new kind. The wheel population reads the same
   shared `ownedIds` accounting as the drop draw and the choice, so the six slots
   bound every acquisition path (drop, field pickup, hold-full choice and
   mini-boss wheel). With **nothing** owned the reward falls back to the

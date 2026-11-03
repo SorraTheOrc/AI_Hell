@@ -1343,17 +1343,19 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   (AH-0MVVF0POV001JNKX).
 - **Every permanent-grant surface is gated, including the mini-boss reward.**
   The mini-boss reward (§4.4.4) is the **spin-the-wheel** upgrade reward: its
-  wedges are built from `resolvePlayerSlotState(player).ownedIds`, so it can
-  only ever level a kind the player already holds — it has **no weapon-unlock
-  half** (the run-scoped unlock feature was removed with the wheel rework,
-  parent AH-0MVLISU03006WDOD AC5) and can never grant a brand-new kind. The
-  wheel population is read through the same shared slot accounting
-  ([`src/powerups/slots.ts`](../src/powerups/slots.ts)) the hold-full choice
-  uses, so the reward surface keeps consulting the single source of truth
-  rather than a scene-local copy of the rule. A reward that
-  would offer nothing falls back to base picks of the **held** kinds (which add
-  no new kind), so the paused overlay can never open empty and a full pool
-  cannot be exceeded through a reward screen.
+  wedges and its payout are built from `resolvePlayerSlotState(player).ownedIds`,
+  so it only ever offers **level-ups of kinds the player already holds** — it
+  has **no weapon-unlock half** (the run-scoped unlock feature was removed with
+  the wheel rework, parent AH-0MVLISU03006WDOD AC5) and can never grant a
+  brand-new kind. The wheel population is read through the same shared slot
+  accounting ([`src/powerups/slots.ts`](../src/powerups/slots.ts)) the
+  hold-full choice uses, whose offer list still passes through
+  `filterOptionsWithinSlotPool`, so the reward surface keeps consulting the
+  single source of truth rather than a scene-local copy of the rule. With
+  nothing owned the reward falls back to the hold-full-style three-option
+  choice (built through the shared strategy and its six-slot gate), so the
+  paused overlay can never open empty and a full pool cannot be exceeded
+  through a reward screen.
 - **One implementation, observable in the gyms.** The rule lives once in
   [`src/powerups/slots.ts`](../src/powerups/slots.ts). The shared drop draw
   (`drawNextDrop` in [`src/scenes/core/dropLayer.ts`](../src/scenes/core/dropLayer.ts)),
