@@ -1199,16 +1199,21 @@ describe('net-new weapons (AH-0MVCRC52P001YIPW)', () => {
     expect(angles.some((a) => Math.abs(a) < 1e-9)).toBe(false);
   });
 
-  test('Railgun is a single slow shot with the catalogue\u2019s deepest pass-through', () => {
-    expect(WEAPON_CATALOGUE.railgun.offsets).toEqual([0]);
-    const maxHitPoints = WEAPON_CATALOGUE.railgun.maxHitPoints ?? 0;
-    // Deeper than every other weapon's base damage budget.
-    for (const id of Object.keys(WEAPON_CATALOGUE) as WeaponId[]) {
-      if (id === 'railgun') continue;
-      expect(WEAPON_CATALOGUE[id].maxHitPoints ?? 0, id).toBeLessThan(maxHitPoints);
-    }
-    // And slower than the wave laser it is a heavier alternative to.
-    expect(WEAPON_CATALOGUE.railgun.fireRateMs).toBeGreaterThan(
+  test('Railgun is a single slow aimed shot that must earn its pass-through', () => {
+    const def = WEAPON_CATALOGUE.railgun;
+    // One aimed shot along the heading: the rail is a precision shot, not a
+    // fan and not a pair.
+    expect(def.offsets).toEqual([0]);
+    // A level-0 Railgun carries a single hit point of damage budget, so the
+    // tracer is consumed by the first enemy it meets — a fresh pickup does
+    // NOT pass through (AH-0MVY0A23A009MRK3). The pierce is earned by the
+    // first upgrade: `resolveWeaponDefinition('railgun', 1).maxHitPoints` is
+    // 2 (pinned in `weaponLevels.test.ts`).
+    expect(def.maxHitPoints).toBe(1);
+    // Heavier than the Wave Laser by cadence — the comparison that survives
+    // the Wave Laser's move to a single-hit hitscan beam
+    // (AH-0MVREBUJ5004HDRQ), so "heavier" never falls back to budget depth.
+    expect(def.fireRateMs).toBeGreaterThan(
       WEAPON_CATALOGUE.wave_laser.fireRateMs,
     );
   });

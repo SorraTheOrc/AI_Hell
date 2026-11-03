@@ -1907,7 +1907,95 @@ describe('damage-budget player bullets — Wave Laser maxHitPoints (AH-0MV97RISJ
     for (const bullet of railgunBullets) {
       expect(bullet.maxHitPoints).toBe(WEAPON_CATALOGUE.railgun.maxHitPoints);
     }
-    expect(WEAPON_CATALOGUE.railgun.maxHitPoints).toBe(5);
+    // The level-0 budget is a single hit point (AH-0MVY0A23A009MRK3).
+    expect(WEAPON_CATALOGUE.railgun.maxHitPoints).toBe(1);
+  });
+});
+
+// ── Railgun pass-through budget (AH-0MVY0A23A009MRK3) ────────────────────────
+
+describe('Railgun pass-through budget — level 0 stops, level 1 pierces (AH-0MVY0A23A009MRK3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  /** Adds a single-hit stub enemy at (x, y) and returns it. */
+  function addEnemy(scene: StubCombatScene, x: number, y: number): StubEnemy {
+    const enemy = new StubEnemy(scene, x, y);
+    scene.add.existing(enemy);
+    scene.entities.push(enemy);
+    return enemy;
+  }
+
+  it('a level-0 Railgun shot destroys the first 1-HP enemy and never reaches the one behind it', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 260, 200);
+
+    // The level-resolved budget the shipped auto-fire path puts on the bullet.
+    const budget = resolveWeaponDefinition('railgun', 0).maxHitPoints!;
+    expect(budget).toBe(1);
+    const bullet = scene.spawnPlayerBullet(
+      200,
+      200,
+      0,
+      0,
+      WEAPON_CATALOGUE.railgun.bulletColor,
+      1,
+      3,
+      budget,
+    );
+
+    scene.runCollisions(); // first — the single hit point is spent here
+    expect(first.destroyed).toBe(true);
+    expect(bullet.maxHitPoints).toBe(0);
+    // Consumed on the kill that spent its last hit point: no pass-through.
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+
+    // Even if the spent bullet is nudged onto the ship behind it, nothing lands.
+    bullet.setPosition(260, 200);
+    scene.runCollisions();
+    expect(second.destroyed).toBe(false);
+  });
+
+  it('the first upgrade (budget 2) pierces: it destroys both 1-HP enemies in the line', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 260, 200);
+
+    const budget = resolveWeaponDefinition('railgun', 1).maxHitPoints!;
+    expect(budget).toBe(2);
+    const bullet = scene.spawnPlayerBullet(
+      200,
+      200,
+      0,
+      0,
+      WEAPON_CATALOGUE.railgun.bulletColor,
+      1,
+      3,
+      budget,
+    );
+
+    scene.runCollisions(); // first — destroyed, budget 2 → 1, passes through
+    expect(first.destroyed).toBe(true);
+    expect(bullet.maxHitPoints).toBe(1);
+    expect(scene.getPlayerBullets()).toContain(bullet);
+
+    bullet.setPosition(260, 200);
+    scene.runCollisions(); // second — destroyed, budget spent, consumed
+    expect(second.destroyed).toBe(true);
+    expect(bullet.maxHitPoints).toBe(0);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
   });
 });
 

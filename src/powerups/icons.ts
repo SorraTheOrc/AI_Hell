@@ -74,7 +74,7 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   // Net-new weapons (AH-0MVCRC52P001YIPW) — ordinary catalogue entries.
   rear_guard: 0xff5599, // warm rose — backward-covering shot
   broadside: 0x44ffdd, // bright teal — perpendicular pair
-  railgun: 0x66aaff, // sky blue — long piercing tracer
+  railgun: 0x66aaff, // sky blue — long tracer that levels into a line piercer
   shard_swarm: 0xc0ff33, // lime — narrow shard fan
   heavy_slug: 0xff2222, // deep red — heavy slow slug
 };
@@ -1102,7 +1102,7 @@ function drawBroadsideIcon(
 
 /**
  * Railgun icon — a long horizontal tracer with speed lines, hinting at the
- * piercing line shot (AH-0MVCRC52P001YIPW).
+ * line-piercing shot the weapon levels into (AH-0MVCRC52P001YIPW).
  */
 function drawRailgunIcon(
   g: Phaser.GameObjects.Graphics,

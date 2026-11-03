@@ -453,8 +453,8 @@ export const WEAPON_BULLET_LIFETIME = {
   /** Broadside — a generous reach (~280 px) for the perpendicular pair. */
   broadside: 0.8,
   /**
-   * Railgun — a very long reach (~490 px) so the piercing tracer crosses the
-   * arena; the slow cadence and pass-through budget are its identity.
+   * Railgun — a very long reach (~490 px) so the tracer crosses the arena; the
+   * slow cadence and the levelled pass-through budget are its identity.
    */
   railgun: 1.4,
   /** Shard Swarm — short reach (~193 px); the fan density is its identity. */
@@ -791,7 +791,10 @@ export interface WeaponDefinition {
    * combat core tracks already-damaged enemies so each is charged once (see
    * `resolveWeaponDefinition`). The Wave Laser no longer carries a budget —
    * its hitscan beam is fixed at 1 damage and stops at the first intercept
-   * (AH-0MVREBUJ5004HDRQ).
+   * (AH-0MVREBUJ5004HDRQ). The Railgun's base budget is **1**
+   * (AH-0MVY0A23A009MRK3): a level-0 tracer spends its single hit point on the
+   * first enemy it meets and is consumed, so the pass-through is earned from
+   * level 1 (budget 2) onward rather than shipped at level 0.
    */
   maxHitPoints?: number;
   /**
@@ -1420,9 +1423,10 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'railgun',
     name: 'Railgun',
     description:
-      'Adds a slow, long-range tracer that pierces a line of enemies.',
-    // A single aimed shot along the heading, like the wave laser, but with a
-    // larger damage budget and a much slower, heavier cadence.
+      'Adds a slow, long-range tracer that pierces a line once it is upgraded.',
+    // A single aimed shot along the heading, the slowest and heaviest cadence
+    // in the catalogue; the shared damage-budget curve is what grows it from a
+    // heavy single shot into a line piercer.
     offsets: [0],
     fireRateMs: WEAPON_RAILGUN_FIRE_RATE,
     bulletColor: BULLET_COLORS.railgun,
@@ -1434,9 +1438,12 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 4.5,
     bulletSize: 1.15,
     bulletLifetime: WEAPON_BULLET_LIFETIME.railgun,
-    // Base damage budget greater than the wave laser's (2) — the rail's
-    // identity is the deeper line-piercing shot.
-    maxHitPoints: 5,
+    // Base damage budget of 1 (AH-0MVY0A23A009MRK3): the tracer spends its
+    // single hit point on the first enemy it meets and is consumed, so a
+    // level-0 rail is a precise, heavy single shot. The shared `maxHitPoints`
+    // curve grants the first extra hit point at level 1 (budget 2), which is
+    // when the line-piercing begins; the slow cadence pays for the depth.
+    maxHitPoints: 1,
     // Launch cue (AH-0MVQ6C1YL003HU9K): a heavy sky-blue flash at the hull when
     // the shot leaves the rail — larger than the cannon's pop and smaller than
     // the wave laser's wide flare. The shared combat-core muzzle-flash path

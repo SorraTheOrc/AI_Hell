@@ -827,11 +827,25 @@ describe('wave laser — fixed 1 damage at every level (AH-0MVREBUJ5004HDRQ)', (
     }
   });
 
-  test('the Railgun keeps its deeper pass-through budget', () => {
-    expect(resolveWeaponDefinition('railgun', 0).maxHitPoints).toBe(5);
-    expect(resolveWeaponDefinition('railgun', 5).maxHitPoints!).toBeGreaterThan(
-      5,
-    );
+  test('the Railgun starts at one hit point and earns its pierce at level 1', () => {
+    // Level 0: a single hit point, spent on the first enemy met, so a fresh
+    // pickup is a heavy single shot with no pass-through (AH-0MVY0A23A009MRK3).
+    expect(resolveWeaponDefinition('railgun', 0).maxHitPoints).toBe(1);
+    // Level 1: the shared curve's first step lands immediately, so the tracer
+    // now destroys a 1-HP ship and continues into the one behind it.
+    expect(resolveWeaponDefinition('railgun', 1).maxHitPoints).toBe(2);
+    // Growth follows the shared curve alone (no weapon-level clamp, no
+    // per-weapon override): monotonic non-decreasing in level and saturating
+    // at base 1 + the shared curve's asymptote.
+    const asymptote = 1 + WEAPON_UPGRADE_SPECS.maxHitPoints.cap;
+    let previous = 1;
+    for (let level = 0; level <= 100; level++) {
+      const budget = resolveWeaponDefinition('railgun', level).maxHitPoints!;
+      expect(budget, `level ${level}`).toBeGreaterThanOrEqual(previous);
+      expect(budget, `level ${level}`).toBeLessThanOrEqual(asymptote);
+      previous = budget;
+    }
+    expect(previous).toBe(asymptote);
   });
 });
 

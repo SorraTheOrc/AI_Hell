@@ -102,7 +102,9 @@ pass-through was replaced by a readable screen-spanning line shot with a single
 point of damage, so the beam reads as a precise aimed strike rather than a
 crowd-clearer (the bounded pass-through budget shipped earlier as
 AH-0MV1BIUSJ0090W92 / AH-0MV97RISJ002WR2S and was retired here). The
-catalogue's remaining pass-through weapon is the Railgun.
+catalogue's remaining pass-through weapon is the Railgun — from its first
+upgrade onward: a level-0 tracer carries a single hit point and stops at the
+first enemy it meets (AH-0MVY0A23A009MRK3).
 
 **Type:** weapon.
 
