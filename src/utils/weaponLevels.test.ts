@@ -55,6 +55,7 @@ import {
   type WeaponId,
 } from './weapons';
 import { beatPeriodMs, beatSubdivisionMs, createBeatClock, isOnGrid } from './beat';
+import { GAME_WIDTH } from '../core/constants';
 
 // The AC4/AC5/AC6 sweeps resolve every weapon at every level 0..100 and
 // assert the invariant for every tunable variable, so they are dominated by
@@ -488,8 +489,10 @@ describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled defini
       const base = WEAPON_CATALOGUE[weaponId];
       const leveled = resolveWeaponDefinition(weaponId, 6);
       // Orbit weapons (Options) grow their pod count instead of an angular
-      // offsets pattern, so their offsets never expand.
-      if (base.orbit) {
+      // offsets pattern, so their offsets never expand. Hitscan weapons (the
+      // Wave Laser) always fire exactly one beam, so their pattern never
+      // expands either (AC1: no fan, no pair, at any level).
+      if (base.orbit || base.hitscan) {
         expect(leveled.offsets).toEqual([...base.offsets]);
         continue;
       }
@@ -583,6 +586,10 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
 
   test('level 0 resolves to half the pre-change base lifetime', () => {
     for (const id of WEAPON_IDS) {
+      // The Wave Laser's `bulletLifetime` is its beam's **visible duration**
+      // (0.3 s), re-specified by the hitscan redesign rather than halved from
+      // a travelling-bullet range (AH-0MVREBUJ5004HDRQ).
+      if (WEAPON_CATALOGUE[id].hitscan) continue;
       const leveled = resolveWeaponDefinition(id, 0);
       expect(leveled.bulletLifetime).toBeCloseTo(
         PRE_CHANGE_LIFETIME[id] / 2,
@@ -593,6 +600,8 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
 
   test('leveled bullet range is half the pre-change value at every level', () => {
     for (const id of WEAPON_IDS) {
+      // Hitscan weapons have no travelling bullet to halve (see above).
+      if (WEAPON_CATALOGUE[id].hitscan) continue;
       for (const level of [1, 2, 5, 20]) {
         const stats = resolveWeaponAtLevel(id, level);
         const leveled = resolveWeaponDefinition(id, level);
@@ -756,74 +765,72 @@ describe('formatDelta (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
   });
 });
 
-// ── R-Type wave-laser damage budget (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S) ─
+// ── Wave laser: fixed 1 damage at every level (AH-0MVREBUJ5004HDRQ, AC7) ─
 
-describe('wave-laser damage budget — maxHitPoints (AH-0MV97RISJ002WR2S)', () => {
-  test('the base definition supplies a level-0 damage budget of 2', () => {
-    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
-    expect(resolveWeaponDefinition('wave_laser', 0).maxHitPoints).toBe(2);
+describe('wave laser — fixed 1 damage at every level (AH-0MVREBUJ5004HDRQ)', () => {
+  test('the base definition carries no damage budget', () => {
+    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBeUndefined();
+    expect(resolveWeaponDefinition('wave_laser', 0).maxHitPoints).toBeUndefined();
   });
 
-  test('the level-resolved maxHitPoints curve grows monotonically within its spec cap', () => {
-    const cap = WEAPON_UPGRADE_SPECS.maxHitPoints.cap;
-    let previous = resolveWeaponAtLevel('wave_laser', 0).maxHitPoints;
-    expect(previous).toBe(0);
-    for (let level = 1; level <= 100; level++) {
-      const value = resolveWeaponAtLevel('wave_laser', level).maxHitPoints;
-      expect(value).toBeGreaterThanOrEqual(previous);
-      expect(value).toBeLessThanOrEqual(cap);
-      previous = value;
+  test('no level grants the beam a damage budget (it never pierces)', () => {
+    for (let level = 0; level <= 100; level++) {
+      expect(
+        resolveWeaponDefinition('wave_laser', level).maxHitPoints,
+        `level ${level}`,
+      ).toBeUndefined();
     }
-    // The first level is responsive: it grants an extra hit point immediately.
-    expect(resolveWeaponAtLevel('wave_laser', 1).maxHitPoints).toBeGreaterThan(0);
   });
 
-  test('the effective budget is base + curve bonus with no weapon-level clamp', () => {
-    const bonusCap = WEAPON_UPGRADE_SPECS.maxHitPoints.cap;
-    const base = WEAPON_CATALOGUE.wave_laser.maxHitPoints!;
-    // The old `Math.min(cap, base + stats)` clamp flattened the effective
-    // budget at the spec cap (5). The budget is now the unclamped sum, so it
-    // saturates only at the shared curve's asymptote (base + bonus cap).
-    expect(resolveWeaponDefinition('wave_laser', 10).maxHitPoints).toBeGreaterThan(
-      bonusCap,
-    );
-    let previous = resolveWeaponDefinition('wave_laser', 0).maxHitPoints!;
-    expect(previous).toBe(2);
-    for (let level = 1; level <= 100; level++) {
-      const value = resolveWeaponDefinition('wave_laser', level).maxHitPoints!;
-      expect(value).toBeGreaterThanOrEqual(previous);
-      expect(value).toBeLessThanOrEqual(base + bonusCap);
-      previous = value;
-    }
-    // Saturates at base + the curve asymptote (~7), never at a hard 5.
-    expect(resolveWeaponDefinition('wave_laser', 100).maxHitPoints).toBe(
-      base + bonusCap,
-    );
-    expect(resolveWeaponDefinition('wave_laser', 100).maxHitPoints).toBe(7);
-  });
-
-  test('the curve bonus itself is discrete so the budget stays whole-numbered', () => {
+  test('the beam stays a single ray at every level (AC1)', () => {
     for (let level = 0; level <= 20; level++) {
-      expect(Number.isInteger(resolveWeaponDefinition('wave_laser', level).maxHitPoints)).toBe(
-        true,
-      );
+      expect(
+        resolveWeaponDefinition('wave_laser', level).offsets,
+        `level ${level}`,
+      ).toEqual([0]);
+    }
+  });
+
+  test('the ray extent grows monotonically and never drops below one screen', () => {
+    const base = WEAPON_CATALOGUE.wave_laser.hitscan!.length;
+    expect(base).toBeGreaterThanOrEqual(GAME_WIDTH);
+    let previous = base;
+    for (let level = 1; level <= 100; level++) {
+      const length = resolveWeaponDefinition('wave_laser', level).hitscan!.length;
+      expect(length).toBeGreaterThanOrEqual(previous);
+      expect(length).toBeGreaterThanOrEqual(GAME_WIDTH);
+      previous = length;
+    }
+    // The curve saturates at the shared `bulletLifetime` asymptote, so the
+    // beam's extent stays finite.
+    expect(previous).toBeCloseTo(
+      base * WEAPON_UPGRADE_SPECS.bulletLifetime.cap,
+      1,
+    );
+  });
+
+  test('the visible duration stays 0.3 s at every level (AC4)', () => {
+    for (let level = 0; level <= 20; level++) {
+      expect(
+        resolveWeaponDefinition('wave_laser', level).hitscan!.duration,
+        `level ${level}`,
+      ).toBeCloseTo(0.3, 6);
     }
   });
 
   test('weapons without a base damage budget never gain one', () => {
-    // The Railgun (AH-0MVCRC52P001YIPW) is the second weapon with a base
+    // The Railgun (AH-0MVCRC52P001YIPW) is the only weapon with a base
     // damage budget; every other weapon has none.
-    const withBaseBudget = new Set<WeaponId>(['wave_laser', 'railgun']);
     for (const id of WEAPON_IDS) {
-      if (withBaseBudget.has(id)) continue;
+      if (id === 'railgun') continue;
       expect(resolveWeaponDefinition(id, 50).maxHitPoints).toBeUndefined();
     }
   });
 
-  test('the Railgun carries a deeper base damage budget than the wave laser', () => {
+  test('the Railgun keeps its deeper pass-through budget', () => {
     expect(resolveWeaponDefinition('railgun', 0).maxHitPoints).toBe(5);
-    expect(resolveWeaponDefinition('railgun', 0).maxHitPoints!).toBeGreaterThan(
-      resolveWeaponDefinition('wave_laser', 0).maxHitPoints!,
+    expect(resolveWeaponDefinition('railgun', 5).maxHitPoints!).toBeGreaterThan(
+      5,
     );
   });
 });

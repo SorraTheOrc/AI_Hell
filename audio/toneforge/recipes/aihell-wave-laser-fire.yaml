@@ -1,15 +1,45 @@
-# AI Hell cue: aihell-wave-laser-fire — Player wave laser fire — high-energy beam crack.
+# AI Hell cue: aihell-wave-laser-fire — Player Wave Laser fire — sci-fi laser
+# "pew": a fast descending sawtooth sweep with a bright square harmonic and a
+# short band-passed noise sizzle (AH-0MVREBUJ5004HDRQ).
 version: "0.1"
 meta:
   name: aihell-wave-laser-fire
-  description: Player wave laser fire — high-energy beam crack, rising 1200 to 600 Hz square wave with a brief sustain.
+  description: Player Wave Laser fire — sci-fi laser beam. A sawtooth sweep falls 2400 to 320 Hz in a fast 0.13 s "pew", a bright square harmonic 1200 to 240 Hz adds the beam's electric edge, and a band-passed noise sweep supplies the ionised sizzle. Deliberately brighter, higher and glassier than the Railgun's deep electromagnetic slam and much longer than the Cannon's 800 to 400 Hz thump, so the single red screen-spanning beam is unmistakable by ear.
   category: AIHell
   tags:
     - weapon
     - fire
-  duration: 0.1
+    - laser
+  duration: 0.16
 nodes:
   v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 2400
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 2400
+        - kind: exponentialRamp
+          time: 0.08
+          value: 900
+        - kind: exponentialRamp
+          time: 0.14
+          value: 320
+  e0:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.138
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.16
+  v1:
     kind: oscillator
     params:
       type: square
@@ -20,26 +50,53 @@ nodes:
           time: 0
           value: 1200
         - kind: exponentialRamp
-          time: 0.08
-          value: 600
-  e0:
+          time: 0.05
+          value: 480
+        - kind: exponentialRamp
+          time: 0.12
+          value: 240
+  e1:
     kind: envelope
     params:
-      attack: 0.003
-      decay: 0.075
-      sustain: 0.3
-      release: 0.02
-  g0:
+      attack: 0.001
+      decay: 0.09
+      sustain: 0
+      release: 0
+  g1:
     kind: gain
     params:
-      gain: 0.18
+      gain: 0.07
+  v2:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f2:
+    kind: biquadFilter
+    params:
+      type: bandpass
+      frequency: 3200
+      Q: 6
+  e2:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.06
+      sustain: 0
+      release: 0
+  g2:
+    kind: gain
+    params:
+      gain: 0.06
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 0.9
   out:
     kind: destination
 routing:
   - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [v2, f2, e2, g2, mix]
   - from: mix
     to: out

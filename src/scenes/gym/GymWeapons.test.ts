@@ -28,7 +28,9 @@ import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
 import { CombatCoreScene } from '../core/CombatCoreScene';
+import * as hitscanBeamModule from '../../vfx/hitscanBeam';
 import { CombatScene } from '../core/CombatScene';
+import { GAME_WIDTH } from '../../core/constants';
 import { isOnGrid } from '../../utils/beat';
 import { euclidPattern, isOnset } from '../../utils/euclid';
 import {
@@ -1325,70 +1327,99 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
   });
 });
 
-describe('GymWeapons — wave-laser damage-budget demonstration (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S)', () => {
+describe('GymWeapons — wave-laser hitscan beam (AH-0MVREBUJ5004HDRQ, AC1/AC2/AC3/AC4)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
+    vi.restoreAllMocks();
   });
 
-  async function bootAoe(): Promise<GymWeapons> {
+  async function bootWeapons(): Promise<GymWeapons> {
     booted = await bootScene([GymWeapons]);
     return booted!.scene as GymWeapons;
   }
 
-  it('a budget-2 wave-laser beam destroys two aligned 1-HP practice targets and is consumed', async () => {
-    const scene = await bootAoe();
+  /**
+   * Fires exactly one wave-laser volley along the given heading from a fixed
+   * muzzle position: the shared beat clock is reset so the shot lands on the
+   * t=0 grid tick and the stationary heading is pinned so the beam direction
+   * is deterministic.
+   */
+  function fireWaveLaser(
+    scene: GymWeapons,
+    muzzle: { x: number; y: number },
+    headingRad: number,
+  ): void {
     const player = scene.getPlayer()!;
-    // Park the ship away from the target line so its auto-fire is inert.
-    player.setPosition(50, 50);
-    scene.advanceBullets(2); // clear the boot volley
-    expect(scene.getBullets()).toHaveLength(0);
+    player.setDefaultHeading(headingRad);
+    // The ship's authoritative position lives in its movement state, so move
+    // it through the same bounded-drag seam the tractor beam uses (a plain
+    // `setPosition` is overwritten by the next physics tick).
+    const state = player.getMovementState();
+    player.applyExternalDrag(muzzle.x - state.x, muzzle.y - state.y, 1);
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+    player.equipWeapon('wave_laser', true);
+    scene.tick(0.05);
+  }
 
+  it('fires one red beam that stops at the first practice target (AC1/AC2)', async () => {
+    const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
+    const scene = await bootWeapons();
     const targets = scene.getTargets();
-    // targets[1] (455,205) and targets[2] (505,205) are horizontally aligned.
-    const bullet = scene.spawnPlayerBullet(
-      445,
-      205,
-      100,
-      0,
-      WEAPON_CATALOGUE.wave_laser.bulletColor,
-      3,
-      3,
-      WEAPON_CATALOGUE.wave_laser.maxHitPoints!,
-    );
+    // targets[1] (455,205) and targets[2] (505,205) are horizontally aligned;
+    // the ship fires from the left of both.
+    expect(targets[1].x).toBeCloseTo(455, 6);
+    expect(targets[2].x).toBeCloseTo(505, 6);
 
-    for (let i = 0; i < 8; i++) scene.tick(0.1);
+    fireWaveLaser(scene, { x: 355, y: 205 }, 0);
 
-    // Each practice target is a single-hit entity (1 HP), so the level-0
-    // budget of 2 destroys both and is spent exactly on the second.
-    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
-    expect(targets[1].alive).toBe(false);
-    expect(targets[2].alive).toBe(false);
-    expect(bullet.maxHitPoints).toBe(0);
-    expect(scene.getBullets()).not.toContain(bullet);
-  });
-
-  it('an ordinary (non-budget) bullet stops at the first target', async () => {
-    const scene = await bootAoe();
-    const player = scene.getPlayer()!;
-    player.setPosition(50, 50);
-    scene.advanceBullets(2);
-    expect(scene.getBullets()).toHaveLength(0);
-
-    const targets = scene.getTargets();
-    const bullet = scene.spawnPlayerBullet(445, 205, 100, 0, 0x00ffff, 3, 3, 0);
-
-    for (let i = 0; i < 8; i++) scene.tick(0.1);
-
-    // Only the first target is destroyed; the bullet is consumed.
+    // Exactly one beam (no fan, no pair) and no travelling wave-laser bullet.
+    expect(beamSpy).toHaveBeenCalledTimes(1);
+    const [beamScene, segments, options] = beamSpy.mock.calls[0];
+    expect(beamScene).toBeInstanceOf(GymWeapons);
+    expect(options!.color).toBe(WEAPON_CATALOGUE.wave_laser.bulletColor);
+    expect(options!.color).toBe(0xff0000);
+    expect(options!.duration).toBeCloseTo(0.3, 6);
+    // The beam is truncated at the first target it meets: the near target is
+    // destroyed, the one behind it is untouched (1 damage, stops at intercept).
+    expect(segments).toHaveLength(1);
     expect(targets[1].alive).toBe(false);
     expect(targets[2].alive).toBe(true);
-    expect(scene.getBullets()).not.toContain(bullet);
+    expect(
+      scene.getBullets().filter((b) => b.color === 0xff0000),
+    ).toHaveLength(0);
+  });
+
+  it('spans a full screen width and wraps at the edge when nothing intercepts it (AC3)', async () => {
+    const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
+    const scene = await bootWeapons();
+    // Clear the practice targets so the ray meets nothing.
+    for (const target of scene.getTargets()) target.destroySelf();
+
+    // Fire right from 40 px inside the right edge: the ray leaves the right
+    // wall and re-enters from the left.
+    fireWaveLaser(scene, { x: GAME_WIDTH - 40, y: 400 }, 0);
+
+    expect(beamSpy).toHaveBeenCalledTimes(1);
+    const segments = beamSpy.mock.calls[0][1] as {
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+    }[];
+    const total = segments.reduce(
+      (sum, s) => sum + Math.hypot(s.x2 - s.x1, s.y2 - s.y1),
+      0,
+    );
+    expect(total).toBeCloseTo(GAME_WIDTH, 6);
+    expect(segments.length).toBeGreaterThanOrEqual(2);
+    expect(segments[0].x2).toBeCloseTo(GAME_WIDTH, 6);
+    expect(segments[1].x1).toBeCloseTo(0, 6);
   });
 });
-
 
 describe('GymWeapons — ricochet edge-bounce demonstration (AH-0MV1BIV5L005NJAI)', () => {
   let booted: BootedGame | null = null;

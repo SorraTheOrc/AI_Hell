@@ -160,7 +160,7 @@ describe('player weapon roster — every weapon is visually unique in flight (AC
 
   it('the Dual and the Wave Laser beams are distinguishable from each other', () => {
     // Same `line` shape, but different length / rim / thickness knobs — so
-    // the short side-by-side pulse bars never read as the long piercing beam.
+    // the short side-by-side pulse bars never read as the long red laser column.
     expect(playerSignature(WEAPON_CATALOGUE.dual)).not.toBe(
       playerSignature(WEAPON_CATALOGUE.wave_laser),
     );
@@ -216,7 +216,7 @@ describe('docs guard — the player-facing documentation records the visual rost
     { id: 'nova', phrase: 'Concentric neon rings' },
     { id: 'mortar', phrase: 'Random blast burst' },
     { id: 'arc', phrase: 'Jagged lightning bolt' },
-    { id: 'wave_laser', phrase: 'Long horizontal beam with pass-through chevrons' },
+    { id: 'wave_laser', phrase: 'Long red beam that stops at the first hit' },
     { id: 'ricochet', phrase: 'Zig-zag bank-shot path between two walls' },
     { id: 'cluster', phrase: 'Central shell bursting into a radial cluster of warheads' },
     { id: 'options', phrase: 'Ship ringed by orbiting satellite pods' },

@@ -10,7 +10,7 @@ import {
   GAME_WIDTH,
   PLAYER_BULLET_SPEED,
 } from '../../core/constants';
-import { WEAPON_CATALOGUE } from '../../utils/weapons';
+import { BULLET_COLORS, WEAPON_CATALOGUE } from '../../utils/weapons';
 import { RULES_STORAGE_KEY } from '../../core/rules';
 import { advanceGame, bootScene, stepGameUntil, type BootedGame } from '../../test/gameHarness';
 import type { FormationOffset } from '../../utils/formations';
@@ -3567,9 +3567,9 @@ describe('CombatScene — shared AOE dispatch/effect is defined once (F6 AC1)', 
   });
 });
 
-// ── R-Type wave-laser damage-budget parity (AH-0MV97RISJ002WR2S) ───────
+// ── Damage-budget beam parity (AH-0MV97RISJ002WR2S) ─────────────────────
 
-describe('CombatScene — wave-laser damage-budget parity (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S)', () => {
+describe('CombatScene — damage-budget beam parity (Railgun seam, AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S)', () => {
   const games: BootedGame[] = [];
 
   afterEach(() => {
@@ -3622,19 +3622,20 @@ describe('CombatScene — wave-laser damage-budget parity (AH-0MV1BIUSJ0090W92, 
     playScene.getPlayer()!.setPosition(50, 50);
     gymScene.getPlayer()!.setPosition(50, 50);
 
-    // Budget 2 (the level-0 wave laser): destroys the first enemy, passes
-    // through with 1 budget, destroys the second and is consumed — exactly one
-    // damage point per 1-HP ship, in both scenes.
+    // A budget of 2 (the Wave Laser's retired pass-through budget; the seam
+    // is now the Railgun's, AH-0MVREBUJ5004HDRQ): destroys the first enemy,
+    // passes through with 1 budget, destroys the second and is consumed —
+    // exactly one damage point per 1-HP ship, in both scenes.
     const spawnBeam = (owner: PlayScene | EquivGymScene) =>
       owner.spawnPlayerBullet(
         703,
         400,
         PLAYER_BULLET_SPEED,
         0,
-        0x3366ff,
+        BULLET_COLORS.railgun,
         2,
         3,
-        WEAPON_CATALOGUE.wave_laser.maxHitPoints!,
+        2,
       );
     const gameBeam = spawnBeam(playScene);
     const gymBeam = spawnBeam(gymScene);
@@ -4483,5 +4484,38 @@ describe('enemy force-field spawn parity — game and level gym (AH-0MVM8GXEF009
     expect(gym.getShip()!.active).toBe(true);
     // The shared outcome is identical, not merely individually plausible.
     expect(gymTank.forceFieldHits).toBe(gameTank.forceFieldHits);
+  });
+});
+
+// ── Wave-laser hitscan-beam parity (AH-0MVREBUJ5004HDRQ, AC8/AC11) ─────
+
+describe('CombatScene — wave-laser hitscan seam is shared, never per-scene', () => {
+  it('GymWeapons inherits the beam seam instead of defining its own', () => {
+    for (const method of [
+      'fireHitscanBeam',
+      'getHitscanTargets',
+      'applyHitscanHit',
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(GymWeapons.prototype, method),
+        `GymWeapons must not define ${method}`,
+      ).toBe(false);
+      expect(
+        (GymWeapons.prototype as unknown as Record<string, unknown>)[method],
+        `GymWeapons.${method} must be the shared hook`,
+      ).toBe(
+        (CombatScene.prototype as unknown as Record<string, unknown>)[method],
+      );
+    }
+  });
+
+  it('PlayScene only adds boss routing on top of the shared hit path', () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/scenes/PlayScene.ts'),
+      'utf8',
+    );
+    // The boss/mini-boss route through their own damage path, then every
+    // ordinary enemy keeps the shared implementation (no duplicate body).
+    expect(source).toContain('super.applyHitscanHit(');
   });
 });

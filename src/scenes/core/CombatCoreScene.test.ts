@@ -27,6 +27,7 @@ import {
   type CombatEnemyBullet,
 } from './CombatCoreScene';
 import * as muzzleFlashModule from '../../vfx/muzzleFlash';
+import * as hitscanBeamModule from '../../vfx/hitscanBeam';
 import { BULLET_COLORS, WEAPON_CATALOGUE } from '../../utils/weapons';
 import { expectRangedClear } from '../../test/powerUpEffectFixtures';
 
@@ -1440,5 +1441,102 @@ describe('CombatCoreScene — SHUTDOWN releases the shared Phase Shift treatment
     scene.runTeardownRunState();
     expect(() => scene.runTeardownRunState()).not.toThrow();
     expect(destroy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Wave-laser hitscan dispatch (AH-0MVREBUJ5004HDRQ) ─────────────────
+
+/** A target the stub core can intercept. */
+interface StubTarget {
+  x: number;
+  y: number;
+  alive: boolean;
+  getHitRadius(): number;
+}
+
+/** Stub core that exposes the hitscan seam for dispatch assertions. */
+class HitscanStubScene extends StubCoreScene {
+  targets: StubTarget[] = [];
+  hits: { target: StubTarget; x: number; y: number }[] = [];
+  appliedDefs: string[] = [];
+
+  protected override getHitscanTargets() {
+    return this.targets;
+  }
+
+  protected override applyHitscanHit(
+    target: Parameters<CombatCoreScene['applyHitscanHit']>[0],
+    def: Parameters<CombatCoreScene['applyHitscanHit']>[1],
+    x: number,
+    y: number,
+  ): void {
+    this.hits.push({ target: target as StubTarget, x, y });
+    this.appliedDefs.push(def.id);
+  }
+
+  addTarget(x: number, y: number, radius = 12): StubTarget {
+    const target: StubTarget = {
+      x,
+      y,
+      alive: true,
+      getHitRadius: () => radius,
+    };
+    this.targets.push(target);
+    return target;
+  }
+}
+
+describe('wave laser — hitscan dispatch from the shared fire path (AH-0MVREBUJ5004HDRQ)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+    vi.restoreAllMocks();
+  });
+
+  async function boot(): Promise<HitscanStubScene> {
+    const booted = await bootScene([HitscanStubScene]);
+    games.push(booted);
+    return booted.scene as unknown as HitscanStubScene;
+  }
+
+  it('spawns no travelling bullet — one beam resolved at launch instead', async () => {
+    const scene = await boot();
+    const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
+    beamSpy.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('wave_laser', true);
+
+    scene.runAutoFire(10);
+
+    // No projectile enters the travelling-bullet path (AC11).
+    expect(
+      scene.getPlayerBullets().filter((b) => b.color === 0xff0000),
+    ).toHaveLength(0);
+    // Exactly one beam column per shot, one full screen wide (AC1/AC3).
+    expect(beamSpy).toHaveBeenCalledTimes(1);
+    const options = beamSpy.mock.calls[0][2]!;
+    expect(options.color).toBe(BULLET_COLORS.wave_laser);
+    expect(options.duration).toBeCloseTo(0.3, 6);
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+    expect(scene.hits).toHaveLength(0);
+  });
+
+  it('applies exactly one hit at the nearest intercept and stops there (AC2)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 200 });
+    player.setDefaultHeading(0); // fire right
+    const near = scene.addTarget(300, 200);
+    const far = scene.addTarget(600, 200);
+    player.equipWeapon('wave_laser', true);
+
+    scene.runAutoFire(10);
+
+    expect(scene.hits).toHaveLength(1);
+    expect(scene.hits[0].target).toBe(near);
+    expect(scene.hits[0].x).toBeCloseTo(288, 6);
+    expect(scene.appliedDefs).toEqual(['wave_laser']);
+    // The entity behind the intercept is never reached.
+    expect(scene.hits.some((hit) => hit.target === far)).toBe(false);
   });
 });

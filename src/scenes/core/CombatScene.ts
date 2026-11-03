@@ -56,7 +56,13 @@ import { spawnOrbitalStrike } from '../../vfx/orbitalStrike';
 import { selectOrbitalStrikeTarget } from './strikeTargeting';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
 import { isEligibleAutoTarget } from '../../utils/targetEligibility';
-import type { AoEDescriptor, WeaponDefinition, WeaponId } from '../../utils/weapons';
+import type {
+  AoEDescriptor,
+  ImpactFxSpec,
+  WeaponDefinition,
+  WeaponId,
+} from '../../utils/weapons';
+import type { HitscanTarget } from './hitscanBeam';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { resolveThornsAbsorb } from '../../vfx/thornsAbsorb';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -507,10 +513,27 @@ export abstract class CombatScene<
    * are a no-op — they keep the generic bullet-impact flash only.
    */
   protected resolveWeaponImpactFx(bullet: PlayerBullet): void {
-    const fx = bullet.impactFx;
+    this.resolveImpactFx(bullet.impactFx, bullet.x, bullet.y);
+  }
+
+  /**
+   * The shared per-weapon impact feedback seam: plays the weapon's baked hit
+   * cue (when it declares one) and spawns its distinct impact flash at
+   * `(x, y)`. Bullets, AOE detonations and the wave-laser hitscan intercept
+   * all resolve their feedback here, so the game and every gym show the
+   * identical hit response (AH-0MV8228YW0050IXS, AH-0MVREBUJ5004HDRQ).
+   *
+   * A spec-less hit is a no-op — the generic bullet-impact flash is the
+   * caller's fallback.
+   */
+  protected resolveImpactFx(
+    fx: ImpactFxSpec | undefined,
+    x: number,
+    y: number,
+  ): void {
     if (!fx) return;
     playWeaponImpactCue(fx.cue);
-    spawnBulletImpact(this, bullet.x, bullet.y, {
+    spawnBulletImpact(this, x, y, {
       registry: this.bulletImpactEffects,
       color: fx.color,
       radius: fx.radius,
@@ -615,7 +638,7 @@ export abstract class CombatScene<
    * weapons pass the default of one hit; the Smart Bomb passes its
    * level-resolved damage (AH-0MV1BIWP9003EHRQ).
    */
-  private damageEnemyViaAoe(enemy: TEnemy, damage = 1): void {
+  protected damageEnemyViaAoe(enemy: TEnemy, damage = 1): void {
     if (!enemy.alive) return;
     if (enemy.takeDamage) {
       const hits = Math.max(1, Math.floor(damage));
@@ -625,6 +648,33 @@ export abstract class CombatScene<
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
     }
+  }
+
+  /**
+   * Applies a wave-laser hitscan beam's single hit point (AH-0MVREBUJ5004HDRQ
+   * AC2/AC7). The beam always deals **exactly one** hit point at level 0 and
+   * stops at the first intercept — it never pierces, and no weapon level grows
+   * it into a damage budget. The hit routes through the same shared kill seam
+   * a player bullet or AOE effect uses (`takeDamage()` + `finaliseEnemyKill`),
+   * so destruction audio, score/drop/wave accounting and the Frenzy damage
+   * bonus behave identically for every damage source; the weapon's own impact
+   * flash and baked hit cue play at the intercept point.
+   *
+   * `PlayScene` overrides this to route its boss-style encounters (which carry
+   * their own damage path) to the same override while every ordinary enemy
+   * keeps this shared implementation.
+   */
+  protected override applyHitscanHit(
+    target: HitscanTarget,
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    // Per-weapon intercept feedback (the wave laser's red flash + baked cue)
+    // at the point where the beam stops, through the shared impact seam.
+    this.resolveImpactFx(def.impactFx, x, y);
+    const damage = 1 + this.getEffectsRegistry().frenzyBonusHits();
+    this.damageEnemyViaAoe(target as unknown as TEnemy, damage);
   }
 
   /**

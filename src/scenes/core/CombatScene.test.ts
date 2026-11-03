@@ -4,6 +4,7 @@ import Phaser from 'phaser';
 import * as effectsModule from '../../audio/effects';
 import * as bulletImpactModule from '../../vfx/bulletImpact';
 import * as muzzleFlashModule from '../../vfx/muzzleFlash';
+import * as hitscanBeamModule from '../../vfx/hitscanBeam';
 import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import {
   FORCE_FIELD_COLOR,
@@ -1888,8 +1889,10 @@ describe('damage-budget player bullets — Wave Laser maxHitPoints (AH-0MV97RISJ
   it('auto-fire propagates the weapon maxHitPoints budget onto spawned bullets', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
-    // Equip the wave laser permanently so it fires this frame.
-    player.equipWeapon('wave_laser', true);
+    // The Railgun is the catalogue's remaining damage-budget weapon: equipping
+    // it permanently makes it fire this frame (the Wave Laser is a hitscan
+    // beam now and spawns no travelling bullet — AH-0MVREBUJ5004HDRQ).
+    player.equipWeapon('railgun', true);
     player.setBeatClock(scene.getBeatClock());
     scene.getBeatClock().reset();
     // Establish a heading (right) without moving the ship far.
@@ -1897,14 +1900,14 @@ describe('damage-budget player bullets — Wave Laser maxHitPoints (AH-0MV97RISJ
     player.physicsTick(0.1, scene.scale.width, scene.scale.height);
 
     scene.runAutoFire(0.5);
-    const waveBullets = scene
+    const railgunBullets = scene
       .getPlayerBullets()
-      .filter((b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor);
-    expect(waveBullets.length).toBeGreaterThan(0);
-    for (const bullet of waveBullets) {
-      expect(bullet.maxHitPoints).toBe(WEAPON_CATALOGUE.wave_laser.maxHitPoints);
+      .filter((b) => b.color === WEAPON_CATALOGUE.railgun.bulletColor);
+    expect(railgunBullets.length).toBeGreaterThan(0);
+    for (const bullet of railgunBullets) {
+      expect(bullet.maxHitPoints).toBe(WEAPON_CATALOGUE.railgun.maxHitPoints);
     }
-    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
+    expect(WEAPON_CATALOGUE.railgun.maxHitPoints).toBe(5);
   });
 });
 
@@ -2476,8 +2479,10 @@ describe('auto-fire threads the weapon visual identity onto spawned bullets', ()
     return booted.scene as StubCombatScene;
   }
 
-  it('spawned wave-laser bullets carry the beam shape + length + rim', async () => {
+  it('the wave laser fires a hitscan beam and spawns no travelling bullet', async () => {
     const scene = await boot();
+    const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
+    beamSpy.mockClear();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('wave_laser', true);
     player.setBeatClock(scene.getBeatClock());
@@ -2486,16 +2491,18 @@ describe('auto-fire threads the weapon visual identity onto spawned bullets', ()
     player.physicsTick(0.1, scene.scale.width, scene.scale.height);
 
     scene.runAutoFire(0.5);
-    const bullets = scene.getPlayerBullets().filter(
-      (b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor,
-    );
-    expect(bullets.length).toBeGreaterThan(0);
-    for (const bullet of bullets) {
-      expect(bullet.shape).toBe('line');
-      expect(bullet.shapeLength).toBe(7);
-      expect(bullet.rimColor).toBe(0xffffff);
-      expect(bullet.thickness).toBe(3);
-    }
+
+    // The shot never enters the travelling-bullet path (AC11)…
+    expect(
+      scene
+        .getPlayerBullets()
+        .filter((b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor),
+    ).toHaveLength(0);
+    // …and instead resolves one beam through the shared hitscan seam.
+    expect(beamSpy).toHaveBeenCalledTimes(1);
+    const options = beamSpy.mock.calls[0][2]!;
+    expect(options.color).toBe(WEAPON_CATALOGUE.wave_laser.bulletColor);
+    expect(options.duration).toBeCloseTo(0.3, 6);
   });
 
   it('spawned dual bullets carry the short-beam shape', async () => {

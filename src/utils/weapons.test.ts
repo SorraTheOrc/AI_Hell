@@ -11,6 +11,8 @@
 
 import { describe, expect, test } from 'vitest';
 
+import { GAME_WIDTH } from '../core/constants';
+
 import {
   WEAPON_CATALOGUE,
   getWeaponById,
@@ -63,6 +65,7 @@ import {
   BULLET_SPEED,
   BULLET_COLORS,
   WEAPON_BULLET_LIFETIME,
+  WAVE_LASER_BEAM_LENGTH,
   isTimedWeapon,
 } from './weapons';
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
@@ -731,7 +734,7 @@ describe('configurable beat subdivisions (AH-0MUAYB8EH005RJ8B AC2/AC6)', () => {
   });
 });
 
-describe('R-Type wave laser (AH-0MV1BIUSJ0090W92)', () => {
+describe('Wave laser — single red hitscan beam (AH-0MVREBUJ5004HDRQ)', () => {
   test('is a catalogue weapon with a name and a player-facing description', () => {
     const def = WEAPON_CATALOGUE.wave_laser;
     expect(def.name).toBe('Wave Laser');
@@ -751,27 +754,45 @@ describe('R-Type wave laser (AH-0MV1BIUSJ0090W92)', () => {
     expect(isOnBeatGrid(WEAPON_CATALOGUE.wave_laser.fireRateMs)).toBe(true);
   });
 
-  test('supplies a base damage budget of 2 (the level curve grows it)', () => {
-    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
-  });
-
   test('is a timed weapon drop (not permanent) and not part of the AOE family', () => {
     expect(isTimedWeapon('wave_laser')).toBe(true);
     expect(isAoeWeapon('wave_laser')).toBe(false);
     expect(WEAPON_CATALOGUE.wave_laser.aoe).toBeUndefined();
   });
 
-  test('is a long-range beam with a distinct neon-blue bolt', () => {
-    expect(WEAPON_CATALOGUE.wave_laser.bulletLifetime).toBeGreaterThan(
-      WEAPON_CATALOGUE.cannon.bulletLifetime,
-    );
+  test('carries no damage budget — the beam is fixed at 1 damage and never pierces', () => {
+    // The retired pass-through budget (AH-0MV1BIUSJ0090W92): the hitscan beam
+    // stops at the first intercept and deals exactly 1 damage at every level
+    // (AC2/AC7).
+    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBeUndefined();
+  });
+
+  test('declares a hitscan ray one screen wide and visible for 0.3 s (AC3/AC4)', () => {
+    const def = WEAPON_CATALOGUE.wave_laser;
+    expect(def.hitscan).toBeDefined();
+    expect(def.hitscan!.length).toBe(WAVE_LASER_BEAM_LENGTH);
+    expect(def.hitscan!.length).toBeGreaterThanOrEqual(GAME_WIDTH);
+    expect(def.hitscan!.duration).toBeCloseTo(0.3, 6);
+    // The travelling-bullet lifetime mirrors the beam's visible duration; the
+    // shot itself is resolved instantly by the shared ray seam.
+    expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.wave_laser);
+  });
+
+  test('is a pure-red beam, distinct from the Heavy Slug\u2019s deep red (AC1, A5)', () => {
     expect(WEAPON_CATALOGUE.wave_laser.bulletColor).toBe(BULLET_COLORS.wave_laser);
+    expect(BULLET_COLORS.wave_laser).toBe(0xff0000);
+    expect(WEAPON_CATALOGUE.wave_laser.bulletColor).not.toBe(
+      BULLET_COLORS.heavy_slug,
+    );
     expect(WEAPON_CATALOGUE.wave_laser.bulletColor).not.toBe(
       WEAPON_CATALOGUE.cannon.bulletColor,
     );
+    // One beam, drawn as a line/column — never a fan and never a pair.
+    expect(WEAPON_CATALOGUE.wave_laser.bulletShape).toBe('line');
+    expect(WEAPON_CATALOGUE.wave_laser.offsets).toHaveLength(1);
   });
 
-  test('carries a wide muzzle flash, a faint trail and a distinct impact FX (AH-0MV822ACO007CEZF)', () => {
+  test('carries a wide muzzle flash and a distinct impact FX (AH-0MV822ACO007CEZF)', () => {
     const def = WEAPON_CATALOGUE.wave_laser;
     // Wide launch cue at the ship — larger than the cannon's default flash.
     expect(def.muzzleFlash).toBeDefined();
@@ -779,10 +800,8 @@ describe('R-Type wave laser (AH-0MV1BIUSJ0090W92)', () => {
     expect(def.muzzleFlash!.radius).toBeGreaterThan(
       WEAPON_CATALOGUE.cannon.muzzleFlash!.radius,
     );
-    // A short fading wake behind the beam in flight.
-    expect(def.bulletTrail).toBeDefined();
-    expect(def.bulletTrail!).toBeGreaterThan(0);
-    // Distinct neon-blue impact flash + the baked wave-laser hit cue.
+    // Distinct red impact flash + the baked wave-laser hit cue at the point
+    // where the beam stops.
     expect(def.impactFx).toBeDefined();
     expect(def.impactFx!.color).toBe(BULLET_COLORS.wave_laser);
     expect(def.impactFx!.cue).toBe('playWaveLaserImpactSound');

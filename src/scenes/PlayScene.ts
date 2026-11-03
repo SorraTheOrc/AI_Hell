@@ -214,7 +214,7 @@ import {
 import { type PowerUpSpawner } from '../powerups/spawner';
 import { HUD } from '../ui/HUD';
 import { combatHudOptions } from './core/hudWiring';
-import { type WeaponId } from '../utils/weapons';
+import { type WeaponDefinition, type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
 import { createCompetentBotBrain } from '../ai/framework';
@@ -236,6 +236,7 @@ import { loadEnemyConfig } from '../core/enemyConfig';
 import { enemyForceFieldHits } from '../core/enemyForceField';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import { isRunProgressEnabled, publishRunProgress } from '../core/runProgress';
+import type { HitscanTarget } from './core/hitscanBeam';
 import {
   createTelemetryRecorder,
   installDevTelemetryBuffer,
@@ -4455,6 +4456,49 @@ export class PlayScene extends CombatScene<
   protected override onEnemyDestroyed(enemy: EnemyEntity): void {
     const s = this.spawned.find((candidate) => candidate.entity === enemy);
     if (s) this._onEnemyKilled(s);
+  }
+
+  /**
+   * Entities the wave-laser hitscan beam may intercept: the live fodder enemies
+   * **plus** the boss-style encounters (the final boss and the mini-boss),
+   * which live outside the enemy list. This keeps the shared ray seam honest —
+   * the beam stops at whichever entity it meets first, boss or not (AC2) —
+   * while the resolution itself stays in the shared core
+   * (AH-0MVREBUJ5004HDRQ, gym↔game parity).
+   */
+  protected override getHitscanTargets(): readonly HitscanTarget[] {
+    const targets: HitscanTarget[] = [...this.getEnemyEntities()];
+    if (this.boss?.alive) targets.push(this.boss);
+    if (this.miniBoss?.alive) targets.push(this.miniBoss);
+    return targets;
+  }
+
+  /**
+   * Applies a wave-laser beam hit: a boss-style encounter takes the phase hit
+   * through the same `_damageBoss`/`_damageMiniBoss` path a player bullet uses
+   * (so phase pacing, scores and minion summons are identical), while every
+   * ordinary enemy keeps the shared `CombatScene.applyHitscanHit`
+   * implementation (AH-0MVREBUJ5004HDRQ).
+   */
+  protected override applyHitscanHit(
+    target: HitscanTarget,
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    if (target === this.boss) {
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageBoss(x, y);
+      }
+      return;
+    }
+    if (target === this.miniBoss) {
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageMiniBoss(x, y);
+      }
+      return;
+    }
+    super.applyHitscanHit(target, def, x, y);
   }
 
   /**

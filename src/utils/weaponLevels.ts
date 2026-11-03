@@ -1156,7 +1156,11 @@ export function expandWeaponPattern(
  * - `levelBulletSize` — bullet-radius upgrade multiplier,
  * - `maxHitPoints` — the base damage budget grown by the level's
  *   `maxHitPoints` upgrade (weapons with a base `maxHitPoints` only, e.g. the
- *   wave laser; AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S),
+ *   railgun; AH-0MV1BIUSJ0090W92),
+ * - `hitscan.length` — the beam's ray extent grown by the level's
+ *   `bulletLifetime` (range) upgrade (hitscan weapons only, i.e. the wave
+ *   laser, which never gains a damage budget and never widens into a fan —
+ *   AH-0MVREBUJ5004HDRQ),
  * - `bounce` — the base wall-bounce budget grown by the level's `bounce`
  *   upgrade and clamped to its spec cap (weapons with a base `bounce` only,
  *   e.g. the ricochet; AH-0MV1BIV5L005NJAI),
@@ -1194,21 +1198,38 @@ export function resolveWeaponDefinition(
     // Orbit weapons (the Gradius Options escort) fire from their pods, not
     // from an angular `offsets` fan, so the pattern is never expanded by
     // `projectileCount` (the level variable grows the pod count instead).
-    offsets: base.orbit
-      ? [...base.offsets]
-      : expandWeaponPattern(base, stats).offsets,
+    // Hitscan weapons (the wave laser) always fire exactly **one** beam, so
+    // their pattern is never expanded either (AC1: one beam per shot, no fan
+    // and no pair at any level; AH-0MVREBUJ5004HDRQ).
+    offsets:
+      base.orbit || base.hitscan
+        ? [...base.offsets]
+        : expandWeaponPattern(base, stats).offsets,
     bulletLifetime: base.bulletLifetime * stats.bulletLifetime,
     levelBulletSize: stats.bulletSize,
   };
-  // Damage-budget weapons (the R-Type wave laser) opt in with a base budget.
+  // Damage-budget weapons (the railgun) opt in with a base budget.
   // Their effective budget is the base value plus the level-resolved
   // `maxHitPoints` upgrade with **no clamp**: growth is governed only by the
   // shared exponential-saturation curve, so the budget saturates near its
   // asymptote (~base + 5) instead of flattening at a hard cap
   // (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S). Weapons without a base
-  // budget never gain one.
+  // budget never gain one — the wave laser's hitscan beam is fixed at 1
+  // damage and stops at the first intercept at every level
+  // (AH-0MVREBUJ5004HDRQ).
   if (base.maxHitPoints !== undefined) {
     leveled.maxHitPoints = base.maxHitPoints + stats.maxHitPoints;
+  }
+  // Hitscan weapons opt in with a base ray descriptor. The ray's extent grows
+  // with the level-resolved `bulletLifetime` (range) upgrade — a longer beam
+  // still deals exactly 1 damage and stops at the first intercept — while the
+  // visible duration stays the fixed 0.3 s column (AC4). Weapons without a
+  // `hitscan` descriptor never gain one.
+  if (base.hitscan) {
+    leveled.hitscan = {
+      ...base.hitscan,
+      length: base.hitscan.length * stats.bulletLifetime,
+    };
   }
   // Ricochet-style weapons opt in with a base wall-bounce budget. Their
   // effective budget grows with the level-resolved `bounce` upgrade, clamped
