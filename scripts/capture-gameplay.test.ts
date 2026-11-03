@@ -968,21 +968,24 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     ).toBe(true);
   });
 
-  it('enables the dev-gated Hangar War menu entry before the game boots (AH-0MVWMUQUC003WXF5)', () => {
+  it('seeds the Hangar War flag ON before the game boots (AH-0MVWMUQUC003WXF5)', () => {
     const plan = buildHangarWarFlagPlan();
 
     // The seeded record must match the real flag store: the menu control only
-    // exists when the dev-gated flag resolves ON.
+    // exists when the flag resolves ON. The flag ships ON by default
+    // (AH-0MVZ4S9ZU004GXUM); the capture pipeline still seeds it explicitly so
+    // a profile carrying the kill switch (`hangarWar: false`) cannot break a
+    // capture run.
     expect(FEATURE_FLAGS_STORAGE_KEY).toBe(FEATURE_FLAGS_TS_KEY);
     expect(HANGAR_WAR_FEATURE_FLAG).toBe('hangarWar');
     expect(plan.storageKey).toBe(FEATURE_FLAGS_TS_KEY);
     expect(
-      resolveHangarWarEnabled({ DEV: true }, plan.record as unknown as FeatureFlagsRecord),
+      resolveHangarWarEnabled(plan.record as unknown as FeatureFlagsRecord),
     ).toBe(true);
-    // Fail-closed in production: the same record is inert outside a dev build.
-    expect(
-      resolveHangarWarEnabled({ PROD: true }, plan.record as unknown as FeatureFlagsRecord),
-    ).toBe(false);
+    // The persisted value is honoured in every build: there is no dev gate on
+    // the effective value any more.
+    expect(resolveHangarWarEnabled({ hangarWar: true })).toBe(true);
+    expect(resolveHangarWarEnabled({ hangarWar: false })).toBe(false);
 
     // The init script writes the plan into the page's localStorage.
     const store = new Map<string, string>();

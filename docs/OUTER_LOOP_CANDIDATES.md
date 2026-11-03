@@ -1178,16 +1178,16 @@ the shipped hangar slice and **§8.2** specifies the shipped first hex ring
 the measured ring timings). The documentation of record was published by
 **AH-0MVUXCC5J0028OGQ**.
 
-### Build status — entry surfaces gated (AH-0MVZ0VGGQ0032KDP)
+### Build status — shipped, flag ON by default (AH-0MVZ4S9ZU004GXUM)
 
-The build is shipped but the Hangar War **currently does not work**, so its
-player-visible entry surfaces are temporarily **gated behind a default-OFF
-feature flag** (`ai_hell_feature_flags.hangarWar`, resolved through
-`src/core/featureFlags.ts`): the menu entry and the idle-attract Hangar War
-traversal are hidden, while the Hangar War scenes stay registered for the dev
-gyms and the capture pipeline. The flag resolves OFF in every production build
-regardless of any stored value; only a dev build can turn it on (the
-pointer-only `🛠 Hangar War (dev): ON/OFF` footer toggle). Nothing in the design
-of record above changes — the gate is an interim containment measure until the
-defects are fixed, at which point the flag is turned on (or removed) by a
-follow-on work item.
+The Hangar War ships enabled. The entry surfaces were briefly gated behind a
+default-OFF feature flag (AH-0MVZ0VGGQ0032KDP) while the loop was broken; the
+defect — `DefenceReportScene` was started by `PlayScene` but never registered in
+the shipped scene array, and the hangar had no route to the hex map — is fixed
+and the flow is verified end to end through `buildGameConfig().scene`
+(`src/scenes/hangarWarFlow.integration.test.ts`). The persisted flag
+`ai_hell_feature_flags.hangarWar` is kept as a **kill switch**: it now defaults
+to ON and `resolveHangarWarEnabled()` honours the stored value in every build,
+so the shipped (production) build runs the Hangar War. Only flipping it from a
+UI remains dev-gated (the pointer-only `🛠 Hangar War (dev): ON/OFF` footer
+toggle). Nothing in the design of record above changes.

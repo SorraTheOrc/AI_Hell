@@ -164,6 +164,43 @@ export interface HangarDeployRow {
   actionable: boolean;
 }
 
+/**
+ * The `⌗ HEX MAP` navigation row: the one click from what the player owns to
+ * what the player holds.
+ *
+ * `HexMapScene` has carried the mirror-image `◀ HANGAR` row since
+ * AH-0MVUXCAG90086LH2, but the hangar had no way back — a player entering the
+ * Hangar War from the menu could only launch a blind deployment at the weakest
+ * hex and never saw the ring intel the map exists to show. The design of
+ * record is "the map and hangar one click apart" (GDD §8.2), so this row makes
+ * that true in both directions.
+ */
+export interface HangarMapRow {
+  /** Row key (`map`). */
+  key: 'map';
+  /** Full row text as rendered. */
+  label: string;
+  /** Always true: the map is always reachable. */
+  actionable: boolean;
+}
+
+/** Row key of the hangar's navigation row to the hex map. */
+export const HANGAR_MAP_ROW_KEY = 'map';
+
+/**
+ * Builds the `⌗ HEX MAP` navigation row (pure).
+ *
+ * The map is always reachable — it is a navigation action, not an economy one,
+ * so it never depends on salvage, ring progress or ownership.
+ */
+export function buildHangarMapRow(): HangarMapRow {
+  return {
+    key: HANGAR_MAP_ROW_KEY,
+    label: '⌗ HEX MAP — open the ring',
+    actionable: true,
+  };
+}
+
 /** The complete rendered state of the hangar screen (pure data). */
 export interface HangarScreenModel {
   /** Screen title. */
@@ -182,6 +219,8 @@ export interface HangarScreenModel {
   modifierOptions: HangarModifierOption[];
   /** The ▶ DEPLOY row (the deployment this loadout launches). */
   deployRow: HangarDeployRow;
+  /** The `⌗ HEX MAP` navigation row (one click to what the player holds). */
+  mapRow: HangarMapRow;
   /**
    * Keys of the rows that can be activated, in reading order — exactly the
    * rows registered with the shared `FocusManager` (disabled rows are never
@@ -428,12 +467,16 @@ export function buildHangarScreenModel(
   const weaponOptions = buildHangarWeaponOptions(payload, catalogue);
   const modifierOptions = buildHangarModifierOptions(payload, catalogue);
   const deployRow = buildHangarDeployRow(payload, catalogue);
+  const mapRow = buildHangarMapRow();
   const focusOrder = [
     ...unlockRows.filter((row) => row.actionable),
     ...hullOptions.filter((row) => row.actionable),
     ...weaponOptions.filter((row) => row.actionable),
     ...modifierOptions.filter((row) => row.actionable),
     deployRow,
+    // The navigation row follows the primary action, mirroring `HexMapScene`'s
+    // convention of placing its own navigation row last in the focus order.
+    mapRow,
   ].map((row) => row.key);
   return {
     title: HANGAR_SCREEN_TITLE,
@@ -444,6 +487,7 @@ export function buildHangarScreenModel(
     weaponOptions,
     modifierOptions,
     deployRow,
+    mapRow,
     focusOrder,
   };
 }
@@ -600,6 +644,8 @@ export interface HangarScreenHandlers {
   onToggleModifier(modifierId: string): void;
   /** Launch a deployment at `hexId` (the ▶ DEPLOY row). */
   onDeploy(hexId: string | null): void;
+  /** Open the hex map (the `⌗ HEX MAP` row). */
+  onOpenMap(): void;
 }
 
 /** One rendered row, exposed for tests and screen queries. */
@@ -836,6 +882,16 @@ export function renderHangarScreen(
     handlers?.onDeploy
       ? () => handlers.onDeploy!(model.deployRow.hexId)
       : undefined,
+  );
+
+  // ── Hex map (navigation, directly above the primary action) ──
+  addRow(
+    LEFT_X,
+    GAME_HEIGHT - 74,
+    model.mapRow.key,
+    model.mapRow.label,
+    model.mapRow.actionable,
+    handlers?.onOpenMap ? () => handlers.onOpenMap!() : undefined,
   );
 
   objects.push(

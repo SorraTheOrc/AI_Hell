@@ -749,8 +749,10 @@ export function evaluateHangarActivation(
 export const FEATURE_FLAGS_STORAGE_KEY = 'ai_hell_feature_flags';
 
 /**
- * The dev-only feature flag that gates the Hangar War entry surfaces
- * (`hangarWar`: the main-menu control and the idle-attract traversal).
+ * The feature flag that gates the Hangar War entry surfaces (`hangarWar`: the
+ * main-menu control and the idle-attract traversal). It ships ON by default
+ * (AH-0MVZ4S9ZU004GXUM) and acts as a kill switch; only flipping it from a UI
+ * is dev-gated.
  */
 export const HANGAR_WAR_FEATURE_FLAG = 'hangarWar';
 
@@ -758,11 +760,11 @@ export const HANGAR_WAR_FEATURE_FLAG = 'hangarWar';
  * The pre-boot plan that **enables** the Hangar War menu entry.
  *
  * The `--hangar` path navigates the real menu, and that control only exists
- * when the dev-gated flag resolves ON (AH-0MVZ0VGGQ0032KDP). Without this the
- * Tab lands on `Watch Demo` and the activation check fails. The record is
- * merged over the shipped defaults by the flag store, and the flag is inert in
- * a production build, so seeding it here cannot enable a broken feature
- * outside a dev build.
+ * when the flag resolves ON (AH-0MVZ0VGGQ0032KDP). The flag ships ON by
+ * default (AH-0MVZ4S9ZU004GXUM), but the plan is still seeded explicitly: a
+ * capture profile that carries the kill switch (`hangarWar: false`) would
+ * otherwise lose the control, and the activation check would fail. The record
+ * is merged over the shipped defaults by the flag store.
  *
  * @returns {{ storageKey: string, record: Record<string, boolean> }}
  */
@@ -2207,10 +2209,11 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       await page.addInitScript(installBotTuningConfig, options.botTuningState);
     }
 
-    // The Hangar War menu control is behind a dev-only, default-OFF feature
-    // flag (AH-0MVZ0VGGQ0032KDP). Seed the enable *before* the menu scene is
-    // created, otherwise `--hangar`'s Tab would land on `Watch Demo` and the
-    // activation check would fail for a controllable reason.
+    // The Hangar War menu control is behind a feature flag
+    // (AH-0MVZ0VGGQ0032KDP) that ships ON by default (AH-0MVZ4S9ZU004GXUM).
+    // Seed the enable *before* the menu scene is created so a profile carrying
+    // the kill switch cannot make `--hangar`'s Tab land on `Watch Demo` and
+    // fail the activation check for a controllable reason.
     if (mode === 'hangar') {
       await page.addInitScript(installHangarWarFlag, buildHangarWarFlagPlan());
     }

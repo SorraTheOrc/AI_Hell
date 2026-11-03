@@ -113,10 +113,12 @@ resolver state); the report view deliberately renders the **shipped** resolver's
 record so the numbers cannot drift. The `GymHangar` and `GymHexWar` rows above
 were re-checked against that shipped code by this item.
 
-**Entry-surface gating does not change parity (AH-0MVZ0VGGQ0032KDP).** While
-the Hangar War does not work it is hidden behind the default-OFF feature flag
+**Entry-surface gating does not change parity (AH-0MVZ0VGGQ0032KDP).** The
+Hangar War entry surfaces sit behind the feature flag
 `ai_hell_feature_flags.hangarWar`, which only gates the **menu entry and the
-idle-attract Hangar War traversal**. The scenes stay registered, so `GymHangar`
+idle-attract Hangar War traversal**. The flag now ships ON — the flow is
+verified end to end through the shipped scene array (AH-0MVZ4S9ZU004GXUM) — and
+a stored `false` is the kill switch. The scenes stay registered, so `GymHangar`
 and `GymHexWar` keep rendering the same shipped model/renderer pairs as the
 game — the rows above are unchanged by the flag and no gym divergence is
 introduced.

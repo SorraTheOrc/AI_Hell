@@ -8,11 +8,12 @@
  *   outer-loop entry of Build Candidate D (AH-0MVUXC2DD003HN0I). Play Game
  *   keeps starting the shipped classic campaign and Continue keeps resuming
  *   the arcade checkpoint; a hex deployment launched from the hangar is a
- *   separate session that never touches that checkpoint. The feature is
- *   **gated behind a default-OFF feature flag** while it does not work
- *   (AH-0MVZ0VGGQ0032KDP): the control is absent unless the flag resolves ON,
- *   which is only possible in a dev build. Dev builds additionally render a
- *   pointer-only `Hangar War (dev): ON/OFF` toggle (never in production).
+ *   separate session that never touches that checkpoint. The feature sits
+ *   behind a feature flag (AH-0MVZ0VGGQ0032KDP) that **ships ON** now that the
+ *   flow is verified end to end in the shipped config (AH-0MVZ4S9ZU004GXUM): a
+ *   stored `false` is the kill switch and hides the control. Dev builds
+ *   additionally render a pointer-only `Hangar War (dev): ON/OFF` toggle
+ *   (never in production).
  * - **Settings** — opens the shared settings screen (audio + controls)
  *   before starting a session (parent AH-0MU9LPZ0G0015292).
  * - **Gym Scene Index** — navigates to the existing `GymIndex` dev scene
@@ -233,7 +234,8 @@ export class MenuScene extends Phaser.Scene {
     this.controls = [];
     this.githubLogo = null;
     // Feature flag: the Hangar War entry surfaces are hidden unless the flag
-    // resolves ON, which the dev-build gate limits to dev builds
+    // resolves ON. The flag ships ON now that the flow is verified end to end
+    // (AH-0MVZ4S9ZU004GXUM); a persisted `false` is the kill switch
     // (AH-0MVZ0VGGQ0032KDP).
     this.hangarWarEnabled = resolveHangarWarEnabled();
 
@@ -348,10 +350,11 @@ export class MenuScene extends Phaser.Scene {
     // outer loop cannot put the shipped game at risk. The hangar screen owns
     // the deployment path; this control only navigates.
     //
-    // Gated behind a default-OFF feature flag while the feature does not work
-    // (AH-0MVZ0VGGQ0032KDP). When the flag is OFF the control is not created
-    // at all, so it is absent from the scene and from the FocusManager cycle
-    // (the remaining controls keep their relative order).
+    // Gated behind a feature flag that ships ON (AH-0MVZ0VGGQ0032KDP,
+    // AH-0MVZ4S9ZU004GXUM). When the flag is OFF (the persisted kill switch)
+    // the control is not created at all, so it is absent from the scene and
+    // from the FocusManager cycle (the remaining controls keep their relative
+    // order).
     let hangarWarButton: Phaser.GameObjects.Text | null = null;
     if (this.hangarWarEnabled) {
       hangarWarButton = this.add.text(
@@ -592,12 +595,12 @@ export class MenuScene extends Phaser.Scene {
     this.controls.push({ label: '⚙  Gym Scene Index (dev)', text: devButton });
 
     // ── Hangar War feature-flag toggle (dev tool) ────────────────
-    // The enable surface for the gated Hangar War entry
+    // The enable surface for the Hangar War entry
     // (AH-0MVZ0VGGQ0032KDP). Rendered in **dev builds only** — the toggle
-    // itself never exists in a production build, where the flag resolves OFF
-    // regardless of the stored value. Deliberately pointer-only and not
-    // registered with the FocusManager: the keyboard focus cycle is unchanged
-    // whether the flag is on or off (AC2).
+    // itself never exists in a production build, which therefore always runs
+    // the shipped default (ON). Deliberately pointer-only and not registered
+    // with the FocusManager: the keyboard focus cycle is unchanged whether the
+    // flag is on or off (AC2).
     if (isDevBuild()) {
       const flagToggle = this.add.text(
         GAME_WIDTH - 16,

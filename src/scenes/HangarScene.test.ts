@@ -31,6 +31,7 @@ import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
 import type { HangarEntry } from '../data/hangarCatalogue';
 import { HANGAR_CATALOGUE } from '../data/hangarCatalogue';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
+import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene } from './PlayScene';
 import {
   HANGAR_SCREEN_TITLE,
@@ -226,13 +227,27 @@ describe('hangar screen model (pure)', () => {
       'hull:hull-2',
       'weapon:spread',
       'deploy',
+      'map',
     ]);
   });
 
-  it('has only the deployment in the focus order when nothing can be activated', () => {
+  it('offers the one click to the hex map, after the primary action', () => {
+    const model = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
+    expect(model.mapRow).toEqual({
+      key: 'map',
+      label: '⌗ HEX MAP — open the ring',
+      actionable: true,
+    });
+    // Navigation follows the primary action, mirroring the map's own row order.
+    expect(model.focusOrder.at(-2)).toBe('deploy');
+    expect(model.focusOrder.at(-1)).toBe('map');
+  });
+
+  it('has only the deployment and the map in the focus order when nothing can be activated', () => {
     const model = buildHangarScreenModel(UNARMED_PAYLOAD);
-    // A fleet can always deploy, even with nothing affordable.
-    expect(model.focusOrder).toEqual(['deploy']);
+    // A fleet can always deploy, even with nothing affordable, and the map is
+    // always reachable.
+    expect(model.focusOrder).toEqual(['deploy', 'map']);
     expect(model.deployRow.actionable).toBe(true);
     expect(model.unlockRows.every((row) => !row.actionable)).toBe(true);
     expect(model.modifierOptions).toEqual([]);
@@ -274,6 +289,7 @@ describe('hangar screen model (pure)', () => {
       'weapon:spread',
       'modifier:hardened_plating',
       'deploy',
+      'map',
     ]);
     // An unknown modifier id in the owned set is not presented as an option.
     expect(
@@ -455,6 +471,7 @@ describe('HangarScene', () => {
       'hull:hull-2',
       'weapon:spread',
       'deploy',
+      'map',
     ]);
     // Rendering is read-only: nothing is written to storage until a change.
     expect(storage.entries.size).toBe(0);
@@ -599,8 +616,11 @@ describe('HangarScene', () => {
     const storage = memoryStorage(UNARMED_PAYLOAD);
     const scene = await bootHangar({ storage });
 
-    // Only the deployment is focusable; no purchase/equip row can be reached.
+    // Only the deployment and the map are focusable; no purchase/equip row
+    // can be reached.
     expect(scene.getFocusedKey()).toBe('deploy');
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedKey()).toBe('map');
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedKey()).toBe('deploy');
 
@@ -657,5 +677,40 @@ describe('HangarScene', () => {
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isHangarWarRun()).toBe(true);
     expect(play.getHangarWarDeployment()!.hexId).toBe('hex-2');
+  });
+
+  it('opens the hex map with this hangar payload from the HEX MAP row', async () => {
+    booted = await bootScene([HangarScene, HexMapScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: VALID_HANGAR_WAR_PAYLOAD,
+      storage: null,
+    });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+
+    rowFor(scene, 'map').text.emit('pointerdown');
+    await advanceGame(booted.game, 350);
+
+    expect(booted.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+    const map = booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
+    // One war state on both screens: the map shows exactly the payload the
+    // hangar was presenting (no re-read of the versioned store).
+    expect(map.getPayload()).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+  });
+
+  it('opens the hex map from the HEX MAP row on the keyboard path', async () => {
+    booted = await bootScene([HangarScene, HexMapScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: VALID_HANGAR_WAR_PAYLOAD,
+      storage: null,
+    });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+
+    expect(scene.focusRow('map')).toBe(true);
+    pressKey(scene, { key: 'Enter' });
+    await advanceGame(booted.game, 350);
+
+    expect(booted.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
   });
 });

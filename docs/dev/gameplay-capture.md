@@ -751,14 +751,13 @@ A Hangar War **screen has no run-end signal**, so `--hangar` is a
 than waiting for `aihell:run-ended`, and `--tail` / `--max-duration` do not
 apply.
 
-**The dev-only menu entry is enabled for the capture.** The Hangar War control
-sits behind the default-OFF, dev-gated `hangarWar` feature flag
-(AH-0MVZ0VGGQ0032KDP), so a fresh browser profile has no control to focus and
-Tab would land on **Watch Demo**. `--hangar` therefore seeds the flag record
-(`ai_hell_feature_flags` → `{ "hangarWar": true }`) through a pre-boot
-`addInitScript`, before `MenuScene.create()` builds the focus cycle. The flag
-stays inert in a production build, so the seed can never enable a broken
-feature outside a dev build.
+**The menu entry is enabled for the capture.** The Hangar War control sits
+behind the `hangarWar` feature flag (AH-0MVZ0VGGQ0032KDP), which ships ON by
+default now that the flow works (AH-0MVZ4S9ZU004GXUM). `--hangar` still seeds
+the flag record (`ai_hell_feature_flags` → `{ "hangarWar": true }`) through a
+pre-boot `addInitScript`, before `MenuScene.create()` builds the focus cycle, so
+a capture profile that carries the kill switch (`hangarWar: false`) cannot leave
+Tab landing on **Watch Demo**.
 
 **The activation is proved before recording.** After the warm-up the capture
 reads the dev-gated director's read-only `activeSceneKeys()` snapshot and

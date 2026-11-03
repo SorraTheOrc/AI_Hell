@@ -36,6 +36,7 @@ import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { DefenceReportScene } from './DefenceReportScene';
 import {
+  FEATURE_FLAGS_STORAGE_KEY,
   loadFeatureFlags,
   resetFeatureFlags,
   setHangarWarEnabled,
@@ -164,7 +165,8 @@ describe('MenuScene — Hangar War entry (AH-0MVUXC2DD003HN0I)', () => {
   let booted: BootedGame | null = null;
 
   // These tests describe the shipped entry when the feature flag is ON
-  // (AH-0MVZ0VGGQ0032KDP). The flag defaults OFF, so it is enabled here.
+  // (AH-0MVZ0VGGQ0032KDP). The flag ships ON (AH-0MVZ4S9ZU004GXUM) and is
+  // enabled explicitly here so the suite never depends on the default.
   beforeEach(() => {
     setHangarWarEnabled(true);
   });
@@ -259,7 +261,9 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
-    // The flag defaults OFF; start every test from a clean persisted record.
+    // Start every test from a clean persisted record. The flag's default is ON
+    // (AH-0MVZ4S9ZU004GXUM); the tests that describe the disabled state store an
+    // explicit `false` (the kill switch).
     resetFeatureFlags();
   });
 
@@ -290,7 +294,8 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
     } as KeyboardEvent);
   }
 
-  it('AC2 — with the flag OFF (default) the Hangar War control is not rendered', async () => {
+  it('AC2 — with the flag OFF (the kill switch) the Hangar War control is not rendered', async () => {
+    setHangarWarEnabled(false);
     const scene = await bootMenu();
     expect(scene.isHangarWarEnabled()).toBe(false);
     const hangarWar = scene.children.list.find(
@@ -301,6 +306,7 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
   });
 
   it('AC2 — with the flag OFF the focus cycle skips Hangar War and keeps the remaining order', async () => {
+    setHangarWarEnabled(false);
     const scene = await bootMenu();
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
 
@@ -318,6 +324,7 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
   });
 
   it('AC2 — Play Game, Continue and Watch Demo behave exactly as before with the flag OFF', async () => {
+    setHangarWarEnabled(false);
     saveCheckpoint({
       version: CHECKPOINT_VERSION,
       level: 3,
@@ -346,6 +353,7 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
   });
 
   it('AC3 — with the flag OFF the idle attract only ever starts the arcade demo', async () => {
+    setHangarWarEnabled(false);
     const scene = await bootMenu();
 
     // Two attract cycles: even with the flag OFF, neither may reach the hex map.
@@ -364,6 +372,15 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
     expect(booted!.game.scene.isActive('HexMapScene')).toBe(false);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     expect((booted!.game.scene.getScene('PlayScene') as PlayScene).isDemoMode()).toBe(true);
+  });
+
+  it('AC1 — the shipped default (no stored flag) renders the entry', async () => {
+    // AH-0MVZ4S9ZU004GXUM AC1: the flow now works, so the shipped default is
+    // ON and a fresh profile reaches the Hangar War from the menu.
+    window.localStorage.removeItem(FEATURE_FLAGS_STORAGE_KEY);
+    const scene = await bootMenu();
+    expect(scene.isHangarWarEnabled()).toBe(true);
+    expect(findText(scene, HANGAR_WAR_LABEL)).toBeDefined();
   });
 
   it('AC1/AC4 — with the flag ON the entry is rendered and opens the hangar screen', async () => {
@@ -397,17 +414,25 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
 
   it('AC4 — the dev enable surface is present in a dev build and flips the flag', async () => {
     const scene = await bootMenu();
-    const toggle = findText(scene, hangarWarFlagLabel(false));
+    // The flag ships ON, so the toggle starts in its ON state.
+    const toggle = findText(scene, hangarWarFlagLabel(true));
     expect(toggle.input?.enabled).toBe(true);
 
     toggle.emit('pointerdown');
     await advanceGame(booted!.game, 200);
 
-    // The menu restarts with the flag ON, so the entry is now rendered.
+    // The menu restarts with the flag OFF (the kill switch), so the gated entry
+    // is now absent.
     const menu = booted!.game.scene.getScene('MenuScene') as MenuScene;
-    expect(menu.isHangarWarEnabled()).toBe(true);
-    expect(loadFeatureFlags().hangarWar).toBe(true);
-    expect(findText(menu, HANGAR_WAR_LABEL)).toBeDefined();
+    expect(menu.isHangarWarEnabled()).toBe(false);
+    expect(loadFeatureFlags().hangarWar).toBe(false);
+    expect(
+      menu.children.list.find(
+        (child): child is Phaser.GameObjects.Text =>
+          child instanceof Phaser.GameObjects.Text &&
+          child.text === HANGAR_WAR_LABEL,
+      ),
+    ).toBeUndefined();
   });
 });
 
