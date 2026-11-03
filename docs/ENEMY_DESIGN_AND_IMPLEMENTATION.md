@@ -303,6 +303,22 @@ children are registered through the base's `registerDynamicEntity(child)` seam
 consume the shared respawn and player lifecycle instead of re-implementing
 them.
 
+**Auto-targeting never picks the rock** (AH-0MVNSIG1O0049G69). The `asteroid`
+archetype is excluded from **all** auto-targeting offence — the Arc chain
+(`selectChainTargets` driven by the shared `isEligibleAutoTarget` predicate)
+and the Orbital Strike bolt (`selectOrbitalStrikeTarget`) — because it is an
+inert world hazard, not an enemy. Aimed and area weapons (cannon fire, Nova,
+Mortar, the Smart Bomb pulse) may still hit asteroids. The eligibility rule
+lives once in the pure shared helper `src/utils/targetEligibility.ts`
+(`INERT_WORLD_HAZARD_ARCHETYPES`, `isInertWorldHazard`, `isEligibleAutoTarget`)
+and identifies the hazard by **archetype string**, never `instanceof`, so a
+gym entity and a game entity with the same archetype are treated identically
+(gym↔game parity, AH-0MUGZDTFX004RBD1). An absent archetype is never a
+hazard, which is why `GymWeapons`' archetype-less `TrainingTarget`s stay
+Arc-targetable — the documented divergence in §5.1 still holds. Coverage:
+`src/utils/targetEligibility.test.ts`, `src/utils/aoe.test.ts` and the
+Arc-vs-asteroid block in `src/scenes/core/AoeWeapons.test.ts`.
+
 Enemy archetypes are **data, not code**. The runtime type is `EnemyConfig`
 (`src/core/configTypes.ts`) — a record of formation, visual and shot tuning.
 Seven **seed configs** (scout/diver/tank/phaser/swarm/boss/asteroid) live in
@@ -1903,7 +1919,11 @@ gym stays threat-free. The AOE resolution itself is **not** duplicated — the
 gym exposes the targets through the shared `getEnemyEntities()` participant
 contract and inherits every AOE hook from the shared core, so the game and the
 gym resolve the same effect from one implementation (parent
-AH-0MQUYHY0000MZ2F, F6 AC3/AC5).
+AH-0MQUYHY0000MZ2F, F6 AC3/AC5). The targets carry **no** `archetype`, so the
+shared auto-targeting eligibility rule (`src/utils/targetEligibility.ts`,
+AH-0MVNSIG1O0049G69) admits them: they stay valid **Arc** targets and the gym
+still visibly demonstrates the bolt under the rule that excludes the
+`asteroid` world hazard from auto-targeting offence.
 
 **Documented divergence — formation gyms keep a flat supply cadence.**
 The campaign now scales two axes with the level (`src/core/levelScaling.ts`):

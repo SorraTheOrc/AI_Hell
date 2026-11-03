@@ -80,7 +80,7 @@ describe('hangar-war store surface (AH-0MVUXC0M5007LCGV)', () => {
     expect(HANGAR_WAR_VERSION).toBe(1);
   });
 
-  it('starts the fleet minimal with an empty ring', () => {
+  it('starts the fleet minimal, owning the starter weapon but equipping nothing', () => {
     const payload = createDefaultPayload(7);
 
     expect(payload).toEqual({
@@ -93,7 +93,7 @@ describe('hangar-war store surface (AH-0MVUXC0M5007LCGV)', () => {
         unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
         ownedModifiers: [],
         activeHull: DEFAULT_HULL_ID,
-        activeLoadout: { startingWeapons: [DEFAULT_STARTING_WEAPON_ID], modifiers: [] },
+        activeLoadout: { startingWeapons: [], modifiers: [] },
       },
       ring: { ringIndex: DEFAULT_RING_INDEX, hexes: [] },
       pendingAttacks: [],
@@ -112,7 +112,7 @@ describe('hangar-war store surface (AH-0MVUXC0M5007LCGV)', () => {
   it('returns a fresh, independently mutable payload every call', () => {
     const first = createDefaultPayload(3);
     first.hangar.unlockedHulls.push('hull-2');
-    first.hangar.activeLoadout.startingWeapons.length = 0;
+    first.hangar.activeLoadout.startingWeapons.push(DEFAULT_STARTING_WEAPON_ID);
     first.ring.hexes.push({
       id: 'hex-1',
       q: 1,
@@ -126,9 +126,7 @@ describe('hangar-war store surface (AH-0MVUXC0M5007LCGV)', () => {
 
     const second = createDefaultPayload(3);
     expect(second.hangar.unlockedHulls).toEqual([DEFAULT_HULL_ID]);
-    expect(second.hangar.activeLoadout.startingWeapons).toEqual([
-      DEFAULT_STARTING_WEAPON_ID,
-    ]);
+    expect(second.hangar.activeLoadout.startingWeapons).toEqual([]);
     expect(second.ring.hexes).toEqual([]);
   });
 });
@@ -143,8 +141,38 @@ describe('hangar-war store round-trip', () => {
     expect(hasHangarWarPayload(storage)).toBe(true);
   });
 
-  it('round-trips a partial ring without padding or discarding hexes', () => {
+  it('keeps a persisted loadout that names owned weapons (no migration reset)', () => {
+    // AH-0MVZJ6V1J001DA9D: the empty default must not migrate an existing save
+    // back to empty — a loadout the player already set is kept as written.
     const storage = createInMemoryHangarWarStorage();
+    const saved: HangarWarPayload = {
+      ...VALID_HANGAR_WAR_PAYLOAD,
+      hangar: {
+        ...VALID_HANGAR_WAR_PAYLOAD.hangar,
+        activeLoadout: {
+          startingWeapons: [
+            DEFAULT_STARTING_WEAPON_ID,
+            'wave_laser',
+            'not_a_weapon',
+          ],
+          modifiers: [],
+        },
+      },
+    };
+
+    saveHangarWarPayload(saved, storage);
+    const loaded = loadHangarWarPayload(storage);
+
+    // The store keeps the ids it was given (unknown-id resolution belongs to
+    // the economy), so an owned selection is never silently emptied.
+    expect(loaded?.hangar.activeLoadout.startingWeapons).toEqual([
+      DEFAULT_STARTING_WEAPON_ID,
+      'wave_laser',
+      'not_a_weapon',
+    ]);
+  });
+
+  it('round-trips a partial ring without padding or discarding hexes', () => {    const storage = createInMemoryHangarWarStorage();
     const hexIds = PARTIAL_RING_PAYLOAD.ring.hexes.map((hex) => hex.id);
 
     saveHangarWarPayload(PARTIAL_RING_PAYLOAD, storage);

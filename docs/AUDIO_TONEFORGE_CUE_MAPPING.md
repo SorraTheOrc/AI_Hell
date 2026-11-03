@@ -134,7 +134,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playBroadsideImpactSound` | Short teal dart tick — triangle 2400→1600 Hz + quiet 3600 Hz sine overtone + 3000 Hz HP noise contact tick, no square click, ~0.10 s | Player Broadside dart connects | shared impact seam in `CombatScene` (AH-0MVV0WNOX0078G9G) | new | `aihell-broadside-impact` |
 | `playHeavySlugFireSound` | Heaviest single shot — low saw boom 110→55 Hz + metallic square clank 1800→900 Hz transient + LP noise air, ~0.26 s (deepest fundamental of the player fire cues, below the Cannon's 800 Hz and the Mortar's 220 Hz; shorter sustain than the `aihell-mortar-detonation` 0.32 s boom, never aliasing it) | Player Heavy Slug fire (one huge slow deep-red shell) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`, incl. the hold-full metronome) | new | `aihell-heavy-slug-fire` |
 | `playHeavySlugImpactSound` | Dull red thud with debris — low triangle 220→60 Hz + quiet 110 Hz sine + 700 Hz LP noise debris burst, no square edge, ~0.15 s (duller and lower than the Mortar's dry shell crack) | Player Heavy Slug shell connects | shared impact seam in `CombatScene` (AH-0MVV0WO4M001KEDG) | new | `aihell-heavy-slug-impact` |
-| `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz with a brief sustain, ~0.1 s | Player wave-laser fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
+| `playWaveLaserFireSound` | Sci-fi laser "pew": sawtooth sweep 2400→320 Hz with a square harmonic 1200→240 Hz and a band-passed noise sizzle, ~0.16 s | Player wave-laser fire (the single red screen-spanning beam) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
 | `playWaveLaserImpactSound` | Sharp neon snap — saw 800→200 Hz + square click + BP noise crack, ~0.12 s | Player wave-laser hit (when the beam connects) | shared impact seam in `CombatScene` (AH-0MV822ACO007CEZF) | new | `aihell-wave-laser-impact` |
 | `playRicochetFireSound` | Bright springy ping — triangle 1400→500 Hz + square tick, ~0.1 s | Player ricochet fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-ricochet-fire` |
 | `playRicochetImpactSound` | Soft high bounce tick — triangle 1800→900 Hz + HP noise smack, ~0.09 s | Player ricochet wall bounce or connect | shared impact seam in `CombatScene` (AH-0MV822AP1006W2F9) | new | `aihell-ricochet-impact` |
@@ -270,7 +270,7 @@ as part of `npm run build-audio:verify` (AC5).
 Seed block **32100–32299** is reserved for game-specific recipes to keep them
 clear of ToneForge's existing card/impact seeds. (The block was originally
 declared as `32100–32199`; live game seeds now run to **32286** — the end of the
-net-new unlock-pool weapon packages — so the reservation was widened to cover
+net-new weapon packages — so the reservation was widened to cover
 them, matching `manifest.json`'s `seedBlock` field. No shipped seed was
 renumbered.) One-shots are rendered at a
 single seed; cues whose original character used per-invocation jitter
@@ -330,7 +330,7 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-broadside-impact` | `playBroadsideImpactSound` | Short teal dart tick — triangle 2400→1600 Hz + quiet 3600 Hz sine + 3000 Hz HP noise contact tick, no square click, ~0.10 s (AH-0MVV0WNOX0078G9G) | 32284 |
 | `aihell-heavy-slug-fire` | `playHeavySlugFireSound` | Heaviest single shot — low saw boom 110→55 Hz + metallic square clank 1800→900 Hz + 60→40 Hz sine sub + LP noise air, ~0.26 s (deepest fundamental, longest decay; never aliases `aihell-mortar-detonation`) (AH-0MVV0WO4M001KEDG) | 32285 |
 | `aihell-heavy-slug-impact` | `playHeavySlugImpactSound` | Dull red thud — low triangle 220→60 Hz + quiet 110 Hz sine + 700 Hz LP noise debris burst, no square edge, ~0.15 s (duller/lower than the `aihell-mortar-impact` dry crack) (AH-0MVV0WO4M001KEDG) | 32286 |
-| `aihell-wave-laser-fire` | `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz, brief sustain, ~0.1 s | 32219 |
+| `aihell-wave-laser-fire` | `playWaveLaserFireSound` | Sci-fi laser "pew": sawtooth sweep 2400→320 Hz + square harmonic 1200→240 Hz + band-passed noise sizzle, ~0.16 s | 32219 |
 | `aihell-wave-laser-impact` | `playWaveLaserImpactSound` | Sharp neon snap 800→200 Hz + square click + BP noise crack, ~0.12 s | 32231 |
 | `aihell-ricochet-fire` | `playRicochetFireSound` | Bright springy ping 1400→500 Hz + square tick, ~0.1 s | 32267 |
 | `aihell-ricochet-impact` | `playRicochetImpactSound` | Soft high bounce tick 1800→900 Hz + HP noise smack, ~0.09 s | 32268 |

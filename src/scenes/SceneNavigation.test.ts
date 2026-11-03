@@ -190,8 +190,8 @@ function killMiniBoss(scene: PlayScene): void {
       240,
     );
   }
-  // The mini-boss defeat offers the upgrade-or-unlock reward
-  // (AH-0MVCRBNO6003E1CH); resolve it so the walk can continue.
+  // The mini-boss defeat opens the wheel reward (AH-0MVLISU03006WDOD);
+  // resolve it so the walk can continue.
   if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
 }
 

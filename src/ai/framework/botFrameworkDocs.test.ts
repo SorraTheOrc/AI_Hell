@@ -27,6 +27,23 @@ describe('Bot framework is documented (AH-0MUY08WKB002N1N6)', () => {
 
   const doc = fs.existsSync(DOC_PATH) ? fs.readFileSync(DOC_PATH, 'utf8') : '';
 
+  it('documents the retired wallMargin without advertising it as a tunable (AH-0MVT2W3RS009ZB2X)', () => {
+    // The retirement is explained (the edges are a wrap, not a wall) but the
+    // live tuning table no longer offers the knob.
+    expect(doc).toMatch(/`wallMargin` retired/i);
+    const tuning = doc.slice(doc.indexOf('## 12. Tuning the bot live'));
+    expect(tuning).not.toMatch(/wallMargin/i);
+  });
+
+  it('documents the wrap-aware (torus) model (AH-0MVMISF0Q00314LG)', () => {
+    expect(doc).toContain('### 9.11 Wrap-aware (torus) model');
+    expect(doc).toContain('src/utils/wrapGeometry.ts');
+    expect(doc).toContain('src/ai/framework/wrapGeometry.ts');
+    expect(doc).toContain('chooseWrappedRoute');
+    expect(doc).toMatch(/near-tie hysteresis/i);
+    expect(doc).toMatch(/wrap, not a wall/i);
+  });
+
   it('documents the framework overview and all four pieces (AC1–AC7)', () => {
     for (const heading of [
       '## 1. Why a framework',

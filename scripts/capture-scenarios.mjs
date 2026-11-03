@@ -149,7 +149,7 @@ const AUTHORED_SCENARIOS = [
     name: 'promo-lane-runner',
     effect: 'Weave lane traffic while farming the fleet for drops.',
     kind: 'promo',
-    preset: 'cautious-collector',
+    preset: 'evasive',
     promoLevel: 'promo-lane-runner',
     categories: ['enemies', 'pickups'],
     seed: 1008,

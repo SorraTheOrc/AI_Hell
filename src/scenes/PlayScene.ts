@@ -140,8 +140,6 @@ import {
 } from '../vfx/endOfRunJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
-  CHOICE_POOL,
-  buildOwnedLevelUpOptions,
   randomChoiceStrategy,
   toChoiceOption,
   type ChoiceOption,
@@ -149,10 +147,18 @@ import {
 } from '../powerups/choice';
 import { buildOwnedLoadout } from '../powerups/ownedLoadout';
 import {
-  filterOptionsWithinSlotPool,
-  resolvePlayerSlotState,
-  type PowerUpSlotState,
-} from '../powerups/slots';
+  MINI_BOSS_WHEEL_SLOT_COUNT,
+  applyWheelOutcome,
+  buildWheelWedges,
+  drawWheelOutcome,
+  type MiniBossWheelOutcome,
+  type MiniBossWheelWedge,
+} from '../powerups/miniBossWheel';
+import {
+  MINI_BOSS_WHEEL_SCENE_KEY,
+  type MiniBossWheelScene,
+} from './MiniBossWheelScene';
+import { resolvePlayerSlotState } from '../powerups/slots';
 import {
   CHECKPOINT_VERSION,
   loadCheckpoint,
@@ -208,7 +214,7 @@ import {
 import { type PowerUpSpawner } from '../powerups/spawner';
 import { HUD } from '../ui/HUD';
 import { combatHudOptions } from './core/hudWiring';
-import { type WeaponId } from '../utils/weapons';
+import { type WeaponDefinition, type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
 import { createCompetentBotBrain } from '../ai/framework';
@@ -230,6 +236,7 @@ import { loadEnemyConfig } from '../core/enemyConfig';
 import { enemyForceFieldHits } from '../core/enemyForceField';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import { isRunProgressEnabled, publishRunProgress } from '../core/runProgress';
+import type { HitscanTarget } from './core/hitscanBeam';
 import {
   createTelemetryRecorder,
   installDevTelemetryBuffer,
@@ -734,6 +741,18 @@ export class PlayScene extends CombatScene<
   private mineralChoiceOpen = false;
   /** The options currently offered by the hold-full choice. */
   private mineralChoiceOptions: ChoiceOption[] = [];
+  /**
+   * True when the hold filled during a mini-boss death sweep (or its reward
+   * overlay) and the choice is waiting for the encounter to finalise.
+   *
+   * The sweep animates on this scene's own clock and its completion is what
+   * finalises the encounter (reward overlay plus the single wave/level
+   * advance), so a choice overlay's scene pause would freeze it mid-animation
+   * and hold the level clear indefinitely. The request is therefore deferred
+   * and opened on the first free tick after the encounter resolves
+   * ({@link PlayScene._requestHoldFullChoice}).
+   */
+  private holdFullChoicePending = false;
   /** Pluggable policy that selects the offered options. */
   private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
 
@@ -829,6 +848,18 @@ export class PlayScene extends CombatScene<
 
   /** The options offered by the open mini-boss reward overlay. */
   private miniBossRewardOptions: ChoiceOption[] = [];
+  /**
+   * The wedges shown by the open (or most recent) mini-boss wheel. Empty when
+   * the reward took the empty-owned three-option fallback
+   * (parent AH-0MVLISU03006WDOD AC1/AC4).
+   */
+  private miniBossWheelWedges: MiniBossWheelWedge[] = [];
+  /**
+   * The resolved 100-slot outcome of the open (or most recent) mini-boss
+   * wheel, drawn once from the run-seeded RNG before the overlay launches
+   * (parent AH-0MVLISU03006WDOD AC3/AC6).
+   */
+  private miniBossWheelOutcome: MiniBossWheelOutcome | null = null;
 
   /**
    * Live handle for the in-flight mini-boss death sweep (parent
@@ -1516,6 +1547,7 @@ export class PlayScene extends CombatScene<
     this.minerals = [];
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
+    this.holdFullChoicePending = false;
     this.boss = null;
     this.runFinished = false;
     this.miniBoss = null;
@@ -1523,6 +1555,8 @@ export class PlayScene extends CombatScene<
     this.miniBossSpawnedLevel = null;
     this.miniBossRewardOpen = false;
     this.miniBossRewardOptions = [];
+    this.miniBossWheelWedges = [];
+    this.miniBossWheelOutcome = null;
     this.miniBossSweepHandle = null;
     this.miniBossSweepTargets = [];
     this.salvageBank = null;
@@ -1654,6 +1688,11 @@ export class PlayScene extends CombatScene<
     // freeze, and the player is frozen and cannot be hit. Resuming
     // continues from this exact state with no time counted.
     if (this.paused) return;
+
+    // A hold-full choice deferred by the mini-boss encounter opens here, on
+    // the first free tick after the sweep/reward resolves (by then the
+    // overlay that requested it has closed, so opening a fresh one is safe).
+    this._flushPendingHoldFullChoice();
 
     this.effectsRegistry.tick(dt);
     this.hud?.refresh();
@@ -3523,11 +3562,12 @@ export class PlayScene extends CombatScene<
     context: MiniBossDefeatContext,
     sweptEscortCount: number,
   ): void {
-    // Reward loop (AH-0MVCRBNO6003E1CH AC1): a defeat offers exactly ONE
-    // upgrade-or-unlock choice through the shared choice overlay, opened only
-    // now that every burst has finished animating. Off while a choice is
-    // already open; the `miniBossRewardOpen` latch inside also guarantees a
-    // single overlay per defeat.
+    // Reward loop (AH-0MVLISU03006WDOD AC1): a defeat opens exactly ONE
+    // reward — the shared spin-the-wheel overlay (or the empty-owned
+    // three-option fallback) — only now that every burst has finished
+    // animating. Off while a reward is already open; the
+    // `miniBossRewardOpen` latch inside also guarantees a single overlay per
+    // defeat.
     if (!this.miniBossRewardOpen) this.openMiniBossReward(context);
 
     // Wave accounting advances exactly once, after the sweep (parent AC4).
@@ -3611,80 +3651,115 @@ export class PlayScene extends CombatScene<
    */
   openMiniBossReward(_context: MiniBossDefeatContext): ChoiceOption[] {
     if (this.miniBossRewardOpen) return [...this.miniBossRewardOptions];
-    // One offer per owned permanent weapon/power-up — the same shared builder
-    // the hold-full choice uses, so the two surfaces can never drift.
-    const owned: ChoiceOption[] = buildOwnedLevelUpOptions({
-      weaponLevels: this.player?.getWeaponLevels() ?? [],
-      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
-      // The mini-boss reward reads the same six-slot view as the hold-full
-      // choice (parent AH-0MVLIJT3M005HPHF; temporary stacks hold a slot).
-      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
-      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
-    });
-    // Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4). Every offer here names a
-    // kind the player already holds (permanently or temporarily), so it is
-    // admissible by construction; the shared predicate is still applied so the
-    // reward surface keeps consulting the single source of truth rather than a
-    // scene-local copy of the rule.
-    const slotState = resolvePlayerSlotState(this.player);
-    const admissible = filterOptionsWithinSlotPool(owned, slotState);
-    // The overlay pauses play, so it must never open with nothing to pick — an
-    // empty offer would stall the run. At a full pool the held kinds themselves
-    // are always admissible (taking one makes a temporarily-held kind
-    // permanent), so fall back to those rather than opening with no options;
-    // with nothing held at all, fall back to the hold-full-style three-option
-    // choice so the mini-boss still pays out (parent AC4).
-    const options =
-      admissible.length > 0
-        ? admissible
-        : slotState.isFull
-          ? this._heldKindRewardOptions(slotState)
-          : this._holdFullStyleRewardOptions();
-    this.miniBossRewardOptions = options;
+
+    // The wheel population is the run's **permanent** kinds across the shared
+    // six-slot pool (weapon drops and power-up kinds alike), the same
+    // accounting the hold-full choice reads. Temporary field stacks are
+    // deliberately excluded: a spin levels permanent progress
+    // (parent AH-0MVLISU03006WDOD AC1/AC6).
+    const ownedKinds = [...resolvePlayerSlotState(this.player).ownedIds];
+
+    if (ownedKinds.length === 0) {
+      // Empty-owned fallback (AC4): a wheel with no owned wedge would be a
+      // dud, so offer the same three-option hold-full-style choice instead. A
+      // mini-boss always pays out and the paused overlay can never soft-lock
+      // the run.
+      const options = this._holdFullStyleRewardOptions();
+      this.miniBossRewardOptions = options;
+      this.miniBossWheelWedges = [];
+      this.miniBossWheelOutcome = null;
+      this.miniBossRewardOpen = true;
+      this.mineralChoiceOpen = true;
+      this.setPaused(true);
+      if (this.scene.manager.getScene('MineralChoiceScene')) {
+        this.scene.pause();
+        this.scene.launch('MineralChoiceScene', {
+          origin: 'PlayScene-miniBoss',
+          options: [...options],
+          // Demo mode auto-selects after the same human-like delay as the
+          // hold-full choice (AH-0MVJ8U79V0056I2F · AC1/AC2); normal play
+          // waits for a real selection (AC3).
+          ...(this.demoMode
+            ? {
+                autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS,
+                autoSelectIndex: this._randomDemoRewardIndex(),
+              }
+            : {}),
+          onSelect: (index: number) => this.selectMineralChoice(index),
+        });
+      }
+      return [...options];
+    }
+
+    // Wheel path (AC1–AC3, AC6). One run-seeded 100-slot draw resolves the
+    // outcome; the wedge list and the outcome are two views of the same
+    // owned-kind snapshot, so they can never drift (plan decision D1).
+    const slotIndex = Math.min(
+      MINI_BOSS_WHEEL_SLOT_COUNT - 1,
+      Math.max(0, Math.floor(this.rng() * MINI_BOSS_WHEEL_SLOT_COUNT)),
+    );
+    const outcome = drawWheelOutcome(slotIndex, ownedKinds);
+    const wedges = buildWheelWedges(ownedKinds);
+    this.miniBossRewardOptions = [];
+    this.miniBossWheelWedges = wedges;
+    this.miniBossWheelOutcome = outcome;
+
+    // A launcher without the overlay registered (headless test boot, misconfig)
+    // pays the resolved outcome immediately rather than pausing forever on a
+    // surface it can never show — "a mini-boss always pays out" (AC4).
+    if (!this.scene.manager.getScene(MINI_BOSS_WHEEL_SCENE_KEY)) {
+      applyWheelOutcome(outcome, this.effectsRegistry, this.player);
+      return [];
+    }
+
     this.miniBossRewardOpen = true;
     this.mineralChoiceOpen = true;
     this.setPaused(true);
-    if (this.scene.manager.getScene('MineralChoiceScene')) {
-      this.scene.pause();
-      this.scene.launch('MineralChoiceScene', {
-        origin: 'PlayScene-miniBoss',
-        options: [...this.miniBossRewardOptions],
-        // Demo mode auto-selects a random offered option after the same
-        // human-like delay as the hold-full choice, so the attract bot never
-        // stalls on the reward screen (AH-0MVJ8U79V0056I2F · AC1/AC2). The
-        // pick is drawn from the run-seeded RNG, so a seed replays the same
-        // reward; normal play leaves both params unset and waits for a real
-        // selection (AC3).
-        ...(this.demoMode
-          ? {
-              autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS,
-              autoSelectIndex: this._randomDemoRewardIndex(),
-            }
-          : {}),
-        // Single overlay contract: the launcher supplies one selection
-        // callback; `selectMineralChoice` routes it to the reward resolver
-        // while the reward is open.
-        onSelect: (index: number) => this.selectMineralChoice(index),
-      });
-    }
-    return [...this.miniBossRewardOptions];
+    // Fade the ship's engine hum out across the pause, exactly like the
+    // hold-full overlay (AH-0MV70Y2XY005J2HI).
+    this.fadeThrusterHumForHoldFull();
+    this.scene.pause();
+    this.scene.launch(MINI_BOSS_WHEEL_SCENE_KEY, {
+      origin: 'PlayScene-miniBoss',
+      wedges,
+      outcome,
+      // Frozen player-fire schedule: the reduced-volume ghost fire continues
+      // on the same beat grid while play is paused (AH-0MV55O9R5005W6J0).
+      fireSchedule: buildHoldFullFireSchedule(this.player),
+      // Demo mode auto-spins after the human-like delay so the attract bot
+      // never stalls (AH-0MVJ8U79V0056I2F · AC1/AC2); normal play waits for
+      // the player (AC3).
+      ...(this.demoMode ? { autoSpinMs: BOT_MINERAL_CHOICE_DELAY_MS } : {}),
+      // Single overlay contract: the launcher supplies one result callback;
+      // the wheel never reaches back into `PlayScene` by key.
+      onResult: (resolved: MiniBossWheelOutcome) =>
+        this._resolveMiniBossWheel(resolved),
+    });
+    return [];
   }
 
   /**
-   * The last-resort mini-boss reward offer: base picks of the kinds already in
-   * the slots.
+   * Applies a landed wheel outcome and closes the reward: every gained level
+   * runs through the shared {@link applyWheelOutcome} seam (the identical
+   * permanent-level machinery as the hold-full choice), play resumes and the
+   * frozen beat clock is re-based across the pause.
    *
-   * Reached only at a full pool when the ordinary offer list is empty (no
-   * permanent holdings to upgrade and no temporarily-held locked weapon to
-   * unlock) — the overlay pauses play, so an empty list would soft-lock the
-   * run. Taking one of these makes a temporarily-held kind permanent, which
-   * adds no new kind, so the cap still holds. `reset` is excluded by
-   * construction through {@link CHOICE_POOL}.
+   * Guarded by `miniBossRewardOpen`, so a repeated spin/result can never apply
+   * the outcome twice (parent AH-0MVLISU03006WDOD AC3).
    */
-  private _heldKindRewardOptions(state: PowerUpSlotState): ChoiceOption[] {
-    return [...state.heldIds]
-      .filter((id) => (CHOICE_POOL as readonly string[]).includes(id))
-      .map((id) => toChoiceOption(id));
+  private _resolveMiniBossWheel(outcome: MiniBossWheelOutcome): void {
+    if (!this.miniBossRewardOpen) return;
+    applyWheelOutcome(outcome, this.effectsRegistry, this.player);
+    this.miniBossRewardOpen = false;
+    this.miniBossRewardOptions = [];
+    this.mineralChoiceOpen = false;
+    const overlay = this.scene.manager.getScene(
+      MINI_BOSS_WHEEL_SCENE_KEY,
+    ) as MiniBossWheelScene | null;
+    this.rebaseBeatClockForHoldFullResume(overlay?.getOverlayElapsedMs() ?? 0);
+    this.setPaused(false);
+    // Resume the SceneManager-level pause that accompanied the overlay.
+    this.scene.resume();
   }
 
   /**
@@ -4015,7 +4090,13 @@ export class PlayScene extends CombatScene<
     this.gameState.runSeed = checkpoint.runSeed;
     this.injectedRunSeed = checkpoint.runSeed;
     // Replay the permanent grants through the ordinary collection seam so the
-    // restored registry state is identical to a run that earned them.
+    // restored registry state is identical to a run that earned them. The
+    // replay deliberately does **not** re-gate the payload (AH-0MVVJS34M00551ES):
+    // `Continue` must reproduce the saved run exactly (HUD/effect parity,
+    // AH-0MVSHI07B003BZIP). The six-slot cap is enforced on **save**
+    // (`saveCheckpoint` → `capCheckpointLoadout`), so every payload this build
+    // writes is already within the pool; a legacy pre-cap save is the one
+    // documented exception, and it is not the reported organic-play surface.
     for (const entry of checkpoint.weaponLevels) {
       for (let i = 0; i < entry.level; i += 1) {
         grantPermanentWeapon(entry.id, this.effectsRegistry, this.player);
@@ -4051,7 +4132,13 @@ export class PlayScene extends CombatScene<
     this._refreshHudText();
   }
 
-  /** The options offered by the open (or most recent) mini-boss reward. */
+  /**
+   * The options offered by the open (or most recent) mini-boss reward.
+   *
+   * Empty for the wheel reward (the multi-option menu is gone — parent
+   * AH-0MVLISU03006WDOD AC1/AC5); non-empty only for the
+   * empty-owned three-option fallback (AC4).
+   */
   getMiniBossRewardOptions(): ChoiceOption[] {
     return [...this.miniBossRewardOptions];
   }
@@ -4059,6 +4146,42 @@ export class PlayScene extends CombatScene<
   /** Whether the mini-boss reward overlay is open. */
   isMiniBossRewardOpen(): boolean {
     return this.miniBossRewardOpen;
+  }
+
+  /**
+   * The wedges of the open (or most recent) mini-boss wheel: one per owned
+   * permanent kind plus the bonus wedge. Empty when the reward took the
+   * empty-owned fallback.
+   */
+  getMiniBossWheelWedges(): MiniBossWheelWedge[] {
+    return this.miniBossWheelWedges.map((wedge) => ({ ...wedge }));
+  }
+
+  /**
+   * The resolved 100-slot outcome of the open (or most recent) mini-boss
+   * wheel, or null when the reward took the empty-owned fallback.
+   */
+  getMiniBossWheelOutcome(): MiniBossWheelOutcome | null {
+    const outcome = this.miniBossWheelOutcome;
+    if (outcome === null) return null;
+    return {
+      slotKind: outcome.slotKind,
+      gains: outcome.gains.map((gain) => ({ ...gain })),
+    };
+  }
+
+  /**
+   * Spins the open mini-boss wheel (player/input or test seam). Returns
+   * whether a spin started — a repeat spin after it has started or landed is
+   * a no-op, so the outcome can never be applied twice
+   * (parent AH-0MVLISU03006WDOD AC3).
+   */
+  spinMiniBossReward(): boolean {
+    if (!this.miniBossRewardOpen) return false;
+    const overlay = this.scene.manager.getScene(
+      MINI_BOSS_WHEEL_SCENE_KEY,
+    ) as MiniBossWheelScene | null;
+    return overlay?.spin() ?? false;
   }
 
   /**
@@ -4333,6 +4456,49 @@ export class PlayScene extends CombatScene<
   protected override onEnemyDestroyed(enemy: EnemyEntity): void {
     const s = this.spawned.find((candidate) => candidate.entity === enemy);
     if (s) this._onEnemyKilled(s);
+  }
+
+  /**
+   * Entities the wave-laser hitscan beam may intercept: the live fodder enemies
+   * **plus** the boss-style encounters (the final boss and the mini-boss),
+   * which live outside the enemy list. This keeps the shared ray seam honest —
+   * the beam stops at whichever entity it meets first, boss or not (AC2) —
+   * while the resolution itself stays in the shared core
+   * (AH-0MVREBUJ5004HDRQ, gym↔game parity).
+   */
+  protected override getHitscanTargets(): readonly HitscanTarget[] {
+    const targets: HitscanTarget[] = [...this.getEnemyEntities()];
+    if (this.boss?.alive) targets.push(this.boss);
+    if (this.miniBoss?.alive) targets.push(this.miniBoss);
+    return targets;
+  }
+
+  /**
+   * Applies a wave-laser beam hit: a boss-style encounter takes the phase hit
+   * through the same `_damageBoss`/`_damageMiniBoss` path a player bullet uses
+   * (so phase pacing, scores and minion summons are identical), while every
+   * ordinary enemy keeps the shared `CombatScene.applyHitscanHit`
+   * implementation (AH-0MVREBUJ5004HDRQ).
+   */
+  protected override applyHitscanHit(
+    target: HitscanTarget,
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    if (target === this.boss) {
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageBoss(x, y);
+      }
+      return;
+    }
+    if (target === this.miniBoss) {
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageMiniBoss(x, y);
+      }
+      return;
+    }
+    super.applyHitscanHit(target, def, x, y);
   }
 
   /**
@@ -5168,7 +5334,7 @@ export class PlayScene extends CombatScene<
       addMinerals: (amount: number) => {
         this.gameState.addMinerals(amount);
         this._syncMineralHud();
-        if (this.gameState.isHoldFull()) this.openMineralChoice();
+        this._requestHoldFullChoice();
       },
     };
   }
@@ -5687,7 +5853,52 @@ export class PlayScene extends CombatScene<
     this.gameState.addMinerals(mineral.value);
     this.runTelemetry.mineralCollected(this.gameState.minerals);
     this._syncMineralHud();
-    if (this.gameState.isHoldFull()) this.openMineralChoice();
+    this._requestHoldFullChoice();
+  }
+
+  /**
+   * Requests the hold-full choice when the hold just filled, deferring it
+   * while the active mini-boss encounter is finalising.
+   *
+   * The mini-boss death sweep animates on this scene's own clock and its
+   * completion (`onComplete`) is the **only** route that finalises the
+   * encounter — the reward overlay plus the single wave/level advance. A
+   * hold-full choice pauses this scene (`openMineralChoice` →
+   * `setPaused(true)` + `scene.pause()`), which freezes that clock, the burst
+   * tweens and the sweep's completion watchdog with it. A mineral collected in
+   * the same window a mini-boss dies therefore used to wedge the level clear
+   * mid-cascade: no reward, no advance, nothing on screen to shoot — exactly
+   * the "clearing level 2 does nothing" report this fix closes
+   * (AH-0MVZJ76BP000051B).
+   *
+   * Deferring keeps the established pause semantics for the choice while the
+   * encounter's own presentation finishes; {@link
+   * PlayScene._flushPendingHoldFullChoice} opens it on the first free tick.
+   */
+  private _requestHoldFullChoice(): void {
+    if (!this.gameState.isHoldFull()) return;
+    if (this.mineralChoiceOpen) return;
+    // The encounter owns the scene until its sweep completes and its reward
+    // overlay is resolved; opening a pausing overlay now would freeze it.
+    if (this.isMiniBossSweepActive() || this.miniBossRewardOpen) {
+      this.holdFullChoicePending = true;
+      return;
+    }
+    this.openMineralChoice();
+  }
+
+  /**
+   * Opens a hold-full choice that was deferred by the mini-boss encounter, on
+   * the first tick where no overlay owns the scene and the hold is still full.
+   * Idempotent and a no-op when nothing is pending.
+   */
+  private _flushPendingHoldFullChoice(): void {
+    if (!this.holdFullChoicePending) return;
+    if (this.isMiniBossSweepActive() || this.miniBossRewardOpen) return;
+    if (this.mineralChoiceOpen || this.paused) return;
+    this.holdFullChoicePending = false;
+    if (!this.gameState.isHoldFull()) return;
+    this.openMineralChoice();
   }
 
   /** Mirrors the GameState hold onto the HUD mineral hold bar. */

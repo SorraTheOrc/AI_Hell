@@ -26,70 +26,70 @@
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 208.11666666666667,
-            "captured": false,
+            "seconds": 300,
+            "captured": true,
             "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 8.46861111111111
+            "hits": 0,
+            "retries": 0,
+            "minutes": 5
           },
           {
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 208.11666666666667,
-            "captured": false,
+            "seconds": 300,
+            "captured": true,
             "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 8.46861111111111
+            "hits": 0,
+            "retries": 0,
+            "minutes": 5
           },
           {
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 30.05,
+            "seconds": 235.96666666666667,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.5008333333333335
+            "minutes": 8.932777777777778
           },
           {
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 17.95,
+            "seconds": 47.78333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.299166666666666
+            "minutes": 5.796388888888889
           },
           {
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 31.9,
+            "seconds": 247.06666666666666,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.531666666666666
+            "minutes": 9.117777777777778
           }
         ],
-        "deploymentMinutes": 13.268888888888887,
+        "deploymentMinutes": 23.846944444444446,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 25,
+        "retryMinutes": 15,
         "retakeMinutes": 0,
-        "totalMinutes": 50.26888888888889,
-        "captured": 1,
-        "losses": 5,
+        "totalMinutes": 50.846944444444446,
+        "captured": 3,
+        "losses": 3,
         "expectedRetakes": 0,
-        "expectedLosses": 5,
+        "expectedLosses": 3,
         "exposedHexes": 0,
-        "salvageBanked": 18,
-        "salvageForfeited": 47,
+        "salvageBanked": 54,
+        "salvageForfeited": 41,
         "ringSecured": true
       },
       {
@@ -132,48 +132,48 @@
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 47.25,
+            "seconds": 250.51666666666665,
             "captured": false,
-            "minerals": 7,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.7875
+            "minutes": 9.175277777777778
           },
           {
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 56.733333333333334,
+            "seconds": 31.516666666666666,
             "captured": false,
-            "minerals": 6,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.945555555555556
+            "minutes": 5.525277777777777
           },
           {
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 17.466666666666665,
+            "seconds": 191.8,
             "captured": false,
-            "minerals": 1,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.291111111111111
+            "minutes": 8.196666666666667
           }
         ],
-        "deploymentMinutes": 17.024166666666666,
+        "deploymentMinutes": 22.897222222222222,
         "betweenSortieMinutes": 12,
         "retryMinutes": 15,
         "retakeMinutes": 0,
-        "totalMinutes": 44.024166666666666,
+        "totalMinutes": 49.897222222222226,
         "captured": 3,
         "losses": 3,
         "expectedRetakes": 0,
         "expectedLosses": 3,
         "exposedHexes": 0,
         "salvageBanked": 54,
-        "salvageForfeited": 14,
+        "salvageForfeited": 41,
         "ringSecured": true
       },
       {
@@ -197,7 +197,7 @@
             "seconds": 300,
             "captured": true,
             "minerals": 18,
-            "hits": 0,
+            "hits": 1,
             "retries": 0,
             "minutes": 5
           },
@@ -208,7 +208,7 @@
             "seconds": 300,
             "captured": true,
             "minerals": 18,
-            "hits": 0,
+            "hits": 1,
             "retries": 0,
             "minutes": 5
           },
@@ -216,86 +216,86 @@
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 34.71666666666667,
+            "seconds": 175.83333333333334,
             "captured": false,
-            "minerals": 4,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.578611111111111
+            "minutes": 7.930555555555555
           },
           {
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 40.78333333333333,
+            "seconds": 77.93333333333334,
             "captured": false,
-            "minerals": 3,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.679722222222222
+            "minutes": 6.298888888888889
           },
           {
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 25.816666666666666,
+            "seconds": 34,
             "captured": false,
-            "minerals": 3,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.4302777777777775
+            "minutes": 5.566666666666666
           }
         ],
-        "deploymentMinutes": 16.68861111111111,
+        "deploymentMinutes": 19.796111111111113,
         "betweenSortieMinutes": 12,
         "retryMinutes": 15,
         "retakeMinutes": 0,
-        "totalMinutes": 43.688611111111115,
+        "totalMinutes": 46.79611111111112,
         "captured": 3,
         "losses": 3,
         "expectedRetakes": 0,
         "expectedLosses": 3,
         "exposedHexes": 0,
         "salvageBanked": 54,
-        "salvageForfeited": 10,
+        "salvageForfeited": 26,
         "ringSecured": true
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 45.9938888888889,
-        "min": 43.688611111111115,
-        "max": 50.26888888888889
+        "mean": 49.180092592592594,
+        "min": 46.79611111111112,
+        "max": 50.846944444444446
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 15.660555555555556,
-        "min": 13.268888888888887,
-        "max": 17.024166666666666
+        "mean": 22.180092592592597,
+        "min": 19.796111111111113,
+        "max": 23.846944444444446
       },
       "losses": {
         "count": 3,
-        "mean": 3.6666666666666665,
+        "mean": 3,
         "min": 3,
-        "max": 5
+        "max": 3
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 3.6666666666666665,
+        "mean": 3,
         "min": 3,
-        "max": 5
+        "max": 3
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 42,
-        "min": 18,
+        "mean": 54,
+        "min": 54,
         "max": 54
       },
       "captured": {
         "count": 3,
-        "mean": 2.3333333333333335,
-        "min": 1,
+        "mean": 3,
+        "min": 3,
         "max": 3
       },
       "ringSecuredRuns": 3
@@ -308,7 +308,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 2,
-      "measuredMinutes": 45.9938888888889,
+      "measuredMinutes": 49.180092592592594,
       "withinWindow": true,
       "withinTolerance": true,
       "verdict": "in-window"
@@ -330,26 +330,26 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 31.9,
+            "seconds": 247.06666666666666,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.531666666666666
+            "minutes": 9.117777777777778
           }
         ],
-        "deploymentMinutes": 0.5316666666666666,
+        "deploymentMinutes": 4.1177777777777775,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 24.5,
-        "totalMinutes": 32.031666666666666,
+        "totalMinutes": 35.617777777777775,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 5,
+        "salvageForfeited": 18,
         "ringSecured": false
       },
       {
@@ -359,26 +359,26 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 17.466666666666665,
+            "seconds": 191.8,
             "captured": false,
-            "minerals": 1,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.291111111111111
+            "minutes": 8.196666666666667
           }
         ],
-        "deploymentMinutes": 0.2911111111111111,
+        "deploymentMinutes": 3.1966666666666668,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 24.5,
-        "totalMinutes": 31.79111111111111,
+        "totalMinutes": 34.696666666666665,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 1,
+        "salvageForfeited": 18,
         "ringSecured": false
       },
       {
@@ -388,41 +388,41 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 25.816666666666666,
+            "seconds": 34,
             "captured": false,
-            "minerals": 3,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.4302777777777775
+            "minutes": 5.566666666666666
           }
         ],
-        "deploymentMinutes": 0.43027777777777776,
+        "deploymentMinutes": 0.5666666666666667,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 24.5,
-        "totalMinutes": 31.93027777777778,
+        "totalMinutes": 32.06666666666666,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 3,
+        "salvageForfeited": 4,
         "ringSecured": false
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 31.91768518518518,
-        "min": 31.79111111111111,
-        "max": 32.031666666666666
+        "mean": 34.127037037037034,
+        "min": 32.06666666666666,
+        "max": 35.617777777777775
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 0.4176851851851852,
-        "min": 0.2911111111111111,
-        "max": 0.5316666666666666
+        "mean": 2.6270370370370366,
+        "min": 0.5666666666666667,
+        "max": 4.1177777777777775
       },
       "losses": {
         "count": 3,
@@ -458,7 +458,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 2,
-      "measuredMinutes": 31.91768518518518,
+      "measuredMinutes": 34.127037037037034,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"
@@ -480,147 +480,147 @@
             "hexId": "hex-r2-2",
             "aggression": 3,
             "level": 4,
-            "seconds": 30.05,
+            "seconds": 235.96666666666667,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.5008333333333335
+            "minutes": 8.932777777777778
           },
           {
             "hexId": "hex-r2-4",
             "aggression": 3,
             "level": 4,
-            "seconds": 30.05,
+            "seconds": 235.96666666666667,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.5008333333333335
+            "minutes": 8.932777777777778
           },
           {
             "hexId": "hex-r2-1",
             "aggression": 4,
             "level": 5,
-            "seconds": 17.95,
+            "seconds": 47.78333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.299166666666666
+            "minutes": 5.796388888888889
           },
           {
             "hexId": "hex-r2-10",
             "aggression": 4,
             "level": 5,
-            "seconds": 17.95,
+            "seconds": 47.78333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.299166666666666
+            "minutes": 5.796388888888889
           },
           {
             "hexId": "hex-r2-6",
             "aggression": 4,
             "level": 5,
-            "seconds": 17.95,
+            "seconds": 47.78333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.299166666666666
+            "minutes": 5.796388888888889
           },
           {
             "hexId": "hex-r2-7",
             "aggression": 4,
             "level": 5,
-            "seconds": 17.95,
+            "seconds": 47.78333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.299166666666666
+            "minutes": 5.796388888888889
           },
           {
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 35.75,
+            "seconds": 170.68333333333334,
             "captured": false,
-            "minerals": 7,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.595833333333333
+            "minutes": 7.844722222222222
           },
           {
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 35.75,
+            "seconds": 170.68333333333334,
             "captured": false,
-            "minerals": 7,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.595833333333333
+            "minutes": 7.844722222222222
           },
           {
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 35.75,
+            "seconds": 170.68333333333334,
             "captured": false,
-            "minerals": 7,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.595833333333333
+            "minutes": 7.844722222222222
           },
           {
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 35.75,
+            "seconds": 170.68333333333334,
             "captured": false,
-            "minerals": 7,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.595833333333333
+            "minutes": 7.844722222222222
           },
           {
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 31.9,
+            "seconds": 247.06666666666666,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.531666666666666
+            "minutes": 9.117777777777778
           },
           {
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 68.85,
+            "seconds": 160.13333333333333,
             "captured": false,
-            "minerals": 12,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 6.1475
+            "minutes": 7.668888888888889
           }
         ],
-        "deploymentMinutes": 6.260833333333332,
+        "deploymentMinutes": 29.21666666666667,
         "betweenSortieMinutes": 24,
         "retryMinutes": 60,
         "retakeMinutes": 0,
-        "totalMinutes": 90.26083333333332,
+        "totalMinutes": 113.21666666666667,
         "captured": 0,
         "losses": 12,
         "expectedRetakes": 0,
         "expectedLosses": 12,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 59,
+        "salvageForfeited": 164,
         "ringSecured": true
       },
       {
@@ -630,147 +630,147 @@
             "hexId": "hex-r2-2",
             "aggression": 3,
             "level": 4,
-            "seconds": 47.25,
+            "seconds": 250.51666666666665,
             "captured": false,
-            "minerals": 7,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.7875
+            "minutes": 9.175277777777778
           },
           {
             "hexId": "hex-r2-4",
             "aggression": 3,
             "level": 4,
-            "seconds": 47.25,
+            "seconds": 250.51666666666665,
             "captured": false,
-            "minerals": 7,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.7875
+            "minutes": 9.175277777777778
           },
           {
             "hexId": "hex-r2-1",
             "aggression": 4,
             "level": 5,
-            "seconds": 56.733333333333334,
+            "seconds": 31.516666666666666,
             "captured": false,
-            "minerals": 6,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.945555555555556
+            "minutes": 5.525277777777777
           },
           {
             "hexId": "hex-r2-10",
             "aggression": 4,
             "level": 5,
-            "seconds": 56.733333333333334,
+            "seconds": 31.516666666666666,
             "captured": false,
-            "minerals": 6,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.945555555555556
+            "minutes": 5.525277777777777
           },
           {
             "hexId": "hex-r2-6",
             "aggression": 4,
             "level": 5,
-            "seconds": 56.733333333333334,
+            "seconds": 31.516666666666666,
             "captured": false,
-            "minerals": 6,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.945555555555556
+            "minutes": 5.525277777777777
           },
           {
             "hexId": "hex-r2-7",
             "aggression": 4,
             "level": 5,
-            "seconds": 56.733333333333334,
+            "seconds": 31.516666666666666,
             "captured": false,
-            "minerals": 6,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.945555555555556
+            "minutes": 5.525277777777777
           },
           {
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 44.666666666666664,
+            "seconds": 128.65,
             "captured": false,
-            "minerals": 3,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.7444444444444445
+            "minutes": 7.144166666666667
           },
           {
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 44.666666666666664,
+            "seconds": 128.65,
             "captured": false,
-            "minerals": 3,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.7444444444444445
+            "minutes": 7.144166666666667
           },
           {
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 44.666666666666664,
+            "seconds": 128.65,
             "captured": false,
-            "minerals": 3,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.7444444444444445
+            "minutes": 7.144166666666667
           },
           {
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 44.666666666666664,
+            "seconds": 128.65,
             "captured": false,
-            "minerals": 3,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.7444444444444445
+            "minutes": 7.144166666666667
           },
           {
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 17.466666666666665,
+            "seconds": 191.8,
             "captured": false,
-            "minerals": 1,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.291111111111111
+            "minutes": 8.196666666666667
           },
           {
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 48.96666666666667,
+            "seconds": 60.483333333333334,
             "captured": false,
-            "minerals": 6,
+            "minerals": 10,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.816111111111111
+            "minutes": 6.008055555555556
           }
         ],
-        "deploymentMinutes": 9.442222222222222,
+        "deploymentMinutes": 23.233055555555552,
         "betweenSortieMinutes": 24,
         "retryMinutes": 60,
         "retakeMinutes": 0,
-        "totalMinutes": 93.44222222222223,
+        "totalMinutes": 107.23305555555555,
         "captured": 0,
         "losses": 12,
         "expectedRetakes": 0,
         "expectedLosses": 12,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 57,
+        "salvageForfeited": 156,
         "ringSecured": true
       },
       {
@@ -780,162 +780,162 @@
             "hexId": "hex-r2-2",
             "aggression": 3,
             "level": 4,
-            "seconds": 34.71666666666667,
+            "seconds": 175.83333333333334,
             "captured": false,
-            "minerals": 4,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.578611111111111
+            "minutes": 7.930555555555555
           },
           {
             "hexId": "hex-r2-4",
             "aggression": 3,
             "level": 4,
-            "seconds": 34.71666666666667,
+            "seconds": 175.83333333333334,
             "captured": false,
-            "minerals": 4,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.578611111111111
+            "minutes": 7.930555555555555
           },
           {
             "hexId": "hex-r2-1",
             "aggression": 4,
             "level": 5,
-            "seconds": 40.78333333333333,
+            "seconds": 77.93333333333334,
             "captured": false,
-            "minerals": 3,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.679722222222222
+            "minutes": 6.298888888888889
           },
           {
             "hexId": "hex-r2-10",
             "aggression": 4,
             "level": 5,
-            "seconds": 40.78333333333333,
+            "seconds": 77.93333333333334,
             "captured": false,
-            "minerals": 3,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.679722222222222
+            "minutes": 6.298888888888889
           },
           {
             "hexId": "hex-r2-6",
             "aggression": 4,
             "level": 5,
-            "seconds": 40.78333333333333,
+            "seconds": 77.93333333333334,
             "captured": false,
-            "minerals": 3,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.679722222222222
+            "minutes": 6.298888888888889
           },
           {
             "hexId": "hex-r2-7",
             "aggression": 4,
             "level": 5,
-            "seconds": 40.78333333333333,
+            "seconds": 77.93333333333334,
             "captured": false,
-            "minerals": 3,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.679722222222222
+            "minutes": 6.298888888888889
           },
           {
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 31.883333333333333,
+            "seconds": 143.53333333333333,
             "captured": false,
-            "minerals": 3,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.531388888888889
+            "minutes": 7.392222222222222
           },
           {
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 31.883333333333333,
+            "seconds": 143.53333333333333,
             "captured": false,
-            "minerals": 3,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.531388888888889
+            "minutes": 7.392222222222222
           },
           {
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 31.883333333333333,
+            "seconds": 143.53333333333333,
             "captured": false,
-            "minerals": 3,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.531388888888889
+            "minutes": 7.392222222222222
           },
           {
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 31.883333333333333,
+            "seconds": 143.53333333333333,
             "captured": false,
-            "minerals": 3,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.531388888888889
+            "minutes": 7.392222222222222
           },
           {
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 25.816666666666666,
+            "seconds": 34,
             "captured": false,
-            "minerals": 3,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.4302777777777775
+            "minutes": 5.566666666666666
           },
           {
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 34.583333333333336,
+            "seconds": 77.83333333333333,
             "captured": false,
-            "minerals": 5,
+            "minerals": 9,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.576388888888889
+            "minutes": 6.2972222222222225
           }
         ],
-        "deploymentMinutes": 7.0083333333333355,
+        "deploymentMinutes": 22.489444444444448,
         "betweenSortieMinutes": 24,
         "retryMinutes": 60,
         "retakeMinutes": 0,
-        "totalMinutes": 91.00833333333334,
+        "totalMinutes": 106.48944444444444,
         "captured": 0,
         "losses": 12,
         "expectedRetakes": 0,
         "expectedLosses": 12,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 40,
+        "salvageForfeited": 137,
         "ringSecured": true
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 91.57046296296296,
-        "min": 90.26083333333332,
-        "max": 93.44222222222223
+        "mean": 108.97972222222222,
+        "min": 106.48944444444444,
+        "max": 113.21666666666667
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 7.570462962962964,
-        "min": 6.260833333333332,
-        "max": 9.442222222222222
+        "mean": 24.97972222222222,
+        "min": 22.489444444444448,
+        "max": 29.21666666666667
       },
       "losses": {
         "count": 3,
@@ -966,12 +966,12 @@
     "budget": {
       "applicable": true,
       "target": {
-        "minMinutes": 70,
-        "maxMinutes": 100
+        "minMinutes": 90,
+        "maxMinutes": 120
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 3,
-      "measuredMinutes": 91.57046296296296,
+      "measuredMinutes": 108.97972222222222,
       "withinWindow": true,
       "withinTolerance": true,
       "verdict": "in-window"
@@ -993,26 +993,26 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 68.85,
+            "seconds": 160.13333333333333,
             "captured": false,
-            "minerals": 12,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 6.1475
+            "minutes": 7.668888888888889
           }
         ],
-        "deploymentMinutes": 1.1475,
+        "deploymentMinutes": 2.6688888888888886,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 62.04749999999999,
+        "totalMinutes": 63.56888888888888,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
         "expectedLosses": 8.7,
         "exposedHexes": 11,
         "salvageBanked": 0,
-        "salvageForfeited": 12,
+        "salvageForfeited": 18,
         "ringSecured": false
       },
       {
@@ -1022,26 +1022,26 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 48.96666666666667,
+            "seconds": 60.483333333333334,
             "captured": false,
-            "minerals": 6,
+            "minerals": 10,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.816111111111111
+            "minutes": 6.008055555555556
           }
         ],
-        "deploymentMinutes": 0.8161111111111111,
+        "deploymentMinutes": 1.0080555555555555,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 61.716111111111104,
+        "totalMinutes": 61.90805555555555,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
         "expectedLosses": 8.7,
         "exposedHexes": 11,
         "salvageBanked": 0,
-        "salvageForfeited": 6,
+        "salvageForfeited": 10,
         "ringSecured": false
       },
       {
@@ -1051,41 +1051,41 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 34.583333333333336,
+            "seconds": 77.83333333333333,
             "captured": false,
-            "minerals": 5,
+            "minerals": 9,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.576388888888889
+            "minutes": 6.2972222222222225
           }
         ],
-        "deploymentMinutes": 0.576388888888889,
+        "deploymentMinutes": 1.297222222222222,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 61.47638888888888,
+        "totalMinutes": 62.197222222222216,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
         "expectedLosses": 8.7,
         "exposedHexes": 11,
         "salvageBanked": 0,
-        "salvageForfeited": 5,
+        "salvageForfeited": 9,
         "ringSecured": false
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 61.74666666666665,
-        "min": 61.47638888888888,
-        "max": 62.04749999999999
+        "mean": 62.55805555555555,
+        "min": 61.90805555555555,
+        "max": 63.56888888888888
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 0.8466666666666667,
-        "min": 0.576388888888889,
-        "max": 1.1475
+        "mean": 1.6580555555555554,
+        "min": 1.0080555555555555,
+        "max": 2.6688888888888886
       },
       "losses": {
         "count": 3,
@@ -1116,12 +1116,12 @@
     "budget": {
       "applicable": false,
       "target": {
-        "minMinutes": 70,
-        "maxMinutes": 100
+        "minMinutes": 90,
+        "maxMinutes": 120
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 3,
-      "measuredMinutes": 61.74666666666665,
+      "measuredMinutes": 62.55805555555555,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"

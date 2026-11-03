@@ -82,11 +82,14 @@ land. The score is a co-conspirator, not a narrator: it never tells the player
 what to feel, it applies pressure and then releases it.
 
 Because AI Hell is a game about rhythm as much as aim, the music is welded to
-the same clock as the gameplay. Player fire is quantised to a **silent internal
-80 BPM beat** (GDD §4.4), and explosion accents are deferred to the next 16th
-note of that grid. Every tempo zone in this chapter is an integer multiple or
-division of 80 BPM, so a future soundtrack can lock to the very grid the
-player's weapons already obey.
+the same clock as the gameplay. Player fire is an **onset cadence on a silent
+internal 16th-note lattice at 80 BPM** (GDD §4.4): each weapon sounds its own
+deterministic Euclidean pattern, so the onsets are deliberately irregular, but
+every one of them is an exact tick of that grid and every upgrade morph lands
+on a bar downbeat. Explosion accents are deferred to the next 16th note of the
+same grid. Every tempo zone in this chapter is an integer multiple or division
+of 80 BPM, so a future soundtrack can lock to the very grid the player's
+weapons already obey.
 
 ---
 
@@ -217,9 +220,12 @@ scale, and short enough to loop cleanly at 1–2 bars.
 
 #### Tempo Zones and the Fire Grid
 
-AI Hell's player fire is quantised to a silent **80 BPM** beat, and non-weapon
-destruction accents are deferred to the next 16th note of the same grid (GDD
-§4.4). The music must not fight that grid:
+AI Hell's player fire is an **onset cadence on a silent 16th-note lattice at
+80 BPM**: each weapon fires on the onsets of its Euclidean pattern (187.5 ms
+steps, 16 steps to the bar), so the rhythm is irregular on purpose while every
+shot is an exact grid tick, and pattern morphs land only on bar downbeats. The
+non-weapon destruction accents are deferred to the next 16th note of the same
+grid (GDD §4.4, AH-0MVYA1V8Z009SHMR). The music must not fight that grid:
 
 | Tempo zone | BPM | Grid relationship | Used by |
 |------------|-----|-------------------|---------|
@@ -232,10 +238,13 @@ a whole-second schedule: one bolt every **9 beats** of the 80 BPM clock (6.75 s
 (2.25 s) — so the strike's 0.62 s `aihell-orbital-strike` impact cue lands with
 the music instead of drifting against it (AH-0MVRE6N08001TE4V).
 
-At 160 BPM the music beat period is exactly 375 ms — the shipped Cannon fire
-interval — so an eighth-note pulse in the score aligns with two cannon shots.
-Composers should write combat material so that any 16th-note flourish lands on
-the same 187.5 ms tick grid the audio accents already use.
+At 160 BPM the music beat period is exactly 375 ms — two 16th notes of the
+fire lattice — so an eighth-note pulse in the score aligns with the lattice
+ticks the weapons play on. Because a weapon's onsets are irregular (the cannon
+sounds `E(9, 16)`, not a fixed 375 ms interval), compose against the **lattice
+and the bar**, not against a single weapon's rhythm: one bar is 16 lattice steps
+(3 s at 80 BPM), morphs resolve on its downbeat, and any 16th-note flourish
+lands on the same 187.5 ms tick grid the audio accents already use.
 
 #### Composer Note — Loop Architecture
 
@@ -684,7 +693,7 @@ Terms are alphabetical.
 |------|---------------------------|
 | **Arpeggio** | A chord played one note at a time rather than all at once. Fast arpeggios are how AI Hell adds speed and density without adding new melodies. |
 | **Bar boundary** | The exact moment a new musical bar begins — the downbeat. In AI Hell, stem transitions only happen on bar boundaries so the rhythm never sounds disrupted, like waiting for a natural pause before changing the subject. |
-| **Beat grid (80 BPM)** | The game's internal, inaudible pulse. Player fire is quantised to it and destruction accents are delayed to its 16th notes (GDD §4.4). Music tempo zones are multiples of it so that musical and gameplay accents land together. |
+| **Beat grid (80 BPM)** | The game's internal, inaudible pulse, counted in 16th notes (187.5 ms at 80 BPM). Player fire is an onset cadence on it — each weapon sounds its own deterministic Euclidean pattern, so shots are irregular but always on grid ticks — and destruction accents are delayed to its 16th notes (GDD §4.4). Upgrade pattern morphs land on a bar downbeat. Music tempo zones are multiples of it so that musical and gameplay accents land together. |
 | **BPM (beats per minute)** | How fast the music moves. 80 BPM means one beat every 750 ms; 160 BPM means one every 375 ms. AI Hell uses 80 BPM for ambient states and 160 BPM for combat — exactly double, so the two share one grid. |
 | **Chiptune waveform** | The basic tones of early game hardware — square, triangle and noise. AI Hell's palette is built from these plus FM synthesis. |
 | **Crossfade** | One layer fades out while another fades in, so there is never a gap or a jump. AI Hell uses crossfades for every musical change. |

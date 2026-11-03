@@ -24,10 +24,11 @@
  * - **spread** — 3-bullet fan at -30° / 0° / +30° relative to heading (timed)
  * - **dual**   — 2 bullets offset perpendicular (±90°) to heading (timed)
  * - **rapid**  — single bullets at a much higher fire rate (timed)
- * - **wave_laser** — a single slow, wide beam with a total damage budget: it
- *   blows through the enemies it destroys and spends the rest on the ones
- *   behind them (R-Type homage, timed; see
- *   {@link WeaponDefinition.maxHitPoints})
+ * - **wave_laser** — a single red **hitscan beam** fired along the heading: it
+ *   deals exactly 1 damage to the first enemy it intercepts and stops there,
+ *   or runs a full screen width (wrapping at the arena edges) when nothing
+ *   intercepts it (R-Type homage, timed; see
+ *   {@link WeaponDefinition.hitscan})
  * - **ricochet** — a single shot that reflects off the arena edges up to a
  *   budget of bounces (Centipede homage, timed; see
  *   {@link WeaponDefinition.bounce})
@@ -77,8 +78,8 @@ export type WeaponId =
   | 'nova'
   | 'mortar'
   | 'arc'
-  // Net-new (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC52P001YIPW): the unlock-pool
-  // weapons spread across the campaign's later levels.
+  // Net-new (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC52P001YIPW): ordinary
+  // catalogue weapons spread across the campaign's later levels.
   | 'rear_guard'
   | 'broadside'
   | 'railgun'
@@ -413,10 +414,11 @@ export const WEAPON_BULLET_LIFETIME = {
   /** Rapid — short reach balanced by its high fire rate (~131 px). */
   rapid: 0.375,
   /**
-   * Wave laser — long reach so the beam crosses the arena (~350 px); the
-   * slow cadence and the pass-through budget are its identity.
+   * Wave laser — the beam's **visible duration** (0.3 s, AC4): the hitscan ray
+   * resolves at launch and the beam column is held for this long. The
+   * travelling-bullet path never applies to it.
    */
-  wave_laser: 1.0,
+  wave_laser: 0.3,
   /**
    * Ricochet — a long reach so the shot can reach a wall and bank back
    * (~560 px); the bounce budget, not the lifetime, bounds the number of
@@ -451,8 +453,8 @@ export const WEAPON_BULLET_LIFETIME = {
   /** Broadside — a generous reach (~280 px) for the perpendicular pair. */
   broadside: 0.8,
   /**
-   * Railgun — a very long reach (~490 px) so the piercing tracer crosses the
-   * arena; the slow cadence and pass-through budget are its identity.
+   * Railgun — a very long reach (~490 px) so the tracer crosses the arena; the
+   * slow cadence and the levelled pass-through budget are its identity.
    */
   railgun: 1.4,
   /** Shard Swarm — short reach (~193 px); the fan density is its identity. */
@@ -476,8 +478,12 @@ export const BULLET_COLORS = {
   dual: 0xff00ff,
   /** Rapid weapon bullet — electric yellow. */
   rapid: 0xffff00,
-  /** Wave laser beam — vivid neon blue, distinct from the cyan cannon. */
-  wave_laser: 0x3366ff,
+  /**
+   * Wave laser beam — pure red, the single-beam identity (AC1). Deliberately a
+   * brighter, purer red than the Heavy Slug's deep `0xff2222`, and the two
+   * never share a shape (a full-width column vs a heavy round shell).
+   */
+  wave_laser: 0xff0000,
   /** Ricochet pellet — neon green, distinct from every other weapon. */
   ricochet: 0x33ff66,
   /** Cluster missile / warheads — neon hot pink, distinct from every weapon. */
@@ -683,6 +689,36 @@ export type BulletShape =
  * offsets (the shot pattern, in radians), fire rate in milliseconds,
  * bullet colour, shape, and size multiplier.
  */
+/**
+ * Wave-laser beam extent at level 0 (px) — one full arena width, so an
+ * unobstructed shot always spans the screen (AC3). The arena width itself is
+ * `GAME_WIDTH` in `core/constants`; it is mirrored here as a plain number
+ * because `core/constants` imports `core/rules`, which imports this catalogue
+ * — importing it back would create a module cycle. `hitscanBeam.test.ts`
+ * asserts the two stay equal.
+ */
+export const WAVE_LASER_BEAM_LENGTH = 960;
+
+/**
+ * Hitscan-beam descriptor — the Wave Laser's dedicated ray seam
+ * (AH-0MVREBUJ5004HDRQ, AC11). When present the shot does **not** spawn a
+ * travelling `PlayerBullet`: the shared combat core resolves an instant ray
+ * along the ship's heading (`scenes/core/hitscanBeam`), deals exactly 1 damage
+ * to the first entity it intercepts where it stops, and renders the beam for
+ * `duration` seconds. The descriptor carries only data, never behaviour.
+ */
+export interface HitscanDescriptor {
+  /**
+   * Total ray length (px) travelled before the beam stops, wrapping at the
+   * arena edges. One full arena width ({@link GAME_WIDTH}) at level 0, so an
+   * unobstructed shot always spans the screen (AC3). Weapon leveling grows it
+   * through the `bulletLifetime` (range) upgrade.
+   */
+  length: number;
+  /** Seconds the resolved beam stays visible after launch (AC4). */
+  duration: number;
+}
+
 export interface WeaponDefinition {
   /** Unique weapon ID (e.g. `'cannon'`). */
   id: WeaponId;
@@ -744,17 +780,21 @@ export interface WeaponDefinition {
    */
   bulletLifetime: number;
   /**
-   * Base **hit-point budget** a fired bullet may deal before it is consumed —
-   * the R-Type wave-laser damage seam (AH-0MV1BIUSJ0090W92,
-   * AH-0MV97RISJ002WR2S). The beam spends one budget point per hit point of
-   * damage: it passes through the ships it destroys and spends its remaining
-   * budget on the ships behind them. `0`/absent means an ordinary single-hit
-   * bullet.
+   * Base **hit-point budget** a fired bullet may deal before it is consumed
+   * (the Railgun's pass-through seam, AH-0MV1BIUSJ0090W92). The bullet spends
+   * one budget point per hit point of damage: it passes through the ships it
+   * destroys and spends its remaining budget on the ships behind them.
+   * `0`/absent means an ordinary single-hit bullet.
    *
    * A bullet's effective budget is this base value plus the weapon's
    * level-resolved `maxHitPoints` upgrade (from `weaponLevels.ts`); the shared
    * combat core tracks already-damaged enemies so each is charged once (see
-   * `resolveWeaponDefinition`).
+   * `resolveWeaponDefinition`). The Wave Laser no longer carries a budget —
+   * its hitscan beam is fixed at 1 damage and stops at the first intercept
+   * (AH-0MVREBUJ5004HDRQ). The Railgun's base budget is **1**
+   * (AH-0MVY0A23A009MRK3): a level-0 tracer spends its single hit point on the
+   * first enemy it meets and is consumed, so the pass-through is earned from
+   * level 1 (budget 2) onward rather than shipped at level 0.
    */
   maxHitPoints?: number;
   /**
@@ -807,6 +847,13 @@ export interface WeaponDefinition {
    * (parent AH-0MUOOB3OR001V8CD).
    */
   aoe?: AoEDescriptor;
+  /**
+   * Hitscan-beam descriptor (absent for every other weapon). When present the
+   * shot resolves as an instant ray through the shared `scenes/core/
+   * hitscanBeam` seam instead of spawning a travelling bullet
+   * (AH-0MVREBUJ5004HDRQ; wave laser only).
+   */
+  hitscan?: HitscanDescriptor;
   /**
    * Optional short fading trail drawn behind the bullet in flight
    * (AH-0MV8228YW0050IXS). Value is the tail length as a multiplier of the
@@ -1025,34 +1072,38 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'wave_laser',
     name: 'Wave Laser',
     description:
-      'Adds a slow, long-range beam that deals a limited amount of damage in a line.',
-    // A single aimed beam along the ship's heading.
+      'Adds a red laser beam that deals 1 damage to the first enemy it hits and spans the whole screen.',
+    // A single aimed beam along the ship's heading — exactly one beam per
+    // shot, never a fan or a pair (AC1).
     offsets: [0],
     fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
     bulletColor: BULLET_COLORS.wave_laser,
-    // The beam is a long, thick neon bolt — a visible piercing column,
-    // never a dot (AH-0MV8228MD009UBF7 AC1). `line` + a long length + a
-    // white-hot rim distinguish it from the Dual's short pair of beams.
+    // The beam is drawn as a red column along the resolved ray
+    // (`vfx/hitscanBeam`); the `line` shape keeps the catalogue-wide visual
+    // identity consistent for the roster docs and any bullet-path renderer
+    // (AH-0MV8228MD009UBF7).
     bulletShape: 'line',
     bulletShapeLength: 7,
     bulletRim: 0xffffff,
     bulletThickness: 3,
     bulletSize: 1.2,
     bulletLifetime: WEAPON_BULLET_LIFETIME.wave_laser,
-    // Base damage budget: the beam deals up to two hit points in total — it
-    // destroys two 1-HP ships (or one 2-HP ship) and then stops. The
-    // `maxHitPoints` level variable grows it (~7 at very high levels).
-    maxHitPoints: 2,
-    // Wide neon muzzle flash / launch cue at the ship when the wave laser
+    // Hitscan ray (AH-0MVREBUJ5004HDRQ): the shot resolves instantly along
+    // the heading, deals 1 damage at the first intercept and stops; with
+    // nothing in the way it runs one full screen width, wrapping at the arena
+    // edges. The beam column is visible for 0.3 s. There is no damage budget
+    // (fixed 1 damage at every level) and no travelling projectile.
+    hitscan: {
+      length: WAVE_LASER_BEAM_LENGTH,
+      duration: WEAPON_BULLET_LIFETIME.wave_laser,
+    },
+    // Wide red muzzle flash / launch cue at the ship when the wave laser
     // fires — a substantial burst befitting the long beam it launches
     // (AH-0MV822ACO007CEZF). The flash is wider than the cannon's to match
     // the beam identity.
     muzzleFlash: { color: BULLET_COLORS.wave_laser, radius: 12, duration: 0.15 },
-    // Short fading trail behind the beam — a faint neon wake that extends
-    // the beam's visual identity in flight (AH-0MV822ACO007CEZF).
-    bulletTrail: 4,
-    // Distinct neon-blue impact flash + baked hit cue when a wave laser
-    // shot connects (shared impact seam — AH-0MV822ACO007CEZF).
+    // Distinct red impact flash + baked hit cue where the beam stops
+    // (shared impact seam — AH-0MV822ACO007CEZF).
     impactFx: {
       color: BULLET_COLORS.wave_laser,
       radius: 12,
@@ -1275,14 +1326,15 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
       chains: 2,
     },
   },
-  // ── Net-new unlock-pool weapons (epic AH-0MVCC8XSS007P01Z) ────────
+  // ── Net-new weapons (epic AH-0MVCC8XSS007P01Z) ────────────────────
   //
   // AH-0MVCRC52P001YIPW adds five net-new weapons beyond the original 11.
-  // They are the campaign's unlock-pool rewards (mini-boss reward feature)
-  // rather than members of the starting drop rotation, so `WEAPON_DROP_ORDER`
-  // deliberately still cycles spread → dual → rapid. Every one uses an
-  // existing shared firing seam (pattern offsets / damage budget), so the game
-  // and every gym fire them through identical core code.
+  // They are ordinary catalogue weapons reachable through the normal
+  // hold-full choice and field drop paths (there is no run-scoped unlock
+  // gate), but they are not members of the starting drop rotation, so
+  // `WEAPON_DROP_ORDER` deliberately still cycles spread → dual → rapid.
+  // Every one uses an existing shared firing seam (pattern offsets / damage
+  // budget), so the game and every gym fire them through identical core code.
   rear_guard: {
     id: 'rear_guard',
     name: 'Rear Guard',
@@ -1371,9 +1423,10 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'railgun',
     name: 'Railgun',
     description:
-      'Adds a slow, long-range tracer that pierces a line of enemies.',
-    // A single aimed shot along the heading, like the wave laser, but with a
-    // larger damage budget and a much slower, heavier cadence.
+      'Adds a slow, long-range tracer that pierces a line once it is upgraded.',
+    // A single aimed shot along the heading, the slowest and heaviest cadence
+    // in the catalogue; the shared damage-budget curve is what grows it from a
+    // heavy single shot into a line piercer.
     offsets: [0],
     fireRateMs: WEAPON_RAILGUN_FIRE_RATE,
     bulletColor: BULLET_COLORS.railgun,
@@ -1385,9 +1438,12 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 4.5,
     bulletSize: 1.15,
     bulletLifetime: WEAPON_BULLET_LIFETIME.railgun,
-    // Base damage budget greater than the wave laser's (2) — the rail's
-    // identity is the deeper line-piercing shot.
-    maxHitPoints: 5,
+    // Base damage budget of 1 (AH-0MVY0A23A009MRK3): the tracer spends its
+    // single hit point on the first enemy it meets and is consumed, so a
+    // level-0 rail is a precise, heavy single shot. The shared `maxHitPoints`
+    // curve grants the first extra hit point at level 1 (budget 2), which is
+    // when the line-piercing begins; the slow cadence pays for the depth.
+    maxHitPoints: 1,
     // Launch cue (AH-0MVQ6C1YL003HU9K): a heavy sky-blue flash at the hull when
     // the shot leaves the rail — larger than the cannon's pop and smaller than
     // the wave laser's wide flare. The shared combat-core muzzle-flash path

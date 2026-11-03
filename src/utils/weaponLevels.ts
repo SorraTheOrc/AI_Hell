@@ -42,6 +42,18 @@
  * off-grid desired rate falls back to the nearest on-grid rate
  * (AH-0MUAYB8EH005RJ8B, AH-0MUQOV9JV00389E7).
  *
+ * ## Euclidean cadence ladder
+ *
+ * The fire cadence itself is a deterministic **Euclidean rhythm**: `k`
+ * onsets spread as evenly as possible over `n` steps of `stepMs`, shifted by
+ * `rotation` steps ({@link EuclideanPattern}). Each weapon owns an authored
+ * ladder of patterns ({@link WEAPON_EUCLIDEAN_LADDERS}) whose rungs become
+ * active at curve-derived levels, so a fire-rate upgrade can change the
+ * rhythm's **shape and phase** as well as its density. The resolver
+ * ({@link resolveWeaponPattern}) is the epic's `patternFor(weaponId, level)`:
+ * pure, deterministic and monotonic in onsets-per-minute
+ * (AH-0MVYA291J000CK64, parent AH-0MVYA1JFK003RLAW).
+ *
  * ## MVP scope
  *
  * This epic targets an MVP-partial vertical slice: the four producer-confirmed
@@ -55,7 +67,13 @@
 
 import { WEAPON_CATALOGUE, getWeaponById, type WeaponId, type WeaponDefinition } from './weapons';
 import { resolveOptionsPodCount } from '../scenes/core/optionsEscort';
-import { DEFAULT_BPM, beatPeriodMs, beatSubdivisionMs } from './beat';
+import {
+  DEFAULT_BPM,
+  MS_PER_MINUTE,
+  SIXTEENTH_NOTE_SUBDIVISIONS,
+  beatPeriodMs,
+  beatSubdivisionMs,
+} from './beat';
 import { curveValue, formatDelta, type CurveSpec, type UpgradeCurve } from './curve';
 
 // Re-exported so existing importers of this module keep working while the
@@ -462,6 +480,533 @@ export function quantiseFireRateMs(
   return beatSubdivisionMs(subdivision, bpm);
 }
 
+// ── Euclidean cadence ladder (AH-0MVYA291J000CK64) ──────────────────
+
+/**
+ * One tile of a **Euclidean fire rhythm**: `k` onsets spread as evenly as
+ * possible over `n` steps of `stepMs`, phase-shifted by `rotation` steps.
+ *
+ * This is the data half of the epic's `patternFor(weaponId, level)`
+ * (parent AH-0MVYA1JFK003RLAW). The pure Bjorklund generator that turns
+ * `(k, n, rotation)` into onset ticks is `euclidPattern` in
+ * `src/utils/euclid.ts` (with the `stepIndexAt` / `isOnset` /
+ * `nextOnsetTick` / `nextOnsetDelayMs` lattice helpers); this module owns the
+ * per-weapon **ladder** that selects the node.
+ *
+ * A **degenerate straight** pattern (`k === n`) is all-onsets — one shot per
+ * step — so its interval is exactly `stepMs`. That is how a legacy
+ * {@link quantiseSubdivision} cadence is represented (see
+ * {@link straightEuclidean}), which keeps every shipped fire rate available
+ * as an all-onsets subset of the ladder.
+ *
+ * `k`, `n` and `rotation` are whole numbers of steps; `stepMs` is the step
+ * duration in milliseconds. Patterns carry no RNG or wall-clock input, so the
+ * same `(weapon, level)` always resolves the same rhythm.
+ */
+export interface EuclideanPattern {
+  /** Onsets per tile (`1 <= k <= n`). */
+  readonly k: number;
+  /** Steps per tile (`n > 0`). */
+  readonly n: number;
+  /** Phase shift in steps (`0 <= rotation < n`). */
+  readonly rotation: number;
+  /** Duration of one step in milliseconds (`> 0`). */
+  readonly stepMs: number;
+}
+
+/**
+ * One rung of a weapon's Euclidean upgrade ladder: the rhythm, the level at
+ * which it becomes active, and its effective densities.
+ */
+export interface WeaponPatternLadderNode {
+  /** First weapon level at which this rung is active. */
+  readonly minLevel: number;
+  /** The rhythm played from {@link minLevel} until the next rung. */
+  readonly pattern: EuclideanPattern;
+  /** Effective onsets per beat (80 BPM reference) for this rung. */
+  readonly onsetsPerBeat: number;
+  /** Effective onsets per minute for this rung. */
+  readonly onsetsPerMinute: number;
+}
+
+/**
+ * One step of the shared 16th-note lattice at the default tempo:
+ * `beatPeriodMs(80) / 4 = 187.5 ms`. A bar is 16 such steps, and every
+ * authored ladder rung tiles a whole number of these steps.
+ *
+ * At a non-default tempo the step scales with `beatPeriodMs(bpm)`; a rung's
+ * `(k, n, rotation)` shape is tempo-independent, so the scheduler only has to
+ * scale `stepMs` by the tempo ratio.
+ */
+export const SIXTEENTH_NOTE_STEP_MS = beatSubdivisionMs(
+  SIXTEENTH_NOTE_SUBDIVISIONS,
+);
+
+/** Steps in one 4-beat bar of the 16th-note lattice (`4 beats x 4 steps`). */
+const STEPS_PER_BAR = SIXTEENTH_NOTE_SUBDIVISIONS * 4;
+
+/** Difference below which two densities are treated as identical. */
+const DENSITY_EPSILON = 1e-9;
+
+/** Upper bound on the level scan used to derive ladder thresholds. */
+const LADDER_LEVEL_SEARCH_LIMIT = 500;
+
+/** True for a finite positive whole number. */
+function isPositiveWhole(value: number): boolean {
+  return Number.isFinite(value) && Number.isInteger(value) && value > 0;
+}
+
+/** Greatest common divisor, used to normalise a lattice pattern. */
+function greatestCommonDivisor(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y > 0) {
+    const remainder = x % y;
+    x = y;
+    y = remainder;
+  }
+  return x;
+}
+
+/**
+ * Effective onsets per minute for a pattern: `k * 60_000 / (n * stepMs)`.
+ * An invalid pattern resolves to `0` rather than `NaN`/`Infinity`.
+ */
+export function euclideanOnsetsPerMinute(pattern: EuclideanPattern): number {
+  const { k, n, stepMs } = pattern;
+  if (
+    !Number.isFinite(k) ||
+    !Number.isFinite(n) ||
+    !Number.isFinite(stepMs) ||
+    k <= 0 ||
+    n <= 0 ||
+    stepMs <= 0
+  ) {
+    return 0;
+  }
+  return (k * MS_PER_MINUTE) / (n * stepMs);
+}
+
+/**
+ * Effective onsets per beat for a pattern at `bpm` (default
+ * {@link DEFAULT_BPM}). A 16th-note rung `E(k, 16)` therefore reports `k / 4`
+ * onsets per beat at 80 BPM.
+ */
+export function euclideanOnsetsPerBeat(
+  pattern: EuclideanPattern,
+  bpm: number = DEFAULT_BPM,
+): number {
+  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : DEFAULT_BPM;
+  return euclideanOnsetsPerMinute(pattern) / safeBpm;
+}
+
+/**
+ * True when a tile's onsets are evenly spaced, i.e. `k` divides `n` so every
+ * gap is `n / k` steps. Such a pattern is a **straight** (degenerate)
+ * cadence that a legacy subdivision can also express exactly.
+ */
+export function isStraightEuclidean(pattern: EuclideanPattern): boolean {
+  return (
+    isPositiveWhole(pattern.k) &&
+    isPositiveWhole(pattern.n) &&
+    pattern.k <= pattern.n &&
+    pattern.n % pattern.k === 0
+  );
+}
+
+/**
+ * Interval between adjacent onsets for a **straight** pattern, or `NaN` for
+ * an irregular one (whose gaps intentionally differ).
+ */
+export function euclideanOnsetIntervalMs(pattern: EuclideanPattern): number {
+  if (!isStraightEuclidean(pattern) || !(pattern.stepMs > 0)) {
+    return Number.NaN;
+  }
+  return (pattern.n / pattern.k) * pattern.stepMs;
+}
+
+/**
+ * Builds a pattern on the shared **16th-note lattice**: `k` onsets over `n`
+ * steps of {@link SIXTEENTH_NOTE_STEP_MS}, phase-shifted by `rotation` steps.
+ * A `n = 16` tile spans one bar; `n = 8` halves the bar so the tile repeats
+ * twice per bar (the documented bar-halving shape morph).
+ */
+export function latticeEuclidean(
+  k: number,
+  n: number,
+  rotation = 0,
+): EuclideanPattern {
+  return { k, n, rotation, stepMs: SIXTEENTH_NOTE_STEP_MS };
+}
+
+/**
+ * Builds the **degenerate straight** all-onsets pattern for an on-grid
+ * subdivision: `E(n, n)` at a step of `beatPeriodMs(bpm) / subdivision`.
+ *
+ * For every subdivision this reproduces today's beat-grid cadence exactly
+ * (e.g. subdivision `2` → an onset every 375 ms at 80 BPM; subdivision
+ * `0.5` → one onset every 1 500 ms), so legacy fire rates remain the
+ * all-onsets subset of the ladder. Slow (< 1) subdivisions use a single-step
+ * tile whose step is the whole-beat multiple.
+ *
+ * @param subdivision - Desired shots per beat (any positive number; it is
+ *   snapped with {@link quantiseSubdivision} first).
+ * @param bpm - Tempo in beats per minute (default 80).
+ */
+export function straightEuclidean(
+  subdivision: number,
+  bpm: number = DEFAULT_BPM,
+): EuclideanPattern {
+  const quantised = quantiseSubdivision(subdivision);
+  const steps = quantised >= 1 ? Math.max(1, Math.round(quantised)) : 1;
+  return {
+    k: steps,
+    n: steps,
+    rotation: 0,
+    stepMs: beatPeriodMs(bpm) / quantised,
+  };
+}
+
+/**
+ * Quantises an arbitrary **desired onsets-per-beat** rate to a Euclidean
+ * pattern, mapping the shipped `fireRate` multiplier curve onto the ladder.
+ *
+ * - A desired rate that is already an on-grid subdivision (including the
+ *   slow whole-beat reciprocals) resolves to the degenerate all-onsets form
+ *   {@link straightEuclidean}, so it is cadence-identical to today's
+ *   `quantiseSubdivision` (legacy parity).
+ * - A rate faster than the 16th-note lattice can carry (`> 4` onsets/beat)
+ *   also falls back to the nearest legacy subdivision, because v1 patterns
+ *   stay on 16th-note steps.
+ * - Any other rate snaps to the nearest density representable by one bar of
+ *   16 steps (`k = round(desired * 4)`, normalised to lowest terms), e.g.
+ *   `2.25` → `E(9, 16)` and `1.5` → `E(3, 8)`.
+ *
+ * The result is pure and monotonic in `desiredOnsetsPerBeat` (ties round
+ * **up**), so a rising fire-rate curve can never produce a slower rhythm.
+ *
+ * @param desiredOnsetsPerBeat - Desired onsets per beat (e.g. the base
+ *   rhythm density times the level's `fireRate` multiplier).
+ * @param bpm - Tempo in beats per minute (default 80).
+ */
+export function quantiseEuclidean(
+  desiredOnsetsPerBeat: number,
+  bpm: number = DEFAULT_BPM,
+): EuclideanPattern {
+  const safe =
+    Number.isFinite(desiredOnsetsPerBeat) && desiredOnsetsPerBeat > 0
+      ? desiredOnsetsPerBeat
+      : 1;
+  const legacySubdivision = quantiseSubdivision(safe);
+  if (Math.abs(safe - legacySubdivision) <= DENSITY_EPSILON) {
+    return straightEuclidean(legacySubdivision, bpm);
+  }
+  if (safe > SIXTEENTH_NOTE_SUBDIVISIONS) {
+    return straightEuclidean(legacySubdivision, bpm);
+  }
+  const onsetsPerBar = safe * SIXTEENTH_NOTE_SUBDIVISIONS;
+  const onsets = Math.min(
+    STEPS_PER_BAR,
+    Math.max(1, Math.round(onsetsPerBar)),
+  );
+  const divisor = greatestCommonDivisor(onsets, STEPS_PER_BAR);
+  return {
+    k: onsets / divisor,
+    n: STEPS_PER_BAR / divisor,
+    rotation: 0,
+    stepMs: beatSubdivisionMs(SIXTEENTH_NOTE_SUBDIVISIONS, bpm),
+  };
+}
+
+/**
+ * The authored per-weapon ladder rungs, **before** the curve-derived level
+ * thresholds are attached. Densities are non-decreasing in authored order;
+ * a repeated density is a deliberate shape (bar-halving) or phase (rotation)
+ * morph that keeps the density identical.
+ *
+ * Level 0 is the weapon's shipped cadence density (legacy onsets per bar) for
+ * most weapons; the six canonical superposition weapons use the epic's
+ * agreed fixture values (`heavy_slug` 3/16, `railgun` 2/16, `cannon` 9/16,
+ * `arc` 9/16 rotated 4, `rapid` 13/16, `shard_swarm` 10/16).
+ */
+const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
+  WeaponId,
+  readonly EuclideanPattern[]
+> = {
+  // 2.25 onsets/beat rising to the 16th-lattice ceiling of 4.
+  cannon: [
+    latticeEuclidean(9, 16),
+    latticeEuclidean(10, 16),
+    latticeEuclidean(13, 16),
+    latticeEuclidean(16, 16),
+    latticeEuclidean(8, 8), // bar-halving shape morph at equal density
+  ],
+  spread: [
+    latticeEuclidean(4, 16),
+    latticeEuclidean(5, 16),
+    latticeEuclidean(6, 16),
+    latticeEuclidean(8, 16),
+    latticeEuclidean(5, 8),
+  ],
+  // Phase morph first: the same E(4, 16) density rotated by two steps.
+  dual: [
+    latticeEuclidean(4, 16),
+    latticeEuclidean(4, 16, 2),
+    latticeEuclidean(5, 16),
+    latticeEuclidean(6, 16),
+    latticeEuclidean(8, 16),
+    latticeEuclidean(5, 8),
+  ],
+  rapid: [
+    latticeEuclidean(13, 16),
+    latticeEuclidean(14, 16),
+    latticeEuclidean(15, 16),
+    latticeEuclidean(16, 16),
+    latticeEuclidean(8, 8),
+  ],
+  wave_laser: [
+    latticeEuclidean(4, 16),
+    latticeEuclidean(5, 16),
+    latticeEuclidean(6, 16),
+    latticeEuclidean(7, 16),
+    latticeEuclidean(8, 16),
+    latticeEuclidean(5, 8),
+  ],
+  // Phase morph at equal density, then a faster irregular tile.
+  ricochet: [
+    latticeEuclidean(4, 16),
+    latticeEuclidean(4, 16, 1),
+    latticeEuclidean(6, 16),
+    latticeEuclidean(8, 16),
+    latticeEuclidean(5, 8),
+  ],
+  cluster: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
+    latticeEuclidean(4, 16),
+    latticeEuclidean(5, 16),
+  ],
+  options: [
+    latticeEuclidean(4, 16),
+    latticeEuclidean(5, 16),
+    latticeEuclidean(6, 16),
+    latticeEuclidean(7, 16),
+    latticeEuclidean(8, 16),
+    latticeEuclidean(5, 8),
+  ],
+  nova: [latticeEuclidean(1, 16), latticeEuclidean(2, 16)],
+  mortar: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
+    latticeEuclidean(4, 16),
+    latticeEuclidean(5, 16),
+  ],
+  // Shares E(9, 16) with the cannon at level 0, differing only by rotation.
+  arc: [
+    latticeEuclidean(9, 16, 4),
+    latticeEuclidean(9, 16, 6), // phase morph at equal density
+    latticeEuclidean(10, 16, 6),
+    latticeEuclidean(13, 16, 6),
+    latticeEuclidean(16, 16),
+    latticeEuclidean(8, 8),
+  ],
+  rear_guard: [
+    latticeEuclidean(8, 16),
+    latticeEuclidean(10, 16),
+    latticeEuclidean(12, 16),
+    latticeEuclidean(14, 16),
+    latticeEuclidean(16, 16),
+    latticeEuclidean(8, 8),
+  ],
+  broadside: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
+    latticeEuclidean(4, 16),
+    latticeEuclidean(5, 16),
+  ],
+  railgun: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
+    latticeEuclidean(4, 16),
+    latticeEuclidean(5, 16),
+  ],
+  shard_swarm: [
+    latticeEuclidean(10, 16),
+    latticeEuclidean(11, 16),
+    latticeEuclidean(12, 16),
+    latticeEuclidean(13, 16),
+    latticeEuclidean(14, 16),
+    latticeEuclidean(16, 16),
+    latticeEuclidean(8, 8),
+  ],
+  heavy_slug: [
+    latticeEuclidean(3, 16),
+    latticeEuclidean(4, 16),
+    latticeEuclidean(6, 16),
+    latticeEuclidean(8, 16),
+  ],
+};
+
+/**
+ * The onsets-per-beat a weapon's `fireRate` curve **desires** at `level`:
+ * the level-0 rhythm density multiplied by the shared exponential-saturation
+ * `fireRate` multiplier (base 1×, cap 3×, k = 0.18).
+ *
+ * Level 0 always returns the authored base density, so the curve maps
+ * directly onto the ladder without a second tuning table. Invalid levels are
+ * clamped to a non-negative whole number.
+ *
+ * @throws Error when `weaponId` is not in the catalogue.
+ */
+export function weaponPatternDesiredOnsetsPerBeat(
+  weaponId: WeaponId,
+  level: number,
+): number {
+  getWeaponById(weaponId);
+  const safeLevel = Number.isFinite(level) ? Math.max(0, Math.floor(level)) : 0;
+  const base = euclideanOnsetsPerBeat(
+    WEAPON_EUCLIDEAN_LADDER_SPECS[weaponId][0],
+  );
+  return base * curveValue(WEAPON_UPGRADE_SPECS.fireRate, safeLevel);
+}
+
+/** First level whose desired density reaches `density`, or `Infinity`. */
+function firstLevelReaching(
+  weaponId: WeaponId,
+  density: number,
+): number {
+  for (let level = 0; level <= LADDER_LEVEL_SEARCH_LIMIT; level++) {
+    if (
+      weaponPatternDesiredOnsetsPerBeat(weaponId, level) >=
+      density - DENSITY_EPSILON
+    ) {
+      return level;
+    }
+  }
+  return Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Attaches curve-derived level thresholds to an authored ladder.
+ *
+ * A rung becomes active at the first level the `fireRate` curve's desired
+ * density supports it, and never earlier than one level after the previous
+ * rung — so equal-density shape and phase morphs are still displayed as
+ * distinct upgrade steps. Rungs at or above the curve's 3× asymptote are
+ * omitted because the exponential curve only approaches that density, never
+ * reaches it.
+ */
+function buildWeaponPatternLadder(
+  weaponId: WeaponId,
+): readonly WeaponPatternLadderNode[] {
+  const spec = WEAPON_EUCLIDEAN_LADDER_SPECS[weaponId];
+  const baseDensity = euclideanOnsetsPerBeat(spec[0]);
+  const densityCeiling = baseDensity * WEAPON_UPGRADE_SPECS.fireRate.cap;
+  const nodes: WeaponPatternLadderNode[] = [];
+  let previousMinLevel = -1;
+  let previousDensity = Number.NEGATIVE_INFINITY;
+  for (const pattern of spec) {
+    if (
+      !isPositiveWhole(pattern.k) ||
+      !isPositiveWhole(pattern.n) ||
+      pattern.k > pattern.n
+    ) {
+      throw new Error(
+        `Invalid Euclidean ladder pattern for ${weaponId}: k=${pattern.k}, n=${pattern.n}`,
+      );
+    }
+    if (
+      !Number.isInteger(pattern.rotation) ||
+      pattern.rotation < 0 ||
+      pattern.rotation >= pattern.n
+    ) {
+      throw new Error(
+        `Invalid Euclidean ladder rotation for ${weaponId}: ${pattern.rotation} (n=${pattern.n})`,
+      );
+    }
+    if (!(pattern.stepMs > 0) || !Number.isFinite(pattern.stepMs)) {
+      throw new Error(
+        `Invalid Euclidean ladder step for ${weaponId}: ${pattern.stepMs}`,
+      );
+    }
+    const density = euclideanOnsetsPerBeat(pattern);
+    if (density + DENSITY_EPSILON < previousDensity) {
+      throw new Error(
+        `Euclidean ladder density decreases for ${weaponId}: ${density} < ${previousDensity}`,
+      );
+    }
+    previousDensity = density;
+    if (density >= densityCeiling - DENSITY_EPSILON) {
+      continue; // at/above the fire-rate asymptote: unreachable in v1
+    }
+    const reached = firstLevelReaching(weaponId, density);
+    if (!Number.isFinite(reached)) continue;
+    const minLevel = Math.max(reached, previousMinLevel + 1);
+    previousMinLevel = minLevel;
+    nodes.push(
+      Object.freeze({
+        minLevel,
+        pattern: Object.freeze({ ...pattern }),
+        onsetsPerBeat: density,
+        onsetsPerMinute: euclideanOnsetsPerMinute(pattern),
+      }),
+    );
+  }
+  return Object.freeze(nodes);
+}
+
+/**
+ * The resolved per-weapon Euclidean upgrade ladders: every catalogue weapon
+ * maps to its rungs in increasing level order, each carrying the pattern, its
+ * activation level and its effective densities.
+ *
+ * The values are documented in the machine-verifiable ledger in
+ * [`docs/BALANCING.md`](../../docs/BALANCING.md) and pinned by
+ * `src/utils/weaponLevels.test.ts`.
+ */
+export const WEAPON_EUCLIDEAN_LADDERS: Readonly<
+  Record<WeaponId, readonly WeaponPatternLadderNode[]>
+> = Object.freeze(
+  Object.fromEntries(
+    (Object.keys(WEAPON_EUCLIDEAN_LADDER_SPECS) as WeaponId[]).map(
+      (weaponId) => [weaponId, buildWeaponPatternLadder(weaponId)] as const,
+    ),
+  ) as Record<WeaponId, readonly WeaponPatternLadderNode[]>,
+);
+
+/**
+ * Resolves the Euclidean rhythm a weapon plays at `level` — the epic's
+ * `patternFor(weaponId, level)`.
+ *
+ * The result is the last ladder rung whose `minLevel` is at or below the
+ * (clamped, whole-number) level. It is a pure function of `(weaponId, level)`:
+ * no RNG, no wall-clock reads, and the same inputs always return a fresh but
+ * equal `{ k, n, rotation, stepMs }`.
+ *
+ * Onsets per minute are **monotonic non-decreasing** in level for every
+ * weapon because rung densities never decrease and thresholds are derived
+ * from the monotonic `fireRate` curve.
+ *
+ * @param weaponId - The weapon to resolve (must be in the catalogue).
+ * @param level - The weapon's level (0 = un-upgraded; negative/fractional
+ *   values are clamped to a non-negative whole number).
+ * @throws Error when `weaponId` is not in the catalogue.
+ */
+export function resolveWeaponPattern(
+  weaponId: WeaponId,
+  level: number,
+): EuclideanPattern {
+  getWeaponById(weaponId);
+  const safeLevel = Number.isFinite(level) ? Math.max(0, Math.floor(level)) : 0;
+  const ladder = WEAPON_EUCLIDEAN_LADDERS[weaponId];
+  let resolved = ladder[0].pattern;
+  for (const node of ladder) {
+    if (node.minLevel > safeLevel) break;
+    resolved = node.pattern;
+  }
+  return { ...resolved };
+}
+
 // ── Resolved stats ──────────────────────────────────────────────────
 
 /**
@@ -611,7 +1156,11 @@ export function expandWeaponPattern(
  * - `levelBulletSize` — bullet-radius upgrade multiplier,
  * - `maxHitPoints` — the base damage budget grown by the level's
  *   `maxHitPoints` upgrade (weapons with a base `maxHitPoints` only, e.g. the
- *   wave laser; AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S),
+ *   railgun; AH-0MV1BIUSJ0090W92),
+ * - `hitscan.length` — the beam's ray extent grown by the level's
+ *   `bulletLifetime` (range) upgrade (hitscan weapons only, i.e. the wave
+ *   laser, which never gains a damage budget and never widens into a fan —
+ *   AH-0MVREBUJ5004HDRQ),
  * - `bounce` — the base wall-bounce budget grown by the level's `bounce`
  *   upgrade and clamped to its spec cap (weapons with a base `bounce` only,
  *   e.g. the ricochet; AH-0MV1BIV5L005NJAI),
@@ -649,21 +1198,38 @@ export function resolveWeaponDefinition(
     // Orbit weapons (the Gradius Options escort) fire from their pods, not
     // from an angular `offsets` fan, so the pattern is never expanded by
     // `projectileCount` (the level variable grows the pod count instead).
-    offsets: base.orbit
-      ? [...base.offsets]
-      : expandWeaponPattern(base, stats).offsets,
+    // Hitscan weapons (the wave laser) always fire exactly **one** beam, so
+    // their pattern is never expanded either (AC1: one beam per shot, no fan
+    // and no pair at any level; AH-0MVREBUJ5004HDRQ).
+    offsets:
+      base.orbit || base.hitscan
+        ? [...base.offsets]
+        : expandWeaponPattern(base, stats).offsets,
     bulletLifetime: base.bulletLifetime * stats.bulletLifetime,
     levelBulletSize: stats.bulletSize,
   };
-  // Damage-budget weapons (the R-Type wave laser) opt in with a base budget.
+  // Damage-budget weapons (the railgun) opt in with a base budget.
   // Their effective budget is the base value plus the level-resolved
   // `maxHitPoints` upgrade with **no clamp**: growth is governed only by the
   // shared exponential-saturation curve, so the budget saturates near its
   // asymptote (~base + 5) instead of flattening at a hard cap
   // (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S). Weapons without a base
-  // budget never gain one.
+  // budget never gain one — the wave laser's hitscan beam is fixed at 1
+  // damage and stops at the first intercept at every level
+  // (AH-0MVREBUJ5004HDRQ).
   if (base.maxHitPoints !== undefined) {
     leveled.maxHitPoints = base.maxHitPoints + stats.maxHitPoints;
+  }
+  // Hitscan weapons opt in with a base ray descriptor. The ray's extent grows
+  // with the level-resolved `bulletLifetime` (range) upgrade — a longer beam
+  // still deals exactly 1 damage and stops at the first intercept — while the
+  // visible duration stays the fixed 0.3 s column (AC4). Weapons without a
+  // `hitscan` descriptor never gain one.
+  if (base.hitscan) {
+    leveled.hitscan = {
+      ...base.hitscan,
+      length: base.hitscan.length * stats.bulletLifetime,
+    };
   }
   // Ricochet-style weapons opt in with a base wall-bounce budget. Their
   // effective budget grows with the level-resolved `bounce` upgrade, clamped

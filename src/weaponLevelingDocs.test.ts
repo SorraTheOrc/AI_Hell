@@ -24,10 +24,12 @@ import {
 
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const README_PATH = path.resolve(process.cwd(), 'README.md');
+const BALANCING_PATH = path.resolve(process.cwd(), 'docs/BALANCING.md');
 
 describe('weapon leveling is documented (AH-0MUQOT1I60038CO7 AC4/AC5)', () => {
   const gdd = fs.readFileSync(GDD_PATH, 'utf8');
   const readme = fs.readFileSync(README_PATH, 'utf8');
+  const balancing = fs.readFileSync(BALANCING_PATH, 'utf8');
 
   it('the GDD has a dedicated §4.4.2 Weapon Leveling subsection', () => {
     expect(gdd).toContain('#### 4.4.2 Weapon Leveling');
@@ -94,5 +96,45 @@ describe('weapon leveling is documented (AH-0MUQOT1I60038CO7 AC4/AC5)', () => {
     expect(gdd).toMatch(/buildOwnedLevelUpOptions/);
     expect(readme).toContain('buildOwnedLevelUpOptions');
     expect(readme).toMatch(/changeSummary/);
+  });
+
+  it('the GDD and README document the Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
+    expect(gdd).toMatch(/Euclidean cadence ladder/);
+    expect(gdd).toContain('resolveWeaponPattern');
+    expect(gdd).toContain('WEAPON_EUCLIDEAN_LADDERS');
+    expect(gdd).toMatch(/onsets-per-minute are monotonic non-decreasing/i);
+    expect(gdd).toContain('quantiseEuclidean');
+    expect(readme).toContain('WEAPON_EUCLIDEAN_LADDERS');
+    expect(readme).toContain('resolveWeaponPattern');
+    expect(readme).toContain('docs/BALANCING.md');
+  });
+
+  it('BALANCING.md carries the machine-verifiable Euclidean ladder ledger', () => {
+    expect(balancing).toContain(
+      '## Weapon Euclidean upgrade ladder (AH-0MVYA291J000CK64)',
+    );
+    expect(balancing).toContain('<!-- euclidean-ladder:start -->');
+    expect(balancing).toContain('<!-- euclidean-ladder:end -->');
+    for (const weapon of [
+      'cannon',
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'options',
+      'nova',
+      'mortar',
+      'arc',
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
+    ]) {
+      expect(balancing).toContain(`\`${weapon}\``);
+    }
+    expect(balancing).toMatch(/46 onsets per bar/);
   });
 });

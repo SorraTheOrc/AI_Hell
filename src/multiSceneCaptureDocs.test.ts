@@ -18,6 +18,8 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
+  HANGAR_WAR_SCENE_KEYS,
+  HANGAR_WAR_SCENE_SETUP_FIELDS,
   PARAMETERISED_GYM_SCENE_KEYS,
   SCENE_CONFIG_ERROR_CODES,
   GENERATED_LEVEL_ONLY_FIELDS,
@@ -163,6 +165,35 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
   // the gym-family showcase and `examples/teaserVideoScript.json` is the
   // seven-beat teaser, which records the SHIPPED GAME (bot-driven, no gym
   // chrome) and therefore targets `PlayScene` only.
+  it('documents the Hangar War screens and their launch fields (AH-0MVWMUQUC003WXF5)', () => {
+    // The new outer-loop screens must stay discoverable: the CLI `--hangar`
+    // path, the multi-scene target registry and the per-screen setup fields.
+    expect(captureDoc).toMatch(/## Hangar War screens \(`--hangar`/);
+    expect(captureDoc).toContain('--hangar');
+    for (const key of HANGAR_WAR_SCENE_KEYS) {
+      expect(captureDoc).toContain(key);
+    }
+    for (const field of HANGAR_WAR_SCENE_SETUP_FIELDS) {
+      expect(captureDoc).toContain(`\`${field}\``);
+    }
+    // The proof-before-recording contract is documented, not just the flags.
+    expect(captureDoc).toContain('activeSceneKeys()');
+    expect(captureDoc).toMatch(/lost Tab\/Enter/i);
+    // The README advertises the new path as well.
+    expect(readme).toContain('--hangar');
+  });
+
+  it('ships a static Hangar War entry for every screen in examples/scenes.json', () => {
+    const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
+    const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
+    const byTarget = new Map(parsed.map((scene) => [scene.target, scene]));
+    for (const key of HANGAR_WAR_SCENE_KEYS) {
+      const entry = byTarget.get(key);
+      expect(entry, `${key} has no example entry`).toBeDefined();
+      expect(entry?.setup).toEqual({ demo: false });
+    }
+  });
+
   it('ships the gym-family showcase with a setup on every entry', () => {
     const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
     const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
@@ -188,6 +219,7 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
       'GymPowerUpLeveling',
       'GymPowerUpsCombat',
       'GymPowerUpsUtility',
+      'GymRhythm',
       'GymWeaponLeveling',
       'GymWeapons',
     ]) {

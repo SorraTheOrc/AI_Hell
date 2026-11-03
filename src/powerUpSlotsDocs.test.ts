@@ -155,16 +155,23 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVLIJT3M005HPH
     expect(choice).toMatch(/tempPowerUpIds/);
   });
 
-  // Producer rejection 2026-10-29 ("we seem able to get 7 slots"): the leak was
-  // the mini-boss reward's unlock half, a base-entry offer that does not come
-  // through `buildChoiceCandidates`. The rule now applies to every offer
-  // surface, and the docs must say so.
-  it('the GDD records that the mini-boss unlock half is gated by the same pool', () => {
+  // Producer rejection 2026-10-29 ("we seem able to get 7 slots") was traced to
+  // the mini-boss reward's unlock half, a base-entry offer that did not come
+  // through `buildChoiceCandidates`. That feature has since been removed (the
+  // reward is an owned-level-up surface only), so the docs must say so and pin
+  // the shared-pool consult rather than describe a surface that no longer
+  // exists.
+  // The reward surface is now the spin-the-wheel upgrade reward
+  // (AH-0MVLISU03006WDOD): the guards below pin the invariants that still
+  // matter — no unlock half, level-ups of kinds the player already holds, and
+  // an overlay that can never open empty (the empty-owned fallback is the
+  // hold-full-style three-option choice, not base picks).
+  it('the GDD records that the mini-boss reward has no unlock half and is gated', () => {
     const section = slotsSection(gdd);
     expect(section).toMatch(/mini-boss/i);
     expect(section).toContain('filterOptionsWithinSlotPool');
-    expect(section).toMatch(/unlock/i);
-    expect(section).toMatch(/seventh/i);
+    expect(section).toMatch(/no weapon-unlock half|has \*\*no [^*]*unlock half/i);
+    expect(section).toMatch(/level-ups? of kinds the player already\s+holds/i);
     expect(section).toMatch(/falls back to\s+base picks|never open empty/i);
   });
 
@@ -172,7 +179,7 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVLIJT3M005HPH
     const section = balancingSection(balancing);
     expect(section).toContain('filterOptionsWithinSlotPool');
     expect(section).toMatch(/mini-boss/i);
-    expect(section).toMatch(/unlock/i);
+    expect(section).toMatch(/no unlock half|no .*unlock/i);
     expect(section).toMatch(/held\s+kinds/i);
   });
 
@@ -248,6 +255,19 @@ describe('the HUD slot budget and non-slot rows are documented (AH-0MVVJRRN10038
     expect(section).toMatch(/POWER_UP_SLOT_CAP/);
   });
 
+  it('the GDD records that non-slot rows are grouped out of the loadout list', () => {
+    const section = slotsSection(gdd);
+    expect(section).toContain('Not in loadout');
+    expect(section).toMatch(/contiguous loadout list/i);
+    expect(section).toMatch(/never contains more rows than `used`/i);
+  });
+
+  it('docs/BALANCING.md records the loadout grouping', () => {
+    const section = balancingSection(balancing);
+    expect(section).toContain('Not in loadout');
+    expect(section).toMatch(/contiguous and never longer than `used`/i);
+  });
+
   it('docs/BALANCING.md records the presented budget and the marked non-slot rows', () => {
     const section = balancingSection(balancing);
     expect(section).toContain('Loadout n/6');
@@ -297,6 +317,22 @@ describe('the audited acquisition surfaces are documented (AH-0MVVJS34M00551ES)'
     expect(section).toContain('capCheckpointLoadout');
     expect(section).toMatch(/checkpoint/i);
     expect(section).toMatch(/deliberate|by design|intended/i);
+  });
+
+  it('the GDD records that a Hangar War deployment loadout is gated at apply time', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/Hangar War/i);
+    expect(section).toContain('applyHangarWarDeployment');
+    expect(section).toContain('capDropIdsToSlotPool');
+    expect(section).toMatch(/only the first six distinct counted kinds/i);
+  });
+
+  it('docs/BALANCING.md records the Hangar War deployment gate', () => {
+    const section = balancingSection(balancing);
+    expect(section).toMatch(/Hangar War/i);
+    expect(section).toContain('applyHangarWarDeployment');
+    expect(section).toContain('capDropIdsToSlotPool');
+    expect(section).toMatch(/never begin a run above/i);
   });
 });
 

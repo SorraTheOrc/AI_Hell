@@ -112,6 +112,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'PowerUpLeveling',
       'PowerUpsCombat',
       'PowerUpsUtility',
+      'Rhythm',
       'WeaponLeveling',
       'Weapons',
     ]);
@@ -125,6 +126,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymPowerUpLeveling',
       'GymPowerUpsCombat',
       'GymPowerUpsUtility',
+      'GymRhythm',
       'GymWeaponLeveling',
       'GymWeapons',
     ]);

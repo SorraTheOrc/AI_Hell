@@ -31,11 +31,18 @@ const HUMAN_INPUT: Partial<BotHumanInputTunables> = {
   thrustPressMaxMsLong: 200,
 };
 
-/** A distinctive, risky human tuning so the default bot visibly differs. */
+/** A distinctive, risky human tuning so the default bot visibly differs.
+ *
+ * These values are exactly reachable by the fit's risk/appetite lerps
+ * (`dangerMargin` 45 and `survivalUrgencyPort` 4 are the risk=1 end), so the
+ * synthetic human run has a non-default fixed point now that the retired
+ * `wallMargin` knob can no longer carry the distinction
+ * (AH-0MVT2W3RS009ZB2X).
+ */
 const HUMAN_TUNABLES = resolveCompetentTunables({
   engagementRange: 70,
-  dangerMargin: 40,
-  wallMargin: 20,
+  dangerMargin: 45,
+  survivalUrgencyPort: 4,
 });
 
 /**
@@ -48,7 +55,7 @@ function syntheticHumanRun(seed = 42, ticks = 600) {
   let run = recordingRunFromRecords(
     runArena(createCompetentBotBrain({ tunables }), { seed, ticks, humanInput }).records,
   );
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 8; i += 1) {
     const fit = fitStyle(extractStyleFeatures(run));
     humanInput = fit.humanInput;
     tunables = fit.tunables;

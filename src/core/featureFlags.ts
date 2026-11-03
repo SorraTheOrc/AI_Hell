@@ -1,21 +1,24 @@
 /**
  * Feature flags (AH-0MVZ0VGGQ0032KDP).
  *
- * The **Hangar War** outer loop is shipped but currently does not work, so its
- * player-visible entry surfaces — the main-menu control and the idle-attract
- * Hangar War traversal — sit behind a feature flag that is **OFF by default**.
- * Scenes stay registered (the dev gyms and capture pipeline keep reaching
- * them); only the entry surfaces are gated.
+ * The **Hangar War** outer loop's player-visible entry surfaces — the
+ * main-menu control and the idle-attract Hangar War traversal — sit behind a
+ * persisted feature flag. The flag was introduced **OFF by default** while the
+ * feature did not work; the defect is now fixed and verified end to end
+ * (AH-0MVZ4S9ZU004GXUM), so the flag is **ON by default** and the shipped
+ * (production) build runs the Hangar War. Scenes stay registered either way.
  *
- * Two rules make the flag safe to ship:
+ * Two rules keep the flag safe to ship:
  *
- * 1. **Fail-closed in production.** {@link resolveHangarWarEnabled} ANDs the
- *    persisted value with {@link isDevBuild}, so a production build is inert —
- *    a stored `true` (or a hand-edited `localStorage` record) can never enable
- *    the feature. This mirrors the `shareTelemetryDev` / `devMode.ts` pattern.
+ * 1. **One effective value, every build.** {@link resolveHangarWarEnabled} is
+ *    the single resolver: it returns the persisted value, which defaults to
+ *    ON. A production build therefore runs the Hangar War, and the flag acts
+ *    as a kill switch rather than a build gate.
  * 2. **The enable surface is dev-only.** {@link setHangarWarEnabled} and
- *    {@link toggleHangarWarEnabled} are no-ops outside a dev build, so no
- *    production UI can turn the feature on.
+ *    {@link toggleHangarWarEnabled} are no-ops outside a dev build, so a
+ *    shipped build always uses the default (ON) and no production UI can flip
+ *    it. The decision to ship the feature ON is recorded on
+ *    AH-0MVZ0VGGQ0032KDP.
  *
  * Persistence follows the `settingsStore` pattern: a typed record under one
  * `localStorage` key, merge-over-defaults on load, corrupt-JSON fallback and an
@@ -42,9 +45,15 @@ export interface FeatureFlagEnv {
 /** `localStorage` key holding the persisted feature flags. */
 export const FEATURE_FLAGS_STORAGE_KEY = 'ai_hell_feature_flags';
 
-/** Built-in defaults: every gated feature starts OFF. */
+/**
+ * Built-in defaults.
+ *
+ * `hangarWar` is **ON**: the flow is verified end to end in the shipped game
+ * (AH-0MVZ4S9ZU004GXUM), so the outer loop ships enabled. The flag is kept as
+ * a kill switch — a persisted `false` disables the entry surfaces again.
+ */
 export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlagsRecord> = {
-  hangarWar: false,
+  hangarWar: true,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -66,11 +75,11 @@ function storage(): Storage | null {
 // ── Public API ────────────────────────────────────────────────────────
 
 /**
- * True when this is a Vite **dev** build — the only build in which a gated
- * feature can be enabled at all.
+ * True when this is a Vite **dev** build — the only build in which a feature
+ * flag can be flipped from a UI ({@link setHangarWarEnabled}).
  *
  * Fails closed on a contradictory environment (both `DEV` and `PROD` true),
- * so an ambiguous build can never expose a broken feature.
+ * so an ambiguous build can never expose a developer-only control.
  *
  * @param env - The build environment, defaulting to `import.meta.env`.
  */
@@ -128,45 +137,48 @@ export function saveFeatureFlags(flags: FeatureFlagsRecord): void {
 }
 
 /**
- * Resets every feature flag to its built-in default (all OFF) and persists it.
- * No-op when storage is unavailable.
+ * Resets every feature flag to its built-in default (`hangarWar` ON) and
+ * persists it. No-op when storage is unavailable.
  */
 export function resetFeatureFlags(): void {
   saveFeatureFlags({ ...DEFAULT_FEATURE_FLAGS });
 }
 
 /**
- * The effective Hangar War flag: ON only in a **dev build** whose persisted
- * record says ON. A production build always resolves OFF, regardless of the
- * stored value (production-inert, fail-closed).
+ * The effective Hangar War flag: the persisted value, which defaults to ON.
  *
- * @param env - The build environment, defaulting to `import.meta.env`.
+ * This is the **single** resolver for the flag and it is build-agnostic on
+ * purpose: the shipped (production) build runs the Hangar War because the
+ * flow now works (AH-0MVZ4S9ZU004GXUM), and the persisted `false` is the kill
+ * switch. Enabling or disabling it from a UI is still dev-only — see
+ * {@link setHangarWarEnabled}.
+ *
  * @param flags - The flag record, defaulting to the persisted one.
  */
 export function resolveHangarWarEnabled(
-  env: FeatureFlagEnv = import.meta.env,
   flags: FeatureFlagsRecord = loadFeatureFlags(),
 ): boolean {
-  return isDevBuild(env) && flags.hangarWar === true;
+  return flags.hangarWar === true;
 }
 
 /**
  * Enables or disables the Hangar War entry surfaces. **Dev builds only**: in
- * a production build nothing is stored and the effective value stays OFF, so
- * no production UI can turn the feature on.
+ * a production build nothing is stored, so the shipped default (ON) is what
+ * players get and no production UI can flip the kill switch.
  *
  * @param enabled - The requested value.
  * @param env - The build environment, defaulting to `import.meta.env`.
- * @returns The resulting effective value.
+ * @returns The resulting effective value (the unchanged shipped default when
+ *   the write is refused outside a dev build).
  */
 export function setHangarWarEnabled(
   enabled: boolean,
   env: FeatureFlagEnv = import.meta.env,
 ): boolean {
-  if (!isDevBuild(env)) return false;
+  if (!isDevBuild(env)) return resolveHangarWarEnabled();
   const next: FeatureFlagsRecord = { ...loadFeatureFlags(), hangarWar: enabled };
   saveFeatureFlags(next);
-  return resolveHangarWarEnabled(env, next);
+  return resolveHangarWarEnabled(next);
 }
 
 /**

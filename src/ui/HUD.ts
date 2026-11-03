@@ -47,7 +47,12 @@
  * `scenes/core/hudWiring.ts`), the HUD:
  *
  * - renders an explicit `Loadout n/6` budget read-out;
- * - marks every non-slot row (`always available` / `charges only`); and
+ * - renders every slot-counted row **first**, as the loadout list, and groups
+ *   the non-slot rows below a `Not in loadout` heading so the visible loadout
+ *   list never contains more rows than the model says are equipped
+ *   (AH-0MVVF0POV001JNKX);
+ * - marks every non-slot row (`always available` / `charges only`) and dims it;
+ *   and
  * - renders a row for every slot-held kind, including a temporary one-shot
  *   (Orbital Strike, Smart Bomb) whose pre-existing rule hid it.
  *
@@ -122,6 +127,17 @@ export const SLOT_MARKER_ALWAYS_AVAILABLE = 'always available';
  * temporary level window expired — the row is a charge pool, not a slot.
  */
 export const SLOT_MARKER_CHARGES_ONLY = 'charges only';
+
+/**
+ * Heading rendered before the non-slot rows, separating them from the six-slot
+ * loadout list (AH-0MVVF0POV001JNKX). The rows above the heading are the only
+ * ones that occupy a slot, so a player counting the upgrade list can stop at
+ * the separator.
+ */
+export const NON_SLOT_SECTION_LABEL = 'Not in loadout';
+
+/** Name of the non-slot section heading Text object (test/debug access). */
+export const NON_SLOT_SECTION_NAME = 'hud-non-slot-heading';
 
 /**
  * Opacity applied to a non-slot row (icon, label and value) so it visually
@@ -401,15 +417,40 @@ export class HUD extends Phaser.GameObjects.Container {
       let row = 0;
       // One row per power-up/weapon: the shared registry merges permanent
       // and temporary state so a field pickup never adds a second row.
-      for (const entry of this._buildPowerUpRows()) {
+      //
+      // Slot-counted rows come first, as the loadout list; non-slot rows are
+      // grouped below a heading so a player counting the list can never read
+      // them as equipped upgrades (AH-0MVVF0POV001JNKX).
+      const powerUpRows = this._buildPowerUpRows();
+      for (const entry of powerUpRows) {
+        if (entry.slotCounted === false) continue;
         this._addRow(entry, row);
         row += 1;
       }
-      // Render active weapon rows after power-up rows.
+      const state = this._slotState();
       const weapons = this._registry.activeWeapons();
       for (const weapon of weapons) {
+        if (!this._weaponRowSlotCounted(weapon.weaponId, state)) continue;
         this._addWeaponRow(weapon, row);
         row += 1;
+      }
+      const nonSlotPowerUps = powerUpRows.filter(
+        (entry) => entry.slotCounted === false,
+      );
+      const nonSlotWeapons = weapons.filter(
+        (weapon) => !this._weaponRowSlotCounted(weapon.weaponId, state),
+      );
+      if (nonSlotPowerUps.length > 0 || nonSlotWeapons.length > 0) {
+        this._addNonSlotSectionHeading(row);
+        row += 1;
+        for (const entry of nonSlotPowerUps) {
+          this._addRow(entry, row);
+          row += 1;
+        }
+        for (const weapon of nonSlotWeapons) {
+          this._addWeaponRow(weapon, row, false);
+          row += 1;
+        }
       }
       if (this._showLives) {
         this._livesLabel.setVisible(true);
@@ -539,6 +580,35 @@ export class HUD extends Phaser.GameObjects.Container {
   }
 
   // ── Rendering helpers ─────────────────────────────────────────────
+
+  /**
+   * Whether a weapon row's kind occupies one of the six slots. Derived from the
+   * shared model only; a standalone HUD without a provider treats every row as
+   * equipped, preserving the pre-existing reading (§ AH-0MVVJRRN10038VFR).
+   */
+  private _weaponRowSlotCounted(
+    weaponId: string,
+    state: PowerUpSlotState | null,
+  ): boolean {
+    return state ? isSlotCountedHeldKind(weaponId, state) : true;
+  }
+
+  /**
+   * Draws the heading that separates the loadout rows from the non-slot rows
+   * (AH-0MVVF0POV001JNKX). The non-slot rows below it never hold a slot.
+   */
+  private _addNonSlotSectionHeading(row: number): void {
+    const heading = new Phaser.GameObjects.Text(
+      this.scene,
+      ICON_X,
+      this._rowY(row) + ROW_HEIGHT * 0.25,
+      NON_SLOT_SECTION_LABEL,
+      { ...TEXT_STYLE, color: POWER_UP_GREY_COLOUR_CSS },
+    );
+    heading.name = NON_SLOT_SECTION_NAME;
+    this.add(heading);
+    this._rowObjects.push(heading);
+  }
 
   /** Builds one display row (icon + label + value) from a HUD entry. */
   private _addRow(entry: HUDEntry, row: number): void {
@@ -911,21 +981,37 @@ export class HUD extends Phaser.GameObjects.Container {
     id: string;
     label: string;
     slotCounted: boolean;
+    group: 'loadout' | 'non-slot';
     marker?: string;
   }> {
     const state = this._slotState();
-    return [
+    const groupOf = (slotCounted: boolean): 'loadout' | 'non-slot' =>
+      slotCounted ? 'loadout' : 'non-slot';
+    const rows = [
       ...this._rows.map((row) => ({
         id: row.id,
         label: row.label,
         slotCounted: row.slotCounted ?? true,
+        group: groupOf(row.slotCounted ?? true),
         ...(row.marker !== undefined ? { marker: row.marker } : {}),
       })),
-      ...this._weaponRows.map((row) => ({
-        id: row.id,
-        label: row.label,
-        slotCounted: state ? isSlotCountedHeldKind(row.id, state) : true,
-      })),
+      ...this._weaponRows.map((row) => {
+        const slotCounted = state
+          ? isSlotCountedHeldKind(row.id, state)
+          : true;
+        return {
+          id: row.id,
+          label: row.label,
+          slotCounted,
+          group: groupOf(slotCounted),
+        };
+      }),
+    ];
+    // Mirror the rendered grouping: the contiguous loadout list first, then the
+    // non-slot rows (AH-0MVVF0POV001JNKX).
+    return [
+      ...rows.filter((row) => row.group === 'loadout'),
+      ...rows.filter((row) => row.group === 'non-slot'),
     ];
   }
 
@@ -942,7 +1028,11 @@ export class HUD extends Phaser.GameObjects.Container {
   // ── Weapon row rendering ──────────────────────────────────────────
 
   /** Builds one weapon display row (icon + name + value). */
-  private _addWeaponRow(weapon: WeaponEffect, row: number): void {
+  private _addWeaponRow(
+    weapon: WeaponEffect,
+    row: number,
+    slotCounted = true,
+  ): void {
     const y = this._rowY(row);
 
     // Weapon icon.
@@ -982,5 +1072,12 @@ export class HUD extends Phaser.GameObjects.Container {
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
     this._weaponRows.push({ id: weapon.weaponId, label });
+    if (!slotCounted) {
+      // A weapon row that holds no slot (only reachable outside the shipped
+      // wiring) recedes like the power-up non-slot rows.
+      icon.setAlpha(NON_SLOT_ROW_ALPHA);
+      name.setAlpha(NON_SLOT_ROW_ALPHA);
+      value.setAlpha(NON_SLOT_ROW_ALPHA);
+    }
   }
 }

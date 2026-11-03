@@ -17,6 +17,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  INERT_WORLD_HAZARD_ARCHETYPES,
+  isEligibleAutoTarget,
+} from '../../utils/targetEligibility';
+import {
   ORBITAL_STRIKE_EXCLUDED_ARCHETYPES,
   isOrbitalStrikeTarget,
   selectOrbitalStrikeTarget,
@@ -86,5 +90,32 @@ describe('Orbital Strike target rule — nearest enemy (AH-0MVU3341U001B40T)', (
         entity('lane-traffic', { x: ORIGIN.x + 5, y: ORIGIN.y }),
       ),
     ).toBe(true);
+  });
+});
+
+describe('Orbital Strike delegates to the shared auto-target rule (AH-0MVVHAAUJ0080M9M)', () => {
+  it('reads the shared inert-hazard list instead of defining its own copy', () => {
+    // Identity, not just equal contents: a copied array would be a second
+    // source of truth and this fails.
+    expect(ORBITAL_STRIKE_EXCLUDED_ARCHETYPES).toBe(
+      INERT_WORLD_HAZARD_ARCHETYPES,
+    );
+  });
+
+  it('classifies every candidate exactly as the shared auto-target rule does', () => {
+    const candidates: StrikeTargetEntity[] = [
+      entity('asteroid', { x: 1, y: 0 }),
+      entity('scout', { x: 2, y: 0 }),
+      entity('lane-traffic', { x: 3, y: 0 }),
+      entity(undefined, { x: 4, y: 0 }),
+      entity('tank', { x: 5, y: 0 }, false),
+      entity('asteroid', { x: 6, y: 0 }, false),
+    ];
+
+    for (const candidate of candidates) {
+      expect(isOrbitalStrikeTarget(candidate)).toBe(
+        isEligibleAutoTarget(candidate),
+      );
+    }
   });
 });

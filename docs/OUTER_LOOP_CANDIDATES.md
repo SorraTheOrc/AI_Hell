@@ -90,8 +90,9 @@ shared loadout slots** (§4.4, any mix of power-up and weapon kinds) plus the tw
 a **variety of six upgrades plus Extra Life and Mystery UFO** inside a
 deployment. Stripping that variety to create the outer loop's scarcity would
 gut the middle loop, which is the opposite of the intent. *Cost:* the first ten
-minutes are sparser in *fleet* terms (one hull, one starting weapon), so the
-opening hex must still be fun flown with the shipped run kit.
+minutes are sparser in *fleet* terms (one hull and its starter weapon, owned
+but not equipped by default), so the opening hex must still be fun flown with
+the shipped run kit.
 
 **Rule 2 — the boss wields it before you own it.** Mini-bosses can **introduce
 new upgrades and weapon types** by using them against the player. An upgrade or
@@ -107,9 +108,9 @@ before it reads as a reward.
 | Candidate | Rule 1 — reduced starting kit | Rule 2 — boss demonstrates, then grants |
 |-----------|-------------------------------|-----------------------------------------|
 | **Candidate A — Contested Regions / Home World** | Every new ship leaves home with **no upgrades** (A already rotates unupgraded ships onto the line) | A region's mini-boss demonstrates the region's signature weapon; the stationed-ship upgrade is earned by beating it |
-| **Candidate B — Salvage Fleet** | The hangar starts with **one basic hull and one starting weapon**; everything else is bought | A mini-boss's weapon appears in the hangar tree only after that mini-boss has been defeated wielding it |
+| **Candidate B — Salvage Fleet** | The hangar starts with **one basic hull and one starting weapon** (owned; the default loadout is empty); everything else is bought | A mini-boss's weapon appears in the hangar tree only after that mini-boss has been defeated wielding it |
 | **Candidate C — Signal Decode** | The codex starts **empty**, so the campaign starts plain and mutates as it is decoded | The boss's phases *are* the demonstration; each decoded rule unlocks the behaviour/weapon the player has just survived |
-| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, one starting weapon, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | A hex boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
+| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, its starting weapon owned but **not equipped**, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | A hex boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
 
 ---
 
@@ -205,7 +206,7 @@ claimed.
   a region's aggression level selects/perturbs the same curve the campaign
   already uses, so region difficulty needs no parallel scaling system.
 - **Mini-boss rewards (`MiniBoss` / §4.4.4)** — each region's deployment ends on
-  its mini-boss and its upgrade-or-unlock reward, which is exactly how a ship
+  its mini-boss and its spin-the-wheel upgrade reward (§4.4.4), which is exactly how a ship
   gets strong enough to be left guarding a region.
 - **Bot / attract mode** — the same survival-first `decideBotIntent` heuristic
   becomes the **automated pilot** defending a region, and it traverses the map
@@ -411,14 +412,14 @@ every run. The map never changes; the thing that changes is **what you own**.
   the same defensive-parse/injectable-store pattern.
 - **Minerals / power-up levels** — the run's mineral economy is unchanged; the
   banked balance is the *persistent* echo of it, and the mini-boss
-  upgrade-or-unlock reward (§4.4.4) already produces the "cores" that get
+  spin-the-wheel upgrade reward (§4.4.4) already produces the "cores" that get
   banked.
 - **Leaderboard (`src/core/Leaderboard.ts`)** — per-run score continues to the
   existing leaderboard; the hangar can also show a best-fleet/best-score line.
 - **Difficulty curves (`src/data/difficulty-curves.csv`)** — the threat tiers
   are the same curve vocabulary; the final assault is the curve at its maximum.
-- **Mini-boss rewards** — their upgrade-or-unlock choice is reused for the run
-  and their defeat is the extraction point.
+- **Mini-boss rewards** — their spin-the-wheel upgrade reward (§4.4.4) is
+  reused for the run and their defeat is the extraction point.
 - **Bot / attract mode** — the bot can bank salvage, buy a hangar upgrade and
   pick a hull in demo mode (see *Gym testability and the bot*).
 
@@ -512,8 +513,12 @@ fix it.
 
 - **Rule 1 — reduced starting kit.** The hangar starts with **one basic hull and
   one starting weapon** and no modifiers; every other hull, weapon and modifier
-  is earned. The shipped 10-level campaign therefore opens with a deliberately
-  thin loadout, and the run's own mineral/power-up economy does the rest.
+  is earned. The starting weapon is **owned**, not equipped: the default
+  deployment loadout is empty, so a run starts with only the ship's permanent
+  cannon and equipping the starter is the player's choice (producer decision,
+  AH-0MVZJ6V1J001DA9D). The shipped 10-level campaign therefore opens with a
+  deliberately thin loadout, and the run's own mineral/power-up economy does the
+  rest.
 - **Rule 2 — the boss wields it first.** A new weapon or upgrade is **not** in
   the hangar tree until its mini-boss has been defeated: the boss demonstrates
   it as an attack (or carries it visibly), and its defeat both **drops the core**
@@ -816,7 +821,7 @@ hangar survives — that is what winning this hell looks like.
   aggression selects/perturbs the same curve, so hex difficulty needs no second
   scaling system.
 - **Mini-boss rewards (`MiniBoss`, §4.4.4)** — the hex boss's
-  upgrade-or-unlock reward is the discovery channel (Rule 2) as well as the
+  spin-the-wheel upgrade reward is the discovery channel (Rule 2) as well as the
   extraction point.
 - **Bot / attract mode** — the survival-first `decideBotIntent` heuristic
   supplies the **defender's rating** (it is never flown live in defence, so a
@@ -878,7 +883,7 @@ replace storage behind the same injectable interface (§6.6).
   40–60 minutes** for a semi-skilled player: six ≈5-minute deployments (≈30
   minutes) plus build/salvage time on the hangar and the cost of a few lost
   attempts. **Ring 2 is larger — 12 hexes** — so it lands at ≈60 minutes of
-  deployments plus 10–40 minutes of builds and losses (**≈70–100 minutes**).
+  deployments plus 10–40 minutes of builds and losses (**≈90–120 minutes** with the wrap-aware bot).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.
@@ -1039,12 +1044,12 @@ wasted).
 ### Progression rules
 
 - **Rule 1 — reduced starting kit.** The **fleet** starts as B's does — one basic
-  hull, one starting weapon, no hangar modifiers — and the *first* hex is taken
-  with that bare fleet, so the fleet's range is earned outward from nothing. The
-  **run is not reduced**: it keeps the shipped **six shared loadout slots** plus
-  the two slot-free kinds, **Extra Life** and **Mystery UFO**, so the opening
-  deployment is the game players already know and the scarcity lives in what the
-  hangar owns between deployments.
+  hull, its starting weapon owned but **not equipped**, no hangar modifiers — and
+  the *first* hex is taken with that bare fleet, so the fleet's range is earned
+  outward from nothing. The **run is not reduced**: it keeps the shipped **six
+  shared loadout slots** plus the two slot-free kinds, **Extra Life** and
+  **Mystery UFO**, so the opening deployment is the game players already know
+  and the scarcity lives in what the hangar owns between deployments.
 - **Rule 2 — the boss wields it first.** A hex boss demonstrates the hex's new
   weapon or power-up against the player; defeating it both **captures the hex**
   and **adds the entry to the hangar**, where it is then bought with salvage.
@@ -1173,16 +1178,16 @@ the shipped hangar slice and **§8.2** specifies the shipped first hex ring
 the measured ring timings). The documentation of record was published by
 **AH-0MVUXCC5J0028OGQ**.
 
-### Build status — entry surfaces gated (AH-0MVZ0VGGQ0032KDP)
+### Build status — shipped, flag ON by default (AH-0MVZ4S9ZU004GXUM)
 
-The build is shipped but the Hangar War **currently does not work**, so its
-player-visible entry surfaces are temporarily **gated behind a default-OFF
-feature flag** (`ai_hell_feature_flags.hangarWar`, resolved through
-`src/core/featureFlags.ts`): the menu entry and the idle-attract Hangar War
-traversal are hidden, while the Hangar War scenes stay registered for the dev
-gyms and the capture pipeline. The flag resolves OFF in every production build
-regardless of any stored value; only a dev build can turn it on (the
-pointer-only `🛠 Hangar War (dev): ON/OFF` footer toggle). Nothing in the design
-of record above changes — the gate is an interim containment measure until the
-defects are fixed, at which point the flag is turned on (or removed) by a
-follow-on work item.
+The Hangar War ships enabled. The entry surfaces were briefly gated behind a
+default-OFF feature flag (AH-0MVZ0VGGQ0032KDP) while the loop was broken; the
+defect — `DefenceReportScene` was started by `PlayScene` but never registered in
+the shipped scene array, and the hangar had no route to the hex map — is fixed
+and the flow is verified end to end through `buildGameConfig().scene`
+(`src/scenes/hangarWarFlow.integration.test.ts`). The persisted flag
+`ai_hell_feature_flags.hangarWar` is kept as a **kill switch**: it now defaults
+to ON and `resolveHangarWarEnabled()` honours the stored value in every build,
+so the shipped (production) build runs the Hangar War. Only flipping it from a
+UI remains dev-gated (the pointer-only `🛠 Hangar War (dev): ON/OFF` footer
+toggle). Nothing in the design of record above changes.

@@ -4,7 +4,7 @@
  *
  * The Heavy Slug is the catalogue's heaviest round — one huge, slow, deep-red
  * `heavy-shell` per shot. It shipped silhouette-only, like the other
- * unlock-pool weapons. This guard pins the parts of its completed feel package
+ * net-new weapons. This guard pins the parts of its completed feel package
  * that are not observable through the scene seams:
  *
  * - both cues are baked manifest entries with their reserved seeds

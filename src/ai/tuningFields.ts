@@ -92,7 +92,6 @@ export const BOT_TUNING_NUMERIC_FIELDS: readonly BotTuningFieldSpec[] = [
   { group: 'competent', key: 'engagementRange', label: 'engagementRange', min: 0, max: 600, step: 5, description: 'Preferred standoff (px) for combat targets. Inside it the engage behaviour holds its fire axis (aims and coasts) rather than closing further.' },
   { group: 'competent', key: 'collectArrivalRadius', label: 'collectArrivalRadius', min: 1, max: 100, step: 1, description: 'Distance (px) within which a collection target counts as reached.' },
   { group: 'competent', key: 'dangerMargin', label: 'dangerMargin', min: 0, max: 300, step: 5, description: 'Distance (px) the bot keeps from a hazard (keep-away clearance).' },
-  { group: 'competent', key: 'wallMargin', label: 'wallMargin', min: 0, max: 200, step: 5, description: 'Distance (px) from an edge treated as a wall hazard.' },
   { group: 'competent', key: 'threatRadius', label: 'threatRadius', min: 0, max: 300, step: 5, description: "Distance (px) within which the ship's centre is at risk from a shot." },
   { group: 'competent', key: 'longTravelDistance', label: 'longTravelDistance', min: 0, max: 1000, step: 10, description: 'Distance (px) beyond which the steer objective is treated as a long-travel leg (which lengthens thrust bursts).' },
   { group: 'competent', key: 'repositionRadius', label: 'repositionRadius', min: 0, max: 600, step: 5, description: 'Distance (px) from the playfield centre within which the reposition fallback idles.' },

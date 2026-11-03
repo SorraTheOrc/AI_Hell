@@ -16,9 +16,12 @@ import { buildBotWorld } from '../worldModel';
 import { boss, bullet, drop, enemy, makeSnapshot, mineral } from '../testFixtures';
 import {
   COMPETENT_GOAL_IDS,
+  bestWeightedTarget,
   createCompetentGoals,
+  nearestTarget,
   survivalUrgency,
 } from './goals';
+import { botWrapWorld } from '../wrapGeometry';
 import { COMPETENT_BOT_TUNABLES } from './tunables';
 import type { CompetentBotTunables } from './tunables';
 import { createCompetentBotBrain } from './index';
@@ -240,23 +243,25 @@ describe('boss-focus band (AH-0MVBMESIE003YQ68 · AC2)', () => {
 
   it('sources its band base from the competent tunables', () => {
     expect(typeof BOSS_BASE).toBe('number');
-    // At the far edge of the enemy seek range the proximity term is ~0, so
-    // the scored utility exposes the band base. Overriding the tunable must
-    // move the score — the base is read, never hard-coded in the goal.
+    // The base is read from the tunables, never hard-coded: raising it raises
+    // the same goal's utility by exactly the same amount on the same view (the
+    // wrapped-distance proximity term is identical for both instances).
     const custom = 5.25;
-    const edge = viewOf(
+    const view = viewOf(
       makeSnapshot({
         player: PLAYER,
-        boss: boss(PLAYER.x + T.enemySeekRange - 1, PLAYER.y),
+        boss: boss(680, 270),
       }),
     );
     const customGoals = createCompetentGoals({
       ...T,
       bossBase: custom,
     } as CompetentBotTunables);
-    expect(customGoals.require('engage-boss').utility(edge)).toBeCloseTo(
-      custom,
-      2,
+    const defaultUtility = goal('engage-boss').utility(view);
+    const customUtility = customGoals.require('engage-boss').utility(view);
+    expect(customUtility - defaultUtility).toBeCloseTo(
+      custom - (BOSS_BASE as number),
+      6,
     );
   });
 
@@ -313,14 +318,21 @@ describe('boss-focus band (AH-0MVBMESIE003YQ68 · AC2)', () => {
   });
 
   it('is invalid and achieved once the boss leaves the enemy seek range', () => {
+    // The default seek range (800) exceeds the maximum torus separation, so
+    // narrow it for this lifecycle test: a boss 200 px away on the torus is
+    // outside a 100 px seek range.
+    const narrow = createCompetentGoals({
+      ...T,
+      enemySeekRange: 100,
+    } as CompetentBotTunables);
     const view = viewOf(
       makeSnapshot({
         player: PLAYER,
-        boss: boss(PLAYER.x + T.enemySeekRange + 200, PLAYER.y),
+        boss: boss(PLAYER.x + 200, PLAYER.y),
       }),
     );
-    expect(bossGoal().isValid!(view)).toBe(false);
-    expect(bossGoal().isAchieved!(view)).toBe(true);
+    expect(narrow.require('engage-boss').isValid!(view)).toBe(false);
+    expect(narrow.require('engage-boss').isAchieved!(view)).toBe(true);
   });
 });
 
@@ -418,5 +430,54 @@ describe('committed selection (AC1/AC7)', () => {
       0.1,
     );
     expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectPowerUp);
+  });
+});
+
+describe('wrapped nearest-selection (AH-0MVT2W10L003VV1U)', () => {
+  const wrap = botWrapWorld(T);
+
+  it('chooses the wrapped-nearest mineral on the x axis', () => {
+    const player = { x: 100, y: 270 };
+    // A is 800 px away on the raw line but 160 px away across the left seam;
+    // B is 300 px away on the raw line. Raw ordering would pick B.
+    const a = mineral(900, 270);
+    const b = mineral(400, 270);
+
+    const nearest = nearestTarget([a, b], player, wrap);
+    expect(nearest!.point).toBe(a);
+    expect(nearest!.distance).toBeCloseTo(160, 6);
+
+    const weighted = bestWeightedTarget(
+      [
+        { x: a.x, y: a.y, contentId: a.type },
+        { x: b.x, y: b.y, contentId: b.type },
+      ],
+      player,
+      () => 1,
+      wrap,
+    );
+    expect(weighted!.point.x).toBe(a.x);
+    expect(weighted!.point.y).toBe(a.y);
+    expect(weighted!.distance).toBeCloseTo(160, 6);
+  });
+
+  it('chooses the wrapped-nearest mineral on the y axis', () => {
+    const player = { x: 480, y: 70 };
+    // A is 460 px away on the raw line but 80 px away across the bottom seam;
+    // B is 130 px away on the raw line.
+    const a = mineral(480, 530);
+    const b = mineral(480, 200);
+    const nearest = nearestTarget([a, b], player, wrap);
+    expect(nearest!.point).toBe(a);
+    expect(nearest!.distance).toBeCloseTo(80, 6);
+  });
+
+  it('keeps today’s choice when the raw and wrapped orderings agree', () => {
+    const player = { x: 480, y: 270 };
+    const near = mineral(600, 270); // 120 px right
+    const far = mineral(700, 270); // 220 px right
+    const nearest = nearestTarget([near, far], player, wrap);
+    expect(nearest!.point).toBe(near);
+    expect(nearest!.distance).toBeCloseTo(120, 6);
   });
 });

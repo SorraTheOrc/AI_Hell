@@ -187,7 +187,7 @@ describe('Hangar slice — end to end (AH-0MVUXC2T0009Y42G)', () => {
     expect(payload.hangar.bankedMinerals).toBe(0);
     expect(payload.hangar.bankedCores).toBe(0);
 
-    // ── 2. Deploy: the starter hull and its factory weapon ──────────────
+    // ── 2. Deploy: the starter hull with no extra weapon equipped ────────
     const firstDeployment = buildHangarDeployment(payload);
     expect(firstDeployment).toMatchObject({
       hexId: null,
@@ -195,12 +195,14 @@ describe('Hangar slice — end to end (AH-0MVUXC2T0009Y42G)', () => {
       startLevel: 1,
       hullId: DEFAULT_HULL_ID,
       startingLives: DEFAULT_LIVES,
-      startingWeapons: [DEFAULT_STARTING_WEAPON_ID],
+      startingWeapons: [],
       modifiers: [],
     });
+    // The run starts with only the ship's permanent cannon: no extra weapon is
+    // equipped (AH-0MVZJ6V1J001DA9D).
     expect(applyDeployment(firstDeployment)).toEqual({
       lives: DEFAULT_LIVES,
-      equipped: [{ id: DEFAULT_STARTING_WEAPON_ID, permanent: true }],
+      equipped: [],
     });
 
     // ── 3. Bank the salvage earned at the run's checkpoint moments ───────
@@ -274,7 +276,7 @@ describe('Hangar slice — end to end (AH-0MVUXC2T0009Y42G)', () => {
     expect(equippedWeapon.ok).toBe(true);
     expect(
       equippedWeapon.payload.hangar.activeLoadout.startingWeapons,
-    ).toEqual([DEFAULT_STARTING_WEAPON_ID, 'wave_laser']);
+    ).toEqual(['wave_laser']);
     payload = equippedWeapon.payload;
 
     const afterModifier = purchaseHangarEntry(payload, 'hardened_plating');
@@ -304,19 +306,13 @@ describe('Hangar slice — end to end (AH-0MVUXC2T0009Y42G)', () => {
     expect(reloaded).not.toBeNull();
     const secondDeployment = buildHangarDeployment(reloaded!);
     expect(secondDeployment.hullId).toBe(DEFAULT_HULL_ID);
-    expect(secondDeployment.startingWeapons).toEqual([
-      DEFAULT_STARTING_WEAPON_ID,
-      'wave_laser',
-    ]);
+    expect(secondDeployment.startingWeapons).toEqual(['wave_laser']);
     expect(secondDeployment.modifiers).toEqual(['hardened_plating']);
     // The modifier's one extra life is a run stat, not a cosmetic unlock.
     expect(secondDeployment.startingLives).toBe(DEFAULT_LIVES + 1);
     expect(applyDeployment(secondDeployment)).toEqual({
       lives: DEFAULT_LIVES + 1,
-      equipped: [
-        { id: DEFAULT_STARTING_WEAPON_ID, permanent: true },
-        { id: 'wave_laser', permanent: true },
-      ],
+      equipped: [{ id: 'wave_laser', permanent: true }],
     });
 
     // ── 7. A later run banks enough for the extra hull, then redeploys ───
@@ -350,10 +346,7 @@ describe('Hangar slice — end to end (AH-0MVUXC2T0009Y42G)', () => {
     expect(thirdDeployment.speedMultiplier).toBe(0.85);
     // Bulwark's four lives plus Hardened Plating, capped at the run's maximum.
     expect(thirdDeployment.startingLives).toBe(MAX_LIVES);
-    expect(thirdDeployment.startingWeapons).toEqual([
-      DEFAULT_STARTING_WEAPON_ID,
-      'wave_laser',
-    ]);
+    expect(thirdDeployment.startingWeapons).toEqual(['wave_laser']);
     expect(thirdDeployment.modifiers).toEqual(['hardened_plating']);
 
     // One versioned key carries the whole slice — nothing else was written.

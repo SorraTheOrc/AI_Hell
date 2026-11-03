@@ -164,6 +164,43 @@ export interface HangarDeployRow {
   actionable: boolean;
 }
 
+/**
+ * The `⌗ HEX MAP` navigation row: the one click from what the player owns to
+ * what the player holds.
+ *
+ * `HexMapScene` has carried the mirror-image `◀ HANGAR` row since
+ * AH-0MVUXCAG90086LH2, but the hangar had no way back — a player entering the
+ * Hangar War from the menu could only launch a blind deployment at the weakest
+ * hex and never saw the ring intel the map exists to show. The design of
+ * record is "the map and hangar one click apart" (GDD §8.2), so this row makes
+ * that true in both directions.
+ */
+export interface HangarMapRow {
+  /** Row key (`map`). */
+  key: 'map';
+  /** Full row text as rendered. */
+  label: string;
+  /** Always true: the map is always reachable. */
+  actionable: boolean;
+}
+
+/** Row key of the hangar's navigation row to the hex map. */
+export const HANGAR_MAP_ROW_KEY = 'map';
+
+/**
+ * Builds the `⌗ HEX MAP` navigation row (pure).
+ *
+ * The map is always reachable — it is a navigation action, not an economy one,
+ * so it never depends on salvage, ring progress or ownership.
+ */
+export function buildHangarMapRow(): HangarMapRow {
+  return {
+    key: HANGAR_MAP_ROW_KEY,
+    label: '⌗ HEX MAP — open the ring',
+    actionable: true,
+  };
+}
+
 /** The complete rendered state of the hangar screen (pure data). */
 export interface HangarScreenModel {
   /** Screen title. */
@@ -182,6 +219,8 @@ export interface HangarScreenModel {
   modifierOptions: HangarModifierOption[];
   /** The ▶ DEPLOY row (the deployment this loadout launches). */
   deployRow: HangarDeployRow;
+  /** The `⌗ HEX MAP` navigation row (one click to what the player holds). */
+  mapRow: HangarMapRow;
   /**
    * Keys of the rows that can be activated, in reading order — exactly the
    * rows registered with the shared `FocusManager` (disabled rows are never
@@ -334,10 +373,11 @@ export function buildHangarWeaponOptions(
       name: entry.name,
       equipped,
       label: `LOADOUT ${entry.name}${equipped ? ' — EQUIPPED' : ''}`,
-      // The last equipped weapon can never be removed: a deployment always
-      // starts armed (economy rule), so the row is disabled instead of
-      // silently doing nothing.
-      actionable: !equipped || equippedIds.size > 1,
+      // Every owned weapon is toggleable, including the last equipped one:
+      // the player may deploy with no extra weapon at all, in which case the
+      // run starts with only the ship's permanent cannon
+      // (AH-0MVZJ6V1J001DA9D).
+      actionable: true,
     });
   }
   return options;
@@ -427,12 +467,16 @@ export function buildHangarScreenModel(
   const weaponOptions = buildHangarWeaponOptions(payload, catalogue);
   const modifierOptions = buildHangarModifierOptions(payload, catalogue);
   const deployRow = buildHangarDeployRow(payload, catalogue);
+  const mapRow = buildHangarMapRow();
   const focusOrder = [
     ...unlockRows.filter((row) => row.actionable),
     ...hullOptions.filter((row) => row.actionable),
     ...weaponOptions.filter((row) => row.actionable),
     ...modifierOptions.filter((row) => row.actionable),
     deployRow,
+    // The navigation row follows the primary action, mirroring `HexMapScene`'s
+    // convention of placing its own navigation row last in the focus order.
+    mapRow,
   ].map((row) => row.key);
   return {
     title: HANGAR_SCREEN_TITLE,
@@ -443,6 +487,7 @@ export function buildHangarScreenModel(
     weaponOptions,
     modifierOptions,
     deployRow,
+    mapRow,
     focusOrder,
   };
 }
@@ -524,8 +569,10 @@ export function equipHangarHull(
 /**
  * Toggles one owned starting weapon in the active loadout (pure).
  *
- * Removing the last equipped weapon is refused (the fleet always deploys
- * armed), so the result reports `ok: false` and the payload is unchanged.
+ * Every toggle is allowed, including removing the last equipped weapon: an
+ * empty starting-weapon selection is a legal loadout, so the player can deploy
+ * with only the ship's permanent cannon (AH-0MVZJ6V1J001DA9D). The result
+ * reports whether the requested change actually landed.
  */
 export function toggleHangarWeapon(
   payload: HangarWarPayload,
@@ -533,9 +580,6 @@ export function toggleHangarWeapon(
 ): HangarUpdateResult {
   const current = resolveActiveLoadout(payload.hangar).startingWeapons;
   const equipped = current.includes(weaponId);
-  if (equipped && current.length <= 1) {
-    return { ok: false, reason: null, payload: clonePayload(payload) };
-  }
   const requested = equipped
     ? current.filter((id) => id !== weaponId)
     : [...current, weaponId];
@@ -600,6 +644,8 @@ export interface HangarScreenHandlers {
   onToggleModifier(modifierId: string): void;
   /** Launch a deployment at `hexId` (the ▶ DEPLOY row). */
   onDeploy(hexId: string | null): void;
+  /** Open the hex map (the `⌗ HEX MAP` row). */
+  onOpenMap(): void;
 }
 
 /** One rendered row, exposed for tests and screen queries. */
@@ -838,6 +884,16 @@ export function renderHangarScreen(
       : undefined,
   );
 
+  // ── Hex map (navigation, directly above the primary action) ──
+  addRow(
+    LEFT_X,
+    GAME_HEIGHT - 74,
+    model.mapRow.key,
+    model.mapRow.label,
+    model.mapRow.actionable,
+    handlers?.onOpenMap ? () => handlers.onOpenMap!() : undefined,
+  );
+
   objects.push(
     scene.add
       .text(GAME_WIDTH / 2, GAME_HEIGHT - 14, options?.hint ?? HANGAR_SCREEN_HINT, {
@@ -881,7 +937,13 @@ export function renderHangarScreen(
   };
 }
 
-/** The starting weapon a hangar always keeps when a loadout is emptied. */
+/**
+ * The starter weapon a fresh fleet owns (never auto-equipped).
+ *
+ * Kept as a named export for callers that need to point at the fleet's starter
+ * in the loadout selector; emptying a loadout no longer falls back to it
+ * (AH-0MVZJ6V1J001DA9D).
+ */
 export const HANGAR_FALLBACK_WEAPON_ID = STARTER_WEAPON_ID;
 
 /** Whether the fleet owns a catalogue entry (exposed for the scene/tests). */

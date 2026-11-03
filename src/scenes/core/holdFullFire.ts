@@ -11,6 +11,13 @@
  * fire cues continue at a reduced volume with **no projectiles and no
  * gameplay simulation**.
  *
+ * **Nominal cadence, not the Euclidean pattern.** The interval supplied per
+ * weapon is `Player.getFireInterval`, the legacy nominal subdivision rate. The
+ * shipped fire cadence is each weapon's Euclidean onset pattern on the same
+ * lattice (AH-0MVYA1V8Z009SHMR); while the overlay is open the real scheduler
+ * is paused, so the ghost metronome paces the nominal rate as a phase-stable
+ * stand-in rather than re-deriving every onset set.
+ *
  * Every ghost tick is derived from `src/utils/beat.ts` grid maths, never a
  * wall-clock read, so the game, every gym and the tests share one grid:
  * - AC1 — each active weapon cues at its exact beat-grid interval;

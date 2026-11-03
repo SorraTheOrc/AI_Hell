@@ -57,13 +57,16 @@
  *
  * A promo level must keep the competent bot alive and producing action for at
  * least **45 s** before the run ends — a scenario the bot dies in instantly is
- * a wasted clip. The hermetic check in
- * `src/waves/promoScenario.survival.test.ts` (harness:
- * `src/waves/promoSurvival.ts`) plays every level headlessly through the
- * shipped evaluation arena and reports its simulated action duration. The two
- * calibration knobs are this module's wave composition and the curated
- * `promo-*` presets in `src/data/bot-tuning.json` — never new spawner or
- * movement behaviour (the gym↔game parity rule stays untouched).
+ * a wasted clip. The authoritative check is
+ * `src/scenes/PromoScenarioSurvival.integration.test.ts`, which flies the real
+ * `PlayScene` for every registered promo scenario (formation descent, real
+ * collision/spawner loop) and asserts the target; the fast arena harness
+ * (`src/waves/promoSurvival.ts`, `src/waves/promoScenario.survival.test.ts`)
+ * is a bounded **smoke signal** only and makes no 45 s claim
+ * (AH-0MW06XJKA009WX4B). The two calibration knobs are this module's wave
+ * composition and the curated `promo-*` presets in `src/data/bot-tuning.json`
+ * — never new spawner or movement behaviour (the gym↔game parity rule stays
+ * untouched).
  *
  * ## Portability
  *
@@ -514,18 +517,26 @@ const AUTHORED_PROMO_LEVELS = [
     // The Pac-Man personality pursuers hunt the player between non-targeting
     // escorts: a pursuit showcase (enemies) that keeps the bot moving.
     categories: ['enemies'],
+    // Calibrated against the real PlayScene (AH-0MVI5XI73000ZVYA, AC2): the
+    // first cut lost the bot on wave 2 (39 s) with 21 pursuers still alive, so
+    // the escort/pursuer density is trimmed and a fourth pursuit wave carries
+    // the scene past the 45 s target. Composition only — same archetypes.
     waves: [
       firing([
-        group('diver', 'diver', 8, { spacingY: 28, startYMin: 140, startYMax: 280 }),
-        group('tank', 'rect', 4, { startX: ESCORT_X + 120, spacingX: 52 }),
+        group('diver', 'diver', 6, { spacingY: 28, startYMin: 140, startYMax: 280 }),
+        group('tank', 'rect', 3, { startX: ESCORT_X + 120, spacingX: 52 }),
       ], { ghosts: true }),
       firing([
-        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44, startXMin: 150, startXMax: 250 }),
+        group('tank', 'rect', 5, { spacingX: 50, spacingY: 44, startXMin: 150, startXMax: 250 }),
+        group('swarm', 'swarm', 6, { startX: ESCORT_X + 120, spacingX: 24 }),
+      ], { ghosts: true }),
+      firing([
+        group('swarm', 'swarm', 9, { spacingX: 24, startXMin: 140, startXMax: 320 }),
+        group('tank', 'rect', 4, { startX: ESCORT_X + 120, spacingX: 50 }),
+      ], { ghosts: true }),
+      firing([
+        group('diver', 'diver', 6, { spacingY: 28, startYMin: 140, startYMax: 280 }),
         group('swarm', 'swarm', 8, { startX: ESCORT_X + 120, spacingX: 24 }),
-      ], { ghosts: true }),
-      firing([
-        group('swarm', 'swarm', 12, { spacingX: 24, startXMin: 140, startXMax: 320 }),
-        group('tank', 'rect', 6, { startX: ESCORT_X + 120, spacingX: 50 }),
       ], { ghosts: true }),
     ],
   },
@@ -537,18 +548,39 @@ const AUTHORED_PROMO_LEVELS = [
     // while the fleet holds the centre (enemies) and the player sprays into
     // the incoming line (weapons).
     categories: ['enemies', 'weapons'],
+    // Calibrated against the real PlayScene (AH-0MVI5XI73000ZVYA, AC2). Two
+    // findings drove this shape: the horde itself is data-driven (the shared
+    // `grunt` enemy row — 16 homing grunts per horde wave, not wave content),
+    // and a horde on wave 1 ends the run in ~9 s regardless of how thin the
+    // escorts are. So the level now **builds to the siege**: four fleet waves
+    // establish the run and the horde pours in for the last two — still the
+    // homing-horde showcase, but with a watchable run before it. Composition
+    // only; the same archetypes and spawner flags as before.
     waves: [
       firing([
-        group('diver', 'diver', 8, { spacingY: 28, startYMin: 140, startYMax: 280 }),
-        group('scout', 'v', 6, { startX: ESCORT_X + 120 }),
-      ], { horde: true }),
-      firing([
-        group('tank', 'rect', 6, { spacingX: 52, spacingY: 46, startXMin: 160, startXMax: 260 }),
+        group('scout', 'v', 10, { spacingX: 28, spacingY: 20, startXMin: 150, startXMax: 300 }),
         group('swarm', 'swarm', 10, { startX: ESCORT_X + 120, spacingX: 24 }),
+      ]),
+      firing([
+        group('diver', 'diver', 10, { spacingY: 26, startYMin: 140, startYMax: 280 }),
+        group('tank', 'rect', 4, { startX: ESCORT_X + 120, spacingX: 52 }),
+      ]),
+      firing([
+        group('swarm', 'swarm', 14, { spacingX: 22, spacingY: 20, startXMin: 130, startXMax: 330 }),
+        group('scout', 'v', 6, { startX: ESCORT_X + 120 }),
+      ]),
+      firing([
+        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44, startXMin: 150, startXMax: 250 }),
+        group('swarm', 'swarm', 8, { startX: ESCORT_X + 120, spacingX: 24 }),
+        group('diver', 'diver', 4, { spacingY: 28, startYMin: 140, startYMax: 280 }),
+      ]),
+      firing([
+        group('scout', 'v', 4, { startX: ESCORT_X + 120 }),
+        group('tank', 'rect', 4, { startX: ESCORT_X + 160, spacingX: 52 }),
       ], { horde: true }),
       firing([
-        group('swarm', 'swarm', 12, { spacingX: 24, startXMin: 140, startXMax: 320 }),
-        group('tank', 'rect', 6, { startX: ESCORT_X + 120, spacingX: 52 }),
+        group('swarm', 'swarm', 8, { startX: ESCORT_X + 120, spacingX: 24 }),
+        group('diver', 'diver', 4, { spacingY: 28, startYMin: 140, startYMax: 280 }),
       ], { horde: true }),
     ],
   },
@@ -560,18 +592,31 @@ const AUTHORED_PROMO_LEVELS = [
     // destructible fleet, so the screen keeps producing drop opportunities
     // (pickups) while the player weaves the lanes.
     categories: ['enemies', 'pickups'],
+    // Calibrated against the real PlayScene (AH-0MVI5XI73000ZVYA, AC2): the
+    // first cut lost the bot on wave 2 (37 s) with 27 enemies alive, so the
+    // fleet is thinned (the lanes are the hazard, not the fleet) and a fourth
+    // wave keeps the pick-up stream running past the 45 s target.
+    //
+    // Recalibrated for the wrap-aware bot (AH-0MVMISF0Q00314LG): wrapping lane
+    // traffic and bullets made the earlier counts lethal again (23 s), so wave
+    // 2 and wave 4 are thinned a little further and the scenario flies the
+    // survival-first `evasive` preset instead of `cautious-collector`.
     waves: [
       firing([
-        group('tank', 'rect', 6, { spacingX: 52, spacingY: 46, startXMin: 160, startXMax: 260 }),
+        group('tank', 'rect', 4, { spacingX: 52, spacingY: 46, startXMin: 160, startXMax: 260 }),
+        group('scout', 'v', 3, { startX: ESCORT_X + 120 }),
+      ], { laneTraffic: true }),
+      firing([
+        group('swarm', 'swarm', 5, { spacingX: 24, startXMin: 140, startXMax: 320 }),
+        group('diver', 'diver', 3, { spacingY: 28 }),
+      ], { laneTraffic: true }),
+      firing([
+        group('tank', 'rect', 6, { spacingX: 50, spacingY: 44, startXMin: 150, startXMax: 250 }),
         group('scout', 'v', 4, { startX: ESCORT_X + 120 }),
       ], { laneTraffic: true }),
       firing([
-        group('swarm', 'swarm', 12, { spacingX: 24, startXMin: 140, startXMax: 320 }),
-        group('diver', 'diver', 6, { spacingY: 28 }),
-      ], { laneTraffic: true }),
-      firing([
-        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44, startXMin: 150, startXMax: 250 }),
-        group('scout', 'v', 6, { startX: ESCORT_X + 120 }),
+        group('swarm', 'swarm', 6, { spacingX: 24, startXMin: 140, startXMax: 320 }),
+        group('scout', 'v', 3, { startX: ESCORT_X + 120 }),
       ], { laneTraffic: true }),
     ],
   },
@@ -638,9 +683,9 @@ const AUTHORED_PROMO_LEVELS = [
     // flag-driven, so it works on a short promo level exactly as it does on
     // the campaign's wave 10.
     categories: ['boss', 'enemies'],
-    // A third pressure wave (AH-0MVSDMDA1003ARV5): the original two-wave
-    // prelude reached the mini-boss cordon in 44 s — just under the ≥45 s
-    // target — so the cordon now opens after three pressure waves.
+    // A fourth pressure wave (AH-0MVMISF0Q00314LG): the wrap-aware bot clears
+    // the earlier three-wave prelude in 37 s (below the ≥45 s target), so an
+    // extra pressure wave runs before the mini-boss cordon.
     waves: [
       firing([
         group('tank', 'rect', 8, { spacingX: 50, spacingY: 44, startXMin: 150, startXMax: 250 }),
@@ -649,6 +694,10 @@ const AUTHORED_PROMO_LEVELS = [
       firing([
         group('tank', 'rect', 10, { spacingX: 48, spacingY: 42, startXMin: 140, startXMax: 240 }),
         group('swarm', 'swarm', 10, { startX: ESCORT_X + 140, spacingX: 24 }),
+      ]),
+      firing([
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42, startXMin: 140, startXMax: 240 }),
+        group('diver', 'diver', 6, { spacingY: 28, startYMin: 140, startYMax: 280 }),
       ]),
       firing([
         group('tank', 'rect', 12, { spacingX: 46, spacingY: 40, startXMin: 140, startXMax: 240 }),

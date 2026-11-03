@@ -2,9 +2,11 @@
  * Hangar scene — the player-facing hangar screen of the Hangar War
  * (AH-0MVUXC1X6007KAG1, part of **Build Candidate D — Hangar War**).
  *
- * The screen sits one click from the hex map: it shows banked salvage, the
- * unlock tree (cost, owned, gated), and the deployment selector (which hull
- * and which starting weapons the next deployment carries). Design of record:
+ * The screen sits one click from the hex map: the `⌗ HEX MAP` row opens
+ * `HexMapScene` with this hangar's payload, the mirror of the map's own
+ * `◀ HANGAR` row. It shows banked salvage, the unlock tree (cost, owned, gated),
+ * and the deployment selector (which hull and which starting weapons the next
+ * deployment carries). Design of record:
  * `docs/OUTER_LOOP_CANDIDATES.md` Candidate D § UI / scene surface.
  *
  * **All state goes through the hangar-war store and the pure economy module.**
@@ -182,6 +184,7 @@ export class HangarScene extends Phaser.Scene {
       onToggleWeapon: (weaponId) => this.toggleWeapon(weaponId),
       onToggleModifier: (modifierId) => this.toggleModifier(modifierId),
       onDeploy: (hexId) => this.deploy(hexId),
+      onOpenMap: () => this.openMap(),
     });
     const key = this.pendingFocusKey;
     this.pendingFocusKey = null;
@@ -240,6 +243,27 @@ export class HangarScene extends Phaser.Scene {
     }
     this.rebuildKeepingFocus(`modifier:${modifierId}`);
     return result.ok;
+  }
+
+  /**
+   * Opens the hex map, carrying this hangar's war payload (the `⌗ HEX MAP`
+   * row).
+   *
+   * This is the mirror of `HexMapScene.openHangar()`: the map and the hangar
+   * are one click apart in **both** directions (GDD §8.2), so a player who
+   * entered the war from the menu can read the ring intel before committing to
+   * a deployment instead of only launching a blind one from the DEPLOY row.
+   * The scene key is written as a literal, like this scene's `'PlayScene'`
+   * starts, because `HexMapScene` already imports `HANGAR_SCENE_KEY` from here
+   * and importing the key back would create a module cycle.
+   */
+  openMap(): void {
+    this.scene.start('HexMapScene', {
+      payload: this.payload,
+      storage: this.storage,
+      demo: this.demo,
+      demoDwellMs: this.demoDwellMs,
+    });
   }
 
   /**

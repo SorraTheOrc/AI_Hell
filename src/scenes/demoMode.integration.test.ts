@@ -56,6 +56,11 @@ import { PlayScene } from './PlayScene';
 import { GameOverScene } from './GameOverScene';
 import { LeaderboardScene } from './LeaderboardScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
+import {
+  MINI_BOSS_WHEEL_REVEAL_HOLD_MS,
+  MINI_BOSS_WHEEL_SPIN_DURATION_MS,
+  MiniBossWheelScene,
+} from './MiniBossWheelScene';
 import { GymIndex } from './GymIndex';
 import { GYM_BOT_TUNING_SCENE_KEY, GymBotTuning } from './gym/GymBotTuning';
 import { bundledBotTuningJson } from '../core/bundledConfig';
@@ -132,6 +137,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
         GameOverScene,
         LeaderboardScene,
         MineralChoiceScene,
+        MiniBossWheelScene,
         GymIndex,
       ],
     );
@@ -274,7 +280,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
   });
 
-  // ── Mini-boss reward auto-select (AH-0MVJ8U79V0056I2F) ──────────
+  // ── Mini-boss wheel auto-spin (AH-0MVJ8U79V0056I2F / AH-0MVLISU03006WDOD) ──
 
   /** Opens the mini-boss reward overlay exactly as a defeat would. */
   function openReward(play: PlayScene) {
@@ -286,93 +292,85 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     });
   }
 
-  it('AC1/AC2 — the demo bot auto-selects a seeded random mini-boss reward instead of stalling', async () => {
+  /** Cuts the run back to a known permanent loadout before a reward. */
+  function ownRewardKinds(play: PlayScene): void {
+    const player = play.getPlayer()!;
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+    player.equipWeapon('spread', true);
+    player.equipWeapon('rapid', true);
+  }
+
+  it('AC1/AC2 — the demo bot auto-spins a seeded mini-boss wheel instead of stalling', async () => {
     const menu = await bootMenu();
     menu.startDemo();
     await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
-    play.getPlayer()!.equipWeapon('spread', true);
-    // Own more than one permanent kind so there is a genuine "last option" to
-    // land on (the reward is a level-up surface only — no unlock half).
-    play.getPlayer()!.collectPowerUp('shield', true);
-    play.getPlayer()!.collectPowerUp('magnet', true);
-
-    // A high draw from the run-seeded stream must pick the last offered
-    // option — proving the pick comes from `PlayScene`'s RNG, not
-    // `Math.random()`.
+    ownRewardKinds(play);
+    // A near-one draw is slot 99, a single-upgrade slot, drawn from the
+    // run-seeded stream rather than `Math.random()`.
     play.setRng(() => 0.999999);
 
-    const selected = vi.spyOn(play, 'selectMineralChoice');
-    const offered = openReward(play);
-    expect(offered.length).toBeGreaterThan(1);
+    openReward(play);
     expect(play.isMiniBossRewardOpen()).toBe(true);
+    expect(play.getMiniBossWheelWedges().map((wedge) => wedge.id)).toEqual([
+      'spread',
+      'rapid',
+      'bonus',
+    ]);
+    expect(play.getMiniBossWheelOutcome()!.slotKind).toBe('single');
 
     await wait(booted!.game, 80);
-    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(true);
+    expect(booted!.game.scene.isActive('MiniBossWheelScene')).toBe(true);
 
+    // The wheel auto-spins after the same human-like delay as the hold-full
+    // choice, reveals the landed wedge and resumes play — no stall.
     await wait(
       booted!.game,
-      BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400,
+      BOT_MINERAL_CHOICE_DELAY_MS +
+        MINI_BOSS_WHEEL_SPIN_DURATION_MS +
+        MINI_BOSS_WHEEL_REVEAL_HOLD_MS +
+        400,
     );
 
-    const last = offered[offered.length - 1];
-    expect(selected).toHaveBeenCalledWith(offered.length - 1);
-    // The reward was applied through the shared reward resolver: the last
-    // option is an owned-offer of a kind the run owns permanently (the unlock
-    // feature is gone, so nothing on the wheel adds a new kind). An owned
-    // consumable is offered as a **charge**, never a level-up
-    // (AH-0MVUXH35J002WSAB AC1).
-    expect(
-      last.kind === 'weapon-level' ||
-        last.kind === 'power-up-level' ||
-        last.kind === 'power-up-charge',
-    ).toBe(true);
-    const levelled = [
-      ...play.getPlayer()!.getWeaponLevels(),
-      ...play.getPlayer()!.getPowerUpLevels(),
-    ].find((entry) => entry.id === last.id);
-    expect(levelled?.level).toBeGreaterThanOrEqual(1);
-    // …and the run carries on: overlay closed, play resumed.
     expect(play.isMiniBossRewardOpen()).toBe(false);
-    expect(play.isMineralChoiceOpen()).toBe(false);
-    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
+    expect(booted!.game.scene.isActive('MiniBossWheelScene')).toBe(false);
     expect(play.isPaused()).toBe(false);
   });
 
-  it('AC2 — a zero draw takes the first offered reward (lower bound)', async () => {
+  it('AC2 — a zero draw lands the bonus slot and upgrades every owned kind', async () => {
     const menu = await bootMenu();
     menu.startDemo();
     await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    ownRewardKinds(play);
     const player = play.getPlayer()!;
-    player.equipWeapon('spread', true);
-    const levelBefore = player
-      .getWeaponLevels()
-      .find((entry) => entry.id === 'spread')!.level;
+    const levelOf = (id: string): number =>
+      player.getWeaponLevels().find((entry) => entry.id === id)?.level ?? 0;
+    const before = { spread: levelOf('spread'), rapid: levelOf('rapid') };
 
+    // Zero is slot 0 — the single bonus slot of the 100-slot table.
     play.setRng(() => 0);
-
-    const selected = vi.spyOn(play, 'selectMineralChoice');
-    const offered = openReward(play);
-    expect(offered[0]).toMatchObject({ id: 'spread', kind: 'weapon-level' });
+    openReward(play);
+    expect(play.getMiniBossWheelOutcome()!.slotKind).toBe('bonus');
 
     await wait(
       booted!.game,
-      BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400,
+      BOT_MINERAL_CHOICE_DELAY_MS +
+        MINI_BOSS_WHEEL_SPIN_DURATION_MS +
+        MINI_BOSS_WHEEL_REVEAL_HOLD_MS +
+        400,
     );
 
-    expect(selected).toHaveBeenCalledWith(0);
-    const levelAfter = player
-      .getWeaponLevels()
-      .find((entry) => entry.id === 'spread')!.level;
-    expect(levelAfter).toBe(levelBefore + 1);
+    expect(levelOf('spread')).toBe(before.spread + 1);
+    expect(levelOf('rapid')).toBe(before.rapid + 1);
     expect(play.isMiniBossRewardOpen()).toBe(false);
   });
 
-  it('AC3 — outside demo mode the reward overlay waits for a real selection', async () => {
+  it('AC3 — outside demo mode the wheel waits for a real spin', async () => {
     const menu = await bootMenu();
     // Enter activates the focused Play Game control (normal run).
     menu.input.keyboard!.emit('keydown', {
@@ -384,25 +382,32 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(false);
-    play.getPlayer()!.equipWeapon('spread', true);
+    ownRewardKinds(play);
 
-    const selected = vi.spyOn(play, 'selectMineralChoice');
     openReward(play);
     await wait(booted!.game, 80);
-    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(true);
+    expect(booted!.game.scene.isActive('MiniBossWheelScene')).toBe(true);
 
-    // Well past the demo delay + countdown: no auto-select ever fires.
+    // Well past the demo delay + spin: no auto-spin ever fires.
     await wait(
       booted!.game,
-      BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400,
+      BOT_MINERAL_CHOICE_DELAY_MS +
+        MINI_BOSS_WHEEL_SPIN_DURATION_MS +
+        MINI_BOSS_WHEEL_REVEAL_HOLD_MS +
+        400,
     );
-    expect(selected).not.toHaveBeenCalled();
     expect(play.isMiniBossRewardOpen()).toBe(true);
-    expect(play.isMineralChoiceOpen()).toBe(true);
+    expect(booted!.game.scene.isActive('MiniBossWheelScene')).toBe(true);
+    expect(play.isPaused()).toBe(true);
 
-    // A real selection still resolves the reward.
-    play.selectMiniBossReward(0);
+    // A real spin still resolves the reward.
+    expect(play.spinMiniBossReward()).toBe(true);
+    await wait(
+      booted!.game,
+      MINI_BOSS_WHEEL_SPIN_DURATION_MS + MINI_BOSS_WHEEL_REVEAL_HOLD_MS + 200,
+    );
     expect(play.isMiniBossRewardOpen()).toBe(false);
+    expect(play.isPaused()).toBe(false);
   });
 
   it('AC6 — the demo auto-select routes through the 3-2-1 countdown and resumes on the beat', async () => {
@@ -859,7 +864,10 @@ describe('snapshot builder → decision integration (AC4/AC5)', () => {
     const snapshot = buildBotSnapshot(
       makeScene({
         getPlayer: () => stillPlayer(400, 300),
-        getEnemies: () => [{ x: 1000, y: 300, alive: true, archetype: 'scout' }],
+        // The enemy is to the right on the shortest (raw) path, so the aim is
+        // still rightwards; seam-aware aim (AH-0MVT2VZR7000GS15) only changes
+        // the bearing when the wrapped route is shorter.
+        getEnemies: () => [{ x: 700, y: 300, alive: true, archetype: 'scout' }],
         getMinerals: () => [{ x: 350, y: 300 }],
         getAliveCount: () => 1,
       }),

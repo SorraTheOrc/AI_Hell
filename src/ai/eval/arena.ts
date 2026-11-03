@@ -169,6 +169,7 @@ import { applyMineralChoiceReward, type MineralChoicePlayer } from '../../poweru
 import type { PowerUpId } from '../../powerups/types';
 import type { WeaponId } from '../../utils/weapons';
 import { AsteroidsModel } from '../../utils/movementModel';
+import { wrapAxis, wrappedAxisDelta } from '../../utils/wrapGeometry';
 import type {
   AsteroidsConfig,
   AsteroidsInput,
@@ -210,8 +211,10 @@ const PLAYER_BULLET_SPEED = 420;
 /** Ticks between replenishing the collectable/hostile reservoirs. */
 const COLLECTABLE_RESPAWN_TICKS = 150;
 const HOSTILE_RESPAWN_TICKS = 240;
-/** Bullets are retired once this far outside the playfield. */
-const BULLET_MARGIN = 32;
+/** Player-bullet lifetime (seconds), matching the game's PlayerBullet default. */
+const PLAYER_BULLET_LIFETIME = 0.75;
+/** Enemy-bullet lifetime (seconds), matching the game's enemy-bullet default. */
+const ENEMY_BULLET_LIFETIME = 1.5;
 /**
  * Ticks a freshly spawned hostile waits before its first volley (arena
  * tuning — a small grace period so the opening is not instantly lethal).
@@ -272,6 +275,10 @@ interface Hostile {
 interface Bullet extends Vec {
   vx: number;
   vy: number;
+  /** Lifetime in seconds (game parity: player 0.75 s, enemy 1.5 s). */
+  lifetime: number;
+  /** Seconds elapsed since creation. */
+  elapsed: number;
 }
 
 /** A seed-derived hostile spec held in the spawn reservoir. */
@@ -314,6 +321,42 @@ function resolveSpawns(partial: Partial<ArenaSpawns> | undefined): ArenaSpawns {
 /** Euclidean distance between two points. */
 function distance(a: Vec, b: Vec): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/**
+ * Advances a bullet's position by `dt` and wraps it at all four edges — the
+ * game's bullet model (AH-0MU960UTE001PTV0). Exported so the wrap parity is
+ * directly testable per edge (AH-0MVT2W5EL004OXNN).
+ */
+export function advanceBulletPosition(
+  bullet: Vec,
+  vx: number,
+  vy: number,
+  dt: number,
+  width: number,
+  height: number,
+): void {
+  bullet.x = wrapAxis(bullet.x + vx * dt, width);
+  bullet.y = wrapAxis(bullet.y + vy * dt, height);
+}
+
+/**
+ * The velocity a hostile fires along: the shortest wrapped route to the
+ * player, so a hostile near one edge shoots across the seam at a player near
+ * the opposite edge (AH-0MVT2W5EL004OXNN). Delegates to the shared torus
+ * maths — the eval layer carries no second seam implementation.
+ */
+export function hostileAimVelocity(
+  from: Vec,
+  to: Vec,
+  speed: number,
+  width: number,
+  height: number,
+): { vx: number; vy: number } {
+  const dx = wrappedAxisDelta(from.x, to.x, width);
+  const dy = wrappedAxisDelta(from.y, to.y, height);
+  const length = Math.hypot(dx, dy) || 1;
+  return { vx: (dx / length) * speed, vy: (dy / length) * speed };
 }
 
 /** Clamps a probability into [0, 1]. */
@@ -685,16 +728,6 @@ function stateOf(world: ArenaWorld): ArenaState {
     hold: { minerals: world.hold.store, capacity: world.hold.capacity },
     boss: null,
   };
-}
-
-/** Whether a point is outside the playfield by the bullet margin. */
-function offField(point: Vec, width: number, height: number): boolean {
-  return (
-    point.x < -BULLET_MARGIN ||
-    point.x > width + BULLET_MARGIN ||
-    point.y < -BULLET_MARGIN ||
-    point.y > height + BULLET_MARGIN
-  );
 }
 
 /**
@@ -1215,6 +1248,8 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         y: world.player.y,
         vx: Math.cos(world.player.facing) * PLAYER_BULLET_SPEED,
         vy: Math.sin(world.player.facing) * PLAYER_BULLET_SPEED,
+        lifetime: PLAYER_BULLET_LIFETIME,
+        elapsed: 0,
       });
     }
 
@@ -1227,31 +1262,43 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       // Per-archetype shot probability (config `shotProbability`): the draw
       // uses the run's seeded stream, so it is reproducible per seed+config.
       if (!(simRng() < hostile.shotProbability)) continue;
-      const dx = world.player.x - hostile.x;
-      const dy = world.player.y - hostile.y;
-      const length = Math.hypot(dx, dy) || 1;
+      // Seam-aware hostile aim (AH-0MVT2W5EL004OXNN): fire along the shortest
+      // wrapped route, so a hostile near one edge shoots a player near the
+      // opposite edge across the seam, matching the wrap-aware enemies in the
+      // game. Shared torus maths — no duplicate implementation here.
+      const aim = hostileAimVelocity(
+        hostile,
+        world.player,
+        hostile.bulletSpeed,
+        width,
+        height,
+      );
       world.enemyBullets.push({
         x: hostile.x,
         y: hostile.y,
-        vx: (dx / length) * hostile.bulletSpeed,
-        vy: (dy / length) * hostile.bulletSpeed,
+        vx: aim.vx,
+        vy: aim.vy,
+        lifetime: ENEMY_BULLET_LIFETIME,
+        elapsed: 0,
       });
     }
 
-    // 4. Advance projectiles.
+    // 4. Advance projectiles: integrate, wrap at all four edges and expire by
+    // lifetime — the game's bullet model (AH-0MU960UTE001PTV0), not the old
+    // off-field cull (AH-0MVT2W5EL004OXNN).
     for (const bullet of world.playerBullets) {
-      bullet.x += bullet.vx * dt;
-      bullet.y += bullet.vy * dt;
+      advanceBulletPosition(bullet, bullet.vx, bullet.vy, dt, width, height);
+      bullet.elapsed += dt;
     }
     for (const bullet of world.enemyBullets) {
-      bullet.x += bullet.vx * dt;
-      bullet.y += bullet.vy * dt;
+      advanceBulletPosition(bullet, bullet.vx, bullet.vy, dt, width, height);
+      bullet.elapsed += dt;
     }
     world.playerBullets = world.playerBullets.filter(
-      (bullet) => !offField(bullet, width, height),
+      (bullet) => bullet.elapsed < bullet.lifetime,
     );
     world.enemyBullets = world.enemyBullets.filter(
-      (bullet) => !offField(bullet, width, height),
+      (bullet) => bullet.elapsed < bullet.lifetime,
     );
 
     // 5. Player bullets vs hostiles (per-archetype radius and health).

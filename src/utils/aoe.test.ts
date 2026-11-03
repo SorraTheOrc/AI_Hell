@@ -19,6 +19,7 @@ import {
   selectRandomPoint,
   type AoEGeometryTarget,
 } from './aoe';
+import { isEligibleAutoTarget } from './targetEligibility';
 
 /** A minimal positioned target with an optional hit radius / alive flag. */
 class Target implements AoEGeometryTarget {
@@ -31,6 +32,21 @@ class Target implements AoEGeometryTarget {
 
   getHitRadius(): number {
     return this.radius;
+  }
+}
+
+/**
+ * A positioned target carrying the `archetype` key the shared auto-target
+ * eligibility rule reads (AH-0MVNSIG1O0049G69).
+ */
+class ArchetypeTarget extends Target {
+  constructor(
+    x: number,
+    y: number,
+    public archetype?: string,
+    alive = true,
+  ) {
+    super(x, y, 0, alive);
   }
 }
 
@@ -184,6 +200,45 @@ describe('findNearestTarget', () => {
     expect(findNearestTarget(0, 0, [])).toBeNull();
     expect(findNearestTarget(0, 0, [new Target(0, 0, 0, false)])).toBeNull();
   });
+
+  test('AH-0MVVHA66X002OM83 AC2 — an accepts predicate skips a nearer excluded rock for a farther enemy', () => {
+    const rock = new ArchetypeTarget(5, 0, 'asteroid');
+    const enemy = new ArchetypeTarget(50, 0, 'scout');
+    expect(
+      findNearestTarget(0, 0, [rock, enemy], new Set(), isEligibleAutoTarget),
+    ).toBe(enemy);
+  });
+
+  test('AH-0MVVHA66X002OM83 AC4 — without a predicate the nearest live target is still returned (legacy)', () => {
+    const rock = new ArchetypeTarget(5, 0, 'asteroid');
+    const enemy = new ArchetypeTarget(50, 0, 'scout');
+    expect(findNearestTarget(0, 0, [rock, enemy])).toBe(rock);
+  });
+
+  test('AH-0MVVHA66X002OM83 AC2 — an accepts predicate that excludes every candidate yields null', () => {
+    const rock = new ArchetypeTarget(5, 0, 'asteroid');
+    const deadEnemy = new ArchetypeTarget(10, 0, 'scout', false);
+    expect(
+      findNearestTarget(
+        0,
+        0,
+        [rock, deadEnemy],
+        new Set(),
+        isEligibleAutoTarget,
+      ),
+    ).toBeNull();
+  });
+
+  test('AH-0MVVHA66X002OM83 AC2 — the accepts filter does not reorder the equal-distance tie-break', () => {
+    const a = new ArchetypeTarget(5, 0, 'scout');
+    const b = new ArchetypeTarget(-5, 0, 'scout');
+    expect(
+      findNearestTarget(0, 0, [a, b], new Set(), isEligibleAutoTarget),
+    ).toBe(a);
+    expect(
+      findNearestTarget(0, 0, [b, a], new Set(), isEligibleAutoTarget),
+    ).toBe(b);
+  });
 });
 
 describe('selectChainTargets', () => {
@@ -238,6 +293,89 @@ describe('selectChainTargets', () => {
     const b = new Target(90, 0);
     const c = new Target(120, 0);
     expect(selectChainTargets(0, 0, [c, a, b], 3, 60)).toEqual([a, b, c]);
+  });
+
+  test('AH-0MVVHA66X002OM83 AC2 — a chain hops across an excluded rock to both enemies', () => {
+    const a = new ArchetypeTarget(30, 0, 'scout');
+    const rock = new ArchetypeTarget(60, 0, 'asteroid');
+    const b = new ArchetypeTarget(90, 0, 'scout');
+    const chain = selectChainTargets(
+      0,
+      0,
+      [a, rock, b],
+      3,
+      60,
+      isEligibleAutoTarget,
+    );
+    expect(chain).toEqual([a, b]);
+  });
+
+  test('AH-0MVVHA66X002OM83 AC3 — an excluded rock inside reach does not consume a chain link', () => {
+    const a = new ArchetypeTarget(30, 0, 'scout');
+    const rock = new ArchetypeTarget(60, 0, 'asteroid');
+    const b = new ArchetypeTarget(90, 0, 'scout');
+    const chain = selectChainTargets(
+      0,
+      0,
+      [a, rock, b],
+      3,
+      60,
+      isEligibleAutoTarget,
+    );
+    expect(chain).toHaveLength(2);
+    expect(chain).not.toContain(rock);
+  });
+
+  test('AH-0MVVHA66X002OM83 AC3 — the hop reach budget still applies to the eligible hop', () => {
+    // a is inside reach; the rock sits inside the next hop budget, but the
+    // eligible enemy beyond it is 80 px from a — outside the 60 px reach.
+    const a = new ArchetypeTarget(50, 0, 'scout');
+    const rock = new ArchetypeTarget(70, 0, 'asteroid');
+    const b = new ArchetypeTarget(130, 0, 'scout');
+    expect(
+      selectChainTargets(
+        0,
+        0,
+        [a, rock, b],
+        3,
+        60,
+        isEligibleAutoTarget,
+      ),
+    ).toEqual([a]);
+  });
+
+  test('AH-0MVVHA66X002OM83 AC2 — no eligible candidate yields an empty chain', () => {
+    const rock = new ArchetypeTarget(10, 0, 'asteroid');
+    const deadEnemy = new ArchetypeTarget(20, 0, 'scout', false);
+    expect(
+      selectChainTargets(
+        0,
+        0,
+        [rock, deadEnemy],
+        3,
+        60,
+        isEligibleAutoTarget,
+      ),
+    ).toEqual([]);
+  });
+
+  test('AH-0MVVHA66X002OM83 AC2 — the accepts filter preserves the earlier-candidate tie-break', () => {
+    const a = new ArchetypeTarget(5, 0, 'scout');
+    const b = new ArchetypeTarget(-5, 0, 'scout');
+    expect(
+      selectChainTargets(0, 0, [a, b], 1, Infinity, isEligibleAutoTarget),
+    ).toEqual([a]);
+    expect(
+      selectChainTargets(0, 0, [b, a], 1, Infinity, isEligibleAutoTarget),
+    ).toEqual([b]);
+  });
+
+  test('AH-0MVVHA66X002OM83 AC4 — without a predicate the nearest live target is still chained (legacy)', () => {
+    const rock = new ArchetypeTarget(10, 0, 'asteroid');
+    // The enemy lies beyond the hop reach from the rock, so the legacy chain
+    // (live-only filtering) is just the rock itself.
+    const enemy = new ArchetypeTarget(200, 0, 'scout');
+    expect(selectChainTargets(0, 0, [rock, enemy], 3, 60)).toEqual([rock]);
   });
 });
 

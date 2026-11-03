@@ -22,8 +22,10 @@
  *    (parent epic AH-0MVLISU03006WDOD AC5);
  * 5. **checkpoint resume** — the save seam (`saveCheckpoint`) bounds the
  *    persisted payload, so a resumed run cannot restore a seventh kind. The
- *    documented divergence (the replay itself does not re-gate a hand-written
- *    payload) is recorded in GDD §4.4 / `docs/BALANCING.md`;
+ *    replay itself deliberately does not re-gate (`Continue` must reproduce the
+ *    saved run exactly, AH-0MVSHI07B003BZIP); every payload this build writes
+ *    is already capped, and a legacy pre-cap save is the documented exception
+ *    in GDD §4.4 / `docs/BALANCING.md`;
  * 6. **capture/scripted setup** — the documented divergence: the applier may
  *    pre-grant more than six kinds, and `resolveSceneSetupState` keeps that
  *    state off the normal play path (dev gate folded off in a shipped build).
@@ -276,7 +278,7 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
   });
 
   // ── 4. Mini-boss reward ─────────────────────────────────────────
-  it('the mini-boss reward offers only kinds already in the pool (full pool)', () => {
+  it('the mini-boss wheel shows only kinds already in the pool (full pool)', () => {
     const live = player();
     fillMixedSix(live);
     const state = resolvePlayerSlotState(live);
@@ -285,29 +287,27 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
       {},
     );
 
-    // The overlay must never open empty (it pauses play).
-    expect(options.length).toBeGreaterThan(0);
-    // Every offer names a kind the player already holds: the unlock half was
-    // removed (parent AH-0MVLISU03006WDOD AC5), so the reward is a level-up
-    // only and can never acquire a seventh counted kind.
-    for (const option of options) {
+    // The multi-option menu is gone: the reward is the
+    // wheel, whose wedges name held kinds only (parent AH-0MVLISU03006WDOD
+    // AC1/AC5), so it can never acquire a seventh counted kind.
+    expect(options).toEqual([]);
+    const wedges = scene.getMiniBossWheelWedges();
+    expect(wedges.length).toBeGreaterThan(1);
+    for (const wedge of wedges) {
+      if (wedge.kind === 'bonus') continue;
       expect(
-        isWithinSlotPool(option.id as DropId, state),
-        `${option.id} offered as a seventh slot`,
+        isWithinSlotPool(wedge.id as DropId, state),
+        `${wedge.id} offered as a seventh slot`,
       ).toBe(true);
-      expect([...state.heldIds]).toContain(option.id);
+      expect([...state.heldIds]).toContain(wedge.id);
     }
-    expect(options.map((option) => option.id)).not.toContain(
-      NEW_COUNTED_WEAPON,
-    );
-    expect(options.map((option) => option.id)).not.toContain(
-      NEW_COUNTED_POWER_UP,
-    );
+    expect(wedges.map((wedge) => wedge.id)).not.toContain(NEW_COUNTED_WEAPON);
+    expect(wedges.map((wedge) => wedge.id)).not.toContain(NEW_COUNTED_POWER_UP);
   });
 
-  it('the mini-boss reward never offers a brand-new weapon with room to spare', () => {
+  it('the mini-boss wheel never offers a brand-new weapon with room to spare', () => {
     const live = player();
-    // Own one permanent kind so the reward takes its level-up path (with
+    // Own one permanent kind so the reward takes the wheel path (with
     // nothing owned at all it deliberately falls back to the hold-full-style
     // choice, which may offer base-pool kinds — parent AC4).
     live.equipWeapon(MIXED_PERMANENT_WEAPON, true);
@@ -317,16 +317,17 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
       {},
     );
 
-    // Below the cap the old unlock half would have offered a locked weapon. The
-    // reward now offers level-ups of held kinds only, so a mini-boss is no
-    // longer an acquisition surface at all.
-    expect(options.length).toBeGreaterThan(0);
-    for (const option of options) {
-      expect(held.has(option.id)).toBe(true);
+    // Below the cap the old unlock half would have offered a locked weapon.
+    // The wheel only shows owned kinds, so a mini-boss is no longer an
+    // acquisition surface at all.
+    expect(options).toEqual([]);
+    const wedges = scene.getMiniBossWheelWedges();
+    expect(wedges.length).toBeGreaterThan(1);
+    for (const wedge of wedges) {
+      if (wedge.kind === 'bonus') continue;
+      expect(held.has(wedge.id)).toBe(true);
     }
-    expect(options.map((option) => option.id)).not.toContain(
-      NEW_COUNTED_WEAPON,
-    );
+    expect(wedges.map((wedge) => wedge.id)).not.toContain(NEW_COUNTED_WEAPON);
     expect(resolvePlayerSlotState(live).used).toBeLessThanOrEqual(
       POWER_UP_SLOT_CAP,
     );

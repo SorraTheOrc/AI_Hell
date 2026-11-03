@@ -10,7 +10,8 @@
  * Acceptance criteria covered:
  * - AC1 — survival-first priority ordering
  * - AC2 — a deterministic unit test per priority branch
- * - AC3 — the bot never suicides into a bullet / asteroid / enemy / wall
+ * - AC3 — the bot never suicides into a bullet / asteroid / enemy (edges are
+ *   a wrap, not a wall: AH-0MVT2VYN40076JKX)
  * - AC4 — fire-pattern avoidance reduces avoidable hits vs a reactive baseline
  * - AC5 — tunables live in one shared config object
  */
@@ -160,7 +161,6 @@ describe('AC5 — tunables in one shared config', () => {
       'engagementRadius',
       'dangerMargin',
       'bulletDangerRadius',
-      'wallMargin',
       'powerUpSeekRange',
       'mineralSeekRange',
       'playerSpeed',
@@ -451,6 +451,43 @@ describe('precise steering intent — point at the target (rejection)', () => {
   });
 });
 
+// ── Seam-aware legacy aim (AH-0MVT2VZR7000GS15) ──────────────────────
+//
+// The legacy decision layer aims with the same shared wrap maths as the
+// competent bot: the precise bearing runs along the shortest wrapped path.
+// When the raw line is already shortest the output is byte-for-byte the
+// pre-change value.
+
+describe('seam-aware legacy aim (AH-0MVT2VZR7000GS15)', () => {
+  it('keeps the pre-change bearing byte-for-byte when the raw line is shortest', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 100)], // raw line is already the shortest
+    });
+
+    const intent = decideBotIntent(snapshot);
+    const len = Math.hypot(-200, -200);
+    expect(intent.dirX).toBe(-200 / len);
+    expect(intent.dirY).toBe(-200 / len);
+  });
+
+  it('points across the seam when the wrapped route is shorter', () => {
+    // The enemy is 780 px rightwards on the raw line but only 180 px away
+    // across the left seam, so the aim must point left.
+    const snapshot = makeSnapshot({
+      player: { x: 100, y: 270, vx: 0, vy: 0 },
+      enemies: [enemy(880, 270, 'scout')],
+    });
+
+    const intent = decideBotIntent(snapshot);
+    expect(intent.dirX).toBeCloseTo(-1, 6);
+    expect(intent.dirY).toBeCloseTo(0, 6);
+    // The cardinal projection follows the seam-aware bearing too.
+    expect(intent.left).toBe(true);
+    expect(intent.right).toBe(false);
+  });
+});
+
 // ── Forward model: no thruster overshoot (AC10) ─────────────────────
 //
 // The operator reported the bot "tends to overshoot with its thrusters" and
@@ -545,15 +582,16 @@ describe('AC2 — one deterministic test per priority branch', () => {
     expect(input.up).toBe(false);
   });
 
-  it('survive: does not steer into a wall it is pressed against', () => {
-    // Wall to the left is within wallMargin; a power-up to the left tempts
-    // the bot, but survival blocks the leftward move.
+  it('survive: crosses the seam toward a drop at the edge (edges are not walls)', () => {
+    // The drop sits just across the left seam. Edges are not walls on the
+    // wrap-around arena, so the bot is free to step over the edge toward it
+    // (AH-0MVT2VYN40076JKX) instead of refusing the leftward move.
     const snapshot = makeSnapshot({
       player: { x: 20, y: 300, vx: 0, vy: 0 },
       drops: [drop(10, 300, 'spread')],
     });
     const input = decideBotInput(snapshot);
-    expect(input.left).toBe(false);
+    expect(input.left).toBe(true);
   });
 
   it('enemies: engages a live enemy within engagement radius', () => {
@@ -677,10 +715,59 @@ describe('AC3 — the bot never suicides when a safe alternative exists', () => 
     expect(input.left).toBe(false);
   });
 
-  it('does not steer into a wall when a power-up is behind the wall', () => {
+  it('does not steer into a hazard near an edge (edges themselves are not walls)', () => {
+    // A power-up just across the left seam tempts the bot, and there is no
+    // hazard, so the edge no longer blocks the move (AH-0MVT2VYN40076JKX).
     const snapshot = makeSnapshot({
       player: { x: 30, y: 300, vx: 0, vy: 0 },
       drops: [drop(5, 300, 'spread')],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(true);
+  });
+
+  it('steers across the seam toward a mineral whose wrapped route is shorter', () => {
+    // Player near the right edge, mineral near the left edge: the raw line is
+    // 490 px left (still inside the 500 px mineral seek range), but the
+    // wrapped route is 470 px right across the seam. The bot's objective is the
+    // shortest wrapped delta, so it heads right.
+    const snapshot = makeSnapshot({
+      player: { x: 740, y: 270, vx: 0, vy: 0 },
+      minerals: [mineral(250, 270)],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.right).toBe(true);
+    expect(input.left).toBe(false);
+  });
+
+  it('does not flap between raw and wrapped duplicates near the half-width (AC4)', () => {
+    // The mineral sits almost exactly half a playfield away, so the raw and
+    // wrapped routes are nearly equal. Nudging it ±0.4 px each tick would make
+    // a naive shortest-route choice alternate left/right; the near-tie
+    // hysteresis keeps one committed duplicate.
+    const half = 480; // playfield width / 2
+    const directions: string[] = [];
+    for (let tick = 0; tick < 8; tick += 1) {
+      const x = 100 + half + (tick % 2 === 0 ? 0.4 : -0.4);
+      const snapshot = makeSnapshot({
+        player: { x: 100, y: 270, vx: 0, vy: 0 },
+        minerals: [mineral(x, 270)],
+      });
+      const input = decideBotInput(snapshot);
+      directions.push(input.right ? 'right' : input.left ? 'left' : 'none');
+    }
+    expect(new Set(directions).size).toBe(1);
+  });
+
+  it('refuses a bearing into a shot arriving across the seam (AH-0MVT2W2D9002BOHO)', () => {
+    // Player just inside the left edge with a mineral to the left tempting a
+    // leftward move. A bullet just outside the right edge travels right and
+    // will wrap across the player: 50 px away on the torus, 910 px away on the
+    // raw line. The bot must not head left into it.
+    const snapshot = makeSnapshot({
+      player: { x: 40, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(20, 300)],
+      enemyBullets: [bullet(950, 300, 100, 0)],
     });
     const input = decideBotInput(snapshot);
     expect(input.left).toBe(false);

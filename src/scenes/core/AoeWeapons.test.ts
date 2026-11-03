@@ -24,6 +24,7 @@ import { advanceAndCull } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { isOnGrid } from '../../utils/beat';
+import { euclidPattern, isOnset } from '../../utils/euclid';
 import { WEAPON_CATALOGUE, type AoEDescriptor, type WeaponDefinition } from '../../utils/weapons';
 import {
   CombatScene,
@@ -92,6 +93,40 @@ class ToughEnemy extends StubEnemy {
 
   playDestructionAudio(): void {
     this.destructionAudioCalls += 1;
+  }
+}
+
+/**
+ * An inert world-hazard stub: an enemy that reports the `asteroid` archetype
+ * and counts every damage/death/accounting call, so "the Arc left the rock
+ * untouched" is observable rather than inferred from a single flag
+ * (AH-0MVNSIG1O0049G69). It is single-hit like a fully-killed rock and carries
+ * the asteroid size-tier seam the shared kill accounting reads.
+ */
+class AsteroidStub extends StubEnemy {
+  readonly archetype = 'asteroid';
+  damageCalls = 0;
+  destroyCalls = 0;
+  destructionAudioCalls = 0;
+
+  takeDamage(): number {
+    this.damageCalls += 1;
+    this.destroySelf();
+    return 0;
+  }
+
+  override destroySelf(): void {
+    if (!this.alive) return;
+    this.destroyCalls += 1;
+    super.destroySelf();
+  }
+
+  playDestructionAudio(): void {
+    this.destructionAudioCalls += 1;
+  }
+
+  getSizeTier(): 'small' {
+    return 'small';
   }
 }
 
@@ -435,12 +470,18 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
   // ── AC7 — beat-quantised triggering ───────────────────────────────
 
-  it('AC7 — Nova fires on the 3000 ms beat grid and reports an on-grid shot', async () => {
+  it('AC7 — Nova fires on its one-onset-per-bar pattern and reports an onset tick', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('nova');
 
+    // The legacy nominal interval is one shot per bar (3000 ms at 80 BPM).
     expect(player.getFireInterval('nova')).toBe(3000);
+    // The shipped cadence is the ladder's E(1, 16): one onset per bar.
+    const pattern = player.getFirePattern('nova')!;
+    expect(pattern.k).toBe(1);
+    expect(pattern.n).toBe(16);
+    expect(pattern.stepMs).toBe(187.5);
 
     scene.getBeatClock().reset();
     player.setBeatClock(scene.getBeatClock());
@@ -448,8 +489,16 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
     const shot = player.getLastShotTime('nova');
     expect(shot).toBeDefined();
-    expect(isOnGrid(shot!, 3000, 0)).toBe(true);
-    expect(shot! % 3000).toBe(0);
+    expect(isOnGrid(shot!, pattern.stepMs, 0)).toBe(true);
+    expect(
+      isOnset(
+        shot!,
+        euclidPattern(pattern.k, pattern.n, pattern.rotation),
+        pattern.stepMs,
+        0,
+      ),
+    ).toBe(true);
+    expect(shot! % 3000).toBe(0); // exactly one onset per 3 s bar
   });
 
   it('AC7 — conventional weapons keep their own on-grid cadence alongside AOE', async () => {
@@ -459,10 +508,23 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
     scene.runAutoFire(3.0);
 
-    // The cannon (375 ms) and nova (3000 ms) both fired on their own grids.
+    // The cannon (E(9, 16)) and nova (E(1, 16)) each fired on their own
+    // pattern's first onset of the bar.
     expect(player.getLastShotTime('cannon')).toBeDefined();
-    expect(player.getLastShotTime('nova')).toBe(3000);
-    expect(player.getLastShotTime('cannon')! % 375).toBe(0);
+    expect(player.getLastShotTime('nova')).toBe(0);
+    const cannonPattern = player.getFirePattern('cannon')!;
+    expect(
+      isOnset(
+        player.getLastShotTime('cannon')!,
+        euclidPattern(
+          cannonPattern.k,
+          cannonPattern.n,
+          cannonPattern.rotation,
+        ),
+        cannonPattern.stepMs,
+        0,
+      ),
+    ).toBe(true);
   });
 
   // ── Regression: ordinary bullets still travel at the shared speed ──
@@ -916,6 +978,208 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(scene.getAoeEffects()).toHaveLength(0);
     expect(scene.hooks.filter((h) => h.startsWith('onEnemyDestroyed'))).toHaveLength(0);
     expect(impactCue).not.toHaveBeenCalled();
+  });
+});
+
+// ── Arc-vs-asteroid targeting (AH-0MVNSIG1O0049G69) ─────────────────
+//
+// The Arc is the only auto-targeting AOE weapon: every beat it strikes the
+// nearest target and chains to two more. Its candidate list is the raw enemy
+// list, which also carries the inert `asteroid` world hazard — so a nearer
+// rock used to absorb the bolt and could even be farmed for minerals and the
+// rare Extra Life drop. These scene-level tests pin the shared rule end to
+// end (the same `CombatScene.onAoeFired` path every gym inherits) and pin the
+// unchanged weapons so a future change cannot silently widen the exclusion.
+
+describe('Arc never affects asteroids (AH-0MVNSIG1O0049G69)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<AoeStubScene> {
+    booted = await bootScene([AoeStubScene]);
+    return booted.scene as AoeStubScene;
+  }
+
+  it('AH-0MVNSIG1O0049G69 AC1 — a nearer asteroid is skipped for the ship enemy', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    const rock = new AsteroidStub(scene, 130, 100); // 30 px from the ship
+    const enemy = new StubEnemy(scene, 150, 100); // 50 px from the ship
+    scene.entities.push(rock, enemy);
+
+    scene.runAutoFire(0.75);
+
+    // The bolt spends itself on the threat, never on the closer rock.
+    expect(enemy.destroyed).toBe(true);
+    expect(rock.alive).toBe(true);
+    expect(rock.destroyed).toBe(false);
+    expect(rock.damageCalls).toBe(0);
+    expect(rock.destroyCalls).toBe(0);
+  });
+
+  it('AH-0MVNSIG1O0049G69 AC2 — an enemy → asteroid → enemy line chains past the rock to both enemies', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    // enemyA 40 px from the ship; the rock sits 27 px from enemyA (nearer
+    // than enemyB at 55 px), so the geometric next hop is the rock — the
+    // chain must step over it without absorbing a link.
+    const enemyA = new StubEnemy(scene, 140, 100);
+    const rock = new AsteroidStub(scene, 167, 100);
+    const enemyB = new StubEnemy(scene, 195, 100);
+    scene.entities.push(enemyA, rock, enemyB);
+
+    scene.runAutoFire(0.75);
+
+    expect(enemyA.destroyed).toBe(true);
+    expect(enemyB.destroyed).toBe(true);
+    expect(rock.alive).toBe(true);
+    expect(rock.damageCalls).toBe(0);
+    // The link budget is unchanged: chains = 2 → primary + two hops.
+    expect(WEAPON_CATALOGUE.arc.aoe!.chains).toBe(2);
+    expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(2);
+  });
+
+  it('AH-0MVNSIG1O0049G69 AC3 — a rocks-only field is a full no-op (no damage, VFX, cue or kill accounting)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    const nearRock = new AsteroidStub(scene, 130, 100);
+    const farRock = new AsteroidStub(scene, 150, 120);
+    scene.entities.push(nearRock, farRock);
+    const impactCue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+
+    scene.runAutoFire(0.75);
+
+    // No damage and no kill accounting: `onEnemyDestroyed` is the shared seam
+    // that drives score, drops, minerals and the Extra Life roll, so a silent
+    // seam means the Arc farms nothing from rock.
+    expect(nearRock.alive).toBe(true);
+    expect(farRock.alive).toBe(true);
+    expect(nearRock.damageCalls).toBe(0);
+    expect(farRock.damageCalls).toBe(0);
+    expect(scene.hooks.filter((h) => h.startsWith('onEnemyDestroyed'))).toHaveLength(0);
+    expect(destroySound).not.toHaveBeenCalled();
+    // No chain VFX, no connect flash and no impact cue — identical to the
+    // empty-field behaviour.
+    expect(scene.getAoeEffects()).toHaveLength(0);
+    expect(scene.getBulletImpactEffects()).toHaveLength(0);
+    expect(impactCue).not.toHaveBeenCalled();
+  });
+
+  it('AH-0MVNSIG1O0049G69 AC4 — the bolt path and along-path bullet clear follow the filtered chain, never a rock segment', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    // The rock is due south of the ship; the enemy is due east. The filtered
+    // chain is ship → enemy, so the vertical ship → rock segment is not part
+    // of the bolt.
+    const rock = new AsteroidStub(scene, 100, 150); // 50 px south
+    const enemy = new StubEnemy(scene, 150, 100); // 50 px east
+    scene.entities.push(rock, enemy);
+    const onBoltPath = new StubBullet(scene, 125, 100); // on ship → enemy
+    const onRockSegment = new StubBullet(scene, 100, 125); // on ship → rock only
+    scene.bullets.push(onBoltPath, onRockSegment);
+
+    scene.runAutoFire(0.75);
+
+    expect(enemy.destroyed).toBe(true);
+    expect(rock.alive).toBe(true);
+    // The bullet through the real bolt segment is cleared; the one that only
+    // lies on the discarded rock segment survives.
+    expect(onBoltPath.graphics.active).toBe(false);
+    expect(onRockSegment.graphics.active).toBe(true);
+    expect(scene.bullets).toEqual([onRockSegment]);
+  });
+
+  it('AH-0MVNSIG1O0049G69 AC5 — the Nova ring still damages an asteroid inside its radius', async () => {
+    const scene = await boot();
+    const rock = new AsteroidStub(scene, 120, 100);
+    scene.entities.push(rock);
+
+    scene.runApplyAoe(WEAPON_CATALOGUE.nova, 100, 100);
+
+    expect(rock.destroyed).toBe(true);
+    expect(rock.damageCalls).toBe(1);
+  });
+
+  it('AH-0MVNSIG1O0049G69 AC5 — the Mortar blast still damages an asteroid inside its radius', async () => {
+    const scene = await boot();
+    const rock = new AsteroidStub(scene, 120, 100);
+    scene.entities.push(rock);
+
+    scene.runApplyAoe(WEAPON_CATALOGUE.mortar, 100, 100);
+
+    expect(rock.destroyed).toBe(true);
+    expect(rock.damageCalls).toBe(1);
+  });
+
+  it('AH-0MVNSIG1O0049G69 AC5 — the Smart Bomb pulse still damages an asteroid inside its area', async () => {
+    const scene = await boot();
+    const rock = new AsteroidStub(scene, 120, 100);
+    scene.entities.push(rock);
+
+    scene.runApplyAoeDescriptor(
+      {
+        trigger: 'screenPulse',
+        radius: 200,
+        damagesEnemies: true,
+        clearsEnemyBullets: true,
+        damage: 1,
+      },
+      100,
+      100,
+    );
+
+    expect(rock.destroyed).toBe(true);
+    expect(rock.damageCalls).toBe(1);
+  });
+
+  it('AH-0MVNSIG1O0049G69 AC5 — an entity with no archetype (gym TrainingTarget style) is still Arc-targetable', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    // `StubEnemy` carries no `archetype`, exactly like the GymWeapons
+    // practice targets — an absent archetype must never look like a hazard.
+    const bare = new StubEnemy(scene, 150, 100);
+    scene.entities.push(bare);
+
+    scene.runAutoFire(0.75);
+
+    expect(bare.destroyed).toBe(true);
+    expect(scene.hooks).toContain('onEnemyDestroyed:true');
+  });
+
+  it('AH-0MVNSIG1O0049G69 AC6 — Arc performs no asteroid kill accounting while other means still route the kill through the shared seam', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    const rock = new AsteroidStub(scene, 120, 100);
+    scene.entities.push(rock);
+
+    // Arc beat: no damage, no destruction and therefore no `onEnemyDestroyed`
+    // (the seam PlayScene._onEnemyKilled uses to award score/drops/minerals
+    // and roll the Extra Life).
+    scene.runAutoFire(0.75);
+    expect(rock.damageCalls).toBe(0);
+    expect(rock.destroyed).toBe(false);
+    expect(rock.destructionAudioCalls).toBe(0);
+    expect(scene.hooks.filter((h) => h.startsWith('onEnemyDestroyed'))).toHaveLength(0);
+
+    // Other means (here the Nova ring) still destroy the rock and finalise it
+    // through that same shared kill seam, so mineral/Extra Life accounting is
+    // untouched for aimed or area play.
+    scene.runApplyAoe(WEAPON_CATALOGUE.nova, 100, 100);
+    expect(rock.destroyed).toBe(true);
+    expect(rock.destructionAudioCalls).toBe(1);
+    expect(scene.hooks).toContain('onEnemyDestroyed:true');
   });
 });
 

@@ -89,6 +89,54 @@ describe('trackHazardVelocities (AH-0MVI4QDN90037DIN AC1)', () => {
     );
   });
 
+  it('estimates a seam crossing as the true velocity, not a clamped jump (AH-0MVT2W2D9002BOHO)', () => {
+    const memory = createBotMemory();
+    const key = enemyHazardKey(3);
+    const world = { width: 960, height: 540 };
+    const advanceWrapped = (snapshot: BotSnapshot) => {
+      const velocities = trackHazardVelocities(memory, snapshot, DT, world);
+      memory.ticks += 1;
+      return velocities;
+    };
+
+    advanceWrapped(makeSnapshot({ enemies: [trackedEnemy(958, 200, 3)] }));
+    // Crossing the right seam from 958 to 1 is a +3 px step, i.e. 180 px/s
+    // rightwards. Without wrapping the raw delta is −957 px, which the clamp
+    // would floor to −900 px/s.
+    const estimate = advanceWrapped(
+      makeSnapshot({ enemies: [trackedEnemy(1, 200, 3)] }),
+    ).get(key)!;
+
+    expect(estimate.x).toBeCloseTo(180, 6);
+    expect(estimate.y).toBeCloseTo(0, 6);
+    expect(Math.hypot(estimate.x, estimate.y)).toBeLessThan(
+      HAZARD_MAX_ESTIMATED_SPEED,
+    );
+  });
+
+  it('still clamps a genuine respawn/teleport under the torus model', () => {
+    const memory = createBotMemory();
+    const key = enemyHazardKey(4);
+    const world = { width: 960, height: 540 };
+    const advanceWrapped = (snapshot: BotSnapshot) => {
+      const velocities = trackHazardVelocities(memory, snapshot, DT, world);
+      memory.ticks += 1;
+      return velocities;
+    };
+
+    advanceWrapped(makeSnapshot({ enemies: [trackedEnemy(100, 200, 4)] }));
+    // A 100 → 800 teleport is a −260 px wrapped step in one tick, implying
+    // 15 600 px/s — a spurious jump, so it is still clamped.
+    const estimate = advanceWrapped(
+      makeSnapshot({ enemies: [trackedEnemy(800, 200, 4)] }),
+    ).get(key)!;
+
+    expect(Math.hypot(estimate.x, estimate.y)).toBeCloseTo(
+      HAZARD_MAX_ESTIMATED_SPEED,
+      6,
+    );
+  });
+
   it('keeps the last estimate across a missed tick and prunes despawns', () => {
     const memory = createBotMemory();
     const key = enemyHazardKey(3);

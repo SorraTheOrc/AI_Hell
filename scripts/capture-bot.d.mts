@@ -25,6 +25,11 @@ export interface VideoClipProbe {
 export interface NonTrivialVerdict {
   nonTrivial: boolean;
   reasons: string[];
+  /**
+   * Additive, non-failing observations (e.g. "static screen: no motion
+   * required" for an `allowStatic` screen capture).
+   */
+  notes?: string[];
 }
 
 export interface AudioTrackProbe {
@@ -73,13 +78,22 @@ export function planDurationMs(plan: readonly BotStep[]): number;
  */
 export const MIN_EFFECTIVE_FPS = 15;
 
-export function isNonTrivialClip(probe?: VideoClipProbe): NonTrivialVerdict;
+/** `allowStatic` judges a static screen capture: no motion required. */
+export function isNonTrivialClip(
+  probe?: VideoClipProbe,
+  options?: { allowStatic?: boolean },
+): NonTrivialVerdict;
 export function resolveCaptureMimeType(
   isSupported: (mimeType: string) => boolean,
 ): string | null;
 export function evaluateAudioTrack(probe?: AudioTrackProbe): AudioTrackVerdict;
+/**
+ * `requireAudio: false` accepts a screen clip on its video verdict alone (the
+ * Hangar War screens emit no audio of their own).
+ */
 export function combineClipVerdict(
   videoVerdict?: NonTrivialVerdict,
   audioVerdict?: AudioTrackVerdict,
+  options?: { requireAudio?: boolean },
 ): CombinedClipVerdict;
 export function installGameAudioTap(scope?: object): GameAudioTap | null;

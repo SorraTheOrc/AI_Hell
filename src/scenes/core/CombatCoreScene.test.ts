@@ -20,12 +20,14 @@ import type { ControlInput } from '../../utils/movementModel';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { isOnGrid } from '../../utils/beat';
+import { euclidPattern, isOnset } from '../../utils/euclid';
 import {
   CombatCoreScene,
   type CombatDrop,
   type CombatEnemyBullet,
 } from './CombatCoreScene';
 import * as muzzleFlashModule from '../../vfx/muzzleFlash';
+import * as hitscanBeamModule from '../../vfx/hitscanBeam';
 import { BULLET_COLORS, WEAPON_CATALOGUE } from '../../utils/weapons';
 import { expectRangedClear } from '../../test/powerUpEffectFixtures';
 
@@ -361,6 +363,51 @@ describe('CombatCoreScene — shared base class', () => {
         5,
       );
     }
+  });
+
+  it('AC: fire VFX and SFX dispatch on the same frame as the pattern onset (AH-0MVYA1V8Z009SHMR)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Deterministic 16th-note lattice from t=0 (cannon = E(9, 16)).
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+    const pattern = player.getFirePattern('cannon')!;
+    expect(pattern.k).toBe(9);
+
+    const firingFrames: number[] = [];
+    const onsetTicks: number[] = [];
+    const idleFrames: number[] = [];
+    for (let frame = 0; frame < 40; frame += 1) {
+      // 40 x 25 ms = 1000 ms, so the cannon's onsets at 0/375/750 are due.
+      const hooksBefore = scene.hooks.length;
+      const bulletsBefore = scene.getPlayerBullets().length;
+      const flashesBefore = scene.getFireFxEffects().length;
+
+      scene.runAutoFire(0.025);
+
+      const fired = scene.hooks.slice(hooksBefore);
+      if (fired.length === 0) {
+        idleFrames.push(frame);
+        // No cue, no bullet and no muzzle flash on a non-onset frame.
+        expect(scene.getPlayerBullets()).toHaveLength(bulletsBefore);
+        expect(scene.getFireFxEffects()).toHaveLength(flashesBefore);
+        continue;
+      }
+      firingFrames.push(frame);
+      onsetTicks.push(player.getLastShotTime('cannon')!);
+      // The single shared `_autoFire` dispatch emits the fire cue, the muzzle
+      // flash and the bullet spawn in this one call, so VFX/SFX can never drift
+      // from the onset (no decoupled audio schedule).
+      expect(fired).toEqual(['onWeaponFired:cannon']);
+      expect(scene.getPlayerBullets().length).toBeGreaterThan(bulletsBefore);
+      expect(scene.getFireFxEffects().length).toBeGreaterThan(flashesBefore);
+    }
+
+    // One firing frame per onset, with real silent frames in between, and the
+    // shots attributed to the exact onsets of E(9, 16) in the first bar.
+    expect(firingFrames).toHaveLength(3);
+    expect(onsetTicks).toEqual([0, 375, 750]);
+    expect(idleFrames.length).toBeGreaterThan(0);
   });
 
   // ── Cannon projectile visuals & feel (AH-0MV8228YW0050IXS) ──────
@@ -805,7 +852,7 @@ describe('CombatCoreScene — shared base class', () => {
     expect(other.getBeatClock()).not.toBe(scene.getBeatClock());
   });
 
-  it('AC1/AC3 — auto-fire advances the shared clock with game time and fires on grid ticks', async () => {
+  it('AC1/AC3 — auto-fire advances the shared clock and fires on a pattern onset tick', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });
 
@@ -815,9 +862,20 @@ describe('CombatCoreScene — shared base class', () => {
     expect(scene.getBeatClock().now()).toBeCloseTo(500, 5); // dt*1000
     const cannonShot = player.getLastShotTime('cannon');
     expect(cannonShot).toBeDefined();
-    expect(isOnGrid(cannonShot!, 375, scene.getBeatClock().anchorMs)).toBe(
-      true,
-    );
+    // The cannon's cadence is its Euclidean pattern, not an interval grid
+    // (AH-0MVYA1V8Z009SHMR): the shot is an exact onset of E(k, n).
+    const pattern = player.getFirePattern('cannon')!;
+    expect(
+      isOnGrid(cannonShot!, pattern.stepMs, scene.getBeatClock().anchorMs),
+    ).toBe(true);
+    expect(
+      isOnset(
+        cannonShot!,
+        euclidPattern(pattern.k, pattern.n, pattern.rotation),
+        pattern.stepMs,
+        scene.getBeatClock().anchorMs,
+      ),
+    ).toBe(true);
   });
 
   // ── AC1 — shared player-control step ─────────────────────────────
@@ -1383,5 +1441,102 @@ describe('CombatCoreScene — SHUTDOWN releases the shared Phase Shift treatment
     scene.runTeardownRunState();
     expect(() => scene.runTeardownRunState()).not.toThrow();
     expect(destroy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Wave-laser hitscan dispatch (AH-0MVREBUJ5004HDRQ) ─────────────────
+
+/** A target the stub core can intercept. */
+interface StubTarget {
+  x: number;
+  y: number;
+  alive: boolean;
+  getHitRadius(): number;
+}
+
+/** Stub core that exposes the hitscan seam for dispatch assertions. */
+class HitscanStubScene extends StubCoreScene {
+  targets: StubTarget[] = [];
+  hits: { target: StubTarget; x: number; y: number }[] = [];
+  appliedDefs: string[] = [];
+
+  protected override getHitscanTargets() {
+    return this.targets;
+  }
+
+  protected override applyHitscanHit(
+    target: Parameters<CombatCoreScene['applyHitscanHit']>[0],
+    def: Parameters<CombatCoreScene['applyHitscanHit']>[1],
+    x: number,
+    y: number,
+  ): void {
+    this.hits.push({ target: target as StubTarget, x, y });
+    this.appliedDefs.push(def.id);
+  }
+
+  addTarget(x: number, y: number, radius = 12): StubTarget {
+    const target: StubTarget = {
+      x,
+      y,
+      alive: true,
+      getHitRadius: () => radius,
+    };
+    this.targets.push(target);
+    return target;
+  }
+}
+
+describe('wave laser — hitscan dispatch from the shared fire path (AH-0MVREBUJ5004HDRQ)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+    vi.restoreAllMocks();
+  });
+
+  async function boot(): Promise<HitscanStubScene> {
+    const booted = await bootScene([HitscanStubScene]);
+    games.push(booted);
+    return booted.scene as unknown as HitscanStubScene;
+  }
+
+  it('spawns no travelling bullet — one beam resolved at launch instead', async () => {
+    const scene = await boot();
+    const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
+    beamSpy.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('wave_laser', true);
+
+    scene.runAutoFire(10);
+
+    // No projectile enters the travelling-bullet path (AC11).
+    expect(
+      scene.getPlayerBullets().filter((b) => b.color === 0xff0000),
+    ).toHaveLength(0);
+    // Exactly one beam column per shot, one full screen wide (AC1/AC3).
+    expect(beamSpy).toHaveBeenCalledTimes(1);
+    const options = beamSpy.mock.calls[0][2]!;
+    expect(options.color).toBe(BULLET_COLORS.wave_laser);
+    expect(options.duration).toBeCloseTo(0.3, 6);
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+    expect(scene.hits).toHaveLength(0);
+  });
+
+  it('applies exactly one hit at the nearest intercept and stops there (AC2)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 200 });
+    player.setDefaultHeading(0); // fire right
+    const near = scene.addTarget(300, 200);
+    const far = scene.addTarget(600, 200);
+    player.equipWeapon('wave_laser', true);
+
+    scene.runAutoFire(10);
+
+    expect(scene.hits).toHaveLength(1);
+    expect(scene.hits[0].target).toBe(near);
+    expect(scene.hits[0].x).toBeCloseTo(288, 6);
+    expect(scene.appliedDefs).toEqual(['wave_laser']);
+    // The entity behind the intercept is never reached.
+    expect(scene.hits.some((hit) => hit.target === far)).toBe(false);
   });
 });

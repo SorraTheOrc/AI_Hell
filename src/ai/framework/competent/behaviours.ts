@@ -52,6 +52,7 @@ import {
 } from './goals';
 import { hazardThreatensPlayer, idleIntent, interceptPoint, mayReverse, mayThrust, planSteering } from './steering';
 import type { CompetentBotTunables } from './tunables';
+import { botWrapWorld, wrappedAxisDelta, wrappedDelta } from '../wrapGeometry';
 
 /** The collect targets for a goal: minerals or power-ups as content targets. */
 function collectTargets(
@@ -95,14 +96,16 @@ function collectBehaviour(
           ? () => 1
           : (target: ContentTarget) =>
               content.resolveDrop(target.contentId).value;
-      const best = bestWeightedTarget(targets, player, weight);
+      const best = bestWeightedTarget(
+        targets,
+        player,
+        weight,
+        botWrapWorld(t),
+      );
       if (!best) return null;
 
       const distance = best.distance;
-      const objective = {
-        x: best.point.x - player.x,
-        y: best.point.y - player.y,
-      };
+      const objective = wrappedDelta(player, best.point, botWrapWorld(t));
       const thrust = mayThrust(
         view.snapshot,
         t,
@@ -151,6 +154,7 @@ function engageBehaviour(
         player,
         (target: ContentTarget) =>
           content.resolveEnemy(target.contentId).threat,
+        botWrapWorld(t),
       );
       if (!best) return null;
 
@@ -164,22 +168,26 @@ function engageBehaviour(
       // time plus the shot's time of flight, iterated to a stable intercept.
       // A target that exposes no (or zero) velocity falls back to its current
       // position — exactly the pre-lead behaviour.
+      //
+      // Seam-aware aim (AH-0MVT2VZR7000GS15): both the lead solve and the
+      // route to the aim point run on the torus, so a target whose shortest
+      // path crosses an edge is led and aimed at through that edge.
       const targetVx = best.point.vx ?? 0;
       const targetVy = best.point.vy ?? 0;
-      const objective =
+      const wrapWorld = botWrapWorld(t);
+      const aimPoint =
         t.aimLeadEnabled && (targetVx !== 0 || targetVy !== 0)
-          ? (() => {
-              const intercept = interceptPoint(
-                player,
-                best.point,
-                { x: targetVx, y: targetVy },
-                t.assumedBulletSpeed,
-                t.aimLeadAlignSeconds,
-                t.aimLeadIterations,
-              );
-              return { x: intercept.x - player.x, y: intercept.y - player.y };
-            })()
-          : { x: best.point.x - player.x, y: best.point.y - player.y };
+          ? interceptPoint(
+              player,
+              best.point,
+              { x: targetVx, y: targetVy },
+              t.assumedBulletSpeed,
+              t.aimLeadAlignSeconds,
+              t.aimLeadIterations,
+              wrapWorld,
+            )
+          : { x: best.point.x, y: best.point.y };
+      const objective = wrappedDelta(player, aimPoint, wrapWorld);
       // Kiting (AC3): inside the standoff and needing more separation, hold
       // reverse while keeping the nose on the aim target (the objective still
       // points at the target, so the actuator backs away).  Only fires on a
@@ -250,23 +258,35 @@ function evadeBehaviour(t: CompetentBotTunables): BotBehaviour {
       const threatening = view.world.incomingFire.filter(
         (shot) => shot.threatens,
       );
+      const wrapWorld = botWrapWorld(t);
       let ax = 0;
       let ay = 0;
       if (threatening.length > 0) {
         for (const shot of threatening) {
-          const distance = Math.hypot(
-            shot.source.x - player.x,
-            shot.source.y - player.y,
+          // Measure the shot on the torus and flee along the wrapped route, so
+          // a shot that arrived across a seam is escaped *through* the seam
+          // rather than toward it (AH-0MVT2W10L003VV1U).
+          const dx = wrappedAxisDelta(
+            player.x,
+            shot.source.x,
+            wrapWorld.width,
           );
+          const dy = wrappedAxisDelta(
+            player.y,
+            shot.source.y,
+            wrapWorld.height,
+          );
+          const distance = Math.hypot(dx, dy);
           const weight = 1 / (1 + distance);
-          ax += (player.x - shot.source.x) * weight;
-          ay += (player.y - shot.source.y) * weight;
+          ax += -dx * weight;
+          ay += -dy * weight;
         }
       } else {
-        const nearest = nearestTarget(view.world.hazards, player);
+        const nearest = nearestTarget(view.world.hazards, player, wrapWorld);
         if (nearest) {
-          ax = player.x - nearest.point.x;
-          ay = player.y - nearest.point.y;
+          const away = wrappedDelta(nearest.point, player, wrapWorld);
+          ax = away.x;
+          ay = away.y;
         }
       }
 

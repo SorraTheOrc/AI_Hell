@@ -13,8 +13,8 @@
  * line, which stalls the ship when every cardinal is blocked or makes it
  * twitch between adjacent cardinals. Instead, {@link planSteering} samples a
  * fan of bearings around the objective (the direct bearing first, then
- * offsets), evaluates each one's predicted clearance against walls, hazards
- * and incoming fire, and picks the safe bearing that best trades objective
+ * offsets), evaluates each one's predicted clearance against hazards and
+ * incoming fire, and picks the safe bearing that best trades objective
  * progress against clearance. When no bearing is safe it takes the one with
  * the greatest clearance — the least-bad escape — so the ship always moves
  * rather than freezing.
@@ -23,10 +23,17 @@
  *
  * Every behaviour routes its intent through {@link planSteering}, so the
  * never-suicide property holds regardless of which goal is committed. A
- * bearing is unsafe when it reaches a wall inside the wall margin, drives
- * toward a hazard inside the danger margin, or is predicted to pass within
- * the threat radius of an in-flight shot (or a fire-tell shot) inside the
- * prediction horizon.
+ * bearing is unsafe when it drives toward a hazard inside the danger margin,
+ * or is predicted to pass within the threat radius of an in-flight shot (or a
+ * fire-tell shot) inside the prediction horizon.
+ *
+ * ## Wrap-around arena (AH-0MVT2VYN40076JKX)
+ *
+ * The four arena edges are **not** walls: the ship crosses an edge and
+ * reappears on the opposite side, so reaching an edge never makes a bearing
+ * unsafe. Distance to an edge is retained only as a soft clearance
+ * contribution; the objective itself should already be a wrapped delta
+ * (see {@link bearingTo}).
  *
  * ## Predictive hazard avoidance (AH-0MVI4QDN90037DIN · AC2)
  *
@@ -46,6 +53,16 @@
  * forward-firing weapon on the enemy, instead of aiming only by accident of
  * its travel direction.
  *
+ * ## Seam-aware aim (AH-0MVT2VZR7000GS15)
+ *
+ * {@link bearingTo} and {@link interceptPoint} accept an optional
+ * {@link WrapWorld}. With one, deltas follow the **shortest wrapped path** and
+ * the lead solve measures time of flight on the torus, so aim and lead cross a
+ * seam when that route is shorter (firing off one edge to arrive from the
+ * opposite one). The maths is the shared `src/utils/wrapGeometry.ts`
+ * implementation — this module adds no second seam model. Omitting the world
+ * keeps the legacy raw Euclidean result, bit-for-bit.
+ *
  * @module src/ai/framework/competent/steering
  */
 
@@ -59,6 +76,13 @@ import {
   resolveReverseAcceleration,
   resolveReverseMaxSpeed,
 } from './tunables';
+import {
+  wrapPosition,
+  wrappedAxisDelta,
+  wrappedBearing,
+  wrappedDistance,
+  type WrapWorld,
+} from '../../../utils/wrapGeometry';
 
 /** Epsilon for float comparisons. */
 const EPS = 1e-6;
@@ -93,11 +117,18 @@ export function normalise(x: number, y: number): BotWorldPoint {
   return { x: x / len, y: y / len };
 }
 
-/** Unit bearing from `from` toward `to`. */
+/** Unit bearing from `from` toward `to`.
+ *
+ * With a {@link WrapWorld} the bearing follows the **shortest wrapped path**
+ * (seam-aware aim), so a target across an edge is pointed at through that
+ * edge; without one the legacy raw bearing is returned unchanged.
+ */
 export function bearingTo(
   from: BotWorldPoint,
   to: BotWorldPoint,
+  world?: WrapWorld,
 ): BotWorldPoint {
+  if (world) return wrappedBearing(from, to, world);
   return normalise(to.x - from.x, to.y - from.y);
 }
 
@@ -116,12 +147,23 @@ export function bearingTo(
  * `projectileSpeed <= 0` (unknown) leaves the target at its current position
  * after accounting only for `alignSeconds`.
  *
+ * ## Seam-aware lead (AH-0MVT2VZR7000GS15)
+ *
+ * With a {@link WrapWorld} the solve runs on the torus: the predicted point is
+ * the target advanced by its velocity, wrapped onto the playfield, and the
+ * shot's time of flight is measured along the **shortest wrapped route** to
+ * it. A lead solution that must cross a seam is therefore still produced, and
+ * a stationary target reduces to its position wrapped onto the torus (so the
+ * caller's wrapped bearing aims along the short route). Without a world the
+ * legacy raw Euclidean solve is unchanged.
+ *
  * @param shooter — the firing ship's position.
  * @param target — the target's current position.
  * @param targetVelocity — the target's velocity (px/s).
  * @param projectileSpeed — the projectile's speed (px/s).
  * @param alignSeconds — estimated time for the ship to finish its turn.
  * @param iterations — refine passes; one or more (clamped).
+ * @param world — optional torus; omit for the legacy raw solve.
  */
 export function interceptPoint(
   shooter: BotWorldPoint,
@@ -130,31 +172,40 @@ export function interceptPoint(
   projectileSpeed: number,
   alignSeconds: number,
   iterations: number,
+  world?: WrapWorld,
 ): BotWorldPoint {
   const align = Math.max(0, Number.isFinite(alignSeconds) ? alignSeconds : 0);
   const steps = Math.max(1, Math.floor(iterations));
   const hasSpeed = Number.isFinite(projectileSpeed) && projectileSpeed > EPS;
+  // The predicted point is the target advanced by its velocity, kept on the
+  // torus when a wrap world is supplied (its duplicate is equivalent, and an
+  // on-world point keeps the returned intercept point meaningful).
+  const predict = (t: number): BotWorldPoint => {
+    const x = target.x + targetVelocity.x * t;
+    const y = target.y + targetVelocity.y * t;
+    return world ? wrapPosition(x, y, world) : { x, y };
+  };
   let t = align;
   for (let i = 0; i < steps; i += 1) {
-    const predicted = {
-      x: target.x + targetVelocity.x * t,
-      y: target.y + targetVelocity.y * t,
-    };
+    const predicted = predict(t);
     if (!hasSpeed) return predicted;
-    const flight =
-      Math.hypot(predicted.x - shooter.x, predicted.y - shooter.y) /
-      projectileSpeed;
+    const flight = world
+      ? wrappedDistance(shooter, predicted, world) / projectileSpeed
+      : Math.hypot(predicted.x - shooter.x, predicted.y - shooter.y) /
+        projectileSpeed;
     t = align + flight;
   }
-  return {
-    x: target.x + targetVelocity.x * t,
-    y: target.y + targetVelocity.y * t,
-  };
+  return predict(t);
 }
 
 /**
  * Closest approach between the player (moving with velocity `pv`) and a body
  * (moving with velocity `qv`) over `horizon` seconds.
+ *
+ * With a {@link WrapWorld} the relative position is the shortest wrapped delta
+ * (per axis), so a body arriving across a seam is predicted on the torus
+ * instead of on a raw line that starts most of a playfield away
+ * (AH-0MVT2W2D9002BOHO). Relative velocity is a rate, so it is not wrapped.
  */
 function closestApproach(
   px: number,
@@ -166,9 +217,10 @@ function closestApproach(
   qvx: number,
   qvy: number,
   horizon: number,
+  world?: WrapWorld,
 ): { t: number; distance: number } {
-  const rx = qx - px;
-  const ry = qy - py;
+  const rx = world ? wrappedAxisDelta(px, qx, world.width) : qx - px;
+  const ry = world ? wrappedAxisDelta(py, qy, world.height) : qy - py;
   const rvx = qvx - pvx;
   const rvy = qvy - pvy;
   const denom = rvx * rvx + rvy * rvy;
@@ -208,8 +260,16 @@ export function hazardThreatensPlayer(
   const hvx = hazard.vx ?? 0;
   const hvy = hazard.vy ?? 0;
   const moving = hvx !== 0 || hvy !== 0;
+  // The arena is a torus: a hazard just across a seam is close, not most of a
+  // playfield away (AH-0MVT2W2D9002BOHO).
+  const torus: WrapWorld = {
+    width: t.playfieldWidth,
+    height: t.playfieldHeight,
+  };
   if (!t.hazardPredictionEnabled || !moving) {
-    return Math.hypot(hx - player.x, hy - player.y) < t.dangerMargin;
+    const dx = wrappedAxisDelta(player.x, hx, torus.width);
+    const dy = wrappedAxisDelta(player.y, hy, torus.height);
+    return Math.hypot(dx, dy) < t.dangerMargin;
   }
   const approach = closestApproach(
     player.x,
@@ -221,6 +281,7 @@ export function hazardThreatensPlayer(
     hvx,
     hvy,
     t.hazardPredictionHorizon,
+    torus,
   );
   return approach.distance < t.threatRadius;
 }
@@ -282,27 +343,33 @@ export function evaluateDirection(
   const pvy = dirY * speed;
   let clearance = t.clearanceCap;
   let safe = true;
+  // The torus the prediction runs on (the arena is a four-edge wrap).
+  const torus: WrapWorld = {
+    width: t.playfieldWidth,
+    height: t.playfieldHeight,
+  };
 
-  // Walls: reject a bearing that reaches an edge inside the wall margin.
+  // Clearance term: distance travelled along the direction to the first edge.
+  // On the wrap-around arena an edge is **not** a wall — the ship crosses it and
+  // reappears on the opposite side (AH-0MVT2VYN40076JKX) — so this is only a
+  // soft clearance contribution, never a reason to reject a bearing.
   let wall = Number.POSITIVE_INFINITY;
   if (dirX < -EPS) wall = Math.min(wall, px / -dirX);
   if (dirX > EPS) wall = Math.min(wall, (t.playfieldWidth - px) / dirX);
   if (dirY < -EPS) wall = Math.min(wall, py / -dirY);
   if (dirY > EPS) wall = Math.min(wall, (t.playfieldHeight - py) / dirY);
   if (wall < clearance) clearance = wall;
-  if (wall < t.wallMargin) safe = false;
 
   // Hazards (enemies, asteroids, boss): reactive keep-away plus, when the bot
   // has a velocity estimate and prediction is on, a closest-approach solve
   // against where the hazard will be (AH-0MVI4QDN90037DIN · AC2). Stationary
   // or untracked hazards keep exactly the positional rule.
   for (const hazard of world.hazards) {
-    const d = Math.hypot(hazard.x - px, hazard.y - py);
+    const hdx = wrappedAxisDelta(px, hazard.x, torus.width);
+    const hdy = wrappedAxisDelta(py, hazard.y, torus.height);
+    const d = Math.hypot(hdx, hdy);
     if (d < clearance) clearance = d;
-    if (
-      d < t.dangerMargin &&
-      (hazard.x - px) * dirX + (hazard.y - py) * dirY > 0
-    ) {
+    if (d < t.dangerMargin && hdx * dirX + hdy * dirY > 0) {
       safe = false;
     }
     const hvx = hazard.vx ?? 0;
@@ -322,6 +389,7 @@ export function evaluateDirection(
         hvx,
         hvy,
         t.hazardPredictionHorizon,
+        torus,
       );
       if (ca.distance < clearance) clearance = ca.distance;
       if (ca.t > EPS && ca.distance < t.threatRadius) safe = false;
@@ -332,12 +400,11 @@ export function evaluateDirection(
   // predicted to cross a shot's path inside the horizon, or that drives
   // toward a shot already inside the threat radius.
   for (const shot of world.incomingFire) {
-    const d = Math.hypot(shot.source.x - px, shot.source.y - py);
+    const sdx = wrappedAxisDelta(px, shot.source.x, torus.width);
+    const sdy = wrappedAxisDelta(py, shot.source.y, torus.height);
+    const d = Math.hypot(sdx, sdy);
     if (d < clearance) clearance = d;
-    if (
-      d < t.threatRadius &&
-      (shot.source.x - px) * dirX + (shot.source.y - py) * dirY > 0
-    ) {
+    if (d < t.threatRadius && sdx * dirX + sdy * dirY > 0) {
       safe = false;
     }
     const ca = closestApproach(
@@ -350,6 +417,7 @@ export function evaluateDirection(
       shot.velocity.x,
       shot.velocity.y,
       t.firePredictionHorizon,
+      torus,
     );
     if (ca.distance < clearance) clearance = ca.distance;
     if (ca.t > EPS && ca.distance < t.threatRadius) safe = false;
