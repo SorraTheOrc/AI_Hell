@@ -756,6 +756,11 @@ export abstract class CombatScene<
    * chain targets, clears enemy bullets along the bolt path, and reports the
    * hit to the boss hook.
    *
+   * `chain` is the eligibility-filtered selection from `onAoeFired`, so the
+   * inert `asteroid` world hazard is never damaged and the derived `path`
+   * (and therefore the along-path bullet clear) never runs through a rock
+   * (AH-0MVNSIG1O0049G69).
+   *
    * @param aoe - The weapon's AOE descriptor.
    * @param x - Effect origin x (the ship).
    * @param y - Effect origin y.

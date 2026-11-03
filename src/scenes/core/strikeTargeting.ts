@@ -10,17 +10,28 @@
  * (`waveTimeout.isNonBlockingHazard`, `miniBossDeathSweep`), and a one-hit
  * bolt spent on rock read in play as "the power-up does nothing".
  *
- * The rule lives here, once, and is consumed by
+ * The **eligibility rule** (which archetypes auto-targeting offence must
+ * never select) is not defined here: it lives once in the pure, shared
+ * `utils/targetEligibility` module (AH-0MVVHAAUJ0080M9M) and this module
+ * delegates to it, so the Arc chain and the Orbital Strike bolt cannot drift
+ * apart — in the game or in any gym (gym↔game parity, AH-0MUGZDTFX004RBD1).
+ *
+ * The strike **selection** lives here, once, and is consumed by
  * `CombatScene.onOrbitalStrike` — the single strike seam inherited by
- * `PlayScene` and every gym (gym↔game parity, AH-0MUGZDTFX004RBD1), so the
- * game and the gyms cannot disagree about what a strike may hit. Being pure
- * and scene-agnostic it is unit-testable without booting a scene.
+ * `PlayScene` and every gym, so the game and the gyms cannot disagree about
+ * what a strike may hit. Being pure and scene-agnostic it is unit-testable
+ * without booting a scene.
  *
  * Only the *target* changes here: the damage path, the bolt VFX and the cue
  * are untouched, and every other weapon may still hit asteroids.
  *
  * @module scenes/core/strikeTargeting
  */
+
+import {
+  INERT_WORLD_HAZARD_ARCHETYPES,
+  isInertWorldHazard,
+} from '../../utils/targetEligibility';
 
 /**
  * Minimal entity contract the strike's target rule reads: a live body with a
@@ -44,29 +55,31 @@ export interface StrikeTargetEntity {
 /**
  * Archetypes an Orbital Strike must never target.
  *
- * `asteroid` is the only exclusion: it is an inert world hazard whose kill
- * reward is not the strike's business. `lane-traffic` and the
- * `orbital-strike` hazard entity are hostile, so they remain valid targets.
+ * Aliased to the shared {@link INERT_WORLD_HAZARD_ARCHETYPES} list rather than
+ * copied, so the Orbital Strike and the Arc chain read one rule
+ * (AH-0MVVHAAUJ0080M9M). `asteroid` is the only exclusion: it is an inert
+ * world hazard whose kill reward is not auto-targeting offence's business.
+ * `lane-traffic` and the `orbital-strike` hazard entity are hostile, so they
+ * remain valid targets.
  */
-export const ORBITAL_STRIKE_EXCLUDED_ARCHETYPES: readonly string[] = [
-  'asteroid',
-];
+export const ORBITAL_STRIKE_EXCLUDED_ARCHETYPES: readonly string[] =
+  INERT_WORLD_HAZARD_ARCHETYPES;
 
 /**
  * Whether an entity may be struck by an Orbital Strike bolt: it must be alive
  * and must not be a world hazard listed in
  * {@link ORBITAL_STRIKE_EXCLUDED_ARCHETYPES}.
  *
+ * Delegates the hazard test to the shared
+ * {@link isInertWorldHazard} so this rule and `isEligibleAutoTarget` (the Arc
+ * chain's predicate) can never disagree.
+ *
  * @param entity - Candidate entity (any live enemy body).
  * @returns True when the bolt may target it.
  */
 export function isOrbitalStrikeTarget(entity: StrikeTargetEntity): boolean {
   if (!entity.alive) return false;
-  const archetype = entity.archetype;
-  return !(
-    archetype !== undefined &&
-    ORBITAL_STRIKE_EXCLUDED_ARCHETYPES.includes(archetype)
-  );
+  return !isInertWorldHazard(entity.archetype);
 }
 
 /**
