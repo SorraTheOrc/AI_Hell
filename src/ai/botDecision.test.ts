@@ -10,7 +10,8 @@
  * Acceptance criteria covered:
  * - AC1 — survival-first priority ordering
  * - AC2 — a deterministic unit test per priority branch
- * - AC3 — the bot never suicides into a bullet / asteroid / enemy / wall
+ * - AC3 — the bot never suicides into a bullet / asteroid / enemy (edges are
+ *   a wrap, not a wall: AH-0MVT2VYN40076JKX)
  * - AC4 — fire-pattern avoidance reduces avoidable hits vs a reactive baseline
  * - AC5 — tunables live in one shared config object
  */
@@ -582,15 +583,16 @@ describe('AC2 — one deterministic test per priority branch', () => {
     expect(input.up).toBe(false);
   });
 
-  it('survive: does not steer into a wall it is pressed against', () => {
-    // Wall to the left is within wallMargin; a power-up to the left tempts
-    // the bot, but survival blocks the leftward move.
+  it('survive: crosses the seam toward a drop at the edge (edges are not walls)', () => {
+    // The drop sits just across the left seam. Edges are not walls on the
+    // wrap-around arena, so the bot is free to step over the edge toward it
+    // (AH-0MVT2VYN40076JKX) instead of refusing the leftward move.
     const snapshot = makeSnapshot({
       player: { x: 20, y: 300, vx: 0, vy: 0 },
       drops: [drop(10, 300, 'spread')],
     });
     const input = decideBotInput(snapshot);
-    expect(input.left).toBe(false);
+    expect(input.left).toBe(true);
   });
 
   it('enemies: engages a live enemy within engagement radius', () => {
@@ -714,13 +716,48 @@ describe('AC3 — the bot never suicides when a safe alternative exists', () => 
     expect(input.left).toBe(false);
   });
 
-  it('does not steer into a wall when a power-up is behind the wall', () => {
+  it('does not steer into a hazard near an edge (edges themselves are not walls)', () => {
+    // A power-up just across the left seam tempts the bot, and there is no
+    // hazard, so the edge no longer blocks the move (AH-0MVT2VYN40076JKX).
     const snapshot = makeSnapshot({
       player: { x: 30, y: 300, vx: 0, vy: 0 },
       drops: [drop(5, 300, 'spread')],
     });
     const input = decideBotInput(snapshot);
+    expect(input.left).toBe(true);
+  });
+
+  it('steers across the seam toward a mineral whose wrapped route is shorter', () => {
+    // Player near the right edge, mineral near the left edge: the raw line is
+    // 490 px left (still inside the 500 px mineral seek range), but the
+    // wrapped route is 470 px right across the seam. The bot's objective is the
+    // shortest wrapped delta, so it heads right.
+    const snapshot = makeSnapshot({
+      player: { x: 740, y: 270, vx: 0, vy: 0 },
+      minerals: [mineral(250, 270)],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.right).toBe(true);
     expect(input.left).toBe(false);
+  });
+
+  it('does not flap between raw and wrapped duplicates near the half-width (AC4)', () => {
+    // The mineral sits almost exactly half a playfield away, so the raw and
+    // wrapped routes are nearly equal. Nudging it ±0.4 px each tick would make
+    // a naive shortest-route choice alternate left/right; the near-tie
+    // hysteresis keeps one committed duplicate.
+    const half = 480; // playfield width / 2
+    const directions: string[] = [];
+    for (let tick = 0; tick < 8; tick += 1) {
+      const x = 100 + half + (tick % 2 === 0 ? 0.4 : -0.4);
+      const snapshot = makeSnapshot({
+        player: { x: 100, y: 270, vx: 0, vy: 0 },
+        minerals: [mineral(x, 270)],
+      });
+      const input = decideBotInput(snapshot);
+      directions.push(input.right ? 'right' : input.left ? 'left' : 'none');
+    }
+    expect(new Set(directions).size).toBe(1);
   });
 
   it('does not steer into a bullet when cornered by bullets on all sides', () => {

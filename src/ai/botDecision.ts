@@ -78,7 +78,7 @@
 
 import type { FourDirectionalInput } from '../utils/movementModel';
 import type { BotSnapshot } from './botSnapshot';
-import { botWrapWorld, wrappedDelta } from './framework/wrapGeometry';
+import { chooseWrappedRouteToPlayer } from './framework/wrapGeometry';
 
 // ── Tunables (AC5) ──────────────────────────────────────────────────
 
@@ -355,12 +355,15 @@ interface DirectionSafety {
  * and how much clearance it offers.
  *
  * A direction is unsafe when it either:
- * - reaches a wall within `wallMargin`;
  * - moves toward an alive hazard (enemy/asteroid/boss) closer than
  *   `dangerMargin`;
  * - moves toward a bullet already within `bulletDangerRadius`; or
  * - is predicted to cross an in-flight bullet's path within
  *   `firePredictionHorizon` (fire-pattern avoidance).
+ *
+ * The four arena edges are **not** walls (AH-0MVT2VYN40076JKX): the ship
+ * crosses an edge and reappears on the opposite side, so distance to an edge
+ * is only a soft clearance contribution, never a reason to reject a bearing.
  *
  * Generalising the check to an arbitrary unit vector is what lets the bot
  * validate a precise aiming direction (not just the four cardinals).
@@ -376,15 +379,17 @@ function evaluateVector(
   const pvx = dirX * t.playerSpeed;
   const pvy = dirY * t.playerSpeed;
 
-  // Walls: distance travelled along the direction to the first wall it
-  // reaches; reaching one inside `wallMargin` is unsafe.
+  // Clearance term: distance travelled along the direction to the first edge.
+  // Edges are not walls on the wrap-around arena (AH-0MVT2VYN40076JKX), so
+  // this only contributes to clearance selection — it never makes a bearing
+  // unsafe.
   let wall = Infinity;
   if (dirX < -EPS) wall = Math.min(wall, px / -dirX);
   if (dirX > EPS) wall = Math.min(wall, (t.playfieldWidth - px) / dirX);
   if (dirY < -EPS) wall = Math.min(wall, py / -dirY);
   if (dirY > EPS) wall = Math.min(wall, (t.playfieldHeight - py) / dirY);
   let clearance = wall;
-  let safe = wall >= t.wallMargin;
+  let safe = true;
 
   // Hazards (enemies, asteroids, boss): reactive keep-away.
   for (const hazard of collectHazards(snapshot)) {
@@ -867,11 +872,16 @@ function approachIntent(
   // shortest wrapped route to the target, so a target across an edge is
   // pointed at through that edge. On a non-seam geometry the wrapped delta is
   // the raw delta exactly, so the pre-change aim is unchanged.
-  const delta = wrappedDelta(
+  //
+  // Near-tie hysteresis (AH-0MVT2VYN40076JKX): the shared route chooser keeps
+  // the raw route when the raw and wrapped routes are within one pixel of each
+  // other, so a target sitting near the half-width cannot make the committed
+  // duplicate flip left/right every tick.
+  const delta = chooseWrappedRouteToPlayer(
     { x: px, y: py },
     { x: target.x, y: target.y },
-    botWrapWorld(t),
-  );
+    t,
+  ).delta;
   const rx = delta.x;
   const ry = delta.y;
   const d = Math.hypot(rx, ry) || 1;

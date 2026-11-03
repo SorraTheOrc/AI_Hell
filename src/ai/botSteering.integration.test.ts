@@ -225,9 +225,30 @@ describe('closed-loop steering (rejection AH-0MUXYOV4C008MV0L)', () => {
     expect(trace.minDistance).toBeLessThan(30);
     // ... at a controlled speed.  The human-like thrust presses (AC15) trade a
     // little precision for feel, so the ship may still carry a modest speed
-    // and overshoot slightly — but it never wraps the screen.
+    // and overshoot slightly — but it still brakes to a controlled stop rather
+    // than blasting past.  Crossing a seam is allowed now that the arena is a
+    // torus (AH-0MVT2VYN40076JKX); this case simply never needs to.
     expect(trace.minSpeed).toBeLessThan(70);
     expect(trace.overshoot).toBeLessThan(40);
+  });
+
+  it('crosses the seam to reach a mineral that is nearer the other way (AH-0MVT2VYN40076JKX)', () => {
+    // Start just inside the right edge, mineral across the seam: the raw line
+    // is 485 px left (inside the 500 px seek range the whole way), but the
+    // shortest wrapped route is 475 px right across the right seam. The ship
+    // crosses the seam and closes on the mineral from the far side. (Selection
+    // ranges are wrapped by AH-0MVT2W10L003VV1U; keeping the raw distance
+    // inside the range lets this steering-only slice assert the crossing.)
+    const start = { x: 955, y: 270, vx: 0, vy: 0, facing: 0, angularVelocity: 0 };
+    const target = { x: 470, y: 270 };
+    const trace = simulateToward(
+      start,
+      target,
+      { minerals: [{ x: target.x, y: target.y, type: 'mineral' }] },
+      300,
+    );
+    expect(trace.startDistance).toBe(485);
+    expect(trace.minDistance).toBeLessThan(40);
   });
 
   it('survival bounds the aim: the ship does not fly into a shot line', () => {

@@ -13,8 +13,8 @@
  * line, which stalls the ship when every cardinal is blocked or makes it
  * twitch between adjacent cardinals. Instead, {@link planSteering} samples a
  * fan of bearings around the objective (the direct bearing first, then
- * offsets), evaluates each one's predicted clearance against walls, hazards
- * and incoming fire, and picks the safe bearing that best trades objective
+ * offsets), evaluates each one's predicted clearance against hazards and
+ * incoming fire, and picks the safe bearing that best trades objective
  * progress against clearance. When no bearing is safe it takes the one with
  * the greatest clearance — the least-bad escape — so the ship always moves
  * rather than freezing.
@@ -23,10 +23,17 @@
  *
  * Every behaviour routes its intent through {@link planSteering}, so the
  * never-suicide property holds regardless of which goal is committed. A
- * bearing is unsafe when it reaches a wall inside the wall margin, drives
- * toward a hazard inside the danger margin, or is predicted to pass within
- * the threat radius of an in-flight shot (or a fire-tell shot) inside the
- * prediction horizon.
+ * bearing is unsafe when it drives toward a hazard inside the danger margin,
+ * or is predicted to pass within the threat radius of an in-flight shot (or a
+ * fire-tell shot) inside the prediction horizon.
+ *
+ * ## Wrap-around arena (AH-0MVT2VYN40076JKX)
+ *
+ * The four arena edges are **not** walls: the ship crosses an edge and
+ * reappears on the opposite side, so reaching an edge never makes a bearing
+ * unsafe. Distance to an edge is retained only as a soft clearance
+ * contribution; the objective itself should already be a wrapped delta
+ * (see {@link bearingTo}).
  *
  * ## Predictive hazard avoidance (AH-0MVI4QDN90037DIN · AC2)
  *
@@ -321,14 +328,16 @@ export function evaluateDirection(
   let clearance = t.clearanceCap;
   let safe = true;
 
-  // Walls: reject a bearing that reaches an edge inside the wall margin.
+  // Clearance term: distance travelled along the direction to the first edge.
+  // On the wrap-around arena an edge is **not** a wall — the ship crosses it and
+  // reappears on the opposite side (AH-0MVT2VYN40076JKX) — so this is only a
+  // soft clearance contribution, never a reason to reject a bearing.
   let wall = Number.POSITIVE_INFINITY;
   if (dirX < -EPS) wall = Math.min(wall, px / -dirX);
   if (dirX > EPS) wall = Math.min(wall, (t.playfieldWidth - px) / dirX);
   if (dirY < -EPS) wall = Math.min(wall, py / -dirY);
   if (dirY > EPS) wall = Math.min(wall, (t.playfieldHeight - py) / dirY);
   if (wall < clearance) clearance = wall;
-  if (wall < t.wallMargin) safe = false;
 
   // Hazards (enemies, asteroids, boss): reactive keep-away plus, when the bot
   // has a velocity estimate and prediction is on, a closest-approach solve

@@ -20,6 +20,10 @@ import {
 } from '../testFixtures';
 import { wrapPosition, type WrapWorld } from '../../../utils/wrapGeometry';
 import {
+  chooseWrappedRouteToPlayer,
+  wrappedDeltaToPlayer,
+} from '../wrapGeometry';
+import {
   bearingTo,
   buildIntent,
   chooseSteeringDirection,
@@ -62,14 +66,23 @@ describe('evaluateDirection', () => {
     expect(evaluateDirection(-1, 0, world, T).safe).toBe(true);
   });
 
-  it('rejects a bearing that reaches a wall inside the wall margin', () => {
+  it('treats each of the four edges as a wrap, not a wall (AH-0MVT2VYN40076JKX)', () => {
+    // From mid-playfield, driving straight at any edge is safe: the ship
+    // crosses the seam and reappears on the opposite side. A raw-line wall
+    // model would reject all four of these bearings.
     const snapshot = makeSnapshot({
-      player: { x: 10, y: 270, vx: 0, vy: 0 },
+      player: { x: 480, y: 270, vx: 0, vy: 0 },
     });
     const world = buildBotWorld(snapshot);
-    // Player is 10 px from the left edge; going left reaches it immediately.
-    expect(evaluateDirection(-1, 0, world, T).safe).toBe(false);
-    expect(evaluateDirection(1, 0, world, T).safe).toBe(true);
+    const edgeBearings = [
+      { name: 'left edge', dx: -1, dy: 0 },
+      { name: 'right edge', dx: 1, dy: 0 },
+      { name: 'top edge', dx: 0, dy: -1 },
+      { name: 'bottom edge', dx: 0, dy: 1 },
+    ];
+    for (const { name, dx, dy } of edgeBearings) {
+      expect(evaluateDirection(dx, dy, world, T).safe, name).toBe(true);
+    }
   });
 });
 
@@ -137,6 +150,71 @@ describe('planSteering', () => {
       longTravel: false,
     });
     expect(intent).toMatchObject({ dirX: 0, dirY: 0, thrust: false });
+  });
+});
+
+describe('wrap-aware objective steering (AH-0MVT2VYN40076JKX)', () => {
+  it('steers across the seam when the wrapped route to the objective is shorter', () => {
+    // Player near the right edge, target near the left edge. The raw delta is
+    // −800 px (left); the wrapped route is +160 px (right, across the seam).
+    const player = { x: 900, y: 270, vx: 0, vy: 0 };
+    const target = { x: 100, y: 270 };
+    const snapshot = makeSnapshot({ player });
+    const world = buildBotWorld(snapshot);
+
+    const rawDelta = { x: target.x - player.x, y: target.y - player.y };
+    const wrappedDelta = wrappedDeltaToPlayer(player, target, T);
+    expect(Math.abs(wrappedDelta.x)).toBeLessThan(Math.abs(rawDelta.x));
+
+    const intent = planSteering(wrappedDelta, world, T, {
+      thrust: true,
+      longTravel: false,
+    });
+    // The chosen bearing points at the seam duplicate (rightwards), not at the
+    // raw leftward line.
+    expect(intent.dirX).toBeGreaterThan(0.9);
+  });
+
+  it('keeps the raw bearing when the raw line is already shortest', () => {
+    const player = { x: 400, y: 270, vx: 0, vy: 0 };
+    const target = { x: 500, y: 270 };
+    const snapshot = makeSnapshot({ player });
+    const world = buildBotWorld(snapshot);
+
+    const rawDelta = { x: target.x - player.x, y: target.y - player.y };
+    const wrappedDelta = wrappedDeltaToPlayer(player, target, T);
+    expect(wrappedDelta).toEqual(rawDelta);
+
+    const intent = planSteering(wrappedDelta, world, T, {
+      thrust: true,
+      longTravel: false,
+    });
+    expect(intent.dirX).toBeCloseTo(1, 6);
+    expect(intent.dirY).toBeCloseTo(0, 6);
+  });
+
+  it('commits one duplicate when raw and wrapped routes swap by a tiny margin (AC4)', () => {
+    // The target sits near the exact half-width, so the raw and wrapped routes
+    // are almost equal. Each tick nudges it ±0.4 px, swapping which route is
+    // nominally shorter. Without hysteresis the committed route would flip
+    // every tick.
+    const half = T.playfieldWidth / 2;
+    const player = { x: 100, y: 270 };
+    const routes: string[] = [];
+    let previous: 'raw' | 'wrapped' | undefined;
+    for (let tick = 0; tick < 8; tick += 1) {
+      const target = {
+        x: 100 + half + (tick % 2 === 0 ? 0.4 : -0.4),
+        y: 270,
+      };
+      const choice = chooseWrappedRouteToPlayer(player, target, T, {
+        previous,
+      });
+      routes.push(choice.route);
+      previous = choice.route;
+    }
+    // The committed duplicate never oscillates.
+    expect(new Set(routes).size).toBe(1);
   });
 });
 
