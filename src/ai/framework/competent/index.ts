@@ -109,7 +109,10 @@ export function createCompetentBotBrain(
     // (AH-0MVI4QDN90037DIN · AC1/AC2).
     worldModel: (snapshot, memory, dt) => {
       const hazardVelocities = memory
-        ? trackHazardVelocities(memory, snapshot, dt ?? 0)
+        ? trackHazardVelocities(memory, snapshot, dt ?? 0, {
+            width: tunables.playfieldWidth,
+            height: tunables.playfieldHeight,
+          })
         : undefined;
       return buildBotWorld(
         snapshot,

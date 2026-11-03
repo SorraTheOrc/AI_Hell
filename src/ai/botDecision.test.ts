@@ -760,6 +760,20 @@ describe('AC3 — the bot never suicides when a safe alternative exists', () => 
     expect(new Set(directions).size).toBe(1);
   });
 
+  it('refuses a bearing into a shot arriving across the seam (AH-0MVT2W2D9002BOHO)', () => {
+    // Player just inside the left edge with a mineral to the left tempting a
+    // leftward move. A bullet just outside the right edge travels right and
+    // will wrap across the player: 50 px away on the torus, 910 px away on the
+    // raw line. The bot must not head left into it.
+    const snapshot = makeSnapshot({
+      player: { x: 40, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(20, 300)],
+      enemyBullets: [bullet(950, 300, 100, 0)],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(false);
+  });
+
   it('does not steer into a bullet when cornered by bullets on all sides', () => {
     // Every direction has an incoming bullet; the bot must still return a
     // valid input and must not move directly into an adjacent bullet.

@@ -229,4 +229,50 @@ describe('predictIncomingFire', () => {
     const [threat] = predictIncomingFire(snapshot, { horizon: 0.1 });
     expect(threat.timeToClosest).toBeCloseTo(0.1);
   });
+
+  it('classifies a shot arriving across a seam as threatening (AH-0MVT2W2D9002BOHO)', () => {
+    // Player just inside the left edge; a bullet just outside the right edge
+    // travelling right will wrap and cross the player. On the raw line it is
+    // 940 px to the right and receding; on the torus it is 20 px away and
+    // closing.
+    const seamPlayer = { x: 10, y: 300, vx: 0, vy: 0 };
+    const snapshot = makeSnapshot({
+      player: seamPlayer,
+      enemyBullets: [bullet(950, 300, 100, 0)],
+    });
+    const [threat] = predictIncomingFire(snapshot);
+
+    // The raw-line view would miss it entirely.
+    expect(Math.hypot(950 - seamPlayer.x, 300 - seamPlayer.y)).toBe(940);
+
+    expect(threat.closing).toBe(true);
+    expect(threat.threatens).toBe(true);
+    expect(threat.closestDistance).toBeCloseTo(0, 6);
+    expect(threat.timeToClosest).toBeCloseTo(0.2, 6);
+  });
+
+  it('classifies a same-side shot exactly as the raw model did (regression)', () => {
+    // Own-side geometry: raw and wrapped agree, so the prediction is unchanged.
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemyBullets: [bullet(400, 250, 0, 100)],
+    });
+    const [threat] = predictIncomingFire(snapshot);
+    expect(threat.timeToClosest).toBeCloseTo(0.5);
+    expect(threat.closestDistance).toBeCloseTo(0);
+    expect(threat.threatens).toBe(true);
+  });
+
+  it('models a fire tell that will fire across the seam', () => {
+    // Enemy just outside the right edge, player just inside the left edge: the
+    // tell aims across the seam (rightwards), not along the raw leftward line.
+    const snapshot = makeSnapshot({
+      player: { x: 10, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(950, 300, 'scout', true, true)],
+    });
+    const [threat] = predictIncomingFire(snapshot);
+    expect(threat.velocity.x).toBeGreaterThan(0);
+    expect(threat.closing).toBe(true);
+    expect(threat.threatens).toBe(true);
+  });
 });

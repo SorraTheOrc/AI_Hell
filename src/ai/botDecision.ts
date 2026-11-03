@@ -78,7 +78,7 @@
 
 import type { FourDirectionalInput } from '../utils/movementModel';
 import type { BotSnapshot } from './botSnapshot';
-import { chooseWrappedRouteToPlayer } from './framework/wrapGeometry';
+import { chooseWrappedRouteToPlayer, wrappedAxisDelta } from './framework/wrapGeometry';
 
 // ── Tunables (AC5) ──────────────────────────────────────────────────
 
@@ -310,6 +310,10 @@ function dot(
  * Returns the time of closest approach `t` (clamped to `[0, horizon]`) and
  * the separation at that time.  When the bodies are receding the returned
  * `t` is `0` (i.e. "now" is closest).
+ *
+ * With a `world` the relative position is the shortest wrapped delta (per
+ * axis), so a shot or hazard arriving across a seam is predicted on the torus
+ * (AH-0MVT2W2D9002BOHO). Relative velocity is a rate, so it is not wrapped.
  */
 function closestApproach(
   px: number,
@@ -321,9 +325,10 @@ function closestApproach(
   qvx: number,
   qvy: number,
   horizon: number,
+  world?: { readonly width: number; readonly height: number },
 ): { t: number; distance: number } {
-  const rx = qx - px;
-  const ry = qy - py;
+  const rx = world ? wrappedAxisDelta(px, qx, world.width) : qx - px;
+  const ry = world ? wrappedAxisDelta(py, qy, world.height) : qy - py;
   const rvx = qvx - pvx;
   const rvy = qvy - pvy;
   const denom = rvx * rvx + rvy * rvy;
@@ -390,13 +395,16 @@ function evaluateVector(
   if (dirY > EPS) wall = Math.min(wall, (t.playfieldHeight - py) / dirY);
   let clearance = wall;
   let safe = true;
+  // The torus the prediction runs on (the arena is a four-edge wrap).
+  const torus = { width: t.playfieldWidth, height: t.playfieldHeight };
 
-  // Hazards (enemies, asteroids, boss): reactive keep-away.
+  // Hazards (enemies, asteroids, boss): reactive keep-away, measured on the
+  // torus so a hazard across a seam counts as near (AH-0MVT2W2D9002BOHO).
   for (const hazard of collectHazards(snapshot)) {
-    const d = distance(px, py, hazard.x, hazard.y);
+    const toX = wrappedAxisDelta(px, hazard.x, torus.width);
+    const toY = wrappedAxisDelta(py, hazard.y, torus.height);
+    const d = Math.hypot(toX, toY);
     if (d < clearance) clearance = d;
-    const toX = hazard.x - px;
-    const toY = hazard.y - py;
     if (d < t.dangerMargin && dot(toX, toY, dirX, dirY) > 0) {
       safe = false;
     }
@@ -404,11 +412,13 @@ function evaluateVector(
 
   // Enemies inside a fire tell are about to shoot; treat the tell as an
   // aimed shot and reject directions that cross its line (fire-pattern
-  // avoidance using tell/interval cues, best-effort).
+  // avoidance using tell/interval cues, best-effort).  The tell line follows
+  // the shortest wrapped route so a tell that will fire across a seam is
+  // predicted (AH-0MVT2W2D9002BOHO).
   for (const enemy of snapshot.enemies) {
     if (!enemy.alive || enemy.isTelling !== true) continue;
-    const dx = px - enemy.x;
-    const dy = py - enemy.y;
+    const dx = wrappedAxisDelta(enemy.x, px, torus.width);
+    const dy = wrappedAxisDelta(enemy.y, py, torus.height);
     const len = Math.hypot(dx, dy) || 1;
     const ca = closestApproach(
       px,
@@ -420,6 +430,7 @@ function evaluateVector(
       (dx / len) * t.assumedBulletSpeed,
       (dy / len) * t.assumedBulletSpeed,
       t.firePredictionHorizon,
+      torus,
     );
     if (ca.distance < clearance) clearance = ca.distance;
     if (ca.t > EPS && ca.distance < t.bulletDangerRadius) safe = false;
@@ -427,16 +438,13 @@ function evaluateVector(
 
   // Bullets: reactive proximity plus predictive path crossing.
   for (const bullet of snapshot.enemyBullets) {
-    const d = distance(px, py, bullet.x, bullet.y);
+    const bdx = wrappedAxisDelta(px, bullet.x, torus.width);
+    const bdy = wrappedAxisDelta(py, bullet.y, torus.height);
+    const d = Math.hypot(bdx, bdy);
     if (d < clearance) clearance = d;
 
     // Reactive: moving toward a bullet that is already close is unsafe.
-    if (d < t.bulletDangerRadius && dot(
-      bullet.x - px,
-      bullet.y - py,
-      dirX,
-      dirY,
-    ) > 0) {
+    if (d < t.bulletDangerRadius && dot(bdx, bdy, dirX, dirY) > 0) {
       safe = false;
     }
 
@@ -452,6 +460,7 @@ function evaluateVector(
         bullet.vx,
         bullet.vy,
         t.firePredictionHorizon,
+        torus,
       );
       if (ca.distance < clearance) clearance = ca.distance;
       if (ca.t > EPS && ca.distance < t.bulletDangerRadius) {

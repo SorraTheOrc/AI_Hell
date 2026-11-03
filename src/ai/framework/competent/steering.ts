@@ -78,6 +78,7 @@ import {
 } from './tunables';
 import {
   wrapPosition,
+  wrappedAxisDelta,
   wrappedBearing,
   wrappedDistance,
   type WrapWorld,
@@ -200,6 +201,11 @@ export function interceptPoint(
 /**
  * Closest approach between the player (moving with velocity `pv`) and a body
  * (moving with velocity `qv`) over `horizon` seconds.
+ *
+ * With a {@link WrapWorld} the relative position is the shortest wrapped delta
+ * (per axis), so a body arriving across a seam is predicted on the torus
+ * instead of on a raw line that starts most of a playfield away
+ * (AH-0MVT2W2D9002BOHO). Relative velocity is a rate, so it is not wrapped.
  */
 function closestApproach(
   px: number,
@@ -211,9 +217,10 @@ function closestApproach(
   qvx: number,
   qvy: number,
   horizon: number,
+  world?: WrapWorld,
 ): { t: number; distance: number } {
-  const rx = qx - px;
-  const ry = qy - py;
+  const rx = world ? wrappedAxisDelta(px, qx, world.width) : qx - px;
+  const ry = world ? wrappedAxisDelta(py, qy, world.height) : qy - py;
   const rvx = qvx - pvx;
   const rvy = qvy - pvy;
   const denom = rvx * rvx + rvy * rvy;
@@ -253,8 +260,16 @@ export function hazardThreatensPlayer(
   const hvx = hazard.vx ?? 0;
   const hvy = hazard.vy ?? 0;
   const moving = hvx !== 0 || hvy !== 0;
+  // The arena is a torus: a hazard just across a seam is close, not most of a
+  // playfield away (AH-0MVT2W2D9002BOHO).
+  const torus: WrapWorld = {
+    width: t.playfieldWidth,
+    height: t.playfieldHeight,
+  };
   if (!t.hazardPredictionEnabled || !moving) {
-    return Math.hypot(hx - player.x, hy - player.y) < t.dangerMargin;
+    const dx = wrappedAxisDelta(player.x, hx, torus.width);
+    const dy = wrappedAxisDelta(player.y, hy, torus.height);
+    return Math.hypot(dx, dy) < t.dangerMargin;
   }
   const approach = closestApproach(
     player.x,
@@ -266,6 +281,7 @@ export function hazardThreatensPlayer(
     hvx,
     hvy,
     t.hazardPredictionHorizon,
+    torus,
   );
   return approach.distance < t.threatRadius;
 }
@@ -327,6 +343,11 @@ export function evaluateDirection(
   const pvy = dirY * speed;
   let clearance = t.clearanceCap;
   let safe = true;
+  // The torus the prediction runs on (the arena is a four-edge wrap).
+  const torus: WrapWorld = {
+    width: t.playfieldWidth,
+    height: t.playfieldHeight,
+  };
 
   // Clearance term: distance travelled along the direction to the first edge.
   // On the wrap-around arena an edge is **not** a wall — the ship crosses it and
@@ -344,12 +365,11 @@ export function evaluateDirection(
   // against where the hazard will be (AH-0MVI4QDN90037DIN · AC2). Stationary
   // or untracked hazards keep exactly the positional rule.
   for (const hazard of world.hazards) {
-    const d = Math.hypot(hazard.x - px, hazard.y - py);
+    const hdx = wrappedAxisDelta(px, hazard.x, torus.width);
+    const hdy = wrappedAxisDelta(py, hazard.y, torus.height);
+    const d = Math.hypot(hdx, hdy);
     if (d < clearance) clearance = d;
-    if (
-      d < t.dangerMargin &&
-      (hazard.x - px) * dirX + (hazard.y - py) * dirY > 0
-    ) {
+    if (d < t.dangerMargin && hdx * dirX + hdy * dirY > 0) {
       safe = false;
     }
     const hvx = hazard.vx ?? 0;
@@ -369,6 +389,7 @@ export function evaluateDirection(
         hvx,
         hvy,
         t.hazardPredictionHorizon,
+        torus,
       );
       if (ca.distance < clearance) clearance = ca.distance;
       if (ca.t > EPS && ca.distance < t.threatRadius) safe = false;
@@ -379,12 +400,11 @@ export function evaluateDirection(
   // predicted to cross a shot's path inside the horizon, or that drives
   // toward a shot already inside the threat radius.
   for (const shot of world.incomingFire) {
-    const d = Math.hypot(shot.source.x - px, shot.source.y - py);
+    const sdx = wrappedAxisDelta(px, shot.source.x, torus.width);
+    const sdy = wrappedAxisDelta(py, shot.source.y, torus.height);
+    const d = Math.hypot(sdx, sdy);
     if (d < clearance) clearance = d;
-    if (
-      d < t.threatRadius &&
-      (shot.source.x - px) * dirX + (shot.source.y - py) * dirY > 0
-    ) {
+    if (d < t.threatRadius && sdx * dirX + sdy * dirY > 0) {
       safe = false;
     }
     const ca = closestApproach(
@@ -397,6 +417,7 @@ export function evaluateDirection(
       shot.velocity.x,
       shot.velocity.y,
       t.firePredictionHorizon,
+      torus,
     );
     if (ca.distance < clearance) clearance = ca.distance;
     if (ca.t > EPS && ca.distance < t.threatRadius) safe = false;

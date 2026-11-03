@@ -852,3 +852,27 @@ describe('hazardThreatensPlayer (AH-0MVI4QDN90037DIN AC2)', () => {
     ).toBe(true);
   });
 });
+
+describe('seam-aware threat prediction (AH-0MVT2W2D9002BOHO)', () => {
+  it('reports a seam-crossing hazard as threatening', () => {
+    // Player just inside the left edge; a hazard just outside the right edge
+    // moving right is 20 px away on the wrapped route and 940 px away on the
+    // raw line.
+    const player = { x: 10, y: 300, vx: 0, vy: 0 };
+    expect(
+      hazardThreatensPlayer(player, { x: 950, y: 300, vx: 100, vy: 0 }, T),
+    ).toBe(true);
+  });
+
+  it('rejects a bearing that drives into a shot arriving across the seam', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 10, y: 300, vx: 0, vy: 0 },
+      enemyBullets: [bullet(950, 300, 100, 0)],
+    });
+    const world = buildBotWorld(snapshot);
+    // Moving left heads toward the seam the bullet arrives from; moving right
+    // opens the range.
+    expect(evaluateDirection(-1, 0, world, T).safe).toBe(false);
+    expect(evaluateDirection(1, 0, world, T).safe).toBe(true);
+  });
+});
