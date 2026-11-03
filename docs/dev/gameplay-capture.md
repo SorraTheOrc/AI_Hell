@@ -682,20 +682,27 @@ least one level.
 ### Sustained footage: the ≥45 s survival check
 
 A promo clip is only usable if the bot **survives and keeps producing action**
-long enough to cut, so every scenario is measured headlessly
-(AH-0MVSDMDA1003ARV5): `src/waves/promoSurvival.ts` plays each registered
-promo level as the whole campaign through the shipped evaluation harness
-(`src/ai/eval/arena.ts`), flown by the competent bot configured with the
-scenario's preset and seeded with the scenario's seed — the same code path a
-promo capture runs, without a browser or Phaser. The measured **action
-duration** is `ticksSimulated × dt` before the run ends (death, campaign
-clear, or the bounded 100 s tick budget).
+long enough to cut, so every scenario is measured against a **≥45 s** target.
+Exactly one check is authoritative for that target
+(AH-0MW06XJKA009WX4B):
 
-The hermetic check lives in `src/waves/promoScenario.survival.test.ts`: it
-fails, naming the scenario and its measured duration, when any scenario
-sustains less than **45 s**. The suite is deterministic per scenario seed and
-bounded (≃100 s simulated per scenario, a few seconds of wall clock in the
-unit project), so it runs as part of the standard suite.
+- **Authoritative — `src/scenes/PromoScenarioSurvival.integration.test.ts`.**
+  It boots the real `PlayScene` for every registered promo scenario, applies
+  the scenario through the URL seam (its preset by name, its promo level as
+  the whole campaign, its seed), steps at a fixed 1/60 s until the run-ended
+  signal and fails, naming the scenario and its measured duration, when any
+  scenario ends before 45 s. No browser, no dev server and no video are
+  involved, and the result is deterministic.
+- **Smoke signal only — `src/waves/promoScenario.survival.test.ts`** (harness
+  `src/waves/promoSurvival.ts`). It plays each promo level through the
+  evaluation arena (`src/ai/eval/arena.ts`) — fast, and bounded at ≃100 s
+  simulated per scenario — and asserts parity, measurement shape,
+  determinism and the tick budget. It makes **no ≥45 s claim**: the arena
+  omits Phaser formation movement/descent and the real collision loop, so its
+  durations track the competent bot's steering rather than the shipped game
+  (its failing set changed with bot-steering commits while the real game
+  stayed green). Use it as a cheap regression signal, not as evidence for the
+  promo target.
 
 Calibration (AC3) used only the two data knobs this section describes:
 

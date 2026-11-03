@@ -1,12 +1,24 @@
 /**
- * Hermetic promo-scenario survival/duration check
+ * Hermetic promo-scenario arena smoke signal
  * (AH-0MVSDMDA1003ARV5, child of AH-0MVI5XI73000ZVYA).
  *
  * A promo clip is only usable if the competent bot actually **survives and
  * keeps producing action** long enough to cut: a scenario the bot dies in
- * instantly is a wasted clip (parent risk). This module measures that
- * property headlessly through the shipped evaluation harness
- * (`src/ai/eval/arena.ts`) instead of ad-hoc browser captures.
+ * instantly is a wasted clip (parent risk). This module measures how long the
+ * shipped bot survives the authored waves through the evaluation harness
+ * (`src/ai/eval/arena.ts`).
+ *
+ * ## Not the acceptance oracle (AH-0MW06XJKA009WX4B)
+ *
+ * The **≥45 s sustained-footage target** is asserted by
+ * `src/scenes/PromoScenarioSurvival.integration.test.ts`, which flies the real
+ * `PlayScene` (formation descent, the real collision/spawner loop) and is the
+ * sole authoritative check. The arena deliberately omits formation movement
+ * and descent, so its durations do not track the shipped game: they move with
+ * bot-steering changes while the real game stays green. This module therefore
+ * keeps only the **bounded smoke signal** (does every scenario measure, with
+ * the authored level/preset/seed, inside the tick budget and with a known end
+ * reason); it makes no pass/fail claim about the 45 s target.
  *
  * ## What it measures
  *
@@ -23,18 +35,17 @@
  *   reproducible per scenario.
  *
  * The reported **action duration** is the simulated time before the run ends
- * (death, campaign clear, or the tick budget): `ticksSimulated × dt`. The
- * promo target is {@link PROMO_SURVIVAL_MIN_SECONDS} (≥45 s), and the tick
- * budget is bounded ({@link PROMO_SURVIVAL_TICK_BUDGET}) so the check stays a
- * fast, deterministic part of the standard suite.
+ * (death, campaign clear, or the tick budget): `ticksSimulated × dt`, bounded
+ * by {@link PROMO_SURVIVAL_TICK_BUDGET} so the smoke signal stays a fast,
+ * deterministic part of the standard suite.
  *
  * ## Fidelity boundary
  *
  * The arena is the evaluation harness's closed-loop approximation (no
  * Phaser, formation movement, VFX or boss entity — see the arena module doc).
- * It measures the property that matters here — how long the shipped bot
- * survives the authored waves — and is deliberately the *same* harness the
- * balance/batch tooling uses, so the number can be reproduced from the CLI.
+ * Its number is reproducible from the CLI and useful as a regression smoke
+ * signal, but it is **not** the shipped game's survival time — that is what
+ * the real-`PlayScene` check measures.
  *
  * @module src/waves/promoSurvival
  */
@@ -59,16 +70,13 @@ import { getPromoLevel } from '../../scripts/promo-scenarios.mjs';
 /** Fixed simulation step (seconds) — the arena's default ~60 fps. */
 export const PROMO_SURVIVAL_DT = 1 / 60;
 
-/** The sustained-action target a promo scenario must meet (parent AC2). */
-export const PROMO_SURVIVAL_MIN_SECONDS = 45;
-
 /**
  * Maximum ticks a measurement simulates (100 s at 60 fps).
  *
  * The budget is a *bound*, not a target: it sits comfortably above the 45 s
- * threshold so a healthy scenario can still be measured past it, while a
- * scenario that runs away (e.g. one stalled wave the bot cannot clear) ends
- * deterministically instead of hanging the suite.
+ * target the real-game check asserts, so a healthy scenario is still measured
+ * past it, while a scenario that runs away (e.g. one stalled wave the bot
+ * cannot clear) ends deterministically instead of hanging the suite.
  */
 export const PROMO_SURVIVAL_TICK_BUDGET = 6_000;
 
@@ -95,14 +103,10 @@ export interface PromoSurvivalMeasurement {
   readonly cleared: boolean;
 }
 
-/** The measured radio of a promo scenario against the ≥45 s target. */
+/** The measured catalogue (arena smoke signal — no pass/fail verdict). */
 export interface PromoSurvivalReport {
   /** Every measurement, in registry order. */
   readonly measurements: readonly PromoSurvivalMeasurement[];
-  /** The scenarios below {@link PROMO_SURVIVAL_MIN_SECONDS}, in registry order. */
-  readonly failures: readonly PromoSurvivalMeasurement[];
-  /** Whether every measured scenario met the target. */
-  readonly passed: boolean;
 }
 
 /** Narrows a registry entry to the promo catalogue. */
@@ -178,27 +182,15 @@ export function measurePromoScenario(
   };
 }
 
-/** Measures every promo scenario in the registry and checks the target. */
+/**
+ * Measures every promo scenario in the registry.
+ *
+ * Returns the measurements only: the arena is a bounded smoke signal, and the
+ * ≥45 s sustained-footage verdict belongs to the real-`PlayScene` check
+ * (`src/scenes/PromoScenarioSurvival.integration.test.ts`).
+ */
 export function measurePromoSurvivalCatalogue(
   entries: readonly CapturePromoScenario[] = promoScenarioEntries(),
 ): PromoSurvivalReport {
-  const measurements = entries.map(measurePromoScenario);
-  const failures = measurements.filter(
-    (measurement) => measurement.seconds < PROMO_SURVIVAL_MIN_SECONDS,
-  );
-  return { measurements, failures, passed: failures.length === 0 };
-}
-
-/**
- * Formats a measurement for an actionable failure message: the scenario name
- * and the measured duration are always present, as AC2 requires.
- */
-export function describePromoSurvivalFailure(
-  measurement: PromoSurvivalMeasurement,
-): string {
-  return (
-    `${measurement.scenario}: ${measurement.seconds.toFixed(2)} s of action`
-    + ` (${measurement.ticks} ticks, ended by ${measurement.endReason};`
-    + ` target ≥${PROMO_SURVIVAL_MIN_SECONDS} s)`
-  );
+  return { measurements: entries.map(measurePromoScenario) };
 }

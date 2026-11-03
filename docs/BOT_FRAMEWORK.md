@@ -932,10 +932,13 @@ stays the current selection, so the Watch Demo is unchanged.
 | `gauntlet-runner` | The promo finale: outlasts the every-showcase gauntlet between dense waves. | high `survivalBase`, wide `dangerMargin`, long `reverseRetreatRange` |
 
 The four `promo-*`-facing presets (`relentless-hunter`, `barrage-dodger`,
-`cordon-breaker`, `gauntlet-runner`) were calibrated with the hermetic
-survival check in `src/waves/promoScenario.survival.test.ts` so every promo
-scenario sustains ≥45 s of bot-flown action before the run ends
-(AH-0MVSDMDA1003ARV5).
+`cordon-breaker`, `gauntlet-runner`) were calibrated with the authoritative
+real-`PlayScene` check `src/scenes/PromoScenarioSurvival.integration.test.ts`
+so every promo scenario sustains ≥45 s of bot-flown action before the run ends
+(AH-0MVSDMDA1003ARV5, AH-0MW06XJKA009WX4B). The fast arena suite
+`src/waves/promoScenario.survival.test.ts` is a bounded **smoke signal** only
+(parity, measurement shape, determinism, tick budget) — it omits formation
+descent, so it makes no ≥45 s claim.
 
 The catalogue is pinned by `src/data/bot-tuning.test.ts` (preset lookup, sparse
 authoring, deterministic coercion, slider bounds, distinctness from `Default`)

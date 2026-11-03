@@ -57,13 +57,16 @@
  *
  * A promo level must keep the competent bot alive and producing action for at
  * least **45 s** before the run ends — a scenario the bot dies in instantly is
- * a wasted clip. The hermetic check in
- * `src/waves/promoScenario.survival.test.ts` (harness:
- * `src/waves/promoSurvival.ts`) plays every level headlessly through the
- * shipped evaluation arena and reports its simulated action duration. The two
- * calibration knobs are this module's wave composition and the curated
- * `promo-*` presets in `src/data/bot-tuning.json` — never new spawner or
- * movement behaviour (the gym↔game parity rule stays untouched).
+ * a wasted clip. The authoritative check is
+ * `src/scenes/PromoScenarioSurvival.integration.test.ts`, which flies the real
+ * `PlayScene` for every registered promo scenario (formation descent, real
+ * collision/spawner loop) and asserts the target; the fast arena harness
+ * (`src/waves/promoSurvival.ts`, `src/waves/promoScenario.survival.test.ts`)
+ * is a bounded **smoke signal** only and makes no 45 s claim
+ * (AH-0MW06XJKA009WX4B). The two calibration knobs are this module's wave
+ * composition and the curated `promo-*` presets in `src/data/bot-tuning.json`
+ * — never new spawner or movement behaviour (the gym↔game parity rule stays
+ * untouched).
  *
  * ## Portability
  *
