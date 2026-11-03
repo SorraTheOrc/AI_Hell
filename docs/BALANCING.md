@@ -288,8 +288,8 @@ cap shapes what a run can become.
   reaffirmed by the Q4/Q7 answers of 2026-10-27).** Because weapons and
   power-ups share the six slots (permanent or temporary), a **weapon-heavy build
   can occupy the pool before any power-up reward is taken** — a player who keeps
-  choosing weapon unlocks and level-ups may reach the cap with no permanent
-  Shield, Phase Shift or Magnet. This is the producer's **chosen** rule, **not a
+  choosing weapons and level-ups may reach the cap with no permanent Shield,
+  Phase Shift or Magnet. This is the producer's **chosen** rule, **not a
   bug**: the shared pool is what gives each run a coherent build identity, and
   the exempt entries plus the owned level-ups keep the choice useful when the
   pool fills. A future change that splits the pool per family (or reserves
@@ -299,19 +299,21 @@ cap shapes what a run can become.
   shared drop draw (`drawNextDrop`, `src/scenes/core/dropLayer.ts`), the shared
   collection gate (`CombatCoreScene`), the hold-full choice builder
   (`buildChoiceCandidates`, `src/powerups/choice.ts`) and every other offer
-  surface (`filterOptionsWithinSlotPool` — e.g. the mini-boss reward's level-up
-  offers),
+  surface (`filterOptionsWithinSlotPool` for the choice/reward offers; the
+  mini-boss wheel's wedges are derived directly from the same
+  `resolvePlayerSlotState(...).ownedIds` accounting),
   so `PlayScene` and every gym behave identically (gym↔game parity) and a gym
   run is a valid place to observe the rule.
-- **No reward screen can breach the cap.** The mini-boss reward (§4.4.4) offers
-  level-ups of kinds the player already holds; it has **no unlock half** (the
-  run-scoped unlock feature was removed with the reward's wheel rework, parent
-  AH-0MVLISU03006WDOD AC5), so it can never grant a brand-new kind. Its offers
-  still pass through the same eligibility predicate as the drop draw and the
-  choice, so the six slots bound every acquisition path (drop, field pickup,
-  hold-full choice and mini-boss reward). A gated reward that would offer
-  nothing falls back to base picks of the held kinds, so the rule can never
-  stall a paused overlay.
+- **No reward screen can breach the cap.** The mini-boss reward (§4.4.4) is
+  the spin-the-wheel upgrade reward: its wedges are built from the kinds the
+  player already holds, and it has **no unlock half** (the run-scoped unlock
+  feature was removed with the wheel rework, parent AH-0MVLISU03006WDOD AC5),
+  so it can never grant a brand-new kind. The wheel population reads the same
+  shared `ownedIds` accounting as the drop draw and the choice, so the six slots
+  bound every acquisition path (drop, field pickup, hold-full choice and
+  mini-boss wheel). With **nothing** owned the reward falls back to the
+  hold-full-style three-option choice, which is itself built through the shared
+  strategy and its six-slot gate, so the rule can never stall a paused overlay.
 - **What the player sees: a slot budget and marked non-slot rows
   (AH-0MVVJRRN10038VFR).** The HUD upgrade list is a *display* list, not the
   loadout, so it can legitimately show rows that hold no slot: an exempt entry
@@ -381,6 +383,47 @@ cap shapes what a run can become.
   re-recording the bot batches is **out of scope** for the cap work item; it
   becomes a linked follow-up only if a gate fails. Recorded user stories and the
   producer decisions live on the parent work item (AH-0MVLIJT3M005HPHF).
+
+### Mini-boss wheel reward — always pays out (AH-0MVLISU03006WDOD)
+
+The mini-boss reward is a **power guarantee**, not an optional pick: every
+mini-boss victory should leave the build meaningfully stronger. The wheel's
+payout follows a literal **100-slot distribution** (`MINI_BOSS_WHEEL_DISTRIBUTION`
+in [`src/powerups/miniBossWheel.ts`](../src/powerups/miniBossWheel.ts)):
+
+| Slots | Outcome | Effect | Expected level-gains |
+|-------|---------|--------|----------------------|
+| 1 | **bonus** | +1 level to **every** owned permanent kind | `1 × owned` |
+| 5 | **three-upgrade** | +1 level to 3 distinct owned kinds | `15` |
+| 10 | **two-upgrade** | +1 level to 2 distinct owned kinds | `20` |
+| 84 | **one-upgrade** | +1 level to 1 owned kind | `84` |
+
+The expected number of level-gains per spin is therefore
+`(1 × owned + 15 + 20 + 84) / 100 = 1.19 + 0.01 × owned` — always **≥ 1.19**
+levels, and higher as the run owns more kinds (the bonus slot scales with the
+build). Multi-upgrade slots pick **distinct** kinds where possible and repeat a
+kind only when there are fewer owned kinds than picks, so a narrow build
+concentrates its gains (one owned power-up on a three-upgrade slot gains +3
+levels on it) while a broad build spreads them.
+
+Balance consequences:
+
+- **No zero-reward outcome.** There is **no level-cap filter** (parity with the
+  hold-full choice's `buildOwnedLevelUpOptions`): the run-scoped level stores
+  are unbounded and only the derived stat saturates, so every spin increments a
+  level. A refusable or empty reward would recreate the perceived-nothing
+  outcome this reward exists to remove.
+- **The empty-owned fallback still pays out.** With no permanent kinds owned
+  (possible at the level-1 mini-boss) the wheel is replaced by the
+  hold-full-style **three-option** choice, so the 1/5/10/84 split never applies
+  to an empty wheel.
+- **The split is not rebalanced here.** Whether 1/5/10/84 keeps its value once
+  average owned-kind counts and per-kind caps are considered is a follow-up
+  balance question (recorded on the parent work item); the shipped split is the
+  producer-approved reference.
+- **Spin tension is cosmetic, not balance.** The ≈2.2 s fast-start/ease-out
+  spin and the ≈0.45 s landed-wedge reveal change how the guaranteed payout is
+  experienced, never what it is.
 
 ### Per-upgrade temporary TTLs — how long a field pickup lasts
 

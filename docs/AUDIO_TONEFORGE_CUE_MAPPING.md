@@ -270,7 +270,7 @@ as part of `npm run build-audio:verify` (AC5).
 Seed block **32100–32299** is reserved for game-specific recipes to keep them
 clear of ToneForge's existing card/impact seeds. (The block was originally
 declared as `32100–32199`; live game seeds now run to **32286** — the end of the
-net-new unlock-pool weapon packages — so the reservation was widened to cover
+net-new weapon packages — so the reservation was widened to cover
 them, matching `manifest.json`'s `seedBlock` field. No shipped seed was
 renumbered.) One-shots are rendered at a
 single seed; cues whose original character used per-invocation jitter

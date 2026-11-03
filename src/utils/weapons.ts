@@ -77,8 +77,8 @@ export type WeaponId =
   | 'nova'
   | 'mortar'
   | 'arc'
-  // Net-new (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC52P001YIPW): the unlock-pool
-  // weapons spread across the campaign's later levels.
+  // Net-new (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC52P001YIPW): ordinary
+  // catalogue weapons spread across the campaign's later levels.
   | 'rear_guard'
   | 'broadside'
   | 'railgun'
@@ -1275,14 +1275,15 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
       chains: 2,
     },
   },
-  // ── Net-new unlock-pool weapons (epic AH-0MVCC8XSS007P01Z) ────────
+  // ── Net-new weapons (epic AH-0MVCC8XSS007P01Z) ────────────────────
   //
   // AH-0MVCRC52P001YIPW adds five net-new weapons beyond the original 11.
-  // They are the campaign's unlock-pool rewards (mini-boss reward feature)
-  // rather than members of the starting drop rotation, so `WEAPON_DROP_ORDER`
-  // deliberately still cycles spread → dual → rapid. Every one uses an
-  // existing shared firing seam (pattern offsets / damage budget), so the game
-  // and every gym fire them through identical core code.
+  // They are ordinary catalogue weapons reachable through the normal
+  // hold-full choice and field drop paths (there is no run-scoped unlock
+  // gate), but they are not members of the starting drop rotation, so
+  // `WEAPON_DROP_ORDER` deliberately still cycles spread → dual → rapid.
+  // Every one uses an existing shared firing seam (pattern offsets / damage
+  // budget), so the game and every gym fire them through identical core code.
   rear_guard: {
     id: 'rear_guard',
     name: 'Rear Guard',

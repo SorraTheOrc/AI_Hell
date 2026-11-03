@@ -68,7 +68,7 @@ import {
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
 
 describe('WEAPON_CATALOGUE', () => {
-  test('contains the eight conventional/beam weapons, the three AOE weapons and the five net-new unlock-pool weapons', () => {
+  test('contains the eight conventional/beam weapons, the three AOE weapons and the five net-new weapons', () => {
     expect(Object.keys(WEAPON_CATALOGUE).length).toBe(16);
     expect(WEAPON_CATALOGUE.cannon).toBeDefined();
     expect(WEAPON_CATALOGUE.spread).toBeDefined();
@@ -81,7 +81,7 @@ describe('WEAPON_CATALOGUE', () => {
     expect(WEAPON_CATALOGUE.nova).toBeDefined();
     expect(WEAPON_CATALOGUE.mortar).toBeDefined();
     expect(WEAPON_CATALOGUE.arc).toBeDefined();
-    // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW).
+    // Net-new weapons (AH-0MVCRC52P001YIPW) — ordinary catalogue entries.
     expect(WEAPON_CATALOGUE.rear_guard).toBeDefined();
     expect(WEAPON_CATALOGUE.broadside).toBeDefined();
     expect(WEAPON_CATALOGUE.railgun).toBeDefined();
@@ -1052,7 +1052,7 @@ describe('Arc chaining-bolt feel (AH-0MV822CE7004MQ14)', () => {
   });
 });
 
-describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
+describe('net-new weapons (AH-0MVCRC52P001YIPW)', () => {
   // The five additions beyond the original 11. Each is exercised here through
   // the public catalogue/pattern helpers (the shared firing seam the game and
   // every gym consume), so these assertions cover real firing behaviour
@@ -1356,8 +1356,8 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
   });
 
   test('the new weapons are not part of the starting drop rotation', () => {
-    // Unlock-pool weapons (mini-boss reward feature) stay out of the basic
-    // spread → dual → rapid cycle until the player unlocks them.
+    // The net-new weapons are ordinary catalogue entries but stay out of the
+    // basic spread → dual → rapid field-drop cycle.
     const rotation = weaponDropOrder();
     for (const id of NEW_WEAPON_IDS) {
       expect(rotation).not.toContain(id);

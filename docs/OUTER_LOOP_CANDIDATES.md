@@ -206,7 +206,7 @@ claimed.
   a region's aggression level selects/perturbs the same curve the campaign
   already uses, so region difficulty needs no parallel scaling system.
 - **Mini-boss rewards (`MiniBoss` / §4.4.4)** — each region's deployment ends on
-  its mini-boss and its upgrade-or-unlock reward, which is exactly how a ship
+  its mini-boss and its spin-the-wheel upgrade reward (§4.4.4), which is exactly how a ship
   gets strong enough to be left guarding a region.
 - **Bot / attract mode** — the same survival-first `decideBotIntent` heuristic
   becomes the **automated pilot** defending a region, and it traverses the map
@@ -412,14 +412,14 @@ every run. The map never changes; the thing that changes is **what you own**.
   the same defensive-parse/injectable-store pattern.
 - **Minerals / power-up levels** — the run's mineral economy is unchanged; the
   banked balance is the *persistent* echo of it, and the mini-boss
-  upgrade-or-unlock reward (§4.4.4) already produces the "cores" that get
+  spin-the-wheel upgrade reward (§4.4.4) already produces the "cores" that get
   banked.
 - **Leaderboard (`src/core/Leaderboard.ts`)** — per-run score continues to the
   existing leaderboard; the hangar can also show a best-fleet/best-score line.
 - **Difficulty curves (`src/data/difficulty-curves.csv`)** — the threat tiers
   are the same curve vocabulary; the final assault is the curve at its maximum.
-- **Mini-boss rewards** — their upgrade-or-unlock choice is reused for the run
-  and their defeat is the extraction point.
+- **Mini-boss rewards** — their spin-the-wheel upgrade reward (§4.4.4) is
+  reused for the run and their defeat is the extraction point.
 - **Bot / attract mode** — the bot can bank salvage, buy a hangar upgrade and
   pick a hull in demo mode (see *Gym testability and the bot*).
 
@@ -821,7 +821,7 @@ hangar survives — that is what winning this hell looks like.
   aggression selects/perturbs the same curve, so hex difficulty needs no second
   scaling system.
 - **Mini-boss rewards (`MiniBoss`, §4.4.4)** — the hex boss's
-  upgrade-or-unlock reward is the discovery channel (Rule 2) as well as the
+  spin-the-wheel upgrade reward is the discovery channel (Rule 2) as well as the
   extraction point.
 - **Bot / attract mode** — the survival-first `decideBotIntent` heuristic
   supplies the **defender's rating** (it is never flown live in defence, so a

@@ -327,7 +327,7 @@ function killMiniBoss(scene: PlayScene, resolveReward = true): void {
   if (!miniBoss?.alive) return;
   hitMiniBossUntilDead(scene);
   finishMiniBossSweep(scene);
-  // A defeat offers the one upgrade-or-unlock reward choice
+  // A defeat opens the mini-boss wheel reward
   // (AH-0MVCRBNO6003E1CH); a deterministic walk resolves it so play can
   // continue, exactly as a player picking the first option would. Tests that
   // need to inspect/choose the offer pass `resolveReward: false`.
@@ -7838,7 +7838,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
 
     killMiniBoss(scene, false);
 
-    // The multi-option upgrade-or-unlock menu is gone (AC1/AC5).
+    // The multi-option reward menu is gone (AC1/AC5).
     expect(scene.getMiniBossRewardOptions()).toEqual([]);
     // One wedge per owned permanent kind, bonus last (AC1).
     expect(scene.getMiniBossWheelWedges().map((wedge) => wedge.id)).toEqual([

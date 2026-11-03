@@ -462,14 +462,14 @@ describe('GymWeapons AC3: round-robin spawn order & lifecycle', () => {
     return booted!.scene as GymWeapons;
   }
 
-  it('spawns exactly one drop at a time in round-robin order spread → … → arc → the five net-new unlock-pool weapons → reset', async () => {
+  it('spawns exactly one drop at a time in round-robin order spread → … → arc → the five net-new weapons → reset', async () => {
     const scene = await bootWeapons();
     // First drop spawned in create().
     expect(scene.getDrops()).toHaveLength(1);
     expect(scene.getDrops()[0].weaponType).toBe('spread');
 
     // Cycle through the rest of the order (conventional, wave laser, ricochet,
-    // cluster, options, AOE, the five net-new unlock-pool weapons, then Reset).
+    // cluster, options, AOE, the five net-new weapons, then Reset).
     for (const expected of [
       'dual',
       'rapid',

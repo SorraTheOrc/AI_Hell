@@ -1933,7 +1933,7 @@ function reachPlayBoss(play: PlayScene): void {
         240,
       );
     }
-    // The mini-boss defeat offers the one upgrade-or-unlock reward choice
+    // The mini-boss defeat opens the wheel reward
     // (AH-0MVCRBNO6003E1CH); resolve it so play can continue.
     if (play.isMiniBossRewardOpen()) play.selectMiniBossReward(0);
     // Nothing alive but the wave still has accounted enemies: advance the

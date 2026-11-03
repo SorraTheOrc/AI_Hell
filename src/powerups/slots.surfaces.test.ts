@@ -287,7 +287,7 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
       {},
     );
 
-    // The multi-option upgrade-or-unlock menu is gone: the reward is the
+    // The multi-option menu is gone: the reward is the
     // wheel, whose wedges name held kinds only (parent AH-0MVLISU03006WDOD
     // AC1/AC5), so it can never acquire a seventh counted kind.
     expect(options).toEqual([]);

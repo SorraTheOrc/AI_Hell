@@ -153,8 +153,9 @@ export type WeaponDropId =
   | 'nova'
   | 'mortar'
   | 'arc'
-  // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW): valid drop ids so the
-  // mini-boss reward can grant them, but never in the basic drop rotation.
+  // Net-new weapons (AH-0MVCRC52P001YIPW): ordinary catalogue drop ids,
+  // reachable through the hold-full choice and field drops, but never in the
+  // basic drop rotation.
   | 'rear_guard'
   | 'broadside'
   | 'railgun'
@@ -530,8 +531,9 @@ export const WEAPON_DROP_IDS: readonly WeaponDropId[] = [
   'mortar',
   'arc',
   'reset',
-  // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW): valid weapon drops so
-  // the reward pool can grant them; never in the basic rotation.
+  // Net-new weapons (AH-0MVCRC52P001YIPW): ordinary catalogue weapon drops,
+  // reachable through the hold-full choice and field drops; never in the basic
+  // rotation.
   'rear_guard',
   'broadside',
   'railgun',

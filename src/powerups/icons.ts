@@ -71,7 +71,7 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   nova: 0x66ffff, // pale cyan — expanding ring
   mortar: 0xff6600, // deep orange — shell/blast
   arc: 0xcc66ff, // electric purple — chaining bolt
-  // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW).
+  // Net-new weapons (AH-0MVCRC52P001YIPW) — ordinary catalogue entries.
   rear_guard: 0xff5599, // warm rose — backward-covering shot
   broadside: 0x44ffdd, // bright teal — perpendicular pair
   railgun: 0x66aaff, // sky blue — long piercing tracer
@@ -725,7 +725,7 @@ function _drawWeaponIcon(
     case 'arc':
       drawArcIcon(graphics, x, y, size);
       break;
-    // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW): each glyph hints at
+    // Net-new weapons (AH-0MVCRC52P001YIPW): each glyph hints at
     // the weapon's firing geometry so the drop reads at a glance.
     case 'rear_guard':
       drawRearGuardIcon(graphics, x, y, size);

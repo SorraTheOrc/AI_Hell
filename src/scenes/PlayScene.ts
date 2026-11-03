@@ -3561,11 +3561,12 @@ export class PlayScene extends CombatScene<
     context: MiniBossDefeatContext,
     sweptEscortCount: number,
   ): void {
-    // Reward loop (AH-0MVCRBNO6003E1CH AC1): a defeat offers exactly ONE
-    // upgrade-or-unlock choice through the shared choice overlay, opened only
-    // now that every burst has finished animating. Off while a choice is
-    // already open; the `miniBossRewardOpen` latch inside also guarantees a
-    // single overlay per defeat.
+    // Reward loop (AH-0MVLISU03006WDOD AC1): a defeat opens exactly ONE
+    // reward — the shared spin-the-wheel overlay (or the empty-owned
+    // three-option fallback) — only now that every burst has finished
+    // animating. Off while a reward is already open; the
+    // `miniBossRewardOpen` latch inside also guarantees a single overlay per
+    // defeat.
     if (!this.miniBossRewardOpen) this.openMiniBossReward(context);
 
     // Wave accounting advances exactly once, after the sweep (parent AC4).
@@ -4133,8 +4134,8 @@ export class PlayScene extends CombatScene<
   /**
    * The options offered by the open (or most recent) mini-boss reward.
    *
-   * Empty for the wheel reward (the multi-option upgrade-or-unlock menu is
-   * gone — parent AH-0MVLISU03006WDOD AC1/AC5); non-empty only for the
+   * Empty for the wheel reward (the multi-option menu is gone — parent
+   * AH-0MVLISU03006WDOD AC1/AC5); non-empty only for the
    * empty-owned three-option fallback (AC4).
    */
   getMiniBossRewardOptions(): ChoiceOption[] {
