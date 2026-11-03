@@ -78,7 +78,14 @@
           "enemyWavePressurePort": 5,
           "engagementRange": 70,
           "mineralBase": 3,
-          "asteroidBase": 0.5
+          "asteroidBase": 0.5,
+          "survivalBase": 18,
+          "survivalUrgencyPort": 10,
+          "dangerMargin": 130,
+          "threatRadius": 120,
+          "hazardPredictionHorizon": 2.6,
+          "reverseRetreatRange": 170,
+          "survivalUrgencyHorizon": 1.2
         },
         "human": {
           "reactionTimeMs": 200
@@ -94,11 +101,15 @@
           "mineralSeekRange": 600,
           "powerUpSeekRange": 1300,
           "lifeSeekRange": 1500,
-          "dangerMargin": 140,
-          "threatRadius": 110,
+          "dangerMargin": 155,
+          "threatRadius": 125,
           "enemyBase": 10,
           "enemySeekRange": 1000,
-          "survivalUrgencyHorizon": 1.3
+          "survivalUrgencyHorizon": 1.3,
+          "survivalBase": 18,
+          "survivalUrgencyPort": 10,
+          "hazardPredictionHorizon": 2.6,
+          "reverseRetreatRange": 180
         },
         "human": {}
       }
@@ -107,16 +118,19 @@
       "name": "evasive",
       "values": {
         "competent": {
-          "survivalBase": 20,
-          "survivalUrgencyPort": 14,
-          "dangerMargin": 170,
-          "threatRadius": 130,
-          "reverseRetreatRange": 200,
-          "hazardPredictionHorizon": 2.8,
+          "survivalBase": 24,
+          "survivalUrgencyPort": 16,
+          "dangerMargin": 185,
+          "threatRadius": 150,
+          "reverseRetreatRange": 240,
+          "hazardPredictionHorizon": 2.95,
           "enemyBase": 10,
-          "enemyWavePressurePort": 2
+          "enemyWavePressurePort": 2,
+          "survivalUrgencyHorizon": 1.5
         },
-        "human": {}
+        "human": {
+          "reactionTimeMs": 220
+        }
       }
     },
     {
@@ -192,21 +206,21 @@
       "name": "cordon-breaker",
       "values": {
         "competent": {
-          "survivalBase": 24.71,
+          "survivalBase": 27,
           "survivalUrgencyPort": 14.11,
           "enemyBase": 15.87,
           "enemyWavePressurePort": 2,
           "engagementRange": 60.91,
-          "dangerMargin": 144.44,
-          "threatRadius": 114.11,
-          "hazardPredictionHorizon": 2.147,
-          "survivalUrgencyHorizon": 0.859,
+          "dangerMargin": 170,
+          "threatRadius": 145,
+          "hazardPredictionHorizon": 2.6,
+          "survivalUrgencyHorizon": 1.3,
           "reverseRetreatRange": 281.76,
           "progressWeight": 0.517,
           "clearanceWeight": 0.736
         },
         "human": {
-          "reactionTimeMs": 240,
+          "reactionTimeMs": 200,
           "maxAimErrorRad": 0.0579
         }
       }

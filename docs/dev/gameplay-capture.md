@@ -569,6 +569,49 @@ Everything is gated behind `import.meta.env.DEV`: a production build ignores
 the query parameter (`resolveDevScenario` is never consulted), so the shipped
 bundle and normal runs are unchanged.
 
+#### Verifying a promo scenario without recording
+
+A recording is the final editorial check, not the acceptance check. The
+acceptance property — every registered promo scenario survives at least 45 s
+of bot-flown action — is pinned hermetically by
+`src/scenes/PromoScenarioSurvival.integration.test.ts`: it boots the **real
+`PlayScene`** for each registered `kind: 'promo'` entry, lets the `scenario`
+URL parameter apply the hand-authored level, the preset by name and the seed,
+and advances the scene at a fixed 1/60 s step until the run-ended signal
+fires. No browser, no dev server and no video are involved, and the result is
+deterministic (it does not move with host load), so it can be run through the
+test skill on any machine:
+
+```bash
+/skill:test --type full            # or the implement/audit gate that runs it
+```
+
+The suite also asserts each measured run actually flew the scenario (its
+preset, its promo level as the whole campaign), so a scenario that silently
+fell back to the shipped campaign fails instead of passing vacuously. A
+failure names the scenario and the measured duration.
+
+#### Recording a clip for review (idle host)
+
+A clip is only reviewable if the page rendered it at a usable rate. The
+recorder rejects a **stalled take** below 15 effective fps and exits
+non-zero, because Phaser caps its delta: a CPU-starved page advances game time
+at a fraction of wall clock, so the clip shows almost no simulated action
+even when it is long. Check the machine before recording:
+
+```bash
+uptime                             # load average should be well under the core count
+npm run capture -- --scenario promo-blitz-hook   # records until run-ended
+npm run capture -- --all-scenarios --output promo/   # one clip per scenario
+```
+
+On a busy host the capture reports `recording is stalled (N fps < 15 fps)` and
+`Capture produced a trivial clip` — that is an environment limit, not a
+scenario defect; wait for the host to be quiet and re-record. Each clip is
+written next to its `<run-id>.action.jsonl` (action-intensity series) and
+`<run-id>.capture.json` (video-join anchor), which are the machine-checkable
+evidence for a cut.
+
 ### Promo scenario wave definitions
 
 A promo scenario (`kind: 'promo'`) pairs a curated bot-tuning preset with a
