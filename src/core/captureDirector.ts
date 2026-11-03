@@ -12,12 +12,13 @@
  * dead-code-eliminated — so the shipped bundle never writes the global and
  * `npm run check-bundle` stays green.
  *
- * The handle exposes `start(key)`, which starts a discovered,
- * non-parameterised gym scene by key through the Phaser scene manager — no
- * navigation, no reload, so the recorder keeps going. Gym scenes are **not**
- * in the shipped `gameConfig` scene list (they are dev gyms registered lazily
- * by `GymIndex` on demand), so the director registers the requested scene's
- * class with the running game's scene manager before starting it, mirroring
+ * The handle exposes `start(key)`, which starts a capturable scene by key
+ * through the Phaser scene manager — no navigation, no reload, so the recorder
+ * keeps going. That covers the discovered gyms (dev-only scenes registered
+ * lazily by `GymIndex` on demand) **and** the shipped Hangar War screens
+ * (`HangarScene`, `HexMapScene`, `DefenceReportScene`), which are already in
+ * the boot `gameConfig` scene list. A gym scene's class is registered with the
+ * running game's scene manager before starting it, mirroring
  * `GymIndex.create()`.
  *
  * **Exactly one scene runs (AH-0MVNWJ5FH006QD8V).** Before the requested
@@ -45,6 +46,7 @@ import {
   GENERATED_LEVEL_SCENE_KEY,
   SCENE_CONFIG_ERROR_CODES,
   SceneConfigError,
+  isHangarWarSceneKey,
   resolveWatchableSceneEntry,
 } from '../../scripts/capture-scenes.mjs';
 import type { SceneSetup } from '../../scripts/capture-scenes.mjs';
@@ -69,12 +71,22 @@ export interface CaptureDirectorHandle {
    * every scene.
    *
    * `setup` makes the parameterised gyms (`GymLevel`, `GymFodderEnemies`)
-   * capturable when it supplies their required parameter. Throws a typed
+   * capturable when it supplies their required parameter, and configures a
+   * Hangar War screen (`demo`/`demoDwellMs`). Throws a typed
    * {@link SceneConfigError} for a non-string, unknown, blank or
    * parameterised-without-setup key, and for a setup a target cannot consume,
    * rather than silently doing nothing.
    */
   start(key: string, setup?: unknown): void;
+  /**
+   * Read-only snapshot of the scene keys currently **active** in the running
+   * game (Phaser `getScenes(true)`, in render order).
+   *
+   * The capture CLI uses it to prove a menu-navigated screen actually
+   * activated (`--hangar`): a lost menu activation leaves `HangarScene`
+   * absent, so the capture fails loudly instead of recording the static menu.
+   */
+  activeSceneKeys(): string[];
 }
 
 declare global {
@@ -96,9 +108,11 @@ declare global {
  * Pure and total: validates `key` against the shared resolver (the single
  * source of truth shared with the capture CLI — rejecting non-strings,
  * unknown keys and the parameterised `GymFodderEnemies`/`GymLevel` without a
- * valid setup) **and** requires the key to be among the gym scenes actually
- * discovered on this page. A key that is in the registry but not present at
- * runtime is rejected as unknown rather than started blank.
+ * valid setup) **and** requires a gym key to be among the gym scenes actually
+ * discovered on this page. The boot-registered Hangar War screens are exempt
+ * from that discovery check (they are shipped scenes, not dev gyms). A gym key
+ * that is in the registry but not present at runtime is rejected as unknown
+ * rather than started blank.
  *
  * @param key — the requested scene key (any value; non-strings are rejected).
  * @param discoveredKeys — the gym scene keys discovered on this page (runtime
@@ -129,7 +143,14 @@ export function resolveSceneEntry(
   const resolved = resolveWatchableSceneEntry(
     setup === undefined ? { target: key } : { target: key, setup },
   );
-  if (!discoveredKeys.includes(resolved.key)) {
+  // The Hangar War screens are boot-registered shipped scenes, so they are
+  // never part of the dev-gym page discovery; validating them against it
+  // would reject every capture of the new outer loop. Gyms keep the strict
+  // discovery check so a registry entry that is not loaded fails loudly.
+  if (
+    !isHangarWarSceneKey(resolved.key)
+    && !discoveredKeys.includes(resolved.key)
+  ) {
     throw new SceneConfigError(
       SCENE_CONFIG_ERROR_CODES.unknownTarget,
       `Scene key "${resolved.key}" is in the watchable registry but was not `
@@ -270,9 +291,12 @@ export function startScene(game: GameLike, key: unknown, setup?: unknown): void 
       ? sceneClassFromModule(entry.module, resolved)
       : undefined;
     if (sceneClass === undefined) {
+      const hint = isHangarWarSceneKey(resolved)
+        ? 'it is not registered in the boot game config'
+        : 'it exposes no scene class to start';
       throw new SceneConfigError(
         SCENE_CONFIG_ERROR_CODES.unknownTarget,
-        `Discovered gym scene "${resolved}" exposes no scene class to start; `
+        `Scene "${resolved}" cannot be started: ${hint}; `
           + 'refusing to record a blank scene.',
       );
     }
@@ -320,6 +344,14 @@ export function registerCaptureDirector(
 
   const handle: CaptureDirectorHandle = {
     start: (key: string, setup?: unknown) => startScene(game, key, setup),
+    activeSceneKeys: () => {
+      const keys = [];
+      for (const scene of game.phaser.scene.getScenes(true)) {
+        const key = sceneKeyOf(scene);
+        if (key !== undefined) keys.push(key);
+      }
+      return keys;
+    },
   };
   window.__aiHellCaptureDirector = handle;
   return handle;

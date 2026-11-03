@@ -87,6 +87,8 @@ import {
   renderScenarioListing,
   readDevTelemetryBuffer,
   resolveCaptureMode,
+  evaluateHangarActivation,
+  HANGAR_SCENE_KEY,
   resolveOutputPaths,
   resolveScenesOutputPath,
   loadScenesForCapture,
@@ -843,6 +845,53 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     );
     // An empty scenario string leaves the default demo path untouched.
     expect(resolveCaptureMode({ scenario: '' })).toBe('demo');
+  });
+
+  it('selects the Hangar War mode and navigates the menu to it (AH-0MVWMUQUC003WXF5)', () => {
+    expect(resolveCaptureMode({ hangar: true })).toBe('hangar');
+    // Tab moves focus from Play Game to the adjacent Hangar War control; the
+    // same gap makes the FocusManager hand-off reliable.
+    expect(captureStartKeys('hangar')).toEqual(['Tab', 'Enter']);
+    expect(captureStartPlan('hangar')).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
+    expect(parseCaptureArgs(['--hangar']).hangar).toBe(true);
+    expect(parseCaptureArgs([]).hangar).toBe(false);
+    // The hangar path is a screen, not a run: `--hangar` wins over the
+    // PlayScene scripted fallback, while an explicit scenario still wins.
+    expect(resolveCaptureMode({ hangar: true, scripted: true })).toBe('hangar');
+    expect(resolveCaptureMode({ hangar: true, scenario: 'defeat' })).toBe(
+      'scenario',
+    );
+  });
+
+  it('proves the hangar screen activated before recording (AH-0MVWMUQUC003WXF5)', () => {
+    expect(HANGAR_SCENE_KEY).toBe('HangarScene');
+    expect(evaluateHangarActivation(['HangarScene'])).toEqual({
+      active: true,
+      reason: '',
+    });
+    // Extra active scenes do not matter: the hangar screen is running.
+    expect(evaluateHangarActivation(['PlayScene', 'HangarScene']).active).toBe(true);
+
+    // A lost tab/enter leaves the menu (or PlayScene) running: the capture
+    // must fail rather than record the static menu.
+    const lost = evaluateHangarActivation(['MenuScene']);
+    expect(lost.active).toBe(false);
+    expect(lost.reason).toContain('HangarScene');
+    expect(lost.reason).toContain('MenuScene');
+
+    // A director without the read-only snapshot (old build / failed
+    // registration) is a loud failure too, never a silent pass.
+    for (const value of [null, undefined, 'HangarScene', {}]) {
+      const unknown = evaluateHangarActivation(value);
+      expect(unknown.active).toBe(false);
+      expect(unknown.reason.toLowerCase()).toContain('director');
+    }
+    expect(
+      evaluateHangarActivation(['HexMapScene'], 'HexMapScene').active,
+    ).toBe(true);
   });
 
   it('captureUrl adds the scenario query only when requested', () => {

@@ -53,13 +53,18 @@ export interface CaptureOptions {
    * `scenes`.
    */
   scenesConfig: string | null;
+  /**
+   * True when `--hangar` was passed: activate the menu's Hangar War control
+   * and record `HangarScene` for a fixed window (AH-0MVWMUQUC003WXF5).
+   */
+  hangar: boolean;
   /** Parsed scene list (filled in by the CLI/pre-flight validation). */
   scenes?: SceneSpec[];
   help?: boolean;
 }
 
 /** Which capture path the options select. */
-export type CaptureMode = 'demo' | 'scripted' | 'scenario';
+export type CaptureMode = 'demo' | 'scripted' | 'scenario' | 'hangar';
 
 /**
  * The lifecycle a planned capture follows: the demo/scripted modes, a frozen
@@ -351,7 +356,23 @@ export function planCaptureRun(
 export function resolveCaptureMode(options?: {
   scripted?: boolean;
   scenario?: string | null;
+  hangar?: boolean;
 }): CaptureMode;
+
+/**
+ * The shipped Hangar War screen a `--hangar` capture must reach.
+ */
+export const HANGAR_SCENE_KEY = 'HangarScene';
+
+/**
+ * Decides whether a `--hangar` capture actually reached the hangar screen from
+ * the director's read-only `activeSceneKeys()` snapshot. A `null`/missing
+ * snapshot is a failure, never a silent pass.
+ */
+export function evaluateHangarActivation(
+  activeSceneKeys: unknown,
+  expected?: string,
+): { active: boolean; reason: string };
 export function captureUrl(
   baseUrl: string,
   options?: { scenario?: string | null },

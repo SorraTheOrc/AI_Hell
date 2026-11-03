@@ -51,6 +51,21 @@ export const PARAMETERISED_GYM_SCENE_KEYS: readonly string[];
  */
 export const WATCHABLE_GYM_SCENE_KEYS: readonly string[];
 
+/**
+ * The shipped **Hangar War** screens (Build Candidate D) that capture can
+ * record: the defence report, the hangar screen and the hex ring map. They are
+ * boot-registered shipped scenes, not gyms, and every launch field has a
+ * shipped default (`{ demo: false }` renders the static screen), so each is
+ * capturable standalone without a setup.
+ */
+export const HANGAR_WAR_SCENE_KEYS: readonly string[];
+
+/**
+ * Every scene key a capture config may target: the watchable gym scenes plus
+ * the shipped Hangar War screens, sorted and frozen.
+ */
+export const CAPTURABLE_SCENE_KEYS: readonly string[];
+
 /** Stable machine-readable error codes carried by {@link SceneConfigError}. */
 export const SCENE_CONFIG_ERROR_CODES: Readonly<{
   /** The config file does not exist (ENOENT). */
@@ -223,11 +238,24 @@ export interface SceneSetup {
   minerals?: number;
   /** 32-bit unsigned determinism seed (defaults to 0). */
   seed?: number;
+  /**
+   * Attract/demo traversal flag for a Hangar War screen
+   * (`HangarScene`/`HexMapScene`/`DefenceReportScene`): `true` auto-advances
+   * the scene (buy, then deploy/continue) after the dwell, `false` leaves the
+   * static player-facing screen on display. Absent ⇒ the scene default
+   * (`false`).
+   */
+  demo?: boolean;
+  /** Demo dwell override in milliseconds (Hangar War screens only). */
+  demoDwellMs?: number;
 }
 
 /** One validated scene-list entry (after config parsing/normalisation). */
 export interface SceneSpec {
-  /** A watchable gym scene key, or a parameterised key when `setup` is present. */
+  /**
+   * A capturable scene key: a watchable gym, a parameterised gym when `setup`
+   * is present, or a shipped Hangar War screen.
+   */
   target: string;
   /** Warm-up play duration in milliseconds (positive integer). */
   playMs: number;
@@ -302,6 +330,8 @@ export const SCENE_SETUP_COMMON_FIELDS: readonly string[];
 export const SCENE_SETUP_TARGET_EXTRA_FIELDS: Readonly<Record<string, readonly string[]>>;
 /** Watchable gyms that cannot consume a setup at all. */
 export const SCENE_SETUP_INCAPABLE_TARGETS: readonly string[];
+/** Fields the Hangar War screens consume (`demo`, `demoDwellMs`). */
+export const HANGAR_WAR_SCENE_SETUP_FIELDS: readonly string[];
 
 /** The setup fields `target` can consume (empty ⇒ cannot accept a setup). */
 export function sceneSetupFieldsFor(target: string): string[];
@@ -319,10 +349,11 @@ export function parseSceneSetup(rawSetup: unknown, target: string, at?: string):
 
 /**
  * Resolves a scene entry (or bare key) to a capturable key plus its normalised
- * setup. Absent setup keeps today's watchable-only behaviour; present setup
- * makes a parameterised target capturable when its required parameter is
- * supplied and is rejected on a target that cannot consume it. Shared by the
- * CLI's pre-boot validation and the in-page director.
+ * setup. Absent setup requires a capturable key (watchable gym or Hangar War
+ * screen); present setup makes a parameterised target capturable when its
+ * required parameter is supplied and is rejected on a target that cannot
+ * consume it. Shared by the CLI's pre-boot validation and the in-page
+ * director.
  */
 export function resolveWatchableSceneEntry(
   entry: unknown,
@@ -395,6 +426,19 @@ export class SceneConfigError extends Error {
  * Pure predicate — never throws.
  */
 export function isWatchableGymSceneKey(value: unknown): boolean;
+
+/**
+ * Whether `value` is a shipped Hangar War screen key (exact, no trimming).
+ * Pure predicate — never throws.
+ */
+export function isHangarWarSceneKey(value: unknown): boolean;
+
+/**
+ * Resolves `value` to any capturable scene key — a watchable gym or a shipped
+ * Hangar War screen — throwing a typed {@link SceneConfigError} for a
+ * non-string, unknown, blank or parameterised key.
+ */
+export function resolveCapturableSceneKey(value: unknown): string;
 
 /**
  * Resolves `value` to a watchable gym scene key, throwing a typed

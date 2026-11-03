@@ -29,6 +29,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_SCENE_SETUP_SEED,
   DEFAULT_SCENE_SETUP_START_WAVE,
+  HANGAR_WAR_SCENE_KEYS,
   PARAMETERISED_GYM_SCENE_KEYS,
   SCENE_CONFIG_ERROR_CODES,
   SceneConfigError,
@@ -203,6 +204,93 @@ describe('resolveSceneKey — pure key resolution (AC: key resolution pure)', ()
     );
     expect(error.message).toContain('GymPlayer');
     expect(error.message.toLowerCase()).toContain('discover');
+  });
+});
+
+describe('Hangar War screens in the director (AH-0MVWMUQUC003WXF5)', () => {
+  it('resolves every Hangar War key even though it is not a discovered gym', () => {
+    for (const key of HANGAR_WAR_SCENE_KEYS) {
+      // Boot-registered shipped scene: the gym page discovery never sees it,
+      // yet the director must accept it (HangarScene/HexMapScene/… are in
+      // `gameConfig.scene`).
+      expect(resolveSceneKey(key, WATCHABLE_GYM_SCENE_KEYS)).toBe(key);
+      expect(resolveSceneEntry(key, WATCHABLE_GYM_SCENE_KEYS)).toEqual({
+        key,
+        setup: null,
+      });
+    }
+  });
+
+  it('normalises the Hangar War launch data it forwards', () => {
+    const { key, setup } = resolveSceneEntry(
+      'HangarScene',
+      [],
+      { demo: false },
+    );
+    expect(key).toBe('HangarScene');
+    expect(setup).toEqual({ demo: false });
+  });
+
+  it('rejects gym-only setup on a Hangar War screen', () => {
+    expectSceneError(
+      () => resolveSceneEntry('HexMapScene', [], { player: { weapons: ['rapid'] } }),
+      ERROR.setupNotSupported,
+    );
+  });
+
+  it('switches from the warm-up PlayScene to a boot-registered HangarScene', () => {
+    const { manager, added, events, active, startedCalls } = fakeSceneManager([
+      'PlayScene',
+      'HangarScene',
+    ]);
+
+    startScene(fakeGame(manager), 'HangarScene', { demo: false });
+
+    // Already registered at boot: no gym class is added, the warm-up scene is
+    // stopped, and the forwarded launch data reaches the scene.
+    expect(added).toEqual([]);
+    expect(events).toEqual([
+      'stop:PlayScene',
+      'start:HangarScene',
+      'bringToTop:HangarScene',
+    ]);
+    expect(startedCalls).toEqual([
+      { key: 'HangarScene', args: [{ demo: false }] },
+    ]);
+    expect(active).toEqual(['HangarScene']);
+  });
+
+  it('refuses a Hangar War screen that is not registered in the boot config', () => {
+    const { manager, added, started, stopped, broughtToTop } = fakeSceneManager([
+      'PlayScene',
+    ]);
+
+    const error = expectSceneError(
+      () => startScene(fakeGame(manager), 'DefenceReportScene'),
+      ERROR.unknownTarget,
+    );
+    expect(error.message).toContain('DefenceReportScene');
+    expect(added).toEqual([]);
+    expect(started).toEqual([]);
+    expect(stopped).toEqual([]);
+    expect(broughtToTop).toEqual([]);
+  });
+
+  it('exposes a read-only activeSceneKeys() snapshot on the handle', () => {
+    const { manager } = fakeSceneManager([
+      'PlayScene',
+      'HangarScene',
+      'HexMapScene',
+    ]);
+    const handle = registerCaptureDirector(fakeGame(manager)) as CaptureDirectorHandle;
+
+    expect(handle.activeSceneKeys()).toEqual(['PlayScene', 'HangarScene', 'HexMapScene']);
+
+    startScene(fakeGame(manager), 'HexMapScene');
+
+    // Every other active scene is stopped, so the snapshot holds exactly the
+    // visible scene — the proof the `--hangar` capture relies on.
+    expect(handle.activeSceneKeys()).toEqual(['HexMapScene']);
   });
 });
 

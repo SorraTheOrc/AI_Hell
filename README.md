@@ -726,6 +726,17 @@ added by AH-0MUWTNPYJ0031FQE):
   (`import.meta.env.DEV`), so production builds ignore the URL parameter.
   Every scenario, its effect, preset and editorial categories are listed in
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#promo-scenarios-kind-promo).
+- **Hangar War screen (`--hangar`):** `npm run capture -- --hangar` drives the
+  normal menu (**Tab** from the focused **Play Game** control to the adjacent
+  **Hangar War** button, then **Enter**) and records the `HangarScene` screen
+  for `--duration` ms (default 15000; a screen has no run-end signal, so the
+  window is fixed). After the warm-up it reads the dev-gated director's
+  `activeSceneKeys()` snapshot and fails with an actionable error unless
+  `HangarScene` is active, so a lost activation can never be recorded as a
+  clip of the static menu (AH-0MVWMUQUC003WXF5). The three Hangar War screens
+  (`HangarScene`, `HexMapScene`, `DefenceReportScene`) are also capturable
+  targets in `capture:scenes` configs; see
+  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#hangar-war-screens---hangar-and-capture-targets).
 - **Batch clips (`--count n` / `-n`):** `npm run capture -- --count 3` records
   **3 clips in one process** — one Vite dev server and one browser, a fresh
   page per iteration, no state leaking between clips. With `--output
@@ -751,7 +762,9 @@ added by AH-0MUWTNPYJ0031FQE):
   `capture-output/<scenario>-<timestamp>.webm` and an existing file is never
   silently overwritten (a `-<n>` suffix is used).
 - **Multi-scene capture (`capture:scenes`):** `npm run capture:scenes --
-  --config scenes.json` records several **dev gym scenes in config order** and
+  --config scenes.json` records several **capturable scenes in config order**
+  (the dev gyms plus the shipped Hangar War screens `HangarScene`,
+  `HexMapScene` and `DefenceReportScene`) and
   compiles them into **one WebM**, with a page-side **fade to black and back
   (0.25 s each way)** between consecutive scenes (AH-0MUX2NLFZ00128WC). One
   Vite server, one browser, one page and **one continuously running
@@ -774,11 +787,14 @@ added by AH-0MUWTNPYJ0031FQE):
   up → escalation → mini-boss → reprise → main boss) with deterministic
   pay-offs and pinned seeds (AH-0MVRMFRSO004H9JM), while
   `examples/scenes.json` is the **gym showcase** — one worked entry for every
-  gym scene under `src/scenes/gym/`. Entries may also target
+  gym scene under `src/scenes/gym/` — plus one static entry for each Hangar
+  War screen. Entries may also target
   the shipped game (`target: "PlayScene"`) with a
   `seed`/`level` and a multi-wave-aware window (`minWaves`, `maxCaptureMs`), so
   a promo shows real generated campaign gameplay mixed with gym demos
-  (AH-0MVE01EY0008QEVX). Output is a single
+  (AH-0MVE01EY0008QEVX). A Hangar War screen accepts an optional setup with
+  only `demo`/`demoDwellMs` (`demo: false` records the static screen);
+  `examples/scenes.json` carries one such entry per screen. Output is a single
   `capture-output/scenes-<timestamp>.webm` (or `--output
   <path>`), and `--json` reports per-scene `{ target, playMs, captureMs,
   startMs, endMs }`, the total duration, the output path and whether the fades

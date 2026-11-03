@@ -4,6 +4,7 @@ import { MenuScene } from '../scenes/MenuScene';
 import { PlayScene } from '../scenes/PlayScene';
 import { HangarScene } from '../scenes/HangarScene';
 import { HexMapScene } from '../scenes/HexMapScene';
+import { DefenceReportScene } from '../scenes/DefenceReportScene';
 import { PauseScene } from '../scenes/PauseScene';
 import { HelpScene } from '../scenes/HelpScene';
 import { MineralChoiceScene } from '../scenes/MineralChoiceScene';
@@ -28,7 +29,9 @@ import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH } from './constants';
  *   outer-loop entry (AH-0MVUXC2DD003HN0I); a deployment launched there runs
  *   the same `PlayScene` with the hangar loadout. The **hex map**
  *   (`HexMapScene`, AH-0MVUXCAG90086LH2) renders the ring with its known-ahead
- *   intel and is one click from the hangar.
+ *   intel and is one click from the hangar. A deployment that ends starts the
+ *   **between-sortie defence report** (`DefenceReportScene`,
+ *   AH-0MVUXCBBK004EJIP), which returns to the map.
  * - **Leaderboard** → opens the shared full-score view (`LeaderboardScene`).
  * - **Gym Scene Index** → navigates to the dev-only `GymIndex` scene.
  *
@@ -42,7 +45,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     height: GAME_HEIGHT,
     backgroundColor: GAME_BACKGROUND_COLOR,
     parent: 'game-container',
-    scene: [MenuScene, PlayScene, HangarScene, HexMapScene, PauseScene, HelpScene, MineralChoiceScene, MiniBossWheelScene, SettingsScene, TelemetryConsentScene, GameOverScene, LeaderboardScene, GymIndex],
+    scene: [MenuScene, PlayScene, HangarScene, HexMapScene, DefenceReportScene, PauseScene, HelpScene, MineralChoiceScene, MiniBossWheelScene, SettingsScene, TelemetryConsentScene, GameOverScene, LeaderboardScene, GymIndex],
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,

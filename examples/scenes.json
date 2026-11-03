@@ -398,6 +398,33 @@
         "practiceTargets": true,
         "seed": 8091
       }
+    },
+    {
+      "target": "HangarScene",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Hangar War \u2014 hangar screen (unlock tree + deployment loadout)",
+      "setup": {
+        "demo": false
+      }
+    },
+    {
+      "target": "HexMapScene",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Hangar War \u2014 hex ring map with known-ahead intel",
+      "setup": {
+        "demo": false
+      }
+    },
+    {
+      "target": "DefenceReportScene",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Hangar War \u2014 between-sortie defence report",
+      "setup": {
+        "demo": false
+      }
     }
   ]
 }
