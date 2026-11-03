@@ -6,7 +6,8 @@
  * required* (hulls, starting weapons, permanent modifiers) and *Persistence and
  * save model*; the epic (`AH-0MVU3VNJI00066YE`, AC1) fixes the contents: **one
  * extra hull, three unlockable starting weapons and one permanent modifier**,
- * on top of the minimal starting kit (one basic hull, one starting weapon).
+ * on top of the minimal starting kit (one basic hull and its starting weapon,
+ * owned but not equipped by default — AH-0MVZJ6V1J001DA9D).
  *
  * The tree is declarative on purpose. The pure rules that read it
  * (`src/core/hangarWar/hangarEconomy.ts`) own every decision — cost, gating,
@@ -110,7 +111,7 @@ export type HangarEntry =
 /** The basic hull every fleet owns from the first deployment. */
 export const STARTER_HULL_ID = 'hull-1';
 
-/** The starting weapon every fleet deploys with until it buys another. */
+/** The starting weapon every fleet owns from its first deployment (never auto-equipped). */
 export const STARTER_WEAPON_ID = 'spread';
 
 /**

@@ -232,11 +232,13 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
     expect(handles[0].totalCount).toBe(scaledCount(TANK_SIZE));
 
     const base = colorToHSL(TANK_COLOR);
-    for (const p of handles[0].particles) {
+    for (const p of handles[0].particles.filter((q) => q.zone === 'lobe')) {
       const hsl = colorToHSL(p.color);
       let delta = Math.abs(hsl.h - base.h) % 360;
       if (delta > 180) delta = 360 - delta;
       // +0.5° allows for hex↔HSL round-trip precision at the jitter edge.
+      // Lobe/ember particles keep the entity hue; the warm core layer is
+      // warm-palette by design (AH-0MVJ8TB610098DSY AC3).
       expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
     }
   });

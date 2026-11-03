@@ -172,7 +172,7 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
           240,
         );
       }
-      // The defeat offers the upgrade-or-unlock reward; resolve it.
+      // The defeat opens the mini-boss wheel reward; resolve it.
       if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
       if (scene.isTransitioning()) scene.tick(1.6);
     }

@@ -350,6 +350,58 @@ export function isWithinSlotPool(
 }
 
 /**
+ * Whether `dropId` is a kind the six-slot pool can actually hold.
+ *
+ * Only catalogue power-ups and real weapon **drop** ids can occupy a slot, so a
+ * non-drop id — the permanent `cannon` is the only one today — is admitted by
+ * {@link capDropIdsToSlotPool} without consuming capacity, mirroring
+ * {@link resolveSlotState}, which filters the weapon snapshot to real drops.
+ */
+function isSlotPoolKind(dropId: string): boolean {
+  return WEAPON_DROP_ID_SET.has(dropId) || dropId in POWER_UP_CATALOGUE;
+}
+
+/**
+ * Trims an ordered list of **pre-granted** drop ids to those the six-slot pool
+ * can hold, admitting entries in source order (AH-0MVVF0POV001JNKX).
+ *
+ * A pre-grant surface can name more distinct counted kinds than a run is
+ * allowed to hold — a Hangar War deployment's starting-weapon selection, for
+ * example, lets a player equip every weapon they own. The cap promises a run
+ * "can never hold more than six distinct kinds at once, however they were
+ * acquired" (parent AH-0MVLIJT3M005HPHF), so the applier trims the list through
+ * the same single rule the drop draw and collection gates use:
+ *
+ * - a counted kind is admitted only while fewer than {@link POWER_UP_SLOT_CAP}
+ *   distinct counted kinds have already been admitted;
+ * - exempt entries (`availableWhenSlotsFull`) and the slot-exempt `reset`
+ *   utility are always admitted and never consume capacity (producer Q7a);
+ * - a repeated id never opens a second slot (every level of it still applies),
+ *   so only its first occurrence consumes capacity; and
+ * - a non-drop id (the permanent `cannon`) is admitted without consuming
+ *   capacity.
+ *
+ * Never mutates the input; returns a new array in the original order.
+ */
+export function capDropIdsToSlotPool<T extends string>(
+  dropIds: readonly T[],
+): T[] {
+  const admitted: T[] = [];
+  const countedKinds = new Set<string>();
+  for (const dropId of dropIds) {
+    if (!isSlotPoolKind(dropId) || !countsTowardsSlotCap(dropId as DropId)) {
+      admitted.push(dropId);
+      continue;
+    }
+    const isNewKind = !countedKinds.has(dropId);
+    if (isNewKind && countedKinds.size >= POWER_UP_SLOT_CAP) continue;
+    if (isNewKind) countedKinds.add(dropId);
+    admitted.push(dropId);
+  }
+  return admitted;
+}
+
+/**
  * Filters `dropIds` to those still eligible, preserving their order and
  * without mutating the input.
  *

@@ -16,21 +16,34 @@
  */
 
 import { describe, expect, test, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import {
   BASE_WEAPON_DEFINITIONS,
   MVP_UPGRADE_VARIABLES,
+  SIXTEENTH_NOTE_STEP_MS,
   UPGRADE_VARIABLES,
+  WEAPON_EUCLIDEAN_LADDERS,
   WEAPON_UPGRADE_SPECS,
   curveValue,
+  euclideanOnsetIntervalMs,
+  euclideanOnsetsPerBeat,
+  euclideanOnsetsPerMinute,
   expandWeaponPattern,
   formatDelta,
+  isStraightEuclidean,
+  latticeEuclidean,
+  quantiseEuclidean,
   quantiseFireRateMs,
   quantiseSubdivision,
   resolveVariable,
   resolveWeaponAtLevel,
   resolveWeaponDefinition,
+  resolveWeaponPattern,
+  straightEuclidean,
   summariseWeaponLevelChange,
+  weaponPatternDesiredOnsetsPerBeat,
   type WeaponLevelStats,
   type WeaponUpgradeVariable,
 } from './weaponLevels';
@@ -41,7 +54,8 @@ import {
   OPTIONS_MAX_PODS,
   type WeaponId,
 } from './weapons';
-import { beatPeriodMs, createBeatClock, isOnGrid } from './beat';
+import { beatPeriodMs, beatSubdivisionMs, createBeatClock, isOnGrid } from './beat';
+import { GAME_WIDTH } from '../core/constants';
 
 // The AC4/AC5/AC6 sweeps resolve every weapon at every level 0..100 and
 // assert the invariant for every tunable variable, so they are dominated by
@@ -475,8 +489,10 @@ describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled defini
       const base = WEAPON_CATALOGUE[weaponId];
       const leveled = resolveWeaponDefinition(weaponId, 6);
       // Orbit weapons (Options) grow their pod count instead of an angular
-      // offsets pattern, so their offsets never expand.
-      if (base.orbit) {
+      // offsets pattern, so their offsets never expand. Hitscan weapons (the
+      // Wave Laser) always fire exactly one beam, so their pattern never
+      // expands either (AC1: no fan, no pair, at any level).
+      if (base.orbit || base.hitscan) {
         expect(leveled.offsets).toEqual([...base.offsets]);
         continue;
       }
@@ -570,6 +586,10 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
 
   test('level 0 resolves to half the pre-change base lifetime', () => {
     for (const id of WEAPON_IDS) {
+      // The Wave Laser's `bulletLifetime` is its beam's **visible duration**
+      // (0.3 s), re-specified by the hitscan redesign rather than halved from
+      // a travelling-bullet range (AH-0MVREBUJ5004HDRQ).
+      if (WEAPON_CATALOGUE[id].hitscan) continue;
       const leveled = resolveWeaponDefinition(id, 0);
       expect(leveled.bulletLifetime).toBeCloseTo(
         PRE_CHANGE_LIFETIME[id] / 2,
@@ -580,6 +600,8 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
 
   test('leveled bullet range is half the pre-change value at every level', () => {
     for (const id of WEAPON_IDS) {
+      // Hitscan weapons have no travelling bullet to halve (see above).
+      if (WEAPON_CATALOGUE[id].hitscan) continue;
       for (const level of [1, 2, 5, 20]) {
         const stats = resolveWeaponAtLevel(id, level);
         const leveled = resolveWeaponDefinition(id, level);
@@ -743,75 +765,87 @@ describe('formatDelta (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
   });
 });
 
-// ── R-Type wave-laser damage budget (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S) ─
+// ── Wave laser: fixed 1 damage at every level (AH-0MVREBUJ5004HDRQ, AC7) ─
 
-describe('wave-laser damage budget — maxHitPoints (AH-0MV97RISJ002WR2S)', () => {
-  test('the base definition supplies a level-0 damage budget of 2', () => {
-    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
-    expect(resolveWeaponDefinition('wave_laser', 0).maxHitPoints).toBe(2);
+describe('wave laser — fixed 1 damage at every level (AH-0MVREBUJ5004HDRQ)', () => {
+  test('the base definition carries no damage budget', () => {
+    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBeUndefined();
+    expect(resolveWeaponDefinition('wave_laser', 0).maxHitPoints).toBeUndefined();
   });
 
-  test('the level-resolved maxHitPoints curve grows monotonically within its spec cap', () => {
-    const cap = WEAPON_UPGRADE_SPECS.maxHitPoints.cap;
-    let previous = resolveWeaponAtLevel('wave_laser', 0).maxHitPoints;
-    expect(previous).toBe(0);
-    for (let level = 1; level <= 100; level++) {
-      const value = resolveWeaponAtLevel('wave_laser', level).maxHitPoints;
-      expect(value).toBeGreaterThanOrEqual(previous);
-      expect(value).toBeLessThanOrEqual(cap);
-      previous = value;
+  test('no level grants the beam a damage budget (it never pierces)', () => {
+    for (let level = 0; level <= 100; level++) {
+      expect(
+        resolveWeaponDefinition('wave_laser', level).maxHitPoints,
+        `level ${level}`,
+      ).toBeUndefined();
     }
-    // The first level is responsive: it grants an extra hit point immediately.
-    expect(resolveWeaponAtLevel('wave_laser', 1).maxHitPoints).toBeGreaterThan(0);
   });
 
-  test('the effective budget is base + curve bonus with no weapon-level clamp', () => {
-    const bonusCap = WEAPON_UPGRADE_SPECS.maxHitPoints.cap;
-    const base = WEAPON_CATALOGUE.wave_laser.maxHitPoints!;
-    // The old `Math.min(cap, base + stats)` clamp flattened the effective
-    // budget at the spec cap (5). The budget is now the unclamped sum, so it
-    // saturates only at the shared curve's asymptote (base + bonus cap).
-    expect(resolveWeaponDefinition('wave_laser', 10).maxHitPoints).toBeGreaterThan(
-      bonusCap,
-    );
-    let previous = resolveWeaponDefinition('wave_laser', 0).maxHitPoints!;
-    expect(previous).toBe(2);
-    for (let level = 1; level <= 100; level++) {
-      const value = resolveWeaponDefinition('wave_laser', level).maxHitPoints!;
-      expect(value).toBeGreaterThanOrEqual(previous);
-      expect(value).toBeLessThanOrEqual(base + bonusCap);
-      previous = value;
-    }
-    // Saturates at base + the curve asymptote (~7), never at a hard 5.
-    expect(resolveWeaponDefinition('wave_laser', 100).maxHitPoints).toBe(
-      base + bonusCap,
-    );
-    expect(resolveWeaponDefinition('wave_laser', 100).maxHitPoints).toBe(7);
-  });
-
-  test('the curve bonus itself is discrete so the budget stays whole-numbered', () => {
+  test('the beam stays a single ray at every level (AC1)', () => {
     for (let level = 0; level <= 20; level++) {
-      expect(Number.isInteger(resolveWeaponDefinition('wave_laser', level).maxHitPoints)).toBe(
-        true,
-      );
+      expect(
+        resolveWeaponDefinition('wave_laser', level).offsets,
+        `level ${level}`,
+      ).toEqual([0]);
+    }
+  });
+
+  test('the ray extent grows monotonically and never drops below one screen', () => {
+    const base = WEAPON_CATALOGUE.wave_laser.hitscan!.length;
+    expect(base).toBeGreaterThanOrEqual(GAME_WIDTH);
+    let previous = base;
+    for (let level = 1; level <= 100; level++) {
+      const length = resolveWeaponDefinition('wave_laser', level).hitscan!.length;
+      expect(length).toBeGreaterThanOrEqual(previous);
+      expect(length).toBeGreaterThanOrEqual(GAME_WIDTH);
+      previous = length;
+    }
+    // The curve saturates at the shared `bulletLifetime` asymptote, so the
+    // beam's extent stays finite.
+    expect(previous).toBeCloseTo(
+      base * WEAPON_UPGRADE_SPECS.bulletLifetime.cap,
+      1,
+    );
+  });
+
+  test('the visible duration stays 0.3 s at every level (AC4)', () => {
+    for (let level = 0; level <= 20; level++) {
+      expect(
+        resolveWeaponDefinition('wave_laser', level).hitscan!.duration,
+        `level ${level}`,
+      ).toBeCloseTo(0.3, 6);
     }
   });
 
   test('weapons without a base damage budget never gain one', () => {
-    // The Railgun (AH-0MVCRC52P001YIPW) is the second weapon with a base
+    // The Railgun (AH-0MVCRC52P001YIPW) is the only weapon with a base
     // damage budget; every other weapon has none.
-    const withBaseBudget = new Set<WeaponId>(['wave_laser', 'railgun']);
     for (const id of WEAPON_IDS) {
-      if (withBaseBudget.has(id)) continue;
+      if (id === 'railgun') continue;
       expect(resolveWeaponDefinition(id, 50).maxHitPoints).toBeUndefined();
     }
   });
 
-  test('the Railgun carries a deeper base damage budget than the wave laser', () => {
-    expect(resolveWeaponDefinition('railgun', 0).maxHitPoints).toBe(5);
-    expect(resolveWeaponDefinition('railgun', 0).maxHitPoints!).toBeGreaterThan(
-      resolveWeaponDefinition('wave_laser', 0).maxHitPoints!,
-    );
+  test('the Railgun starts at one hit point and earns its pierce at level 1', () => {
+    // Level 0: a single hit point, spent on the first enemy met, so a fresh
+    // pickup is a heavy single shot with no pass-through (AH-0MVY0A23A009MRK3).
+    expect(resolveWeaponDefinition('railgun', 0).maxHitPoints).toBe(1);
+    // Level 1: the shared curve's first step lands immediately, so the tracer
+    // now destroys a 1-HP ship and continues into the one behind it.
+    expect(resolveWeaponDefinition('railgun', 1).maxHitPoints).toBe(2);
+    // Growth follows the shared curve alone (no weapon-level clamp, no
+    // per-weapon override): monotonic non-decreasing in level and saturating
+    // at base 1 + the shared curve's asymptote.
+    const asymptote = 1 + WEAPON_UPGRADE_SPECS.maxHitPoints.cap;
+    let previous = 1;
+    for (let level = 0; level <= 100; level++) {
+      const budget = resolveWeaponDefinition('railgun', level).maxHitPoints!;
+      expect(budget, `level ${level}`).toBeGreaterThanOrEqual(previous);
+      expect(budget, `level ${level}`).toBeLessThanOrEqual(asymptote);
+      previous = budget;
+    }
+    expect(previous).toBe(asymptote);
   });
 });
 
@@ -1100,5 +1134,408 @@ describe('bullet visual metadata carried through level resolution unchanged', ()
     const leveled = resolveWeaponDefinition('wave_laser', 5);
     expect(leveled.bulletShape).toBe('line');
     expect(leveled.bulletShapeLength).toBe(7);
+  });
+});
+
+// ── Euclidean cadence ladder (AH-0MVYA291J000CK64) ──────────────────
+
+describe('Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
+  const SAMPLE_SUBDIVISIONS = [
+    0.25,
+    1 / 3,
+    0.5,
+    1,
+    1.5,
+    2,
+    2.4,
+    3,
+    4,
+    5.6,
+    6,
+    10,
+  ];
+
+  describe('legacy parity (straight patterns)', () => {
+    test('straightEuclidean reproduces every legacy on-grid interval exactly', () => {
+      for (const desired of SAMPLE_SUBDIVISIONS) {
+        const legacySubdivision = quantiseSubdivision(desired);
+        const legacyInterval = beatSubdivisionMs(legacySubdivision);
+        const straight = straightEuclidean(desired);
+
+        // A degenerate straight pattern is all-onsets: one shot per step.
+        expect(straight.k).toBe(straight.n);
+        expect(straight.rotation).toBe(0);
+        expect(straight.stepMs).toBeCloseTo(legacyInterval, 9);
+        expect(euclideanOnsetIntervalMs(straight)).toBeCloseTo(legacyInterval, 9);
+        expect(euclideanOnsetsPerBeat(straight)).toBeCloseTo(
+          legacySubdivision,
+          9,
+        );
+        expect(isStraightEuclidean(straight)).toBe(true);
+      }
+    });
+
+    test('quantiseEuclidean matches quantiseSubdivision for all-straight patterns', () => {
+      for (const desired of SAMPLE_SUBDIVISIONS) {
+        if (Math.abs(desired - quantiseSubdivision(desired)) > 1e-9) continue;
+        const pattern = quantiseEuclidean(desired);
+        const legacyInterval = beatSubdivisionMs(quantiseSubdivision(desired));
+
+        expect(pattern).toEqual(straightEuclidean(desired));
+        expect(euclideanOnsetIntervalMs(pattern)).toBeCloseTo(
+          legacyInterval,
+          9,
+        );
+      }
+    });
+
+    test('an off-grid density snaps to the nearest 16-step lattice pattern', () => {
+      expect(quantiseEuclidean(2.25)).toEqual({
+        k: 9,
+        n: 16,
+        rotation: 0,
+        stepMs: SIXTEENTH_NOTE_STEP_MS,
+      });
+      expect(quantiseEuclidean(2.5)).toEqual({
+        k: 5,
+        n: 8,
+        rotation: 0,
+        stepMs: SIXTEENTH_NOTE_STEP_MS,
+      });
+      expect(quantiseEuclidean(1.5)).toEqual({
+        k: 3,
+        n: 8,
+        rotation: 0,
+        stepMs: SIXTEENTH_NOTE_STEP_MS,
+      });
+      expect(quantiseEuclidean(1.75)).toEqual({
+        k: 7,
+        n: 16,
+        rotation: 0,
+        stepMs: SIXTEENTH_NOTE_STEP_MS,
+      });
+      // ...and those lattice patterns are genuinely irregular.
+      expect(isStraightEuclidean(quantiseEuclidean(1.5))).toBe(false);
+      expect(isStraightEuclidean(quantiseEuclidean(1.75))).toBe(false);
+    });
+
+    test('invalid densities fall back to one onset per beat', () => {
+      for (const invalid of [0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(quantiseEuclidean(invalid)).toEqual(straightEuclidean(1));
+      }
+    });
+
+    test('a density faster than the 16th lattice keeps the legacy cadence', () => {
+      const pattern = quantiseEuclidean(6);
+      expect(euclideanOnsetIntervalMs(pattern)).toBeCloseTo(
+        beatSubdivisionMs(6),
+        9,
+      );
+    });
+  });
+
+  describe('ladder structure and curve linkage', () => {
+    test('every catalogue weapon has a strictly levelled, non-decreasing-density ladder', () => {
+      for (const weaponId of WEAPON_IDS) {
+        const ladder = WEAPON_EUCLIDEAN_LADDERS[weaponId];
+        expect(ladder.length).toBeGreaterThan(0);
+        expect(ladder[0].minLevel).toBe(0);
+
+        for (let index = 0; index < ladder.length; index++) {
+          const node = ladder[index];
+          expect(Number.isInteger(node.pattern.k)).toBe(true);
+          expect(Number.isInteger(node.pattern.n)).toBe(true);
+          expect(node.pattern.k).toBeGreaterThan(0);
+          expect(node.pattern.k).toBeLessThanOrEqual(node.pattern.n);
+          expect(node.pattern.rotation).toBeGreaterThanOrEqual(0);
+          expect(node.pattern.rotation).toBeLessThan(node.pattern.n);
+          expect(node.onsetsPerBeat).toBeCloseTo(
+            euclideanOnsetsPerBeat(node.pattern),
+            9,
+          );
+          expect(node.onsetsPerMinute).toBeCloseTo(
+            euclideanOnsetsPerMinute(node.pattern),
+            9,
+          );
+          if (index > 0) {
+            expect(node.minLevel).toBeGreaterThan(ladder[index - 1].minLevel);
+            expect(node.onsetsPerMinute).toBeGreaterThanOrEqual(
+              ladder[index - 1].onsetsPerMinute,
+            );
+          }
+        }
+      }
+    });
+
+    test('every rung is affordable at its level and below the fire-rate asymptote', () => {
+      for (const weaponId of WEAPON_IDS) {
+        const ladder = WEAPON_EUCLIDEAN_LADDERS[weaponId];
+        const baseDensity = ladder[0].onsetsPerBeat;
+        const asymptote = baseDensity * WEAPON_UPGRADE_SPECS.fireRate.cap;
+        for (const node of ladder) {
+          // The shipped fireRate curve supports the rung at its level...
+          expect(
+            weaponPatternDesiredOnsetsPerBeat(weaponId, node.minLevel),
+          ).toBeGreaterThanOrEqual(node.onsetsPerBeat - 1e-9);
+          // ...and the rung stays strictly below the 3x asymptote.
+          expect(node.onsetsPerBeat).toBeLessThan(asymptote - 1e-9);
+        }
+      }
+    });
+  });
+
+  describe('canonical fixture and documented ledger', () => {
+    test('the six-weapon 16-step superposition totals 46 onsets per bar', () => {
+      const fixture: ReadonlyArray<
+        readonly [WeaponId, number, number]
+      > = [
+        ['heavy_slug', 3, 0],
+        ['railgun', 2, 0],
+        ['cannon', 9, 0],
+        ['arc', 9, 4],
+        ['rapid', 13, 0],
+        ['shard_swarm', 10, 0],
+      ];
+      let total = 0;
+      for (const [weaponId, k, rotation] of fixture) {
+        const pattern = resolveWeaponPattern(weaponId, 0);
+        expect(pattern).toEqual({
+          k,
+          n: 16,
+          rotation,
+          stepMs: SIXTEENTH_NOTE_STEP_MS,
+        });
+        total += pattern.k;
+      }
+      expect(total).toBe(46);
+    });
+
+    test('the cannon walks the documented (k, n) ledger', () => {
+      expect(resolveWeaponPattern('cannon', 0)).toEqual(
+        latticeEuclidean(9, 16),
+      );
+      expect(resolveWeaponPattern('cannon', 1)).toEqual(
+        latticeEuclidean(10, 16),
+      );
+      expect(resolveWeaponPattern('cannon', 2)).toEqual(
+        latticeEuclidean(13, 16),
+      );
+      expect(resolveWeaponPattern('cannon', 3)).toEqual(
+        latticeEuclidean(16, 16),
+      );
+      expect(resolveWeaponPattern('cannon', 4)).toEqual(latticeEuclidean(8, 8));
+      // Unbounded levels plateau at the final authored rung.
+      expect(resolveWeaponPattern('cannon', 500)).toEqual(
+        latticeEuclidean(8, 8),
+      );
+    });
+
+    test('docs/BALANCING.md carries the machine-verifiable rung ledger', () => {
+      const balancing = fs.readFileSync(
+        path.resolve(process.cwd(), 'docs/BALANCING.md'),
+        'utf8',
+      );
+      const start = balancing.indexOf('<!-- euclidean-ladder:start -->');
+      const end = balancing.indexOf('<!-- euclidean-ladder:end -->');
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(end).toBeGreaterThan(start);
+      const block = balancing.slice(start, end);
+
+      const rowPattern =
+        /^\|\s*`([a-z_]+)`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|$/;
+      const documented = new Map<
+        string,
+        Array<{
+          minLevel: number;
+          k: number;
+          n: number;
+          rotation: number;
+          stepMs: number;
+          onsetsPerBeat: number;
+          onsetsPerMinute: number;
+        }>
+      >();
+      for (const line of block.split('\n')) {
+        const match = rowPattern.exec(line.trim());
+        if (!match) continue;
+        const weaponId = match[1];
+        const rows = documented.get(weaponId) ?? [];
+        rows.push({
+          minLevel: Number(match[2]),
+          k: Number(match[3]),
+          n: Number(match[4]),
+          rotation: Number(match[5]),
+          stepMs: Number(match[6]),
+          onsetsPerBeat: Number(match[7]),
+          onsetsPerMinute: Number(match[8]),
+        });
+        documented.set(weaponId, rows);
+      }
+
+      for (const weaponId of WEAPON_IDS) {
+        const rows = documented.get(weaponId) ?? [];
+        const ladder = WEAPON_EUCLIDEAN_LADDERS[weaponId];
+        expect(rows).toHaveLength(ladder.length);
+        rows.forEach((row, index) => {
+          const node = ladder[index];
+          expect(row.minLevel).toBe(node.minLevel);
+          expect(row.k).toBe(node.pattern.k);
+          expect(row.n).toBe(node.pattern.n);
+          expect(row.rotation).toBe(node.pattern.rotation);
+          expect(row.stepMs).toBeCloseTo(node.pattern.stepMs, 9);
+          expect(row.onsetsPerBeat).toBeCloseTo(node.onsetsPerBeat, 9);
+          expect(row.onsetsPerMinute).toBeCloseTo(node.onsetsPerMinute, 9);
+        });
+      }
+    });
+  });
+
+  describe('monotonicity in density space', () => {
+    test('onsets-per-minute never decrease across levels 0..100', () => {
+      for (const weaponId of WEAPON_IDS) {
+        let previous = euclideanOnsetsPerMinute(
+          resolveWeaponPattern(weaponId, 0),
+        );
+        for (let level = 1; level <= 100; level++) {
+          const current = euclideanOnsetsPerMinute(
+            resolveWeaponPattern(weaponId, level),
+          );
+          expect(current).toBeGreaterThanOrEqual(previous);
+          previous = current;
+        }
+      }
+    });
+
+    test('the resolved density tracks the fire-rate curve direction', () => {
+      for (const weaponId of WEAPON_IDS) {
+        let previousDesired = weaponPatternDesiredOnsetsPerBeat(weaponId, 0);
+        let previousResolved = euclideanOnsetsPerBeat(
+          resolveWeaponPattern(weaponId, 0),
+        );
+        for (let level = 1; level <= 50; level++) {
+          const desired = weaponPatternDesiredOnsetsPerBeat(weaponId, level);
+          const resolved = euclideanOnsetsPerBeat(
+            resolveWeaponPattern(weaponId, level),
+          );
+          expect(desired).toBeGreaterThanOrEqual(previousDesired);
+          expect(resolved).toBeGreaterThanOrEqual(previousResolved);
+          // The resolved rhythm never outruns the curve's density budget.
+          expect(resolved).toBeLessThanOrEqual(desired + 1e-9);
+          previousDesired = desired;
+          previousResolved = resolved;
+        }
+      }
+    });
+  });
+
+  describe('rotation morphs', () => {
+    test('a rotation-only rung changes phase at identical density', () => {
+      const dualBefore = resolveWeaponPattern('dual', 0);
+      const dualAfter = resolveWeaponPattern('dual', 1);
+      expect(dualAfter.k).toBe(dualBefore.k);
+      expect(dualAfter.n).toBe(dualBefore.n);
+      expect(dualAfter.stepMs).toBe(dualBefore.stepMs);
+      expect(dualAfter.rotation).not.toBe(dualBefore.rotation);
+      expect(euclideanOnsetsPerMinute(dualAfter)).toBeCloseTo(
+        euclideanOnsetsPerMinute(dualBefore),
+        9,
+      );
+
+      const arcBefore = resolveWeaponPattern('arc', 0);
+      const arcAfter = resolveWeaponPattern('arc', 1);
+      expect(arcBefore.rotation).toBe(4);
+      expect(arcAfter.rotation).toBe(6);
+      expect(arcAfter.k).toBe(arcBefore.k);
+      expect(arcAfter.n).toBe(arcBefore.n);
+      expect(euclideanOnsetsPerMinute(arcAfter)).toBeCloseTo(
+        euclideanOnsetsPerMinute(arcBefore),
+        9,
+      );
+    });
+
+    test('cannon and arc share k=9 at level 0 and differ only by rotation', () => {
+      const cannon = resolveWeaponPattern('cannon', 0);
+      const arc = resolveWeaponPattern('arc', 0);
+      expect(cannon.k).toBe(9);
+      expect(arc.k).toBe(9);
+      expect(cannon.n).toBe(arc.n);
+      expect(cannon.stepMs).toBe(arc.stepMs);
+      expect(cannon.rotation).toBe(0);
+      expect(arc.rotation).toBe(4);
+      expect(euclideanOnsetsPerMinute(cannon)).toBe(
+        euclideanOnsetsPerMinute(arc),
+      );
+    });
+
+    test('the catalogue carries at least two rotation-only morphs', () => {
+      let rotationMorphs = 0;
+      for (const weaponId of WEAPON_IDS) {
+        const ladder = WEAPON_EUCLIDEAN_LADDERS[weaponId];
+        for (let index = 1; index < ladder.length; index++) {
+          const previous = ladder[index - 1].pattern;
+          const current = ladder[index].pattern;
+          if (
+            previous.k === current.k &&
+            previous.n === current.n &&
+            previous.stepMs === current.stepMs &&
+            previous.rotation !== current.rotation
+          ) {
+            rotationMorphs++;
+          }
+        }
+      }
+      expect(rotationMorphs).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('purity and determinism', () => {
+    test('the resolver is a pure function of (weapon, level)', () => {
+      for (const weaponId of WEAPON_IDS) {
+        for (const level of [0, 1, 2, 3, 7, 42]) {
+          const first = resolveWeaponPattern(weaponId, level);
+          const second = resolveWeaponPattern(weaponId, level);
+          expect(second).toEqual(first);
+          // A fresh object, so callers cannot mutate shared ladder state.
+          expect(second).not.toBe(first);
+        }
+      }
+    });
+
+    test('the resolver reads no RNG and no wall clock', () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockImplementation(() => {
+        throw new Error('resolveWeaponPattern read Math.random');
+      });
+      const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+        throw new Error('resolveWeaponPattern read Date.now');
+      });
+      try {
+        for (const weaponId of WEAPON_IDS) {
+          for (let level = 0; level <= 20; level++) {
+            expect(() => resolveWeaponPattern(weaponId, level)).not.toThrow();
+          }
+        }
+      } finally {
+        randomSpy.mockRestore();
+        nowSpy.mockRestore();
+      }
+    });
+
+    test('levels are clamped to a non-negative whole number', () => {
+      expect(resolveWeaponPattern('cannon', -5)).toEqual(
+        resolveWeaponPattern('cannon', 0),
+      );
+      expect(resolveWeaponPattern('cannon', 2.9)).toEqual(
+        resolveWeaponPattern('cannon', 2),
+      );
+      expect(resolveWeaponPattern('cannon', Number.NaN)).toEqual(
+        resolveWeaponPattern('cannon', 0),
+      );
+    });
+
+    test('an unknown weapon throws rather than inventing a rhythm', () => {
+      expect(() =>
+        resolveWeaponPattern('not_a_weapon' as WeaponId, 0),
+      ).toThrow(/Unknown weapon/);
+    });
   });
 });

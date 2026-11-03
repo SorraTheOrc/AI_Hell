@@ -31,6 +31,7 @@
 import type { BotSnapshot } from '../botSnapshot';
 import type { BotMemory } from './memory';
 import type { BotWorldPoint } from './worldModel';
+import { wrappedAxisDelta } from '../../utils/wrapGeometry';
 
 /**
  * Upper bound (px/s) on an estimated hazard velocity. The fastest shipped
@@ -65,11 +66,16 @@ export function enemyHazardKey(id: number): string {
  * @param memory — the run's memory; its `hazardVelocities` map is updated.
  * @param snapshot — the read-only game state for this tick.
  * @param dt — injected seconds since the previous decision tick.
+ * @param world — optional torus; when supplied the position delta is wrapped
+ *   per axis, so a hazard that legitimately crosses a seam yields its true
+ *   velocity instead of a seam-sized jump that the clamp would floor
+ *   (AH-0MVT2W2D9002BOHO). Respawns/teleports are still clamped.
  */
 export function trackHazardVelocities(
   memory: BotMemory,
   snapshot: BotSnapshot,
   dt: number,
+  world?: { readonly width: number; readonly height: number },
 ): ReadonlyMap<string, BotWorldPoint> {
   const tick = memory.ticks;
   const seen = new Set<string>();
@@ -88,8 +94,14 @@ export function trackHazardVelocities(
     let vx = previous.vx;
     let vy = previous.vy;
     if (consecutive && Number.isFinite(dt) && dt > 0) {
-      vx = (x - previous.x) / dt;
-      vy = (y - previous.y) / dt;
+      const dx = world
+        ? wrappedAxisDelta(previous.x, x, world.width)
+        : x - previous.x;
+      const dy = world
+        ? wrappedAxisDelta(previous.y, y, world.height)
+        : y - previous.y;
+      vx = dx / dt;
+      vy = dy / dt;
       const speed = Math.hypot(vx, vy);
       if (speed > HAZARD_MAX_ESTIMATED_SPEED) {
         const scale = HAZARD_MAX_ESTIMATED_SPEED / speed;

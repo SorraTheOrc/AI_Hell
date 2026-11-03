@@ -112,7 +112,12 @@ export function planDurationMs(plan) {
  * rejecting an empty recording, a blank canvas and a frozen frame.
  *
  * @param {{ bytes?: number, width?: number, height?: number, nonBlackFraction?: number, uniqueColours?: number, motion?: number }} probe
- * @returns {{ nonTrivial: boolean, reasons: string[] }}
+ * @param {{ allowStatic?: boolean }} [options] — `allowStatic` judges a
+ *   **static screen** capture (a player-facing UI screen such as the Hangar
+ *   War hangar/map/report, AH-0MVWMUQUC003WXF5): the frame must still be
+ *   decodable, non-black, colourful and rendered at a usable frame rate, but
+ *   no **motion** is required, because nothing on the screen moves by design.
+ * @returns {{ nonTrivial: boolean, reasons: string[], notes?: string[] }}
  */
 /**
  * Lowest effective frame rate a recording may have and still count as a real
@@ -127,8 +132,10 @@ export function planDurationMs(plan) {
  */
 export const MIN_EFFECTIVE_FPS = 15;
 
-export function isNonTrivialClip(probe) {
+export function isNonTrivialClip(probe, options = {}) {
+  const allowStatic = options.allowStatic === true;
   const reasons = [];
+  const notes = [];
   const bytes = Number(probe?.bytes ?? 0);
   const width = Number(probe?.width ?? 0);
   const height = Number(probe?.height ?? 0);
@@ -140,7 +147,13 @@ export function isNonTrivialClip(probe) {
   if (width <= 0 || height <= 0) reasons.push('no decodable video frames');
   if (nonBlackFraction < 0.002) reasons.push('frame is essentially black');
   if (uniqueColours < 8) reasons.push('too few distinct colours (static/black)');
-  if (motion < 0.0005) reasons.push('sampled frames are static (no motion)');
+  if (motion < 0.0005) {
+    // A screen capture is expected to be still; the activation assertion (and
+    // the non-black/colour checks above) already prove the screen rendered, so
+    // a static frame is a note rather than a failure (AH-0MVWMUQUC003WXF5).
+    if (allowStatic) notes.push('static screen: no motion required');
+    else reasons.push('sampled frames are static (no motion)');
+  }
   // A recording can look fine by every other measure while the page rendered
   // it at a crawl; report that as a stalled take (AH-0MVTI3O650064IM7). An
   // unknown metric is never judged.
@@ -156,7 +169,9 @@ export function isNonTrivialClip(probe) {
     );
   }
 
-  return { nonTrivial: reasons.length === 0, reasons };
+  const verdict = { nonTrivial: reasons.length === 0, reasons };
+  if (notes.length > 0) verdict.notes = notes;
+  return verdict;
 }
 
 /**
@@ -380,24 +395,31 @@ export function installGameAudioTap(scope = globalThis) {
  * `--json` payload explain every failing half; a missing verdict contributes
  * an explicit reason rather than silently passing.
  *
+ * A **screen** clip (`options.requireAudio === false`, e.g. `--hangar`) needs
+ * a video verdict only: the Hangar War screens emit no audio of their own, so
+ * requiring a non-silent track would reject a perfectly good static screen
+ * (AH-0MVWMUQUC003WXF5). The audio verdict stays in the report either way.
+ *
  * @param {{ nonTrivial?: boolean, reasons?: string[] }} [videoVerdict]
  * @param {{ hasAudioTrack?: boolean, nonSilent?: boolean, reasons?: string[] }} [audioVerdict]
+ * @param {{ requireAudio?: boolean }} [options]
  * @returns {{ nonTrivial: boolean, reasons: string[] }}
  */
-export function combineClipVerdict(videoVerdict, audioVerdict) {
+export function combineClipVerdict(videoVerdict, audioVerdict, options = {}) {
+  const requireAudio = options.requireAudio !== false;
   const video = videoVerdict ?? {};
   const audio = audioVerdict ?? {};
 
   const reasons = [];
   if (Array.isArray(video.reasons)) reasons.push(...video.reasons);
-  if (Array.isArray(audio.reasons)) reasons.push(...audio.reasons);
+  if (requireAudio && Array.isArray(audio.reasons)) reasons.push(...audio.reasons);
   if (!videoVerdict) reasons.push('missing video verdict');
-  if (!audioVerdict) reasons.push('missing audio verdict');
+  if (requireAudio && !audioVerdict) reasons.push('missing audio verdict');
 
   const nonTrivial =
-    video.nonTrivial === true &&
-    audio.hasAudioTrack === true &&
-    audio.nonSilent === true;
+    video.nonTrivial === true
+    && (!requireAudio
+      || (audio.hasAudioTrack === true && audio.nonSilent === true));
 
   return { nonTrivial, reasons };
 }

@@ -16,7 +16,9 @@
  *    (`--enable-unsafe-swiftshader`); Phaser's `AUTO` renderer then gets a
  *    real WebGL context instead of silently degrading.
  * 3. Load the game, press **Enter** to activate the focused "Play Game"
- *    menu control, and wait `--warmup` ms for `PlayScene` to settle.
+ *    menu control (or **Tab → Tab → Enter** for the demo path and
+ *    **Tab → Enter** for `--hangar`), and wait `--warmup` ms for the target
+ *    scene to settle; the reached scene is then asserted before recording.
  * 4. Start `canvas.captureStream(60)` → `MediaRecorder` (VP9, falling back
  *    to VP8/WebM) inside the page.
  * 5. Record the run. The default demo path waits for the dev-gated
@@ -162,8 +164,9 @@ const INTER_STEP_MS = 30;
  * (AH-0MUXVVYWY009WT3X). The menu's `FocusManager` moves focus on the first
  * keydown; dispatching the next key back-to-back races that focus change and
  * the activation is lost, so neither the demo nor a normal run starts and the
- * capture records the static menu. A short gap makes the demo
- * (**Tab → Enter**) start reliably.
+ * capture records the static menu. A short gap makes the multi-key plans
+ * (**Tab → Tab → Enter** for the demo, **Tab → Enter** for `--hangar`) start
+ * reliably.
  */
 export const START_KEY_GAP_MS = 250;
 
@@ -484,6 +487,10 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     // `--config <file>` (alias `--scenes`): multi-scene capture, validated
     // before any server or browser boots (AH-0MVFC70GT000B96J).
     scenesConfig: null,
+    // `--hangar`: navigate the main menu's **Hangar War** control (Tab → Enter),
+    // then hand the bot over to the shipped Hangar War attract traversal for a
+    // fixed duration (AH-0MVWMUQUC003WXF5).
+    hangar: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -539,6 +546,12 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         // Dev-gated game scenario selected through the URL query
         // (AH-0MUWZ5HCV0034H44), e.g. `boss-four-hits`.
         options.scenario = next();
+        break;
+      case '--hangar':
+        // Record the new Hangar War screen through the normal menu path
+        // (Tab → Enter on the **Hangar War** control, AH-0MVWMUQUC003WXF5).
+        // Fixed-length, because a screen has no run-end signal.
+        options.hangar = true;
         break;
       case '--list-scenarios':
         // Print the implemented dev scenarios then exit (AH-0MV6JGELV001FAX1)
@@ -681,6 +694,283 @@ export function renderScenarioListing(
 }
 
 /**
+ * The shipped Hangar War screen a `--hangar` capture must land on
+ * (Build Candidate D, AH-0MVWMUQUC003WXF5). The menu's **Hangar War** control
+ * starts this scene; the capture proves it is active before recording so a
+ * lost menu activation can never be recorded as a clip of the static menu.
+ */
+export const HANGAR_SCENE_KEY = 'HangarScene';
+
+/**
+ * The scene the **default demo** capture must land on
+ * (AH-0MVWMUQUC003WXF5).
+ *
+ * The `Watch Demo` menu control starts `PlayScene` in demo mode; proving that
+ * scene is active before recording is what stops a lost menu gesture from
+ * being recorded as a static, silent clip.
+ */
+export const DEMO_SCENE_KEY = 'PlayScene';
+
+/**
+ * The **hub** the shipped Hangar War attract traversal starts from
+ * (`MenuScene.startHangarWarDemo` starts this scene with `{ demo: true }`).
+ *
+ * A `--hangar` capture hands over to that traversal after showing the hangar
+ * screen, so the bot leaves the loadout selector and demonstrates the hex map
+ * and the deployment as well (AH-0MVWMUQUC003WXF5).
+ */
+export const HANGAR_WAR_TRAVERSAL_SCENE_KEY = 'HexMapScene';
+
+/**
+ * How long the lead-in traversal dwell is given before the capture fails loudly
+ * when the requested scene never becomes active (ms).
+ */
+export const HANGAR_TRAVERSAL_START_TIMEOUT_MS = 5_000;
+
+/**
+ * How long a `--hangar` clip shows the hangar screen the menu just opened
+ * before handing the bot over to the shipped attract traversal (ms).
+ *
+ * The clip therefore contains the journey the review asked for — hangar → hex
+ * map → deployment — instead of resting on the hangar's loadout selector. On a
+ * very short `--duration` the hold is halved so the traversal still gets air
+ * time.
+ */
+export const HANGAR_TRAVERSAL_HOLD_MS = 2_500;
+
+/**
+ * Decides whether a menu-navigated capture actually reached `expected`.
+ *
+ * Pure predicate over the dev-gated director's read-only
+ * `activeSceneKeys()` snapshot, so the navigation proof is unit-testable
+ * without a browser. A `null`/missing snapshot (an older dev build or a
+ * director that failed to register) is a failure, never a silent pass: the
+ * capture must not record the menu and call it a successful clip.
+ *
+ * @param {unknown} activeSceneKeys — `window.__aiHellCaptureDirector.activeSceneKeys()` result.
+ * @param {string} expected — the scene key the capture must have reached.
+ * @param {string} [hint] — mode-specific explanation appended to the failure.
+ * @returns {{ active: boolean, reason: string }}
+ */
+export function evaluateSceneActivation(activeSceneKeys, expected, hint = '') {
+  if (!Array.isArray(activeSceneKeys)) {
+    return {
+      active: false,
+      reason:
+        'the capture director did not expose activeSceneKeys() — is this a dev build?',
+    };
+  }
+  if (!activeSceneKeys.includes(expected)) {
+    return {
+      active: false,
+      reason:
+        `the menu activation did not reach ${expected} `
+        + `(active scenes: ${activeSceneKeys.join(', ') || 'none'})`
+        + (hint === '' ? '' : ` — ${hint}`),
+    };
+  }
+  return { active: true, reason: '' };
+}
+
+/**
+ * Decides whether a `--hangar` capture actually reached the hangar screen.
+ *
+ * @param {unknown} activeSceneKeys — `window.__aiHellCaptureDirector.activeSceneKeys()` result.
+ * @param {string} [expected] — the scene key the capture must have reached.
+ * @returns {{ active: boolean, reason: string }}
+ */
+export function evaluateHangarActivation(
+  activeSceneKeys,
+  expected = HANGAR_SCENE_KEY,
+) {
+  return evaluateSceneActivation(
+    activeSceneKeys,
+    expected,
+    'the Tab/Enter gesture was lost or the control was absent (it is '
+      + 'dev-build only and gated by the hangarWar flag, which this capture '
+      + 'enables); the capture would record the static menu',
+  );
+}
+
+/**
+ * Decides whether the **default demo** capture actually reached `PlayScene`.
+ *
+ * The demo path presses **Tab → Tab → Enter**: the menu's focus order is
+ * `Play Game` → `Hangar War` → `Watch Demo` (a fresh capture profile has no
+ * `Continue` control), so a single Tab now lands on the Hangar War screen and
+ * the capture would record the hangar's loadout selector until the duration
+ * cap — the regression this predicate guards against
+ * (AH-0MVWMUQUC003WXF5).
+ *
+ * @param {unknown} activeSceneKeys — `window.__aiHellCaptureDirector.activeSceneKeys()` result.
+ * @returns {{ active: boolean, reason: string }}
+ */
+export function evaluateDemoActivation(activeSceneKeys) {
+  return evaluateSceneActivation(
+    activeSceneKeys,
+    DEMO_SCENE_KEY,
+    'the demo path presses Tab → Tab → Enter (Play Game → Hangar War → '
+      + 'Watch Demo), so a lost key or a changed menu focus order would leave '
+      + 'the capture resting on a static screen',
+  );
+}
+
+/**
+ * Builds the page-side director request that starts the shipped Hangar War
+ * attract traversal.
+ *
+ * The traversal itself lives in the game (`src/ai/hangarWarTraversal.ts`,
+ * applied by the Hangar War screens), so the capture only starts its hub in
+ * demo mode — the same thing `MenuScene.startHangarWarDemo()` does. Nothing
+ * about which hex to deploy at, what to buy or when to continue is decided
+ * here.
+ *
+ * @param {number} [dwellMs] — per-screen dwell override (positive only).
+ * @returns {{ key: string, setup: { demo: boolean, demoDwellMs?: number } }}
+ */
+export function buildHangarTraversalRequest(dwellMs) {
+  /** @type {{ demo: boolean, demoDwellMs?: number }} */
+  const setup = { demo: true };
+  if (typeof dwellMs === 'number' && Number.isFinite(dwellMs) && dwellMs > 0) {
+    setup.demoDwellMs = Math.floor(dwellMs);
+  }
+  return { key: HANGAR_WAR_TRAVERSAL_SCENE_KEY, setup };
+}
+
+/**
+ * Hands a `--hangar` capture over to the shipped Hangar War attract traversal.
+ *
+ * The capture only starts the traversal's **hub** scene in demo mode — the same
+ * thing `MenuScene.startHangarWarDemo()` does. The screens then apply their own
+ * pure traversal decisions (`src/ai/hangarWarTraversal.ts`), so the bot leaves
+ * the hangar loadout selector, deploys at the weakest adjacent hex and
+ * auto-advances the defence report without any capture-side rule.
+ *
+ * The start is proved before the clip is accepted: Phaser queues a scene start
+ * and applies it on a later frame, so the helper waits (bounded) for the
+ * director to report the hub active and then fails loudly with an actionable
+ * `CaptureSetupError` when it never does — a `--hangar` clip must never rest on
+ * the static hangar screen (AH-0MVWMUQUC003WXF5).
+ *
+ * @param {import('playwright').Page} page — the page being recorded.
+ * @param {{ step: (message: string) => void }} reporter — progress reporter.
+ * @returns {Promise<void>}
+ */
+async function startHangarTraversal(page, reporter) {
+  const request = buildHangarTraversalRequest();
+  const requested = await page.evaluate(({ key, setup }) => {
+    const director = window.__aiHellCaptureDirector;
+    if (!director || typeof director.start !== 'function') return false;
+    director.start(key, setup);
+    return true;
+  }, request);
+  if (!requested) {
+    throw new CaptureSetupError(
+      'Hangar War traversal did not start: the capture director did not expose '
+        + 'start() — is this a dev build?',
+    );
+  }
+  try {
+    await page.waitForFunction(
+      (key) => {
+        const keys = window.__aiHellCaptureDirector?.activeSceneKeys?.();
+        return Array.isArray(keys) && keys.includes(key);
+      },
+      request.key,
+      { timeout: HANGAR_TRAVERSAL_START_TIMEOUT_MS },
+    );
+  } catch {
+    // Fall through: the verdict below builds the actionable message from
+    // whatever the director actually reports.
+  }
+  const activeSceneKeys = await page.evaluate(
+    () => window.__aiHellCaptureDirector?.activeSceneKeys?.() ?? null,
+  );
+  const verdict = evaluateSceneActivation(
+    activeSceneKeys,
+    request.key,
+    'the shipped attract traversal did not start, so the clip would rest on '
+      + 'the static hangar screen',
+  );
+  if (!verdict.active) {
+    throw new CaptureSetupError(`Hangar War capture failed: ${verdict.reason}`);
+  }
+  reporter.step(`Hangar War traversal started (${request.key} in demo mode).`);
+}
+
+/**
+ * `localStorage` key holding the persisted feature flags
+ * (`FEATURE_FLAGS_STORAGE_KEY` in `src/core/featureFlags.ts`,
+ * AH-0MVZ0VGGQ0032KDP).
+ *
+ * Duplicated as a literal here because this script runs in node and cannot
+ * import a Vite/TypeScript module; `capture-gameplay.test.ts` asserts it
+ * against the real constant, so the two cannot drift.
+ */
+export const FEATURE_FLAGS_STORAGE_KEY = 'ai_hell_feature_flags';
+
+/**
+ * The feature flag that gates the Hangar War entry surfaces (`hangarWar`: the
+ * main-menu control and the idle-attract traversal). It ships ON by default
+ * (AH-0MVZ4S9ZU004GXUM) and acts as a kill switch; only flipping it from a UI
+ * is dev-gated.
+ */
+export const HANGAR_WAR_FEATURE_FLAG = 'hangarWar';
+
+/**
+ * The pre-boot plan that **enables** the Hangar War menu entry.
+ *
+ * The `--hangar` path navigates the real menu, and that control only exists
+ * when the flag resolves ON (AH-0MVZ0VGGQ0032KDP). The flag ships ON by
+ * default (AH-0MVZ4S9ZU004GXUM), but the plan is still seeded explicitly: a
+ * capture profile that carries the kill switch (`hangarWar: false`) would
+ * otherwise lose the control, and the activation check would fail. The record
+ * is merged over the shipped defaults by the flag store.
+ *
+ * @returns {{ storageKey: string, record: Record<string, boolean> }}
+ */
+export function buildHangarWarFlagPlan() {
+  return {
+    storageKey: FEATURE_FLAGS_STORAGE_KEY,
+    record: { [HANGAR_WAR_FEATURE_FLAG]: true },
+  };
+}
+
+/**
+ * Self-contained pre-boot init script that seeds the page's `localStorage`
+ * with the Hangar War feature-flag record (see {@link buildHangarWarFlagPlan}).
+ *
+ * Installed through `page.addInitScript` **before the game boots** so
+ * `MenuScene.create()` already sees the flag enabled and registers the
+ * **Hangar War** control in its focus cycle. Self-contained with inline
+ * defaults so Playwright can serialise it for the page.
+ *
+ * @param {{ storageKey?: string, record?: Record<string, boolean> }} [plan]
+ * @param {object} [scope]
+ * @returns {Record<string, boolean> | null} the injected record, or `null`
+ *   when it cannot be written.
+ */
+export function installHangarWarFlag(
+  plan = { storageKey: 'ai_hell_feature_flags', record: { hangarWar: true } },
+  scope = globalThis,
+) {
+  if (!scope || !scope.localStorage || !plan || typeof plan !== 'object') {
+    return null;
+  }
+  const storageKey = plan.storageKey;
+  const record = plan.record;
+  if (typeof storageKey !== 'string' || !record || typeof record !== 'object') {
+    return null;
+  }
+  try {
+    scope.localStorage.setItem(storageKey, JSON.stringify(record));
+  } catch {
+    return null;
+  }
+  return record;
+}
+
+/**
  * Resolves which capture mode the options select (AH-0MUX496IJ0041O3V).
  *
  * The **in-game demo** is the default: the capture starts the shipped
@@ -696,12 +986,18 @@ export function renderScenarioListing(
  * no freeze/release step (AH-0MVSDMAC0006DS25). Use
  * {@link planScenarioLaunch} when the launch/wait/release decision matters.
  *
- * @param {{ scripted?: boolean, scenario?: string | null }} [options]
- * @returns {'demo' | 'scripted' | 'scenario'}
+ * @param {{ scripted?: boolean, scenario?: string | null, hangar?: boolean }} [options]
+ * @returns {'demo' | 'scripted' | 'scenario' | 'hangar'}
  */
 export function resolveCaptureMode(options = {}) {
   if (typeof options.scenario === 'string' && options.scenario.length > 0) {
     return 'scenario';
+  }
+  // `--hangar` records the new Hangar War screen through the same normal menu
+  // input path (Tab → Enter on the **Hangar War** control). It takes
+  // precedence over `--scripted`, which describes the PlayScene fallback.
+  if (options.hangar === true) {
+    return 'hangar';
   }
   return options.scripted === true ? 'scripted' : 'demo';
 }
@@ -729,21 +1025,30 @@ export function captureUrl(baseUrl, options = {}) {
 /**
  * The key sequence that starts the chosen mode from `MenuScene`.
  *
- * `Play Game` is focused by default, so the demo path presses **Tab** to move
- * focus to the `Watch Demo` control and **Enter** to activate it; the
- * scripted and scenario paths activate the focused `Play Game` directly. All
- * are the same normal menu input a player would use (no `src/` internals are
- * reached).
+ * `Play Game` is focused by default, so the demo path presses **Tab** twice —
+ * `Play Game` → `Hangar War` → `Watch Demo` (a fresh capture profile has no
+ * `Continue` control) — and **Enter** to activate the `Watch Demo` control; the
+ * hangar path stops after the **first Tab**, which lands on the adjacent
+ * **Hangar War** button, and activates it. The scripted and scenario paths
+ * activate the focused `Play Game` directly. All are the same normal menu input
+ * a player would use (no `src/` internals are reached).
+ *
+ * The demo path's second Tab is required because Build Candidate D inserted the
+ * Hangar War control between `Play Game` and `Watch Demo`; a single Tab now
+ * lands on the hangar screen, which has no run-end signal, so the capture used
+ * to record the static loadout selector until the duration cap
+ * (AH-0MVWMUQUC003WXF5).
  *
  * A promo scenario uses the same single **Enter** as the jump scenarios —
  * `PlayScene` forces demo-mode flight for it, so the bot flies it from an
  * ordinary Play Game run (AH-0MVSDMAC0006DS25).
  *
- * @param {'demo' | 'scripted' | 'scenario'} mode
+ * @param {'demo' | 'scripted' | 'scenario' | 'hangar'} mode
  * @returns {string[]}
  */
 export function captureStartKeys(mode) {
-  return mode === 'demo' ? ['Tab', 'Enter'] : ['Enter'];
+  if (mode === 'demo') return ['Tab', 'Tab', 'Enter'];
+  return mode === 'hangar' ? ['Tab', 'Enter'] : ['Enter'];
 }
 
 /**
@@ -756,7 +1061,7 @@ export function captureStartKeys(mode) {
  * `FocusManager` has processed the focus change before it is activated. The
  * final key carries no trailing delay.
  *
- * @param {'demo' | 'scripted' | 'scenario'} mode
+ * @param {'demo' | 'scripted' | 'scenario' | 'hangar'} mode
  * @param {number} [gapMs] — delay (ms) after each key except the last.
  * @returns {{ key: string, delayAfterMs: number }[]}
  */
@@ -806,16 +1111,20 @@ export function findCapturedScenario(
  *   it and the release step reports the existing actionable error instead of
  *   silently recording a normal run.
  *
- * Without a scenario the plan is the demo/scripted decision unchanged. The
- * legacy `--duration` override suppresses the run-ended wait for every mode.
+ * Without a scenario the plan is the demo/scripted/hangar decision unchanged.
+ * Only the demo mode waits for a run end; `--hangar` records a fixed window
+ * (the hangar screen, then the shipped Hangar War attract traversal) because
+ * the traversal itself never emits the arcade run-ended signal
+ * (AH-0MVWMUQUC003WXF5). The legacy `--duration` override suppresses the
+ * run-ended wait for every mode.
  *
- * @param {{ scripted?: boolean, scenario?: string | null, fixedDuration?: boolean }} [options]
+ * @param {{ scripted?: boolean, scenario?: string | null, hangar?: boolean, fixedDuration?: boolean }} [options]
  * @param {readonly object[]} [scenarios] — registry entries to plan against.
  * @returns {{
- *   mode: 'demo' | 'scripted' | 'scenario',
+ *   mode: 'demo' | 'scripted' | 'scenario' | 'hangar',
  *   scenario: string | null,
  *   kind: 'boss' | 'defeat' | 'promo' | null,
- *   lifecycle: 'demo' | 'scripted' | 'jump' | 'promo',
+ *   lifecycle: 'demo' | 'scripted' | 'hangar' | 'jump' | 'promo',
  *   startPlan: { key: string, delayAfterMs: number }[],
  *   waitsForRunEnd: boolean,
  *   releaseScenarioHandle: boolean,
@@ -840,7 +1149,11 @@ export function planScenarioLaunch(
       kind: null,
       lifecycle: mode,
       startPlan: captureStartPlan(mode),
-      waitsForRunEnd: mode !== 'scripted' && !fixedDuration,
+      // Only a **demo** run ends on the game's run-ended signal. `--scripted`
+      // and `--hangar` record a fixed window: the Hangar War screens are
+      // static organic screens and the traversal's deployment never emits the
+      // arcade run-ended signal (AH-0MVWMUQUC003WXF5).
+      waitsForRunEnd: mode === 'demo' && !fixedDuration,
       releaseScenarioHandle: false,
       botFlown: mode === 'demo',
     };
@@ -2011,11 +2324,12 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
   let removeOverflowHandler = () => {};
   // The default demo path records a **complete run**: it waits for the game's
   // run-end signal and stops one `--tail` later (bounded by
-  // `--max-duration`). `--duration` and `--scripted` keep the legacy
-  // fixed-length behaviour (AH-0MUXZ4CNS009RV40, AC4). A dev scenario
-  // (`--scenario`) is a complete run too: a jump scenario's short fight ends
-  // in victory/defeat and a promo scenario is a full bot-flown run, so both
-  // wait for the run-ended signal (AH-0MVSDMAC0006DS25, AC1).
+  // `--max-duration`). `--duration`, `--scripted` and `--hangar` keep the
+  // legacy fixed-length behaviour (AH-0MUXZ4CNS009RV40, AC4; a Hangar War
+  // screen has no run-end signal, so its window must be fixed). A dev
+  // scenario (`--scenario`) is a complete run too: a jump scenario's short
+  // fight ends in victory/defeat and a promo scenario is a full bot-flown
+  // run, so both wait for the run-ended signal (AH-0MVSDMAC0006DS25, AC1).
   const fullRun = launch.waitsForRunEnd;
   const plan = mode === 'scripted' ? buildScriptedPlan(options.durationMs) : [];
   // The scripted plan spans the plan plus one inter-step gap after each step;
@@ -2066,6 +2380,15 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       await page.addInitScript(installBotTuningConfig, options.botTuningState);
     }
 
+    // The Hangar War menu control is behind a feature flag
+    // (AH-0MVZ0VGGQ0032KDP) that ships ON by default (AH-0MVZ4S9ZU004GXUM).
+    // Seed the enable *before* the menu scene is created so a profile carrying
+    // the kill switch cannot make `--hangar`'s Tab land on `Watch Demo` and
+    // fail the activation check for a controllable reason.
+    if (mode === 'hangar') {
+      await page.addInitScript(installHangarWarFlag, buildHangarWarFlagPlan());
+    }
+
     // Telemetry now lives in a per-run in-memory buffer that `startRun`
     // resets (AH-0MVIRYGD1000JVY3), and every batch item gets a fresh page,
     // so a new page can never read a previous item's records. The old
@@ -2087,17 +2410,20 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
     );
 
     // The demo path (default) starts the shipped in-game demo through the
-    // normal menu; the scripted fallback activates the focused Play Game and
+    // normal menu; the hangar path activates the adjacent **Hangar War**
+    // control; the scripted fallback activates the focused Play Game and
     // replays the fixed plan; the scenario path activates Play Game and lets
     // the URL-selected dev scenario drive the run.
     reporter.step(
       mode === 'demo'
         ? 'Starting in-game demo (Watch Demo)…'
-        : mode === 'scenario'
-          ? launch.kind === 'promo'
-            ? `Starting promo scenario "${launch.scenario}" (bot-flown, Enter)…`
-            : `Starting dev scenario "${options.scenario}" (Enter)…`
-          : 'Starting PlayScene (Enter)…',
+        : mode === 'hangar'
+          ? 'Starting Hangar War (Tab → Enter on Hangar War)…'
+          : mode === 'scenario'
+            ? launch.kind === 'promo'
+              ? `Starting promo scenario "${launch.scenario}" (bot-flown, Enter)…`
+              : `Starting dev scenario "${options.scenario}" (Enter)…`
+            : 'Starting PlayScene (Enter)…',
     );
     for (const step of captureStartPlan(mode)) {
       await page.keyboard.press(step.key);
@@ -2108,6 +2434,31 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       }
     }
     await page.waitForTimeout(options.warmupMs);
+
+    // Prove the menu gesture reached the screen the mode asked for before
+    // recording (AH-0MVWMUQUC003WXF5): a lost activation leaves the menu (or,
+    // for the demo, the Hangar War screen) running, so a capture that skipped
+    // this check would silently record a static screen as a successful clip.
+    if (mode === 'demo' || mode === 'hangar') {
+      const activeSceneKeys = await page.evaluate(
+        () => window.__aiHellCaptureDirector?.activeSceneKeys?.() ?? null,
+      );
+      const verdict = mode === 'hangar'
+        ? evaluateHangarActivation(activeSceneKeys)
+        : evaluateDemoActivation(activeSceneKeys);
+      if (!verdict.active) {
+        throw new CaptureSetupError(
+          mode === 'hangar'
+            ? `Hangar War capture failed: ${verdict.reason}`
+            : `Demo capture failed: ${verdict.reason}`,
+        );
+      }
+      reporter.step(
+        mode === 'hangar'
+          ? `Hangar War screen active (${HANGAR_SCENE_KEY}).`
+          : `Demo run active (${DEMO_SCENE_KEY}).`,
+      );
+    }
 
     // The Enter gesture resumes the shared context; wait (bounded) for the
     // tap to see it and expose an audio track, then record audio if present.
@@ -2126,6 +2477,9 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
         ? `Recording the full run (tail ${formatDuration(options.tailMs)}, cap ${formatDuration(options.maxDurationMs)})…`
         : mode === 'scripted'
           ? `Recording ${formatDuration(recordingMs)} of scripted gameplay…`
+          : mode === 'hangar'
+          ? `Recording ${formatDuration(recordingMs)} of the Hangar War `
+            + 'traversal (hangar → hex map → deployment)…'
           : `Recording ${formatDuration(recordingMs)} of in-game demo…`,
     );
     const captureStartedAtEpochMs = await startRecording(page, mimeType);
@@ -2222,8 +2576,23 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       } else {
         // The bot plays autonomously; hold the recording open and emit
         // heartbeats until the requested duration elapses.
+        //
+        // A `--hangar` clip starts on the hangar screen the menu just opened,
+        // then hands over to the **shipped Hangar War attract traversal**
+        // (AH-0MVWMUQUC003WXF5): manual review rejected a capture that never
+        // left the hangar's loadout selector. The hold lets the clip show the
+        // hangar before the traversal starts the hex map and the deployment;
+        // no traversal rule is duplicated here — the screens own it.
+        const traversalAtMs = mode === 'hangar'
+          ? Math.min(HANGAR_TRAVERSAL_HOLD_MS, Math.floor(recordingMs / 2))
+          : null;
+        let traversalStarted = traversalAtMs === null;
         while (Date.now() - startedAt < recordingMs) {
           const elapsed = Date.now() - startedAt;
+          if (!traversalStarted && elapsed >= traversalAtMs) {
+            traversalStarted = true;
+            await startHangarTraversal(page, reporter);
+          }
           reportProgress(elapsed, recordingMs);
           await page.waitForTimeout(Math.min(250, recordingMs - elapsed));
         }
@@ -2319,14 +2688,27 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       };
     }
 
-    const videoVerdict = isNonTrivialClip({ ...probe, bytes: videoBytes });
+    // `--hangar` clips are judged as **screens plus traversal**, not as pure
+    // gameplay: the hangar, hex map and defence report neither move nor emit
+    // their own audio, so the gameplay probe's motion and non-silent-audio
+    // requirements do not apply (AH-0MVWMUQUC003WXF5). The screen activation
+    // and the traversal start were already asserted before recording, and the
+    // render checks (decodable frames, non-black, colour variety, frame rate)
+    // still apply, so a blank or stalled clip is still rejected.
+    const staticScreen = mode === 'hangar';
+    const videoVerdict = isNonTrivialClip(
+      { ...probe, bytes: videoBytes },
+      { allowStatic: staticScreen },
+    );
     const audioVerdict = evaluateAudioTrack({
       trackCount: probe.audioTrackCount,
       peak: probe.audioPeak,
       rms: probe.audioRms,
       decodeError: probe.audioDecodeError,
     });
-    const verdict = combineClipVerdict(videoVerdict, audioVerdict);
+    const verdict = combineClipVerdict(videoVerdict, audioVerdict, {
+      requireAudio: !staticScreen,
+    });
     // A full run is complete once the game signalled its end; hitting the cap
     // without a signal is reported explicitly so a capped clip is never
     // presented as a complete run (AC3). Fixed-length captures report neither.
@@ -3513,7 +3895,7 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--all-scenarios] [--list-scenarios] [--bot-config file] [--config scenes.json] [--diagnostics]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--hangar] [--all-scenarios] [--list-scenarios] [--bot-config file] [--config scenes.json] [--diagnostics]',
     );
     console.log(
       'Diagnostics: --diagnostics (off by default) records the base64 payload size of every recorder chunk handed to the CDP binding (count/max/p50/p95 plus a size-only timeline), samples node RSS at each progress heartbeat, reads the page heap at clip end, and taps the Playwright CDP pipe transport so an overflow can be classified (method + binding name + prefix) instead of guessed. It writes <stem>.diagnostics.json next to each clip; a failed write is reported and never fails the clip. A normal capture is unchanged.',
@@ -3526,6 +3908,9 @@ async function main() {
     );
     console.log(
       'Scenarios: --scenario boss-four-hits loads the game with a dev scenario URL that jumps straight to the boss with 4 hits remaining (dev builds only); --scenario defeat clears the wave and ends the run in defeat on release (dev builds only). A registered promo scenario is bot-flown: it starts an ordinary Play Game run, plays its hand-authored promo level with its preset and seed, and records until the run-ended signal (bounded by --max-duration) with no freeze/release step — e.g. --scenario promo-blitz-hook records the catalogue\'s opening hook. See --list-scenarios for the registered promos and docs/dev/gameplay-capture.md §Promo scenarios for the full catalogue (effect, preset, editorial categories).',
+    );
+    console.log(
+      'Hangar War: --hangar presses Tab then Enter on the main menu to activate the Hangar War control (the control next to Play Game), records the HangarScene screen and then hands the bot over to the shipped Hangar War attract traversal (hangar → hex map → deployment → defence report) for --duration ms (default 15000); it fails with an actionable error if either the menu activation did not reach HangarScene or the traversal did not start. Multi-scene capture can also target HangarScene, HexMapScene and DefenceReportScene directly (--config).',
     );
     console.log(
       'Count: --count n (alias -n) records n clips in one process, reusing a single dev server and browser session. Each clip gets a 1-based index; `--output demo.webm` with --count 3 writes demo-1.webm, demo-2.webm, demo-3.webm.',
@@ -3543,7 +3928,7 @@ async function main() {
       'Series: every clip also exports <run-id>.action.jsonl (the per-run action-intensity series, documented docs/dev/action-intensity.md §7.2–§7.3) and <run-id>.capture.json (the §7.5 video-join anchor: the capture_started marker plus the telemetry run-header startedAt), written next to the WebM with a matching basename. The capture re-enables page telemetry; a partial or telemetry-less run still writes a header-only series.',
     );
     console.log(
-      'Multi-scene: `npm run capture:scenes -- --config <file>` (alias --scenes) records every gym scene listed in the JSON config with ONE MediaRecorder on ONE page, fading to black and back (0.25 s each way) between scenes, and writes a single WebM plus a --json payload with per-scene { target, playMs, captureMs, startMs, endMs }, the total duration and the output path. The config schema is { "scenes": [{ "target": "GymPlayer", "playMs": 2000, "captureMs": 2000, "label": "optional" }] }; it is validated before any server or browser boots.',
+      'Multi-scene: `npm run capture:scenes -- --config <file>` (alias --scenes) records every capturable scene listed in the JSON config with ONE MediaRecorder on ONE page, fading to black and back (0.25 s each way) between scenes, and writes a single WebM plus a --json payload with per-scene { target, playMs, captureMs, startMs, endMs }, the total duration and the output path. Targets are the watchable gyms plus the shipped Hangar War screens (HangarScene, HexMapScene, DefenceReportScene). The config schema is { "scenes": [{ "target": "GymPlayer", "playMs": 2000, "captureMs": 2000, "label": "optional" }] }; it is validated before any server or browser boots.',
     );
     return;
   }

@@ -197,7 +197,7 @@ const LEVELABLE_WEAPON_IDS: readonly WeaponDropId[] = [
   'nova',
   'mortar',
   'arc',
-  // Net-new unlock-pool weapons are upgradable like every other weapon.
+  // Net-new weapons are upgradable like every other weapon.
   'rear_guard',
   'broadside',
   'railgun',

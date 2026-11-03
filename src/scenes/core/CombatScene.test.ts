@@ -4,6 +4,7 @@ import Phaser from 'phaser';
 import * as effectsModule from '../../audio/effects';
 import * as bulletImpactModule from '../../vfx/bulletImpact';
 import * as muzzleFlashModule from '../../vfx/muzzleFlash';
+import * as hitscanBeamModule from '../../vfx/hitscanBeam';
 import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import {
   FORCE_FIELD_COLOR,
@@ -23,6 +24,7 @@ import {
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { isOnGrid } from '../../utils/beat';
+import { euclidPattern, isOnset } from '../../utils/euclid';
 import {
   WEAPON_BULLET_LIFETIME,
   WEAPON_CATALOGUE,
@@ -1642,9 +1644,10 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
    * The grid is reset to a deterministic t=0 anchor and shared with the
    * player, so the recorded ticks are independent of boot timing.
    */
-  async function collectSpawnTicks(
-    frameDeltasMs: number[],
-  ): Promise<Record<WeaponId, number[]>> {
+  async function collectSpawnTicks(frameDeltasMs: number[]): Promise<{
+    ticks: Record<WeaponId, number[]>;
+    patterns: Partial<Record<WeaponId, ReturnType<Player['getFirePattern']>>>;
+  }> {
     booted = await bootScene([StubCombatScene]);
     const scene = booted.scene as StubCombatScene;
     const player = scene.addPlayer({ x: 100, y: 100 });
@@ -1687,36 +1690,49 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
     }
 
     vi.restoreAllMocks();
+    const patterns: Partial<Record<WeaponId, ReturnType<Player['getFirePattern']>>> = {
+      cannon: player.getFirePattern('cannon'),
+      spread: player.getFirePattern('spread'),
+      rapid: player.getFirePattern('rapid'),
+    };
     booted.game.destroy(true);
     booted = null;
-    return ticks;
+    return { ticks, patterns };
   }
 
-  it('AC1/AC4 — every spawned bullet lands on its weapon grid tick; active weapons share the phase', async () => {
-    const ticks = await collectSpawnTicks(
+  it('AC1/AC4 — every spawned bullet lands on its pattern onset tick; active weapons share the lattice', async () => {
+    const { ticks, patterns } = await collectSpawnTicks(
       Array.from({ length: 300 }, () => 10),
     );
 
     for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
-      const interval = WEAPON_CATALOGUE[weapon].fireRateMs;
+      // The Euclidean pattern owns the cadence (AH-0MVYA1V8Z009SHMR): every
+      // bullet lands on an exact onset tick of that weapon's rhythm.
+      const pattern = patterns[weapon]!;
+      const tile = euclidPattern(pattern.k, pattern.n, pattern.rotation);
       expect(ticks[weapon].length).toBeGreaterThan(0);
       for (const tick of ticks[weapon]) {
-        expect(isOnGrid(tick, interval, 0)).toBe(true);
-        expect(tick % interval).toBe(0); // exact tick, anchored at 0
+        expect(isOnGrid(tick, pattern.stepMs, 0)).toBe(true);
+        expect(tick % pattern.stepMs).toBe(0); // exact tick, anchored at 0
+        expect(isOnset(tick, tile, pattern.stepMs, 0)).toBe(true);
       }
-      // All default intervals are multiples of the finest (125 ms) grid, so
-      // simultaneously active weapons stay phase-locked.
-      for (const tick of ticks[weapon]) expect(tick % 125).toBe(0);
+      // All patterns share the 187.5 ms 16th-note lattice, so simultaneously
+      // active weapons stay phase-locked.
+      for (const tick of ticks[weapon]) expect(tick % 187.5).toBe(0);
     }
   });
 
   it('AC3 — the spawned-bullet grid is framerate-independent', async () => {
-    const at10ms = await collectSpawnTicks(
-      Array.from({ length: 300 }, () => 10), // 3000 ms at 10 ms/frame
-    );
-    const at25ms = await collectSpawnTicks(
-      Array.from({ length: 120 }, () => 25), // 3000 ms at 25 ms/frame
-    );
+    const at10ms = (
+      await collectSpawnTicks(
+        Array.from({ length: 300 }, () => 10), // 3000 ms at 10 ms/frame
+      )
+    ).ticks;
+    const at25ms = (
+      await collectSpawnTicks(
+        Array.from({ length: 120 }, () => 25), // 3000 ms at 25 ms/frame
+      )
+    ).ticks;
 
     for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
       expect(at10ms[weapon].length).toBeGreaterThan(0);
@@ -1873,8 +1889,10 @@ describe('damage-budget player bullets — Wave Laser maxHitPoints (AH-0MV97RISJ
   it('auto-fire propagates the weapon maxHitPoints budget onto spawned bullets', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
-    // Equip the wave laser permanently so it fires this frame.
-    player.equipWeapon('wave_laser', true);
+    // The Railgun is the catalogue's remaining damage-budget weapon: equipping
+    // it permanently makes it fire this frame (the Wave Laser is a hitscan
+    // beam now and spawns no travelling bullet — AH-0MVREBUJ5004HDRQ).
+    player.equipWeapon('railgun', true);
     player.setBeatClock(scene.getBeatClock());
     scene.getBeatClock().reset();
     // Establish a heading (right) without moving the ship far.
@@ -1882,14 +1900,102 @@ describe('damage-budget player bullets — Wave Laser maxHitPoints (AH-0MV97RISJ
     player.physicsTick(0.1, scene.scale.width, scene.scale.height);
 
     scene.runAutoFire(0.5);
-    const waveBullets = scene
+    const railgunBullets = scene
       .getPlayerBullets()
-      .filter((b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor);
-    expect(waveBullets.length).toBeGreaterThan(0);
-    for (const bullet of waveBullets) {
-      expect(bullet.maxHitPoints).toBe(WEAPON_CATALOGUE.wave_laser.maxHitPoints);
+      .filter((b) => b.color === WEAPON_CATALOGUE.railgun.bulletColor);
+    expect(railgunBullets.length).toBeGreaterThan(0);
+    for (const bullet of railgunBullets) {
+      expect(bullet.maxHitPoints).toBe(WEAPON_CATALOGUE.railgun.maxHitPoints);
     }
-    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
+    // The level-0 budget is a single hit point (AH-0MVY0A23A009MRK3).
+    expect(WEAPON_CATALOGUE.railgun.maxHitPoints).toBe(1);
+  });
+});
+
+// ── Railgun pass-through budget (AH-0MVY0A23A009MRK3) ────────────────────────
+
+describe('Railgun pass-through budget — level 0 stops, level 1 pierces (AH-0MVY0A23A009MRK3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  /** Adds a single-hit stub enemy at (x, y) and returns it. */
+  function addEnemy(scene: StubCombatScene, x: number, y: number): StubEnemy {
+    const enemy = new StubEnemy(scene, x, y);
+    scene.add.existing(enemy);
+    scene.entities.push(enemy);
+    return enemy;
+  }
+
+  it('a level-0 Railgun shot destroys the first 1-HP enemy and never reaches the one behind it', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 260, 200);
+
+    // The level-resolved budget the shipped auto-fire path puts on the bullet.
+    const budget = resolveWeaponDefinition('railgun', 0).maxHitPoints!;
+    expect(budget).toBe(1);
+    const bullet = scene.spawnPlayerBullet(
+      200,
+      200,
+      0,
+      0,
+      WEAPON_CATALOGUE.railgun.bulletColor,
+      1,
+      3,
+      budget,
+    );
+
+    scene.runCollisions(); // first — the single hit point is spent here
+    expect(first.destroyed).toBe(true);
+    expect(bullet.maxHitPoints).toBe(0);
+    // Consumed on the kill that spent its last hit point: no pass-through.
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+
+    // Even if the spent bullet is nudged onto the ship behind it, nothing lands.
+    bullet.setPosition(260, 200);
+    scene.runCollisions();
+    expect(second.destroyed).toBe(false);
+  });
+
+  it('the first upgrade (budget 2) pierces: it destroys both 1-HP enemies in the line', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 260, 200);
+
+    const budget = resolveWeaponDefinition('railgun', 1).maxHitPoints!;
+    expect(budget).toBe(2);
+    const bullet = scene.spawnPlayerBullet(
+      200,
+      200,
+      0,
+      0,
+      WEAPON_CATALOGUE.railgun.bulletColor,
+      1,
+      3,
+      budget,
+    );
+
+    scene.runCollisions(); // first — destroyed, budget 2 → 1, passes through
+    expect(first.destroyed).toBe(true);
+    expect(bullet.maxHitPoints).toBe(1);
+    expect(scene.getPlayerBullets()).toContain(bullet);
+
+    bullet.setPosition(260, 200);
+    scene.runCollisions(); // second — destroyed, budget spent, consumed
+    expect(second.destroyed).toBe(true);
+    expect(bullet.maxHitPoints).toBe(0);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
   });
 });
 
@@ -2461,8 +2567,10 @@ describe('auto-fire threads the weapon visual identity onto spawned bullets', ()
     return booted.scene as StubCombatScene;
   }
 
-  it('spawned wave-laser bullets carry the beam shape + length + rim', async () => {
+  it('the wave laser fires a hitscan beam and spawns no travelling bullet', async () => {
     const scene = await boot();
+    const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
+    beamSpy.mockClear();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('wave_laser', true);
     player.setBeatClock(scene.getBeatClock());
@@ -2471,16 +2579,18 @@ describe('auto-fire threads the weapon visual identity onto spawned bullets', ()
     player.physicsTick(0.1, scene.scale.width, scene.scale.height);
 
     scene.runAutoFire(0.5);
-    const bullets = scene.getPlayerBullets().filter(
-      (b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor,
-    );
-    expect(bullets.length).toBeGreaterThan(0);
-    for (const bullet of bullets) {
-      expect(bullet.shape).toBe('line');
-      expect(bullet.shapeLength).toBe(7);
-      expect(bullet.rimColor).toBe(0xffffff);
-      expect(bullet.thickness).toBe(3);
-    }
+
+    // The shot never enters the travelling-bullet path (AC11)…
+    expect(
+      scene
+        .getPlayerBullets()
+        .filter((b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor),
+    ).toHaveLength(0);
+    // …and instead resolves one beam through the shared hitscan seam.
+    expect(beamSpy).toHaveBeenCalledTimes(1);
+    const options = beamSpy.mock.calls[0][2]!;
+    expect(options.color).toBe(WEAPON_CATALOGUE.wave_laser.bulletColor);
+    expect(options.duration).toBeCloseTo(0.3, 6);
   });
 
   it('spawned dual bullets carry the short-beam shape', async () => {

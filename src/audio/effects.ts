@@ -186,6 +186,14 @@ function pickCueSeed(cue: string): number | undefined {
 /**
  * Subdivisions per beat for the explosion accent grid: a **16th note**
  * (4 per beat). At the default 80 BPM that is 187.5 ms.
+ *
+ * Deliberately unchanged by the Euclidean fire scheduler
+ * (AH-0MVYA1V8Z009SHMR): weapon fire moved from interval scheduling to
+ * pattern onsets, but the non-weapon destruction accent keeps its shipped
+ * snap-to-next-16th behaviour and per-tick cap (regression-guarded in
+ * `src/audio/effects.test.ts` §6). Weapon-kill impacts are off-grid by
+ * construction (fire time + flight time), so this accent is the one place the
+ * audio deliberately re-aligns a gameplay event to the bar.
  */
 export const EXPLOSION_ACCENT_SUBDIVISIONS = 4;
 

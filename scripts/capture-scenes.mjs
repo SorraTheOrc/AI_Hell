@@ -65,9 +65,40 @@ export const WATCHABLE_GYM_SCENE_KEYS = Object.freeze([
   'GymPowerUpLeveling',
   'GymPowerUpsCombat',
   'GymPowerUpsUtility',
+  'GymRhythm',
   'GymWeaponLeveling',
   'GymWeapons',
 ]);
+
+/**
+ * The shipped **Hangar War** screens (Build Candidate D) that multi-scene
+ * capture and the `--hangar` menu path can record: the hangar screen, the hex
+ * ring map and the between-sortie defence report.
+ *
+ * They are **not** gyms — they are boot-registered shipped scenes
+ * (`src/core/gameConfig.ts`), so the in-page director starts them without the
+ * gym page-discovery check. Each one is capturable standalone: every launch
+ * field has a shipped default (`{ demo: false }` renders the static,
+ * player-facing screen), so no setup is required.
+ *
+ * `capture-scenes.test.ts` pins this list against the three scene modules, so
+ * adding or removing a Hangar War screen without updating the registry fails
+ * the suite instead of silently diverging.
+ */
+export const HANGAR_WAR_SCENE_KEYS = Object.freeze([
+  'DefenceReportScene',
+  'HangarScene',
+  'HexMapScene',
+]);
+
+/**
+ * Every scene key a capture config may target: the watchable gym scenes plus
+ * the shipped Hangar War screens. Sorted and frozen so the CLI hint and the
+ * director's validation read the same, deterministic list.
+ */
+export const CAPTURABLE_SCENE_KEYS = Object.freeze(
+  [...WATCHABLE_GYM_SCENE_KEYS, ...HANGAR_WAR_SCENE_KEYS].sort(),
+);
 
 /**
  * Stable machine-readable error codes carried by {@link SceneConfigError}.
@@ -487,6 +518,21 @@ export const SCENE_SETUP_TARGET_EXTRA_FIELDS = Object.freeze({
  */
 export const SCENE_SETUP_INCAPABLE_TARGETS = Object.freeze([]);
 
+/**
+ * Setup fields the **Hangar War screens** consume: the attract/demo traversal
+ * flag and its dwell override, both forwarded as the scene's launch data.
+ *
+ * The screens take no player loadout, power-up, seed or level, so none of the
+ * gym setup fields apply — supplying one is rejected rather than silently
+ * dropped. Both fields are optional: the scenes' own defaults render the
+ * static, player-facing screen (`demo: false`), which is what a capture of the
+ * hangar/map/report wants.
+ */
+export const HANGAR_WAR_SCENE_SETUP_FIELDS = Object.freeze([
+  'demo',
+  'demoDwellMs',
+]);
+
 /** Every setup field name (used to distinguish unknown vs unsupported). */
 const SETUP_ALL_FIELDS = Object.freeze([
   'level',
@@ -502,14 +548,20 @@ const SETUP_ALL_FIELDS = Object.freeze([
   'practiceTargets',
   'threatCount',
   'minerals',
+  'demo',
+  'demoDwellMs',
 ]);
 
-/** Whether `value` is any known scene key (watchable or parameterised). */
+/**
+ * Whether `value` is any known scene key: a watchable gym, a parameterised gym
+ * or a shipped Hangar War screen.
+ */
 function isKnownSceneKey(value) {
   return (
     typeof value === 'string'
     && (WATCHABLE_GYM_SCENE_KEYS.includes(value)
-      || PARAMETERISED_GYM_SCENE_KEYS.includes(value))
+      || PARAMETERISED_GYM_SCENE_KEYS.includes(value)
+      || HANGAR_WAR_SCENE_KEYS.includes(value))
   );
 }
 
@@ -524,6 +576,9 @@ export function sceneSetupFieldsFor(target) {
   // The shipped game scene is setup-capable through dev-gated launch data
   // (AH-0MVTNTHE0008UT2C) even though it is not a gym key.
   if (target === GENERATED_LEVEL_SCENE_KEY) return [...SCENE_SETUP_PLAYSCENE_FIELDS];
+  // The Hangar War screens consume only their own launch data — the gym
+  // common fields (player/powerUps/seed) do not apply to a screen.
+  if (isHangarWarSceneKey(target)) return [...HANGAR_WAR_SCENE_SETUP_FIELDS];
   if (!isKnownSceneKey(target)) return [];
   if (SCENE_SETUP_INCAPABLE_TARGETS.includes(target)) return [];
   const extra = SCENE_SETUP_TARGET_EXTRA_FIELDS[target] ?? [];
@@ -542,9 +597,14 @@ export function requiredSceneSetupFieldsFor(target) {
   return [];
 }
 
-/** The watchable keys as a readable list for error messages. */
+/** The watchable gym keys as a readable list for error messages. */
 function watchableKeysHint() {
   return WATCHABLE_GYM_SCENE_KEYS.join(', ');
+}
+
+/** Every capturable scene key as a readable list for error messages. */
+function capturableKeysHint() {
+  return CAPTURABLE_SCENE_KEYS.join(', ');
 }
 
 /**
@@ -556,6 +616,53 @@ function watchableKeysHint() {
  */
 export function isWatchableGymSceneKey(value) {
   return typeof value === 'string' && WATCHABLE_GYM_SCENE_KEYS.includes(value);
+}
+
+/**
+ * Whether `value` is a shipped Hangar War screen key (exact match). Pure
+ * predicate: never throws.
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function isHangarWarSceneKey(value) {
+  return typeof value === 'string' && HANGAR_WAR_SCENE_KEYS.includes(value);
+}
+
+/**
+ * Resolves `value` to any capturable scene key — a watchable gym key or a
+ * shipped Hangar War screen key — throwing a typed {@link SceneConfigError}
+ * for anything else.
+ *
+ * Parameterised gyms stay rejected (`unsupported-target`) because they cannot
+ * start without a caller-supplied parameter; the Hangar War screens have a
+ * shipped default for every launch field, so they need no setup.
+ *
+ * @param {unknown} value
+ * @returns {string} the key, unchanged.
+ */
+export function resolveCapturableSceneKey(value) {
+  if (typeof value !== 'string') {
+    throw new SceneConfigError(
+      CODE.invalidTarget,
+      `Invalid scene target ${JSON.stringify(value)}: expected a scene key such as GymPlayer or HangarScene`,
+    );
+  }
+  if (PARAMETERISED_GYM_SCENE_KEYS.includes(value)) {
+    throw new SceneConfigError(
+      CODE.unsupportedTarget,
+      `Scene target "${value}" is a parameterised gym scene and cannot be captured standalone `
+        + `(it needs a parameter); use a watchable scene instead: ${watchableKeysHint()}`,
+    );
+  }
+  if (!isWatchableGymSceneKey(value) && !isHangarWarSceneKey(value)) {
+    throw new SceneConfigError(
+      CODE.unknownTarget,
+      `Unknown scene target ${JSON.stringify(value)}: not a capturable scene. `
+        + `Capturable scenes: ${capturableKeysHint()}`,
+    );
+  }
+  return value;
 }
 
 /**
@@ -1026,6 +1133,21 @@ export function validateSceneSetup(rawSetup, target, at = 'setup') {
       target,
     );
   }
+  // Hangar War screen launch data (Build Candidate D): the attract/demo flag
+  // and its dwell override. Only those screens accept these fields, so an
+  // accepted flag is always consumed by the scene.
+  if (rawSetup.demo !== undefined) {
+    requireSetupBoolean(rawSetup.demo, `${at}.demo`);
+  }
+  if (rawSetup.demoDwellMs !== undefined) {
+    const dwell = rawSetup.demoDwellMs;
+    if (typeof dwell !== 'number' || !Number.isInteger(dwell) || dwell <= 0) {
+      throw new SceneConfigError(
+        CODE.invalidSetupType,
+        `${at}.demoDwellMs must be a positive integer number of milliseconds (got ${JSON.stringify(dwell)})`,
+      );
+    }
+  }
   // Scenario parameters (AH-0MVRMI0Q7001KG4Y): booleans and bounded counts a
   // gym consumes directly (its SHOOT toggle, optional scenario layers, threat
   // wave size, demonstration mineral field). A target that does not declare
@@ -1102,7 +1224,9 @@ function normaliseSetupLevel(level) {
  * weapons `['spread', 'dual']` (mirroring `GymLevel`'s existing loadout), no
  * timed weapons, no per-weapon level grants ({@link
  * DEFAULT_SCENE_SETUP_WEAPON_LEVELS}), no power-ups, and the
- * level/enemy/mineralReward omitted when absent.
+ * level/enemy/mineralReward omitted when absent. The Hangar War screens' own
+ * launch fields (`demo`, `demoDwellMs`) are only emitted when supplied, so an
+ * omitted flag keeps the scenes' shipped default (the static screen).
  *
  * @param {object} [rawSetup]
  * @param {string} [target] — when given, only fields the target can consume are
@@ -1168,6 +1292,14 @@ export function normaliseSceneSetup(rawSetup = {}, target) {
       normalised[field] = setup[field];
     }
   }
+  // Hangar War launch data is only emitted when supplied (the scenes' own
+  // defaults render the static screen), so a supplied value survives
+  // normalisation untouched.
+  for (const field of HANGAR_WAR_SCENE_SETUP_FIELDS) {
+    if (include(field) && setup[field] !== undefined) {
+      normalised[field] = setup[field];
+    }
+  }
   if (include('seed')) {
     normalised.seed = setup.seed === undefined ? DEFAULT_SCENE_SETUP_SEED : setup.seed;
   }
@@ -1192,8 +1324,9 @@ export function parseSceneSetup(rawSetup, target, at = 'setup') {
  * setup — the **single source of truth** both the CLI's pre-boot validation and
  * the in-page director use, so the two can never disagree.
  *
- * - Absent setup ⇒ today's behaviour: the key must be watchable (the
- *   parameterised gyms are rejected with `unsupported-target`).
+ * - Absent setup ⇒ the key must be capturable standalone: a watchable gym or
+ *   a shipped Hangar War screen (the parameterised gyms are rejected with
+ *   `unsupported-target`).
  * - Present setup ⇒ the key must be a known scene key that can consume it; the
  *   setup is validated and normalised (defaults filled). A parameterised target
  *   becomes capturable **only** with the setup that carries its required
@@ -1208,7 +1341,9 @@ export function resolveWatchableSceneEntry(entry, at = 'setup') {
   const target = isEntry ? entry.target : entry;
   const rawSetup = isEntry ? entry.setup : undefined;
   if (rawSetup === undefined || rawSetup === null) {
-    return { key: resolveWatchableSceneKey(target), setup: null };
+    // No setup: the key must be capturable standalone (watchable gym or a
+    // Hangar War screen), rejecting the parameterised gyms.
+    return { key: resolveCapturableSceneKey(target), setup: null };
   }
   if (typeof target !== 'string' || !isKnownSceneKey(target)) {
     throw new SceneConfigError(

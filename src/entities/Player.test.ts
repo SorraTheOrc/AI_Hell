@@ -18,6 +18,7 @@ import { seedConfigStore } from '../core/configStore';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
 import { DEFAULT_RULES, RULES_STORAGE_KEY, saveRules } from '../core/rules';
 import { createBeatClock, isOnGrid } from '../utils/beat';
+import { euclidPattern, isOnset } from '../utils/euclid';
 import { isOnBeatGrid, WEAPON_CATALOGUE, type WeaponId } from '../utils/weapons';
 import { resolveWeaponAtLevel } from '../utils/weaponLevels';
 import { Player } from './Player';
@@ -1283,11 +1284,14 @@ describe('Player ship entity', () => {
     });
   });
 
-  // ── Phase-locked beat-grid auto-fire (AH-0MUAYB8EH005RJ8B) ──────
+  // ── Euclidean onset cadence (AH-0MVYA1V8Z009SHMR) ───────────────
+
+  /** Steps in one 4-beat bar of the shared 16th-note lattice. */
+  const STEPS_PER_BAR = 16;
 
   /**
    * Boots a player and resets its beat clock to a fresh, deterministic
-   * 80 BPM grid anchored at t=0. The live scene loop advances the clock
+   * 80 BPM lattice anchored at t=0. The live scene loop advances the clock
    * during boot, so tests that assert exact shot times reset it first.
    */
   async function freshPlayer(): Promise<Player> {
@@ -1299,138 +1303,228 @@ describe('Player ship entity', () => {
     return player!;
   }
 
-  it('tryFire fires active weapons on the shared beat grid, phase-locked (AC1/AC2)', async () => {
+  /** The active pattern's tile for `weaponId` (its onset steps included). */
+  function activeTile(player: Player, weaponId: WeaponId) {
+    const pattern = player.getFirePattern(weaponId);
+    expect(pattern).toBeDefined();
+    return euclidPattern(pattern!.k, pattern!.n, pattern!.rotation);
+  }
+
+  /** Every onset tick of `weaponId`'s active pattern across `bars` bars. */
+  function onsetTicks(player: Player, weaponId: WeaponId, bars = 2): number[] {
+    const pattern = player.getFirePattern(weaponId)!;
+    const tile = activeTile(player, weaponId);
+    const ticks: number[] = [];
+    for (let bar = 0; bar < bars; bar += 1) {
+      for (let step = 0; step < STEPS_PER_BAR; step += 1) {
+        if (tile.onsets.includes(step % pattern.n)) {
+          ticks.push((bar * STEPS_PER_BAR + step) * pattern.stepMs);
+        }
+      }
+    }
+    return ticks;
+  }
+
+  /** Drives `player` in fixed frames and records every shot tick per weapon. */
+  function collectShots(
+    player: Player,
+    weaponIds: readonly WeaponId[],
+    dtMs: number,
+    frames: number,
+  ): Record<string, number[]> {
+    const shots: Record<string, number[]> = {};
+    for (const id of weaponIds) shots[id] = [];
+    for (let frame = 0; frame < frames; frame += 1) {
+      for (const id of player.tryFire(dtMs / 1000)) {
+        (shots[id] ??= []).push(player.getLastShotTime(id)!);
+      }
+    }
+    return shots;
+  }
+
+  it('fires only on the onset ticks of each weapon’s Euclidean pattern (AC1)', async () => {
     const player = await freshPlayer();
-    player.equipWeapon('rapid'); // first collection = base (125 ms, 6/beat)
+    player.equipWeapon('spread'); // E(4, 16)
+    player.equipWeapon('rapid'); // E(13, 16)
+    const ids: WeaponId[] = ['cannon', 'spread', 'rapid'];
 
-    // t = 500 ms: both weapons' grid ticks have elapsed.
-    expect(player.tryFire(0.5)).toEqual(['cannon', 'rapid']);
+    // 6 s = two 3000 ms bars of 16th notes at 80 BPM.
+    const shots = collectShots(player, ids, 25, 240);
 
-    // t = 600 ms: nothing due (next cannon 750, next rapid 625).
-    expect(player.tryFire(0.1)).toEqual([]);
+    for (const id of ids) {
+      const onsets = onsetTicks(player, id, 3);
+      expect(shots[id].length).toBeGreaterThan(0);
+      // Every shot is an onset — and an onset can be a *non-interval* tick:
+      // step 1 (187.5 ms) is a lattice tick the cannon's E(9, 16) skips.
+      for (const tick of shots[id]) expect(onsets).toContain(tick);
+      // Per-bar onset count equals the pattern's k.
+      const firstBar = shots[id].filter((tick) => tick < 3000);
+      expect(firstBar).toHaveLength(player.getFirePattern(id)!.k);
+    }
 
-    // t = 650 ms: the rapid tick at 625 has now elapsed → rapid only.
-    expect(player.tryFire(0.05)).toEqual(['rapid']);
+    // A patterned weapon is not interval-free: the cannon's E(9, 16) skips
+    // step 1 entirely, so it never fires on the 187.5 ms lattice tick.
+    expect(shots.cannon).not.toContain(187.5);
 
-    // t = 800 ms: cannon tick 750 and rapid tick 750 coincide.
-    expect(player.tryFire(0.15)).toEqual(['cannon', 'rapid']);
+    // The cannon's rhythm is genuinely irregular: 1- and 2-step gaps.
+    const cannonGaps = new Set(
+      shots.cannon.slice(1).map((tick, index) => tick - shots.cannon[index]),
+    );
+    expect(cannonGaps).toEqual(new Set([187.5, 375]));
   });
 
-  it('tryFire with only the cannon fires on the 375 ms beat grid (AC1)', async () => {
+  it('every emitted shot time is an exact onset tick of the shared lattice (AC1/AC5)', async () => {
     const player = await freshPlayer();
+    player.equipWeapon('spread');
+    player.equipWeapon('dual');
+    player.equipWeapon('rapid');
+    const ids: WeaponId[] = ['cannon', 'spread', 'dual', 'rapid'];
 
-    expect(player.tryFire(0.5)).toEqual(['cannon']); // tick 375 elapsed by t=500
-    expect(player.tryFire(0.1)).toEqual([]); // t=600 < next tick 750
-    expect(player.tryFire(0.2)).toEqual(['cannon']); // t=800 ≥ tick 750
-  });
+    const shots = collectShots(player, ids, 25, 160); // 4 s
 
-  it('every emitted shot time is an exact grid tick (AC5)', async () => {
-    const player = await freshPlayer();
-    player.equipWeapon('spread'); // 750 ms (1/beat)
-    player.equipWeapon('dual'); // 750 ms (1/beat)
-    player.equipWeapon('rapid'); // 125 ms (6/beat)
-
-    for (let i = 0; i < 40; i++) player.tryFire(0.05); // 2 s of 50 ms frames
-
-    for (const id of player.getActiveWeapons()) {
-      // The scheduler interval (base rules until the shared core applies
-      // weapon levels); assert each shot lands on that exact grid tick.
-      const interval = player.getFireInterval(id);
-      const shot = player.getLastShotTime(id);
-      expect(shot).toBeDefined();
-      expect(isOnGrid(shot!, interval)).toBe(true);
-      // Anchored at 0, so the tick is an exact integer multiple.
-      expect(shot! % interval).toBe(0);
+    for (const id of ids) {
+      const pattern = player.getFirePattern(id)!;
+      const tile = activeTile(player, id);
+      for (const tick of shots[id]) {
+        // An exact tick of the shared 16th-note lattice, anchored at 0.
+        expect(isOnGrid(tick, pattern.stepMs, 0)).toBe(true);
+        expect(tick % pattern.stepMs).toBe(0);
+        // ...and specifically an onset of that weapon's own rhythm.
+        expect(isOnset(tick, tile, pattern.stepMs, 0)).toBe(true);
+      }
     }
   });
 
-  it('multiple active weapons stay phase-locked on one shared grid (AC2)', async () => {
+  it('simultaneously active weapons stay phase-locked to the one shared lattice (AC2)', async () => {
     const player = await freshPlayer();
     player.equipWeapon('rapid');
 
-    const cannonShots: number[] = [];
-    const rapidShots: number[] = [];
-    for (let i = 0; i < 80; i++) {
-      const fired = player.tryFire(0.025); // 25 ms frames out to 2 s
-      for (const id of fired) {
-        const shot = player.getLastShotTime(id)!;
-        if (id === 'cannon') cannonShots.push(shot);
-        if (id === 'rapid') rapidShots.push(shot);
+    const shots: number[] = [];
+    for (let frame = 0; frame < 160; frame += 1) {
+      for (const id of player.tryFire(0.025)) {
+        shots.push(player.getLastShotTime(id)!);
       }
     }
 
-    expect(cannonShots.length).toBeGreaterThan(0);
-    expect(rapidShots.length).toBeGreaterThan(0);
-    // Cannon (375 ms) is an exact multiple of rapid (125 ms), so every
-    // cannon shot coincides with a rapid shot — no independent drift.
-    for (const shot of cannonShots) {
-      expect(rapidShots).toContain(shot);
-      expect(shot % 125).toBe(0);
-    }
+    expect(shots.length).toBeGreaterThan(0);
+    // Every weapon's onsets are ticks of the same 187.5 ms lattice, so their
+    // patterns interlock exactly and never drift apart.
+    for (const tick of shots) expect(tick % 187.5).toBe(0);
   });
 
-  it('a weapon collected mid-beat waits for the next grid tick (AC3)', async () => {
+  it('a weapon collected mid-bar waits for its pattern’s next onset (AC3)', async () => {
     const player = await freshPlayer();
 
     player.tryFire(0.2); // advance to t=200 ms
-    player.equipWeapon('spread'); // 750 ms interval → next tick at 750
+    player.equipWeapon('spread'); // E(4, 16): onsets 0, 750, 1500, 2250
     expect(player.getNextShotTime('spread')).toBe(750);
 
-    // t=700: the spread's tick has not arrived.
+    // t=700: the spread's first onset after collection has not arrived.
     expect(player.tryFire(0.5)).not.toContain('spread');
-    // t=800: the 750 tick has elapsed.
+    // t=800: the 750 ms onset has elapsed.
     expect(player.tryFire(0.1)).toContain('spread');
     expect(player.getLastShotTime('spread')).toBe(750);
   });
 
-  it('shots never drift under variable frame deltas (AC5)', async () => {
+  it('identical time-driven input produces an identical shot schedule (determinism)', async () => {
+    const run = async () => {
+      booted?.game.destroy(true);
+      booted = null;
+      const player = await freshPlayer();
+      player.equipWeapon('spread');
+      player.equipWeapon('rapid');
+      const shots = collectShots(
+        player,
+        ['cannon', 'spread', 'rapid'],
+        25,
+        240,
+      );
+      const patterns = ['cannon', 'spread', 'rapid'].map(
+        (id) => player.getFirePattern(id as WeaponId)!,
+      );
+      return { shots, patterns };
+    };
+
+    const first = await run();
+    const second = await run();
+
+    // Byte-identical schedules and pattern data: no RNG, no wall clock.
+    expect(second.shots).toEqual(first.shots);
+    expect(second.patterns).toEqual(first.patterns);
+  });
+
+  it('an upgrade morph changes the pattern only on a bar downbeat (AC: bar-boundary morph)', async () => {
     const player = await freshPlayer();
+    player.tryFire(0.5); // t = 500 ms, mid-bar
+    player.equipWeapon('spread'); // level 1 → E(4, 16)
+    const levelOne = player.getFirePattern('spread')!;
+    expect(levelOne.k).toBe(4);
+    expect(levelOne.n).toBe(16);
 
-    const frameDeltasMs = [10, 33, 7, 50, 16, 42, 120];
-    const shots: number[] = [];
-    for (let frame = 0; frame < 240; frame++) {
-      const dtMs = frameDeltasMs[frame % frameDeltasMs.length];
-      const fired = player.tryFire(dtMs / 1000);
-      if (fired.includes('cannon')) {
-        shots.push(player.getLastShotTime('cannon')!);
-      }
+    player.tryFire(0.5); // t = 1000 ms, still mid-bar
+    player.equipWeapon('spread'); // level 2 → E(5, 16), queued
+
+    const pending = player.getPendingFirePattern('spread')!;
+    expect(pending.pattern.k).toBe(5);
+    // The morph lands on the next bar downbeat (one bar = 16 × 187.5 ms).
+    expect(pending.effectiveAtMs).toBe(3000);
+    // The level-1 pattern keeps sounding until then.
+    expect(player.getFirePattern('spread')).toEqual(levelOne);
+
+    // Drive to the downbeat: every spread shot before it is still an onset of
+    // E(4, 16). In particular 1125 ms (a 5/16 onset, not a 4/16 one) is
+    // silent, so the upgrade never leaks into the bar it was collected in.
+    const before = collectShots(player, ['spread'], 25, 80); // t → 3000
+    for (const tick of before.spread) {
+      expect(isOnset(tick, euclidPattern(4, 16), 187.5, 0)).toBe(true);
     }
+    expect(before.spread).not.toContain(1125);
 
-    expect(shots.length).toBeGreaterThan(1);
-    for (let i = 0; i < shots.length; i++) {
-      expect(shots[i] % 375).toBe(0); // exact 2/beat tick
-      if (i > 0) expect(shots[i]).toBe(shots[i - 1] + 375); // exact spacing
+    // The downbeat itself is the first onset of the new pattern…
+    expect(before.spread).toContain(3000);
+    expect(player.getPendingFirePattern('spread')).toBeUndefined();
+    expect(player.getFirePattern('spread')!.k).toBe(5);
+
+    // …and from then on the 5/16 onsets sound: E(5, 16) has onsets
+    // [0, 3, 6, 9, 12] steps, so its first onset after the downbeat is
+    // 3562.5 ms — a tick the old E(4, 16) never used.
+    const after = collectShots(player, ['spread'], 25, 24); // t → 3600
+    expect(after.spread).toContain(3562.5);
+    for (const tick of after.spread) {
+      expect(isOnset(tick, euclidPattern(5, 16), 187.5, 0)).toBe(true);
     }
   });
 
-  it('the fire-rate multiplier moves weapons onto the scaled interval grid (P5 AC1)', async () => {
+  it('the fire-rate multiplier scales the lattice, not the pattern shape (P5 AC1)', async () => {
     const player = await freshPlayer();
-    player.setFireRateMultiplier(1.5); // cannon interval → 250 ms
+    player.setFireRateMultiplier(1.5);
     player.setBeatClock(createBeatClock()); // deterministic anchor at t=0
 
-    const shots: number[] = [];
-    for (let i = 0; i < 30; i++) {
-      const fired = player.tryFire(0.1);
-      if (fired.includes('cannon')) shots.push(player.getLastShotTime('cannon')!);
-    }
+    const pattern = player.getFirePattern('cannon')!;
+    // Same authored rhythm, played on a 1.5× faster lattice.
+    expect(pattern.k).toBe(9);
+    expect(pattern.n).toBe(16);
+    expect(pattern.stepMs).toBeCloseTo(125, 9);
 
-    expect(shots.length).toBeGreaterThan(1);
-    for (let i = 0; i < shots.length; i++) {
-      expect(shots[i] % 250).toBe(0);
-      if (i > 0) expect(shots[i]).toBe(shots[i - 1] + 250);
+    const shots = collectShots(player, ['cannon'], 25, 80); // 2 s
+    expect(shots.cannon.length).toBeGreaterThan(1);
+    for (const tick of shots.cannon) {
+      expect(tick % 125).toBe(0);
+      expect(isOnset(tick, euclidPattern(9, 16), 125, 0)).toBe(true);
     }
   });
 
-  it('resetting the multiplier re-schedules active weapons on the beat grid (P5 AC2)', async () => {
+  it('resetting the multiplier re-anchors the pattern on the beat lattice (P5 AC2)', async () => {
     const player = await freshPlayer();
     player.setFireRateMultiplier(1.5);
     player.setBeatClock(createBeatClock());
-    player.tryFire(1.0); // fire on the boosted grid
+    player.tryFire(1.0); // fire on the boosted lattice
 
     player.setFireRateMultiplier(1);
+    expect(player.getFirePattern('cannon')!.stepMs).toBe(187.5);
     const next = player.getNextShotTime('cannon')!;
-    // Back on the 375 ms grid, phase-locked, and still in the future.
-    expect(isOnGrid(next, 375)).toBe(true);
+    // Back on the shipped 16th-note lattice, still an exact onset, still ahead.
+    expect(isOnset(next, euclidPattern(9, 16), 187.5, 0)).toBe(true);
     expect(next).toBeGreaterThan(player.getBeatClock().now());
   });
 
@@ -1440,10 +1534,11 @@ describe('Player ship entity', () => {
     player.setBeatClock(createBeatClock());
     player.respawnInPlace();
 
-    // Multiplier and beat grid persist across respawn.
-    expect(player.tryFire(0.5)).toEqual(['cannon']);
-    expect(player.tryFire(0.3)).toEqual(['cannon']);
+    // Multiplier and onset lattice persist across respawn.
+    expect(player.tryFire(0.5)).toEqual(['cannon']); // onset at 500 ms
+    expect(player.tryFire(0.4)).toEqual(['cannon']); // next onset at 875 ms
   });
+
 });
 
 // ── Asteroids control scheme (AC1, AC2, AC3, AC5) ───────────────────
@@ -2136,60 +2231,81 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
     return player!;
   }
 
-  it('derives the fire interval from the configured BPM', async () => {
+  it('scales the pattern lattice with the configured BPM', async () => {
     saveRules({
       ...DEFAULT_RULES,
       beatBpm: 120,
-      // 120 BPM → 500 ms/beat; cannon 2/beat → 250 ms.
+      // The legacy nominal interval is still derived from the subdivision.
       weaponSubdivisions: { cannon: 2, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2,broadside: 0.5,railgun: 0.25,shard_swarm: 1,heavy_slug: 0.5 },
     });
 
     const player = await bootGridPlayer();
     expect(player.getFireInterval('cannon')).toBe(250);
-    expect(player.getFireInterval('spread')).toBe(500);
     expect(player.getBeatClock().bpm).toBe(120);
+    // 120 BPM → a 125 ms 16th-note lattice: the same E(9, 16) rhythm plays
+    // 1.5× faster, so the cadence follows the tempo (AH-0MVYA1V8Z009SHMR).
+    expect(player.getFirePattern('cannon')!.k).toBe(9);
+    expect(player.getFirePattern('cannon')!.n).toBe(16);
+    expect(player.getFirePattern('cannon')!.stepMs).toBe(125);
   });
 
-  it('changing a subdivision changes the firing cadence', async () => {
+  it('the subdivision rule no longer gates firing — the Euclidean ladder owns the cadence', async () => {
     saveRules({
       ...DEFAULT_RULES,
-      // 80 BPM → 750 ms/beat; cannon 1/beat → 750 ms (half the default rate).
+      // 80 BPM → 750 ms/beat; cannon 1/beat → a 750 ms *nominal* interval.
       weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2,broadside: 0.5,railgun: 0.25,shard_swarm: 1,heavy_slug: 0.5 },
     });
 
     const player = await bootGridPlayer();
+    // The legacy nominal interval still reflects the subdivision…
     expect(player.getFireInterval('cannon')).toBe(750);
-  });
+    // …but the sounding rhythm is the ladder's, unchanged by the value.
+    expect(player.getFirePattern('cannon')!.k).toBe(9);
+    expect(player.getFirePattern('cannon')!.stepMs).toBe(187.5);
 
-  it('setRules hot-reloads the cadence and re-schedules active weapons', async () => {
-    const player = await bootGridPlayer();
-    expect(player.getFireInterval('cannon')).toBe(375); // default 2/beat
-
-    player.setRules({
-      ...DEFAULT_RULES,
-      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2,broadside: 0.5,railgun: 0.25,shard_swarm: 1,heavy_slug: 0.5 },
-    });
-
-    expect(player.getFireInterval('cannon')).toBe(750);
-    const next = player.getNextShotTime('cannon')!;
-    expect(isOnGrid(next, 750, player.getBeatClock().anchorMs)).toBe(true);
-  });
-
-  it('the configured cadence gates real shots on the beat grid', async () => {
-    saveRules({
-      ...DEFAULT_RULES,
-      weaponSubdivisions: { cannon: 3, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2,broadside: 0.5,railgun: 0.25,shard_swarm: 1,heavy_slug: 0.5 },
-    });
-
-    const player = await bootGridPlayer();
-    // 80 BPM → 750 ms/beat; cannon 3/beat → 250 ms.
-    expect(player.getFireInterval('cannon')).toBe(250);
-
-    // Reset the shared clock so the first tick is deterministic at t=0.
     player.getBeatClock().reset();
     player.setBeatClock(player.getBeatClock());
-    expect(player.tryFire(0.3)).toEqual(['cannon']);
+    const shots: number[] = [];
+    for (let frame = 0; frame < 120; frame += 1) {
+      if (player.tryFire(0.025).includes('cannon')) {
+        shots.push(player.getLastShotTime('cannon')!);
+      }
+    }
+    // Onsets of E(9, 16) on the 187.5 ms lattice — not 750 ms intervals.
+    for (const tick of shots) {
+      expect(isOnset(tick, euclidPattern(9, 16), 187.5, 0)).toBe(true);
+    }
+    expect(shots).toContain(375);
+  });
+
+  it('setRules hot-reloads the tempo and re-anchors the patterns', async () => {
+    const player = await bootGridPlayer();
+    expect(player.getFirePattern('cannon')!.stepMs).toBe(187.5);
+
+    player.setRules({ ...DEFAULT_RULES, beatBpm: 160 });
+
+    // 160 BPM → 93.75 ms 16th notes; the rhythm shape is unchanged.
+    const pattern = player.getFirePattern('cannon')!;
+    expect(pattern.k).toBe(9);
+    expect(pattern.n).toBe(16);
+    expect(pattern.stepMs).toBe(93.75);
+    const next = player.getNextShotTime('cannon')!;
+    expect(isOnGrid(next, 93.75, player.getBeatClock().anchorMs)).toBe(true);
+    expect(isOnset(next, euclidPattern(9, 16), 93.75, 0)).toBe(true);
+  });
+
+  it('the configured tempo gates real shots on its onset lattice', async () => {
+    saveRules({ ...DEFAULT_RULES, beatBpm: 120 });
+
+    const player = await bootGridPlayer();
+    expect(player.getFirePattern('cannon')!.stepMs).toBe(125);
+
+    // Reset the shared clock so the first onset is deterministic at t=0.
+    player.getBeatClock().reset();
+    player.setBeatClock(player.getBeatClock());
+    expect(player.tryFire(0.01)).toEqual(['cannon']); // onset at 0 ms
+    expect(player.tryFire(0.3)).toEqual(['cannon']); // onset at 250 ms
     expect(player.getLastShotTime('cannon')).toBe(250);
-    expect(isOnGrid(player.getLastShotTime('cannon')!, 250)).toBe(true);
+    expect(isOnset(250, euclidPattern(9, 16), 125, 0)).toBe(true);
   });
 });

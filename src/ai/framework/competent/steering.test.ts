@@ -18,7 +18,13 @@ import {
   makeSnapshot,
   makeThrusterSnapshot,
 } from '../testFixtures';
+import { wrapPosition, type WrapWorld } from '../../../utils/wrapGeometry';
 import {
+  chooseWrappedRouteToPlayer,
+  wrappedDeltaToPlayer,
+} from '../wrapGeometry';
+import {
+  bearingTo,
   buildIntent,
   chooseSteeringDirection,
   evaluateDirection,
@@ -60,14 +66,23 @@ describe('evaluateDirection', () => {
     expect(evaluateDirection(-1, 0, world, T).safe).toBe(true);
   });
 
-  it('rejects a bearing that reaches a wall inside the wall margin', () => {
+  it('treats each of the four edges as a wrap, not a wall (AH-0MVT2VYN40076JKX)', () => {
+    // From mid-playfield, driving straight at any edge is safe: the ship
+    // crosses the seam and reappears on the opposite side. A raw-line wall
+    // model would reject all four of these bearings.
     const snapshot = makeSnapshot({
-      player: { x: 10, y: 270, vx: 0, vy: 0 },
+      player: { x: 480, y: 270, vx: 0, vy: 0 },
     });
     const world = buildBotWorld(snapshot);
-    // Player is 10 px from the left edge; going left reaches it immediately.
-    expect(evaluateDirection(-1, 0, world, T).safe).toBe(false);
-    expect(evaluateDirection(1, 0, world, T).safe).toBe(true);
+    const edgeBearings = [
+      { name: 'left edge', dx: -1, dy: 0 },
+      { name: 'right edge', dx: 1, dy: 0 },
+      { name: 'top edge', dx: 0, dy: -1 },
+      { name: 'bottom edge', dx: 0, dy: 1 },
+    ];
+    for (const { name, dx, dy } of edgeBearings) {
+      expect(evaluateDirection(dx, dy, world, T).safe, name).toBe(true);
+    }
   });
 });
 
@@ -135,6 +150,71 @@ describe('planSteering', () => {
       longTravel: false,
     });
     expect(intent).toMatchObject({ dirX: 0, dirY: 0, thrust: false });
+  });
+});
+
+describe('wrap-aware objective steering (AH-0MVT2VYN40076JKX)', () => {
+  it('steers across the seam when the wrapped route to the objective is shorter', () => {
+    // Player near the right edge, target near the left edge. The raw delta is
+    // −800 px (left); the wrapped route is +160 px (right, across the seam).
+    const player = { x: 900, y: 270, vx: 0, vy: 0 };
+    const target = { x: 100, y: 270 };
+    const snapshot = makeSnapshot({ player });
+    const world = buildBotWorld(snapshot);
+
+    const rawDelta = { x: target.x - player.x, y: target.y - player.y };
+    const wrappedDelta = wrappedDeltaToPlayer(player, target, T);
+    expect(Math.abs(wrappedDelta.x)).toBeLessThan(Math.abs(rawDelta.x));
+
+    const intent = planSteering(wrappedDelta, world, T, {
+      thrust: true,
+      longTravel: false,
+    });
+    // The chosen bearing points at the seam duplicate (rightwards), not at the
+    // raw leftward line.
+    expect(intent.dirX).toBeGreaterThan(0.9);
+  });
+
+  it('keeps the raw bearing when the raw line is already shortest', () => {
+    const player = { x: 400, y: 270, vx: 0, vy: 0 };
+    const target = { x: 500, y: 270 };
+    const snapshot = makeSnapshot({ player });
+    const world = buildBotWorld(snapshot);
+
+    const rawDelta = { x: target.x - player.x, y: target.y - player.y };
+    const wrappedDelta = wrappedDeltaToPlayer(player, target, T);
+    expect(wrappedDelta).toEqual(rawDelta);
+
+    const intent = planSteering(wrappedDelta, world, T, {
+      thrust: true,
+      longTravel: false,
+    });
+    expect(intent.dirX).toBeCloseTo(1, 6);
+    expect(intent.dirY).toBeCloseTo(0, 6);
+  });
+
+  it('commits one duplicate when raw and wrapped routes swap by a tiny margin (AC4)', () => {
+    // The target sits near the exact half-width, so the raw and wrapped routes
+    // are almost equal. Each tick nudges it ±0.4 px, swapping which route is
+    // nominally shorter. Without hysteresis the committed route would flip
+    // every tick.
+    const half = T.playfieldWidth / 2;
+    const player = { x: 100, y: 270 };
+    const routes: string[] = [];
+    let previous: 'raw' | 'wrapped' | undefined;
+    for (let tick = 0; tick < 8; tick += 1) {
+      const target = {
+        x: 100 + half + (tick % 2 === 0 ? 0.4 : -0.4),
+        y: 270,
+      };
+      const choice = chooseWrappedRouteToPlayer(player, target, T, {
+        previous,
+      });
+      routes.push(choice.route);
+      previous = choice.route;
+    }
+    // The committed duplicate never oscillates.
+    expect(new Set(routes).size).toBe(1);
   });
 });
 
@@ -522,6 +602,58 @@ describe('live thruster consumption (AH-0MV85WGA9005B080)', () => {
   });
 });
 
+// ── Seam-aware aim (AH-0MVT2VZR7000GS15 · AC2/AC3/AC4) ──────────────
+
+/** The shipped playfield torus (the dimensions the bot's tunables carry). */
+const TORUS: WrapWorld = { width: 960, height: 540 };
+
+describe('bearingTo — aim along the shortest wrapped path (AH-0MVT2VZR7000GS15)', () => {
+  it('points across each of the four edges when the wrapped route is shorter', () => {
+    // Each case has a raw line longer than half an axis, so the shortest
+    // route leaves through one edge and arrives from the opposite one.
+    const cases = [
+      { name: 'left edge', from: { x: 100, y: 270 }, to: { x: 900, y: 270 }, expected: { x: -1, y: 0 } },
+      { name: 'right edge', from: { x: 860, y: 270 }, to: { x: 60, y: 270 }, expected: { x: 1, y: 0 } },
+      { name: 'top edge', from: { x: 480, y: 100 }, to: { x: 480, y: 500 }, expected: { x: 0, y: -1 } },
+      { name: 'bottom edge', from: { x: 480, y: 440 }, to: { x: 480, y: 40 }, expected: { x: 0, y: 1 } },
+    ];
+    for (const { name, from, to, expected } of cases) {
+      const bearing = bearingTo(from, to, TORUS);
+      expect(bearing.x, name).toBeCloseTo(expected.x, 10);
+      expect(bearing.y, name).toBeCloseTo(expected.y, 10);
+    }
+  });
+
+  it('fires off one edge to arrive from the opposite edge', () => {
+    const from = { x: 100, y: 270 };
+    const to = { x: 900, y: 270 };
+    const bearing = bearingTo(from, to, TORUS);
+    // Stepping 120 px along the wrapped bearing leaves the left edge...
+    const across = wrapPosition(
+      from.x + bearing.x * 120,
+      from.y + bearing.y * 120,
+      TORUS,
+    );
+    expect(across.x).toBeCloseTo(940, 10);
+    // ...and re-enters from the right edge, still 40 px from the target.
+    expect(Math.hypot(across.x - to.x, across.y - to.y)).toBeCloseTo(40, 10);
+  });
+
+  it('is bit-identical to the raw bearing when the raw line is shortest', () => {
+    const from = { x: 200.5, y: 100.25 };
+    const to = { x: 600.75, y: 300.5 };
+    expect(bearingTo(from, to, TORUS)).toEqual(
+      normalise(to.x - from.x, to.y - from.y),
+    );
+  });
+
+  it('keeps the legacy raw bearing when no wrap world is supplied', () => {
+    const from = { x: 100, y: 270 };
+    const to = { x: 900, y: 270 };
+    expect(bearingTo(from, to)).toEqual(normalise(800, 0));
+  });
+});
+
 // ── Intercept solve (AH-0MV1DUSM2005HL98 · AC2) ─────────────────────
 
 describe('interceptPoint (AH-0MV1DUSM2005HL98 AC2)', () => {
@@ -586,6 +718,59 @@ describe('interceptPoint (AH-0MV1DUSM2005HL98 AC2)', () => {
       4,
     ] as const;
     expect(interceptPoint(...args)).toEqual(interceptPoint(...args));
+  });
+
+  it('is bit-identical with a wrap world when the raw line is shortest', () => {
+    const args = [
+      { x: 200, y: 200 },
+      { x: 500, y: 300 },
+      { x: 20, y: -30 },
+      200,
+      0.2,
+      4,
+    ] as const;
+    expect(interceptPoint(...args, TORUS)).toEqual(interceptPoint(...args));
+  });
+
+  it('reduces a stationary target to the wrapped bearing', () => {
+    const shooter = { x: 100, y: 270 };
+    const target = { x: 900, y: 270 };
+    const point = interceptPoint(
+      shooter,
+      target,
+      { x: 0, y: 0 },
+      200,
+      0.25,
+      4,
+      TORUS,
+    );
+    expect(point).toEqual(target);
+    // The route to the returned point is the wrapped one, so the aim is the
+    // wrapped bearing to the stationary target.
+    expect(bearingTo(shooter, point, TORUS)).toEqual(
+      bearingTo(shooter, target, TORUS),
+    );
+  });
+
+  it('leads a moving target across the seam and converges with more iterations', () => {
+    // The target is 160 px away across the left seam, running further left at
+    // 100 px/s while the shot travels at 200 px/s. The wrapped route grows
+    // with its motion, so the fixed point is t = 0.8 + 0.5t = 1.6 s
+    // (x = 740), not the raw-position aim.
+    const shooter = { x: 100, y: 270 };
+    const target = { x: 900, y: 270 };
+    const velocity = { x: -100, y: 0 };
+    const single = interceptPoint(shooter, target, velocity, 200, 0, 1, TORUS);
+    const converged = interceptPoint(shooter, target, velocity, 200, 0, 10, TORUS);
+    expect(single.x).toBeCloseTo(820, 6);
+    expect(converged.x).toBeCloseTo(740.16, 1);
+    expect(converged.y).toBeCloseTo(270, 10);
+    // The returned point is on the torus, and the aim route to it is the
+    // short wrapped one (leftwards), not the raw 640 px rightwards line.
+    expect(converged.x).toBeGreaterThanOrEqual(0);
+    expect(converged.x).toBeLessThan(TORUS.width);
+    const aim = bearingTo(shooter, converged, TORUS);
+    expect(aim.x).toBeCloseTo(-1, 10);
   });
 });
 
@@ -665,5 +850,29 @@ describe('hazardThreatensPlayer (AH-0MVI4QDN90037DIN AC2)', () => {
     expect(
       hazardThreatensPlayer(player, { x: 520, y: 270, vx: 0, vy: 0 }, T),
     ).toBe(true);
+  });
+});
+
+describe('seam-aware threat prediction (AH-0MVT2W2D9002BOHO)', () => {
+  it('reports a seam-crossing hazard as threatening', () => {
+    // Player just inside the left edge; a hazard just outside the right edge
+    // moving right is 20 px away on the wrapped route and 940 px away on the
+    // raw line.
+    const player = { x: 10, y: 300, vx: 0, vy: 0 };
+    expect(
+      hazardThreatensPlayer(player, { x: 950, y: 300, vx: 100, vy: 0 }, T),
+    ).toBe(true);
+  });
+
+  it('rejects a bearing that drives into a shot arriving across the seam', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 10, y: 300, vx: 0, vy: 0 },
+      enemyBullets: [bullet(950, 300, 100, 0)],
+    });
+    const world = buildBotWorld(snapshot);
+    // Moving left heads toward the seam the bullet arrives from; moving right
+    // opens the range.
+    expect(evaluateDirection(-1, 0, world, T).safe).toBe(false);
+    expect(evaluateDirection(1, 0, world, T).safe).toBe(true);
   });
 });

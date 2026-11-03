@@ -363,7 +363,11 @@ describe('campaign-by-default batch with a bounded tick budget (AH-0MVD1RK2V009J
         .filter((record) => record.kind !== 'run_header')
         .map((record) => record.tick),
     );
-    expect(lastTick).toBeLessThan(DEFAULT_BATCH_TICKS / 10);
+    // Wrap parity (AH-0MVT2W5EL004OXNN) lets bullets wrap and live by their
+    // game lifetime, so the campaign runs a little longer before the boss
+    // trigger (2175 ticks measured). It still ends far below the 18 000-tick
+    // budget — the point of this assertion (no unbounded simulation) holds.
+    expect(lastTick).toBeLessThan(DEFAULT_BATCH_TICKS / 8);
   });
 
   it('restores the legacy skirmish with campaign: false (AC2)', () => {

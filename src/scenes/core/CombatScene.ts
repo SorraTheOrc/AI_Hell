@@ -55,7 +55,14 @@ import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } fr
 import { spawnOrbitalStrike } from '../../vfx/orbitalStrike';
 import { selectOrbitalStrikeTarget } from './strikeTargeting';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
-import type { AoEDescriptor, WeaponDefinition, WeaponId } from '../../utils/weapons';
+import { isEligibleAutoTarget } from '../../utils/targetEligibility';
+import type {
+  AoEDescriptor,
+  ImpactFxSpec,
+  WeaponDefinition,
+  WeaponId,
+} from '../../utils/weapons';
+import type { HitscanTarget } from './hitscanBeam';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { resolveThornsAbsorb } from '../../vfx/thornsAbsorb';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -506,10 +513,27 @@ export abstract class CombatScene<
    * are a no-op — they keep the generic bullet-impact flash only.
    */
   protected resolveWeaponImpactFx(bullet: PlayerBullet): void {
-    const fx = bullet.impactFx;
+    this.resolveImpactFx(bullet.impactFx, bullet.x, bullet.y);
+  }
+
+  /**
+   * The shared per-weapon impact feedback seam: plays the weapon's baked hit
+   * cue (when it declares one) and spawns its distinct impact flash at
+   * `(x, y)`. Bullets, AOE detonations and the wave-laser hitscan intercept
+   * all resolve their feedback here, so the game and every gym show the
+   * identical hit response (AH-0MV8228YW0050IXS, AH-0MVREBUJ5004HDRQ).
+   *
+   * A spec-less hit is a no-op — the generic bullet-impact flash is the
+   * caller's fallback.
+   */
+  protected resolveImpactFx(
+    fx: ImpactFxSpec | undefined,
+    x: number,
+    y: number,
+  ): void {
     if (!fx) return;
     playWeaponImpactCue(fx.cue);
-    spawnBulletImpact(this, bullet.x, bullet.y, {
+    spawnBulletImpact(this, x, y, {
       registry: this.bulletImpactEffects,
       color: fx.color,
       radius: fx.radius,
@@ -614,7 +638,7 @@ export abstract class CombatScene<
    * weapons pass the default of one hit; the Smart Bomb passes its
    * level-resolved damage (AH-0MV1BIWP9003EHRQ).
    */
-  private damageEnemyViaAoe(enemy: TEnemy, damage = 1): void {
+  protected damageEnemyViaAoe(enemy: TEnemy, damage = 1): void {
     if (!enemy.alive) return;
     if (enemy.takeDamage) {
       const hits = Math.max(1, Math.floor(damage));
@@ -624,6 +648,33 @@ export abstract class CombatScene<
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
     }
+  }
+
+  /**
+   * Applies a wave-laser hitscan beam's single hit point (AH-0MVREBUJ5004HDRQ
+   * AC2/AC7). The beam always deals **exactly one** hit point at level 0 and
+   * stops at the first intercept — it never pierces, and no weapon level grows
+   * it into a damage budget. The hit routes through the same shared kill seam
+   * a player bullet or AOE effect uses (`takeDamage()` + `finaliseEnemyKill`),
+   * so destruction audio, score/drop/wave accounting and the Frenzy damage
+   * bonus behave identically for every damage source; the weapon's own impact
+   * flash and baked hit cue play at the intercept point.
+   *
+   * `PlayScene` overrides this to route its boss-style encounters (which carry
+   * their own damage path) to the same override while every ordinary enemy
+   * keeps this shared implementation.
+   */
+  protected override applyHitscanHit(
+    target: HitscanTarget,
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    // Per-weapon intercept feedback (the wave laser's red flash + baked cue)
+    // at the point where the beam stops, through the shared impact seam.
+    this.resolveImpactFx(def.impactFx, x, y);
+    const damage = 1 + this.getEffectsRegistry().frenzyBonusHits();
+    this.damageEnemyViaAoe(target as unknown as TEnemy, damage);
   }
 
   /**
@@ -715,9 +766,16 @@ export abstract class CombatScene<
     const aoe = def.aoe;
     if (aoe?.trigger !== 'onFire') return;
     if (aoe.chains) {
-      // Arc: strike the nearest enemy, then chain to nearby targets. The
-      // chain is computed once (before any damage) so the damage, the
-      // along-path bullet clear and the VFX all describe the same strikes.
+      // Arc: strike the nearest **eligible** enemy, then chain to nearby
+      // targets. The chain is computed once (before any damage) so the damage,
+      // the along-path bullet clear and the VFX all describe the same strikes.
+      //
+      // Auto-targeting offence skips the inert `asteroid` world hazard
+      // (AH-0MVNSIG1O0049G69): a nearer rock neither absorbs the primary bolt
+      // nor consumes a chain link, and a rocks-only field resolves exactly
+      // like an empty one. The rule is the shared, pure
+      // `isEligibleAutoTarget`, so the game and every gym pick the same
+      // targets (gym↔game parity, AH-0MUGZDTFX004RBD1).
       const chain = selectChainTargets(
         x,
         y,
@@ -725,6 +783,7 @@ export abstract class CombatScene<
         // The descriptor counts *additional* targets after the primary.
         aoe.chains + 1,
         aoe.radius,
+        isEligibleAutoTarget,
       );
       const path: ArcChainPoint[] = [
         { x, y },
@@ -746,6 +805,11 @@ export abstract class CombatScene<
    * Resolves a chaining (`'chains'`) `'onFire'` effect: damages the selected
    * chain targets, clears enemy bullets along the bolt path, and reports the
    * hit to the boss hook.
+   *
+   * `chain` is the eligibility-filtered selection from `onAoeFired`, so the
+   * inert `asteroid` world hazard is never damaged and the derived `path`
+   * (and therefore the along-path bullet clear) never runs through a rock
+   * (AH-0MVNSIG1O0049G69).
    *
    * @param aoe - The weapon's AOE descriptor.
    * @param x - Effect origin x (the ship).

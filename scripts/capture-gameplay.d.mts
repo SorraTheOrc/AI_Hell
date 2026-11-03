@@ -53,13 +53,18 @@ export interface CaptureOptions {
    * `scenes`.
    */
   scenesConfig: string | null;
+  /**
+   * True when `--hangar` was passed: activate the menu's Hangar War control
+   * and record `HangarScene` for a fixed window (AH-0MVWMUQUC003WXF5).
+   */
+  hangar: boolean;
   /** Parsed scene list (filled in by the CLI/pre-flight validation). */
   scenes?: SceneSpec[];
   help?: boolean;
 }
 
 /** Which capture path the options select. */
-export type CaptureMode = 'demo' | 'scripted' | 'scenario';
+export type CaptureMode = 'demo' | 'scripted' | 'scenario' | 'hangar';
 
 /**
  * The lifecycle a planned capture follows: the demo/scripted modes, a frozen
@@ -277,6 +282,7 @@ export function planScenarioLaunch(
   options?: {
     scripted?: boolean;
     scenario?: string | null;
+    hangar?: boolean;
     fixedDuration?: boolean;
   },
   scenarios?: readonly CaptureScenario[],
@@ -351,7 +357,86 @@ export function planCaptureRun(
 export function resolveCaptureMode(options?: {
   scripted?: boolean;
   scenario?: string | null;
+  hangar?: boolean;
 }): CaptureMode;
+
+/**
+ * The shipped Hangar War screen a `--hangar` capture must reach.
+ */
+export const HANGAR_SCENE_KEY = 'HangarScene';
+
+/** The scene the default demo capture must reach (`Watch Demo` → PlayScene). */
+export const DEMO_SCENE_KEY = 'PlayScene';
+
+/** The hub the shipped Hangar War attract traversal starts from. */
+export const HANGAR_WAR_TRAVERSAL_SCENE_KEY = 'HexMapScene';
+
+/** Bounded wait (ms) for the traversal hub to become active. */
+export const HANGAR_TRAVERSAL_START_TIMEOUT_MS: number;
+
+/** How long (ms) a `--hangar` clip shows the hangar before the traversal. */
+export const HANGAR_TRAVERSAL_HOLD_MS: number;
+
+/**
+ * Decides whether a menu-navigated capture actually reached `expected` from
+ * the director's read-only `activeSceneKeys()` snapshot. A `null`/missing
+ * snapshot is a failure, never a silent pass.
+ */
+export function evaluateSceneActivation(
+  activeSceneKeys: unknown,
+  expected: string,
+  hint?: string,
+): { active: boolean; reason: string };
+
+/**
+ * Decides whether a `--hangar` capture actually reached the hangar screen.
+ */
+export function evaluateHangarActivation(
+  activeSceneKeys: unknown,
+  expected?: string,
+): { active: boolean; reason: string };
+
+/**
+ * Decides whether the default demo capture actually reached `PlayScene`
+ * (`Tab → Tab → Enter` on the menu).
+ */
+export function evaluateDemoActivation(
+  activeSceneKeys: unknown,
+): { active: boolean; reason: string };
+
+/**
+ * Builds the page-side director request that starts the shipped Hangar War
+ * attract traversal (its hub scene in demo mode).
+ */
+export function buildHangarTraversalRequest(dwellMs?: number): {
+  key: string;
+  setup: { demo: boolean; demoDwellMs?: number };
+};
+
+/**
+ * `localStorage` key holding the persisted feature flags
+ * (`FEATURE_FLAGS_STORAGE_KEY` in `src/core/featureFlags.ts`).
+ */
+export const FEATURE_FLAGS_STORAGE_KEY: string;
+
+/** The dev-only feature flag that gates the Hangar War entry surfaces. */
+export const HANGAR_WAR_FEATURE_FLAG: string;
+
+/** The pre-boot plan that enables the Hangar War menu entry. */
+export function buildHangarWarFlagPlan(): {
+  storageKey: string;
+  record: Record<string, boolean>;
+};
+
+/**
+ * Self-contained pre-boot init script seeding the Hangar War feature flag into
+ * the page's `localStorage`. Returns the injected record, or `null` when it
+ * cannot be written.
+ */
+export function installHangarWarFlag(
+  plan?: { storageKey?: string; record?: Record<string, boolean> },
+  scope?: { localStorage?: { setItem: (key: string, value: string) => void } },
+): Record<string, boolean> | null;
 export function captureUrl(
   baseUrl: string,
   options?: { scenario?: string | null },

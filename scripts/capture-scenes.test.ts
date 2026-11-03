@@ -25,6 +25,7 @@
 
 import { execFileSync } from 'node:child_process';
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -52,6 +53,9 @@ import {
   DEFAULT_MIN_WAVES,
   DEFAULT_SCENE_SETUP_TIMED_WEAPONS,
   GENERATED_LEVEL_SCENE_KEY,
+  CAPTURABLE_SCENE_KEYS,
+  HANGAR_WAR_SCENE_KEYS,
+  HANGAR_WAR_SCENE_SETUP_FIELDS,
   MAX_CAPTURE_MULTIPLIER,
   PARAMETERISED_GYM_SCENE_KEYS,
   SCENE_CONFIG_ERROR_CODES,
@@ -76,6 +80,7 @@ import {
   buildScenesPayload,
   buildTransitionProbeTimes,
   evaluateSceneFadeSamples,
+  isHangarWarSceneKey,
   isWatchableGymSceneKey,
   loadSceneConfig,
   normaliseSceneSetup,
@@ -83,6 +88,7 @@ import {
   parseSceneSetup,
   requiredSceneSetupFieldsFor,
   resolveCaptureWindow,
+  resolveCapturableSceneKey,
   resolveWatchableSceneEntry,
   resolveWatchableSceneKey,
   sceneSetupFieldsFor,
@@ -233,6 +239,157 @@ describe('watchable scene registry', () => {
   });
 });
 
+describe('Hangar War scene registry (AH-0MVWMUQUC003WXF5)', () => {
+  it('exposes a frozen, sorted, deduplicated list pinned to the shipped scenes', () => {
+    expect(Object.isFrozen(HANGAR_WAR_SCENE_KEYS)).toBe(true);
+    expect([...HANGAR_WAR_SCENE_KEYS]).toEqual(
+      [...HANGAR_WAR_SCENE_KEYS].sort(),
+    );
+    expect(new Set(HANGAR_WAR_SCENE_KEYS).size).toBe(
+      HANGAR_WAR_SCENE_KEYS.length,
+    );
+    // Every registered key names a shipped scene module (a class-name key),
+    // so the registry cannot drift from the scenes the game boots.
+    for (const key of HANGAR_WAR_SCENE_KEYS) {
+      expect(
+        existsSync(resolve(process.cwd(), `src/scenes/${key}.ts`)),
+        `${key} has no scene module`,
+      ).toBe(true);
+    }
+    // The three Hangar War screens Build Candidate D ships.
+    expect([...HANGAR_WAR_SCENE_KEYS]).toEqual([
+      'DefenceReportScene',
+      'HangarScene',
+      'HexMapScene',
+    ]);
+  });
+
+  it('joins the capturable registry alongside the watchable gyms', () => {
+    expect(Object.isFrozen(CAPTURABLE_SCENE_KEYS)).toBe(true);
+    expect([...CAPTURABLE_SCENE_KEYS]).toEqual(
+      [...CAPTURABLE_SCENE_KEYS].sort(),
+    );
+    for (const key of WATCHABLE_GYM_SCENE_KEYS) {
+      expect(CAPTURABLE_SCENE_KEYS).toContain(key);
+    }
+    for (const key of HANGAR_WAR_SCENE_KEYS) {
+      expect(CAPTURABLE_SCENE_KEYS).toContain(key);
+    }
+    // Parameterised gyms cannot start without a parameter, so they stay out of
+    // the setup-less capturable list.
+    for (const key of PARAMETERISED_GYM_SCENE_KEYS) {
+      expect(CAPTURABLE_SCENE_KEYS).not.toContain(key);
+    }
+  });
+
+  it('keeps the Hangar War screens out of the gym registries', () => {
+    for (const key of HANGAR_WAR_SCENE_KEYS) {
+      expect(isHangarWarSceneKey(key)).toBe(true);
+      expect(isWatchableGymSceneKey(key)).toBe(false);
+      expect(WATCHABLE_GYM_SCENE_KEYS).not.toContain(key);
+      expect(PARAMETERISED_GYM_SCENE_KEYS).not.toContain(key);
+    }
+    expect(isHangarWarSceneKey('GymPlayer')).toBe(false);
+    for (const value of [null, undefined, 42, {}, [], 'HangarScene ']) {
+      expect(isHangarWarSceneKey(value)).toBe(false);
+    }
+  });
+
+  it('resolves every Hangar War key without a setup (no launch parameter)', () => {
+    for (const key of HANGAR_WAR_SCENE_KEYS) {
+      expect(resolveCapturableSceneKey(key)).toBe(key);
+      expect(resolveWatchableSceneEntry({ target: key })).toEqual({
+        key,
+        setup: null,
+      });
+      // A bare key is accepted too (the director's `start(key)` shape).
+      expect(resolveWatchableSceneEntry(key)).toEqual({ key, setup: null });
+    }
+    expectConfigError(() => resolveCapturableSceneKey('HangarNope'), ERROR.unknownTarget);
+    expectConfigError(() => resolveCapturableSceneKey(null), ERROR.invalidTarget);
+    // The parameterised gyms are still rejected without their parameter.
+    for (const key of PARAMETERISED_GYM_SCENE_KEYS) {
+      expectConfigError(() => resolveCapturableSceneKey(key), ERROR.unsupportedTarget);
+    }
+  });
+
+  it('accepts only the Hangar War launch fields as a setup', () => {
+    for (const key of HANGAR_WAR_SCENE_KEYS) {
+      expect(sceneSetupFieldsFor(key)).toEqual([...HANGAR_WAR_SCENE_SETUP_FIELDS]);
+      // Gym-only configuration is rejected rather than silently dropped:
+      // known gym fields are `setup-not-supported` on a screen, an invented
+      // field is unknown everywhere.
+      expectConfigError(
+        () => parseSceneSetup({ player: { weapons: ['rapid'] } }, key),
+        ERROR.setupNotSupported,
+      );
+      expectConfigError(
+        () => parseSceneSetup({ seed: 4 }, key),
+        ERROR.setupNotSupported,
+      );
+      expectConfigError(
+        () => parseSceneSetup({ wobble: true }, key),
+        ERROR.unknownSetupField,
+      );
+    }
+    // The launch fields do not leak onto gym targets.
+    expectConfigError(
+      () => parseSceneSetup({ demo: true }, 'GymPlayer'),
+      ERROR.setupNotSupported,
+    );
+  });
+
+  it('validates the demo flag and its dwell override', () => {
+    expect(parseSceneSetup({ demo: true }, 'HangarScene').demo).toBe(true);
+    expect(parseSceneSetup({ demo: false }, 'HexMapScene').demo).toBe(false);
+    expect(
+      parseSceneSetup({ demoDwellMs: 250 }, 'DefenceReportScene').demoDwellMs,
+    ).toBe(250);
+    for (const value of ['yes', 1, null, {}]) {
+      expectConfigError(
+        () => parseSceneSetup({ demo: value }, 'HangarScene'),
+        ERROR.invalidSetupType,
+      );
+    }
+    for (const value of [0, -1, 1.5, '250', null]) {
+      expectConfigError(
+        () => parseSceneSetup({ demoDwellMs: value }, 'HangarScene'),
+        ERROR.invalidSetupType,
+      );
+    }
+  });
+
+  it('normalises only the supplied launch fields, idempotently', () => {
+    // Nothing supplied ⇒ no gym defaults are injected onto a screen.
+    expect(normaliseSceneSetup({}, 'HangarScene')).toEqual({});
+    const once = normaliseSceneSetup({ demo: true, demoDwellMs: 400 }, 'HangarScene');
+    expect(once).toEqual({ demo: true, demoDwellMs: 400 });
+    expect(normaliseSceneSetup(once, 'HangarScene')).toEqual(once);
+  });
+
+  it('parses a mixed gym + Hangar War scene config in order', () => {
+    const parsed = parseSceneConfig({
+      scenes: [
+        { target: 'GymPlayer', playMs: 1000, captureMs: 2000 },
+        { target: 'HangarScene', playMs: 1000, captureMs: 3000, setup: { demo: false } },
+        { target: 'DefenceReportScene', playMs: 1000, captureMs: 3000 },
+      ],
+    });
+    expect(parsed.map((scene) => scene.target)).toEqual([
+      'GymPlayer',
+      'HangarScene',
+      'DefenceReportScene',
+    ]);
+    expect(parsed[1].setup).toEqual({ demo: false });
+    expect(parsed[2].setup).toBeUndefined();
+    expect(buildScenePlan(parsed).map((scene) => scene.target)).toEqual([
+      'GymPlayer',
+      'HangarScene',
+      'DefenceReportScene',
+    ]);
+  });
+});
+
 describe('scene key validation (shared with the in-page director)', () => {
   it('accepts every watchable key and returns it unchanged', () => {
     for (const key of WATCHABLE_GYM_SCENE_KEYS) {
@@ -361,7 +518,10 @@ describe('parseSceneConfig', () => {
     );
 
     expect(error.message).toContain('GymNope');
-    expect(error.message).toContain('watchable');
+    // The accepted set is every capturable scene (watchable gyms plus the
+    // shipped Hangar War screens), so the hint names it rather than the gyms
+    // alone (AH-0MVWMUQUC003WXF5).
+    expect(error.message).toContain('Capturable scenes');
   });
 
   it('rejects the parameterised gym scenes with an unsupported-target error', () => {
@@ -1248,12 +1408,18 @@ describe('examples/scenes.json setup-bearing example (AH-0MVNW91PH000HV2J)', () 
     expect(configured.length).toBeGreaterThanOrEqual(1);
 
     for (const scene of configured) {
-      // Defaults are filled by parseSceneConfig…
-      expect(scene.setup?.seed).toBeTypeOf('number');
-      expect(scene.setup?.player?.weapons).toBeInstanceOf(Array);
       // …and re-normalising the result is a no-op (the example is canonical).
       const once = normaliseSceneSetup(scene.setup, scene.target);
       expect(normaliseSceneSetup(once, scene.target)).toEqual(once);
+      if (isHangarWarSceneKey(scene.target)) {
+        // A Hangar War screen carries only its launch data; the gym defaults
+        // (seed/player) do not apply and are intentionally absent.
+        expect(scene.setup?.demo).toBe(false);
+      } else {
+        // Defaults are filled by parseSceneConfig…
+        expect(scene.setup?.seed).toBeTypeOf('number');
+        expect(scene.setup?.player?.weapons).toBeInstanceOf(Array);
+      }
       // The documented example's parameterised targets are now capturable.
       expect(() => resolveWatchableSceneEntry({
         target: scene.target,
@@ -1276,13 +1442,21 @@ describe('examples/scenes.json setup-bearing example (AH-0MVNW91PH000HV2J)', () 
       ...WATCHABLE_GYM_SCENE_KEYS,
       ...PARAMETERISED_GYM_SCENE_KEYS,
     ];
+    // The shipped example also carries the Hangar War screens
+    // (AH-0MVWMUQUC003WXF5), so its keys are gyms plus those screens.
+    const allCapturableKeys = [...allGymKeys, ...HANGAR_WAR_SCENE_KEYS];
     const covered = new Set(parsed.map((scene) => scene.target));
     for (const key of covered) {
-      expect(allGymKeys, `${key} is not a gym scene key`).toContain(key);
+      expect(allCapturableKeys, `${key} is not a capturable scene key`).toContain(key);
     }
     // Every gym scene has a worked entry: no gym is left to "covered
     // elsewhere" (the parameterised and boss gyms included).
     for (const key of allGymKeys) {
+      expect(covered, `${key} has no example entry`).toContain(key);
+    }
+    // Each Hangar War screen has a worked entry too, so a maintainer can copy
+    // the capture path for the new outer loop.
+    for (const key of HANGAR_WAR_SCENE_KEYS) {
       expect(covered, `${key} has no example entry`).toContain(key);
     }
 

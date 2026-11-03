@@ -782,16 +782,17 @@ describe('resolvePlayerBulletVisual', () => {
     expect(dual.color).toBe(0xff00ff);
   });
 
-  it('the wave laser resolves a long stroked beam with a faint trail (AH-0MV822ACO007CEZF)', () => {
+  it('the wave laser resolves a long stroked red beam (AH-0MV822ACO007CEZF)', () => {
     const laser = resolvePlayerBulletVisual(WEAPON_CATALOGUE.wave_laser);
-    // The elongated neon beam identity: a long line/beam (never a dot), a
-    // thick stroke, and a faint fading wake behind the trailing edge — all
-    // visual metadata; flight (speed, lifetime, maxHitPoints) is unchanged.
+    // The beam identity: a long line/column (never a dot), a thick stroke and
+    // a pure-red colour. The travelling-bullet trail was retired with the
+    // bullet itself — the shot is an instant hitscan ray rendered as a beam by
+    // `vfx/hitscanBeam` (AH-0MVREBUJ5004HDRQ).
     expect(canonicalShape(laser.shape)).toBe('line');
     expect(laser.length).toBeGreaterThan(3); // long beam, distinctly not the dual
     expect(laser.thickness).toBeGreaterThan(1);
-    expect(laser.tail).toBeGreaterThan(0); // faint trail
-    expect(laser.color).toBe(0x3366ff);
+    expect(laser.tail).toBeUndefined();
+    expect(laser.color).toBe(0xff0000);
   });
 
   it('the cluster missile resolves a rimmed missile with an exhaust flame and trail (AH-0MV822B1B0048UZT)', () => {

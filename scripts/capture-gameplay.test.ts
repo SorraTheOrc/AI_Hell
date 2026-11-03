@@ -87,6 +87,19 @@ import {
   renderScenarioListing,
   readDevTelemetryBuffer,
   resolveCaptureMode,
+  evaluateHangarActivation,
+  evaluateDemoActivation,
+  evaluateSceneActivation,
+  DEMO_SCENE_KEY,
+  HANGAR_WAR_TRAVERSAL_SCENE_KEY,
+  HANGAR_TRAVERSAL_HOLD_MS,
+  HANGAR_TRAVERSAL_START_TIMEOUT_MS,
+  buildHangarTraversalRequest,
+  HANGAR_SCENE_KEY,
+  buildHangarWarFlagPlan,
+  installHangarWarFlag,
+  FEATURE_FLAGS_STORAGE_KEY,
+  HANGAR_WAR_FEATURE_FLAG,
   resolveOutputPaths,
   resolveScenesOutputPath,
   loadScenesForCapture,
@@ -120,6 +133,11 @@ import {
   parseActionIntensitySeries,
   serialiseActionIntensitySeries as serialiseActionIntensitySeriesTs,
 } from '../src/scenes/core/actionIntensitySerialiser';
+import {
+  FEATURE_FLAGS_STORAGE_KEY as FEATURE_FLAGS_TS_KEY,
+  resolveHangarWarEnabled,
+  type FeatureFlagsRecord,
+} from '../src/core/featureFlags';
 import {
   CDP_PIPE_STRING_LIMIT_CHARS,
   addTransportOverflowHandler,
@@ -287,6 +305,71 @@ describe('isNonTrivialClip', () => {
     expect(verdict.reasons).toContain(
       'sampled frames are static (no motion)',
     );
+  });
+
+  it('accepts a still screen when the capture targets a static screen (AH-0MVWMUQUC003WXF5)', () => {
+    // `--hangar` records a player-facing UI screen: nothing on it moves, so a
+    // still frame is expected — the render checks still decide the verdict.
+    const still = { ...healthy, motion: 0, nonBlackFraction: 0.032 };
+    expect(isNonTrivialClip(still, { allowStatic: true })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+      notes: ['static screen: no motion required'],
+    });
+
+    // A moving clip never grows a note, and the static allowance does not
+    // weaken the blank / decode / fps checks.
+    expect(isNonTrivialClip(healthy, { allowStatic: true })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+    });
+    const blank = isNonTrivialClip(
+      { ...still, nonBlackFraction: 0 },
+      { allowStatic: true },
+    );
+    expect(blank.nonTrivial).toBe(false);
+    expect(blank.reasons).toContain('frame is essentially black');
+    const stalled = isNonTrivialClip(
+      { ...still, effectiveFps: 4 },
+      { allowStatic: true },
+    );
+    expect(stalled.nonTrivial).toBe(false);
+    expect(stalled.reasons.join(' ')).toContain('stalled');
+  });
+
+  it('accepts a silent screen clip when audio is not required (AH-0MVWMUQUC003WXF5)', () => {
+    const video = { nonTrivial: true, reasons: [] };
+    const silent = {
+      hasAudioTrack: true,
+      nonSilent: false,
+      reasons: ['audio track is silent (peak and RMS at or below the floor)'],
+    };
+
+    // A screen emits no audio of its own: the video verdict decides.
+    expect(
+      combineClipVerdict(video, silent, { requireAudio: false }),
+    ).toEqual({ nonTrivial: true, reasons: [] });
+    // The default (gameplay) contract is unchanged.
+    const strict = combineClipVerdict(video, silent);
+    expect(strict.nonTrivial).toBe(false);
+    expect(strict.reasons).toContain(
+      'audio track is silent (peak and RMS at or below the floor)',
+    );
+    // A missing audio verdict is also fine for a screen, never for gameplay.
+    expect(
+      combineClipVerdict(video, undefined, { requireAudio: false }),
+    ).toEqual({ nonTrivial: true, reasons: [] });
+    expect(combineClipVerdict(video, undefined).reasons).toContain(
+      'missing audio verdict',
+    );
+    // A failed video verdict still fails a screen clip.
+    expect(
+      combineClipVerdict(
+        { nonTrivial: false, reasons: ['frame is essentially black'] },
+        silent,
+        { requireAudio: false },
+      ).nonTrivial,
+    ).toBe(false);
   });
 
   it('rejects a starvation-level recording (effective fps below the floor)', () => {
@@ -795,18 +878,23 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     expect(resolveCaptureMode({ scripted: true })).toBe('scripted');
   });
 
-  it('starts the demo through the normal menu input (Tab to Watch Demo, Enter)', () => {
-    expect(captureStartKeys('demo')).toEqual(['Tab', 'Enter']);
+  it('starts the demo through the normal menu input (Tab, Tab to Watch Demo, Enter)', () => {
+    // Build Candidate D inserted the Hangar War control between Play Game and
+    // Watch Demo, so the demo needs a second Tab; a single Tab lands on the
+    // hangar screen and the capture would record its static loadout selector
+    // (AH-0MVWMUQUC003WXF5).
+    expect(captureStartKeys('demo')).toEqual(['Tab', 'Tab', 'Enter']);
   });
 
   it('starts the scripted plan with Enter on the focused Play Game', () => {
     expect(captureStartKeys('scripted')).toEqual(['Enter']);
   });
 
-  it('waits a gap after the focus-moving Tab before activating Enter (AH-0MUXVVYWY009WT3X)', () => {
+  it('waits a gap after each focus-moving Tab before activating Enter (AH-0MUXVVYWY009WT3X)', () => {
     const plan = captureStartPlan('demo');
 
     expect(plan).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
       { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
       { key: 'Enter', delayAfterMs: 0 },
     ]);
@@ -822,6 +910,7 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
 
   it('honours a custom inter-key gap', () => {
     expect(captureStartPlan('demo', 500)).toEqual([
+      { key: 'Tab', delayAfterMs: 500 },
       { key: 'Tab', delayAfterMs: 500 },
       { key: 'Enter', delayAfterMs: 0 },
     ]);
@@ -843,6 +932,156 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     );
     // An empty scenario string leaves the default demo path untouched.
     expect(resolveCaptureMode({ scenario: '' })).toBe('demo');
+  });
+
+  it('selects the Hangar War mode and navigates the menu to it (AH-0MVWMUQUC003WXF5)', () => {
+    expect(resolveCaptureMode({ hangar: true })).toBe('hangar');
+    // Tab moves focus from Play Game to the adjacent Hangar War control; the
+    // same gap makes the FocusManager hand-off reliable.
+    expect(captureStartKeys('hangar')).toEqual(['Tab', 'Enter']);
+    expect(captureStartPlan('hangar')).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
+    expect(parseCaptureArgs(['--hangar']).hangar).toBe(true);
+    expect(parseCaptureArgs([]).hangar).toBe(false);
+    // The hangar path is a screen, not a run: `--hangar` wins over the
+    // PlayScene scripted fallback, while an explicit scenario still wins.
+    expect(resolveCaptureMode({ hangar: true, scripted: true })).toBe('hangar');
+    expect(resolveCaptureMode({ hangar: true, scenario: 'defeat' })).toBe(
+      'scenario',
+    );
+  });
+
+  it('proves the hangar screen activated before recording (AH-0MVWMUQUC003WXF5)', () => {
+    expect(HANGAR_SCENE_KEY).toBe('HangarScene');
+    expect(evaluateHangarActivation(['HangarScene'])).toEqual({
+      active: true,
+      reason: '',
+    });
+    // Extra active scenes do not matter: the hangar screen is running.
+    expect(evaluateHangarActivation(['PlayScene', 'HangarScene']).active).toBe(true);
+
+    // A lost tab/enter leaves the menu (or PlayScene) running: the capture
+    // must fail rather than record the static menu.
+    const lost = evaluateHangarActivation(['MenuScene']);
+    expect(lost.active).toBe(false);
+    expect(lost.reason).toContain('HangarScene');
+    expect(lost.reason).toContain('MenuScene');
+
+    // A director without the read-only snapshot (old build / failed
+    // registration) is a loud failure too, never a silent pass.
+    for (const value of [null, undefined, 'HangarScene', {}]) {
+      const unknown = evaluateHangarActivation(value);
+      expect(unknown.active).toBe(false);
+      expect(unknown.reason.toLowerCase()).toContain('director');
+    }
+    expect(
+      evaluateHangarActivation(['HexMapScene'], 'HexMapScene').active,
+    ).toBe(true);
+  });
+
+  it('proves the default demo reached PlayScene (AH-0MVWMUQUC003WXF5)', () => {
+    expect(DEMO_SCENE_KEY).toBe('PlayScene');
+    expect(evaluateDemoActivation(['PlayScene'])).toEqual({
+      active: true,
+      reason: '',
+    });
+
+    // The exact regression the review rejected: the single-Tab gesture lands on
+    // the Hangar War screen, which never emits a run end, so the clip rested on
+    // the static loadout selector. The verdict must fail, and name both the
+    // expected and the actual scene.
+    const stuckInHangar = evaluateDemoActivation(['HangarScene']);
+    expect(stuckInHangar.active).toBe(false);
+    expect(stuckInHangar.reason).toContain(DEMO_SCENE_KEY);
+    expect(stuckInHangar.reason).toContain('HangarScene');
+    // ... and the failure explains the fix, not just the symptom.
+    expect(stuckInHangar.reason).toContain('Tab → Tab → Enter');
+
+    // A missing director snapshot is a loud failure, never a silent pass.
+    for (const value of [null, undefined, 'PlayScene', 42]) {
+      const unknown = evaluateDemoActivation(value);
+      expect(unknown.active).toBe(false);
+      expect(unknown.reason.toLowerCase()).toContain('director');
+    }
+  });
+
+  it('generalises the activation proof over any expected scene key', () => {
+    expect(evaluateSceneActivation(['A', 'B'], 'B').active).toBe(true);
+    const missing = evaluateSceneActivation(['MenuScene'], 'HexMapScene', 'why');
+    expect(missing.active).toBe(false);
+    expect(missing.reason).toContain('HexMapScene');
+    expect(missing.reason).toContain('MenuScene');
+    expect(missing.reason).toContain('why');
+  });
+
+  it('builds the shipped Hangar War traversal start request (AH-0MVWMUQUC003WXF5)', () => {
+    // The hub is the hex map — the same scene `MenuScene.startHangarWarDemo()`
+    // starts in demo mode, so the capture never owns a traversal rule.
+    expect(HANGAR_WAR_TRAVERSAL_SCENE_KEY).toBe('HexMapScene');
+    expect(buildHangarTraversalRequest()).toEqual({
+      key: 'HexMapScene',
+      setup: { demo: true },
+    });
+    // A positive dwell override is forwarded; anything else keeps the shipped
+    // default dwell.
+    expect(buildHangarTraversalRequest(80).setup).toEqual({
+      demo: true,
+      demoDwellMs: 80,
+    });
+    for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(buildHangarTraversalRequest(invalid).setup).toEqual({ demo: true });
+    }
+    // A non-number value is ignored by the runtime guard (the CLI is plain JS).
+    expect(
+      buildHangarTraversalRequest('80' as unknown as number).setup,
+    ).toEqual({ demo: true });
+    // The lead-in hold leaves the traversal most of a short clip, and the
+    // start check is bounded.
+    expect(HANGAR_TRAVERSAL_HOLD_MS).toBeGreaterThan(0);
+    expect(HANGAR_TRAVERSAL_START_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+
+  it('seeds the Hangar War flag ON before the game boots (AH-0MVWMUQUC003WXF5)', () => {
+    const plan = buildHangarWarFlagPlan();
+
+    // The seeded record must match the real flag store: the menu control only
+    // exists when the flag resolves ON. The flag ships ON by default
+    // (AH-0MVZ4S9ZU004GXUM); the capture pipeline still seeds it explicitly so
+    // a profile carrying the kill switch (`hangarWar: false`) cannot break a
+    // capture run.
+    expect(FEATURE_FLAGS_STORAGE_KEY).toBe(FEATURE_FLAGS_TS_KEY);
+    expect(HANGAR_WAR_FEATURE_FLAG).toBe('hangarWar');
+    expect(plan.storageKey).toBe(FEATURE_FLAGS_TS_KEY);
+    expect(
+      resolveHangarWarEnabled(plan.record as unknown as FeatureFlagsRecord),
+    ).toBe(true);
+    // The persisted value is honoured in every build: there is no dev gate on
+    // the effective value any more.
+    expect(resolveHangarWarEnabled({ hangarWar: true })).toBe(true);
+    expect(resolveHangarWarEnabled({ hangarWar: false })).toBe(false);
+
+    // The init script writes the plan into the page's localStorage.
+    const store = new Map<string, string>();
+    const scope = {
+      localStorage: {
+        setItem: (key: string, value: string) => store.set(key, value),
+      },
+    };
+    expect(installHangarWarFlag(plan, scope)).toEqual({ hangarWar: true });
+    expect(store.get(FEATURE_FLAGS_TS_KEY)).toBe('{"hangarWar":true}');
+
+    // No storage (SSR/privacy mode) is a null return, never a throw.
+    expect(installHangarWarFlag(plan, {})).toBeNull();
+    const throwing = {
+      localStorage: {
+        setItem: () => {
+          throw new Error('quota');
+        },
+      },
+    };
+    expect(installHangarWarFlag(plan, throwing)).toBeNull();
   });
 
   it('captureUrl adds the scenario query only when requested', () => {
@@ -2187,12 +2426,38 @@ describe('promo scenario CLI support (AH-0MVSDMAC0006DS25)', () => {
     }
   });
 
-  it('leaves the demo/scripted plans unchanged', () => {
+  it('plans a fixed-length hangar window with no run-ended wait (AH-0MVWMUQUC003WXF5)', () => {
+    const hangar = planScenarioLaunch({ hangar: true });
+
+    expect(hangar.mode).toBe('hangar');
+    expect(hangar.kind).toBeNull();
+    expect(hangar.lifecycle).toBe('hangar');
+    expect(hangar.scenario).toBeNull();
+    expect(hangar.startPlan).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
+    // A static screen never emits a run end: the window must stay fixed.
+    expect(hangar.waitsForRunEnd).toBe(false);
+    expect(hangar.releaseScenarioHandle).toBe(false);
+    expect(hangar.botFlown).toBe(false);
+
+    // `--duration` does not change the verdict; it is already fixed-length.
+    expect(planScenarioLaunch({ hangar: true, fixedDuration: true }).waitsForRunEnd)
+      .toBe(false);
+    // The demo path still waits for the run end: only the hangar changed.
+    expect(planScenarioLaunch({}).waitsForRunEnd).toBe(true);
+  });
+
+  it('leaves the scripted plan unchanged and keeps the demo on Watch Demo', () => {
     const demo = planScenarioLaunch({});
     expect(demo.mode).toBe('demo');
     expect(demo.kind).toBeNull();
     expect(demo.lifecycle).toBe('demo');
+    // Tab → Tab → Enter: Play Game → Hangar War → Watch Demo
+    // (AH-0MVWMUQUC003WXF5).
     expect(demo.startPlan).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
       { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
       { key: 'Enter', delayAfterMs: 0 },
     ]);

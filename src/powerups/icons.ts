@@ -64,17 +64,17 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   spread: 0xffaa00, // neon orange — fan arc
   dual: 0xff00ff, // neon magenta — parallel bars
   rapid: 0xffff00, // neon yellow — stacked dots
-  wave_laser: 0x3366ff, // neon blue — piercing beam
+  wave_laser: 0xff0000, // pure red — full-screen stopping beam
   ricochet: 0x33ff66, // neon green — edge-bouncing pellet
   cluster: 0xff3366, // neon hot pink — splitting warhead cluster
   options: 0x00ffcc, // neon aquamarine — orbiting satellite pods
   nova: 0x66ffff, // pale cyan — expanding ring
   mortar: 0xff6600, // deep orange — shell/blast
   arc: 0xcc66ff, // electric purple — chaining bolt
-  // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW).
+  // Net-new weapons (AH-0MVCRC52P001YIPW) — ordinary catalogue entries.
   rear_guard: 0xff5599, // warm rose — backward-covering shot
   broadside: 0x44ffdd, // bright teal — perpendicular pair
-  railgun: 0x66aaff, // sky blue — long piercing tracer
+  railgun: 0x66aaff, // sky blue — long tracer that levels into a line piercer
   shard_swarm: 0xc0ff33, // lime — narrow shard fan
   heavy_slug: 0xff2222, // deep red — heavy slow slug
 };
@@ -725,7 +725,7 @@ function _drawWeaponIcon(
     case 'arc':
       drawArcIcon(graphics, x, y, size);
       break;
-    // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW): each glyph hints at
+    // Net-new weapons (AH-0MVCRC52P001YIPW): each glyph hints at
     // the weapon's firing geometry so the drop reads at a glance.
     case 'rear_guard':
       drawRearGuardIcon(graphics, x, y, size);
@@ -866,8 +866,10 @@ function drawRapidIcon(
 }
 
 /**
- * Wave laser icon — a long horizontal beam with pass-through chevrons,
- * hinting at the R-Type piercing shot that survives the enemies it hits.
+ * Wave laser icon — a long red beam that **stops** at a bright blocking edge,
+ * hinting at the hitscan shot that deals 1 damage to the first thing it meets
+ * and spans the whole screen when nothing intercepts it
+ * (AH-0MVREBUJ5004HDRQ).
  */
 function drawWaveLaserIcon(
   g: Phaser.GameObjects.Graphics,
@@ -880,12 +882,12 @@ function drawWaveLaserIcon(
   g.moveTo(x - s * 0.9, y);
   g.lineTo(x + s * 0.9, y);
   g.strokePath();
-  // Two pass-through chevrons along the beam ("pierces onward").
-  for (const cx of [-0.35, 0.25]) {
+  // The intercept: a short perpendicular bar where the beam stops (no
+  // pass-through chevrons — the beam never pierces).
+  for (const bx of [-0.2, 0.5]) {
     g.beginPath();
-    g.moveTo(x + s * cx, y - s * 0.5);
-    g.lineTo(x + s * (cx + 0.25), y);
-    g.lineTo(x + s * cx, y + s * 0.5);
+    g.moveTo(x + s * bx, y - s * 0.55);
+    g.lineTo(x + s * bx, y + s * 0.55);
     g.strokePath();
   }
 }
@@ -1100,7 +1102,7 @@ function drawBroadsideIcon(
 
 /**
  * Railgun icon — a long horizontal tracer with speed lines, hinting at the
- * piercing line shot (AH-0MVCRC52P001YIPW).
+ * line-piercing shot the weapon levels into (AH-0MVCRC52P001YIPW).
  */
 function drawRailgunIcon(
   g: Phaser.GameObjects.Graphics,

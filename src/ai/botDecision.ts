@@ -42,8 +42,11 @@
  * therefore also returns the exact bearing to the chosen target
  * (`dirX`/`dirY`); {@link BotSteeringIntent} carries it and the human-like
  * governor aims the hull at it (see `src/ai/botHumanLike.ts`).  The cardinal
- * booleans remain the nearest-cardinal projection, so the
- * `fourDirectional` scheme and existing consumers are unchanged.
+ * booleans remain the nearest-cardinal projection, so the `fourDirectional`
+ * scheme and existing consumers are unchanged.  The precise bearing follows
+ * the **shortest wrapped path** to the target (AH-0MVT2VZR7000GS15), so a
+ * target across a seam is pointed at through that seam; on a non-seam
+ * geometry the bearing is exactly the pre-change raw one.
  *
  * `decideBotInput(snapshot)` is the four-directional projection of the same
  * intent, retained for the `fourDirectional` scheme and legacy callers.
@@ -75,6 +78,7 @@
 
 import type { FourDirectionalInput } from '../utils/movementModel';
 import type { BotSnapshot } from './botSnapshot';
+import { chooseWrappedRouteToPlayer, wrappedAxisDelta } from './framework/wrapGeometry';
 
 // ── Tunables (AC5) ──────────────────────────────────────────────────
 
@@ -97,8 +101,6 @@ export interface BotDecisionTunables {
    * an immediate (reactive) threat.
    */
   bulletDangerRadius: number;
-  /** Distance (px) from a screen edge that the bot treats as a wall hazard. */
-  wallMargin: number;
   /** Radius (px) within which the bot seeks power-up drops. */
   powerUpSeekRange: number;
   /** Radius (px) within which the bot collects minerals. */
@@ -186,7 +188,6 @@ export const BOT_DECISION_TUNABLES: BotDecisionTunables = {
   engagementRadius: 300,
   dangerMargin: 70,
   bulletDangerRadius: 55,
-  wallMargin: 40,
   powerUpSeekRange: 500,
   mineralSeekRange: 500,
   playerSpeed: 175,
@@ -306,6 +307,10 @@ function dot(
  * Returns the time of closest approach `t` (clamped to `[0, horizon]`) and
  * the separation at that time.  When the bodies are receding the returned
  * `t` is `0` (i.e. "now" is closest).
+ *
+ * With a `world` the relative position is the shortest wrapped delta (per
+ * axis), so a shot or hazard arriving across a seam is predicted on the torus
+ * (AH-0MVT2W2D9002BOHO). Relative velocity is a rate, so it is not wrapped.
  */
 function closestApproach(
   px: number,
@@ -317,9 +322,10 @@ function closestApproach(
   qvx: number,
   qvy: number,
   horizon: number,
+  world?: { readonly width: number; readonly height: number },
 ): { t: number; distance: number } {
-  const rx = qx - px;
-  const ry = qy - py;
+  const rx = world ? wrappedAxisDelta(px, qx, world.width) : qx - px;
+  const ry = world ? wrappedAxisDelta(py, qy, world.height) : qy - py;
   const rvx = qvx - pvx;
   const rvy = qvy - pvy;
   const denom = rvx * rvx + rvy * rvy;
@@ -351,12 +357,15 @@ interface DirectionSafety {
  * and how much clearance it offers.
  *
  * A direction is unsafe when it either:
- * - reaches a wall within `wallMargin`;
  * - moves toward an alive hazard (enemy/asteroid/boss) closer than
  *   `dangerMargin`;
  * - moves toward a bullet already within `bulletDangerRadius`; or
  * - is predicted to cross an in-flight bullet's path within
  *   `firePredictionHorizon` (fire-pattern avoidance).
+ *
+ * The four arena edges are **not** walls (AH-0MVT2VYN40076JKX): the ship
+ * crosses an edge and reappears on the opposite side, so distance to an edge
+ * is only a soft clearance contribution, never a reason to reject a bearing.
  *
  * Generalising the check to an arbitrary unit vector is what lets the bot
  * validate a precise aiming direction (not just the four cardinals).
@@ -372,22 +381,27 @@ function evaluateVector(
   const pvx = dirX * t.playerSpeed;
   const pvy = dirY * t.playerSpeed;
 
-  // Walls: distance travelled along the direction to the first wall it
-  // reaches; reaching one inside `wallMargin` is unsafe.
+  // Clearance term: distance travelled along the direction to the first edge.
+  // Edges are not walls on the wrap-around arena (AH-0MVT2VYN40076JKX), so
+  // this only contributes to clearance selection — it never makes a bearing
+  // unsafe.
   let wall = Infinity;
   if (dirX < -EPS) wall = Math.min(wall, px / -dirX);
   if (dirX > EPS) wall = Math.min(wall, (t.playfieldWidth - px) / dirX);
   if (dirY < -EPS) wall = Math.min(wall, py / -dirY);
   if (dirY > EPS) wall = Math.min(wall, (t.playfieldHeight - py) / dirY);
   let clearance = wall;
-  let safe = wall >= t.wallMargin;
+  let safe = true;
+  // The torus the prediction runs on (the arena is a four-edge wrap).
+  const torus = { width: t.playfieldWidth, height: t.playfieldHeight };
 
-  // Hazards (enemies, asteroids, boss): reactive keep-away.
+  // Hazards (enemies, asteroids, boss): reactive keep-away, measured on the
+  // torus so a hazard across a seam counts as near (AH-0MVT2W2D9002BOHO).
   for (const hazard of collectHazards(snapshot)) {
-    const d = distance(px, py, hazard.x, hazard.y);
+    const toX = wrappedAxisDelta(px, hazard.x, torus.width);
+    const toY = wrappedAxisDelta(py, hazard.y, torus.height);
+    const d = Math.hypot(toX, toY);
     if (d < clearance) clearance = d;
-    const toX = hazard.x - px;
-    const toY = hazard.y - py;
     if (d < t.dangerMargin && dot(toX, toY, dirX, dirY) > 0) {
       safe = false;
     }
@@ -395,11 +409,13 @@ function evaluateVector(
 
   // Enemies inside a fire tell are about to shoot; treat the tell as an
   // aimed shot and reject directions that cross its line (fire-pattern
-  // avoidance using tell/interval cues, best-effort).
+  // avoidance using tell/interval cues, best-effort).  The tell line follows
+  // the shortest wrapped route so a tell that will fire across a seam is
+  // predicted (AH-0MVT2W2D9002BOHO).
   for (const enemy of snapshot.enemies) {
     if (!enemy.alive || enemy.isTelling !== true) continue;
-    const dx = px - enemy.x;
-    const dy = py - enemy.y;
+    const dx = wrappedAxisDelta(enemy.x, px, torus.width);
+    const dy = wrappedAxisDelta(enemy.y, py, torus.height);
     const len = Math.hypot(dx, dy) || 1;
     const ca = closestApproach(
       px,
@@ -411,6 +427,7 @@ function evaluateVector(
       (dx / len) * t.assumedBulletSpeed,
       (dy / len) * t.assumedBulletSpeed,
       t.firePredictionHorizon,
+      torus,
     );
     if (ca.distance < clearance) clearance = ca.distance;
     if (ca.t > EPS && ca.distance < t.bulletDangerRadius) safe = false;
@@ -418,16 +435,13 @@ function evaluateVector(
 
   // Bullets: reactive proximity plus predictive path crossing.
   for (const bullet of snapshot.enemyBullets) {
-    const d = distance(px, py, bullet.x, bullet.y);
+    const bdx = wrappedAxisDelta(px, bullet.x, torus.width);
+    const bdy = wrappedAxisDelta(py, bullet.y, torus.height);
+    const d = Math.hypot(bdx, bdy);
     if (d < clearance) clearance = d;
 
     // Reactive: moving toward a bullet that is already close is unsafe.
-    if (d < t.bulletDangerRadius && dot(
-      bullet.x - px,
-      bullet.y - py,
-      dirX,
-      dirY,
-    ) > 0) {
+    if (d < t.bulletDangerRadius && dot(bdx, bdy, dirX, dirY) > 0) {
       safe = false;
     }
 
@@ -443,6 +457,7 @@ function evaluateVector(
         bullet.vx,
         bullet.vy,
         t.firePredictionHorizon,
+        torus,
       );
       if (ca.distance < clearance) clearance = ca.distance;
       if (ca.t > EPS && ca.distance < t.bulletDangerRadius) {
@@ -859,8 +874,22 @@ function approachIntent(
   arrivalRadius: number,
 ): BotSteeringIntent | null {
   const longTravel = target.distance >= t.longTravelDistance;
-  const rx = target.x - px;
-  const ry = target.y - py;
+  // Seam-aware aim (AH-0MVT2VZR7000GS15): the precise bearing follows the
+  // shortest wrapped route to the target, so a target across an edge is
+  // pointed at through that edge. On a non-seam geometry the wrapped delta is
+  // the raw delta exactly, so the pre-change aim is unchanged.
+  //
+  // Near-tie hysteresis (AH-0MVT2VYN40076JKX): the shared route chooser keeps
+  // the raw route when the raw and wrapped routes are within one pixel of each
+  // other, so a target sitting near the half-width cannot make the committed
+  // duplicate flip left/right every tick.
+  const delta = chooseWrappedRouteToPlayer(
+    { x: px, y: py },
+    { x: target.x, y: target.y },
+    t,
+  ).delta;
+  const rx = delta.x;
+  const ry = delta.y;
   const d = Math.hypot(rx, ry) || 1;
   const dirX = (direction * rx) / d;
   const dirY = (direction * ry) / d;

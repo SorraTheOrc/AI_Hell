@@ -37,6 +37,10 @@ npm run capture -- --scripted    # fallback: replay the fixed scripted plan
 # record the dev boss scenario: jump straight to a boss with 4 hits remaining
 npm run capture -- --scenario boss-four-hits
 
+# record the Hangar War screens through the normal menu (Tab → Enter)
+# (hangar → hex map → deployment, driven by the shipped attract traversal)
+npm run capture -- --hangar --output clips/hangar.webm
+
 # discover every implemented dev scenario (no browser or server booted)
 npm run capture -- --list-scenarios
 npm run capture -- --list-scenarios --json
@@ -102,12 +106,16 @@ one actionable message (see
 4. Loads the game and waits for the real `#game-container canvas` at
    `960×540`.
 5. Starts a run through the **normal menu input path**: by default it presses
-   **Tab** then **Enter** to activate the **Watch Demo** control (`Play Game`
-   is focused by default, so Tab moves focus to Watch Demo), which starts
+   **Tab**, **Tab**, **Enter** to activate the **Watch Demo** control (`Play
+   Game` is focused by default and the Hangar War control sits next to it, so
+   two Tabs move focus to Watch Demo on a fresh capture profile), which starts
    `PlayScene` in demo mode; with `--scripted` it presses **Enter** to
-   activate the focused **Play Game** control instead. Either gesture resumes
-   the shared `AudioContext`. Waits `--warmup` ms for `PlayScene` to settle,
-   then waits (bounded) for the tap to expose an audio track.
+   activate the focused **Play Game** control instead; with `--hangar` it
+   presses **Tab → Enter**, which lands on the adjacent **Hangar War** control
+   and opens `HangarScene`. Either gesture resumes the shared `AudioContext`.
+   Waits `--warmup` ms for the target scene to settle, **asserts the expected
+   scene is active**, then waits (bounded) for the tap to expose an audio
+   track.
 6. Calls `canvas.captureStream(60)`, muxes the canvas video tracks with the
    tapped audio tracks and starts a `MediaRecorder` **inside the page** with
    the resolved VP9+Opus mime.
@@ -519,7 +527,7 @@ editorial `categories` the scenario was authored to evidence.
 | `promo-centipede-tunnel` | Thread the centipede chain as it winds through a scout screen. | `evasive` | enemies |
 | `promo-ghost-hunt` | Outrun Pac-Man pursuers hunting between non-targeting escorts. | `evasive` | enemies |
 | `promo-horde-siege` | Survive the homing-horde rush pouring in from the arena edges. | `aggressive-hunter` | enemies, weapons |
-| `promo-lane-runner` | Weave lane traffic while farming the fleet for drops. | `cautious-collector` | enemies, pickups |
+| `promo-lane-runner` | Weave lane traffic while farming the fleet for drops. | `evasive` | enemies, pickups |
 | `promo-orbital-barrage` | Crossfire of orbital phasers and telegraphed strike arcs. | `barrage-dodger` | weapons, enemies |
 | `promo-capture-cordon` | Break a tractor-pull and attack-run cordon with a hard silhouette. | `cordon-breaker` | enemies |
 | `promo-boss-prelude` | Pressure waves into a mini-boss cordon: the boss-category footage. | `glass-cannon` | boss, enemies |
@@ -568,6 +576,49 @@ lifecycle its kind requires.
 Everything is gated behind `import.meta.env.DEV`: a production build ignores
 the query parameter (`resolveDevScenario` is never consulted), so the shipped
 bundle and normal runs are unchanged.
+
+#### Verifying a promo scenario without recording
+
+A recording is the final editorial check, not the acceptance check. The
+acceptance property — every registered promo scenario survives at least 45 s
+of bot-flown action — is pinned hermetically by
+`src/scenes/PromoScenarioSurvival.integration.test.ts`: it boots the **real
+`PlayScene`** for each registered `kind: 'promo'` entry, lets the `scenario`
+URL parameter apply the hand-authored level, the preset by name and the seed,
+and advances the scene at a fixed 1/60 s step until the run-ended signal
+fires. No browser, no dev server and no video are involved, and the result is
+deterministic (it does not move with host load), so it can be run through the
+test skill on any machine:
+
+```bash
+/skill:test --type full            # or the implement/audit gate that runs it
+```
+
+The suite also asserts each measured run actually flew the scenario (its
+preset, its promo level as the whole campaign), so a scenario that silently
+fell back to the shipped campaign fails instead of passing vacuously. A
+failure names the scenario and the measured duration.
+
+#### Recording a clip for review (idle host)
+
+A clip is only reviewable if the page rendered it at a usable rate. The
+recorder rejects a **stalled take** below 15 effective fps and exits
+non-zero, because Phaser caps its delta: a CPU-starved page advances game time
+at a fraction of wall clock, so the clip shows almost no simulated action
+even when it is long. Check the machine before recording:
+
+```bash
+uptime                             # load average should be well under the core count
+npm run capture -- --scenario promo-blitz-hook   # records until run-ended
+npm run capture -- --all-scenarios --output promo/   # one clip per scenario
+```
+
+On a busy host the capture reports `recording is stalled (N fps < 15 fps)` and
+`Capture produced a trivial clip` — that is an environment limit, not a
+scenario defect; wait for the host to be quiet and re-record. Each clip is
+written next to its `<run-id>.action.jsonl` (action-intensity series) and
+`<run-id>.capture.json` (video-join anchor), which are the machine-checkable
+evidence for a cut.
 
 ### Promo scenario wave definitions
 
@@ -639,20 +690,27 @@ least one level.
 ### Sustained footage: the ≥45 s survival check
 
 A promo clip is only usable if the bot **survives and keeps producing action**
-long enough to cut, so every scenario is measured headlessly
-(AH-0MVSDMDA1003ARV5): `src/waves/promoSurvival.ts` plays each registered
-promo level as the whole campaign through the shipped evaluation harness
-(`src/ai/eval/arena.ts`), flown by the competent bot configured with the
-scenario's preset and seeded with the scenario's seed — the same code path a
-promo capture runs, without a browser or Phaser. The measured **action
-duration** is `ticksSimulated × dt` before the run ends (death, campaign
-clear, or the bounded 100 s tick budget).
+long enough to cut, so every scenario is measured against a **≥45 s** target.
+Exactly one check is authoritative for that target
+(AH-0MW06XJKA009WX4B):
 
-The hermetic check lives in `src/waves/promoScenario.survival.test.ts`: it
-fails, naming the scenario and its measured duration, when any scenario
-sustains less than **45 s**. The suite is deterministic per scenario seed and
-bounded (≃100 s simulated per scenario, a few seconds of wall clock in the
-unit project), so it runs as part of the standard suite.
+- **Authoritative — `src/scenes/PromoScenarioSurvival.integration.test.ts`.**
+  It boots the real `PlayScene` for every registered promo scenario, applies
+  the scenario through the URL seam (its preset by name, its promo level as
+  the whole campaign, its seed), steps at a fixed 1/60 s until the run-ended
+  signal and fails, naming the scenario and its measured duration, when any
+  scenario ends before 45 s. No browser, no dev server and no video are
+  involved, and the result is deterministic.
+- **Smoke signal only — `src/waves/promoScenario.survival.test.ts`** (harness
+  `src/waves/promoSurvival.ts`). It plays each promo level through the
+  evaluation arena (`src/ai/eval/arena.ts`) — fast, and bounded at ≃100 s
+  simulated per scenario — and asserts parity, measurement shape,
+  determinism and the tick budget. It makes **no ≥45 s claim**: the arena
+  omits Phaser formation movement/descent and the real collision loop, so its
+  durations track the competent bot's steering rather than the shipped game
+  (its failing set changed with bot-steering commits while the real game
+  stayed green). Use it as a cheap regression signal, not as evidence for the
+  promo target.
 
 Calibration (AC3) used only the two data knobs this section describes:
 
@@ -666,6 +724,105 @@ the target.
 
 No spawner, movement class or enemy config was added, so the gym↔game parity
 rule and the duplicate-body guard are untouched.
+
+## Hangar War screens (`--hangar` and capture targets)
+
+Build Candidate D added the **Hangar War** outer loop: a hangar screen
+(`HangarScene`), a hex ring map (`HexMapScene`) and a between-sortie defence
+report (`DefenceReportScene`). `npm run capture` can record them two ways
+(AH-0MVWMUQUC003WXF5):
+
+1. **`--hangar`** navigates the main menu with the same trusted input a player
+   uses — **Tab** moves focus from the focused **Play Game** control to the
+   adjacent **Hangar War** button, **Enter** activates it — then records the
+   hangar screen for a short hold and hands the bot over to the **shipped
+   Hangar War attract traversal**, so the clip continues to the hex map and the
+   deployment instead of resting on the hangar's loadout selector.
+2. **`capture:scenes`** can target `HangarScene`, `HexMapScene` and
+   `DefenceReportScene` directly in a multi-scene config, switching to them
+   in-page through the dev-gated director (see
+   [Multi-scene capture](#multi-scene-capture-capturescenes)).
+
+```bash
+# hangar screen, then the shipped traversal (hex map → deployment), 15 s
+npm run capture -- --hangar
+
+# longer window, explicit output
+npm run capture -- --hangar --duration 30000 --output clips/hangar.webm
+```
+
+The `--duration` window contains **the hangar screen** (the first 2.5 s, or
+half the window when that is shorter) followed by the **traversal**: the hex
+map, the weakest-adjacent-hex deployment the map's bot picks, and — once that
+deployment ends — the between-sortie defence report. Nothing about which hex
+to take, what to buy or when to continue is decided by the capture: it only
+starts the traversal hub in demo mode, exactly like
+`MenuScene.startHangarWarDemo()` (the screens apply
+`src/ai/hangarWarTraversal.ts` themselves). Lengthen `--duration` to see
+further into the loop.
+
+A Hangar War **screen has no run-end signal**, so `--hangar` is a
+**fixed-length** capture: it records `--duration` ms (default 15000) rather
+than waiting for `aihell:run-ended`, and `--tail` / `--max-duration` do not
+apply.
+
+**The menu entry is enabled for the capture.** The Hangar War control sits
+behind the `hangarWar` feature flag (AH-0MVZ0VGGQ0032KDP), which ships ON by
+default now that the flow works (AH-0MVZ4S9ZU004GXUM). `--hangar` still seeds
+the flag record (`ai_hell_feature_flags` → `{ "hangarWar": true }`) through a
+pre-boot `addInitScript`, before `MenuScene.create()` builds the focus cycle, so
+a capture profile that carries the kill switch (`hangarWar: false`) cannot leave
+Tab landing on **Watch Demo**.
+
+**The activation is proved before recording.** After the warm-up the capture
+reads the dev-gated director's read-only `activeSceneKeys()` snapshot and
+fails with an actionable `CaptureSetupError` unless `HangarScene` is active.
+A lost Tab/Enter gesture — which would otherwise record the static menu and
+still pass the non-trivial-frame probe — can therefore never be reported as a
+good clip. `evaluateHangarActivation()` is the pure predicate behind that
+check, so the failure mode is unit-tested without a browser. The **traversal
+start is proved the same way**: the clip fails unless the director reports
+`HexMapScene` active shortly after the hand-over, so a `--hangar` clip can
+never be accepted for resting on the static hangar screen.
+
+The **default `npm run capture` path asserts its target too**: it presses
+**Tab → Tab → Enter** to reach **Watch Demo** (`Play Game` → `Hangar War` →
+`Watch Demo` on a fresh profile) and fails with an actionable
+`CaptureSetupError` unless `PlayScene` is active. A single Tab now lands on
+the Hangar War screen — which has no run-end signal — and that regression is
+exactly what made a default capture record the static loadout selector until
+the duration cap (AH-0MVWMUQUC003WXF5).
+
+A `--hangar` clip mixes screens and gameplay, so it is judged on **render**
+evidence. The shared probe demands motion and a non-silent audio track, which
+a player-facing UI screen (the hangar, the map, the defence report) never has
+— judging it by the gameplay rule alone would reject a legitimate screen beat.
+The clip is therefore accepted on decodable frames, a non-black frame, colour
+variety and the effective-FPS floor (so a blank, stalled or menu-resting clip
+is still rejected), while motion is recorded as a note (`static screen: no
+motion required`) and the silent audio track is not required. Gameplay paths
+(`npm run capture`, the gyms, `capture:scenes`) keep the strict motion +
+audio verdict unchanged.
+
+**Capture targets and launch data.** The three screens are registered in
+`HANGAR_WAR_SCENE_KEYS` (`scripts/capture-scenes.mjs`) and are
+**boot-registered** in `src/core/gameConfig.ts`, so the in-page director
+starts them without the dev-gym page-discovery check (they are shipped
+scenes, not gyms). `DefenceReportScene` is also boot-registered because
+`PlayScene` starts it after a hex deployment ends; without the registration
+that transition silently did nothing.
+
+Each screen accepts an optional `setup` carrying only its own launch data:
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `demo` | boolean | `false` | attract traversal: `true` makes the screen auto-buy then deploy/continue after the dwell, so the clip runs into `PlayScene`; `false` keeps the static, player-facing screen on display |
+| `demoDwellMs` | positive integer | the shared traversal dwell | how long the attract traversal pauses on this screen before acting |
+
+Gym-only fields (`player`, `powerUps`, `seed`, `level`, …) are rejected on
+these targets with `setup-not-supported`, because the screens cannot consume
+them. `examples/scenes.json` ships one `{ "demo": false }` entry for each of
+the three screens as a copy-paste starting point.
 
 ## Full-run capture (default)
 
@@ -1421,7 +1578,7 @@ the file order and the list may be any length (at least one scene):
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `target` | string | yes | a **watchable gym scene key** (see below) |
+| `target` | string | yes | a **capturable scene key**: a watchable gym, a parameterised gym with its `setup`, or a shipped Hangar War screen (see below) |
 | `playMs` | positive integer | yes | warm-up play window for this scene |
 | `captureMs` | positive integer | yes | recorded capture window for this scene |
 | `label` | string | no | one-line note for your own reference (not written into the video) |
@@ -1462,6 +1619,8 @@ setup is validated before boot and forwarded to the scene as its launch data.
 | `practiceTargets` | boolean | `GymWeapons` | `true` | `false` omits the inert AOE practice-target tripod |
 | `threatCount` | integer `1`–`12` | `GymPowerUpsCombat` | `3` | size of the scout threat wave (`SCENE_SETUP_SCENARIO_COUNT_BOUNDS.threatCount`) |
 | `minerals` | integer `0`–`200` | `GymPowerUpsUtility` | `40` | size of the seeded demonstration mineral field (`SCENE_SETUP_SCENARIO_COUNT_BOUNDS.minerals`) |
+| `demo` | boolean | `HangarScene`, `HexMapScene`, `DefenceReportScene` | `false` | attract traversal: `true` auto-advances the screen after the dwell (buy, then deploy/continue), `false` records the static, player-facing screen |
+| `demoDwellMs` | positive integer | `HangarScene`, `HexMapScene`, `DefenceReportScene` | the shared traversal dwell | how long the attract traversal pauses on the screen before acting |
 | `seed` | uint32 | all setup-capable gyms | `0` | determinism seed for content RNGs |
 
 `level` is a `LevelDefinition`-shaped object: `{ level, name, waves[] }` where
@@ -1485,7 +1644,9 @@ shared `applySceneSetup` applier and re-seeds its content RNG from
 `player`, `powerUps` and `seed` fields are live **before the first captured
 frame** in every gym — including the six combat gyms (`GymPlayer`, `GymWeapons`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymWeaponLeveling`,
-`GymPowerUpLeveling`) that previously ignored an incoming setup. An absent setup
+`GymPowerUpLeveling`) that previously ignored an incoming setup, and the
+`GymRhythm` audition, whose fixed six-voice cast is completed on top of any
+setup-granted voices. An absent setup
 remains a no-op. `GymCurveSequencer` has no player and no intrinsic random
 content (its waves are derived deterministically from the curve), so it applies
 the shared seam as a documented no-op and **forwards** the setup (loadout,
@@ -1524,7 +1685,7 @@ capture framing), recorded with their reason in
 [`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8).
 
 **Every gym is representable in `examples/scenes.json`.** The shipped example
-carries one scripted entry for every gym scene — all 16, including the
+carries one scripted entry for every gym scene — all 17, including the
 parameterised `GymLevel`/`GymFodderEnemies`, the boss gyms (`GymBoss`,
 `GymMiniBoss`), the curve editor, the read-only `GymHangar` payload view and
 the read-only `GymHexWar` ring harness. The seven-beat excitement-curve teaser
@@ -1701,7 +1862,7 @@ Two example configs ship, each with a single purpose:
 | File | Purpose | Targets |
 |---|---|---|
 | `examples/teaserVideoScript.json` | the **teaser/showcase video** — the real game, played by the bot, no debug chrome | `PlayScene` only |
-| `examples/scenes.json` | the **gym-family showcase** — one entry per gym, as a copy-paste guide to each scenario's setup | dev gyms only |
+| `examples/scenes.json` | the **gym-family showcase plus the Hangar War screens** — one entry per gym, as a copy-paste guide to each scenario's setup, and one static entry per Hangar War screen | dev gyms + `HangarScene`/`HexMapScene`/`DefenceReportScene` |
 
 Record the teaser with:
 
@@ -1746,10 +1907,12 @@ Two config files ship with the repo, each with one purpose:
   pinned `seed` and a `playMs`/`captureMs` window, so its loadout and its
   on-camera pay-off are deterministic (AH-0MVTNTHTI0041QIF).
 - **`examples/scenes.json`** — the **gym showcase**: one scripted entry for
-  every gym scene under `src/scenes/gym/` (all 16, including the parameterised
+  every gym scene under `src/scenes/gym/` (all 17, including the parameterised
   `GymLevel`/`GymFodderEnemies`, the boss gyms, the curve editor, the
   read-only `GymHangar` payload view and the read-only `GymHexWar` ring
-  harness), each carrying a copy-paste `setup`.
+  harness), each carrying a copy-paste `setup`, plus a static
+  `{ "demo": false }` entry for each shipped Hangar War screen
+  (`HangarScene`, `HexMapScene`, `DefenceReportScene`, AH-0MVWMUQUC003WXF5).
 
 The teaser arc, in order:
 
@@ -1859,15 +2022,32 @@ examples/teaserVideoScript.json`, and the gym showcase with `--config
 examples/scenes.json`; `--json` reports each scene's timings and seeds
 (see [Output](#output) and [`--json` shape](#json-shape)).
 
-#### Watchable gym scenes
+#### Capturable scenes
 
-`target` must be one of the dev gym scenes discovered under `src/scenes/gym/`
-(`Gym<Name>`), minus the two **parameterised** scenes that cannot start
-without a caller-supplied parameter:
+`target` may be any **capturable scene key**: the dev gym scenes discovered
+under `src/scenes/gym/` (`Gym<Name>`) plus the shipped Hangar War screens
+(`HangarScene`, `HexMapScene`, `DefenceReportScene`). The two registries in
+`scripts/capture-scenes.mjs` are the single source of truth shared by the
+CLI's pre-boot validation and the page-side director's `start(key)` guard:
+`WATCHABLE_GYM_SCENE_KEYS` + `PARAMETERISED_GYM_SCENE_KEYS` partition the
+gyms, and `HANGAR_WAR_SCENE_KEYS` names the shipped screens.
+
+**Hangar War screens** are boot-registered in `src/core/gameConfig.ts` (not
+dev gyms), so the director starts them without the gym page-discovery check.
+They need no launch parameter; an optional `setup` may carry `demo` and
+`demoDwellMs` (see the table above), and the shipped example uses
+`{ "demo": false }`. A `--hangar` capture reaches the hangar through the
+normal menu instead; see
+[Hangar War screens](#hangar-war-screens---hangar-and-capture-targets).
+
+**Watchable gym scenes.** `target` may be one of the dev gym scenes discovered
+under `src/scenes/gym/` (`Gym<Name>`), minus the two **parameterised** scenes
+that cannot start without a caller-supplied parameter:
 
 `GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymHangar`,
 `GymHexWar`, `GymMinerals`, `GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`,
-`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymWeaponLeveling`, `GymWeapons`.
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymRhythm`, `GymWeaponLeveling`,
+`GymWeapons`.
 
 `GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
 setup) are **rejected** with `unsupported-target` when no setup is supplied;
@@ -2457,10 +2637,10 @@ full`) or `npm run build`.
 | `scripts/capture-salvage.mjs` | Salvage seam: keeps a failed clip's streamed bytes at `<stem>.partial.webm`, formats the one actionable message, attributes `salvagedBytes`/`partialPath`/`salvageMessage` |
 | `scripts/capture-salvage.d.mts` | Types for the salvage seam |
 | `scripts/capture-salvage.test.ts` | Hermetic tests for the injected mid-recording failure: partial kept, one actionable line, non-zero exit, additive `--json` fields |
-| `scripts/capture-scenes.mjs` | Pure multi-scene core: scene-list config parsing/validation, shared watchable-gym registry, scene/fade timeline and `--json` payload (browser-free) |
+| `scripts/capture-scenes.mjs` | Pure multi-scene core: scene-list config parsing/validation, shared watchable-gym + Hangar War scene registry, scene/fade timeline and `--json` payload (browser-free) |
 | `scripts/capture-scenes.d.mts` | Types for the multi-scene core |
 | `scripts/capture-scenes.test.ts` | Hermetic tests for config validation, the scene/fade plan, the payload, fade-sample verification and the watchable-scene registry |
-| `src/core/captureDirector.ts` | Dev-gated `window.__aiHellCaptureDirector` in-page scene director (key validation shared with the CLI, no navigation); inert in production |
+| `src/core/captureDirector.ts` | Dev-gated `window.__aiHellCaptureDirector` in-page scene director (key validation shared with the CLI, `activeSceneKeys()` read-only snapshot, no navigation); inert in production |
 | `src/core/captureDirector.test.ts` | Unit tests for the director's key validation, discovery and dev gate |
 | `scripts/capture-scenarios.mjs` | Shared dev-capture scenario registry (single source of truth for the game resolver and the capture CLI) |
 | `scripts/capture-scenarios.d.mts` | Types for the shared scenario registry |

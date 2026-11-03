@@ -268,8 +268,8 @@ export const WEAPON_WEIGHT_IDS: readonly WeaponDropId[] = [
   'mortar',
   'arc',
   'reset',
-  // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW) — weighted like every
-  // other weapon drop; they only enter play through a mini-boss unlock.
+  // Net-new weapons (AH-0MVCRC52P001YIPW) — ordinary catalogue entries,
+  // weighted like every other weapon drop (no run-scoped unlock gate).
   'rear_guard',
   'broadside',
   'railgun',

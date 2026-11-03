@@ -26,6 +26,7 @@ import * as mineralLayer from '../core/mineralLayer';
 import * as mineralScoop from '../../powerups/mineralScoop';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
 import { nextTick, isOnGrid } from '../../utils/beat';
+import { euclidPattern, isOnset } from '../../utils/euclid';
 
 /** Builds a strategy that always offers the supplied options. */
 function fixedStrategy(options: ChoiceOption[]): ChoiceStrategy {
@@ -592,21 +593,26 @@ describe('PlayScene mineral wiring', () => {
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
     expect(scene.isPaused()).toBe(false);
 
-    const interval = player.getFireInterval('cannon');
+    // The cannon's cadence is its Euclidean pattern on the shared lattice
+    // (AH-0MVYA1V8Z009SHMR), not a fixed interval.
+    const pattern = player.getFirePattern('cannon')!;
+    const tile = euclidPattern(pattern.k, pattern.n, pattern.rotation);
     // The resume re-based the frozen clock forward by the overlay duration
     // (the countdown), so the clock no longer sits at the launch instant.
     expect(scene.getBeatClock().now()).toBeGreaterThan(startMs);
-    // The first real shot after resume is scheduled on the same grid, at the
-    // first tick at/after the re-based clock — no phase restart.
+    // The first real shot after resume is scheduled on the same lattice, at
+    // the first onset at/after the re-based clock — no phase restart.
     const nextShot = player.getNextShotTime('cannon')!;
-    expect(isOnGrid(nextShot, interval)).toBe(true);
+    expect(
+      isOnset(nextShot, tile, pattern.stepMs, scene.getBeatClock().anchorMs),
+    ).toBe(true);
     expect(nextShot).toBeGreaterThanOrEqual(
-      nextTick(scene.getBeatClock().now(), interval),
+      nextTick(scene.getBeatClock().now(), pattern.stepMs),
     );
 
     // Drive real fire for ~2 s: every emitted cannon shot stays an exact
-    // grid tick and consecutive shots keep the exact interval spacing
-    // (continuous cadence, no jump after the pause).
+    // onset tick and consecutive shots keep the pattern's irregular spacing
+    // (1- or 2-step gaps — continuous cadence, no jump after the pause).
     const shots: number[] = [];
     let last = -1;
     for (let i = 0; i < 120; i += 1) {
@@ -619,8 +625,18 @@ describe('PlayScene mineral wiring', () => {
     }
     expect(shots.length).toBeGreaterThan(2);
     for (let i = 0; i < shots.length; i += 1) {
-      expect(isOnGrid(shots[i], interval)).toBe(true);
-      if (i > 0) expect(shots[i] - shots[i - 1]).toBeCloseTo(interval, 4);
+      expect(isOnGrid(shots[i], pattern.stepMs)).toBe(true);
+      expect(
+        isOnset(shots[i], tile, pattern.stepMs, scene.getBeatClock().anchorMs),
+      ).toBe(true);
+      if (i > 0) {
+        const gap = shots[i] - shots[i - 1];
+        // Strictly forward, on the lattice, and never longer than a 2-step
+        // gap (E(9, 16) alternates 1- and 2-step gaps, incl. across the bar).
+        expect(gap).toBeGreaterThan(0);
+        expect(gap % pattern.stepMs).toBeCloseTo(0, 6);
+        expect(gap).toBeLessThanOrEqual(2 * pattern.stepMs + 1e-6);
+      }
     }
   });
 

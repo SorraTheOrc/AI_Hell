@@ -29,6 +29,7 @@ import { POWER_UP_CATALOGUE, type DropId, type PowerUpId } from './types';
 import { PowerUpLevelStore } from './powerUpLevels';
 import { CHOICE_POOL } from './choice';
 import {
+  capDropIdsToSlotPool,
   eligibleForSlotPool,
   filterOptionsWithinSlotPool,
   isWithinSlotPool,
@@ -491,5 +492,109 @@ describe('mixed-loadout invariant (AC4)', () => {
     expect(state.used).toBe(POWER_UP_SLOT_CAP + 1);
     expect(state.free).toBe(0);
     expect(state.free).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ── Pre-granted loadout trimming (AH-0MVVF0POV001JNKX) ─────────────────
+//
+// A pre-grant surface (a Hangar War deployment's starting weapons) can name
+// more owned kinds than a run may hold. The shared helper trims that list in
+// source order through the same counted/exempt rule the drop draw and the
+// collection gate use, so a run can never start above the cap.
+
+describe('capDropIdsToSlotPool — pre-granted loadouts stay within the cap', () => {
+  it('admits every id below the cap and preserves order', () => {
+    const ids = ['spread', 'magnet', 'rapid'] as const;
+    expect(capDropIdsToSlotPool(ids)).toEqual([...ids]);
+  });
+
+  it('keeps the first six counted kinds and drops the rest', () => {
+    const ids = [
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'options',
+      'nova',
+    ] as const;
+
+    expect(capDropIdsToSlotPool(ids)).toEqual([
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ]);
+  });
+
+  it('does not let duplicates consume a second slot', () => {
+    const ids = [
+      'spread',
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'options',
+    ] as const;
+
+    // Every occurrence of an admitted kind survives (it still levels the
+    // kind); only a new counted kind is refused once six are admitted.
+    expect(capDropIdsToSlotPool(ids)).toEqual([
+      'spread',
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ]);
+  });
+
+  it('keeps exempt entries without spending a slot, and admits the cannon uncounted', () => {
+    const ids = [
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'mystery_ufo',
+      'extra_life',
+      'reset',
+    ] as const;
+
+    const capped = capDropIdsToSlotPool(['cannon', ...ids]);
+
+    // The non-drop cannon is admitted but never counted; six counted kinds are
+    // admitted and the exempt entries/utility stay available (Q7a).
+    expect(capped).toEqual(['cannon', ...ids]);
+    expect(capped).not.toContain('options');
+  });
+
+  it('yields a state the shared model counts at exactly the cap', () => {
+    const capped = capDropIdsToSlotPool([
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'options',
+      'mystery_ufo',
+    ]);
+    const state = resolveSlotState(
+      ownedPowerUps('mystery_ufo'),
+      ownedWeapons(...(capped.filter((id) => id !== 'mystery_ufo') as WeaponId[])),
+    );
+
+    expect(state.used).toBe(POWER_UP_SLOT_CAP);
+    expect(state.used).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+    expect(state.heldIds.has('mystery_ufo')).toBe(true);
+    expect(state.heldIds.has('options')).toBe(false);
   });
 });

@@ -76,6 +76,12 @@ import {
 } from './combatDrone';
 import { resolvePowerUpAtLevel } from '../../powerups/powerUpLevels';
 import { spawnMuzzleFlash } from '../../vfx/muzzleFlash';
+import { HITSCAN_BEAM_WIDTH, spawnHitscanBeam } from '../../vfx/hitscanBeam';
+import {
+  resolveHitscanRay,
+  type HitscanSegment,
+  type HitscanTarget,
+} from './hitscanBeam';
 import {
   CLUSTER_SPLIT_BURST_RADIUS,
   CLUSTER_WARHEAD_LIFETIME,
@@ -1024,6 +1030,15 @@ export class CombatCoreScene<
           continue;
         }
       }
+      // Hitscan weapons (the wave laser, AH-0MVREBUJ5004HDRQ) spawn **no**
+      // travelling bullet: the ray resolves at launch through the dedicated
+      // shared seam, deals 1 damage at the first intercept and is rendered for
+      // its fixed visible duration. Dispatched from this one shared fire path
+      // so the game and every gym resolve the identical beam (AC8, AC11).
+      if (def.hitscan) {
+        this.fireHitscanBeam(def, player.getHeading(), player.x, player.y);
+        continue;
+      }
       // Orbit weapons (the Gradius Options escort) fire one bullet per pod
       // from each pod's current world position, radially outward along the
       // pod's own orbit direction. The pod geometry lives once in the shared
@@ -1101,6 +1116,91 @@ export class CombatCoreScene<
         }
       }
     }
+  }
+
+  // ── Hitscan beam (wave laser) ────────────────────────────────────
+
+  /**
+   * Entities a hitscan beam may intercept. Default: the scene's live enemy
+   * list. `PlayScene` widens it with its boss-style encounters so a beam met
+   * by the boss stops there too (AC2).
+   */
+  protected getHitscanTargets(): readonly HitscanTarget[] {
+    return this.getEnemyEntities();
+  }
+
+  /**
+   * Applies a beam's single hit point to the intercepted entity through the
+   * shared damage seam. Default no-op (a threat-free core has nothing to
+   * damage); `CombatScene` implements it, so `PlayScene` and every gym damage
+   * their targets with the same code (gym↔game parity).
+   *
+   * @param _target - The intercepted entity.
+   * @param _def - The firing weapon's catalogue definition (carries `impactFx`).
+   * @param _x - Intercept x (px).
+   * @param _y - Intercept y (px).
+   */
+  protected applyHitscanHit(
+    _target: HitscanTarget,
+    _def: WeaponDefinition,
+    _x: number,
+    _y: number,
+  ): void {}
+
+  /**
+   * Fires one hitscan beam (the wave laser) from `(x, y)` along `headingRad`.
+   *
+   * The ray is resolved **once** at launch through the pure shared geometry
+   * (`scenes/core/hitscanBeam`): it runs the weapon's whole length budget,
+   * wrapping at the arena edges, and is truncated at the **first** intercepted
+   * entity — nothing behind that entity is touched, so the beam never pierces
+   * (AC2/AC3). The rendered column is spawned through the shared VFX seam for
+   * the descriptor's visible duration and the hit is applied through
+   * {@link CombatCoreScene.applyHitscanHit} (AC4/AC11).
+   *
+   * No `PlayerBullet` is created: the travelling-bullet flight/collision path
+   * is untouched for every other weapon.
+   *
+   * @param def - The firing weapon's (level-resolved) definition.
+   * @param headingRad - Firing heading in radians.
+   * @param x - Muzzle x (px).
+   * @param y - Muzzle y (px).
+   * @returns The rendered beam segments and whether the ray intercepted
+   *   anything (exposed for tests and scene hooks).
+   */
+  protected fireHitscanBeam(
+    def: WeaponDefinition,
+    headingRad: number,
+    x: number,
+    y: number,
+  ): { segments: HitscanSegment[]; hit: HitscanTarget | null } {
+    const descriptor = def.hitscan;
+    if (!descriptor) return { segments: [], hit: null };
+    const resolution = resolveHitscanRay({
+      originX: x,
+      originY: y,
+      angleRad: headingRad,
+      length: descriptor.length,
+      targets: this.getHitscanTargets(),
+    });
+    spawnHitscanBeam(this, resolution.segments, {
+      color: def.bulletColor,
+      width: Math.max(2, HITSCAN_BEAM_WIDTH * (def.levelBulletSize ?? 1)),
+      duration: descriptor.duration,
+      registry: this.fireFxEffects,
+    });
+    if (resolution.hit) {
+      this.applyHitscanHit(
+        resolution.hit.target,
+        def,
+        resolution.hit.x,
+        resolution.hit.y,
+      );
+    }
+    return {
+      segments: resolution.segments,
+      hit: resolution.hit ? resolution.hit.target : null,
+    };
   }
 
   /**

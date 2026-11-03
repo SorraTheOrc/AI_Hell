@@ -17,7 +17,7 @@ Governing rule: [`AGENTS.md` § Game Architecture Conventions](../AGENTS.md#game
 | Audited at commit | `1e335eb0` (2026-10-29) |
 | Divergences fixed by | AH-0MVRMHWNC002H4B5 (D1–D4, all rows now `parity`) |
 | Hangar War rows refreshed by | AH-0MVUXCC5J0028OGQ (the Hangar War ring specification, GDD §8.2): the `GymHangar` and `GymHexWar` rows were re-checked against the shipped hangar screen, hex map and defence report, so the enabled-objects and reason cells name the same model/renderer pairs the game runs |
-| Scope | every production scene under `src/scenes/gym/` (16) plus the generic base `src/scenes/gym/core/GymFormationScene.ts` |
+| Scope | every production scene under `src/scenes/gym/` (17) plus the generic base `src/scenes/gym/core/GymFormationScene.ts` |
 | Automated guard | [`src/scenes/core/gymParityDocs.test.ts`](../src/scenes/core/gymParityDocs.test.ts) fails if a gym scene has no row here, or if a row loses its verdict or evidence |
 
 ## How to re-audit
@@ -96,8 +96,9 @@ column). No other verdict is accepted by the guard.
 | `GymPowerUpLeveling` | `CombatScene` (`src/scenes/gym/GymPowerUpLeveling.ts:185`) | `Player` + every power-up through the shared `EffectsRegistry`/`resolvePowerUpAtLevel`, shared drop layer, minerals, `MineralHold` and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:306`, shared drop/mineral/hold-full passes | `parity` | Intentional: gym-only round-robin drop source (no kills to roll) and the level/stats readout panel (`src/scenes/gym/GymPowerUpLeveling.ts:185`, `gym-powerup-level-readout`); the level curve and effects are shared, not copied; the leveling gym asserts the absorbed-hit charge/lifetime grants through the shared store — `consumableCharges('shield')`, field-pickup levelling, no dedicated pickup window (AH-0MVVD8U6F0011UOG, `GymPowerUpLeveling.test.ts`) |
 | `GymPowerUpsCombat` | `CombatScene` (`src/scenes/gym/GymPowerUpsCombat.ts:171`) | `Scout` threat formation + shared `fireForEnemy` (`:554`), Shield/Bomb/Phase Shift/Teleport/Thorn Field/Force Field through the shared `EffectsRegistry`, shared drop layer, shared teleport/auto-defence seams | `_spawnScoutFormation` → `createEnemyFromConfig` + `resolveSpawnTransitTarget({transit:false})` + `startSpawnAnimation`/`updateSpawnEmergence` (`src/scenes/gym/GymPowerUpsCombat.ts:405`), matching the shared factory + in-place spawn presentation | yes — `_tickPlayer` `:333`, `_handleCollisions` `:361` | `parity` | **D4 closed by AH-0MVRMHWNC002H4B5** — threats are built through the shared factory (the active `scout` `EnemyConfig` reaches them) and grow from 1 px behind the shared spawn protection, in place; pinned by `src/scenes/gym/GymPowerUpsCombat.test.ts` (D4 parity). Intentional: auto-fire disabled (`:317`) so the defensive power-ups, not player fire, are the demonstration; HUD is gym-only. The absorbed-hit pickup→charge→event cycle is pinned here and against `PlayScene` (`GymPowerUpsCombat.test.ts` + `src/scenes/core/consumableChargeParity.test.ts`, AH-0MVVD8U6F0011UOG) |
 | `GymPowerUpsUtility` | `CombatCoreScene` (`src/scenes/gym/GymPowerUpsUtility.ts:116`) | `Player` + Speed Boost/Extra Life/Magnet/Mineral Scoop/Mystery UFO through the shared `EffectsRegistry`, shared drop layer, `MineralHold` and mineral scoop | no enemy spawn; round-robin drop source | partial — `CombatCoreScene` only (`_tickPlayer` `:247`, input/auto-fire/drop passes); no collision pass because the scene is threat-free | `parity` | Intentional: threat-free utility gallery (no enemy objects to collide with), auto-fire disabled (`src/scenes/gym/GymPowerUpsUtility.ts:232`), gym-only round-robin source and 40 seeded minerals (`:176`). Disabling a feature is a permitted difference; no enabled object runs divergent code |
+| `GymRhythm` | `CombatCoreScene` (`src/scenes/gym/GymRhythm.ts:154`) | `Player` + the six canonical Euclidean voices (`heavy_slug`, `railgun`, `cannon`, `arc`, `rapid`, `shard_swarm`) through the **shared fire scheduler**: `_tickPlayer` → `_autoFire` → `Player.tryFire` → the shared `PlayerBullet`/AOE spawn path. No enemies, no enemy bullets | n/a — no enemy spawn (player fire only) | shared player/auto-fire step (`src/scenes/core/CombatCoreScene.ts:913` → `:988`); no collision pass because the scene is threat-free | `parity` | The gym runs the shipped cadence, not a copy: voices are granted through the shared `Player.equipWeapon` (so each is at its level-0 ladder rung), the onset grid is expanded from the scheduler's live `Player.getFirePattern` through the pure `euclidPattern` generator (`GymRhythm.ts:342`), and every recorded fire carries `Player.getLastShotTime` — the scheduler's own attributed onset tick, always an exact lattice tick. Pinned by `src/scenes/gym/GymRhythm.test.ts` (canonical 46-onset stack and per-step voice counts, slow/medium/fast coverage, exact-tick/on-pattern fires, bar-0 per-voice `k` counts, and an identical onset sequence to a bare `Player` driven with the same input). Intentional: a fixed gym-only audition cast with no enemies (the game's equivalent is `PlayScene`'s auto-fire); the overlay playhead and dot grid are presentation only; a capture setup may add extra voices, which sound alongside the fixed six |
 | `GymWeaponLeveling` | `CombatScene` (`src/scenes/gym/GymWeaponLeveling.ts:145`) | `Player` + every weapon through the shared `EffectsRegistry`/level resolver, shared AOE dispatch/VFX, shared drop layer, minerals and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:250`, shared effect/drop/mineral passes | `parity` | Intentional: gym-only round-robin drop source and level readout; weapon behaviour lives once in the shared arsenal (`src/utils/weapons.ts`, `src/powerups/effects.ts`) |
-| `GymWeapons` | `CombatScene` (`src/scenes/gym/GymWeapons.ts:200`) | `Player` + cannon/Spread/Dual/Rapid/Nova/Mortar/Arc through the shared combat core, shared AOE dispatch/VFX, shared drop layer | no enemy spawn; `TrainingTarget` fixtures only (`:171`, `:504`) | yes — `_tickPlayer` `:303`, `_handleCollisions` inherited | `intentional divergence` | AOE practice targets are the documented gym-only divergence (F6 AC5, `GymWeapons.ts:120`, `:165`; §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). The AOE resolution and VFX are shared, not copied |
+| `GymWeapons` | `CombatScene` (`src/scenes/gym/GymWeapons.ts:200`) | `Player` + cannon/Spread/Dual/Rapid/Nova/Mortar/Arc through the shared combat core, shared AOE dispatch/VFX, shared drop layer | no enemy spawn; `TrainingTarget` fixtures only (`:171`, `:504`) | yes — `_tickPlayer` `:303`, `_handleCollisions` inherited | `intentional divergence` | AOE practice targets are the documented gym-only divergence (F6 AC5, `GymWeapons.ts:120`, `:165`; §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). The AOE resolution and VFX are shared, not copied. The `TrainingTarget`s carry **no** `archetype`, so the shared auto-targeting eligibility rule (`src/utils/targetEligibility.ts`, `isEligibleAutoTarget`) still admits them as **Arc** targets — the gym keeps visibly demonstrating the bolt while the rule excludes the `asteroid` world hazard (AH-0MVNSIG1O0049G69) |
 
 ## Hangar War rows (AH-0MVUXCC5J0028OGQ)
 
@@ -112,10 +113,12 @@ resolver state); the report view deliberately renders the **shipped** resolver's
 record so the numbers cannot drift. The `GymHangar` and `GymHexWar` rows above
 were re-checked against that shipped code by this item.
 
-**Entry-surface gating does not change parity (AH-0MVZ0VGGQ0032KDP).** While
-the Hangar War does not work it is hidden behind the default-OFF feature flag
+**Entry-surface gating does not change parity (AH-0MVZ0VGGQ0032KDP).** The
+Hangar War entry surfaces sit behind the feature flag
 `ai_hell_feature_flags.hangarWar`, which only gates the **menu entry and the
-idle-attract Hangar War traversal**. The scenes stay registered, so `GymHangar`
+idle-attract Hangar War traversal**. The flag now ships ON — the flow is
+verified end to end through the shipped scene array (AH-0MVZ4S9ZU004GXUM) — and
+a stored `false` is the kill switch. The scenes stay registered, so `GymHangar`
 and `GymHexWar` keep rendering the same shipped model/renderer pairs as the
 game — the rows above are unchanged by the flag and no gym divergence is
 introduced.
@@ -167,6 +170,13 @@ total), so setup-less gym behaviour is unchanged.
   schema-bounded to 0–200). Limitation: the round-robin drop cadence stays at
   the shared shipped interval (`POWER_UP_SPAWN_INTERVAL`) — it is a supply-cadence
   parity constant, not capture framing.
+- **`GymRhythm`** — consumes `player`, `powerUps` and `seed` through the shared
+  applier; the six canonical voices are the audition's fixed cast, so the setup
+  may select and level them (the first grant is the base rung, so listing the
+  six yields the documented level-0 superposition) and any additional setup
+  weapon sounds as an extra voice. Limitation: the onset grid is the shipped
+  cadence — there is no scenario knob for it, because the gym exists to audition
+  exactly that scheduler.
 - **`GymWeaponLeveling`** — consumes `player`, `powerUps`, `seed` (seeds the
   mineral field). Limitation: the round-robin drop and mineral-hold cadences
   are fixed gym-only scenarios (`src/scenes/gym/GymWeaponLeveling.ts:145`);
@@ -380,7 +390,7 @@ the duplicate-body guard.
 | # | Divergence | Scene(s) | Reason and where it is recorded |
 |---|---|---|---|
 | 1 | Obstacle course | `GymPlayer` | Gym-only thruster-navigation training; the game has no static hazards. Recorded in `src/scenes/gym/GymPlayer.ts:23` and `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §5.1 ("the Player gym's obstacle course") |
-| 2 | AOE practice targets | `GymWeapons` | Inert static `TrainingTarget`s exist only so the shared Nova/Mortar/Arc resolution and VFX are visible in a threat-free gallery; the AOE code itself is shared. Recorded in `src/scenes/gym/GymWeapons.ts:120`, `:165` and §5.1 |
+| 2 | AOE practice targets | `GymWeapons` | Inert static `TrainingTarget`s exist only so the shared Nova/Mortar/Arc resolution and VFX are visible in a threat-free gallery; the AOE code itself is shared. Recorded in `src/scenes/gym/GymWeapons.ts:120`, `:165` and §5.1. The targets carry **no** `archetype`, so the shared auto-targeting eligibility rule still admits them as valid Arc targets (AH-0MVNSIG1O0049G69) |
 | 3 | Flat supply cadence in `GymFormationScene`-derived gyms | `GymFormationScene` + all subclasses | No campaign-level input, so the scene-specific flat `rules.powerUpSpawnInterval` source stays; `GymLevel`/`GymBotTuning` adopt the level curves. Recorded in `src/scenes/gym/core/GymFormationScene.ts:982`, `src/scenes/gym/GymLevel.ts:58`, §5.1 and [`docs/BALANCING.md`](./BALANCING.md) |
 | 4 | Gym-only HUDs, controls, tuning panels and demonstration supply sources | all gyms | HUD lead lines, DAMAGE/EXPLODE/SHOOT/INDEX controls, DOM tuning panels, fixed mini-boss pool, seeded mineral fields and round-robin drop sources exist to make a scenario legible and deterministic; none of them replace a gameplay object's code. Recorded per scene (e.g. `GymBoss.ts:186`, `GymMiniBoss.ts:78`, `GymFodderEnemies.ts:204`, `GymPowerUpLeveling.ts:88`) |
 | 5 | Absence of run telemetry | all gyms | Telemetry is a shipped-run concern only (`src/scenes/core/runTelemetry.ts`, used by `PlayScene.ts:838`); a gym has no run to report |

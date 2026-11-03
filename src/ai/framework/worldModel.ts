@@ -34,6 +34,7 @@ import type {
 } from '../botSnapshot';
 import type { BotContent } from './content';
 import { BOSS_HAZARD_KEY, enemyHazardKey } from './hazardVelocity';
+import { wrappedAxisDelta } from '../../utils/wrapGeometry';
 
 /** A plain 2-D point used by the derived world view. */
 export interface BotWorldPoint {
@@ -71,6 +72,14 @@ export interface BotWorldTunables {
    * a fire tell is about to fire (its actual bullet does not exist yet).
    */
   assumedBulletSpeed: number;
+  /**
+   * Playfield width (px) of the four-edge wrap model. Prediction runs on the
+   * torus, so a shot arriving across a seam is measured along the wrapped
+   * route (AH-0MVT2W2D9002BOHO).
+   */
+  playfieldWidth: number;
+  /** Playfield height (px) of the four-edge wrap model. */
+  playfieldHeight: number;
 }
 
 /** Default world-model tunables (mirror the decision layer's defaults). */
@@ -78,6 +87,8 @@ export const BOT_WORLD_TUNABLES: BotWorldTunables = {
   horizon: 0.9,
   threatRadius: 55,
   assumedBulletSpeed: 200,
+  playfieldWidth: 960,
+  playfieldHeight: 540,
 };
 
 /** A predicted incoming shot and its threat to the player. */
@@ -239,6 +250,7 @@ export function buildBotWorld(
           snapshot.enemies.filter(
             (enemy) => enemy.alive && !isAsteroidLike(enemy.archetype),
           ),
+          { width: tunables.playfieldWidth, height: tunables.playfieldHeight },
         )
       : Number.POSITIVE_INFINITY,
     wavePressure: computeWavePressure(snapshot),
@@ -254,6 +266,11 @@ export function buildBotWorld(
  * *tell* has not fired yet, so its shot is estimated as a straight line from
  * the enemy toward the player's current position at `assumedBulletSpeed` —
  * best-effort, matching the legacy decision layer's tell handling.
+ *
+ * All geometry is measured on the four-edge wrap model (the torus), so a shot
+ * that will arrive across a seam is predicted on its wrapped route rather
+ * than on a raw line that starts most of a playfield away
+ * (AH-0MVT2W2D9002BOHO).
  *
  * @param snapshot — the read-only game state.
  * @param tunableOverrides — optional partial override of
@@ -287,8 +304,19 @@ export function predictIncomingFire(
 
   for (const enemy of snapshot.enemies) {
     if (!enemy.alive || enemy.isTelling !== true) continue;
-    const dx = player.x - enemy.x;
-    const dy = player.y - enemy.y;
+    // The tell is an aimed shot: model it along the shortest wrapped route
+    // from the enemy to the player, so a tell that will fire across the seam
+    // is classified as threatening (AH-0MVT2W2D9002BOHO).
+    const dx = wrappedAxisDelta(
+      enemy.x,
+      player.x,
+      tunables.playfieldWidth,
+    );
+    const dy = wrappedAxisDelta(
+      enemy.y,
+      player.y,
+      tunables.playfieldHeight,
+    );
     const len = Math.hypot(dx, dy) || 1;
     threats.push(
       classifyShot(
@@ -317,9 +345,12 @@ function classifyShot(
   shotVy: number,
   tunables: BotWorldTunables,
 ): IncomingFireThreat {
-  // Relative position/velocity of the shot with respect to the player.
-  const rx = sourceX - player.x;
-  const ry = sourceY - player.y;
+  // Relative position of the shot with respect to the player, measured on the
+  // torus: a bullet just outside one edge is a few pixels away along the
+  // wrapped route, not ~a playfield width away on the raw line
+  // (AH-0MVT2W2D9002BOHO). Relative velocity is a rate, so it is not wrapped.
+  const rx = wrappedAxisDelta(player.x, sourceX, tunables.playfieldWidth);
+  const ry = wrappedAxisDelta(player.y, sourceY, tunables.playfieldHeight);
   const rvx = shotVx - player.vx;
   const rvy = shotVy - player.vy;
   const denom = rvx * rvx + rvy * rvy;
@@ -348,14 +379,24 @@ function classifyShot(
   };
 }
 
-/** Distance from `from` to the nearest of `points`, or `Infinity`. */
+/** Distance from `from` to the nearest of `points`, or `Infinity`.
+ *
+ * Measured on the torus, so an enemy just across a seam counts as near
+ * (AH-0MVT2W10L003VV1U).
+ */
 function nearestDistance(
   from: BotWorldPoint,
   points: readonly BotWorldPoint[],
+  world?: { readonly width: number; readonly height: number },
 ): number {
   let nearest = Number.POSITIVE_INFINITY;
   for (const point of points) {
-    const d = Math.hypot(point.x - from.x, point.y - from.y);
+    const d = world
+      ? Math.hypot(
+          wrappedAxisDelta(from.x, point.x, world.width),
+          wrappedAxisDelta(from.y, point.y, world.height),
+        )
+      : Math.hypot(point.x - from.x, point.y - from.y);
     if (d < nearest) nearest = d;
   }
   return nearest;

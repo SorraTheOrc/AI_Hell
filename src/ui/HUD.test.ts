@@ -6,6 +6,8 @@ import {
   HUD,
   HUD_DEPTH,
   HUD_ROW_HEIGHT,
+  NON_SLOT_SECTION_LABEL,
+  NON_SLOT_SECTION_NAME,
   PERMANENT_VALUE,
   SLOT_BUDGET_NAME,
   SLOT_MARKER_ALWAYS_AVAILABLE,
@@ -1535,6 +1537,84 @@ describe('HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49)', () => {
     // The pre-existing visibility rules are untouched: a temporary one-shot
     // still renders no row when the HUD is not slot-aware.
     expect(rows.map((row) => row.id)).not.toContain('strike');
+  });
+});
+
+// ── Loadout grouping (AH-0MVVF0POV001JNKX) ─────────────────────────────
+//
+// The producer rejected the earlier presentation (budget + markers + dimmed
+// rows) because the upgrade list still showed more than six entries. The rows
+// are now grouped: the slot-counted loadout rows are contiguous and come first,
+// and every non-slot row (exempt entry, residual charge pool) is rendered below
+// a `Not in loadout` heading. The visible loadout list therefore never contains
+// more rows than the model says are equipped.
+
+describe('HUD loadout grouping (AH-0MVVF0POV001JNKX)', () => {
+  it('groups non-slot rows below a heading, after a contiguous loadout list', async () => {
+    const { game, hud } = await bootHudForLoadout('seven-rows-five-slots');
+    const rows = hud.getLoadoutRows();
+    const texts = hudTexts(hud);
+    destroy(game);
+
+    const loadout = rows.filter((row) => row.group === 'loadout');
+    const nonSlot = rows.filter((row) => row.group === 'non-slot');
+
+    // The group split is exactly the slot classification: every loadout row
+    // precedes every non-slot row, so a player counting the list stops at six.
+    expect(rows.slice(0, loadout.length).every((row) => row.group === 'loadout')).toBe(true);
+    expect(rows.slice(loadout.length).every((row) => row.group === 'non-slot')).toBe(true);
+    expect(loadout.length).toBe(
+      rows.filter((row) => row.slotCounted).length,
+    );
+    expect(loadout.length).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+    expect(nonSlot.length).toBeGreaterThan(0);
+
+    // The grouping is visible: the heading is rendered, not model-only.
+    expect(texts).toContain(NON_SLOT_SECTION_LABEL);
+  });
+
+  it('renders the heading between the loadout rows and the non-slot rows', async () => {
+    const { game, hud } = await bootHudForLoadout('seven-rows-five-slots');
+    const rows = hud.getLoadoutRows();
+    const children = hudChildren(hud);
+    const textOf = (text: string): Phaser.GameObjects.Text | undefined =>
+      children.find(
+        (child): child is Phaser.GameObjects.Text =>
+          child instanceof Phaser.GameObjects.Text && child.text === text,
+      );
+    const heading = children.find(
+      (child) =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.name === NON_SLOT_SECTION_NAME,
+    ) as Phaser.GameObjects.Text | undefined;
+    const loadoutLabels = rows
+      .filter((row) => row.group === 'loadout')
+      .map((row) => row.label);
+    const nonSlotLabels = rows
+      .filter((row) => row.group === 'non-slot')
+      .map((row) => row.label);
+    const maxLoadoutY = Math.max(
+      ...loadoutLabels.map((label) => textOf(label)!.y),
+    );
+    const minNonSlotY = Math.min(
+      ...nonSlotLabels.map((label) => textOf(label)!.y),
+    );
+    destroy(game);
+
+    expect(heading).toBeDefined();
+    expect(heading!.text).toBe(NON_SLOT_SECTION_LABEL);
+    expect(heading!.y).toBeGreaterThan(maxLoadoutY);
+    expect(heading!.y).toBeLessThan(minNonSlotY);
+  });
+
+  it('renders no heading when every rendered row holds a slot', async () => {
+    const { game, hud } = await bootHudForLoadout('six-slots-five-rows');
+    const rows = hud.getLoadoutRows();
+    const texts = hudTexts(hud);
+    destroy(game);
+
+    expect(rows.every((row) => row.group === 'loadout')).toBe(true);
+    expect(texts).not.toContain(NON_SLOT_SECTION_LABEL);
   });
 });
 

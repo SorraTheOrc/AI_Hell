@@ -5,6 +5,12 @@
  *
  * This file is the test-first spec: the implementation in
  * `explosionParticles.ts` must satisfy every acceptance criterion below.
+ *
+ * The image-based explosion work (AH-0MVJ8TB610098DSY) extends the spec with
+ * the frame-morph contract (AC2), the two-zone colour model (AC3) and the
+ * frame-texture reuse/teardown budget (AC1, AC7); the pure frame geometry and
+ * the generate-once cache are pinned separately in
+ * `explosionTextures.test.ts`.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -24,10 +30,22 @@ import {
   EXPLOSION_RADIAL_START_RADIUS,
   EXPLOSION_RING_PARTICLE_RADIUS,
   EXPLOSION_IMPLOSION_PARTICLE_RADIUS,
+  EXPLOSION_CORE_FRACTION,
+  EXPLOSION_CORE_HUE_MIN_DEG,
+  EXPLOSION_CORE_HUE_MAX_DEG,
+  EXPLOSION_CORE_SAT_MIN,
+  EXPLOSION_CORE_SAT_MAX,
+  EXPLOSION_CORE_LIGHT_MIN,
+  EXPLOSION_CORE_LIGHT_MAX,
+  EXPLOSION_CORE_CENTRE_COLOR,
+  EXPLOSION_CORE_HUE_TOLERANCE_DEG,
   scaledCount,
   jitterColor,
   colorToHSL,
   hslToHex,
+  resolveCoreColor,
+  pickParticleColor,
+  coreCountFor,
   generateRadialBurst,
   generateRingBurst,
   generateImplosionBurst,
@@ -40,6 +58,7 @@ import {
   getExplosionVfxCounts,
   resetExplosionVfxCounts,
 } from './explosionParticles';
+import { EXPLOSION_FRAME_COUNT, explosionFrameKey } from './explosionTextures';
 
 // ── Seeded RNG for deterministic tests ─────────────────────────────
 
@@ -304,7 +323,9 @@ describe('generateRadialBurst (AC3)', () => {
   it('particle colours are jittered from the base colour', () => {
     const rng = makeRng(400);
     const particles = generateRadialBurst(20, 0, 0, 20, 0xff0000, rng);
-    for (const p of particles) {
+    // Lobe/ember particles keep the entity hue; the warm core layer is
+    // warm-palette by design (AH-0MVJ8TB610098DSY AC3).
+    for (const p of particles.filter((q) => q.zone === 'lobe')) {
       const baseHsl = colorToHSL(0xff0000);
       const pColorHsl = colorToHSL(p.color);
       // Allow 0.1° tolerance for hex↔HSL round-trip precision.
@@ -712,68 +733,209 @@ interface CapturedTween {
   targets: unknown;
   alpha: { from: number; to: number };
   duration: number;
+  delay?: number;
   onUpdate?: () => void;
   onComplete?: () => void;
 }
 
-interface StubGraphics {
+/** A recorded burst frame image (the `scene.add.image` double). */
+interface StubImage {
   x: number;
   y: number;
+  texture: string;
+  tint: number;
   alpha: number;
+  scale: number;
+  rotation: number;
   destroyed: boolean;
-  depth: number;
-  fillCalls: Array<{ color: number; alpha: number }>;
-  setDepth(d: number): void;
-  clear(): void;
-  fillStyle(c: number, a?: number): void;
-  fillCircle(x: number, y: number, r: number): void;
+  setTexture(key: string): void;
+  setPosition(x: number, y: number): void;
+  setAlpha(alpha: number): void;
+  setScale(scale: number): void;
+  setRotation(rotation: number): void;
+  setTint(color: number): void;
   destroy(): void;
 }
 
+/** A recorded burst display container (the `scene.add.container` double). */
+interface StubContainer {
+  x: number;
+  y: number;
+  depth: number;
+  children: StubImage[];
+  destroyed: boolean;
+  setDepth(d: number): void;
+  add(child: unknown): void;
+  destroy(): void;
+}
+
+/** A texture-provider double that records frame creation. */
+interface StubTextures {
+  created: string[];
+  exists(key: string): boolean;
+  createCanvas(
+    key: string,
+    width: number,
+    height: number,
+  ): { getContext(): unknown; refresh(): void } | null;
+}
+
 interface StubScene {
-  gfx: StubGraphics[];
+  containers: StubContainer[];
+  images: StubImage[];
+  textures: StubTextures;
   tweenCfgs: CapturedTween[];
+  /** Count of `stop()` calls on the driving tween (teardown seam). */
+  tweenStops: number;
   add: {
-    graphics(opts?: { x?: number; y?: number }): StubGraphics;
+    container(x?: number, y?: number): StubContainer;
+    image(x: number, y: number, texture: string): StubImage;
   };
   tweens: {
-    add(cfg: CapturedTween): void;
+    add(cfg: CapturedTween): { stop(): void };
   };
 }
 
-/** Creates a headed stub scene that captures Graphics + tween calls. */
+/**
+ * Creates a headed stub scene with a recording texture provider, container and
+ * image factory. No DOM and no canvas: the frame painter's context is a
+ * no-op double, so this stays a `unit`-project test (AC6).
+ */
 function makeStubScene(): StubScene {
+  const keys = new Set<string>();
   const stub: StubScene = {
-    gfx: [],
+    containers: [],
+    images: [],
+    textures: {
+      created: [],
+      exists(key: string): boolean {
+        return keys.has(key);
+      },
+      createCanvas(key: string) {
+        keys.add(key);
+        stub.textures.created.push(key);
+        const context = {
+          globalAlpha: 1,
+          fillStyle: '',
+          strokeStyle: '',
+          lineWidth: 1,
+          clearRect(): void {},
+          beginPath(): void {},
+          moveTo(): void {},
+          lineTo(): void {},
+          closePath(): void {},
+          fill(): void {},
+          stroke(): void {},
+        };
+        return { getContext: () => context, refresh: () => undefined };
+      },
+    },
     tweenCfgs: [],
+    tweenStops: 0,
     add: {
-      graphics(opts?: { x?: number; y?: number }): StubGraphics {
-        const g: StubGraphics = {
-          x: opts?.x ?? 0,
-          y: opts?.y ?? 0,
-          alpha: 1,
-          destroyed: false,
+      container(x?: number, y?: number): StubContainer {
+        const container: StubContainer = {
+          x: x ?? 0,
+          y: y ?? 0,
           depth: 0,
-          fillCalls: [],
+          children: [],
+          destroyed: false,
           setDepth(d: number): void {
-            g.depth = d;
+            container.depth = d;
           },
-          clear(): void {},
-          fillStyle(c: number, a?: number): void {
-            g.fillCalls.push({ color: c, alpha: a ?? 1 });
+          add(child: unknown): void {
+            container.children.push(child as StubImage);
           },
-          fillCircle(_x: number, _y: number, _r: number): void {},
           destroy(): void {
-            g.destroyed = true;
+            container.destroyed = true;
+            for (const child of container.children) child.destroyed = true;
           },
         };
-        stub.gfx.push(g);
-        return g;
+        stub.containers.push(container);
+        return container;
+      },
+      image(x: number, y: number, texture: string): StubImage {
+        const image: StubImage = {
+          x,
+          y,
+          texture,
+          tint: 0xffffff,
+          alpha: 1,
+          scale: 1,
+          rotation: 0,
+          destroyed: false,
+          // A real Phaser image throws when a mutator touches it after
+          // destroy (its `scene` reference is gone) — mirrored here so a
+          // post-teardown tween update cannot pass unnoticed.
+          setTexture(key: string): void {
+            if (image.destroyed) throw new Error('destroyed frame image');
+            image.texture = key;
+          },
+          setPosition(nx: number, ny: number): void {
+            if (image.destroyed) throw new Error('destroyed frame image');
+            image.x = nx;
+            image.y = ny;
+          },
+          setAlpha(a: number): void {
+            if (image.destroyed) throw new Error('destroyed frame image');
+            image.alpha = a;
+          },
+          setScale(s: number): void {
+            if (image.destroyed) throw new Error('destroyed frame image');
+            image.scale = s;
+          },
+          setRotation(r: number): void {
+            if (image.destroyed) throw new Error('destroyed frame image');
+            image.rotation = r;
+          },
+          setTint(color: number): void {
+            image.tint = color;
+          },
+          destroy(): void {
+            image.destroyed = true;
+          },
+        };
+        stub.images.push(image);
+        return image;
       },
     },
     tweens: {
-      add(cfg: CapturedTween): void {
+      add(cfg: CapturedTween): { stop(): void } {
         stub.tweenCfgs.push(cfg);
+        return {
+          stop(): void {
+            stub.tweenStops += 1;
+          },
+        };
+      },
+    },
+  };
+  return stub;
+}
+
+/**
+ * Creates a **headless** stub scene: tweens only, no texture provider and no
+ * display factories. This is the documented degradation seam — the burst still
+ * simulates, counts and tears down, it just renders nothing.
+ */
+function makeHeadlessStubScene(): {
+  tweenCfgs: CapturedTween[];
+  tweenStops: number;
+  add: Record<string, never>;
+  tweens: { add(cfg: CapturedTween): { stop(): void } };
+} {
+  const stub = {
+    tweenCfgs: [] as CapturedTween[],
+    tweenStops: 0,
+    add: {} as Record<string, never>,
+    tweens: {
+      add(cfg: CapturedTween): { stop(): void } {
+        stub.tweenCfgs.push(cfg);
+        return {
+          stop(): void {
+            stub.tweenStops += 1;
+          },
+        };
       },
     },
   };
@@ -784,8 +946,20 @@ function makeStubScene(): StubScene {
 function advanceTween(scene: StubScene, elapsedMs: number, duration: number): void {
   const cfg = scene.tweenCfgs[0];
   expect(cfg, 'expected a tween to be scheduled').toBeDefined();
-  const gfx = cfg.targets as StubGraphics;
-  gfx.alpha = 1 - elapsedMs / duration;
+  const clock = cfg.targets as { alpha: number };
+  clock.alpha = 1 - elapsedMs / duration;
+  cfg.onUpdate?.();
+}
+
+/** Advances a headless stub scene's tween clock (same derivation). */
+function advanceHeadlessTween(
+  scene: { tweenCfgs: CapturedTween[] },
+  elapsedMs: number,
+  duration: number,
+): void {
+  const cfg = scene.tweenCfgs[0];
+  expect(cfg, 'expected a tween to be scheduled').toBeDefined();
+  (cfg.targets as { alpha: number }).alpha = 1 - elapsedMs / duration;
   cfg.onUpdate?.();
 }
 
@@ -883,7 +1057,7 @@ describe('spawnExplosionParticles (AC1–AC5)', () => {
     }
   });
 
-  it('AC4: onComplete destroys the Graphics and unregisters', () => {
+  it('AC4: onComplete destroys the burst display and unregisters', () => {
     const registry: unknown[] = [];
     const fakeRegistry = {
       push: (g: unknown) => { registry.push(g); },
@@ -896,11 +1070,12 @@ describe('spawnExplosionParticles (AC1–AC5)', () => {
       0, 0, 0x00ff00, 20, { seed: 13, count: 6, registry: fakeRegistry },
     );
     expect(registry.length).toBe(1);
+    expect(registry[0]).toBe(handle!.graphics);
     // Finish the tween.
     advanceTween(scene, EXPLOSION_LIFESPAN_MS, EXPLOSION_LIFESPAN_MS);
     scene.tweenCfgs[0].onComplete?.();
     expect(handle!.alive).toBe(false);
-    expect((handle!.graphics as StubGraphics).destroyed).toBe(true);
+    expect((handle!.graphics as StubContainer).destroyed).toBe(true);
     expect(registry.length).toBe(0);
   });
 
@@ -919,7 +1094,7 @@ describe('spawnExplosionParticles (AC1–AC5)', () => {
     expect(handle!.alive).toBe(true);
     handle!.destroy();
     expect(handle!.alive).toBe(false);
-    expect((handle!.graphics as StubGraphics).destroyed).toBe(true);
+    expect((handle!.graphics as StubContainer).destroyed).toBe(true);
     expect(registry.length).toBe(0);
   });
 
@@ -1035,9 +1210,304 @@ describe('resolvePatterns (AC5)', () => {
   });
 });
 
-describe('shared explosion-VFX registry (AH-0MUZQGRQR0086NP6, AC7)', () => {
+// ── AC3: two-zone colour model (warm core + entity hue) ──────────
+
+/**
+ * Every base colour a burst can be spawned with: the seven palette colours
+ * plus the multi-colour victory-firework palette (AC3 covers death bursts
+ * *and* fireworks).
+ */
+const BURST_BASE_COLORS = [
+  ...PALETTE.map((entry) => entry.color),
+  0xffaa00,
+  0xff3388,
+  0x33ffcc,
+];
+
+/** Returns the hue distance from a hue band's centre, in degrees. */
+function hueFromBand(h: number, min: number, max: number): number {
+  if (h < min) return min - h;
+  if (h > max) return h - max;
+  return 0;
+}
+
+describe('two-zone colour model (AC3)', () => {
+  it('documents a warm red/orange core band with bounded variance', () => {
+    expect(EXPLOSION_CORE_FRACTION).toBeGreaterThan(0);
+    expect(EXPLOSION_CORE_FRACTION).toBeLessThan(0.5);
+    expect(EXPLOSION_CORE_HUE_MIN_DEG).toBe(0);
+    expect(EXPLOSION_CORE_HUE_MAX_DEG).toBeGreaterThan(EXPLOSION_CORE_HUE_MIN_DEG);
+    expect(EXPLOSION_CORE_HUE_MAX_DEG).toBeLessThanOrEqual(45);
+    expect(EXPLOSION_CORE_SAT_MIN).toBeGreaterThanOrEqual(0.8);
+    expect(EXPLOSION_CORE_SAT_MAX).toBeLessThanOrEqual(1);
+    expect(EXPLOSION_CORE_LIGHT_MIN).toBeGreaterThan(0.3);
+    expect(EXPLOSION_CORE_LIGHT_MAX).toBeLessThanOrEqual(0.8);
+    expect(EXPLOSION_CORE_LIGHT_MAX).toBeGreaterThan(EXPLOSION_CORE_LIGHT_MIN);
+  });
+
+  it('splits every pattern group into a warm core and entity-hued lobes', () => {
+    ALL_PATTERNS.forEach((pattern, i) => {
+      const particles = generateForPattern(pattern, 8100 + i);
+      const core = particles.filter((p) => p.zone === 'core');
+      const lobes = particles.filter((p) => p.zone === 'lobe');
+      expect(core.length, `${pattern} core`).toBe(coreCountFor(particles.length));
+      expect(core.length).toBeGreaterThan(0);
+      expect(lobes.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('never marks a group of two or more entirely as core', () => {
+    for (const count of [2, 3, 8, 30, 80]) {
+      const coreCount = coreCountFor(count);
+      expect(coreCount, `count ${count}`).toBeGreaterThanOrEqual(1);
+      expect(coreCount).toBeLessThan(count);
+    }
+    expect(coreCountFor(0)).toBe(0);
+  });
+
+  it('keeps every core colour inside the documented warm band', () => {
+    for (const baseColor of BURST_BASE_COLORS) {
+      for (const seed of [1, 7, 42, 9001]) {
+        const particles = generateRadialBurst(40, 0, 0, 20, baseColor, makeRng(seed));
+        for (const p of particles.filter((q) => q.zone === 'core')) {
+          const hsl = colorToHSL(p.color);
+          expect(
+            hueFromBand(hsl.h, EXPLOSION_CORE_HUE_MIN_DEG, EXPLOSION_CORE_HUE_MAX_DEG),
+            `core hue ${hsl.h}`,
+          ).toBeLessThanOrEqual(EXPLOSION_CORE_HUE_TOLERANCE_DEG);
+          expect(hsl.s).toBeGreaterThanOrEqual(EXPLOSION_CORE_SAT_MIN - 0.02);
+          expect(hsl.s).toBeLessThanOrEqual(EXPLOSION_CORE_SAT_MAX + 0.02);
+          expect(hsl.l).toBeGreaterThanOrEqual(EXPLOSION_CORE_LIGHT_MIN - 0.02);
+          expect(hsl.l).toBeLessThanOrEqual(EXPLOSION_CORE_LIGHT_MAX + 0.02);
+        }
+      }
+    }
+  });
+
+  it('keeps every lobe/ember colour within the entity hue jitter (that ship)', () => {
+    for (const baseColor of BURST_BASE_COLORS) {
+      for (const seed of [3, 11, 55]) {
+        const particles = generateRingBurst(40, 0, 0, 20, baseColor, makeRng(seed));
+        const baseHsl = colorToHSL(baseColor);
+        for (const p of particles.filter((q) => q.zone === 'lobe')) {
+          const hsl = colorToHSL(p.color);
+          expect(
+            hueDelta(baseHsl.h, hsl.h),
+            `lobe hue near #${baseColor.toString(16)}`,
+          ).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.1);
+        }
+      }
+    }
+  });
+
+  it('opens every pattern group with a brighter white-hot centre', () => {
+    expect(colorToHSL(EXPLOSION_CORE_CENTRE_COLOR).l).toBeCloseTo(
+      EXPLOSION_CORE_LIGHT_MAX,
+      2,
+    );
+    ALL_PATTERNS.forEach((pattern, i) => {
+      const particles = generateForPattern(pattern, 8200 + i);
+      expect(particles[0].zone).toBe('core');
+      expect(particles[0].color).toBe(EXPLOSION_CORE_CENTRE_COLOR);
+      // The centre is the brightest core particle in the group.
+      const coreLightness = particles
+        .filter((p) => p.zone === 'core')
+        .map((p) => colorToHSL(p.color).l);
+      expect(Math.max(...coreLightness)).toBeGreaterThanOrEqual(
+        colorToHSL(EXPLOSION_CORE_CENTRE_COLOR).l - 1e-9,
+      );
+    });
+  });
+
+  it('resolveCoreColor stays inside the warm band and varies per particle', () => {
+    const rng = makeRng(777);
+    const emitted = new Set<number>();
+    for (let i = 0; i < 200; i++) {
+      const color = resolveCoreColor(rng);
+      emitted.add(color);
+      const hsl = colorToHSL(color);
+      expect(
+        hueFromBand(hsl.h, EXPLOSION_CORE_HUE_MIN_DEG, EXPLOSION_CORE_HUE_MAX_DEG),
+      ).toBeLessThanOrEqual(EXPLOSION_CORE_HUE_TOLERANCE_DEG);
+      expect(hsl.s).toBeGreaterThanOrEqual(EXPLOSION_CORE_SAT_MIN - 0.02);
+      expect(hsl.l).toBeGreaterThanOrEqual(EXPLOSION_CORE_LIGHT_MIN - 0.02);
+      expect(hsl.l).toBeLessThanOrEqual(EXPLOSION_CORE_LIGHT_MAX + 0.02);
+    }
+    // Subtle variation, not a single flat orange.
+    expect(emitted.size).toBeGreaterThan(50);
+  });
+
+  it('pickParticleColor routes each zone to its own palette', () => {
+    const rng = makeRng(31);
+    const base = 0x00ff00;
+    expect(pickParticleColor(base, false, false, rng)).not.toBe(base);
+    expect(hueDelta(colorToHSL(base).h, colorToHSL(pickParticleColor(base, false, false, makeRng(31))).h))
+      .toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.1);
+    expect(pickParticleColor(base, true, true, rng)).toBe(EXPLOSION_CORE_CENTRE_COLOR);
+    const core = colorToHSL(pickParticleColor(base, true, false, rng));
+    expect(
+      hueFromBand(core.h, EXPLOSION_CORE_HUE_MIN_DEG, EXPLOSION_CORE_HUE_MAX_DEG),
+    ).toBeLessThanOrEqual(EXPLOSION_CORE_HUE_TOLERANCE_DEG);
+  });
+
+  it('every spawned burst (death and firework colours) carries both zones', () => {
+    type SpawnScene = Parameters<typeof spawnExplosionParticles>[0];
+    for (const baseColor of BURST_BASE_COLORS) {
+      const handle = spawnExplosionParticles(
+        makeStubScene() as unknown as SpawnScene,
+        0, 0, baseColor, 20,
+        { seed: 5, patterns: ['radial', 'ring', 'implosion'] },
+      );
+      const zones = new Set(handle!.particles.map((p) => p.zone));
+      expect(zones, `#${baseColor.toString(16)} zones`).toEqual(
+        new Set(['core', 'lobe']),
+      );
+    }
+  });
+});
+
+// ── AC1, AC2, AC7: image-based rendering ──────────────────────────
+
+describe('image-based burst rendering (AC1, AC2, AC7)', () => {
   type SpawnScene = Parameters<typeof spawnExplosionParticles>[0];
 
+  /** Spawns a burst on a fresh stub scene and returns both. */
+  function spawnBurst(
+    opts: Parameters<typeof spawnExplosionParticles>[5] = { seed: 1 },
+  ): { scene: StubScene; handle: ExplosionHandle } {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as SpawnScene, 100, 50, 0xff0000, 20, opts,
+    );
+    return { scene, handle: handle! };
+  }
+
+  it('renders one frame image per particle inside a single burst container', () => {
+    const { scene, handle } = spawnBurst({ seed: 2, count: 12, patterns: ['radial'] });
+
+    expect(scene.containers.length).toBe(1);
+    const container = scene.containers[0];
+    expect(container.x).toBe(100);
+    expect(container.y).toBe(50);
+    expect(container.depth).toBe(5);
+    expect(container.children.length).toBe(handle.totalCount);
+    expect(handle.graphics).toBe(container);
+
+    // Every particle is an explosion frame image tinted with its own colour —
+    // no per-frame `fillCircle` particle drawing anywhere (AC1).
+    container.children.forEach((image, i) => {
+      expect(image.texture).toBe(explosionFrameKey(0));
+      expect(image.tint).toBe(handle.particles[i].color);
+      expect(image.rotation).toBe(handle.particles[i].rotation);
+      expect(image.scale).toBeCloseTo((handle.particles[i].radius * 2) / 64, 6);
+    });
+  });
+
+  it('honours the depth override for the burst container', () => {
+    const { scene } = spawnBurst({ seed: 2, count: 6, depth: -7 });
+    expect(scene.containers[0].depth).toBe(-7);
+  });
+
+  it('morphs every particle through the frame family as it ages (AC2)', () => {
+    const { scene, handle } = spawnBurst({ seed: 4, count: 10, patterns: ['ring'] });
+    const image = scene.containers[0].children[0];
+    const seen = new Set<string>();
+
+    for (const ageFraction of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
+      advanceTween(scene, ageFraction * EXPLOSION_LIFESPAN_MS, EXPLOSION_LIFESPAN_MS);
+      seen.add(image.texture);
+    }
+
+    expect(seen.size).toBeGreaterThanOrEqual(3);
+    expect(image.texture).toBe(explosionFrameKey(EXPLOSION_FRAME_COUNT - 1));
+    // Still animating its own radius down at the same time (shrinks + morphs).
+    expect(handle.particles[0].radius).toBeLessThan(handle.particles[0].shrinkStep * EXPLOSION_LIFESPAN_MS);
+  });
+
+  it('drives position, alpha and scale of every image from its particle', () => {
+    const { scene, handle } = spawnBurst({ seed: 6, count: 8, patterns: ['radial'] });
+    advanceTween(scene, EXPLOSION_LIFESPAN_MS / 2, EXPLOSION_LIFESPAN_MS);
+    scene.containers[0].children.forEach((image, i) => {
+      const particle = handle.particles[i];
+      expect(image.x).toBeCloseTo(particle.x, 6);
+      expect(image.y).toBeCloseTo(particle.y, 6);
+      expect(image.alpha).toBeCloseTo(particle.alpha, 6);
+      expect(image.scale).toBeCloseTo((particle.radius * 2) / 64, 6);
+    });
+  });
+
+  it('generates the frame family once per game, never per particle (AC7)', () => {
+    const scene = makeStubScene();
+    // A dense Boss-style burst: 80 particles, three patterns.
+    spawnExplosionParticles(
+      scene as unknown as SpawnScene, 0, 0, 0xff0000, 50,
+      { seed: 8, patterns: ['radial', 'ring', 'implosion'] },
+    );
+    expect(scene.textures.created.length).toBe(EXPLOSION_FRAME_COUNT);
+
+    // A later burst on the same game reuses the cached frames.
+    spawnExplosionParticles(
+      scene as unknown as SpawnScene, 10, 10, 0x00ff00, 16,
+      { seed: 9, patterns: ['radial'] },
+    );
+    expect(scene.textures.created.length).toBe(EXPLOSION_FRAME_COUNT);
+  });
+
+  it('leaves no display objects behind after the burst completes (AC7)', () => {
+    const { scene, handle } = spawnBurst({ seed: 10, count: 12, patterns: ['radial'] });
+    const container = scene.containers[0];
+    advanceTween(scene, EXPLOSION_LIFESPAN_MS, EXPLOSION_LIFESPAN_MS);
+    scene.tweenCfgs[0].onComplete?.();
+
+    expect(handle.alive).toBe(false);
+    expect(container.destroyed).toBe(true);
+    for (const image of container.children) expect(image.destroyed).toBe(true);
+  });
+
+  it('stops the driver and tolerates in-flight updates after teardown', () => {
+    // Regression (AH-0MVJ8TB610098DSY): an entity's SHUTDOWN teardown destroys
+    // the burst while its tween is still scheduled. The next tween update must
+    // not touch the destroyed frame images (a real Phaser image throws there),
+    // and teardown must stop the driver rather than leave it ticking.
+    const { scene, handle } = spawnBurst({ seed: 21, count: 10, patterns: ['radial'] });
+    advanceTween(scene, EXPLOSION_LIFESPAN_MS / 3, EXPLOSION_LIFESPAN_MS);
+
+    handle.destroy();
+    expect(scene.tweenStops).toBe(1);
+    expect(scene.containers[0].destroyed).toBe(true);
+    for (const image of scene.containers[0].children) expect(image.destroyed).toBe(true);
+
+    expect(() => advanceTween(scene, EXPLOSION_LIFESPAN_MS, EXPLOSION_LIFESPAN_MS)).not.toThrow();
+    expect(() => scene.tweenCfgs[0].onComplete?.()).not.toThrow();
+    expect(handle.alive).toBe(false);
+  });
+
+  it('does not render anything when the scene has no texture support (AC6)', () => {
+    resetExplosionVfxCounts();
+    type HeadlessScene = Parameters<typeof spawnExplosionParticles>[0];
+    const scene = makeHeadlessStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as HeadlessScene,
+      0, 0, 0xff0000, 20,
+      { seed: 12, count: 6, patterns: ['radial'], kind: 'enemy' },
+    );
+
+    // The pure simulation, the counter and the teardown contract still hold.
+    expect(handle!.graphics).toBeNull();
+    expect(handle!.particles.length).toBe(6);
+    expect(getExplosionVfxCounts().enemy).toBe(1);
+
+    advanceHeadlessTween(scene, EXPLOSION_LIFESPAN_MS / 2, EXPLOSION_LIFESPAN_MS);
+    expect(handle!.particles[0].alpha).toBeLessThan(1);
+
+    handle!.destroy();
+    expect(handle!.alive).toBe(false);
+    expect(getExplosionVfxCounts().enemy).toBe(0);
+  });
+});
+
+describe('shared explosion-VFX registry (AH-0MUZQGRQR0086NP6, AC7)', () => {
+  type SpawnScene = Parameters<typeof spawnExplosionParticles>[0];
   it('counts live bursts per kind and releases them when they finish', () => {
     resetExplosionVfxCounts();
     const scene = makeStubScene();

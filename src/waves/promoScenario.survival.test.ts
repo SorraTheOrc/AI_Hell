@@ -1,41 +1,38 @@
 /**
- * Hermetic promo-scenario survival check (AH-0MVSDMDA1003ARV5, child of
- * AH-0MVI5XI73000ZVYA).
+ * Hermetic promo-scenario **arena smoke signal** (AH-0MVSDMDA1003ARV5, child
+ * of AH-0MVI5XI73000ZVYA; demoted by AH-0MW06XJKA009WX4B).
  *
- * Proves the parent's sustained-footage target: every registered promo
- * scenario must keep the competent bot alive and producing action for at
- * least {@link PROMO_SURVIVAL_MIN_SECONDS} (45 s) before the run ends, so a
- * promo clip is never a bot dying on the first wave.
+ * A promo clip is only usable if the bot survives long enough to cut, but the
+ * authoritative check for that is the **real-game** suite
+ * `src/scenes/PromoScenarioSurvival.integration.test.ts`: it boots the real
+ * `PlayScene` (formation descent, the real collision/spawner loop) and asserts
+ * the ≥45 s target for every registered promo scenario.
  *
- * The measurement is headless and hermetic (no browser, no Phaser, no
- * wall-clock): `src/waves/promoSurvival.ts` plays each scenario's authored
- * promo level as the whole campaign through the shipped evaluation harness
- * (`src/ai/eval/arena.ts`), flown by the competent bot configured with the
- * scenario's curated bot-tuning preset and seeded with the scenario's seed —
- * exactly the way `PlayScene` runs a promo capture.
+ * This suite is retained as a **bounded smoke signal** over the same
+ * catalogue, using the fast arena harness (`src/waves/promoSurvival.ts`). The
+ * arena omits Phaser formation movement/descent, so its durations do not
+ * track the shipped game — they move with bot-steering changes while the real
+ * game stays green — and it therefore makes **no ≥45 s assertion** (producer
+ * decision (a) on AH-0MW06XJKA009WX4B). What it still proves cheaply:
  *
- * The suite asserts (parent AC map):
+ * - **parity:** the harness measures **every** registered promo scenario
+ *   exactly once (registry ↔ harness), never an invented one;
+ * - **shape:** each measurement carries the authored `promoLevel`, `preset`
+ *   and `seed`, a positive duration inside the bounded tick budget and a
+ *   known end reason;
+ * - **determinism:** the same scenario seed measures the same duration, so
+ *   the number is reproducible evidence rather than noise.
  *
- * - **AC1 (harness):** the harness measures **every** registered promo
- *   scenario (registry ↔ harness parity) and reports its simulated action
- *   duration and end reason.
- * - **AC2 (threshold):** no scenario measures below 45 s; a failure message
- *   names the scenario and its measured duration.
- * - **AC3 (tuning):** the measurement is reproducible per scenario (same
- *   seed ⇒ identical ticks), so a calibrated number is evidence rather than
- *   noise. The parity/duplicate-body guards stay green in the rest of the
- *   suite (this change adds authored promo content and presets only).
- * - **AC4 (regression):** each run is bounded by the tick budget, so the
- *   check is a fast, deterministic part of the standard suite.
+ * The ≥45 s assertion moved to the real-game check with the producer's
+ * decision; re-adding it here would resurrect the contradiction between the
+ * two oracles.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
   PROMO_SURVIVAL_DT,
-  PROMO_SURVIVAL_MIN_SECONDS,
   PROMO_SURVIVAL_TICK_BUDGET,
-  describePromoSurvivalFailure,
   measurePromoScenario,
   measurePromoSurvivalCatalogue,
   promoScenarioEntries,
@@ -105,22 +102,7 @@ describe('promo scenario survival harness (AH-0MVSDMDA1003ARV5, AC1)', () => {
   }, 60_000);
 });
 
-describe('promo scenario sustained footage (AH-0MVSDMDA1003ARV5, AC2)', () => {
-  it(`sustains at least ${PROMO_SURVIVAL_MIN_SECONDS} s of action in every scenario`, () => {
-    const failures = report.measurements.filter(
-      (measurement) => measurement.seconds < PROMO_SURVIVAL_MIN_SECONDS,
-    );
-
-    // The message names the scenario and the measured duration for every
-    // scenario that misses the target, as AC2 requires.
-    expect(
-      failures.map(describePromoSurvivalFailure),
-      'promo scenarios below the sustained-footage target',
-    ).toEqual([]);
-    expect(report.passed).toBe(true);
-    expect(report.failures).toEqual([]);
-  });
-
+describe('promo scenario arena smoke signal (AH-0MVI5XI73000ZVYA, AC5)', () => {
   it('ends every run inside the bounded tick budget (AC4)', () => {
     for (const measurement of report.measurements) {
       expect(

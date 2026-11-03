@@ -279,10 +279,12 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
 
     // Every emitted colour is jittered around the swarm's neon blue.
     const baseHsl = colorToHSL(SWARM_COLOR);
-    for (const p of handle.particles) {
+    for (const p of handle.particles.filter((q) => q.zone === 'lobe')) {
       const hsl = colorToHSL(p.color);
       let delta = Math.abs(hsl.h - baseHsl.h) % 360;
       if (delta > 180) delta = 360 - delta;
+      // Lobe/ember particles keep the entity hue; the warm core layer is
+      // warm-palette by design (AH-0MVJ8TB610098DSY AC3).
       expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
     }
 

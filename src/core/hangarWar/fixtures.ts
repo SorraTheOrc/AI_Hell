@@ -196,10 +196,12 @@ export function serialisePayload(payload: unknown): string {
 /**
  * Builds a plausible, deterministic full payload for `seed`.
  *
- * The fleet starts minimal (one hull, one starting weapon, no modifiers), the
- * ring is a complete six-hex ring 1 with mixed ownership, aggression and
- * granted weapons, and the queued attacks are drawn from the unheld hexes —
- * so the gym can render a realistic payload without hand-written data.
+ * The fleet starts minimal — one hull, its starting weapon owned but not
+ * equipped, no modifiers — the ring is a complete six-hex ring 1 with mixed
+ * ownership, aggression and granted weapons, and the queued attacks are drawn
+ * from the unheld hexes — so the gym can render a realistic payload without
+ * hand-written data. The default loadout is empty, matching
+ * `createDefaultPayload` (AH-0MVZJ6V1J001DA9D).
  *
  * @param seed — any finite number; normalised like every seeded stream.
  * @returns a complete payload (a fresh object on every call).
@@ -244,7 +246,7 @@ export function createSampleHangarWarPayload(seed: number): HangarWarPayload {
       unlockedWeapons: ['spread'],
       ownedModifiers: [],
       activeHull: 'hull-1',
-      activeLoadout: { startingWeapons: ['spread'], modifiers: [] },
+      activeLoadout: { startingWeapons: [], modifiers: [] },
     },
     ring: { ringIndex: 1, hexes },
     pendingAttacks,

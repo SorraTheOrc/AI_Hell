@@ -434,6 +434,41 @@ describe('engage behaviour — lead prediction (AH-0MV1DUSM2005HL98 AC2)', () =>
   });
 });
 
+// ── Seam-aware aim (AH-0MVT2VZR7000GS15 · AC2/AC3) ───────────────────
+
+describe('engage behaviour — seam-aware aim (AH-0MVT2VZR7000GS15)', () => {
+  it('aims across the seam when the wrapped route is shorter', () => {
+    // The enemy sits 780 px to the right on the raw line but only 180 px away
+    // across the left seam, so the aim must point left.
+    const snapshot = makeSnapshot({
+      player: { x: 100, y: 270, vx: 0, vy: 0 },
+      enemies: [enemy(880, 270, 'scout')],
+    });
+    const intent = engage.run(context(snapshot, COMPETENT_GOAL_IDS.engageEnemy));
+    expect(intent).not.toBeNull();
+    expect(intent!.dirX).toBeCloseTo(-1, 6);
+    expect(intent!.dirY).toBeCloseTo(0, 6);
+    expect(intent!.aim).toBe(true);
+  });
+
+  it('leads a moving target across the seam', () => {
+    // The target is across the left seam and climbing: the intercept lies
+    // up-left, not right where the raw bearing would point.
+    const snapshot = makeSnapshot({
+      player: { x: 100, y: 270, vx: 0, vy: 0 },
+      enemies: [
+        { x: 900, y: 270, alive: true, archetype: 'scout', vx: 0, vy: -100 },
+      ],
+    });
+    const intent = engage.run(context(snapshot, COMPETENT_GOAL_IDS.engageEnemy));
+    expect(intent).not.toBeNull();
+    // The aim crosses the left seam (negative x) and leads upward, rather
+    // than pointing right along the raw 800 px line.
+    expect(intent!.dirX).toBeLessThan(-0.1);
+    expect(intent!.dirY).toBeLessThan(0);
+  });
+});
+
 // ── Predictive kiting gate (AH-0MVI4QDN90037DIN AC2) ────────────────
 
 describe('engage kiting uses the predicted-collision test (AH-0MVI4QDN90037DIN AC2)', () => {
@@ -486,5 +521,40 @@ describe('engage kiting uses the predicted-collision test (AH-0MVI4QDN90037DIN A
     );
     expect(intent).not.toBeNull();
     expect(intent!.reverse).toBe(false);
+  });
+});
+
+describe('wrapped distances in behaviours (AH-0MVT2W10L003VV1U)', () => {
+  it('collects the wrapped-nearest mineral across the seam', () => {
+    // Player near the left edge. A is 800 px away on the raw line but only
+    // 160 px away across the left seam; B is 300 px away on the raw line. The
+    // collect objective must point at A (leftwards) because its wrapped
+    // distance is shorter.
+    const intent = collect.run(
+      context(
+        makeSnapshot({
+          player: { x: 100, y: 270, vx: 0, vy: 0 },
+          minerals: [mineral(900, 270), mineral(400, 270)],
+        }),
+        COMPETENT_GOAL_IDS.collectMineral,
+      ),
+    );
+    expect(intent!.dirX).toBeLessThan(0);
+  });
+
+  it('evades a shot that arrives across the seam by fleeing through it', () => {
+    // Player near the left edge; a bullet just outside the right edge travels
+    // right and will wrap across the player. Fleeing right increases the
+    // wrapped separation from the shot.
+    const intent = evade.run(
+      context(
+        makeSnapshot({
+          player: { x: 100, y: 270, vx: 0, vy: 0 },
+          enemyBullets: [bullet(950, 270, 100, 0)],
+        }),
+        COMPETENT_GOAL_IDS.survive,
+      ),
+    );
+    expect(intent!.dirX).toBeGreaterThan(0);
   });
 });

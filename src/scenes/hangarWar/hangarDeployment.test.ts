@@ -151,7 +151,9 @@ describe('buildHangarDeployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(deployment.hullId).toBe('hull-1');
     expect(deployment.startingLives).toBe(3);
     expect(deployment.speedMultiplier).toBe(1);
-    expect(deployment.startingWeapons).toEqual(['spread']);
+    // AH-0MVZJ6V1J001DA9D: the default loadout carries no extra weapon; the run
+    // starts with only the ship's permanent cannon.
+    expect(deployment.startingWeapons).toEqual([]);
     expect(deployment.modifiers).toEqual([]);
   });
 
@@ -311,6 +313,22 @@ describe('applyHangarWarDeployment (AH-0MVUXC2DD003HN0I)', () => {
     ]);
   });
 
+  it('equips nothing for an empty loadout, so the run keeps only the cannon', () => {
+    const deployment = buildHangarDeployment(createDefaultPayload(7));
+    const setStartingLives = vi.fn();
+    const equipWeapon = vi.fn();
+
+    applyHangarWarDeployment(
+      { getPlayer: () => ({ equipWeapon }), setStartingLives },
+      deployment,
+    );
+
+    expect(deployment.startingWeapons).toEqual([]);
+    expect(equipWeapon).not.toHaveBeenCalled();
+    // The hull's run stats still apply: only the extra weapons are gone.
+    expect(setStartingLives).toHaveBeenCalledWith(3);
+  });
+
   it('still applies the lives when the player has not spawned yet', () => {
     const deployment = buildHangarDeployment(fieldedPayload());
     const setStartingLives = vi.fn();
@@ -319,6 +337,43 @@ describe('applyHangarWarDeployment (AH-0MVUXC2DD003HN0I)', () => {
       deployment,
     );
     expect(setStartingLives).toHaveBeenCalledWith(5);
+  });
+
+  it('trims a starting-weapon list to the six-slot cap (AH-0MVVF0POV001JNKX)', () => {
+    // A fleet may own and equip more weapons than a run can hold; the
+    // deployment applies them through the shared pool so a run can never start
+    // above `POWER_UP_SLOT_CAP` counted kinds (parent AH-0MVLIJT3M005HPHF).
+    const deployment = {
+      ...buildHangarDeployment(fieldedPayload()),
+      startingWeapons: [
+        'spread',
+        'dual',
+        'rapid',
+        'wave_laser',
+        'ricochet',
+        'cluster',
+        'options',
+      ] as const,
+    };
+    const setStartingLives = vi.fn();
+    const equipWeapon = vi.fn();
+
+    applyHangarWarDeployment(
+      { getPlayer: () => ({ equipWeapon }), setStartingLives },
+      deployment,
+    );
+
+    expect(equipWeapon.mock.calls.map(([id]) => id)).toEqual([
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ]);
+    expect(equipWeapon.mock.calls.every(([, permanent]) => permanent === true)).toBe(
+      true,
+    );
   });
 
   it('scales the ship config by the hull speed multiplier', () => {

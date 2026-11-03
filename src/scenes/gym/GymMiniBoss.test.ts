@@ -31,6 +31,7 @@ import {
   MINI_BOSS_GYM_LEVEL,
   MINI_BOSS_GYM_NAME,
   MINI_BOSS_GYM_PHASES,
+  MINI_BOSS_GYM_REWARD_SEED,
   MINI_BOSS_FORMATION_START_X,
   MINI_BOSS_FORMATION_START_Y,
   selectGymMiniBossDesign,
@@ -40,6 +41,23 @@ import {
   MINI_BOSS_DESIGNS,
   miniBossDesignForLevel,
 } from '../../waves/miniBossDesigns';
+
+import { readFileSync } from 'node:fs';
+import * as nodePath from 'node:path';
+
+import {
+  collectProductionSourceFiles,
+  definesFunction,
+} from '../../test/duplicateBodyGuard';
+import { createSeededRng } from '../../core/rng';
+import {
+  MINI_BOSS_WHEEL_SLOT_COUNT,
+  buildWheelWedges,
+  drawWheelOutcome,
+} from '../../powerups/miniBossWheel';
+import type { DropId } from '../../powerups/types';
+import { resolvePlayerSlotState } from '../../powerups/slots';
+import { MiniBossWheelScene } from '../MiniBossWheelScene';
 
 /** Finds an on-screen text button by label. */
 function findButton(
@@ -376,5 +394,139 @@ describe('GymMiniBoss — scripted-video boss hit preview (AH-0MVRMFMJP0070KTS)'
     expect(module.SCENE_SETUP_BOSS_TOTAL_HITS.GymMiniBoss).toBe(
       scene.formationMiniBoss.getTotalHp(),
     );
+  });
+});
+
+// ── Mini-boss wheel reward parity (AH-0MVSF68QS006C8V0) ─────────────────────
+
+describe('GymMiniBoss — wheel reward parity (AH-0MVSF68QS006C8V0)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootRewardGym(): Promise<GymMiniBoss> {
+    booted = await bootScene([GymMiniBoss, MiniBossWheelScene]);
+    return booted!.scene as GymMiniBoss;
+  }
+
+  it('opens the shared wheel with one wedge per owned kind plus the bonus wedge', async () => {
+    const scene = await bootRewardGym();
+    const wedges = scene.openMiniBossReward();
+    const player = scene.getPlayer()!;
+    const owned = [...resolvePlayerSlotState(player).ownedIds];
+
+    // The gym uses the same shared builder the game uses: one wedge per owned
+    // permanent kind, bonus last.
+    expect(wedges.map((wedge) => wedge.id)).toEqual(
+      buildWheelWedges(owned).map((wedge) => wedge.id),
+    );
+    expect(wedges[wedges.length - 1].kind).toBe('bonus');
+    expect(wedges.length).toBe(owned.length + 1);
+
+    // The outcome is the same pure resolver over the same snapshot, drawn from
+    // the seeded-RNG seam with the fixed gym seed (gyms have no run).
+    const rng = createSeededRng(MINI_BOSS_GYM_REWARD_SEED);
+    const slotIndex = Math.floor(rng() * MINI_BOSS_WHEEL_SLOT_COUNT);
+    expect(scene.getMiniBossWheelOutcome()).toEqual(
+      drawWheelOutcome(slotIndex, owned),
+    );
+
+    await advanceGame(booted!.game, 60);
+    expect(booted!.game.scene.isActive('MiniBossWheelScene')).toBe(true);
+    scene.spinMiniBossReward();
+    stepGameUntil(
+      booted!.game,
+      'gym wheel reward resolution',
+      () =>
+        !scene.isMiniBossRewardOpen() &&
+        booted!.game.scene.isActive('MiniBossWheelScene') !== true,
+      400,
+    );
+  });
+
+  it('applies the landed outcome exactly once through the shared reward seam', async () => {
+    const scene = await bootRewardGym();
+    const wedges = scene.openMiniBossReward();
+    const outcome = scene.getMiniBossWheelOutcome()!;
+    const player = scene.getPlayer()!;
+    const levelOf = (id: string): number =>
+      [...player.getWeaponLevels(), ...player.getPowerUpLevels()].find(
+        (entry) => entry.id === id,
+      )?.level ?? 0;
+    const ownedIds = wedges
+      .filter((wedge) => wedge.kind === 'kind')
+      .map((wedge) => wedge.id as DropId);
+    const before = new Map(ownedIds.map((id) => [id, levelOf(id)]));
+
+    await advanceGame(booted!.game, 60);
+    expect(scene.spinMiniBossReward()).toBe(true);
+    stepGameUntil(
+      booted!.game,
+      'gym wheel reward application',
+      () => scene.getMiniBossRewardAppliedCount() === 1,
+      400,
+    );
+
+    // Every gained level is applied through `applyWheelOutcome` — the same
+    // shared permanent-level machinery as the game — and nothing else moves.
+    for (const [id, level] of before) {
+      const gain = outcome.gains.find((entry) => entry.id === id)?.levels ?? 0;
+      expect(levelOf(id), `${id} level`).toBe(level + gain);
+    }
+    expect(scene.getMiniBossRewardAppliedCount()).toBe(1);
+    // A repeat spin after resolution cannot apply it again.
+    expect(scene.spinMiniBossReward()).toBe(false);
+    expect(scene.getMiniBossRewardAppliedCount()).toBe(1);
+  });
+
+  it('the game and the gym consume the same shared wheel modules (no private copies)', () => {
+    // Both surfaces import the shared module and call its three seams.
+    const sources: Record<string, string> = {
+      'src/scenes/PlayScene.ts': readFileSync(
+        nodePath.resolve(process.cwd(), 'src/scenes/PlayScene.ts'),
+        'utf8',
+      ),
+      'src/scenes/gym/GymMiniBoss.ts': readFileSync(
+        nodePath.resolve(process.cwd(), 'src/scenes/gym/GymMiniBoss.ts'),
+        'utf8',
+      ),
+    };
+    for (const [file, source] of Object.entries(sources)) {
+      expect(source, `${file} imports the shared wheel module`).toMatch(
+        /from '(?:\.\.\/)+(?:\.\.\/)?powerups\/miniBossWheel'/,
+      );
+      expect(source, `${file} builds its wedges from the shared builder`).toContain(
+        'buildWheelWedges(',
+      );
+      expect(source, `${file} resolves through the shared resolver`).toContain(
+        'drawWheelOutcome(',
+      );
+      expect(source, `${file} applies through the shared seam`).toContain(
+        'applyWheelOutcome(',
+      );
+    }
+
+    // "One rule, one home": no production file other than the shared module
+    // defines the distribution/resolver/application functions, so a scene can
+    // never re-introduce a divergent copy.
+    const files = collectProductionSourceFiles(
+      nodePath.resolve(process.cwd(), 'src'),
+    );
+    for (const name of [
+      'buildWheelWedges',
+      'drawWheelOutcome',
+      'applyWheelOutcome',
+    ]) {
+      const definers = files
+        .filter((file) => definesFunction(readFileSync(file, 'utf8'), name))
+        .map((file) => nodePath.relative(process.cwd(), file))
+        .sort();
+      expect(definers, `${name} should be defined once`).toEqual([
+        'src/powerups/miniBossWheel.ts',
+      ]);
+    }
   });
 });
