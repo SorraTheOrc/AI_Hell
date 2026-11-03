@@ -131,21 +131,33 @@ export function selectAoETargets<T extends AoEGeometryTarget>(
  * live. Ties resolve to the earlier candidate, so selection is
  * deterministic — the basis for the Arc weapon's primary target.
  *
+ * An optional `accepts` predicate narrows the candidate set further (e.g.
+ * {@link import('./targetEligibility').isEligibleAutoTarget} to keep a chain
+ * off the inert `asteroid` world hazard, AH-0MVNSIG1O0049G69): a rejected
+ * candidate is skipped exactly like a dead one, so it neither becomes the
+ * primary target nor shifts the tie-break of the candidates that pass. Omitting
+ * the predicate keeps the historical live-only behaviour, so existing callers
+ * are unaffected.
+ *
  * @param originX - Origin x (px).
  * @param originY - Origin y (px).
  * @param targets - Candidate targets.
  * @param exclude - Targets to ignore (e.g. already-chained enemies).
+ * @param accepts - Optional target-eligibility predicate; when supplied, a
+ *   candidate must satisfy it to be selected.
  */
 export function findNearestTarget<T extends AoEGeometryTarget>(
   originX: number,
   originY: number,
   targets: readonly T[],
   exclude: ReadonlySet<T> = new Set<T>(),
+  accepts?: (target: T) => boolean,
 ): T | null {
   let nearest: T | null = null;
   let nearestDistance = Infinity;
   for (const target of targets) {
     if (target.alive === false || exclude.has(target)) continue;
+    if (accepts !== undefined && !accepts(target)) continue;
     const distance = distanceSquared(originX, originY, target.x, target.y);
     if (distance < nearestDistance) {
       nearest = target;
@@ -161,12 +173,20 @@ export function findNearestTarget<T extends AoEGeometryTarget>(
  * already-selected targets. Pure and order-deterministic, so the Arc
  * weapon's chain is identical in the game and the gyms.
  *
+ * The optional `accepts` predicate is applied to every hop (see
+ * {@link findNearestTarget}), so an excluded candidate such as the inert
+ * `asteroid` world hazard neither absorbs a hop nor consumes a link: the chain
+ * hops past it to the next eligible target within reach (AH-0MVNSIG1O0049G69).
+ * Omitting the predicate keeps the historical live-only behaviour.
+ *
  * @param originX - Chain origin x (px).
  * @param originY - Chain origin y (px).
  * @param targets - Candidate targets.
  * @param maxLinks - Maximum number of targets to return (0 → empty).
  * @param maxHopDistance - Maximum distance (px) for each hop, including the
  *   first from the origin; defaults to `Infinity` (unbounded reach).
+ * @param accepts - Optional target-eligibility predicate applied to every
+ *   hop; when supplied, a candidate must satisfy it to be chained.
  * @returns The chained targets in hop order.
  */
 export function selectChainTargets<T extends AoEGeometryTarget>(
@@ -175,6 +195,7 @@ export function selectChainTargets<T extends AoEGeometryTarget>(
   targets: readonly T[],
   maxLinks: number,
   maxHopDistance: number = Infinity,
+  accepts?: (target: T) => boolean,
 ): T[] {
   const chain: T[] = [];
   if (!Number.isFinite(maxLinks) || maxLinks <= 0) return chain;
@@ -184,7 +205,7 @@ export function selectChainTargets<T extends AoEGeometryTarget>(
   let fromX = originX;
   let fromY = originY;
   while (chain.length < maxLinks) {
-    const next = findNearestTarget(fromX, fromY, targets, chosen);
+    const next = findNearestTarget(fromX, fromY, targets, chosen, accepts);
     if (!next) break;
     // Each hop (including the first from the origin) must be within reach.
     if (distanceSquared(fromX, fromY, next.x, next.y) > hopLimitSq) break;
