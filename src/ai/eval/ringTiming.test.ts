@@ -285,6 +285,20 @@ describe('ring timing: budget verdicts', () => {
   });
 });
 
+/**
+ * Per-test cap for the real-arena evidence runs.
+ *
+ * These tests drive `simulateRingTiming` over the shipped arena, so their
+ * runtime is pure simulation cost: the ring-2 grind (3 seeds x 12 hexes) takes
+ * ~20 s on an idle machine and measured 126–220 s on a shared 16-core host
+ * running several concurrent agent suites. The 60 s cap therefore expired as a
+ * load-induced timeout rather than a behavioural regression
+ * (AH-0MW0M42H1003J8HW), turning host contention into a red suite. A generous
+ * cap keeps a genuine hang bounded while the assertions stay about modelled
+ * in-game minutes, never about wall-clock speed.
+ */
+const REAL_ARENA_TIMEOUT_MS = 300_000;
+
 describe('ring timing: real arena evidence', () => {
   it('is deterministic: the same seed measures the same summed duration', () => {
     const options = { ringIndex: 1, strategy: 'grind' as const, seeds: [7] };
@@ -296,7 +310,7 @@ describe('ring timing: real arena evidence', () => {
     );
     // The measurement is the real arena's durations, not a constant.
     expect(first.summary.deploymentMinutes.mean).toBeGreaterThan(0);
-  }, 60_000);
+  }, REAL_ARENA_TIMEOUT_MS);
 
   it('the one-ring MVP grind lands inside the 40–60-minute budget', () => {
     const report = simulateRingTiming({
@@ -314,7 +328,7 @@ describe('ring timing: real arena evidence', () => {
       RING_TIMING_TARGETS[1].maxMinutes,
     );
     expect(report.summary.ringSecuredRuns).toBe(3);
-  }, 60_000);
+  }, REAL_ARENA_TIMEOUT_MS);
 
   it('the 12-hex ring 2 grind lands inside the 90–120-minute budget', () => {
     const report = simulateRingTiming({
@@ -331,7 +345,7 @@ describe('ring timing: real arena evidence', () => {
     expect(report.budget.measuredMinutes).toBeLessThanOrEqual(
       RING_TIMING_TARGETS[2].maxMinutes,
     );
-  }, 60_000);
+  }, REAL_ARENA_TIMEOUT_MS);
 
   it('the rush line is faster but riskier than the grind, and neither dominates', () => {
     const grind = simulateRingTiming({
@@ -367,7 +381,7 @@ describe('ring timing: real arena evidence', () => {
     expect(grind.summary.totalMinutes.mean).toBeGreaterThan(
       rush.summary.totalMinutes.mean,
     );
-  }, 60_000);
+  }, REAL_ARENA_TIMEOUT_MS);
 
   it('the default runner plays the real campaign slice for the hex level', () => {
     const runner = createArenaDeploymentRunner();

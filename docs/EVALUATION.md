@@ -396,6 +396,15 @@ deployment instead of dying in under a minute, raising the measured grind from
 
 - **Determinism.** Same seeds, same hexes, same allowances ⇒ identical report
   (asserted by a test); the harness never reads the wall clock.
+- **Test runtime is not a signal.** The real-arena evidence tests in
+  `src/ai/eval/ringTiming.test.ts` are compute-bound, not wall-clock-bound: the
+  ring-2 grind (3 seeds × 12 hexes) takes ~20 s on an idle machine and measured
+  126–220 s on a shared 16-core host running several concurrent test suites.
+  They therefore carry a generous per-test cap (`REAL_ARENA_TIMEOUT_MS`, 300 s)
+  so host contention cannot masquerade as a behavioural regression, while a
+  genuine hang still fails the suite. The assertions compare modelled in-game
+  minutes; none of them asserts how fast the simulation runs
+  (AH-0MW0M42H1003J8HW).
 - **Evidence quality.** The arena is a closed-loop model, not a human playtest
   (intake assumption A1 / Q4): its run durations and capture/loss verdicts are
   the measurement, and the build/retry allowances are explicit model
