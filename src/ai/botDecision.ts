@@ -42,8 +42,11 @@
  * therefore also returns the exact bearing to the chosen target
  * (`dirX`/`dirY`); {@link BotSteeringIntent} carries it and the human-like
  * governor aims the hull at it (see `src/ai/botHumanLike.ts`).  The cardinal
- * booleans remain the nearest-cardinal projection, so the
- * `fourDirectional` scheme and existing consumers are unchanged.
+ * booleans remain the nearest-cardinal projection, so the `fourDirectional`
+ * scheme and existing consumers are unchanged.  The precise bearing follows
+ * the **shortest wrapped path** to the target (AH-0MVT2VZR7000GS15), so a
+ * target across a seam is pointed at through that seam; on a non-seam
+ * geometry the bearing is exactly the pre-change raw one.
  *
  * `decideBotInput(snapshot)` is the four-directional projection of the same
  * intent, retained for the `fourDirectional` scheme and legacy callers.
@@ -75,6 +78,7 @@
 
 import type { FourDirectionalInput } from '../utils/movementModel';
 import type { BotSnapshot } from './botSnapshot';
+import { botWrapWorld, wrappedDelta } from './framework/wrapGeometry';
 
 // ── Tunables (AC5) ──────────────────────────────────────────────────
 
@@ -859,8 +863,17 @@ function approachIntent(
   arrivalRadius: number,
 ): BotSteeringIntent | null {
   const longTravel = target.distance >= t.longTravelDistance;
-  const rx = target.x - px;
-  const ry = target.y - py;
+  // Seam-aware aim (AH-0MVT2VZR7000GS15): the precise bearing follows the
+  // shortest wrapped route to the target, so a target across an edge is
+  // pointed at through that edge. On a non-seam geometry the wrapped delta is
+  // the raw delta exactly, so the pre-change aim is unchanged.
+  const delta = wrappedDelta(
+    { x: px, y: py },
+    { x: target.x, y: target.y },
+    botWrapWorld(t),
+  );
+  const rx = delta.x;
+  const ry = delta.y;
   const d = Math.hypot(rx, ry) || 1;
   const dirX = (direction * rx) / d;
   const dirY = (direction * ry) / d;

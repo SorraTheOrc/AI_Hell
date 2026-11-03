@@ -46,6 +46,16 @@
  * forward-firing weapon on the enemy, instead of aiming only by accident of
  * its travel direction.
  *
+ * ## Seam-aware aim (AH-0MVT2VZR7000GS15)
+ *
+ * {@link bearingTo} and {@link interceptPoint} accept an optional
+ * {@link WrapWorld}. With one, deltas follow the **shortest wrapped path** and
+ * the lead solve measures time of flight on the torus, so aim and lead cross a
+ * seam when that route is shorter (firing off one edge to arrive from the
+ * opposite one). The maths is the shared `src/utils/wrapGeometry.ts`
+ * implementation — this module adds no second seam model. Omitting the world
+ * keeps the legacy raw Euclidean result, bit-for-bit.
+ *
  * @module src/ai/framework/competent/steering
  */
 
@@ -59,6 +69,12 @@ import {
   resolveReverseAcceleration,
   resolveReverseMaxSpeed,
 } from './tunables';
+import {
+  wrapPosition,
+  wrappedBearing,
+  wrappedDistance,
+  type WrapWorld,
+} from '../../../utils/wrapGeometry';
 
 /** Epsilon for float comparisons. */
 const EPS = 1e-6;
@@ -93,11 +109,18 @@ export function normalise(x: number, y: number): BotWorldPoint {
   return { x: x / len, y: y / len };
 }
 
-/** Unit bearing from `from` toward `to`. */
+/** Unit bearing from `from` toward `to`.
+ *
+ * With a {@link WrapWorld} the bearing follows the **shortest wrapped path**
+ * (seam-aware aim), so a target across an edge is pointed at through that
+ * edge; without one the legacy raw bearing is returned unchanged.
+ */
 export function bearingTo(
   from: BotWorldPoint,
   to: BotWorldPoint,
+  world?: WrapWorld,
 ): BotWorldPoint {
+  if (world) return wrappedBearing(from, to, world);
   return normalise(to.x - from.x, to.y - from.y);
 }
 
@@ -116,12 +139,23 @@ export function bearingTo(
  * `projectileSpeed <= 0` (unknown) leaves the target at its current position
  * after accounting only for `alignSeconds`.
  *
+ * ## Seam-aware lead (AH-0MVT2VZR7000GS15)
+ *
+ * With a {@link WrapWorld} the solve runs on the torus: the predicted point is
+ * the target advanced by its velocity, wrapped onto the playfield, and the
+ * shot's time of flight is measured along the **shortest wrapped route** to
+ * it. A lead solution that must cross a seam is therefore still produced, and
+ * a stationary target reduces to its position wrapped onto the torus (so the
+ * caller's wrapped bearing aims along the short route). Without a world the
+ * legacy raw Euclidean solve is unchanged.
+ *
  * @param shooter — the firing ship's position.
  * @param target — the target's current position.
  * @param targetVelocity — the target's velocity (px/s).
  * @param projectileSpeed — the projectile's speed (px/s).
  * @param alignSeconds — estimated time for the ship to finish its turn.
  * @param iterations — refine passes; one or more (clamped).
+ * @param world — optional torus; omit for the legacy raw solve.
  */
 export function interceptPoint(
   shooter: BotWorldPoint,
@@ -130,26 +164,30 @@ export function interceptPoint(
   projectileSpeed: number,
   alignSeconds: number,
   iterations: number,
+  world?: WrapWorld,
 ): BotWorldPoint {
   const align = Math.max(0, Number.isFinite(alignSeconds) ? alignSeconds : 0);
   const steps = Math.max(1, Math.floor(iterations));
   const hasSpeed = Number.isFinite(projectileSpeed) && projectileSpeed > EPS;
+  // The predicted point is the target advanced by its velocity, kept on the
+  // torus when a wrap world is supplied (its duplicate is equivalent, and an
+  // on-world point keeps the returned intercept point meaningful).
+  const predict = (t: number): BotWorldPoint => {
+    const x = target.x + targetVelocity.x * t;
+    const y = target.y + targetVelocity.y * t;
+    return world ? wrapPosition(x, y, world) : { x, y };
+  };
   let t = align;
   for (let i = 0; i < steps; i += 1) {
-    const predicted = {
-      x: target.x + targetVelocity.x * t,
-      y: target.y + targetVelocity.y * t,
-    };
+    const predicted = predict(t);
     if (!hasSpeed) return predicted;
-    const flight =
-      Math.hypot(predicted.x - shooter.x, predicted.y - shooter.y) /
-      projectileSpeed;
+    const flight = world
+      ? wrappedDistance(shooter, predicted, world) / projectileSpeed
+      : Math.hypot(predicted.x - shooter.x, predicted.y - shooter.y) /
+        projectileSpeed;
     t = align + flight;
   }
-  return {
-    x: target.x + targetVelocity.x * t,
-    y: target.y + targetVelocity.y * t,
-  };
+  return predict(t);
 }
 
 /**

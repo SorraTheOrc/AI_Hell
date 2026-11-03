@@ -859,7 +859,10 @@ describe('snapshot builder → decision integration (AC4/AC5)', () => {
     const snapshot = buildBotSnapshot(
       makeScene({
         getPlayer: () => stillPlayer(400, 300),
-        getEnemies: () => [{ x: 1000, y: 300, alive: true, archetype: 'scout' }],
+        // The enemy is to the right on the shortest (raw) path, so the aim is
+        // still rightwards; seam-aware aim (AH-0MVT2VZR7000GS15) only changes
+        // the bearing when the wrapped route is shorter.
+        getEnemies: () => [{ x: 700, y: 300, alive: true, archetype: 'scout' }],
         getMinerals: () => [{ x: 350, y: 300 }],
         getAliveCount: () => 1,
       }),

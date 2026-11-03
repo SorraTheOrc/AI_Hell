@@ -52,6 +52,7 @@ import {
 } from './goals';
 import { hazardThreatensPlayer, idleIntent, interceptPoint, mayReverse, mayThrust, planSteering } from './steering';
 import type { CompetentBotTunables } from './tunables';
+import { botWrapWorld, wrappedDelta } from '../wrapGeometry';
 
 /** The collect targets for a goal: minerals or power-ups as content targets. */
 function collectTargets(
@@ -164,22 +165,26 @@ function engageBehaviour(
       // time plus the shot's time of flight, iterated to a stable intercept.
       // A target that exposes no (or zero) velocity falls back to its current
       // position — exactly the pre-lead behaviour.
+      //
+      // Seam-aware aim (AH-0MVT2VZR7000GS15): both the lead solve and the
+      // route to the aim point run on the torus, so a target whose shortest
+      // path crosses an edge is led and aimed at through that edge.
       const targetVx = best.point.vx ?? 0;
       const targetVy = best.point.vy ?? 0;
-      const objective =
+      const wrapWorld = botWrapWorld(t);
+      const aimPoint =
         t.aimLeadEnabled && (targetVx !== 0 || targetVy !== 0)
-          ? (() => {
-              const intercept = interceptPoint(
-                player,
-                best.point,
-                { x: targetVx, y: targetVy },
-                t.assumedBulletSpeed,
-                t.aimLeadAlignSeconds,
-                t.aimLeadIterations,
-              );
-              return { x: intercept.x - player.x, y: intercept.y - player.y };
-            })()
-          : { x: best.point.x - player.x, y: best.point.y - player.y };
+          ? interceptPoint(
+              player,
+              best.point,
+              { x: targetVx, y: targetVy },
+              t.assumedBulletSpeed,
+              t.aimLeadAlignSeconds,
+              t.aimLeadIterations,
+              wrapWorld,
+            )
+          : { x: best.point.x, y: best.point.y };
+      const objective = wrappedDelta(player, aimPoint, wrapWorld);
       // Kiting (AC3): inside the standoff and needing more separation, hold
       // reverse while keeping the nose on the aim target (the objective still
       // points at the target, so the actuator backs away).  Only fires on a

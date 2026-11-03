@@ -451,6 +451,43 @@ describe('precise steering intent — point at the target (rejection)', () => {
   });
 });
 
+// ── Seam-aware legacy aim (AH-0MVT2VZR7000GS15) ──────────────────────
+//
+// The legacy decision layer aims with the same shared wrap maths as the
+// competent bot: the precise bearing runs along the shortest wrapped path.
+// When the raw line is already shortest the output is byte-for-byte the
+// pre-change value.
+
+describe('seam-aware legacy aim (AH-0MVT2VZR7000GS15)', () => {
+  it('keeps the pre-change bearing byte-for-byte when the raw line is shortest', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 100)], // raw line is already the shortest
+    });
+
+    const intent = decideBotIntent(snapshot);
+    const len = Math.hypot(-200, -200);
+    expect(intent.dirX).toBe(-200 / len);
+    expect(intent.dirY).toBe(-200 / len);
+  });
+
+  it('points across the seam when the wrapped route is shorter', () => {
+    // The enemy is 780 px rightwards on the raw line but only 180 px away
+    // across the left seam, so the aim must point left.
+    const snapshot = makeSnapshot({
+      player: { x: 100, y: 270, vx: 0, vy: 0 },
+      enemies: [enemy(880, 270, 'scout')],
+    });
+
+    const intent = decideBotIntent(snapshot);
+    expect(intent.dirX).toBeCloseTo(-1, 6);
+    expect(intent.dirY).toBeCloseTo(0, 6);
+    // The cardinal projection follows the seam-aware bearing too.
+    expect(intent.left).toBe(true);
+    expect(intent.right).toBe(false);
+  });
+});
+
 // ── Forward model: no thruster overshoot (AC10) ─────────────────────
 //
 // The operator reported the bot "tends to overshoot with its thrusters" and
