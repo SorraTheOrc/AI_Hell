@@ -1393,6 +1393,21 @@ describe('GymWeapons — wave-laser hitscan beam (AH-0MVREBUJ5004HDRQ, AC1/AC2/A
     ).toHaveLength(0);
   });
 
+  it('plays its sci-fi laser fire cue once per shot through the shared dispatcher (AC5)', async () => {
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
+    const scene = await bootWeapons();
+    vi.clearAllMocks();
+
+    fireWaveLaser(scene, { x: 355, y: 205 }, 0);
+
+    // One cue per shot, dispatched through the single shared
+    // `playWeaponFireSound` seam (never a per-scene direct cue call). The
+    // permanent cannon fires on the same grid tick, so count only the beam.
+    expect(
+      fireSound.mock.calls.filter(([id]) => id === 'wave_laser'),
+    ).toHaveLength(1);
+  });
+
   it('spans a full screen width and wraps at the edge when nothing intercepts it (AC3)', async () => {
     const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
     const scene = await bootWeapons();
