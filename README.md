@@ -726,17 +726,23 @@ added by AH-0MUWTNPYJ0031FQE):
   (`import.meta.env.DEV`), so production builds ignore the URL parameter.
   Every scenario, its effect, preset and editorial categories are listed in
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#promo-scenarios-kind-promo).
-- **Hangar War screen (`--hangar`):** `npm run capture -- --hangar` drives the
+- **Hangar War screens (`--hangar`):** `npm run capture -- --hangar` drives the
   normal menu (**Tab** from the focused **Play Game** control to the adjacent
-  **Hangar War** button, then **Enter**) and records the `HangarScene` screen
-  for `--duration` ms (default 15000; a screen has no run-end signal, so the
-  window is fixed). It enables the dev-gated `hangarWar` menu flag before boot
-  (the control is otherwise hidden), and after the warm-up it reads the
-  dev-gated director's `activeSceneKeys()` snapshot, failing with an actionable
-  error unless `HangarScene` is active — so a lost activation can never be
-  recorded as a clip of the static menu. A still screen is accepted on its
-  render evidence (non-black, colourful, decodable, usable frame rate) rather
-  than on gameplay motion and audio, which a UI screen never has
+  **Hangar War** button, then **Enter**), records the `HangarScene` screen for a
+  short hold, then hands the bot over to the **shipped Hangar War attract
+  traversal** — the hex map and the weakest-adjacent-hex deployment — for
+  `--duration` ms (default 15000; a screen has no run-end signal, so the window
+  is fixed). It enables the dev-gated `hangarWar` menu flag before boot (the
+  control is otherwise hidden), and after the warm-up it reads the dev-gated
+  director's `activeSceneKeys()` snapshot, failing with an actionable error
+  unless `HangarScene` is active and the traversal hub started — so neither a
+  lost activation nor a clip resting on the hangar's loadout selector can be
+  recorded as a success. The default demo path asserts its own target too:
+  **Tab → Tab → Enter** reaches **Watch Demo** now that the Hangar War control
+  sits between `Play Game` and `Watch Demo`, and the capture fails loudly
+  unless `PlayScene` is active. A still screen is accepted on its render
+  evidence (non-black, colourful, decodable, usable frame rate) rather than on
+  gameplay motion and audio, which a UI screen never has
   (AH-0MVWMUQUC003WXF5). The three Hangar War screens
   (`HangarScene`, `HexMapScene`, `DefenceReportScene`) are also capturable
   targets in `capture:scenes` configs; see

@@ -88,6 +88,13 @@ import {
   readDevTelemetryBuffer,
   resolveCaptureMode,
   evaluateHangarActivation,
+  evaluateDemoActivation,
+  evaluateSceneActivation,
+  DEMO_SCENE_KEY,
+  HANGAR_WAR_TRAVERSAL_SCENE_KEY,
+  HANGAR_TRAVERSAL_HOLD_MS,
+  HANGAR_TRAVERSAL_START_TIMEOUT_MS,
+  buildHangarTraversalRequest,
   HANGAR_SCENE_KEY,
   buildHangarWarFlagPlan,
   installHangarWarFlag,
@@ -871,18 +878,23 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     expect(resolveCaptureMode({ scripted: true })).toBe('scripted');
   });
 
-  it('starts the demo through the normal menu input (Tab to Watch Demo, Enter)', () => {
-    expect(captureStartKeys('demo')).toEqual(['Tab', 'Enter']);
+  it('starts the demo through the normal menu input (Tab, Tab to Watch Demo, Enter)', () => {
+    // Build Candidate D inserted the Hangar War control between Play Game and
+    // Watch Demo, so the demo needs a second Tab; a single Tab lands on the
+    // hangar screen and the capture would record its static loadout selector
+    // (AH-0MVWMUQUC003WXF5).
+    expect(captureStartKeys('demo')).toEqual(['Tab', 'Tab', 'Enter']);
   });
 
   it('starts the scripted plan with Enter on the focused Play Game', () => {
     expect(captureStartKeys('scripted')).toEqual(['Enter']);
   });
 
-  it('waits a gap after the focus-moving Tab before activating Enter (AH-0MUXVVYWY009WT3X)', () => {
+  it('waits a gap after each focus-moving Tab before activating Enter (AH-0MUXVVYWY009WT3X)', () => {
     const plan = captureStartPlan('demo');
 
     expect(plan).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
       { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
       { key: 'Enter', delayAfterMs: 0 },
     ]);
@@ -898,6 +910,7 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
 
   it('honours a custom inter-key gap', () => {
     expect(captureStartPlan('demo', 500)).toEqual([
+      { key: 'Tab', delayAfterMs: 500 },
       { key: 'Tab', delayAfterMs: 500 },
       { key: 'Enter', delayAfterMs: 0 },
     ]);
@@ -966,6 +979,68 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     expect(
       evaluateHangarActivation(['HexMapScene'], 'HexMapScene').active,
     ).toBe(true);
+  });
+
+  it('proves the default demo reached PlayScene (AH-0MVWMUQUC003WXF5)', () => {
+    expect(DEMO_SCENE_KEY).toBe('PlayScene');
+    expect(evaluateDemoActivation(['PlayScene'])).toEqual({
+      active: true,
+      reason: '',
+    });
+
+    // The exact regression the review rejected: the single-Tab gesture lands on
+    // the Hangar War screen, which never emits a run end, so the clip rested on
+    // the static loadout selector. The verdict must fail, and name both the
+    // expected and the actual scene.
+    const stuckInHangar = evaluateDemoActivation(['HangarScene']);
+    expect(stuckInHangar.active).toBe(false);
+    expect(stuckInHangar.reason).toContain(DEMO_SCENE_KEY);
+    expect(stuckInHangar.reason).toContain('HangarScene');
+    // ... and the failure explains the fix, not just the symptom.
+    expect(stuckInHangar.reason).toContain('Tab → Tab → Enter');
+
+    // A missing director snapshot is a loud failure, never a silent pass.
+    for (const value of [null, undefined, 'PlayScene', 42]) {
+      const unknown = evaluateDemoActivation(value);
+      expect(unknown.active).toBe(false);
+      expect(unknown.reason.toLowerCase()).toContain('director');
+    }
+  });
+
+  it('generalises the activation proof over any expected scene key', () => {
+    expect(evaluateSceneActivation(['A', 'B'], 'B').active).toBe(true);
+    const missing = evaluateSceneActivation(['MenuScene'], 'HexMapScene', 'why');
+    expect(missing.active).toBe(false);
+    expect(missing.reason).toContain('HexMapScene');
+    expect(missing.reason).toContain('MenuScene');
+    expect(missing.reason).toContain('why');
+  });
+
+  it('builds the shipped Hangar War traversal start request (AH-0MVWMUQUC003WXF5)', () => {
+    // The hub is the hex map — the same scene `MenuScene.startHangarWarDemo()`
+    // starts in demo mode, so the capture never owns a traversal rule.
+    expect(HANGAR_WAR_TRAVERSAL_SCENE_KEY).toBe('HexMapScene');
+    expect(buildHangarTraversalRequest()).toEqual({
+      key: 'HexMapScene',
+      setup: { demo: true },
+    });
+    // A positive dwell override is forwarded; anything else keeps the shipped
+    // default dwell.
+    expect(buildHangarTraversalRequest(80).setup).toEqual({
+      demo: true,
+      demoDwellMs: 80,
+    });
+    for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(buildHangarTraversalRequest(invalid).setup).toEqual({ demo: true });
+    }
+    // A non-number value is ignored by the runtime guard (the CLI is plain JS).
+    expect(
+      buildHangarTraversalRequest('80' as unknown as number).setup,
+    ).toEqual({ demo: true });
+    // The lead-in hold leaves the traversal most of a short clip, and the
+    // start check is bounded.
+    expect(HANGAR_TRAVERSAL_HOLD_MS).toBeGreaterThan(0);
+    expect(HANGAR_TRAVERSAL_START_TIMEOUT_MS).toBeGreaterThan(0);
   });
 
   it('seeds the Hangar War flag ON before the game boots (AH-0MVWMUQUC003WXF5)', () => {
@@ -2374,12 +2449,15 @@ describe('promo scenario CLI support (AH-0MVSDMAC0006DS25)', () => {
     expect(planScenarioLaunch({}).waitsForRunEnd).toBe(true);
   });
 
-  it('leaves the demo/scripted plans unchanged', () => {
+  it('leaves the scripted plan unchanged and keeps the demo on Watch Demo', () => {
     const demo = planScenarioLaunch({});
     expect(demo.mode).toBe('demo');
     expect(demo.kind).toBeNull();
     expect(demo.lifecycle).toBe('demo');
+    // Tab → Tab → Enter: Play Game → Hangar War → Watch Demo
+    // (AH-0MVWMUQUC003WXF5).
     expect(demo.startPlan).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
       { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
       { key: 'Enter', delayAfterMs: 0 },
     ]);

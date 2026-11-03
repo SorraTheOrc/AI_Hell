@@ -37,7 +37,8 @@ npm run capture -- --scripted    # fallback: replay the fixed scripted plan
 # record the dev boss scenario: jump straight to a boss with 4 hits remaining
 npm run capture -- --scenario boss-four-hits
 
-# record the Hangar War screen through the normal menu (Tab → Enter)
+# record the Hangar War screens through the normal menu (Tab → Enter)
+# (hangar → hex map → deployment, driven by the shipped attract traversal)
 npm run capture -- --hangar --output clips/hangar.webm
 
 # discover every implemented dev scenario (no browser or server booted)
@@ -105,14 +106,16 @@ one actionable message (see
 4. Loads the game and waits for the real `#game-container canvas` at
    `960×540`.
 5. Starts a run through the **normal menu input path**: by default it presses
-   **Tab** then **Enter** to activate the **Watch Demo** control (`Play Game`
-   is focused by default, so Tab moves focus to Watch Demo), which starts
+   **Tab**, **Tab**, **Enter** to activate the **Watch Demo** control (`Play
+   Game` is focused by default and the Hangar War control sits next to it, so
+   two Tabs move focus to Watch Demo on a fresh capture profile), which starts
    `PlayScene` in demo mode; with `--scripted` it presses **Enter** to
    activate the focused **Play Game** control instead; with `--hangar` it
-   presses the same **Tab → Enter** gesture, which lands on the adjacent
-   **Hangar War** control and opens `HangarScene`. Either gesture resumes
-   the shared `AudioContext`. Waits `--warmup` ms for the target scene to
-   settle, then waits (bounded) for the tap to expose an audio track.
+   presses **Tab → Enter**, which lands on the adjacent **Hangar War** control
+   and opens `HangarScene`. Either gesture resumes the shared `AudioContext`.
+   Waits `--warmup` ms for the target scene to settle, **asserts the expected
+   scene is active**, then waits (bounded) for the tap to expose an audio
+   track.
 6. Calls `canvas.captureStream(60)`, muxes the canvas video tracks with the
    tapped audio tracks and starts a `MediaRecorder` **inside the page** with
    the resolved VP9+Opus mime.
@@ -732,19 +735,31 @@ report (`DefenceReportScene`). `npm run capture` can record them two ways
 1. **`--hangar`** navigates the main menu with the same trusted input a player
    uses — **Tab** moves focus from the focused **Play Game** control to the
    adjacent **Hangar War** button, **Enter** activates it — then records the
-   hangar screen for a fixed window.
+   hangar screen for a short hold and hands the bot over to the **shipped
+   Hangar War attract traversal**, so the clip continues to the hex map and the
+   deployment instead of resting on the hangar's loadout selector.
 2. **`capture:scenes`** can target `HangarScene`, `HexMapScene` and
    `DefenceReportScene` directly in a multi-scene config, switching to them
    in-page through the dev-gated director (see
    [Multi-scene capture](#multi-scene-capture-capturescenes)).
 
 ```bash
-# record the hangar screen for 15 s (the --duration default) after navigating
+# hangar screen, then the shipped traversal (hex map → deployment), 15 s
 npm run capture -- --hangar
 
 # longer window, explicit output
 npm run capture -- --hangar --duration 30000 --output clips/hangar.webm
 ```
+
+The `--duration` window contains **the hangar screen** (the first 2.5 s, or
+half the window when that is shorter) followed by the **traversal**: the hex
+map, the weakest-adjacent-hex deployment the map's bot picks, and — once that
+deployment ends — the between-sortie defence report. Nothing about which hex
+to take, what to buy or when to continue is decided by the capture: it only
+starts the traversal hub in demo mode, exactly like
+`MenuScene.startHangarWarDemo()` (the screens apply
+`src/ai/hangarWarTraversal.ts` themselves). Lengthen `--duration` to see
+further into the loop.
 
 A Hangar War **screen has no run-end signal**, so `--hangar` is a
 **fixed-length** capture: it records `--duration` ms (default 15000) rather
@@ -765,17 +780,29 @@ fails with an actionable `CaptureSetupError` unless `HangarScene` is active.
 A lost Tab/Enter gesture — which would otherwise record the static menu and
 still pass the non-trivial-frame probe — can therefore never be reported as a
 good clip. `evaluateHangarActivation()` is the pure predicate behind that
-check, so the failure mode is unit-tested without a browser.
+check, so the failure mode is unit-tested without a browser. The **traversal
+start is proved the same way**: the clip fails unless the director reports
+`HexMapScene` active shortly after the hand-over, so a `--hangar` clip can
+never be accepted for resting on the static hangar screen.
 
-**A static screen is judged as a screen, not as gameplay.** The shared probe
-demands motion and a non-silent audio track, which a player-facing UI screen
-never has — judging it by the gameplay rule would reject every `--hangar`
-clip. The clip is therefore accepted on its **render** evidence: decodable
-frames, a non-black frame, colour variety and the effective-FPS floor all
-still apply (so a blank, stalled or menu-resting clip is rejected), while
-motion is recorded as a note (`static screen: no motion required`) and the
-silent audio track is not required. Gameplay paths (`npm run capture`, the
-gyms, `capture:scenes`) keep the strict motion + audio verdict unchanged.
+The **default `npm run capture` path asserts its target too**: it presses
+**Tab → Tab → Enter** to reach **Watch Demo** (`Play Game` → `Hangar War` →
+`Watch Demo` on a fresh profile) and fails with an actionable
+`CaptureSetupError` unless `PlayScene` is active. A single Tab now lands on
+the Hangar War screen — which has no run-end signal — and that regression is
+exactly what made a default capture record the static loadout selector until
+the duration cap (AH-0MVWMUQUC003WXF5).
+
+A `--hangar` clip mixes screens and gameplay, so it is judged on **render**
+evidence. The shared probe demands motion and a non-silent audio track, which
+a player-facing UI screen (the hangar, the map, the defence report) never has
+— judging it by the gameplay rule alone would reject a legitimate screen beat.
+The clip is therefore accepted on decodable frames, a non-black frame, colour
+variety and the effective-FPS floor (so a blank, stalled or menu-resting clip
+is still rejected), while motion is recorded as a note (`static screen: no
+motion required`) and the silent audio track is not required. Gameplay paths
+(`npm run capture`, the gyms, `capture:scenes`) keep the strict motion +
+audio verdict unchanged.
 
 **Capture targets and launch data.** The three screens are registered in
 `HANGAR_WAR_SCENE_KEYS` (`scripts/capture-scenes.mjs`) and are

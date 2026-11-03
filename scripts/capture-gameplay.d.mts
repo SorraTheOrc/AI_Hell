@@ -365,15 +365,53 @@ export function resolveCaptureMode(options?: {
  */
 export const HANGAR_SCENE_KEY = 'HangarScene';
 
+/** The scene the default demo capture must reach (`Watch Demo` → PlayScene). */
+export const DEMO_SCENE_KEY = 'PlayScene';
+
+/** The hub the shipped Hangar War attract traversal starts from. */
+export const HANGAR_WAR_TRAVERSAL_SCENE_KEY = 'HexMapScene';
+
+/** Bounded wait (ms) for the traversal hub to become active. */
+export const HANGAR_TRAVERSAL_START_TIMEOUT_MS: number;
+
+/** How long (ms) a `--hangar` clip shows the hangar before the traversal. */
+export const HANGAR_TRAVERSAL_HOLD_MS: number;
+
 /**
- * Decides whether a `--hangar` capture actually reached the hangar screen from
+ * Decides whether a menu-navigated capture actually reached `expected` from
  * the director's read-only `activeSceneKeys()` snapshot. A `null`/missing
  * snapshot is a failure, never a silent pass.
+ */
+export function evaluateSceneActivation(
+  activeSceneKeys: unknown,
+  expected: string,
+  hint?: string,
+): { active: boolean; reason: string };
+
+/**
+ * Decides whether a `--hangar` capture actually reached the hangar screen.
  */
 export function evaluateHangarActivation(
   activeSceneKeys: unknown,
   expected?: string,
 ): { active: boolean; reason: string };
+
+/**
+ * Decides whether the default demo capture actually reached `PlayScene`
+ * (`Tab → Tab → Enter` on the menu).
+ */
+export function evaluateDemoActivation(
+  activeSceneKeys: unknown,
+): { active: boolean; reason: string };
+
+/**
+ * Builds the page-side director request that starts the shipped Hangar War
+ * attract traversal (its hub scene in demo mode).
+ */
+export function buildHangarTraversalRequest(dwellMs?: number): {
+  key: string;
+  setup: { demo: boolean; demoDwellMs?: number };
+};
 
 /**
  * `localStorage` key holding the persisted feature flags
