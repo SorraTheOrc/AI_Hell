@@ -78,6 +78,16 @@ the relative motion, prediction captures a dodge.
 The world model is a **pure function** — no memory, no wall clock — so a
 prediction is exactly reproducible and testable in isolation.
 
+### 2.1 The arena is a torus
+
+The playfield wraps at all four edges, so the world model measures geometry on
+the **shortest wrapped route**, not the raw straight line: `predictIncomingFire`
+classifies a shot that will arrive across a seam, `nearestEnemyDistance` is the
+wrapped distance, and the reported threat distance/time are computed on the
+torus. The bot-facing helpers live in `src/ai/framework/wrapGeometry.ts` and
+delegate to the single shared implementation in `src/utils/wrapGeometry.ts`
+(see [section 9.11](#911-wrap-aware-torus-model-ah-0mvmisf0q00314lg)).
+
 ## 3. Goals and behaviours
 
 A goal and a behaviour are **data**. Both register under a stable string id in
@@ -344,8 +354,11 @@ via the read-only snapshot — the bot introduces no cap constant of its own.
 
 Every behaviour routes its intent through the pure `planSteering` helper,
 which samples a **fan of bearings around the objective**, evaluates each one
-for predicted clearance against walls, hazards and incoming fire, and picks
-the safe bearing that best trades objective progress for clearance. Hazards
+for predicted clearance against hazards and incoming fire, and picks
+the safe bearing that best trades objective progress for clearance. The four
+arena edges are a **wrap, not a wall** (see
+[section 9.11](#911-wrap-aware-torus-model-ah-0mvmisf0q00314lg)), so reaching
+an edge never makes a bearing unsafe. Hazards
 are evaluated at their **predicted** positions when the bot has a velocity
 estimate for them (and `hazardPredictionEnabled` is on): a bearing is also
 unsafe when the ship and a moving hazard are predicted to come within
@@ -621,6 +634,55 @@ leading a target; this section covers the avoidance half.
   straight crossing enemy collides with prediction off and is evaded (minimum
   ship–hazard distance ≥ `threatRadius` minus tolerance) with it on.
 
+### 9.11 Wrap-aware (torus) model (AH-0MVMISF0Q00314LG)
+
+The playfield is a **torus**: the ship, bullets, asteroids and wrap-aware
+enemies cross any edge and reappear on the opposite one. The bot reasons on
+that same torus rather than on a bounded rectangle, so a target across a seam
+is genuinely nearer and the four edges are no longer walls.
+
+- **One shared geometry.** `src/utils/wrapGeometry.ts` is the single
+  implementation: `wrapAxis`, `wrapPosition`, `wrappedAxisDelta`,
+  `wrappedDelta`, `wrappedDistance`, `wrappedBearing` and
+  `chooseWrappedRoute` (the near-tie hysteresis). The enemy seam modules
+  (`src/scenes/core/enemyTargeting.ts`, `enemyWrap.ts`) re-export it, and
+  `src/ai/framework/wrapGeometry.ts` is the bot-facing binding (`botWrapWorld`,
+  `wrappedDeltaToPlayer`, …). No behaviour carries its own seam maths.
+- **Wrapped steering and aim.** `bearingTo` / `interceptPoint` accept an
+  optional `WrapWorld`; with it the bearing and the lead solve follow the
+  shortest wrapped route (firing off one edge to arrive from the opposite
+  one). The legacy `approachIntent` uses the same route chooser.
+- **Wrapped nearest-selection and behaviours.** `nearestTarget`,
+  `bestWeightedTarget`, the boss/enemy proximity gates, `nearestEnemyDistance`
+  and the collect/engage/evade distances measure wrapped distance, so a
+  mineral or enemy just across a seam wins. `evade` flees along the wrapped
+  route, away from a shot that arrived across a seam.
+- **Wrapped threat and hazard prediction.** `predictIncomingFire`, the
+  competent `closestApproach` solves and the legacy path-crossing checks use
+  the shortest wrapped relative delta, so a seam-crossing shot is predicted
+  and dodged. `trackHazardVelocities` wraps its position delta, so a hazard
+  that crosses a seam yields its true velocity instead of a clamped jump;
+  a respawn/teleport is still clamped.
+- **Near-tie hysteresis.** `chooseWrappedRoute` keeps the caller's previous
+  route (else the raw route) when the raw and wrapped lengths differ by less
+  than `DEFAULT_WRAP_ROUTE_TOLERANCE` (1 px), so a target near the half-width
+  cannot flip duplicates tick-to-tick; a genuinely shorter route (by more than
+  the tolerance) is always taken.
+- **`wallMargin` retired.** The tunable no longer exists: an edge is not a
+  wall, so it is neither a safety nor a clearance constraint
+  (`botDecision.ts`, `competent/tunables.ts`, `style/fitting.ts`,
+  `tuningFields.ts`, `src/data/bot-tuning.json`). A saved config that still
+  carries the field loads and ignores it.
+- **Human-like governor preserved.** `src/ai/botHumanLike.ts` is unchanged:
+  reaction cadence, W/A/D control mapping, reverse control, seeded aim-skill
+  noise and human-feel thrust presses all still apply. Wrap-awareness is a
+  **model** property — the same governor flies the wrap-aware bot.
+- **Eval parity.** The headless arena (`src/ai/eval/arena.ts`) wraps player and
+  enemy bullets at all four edges, expires them by their game lifetimes and
+  aims hostile fire along the shortest wrapped path, so eval scores measure the
+  same wrap-around world the bot faces in the game
+  ([docs/EVALUATION.md](./EVALUATION.md#fidelity-boundary-and-limitations)).
+
 ## 10. Testing
 
 The framework's unit tests live beside it:
@@ -785,7 +847,7 @@ and adjust its parameters in real time.
   an autonomous run never pauses (the single documented gym-only divergence).
 - **Live sliders.** The collapsible panel exposes one slider per entry in
   `BOT_TUNING_NUMERIC_FIELDS` (`src/ai/tuningFields.ts`) plus boolean toggles:
-  the utility bands, seek ranges, standoff/danger/wall margins, prediction
+  the utility bands, seek ranges, standoff/danger margins, prediction
   horizons and speeds, steering weights, commitment hysteresis, the world
   model, the human-input reaction/press cadence, and the rotation-skill
   knobs `skill` / `maxAimErrorRad` / `aimLeadAlignSeconds` /

@@ -83,6 +83,8 @@ interface SimResult {
   reversePresses: number;
   /** Number of ticks the reverse key was held (AC5). */
   reverseTicks: number;
+  /** Number of times the ship crossed a seam (wrapped) during the run. */
+  wrapCrossings: number;
 }
 
 /** Priority-weighted objective score honouring the operator's order (AC1). */
@@ -129,6 +131,7 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
   let ticksSurvived = 0;
   let reversePresses = 0;
   let reverseTicks = 0;
+  let wrapCrossings = 0;
   let prevReverse = false;
 
   const snapshotOf = (): BotSnapshot => ({
@@ -174,6 +177,8 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
       if (!prevReverse) reversePresses += 1;
     }
     prevReverse = committed.reverse === true;
+    const prevX = state.x;
+    const prevY = state.y;
     state = model.tick(
       state,
       committed,
@@ -182,6 +187,14 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
       HEIGHT,
       SHIP_CONFIG,
     ) as typeof state;
+    if (
+      (prevX > WIDTH * 0.9 && state.x < WIDTH * 0.1) ||
+      (prevX < WIDTH * 0.1 && state.x > WIDTH * 0.9) ||
+      (prevY > HEIGHT * 0.9 && state.y < HEIGHT * 0.1) ||
+      (prevY < HEIGHT * 0.1 && state.y > HEIGHT * 0.9)
+    ) {
+      wrapCrossings += 1;
+    }
     ticksSurvived += 1;
     if (i % 60 === 0) dbg.push({ i, x: Math.round(state.x), y: Math.round(state.y), sp: Math.round(Math.hypot(state.vx, state.vy)), f: +state.facing.toFixed(2) });
 
@@ -223,6 +236,7 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
     final: { x: state.x, y: state.y, facing: state.facing },
     reversePresses,
     reverseTicks,
+    wrapCrossings,
   } as Omit<SimResult, 'score'>;
   // eslint-disable-next-line no-console
   if ((policy as unknown as { committedGoalId?: string }).committedGoalId !== undefined) console.log('GOALTICKS', JSON.stringify({ goalTicks, collected, collisions, dbg }));
@@ -444,16 +458,19 @@ describe('competent bot turns 180° to a target behind it (AC1)', () => {
     const governor = new BotInputGovernor();
     governor.seed(RUN_SEED);
     const brain = createCompetentBotBrain({ fallback: null });
-    // Start facing right with a mineral directly behind (to the left).
+    // Start facing right with a mineral behind it (to the left). The
+    // separation is under half the playfield, so the shortest wrapped route is
+    // genuinely leftwards (a target more than half a width away is *nearer*
+    // across the seam, AH-0MVMISF0Q00314LG).
     let state = {
-      x: 700,
+      x: 400,
       y: 270,
       vx: 0,
       vy: 0,
       facing: 0,
       angularVelocity: 0,
     };
-    const target = { x: 200, y: 270 };
+    const target = { x: 100, y: 270 };
     let taken = false;
     let turnTicks = 0;
 
@@ -643,5 +660,51 @@ describe('reverse overuse regression bound (AC5)', () => {
     // Sanity: reverse is not silently disabled — the threatening scenario
     // still uses it for recovery.
     expect(result.reverseTicks).toBeGreaterThan(0);
+  });
+});
+
+describe('wrap-aware end-to-end scenarios (AH-0MVMISF0Q00314LG)', () => {
+  it('crosses a seam to reach a mineral that is nearer the other way', () => {
+    // Player just inside the right edge, mineral across the seam: the raw line
+    // is 485 px left, but the shortest wrapped route is 475 px right. The bot
+    // turns, crosses the right seam and collects the mineral on the far side.
+    const result = simulate(createCompetentBotBrain({ fallback: null }), {
+      start: { x: 955, y: 270, facing: 0 },
+      targets: [{ x: 470, y: 270, kind: 'mineral' }],
+      ticks: 240,
+    });
+    expect(result.minerals).toBe(1);
+    // It genuinely crossed a seam rather than taking the raw leftward line.
+    expect(result.wrapCrossings).toBeGreaterThanOrEqual(1);
+  });
+
+  it('reacts to a shot that arrives across the seam', () => {
+    // Player near the left edge; a bullet just outside the right edge travels
+    // right and wraps across the player. A raw-line-only view puts it 850 px
+    // away and receding; on the torus it is 110 px away and closing, so the
+    // brain must commit `survive` and steer away from it.
+    const snapshot: BotSnapshot = {
+      player: { x: 100, y: 270, vx: 0, vy: 0 },
+      enemies: [],
+      enemyBullets: [{ x: 950, y: 270, vx: 150, vy: 0 }],
+      playerBullets: [],
+      drops: [],
+      minerals: [],
+      boss: null,
+      aliveCount: 0,
+      wave: null,
+      runSeed: RUN_SEED,
+      lives: 3,
+      livesCap: 5,
+    };
+    const brain = createCompetentBotBrain({
+      fallback: null,
+      tunables: { survivalUrgencyHorizon: 0.9 },
+    });
+    const intent = brain.decide(snapshot, DT);
+    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.survive);
+    // The shot arrives from the left (across the seam), so fleeing rightward
+    // increases the wrapped separation.
+    expect(intent.dirX).toBeGreaterThan(0);
   });
 });
