@@ -161,7 +161,6 @@ describe('AC5 — tunables in one shared config', () => {
       'engagementRadius',
       'dangerMargin',
       'bulletDangerRadius',
-      'wallMargin',
       'powerUpSeekRange',
       'mineralSeekRange',
       'playerSpeed',

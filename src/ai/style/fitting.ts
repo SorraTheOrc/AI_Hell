@@ -18,7 +18,7 @@
  * | key-hold distribution | `humanInput.thrustPressMinMs/MaxMs/Long` |
  * | target preferences | objective priority bands (order preserved) |
  * | engagement distances | `engagementRange`, `firePredictionHorizon` |
- * | risk appetite | `dangerMargin`, `wallMargin`, `survivalUrgencyPort` |
+ * | risk appetite | `dangerMargin`, `survivalUrgencyPort` |
  *
  * ## Safety guarantees (AC2)
  *
@@ -71,8 +71,6 @@ const ENGAGEMENT_MIN_PX = 60;
 const ENGAGEMENT_MAX_PX = 320;
 const DANGER_MARGIN_CAUTIOUS = 130;
 const DANGER_MARGIN_RISKY = 45;
-const WALL_MARGIN_CAUTIOUS = 45;
-const WALL_MARGIN_RISKY = 20;
 const SURVIVAL_URGENCY_CAUTIOUS = 7;
 const SURVIVAL_URGENCY_RISKY = 4;
 const HORIZON_MIN_SECONDS = 0.6;
@@ -182,7 +180,6 @@ export function enforceSafety(t: CompetentBotTunables): {
 
   const survivalUrgencyPort = clamp(t.survivalUrgencyPort, 1, 20);
   const dangerMargin = clamp(t.dangerMargin, 10, 240);
-  const wallMargin = clamp(t.wallMargin, 6, 90);
   const engagementRange = clamp(t.engagementRange, 30, 400);
   const threatRadius = clamp(t.threatRadius, 20, 120);
 
@@ -197,7 +194,6 @@ export function enforceSafety(t: CompetentBotTunables): {
       survivalBase,
       survivalUrgencyPort,
       dangerMargin,
-      wallMargin,
       engagementRange,
       threatRadius,
     },
@@ -376,7 +372,6 @@ export function fitStyle(
   // ── Risk appetite: keep-away margin and survival urgency ─────────
   const risk = clamp(features.riskAppetite, 0, 1);
   const dangerMargin = Math.round(lerp(DANGER_MARGIN_CAUTIOUS, DANGER_MARGIN_RISKY, risk));
-  const wallMargin = Math.round(lerp(WALL_MARGIN_CAUTIOUS, WALL_MARGIN_RISKY, risk));
   const survivalUrgencyPort = lerp(
     SURVIVAL_URGENCY_CAUTIOUS,
     SURVIVAL_URGENCY_RISKY,
@@ -385,11 +380,6 @@ export function fitStyle(
   applied.push({
     knob: 'dangerMargin',
     value: dangerMargin,
-    reason: `risk appetite ${risk.toFixed(2)}`,
-  });
-  applied.push({
-    knob: 'wallMargin',
-    value: wallMargin,
     reason: `risk appetite ${risk.toFixed(2)}`,
   });
   applied.push({
@@ -430,7 +420,6 @@ export function fitStyle(
     engagementRange,
     firePredictionHorizon,
     dangerMargin,
-    wallMargin,
     survivalUrgencyPort,
   };
 

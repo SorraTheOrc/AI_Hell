@@ -862,7 +862,7 @@ stays the current selection, so the Watch Demo is unchanged.
 | `Default` | The shipped tuned bot; the current selection everywhere. | — |
 | `aggressive-hunter` | Closes in and picks fights sooner across the whole screen. | higher `enemyBase`/`enemySeekRange`/`enemyWavePressurePort`, tighter `engagementRange`, lower `mineralBase` |
 | `cautious-collector` | Collection-first: long mineral/life/power-up reach with a wide safety margin. | higher `mineralBase`/`powerUpBase`, longer `mineralSeekRange`/`powerUpSeekRange`/`lifeSeekRange`, wider `dangerMargin` |
-| `evasive` | Survival above all: a wide threat bubble and room to retreat. | higher `survivalBase`/`survivalUrgencyPort`, wider `dangerMargin`/`threatRadius`/`wallMargin`, longer `reverseRetreatRange` |
+| `evasive` | Survival above all: a wide threat bubble and room to retreat. | higher `survivalBase`/`survivalUrgencyPort`, wider `dangerMargin`/`threatRadius`, longer `reverseRetreatRange` |
 | `glass-cannon` | All-out offence at point-blank range with thin defence. | higher `enemyBase`, much tighter `engagementRange`, lower `clearanceWeight`/`dangerMargin`/`survivalBase`, precise aim |
 | `relentless-hunter` | The promo opener: hunts across the screen with a wide threat bubble and retreat room. | higher `enemyBase`/`enemySeekRange`, wider `dangerMargin`/`threatRadius`/`reverseRetreatRange`, longer reaction time |
 | `barrage-dodger` | The promo crossfire: survival above all against an orbital threat bubble. | high `survivalUrgencyPort`, wide `dangerMargin`/`threatRadius`, long `hazardPredictionHorizon` |

@@ -84,8 +84,6 @@ export interface CompetentBotTunables {
   collectArrivalRadius: number;
   /** Distance (px) the bot keeps from a hazard (keep-away). */
   dangerMargin: number;
-  /** Distance (px) from an edge treated as a wall hazard. */
-  wallMargin: number;
   /** Distance (px) within which the ship's centre is at risk from a shot. */
   threatRadius: number;
   /** Distance (px) beyond which the steer objective is a long-travel leg. */
@@ -250,7 +248,6 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   engagementRange: 140,
   collectArrivalRadius: 18,
   dangerMargin: 70,
-  wallMargin: 30,
   threatRadius: 55,
   longTravelDistance: 250,
   repositionRadius: 90,

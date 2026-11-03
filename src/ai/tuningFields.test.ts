@@ -22,6 +22,8 @@ import {
   writeTuningNumber,
 } from './tuningFields';
 import { COMPETENT_BOT_TUNABLES } from './framework/competent/tunables';
+import { createCompetentBotBrain } from './framework/competent';
+import { makeSnapshot } from './framework/testFixtures';
 import { BOT_HUMAN_INPUT_TUNABLES } from './botHumanLike';
 import { BOT_WORLD_TUNABLES } from './framework/worldModel';
 
@@ -174,5 +176,40 @@ describe('bot tuning tooltip descriptions (AH-0MV4XGXVL001GSB2)', () => {
         toggle.description.trim().length === 0,
     ).map((toggle) => toggle.key);
     expect(missing).toEqual([]);
+  });
+});
+
+describe('retired wallMargin tolerance (AH-0MVT2W3RS009ZB2X)', () => {
+  it('exposes no wallMargin control', () => {
+    expect(
+      BOT_TUNING_NUMERIC_FIELDS.some((field) => field.key === 'wallMargin'),
+    ).toBe(false);
+  });
+
+  it('still loads a legacy config that carries wallMargin, applying the rest', () => {
+    // A config saved before the retirement still contains the field. Loading
+    // must tolerate it (forward compatibility) and apply the remaining values.
+    const legacy = {
+      competent: {
+        wallMargin: 120,
+        dangerMargin: 88,
+        engagementRange: 150,
+      },
+      human: {},
+    };
+    const values = coerceTuningValues(legacy);
+    const overrides = toCompetentOverrides(values);
+
+    expect(overrides.dangerMargin).toBe(88);
+    expect(overrides.engagementRange).toBe(150);
+
+    // The brain starts and decides without a fatal error or warning.
+    const brain = createCompetentBotBrain({ tunables: overrides });
+    expect(() =>
+      brain.decide(
+        makeSnapshot({ player: { x: 480, y: 270, vx: 0, vy: 0 } }),
+        0.1,
+      ),
+    ).not.toThrow();
   });
 });

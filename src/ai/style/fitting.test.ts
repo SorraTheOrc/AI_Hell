@@ -84,8 +84,6 @@ describe('fitStyle feature mapping (AC2)', () => {
     const fit = fitStyle(features({ riskAppetite: 0.3 }));
     // lerp(130, 45, 0.3) = 104.5 => rounds to 105.
     expect(fit.tunables.dangerMargin).toBe(105);
-    // lerp(45, 20, 0.3) = 37.5 => rounds to 38.
-    expect(fit.tunables.wallMargin).toBe(38);
     // lerp(7, 4, 0.3) = 6.1.
     expect(fit.tunables.survivalUrgencyPort).toBeCloseTo(6.1, 6);
 
@@ -95,6 +93,17 @@ describe('fitStyle feature mapping (AC2)', () => {
     expect(risky.tunables.survivalUrgencyPort).toBeLessThan(
       cautious.tunables.survivalUrgencyPort,
     );
+  });
+
+  it('retires the wallMargin knob but keeps the risk-appetite knobs fitted (AH-0MVT2W3RS009ZB2X)', () => {
+    const fit = fitStyle(features({ riskAppetite: 0.3 }));
+    // The retired field is absent from the fitted tunables and the knob list.
+    expect(fit.tunables).not.toHaveProperty('wallMargin');
+    const knobs = fit.applied.map((entry) => entry.knob);
+    expect(knobs).not.toContain('wallMargin');
+    // The remaining risk-appetite knobs are still fitted.
+    expect(knobs).toContain('dangerMargin');
+    expect(knobs).toContain('survivalUrgencyPort');
   });
 
   it('clamps out-of-range features instead of trusting them', () => {
@@ -187,7 +196,6 @@ describe('enforceSafety (AC2)', () => {
         mineralBase: 1_000,
         prioritySpan: 99,
         dangerMargin: -10,
-        wallMargin: 1e9,
         engagementRange: 1e9,
         threatRadius: 0,
         survivalUrgencyPort: 0,
@@ -197,7 +205,6 @@ describe('enforceSafety (AC2)', () => {
     expect(tunables.mineralBase).toBeLessThanOrEqual(MAX_BAND_BASE);
     expect(tunables.prioritySpan).toBeLessThanOrEqual(1);
     expect(tunables.dangerMargin).toBeGreaterThanOrEqual(10);
-    expect(tunables.wallMargin).toBeLessThanOrEqual(90);
     expect(tunables.engagementRange).toBeLessThanOrEqual(400);
     expect(tunables.threatRadius).toBeGreaterThanOrEqual(20);
     expect(tunables.survivalUrgencyPort).toBeGreaterThanOrEqual(1);

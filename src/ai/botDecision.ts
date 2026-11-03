@@ -101,8 +101,6 @@ export interface BotDecisionTunables {
    * an immediate (reactive) threat.
    */
   bulletDangerRadius: number;
-  /** Distance (px) from a screen edge that the bot treats as a wall hazard. */
-  wallMargin: number;
   /** Radius (px) within which the bot seeks power-up drops. */
   powerUpSeekRange: number;
   /** Radius (px) within which the bot collects minerals. */
@@ -190,7 +188,6 @@ export const BOT_DECISION_TUNABLES: BotDecisionTunables = {
   engagementRadius: 300,
   dangerMargin: 70,
   bulletDangerRadius: 55,
-  wallMargin: 40,
   powerUpSeekRange: 500,
   mineralSeekRange: 500,
   playerSpeed: 175,

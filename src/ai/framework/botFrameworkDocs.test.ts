@@ -27,6 +27,12 @@ describe('Bot framework is documented (AH-0MUY08WKB002N1N6)', () => {
 
   const doc = fs.existsSync(DOC_PATH) ? fs.readFileSync(DOC_PATH, 'utf8') : '';
 
+  it('does not advertise the retired wallMargin tunable (AH-0MVT2W3RS009ZB2X)', () => {
+    // The edges are a wrap, not a wall; the knob is retired and no longer
+    // part of the designer-facing tuning surface.
+    expect(doc).not.toMatch(/wallMargin/i);
+  });
+
   it('documents the framework overview and all four pieces (AC1–AC7)', () => {
     for (const heading of [
       '## 1. Why a framework',

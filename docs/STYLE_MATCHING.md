@@ -98,7 +98,7 @@ and keep a safe default.
 | key-hold distribution | `humanInput.thrustPressMinMs` / `MaxMs` / `MaxMsLong` |
 | target preferences | objective priority bands (`mineralBase`, `powerUpBase`, `enemyBase`) |
 | engagement distances | `engagementRange`, `firePredictionHorizon` |
-| risk appetite | `dangerMargin`, `wallMargin`, `survivalUrgencyPort` |
+| risk appetite | `dangerMargin`, `survivalUrgencyPort` |
 
 Fitting is **clamped**: reaction time, hold timing, stand-off and margins are
 all bounded to sane envelopes, so an extreme or malformed recording cannot
