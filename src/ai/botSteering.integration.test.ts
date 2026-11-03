@@ -317,10 +317,13 @@ describe('predictive hazard avoidance in the competent brain (AH-0MVI4QDN90037DI
   }
 
   /**
-   * The ship flies east toward a mineral at (800, 270) while a scout crosses
-   * its path vertically at x=480. The enemy is a plain `BotEnemy` with a
-   * stable bot-side id and **no** exposed velocity, so any lead the bot has on
-   * it comes from its own position-delta estimator.
+   * The ship flies east toward a mineral at (660, 270) while a scout crosses
+   * its path vertically at x=480. The mineral is under half a playfield away,
+   * so the shortest wrapped route is genuinely eastwards (a target more than
+   * half a width away is nearer across the seam, AH-0MVMISF0Q00314LG). The
+   * enemy is a plain `BotEnemy` with a stable bot-side id and **no** exposed
+   * velocity, so any lead the bot has on it comes from its own position-delta
+   * estimator.
    */
   function runCrossing(hazardPredictionEnabled: boolean): CrossingResult {
     const brain = createCompetentBotBrain({
@@ -344,7 +347,7 @@ describe('predictive hazard avoidance in the competent brain (AH-0MVI4QDN90037DI
         enemyBullets: [],
         playerBullets: [],
         drops: [],
-        minerals: [{ x: 800, y: 270, type: 'mineral' }],
+        minerals: [{ x: 660, y: 270, type: 'mineral' }],
         boss: null,
         aliveCount: 1,
         wave: null,
