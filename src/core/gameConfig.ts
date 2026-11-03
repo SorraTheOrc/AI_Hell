@@ -7,6 +7,7 @@ import { HexMapScene } from '../scenes/HexMapScene';
 import { PauseScene } from '../scenes/PauseScene';
 import { HelpScene } from '../scenes/HelpScene';
 import { MineralChoiceScene } from '../scenes/MineralChoiceScene';
+import { MiniBossWheelScene } from '../scenes/MiniBossWheelScene';
 import { SettingsScene } from '../scenes/SettingsScene';
 import { TelemetryConsentScene } from '../scenes/TelemetryConsentScene';
 import { GameOverScene } from '../scenes/GameOverScene';
@@ -41,7 +42,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     height: GAME_HEIGHT,
     backgroundColor: GAME_BACKGROUND_COLOR,
     parent: 'game-container',
-    scene: [MenuScene, PlayScene, HangarScene, HexMapScene, PauseScene, HelpScene, MineralChoiceScene, SettingsScene, TelemetryConsentScene, GameOverScene, LeaderboardScene, GymIndex],
+    scene: [MenuScene, PlayScene, HangarScene, HexMapScene, PauseScene, HelpScene, MineralChoiceScene, MiniBossWheelScene, SettingsScene, TelemetryConsentScene, GameOverScene, LeaderboardScene, GymIndex],
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,

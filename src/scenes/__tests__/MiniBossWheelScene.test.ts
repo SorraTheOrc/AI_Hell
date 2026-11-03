@@ -134,13 +134,13 @@ describe('MiniBossWheelScene', () => {
     // catalogue display name …
     expect(visuals.slice(0, -1).map((wedge) => wedge.id)).toEqual([
       'spread',
-      'shield',
       'rapid',
+      'shield',
     ]);
     expect(visuals.map((wedge) => wedge.label)).toEqual([
       'Spread Shot',
-      'Shield',
       'Rapid Fire',
+      'Shield',
       'BONUS',
     ]);
     // … plus exactly one bonus wedge, last.
