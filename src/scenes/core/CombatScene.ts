@@ -55,6 +55,7 @@ import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } fr
 import { spawnOrbitalStrike } from '../../vfx/orbitalStrike';
 import { selectOrbitalStrikeTarget } from './strikeTargeting';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
+import { isEligibleAutoTarget } from '../../utils/targetEligibility';
 import type { AoEDescriptor, WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { resolveThornsAbsorb } from '../../vfx/thornsAbsorb';
@@ -715,9 +716,16 @@ export abstract class CombatScene<
     const aoe = def.aoe;
     if (aoe?.trigger !== 'onFire') return;
     if (aoe.chains) {
-      // Arc: strike the nearest enemy, then chain to nearby targets. The
-      // chain is computed once (before any damage) so the damage, the
-      // along-path bullet clear and the VFX all describe the same strikes.
+      // Arc: strike the nearest **eligible** enemy, then chain to nearby
+      // targets. The chain is computed once (before any damage) so the damage,
+      // the along-path bullet clear and the VFX all describe the same strikes.
+      //
+      // Auto-targeting offence skips the inert `asteroid` world hazard
+      // (AH-0MVNSIG1O0049G69): a nearer rock neither absorbs the primary bolt
+      // nor consumes a chain link, and a rocks-only field resolves exactly
+      // like an empty one. The rule is the shared, pure
+      // `isEligibleAutoTarget`, so the game and every gym pick the same
+      // targets (gym↔game parity, AH-0MUGZDTFX004RBD1).
       const chain = selectChainTargets(
         x,
         y,
@@ -725,6 +733,7 @@ export abstract class CombatScene<
         // The descriptor counts *additional* targets after the primary.
         aoe.chains + 1,
         aoe.radius,
+        isEligibleAutoTarget,
       );
       const path: ArcChainPoint[] = [
         { x, y },
