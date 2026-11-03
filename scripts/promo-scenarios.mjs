@@ -596,22 +596,27 @@ const AUTHORED_PROMO_LEVELS = [
     // first cut lost the bot on wave 2 (37 s) with 27 enemies alive, so the
     // fleet is thinned (the lanes are the hazard, not the fleet) and a fourth
     // wave keeps the pick-up stream running past the 45 s target.
+    //
+    // Recalibrated for the wrap-aware bot (AH-0MVMISF0Q00314LG): wrapping lane
+    // traffic and bullets made the earlier counts lethal again (23 s), so wave
+    // 2 and wave 4 are thinned a little further and the scenario flies the
+    // survival-first `evasive` preset instead of `cautious-collector`.
     waves: [
       firing([
         group('tank', 'rect', 4, { spacingX: 52, spacingY: 46, startXMin: 160, startXMax: 260 }),
         group('scout', 'v', 3, { startX: ESCORT_X + 120 }),
       ], { laneTraffic: true }),
       firing([
-        group('swarm', 'swarm', 8, { spacingX: 24, startXMin: 140, startXMax: 320 }),
-        group('diver', 'diver', 4, { spacingY: 28 }),
+        group('swarm', 'swarm', 5, { spacingX: 24, startXMin: 140, startXMax: 320 }),
+        group('diver', 'diver', 3, { spacingY: 28 }),
       ], { laneTraffic: true }),
       firing([
         group('tank', 'rect', 6, { spacingX: 50, spacingY: 44, startXMin: 150, startXMax: 250 }),
         group('scout', 'v', 4, { startX: ESCORT_X + 120 }),
       ], { laneTraffic: true }),
       firing([
-        group('swarm', 'swarm', 10, { spacingX: 24, startXMin: 140, startXMax: 320 }),
-        group('scout', 'v', 4, { startX: ESCORT_X + 120 }),
+        group('swarm', 'swarm', 6, { spacingX: 24, startXMin: 140, startXMax: 320 }),
+        group('scout', 'v', 3, { startX: ESCORT_X + 120 }),
       ], { laneTraffic: true }),
     ],
   },
@@ -678,9 +683,9 @@ const AUTHORED_PROMO_LEVELS = [
     // flag-driven, so it works on a short promo level exactly as it does on
     // the campaign's wave 10.
     categories: ['boss', 'enemies'],
-    // A third pressure wave (AH-0MVSDMDA1003ARV5): the original two-wave
-    // prelude reached the mini-boss cordon in 44 s — just under the ≥45 s
-    // target — so the cordon now opens after three pressure waves.
+    // A fourth pressure wave (AH-0MVMISF0Q00314LG): the wrap-aware bot clears
+    // the earlier three-wave prelude in 37 s (below the ≥45 s target), so an
+    // extra pressure wave runs before the mini-boss cordon.
     waves: [
       firing([
         group('tank', 'rect', 8, { spacingX: 50, spacingY: 44, startXMin: 150, startXMax: 250 }),
@@ -689,6 +694,10 @@ const AUTHORED_PROMO_LEVELS = [
       firing([
         group('tank', 'rect', 10, { spacingX: 48, spacingY: 42, startXMin: 140, startXMax: 240 }),
         group('swarm', 'swarm', 10, { startX: ESCORT_X + 140, spacingX: 24 }),
+      ]),
+      firing([
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42, startXMin: 140, startXMax: 240 }),
+        group('diver', 'diver', 6, { spacingY: 28, startYMin: 140, startYMax: 280 }),
       ]),
       firing([
         group('tank', 'rect', 12, { spacingX: 46, spacingY: 40, startXMin: 140, startXMax: 240 }),

@@ -2576,7 +2576,7 @@ Design decisions agreed with the decision, carried by the build item:
 targeted at 40–60 minutes** for a semi-skilled player — six ≈5-minute
 deployments (≈30 minutes) plus builds, salvage and a few losses. **Ring 2 is
 larger at 12 hexes** (≈60 minutes of deployments plus 10–40 minutes of builds and
-losses, so ≈70–100 minutes), and ring *n* holds 6*n* hexes, so later rings take
+losses, so ≈90–120 minutes), and ring *n* holds 6*n* hexes, so later rings take
 progressively longer. The campaign is therefore extendable rather than finite.
 - **Boss and weapon strength are known ahead.** Before committing, the player sees
 each hex's boss, its strengths and weaknesses, its aggression and exactly which
@@ -2958,10 +2958,10 @@ Measured baseline (seeds 1–3, competent bot; artifact
 
 | Ring | Line | Total mean (min–max) | Losses | Budget |
 |---|---|---|---|---|
-| 1 (6 hexes) | grind | **46.0 min** (43.7–50.3) | 3.7 | 40–60 · **in-window** |
-| 1 (6 hexes) | rush | **31.9 min** (31.8–32.0) | 1.0 | ring not secured |
-| 2 (12 hexes) | grind | **91.6 min** (90.3–93.4) | 12.0 | 70–100 · **in-window** |
-| 2 (12 hexes) | rush | **61.7 min** (61.5–62.0) | 1.0 | ring not secured |
+| 1 (6 hexes) | grind | **49.2 min** (46.8–50.8) | 3.0 | 40–60 · **in-window** |
+| 1 (6 hexes) | rush | **34.1 min** (32.1–35.6) | 1.0 | ring not secured |
+| 2 (12 hexes) | grind | **109.0 min** (106.5–113.2) | 12.0 | 90–120 · **in-window** |
+| 2 (12 hexes) | rush | **62.6 min** (61.9–63.6) | 1.0 | ring not secured |
 
 The budget assertion states a **10 % tolerance** of each window's width —
 **±2 min** for ring 1 and **±3 min** for ring 2 — and both grind lines pass
@@ -2973,10 +2973,10 @@ and Q4); a human playtest is desirable but not a gate.
 Two lines are measured, and both are viable:
 
 - **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
-  secured: **46.0 min** for ring 1 and **91.6 min** for ring 2, banking salvage
+  secured: **49.2 min** for ring 1 and **109.0 min** for ring 2, banking salvage
   and ending with a held ring.
-- **Rush** — the weapon hex first, then straight into the next ring: **31.9 min**
-  and **61.7 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
+- **Rush** — the weapon hex first, then straight into the next ring: **34.1 min**
+  and **62.6 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
 expected retakes and forfeiting the salvage of any failed attempt.
 
 **Neither line dominates**: the rush is faster but riskier and ends with an

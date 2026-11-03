@@ -316,7 +316,7 @@ describe('ring timing: real arena evidence', () => {
     expect(report.summary.ringSecuredRuns).toBe(3);
   }, 60_000);
 
-  it('the 12-hex ring 2 grind lands inside the 70–100-minute budget', () => {
+  it('the 12-hex ring 2 grind lands inside the 90–120-minute budget', () => {
     const report = simulateRingTiming({
       ringIndex: 2,
       strategy: 'grind',

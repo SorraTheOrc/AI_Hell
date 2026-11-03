@@ -883,7 +883,7 @@ replace storage behind the same injectable interface (§6.6).
   40–60 minutes** for a semi-skilled player: six ≈5-minute deployments (≈30
   minutes) plus build/salvage time on the hangar and the cost of a few lost
   attempts. **Ring 2 is larger — 12 hexes** — so it lands at ≈60 minutes of
-  deployments plus 10–40 minutes of builds and losses (**≈70–100 minutes**).
+  deployments plus 10–40 minutes of builds and losses (**≈90–120 minutes** with the wrap-aware bot).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.
