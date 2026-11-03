@@ -519,7 +519,7 @@ editorial `categories` the scenario was authored to evidence.
 | `promo-centipede-tunnel` | Thread the centipede chain as it winds through a scout screen. | `evasive` | enemies |
 | `promo-ghost-hunt` | Outrun Pac-Man pursuers hunting between non-targeting escorts. | `evasive` | enemies |
 | `promo-horde-siege` | Survive the homing-horde rush pouring in from the arena edges. | `aggressive-hunter` | enemies, weapons |
-| `promo-lane-runner` | Weave lane traffic while farming the fleet for drops. | `cautious-collector` | enemies, pickups |
+| `promo-lane-runner` | Weave lane traffic while farming the fleet for drops. | `evasive` | enemies, pickups |
 | `promo-orbital-barrage` | Crossfire of orbital phasers and telegraphed strike arcs. | `barrage-dodger` | weapons, enemies |
 | `promo-capture-cordon` | Break a tractor-pull and attack-run cordon with a hard silhouette. | `cordon-breaker` | enemies |
 | `promo-boss-prelude` | Pressure waves into a mini-boss cordon: the boss-category footage. | `glass-cannon` | boss, enemies |
