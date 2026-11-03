@@ -24,6 +24,10 @@
  *   mini-boss's live minions are captured before the teardown, swept with the
  *   staggered cascade, and the status line reports the sweep's completion.
  * - **SHOOT: ON/OFF** — toggles the mini-boss's volleys.
+ * - **REWARD** — opens the shared mini-boss wheel overlay with a deterministic
+ *   gym-seeded outcome, so the reward can be exercised end-to-end through the
+ *   same distribution/resolver/reward-application modules the game uses
+ *   (parent AH-0MVLISU03006WDOD, parity child AH-0MVSF68QS006C8V0).
  * - **← INDEX** — returns to the gym index.
  */
 
@@ -45,6 +49,20 @@ import type { EnemyEntity } from '../../entities/enemyFactory';
 import type { FormationOffset } from '../../utils/formations';
 import type { SceneSetupState } from '../core/sceneSetup';
 import { loadEnemyConfig } from '../../core/enemyConfig';
+import { createSeededRng } from '../../core/rng';
+import {
+  MINI_BOSS_WHEEL_SLOT_COUNT,
+  applyWheelOutcome,
+  buildWheelWedges,
+  drawWheelOutcome,
+  type MiniBossWheelOutcome,
+  type MiniBossWheelWedge,
+} from '../../powerups/miniBossWheel';
+import { resolvePlayerSlotState } from '../../powerups/slots';
+import {
+  MINI_BOSS_WHEEL_SCENE_KEY,
+  type MiniBossWheelScene,
+} from '../MiniBossWheelScene';
 import {
   collectSweepTargets,
   spawnMiniBossDeathSweep,
@@ -83,6 +101,15 @@ export const MINI_BOSS_GYM_HP_PER_PHASE = 5;
  * the EXPLODE display — and every parity assertion — identical.
  */
 export const MINI_BOSS_GYM_SWEEP_SEED = 0x5eed_1b05;
+
+/**
+ * Fixed seed for the gym's wheel-reward exercise (parent AH-0MVLISU03006WDOD
+ * AC6, parity child AH-0MVSF68QS006C8V0). Gyms have no run, so — exactly like
+ * {@link MINI_BOSS_GYM_SWEEP_SEED} — a constant seed keeps every repetition of
+ * the reward (and every parity assertion) identical while still drawing the
+ * slot index from the shared seeded-RNG seam the game uses.
+ */
+export const MINI_BOSS_GYM_REWARD_SEED = 0x5eed_beef;
 
 // Level-1 design constants, surfaced for the gym's tests and the index row.
 // They mirror the bespoke catalogue rather than a separate demo config, so a
@@ -187,12 +214,26 @@ export class GymMiniBoss extends GymFormationScene<
   /** Targets captured for the current/last defeat sweep (test seam). */
   private defeatSweepTargets: readonly MiniBossSweepTarget[] = [];
 
+  /** The wedges of the open (or most recent) gym wheel reward. */
+  private rewardWedges: MiniBossWheelWedge[] = [];
+  /** The deterministic outcome of the open (or most recent) gym wheel reward. */
+  private rewardOutcome: MiniBossWheelOutcome | null = null;
+  /** Whether the gym wheel reward overlay is open. */
+  private rewardOpen = false;
+  /** How many times the gym applied a wheel outcome (exactly once by design). */
+  private rewardAppliedCount = 0;
+
   constructor() {
     super(MINI_BOSS_CONFIG);
   }
 
   override create(): void {
     super.create();
+
+    this.rewardWedges = [];
+    this.rewardOutcome = null;
+    this.rewardOpen = false;
+    this.rewardAppliedCount = 0;
 
     // DAMAGE button beside EXPLODE (mirrors GymBoss's layout).
     const explodeButton = this.explodeButton;
@@ -213,6 +254,12 @@ export class GymMiniBoss extends GymFormationScene<
         );
         this.scene.restart();
       });
+
+    // REWARD opens the same shared wheel overlay the game uses, so a tester
+    // can exercise the mini-boss reward end-to-end in the gym
+    // (parent AH-0MVLISU03006WDOD, parity child AH-0MVSF68QS006C8V0).
+    this._addButton(explodeButton.x - 360, explodeButton.y, 'REWARD', LABEL_STYLE)
+      .on('pointerdown', () => this.openMiniBossReward());
 
     this._refreshStatus();
   }
@@ -261,9 +308,11 @@ export class GymMiniBoss extends GymFormationScene<
    * captured *before* the teardown (the entity clears them on destruction),
    * every captured target is removed cosmetically, and the staggered cascade
    * plus the scattered/anchored celebration bursts — and the mini-boss's
-   * 20-burst finale, fired in pairs two every 0.25 s — play out. The gym has no
-   * reward overlay or wave accounting, so completion only reports itself on
-   * the status line — the same display the game shows, minus the reward.
+   * 20-burst finale, fired in pairs two every 0.25 s — play out. EXPLODE itself
+   * does not open the reward: the dedicated REWARD control exercises that
+   * shared wheel path, and the gym has no wave accounting, so completion only
+   * reports itself on the status line — the same display the game shows, with
+   * the reward available from its own button.
    */
   override explodeRandom(): void {
     const boss = this.formationMiniBoss;
@@ -353,6 +402,130 @@ export class GymMiniBoss extends GymFormationScene<
     this.statusText.setText(
       `${prefix ? `${prefix} — ` : ''}${state}`,
     );
+  }
+
+  // ── Mini-boss wheel reward (game ↔ gym parity) ──────────────────
+
+  /**
+   * Seeds a small permanent loadout when the gym player owns nothing, so the
+   * wheel has real wedges to exercise. Gym-only demo fixture: it uses the same
+   * run-scoped player stores the game grants through, so the wheel population
+   * is derived exactly as `PlayScene.openMiniBossReward` derives it.
+   */
+  private _ensureRewardLoadout(): void {
+    if (this.player === null) return;
+    if (resolvePlayerSlotState(this.player).ownedIds.size > 0) return;
+    this.player.equipWeapon('spread', true);
+    this.player.collectPowerUp('speed_boost', true);
+    this.player.collectPowerUp('magnet', true);
+  }
+
+  /**
+   * Opens the mini-boss wheel reward through the **shared** modules the game
+   * uses: the wedge list and the outcome are both derived from the same
+   * `resolvePlayerSlotState(player).ownedIds` snapshot, the slot index is
+   * drawn from the seeded-RNG seam (fixed gym seed — no run), and the landed
+   * outcome is applied through `applyWheelOutcome`.
+   *
+   * Mirrors `PlayScene.openMiniBossReward` for the parity reference. A gym
+   * with no owned kinds keeps the empty-owned fallback (no wheel); a gym that
+   * has not registered the overlay pays the outcome immediately rather than
+   * pausing forever.
+   */
+  openMiniBossReward(): MiniBossWheelWedge[] {
+    if (this.rewardOpen) return this.getMiniBossWheelWedges();
+    this._ensureRewardLoadout();
+    const ownedKinds = [
+      ...resolvePlayerSlotState(this.player).ownedIds,
+    ];
+    const wedges = buildWheelWedges(ownedKinds);
+    this.rewardWedges = wedges;
+    this.rewardAppliedCount = 0;
+    if (ownedKinds.length === 0) {
+      // Empty-owned fallback (parent AC4): there is no wheel to show.
+      this.rewardOutcome = null;
+      return [];
+    }
+
+    const rng = createSeededRng(MINI_BOSS_GYM_REWARD_SEED);
+    const slotIndex = Math.min(
+      MINI_BOSS_WHEEL_SLOT_COUNT - 1,
+      Math.max(0, Math.floor(rng() * MINI_BOSS_WHEEL_SLOT_COUNT)),
+    );
+    const outcome = drawWheelOutcome(slotIndex, ownedKinds);
+    this.rewardOutcome = outcome;
+
+    if (!this.scene.manager.getScene(MINI_BOSS_WHEEL_SCENE_KEY)) {
+      // No overlay registered (isolated boot): pay out immediately so the gym
+      // never pauses on a surface it cannot show.
+      this._applyMiniBossWheelReward(outcome);
+      return wedges;
+    }
+
+    this.rewardOpen = true;
+    this.scene.pause();
+    this.scene.launch(MINI_BOSS_WHEEL_SCENE_KEY, {
+      origin: 'GymMiniBoss',
+      wedges,
+      outcome,
+      // Gyms have no demo mode: the tester spins (AC3).
+      onResult: (resolved: MiniBossWheelOutcome) =>
+        this._applyMiniBossWheelReward(resolved),
+    });
+    return wedges;
+  }
+
+  /**
+   * Applies a landed gym wheel outcome exactly once through the shared
+   * `applyWheelOutcome` seam and resumes the scene. Guarded by `rewardOpen`,
+   * so a repeated result can never apply the outcome twice.
+   */
+  private _applyMiniBossWheelReward(outcome: MiniBossWheelOutcome): void {
+    // At most one application per reward: the overlay callback fires once and
+    // the immediate-payout path runs at most once.
+    if (this.rewardAppliedCount > 0) return;
+    applyWheelOutcome(outcome, this.getEffectsRegistry(), this.player);
+    this.rewardAppliedCount += 1;
+    const wasOpen = this.rewardOpen;
+    this.rewardOpen = false;
+    if (wasOpen) this.scene.resume();
+  }
+
+  /** The wedges of the open (or most recent) gym wheel reward. */
+  getMiniBossWheelWedges(): MiniBossWheelWedge[] {
+    return this.rewardWedges.map((wedge) => ({ ...wedge }));
+  }
+
+  /** The deterministic outcome of the open (or most recent) gym wheel reward. */
+  getMiniBossWheelOutcome(): MiniBossWheelOutcome | null {
+    const outcome = this.rewardOutcome;
+    if (outcome === null) return null;
+    return {
+      slotKind: outcome.slotKind,
+      gains: outcome.gains.map((gain) => ({ ...gain })),
+    };
+  }
+
+  /** Whether the gym wheel reward overlay is open. */
+  isMiniBossRewardOpen(): boolean {
+    return this.rewardOpen;
+  }
+
+  /** How many times the gym applied a wheel outcome (0 or 1 per reward). */
+  getMiniBossRewardAppliedCount(): number {
+    return this.rewardAppliedCount;
+  }
+
+  /**
+   * Spins the open gym wheel (test seam / pointer). A repeat spin after it has
+   * started or landed is a no-op, so the outcome is applied once.
+   */
+  spinMiniBossReward(): boolean {
+    if (!this.rewardOpen) return false;
+    const overlay = this.scene.manager.getScene(
+      MINI_BOSS_WHEEL_SCENE_KEY,
+    ) as MiniBossWheelScene | null;
+    return overlay?.spin() ?? false;
   }
 
   // ── Public test accessors ───────────────────────────────────────
