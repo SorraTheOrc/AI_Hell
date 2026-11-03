@@ -15,6 +15,9 @@
  * `utils/targetEligibility` module (AH-0MVVHAAUJ0080M9M) and this module
  * delegates to it, so the Arc chain and the Orbital Strike bolt cannot drift
  * apart — in the game or in any gym (gym↔game parity, AH-0MUGZDTFX004RBD1).
+ * That rule — auto-targeting offence targets live enemies only and skips the
+ * inert `asteroid` world hazard, while aimed/area weapons may still hit rock —
+ * is the standing rule for all auto-targeting offence (AH-0MVNSIG1O0049G69).
  *
  * The strike **selection** lives here, once, and is consumed by
  * `CombatScene.onOrbitalStrike` — the single strike seam inherited by
