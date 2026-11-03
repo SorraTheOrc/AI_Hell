@@ -88,7 +88,7 @@
  * @vitest-environment node
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   ACTION_SERIES_EXTENSION,
   BREAKDOWN_TO_EDITORIAL_CATEGORY,
@@ -139,6 +139,39 @@ import {
   sourceWebmPath,
   windowFeatures,
 } from './compile-promo.mjs';
+
+// ────────────────────────────────────────────────────────────────────────────
+// Suite-output hygiene (AH-0MW0M82U40059AKD)
+// ────────────────────────────────────────────────────────────────────────────
+//
+// Every test in this file is hermetic: ffmpeg/ffprobe are injected, so nothing
+// here touches a real encoder. The *CLI* entry point is the exception —
+// `compilePromoMain` forwards its progress stream to the real `process.stderr`
+// by default (a deliberate feature of real runs: a 2-4 minute encode must not
+// look hung). A test that drives the CLI without injecting a `progress` sink
+// therefore leaks `compile: [1/3] promo: FAIL — …` lines into the suite's own
+// output tail. That noise was triaged as a failing
+// `scripts/compile-promo.test.ts` test on 2026-11-03 while the real failure was
+// an unrelated timeout: the FAIL line came from the *passing* test that
+// deliberately injects a black deliverable. This guard keeps the signal clean
+// — no test in this file may write to `process.stderr`.
+const stderrWrites: string[] = [];
+
+beforeAll(() => {
+  vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+    stderrWrites.push(String(chunk));
+    return true;
+  });
+});
+
+afterAll(() => {
+  vi.restoreAllMocks();
+  expect(
+    stderrWrites.join(''),
+    'a hermetic test wrote to the process stderr — inject a silent `progress` sink ' +
+      'instead, so the suite output never carries compile FAIL lines from passing tests',
+  ).toBe('');
+});
 
 /** A synthetic series point (t in ms since run start). */
 function pt(
@@ -2254,6 +2287,9 @@ function memoryFs(files: Record<string, string>) {
   };
 }
 
+/** A silent progress sink: these tests assert behaviour, not the operator stream. */
+const silentProgress = () => {};
+
 describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
   it('parses --compile and --out-dir', () => {
     expect(parseCompileArgs(['--compile']).compile).toBe(true);
@@ -2271,7 +2307,7 @@ describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
     const result = compilePromoMain(
       ['--compile', '--runs', 'gameplay-demo', '--out-dir', `${CAPTURE_OUTPUT_DIR}/unit`],
       memoryFs(files),
-      { resolveTools: () => null },
+      { resolveTools: () => null, progress: silentProgress },
     );
     expect(result.code).toBe(1);
     expect(result.stdout).toContain('not found on PATH');
@@ -2295,6 +2331,7 @@ describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
         probe: targetProbeOf,
         brightness: brightFixture,
         run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+        progress: silentProgress,
       },
     );
     expect(result.code).toBe(0);
@@ -2319,6 +2356,7 @@ describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
         probe: targetProbeOf,
         brightness: brightFixture,
         run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+        progress: silentProgress,
       },
     );
     expect(result.code).toBe(1);
@@ -2342,6 +2380,10 @@ describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
         probe: () => probeOf(),
         brightness: () => ({ ...brightFixture(), maxYavg: 0, nonBlackRatio: 0, nonBlackFrames: 0 }),
         run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+        // The black-deliverable verdict is asserted from `result.stdout`; the
+        // progress stream must not leak a matching `FAIL` line into the suite
+        // output (that is exactly how this test was mis-triaged as failing).
+        progress: silentProgress,
       },
     );
     expect(result.code).toBe(1);
