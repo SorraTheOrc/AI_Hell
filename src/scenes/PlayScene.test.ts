@@ -69,6 +69,11 @@ import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
 import { PauseScene } from './PauseScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
+import {
+  MINI_BOSS_WHEEL_REVEAL_HOLD_MS,
+  MINI_BOSS_WHEEL_SPIN_DURATION_MS,
+  MiniBossWheelScene,
+} from './MiniBossWheelScene';
 import { RunTelemetry } from './core/runTelemetry';
 import { HOLD_FULL_COUNTDOWN_DURATION_MS } from './core/holdFullCountdown';
 import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
@@ -282,6 +287,27 @@ function hitMiniBossUntilDead(scene: PlayScene): void {
 }
 
 /**
+ * Resolves an open mini-boss reward exactly as a player would: spin the wheel
+ * to its landed result, or select the first fallback option when the wheel is
+ * not shown (the empty-owned fallback). Both paths are synchronous so the
+ * existing fixed-delta walks keep working.
+ */
+function resolveOpenMiniBossReward(scene: PlayScene): void {
+  if (!scene.isMiniBossRewardOpen()) return;
+  if (scene.getMiniBossWheelWedges().length > 0) {
+    scene.spinMiniBossReward();
+    stepGameUntil(
+      scene.game,
+      'mini-boss wheel reward resolution',
+      () => !scene.isMiniBossRewardOpen(),
+      400,
+    );
+    return;
+  }
+  scene.selectMiniBossReward(0);
+}
+
+/**
  * Destroys the active level's mini-boss (if any) via player bullets and
  * drives its death sweep to completion, so the encounter is fully finalised
  * (reward overlay offered, wave/level accounting advanced). A no-op outside
@@ -296,9 +322,7 @@ function killMiniBoss(scene: PlayScene, resolveReward = true): void {
   // (AH-0MVCRBNO6003E1CH); a deterministic walk resolves it so play can
   // continue, exactly as a player picking the first option would. Tests that
   // need to inspect/choose the offer pass `resolveReward: false`.
-  if (resolveReward && scene.isMiniBossRewardOpen()) {
-    scene.selectMiniBossReward(0);
-  }
+  if (resolveReward) resolveOpenMiniBossReward(scene);
 }
 
 /** Destroys every live enemy via player bullets (deterministic). */
@@ -665,6 +689,7 @@ async function bootSceneWithLevels(
   return bootDeterministic(async () => {
     const game = await bootScene([
       PlayScene,
+      MiniBossWheelScene,
       ...(options.extraScenes ?? []),
       GameOverScene,
       MenuScene,
@@ -7777,82 +7802,173 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(miniBoss.getHpFraction()).toBeLessThan(1);
   });
 
-  it('AC1/AC4 — a defeat offers exactly one upgrade choice (no unlock options)', async () => {
+  // ── Mini-boss wheel reward (parent AH-0MVLISU03006WDOD AC1–AC6) ──
+
+  /** Cuts the run back to a known permanent loadout before a reward. */
+  function ownWheelKinds(scene: PlayScene): void {
+    const player = scene.getPlayer()!;
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+    player.equipWeapon('spread', true);
+    player.equipWeapon('rapid', true);
+    player.collectPowerUp('speed_boost', true);
+  }
+
+  /** A plausible defeat context for direct `openMiniBossReward` calls. */
+  const rewardContext = {
+    level: 1,
+    waveNumber: 2,
+    miniBossName: 'Test Mini-Boss',
+    isFinalLevel: false,
+  };
+
+  it('AC1 — a defeat opens the wheel with one wedge per owned kind plus the bonus wedge', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
-    // Collect/own a weapon so the upgrade option set is non-empty.
-    scene.getPlayer()!.equipWeapon('spread', true);
+    ownWheelKinds(scene);
 
     killMiniBoss(scene, false);
 
-    const options = scene.getMiniBossRewardOptions();
-    expect(options.length).toBeGreaterThan(0);
-    // The reward is a level-up surface only (parent AH-0MVLISU03006WDOD AC5):
-    // every offer upgrades an owned permanent item, and no option adds a
-    // brand-new weapon kind.
-    expect(options.every((option) => option.kind === 'weapon-level' || option.kind === 'power-up-level')).toBe(true);
-    expect(options.some((option) => option.kind === 'weapon-level')).toBe(true);
-    expect(options.some((option) => option.kind === 'weapon')).toBe(false);
+    // The multi-option upgrade-or-unlock menu is gone (AC1/AC5).
+    expect(scene.getMiniBossRewardOptions()).toEqual([]);
+    // One wedge per owned permanent kind, bonus last (AC1).
+    expect(scene.getMiniBossWheelWedges().map((wedge) => wedge.id)).toEqual([
+      'spread',
+      'rapid',
+      'speed_boost',
+      'bonus',
+    ]);
+    expect(scene.isMiniBossRewardOpen()).toBe(true);
+    // The outcome was resolved from the run-seeded RNG before launch (AC6).
+    expect(scene.getMiniBossWheelOutcome()).not.toBeNull();
+    // Play is paused exactly like the hold-full choice (AC1).
+    expect(scene.isPaused()).toBe(true);
+
+    await advanceGame(scene.game, 60);
+    expect(scene.game.scene.isActive('MiniBossWheelScene')).toBe(true);
+    expect(scene.game.scene.isActive('MineralChoiceScene')).toBe(false);
+
+    resolveOpenMiniBossReward(scene);
   });
 
-  it('AC2/AC4 — choosing an upgrade raises an owned permanent item by one level', async () => {
+  it('AC2/AC3 — the spin applies the resolved outcome exactly once', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    ownWheelKinds(scene);
+    const player = scene.getPlayer()!;
+
+    killMiniBoss(scene, false);
+    const outcome = scene.getMiniBossWheelOutcome()!;
+    const levelOf = (id: string): number =>
+      [...player.getWeaponLevels(), ...player.getPowerUpLevels()].find(
+        (entry) => entry.id === id,
+      )?.level ?? 0;
+    const before = new Map(
+      ['spread', 'rapid', 'speed_boost'].map((id) => [id, levelOf(id)]),
+    );
+
+    // The wheel never resolves on its own outside demo mode: spinning is
+    // player-initiated (AC2).
+    await advanceGame(scene.game, 400);
+    expect(scene.isMiniBossRewardOpen()).toBe(true);
+    expect(scene.spinMiniBossReward()).toBe(true);
+    stepGameUntil(
+      scene.game,
+      'mini-boss wheel resolution',
+      () => !scene.isMiniBossRewardOpen(),
+      400,
+    );
+
+    // Exactly the resolved gains, applied exactly once (AC3).
+    for (const [id, level] of before) {
+      const gain = outcome.gains.find((entry) => entry.id === id)?.levels ?? 0;
+      expect(levelOf(id), `${id} level`).toBe(level + gain);
+    }
+    // A repeat spin/select is a no-op (AC3).
+    expect(scene.spinMiniBossReward()).toBe(false);
+    expect(scene.selectMiniBossReward(0)).toBeNull();
+    // Play resumes and the overlay closes (AC1/AC3).
+    expect(scene.isPaused()).toBe(false);
+    expect(scene.game.scene.isActive('MiniBossWheelScene')).toBe(false);
+  });
+
+  it('AC4 — with nothing owned the wheel is not shown and the three-option choice pays out', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
     const player = scene.getPlayer()!;
-    player.equipWeapon('railgun', true);
-    const before = player
-      .getWeaponLevels()
-      .find((entry) => entry.id === 'railgun')!.level;
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
 
     killMiniBoss(scene, false);
-    const options = scene.getMiniBossRewardOptions();
-    const upgradeIndex = options.findIndex(
-      (option) => option.kind === 'weapon-level' && option.id === 'railgun',
-    );
-    expect(upgradeIndex).toBeGreaterThanOrEqual(0);
 
-    const chosen = scene.selectMiniBossReward(upgradeIndex);
-    expect(chosen).not.toBeNull();
-    const after = player
-      .getWeaponLevels()
-      .find((entry) => entry.id === 'railgun')!.level;
-    expect(after).toBe(before + 1);
-    // The reward is resolved exactly once (AC4).
+    // No wheel: with nothing owned a wheel would be a dud, so the
+    // hold-full-style three-option choice is offered instead (AC4).
+    expect(scene.getMiniBossWheelWedges()).toEqual([]);
+    expect(scene.getMiniBossWheelOutcome()).toBeNull();
+    const options = scene.getMiniBossRewardOptions();
+    expect(options).toHaveLength(3);
+    expect(options.map((option) => option.id)).not.toContain('reset');
+    // …and it resolves, so a mini-boss always pays out (no soft-lock).
+    expect(scene.selectMiniBossReward(0)).not.toBeNull();
     expect(scene.isMiniBossRewardOpen()).toBe(false);
-    expect(scene.selectMiniBossReward(upgradeIndex)).toBeNull();
+    expect(scene.isPaused()).toBe(false);
   });
 
-  it('AC5 — the removed unlock feature leaves no unlock option and no persisted unlock state', async () => {
+  it('AC6 — the wheel outcome is drawn from the run-seeded RNG and reproduces', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
-    scene.getPlayer()!.equipWeapon('spread', true);
+    ownWheelKinds(scene);
+
+    // A zero draw is slot 0 — the single bonus slot — so every owned kind
+    // gains one level (the 100-slot table's first entry).
+    scene.setRng(() => 0);
+    killMiniBoss(scene, false);
+    const bonus = scene.getMiniBossWheelOutcome()!;
+    expect(bonus.slotKind).toBe('bonus');
+    expect(bonus.gains.map((gain) => gain.id).sort()).toEqual([
+      'rapid',
+      'speed_boost',
+      'spread',
+    ]);
+    resolveOpenMiniBossReward(scene);
+
+    // The same draw on the same owned snapshot reproduces the same outcome.
+    scene.setRng(() => 0);
+    scene.openMiniBossReward(rewardContext);
+    expect(scene.getMiniBossWheelOutcome()).toEqual(bonus);
+    resolveOpenMiniBossReward(scene);
+
+    // A near-one draw lands slot 99, a single-upgrade slot.
+    scene.setRng(() => 0.999999);
+    scene.openMiniBossReward(rewardContext);
+    expect(scene.getMiniBossWheelOutcome()!.slotKind).toBe('single');
+    resolveOpenMiniBossReward(scene);
+  });
+
+  it('AC5 — the wheel never offers a kind the run does not own (no unlock surface)', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    ownWheelKinds(scene);
     localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
 
     killMiniBoss(scene, false);
-    const options = scene.getMiniBossRewardOptions();
-    // A previously locked weapon can never be picked up from the reward…
-    expect(options.some((option) => option.id === 'railgun')).toBe(false);
+    const wedgeIds = scene.getMiniBossWheelWedges().map((wedge) => wedge.id);
+    // A previously locked weapon can never be a wheel wedge…
+    expect(wedgeIds).not.toContain('railgun');
+    resolveOpenMiniBossReward(scene);
 
-    scene.selectMiniBossReward(0);
-    // …and the checkpoint no longer carries a `unlockedWeapons` field, so the
-    // removed feature cannot leak back through Continue.
-    const persisted = loadCheckpoint()!;
+    // …and the checkpoint no longer carries the removed unlock field.
+    const persisted = loadCheckpoint();
     expect(persisted).not.toBeNull();
     expect(persisted).not.toHaveProperty('unlockedWeapons');
   });
 
-  // ── Six-slot cap on the reward offer (parent AH-0MVLIJT3M005HPHF AC4) ──
-
-  it('AH-0MVLIJT3M005HPHF AC4 — at six filled slots the reward offers no brand-new weapon unlock', async () => {
+  it('AH-0MVLIJT3M005HPHF AC4 — the wheel is the six-slot pool (no seventh kind)', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
     const player = scene.getPlayer()!;
-    // Start from an empty loadout: walking to the mini-boss resolves hold-full
-    // choices, which would otherwise leave an unknown permanent loadout behind.
     player.resetWeaponLevels();
     player.getPowerUpLevelStore().reset();
-    // Fill all six counted slots: one permanent weapon plus five permanent
-    // power-up kinds, through the player's own run-scoped stores.
     player.equipWeapon('spread', true);
     for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift', 'magnet'] as const) {
       player.collectPowerUp(id, true);
@@ -7860,16 +7976,6 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
 
     killMiniBoss(scene, false);
 
-    const options = scene.getMiniBossRewardOptions();
-    expect(options.length).toBeGreaterThan(0);
-    // The upgrade half survives — it names kinds already in the slots.
-    expect(
-      options.some((option) => option.kind === 'weapon-level' && option.id === 'spread'),
-    ).toBe(true);
-    // The unlock half is gated: no kind outside the slots can be added, so a
-    // seventh kind can never come from a mini-boss reward (the producer's
-    // "we seem able to get 7 slots" path).
-    expect(options.every((option) => option.kind !== 'weapon')).toBe(true);
     const held = new Set([
       'spread',
       'shield',
@@ -7878,87 +7984,13 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
       'phase_shift',
       'magnet',
     ]);
-    for (const option of options) {
-      expect(held.has(option.id), `${option.id} is outside the slots`).toBe(true);
+    const wedgeIds = scene.getMiniBossWheelWedges().map((wedge) => wedge.id);
+    // One wedge per owned kind plus the bonus — never a seventh counted kind.
+    expect(wedgeIds).toHaveLength(held.size + 1);
+    for (const id of wedgeIds) {
+      expect(id === 'bonus' || held.has(id), `${id} outside the pool`).toBe(true);
     }
-  });
-
-  it('AH-0MVLIJT3M005HPHF AC4 — a temporarily-held kind is no longer offered as an unlock', async () => {
-    const scene = await bootMiniBossCampaign();
-    advanceToMiniBoss(scene);
-    const player = scene.getPlayer()!;
-    player.resetWeaponLevels();
-    player.getPowerUpLevelStore().reset();
-    player.equipWeapon('spread', true);
-    for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift'] as const) {
-      player.collectPowerUp(id, true);
-    }
-    // The sixth slot is a field pickup of a previously locked weapon.
-    player.equipWeapon('railgun', false);
-
-    killMiniBoss(scene, false);
-
-    const options = scene.getMiniBossRewardOptions();
-    // The unlock half is gone, so the temporarily-held weapon is not offered as
-    // an acquisition; the reward offers only the permanently-owned kinds.
-    expect(options.some((option) => option.kind === 'weapon')).toBe(false);
-    expect(options.map((option) => option.id)).not.toContain('railgun');
-    expect(options.map((option) => option.id)).toContain('spread');
-  });
-
-  it('AH-0MVLIJT3M005HPHF AC4 — a full pool never opens an empty reward (no soft-lock)', async () => {
-    const scene = await bootMiniBossCampaign();
-    advanceToMiniBoss(scene);
-    const player = scene.getPlayer()!;
-    // A run holding six field pickups and nothing permanent: the upgrade half
-    // is empty and no locked weapon is held, so a naive gate would offer zero
-    // options and the paused overlay would never resolve.
-    player.resetWeaponLevels();
-    player.getPowerUpLevelStore().reset();
-    for (const id of [
-      'shield',
-      'bomb',
-      'speed_boost',
-      'phase_shift',
-      'teleport',
-      'magnet',
-    ] as const) {
-      player.collectPowerUp(id);
-    }
-
-    killMiniBoss(scene, false);
-
-    const options = scene.getMiniBossRewardOptions();
-    expect(options.length).toBeGreaterThan(0);
-    // The fallback offers only kinds already in the slots (taking one makes it
-    // permanent), never a brand-new kind.
-    expect(options.every((option) => option.kind !== 'weapon')).toBe(true);
-    expect(options.map((option) => option.id)).not.toContain('reset');
-    // And the reward still resolves, so play resumes.
-    expect(scene.selectMiniBossReward(0)).not.toBeNull();
-    expect(scene.isMiniBossRewardOpen()).toBe(false);
-  });
-
-  it('AH-0MVLISU03006WDOD AC4 — a mini-boss always pays out (empty loadout fallback)', async () => {
-    const scene = await bootMiniBossCampaign();
-    advanceToMiniBoss(scene);
-    const player = scene.getPlayer()!;
-    // Nothing owned, nothing held: the level-1 mini-boss case that used to be
-    // covered by the (now removed) unlock half.
-    player.resetWeaponLevels();
-    player.getPowerUpLevelStore().reset();
-
-    killMiniBoss(scene, false);
-
-    const options = scene.getMiniBossRewardOptions();
-    // The reward falls back to the hold-full-style three-option choice, so the
-    // paused overlay never opens empty…
-    expect(options.length).toBeGreaterThan(0);
-    expect(options.map((option) => option.id)).not.toContain('reset');
-    // …and it resolves, so play resumes (no soft-lock).
-    expect(scene.selectMiniBossReward(0)).not.toBeNull();
-    expect(scene.isMiniBossRewardOpen()).toBe(false);
-    expect(scene.isMineralChoiceOpen()).toBe(false);
+    resolveOpenMiniBossReward(scene);
   });
 
   it('AC2 — a mini-boss defeat auto-saves the run checkpoint', async () => {
@@ -8101,7 +8133,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
       isolated.getEnemyEntities = originalGetEnemyEntities;
       isolated.autoFireEnabled = originalAutoFireEnabled;
     }
-    if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+    resolveOpenMiniBossReward(scene);
 
     const after = miniBoss.getHpFraction() * totalHp;
     // One shot consumes 1 + bonus hits (2), not 1.
@@ -8391,7 +8423,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
 
     // The nearest (1-HP scout) is destroyed by the strike.
     expect(nearest.alive).toBe(false);
-    if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+    resolveOpenMiniBossReward(scene);
   });
 
   it('AH-0MVH87A3L004VOLD — a fresh run faces the base mini-boss hit pool', async () => {
@@ -8425,7 +8457,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(miniBoss.resolvedConfig.hpPerPhase).toBeGreaterThan(
       miniBossDesignForLevel(1).hpPerPhase,
     );
-    if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+    resolveOpenMiniBossReward(scene);
   });
 
   it('AC5 — on the final level, defeating the mini-boss triggers the final boss', async () => {
@@ -8552,7 +8584,7 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     expect(wm.miniBossActive).toBe(false);
 
     // Further simulation never re-opens the overlay or advances again.
-    scene.selectMiniBossReward(0);
+    resolveOpenMiniBossReward(scene);
     finishTransition(scene);
     scene.tick(0.016);
     expect(wm.level).toBe(2);
@@ -8728,9 +8760,11 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     expect(scene.getDrops()).toHaveLength(dropsBefore);
   });
 
-  it('AC3/AC4 — demo mode still auto-selects the reward after the sweep delay (no stall)', async () => {
-    const scene = await bootSweepScene({ extraScenes: [MineralChoiceScene] });
+  it('AC3/AC4 — demo mode auto-spins the wheel reward after the sweep delay (no stall)', async () => {
+    const scene = await bootSweepScene();
     advanceToMiniBoss(scene);
+    // Own a permanent kind so the wheel (not the empty-owned fallback) opens.
+    scene.getPlayer()!.equipWeapon('spread', true);
     scene.setDemoMode(true);
     // Keep the attract walk deterministic: no player fire, no stray kills.
     (scene as unknown as { autoFireEnabled(): boolean }).autoFireEnabled =
@@ -8738,12 +8772,16 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
 
     killMiniBoss(scene, false);
     expect(scene.isMiniBossRewardOpen()).toBe(true);
+    expect(scene.getMiniBossWheelWedges().length).toBeGreaterThan(1);
 
-    // The shared overlay auto-selects after the human-like demo delay and the
-    // 3-2-1 countdown — the attract run never stalls behind the new sweep.
+    // The wheel auto-spins after the human-like demo delay, then reveals the
+    // landed wedge — the attract run never stalls behind the new sweep.
     await advanceGame(
       scene.game,
-      BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400,
+      BOT_MINERAL_CHOICE_DELAY_MS +
+        MINI_BOSS_WHEEL_SPIN_DURATION_MS +
+        MINI_BOSS_WHEEL_REVEAL_HOLD_MS +
+        400,
     );
 
     expect(scene.isMiniBossRewardOpen()).toBe(false);
