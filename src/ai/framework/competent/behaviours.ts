@@ -52,7 +52,7 @@ import {
 } from './goals';
 import { hazardThreatensPlayer, idleIntent, interceptPoint, mayReverse, mayThrust, planSteering } from './steering';
 import type { CompetentBotTunables } from './tunables';
-import { botWrapWorld, wrappedDelta } from '../wrapGeometry';
+import { botWrapWorld, wrappedAxisDelta, wrappedDelta } from '../wrapGeometry';
 
 /** The collect targets for a goal: minerals or power-ups as content targets. */
 function collectTargets(
@@ -96,14 +96,16 @@ function collectBehaviour(
           ? () => 1
           : (target: ContentTarget) =>
               content.resolveDrop(target.contentId).value;
-      const best = bestWeightedTarget(targets, player, weight);
+      const best = bestWeightedTarget(
+        targets,
+        player,
+        weight,
+        botWrapWorld(t),
+      );
       if (!best) return null;
 
       const distance = best.distance;
-      const objective = {
-        x: best.point.x - player.x,
-        y: best.point.y - player.y,
-      };
+      const objective = wrappedDelta(player, best.point, botWrapWorld(t));
       const thrust = mayThrust(
         view.snapshot,
         t,
@@ -152,6 +154,7 @@ function engageBehaviour(
         player,
         (target: ContentTarget) =>
           content.resolveEnemy(target.contentId).threat,
+        botWrapWorld(t),
       );
       if (!best) return null;
 
@@ -255,23 +258,35 @@ function evadeBehaviour(t: CompetentBotTunables): BotBehaviour {
       const threatening = view.world.incomingFire.filter(
         (shot) => shot.threatens,
       );
+      const wrapWorld = botWrapWorld(t);
       let ax = 0;
       let ay = 0;
       if (threatening.length > 0) {
         for (const shot of threatening) {
-          const distance = Math.hypot(
-            shot.source.x - player.x,
-            shot.source.y - player.y,
+          // Measure the shot on the torus and flee along the wrapped route, so
+          // a shot that arrived across a seam is escaped *through* the seam
+          // rather than toward it (AH-0MVT2W10L003VV1U).
+          const dx = wrappedAxisDelta(
+            player.x,
+            shot.source.x,
+            wrapWorld.width,
           );
+          const dy = wrappedAxisDelta(
+            player.y,
+            shot.source.y,
+            wrapWorld.height,
+          );
+          const distance = Math.hypot(dx, dy);
           const weight = 1 / (1 + distance);
-          ax += (player.x - shot.source.x) * weight;
-          ay += (player.y - shot.source.y) * weight;
+          ax += -dx * weight;
+          ay += -dy * weight;
         }
       } else {
-        const nearest = nearestTarget(view.world.hazards, player);
+        const nearest = nearestTarget(view.world.hazards, player, wrapWorld);
         if (nearest) {
-          ax = player.x - nearest.point.x;
-          ay = player.y - nearest.point.y;
+          const away = wrappedDelta(nearest.point, player, wrapWorld);
+          ax = away.x;
+          ay = away.y;
         }
       }
 

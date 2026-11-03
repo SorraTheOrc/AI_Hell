@@ -76,6 +76,17 @@ describe('buildBotWorld', () => {
     expect(world.nearestEnemyDistance).toBeCloseTo(100);
   });
 
+  it('measures nearest enemy distance on the torus (AH-0MVT2W10L003VV1U)', () => {
+    const world = buildBotWorld(
+      makeSnapshot({
+        player: { x: 100, y: 270, vx: 0, vy: 0 },
+        // 800 px away on the raw line, but 160 px away across the left seam.
+        enemies: [enemy(900, 270, 'scout', true)],
+      }),
+    );
+    expect(world.nearestEnemyDistance).toBeCloseTo(160, 6);
+  });
+
   it('returns Infinity when there is no live enemy and no player', () => {
     expect(buildBotWorld(makeSnapshot()).nearestEnemyDistance).toBe(
       Number.POSITIVE_INFINITY,

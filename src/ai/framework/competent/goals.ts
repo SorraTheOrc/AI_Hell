@@ -62,6 +62,11 @@ import type { BotContent } from '../content';
 import { createBotContent } from '../content';
 import { BOSS_ENEMY_ID, SECURE_LIFE_DROP_ID } from './content';
 import type { CompetentBotTunables } from './tunables';
+import {
+  botWrapWorld,
+  wrappedDistance,
+  type WrapWorld,
+} from '../wrapGeometry';
 
 /** Stable behaviour ids the goals name. */
 export const COMPETENT_BEHAVIOUR_IDS = {
@@ -123,14 +128,23 @@ export interface NearestTarget<T extends BotWorldPoint = BotWorldPoint> {
   readonly distance: number;
 }
 
-/** Nearest point to the player, or `null` when the list is empty. */
+/** Nearest point to the player, or `null` when the list is empty.
+ *
+ * With a `world` the distance is the shortest wrapped distance on the torus,
+ * so a target just across a seam is nearer than one raw-closer on the same
+ * side (AH-0MVT2W10L003VV1U). The returned `distance` is wrapped too, so every
+ * caller threshold compares consistently.
+ */
 export function nearestTarget<T extends BotWorldPoint>(
   points: readonly T[],
   player: BotWorldPoint,
+  world?: WrapWorld,
 ): NearestTarget<T> | null {
   let best: NearestTarget<T> | null = null;
   for (const point of points) {
-    const distance = Math.hypot(point.x - player.x, point.y - player.y);
+    const distance = world
+      ? wrappedDistance(player, point, world)
+      : Math.hypot(point.x - player.x, point.y - player.y);
     if (best === null || distance < best.distance) {
       best = { point, distance };
     }
@@ -149,11 +163,14 @@ export function bestWeightedTarget<T extends ContentTarget>(
   targets: readonly T[],
   player: BotWorldPoint,
   weight: (target: T) => number,
+  world?: WrapWorld,
 ): NearestTarget<T> | null {
   let best: NearestTarget<T> | null = null;
   let bestScore = Number.NEGATIVE_INFINITY;
   for (const target of targets) {
-    const distance = Math.hypot(target.x - player.x, target.y - player.y);
+    const distance = world
+      ? wrappedDistance(player, target, world)
+      : Math.hypot(target.x - player.x, target.y - player.y);
     const score = weight(target) / (1 + distance);
     if (score > bestScore) {
       bestScore = score;
@@ -228,13 +245,17 @@ export function enemyTargets(world: BotWorld): ContentTarget[] {
 export function bossTargets(
   world: BotWorld,
   range?: number,
+  wrapWorld?: WrapWorld,
 ): ContentTarget[] {
   const boss = world.boss;
   if (!boss) return [];
   if (range !== undefined) {
     const player = world.player;
     if (!player) return [];
-    if (Math.hypot(boss.x - player.x, boss.y - player.y) > range) return [];
+    const distance = wrapWorld
+      ? wrappedDistance(player, boss, wrapWorld)
+      : Math.hypot(boss.x - player.x, boss.y - player.y);
+    if (distance > range) return [];
   }
   return [{ x: boss.x, y: boss.y, contentId: BOSS_ENEMY_ID }];
 }
@@ -271,12 +292,13 @@ function weightedUtility(
   range: number,
   span: number,
   weight: (target: ContentTarget) => number,
+  world: WrapWorld,
 ): number {
   const player = view.world.player;
   if (!player) return 0;
   let best = 0;
   for (const target of targets) {
-    const distance = Math.hypot(target.x - player.x, target.y - player.y);
+    const distance = wrappedDistance(player, target, world);
     const score = base + span * proximity(distance, range) * weight(target);
     if (score > best) best = score;
   }
@@ -314,6 +336,7 @@ function secureLifeGoal(t: CompetentBotTunables): BotGoal {
         t.lifeSeekRange,
         t.prioritySpan,
         () => 1,
+        botWrapWorld(t),
       ),
     isValid: (view) =>
       view.world.player !== null &&
@@ -338,7 +361,7 @@ function secureLifeGoal(t: CompetentBotTunables): BotGoal {
  */
 function bossGoal(t: CompetentBotTunables): BotGoal {
   const inRange = (view: BotGoalView): readonly ContentTarget[] =>
-    bossTargets(view.world, t.enemySeekRange);
+    bossTargets(view.world, t.enemySeekRange, botWrapWorld(t));
   return {
     id: COMPETENT_GOAL_IDS.engageBoss,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.engage,
@@ -350,6 +373,7 @@ function bossGoal(t: CompetentBotTunables): BotGoal {
         t.enemySeekRange,
         t.prioritySpan,
         () => 1,
+        botWrapWorld(t),
       ),
     isValid: (view) => inRange(view).length > 0,
     isAchieved: (view) => inRange(view).length === 0,
@@ -379,6 +403,7 @@ function collectGoal(
         range,
         t.prioritySpan,
         weight,
+        botWrapWorld(t),
       ),
     isValid: (view) =>
       view.world.player !== null && select(view.world).length > 0,
@@ -406,6 +431,7 @@ function engageGoal(
         range,
         t.prioritySpan,
         weight,
+        botWrapWorld(t),
       ),
     isValid: (view) =>
       view.world.player !== null && select(view.world).length > 0,

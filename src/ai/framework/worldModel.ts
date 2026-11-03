@@ -250,6 +250,7 @@ export function buildBotWorld(
           snapshot.enemies.filter(
             (enemy) => enemy.alive && !isAsteroidLike(enemy.archetype),
           ),
+          { width: tunables.playfieldWidth, height: tunables.playfieldHeight },
         )
       : Number.POSITIVE_INFINITY,
     wavePressure: computeWavePressure(snapshot),
@@ -378,14 +379,24 @@ function classifyShot(
   };
 }
 
-/** Distance from `from` to the nearest of `points`, or `Infinity`. */
+/** Distance from `from` to the nearest of `points`, or `Infinity`.
+ *
+ * Measured on the torus, so an enemy just across a seam counts as near
+ * (AH-0MVT2W10L003VV1U).
+ */
 function nearestDistance(
   from: BotWorldPoint,
   points: readonly BotWorldPoint[],
+  world?: { readonly width: number; readonly height: number },
 ): number {
   let nearest = Number.POSITIVE_INFINITY;
   for (const point of points) {
-    const d = Math.hypot(point.x - from.x, point.y - from.y);
+    const d = world
+      ? Math.hypot(
+          wrappedAxisDelta(from.x, point.x, world.width),
+          wrappedAxisDelta(from.y, point.y, world.height),
+        )
+      : Math.hypot(point.x - from.x, point.y - from.y);
     if (d < nearest) nearest = d;
   }
   return nearest;
