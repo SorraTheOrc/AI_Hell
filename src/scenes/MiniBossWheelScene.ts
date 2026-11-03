@@ -235,6 +235,8 @@ export class MiniBossWheelScene extends Phaser.Scene {
   private revealIconObjects: Phaser.GameObjects.Graphics[] = [];
   /** How many times the result callback has fired (exactly once by design). */
   private resultCallCount = 0;
+  /** Total overlay-relative elapsed time (ms) — used to re-base the beat clock. */
+  private overlayElapsedMs = 0;
 
   /** Pending demo auto-spin timer. */
   private autoSpinTimer: Phaser.Time.TimerEvent | null = null;
@@ -277,6 +279,7 @@ export class MiniBossWheelScene extends Phaser.Scene {
     this.wedgeIconObjects = [];
     this.revealIconObjects = [];
     this.resultCallCount = 0;
+    this.overlayElapsedMs = 0;
     this.autoSpinTimer = null;
     this.metronome = null;
     this.wheel = null;
@@ -370,6 +373,7 @@ export class MiniBossWheelScene extends Phaser.Scene {
    */
   override update(_time: number, delta: number): void {
     const stepMs = Math.max(0, delta);
+    this.overlayElapsedMs += stepMs;
     if (this.metronome !== null) {
       for (const weaponId of this.metronome.advance(stepMs)) {
         playWeaponFireSound(weaponId, {
@@ -466,6 +470,11 @@ export class MiniBossWheelScene extends Phaser.Scene {
   /** How many times the result callback has fired (0 or 1). */
   getResultCallCount(): number {
     return this.resultCallCount;
+  }
+
+  /** Total overlay-relative elapsed time (ms) since the scene started. */
+  getOverlayElapsedMs(): number {
+    return this.overlayElapsedMs;
   }
 
   // ── Rendering ─────────────────────────────────────────────────────

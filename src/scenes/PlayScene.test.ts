@@ -68,14 +68,12 @@ import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
 import { PauseScene } from './PauseScene';
-import { MineralChoiceScene } from './MineralChoiceScene';
 import {
   MINI_BOSS_WHEEL_REVEAL_HOLD_MS,
   MINI_BOSS_WHEEL_SPIN_DURATION_MS,
   MiniBossWheelScene,
 } from './MiniBossWheelScene';
 import { RunTelemetry } from './core/runTelemetry';
-import { HOLD_FULL_COUNTDOWN_DURATION_MS } from './core/holdFullCountdown';
 import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
 import {
   BANNER_BACKGROUND_ALPHA,
@@ -295,11 +293,22 @@ function hitMiniBossUntilDead(scene: PlayScene): void {
 function resolveOpenMiniBossReward(scene: PlayScene): void {
   if (!scene.isMiniBossRewardOpen()) return;
   if (scene.getMiniBossWheelWedges().length > 0) {
+    const key = 'MiniBossWheelScene';
+    // The launch is queued; let Phaser activate the overlay before spinning it
+    // (its `init` must have run for the spin to accept the call).
+    if (scene.game.scene.isActive(key) !== true) {
+      stepGameUntil(
+        scene.game,
+        'mini-boss wheel overlay start',
+        () => scene.game.scene.isActive(key) === true,
+        120,
+      );
+    }
     scene.spinMiniBossReward();
     stepGameUntil(
       scene.game,
       'mini-boss wheel reward resolution',
-      () => !scene.isMiniBossRewardOpen(),
+      () => !scene.isMiniBossRewardOpen() && scene.game.scene.isActive(key) !== true,
       400,
     );
     return;
@@ -7846,7 +7855,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
 
     await advanceGame(scene.game, 60);
     expect(scene.game.scene.isActive('MiniBossWheelScene')).toBe(true);
-    expect(scene.game.scene.isActive('MineralChoiceScene')).toBe(false);
+    expect(scene.game.scene.getScene('MineralChoiceScene')).toBeNull();
 
     resolveOpenMiniBossReward(scene);
   });
@@ -7875,7 +7884,9 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     stepGameUntil(
       scene.game,
       'mini-boss wheel resolution',
-      () => !scene.isMiniBossRewardOpen(),
+      () =>
+        !scene.isMiniBossRewardOpen() &&
+        scene.game.scene.isActive('MiniBossWheelScene') !== true,
       400,
     );
 
