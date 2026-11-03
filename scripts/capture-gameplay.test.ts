@@ -89,6 +89,10 @@ import {
   resolveCaptureMode,
   evaluateHangarActivation,
   HANGAR_SCENE_KEY,
+  buildHangarWarFlagPlan,
+  installHangarWarFlag,
+  FEATURE_FLAGS_STORAGE_KEY,
+  HANGAR_WAR_FEATURE_FLAG,
   resolveOutputPaths,
   resolveScenesOutputPath,
   loadScenesForCapture,
@@ -122,6 +126,11 @@ import {
   parseActionIntensitySeries,
   serialiseActionIntensitySeries as serialiseActionIntensitySeriesTs,
 } from '../src/scenes/core/actionIntensitySerialiser';
+import {
+  FEATURE_FLAGS_STORAGE_KEY as FEATURE_FLAGS_TS_KEY,
+  resolveHangarWarEnabled,
+  type FeatureFlagsRecord,
+} from '../src/core/featureFlags';
 import {
   CDP_PIPE_STRING_LIMIT_CHARS,
   addTransportOverflowHandler,
@@ -289,6 +298,71 @@ describe('isNonTrivialClip', () => {
     expect(verdict.reasons).toContain(
       'sampled frames are static (no motion)',
     );
+  });
+
+  it('accepts a still screen when the capture targets a static screen (AH-0MVWMUQUC003WXF5)', () => {
+    // `--hangar` records a player-facing UI screen: nothing on it moves, so a
+    // still frame is expected — the render checks still decide the verdict.
+    const still = { ...healthy, motion: 0, nonBlackFraction: 0.032 };
+    expect(isNonTrivialClip(still, { allowStatic: true })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+      notes: ['static screen: no motion required'],
+    });
+
+    // A moving clip never grows a note, and the static allowance does not
+    // weaken the blank / decode / fps checks.
+    expect(isNonTrivialClip(healthy, { allowStatic: true })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+    });
+    const blank = isNonTrivialClip(
+      { ...still, nonBlackFraction: 0 },
+      { allowStatic: true },
+    );
+    expect(blank.nonTrivial).toBe(false);
+    expect(blank.reasons).toContain('frame is essentially black');
+    const stalled = isNonTrivialClip(
+      { ...still, effectiveFps: 4 },
+      { allowStatic: true },
+    );
+    expect(stalled.nonTrivial).toBe(false);
+    expect(stalled.reasons.join(' ')).toContain('stalled');
+  });
+
+  it('accepts a silent screen clip when audio is not required (AH-0MVWMUQUC003WXF5)', () => {
+    const video = { nonTrivial: true, reasons: [] };
+    const silent = {
+      hasAudioTrack: true,
+      nonSilent: false,
+      reasons: ['audio track is silent (peak and RMS at or below the floor)'],
+    };
+
+    // A screen emits no audio of its own: the video verdict decides.
+    expect(
+      combineClipVerdict(video, silent, { requireAudio: false }),
+    ).toEqual({ nonTrivial: true, reasons: [] });
+    // The default (gameplay) contract is unchanged.
+    const strict = combineClipVerdict(video, silent);
+    expect(strict.nonTrivial).toBe(false);
+    expect(strict.reasons).toContain(
+      'audio track is silent (peak and RMS at or below the floor)',
+    );
+    // A missing audio verdict is also fine for a screen, never for gameplay.
+    expect(
+      combineClipVerdict(video, undefined, { requireAudio: false }),
+    ).toEqual({ nonTrivial: true, reasons: [] });
+    expect(combineClipVerdict(video, undefined).reasons).toContain(
+      'missing audio verdict',
+    );
+    // A failed video verdict still fails a screen clip.
+    expect(
+      combineClipVerdict(
+        { nonTrivial: false, reasons: ['frame is essentially black'] },
+        silent,
+        { requireAudio: false },
+      ).nonTrivial,
+    ).toBe(false);
   });
 
   it('rejects a starvation-level recording (effective fps below the floor)', () => {
@@ -892,6 +966,44 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     expect(
       evaluateHangarActivation(['HexMapScene'], 'HexMapScene').active,
     ).toBe(true);
+  });
+
+  it('enables the dev-gated Hangar War menu entry before the game boots (AH-0MVWMUQUC003WXF5)', () => {
+    const plan = buildHangarWarFlagPlan();
+
+    // The seeded record must match the real flag store: the menu control only
+    // exists when the dev-gated flag resolves ON.
+    expect(FEATURE_FLAGS_STORAGE_KEY).toBe(FEATURE_FLAGS_TS_KEY);
+    expect(HANGAR_WAR_FEATURE_FLAG).toBe('hangarWar');
+    expect(plan.storageKey).toBe(FEATURE_FLAGS_TS_KEY);
+    expect(
+      resolveHangarWarEnabled({ DEV: true }, plan.record as unknown as FeatureFlagsRecord),
+    ).toBe(true);
+    // Fail-closed in production: the same record is inert outside a dev build.
+    expect(
+      resolveHangarWarEnabled({ PROD: true }, plan.record as unknown as FeatureFlagsRecord),
+    ).toBe(false);
+
+    // The init script writes the plan into the page's localStorage.
+    const store = new Map<string, string>();
+    const scope = {
+      localStorage: {
+        setItem: (key: string, value: string) => store.set(key, value),
+      },
+    };
+    expect(installHangarWarFlag(plan, scope)).toEqual({ hangarWar: true });
+    expect(store.get(FEATURE_FLAGS_TS_KEY)).toBe('{"hangarWar":true}');
+
+    // No storage (SSR/privacy mode) is a null return, never a throw.
+    expect(installHangarWarFlag(plan, {})).toBeNull();
+    const throwing = {
+      localStorage: {
+        setItem: () => {
+          throw new Error('quota');
+        },
+      },
+    };
+    expect(installHangarWarFlag(plan, throwing)).toBeNull();
   });
 
   it('captureUrl adds the scenario query only when requested', () => {
@@ -2234,6 +2346,29 @@ describe('promo scenario CLI support (AH-0MVSDMAC0006DS25)', () => {
       // A jump scenario is a frozen scripted display, not a bot-flown run.
       expect(plan.botFlown).toBe(false);
     }
+  });
+
+  it('plans a fixed-length hangar window with no run-ended wait (AH-0MVWMUQUC003WXF5)', () => {
+    const hangar = planScenarioLaunch({ hangar: true });
+
+    expect(hangar.mode).toBe('hangar');
+    expect(hangar.kind).toBeNull();
+    expect(hangar.lifecycle).toBe('hangar');
+    expect(hangar.scenario).toBeNull();
+    expect(hangar.startPlan).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
+    // A static screen never emits a run end: the window must stay fixed.
+    expect(hangar.waitsForRunEnd).toBe(false);
+    expect(hangar.releaseScenarioHandle).toBe(false);
+    expect(hangar.botFlown).toBe(false);
+
+    // `--duration` does not change the verdict; it is already fixed-length.
+    expect(planScenarioLaunch({ hangar: true, fixedDuration: true }).waitsForRunEnd)
+      .toBe(false);
+    // The demo path still waits for the run end: only the hangar changed.
+    expect(planScenarioLaunch({}).waitsForRunEnd).toBe(true);
   });
 
   it('leaves the demo/scripted plans unchanged', () => {

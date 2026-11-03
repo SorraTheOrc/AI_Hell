@@ -518,7 +518,10 @@ describe('parseSceneConfig', () => {
     );
 
     expect(error.message).toContain('GymNope');
-    expect(error.message).toContain('watchable');
+    // The accepted set is every capturable scene (watchable gyms plus the
+    // shipped Hangar War screens), so the hint names it rather than the gyms
+    // alone (AH-0MVWMUQUC003WXF5).
+    expect(error.message).toContain('Capturable scenes');
   });
 
   it('rejects the parameterised gym scenes with an unsupported-target error', () => {

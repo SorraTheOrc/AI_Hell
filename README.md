@@ -730,10 +730,14 @@ added by AH-0MUWTNPYJ0031FQE):
   normal menu (**Tab** from the focused **Play Game** control to the adjacent
   **Hangar War** button, then **Enter**) and records the `HangarScene` screen
   for `--duration` ms (default 15000; a screen has no run-end signal, so the
-  window is fixed). After the warm-up it reads the dev-gated director's
-  `activeSceneKeys()` snapshot and fails with an actionable error unless
-  `HangarScene` is active, so a lost activation can never be recorded as a
-  clip of the static menu (AH-0MVWMUQUC003WXF5). The three Hangar War screens
+  window is fixed). It enables the dev-gated `hangarWar` menu flag before boot
+  (the control is otherwise hidden), and after the warm-up it reads the
+  dev-gated director's `activeSceneKeys()` snapshot, failing with an actionable
+  error unless `HangarScene` is active — so a lost activation can never be
+  recorded as a clip of the static menu. A still screen is accepted on its
+  render evidence (non-black, colourful, decodable, usable frame rate) rather
+  than on gameplay motion and audio, which a UI screen never has
+  (AH-0MVWMUQUC003WXF5). The three Hangar War screens
   (`HangarScene`, `HexMapScene`, `DefenceReportScene`) are also capturable
   targets in `capture:scenes` configs; see
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#hangar-war-screens---hangar-and-capture-targets).

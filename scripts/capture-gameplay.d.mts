@@ -282,6 +282,7 @@ export function planScenarioLaunch(
   options?: {
     scripted?: boolean;
     scenario?: string | null;
+    hangar?: boolean;
     fixedDuration?: boolean;
   },
   scenarios?: readonly CaptureScenario[],
@@ -373,6 +374,31 @@ export function evaluateHangarActivation(
   activeSceneKeys: unknown,
   expected?: string,
 ): { active: boolean; reason: string };
+
+/**
+ * `localStorage` key holding the persisted feature flags
+ * (`FEATURE_FLAGS_STORAGE_KEY` in `src/core/featureFlags.ts`).
+ */
+export const FEATURE_FLAGS_STORAGE_KEY: string;
+
+/** The dev-only feature flag that gates the Hangar War entry surfaces. */
+export const HANGAR_WAR_FEATURE_FLAG: string;
+
+/** The pre-boot plan that enables the Hangar War menu entry. */
+export function buildHangarWarFlagPlan(): {
+  storageKey: string;
+  record: Record<string, boolean>;
+};
+
+/**
+ * Self-contained pre-boot init script seeding the Hangar War feature flag into
+ * the page's `localStorage`. Returns the injected record, or `null` when it
+ * cannot be written.
+ */
+export function installHangarWarFlag(
+  plan?: { storageKey?: string; record?: Record<string, boolean> },
+  scope?: { localStorage?: { setItem: (key: string, value: string) => void } },
+): Record<string, boolean> | null;
 export function captureUrl(
   baseUrl: string,
   options?: { scenario?: string | null },

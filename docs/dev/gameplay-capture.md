@@ -751,6 +751,15 @@ A Hangar War **screen has no run-end signal**, so `--hangar` is a
 than waiting for `aihell:run-ended`, and `--tail` / `--max-duration` do not
 apply.
 
+**The dev-only menu entry is enabled for the capture.** The Hangar War control
+sits behind the default-OFF, dev-gated `hangarWar` feature flag
+(AH-0MVZ0VGGQ0032KDP), so a fresh browser profile has no control to focus and
+Tab would land on **Watch Demo**. `--hangar` therefore seeds the flag record
+(`ai_hell_feature_flags` → `{ "hangarWar": true }`) through a pre-boot
+`addInitScript`, before `MenuScene.create()` builds the focus cycle. The flag
+stays inert in a production build, so the seed can never enable a broken
+feature outside a dev build.
+
 **The activation is proved before recording.** After the warm-up the capture
 reads the dev-gated director's read-only `activeSceneKeys()` snapshot and
 fails with an actionable `CaptureSetupError` unless `HangarScene` is active.
@@ -758,6 +767,16 @@ A lost Tab/Enter gesture — which would otherwise record the static menu and
 still pass the non-trivial-frame probe — can therefore never be reported as a
 good clip. `evaluateHangarActivation()` is the pure predicate behind that
 check, so the failure mode is unit-tested without a browser.
+
+**A static screen is judged as a screen, not as gameplay.** The shared probe
+demands motion and a non-silent audio track, which a player-facing UI screen
+never has — judging it by the gameplay rule would reject every `--hangar`
+clip. The clip is therefore accepted on its **render** evidence: decodable
+frames, a non-black frame, colour variety and the effective-FPS floor all
+still apply (so a blank, stalled or menu-resting clip is rejected), while
+motion is recorded as a note (`static screen: no motion required`) and the
+silent audio track is not required. Gameplay paths (`npm run capture`, the
+gyms, `capture:scenes`) keep the strict motion + audio verdict unchanged.
 
 **Capture targets and launch data.** The three screens are registered in
 `HANGAR_WAR_SCENE_KEYS` (`scripts/capture-scenes.mjs`) and are

@@ -729,10 +729,82 @@ export function evaluateHangarActivation(
       reason:
         `the Hangar War menu activation did not reach ${expected} `
         + `(active scenes: ${activeSceneKeys.join(', ') || 'none'}) — `
-        + 'the Tab/Enter gesture was lost; the capture would record the static menu',
+        + 'the Tab/Enter gesture was lost or the control was absent (it is '
+        + 'dev-build only and gated by the hangarWar flag, which this capture '
+        + 'enables); the capture would record the static menu',
     };
   }
   return { active: true, reason: '' };
+}
+
+/**
+ * `localStorage` key holding the persisted feature flags
+ * (`FEATURE_FLAGS_STORAGE_KEY` in `src/core/featureFlags.ts`,
+ * AH-0MVZ0VGGQ0032KDP).
+ *
+ * Duplicated as a literal here because this script runs in node and cannot
+ * import a Vite/TypeScript module; `capture-gameplay.test.ts` asserts it
+ * against the real constant, so the two cannot drift.
+ */
+export const FEATURE_FLAGS_STORAGE_KEY = 'ai_hell_feature_flags';
+
+/**
+ * The dev-only feature flag that gates the Hangar War entry surfaces
+ * (`hangarWar`: the main-menu control and the idle-attract traversal).
+ */
+export const HANGAR_WAR_FEATURE_FLAG = 'hangarWar';
+
+/**
+ * The pre-boot plan that **enables** the Hangar War menu entry.
+ *
+ * The `--hangar` path navigates the real menu, and that control only exists
+ * when the dev-gated flag resolves ON (AH-0MVZ0VGGQ0032KDP). Without this the
+ * Tab lands on `Watch Demo` and the activation check fails. The record is
+ * merged over the shipped defaults by the flag store, and the flag is inert in
+ * a production build, so seeding it here cannot enable a broken feature
+ * outside a dev build.
+ *
+ * @returns {{ storageKey: string, record: Record<string, boolean> }}
+ */
+export function buildHangarWarFlagPlan() {
+  return {
+    storageKey: FEATURE_FLAGS_STORAGE_KEY,
+    record: { [HANGAR_WAR_FEATURE_FLAG]: true },
+  };
+}
+
+/**
+ * Self-contained pre-boot init script that seeds the page's `localStorage`
+ * with the Hangar War feature-flag record (see {@link buildHangarWarFlagPlan}).
+ *
+ * Installed through `page.addInitScript` **before the game boots** so
+ * `MenuScene.create()` already sees the flag enabled and registers the
+ * **Hangar War** control in its focus cycle. Self-contained with inline
+ * defaults so Playwright can serialise it for the page.
+ *
+ * @param {{ storageKey?: string, record?: Record<string, boolean> }} [plan]
+ * @param {object} [scope]
+ * @returns {Record<string, boolean> | null} the injected record, or `null`
+ *   when it cannot be written.
+ */
+export function installHangarWarFlag(
+  plan = { storageKey: 'ai_hell_feature_flags', record: { hangarWar: true } },
+  scope = globalThis,
+) {
+  if (!scope || !scope.localStorage || !plan || typeof plan !== 'object') {
+    return null;
+  }
+  const storageKey = plan.storageKey;
+  const record = plan.record;
+  if (typeof storageKey !== 'string' || !record || typeof record !== 'object') {
+    return null;
+  }
+  try {
+    scope.localStorage.setItem(storageKey, JSON.stringify(record));
+  } catch {
+    return null;
+  }
+  return record;
 }
 
 /**
@@ -2135,6 +2207,14 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       await page.addInitScript(installBotTuningConfig, options.botTuningState);
     }
 
+    // The Hangar War menu control is behind a dev-only, default-OFF feature
+    // flag (AH-0MVZ0VGGQ0032KDP). Seed the enable *before* the menu scene is
+    // created, otherwise `--hangar`'s Tab would land on `Watch Demo` and the
+    // activation check would fail for a controllable reason.
+    if (mode === 'hangar') {
+      await page.addInitScript(installHangarWarFlag, buildHangarWarFlagPlan());
+    }
+
     // Telemetry now lives in a per-run in-memory buffer that `startRun`
     // resets (AH-0MVIRYGD1000JVY3), and every batch item gets a fresh page,
     // so a new page can never read a previous item's records. The old
@@ -2407,14 +2487,27 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       };
     }
 
-    const videoVerdict = isNonTrivialClip({ ...probe, bytes: videoBytes });
+    // `--hangar` records a **static screen**, not gameplay: the hangar/map/
+    // report screens neither move nor emit their own audio, so the gameplay
+    // probe's motion and non-silent-audio requirements do not apply
+    // (AH-0MVWMUQUC003WXF5). The screen's activation was already asserted
+    // before recording, and the render checks (decodable frames, non-black,
+    // colour variety, frame rate) still apply, so a blank or stalled clip is
+    // still rejected.
+    const staticScreen = mode === 'hangar';
+    const videoVerdict = isNonTrivialClip(
+      { ...probe, bytes: videoBytes },
+      { allowStatic: staticScreen },
+    );
     const audioVerdict = evaluateAudioTrack({
       trackCount: probe.audioTrackCount,
       peak: probe.audioPeak,
       rms: probe.audioRms,
       decodeError: probe.audioDecodeError,
     });
-    const verdict = combineClipVerdict(videoVerdict, audioVerdict);
+    const verdict = combineClipVerdict(videoVerdict, audioVerdict, {
+      requireAudio: !staticScreen,
+    });
     // A full run is complete once the game signalled its end; hitting the cap
     // without a signal is reported explicitly so a capped clip is never
     // presented as a complete run (AC3). Fixed-length captures report neither.
