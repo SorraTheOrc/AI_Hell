@@ -20,7 +20,41 @@
  * (counts, lifespan, jitter, speeds/radii) are exported constants below.
  *
  * All pure helpers use a seeded PRNG for deterministic tests.
+ *
+ * ## Image-based explosion frames (AH-0MVJ8TB610098DSY)
+ *
+ * Particles are no longer drawn as filled circles. Each one is an **image**
+ * whose texture is a procedurally generated explosion frame (see
+ * `./explosionTextures`), and the frame index is a function of the particle's
+ * normalised age only, so the silhouette morphs from a hot dense core through
+ * ragged flame lobes into a thin ember as the particle shrinks and fades.
+ *
+ * ## Two-zone colour model (AC3)
+ *
+ * Every burst carries two colour zones:
+ *
+ *   - **core** — the inner `EXPLOSION_CORE_FRACTION` of each pattern group,
+ *     coloured from the exported warm red/orange → white-hot palette below, so
+ *     the blast has a fire core;
+ *   - **lobe/ember** — every remaining particle, which keeps the exploding
+ *     entity's palette hue with the existing seeded HSL jitter
+ *     (`EXPLOSION_HUE_JITTER_DEG`), so per-entity identity survives
+ *     (AH-0MTVID3I1001Y034 stays in force).
+ *
+ * The renderer creates the burst once as a container of frame images (shared
+ * textures, one generated set per game) and re-tints/morphs them per frame; it
+ * degrades to a display-free burst when the scene exposes no texture support
+ * (headless stub scenes), keeping the counters and teardown contract intact.
  */
+
+import {
+  EXPLOSION_TEXTURE_SIZE,
+  ensureExplosionFrameTextures,
+  explosionFrameKey,
+  explosionFramesAvailable,
+  frameIndexFor,
+  type ExplosionTextureProvider,
+} from './explosionTextures';
 
 // ── Tunable constants (AC2, AC4) ───────────────────────────────────
 
@@ -143,6 +177,19 @@ export interface Particle {
   vy: number;
   /** Colour (hex). */
   color: number;
+  /**
+   * Colour zone: `core` particles use the warm fire palette, `lobe` particles
+   * keep the exploding entity's hue with the seeded HSL jitter (AC3).
+   */
+  zone: ParticleZone;
+  /**
+   * Seeded silhouette-frame phase offset in [0, 1). Shifts where in the
+   * particle's life the explosion frame morphs (AC2), while the frame index
+   * itself stays a pure function of the normalised age.
+   */
+  frameOffset: number;
+  /** Seeded start rotation in radians, so lobe silhouettes never align. */
+  rotation: number;
   /** Current alpha (1 → 0 over lifespan). */
   alpha: number;
   /** Current radius/size (shrinks to 0 over lifespan). */
@@ -165,6 +212,9 @@ export interface Particle {
 
 /** Explosion pattern type identifier. */
 export type Pattern = 'radial' | 'ring' | 'implosion';
+
+/** Colour zone of a particle (AC3). */
+export type ParticleZone = 'core' | 'lobe';
 
 // ── Seeded RNG (mulberry32) ────────────────────────────────────────
 
@@ -274,15 +324,110 @@ export function jitterColor(baseColor: number, rng: () => number): number {
   );
 }
 
+// ── AC3: Warm fire core palette ───────────────────────────────────
+
+/**
+ * Fraction of each pattern group rendered as the warm fire **core**. The
+ * remainder are lobe/ember particles that keep the entity hue, so a burst
+ * always has both colour zones.
+ */
+export const EXPLOSION_CORE_FRACTION = 0.35;
+
+/** Lower bound of the documented core hue band (degrees) — deep red. */
+export const EXPLOSION_CORE_HUE_MIN_DEG = 0;
+
+/** Upper bound of the documented core hue band (degrees) — orange. */
+export const EXPLOSION_CORE_HUE_MAX_DEG = 34;
+
+/** Lower bound of the core saturation band (0-1) — fully saturated fire. */
+export const EXPLOSION_CORE_SAT_MIN = 0.85;
+
+/** Upper bound of the core saturation band (0-1). */
+export const EXPLOSION_CORE_SAT_MAX = 1;
+
+/** Lower bound of the core lightness band (0-1) — deep red fire. */
+export const EXPLOSION_CORE_LIGHT_MIN = 0.42;
+
+/** Upper bound of the core lightness band (0-1) — white-hot. */
+export const EXPLOSION_CORE_LIGHT_MAX = 0.74;
+
+/** Hue of the white-hot centre particle (degrees) — amber-orange. */
+export const EXPLOSION_CORE_CENTRE_HUE_DEG = 28;
+
+/**
+ * Allowed hue error (degrees) when a band guard reads an emitted colour back
+ * through `colorToHSL`. 0xRRGGBB quantisation moves a hue by well under 1°.
+ */
+export const EXPLOSION_CORE_HUE_TOLERANCE_DEG = 1;
+
+/**
+ * The single white-hot centre colour every pattern group opens with — the
+ * brightest point of the burst, drawn from the top of the core lightness band.
+ */
+export const EXPLOSION_CORE_CENTRE_COLOR = hslToHex(
+  EXPLOSION_CORE_CENTRE_HUE_DEG,
+  1,
+  EXPLOSION_CORE_LIGHT_MAX,
+);
+
+/**
+ * Draws one warm core colour from the seeded PRNG: hue inside
+ * [`EXPLOSION_CORE_HUE_MIN_DEG`, `EXPLOSION_CORE_HUE_MAX_DEG`], saturation
+ * inside [`EXPLOSION_CORE_SAT_MIN`, `EXPLOSION_CORE_SAT_MAX`] and lightness
+ * inside [`EXPLOSION_CORE_LIGHT_MIN`, `EXPLOSION_CORE_LIGHT_MAX`]. Draws
+ * exactly three values so the seeded sequence stays stable.
+ */
+export function resolveCoreColor(rng: () => number): number {
+  const h =
+    EXPLOSION_CORE_HUE_MIN_DEG +
+    rng() * (EXPLOSION_CORE_HUE_MAX_DEG - EXPLOSION_CORE_HUE_MIN_DEG);
+  const s =
+    EXPLOSION_CORE_SAT_MIN +
+    rng() * (EXPLOSION_CORE_SAT_MAX - EXPLOSION_CORE_SAT_MIN);
+  const l =
+    EXPLOSION_CORE_LIGHT_MIN +
+    rng() * (EXPLOSION_CORE_LIGHT_MAX - EXPLOSION_CORE_LIGHT_MIN);
+  return hslToHex(h, s, l);
+}
+
+/**
+ * Resolves one particle's colour: warm core colours for the fire core (with
+ * the group's first particle always white-hot), entity-hue jitter for lobes.
+ */
+export function pickParticleColor(
+  baseColor: number,
+  isCore: boolean,
+  isCentre: boolean,
+  rng: () => number,
+): number {
+  if (!isCore) return jitterColor(baseColor, rng);
+  if (isCentre) return EXPLOSION_CORE_CENTRE_COLOR;
+  return resolveCoreColor(rng);
+}
+
+/**
+ * Number of core particles in a pattern group of `count` particles — at least
+ * one (so a burst always has a fire core) and never all of a group of two or
+ * more (so lobes and embers carry the entity hue).
+ */
+export function coreCountFor(count: number): number {
+  if (count <= 0) return 0;
+  if (count === 1) return 1;
+  return Math.max(
+    1,
+    Math.min(count - 1, Math.round(count * EXPLOSION_CORE_FRACTION)),
+  );
+}
+
 // ── AC3: Pattern emitters (pure geometry) ──────────────────────────
 
 /**
  * Generates a radial burst: particles in uniformly random directions
  * with speed spread proportional to entity size.
  *
- * Each particle gets a colour jittered from `baseColor`, its radius
- * jittered by ±{@link EXPLOSION_SIZE_JITTER}, and its start position
- * offset by ±({@link EXPLOSION_POSITION_JITTER} × size) on each axis.
+ * Each particle gets a colour from its zone (warm core or entity-hued lobe,
+ * AC3), its radius jittered by ±{@link EXPLOSION_SIZE_JITTER}, and its start
+ * position offset by ±({@link EXPLOSION_POSITION_JITTER} × size) on each axis.
  */
 export function generateRadialBurst(
   count: number,
@@ -296,11 +441,15 @@ export function generateRadialBurst(
   const startRadius = size * EXPLOSION_RADIAL_START_RADIUS;
   const speedBase = EXPLOSION_RADIAL_SPEED_BASE + size * EXPLOSION_RADIAL_SPEED_PER_SIZE;
   const speedSpread = speedBase * EXPLOSION_RADIAL_SPEED_SPREAD;
+  const coreCount = coreCountFor(count);
 
   for (let i = 0; i < count; i++) {
     const angle = rng() * Math.PI * 2;
     const speed = speedBase + (rng() - 0.5) * 2 * speedSpread;
-    const color = jitterColor(baseColor, rng);
+    const isCore = i < coreCount;
+    const color = pickParticleColor(baseColor, isCore, i === 0, rng);
+    const frameOffset = rng();
+    const rotation = rng() * Math.PI * 2;
     const jitteredRadius = jitterSize(startRadius, rng);
     const x = jitterPosition(baseX, size, rng);
     const y = jitterPosition(baseY, size, rng);
@@ -311,6 +460,9 @@ export function generateRadialBurst(
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       color,
+      zone: isCore ? 'core' : 'lobe',
+      frameOffset,
+      rotation,
       alpha: 1,
       radius: jitteredRadius,
       dead: false,
@@ -342,11 +494,15 @@ export function generateRingBurst(
   const ringRadius = size * EXPLOSION_RING_RADIUS_FACTOR;
   const speedBase = EXPLOSION_RING_SPEED_BASE + size * EXPLOSION_RING_SPEED_PER_SIZE;
   const speedTolerance = speedBase * EXPLOSION_RING_SPEED_TOLERANCE;
+  const coreCount = coreCountFor(count);
 
   for (let i = 0; i < count; i++) {
     const angle = (i / count) * Math.PI * 2; // evenly spaced on the ring
     const speed = speedBase + (rng() - 0.5) * 2 * speedTolerance;
-    const color = jitterColor(baseColor, rng);
+    const isCore = i < coreCount;
+    const color = pickParticleColor(baseColor, isCore, i === 0, rng);
+    const frameOffset = rng();
+    const rotation = rng() * Math.PI * 2;
     const jitteredRadius = jitterSize(size * EXPLOSION_RING_PARTICLE_RADIUS, rng);
     // Position jitter (AC2) also applies to the evenly-spaced ring particles.
     const x = jitterPosition(baseX + Math.cos(angle) * ringRadius, size, rng);
@@ -358,6 +514,9 @@ export function generateRingBurst(
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       color,
+      zone: isCore ? 'core' : 'lobe',
+      frameOffset,
+      rotation,
       alpha: 1,
       radius: jitteredRadius,
       dead: false,
@@ -391,6 +550,7 @@ export function generateImplosionBurst(
   const implSpeed = EXPLOSION_IMPLOSION_SPEED_BASE + size * EXPLOSION_IMPLOSION_SPEED_PER_SIZE;
   const burstSpeedBase = EXPLOSION_BURST_SPEED_BASE + size * EXPLOSION_BURST_SPEED_PER_SIZE;
   const burstSpeedSpread = burstSpeedBase * EXPLOSION_BURST_SPEED_SPREAD;
+  const coreCount = coreCountFor(count);
 
   for (let i = 0; i < count; i++) {
     const angle = rng() * Math.PI * 2;
@@ -410,7 +570,9 @@ export function generateImplosionBurst(
     const burstAngle = angle + (rng() - 0.5) * EXPLOSION_BURST_ANGLE_SPREAD;
     const burstSpeed = burstSpeedBase + (rng() - 0.5) * 2 * burstSpeedSpread;
 
-    const color = jitterColor(baseColor, rng);
+    const color = pickParticleColor(baseColor, i < coreCount, i === 0, rng);
+    const frameOffset = rng();
+    const rotation = rng() * Math.PI * 2;
     const startRadius = jitterSize(size * EXPLOSION_IMPLOSION_PARTICLE_RADIUS, rng);
 
     particles.push({
@@ -419,6 +581,9 @@ export function generateImplosionBurst(
       vx: vxImpl,
       vy: vyImpl,
       color,
+      zone: i < coreCount ? 'core' : 'lobe',
+      frameOffset,
+      rotation,
       alpha: 1,
       radius: startRadius,
       dead: false,
@@ -570,8 +735,8 @@ export interface SpawnExplosionOptions {
    */
   delay?: number;
   /**
-   * Render depth of the burst Graphics. Defaults to 5 (above world bodies,
-   * below the HUD). Firework sequences pass a UI-relative depth so the
+   * Render depth of the burst display container. Defaults to 5 (above world
+   * bodies, below the HUD). Firework sequences pass a UI-relative depth so the
    * burst can sit behind a screen's UI (negative) or below its HUD.
    */
   depth?: number;
@@ -583,8 +748,8 @@ export interface SpawnExplosionOptions {
    */
   kind?: ExplosionVfxKind;
   /**
-   * Optional Graphics registry (e.g. `playerExplosions`) — the handle's
-   * Graphics is pushed here on spawn and spliced on completion, so a
+   * Optional display registry (e.g. `playerExplosions`) — the handle's display
+   * container is pushed here on spawn and spliced on completion, so a
    * SHUTDOWN handler can destroy leftovers exactly like the existing
    * ring/cross explosions.
    */
@@ -597,13 +762,23 @@ export interface SpawnExplosionOptions {
    * last burst (AH-0MVROEKMT005RVML).
    */
   onComplete?: () => void;
+  /**
+   * Optional texture provider for the procedural explosion frames. Defaults
+   * to the scene's own texture manager (`scene.textures`). Unit tests inject a
+   * recording double so frame generation stays headless and deterministic
+   * (AC6).
+   */
+  textureProvider?: ExplosionTextureProvider;
 }
 
-/** Live handle for a spawned explosion. Test seam: `particles` is the
- * pure simulated state, `graphics` the Phaser object (destroyed on
- * completion/teardown). */
+/**
+ * Live handle for a spawned explosion. Test seam: `particles` is the
+ * pure simulated state, `graphics` the burst display container (a Phaser
+ * `Container` of frame images) — destroyed on completion/teardown, and
+ * `null` when the scene exposes no texture support (headless stub scene).
+ */
 export interface ExplosionHandle {
-  /** The Phaser Graphics object (destroyed on completion). */
+  /** The burst display container (destroyed on completion), or `null`. */
   readonly graphics: unknown;
   /** Pure simulated particle state (positions advance with the tween). */
   readonly particles: Particle[];
@@ -611,19 +786,55 @@ export interface ExplosionHandle {
   readonly totalCount: number;
   /** Patterns assigned (one entry per particle group). */
   readonly patterns: Pattern[];
-  /** Destroys the Graphics immediately (SHUTDOWN teardown path). */
+  /** Destroys the burst display immediately (SHUTDOWN teardown path). */
   destroy(): void;
   /** Whether the explosion is still animating. */
   readonly alive: boolean;
 }
 
-/** Minimal Phaser surface needed by `spawnExplosionParticles`. Kept
- * structural (not `Phaser.Scene`) so unit tests can inject a double.
- * `tweens.add` takes `unknown` so a real `Phaser.Scene` (whose `add`
- * accepts a TweenBuilderConfig union) is structurally assignable. */
+/** A burst frame image (a `Phaser.GameObjects.Image` subset). */
+export interface ExplosionFrameImage {
+  setTexture(key: string): unknown;
+  setPosition(x: number, y: number): unknown;
+  setAlpha(alpha: number): unknown;
+  setScale(scale: number): unknown;
+  setRotation(rotation: number): unknown;
+  setTint(color: number): unknown;
+  destroy(): void;
+}
+
+/** The burst display container (a `Phaser.GameObjects.Container` subset). */
+export interface ExplosionDisplayContainer {
+  setDepth(depth: number): unknown;
+  add(child: unknown): unknown;
+  destroy(): void;
+}
+
+/**
+ * Minimal Phaser surface needed by `spawnExplosionParticles`. Kept structural
+ * (not `Phaser.Scene`) so unit tests can inject a double.
+ *
+ * `container` / `image` / `textures` are optional: a scene that exposes none of
+ * them (a headless stub) still gets the full particle simulation, colour
+ * zones, counters and teardown contract — it simply renders no display
+ * objects. `tweens.add` takes `unknown` so a real `Phaser.Scene` (whose `add`
+ * accepts a TweenBuilderConfig union) is structurally assignable.
+ */
 export interface ExplosionScene {
-  add: { graphics(opts?: { x?: number; y?: number }): { setDepth(d: number): unknown; clear(): unknown; fillStyle(c: number, a?: number): unknown; fillCircle(x: number, y: number, r: number): unknown; destroy(): void; alpha: number } };
+  add: {
+    container?(x?: number, y?: number): ExplosionDisplayContainer;
+    image?(x: number, y: number, texture: string): ExplosionFrameImage;
+  };
+  textures?: ExplosionTextureProvider;
   tweens: { add(cfg: unknown): unknown };
+}
+
+/**
+ * Scale that maps a particle radius (px) onto the frame texture's edge, so a
+ * particle image is exactly as wide as the particle's diameter.
+ */
+function imageScaleForRadius(radius: number): number {
+  return (Math.max(0, radius) * 2) / EXPLOSION_TEXTURE_SIZE;
 }
 
 /**
@@ -632,18 +843,22 @@ export interface ExplosionScene {
  *
  * - Count defaults to `scaledCount(size)` (size-proportional, clamped).
  * - Particles are split across `opts.patterns` via `combinePatterns`.
- * - A single Graphics is animated by one tween over `lifespan` ms:
- *   each onUpdate derives elapsed from the tweened alpha (the same
- *   pattern the existing ring/cross explosions use), advances particle
- *   positions, flips implosion→burst at 100 ms, and redraws all live
- *   particles as small filled circles that fade and shrink.
- * - On completion the Graphics is destroyed and removed from
+ * - Each particle is an **image** of a procedurally generated explosion frame
+ *   (see `./explosionTextures`), tinted with the particle colour from its
+ *   colour zone (warm red/orange core vs entity-hued lobe, AC3), rotated by
+ *   its seeded rotation and scaled to its (shrinking) radius.
+ * - One tween over `lifespan` ms drives the burst: each onUpdate derives
+ *   elapsed from a tweened clock (the same pattern the existing ring/cross
+ *   explosions use), advances particle positions, flips implosion→burst at
+ *   100 ms, and morphs every particle image's frame as a function of its
+ *   normalised age (AC2) while it fades and shrinks.
+ * - On completion the display container is destroyed and removed from
  *   `opts.registry` (if given) — the SHUTDOWN teardown pattern.
  *
  * Returns `null` when `scene` is missing (belt-and-braces null-scene
  * guard per AH-0MTPLHLZ3006MOC4).
  *
- * @param scene  — Phaser.Scene instance (for Graphics/tweens).
+ * @param scene  — Phaser.Scene instance (for display objects/textures/tweens).
  * @param x      — X coordinate of the explosion centre.
  * @param y      — Y coordinate of the explosion centre.
  * @param baseColor — Hex colour of the exploding entity.
@@ -707,27 +922,71 @@ export function spawnExplosionParticles(
     }
   };
 
-  // Single Graphics for the whole burst (depth above bodies by default).
-  const gfx = scene.add.graphics({ x, y });
-  (gfx as { setDepth(d: number): unknown }).setDepth(opts.depth ?? 5);
+  // ── Frame-textured display (AC1, AC2, AC7) ─────────────────────
+  //
+  // The frame family is generated once per game and shared by every burst
+  // (never per particle). A scene without texture support keeps the pure
+  // simulation but renders nothing (headless seam).
+  const provider = opts.textureProvider ?? scene.textures;
+  const display =
+    typeof scene.add.container === 'function' ? scene.add.container(x, y) : null;
+  display?.setDepth(opts.depth ?? 5);
+  ensureExplosionFrameTextures(provider);
+  const framesReady =
+    display !== null &&
+    typeof scene.add.image === 'function' &&
+    explosionFramesAvailable(provider);
+
+  const images: ExplosionFrameImage[] = [];
+  const lastFrame: number[] = [];
+  if (display && framesReady) {
+    for (const p of particles) {
+      const frame = frameIndexFor(0, p.frameOffset);
+      const image = scene.add.image!(p.x, p.y, explosionFrameKey(frame));
+      image.setTint(p.color);
+      image.setAlpha(p.alpha);
+      image.setScale(imageScaleForRadius(p.radius));
+      image.setRotation(p.rotation);
+      display.add(image);
+      images.push(image);
+      lastFrame.push(frame);
+    }
+  }
 
   let alive = true;
   let lastElapsed = 0;
-  const draw = (): void => {
-    gfx.clear();
-    for (const p of particles) {
-      if (p.dead || p.radius <= 0) continue;
-      gfx.fillStyle(p.color, Math.max(0, Math.min(1, p.alpha)));
-      gfx.fillCircle(p.x, p.y, Math.max(0.5, p.radius));
+  /** The driving tween, so teardown can stop it (see `finish`). */
+  let tween: { stop?: () => void } | undefined;
+
+  /** Morphs, tints and positions every particle image for `elapsed` ms. */
+  const draw = (elapsed: number): void => {
+    // A destroyed burst has no display objects left to touch; its tween is
+    // removed in `finish`, but a frame may already be in flight.
+    if (!alive || images.length === 0) return;
+    const age = lifespan > 0 ? elapsed / lifespan : 1;
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      const image = images[i];
+      const frame = frameIndexFor(age, p.frameOffset);
+      if (frame !== lastFrame[i]) {
+        image.setTexture(explosionFrameKey(frame));
+        lastFrame[i] = frame;
+      }
+      image.setPosition(p.x, p.y);
+      image.setAlpha(p.alpha);
+      image.setScale(imageScaleForRadius(p.radius));
     }
   };
 
   const finish = (): void => {
     if (!alive) return;
     alive = false;
-    gfx.destroy();
-    if (opts.registry) {
-      const idx = opts.registry.indexOf(gfx);
+    // Stop the driver before the display objects go away: an onUpdate that
+    // lands after teardown would otherwise touch destroyed images.
+    tween?.stop?.();
+    display?.destroy();
+    if (display && opts.registry) {
+      const idx = opts.registry.indexOf(display);
       if (idx >= 0) opts.registry.splice(idx, 1);
     }
     if (kind && EXPLOSION_VFX_COUNTS[kind] > 0) {
@@ -745,10 +1004,10 @@ export function spawnExplosionParticles(
     opts.onComplete?.();
   };
 
-  if (opts.registry) opts.registry.push(gfx);
+  if (display && opts.registry) opts.registry.push(display);
 
   const handle: ExplosionHandle = {
-    graphics: gfx,
+    graphics: display,
     particles,
     totalCount: particles.length,
     patterns: [...patterns],
@@ -762,16 +1021,17 @@ export function spawnExplosionParticles(
     return handle;
   }
 
-  scene.tweens.add({
-    targets: gfx,
+  // The tween clock: `alpha` walks 1 → 0 over the lifespan and elapsed is
+  // derived from it (robust to headless timer quirks). Kept separate from the
+  // display so the per-particle alpha fade is the only fade applied.
+  const clock = { alpha: 1 };
+  tween = scene.tweens.add({
+    targets: clock,
     alpha: { from: 1, to: 0 },
     duration: lifespan,
     delay: opts.delay ?? 0,
     onUpdate: () => {
-      // Derive elapsed from the tweened property (existing explosion
-      // pattern — robust to headless timer quirks).
-      const alpha = (gfx as { alpha: number }).alpha;
-      const elapsed = (1 - alpha) * lifespan;
+      const elapsed = (1 - clock.alpha) * lifespan;
       // Incremental stepping keeps velocities linear in wall-clock time.
       const step = Math.max(0, elapsed - lastElapsed);
       if (step > 0) {
@@ -794,14 +1054,14 @@ export function spawnExplosionParticles(
         }
         lastElapsed = elapsed;
       }
-      draw();
+      draw(elapsed);
     },
     onComplete: () => {
       const finishedAnimating = alive;
       finish();
       if (finishedAnimating) notifyComplete();
     },
-  });
+  }) as { stop?: () => void } | undefined;
 
   // Expose the stepper for headless verification (not part of the VFX path).
   (handle as { _stepForTests?: (ms: number) => void })._stepForTests = stepParticles;

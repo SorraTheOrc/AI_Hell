@@ -525,10 +525,13 @@ describe('shared collector-drone pass', () => {
       scene: Phaser.Scene,
       x: number,
       y: number,
-    ): Phaser.GameObjects.Graphics[] {
+    ): Phaser.GameObjects.Container[] {
+      // The shared particle burst renders as a container of explosion frame
+      // images at its burst position (AH-0MVJ8TB610098DSY); it used to be a
+      // single Graphics.
       return scene.children.list.filter(
-        (child): child is Phaser.GameObjects.Graphics =>
-          child instanceof Phaser.GameObjects.Graphics &&
+        (child): child is Phaser.GameObjects.Container =>
+          child instanceof Phaser.GameObjects.Container &&
           child.depth === 5 &&
           Math.abs(child.x - x) < 0.001 &&
           Math.abs(child.y - y) < 0.001,
