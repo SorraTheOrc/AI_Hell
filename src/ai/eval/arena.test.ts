@@ -38,7 +38,7 @@ import { loadAllEnemyConfigs, resetConfigStore, seedConfigStore } from '../../co
 import { createSeededRng } from '../../core/rng';
 import type { EnemyConfig } from '../../core/configTypes';
 import { createLegacyBotPolicy } from '../framework/legacyPolicy';
-import { HeadlessChoicePlayer, runArena } from './arena';
+import { HeadlessChoicePlayer, advanceBulletPosition, hostileAimVelocity, runArena } from './arena';
 import { loadBalanceConfig } from './balanceConfig';
 import { runBatch } from './engine';
 import { extractBalanceStats } from './metrics';
@@ -1073,5 +1073,73 @@ describe('pure eval core guard (AH-0MVD1RLGZ002LT7B AC4)', () => {
       WALL_CLOCK.test(codeOnly(fs.readFileSync(path.join(ROOT, file), 'utf8'))),
     );
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('wrap parity with the game (AH-0MVT2W5EL004OXNN)', () => {
+  const W = 960;
+  const H = 540;
+
+  it('wraps a bullet at each of the four edges instead of culling it', () => {
+    const cases = [
+      { name: 'right → left', bullet: { x: W - 2, y: H / 2 }, vx: 300, vy: 0, x: 28, y: H / 2 },
+      { name: 'left → right', bullet: { x: 2, y: H / 2 }, vx: -300, vy: 0, x: W - 28, y: H / 2 },
+      { name: 'bottom → top', bullet: { x: W / 2, y: H - 2 }, vx: 0, vy: 300, x: W / 2, y: 28 },
+      { name: 'top → bottom', bullet: { x: W / 2, y: 2 }, vx: 0, vy: -300, x: W / 2, y: H - 28 },
+    ];
+    for (const c of cases) {
+      const bullet = { ...c.bullet };
+      advanceBulletPosition(bullet, c.vx, c.vy, 0.1, W, H);
+      expect(bullet.x, c.name).toBeCloseTo(c.x, 6);
+      expect(bullet.y, c.name).toBeCloseTo(c.y, 6);
+      // Never outside the playfield — there is no off-field cull any more.
+      expect(bullet.x, c.name).toBeGreaterThanOrEqual(0);
+      expect(bullet.x, c.name).toBeLessThan(W);
+      expect(bullet.y, c.name).toBeGreaterThanOrEqual(0);
+      expect(bullet.y, c.name).toBeLessThan(H);
+    }
+  });
+
+  it('aims a hostile along the shortest wrapped path across each edge', () => {
+    const speed = 200;
+    const cases = [
+      { name: 'right seam', from: { x: 950, y: 300 }, to: { x: 10, y: 300 }, vx: speed, vy: 0 },
+      { name: 'left seam', from: { x: 10, y: 300 }, to: { x: 950, y: 300 }, vx: -speed, vy: 0 },
+      { name: 'bottom seam', from: { x: 480, y: 530 }, to: { x: 480, y: 10 }, vx: 0, vy: speed },
+      { name: 'top seam', from: { x: 480, y: 10 }, to: { x: 480, y: 530 }, vx: 0, vy: -speed },
+    ];
+    for (const c of cases) {
+      const aim = hostileAimVelocity(c.from, c.to, speed, W, H);
+      expect(aim.vx, c.name).toBeCloseTo(c.vx, 6);
+      expect(aim.vy, c.name).toBeCloseTo(c.vy, 6);
+    }
+  });
+
+  it('leaves a same-side hostile shot unchanged', () => {
+    const aim = hostileAimVelocity({ x: 100, y: 300 }, { x: 300, y: 300 }, 200, W, H);
+    expect(aim.vx).toBeCloseTo(200, 6);
+    expect(aim.vy).toBeCloseTo(0, 6);
+  });
+
+  it('keeps wrapped bullets live and on-field (no off-field cull)', () => {
+    // Every recorded player bullet must stay inside the playfield: bullets now
+    // wrap and expire by lifetime, so a bullet that crossed a seam is still a
+    // live projectile rather than being retired off-field.
+    const result = runArena(createLegacyBotPolicy(), {
+      seed: 5,
+      ticks: 300,
+      spawns: SMALL_SPAWNS,
+    });
+    const ticks = result.records.filter(
+      (record): record is TelemetryTickRecord => record.kind === 'tick',
+    );
+    const playerBullets = ticks.flatMap((tick) => tick.state.playerBullets);
+    expect(playerBullets.length).toBeGreaterThan(0);
+    for (const bullet of playerBullets) {
+      expect(bullet.x).toBeGreaterThanOrEqual(0);
+      expect(bullet.x).toBeLessThan(W);
+      expect(bullet.y).toBeGreaterThanOrEqual(0);
+      expect(bullet.y).toBeLessThan(H);
+    }
   });
 });

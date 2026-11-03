@@ -276,11 +276,21 @@ harness itself never invokes a browser or an encoder.
 The arena is a **closed-loop headless model**, not Phaser: it models the
 quantities the bot reasons about (player physics, collectables, hazards,
 auto-fire, collisions) rather than the full wave/VFX/enemy-behaviour stack
-(enemy formations, burst patterns and bullet lifetimes are intentionally not
-modelled), and it never boots a renderer or reads the wall clock. Each
-hostile's radius, health, fire cadence, bullet speed and fire chance do come
-from the shared `EnemyConfig`, so balance tuning is reflected in the
-simulation. That keeps evaluation fast and deterministic under Node/vitest.
+(enemy formations and burst patterns are intentionally not modelled), and it
+never boots a renderer or reads the wall clock. Each hostile's radius, health,
+fire cadence, bullet speed and fire chance do come from the shared
+`EnemyConfig`, so balance tuning is reflected in the simulation. That keeps
+evaluation fast and deterministic under Node/vitest.
+
+**Wrap parity (AH-0MVT2W5EL004OXNN).** Bullets are modelled on the same
+torus as the game: player and enemy bullets wrap at all four edges and expire
+by their game lifetimes (0.75 s player, 1.5 s enemy) instead of being culled
+off-field, and hostile fire aims along the **shortest wrapped path**, so a
+hostile near one edge shoots a player near the opposite edge across the seam.
+A bullet that crosses a seam therefore stays a live, hittable projectile, and
+the arena's avoidable-hit/damage metrics measure wrap-aware play rather than a
+world in which the seam does not exist for bullets.
+
 For pixel-accurate, full-stack verification use the browser capture path
 (`npm run capture`); both paths feed the same telemetry schema, so a recorded
 capture can be analysed with `npm run analyse`.
