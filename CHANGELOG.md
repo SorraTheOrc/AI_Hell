@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.18 (2026-11-03)
+> **Release focus:** This release completes and enables the Hangar War mode by default, letting players build a fleet, capture hexes by defeating bosses, and earn permanent upgrades through a reward wheel. It also refines combat with evolving weapon fire patterns, a reworked Railgun and Wave Laser, better explosions, and smarter bots, while improving demo showcases, gameplay capture, and test reliability.
+### Features
+- Weapons now fire in evolving rhythmic patterns that shift as you upgrade them. (AH-0MVYA1JFK003RLAW)
+- Build a hangar to grow your fleet, then capture a ring of hexes by beating their bosses. (AH-0MVU3VNJI00066YE)
+- Gameplay capture now records the full Hangar War flow, including the hex map and defence report. (AH-0MVWMUQUC003WXF5)
+- The Railgun now fires a single heavy shot at level 0 and earns its piercing power as it levels up. (AH-0MVY0A23A009MRK3)
+- Explosions now look like real fiery blasts instead of clusters of dots. (AH-0MVJ8TB610098DSY)
+- Permanent Force Fields now slowly regain spent reflections over time instead of going inert. (AH-0MVNX40F2005CM8P)
+- Wave Laser now fires a single red beam that hits the first enemy for 1 damage. (AH-0MVREBUJ5004HDRQ)
+- Watch Demo now shows off varied bot gameplay across 10+ new scenarios, from boss fights to pick-up frenzies. (AH-0MVI5XI73000ZVYA)
+- The demo bot now uses screen wrap like a human, chasing, dodging and aiming across edges. (AH-0MVMISF0Q00314LG)
+- Mini-boss wins now spin a reward wheel that always grants a permanent upgrade. (AH-0MVLISU03006WDOD)
+### Bug Fixes
+- Test-mode saves no longer write files, keeping automated test runs clean and reliable. (AH-0MVW9YSKT0052A3Q)
+- Promo scenarios are now validated against real gameplay, so every showcase reliably delivers 45+ seconds of action. (AH-0MW06XJKA009WX4B)
+- The upgrade list now clearly shows your six slots, so you can trust what your ship is carrying. (AH-0MVVF0POV001JNKX)
+- Bots now correctly turn to face targets behind them instead of reversing. (AH-0MW08K9LP005Y9O2)
+- Tests are now more reliable, so a random failure won't wrongly block updates. (AH-0MVX2DKC8001RRM4)
+- Hangar War now works end to end and is enabled by default. (AH-0MVZ4S9ZU004GXUM)
+- Captured gameplay videos can now be fast-forwarded and scrubbed in VLC. (AH-0MVMIK8EM001JAYR)
+- Arc now strikes only enemies, not asteroids, so its chain is spent on threats instead of farming rock. (AH-0MVNSIG1O0049G69)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.17 (2026-11-02)
 > **Release focus:** This release focuses on making combat and progression feel more varied and readable, with mixed enemy waves, distinct level backdrops, and richer audio-visual feedback for weapons, bosses, and rewards. It also rebalances temporary and permanent pickups so effects are limited rather than endless, and fixes several save-data, boss-fight, and test-reliability issues.
 ### Features
