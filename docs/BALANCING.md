@@ -1294,6 +1294,129 @@ Notes on individual ladders:
   reaches `E(8,8)` at 4 onsets/beat; faster-than-16th patterns need a
   sub-16th step size and are deferred to a follow-up tuning item.
 
+## Weapon 40 % trim / flattened curve — measured before/after gate (AH-0MVRENEME004FS8T)
+
+Producer answer **Q3 = B** made the weapon nerf (40 % level-0 trim plus the
+flattened per-level curve, parent **Weapon upgrades are too powerful**
+(AH-0MVRENEME004FS8T)) acceptable only with a pre/post batch comparison. That
+comparison is recorded here. The strength budget it is *not* able to check —
+the `≤ 60 % of baseline` level-0 bound, the `≤ 1.5× cannon` ceiling and the
+`≤ 2.5× L0` / `≤ 50 % of the old saturated output` level bounds — is asserted
+numerically by `src/utils/weapons.test.ts` and
+`src/utils/weaponLevels.test.ts`; see GDD §4.4 / §4.4.2.
+
+### The two runs (same sweep)
+
+```bash
+# BEFORE — commit 47609296, clean tree, no weapon data edits
+npm run evaluate -- --batch --games 100 --out eval-output/baseline-run
+# (artefacts copied to the dated, retained-for-comparison path)
+#   eval-output/baseline-2026-11-03/balance-report.json|.txt
+
+# AFTER — commit ffd79aa2 (level-0 trim 9586e7f4 + flattened curve ffd79aa2)
+npm run evaluate -- --batch --games 100 --out eval-output/post-change-2026-11-04
+```
+
+Both batches are git-ignored artefacts under `eval-output/`; the durable
+record is this section plus the work-item comment on
+AH-0MVWAVM03002FLLL.
+
+| Side | Commit | Date | Artefact directory |
+|---|---|---|---|
+| before | `47609296` | 2026-11-03 | `eval-output/baseline-2026-11-03/` |
+| after | `ffd79aa2` | 2026-11-04 | `eval-output/post-change-2026-11-04/` |
+
+**Same sweep, verified from the report `config` block:** campaign mode,
+`policies: ["competent"]`, seeds `1..100`, `ticks: 18000`, `dt: 1/60`,
+`sampleEveryTicks: 1`. The two `config` blocks are byte-identical and the two
+`balance-report.json` files are **byte-identical**, including every per-run
+`recordsHash`.
+
+### Before / after / delta
+
+Aggregate means per 100-game campaign batch (`n = 100`):
+
+| Metric | Before (`47609296`) | After (`ffd79aa2`) | Delta |
+|---|---:|---:|---:|
+| `survivalSeconds` | 300.00 | 300.00 | **0.00** |
+| `waveReached` | 5.89 | 5.89 | **0.00** |
+| `levelReached` | 1.09 | 1.09 | **0.00** |
+| `upgradesSelected` (sum of per-choice-id means) | 2.00 | 2.00 | **0.00** |
+| `mineralsCollected` | 18.00 | 18.00 | **0.00** |
+| `avoidableHits` | 0.00 | 0.00 | **0.00** |
+| `powerUpsCollected` | 12.95 | 12.95 | **0.00** |
+| `asteroidsDestroyed` | 12.00 | 12.00 | **0.00** |
+
+Per-band deltas against `src/data/experience-targets.json`
+(`targetsVersion` 1) are likewise unchanged:
+
+| Band | Before | After | Band delta | Verdict |
+|---|---:|---:|---:|---|
+| `survivalSeconds` (300 ± 30) | 300 | 300 | 0 | in-band |
+| `mineralsCollected` (18 ± 1.8) | 18 | 18 | 0 | in-band |
+| `upgradesSelected` (2 ± 0.5) | 2.00 | 2.00 | 0 | in-band |
+| `waveReached` (6.46 ± 4.9592) | 5.89 | 5.89 | 0 | in-band (pre-existing −0.57) |
+| `levelReached` (1.15 ± 0.7141) | 1.09 | 1.09 | 0 | in-band (pre-existing −0.06) |
+| `avoidableHits` (0 ± 0.5) | 0 | 0 | 0 | in-band |
+
+`node scripts/validate-experience.mjs eval-output/post-change-2026-11-04/balance-report.json`
+returns `verdict: pass`, `driftedMetrics: []` and exit 0 — so **no band moved
+materially and `src/data/experience-targets.json` is deliberately NOT
+re-baselined** (no `targetsVersion` bump, and GDD §2.7 is unchanged).
+
+### Why the numbers cannot move: the harness does not model weapon output
+
+A byte-identical report is the **structurally expected** result of this change,
+not evidence that the nerf is ineffective in the game. The closed-loop headless
+arena fires the player's shots on a **fixed cadence constant**
+(`FIRE_INTERVAL_TICKS = 9` in `src/ai/eval/arena.ts`) and imports only the
+**type** `WeaponId` from `src/utils/weapons` — a type-only import is erased at
+compile time, so no `WEAPON_CATALOGUE`, `DEFAULT_WEAPON_SUBDIVISIONS`,
+`AOE_RADII`, hit-budget or `WEAPON_UPGRADE_SPECS` value can reach the
+simulation. This is the already-documented fidelity boundary above: "choices
+affect the ownership context used by later offers — the arena does **not** model
+the chosen weapon's fire pattern".
+
+Measured, not inferred — a sensitivity probe on the same tree:
+
+```bash
+node scripts/evaluate.mjs --batch --games 3 --out /tmp/probe/control   # control
+# temporary edit: DEFAULT_WEAPON_SUBDIVISIONS.cannon 2 -> 12 (6x cadence)
+node scripts/evaluate.mjs --batch --games 3 --out /tmp/probe/edited    # 6x cannon fire rate
+git checkout -- src/utils/weapons.ts    # reverted; `git status --porcelain` empty
+```
+
+`diff /tmp/probe/control/balance-report.json /tmp/probe/edited/balance-report.json`
+is **empty**: even a 6× change to the starting weapon's level-0 cadence —
+several times larger than the 40 % trim under test — leaves the batch report
+byte-identical. **The batch gate is blind to weapon-output levers.**
+
+### Decision, and what still gates the change
+
+- **No retune iteration is recorded, because no retune can change a metric the
+  harness never reads.** Re-tuning weapon data to move these numbers would be
+  evidence-free churn; the stated bounds were therefore not re-entered.
+- **The numeric half of Q3 = B is the binding gate** for this change: the
+  level-0 `≤ 60 %` bound, the `≤ 1.5× cannon` ceiling and the
+  `≤ 2.5× L0` / `≤ 50 % of the pre-change saturated output` level bounds are
+  asserted table-driven against literal baselines by
+  `src/utils/weapons.test.ts` and `src/utils/weaponLevels.test.ts`.
+- **What the batch gate does still verify** here: the change is not a
+  campaign-shape regression — the sweep stays playable, in-band and
+  deterministic, and the same seeds reproduce the same report byte-for-byte
+  (a stronger reproducibility statement than the same-tree replay in
+  §Determinism and reproducibility, since the two runs happened on different
+  trees).
+- **Evidence limitation (carry it forward):** this batch is *directional* bot
+  evidence and cannot speak to weapon feel. A **human play-check is required**
+  after merge before the nerf is considered validated.
+- **Follow-up:** modelling the player's weapon fire (catalogue cadence, pattern
+  count, bullet lifetime, budgets and the level curve) in the arena, so a
+  future weapon-output change is measurable by this gate, is filed as
+  **Model player weapon fire output in the balance harness**
+  (AH-0MW1OLFM20060MOE, `discovered-from:AH-0MVRENEME004FS8T`) — out of scope
+  here (AC4 scope guard) but the reason this gate cannot answer the question.
+
 ## Related work
 
 - Epic: **Automated Balancing** (AH-0MV1DLUZ8009OCJW).

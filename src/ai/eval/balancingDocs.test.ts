@@ -333,3 +333,61 @@ describe('Campaign fidelity boundary is documented (AH-0MVD1RO7D000AC4X)', () =>
     expect(doc).toMatch(/reading the campaign distributions|per-wave|waveReached/);
   });
 });
+
+describe('Weapon-trim measured before/after gate is documented (AH-0MVWAVM03002FLLL)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+  const section = doc.slice(
+    doc.indexOf('## Weapon 40 % trim / flattened curve — measured before/after gate'),
+  );
+  const hasSection = section.length > 0;
+
+  it('records the gate as its own section naming the item and both sides of the comparison (parent AC6)', () => {
+    expect(hasSection).toBe(true);
+    expect(section).toContain('AH-0MVWAVM03002FLLL');
+    expect(section).toContain('AH-0MVRENEME004FS8T');
+    // The before/after provenance: the two commits and the dated artefact paths.
+    expect(section).toContain('47609296');
+    expect(section).toContain('ffd79aa2');
+    expect(section).toContain('eval-output/baseline-2026-11-03/');
+    expect(section).toContain('eval-output/post-change-2026-11-04/');
+    expect(section).toContain('npm run evaluate -- --batch --games 100');
+  });
+
+  it('records the before/after/delta table for every required aggregate metric', () => {
+    for (const metric of [
+      'survivalSeconds',
+      'waveReached',
+      'levelReached',
+      'upgradesSelected',
+      'mineralsCollected',
+      'avoidableHits',
+    ]) {
+      expect(section).toContain(metric);
+    }
+    // Same sweep, asserted from the report config block.
+    expect(section).toMatch(/campaign mode/);
+    expect(section).toMatch(/seeds `1\.\.100`/);
+    expect(section).toContain('18000');
+  });
+
+  it('records why the metrics cannot move, so the zero delta is not over-read (AC3)', () => {
+    // The structural reason: the arena fires on a fixed constant and imports
+    // only the *type* from the weapon catalogue.
+    expect(section).toContain('FIRE_INTERVAL_TICKS');
+    expect(section).toMatch(/type-only import|imports only the\s+\*\*type\*\*/);
+    // The measured sensitivity probe, not an inference.
+    expect(section).toMatch(/sensitivity probe/i);
+    expect(section).toContain('/tmp/probe/control');
+    expect(section).toContain('/tmp/probe/edited');
+    // The carried-forward limitation and the follow-up.
+    expect(section).toMatch(/human play-check is required/i);
+    expect(section).toContain('discovered-from:AH-0MVRENEME004FS8T');
+  });
+
+  it('records the no-re-baseline decision with the per-band deltas as evidence (AC4)', () => {
+    expect(section).toMatch(/deliberately NOT\s+re-baselined/);
+    expect(section).toContain('validate-experience');
+    expect(section).toMatch(/no band moved\s+materially/);
+    expect(section).toMatch(/in-band/);
+  });
+});
