@@ -95,10 +95,18 @@ describe('default guard (installed by src/test/setup.ts)', () => {
     expect(error!.message).toContain('installCsvFetchBridge');
   });
 
-  it('does not refuse an un-bridged absolute CSV URL either', async () => {
-    await expect(fetch(`http://localhost:3000${CSV_URL}`)).rejects.toThrow(
-      /Refusing un-bridged CSV fetch/,
-    );
+  it('does not refuse an absolute CSV URL — it names its target deliberately', async () => {
+    // The configCsvPlugin suite fetches its own ephemeral server by absolute
+    // URL; only a *relative* request could resolve to a stray checkout's dev
+    // server (AH-0MW26VICK000X2WC).
+    const base = vi.fn(async () => new Response('served'));
+    const guard = createCsvFetchGuard(base as unknown as typeof fetch);
+    const absolute = `http://127.0.0.1:4321${CSV_URL}`;
+
+    const response = await guard(absolute);
+
+    expect(await response.text()).toBe('served');
+    expect(base).toHaveBeenCalledWith(absolute, undefined);
   });
 });
 

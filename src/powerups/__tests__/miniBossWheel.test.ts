@@ -25,7 +25,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -105,8 +105,12 @@ function gainIds(outcome: MiniBossWheelOutcome): DropId[] {
   return outcome.gains.map((gain) => gain.id);
 }
 
+// Resolved from the Vitest project root rather than `import.meta.url`: the
+// integration project runs under happy-dom, where `import.meta.url` is an
+// `http://localhost:3000/...` URL and `fileURLToPath` throws "The URL must be
+// of scheme file" while the file is being collected.
 const MODULE_SOURCE = readFileSync(
-  fileURLToPath(new URL('../miniBossWheel.ts', import.meta.url)),
+  resolve(process.cwd(), 'src/powerups/miniBossWheel.ts'),
   'utf8',
 );
 

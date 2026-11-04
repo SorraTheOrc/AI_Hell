@@ -65,10 +65,12 @@ gate on later sessions and can silently clobber an operator's tuned config
    wants the *real* write path (e.g. the plugin/temp-root pipeline) must pin
    `vi.stubEnv('MODE', 'development')` and install the bridge (below).
 3. **Default CSV fetch guard** (`src/test/csvFetchBridge.ts`, installed by
-   `src/test/setup.ts` for the integration project): non-CSV requests pass
-   through, but an un-bridged `/api/csv/...` fetch **rejects without network
-   I/O**, naming the calling test file and the remedy. A test exercising real
-   CSV traffic opts in with `installCsvFetchBridge(baseUrl)` — a per-test
+   `src/test/setup.ts` for the integration project): non-CSV requests and
+   **absolute** CSV URLs (which name their target deliberately, e.g. a test's
+   own ephemeral `127.0.0.1:<port>` server) pass through, but an un-bridged
+   **relative** `/api/csv/...` fetch **rejects without network I/O**, naming the
+   calling test file and the remedy. A test exercising real CSV traffic opts in
+   with `installCsvFetchBridge(baseUrl)` — a per-test
    `vi.stubGlobal`, restored by `vi.unstubAllGlobals()`. Note the bridge crosses
    origins (`localhost:3000` → `127.0.0.1:<port>`), so a bridged test server
    must answer with permissive CORS headers; a real dev server is same-origin
