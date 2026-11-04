@@ -61,6 +61,11 @@ import { Scout } from '../entities/Scout';
 import { Tank } from '../entities/Tank';
 import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
 import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss, type MiniBossConfig } from '../entities/MiniBoss';
+import {
+  MINI_BOSS_SWEEP_FINALE_COUNT,
+  MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS,
+  MINI_BOSS_SWEEP_FINALE_PAIR_SIZE,
+} from './core/miniBossDeathSweep';
 import { minionCountForPhase } from '../waves/BossMinions';
 import type { WeaponDefinition } from '../utils/weapons';
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
@@ -8503,8 +8508,9 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
  * formula, scope split, determinism, anchored/scattered placement, completion
  * ordering) is pinned by `src/scenes/core/miniBossDeathSweep.test.ts`; this
  * suite pins the **scene wiring**: capture-before-teardown, the deferred
- * overlay, the single post-sweep advance, hazard survival and the
- * cosmetic-only teardown.
+ * overlay, the single post-sweep advance, hazard survival, the cosmetic-only
+ * teardown and the shared-dispatcher audio wiring (AH-0MVVEI7FD004TR2M — the
+ * game and the gym dispatch the identical cue palette).
  */
 describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () => {
   let booted: BootedGame | null = null;
@@ -8800,31 +8806,68 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     expect(scene.isPaused()).toBe(false);
   });
 
-  it('AC3 — every sweep burst schedules its explosion SFX (no silent explosions)', async () => {
+  it('AC3 — every sweep burst schedules its explosion SFX through the shared dispatcher (no silent explosions)', async () => {
     const scene = await bootSweepScene();
     advanceToMiniBoss(scene);
-    const destruction = vi.spyOn(effectsModule, 'playDestructionSound');
+    const sweepSound = vi.spyOn(effectsModule, 'playMiniBossSweepSound');
     const bossDestruction = vi.spyOn(effectsModule, 'playBossDestructionSound');
 
     hitMiniBossUntilDead(scene);
 
     const targets = scene.getMiniBossSweepTargets();
-    // The swept enemies, the `max(0, 30 - n)` scatter bursts and the 10
-    // anchored bursts share the enemy-destruction cue, each scheduled at its
-    // own burst delay (producer audit: explosions were silent).
-    expect(destruction.mock.calls.length).toBeGreaterThanOrEqual(
-      targets.length + 10,
+    expect(targets.length).toBeGreaterThan(0);
+
+    // Gym↔game parity (AH-0MVVEI7FD004TR2M AC3/AC4): the cascade is voiced
+    // through the **one** shared dispatcher — the swept enemies, the
+    // `max(0, 30 - n)` scatter bursts and the 10 anchored bursts reuse the
+    // enemy-destruction cue, and the 20-burst finale reuses the
+    // victory-explosion boom. The scene never picks its own cue.
+    const calls = sweepSound.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const cues = new Set(calls.map(([cue]) => cue));
+    expect([...cues].sort()).toEqual([
+      'playDestructionSound',
+      'playVictoryExplosionSound',
+    ]);
+
+    // Every cue is visual-timed at its burst's own delay and mix-trimmed, so
+    // no burst is dispatched silently or snapped to the beat grid.
+    for (const [, options] of calls) {
+      expect(options?.delay).toBeGreaterThanOrEqual(0);
+      expect(options?.volume).toBeGreaterThan(0);
+      expect(options?.variantPick).toBeGreaterThanOrEqual(0);
+      expect(options?.variantPick).toBeLessThan(1);
+    }
+
+    const destructionDelays = calls
+      .filter(([cue]) => cue === 'playDestructionSound')
+      .map(([, options]) => options?.delay ?? 0);
+    // Every swept enemy is voiced (role thinning stride 1) plus the scatter
+    // and anchored celebration bursts — the pre-change bug was 0 cues.
+    expect(destructionDelays.length).toBeGreaterThanOrEqual(targets.length + 10);
+    expect(destructionDelays.some((delay) => delay > 0)).toBe(true);
+
+    // The finale is the mini-boss's biggest beat: all 20 bursts voiced, in
+    // pairs two every 0.25 s, after the anchored celebration.
+    const finaleDelays = calls
+      .filter(([cue]) => cue === 'playVictoryExplosionSound')
+      .map(([, options]) => options?.delay ?? 0);
+    expect(finaleDelays).toHaveLength(MINI_BOSS_SWEEP_FINALE_COUNT);
+    expect(finaleDelays.every((delay) => delay > 0)).toBe(true);
+    const expectedPairGap =
+      MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS / 1000;
+    for (let i = MINI_BOSS_SWEEP_FINALE_PAIR_SIZE; i < finaleDelays.length; i++) {
+      expect(finaleDelays[i] - finaleDelays[i - MINI_BOSS_SWEEP_FINALE_PAIR_SIZE])
+        .toBeCloseTo(expectedPairGap, 6);
+    }
+
+    // The mini-boss's own body boom plays exactly once on the defeat frame
+    // (through the entity's shared death seam, at delay 0) — the cascade must
+    // never double it.
+    const bodyBooms = bossDestruction.mock.calls.filter(
+      ([options]) => (options?.delay ?? 0) === 0,
     );
-    expect(
-      destruction.mock.calls.some(([options]) => (options?.delay ?? 0) > 0),
-    ).toBe(true);
-    // The 20-burst finale is the mini-boss's own heavy boss-destruction boom
-    // (the mini-boss's single death cue, when routed through its
-    // `playDestructionAudio` seam, is unscheduled and therefore not counted).
-    const scheduledBossBooms = bossDestruction.mock.calls.filter(
-      ([options]) => (options?.delay ?? 0) > 0,
-    );
-    expect(scheduledBossBooms).toHaveLength(20);
+    expect(bodyBooms).toHaveLength(1);
 
     finishMiniBossSweep(scene);
   });

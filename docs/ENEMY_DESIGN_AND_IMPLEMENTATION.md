@@ -1655,13 +1655,21 @@ covers it):
   the burst) and never route through the reward-bearing `_onEnemyKilled` path:
   no score, no drops, no kill telemetry.
 - **Sound.** Every planned burst schedules its matching explosion cue through
-  the shared audio layer: the swept-enemy, scatter and anchored bursts reuse
-  `playDestructionSound`, and the finale pairs use
-  `playBossDestructionSound`. Each cue carries the burst's explicit `delay`
+  the one shared dispatcher
+  (`playMiniBossSweepSound` in `src/audio/effects.ts`,
+  AH-0MVVEI7FD004TR2M): the swept-enemy, scatter and anchored bursts reuse
+  `playDestructionSound`, and the finale pairs reuse
+  `playVictoryExplosionSound` (the mini-boss's own body boom,
+  `playBossDestructionSound`, stays on the entity's shared death seam so the
+  sweep never doubles it). Each cue carries the burst's explicit `delay`
   (honoured verbatim by `playExplosionCue` instead of being snapped to the
-  beat grid) and a per-role mix trim, so no burst in the display is silent
-  (producer audit: "explosions with no SFX"). `spawnMiniBossDeathSweep`
+  beat grid), a per-role mix trim and a run-seeded baked-variant draw, so no
+  burst in the display is silent (producer audit: "explosions with no SFX")
+  and the same seed replays the same audio. `spawnMiniBossDeathSweep`
   exposes `soundEnabled` and `playSound` seams for custom routing/tests.
+  `PlayScene` and `GymMiniBoss` therefore dispatch the identical palette —
+  pinned on the game side by the `PlayScene.test.ts` AC3 case and on the gym
+  side by `GymMiniBoss.test.ts`, both spying on the shared dispatcher.
 - **Deferred finalisation.** `PlayScene._finaliseMiniBossDefeat` runs from the
   executor's `onComplete`: it opens the reward overlay
   (`openMiniBossReward`, `miniBossRewardOpen` latch ⇒ exactly one overlay per
