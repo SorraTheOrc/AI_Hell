@@ -912,6 +912,13 @@ npm run perf:measure -- --scene PlayScene --setup '{"demo":true,"seed":1,"startL
   browser.
 - **Budget, reported fields, reference machine, noise floor and how to compare
   two runs:** see [docs/PERFORMANCE.md](./docs/PERFORMANCE.md).
+- **Measured chrome costs are recorded too:** the ranked hotspot list, and the
+  ablations behind it, live in the same document — e.g. the per-frame HUD row
+  rebuild (destroyed and re-created a `Text` per row per frame) was worth 9 % of
+  the measured window with a loadout on screen and is now a redraw-on-change
+  plan in `src/ui/HUD.ts` (AH-0MVXV0FFJ0066EC8), while the player bubbles, the
+  Options escort and the wave-timer bar measure inside the noise floor. See
+  [docs/PERFORMANCE.md § Per-frame HUD rows](./docs/PERFORMANCE.md#per-frame-hud-rows-ah-0mvxv0ffj0066ec8).
 
 #### On-screen action intensity (research & decision)
 

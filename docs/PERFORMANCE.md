@@ -383,7 +383,7 @@ Source lines are the **TypeScript** declaration lines, resolved by function name
 | 4 | Enemy fire + aim-target collection | `src/entities/enemyFire.ts:111` (`fireForEnemy`), `src/scenes/core/enemyTargeting.ts:85` (`pushAimTargets`) | 0.04 % [0.2 %] | Allocation removal only | AH-0MVXV0F0Y004NENT (low) |
 | 5 | Collision passes (`_handleCollisions`) | `src/scenes/core/CombatScene.ts:1310` | 0.02 % [0.2 %] | Broad-phase — **measured too small to matter at this load** | AH-0MVXV0EMF001WVQ1 (low) |
 | 6 | GC / allocation pressure | V8 `(garbage collector)` | 0.40 % [2.7 %] | Allocation removal | AH-0MVXV0F0Y004NENT (low) |
-| 7 | HUD / UI refresh, player auto-defence | `src/ui/HUD.ts:405` (`refresh`), `src/scenes/core/CombatScene.ts:243` (`_updateAutoDefence`) | 0.02–0.03 % | None needed | — |
+| 7 | HUD / UI refresh, player auto-defence | `src/ui/HUD.ts:405` (`refresh`), `src/scenes/core/CombatScene.ts:243` (`_updateAutoDefence`) | 0.02–0.03 % **with no loadout rows**; 9.06 % of the window (~40 % of JS) once rows are present — see [Per-frame HUD rows](#per-frame-hud-rows-ah-0mvxv0ffj0066ec8) | Redraw the rows only when the rendered state changes (done); auto-defence measured too small to matter | AH-0MVXV0FFJ0066EC8 |
 | 8 | Minerals update/collect | `src/scenes/core/mineralLayer.ts:130` (`collectMinerals`), `src/scenes/gym/core/GymFormationScene.ts:1464` (`_updateMinerals`) | 0.01 % in the gym (minerals disabled); 0.06 % in the busier run | None needed | — |
 | 9 | **Demo-bot steering** (attract mode only) | `src/ai/framework/competent/steering.ts:327` (`evaluateDirection`), `src/ai/framework/hazardVelocity.ts:74` (`trackHazardVelocities`) | PlayScene demo run: 0.47 % [5.2 %] — the largest single game-code function there | Evaluate less often / reuse the world snapshot | AH-0MW2DC28M00161W6 (low) |
 | 10 | **Dev telemetry serialisation** (dev builds only) | `src/telemetry/redact.ts:93` (`sanitiseObject`), `src/ai/botSnapshot.ts:459` (`deepFreeze`) | PlayScene demo run: ≈ 0.7 % [≈ 7 % of JS] | Skip the serialise+redact of a payload that will be discarded for exceeding the upload cap | AH-0MW2DC20A007TAVY (low) |
@@ -400,9 +400,105 @@ speculation):
   bullet counts, not as a lever on the target.
 - **Per-frame allocations (AH-0MVXV0F0Y004NENT) → `low`.** GC is 2.7 % of JS /
   0.40 % of the window.
+- **HUD rows (AH-0MVXV0FFJ0066EC8) → measured by ablation, not by this
+  ranking.** This profile's scenario holds no power-ups, so it never rendered a
+  loadout row; with a scripted loadout the per-frame row rebuild costs 9.06 % of
+  the window (~40 % of JS) and is now removed — see
+  [Per-frame HUD rows](#per-frame-hud-rows-ah-0mvxv0ffj0066ec8). The chrome
+  around it (bubbles, escort pods, timer bar) measures inside the noise floor.
 - **A new child was created for the measured #1 hotspot**
   (AH-0MW2DAY2L004QSKF) because the pre-provisioned draw-call child's scope
   (HUD, bubbles, pods, timer bar) does not cover the per-bullet Graphics cost.
+
+### Per-frame HUD rows (AH-0MVXV0FFJ0066EC8)
+
+The stress gym holds **no power-ups**, so the baseline profile above never
+rendered a HUD loadout row and ranked `HUD.refresh` at 0.02–0.03 % of the
+window (hotspot #7, "none needed"). That reading is **incomplete**: the row
+list is empty in that scenario. Re-measured with a scripted combat loadout,
+the per-frame row rebuild was the single largest cost in the chrome this item
+owns — and it is now gone.
+
+**What was wrong.** `HUD.refresh()` ran on every frame (via `update()`) and
+destroyed and re-created every row's `Graphics` icon and `Text` objects — two
+`Text` objects per row, each regenerating a canvas texture and re-uploading it
+on creation. The rendered state it rebuilt from changes at most once a second
+(the countdowns are whole seconds: `formatHUDValue` → `Ns`,
+`buildHUDLabel` → `next in Ns`), and only on a pickup/spend during play, so
+~59 frames in 60 paid the full rebuild for an identical result.
+
+**Measurement.** `GymPowerUpsCombat` with the fixed scenario
+`--setup '{"threatCount":12}'` (plain) against the same scene with a scripted
+combat loadout — `--setup '{"powerUps":{"shield":1,"force_field":1,"thorns":1,"magnet":1,"bomb":1},"player":{"weapons":["options"]},"threatCount":12}'`
+(armed: five HUD rows plus the Shield, Force Field and Thorn Field bubbles and
+the Options escort) — 30 s window, 5 s warm-up, `--profile`, same host:
+
+| Run | Host load | JS (% window) | `ui` bucket | `gc` bucket | FPS | p95 (ms) | Frames > 33 ms |
+|---|---|---|---|---|---|---|---|
+| plain, before | 5.64 | 5.05 | 0.02 | 0.18 | 58.8 | 16.8 | 36 |
+| plain, after | 8.88 | 4.96 | 0.08 | 0.22 | 57.5 | 16.8 | 76 |
+| armed, before | 7.14 | **9.06** | 0.13 | 0.39 | 51.3 | 33.4 | 261 |
+| armed, after (run A) | 13.49 | **5.44** | 0.08 | 0.18 | 53.2 | 33.3 | 200 |
+| armed, after (run B, final code) | 10.26 | **5.79** | 0.14 | 0.21 | 49.8 | 33.4 | 306 |
+
+On this shared host the **FPS and percentile columns are noise-dominated** (these
+runs were taken while other agents' suites were loading the box, and the
+load-average column moves with them); the **JS attribution is the stable
+signal**, exactly as the bucket table in [Where the frame time
+goes](#where-the-frame-time-goes) shows. Read the fix from `JS`/`ui`/`gc` and the
+per-symbol table below, not from a few FPS.
+
+The JS attribution is the decisive part, and it is unambiguous — these
+functions only appear in the profile when the HUD rows are present, and every
+one of them vanishes after the change (self time, % of the measured window):
+
+| Symbol (Phaser text path) | armed, before | armed, after |
+|---|---|---|
+| `texImage2D` (texture upload) | 0.99 | — |
+| `save` (canvas state) | 0.49 | — |
+| `preDestroy` (row teardown) | 0.47 | — |
+| `updateText` | 0.39 | — |
+| `MeasureText` / `measureText` | 0.27 / 0.20 | — |
+| `setStyle` | 0.27 | — |
+| `Text` (constructor) / `create` | 0.25 / 0.25 | — |
+| `fillText` | 0.19 | — |
+
+"—" means below the profile's top-16 cut (each < 0.15 %). The `armed` run now
+sits within noise of the `plain` run on every bucket (5.44 % vs 4.96 % JS,
+4.45 % vs 4.03 % renderer, `gc` 0.18 vs 0.22) **despite a load average almost
+twice as high**, so the HUD rows are effectively free and the remaining chrome
+the armed setup adds — the three player bubbles and the Options escort, one
+`Graphics` object each, plus the wave-timer bar in `PlayScene` — is inside the
+noise floor (`GraphicsWebGLRenderer` 1.05 % armed vs 1.07 % plain). That agrees
+with the ranked hotspot: the measured draw-submission cost is the **per-bullet**
+`Graphics` object (hotspot #1, AH-0MW2DAY2L004QSKF), not the chrome.
+
+**What changed.** `HUD.refresh()` now resolves a *render plan* — the rows, their
+indices, labels, values, greyed/marker state, the lives label and the layout
+inputs — and rebuilds the row objects only when that plan's signature differs
+from the one on screen. The mineral hold bar redraws only when its geometry
+(fill width / visibility) changes. Both live in `src/ui/HUD.ts`, which every
+combat gym and `PlayScene` consume, so the win is shared by construction
+(gym↔game parity). The countdown rows still advance exactly on the second they
+always did; the tests in `src/ui/HUD.refreshCadence.test.ts` pin both halves —
+stable objects while the state is stable, a rebuild on every visible change.
+
+**Not done, deliberately.** The bubbles, the Options escort and the wave-timer
+bar are still clear-and-redraw `Graphics`: each is one object whose geometry
+either moves every frame (the orbiting pods, the depleting timer fill) or is
+cheaper to redraw than to diff, and the measurement above puts the whole set
+inside the noise floor. Converting them to cached textures would trade a
+measurable-zero draw cost for a visual-parity risk, so it is not part of this
+change; if a future profile makes them material, the same ablation method
+(plain vs armed setup, compare `topFunctions`) is how to show it.
+
+**No regression at the target load.** A 60 s `GymPerformance` re-run of the
+same change (100 enemies, 326 enemy-bullet peak) at host load 15.71 reproduced
+the documented **high-load** baseline rows 4–5 exactly — 26.81 FPS vs
+26.77 / 26.80, p50 33.4 ms, p95 50.0 ms vs 50.1 ms — as the host-load
+sensitivity table predicts for that band. The stress gym holds no power-ups, so
+it renders no HUD rows and the change is not expected to move its numbers; the
+run confirms it does not.
 
 ## Reference machine
 

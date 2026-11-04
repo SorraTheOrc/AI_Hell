@@ -299,6 +299,37 @@ export interface HUDOptions {
   getSlotState?: () => PowerUpSlotState | null;
 }
 
+/**
+ * One planned display row, resolved from registry state **before** any
+ * GameObject is created, so an unchanged plan can skip the whole rebuild
+ * (AH-0MVXV0FFJ0066EC8). `label`/`value` are resolved here (not in the
+ * renderer) so the signature compared between frames and the text actually
+ * rendered can never disagree.
+ */
+type HudRowPlan =
+  | { kind: 'powerUp'; entry: HUDEntry; row: number }
+  | {
+      kind: 'weapon';
+      weapon: WeaponEffect;
+      row: number;
+      slotCounted: boolean;
+      label: string;
+      value: string;
+    }
+  | { kind: 'heading'; row: number };
+
+/**
+ * The complete rendered state of the HUD's row list for one frame:
+ * the rows to render, the lives label, and the signature that decides
+ * whether those rows differ from the ones already on screen.
+ */
+interface HudRenderPlan {
+  rows: HudRowPlan[];
+  livesVisibility: 'show' | 'hide' | 'keep';
+  livesText: string;
+  signature: string;
+}
+
 export class HUD extends Phaser.GameObjects.Container {
   private _registry: EffectsRegistry | null = null;
   private _livesLabel: Phaser.GameObjects.Text;
@@ -314,6 +345,16 @@ export class HUD extends Phaser.GameObjects.Container {
   private _weaponRows: Array<{ id: string; label: string }> = [];
   private _minerals = 0;
   private _mineralCapacity = 0;
+  /**
+   * Signature of the row list currently on screen; `null` before the first
+   * render. `refresh()` rebuilds only when this changes (AH-0MVXV0FFJ0066EC8):
+   * the previous code destroyed and re-created every row's `Text`/`Graphics`
+   * objects on every frame, forcing a canvas text re-render and a texture
+   * upload per row per frame for state that changes at most once a second.
+   */
+  private _renderedRowSignature: string | null = null;
+  /** Signature of the mineral hold bar currently drawn (`null` = never). */
+  private _drawnMineralBarSignature: string | null = null;
 
   constructor(scene: Phaser.Scene, registry: EffectsRegistry | null = null, options?: HUDOptions) {
     super(scene, 8, 8);
@@ -398,40 +439,83 @@ export class HUD extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Rebuilds the display rows and lives label from the current registry
-   * state. Call after the registry ticks or changes (or rely on the
-   * scene calling it each frame via `update`).
+   * Brings the display rows, slot budget, lives label and mineral hold bar in
+   * line with the current registry state. Call after the registry ticks or
+   * changes (or rely on the scene calling it each frame via `update`).
+   *
+   * Safe — and cheap — to call every frame: the row objects are rebuilt only
+   * when the resolved render plan changes, so a frame whose registry state is
+   * unchanged does no GameObject churn (AH-0MVXV0FFJ0066EC8).
    */
   refresh(): void {
-    // Tear down the previous frame's row objects (lives label + icon
-    // graphics are rebuilt too — keep the list consistent).
-    for (const obj of this._rowObjects) {
-      obj.destroy();
-    }
-    this._rowObjects = [];
-    this._rows = [];
-    this._weaponRows = [];
     this._drawSlotBudget();
+
+    // Resolve the row plan, then rebuild the row objects **only when the
+    // rendered state actually changed**. The plan is cheap (registry reads +
+    // string formatting); the rebuild is not (a `Graphics` icon and one or two
+    // `Text` objects per row, each regenerating a canvas texture on creation),
+    // and the plan is stable for every frame between two countdown ticks
+    // (AH-0MVXV0FFJ0066EC8).
+    const plan = this._planRows();
+
+    // The row *model* is current every frame, whether or not the objects are
+    // rebuilt: `getRows()` and `getLoadoutRows()` read these arrays, and
+    // consumers must never see a value lag behind the registry just because
+    // the rendered text happens to be unchanged (a sub-second recharge change
+    // moves `recharge` without moving the whole-second label).
+    this._rows = plan.rows
+      .filter((spec) => spec.kind === 'powerUp')
+      .map((spec) => (spec as Extract<HudRowPlan, { kind: 'powerUp' }>).entry);
+    this._weaponRows = plan.rows
+      .filter((spec) => spec.kind === 'weapon')
+      .map((spec) => {
+        const weapon = spec as Extract<HudRowPlan, { kind: 'weapon' }>;
+        return { id: weapon.weapon.weaponId, label: weapon.label };
+      });
+
+    if (plan.signature !== this._renderedRowSignature) {
+      this._renderedRowSignature = plan.signature;
+      this._renderRows(plan);
+    }
+
+    // Mineral hold bar row (drawn only when a capacity is configured).
+    this._drawMineralBar();
+  }
+
+  /**
+   * Resolves the row list the HUD should show, without touching any
+   * GameObject.
+   *
+   * One row per power-up/weapon: the shared registry merges permanent and
+   * temporary state so a field pickup never adds a second row. Slot-counted
+   * rows come first, as the loadout list; non-slot rows are grouped below a
+   * heading so a player counting the list can never read them as equipped
+   * upgrades (AH-0MVVF0POV001JNKX).
+   *
+   * The returned `signature` covers every input the renderers read — the row
+   * order and indices, each row's icon/label/value/greyed/marker state, the
+   * non-slot alpha flag, the lives label, and the layout inputs `_rowY()`
+   * depends on — so an unchanged signature proves the on-screen rows are still
+   * correct (AH-0MVXV0FFJ0066EC8).
+   */
+  private _planRows(): HudRenderPlan {
+    const rows: HudRowPlan[] = [];
+    let livesVisibility: HudRenderPlan['livesVisibility'] = 'keep';
+    let livesText = '';
 
     if (this._registry) {
       let row = 0;
-      // One row per power-up/weapon: the shared registry merges permanent
-      // and temporary state so a field pickup never adds a second row.
-      //
-      // Slot-counted rows come first, as the loadout list; non-slot rows are
-      // grouped below a heading so a player counting the list can never read
-      // them as equipped upgrades (AH-0MVVF0POV001JNKX).
       const powerUpRows = this._buildPowerUpRows();
       for (const entry of powerUpRows) {
         if (entry.slotCounted === false) continue;
-        this._addRow(entry, row);
+        rows.push({ kind: 'powerUp', entry, row });
         row += 1;
       }
       const state = this._slotState();
       const weapons = this._registry.activeWeapons();
       for (const weapon of weapons) {
         if (!this._weaponRowSlotCounted(weapon.weaponId, state)) continue;
-        this._addWeaponRow(weapon, row);
+        rows.push(this._weaponRowPlan(weapon, row, true));
         row += 1;
       }
       const nonSlotPowerUps = powerUpRows.filter(
@@ -441,31 +525,96 @@ export class HUD extends Phaser.GameObjects.Container {
         (weapon) => !this._weaponRowSlotCounted(weapon.weaponId, state),
       );
       if (nonSlotPowerUps.length > 0 || nonSlotWeapons.length > 0) {
-        this._addNonSlotSectionHeading(row);
+        rows.push({ kind: 'heading', row });
         row += 1;
         for (const entry of nonSlotPowerUps) {
-          this._addRow(entry, row);
+          rows.push({ kind: 'powerUp', entry, row });
           row += 1;
         }
         for (const weapon of nonSlotWeapons) {
-          this._addWeaponRow(weapon, row, false);
+          rows.push(this._weaponRowPlan(weapon, row, false));
           row += 1;
         }
       }
       if (this._showLives) {
-        this._livesLabel.setVisible(true);
-        this._livesLabel.setText(`Lives: ${this._registry.lives()}`);
+        livesVisibility = 'show';
+        livesText = `Lives: ${this._registry.lives()}`;
       } else {
-        this._livesLabel.setVisible(false);
-        this._livesLabel.setText('');
+        livesVisibility = 'hide';
       }
-    } else {
-      this._livesLabel.setText('');
-      if (!this._showLives) this._livesLabel.setVisible(false);
+    } else if (!this._showLives) {
+      livesVisibility = 'hide';
     }
 
-    // Mineral hold bar row (drawn only when a capacity is configured).
-    this._drawMineralBar();
+    // Layout inputs `_rowY()` reads: a lives row, a mineral bar row and a
+    // slot-budget row each shift every row down by one band, so a change to
+    // any of them must force a rebuild even when the row text is identical.
+    const layoutKey = [
+      this._showLives ? 1 : 0,
+      this._mineralCapacity > 0 ? 1 : 0,
+      this._budgetOffset() > 0 ? 1 : 0,
+    ].join('/');
+    const signature = [
+      layoutKey,
+      ...rows.map((spec) => this._rowSignature(spec)),
+      `lives|${livesVisibility}|${livesText}`,
+    ].join('\n');
+    return { rows, livesVisibility, livesText, signature };
+  }
+
+  /** The signature contribution of one planned row (see {@link _planRows}). */
+  private _rowSignature(spec: HudRowPlan): string {
+    if (spec.kind === 'powerUp') {
+      const entry = spec.entry;
+      return [
+        'p',
+        spec.row,
+        entry.id,
+        entry.label,
+        entry.value,
+        entry.greyed ? 1 : 0,
+        entry.slotCounted === false ? 0 : 1,
+        entry.marker ?? '',
+      ].join('|');
+    }
+    if (spec.kind === 'weapon') {
+      return [
+        'w',
+        spec.row,
+        spec.weapon.weaponId,
+        spec.label,
+        spec.value,
+        spec.slotCounted ? 1 : 0,
+      ].join('|');
+    }
+    return ['h', spec.row].join('|');
+  }
+
+  /** Rebuilds the row objects for *plan*, replacing the previous frame's. */
+  private _renderRows(plan: HudRenderPlan): void {
+    // Tear down the previous row objects (the lives label, icon graphics,
+    // mineral bar and budget label are permanent container children, so they
+    // are never rebuilt). The row model arrays are owned by `refresh()`.
+    for (const obj of this._rowObjects) {
+      obj.destroy();
+    }
+    this._rowObjects = [];
+
+    for (const spec of plan.rows) {
+      if (spec.kind === 'powerUp') this._addRow(spec.entry, spec.row);
+      else if (spec.kind === 'weapon') this._addWeaponRow(spec);
+      else this._addNonSlotSectionHeading(spec.row);
+    }
+
+    if (plan.livesVisibility === 'show') {
+      this._livesLabel.setVisible(true);
+      this._livesLabel.setText(plan.livesText);
+    } else if (plan.livesVisibility === 'hide') {
+      this._livesLabel.setVisible(false);
+      this._livesLabel.setText('');
+    } else {
+      this._livesLabel.setText(plan.livesText);
+    }
   }
 
   /** Phaser per-frame hook: keep the HUD in sync with the registry. */
@@ -535,10 +684,23 @@ export class HUD extends Phaser.GameObjects.Container {
    * the outline (AC3).
    */
   private _drawMineralBar(): void {
+    // The bar is a clear-and-redraw each frame in the original code; its whole
+    // geometry is a function of (visible, fill width, lives offset), so skip
+    // the clear + three primitives when none of them moved
+    // (AH-0MVXV0FFJ0066EC8).
+    const visible = this._mineralCapacity > 0;
+    const signature = [
+      visible ? 1 : 0,
+      visible ? this._mineralFillWidth() : 0,
+      this._showLives ? 1 : 0,
+    ].join('|');
+    if (signature === this._drawnMineralBarSignature) return;
+    this._drawnMineralBarSignature = signature;
+
     const bar = this._mineralBar;
     bar.clear();
 
-    if (this._mineralCapacity <= 0) {
+    if (!visible) {
       bar.setVisible(false);
       return;
     }
@@ -658,7 +820,6 @@ export class HUD extends Phaser.GameObjects.Container {
 
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
-    this._rows.push(entry);
 
     // Non-slot marker: tells the player the row is not one of the six
     // loadout slots (exempt entry / charge pool) without changing the label
@@ -1027,52 +1188,66 @@ export class HUD extends Phaser.GameObjects.Container {
 
   // ── Weapon row rendering ──────────────────────────────────────────
 
-  /** Builds one weapon display row (icon + name + value). */
-  private _addWeaponRow(
+  /**
+   * Plans one weapon display row (icon + name + value).
+   *
+   * The label (run-scoped **effective** level, permanent + temporary) and the
+   * value (countdown while a temporary field-pickup window is active, else
+   * `∞`, AH-0MUX802450085VZZ) are resolved here so the row signature and the
+   * rendered text come from one computation (AH-0MVXV0FFJ0066EC8).
+   */
+  private _weaponRowPlan(
     weapon: WeaponEffect,
     row: number,
-    slotCounted = true,
+    slotCounted: boolean,
+  ): HudRowPlan {
+    const level = this._getWeaponLevel?.(weapon.weaponId) ?? 0;
+    const temporary = weapon.tempWindow === true;
+    return {
+      kind: 'weapon',
+      weapon,
+      row,
+      slotCounted,
+      label: `${WEAPON_ROW_PREFIX}${weapon.weaponId} Lvl ${level}`,
+      value: formatHUDValue(temporary, weapon.remaining),
+    };
+  }
+
+  /** Builds one planned weapon display row (icon + name + value). */
+  private _addWeaponRow(
+    spec: Extract<HudRowPlan, { kind: 'weapon' }>,
   ): void {
-    const y = this._rowY(row);
+    const y = this._rowY(spec.row);
 
     // Weapon icon.
     const icon = new Phaser.GameObjects.Graphics(this.scene);
     drawWeaponIcon(
       icon,
-      weapon.weaponId as WeaponDropIconId,
+      spec.weapon.weaponId as WeaponDropIconId,
       ICON_X,
       y + ROW_HEIGHT / 2,
       8,
     );
 
-    // Weapon label, always suffixed with the run-scoped **effective** level
-    // (permanent + temporary); the value shows a countdown while a temporary
-    // field-pickup window is active, else `∞` (AH-0MUX802450085VZZ).
-    const level = this._getWeaponLevel?.(weapon.weaponId) ?? 0;
-    const label = `${WEAPON_ROW_PREFIX}${weapon.weaponId} Lvl ${level}`;
     const name = new Phaser.GameObjects.Text(
       this.scene,
       NAME_X,
       y + ROW_HEIGHT * 0.25,
-      label,
+      spec.label,
       TEXT_STYLE,
     );
 
-    // Remaining seconds while the temporary window is active; `∞` for a
-    // permanent-only weapon.
-    const temporary = weapon.tempWindow === true;
     const value = new Phaser.GameObjects.Text(
       this.scene,
       VALUE_X,
       y + ROW_HEIGHT * 0.25,
-      formatHUDValue(temporary, weapon.remaining),
+      spec.value,
       TEXT_STYLE,
     );
 
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
-    this._weaponRows.push({ id: weapon.weaponId, label });
-    if (!slotCounted) {
+    if (!spec.slotCounted) {
       // A weapon row that holds no slot (only reachable outside the shipped
       // wiring) recedes like the power-up non-slot rows.
       icon.setAlpha(NON_SLOT_ROW_ALPHA);
