@@ -1,0 +1,34 @@
+# Weapon Shot-Pattern CSV — one row per pattern bullet, grouped by weapon.
+# Angles are authored in DEGREES (readable in a spreadsheet) and converted to
+# radians on parse. Edit to retune; refresh `npm run dev` to see the change.
+#
+# Columns:
+#   weaponId     — Weapon id, matching a row in weapons.csv.
+#   index        — Bullet index within the pattern (0-based, contiguous).
+#   angleDeg     — Angle in degrees relative to the ship heading.
+#   sideOffsetPx — Perpendicular positional offset in px; blank = centred.
+weaponId,index,angleDeg,sideOffsetPx
+cannon,0,0.000,
+spread,0,-30.000,
+spread,1,0.000,
+spread,2,30.000,
+dual,0,0.000,-8
+dual,1,0.000,8
+rapid,0,0.000,
+wave_laser,0,0.000,
+ricochet,0,0.000,
+cluster,0,0.000,
+options,0,0.000,
+nova,0,0.000,
+mortar,0,0.000,
+arc,0,0.000,
+rear_guard,0,180.000,
+broadside,0,-90.000,
+broadside,1,90.000,
+railgun,0,0.000,
+shard_swarm,0,-15.000,
+shard_swarm,1,-7.500,
+shard_swarm,2,0.000,
+shard_swarm,3,7.500,
+shard_swarm,4,15.000,
+heavy_slug,0,0.000,

@@ -21,6 +21,7 @@
     "validate-experience": "node scripts/validate-experience.mjs",
     "capture:install": "playwright install chromium",
     "generate:mode-ledger": "node scripts/generate-mode-ledger.mjs",
+    "generate:weapon-csv-seed": "node scripts/generate-weapon-csv-seed.mjs",
     "record": "node scripts/record-session.mjs",
     "analyse": "node scripts/analyse-recording.mjs",
     "replay": "node scripts/replay-recording.mjs",
