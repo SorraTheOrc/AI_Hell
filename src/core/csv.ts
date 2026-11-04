@@ -1562,6 +1562,17 @@ export interface WeaponPatternParseResult {
 /** Result of {@link parseWeaponCatalogue} — never throws. */
 export interface WeaponCatalogueParseResult {
   catalogue: Partial<Record<WeaponId, WeaponDefinition>>;
+  /**
+   * The validated `subdivisions` cell per weapon, in catalogue order.
+   *
+   * `fireRateMs` is derived from this cell, so the catalogue alone cannot
+   * recover the authored value. Exposing it lets the caller build the
+   * runtime default subdivision table from the CSV (with a per-id code
+   * fallback) without re-parsing the file (AH-0MW0Q1EYJ007RRFI). An omitted
+   * id means the row was missing or invalid, so the caller must fall back to
+   * the code default for that weapon.
+   */
+  subdivisions: Partial<Record<WeaponId, number>>;
   errors: string[];
 }
 
@@ -1752,6 +1763,7 @@ export function parseWeaponCatalogue(
   errors.push(...patternResult.errors);
 
   const catalogue: Partial<Record<WeaponId, WeaponDefinition>> = {};
+  const subdivisions: Partial<Record<WeaponId, number>> = {};
 
   for (const row of parseCsvRows(weaponsCsv)) {
     const validation = validateWeaponRow(row);
@@ -1769,9 +1781,10 @@ export function parseWeaponCatalogue(
 
     const pattern = patternResult.patterns[id] ?? { offsets: [] };
     catalogue[id] = buildWeaponDefinition(coerced, pattern);
+    subdivisions[id] = coerced.subdivisions;
   }
 
-  return { catalogue, errors };
+  return { catalogue, subdivisions, errors };
 }
 
 /** Format an optional number cell: shortest round-tripping form, blank if unusable. */

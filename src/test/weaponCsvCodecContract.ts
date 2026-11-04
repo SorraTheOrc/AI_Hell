@@ -126,6 +126,12 @@ export interface WeaponPatternParseResult {
 /** Result of `parseWeaponCatalogue` — never throws, diagnostics are flat strings. */
 export interface WeaponCatalogueParseResult {
   catalogue: Partial<Record<WeaponId, WeaponDefinition>>;
+  /**
+   * The validated `subdivisions` cell per weapon, so the caller can derive the
+   * runtime nominal cadence table from the CSV with a per-id code fallback
+   * (AH-0MW0Q1EYJ007RRFI). Omitted ids had a missing/invalid row.
+   */
+  subdivisions: Partial<Record<WeaponId, number>>;
   errors: string[];
 }
 

@@ -48,8 +48,34 @@
  * from the pure beat-clock module (`utils/beat.ts`) rather than hard-coded.
  * This keeps every current and future weapon on-grid by construction, and
  * `isOnBeatGrid` is the catalogue-wide invariant that guards it.
+ *
+ * ## Data source (AH-0MW0Q1EYJ007RRFI)
+ *
+ * The runtime catalogue is **loaded from the committed CSVs**
+ * (`src/data/weapons.csv` + `src/data/weapon-patterns.csv`) at module load,
+ * following the same ladder as `enemy-configs.csv` and `ship-config.csv`:
+ * the parsed CSV is the source of truth and the TypeScript literal below
+ * ({@link DEFAULT_WEAPON_CATALOGUE}) is only the per-weapon fallback for a
+ * missing or invalid row. Editing a CSV cell therefore changes the game with
+ * no TypeScript edit; the Vite build inlines the files (`?raw`), so
+ * production stays read-only with no runtime fetch.
+ *
+ * ## Cadence ownership
+ *
+ * `subdivisions`/`fireRateMs` are the **legacy nominal** cadence: level-stat
+ * quantisation and the hold-full ghost metronome interval only. The **live**
+ * fire cadence is the Euclidean ladder resolved by `resolveWeaponPattern`
+ * (`utils/weaponLevels.ts`), whose authored data is `src/data/weapon-levels.json`
+ * (migrated from the in-code ladders by AH-0MW0Q1TQV009M8AO). A dev-only
+ * diagnostic (`utils/weaponDataDiagnostics.ts`) reports any disagreement, so
+ * the split is visible instead of folklore.
  */
 
+import {
+  bundledWeaponPatternsCsv,
+  bundledWeaponsCsv,
+} from '../core/bundledConfig';
+import { parseWeaponCatalogue } from '../core/csv';
 import {
   DEFAULT_BPM,
   beatPeriodMs,
@@ -197,14 +223,19 @@ export function isTimedWeapon(id: WeaponId): boolean {
 export type WeaponSubdivisions = Record<WeaponId, number>;
 
 /**
- * Default shots-per-beat for each weapon. The four conventional weapons are
- * integer or reciprocal subdivisions (cannon 2, spread 0.5, dual 0.5, rapid
- * 3). The AOE family fires **slower than the beat**, so its entries are
- * fractional subdivisions: Nova fires once every 4 beats (`0.25`), Mortar
- * once every 2 beats (`0.5`) and Arc once per beat (`1`). `beatSubdivisionMs`
- * accepts any positive number, and every derived rate stays an exact
- * subdivision/multiple of the beat, so the on-grid invariant holds for the
- * whole catalogue.
+ * **Code fallback** shots-per-beat for each weapon. The runtime default is
+ * {@link DEFAULT_WEAPON_SUBDIVISIONS}, derived from the parsed
+ * `src/data/weapons.csv`; this table is only used when a row is missing or
+ * invalid, and to derive {@link DEFAULT_WEAPON_CATALOGUE}'s `fireRateMs`
+ * values.
+ *
+ * The four conventional weapons are integral or reciprocal subdivisions
+ * (cannon 2, spread 0.5, dual 0.5, rapid 3). The AOE family fires **slower
+ * than the beat**, so its entries are fractional subdivisions: Nova fires
+ * once every 4 beats (`0.25`), Mortar once every 2 beats (`0.5`) and Arc once
+ * per beat (`1`). `beatSubdivisionMs` accepts any positive number, and every
+ * derived rate stays an exact subdivision/multiple of the beat, so the
+ * on-grid invariant holds for the whole catalogue.
  *
  * The non-cannon entries carry the **level-0 output trim**
  * (AH-0MVWAVKS0005P9VN): each weapon's level-0 output is cut to ≤ 60 % of its
@@ -218,7 +249,7 @@ export type WeaponSubdivisions = Record<WeaponId, number>;
  * and in the committed post-change table in `utils/weapons.test.ts`
  * (`LEVEL0_TRIMMED`), which pins both the output and the share.
  */
-export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
+export const CODE_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   // FROZEN: the cannon's level-0 values never move.
   cannon: 2,
   // 1/beat → 0.5/beat: 50 % of the pre-change level-0 output.
@@ -256,52 +287,86 @@ export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   heavy_slug: 0.25,
 };
 
-/** Default cannon subdivision (2 shots per beat). */
-export const WEAPON_CANNON_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.cannon;
-/** Default spread subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
-export const WEAPON_SPREAD_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.spread;
-/** Default dual subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
-export const WEAPON_DUAL_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.dual;
-/** Default rapid subdivision (3 shots per beat → 250 ms at 80 BPM). */
-export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
-/** Default wave-laser subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
+/**
+ * Parsed-at-boot view of the bundled weapon CSVs: the source of the runtime
+ * catalogue and of {@link DEFAULT_WEAPON_SUBDIVISIONS}.
+ *
+ * `csv.ts` only type-imports this module, so the parse is not a runtime
+ * module cycle. Parsing happens once, here, and never throws: a malformed
+ * file yields an empty/partial `catalogue` plus diagnostics, and every
+ * missing id falls back to {@link DEFAULT_WEAPON_CATALOGUE}.
+ */
+const WEAPON_CSV_DATA = parseWeaponCatalogue(
+  bundledWeaponsCsv,
+  bundledWeaponPatternsCsv,
+);
+
+/**
+ * Default shots-per-beat for each weapon, **derived from the parsed
+ * `src/data/weapons.csv`** (`subdivisions` column) with a per-weapon fallback
+ * to {@link CODE_WEAPON_SUBDIVISIONS}.
+ *
+ * Deriving the table (rather than hand-maintaining a second literal) means a
+ * designer's fire-rate edit is not silently overridden by a stale code
+ * default: a changed `subdivisions` cell changes `DEFAULT_RULES.weaponSubdivisions`
+ * (`core/rules.ts` seeds from this table) on the next boot. A persisted user
+ * override in the rules store still wins at runtime and remains a local,
+ * uncommitted setting. These values are the **legacy nominal** cadence — the
+ * live fire cadence is the Euclidean ladder (see the module header).
+ */
+export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
+  ...CODE_WEAPON_SUBDIVISIONS,
+  ...WEAPON_CSV_DATA.subdivisions,
+};
+
+/** Default cannon subdivision (2 shots per beat) — code fallback value. */
+export const WEAPON_CANNON_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.cannon;
+/** Default spread subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
+export const WEAPON_SPREAD_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.spread;
+/** Default dual subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
+export const WEAPON_DUAL_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.dual;
+/** Default rapid subdivision (3 shots per beat → 250 ms at 80 BPM) — code fallback value. */
+export const WEAPON_RAPID_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.rapid;
+/** Default wave-laser subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
 export const WEAPON_WAVE_LASER_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.wave_laser;
-/** Default ricochet subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
+  CODE_WEAPON_SUBDIVISIONS.wave_laser;
+/** Default ricochet subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
 export const WEAPON_RICOCHET_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.ricochet;
+  CODE_WEAPON_SUBDIVISIONS.ricochet;
 /**
  * Default cluster-missile subdivision (once every 4 beats → 3000 ms at
- * 80 BPM). The slow cadence is what the split payload pays for.
+ * 80 BPM) — code fallback value. The slow cadence is what the split payload
+ * pays for.
  */
 export const WEAPON_CLUSTER_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.cluster;
+  CODE_WEAPON_SUBDIVISIONS.cluster;
 /**
- * Default Options subdivision (0.5 shots per beat → 1500 ms at 80 BPM). The
- * pods fire on the same half-beat cadence as the spread/dual weapons.
+ * Default Options subdivision (0.5 shots per beat → 1500 ms at 80 BPM) —
+ * code fallback value. The pods fire on the same half-beat cadence as the
+ * spread/dual weapons.
  */
 export const WEAPON_OPTIONS_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.options;
-/** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM). */
-export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
-/** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM). */
-export const WEAPON_MORTAR_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.mortar;
-/** Default Arc subdivision (once per beat → 750 ms at 80 BPM). */
-export const WEAPON_ARC_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.arc;
-/** Default Rear Guard subdivision (1 shot per beat → 750 ms at 80 BPM). */
+  CODE_WEAPON_SUBDIVISIONS.options;
+/** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM) — code fallback value. */
+export const WEAPON_NOVA_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.nova;
+/** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM) — code fallback value. */
+export const WEAPON_MORTAR_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.mortar;
+/** Default Arc subdivision (once per beat → 750 ms at 80 BPM) — code fallback value. */
+export const WEAPON_ARC_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.arc;
+/** Default Rear Guard subdivision (1 shot per beat → 750 ms at 80 BPM) — code fallback value. */
 export const WEAPON_REAR_GUARD_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.rear_guard;
-/** Default Broadside subdivision (once every 4 beats → 3000 ms at 80 BPM). */
+  CODE_WEAPON_SUBDIVISIONS.rear_guard;
+/** Default Broadside subdivision (once every 4 beats → 3000 ms at 80 BPM) — code fallback value. */
 export const WEAPON_BROADSIDE_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.broadside;
-/** Default Railgun subdivision (once every 4 beats → 3000 ms at 80 BPM). */
-export const WEAPON_RAILGUN_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.railgun;
-/** Default Shard Swarm subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
+  CODE_WEAPON_SUBDIVISIONS.broadside;
+/** Default Railgun subdivision (once every 4 beats → 3000 ms at 80 BPM) — code fallback value. */
+export const WEAPON_RAILGUN_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.railgun;
+/** Default Shard Swarm subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
 export const WEAPON_SHARD_SWARM_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.shard_swarm;
-/** Default Heavy Slug subdivision (once every 4 beats → 3000 ms at 80 BPM). */
+  CODE_WEAPON_SUBDIVISIONS.shard_swarm;
+/** Default Heavy Slug subdivision (once every 4 beats → 3000 ms at 80 BPM) — code fallback value. */
 export const WEAPON_HEAVY_SLUG_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.heavy_slug;
+  CODE_WEAPON_SUBDIVISIONS.heavy_slug;
 
 /**
  * Derives a weapon's fire interval (ms) from a subdivision of the beat:
@@ -777,7 +842,16 @@ export interface WeaponDefinition {
    * (e.g. Dual) without changing their flight angles.
    */
   sideOffsets?: ReadonlyArray<number>;
-  /** Milliseconds between shots. */
+  /**
+   * Milliseconds between shots, derived from the authored CSV
+   * `subdivisions` cell (`beatPeriodMs / subdivisions`).
+   *
+   * This is the **legacy nominal** cadence (level-stat quantisation and the
+   * hold-full ghost metronome). The **live** fire cadence is the Euclidean
+   * ladder resolved by `resolveWeaponPattern` in `utils/weaponLevels.ts`,
+   * whose authored data is `src/data/weapon-levels.json`; see
+   * {@link DEFAULT_WEAPON_SUBDIVISIONS} and the module header.
+   */
   fireRateMs: number;
   /** Bullet colour (Phaser integer). */
   bulletColor: number;
@@ -1048,8 +1122,13 @@ export interface ImpactFxSpec {
  *
  * Weapons are **cumulative**, so a run's total output is the sum of every
  * active weapon plus the cannon — a single pick is not the unit of power.
+ *
+ * This literal is the **code fallback** for the data-driven catalogue
+ * (AH-0MW0Q1EYJ007RRFI): the runtime {@link WEAPON_CATALOGUE} is built from the
+ * parsed `src/data/weapons.csv` + `src/data/weapon-patterns.csv` and only
+ * reads an entry here when that weapon's CSV row is missing or invalid.
  */
-export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
+export const DEFAULT_WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   cannon: {
     id: 'cannon',
     name: 'Cannon',
@@ -1670,6 +1749,104 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     },
   },
 };
+
+// ── Runtime catalogue: CSV source of truth + code fallback ──────────
+
+/**
+ * Every valid weapon id, in catalogue order, derived from
+ * {@link DEFAULT_WEAPON_CATALOGUE}.
+ *
+ * The runtime catalogue comes from data, so `Record` key exhaustiveness no
+ * longer types the shipped roster. This explicit list (and the literal's
+ * `Record<WeaponId, WeaponDefinition>` type) keeps the roster compile-checked:
+ * adding an id to the `WeaponId` union without a fallback entry is a type
+ * error, and `weaponsCatalogueLoad.test.ts` asserts the runtime ids cover the
+ * list.
+ */
+export const WEAPON_IDS: readonly WeaponId[] = Object.keys(
+  DEFAULT_WEAPON_CATALOGUE,
+) as WeaponId[];
+
+/** What the module-load CSV parse resolved, and what fell back to code. */
+export interface WeaponCatalogueLoadReport {
+  /** Ids whose definition came from the parsed CSV. */
+  resolvedFromCsv: readonly WeaponId[];
+  /** Ids whose CSV row was missing/invalid, resolved from the code default. */
+  resolvedFromFallback: readonly WeaponId[];
+  /** Flat codec diagnostics (empty for the committed seed). */
+  errors: readonly string[];
+}
+
+/**
+ * The result of parsing the bundled weapon CSVs at module load.
+ *
+ * Exposed so a boot-time self-check can surface a typo that silently fell back
+ * to code, and so tests can prove the CSV — not the TypeScript literal — built
+ * the runtime catalogue.
+ */
+export const WEAPON_CATALOGUE_LOAD_REPORT: WeaponCatalogueLoadReport = {
+  resolvedFromCsv: WEAPON_IDS.filter(
+    (id) => WEAPON_CSV_DATA.catalogue[id] !== undefined,
+  ),
+  resolvedFromFallback: WEAPON_IDS.filter(
+    (id) => WEAPON_CSV_DATA.catalogue[id] === undefined,
+  ),
+  errors: [...WEAPON_CSV_DATA.errors],
+};
+
+/**
+ * Builds the runtime catalogue: the parsed CSV row per weapon, falling back to
+ * {@link DEFAULT_WEAPON_CATALOGUE} for that id only when its row is missing or
+ * invalid. Weapons with a valid row stay CSV-driven.
+ */
+function buildWeaponCatalogue(): Record<WeaponId, WeaponDefinition> {
+  const catalogue = {} as Record<WeaponId, WeaponDefinition>;
+  for (const id of WEAPON_IDS) {
+    catalogue[id] =
+      WEAPON_CSV_DATA.catalogue[id] ?? DEFAULT_WEAPON_CATALOGUE[id];
+  }
+  return catalogue;
+}
+
+/**
+ * The shipped weapon catalogue, built at module load from
+ * `src/data/weapons.csv` + `src/data/weapon-patterns.csv` with a per-weapon
+ * code fallback. Same exported name and type as before the CSV migration, so
+ * every consumer is unchanged.
+ */
+export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> =
+  buildWeaponCatalogue();
+
+/**
+ * Formats the catalogue-load self-check as one actionable message, or `null`
+ * when the CSV resolved every weapon with no diagnostics.
+ *
+ * Kept pure so the dev-only boot warning (`utils/weaponDataDiagnostics.ts`)
+ * and its tests share the exact wording a developer sees.
+ */
+export function formatWeaponCatalogueLoadWarning(
+  report: WeaponCatalogueLoadReport,
+): string | null {
+  if (
+    report.resolvedFromFallback.length === 0 &&
+    report.errors.length === 0
+  ) {
+    return null;
+  }
+  const lines = [
+    'Weapon catalogue load self-check: the runtime catalogue did not resolve ' +
+      'cleanly from src/data/weapons.csv.',
+  ];
+  if (report.resolvedFromFallback.length > 0) {
+    lines.push(
+      `Resolved from the code fallback instead of CSV: ${report.resolvedFromFallback.join(', ')}.`,
+    );
+  }
+  if (report.errors.length > 0) {
+    lines.push('CSV diagnostics:', ...report.errors.map((error) => `  ${error}`));
+  }
+  return lines.join('\n');
+}
 
 /**
  * The **Reset** drop — not a weapon itself, but one of the weapon-pool

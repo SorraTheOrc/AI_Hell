@@ -1,6 +1,7 @@
 import { Game } from './Game';
 import { loadConfigs } from './configStore';
 import { registerCaptureDirector } from './captureDirector';
+import { warnOnWeaponDataDivergences } from '../utils/weaponDataDiagnostics';
 
 /**
  * Application boot wrapper (AH-0MUESFKCD004SI1V).
@@ -15,6 +16,12 @@ import { registerCaptureDirector } from './captureDirector';
  * `loadConfigs()` never throws — a failed fetch/read falls back to the
  * built-in defaults — so the game always boots (AC4).
  *
+ * Before the config store is hydrated, the weapon-catalogue data self-check
+ * runs once (`warnOnWeaponDataDivergences`, AH-0MW0Q1EYJ007RRFI): in dev it
+ * warns when a CSV row silently fell back to the TypeScript catalogue, or when
+ * the legacy nominal `subdivisions` disagree with the live Euclidean cadence.
+ * It is dev-only and never throws, so production and test runs are unaffected.
+ *
  * After construction the dev-only capture director
  * (`window.__aiHellCaptureDirector`, AH-0MVFC6WPS004UOLO) is registered on
  * the running game, so the multi-scene capture tool can switch gym scenes
@@ -23,6 +30,7 @@ import { registerCaptureDirector } from './captureDirector';
  * writes the global.
  */
 export async function bootGame(): Promise<Game> {
+  warnOnWeaponDataDivergences();
   await loadConfigs();
   const game = new Game();
   registerCaptureDirector(game);

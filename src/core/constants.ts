@@ -5,9 +5,14 @@
  * Ship physics constants are re-exported from `config.ts` (the single
  * source of truth), so the gym scene and Player can load tuned values
  * at runtime while existing imports keep working unchanged.
+ *
+ * This module must stay a **leaf** (no imports): the CSV codec reaches it
+ * through `configDefaults`, and the weapon catalogue parses its CSV at module
+ * load. A `constants → rules → weapons → csv → configDefaults → constants`
+ * cycle would re-enter the codec before its tables are initialised
+ * (AH-0MW0Q1EYJ007RRFI). `rules.ts` therefore seeds its defaults from these
+ * literals, never the other way round.
  */
-
-import { DEFAULT_RULES } from './rules';
 
 // ── Canvas ──────────────────────────────────────────────────────────
 
@@ -122,12 +127,15 @@ export const POWER_UP_LIFETIME = 12.5;
 export const POWER_UP_COLLECTION_THRESHOLD = 3;
 
 /**
- * Interval between spawns in a round-robin cycle (seconds). Sourced from the
- * game-rules config default (`DEFAULT_RULES`, GDD §4.4) so the interval has a
- * single source of truth; mirrors POWER_UP_LIFETIME so one drop is on screen
- * at a time.
+ * Default interval between power-up spawns in a round-robin cycle (seconds).
+ *
+ * The single source of truth: `rules.ts` seeds
+ * `DEFAULT_POWER_UP_SPAWN_INTERVAL` / `DEFAULT_RULES.powerUpSpawnInterval`
+ * from this literal (GDD §4.4). It stays here rather than in `rules.ts` so
+ * this module remains a leaf and the weapon-catalogue CSV parse cannot form a
+ * module cycle through `configDefaults` (AH-0MW0Q1EYJ007RRFI).
  */
-export const POWER_UP_SPAWN_INTERVAL = DEFAULT_RULES.powerUpSpawnInterval;
+export const POWER_UP_SPAWN_INTERVAL = 12.5;
 
 /**
  * Number of **permanent** loadout slots shared by power-up and weapon kinds
