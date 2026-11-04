@@ -48,6 +48,11 @@ if (!GPU) {
 } else {
   app.commandLine.appendSwitch('ignore-gpu-blocklist');
   app.commandLine.appendSwitch('enable-gpu-rasterization');
+  // Name the backend: blocklisting/rasterisation alone still landed on ANGLE's
+  // SwiftShader Vulkan device on the reference host (AH-0MW2OB0CN003BWOY), so
+  // the harness's `--require-hardware-webgl` guard refused the run.
+  app.commandLine.appendSwitch('use-gl', 'angle');
+  app.commandLine.appendSwitch('use-angle', 'vulkan');
 }
 
 /** The page this host should load. */

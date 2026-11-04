@@ -36,6 +36,24 @@ describe('rendererSwitches', () => {
     // fallback: that is exactly the ambiguity this item exists to remove.
     expect(switches).not.toContain('--enable-unsafe-swiftshader');
   });
+
+  it('selects the ANGLE-Vulkan backend for a hardware run (AH-0MW2OB0CN003BWOY)', () => {
+    // `--ignore-gpu-blocklist` alone is not enough: Chromium reaches for ANGLE's
+    // SwiftShader Vulkan device on a GPU-capable host unless the backend is
+    // named explicitly, so `--require-hardware-webgl` would refuse every run.
+    const switches = rendererSwitches(true);
+
+    expect(switches).toContain('--use-gl=angle');
+    expect(switches).toContain('--use-angle=vulkan');
+  });
+
+  it('leaves the software switch set untouched, so software baselines stay reproducible', () => {
+    const switches = rendererSwitches(false);
+
+    expect(switches).toEqual(['--enable-unsafe-swiftshader']);
+    expect(switches).not.toContain('--use-gl=angle');
+    expect(switches).not.toContain('--use-angle=vulkan');
+  });
 });
 
 describe('buildBrowserLaunchArgs', () => {
@@ -69,6 +87,8 @@ describe('buildElectronLaunchArgs', () => {
     const args = buildElectronLaunchArgs({ repoRoot: '/repo', gpu: true });
 
     expect(args).toContain('--ignore-gpu-blocklist');
+    expect(args).toContain('--use-gl=angle');
+    expect(args).toContain('--use-angle=vulkan');
     expect(args).not.toContain('--enable-unsafe-swiftshader');
   });
 });

@@ -127,12 +127,15 @@ What the host is, and what it is not:
 
 ### Measuring a hardware-GPU run
 
-`--gpu` drops the software-WebGL switch and asks Chromium for the real GPU
-(`--ignore-gpu-blocklist`, GPU rasterisation). Because a headless Chromium
-asked for hardware GL can still fall back to SwiftShader, the
-`--require-hardware-webgl` guard **refuses the run** (exit 1) unless the
-report's `webgl.kind` is `hardware` — a software fallback can never be
-published under a desktop label:
+`--gpu` drops the software-WebGL switch and asks Chromium for the real GPU by
+naming the backend (`--ignore-gpu-blocklist`, GPU rasterisation,
+`--use-gl=angle --use-angle=vulkan` — the same switch set for both hosts). The
+explicit ANGLE-Vulkan pair matters: unblocklisting alone still left Chromium on
+ANGLE's SwiftShader Vulkan device on a host with a working NVIDIA driver, so the
+run rendered through software anyway. Because a headless Chromium asked for
+hardware GL can still fall back to SwiftShader, the `--require-hardware-webgl`
+guard **refuses the run** (exit 1) unless the report's `webgl.kind` is
+`hardware` — a software fallback can never be published under a desktop label:
 
 ```bash
 npm run perf:measure -- --gpu --require-hardware-webgl --scene GymPerformance --seconds 60
@@ -194,7 +197,7 @@ director), lets the scene settle for `--warmup` seconds, samples the loop for
 |---|---|---|
 | `--scene <key>` | `PlayScene` | The shipped game or any watchable gym key (`GymPlayer`, `GymBoss`, … — the list is the shared capture registry `scripts/capture-scenes.mjs`). |
 | `--host <name>` | `browser` | `browser` (headless Chromium, the original path) or `electron` (the desktop host in `electron/main.mjs`). Recorded in the report as `runtime.kind`. |
-| `--gpu` | off | Request the hardware GPU instead of the software (SwiftShader) backend. Drops the software-permitting switch, so a GPU-less host reports absent/software WebGL instead of silently using it. |
+| `--gpu` | off | Request the hardware GPU instead of the software (SwiftShader) backend. Drops the software-permitting switch and asks ANGLE for the Vulkan backend (`--use-gl=angle --use-angle=vulkan`), so a GPU-less host reports absent/software WebGL instead of silently using it. |
 | `--require-hardware-webgl` | off | Fail the run (exit 1) unless `webgl.kind` is `hardware` — use it on every run published as a desktop baseline. |
 | `--electron-executable <path>` | the installed `electron` package | Electron binary for `--host electron` (also `$AI_HELL_ELECTRON_BIN`). |
 | `--seconds <n>` | `10` | Measured window (max 600). |
@@ -561,10 +564,18 @@ verdict and changes its consequence:
 
 ## Hardware-GPU desktop baseline (outstanding)
 
+> **Host access restored (2026-11-04).** Both host faults recorded below were
+> remediated by AH-0MW2L3JXU008I2Z8, and the harness's `--gpu` switch set now
+> names the ANGLE-Vulkan backend explicitly (AH-0MW2OB0CN003BWOY), so both
+> desktop hosts do render on the RTX 3050 Ti today — see [Host access
+> restored](#host-access-restored-2026-11-04). What remains outstanding is the
+> **full-length measured run** (60 s window, 3 s warmup, CPU profiles) for
+> AH-0MW2IRYJ2006PV3P — the capability itself is no longer the blocker.
+
 The desktop host is now measurable and its software-rasteriser baseline is
 recorded ([Electron baseline](#electron-baseline-software-gpu-process-rasteriser)).
-What this host still **cannot** produce is a **hardware-GPU** run, so the
-desktop 60 FPS target is not yet falsified on a real GPU:
+Before the remediation below, this host could not produce a **hardware-GPU**
+run, so the desktop 60 FPS target was not falsified on a real GPU:
 
 - **This host has no usable GPU device for the browser/harness.** `/dev/dri`
   exists (`card0`, `card1`, `renderD128`, `renderD129`) but the render nodes are
@@ -586,6 +597,55 @@ desktop 60 FPS target is not yet falsified on a real GPU:
 The verification run itself is tracked by AH-0MW2IRYJ2006PV3P (filed by
 AH-0MVXV6VOI006P7VG: this host cannot produce it, so it cannot be part of the
 final verification's own evidence here).
+
+### Host access restored (2026-11-04)
+
+**`Recorded:`** commit `da8aaa8f` + the host remediation of
+AH-0MW2L3JXU008I2Z8 and the switch change of AH-0MW2OB0CN003BWOY · 2026-11-04 ·
+both desktop hosts (headless Chromium and `--host electron`) · CPU throttle 1× ·
+AH-0MW2L3JXU008I2Z8. These are again guard checks (`--seconds 3 --warmup 1`),
+not measurements: they prove a **hardware** backend is reachable, so there are
+no 60 s frame times to attribute yet.
+
+The three diagnosed causes each had a fix, and all three are now applied on the
+reference host:
+
+1. **NVIDIA driver/library mismatch** — fixed **without a reboot**. The loaded
+   module could not be unloaded because `nvidia-powerd` held 11 file handles on
+   `/dev/nvidia0`/`/dev/nvidiactl` (`fuser -v /dev/nvidia*` was the only way to
+   find the holder), so: `sudo systemctl stop gdm && sudo systemctl stop
+   nvidia-powerd && sudo modprobe -r nvidia && sudo modprobe nvidia`.
+   `/proc/driver/nvidia/version` then reported `595.99.02` (was `595.91.07`),
+   matching the userspace `nvidia-driver-595-open 595.99.02`, and `nvidia-smi`
+   reports the GPU (`NVIDIA GeForce RTX 3050 Ti Laptop GPU`, driver 595.99.02,
+   CUDA 13.2). A reboot after the driver upgrade does the same thing; the
+   module reload avoids killing the in-flight test tree.
+2. **DRM render nodes** — `sudo usermod -aG video,render <user>` is applied
+   (`/etc/group` carries the user), but group membership is per-session, so it
+   only takes effect for a **newly started** session. The NVIDIA path does not
+   need it (the `/dev/nvidia*` nodes are mode `666`), so no run depends on it.
+3. **Electron** — installed explicitly (`npm install electron`, 45.2.3); it is
+   an `optionalDependencies` entry, so a plain `npm install` prunes it again.
+   The host cannot run the SUID sandbox helper (it is not root-owned), which is
+   why every launch passes `--no-sandbox` — the harness already does
+   (`COMMON_SWITCHES`), so `--host electron` runs.
+
+**The `--gpu` switch set had to name the backend.** `--ignore-gpu-blocklist
+--enable-gpu-rasterization` alone still produced
+`ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)`
+on a host with a working driver, so `--require-hardware-webgl` refused every
+run. `rendererSwitches({ gpu: true })` (shared by the browser and Electron
+hosts) now also passes `--use-gl=angle --use-angle=vulkan`; the software path
+(`gpu: false`) is unchanged, so software baselines stay reproducible.
+
+| Invocation | Result |
+|---|---|
+| `--gpu --require-hardware-webgl --scene GymPerformance --seconds 3 --warmup 1` | **exit 0** — `ANGLE (NVIDIA, Vulkan 1.4.329 (NVIDIA NVIDIA GeForce RTX 3050 Ti Laptop GPU (0x000025A0)), NVIDIA)` |
+| `--host electron --gpu --require-hardware-webgl --scene GymPerformance --seconds 3 --warmup 1` | **exit 0** — the same `ANGLE (NVIDIA, Vulkan …)` renderer string |
+
+Both rows are short guard checks, so they carry no publishable frame times;
+their job is to show that the guard now *passes* on a hardware backend instead
+of refusing, which is what the 60 s runs below need.
 
 ### Re-verified (2026-11-04, commit `da8aaa8f`)
 
@@ -634,9 +694,10 @@ These are operator tasks (they need `sudo`, a re-login or a reboot) and are
 tracked as **AH-0MW2L3JXU008I2Z8**, which blocks the verification item
 AH-0MW2IRYJ2006PV3P. The runs below stay outstanding until it completes.
 
-**To fill the gap**, once the host exposes a hardware GPU (and, for the
-Electron row, with `electron` installed and a display or a GPU-capable headless
-setup):
+**To fill the gap** — the host now exposes a hardware GPU to both hosts, so
+these are the remaining measured runs (no display is needed: Electron runs
+headless with `--ozone-platform=headless`, which the harness passes for a
+`--host electron` run):
 
 ```bash
 # desktop browser, hardware GPU — the guard refuses a software fallback

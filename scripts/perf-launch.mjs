@@ -17,7 +17,12 @@
  *   (SwiftShader) WebGL backend, which is the only backend a GPU-less host can
  *   provide and is deterministic across machines;
  * - `gpu: true` drops the software switch and asks Chromium to use the real
- *   GPU (`--ignore-gpu-blocklist`, GPU rasterisation).
+ *   GPU, **naming the ANGLE-Vulkan backend explicitly**
+ *   (`--ignore-gpu-blocklist`, GPU rasterisation, `--use-gl=angle`,
+ *   `--use-angle=vulkan`). The explicit pair is required: unblocklisting alone
+ *   still let Chromium pick ANGLE's SwiftShader Vulkan device on the reference
+ *   host, so `--require-hardware-webgl` refused every run even with a working
+ *   NVIDIA driver (AH-0MW2OB0CN003BWOY).
  *
  * The switches are pure data so they can be unit-tested without booting a
  * browser or an Electron app (harness AC5), and so both hosts stay in step.
@@ -48,8 +53,24 @@ const COMMON_SWITCHES = [
 /** Switches that make Chromium request the software WebGL backend. */
 const SOFTWARE_SWITCHES = ['--enable-unsafe-swiftshader'];
 
-/** Switches that make Chromium request the hardware GPU (ANGLE picks it). */
-const HARDWARE_SWITCHES = ['--ignore-gpu-blocklist', '--enable-gpu-rasterization'];
+/**
+ * Switches that make Chromium request the hardware GPU.
+ *
+ * `--use-gl=angle --use-angle=vulkan` names the backend instead of leaving the
+ * choice to Chromium: with only the blocklist/rasterisation switches the same
+ * host rendered through `ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device
+ * (Subzero)), SwiftShader driver)`, i.e. a software backend that
+ * `--require-hardware-webgl` correctly refuses to publish as a desktop
+ * baseline. With the pair it renders through `ANGLE (NVIDIA, Vulkan …)` on the
+ * reference host (AH-0MW2OB0CN003BWOY). On a host without a Vulkan-capable
+ * GPU the request simply falls back, so the switch set stays safe everywhere.
+ */
+const HARDWARE_SWITCHES = [
+  '--ignore-gpu-blocklist',
+  '--enable-gpu-rasterization',
+  '--use-gl=angle',
+  '--use-angle=vulkan',
+];
 
 /** Renderer switches for a run, chosen by the `--gpu` flag. */
 export function rendererSwitches(gpu = false) {
