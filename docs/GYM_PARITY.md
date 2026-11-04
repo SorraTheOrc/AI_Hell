@@ -402,6 +402,29 @@ the duplicate-body guard.
 | 10 | Ring-war harness is not a combat scene | `GymHexWar` | The gym renders the shipped hex-map model/renderer (`src/core/hangarWar/hexIntel.ts`, `src/scenes/hangarWar/hexMap.ts`) against an injected ring payload, read-only, and drives the deterministic frontier-tick harness; the defence resolver and frontier clock are pure modules (B3's `src/core/hangarWar/hexDefence.ts`) exercised through this scene via the documented harness double (`src/core/hangarWar/fakeFrontierClock.ts`), and its `report` view renders the shipped defence report (`src/core/hangarWar/defenceReport.ts`, `src/scenes/hangarWar/defenceReport.ts`) from the shipped resolver's own record, so there is no gameplay object to demonstrate and no divergent copy. Recorded in `src/scenes/gym/GymHexWar.ts:1` and `scripts/capture-scenes.mjs` |
 | 11 | Fixed level-1 backdrop and no level-change warp | all combat gyms (`GymFormationScene` + subclasses, `GymLevel`/`GymBotTuning`, `GymPlayer`, `GymWeapons`, `GymWeaponLeveling`, `GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymPowerUpLeveling`) | The backdrop itself is the shipped object rendered by the shared layer (`CombatCoreScene._createSceneBackground` → `createBackgroundLayer`), so depth/dim/non-interactivity are the game's. A gym pins `backgroundForLevel(1)` so silhouettes are compared against a constant and tuning screenshots are reproducible, and never calls `_setBackgroundLevel`, so the level-change warp never runs — a gym has no campaign level-change flow. `GymLevel` previews a level's enemies but keeps the constant backdrop. Recorded in `src/scenes/gym/core/gymBackground.ts`, §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` and pinned by `src/scenes/gym/backgroundParity.test.ts` |
 
+### The weapon panel is a tuning surface, not a gameplay gym (AH-0MW0Q01VM004EPY7)
+
+The **`GymWeaponTuning`** panel is a **tuning surface**, not a gameplay gym. It
+exists so a designer can retune the catalogue (`src/data/weapons.csv`), not so
+it can demonstrate a second implementation of a weapon: the preview ship and
+target run the shared auto-fire scheduler, the shared AOE dispatch/VFX and the
+shared impact feedback, and its one gym-only fixture is the inert dummy target
+(row `GymWeaponTuning` above). The rhythm it displays is read-only and rendered
+from the shipped ladders; its stated cadence authority is
+`src/data/weapon-levels.json`.
+
+Because both the game and every gym read the same **data**, a data-driven value
+`must not diverge` between `PlayScene` and the gyms — there is one parsed
+catalogue (`src/utils/weapons.ts` → `parseWeaponCatalogue` in
+`src/core/csv.ts`), one ladder resolver reading `src/data/weapon-levels.json`,
+and one runtime invariant guard (`src/utils/weaponCatalogue.ts`) that replaces a
+bad weapon with its code default in **every** environment, so a dev-only roster
+cannot exist. A retune therefore reaches the game and every gym at once; a scene
+that resolved its own copy of a bullet colour, an AOE radius or a cadence would
+be a divergence to fix, not a tuning difference. The designer-facing schema,
+workflow, invariants and "what each surface cannot do" are documented in
+[`docs/BALANCING.md`](./BALANCING.md#weapon-tuning-csv-ah-0mw0q01vm004epy7).
+
 ## Consumable charge parity (AH-0MVUXH3X60078QR3, F6 of AH-0MVTQMREN009DSFW)
 
 The consumable upgrade parent made a permanently-owned consumable (Shield,

@@ -1128,6 +1128,304 @@ all on the streaming path. Both are covered by tests in
 `src/ai/eval/cli.test.ts` (one sink chunk per run, in sweep order; streamed
 chunks byte-identical to the in-memory `runs.jsonl` artifact).
 
+## Weapon tuning CSV (AH-0MW0Q01VM004EPY7)
+
+The player-weapon catalogue is **data**. Every tunable value for the sixteen
+weapons lives in committed files that are parsed once at module load
+(`src/utils/weapons.ts` → `parseWeaponCatalogue` in `src/core/csv.ts`), checked
+by runtime invariants (`src/utils/weaponCatalogue.ts`) and bundled into the
+build (`?raw` imports in `src/core/bundledConfig.ts`), so the shipped game is
+read-only. Retuning a bullet colour, a bullet size, an impact cue or a Nova
+blast radius needs no TypeScript edit.
+
+### The three data files
+
+| File | Shape | Holds |
+|---|---|---|
+| [`src/data/weapons.csv`](../src/data/weapons.csv) | one row per weapon, one cell per column | every scalar tunable: colours, bullet size and lifetime, damage/bounce/split budgets, the AOE/orbit/hitscan descriptors, and the muzzle/impact feedback |
+| [`src/data/weapon-patterns.csv`](../src/data/weapon-patterns.csv) | long format, one row per pattern bullet | the heading-relative shot angles (`angleDeg`) and the perpendicular side offsets (`sideOffsetPx`) |
+| [`src/data/weapon-levels.json`](../src/data/weapon-levels.json) | `weaponId` → ordered rungs of `{ k, n, rotation }` | the **live fire cadence** — the Euclidean ladder documented in [Weapon Euclidean upgrade ladder](#weapon-euclidean-upgrade-ladder-ah-0mvya291j000ck64) |
+
+The sixteen catalogue ids, in catalogue order, are `cannon`, `spread`, `dual`,
+`rapid`, `wave_laser`, `ricochet`, `cluster`, `options`, `nova`, `mortar`,
+`arc`, `rear_guard`, `broadside`, `railgun`, `shard_swarm` and `heavy_slug`.
+Every file lists them in that order, and an `id` cell must be one of them.
+
+### `weapons.csv` columns
+
+One table row per column, in the committed header order. "Required" means the
+cell must be non-blank on every row; "optional" means a blank cell is legal
+(and means something — see [Blank means absent](#blank-means-absent)).
+
+| Column | Meaning | Units and legal values |
+|---|---|---|
+| `id` | Weapon id — the row's key. | One of the sixteen ids listed above. Required. |
+| `name` | Display name (weapon HUD, help overlay, choice offer). | Free text; quote it if it contains a comma. Required. |
+| `description` | One-line player-facing effect description. | Free text; quote it if it contains a comma. Required. |
+| `subdivisions` | Shots per beat on the 80 BPM grid (`2` = double time, `0.5` = half time). | Positive and an exact subdivision or multiple of the 750 ms beat period (`0.25`, `0.5`, `1`, `2`, `3`, `4`, …). Required. This is the **legacy nominal** cadence, not the live one. |
+| `bulletColor` | Bullet colour. | `0xrrggbb` (six hex digits, lower case in the committed file). Required. |
+| `bulletShape` | Bullet visual shape. | A `BulletShape` enum value (full list below). Required. |
+| `bulletSize` | Bullet radius multiplier. | Number > 0. Required. |
+| `bulletLifetime` | Bullet lifetime (effective range = bullet speed × lifetime). | Seconds, > 0. Required. |
+| `bulletShapeLength` | Long-axis multiplier for elongated shapes. | Number ≥ 0. Optional. |
+| `bulletRim` | Neon rim/outline colour. | `0xrrggbb`. Optional. |
+| `bulletThickness` | Stroke-thickness multiplier for stroked shapes. | Number ≥ 0. Optional. |
+| `bulletTrail` | Trail length. | Multiple of the bullet radius, ≥ 0. Optional. |
+| `bulletFlame` | Exhaust-flame length. | Multiple of the bullet radius, ≥ 0. Optional. |
+| `maxHitPoints` | Pass-through hit-point budget, spent one hit point per hit. | Number ≥ 0 (a whole count in practice). Optional (blank = no budget, the bullet expires on first hit). |
+| `bounce` | Wall-bounce budget before the bullet expires. | Number ≥ 0 (a whole count). Optional (blank = no bounce). |
+| `splits` | Radial warheads spawned once on impact/expiry. | Number ≥ 0 (a whole count). Optional (blank = no split). |
+| `orbitPods` | Orbiting satellite-pod count. **Opens** the orbit group. | Number ≥ 1 (a whole count). Optional (blank = no orbit). |
+| `orbitRadius` | Orbit radius around the ship. | px, > 0. Required when `orbitPods` is present. |
+| `aoeTrigger` | When the area effect resolves. **Opens** the AOE group. | `onFire`, `onImpact`, `onRandom` or `screenPulse` (list below). Optional (blank = no AOE). |
+| `aoeRadius` | Effect radius. | px, > 0. Required when `aoeTrigger` is present. |
+| `aoeDamagesEnemies` | Does the effect damage enemies inside the radius? | `true` or `false` (`1`/`0` are also accepted). Required when `aoeTrigger` is present. |
+| `aoeClearsEnemyBullets` | Does the effect clear enemy bullets inside the radius? | `true` or `false`. Required when `aoeTrigger` is present. |
+| `aoeDamage` | Hit points each affected enemy takes per resolution. | Number ≥ 0 (a whole count). Optional AOE extra. |
+| `aoeChains` | Extra targets an `onFire` effect may chain to. | Number ≥ 0 (a whole count). Optional AOE extra. |
+| `aoeProjectileSpeed` | Projectile speed, required to sample an `onRandom` range. | px/s, > 0. Optional AOE extra. |
+| `hitscanLength` | Beam length. **Opens** the hitscan group. | px, > 0. Optional (blank = no beam). |
+| `hitscanDuration` | How long the resolved beam stays visible. | Seconds, > 0. Required when `hitscanLength` is present. |
+| `muzzleColor` | Launch-flash colour. **Opens** the muzzle-flash group. | `0xrrggbb`. Optional; defaults to `bulletColor`. |
+| `muzzleRadius` | Launch-flash core radius. | px, > 0. Optional; default `7`. |
+| `muzzleDuration` | Launch-flash fade duration. | Seconds, > 0. Optional; default `0.12`. |
+| `impactColor` | Impact-flash colour. **Opens** the impact group. | `0xrrggbb`. Optional (blank = no impact flash, the generic warm-white fallback applies). |
+| `impactRadius` | Impact-flash radius. | px, > 0. Required when `impactColor` is present. |
+| `impactDuration` | Impact-flash fade duration. | Seconds, > 0. Required when `impactColor` is present. |
+| `impactCue` | Baked impact cue export name. | A cue exported by `src/audio/effects.ts` (e.g. `playCannonImpactSound`). Required when `impactColor` is present. |
+
+Hex colours are validated case-insensitively, but the committed files are
+written in lower case: `npm run generate:weapon-csv-seed` serialises through the
+codec, and the seed test compares the file bytes, so an upper-case cell fails
+that guard even though it parses.
+
+**`bulletShape` legal values.** `circle`, `disc`, `line`, `teardrop`, `missile`,
+`ring`, `shell`, `heavy-shell`, `shard`, `bolt`, `phaser-bolt`, `fleck`, `dart`,
+`boss-pellet`, `spiral-pellet`, `pulse-ring`, `tracer`, `warhead`, `diamond`,
+`spark`, `chevron`, `pellet`. `disc` is an alias of `circle` (the uniqueness
+invariant compares the *canonical* shape family, so the two cannot be used to
+smuggle in a duplicate).
+
+**`aoeTrigger` legal values.** `onFire`, `onImpact`, `onRandom`, `screenPulse`.
+
+### `weapon-patterns.csv` columns
+
+One row per pattern bullet, grouped by weapon; `index` must be a contiguous
+0-based sequence within each weapon.
+
+| Column | Meaning | Units and legal values |
+|---|---|---|
+| `weaponId` | Weapon the row belongs to. | One of the sixteen catalogue ids. Required. |
+| `index` | Bullet position within the pattern. | Non-negative whole number, 0-based. Required. |
+| `angleDeg` | Angle relative to the ship's heading. | **Degrees**, negative = anticlockwise. Required; converted to radians on parse. |
+| `sideOffsetPx` | Perpendicular positional offset (e.g. Dual's two parallel bullets). | px, may be negative. Optional; a blank cell means centred. |
+
+Angles are authored in **degrees** because that is what a spreadsheet and a
+level designer can read; the codec converts them with `(degrees × π) / 180` at
+the boundary (`parseWeaponPatterns` in `src/core/csv.ts`) and the engine works
+in **radians** everywhere after that. Edit `angleDeg`, never a radian value.
+
+### The designer workflow
+
+**By hand (either file).**
+
+1. Open `src/data/weapons.csv` (or `src/data/weapon-patterns.csv`). The `#`
+   block above the header lists every column; keep its wording in step with any
+   schema change.
+2. Change cells, keeping the canonical formatting: lower-case `0xrrggbb`
+   colours, plain decimal numbers (`2`, `0.75` — not `2.0`), `true`/`false`
+   booleans, and an **empty** cell where the weapon has no such capability.
+3. Save and refresh the `npm run dev` page. The files are bundled with `?raw`
+   and parsed at module load, so a refresh re-reads them and every consumer
+   (`Player`, the shared combat core, every gym) fires the new value on the
+   next shot.
+4. Verify the change (the worked examples below), then run the retune
+   tripwires listed under [Verifying a change](#verifying-a-change).
+5. Normalise the committed file with `npm run generate:weapon-csv-seed` — it
+   re-serialises the parsed catalogue through the same writer the panel uses —
+   and regenerate the frozen fixtures as part of the deliberate change.
+
+**From the panel (dev only).**
+
+1. Gym Index → **WeaponTuning** (the panel titled **Weapon Tuning**,
+   `src/scenes/gym/GymWeaponTuning.ts`).
+2. Select a weapon and change a control. Every input applies to the live
+   catalogue as a draft, and the preview ship fires the edited definition on
+   its next shot against an inert target — the preview runs the shared combat
+   core, so it cannot drift from the game.
+3. **Save** upserts the selected row into `src/data/weapons.csv` through the
+   dev-only CSV plugin and then re-reads both weapon files, so the running
+   catalogue is exactly the file just saved. **Save As** appends a row under a
+   new id and is refused unless that id already has a code fallback definition
+   (an icon arm in `src/powerups/icons.ts` and an audio cue arm in
+   `src/audio/effects.ts`) — a bare CSV row cannot add a weapon.
+4. The rhythm section of the panel is **read-only**: it renders the selected
+   weapon's ladder rungs from `WEAPON_EUCLIDEAN_LADDERS`, auditions them, and
+   states that cadence is authored in `src/data/weapon-levels.json`. There is
+   deliberately no fire-rate control.
+
+**Production is read-only and needs a rebuild.** The CSV cells are inlined
+into the bundle at build time, so a shipped build keeps the values it was built
+with: a retune reaches production only after `npm run build` and a redeploy.
+The write endpoint exists only under `npm run dev`; in a production or static
+build **Save**/**Save As** are disabled and the panel shows the message
+`Weapon writes are unavailable in production builds (read-only CSV).` Nothing
+is fetched or written at runtime.
+
+### Blank means absent
+
+**A blank cell means the weapon has no such capability** — it is never read as
+`0`. That matters because the combat core dispatches on the **presence** of a
+descriptor: a `0` bounce budget, a zero-radius AOE or a `false`
+`aoeDamagesEnemies` would be a live descriptor with inert behaviour instead of
+no descriptor at all. The coercion therefore omits a blank optional cell
+entirely, and presence-based dispatch keeps working unchanged. An explicit `0`
+is preserved (and, in a descriptor group, flagged as a data smell by the
+invariants — the cell should simply be blank).
+
+Descriptors are **all-or-nothing groups**, declared by an opening column:
+
+| Group | Opening column | Other columns in the group |
+|---|---|---|
+| orbit | `orbitPods` | `orbitRadius` |
+| AOE | `aoeTrigger` | `aoeRadius`, `aoeDamagesEnemies`, `aoeClearsEnemyBullets` (required); `aoeDamage`, `aoeChains`, `aoeProjectileSpeed` (extras) |
+| hitscan | `hitscanLength` | `hitscanDuration` |
+| muzzle flash | `muzzleColor` | `muzzleRadius`, `muzzleDuration` (both have defaults) |
+| impact | `impactColor` | `impactRadius`, `impactDuration`, `impactCue` |
+
+A group's opener present and non-blank authors the group, so its required
+members must be non-blank too. An opener cell that is blank while every other
+cell in the group is blank means the group is absent (a header may list a group
+nobody uses). A member cell with the opener absent is a diagnostic: it belongs
+to a descriptor that was never opened. The muzzle flash is the one group that is
+always present — its colour defaults to `bulletColor` and its radius/duration to
+`7`/`0.12` — so `muzzleColor` is a pure override.
+
+### Fire rate: shots per beat, on the beat grid
+
+`subdivisions` is authored as **shots per beat** on the shared 80 BPM grid,
+and the runtime interval is derived, never stored:
+`fireRateMs = beatPeriodMs(80) / subdivisions` (`src/utils/beat.ts`). The value
+must stay **on the beat grid** — an exact subdivision or multiple of the beat
+period — which `isOnBeatGrid` enforces catalogue-wide. An off-grid cell (for
+example `1.37`) is rejected and the weapon falls back to its code default, so a
+hand edit can never desynchronise a weapon from the clock everything else moves
+on (the same lattice the Euclidean ladders step on, see
+[Weapon Euclidean upgrade ladder](#weapon-euclidean-upgrade-ladder-ah-0mvya291j000ck64)).
+
+**This cell is the legacy nominal cadence, not what you hear.** It drives the
+level-stat quantisation and the hold-full ghost metronome interval only. The
+**live** firing cadence is the Euclidean ladder in
+`src/data/weapon-levels.json` (resolved by `resolveWeaponPattern` in
+`src/utils/weaponLevels.ts`), which is why the ladder section below says that
+file — not `weapons.csv` `subdivisions` — is the fire rate. A dev-only boot
+diagnostic (`src/utils/weaponDataDiagnostics.ts`) reports where the two
+disagree, so editing the wrong surface is visible rather than folklore.
+
+### Runtime invariants and the code fallback
+
+The guarantees that used to be compiler-enforced are re-asserted against the
+**parsed catalogue** at module load (`src/utils/weaponCatalogue.ts`, applied by
+`applyWeaponCatalogueGuards`):
+
+- **On-beat grid** — every derived `fireRateMs` is an exact subdivision or
+  multiple of the beat period.
+- **Unique bullet colour** — no two weapons share `bulletColor`.
+- **Unique shape family** — no two weapons resolve the same canonical shape
+  (`disc`/`circle` collapse to one family). The single documented allowance is
+  the Dual / Wave Laser `line` beam pair, encoded as data with a reason.
+- **Sane magnitudes** — positive size/lifetime, non-negative budgets and AOE
+  radius, positive orbit radius, 24-bit colours.
+- **Structural coherence** — an AOE/orbit descriptor carries its companion
+  radius, and a degenerate `0` budget is flagged.
+
+A row that is missing, malformed or invariant-breaking falls back to its **code
+default** in `DEFAULT_WEAPON_CATALOGUE` (`src/utils/weapons.ts`) — for that
+weapon only, so one bad cell never changes the other fifteen. The fallback
+applies in **every** environment, not only production: the game and the gyms
+must run the same roster, and a dev-only broken roster is exactly the
+split-source divergence the parity rule forbids. Boot never throws — the game
+still boots and degrades to the shipped values — and the load report
+(`WEAPON_CATALOGUE_LOAD_REPORT`) records which ids came from data and which fell
+back. Under `npm run dev` a boot diagnostic
+(`warnOnWeaponDataDivergences` in `src/utils/weaponDataDiagnostics.ts`) logs one
+`console.warn` naming the file, the weapon and the problem, so a typo is
+visible instead of silently ignored.
+
+### What each surface cannot do
+
+| Surface | Cannot | Follow-up |
+|---|---|---|
+| `src/data/weapons.csv` | **Add a weapon.** A row whose `id` is not one of the sixteen is rejected; a new weapon needs the `WeaponId` union, an icon arm in `src/powerups/icons.ts`, an audio cue arm in `src/audio/effects.ts`, and a code fallback definition (which is exactly what **Save As** checks for). | Create a work item for the new weapon; the CSV can then tune it. |
+| `src/data/weapons.csv` | **Cannot change the fire cadence.** `subdivisions` is the legacy nominal value only. | Edit the rung in `src/data/weapon-levels.json`. |
+| `src/data/weapons.csv` | **Change the level ladder** (rungs, rotations, threshold curve). | Same file: `src/data/weapon-levels.json`; the `fireRate` curve lives in `WEAPON_UPGRADE_SPECS` (`src/utils/weaponLevels.ts`). |
+| `src/data/weapon-levels.json` | **Add a weapon.** A weapon with no entry (or a malformed one) falls back to its in-code ladder, and the catalogue still has no row for it. | The new-weapon path above. |
+| `src/data/weapon-patterns.csv` | **Add a weapon.** Rows for an unknown `weaponId` are rejected. | The new-weapon path above. |
+
+`src/data/weapon-levels.json` cannot add a weapon either: an entry tunes the
+cadence of an existing catalogue id, and a weapon the catalogue does not carry
+still has no icon arm and no audio cue arm, so it could never be dropped or
+drawn. Neither file can change the level ladder's activation curve: that is
+the `fireRate` spec in `WEAPON_UPGRADE_SPECS` (`src/utils/weaponLevels.ts`).
+
+The catalogue keeps its exported name and type
+(`Record<WeaponId, WeaponDefinition>`), so every consumer — `Player`, the shared
+combat core, the drop layer, the gym help and the gyms — reads the data without
+changing.
+
+### Worked examples
+
+**1. Change a bullet colour (Cannon).** In `src/data/weapons.csv`, find the
+`cannon` row and change `bulletColor` from `0x00ffff` to `0xff00ff`; save,
+refresh `npm run dev`, and fire — the bullets are magenta. Or do it live: Gym
+Index → **WeaponTuning**, select Cannon, use the colour input, watch the
+preview, press **Save**. Verify the change took effect by firing in the game
+and in **GymWeapons** (both read the same catalogue), and then run the retune
+tripwires — the frozen catalogue fixture will fail until it is regenerated as
+part of the deliberate change.
+
+**2. Change a fire rate (Cannon, level 0).** Edit the first rung in
+`src/data/weapon-levels.json` — for example `{ "k": 9, "n": 16, "rotation": 0
+}` → `{ "k": 10, "n": 16, "rotation": 0 }` — save and restart/refresh
+`npm run dev` (the ladders are built at module load). Audition it in Gym Index
+→ **Rhythm**, or in the tuning panel's read-only rhythm section, and update the
+machine-verified ledger table in the ladder section below: the suite compares
+that table row-for-row against `WEAPON_EUCLIDEAN_LADDERS`, so a rung edit that
+is not mirrored there fails. Regenerate `src/data/weapon-levels-parity.json` in
+the same change.
+
+**3. Change the Nova AoE radius.** In `src/data/weapons.csv`, find the `nova`
+row and change `aoeRadius` (shipped: `34`) to, say, `44`; save and refresh
+`npm run dev`. Keep the AOE group whole — `aoeTrigger`, `aoeRadius`,
+`aoeDamagesEnemies` and `aoeClearsEnemyBullets` are authored together. Trigger a
+Nova in **GymWeapons** (it demonstrates the shared AOE ring) or in
+**WeaponTuning** (select Nova and fire at the dummy target): the ring should
+clear enemies and bullets out to the new radius. A blank radius with a trigger
+present is rejected and falls back to the code default instead of shipping a
+zero-radius blast.
+
+### Verifying a change
+
+The suite is the tripwire, and each guard answers a different question:
+
+| Guard | Pins |
+|---|---|
+| `src/data/weaponsCsvSeed.test.ts` | the committed files parse with zero diagnostics, deep-equal the resolved catalogue, keep every column documented in the `#` block, and are **byte-identical** to `npm run generate:weapon-csv-seed` |
+| `src/data/weaponCatalogueParity.test.ts` | the resolved catalogue is deep-equal to the frozen snapshot `src/data/weapon-catalogue-parity.json` |
+| `src/data/weaponLevelsParity.test.ts` | `resolveWeaponPattern(weaponId, level)` for all sixteen weapons at levels 0–10 equals `src/data/weapon-levels-parity.json` |
+| `src/utils/weaponLevels.test.ts` | the machine-verified ladder ledger in this document, row for row against the resolved ladders |
+| `src/weaponDataRetuningDocs.test.ts` | this guide: every column, enum value and workflow claim above |
+| `src/utils/weaponsCatalogueLoad.test.ts` | the runtime roster covers all sixteen ids and the load report names what fell back |
+
+The two parity fixtures are **frozen snapshots**, not comparisons against the
+current fallback: they are the safety net that makes a typo a failing test
+rather than a silent retune. A deliberate balance change regenerates them in
+the same commit (a one-off snapshot of `WEAPON_CATALOGUE` /
+`resolveWeaponPattern` loaded through `vite.ssrLoadModule`, written with
+`JSON.stringify(value, null, 2)`), so the fixture diff is the reviewable record
+of exactly what moved. Never regenerate a fixture to make an accidental edit
+pass: read the diff first.
+
 ## Weapon Euclidean upgrade ladder (AH-0MVYA291J000CK64)
 
 Every weapon's fire cadence is a deterministic **Euclidean rhythm**
@@ -1201,7 +1499,9 @@ fire rate. `weapons.csv` `subdivisions` remains the **legacy nominal** value
 (level-stat quantisation and the hold-full ghost metronome interval); the dev
 boot diagnostic reports where the two disagree and names
 `src/data/weapon-levels.json` as the cadence source, so the divergence is
-visible rather than folklore.
+visible rather than folklore. The designer-facing schema, file shape and worked
+retune examples for all three data files are in
+[Weapon tuning CSV](#weapon-tuning-csv-ah-0mw0q01vm004epy7) above.
 
 The generator that turns a tile into onset steps, and the helpers that turn
 those steps into exact tick times, live in `src/utils/euclid.ts`
