@@ -91,8 +91,9 @@ no damage budget at any weapon level. With nothing in its path the ray runs a
 arena edges** so a beam fired near the right edge re-enters from the left and
 keeps extending; the level curve lengthens that run. The beam column is
 **visible for 0.3 s** with a wide red launch flash and its own sci-fi laser
-fire cue, and the fire cadence is **1 shot per beat** (750 ms at 80 BPM) so a
-beam never overlaps the next shot. It does not clear enemy bullets (that stays
+fire cue, and the fire cadence is **1 shot every 2 beats** (1500 ms at 80 BPM,
+after the level-0 output trim, AH-0MVWAVKS0005P9VN) so a beam never overlaps the
+next shot. It does not clear enemy bullets (that stays
 Nova/Arc/Bomb territory) so it does not eclipse the AOE family.
 
 **Divergence from original:** No charge meter — AI_Hell's weapons are
@@ -112,8 +113,8 @@ first enemy it meets (AH-0MVY0A23A009MRK3).
 
 - `WeaponId`: `'wave_laser'`; a new `WEAPON_CATALOGUE` entry with a single `[0]`
   offset pattern (the beam is aimed along the ship's heading).
-- Fire subdivision: **1 shot per beat** (`1` in `DEFAULT_WEAPON_SUBDIVISIONS` →
-  750 ms at 80 BPM), on the shared grid.
+- Fire subdivision: **1 shot every 2 beats** (`0.5` in
+  `DEFAULT_WEAPON_SUBDIVISIONS` → 1500 ms at 80 BPM), on the shared grid.
 - Seam: **dedicated shared hitscan-ray seam.** A new optional `HitscanDescriptor`
   on `WeaponDefinition` marks the shot as a ray; the shared fire path in
   `CombatCoreScene` resolves it through the pure `scenes/core/hitscanBeam.ts`
@@ -174,14 +175,14 @@ field.
 
 - `WeaponId`: `'ricochet'`; a new `WEAPON_CATALOGUE` entry with a single `[0]`
   offset pattern.
-- Fire subdivision: **1 shot per beat** (`1` → 750 ms at 80 BPM), on the shared
-  grid.
+- Fire subdivision: **1 shot every 2 beats** (`0.5` → 1500 ms at 80 BPM), on
+  the shared grid.
 - Seam: **new shared combat-core dispatch seam.** A boundary-reflection update
   on the shared player-bullet step (reflect velocity component at the arena
   edge; decrement the bounce count; expire at zero), read from a new optional
   `bounce` field on `WeaponDefinition`. No `AoEDescriptor`; the seam lives in
   shared core so game and gyms bounce identically.
-- `weaponLevels.ts` variables: **Bounce** (`bounce`, 0 → 4, k=0.25 — the
+- `weaponLevels.ts` variables: **Bounce** (`bounce`, 0 → 4, k=0.13 — the
   planned variable this weapon exercises), **Fire rate** (`fireRate`, MVP),
   **Bullet size** (`bulletSize`, MVP) and **Damage** (`damage`).
 
@@ -226,8 +227,9 @@ legible and audible in flight and on contact, with no behaviour change.
 **Pipeline fit:**
 
 - `WeaponId`: `'cluster'` (`'Cluster Missile'`); a new `WEAPON_CATALOGUE` entry with a single `[0]` offset pattern.
-- Fire subdivision: **1 shot every 2 beats** (`0.5` → 1500 ms at 80 BPM), on
-  the shared grid — the slower cadence the split payload pays for.
+- Fire subdivision: **1 shot every 4 beats** (`0.25` → 3000 ms at 80 BPM), on
+  the shared grid — the slower cadence the split payload pays for (slowed from
+  1 shot every 2 beats by the level-0 output trim, AH-0MVWAVKS0005P9VN).
 - Seam: **new shared combat-core split dispatch seam** in
   `src/scenes/core/CombatCoreScene.ts` (`splitProjectile`), reading a neutral
   `WeaponDefinition.splits` field. This is deliberately **not** an
@@ -272,7 +274,7 @@ bullet **radially outward** along its current orbit direction (the ship→pod
 line, in the direction of the orb) on the weapon's beat subdivision, so a
 volley fans into a rotating spike/flower pattern and the weapon's damage scales
 with positioning and the orbit phase rather than the ship's facing. The 2000 ms
-orbit is deliberately not a whole multiple of the 750 ms fire interval (0.375
+orbit is deliberately not a whole multiple of the 1500 ms fire interval (0.75
 revolutions per trigger), so consecutive volleys aim differently and the spread
 stays alive (`isOptionsOrbitTriggerAligned`). The pods are visual entities
 owned by the shared player/bullet layer, not new enemy types.
@@ -298,8 +300,8 @@ flash through the shared impact seam — with no behaviour change.
 - `WeaponId`: `'options'`; a new `WEAPON_CATALOGUE` entry. The pods are modelled
   through a new optional orbit-emitter descriptor rather than `offsets`, because
   the emitters are positional entities rather than one-shot angle offsets.
-- Fire subdivision: **1 shot per beat** (`1` → 750 ms at 80 BPM), on the shared
-  grid; the pods and the active main guns stay phase-locked.
+- Fire subdivision: **1 shot every 2 beats** (`0.5` → 1500 ms at 80 BPM), on
+  the shared grid; the pods and the active main guns stay phase-locked.
 - Seam: **new shared combat-core dispatch seam.** A shared orbit-emitter update
   in `CombatCoreScene` maintains each pod's angle and fires radially outward
   from its world position through the same `PlayerBullet` path; the pure
@@ -562,10 +564,10 @@ one-line deferral reason so the pool can be revisited.
 
 | Concept | Type | Catalogue seam | Beat subdivision | New dispatch seam? | Level variables (`weaponLevels` / `powerUpLevels`) | Gym scene(s) |
 |---------|------|----------------|------------------|--------------------|----------------------------------------------------|--------------|
-| R-Type wave laser | weapon | `WeaponId: 'wave_laser'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | Shared hitscan-ray seam (`hitscanBeam.ts`) | `fireRate`, `bulletSize`, `bulletLifetime` (beam extent) | `GymWeapons` |
-| Centipede ricochet shot | weapon | `WeaponId: 'ricochet'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared bullet-bounce seam | `bounce`, `fireRate`, `bulletSize`, `damage` | `GymWeapons` |
-| Missile Command cluster/MIRV missile | weapon | `WeaponId: 'cluster'` / `WEAPON_CATALOGUE` | 1 shot / 2 beats (1500 ms) | New shared split seam (`WeaponDefinition.splits`, not AoE) | `splitCount`, `fireRate`, `damage` | `GymWeapons` |
-| Gradius Options orbiting satellites | weapon | `WeaponId: 'options'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared orbit-emitter seam | `projectileCount`, `fireRate`, `bulletSize`, `homing` | `GymWeapons` |
+| R-Type wave laser | weapon | `WeaponId: 'wave_laser'` / `WEAPON_CATALOGUE` | 0.5/beat (1500 ms) | Shared hitscan-ray seam (`hitscanBeam.ts`) | `fireRate`, `bulletSize`, `bulletLifetime` (beam extent) | `GymWeapons` |
+| Centipede ricochet shot | weapon | `WeaponId: 'ricochet'` / `WEAPON_CATALOGUE` | 0.5/beat (1500 ms) | New shared bullet-bounce seam | `bounce`, `fireRate`, `bulletSize`, `damage` | `GymWeapons` |
+| Missile Command cluster/MIRV missile | weapon | `WeaponId: 'cluster'` / `WEAPON_CATALOGUE` | 1 shot / 4 beats (3000 ms) | New shared split seam (`WeaponDefinition.splits`, not AoE) | `splitCount`, `fireRate`, `damage` | `GymWeapons` |
+| Gradius Options orbiting satellites | weapon | `WeaponId: 'options'` / `WEAPON_CATALOGUE` | 0.5/beat (1500 ms) | New shared orbit-emitter seam | `projectileCount`, `fireRate`, `bulletSize`, `homing` | `GymWeapons` |
 | Pac-Man power pellet | power-up | — (removed, AH-0MV5CB6KO0079N08) | — | — (removed) | — (removed) | — (removed) |
 | Defender smart bomb | power-up | `PowerUpId: 'smart_bomb'` / `POWER_UP_CATALOGUE` | — | Existing `AoEDescriptor`/`AoETrigger` seam (`screenPulse`) | `aoeRadius`, `smartBombDamage`, `smartBombInterval` | `GymPowerUpsCombat` |
 | Gradius force field | power-up | `PowerUpId: 'force_field'` / `POWER_UP_CATALOGUE` | — | New shared bullet-reflection seam | `forceFieldDuration`, `forceFieldReflects` | `GymPowerUpsCombat` |

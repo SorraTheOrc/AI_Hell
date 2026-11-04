@@ -57,8 +57,13 @@ describe('weapon leveling is documented (AH-0MUQOT1I60038CO7 AC4/AC5)', () => {
 
   it('the GDD records a cap/rate rationale for the curve', () => {
     // The rationale paragraph names the ceiling(s) and the saturation rate.
+    // Both are derived from the shipped spec so a retune can never leave the
+    // prose quoting a stale ceiling (AH-0MVRENEME004FS8T).
+    const fireRate = WEAPON_UPGRADE_SPECS.fireRate;
     expect(gdd).toMatch(/Rationale for each cap\/rate/);
-    expect(gdd).toMatch(/3× ceiling/);
+    expect(gdd).toContain(
+      `from 3× to **${fireRate.cap}×** with \`k=${fireRate.k}\``,
+    );
   });
 
   it('the GDD records the beat-grid constraint on fire-rate upgrades', () => {

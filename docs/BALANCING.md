@@ -1158,12 +1158,12 @@ morphs are deliberate:
   density is identical and only the groove's alignment moves.
 
 **Curve-derived rungs.** Each rung becomes active at the first level where the
-shipped `fireRate` exponential-saturation curve (base 1×, cap 3×, `k = 0.18`)
+shipped `fireRate` exponential-saturation curve (base 1×, cap 2.2×, `k = 0.12`)
 desires at least that rung's density, and never earlier than one level after the
 previous rung. The desired density is
 `baseDensity × curveValue(WEAPON_UPGRADE_SPECS.fireRate, level)`
 (`weaponPatternDesiredOnsetsPerBeat`). Because the curve is monotonic, so is the
-ladder. Rungs at or above the 3× asymptote are omitted: the exponential curve
+ladder. Rungs at or above the 2.2× asymptote are omitted: the exponential curve
 approaches but never reaches it, and the 16th-note lattice itself caps a v1
 pattern at one onset per step (4 onsets/beat).
 
@@ -1304,6 +1304,22 @@ the `≤ 60 % of baseline` level-0 bound, the `≤ 1.5× cannon` ceiling and the
 `≤ 2.5× L0` / `≤ 50 % of the old saturated output` level bounds — is asserted
 numerically by `src/utils/weapons.test.ts` and
 `src/utils/weaponLevels.test.ts`; see GDD §4.4 / §4.4.2.
+
+### Strength budget (the numeric half of Q3 = B)
+
+The batch gate below cannot see weapon output (the arena fires on a fixed
+cadence constant and imports only the `WeaponId` type), so the binding
+acceptance evidence for the trim is the numeric budget. It is documented in
+full — per-family output definition, the frozen level-0 baseline table, the
+post-change table and the level-0 / level-1 / level-cap ceilings (60 %, 1.5×
+the cannon, 2.5× L0 and 50 % of the pre-change saturated output) — in the GDD
+[§4.4 Power-Ups](./Game%20Design%20Document.md#44-power-ups) and
+[§4.4.2 Weapon Leveling](./Game%20Design%20Document.md#442-weapon-leveling-ah-0mupmpcb2009j54j).
+In code, `WEAPON_STRENGTH_BUDGET` (`src/utils/weaponStrength.ts`) holds the
+ceilings, the frozen level-0 baselines sit beside `WEAPON_CATALOGUE`
+(`src/utils/weapons.ts`), and `src/utils/weapons.test.ts` /
+`src/utils/weaponLevels.test.ts` assert the bounds table-driven against literal
+baselines. Any future weapon must satisfy the same budget before it ships.
 
 ### The two runs (same sweep)
 

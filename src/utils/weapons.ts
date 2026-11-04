@@ -214,7 +214,9 @@ export type WeaponSubdivisions = Record<WeaponId, number>;
  * curve-flattening work (AH-0MVWAVL6R001UI60) because the beam's cadence is
  * its only output axis (see its entry below). The cannon's `2` is frozen —
  * its level-0 values may never change. The realised percentage per weapon is
- * recorded in the strength budget block beside `WEAPON_CATALOGUE`.
+ * recorded in the strength budget block beside `WEAPON_CATALOGUE` (baselines)
+ * and in the committed post-change table in `utils/weapons.test.ts`
+ * (`LEVEL0_TRIMMED`), which pins both the output and the share.
  */
 export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   // FROZEN: the cannon's level-0 values never move.
@@ -1006,9 +1008,9 @@ export interface ImpactFxSpec {
  * The ceilings are expressed in code as `WEAPON_STRENGTH_BUDGET`
  * (`utils/weaponStrength.ts`). Where an exact 60 % is not representable on
  * the beat grid / with integer counts, the nearest on-grid value **at or
- * below** the target is used and the realised percentage is recorded by the
- * trim work item (AH-0MVWAVKS0005P9VN), which appends the post-change table
- * here.
+ * below** the target is used and the realised percentage is pinned per weapon
+ * by the committed post-change table in `weapons.test.ts` (`LEVEL0_TRIMMED`)
+ * and documented in GDD §4.4.2.
  *
  * ### Pre-change level-0 baselines (frozen fixture, never re-derived)
  *
