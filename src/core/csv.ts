@@ -1099,16 +1099,26 @@ export const WEAPON_IDS: readonly WeaponId[] = Object.keys(
 /** Fast membership check for {@link WEAPON_IDS}. */
 const WEAPON_ID_SET: ReadonlySet<string> = new Set<string>(WEAPON_IDS);
 
-/** Every bullet shape the catalogue understands (mirrors `BulletShape`). */
-const VALID_BULLET_SHAPES: BulletShape[] = [
+/**
+ * Every bullet shape the catalogue understands (mirrors `BulletShape`).
+ *
+ * Exported so the weapon tuning panel's shape selector offers exactly the
+ * enum the codec validates (AH-0MW0Q1HMH0037RNC).
+ */
+export const VALID_BULLET_SHAPES: BulletShape[] = [
   'circle', 'disc', 'line', 'teardrop', 'missile', 'ring', 'shell',
   'heavy-shell', 'shard', 'bolt', 'phaser-bolt', 'fleck', 'dart',
   'boss-pellet', 'spiral-pellet', 'pulse-ring', 'tracer', 'warhead',
   'diamond', 'spark', 'chevron', 'pellet',
 ];
 
-/** Every AOE trigger the catalogue understands (mirrors `AoETrigger`). */
-const VALID_AOE_TRIGGERS: AoETrigger[] = [
+/**
+ * Every AOE trigger the catalogue understands (mirrors `AoETrigger`).
+ *
+ * Exported so the weapon tuning panel's trigger selector offers exactly the
+ * enum the codec validates (AH-0MW0Q1HMH0037RNC).
+ */
+export const VALID_AOE_TRIGGERS: AoETrigger[] = [
   'onFire', 'onImpact', 'onRandom', 'screenPulse',
 ];
 

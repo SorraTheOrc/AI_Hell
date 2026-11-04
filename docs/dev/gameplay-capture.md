@@ -2047,7 +2047,7 @@ that cannot start without a caller-supplied parameter:
 `GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymHangar`,
 `GymHexWar`, `GymMinerals`, `GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymRhythm`, `GymWeaponLeveling`,
-`GymWeapons`.
+`GymWeapons`, `GymWeaponTuning`.
 
 `GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
 setup) are **rejected** with `unsupported-target` when no setup is supplied;

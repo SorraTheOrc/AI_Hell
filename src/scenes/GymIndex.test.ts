@@ -115,6 +115,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'Rhythm',
       'WeaponLeveling',
       'Weapons',
+      'WeaponTuning',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymBotTuning',
@@ -129,6 +130,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymRhythm',
       'GymWeaponLeveling',
       'GymWeapons',
+      'GymWeaponTuning',
     ]);
 
     // Middle column: the reusable fodder gym (its in-panel dropdown selects

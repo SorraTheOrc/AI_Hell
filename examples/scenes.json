@@ -400,6 +400,22 @@
       }
     },
     {
+      "target": "GymWeaponTuning",
+      "playMs": 1500,
+      "captureMs": 6000,
+      "label": "Gym family \u2014 weapon tuning panel with live preview",
+      "setup": {
+        "player": {
+          "weapons": [
+            "spread"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {},
+        "seed": 8096
+      }
+    },
+    {
       "target": "HangarScene",
       "playMs": 1500,
       "captureMs": 5000,
