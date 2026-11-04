@@ -42,6 +42,8 @@ import {
 } from '../vfx/wormholeSpawn';
 import type { EnemySpawn } from '../waves/WaveManager';
 import * as effectsModule from '../audio/effects';
+import * as enemyTargetingModule from './core/enemyTargeting';
+import * as enemyWrapModule from './core/enemyWrap';
 import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
@@ -933,6 +935,168 @@ describe('PlayScene — deterministic boot helper (AH-0MVXWEE3L004SPTC)', () => 
     // The live loop stays stopped for the whole test.
     expect(second.game.loop.running).toBe(false);
     expect(fingerprint(second.scene)).toBe(firstFingerprint);
+  });
+});
+
+describe('PlayScene — hot-loop allocation removal (AH-0MVXV0F0Y004NENT)', () => {
+  let booted: BootedGame | null = null;
+
+  // The run seed / static campaign fix the wave composition, so the enemy
+  // list these tests walk is the same on every run and host load.
+  beforeEach(() => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** The private seams the allocation guarantees live on. */
+  interface HotLoopSeams {
+    spawned: {
+      entity: EnemyEntity & { alive: boolean };
+      enemyKey: string;
+    }[];
+    enemyBullets: unknown[];
+    getEnemyEntities(): readonly EnemyEntity[];
+    _collectAliveEnemies(): EnemyEntity[];
+    _collectEnemyFire(): void;
+    _moveEnemies(dt: number): void;
+    _applyFormationReanchor(): boolean;
+    positionedScratch: unknown[];
+    reanchorCandidates: unknown[];
+  }
+
+  function seams(scene: PlayScene): HotLoopSeams {
+    return scene as unknown as HotLoopSeams;
+  }
+
+  /** Boots a one-wave scene with its enemies fully spawned. */
+  async function bootWithWave(): Promise<PlayScene> {
+    const result = await bootSceneWithLevels(singleLevelCampaign(), {
+      asteroidSpawner: false,
+    });
+    booted = result.booted;
+    result.scene.finishSpawnAnimations();
+    return result.scene;
+  }
+
+  it('AC2 — getEnemyEntities caches its list and preserves live spawn order', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    expect(hot.spawned.length).toBeGreaterThan(0);
+
+    const first = hot.getEnemyEntities();
+    const second = hot.getEnemyEntities();
+
+    // Same buffer, refilled in place — no per-call `spawned.map(...)`.
+    expect(second).toBe(first);
+    // ... and the same content the map produced: every spawn, in spawn order.
+    expect([...second]).toEqual(hot.spawned.map((spawn) => spawn.entity));
+  });
+
+  it('AC1 — the aim-target push receives one reused live-enemy buffer per frame', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    const push = vi.spyOn(enemyTargetingModule, 'pushAimTargets');
+
+    try {
+      hot._collectEnemyFire();
+      hot._collectEnemyFire();
+
+      expect(push).toHaveBeenCalledTimes(2);
+      const [firstEnemies] = push.mock.calls[0];
+      const [secondEnemies] = push.mock.calls[1];
+      // Identity is the allocation guarantee: the same array is handed over
+      // every frame instead of a fresh `filter().map()` result.
+      expect(secondEnemies).toBe(firstEnemies);
+      // The buffer is the scene's own snapshot, refilled in place.
+      expect(secondEnemies).toBe(hot._collectAliveEnemies());
+      // Content and order are exactly what the filter+map produced.
+      expect([...secondEnemies]).toEqual(
+        hot.spawned
+          .filter((spawn) => spawn.entity.alive)
+          .map((spawn) => spawn.entity),
+      );
+    } finally {
+      push.mockRestore();
+    }
+  });
+
+  it('AC2 — the mineral-seek push reuses the same live-enemy buffer', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    const seek = vi.spyOn(enemyTargetingModule, 'pushSeekTargets');
+
+    try {
+      hot._moveEnemies(0.016);
+      hot._moveEnemies(0.016);
+
+      expect(seek).toHaveBeenCalledTimes(2);
+      const [firstEnemies] = seek.mock.calls[0];
+      const [secondEnemies] = seek.mock.calls[1];
+      expect(secondEnemies).toBe(firstEnemies);
+      expect(secondEnemies).toBe(hot._collectAliveEnemies());
+    } finally {
+      seek.mockRestore();
+    }
+  });
+
+  it('AC1 — enemy fire is collected into the scene\'s own bullet list', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    const bullets = hot.enemyBullets;
+
+    // A deterministic firing enemy: the shared dispatcher appends its bullet
+    // straight into the live list, so the list object never changes.
+    const fired = [
+      { vx: 1, vy: 0 },
+      { vx: 0, vy: 1 },
+    ];
+    let shots = 0;
+    hot.spawned.push({
+      enemyKey: 'scout',
+      entity: {
+        alive: true,
+        tryFireAimedBullet: () => fired[shots++] ?? null,
+      } as unknown as EnemyEntity & { alive: boolean },
+    });
+
+    hot._collectEnemyFire();
+    hot._collectEnemyFire();
+
+    expect(hot.enemyBullets).toBe(bullets);
+    expect(hot.enemyBullets.slice(-2)).toEqual(fired);
+  });
+
+  it('AC3 — the positioned-body buffer and the re-anchor candidate pool are reused', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    const wrap = vi.spyOn(enemyWrapModule, 'applyPostMotionWrapAll');
+
+    try {
+      // Warm the run one frame, then capture the buffers the next frame uses.
+      scene.tick(0.016);
+      hot._moveEnemies(0.016);
+      const candidates = hot.reanchorCandidates;
+      const positioned = hot.positionedScratch;
+
+      hot._moveEnemies(0.016);
+
+      // The wrap seam (and the re-anchor pool) see the same array objects on
+      // the next frame: neither is rebuilt per frame.
+      const lastCall = wrap.mock.calls[wrap.mock.calls.length - 1];
+      expect(lastCall[0]).toBe(positioned);
+      expect(hot.reanchorCandidates).toBe(candidates);
+      expect(hot.positionedScratch).toBe(positioned);
+    } finally {
+      wrap.mockRestore();
+    }
   });
 });
 

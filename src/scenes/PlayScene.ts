@@ -112,7 +112,7 @@ import {
   type MarchOptions,
   type MarchState,
 } from './core/marchFormation';
-import { fireForEnemy } from '../entities/enemyFire';
+import { collectEnemyFire } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
 import { Mineral } from '../entities/Mineral';
@@ -738,6 +738,33 @@ export class PlayScene extends CombatScene<
   private spawned: SpawnedEnemy[] = [];
   private enemyBullets: PlayEnemyBullet[] = [];
   private drops: PlayDrop[] = [];
+
+  // ── Hot-loop scratch buffers (AH-0MVXV0F0Y004NENT) ───────────────
+  // The per-frame path used to allocate a thrown-away array (or several) every
+  // tick even when nothing changed. These buffers are owned by the scene and
+  // reused: cleared and refilled in place, never handed to a caller that might
+  // retain them across frames.
+
+  /**
+   * Live enemy entities for the shared targeting pushes (`pushAimTargets` /
+   * `pushSeekTargets`) — rebuilt in place on each call, so the two pushes and
+   * their tests share one snapshot buffer whose identity is stable.
+   */
+  private readonly aliveEnemyScratch: EnemyEntity[] = [];
+  /**
+   * {@link getEnemyEntities} snapshot. Rebuilt in place on every call, so a
+   * caller sees the same live-order list without a per-call allocation; only
+   * the *current* call may hold it (a later call refills the same array).
+   */
+  private readonly enemyEntityCache: EnemyEntity[] = [];
+  /** Bodies positioned this frame, wrapped in place by the shared wrap seam. */
+  private readonly positionedScratch: WrapAwareBody[] = [];
+  /**
+   * Diver re-anchor candidates for this frame, pooled: the array and its
+   * candidate objects are reused, and `FormationReanchorController.apply()`
+   * only reads them (it retains entities, never the wrappers).
+   */
+  private readonly reanchorCandidates: FormationReanchorCandidate[] = [];
   /** Live mineral collectables on the field (GDD §4.5). */
   private minerals: Mineral[] = [];
   /** Whether the hold-full power-up choice is currently open. */
@@ -2784,11 +2811,10 @@ export class PlayScene extends CombatScene<
     // Live mineral-seek: push the scene's live mineral field so roaming
     // seekers (Harvester) steer toward the nearest live mineral — the same
     // shared helper the gyms call (AH-0MV5SDNI2008RWQ2). The seeker advances
-    // its own motion in the loop below.
-    pushSeekTargets(
-      this.spawned.filter((s) => s.entity.alive).map((s) => s.entity),
-      this.minerals,
-    );
+    // its own motion in the loop below. The live list is the scene's reused
+    // snapshot buffer, so the per-frame push allocates nothing
+    // (AH-0MVXV0F0Y004NENT).
+    pushSeekTargets(this._collectAliveEnemies(), this.minerals);
 
     // The formation-positioned enemies of this frame — the shared
     // post-motion wrap runs over exactly these bodies once the positioning
@@ -2797,7 +2823,10 @@ export class PlayScene extends CombatScene<
     // four-edge wrap and are deliberately not re-wrapped here: an
     // `enterFromOffscreen` asteroid must stay outside the viewport until it
     // has drifted in (AH-0MUDYS2SZ004H123), which a second seam would undo.
-    const positioned: WrapAwareBody[] = [];
+    // The buffer is the scene's reused scratch (AH-0MVXV0F0Y004NENT), refilled
+    // in order so the shared wrap sees exactly the same list as before.
+    const positioned = this.positionedScratch;
+    positioned.length = 0;
 
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
@@ -2863,6 +2892,24 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Rebuilds the scene's live-enemy snapshot in place and returns it.
+   *
+   * The shared targeting helpers take a readonly list, so the previous
+   * `this.spawned.filter(...).map(...)` built a fresh array per frame per push.
+   * This buffer is reused instead (AH-0MVXV0F0Y004NENT); membership and order
+   * are exactly what the filter+map produced — alive spawns, spawn order — and
+   * it is only read inside the call that refreshed it.
+   */
+  private _collectAliveEnemies(): EnemyEntity[] {
+    const alive = this.aliveEnemyScratch;
+    alive.length = 0;
+    for (const spawn of this.spawned) {
+      if (spawn.entity.alive) alive.push(spawn.entity);
+    }
+    return alive;
+  }
+
+  /**
    * Consumes any pending enemy re-anchor requests and shifts the Diver-group
    * anchor so the requesting Diver's slot lands on its attack end. The rule is
    * the shared `FormationReanchorController` (D2, docs/GYM_PARITY.md) — the
@@ -2870,22 +2917,44 @@ export class PlayScene extends CombatScene<
    * Divers glide to their new slots. Every other enemy stays where it is
    * (producer review, AH-0MUL15N63003PUDB).
    *
+   * The candidate list and its wrapper objects are pooled on the scene
+   * (AH-0MVXV0F0Y004NENT): `apply()` reads them synchronously and retains only
+   * the entities, so refilling the same wrappers per frame is equivalent to
+   * the fresh `filter().map()` list it replaces — same candidates, same order.
+   *
    * @returns `true` if a re-anchor was applied (and the glide was begun),
    *   `false` otherwise.
    */
   private _applyFormationReanchor(): boolean {
-    const candidates = this.spawned
-      .filter(
-        (spawn) =>
-          spawn.entity.alive && spawn.entity.consumeFormationReanchor != null,
-      )
-      .map((spawn) => ({
-        entity: spawn.entity as unknown as FormationReanchorCandidate['entity'],
-        originX: spawn.startX + this.driftX,
-        originY: spawn.startY,
-        spacingX: spawn.spacingX,
-        spacingY: spawn.spacingY,
-      }));
+    const candidates = this.reanchorCandidates;
+    let count = 0;
+    for (const spawn of this.spawned) {
+      const { entity } = spawn;
+      if (!entity.alive || entity.consumeFormationReanchor == null) continue;
+      // Reuse the pooled wrapper at this slot, creating it on first use.
+      let candidate = candidates[count];
+      if (candidate === undefined) {
+        candidate = {
+          entity: entity as unknown as FormationReanchorCandidate['entity'],
+          originX: 0,
+          originY: 0,
+          spacingX: 0,
+          spacingY: 0,
+        };
+        candidates[count] = candidate;
+      }
+      candidate.entity = entity as unknown as FormationReanchorCandidate['entity'];
+      candidate.originX = spawn.startX + this.driftX;
+      candidate.originY = spawn.startY;
+      candidate.spacingX = spawn.spacingX;
+      candidate.spacingY = spawn.spacingY;
+      count += 1;
+    }
+    // Truncate to this frame's candidate count: `apply()` iterates the whole
+    // array, so a stale wrapper must never reach the controller. The dropped
+    // wrappers are re-created only if Divers reappear (a one-off, not a
+    // per-frame cost).
+    candidates.length = count;
     return this.reanchor.apply(candidates);
   }
 
@@ -4399,21 +4468,21 @@ export class PlayScene extends CombatScene<
   private _collectEnemyFire(): void {
     // Live aim tracking: push the live player position into every alive
     // aimed enemy BEFORE this frame's fire is collected — single-sourced with
-    // the gyms through the shared helper (AH-0MV5SDNI2008RWQ2).
-    pushAimTargets(
-      this.spawned.filter((s) => s.entity.alive).map((s) => s.entity),
-      this.player,
-    );
+    // the gyms through the shared helper (AH-0MV5SDNI2008RWQ2). The list is
+    // the scene's reused snapshot buffer (AH-0MVXV0F0Y004NENT).
+    pushAimTargets(this._collectAliveEnemies(), this.player);
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
       // Shared archetype→tryFire dispatch, driven by the scene clock
       // (AH-0MUII3BBW000XZ46): no local switch, so a new enemy is wired once.
-      this.enemyBullets.push(
-        ...fireForEnemy<PlayEnemyBullet>(
-          s.entity,
-          s.enemyKey,
-          this.time.now,
-        ),
+      // The allocation-free form appends straight into the live bullet list —
+      // the previous `push(...fireForEnemy(...))` spread built a transient
+      // array per enemy per frame (AH-0MVXV0F0Y004NENT).
+      collectEnemyFire<PlayEnemyBullet>(
+        s.entity,
+        s.enemyKey,
+        this.time.now,
+        this.enemyBullets,
       );
     }
   }
@@ -4450,9 +4519,32 @@ export class PlayScene extends CombatScene<
 
   // ── Shared collision hooks ──────────────────────────────────────
 
-  /** Live enemy entities for the shared collision pass. */
+  /**
+   * Live enemy entities for the shared collision pass.
+   *
+   * Returns the scene's reused snapshot buffer, refilled in place on every call
+   * (AH-0MVXV0F0Y004NENT): the shared passes re-read this accessor once per
+   * bullet, and that per-call `spawned.map(...)` was the single largest source
+   * of per-frame garbage in the game. Contract: the list is a snapshot of
+   * `spawned` **at call time**, in spawn order, and a caller that needs to keep
+   * it across a later call must copy it (every caller today consumes it
+   * immediately, exactly as it did the old per-call array).
+   */
   protected override getEnemyEntities(): readonly EnemyEntity[] {
-    return this.spawned.map((s) => s.entity);
+    const cache = this.enemyEntityCache;
+    cache.length = 0;
+    for (const spawn of this.spawned) cache.push(spawn.entity);
+    return cache;
+  }
+
+  /**
+   * The live enemy-bullet list **without** a protective copy, for the shared
+   * collision pass only (AH-0MVXV0F0Y004NENT). The public
+   * {@link getEnemyBullets} keeps handing out a copy; the pass needs the owned
+   * array so it can recycle the released buffer instead of allocating one.
+   */
+  protected override getEnemyBulletStorage(): readonly PlayEnemyBullet[] {
+    return this.enemyBullets;
   }
 
   /** Replaces the enemy-bullet collection after a shared collision pass. */

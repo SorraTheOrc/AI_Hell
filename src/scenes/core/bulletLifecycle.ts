@@ -113,18 +113,34 @@ export function advanceWrappingBullets<T extends WrappingBullet>(
 }
 
 /**
- * Advances every player bullet by `dt` seconds and returns those still alive,
+ * Advances every player bullet by `dt` seconds and keeps those still alive,
  * delegating the per-bullet wrap/expiry to the existing `advanceAndCull` so
  * player-bullet semantics stay defined in exactly one place.
  *
- * @param bullets - The live player-bullet array.
+ * The survivors are compacted **in place** and the same array is returned
+ * (AH-0MVXV0F0Y004NENT): this helper runs once per frame in the game and every
+ * gym, so the previous `.filter` allocated a fresh, thrown-away array on the
+ * hot path. Compaction is a stable pass — survivors keep their relative order
+ * — and every scene assigns the return into its own `playerBullets` field, so
+ * the observable behaviour (which bullets survive, in which order) is
+ * identical to the filtered copy it replaces.
+ *
+ * @param bullets - The live player-bullet array; mutated in place.
  * @param dt - Time step in seconds.
- * @returns The surviving bullets (a new array, matching the previous
- *   `.filter` idiom used by every scene).
+ * @returns The same array, holding the surviving bullets in their original
+ *   order.
  */
 export function advancePlayerBullets(
   bullets: PlayerBullet[],
   dt: number,
 ): PlayerBullet[] {
-  return bullets.filter((bullet) => advanceAndCull(bullet, dt));
+  // Walk forward and write each survivor back at the compaction cursor —
+  // `kept` never passes the read index, so no unread entry is overwritten.
+  let kept = 0;
+  for (let i = 0; i < bullets.length; i += 1) {
+    const bullet = bullets[i];
+    if (advanceAndCull(bullet, dt)) bullets[kept++] = bullet;
+  }
+  bullets.length = kept;
+  return bullets;
 }

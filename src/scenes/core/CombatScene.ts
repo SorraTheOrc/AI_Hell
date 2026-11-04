@@ -205,6 +205,21 @@ export abstract class CombatScene<
   /** Reused consumed-bullet markers for one bullet-vs-bullet pass. */
   private collisionConsumed = new Uint8Array(0);
 
+  // ── Recycled survivor buffers (AH-0MVXV0F0Y004NENT) ──────────────
+  // Each collision pass publishes its survivors through `setEnemyBullets` and
+  // then keeps the array the scene released to write the next frame's
+  // survivors into: the pass double-buffers the live list instead of building
+  // a fresh `kept*` array every frame. A scene whose `setEnemyBullets` assigns
+  // (every shipped scene does) therefore alternates between a fixed set of
+  // three buffers per list and allocates nothing on the hot path.
+
+  /** Survivor buffer for pass 1 (player bullets vs enemies). */
+  private collisionKeptPlayerBullets: PlayerBullet[] = [];
+  /** Survivor buffer for pass 2 (player bullets vs enemy bullets). */
+  private collisionKeptEnemy: TBullet[] = [];
+  /** Survivor buffer for pass 3 (enemy bullets vs player). */
+  private collisionKeptEnemy2: TBullet[] = [];
+
   /**
    * Scene-clock timestamp (`this.time.now`, ms) until which an enemy force
    * field will not absorb another ram (epic AH-0MVJ8W4GE007OMNT AC2, Q6 = B).
@@ -249,6 +264,22 @@ export abstract class CombatScene<
   protected abstract getEnemyBullets(): readonly TBullet[];
   /** Replaces the enemy-bullet collection after a collision pass. */
   protected abstract setEnemyBullets(bullets: TBullet[]): void;
+
+  /**
+   * The scene's **owned** enemy-bullet array, without a protective copy.
+   *
+   * Only the shared collision pass uses this (AH-0MVXV0F0Y004NENT): it
+   * double-buffers the live list, so it must be able to reclaim the array the
+   * scene has just released instead of allocating a fresh survivor list every
+   * frame. `getEnemyBullets()` stays the general accessor and may hand out a
+   * copy (a scene that wants that protection keeps it there).
+   *
+   * Default: whatever {@link getEnemyBullets} returns, which is already the
+   * owned array for scenes that do not copy.
+   */
+  protected getEnemyBulletStorage(): readonly TBullet[] {
+    return this.getEnemyBullets();
+  }
 
   /**
    * Live entity counts for the dev performance probe
@@ -1324,8 +1355,14 @@ export abstract class CombatScene<
    * (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S).
    */
   protected _resolvePlayerBulletsVsEnemies(): void {
-    const keptBullets: PlayerBullet[] = [];
-    for (const pb of this.playerBullets) {
+    // The survivor buffer is recycled from the list this pass releases
+    // (AH-0MVXV0F0Y004NENT): survivors keep their original order, exactly as
+    // the filtered copy this replaces did, but the pass allocates nothing.
+    const playerBullets = this.playerBullets;
+    const keptBullets = this.collisionKeptPlayerBullets;
+    let kept = 0;
+    for (let index = 0; index < playerBullets.length; index += 1) {
+      const pb = playerBullets[index];
       let spent = false;
       for (const enemy of this.getEnemyEntities()) {
         if (!enemy.alive) continue;
@@ -1344,9 +1381,11 @@ export abstract class CombatScene<
         }
       }
       if (!spent) spent = this.onPlayerBulletHitsBoss(pb);
-      if (!spent) keptBullets.push(pb);
+      if (!spent) keptBullets[kept++] = pb;
     }
+    keptBullets.length = kept;
     this.playerBullets = keptBullets;
+    this.collisionKeptPlayerBullets = playerBullets;
   }
 
   /**
@@ -1461,9 +1500,18 @@ export abstract class CombatScene<
 
     // 2. Player bullets vs enemy bullets — both destroyed (shared AC5 path).
     const bulletRadius = this.getEnemyBulletRadius();
-    const keptEnemy: TBullet[] = [];
-    const enemyBullets = this.getEnemyBullets();
+    // Recycled survivor buffer + the scene's owned bullet list: survivors keep
+    // their original order, and the array this pass releases becomes next
+    // frame's buffer (AH-0MVXV0F0Y004NENT). The loop bound is captured up
+    // front so a hook that *appends* a bullet mid-pass is not picked up here —
+    // the same snapshot the previous `for (const eb of getEnemyBullets())`
+    // over a copy saw.
+    const keptEnemy = this.collisionKeptEnemy;
+    let keptEnemyCount = 0;
+    const enemyBullets = this.getEnemyBulletStorage();
+    const enemyBulletCount = enemyBullets.length;
     const playerBullets = this.playerBullets;
+    const playerBulletCount = playerBullets.length;
 
     // Broad phase: index the bullets once, then query per enemy bullet. An
     // empty player-bullet list (the `GymPerformance` stress gym disables
@@ -1480,7 +1528,8 @@ export abstract class CombatScene<
     let anyConsumed = false;
     let candidateTests = 0;
 
-    for (const eb of enemyBullets) {
+    for (let enemyIndex = 0; enemyIndex < enemyBulletCount; enemyIndex += 1) {
+      const eb = enemyBullets[enemyIndex];
       const bulletX = eb.graphics.x;
       const bulletY = eb.graphics.y;
       let candidateCount: number;
@@ -1528,19 +1577,29 @@ export abstract class CombatScene<
           break;
         }
       }
-      if (!consumed) keptEnemy.push(eb);
+      if (!consumed) keptEnemy[keptEnemyCount++] = eb;
     }
+    keptEnemy.length = keptEnemyCount;
 
     if (anyConsumed) {
-      this.playerBullets = playerBullets.filter(
-        (_bullet, index) => consumedBullets[index] === 0,
-      );
+      // Stable in-place compaction of the survivors into the live array —
+      // identical to the `.filter` it replaces (order preserved, consumed
+      // bullets dropped), without a per-pass array (AH-0MVXV0F0Y004NENT).
+      let kept = 0;
+      for (let index = 0; index < playerBullets.length; index += 1) {
+        if (consumedBullets[index] === 0) playerBullets[kept++] =
+          playerBullets[index];
+      }
+      playerBullets.length = kept;
     }
-    this.collisionStats = {
-      candidateTests,
-      naivePairTests: enemyBullets.length * playerBullets.length,
-    };
+    // Updated in place: the probe reads it every frame, so a fresh object per
+    // pass was another avoidable allocation. The pair counts describe the
+    // pass's input state, so they use the counts captured before compaction.
+    this.collisionStats.candidateTests = candidateTests;
+    this.collisionStats.naivePairTests = enemyBulletCount * playerBulletCount;
     this.setEnemyBullets(keptEnemy);
+    // Double-buffer: the list just released is next pass's survivor buffer.
+    this.collisionKeptEnemy = enemyBullets as TBullet[];
 
     // 2c. Enemy ordnance and enemy bodies vs collector drones (Mystery UFO
     //     reward, AH-0MV9G113S009B37I). Only enemies can destroy a drone —
@@ -1565,9 +1624,18 @@ export abstract class CombatScene<
     //    pickup field pops on the last reflection. A bullet the field cannot
     //    reflect (inactive or budget spent) falls through to the normal
     //    player-hit check below.
-    const keptEnemy2: TBullet[] = [];
+    const keptEnemy2 = this.collisionKeptEnemy2;
+    let keptEnemy2Count = 0;
     const effects = this.getEffectsRegistry();
-    for (const eb of this.getEnemyBullets()) {
+    // Same recycled-buffer contract as pass 2 (AH-0MVXV0F0Y004NENT).
+    const playerPhaseBullets = this.getEnemyBulletStorage();
+    const playerPhaseBulletCount = playerPhaseBullets.length;
+    for (
+      let enemyIndex = 0;
+      enemyIndex < playerPhaseBulletCount;
+      enemyIndex += 1
+    ) {
+      const eb = playerPhaseBullets[enemyIndex];
       const bulletX = eb.graphics.x;
       const bulletY = eb.graphics.y;
       if (
@@ -1615,10 +1683,13 @@ export abstract class CombatScene<
         this._spawnEnemyBulletHitImpact(eb);
         eb.graphics.destroy();
       } else {
-        keptEnemy2.push(eb);
+        keptEnemy2[keptEnemy2Count++] = eb;
       }
     }
+    keptEnemy2.length = keptEnemy2Count;
     this.setEnemyBullets(keptEnemy2);
+    // Double-buffer: the list just released is next pass's survivor buffer.
+    this.collisionKeptEnemy2 = playerPhaseBullets as TBullet[];
 
     // 4. Player body vs enemy body — both are hit.
     if (this.invulnerable <= 0) {

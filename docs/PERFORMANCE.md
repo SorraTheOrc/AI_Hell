@@ -583,10 +583,10 @@ Source lines are the **TypeScript** declaration lines, resolved by function name
 |---|---|---|---|---|---|
 | 1 | **One `Graphics` object per bullet**, re-batched every frame by Phaser (`GraphicsWebGLRenderer` 4.18 % [28.3 %], `batch` 2.97 % [20.1 %], Graphics pipeline `run` ×3 ≈ 2.82 % [19.2 %]) | `src/entities/bulletUtils.ts:80` (`createBullet` → `scene.add.graphics()`), `src/utils/bulletVisuals.ts:203` (`drawBulletShape`) | **≈ 10.0 % [≈ 68 % of JS]**, and it drives most of the 84.75 % `native` GL submission | **Done** — every bullet is an `Image` of its cached texture; renderer bucket −52.8 % (see [Cached bullet textures](#cached-bullet-textures-ah-0mw2day2l004qskf)) | AH-0MW2DAY2L004QSKF (high) |
 | 2 | **Animated pellets redraw their `Graphics` every frame**, so earcut re-triangulates the path every frame (`earcutLinked` 0.49 %, `linkedList` 0.21 %) | `src/utils/bulletVisuals.ts:1120` (`_pellet`), redraw wired at `src/entities/bulletUtils.ts:105` | 0.70 % [4.7 %] | **Done** — the same texture cache as #1, with the pulse animated by image scale/alpha; earcut no longer appears in the profile | AH-0MW2DAY2L004QSKF |
-| 3 | Bullet advancement / wrap, once per bullet per frame | `src/scenes/core/bulletLifecycle.ts:64` (`advanceWrappingBullets`) | 0.09 % [0.6 %] | Fold into the bullet rework (a batched position update) | AH-0MVXV0F0Y004NENT (low) |
-| 4 | Enemy fire + aim-target collection | `src/entities/enemyFire.ts:111` (`fireForEnemy`), `src/scenes/core/enemyTargeting.ts:85` (`pushAimTargets`) | 0.04 % [0.2 %] | Allocation removal only | AH-0MVXV0F0Y004NENT (low) |
+| 3 | Bullet advancement / wrap, once per bullet per frame | `src/scenes/core/bulletLifecycle.ts:64` (`advanceWrappingBullets`), `advancePlayerBullets` | 0.09 % [0.6 %] | **Done** — player-bullet survivors are compacted in place; no per-frame survivor array (see [Per-frame allocations](#per-frame-allocations-ah-0mvxv0f0y004nent)) | AH-0MVXV0F0Y004NENT (low) |
+| 4 | Enemy fire + aim-target collection | `src/entities/enemyFire.ts:111` (`fireForEnemy`), `src/scenes/core/enemyTargeting.ts:85` (`pushAimTargets`) | 0.04 % [0.2 %] | **Done** — allocation-free `collectEnemyFire` appends into the live list, aim/seek pushes share one reused snapshot buffer (see [Per-frame allocations](#per-frame-allocations-ah-0mvxv0f0y004nent)) | AH-0MVXV0F0Y004NENT (low) |
 | 5 | Collision passes (`_handleCollisions`) | `src/scenes/core/CombatScene.ts:1418` | 0.02 % [0.2 %] — but the measured pass had **no player bullets** (see the caveat below) | **Done** — player bullets indexed per pass: 90 000 → **699** candidate pairs at 300 × 300 (see [Collision broad phase](#collision-broad-phase-ah-0mvxv0emf001wvq1)) | AH-0MVXV0EMF001WVQ1 (low) |
-| 6 | GC / allocation pressure | V8 `(garbage collector)` | 0.40 % [2.7 %] | Allocation removal | AH-0MVXV0F0Y004NENT (low) |
+| 6 | GC / allocation pressure | V8 `(garbage collector)` | 0.40 % [2.7 %] | **Done** — the per-frame transient arrays are gone; the paired GC bucket is unchanged (see [Per-frame allocations](#per-frame-allocations-ah-0mvxv0f0y004nent)) | AH-0MVXV0F0Y004NENT (low) |
 | 7 | HUD / UI refresh, player auto-defence | `src/ui/HUD.ts:405` (`refresh`), `src/scenes/core/CombatScene.ts:243` (`_updateAutoDefence`) | 0.02–0.03 % **with no loadout rows**; 9.06 % of the window (~40 % of JS) once rows are present — see [Per-frame HUD rows](#per-frame-hud-rows-ah-0mvxv0ffj0066ec8) | Redraw the rows only when the rendered state changes (done); auto-defence measured too small to matter | AH-0MVXV0FFJ0066EC8 |
 | 8 | Minerals update/collect | `src/scenes/core/mineralLayer.ts:130` (`collectMinerals`), `src/scenes/gym/core/GymFormationScene.ts:1464` (`_updateMinerals`) | 0.01 % in the gym (minerals disabled); 0.06 % in the busier run | None needed | — |
 | 9 | **Demo-bot steering** (attract mode only) | `src/ai/framework/competent/steering.ts:327` (`evaluateDirection`), `src/ai/framework/hazardVelocity.ts:74` (`trackHazardVelocities`) | PlayScene demo run: 0.47 % [5.2 %] — the largest single game-code function there | Evaluate less often / reuse the world snapshot | AH-0MW2DC28M00161W6 (low) |
@@ -842,6 +842,73 @@ each is run through the shipped grid and through the degenerate grid and must
 produce the identical outcome. The existing parity and equivalence suites are
 unchanged and green.
 
+### Per-frame allocations (AH-0MVXV0F0Y004NENT)
+
+Ranked hotspots **#3, #4 and #6** were one root cause: the per-frame path
+allocated transient arrays even on a frame where nothing changed. At 100
+enemies that is thousands of short-lived objects per second, and the GC bucket
+was 0.40 % of the window / 2.7 % of JS — small, which is why the item was
+re-ranked to `low`, and why its AC allows closing on evidence that the
+allocations are not material.
+
+**What was allocating (and what replaced it).** Every entry is a reused,
+scene-owned or pass-owned buffer, refilled in place — never a fresh array:
+
+| Per-frame allocation | Where | Now |
+|---|---|---|
+| `this.spawned.filter(...).map(...)` for the aim push | `PlayScene._collectEnemyFire` | one reused live-enemy snapshot buffer, shared with the seek push |
+| `this.spawned.filter(...).map(...)` for the seek push | `PlayScene._moveEnemies` | the same reused snapshot buffer |
+| `push(...fireForEnemy(...))` — a transient array per firing enemy | `PlayScene._collectEnemyFire` | `collectEnemyFire()` appends straight into the live bullet list |
+| `this.spawned.map(s => s.entity)` on every collision pass | `PlayScene.getEnemyEntities`, `GymLevel.getEnemyEntities` | one cached snapshot list, refilled per call |
+| fresh `keptEnemy` / `keptEnemy2` survivor arrays | `CombatScene._handleCollisions` passes 2 and 3 | recycled survivor buffers (the released list becomes the next frame's buffer) |
+| a filtered copy of the player-bullet list | `CombatScene._resolvePlayerBulletsVsEnemies`, and the consumed-bullet filter in pass 2 | stable in-place compaction into the live list |
+| `filter().map()` candidate wrappers for the Diver re-anchor | `PlayScene._applyFormationReanchor` | a pooled candidate array refilled per frame |
+| `const positioned: WrapAwareBody[] = []` | `PlayScene._moveEnemies` | one reused positioned-body buffer |
+| a fresh survivor array per frame | `bulletLifecycle.advancePlayerBullets` | in-place compaction, same array returned |
+| a fresh `collisionStats` object per pass | `CombatScene._handleCollisions` | updated in place |
+
+**Ordering is unchanged.** Every replacement is a stable pass: survivors keep
+their original relative order, so collision resolution order, first-hit
+selection, hook order and the RNG sequence are identical to the filtered copies
+this replaces. The recycled collision buffers are pinned by
+`src/scenes/core/CombatScene.recycledBuffers.test.ts` (buffer identity across
+frames, survivor order, and no stale survivors resurfacing from a recycled
+tail); the `PlayScene` buffers are pinned in `PlayScene.test.ts` (reused
+snapshot/bullet/positioned buffers, and the aim/seek pushes receiving them);
+`bulletLifecycle.test.ts` and `enemyFire.test.ts` cover the two helpers.
+
+**Measured: the GC bucket does not move, and that is the honest result.** Two
+paired 60 s `GymPerformance` runs on the same host, same scene and same load
+(`--profile`, SwiftShader, 100 enemies, enemy-bullet peak 323 in both) — one at
+the parent commit `dev` (the "before") and one with this change:
+
+| Run | Host load | p50 (ms) | p95 (ms) | Effective FPS | Frames > 33 ms | JS (% window) | simulation | renderer | `gc` |
+|---|---|---|---|---|---|---|---|---|---|
+| before (`dev`, 40f6dce4) | 11.05 | 33.3 | 33.4 | 36.90 | 61.6 % | 7.81 | 0.94 | 6.79 | **0.21** |
+| after (this change) | 10.98 | 33.3 | 33.4 | 34.84 | 66.0 % | 7.59 | 0.88 | 6.63 | **0.21** |
+
+The GC bucket is identical to the resolution of the profile (0.21 % of the
+window ≈ 128 ms of a 60 s run), the JS/simulation/renderer buckets move by
+0.06–0.22 pp, and p50/p95 are unchanged — the effective-FPS difference (36.9 vs
+34.8) is inside the run-to-run noise this document already documents for this
+load band. So: **the allocations are removed and the frame time is not
+measurably affected, which is what the baseline predicted** — the loop is
+draw-submission bound (92 % `native`, 6.6 % renderer JS) and per-frame garbage
+was never the limiting resource at this load. The value is structural: the hot
+loop no longer grows a garbage pile in proportion to enemy and bullet count, so
+a later change that makes GC spikes visible in p95/max has no avoidable
+transient arrays to collect. No frame-time win is claimed.
+
+**Gym↔game parity.** The shared helpers keep their signatures
+(`pushAimTargets`, `pushSeekTargets`, `advanceWrappingBullets`,
+`advancePlayerBullets`) — only their inputs and their internals changed — and
+`collectEnemyFire` is the same dispatch body `fireForEnemy` now wraps, so a gym
+that still consumes `fireForEnemy` runs the identical dispatch and produces the
+identical bullets. The formation gyms' per-frame collection is a
+`collectBullets(entity, now): TBullet[]` config seam, so they keep the
+allocating form; that is a difference in the seam's shape, not a second
+implementation of the rule.
+
 ## Reference machine
 
 Record the host with every published baseline. The numbers in this document
@@ -953,3 +1020,12 @@ injective cell keys, the degenerate single-cell shape) is unit-tested in
 `src/scenes/core/CombatScene.broadPhase.test.ts` drive the real shared pass
 through both grids on collision fixtures and read the candidate counts from
 `getCollisionBroadPhaseStats()`.
+
+The per-frame allocation removals are covered the same way: the recycled
+collision buffers by `src/scenes/core/CombatScene.recycledBuffers.test.ts`
+(buffer identity across frames, survivor order, no stale recycled tail), the
+`PlayScene` hot-loop buffers by the allocation-removal suite in
+`src/scenes/PlayScene.test.ts`, and the two shared helpers by
+`src/scenes/core/bulletLifecycle.test.ts` and `src/entities/enemyFire.test.ts`
+(the allocation-free `collectEnemyFire` entry point, including its equivalence
+with `fireForEnemy` across every mapped archetype).

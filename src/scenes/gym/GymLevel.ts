@@ -560,6 +560,12 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   private spawned: LevelSpawn[] = [];
   private enemyBullets: GymLevelBullet[] = [];
   /**
+   * {@link getEnemyEntities} snapshot, refilled in place on every call so the
+   * shared collision pass does not allocate a fresh list per bullet
+   * (AH-0MVXV0F0Y004NENT). Same contract, and same reason, as `PlayScene`.
+   */
+  private readonly enemyEntityCache: EnemyEntity[] = [];
+  /**
    * Single-live wormhole lifecycle for the launched waves, shared with
    * `PlayScene` and every formation gym (AH-0MV9KHLV8006GMX6) so a wave
    * transition can never strand a live wormhole.
@@ -1904,7 +1910,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   }
 
   protected override getEnemyEntities(): readonly EnemyEntity[] {
-    return this.spawned.map((spawn) => spawn.entity);
+    const cache = this.enemyEntityCache;
+    cache.length = 0;
+    for (const spawn of this.spawned) cache.push(spawn.entity);
+    return cache;
   }
 
   /** Enemy bullets in flight (public, mirroring `PlayScene.getEnemyBullets`). */

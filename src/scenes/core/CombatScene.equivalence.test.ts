@@ -932,8 +932,16 @@ describe('shared projectile lifecycle — cross-scene equivalence (AC2)', () => 
 // ── Shared enemy-fire dispatcher guard (AH-0MUII3BBW000XZ46, AC1) ─────
 
 describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
-  const FIRE_HELPER = 'fireForEnemy';
+  /**
+   * The dispatcher's two entry points (AH-0MVXV0F0Y004NENT): the allocating
+   * `fireForEnemy` and the allocation-free `collectEnemyFire` it now delegates
+   * to. Both must be defined **only** in the shared helper, so the dispatch
+   * body stays single-sourced whichever form a scene consumes.
+   */
+  const FIRE_HELPERS = ['fireForEnemy', 'collectEnemyFire'] as const;
   const FIRE_HELPER_FILE = 'src/entities/enemyFire.ts';
+  /** Any dispatcher entry point at a call site counts as consuming it. */
+  const FIRE_CONSUMPTION = /(?:collectEnemyFire|fireForEnemy)\s*(?:<[^()]*>)?\(/;
 
   /** Every production TypeScript file under `src/` (excluding tests). */
   function productionSourceFiles(): string[] {
@@ -941,14 +949,16 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
   }
 
   it('defines the dispatcher exactly once, in the shared helper', () => {
-    const definers = productionSourceFiles()
-      .filter((file) =>
-        definesFunction(fs.readFileSync(file, 'utf8'), FIRE_HELPER),
-      )
-      .map((file) => path.relative(process.cwd(), file))
-      .sort();
+    for (const helper of FIRE_HELPERS) {
+      const definers = productionSourceFiles()
+        .filter((file) =>
+          definesFunction(fs.readFileSync(file, 'utf8'), helper),
+        )
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
 
-    expect(definers).toEqual([FIRE_HELPER_FILE]);
+      expect(definers, `${helper} definers`).toEqual([FIRE_HELPER_FILE]);
+    }
   });
 
   it('PlayScene and GymFodderEnemies consume the dispatcher and keep no local switch', () => {
@@ -962,8 +972,8 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
       'src/scenes/gym/GymFodderEnemies.ts',
     ]) {
       const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
-      expect(source, `${file} must consume the shared dispatcher`).toContain(
-        FIRE_HELPER,
+      expect(source, `${file} must consume the shared dispatcher`).toMatch(
+        FIRE_CONSUMPTION,
       );
       // ... and must not re-map archetype keys to fire method names itself.
       expect(source, `${file} must not map tryFire* names`).not.toMatch(
@@ -977,7 +987,7 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
       path.resolve(process.cwd(), 'src/scenes/gym/GymPowerUpsCombat.ts'),
       'utf8',
     );
-    expect(source).toContain(FIRE_HELPER);
+    expect(source).toMatch(FIRE_CONSUMPTION);
     // The fake fixed-16 ms frame accumulator is gone (AC2).
     expect(source).not.toContain('_nextFireTime');
   });
