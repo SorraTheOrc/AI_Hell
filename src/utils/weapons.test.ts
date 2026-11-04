@@ -758,10 +758,13 @@ describe('Wave laser — single red hitscan beam (AH-0MVREBUJ5004HDRQ)', () => {
     expect(def.sideOffsets).toBeUndefined();
   });
 
-  test('fires once per beat (1 subdivision → 750 ms at 80 BPM) on the grid', () => {
-    expect(WEAPON_WAVE_LASER_SUBDIVISION).toBe(1);
-    expect(WEAPON_WAVE_LASER_FIRE_RATE).toBe(750);
-    expect(WEAPON_CATALOGUE.wave_laser.fireRateMs).toBe(750);
+  test('fires once every two beats (0.5 subdivision → 1500 ms at 80 BPM) on the grid', () => {
+    // Halved by the curve-flattening work (AH-0MVWAVL6R001UI60): the beam has
+    // no projectile/AOE lever, so its saturated output can only be held inside
+    // the ≤ 50 % level-cap ceiling on the cadence axis.
+    expect(WEAPON_WAVE_LASER_SUBDIVISION).toBe(0.5);
+    expect(WEAPON_WAVE_LASER_FIRE_RATE).toBe(1500);
+    expect(WEAPON_CATALOGUE.wave_laser.fireRateMs).toBe(1500);
     expect(isOnBeatGrid(WEAPON_CATALOGUE.wave_laser.fireRateMs)).toBe(true);
   });
 
@@ -1659,8 +1662,10 @@ describe('level-0 strength budget (AH-0MVRENEME004FS8T AC1/AC2)', () => {
     dual: { output: 4 / 3, sharePercent: 50 },
     // 1 bullet × 3 shots/beat — the 1.5× cannon cap binds, 50 %.
     rapid: { output: 4, sharePercent: 50 },
-    // Already inside the bound (single-hit beam, AH-0MVREBUJ5004HDRQ).
-    wave_laser: { output: 4 / 3, sharePercent: 50 },
+    // Already inside the bound (single-hit beam, AH-0MVREBUJ5004HDRQ); the
+    // curve-flattening work halved its cadence again because that cadence is
+    // the beam's only output axis (AH-0MVWAVL6R001UI60).
+    wave_laser: { output: 2 / 3, sharePercent: 25 },
     // 1 pellet × 0.5 shots/beat × 3 bounce targets — cadence lever, 50 %.
     ricochet: { output: 2, sharePercent: 50 },
     // (missile + 2 warheads) × 0.25 shots/beat — cadence lever, 50 %.

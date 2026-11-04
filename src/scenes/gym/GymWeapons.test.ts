@@ -1244,11 +1244,14 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
 
     scene.tick(0.75); // Arc's 750 ms beat cadence
 
-    // Nearest (centre) plus the two chained neighbours (each within the
-    // halved 60 px Arc chain reach of the previous hop).
-    for (const target of scene.getTargets()) {
-      expect(target.alive).toBe(false);
-    }
+    // Nearest (centre) target plus the first chained neighbour (35 px away,
+    // inside the shipped Arc chain reach). The third practice target sits
+    // 50 px from the second hop — outside the Arc's trimmed 46 px reach — so
+    // it survives (AH-0MVWAVKS0005P9VN).
+    const targets = scene.getTargets();
+    expect(targets[0].alive).toBe(false);
+    expect(targets[1].alive).toBe(false);
+    expect(targets[2].alive).toBe(true);
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
 

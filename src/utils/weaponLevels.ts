@@ -180,7 +180,8 @@ export interface WeaponUpgradeSpec extends CurveSpec {
 
 /**
  * The per-variable upgrade catalogue. Values are deliberately conservative:
- * the four MVP variables give an obvious, legible power spike while the
+ * every level is a step, not a spike — the four MVP variables ramp the
+ * weapon up over the run (the flattened curve, AH-0MVWAVL6R001UI60) while the
  * remaining variables sit ready for follow-up implementation.
  *
  * Caps/rates are tunable in one place by design (balance work stays here,
@@ -195,13 +196,15 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Fire rate',
     description: 'Fires more often (shots-per-second multiplier).',
     rationale:
-      'Cadence is the most feel-sensitive variable; a 3× ceiling keeps ' +
-      'indefinite levels from trivialising bullet density, and k=0.18 ' +
-      'front-loads the early gains (≈17 % of the span by level 1).',
+      'Cadence is the most feel-sensitive variable. The retuned ceiling is ' +
+      '2.2× (was 3×) with k=0.12 (was 0.18): level 1 is a step, not a spike ' +
+      '(≈1.14×, which mostly quantises to no extra beat step) and the ' +
+      'saturated cadence stops at ≈2.2× instead of 3× ' +
+      '(AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 1,
-    cap: 3,
-    k: 0.18,
+    cap: 2.2,
+    k: 0.12,
     discrete: false,
     tier: 'mvp',
   },
@@ -210,12 +213,14 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Projectiles',
     description: 'Adds projectiles to every shot.',
     rationale:
-      'Extra bullets multiply total damage, so the cap is deliberately ' +
-      'small (8) and k=0.22 lands the first extra bullet at level 1.',
+      'Extra bullets multiply total damage, so the cap stays deliberately ' +
+      'small (4 extra, was 8) and k=0.18 lands exactly one extra bullet at ' +
+      'level 1 (round(4·(1−e^−0.18)) = 1) rather than the old +2 spike ' +
+      '(AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 0,
-    cap: 8,
-    k: 0.22,
+    cap: 4,
+    k: 0.18,
     discrete: true,
     tier: 'mvp',
   },
@@ -238,12 +243,13 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Bullet size',
     description: 'Increases bullet radius.',
     rationale:
-      'Larger bullets improve hit probability; 2.5× keeps them legible ' +
-      'against the neon background, k=0.16 spreads the gain across the early levels.',
+      'Larger bullets improve hit probability; 2.0× (was 2.5×) keeps them ' +
+      'legible against the neon background and k=0.12 (was 0.16) makes ' +
+      'level 1 a step, not a spike (AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 1,
-    cap: 2.5,
-    k: 0.16,
+    cap: 2,
+    k: 0.12,
     discrete: false,
     tier: 'mvp',
   },
@@ -294,15 +300,17 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Max Hit Points',
     description: 'Beams deal more total damage before being consumed.',
     rationale:
-      'A damage budget is very strong in crowds; the cap is 5 and k=0.25 ' +
-      'grants the first extra hit point at level 1 so it feels responsive. ' +
+      'A damage budget is very strong in crowds; the cap stays 5 and k=0.10 ' +
+      '(was 0.25) places the first extra hit point at level 2 so the level-1 ' +
+      'output ceiling is not compounded by the +1 projectile step on the ' +
+      'pierce family (railgun; AH-0MVWAVL6R001UI60). ' +
       'The cap is the shared curve asymptote only — the weapon-level clamp ' +
       'was removed, so the budget saturates at ~7 rather than a hard 5 ' +
       '(AH-0MV97RISJ002WR2S).',
     curve: 'exponential-saturation',
     base: 0,
     cap: 5,
-    k: 0.25,
+    k: 0.1,
     discrete: true,
     tier: 'planned',
   },
@@ -311,12 +319,14 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Bounce',
     description: 'Bullets bounce off walls/enemies more often.',
     rationale:
-      'Bounce mainly adds coverage in corridors; cap 4 with k=0.25 keeps ' +
-      'it from becoming a perpetual wall bounce.',
+      'Bounce mainly adds coverage in corridors; the cap stays 4 and k=0.13 ' +
+      '(was 0.25) places the first extra bounce at level 2 so level 1 does ' +
+      'not double-count against the +1 projectile step on the bounce family ' +
+      '(ricochet; AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 0,
     cap: 4,
-    k: 0.25,
+    k: 0.13,
     discrete: true,
     tier: 'planned',
   },
@@ -339,12 +349,13 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Area',
     description: 'Increases area-of-effect radius.',
     rationale:
-      'Area is the AOE family identity; 2.5× is a large but bounded blast, ' +
-      'and k=0.18 gives a visible early gain without screen-filling rings.',
+      'Area is the AOE family identity; 2.0× (was 2.5×) is a large but ' +
+      'bounded blast, and k=0.12 (was 0.18) gives a visible level-1 gain ' +
+      '(≈1.13× radius) without screen-filling rings (AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 1,
-    cap: 2.5,
-    k: 0.18,
+    cap: 2,
+    k: 0.12,
     discrete: false,
     tier: 'mvp',
   },
@@ -850,7 +861,7 @@ const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
 /**
  * The onsets-per-beat a weapon's `fireRate` curve **desires** at `level`:
  * the level-0 rhythm density multiplied by the shared exponential-saturation
- * `fireRate` multiplier (base 1×, cap 3×, k = 0.18).
+ * `fireRate` multiplier (base 1×, cap 2.2×, k = 0.12).
  *
  * Level 0 always returns the authored base density, so the curve maps
  * directly onto the ladder without a second tuning table. Invalid levels are
@@ -892,7 +903,7 @@ function firstLevelReaching(
  * A rung becomes active at the first level the `fireRate` curve's desired
  * density supports it, and never earlier than one level after the previous
  * rung — so equal-density shape and phase morphs are still displayed as
- * distinct upgrade steps. Rungs at or above the curve's 3× asymptote are
+ * distinct upgrade steps. Rungs at or above the curve's 2.2× asymptote are
  * omitted because the exponential curve only approaches that density, never
  * reaches it.
  */

@@ -210,9 +210,11 @@ export type WeaponSubdivisions = Record<WeaponId, number>;
  * (AH-0MVWAVKS0005P9VN): each weapon's level-0 output is cut to ≤ 60 % of its
  * pre-change baseline, realised by **slowing the on-beat cadence** (the
  * identity-preserving lever) rather than deleting a pattern bullet, bounce or
- * pierce budget. The cannon's `2` is frozen — its level-0 values may never
- * change. The realised percentage per weapon is recorded in the strength
- * budget block beside `WEAPON_CATALOGUE`.
+ * pierce budget. The Wave Laser's cadence was slowed a second time by the
+ * curve-flattening work (AH-0MVWAVL6R001UI60) because the beam's cadence is
+ * its only output axis (see its entry below). The cannon's `2` is frozen —
+ * its level-0 values may never change. The realised percentage per weapon is
+ * recorded in the strength budget block beside `WEAPON_CATALOGUE`.
  */
 export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   // FROZEN: the cannon's level-0 values never move.
@@ -223,9 +225,12 @@ export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   dual: 0.5,
   // 6/beat → 3/beat: 50 % (the 1.5× cannon ceiling binds exactly).
   rapid: 3,
-  // Unchanged — already at 50 % since the beam became single-hit
-  // (AH-0MVREBUJ5004HDRQ).
-  wave_laser: 1,
+  // 1/beat → 0.5/beat: 25 % of the pre-change baseline. The beam has no
+  // projectile/AOE lever (fixed 1 hit, no budget), so its cadence is its only
+  // output axis; the flattened fire-rate curve (AH-0MVWAVL6R001UI60) left its
+  // saturated cadence at 2/beat (66.7 % of the pre-change level cap), so the
+  // level-0 cadence was halved to stay inside the ≤ 50 % level-cap ceiling.
+  wave_laser: 0.5,
   // 1/beat → 0.5/beat: 50 %, so the 2-bounce budget stays intact.
   ricochet: 0.5,
   // 0.5/beat → 0.25/beat: 50 %, so the split payload stays intact.
@@ -257,7 +262,7 @@ export const WEAPON_SPREAD_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.spread;
 export const WEAPON_DUAL_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.dual;
 /** Default rapid subdivision (3 shots per beat → 250 ms at 80 BPM). */
 export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
-/** Default wave-laser subdivision (1 shot per beat → 750 ms at 80 BPM). */
+/** Default wave-laser subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
 export const WEAPON_WAVE_LASER_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.wave_laser;
 /** Default ricochet subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */

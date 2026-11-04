@@ -133,11 +133,25 @@ describe('upgrade variable catalogue (AC2)', () => {
     }
   });
 
-  test('every variable has a measurable level-1 gain (AC2 — per-level effect)', () => {
+  test('every variable has a measurable early gain (AC2 — per-level effect)', () => {
+    // Continuous variables gain at level 1, and so does every whole-number
+    // count except the two deliberately held back to level 2: `bounce` and
+    // `maxHitPoints`. Those two are held because their first step would
+    // otherwise compound the +1 projectile step on the bounce (ricochet) and
+    // pierce (railgun) families and breach the 2.5× level-1 output ceiling
+    // (AH-0MVWAVL6R001UI60).
+    const heldToLevelTwo: readonly WeaponUpgradeVariable[] = [
+      'bounce',
+      'maxHitPoints',
+    ];
     for (const variable of UPGRADE_VARIABLES) {
       const base = curveValue(WEAPON_UPGRADE_SPECS[variable], 0);
-      const levelOne = curveValue(WEAPON_UPGRADE_SPECS[variable], 1);
-      expect(levelOne).toBeGreaterThan(base);
+      const firstStep = heldToLevelTwo.includes(variable) ? 2 : 1;
+      const gained = curveValue(WEAPON_UPGRADE_SPECS[variable], firstStep);
+      expect(
+        gained,
+        `${variable} gain by level ${firstStep}`,
+      ).toBeGreaterThan(base);
     }
   });
 
@@ -627,12 +641,19 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
     expect(leveled.bulletLifetime).toBeCloseTo(preChangeCapped / 2, 10);
   });
 
-  test('AOE radius is half the pre-change value at level 0 and at the capped level', () => {
+  test('AOE radius carries the range halving (and the later level-0 trim) at level 0 and at the capped level', () => {
     for (const id of ['nova', 'mortar', 'arc'] as const) {
+      // The base radius carries the catalogue-wide range halving
+      // (AH-0MUU131PU006O7ZD) **and** the level-0 AOE coverage trim applied
+      // afterwards (AH-0MVWAVKS0005P9VN), so it is at or below half the
+      // pre-halving radius, never above it.
       const level0 = resolveWeaponDefinition(id, 0);
       expect(level0.aoe!.radius).toBeCloseTo(
-        PRE_CHANGE_AOE_RADIUS[id] / 2,
+        WEAPON_CATALOGUE[id].aoe!.radius,
         10,
+      );
+      expect(level0.aoe!.radius).toBeLessThanOrEqual(
+        PRE_CHANGE_AOE_RADIUS[id] / 2 + 1e-9,
       );
 
       const stats = resolveWeaponAtLevel(id, 1000);
@@ -641,9 +662,9 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
         6,
       );
       const capped = resolveWeaponDefinition(id, 1000);
-      const preChangeCapped =
-        PRE_CHANGE_AOE_RADIUS[id] * WEAPON_UPGRADE_SPECS.aoeRadius.cap;
-      expect(capped.aoe!.radius).toBeCloseTo(preChangeCapped / 2, 10);
+      const cappedRadius =
+        WEAPON_CATALOGUE[id].aoe!.radius * WEAPON_UPGRADE_SPECS.aoeRadius.cap;
+      expect(capped.aoe!.radius).toBeCloseTo(cappedRadius, 10);
     }
   });
 });
@@ -828,13 +849,18 @@ describe('wave laser — fixed 1 damage at every level (AH-0MVREBUJ5004HDRQ)', (
     }
   });
 
-  test('the Railgun starts at one hit point and earns its pierce at level 1', () => {
+  test('the Railgun starts at one hit point and earns its pierce at level 2', () => {
     // Level 0: a single hit point, spent on the first enemy met, so a fresh
     // pickup is a heavy single shot with no pass-through (AH-0MVY0A23A009MRK3).
     expect(resolveWeaponDefinition('railgun', 0).maxHitPoints).toBe(1);
-    // Level 1: the shared curve's first step lands immediately, so the tracer
-    // now destroys a 1-HP ship and continues into the one behind it.
-    expect(resolveWeaponDefinition('railgun', 1).maxHitPoints).toBe(2);
+    // Level 1: the flattened curve's `projectileCount` step already adds a
+    // second tracer, so the damage budget is held back one level (k=0.10) to
+    // keep the resolved level-1 output inside its 2.5× ceiling
+    // (AH-0MVWAVL6R001UI60).
+    expect(resolveWeaponDefinition('railgun', 1).maxHitPoints).toBe(1);
+    // Level 2: the tracer now destroys a 1-HP ship and continues into the one
+    // behind it.
+    expect(resolveWeaponDefinition('railgun', 2).maxHitPoints).toBe(2);
     // Growth follows the shared curve alone (no weapon-level clamp, no
     // per-weapon override): monotonic non-decreasing in level and saturating
     // at base 1 + the shared curve's asymptote.
@@ -868,8 +894,11 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
       expect(value).toBeLessThanOrEqual(cap);
       previous = value;
     }
-    // The first level is responsive: it grants an extra bounce immediately.
-    expect(resolveWeaponAtLevel('ricochet', 1).bounce).toBeGreaterThan(0);
+    // The first extra bounce lands at level 2: `bounce` is held back one
+    // level (k=0.13) so a level-1 upgrade cannot compound the +1 projectile
+    // step and breach the 2.5× level-1 output ceiling (AH-0MVWAVL6R001UI60).
+    expect(resolveWeaponAtLevel('ricochet', 1).bounce).toBe(0);
+    expect(resolveWeaponAtLevel('ricochet', 2).bounce).toBeGreaterThan(0);
   });
 
   test('the resolved bounce budget grows monotonically and never exceeds the spec cap', () => {
@@ -1312,19 +1341,28 @@ describe('Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
     });
 
     test('the cannon walks the documented (k, n) ledger', () => {
+      // Rung thresholds are derived from the flattened `fireRate` curve
+      // (cap 2.2×, k=0.12), so the shape morphs land later than they did under
+      // the old 3× / k=0.18 curve (AH-0MVWAVL6R001UI60).
       expect(resolveWeaponPattern('cannon', 0)).toEqual(
         latticeEuclidean(9, 16),
       );
       expect(resolveWeaponPattern('cannon', 1)).toEqual(
         latticeEuclidean(10, 16),
       );
-      expect(resolveWeaponPattern('cannon', 2)).toEqual(
+      expect(resolveWeaponPattern('cannon', 3)).toEqual(
+        latticeEuclidean(10, 16),
+      );
+      expect(resolveWeaponPattern('cannon', 4)).toEqual(
         latticeEuclidean(13, 16),
       );
-      expect(resolveWeaponPattern('cannon', 3)).toEqual(
+      expect(resolveWeaponPattern('cannon', 8)).toEqual(
+        latticeEuclidean(13, 16),
+      );
+      expect(resolveWeaponPattern('cannon', 9)).toEqual(
         latticeEuclidean(16, 16),
       );
-      expect(resolveWeaponPattern('cannon', 4)).toEqual(latticeEuclidean(8, 8));
+      expect(resolveWeaponPattern('cannon', 10)).toEqual(latticeEuclidean(8, 8));
       // Unbounded levels plateau at the final authored rung.
       expect(resolveWeaponPattern('cannon', 500)).toEqual(
         latticeEuclidean(8, 8),
@@ -1609,15 +1647,14 @@ const CURVE_EPSILON = 1e-9;
 
 describe('flattened upgrade curve (AH-0MVRENEME004FS8T AC3)', () => {
   /**
-   * **TEST-FIRST (RED).** Authored red under Vitest's `test.fails` (the repo's
-   * red-before/green-after convention, as used by the sibling strength-budget
-   * tests) because `WEAPON_UPGRADE_SPECS` is still on the steep curve: level 1
-   * adds **two** extra projectiles today. The retune work item
-   * (AH-0MVWAVL6R001UI60) flips this back to `test`; a leftover `test.fails`
-   * fails the suite, so the flip is deliberate. The assertion is at full
-   * strength now — do not weaken it to land it green early.
+   * Authored red first (Vitest's `test.fails`, the repo's
+   * red-before/green-after convention) by the sibling curve-ceiling child
+   * (AH-0MVWAVKD50063AC9), green once the retune landed
+   * (AH-0MVWAVL6R001UI60) — `projectileCount` cap 4 / k=0.18 resolves level 1
+   * to exactly one extra projectile (round(4·(1−e^−0.18)) = 1) instead of
+   * the old +2 spike.
    */
-  test.fails(
+  test(
     'level 1 adds exactly one projectile, or one orbit pod, for every weapon',
     () => {
       const offenders: string[] = [];
@@ -1643,11 +1680,11 @@ describe('flattened upgrade curve (AH-0MVRENEME004FS8T AC3)', () => {
   );
 
   /**
-   * **TEST-FIRST (RED).** Flip to `test` with the retune
-   * (AH-0MVWAVL6R001UI60). Today the cannon pattern resolves to 4.5× and the
-   * rapid/laser families are far above the ceiling too.
+   * Green with the retune (AH-0MVWAVL6R001UI60): every weapon's level-1
+   * multiple is now ≤ 2.5× its own level 0 (the cannon pattern drops from
+   * 4.5× to 2.0×).
    */
-  test.fails(
+  test(
     'resolved level-1 output stays at or below 2.5× level 0 for every weapon',
     () => {
       const ceiling = WEAPON_STRENGTH_BUDGET.level1GrowthMultiple;
@@ -1664,11 +1701,12 @@ describe('flattened upgrade curve (AH-0MVRENEME004FS8T AC3)', () => {
   );
 
   /**
-   * **TEST-FIRST (RED).** Flip to `test` with the retune
-   * (AH-0MVWAVL6R001UI60). Saturation is unchanged today, so the realised
-   * share is 100 % against every recorded pre-change literal.
+   * Green with the retune (AH-0MVWAVL6R001UI60): the `projectileCount` cap
+   * (4 extra), the `fireRate` cap (2.2×) and the deeper cadence trim on the
+   * Wave Laser — whose cadence is its only output axis — bring every weapon
+   * inside 50 % of its recorded pre-change level cap.
    */
-  test.fails(
+  test(
     'saturated output stays at or below 50 % of the recorded pre-change level cap',
     () => {
       const share = WEAPON_STRENGTH_BUDGET.levelCapShareOfPreChange;
@@ -1687,12 +1725,11 @@ describe('flattened upgrade curve (AH-0MVRENEME004FS8T AC3)', () => {
   );
 
   /**
-   * **TEST-FIRST (RED).** The regression pin for the spike itself: the change
-   * must take the cannon pattern's level-1 multiple strictly below the
-   * measured pre-change 4.5×. Flip to `test` with the retune
-   * (AH-0MVWAVL6R001UI60).
+   * The regression pin for the spike itself: the change must take the cannon
+   * pattern's level-1 multiple strictly below the measured pre-change 4.5×.
+   * Green with the retune (AH-0MVWAVL6R001UI60).
    */
-  test.fails(
+  test(
     'the removed spike: the cannon pattern gains less than 4.5× at level 1',
     () => {
       const l0 = weaponStrength('cannon', 0).output;

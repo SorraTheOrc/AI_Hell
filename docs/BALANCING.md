@@ -1198,93 +1198,94 @@ mirrored here fails the suite (and vice versa).
 |--------|-------|---|---|----------|-----------|-------------|------------|
 | `cannon` | 0 | 9 | 16 | 0 | 187.5 | 2.25 | 180 |
 | `cannon` | 1 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
-| `cannon` | 2 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
-| `cannon` | 3 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `cannon` | 4 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `cannon` | 4 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
+| `cannon` | 9 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `cannon` | 10 | 8 | 8 | 0 | 187.5 | 4 | 320 |
 | `spread` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `spread` | 1 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `spread` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `spread` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `spread` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `spread` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `spread` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `spread` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
 | `dual` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `dual` | 1 | 4 | 16 | 2 | 187.5 | 1 | 80 |
 | `dual` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `dual` | 3 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `dual` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `dual` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `dual` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `dual` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
 | `rapid` | 0 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
 | `rapid` | 1 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
 | `rapid` | 2 | 15 | 16 | 0 | 187.5 | 3.75 | 300 |
 | `rapid` | 3 | 16 | 16 | 0 | 187.5 | 4 | 320 |
 | `rapid` | 4 | 8 | 8 | 0 | 187.5 | 4 | 320 |
 | `wave_laser` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `wave_laser` | 1 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `wave_laser` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `wave_laser` | 3 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
-| `wave_laser` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `wave_laser` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `wave_laser` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `wave_laser` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `wave_laser` | 9 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
+| `wave_laser` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
 | `ricochet` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `ricochet` | 1 | 4 | 16 | 1 | 187.5 | 1 | 80 |
-| `ricochet` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `ricochet` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `ricochet` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `ricochet` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `ricochet` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
 | `cluster` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `cluster` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `cluster` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `cluster` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `cluster` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `cluster` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `options` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `options` | 1 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `options` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `options` | 3 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
-| `options` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `options` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `options` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `options` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `options` | 9 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
+| `options` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
 | `nova` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
-| `nova` | 4 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `nova` | 15 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
 | `mortar` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `mortar` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `mortar` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `mortar` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `mortar` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `mortar` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `arc` | 0 | 9 | 16 | 4 | 187.5 | 2.25 | 180 |
 | `arc` | 1 | 9 | 16 | 6 | 187.5 | 2.25 | 180 |
 | `arc` | 2 | 10 | 16 | 6 | 187.5 | 2.5 | 200 |
-| `arc` | 3 | 13 | 16 | 6 | 187.5 | 3.25 | 260 |
-| `arc` | 4 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `arc` | 5 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `arc` | 4 | 13 | 16 | 6 | 187.5 | 3.25 | 260 |
+| `arc` | 9 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `arc` | 10 | 8 | 8 | 0 | 187.5 | 4 | 320 |
 | `rear_guard` | 0 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `rear_guard` | 1 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
-| `rear_guard` | 2 | 12 | 16 | 0 | 187.5 | 3 | 240 |
-| `rear_guard` | 3 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
-| `rear_guard` | 4 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `rear_guard` | 5 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `rear_guard` | 2 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
+| `rear_guard` | 5 | 12 | 16 | 0 | 187.5 | 3 | 240 |
+| `rear_guard` | 9 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
+| `rear_guard` | 15 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `rear_guard` | 16 | 8 | 8 | 0 | 187.5 | 4 | 320 |
 | `broadside` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `broadside` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `broadside` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `broadside` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `broadside` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `broadside` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `railgun` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `railgun` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `railgun` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `railgun` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `railgun` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `railgun` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `shard_swarm` | 0 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
 | `shard_swarm` | 1 | 11 | 16 | 0 | 187.5 | 2.75 | 220 |
 | `shard_swarm` | 2 | 12 | 16 | 0 | 187.5 | 3 | 240 |
 | `shard_swarm` | 3 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
 | `shard_swarm` | 4 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
-| `shard_swarm` | 5 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `shard_swarm` | 6 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `shard_swarm` | 6 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `shard_swarm` | 7 | 8 | 8 | 0 | 187.5 | 4 | 320 |
 | `heavy_slug` | 0 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `heavy_slug` | 2 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `heavy_slug` | 4 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `heavy_slug` | 10 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `heavy_slug` | 3 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `heavy_slug` | 15 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
 <!-- euclidean-ladder:end -->
 
 Notes on individual ladders:
 
+- Rung thresholds are **derived** from the weapon `fireRate` curve (base 1×,
+  cap 2.2×, `k = 0.12`) — every desk above is the first level whose desired
+  onset density supports that rung. The curve was flattened by
+  AH-0MVWAVL6R001UI60 (was cap 3× / `k = 0.18`), so the same rungs now arrive
+  later, and any rung whose density sits at or above the 2.2× asymptote is
+  omitted (the exponential curve approaches the density, never reaches it).
+  That is why `spread`, `dual`, `wave_laser`, `ricochet` and `options` stop at
+  their `E(8,16)` rung instead of the old `E(5,8)`, and why the sparse
+  `cluster`/`mortar`/`broadside`/`railgun` ladders now end at `E(4,16)` and
+  `heavy_slug` at `E(6,16)`.
 - `cannon` walks the documented shape morph
-  `E(9,16) → E(10,16) → E(13,16) → E(16,16) → E(8,8)`. The work item's example
-  ledger starts at `E(8,16)`, but the canonical six-weapon fixture fixes the
-  level-0 cannon rung at `E(9,16)` (so the fixture totals 46 onsets per bar);
-  the ladder above follows the same `E(10,16) → E(13,16) → E(16,16) →
-  E(8,8)` shape from that one-onset-higher base.
+  `E(9,16) → E(10,16) → E(13,16) → E(16,16) → E(8,8)` (levels 0, 1, 4, 9 and
+  10). The work item's example ledger starts at `E(8,16)`, but the canonical
+  six-weapon fixture fixes the level-0 cannon rung at `E(9,16)` (so the
+  fixture totals 46 onsets per bar); the ladder above follows the same
+  `E(10,16) → E(13,16) → E(16,16) → E(8,8)` shape from that one-onset-higher
+  base.
 - `heavy_slug`, `railgun`, `cluster`, `mortar`, `broadside` and `nova` stay
   **sparse**, moving through irregular tiles such as `E(3,16)`, `E(5,16)` and
   `E(6,16)` as well as the straight low-density `E(2,16)`/`E(1,16)` tiles — they

@@ -1914,7 +1914,7 @@ describe('damage-budget player bullets — Wave Laser maxHitPoints (AH-0MV97RISJ
 
 // ── Railgun pass-through budget (AH-0MVY0A23A009MRK3) ────────────────────────
 
-describe('Railgun pass-through budget — level 0 stops, level 1 pierces (AH-0MVY0A23A009MRK3)', () => {
+describe('Railgun pass-through budget — level 0 stops, level 2 pierces (AH-0MVY0A23A009MRK3)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -1967,13 +1967,16 @@ describe('Railgun pass-through budget — level 0 stops, level 1 pierces (AH-0MV
     expect(second.destroyed).toBe(false);
   });
 
-  it('the first upgrade (budget 2) pierces: it destroys both 1-HP enemies in the line', async () => {
+  it('the second upgrade (budget 2) pierces: it destroys both 1-HP enemies in the line', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 50, y: 50 });
     const first = addEnemy(scene, 200, 200);
     const second = addEnemy(scene, 260, 200);
 
-    const budget = resolveWeaponDefinition('railgun', 1).maxHitPoints!;
+    // Level 1 already spends its step on the extra projectile, so the flattened
+    // curve (k=0.10) grants the first extra hit point at level 2
+    // (AH-0MVWAVL6R001UI60) — the pass-through still arrives, one level later.
+    const budget = resolveWeaponDefinition('railgun', 2).maxHitPoints!;
     expect(budget).toBe(2);
     const bullet = scene.spawnPlayerBullet(
       200,

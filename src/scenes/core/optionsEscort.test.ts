@@ -167,8 +167,9 @@ describe('optionsEscort — pod fire directions are radial (AH-0MV5DFBVW002J2XO)
 describe('optionsEscort — orbit vs trigger non-alignment (AH-0MV5DFBVW002J2XO)', () => {
   test('the Options fire interval is not a whole number of orbit revolutions', () => {
     const revolutions = optionsRevolutionsPerTrigger(WEAPON_OPTIONS_FIRE_RATE);
-    // 750 ms trigger / 2000 ms orbit = 0.375 revolutions per trigger.
-    expect(revolutions).toBeCloseTo(0.375, 12);
+    // 1500 ms trigger / 2000 ms orbit = 0.75 revolutions per trigger (the
+    // Options cadence carries the level-0 trim, AH-0MVWAVKS0005P9VN).
+    expect(revolutions).toBeCloseTo(0.75, 12);
     expect(Number.isInteger(revolutions)).toBe(false);
     expect(isOptionsOrbitTriggerAligned(WEAPON_OPTIONS_FIRE_RATE)).toBe(false);
   });

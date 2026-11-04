@@ -354,7 +354,9 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
     // The blast resolved at fire time (hook recorded for the sampled point)...
     expect(scene.hooks).toContain('onAoeFired:mortar:onRandom:100,100');
-    expect(scene.hooks).toContain(`onAoeHitsBoss:100,${100 + range / 2},35`);
+    expect(scene.hooks).toContain(
+      `onAoeHitsBoss:100,${100 + range / 2},${def.aoe!.radius}`,
+    );
     // ...exactly once, at a point inside the disc of radius `range`...
     expect(
       scene.hooks.filter((h) => h.startsWith('onAoeHitsBoss')),
@@ -368,7 +370,8 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
   it('AC3 — AOE damages only enemies inside the radius; enemies outside survive', async () => {
     const scene = await boot();
-    const inside = new StubEnemy(scene, 150, 100);
+    // 20 px from the blast centre: inside the shipped (trimmed) Nova radius.
+    const inside = new StubEnemy(scene, 120, 100);
     const outside = new StubEnemy(scene, 400, 100);
     scene.entities.push(inside, outside);
 
@@ -454,7 +457,9 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
     scene.runApplyAoe(WEAPON_CATALOGUE.nova, 250, 300);
 
-    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,45');
+    expect(scene.hooks).toContain(
+      `onAoeHitsBoss:250,300,${WEAPON_CATALOGUE.nova.aoe!.radius}`,
+    );
     expect(scene.bossHitCount).toBe(0); // no boss present
   });
 
@@ -465,7 +470,9 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     scene.runApplyAoe(WEAPON_CATALOGUE.mortar, 250, 300);
 
     expect(scene.bossHitCount).toBe(1);
-    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,35');
+    expect(scene.hooks).toContain(
+      `onAoeHitsBoss:250,300,${WEAPON_CATALOGUE.mortar.aoe!.radius}`,
+    );
   });
 
   // ── AC7 — beat-quantised triggering ───────────────────────────────
@@ -612,7 +619,11 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('mortar');
-    player.equipWeapon('mortar'); // level 2 → +2 projectiles → 3 bullets
+    // The flattened projectile curve adds +1 at level 2 and +1 again at
+    // level 4 (cap 4, k=0.18, AH-0MVWAVL6R001UI60), so level 4 → 3 bullets.
+    player.equipWeapon('mortar');
+    player.equipWeapon('mortar');
+    player.equipWeapon('mortar');
     const def = player.getWeaponDef('mortar');
     expect(def.offsets.length).toBe(3);
 
@@ -878,8 +889,10 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('arc');
-    const nearest = new StubEnemy(scene, 150, 100); // 50 px from the ship
-    const chained = new StubEnemy(scene, 200, 100); // 50 px from nearest
+    // The Arc's chain reach is its shipped (trimmed) AOE radius, so both
+    // targets sit well inside it (AH-0MVWAVKS0005P9VN).
+    const nearest = new StubEnemy(scene, 130, 100); // 30 px from the ship
+    const chained = new StubEnemy(scene, 170, 100); // 40 px from nearest
     const far = new StubEnemy(scene, 700, 450); // out of reach
     scene.entities.push(nearest, chained, far);
 
@@ -915,10 +928,10 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('arc');
-    const nearest = new StubEnemy(scene, 150, 100);
-    const chained = new StubEnemy(scene, 200, 100);
+    const nearest = new StubEnemy(scene, 130, 100);
+    const chained = new StubEnemy(scene, 170, 100);
     scene.entities.push(nearest, chained);
-    const onPath = new StubBullet(scene, 175, 100);
+    const onPath = new StubBullet(scene, 150, 100);
     const offPath = new StubBullet(scene, 175, 300);
     scene.bullets.push(onPath, offPath);
 
@@ -933,8 +946,8 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('arc');
     scene.entities.push(
-      new StubEnemy(scene, 150, 100),
-      new StubEnemy(scene, 200, 100),
+      new StubEnemy(scene, 130, 100),
+      new StubEnemy(scene, 170, 100),
     );
 
     scene.runAutoFire(0.75);
@@ -947,8 +960,8 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('arc');
     scene.entities.push(
-      new StubEnemy(scene, 150, 100),
-      new StubEnemy(scene, 200, 100),
+      new StubEnemy(scene, 130, 100),
+      new StubEnemy(scene, 170, 100),
     );
     const impactCue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
 
@@ -1009,8 +1022,8 @@ describe('Arc never affects asteroids (AH-0MVNSIG1O0049G69)', () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('arc');
-    const rock = new AsteroidStub(scene, 130, 100); // 30 px from the ship
-    const enemy = new StubEnemy(scene, 150, 100); // 50 px from the ship
+    const rock = new AsteroidStub(scene, 120, 100); // 20 px from the ship
+    const enemy = new StubEnemy(scene, 140, 100); // 40 px from the ship
     scene.entities.push(rock, enemy);
 
     scene.runAutoFire(0.75);
@@ -1027,12 +1040,13 @@ describe('Arc never affects asteroids (AH-0MVNSIG1O0049G69)', () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('arc');
-    // enemyA 40 px from the ship; the rock sits 27 px from enemyA (nearer
-    // than enemyB at 55 px), so the geometric next hop is the rock — the
-    // chain must step over it without absorbing a link.
-    const enemyA = new StubEnemy(scene, 140, 100);
-    const rock = new AsteroidStub(scene, 167, 100);
-    const enemyB = new StubEnemy(scene, 195, 100);
+    // enemyA 30 px from the ship; the rock sits 20 px from enemyA (nearer
+    // than enemyB at 42 px, inside the shipped 46 px chain reach), so the
+    // geometric next hop is the rock — the chain must step over it without
+    // absorbing a link.
+    const enemyA = new StubEnemy(scene, 130, 100);
+    const rock = new AsteroidStub(scene, 150, 100);
+    const enemyB = new StubEnemy(scene, 172, 100);
     scene.entities.push(enemyA, rock, enemyB);
 
     scene.runAutoFire(0.75);
@@ -1082,9 +1096,9 @@ describe('Arc never affects asteroids (AH-0MVNSIG1O0049G69)', () => {
     // chain is ship → enemy, so the vertical ship → rock segment is not part
     // of the bolt.
     const rock = new AsteroidStub(scene, 100, 150); // 50 px south
-    const enemy = new StubEnemy(scene, 150, 100); // 50 px east
+    const enemy = new StubEnemy(scene, 140, 100); // 40 px east
     scene.entities.push(rock, enemy);
-    const onBoltPath = new StubBullet(scene, 125, 100); // on ship → enemy
+    const onBoltPath = new StubBullet(scene, 120, 100); // on ship → enemy
     const onRockSegment = new StubBullet(scene, 100, 125); // on ship → rock only
     scene.bullets.push(onBoltPath, onRockSegment);
 
@@ -1148,7 +1162,7 @@ describe('Arc never affects asteroids (AH-0MVNSIG1O0049G69)', () => {
     player.equipWeapon('arc');
     // `StubEnemy` carries no `archetype`, exactly like the GymWeapons
     // practice targets — an absent archetype must never look like a hazard.
-    const bare = new StubEnemy(scene, 150, 100);
+    const bare = new StubEnemy(scene, 130, 100);
     scene.entities.push(bare);
 
     scene.runAutoFire(0.75);

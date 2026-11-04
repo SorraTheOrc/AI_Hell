@@ -119,7 +119,16 @@ describe('game rules configuration module', () => {
       const custom: GameRules = {
         powerUpSpawnInterval: 5,
         beatBpm: 120,
-        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2, broadside: 0.5, railgun: 0.25, shard_swarm: 1, heavy_slug: 0.5 },
+        // Only positive integers survive the stored-table merge, so the custom
+        // entries are integers and the fractional catalogue defaults (0.5/0.25
+        // cadences) ride along from the defaults (AH-0MVWAVKS0005P9VN trim).
+        weaponSubdivisions: {
+          ...defaultWeaponSubdivisions(),
+          cannon: 4,
+          rapid: 8,
+          rear_guard: 2,
+          shard_swarm: 1,
+        },
         powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, smart_bomb: 2, force_field: 4, mystery_ufo: 3, frenzy: 4, chrono: 4, thorns: 4, salvage: 4, strike: 2 },
         weaponWeights: {
           spread: 3,
@@ -162,7 +171,11 @@ describe('game rules configuration module', () => {
       expect(loaded.powerUpSpawnInterval).toBe(5);
       expect(loaded.beatBpm).toBe(120);
       expect(loaded.weaponSubdivisions.cannon).toBe(4);
-      expect(loaded.weaponSubdivisions.spread).toBe(2);
+      // The catalogue's fractional cadences ride along from the defaults
+      // (only positive integers are accepted from storage).
+      expect(loaded.weaponSubdivisions.spread).toBe(
+        defaultWeaponSubdivisions().spread,
+      );
       expect(loaded.powerUpWeights.shield).toBe(10);
       expect(loaded.weaponWeights.spread).toBe(3);
       expect(loaded.mineralCollectAmount).toBe(2);
@@ -258,24 +271,10 @@ describe('game rules configuration module', () => {
     it('defaults to 80 BPM and the catalogue subdivisions', () => {
       expect(DEFAULT_BEAT_BPM).toBe(80);
       expect(DEFAULT_RULES.beatBpm).toBe(80);
-      expect(DEFAULT_RULES.weaponSubdivisions).toEqual({
-        cannon: 2,
-        spread: 1,
-        dual: 1,
-        rapid: 6,
-        wave_laser: 1,
-        ricochet: 1,
-        cluster: 0.5,
-        options: 1,
-        nova: 0.25,
-        mortar: 0.5,
-        arc: 1,
-        rear_guard: 2,
-        broadside: 0.5,
-        railgun: 0.25,
-        shard_swarm: 1,
-        heavy_slug: 0.5,
-      });
+      // The shipped catalogue table (trimmed cadences included).
+      expect(DEFAULT_RULES.weaponSubdivisions).toEqual(
+        defaultWeaponSubdivisions(),
+      );
     });
 
     it('returns a fresh subdivision table each call', () => {
@@ -288,28 +287,26 @@ describe('game rules configuration module', () => {
       saveRules({
         ...DEFAULT_RULES,
         beatBpm: 160,
-        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2, broadside: 0.5, railgun: 0.25, shard_swarm: 1, heavy_slug: 0.5 },
+        // Only positive integers survive the stored-table merge, so the custom
+        // entries are integers and the fractional catalogue defaults (0.5/0.25
+        // cadences) ride along from the defaults (AH-0MVWAVKS0005P9VN trim).
+        weaponSubdivisions: {
+          ...defaultWeaponSubdivisions(),
+          cannon: 4,
+          rapid: 8,
+          rear_guard: 2,
+          shard_swarm: 1,
+        },
       });
 
       const loaded = loadRules();
       expect(loaded.beatBpm).toBe(160);
       expect(loaded.weaponSubdivisions).toEqual({
+        ...defaultWeaponSubdivisions(),
         cannon: 4,
-        spread: 2,
-        dual: 2,
         rapid: 8,
-        wave_laser: 1,
-        ricochet: 1,
-        cluster: 0.5,
-        options: 1,
-        nova: 0.25,
-        mortar: 0.5,
-        arc: 1,
         rear_guard: 2,
-        broadside: 0.5,
-        railgun: 0.25,
         shard_swarm: 1,
-        heavy_slug: 0.5,
       });
     });
 
@@ -321,8 +318,10 @@ describe('game rules configuration module', () => {
 
       const loaded = loadRules();
       expect(loaded.weaponSubdivisions.cannon).toBe(4);
-      expect(loaded.weaponSubdivisions.spread).toBe(1);
-      expect(loaded.weaponSubdivisions.rapid).toBe(6);
+      // Non-overridden weapons keep the shipped catalogue defaults.
+      const defaults = defaultWeaponSubdivisions();
+      expect(loaded.weaponSubdivisions.spread).toBe(defaults.spread);
+      expect(loaded.weaponSubdivisions.rapid).toBe(defaults.rapid);
     });
 
     it('falls back to the defaults for invalid BPM / non-integer subdivisions', () => {
@@ -336,24 +335,9 @@ describe('game rules configuration module', () => {
 
       const loaded = loadRules();
       expect(loaded.beatBpm).toBe(DEFAULT_BEAT_BPM);
-      expect(loaded.weaponSubdivisions).toEqual({
-        cannon: 2,
-        spread: 1,
-        dual: 1,
-        rapid: 6,
-        wave_laser: 1,
-        ricochet: 1,
-        cluster: 0.5,
-        options: 1,
-        nova: 0.25,
-        mortar: 0.5,
-        arc: 1,
-        rear_guard: 2,
-        broadside: 0.5,
-        railgun: 0.25,
-        shard_swarm: 1,
-        heavy_slug: 0.5,
-      });
+      expect(loaded.weaponSubdivisions).toEqual(
+        defaultWeaponSubdivisions(),
+      );
     });
 
     it('returns a fresh object so callers cannot mutate the default subdivisions', () => {

@@ -892,7 +892,9 @@ describe('Player ship entity', () => {
 
     // Per-id lookup works for any catalogue weapon.
     expect(player!.getWeaponDef('spread').offsets).toHaveLength(3);
-    expect(player!.getWeaponDef('rapid').fireRateMs).toBe(125);
+    // Rapid's cadence carries the level-0 output trim (6/beat → 3/beat,
+    // AH-0MVWAVKS0005P9VN) — 250 ms at 80 BPM.
+    expect(player!.getWeaponDef('rapid').fireRateMs).toBe(250);
 
     // No-arg form defaults to the most-recently collected weapon.
     player!.equipWeapon('rapid');
@@ -1045,7 +1047,8 @@ describe('Player ship entity', () => {
       );
       // The shared catalogue entry is a fresh object, not the mutable base.
       expect(leveled).not.toBe(base);
-      expect(WEAPON_CATALOGUE.rapid.fireRateMs).toBe(125);
+      // The catalogue base itself keeps the trimmed cadence (3/beat → 250 ms).
+      expect(WEAPON_CATALOGUE.rapid.fireRateMs).toBe(250);
       expect(WEAPON_CATALOGUE.rapid.bulletSize).toBe(base.bulletSize);
     });
 
@@ -1143,13 +1146,17 @@ describe('Player ship entity', () => {
       expect(player.getFireInterval('rapid')).toBe(base);
 
       player.equipWeapon('rapid'); // first upgrade
+      // The flattened fire-rate curve makes the first upgrade a step, not a
+      // spike: 3/beat × 1.14 quantises back to 3/beat, so the cadence only
+      // reaches the next beat subdivision on the second upgrade
+      // (AH-0MVWAVL6R001UI60).
       const levelOne = player.getFireInterval('rapid');
-      expect(levelOne).toBeLessThan(base);
+      expect(levelOne).toBe(base);
       expect(isOnBeatGrid(levelOne)).toBe(true);
 
       player.equipWeapon('rapid'); // second upgrade
       const levelTwo = player.getFireInterval('rapid');
-      expect(levelTwo).toBeLessThanOrEqual(levelOne);
+      expect(levelTwo).toBeLessThan(levelOne);
       expect(isOnBeatGrid(levelTwo)).toBe(true);
 
       // The scheduler is armed on the upgraded interval.
@@ -1462,7 +1469,11 @@ describe('Player ship entity', () => {
     expect(levelOne.n).toBe(16);
 
     player.tryFire(0.5); // t = 1000 ms, still mid-bar
-    player.equipWeapon('spread'); // level 2 → E(5, 16), queued
+    player.equipWeapon('spread'); // level 2 (upgrade index 1) → still E(4, 16)
+    // The flattened fire-rate curve moves the E(5, 16) rung to upgrade index 2,
+    // so the first upgrade no longer changes the shape (AH-0MVWAVL6R001UI60).
+    expect(player.getPendingFirePattern('spread')).toBeUndefined();
+    player.equipWeapon('spread'); // level 3 (upgrade index 2) → E(5, 16), queued
 
     const pending = player.getPendingFirePattern('spread')!;
     expect(pending.pattern.k).toBe(5);

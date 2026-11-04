@@ -50,18 +50,21 @@ describe('GymWeaponLeveling', () => {
     const player = scene.getPlayer()!;
 
     const base = WEAPON_CATALOGUE.spread;
-    // Level up to the first upgrade (second collection), then a second
-    // upgrade so the fire rate has enough headroom to reach the next beat
-    // subdivision (quantisation makes the first step land on 750 ms).
+    // Level up to the first upgrade (second collection), then on to level 4:
+    // the flattened fire-rate curve (cap 2.2×, k=0.12) only reaches the next
+    // beat subdivision for a 0.5/beat weapon at the third upgrade
+    // (AH-0MVWAVL6R001UI60).
     scene.spawnDrop('spread', player.x, player.y);
     scene.tick(0.1);
     scene.spawnDrop('spread', player.x, player.y);
     scene.tick(0.1);
     scene.spawnDrop('spread', player.x, player.y);
     scene.tick(0.1);
-    expect(player.getWeaponLevel('spread')).toBe(3);
+    scene.spawnDrop('spread', player.x, player.y);
+    scene.tick(0.1);
+    expect(player.getWeaponLevel('spread')).toBe(4);
     const def = player.getWeaponDef('spread');
-    const stats = resolveWeaponDefinition('spread', 2);
+    const stats = resolveWeaponDefinition('spread', 3);
 
     // projectile count → more bullets in the pattern.
     expect(def.offsets.length).toBeGreaterThan(base.offsets.length);
