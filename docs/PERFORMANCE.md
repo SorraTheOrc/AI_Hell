@@ -585,7 +585,7 @@ Source lines are the **TypeScript** declaration lines, resolved by function name
 | 2 | **Animated pellets redraw their `Graphics` every frame**, so earcut re-triangulates the path every frame (`earcutLinked` 0.49 %, `linkedList` 0.21 %) | `src/utils/bulletVisuals.ts:1120` (`_pellet`), redraw wired at `src/entities/bulletUtils.ts:105` | 0.70 % [4.7 %] | **Done** — the same texture cache as #1, with the pulse animated by image scale/alpha; earcut no longer appears in the profile | AH-0MW2DAY2L004QSKF |
 | 3 | Bullet advancement / wrap, once per bullet per frame | `src/scenes/core/bulletLifecycle.ts:64` (`advanceWrappingBullets`) | 0.09 % [0.6 %] | Fold into the bullet rework (a batched position update) | AH-0MVXV0F0Y004NENT (low) |
 | 4 | Enemy fire + aim-target collection | `src/entities/enemyFire.ts:111` (`fireForEnemy`), `src/scenes/core/enemyTargeting.ts:85` (`pushAimTargets`) | 0.04 % [0.2 %] | Allocation removal only | AH-0MVXV0F0Y004NENT (low) |
-| 5 | Collision passes (`_handleCollisions`) | `src/scenes/core/CombatScene.ts:1310` | 0.02 % [0.2 %] | Broad-phase — **measured too small to matter at this load** | AH-0MVXV0EMF001WVQ1 (low) |
+| 5 | Collision passes (`_handleCollisions`) | `src/scenes/core/CombatScene.ts:1418` | 0.02 % [0.2 %] — but the measured pass had **no player bullets** (see the caveat below) | **Done** — player bullets indexed per pass: 90 000 → **699** candidate pairs at 300 × 300 (see [Collision broad phase](#collision-broad-phase-ah-0mvxv0emf001wvq1)) | AH-0MVXV0EMF001WVQ1 (low) |
 | 6 | GC / allocation pressure | V8 `(garbage collector)` | 0.40 % [2.7 %] | Allocation removal | AH-0MVXV0F0Y004NENT (low) |
 | 7 | HUD / UI refresh, player auto-defence | `src/ui/HUD.ts:405` (`refresh`), `src/scenes/core/CombatScene.ts:243` (`_updateAutoDefence`) | 0.02–0.03 % **with no loadout rows**; 9.06 % of the window (~40 % of JS) once rows are present — see [Per-frame HUD rows](#per-frame-hud-rows-ah-0mvxv0ffj0066ec8) | Redraw the rows only when the rendered state changes (done); auto-defence measured too small to matter | AH-0MVXV0FFJ0066EC8 |
 | 8 | Minerals update/collect | `src/scenes/core/mineralLayer.ts:130` (`collectMinerals`), `src/scenes/gym/core/GymFormationScene.ts:1464` (`_updateMinerals`) | 0.01 % in the gym (minerals disabled); 0.06 % in the busier run | None needed | — |
@@ -598,10 +598,15 @@ speculation):
 - **GPU offload / draw-call batching (AH-0MVXV0FFJ0066EC8) → `high`.** It was
   provisioned at `medium`; the measured renderer share (92.8 % of JS, plus the
   native GL submission it drives) makes it the top lever by a wide margin.
-- **Collision broad-phase (AH-0MVXV0EMF001WVQ1) → `low`.** `_handleCollisions`
-  is 0.2 % of JS / 0.02 % of the window — an O(n·m) pass that costs
-  microseconds at 100 enemies. It stays worth doing as a scaling fix for higher
-  bullet counts, not as a lever on the target.
+- **Collision broad-phase (AH-0MVXV0EMF001WVQ1) → `low`, then implemented.**
+  `_handleCollisions` profiled at 0.2 % of JS / 0.02 % of the window — microseconds
+  at 100 enemies — so it cannot move the target. That reading has a caveat the
+  profile alone does not show: `GymPerformance` disables the player's auto-fire,
+  so the bullet-vs-bullet pass ran with **zero player bullets** and the sampled
+  time says nothing about it (see [Collision broad
+  phase](#collision-broad-phase-ah-0mvxv0emf001wvq1)). It was kept as a scaling
+  fix for higher bullet counts and is now implemented; no frame-time win is
+  claimed for the 100-enemy budget.
 - **Per-frame allocations (AH-0MVXV0F0Y004NENT) → `low`.** GC is 2.7 % of JS /
   0.40 % of the window.
 - **HUD rows (AH-0MVXV0FFJ0066EC8) → measured by ablation, not by this
@@ -772,6 +777,71 @@ frame-time regression. The item's frame-time target (p50/p95 ≥ 20 % better)
 hardware-GPU desktop run already tracked by AH-0MW2DB9VN006XB63, which
 re-states every optimisation's verdict for real GPUs.
 
+### Collision broad phase (AH-0MVXV0EMF001WVQ1)
+
+Ranked hotspot **#5** was the shared `_handleCollisions` pass: player bullets
+were compared with **every** live enemy bullet, every frame. It profiled at
+0.02 % of the measured window / 0.2 % of JS, which is why the item was
+re-ranked to `low` — but that number has a caveat.
+
+**The baseline never exercised the pass.** The stress gym sets
+`autoFireEnabled()` to `false` so the 100-enemy load cannot be shot down
+during a measurement (see [the stress gym](#the-stress-gym-gymperformance)),
+which means the player has **no bullets** for the whole 60 s window. The
+bullet-vs-bullet pass therefore compared nothing at all, and its sampled time
+is not evidence that the pass is cheap — it is evidence that the scenario
+never ran it. The pass is quadratic in the live bullet count, and the game
+*does* fire: the shipped auto-fire plus the Options escort keeps a steady
+stream of player bullets in flight while enemy bullets peak in the hundreds.
+
+**What changed.** `_handleCollisions` now indexes the player bullets once per
+pass in the shared uniform-grid broad phase
+(`src/utils/spatialHash.ts`) and queries it per enemy bullet with the same
+radius its narrow-phase test uses, so only bullets in neighbouring cells are
+candidates. The grid only ever *removes impossible pairs*: candidates come
+back in ascending bullet order and are re-tested with the same `_overlaps`
+predicate, which reproduces the nested loop's first-hit selection, destruction
+order and hook order exactly.
+
+**Measured candidate-pair collapse.** Both columns are measured through the
+production pass (`getCollisionBroadPhaseStats()`), not asserted from a formula:
+a degenerate single-cell grid *is* the nested loop, and the test runs the same
+fixture through both (`src/scenes/core/CombatScene.broadPhase.test.ts`).
+
+| Fixture | All-pairs tests | Broad-phase candidate tests | Reduction |
+|---|---|---|---|
+| 300 player bullets × 300 enemy bullets, uniform over the play area (seeded) | 90 000 | **699** | **128.8×** |
+| Same fixture with the grid degenerated to one cell (the pre-change nested loop) | 90 000 | 90 000 | 1× (baseline) |
+
+**Not claimed: a frame-time win at the budget load.** At 100 enemies the player
+fires a handful of bullets, so the pass was already microseconds and the
+SwiftShader baseline cannot resolve the difference — the same conclusion the
+[cached bullet textures](#cached-bullet-textures-ah-0mw2day2l004qskf) section
+recorded. The win is structural: the pass is no longer `n × m`, so a later
+scenario that pushes live bullets far above ~350 (the re-rank trigger) pays a
+linear, not quadratic, cost.
+
+**What was deliberately left alone.** The other collision passes are scans, and
+stay scans:
+
+- **Player bullets vs enemies** re-reads `getEnemyEntities()` for *every*
+  bullet, and that live snapshot is part of its contract — a kill can spawn
+  entities synchronously (an asteroid splits into children) and a later bullet
+  in the same pass may legitimately hit one. A per-pass index would change that
+  same-frame visibility, so broadening it would change behaviour, not just
+  cost.
+- **Enemy bullets vs player** and **player body vs enemies** are already
+  linear: one player body and one player bullet list owner, so a single scan is
+  the lower bound and an index would cost more to build than it saves.
+
+**No behaviour change.** The collision fixtures in
+`CombatScene.broadPhase.test.ts` cover bullet-vs-bullet (including two bullets
+at one point, which is where candidate ordering matters), bullet-vs-player,
+body-vs-body, Force Field reflect, AOE detonation and splitting projectiles;
+each is run through the shipped grid and through the degenerate grid and must
+produce the identical outcome. The existing parity and equivalence suites are
+unchanged and green.
+
 ## Reference machine
 
 Record the host with every published baseline. The numbers in this document
@@ -875,3 +945,11 @@ including the "the Electron window must be visible or the loop is throttled to
 1 Hz" guard) are not unit-tested — the same trade-off as
 `scripts/capture-gameplay.mjs` — and are verified by running the harness; the
 Electron rows in this document are that verification.
+
+The collision broad phase is covered without a browser: the grid's contract
+(superset of in-radius entries, ascending index order, no duplicate indices,
+injective cell keys, the degenerate single-cell shape) is unit-tested in
+`src/utils/spatialHash.test.ts`, and the equivalence/cost tests in
+`src/scenes/core/CombatScene.broadPhase.test.ts` drive the real shared pass
+through both grids on collision fixtures and read the candidate counts from
+`getCollisionBroadPhaseStats()`.

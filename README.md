@@ -919,6 +919,14 @@ npm run perf:measure -- --scene PlayScene --setup '{"demo":true,"seed":1,"startL
   plan in `src/ui/HUD.ts` (AH-0MVXV0FFJ0066EC8), while the player bubbles, the
   Options escort and the wave-timer bar measure inside the noise floor. See
   [docs/PERFORMANCE.md § Per-frame HUD rows](./docs/PERFORMANCE.md#per-frame-hud-rows-ah-0mvxv0ffj0066ec8).
+- **Hot paths are also removed at the data-structure level:** the shared
+  collision pass no longer compares every player bullet with every enemy
+  bullet. A uniform-grid broad phase (`src/utils/spatialHash.ts`) indexes the
+  player bullets once per pass, taking a seeded 300 × 300 fixture from
+  90 000 candidate pairs to 699 with identical outcomes — and the stress gym's
+  profile could not see that pass at all, because it disables the player's
+  auto-fire. See
+  [docs/PERFORMANCE.md § Collision broad phase](./docs/PERFORMANCE.md#collision-broad-phase-ah-0mvxv0emf001wvq1).
 
 #### On-screen action intensity (research & decision)
 
