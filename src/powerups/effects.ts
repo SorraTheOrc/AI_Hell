@@ -254,47 +254,52 @@ export type AutoDefenceChoice = 'phase_shift' | 'teleport';
 export type DangerDecision = AutoDefenceChoice | null;
 
 /**
- * Picks the defensive ability to spend from the available stocks, using the
- * producer's charge-count rule (AH-0MUZE4AIP009HZWC, AC2):
+ * Picks the defensive ability to spend from the two readiness flags
+ * (AH-0MVY096RT006QMF4 AC7 / AH-0MW231NAR008K9IS AC1):
  *
  * - Neither available → `null`.
  * - Only one available → that ability.
- * - Both available → the ability with the **greater** available count.
- * - Equal finite counts → a uniform 50/50 pick driven by `rng`.
+ * - Both available → a uniform 50/50 pick driven by `rng`.
  *
- * Phase Shift contributes its finite charge count and Teleport contributes
- * `1` when its single ready warp is available (`0` while recharging — it has
- * no stored count, parent AH-0MVY096RT006QMF4). There is no unbounded
- * /permanent-Infinity branch — the permanent Phase Shift reward is an
- * ownership flag, not an unlimited supply (AH-0MV82I8IL0012RXY AC2).
+ * Availability is decided by readiness, never by a stock count: Phase Shift is
+ * available while it holds **at least one** auto-activation charge, and
+ * Teleport is available while its single escape is **ready** (a boolean —
+ * Teleport has no stored count any more, parent AH-0MVY096RT006QMF4). The
+ * greater-count rule that used to rank the two was retired because Teleport
+ * has no count to compare: once it is ready the two escapes are equally
+ * valuable, and a levelled Phase Shift pool must not silently starve Teleport
+ * (producer answer Q3 = C). The rng is consulted **only** in the
+ * both-available case, so single-ability and neither-available frames stay
+ * deterministic.
+ *
+ * Phase Shift contributes its finite charge count only as a readiness test.
+ * There is no unbounded /permanent-Infinity branch — the permanent Phase Shift
+ * reward is an ownership flag, not an unlimited supply (AH-0MV82I8IL0012RXY
+ * AC2).
  *
  * Pure and engine-agnostic so the game and every gym share one rule and the
- * tie-break is deterministically testable via an injectable `rng`.
+ * 50/50 split is deterministically testable via an injectable `rng`.
  *
- * @param phaseCharges — available Phase Shift auto-activation charges.
- * @param teleportAvailable — `1` when the single ready Teleport is available,
- *   else `0` (there is no stored Teleport count any more — parent
- *   AH-0MVY096RT006QMF4).
- * @param rng — random source in `[0, 1)`; only consulted for an exact tie
- *   between two finite counts. Injectable/seeded for deterministic tests.
+ * @param phaseCharges — available Phase Shift auto-activation charges; any
+ *   value `> 0` means available.
+ * @param teleportReady — `true` when the single ready Teleport is available,
+ *   `false` while it recharges or is not held (there is no stored Teleport
+ *   count any more — parent AH-0MVY096RT006QMF4).
+ * @param rng — random source in `[0, 1)`; consulted only when both abilities
+ *   are available. Injectable/seeded for deterministic tests.
  * @returns the ability to spend, or `null` when none is available.
  */
 export function selectAutoDefence(
   phaseCharges: number,
-  teleportAvailable: number,
+  teleportReady: boolean,
   rng: () => number = Math.random,
 ): AutoDefenceChoice | null {
-  const phaseCount = Math.max(0, phaseCharges);
-  const teleportCount = Math.max(0, teleportAvailable);
-  const phaseReady = phaseCount > 0;
-  const teleportReady = teleportCount > 0;
+  const phaseReady = Math.max(0, phaseCharges) > 0;
 
   if (!phaseReady && !teleportReady) return null;
   if (phaseReady && !teleportReady) return 'phase_shift';
   if (teleportReady && !phaseReady) return 'teleport';
-  if (phaseCount > teleportCount) return 'phase_shift';
-  if (teleportCount > phaseCount) return 'teleport';
-  // Both finite and equal — uniform 50/50 tie-break.
+  // Both ready — uniform 50/50, independent of the Phase Shift charge count.
   return rng() < 0.5 ? 'phase_shift' : 'teleport';
 }
 
@@ -1573,10 +1578,11 @@ export class EffectsRegistry {
    * When `inDanger` is true, the player is not already phased, danger has
    * cleared since the last activation and the shared re-arm cooldown has
    * elapsed, this selects which defensive ability to spend via
-   * {@link selectAutoDefence} (greater finite pool count wins; an exact tie
-   * is a seeded 50/50) and, for Phase Shift, activates the level-resolved
-   * `phaseDuration` and consumes one charge from the **finite** pool (the
-   * permanent reward is an ownership flag — never an unlimited supply).
+   * {@link selectAutoDefence} (Phase Shift available above zero charges,
+   * Teleport available while ready — a uniform 50/50 whenever both are) and,
+   * for Phase Shift, activates the level-resolved `phaseDuration` and consumes
+   * one charge from the **finite** pool (the permanent reward is an ownership
+   * flag — never an unlimited supply).
    * Teleport is **not** consumed here — the registry has no player or warp —
    * so the scene performs the warp on the returned decision. Either way the
    * danger episode is latched so at most one ability fires per episode
@@ -1602,7 +1608,7 @@ export class EffectsRegistry {
     const store = this._levelStore;
     const choice = selectAutoDefence(
       store.phaseCharges(),
-      store.hasTeleport() ? 1 : 0,
+      store.hasTeleport(),
       this._rng,
     );
     if (choice === null) return null;

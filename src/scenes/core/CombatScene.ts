@@ -312,8 +312,9 @@ export abstract class CombatScene<
    * within `DANGER_RADIUS` of the ship (via the pure `isInDanger` helper)
    * and hands the result to the effects registry. Under one shared re-arm
    * governor the registry selects — at most once per danger episode — which
-   * defence to spend by comparing the available counts ({@link
-   * selectAutoDefence}). When it reports Phase Shift it has already
+   * defence to spend from their readiness ({@link selectAutoDefence}: Phase
+   * Shift above zero charges, Teleport while ready, a uniform 50/50 when both
+   * are). When it reports Phase Shift it has already
    * activated the pass-through; when it selects Teleport the scene performs
    * the warp through {@link CombatScene.triggerTeleport} (spending the single
    * ready warp and granting Phase Shift on arrival). Every combat scene calls this

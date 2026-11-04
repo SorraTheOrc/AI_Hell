@@ -8,6 +8,7 @@ import {
   applySpeedMultiplier,
   magnetRadius,
   selectAutoDefence,
+  type AutoDefenceChoice,
   MAGNET_ATTRACTION_SPEED,
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
@@ -22,6 +23,7 @@ import {
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
 import { grantPermanentPowerUp } from './choiceReward';
 import { beatPeriodMs } from '../utils/beat';
+import { createSeededRng } from '../core/rng';
 import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
 import {
   activateEffectAtUpgradeLevel,
@@ -1044,34 +1046,64 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
 
 // ── Automatic defence selection: Phase Shift vs Teleport ─────────────
 
-describe('selectAutoDefence: finite-pool charge-count selection (AC2)', () => {
-  it('returns null when neither defence is available', () => {
-    expect(selectAutoDefence(0, 0)).toBeNull();
+describe('selectAutoDefence: readiness-based 50/50 selection (AH-0MW231NAR008K9IS)', () => {
+  it('returns null when neither defence is available and never consults the rng (AC3)', () => {
+    let draws = 0;
+    const rng = () => {
+      draws += 1;
+      return 0.5;
+    };
+    expect(selectAutoDefence(0, false, rng)).toBeNull();
+    expect(draws).toBe(0);
   });
 
-  it('returns the only available defence', () => {
-    expect(selectAutoDefence(1, 0)).toBe('phase_shift');
-    expect(selectAutoDefence(0, 2)).toBe('teleport');
+  it('returns the only available defence and never consults the rng (AC3)', () => {
+    let draws = 0;
+    const rng = () => {
+      draws += 1;
+      return 0.5;
+    };
+    // Phase Shift readiness is a non-zero charge count, whatever its size.
+    expect(selectAutoDefence(1, false, rng)).toBe('phase_shift');
+    expect(selectAutoDefence(3, false, rng)).toBe('phase_shift');
+    // Teleport readiness is a boolean flag.
+    expect(selectAutoDefence(0, true, rng)).toBe('teleport');
+    expect(draws).toBe(0);
   });
 
-  it('spends the ability with the greater available count', () => {
-    expect(selectAutoDefence(1, 3)).toBe('teleport');
-    expect(selectAutoDefence(3, 1)).toBe('phase_shift');
+  it('splits 50/50 when both are available, for 1 and for 3 Phase charges (AC1/AC2)', () => {
+    const DRAWS = 2000;
+    const TOLERANCE = 0.05;
+    for (const charges of [1, 3]) {
+      const rng = createSeededRng(20261104 + charges);
+      let phaseShift = 0;
+      let teleport = 0;
+      for (let i = 0; i < DRAWS; i += 1) {
+        const choice = selectAutoDefence(charges, true, rng);
+        expect(choice).not.toBeNull();
+        if (choice === 'phase_shift') phaseShift += 1;
+        else teleport += 1;
+      }
+      expect(Math.abs(phaseShift / DRAWS - 0.5)).toBeLessThanOrEqual(TOLERANCE);
+      expect(Math.abs(teleport / DRAWS - 0.5)).toBeLessThanOrEqual(TOLERANCE);
+    }
   });
 
-  it('breaks an exact tie with the injected RNG (both outcomes reachable)', () => {
-    expect(selectAutoDefence(2, 2, () => 0.0)).toBe('phase_shift');
-    expect(selectAutoDefence(2, 2, () => 0.49)).toBe('phase_shift');
-    expect(selectAutoDefence(2, 2, () => 0.5)).toBe('teleport');
-    expect(selectAutoDefence(2, 2, () => 0.99)).toBe('teleport');
+  it('is deterministic for a fixed seed and independent of the charge count (AC2)', () => {
+    const draws = (charges: number): AutoDefenceChoice[] => {
+      const rng = createSeededRng(4242);
+      return Array.from({ length: 50 }, () => selectAutoDefence(charges, true, rng)!);
+    };
+    const oneCharge = draws(1);
+    expect(draws(1)).toEqual(oneCharge); // replayable
+    expect(draws(3)).toEqual(oneCharge); // charge count never biases the draw
   });
 
-  it('never treats a pool as unbounded: an empty phase pool cannot outrank Teleport', () => {
-    // Both pools are finite — an empty phase pool contributes zero available
-    // count, so a stored Teleport is selected (the permanent-Infinity branch
-    // is gone, AH-0MV82I8IL0012RXY AC2).
-    expect(selectAutoDefence(0, 5)).toBe('teleport');
-    expect(selectAutoDefence(0, 0)).toBeNull();
+  it('maps a both-available draw onto the 50/50 boundary (AC1)', () => {
+    expect(selectAutoDefence(3, true, () => 0.0)).toBe('phase_shift');
+    expect(selectAutoDefence(3, true, () => 0.499)).toBe('phase_shift');
+    expect(selectAutoDefence(3, true, () => 0.5)).toBe('teleport');
+    expect(selectAutoDefence(3, true, () => 0.99)).toBe('teleport');
   });
 });
 
@@ -1115,18 +1147,22 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe('teleport');
   });
 
-  it('spends the more abundant Phase Shift stock (greater-count rule)', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('phase_shift'); // 1 charge
-    reg.applyCollect('phase_shift'); // level 2 → 3 charges
-    reg.applyCollect('teleport'); // single ready warp
-    expect(reg.phaseCharges()).toBe(3);
-    expect(reg.hasTeleport()).toBe(true);
+  it('lets the seeded RNG decide when both are available, regardless of Phase charges', () => {
+    const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
+    phaseFirst.applyCollect('phase_shift');
+    phaseFirst.applyCollect('phase_shift'); // 3 charges
+    phaseFirst.applyCollect('teleport');
+    expect(phaseFirst.phaseCharges()).toBe(3);
+    expect(phaseFirst.updateDanger(true, 0.016)).toBe('phase_shift');
 
-    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
+    const teleportFirst = new EffectsRegistry(undefined, () => 0.99);
+    teleportFirst.applyCollect('phase_shift');
+    teleportFirst.applyCollect('phase_shift'); // 3 charges
+    teleportFirst.applyCollect('teleport');
+    expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
   });
 
-  it('uses the seeded RNG for the exact-tie pick', () => {
+  it('uses the seeded RNG for the both-available pick', () => {
     const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
     phaseFirst.applyCollect('phase_shift');
     phaseFirst.applyCollect('teleport');
@@ -1138,10 +1174,10 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
   });
 
-  it('a permanent Phase Shift ties Teleport by count (seeded RNG decides)', () => {
-    // The permanent reward is an ownership flag, not an unbounded supply: a
-    // single-charge finite pool exactly ties one stored Teleport, so the
-    // tie-break RNG decides (no permanent-Infinity branch, AC2).
+  it('a permanent Phase Shift plus a ready Teleport is a 50/50 pick (seeded RNG decides)', () => {
+    // The permanent reward is an ownership flag, not an unbounded supply: the
+    // two abilities are equally available, so the 50/50 RNG decides
+    // (AH-0MW231NAR008K9IS AC1).
     const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
     phaseFirst.applyCollect('phase_shift', true);
     phaseFirst.applyCollect('teleport');
@@ -1161,8 +1197,8 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     reg.tick(PHASE_DURATION + 0.01); // phase expires → re-arm cooldown starts
     expect(reg.phaseCharges()).toBe(0);
 
-    // Danger clears and the cooldown elapses; the empty phase pool now
-    // contributes zero available count, so a stored Teleport fires (AC3).
+    // Danger clears and the cooldown elapses; the empty phase pool is now
+    // unavailable, so the ready Teleport fires without consulting the rng (AC3).
     reg.applyCollect('teleport');
     reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
     expect(reg.updateDanger(true, 0.016)).toBe('teleport');
