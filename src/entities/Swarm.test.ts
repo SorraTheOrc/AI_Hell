@@ -516,13 +516,14 @@ describe('Swarm — coordinated-burst projectile identity (AH-0MV822E4T006F37Y)'
     const bullet = swarm.tryFireBurstBullet(1_000_000);
     expect(bullet).not.toBeNull();
 
-    // The shot spawns its fleck bullet Graphics **plus** one cyan launch pop
-    // at the member body — the enemy-side fire VFX per emitted fleck.
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), so the only
+    // new Graphics is the one cyan launch pop at the member body — the
+    // enemy-side fire VFX per emitted fleck.
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + 1 + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     // The identity fleck keeps the established cyan bullet colour (the shared
     // impact pass tints the hit flash with it).

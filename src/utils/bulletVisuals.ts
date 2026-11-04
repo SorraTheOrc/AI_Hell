@@ -194,17 +194,28 @@ function shapeLength(radius: number, spec: BulletVisualSpec): number {
 /**
  * Lays down all of the shape's draw commands into `graphics` in local space,
  * origin at the bullet centre, long axis along +x. The buffer is cleared
- * first so a caller may safely re-draw every frame (the `PlayerBullet.advance`
- * pattern).
+ * first so a caller may safely re-draw into the same Graphics.
+ *
+ * The optional `offsetX`/`offsetY` shift every command (through the Graphics'
+ * canvas translate), so a **bake** can centre the shape inside a generated
+ * texture without changing a single shape coordinate
+ * (`src/utils/bulletTextures.ts`, AH-0MW2DAY2L004QSKF).
  *
  * @param graphics - The Graphics context to draw into.
  * @param spec - The visual metadata driving the draw.
+ * @param offsetX - Horizontal offset of the shape's origin in px (default 0).
+ * @param offsetY - Vertical offset of the shape's origin in px (default 0).
  */
 export function drawBulletShape(
   graphics: Phaser.GameObjects.Graphics,
   spec: BulletVisualSpec,
+  offsetX = 0,
+  offsetY = 0,
 ): void {
   graphics.clear();
+  if (offsetX !== 0 || offsetY !== 0) {
+    graphics.translateCanvas(offsetX, offsetY);
+  }
   const shape = canonicalShape(spec.shape);
   const alpha = spec.alpha ?? 1;
   const stroke = BASE_STROKE * (spec.thickness ?? 1);
@@ -1158,11 +1169,15 @@ function _pellet(
 }
 
 /**
- * Whether a shape carries parts animated by `spec.time` (so enemy bullets
- * must be redrawn each frame to show them). Currently the pellet's faint
- * pulse; the player-side missile exhaust flame animates through
- * `PlayerBullet._draw` directly. `bulletUtils.createBullet` hands back a
- * `redraw` hook exactly for these shapes (AH-0MV822CQL005R4MM).
+ * Whether a shape carries parts animated by `spec.time` (so a bullet must
+ * animate in flight to show them). Currently the pellet's faint pulse, the
+ * heavy shell's breathing glow and the shard's sweeping glint.
+ *
+ * Since AH-0MW2DAY2L004QSKF the shape is baked into a cached texture and the
+ * motion is reproduced by sprite scale/alpha (`animateBulletView` in
+ * `src/utils/bulletTextures.ts`) rather than by a per-frame
+ * `drawBulletShape` redraw; `bulletUtils.createBullet` hands back a `redraw`
+ * hook exactly for these shapes (AH-0MV822CQL005R4MM).
  */
 export function shapeAnimates(shape: BulletShape): boolean {
   const canonical = canonicalShape(shape);

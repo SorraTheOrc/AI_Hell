@@ -221,7 +221,8 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
 
 /** Structural contract an enemy bullet must satisfy. */
 export interface CombatEnemyBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view: a sprite of its shape's cached texture. */
+  readonly graphics: Phaser.GameObjects.Image;
   vx: number;
   vy: number;
   /**

@@ -195,9 +195,10 @@ describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
     // At least one bullet should be on screen.
     expect(bullets.length).toBeGreaterThan(0);
 
-    // Bullets are Graphics objects.
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), never
+    // per-bullet Graphics objects.
     for (const b of bullets) {
-      expect(b.graphics).toBeInstanceOf(Phaser.GameObjects.Graphics);
+      expect(b.graphics).toBeInstanceOf(Phaser.GameObjects.Image);
     }
   });
 

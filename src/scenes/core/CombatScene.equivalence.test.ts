@@ -137,14 +137,15 @@ class EquivEnemy
 }
 
 class EquivBullet implements FormationSceneBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** Bullets are cached-texture sprites (AH-0MW2DAY2L004QSKF). */
+  readonly graphics: Phaser.GameObjects.Image;
   vx = 0;
   vy = 0;
   lifetime = 3.0;
   elapsed = 0;
 
   constructor(scene: Phaser.Scene) {
-    this.graphics = scene.add.graphics();
+    this.graphics = scene.add.image(0, 0, '__DEFAULT');
   }
 }
 
@@ -706,7 +707,7 @@ interface EnemyBulletValues {
 function pushEnemyBullet(
   owner: EnemyBulletOwner,
   bullet: EnemyBulletValues,
-): Phaser.GameObjects.Graphics {
+): Phaser.GameObjects.Image {
   if (owner instanceof EquivGymScene) {
     const created = new EquivBullet(owner);
     created.graphics.setPosition(bullet.x, bullet.y);
@@ -747,15 +748,15 @@ function advanceEnemyBullets(owner: EnemyBulletOwner, dt: number): void {
   (owner as unknown as { _advanceBullets(dt: number): void })._advanceBullets(dt);
 }
 
-/** The Graphics of a scene's live enemy bullets. */
+/** The sprite views of a scene's live enemy bullets. */
 function enemyBulletGraphics(
   owner: EnemyBulletOwner,
-): Phaser.GameObjects.Graphics[] {
+): Phaser.GameObjects.Image[] {
   if (owner instanceof EquivGymScene) {
     return owner.activeBullets.map((bullet) => bullet.graphics);
   }
   const bullets = owner.getEnemyBullets() as Array<{
-    graphics: Phaser.GameObjects.Graphics;
+    graphics: Phaser.GameObjects.Image;
   }>;
   return bullets.map((bullet) => bullet.graphics);
 }
@@ -1627,8 +1628,8 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     const { play, formation, combat } = await bootDrops();
     const owners: EnemyBulletOwner[] = [play, formation, combat];
 
-    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
-    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
+    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Image>();
+    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Image>();
 
     for (const owner of owners) {
       const player = owner.getPlayer()!;
@@ -1673,8 +1674,8 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     const { play, formation, combat } = await bootDrops();
     const owners: EnemyBulletOwner[] = [play, formation, combat];
 
-    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
-    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
+    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Image>();
+    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Image>();
 
     for (const owner of owners) {
       const player = owner.getPlayer()!;
@@ -1955,8 +1956,8 @@ function reachPlayBoss(play: PlayScene): void {
 }
 
 /** Stubs a boss to emit one deterministic bullet on its next update. */
-function stubBossSingleBullet(boss: Boss): Phaser.GameObjects.Graphics {
-  const graphics = boss.scene.add.graphics();
+function stubBossSingleBullet(boss: Boss): Phaser.GameObjects.Image {
+  const graphics = boss.scene.add.image(0, 0, '__DEFAULT');
   boss.update = (() =>
     [
       {

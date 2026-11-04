@@ -65,14 +65,15 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
 
 /** A bullet the base class can track (unused here). */
 class StubBullet implements FormationSceneBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  readonly graphics: Phaser.GameObjects.Image;
   vx = 0;
   vy = 0;
   lifetime = 1;
   elapsed = 0;
 
   constructor(scene: Phaser.Scene) {
-    this.graphics = scene.add.graphics();
+    // Bullets are cached-texture sprites (AH-0MW2DAY2L004QSKF).
+    this.graphics = scene.add.image(0, 0, '__DEFAULT');
   }
 }
 

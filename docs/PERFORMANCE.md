@@ -377,8 +377,8 @@ Source lines are the **TypeScript** declaration lines, resolved by function name
 
 | # | Hotspot | Source | Measured share | Lever | Work item |
 |---|---|---|---|---|---|
-| 1 | **One `Graphics` object per bullet**, re-batched every frame by Phaser (`GraphicsWebGLRenderer` 4.18 % [28.3 %], `batch` 2.97 % [20.1 %], Graphics pipeline `run` ×3 ≈ 2.82 % [19.2 %]) | `src/entities/bulletUtils.ts:80` (`createBullet` → `scene.add.graphics()`), `src/utils/bulletVisuals.ts:203` (`drawBulletShape`) | **≈ 10.0 % [≈ 68 % of JS]**, and it drives most of the 84.75 % `native` GL submission | Cache each bullet shape as a **texture/sprite** (or batch all bullets of a shape into one draw) so the per-object Graphics pipeline disappears | AH-0MW2DAY2L004QSKF (high) |
-| 2 | **Animated pellets redraw their `Graphics` every frame**, so earcut re-triangulates the path every frame (`earcutLinked` 0.49 %, `linkedList` 0.21 %) | `src/utils/bulletVisuals.ts:1120` (`_pellet`), redraw wired at `src/entities/bulletUtils.ts:105` | 0.70 % [4.7 %] | Same texture/sprite cache as #1, with the pulse animated by sprite scale/alpha instead of a redraw | AH-0MW2DAY2L004QSKF |
+| 1 | **One `Graphics` object per bullet**, re-batched every frame by Phaser (`GraphicsWebGLRenderer` 4.18 % [28.3 %], `batch` 2.97 % [20.1 %], Graphics pipeline `run` ×3 ≈ 2.82 % [19.2 %]) | `src/entities/bulletUtils.ts:80` (`createBullet` → `scene.add.graphics()`), `src/utils/bulletVisuals.ts:203` (`drawBulletShape`) | **≈ 10.0 % [≈ 68 % of JS]**, and it drives most of the 84.75 % `native` GL submission | **Done** — every bullet is an `Image` of its cached texture; renderer bucket −52.8 % (see [Cached bullet textures](#cached-bullet-textures-ah-0mw2day2l004qskf)) | AH-0MW2DAY2L004QSKF (high) |
+| 2 | **Animated pellets redraw their `Graphics` every frame**, so earcut re-triangulates the path every frame (`earcutLinked` 0.49 %, `linkedList` 0.21 %) | `src/utils/bulletVisuals.ts:1120` (`_pellet`), redraw wired at `src/entities/bulletUtils.ts:105` | 0.70 % [4.7 %] | **Done** — the same texture cache as #1, with the pulse animated by image scale/alpha; earcut no longer appears in the profile | AH-0MW2DAY2L004QSKF |
 | 3 | Bullet advancement / wrap, once per bullet per frame | `src/scenes/core/bulletLifecycle.ts:64` (`advanceWrappingBullets`) | 0.09 % [0.6 %] | Fold into the bullet rework (a batched position update) | AH-0MVXV0F0Y004NENT (low) |
 | 4 | Enemy fire + aim-target collection | `src/entities/enemyFire.ts:111` (`fireForEnemy`), `src/scenes/core/enemyTargeting.ts:85` (`pushAimTargets`) | 0.04 % [0.2 %] | Allocation removal only | AH-0MVXV0F0Y004NENT (low) |
 | 5 | Collision passes (`_handleCollisions`) | `src/scenes/core/CombatScene.ts:1310` | 0.02 % [0.2 %] | Broad-phase — **measured too small to matter at this load** | AH-0MVXV0EMF001WVQ1 (low) |
@@ -499,6 +499,74 @@ the documented **high-load** baseline rows 4–5 exactly — 26.81 FPS vs
 sensitivity table predicts for that band. The stress gym holds no power-ups, so
 it renders no HUD rows and the change is not expected to move its numbers; the
 run confirms it does not.
+
+### Cached bullet textures (AH-0MW2DAY2L004QSKF)
+
+Ranked hotspots **#1 and #2** were the same root cause: every projectile was
+its own `Phaser.GameObjects.Graphics` object, re-triangulated (earcut) and
+re-batched through the Graphics pipeline every frame. The fix bakes each
+bullet *silhouette* (shape + colour + rim + tail) **once per visual spec** into
+a cached Phaser canvas texture and renders each bullet as one plain
+`Image` of it (`src/utils/bulletTextures.ts`, consumed by
+`src/entities/bulletUtils.ts` and `src/entities/PlayerBullet.ts`). The bake
+draws through the **same** `drawBulletShape` seam the game and every gym
+already used, so the silhouette is identical by construction and only *when*
+it is drawn changed (once, at bake time). Time-driven parts are baked at
+`time = 0` — the mean phase of every animated part — and the shapes whose
+motion reads as a pulse/breathe/shimmer (the pellet's pulse ring, the heavy
+shell's breathing glow, the shard's glint) are animated with **image
+scale/alpha** from the bullet's own age, so no per-frame `drawBulletShape`
+redraw survives (AC2). The Boss pulse wave (a slowly expanding ring) became a
+sprite of the cached `ring` texture grown by scale and faded by alpha.
+Gameplay, collision, RNG and `tick(dt)` determinism are untouched.
+
+**What the profile says (profiled pair, 60 s, same host, ~load 14).** The
+bullet draw submission is gone; the *frame time* is not, because this backend
+rasterises on the CPU:
+
+| Bucket / symbol (share of the measured window) | Before | After | Change |
+|---|---|---|---|
+| `renderer` bucket | 14.77 % | **6.97 %** | **−52.8 %** |
+| main-thread JS | 16.24 % | **8.09 %** | **−50.2 %** |
+| `GraphicsWebGLRenderer` (hotspot #1) | 4.45 % | 1.40 % | −68.5 % |
+| `batch` (hotspot #1) | 3.02 % | 1.09 % | −63.9 % |
+| Graphics pipeline `run` (three hottest) | 3.22 % | 1.26 % | −60.9 % |
+| `earcutLinked` (hotspot #2 — per-frame re-triangulation) | 0.64 % | below top-16 | gone |
+| `native` `(program)` bucket | 83.16 % | 91.55 % | **+8.4 pp** |
+
+The renderer-side JS the item targeted halved and the two ranked hotspots
+dropped out of the profile — the freed main-thread time went straight into the
+software rasteriser, which is why the frame time did not move. **This is the
+backend caveat the baseline already records**: every launch mode on this host
+reports SwiftShader, and SwiftShader rasterises on the CPU, so
+*"the renderer is the bottleneck"* is proven for this backend only while
+*"the game's simulation is not the bottleneck"* is backend-independent. Draw
+submission is JS on the main thread, so the halved JS cost is the half that a
+hardware GPU does not absorb.
+
+**Frame time (paired before/after, 60 s `GymPerformance`, SwiftShader).** Both
+halves sit at the 30 FPS vsync step, so p50 is quantised and cannot show the
+halved JS:
+
+| Run | Host load | p50 (ms) | p95 (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|
+| before, run A | 13.92 | 33.3 | 49.9 | 29.76 | 33.60 | 72.6 % | 319 / 192.0 |
+| after, run A | 14.95 | 33.3 | 50.0 | 31.07 | 32.18 | 77.0 % | 347 / 215.2 |
+| after, run B | 14.01 | 33.3 | 50.0 | 32.85 | 30.44 | 82.0 % | 333 / 216.9 |
+| before, run B | 10.64 | 33.3 | 50.0 | 31.64 | 31.61 | 80.3 % | 326 / 216.3 |
+
+Both before and after runs land inside the same spread as the documented
+run-to-run noise for this load band — **no p50/p95 frame-time change is
+measurable on this backend**, and none is claimed. The mobile-tier check
+agrees: at `--cpu-throttle 4` the after run reports p50 50.0 ms / p95 68.4 ms /
+20.0 FPS vs the recorded 4× baseline **50.0 ms / 66.7 ms / 19.9 FPS**.
+
+**Verdict.** The measured #1/#2 hotspots are removed (renderer JS −52.8 %, the
+two hotspot symbols −64 % to −69 %, earcut gone) for no gameplay change and no
+frame-time regression. The item's frame-time target (p50/p95 ≥ 20 % better)
+**is not demonstrable on the SwiftShader floor** — that requires the
+hardware-GPU desktop run already tracked by AH-0MW2DB9VN006XB63, which
+re-states every optimisation's verdict for real GPUs.
 
 ## Reference machine
 

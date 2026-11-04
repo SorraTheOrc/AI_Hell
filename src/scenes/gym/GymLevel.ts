@@ -307,7 +307,8 @@ export const GYM_LEVEL_DROP_MARGIN = 24;
  * collision and lifecycle passes can consume it unchanged.
  */
 export interface GymLevelBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view: a sprite of its shape's cached texture. */
+  readonly graphics: Phaser.GameObjects.Image;
   vx: number;
   vy: number;
   lifetime: number;

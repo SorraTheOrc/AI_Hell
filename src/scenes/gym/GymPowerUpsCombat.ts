@@ -84,6 +84,7 @@ import {
   drawThornsAura,
 } from '../core/CombatEffectVisuals';
 import { Player } from '../../entities/Player';
+import { createBullet } from '../../entities/bulletUtils';
 import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
 import {
   createEnemyFromConfig,
@@ -769,10 +770,15 @@ export class GymPowerUpsCombat extends CombatScene<
 
   /** Exposes a bullet directly (for tests: place a bullet deterministically). */
   spawnEnemyBullet(x: number, y: number, vx: number, vy: number): ScoutBullet {
-    const graphics = this.add.graphics();
-    graphics.fillStyle(0xff4444, 1);
-    graphics.fillCircle(0, 0, 3);
-    graphics.setPosition(x, y);
+    // Legacy generic shot: the cached-disc texture, never a per-bullet
+    // Graphics object (AH-0MW2DAY2L004QSKF).
+    const { graphics } = createBullet({
+      scene: this,
+      color: 0xff4444,
+      size: 3,
+      x,
+      y,
+    });
     const b: ScoutBullet = { graphics, color: 0xff4444, vx, vy, lifetime: 1.5, elapsed: 0 };
     this.scoutBullets.push(b);
     return b;

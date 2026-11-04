@@ -296,8 +296,8 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
 
 /** Contract a bullet must satisfy for the base scene to own its lifecycle. */
 export interface FormationSceneBullet {
-  /** The drawn shape — the base scene advances its x/y position. */
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view — a cached-texture sprite the scene moves. */
+  readonly graphics: Phaser.GameObjects.Image;
   /** Horizontal speed (px/s). */
   vx: number;
   /** Vertical speed (px/s). */

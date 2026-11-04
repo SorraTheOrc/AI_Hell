@@ -1020,15 +1020,15 @@ describe('Diver — spread-burst projectile identity (AH-0MV822D2U000LRFV)', () 
     const bullets = diver.tryFireSpreadBurst(1_000_000);
     expect(bullets).toHaveLength(DIVER_BURST_COUNT);
 
-    // The burst spawns its shard bullet Graphics **plus** one pale-yellow
-    // launch pop at the diver body — the enemy-side fire VFX for the whole
-    // volley (one pop per burst, not per shard — the burst is one fire
-    // event that already plays one fire cue).
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), so the only
+    // new Graphics is the one pale-yellow launch pop at the diver body — the
+    // enemy-side fire VFX for the whole volley (one pop per burst, not per
+    // shard — the burst is one fire event that already plays one fire cue).
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + DIVER_BURST_COUNT + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     for (const bullet of bullets) {
       // The identity shard carries its pale-yellow colour (the shared

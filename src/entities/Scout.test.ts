@@ -225,13 +225,14 @@ describe('Scout entity (visuals, firing, destruction)', () => {
       1_000_000 + SCOUT_ADVANCE_CUE_DURATION,
     )!;
 
-    // The arriving shot spawns its bullet Graphics **plus** the launch pop —
-    // the enemy-side fire VFX, spawned from this shared fire seam.
+    // The bullet is a cached-texture image (AH-0MW2DAY2L004QSKF), so the
+    // only new Graphics is the launch pop — the enemy-side fire VFX, spawned
+    // from this shared fire seam.
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + 2);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     expect(bullet.color).toBe(SCOUT_BULLET_COLOR);
     // The pellet identity is animated — the faint pulse redraws each frame

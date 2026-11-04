@@ -84,6 +84,7 @@ import {
   playWeaponFireSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
+import { createBullet } from '../entities/bulletUtils';
 import { PlayerBullet } from '../entities/PlayerBullet';
 import { pushAimTargets, pushSeekTargets } from './core/enemyTargeting';
 import {
@@ -590,7 +591,8 @@ interface SpawnedEnemy {
 
 /** A live enemy bullet (matches the entity fire-method return shape). */
 interface PlayEnemyBullet {
-  graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view: a sprite of its shape's cached texture. */
+  graphics: Phaser.GameObjects.Image;
   vx: number;
   vy: number;
   /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
@@ -4377,10 +4379,15 @@ export class PlayScene extends CombatScene<
     color = 0xff4444,
     lifetime = 1.5,
   ): PlayEnemyBullet {
-    const graphics = this.add.graphics();
-    graphics.fillStyle(color, 1);
-    graphics.fillCircle(0, 0, 4);
-    graphics.setPosition(x, y);
+    // Legacy generic shot: the cached-disc texture, never a per-bullet
+    // Graphics object (AH-0MW2DAY2L004QSKF).
+    const { graphics } = createBullet({
+      scene: this,
+      color,
+      size: 4,
+      x,
+      y,
+    });
     const bullet: PlayEnemyBullet = { graphics, vx, vy, lifetime, elapsed: 0 };
     this.enemyBullets.push(bullet);
     return bullet;

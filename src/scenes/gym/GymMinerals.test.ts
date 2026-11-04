@@ -267,8 +267,8 @@ describe('GymMinerals — hold-full rewards are functional', () => {
   function placeEnemyBulletsOnPlayer(scene: GymMinerals, count = 1): void {
     const player = scene.getPlayer()!;
     for (let i = 0; i < count; i += 1) {
-      const graphics = scene.add.graphics();
-      graphics.setPosition(player.x, player.y);
+      // Bullets are cached-texture sprites (AH-0MW2DAY2L004QSKF).
+      const graphics = scene.add.image(player.x, player.y, '__DEFAULT');
       (scene as unknown as { bullets: FormationSceneBullet[] }).bullets.push({
         graphics,
         vx: 0,

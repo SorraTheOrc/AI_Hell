@@ -55,6 +55,8 @@ import { Harvester } from '../../entities/Harvester';
 import { OrbitalStrike } from '../../entities/OrbitalStrike';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
+import { resolveEnemyBulletVisual } from '../../utils/bulletVisuals';
+import { bulletTextureKey } from '../../utils/bulletTextures';
 import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
 import type { Player } from '../../entities/Player';
 import { Centipede } from '../../entities/Centipede';
@@ -1969,8 +1971,8 @@ describe('GymFodderEnemies — P3 shield / P6 phase hit-gating on the real diver
   /** Parks a stationary enemy bullet on the player's current position. */
   function placeEnemyBulletOnPlayer(scene: GymFodderEnemies): FormationSceneBullet {
     const player = scene.getPlayer()!;
-    const graphics = scene.add.graphics();
-    graphics.setPosition(player.x, player.y);
+    // Bullets are cached-texture sprites (AH-0MW2DAY2L004QSKF).
+    const graphics = scene.add.image(player.x, player.y, '__DEFAULT');
     const bullet: FormationSceneBullet = {
       graphics,
       vx: 0,
@@ -2021,29 +2023,20 @@ describe('GymFodderEnemies — P3 shield / P6 phase hit-gating on the real diver
 });
 
 /**
- * AH-0MVV0WOKU001W2TU AC7 — visual check on the real gym route that hosts the
- * Diver (`GymFodderEnemies` with `enemyKey: 'diver'`).
+ * AH-0MVV0WOKU001W2TU AC7 — the real gym route that hosts the Diver
+ * (`GymFodderEnemies` with `enemyKey: 'diver'`) renders its shards through the
+ * **shared** `shard` primitive, not a divergent copy.
  *
- * The strengthened `shard` primitive is deliberately shared by the player's
- * Shard Swarm bullets and the Diver's spread burst (producer decision Q1 = C),
- * so the gym render is verified mechanically here at the Diver's base bullet
- * radius (3 px): a two-pass spine (a lighter tint of the shard's own colour
- * under a white-hot core), a 2 px rim stroke and a larger, never-washed-out
- * glint — all still reading against the Diver's pale-yellow (`0xffee88`) body
- * and `0xffff00` rim palette. The subjective in-game judgement stays with the
- * reviewer; this pins the draw the gym actually renders.
+ * The strengthened shard geometry itself (two-pass spine, 2 px rim, enlarged
+ * glint) is pinned by `src/utils/bulletVisuals.test.ts`, including the
+ * assertion that both consumers draw the same shared primitive. Here the gym
+ * route is pinned to that primitive: the fired bullets come from
+ * `resolveEnemyBulletVisual('diver')` and use the cached `shard` texture with
+ * its in-flight shimmer animation — so the gym cannot drift from the game
+ * (AGENTS.md gym↔game parity, AH-0MW2DAY2L004QSKF).
  */
-describe('GymFodderEnemies — Diver shards render the strengthened shared shard (AH-0MVV0WOKU001W2TU)', () => {
+describe('GymFodderEnemies — Diver shards use the shared shard visually (AH-0MVV0WOKU001W2TU)', () => {
   let booted: BootedGame | null = null;
-
-  // Phaser Graphics command ids + parameter widths used to walk the buffer
-  // (ARC's opcode 0 also appears as a parameter value, so index arithmetic is
-  // required — a bare lastIndexOf is ambiguous).
-  const ARC = 0;
-  const FILL_STYLE = 7;
-  const COMMAND_WIDTHS: Record<number, number> = {
-    [ARC]: 7, 1: 0, 2: 0, 3: 4, 4: 2, 5: 2, 6: 3, 7: 2, 8: 0, 9: 0, 10: 6, 11: 6,
-  };
 
   beforeEach(() => {
     localStorage.clear();
@@ -2058,7 +2051,7 @@ describe('GymFodderEnemies — Diver shards render the strengthened shared shard
     document.getElementById('enemy-gym-panel')?.remove();
   });
 
-  it('draws the diver burst with the strengthened spine, rim and glint at base radius', async () => {
+  it('fires the shared shard identity through the gym fire dispatcher', async () => {
     class DiverShardGym extends GymFodderEnemies {
       override init(): void {
         super.init({ enemyKey: 'diver' });
@@ -2071,56 +2064,31 @@ describe('GymFodderEnemies — Diver shards render the strengthened shared shard
     diver.shootEnabled = true;
 
     // The gym's `collectBullets` reaches exactly this method for the `diver`
-    // archetype through the shared `fireForEnemy` dispatcher, so firing it
-    // directly exercises the real gym firing seam.
+    // archetype through the shared `fireForEnemy` dispatcher.
     expect(enemyFireMethod('diver')).toBe('tryFireSpreadBurst');
     const bullets = diver.tryFireSpreadBurst(1_000_000);
     expect(bullets).toHaveLength(DEFAULT_ENEMY_CONFIGS.diver.burstCount);
 
-    const buf = bullets[0].graphics.commandBuffer as number[];
-    const fills: Array<{ color: number; alpha: number }> = [];
-    const arcs: Array<{ radius: number; alpha: number }> = [];
-    let lastFillAlpha = 1;
-    for (let i = 0; i < buf.length; i += 1 + (COMMAND_WIDTHS[buf[i]] ?? 0)) {
-      const op = buf[i];
-      if (op === FILL_STYLE) {
-        lastFillAlpha = buf[i + 2];
-        fills.push({ color: buf[i + 1], alpha: buf[i + 2] });
-      } else if (op === ARC) {
-        arcs.push({ radius: buf[i + 3], alpha: lastFillAlpha });
-      }
+    const visual = resolveEnemyBulletVisual('diver');
+    const expectedKey = bulletTextureKey({
+      shape: visual.shape,
+      color: visual.color,
+      radius: DEFAULT_ENEMY_CONFIGS.diver.bulletSize,
+      length: visual.length,
+      rimColor: visual.rimColor,
+      thickness: visual.thickness,
+      alpha: visual.alpha,
+      tail: visual.tail,
+      flame: undefined,
+    });
+
+    for (const bullet of bullets) {
+      expect(bullet.graphics.texture.key).toBe(expectedKey);
+      // The shard's sweeping glint is animated by the cached-texture sprite,
+      // never by a per-frame redraw.
+      expect(bullet.redraw).toBeTypeOf('function');
+      expect(bullet.color).toBe(DEFAULT_ENEMY_CONFIGS.diver.bulletColor);
     }
-
-    // Two-pass spine: body fill, a lighter tint of the body colour, then the
-    // white-hot core (the glint's arc fill is the fourth fill style).
-    expect(fills.length).toBeGreaterThanOrEqual(4);
-    expect(fills[0].color).toBe(DEFAULT_ENEMY_CONFIGS.diver.bulletColor);
-    expect(fills[1].color).not.toBe(DEFAULT_ENEMY_CONFIGS.diver.bulletColor);
-    expect(fills[1].color).not.toBe(0xffffff);
-    expect(fills[2].color).toBe(0xffffff);
-
-    // The Diver's one neon rim: 2 px at ≥0.95 alpha in its own `0xffff00`.
-    const strokeEnd = buf.indexOf(STROKE_PATH);
-    expect(strokeEnd, 'shard rim stroke missing').toBeGreaterThanOrEqual(0);
-    let rimStart = -1;
-    for (let i = strokeEnd - 1; i >= 0; i -= 1) {
-      if (buf[i] === LINE_STYLE) {
-        rimStart = i;
-        break;
-      }
-    }
-    expect(rimStart).toBeGreaterThanOrEqual(0);
-    expect(buf[rimStart + 1]).toBeGreaterThan(1.5); // was 1.5 px
-    expect(buf[rimStart + 2]).toBe(DEFAULT_ENEMY_CONFIGS.diver.color);
-    expect(buf[rimStart + 3]).toBeGreaterThan(0.9); // was 0.9 alpha
-
-    // The enlarged glint: r × 0.42 (was r × 0.3) and never below 0.55 alpha
-    // (was 0.3) — the shard's only arc.
-    expect(arcs).toHaveLength(1);
-    expect(arcs[0].radius).toBeGreaterThan(
-      DEFAULT_ENEMY_CONFIGS.diver.bulletSize * 0.3,
-    );
-    expect(arcs[0].alpha).toBeGreaterThan(0.3);
   });
 });
 

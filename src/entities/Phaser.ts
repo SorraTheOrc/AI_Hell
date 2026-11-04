@@ -144,7 +144,8 @@ export interface PhaserConfig {
  * lifetime elapses.
  */
 export interface PhaserBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view: a sprite of its shape's cached texture. */
+  readonly graphics: Phaser.GameObjects.Image;
   readonly color: number;
   /**
    * Per-frame redraw hook for shapes animated by the bullet's age, consumed by

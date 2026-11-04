@@ -168,15 +168,16 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
     const bullets = tank.tryFireRadialBurst(1_000_000);
     expect(bullets).toHaveLength(TANK_BURST_COUNT);
 
-    // The burst spawns its shell bullet Graphics **plus** one amber launch
-    // pop at the tank body — the enemy-side fire VFX for the whole volley
-    // (one pop per burst, not per shell — the burst is one fire event that
-    // already plays one cue+thump pair).
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), so the only
+    // new Graphics is the one amber launch pop at the tank body — the
+    // enemy-side fire VFX for the whole volley (one pop per burst, not per
+    // shell — the burst is one fire event that already plays one cue+thump
+    // pair).
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + TANK_BURST_COUNT + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     for (const bullet of bullets) {
       // The identity bullet carries its amber colour (the shared impact pass

@@ -34,6 +34,7 @@
 import Phaser from 'phaser';
 
 import { createBullet } from './bulletUtils';
+import { ensureBulletTexture } from '../utils/bulletTextures';
 import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
 import type { EnemyBulletVisual } from '../utils/bulletVisuals';
 import type { BulletShape } from '../utils/weapons';
@@ -287,7 +288,8 @@ export interface BossDemonstratedWeapon {
 // ── Bullet types ────────────────────────────────────────────────────
 
 export interface BossBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view: a sprite of its shape's cached texture. */
+  readonly graphics: Phaser.GameObjects.Image;
   readonly color: number;
   vx: number;
   vy: number;
@@ -368,7 +370,7 @@ export class Boss extends Phaser.GameObjects.Container {
   private _moveElapsedMs = 0;
 
   // Pulse wave state
-  private _pulseWaveGraphics: Phaser.GameObjects.Graphics | null = null;
+  private _pulseWaveGraphics: Phaser.GameObjects.Image | null = null;
   private _pulseWaveRadius = 0;
   private _pulseWaveSpeed = 300;
 
@@ -782,23 +784,7 @@ export class Boss extends Phaser.GameObjects.Container {
     const bullets: BossBullet[] = [];
 
     // Create a pulse wave (ring expanding from the Boss).
-    const pulse = (this.scene as Phaser.Scene).add.graphics();
-    pulse.fillStyle(BOSS_CORE_COLOR, 0.4);
-    pulse.setDepth(2);
-    pulse.setPosition(this.x, this.y);
-    this._pulseWaveRadius = BOSS_CORE_GLOW_RADIUS;
-    this._pulseWaveGraphics = pulse;
-
-    bullets.push({
-      graphics: pulse,
-      color: BOSS_CORE_COLOR,
-      vx: 0,
-      vy: 0,
-      lifetime: BOSS_BULLET_LIFETIME,
-      elapsed: 0,
-      isPulseWave: true,
-      pulseRadius: BOSS_CORE_GLOW_RADIUS,
-    });
+    bullets.push(this._spawnPulseWave(0.4));
 
     if (visual.muzzle) {
       const dx = this._playerTargetX - this.x;
@@ -894,14 +880,40 @@ export class Boss extends Phaser.GameObjects.Container {
     const aimAngle = Math.atan2(dy, dx);
     bullets.push(this._createBullet(aimAngle, speed, visual));
 
-    // Pulse wave.
-    const pulse = (this.scene as Phaser.Scene).add.graphics();
-    pulse.fillStyle(BOSS_CORE_COLOR, 0.5);
-    pulse.setDepth(2);
-    pulse.setPosition(this.x, this.y);
+    // Pulse wave (the cached ring sprite — see `_spawnPulseWave`).
+    bullets.push(this._spawnPulseWave(0.5));
+
+    // Play the Boss fire sound once per volley.
+    playBossFireSound();
+
+    this._lastAttackTime = now; // mark volley as fired
+    return bullets;
+  }
+
+  /**
+   * Spawns the Boss's expanding pulse wave as a sprite of the cached `ring`
+   * texture (AH-0MW2DAY2L004QSKF). The wave grows by sprite scale and fades
+   * by sprite alpha in {@link advancePulseWave}, so it costs one batched draw
+   * instead of a re-triangulated Graphics redraw every frame. Defined once and
+   * used by every pattern that emits a wave, so the game and the gyms run the
+   * same code (AGENTS.md gym↔game parity).
+   *
+   * @param alpha - Starting sprite alpha for the wave.
+   */
+  private _spawnPulseWave(alpha: number): BossBullet {
+    const pulseTexture = ensureBulletTexture(this.scene as Phaser.Scene, {
+      shape: 'ring',
+      color: BOSS_CORE_COLOR,
+      radius: BOSS_CORE_GLOW_RADIUS,
+      thickness: 3,
+    });
+    const pulse = (this.scene as Phaser.Scene).add
+      .image(this.x, this.y, pulseTexture.key)
+      .setDepth(2)
+      .setAlpha(alpha);
     this._pulseWaveRadius = BOSS_CORE_GLOW_RADIUS;
     this._pulseWaveGraphics = pulse;
-    bullets.push({
+    return {
       graphics: pulse,
       color: BOSS_CORE_COLOR,
       vx: 0,
@@ -910,13 +922,7 @@ export class Boss extends Phaser.GameObjects.Container {
       elapsed: 0,
       isPulseWave: true,
       pulseRadius: BOSS_CORE_GLOW_RADIUS,
-    });
-
-    // Play the Boss fire sound once per volley.
-    playBossFireSound();
-
-    this._lastAttackTime = now; // mark volley as fired
-    return bullets;
+    };
   }
 
   /**
@@ -936,11 +942,11 @@ export class Boss extends Phaser.GameObjects.Container {
       return true;
     }
 
+    // Grow and fade the cached ring texture with sprite scale/alpha — no
+    // per-frame redraw of the wave geometry (AH-0MW2DAY2L004QSKF).
     const pulse = this._pulseWaveGraphics;
-    pulse.clear();
-    const alpha = Math.max(0, 1 - this._pulseWaveRadius / maxRadius) * 0.4;
-    pulse.lineStyle(Math.max(1, 6 - this._pulseWaveRadius / 100), BOSS_CORE_COLOR, alpha);
-    pulse.strokeCircle(0, 0, this._pulseWaveRadius);
+    pulse.setScale(this._pulseWaveRadius / BOSS_CORE_GLOW_RADIUS);
+    pulse.setAlpha(Math.max(0, 1 - this._pulseWaveRadius / maxRadius) * 0.4);
 
     return false;
   }

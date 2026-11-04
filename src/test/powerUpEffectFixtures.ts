@@ -254,8 +254,12 @@ export function expectRangedClear(
  * so no spy is needed to observe a bullet leaving the field.
  */
 export class StubEnemyBullet implements CombatEnemyBullet {
-  /** The bullet's display object (destroyed by the clear). */
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /**
+   * The bullet's display object (destroyed by the clear). Bullets are cached-
+   * texture sprites (AH-0MW2DAY2L004QSKF), so the fixture uses Phaser's
+   * default texture — the clear only ever destroys it.
+   */
+  readonly graphics: Phaser.GameObjects.Image;
   /** Velocity x (px/s) — unused by the clear, present for the contract. */
   vx = 0;
   /** Velocity y (px/s) — unused by the clear, present for the contract. */
@@ -266,8 +270,7 @@ export class StubEnemyBullet implements CombatEnemyBullet {
     public x: number,
     public y: number,
   ) {
-    this.graphics = scene.add.graphics();
-    this.graphics.setPosition(x, y);
+    this.graphics = scene.add.image(x, y, '__DEFAULT');
   }
 
   /** True once the bullet's graphics have been destroyed. */

@@ -2652,7 +2652,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // Override update to emit one deterministic bullet (attack logic itself
     // is covered by Boss.test.ts).
     const fakeBullet = {
-      graphics: scene.add.graphics(),
+      graphics: scene.add.image(0, 0, '__DEFAULT'),
       vx: 100,
       vy: 100,
       color: 0xffffff,
