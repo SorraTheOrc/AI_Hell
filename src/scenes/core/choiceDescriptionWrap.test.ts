@@ -25,10 +25,12 @@ describe('wrapChoiceDescription', () => {
   });
 
   it('wraps a long catalogue description onto two lines without losing content', () => {
-    // The longest description in the shared catalogue (Teleport, 210 chars);
-    // it must fit the two-line area without truncation (AC1).
+    // The longest description in the shared catalogue (Mystery UFO, 190
+    // characters after the single-use Teleport copy was shortened by parent
+    // AH-0MVY096RT006QMF4); it must fit the two-line area without truncation
+    // (AC1).
     const copy =
-      'Stores up to 3 uses; when the ship is in danger, one is spent automatically to warp to the nearest safe spot and grant a short Phase Shift on arrival. Teleporting can be disorienting — keep your wits about you.';
+      'A rare collector drone hoovers up minerals and carries them home. One charge spawns one drone; charges regenerate on a level-derived timer, and a hold-full reward adds a charge, not a level.';
     expect(copy.length).toBeGreaterThan(
       CHOICE_DESCRIPTION_MAX_CHARS_PER_LINE,
     );

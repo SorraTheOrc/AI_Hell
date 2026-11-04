@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import Phaser from 'phaser';
 
 import { bootScene } from '../test/gameHarness';
@@ -647,7 +649,7 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
       // is no longer an unlimited supply). Teleport is single-use, so it
       // carries no count — only its readiness (parent AH-0MVY096RT006QMF4).
       expect(phase()!.label).toBe('Phase Shift Lvl 1 ×1');
-      expect(tele()!.label).toBe('Teleport Lvl 1');
+      expect(tele()!.label).toBe('Teleport Lvl 1 (ready)');
       expect(tele()!.stacks).toBeUndefined();
 
       // Spending empties the pool / starts the Teleport recharge (greyed)…
@@ -662,7 +664,7 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
       store.tickRecharge(store.teleportRechargeTime());
       hud.refresh();
       expect(phase()!.label).toBe('Phase Shift Lvl 1 ×1');
-      expect(tele()!.label).toBe('Teleport Lvl 1');
+      expect(tele()!.label).toBe('Teleport Lvl 1 (ready)');
       expect(tele()!.recharge).toBeUndefined();
       expect(rowGreyed(phase())).toBe(false);
       expect(rowGreyed(tele())).toBe(false);
@@ -752,6 +754,21 @@ describe('HUD label builder (AH-0MUX802450085VZZ)', () => {
       'Thorn Field Lvl 1 (next in 4s)',
     );
     expect(buildHUDLabel('Thorn Field', 1, 1, 0)).toBe('Thorn Field Lvl 1 ×1');
+  });
+
+  it('appends a `ready` state for a single-use kind with no countdown (AH-0MW231O8Q0095LQM)', () => {
+    expect(buildHUDLabel('Teleport', 1, undefined, undefined, true)).toBe(
+      'Teleport Lvl 1 (ready)',
+    );
+    // A live recharge always wins: a row can never read `ready` mid-countdown.
+    expect(buildHUDLabel('Teleport', 1, undefined, 4.2, true)).toBe(
+      'Teleport Lvl 1 (next in 5s)',
+    );
+    // Without the flag the label is byte-for-byte unchanged (pooled kinds).
+    expect(buildHUDLabel('Phase Shift', 1, 1)).toBe('Phase Shift Lvl 1 ×1');
+    expect(buildHUDLabel('Phase Shift', 1, 1, 7.2)).toBe(
+      'Phase Shift Lvl 1 ×1 (next in 8s)',
+    );
   });
 });
 
@@ -1073,7 +1090,7 @@ describe('HUD temporary window on the newly windowed kinds (AH-0MVUGI4WG008HU3M 
     expect(during.temporary).toBe(true);
     // No stored count is ever published for a single-use kind.
     expect(during.stacks).toBeUndefined();
-    expect(during.label).toBe('Teleport Lvl 1');
+    expect(during.label).toBe('Teleport Lvl 1 (ready)');
     const opened = countdownSeconds(during.value);
 
     reg.tick(1);
@@ -1652,6 +1669,140 @@ describe('HUD loadout grouping (AH-0MVVF0POV001JNKX)', () => {
   });
 });
 
+// ── Single-use Teleport row (AH-0MW231O8Q0095LQM, parent AH-0MVY096RT006QMF4
+//    AC7) ─────────────────────────────────────────────────────────────────
+//
+// Teleport holds no charge pool: its row reads `ready` while the readiness
+// timer is 0 and the shared `next in Ns` countdown while it recharges, greys
+// out while recharging, and never carries a `×N` stack suffix. All of it comes
+// from the shared HUD model, so `PlayScene` and every gym inherit it
+// (`src/scenes/core/hudSingleUseTeleport.parity.test.ts` pins that parity).
+
+/** The body of `methodName` in a TypeScript source text (brace-balanced). */
+function methodSource(source: string, methodName: string): string {
+  const start = source.indexOf(methodName);
+  if (start < 0) return '';
+  const open = source.indexOf('{', start);
+  if (open < 0) return '';
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  return '';
+}
+
+describe('HUD single-use Teleport row (AH-0MW231O8Q0095LQM)', () => {
+  /** A registry whose store the test drives, with a permanently owned Teleport. */
+  function ownedTeleport(): {
+    store: PowerUpLevelStore;
+    reg: EffectsRegistry;
+  } {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    store.collect('teleport', true); // hold-full grant: owned and ready
+    return { store, reg };
+  }
+
+  it('renders `ready` for an owned Teleport, with no stack suffix (AC1/AC2)', async () => {
+    const { reg } = ownedTeleport();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(row).toBeDefined();
+    expect(row.label).toBe('Teleport Lvl 1 (ready)');
+    expect(row.label).not.toContain('×');
+    expect(row.stacks).toBeUndefined();
+    expect(row.recharge).toBeUndefined();
+    expect(rowGreyed(row)).toBe(false);
+    destroy(game);
+  });
+
+  it('renders `next in Ns` from the store timer and greys the row while recharging (AC2/AC3)', async () => {
+    const { store, reg } = ownedTeleport();
+    expect(reg.consumeTeleport()).toBe(true);
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const remaining = store.teleportRechargeRemaining();
+    expect(remaining).toBeCloseTo(store.teleportRechargeTime(), 6);
+
+    const row = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(row).toBeDefined();
+    // N is the store's remaining seconds through the shared label formatter.
+    expect(row.recharge).toBeCloseTo(remaining, 6);
+    expect(row.label).toBe(
+      `Teleport Lvl 1 (next in ${Math.ceil(remaining)}s)`,
+    );
+    expect(row.label).not.toContain('×');
+    expect(row.stacks).toBeUndefined();
+    expect(rowGreyed(row)).toBe(true);
+
+    // The countdown is live: only the shared recharge clock advances it.
+    store.tickRecharge(10);
+    hud.refresh();
+    const ticking = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(ticking.recharge).toBeCloseTo(remaining - 10, 6);
+    expect(ticking.label).toBe(
+      `Teleport Lvl 1 (next in ${Math.ceil(remaining - 10)}s)`,
+    );
+    expect(rowGreyed(ticking)).toBe(true);
+
+    // Elapsed interval: the row returns to `ready` and un-greys.
+    store.tickRecharge(store.teleportRechargeTime());
+    hud.refresh();
+    const settled = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(settled.label).toBe('Teleport Lvl 1 (ready)');
+    expect(settled.recharge).toBeUndefined();
+    expect(settled.label).not.toContain('next in');
+    expect(rowGreyed(settled)).toBe(false);
+    destroy(game);
+  });
+
+  it('keeps the recharging row visible through the shared ownership rule, not a charge count (AC4)', async () => {
+    const { reg } = ownedTeleport();
+    expect(reg.consumeTeleport()).toBe(true);
+    // A single-use kind never holds a pool charge, so the pooled-charge half
+    // of the generalised visibility rule can never be what keeps this row
+    // alive — ownership does, exactly as for every other consumable.
+    expect(reg.consumableCharges('teleport')).toBe(0);
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'teleport');
+    expect(row).toBeDefined();
+    expect(rowGreyed(row)).toBe(true);
+    // The row is owned, so it is loadout-counted — no non-slot marker is
+    // needed to explain it away.
+    expect(row!.slotCounted).toBe(true);
+    expect(row!.marker).toBeUndefined();
+    destroy(game);
+  });
+
+  it('suppresses the stack suffix from the catalogue single-use flag, never an id branch (AC5)', () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/ui/HUD.ts'),
+      'utf8',
+    );
+    // Prose may name Teleport; only executable code is inspected.
+    const stacks = methodSource(source, 'private _powerUpStacks(').replace(
+      /\/\/.*$/gm,
+      '',
+    );
+    expect(stacks).not.toBe('');
+    // Data-driven: the suppression reads the catalogue `singleUse` flag…
+    expect(stacks).toContain('singleUse');
+    // …and the HUD holds no `id === 'teleport'` stack special case.
+    expect(stacks).not.toContain("'teleport'");
+    expect(stacks).not.toContain('"teleport"');
+  });
+});
+
 // ── Consumable charges and regeneration countdown (parent AH-0MVTQMREN009DSFW
 //    AC4) ────────────────────────────────────────────────────────────────
 //
@@ -1787,7 +1938,7 @@ describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
     const ready = rowFor(hud, 'teleport')!;
     expect(ready).toBeDefined();
     expect(ready.stacks).toBeUndefined();
-    expect(ready.label).toBe('Teleport Lvl 1');
+    expect(ready.label).toBe('Teleport Lvl 1 (ready)');
     expect(ready.recharge).toBeUndefined();
     expect(ready.greyed).toBe(false);
 

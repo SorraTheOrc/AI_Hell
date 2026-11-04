@@ -41,7 +41,7 @@
  * The row list is **not** the loadout: the six-slot model
  * (`powerups/slots.ts`) counts distinct kinds a run holds, while a row is a
  * display entry — and two row classes never hold a slot (exempt entries such
- * as the Mystery UFO, and Phase Shift / Teleport charge pools that outlive a
+ * as the Mystery UFO, and the Phase Shift charge pool that outlives a
  * temporary window). When a scene supplies `HUDOptions.getSlotState`
  * (`resolvePlayerSlotState(player)`, wired once through
  * `scenes/core/hudWiring.ts`), the HUD:
@@ -256,21 +256,27 @@ export function formatHUDValue(
  * consumable count as ` ×<stacks>` so the value column stays `∞`/countdown,
  * plus an optional `next in Ns` recharge countdown (Thorn Field,
  * AH-0MVJ8YKR70096C6T) so a recharging row is never an inert bare label.
+ *
+ * A **single-use** kind (Teleport, parent AH-0MVY096RT006QMF4) passes `ready`
+ * instead of a count, so its row reads `(ready)` while the ability is armed
+ * and the same `(next in Ns)` form while it recharges (AH-0MW231O8Q0095LQM).
+ * A live countdown always wins: a row can never read `ready` mid-recharge.
  */
 export function buildHUDLabel(
   name: string,
   level: number,
   stacks?: number,
   rechargeSeconds?: number,
+  ready?: boolean,
 ): string {
   const withStacks =
     stacks !== undefined && stacks > 0
       ? `${name} Lvl ${level} ×${stacks}`
       : `${name} Lvl ${level}`;
-  if (rechargeSeconds === undefined || rechargeSeconds <= 0) {
-    return withStacks;
+  if (rechargeSeconds !== undefined && rechargeSeconds > 0) {
+    return `${withStacks} (next in ${Math.ceil(rechargeSeconds)}s)`;
   }
-  return `${withStacks} (next in ${Math.ceil(rechargeSeconds)}s)`;
+  return ready === true ? `${withStacks} (ready)` : withStacks;
 }
 
 /**
@@ -844,8 +850,8 @@ export class HUD extends Phaser.GameObjects.Container {
    * with the effective level in the label and `∞`/countdown in the value
    * (AH-0MUX802450085VZZ). Extra Life is represented by the dedicated lives counter
    * and is never a row. Preserves the pre-existing visibility rules (a
-   * permanent Bomb bomb, Phase Shift charges/permanent/active phase, Teleport stored
-   * teleports, Magnet/Mineral Scoop timed or permanent).
+   * permanent Bomb bomb, Phase Shift charges/permanent/active phase, a
+   * permanently owned Teleport, Magnet/Mineral Scoop timed or permanent).
    */
   private _buildPowerUpRows(): HUDEntry[] {
     const reg = this._registry;
@@ -870,11 +876,16 @@ export class HUD extends Phaser.GameObjects.Container {
       const stacks = this._powerUpStacks(id);
       const recharge = this._powerUpRecharge(id);
       const greyed = this._isPowerUpGreyed(id);
+      // A single-use kind reads `ready` while its ability is armed
+      // (AH-0MW231O8Q0095LQM): the catalogue flag decides, so no
+      // `id === 'teleport'` branch lives here.
+      const ready =
+        getPowerUpById(id).singleUse === true && reg.isTeleportReady();
       const marker = state ? this._slotMarker(id, state) : undefined;
       rows.push({
         id,
         name: entry.name,
-        label: buildHUDLabel(entry.name, level, stacks, recharge),
+        label: buildHUDLabel(entry.name, level, stacks, recharge, ready),
         icon: entry.id,
         value: formatHUDValue(temporary, remaining),
         level,
@@ -894,8 +905,8 @@ export class HUD extends Phaser.GameObjects.Container {
    * holds a slot. Derived from the shared model, never from row knowledge:
    *
    * - exempt entries (`availableWhenSlotsFull`) → "always available";
-   * - anything else held-only by a consumable pool (a Phase Shift / Teleport
-   *   row kept alive by remaining charges after its window expired) →
+   * - anything else held-only by a consumable pool (a Phase Shift row kept
+   *   alive by its remaining charges after its window expired) →
    *   "charges only".
    */
   private _slotMarker(
@@ -943,7 +954,11 @@ export class HUD extends Phaser.GameObjects.Container {
         // (AH-0MV82I97Y007MB6M).
         return reg.isActive('phase_shift');
       case 'teleport':
-        // Only the charge pool keeps a Teleport row alive — handled above.
+        // A single-use kind (parent AH-0MVY096RT006QMF4) has no charge pool:
+        // permanent ownership or a live pickup level keeps its row alive
+        // through the generalised consumable rule above, so no Teleport
+        // branch is needed here (asserted, never special-cased —
+        // AH-0MW231O8Q0095LQM AC4).
         return false;
       case 'magnet':
         return reg.isMagnetActive();
@@ -997,15 +1012,19 @@ export class HUD extends Phaser.GameObjects.Container {
    * `forceFieldRemaining`) report the pooled charges for every acquisition
    * path — a field pickup grants exactly one charge and opens no effect
    * window under the absorbed-hit model (parent AH-0MVUVSW4J0009QUW), so the
-   * pool is never misread from a parallel window counter. Phase Shift,
-   * Teleport is **single-use** and surfaces no count at all (parent
-   * AH-0MVY096RT006QMF4); Mystery UFO has no separate window budget and
-   * reads the pool directly.
+   * pool is never misread from a parallel window counter. Phase Shift and
+   * Mystery UFO surface their pooled count; Teleport is **single-use** and
+   * surfaces no count at all (parent AH-0MVY096RT006QMF4), and kinds without
+   * a pool surface nothing.
    *
    * Non-consumable kinds surface no count (their level alone is the state).
    */
   private _powerUpStacks(id: PowerUpId): number | undefined {
     if (!isConsumablePowerUpId(id)) return undefined;
+    // The catalogue `singleUse` flag decides, never an `id === 'teleport'`
+    // branch: a single-use kind has no stored count to surface
+    // (AH-0MW231O8Q0095LQM AC5).
+    if (getPowerUpById(id).singleUse === true) return undefined;
     return this._consumableCharges(id) || undefined;
   }
 
@@ -1024,7 +1043,9 @@ export class HUD extends Phaser.GameObjects.Container {
       case 'force_field':
         return reg.forceFieldRemaining();
       default:
-        // Phase Shift / Teleport / Mystery UFO: the pool is the whole budget.
+        // Phase Shift / Mystery UFO: the pool is the whole budget. A
+        // single-use kind (Teleport) holds no pool and reads 0 here, but its
+        // stack suffix is suppressed by `_powerUpStacks` before this runs.
         return reg.consumableCharges(id);
     }
   }

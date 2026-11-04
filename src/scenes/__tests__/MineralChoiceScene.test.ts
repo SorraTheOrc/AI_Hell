@@ -358,17 +358,21 @@ describe('MineralChoiceScene', () => {
   });
 
   describe('two-line description area (AH-0MVBLBSG3002WHBI)', () => {
-    /** The longest description in the shared catalogue (Teleport, 210 chars). */
+    /**
+     * The longest description in the shared catalogue (Mystery UFO, 190
+     * characters — the single-use Teleport copy was shortened by parent
+     * AH-0MVY096RT006QMF4).
+     */
     const LONGEST_COPY =
-      'Stores up to 3 uses; when the ship is in danger, one is spent automatically to warp to the nearest safe spot and grant a short Phase Shift on arrival. Teleporting can be disorienting — keep your wits about you.';
+      'A rare collector drone hoovers up minerals and carries them home. One charge spawns one drone; charges regenerate on a level-derived timer, and a hold-full reward adds a charge, not a level.';
 
     it('AC1/AC7 — wraps the longest catalogue copy onto two lines inside the playfield', async () => {
       booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted.game.scene.start('MineralChoiceScene', {
         options: [
           {
-            id: 'teleport',
-            name: 'Teleport',
+            id: 'mystery_ufo',
+            name: 'Mystery UFO',
             kind: 'powerup',
             description: LONGEST_COPY,
             changeSummary: 'Permanent for this run',
@@ -478,8 +482,8 @@ describe('MineralChoiceScene', () => {
       booted.game.scene.start('MineralChoiceScene', {
         options: [
           {
-            id: 'teleport',
-            name: 'Teleport',
+            id: 'mystery_ufo',
+            name: 'Mystery UFO',
             kind: 'powerup',
             description: LONGEST_COPY,
             changeSummary: 'Permanent for this run',
