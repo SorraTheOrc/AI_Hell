@@ -192,6 +192,9 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     expect(doc).toContain('base64 -d');
     // Git-ignored, so a crashed run leaves no worktree change.
     expect(doc).toContain('src/data/*.tune-journal');
+    // An abort before the edit lands reconciles the journal it wrote itself
+    // (AH-0MW251IE0006K5DS).
+    expect(doc).toMatch(/reconciles the journal it wrote/);
   });
 
   it('documents the per-run progress and the opt-in watchdog (AH-0MVSE1OPF008G1SB)', () => {

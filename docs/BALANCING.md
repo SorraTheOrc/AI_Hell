@@ -889,8 +889,15 @@ removed by the fail-fast validation above rather than by the watchdog.
   `src/data/<file>.tune-journal` (written to a sibling temp file, `fsync`ed and
   atomically renamed, so a kill at any moment leaves either no journal or a
   complete one). The journal is removed after a successful restore, and with
-  `--keep-edit` it is removed **without** restoring. It is git-ignored
-  (`src/data/*.tune-journal`), so a crashed run leaves no worktree change.
+  `--keep-edit` it is removed **without** restoring. An abort that lands
+  between the journal write and the edit — the watchdog's `applying the CSV
+  edit` boundary, or an edit that throws — reconciles the journal it wrote
+  itself (each journal records the `pid` that wrote it, so a concurrent run's
+  journal is never touched), restoring the CSV and removing the journal. A
+  finished run therefore never leaves one behind; only a hard-killed process
+  does, and that is what the next invocation reconciles. The journal is
+  git-ignored (`src/data/*.tune-journal`), so a crashed run leaves no worktree
+  change.
 
   A `SIGKILL` (OOM, an external timeout kill) runs no `finally`, so the
   in-memory restore cannot help — the journal is what makes the edit
