@@ -57,6 +57,7 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState, MAX_LEVEL, MAX_LIVES } from '../core/GameState';
+import type { PerformanceCounts } from '../core/perfProbe';
 import {
   extraLifeDropChance,
   POWER_UP_DROP_CHANCE,
@@ -5448,6 +5449,18 @@ export class PlayScene extends CombatScene<
   /** Live power-up drops. */
   getDrops(): PlayDrop[] {
     return this.drops.slice();
+  }
+
+  /**
+   * Live entity counts for the dev performance probe (AH-0MVXV0DER009ER70).
+   *
+   * Adds the mineral count to the shared `CombatScene` implementation — the
+   * only count the shipped game owns that the shared core cannot see. The
+   * probe samples this at a low cadence, so the `spawned.map` inside
+   * `getEnemyEntities()` is not on the measured frame's hot path.
+   */
+  override getPerformanceCounts(): PerformanceCounts {
+    return { ...super.getPerformanceCounts(), minerals: this.minerals.length };
   }
 
   /** In-flight absorb animations for collected drops (test seam). */

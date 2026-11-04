@@ -1,6 +1,7 @@
 import { Game } from './Game';
 import { loadConfigs } from './configStore';
 import { registerCaptureDirector } from './captureDirector';
+import { registerPerfProbe } from './perfProbe';
 import { warnOnWeaponDataDivergences } from '../utils/weaponDataDiagnostics';
 
 /**
@@ -34,5 +35,10 @@ export async function bootGame(): Promise<Game> {
   await loadConfigs();
   const game = new Game();
   registerCaptureDirector(game);
+  // The dev-only frame-time probe (`window.__aiHellPerfProbe`,
+  // AH-0MVXV0DER009ER70) the performance harness samples the Phaser loop
+  // through. Registered after the game exists, and dev-gated, so a production
+  // build never writes the global.
+  registerPerfProbe(game.phaser);
   return game;
 }

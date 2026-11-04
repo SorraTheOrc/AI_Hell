@@ -6,6 +6,12 @@
 > RNG or wiring it into CI are explicitly **out of scope** (record those as
 > follow-up work items instead).
 
+> **See also:** frame-**time** measurement (as opposed to video capture) is a
+> separate tool — `npm run perf:measure` (`scripts/measure-performance.mjs`,
+> AH-0MVXV0DER009ER70). It reuses this tool's Playwright boot pattern but
+> reports p50/p95 frame times, effective FPS, long frames and live entity
+> counts; see [docs/PERFORMANCE.md](../PERFORMANCE.md).
+
 This document records how AI_Hell can produce a gameplay video **without a
 human recording their screen**: one opt-in command boots the game in a real
 rendering browser, starts the **in-game attract/demo mode** (the shipped bot

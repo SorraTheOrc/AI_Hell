@@ -859,6 +859,43 @@ added by AH-0MUWTNPYJ0031FQE):
 - **Recommendation, rejected alternatives and measured CI cost:** see
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md).
 
+#### Frame-time performance measurement (dev tooling)
+
+`npm run perf:measure` (`scripts/measure-performance.mjs`, AH-0MVXV0DER009ER70)
+boots the dev build in headless Chromium with Playwright, runs a scene for a
+fixed wall-clock window and reports the numbers a performance claim needs:
+**p50 / p95 / max frame time**, **effective FPS** (frames ÷ elapsed), **long
+frame counts** (> 33 ms and > 50 ms) and the **sampled live entity counts**
+(enemies, enemy bullets, player bullets, minerals). JSON goes to stdout and to
+`--out <file>`; a human summary goes to stderr.
+
+```bash
+npm run perf:measure -- --seconds 60                       # PlayScene, 60 s
+npm run perf:measure -- --scene GymPerformance --seconds 60
+npm run perf:measure -- --cpu-throttle 4                    # mobile tier
+npm run perf:measure -- --out before.json
+npm run perf:measure -- --out after.json --compare before.json
+```
+
+- **Method:** frame times are the differences between consecutive Phaser
+  `poststep` timestamps, sampled through the dev-gated page probe
+  (`window.__aiHellPerfProbe`, `src/core/perfProbe.ts`; never written in a
+  production build) — the game loop's real frame interval, not a bare
+  `requestAnimationFrame` counter. Entity counts come from the shared
+  `CombatScene.getPerformanceCounts()` seam, so the game and every gym report
+  the same fields. The method string is recorded in every report.
+- **Every report is self-labelling:** scene, requested duration, warm-up,
+  CPU-throttle factor, method and host description, so a stored baseline is
+  never compared against an unlabelled run.
+- **CI-runnable:** JSON on stdout, non-zero exit on failure, `--json` to
+  suppress the summary. Adding a pipeline job is a follow-up.
+- **Fully opt-in:** the harness lives under `scripts/` and is never imported by
+  `src/`; `playwright` is a devDependency (`npm run capture:install` installs
+  Chromium). The pure maths (`scripts/perf-report.mjs`) is unit-tested without a
+  browser.
+- **Budget, reported fields, reference machine, noise floor and how to compare
+  two runs:** see [docs/PERFORMANCE.md](./docs/PERFORMANCE.md).
+
 #### On-screen action intensity (research & decision)
 
 The recorded measure of how much action is on screen during a run — and the

@@ -63,6 +63,7 @@ import type {
   WeaponId,
 } from '../../utils/weapons';
 import type { HitscanTarget } from './hitscanBeam';
+import type { PerformanceCounts } from '../../core/perfProbe';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { resolveThornsAbsorb } from '../../vfx/thornsAbsorb';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -197,6 +198,25 @@ export abstract class CombatScene<
   protected abstract getEnemyBullets(): readonly TBullet[];
   /** Replaces the enemy-bullet collection after a collision pass. */
   protected abstract setEnemyBullets(bullets: TBullet[]): void;
+
+  /**
+   * Live entity counts for the dev performance probe
+   * (AH-0MVXV0DER009ER70, parent AH-0MVWJQUN6009IS87).
+   *
+   * Read by `src/core/perfProbe.ts` at a low cadence to label every
+   * frame-time sample with the load that produced it, so a gym and the game
+   * report the same fields from the same implementation (games↔gym parity).
+   * `minerals` is `null` here because the shared core owns no minerals; a
+   * scene that has them overrides this to add the count.
+   */
+  getPerformanceCounts(): PerformanceCounts {
+    return {
+      enemies: this.getEnemyEntities().length,
+      enemyBullets: this.getEnemyBullets().length,
+      playerBullets: this.playerBullets.length,
+      minerals: null,
+    };
+  }
 
   // ── Overridable hooks (default = generic gym behaviour) ───────────
 

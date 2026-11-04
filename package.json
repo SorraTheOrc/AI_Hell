@@ -18,6 +18,7 @@
     "capture:promo": "node scripts/compile-promo.mjs --compile",
     "evaluate": "node scripts/evaluate.mjs",
     "ring-timing": "node scripts/ring-timing.mjs",
+    "perf:measure": "node scripts/measure-performance.mjs",
     "validate-experience": "node scripts/validate-experience.mjs",
     "capture:install": "playwright install chromium",
     "generate:mode-ledger": "node scripts/generate-mode-ledger.mjs",
