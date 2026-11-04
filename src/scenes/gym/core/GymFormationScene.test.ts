@@ -2175,16 +2175,16 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.aliveCount).toBe(aliveBefore);
   });
 
-  it('AC4 — P7 teleport consumes a stack, moves the ship and grants P6', async () => {
+  it('AC4 — P7 teleport spends the ready warp, moves the ship and grants P6', async () => {
     const scene = await boot(layer('teleport', CLEAR));
     const player = scene.getPlayer()!;
 
-    // Collect a Teleport to gain a teleport stack.
+    // Collect a Teleport to gain the single ready warp.
     scene.spawnPowerUpDrop('teleport', player.x, player.y);
     scene.tick(0.1);
 
     const registry = scene.getEffectsRegistry();
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
 
     // Move the ship off the grid-centre fallback so the safe-spot search
     // must pick a genuinely different landing position.
@@ -2193,7 +2193,7 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     const beforeY = player.y;
     expect(scene.triggerTeleport()).toBe(true);
 
-    expect(registry.teleportStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
     expect(registry.isPhased).toBe(true);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
     expect(player.x).toBeGreaterThanOrEqual(0);

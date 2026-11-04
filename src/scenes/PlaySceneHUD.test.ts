@@ -224,7 +224,8 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     { id: 'chrono', level: 1 },
     { id: 'force_field', level: 1 },
     { id: 'phase_shift', level: 2 },
-    // Over the charge cap on purpose: the replay must clamp, never stack.
+    // Over-granted on purpose: the replay must clamp, never stack (Teleport
+    // is single-use, so every grant just keeps it ready).
     { id: 'teleport', level: POWER_UP_CHARGE_CAP + 2 },
     { id: 'magnet', level: 1 },
     { id: 'mineral_scoop', level: 1 },
@@ -396,19 +397,20 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     expect(scene.getRunSeed()).toBe(CHECKPOINT.runSeed);
   });
 
-  it('AC5 — replaying an over-granted charge pool stays within POWER_UP_CHARGE_CAP', async () => {
+  it('AC5/AC7 — replaying an over-granted pool clamps Phase Shift and readies Teleport', async () => {
     const scene = await bootResumed();
     const registry = scene.getEffectsRegistry();
     // A replayed pool is clamped at the kind's level-derived charge cap
     // (parent AH-0MVTQMREN009DSFW AC2/AC3), which is itself within the
     // shipped POWER_UP_CHARGE_CAP ceiling.
-    const store = scene.getPlayer()!.getPowerUpLevelStore();
-    expect(registry.teleportStacks()).toBe(
-      store.consumableChargeCap('teleport'),
-    );
-    expect(registry.teleportStacks()).toBeLessThanOrEqual(POWER_UP_CHARGE_CAP);
     expect(registry.phaseCharges()).toBeLessThanOrEqual(POWER_UP_CHARGE_CAP);
     expect(registry.phaseCharges()).toBeGreaterThan(0);
+    // Teleport is single-use (parent AH-0MVY096RT006QMF4): the over-granted
+    // replay leaves it permanently owned and **ready**, with no stored count.
+    expect(registry.isConsumableOwned('teleport')).toBe(true);
+    expect(registry.hasTeleport()).toBe(true);
+    expect(registry.teleportRechargeRemaining()).toBe(0);
+    expect(registry.consumableCharges('teleport')).toBe(0);
   });
 
   it('AC3 — a fresh (non-resume) run starts with no upgrade rows or effects', async () => {

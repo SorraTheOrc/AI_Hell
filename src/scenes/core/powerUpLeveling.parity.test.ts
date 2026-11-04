@@ -77,7 +77,9 @@ const OBSERVABLE: Record<PowerUpId, (registry: EffectsRegistry) => number> = {
   bomb: (r) => r.bombRange(),
   speed_boost: (r) => r.speedMultiplier(),
   phase_shift: (r) => r.phaseCharges(),
-  teleport: (r) => r.teleportStacks(),
+  // Readiness is binary (parent AH-0MVY096RT006QMF4): 1 while the single warp
+  // is ready, 0 while it recharges — there is no stored count.
+  teleport: (r) => (r.hasTeleport() ? 1 : 0),
   extra_life: (r) => r.lives(),
   magnet: (r) => r.magnetStacks(),
   mineral_scoop: (r) => r.scoopStacks(),

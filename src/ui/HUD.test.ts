@@ -617,10 +617,10 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
   );
 
   it(
-    'renders the owned Teleport row normally while stacks remain',
+    'renders the owned Teleport row normally while its warp is ready',
     async () => {
       const { store, reg } = storeRegistry();
-      store.collect('teleport', true); // owned, 1 stack
+      store.collect('teleport', true); // owned, ready
       const { game, hud } = await bootWithHUD(reg);
       hud.refresh();
 
@@ -636,7 +636,7 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
     async () => {
       const { store, reg } = storeRegistry();
       store.collect('phase_shift', true); // ×1
-      store.collect('teleport', true); // ×1
+      store.collect('teleport', true); // single-use: ready, never ×1
       const { game, hud } = await bootWithHUD(reg);
       hud.refresh();
 
@@ -644,23 +644,26 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
       const tele = () => hud.getRows().find((r) => r.id === 'teleport');
 
       // The finite pool count is surfaced (the permanent Phase Shift reward
-      // is no longer an unlimited supply) — existing behaviour for Teleport.
+      // is no longer an unlimited supply). Teleport is single-use, so it
+      // carries no count — only its readiness (parent AH-0MVY096RT006QMF4).
       expect(phase()!.label).toBe('Phase Shift Lvl 1 ×1');
-      expect(tele()!.label).toBe('Teleport Lvl 1 ×1');
+      expect(tele()!.label).toBe('Teleport Lvl 1');
+      expect(tele()!.stacks).toBeUndefined();
 
-      // Spending empties the pool (greyed)…
+      // Spending empties the pool / starts the Teleport recharge (greyed)…
       store.consumePhaseCharge();
       store.consumeTeleport();
       hud.refresh();
       expect(rowGreyed(phase())).toBe(true);
       expect(rowGreyed(tele())).toBe(true);
 
-      // …and a completed recharge returns the charge to the label.
+      // …and a completed recharge returns the charge / the ready warp.
       store.tickRecharge(store.phaseRechargeTime());
       store.tickRecharge(store.teleportRechargeTime());
       hud.refresh();
       expect(phase()!.label).toBe('Phase Shift Lvl 1 ×1');
-      expect(tele()!.label).toBe('Teleport Lvl 1 ×1');
+      expect(tele()!.label).toBe('Teleport Lvl 1');
+      expect(tele()!.recharge).toBeUndefined();
       expect(rowGreyed(phase())).toBe(false);
       expect(rowGreyed(tele())).toBe(false);
       destroy(game);
@@ -1055,19 +1058,22 @@ describe('HUD temporary window on the newly windowed kinds (AH-0MVUGI4WG008HU3M 
     });
   }
 
-  // Teleport's row is kept visible by the stored-use pool, so a field-only
-  // pickup counts down and then settles on `∞` even though the level reverted
-  // to zero — the consumable itself persists (AC1 + AC3 together).
-  it('teleport: the row counts down during the field window, then reads ∞', async () => {
+  // Teleport is single-use (parent AH-0MVY096RT006QMF4): its row carries no
+  // stack count, and a field-only pickup's readiness ends with its window —
+  // the row is only kept alive by permanent ownership or a live pickup level.
+  it('teleport: the row counts down during the field window and carries no stack count', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('teleport', false); // field pickup: temp level + 1 stored use
-    expect(reg.teleportStacks()).toBeGreaterThan(0);
+    reg.applyCollect('teleport', false); // field pickup: temporary level, one ready warp
+    expect(reg.hasTeleport()).toBe(true);
 
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
     const during = hud.getRows().find((r) => r.id === 'teleport')!;
     expect(during.temporary).toBe(true);
+    // No stored count is ever published for a single-use kind.
+    expect(during.stacks).toBeUndefined();
+    expect(during.label).toBe('Teleport Lvl 1');
     const opened = countdownSeconds(during.value);
 
     reg.tick(1);
@@ -1078,12 +1084,40 @@ describe('HUD temporary window on the newly windowed kinds (AH-0MVUGI4WG008HU3M 
 
     reg.tick(reg.powerUpTemporaryRemaining('teleport')! + 0.1);
     hud.refresh();
-    const settled = hud.getRows().find((r) => r.id === 'teleport')!;
-    expect(settled.temporary).toBe(false);
-    expect(settled.value).toBe(PERMANENT_VALUE);
-    // The level reverted but the stored use survived, so the row remains.
+    // The level reverted and Teleport is not permanently owned → not held,
+    // so the readiness model has nothing left to show.
     expect(reg.powerUpLevel('teleport')).toBe(0);
-    expect(reg.teleportStacks()).toBeGreaterThan(0);
+    expect(reg.hasTeleport()).toBe(false);
+    expect(hud.getRows().some((r) => r.id === 'teleport')).toBe(false);
+    destroy(game);
+  });
+
+  it('teleport: a permanently owned row stays visible and greys out while recharging', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport', true); // hold-full grant: owned + ready
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const ready = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(ready.greyed).toBe(false);
+    expect(ready.stacks).toBeUndefined();
+    expect(ready.recharge).toBeUndefined();
+
+    // Spend the warp: the row survives (owned) and counts the recharge down.
+    reg.consumeTeleport();
+    hud.refresh();
+    const recharging = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(recharging.greyed).toBe(true);
+    expect(recharging.recharge).toBeCloseTo(reg.teleportRechargeTime());
+    expect(recharging.label).toContain('next in');
+
+    // Ready again after the shared recharge clock completes the interval.
+    reg.tick(reg.teleportRechargeTime() + 0.01);
+    hud.refresh();
+    const settled = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(settled.greyed).toBe(false);
+    expect(settled.recharge).toBeUndefined();
     destroy(game);
   });
 });
@@ -1629,6 +1663,13 @@ describe('HUD loadout grouping (AH-0MVVF0POV001JNKX)', () => {
 // new consumable is covered without touching this suite.
 
 describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
+  /**
+   * The five **pool-backed** consumables. Teleport is single-use (parent
+   * AH-0MVY096RT006QMF4) and has its own readiness-row coverage above.
+   */
+  const POOLED_CONSUMABLE_IDS = CONSUMABLE_POWER_UP_IDS.filter(
+    (id) => id !== 'teleport',
+  );
   /** The row for `id`, or `undefined` when the HUD renders none. */
   function rowFor(hud: HUD, id: string): HUDEntry | undefined {
     return hud.getRows().find((row) => row.id === id);
@@ -1658,7 +1699,7 @@ describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
     );
   });
 
-  for (const id of CONSUMABLE_POWER_UP_IDS) {
+  for (const id of POOLED_CONSUMABLE_IDS) {
     it(`${id}: shows the charge count, no countdown while full, then greyed + live countdown while recharging`, async () => {
       const { store, reg } = ownedConsumable(id);
       const { game, hud } = await bootWithHUD(reg);
@@ -1737,6 +1778,36 @@ describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
       destroy(game);
     });
   }
+
+  it('teleport: a single-use row shows no charge count and counts its recharge down', async () => {
+    const { store, reg } = ownedConsumable('teleport');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const ready = rowFor(hud, 'teleport')!;
+    expect(ready).toBeDefined();
+    expect(ready.stacks).toBeUndefined();
+    expect(ready.label).toBe('Teleport Lvl 1');
+    expect(ready.recharge).toBeUndefined();
+    expect(ready.greyed).toBe(false);
+
+    // Spending the warp greys the owned row and starts the one countdown.
+    expect(reg.consumeTeleport()).toBe(true);
+    hud.refresh();
+    const recharging = rowFor(hud, 'teleport')!;
+    expect(recharging.greyed).toBe(true);
+    expect(recharging.stacks).toBeUndefined();
+    expect(recharging.recharge).toBeCloseTo(store.teleportRechargeTime(), 6);
+    expect(recharging.label).toContain('(next in');
+
+    // The shared recharge clock returns it to ready.
+    store.tickRecharge(store.teleportRechargeTime() + 0.01);
+    hud.refresh();
+    const settled = rowFor(hud, 'teleport')!;
+    expect(settled.greyed).toBe(false);
+    expect(settled.recharge).toBeUndefined();
+    destroy(game);
+  });
 
   it('renders a field-pickup Shield from the granted charge with no countdown', async () => {
     // A field pickup grants exactly one charge into the shared pool (parent

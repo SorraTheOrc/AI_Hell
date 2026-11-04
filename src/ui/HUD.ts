@@ -206,7 +206,7 @@ export interface HUDEntry {
    * AH-0MVUVSW4J0009QUW AC3).
    */
   temporary: boolean;
-  /** Consumable charge count (Shield absorptions, Thorn Field rams, Phase Shift charges, Teleport teleports, Force Field reflects, Mystery UFO drones), if any. */
+  /** Consumable charge count (Shield absorptions, Thorn Field rams, Phase Shift charges, Force Field reflects, Mystery UFO drones), if any. A single-use kind (Teleport) has no count. */
   stacks?: number;
   /**
    * Seconds until the next regenerating charge of a consumable, or
@@ -998,8 +998,9 @@ export class HUD extends Phaser.GameObjects.Container {
    * path — a field pickup grants exactly one charge and opens no effect
    * window under the absorbed-hit model (parent AH-0MVUVSW4J0009QUW), so the
    * pool is never misread from a parallel window counter. Phase Shift,
-   * Teleport and Mystery UFO have no separate window budget and read the
-   * pool directly.
+   * Teleport is **single-use** and surfaces no count at all (parent
+   * AH-0MVY096RT006QMF4); Mystery UFO has no separate window budget and
+   * reads the pool directly.
    *
    * Non-consumable kinds surface no count (their level alone is the state).
    */
@@ -1069,10 +1070,16 @@ export class HUD extends Phaser.GameObjects.Container {
         // negative countdown.
         return reg.strikeNextBoltSeconds();
       default:
-        // Every consumable regenerates through the shared pool clock — the
-        // Thorn Field special case that predated the charge pool is retired
-        // (parent AH-0MVUVSW4J0009QUW AC3): `thornsRechargeRemaining()` is
-        // exactly this projection, and a pickup-only charge opens no timer.
+        // A **single-use** kind (Teleport) has no pool: its countdown is the
+        // readiness clock in the level store (parent AH-0MVY096RT006QMF4).
+        if (getPowerUpById(id).singleUse === true) {
+          return reg.teleportRechargeRemaining() || undefined;
+        }
+        // Every pooled consumable regenerates through the shared pool clock —
+        // the Thorn Field special case that predated the charge pool is
+        // retired (parent AH-0MVUVSW4J0009QUW AC3):
+        // `thornsRechargeRemaining()` is exactly this projection, and a
+        // pickup-only charge opens no timer.
         return isConsumablePowerUpId(id)
           ? reg.consumableRechargeRemaining(id)
           : undefined;
@@ -1108,6 +1115,12 @@ export class HUD extends Phaser.GameObjects.Container {
    */
   private _isPowerUpGreyed(id: PowerUpId): boolean {
     if (!this._ownsChargePool(id)) return false;
+    // A **single-use** kind (Teleport) has no charge count to read: it is
+    // available while ready and unavailable while its one recharge timer runs
+    // (parent AH-0MVY096RT006QMF4).
+    if (getPowerUpById(id).singleUse === true) {
+      return !this._registry!.isTeleportReady();
+    }
     return this._consumableCharges(id) === 0;
   }
 

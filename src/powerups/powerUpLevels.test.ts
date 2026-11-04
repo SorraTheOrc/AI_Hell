@@ -692,15 +692,17 @@ describe('PowerUpLevelStore (AC3 — stack/charge reconciliation)', () => {
     expect(store.scoopStacks()).toBe(5);
   });
 
-  it('grants one single-use teleport warp and consumes it (AH-0MVY096RT006QMF4)', () => {
+  it('readies one single-use teleport warp and consumes it (AH-0MVY096RT006QMF4)', () => {
     const store = new PowerUpLevelStore();
     store.collect('teleport');
-    expect(store.teleportStacks()).toBe(1);
+    expect(store.hasTeleport()).toBe(true);
     store.collect('teleport');
     // Single-use: a second pickup never banks a second warp.
-    expect(store.teleportStacks()).toBe(1);
+    expect(store.hasTeleport()).toBe(true);
     expect(store.consumeTeleport()).toBe(true);
-    expect(store.teleportStacks()).toBe(0);
+    // While the one recharge timer runs the ability is unavailable.
+    expect(store.hasTeleport()).toBe(false);
+    expect(store.isTeleportRecharging()).toBe(true);
     expect(store.consumeTeleport()).toBe(false);
     // Consuming a use never lowers the run-scoped level.
     expect(store.getLevel('teleport')).toBe(2);
@@ -842,17 +844,18 @@ describe('PowerUpLevelStore — temporary/permanent split (F1 contract)', () => 
   // ── Consumables persist across a temporary-level revert
   //    (AH-0MVUGI4WG008HU3M AC1, parent Resolved decision 2) ────────────
   //
-  // A consumable grant is a *resource* (lives / charges / stored uses), not a
-  // level: reverting the temporary level must never claw the resource back,
-  // and the resource itself carries no timer. Driven as a table over all
-  // three consumable kinds so a future kind cannot be missed.
+  // A consumable grant is a *resource* (lives / charges), not a level:
+  // reverting the temporary level must never claw the resource back, and the
+  // resource itself carries no timer. Driven as a table over the resource
+  // kinds so a future kind cannot be missed. Teleport is deliberately absent:
+  // it is a **readiness state** tied to being held, covered below (parent
+  // AH-0MVY096RT006QMF4 AC5).
   const CONSUMABLES: ReadonlyArray<{
     id: PowerUpId;
     resource: (store: PowerUpLevelStore) => number;
   }> = [
     { id: 'extra_life', resource: (store) => store.lives() },
     { id: 'phase_shift', resource: (store) => store.phaseCharges() },
-    { id: 'teleport', resource: (store) => store.teleportStacks() },
   ];
 
   for (const { id, resource } of CONSUMABLES) {
@@ -886,6 +889,24 @@ describe('PowerUpLevelStore — temporary/permanent split (F1 contract)', () => 
       expect(resource(store)).toBe(granted);
     });
   }
+
+  it('teleport: a pickup-only readiness ends with its level window (AC5)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('teleport');
+    expect(store.hasTeleport()).toBe(true);
+
+    store.clearTemporary('teleport');
+    // Not permanently owned and no pickup level left → unusable.
+    expect(store.isTeleportHeld()).toBe(false);
+    expect(store.hasTeleport()).toBe(false);
+    expect(store.consumeTeleport()).toBe(false);
+
+    // A permanently owned Teleport keeps its readiness across the same expiry.
+    store.collect('teleport', true);
+    store.clearTemporary('teleport');
+    expect(store.isConsumableOwned('teleport')).toBe(true);
+    expect(store.hasTeleport()).toBe(true);
+  });
 
   it('phase_shift: the recharge pool stays intact after the level reverts', () => {
     const store = new PowerUpLevelStore();
@@ -1202,7 +1223,8 @@ describe('per-charge recharge engine and single-use Teleport (AH-0MV82I7HF009ZHP
     {
       id: 'teleport' as PowerUpId,
       grant: (s: PowerUpLevelStore) => s.collect('teleport'),
-      pool: (s: PowerUpLevelStore) => s.teleportStacks(),
+      // Readiness is binary: 1 while the single warp is ready, else 0.
+      pool: (s: PowerUpLevelStore) => (s.hasTeleport() ? 1 : 0),
       consume: (s: PowerUpLevelStore) => s.consumeTeleport(),
       baseTime: 60, // seconds at level 0 (teleportRechargeRate 1/60 → 60 s)
       cap: 1, // single-use: never banks a second warp
@@ -1249,20 +1271,20 @@ describe('per-charge recharge engine and single-use Teleport (AH-0MV82I7HF009ZHP
     expect(a.pool(store)).toBe(3);
   });
 
-  it('starts a fresh timer when a recharged charge is spent again (AC1)', () => {
+  it('starts a fresh timer when a recharged warp is spent again (AC1)', () => {
     const store = new PowerUpLevelStore();
     store.collect('teleport');
     expect(store.consumeTeleport()).toBe(true);
     // First recharge completes after the new 60 s base interval.
     store.tickRecharge(60);
-    expect(store.teleportStacks()).toBe(1);
+    expect(store.hasTeleport()).toBe(true);
     // Spent again → a fresh timer starts from scratch.
     expect(store.consumeTeleport()).toBe(true);
-    expect(store.teleportStacks()).toBe(0);
+    expect(store.hasTeleport()).toBe(false);
     store.tickRecharge(50);
-    expect(store.teleportStacks()).toBe(0); // only part of the time elapsed
+    expect(store.hasTeleport()).toBe(false); // only part of the time elapsed
     store.tickRecharge(11);
-    expect(store.teleportStacks()).toBe(1); // second timer complete
+    expect(store.hasTeleport()).toBe(true); // second timer complete
   });
 
   it('caps each ability at its catalogue ceiling (Phase Shift 3, Teleport 1) (AC2)', () => {
@@ -1278,22 +1300,29 @@ describe('per-charge recharge engine and single-use Teleport (AH-0MV82I7HF009ZHP
     }
   });
 
-  it('discards any collection or recharge that would exceed the single-use ceiling (AC2)', () => {
+  it('a pickup readies the warp immediately mid-recharge, never banking a second (AC2/AC4)', () => {
     const store = new PowerUpLevelStore();
     // A pickup readies the one warp; further pickups never bank a second.
     store.collect('teleport');
     store.collect('teleport');
-    expect(store.teleportStacks()).toBe(1);
-    expect(store.consumableChargeCap('teleport')).toBe(1);
-    // Spend it: the readiness pool empties and starts its one timer.
+    expect(store.hasTeleport()).toBe(true);
+    // Spend it: the warp is unavailable and its one timer runs.
     expect(store.consumeTeleport()).toBe(true);
-    expect(store.teleportStacks()).toBe(0);
-    // A pickup during the recharge readies the warp again…
+    expect(store.hasTeleport()).toBe(false);
+    store.tickRecharge(store.teleportRechargeTime() / 2);
+    expect(store.isTeleportRecharging()).toBe(true);
+    // A pickup during the recharge readies the warp again immediately…
     store.collect('teleport');
-    expect(store.teleportStacks()).toBe(1);
-    // …and the pending recharge lands on a full pool, so it is discarded.
+    expect(store.hasTeleport()).toBe(true);
+    expect(store.teleportRechargeRemaining()).toBe(0);
+    // …and spending it starts exactly one fresh timer, not a second one.
+    expect(store.consumeTeleport()).toBe(true);
+    expect(store.teleportRechargeRemaining()).toBeCloseTo(
+      store.teleportRechargeTime(),
+      6,
+    );
     store.tickRecharge(store.teleportRechargeTime() + 1);
-    expect(store.teleportStacks()).toBe(1);
+    expect(store.hasTeleport()).toBe(true);
   });
 
   it('treats the hold-full Phase Shift reward as a recharging pool — no unlimited activations (AC4)', () => {
@@ -1312,23 +1341,25 @@ describe('per-charge recharge engine and single-use Teleport (AH-0MV82I7HF009ZHP
     expect(store.phaseCharges()).toBe(1);
   });
 
-  it('mirrors Phase Shift for a hold-full Teleport: +1 charge, clamped at the single-use cap (AC5)', () => {
+  it('a hold-full Teleport grant leaves it ready, with no stored charge (AC5/AC7)', () => {
     const store = new PowerUpLevelStore();
-    expect(store.teleportStacks()).toBe(0);
+    expect(store.hasTeleport()).toBe(false);
     store.collect('teleport', true);
-    expect(store.teleportStacks()).toBe(1); // exactly +1, not a stored-stack grant
-    // A hold-full reward never raises the level (parent AC1), so the pool
-    // stays clamped at the **single-use** cap of 1 (parent AH-0MVY096RT006QMF4)
-    // instead of the retired fixed ceiling of 3.
+    // The grant owns the ability and leaves it ready — it never banks a
+    // stored charge (parent AH-0MVY096RT006QMF4).
+    expect(store.isConsumableOwned('teleport')).toBe(true);
+    expect(store.hasTeleport()).toBe(true);
+    expect(store.consumableCharges('teleport')).toBe(0);
+    // A hold-full reward never raises the level either (parent AC1).
     for (let i = 0; i < 8; i++) store.collect('teleport', true);
-    expect(store.teleportStacks()).toBe(1);
+    expect(store.hasTeleport()).toBe(true);
     expect(store.getPermanentLevel('teleport')).toBe(0);
     expect(store.getEffectiveLevel('teleport')).toBe(0);
-    // Recharges normally like any other charge.
+    // Spending starts the one timer; it returns to ready on the shared tick.
     expect(store.consumeTeleport()).toBe(true);
-    expect(store.teleportStacks()).toBe(0);
+    expect(store.hasTeleport()).toBe(false);
     store.tickRecharge(store.teleportRechargeTime() + 1);
-    expect(store.teleportStacks()).toBe(1);
+    expect(store.hasTeleport()).toBe(true);
   });
 
   it('reset clears the pending recharge timers (run restart, AC6)', () => {
@@ -1346,18 +1377,110 @@ describe('per-charge recharge engine and single-use Teleport (AH-0MV82I7HF009ZHP
     }
   });
 
-  it('reset clears both charge pools (run restart, weapon parity, AC6)', () => {
+  it('reset clears the charge pool and the Teleport readiness (run restart, AC6)', () => {
     const store = new PowerUpLevelStore();
     store.collect('phase_shift');
     store.collect('teleport');
     expect(store.phaseCharges()).toBeGreaterThan(0);
-    expect(store.teleportStacks()).toBeGreaterThan(0);
+    expect(store.hasTeleport()).toBe(true);
     store.reset();
     expect(store.phaseCharges()).toBe(0);
-    expect(store.teleportStacks()).toBe(0);
+    expect(store.hasTeleport()).toBe(false);
+    expect(store.teleportRechargeRemaining()).toBe(0);
     // A fresh run starts from an empty pool again.
     store.collect('phase_shift');
     expect(store.phaseCharges()).toBe(1);
+  });
+});
+
+// ── Teleport's single readiness state (AH-0MW231MCL000MMUU) ──────────
+//
+// Teleport is one readiness state — `ready` / `recharging` plus a
+// remaining-seconds value — and spending starts exactly one level-derived
+// recharge timer. No stored count, cap or FIFO exists anywhere.
+
+describe('Teleport single readiness model (AH-0MW231MCL000MMUU)', () => {
+  /** A permanently-owned Teleport (the hold-full grant seam). */
+  function owned(): PowerUpLevelStore {
+    const store = new PowerUpLevelStore();
+    store.collect('teleport', true);
+    return store;
+  }
+
+  it('AC2 — spending starts one level-derived timer and blocks a second warp', () => {
+    const store = owned();
+    expect(store.hasTeleport()).toBe(true);
+
+    expect(store.consumeTeleport()).toBe(true);
+    expect(store.hasTeleport()).toBe(false);
+    expect(store.isTeleportRecharging()).toBe(true);
+    // Exactly one interval, derived from the level's recharge rate.
+    expect(store.teleportRechargeRemaining()).toBeCloseTo(
+      store.teleportRechargeTime(),
+      6,
+    );
+
+    // Just short of the interval the ability is still unavailable…
+    store.tickRecharge(store.teleportRechargeTime() - 0.01);
+    expect(store.hasTeleport()).toBe(false);
+    expect(store.consumeTeleport()).toBe(false);
+    // …and the moment it elapses the ability is ready again.
+    store.tickRecharge(0.02);
+    expect(store.hasTeleport()).toBe(true);
+    expect(store.teleportRechargeRemaining()).toBe(0);
+  });
+
+  it('AC4 — the remaining seconds decrease and stay 0 while ready', () => {
+    const store = owned();
+    expect(store.teleportRechargeRemaining()).toBe(0);
+    expect(store.isTeleportRecharging()).toBe(false);
+
+    store.consumeTeleport();
+    const interval = store.teleportRechargeTime();
+    store.tickRecharge(interval / 4);
+    const quarter = store.teleportRechargeRemaining();
+    expect(quarter).toBeCloseTo((interval * 3) / 4, 6);
+    store.tickRecharge(interval / 4);
+    expect(store.teleportRechargeRemaining()).toBeCloseTo(interval / 2, 6);
+    expect(store.teleportRechargeRemaining()).toBeLessThan(quarter);
+
+    store.tickRecharge(interval);
+    expect(store.teleportRechargeRemaining()).toBe(0);
+    expect(store.isTeleportRecharging()).toBe(false);
+  });
+
+  it('AC4 — a pickup mid-recharge readies it immediately', () => {
+    const store = owned();
+    store.consumeTeleport();
+    store.tickRecharge(store.teleportRechargeTime() * 0.9);
+    expect(store.isTeleportRecharging()).toBe(true);
+
+    store.collect('teleport');
+    expect(store.hasTeleport()).toBe(true);
+    expect(store.teleportRechargeRemaining()).toBe(0);
+  });
+
+  it('AC7 — a restored permanent Teleport (checkpoint replay grant) starts ready', () => {
+    // `_restoreCheckpoint` replays each saved level through the shared grant
+    // seam (`grantPermanentPowerUp` → `collect(id, true)`), so a resumed run
+    // must never start on a free-but-recharging or unavailable Teleport. The
+    // open checkpoint gap (AH-0MVY3IGRC00954UD) does not persist the timer,
+    // so "restored ⇒ ready" is the documented default.
+    const store = new PowerUpLevelStore();
+    for (let i = 0; i < 3; i += 1) store.collect('teleport', true);
+    expect(store.hasTeleport()).toBe(true);
+    expect(store.teleportRechargeRemaining()).toBe(0);
+  });
+
+  it('AC1 — a single-use kind has no charge pool to spend or grant', () => {
+    const store = owned();
+    // The generic pool refuses it: readiness is the whole state.
+    expect(store.consumableCharges('teleport')).toBe(0);
+    expect(store.grantConsumableCharge('teleport', 5)).toBe(0);
+    expect(store.consumeConsumableCharge('teleport')).toBe(false);
+    // A spent warp still leaves the pool untouched.
+    expect(store.consumeTeleport()).toBe(true);
+    expect(store.consumableCharges('teleport')).toBe(0);
   });
 });
 
@@ -1618,7 +1741,12 @@ describe('consumable charge axes (AH-0MVUXFDFN009QK84 AC3/AC4)', () => {
 // charge instead of a level (parent AH-0MVTQMREN009DSFW, AC1–AC3).
 
 describe('PowerUpLevelStore — shared consumable charge pool (F2)', () => {
-  /** Every consumable with its level-0 cap and regeneration interval. */
+  /**
+   * Every **pool-backed** consumable with its level-0 cap and regeneration
+   * interval. Teleport is the sixth catalogue consumable and is **single-use**
+   * (parent AH-0MVY096RT006QMF4), so it has no pool and is covered by its own
+   * readiness tests rather than this charge-pool contract.
+   */
   const CONSUMABLES: ReadonlyArray<{
     id: PowerUpId;
     cap: number;
@@ -1627,16 +1755,19 @@ describe('PowerUpLevelStore — shared consumable charge pool (F2)', () => {
     { id: 'shield', cap: 1, seconds: 45 },
     { id: 'thorns', cap: 2, seconds: 12 },
     { id: 'phase_shift', cap: 1, seconds: 30 },
-    { id: 'teleport', cap: 1, seconds: 60 },
     { id: 'force_field', cap: 3, seconds: 45 },
     { id: 'mystery_ufo', cap: 1, seconds: 30 },
   ];
 
-  it('covers exactly the six catalogue consumables (parent AC1)', () => {
+  it('covers every pool-backed catalogue consumable (parent AC1)', () => {
     for (const { id } of CONSUMABLES) {
       expect(CONSUMABLE_POWER_UP_IDS, id).toContain(id);
     }
-    expect(CONSUMABLES).toHaveLength(CONSUMABLE_POWER_UP_IDS.length);
+    // Only Teleport sits outside the pool — it is single-use.
+    const pooled = new Set(CONSUMABLES.map((entry) => entry.id));
+    expect(
+      CONSUMABLE_POWER_UP_IDS.filter((id) => !pooled.has(id)),
+    ).toEqual(['teleport']);
   });
 
   it('resolves every cap and interval from the catalogue at level 0 (AC3)', () => {
@@ -1705,7 +1836,7 @@ describe('PowerUpLevelStore — shared consumable charge pool (F2)', () => {
       const store = new PowerUpLevelStore();
       // Regeneration is gated on permanent ownership for the three budget
       // kinds (Q-A1=b, AH-0MVVD8SIT000CO9H): own them so a spent charge is
-      // owed. Phase Shift / Teleport / Mystery UFO have no such gate.
+      // owed. Phase Shift / Mystery UFO have no such gate.
       store.collect(id, true);
       store.grantConsumableCharge(id, store.consumableChargeCap(id));
       const cap = store.consumableChargeCap(id);
@@ -1738,20 +1869,20 @@ describe('PowerUpLevelStore — shared consumable charge pool (F2)', () => {
     const oneBigTick = new PowerUpLevelStore();
     const manySmallTicks = new PowerUpLevelStore();
     for (const store of [oneBigTick, manySmallTicks]) {
-      store.collect('teleport');
-      expect(store.consumeConsumableCharge('teleport')).toBe(true);
+      store.collect('phase_shift');
+      expect(store.consumeConsumableCharge('phase_shift')).toBe(true);
     }
     // Nothing returns without a tick.
-    expect(oneBigTick.consumableCharges('teleport')).toBe(0);
-    oneBigTick.tickRecharge(60);
-    for (let i = 0; i < 600; i++) manySmallTicks.tickRecharge(0.1);
-    expect(oneBigTick.consumableCharges('teleport')).toBe(1);
-    expect(manySmallTicks.consumableCharges('teleport')).toBe(1);
+    expect(oneBigTick.consumableCharges('phase_shift')).toBe(0);
+    oneBigTick.tickRecharge(30);
+    for (let i = 0; i < 300; i++) manySmallTicks.tickRecharge(0.1);
+    expect(oneBigTick.consumableCharges('phase_shift')).toBe(1);
+    expect(manySmallTicks.consumableCharges('phase_shift')).toBe(1);
 
     // Non-finite and negative ticks are no-ops (never a free recharge).
     oneBigTick.tickRecharge(Number.NaN);
     oneBigTick.tickRecharge(-10);
-    expect(oneBigTick.consumableCharges('teleport')).toBe(1);
+    expect(oneBigTick.consumableCharges('phase_shift')).toBe(1);
   });
 
   it('reset clears every pool, timer and ownership flag (AC5)', () => {
@@ -1786,12 +1917,13 @@ describe('PowerUpLevelStore — shared consumable charge pool (F2)', () => {
     store.collect('teleport');
     // Single-use: a second pickup never banks a second warp.
     store.collect('teleport');
-    expect(store.teleportStacks()).toBe(1);
+    expect(store.hasTeleport()).toBe(true);
     expect(store.consumeTeleport()).toBe(true);
-    expect(store.teleportStacks()).toBe(0);
-    // The legacy accessors are thin delegates over the shared pool.
+    expect(store.hasTeleport()).toBe(false);
+    // Phase Shift stays a thin delegate over the shared pool; Teleport reads
+    // its own readiness timer and never surfaces a stored count.
     expect(store.phaseCharges()).toBe(store.consumableCharges('phase_shift'));
-    expect(store.teleportStacks()).toBe(store.consumableCharges('teleport'));
+    expect(store.consumableCharges('teleport')).toBe(0);
     expect(store.phaseRechargeTime()).toBeCloseTo(
       store.consumableRechargeTime('phase_shift'),
       6,

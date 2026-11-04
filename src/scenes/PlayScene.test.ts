@@ -3342,17 +3342,17 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
   // ── Teleport (AH-0MU8QUY7U0069XC3) ───────────────────────────
 
-  it('P7 teleport with a stack warps the player, consumes the stack and grants P6', async () => {
+  it('P7 teleport with a ready warp warps the player, starts the recharge and grants P6', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a Teleport to gain a teleport stack.
+    // Collect a Teleport to gain the single ready warp.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
 
     // Move the ship off-centre so the safe-spot search picks a new location.
     player.setPosition(300, 400);
@@ -3361,7 +3361,13 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(scene.triggerTeleport()).toBe(true);
 
-    expect(registry.teleportStacks()).toBe(0);
+    // The single warp is spent: one level-derived recharge timer now runs.
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.isTeleportRecharging()).toBe(true);
+    expect(registry.teleportRechargeRemaining()).toBeCloseTo(
+      registry.teleportRechargeTime(),
+      6,
+    );
     expect(registry.isPhased).toBe(true); // Phase Shift granted on arrival
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
     expect(player.x).toBeGreaterThanOrEqual(0);
@@ -3370,7 +3376,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(player.y).toBeLessThanOrEqual(GAME_HEIGHT);
   });
 
-  it('P7 teleport with zero stacks is a no-op', async () => {
+  it('P7 teleport with no ready warp is a no-op', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
@@ -3381,10 +3387,10 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(scene.triggerTeleport()).toBe(false);
 
-    // Player did not move; no Phase Shift granted; still zero stacks.
+    // Player did not move; no Phase Shift granted; still no ready warp.
     expect(player.x).toBeCloseTo(beforeX);
     expect(player.y).toBeCloseTo(beforeY);
-    expect(registry.teleportStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
     expect(registry.isPhased).toBe(false);
   });
 
@@ -3393,12 +3399,12 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a Teleport stack.
+    // Collect a Teleport: the single ready warp.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
 
     // Park the ship inside a live enemy so the only safe spot is away from it.
     const enemy = scene.getEnemies().find((e) => e.alive)!;
@@ -4082,15 +4088,15 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Gain a teleport stack.
+    // Gain the single ready Teleport warp.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
 
     // Move, then place three hostile bullets within DANGER_RADIUS (40 px) so
-    // the shared danger feed selects the stored Teleport — no key input.
+    // the shared danger feed selects the ready Teleport — no key input.
     // `respawn` syncs the internal movement state so the next tick keeps the
     // ship here (a bare `setPosition` is overwritten by `physicsTick`).
     player.respawn(300, 400);
@@ -4101,8 +4107,10 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     const beforeY = player.y;
     scene.tick(0.016);
 
-    // The warp consumed the stack and moved the ship.
-    expect(registry.teleportStacks()).toBe(0);
+    // The warp spent the ready Teleport (starting its recharge) and moved the
+    // ship.
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.isTeleportRecharging()).toBe(true);
     expect(registry.isPhased).toBe(true);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
   });

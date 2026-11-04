@@ -1545,6 +1545,13 @@ export const POWER_UP_LIVES_START = 3;
 export const POWER_UP_CHARGE_CAP = 3;
 
 /**
+ * Floating-point tolerance for the recharge clock (seconds). 600 × 0.1 s of
+ * small ticks sums to slightly less than 60 s, and a spent Teleport must still
+ * return to ready (frame-rate independence).
+ */
+const RECHARGE_EPSILON = 1e-9;
+
+/**
  * The catalogue axis that bounds each consumable's charge pool (parent
  * AH-0MVTQMREN009DSFW, AC2/AC3). Where a kind already had a spendable budget
  * axis, that axis **is** its charge cap; only Mystery UFO gained a new one.
@@ -1665,9 +1672,12 @@ export function resolveConsumableRechargeTime(
  *     starts its own level-derived recharge timer (advanced by
  *     {@link tickRecharge}); a completed timer returns one charge; grants and
  *     completed recharges are clamped so the pool never exceeds the cap,
- *   - Teleport readiness = a single charge plus **one** level-derived
- *     recharge timer (no pool, no stored count; a pickup or hold-full grant
- *     resets it to ready — parent AH-0MVY096RT006QMF4),
+ *   - Teleport readiness = a single level-derived recharge timer (no pool, no
+ *     stored count; a pickup or hold-full grant resets it to ready — parent
+ *     AH-0MVY096RT006QMF4). It is *not* a member of the charge pool: the
+ *     generic pool methods refuse a single-use kind and
+ *     {@link PowerUpLevelStore.hasTeleport} / `isTeleportRecharging` /
+ *     `teleportRechargeRemaining` are its whole state,
  *   - Extra Life lives = `min(livesStart + Σ lifeGain(level), livesCap)`.
  *
  * The hold-full Phase Shift reward is an **owned flag** (`isPhasePermanent`), not an
@@ -1687,10 +1697,21 @@ export class PowerUpLevelStore {
    * One pool serves the five pooled consumables (Shield, Thorn Field, Phase
    * Shift, Force Field and Mystery UFO) — the shipped Phase Shift engine
    * generalised, never a second counter. Teleport is **single-use** (parent
-   * AH-0MVY096RT006QMF4) and reuses the same pool machinery with a cap of 1.
-   * A kind absent from the map simply holds no charges.
+   * AH-0MVY096RT006QMF4) and has **no pool**: its whole state is
+   * {@link _teleportRecharge}. A kind absent from the map simply holds no
+   * charges.
    */
   private _charges = new Map<PowerUpId, number>();
+  /**
+   * The **single** Teleport readiness timer, in seconds (0 = ready).
+   *
+   * One number is the entire Teleport state (parent AH-0MVY096RT006QMF4):
+   * spending the ready warp sets it to the level-derived
+   * {@link teleportRechargeTime}, {@link tickRecharge} counts it down, and a
+   * Teleport pickup / hold-full grant resets it to 0. The store is its only
+   * home — no scene, registry or HUD keeps a second counter.
+   */
+  private _teleportRecharge = 0;
   /**
    * Remaining seconds of each **in-flight recharge** per consumable kind: one
    * entry per spent charge, advanced only by {@link tickRecharge}.
@@ -1732,7 +1753,8 @@ export class PowerUpLevelStore {
   collect(id: PowerUpId, permanent = false): number {
     getPowerUpById(id); // validate id (throws for unknown power-ups)
     // **Consumables never level up from a hold-full reward** (parent AC1):
-    // the grant adds a charge instead, so the permanent-grant count (what
+    // the grant adds a charge (or, for a single-use kind, readies the
+    // ability) instead, so the permanent-grant count (what
     // `getPermanentLevel`, the hold-full pricing and every level consumer
     // read) is left untouched and ownership is carried by the per-kind flag.
     const consumable = isConsumablePowerUpId(id);
@@ -1749,27 +1771,33 @@ export class PowerUpLevelStore {
         // **Hold-full reward = one charge, never a level**
         // (parent AC1). The permanent-grant count deliberately stays
         // untouched, so `getPermanentLevel` / `getEffectiveLevel` do not
-        // move; the kind becomes *owned* through the flag and the grant is
-        // clamped at the level-derived cap (parent AC2).
+        // move; the kind becomes *owned* through the flag and a pooled
+        // grant is clamped at the level-derived cap (parent AC2).
         this._owned.add(id);
-        this.grantConsumableCharge(id, 1);
+        if (this._isSingleUse(id)) {
+          // A hold-full single-use grant leaves the ability **ready** (timer
+          // 0) — there is no charge to bank (parent AC7).
+          this._teleportRecharge = 0;
+        } else {
+          this.grantConsumableCharge(id, 1);
+        }
+      } else if (this._isSingleUse(id)) {
+        // **Single-use pickup** (parent AH-0MVY096RT006QMF4): the drop makes
+        // the one warp ready immediately, including mid-recharge. No charge
+        // is banked — the readiness timer is the whole state.
+        this._teleportRecharge = 0;
       } else if (id === 'phase_shift') {
         // Field-pickup behaviour is unchanged in this slice (producer
         // decision 2 / PD5): the level-derived count, clamped at the kind's
         // level-derived charge cap (parent AC2/AC3).
         this._addCharges(id, stats.phaseCharges ?? 0, this._poolCap(id));
-      } else if (id === 'teleport') {
-        // **Single-use** (parent AH-0MVY096RT006QMF4): a field pickup grants
-        // the one ready warp (clamped at the catalogue cap of 1); it never
-        // banks a second charge.
-        this._addCharges(id, 1, this._poolCap(id));
       }
     }
     switch (id) {
       case 'phase_shift':
       case 'teleport':
-        // Charges are granted above through the shared pool; the level bookkeeping
-        // is handled by the common paths.
+        // Pooled charges (Phase Shift) / readiness (Teleport) are applied
+        // above; the level bookkeeping is handled by the common paths.
         break;
       case 'extra_life':
         this._lives = Math.min(
@@ -1929,22 +1957,55 @@ export class PowerUpLevelStore {
   }
 
   /**
-   * The Teleport readiness pool size (0 or 1). Teleport is **single-use**
-   * (parent AH-0MVY096RT006QMF4): this is a legacy accessor retained until the
-   * readiness API (`hasTeleport` / `teleportRechargeRemaining`) replaces it.
+   * Whether Teleport is **held** this run — permanently owned (a hold-full
+   * grant) or carrying an active field-pickup level. An unheld Teleport is
+   * unusable, whatever its timer says (parent AH-0MVY096RT006QMF4 AC5).
    */
-  teleportStacks(): number {
-    return this.consumableCharges('teleport');
+  isTeleportHeld(): boolean {
+    return (
+      this.isConsumableOwned('teleport') || this.getEffectiveLevel('teleport') > 0
+    );
   }
 
   /**
-   * Consumes the ready Teleport warp. Returns true when it was available.
-   * The spent warp starts **one** recharge timer whose duration is the
-   * level-derived {@link teleportRechargeTime} at the moment of consumption;
-   * {@link tickRecharge} clears it when it elapses (single-use model).
+   * Whether the single ready Teleport is available now: held **and** not
+   * recharging. This is the whole availability model — there is no stored
+   * count (parent AH-0MVY096RT006QMF4 AC1/AC3).
+   */
+  hasTeleport(): boolean {
+    return this.isTeleportHeld() && this._teleportRecharge <= 0;
+  }
+
+  /**
+   * Whether a spent Teleport is still counting down (held and the recharge
+   * timer is running). While true the ability is unavailable, so no second
+   * warp can fire inside one interval (parent AC2).
+   */
+  isTeleportRecharging(): boolean {
+    return this.isTeleportHeld() && this._teleportRecharge > 0;
+  }
+
+  /**
+   * Seconds until the held Teleport is ready again — 0 when it is ready (or
+   * not held at all). Nothing else exposes a teleport stack/FIFO count
+   * (parent AC4).
+   */
+  teleportRechargeRemaining(): number {
+    if (!this.isTeleportHeld()) return 0;
+    return Math.max(0, this._teleportRecharge);
+  }
+
+  /**
+   * Spends the ready Teleport warp. Returns true when it was available, and
+   * starts **one** recharge timer whose duration is the level-derived
+   * {@link teleportRechargeTime} at the moment of consumption;
+   * {@link tickRecharge} clears it when it elapses. A second call while the
+   * timer runs returns false (single-use model, parent AC3).
    */
   consumeTeleport(): boolean {
-    return this.consumeConsumableCharge('teleport');
+    if (!this.hasTeleport()) return false;
+    this._teleportRecharge = this.teleportRechargeTime();
+    return true;
   }
 
   /**
@@ -1986,14 +2047,27 @@ export class PowerUpLevelStore {
 
   // ── Shared consumable charge pool (parent AH-0MVTQMREN009DSFW) ──────
   //
-  // One pool serves the remaining five consumables: Shield, Thorn Field,
-  // Phase Shift, Force Field and Mystery UFO. A charge buys one event,
-  // charges regenerate on the level-derived interval, and the cap/interval
-  // are catalogue data — no scene, HUD or registry keeps a second counter.
-  // Teleport is **single-use** (parent AH-0MVY096RT006QMF4): its cap is the
-  // catalogue `singleUse` constant 1 and its timer is the readiness state.
+  // One pool serves the five pooled consumables: Shield, Thorn Field, Phase
+  // Shift, Force Field and Mystery UFO. A charge buys one event, charges
+  // regenerate on the level-derived interval, and the cap/interval are
+  // catalogue data — no scene, HUD or registry keeps a second counter.
+  // Teleport is **single-use** (parent AH-0MVY096RT006QMF4): it has no pool
+  // at all — its readiness timer ({@link _teleportRecharge}) is the state, so
+  // the pool methods below refuse a catalogue `singleUse` kind.
 
-  /** Available charges of the consumable `id` (0 for a non-consumable). */
+  /**
+   * Whether `id` is a **single-use** kind (catalogue `singleUse` flag, parent
+   * AH-0MVY096RT006QMF4). Data-driven: no `id === 'teleport'` branch.
+   */
+  private _isSingleUse(id: PowerUpId): boolean {
+    return getPowerUpById(id).singleUse === true;
+  }
+
+  /**
+   * Available charges of the consumable `id` (0 for a non-consumable and for
+   * a **single-use** kind, which has no pool — its readiness is
+   * {@link hasTeleport} / {@link teleportRechargeRemaining}).
+   */
   consumableCharges(id: PowerUpId): number {
     return this._charges.get(id) ?? 0;
   }
@@ -2087,6 +2161,9 @@ export class PowerUpLevelStore {
    */
   consumeConsumableCharge(id: PowerUpId): boolean {
     if (!isConsumablePowerUpId(id)) return false;
+    // A single-use kind is spent through its readiness API
+    // (`consumeTeleport`), never the pool (parent AH-0MVY096RT006QMF4).
+    if (this._isSingleUse(id)) return false;
     const pool = this.consumableCharges(id);
     if (pool <= 0) return false;
     this._charges.set(id, pool - 1);
@@ -2106,6 +2183,9 @@ export class PowerUpLevelStore {
    */
   grantConsumableCharge(id: PowerUpId, count = 1): number {
     if (!isConsumablePowerUpId(id)) return 0;
+    // A single-use kind has no pool to bank a charge in (parent
+    // AH-0MVY096RT006QMF4); its grant is a readiness reset on `collect`.
+    if (this._isSingleUse(id)) return 0;
     const cap = this.consumableChargeCap(id);
     const pool = this.consumableCharges(id);
     const next = Math.min(cap, pool + Math.max(0, Math.floor(count)));
@@ -2123,15 +2203,22 @@ export class PowerUpLevelStore {
 
   /**
    * Advances the run-scoped recharge clock by `dt` seconds. Each recharging
-   * Phase Shift charge (and the single Teleport readiness timer) counts down
-   * independently; when a timer elapses the charge returns to its pool, clamped
-   * at the kind's regenerating ceiling (a recharge landing on a full pool — or
-   * on a pickup-only budget kind's Q-A1=b ceiling of 0 — is discarded).
-   * Negative or non-finite `dt` is a no-op.
+   * Phase Shift charge counts down independently; when a timer elapses the
+   * charge returns to its pool, clamped at the kind's regenerating ceiling (a
+   * recharge landing on a full pool — or on a pickup-only budget kind's
+   * Q-A1=b ceiling of 0 — is discarded). The **single** Teleport readiness
+   * timer counts down here too and clears at 0, returning the ability to
+   * ready (parent AC2/AC6). Negative or non-finite `dt` is a no-op.
    */
   tickRecharge(dt: number): void {
     const safeDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
     if (safeDt <= 0) return;
+    // The single-use readiness clock: one timer, cleared at 0 (the epsilon
+    // absorbs frame-rate drift so many small ticks still complete it).
+    if (this._teleportRecharge > 0) {
+      const remaining = this._teleportRecharge - safeDt;
+      this._teleportRecharge = remaining > RECHARGE_EPSILON ? remaining : 0;
+    }
     for (const id of CONSUMABLE_POWER_UP_IDS) {
       const timers = this._rechargeTimers.get(id);
       if (!timers || timers.length === 0) continue;
@@ -2154,15 +2241,14 @@ export class PowerUpLevelStore {
     timers: number[],
     pool: number,
     dt: number,
-    cap: number = POWER_UP_CHARGE_CAP,
+    cap: number,
   ): number {
     // A tolerance absorbs floating-point drift: 600 × 0.1 s of small ticks
     // sums to slightly less than 60 s, and a spent warp must still return
     // (frame-rate independence, parent AC5).
-    const EPSILON = 1e-9;
     for (let i = timers.length - 1; i >= 0; i--) {
       timers[i] -= dt;
-      if (timers[i] > EPSILON) continue;
+      if (timers[i] > RECHARGE_EPSILON) continue;
       timers.splice(i, 1);
       pool = Math.min(pool + 1, cap);
     }
@@ -2207,6 +2293,7 @@ export class PowerUpLevelStore {
     this._tempStacks.clear();
     this._charges.clear();
     this._rechargeTimers.clear();
+    this._teleportRecharge = 0;
     this._owned.clear();
     this._lives = this._livesStart;
   }

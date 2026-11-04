@@ -1176,8 +1176,8 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     expect(combatScene.getPlayer()!.x).toBe(playScene.getPlayer()!.x);
     expect(combatScene.getPlayer()!.y).toBe(playScene.getPlayer()!.y);
     // The single ready warp is spent → recharging, no second warp available.
-    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(0);
-    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(0);
+    expect(playScene.getEffectsRegistry().hasTeleport()).toBe(false);
+    expect(combatScene.getEffectsRegistry().hasTeleport()).toBe(false);
     expect(playScene.getEffectsRegistry().isPhased).toBe(true);
     expect(combatScene.getEffectsRegistry().isPhased).toBe(true);
 

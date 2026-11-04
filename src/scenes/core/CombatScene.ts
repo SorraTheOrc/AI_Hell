@@ -315,8 +315,8 @@ export abstract class CombatScene<
    * defence to spend by comparing the available counts ({@link
    * selectAutoDefence}). When it reports Phase Shift it has already
    * activated the pass-through; when it selects Teleport the scene performs
-   * the warp through {@link CombatScene.triggerTeleport} (consuming one FIFO
-   * stack and granting Phase Shift on arrival). Every combat scene calls this
+   * the warp through {@link CombatScene.triggerTeleport} (spending the single
+   * ready warp and granting Phase Shift on arrival). Every combat scene calls this
    * once per frame immediately before `_handleCollisions`, so the game and
    * the gyms share one implementation and one ordering and cannot diverge.
    *
@@ -1227,9 +1227,11 @@ export abstract class CombatScene<
   // ── Teleport ─────────────────────────────────────────────────────
 
   /**
-   * Consumes one Teleport teleport stack and warps the player to the nearest
+   * Spends the single ready Teleport warp and warps the player to the nearest
    * safe spot along the heading (granting Phase Shift on arrival via the
-   * registry). Public so tests can trigger it deterministically.
+   * registry). The store starts the one level-derived recharge timer, so no
+   * second warp can fire until it elapses. Public so tests can trigger it
+   * deterministically.
    *
    * @returns true when a teleport was performed.
    */
@@ -1267,7 +1269,7 @@ export abstract class CombatScene<
       },
     );
 
-    // Consume one stack FIFO and grant Phase Shift phase shift at the landing spot.
+    // Spend the ready warp and grant Phase Shift at the landing spot.
     const phaseActivated = registry.consumeTeleport();
     // Direct activation also plays the dedicated cue (Q6).
     if (phaseActivated) playPhaseShiftSound();

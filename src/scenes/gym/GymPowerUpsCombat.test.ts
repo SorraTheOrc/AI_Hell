@@ -736,7 +736,7 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
   });
 });
 
-// ── AC7: Teleport FIFO stacks + safe-spot ──────────────────────────
+// ── AC7: single-use Teleport + safe-spot ───────────────────────────
 
 describe('GymPowerUpsCombat AC7: single-use Teleport + safe-spot', () => {
 
@@ -746,9 +746,8 @@ describe('GymPowerUpsCombat AC7: single-use Teleport + safe-spot', () => {
 
     expect(registry.hasTeleport()).toBe(false);
     collectCombatDrop(scene, 'teleport'); // level 1 → one ready warp
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
     collectCombatDrop(scene, 'teleport'); // level 2 → still one ready warp
-    expect(registry.teleportStacks()).toBe(1);
     expect(registry.hasTeleport()).toBe(true);
   });
 
@@ -760,7 +759,8 @@ describe('GymPowerUpsCombat AC7: single-use Teleport + safe-spot', () => {
 
     const consumed = registry.consumeTeleport();
     expect(consumed).toBe(true);
-    expect(registry.teleportStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.isTeleportRecharging()).toBe(true);
     expect(registry.isPhased).toBe(true);
   });
 });
