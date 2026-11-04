@@ -188,65 +188,90 @@ export function isTimedWeapon(id: WeaponId): boolean {
 /**
  * Shots per beat for each weapon — the musical subdivision that defines
  * its fire rate. The cannon is double-time (2/beat, 160 BPM); spread and
- * dual are whole-time (1/beat, 80 BPM); rapid is six-per-beat (6/beat,
- * 480 BPM). These are the **defaults**; the live values are configurable
- * through `core/rules.ts` (`weaponSubdivisions`), and every fire rate is
- * derived from them so it is an exact subdivision of the beat period
- * (AH-0MUAYB8EH005RJ8B).
+ * dual are half-time (0.5/beat, one shot every 2 beats); rapid is
+ * three-per-beat (3/beat, 240 BPM). These are the **defaults**; the live
+ * values are configurable through `core/rules.ts` (`weaponSubdivisions`), and
+ * every fire rate is derived from them so it is an exact subdivision of the
+ * beat period (AH-0MUAYB8EH005RJ8B).
  */
 export type WeaponSubdivisions = Record<WeaponId, number>;
 
 /**
  * Default shots-per-beat for each weapon. The four conventional weapons are
- * integer subdivisions (cannon 2, spread 1, dual 1, rapid 6). The AOE family
- * fires **slower than the beat**, so its entries are fractional subdivisions:
- * Nova fires once every 4 beats (`0.25`), Mortar once every 2 beats (`0.5`)
- * and Arc once per beat (`1`). `beatSubdivisionMs` accepts any positive
- * number, and every derived rate stays an exact subdivision/multiple of the
- * beat, so the on-grid invariant holds for the whole catalogue.
+ * integer or reciprocal subdivisions (cannon 2, spread 0.5, dual 0.5, rapid
+ * 3). The AOE family fires **slower than the beat**, so its entries are
+ * fractional subdivisions: Nova fires once every 4 beats (`0.25`), Mortar
+ * once every 2 beats (`0.5`) and Arc once per beat (`1`). `beatSubdivisionMs`
+ * accepts any positive number, and every derived rate stays an exact
+ * subdivision/multiple of the beat, so the on-grid invariant holds for the
+ * whole catalogue.
+ *
+ * The non-cannon entries carry the **level-0 output trim**
+ * (AH-0MVWAVKS0005P9VN): each weapon's level-0 output is cut to ≤ 60 % of its
+ * pre-change baseline, realised by **slowing the on-beat cadence** (the
+ * identity-preserving lever) rather than deleting a pattern bullet, bounce or
+ * pierce budget. The cannon's `2` is frozen — its level-0 values may never
+ * change. The realised percentage per weapon is recorded in the strength
+ * budget block beside `WEAPON_CATALOGUE`.
  */
 export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
+  // FROZEN: the cannon's level-0 values never move.
   cannon: 2,
-  spread: 1,
-  dual: 1,
-  rapid: 6,
+  // 1/beat → 0.5/beat: 50 % of the pre-change level-0 output.
+  spread: 0.5,
+  // 1/beat → 0.5/beat: 50 %.
+  dual: 0.5,
+  // 6/beat → 3/beat: 50 % (the 1.5× cannon ceiling binds exactly).
+  rapid: 3,
+  // Unchanged — already at 50 % since the beam became single-hit
+  // (AH-0MVREBUJ5004HDRQ).
   wave_laser: 1,
-  ricochet: 1,
-  cluster: 0.5,
-  options: 1,
+  // 1/beat → 0.5/beat: 50 %, so the 2-bounce budget stays intact.
+  ricochet: 0.5,
+  // 0.5/beat → 0.25/beat: 50 %, so the split payload stays intact.
+  cluster: 0.25,
+  // 1/beat → 0.5/beat: 50 %, so both orbiting pods stay.
+  options: 0.5,
+  // Unchanged: the AOE trim is the radius, not the cadence.
   nova: 0.25,
   mortar: 0.5,
   arc: 1,
-  rear_guard: 2,
-  broadside: 0.5,
+  // 2/beat → 1/beat: 50 %.
+  rear_guard: 1,
+  // 0.5/beat → 0.25/beat: 50 %.
+  broadside: 0.25,
+  // Unchanged — already at 20 % since the level-0 budget became 1
+  // (AH-0MVY0A23A009MRK3).
   railgun: 0.25,
-  shard_swarm: 1,
-  heavy_slug: 0.5,
+  // 1/beat → 0.5/beat: 50 %, so the five-shard fan stays intact.
+  shard_swarm: 0.5,
+  // 0.5/beat → 0.25/beat: 50 %.
+  heavy_slug: 0.25,
 };
 
 /** Default cannon subdivision (2 shots per beat). */
 export const WEAPON_CANNON_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.cannon;
-/** Default spread subdivision (1 shot per beat). */
+/** Default spread subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
 export const WEAPON_SPREAD_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.spread;
-/** Default dual subdivision (1 shot per beat). */
+/** Default dual subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
 export const WEAPON_DUAL_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.dual;
-/** Default rapid subdivision (6 shots per beat). */
+/** Default rapid subdivision (3 shots per beat → 250 ms at 80 BPM). */
 export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
 /** Default wave-laser subdivision (1 shot per beat → 750 ms at 80 BPM). */
 export const WEAPON_WAVE_LASER_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.wave_laser;
-/** Default ricochet subdivision (1 shot per beat → 750 ms at 80 BPM). */
+/** Default ricochet subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
 export const WEAPON_RICOCHET_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.ricochet;
 /**
- * Default cluster-missile subdivision (once every 2 beats → 1500 ms at
+ * Default cluster-missile subdivision (once every 4 beats → 3000 ms at
  * 80 BPM). The slow cadence is what the split payload pays for.
  */
 export const WEAPON_CLUSTER_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.cluster;
 /**
- * Default Options subdivision (1 shot per beat → 750 ms at 80 BPM). The pods
- * fire on the same whole-beat cadence as the spread/dual weapons.
+ * Default Options subdivision (0.5 shots per beat → 1500 ms at 80 BPM). The
+ * pods fire on the same half-beat cadence as the spread/dual weapons.
  */
 export const WEAPON_OPTIONS_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.options;
@@ -256,18 +281,18 @@ export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
 export const WEAPON_MORTAR_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.mortar;
 /** Default Arc subdivision (once per beat → 750 ms at 80 BPM). */
 export const WEAPON_ARC_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.arc;
-/** Default Rear Guard subdivision (2 shots per beat → 375 ms at 80 BPM). */
+/** Default Rear Guard subdivision (1 shot per beat → 750 ms at 80 BPM). */
 export const WEAPON_REAR_GUARD_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.rear_guard;
-/** Default Broadside subdivision (once every 2 beats → 1500 ms at 80 BPM). */
+/** Default Broadside subdivision (once every 4 beats → 3000 ms at 80 BPM). */
 export const WEAPON_BROADSIDE_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.broadside;
 /** Default Railgun subdivision (once every 4 beats → 3000 ms at 80 BPM). */
 export const WEAPON_RAILGUN_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.railgun;
-/** Default Shard Swarm subdivision (once per beat → 750 ms at 80 BPM). */
+/** Default Shard Swarm subdivision (0.5 shots per beat → 1500 ms at 80 BPM). */
 export const WEAPON_SHARD_SWARM_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.shard_swarm;
-/** Default Heavy Slug subdivision (once every 2 beats → 1500 ms at 80 BPM). */
+/** Default Heavy Slug subdivision (once every 4 beats → 3000 ms at 80 BPM). */
 export const WEAPON_HEAVY_SLUG_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.heavy_slug;
 
@@ -515,15 +540,22 @@ export const BULLET_COLORS = {
  * AOE effect radii (px) — the single source of truth read by the catalogue
  * descriptors and (later) the distinctive VFX helpers. Halved alongside the
  * conventional bullet ranges so AOE coverage is tighter and more positional
- * (AH-0MUU131PU006O7ZD).
+ * (AH-0MUU131PU006O7ZD), then trimmed to ≤ 60 % of that level-0 coverage by
+ * the non-cannon output trim (AH-0MVWAVKS0005P9VN).
+ *
+ * The trim is realised as the **largest whole-pixel radius whose area stays
+ * inside the 60 % bound**, so a target that is not representable at an integer
+ * radius never rounds up: Nova 45 → 34 px (57.1 %), Mortar 35 → 27 px
+ * (59.5 %), Arc 60 → 46 px (58.8 %). Coverage is `radius² × cadence`, so the
+ * radius is the AOE family's output lever and its cadence is untouched.
  */
 export const AOE_RADII = {
-  /** Nova ring radius — a defensive pulse around the ship. */
-  nova: 45,
-  /** Mortar blast radius — a focused detonation at the impact point. */
-  mortar: 35,
-  /** Arc chaining reach — the longest AOE, spanning nearby targets. */
-  arc: 60,
+  /** Nova ring radius — a defensive pulse around the ship (57.1 % of 45 px). */
+  nova: 34,
+  /** Mortar blast radius — a focused detonation at the impact point (59.5 % of 35 px). */
+  mortar: 27,
+  /** Arc chaining reach — the longest AOE, spanning nearby targets (58.8 % of 60 px). */
+  arc: 46,
 } as const;
 
 /**
