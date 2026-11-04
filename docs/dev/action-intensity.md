@@ -478,7 +478,7 @@ the calibration work in [§9](#9-risks-limitations--calibration) tunes them
 against human-selected highlights.
 
 **Consumer.** The reference implementation of this recipe is the promo
-compiler (`scripts/compile-promo.mjs`, `npm run compile:promo`): it reads
+compiler (`scripts/compile-promo.mjs`, `npm run capture:promo`): it reads
 `<run-id>.action.jsonl` plus the `<run-id>.capture.json` anchor, applies the
 recipe, splits each window into short cuts, and trims/joins/muxes them with
 `ffmpeg`. Inputs, outputs, the selection/coverage manifest formats and the
@@ -576,7 +576,7 @@ the selection manifest meaningful.
 
 #### Failure behaviour
 
-A promo below the band fails the compile: `npm run compile:promo` exits
+A promo below the band fails the compile: `npm run capture:promo` exits
 non-zero, the report's `pace` field carries `ok: false` plus the measured
 values and per-metric issues, and the stdout summary prints a `pace FAIL`
 line naming the offending metric(s). The band is deliberately applied to the
@@ -602,7 +602,7 @@ rejection — `targets.ok === false` carrying the three target-specific issues,
 with a non-zero exit whose only error is that size verdict — instead of
 relaxing the exit code. Editorial sizing on real footage is covered by the
 `assessTargets` unit tests in `scripts/compile-promo.test.ts` and by
-`npm run compile:promo` against a real capture pool (AH-0MVWN4I95005HBJG).
+`npm run capture:promo` against a real capture pool (AH-0MVWN4I95005HBJG).
 
 ## 8. Telemetry integration & gym↔game parity
 

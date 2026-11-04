@@ -15,7 +15,7 @@
     "capture": "node scripts/capture-gameplay.mjs",
     "capture:scenes": "node scripts/capture-gameplay.mjs",
     "list:pool": "node scripts/list-capture-pool.mjs",
-    "compile:promo": "node scripts/compile-promo.mjs --compile",
+    "capture:promo": "node scripts/compile-promo.mjs --compile",
     "evaluate": "node scripts/evaluate.mjs",
     "ring-timing": "node scripts/ring-timing.mjs",
     "validate-experience": "node scripts/validate-experience.mjs",

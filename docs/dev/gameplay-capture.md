@@ -62,7 +62,7 @@ npm run capture -- --diagnostics --duration 420000 --output capture-output/soak.
 
 # compile the captured pool into a promo + showreel + highlight clips
 # (needs a full ffmpeg — see Compiling a promo package below)
-npm run compile:promo
+npm run capture:promo
 ```
 
 This was proven end to end on 2026-10-06: a 12 s clip recorded at
@@ -224,9 +224,9 @@ The lister is pure apart from a thin `node:fs` scan, and is unit-tested
 hermetically (`scripts/list-capture-pool.test.ts`) without footage, ffmpeg
 or a browser.
 
-## Compiling a promo package (`npm run compile:promo`)
+## Compiling a promo package (`npm run capture:promo`)
 
-`npm run compile:promo` turns the captured pool into shareable material —
+`npm run capture:promo` turns the captured pool into shareable material —
 a short promo, a longer showreel and individual highlight clips — by
 trimming, reordering, concatenating and muxing the source WebMs with
 `ffmpeg` (AH-0MVDV50Z20071RF4; the driver itself is
@@ -236,7 +236,7 @@ selection and the manifests all come from the recorded
 
 ```bash
 # one-off: install a full ffmpeg (VP9 + Opus) — see Prerequisites below
-npm run compile:promo                     # plan + compile + validate
+npm run capture:promo                     # plan + compile + validate
 
 # plan only (no ffmpeg required at all): writes the edit plan JSON to stdout
 node scripts/compile-promo.mjs | less
@@ -269,7 +269,7 @@ sufficient (VP8-only, no VP9/Opus encoder).
 
 Detection is explicit and fails fast with an actionable message rather than
 an `ENOENT` stack: a missing `ffmpeg`/`ffprobe` exits non-zero and prints the
-install hints above plus `npm run compile:promo`. The output directory must
+install hints above plus `npm run capture:promo`. The output directory must
 already exist — a missing `--out-dir` is reported as such (with a `mkdir -p`
 suggestion) before any encoding starts.
 
@@ -383,7 +383,7 @@ Which feature is visible in a cut is decided from the series `breakdown`
 ### Validation
 
 Every output is validated before the run is reported as successful
-(`npm run compile:promo` exits non-zero if anything fails):
+(`npm run capture:promo` exits non-zero if anything fails):
 
 - **decodable** — `ffprobe` returns usable streams;
 - **correct resolution** — 960×540 video;
@@ -403,7 +403,7 @@ with the real encoder, so it asserts the per-deliverable gates and the pace
 band strictly and asserts the size gate's **expected rejection** (its ~5 s
 fixture cannot meet the 45–60 s / > 2 min / 5-clip targets, and lengthening it
 is ruled out by the gated suite's cost budget). Editorial sizing on real
-footage is verified by `npm run compile:promo` against a real capture pool and
+footage is verified by `npm run capture:promo` against a real capture pool and
 by the `assessTargets` unit tests — see
 [docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo).
 
@@ -2518,7 +2518,7 @@ the Playwright-bundled binary and degrades to delivering the unseekable clip
 with a warning, so `npm run capture` still works with no ffmpeg at all.
 
 A full `ffmpeg` is required only by the **promo compiler**
-(`npm run compile:promo`, see
+(`npm run capture:promo`, see
 [Compiling a promo package](#compiling-a-promo-package-npm-run-compilepromo)),
 which is a post-processing step over already-captured WebMs — it never
 changes the capture path. If an MP4 is ever needed, transcode the compiled
@@ -2659,7 +2659,7 @@ full`) or `npm run build`.
 | `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |
 | `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap, progress helpers, the shared pipeline and the duplication guard |
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
-| `package.json` | `capture` / `capture:scenes` / `capture:install` / `list:pool` / `compile:promo` scripts; `playwright` devDependency |
+| `package.json` | `capture` / `capture:scenes` / `capture:install` / `list:pool` / `capture:promo` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |
 
 #### The recorder must never be interrupted by a page reload

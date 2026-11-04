@@ -1435,7 +1435,7 @@ describe('ffmpeg driver — binary resolution & missing-ffmpeg errors (AC4)', ()
     const msg = missingFfmpegError();
     expect(msg).toContain('ffmpeg/ffprobe not found on PATH');
     for (const hint of FFMPEG_INSTALL_HINTS) expect(msg).toContain(hint);
-    expect(msg).toContain('npm run compile:promo');
+    expect(msg).toContain('npm run capture:promo');
     expect(msg).not.toContain('    at ');
     expect(msg).not.toContain('Error: ');
   });
@@ -2312,7 +2312,7 @@ describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
     expect(result.code).toBe(1);
     expect(result.stdout).toContain('not found on PATH');
     expect(result.stdout).toContain('sudo apt-get install ffmpeg');
-    expect(result.stdout).toContain('npm run compile:promo');
+    expect(result.stdout).toContain('npm run capture:promo');
     expect(result.stdout).not.toContain('    at ');
     expect(files[`${CAPTURE_OUTPUT_DIR}/unit/compile-promo-report.json`]).toBeUndefined();
   });

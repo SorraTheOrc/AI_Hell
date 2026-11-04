@@ -792,7 +792,7 @@ Promo compiler (AH-0MVDV4OKN001OT18 + AH-0MVDV4PNZ004ZWOZ). Two modes:
    ${DEFAULT_TARGETS.highlights.count} highlight clips) together with the selection and coverage
    manifests — as JSON. This pure step runs WITHOUT ffmpeg.
 
-2. Compile + validate (--compile, what \`npm run compile:promo\` runs):
+2. Compile + validate (--compile, what \`npm run capture:promo\` runs):
    builds the plan, then drives ffmpeg to trim, reorder, concatenate and
    mux the source clips deterministically into the three deliverable types
    at the game's native 960x540 with the game's own SFX Opus track, and
@@ -1244,7 +1244,7 @@ export function missingFfmpegError() {
     ...FFMPEG_INSTALL_HINTS.map((hint) => `  ${hint}`),
     '',
     'Verify with: ffmpeg -version && ffprobe -version',
-    'Then re-run: npm run compile:promo',
+    'Then re-run: npm run capture:promo',
     '',
   ].join('\n');
 }
