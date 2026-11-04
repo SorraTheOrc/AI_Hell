@@ -259,6 +259,23 @@ export interface PowerUpEntry {
    */
   singleUse?: boolean;
   /**
+   * Whether this entry is still a valid **reward** once it is **permanently
+   * owned** (parent AH-0MVY096RT006QMF4, AC5).
+   *
+   * **Defaults to `true`** — an absent flag means the owned kind keeps its
+   * reward offer (a `'power-up-charge'` in the hold-full choice, and a wedge on
+   * the mini-boss wheel). A kind that has no reward left to give once owned
+   * opts out with `false`: it then produces no hold-full option and no wheel
+   * wedge, while its **unowned** base `★ New` entry still stands and grants the
+   * permanent slot.
+   *
+   * The flag is catalogue data, read through {@link isRewardableWhenOwned}, so
+   * no reward builder (hold-full choice, mini-boss reward, mini-boss wheel)
+   * branches on an id. A **single-use** kind whose one event is already
+   * permanently available opts out: Teleport is the only such entry today.
+   */
+  rewardableWhenOwned?: boolean;
+  /**
    * Whether this entry remains drawable/offerable once all
    * `POWER_UP_SLOT_CAP` permanent slots are occupied (parent
    * AH-0MVLIJT3M005HPHF, AC5).
@@ -348,6 +365,11 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // starts a level-derived `teleportRechargeRate` interval (60 s → 20 s).
     consumable: true,
     singleUse: true,
+    // No reward is left once Teleport is permanently owned: its one warp is
+    // always available (recharging on the interval above), so a charge offer
+    // and a wheel wedge would grant nothing (parent AH-0MVY096RT006QMF4 AC5).
+    // While unowned the base `★ New` choice entry still grants the slot.
+    rewardableWhenOwned: false,
   },
   extra_life: {
     id: 'extra_life',
@@ -524,6 +546,38 @@ export const CONSUMABLE_POWER_UP_IDS: readonly PowerUpId[] = (
 )
   .filter((entry) => entry.consumable === true)
   .map((entry) => entry.id);
+
+/**
+ * The power-up ids that opt **out** of owned rewards, derived from the
+ * catalogue's `rewardableWhenOwned` flag in catalogue order (parent
+ * AH-0MVY096RT006QMF4 AC5).
+ *
+ * An absent flag is the documented `true` default, so only an explicit
+ * `rewardableWhenOwned: false` entry appears here. Derived at module load, so
+ * the set can never drift from the entries and no builder spells it out again.
+ */
+export const NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS: readonly PowerUpId[] = (
+  Object.values(POWER_UP_CATALOGUE) as PowerUpEntry[]
+)
+  .filter((entry) => entry.rewardableWhenOwned === false)
+  .map((entry) => entry.id);
+
+/**
+ * Whether a permanently-owned kind still has a reward to give (parent
+ * AH-0MVY096RT006QMF4 AC5).
+ *
+ * Reads the catalogue flag through the derived
+ * {@link NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS} set: `true` unless the entry
+ * explicitly opts out, so a newly added catalogue entry is rewardable by
+ * default. The single source of the "retire an owned reward" rule — the
+ * hold-full choice and the mini-boss wheel both read it instead of comparing
+ * ids.
+ *
+ * @param id - The power-up kind being offered as a reward.
+ */
+export function isRewardableWhenOwned(id: PowerUpId): boolean {
+  return !NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS.includes(id);
+}
 
 /**
  * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full

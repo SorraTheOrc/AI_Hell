@@ -27,8 +27,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CONSUMABLE_POWER_UP_IDS,
+  NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS,
   POWER_UP_CATALOGUE,
   WEAPON_DROP_IDS,
+  isRewardableWhenOwned,
   type PowerUpEntry,
   type PowerUpId,
 } from './types';
@@ -213,6 +215,33 @@ describe('consumable catalogue copy states the charge model (AC5)', () => {
         CHOICE_DESCRIPTION_MAX_LINES,
       );
     }
+  });
+});
+
+// ── Owned-reward opt-out flag (AH-0MW231NRP004HAT5 AC5) ─────────────
+
+describe('POWER_UP_CATALOGUE.rewardableWhenOwned (AH-0MW231NRP004HAT5)', () => {
+  it('derives the retired-when-owned set from the catalogue flag, in catalogue order', () => {
+    const expected = CATALOGUE_IDS.filter(
+      (id) => POWER_UP_CATALOGUE[id].rewardableWhenOwned === false,
+    );
+
+    expect(NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS).toEqual(expected);
+    // The live opt-out: an owned Teleport has no reward left to give.
+    expect(NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS).toEqual(['teleport']);
+  });
+
+  it('treats an absent flag as the documented rewardable default', () => {
+    for (const id of CATALOGUE_IDS) {
+      expect(isRewardableWhenOwned(id), id).toBe(
+        POWER_UP_CATALOGUE[id].rewardableWhenOwned !== false,
+      );
+    }
+
+    // The default is a real, live data point: Shield declares no flag and is
+    // still rewarded once owned, so the helper must read absence as `true`.
+    expect(POWER_UP_CATALOGUE.shield.rewardableWhenOwned).toBeUndefined();
+    expect(isRewardableWhenOwned('shield')).toBe(true);
   });
 });
 

@@ -8,6 +8,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   CHOICE_POOL,
@@ -40,6 +42,7 @@ import {
   CONSUMABLE_POWER_UP_IDS,
   POWER_UP_CATALOGUE,
   WEAPON_DROP_IDS,
+  isRewardableWhenOwned,
   type DropId,
   type PowerUpId,
 } from '../types';
@@ -1040,6 +1043,16 @@ describe('power-up choice strategy', () => {
     const CONSUMABLES: readonly PowerUpId[] = CONSUMABLE_POWER_UP_IDS;
 
     /**
+     * The consumables that are **still** offered once permanently owned — the
+     * complement of the catalogue's `rewardableWhenOwned` opt-out (parent
+     * AH-0MVY096RT006QMF4 AC5). Filtered through the same catalogue helper the
+     * builders read, so this suite can never keep offering a kind the game has
+     * retired.
+     */
+    const REWARDABLE_CONSUMABLES: readonly PowerUpId[] =
+      CONSUMABLES.filter(isRewardableWhenOwned);
+
+    /**
      * The level-derived regeneration interval of each kind at the base level
      * (resolver level 0, i.e. a first hold-full ownership). Pinned as literal
      * seconds so the copy is asserted against real game numbers rather than
@@ -1060,7 +1073,7 @@ describe('power-up choice strategy', () => {
     });
 
     it('AC1 — a permanently-owned consumable is offered as a charge, never a level-up', () => {
-      for (const id of CONSUMABLES) {
+      for (const id of REWARDABLE_CONSUMABLES) {
         const candidates = buildChoiceCandidates(CHOICE_POOL, ownedContext(id));
         // Exactly one offer for the kind, and it is the charge grant: the
         // base-pool entry is suppressed (owned) and no `power-up-level` offer
@@ -1081,7 +1094,7 @@ describe('power-up choice strategy', () => {
     it('AC1 — the shared owned-offer builder offers the charge too (no surface drift)', () => {
       // `buildOwnedLevelUpOptions` is the one builder the mini-boss reward
       // reuses, so the charge offer cannot exist on one surface only.
-      for (const id of CONSUMABLES) {
+      for (const id of REWARDABLE_CONSUMABLES) {
         const options = buildOwnedLevelUpOptions(ownedContext(id));
         expect(options.map((o) => o.kind), id).toEqual(['power-up-charge']);
         // A charge grants no level, so the offer must not advertise one.
@@ -1093,7 +1106,7 @@ describe('power-up choice strategy', () => {
     });
 
     it('AC2 — copy names the one-event effect and the level-derived interval, per kind', () => {
-      for (const id of CONSUMABLES) {
+      for (const id of REWARDABLE_CONSUMABLES) {
         const option = buildChoiceCandidates(
           CHOICE_POOL,
           ownedContext(id),
@@ -1127,6 +1140,61 @@ describe('power-up choice strategy', () => {
       expect(base.changeSummary).toContain('every 45 s');
       expect(levelled.changeSummary).toContain('every 35 s');
       expect(levelled.changeSummary).not.toBe(base.changeSummary);
+    });
+
+    it('AC1 — the catalogue-driven opt-out gives a permanently-owned Teleport no offer at all', () => {
+      // The retired set is catalogue data, never a hand-written id list: the
+      // single opt-out entry is named here only as the expected live value.
+      const retired = CONSUMABLES.filter((id) => !isRewardableWhenOwned(id));
+      expect(retired).toEqual(['teleport']);
+
+      for (const id of retired) {
+        // The hold-full candidate list emits nothing for the kind — no
+        // `power-up-charge`, no level-up and no surviving base entry (it is
+        // permanently owned) — and neither does the shared builder the
+        // mini-boss reward reuses.
+        expect(
+          buildChoiceCandidates(CHOICE_POOL, ownedContext(id)).filter(
+            (o) => o.id === id,
+          ),
+          id,
+        ).toEqual([]);
+        expect(buildOwnedLevelUpOptions(ownedContext(id)), id).toEqual([]);
+      }
+    });
+
+    it('AC3 — an unowned Teleport is still offered as its ★ New base entry', () => {
+      // The opt-out only retires the *owned* reward surface: the base entry,
+      // which grants the permanent slot, survives — even when another
+      // consumable is owned.
+      const context: ChoiceContext = {
+        powerUpLevels: [{ id: 'shield', level: 1 }],
+      };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const teleport = candidates.find((o) => o.id === 'teleport');
+
+      expect(teleport?.kind).toBe('powerup');
+      expect(teleport?.isNew).toBe(true);
+      expect(
+        candidates.some(
+          (o) => o.id === 'teleport' && o.kind === 'power-up-charge',
+        ),
+      ).toBe(false);
+    });
+
+    it('AC5 — the exclusion is catalogue data, never an id branch in the builder', () => {
+      // Structural guard for the producer's "no `id === 'teleport'`" rule: the
+      // behaviour above must come from the catalogue flag via the shared
+      // helper, so a future kind can opt out without touching this module.
+      const source = readFileSync(
+        resolve(process.cwd(), 'src/powerups/choice.ts'),
+        'utf8',
+      )
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^[ \t]*\/\/.*$/gm, '');
+
+      expect(source).not.toMatch(/===\s*['"]teleport['"]/);
+      expect(source).toContain('isRewardableWhenOwned');
     });
 
     it('AC3 — choosing a charge option grants exactly one charge and no level', () => {

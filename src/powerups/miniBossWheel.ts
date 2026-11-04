@@ -68,6 +68,8 @@ import type { EffectsRegistry } from './effects';
 import {
   POWER_UP_CATALOGUE,
   WEAPON_DROP_IDS,
+  isRewardableWhenOwned,
+  isWeaponDrop,
   type DropId,
   type PowerUpId,
 } from './types';
@@ -158,9 +160,17 @@ const POWER_UP_ORDER: ReadonlyMap<string, number> = new Map(
  * kinds a permanent level-up can be applied to: this excludes the permanent
  * `cannon` (never a drop), the `reset` utility (removes weapons, never
  * levelled) and any unknown id.
+ *
+ * Also excludes a kind whose catalogue entry opts out of owned rewards
+ * (`rewardableWhenOwned: false`, parent AH-0MVY096RT006QMF4 AC5): the wheel is
+ * built from **owned** kinds, so such a kind has no reward left to give and
+ * gets no wedge — and therefore no level from the bonus slot either. The
+ * exclusion is catalogue data read through {@link isRewardableWhenOwned},
+ * never an id comparison.
  */
 function isWheelKind(id: DropId): boolean {
-  return buildLevelUpOption(id, 1) !== undefined;
+  if (buildLevelUpOption(id, 1) === undefined) return false;
+  return isWeaponDrop(id) || isRewardableWhenOwned(id);
 }
 
 /**
@@ -193,7 +203,9 @@ export function orderedOwnedKinds(ownedKinds: Iterable<DropId>): DropId[] {
  *
  * The launcher passes the owned ids from the shared six-slot accounting
  * (`resolveSlotState(...).ownedIds`), so the wedge list and the resolved
- * outcome can never see a different pool.
+ * outcome can never see a different pool. A kind that opts out of owned
+ * rewards (an owned Teleport) contributes no wedge — it is filtered by
+ * {@link orderedOwnedKinds} — while the bonus wedge stays last.
  *
  * @param ownedKinds — The run's owned permanent kinds.
  * @returns The wedges in stable order, bonus last.
