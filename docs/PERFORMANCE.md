@@ -536,9 +536,12 @@ desktop 60 FPS target is not yet falsified on a real GPU:
 - **This host has no usable GPU device for the browser/harness.** `/dev/dri`
   exists (`card0`, `card1`, `renderD128`, `renderD129`) but the render nodes are
   `root:render` with mode `660`, and the measuring user is not in the `render`
-  or `video` group, so the process cannot open them. There is also no display
-  server (`DISPLAY` unset, no Xvfb installed). Every launch mode therefore falls
-  back to a software renderer —
+  or `video` group, so the process cannot open them. (A GPU is physically
+  present — an RTX 3050 Ti and a Renoir iGPU — and the NVIDIA device nodes are
+  writable, but that path is faulted by a driver version mismatch; see
+  [Re-verified](#re-verified-2026-11-04-commit-da8aaa8f) below.) There is also
+  no display server (`DISPLAY` unset, no Xvfb installed). Every launch mode
+  therefore falls back to a software renderer —
   `ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)`
   — including with `--gpu`, which is why `--require-hardware-webgl` exists and
   refuses the run rather than labelling a software run "desktop".
@@ -551,8 +554,51 @@ The verification run itself is tracked by AH-0MW2IRYJ2006PV3P (filed by
 AH-0MVXV6VOI006P7VG: this host cannot produce it, so it cannot be part of the
 final verification's own evidence here).
 
-**To fill the gap**, on a machine with a hardware GPU (and, for the Electron
-row, a display or a GPU-capable headless setup):
+### Re-verified (2026-11-04, commit `da8aaa8f`)
+
+Both desktop hosts were re-checked against the head of the optimisation work
+(baked bullet/enemy-body textures, collision broad phase, allocation removal)
+with short guard-check runs (`--seconds 3 --warmup 1`):
+
+| Invocation | Result |
+|---|---|
+| `--gpu --require-hardware-webgl --scene GymPerformance` | exit 1 — *Refusing to publish a hardware-GPU baseline: the page rendered on a software WebGL backend (`ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)`)* |
+| `--host electron --gpu --require-hardware-webgl …` | exit 1 — *Electron is not installed, so `--host electron` cannot run* |
+
+The guard is behaving correctly (a software run is never published as a desktop
+hardware baseline), so the gap is **host access**, not harness behaviour. The
+diagnosis is now sharper than "no GPU": there are three independent causes,
+each with its own fix, and the first two are the only ones that matter.
+
+1. **NVIDIA: kernel module and userspace driver disagree.** `nvidia-smi` fails
+   with `Failed to initialize NVML: Driver/library version mismatch` (NVML
+   595.99); `/proc/driver/nvidia/version` reports `NVRM … 595.91.07` (the host
+   has been up ~3 days, so the loaded module predates the driver upgrade to
+   `nvidia-driver-595-open 595.99.02`). The device nodes are **not** the
+   problem — `/dev/nvidia0`, `/dev/nvidiactl`, `/dev/nvidia-uvm` are mode `666`
+   and open fine as the non-root measuring user — but a mismatched pair cannot
+   create a GL or Vulkan context. **Fix:** reboot (or reload the nvidia
+   modules) so the 595.99 module set loads, then confirm `nvidia-smi`.
+2. **AMD iGPU: the DRM nodes are not openable by the measuring user.**
+   `renderD128` (Renoir) and `renderD129` (NVIDIA), plus `card0`/`card1`, are
+   `root:video`/`root:render` mode `660` with an ACL for `gdm-greeter` only;
+   the user is in neither group, so `open()` returns `EACCES`. **Fix:**
+   `usermod -aG video,render <user>` and re-login (group membership is
+   per-session), or run the measurement from the graphical seat session, where
+   logind grants the seat user the device ACL.
+3. **Electron is not installed.** `node_modules/electron` is absent (it is an
+   `optionalDependencies` entry, so a plain `npm install` prunes it again), so
+   even the *software* Electron row is currently not reproducible here.
+   **Fix:** `npm install electron@^45.2.2` (or `--electron-executable <path>`)
+   before the Electron run.
+
+These are operator tasks (they need `sudo`, a re-login or a reboot) and are
+tracked as **AH-0MW2L3JXU008I2Z8**, which blocks the verification item
+AH-0MW2IRYJ2006PV3P. The runs below stay outstanding until it completes.
+
+**To fill the gap**, once the host exposes a hardware GPU (and, for the
+Electron row, with `electron` installed and a display or a GPU-capable headless
+setup):
 
 ```bash
 # desktop browser, hardware GPU — the guard refuses a software fallback
