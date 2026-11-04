@@ -44,6 +44,52 @@ exercises — or whose run started and finished on different commits — as a
 **mixed-state** artefact, not a defect: re-run from a clean worktree before
 triaging or filing a `test-failure` item.
 
+## The dev-push full-suite gate (pre-push hook)
+
+The full suite runs **at the dev push**, not during implementation: pushes to
+`refs/heads/dev` or `refs/heads/main` are gated by the committed
+[`.githooks/pre-push`](../../.githooks/pre-push) hook, which invokes the
+canonical runner as
+
+```bash
+run_tests.py --scope full --strict-git-env --project-root <root> \
+  --gate-commit <pushed sha>
+```
+
+Feature-branch, tag and `refs/worklog/data` pushes run no tests — the worktree
+already ran changed-scope validation. The gate is **bound to the pushed
+commit** (`--gate-commit`): the runner resolves a checkout whose `HEAD` is that
+commit with no dirty paths (in place when possible, otherwise a clean
+`git worktree list` checkout) and refuses the push when no such checkout
+exists, so a green verdict can never describe a different tree. The run is
+recorded in the per-repo test cache under the git state it validated, and the
+hook mirrors the resolved checkout's cache entries into the main checkout's
+`.worklog/cache` so post-push verification and audits can read them.
+
+### Why the gate must stay installed
+
+After a successful dev push, `implement.py finish` performs a **read-only**
+post-push verification: it looks up the cached full-suite verdict for the
+pushed tree and refuses the terminal `completed`/`in_review` transition when
+no valid entry exists, reporting `verdict=missing` and filing a critical
+`test-failure` item named `post-push full-suite verification: no valid
+full-suite cache entry`. That refusal is correct — the entry only exists
+because the pre-push gate ran.
+
+AH-0MW28RGA6008DFT1 is exactly that shape: this repository still shipped the
+pre-gate **v2** hook (branch policy + context budget + worklog sync, no test
+gate), so the suite never ran at push time and `finish` refused. The durable
+fix is the gate-enforcing hook now committed; the refusal's remediation (run
+the suite through the test skill, then re-run `finish`, which is idempotent on
+the no-diff path) remains the recovery for a bypassed gate.
+
+Keep the hook current — `wl doctor upgrade --dry-run` lists outdated hooks —
+and treat a `missing` verdict as **infrastructure**, not a failing test: check
+whether the push bypassed the gate (`TEST_SCOPE_SKIP=1`, `git push
+--no-verify`, an outdated hook) before triaging anything. The gate's behaviour
+is pinned by `scripts/pre-push-gate.test.ts`, which executes the hook in a
+temporary repository with a stub runner.
+
 ## Tracked-CSV write safety in tests
 
 The suite must never write the tracked config CSVs (`src/data/ship-config.csv`,

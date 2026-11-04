@@ -484,6 +484,19 @@ mid-run and can produce a red result for a commit that never existed
 (AH-0MVVE2QFP002HSUD; see
 [docs/dev/test-suite-timing.md](docs/dev/test-suite-timing.md#run-verification-suites-in-an-isolated-worktree-never-in-the-shared-main-checkout)).
 
+The full suite runs **at the dev push**: the committed
+[`.githooks/pre-push`](.githooks/pre-push) hook gates pushes to `refs/heads/dev`
+and `refs/heads/main` with `run_tests.py --scope full --strict-git-env
+--gate-commit <pushed sha>` and mirrors the run's cache entry into the main
+checkout. Feature-branch pushes run no tests. `implement.py finish` reads that
+cache entry after pushing and refuses the terminal transition with
+`verdict=missing` ("no valid full-suite cache entry") when it is absent, so an
+outdated or bypassed hook surfaces as a critical `test-failure` item rather
+than as a silent gap (AH-0MW28RGA6008DFT1). Keep the hook current
+(`wl doctor upgrade --dry-run`) and see
+[docs/dev/test-suite-timing.md](docs/dev/test-suite-timing.md#the-dev-push-full-suite-gate-pre-push-hook)
+for the gate's contract and the `missing` recovery.
+
 Project test types are registered in
 `.pi/skills_extensions/test/extension.json` — the supported project-local
 mechanism for typed runs (see the test skill's "Typed runs" contract). The
