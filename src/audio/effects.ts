@@ -392,9 +392,14 @@ export function playSpawnSound(): void {
  *
  * Accepts per-play {@link SfxPlayOptions}; an explicit `delay` (seconds) is
  * honoured verbatim for caller-scheduled displays such as the mini-boss death
- * sweep, otherwise the cue is quantised onto the shared beat grid.
+ * sweep, otherwise the cue is quantised onto the shared beat grid. An explicit
+ * `seed` pins one of the three baked variants (the sweep draws it from the run
+ * seed so a seed replays the same audio); without one a variant is picked at
+ * random per play, as before.
  */
-export function playDestructionSound(options: SfxPlayOptions = {}): void {
+export function playDestructionSound(
+  options: SfxPlayOptions & { seed?: number } = {},
+): void {
   playExplosionCue('playDestructionSound', options);
 }
 
@@ -1119,6 +1124,94 @@ export function playDefeatStingSound(): void {
   playCue('playDefeatStingSound');
 }
 
+// ── Mini-boss death sweep cue dispatcher (AH-0MVVEI7FD004TR2M) ──────
+//
+// The mini-boss defeat sweep (`src/scenes/core/miniBossDeathSweep.ts`) turns
+// its display into audio through this **one** dispatcher, so the game and
+// every gym route the cascade identically (AGENTS.md gym↔game parity).
+//
+// The palette is **reuse-only** (producer decision Q1 = a on
+// AH-0MVVEI7FD004TR2M): no new ToneForge recipe, no new baked asset and no
+// manifest change. The sweep's own planner names the cue per burst role and
+// the per-role mix trim; this function only resolves the baked variant and
+// hands the request to the shipped cue wrappers.
+
+/** Cues the mini-boss death sweep may dispatch (reuse-only palette, Q1 = a). */
+export type MiniBossSweepSoundCueName =
+  | 'playBossDestructionSound'
+  | 'playDestructionSound'
+  | 'playVictoryExplosionSound';
+
+/** Per-play options for {@link playMiniBossSweepSound}. */
+export interface MiniBossSweepSoundOptions {
+  /** Seconds from now to schedule the cue (the burst's own `delayMs`). */
+  readonly delay?: number;
+  /** Per-play mix trim supplied by the sweep's per-role volume scale. */
+  readonly volume?: number;
+  /**
+   * Run-seeded draw in `[0, 1)` choosing one of the cue's baked variants
+   * (AC5). The planner draws it from the run-seeded RNG, so the same run seed
+   * replays the same variant — no `Math.random()` in this path.
+   */
+  readonly variantPick?: number;
+}
+
+/**
+ * Resolves a sweep cue's baked variant seed from a run-seeded draw.
+ *
+ * A single-variant or shared-recipe cue has one seed, so the draw is a no-op;
+ * a multi-variant cue (`playDestructionSound` ×3, `playVictoryExplosionSound`
+ * ×5) is picked deterministically from `variantPick`, never at random.
+ */
+function sweepVariantSeed(
+  cue: MiniBossSweepSoundCueName,
+  variantPick: number | undefined,
+): number | undefined {
+  const seeds = cueSeeds(cue);
+  if (seeds.length === 0) return undefined;
+  if (variantPick === undefined) return seeds[0];
+  const pick = Number.isFinite(variantPick) ? variantPick : 0;
+  // Clamp defensively: a widening variant range must never index out of bounds.
+  const index = Math.min(
+    seeds.length - 1,
+    Math.max(0, Math.floor(pick * seeds.length)),
+  );
+  return seeds[index];
+}
+
+/**
+ * Plays one mini-boss death-sweep cue at its burst's own delay (producer
+ * decision Q3 = a — **visual-timed**, never snapped to the 16th-note accent
+ * grid, and never spending the mass-kill per-tick accent budget).
+ *
+ * A safe no-op without an `AudioContext` (headless tests, muted SFX, volume 0,
+ * autoplay-blocked browsers) and never throws, like every cue.
+ *
+ * @param cue - The cue the sweep's planner assigned to the burst / body.
+ * @param options - Scheduled delay, per-role mix trim and baked-variant draw.
+ */
+export function playMiniBossSweepSound(
+  cue: MiniBossSweepSoundCueName,
+  options: MiniBossSweepSoundOptions = {},
+): void {
+  const seed = sweepVariantSeed(cue, options.variantPick);
+  const play: SfxPlayOptions & { seed?: number } = {
+    delay: options.delay,
+    volume: options.volume,
+    seed,
+  };
+  switch (cue) {
+    case 'playBossDestructionSound':
+      playBossDestructionSound(play);
+      return;
+    case 'playVictoryExplosionSound':
+      playVictoryExplosionSound(play);
+      return;
+    default:
+      playDestructionSound(play);
+  }
+}
+
 // ── Victory firework cues (AH-0MUWZ5HCV0034H44) ────────────────────
 //
 // The sustained victory celebration layers exploded/firework SFX on top of
@@ -1169,10 +1262,12 @@ export function playBossPhaseTransitionSound(): void {
 
 /**
  * Heavy deep fall — Boss destruction. Accepts per-play {@link SfxPlayOptions}
- * so a scripted display (the mini-boss finale) can schedule its booms with an
- * explicit `delay` and a mix-trimming `volume`.
+ * so a scripted display (the mini-boss death sweep) can schedule its boom with
+ * an explicit `delay` and a mix-trimming `volume`.
  */
-export function playBossDestructionSound(options: SfxPlayOptions = {}): void {
+export function playBossDestructionSound(
+  options: SfxPlayOptions & { seed?: number } = {},
+): void {
   playCue('playBossDestructionSound', options);
 }
 

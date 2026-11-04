@@ -84,6 +84,12 @@ KNOWN_CUE_SET.add('playWeaponImpactCue');
 // recipe, so it is known to the coverage check without a manifest entry of its
 // own — the underlying cue it plays is mapped and verified like every other.
 KNOWN_CUE_SET.add('playEnemyForceFieldBreakSound');
+// `playMiniBossSweepSound` is the mini-boss death sweep's **dispatcher** over
+// the reuse-only palette (AH-0MVVEI7FD004TR2M): it routes a sweep cue name
+// (`playDestructionSound` / `playVictoryExplosionSound` / `playBossDestructionSound`)
+// to the baked cue in the manifest, so like the other dispatchers it ships no
+// recipe of its own and is known to the coverage check.
+KNOWN_CUE_SET.add('playMiniBossSweepSound');
 
 function resolveCue(name: string): CueFn | undefined {
   const fromEffects = (effects as unknown as Record<string, unknown>)[name];

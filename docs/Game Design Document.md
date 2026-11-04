@@ -814,13 +814,26 @@ reward overlay (§4.4.4) appears.
   **no score, no mineral/power-up/Extra-Life drops and no kill telemetry** —
   they never route through the reward-bearing kill path. The mini-boss reward
   (§4.4.4) remains the encounter's single reward.
-- **Sound.** The display is never silent: every planned burst schedules its
-  matching explosion cue. Swept-enemy, scatter and anchored bursts reuse the
-  shared enemy-destruction cue, and the finale pairs use the heavy
-  boss-destruction boom, each at the burst's own delay and trimmed to its
-  role's mix level. An explicit delay is honoured verbatim (never snapped to
-  the beat grid) and does not spend the mass-kill accent budget, so a
-  scripted cascade keeps its own rhythm.
+- **Sound.** The display is never silent, and it is the level's biggest audio
+  moment (AH-0MVVEI7FD004TR2M). The mini-boss's own body plays **one
+  boss-scale death cue** (`playBossDestructionSound()`) on the defeat frame,
+  and every planned burst the **per-role thinning rule** keeps schedules its
+  matching explosion cue **at that burst's own `delayMs`** — every swept-enemy
+  burst, every 2nd scattered/anchored burst, and **both** voices of every
+  finale pair (never thinned, so the climax keeps its double boom). The
+  palette is **reuse-only** (no new recipe, asset or manifest entry):
+  escort/scatter/anchored bursts reuse the shared enemy-destruction cue family
+  and the finale bursts use the victory-explosion boom, each trimmed to its
+  role's mix level with the finale the loudest per-burst layer. Timing is
+  **visual-timed**, deliberately not quantised onto the 16th-note accent grid:
+  an explicit delay is honoured verbatim by the cue layer, so the audio lands
+  with the explosion on screen instead of up to 187.5 ms late, and the
+  accent's 4-per-tick cap cannot drop the cascade. Every knob lives in the
+  shared module as a named constant (`MINI_BOSS_SWEEP_SFX_*`), and the plan is
+  bounded so no 60-burst sweep dispatches more than
+  `MINI_BOSS_SWEEP_SFX_MAX_PER_WINDOW` cues inside a 250 ms window. Audio never
+  gates the display: it is dispatched fire-and-forget on the defeat frame and
+  can never delay the reward overlay.
 - **Ordering.** The reward overlay opens only after the **last** burst has
   finished animating (its `setPaused(true)` would otherwise freeze the burst
   tweens mid-flight), and the wave/level accounting advances **exactly once,
@@ -2351,6 +2364,7 @@ The former procedural Web Audio synthesis has been **removed**. The **one** runt
 | **Impacts** | Enemy destroyed | Sharp pop / crack (`playDestructionSound()` / `playDiverDestructionSound()`) | Medium | Next 16th note (accent) |
 | **Impacts** | Wave timeout — survivors carry over (no detonation) | No cue: survivors persist into the next wave as active threats (AH-0MUNS3ZQ1002DJ9S). `playMajorExplosionSound()` is retained but unused by the timeout path | — | — |
 | **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
+| **Impacts** | Mini-boss defeat (body + death sweep) | Two layers, one of them cascade-wide (`src/scenes/core/miniBossDeathSweep.ts`, AH-0MVVEI7FD004TR2M): the mini-boss's own body plays one **boss-scale death boom** (`playBossDestructionSound()`) on the defeat frame — through the entity's shared death seam (`Boss.takeDamage` / `Boss.playDestructionAudio()`), never doubled by the sweep — and every burst the per-role thinning rule keeps schedules its own cue **at the burst's `delayMs`** — escort/scatter/anchored bursts reuse the **enemy-destruction** cue family (`playDestructionSound()`), and both voices of every finale pair use the **victory-explosion** boom (`playVictoryExplosionSound()`), so the climax is heard as the biggest beat. Reuse-only palette: no new recipe or asset | Medium (per-role burst trims 0.3–0.65; the body boom keeps the shared boss level) | Immediate (body) / visual-timed per burst (`MINI_BOSS_SWEEP_SFX_*`) |
 | **Impacts** | Player bullet hits enemy | Very short tick | Low | Immediate |
 | **Impacts** | Player bullet destroys enemy bullet | Dedicated high, very short tick (`playBulletDestructionSound()`; distinct from the heavier enemy-destruction fall) + small impact flash | Low | Immediate |
 | **Impacts** | Mystery UFO destroyed | Deep saw fall A3 → A1 + low-passed noise blast + sine sub thump (`playMysteryUfoDestroySound()`), with the crash-site particle burst and, when minerals spill, the mineral tinkle | Medium | Immediate |
@@ -2382,6 +2396,18 @@ the shared combat core (`CombatCoreScene.resetRunState`), so the game and every
 gym behave identically. Coverage: `src/utils/beat.test.ts`,
 `src/audio/effects.test.ts`, the `PlayScene` beat-accent integration test and
 the gym↔game equivalence suite.
+
+**One documented departure — the mini-boss death sweep.** The mini-boss defeat
+sweep (§3.3.1, AH-0MVVEI7FD004TR2M) is **visual-timed**, not beat-quantised: it
+passes an explicit `delay` (each burst's own `delayMs`) through
+`playMiniBossSweepSound()`, which the accent seam honours verbatim and without
+spending the per-tick accent budget. Two reasons, both deliberate: quantising
+would shift a cue up to 187.5 ms away from the explosion it belongs to, and the
+4-per-tick cap would silently drop most of a 60-burst cascade that the producer
+explicitly asked to hear. The cascade's own density control is the sweep's
+per-role thinning (`MINI_BOSS_SWEEP_SFX_*_EVERY_N`) plus per-role mix trims;
+the shared per-cue voice limiter stays in place, unchanged, as the backstop for
+immediate (non-scheduled) cue bursts such as a mass kill.
 
 #### Destruction Variation (baked scale-degree variants)
 

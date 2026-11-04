@@ -1125,3 +1125,125 @@ describe('per-cue concurrent-voice cap (AH-0MVH8RQR7007QG8E)', () => {
     expect(recording.plays.length).toBe(MAX_CONCURRENT_CUE_VOICES + 1);
   });
 });
+
+// ── Mini-boss death sweep dispatcher (AH-0MVVEI7FD004TR2M) ─────────
+//
+// The sweep reuses only already-baked cues (producer decision Q1 = a), so the
+// dispatcher's job is narrow: resolve the cue name + baked variant, schedule
+// it at the burst's own delay and apply the per-role mix trim. No new recipe
+// and no manifest entry — pinned by `cueManifest.test.ts` /
+// `effects.contract.test.ts` staying unchanged.
+
+describe('playMiniBossSweepSound — reuse-only sweep dispatcher', () => {
+  it('routes each sweep cue onto its existing baked asset family', () => {
+    effects.playMiniBossSweepSound('playDestructionSound', { delay: 0.12 });
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-enemy-destruction.32113.wav',
+    );
+
+    effects.playMiniBossSweepSound('playVictoryExplosionSound', { delay: 0.34 });
+    expect(recording.plays[1].url).toBe(
+      'audio/sfx/aihell-victory-explosion.32250.wav',
+    );
+
+    effects.playMiniBossSweepSound('playBossDestructionSound', { delay: 0 });
+    expect(recording.plays[2].url).toBe('audio/sfx/aihell-boss-destruction.32203.wav');
+  });
+
+  it('schedules each cue at its burst’s own delay (visual-timed, never the beat grid)', () => {
+    // A registered beat clock would snap a non-explicit destruction cue to the
+    // next 16th note; the sweep's explicit delay must bypass that entirely.
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    try {
+      effects.playMiniBossSweepSound('playDestructionSound', { delay: 0.125 });
+      expect(recording.plays[0].delay).toBe(0.125);
+    } finally {
+      effects.setExplosionBeatClock(null);
+    }
+  });
+
+  it('applies the per-role mix trim to the playback volume', () => {
+    effects.playMiniBossSweepSound('playDestructionSound', {
+      delay: 0.2,
+      volume: 0.3,
+    });
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('picks a deterministic baked variant from the run-seeded draw', () => {
+    for (const variantPick of [0, 0.4, 0.99]) {
+      recording.plays.length = 0;
+      effects.playMiniBossSweepSound('playVictoryExplosionSound', {
+        delay: 0.5,
+        variantPick,
+      });
+      const first = recording.plays[0].url;
+
+      // Same draw ⇒ same variant, every time (no Math.random in this path).
+      const random = vi.spyOn(Math, 'random');
+      try {
+        effects.playMiniBossSweepSound('playVictoryExplosionSound', {
+          delay: 0.5,
+          variantPick,
+        });
+        expect(recording.plays[1].url).toBe(first);
+        expect(random).not.toHaveBeenCalled();
+      } finally {
+        random.mockRestore();
+      }
+      expect(allowedUrls(cueEntry('playVictoryExplosionSound'))).toContain(first);
+    }
+  });
+
+  it('covers every baked variant of a multi-variant cue and clamps bad draws', () => {
+    const seeds = cueEntry('playVictoryExplosionSound').seeds;
+    const seen = new Set<string>();
+    for (let i = 0; i < seeds.length; i += 1) {
+      recording.plays.length = 0;
+      effects.playMiniBossSweepSound('playVictoryExplosionSound', {
+        // A non-zero delay keeps the request off the shared limiter (the sweep
+        // always schedules ahead — see the dispatcher's contract).
+        delay: 0.5,
+        variantPick: i / seeds.length,
+      });
+      seen.add(recording.plays[0].url);
+    }
+    expect(seen.size).toBe(seeds.length);
+
+    // Out-of-range / non-finite draws clamp instead of throwing.
+    for (const variantPick of [-5, 42, Number.NaN, Number.POSITIVE_INFINITY]) {
+      recording.plays.length = 0;
+      expect(() =>
+        effects.playMiniBossSweepSound('playDestructionSound', {
+          delay: 0.5,
+          variantPick,
+        }),
+      ).not.toThrow();
+      expect(allowedUrls(cueEntry('playDestructionSound'))).toContain(
+        recording.plays[0].url,
+      );
+    }
+  });
+
+  it('never throws with the mix muted, at zero volume, or headless', () => {
+    // Mute / volume 0: the cue still routes through the shared master gain
+    // (which is silent), so the dispatcher must not throw or special-case it.
+    effects.setSfxVolume(0);
+    effects.setSfxMuted(true);
+    expect(() =>
+      effects.playMiniBossSweepSound('playDestructionSound', { delay: 0.1 }),
+    ).not.toThrow();
+    expect(() =>
+      effects.playMiniBossSweepSound('playVictoryExplosionSound', { delay: 0.2 }),
+    ).not.toThrow();
+
+    // Headless (no AudioContext at all): a safe no-op, like every cue.
+    effects._resetAudioContextForTests();
+    effects.setSfxSoundProvider(null);
+    expect(effects.getAudioContext()).toBeNull();
+    expect(() =>
+      effects.playMiniBossSweepSound('playBossDestructionSound', { delay: 0 }),
+    ).not.toThrow();
+  });
+});

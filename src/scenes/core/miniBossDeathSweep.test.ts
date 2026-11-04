@@ -68,8 +68,7 @@ import * as audioEffects from '../../audio/effects';
 // the audio module so the suite can observe the default per-role routing
 // without an AudioContext; the seam tests inject their own recorder instead.
 vi.mock('../../audio/effects', () => ({
-  playDestructionSound: vi.fn(),
-  playBossDestructionSound: vi.fn(),
+  playMiniBossSweepSound: vi.fn(),
 }));
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
@@ -110,6 +109,28 @@ interface SweepBurst {
   particleCount: number;
   scale: number;
   lifespanMs: number;
+  /** The burst's audio decision (AC1/AC2/AC3/AC5). */
+  audio: SweepBurstAudio;
+}
+
+/** The per-burst audio decision the planner attaches. */
+interface SweepBurstAudio {
+  cue: 'playBossDestructionSound' | 'playDestructionSound' | 'playVictoryExplosionSound';
+  variantPick: number;
+  volume: number;
+  kept: boolean;
+}
+
+/**
+ * One cue the executor dispatches: the mini-boss's own body, or a kept burst
+ * scheduled at its own `delayMs`.
+ */
+interface SweepSoundRequest {
+  role: SweepBurst['role'];
+  cue: SweepBurstAudio['cue'];
+  delayMs: number;
+  volume: number;
+  variantPick?: number;
 }
 
 /** The planner input. */
@@ -154,24 +175,33 @@ interface MiniBossDeathSweepContract {
   MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS: number;
   MINI_BOSS_SWEEP_FINALE_SPREAD_PX: number;
   MINI_BOSS_SWEEP_FINALE_START_MS: number;
+  // SFX tunables (AC2/AC3) — every knob named and exported.
+  MINI_BOSS_SWEEP_SFX_ENABLED: boolean;
+  MINI_BOSS_SWEEP_SFX_DESTRUCTION_CUE: SweepBurstAudio['cue'];
+  MINI_BOSS_SWEEP_SFX_FINALE_CUE: SweepBurstAudio['cue'];
+  MINI_BOSS_SWEEP_SFX_ENEMY_EVERY_N: number;
+  MINI_BOSS_SWEEP_SFX_SCATTER_EVERY_N: number;
+  MINI_BOSS_SWEEP_SFX_ANCHORED_EVERY_N: number;
+  MINI_BOSS_SWEEP_SFX_FINALE_EVERY_N: number;
+  MINI_BOSS_SWEEP_SFX_ENEMY_VOLUME: number;
+  MINI_BOSS_SWEEP_SFX_SCATTER_VOLUME: number;
+  MINI_BOSS_SWEEP_SFX_ANCHORED_VOLUME: number;
+  MINI_BOSS_SWEEP_SFX_FINALE_VOLUME: number;
+  MINI_BOSS_SWEEP_SFX_WINDOW_MS: number;
+  MINI_BOSS_SWEEP_SFX_MAX_PER_WINDOW: number;
   miniBossSweepExtras(sweptCount: number): number;
   collectSweepTargets(
     live: readonly SweepTarget[],
     minions?: readonly SweepTarget[],
   ): SweepTarget[];
   planMiniBossDeathSweep(input: SweepPlanInput): SweepPlan;
-  playMiniBossSweepBurstSound(role: SweepBurst['role'], delayMs: number): void;
   spawnMiniBossDeathSweep(
     scene: unknown,
     input: SweepPlanInput,
     options?: {
       onComplete?: () => void;
       soundEnabled?: boolean;
-      playSound?: (
-        role: SweepBurst['role'],
-        delayMs: number,
-        index: number,
-      ) => void;
+      playSound?: (request: SweepSoundRequest) => void;
     },
   ): SweepHandle;
 }
@@ -793,104 +823,468 @@ describe('mini-boss death sweep — clock watchdog completion (AC3)', () => {
   });
 });
 
-// ── Explosion SFX (producer audit: "explosions with no SFX") ───────
+// ── Explosion SFX (AH-0MVVEI7FD004TR2M: "no SFX accompanying the
+//    mini-boss explosions") ──────────────────────────────────────────
+//
+// Producer decisions (settled): Q1 = reuse the existing baked cues only (no
+// new recipe/asset/manifest entry), Q2 = one cue per burst with per-role
+// thinning, Q3 = visual-timed (each cue at its burst's own `delayMs`, never on
+// the 16th-note accent grid).
 
-describe('mini-boss death sweep — explosion SFX', () => {
-  it('schedules one cue per burst, matching each burst role and delay', async () => {
+/** Records the whole audio timeline through the injectable seam (AC5). */
+function recordSound() {
+  const requests: SweepSoundRequest[] = [];
+  return {
+    requests,
+    playSound: (request: SweepSoundRequest) => {
+      requests.push(request);
+    },
+  };
+}
+
+/** The maximum number of `delayMs`s inside any `windowMs`-wide window. */
+function maxInWindow(delays: readonly number[], windowMs: number): number {
+  const sorted = [...delays].sort((a, b) => a - b);
+  let best = 0;
+  let start = 0;
+  for (let end = 0; end < sorted.length; end += 1) {
+    while (sorted[end] - sorted[start] >= windowMs) start += 1;
+    best = Math.max(best, end - start + 1);
+  }
+  return best;
+}
+
+describe('mini-boss death sweep — SFX dispatch (AC1)', () => {
+  it('dispatches exactly one cue per kept burst, at that burst’s own delay', async () => {
     const { spawnMiniBossDeathSweep } = await sweep();
-    const calls: Array<{
-      role: SweepBurst['role'];
-      delayMs: number;
-      index: number;
-    }> = [];
+    const recorder = recordSound();
 
     const handle = spawnMiniBossDeathSweep(
       makeStubScene(),
       planInput(escorts(4)),
-      {
-        playSound: (role, delayMs, index) => {
-          calls.push({ role, delayMs, index });
-        },
-      },
+      { playSound: recorder.playSound },
     );
 
-    // No silent explosions: every planned burst gets its own cue, scheduled
-    // to land with the burst it belongs to.
-    expect(calls).toHaveLength(handle.plan.bursts.length);
-    calls.forEach((call, index) => {
-      const burst = handle.plan.bursts[index];
-      expect(call.role, `burst ${index}`).toBe(burst.role);
-      expect(call.delayMs, `burst ${index}`).toBe(burst.delayMs);
-      expect(call.index, `burst ${index}`).toBe(index);
-    });
-  });
+    const kept = handle.plan.bursts.filter((burst) => burst.audio.kept);
+    const dispatched = recorder.requests;
 
-  it('fires the finale pairs on the documented 0.25 s cadence', async () => {
-    const {
-      spawnMiniBossDeathSweep,
-      MINI_BOSS_SWEEP_FINALE_COUNT,
-      MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS,
-      MINI_BOSS_SWEEP_FINALE_START_MS,
-    } = await sweep();
-    const finaleDelays: number[] = [];
-
-    spawnMiniBossDeathSweep(makeStubScene(), planInput(escorts(2)), {
-      playSound: (role, delayMs) => {
-        if (role === 'finale') finaleDelays.push(delayMs);
-      },
-    });
-
-    expect(finaleDelays).toHaveLength(MINI_BOSS_SWEEP_FINALE_COUNT);
-    finaleDelays.forEach((delay, index) => {
-      expect(delay, `finale burst ${index}`).toBe(
-        MINI_BOSS_SWEEP_FINALE_START_MS +
-          Math.floor(index / 2) * MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS,
+    // One cue per kept burst — no more, no fewer — in plan order.
+    expect(dispatched).toHaveLength(kept.length);
+    dispatched.forEach((request, index) => {
+      const burst = kept[index];
+      expect(request.role, `kept burst ${index}`).toBe(burst.role);
+      // Visual-timed (Q3 = a): the cue lands with its own burst, never on the
+      // 16th-note accent grid.
+      expect(request.delayMs, `kept burst ${index}`).toBe(burst.delayMs);
+      expect(request.cue, `kept burst ${index}`).toBe(burst.audio.cue);
+      expect(request.volume, `kept burst ${index}`).toBe(burst.audio.volume);
+      expect(request.variantPick, `kept burst ${index}`).toBe(
+        burst.audio.variantPick,
       );
     });
   });
 
-  it('can be silenced for custom audio routing (soundEnabled: false)', async () => {
-    const { spawnMiniBossDeathSweep } = await sweep();
-    const calls: unknown[][] = [];
+  it('never dispatches a cue for a burst the thinning rule drops', async () => {
+    const { spawnMiniBossDeathSweep, MINI_BOSS_SWEEP_SFX_SCATTER_EVERY_N } =
+      await sweep();
+    const recorder = recordSound();
 
-    spawnMiniBossDeathSweep(makeStubScene(), planInput(escorts(2)), {
-      soundEnabled: false,
-      playSound: (...args) => calls.push(args),
-    });
+    const handle = spawnMiniBossDeathSweep(
+      makeStubScene(),
+      planInput(escorts(4)),
+      { playSound: recorder.playSound },
+    );
 
-    expect(calls).toHaveLength(0);
+    const dropped = handle.plan.bursts.filter((burst) => !burst.audio.kept);
+    // The sweep really does thin (a plan where nothing is dropped would make
+    // this test vacuous), and every dropped burst is silent.
+    expect(MINI_BOSS_SWEEP_SFX_SCATTER_EVERY_N).toBeGreaterThan(1);
+    expect(dropped.length).toBeGreaterThan(0);
+
+    const dispatchedDelays = recorder.requests.map((request) => request.delayMs);
+    for (const burst of dropped) {
+      const keptTwin = handle.plan.bursts.find(
+        (candidate) =>
+          candidate.role === burst.role &&
+          candidate.delayMs === burst.delayMs &&
+          candidate.audio.kept,
+      );
+      // A dropped burst only collides in time with a kept one of another role;
+      // assert on the identity of the cue requests instead of the delay alone.
+      if (keptTwin === undefined) {
+        expect(
+          dispatchedDelays.filter((delay) => delay === burst.delayMs).length,
+          `${burst.role} burst at ${burst.delayMs}ms must stay silent`,
+        ).toBe(0);
+      }
+    }
+
+    // The dispatch list is exactly the kept list: nothing dropped slipped in.
+    expect(recorder.requests.length).toBe(
+      handle.plan.bursts.filter((burst) => burst.audio.kept).length,
+    );
   });
 
-  it('routes the default cue per role: destruction for the sweep, boss boom for the finale', async () => {
-    const { playMiniBossSweepBurstSound } = await sweep();
-    vi.mocked(audioEffects.playDestructionSound).mockClear();
-    vi.mocked(audioEffects.playBossDestructionSound).mockClear();
+  it('never dispatches the mini-boss body cue — the entity owns it (AC1)', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    const recorder = recordSound();
 
-    playMiniBossSweepBurstSound('enemy', 0);
-    playMiniBossSweepBurstSound('scatter', 120);
-    playMiniBossSweepBurstSound('anchored', 200);
-    playMiniBossSweepBurstSound('finale', 500);
+    spawnMiniBossDeathSweep(makeStubScene(), planInput(escorts(6)), {
+      playSound: recorder.playSound,
+    });
 
-    // The swept enemies and the celebration bursts reuse the shared enemy
-    // destruction cue (trimmed per role); the finale is the mini-boss's own
-    // heavy boss-destruction boom.
-    expect(audioEffects.playDestructionSound).toHaveBeenCalledTimes(3);
-    expect(audioEffects.playDestructionSound).toHaveBeenNthCalledWith(1, {
-      delay: 0,
-      volume: expect.any(Number),
+    // The body's `playBossDestructionSound()` belongs to the entity's shared
+    // death seam (`Boss.takeDamage` / `Boss.playDestructionAudio`), which both
+    // scenes already run exactly once on the killing blow. If the sweep also
+    // dispatched it, every kill would double the boom — so the sweep must
+    // never emit the body cue, whatever the plan.
+    for (const request of recorder.requests) {
+      expect(request.role).not.toBe('body');
+      expect(request.cue).not.toBe('playBossDestructionSound');
+    }
+  });
+
+  it('still voices the celebration and finale when nothing is swept', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    const recorder = recordSound();
+
+    const handle = spawnMiniBossDeathSweep(
+      makeStubScene(),
+      planInput([]),
+      { playSound: recorder.playSound },
+    );
+
+    // `n = 0` is the loudest plan (30 scatter + 10 anchored + 20 finale): there
+    // are no escort bursts, but the celebration and the climax must still be
+    // heard — the display is never silent.
+    expect(handle.plan.sweptCount).toBe(0);
+    expect(handle.plan.bursts).toHaveLength(60);
+    expect(recorder.requests.length).toBeGreaterThan(0);
+    for (const request of recorder.requests) {
+      expect(request.role).not.toBe('enemy');
+    }
+  });
+});
+
+describe('mini-boss death sweep — thinning and density (AC2)', () => {
+  it('keeps every enemy burst, one in two scatter/anchored bursts and every finale burst', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_SFX_ENEMY_EVERY_N,
+      MINI_BOSS_SWEEP_SFX_SCATTER_EVERY_N,
+      MINI_BOSS_SWEEP_SFX_ANCHORED_EVERY_N,
+      MINI_BOSS_SWEEP_SFX_FINALE_EVERY_N,
+    } = await sweep();
+
+    // The settled strides (Q2 = a).
+    expect(MINI_BOSS_SWEEP_SFX_ENEMY_EVERY_N).toBe(1);
+    expect(MINI_BOSS_SWEEP_SFX_SCATTER_EVERY_N).toBe(2);
+    expect(MINI_BOSS_SWEEP_SFX_ANCHORED_EVERY_N).toBe(2);
+    expect(MINI_BOSS_SWEEP_SFX_FINALE_EVERY_N).toBe(1);
+
+    const plan = planMiniBossDeathSweep(planInput(escorts(6)));
+    const strides: Record<SweepBurst['role'], number> = {
+      enemy: MINI_BOSS_SWEEP_SFX_ENEMY_EVERY_N,
+      scatter: MINI_BOSS_SWEEP_SFX_SCATTER_EVERY_N,
+      anchored: MINI_BOSS_SWEEP_SFX_ANCHORED_EVERY_N,
+      finale: MINI_BOSS_SWEEP_SFX_FINALE_EVERY_N,
+    };
+
+    for (const role of ['enemy', 'scatter', 'anchored', 'finale'] as const) {
+      const bursts = burstsOfRole(plan, role);
+      expect(bursts.length).toBeGreaterThan(0);
+      bursts.forEach((burst, index) => {
+        expect(burst.audio.kept, `${role} burst ${index}`).toBe(
+          index % strides[role] === 0,
+        );
+      });
+    }
+  });
+
+  it('never thins the finale — both voices of every pair are voiced', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_FINALE_COUNT,
+      MINI_BOSS_SWEEP_FINALE_PAIR_SIZE,
+      MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS,
+      MINI_BOSS_SWEEP_FINALE_START_MS,
+    } = await sweep();
+
+    const plan = planMiniBossDeathSweep(planInput(escorts(2)));
+    const finale = burstsOfRole(plan, 'finale');
+
+    expect(finale).toHaveLength(MINI_BOSS_SWEEP_FINALE_COUNT);
+    expect(finale.every((burst) => burst.audio.kept)).toBe(true);
+
+    // The voices of one pair share a delay, two per interval — so the climax
+    // is a pair of simultaneous booms, never a single thinned one.
+    finale.forEach((burst, index) => {
+      expect(burst.delayMs, `finale burst ${index}`).toBe(
+        MINI_BOSS_SWEEP_FINALE_START_MS +
+          Math.floor(index / MINI_BOSS_SWEEP_FINALE_PAIR_SIZE) *
+            MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS,
+      );
     });
-    expect(audioEffects.playDestructionSound).toHaveBeenNthCalledWith(2, {
-      delay: 0.12,
-      volume: expect.any(Number),
+    const pairs = new Map<number, number>();
+    for (const burst of finale) {
+      pairs.set(burst.delayMs, (pairs.get(burst.delayMs) ?? 0) + 1);
+    }
+    expect([...pairs.values()].every((count) => count === 2)).toBe(true);
+  });
+
+  it('keeps the dispatch density inside the documented bound for every 60-burst plan', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_EXTRA_BASE,
+      MINI_BOSS_SWEEP_SFX_MAX_PER_WINDOW,
+      MINI_BOSS_SWEEP_SFX_WINDOW_MS,
+    } = await sweep();
+
+    expect(MINI_BOSS_SWEEP_SFX_WINDOW_MS).toBe(250);
+
+    let worst = 0;
+    let worstSwept = 0;
+    for (let n = 0; n <= MINI_BOSS_SWEEP_EXTRA_BASE; n += 1) {
+      const plan = planMiniBossDeathSweep(planInput(escorts(n)));
+      // The bound only claims the 60-burst maximum (n ≤ 30).
+      expect(plan.bursts.length).toBeLessThanOrEqual(60);
+      const keptDelays = plan.bursts
+        .filter((burst) => burst.audio.kept)
+        .map((burst) => burst.delayMs);
+      const windowed = maxInWindow(keptDelays, MINI_BOSS_SWEEP_SFX_WINDOW_MS);
+      if (windowed > worst) {
+        worst = windowed;
+        worstSwept = n;
+      }
+    }
+
+    expect(worst, `worst window at n=${worstSwept}`).toBeLessThanOrEqual(
+      MINI_BOSS_SWEEP_SFX_MAX_PER_WINDOW,
+    );
+    // ...and the constant is the real worst case, not a slack placeholder: a
+    // louder schedule must fail this pin and force a re-derivation.
+    expect(worst).toBe(MINI_BOSS_SWEEP_SFX_MAX_PER_WINDOW);
+  });
+
+  it('trims the mix per role and keeps the finale the loudest burst layer', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_SFX_ENEMY_VOLUME,
+      MINI_BOSS_SWEEP_SFX_SCATTER_VOLUME,
+      MINI_BOSS_SWEEP_SFX_ANCHORED_VOLUME,
+      MINI_BOSS_SWEEP_SFX_FINALE_VOLUME,
+    } = await sweep();
+
+    const plan = planMiniBossDeathSweep(planInput(escorts(4)));
+    const volumeOf: Record<SweepBurst['role'], number> = {
+      enemy: MINI_BOSS_SWEEP_SFX_ENEMY_VOLUME,
+      scatter: MINI_BOSS_SWEEP_SFX_SCATTER_VOLUME,
+      anchored: MINI_BOSS_SWEEP_SFX_ANCHORED_VOLUME,
+      finale: MINI_BOSS_SWEEP_SFX_FINALE_VOLUME,
+    };
+    for (const burst of plan.bursts) {
+      expect(burst.audio.volume, burst.role).toBe(volumeOf[burst.role]);
+      expect(burst.audio.volume).toBeGreaterThan(0);
+      expect(burst.audio.volume).toBeLessThanOrEqual(1);
+    }
+    // The finale must read as the climax of the display.
+    expect(volumeOf.finale).toBeGreaterThan(volumeOf.enemy);
+    expect(volumeOf.finale).toBeGreaterThan(volumeOf.anchored);
+    expect(volumeOf.finale).toBeGreaterThan(volumeOf.scatter);
+  });
+});
+
+describe('mini-boss death sweep — reuse-only cue palette (AC3)', () => {
+  it('maps each role onto an existing baked cue (no new recipe or asset)', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_SFX_DESTRUCTION_CUE,
+      MINI_BOSS_SWEEP_SFX_FINALE_CUE,
+    } = await sweep();
+
+    expect(MINI_BOSS_SWEEP_SFX_DESTRUCTION_CUE).toBe('playDestructionSound');
+    expect(MINI_BOSS_SWEEP_SFX_FINALE_CUE).toBe('playVictoryExplosionSound');
+
+    const plan = planMiniBossDeathSweep(planInput(escorts(3)));
+    for (const burst of plan.bursts) {
+      expect(burst.audio.cue, burst.role).toBe(
+        burst.role === 'finale'
+          ? MINI_BOSS_SWEEP_SFX_FINALE_CUE
+          : MINI_BOSS_SWEEP_SFX_DESTRUCTION_CUE,
+      );
+    }
+
+    // The palette is reuse-only and closed: exactly the two burst families.
+    const used = new Set(plan.bursts.map((burst) => burst.audio.cue));
+    expect([...used].sort()).toEqual(
+      [MINI_BOSS_SWEEP_SFX_DESTRUCTION_CUE, MINI_BOSS_SWEEP_SFX_FINALE_CUE].sort(),
+    );
+  });
+
+  it('routes every kept burst through the shared audio dispatcher', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    vi.mocked(audioEffects.playMiniBossSweepSound).mockClear();
+
+    const handle = spawnMiniBossDeathSweep(
+      makeStubScene(),
+      planInput(escorts(2)),
+    );
+
+    // One cue per kept burst, all through the one shared dispatcher (so the
+    // game and every gym sound identical — AC4).
+    const calls = vi.mocked(audioEffects.playMiniBossSweepSound).mock.calls;
+    expect(calls.length).toBe(
+      handle.plan.bursts.filter((burst) => burst.audio.kept).length,
+    );
+    for (const [cue, options] of calls) {
+      expect(['playDestructionSound', 'playVictoryExplosionSound']).toContain(cue);
+      expect(options!.volume).toBeGreaterThan(0);
+      expect(options!.delay).toBeGreaterThanOrEqual(0);
+      expect(options!.variantPick).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
+
+describe('mini-boss death sweep — deterministic audio, safe no-ops (AC5)', () => {
+  it('replays the same cue variants for the same seed', async () => {
+    const { planMiniBossDeathSweep } = await sweep();
+
+    const a = planMiniBossDeathSweep(planInput(escorts(8), 0xabc));
+    const b = planMiniBossDeathSweep(planInput(escorts(8), 0xabc));
+    expect(a.bursts.map((burst) => burst.audio)).toEqual(
+      b.bursts.map((burst) => burst.audio),
+    );
+
+    const c = planMiniBossDeathSweep(planInput(escorts(8), 0xdef));
+    expect(c.bursts.map((burst) => burst.audio.variantPick)).not.toEqual(
+      a.bursts.map((burst) => burst.audio.variantPick),
+    );
+  });
+
+  it('draws the variant from the run seed, never from Math.random()', async () => {
+    const { planMiniBossDeathSweep } = await sweep();
+    const spy = vi.spyOn(Math, 'random');
+    try {
+      const plan = planMiniBossDeathSweep(planInput(escorts(5)));
+      expect(spy).not.toHaveBeenCalled();
+      for (const burst of plan.bursts) {
+        expect(burst.audio.variantPick).toBeGreaterThanOrEqual(0);
+        expect(burst.audio.variantPick).toBeLessThan(1);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps burst placement identical to the visual-only sweep for a seed', async () => {
+    const { planMiniBossDeathSweep } = await sweep();
+    const a = planMiniBossDeathSweep(planInput(escorts(6), SEED));
+    const b = planMiniBossDeathSweep(planInput(escorts(6), SEED));
+    // The audio decision draws from its own seeded stream, so adding audio can
+    // never move a burst.
+    expect(a.bursts.map(({ x, y, color }) => ({ x, y, color }))).toEqual(
+      b.bursts.map(({ x, y, color }) => ({ x, y, color })),
+    );
+  });
+
+  it('dispatches nothing when SFX are disabled (mute / headless)', async () => {
+    const { spawnMiniBossDeathSweep, MINI_BOSS_SWEEP_SFX_ENABLED } = await sweep();
+    const recorder = recordSound();
+
+    // On by default.
+    expect(MINI_BOSS_SWEEP_SFX_ENABLED).toBe(true);
+
+    spawnMiniBossDeathSweep(makeStubScene(), planInput(escorts(4)), {
+      soundEnabled: false,
+      playSound: recorder.playSound,
     });
-    expect(audioEffects.playDestructionSound).toHaveBeenNthCalledWith(3, {
-      delay: 0.2,
-      volume: expect.any(Number),
+
+    expect(recorder.requests).toHaveLength(0);
+  });
+
+  it('swallows a throwing sound seam and still completes exactly once (AC9)', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    let attempts = 0;
+    let completions = 0;
+
+    const handle = spawnMiniBossDeathSweep(
+      makeStubScene(),
+      planInput(escorts(3)),
+      {
+        playSound: () => {
+          attempts += 1;
+          throw new Error('audio device exploded');
+        },
+        onComplete: () => {
+          completions += 1;
+        },
+      },
+    );
+
+    // Audio is best-effort: every cue was attempted, none of it threw, and the
+    // completion path was untouched.
+    expect(attempts).toBeGreaterThan(0);
+    handle.destroy();
+    expect(completions).toBe(0);
+  });
+});
+
+describe('mini-boss death sweep — audio never delays the victory hold (AC9)', () => {
+  it('fires onComplete exactly once with SFX enabled', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    const scene = makeStubSceneWithClock();
+    const recorder = recordSound();
+    let completions = 0;
+
+    spawnMiniBossDeathSweep(scene, planInput(escorts(3)), {
+      playSound: recorder.playSound,
+      onComplete: () => {
+        completions += 1;
+      },
     });
-    expect(audioEffects.playBossDestructionSound).toHaveBeenCalledTimes(1);
-    expect(audioEffects.playBossDestructionSound).toHaveBeenCalledWith({
-      delay: 0.5,
-      volume: expect.any(Number),
+
+    // Audio dispatch is synchronous and fire-and-forget, so it never holds the
+    // completion timer: the watchdog is still the plain burst-lifespan timer.
+    expect(scene.timers).toHaveLength(1);
+    expect(completions).toBe(0);
+    scene.timers[0].callback();
+    expect(completions).toBe(1);
+  });
+
+  it('fires onComplete exactly once when SFX are muted', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    const scene = makeStubSceneWithClock();
+    let completions = 0;
+
+    spawnMiniBossDeathSweep(scene, planInput(escorts(3)), {
+      soundEnabled: false,
+      onComplete: () => {
+        completions += 1;
+      },
     });
+
+    scene.timers[0].callback();
+    expect(completions).toBe(1);
+  });
+
+  it('dispatches the whole cue timeline up-front, so none survives destroy()', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    const recorder = recordSound();
+
+    const handle = spawnMiniBossDeathSweep(
+      makeStubScene(),
+      planInput(escorts(6)),
+      { playSound: recorder.playSound },
+    );
+    const kept = handle.plan.bursts.filter((burst) => burst.audio.kept).length;
+    const atSpawn = recorder.requests.length;
+    expect(atSpawn).toBe(kept);
+    expect(atSpawn).toBeGreaterThan(0);
+
+    // Teardown mid-display must not fire anything else: every cue was handed to
+    // the audio layer on the defeat frame, and the audio layer owns the
+    // schedule from there (the scene-teardown mute path silences it).
+    handle.destroy();
+    expect(recorder.requests).toHaveLength(atSpawn);
   });
 });

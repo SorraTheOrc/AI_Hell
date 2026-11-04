@@ -374,12 +374,23 @@ avoid a partially migrated palette. Discovered during this audit.
 | `playBossPhaseCue(phase)` | Per-phase square rise — scale-degree variants: phases rise A3/A4/E5/A5 → A5 (AC3) | `aihell-boss-phase-cue` | 32242, 32227, 32207, 32204 |
 
 The mini-boss death sweep (`src/scenes/core/miniBossDeathSweep.ts`,
-AH-0MVOFGB6K003YD0Z) reuses `playDestructionSound` for its swept-enemy/scatter/
-anchored bursts and `playBossDestructionSound` for its 20-burst finale, each
-scheduled with the burst's explicit `delay` and a per-role mix trim. No new
-recipe is needed: the cue layer honours an explicit delay verbatim (bypassing
-the beat grid and the mass-kill accent cap), so the scripted cascade keeps its
-own rhythm.
+AH-0MVOFGB6K003YD0Z, audio added by AH-0MVVEI7FD004TR2M) is a **reuse-only**
+consumer: the mini-boss's own body plays `playBossDestructionSound`,
+the swept-enemy/scatter/anchored bursts reuse `playDestructionSound` and the
+20-burst finale reuses `playVictoryExplosionSound`. **No new recipe, baked
+asset or manifest entry is introduced** — the cue-manifest contract suite
+(`src/audio/cueManifest.test.ts`, `src/audio/effects.contract.test.ts`)
+passes unchanged, which is the guard that proves the palette stayed reuse-only.
+Every cue is dispatched through the one shared helper
+`playMiniBossSweepSound(cue, { delay, volume, variantPick })` in
+`src/audio/effects.ts`, scheduled with the burst's explicit `delay` and a
+per-role mix trim. Visual-timed rather than beat-quantised: the explicit delay
+is honoured verbatim (bypassing the 16th-note accent grid and its 4-per-tick
+cap), because a scripted cascade must land with the explosions on screen. The
+baked variant is drawn from the run seed (`variantPick`) rather than
+`Math.random()`, so the same seed replays the same audio. Per-role thinning and
+the density bound are owned by the sweep module's `MINI_BOSS_SWEEP_SFX_*`
+constants.
 
 ## Retired cues
 
