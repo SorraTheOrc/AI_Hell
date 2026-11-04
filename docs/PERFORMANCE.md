@@ -20,6 +20,19 @@ outstanding — see
 end to end and records the parity and determinism evidence — see
 [Final target verification](#final-target-verification-ah-0mvxv6voi006p7vg).
 
+## How every number is recorded
+
+Every measurement section below opens with a **`Recorded:`** line naming the
+commit hash the numbers describe, the date, the host/platform they ran on and
+the CPU-throttle factor that was applied; the rows themselves name the work
+item that produced them. A published number is therefore reproducible (or
+disprovable) from the repository alone: check out the commit, run the harness
+command in [Measuring a run](#measuring-a-run) on a matching host and compare
+within the [noise floor](#noise-floor). The convention is enforced by
+`src/performanceDocs.test.ts`, which fails if a section's provenance line, the
+budget statement, the harness command, the baseline table or a results table is
+removed.
+
 ## The stress gym (`GymPerformance`)
 
 The performance budget is stated against **100 late-game enemies alive**, but
@@ -215,11 +228,11 @@ Report fields:
 | `startedAt`, `host` | When and where the run happened (see [reference machine](#reference-machine)). |
 | `webgl` | The WebGL backend the page actually used (`vendor`/`renderer`/`version`), plus `kind`: `software` for a CPU rasteriser (SwiftShader, llvmpipe, …), `hardware` for a real GPU driver string, `unknown` when there is no context. Headless Chromium falls back to SwiftShader, so a run can never be mistaken for a hardware-GPU run on a label alone. |
 | `elapsedSeconds`, `frames` | The measured wall-clock span and the number of sampled frame intervals. |
-| `frameTimeMs.p50`, `.p95`, `.max`, `.mean` | Frame-time percentiles in milliseconds. Percentiles, not means, so one hitch does not hide the typical frame. |
+| `frameTimeMs.p50`, `frameTimeMs.p95`, `frameTimeMs.max`, `frameTimeMs.mean` | Frame-time percentiles in milliseconds. Percentiles, not means, so one hitch does not hide the typical frame. |
 | `fps.effective` | `frames ÷ elapsedSeconds` — the loop's real throughput. |
 | `fps.phaserActualFps` | Phaser's own smoothed `game.loop.actualFps` reading at the end of the window (cross-check). |
-| `longFrames.over33Ms`, `.over50Ms` (+ percentages) | Frames slower than 33 ms (a missed 30 FPS frame) and 50 ms (a visible hitch). Counts are strict (`>`), so a frame at exactly 33.0 ms is not a long frame. |
-| `counts.peak`, `.mean`, `.last`, `.samples` | Live enemies, enemy bullets, player bullets and minerals sampled every 250 ms — the load that produced the frame times. `counts` is `null` when the scene exposes none. |
+| `longFrames.over33Ms`, `longFrames.over50Ms` (+ percentages) | Frames slower than 33 ms (a missed 30 FPS frame) and 50 ms (a visible hitch). Counts are strict (`>`), so a frame at exactly 33.0 ms is not a long frame. |
+| `counts.peak`, `counts.mean`, `counts.last`, `counts.samples` | Live enemies, enemy bullets, player bullets and minerals sampled every 250 ms — the load that produced the frame times. `counts` is `null` when the scene exposes none. |
 | `activeSceneKeys`, `pageErrors` | Proof of which scene actually ran, and any page exception during the window (a page error fails the run). |
 | `profile`, `profileFile` | The CPU-profile summary (buckets, JS/idle shares, ranked hotspots) and the raw profile path — present only with `--profile` (see [CPU profiling](#cpu-profiling)). |
 
@@ -319,6 +332,9 @@ renderer string is recorded in every report under `webgl`). "Host load" is the
 
 ### Desktop tier (headless Chromium, software WebGL)
 
+**`Recorded:`** commit `3e33e5c9` · 2026-11-04 · headless Chromium 140
+(SwiftShader software WebGL) · CPU throttle 1× · AH-0MVXV0E8000937U5.
+
 | Run | Host load | p50 (ms) | p95 (ms) | max (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms | Enemy bullets peak/mean |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | 8.97 | 33.3 | 33.4 | 66.7 | 27.57 | 36.27 | 1356 (62.3 %) | 10 (0.46 %) | 323 / 203.9 |
@@ -333,6 +349,9 @@ and the frame times are comparable run to run.
 is trustworthy (parent AC6).
 
 ### Host-load sensitivity (why the load is recorded)
+
+**`Recorded:`** commit `3e33e5c9` · 2026-11-04 · headless Chromium 140
+(SwiftShader software WebGL) · CPU throttle 1× · AH-0MVXV0E8000937U5.
 
 The same scene and commit on a **busier** host (other agents' test suites
 running) is ~27 % slower, and the tail moves most:
@@ -349,6 +368,10 @@ baseline.
 
 ### CPU-throttle sensitivity and the mobile tier
 
+**`Recorded:`** commit `3e33e5c9` · 2026-11-04 · headless Chromium 140
+(SwiftShader software WebGL) · CPU throttle 1× / 2× / 4×, per row ·
+AH-0MVXV0E8000937U5.
+
 | CPU throttle | Host load | p50 (ms) | p95 (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms |
 |---|---|---|---|---|---|---|
 | 1× | 12.63 | 33.3 | 33.4 | 36.96 | 1360 (61.4 %) | 5 (0.23 %) |
@@ -362,6 +385,10 @@ verdict below). The three rows ran at comparable host load, but the 2× and 4×
 rows are single runs — re-measure before claiming a mobile improvement.
 
 ### Electron baseline (software GPU-process rasteriser)
+
+**`Recorded:`** commit `03f11377` · 2026-11-04 · Electron 45.2.2
+(Chromium 156.0.8078.80) with SwiftShader over the GPU process · CPU throttle
+1× · AH-0MW2DB9VN006XB63.
 
 Measured with `--host electron` on the desktop host (AH-0MW2DB9VN006XB63):
 `GymPerformance`, exactly 100 enemies with live fire,
@@ -427,6 +454,9 @@ No hardware-GPU Electron rows are published: see
 
 ### PlayScene late game (supplementary)
 
+**`Recorded:`** commit `3e33e5c9` · 2026-11-04 · headless Chromium 140
+(SwiftShader software WebGL) · CPU throttle 1× · AH-0MVXV0E8000937U5.
+
 `--setup '{"demo":true,"seed":1,"startLevel":10}'` starts the shipped
 `PlayScene` at campaign level 10 in **demo (attract-mode) flight**, which is the
 only way to reach late-game pressure in the harness — a stationary non-demo run
@@ -446,14 +476,17 @@ dev-telemetry hotspots.
 
 CPU profiles of the runs above (share of the measured window, %):
 
-| Run | JS | simulation | renderer | ui | audio | gc | idle | native | other |
-|---|---|---|---|---|---|---|---|---|---|
-| GymPerformance 1× (run 3, load 9.28) | 14.75 | 1.00 | 13.69 | 0.02 | 0.04 | 0.40 | 0.10 | 84.75 | 0.00 |
-| GymPerformance 1× (run 1, load 15.48) | 14.70 | 1.16 | 13.43 | 0.03 | 0.05 | 0.44 | 0.11 | 84.77 | 0.00 |
-| GymPerformance 4× (load 9.89) | 37.10 | 3.22 | 33.51 | 0.11 | 0.20 | 0.93 | 0.16 | 61.84 | 0.02 |
-| PlayScene level 10 demo (load 13.39) | 9.10 | 3.75 | 5.23 | 0.04 | 0.05 | 0.39 | 11.93 | 78.60 | 0.00 |
-| GymPerformance 1×, **Electron** (load 15.30) | 15.76 | 1.10 | 14.56 | 0.06 | 0.08 | 1.21 | 51.50 | 32.18 | 0.03 |
-| GymPerformance 1×, **Electron** (load 19.58) | 15.80 | 1.19 | 14.53 | 0.06 | 0.08 | 1.20 | 49.39 | 34.26 | 0.03 |
+Each row carries its own commit and date, because this table spans the
+baseline commit and the desktop-host commit:
+
+| Run | Commit | Date | Host | CPU throttle | JS | simulation | renderer | ui | audio | gc | idle | native | other |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| GymPerformance 1× (run 3, load 9.28) | `3e33e5c9` | 2026-11-04 | headless Chromium (SwiftShader) | 1× | 14.75 | 1.00 | 13.69 | 0.02 | 0.04 | 0.40 | 0.10 | 84.75 | 0.00 |
+| GymPerformance 1× (run 1, load 15.48) | `3e33e5c9` | 2026-11-04 | headless Chromium (SwiftShader) | 1× | 14.70 | 1.16 | 13.43 | 0.03 | 0.05 | 0.44 | 0.11 | 84.77 | 0.00 |
+| GymPerformance 4× (load 9.89) | `3e33e5c9` | 2026-11-04 | headless Chromium (SwiftShader) | 4× | 37.10 | 3.22 | 33.51 | 0.11 | 0.20 | 0.93 | 0.16 | 61.84 | 0.02 |
+| PlayScene level 10 demo (load 13.39) | `3e33e5c9` | 2026-11-04 | headless Chromium (SwiftShader) | 1× | 9.10 | 3.75 | 5.23 | 0.04 | 0.05 | 0.39 | 11.93 | 78.60 | 0.00 |
+| GymPerformance 1×, **Electron** (load 15.30) | `03f11377` | 2026-11-04 | Electron 45.2.2 (SwiftShader GPU process) | 1× | 15.76 | 1.10 | 14.56 | 0.06 | 0.08 | 1.21 | 51.50 | 32.18 | 0.03 |
+| GymPerformance 1×, **Electron** (load 19.58) | `03f11377` | 2026-11-04 | Electron 45.2.2 (SwiftShader GPU process) | 1× | 15.80 | 1.19 | 14.53 | 0.06 | 0.08 | 1.20 | 49.39 | 34.26 | 0.03 |
 
 Two things stand out:
 
@@ -555,6 +588,11 @@ AH-0MVXV6VOI006P7VG: this host cannot produce it, so it cannot be part of the
 final verification's own evidence here).
 
 ### Re-verified (2026-11-04, commit `da8aaa8f`)
+
+**`Recorded:`** commit `da8aaa8f` · 2026-11-04 · both desktop hosts (headless
+Chromium and `--host electron`) · CPU throttle 1× · AH-0MW2IRYJ2006PV3P. These
+are guard checks, not measurements: they record the harness refusing a software
+backend, so there are no frame times to attribute.
 
 Both desktop hosts were re-checked against the head of the optimisation work
 (baked bullet/enemy-body textures, collision broad phase, allocation removal)
@@ -675,6 +713,9 @@ speculation):
 
 ### Per-frame HUD rows (AH-0MVXV0FFJ0066EC8)
 
+**`Recorded:`** commit `5a6905b7` · 2026-11-04 · headless Chromium 140
+(SwiftShader software WebGL) · CPU throttle 1× · AH-0MVXV0FFJ0066EC8.
+
 The stress gym holds **no power-ups**, so the baseline profile above never
 rendered a HUD loadout row and ranked `HUD.refresh` at 0.02–0.03 % of the
 window (hotspot #7, "none needed"). That reading is **incomplete**: the row
@@ -765,6 +806,10 @@ run confirms it does not.
 
 ### Cached bullet textures (AH-0MW2DAY2L004QSKF)
 
+**`Recorded:`** commit `ba4e5360` · 2026-11-04 · headless Chromium 140
+(SwiftShader software WebGL) · CPU throttle 1×, with a separate 4× mobile-tier
+check · AH-0MW2DAY2L004QSKF.
+
 Ranked hotspots **#1 and #2** were the same root cause: every projectile was
 its own `Phaser.GameObjects.Graphics` object, re-triangulated (earcut) and
 re-batched through the Graphics pipeline every frame. The fix bakes each
@@ -832,6 +877,10 @@ hardware-GPU desktop run already tracked by AH-0MW2DB9VN006XB63, which
 re-states every optimisation's verdict for real GPUs.
 
 ### Baked enemy body textures (AH-0MW2IRYAH0055WCN)
+
+**`Recorded:`** commit `da8aaa8f` · 2026-11-04 · headless Chromium 140
+(SwiftShader software WebGL) · CPU throttle 4× (the mobile tier), 60 s paired
+runs · AH-0MW2IRYAH0055WCN.
 
 Ranked hotspot **#11** (and the material remainder of hotspot #1 after the
 projectile cache landed): every regular enemy drew its silhouette into its own
@@ -960,6 +1009,10 @@ on the changed tree reproduces the recorded outcome hashes exactly —
 
 ### Collision broad phase (AH-0MVXV0EMF001WVQ1)
 
+**`Recorded:`** commit `40f6dce4` · 2026-11-04 · the Node/vitest fixture below (no
+browser, no GPU, no frame times) · CPU throttle not applicable — the recorded
+figures are candidate-pair counts, not milliseconds · AH-0MVXV0EMF001WVQ1.
+
 Ranked hotspot **#5** was the shared `_handleCollisions` pass: player bullets
 were compared with **every** live enemy bullet, every frame. It profiled at
 0.02 % of the measured window / 0.2 % of JS, which is why the item was
@@ -1024,6 +1077,10 @@ produce the identical outcome. The existing parity and equivalence suites are
 unchanged and green.
 
 ### Per-frame allocations (AH-0MVXV0F0Y004NENT)
+
+**`Recorded:`** commit `d2878b60` (the "before" row is its parent,
+`40f6dce4`) · 2026-11-04 · headless Chromium 140 (SwiftShader software WebGL) ·
+CPU throttle 1× · AH-0MVXV0F0Y004NENT.
 
 Ranked hotspots **#3, #4 and #6** were one root cause: the per-frame path
 allocated transient arrays even on a frame where nothing changed. At 100
@@ -1118,6 +1175,11 @@ would not represent the mobile tier (see [The desktop host](#the-desktop-host-el
 
 ### Final numbers (100 enemies, 60 s)
 
+**`Recorded:`** commit `d2878b60` · 2026-11-04 · desktop browser (headless
+Chromium 140, SwiftShader), Electron 45.2.2 (SwiftShader GPU process) and the
+mobile tier (the browser host under throttle) · CPU throttle 1× / 4×, per
+row · AH-0MVXV6VOI006P7VG.
+
 | Host | CPU throttle | Host load | p50 (ms) | p95 (ms) | max (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms | Enemy bullets peak/mean |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Desktop browser (Chromium 140.0.7339.186, SwiftShader) | 1× | 9.54 | 33.3 | 33.4 | 100.0 | 27.01 | **37.03** | 1342 (60.4 %) | 8 (0.36 %) | 337 / 207.5 |
@@ -1145,14 +1207,18 @@ noise-floor-certified delta.
 
 ### Per-child attribution, next to the final numbers
 
-| Work item | What it changed | Measured before → after (same harness/host) | Frame-time claim |
-|---|---|---|---|
-| AH-0MVXV0FFJ0066EC8 | HUD rows rebuilt only when the rendered state changes | armed `GymPowerUpsCombat` JS **9.06 % → 5.44–5.79 %**; row symbols (`texImage2D`, `save`, `preDestroy`, `updateText`, …) gone from the profile | None at the 100-enemy budget — the stress gym renders no rows |
-| AH-0MW2DAY2L004QSKF | Bullet silhouettes baked once into cached textures (Image draws) | `renderer` bucket **14.77 % → 6.97 %**, main-thread JS **16.24 % → 8.09 %**, `GraphicsWebGLRenderer` −68.5 %, `batch` −63.9 %, earcut gone | None on SwiftShader — the freed JS time moved into `native` rasterisation; that half is absorbed by a real GPU |
-| AH-0MVXV0EMF001WVQ1 | Player bullets indexed in the shared uniform-grid broad phase | bullet-vs-bullet candidates **90 000 → 699** at 300 × 300 (128.8×) | None at the budget load — the pass was microseconds with no player bullets; structural at higher bullet counts |
-| AH-0MVXV0F0Y004NENT | Per-frame transient arrays replaced by reused buffers | GC bucket **0.21 % → 0.21 %**; JS/simulation/renderer within 0.22 pp | None measurable — GC was never the limiting resource at this load; structural |
-| AH-0MW2DB9VN006XB63 | Electron desktop host + software-rasteriser baseline | browser p50 33.3 ms → **Electron p50 16.7 ms** on the same commit and rasteriser | The desktop vsync step, on the desktop host |
-| **AH-0MVXV6VOI006P7VG** (this) | Final measurement, parity and determinism evidence | **aggregate** of the two JS wins: baseline JS 14.75 % / renderer 13.69 % → **JS 8.13 % / renderer 6.90 %**; mobile 4× **19.92 → 24.21 FPS**; Electron holds **p50 16.7 / p95 16.8** | Structural wins confirmed; see the verdicts below |
+Every row is measured against commit `d2878b60` (2026-11-04) on the reference
+machine below; the change's own commit is listed, because that is the commit
+the after-number describes.
+
+| Work item | Commit | What it changed | Measured before → after (same harness/host) | Frame-time claim |
+|---|---|---|---|---|
+| AH-0MVXV0FFJ0066EC8 | `5a6905b7` | HUD rows rebuilt only when the rendered state changes | armed `GymPowerUpsCombat` JS **9.06 % → 5.44–5.79 %**; row symbols (`texImage2D`, `save`, `preDestroy`, `updateText`, …) gone from the profile | None at the 100-enemy budget — the stress gym renders no rows |
+| AH-0MW2DAY2L004QSKF | `ba4e5360` | Bullet silhouettes baked once into cached textures (Image draws) | `renderer` bucket **14.77 % → 6.97 %**, main-thread JS **16.24 % → 8.09 %**, `GraphicsWebGLRenderer` −68.5 %, `batch` −63.9 %, earcut gone | None on SwiftShader — the freed JS time moved into `native` rasterisation; that half is absorbed by a real GPU |
+| AH-0MVXV0EMF001WVQ1 | `40f6dce4` | Player bullets indexed in the shared uniform-grid broad phase | bullet-vs-bullet candidates **90 000 → 699** at 300 × 300 (128.8×) | None at the budget load — the pass was microseconds with no player bullets; structural at higher bullet counts |
+| AH-0MVXV0F0Y004NENT | `d2878b60` | Per-frame transient arrays replaced by reused buffers | GC bucket **0.21 % → 0.21 %**; JS/simulation/renderer within 0.22 pp | None measurable — GC was never the limiting resource at this load; structural |
+| AH-0MW2DB9VN006XB63 | `03f11377` | Electron desktop host + software-rasteriser baseline | browser p50 33.3 ms → **Electron p50 16.7 ms** on the same commit and rasteriser | The desktop vsync step, on the desktop host |
+| **AH-0MVXV6VOI006P7VG** (this) | `d2878b60` | Final measurement, parity and determinism evidence | **aggregate** of the two JS wins: baseline JS 14.75 % / renderer 13.69 % → **JS 8.13 % / renderer 6.90 %**; mobile 4× **19.92 → 24.21 FPS**; Electron holds **p50 16.7 / p95 16.8** | Structural wins confirmed; see the verdicts below |
 
 Two structural suspects were measured and closed as **not material** rather than
 "optimised": the collision pass (0.02 % of the window with no player bullets)
