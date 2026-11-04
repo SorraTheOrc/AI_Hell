@@ -928,6 +928,88 @@ export interface ImpactFxSpec {
  * Spread uses a 3-bullet fan (-30°, 0°, +30°). Dual fires 2 bullets
  * perpendicular to the heading (±90°). Rapid fires single bullets fast.
  */
+/**
+ * ── Weapon strength budget (parent AH-0MVRENEME004FS8T, AC1/AC2) ───────
+ *
+ * The catalogue's balance intent lives here, beside the numbers it
+ * constrains. `utils/weaponStrength.ts` is the **executable** definition of a
+ * weapon's output at a given level — the single place the arithmetic lives;
+ * `utils/weapons.test.ts` asserts the level-0 budget against the literal
+ * pre-change baselines below, and `utils/weaponLevels.test.ts` asserts the
+ * level-1 / level-cap ceilings.
+ *
+ * ### Output definition per family
+ *
+ * - **projectile** weapons — single-target **hits/s**:
+ *   `pattern bullets per shot × shots/s`.
+ * - **pierce** budget weapons — **hit-point budget × hits/s**
+ *   (the railgun's pass-through depth).
+ * - **bounce** budget weapons — **bounce depth × hits/s**, i.e.
+ *   `(1 + bounce) × shots/s` targets per pellet (the ricochet).
+ * - **split** payloads — the missile plus every radial warhead
+ *   (`CLUSTER_BASE_WARHEADS` and its level growth) **× hits/s**.
+ * - **orbit** (Options) — **pod count × shots/s** (every pod fires once per
+ *   trigger).
+ * - **AOE** family (nova, mortar, arc) — **coverage area × cadence**:
+ *   `radius² × shots/s` in `px²/s` (`π` is a constant scale factor and
+ *   cancels in every budget ratio).
+ *
+ * ### Budget ceilings (producer answers Q1 = A, Q2 = A)
+ *
+ * - **Level 0:** every **non-cannon** weapon's output is **≤ 60 %** of its
+ *   pre-change baseline below, and no non-cannon weapon's single-target
+ *   output exceeds **1.5× the cannon's** (the cannon cap takes precedence
+ *   where 60 % is still too strong — today `rapid`).
+ * - **Level 1:** a resolved weapon's output is **≤ 2.5×** its own level-0
+ *   output.
+ * - **Level cap (saturated):** **≤ 50 %** of the pre-change saturated output.
+ *   The cannon pattern saturated at ≈27× its level 0 (≈72 hits/s, 9 bullets
+ *   at 8 shots/s), so the post-change cap is ≤ ≈13.5× / 36 hits/s.
+ *
+ * The ceilings are expressed in code as `WEAPON_STRENGTH_BUDGET`
+ * (`utils/weaponStrength.ts`). Where an exact 60 % is not representable on
+ * the beat grid / with integer counts, the nearest on-grid value **at or
+ * below** the target is used and the realised percentage is recorded by the
+ * trim work item (AH-0MVWAVKS0005P9VN), which appends the post-change table
+ * here.
+ *
+ * ### Pre-change level-0 baselines (frozen fixture, never re-derived)
+ *
+ * Measured from the catalogue at the epic intake (80 BPM beat grid,
+ * `DEFAULT_WEAPON_SUBDIVISIONS` × pattern count × hit budget), relative to the
+ * cannon. These literal numbers are committed as the test fixture in
+ * `weapons.test.ts`; the cannon row is **frozen** (its level-0 values may
+ * never change).
+ *
+ * | Weapon | Pattern at L0 | Shots/s | Output | × cannon |
+ * |---|---|---|---|---|
+ * | cannon (frozen) | 1 bullet | 2.67 | 2.67 hits/s | 1.00× |
+ * | spread | 3-bullet fan ±30° | 1.33 | 4.00 hits/s | 1.50× |
+ * | dual | 2 parallel bullets | 1.33 | 2.67 hits/s | 1.00× |
+ * | rapid | 1 bullet, 6/beat | 8.00 | 8.00 hits/s | 3.00× |
+ * | wave_laser | 1 beam (2 HP then) | 1.33 | 2.67 hits/s | 1.00× |
+ * | ricochet | 1 pellet, 2 wall bounces | 1.33 | 4.00 hits/s | 1.50× |
+ * | cluster | missile + 2 warheads | 0.67 | 2.00 hits/s | 0.75× |
+ * | options | 2 orbiting pods | 1.33 | 2.67 hits/s | 1.00× |
+ * | nova | AOE ring, 45 px | 0.33 | 675 px²/s | role-defined |
+ * | mortar | AOE, 35 px, random point | 0.67 | 817 px²/s | role-defined |
+ * | arc | AOE + chain, 60 px | 1.33 | 4800 px²/s | role-defined |
+ * | rear_guard | 1 backward bullet | 2.67 | 2.67 hits/s | 1.00× |
+ * | broadside | 2 perpendicular bullets | 0.67 | 1.33 hits/s | 0.50× |
+ * | railgun | 1 tracer (5 HP then) | 0.33 | 1.67 hits/s | 0.63× |
+ * | shard_swarm | 5-shard fan ±15° | 1.33 | 6.67 hits/s | 2.50× |
+ * | heavy_slug | 1 oversized slug | 0.67 | 0.67 hits/s | 0.25× |
+ *
+ * The wave-laser and railgun rows are the intake measurement (a 2 HP beam and
+ * a 5 HP budget); both budgets were lowered afterwards by their own work items
+ * (AH-0MVREBUJ5004HDRQ, AH-0MVY0A23A009MRK3), so their shipped output already
+ * sits below the ceiling. Baselines are frozen history — they are never
+ * re-derived from the shipped data, or a regression in the catalogue would be
+ * invisible.
+ *
+ * Weapons are **cumulative**, so a run's total output is the sum of every
+ * active weapon plus the cannon — a single pick is not the unit of power.
+ */
 export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   cannon: {
     id: 'cannon',

@@ -69,6 +69,12 @@ import {
   isTimedWeapon,
 } from './weapons';
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
+import {
+  WEAPON_STRENGTH_BUDGET,
+  weaponStrength,
+  weaponStrengthTable,
+  type WeaponOutputFamily,
+} from './weaponStrength';
 
 describe('WEAPON_CATALOGUE', () => {
   test('contains the eight conventional/beam weapons, the three AOE weapons and the five net-new weapons', () => {
@@ -1386,5 +1392,245 @@ describe('net-new weapons (AH-0MVCRC52P001YIPW)', () => {
     for (const id of NEW_WEAPON_IDS) {
       expect(rotation).not.toContain(id);
     }
+  });
+});
+
+// ── Level-0 strength budget (AH-0MVRENEME004FS8T AC1/AC2) ───────────
+
+/**
+ * Pre-change level-0 output baselines — the intake brief's measurement table
+ * (AH-0MVRENEME004FS8T), transcribed as **literals** on purpose: values
+ * re-derived from the catalogue under test could never catch a regression.
+ *
+ * Each row is `payload × shots/s` (× hit depth for the budget weapons), all
+ * from the pre-change catalogue: 80 BPM beat grid, the shipped
+ * `DEFAULT_WEAPON_SUBDIVISIONS`, and the then-current hit budgets. AOE rows
+ * are `radius² × shots/s` in `px²/s` (`π` cancels in every ratio, so it is
+ * omitted from the measure).
+ *
+ * The `wave_laser` (2 HP beam) and `railgun` (5 HP budget) rows are the intake
+ * measurement; both budgets were lowered by later work items
+ * (AH-0MVREBUJ5004HDRQ, AH-0MVY0A23A009MRK3), so those weapons already sit
+ * below the ceiling. The baseline is frozen history, not live data.
+ */
+const LEVEL0_OUTPUT_BASELINE: Readonly<Record<WeaponId, number>> = {
+  // 1 bullet × 2 shots/beat (2.67 shots/s) — FROZEN.
+  cannon: 8 / 3,
+  // 3 bullets × 1 shot/beat (1.33 shots/s).
+  spread: 4,
+  // 2 parallel bullets × 1 shot/beat.
+  dual: 8 / 3,
+  // 1 bullet × 6 shots/beat (8 shots/s).
+  rapid: 8,
+  // 1.33 shots/s × the then-2 HP beam budget.
+  wave_laser: 8 / 3,
+  // 1 pellet × 1.33 shots/s × (1 + 2 wall bounces) targets.
+  ricochet: 4,
+  // (missile + 2 warheads) × 0.67 shots/s (one shot every 2 beats).
+  cluster: 2,
+  // 2 pods × 1.33 shots/s.
+  options: 8 / 3,
+  // 45 px radius² × 0.33 shots/s (one pulse every 4 beats).
+  nova: (45 * 45) / 3,
+  // 35 px radius² × 0.67 shots/s (one blast every 2 beats).
+  mortar: (35 * 35 * 2) / 3,
+  // 60 px radius² × 1.33 shots/s (one bolt per beat).
+  arc: (60 * 60 * 4) / 3,
+  // 1 backward bullet × 2 shots/beat.
+  rear_guard: 8 / 3,
+  // 2 perpendicular bullets × 0.67 shots/s.
+  broadside: 4 / 3,
+  // 0.33 shots/s × the then-5 HP pass-through budget.
+  railgun: 5 / 3,
+  // 5 shards × 1.33 shots/s.
+  shard_swarm: 20 / 3,
+  // 1 slug × 0.67 shots/s.
+  heavy_slug: 2 / 3,
+};
+
+/** The family the budget measures each weapon by (AC1 definition). */
+const EXPECTED_FAMILY: Readonly<Record<WeaponId, WeaponOutputFamily>> = {
+  cannon: 'projectile',
+  spread: 'projectile',
+  dual: 'projectile',
+  rapid: 'projectile',
+  wave_laser: 'projectile',
+  ricochet: 'bounce',
+  cluster: 'split',
+  options: 'orbit',
+  nova: 'aoe',
+  mortar: 'aoe',
+  arc: 'aoe',
+  rear_guard: 'projectile',
+  broadside: 'projectile',
+  railgun: 'pierce',
+  shard_swarm: 'projectile',
+  heavy_slug: 'projectile',
+};
+
+/** One weapon's level-0 position against its recorded baseline. */
+interface Level0BudgetRow {
+  weaponId: WeaponId;
+  family: string;
+  output: number;
+  outputUnit: string;
+  baseline: number;
+  /** Realised output as a share of the baseline (1 = unchanged). */
+  realisedShare: number;
+  /** Single-target output as a multiple of the cannon's. */
+  cannonMultiple: number;
+}
+
+const BUDGET_EPSILON = 1e-9;
+const ALL_WEAPON_IDS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
+
+function level0BudgetRows(): Level0BudgetRow[] {
+  const cannon = weaponStrength('cannon');
+  return weaponStrengthTable(0).map((strength) => {
+    const baseline = LEVEL0_OUTPUT_BASELINE[strength.weaponId];
+    return {
+      weaponId: strength.weaponId,
+      family: strength.family,
+      output: strength.output,
+      outputUnit: strength.outputUnit,
+      baseline,
+      realisedShare: strength.output / baseline,
+      cannonMultiple: strength.singleTargetOutput / cannon.singleTargetOutput,
+    };
+  });
+}
+
+/** Human-readable budget table — used in every assertion message. */
+function formatBudgetReport(rows: Level0BudgetRow[]): string {
+  return rows
+    .map(
+      (row) =>
+        `${row.weaponId.padEnd(12)} ${row.family.padEnd(10)} ` +
+        `${row.output.toFixed(2).padStart(8)} ${row.outputUnit.padEnd(5)} ` +
+        `/ baseline ${row.baseline.toFixed(2).padStart(8)} = ` +
+        `${(row.realisedShare * 100).toFixed(1).padStart(5)} % ` +
+        `(${row.cannonMultiple.toFixed(2)}× cannon)`,
+    )
+    .join('\n');
+}
+
+describe('level-0 strength budget (AH-0MVRENEME004FS8T AC1/AC2)', () => {
+  test('the cannon level-0 snapshot is frozen', () => {
+    // AC2: the cannon's level-0 values are byte-identical to the pre-change
+    // data. The flattened upgrade curve touches its *levels*, never level 0.
+    const cannon = WEAPON_CATALOGUE.cannon;
+    expect(cannon.offsets).toEqual([0]);
+    expect(cannon.fireRateMs).toBe(375);
+    expect(cannon.bulletLifetime).toBe(0.75);
+    // No budget descriptor of any kind — an ordinary single-hit bullet.
+    expect(cannon.aoe).toBeUndefined();
+    expect(cannon.bounce).toBeUndefined();
+    expect(cannon.splits).toBeUndefined();
+    expect(cannon.maxHitPoints).toBeUndefined();
+    expect(cannon.orbit).toBeUndefined();
+    expect(cannon.hitscan).toBeUndefined();
+  });
+
+  test("the helper reproduces the cannon's recorded baseline exactly", () => {
+    // Calibrates the measurement helper against an independent literal: the
+    // cannon fires 1 bullet at 2 shots/beat on the 80 BPM grid.
+    const cannon = weaponStrength('cannon');
+    expect(cannon.family).toBe('projectile');
+    expect(cannon.outputUnit).toBe('hits/s');
+    expect(cannon.shotsPerSecond).toBeCloseTo(8 / 3, 9);
+    expect(cannon.projectilesPerShot).toBe(1);
+    expect(cannon.hitsPerProjectile).toBe(1);
+    expect(cannon.singleTargetOutput).toBeCloseTo(8 / 3, 9);
+    expect(cannon.output).toBeCloseTo(LEVEL0_OUTPUT_BASELINE.cannon, 9);
+  });
+
+  test('every catalogue weapon is measured by its documented family', () => {
+    for (const id of ALL_WEAPON_IDS) {
+      const strength = weaponStrength(id);
+      expect(strength.family, id).toBe(EXPECTED_FAMILY[id]);
+      expect(strength.outputUnit, id).toBe(
+        strength.family === 'aoe' ? 'px²/s' : 'hits/s',
+      );
+      expect(strength.output, id).toBeGreaterThan(0);
+      expect(strength.descriptor.length, id).toBeGreaterThan(0);
+    }
+  });
+
+  test('the report covers every weapon with a literal baseline', () => {
+    // No weapon may be silently omitted from the budget: the report's ids and
+    // the baseline table's ids must both be exactly the catalogue.
+    const rows = level0BudgetRows();
+    expect(rows.map((row) => row.weaponId)).toEqual(ALL_WEAPON_IDS);
+    expect(Object.keys(LEVEL0_OUTPUT_BASELINE).sort()).toEqual(
+      [...ALL_WEAPON_IDS].sort(),
+    );
+  });
+
+  test('the documented ceilings match the asserted bounds', () => {
+    // Pin the code constants to literals so the documentation, the tests and
+    // the helper cannot drift apart — tightening/loosening the budget has to
+    // be a deliberate two-place edit.
+    expect(WEAPON_STRENGTH_BUDGET.level0BaselineShare).toBe(0.6);
+    expect(WEAPON_STRENGTH_BUDGET.level0CannonMultiple).toBe(1.5);
+    expect(WEAPON_STRENGTH_BUDGET.level1GrowthMultiple).toBe(2.5);
+    expect(WEAPON_STRENGTH_BUDGET.levelCapShareOfPreChange).toBe(0.5);
+  });
+
+  test('the measured output never falls as a weapon levels up', () => {
+    // The helper consumes the shared level resolver, so it inherits the
+    // curve's monotonicity for every family (projectile, pierce, bounce,
+    // split, orbit, AOE).
+    for (const id of ALL_WEAPON_IDS) {
+      const l0 = weaponStrength(id, 0).output;
+      const l1 = weaponStrength(id, 1).output;
+      const l3 = weaponStrength(id, 3).output;
+      expect(l1, `${id} level 1`).toBeGreaterThanOrEqual(l0 - BUDGET_EPSILON);
+      expect(l3, `${id} level 3`).toBeGreaterThanOrEqual(l1 - BUDGET_EPSILON);
+    }
+  });
+
+  /**
+   * **TEST-FIRST (RED).** Authored red under Vitest's `test.fails` (the repo's
+   * red-before/green-after convention) because the shipped catalogue has not
+   * been trimmed yet. The trim work item (AH-0MVWAVKS0005P9VN) flips these
+   * back to `test` once every weapon is inside the bound; a leftover
+   * `test.fails` fails the suite, so the flip is deliberate. The assertions
+   * are at full strength now — do not weaken them to land them green early.
+   */
+  test.fails("every non-cannon weapon is at or below 60 % of its level-0 baseline", () => {
+    const rows = level0BudgetRows();
+    const overBudget = rows.filter(
+      (row) =>
+        row.weaponId !== 'cannon' &&
+        row.realisedShare > WEAPON_STRENGTH_BUDGET.level0BaselineShare + BUDGET_EPSILON,
+    );
+    expect(
+      overBudget.map(
+        (row) =>
+          `${row.weaponId}=${(row.realisedShare * 100).toFixed(1)}%`,
+      ),
+      `level-0 strength budget per weapon:\n${formatBudgetReport(rows)}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * **TEST-FIRST (RED).** Authored red under Vitest's `test.fails`; the trim
+   * work item (AH-0MVWAVKS0005P9VN) flips it back to `test`. The cap takes
+   * precedence where 60 % of the baseline is still above 1.5× the cannon
+   * (today `rapid` at 3.00× and `shard_swarm` at 2.50×).
+   */
+  test.fails("no non-cannon weapon's single-target output exceeds 1.5× the cannon's", () => {
+    const rows = level0BudgetRows();
+    const overCap = rows.filter(
+      (row) =>
+        row.weaponId !== 'cannon' &&
+        row.cannonMultiple > WEAPON_STRENGTH_BUDGET.level0CannonMultiple + BUDGET_EPSILON,
+    );
+    expect(
+      overCap.map(
+        (row) => `${row.weaponId}=${row.cannonMultiple.toFixed(2)}× cannon`,
+      ),
+      `level-0 single-target output vs the cannon:\n${formatBudgetReport(rows)}`,
+    ).toEqual([]);
   });
 });
