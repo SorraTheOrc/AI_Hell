@@ -421,6 +421,24 @@ export interface EnemyFormationConfig<
    */
   player?: PlayerFormationConfig;
   /**
+   * Boot the formation with firing already ON (AH-0MVXV0DT50028RF8). When
+   * `true`, every spawned entity inherits the HUD SHOOT toggle's ON state, so
+   * a scene whose measured scenario is *enemies plus their bullet load* (the
+   * performance stress gym) does not need to click SHOOT first. Absent/
+   * `false` keeps the historical OFF start; a capture setup's `shootEnabled`
+   * scenario parameter is applied afterwards and still wins.
+   */
+  shootEnabled?: boolean;
+  /**
+   * Whether the scene seeds the base's 100 demonstration minerals
+   * (AH-0MVXV0DT50028RF8). Defaults to `true` (every historical formation
+   * gym). A scene that must measure only its gameplay objects — the
+   * performance stress gym — sets `false`, so the seeded field cannot add
+   * non-target load (or random mineral-absorption behaviour) to the run. The
+   * HUD and the mineral hold still exist; only the seeding is skipped.
+   */
+  minerals?: boolean;
+  /**
    * Hit radius (px) of each enemy entity used for player-bullet vs
    * entity collisions. Defaults to {@link DEFAULT_ENTITY_HIT_RADIUS}.
    */
@@ -795,10 +813,21 @@ export class GymFormationScene<
     this.explodeButton.on('pointerdown', () => this.explodeRandom());
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
+    // Scene-level firing default (AH-0MVXV0DT50028RF8): the performance stress
+    // gym boots with firing ON through `config.shootEnabled`. Applied after the
+    // formation spawned so every entity inherits the state, and after the HUD
+    // exists so the label matches. Absent/false ⇒ the historical OFF start.
+    if (config.shootEnabled) {
+      this.shootEnabled = true;
+      for (const entity of this.entities) entity.shootEnabled = true;
+      this.shootButton.setText('SHOOT: ON');
+    }
+
     // Scenario parameter (AH-0MVRMI0Q7001KG4Y): a capture setup may start the
     // formation with firing already on. Applied after the formation spawned so
     // every entity inherits the state, and after the HUD exists so the label
-    // matches. Absent ⇒ the historical OFF start (no behaviour change).
+    // matches. Absent ⇒ the historical OFF start (no behaviour change). A
+    // setup always wins over the scene-level default above.
     if (typeof this.pendingSetup?.shootEnabled === 'boolean') {
       this.shootEnabled = this.pendingSetup.shootEnabled;
       for (const entity of this.entities) {
@@ -1418,7 +1447,10 @@ export class GymFormationScene<
       );
     }
     this._syncMineralHud();
-    this.seedMinerals(100);
+    // `config.minerals === false` skips the demonstration seed only
+    // (AH-0MVXV0DT50028RF8): the performance stress gym must measure exactly
+    // its enemies + fire, so no non-target mineral load is added.
+    if (this.config.minerals !== false) this.seedMinerals(100);
   }
 
   /**

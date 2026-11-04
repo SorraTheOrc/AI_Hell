@@ -877,6 +877,15 @@ npm run perf:measure -- --out before.json
 npm run perf:measure -- --out after.json --compare before.json
 ```
 
+- **Reproducible 100-enemy worst case:** `--scene GymPerformance`
+  (`src/scenes/gym/GymPerformance.ts`, AH-0MVXV0DT50028RF8) boots exactly 100
+  late-game enemies on a fixed grid, all firing from the first frame, with no
+  wave timeout, no mineral field and no formation drift — the reproducible
+  scenario the 60 FPS budget is stated against. It runs the shared factory,
+  fire dispatcher and combat loop (no divergent copy) and shows a live
+  FPS/entity-count overlay. See
+  [docs/PERFORMANCE.md § The stress gym](./docs/PERFORMANCE.md#the-stress-gym-gymperformance).
+
 - **Method:** frame times are the differences between consecutive Phaser
   `poststep` timestamps, sampled through the dev-gated page probe
   (`window.__aiHellPerfProbe`, `src/core/perfProbe.ts`; never written in a

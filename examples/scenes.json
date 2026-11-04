@@ -271,6 +271,23 @@
       }
     },
     {
+      "target": "GymPerformance",
+      "playMs": 2000,
+      "captureMs": 10000,
+      "label": "Gym family \u2014 100-enemy stress load with live fire",
+      "setup": {
+        "player": {
+          "heading": -90,
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {},
+        "seed": 8095
+      }
+    },
+    {
       "target": "GymPlayer",
       "playMs": 1500,
       "captureMs": 5000,

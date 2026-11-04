@@ -5,10 +5,54 @@ compare two runs. This is the prerequisite for every optimisation in the
 Optimization pass epic (parent AH-0MVWJQUN6009IS87): nothing is optimised or
 claimed as an improvement without a harness number before and after.
 
-The harness itself is AH-0MVXV0DER009ER70. The 100-enemy stress gym, the
-recorded desktop/Electron/mobile baseline and the per-hotspot results are
-tracked by the sibling children (AH-0MVXV0DT50028RF8, AH-0MVXV0E8000937U5,
-AH-0MVXV0FUP006W8OR).
+The harness itself is AH-0MVXV0DER009ER70. The reproducible 100-enemy worst
+case is the **`GymPerformance` stress gym** (AH-0MVXV0DT50028RF8) — see
+[the stress gym](#the-stress-gym-gymperformance) below. The recorded
+desktop/Electron/mobile baseline and the per-hotspot results are tracked by the
+sibling children (AH-0MVXV0E8000937U5, AH-0MVXV0FUP006W8OR).
+
+## The stress gym (`GymPerformance`)
+
+The performance budget is stated against **100 late-game enemies alive**, but
+the shipped curated waves never field that many, so the target had no
+reproducible worst case. `GymPerformance` (AH-0MVXV0DT50028RF8) is that case
+on demand, built entirely from the shared gym/combat core — it is not a second
+simulation:
+
+- **Exactly 100 enemies** (the budget's number) on a fixed 10 × 10 row-major
+grid. The archetypes are the **firing** archetypes the campaign's final third
+(levels 6–10) fields — `tank`, `swarm`, `phaser`, `diver`, `raider` and `march`
+— round-robined over the grid. Non-firing late-game threats (the `capturer`
+beam, the `harvester`, the `grunt` horde) are excluded because the measured
+load is *enemies plus bullets*.
+- **Live fire from the first frame**: every entity is created by the shared
+`createEnemyFromConfig` factory and fires through the shared `fireForEnemy`
+dispatcher, at its own archetype's cadence. The scene boots with the SHOOT
+toggle ON (`shootEnabled: true` in its formation config) instead of needing a
+click.
+- **Only the target load**: formation drift is 0 (the block does not scroll
+off), there is no wave timeout (the count stays at 100 for the whole window),
+no power-up layer and **no seeded mineral field** (`minerals: false`). The
+shared player ship sits at the bottom centre — enemy aimed and spread fire
+targets it, so the fire behaviour is the game's — but **its auto-fire is
+disabled** (`autoFireEnabled()` is `false`), so player bullets cannot shoot the
+100-enemy load down mid-measurement.
+- **Live readout**: a top-left overlay reports FPS and the live entity counts,
+refreshed at 4 Hz (never per frame) so the overlay stays off the measured hot
+path. The authoritative counts for reports come from the same shared
+`CombatScene.getPerformanceCounts()` seam the probe samples; the stress gym
+adds its (empty) mineral count so the report shape matches `PlayScene`.
+
+```bash
+npm run perf:measure -- --scene GymPerformance --seconds 60 --warmup 3
+```
+
+Read the numbers with the `counts` block, not just the frame times: enemy
+bullets build up while firing is live and the mix shifts as divers dive and
+raiders break formation, so compare two `GymPerformance` runs only when the
+scene, warmup, window, CPU throttle and host all match. The gym is also
+watchable/capturable like every other gym (`WATCHABLE_GYM_SCENE_KEYS`, see
+[docs/dev/gameplay-capture.md](dev/gameplay-capture.md)).
 
 ## Budget
 

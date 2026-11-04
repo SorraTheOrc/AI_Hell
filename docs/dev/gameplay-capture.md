@@ -2051,7 +2051,8 @@ under `src/scenes/gym/` (`Gym<Name>`), minus the two **parameterised** scenes
 that cannot start without a caller-supplied parameter:
 
 `GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymHangar`,
-`GymHexWar`, `GymMinerals`, `GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`,
+`GymHexWar`, `GymMinerals`, `GymMiniBoss`, `GymPerformance`, `GymPlayer`,
+`GymPowerUpLeveling`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymRhythm`, `GymWeaponLeveling`,
 `GymWeapons`, `GymWeaponTuning`.
 
