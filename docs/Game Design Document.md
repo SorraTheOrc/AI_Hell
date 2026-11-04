@@ -810,6 +810,19 @@ reward overlay (§4.4.4) appears.
   therefore bounded at
   `n + max(0, 30 − n) + 10 + 20 ≤ 60` bursts and keeps animating for ~2.95 s
   after the lethal hit.
+- **Magnitude — the mini-boss's own bursts are huge
+  (AH-0MVY06X16005EO8R).** The two roles clustered on the mini-boss itself are
+  deliberately oversized relative to everything else: the **anchored** bursts
+  use `MINI_BOSS_SWEEP_ANCHORED_SCALE` **1.8** (base size 16 ⇒ 28.8 px) and
+  **32 particles**, and the **finale** uses `MINI_BOSS_SWEEP_FINALE_SCALE`
+  **2.4** (base size 18 ⇒ 43.2 px) and **40 particles** — both at least twice
+  the original budget-conscious sizing (0.9/16 and 1.2/20). The **swept-enemy**
+  (0.8 scale / 14 particles) and **scattered celebration** (0.7 / 12) bursts
+  keep that original modest sizing, so the size contrast keeps the player's
+  eye on the death point: `scatter < enemy < anchored < finale`. Only these 30
+  mini-boss bursts (10 anchored + 20 finale) grow, so the particle budget (one
+  `Graphics` + one tween per burst) still holds; the cadence, burst counts,
+  per-burst lifespan and completion delay are all unchanged.
 - **Cosmetic only.** Swept enemies are removed from play visually and award
   **no score, no mineral/power-up/Extra-Life drops and no kill telemetry** —
   they never route through the reward-bearing kill path. The mini-boss reward

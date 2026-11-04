@@ -1643,6 +1643,23 @@ covers it):
   (`spawnMiniBossDeathSweep`) plays them through the shared
   `spawnExplosionParticles` VFX and holds `onComplete` until the last finale
   pair has finished animating.
+- **Mini-boss burst magnitude (AH-0MVY06X16005EO8R).** The two roles clustered
+  on the mini-boss itself are deliberately **huge** and at least twice their
+  original budget-conscious sizing: the **anchored** bursts use
+  `MINI_BOSS_SWEEP_ANCHORED_SCALE` **1.8** (base size 16 ⇒ 28.8 px) and **32
+  particles** (was 0.9/16), and the **finale** uses
+  `MINI_BOSS_SWEEP_FINALE_SCALE` **2.4** (base size 18 ⇒ 43.2 px) and **40
+  particles** (was 1.2/20). The **swept-enemy** (`MINI_BOSS_SWEEP_ENEMY_SCALE`
+  0.8 / 14 particles) and **scattered celebration** (`..._SCATTER_SCALE` 0.7 /
+  12 particles) bursts keep that original modest sizing on purpose, so the
+  display's focus sits on the death point (`scatter < enemy < anchored <
+  finale`). Only the 30 mini-boss bursts (10 anchored + 20 finale) grow; the
+  burst counts, per-role stagger windows, cadence, the 360 ms per-burst
+  lifespan and the ~2.95 s completion delay are all unchanged, so the reward
+  overlay timing is untouched. The mini-boss **body's** own death burst
+  (inherited from `Boss`) is also unchanged. The doubled magnitudes and the
+  unchanged enemy/scatter values are pinned by
+  `miniBossDeathSweep.test.ts`.
 - **Completion is real animation time.** `spawnExplosionParticles` gained an
   optional `onComplete` seam; the executor completes when the last burst tween
   reports, with a `scene.time.delayedCall` watchdog at
@@ -1763,7 +1780,9 @@ hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
 `asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`, `enemyWrap`,
 `miniBossDeathSweep` — the mini-boss defeat cascade shared by `PlayScene` and
-`GymMiniBoss`, §3.3 — and `spawnTransit`, the wormhole-transit destination
+`GymMiniBoss`, §3.3 — whose anchored/finale bursts are deliberately huge
+(scale 1.8/2.4, particles 32/40) while the swept-enemy/scatter bursts stay
+small (scale 0.8/0.7, particles 14/12), and `spawnTransit`, the wormhole-transit destination
 rule below), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range

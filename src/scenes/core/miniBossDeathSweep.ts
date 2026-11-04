@@ -87,9 +87,19 @@
  *
  * Total bursts `n + max(0, 30 - n) + 10 + 20`; for the realistic `n <= 30`
  * case that is `<= 60`, and above that the extras clamp to 0 so the sweep is
- * one enemy burst per target plus the 30 mini-boss bursts. Extras, anchored
- * and finale bursts use a reduced particle count so the whole display stays
- * inside the particle budget.
+ * one enemy burst per target plus the 30 mini-boss bursts.
+ *
+ * **Size contrast (AH-0MVY06X16005EO8R).** The mini-boss's *own* two roles are
+ * deliberately huge: the anchored bursts (`MINI_BOSS_SWEEP_ANCHORED_SCALE`
+ * 1.8 / 32 particles) and the finale (`MINI_BOSS_SWEEP_FINALE_SCALE` 2.4 / 40
+ * particles) are at least twice the original budget-conscious sizing, while
+ * the swept-enemy (0.8 / 14) and scattered celebration (0.7 / 12) bursts keep
+ * their modest sizing. The contrast is the point — the death point is the
+ * biggest visual event in the level — and the `scatter < enemy < anchored <
+ * finale` ordering is preserved and pinned by `miniBossDeathSweep.test.ts`.
+ * The 30 mini-boss bursts (10 anchored + 20 finale) are the only bursts that
+ * grew, so peak concurrent particles stay well inside the budget (still one
+ * `Graphics` + one tween per burst — no new object count).
  */
 
 import {
@@ -161,11 +171,18 @@ export const MINI_BOSS_SWEEP_FINALE_START_MS =
  */
 export const MINI_BOSS_SWEEP_FINALE_SPREAD_PX = 160;
 
-/** Particle count per finale burst (denser than anchored: the biggest hit). */
-export const MINI_BOSS_SWEEP_FINALE_PARTICLES = 20;
+/**
+ * Particle count per finale burst — the mini-boss's own biggest hit, twice the
+ * anchored count and the display's densest single burst.
+ */
+export const MINI_BOSS_SWEEP_FINALE_PARTICLES = 40;
 
-/** Geometry scale for finale bursts (larger than anchored). */
-export const MINI_BOSS_SWEEP_FINALE_SCALE = 1.2;
+/**
+ * Geometry scale for finale bursts — the largest in the display, 1.33× the
+ * anchored scale and so far above the enemy/scatter roles that the mini-boss's
+ * own death dominates the screen (AH-0MVY06X16005EO8R).
+ */
+export const MINI_BOSS_SWEEP_FINALE_SCALE = 2.4;
 
 /** Particle count per swept-enemy burst (enemy-scale, modest). */
 export const MINI_BOSS_SWEEP_ENEMY_PARTICLES = 14;
@@ -173,8 +190,11 @@ export const MINI_BOSS_SWEEP_ENEMY_PARTICLES = 14;
 /** Reduced particle count per scatter burst (particle budget, AC2). */
 export const MINI_BOSS_SWEEP_SCATTER_PARTICLES = 12;
 
-/** Reduced particle count per anchored burst (particle budget, AC2). */
-export const MINI_BOSS_SWEEP_ANCHORED_PARTICLES = 16;
+/**
+ * Particle count per anchored burst — a heavy celebration on the death point
+ * (AH-0MVY06X16005EO8R doubled it from the original budget-conscious 16).
+ */
+export const MINI_BOSS_SWEEP_ANCHORED_PARTICLES = 32;
 
 /** Per-burst lifespan (ms) — same order as the shared explosion lifespan. */
 export const MINI_BOSS_SWEEP_LIFESPAN_MS = 360;
@@ -192,8 +212,12 @@ export const MINI_BOSS_SWEEP_ENEMY_SCALE = 0.8;
 /** Geometry scale for scatter bursts (reduced, cosmetic-only). */
 export const MINI_BOSS_SWEEP_SCATTER_SCALE = 0.7;
 
-/** Geometry scale for anchored bursts. */
-export const MINI_BOSS_SWEEP_ANCHORED_SCALE = 0.9;
+/**
+ * Geometry scale for anchored bursts — huge relative to the enemy/scatter
+ * roles (AH-0MVY06X16005EO8R doubled it from the original 0.9), so the death
+ * point reads as the biggest visual event in the level.
+ */
+export const MINI_BOSS_SWEEP_ANCHORED_SCALE = 1.8;
 
 /** Celebration colour palette for scatter/anchored bursts. */
 const MINI_BOSS_SWEEP_PALETTE: readonly number[] = [
@@ -337,7 +361,10 @@ export interface MiniBossSweepBurst {
   color: number;
   /** Base size handed to `spawnExplosionParticles` (geometry). */
   size: number;
-  /** Particle count for the burst (reduced for extras/anchored). */
+  /**
+   * Particle count for the burst — role-sized: modest for scattered extras,
+   * doubled (huge) for the mini-boss's own anchored/finale bursts.
+   */
   particleCount: number;
   /** Geometry scale for the burst. */
   scale: number;

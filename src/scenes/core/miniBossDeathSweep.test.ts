@@ -175,6 +175,17 @@ interface MiniBossDeathSweepContract {
   MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS: number;
   MINI_BOSS_SWEEP_FINALE_SPREAD_PX: number;
   MINI_BOSS_SWEEP_FINALE_START_MS: number;
+  // Per-role burst magnitudes (AH-0MVY06X16005EO8R) — the mini-boss's own
+  // anchored/finale roles are huge; enemy/scatter keep their sizing.
+  MINI_BOSS_SWEEP_ANCHORED_SCALE: number;
+  MINI_BOSS_SWEEP_ANCHORED_PARTICLES: number;
+  MINI_BOSS_SWEEP_FINALE_SCALE: number;
+  MINI_BOSS_SWEEP_FINALE_PARTICLES: number;
+  MINI_BOSS_SWEEP_ENEMY_SCALE: number;
+  MINI_BOSS_SWEEP_ENEMY_PARTICLES: number;
+  MINI_BOSS_SWEEP_SCATTER_SCALE: number;
+  MINI_BOSS_SWEEP_SCATTER_PARTICLES: number;
+  MINI_BOSS_SWEEP_LIFESPAN_MS: number;
   // SFX tunables (AC2/AC3) — every knob named and exported.
   MINI_BOSS_SWEEP_SFX_ENABLED: boolean;
   MINI_BOSS_SWEEP_SFX_DESTRUCTION_CUE: SweepBurstAudio['cue'];
@@ -659,6 +670,148 @@ describe('mini-boss death sweep — finale cluster (producer review)', () => {
     expect(plan.completionDelayMs).toBeGreaterThan(
       Math.max(...burstsOfRole(plan, 'anchored').map((b) => b.delayMs + b.lifespanMs)),
     );
+  });
+});
+
+// ── AC7: mini-boss burst magnitudes (AH-0MVY06X16005EO8R) ────────
+//
+// "Increase the size of the mini-boss explosions. They should be at least 2x
+// the size in both scale and sprite count." The producer settled the scope:
+// only the two roles clustered on the mini-boss itself (anchored + finale)
+// double; the swept-enemy and scattered celebration bursts keep today's
+// sizing, and cadence/lifespan/completion are untouched.
+
+describe('mini-boss death sweep — mini-boss burst magnitudes (AC7)', () => {
+  /** The pre-doubling sizing this item supersedes — the recorded baselines. */
+  const BASELINE = {
+    anchored: { scale: 0.9, particles: 16 },
+    finale: { scale: 1.2, particles: 20 },
+    enemy: { scale: 0.8, particles: 14 },
+    scatter: { scale: 0.7, particles: 12 },
+  } as const;
+
+  it('doubles the anchored and finale scale constants', async () => {
+    const {
+      MINI_BOSS_SWEEP_ANCHORED_SCALE,
+      MINI_BOSS_SWEEP_FINALE_SCALE,
+    } = await sweep();
+
+    // At least 2× the recorded baseline — never a quiet shrink-back.
+    expect(MINI_BOSS_SWEEP_ANCHORED_SCALE).toBeGreaterThanOrEqual(
+      BASELINE.anchored.scale * 2,
+    );
+    expect(MINI_BOSS_SWEEP_FINALE_SCALE).toBeGreaterThanOrEqual(
+      BASELINE.finale.scale * 2,
+    );
+    // …and the shipped values the intake fixed.
+    expect(MINI_BOSS_SWEEP_ANCHORED_SCALE).toBe(1.8);
+    expect(MINI_BOSS_SWEEP_FINALE_SCALE).toBe(2.4);
+  });
+
+  it('doubles the anchored and finale per-burst particle counts', async () => {
+    const {
+      MINI_BOSS_SWEEP_ANCHORED_PARTICLES,
+      MINI_BOSS_SWEEP_FINALE_PARTICLES,
+    } = await sweep();
+
+    expect(MINI_BOSS_SWEEP_ANCHORED_PARTICLES).toBeGreaterThanOrEqual(
+      BASELINE.anchored.particles * 2,
+    );
+    expect(MINI_BOSS_SWEEP_FINALE_PARTICLES).toBeGreaterThanOrEqual(
+      BASELINE.finale.particles * 2,
+    );
+    expect(MINI_BOSS_SWEEP_ANCHORED_PARTICLES).toBe(32);
+    expect(MINI_BOSS_SWEEP_FINALE_PARTICLES).toBe(40);
+  });
+
+  it('plans the doubled geometry and counts on every anchored/finale burst', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_ANCHORED_SCALE,
+      MINI_BOSS_SWEEP_ANCHORED_PARTICLES,
+      MINI_BOSS_SWEEP_FINALE_SCALE,
+      MINI_BOSS_SWEEP_FINALE_PARTICLES,
+    } = await sweep();
+
+    const plan = planMiniBossDeathSweep(planInput(escorts(4)));
+
+    for (const burst of burstsOfRole(plan, 'anchored')) {
+      // Effective geometry is `size × scale`: the base size is unchanged, so a
+      // doubled scale doubles the drawn radius and particle travel distance.
+      expect(burst.scale).toBe(MINI_BOSS_SWEEP_ANCHORED_SCALE);
+      expect(burst.scale).toBeGreaterThanOrEqual(BASELINE.anchored.scale * 2);
+      expect(burst.particleCount).toBe(MINI_BOSS_SWEEP_ANCHORED_PARTICLES);
+      expect(burst.particleCount).toBeGreaterThanOrEqual(
+        BASELINE.anchored.particles * 2,
+      );
+      expect(burst.size * burst.scale).toBeGreaterThanOrEqual(2 * 16 * BASELINE.anchored.scale);
+    }
+
+    for (const burst of burstsOfRole(plan, 'finale')) {
+      expect(burst.scale).toBe(MINI_BOSS_SWEEP_FINALE_SCALE);
+      expect(burst.scale).toBeGreaterThanOrEqual(BASELINE.finale.scale * 2);
+      expect(burst.particleCount).toBe(MINI_BOSS_SWEEP_FINALE_PARTICLES);
+      expect(burst.particleCount).toBeGreaterThanOrEqual(
+        BASELINE.finale.particles * 2,
+      );
+      expect(burst.size * burst.scale).toBeGreaterThanOrEqual(2 * 18 * BASELINE.finale.scale);
+    }
+  });
+
+  it('leaves the swept-enemy and scatter bursts exactly as they were (out of scope)', async () => {
+    const { planMiniBossDeathSweep } = await sweep();
+    const plan = planMiniBossDeathSweep(planInput(escorts(5)));
+
+    const enemy = burstsOfRole(plan, 'enemy');
+    expect(enemy.length).toBeGreaterThan(0);
+    for (const burst of enemy) {
+      expect(burst.scale).toBe(BASELINE.enemy.scale);
+      expect(burst.particleCount).toBe(BASELINE.enemy.particles);
+    }
+
+    const scatter = burstsOfRole(plan, 'scatter');
+    expect(scatter.length).toBeGreaterThan(0);
+    for (const burst of scatter) {
+      expect(burst.scale).toBe(BASELINE.scatter.scale);
+      expect(burst.particleCount).toBe(BASELINE.scatter.particles);
+    }
+  });
+
+  it('preserves the role ordering scatter < enemy < anchored < finale', async () => {
+    const { planMiniBossDeathSweep } = await sweep();
+    const plan = planMiniBossDeathSweep(planInput(escorts(4)));
+
+    const scaleOf = (role: SweepBurst['role']) => burstsOfRole(plan, role)[0].scale;
+
+    expect(scaleOf('scatter')).toBeLessThan(scaleOf('enemy'));
+    expect(scaleOf('enemy')).toBeLessThan(scaleOf('anchored'));
+    expect(scaleOf('anchored')).toBeLessThan(scaleOf('finale'));
+  });
+
+  it('leaves the burst counts and completion delay unchanged (AC4)', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_LIFESPAN_MS,
+      MINI_BOSS_SWEEP_ANCHORED_COUNT,
+      MINI_BOSS_SWEEP_FINALE_COUNT,
+    } = await sweep();
+
+    // The display length is untouched: the per-burst lifespan is still 360 ms…
+    expect(MINI_BOSS_SWEEP_LIFESPAN_MS).toBe(360);
+
+    for (const n of [0, 1, 5, 30]) {
+      const plan = planMiniBossDeathSweep(planInput(escorts(n)));
+      // …burst counts are unchanged…
+      expect(burstsOfRole(plan, 'anchored'), `n=${n}`).toHaveLength(
+        MINI_BOSS_SWEEP_ANCHORED_COUNT,
+      );
+      expect(burstsOfRole(plan, 'finale'), `n=${n}`).toHaveLength(
+        MINI_BOSS_SWEEP_FINALE_COUNT,
+      );
+      expect(plan.bursts.length, `n=${n}`).toBe(n + Math.max(0, 30 - n) + 30);
+      // …and the reward overlay still waits for the same ~2.95 s display.
+      expect(plan.completionDelayMs, `n=${n}`).toBe(2950);
+    }
   });
 });
 
