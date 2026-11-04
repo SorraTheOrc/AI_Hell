@@ -3188,7 +3188,7 @@ describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
     registry.applyCollect('magnet', true); // permanent magnet stack
     registry.applyCollect('speed_boost', true); // permanent speed boost
     registry.applyWeapon('spread', true); // permanent weapon
-    registry.applyCollect('teleport'); // stored teleport use
+    registry.applyCollect('teleport'); // teleport readiness (single-use)
 
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.isActive('speed_boost')).toBe(true);

@@ -20,6 +20,7 @@ import {
   resolveTemporaryWindow,
 } from './powerUpLevels';
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
+import { grantPermanentPowerUp } from './choiceReward';
 import { beatPeriodMs } from '../utils/beat';
 import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
 import {
@@ -1338,6 +1339,119 @@ describe('P7 Teleport: single readiness state, consume, grants P6', () => {
     // Never a stack count — a single-use kind surfaces only its readiness.
     expect(t!.stacks).toBeUndefined();
     expect(t!.recharge).toBeUndefined();
+  });
+});
+
+// ── Teleport acquisitions set the readiness timer to 0 ────────────────
+//
+// Any Teleport acquisition — a field pickup or a hold-full permanent grant,
+// including the checkpoint replay seam — leaves the single warp **ready**:
+// the one recharge timer is reset to 0, so a timer started by spending the
+// warp can never fire afterwards and no second warp is banked
+// (AH-0MW231MTT005DE90).
+
+describe('Teleport acquisition readies the warp (AH-0MW231MTT005DE90)', () => {
+  /**
+   * A permanently-owned Teleport that has been spent and is mid-recharge.
+   *
+   * Ownership is granted at the start because a pickup-only Teleport ends
+   * with its 15 s temporary level window, long before the 60 s base recharge
+   * elapses — without it the kind would simply become unheld.
+   */
+  function midRecharge(): { reg: EffectsRegistry; store: PowerUpLevelStore } {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('teleport', true);
+    expect(reg.consumeTeleport()).toBe(true);
+    reg.tick(store.teleportRechargeTime() / 2);
+    expect(reg.isTeleportRecharging()).toBe(true);
+    return { reg, store };
+  }
+
+  it('AC1 — a field pickup mid-recharge readies the warp immediately', () => {
+    const { reg } = midRecharge();
+
+    reg.applyCollect('teleport');
+
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.isTeleportRecharging()).toBe(false);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+    // Still single-use: the pickup readies the one warp, it never banks one.
+    expect(reg.consumableCharges('teleport')).toBe(0);
+  });
+
+  it('AC1 — a hold-full permanent grant mid-recharge readies the warp', () => {
+    const { reg } = midRecharge();
+
+    reg.applyCollect('teleport', true);
+
+    expect(reg.isConsumableOwned('teleport')).toBe(true);
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.isTeleportRecharging()).toBe(false);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+  });
+
+  it('AC1 — the checkpoint replay seam readies a recharging warp', () => {
+    const { reg } = midRecharge();
+
+    // `_restoreCheckpoint` replays grants through `grantPermanentPowerUp`.
+    grantPermanentPowerUp('teleport', reg);
+
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+  });
+
+  it('AC2 — the replaced timer never fires and remaining stays 0', () => {
+    const { reg, store } = midRecharge();
+    const replacedInterval = store.teleportRechargeTime();
+
+    reg.applyCollect('teleport');
+
+    // Well past the interval that was running before the pickup: the reset
+    // discarded that timer, so nothing fires and readiness never decays into
+    // a phantom stored warp.
+    reg.tick(replacedInterval + 1);
+
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.isTeleportRecharging()).toBe(false);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+    expect(reg.consumableCharges('teleport')).toBe(0);
+    expect(reg.consumeTeleport()).toBe(true); // exactly the one warp
+  });
+
+  it('AC3 — a pickup while already ready is a no-op that still refreshes the window', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+    const fullWindow = reg.powerUpTemporaryRemaining('teleport')!;
+    expect(fullWindow).toBeGreaterThan(0);
+
+    reg.tick(fullWindow / 2);
+    expect(reg.powerUpTemporaryRemaining('teleport')!).toBeLessThan(fullWindow);
+    expect(reg.hasTeleport()).toBe(true);
+
+    // Re-collecting keeps it ready (the timer is already 0, so there is
+    // nothing to cancel) and refreshes the temporary level window to its
+    // full TTL rather than stacking.
+    reg.applyCollect('teleport');
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+    expect(reg.powerUpTemporaryRemaining('teleport')).toBeCloseTo(fullWindow, 6);
+    expect(reg.consumableCharges('teleport')).toBe(0);
+  });
+
+  it('AC4 — an expired pickup window without permanent ownership is unavailable', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+    expect(reg.hasTeleport()).toBe(true);
+
+    reg.tick(reg.powerUpTemporaryRemaining('teleport')! + 0.1);
+
+    // The field-pickup window is the only thing holding the ability: once it
+    // expires an unowned Teleport is unavailable, whatever its timer says.
+    expect(reg.hasTeleport()).toBe(false);
+    expect(reg.isTeleportRecharging()).toBe(false);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+    expect(reg.consumeTeleport()).toBe(false);
   });
 });
 
