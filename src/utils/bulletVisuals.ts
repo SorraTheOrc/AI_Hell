@@ -58,6 +58,7 @@ import type Phaser from 'phaser';
 
 import { PLAYER_BULLET_RADIUS } from '../core/constants';
 import type { BulletShape, MuzzleFlashSpec, WeaponDefinition } from './weapons';
+import { canonicalShape } from './bulletShape';
 
 // ── Visual metadata shape ──────────────────────────────────────────
 
@@ -115,10 +116,13 @@ export interface BulletVisualSpec {
  * Canonical shape name: the legacy `'circle'` name renders as a `disc`.
  * Used by the roster tests so `'circle'` and `'disc'` never count as two
  * distinct signatures.
+ *
+ * Re-exported from the leaf `./bulletShape` module so Node-only tooling (the
+ * catalogue guards behind the dev CSV write API) can use the same rule
+ * without importing this Phaser-typed renderer
+ * (AH-0MW0Q1GMK005HOF0).
  */
-export function canonicalShape(shape: BulletShape): BulletShape {
-  return shape === 'circle' ? 'disc' : shape;
-}
+export { canonicalShape };
 
 /**
  * Default elongation multiplier per shape. Elongated shapes (line, teardrop,

@@ -268,6 +268,28 @@ function unquoteCsvField(value: string): string {
   return value;
 }
 
+/**
+ * Serialise one CSV data line from a cell map, in `columns` order.
+ *
+ * A column the map does not carry becomes an empty cell. This is the
+ * line-level writer used by the dev write path
+ * (`vite/plugins/configCsvPlugin.ts`) to replace exactly one authored row:
+ * unlike {@link serializeWeaponCatalogue} it derives nothing (so a
+ * `subdivisions` cell round-trips verbatim), it writes no header and no
+ * comment block, and it therefore cannot disturb the rows and `#` notes
+ * around the edited row (AH-0MW0Q1GMK005HOF0).
+ *
+ * @param cells - The cell values, keyed by column name.
+ * @param columns - The column order to write (defaults may be supplied by the
+ *   caller from the file's own header).
+ */
+export function serializeCsvLine(
+  cells: Readonly<Record<string, string | undefined>>,
+  columns: readonly string[],
+): string {
+  return columns.map((column) => quoteCsvField(cells[column] ?? '')).join(',');
+}
+
 // ── CSV line parser ─────────────────────────────────────────────────
 
 /**

@@ -35,13 +35,16 @@
  * `utils/weaponDataDiagnostics.ts` (one `console.warn` per finding), so a
  * designer sees why an edit did not take effect.
  *
- * This module is a **leaf**: it imports only pure helpers (`canonicalShape`,
- * the beat clock) and type-only declarations from `weapons.ts`, so
- * `weapons.ts` can import it without a module cycle.
+ * This module is a **leaf**: it imports only pure helpers (`canonicalShape`
+ * from the leaf `bulletShape.ts`, the beat clock) and type-only declarations
+ * from `weapons.ts`, so `weapons.ts` can import it without a module cycle —
+ * and Node-only tooling (the Vite config loader / dev CSV write plugin) can
+ * run the same guards without importing a Phaser-typed renderer
+ * (AH-0MW0Q1GMK005HOF0).
  */
 
 import { DEFAULT_BPM, beatPeriodMs } from './beat';
-import { canonicalShape } from './bulletVisuals';
+import { canonicalShape } from './bulletShape';
 import type { BulletShape, WeaponDefinition, WeaponId } from './weapons';
 
 // ── Beat-grid invariant ─────────────────────────────────────────────
