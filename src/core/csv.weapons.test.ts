@@ -385,6 +385,22 @@ cannon,Cannon duplicate,Loses.,2,0xff0000,diamond,1,0.75
     });
   });
 
+  it('reports an unknown column once and still parses the row (AC6)', () => {
+    const csv = `id,name,description,subdivisions,bulletColor,bulletShape,bulletSize,bulletLifetime,glow
+cannon,Cannon,One bullet straight ahead.,2,0x00ffff,circle,1,0.75,0.5
+`;
+    const { catalogue, errors } = weaponCodec().parseWeaponCatalogue(
+      csv,
+      buildPatternsCsv([['cannon', 0, '0.000', '']]),
+    );
+
+    // The hand-added column is not silently dropped: it is reported once, and
+    // the row it was added to still parses.
+    expect(catalogue.cannon).toBeDefined();
+    expect(errors.filter((error) => error.includes('glow'))).toHaveLength(1);
+    expect(errors.join('\n')).toContain('Unknown column "glow"');
+  });
+
   it('never throws on malformed input', () => {
     const codec = weaponCodec();
 
@@ -436,6 +452,17 @@ describe.skipIf(!weaponCodecReady)('parseWeaponPatterns', () => {
 
     expect((patterns as Record<string, unknown>).ghost).toBeUndefined();
     expect(errors.join('\n')).toContain('ghost');
+  });
+
+  it('reports an unknown pattern column once and keeps the rows (AC6)', () => {
+    const csv = `weaponId,index,angleDeg,sideOffsetPx,jitter
+cannon,0,0.000,,1
+`;
+    const { patterns, errors } = weaponCodec().parseWeaponPatterns(csv);
+
+    expect(patterns.cannon?.offsets).toStrictEqual([0]);
+    expect(errors.filter((error) => error.includes('jitter'))).toHaveLength(1);
+    expect(errors.join('\n')).toContain('Unknown column "jitter"');
   });
 
   it('reports a malformed angle instead of emitting NaN radians', () => {

@@ -358,6 +358,33 @@ export function parseCsvRows(csv: string): Record<string, string>[] {
   return records;
 }
 
+// ── Shared column diagnostics ───────────────────────────────────────
+
+/**
+ * Columns present in `rows` that `known` does not declare, in first-seen
+ * order.
+ *
+ * A hand-added spreadsheet column is otherwise silently ignored, so each
+ * parser reports it once (AH-0MW0Q1FT1002Q6NJ AC6): the designer sees that
+ * the column they added is not part of the schema, while the row still parses.
+ */
+function undeclaredColumns(
+  rows: readonly Record<string, string>[],
+  known: readonly string[],
+): string[] {
+  const knownSet = new Set(known);
+  const seen = new Set<string>();
+  const undeclared: string[] = [];
+  for (const row of rows) {
+    for (const column of Object.keys(row)) {
+      if (knownSet.has(column) || seen.has(column)) continue;
+      seen.add(column);
+      undeclared.push(column);
+    }
+  }
+  return undeclared;
+}
+
 // ── AC3: Validation result type ─────────────────────────────────────
 
 export interface ValidationResult {
@@ -1603,7 +1630,14 @@ export function parseWeaponPatterns(csv: string): WeaponPatternParseResult {
   const errors: string[] = [];
   const entriesByWeapon = new Map<WeaponId, WeaponPatternEntry[]>();
 
-  for (const row of parseCsvRows(csv)) {
+  const rows = parseCsvRows(csv);
+  for (const column of undeclaredColumns(rows, WEAPON_PATTERN_COLUMN_ORDER)) {
+    errors.push(
+      `Unknown column "${column}" — ignored; not part of the weapon-pattern schema`,
+    );
+  }
+
+  for (const row of rows) {
     const weaponId = (row.weaponId ?? '').trim();
     if (weaponId === '') {
       errors.push('weaponId: Missing required column');
@@ -1765,7 +1799,14 @@ export function parseWeaponCatalogue(
   const catalogue: Partial<Record<WeaponId, WeaponDefinition>> = {};
   const subdivisions: Partial<Record<WeaponId, number>> = {};
 
-  for (const row of parseCsvRows(weaponsCsv)) {
+  const rows = parseCsvRows(weaponsCsv);
+  for (const column of undeclaredColumns(rows, WEAPON_COLUMN_ORDER)) {
+    errors.push(
+      `Unknown column "${column}" — ignored; not part of the weapon-catalogue schema`,
+    );
+  }
+
+  for (const row of rows) {
     const validation = validateWeaponRow(row);
     if (!validation.ok) {
       errors.push(...validation.errors);

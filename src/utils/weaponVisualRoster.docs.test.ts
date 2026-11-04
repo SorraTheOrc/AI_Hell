@@ -45,7 +45,8 @@ import {
   type BulletVisualSpec,
   type EnemyBulletArchetype,
 } from './bulletVisuals';
-import { WEAPON_CATALOGUE, type BulletShape, type WeaponDefinition, type WeaponId } from './weapons';
+import { WEAPON_CATALOGUE, WEAPON_IDS, type BulletShape, type WeaponDefinition, type WeaponId } from './weapons';
+import { validateWeaponCatalogue } from './weaponCatalogue';
 
 const GDD = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const README = path.resolve(process.cwd(), 'README.md');
@@ -57,25 +58,11 @@ const ENEMY_GUIDE = path.resolve(
 const read = (file: string): string =>
   fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
 
-/** The eleven catalogue weapons (in catalogue order). */
-const CATALOGUE_WEAPON_IDS: readonly WeaponId[] = [
-  'cannon',
-  'spread',
-  'dual',
-  'rapid',
-  'wave_laser',
-  'ricochet',
-  'cluster',
-  'options',
-  'nova',
-  'mortar',
-  'arc',
-  'rear_guard',
-  'broadside',
-  'railgun',
-  'shard_swarm',
-  'heavy_slug',
-];
+/**
+ * The catalogue weapons, in catalogue order — derived from the **parsed**
+ * roster (never a hand-typed literal), so the guard also covers a data edit.
+ */
+const CATALOGUE_WEAPON_IDS: readonly WeaponId[] = WEAPON_IDS;
 
 /** The twelve AC-named enemy-attack families, deduplicated (Scout+Invader = one). */
 const AC_ENEMY_FAMILIES: readonly string[] = [
@@ -194,6 +181,31 @@ describe('enemy attack roster — every attack has its own projectile identity (
 
   it('alias identities (Scout + Invader) share one signature', () => {
     expect(enemySignature('scout')).toBe(enemySignature('march'));
+  });
+});
+
+describe('runtime invariant guard — the same roster guarantee for data edits (AH-0MW0Q1FT1002Q6NJ)', () => {
+  it('accepts the parsed catalogue with no invariant diagnostics', () => {
+    const result = validateWeaponCatalogue(WEAPON_CATALOGUE);
+
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toStrictEqual([]);
+  });
+
+  it('rejects the duplicate shape-family edit this docs guard forbids', () => {
+    // The docs guarantee must also hold for a hand edit to the CSV, not only
+    // for the pre-migration TypeScript literal: a `disc` edit collides with
+    // the cannon's `circle` once both are canonicalised.
+    const edited = {
+      ...WEAPON_CATALOGUE,
+      spread: { ...WEAPON_CATALOGUE.spread, bulletShape: 'disc' as const },
+    };
+    const result = validateWeaponCatalogue(edited);
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.diagnostics.map((diagnostic) => diagnostic.message).join('\n'),
+    ).toContain('cannon, spread');
   });
 });
 

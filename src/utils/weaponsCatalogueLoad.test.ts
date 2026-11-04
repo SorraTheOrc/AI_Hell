@@ -246,3 +246,121 @@ describe('DEFAULT_WEAPON_SUBDIVISIONS follows an edited CSV (AC6)', () => {
     );
   });
 });
+
+// ── Runtime invariant guard on the built catalogue (AH-0MW0Q1FT1002Q6NJ) ──
+
+describe('runtime invariant guard on the built catalogue (AC2/AC3/AC4/AC6)', () => {
+  it('reports a clean invariant report for the committed seed', async () => {
+    const { WEAPON_CATALOGUE_INVARIANT_REPORT } = await import('./weapons');
+
+    expect(WEAPON_CATALOGUE_INVARIANT_REPORT).toStrictEqual({
+      diagnostics: [],
+      resolvedFromFallback: [],
+    });
+  });
+
+  it('falls back both weapons of a duplicate-colour edit and names them (AC3/AC4)', async () => {
+    const catalogue = await copyDefaultCatalogue();
+    const edited = serializeWeaponCatalogue({
+      ...catalogue,
+      spread: {
+        ...catalogue.spread,
+        bulletColor: catalogue.cannon.bulletColor,
+      },
+      // A valid sibling edit must survive: the guard repairs only offenders.
+      rapid: { ...catalogue.rapid, bulletSize: 1.3 },
+    });
+    const mocked = await loadWeaponsWithCsv(
+      edited.weaponsCsv,
+      edited.patternsCsv,
+    );
+
+    expect(mocked.WEAPON_CATALOGUE.cannon).toStrictEqual(
+      mocked.DEFAULT_WEAPON_CATALOGUE.cannon,
+    );
+    expect(mocked.WEAPON_CATALOGUE.spread).toStrictEqual(
+      mocked.DEFAULT_WEAPON_CATALOGUE.spread,
+    );
+    expect(
+      mocked.WEAPON_CATALOGUE_INVARIANT_REPORT.resolvedFromFallback,
+    ).toStrictEqual(['cannon', 'spread']);
+    expect(
+      mocked.WEAPON_CATALOGUE_INVARIANT_REPORT.diagnostics
+        .map((diagnostic) => diagnostic.message)
+        .join('\n'),
+    ).toContain('cannon, spread: bulletColor:');
+    // The valid edit is still CSV-driven.
+    expect(mocked.WEAPON_CATALOGUE.rapid.bulletSize).toBe(1.3);
+
+    // The finding reaches the dev-server boot diagnostic (AC4).
+    const diagnostics = await import('./weaponDataDiagnostics');
+    expect(diagnostics.collectWeaponDataDiagnostics().join('\n')).toContain(
+      'Duplicate bullet colour',
+    );
+  });
+
+  it('falls back an off-beat subdivisions edit and rebases the nominal table (AC2)', async () => {
+    const catalogue = await copyDefaultCatalogue();
+    const edited = serializeWeaponCatalogue(catalogue);
+    const brokenWeaponsCsv = edited.weaponsCsv.replace(
+      ',2,0x00ffff,',
+      ',1.37,0x00ffff,',
+    );
+    expect(brokenWeaponsCsv).not.toBe(edited.weaponsCsv);
+
+    const mocked = await loadWeaponsWithCsv(
+      brokenWeaponsCsv,
+      edited.patternsCsv,
+    );
+
+    expect(mocked.WEAPON_CATALOGUE.cannon).toStrictEqual(
+      mocked.DEFAULT_WEAPON_CATALOGUE.cannon,
+    );
+    expect(
+      mocked.WEAPON_CATALOGUE_INVARIANT_REPORT.resolvedFromFallback,
+    ).toStrictEqual(['cannon']);
+    expect(
+      mocked.WEAPON_CATALOGUE_INVARIANT_REPORT.diagnostics[0]?.message,
+    ).toContain('nearest on-grid value is 375 ms');
+    // The legacy nominal cadence falls back with the rejected definition, so
+    // the off-beat rate cannot survive through `weaponFireRateMs`/rules.
+    expect(mocked.DEFAULT_WEAPON_SUBDIVISIONS.cannon).toBe(2);
+
+    const diagnostics = await import('./weaponDataDiagnostics');
+    expect(diagnostics.collectWeaponDataDiagnostics().join('\n')).toContain(
+      'cannon: fireRateMs:',
+    );
+  });
+
+  it('surfaces an unknown CSV column and still boots the full roster (AC6)', async () => {
+    const catalogue = await copyDefaultCatalogue();
+    const edited = serializeWeaponCatalogue(catalogue);
+
+    const lines = edited.weaponsCsv.split('\n');
+    const headerIndex = lines.findIndex((line) => line.startsWith('id,'));
+    expect(headerIndex).toBeGreaterThanOrEqual(0);
+    lines[headerIndex] = `${lines[headerIndex]},glow`;
+    for (let index = headerIndex + 1; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (line === '' || line.startsWith('#')) continue;
+      lines[index] = `${line},0.5`;
+    }
+
+    const mocked = await loadWeaponsWithCsv(
+      lines.join('\n'),
+      edited.patternsCsv,
+    );
+
+    expect(mocked.WEAPON_CATALOGUE_LOAD_REPORT.errors.join('\n')).toContain(
+      'Unknown column "glow"',
+    );
+    expect(Object.keys(mocked.WEAPON_CATALOGUE)).toHaveLength(16);
+    expect(mocked.WEAPON_CATALOGUE.cannon).toStrictEqual(
+      mocked.DEFAULT_WEAPON_CATALOGUE.cannon,
+    );
+    // An unknown column is a schema diagnostic, not an invariant violation.
+    expect(mocked.WEAPON_CATALOGUE_INVARIANT_REPORT.diagnostics).toStrictEqual(
+      [],
+    );
+  });
+});

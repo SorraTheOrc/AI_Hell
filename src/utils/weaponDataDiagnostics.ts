@@ -33,11 +33,13 @@
 
 import {
   DEFAULT_WEAPON_SUBDIVISIONS,
+  WEAPON_CATALOGUE_INVARIANT_REPORT,
   WEAPON_CATALOGUE_LOAD_REPORT,
   WEAPON_IDS,
   formatWeaponCatalogueLoadWarning,
   type WeaponId,
 } from './weapons';
+import { formatWeaponCatalogueInvariantWarning } from './weaponCatalogue';
 import {
   euclideanOnsetsPerBeat,
   formatWeaponLevelsLoadWarning,
@@ -110,8 +112,8 @@ export function formatWeaponCadenceWarning(
 
 /**
  * Every diagnostic a boot self-check would log, in reporting order:
- * ladder-load fallbacks first, then catalogue-load fallbacks, then cadence
- * divergence.
+ * ladder-load fallbacks first, then catalogue-load fallbacks, then the
+ * catalogue invariant guard (AH-0MW0Q1FT1002Q6NJ), then cadence divergence.
  */
 export function collectWeaponDataDiagnostics(): string[] {
   const warnings: string[] = [];
@@ -123,6 +125,10 @@ export function collectWeaponDataDiagnostics(): string[] {
     WEAPON_CATALOGUE_LOAD_REPORT,
   );
   if (loadWarning !== null) warnings.push(loadWarning);
+  const invariantWarning = formatWeaponCatalogueInvariantWarning(
+    WEAPON_CATALOGUE_INVARIANT_REPORT,
+  );
+  if (invariantWarning !== null) warnings.push(invariantWarning);
   const cadenceWarning = formatWeaponCadenceWarning(
     findWeaponCadenceDivergences(),
   );

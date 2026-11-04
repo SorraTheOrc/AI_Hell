@@ -78,9 +78,13 @@ import {
 import { parseWeaponCatalogue } from '../core/csv';
 import {
   DEFAULT_BPM,
-  beatPeriodMs,
   beatSubdivisionMs,
 } from './beat';
+import {
+  applyWeaponCatalogueGuards,
+  type WeaponCatalogueGuardResult,
+  type WeaponCatalogueInvariantReport,
+} from './weaponCatalogue';
 
 // ── Weapon IDs ───────────────────────────────────────────────────────
 
@@ -300,24 +304,6 @@ const WEAPON_CSV_DATA = parseWeaponCatalogue(
   bundledWeaponsCsv,
   bundledWeaponPatternsCsv,
 );
-
-/**
- * Default shots-per-beat for each weapon, **derived from the parsed
- * `src/data/weapons.csv`** (`subdivisions` column) with a per-weapon fallback
- * to {@link CODE_WEAPON_SUBDIVISIONS}.
- *
- * Deriving the table (rather than hand-maintaining a second literal) means a
- * designer's fire-rate edit is not silently overridden by a stale code
- * default: a changed `subdivisions` cell changes `DEFAULT_RULES.weaponSubdivisions`
- * (`core/rules.ts` seeds from this table) on the next boot. A persisted user
- * override in the rules store still wins at runtime and remains a local,
- * uncommitted setting. These values are the **legacy nominal** cadence — the
- * live fire cadence is the Euclidean ladder (see the module header).
- */
-export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
-  ...CODE_WEAPON_SUBDIVISIONS,
-  ...WEAPON_CSV_DATA.subdivisions,
-};
 
 /** Default cannon subdivision (2 shots per beat) — code fallback value. */
 export const WEAPON_CANNON_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.cannon;
@@ -1798,15 +1784,34 @@ export const WEAPON_CATALOGUE_LOAD_REPORT: WeaponCatalogueLoadReport = {
  * Builds the runtime catalogue: the parsed CSV row per weapon, falling back to
  * {@link DEFAULT_WEAPON_CATALOGUE} for that id only when its row is missing or
  * invalid. Weapons with a valid row stay CSV-driven.
+ *
+ * The build then runs the runtime invariant guard
+ * (`utils/weaponCatalogue.ts`, AH-0MW0Q1FT1002Q6NJ): a weapon whose parsed data
+ * violates a roster invariant (off-beat rate, duplicate colour/shape family,
+ * out-of-range magnitude) is replaced by its code default, so a hand edit can
+ * never ship a broken roster. The fallback applies in every environment — the
+ * game and the gyms must run the same roster — and the findings are surfaced
+ * in a dev server by `utils/weaponDataDiagnostics.ts`.
  */
-function buildWeaponCatalogue(): Record<WeaponId, WeaponDefinition> {
-  const catalogue = {} as Record<WeaponId, WeaponDefinition>;
+function buildWeaponCatalogue(): WeaponCatalogueGuardResult {
+  const unguarded = {} as Record<WeaponId, WeaponDefinition>;
   for (const id of WEAPON_IDS) {
-    catalogue[id] =
+    unguarded[id] =
       WEAPON_CSV_DATA.catalogue[id] ?? DEFAULT_WEAPON_CATALOGUE[id];
   }
-  return catalogue;
+  return applyWeaponCatalogueGuards(unguarded, DEFAULT_WEAPON_CATALOGUE);
 }
+
+const WEAPON_CATALOGUE_BUILD = buildWeaponCatalogue();
+
+/**
+ * What the runtime invariant guard found while building the catalogue, and
+ * which weapons it repaired from the code default. Empty for the committed
+ * seed; a dev-server boot logs every finding once via
+ * `utils/weaponDataDiagnostics.ts`.
+ */
+export const WEAPON_CATALOGUE_INVARIANT_REPORT: WeaponCatalogueInvariantReport =
+  WEAPON_CATALOGUE_BUILD.report;
 
 /**
  * The shipped weapon catalogue, built at module load from
@@ -1815,7 +1820,47 @@ function buildWeaponCatalogue(): Record<WeaponId, WeaponDefinition> {
  * every consumer is unchanged.
  */
 export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> =
-  buildWeaponCatalogue();
+  WEAPON_CATALOGUE_BUILD.catalogue;
+
+/**
+ * Default shots-per-beat for each weapon, **derived from the parsed
+ * `src/data/weapons.csv`** (`subdivisions` column) with a per-weapon fallback
+ * to {@link CODE_WEAPON_SUBDIVISIONS}.
+ *
+ * Deriving the table (rather than hand-maintaining a second literal) means a
+ * designer's fire-rate edit is not silently overridden by a stale code
+ * default: a changed `subdivisions` cell changes `DEFAULT_RULES.weaponSubdivisions`
+ * (`core/rules.ts` seeds from this table) on the next boot. A persisted user
+ * override in the rules store still wins at runtime and remains a local,
+ * uncommitted setting. These values are the **legacy nominal** cadence — the
+ * live fire cadence is the Euclidean ladder (see the module header).
+ *
+ * A weapon whose authored row the runtime invariant guard rejected runs the
+ * code-default definition, so its nominal cadence falls back with it (below);
+ * otherwise `weaponFireRateMs` would keep reporting the rejected rate.
+ */
+export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions =
+  resolveDefaultWeaponSubdivisions(
+    WEAPON_CATALOGUE_INVARIANT_REPORT.resolvedFromFallback,
+  );
+
+/**
+ * Builds the nominal subdivision table from the authored CSV cells, restoring
+ * the code-default value for every weapon the invariant guard rejected so the
+ * nominal surface and the runtime definition cannot disagree.
+ */
+function resolveDefaultWeaponSubdivisions(
+  rejectedIds: readonly WeaponId[],
+): WeaponSubdivisions {
+  const table: WeaponSubdivisions = {
+    ...CODE_WEAPON_SUBDIVISIONS,
+    ...WEAPON_CSV_DATA.subdivisions,
+  };
+  for (const id of rejectedIds) {
+    table[id] = CODE_WEAPON_SUBDIVISIONS[id];
+  }
+  return table;
+}
 
 /**
  * Formats the catalogue-load self-check as one actionable message, or `null`
@@ -1884,42 +1929,10 @@ export function getWeaponById(id: WeaponId): WeaponDefinition {
 
 // ── Beat-grid invariant ─────────────────────────────────────────────
 
-/**
- * Returns true when `fireRateMs` is an exact subdivision of the beat period
- * for `bpm`: `beatPeriodMs(bpm) % fireRateMs === 0`. This is the
- * catalogue-wide invariant (AH-0MUAYB8EH005RJ8B): every weapon must fire on
- * the shared beat grid, so a future 20 BPM quarter-time weapon (or any other
- * addition) is on-grid by construction and an off-grid rate is rejected.
- *
- * @param fireRateMs - Fire interval in milliseconds.
- * @param bpm - Tempo in beats per minute (default 80).
- * @returns True when the interval divides the beat period exactly.
- */
-export function isOnBeatGrid(
-  fireRateMs: number,
-  bpm: number = DEFAULT_BPM,
-): boolean {
-  if (typeof fireRateMs !== 'number' || !Number.isFinite(fireRateMs) || fireRateMs <= 0) {
-    return false;
-  }
-  const period = beatPeriodMs(bpm);
-  // Compare in *ratio* space rather than via `%`: `period % fireRateMs` loses
-  // precision for high subdivisions (e.g. rapid at 11/beat = 68.18 ms), where
-  // 750 / 68.18… evaluates to 10.999… and the remainder check fails on a
-  // mathematically on-grid rate. A relative tolerance on the subdivision
-  // count is stable across the whole catalogue (AH-0MUQOV9JV00389E7).
-  const tolerance = 1e-6;
-  const subdivisions = period / fireRateMs;
-  if (subdivisions >= 1) {
-    return Math.abs(subdivisions - Math.round(subdivisions)) <= tolerance;
-  }
-  // Slower than the beat: the rate is an exact integer multiple of the beat
-  // period (the AOE family, e.g. Nova 3000 ms = 4 beats, Mortar 1500 ms = 2).
-  // This keeps an arbitrary off-grid rate (e.g. 200 ms, or 1000 ms = 1⅓
-  // beats) rejected.
-  const beats = fireRateMs / period;
-  return Math.abs(beats - Math.round(beats)) <= tolerance;
-}
+// The beat-grid predicate lives in the runtime guard's leaf module
+// (`utils/weaponCatalogue.ts`) and is re-exported here so every existing
+// consumer and test keeps importing it from the catalogue module.
+export { isOnBeatGrid } from './weaponCatalogue';
 
 // ── Round-robin drop order ──────────────────────────────────────────
 
