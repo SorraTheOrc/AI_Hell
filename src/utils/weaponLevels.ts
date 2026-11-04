@@ -49,7 +49,12 @@
  * `rotation` steps ({@link EuclideanPattern}). Each weapon owns an authored
  * ladder of patterns ({@link WEAPON_EUCLIDEAN_LADDERS}) whose rungs become
  * active at curve-derived levels, so a fire-rate upgrade can change the
- * rhythm's **shape and phase** as well as its density. The resolver
+ * rhythm's **shape and phase** as well as its density. The authored rungs are
+ * **data**, not TypeScript: `src/data/weapon-levels.json` holds
+ * `{ k, n, rotation }` per rung and {@link CODE_WEAPON_EUCLIDEAN_LADDER_SPECS}
+ * is only the fallback for a weapon whose entry is missing or malformed, so a
+ * designer retunes a weapon's rhythm evolution without a code edit
+ * (AH-0MW0Q1TQV009M8AO). The resolver
  * ({@link resolveWeaponPattern}) is the epic's `patternFor(weaponId, level)`:
  * pure, deterministic and monotonic in onsets-per-minute
  * (AH-0MVYA291J000CK64, parent AH-0MVYA1JFK003RLAW).
@@ -65,7 +70,14 @@
  * Pure and deterministic: no scene, DOM, Phaser or storage coupling.
  */
 
-import { WEAPON_CATALOGUE, getWeaponById, type WeaponId, type WeaponDefinition } from './weapons';
+import {
+  WEAPON_CATALOGUE,
+  WEAPON_IDS,
+  getWeaponById,
+  type WeaponId,
+  type WeaponDefinition,
+} from './weapons';
+import { bundledWeaponLevelsJson } from '../core/bundledConfig';
 import { resolveOptionsPodCount } from '../scenes/core/optionsEscort';
 import {
   DEFAULT_BPM,
@@ -526,6 +538,22 @@ export interface EuclideanPattern {
 }
 
 /**
+ * One authored rung of a weapon's Euclidean ladder **as stored in data**.
+ *
+ * Only the tempo-independent shape is authored: `stepMs` is deliberately
+ * absent and injected at load time from {@link SIXTEENTH_NOTE_STEP_MS}, so a
+ * data edit cannot desynchronise a rung from the shared 16th-note lattice.
+ */
+export interface WeaponLadderRung {
+  /** Onsets per tile (`1 <= k <= n`). */
+  readonly k: number;
+  /** Steps per tile (`n > 0`). */
+  readonly n: number;
+  /** Phase shift in steps (`0 <= rotation < n`). */
+  readonly rotation: number;
+}
+
+/**
  * One rung of a weapon's Euclidean upgrade ladder: the rhythm, the level at
  * which it becomes active, and its effective densities.
  */
@@ -731,16 +759,23 @@ export function quantiseEuclidean(
 
 /**
  * The authored per-weapon ladder rungs, **before** the curve-derived level
- * thresholds are attached. Densities are non-decreasing in authored order;
- * a repeated density is a deliberate shape (bar-halving) or phase (rotation)
- * morph that keeps the density identical.
+ * thresholds are attached.
+ *
+ * This is the **code fallback**: the runtime ladders come from
+ * `src/data/weapon-levels.json` (see {@link WEAPON_EUCLIDEAN_LADDER_SPECS}),
+ * and this literal is used only for a weapon whose JSON entry is missing or
+ * malformed — so a typo in the data file can never stop the game from booting.
+ *
+ * Densities are non-decreasing in authored order; a repeated density is a
+ * deliberate shape (bar-halving) or phase (rotation) morph that keeps the
+ * density identical.
  *
  * Level 0 is the weapon's shipped cadence density (legacy onsets per bar) for
  * most weapons; the six canonical superposition weapons use the epic's
  * agreed fixture values (`heavy_slug` 3/16, `railgun` 2/16, `cannon` 9/16,
  * `arc` 9/16 rotated 4, `rapid` 13/16, `shard_swarm` 10/16).
  */
-const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
+export const CODE_WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
   WeaponId,
   readonly EuclideanPattern[]
 > = {
@@ -857,6 +892,242 @@ const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
     latticeEuclidean(8, 16),
   ],
 };
+
+// ── Runtime ladder specs: JSON source of truth + code fallback ──────
+
+/**
+ * The result of parsing the bundled `src/data/weapon-levels.json` blob.
+ *
+ * A weapon whose entry is missing or malformed is omitted from `ladders` (the
+ * caller uses the code ladder for that weapon only), and every finding is
+ * recorded in `errors` in file order.
+ */
+export interface WeaponLadderParseResult {
+  /** Weapon ids whose ladder rungs came from the data file. */
+  ladders: Partial<Record<WeaponId, readonly WeaponLadderRung[]>>;
+  /** Human-readable diagnostics (empty for the committed file). */
+  errors: string[];
+}
+
+/** Every shipped weapon id, for id validation and reporting order. */
+const SHIPPED_WEAPON_ID_SET: ReadonlySet<string> = new Set(WEAPON_IDS);
+
+/**
+ * Parses the authored `src/data/weapon-levels.json` blob into per-weapon
+ * ladder rungs. **Never throws.**
+ *
+ * Accepted shape: a JSON object keyed by weapon id, each value a non-empty
+ * array of `{ k, n, rotation }` rungs. The three rung fields are validated
+ * here — not only at ladder build time — so a data typo is reported against
+ * the file a designer edited: `k`/`n` are positive whole numbers with
+ * `k <= n`, `rotation` is a whole number with `0 <= rotation < n`, and the
+ * rung densities (`k / n`) must not decrease along the ladder. Every rung
+ * shares the runtime 16th-note step (see {@link SIXTEENTH_NOTE_STEP_MS}), so
+ * `stepMs` is deliberately **not** authored.
+ *
+ * The density check is the one semantic invariant that would otherwise throw
+ * from {@link buildWeaponPatternLadder} at module load: validating it here
+ * keeps a well-formed but wrong data edit on the fallback path instead of
+ * crashing the boot.
+ */
+export function parseWeaponLevels(
+  raw: string | null | undefined,
+): WeaponLadderParseResult {
+  const errors: string[] = [];
+  const ladders: Partial<Record<WeaponId, readonly WeaponLadderRung[]>> = {};
+
+  if (raw === null || raw === undefined || raw.trim() === '') {
+    errors.push('src/data/weapon-levels.json: file is missing or empty');
+    return { ladders, errors };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    errors.push(`src/data/weapon-levels.json: invalid JSON (${reason})`);
+    return { ladders, errors };
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    errors.push(
+      'src/data/weapon-levels.json: expected an object keyed by weapon id',
+    );
+    return { ladders, errors };
+  }
+
+  const record = parsed as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (!SHIPPED_WEAPON_ID_SET.has(key)) {
+      errors.push(`${key}: unknown weapon id`);
+    }
+  }
+
+  for (const weaponId of WEAPON_IDS) {
+    const entry = record[weaponId];
+    if (entry === undefined) {
+      errors.push(`${weaponId}: missing ladder`);
+      continue;
+    }
+    if (!Array.isArray(entry) || entry.length === 0) {
+      errors.push(`${weaponId}: expected a non-empty array of rungs`);
+      continue;
+    }
+
+    const rungs: WeaponLadderRung[] = [];
+    let valid = true;
+    let previousDensity = Number.NEGATIVE_INFINITY;
+    entry.forEach((rung: unknown, index: number) => {
+      const where = `${weaponId}[${index}]`;
+      if (typeof rung !== 'object' || rung === null || Array.isArray(rung)) {
+        errors.push(`${where}: expected { k, n, rotation }`);
+        valid = false;
+        return;
+      }
+      const { k, n, rotation } = rung as Record<string, unknown>;
+      if (!isPositiveWhole(k as number) || !isPositiveWhole(n as number)) {
+        errors.push(`${where}: k and n must be positive whole numbers`);
+        valid = false;
+        return;
+      }
+      if ((k as number) > (n as number)) {
+        errors.push(`${where}: k (${String(k)}) must not exceed n (${String(n)})`);
+        valid = false;
+        return;
+      }
+      if (
+        !Number.isInteger(rotation) ||
+        (rotation as number) < 0 ||
+        (rotation as number) >= (n as number)
+      ) {
+        errors.push(
+          `${where}: rotation must be a whole number in [0, ${String(n)})`,
+        );
+        valid = false;
+        return;
+      }
+      const density = (k as number) / (n as number);
+      if (density + DENSITY_EPSILON < previousDensity) {
+        errors.push(
+          `${where}: density decreases (${String(k)}/${String(n)} < ${previousDensity.toFixed(4)})`,
+        );
+        valid = false;
+        return;
+      }
+      previousDensity = density;
+      rungs.push({
+        k: k as number,
+        n: n as number,
+        rotation: rotation as number,
+      });
+    });
+
+    if (valid) ladders[weaponId] = rungs;
+  }
+
+  return { ladders, errors };
+}
+
+/** What the module-load JSON parse resolved from data, and what fell back. */
+export interface WeaponLevelsLoadReport {
+  /** Ids whose ladder came from `src/data/weapon-levels.json`. */
+  resolvedFromJson: readonly WeaponId[];
+  /** Ids whose JSON entry was missing/invalid, resolved from the code ladder. */
+  resolvedFromFallback: readonly WeaponId[];
+  /** Flat parse diagnostics (empty for the committed file). */
+  errors: readonly string[];
+}
+
+/** Parsed-at-module-load view of the bundled `weapon-levels.json`. */
+const WEAPON_LEVELS_JSON_DATA = parseWeaponLevels(bundledWeaponLevelsJson);
+
+/**
+ * The result of loading the data-driven ladders at module load.
+ *
+ * Exposed so the dev boot self-check can surface a typo that silently fell
+ * back to code, and so tests can prove the JSON — not the TypeScript
+ * literal — built the runtime ladders.
+ */
+export const WEAPON_LEVELS_LOAD_REPORT: WeaponLevelsLoadReport = {
+  resolvedFromJson: WEAPON_IDS.filter(
+    (weaponId) => WEAPON_LEVELS_JSON_DATA.ladders[weaponId] !== undefined,
+  ),
+  resolvedFromFallback: WEAPON_IDS.filter(
+    (weaponId) => WEAPON_LEVELS_JSON_DATA.ladders[weaponId] === undefined,
+  ),
+  errors: [...WEAPON_LEVELS_JSON_DATA.errors],
+};
+
+/**
+ * Injects the shared 16th-note step into authored rungs, producing the full
+ * {@link EuclideanPattern}s the ladder builder consumes.
+ */
+function injectLatticeStep(
+  rungs: readonly WeaponLadderRung[],
+): readonly EuclideanPattern[] {
+  return rungs.map(({ k, n, rotation }) => latticeEuclidean(k, n, rotation));
+}
+
+/**
+ * The effective authored per-weapon ladder rungs: `src/data/weapon-levels.json`
+ * per weapon, falling back to {@link CODE_WEAPON_EUCLIDEAN_LADDER_SPECS} for
+ * that weapon only when its data entry is missing or malformed.
+ *
+ * This is the **single authored source of the live fire cadence**; editing a
+ * rung here (or in the JSON it loads) changes `resolveWeaponPattern` output
+ * with no TypeScript edit. The `stepMs` of every rung is
+ * {@link SIXTEENTH_NOTE_STEP_MS}.
+ */
+export const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
+  WeaponId,
+  readonly EuclideanPattern[]
+> = Object.fromEntries(
+  WEAPON_IDS.map((weaponId) => {
+    const dataRungs = WEAPON_LEVELS_JSON_DATA.ladders[weaponId];
+    return [
+      weaponId,
+      dataRungs === undefined
+        ? CODE_WEAPON_EUCLIDEAN_LADDER_SPECS[weaponId]
+        : injectLatticeStep(dataRungs),
+    ] as const;
+  }),
+) as Record<WeaponId, readonly EuclideanPattern[]>;
+
+/**
+ * Formats the ladder-load self-check as one actionable message, or `null`
+ * when the JSON resolved every weapon with no diagnostics.
+ *
+ * Kept pure so the dev-only boot warning
+ * (`utils/weaponDataDiagnostics.ts`) and its tests share the exact wording a
+ * developer sees.
+ */
+export function formatWeaponLevelsLoadWarning(
+  report: WeaponLevelsLoadReport,
+): string | null {
+  if (
+    report.resolvedFromFallback.length === 0 &&
+    report.errors.length === 0
+  ) {
+    return null;
+  }
+  const lines = [
+    'Weapon Euclidean ladder load self-check: the runtime fire cadence did ' +
+      'not resolve cleanly from src/data/weapon-levels.json.',
+  ];
+  if (report.resolvedFromFallback.length > 0) {
+    lines.push(
+      `Resolved from the code fallback instead of JSON: ${report.resolvedFromFallback.join(', ')}.`,
+    );
+  }
+  if (report.errors.length > 0) {
+    lines.push(
+      'JSON diagnostics:',
+      ...report.errors.map((error) => `  ${error}`),
+    );
+  }
+  return lines.join('\n');
+}
 
 /**
  * The onsets-per-beat a weapon's `fireRate` curve **desires** at `level`:

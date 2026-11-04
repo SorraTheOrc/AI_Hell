@@ -1133,6 +1133,69 @@ a `n = 16` tile spans one 4-beat bar. At another tempo the step scales with
 pure resolver is `resolveWeaponPattern(weaponId, level)` in
 `src/utils/weaponLevels.ts`; the catalogue is `WEAPON_EUCLIDEAN_LADDERS`.
 
+### Where the ladders are authored — `src/data/weapon-levels.json`
+
+**AH-0MW0Q1TQV009M8AO.** The authored rungs are **data**, not TypeScript.
+`src/data/weapon-levels.json` maps every weapon id to its ordered rung list:
+
+```json
+{
+  "cannon": [
+    { "k": 9, "n": 16, "rotation": 0 },
+    { "k": 10, "n": 16, "rotation": 0 },
+    { "k": 13, "n": 16, "rotation": 0 }
+  ]
+}
+```
+
+- **Key:** `weaponId` — all sixteen shipped weapons must be present.
+- **Rung:** `{ k, n, rotation }`. `k` onsets are distributed as evenly as
+  possible over a tile of `n` steps, phase-shifted by `rotation` whole steps;
+  `1 <= k <= n` and `0 <= rotation < n` (all three are whole numbers).
+- **`stepMs` is not authored.** Every rung steps on the shared 16th-note
+  lattice — 187.5 ms at the 80 BPM default, scaled with `beatPeriodMs(bpm)` at
+  other tempos — so the loader injects `stepMs = SIXTEENTH_NOTE_STEP_MS` and a
+  data edit can never desynchronise a rung from the beat grid.
+- **Order:** rungs are listed in level order. A rung's **activation level is
+  derived, never authored**: it is the first level whose desired density
+  (`level-0 rung density × curveValue(WEAPON_UPGRADE_SPECS.fireRate, level)`,
+  base 1×, cap 2.2×, `k = 0.12`) supports the rung, and never earlier than one
+  level after the previous rung. Rungs at or above the 2.2× asymptote are
+  omitted (the exponential curve approaches their density but never reaches
+  it). Editing a rung therefore also moves the upgrade thresholds that follow
+  it.
+
+**Load order and fallback precedence.** The bundled file is imported as raw
+text (`src/core/bundledConfig.ts` → `?raw`) and parsed **once at module load**
+in `src/utils/weaponLevels.ts`:
+
+1. the parsed JSON rungs are the runtime ladders;
+2. a weapon whose entry is **missing or malformed** falls back to the
+   pre-migration in-code ladders (`CODE_WEAPON_EUCLIDEAN_LADDER_SPECS`) — for
+   that weapon only, so one bad rung never changes the other fifteen;
+3. `WEAPON_LEVELS_LOAD_REPORT` records what came from data and what fell back,
+   and the dev-only boot self-check (`warnOnWeaponDataDivergences`) logs one
+   `console.warn` naming the file, the fallback weapons and the parse
+   diagnostics. Boot never throws: malformed or missing data degrades to the
+   shipped code ladders instead of crashing the game.
+
+**Workflow.** Edit a rung, restart `npm run dev` (the ladders are built at
+module load) and the new rhythm is live — no TypeScript edit and no source
+rebuild. The machine-verifiable ledger below reflects the result on the next
+test run. `src/data/weapon-levels-parity.json` freezes
+`resolveWeaponPattern(weaponId, level)` for all sixteen weapons at levels 0–10
+and `src/data/weaponLevelsParity.test.ts` asserts it, so an accidental retune
+while editing data fails the suite: regenerate the fixture only as part of a
+deliberate balance change.
+
+**Single source of truth for cadence.** `weapon-levels.json` is the only
+surface that authors how a weapon's rhythm evolves across levels — it *is* the
+fire rate. `weapons.csv` `subdivisions` remains the **legacy nominal** value
+(level-stat quantisation and the hold-full ghost metronome interval); the dev
+boot diagnostic reports where the two disagree and names
+`src/data/weapon-levels.json` as the cadence source, so the divergence is
+visible rather than folklore.
+
 The generator that turns a tile into onset steps, and the helpers that turn
 those steps into exact tick times, live in `src/utils/euclid.ts`
 (`euclidPattern`, `stepIndexAt`, `isOnset`, `nextOnsetTick`,

@@ -142,4 +142,18 @@ describe('weapon leveling is documented (AH-0MUQOT1I60038CO7 AC4/AC5)', () => {
     }
     expect(balancing).toMatch(/46 onsets per bar/);
   });
+
+  it('BALANCING.md documents the data-driven ladder format and fallback (AH-0MW0Q1TQV009M8AO)', () => {
+    // The rung data is hand-edited by designers: the format, the derived
+    // thresholds and the load-order/fallback precedence must be documented
+    // beside the ladder section, not only in code comments.
+    expect(balancing).toContain('src/data/weapon-levels.json');
+    expect(balancing).toContain('### Where the ladders are authored');
+    expect(balancing).toMatch(/`stepMs` is not authored/);
+    expect(balancing).toMatch(/16th-note lattice/);
+    expect(balancing).toContain('Load order and fallback precedence');
+    expect(balancing).toContain('CODE_WEAPON_EUCLIDEAN_LADDER_SPECS');
+    expect(balancing).toContain('Single source of truth for cadence');
+    expect(balancing).toContain('src/data/weapon-levels-parity.json');
+  });
 });

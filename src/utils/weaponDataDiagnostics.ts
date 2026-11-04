@@ -2,7 +2,8 @@
  * Dev-only self-checks for the data-driven weapon catalogue
  * (AH-0MW0Q1EYJ007RRFI).
  *
- * Two silent drifts are possible once the catalogue comes from data:
+ * Three silent drifts are possible once the catalogue and the cadence come
+ * from data:
  *
  * 1. **A typo falls back to code.** A malformed or missing
  *    `src/data/weapons.csv` row makes that one weapon resolve from
@@ -15,6 +16,10 @@
  *    `resolveWeaponPattern`. A designer who edits a `subdivisions` cell
  *    expecting to retune firing is editing the wrong surface unless the
  *    divergence is visible.
+ * 3. **The ladder data is unreadable.** A malformed
+ *    `src/data/weapon-levels.json` entry falls back to the in-code ladder for
+ *    that weapon only, so the game boots and the typo would otherwise be
+ *    invisible.
  *
  * {@link warnOnWeaponDataDivergences} runs once at boot and logs one
  * `console.warn` per finding in a **dev server** session only (never in a
@@ -33,7 +38,12 @@ import {
   formatWeaponCatalogueLoadWarning,
   type WeaponId,
 } from './weapons';
-import { euclideanOnsetsPerBeat, resolveWeaponPattern } from './weaponLevels';
+import {
+  euclideanOnsetsPerBeat,
+  formatWeaponLevelsLoadWarning,
+  resolveWeaponPattern,
+  WEAPON_LEVELS_LOAD_REPORT,
+} from './weaponLevels';
 
 /** Difference below which two cadence densities are treated as identical. */
 const CADENCE_EPSILON = 1e-9;
@@ -73,10 +83,10 @@ export function findWeaponCadenceDivergences(): WeaponCadenceDivergence[] {
  * and the live ladder agree for every weapon.
  *
  * The message names `src/data/weapon-levels.json` as the cadence source so the
- * reader is sent to the surface that actually gates firing. Until
- * AH-0MW0Q1TQV009M8AO lands, that data lives in the in-code
- * `WEAPON_EUCLIDEAN_LADDERS`; the message says so rather than naming a file
- * that does not exist yet.
+ * reader is sent to the surface that actually gates firing. The live values
+ * are loaded from that file at module load (with the in-code
+ * `WEAPON_EUCLIDEAN_LADDERS` as the per-weapon fallback), so the pointer is
+ * literal.
  */
 export function formatWeaponCadenceWarning(
   divergences: readonly WeaponCadenceDivergence[],
@@ -86,8 +96,9 @@ export function formatWeaponCadenceWarning(
     'Weapon cadence divergence: the legacy nominal `subdivisions` in ' +
       `src/data/weapons.csv disagrees with the live Euclidean ladder for ${divergences.length} weapon(s).`,
     'The live fire cadence is `resolveWeaponPattern` — authored in ' +
-      'src/data/weapon-levels.json (the in-code `WEAPON_EUCLIDEAN_LADDERS` ' +
-      'until AH-0MW0Q1TQV009M8AO lands). The CSV `subdivisions` value is the ' +
+      'src/data/weapon-levels.json (with the in-code ' +
+      '`WEAPON_EUCLIDEAN_LADDERS` as the per-weapon fallback). The CSV ' +
+      '`subdivisions` value is the ' +
       'legacy nominal used only for level-stat quantisation and the hold-full ' +
       'ghost metronome.',
     ...divergences.map(
@@ -99,10 +110,15 @@ export function formatWeaponCadenceWarning(
 
 /**
  * Every diagnostic a boot self-check would log, in reporting order:
- * catalogue-load fallbacks first, then cadence divergence.
+ * ladder-load fallbacks first, then catalogue-load fallbacks, then cadence
+ * divergence.
  */
 export function collectWeaponDataDiagnostics(): string[] {
   const warnings: string[] = [];
+  const ladderWarning = formatWeaponLevelsLoadWarning(
+    WEAPON_LEVELS_LOAD_REPORT,
+  );
+  if (ladderWarning !== null) warnings.push(ladderWarning);
   const loadWarning = formatWeaponCatalogueLoadWarning(
     WEAPON_CATALOGUE_LOAD_REPORT,
   );
