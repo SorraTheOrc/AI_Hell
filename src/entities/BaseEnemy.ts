@@ -33,6 +33,10 @@ import {
 } from '../utils/formations';
 import { resolvePatterns, spawnExplosionParticles } from '../vfx/explosionParticles';
 import type { ExplosionHandle } from '../vfx/explosionParticles';
+import {
+  bakeEnemyBodyTexture,
+  enemyBodyExtent,
+} from '../utils/enemyBodyTextures';
 import { Mineral, scatterMineralDrops } from './Mineral';
 
 /**
@@ -114,6 +118,18 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
 
   /** Body rendering layer — unique shape drawn by each subclass. */
   protected readonly bodyGraphics: Phaser.GameObjects.Graphics;
+
+  /**
+   * The baked body sprite that is actually rendered, or `null` when the scene
+   * cannot bake textures (stub/headless scenes) and {@link bodyGraphics} is
+   * attached to this container instead (AH-0MW2IRYAH0055WCN).
+   *
+   * The body silhouette never changes after construction, so it is baked once
+   * per distinct silhouette into a cached canvas texture and drawn as one
+   * batched sprite instead of re-walking and re-tessellating a Graphics
+   * command buffer on every frame — see `src/utils/enemyBodyTextures.ts`.
+   */
+  protected bodyImage: Phaser.GameObjects.Image | null = null;
 
   /** Separate explosion particle layer. */
   protected readonly explosionGraphics: Phaser.GameObjects.Graphics;
@@ -260,19 +276,66 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   }
 
   /**
+   * The enemy's drawn body silhouette layers, in render order.
+   *
+   * These are the `Graphics` objects the subclass drew in `_drawBody()` and
+   * they remain readable after the body is baked into a texture
+   * (AH-0MW2IRYAH0055WCN): they are the record the baked sprite was produced
+   * from, and the place tests assert the drawn commands and styles on. Only
+   * when the scene cannot bake textures are they rendered directly.
+   */
+  get bodyLayers(): readonly Phaser.GameObjects.Graphics[] {
+    return [this.bodyGraphics];
+  }
+
+  /**
    * Adds the shared body + explosion graphics to this container in the
    * canonical render order (body first, explosion second). Subclasses
    * with extra graphics layers call this before adding their own layers.
    */
   protected addSharedGraphics(): void {
     this.bodyGraphics.setDepth(1);
-    this.add(this.bodyGraphics);
+    this._addStaticBodyLayer([this.bodyGraphics]);
     // The force-field bubble sits over the hull (depth between body and
     // explosion) so a shielded enemy always reads "barrier around ship".
     this.forceFieldGraphics.setDepth(1.5);
     this.add(this.forceFieldGraphics);
     this.add(this.explosionGraphics);
     this._drawForceFieldBubble();
+  }
+
+  /**
+   * Attaches the enemy's **static** body layer(s) to this container.
+   *
+   * The silhouette is drawn once by the subclass into `sources` and then baked
+   * into a cached canvas texture (AH-0MW2IRYAH0055WCN), so the per-frame cost
+   * is one batched sprite draw instead of a full Graphics pipeline pass. When
+   * the scene cannot bake textures the `Graphics` layers are attached directly
+   * — byte-for-byte the pre-change rendering.
+   *
+   * @param sources — the static `Graphics` layers that make up the body, in
+   *   render order (their command buffers are baked as one composite)
+   */
+  protected _addStaticBodyLayer(
+    sources: readonly Phaser.GameObjects.Graphics[],
+  ): void {
+    const scene = this.scene as Phaser.Scene | undefined;
+    const baked = bakeEnemyBodyTexture(
+      scene,
+      sources,
+      enemyBodyExtent(this._size),
+    );
+    if (!baked || !scene) {
+      for (const source of sources) this.add(source);
+      return;
+    }
+    const image = scene.add.image(0, 0, baked.key);
+    image.setDepth(1);
+    this.add(image);
+    this.bodyImage = image;
+    // The bake sources are kept alive (they are the silhouette's record and
+    // subclasses still address them) but never rendered again.
+    for (const source of sources) source.removeFromDisplayList();
   }
 
   // ── Force-field bubble (AC3, AH-0MVM8GW7W004SI0E) ──────────────────
@@ -367,10 +430,11 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
 
   /**
    * Hook for subclasses to hide body graphics on destruction.
-   * The default implementation hides `bodyGraphics`.
+   * The default implementation hides `bodyGraphics` and the baked body sprite.
    */
   protected hideBody(): void {
     this.bodyGraphics.setAlpha(0);
+    this.bodyImage?.setAlpha(0);
   }
 
   /**
@@ -641,6 +705,8 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    */
   protected destroyGraphics(): void {
     this.bodyGraphics.destroy();
+    this.bodyImage?.destroy();
+    this.bodyImage = null;
   }
 
   // ── Formation position ─────────────────────────────────────────────

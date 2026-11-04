@@ -99,12 +99,12 @@ const STROKE_PATH = 9;
  * module-global renderer stroke tint (AH-0MTVYBL2L0085G6G).
  */
 function bodyStrokeColor(entity: Phaser.GameObjects.GameObject): number | null {
-  const children =
-    (entity as unknown as { list?: Phaser.GameObjects.GameObject[] }).list ?? [];
-  const body = children.find(
-    (c): c is Phaser.GameObjects.Graphics =>
-      c instanceof Phaser.GameObjects.Graphics && c.commandBuffer.includes(STROKE_PATH),
-  );
+  // The drawn silhouette layers (the bake source of the rendered body sprite,
+  // AH-0MW2IRYAH0055WCN) — never the empty explosion/force-field layers.
+  const layers =
+    (entity as unknown as { bodyLayers?: Phaser.GameObjects.Graphics[] })
+      .bodyLayers ?? [];
+  const body = layers.find((layer) => layer.commandBuffer.includes(STROKE_PATH));
   if (!body) return null;
   const buf = body.commandBuffer as number[];
   const firstStroke = buf.indexOf(STROKE_PATH);

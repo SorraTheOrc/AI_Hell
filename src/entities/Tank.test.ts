@@ -68,15 +68,13 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
     booted = await bootScene([HarnessScene]);
     const tank = makeTank(100, 100);
 
-    // The body is the container child whose buffer contains a stroked path
-    // (the explosion layer's buffer is empty until a destruction).
-    const children = (tank as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    const body = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics &&
-        c.commandBuffer.includes(STROKE_PATH),
+    // The body is the drawn silhouette layer, whose buffer contains a stroked
+    // path (the explosion layer's buffer is empty until a destruction). It is
+    // also the bake source of the rendered body sprite (AH-0MW2IRYAH0055WCN).
+    const body = tank.bodyLayers.find((layer) =>
+      layer.commandBuffer.includes(STROKE_PATH),
     );
-    expect(body, 'expected a body Graphics child with a stroked path').toBeDefined();
+    expect(body, 'expected a body layer with a stroked path').toBeDefined();
 
     const buf: number[] = body!.commandBuffer as number[];
     const firstStrokeIdx = buf.indexOf(STROKE_PATH);

@@ -598,6 +598,7 @@ Source lines are the **TypeScript** declaration lines, resolved by function name
 | 8 | Minerals update/collect | `src/scenes/core/mineralLayer.ts:130` (`collectMinerals`), `src/scenes/gym/core/GymFormationScene.ts:1464` (`_updateMinerals`) | 0.01 % in the gym (minerals disabled); 0.06 % in the busier run | None needed | — |
 | 9 | **Demo-bot steering** (attract mode only) | `src/ai/framework/competent/steering.ts:327` (`evaluateDirection`), `src/ai/framework/hazardVelocity.ts:74` (`trackHazardVelocities`) | PlayScene demo run: 0.47 % [5.2 %] — the largest single game-code function there | Evaluate less often / reuse the world snapshot | AH-0MW2DC28M00161W6 (low) |
 | 10 | **Dev telemetry serialisation** (dev builds only) | `src/telemetry/redact.ts:93` (`sanitiseObject`), `src/ai/botSnapshot.ts:459` (`deepFreeze`) | PlayScene demo run: ≈ 0.7 % [≈ 7 % of JS] | Skip the serialise+redact of a payload that will be discarded for exceeding the upload cap | AH-0MW2DC20A007TAVY (low) |
+| 11 | **One `Graphics` object per enemy body**, re-walked, re-tessellated and re-batched every frame for a silhouette that never changes | `src/entities/BaseEnemy.ts` (`addSharedGraphics`), each archetype's `_drawBody()`, `src/entities/Phaser.ts` (ring + core) | **≈ 9.5 % of the 4× mobile window** (≈ 47 % of JS): `GraphicsWebGLRenderer` 3.6–3.9 %, `batch` 2.7–2.9 %, Graphics render-node `run` ×3 2.8–3.2 % | **Done** — every body silhouette is baked once into a cached texture and drawn as one sprite; Graphics-pipeline self time **9.5 % → 2.8 %** (see [Baked enemy body textures](#baked-enemy-body-textures-ah-0mw2iryah0055wcn)) | AH-0MW2IRYAH0055WCN (high) |
 
 What this ranking changed (parent AC6 — priorities from measurement, not
 speculation):
@@ -783,6 +784,133 @@ frame-time regression. The item's frame-time target (p50/p95 ≥ 20 % better)
 **is not demonstrable on the SwiftShader floor** — that requires the
 hardware-GPU desktop run already tracked by AH-0MW2DB9VN006XB63, which
 re-states every optimisation's verdict for real GPUs.
+
+### Baked enemy body textures (AH-0MW2IRYAH0055WCN)
+
+Ranked hotspot **#11** (and the material remainder of hotspot #1 after the
+projectile cache landed): every regular enemy drew its silhouette into its own
+`Phaser.GameObjects.Graphics`, and Phaser re-walked that command buffer,
+re-tessellated every stroke (`StrokePath` → `batch`, earcut for fills) and
+re-batched it on **every frame** — for a shape that never changes after
+construction. At 100 enemies that is 119 non-empty `Graphics` objects per frame
+(one body each, plus the Phaser's ring and core).
+
+**Attribution (AC1 — measured, not guessed).** A 30 s profiled
+`GymPerformance` run at `--cpu-throttle 4` (load 7.26, 24.65 FPS, mean 40.57 ms)
+attributes the window as `renderer` **19.39 %** (JS total 23.85 %), `native`
+75.27 %, `simulation` 3.97 %. Inside the renderer bucket, as share of the
+window:
+
+| Symbol | Share | Called from |
+|---|---|---|
+| `GraphicsWebGLRenderer` | **3.92 %** | `renderWebGLStep` 3.42 %, `ContainerWebGLRenderer` 0.39 % |
+| `batch` | **2.92 %** | Graphics render-node `run` 2.89 % |
+| Graphics render-node `run` ×3 (stroke 1.87, fill 0.90, other 0.47) | **3.24 %** | `GraphicsWebGLRenderer` |
+| `GetCalcMatrix` | 0.32 % | `GraphicsWebGLRenderer` 0.31 % |
+| `earcutLinked` + `linkedList` | 0.39 % | Graphics fill node |
+| `ContainerWebGLRenderer` | 1.06 % | `renderWebGLStep` |
+| `ImageWebGLRenderer` + its two `run` nodes | ≈ 1.4 % | the ~210 live enemy bullets (already cached textures) |
+
+The Graphics pipeline is therefore **≈ 11.3 % of the 4× window (≈ 47 % of
+all JS)**, and every sample of it comes from an object that redraws per frame.
+
+**Ablation (per object type).** Each variant is a 20 s run at 4× with one
+renderable group hidden; the host load moved (10.3 → 15.0) so only the JS
+attribution — which is load-robust, see [Where the frame time
+goes](#where-the-frame-time-goes) — is read across rows:
+
+| Ablation | `renderer` | JS | Δ renderer |
+|---|---|---|---|
+| control | 20.96 % | 27.09 % | — |
+| every enemy **body** `Graphics` hidden | **15.36 %** | 21.53 % | **− 5.6 pp** |
+| every enemy **bullet** `Image` hidden | 21.46 % | 26.94 % | ≈ 0 |
+| shared **background** layer hidden | 20.67 % | 25.96 % | ≈ 0 JS |
+| bodies **and** bullets hidden | 13.83 % | 20.61 % | − 7.1 pp |
+
+So the body is the material remaining per-frame `Graphics` submission, the
+bullets are already effectively free, and the whole enemy+bullet
+draw-submission surface is only ≈ 6.5 pp of the window — the simulation
+(≈ 6 pp) dominates the rest. For scale, `GymPlayer` (one `Graphics`, no
+enemies) at 4× runs **40.97 FPS / 24.4 ms mean** with 21.6 ms/frame of
+`native`: the scene's non-enemy floor on this host is ≈ 24 ms/frame.
+
+**What changed.** A silhouette is a pure function of the commands the subclass
+queued in `_drawBody()`, so it is baked **once per distinct silhouette** into a
+Phaser canvas texture (`src/utils/enemyBodyTextures.ts`) and every enemy with
+that silhouette renders as one plain sprite. The seam lives once, in the shared
+base class (`BaseEnemy._addStaticBodyLayer`) and in `PhaserEntity` for its
+ring+core composite, so every gym and `PlayScene` run the same code (see
+[`docs/GYM_PARITY.md`](GYM_PARITY.md#shared-enemy-body-texture-cache-ah-0mw2iryah0055wcn)).
+The bake renders the **same command buffer** through Phaser's own canvas
+Graphics renderer with only a centring translation added, so the silhouette is
+identical by construction and only *when* it is drawn changes. The cache is per
+game, keyed by a pure hash of the drawn commands and the extent (identical
+silhouettes share one texture, different ones never collide) and bounded to 64
+textures, so a stream of unique silhouettes (each asteroid's seeded polygon)
+cannot grow it without limit. A scene that cannot create canvas textures keeps
+the `Graphics` body — the pre-change path.
+
+**Per-symbol result (paired 60 s runs, 4×, `--profile`, same host).**
+
+| Symbol (share of the window) | Before (2 runs) | After (2 runs) | Change |
+|---|---|---|---|
+| `GraphicsWebGLRenderer` | 3.60 % / 3.89 % | 1.49 % / 1.28 % | **− 62 %** |
+| `batch` | 2.70 % / 2.89 % | 0.73 % / 0.66 % | **− 75 %** |
+| Graphics stroke node `run` | 1.61 % / 1.91 % | 0.45 % / 0.40 % | **− 76 %** |
+| Graphics fill nodes (`run` ×2) | 0.78 % / 0.91 % + 0.41 % / 0.42 % | 0.14 % / 0.15 % (one), below the top-14 cut (other) | **− ≥ 80 %** |
+| `GetCalcMatrix` (Graphics path) | 0.35 % | below the top-14 cut | gone |
+| **Graphics-pipeline self time (sum)** | **9.45 % / 10.44 %** | **2.81 % / 2.49 %** | **− 70 % / − 76 %** |
+| `ContainerWebGLRenderer` (one container per enemy) | 1.26 % / 1.36 % | 1.41 % / 1.41 % | unchanged (by design) |
+| `ImageWebGLRenderer` + `run` ×2 (bullets) | 1.93 % / 1.83 % | 2.15 % / 2.26 % | unchanged (bullets untouched) |
+
+The remaining `GraphicsWebGLRenderer` is the player ship's per-frame thrust
+flames, the transient muzzle flashes, the shield/force-field/thorn bubbles and
+the Phaser tell layer — each one object, inside the noise floor.
+
+**Bucket result and frame time (paired, interleaved, 60 s, 4×).**
+
+| Run | Host load | p50 (ms) | p95 (ms) | mean (ms) | Effective FPS | JS (% window) | `renderer` | `native` |
+|---|---|---|---|---|---|---|---|---|
+| before 1 | 10.64 | 33.4 | 50.1 | 41.41 | 24.15 | 21.00 | 18.55 | 78.26 |
+| after 1 | 12.41 | 33.4 | 50.1 | 40.63 | 24.61 | **16.06** | **12.40** | 83.42 |
+| before 2 | 11.94 | 33.4 | 50.1 | 38.35 | 26.07 | 23.65 | 19.65 | 75.49 |
+| after 2 | 13.01 | 33.4 | 50.1 | 41.19 | 24.28 | **15.64** | **12.03** | 83.85 |
+
+Main-thread JS falls **22.3 % → 15.9 % of the window (− 29 %)** and the
+renderer bucket **19.1 % → 12.2 % (− 36 %)**, reproducibly across both pairs.
+The frame time does **not** move: p50/p95 are identical (33.4 / 50.1 ms) and the
+mean is inside the run-to-run spread for this load band — the freed main-thread
+time moved into `native` (76.9 % → 83.6 %), i.e. into SwiftShader
+rasterisation, exactly the backend caveat the [cached bullet
+textures](#cached-bullet-textures-ah-0mw2day2l004qskf) section records. A baked
+body quad also rasterises its full bounding box (mostly transparent) where the
+`Graphics` stroke only filled a thin band, so part of the JS win is *paid back*
+as raster work on a CPU rasteriser.
+
+**Verdict.** The measured #11 hotspot is removed (Graphics-pipeline JS
+− 70–76 %, renderer bucket − 36 %) for no gameplay change. The mobile-tier
+target (**AC3: ≥ 30 FPS at 4×**) is **not met**: 24.3–24.6 FPS against the
+30 FPS bar. The lever this item owns cannot close the gap — the whole
+enemy+bullet draw-submission surface is ≈ 6.5 pp of the window, and the frame
+time is set by software rasterisation on this GPU-less host. Recorded and
+escalated rather than hidden; the same JS win is the half a hardware GPU does
+**not** absorb, so it is expected to pay off on the real-GPU verification
+(AH-0MW2IRYJ2006PV3P).
+
+**Visual parity (checked, not assumed).** The baked sprite is verified to land
+on the enemy's own origin: sampling the rendered canvas per formation slot, the
+silhouette's bounding-box centre equals the slot centre exactly (e.g. slot
+`(183, 80)` → bbox centre `(183.0, 80.0)`; `(513, 114)` → `(513.0, 114.0)`)
+at the same ~25 px span the `Graphics` body drew. Pinned in code by
+`src/entities/BaseEnemy.bodyTexture.test.ts` (one cached sprite per enemy, one
+shared texture per silhouette, a distinct texture per colour, the ring+core
+composite, and the `Graphics` fallback) and
+`src/utils/enemyBodyTextures.test.ts`.
+
+**Determinism (AC4).** `node scripts/evaluate.mjs --seeds 3 --ticks 1800 --json`
+on the changed tree reproduces the recorded outcome hashes exactly —
+`e124cb60`, `6f5f6865`, `85729723` (scores 31.3 / 44.3 / 22.3) — so
+`tick(dt)`, RNG consumption and collision resolution are unchanged.
 
 ### Collision broad phase (AH-0MVXV0EMF001WVQ1)
 
@@ -1010,6 +1138,14 @@ for a garbage-free hot loop, and neither claims a frame-time win.
    84.91 % of JS) on top of software rasterisation (`native` 76.92 %).
    Escalated as **AH-0MW2IRYAH0055WCN** with the measured hotspot shares, and
    the parent (AH-0MVWJQUN6009IS87) is left short of `in_review`.
+   **Follow-up result (AH-0MW2IRYAH0055WCN):** the remaining per-frame
+   `Graphics` submission was attributed and removed — enemy body silhouettes
+   are now baked into cached textures, taking the Graphics-pipeline JS from
+   ≈ 9.5 % of the 4× window to ≈ 2.8 % (renderer bucket − 36 %). The mobile
+   tier is **still short of 30 FPS (24.3–24.6 FPS)**: the whole enemy+bullet
+   draw-submission surface is ≈ 6.5 pp of the window and the frame time is set
+   by software rasterisation on this host — see [Baked enemy body
+   textures](#baked-enemy-body-textures-ah-0mw2iryah0055wcn).
 
 ### Parity and determinism evidence
 
@@ -1051,6 +1187,11 @@ Both missed targets are escalated rather than hidden, ranked by measured impact:
   draw-submission cost at 4× throttle. Evidence: `renderer` 18.87 % of the
   window (84.91 % of JS), `GraphicsWebGLRenderer` 3.78 %, `batch` 2.70 %,
   Graphics pipeline `run` ×5 ≈ 4.1 %, `ContainerWebGLRenderer` 1.20 %.
+  **Outcome:** the draw-submission half was removed (enemy bodies baked to
+  cached textures; Graphics-pipeline JS − 70–76 %, renderer bucket − 36 %),
+  and the mobile tier is still 24.3–24.6 FPS. The residual gap is
+  rasterisation, not draw submission — see [Baked enemy body
+  textures](#baked-enemy-body-textures-ah-0mw2iryah0055wcn).
 - **AH-0MW2IRYJ2006PV3P** — hardware-GPU desktop verification runs (browser and
   Electron). Evidence: Electron p50 16.7 / p95 16.8 ms on a software rasteriser;
   browser 91.53 % `native`. This host cannot produce a hardware-GPU row at all.

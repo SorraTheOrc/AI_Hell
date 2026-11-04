@@ -98,13 +98,10 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     booted = await bootScene([HarnessScene]);
     const swarm = makeSwarm(100, 100);
 
-    const children = (swarm as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    const body = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics &&
-        c.commandBuffer.includes(MOVE_TO),
+    const body = swarm.bodyLayers.find((layer) =>
+      layer.commandBuffer.includes(MOVE_TO),
     );
-    expect(body, 'expected a body Graphics child with a drawn path').toBeDefined();
+    expect(body, 'expected a body layer with a drawn path').toBeDefined();
 
     // Decode the buffer structurally — walking by each command's arg count so
     // vertex values that happen to equal a command id are never misread.
@@ -141,13 +138,10 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     booted = await bootScene([HarnessScene]);
     const swarm = makeSwarm(100, 100);
 
-    const children = (swarm as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    const body = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics &&
-        c.commandBuffer.includes(STROKE_PATH),
+    const body = swarm.bodyLayers.find((layer) =>
+      layer.commandBuffer.includes(STROKE_PATH),
     );
-    expect(body, 'expected a body Graphics child with a stroked path').toBeDefined();
+    expect(body, 'expected a body layer with a stroked path').toBeDefined();
 
     const buf: number[] = body!.commandBuffer as number[];
     const strokeIdx = buf.lastIndexOf(STROKE_PATH);
