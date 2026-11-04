@@ -63,8 +63,15 @@ import {
   comparePerfReports,
   formatPerfComparison,
   formatPerfSummary,
+  hardwareBackendProblem,
   parsePerfArgs,
 } from './perf-report.mjs';
+import {
+  buildBrowserLaunchArgs,
+  buildElectronEnv,
+  buildElectronLaunchArgs,
+  describeRuntime,
+} from './perf-launch.mjs';
 import { formatProfileSummary, summariseCpuProfile } from './perf-profile.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -104,16 +111,60 @@ export function createPerfReporter(stream = process.stderr) {
 }
 
 /** Loads Playwright lazily so a missing install yields an actionable error. */
-async function loadChromium() {
+async function loadPlaywright() {
   try {
-    const playwright = await import('playwright');
-    return playwright.chromium;
+    return await import('playwright');
   } catch (error) {
     throw new PerfSetupError(
       'Playwright is not installed. Run `npm run capture:install` (and `npm install`) first.',
       { cause: error },
     );
   }
+}
+
+/** Loads the Chromium driver (browser host). */
+async function loadChromium() {
+  return (await loadPlaywright()).chromium;
+}
+
+/** Loads Playwright's Electron driver (`_electron`, Electron host). */
+async function loadElectronDriver() {
+  const electron = (await loadPlaywright())._electron;
+  if (!electron || typeof electron.launch !== 'function') {
+    throw new PerfSetupError(
+      'This Playwright build has no Electron driver (`_electron`). Upgrade Playwright ' +
+        '(`npm install --save-dev playwright@latest`) or measure with `--host browser`.',
+    );
+  }
+  return electron;
+}
+
+/**
+ * Resolves the Electron binary used by `--host electron`.
+ *
+ * Order: the explicit `--electron-executable`, then `$AI_HELL_ELECTRON_BIN`,
+ * then the `electron` npm package (which exports its binary path). When none is
+ * available the run stops with the install command rather than silently
+ * measuring the browser instead of the desktop host.
+ */
+async function resolveElectronExecutable(options) {
+  if (typeof options.electronExecutable === 'string' && options.electronExecutable !== '') {
+    return options.electronExecutable;
+  }
+  const fromEnv = process.env.AI_HELL_ELECTRON_BIN;
+  if (typeof fromEnv === 'string' && fromEnv !== '') return fromEnv;
+  try {
+    const imported = await import('electron');
+    const binary = typeof imported === 'string' ? imported : imported?.default;
+    if (typeof binary === 'string' && binary !== '') return binary;
+  } catch {
+    // Fall through to the actionable error below.
+  }
+  throw new PerfSetupError(
+    'Electron is not installed, so `--host electron` cannot run. Install it with ' +
+      '`npm install` (electron is an optional dependency) or point at a binary with ' +
+      '`--electron-executable <path>` / `$AI_HELL_ELECTRON_BIN`.',
+  );
 }
 
 /** Describes the measuring host, so every report is machine-labelled. */
@@ -163,6 +214,7 @@ export async function measurePerformance(options, deps = {}) {
   const cacheDir = mkdtempSync(join(tmpdir(), 'ai-hell-perf-vite-'));
   let server = null;
   let browser = null;
+  let electronApp = null;
   let cdp = null;
 
   try {
@@ -184,29 +236,68 @@ export async function measurePerformance(options, deps = {}) {
     const port = address && typeof address === 'object' ? address.port : options.port;
     const baseUrl = `http://127.0.0.1:${port}/`;
 
-    reporter.step('Launching headless Chromium…');
-    browser = await launchBrowser({
-      headless: !options.headed,
-      args: [
-        '--no-sandbox',
-        // Phaser.AUTO picks WebGL; headless Chromium needs this flag to use
-        // the software (SwiftShader) WebGL backend.
-        '--enable-unsafe-swiftshader',
-        // Keep the frame loop at full rate: a backgrounded/occluded page is
-        // throttled, which would measure the browser's throttle, not the game.
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-      ],
-    });
-
-    const page = await browser.newPage({ viewport: PERF_VIEWPORT });
+    let page;
+    if (options.host === 'electron') {
+      // The desktop host: the same dev build in an Electron BrowserWindow, so
+      // the reported frame times describe the app's renderer rather than a
+      // browser tab's. The window loads the dev URL from the entry point's env
+      // (the probe is dev-gated, so a production bundle cannot be measured).
+      reporter.step('Launching the Electron host…');
+      const electronDriver = await loadElectronDriver();
+      const executablePath = await resolveElectronExecutable(options);
+      electronApp = await electronDriver.launch({
+        executablePath,
+        args: buildElectronLaunchArgs({
+          repoRoot: REPO_ROOT,
+          headless: !options.headed,
+          gpu: options.gpu,
+        }),
+        env: buildElectronEnv({ url: baseUrl, headless: !options.headed, gpu: options.gpu }),
+        timeout: 60_000,
+      });
+      page = await electronApp.firstWindow();
+    } else {
+      reporter.step('Launching headless Chromium…');
+      browser = await launchBrowser({
+        headless: !options.headed,
+        args: buildBrowserLaunchArgs({ gpu: options.gpu }),
+      });
+      page = await browser.newPage({ viewport: PERF_VIEWPORT });
+    }
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
 
-    reporter.step(`Loading ${baseUrl}…`);
-    await page.goto(baseUrl, { waitUntil: 'load', timeout: 30_000 });
-    await page.waitForSelector('#game-container canvas', { timeout: 20_000 });
+    if (options.host === 'electron') {
+      // The entry point already started loading; wait for the canvas rather
+      // than navigating a second time (a reload would lose the probe state).
+      await page.waitForSelector('#game-container canvas', { timeout: 40_000 });
+      // A window that is never shown is treated as occluded and Chromium
+      // throttles requestAnimationFrame to ~1 Hz — the run would then measure
+      // the throttle, not the game. The entry point shows the window (also
+      // under `--ozone-platform=headless`); assert it so a host regression
+      // fails loudly instead of publishing ~1 Hz frame times.
+      const visibleDeadline = Date.now() + 15_000;
+      let windowVisible = false;
+      while (Date.now() < visibleDeadline) {
+        windowVisible = await electronApp.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows()[0];
+          return typeof window?.isVisible === 'function' ? window.isVisible() : true;
+        });
+        if (windowVisible) break;
+        await page.waitForTimeout(100);
+      }
+      if (!windowVisible) {
+        throw new PerfSetupError(
+          'The Electron window was never shown, so Chromium throttles its frame loop (~1 Hz) ' +
+            'and the measurement would describe the throttle rather than the game. ' +
+            'electron/main.mjs must show the window (even under --ozone-platform=headless).',
+        );
+      }
+    } else {
+      reporter.step(`Loading ${baseUrl}…`);
+      await page.goto(baseUrl, { waitUntil: 'load', timeout: 30_000 });
+      await page.waitForSelector('#game-container canvas', { timeout: 20_000 });
+    }
     await page.waitForFunction(
       () => {
         const canvas = document.querySelector('#game-container canvas');
@@ -248,6 +339,17 @@ export async function measurePerformance(options, deps = {}) {
         version: context.getParameter(context.VERSION),
       };
     });
+
+    const runtime =
+      options.host === 'electron'
+        ? describeRuntime({
+            kind: 'electron',
+            ...(await electronApp.evaluate(() => ({
+              electronVersion: process.versions.electron,
+              chromeVersion: process.versions.chrome,
+            }))),
+          })
+        : describeRuntime({ kind: 'browser', chromeVersion: browser ? await browser.version() : null });
 
     const activeSceneKeys = await page.evaluate(
       () => window.__aiHellCaptureDirector?.activeSceneKeys?.() ?? [],
@@ -322,6 +424,7 @@ export async function measurePerformance(options, deps = {}) {
         startedAt: new Date().toISOString(),
         host: hostSnapshot(),
         webgl,
+        runtime,
         activeSceneKeys,
         pageErrors,
       },
@@ -337,6 +440,18 @@ export async function measurePerformance(options, deps = {}) {
           `not trustworthy: ${pageErrors.join(' | ')}`,
       );
     }
+    if (options.requireHardwareWebgl) {
+      // A run labelled desktop must not silently be a software-rasteriser run:
+      // the whole point of a hardware-GPU baseline is that the page had a GPU.
+      const problem = hardwareBackendProblem(report);
+      if (problem) {
+        throw new PerfSetupError(
+          `Refusing to publish a hardware-GPU baseline: ${problem}. ` +
+            'Check the host GPU/driver and rerun with `--gpu` (and without a software-only ' +
+            'display or container restriction).',
+        );
+      }
+    }
     if (profileSummary) {
       report.profile = profileSummary;
       report.profileFile = options.profile;
@@ -345,6 +460,7 @@ export async function measurePerformance(options, deps = {}) {
   } finally {
     if (cdp) await cdp.detach().catch(() => {});
     if (browser) await browser.close().catch(() => {});
+    if (electronApp) await electronApp.close().catch(() => {});
     if (server) await server.close().catch(() => {});
     await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
   }

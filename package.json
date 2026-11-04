@@ -6,6 +6,9 @@
   "description": "AI Hell — a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
   "scripts": {
     "dev": "vite",
+    "electron": "electron electron/main.mjs",
+    "electron:headless": "electron --ozone-platform=headless --enable-unsafe-swiftshader --use-angle=swiftshader electron/main.mjs",
+    "electron:dist": "AI_HELL_ELECTRON_DIST=1 electron electron/main.mjs",
     "build-audio": "scripts/build-audio.sh",
     "build-audio:render": "scripts/build-audio.sh --render",
     "build-audio:verify": "scripts/build-audio.sh --verify && node scripts/audio-balance-guard.mjs",
@@ -19,6 +22,7 @@
     "evaluate": "node scripts/evaluate.mjs",
     "ring-timing": "node scripts/ring-timing.mjs",
     "perf:measure": "node scripts/measure-performance.mjs",
+    "perf:measure:electron": "node scripts/measure-performance.mjs --host electron",
     "validate-experience": "node scripts/validate-experience.mjs",
     "capture:install": "playwright install chromium",
     "generate:mode-ledger": "node scripts/generate-mode-ledger.mjs",
@@ -38,6 +42,9 @@
   "dependencies": {
     "phaser": "^4.2.1",
     "toneforge": "file:../ToneForge"
+  },
+  "optionalDependencies": {
+    "electron": "^45.2.2"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.11",

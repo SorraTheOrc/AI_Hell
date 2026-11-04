@@ -16,6 +16,9 @@ export const DEFAULT_PERF_WARMUP_SECONDS: number;
 export const MAX_PERF_SECONDS: number;
 export const MAX_CPU_THROTTLE: number;
 export const DEFAULT_PERF_SCENE: string;
+export const PERF_HOSTS: readonly string[];
+export const DEFAULT_PERF_HOST: 'browser';
+export const SOFTWARE_RENDERER_PATTERNS: readonly string[];
 export const PERF_USAGE: string;
 
 export class PerfArgsError extends Error {
@@ -65,6 +68,19 @@ export interface WebglInfo {
   vendor?: string | null;
   renderer?: string | null;
   version?: string | null;
+  /** `software` for a CPU rasteriser, `hardware` for a real GPU, else `unknown`. */
+  kind?: RendererKind;
+}
+
+export type RendererKind = 'software' | 'hardware' | 'unknown';
+
+/** Which host produced the numbers (`--host`). */
+export type PerfHostKind = 'browser' | 'electron';
+
+export interface PerfRuntime {
+  kind: PerfHostKind;
+  electronVersion: string | null;
+  chromeVersion: string | null;
 }
 
 export interface PerfReport {
@@ -73,6 +89,8 @@ export interface PerfReport {
   requestedSeconds: number | null;
   warmupSeconds: number | null;
   cpuThrottle: number;
+  /** Electron/Chromium versions of the measured host (`runtime.kind` is the host). */
+  runtime: PerfRuntime;
   method: string;
   startedAt: string | null;
   elapsedSeconds: number | null;
@@ -85,6 +103,7 @@ export interface PerfReport {
   webgl: WebglInfo | null;
   activeSceneKeys: string[];
   pageErrors: string[];
+  /** The measuring machine (CPU, memory, OS, load average), not the host kind. */
   host: Record<string, unknown> | null;
   comparison?: PerfComparison;
 }
@@ -113,6 +132,10 @@ export interface PerfArgs {
   profile: string | null;
   profileIntervalUs: number;
   setup: Record<string, unknown> | null;
+  host: PerfHostKind;
+  gpu: boolean;
+  requireHardwareWebgl: boolean;
+  electronExecutable: string | null;
   json: boolean;
   headed: boolean;
   port: number | undefined;
@@ -154,6 +177,9 @@ export function comparePerfReports(
 ): PerfComparison;
 export function formatPerfComparison(comparison: Partial<PerfComparison>): string;
 export function resolvePerfSceneKey(value: unknown): string;
+export function resolvePerfHost(value: unknown): PerfHostKind;
+export function classifyWebglBackend(webgl?: WebglInfo | null): RendererKind;
+export function hardwareBackendProblem(report?: Partial<PerfReport>): string | null;
 export function parseSceneSetup(raw: unknown): Record<string, unknown>;
 export function parsePerfArgs(argv: readonly string[]): PerfArgs;
 export const MIN_PROFILE_INTERVAL_US: number;

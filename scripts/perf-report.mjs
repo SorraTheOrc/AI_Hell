@@ -22,6 +22,7 @@
  */
 
 import { WATCHABLE_GYM_SCENE_KEYS } from './capture-scenes.mjs';
+import { describeRuntime } from './perf-launch.mjs';
 import { DEFAULT_PROFILE_SAMPLING_INTERVAL_US } from './perf-profile.mjs';
 
 /**
@@ -58,6 +59,78 @@ export const MAX_PROFILE_INTERVAL_US = 10_000;
 
 /** The shipped playable scene, always a legal `--scene` value. */
 export const DEFAULT_PERF_SCENE = 'PlayScene';
+
+/** Hosts the harness can measure in (`--host`). */
+export const PERF_HOSTS = ['browser', 'electron'];
+export const DEFAULT_PERF_HOST = 'browser';
+
+/**
+ * Renderer substrings that identify a **software** (CPU) rasteriser.
+ *
+ * `WEBGL_debug_renderer_info` reports the driver's own string, so this is the
+ * only honest way to tell a hardware-GPU run from a software-fallback run: a
+ * headless Chromium asked for hardware GL still falls back to SwiftShader on a
+ * host without a GPU, and the fallback is visible here and nowhere else. The
+ * list covers the backends this project's hosts have produced or could
+ * plausibly produce (SwiftShader, Mesa's software drivers, `swrast`).
+ */
+export const SOFTWARE_RENDERER_PATTERNS = [
+  'swiftshader',
+  'llvmpipe',
+  'softpipe',
+  'swrast',
+  'software rasterizer',
+  'software renderer',
+  'mesa offscreen',
+];
+
+/**
+ * Classifies the WebGL backend a run actually used.
+ *
+ * - `software` — a CPU rasteriser (the renderer string matches
+ *   {@link SOFTWARE_RENDERER_PATTERNS}); frame times include CPU
+ *   rasterisation that a real GPU would absorb.
+ * - `hardware` — a real GPU/driver renderer string.
+ * - `unknown` — no WebGL context, or no renderer string, so nothing can be
+ *   claimed about the backend.
+ *
+ * @param {{ renderer?: string | null } | null} [webgl]
+ * @returns {'software' | 'hardware' | 'unknown'}
+ */
+export function classifyWebglBackend(webgl) {
+  const renderer = typeof webgl?.renderer === 'string' ? webgl.renderer.trim().toLowerCase() : '';
+  if (renderer === '') return 'unknown';
+  return SOFTWARE_RENDERER_PATTERNS.some((pattern) => renderer.includes(pattern))
+    ? 'software'
+    : 'hardware';
+}
+
+/**
+ * Why a report cannot be published as a **hardware-GPU** baseline, or `null`
+ * when it can (used by the harness's `--require-hardware-webgl` guard).
+ *
+ * A hardware baseline is only meaningful if the page really had a GPU, so a
+ * software fallback — or an unidentified backend — must fail the run rather
+ * than be published under a desktop label. Returning the reason (instead of
+ * throwing) keeps the rule pure and unit-testable.
+ *
+ * @param {object} report — a {@link buildPerfReport} result.
+ * @returns {string | null}
+ */
+export function hardwareBackendProblem(report = {}) {
+  const kind = report?.webgl?.kind ?? classifyWebglBackend(report?.webgl);
+  const renderer =
+    typeof report?.webgl?.renderer === 'string' && report.webgl.renderer.trim() !== ''
+      ? report.webgl.renderer
+      : 'no WebGL renderer string';
+  if (kind === 'software') {
+    return `the page rendered on a software WebGL backend (${renderer})`;
+  }
+  if (kind === 'unknown') {
+    return `the page's WebGL backend could not be identified (${renderer})`;
+  }
+  return null;
+}
 
 /** Raised for a bad CLI argument, so `main()` can print usage and exit 2. */
 export class PerfArgsError extends Error {
@@ -227,6 +300,7 @@ export function buildPerfReport({ meta = {}, result = {} } = {}) {
     requestedSeconds: meta.requestedSeconds ?? null,
     warmupSeconds: meta.warmupSeconds ?? null,
     cpuThrottle: meta.cpuThrottle ?? 1,
+    runtime: describeRuntime(meta.runtime),
     method: typeof result.method === 'string' ? result.method : PERF_METHOD,
     startedAt: meta.startedAt ?? null,
     elapsedSeconds: times.elapsedSeconds,
@@ -235,7 +309,10 @@ export function buildPerfReport({ meta = {}, result = {} } = {}) {
     fps: { ...times.fps, phaserActualFps: actualFps },
     longFrames: times.longFrames,
     counts: summariseCounts(result.countSamples, result.countsSource ?? null),
-    webgl: meta.webgl && typeof meta.webgl === 'object' ? { ...meta.webgl } : null,
+    webgl:
+      meta.webgl && typeof meta.webgl === 'object'
+        ? { ...meta.webgl, kind: classifyWebglBackend(meta.webgl) }
+        : null,
     activeSceneKeys: Array.isArray(meta.activeSceneKeys) ? [...meta.activeSceneKeys] : [],
     pageErrors: Array.isArray(meta.pageErrors) ? [...meta.pageErrors] : [],
     host: meta.host && typeof meta.host === 'object' ? { ...meta.host } : null,
@@ -279,8 +356,14 @@ export function formatPerfSummary(report = {}) {
     lines.push('  entities: counts unavailable for this scene');
   }
 
+  if (report.runtime && report.runtime.kind === 'electron') {
+    const version = report.runtime.electronVersion ?? 'unknown version';
+    const chromium = report.runtime.chromeVersion ? `, Chromium ${report.runtime.chromeVersion}` : '';
+    lines.push(`  runtime: Electron ${version}${chromium}`);
+  }
   if (report.webgl && typeof report.webgl.renderer === 'string') {
-    lines.push(`  webgl: ${report.webgl.renderer}`);
+    const kind = report.webgl.kind ?? classifyWebglBackend(report.webgl);
+    lines.push(`  webgl (${kind}): ${report.webgl.renderer}`);
   }
   lines.push(`  method: ${report.method ?? PERF_METHOD}`);
   if (Array.isArray(report.pageErrors) && report.pageErrors.length > 0) {
@@ -444,6 +527,10 @@ export function parsePerfArgs(argv = []) {
     profile: null,
     profileIntervalUs: DEFAULT_PROFILE_SAMPLING_INTERVAL_US,
     setup: null,
+    host: DEFAULT_PERF_HOST,
+    gpu: false,
+    requireHardwareWebgl: false,
+    electronExecutable: null,
     json: false,
     headed: false,
     port: undefined,
@@ -498,6 +585,18 @@ export function parsePerfArgs(argv = []) {
       case '--setup':
         options.setup = parseSceneSetup(nextValue());
         break;
+      case '--host':
+        options.host = resolvePerfHost(nextValue());
+        break;
+      case '--gpu':
+        options.gpu = true;
+        break;
+      case '--require-hardware-webgl':
+        options.requireHardwareWebgl = true;
+        break;
+      case '--electron-executable':
+        options.electronExecutable = nextValue();
+        break;
       case '--port': {
         const port = positiveNumber('--port', nextValue());
         if (!Number.isInteger(port) || port > 65535) {
@@ -524,17 +623,37 @@ export function parsePerfArgs(argv = []) {
   return options;
 }
 
+/**
+ * Resolves a `--host` value to a legal harness host.
+ *
+ * @param {unknown} value
+ * @returns {'browser' | 'electron'}
+ */
+export function resolvePerfHost(value) {
+  if (value === 'browser' || value === 'electron') return value;
+  throw new PerfArgsError(
+    `--host expects one of ${PERF_HOSTS.join(', ')}, got ${JSON.stringify(value)}`,
+  );
+}
+
 /** CLI usage text. */
 export const PERF_USAGE = `Usage: node scripts/measure-performance.mjs [options]
 
-Boots the dev build in headless Chromium, runs a scene for a fixed duration and
-reports Phaser-loop frame-time percentiles, effective FPS, long frames and the
-sampled entity counts (JSON on stdout, human summary on stderr).
+Boots the dev build in a Chromium browser (default) or an Electron host, runs a
+scene for a fixed duration and reports Phaser-loop frame-time percentiles,
+effective FPS, long frames and the sampled entity counts (JSON on stdout,
+human summary on stderr).
 
 Options:
   --scene <key>         PlayScene (default) or a watchable gym scene
   --seconds <n>         Measured window in seconds (default ${DEFAULT_PERF_SECONDS}, max ${MAX_PERF_SECONDS})
   --warmup <n>          Seconds to let the scene settle before sampling (default ${DEFAULT_PERF_WARMUP_SECONDS})
+  --host <name>         ${PERF_HOSTS.join(' | ')} (default ${DEFAULT_PERF_HOST}); electron runs the game inside the
+                        Electron desktop host (electron/main.mjs)
+  --gpu                 Request the hardware GPU instead of the software (SwiftShader) backend
+  --require-hardware-webgl  Fail the run (exit 1) unless the page really rendered on a hardware GPU
+  --electron-executable <path>  Electron binary for --host electron (default: the installed
+                        \`electron\` package, or $AI_HELL_ELECTRON_BIN)
   --cpu-throttle <n>    Chromium CPU throttling factor, e.g. 4 for the mobile tier (default 1)
   --out <file>          Also write the JSON report to <file>
   --compare <file>      Compare against a previously written JSON report

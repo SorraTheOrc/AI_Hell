@@ -12,23 +12,28 @@ import { describe, expect, it } from 'vitest';
 
 import { WATCHABLE_GYM_SCENE_KEYS } from './capture-scenes.mjs';
 import {
+  DEFAULT_PERF_HOST,
   DEFAULT_PERF_SCENE,
   DEFAULT_PERF_SECONDS,
   DEFAULT_PERF_WARMUP_SECONDS,
   LONG_FRAME_MS,
+  PERF_HOSTS,
   PERF_METHOD,
   PERF_REPORT_SCHEMA_VERSION,
   PerfArgsError,
   SUPPLY_LONG_FRAME_MS,
   buildPerfReport,
+  classifyWebglBackend,
   comparePerfReports,
   countAbove,
   formatPerfComparison,
   formatPerfSummary,
+  hardwareBackendProblem,
   mean,
   parsePerfArgs,
   parseSceneSetup,
   percentile,
+  resolvePerfHost,
   resolvePerfSceneKey,
   summariseCounts,
   summariseFrameTimes,
@@ -248,7 +253,34 @@ describe('buildPerfReport', () => {
     });
 
     expect(report.webgl?.renderer).toContain('SwiftShader');
+    expect(report.webgl?.kind).toBe('software');
     expect(buildPerfReport({ meta: {}, result: {} }).webgl).toBeNull();
+  });
+
+  it('labels a hardware renderer and the Electron runtime in the header', () => {
+    const report = buildPerfReport({
+      meta: {
+        scene: 'GymPerformance',
+        webgl: { renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+        runtime: { kind: 'electron', electronVersion: '45.2.2', chromeVersion: '156.0.8078.80' },
+      },
+      result: { frameTimesMs: [16.7], durationMs: 16.7 },
+    });
+
+    expect(report.runtime.kind).toBe('electron');
+    expect(report.webgl?.kind).toBe('hardware');
+    expect(report.runtime).toEqual({
+      kind: 'electron',
+      electronVersion: '45.2.2',
+      chromeVersion: '156.0.8078.80',
+    });
+  });
+
+  it('defaults the runtime to a browser host when none is supplied', () => {
+    const report = buildPerfReport({ meta: { scene: 'PlayScene' }, result: { frameTimesMs: [16] } });
+
+    expect(report.runtime.kind).toBe('browser');
+    expect(report.runtime).toEqual({ kind: 'browser', electronVersion: null, chromeVersion: null });
   });
 
   it('reports counts null when the probe collected none', () => {
@@ -265,6 +297,56 @@ describe('buildPerfReport', () => {
 
     expect(report.frames).toBe(0);
     expect(report.frameTimeMs.p50).toBeNull();
+  });
+});
+
+describe('WebGL backend classification', () => {
+  it('classifies software rasterisers, so a fallback is never a hardware baseline', () => {
+    expect(
+      classifyWebglBackend({
+        renderer:
+          'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)',
+      }),
+    ).toBe('software');
+    expect(classifyWebglBackend({ renderer: 'llvmpipe (LLVM 15.0.7, 256 bits)' })).toBe('software');
+    expect(classifyWebglBackend({ renderer: 'Mesa softpipe' })).toBe('software');
+  });
+
+  it('classifies a real GPU driver string as hardware', () => {
+    expect(
+      classifyWebglBackend({
+        renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+      }),
+    ).toBe('hardware');
+    expect(
+      classifyWebglBackend({ renderer: 'ANGLE (AMD, AMD Radeon RX 6800 (radeonsi), OpenGL 4.6)' }),
+    ).toBe('hardware');
+  });
+
+  it('reports unknown when there is no WebGL context or renderer string', () => {
+    expect(classifyWebglBackend(null)).toBe('unknown');
+    expect(classifyWebglBackend({})).toBe('unknown');
+    expect(classifyWebglBackend({ renderer: '   ' })).toBe('unknown');
+  });
+
+  it('explains why a report cannot be published as a hardware baseline', () => {
+    const software = buildPerfReport({
+      meta: { scene: 'GymPerformance', webgl: { renderer: 'SwiftShader driver' } },
+      result: { frameTimesMs: [16], durationMs: 16 },
+    });
+    const hardware = buildPerfReport({
+      meta: { scene: 'GymPerformance', webgl: { renderer: 'ANGLE (NVIDIA, GeForce RTX 3060, D3D11)' } },
+      result: { frameTimesMs: [16], durationMs: 16 },
+    });
+    const unknown = buildPerfReport({
+      meta: { scene: 'GymPerformance', webgl: null },
+      result: { frameTimesMs: [16], durationMs: 16 },
+    });
+
+    expect(hardwareBackendProblem(software)).toContain('software WebGL backend');
+    expect(hardwareBackendProblem(software)).toContain('SwiftShader driver');
+    expect(hardwareBackendProblem(unknown)).toContain('could not be identified');
+    expect(hardwareBackendProblem(hardware)).toBeNull();
   });
 });
 
@@ -317,8 +399,23 @@ describe('formatPerfSummary', () => {
       webgl: { renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)' },
     } as never);
 
-    expect(text).toContain('webgl: ANGLE (Google');
+    expect(text).toContain('webgl (software): ANGLE (Google');
     expect(text).toContain('SwiftShader');
+  });
+
+  it('names the Electron runtime in the summary', () => {
+    const text = formatPerfSummary(
+      buildPerfReport({
+        meta: {
+          scene: 'GymPerformance',
+          runtime: { kind: 'electron', electronVersion: '45.2.2', chromeVersion: '156.0.8078.80' },
+        },
+        result: { frameTimesMs: [16], durationMs: 16 },
+      }),
+    );
+
+    expect(text).toContain('runtime: Electron 45.2.2');
+    expect(text).toContain('Chromium 156.0.8078.80');
   });
 
   it('says counts are unavailable rather than printing zeros', () => {
@@ -435,6 +532,10 @@ describe('parsePerfArgs', () => {
       profile: null,
       profileIntervalUs: 1000,
       setup: null,
+      host: DEFAULT_PERF_HOST,
+      gpu: false,
+      requireHardwareWebgl: false,
+      electronExecutable: null,
       json: false,
       headed: false,
       port: undefined,
@@ -503,6 +604,29 @@ describe('parsePerfArgs', () => {
     expect(() => parsePerfArgs(['--setup', 'null'])).toThrow(PerfArgsError);
     expect(() => parsePerfArgs(['--setup', 'not json'])).toThrow(PerfArgsError);
     expect(() => parsePerfArgs(['--setup'])).toThrow(PerfArgsError);
+  });
+
+  it('parses the desktop-host and backend flags', () => {
+    const options = parsePerfArgs([
+      '--host',
+      'electron',
+      '--gpu',
+      '--require-hardware-webgl',
+      '--electron-executable',
+      '/opt/electron/electron',
+    ]);
+
+    expect(options.host).toBe('electron');
+    expect(options.gpu).toBe(true);
+    expect(options.requireHardwareWebgl).toBe(true);
+    expect(options.electronExecutable).toBe('/opt/electron/electron');
+  });
+
+  it('rejects an unknown --host', () => {
+    expect(() => parsePerfArgs(['--host', 'firefox'])).toThrow(PerfArgsError);
+    expect(() => parsePerfArgs(['--host'])).toThrow(PerfArgsError);
+    expect(PERF_HOSTS).toEqual(['browser', 'electron']);
+    expect(resolvePerfHost('browser')).toBe('browser');
   });
 
   it('parses --help without validating the rest', () => {
