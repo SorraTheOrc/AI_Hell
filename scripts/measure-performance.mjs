@@ -20,10 +20,17 @@
  * - **sampled entity counts** — live enemies, enemy bullets, player bullets
  *   and minerals (peak/mean over the run), so the frame time is labelled with
  *   the load that produced it.
+ * - **optional CPU profile** (`--profile <file>`) — a Chrome DevTools
+ *   `Profiler.start`/`Profiler.stop` capture of the page's main thread over the
+ *   same measured window, summarised into coarse buckets (simulation,
+ *   renderer, ui, audio, gc, idle, native, other) plus a ranked hotspot list
+ *   (`scripts/perf-profile.mjs`, AH-0MVXV0E8000937U5). This is what turns a
+ *   frame-time number into an evidence-based optimisation backlog.
  *
  * The JSON report (stdout, and `--out <file>`) records the scene, duration,
- * warm-up, CPU-throttle factor, measurement method and host description, so a
- * stored baseline is never compared against an unlabelled run. The human
+ * warm-up, CPU-throttle factor, measurement method, host description and the
+ * WebGL backend actually used, so a stored baseline is never compared against
+ * an unlabelled run. The human
  * summary goes to stderr; `--json` suppresses it for CI.
  *
  * Usage:
@@ -31,6 +38,8 @@
  *   npm run perf:measure                                   # PlayScene, 10 s, headless
  *   npm run perf:measure -- --scene GymPerformance --seconds 60
  *   npm run perf:measure -- --cpu-throttle 4               # the mobile tier
+ *   npm run perf:measure -- --profile perf.cpuprofile       # + a CPU profile
+ *   npm run perf:measure -- --scene PlayScene --setup '{"demo":true,"startLevel":10}'
  *   npm run perf:measure -- --out perf-baseline.json
  *   npm run perf:measure -- --compare perf-baseline.json    # before/after deltas
  *
@@ -56,6 +65,7 @@ import {
   formatPerfSummary,
   parsePerfArgs,
 } from './perf-report.mjs';
+import { formatProfileSummary, summariseCpuProfile } from './perf-profile.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -153,6 +163,7 @@ export async function measurePerformance(options, deps = {}) {
   const cacheDir = mkdtempSync(join(tmpdir(), 'ai-hell-perf-vite-'));
   let server = null;
   let browser = null;
+  let cdp = null;
 
   try {
     reporter.step('Starting Vite dev server…');
@@ -215,11 +226,28 @@ export async function measurePerformance(options, deps = {}) {
       () => typeof window.__aiHellCaptureDirector?.start === 'function',
       { timeout: 15_000 },
     );
-    if (options.scene !== 'PlayScene') {
-      await page.evaluate((key) => {
-        window.__aiHellCaptureDirector?.start(key);
-      }, options.scene);
+    if (options.scene !== 'PlayScene' || options.setup) {
+      await page.evaluate(({ key, setup }) => {
+        window.__aiHellCaptureDirector?.start(key, setup ?? undefined);
+      }, { key: options.scene, setup: options.setup });
     }
+
+    // Record the WebGL backend the page actually got. Headless Chromium falls
+    // back to SwiftShader (software raster) even when asked for hardware GL, so
+    // a run must never be mistaken for a GPU run on a label alone.
+    const webgl = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+      if (!context) return null;
+      const extension = context.getExtension('WEBGL_debug_renderer_info');
+      return {
+        vendor: extension ? context.getParameter(extension.UNMASKED_VENDOR_WEBGL) : context.getParameter(context.VENDOR),
+        renderer: extension
+          ? context.getParameter(extension.UNMASKED_RENDERER_WEBGL)
+          : context.getParameter(context.RENDERER),
+        version: context.getParameter(context.VERSION),
+      };
+    });
 
     const activeSceneKeys = await page.evaluate(
       () => window.__aiHellCaptureDirector?.activeSceneKeys?.() ?? [],
@@ -234,10 +262,18 @@ export async function measurePerformance(options, deps = {}) {
     reporter.step(`Warming up for ${options.warmupSeconds} s…`);
     await page.waitForTimeout(options.warmupSeconds * 1000);
 
+    if (options.cpuThrottle > 1 || options.profile) {
+      cdp = await page.context().newCDPSession(page);
+    }
     if (options.cpuThrottle > 1) {
       reporter.step(`Applying a ${options.cpuThrottle}× CPU throttle (mobile tier)…`);
-      const session = await page.context().newCDPSession(page);
-      await session.send('Emulation.setCPUThrottlingRate', { rate: options.cpuThrottle });
+      await cdp.send('Emulation.setCPUThrottlingRate', { rate: options.cpuThrottle });
+    }
+    if (options.profile) {
+      reporter.step(`Starting CPU profiling (${options.profileIntervalUs} µs sampling)…`);
+      await cdp.send('Profiler.enable');
+      await cdp.send('Profiler.setSamplingInterval', { interval: options.profileIntervalUs });
+      await cdp.send('Profiler.start');
     }
 
     const started = await page.evaluate(() => window.__aiHellPerfProbe?.start?.() ?? false);
@@ -252,6 +288,22 @@ export async function measurePerformance(options, deps = {}) {
     reporter.step(`Sampling for ${options.seconds} s…`);
     await page.waitForTimeout(options.seconds * 1000);
     const result = await page.evaluate(() => window.__aiHellPerfProbe?.stop?.() ?? null);
+    // Stop profiling on the same window the probe measured, so the profile
+    // attributes exactly the frames the report describes.
+    let profileSummary = null;
+    if (options.profile) {
+      const { profile } = await cdp.send('Profiler.stop');
+      profileSummary = summariseCpuProfile(profile, {
+        samplingIntervalUs: options.profileIntervalUs,
+        windowSeconds: options.seconds,
+      });
+      if (profileSummary) {
+        writeFileSync(options.profile, JSON.stringify(profile));
+        reporter.step(`CPU profile written to ${options.profile}`);
+      } else {
+        reporter.step('CPU profile contained no usable samples; reporting no profile.');
+      }
+    }
     if (!result) {
       throw new PerfSetupError('The performance probe returned no samples (did the page reload?).');
     }
@@ -269,6 +321,7 @@ export async function measurePerformance(options, deps = {}) {
         cpuThrottle: options.cpuThrottle,
         startedAt: new Date().toISOString(),
         host: hostSnapshot(),
+        webgl,
         activeSceneKeys,
         pageErrors,
       },
@@ -284,8 +337,13 @@ export async function measurePerformance(options, deps = {}) {
           `not trustworthy: ${pageErrors.join(' | ')}`,
       );
     }
+    if (profileSummary) {
+      report.profile = profileSummary;
+      report.profileFile = options.profile;
+    }
     return report;
   } finally {
+    if (cdp) await cdp.detach().catch(() => {});
     if (browser) await browser.close().catch(() => {});
     if (server) await server.close().catch(() => {});
     await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
@@ -350,7 +408,10 @@ export async function main(
       if (!options.json) reporter.line(formatPerfComparison(comparison));
     }
 
-    if (!options.json) reporter.line(formatPerfSummary(report));
+    if (!options.json) {
+      reporter.line(formatPerfSummary(report));
+      if (report.profile) reporter.line(formatProfileSummary(report.profile));
+    }
     stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
   } catch (error) {

@@ -7,9 +7,12 @@ claimed as an improvement without a harness number before and after.
 
 The harness itself is AH-0MVXV0DER009ER70. The reproducible 100-enemy worst
 case is the **`GymPerformance` stress gym** (AH-0MVXV0DT50028RF8) — see
-[the stress gym](#the-stress-gym-gymperformance) below. The recorded
-desktop/Electron/mobile baseline and the per-hotspot results are tracked by the
-sibling children (AH-0MVXV0E8000937U5, AH-0MVXV0FUP006W8OR).
+[the stress gym](#the-stress-gym-gymperformance) below. The measured baseline,
+the CPU profile and the ranked hotspot list are recorded in
+[Baseline (100 enemies, 60 s)](#baseline-100-enemies-60-s) and
+[Ranked hotspots](#ranked-hotspots) (AH-0MVXV0E8000937U5). The Electron and
+hardware-GPU desktop numbers are **not recorded yet** — see
+[What is not measurable here](#what-is-not-measurable-here-electron-and-a-hardware-gpu-desktop).
 
 ## The stress gym (`GymPerformance`)
 
@@ -63,8 +66,15 @@ watchable/capturable like every other gym (`WATCHABLE_GYM_SCENE_KEYS`, see
 
 The target is only falsifiable alongside a **reference machine**. Every report
 records the host it ran on (`host` in the JSON: platform, CPU model, CPU count,
-memory, load average, Node version); record that description next to any
-baseline you publish.
+memory, load average, Node version) and the WebGL backend it actually used
+(`webgl`); record both next to any baseline you publish.
+
+The recorded baseline (headless Chromium with the **SwiftShader** software
+renderer) is below both targets today — 36.2 FPS desktop, 19.9 FPS at the
+mobile-tier throttle — see [Baseline (100 enemies, 60 s)](#baseline-100-enemies-60-s).
+Those are the reproducible floor on this host, not a verdict on hardware: the
+desktop GPU and Electron numbers are still missing
+([why](#what-is-not-measurable-here-electron-and-a-hardware-gpu-desktop)).
 
 ## Measuring a run
 
@@ -75,6 +85,8 @@ npm run perf:measure -- --scene GymPerformance --seconds 60
 npm run perf:measure -- --cpu-throttle 4               # the mobile tier
 npm run perf:measure -- --out perf-baseline.json       # keep the JSON report
 npm run perf:measure -- --compare perf-baseline.json    # before/after deltas
+npm run perf:measure -- --profile perf-output/gym.cpuprofile   # + a CPU profile
+npm run perf:measure -- --scene PlayScene --setup '{"demo":true,"seed":1,"startLevel":10}'
 ```
 
 `npm run perf:measure` is `node scripts/measure-performance.mjs`. The harness
@@ -95,6 +107,9 @@ director), lets the scene settle for `--warmup` seconds, samples the loop for
 | `--cpu-throttle <n>` | `1` | Chromium CPU throttling factor applied before sampling (e.g. `4` for the mobile tier). Applied through the DevTools protocol. |
 | `--out <file>` | — | Also write the JSON report to `<file>`. |
 | `--compare <file>` | — | Compare the new run against a previously written report (see below). |
+| `--profile <file>` | — | Capture a CDP CPU profile over the measured window and write the raw `.cpuprofile` to `<file>` (see [CPU profiling](#cpu-profiling)). |
+| `--profile-interval <µs>` | `1000` | CDP CPU sampling interval in microseconds (100–10000). |
+| `--setup <json>` | — | Scene launch data forwarded to the dev-gated capture director — e.g. `{"demo":true,"seed":1,"startLevel":10}` to measure late-game `PlayScene` (see [PlayScene late game](#playscene-late-game-supplementary)). |
 | `--json` | off | Suppress the human summary; print JSON only (for CI). |
 | `--headed` | off | Show the browser window instead of running headless. |
 | `--port <n>` | ephemeral | Fixed Vite dev-server port. |
@@ -115,6 +130,7 @@ Report fields:
 | `scene`, `requestedSeconds`, `warmupSeconds`, `cpuThrottle` | The run configuration (**always** recorded, so two reports can be compared only when they match). |
 | `method` | How frame times were sampled — `phaser-game-loop/poststep-frame-delta` (see [Measurement method](#measurement-method)). |
 | `startedAt`, `host` | When and where the run happened (see [reference machine](#reference-machine)). |
+| `webgl` | The WebGL backend the page actually used (`vendor`/`renderer`/`version`). Headless Chromium falls back to SwiftShader, so a run can never be mistaken for a hardware-GPU run on a label alone. |
 | `elapsedSeconds`, `frames` | The measured wall-clock span and the number of sampled frame intervals. |
 | `frameTimeMs.p50`, `.p95`, `.max`, `.mean` | Frame-time percentiles in milliseconds. Percentiles, not means, so one hitch does not hide the typical frame. |
 | `fps.effective` | `frames ÷ elapsedSeconds` — the loop's real throughput. |
@@ -122,6 +138,7 @@ Report fields:
 | `longFrames.over33Ms`, `.over50Ms` (+ percentages) | Frames slower than 33 ms (a missed 30 FPS frame) and 50 ms (a visible hitch). Counts are strict (`>`), so a frame at exactly 33.0 ms is not a long frame. |
 | `counts.peak`, `.mean`, `.last`, `.samples` | Live enemies, enemy bullets, player bullets and minerals sampled every 250 ms — the load that produced the frame times. `counts` is `null` when the scene exposes none. |
 | `activeSceneKeys`, `pageErrors` | Proof of which scene actually ran, and any page exception during the window (a page error fails the run). |
+| `profile`, `profileFile` | The CPU-profile summary (buckets, JS/idle shares, ranked hotspots) and the raw profile path — present only with `--profile` (see [CPU profiling](#cpu-profiling)). |
 
 Exit codes: `0` success, `1` a failed run (missing dependency, no frames, page
 error), `2` a bad argument. The harness is CI-runnable as-is; wiring a pipeline
@@ -148,6 +165,245 @@ implementation (gym↔game parity) rather than per-scene telemetry copies.
 `method` is part of the report header so numbers from a different sampling
 strategy can never be compared by accident.
 
+## CPU profiling
+
+Frame time tells you *that* the loop is slow; the CPU profile tells you *where*.
+`--profile <file>` records a Chrome DevTools CPU profile
+(`Profiler.start`/`Profiler.stop` over the **same measured window** as the frame
+times) and writes the raw `.cpuprofile` to `<file>`; the run's JSON report also
+carries a summary under `profile`:
+
+```bash
+npm run perf:measure -- --scene GymPerformance --seconds 60 \
+  --profile perf-output/gym.cpuprofile --out perf-output/gym.json
+```
+
+The raw file opens in Chrome DevTools (Performance → Load profile) or
+[speedscope](https://www.speedscope.app/). Profiles are generated locally and
+**not committed** (`perf-output/` is gitignored); the published numbers live in
+this document.
+
+### What the summary contains
+
+| Field | Meaning |
+|---|---|
+| `samplingIntervalUs` | CDP sampling interval (`--profile-interval`, default 1000 µs, range 100–10000) |
+| `windowSeconds`, `samples`, `totalMs` | The profiled window and how much sampled time it contains |
+| `buckets[]` | Self time per bucket, in ms and as a share of the window (see below) |
+| `mainThreadJsPercent` | Share of the window spent **running JavaScript** — the number the CPU-bound question is read from |
+| `mainThreadIdlePercent` | Share of the window the main thread spent idle (waiting on vsync/compositor/GPU) |
+| `topFunctions[]`, `topProjectFunctions[]`, `topFiles[]` | Hotspots ranked by **self time** (game code only for `topProjectFunctions`), each with the share of the window **and** the share of JS |
+
+`selfMs` is the sum of the sample deltas attributed to that function, so a
+parent is never credited for its children's work.
+
+### Buckets
+
+| Bucket | What it holds |
+|---|---|
+| `simulation` | Game code under `src/` that advances the world (scenes, entities, waves, AI, utils, core) |
+| `renderer` | Phaser internals — per-object draw submission, batching, the Graphics pipeline, texture work |
+| `ui` | `src/ui/` and the HUD/banner modules in `src/core/` |
+| `audio` | `src/audio/` and ToneForge |
+| `gc` | V8 `(garbage collector)` samples — allocation pressure |
+| `idle` | V8 `(idle)` samples — the main thread waiting |
+| `native` | Native/VM frames the JS profiler cannot attribute (`(program)`, `(root)`, URL-less frames): GL command submission, raster, DOM, structured clone |
+| `other` | Third-party dependencies other than Phaser, and the dev-only measurement probe |
+
+Two caveats matter when reading a verdict:
+
+- **`native` cannot distinguish "busy" from "blocked".** A main thread blocked
+  inside a synchronous GL call is sampled as `native`, exactly like one running
+  native code. Read `native` as "the main thread was inside non-JS work (or
+  waiting in it)", never as "the CPU was saturated".
+- **`line` is the transpiled line.** The profile records lines in the module the
+  browser executed (the esbuild-transpiled dev output), not the TypeScript
+  source line. Resolve a hotspot to its source declaration by function name —
+  every row in [Ranked hotspots](#ranked-hotspots) is resolved that way.
+
+## Baseline (100 enemies, 60 s)
+
+This is the "before" number every optimisation child must beat (parent
+AH-0MVWJQUN6009IS87 AC3, recorded by AH-0MVXV0E8000937U5 on top of commit
+`3e33e5c9` — the same change added `--profile`/`--setup` to the harness and
+touched no game code, so the numbers describe the game at that commit).
+Every row is `GymPerformance` — exactly 100 late-game enemies with live fire,
+~200 live enemy bullets, minerals disabled, player auto-fire disabled —
+measured with `--seconds 60 --warmup 3` on the reference machine below, in
+headless Chromium with the **SwiftShader** software WebGL backend (the exact
+renderer string is recorded in every report under `webgl`). "Host load" is the
+1-minute load average recorded with the report.
+
+### Desktop tier (headless Chromium, software WebGL)
+
+| Run | Host load | p50 (ms) | p95 (ms) | max (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 8.97 | 33.3 | 33.4 | 66.7 | 27.57 | 36.27 | 1356 (62.3 %) | 10 (0.46 %) | 323 / 203.9 |
+| 2 | 12.63 | 33.3 | 33.4 | 66.7 | 27.06 | 36.96 | 1360 (61.4 %) | 5 (0.23 %) | 328 / 210.4 |
+| 3 (profiled) | 9.28 | 33.3 | 33.4 | 66.6 | 27.59 | 36.24 | 1413 (65.0 %) | 5 (0.23 %) | 345 / 215.0 |
+
+Enemies are exactly 100 in peak *and* mean in every run, so the load is fixed
+and the frame times are comparable run to run.
+
+**Reproducibility.** Runs 1–3 agree to within 1.9 % on effective FPS and
+**0.0 %** on p50 and p95 — well inside the ±20 % p95 noise floor. The baseline
+is trustworthy (parent AC6).
+
+### Host-load sensitivity (why the load is recorded)
+
+The same scene and commit on a **busier** host (other agents' test suites
+running) is ~27 % slower, and the tail moves most:
+
+| Run | Host load | p50 (ms) | p95 (ms) | max (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms |
+|---|---|---|---|---|---|---|---|
+| 4 | 15.48 | 33.4 | 50.1 | 100.0 | 26.77 | 1462 (91.1 %) | 114 (7.10 %) |
+| 5 | 17.89 | 33.4 | 50.1 | 99.9 | 26.80 | 1419 (88.3 %) | 127 (7.90 %) |
+
+Runs 4–5 are reproducible *with each other*, so this is host load, not
+measurement noise: SwiftShader rasterises on the CPU, so a busy host slows the
+renderer. Compare only runs from the same load band, and use runs 1–3 as the
+baseline.
+
+### CPU-throttle sensitivity and the mobile tier
+
+| CPU throttle | Host load | p50 (ms) | p95 (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms |
+|---|---|---|---|---|---|---|
+| 1× | 12.63 | 33.3 | 33.4 | 36.96 | 1360 (61.4 %) | 5 (0.23 %) |
+| 2× | 11.81 | 33.4 | 50.1 | 26.06 | 1483 (94.9 %) | 88 (5.63 %) |
+| 4× (mobile tier) | 9.89 | 50.0 | 66.7 | 19.92 | 1193 (99.8 %) | 341 (28.5 %) |
+
+**Mobile-tier baseline: 19.9 FPS at 4× throttle — below the ≥ 30 FPS mobile
+target.** A 4× slowdown of the JS path would take 36.96 FPS down to ~9 FPS; it
+lands at 19.9 FPS, so the throttled JS is not what sets the frame time (see the
+verdict below). The three rows ran at comparable host load, but the 2× and 4×
+rows are single runs — re-measure before claiming a mobile improvement.
+
+### PlayScene late game (supplementary)
+
+`--setup '{"demo":true,"seed":1,"startLevel":10}'` starts the shipped
+`PlayScene` at campaign level 10 in **demo (attract-mode) flight**, which is the
+only way to reach late-game pressure in the harness — a stationary non-demo run
+is destroyed before the window ends:
+
+| Scene | Host load | p50 (ms) | p95 (ms) | max (ms) | Effective FPS | Frames > 33 ms | Enemies peak/mean | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|---|
+| PlayScene, level 10, demo | 13.39 | 16.7 | 50.0 | 116.6 | 49.9 | 313 (10.5 %) | 1789 / 269.1 | 209 / 33.0 |
+
+This row is **not** comparable to the gym: the demo bot kills most of the
+spawned enemies (mean 269 enemies but only ~33 live bullets) and the horde
+spawner is unbounded. It is recorded to show the shipped scene under real
+late-game pressure, and it is the run whose profile exposes the demo-bot and
+dev-telemetry hotspots.
+
+### Where the frame time goes
+
+CPU profiles of the runs above (share of the measured window, %):
+
+| Run | JS | simulation | renderer | ui | audio | gc | idle | native | other |
+|---|---|---|---|---|---|---|---|---|---|
+| GymPerformance 1× (run 3, load 9.28) | 14.75 | 1.00 | 13.69 | 0.02 | 0.04 | 0.40 | 0.10 | 84.75 | 0.00 |
+| GymPerformance 1× (run 1, load 15.48) | 14.70 | 1.16 | 13.43 | 0.03 | 0.05 | 0.44 | 0.11 | 84.77 | 0.00 |
+| GymPerformance 4× (load 9.89) | 37.10 | 3.22 | 33.51 | 0.11 | 0.20 | 0.93 | 0.16 | 61.84 | 0.02 |
+| PlayScene level 10 demo (load 13.39) | 9.10 | 3.75 | 5.23 | 0.04 | 0.05 | 0.39 | 11.93 | 78.60 | 0.00 |
+
+Two things stand out:
+
+- **The bucket attribution is load-robust; the frame rate is not.** The two gym
+  runs at load 9.28 and 15.48 differ by 35 % in effective FPS yet attribute the
+  window almost identically (JS 14.75 % vs 14.70 %, renderer 13.69 % vs
+  13.43 %). Use the profile to decide *what to fix*, and a same-load-band
+  frame-time pair to prove the fix.
+- **Within JS, draw submission dominates.** Of the JS time, Phaser's renderer is
+  92.8 % (gym 1×) and 90.4 % (gym 4×), while the game's own simulation is 6.8 %
+  and 8.7 %. In the PlayScene demo run the split differs — simulation is 41.3 %
+  of JS — because the attract-mode bot and the dev telemetry recorder run there.
+
+### Verdict: renderer-bound, not simulation-bound
+
+The epic's premise ("assuming we are CPU bound") is **refuted for the game
+loop** and **confirmed for the renderer**. Evidence, in order of strength:
+
+1. **84.75 % of the main thread's sampled time is native** with **0.10 % idle** —
+   the loop is inside draw submission / GL work, not idle and not running game
+   JS, which is 14.75 % of the window.
+2. **Within JS, 92.8 % is Phaser draw submission and 6.8 % is the game's own
+   simulation** — the simulation is the cheap part of the JS that does run.
+3. **A 4× CPU throttle costs 46 % of the frame rate (36.96 → 19.92 FPS), not
+   ~75 %.** A loop limited by main-thread JS would collapse to ~9 FPS under a
+   4× throttle. It does not, so main-thread JS is not the limiting resource.
+4. **Cost tracks live bullets, not enemies.** The gym (100 enemies, ~200 live
+   enemy bullets) sits at p50 33.3 ms; the PlayScene late-game demo (mean 269
+   enemies, ~33 live bullets) sits at p50 16.7 ms. Every bullet is one
+   `Graphics` object, re-batched every frame.
+
+**Caveat that must travel with this verdict.** The measurements are taken on
+**SwiftShader**, a CPU rasteriser, so "renderer-bound" here means *draw
+submission and rasterisation bound*; the rasterisation half is an artefact of
+the software backend and is far cheaper on a hardware GPU. The main-thread JS
+share (14.75 %) is backend-independent, so *the game's simulation is not the
+bottleneck* holds on any backend; *the renderer is the bottleneck* is proven for
+this backend only. A hardware-GPU desktop number is not obtainable here — see
+below.
+
+## What is not measurable here (Electron and a hardware-GPU desktop)
+
+The budget is stated for "desktop browser and Electron", but this repository and
+host can only measure the software-rendered browser:
+
+- **No Electron (or Tauri) packaging exists in this repository.** There is no
+  `electron`/`tauri` dependency in `package.json` and no packaging config; the
+  GDD lists Electron as an alternative and packaging as a known risk. There is
+  nothing to launch, so no Electron numbers are recorded.
+- **Headless Chromium cannot reach the GPU on this host.** Every launch mode
+  (default, `--use-gl=angle --use-angle=gl`, `--use-gl=egl`) reports
+  `ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader
+  driver)` from `WEBGL_debug_renderer_info`, and there is no display server
+  (`DISPLAY` unset, no Xvfb installed).
+
+Consequence: the desktop baseline above is the **SwiftShader floor** — a
+reproducible, pessimistic number for comparing runs of this harness on this
+host, not a statement that the desktop 60 FPS budget is missed on real
+hardware. Recording the hardware-GPU desktop and Electron baselines, and
+re-stating the verdict for them, is tracked by
+AH-0MW2DB9VN006XB63 (child of the epic).
+
+## Ranked hotspots
+
+Ranked by measured impact from the profile of the low-load desktop baseline
+(run 3: `GymPerformance`, 100 enemies, 60 s, load 9.28) unless a row says
+otherwise. "Share" is of the measured window, with the share of JS in brackets.
+Source lines are the **TypeScript** declaration lines, resolved by function name
+(the profile itself records transpiled lines).
+
+| # | Hotspot | Source | Measured share | Lever | Work item |
+|---|---|---|---|---|---|
+| 1 | **One `Graphics` object per bullet**, re-batched every frame by Phaser (`GraphicsWebGLRenderer` 4.18 % [28.3 %], `batch` 2.97 % [20.1 %], Graphics pipeline `run` ×3 ≈ 2.82 % [19.2 %]) | `src/entities/bulletUtils.ts:80` (`createBullet` → `scene.add.graphics()`), `src/utils/bulletVisuals.ts:203` (`drawBulletShape`) | **≈ 10.0 % [≈ 68 % of JS]**, and it drives most of the 84.75 % `native` GL submission | Cache each bullet shape as a **texture/sprite** (or batch all bullets of a shape into one draw) so the per-object Graphics pipeline disappears | AH-0MW2DAY2L004QSKF (high) |
+| 2 | **Animated pellets redraw their `Graphics` every frame**, so earcut re-triangulates the path every frame (`earcutLinked` 0.49 %, `linkedList` 0.21 %) | `src/utils/bulletVisuals.ts:1120` (`_pellet`), redraw wired at `src/entities/bulletUtils.ts:105` | 0.70 % [4.7 %] | Same texture/sprite cache as #1, with the pulse animated by sprite scale/alpha instead of a redraw | AH-0MW2DAY2L004QSKF |
+| 3 | Bullet advancement / wrap, once per bullet per frame | `src/scenes/core/bulletLifecycle.ts:64` (`advanceWrappingBullets`) | 0.09 % [0.6 %] | Fold into the bullet rework (a batched position update) | AH-0MVXV0F0Y004NENT (low) |
+| 4 | Enemy fire + aim-target collection | `src/entities/enemyFire.ts:111` (`fireForEnemy`), `src/scenes/core/enemyTargeting.ts:85` (`pushAimTargets`) | 0.04 % [0.2 %] | Allocation removal only | AH-0MVXV0F0Y004NENT (low) |
+| 5 | Collision passes (`_handleCollisions`) | `src/scenes/core/CombatScene.ts:1310` | 0.02 % [0.2 %] | Broad-phase — **measured too small to matter at this load** | AH-0MVXV0EMF001WVQ1 (low) |
+| 6 | GC / allocation pressure | V8 `(garbage collector)` | 0.40 % [2.7 %] | Allocation removal | AH-0MVXV0F0Y004NENT (low) |
+| 7 | HUD / UI refresh, player auto-defence | `src/ui/HUD.ts:405` (`refresh`), `src/scenes/core/CombatScene.ts:243` (`_updateAutoDefence`) | 0.02–0.03 % | None needed | — |
+| 8 | Minerals update/collect | `src/scenes/core/mineralLayer.ts:130` (`collectMinerals`), `src/scenes/gym/core/GymFormationScene.ts:1464` (`_updateMinerals`) | 0.01 % in the gym (minerals disabled); 0.06 % in the busier run | None needed | — |
+| 9 | **Demo-bot steering** (attract mode only) | `src/ai/framework/competent/steering.ts:327` (`evaluateDirection`), `src/ai/framework/hazardVelocity.ts:74` (`trackHazardVelocities`) | PlayScene demo run: 0.47 % [5.2 %] — the largest single game-code function there | Evaluate less often / reuse the world snapshot | AH-0MW2DC28M00161W6 (low) |
+| 10 | **Dev telemetry serialisation** (dev builds only) | `src/telemetry/redact.ts:93` (`sanitiseObject`), `src/ai/botSnapshot.ts:459` (`deepFreeze`) | PlayScene demo run: ≈ 0.7 % [≈ 7 % of JS] | Skip the serialise+redact of a payload that will be discarded for exceeding the upload cap | AH-0MW2DC20A007TAVY (low) |
+
+What this ranking changed (parent AC6 — priorities from measurement, not
+speculation):
+
+- **GPU offload / draw-call batching (AH-0MVXV0FFJ0066EC8) → `high`.** It was
+  provisioned at `medium`; the measured renderer share (92.8 % of JS, plus the
+  native GL submission it drives) makes it the top lever by a wide margin.
+- **Collision broad-phase (AH-0MVXV0EMF001WVQ1) → `low`.** `_handleCollisions`
+  is 0.2 % of JS / 0.02 % of the window — an O(n·m) pass that costs
+  microseconds at 100 enemies. It stays worth doing as a scaling fix for higher
+  bullet counts, not as a lever on the target.
+- **Per-frame allocations (AH-0MVXV0F0Y004NENT) → `low`.** GC is 2.7 % of JS /
+  0.40 % of the window.
+- **A new child was created for the measured #1 hotspot**
+  (AH-0MW2DAY2L004QSKF) because the pre-provisioned draw-call child's scope
+  (HUD, bubbles, pods, timer bar) does not cover the per-bullet Graphics cost.
+
 ## Reference machine
 
 Record the host with every published baseline. The numbers in this document
@@ -158,52 +414,50 @@ were captured on:
 | CPU | AMD Ryzen 7 4800H with Radeon Graphics (16 logical CPUs) |
 | Memory | 30 GB |
 | OS | Linux 7.0.0-38-generic (x86_64) |
-| Browser | Playwright 1.55.1 Chromium, **headless** with software WebGL (SwiftShader) via `--enable-unsafe-swiftshader` |
+| Browser | Playwright 1.55.1 Chromium, **headless** with software WebGL via `--enable-unsafe-swiftshader` |
+| WebGL renderer | `ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)` — recorded in every report under `webgl` |
 | Node | v22.22.1 |
 
 **Read the browser line carefully.** The harness runs headless with a software
 WebGL backend, which is a *reproducible* but pessimistic renderer: it measures
-the game loop honestly but not the desktop GPU raster path. The desktop target
-(60 FPS on desktop browser and Electron) must therefore be recorded with a
-real GPU renderer by the baseline child (AH-0MVXV0E8000937U5); the headless
-figures are for comparing runs of the *same* harness on the *same* host, not
-for declaring the desktop budget met.
+the game loop honestly but not the desktop GPU raster path. The baseline in
+this document is therefore the SwiftShader floor — use it to compare runs of the
+*same* harness on the *same* host, and do not read it as the desktop budget
+being missed on real hardware. The desktop GPU and Electron numbers are still
+missing; see
+[What is not measurable here](#what-is-not-measurable-here-electron-and-a-hardware-gpu-desktop).
 
 ## Noise floor
 
-Two consecutive 10-second `PlayScene` runs on this host at load average
-~10–11 on 16 CPUs (the host was **not** idle — another agent's work was
-running) produced:
+Two consecutive runs of the same scene and commit define what "no change" looks
+like. On this host the **percentiles are stable and the tail is not**, and the
+*load band* decides the absolute numbers:
 
-| Metric | Run 1 | Run 2 | Delta |
+| Metric | Run 1 (load 8.97) | Run 2 (load 12.63) | Delta |
 |---|---|---|---|
-| p50 frame time | 16.7 ms | 16.7 ms | 0.0 % |
-| p95 frame time | 33.4 ms | 33.4 ms | **0.0 %** |
-| max frame time | 33.4 ms | 50.0 ms | +49.7 % |
-| effective FPS | 44.4 | 45.0 | +1.4 % |
-| long frames (> 33 ms) | 156 (35.1 %) | 149 (33.0 %) | −4.5 % |
-| live enemies (peak/mean) | 5 / 5.0 | 5 / 5.0 | — |
+| p50 frame time | 33.3 ms | 33.3 ms | 0.0 % |
+| p95 frame time | 33.4 ms | 33.4 ms | 0.0 % |
+| max frame time | 66.7 ms | 66.7 ms | 0.0 % |
+| effective FPS | 36.27 | 36.96 | +1.9 % |
+| long frames (> 33 ms) | 1356 (62.3 %) | 1360 (61.4 %) | +0.3 % |
+| enemy bullets (peak/mean) | 323 / 203.9 | 328 / 210.4 | — |
 
 What this tells us:
 
-- **Percentiles are stable, the tail is not.** p50 and p95 matched exactly
-  across the two runs (p95 within the 20 % noise-floor expectation used by
-  `--compare`), while `max` moved by ~50 % — a single frame can always be
-  delayed by the OS or GC. Judge an optimisation on **p50/p95 and effective
-  FPS**, and treat `max` as a hitch indicator that needs several runs before it
-  means anything.
-- **The headless software renderer is the floor, not the target.** ~45 FPS
-  effective on level 1 with five enemies is the SwiftShader raster cost, not
-  gameplay cost; it will move when the renderer or the host changes far more
-  than when the game loop is optimised. Always compare runs captured on the
-  same host, in the same mode, with the same `--seconds`/`--warmup`.
-- **Record the load.** Every report carries the host's load average; a "win"
-  measured at load 2 against a baseline at load 12 is not a win. Re-run a
-  suspicious comparison on a quieter host.
-
-A 4× CPU-throttled 5-second run (the mobile-tier profile) on the same host
-measured ~32 FPS effective (p50 33.3 ms, p95 50 ms), confirming the throttle
-option is applied and materially changes the result.
+- **Percentiles are the verdict, the tail is a hitch indicator.** p50 and p95
+  matched exactly across the three baseline runs; `max` moved by ~50 % between
+  load bands (66.7 ms at load ~9 vs 100 ms at load ~16) because a single frame
+  can always be delayed by the OS, GC or another process. Judge an optimisation
+  on **p50/p95 and effective FPS**, and treat `max` as needing several runs
+  before it means anything.
+- **The host load is part of the measurement.** Runs 4–5 (load 15.5/17.9) were
+  reproducible *with each other* at 26.8 FPS while runs 1–3 (load ~9–13) were
+  reproducible *with each other* at ~36 FPS. A "win" measured at load 9 against
+  a baseline at load 16 is not a win. Re-run a suspicious comparison on a
+  quieter host, and compare only within one load band.
+- **The profile is the load-robust signal.** The bucket attribution barely moved
+  between load bands (JS 14.70 % vs 14.75 %), so profile-based hotspot decisions
+  survive a busy host even when frame times do not.
 
 ## Comparing two runs
 
@@ -230,10 +484,14 @@ Compare only reports with the same `scene`, `cpuThrottle`, `seconds` and
 
 ## Tests and coverage
 
-The percentile, long-frame, FPS-derivation, count-summary, report-header and
-comparison maths live in `scripts/perf-report.mjs` and are unit-tested in
-`scripts/perf-report.test.ts` (no browser). The page-side probe's sampling
-contract is tested against a fake Phaser game in
+The percentile, long-frame, FPS-derivation, count-summary, report-header,
+WebGL-backend and comparison maths live in `scripts/perf-report.mjs` and are
+unit-tested in `scripts/perf-report.test.ts` (no browser). The CPU-profile
+attribution — buckets, self-time ranking, project-only hotspots, the JS/idle
+shares and the malformed-profile guards — lives in `scripts/perf-profile.mjs`
+and is unit-tested against hand-built CDP profiles in
+`scripts/perf-profile.test.ts` (no browser, no CDP session). The page-side
+probe's sampling contract is tested against a fake Phaser game in
 `src/core/perfProbe.test.ts`. The Playwright boot path itself is not
 unit-tested (same trade-off as `scripts/capture-gameplay.mjs`); it is verified
 by running the harness.

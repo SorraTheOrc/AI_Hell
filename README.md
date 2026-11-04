@@ -875,6 +875,8 @@ npm run perf:measure -- --scene GymPerformance --seconds 60
 npm run perf:measure -- --cpu-throttle 4                    # mobile tier
 npm run perf:measure -- --out before.json
 npm run perf:measure -- --out after.json --compare before.json
+npm run perf:measure -- --profile perf-output/gym.cpuprofile   # + CPU profile
+npm run perf:measure -- --scene PlayScene --setup '{"demo":true,"seed":1,"startLevel":10}'
 ```
 
 - **Reproducible 100-enemy worst case:** `--scene GymPerformance`
@@ -893,9 +895,15 @@ npm run perf:measure -- --out after.json --compare before.json
   `requestAnimationFrame` counter. Entity counts come from the shared
   `CombatScene.getPerformanceCounts()` seam, so the game and every gym report
   the same fields. The method string is recorded in every report.
+- **CPU profiling (`--profile <file>`):** a Chrome DevTools
+  `Profiler.start`/`Profiler.stop` capture over the measured window, summarised
+  into coarse buckets (simulation, Phaser renderer/draw submission, ui, audio,
+  GC, idle, native) plus a ranked hotspot list — the evidence an optimisation
+  claim needs. Raw profiles stay local (`perf-output/` is gitignored).
 - **Every report is self-labelling:** scene, requested duration, warm-up,
-  CPU-throttle factor, method and host description, so a stored baseline is
-  never compared against an unlabelled run.
+  CPU-throttle factor, method, host description and the **WebGL backend the page
+  actually used** (`webgl` — headless Chromium falls back to SwiftShader), so a
+  stored baseline is never compared against an unlabelled run.
 - **CI-runnable:** JSON on stdout, non-zero exit on failure, `--json` to
   suppress the summary. Adding a pipeline job is a follow-up.
 - **Fully opt-in:** the harness lives under `scripts/` and is never imported by

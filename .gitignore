@@ -34,6 +34,12 @@ recordings/
 # by `npm run evaluate`, never committed.
 eval-output/
 
+# Performance measurement artifacts (AH-0MVXV0E8000937U5) — raw CDP CPU
+# profiles and per-run harness JSON are generated locally by
+# `npm run perf:measure`, never committed. The published baseline numbers live
+# in docs/PERFORMANCE.md and docs/perf/.
+perf-output/
+
 # Crash-safety journal for the `--tune` CSV edit (AH-0MVSE1A7O002PXAO):
 # written beside the balance CSV before the first edited byte and removed
 # after the restore, so a hard-killed run never shows up as a worktree change.

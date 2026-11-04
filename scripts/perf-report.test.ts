@@ -27,6 +27,7 @@ import {
   formatPerfSummary,
   mean,
   parsePerfArgs,
+  parseSceneSetup,
   percentile,
   resolvePerfSceneKey,
   summariseCounts,
@@ -237,6 +238,19 @@ describe('buildPerfReport', () => {
     expect(report.method).toBe(PERF_METHOD);
   });
 
+  it('records the WebGL backend so a software-renderer run is labelled honestly', () => {
+    const report = buildPerfReport({
+      meta: {
+        scene: 'GymPerformance',
+        webgl: { vendor: 'Google Inc. (Google)', renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device…))' },
+      },
+      result: { frameTimesMs: [16.7], durationMs: 16.7, countSamples: [] },
+    });
+
+    expect(report.webgl?.renderer).toContain('SwiftShader');
+    expect(buildPerfReport({ meta: {}, result: {} }).webgl).toBeNull();
+  });
+
   it('reports counts null when the probe collected none', () => {
     const report = buildPerfReport({
       meta,
@@ -289,6 +303,22 @@ describe('formatPerfSummary', () => {
     expect(text).toContain(`>${SUPPLY_LONG_FRAME_MS} ms 1`);
     expect(text).toContain('enemies 100/100.0');
     expect(text).toContain(PERF_METHOD);
+  });
+
+  it('prints the WebGL backend so a software renderer is visible at a glance', () => {
+    const text = formatPerfSummary({
+      scene: 'GymPerformance',
+      elapsedSeconds: 60,
+      frames: 2176,
+      frameTimeMs: { p50: 33.3, p95: 33.4, max: 66.7, mean: 27.6 },
+      fps: { effective: 36.3 },
+      longFrames: { over33Ms: 1356, over50Ms: 10, over33Percent: 62.3, over50Percent: 0.5 },
+      counts: null,
+      webgl: { renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)' },
+    } as never);
+
+    expect(text).toContain('webgl: ANGLE (Google');
+    expect(text).toContain('SwiftShader');
   });
 
   it('says counts are unavailable rather than printing zeros', () => {
@@ -383,6 +413,16 @@ describe('resolvePerfSceneKey', () => {
   });
 });
 
+describe('parseSceneSetup', () => {
+  it('returns the parsed launch-data object the director receives', () => {
+    expect(parseSceneSetup('{"demo":true,"seed":7,"startLevel":10}')).toEqual({
+      demo: true,
+      seed: 7,
+      startLevel: 10,
+    });
+  });
+});
+
 describe('parsePerfArgs', () => {
   it('applies the documented defaults', () => {
     expect(parsePerfArgs([])).toEqual({
@@ -392,6 +432,9 @@ describe('parsePerfArgs', () => {
       cpuThrottle: 1,
       out: null,
       compare: null,
+      profile: null,
+      profileIntervalUs: 1000,
+      setup: null,
       json: false,
       headed: false,
       port: undefined,
@@ -413,6 +456,12 @@ describe('parsePerfArgs', () => {
       'baseline.json',
       '--compare',
       'previous.json',
+      '--profile',
+      'run.cpuprofile',
+      '--profile-interval',
+      '500',
+      '--setup',
+      '{"demo":true,"startLevel":10}',
       '--json',
       '--headed',
       '--port',
@@ -425,6 +474,9 @@ describe('parsePerfArgs', () => {
     expect(options.cpuThrottle).toBe(4);
     expect(options.out).toBe('baseline.json');
     expect(options.compare).toBe('previous.json');
+    expect(options.profile).toBe('run.cpuprofile');
+    expect(options.profileIntervalUs).toBe(500);
+    expect(options.setup).toEqual({ demo: true, startLevel: 10 });
     expect(options.json).toBe(true);
     expect(options.headed).toBe(true);
     expect(options.port).toBe(5199);
@@ -438,6 +490,19 @@ describe('parsePerfArgs', () => {
     expect(() => parsePerfArgs(['--cpu-throttle', '-2'])).toThrow(PerfArgsError);
     expect(() => parsePerfArgs(['--port', '70000'])).toThrow(PerfArgsError);
     expect(() => parsePerfArgs(['--port', '12.5'])).toThrow(PerfArgsError);
+  });
+
+  it('rejects a --profile-interval outside the documented range', () => {
+    expect(() => parsePerfArgs(['--profile-interval', '50'])).toThrow(PerfArgsError);
+    expect(() => parsePerfArgs(['--profile-interval', '20000'])).toThrow(PerfArgsError);
+    expect(parsePerfArgs(['--profile-interval', '100']).profileIntervalUs).toBe(100);
+  });
+
+  it('rejects a --setup that is not a JSON object', () => {
+    expect(() => parsePerfArgs(['--setup', '[1,2]'])).toThrow(PerfArgsError);
+    expect(() => parsePerfArgs(['--setup', 'null'])).toThrow(PerfArgsError);
+    expect(() => parsePerfArgs(['--setup', 'not json'])).toThrow(PerfArgsError);
+    expect(() => parsePerfArgs(['--setup'])).toThrow(PerfArgsError);
   });
 
   it('parses --help without validating the rest', () => {

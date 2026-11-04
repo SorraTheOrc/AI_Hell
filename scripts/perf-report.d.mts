@@ -61,6 +61,12 @@ export interface CountsSummary {
   samples: Array<Record<string, number | null>>;
 }
 
+export interface WebglInfo {
+  vendor?: string | null;
+  renderer?: string | null;
+  version?: string | null;
+}
+
 export interface PerfReport {
   schemaVersion: number;
   scene: string;
@@ -75,6 +81,8 @@ export interface PerfReport {
   fps: { effective: number | null; phaserActualFps: number | null };
   longFrames: FrameTimeSummary['longFrames'];
   counts: CountsSummary | null;
+  /** The WebGL backend the run actually used (vendor/renderer/version). */
+  webgl: WebglInfo | null;
   activeSceneKeys: string[];
   pageErrors: string[];
   host: Record<string, unknown> | null;
@@ -102,6 +110,9 @@ export interface PerfArgs {
   cpuThrottle: number;
   out: string | null;
   compare: string | null;
+  profile: string | null;
+  profileIntervalUs: number;
+  setup: Record<string, unknown> | null;
   json: boolean;
   headed: boolean;
   port: number | undefined;
@@ -143,4 +154,7 @@ export function comparePerfReports(
 ): PerfComparison;
 export function formatPerfComparison(comparison: Partial<PerfComparison>): string;
 export function resolvePerfSceneKey(value: unknown): string;
+export function parseSceneSetup(raw: unknown): Record<string, unknown>;
 export function parsePerfArgs(argv: readonly string[]): PerfArgs;
+export const MIN_PROFILE_INTERVAL_US: number;
+export const MAX_PROFILE_INTERVAL_US: number;

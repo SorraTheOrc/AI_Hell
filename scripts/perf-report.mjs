@@ -22,6 +22,7 @@
  */
 
 import { WATCHABLE_GYM_SCENE_KEYS } from './capture-scenes.mjs';
+import { DEFAULT_PROFILE_SAMPLING_INTERVAL_US } from './perf-profile.mjs';
 
 /**
  * Schema version of the JSON report. Bump on an incompatible change so a
@@ -49,6 +50,11 @@ export const DEFAULT_PERF_WARMUP_SECONDS = 3;
 export const MAX_PERF_SECONDS = 600;
 /** Upper bound on `--cpu-throttle` (a 20x slowdown is already unplayable). */
 export const MAX_CPU_THROTTLE = 20;
+
+/** Lower bound on `--profile-interval` (µs): below 100 µs the overhead dominates. */
+export const MIN_PROFILE_INTERVAL_US = 100;
+/** Upper bound on `--profile-interval` (µs): 10 ms is coarser than any frame. */
+export const MAX_PROFILE_INTERVAL_US = 10_000;
 
 /** The shipped playable scene, always a legal `--scene` value. */
 export const DEFAULT_PERF_SCENE = 'PlayScene';
@@ -229,6 +235,7 @@ export function buildPerfReport({ meta = {}, result = {} } = {}) {
     fps: { ...times.fps, phaserActualFps: actualFps },
     longFrames: times.longFrames,
     counts: summariseCounts(result.countSamples, result.countsSource ?? null),
+    webgl: meta.webgl && typeof meta.webgl === 'object' ? { ...meta.webgl } : null,
     activeSceneKeys: Array.isArray(meta.activeSceneKeys) ? [...meta.activeSceneKeys] : [],
     pageErrors: Array.isArray(meta.pageErrors) ? [...meta.pageErrors] : [],
     host: meta.host && typeof meta.host === 'object' ? { ...meta.host } : null,
@@ -272,6 +279,9 @@ export function formatPerfSummary(report = {}) {
     lines.push('  entities: counts unavailable for this scene');
   }
 
+  if (report.webgl && typeof report.webgl.renderer === 'string') {
+    lines.push(`  webgl: ${report.webgl.renderer}`);
+  }
   lines.push(`  method: ${report.method ?? PERF_METHOD}`);
   if (Array.isArray(report.pageErrors) && report.pageErrors.length > 0) {
     lines.push(`  page errors: ${report.pageErrors.join(' | ')}`);
@@ -344,6 +354,36 @@ export function formatPerfComparison(comparison = {}) {
   return lines.join('\n');
 }
 
+/**
+ * Parses a `--setup` JSON object forwarded to the in-page capture director as
+ * a scene's launch data.
+ *
+ * This is how a *late-game* `PlayScene` run is measured: the shipped campaign
+ * starts at level 1, so `--setup '{"demo":true,"seed":1,"startLevel":10}'`
+ * launches the bot-flown demo at level 10 through the dev-gated seam
+ * (`PlayScene.init`, see `src/core/captureDirector.ts`). A non-object, an array
+ * or invalid JSON is rejected rather than silently measuring a different
+ * scene than the caller asked for.
+ *
+ * @param {unknown} raw
+ * @returns {Record<string, unknown>}
+ */
+export function parseSceneSetup(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    throw new PerfArgsError("--setup expects a JSON object, e.g. '{\"demo\":true,\"startLevel\":10}'");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new PerfArgsError(`--setup is not valid JSON: ${error.message}`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new PerfArgsError('--setup expects a JSON object, got ' + JSON.stringify(parsed));
+  }
+  return parsed;
+}
+
 /** Reads a positive number from a CLI flag, or throws {@link PerfArgsError}. */
 function positiveNumber(flag, raw, { max = Number.POSITIVE_INFINITY } = {}) {
   const value = Number(raw);
@@ -401,6 +441,9 @@ export function parsePerfArgs(argv = []) {
     cpuThrottle: 1,
     out: null,
     compare: null,
+    profile: null,
+    profileIntervalUs: DEFAULT_PROFILE_SAMPLING_INTERVAL_US,
+    setup: null,
     json: false,
     headed: false,
     port: undefined,
@@ -436,6 +479,24 @@ export function parsePerfArgs(argv = []) {
         break;
       case '--compare':
         options.compare = nextValue();
+        break;
+      case '--profile':
+        options.profile = nextValue();
+        break;
+      case '--profile-interval':
+        options.profileIntervalUs = positiveNumber('--profile-interval', nextValue(), {
+          max: MAX_PROFILE_INTERVAL_US,
+        });
+        if (options.profileIntervalUs < MIN_PROFILE_INTERVAL_US) {
+          throw new PerfArgsError(
+            `--profile-interval expects at least ${MIN_PROFILE_INTERVAL_US} µs, got "${String(
+              options.profileIntervalUs,
+            )}"`,
+          );
+        }
+        break;
+      case '--setup':
+        options.setup = parseSceneSetup(nextValue());
         break;
       case '--port': {
         const port = positiveNumber('--port', nextValue());
@@ -477,6 +538,9 @@ Options:
   --cpu-throttle <n>    Chromium CPU throttling factor, e.g. 4 for the mobile tier (default 1)
   --out <file>          Also write the JSON report to <file>
   --compare <file>      Compare against a previously written JSON report
+  --profile <file>      Capture a CDP CPU profile and write the raw .cpuprofile to <file>
+  --profile-interval <µs>  CDP CPU sampling interval in µs (default ${DEFAULT_PROFILE_SAMPLING_INTERVAL_US})
+  --setup <json>        Scene launch data (e.g. '{"demo":true,"startLevel":10}' for late-game PlayScene)
   --json                Suppress the human summary (JSON only, for CI)
   --headed              Show the browser window (default headless)
   --port <n>            Fixed Vite dev-server port (default: an ephemeral port)
