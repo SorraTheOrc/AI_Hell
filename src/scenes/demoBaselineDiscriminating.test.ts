@@ -39,8 +39,10 @@ vi.mock('../core/bundledConfig', () => {
   });
   // The mock replaces the whole module, so every consumer the graph pulls in
   // must find its exports. The weapon catalogue (src/utils/weapons.ts) parses
-  // the bundled weapon CSVs at module load (AH-0MW0Q1EYJ007RRFI), so those
-  // two `?raw` strings are supplied from the committed files.
+  // the bundled weapon CSVs at module load (AH-0MW0Q1EYJ007RRFI), and the
+  // Euclidean cadence ladders (src/utils/weaponLevels.ts) parse the bundled
+  // `weapon-levels.json` at module load (AH-0MW0Q1TQV009M8AO), so those three
+  // `?raw` strings are supplied from the committed files.
   return {
     bundledBotTuningJson: distinctive,
     bundledWeaponsCsv: fs.readFileSync(
@@ -49,6 +51,10 @@ vi.mock('../core/bundledConfig', () => {
     ),
     bundledWeaponPatternsCsv: fs.readFileSync(
       path.resolve(__dirname, '../data/weapon-patterns.csv'),
+      'utf8',
+    ),
+    bundledWeaponLevelsJson: fs.readFileSync(
+      path.resolve(__dirname, '../data/weapon-levels.json'),
       'utf8',
     ),
   };
