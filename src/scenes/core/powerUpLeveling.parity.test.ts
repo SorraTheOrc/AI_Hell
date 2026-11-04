@@ -11,7 +11,7 @@
  * - the resolved stats (`PowerUpLevelStore.stats` === the shared
  *   `resolvePowerUpAtLevel`), and
  * - the observable effect-path outputs (Shield absorptions, Bomb range,
- *   Speed multiplier, Phase Shift charges, Teleport stacks, Extra Life
+ *   Speed multiplier, Phase Shift charges, Teleport readiness, Extra Life
  *   lives, Magnet / Mineral Scoop stack caps, Smart Bomb pulse rate, Force
  *   Field reflect budget, Mystery UFO bounty).
  *

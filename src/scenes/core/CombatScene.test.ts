@@ -581,7 +581,7 @@ describe('CombatScene — shared combat core hook contract', () => {
 
   // ── Teleport ──────────────────────────────────────────────────────
 
-  it('AC3 — triggerTeleport consumes a stack and warps the player', async () => {
+  it('AC3 — triggerTeleport spends the ready warp and warps the player', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     scene.effects.applyCollect('teleport');
@@ -594,13 +594,13 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(player.x !== 100 || player.y !== 100).toBe(true);
   });
 
-  it('AC3/AC4 — triggerTeleport is blocked by canTeleport() and absent player/stack', async () => {
+  it('AC3/AC4 — triggerTeleport is blocked by canTeleport() and absent player/warp', async () => {
     const scene = await boot();
     // No player.
     expect(scene.triggerTeleport()).toBe(false);
 
     scene.addPlayer({ x: 100, y: 100 });
-    // No teleport stack.
+    // No ready Teleport warp.
     expect(scene.triggerTeleport()).toBe(false);
 
     scene.effects.applyCollect('teleport');

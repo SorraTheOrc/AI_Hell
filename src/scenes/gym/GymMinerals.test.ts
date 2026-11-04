@@ -389,7 +389,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     const beforeY = player.y;
 
     // Three parked threats within DANGER_RADIUS → the shared danger feed
-    // selects the stored Teleport and warps — no key input.
+    // spends the ready Teleport warp and warps — no key input.
     placeEnemyBulletsOnPlayer(scene, 3);
     scene.tick(0.016);
 

@@ -603,11 +603,11 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
   );
 
   it(
-    'keeps an owned Teleport row visible and greyed when its stack is spent',
+    'keeps an owned Teleport row visible and greyed while its one warp recharges',
     async () => {
       const { store, reg } = storeRegistry();
-      store.collect('teleport', true); // hold-full: owned, 1 stack
-      store.consumeTeleport(); // spent → 0 stacks, recharging
+      store.collect('teleport', true); // hold-full: owned, warp ready
+      store.consumeTeleport(); // spent → recharging, no count to bank
       const { game, hud } = await bootWithHUD(reg);
       hud.refresh();
 
@@ -652,7 +652,8 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
       expect(tele()!.label).toBe('Teleport Lvl 1 (ready)');
       expect(tele()!.stacks).toBeUndefined();
 
-      // Spending empties the pool / starts the Teleport recharge (greyed)…
+      // Spending empties the Phase Shift pool and starts the Teleport
+      // recharge, so both rows grey out…
       store.consumePhaseCharge();
       store.consumeTeleport();
       hud.refresh();

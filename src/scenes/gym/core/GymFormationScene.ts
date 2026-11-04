@@ -1204,7 +1204,7 @@ export class GymFormationScene<
 
   /**
    * Teleports are allowed when the opt-in drop layer is active, or whenever
-   * a stored Teleport use is available (the minerals gym grants Teleport through the
+   * a ready Teleport warp is available (the minerals gym grants Teleport through the
    * hold-full choice, not field drops — AH-0MUHMXWGC0058BO4 · AC2).
    */
   protected override canTeleport(): boolean {

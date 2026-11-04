@@ -438,12 +438,29 @@ No scene keeps a consumption counter or a regeneration timer of its own — the
 spends and recharges below are the **shared seams** the game and every gym
 run, so they cannot drift.
 
+**Teleport is the one single-use carve-out (parent AH-0MVY096RT006QMF4).** The
+pool model holds for the five pool-backed kinds; Teleport instead holds
+**exactly one warp** and its whole state is a readiness flag plus one
+level-derived recharge timer (60 s base → 20 s at the upgrade cap), so a
+pickup or hold-full grant **readies** the warp rather than adding a charge and
+there is no stored count or FIFO queue. The shared seam is unchanged in shape —
+`EffectsRegistry.consumeTeleport()` → `PowerUpLevelStore.consumeTeleport()`
+starts the timer, `hasTeleport()` / `isTeleportReady()` report readiness and
+`teleportRechargeRemaining()` is the countdown — and it is consumed by
+`CombatScene._updateAutoDefence` / `triggerTeleport` in the game and every
+gym, so the single-use rule cannot be re-implemented per scene. The
+automatic-defence pick is a **uniform 50/50** whenever both a Phase Shift
+charge and a ready warp are available (the retired greater-count comparison
+could starve the escape). No gym overrides the model, and the HUD row is
+projected from the same readiness flag.
+
 | Consumable spend | Shared seam (game + every gym) | Armed/empty look |
 |---|---|---|
 | Shield — one absorbed hit spends one charge | `EffectsRegistry.tryAbsorbShield()` → shared `CombatScene.tryAbsorbPlayerHit` | Shield bubble (`drawShieldBubble` in `src/scenes/core/CombatEffectVisuals.ts`): armed while the pool holds at least one charge — pickup and permanent alike — and pops on the last absorb; an empty permanent pool clears it and it returns on recharge |
 | Thorn Field — one free ram spends one charge | `EffectsRegistry.tryConsumeThornsRam()` → shared `CombatScene._handleCollisions` ram branch | Thorn aura (`drawThornsAura`): armed while `hasThornsRam()` — the pool, pickup and permanent alike — holds a charge, and pops on the last free ram; empty clears it |
 | Force Field — one reflected bullet spends one charge | `EffectsRegistry.tryConsumeForceFieldReflect()` → shared `CombatScene` reflect branch | Force bubble (`drawForceFieldBubble`): a **pickup** bubble pops on its last spend (an unowned field reads inactive at zero); an **owned** field stays up but **dimmed** while the pool is empty, bright again on recharge (Q1 = b) |
 | Mystery UFO — one drone spawn spends one charge | `EffectsRegistry.consumeMysteryUfoCharge()` → shared `CombatCoreScene._updateDroneSpawning` (registered in `EPIC_SHARED_METHODS` in `CombatScene.equivalence.test.ts`); a **field pickup** keeps its queued one-shot (`consumeMysteryUfoSpawns`) and spends no charge | the drone itself (spawned through `spawnDrone` in `src/scenes/core/combatDrone.ts`) |
+| Teleport — the single warp is spent by one escape (**single-use**) | `EffectsRegistry.consumeTeleport()` → `PowerUpLevelStore.consumeTeleport()` from the shared `CombatScene.triggerTeleport`; a pickup or grant readies it (the store's `applyCollect` single-use branch resets the readiness timer to 0) instead of adding a charge | the HUD Teleport row: the readiness state plus the `next in Ns` recharge countdown while the one warp recharges, greyed while it is spent |
 
 Gyms that exercise the consumables: `GymPowerUpsCombat` (Shield/Bomb/Phase
 Shift/Teleport/Force Field through the shared `EffectsRegistry`), `GymPowerUpLeveling`
@@ -467,7 +484,13 @@ permanent grant differ only in whether the pool refills. The three rows above
 `GymPowerUpLeveling`, `GymFodderEnemies`) were re-checked by the pickup-parity
 pin (AH-0MVVD8U6F0011UOG): no retained divergence changed — the
 `GymFodderEnemies` editors expose the **enemy** force-field axis
-(`forceFieldStartHits`), which the pickup conversion never touches.
+(`forceFieldStartHits`), which the pickup conversion never touches. The
+single-use Teleport carve-out above is pinned by the parity/equivalence
+suites (`src/scenes/core/powerUpLeveling.parity.test.ts` compares
+`hasTeleport()` readiness across `PlayScene` and the gym, and
+`src/scenes/core/CombatScene.equivalence.test.ts` asserts the shared
+`triggerTeleport` spend warps and spends identically in both scenes), so a gym
+cannot reintroduce a banked Teleport charge.
 
 Pinned by `src/scenes/core/consumableChargeParity.test.ts` (the same spend →
 empty → regenerate → re-use cycle in `PlayScene` and `GymPowerUpsCombat`, plus

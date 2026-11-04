@@ -1987,7 +1987,8 @@ export class PowerUpLevelStore {
 
   /**
    * Seconds until the held Teleport is ready again — 0 when it is ready (or
-   * not held at all). Nothing else exposes a teleport stack/FIFO count
+   * not held at all). Nothing else exposes a Teleport count or FIFO position
+   * (parent AH-0MVY096RT006QMF4): the readiness timer is the whole state.
    * (parent AC4).
    */
   teleportRechargeRemaining(): number {

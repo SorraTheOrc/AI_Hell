@@ -186,8 +186,10 @@ export interface ActiveEffect {
   /** Remaining seconds (timed types). */
   remaining?: number;
   /**
-   * Stack count (stackable types, e.g. Magnet magnet, Teleport teleport) or, for the
-   * Shield shield, the remaining absorptions before the bubble pops.
+   * Stack count (stackable types, e.g. the Magnet magnet) or, for the
+   * Shield shield, the remaining absorptions before the bubble pops. A
+   * **single-use** kind (Teleport) carries no stack count — it reports
+   * {@link recharge} instead (parent AH-0MVY096RT006QMF4).
    */
   stacks?: number;
   /**
@@ -283,8 +285,8 @@ export type DangerDecision = AutoDefenceChoice | null;
  * @param phaseCharges — available Phase Shift auto-activation charges; any
  *   value `> 0` means available.
  * @param teleportReady — `true` when the single ready Teleport is available,
- *   `false` while it recharges or is not held (there is no stored Teleport
- *   count any more — parent AH-0MVY096RT006QMF4).
+ *   `false` while it recharges or is not held (a single-use kind banks no
+ *   charge count — parent AH-0MVY096RT006QMF4).
  * @param rng — random source in `[0, 1)`; consulted only when both abilities
  *   are available. Injectable/seeded for deterministic tests.
  * @returns the ability to spend, or `null` when none is available.
@@ -918,8 +920,9 @@ export class EffectsRegistry {
 
   /**
    * Advances timers by `dt` seconds: the run-scoped recharge clock (a spent
-   * Phase Shift/Teleport charge returns to its finite pool when its timer
-   * elapses) and the timed effect/weapon windows, removing expired effects
+   * Phase Shift charge returns to its finite pool and a spent single-use
+   * Teleport warp re-readies when its timer elapses) and the timed
+   * effect/weapon windows, removing expired effects
    * and weapons. Permanent effects (granted by the hold-full choice) never
    * expire, but an active temporary field-pickup window on top of one still
    * expires and clears the store's temporary level (AC1/AC2).

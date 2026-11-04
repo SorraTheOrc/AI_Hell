@@ -449,7 +449,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     expect(gym.getPlayer()!.getActiveWeapons()).toEqual(['cannon']);
   });
 
-  it('teleport consumes a P7 stack and warps the player in both scenes', async () => {
+  it('teleport spends the single ready warp and warps the player in both scenes', async () => {
     const { play, gym } = await bootBoth();
 
     play.getEffectsRegistry().applyCollect('teleport');

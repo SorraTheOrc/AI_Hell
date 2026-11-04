@@ -41,8 +41,9 @@
  * The row list is **not** the loadout: the six-slot model
  * (`powerups/slots.ts`) counts distinct kinds a run holds, while a row is a
  * display entry — and two row classes never hold a slot (exempt entries such
- * as the Mystery UFO, and the Phase Shift charge pool that outlives a
- * temporary window). When a scene supplies `HUDOptions.getSlotState`
+ * as the Mystery UFO, and a held kind kept alive outside the loadout: a Phase
+ * Shift charge pool that outlives a temporary window, or a single-use
+ * Teleport's ready-or-recharging warp). When a scene supplies `HUDOptions.getSlotState`
  * (`resolvePlayerSlotState(player)`, wired once through
  * `scenes/core/hudWiring.ts`), the HUD:
  *
@@ -850,8 +851,9 @@ export class HUD extends Phaser.GameObjects.Container {
    * with the effective level in the label and `∞`/countdown in the value
    * (AH-0MUX802450085VZZ). Extra Life is represented by the dedicated lives counter
    * and is never a row. Preserves the pre-existing visibility rules (a
-   * permanent Bomb bomb, Phase Shift charges/permanent/active phase, a
-   * permanently owned Teleport, Magnet/Mineral Scoop timed or permanent).
+   * permanent Bomb bomb, Phase Shift charges/permanent/active phase, the
+   * single-use Teleport's ready-or-recharging warp, Magnet/Mineral Scoop timed
+   * or permanent).
    */
   private _buildPowerUpRows(): HUDEntry[] {
     const reg = this._registry;
@@ -905,8 +907,9 @@ export class HUD extends Phaser.GameObjects.Container {
    * holds a slot. Derived from the shared model, never from row knowledge:
    *
    * - exempt entries (`availableWhenSlotsFull`) → "always available";
-   * - anything else held-only by a consumable pool (a Phase Shift row kept
-   *   alive by its remaining charges after its window expired) →
+   * - anything else held-only by a consumable outside the loadout (a Phase
+   *   Shift charge pool kept alive by remaining charges after its window
+   *   expired, or a single-use Teleport's ready-or-recharging warp) →
    *   "charges only".
    */
   private _slotMarker(
@@ -1043,9 +1046,9 @@ export class HUD extends Phaser.GameObjects.Container {
       case 'force_field':
         return reg.forceFieldRemaining();
       default:
-        // Phase Shift / Mystery UFO: the pool is the whole budget. A
-        // single-use kind (Teleport) holds no pool and reads 0 here, but its
-        // stack suffix is suppressed by `_powerUpStacks` before this runs.
+        // Phase Shift / Mystery UFO: the pool is the whole budget. Teleport
+        // is **single-use**, so it banks no charges — its row reads the
+        // readiness flag and countdown instead (parent AH-0MVY096RT006QMF4).
         return reg.consumableCharges(id);
     }
   }

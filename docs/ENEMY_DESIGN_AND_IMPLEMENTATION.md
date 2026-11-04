@@ -974,9 +974,8 @@ the first three enemy gym scenes duplicated:
   `GymMinerals` has no field power-up drops, so its rewards come from the
   hold-full choice overlay. Because the choice can grant Teleport, the shared
   automatic-defence feed (`_updateAutoDefence()`) runs every tick —
-  independent of `powerUpsEnabled` — so a stored Teleport use is spent
-  automatically when the ship is in danger; `canTeleport()` accepts a stored
-  use in addition to the opt-in drop layer. The effects registry ticks (and the
+  independent of `powerUpsEnabled` — so the ready Teleport warp is spent
+  automatically when the ship is in danger; `canTeleport()` accepts a ready warp in addition to the opt-in drop layer. The effects registry ticks (and the
   HUD refreshes) every frame in all formation gyms, so a Phase Shift granted on
   teleport arrival expires normally. The overlay renders the caller's
   stored options, so the displayed label is the option applied.

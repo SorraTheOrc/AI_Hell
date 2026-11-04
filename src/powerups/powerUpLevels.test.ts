@@ -1537,7 +1537,8 @@ describe('Thorn Field recharge axis (AH-0MVJ8YKR70096C6T)', () => {
 // regenerate on a level-derived interval, and the pool's cap is a level axis.
 // Three axes are new here — the two recharge intervals and the Mystery UFO
 // charge cap — while every shipped axis (Shield duration/absorptions, Force
-// Field duration/reflects, Thorn recharge, the Phase Shift/Teleport pools)
+// Field duration/reflects, Thorn recharge, the Phase Shift pool and the
+// single-use Teleport readiness)
 // stays exactly as it is. No effect path consumes the new axes yet: this slice
 // only publishes the data.
 
