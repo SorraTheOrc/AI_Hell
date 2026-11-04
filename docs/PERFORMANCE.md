@@ -15,7 +15,10 @@ desktop host** is now measurable and has its own recorded baseline
 ([Electron baseline](#electron-baseline-software-gpu-process-rasteriser),
 AH-0MW2DB9VN006XB63). The **hardware-GPU desktop-browser** baseline is still
 outstanding — see
-[Hardware-GPU desktop baseline](#hardware-gpu-desktop-baseline-outstanding).
+[Hardware-GPU desktop baseline](#hardware-gpu-desktop-baseline-outstanding). The
+**final target verification** (AH-0MVXV6VOI006P7VG) measures the finished tree
+end to end and records the parity and determinism evidence — see
+[Final target verification](#final-target-verification-ah-0mvxv6voi006p7vg).
 
 ## The stress gym (`GymPerformance`)
 
@@ -544,6 +547,10 @@ desktop 60 FPS target is not yet falsified on a real GPU:
   canvas read-back, 1538 distinct colours, and a GPU process at ~7.5 cores),
   but that is still SwiftShader: it says nothing about a hardware driver.
 
+The verification run itself is tracked by AH-0MW2IRYJ2006PV3P (filed by
+AH-0MVXV6VOI006P7VG: this host cannot produce it, so it cannot be part of the
+final verification's own evidence here).
+
 **To fill the gap**, on a machine with a hardware GPU (and, for the Electron
 row, a display or a GPU-capable headless setup):
 
@@ -908,6 +915,145 @@ identical bullets. The formation gyms' per-frame collection is a
 `collectBullets(entity, now): TBullet[]` config seam, so they keep the
 allocating form; that is a difference in the seam's shape, not a second
 implementation of the rule.
+
+## Final target verification (AH-0MVXV6VOI006P7VG)
+
+This is the outcome check the whole epic exists for: the finished tree measured
+end to end — desktop browser, Electron and the mobile tier — with the per-child
+wins attributed, the parity suites green and determinism proven by a seeded bot
+run. It was measured on **commit `d2878b60`** (2026-11-04), the tip of the
+optimisation tree after children 1–6, the bullet-texture cache change and the
+desktop/Electron host work.
+
+```bash
+npm run perf:measure -- --scene GymPerformance --seconds 60 --warmup 3 \
+  --profile perf-output/final-browser.cpuprofile --out perf-output/final-browser.json
+npm run perf:measure -- --host electron --scene GymPerformance --seconds 60 --warmup 3 \
+  --profile perf-output/final-electron.cpuprofile --out perf-output/final-electron.json
+npm run perf:measure -- --scene GymPerformance --seconds 60 --warmup 3 --cpu-throttle 4 \
+  --profile perf-output/final-mobile.cpuprofile --out perf-output/final-mobile.json
+```
+
+All three are `GymPerformance` — exactly 100 enemies with live fire, minerals
+disabled, player auto-fire disabled — on the reference machine below. Every row
+was produced by the same harness, `method`, scene, warm-up and window as the
+recorded baseline; only the host load band differs, and it is recorded per row.
+The mobile-tier row was measured on the same **browser** host, not Electron:
+`--cpu-throttle` only slows the renderer process, so under `--host electron` it
+would not represent the mobile tier (see [The desktop host](#the-desktop-host-electron)).
+
+### Final numbers (100 enemies, 60 s)
+
+| Host | CPU throttle | Host load | p50 (ms) | p95 (ms) | max (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Desktop browser (Chromium 140.0.7339.186, SwiftShader) | 1× | 9.54 | 33.3 | 33.4 | 100.0 | 27.01 | **37.03** | 1342 (60.4 %) | 8 (0.36 %) | 337 / 207.5 |
+| Desktop Electron (45.2.2, Chromium 156.0.8078.80, software GPU process) | 1× | 12.58 | **16.7** | **16.8** | 1850.0 | 18.26 | **54.76** | 23 (0.70 %) | 20 (0.61 %) | 432 / 216.1 |
+| Mobile tier (headless Chromium, 4× throttle) | 4× | 11.96 | 33.4 | 50.1 | 150.1 | 41.30 | **24.21** | 1445 (99.4 %) | 122 (8.4 %) | 350 / 213.7 |
+
+CPU attribution over the same windows (share of the measured window, %):
+
+| Host | JS | simulation | renderer | ui | audio | gc | idle | native |
+|---|---|---|---|---|---|---|---|---|
+| Desktop browser 1× | **8.13** | 1.12 | **6.90** | 0.07 | 0.04 | 0.25 | 0.09 | **91.53** |
+| Desktop Electron 1× | 15.35 | 1.21 | 14.06 | 0.04 | 0.04 | 0.69 | 68.60 | 15.37 |
+| Mobile tier 4× | 22.23 | 3.03 | **18.87** | 0.14 | 0.17 | 0.59 | 0.26 | 76.92 |
+
+**Reproducibility against the recorded baseline.** The browser row reproduces
+the baseline band (`36.27–36.96` FPS at load 9–13) and the post-bullet-texture
+attribution almost exactly (JS 8.13 vs 8.09, renderer 6.90 vs 6.97, `native`
+91.53 vs 91.55) at the same load band, so the tree is measured, not re-labelled.
+The Electron `p50`/`p95` are identical to the recorded Electron rows
+(16.7 / 16.8); its effective FPS is higher (54.76 vs 44.2–44.7) because those
+rows were taken at load 15.3–19.6 — the per-row load band is the controlling
+variable, exactly as the [noise floor](#noise-floor) states. The mobile row is a
+single run against a single baseline run and is read directionally, not as a
+noise-floor-certified delta.
+
+### Per-child attribution, next to the final numbers
+
+| Work item | What it changed | Measured before → after (same harness/host) | Frame-time claim |
+|---|---|---|---|
+| AH-0MVXV0FFJ0066EC8 | HUD rows rebuilt only when the rendered state changes | armed `GymPowerUpsCombat` JS **9.06 % → 5.44–5.79 %**; row symbols (`texImage2D`, `save`, `preDestroy`, `updateText`, …) gone from the profile | None at the 100-enemy budget — the stress gym renders no rows |
+| AH-0MW2DAY2L004QSKF | Bullet silhouettes baked once into cached textures (Image draws) | `renderer` bucket **14.77 % → 6.97 %**, main-thread JS **16.24 % → 8.09 %**, `GraphicsWebGLRenderer` −68.5 %, `batch` −63.9 %, earcut gone | None on SwiftShader — the freed JS time moved into `native` rasterisation; that half is absorbed by a real GPU |
+| AH-0MVXV0EMF001WVQ1 | Player bullets indexed in the shared uniform-grid broad phase | bullet-vs-bullet candidates **90 000 → 699** at 300 × 300 (128.8×) | None at the budget load — the pass was microseconds with no player bullets; structural at higher bullet counts |
+| AH-0MVXV0F0Y004NENT | Per-frame transient arrays replaced by reused buffers | GC bucket **0.21 % → 0.21 %**; JS/simulation/renderer within 0.22 pp | None measurable — GC was never the limiting resource at this load; structural |
+| AH-0MW2DB9VN006XB63 | Electron desktop host + software-rasteriser baseline | browser p50 33.3 ms → **Electron p50 16.7 ms** on the same commit and rasteriser | The desktop vsync step, on the desktop host |
+| **AH-0MVXV6VOI006P7VG** (this) | Final measurement, parity and determinism evidence | **aggregate** of the two JS wins: baseline JS 14.75 % / renderer 13.69 % → **JS 8.13 % / renderer 6.90 %**; mobile 4× **19.92 → 24.21 FPS**; Electron holds **p50 16.7 / p95 16.8** | Structural wins confirmed; see the verdicts below |
+
+Two structural suspects were measured and closed as **not material** rather than
+"optimised": the collision pass (0.02 % of the window with no player bullets)
+and per-frame allocations (0.21 % GC). Both changes are kept for scaling and
+for a garbage-free hot loop, and neither claims a frame-time win.
+
+### Verdicts
+
+1. **Desktop browser — not a pass on this host, and not a verdict on the game.**
+   37.03 FPS with 91.53 % of the window in `native`: the frame time is set by
+   **SwiftShader rasterising on the renderer main thread**, which is a property
+   of this GPU-less host (see [Hardware-GPU desktop
+   baseline](#hardware-gpu-desktop-baseline-outstanding)), not of the
+   simulation, which is 1.12 % of the window. The formal desktop pass needs the
+   hardware-GPU run tracked by **AH-0MW2IRYJ2006PV3P**.
+2. **Desktop Electron — at the 60 FPS step, one tenth of a millisecond short of
+   the formal bar.** p50 16.7 ms / p95 16.8 ms is the vsync step at 100 enemies
+   with live fire, 0.70 % of frames > 33 ms (no sustained long-frame spike); the
+   effective 54.76 FPS is dragged down by 20 isolated stalls > 50 ms on a host
+   at load 12.58. `p95 ≤ 16.7 ms` is missed by 0.1 ms, so this is recorded as
+   *at the budget on a software rasteriser*, not as a formal pass. The
+   hardware-GPU Electron run (AH-0MW2IRYJ2006PV3P) is the confirmation that
+   turns it into one.
+3. **Mobile tier — target missed.** 24.21 FPS against the ≥ 30 FPS bar at a
+   fixed 4× throttle. It is a real improvement over the recorded 19.92 FPS
+   baseline (+21.5 %; the 4× `renderer` bucket fell from 33.51 % to 18.87 % of
+   the window), but it is not the target.
+   The remaining cost is draw submission (`renderer` 18.87 % of the window,
+   84.91 % of JS) on top of software rasterisation (`native` 76.92 %).
+   Escalated as **AH-0MW2IRYAH0055WCN** with the measured hotspot shares, and
+   the parent (AH-0MVWJQUN6009IS87) is left short of `in_review`.
+
+### Parity and determinism evidence
+
+- **Parity.** The optimisations landed in the shared core
+  (`src/scenes/core/`) and shared helpers, so gyms and `PlayScene` run the same
+  code. The shared-core equivalence suite
+  (`src/scenes/core/CombatScene.equivalence.test.ts`), the gym-parity docs guard
+  (`src/scenes/core/gymParityDocs.test.ts`) and the parity suites
+  (`captureBeam.parity`, `choicePool.parity`, `consumableChargeParity`,
+  `powerUpLeveling.parity`, `mineralLayer.equivalence`) all run in the full
+  project suite, which the dev-push gate enforces on every push.
+- **Determinism.** The seeded bot run is the same before and after the
+  optimisation tree — not merely stable run to run:
+
+  ```bash
+  node scripts/evaluate.mjs --seeds 3 --ticks 1800 --json --out <dir>
+  ```
+
+  Run on the pre-optimisation commit **`a17a953b`** and on the finished tree
+  **`d2878b60`**, with fixed policy `competent`, `dt = 1/60` and seeds 1–3, the
+  artefacts are **identical**: `report.json` is equal field for field and
+  `runs.jsonl` is byte-for-byte identical (5464 records, 1815–1827 per seed).
+  The per-seed outcome hashes match exactly:
+
+  | Seed | Outcome hash | Score | Enemies destroyed | Survival | Minerals | Power-ups |
+  |---|---|---|---|---|---|---|
+  | 1 | `e124cb60` | 31.3 | 5 | 30 s | 4 | 0 |
+  | 2 | `6f5f6865` | 44.3 | 6 | 30 s | 6 | 1 |
+  | 3 | `85729723` | 22.3 | 1 | 30 s | 4 | 0 |
+
+  `tick(dt)` order, RNG consumption and collision resolution are therefore
+  unchanged by the optimisation tree, which is parent AC7's requirement.
+
+### Escalation (parent AC6)
+
+Both missed targets are escalated rather than hidden, ranked by measured impact:
+
+- **AH-0MW2IRYAH0055WCN** — mobile-tier shortfall: cut the remaining Phaser
+  draw-submission cost at 4× throttle. Evidence: `renderer` 18.87 % of the
+  window (84.91 % of JS), `GraphicsWebGLRenderer` 3.78 %, `batch` 2.70 %,
+  Graphics pipeline `run` ×5 ≈ 4.1 %, `ContainerWebGLRenderer` 1.20 %.
+- **AH-0MW2IRYJ2006PV3P** — hardware-GPU desktop verification runs (browser and
+  Electron). Evidence: Electron p50 16.7 / p95 16.8 ms on a software rasteriser;
+  browser 91.53 % `native`. This host cannot produce a hardware-GPU row at all.
 
 ## Reference machine
 
