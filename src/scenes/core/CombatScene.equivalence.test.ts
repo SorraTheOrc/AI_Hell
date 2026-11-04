@@ -1126,7 +1126,7 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     expect(formationScene.getPlayer()!.y).toBeCloseTo(400, 5);
   });
 
-  it('destination selection, FIFO consumption and P6-on-arrival match the game', async () => {
+  it('destination selection and single-use consumption/P6-on-arrival match the game', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
       'teleport-play-host',
@@ -1161,13 +1161,11 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
       };
     }
 
-    // Two Teleport collects each → 3 stored uses (level-derived: +1 then +2), so
-    // FIFO consumption is observable.
+    // One Teleport collect each → one ready warp (single-use model).
     for (const registry of [
       playScene.getEffectsRegistry(),
       combatScene.getEffectsRegistry(),
     ]) {
-      registry.applyCollect('teleport');
       registry.applyCollect('teleport');
     }
 
@@ -1177,16 +1175,15 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     // Same inputs through the same shared algorithm → same landing spot.
     expect(combatScene.getPlayer()!.x).toBe(playScene.getPlayer()!.x);
     expect(combatScene.getPlayer()!.y).toBe(playScene.getPlayer()!.y);
-    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(2);
-    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(2);
+    // The single ready warp is spent → recharging, no second warp available.
+    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(0);
+    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(0);
     expect(playScene.getEffectsRegistry().isPhased).toBe(true);
     expect(combatScene.getEffectsRegistry().isPhased).toBe(true);
 
-    // The second teleport consumes the remaining stack on both.
-    expect(playScene.triggerTeleport()).toBe(true);
-    expect(combatScene.triggerTeleport()).toBe(true);
-    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(1);
-    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(1);
+    // A second teleport request finds no ready warp on either scene.
+    expect(playScene.triggerTeleport()).toBe(false);
+    expect(combatScene.triggerTeleport()).toBe(false);
   });
 
   it('danger auto-triggers Phase Shift identically in the game and both gyms (Q1/Q2/Q3)', async () => {

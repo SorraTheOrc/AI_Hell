@@ -24,10 +24,12 @@
  *   hostile bodies/bullets close within 40 px; the hold-full reward adds
  *   exactly one charge to that pool — it is never an unlimited supply
  *   (AH-0MV82I7TX0009JMT).
- * - **Teleport** — stored stacks (FIFO) in a **finite recharging pool** (cap 3,
- *   level-derived recharge time); activates automatically when the ship is in
- *   danger — one stack is spent to warp to the nearest safe spot and grant a
- *   1.5 s Phase Shift on arrival
+ * - **Teleport** — a **single-use** escape (parent AH-0MVY096RT006QMF4): no
+ *   stored-charge count and no FIFO pool, just a readiness timer (60 s at base
+ *   → 20 s at the upgrade cap); activates automatically when the ship is in
+ *   danger — the ready warp is spent to reach the nearest safe spot and grant
+ *   a 1.5 s Phase Shift on arrival. A Teleport pickup (or a hold-full grant)
+ *   resets the timer to ready
  * - **Smart Bomb** — Defender-inspired stored screen-wide pulse: a field
  *   pickup fires one screen-clearing blast (damages every enemy once and
  *   clears every enemy bullet); a hold-full reward makes the pulse repeat on
@@ -245,6 +247,18 @@ export interface PowerUpEntry {
    */
   regenRequiresOwnership?: boolean;
   /**
+   * Whether this consumable is a **single-use** ability rather than a
+   * multi-charge pool (parent AH-0MVY096RT006QMF4).
+   *
+   * **Defaults to `false`** — an absent flag means the kind keeps the shared
+   * charge-pool model. Teleport opts in: it holds no stored-charge count, its
+   * charge cap is always `1`, and its state is binary (ready / recharging on
+   * the level-derived interval). The cap is read by
+   * `resolveConsumableChargeCap`, so no store, HUD or scene needs an
+   * `id === 'teleport'` branch.
+   */
+  singleUse?: boolean;
+  /**
    * Whether this entry remains drawable/offerable once all
    * `POWER_UP_SLOT_CAP` permanent slots are occupied (parent
    * AH-0MVLIJT3M005HPHF, AC5).
@@ -325,13 +339,15 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'teleport',
     name: 'Teleport',
     description:
-      'Stores up to 3 warps that regenerate on a level-derived timer; in danger one is spent automatically to warp you to safety. Teleporting can be disorienting. A hold-full reward adds a charge, not a level.',
+      'In danger the ready warp is spent automatically; it recharges on a level-derived timer (60 s → 20 s) and a pickup readies it again. Teleporting can be disorienting.',
     // Balance tuning: defensive kind, so the temporary level uses the same
     // 15 s window as Phase Shift / Shield (AH-0MVUGI3Q4009MW6A).
     temporaryWindow: 15,
-    // Charge model: one warp per charge, regenerating on the level-derived
-    // `teleportRechargeRate` interval (15 s → 5 s) (AH-0MVTQMREN009DSFW).
+    // Charge model: a **single-use** escape (parent AH-0MVY096RT006QMF4) —
+    // no stored-charge count and no FIFO pool. Spending the one ready warp
+    // starts a level-derived `teleportRechargeRate` interval (60 s → 20 s).
     consumable: true,
+    singleUse: true,
   },
   extra_life: {
     id: 'extra_life',

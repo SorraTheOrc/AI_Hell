@@ -738,17 +738,17 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
 
 // ── AC7: Teleport FIFO stacks + safe-spot ──────────────────────────
 
-describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
+describe('GymPowerUpsCombat AC7: single-use Teleport + safe-spot', () => {
 
-  it('collecting P7 stacks FIFO', async () => {
+  it('collecting Teleport keeps one ready warp', async () => {
     const scene = await bootCombat();
     const registry = scene.getEffectsRegistry();
 
     expect(registry.hasTeleport()).toBe(false);
-    collectCombatDrop(scene, 'teleport'); // level 1 → +1
+    collectCombatDrop(scene, 'teleport'); // level 1 → one ready warp
     expect(registry.teleportStacks()).toBe(1);
-    collectCombatDrop(scene, 'teleport'); // level 2 → +2 (level-derived grant)
-    expect(registry.teleportStacks()).toBe(3);
+    collectCombatDrop(scene, 'teleport'); // level 2 → still one ready warp
+    expect(registry.teleportStacks()).toBe(1);
     expect(registry.hasTeleport()).toBe(true);
   });
 
@@ -760,7 +760,7 @@ describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
 
     const consumed = registry.consumeTeleport();
     expect(consumed).toBe(true);
-    expect(registry.teleportStacks()).toBe(2);
+    expect(registry.teleportStacks()).toBe(0);
     expect(registry.isPhased).toBe(true);
   });
 });

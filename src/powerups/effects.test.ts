@@ -1088,12 +1088,12 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
   it('latches the danger episode so Teleport is not drained continuously', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('teleport');
-    reg.applyCollect('teleport'); // level 2 → 3 stacks
+    reg.applyCollect('teleport'); // second pickup is a no-op on the single-use pool
 
     expect(reg.updateDanger(true, 0.016)).toBe('teleport');
     // Still in danger on the same episode → no second selection.
     expect(reg.updateDanger(true, 5)).toBeNull();
-    expect(reg.teleportStacks()).toBe(3);
+    expect(reg.teleportStacks()).toBe(1);
   });
 
   it('re-arms only after danger clears and the phase cooldown elapses', () => {
@@ -1114,15 +1114,15 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe('teleport');
   });
 
-  it('spends the more abundant stock when both are available', () => {
+  it('spends the more abundant Phase Shift stock (greater-count rule)', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift'); // 1 charge
-    reg.applyCollect('teleport'); // 1 stack
-    reg.applyCollect('teleport'); // level 2 → 3 stacks
-    expect(reg.phaseCharges()).toBe(1);
-    expect(reg.teleportStacks()).toBe(3);
+    reg.applyCollect('phase_shift'); // level 2 → 3 charges
+    reg.applyCollect('teleport'); // single ready warp
+    expect(reg.phaseCharges()).toBe(3);
+    expect(reg.teleportStacks()).toBe(1);
 
-    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
   });
 
   it('uses the seeded RNG for the exact-tie pick', () => {
@@ -1223,7 +1223,7 @@ describe('registry HUD recharge accessors (AH-0MV82I8IL0012RXY AC4)', () => {
     const basePhase = reg.phaseRechargeTime();
     const baseTeleport = reg.teleportRechargeTime();
     expect(basePhase).toBeCloseTo(30, 6);
-    expect(baseTeleport).toBeCloseTo(15, 6);
+    expect(baseTeleport).toBeCloseTo(60, 6);
 
     reg.applyCollect('phase_shift');
     reg.applyCollect('phase_shift');
@@ -1295,16 +1295,16 @@ describe('P6 charge display model', () => {
 // ── Teleport ──────────────────────────────────────────────────────
 
 describe('P7 Teleport: derived FIFO stacks, consume, grants P6', () => {
-  it('stacks grow by the level-resolved grant on each collect', () => {
+  it('keeps one ready warp however many times Teleport is collected (single-use)', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
     expect(reg.hasTeleport()).toBe(false);
-    reg.applyCollect('teleport'); // level 1 → +1
+    reg.applyCollect('teleport'); // level 1 → one ready warp
     expect(reg.teleportStacks()).toBe(1);
-    reg.applyCollect('teleport'); // level 2 → +2
-    expect(reg.teleportStacks()).toBe(3);
+    reg.applyCollect('teleport'); // level 2 → still one ready warp
+    expect(reg.teleportStacks()).toBe(1);
     expect(reg.hasTeleport()).toBe(true);
-    expect(store.teleportStacks()).toBe(3);
+    expect(store.teleportStacks()).toBe(1);
   });
 
   it('consumeTeleport removes one stack and grants P6', () => {
@@ -1325,7 +1325,7 @@ describe('P7 Teleport: derived FIFO stacks, consume, grants P6', () => {
     reg.applyCollect('teleport');
     const t = reg.activeEffects().find((e) => e.id === 'teleport');
     expect(t).toBeDefined();
-    expect(t!.stacks).toBe(3);
+    expect(t!.stacks).toBe(1);
   });
 });
 

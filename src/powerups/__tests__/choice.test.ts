@@ -1049,7 +1049,7 @@ describe('power-up choice strategy', () => {
       shield: 45,
       thorns: 12,
       phase_shift: 30,
-      teleport: 15,
+      teleport: 60,
       force_field: 45,
       mystery_ufo: 30,
     };
