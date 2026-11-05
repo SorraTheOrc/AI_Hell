@@ -195,6 +195,25 @@ export const MAGNET_RADIUS_PER_STACK = 0.5;
 /** Speed (px/s) at which the magnet pulls on-screen drops toward the ship. */
 export const MAGNET_ATTRACTION_SPEED = 120;
 
+// ── Blocked-drop discard (parent AH-0MW0UAQ23005AC9L) ─────────────
+// A drop the six-slot collection gate refuses sticks to the ship, is then
+// thrown away and disappears at the screen edge. The stepper lives once in
+// `src/scenes/core/blockedDropDiscard.ts`, so the game and every gym that
+// spawns drops share the same window and throw speed.
+
+/**
+ * Seconds a blocked drop sticks to the ship before it is thrown away.
+ * Measured as accumulated frame `dt` from the first frame the blocked drop
+ * overlaps the ship (producer Q1a).
+ */
+export const BLOCKED_DROP_STICK_SECONDS = 1.5;
+
+/**
+ * Speed (px/s) at which a discarded blocked drop travels away from the ship.
+ * Producer-approved default from the parent's risk assumptions.
+ */
+export const BLOCKED_DROP_THROW_SPEED = 400;
+
 // ── Smart Bomb (Defender homage, AH-0MV1BIWP9003EHRQ; re-balanced in AH-0MV8GPGBL009M0D8) ─
 
 /**
