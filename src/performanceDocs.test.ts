@@ -81,6 +81,44 @@ function rowStartingWith(doc: string, prefix: string): string | undefined {
 }
 
 /**
+ * The cells of one markdown table line, trimmed, with the leading and trailing
+ * empty splits removed.
+ */
+function tableCells(line: string): string[] {
+  return line
+    .split('|')
+    .slice(1, -1)
+    .map((cell) => cell.trim());
+}
+
+/**
+ * The numeric value of `rowPrefix` in the column named `column`, read from the
+ * table that follows the table header starting with `headerPrefix`.
+ *
+ * Used where a guard must check a *measured* number against a *published* bar
+ * (AH-0MW3KP1R90030QY9 AC3): the number is read from the document rather than
+ * re-derived, so a re-run that publishes a row below the bar fails the guard.
+ */
+function numericCell(
+  section: string,
+  headerPrefix: string,
+  column: string,
+  rowPrefix: string,
+): number {
+  const lines = section.split('\n');
+  const header = lines.find((line) => line.startsWith(headerPrefix));
+  expect(header, `table header ${headerPrefix} is missing`).toBeDefined();
+  const columnIndex = tableCells(header as string).indexOf(column);
+  expect(columnIndex, `table has no "${column}" column`).toBeGreaterThanOrEqual(0);
+  const row = lines.find((line) => line.startsWith(rowPrefix));
+  expect(row, `table row ${rowPrefix} is missing`).toBeDefined();
+  const cell = tableCells(row as string)[columnIndex];
+  const value = Number.parseFloat(cell.replace(/[*`\s]/g, ''));
+  expect(Number.isFinite(value), `row ${rowPrefix} has no numeric "${column}" (${cell})`).toBe(true);
+  return value;
+}
+
+/**
  * The provenance statement every measurement section must carry (AC2: "every
  * recorded number carries its commit hash, platform, throttle factor and
  * date"). Each entry names the facts that must appear in that section's
@@ -107,6 +145,10 @@ const RECORDED_SECTIONS: ReadonlyArray<RecordedSection> = [
   {
     heading: '### CPU-throttle sensitivity and the mobile tier',
     facts: [COMMIT, DATE, { label: 'the platform', pattern: /Chromium/ }, { label: 'the throttle factors', pattern: /4×/ }],
+  },
+  {
+    heading: '### Hardware-WebGL mobile tier (4× CPU throttle)',
+    facts: [COMMIT, DATE, { label: 'the platform', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /4×/ }],
   },
   {
     heading: '### Electron baseline (software GPU-process rasteriser)',
@@ -315,6 +357,34 @@ describe('docs/PERFORMANCE.md — recorded numbers', () => {
         expect(recorded, `${section.heading} does not record ${fact.label}`).toMatch(fact.pattern);
       }
     }
+  });
+
+  it('publishes the hardware-WebGL mobile tier and states the AC5 verdict', () => {
+    const doc = perfDoc();
+    const mobile = sectionBody(doc, '### Hardware-WebGL mobile tier (4× CPU throttle)');
+
+    // AC1: a 4×-throttled GymPerformance run on the real GPU, named not inferred.
+    expect(mobile).toContain('webgl.kind: "hardware"');
+    expect(mobile).toContain('ANGLE (NVIDIA, Vulkan 1.4.329');
+    expect(mobile).toContain('NVIDIA GeForce RTX 3050 Ti');
+    expect(mobile).toMatch(/--cpu-throttle 4/);
+    expect(mobile).toMatch(/--seconds 60 --warmup 3/);
+    expect(mobile).toContain('GymPerformance');
+
+    // AC1: the in-band row's published Effective FPS clears the ≥ 30 FPS bar.
+    expect(
+      numericCell(mobile, '| Run |', 'Effective FPS', '| 1 (profiled, in band)'),
+    ).toBeGreaterThanOrEqual(30);
+
+    // AC2: the software-GL rows are retained as the host floor, not replaced.
+    const software = sectionBody(doc, '### CPU-throttle sensitivity and the mobile tier');
+    const floor = rowStartingWith(software, '| 4× (mobile tier)');
+    expect(floor, 'the software-WebGL 4× mobile row was removed').toBeDefined();
+    expect(floor).toContain('19.92');
+
+    // AC3: the verdict is stated where a reader looks for it, and named.
+    expect(mobile).toMatch(/Mobile-tier verdict: met/);
+    expect(sectionBody(doc, '### Verdicts')).toContain('AH-0MW3KP1R90030QY9');
   });
 
   it('publishes the hardware-GPU desktop runs for both hosts', () => {

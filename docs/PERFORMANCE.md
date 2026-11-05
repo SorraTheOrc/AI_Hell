@@ -16,7 +16,10 @@ desktop host** is now measurable and has its own recorded baseline
 AH-0MW2DB9VN006XB63). The **hardware-GPU desktop** baseline — desktop browser
 and Electron, both on the reference host's RTX 3050 Ti — is recorded in
 [Hardware-GPU desktop baseline](#hardware-gpu-desktop-baseline)
-(AH-0MW2IRYJ2006PV3P). The
+(AH-0MW2IRYJ2006PV3P). The **mobile tier** re-measured on the same hardware
+WebGL backend, still under the 4× CPU throttle, is recorded in
+[Hardware-WebGL mobile tier](#hardware-webgl-mobile-tier-4-cpu-throttle)
+(AH-0MW3KP1R90030QY9). The
 **final target verification** (AH-0MVXV6VOI006P7VG) measures the finished tree
 end to end and records the parity and determinism evidence — see
 [Final target verification](#final-target-verification-ah-0mvxv6voi006p7vg).
@@ -170,9 +173,11 @@ mobile-tier throttle — see [Baseline (100 enemies, 60 s)](#baseline-100-enemie
 Those are the reproducible floor of the **headless-shell browser path** on this
 host, not a verdict on hardware: the Electron desktop host holds the 60 FPS
 step on the same software rasteriser
-([Electron baseline](#electron-baseline-software-gpu-process-rasteriser)), and
-the hardware-GPU pair now holds it with a wide margin
-([Hardware-GPU desktop baseline](#hardware-gpu-desktop-baseline)).
+([Electron baseline](#electron-baseline-software-gpu-process-rasteriser)), the
+hardware-GPU pair now holds it with a wide margin
+([Hardware-GPU desktop baseline](#hardware-gpu-desktop-baseline)), and the
+mobile tier clears its ≥ 30 FPS bar on the same hardware backend at the 4×
+throttle ([Hardware-WebGL mobile tier](#hardware-webgl-mobile-tier-4-cpu-throttle)).
 
 ## Measuring a run
 
@@ -392,6 +397,114 @@ target.** A 4× slowdown of the JS path would take 36.96 FPS down to ~9 FPS; it
 lands at 19.9 FPS, so the throttled JS is not what sets the frame time (see the
 verdict below). The three rows ran at comparable host load, but the 2× and 4×
 rows are single runs — re-measure before claiming a mobile improvement.
+
+Those rows are the **software-WebGL floor**: on SwiftShader the rasteriser, not
+the throttled JS, sets the frame time, so they describe this host without a
+usable GPU rather than the mobile tier's shape (real GPU, slow CPU). The same
+tier re-measured on the host's **hardware GPU** is the next section — it keeps
+these rows as the floor and clears the bar.
+
+### Hardware-WebGL mobile tier (4× CPU throttle)
+
+**`Recorded:`** commit `ca6be545` (game code; this documentation change
+touches no game code) · 2026-11-05 · desktop browser (headless Chromium
+140.0.7339.186) on the **NVIDIA RTX 3050 Ti through ANGLE-Vulkan** · CPU
+throttle 4× · AH-0MW3KP1R90030QY9.
+
+The mobile tier is the same harness under a 4× CPU slowdown. Every mobile row
+recorded before this section was taken on the **software** WebGL backend,
+because the host had no usable GPU; the recorded verdict was *"mobile tier
+target missed"* with the residual attributed to software rasterisation, not to
+draw submission or simulation. Now that the host reaches its GPU
+(AH-0MW2L3JXU008I2Z8, AH-0MW2IRYJ2006PV3P), the tier can be measured the way a
+phone actually behaves: a **real GPU with a 4×-slowed CPU**. Four runs of
+`GymPerformance` (exactly 100 late-game enemies with live fire),
+`--seconds 60 --warmup 3`, with `--gpu --require-hardware-webgl` so a software
+fallback refuses the run (exit 1) instead of being published (run 1 additionally
+carries `--profile`):
+
+```bash
+npm run perf:measure -- --gpu --require-hardware-webgl --scene GymPerformance \
+  --seconds 60 --warmup 3 --cpu-throttle 4 \
+  --profile perf-output/mobile-gpu.cpuprofile --out perf-output/mobile-gpu.json
+```
+
+**Backend, exactly as recorded in the reports.** All four reports carry
+`webgl.kind: "hardware"` and `runtime: { kind: "browser", chromeVersion:
+"140.0.7339.186" }`, and all four name the same renderer as the
+[hardware-GPU desktop rows](#hardware-gpu-desktop-baseline):
+
+```
+ANGLE (NVIDIA, Vulkan 1.4.329 (NVIDIA NVIDIA GeForce RTX 3050 Ti Laptop GPU (0x000025A0)), NVIDIA)
+```
+
+Host block (`host` in every report) is the [reference machine](#reference-machine)
+(AMD Ryzen 7 4800H, 16 logical CPUs, 30 223 MB, Linux 7.0.0-38-generic, Node
+v22.22.1). Rows are ordered by host load, and only run 1 ended inside the
+documented 9–13 baseline band: the box was carrying other sessions' test
+suites (and, during run 2, an unthrottled Chromium) throughout, so runs 2–4 are
+labelled out of band rather than blended in — they are recorded as the
+tier's **load sensitivity**, which is what they are.
+
+| Run | Host load | p50 (ms) | p95 (ms) | max (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 (profiled, in band) | 9.25 | **16.7** | **16.8** | 99.9 | 16.83 | **59.44** | 26 (0.73 %) | 3 (0.08 %) | 479 / 213.8 |
+| 2 (out of band) | 16.43 | **16.7** | 33.3 | 233.3 | 18.60 | **53.77** | 246 (7.63 %) | 32 (0.99 %) | 317 / 200.2 |
+| 3 (out of band) | 17.29 | **16.7** | 33.4 | 133.3 | 19.78 | **50.57** | 476 (15.69 %) | 23 (0.76 %) | 320 / 217.5 |
+| 4 (out of band) | 23.20 | **16.7** | 49.9 | 183.4 | 21.34 | **46.85** | 550 (19.57 %) | 71 (2.53 %) | 328 / 207.5 |
+
+Counts (`counts` in the reports): enemies are exactly **100** in peak *and*
+mean in all four runs, so the load is fixed and the frame times are comparable
+run to run; player bullets are 0 by design (the gym disables the player's
+auto-fire); enemy bullets peak 317–479 and mean 200–218; live minerals stay
+effectively empty (peak 2–7), as the stress gym intends.
+
+CPU attribution over the profiled window (share of the measured window, %):
+
+| Run | JS | simulation | renderer | ui | audio | gc | idle | native | other |
+|---|---|---|---|---|---|---|---|---|
+| 1 (in band, load 9.25) | 50.96 | 9.10 | 40.90 | 0.54 | 0.37 | 0.68 | 32.01 | 16.35 | 0.04 |
+
+**Mobile-tier verdict: met.** Read the numbers this way:
+
+- **The bar is cleared with room, at the mobile tier's throttle.** Run 1 — the
+  one taken inside the documented load band — reports **59.44 FPS** against the
+  ≥ 30 FPS bar, with p50 16.7 ms, p95 16.8 ms and 26 long frames in 3 566
+  (0.73 %). p50 is the 60 Hz vsync step, exactly as the hardware desktop rows
+  are: at this load the 4×-throttled CPU finishes the frame inside the vsync
+  window (32.01 % of the window is idle) and the GPU draws it.
+- **The pass is not a single lucky window.** Runs 2–4 ran at load 16.43, 17.29
+  and 23.20 — busier than the documented 9–13 band, and busier than the desktop
+  software baseline band — and still hold **53.77**, **50.57** and **46.85
+  FPS**, 79 %, 69 % and 56 % above the bar. The tail moves with the host (p95
+  33.3 → 49.9 ms) but p50 stays pinned at the 16.7 ms vsync step in all four
+  runs, which is the same load-sensitivity pattern the
+  [noise floor](#noise-floor) describes.
+  never approaches the ≥ 30 FPS floor (33.3 ms p95), which is the same
+  load-sensitivity pattern the [noise floor](#noise-floor) describes.
+- **The mobile shortfall was the software rasteriser, as attributed.**
+  `native` — the CPU rasterisation bucket that dominated the software rows —
+  falls from **76.92 %** of the 4× window to **16.35 %**, and the frame time
+  falls from 41.30 ms to 16.83 ms mean. Nothing in the shipped code changed to
+  produce that: the same draw submission now lands on the GPU.
+- **Per-frame JS is unchanged, so the backend explains the whole delta.** The
+  software 4× row spends 22.23 % of a 41.30 ms frame in JS (≈ 9.2 ms); this run
+  spends 50.96 % of a 16.83 ms frame (≈ 8.6 ms). The throttle stretches the JS
+  bucket's *share* of a shorter window, not the work per frame — compare frame
+  times across backends, not bucket percentages (see
+  [Measurement method](#measurement-method)).
+- **Draw submission is still the top JS cost, and it no longer decides the
+  frame.** `ContainerWebGLRenderer` 4.87 %, `GraphicsWebGLRenderer` 4.29 %,
+  `renderWebGLStep` 3.43 %, `batch` 1.99 %, `ImageWebGLRenderer` 1.57 % of the
+  window — the same order the software rows produced. That is why the baked
+  body-texture work ([Baked enemy body
+  textures](#baked-enemy-body-textures-ah-0mw2iryah0055wcn)) still counts at the
+  1× budget; it is simply no longer the limiting resource at 4× on a real GPU.
+- **This is a proxy, not a phone.** A 4×-throttled desktop Chromium on a laptop
+  GPU is a defensible proxy for "real GPU, slow CPU", not a measurement of any
+  specific handset. The bar, the throttle factor and the [reference
+  machine](#reference-machine) are unchanged; what changed is the backend the
+  frame is drawn on.
 
 ### Electron baseline (software GPU-process rasteriser)
 
@@ -1420,6 +1533,13 @@ for a garbage-free hot loop, and neither claims a frame-time win.
    draw-submission surface is ≈ 6.5 pp of the window and the frame time is set
    by software rasterisation on this host — see [Baked enemy body
    textures](#baked-enemy-body-textures-ah-0mw2iryah0055wcn).
+   **Follow-up result (AH-0MW3KP1R90030QY9):** the same 4× tier re-measured on
+   the host's **hardware GPU** holds **59.44 FPS** inside the documented load
+   band (46.85–53.77 FPS at load 16–23), so the mobile target is **met under
+   the hardware proxy** — the 24 FPS rows were this host's software
+   rasteriser, exactly as the attribution said. See [Hardware-WebGL mobile
+   tier](#hardware-webgl-mobile-tier-4-cpu-throttle), which states the verdict
+   for parent AC5.
 
 ### Parity and determinism evidence
 
@@ -1463,9 +1583,14 @@ Both missed targets are escalated rather than hidden, ranked by measured impact:
   Graphics pipeline `run` ×5 ≈ 4.1 %, `ContainerWebGLRenderer` 1.20 %.
   **Outcome:** the draw-submission half was removed (enemy bodies baked to
   cached textures; Graphics-pipeline JS − 70–76 %, renderer bucket − 36 %),
-  and the mobile tier is still 24.3–24.6 FPS. The residual gap is
-  rasterisation, not draw submission — see [Baked enemy body
+  and the mobile tier is still 24.3–24.6 FPS on the software backend. The
+  residual gap is rasterisation, not draw submission — see [Baked enemy body
   textures](#baked-enemy-body-textures-ah-0mw2iryah0055wcn).
+  **Resolution (AH-0MW3KP1R90030QY9):** re-measured on the host's hardware GPU
+  at the same 4× throttle, the tier holds 46.85–59.44 FPS against the ≥ 30 FPS
+  bar, so the residual was the software rasteriser and no further
+  draw-submission work is justified by this evidence — see [Hardware-WebGL
+  mobile tier](#hardware-webgl-mobile-tier-4-cpu-throttle).
 - **AH-0MW2IRYJ2006PV3P** — hardware-GPU desktop verification runs (browser and
   Electron). Evidence: Electron p50 16.7 / p95 16.8 ms on a software rasteriser;
   browser 91.53 % `native`. This host cannot produce a hardware-GPU row at all.
