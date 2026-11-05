@@ -24,8 +24,10 @@
  *   Magnet stacks at all: while sticking the drop tracks the ship's position
  *   every frame, so the behaviour does not depend on the Magnet power-up.
  * - **Q3a** — a drop that becomes collectable during the window is collected
- *   normally and the throw is cancelled; the collection path clears the state
- *   through {@link cancelBlockedDiscard}.
+ *   normally and the throw is cancelled, preserving the existing "stays
+ *   collectable if a slot frees" rule: the drop never both comes home and gets
+ *   thrown. The collection path clears the state through
+ *   {@link cancelBlockedDiscard}.
  *
  * The thrown drop is cosmetic: it applies no effect to enemies or the player,
  * and it is no longer collectable once launched.

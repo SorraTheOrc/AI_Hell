@@ -537,6 +537,32 @@ the scene cannot bake) and `src/utils/enemyBodyTextures.test.ts` (the cache key
 is a pure function of the drawn commands, the texture sizing and the
 cannot-bake/cache-bound guards).
 
+## Blocked-drop stick and discard is shared core (parent AH-0MW0UAQ23005AC9L)
+
+A drop that the six-slot collection gate refuses is **not** a per-gym
+behaviour and **not a divergence**: it sticks to the ship for
+`BLOCKED_DROP_STICK_SECONDS` (1.5 s), is then thrown in a random direction at
+`BLOCKED_DROP_THROW_SPEED` (400 px/s) and is destroyed when it reaches a
+screen edge, while a slot freeing inside the window collects it normally and
+cancels the throw (producer Q3a). The stick is explicit and never depends on
+the Magnet power-up (producer Q2a), and the thrown drop is cosmetic — it
+applies no effect and is no longer collectable once launched.
+
+The rule lives **once**, in the pure stepper
+`src/scenes/core/blockedDropDiscard.ts` (with both constants in
+`src/core/constants.ts`), and is advanced from the shared
+`CombatCoreScene._advanceDropLifecycles` template method. All eight drop
+consumers (`PlayScene`, `GymFormationScene` and its subclasses,
+`GymPowerUpsUtility`, `GymPowerUpsCombat`, `GymLevel`, `GymWeapons`,
+`GymWeaponLeveling`, `GymPowerUpLeveling`) inherit it through that shared
+step, so no row above records a divergence for it. See
+[`docs/Game Design Document.md`](./Game%20Design%20Document.md) §4.4 and the
+shared drop layer paragraph in [`README.md`](../README.md).
+
+Pinned by `src/scenes/core/blockedDropDiscard.test.ts` (the pure stepper) and
+`src/scenes/core/blockedDropDiscard.parity.test.ts` (every consumer boots the
+real scene and observes the same stick → throw → edge retirement).
+
 ## Maintenance contract
 
 - A row's **verdict** must be exactly one of `parity`,

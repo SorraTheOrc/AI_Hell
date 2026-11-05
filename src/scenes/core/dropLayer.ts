@@ -279,9 +279,14 @@ export interface CollectOverlapOptions<T extends DropLifecycleDrop> {
  * A refused drop is snapped onto the ship here and follows it until the shared
  * stepper in `./blockedDropDiscard` throws it away; if a slot frees during the
  * window the drop is collected normally and the throw is **cancelled**
- * (producer Q3a), so it never both comes home and gets thrown. A drop that has
- * already been thrown is exempt from the collection gate — it is being
- * discarded, not picked up.
+ * (producer Q3a), so it never both comes home and gets thrown. The stick is
+ * **explicit**, not a Magnet side effect (producer Q2a): this seam snaps the
+ * drop onto the ship itself, so the window behaves identically whether or not
+ * the player owns Magnet. The thrown drop is **cosmetic** — once launched it
+ * applies no effect and is no longer collectable, so it is exempt from the
+ * collection gate; it is being discarded, not picked up.
+ *
+ * Parent: AH-0MW0UAQ23005AC9L.
  */
 export function collectOverlappingDrops<T extends DropLifecycleDrop>(
   drops: T[],

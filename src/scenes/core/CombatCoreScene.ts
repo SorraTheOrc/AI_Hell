@@ -1589,7 +1589,13 @@ export class CombatCoreScene<
    * The **blocked stick-then-throw** step runs here first (parent
    * AH-0MW0UAQ23005AC9L): a drop refused by the six-slot gate sticks to the
    * ship for the 1.5 s blocked window and is then thrown away, and a thrown
-   * drop is retired at the screen edge. Hanging it on this shared
+   * drop is retired at the screen edge. The stick is **explicit** here, never
+   * a Magnet side effect (producer Q2a): this step consults no Magnet stacks,
+   * so a blocked drop sticks and is thrown identically without the power-up.
+   * The thrown drop is **cosmetic** — it applies no effect and is no longer
+   * collectable; a slot freeing inside the window is collected normally by
+   * the collection seam and the throw is cancelled there (producer Q3a).
+   * Hanging the step on this shared
    * template method — not on any scene — is what gives `PlayScene` and every
    * drop-spawning gym the behaviour with no per-scene code (gym↔game parity,
    * AH-0MUGZDTFX004RBD1). The seeded `sceneRng` picks the throw direction, so a
