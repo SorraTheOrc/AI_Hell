@@ -189,6 +189,25 @@ export enum DiverState {
   PAUSING = 'pausing',
 }
 
+/**
+ * Diver (GDD §4.1 E2): breaks formation and dives along a quadratic-bezier
+ * parabolic arc toward the player's position snapshotted at dive start, then
+ * pauses at the attack end and re-anchors the Diver group.
+ *
+ * Dive timing is **fixed-speed and distance-proportional**
+ * (AH-0MW0TY1AY003TDFC): at dive start `_startDive` measures the bezier
+ * **arc length** (`computeDiveArcLength`, 32 numerically sampled chords —
+ * counted rather than the straight start→target distance so the apex
+ * excursion is not undercounted) and sets
+ * `_diveDuration = max(pathLength / diveSpeed, MIN_DIVE_DURATION)`
+ * (`diveDurationForPath`). `diveSpeed` is data-driven (the CSV `diveSpeed`
+ * column, **320 px/s** code default), so the arc is traversed at a constant
+ * along-path speed: a close dive completes faster than a full-height one
+ * instead of creeping. The `MIN_DIVE_DURATION` floor (0.15 s) keeps a dive
+ * started on top of the player from teleporting in a single frame. The arc
+ * shape and the FORMATION → DIVING → PAUSING → FORMATION lifecycle are
+ * unchanged.
+ */
 export class Diver extends BaseEnemy {
   // ── Diver-specific fields ────────────────────────────────────────
 
