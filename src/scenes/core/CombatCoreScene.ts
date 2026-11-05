@@ -133,6 +133,10 @@ import {
   type SlotGatedDropSpawner,
 } from './dropLayer';
 import {
+  stepBlockedDiscards,
+  type BlockedDiscardState,
+} from './blockedDropDiscard';
+import {
   resolvePlayerSlotState,
   isWithinSlotPool,
   type PowerUpSlotState,
@@ -259,6 +263,13 @@ export interface CombatDrop {
    * the drop stays collectable and is picked up normally if a slot frees.
    */
   blockedCuePlayed?: boolean;
+  /**
+   * Blocked stick-then-throw state (parent AH-0MW0UAQ23005AC9L): set from the
+   * first frame the six-slot gate refuses the drop, advanced by the shared
+   * `_advanceDropLifecycles` step, and cleared on collection. Undefined for a
+   * drop that was never blocked.
+   */
+  blockedDiscard?: BlockedDiscardState;
 }
 
 /**
@@ -1555,13 +1566,24 @@ export class CombatCoreScene<
    * Advances every drop's grow → hold → shrink → despawn lifecycle by `dt`
    * (shared implementation), destroying despawned Graphics. `onDespawn`
    * lets a scene play a despawn cue. Returns the kept drops.
+   *
+   * The **blocked stick-then-throw** step runs here first (parent
+   * AH-0MW0UAQ23005AC9L): a drop refused by the six-slot gate sticks to the
+   * ship for the 1.5 s blocked window and is then thrown away, and a thrown
+   * drop is retired at the screen edge. Hanging it on this shared
+   * template method — not on any scene — is what gives `PlayScene` and every
+   * drop-spawning gym the behaviour with no per-scene code (gym↔game parity,
+   * AH-0MUGZDTFX004RBD1). The seeded `sceneRng` picks the throw direction, so a
+   * seeded run reproduces it.
    */
   protected _advanceDropLifecycles(
     drops: TDrop[],
     dt: number,
     onDespawn?: (drop: TDrop) => void,
   ): TDrop[] {
-    return advanceDropLifecycles(drops, dt, onDespawn);
+    const player = this.getPlayer();
+    const kept = stepBlockedDiscards(drops, player, dt, this.sceneRng);
+    return advanceDropLifecycles(kept, dt, onDespawn);
   }
 
   /**
@@ -1612,6 +1634,8 @@ export class CombatCoreScene<
    * drop within range, using the scene's effective magnet stacks
    * (permanent stacking or timed field-pickup). The hybrid accessor
    * consumes the effective count so both paths drive the same radius curve.
+   * A thrown-away blocked drop is exempt (the shared helper filters it), so the
+   * throw is never curbed back toward the ship (parent AH-0MW0UAQ23005AC9L).
    */
   protected _applyDropMagnet(drops: TDrop[], dt: number): void {
     applyDropMagnet(
@@ -1642,9 +1666,9 @@ export class CombatCoreScene<
 
   /**
    * The complete shared per-frame drop sequence: apply the Magnet magnet,
-   * advance the lifecycle, collect overlaps, then advance the absorb
-   * animations. Scenes that interleave a spawn source call the individual
-   * shared steps instead.
+   * advance the lifecycle (with the blocked stick-then-throw step), collect
+   * overlaps, then advance the absorb animations. Scenes that interleave a
+   * spawn source call the individual shared steps instead.
    */
   protected _updateDropLayer(
     drops: TDrop[],
@@ -1991,6 +2015,11 @@ export class CombatCoreScene<
    *
    * Scenes that own additional per-run state override this and call
    * `super.resetRunState()` first. Called at the top of `create()`.
+   *
+   * Drop-side state: every scene that owns drops empties its drop list in its
+   * own override (e.g. `PlayScene.drops = []`), and the blocked stick-then-throw
+   * state lives on those drop objects (parent AH-0MW0UAQ23005AC9L) — so a
+   * restarted run never inherits a half-stuck or half-thrown drop.
    */
   protected resetRunState(): void {
     // Re-anchor the shared beat clock at t=0 for the new run

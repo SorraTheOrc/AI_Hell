@@ -71,6 +71,7 @@ import {
   type GameRules,
 } from '../core/rules';
 import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
+import type { BlockedDiscardState } from './core/blockedDropDiscard';
 import type { MineralChoiceScene } from './MineralChoiceScene';
 import {
   applySceneSetup,
@@ -614,6 +615,12 @@ interface PlayDrop {
    * the overlap gate must not re-collect it (AC5, AH-0MUBYXR280018HST).
    */
   absorbing?: boolean;
+  /**
+   * Blocked stick-then-throw state (parent AH-0MW0UAQ23005AC9L), owned by the
+   * shared `blockedDropDiscard` stepper: present from the first frame the
+   * six-slot gate refuses the drop until it is collected or thrown away.
+   */
+  blockedDiscard?: BlockedDiscardState;
 }
 
 /**

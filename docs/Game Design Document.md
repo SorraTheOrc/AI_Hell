@@ -1314,6 +1314,20 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   replaces the pickup pop, so the player can tell why the pickup failed. The
   gate is the shared `canCollect` predicate of `collectOverlappingDrops`,
   supplied by `CombatCoreScene`, so the game and the gyms refuse identically.
+- **A blocked drop sticks, then is thrown away (parent AH-0MW0UAQ23005AC9L).**
+  On the first frame the refused drop overlaps the ship it **sticks to the
+  ship** for `BLOCKED_DROP_STICK_SECONDS = 1.5` s — explicitly, whether or not
+  the player owns Magnet — and then **launches in a random direction** at
+  `BLOCKED_DROP_THROW_SPEED = 400` px/s in a straight line, destroyed when it
+  reaches a screen edge. A full loadout therefore never accumulates an
+  uncollectable icon trailing the ship. A launched drop is no longer
+  collectable and is exempt from the Magnet pull and from the grow → hold →
+  shrink lifecycle; if a slot frees inside the 1.5 s window the drop is
+  collected normally and the throw is **cancelled** (producer Q3a). The stepper
+  is the pure module
+  [`src/scenes/core/blockedDropDiscard.ts`](../src/scenes/core/blockedDropDiscard.ts),
+  advanced from the shared `advanceDropLifecycles` / `_advanceDropLifecycles`
+  step, so `PlayScene` and every drop-spawning gym behave identically.
 - **The permanent cannon and `reset` never count.** The cannon can never hold a
   timed level and the `reset` weapon utility cannot be permanently granted, so
   neither can occupy a slot; `reset` is also never gated by the cap. A weapon

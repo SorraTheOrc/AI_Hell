@@ -7,6 +7,9 @@ import {
   type UfoCueRecorder,
 } from '../../test/collectorDroneFixtures';
 import {
+  BLOCKED_DROP_THROW_SPEED,
+  GAME_HEIGHT,
+  GAME_WIDTH,
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_RESPAWN_INVULNERABLE,
@@ -28,6 +31,7 @@ import {
 } from './CombatCoreScene';
 import * as muzzleFlashModule from '../../vfx/muzzleFlash';
 import * as hitscanBeamModule from '../../vfx/hitscanBeam';
+import { isDiscarding, startBlockedStick, type BlockedDiscardState } from './blockedDropDiscard';
 import { BULLET_COLORS, WEAPON_CATALOGUE } from '../../utils/weapons';
 import { expectRangedClear } from '../../test/powerUpEffectFixtures';
 
@@ -55,6 +59,7 @@ class StubDrop implements CombatDrop {
   readonly dropId: 'speed_boost' | 'bomb';
   weaponDropId?: string;
   absorbing?: boolean;
+  blockedDiscard?: BlockedDiscardState;
 
   constructor(
     public x: number,
@@ -219,6 +224,14 @@ class StubCoreScene extends BareCoreScene {
   }
   getCollectAnimations() {
     return this.collectAnimations;
+  }
+  /** Drives the shared per-frame blocked stick-then-throw step (AH-0MW0UAQ23005AC9L). */
+  runAdvanceDropLifecycles(drops: CombatDrop[], dt: number): CombatDrop[] {
+    return this._advanceDropLifecycles(drops, dt);
+  }
+  /** Pins the shared seeded RNG so a throw direction is reproducible. */
+  setSceneRng(rng: () => number): void {
+    this.sceneRng = rng;
   }
   addDrop(id: 'speed_boost' | 'bomb', weaponDropId?: string): StubDrop {
     const g = this.add.graphics();
@@ -1232,6 +1245,56 @@ describe('CombatCoreScene — shared base class', () => {
     }
     const scene = new ShortInvulnScene();
     expect(scene.runGetInvulnerabilityDuration()).toBe(0.8);
+  });
+
+  // ── Blocked stick-then-throw (parent AH-0MW0UAQ23005AC9L) ────────
+
+  it('AC — advances the blocked stick window and the throw from the shared drop step', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
+    const drop = scene.addDrop('speed_boost');
+    drop.x = player.x;
+    drop.y = player.y;
+    scene.setSceneRng(() => 0); // straight right
+    startBlockedStick(drop, player);
+
+    // 1.0 s of the 1.5 s window: the drop follows the ship and is not thrown.
+    let kept = scene.runAdvanceDropLifecycles([drop], 1);
+    expect(kept, 'a sticking drop stays on the field').toEqual([drop]);
+    expect(drop.blockedDiscard?.stickSeconds, 'the shared step accumulates the stick time').toBeCloseTo(
+      1,
+      6,
+    );
+    expect(isDiscarding(drop), '1 s is inside the stick window').toBe(false);
+
+    // The ship moves during the window: the drop keeps following it.
+    player.setPosition(player.x + 30, player.y - 20);
+    kept = scene.runAdvanceDropLifecycles(kept, 0.5);
+    expect(drop.x, 'a sticking drop follows the ship while the window runs').toBe(player.x);
+    expect(drop.y, 'a sticking drop follows the ship while the window runs').toBe(player.y);
+    expect(isDiscarding(drop), '1.5 s elapses the window and launches the drop').toBe(true);
+
+    // The throw is a straight line at the shared speed, ignoring the ship.
+    const launchX = drop.x;
+    const launchY = drop.y;
+    player.setPosition(10, 10);
+    kept = scene.runAdvanceDropLifecycles(kept, 0.1);
+    expect(kept, 'a launched drop stays on the field while it is short of an edge').toEqual([drop]);
+    expect(drop.x, 'the throw advances BLOCKED_DROP_THROW_SPEED × dt').toBeCloseTo(
+      launchX + BLOCKED_DROP_THROW_SPEED * 0.1,
+      6,
+    );
+    expect(drop.y, 'the throw ignores where the ship moved').toBeCloseTo(launchY, 6);
+
+    // Fly to the edge: the shared step retires and destroys the drop.
+    const destroy = vi.spyOn(drop.graphics, 'destroy');
+    for (let i = 0; i < 100 && kept.length > 0; i++) {
+      kept = scene.runAdvanceDropLifecycles(kept, 0.1);
+    }
+    expect(kept, 'a launched drop is removed once it reaches a screen edge').toHaveLength(0);
+    expect(destroy, 'the Graphics of a drop discarded at the edge is destroyed').toHaveBeenCalledTimes(
+      1,
+    );
   });
 });
 

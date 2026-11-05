@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import {
+  BLOCKED_DROP_STICK_SECONDS,
   GAME_HEIGHT,
   GAME_WIDTH,
   MINERAL_COLOR,
@@ -9777,6 +9778,80 @@ describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
     expect(popCue).toHaveBeenCalledTimes(1);
     expect(scene.getDrops()).not.toContain(drop);
     expect(scene.getCollectAnimations().length).toBeGreaterThan(0);
+  });
+
+  it('a blocked drop sticks to the ship and is then thrown away (AH-0MW0UAQ23005AC9L)', async () => {
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    player.getPowerUpLevelStore().collect('shield', true);
+    player.getPowerUpLevelStore().collect('bomb', true);
+    player.getPowerUpLevelStore().collect('speed_boost', true);
+    player.getPowerUpLevelStore().collect('phase_shift', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('dual', true);
+    expect(resolvePlayerSlotState(player).isFull).toBe(true);
+
+    // A deterministic throw direction (straight right) so the flight is known.
+    scene.setRng(() => 0);
+
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // clear the collect gate
+    player.setPosition(drop.x, drop.y);
+
+    // First refused frame: the drop stays on the field and starts sticking.
+    scene.tick(0.016);
+    expect(scene.getDrops()).toContain(drop);
+    expect(
+      drop.blockedDiscard,
+      'the first refused frame starts the shared stick window',
+    ).toBeDefined();
+
+    // The ship moves inside the window: the blocked drop follows it.
+    player.setPosition(player.x + 40, player.y + 10);
+    scene.tick(0.05);
+    expect(drop.x, 'a blocked drop follows the ship through the stick window').toBe(player.x);
+    expect(drop.y, 'a blocked drop follows the ship through the stick window').toBe(player.y);
+    expect(drop.blockedDiscard?.discarding, 'the drop is still sticking').toBe(false);
+
+    // Fast-forward to the end of the window (the pure stepper pins the full
+    // 1.5 s accumulation and the four edges; this test pins the scene wiring).
+    drop.blockedDiscard!.stickSeconds = BLOCKED_DROP_STICK_SECONDS;
+    scene.tick(0.016);
+    expect(drop.blockedDiscard?.discarding, 'the window elapses and launches the drop').toBe(true);
+    const launchX = drop.x;
+
+    // Straight-line flight: it ignores the ship and keeps travelling.
+    player.setPosition(10, 10);
+    scene.tick(0.1);
+    expect(scene.getDrops(), 'a launched drop stays on the field while in flight').toContain(drop);
+    expect(drop.x, 'the throw travels away from the ship in a straight line').toBeGreaterThan(
+      launchX,
+    );
+  });
+
+  it('clears blocked stick-then-throw state on run restart (AH-0MW0UAQ23005AC9L)', async () => {
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    player.getPowerUpLevelStore().collect('shield', true);
+    player.getPowerUpLevelStore().collect('bomb', true);
+    player.getPowerUpLevelStore().collect('speed_boost', true);
+    player.getPowerUpLevelStore().collect('phase_shift', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('dual', true);
+
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(drop.blockedDiscard, 'the drop is mid-stick before the restart').toBeDefined();
+
+    // A run restart runs `resetRunState()` at the top of `create()`, which
+    // clears the run's drop field — and with it every blocked stick/throw
+    // state. The new run never inherits a half-stuck drop.
+    (scene as unknown as { resetRunState(): void }).resetRunState();
+    expect(scene.getDrops(), 'a restarted run starts with an empty drop field').toHaveLength(0);
+    for (let i = 0; i < 5; i++) scene.tick(0.1);
+    expect(scene.getDrops(), 'the cleared half-stuck drop is never resurrected').not.toContain(drop);
   });
 
   it('below the cap the full weighted pool is still drawable (AC3)', async () => {

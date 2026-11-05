@@ -269,7 +269,11 @@ cap shapes what a run can become.
 - **Blocked pickups are visible (producer Q5b).** At the cap a drop that cannot
   be taken stays on the field, applies nothing and plays the distinct
   not-collectable cue once, so a full pool never silently swallows a pickup the
-  player is chasing.
+  player is chasing. It sticks to the ship for `BLOCKED_DROP_STICK_SECONDS =
+  1.5` s and is then thrown away at `BLOCKED_DROP_THROW_SPEED = 400` px/s until
+  it leaves the screen (parent AH-0MW0UAQ23005AC9L), so a full loadout does not
+  trail a permanent uncollectable icon; a slot freeing inside that window still
+  collects the drop normally.
 - **Eligibility only, not weights.** The cap gates *which* ids may be drawn,
   collected or offered once the pool is **full**; it never retunes a weight.
   Below the cap every id remains eligible with its existing weight, so

@@ -46,6 +46,12 @@ import {
 } from '../../audio/effects';
 import { dropCollectRadius } from '../../powerups/icons';
 import { applyMagnetAttraction } from '../../powerups/magnet';
+import {
+  cancelBlockedDiscard,
+  isDiscarding,
+  startBlockedStick,
+  type BlockedDiscardState,
+} from './blockedDropDiscard';
 import { PowerUpState } from '../../powerups/PowerUp';
 import {
   WeightedRandomSpawner,
@@ -104,6 +110,13 @@ export interface DropLifecycleDrop {
   };
   /** True once collected and playing its absorb VFX. */
   absorbing?: boolean;
+  /**
+   * Present only while the drop is stuck to the ship after the six-slot gate
+   * refused it, and after it has been thrown away (parent AH-0MW0UAQ23005AC9L).
+   * The state itself lives in `./blockedDropDiscard`, the one implementation of
+   * the stick-then-throw rule shared by the game and every drop-spawning gym.
+   */
+  blockedDiscard?: BlockedDiscardState;
 }
 
 /** The id fields the shared pickup-cue dispatcher reads. */
@@ -208,6 +221,13 @@ export function advanceDropLifecycles<T extends DropLifecycleDrop>(
   for (const drop of drops) {
     // An absorbing drop is owned by its animation — never re-process it.
     if (drop.absorbing) continue;
+    // A thrown-away drop is owned by the blocked-discard stepper until it
+    // leaves the screen: it never grows, shrinks, despawns or fades away
+    // (parent AH-0MW0UAQ23005AC9L AC6).
+    if (isDiscarding(drop)) {
+      kept.push(drop);
+      continue;
+    }
     drop.powerUp.advance(dt);
     drop.graphics.setScale(drop.powerUp.currentScale);
     if (drop.powerUp.state === PowerUpState.DESPAWNED) {
@@ -249,9 +269,19 @@ export interface CollectOverlapOptions<T extends DropLifecycleDrop> {
  * `options.canCollect` is consulted for a drop that passes the geometric
  * gate. When it returns false the drop is **kept on the field** (it is not
  * collected, so no effect is applied and it stays collectable if a slot frees
- * later) and `options.onBlocked` runs so the caller can give feedback — the
- * shared combat scene plays the not-collectable cue there. A null player
- * leaves the drops untouched.
+ * later), its **stick window starts on that first refused frame** (producer
+ * Q1a, parent AH-0MW0UAQ23005AC9L) and `options.onBlocked` runs so the caller
+ * can give feedback — the shared combat scene plays the not-collectable cue
+ * there. A null player leaves the drops untouched.
+ *
+ * ## Blocked stick-then-throw (parent AH-0MW0UAQ23005AC9L)
+ *
+ * A refused drop is snapped onto the ship here and follows it until the shared
+ * stepper in `./blockedDropDiscard` throws it away; if a slot frees during the
+ * window the drop is collected normally and the throw is **cancelled**
+ * (producer Q3a), so it never both comes home and gets thrown. A drop that has
+ * already been thrown is exempt from the collection gate — it is being
+ * discarded, not picked up.
  */
 export function collectOverlappingDrops<T extends DropLifecycleDrop>(
   drops: T[],
@@ -264,6 +294,11 @@ export function collectOverlappingDrops<T extends DropLifecycleDrop>(
   const hull = SHIP_SIZE / 2;
   const kept: T[] = [];
   for (const drop of drops) {
+    // A thrown-away drop is being discarded: it is no longer collectable.
+    if (isDiscarding(drop)) {
+      kept.push(drop);
+      continue;
+    }
     if (drop.absorbing || !drop.powerUp.canCollect()) {
       kept.push(drop);
       continue;
@@ -271,12 +306,18 @@ export function collectOverlappingDrops<T extends DropLifecycleDrop>(
     const radius = dropCollectRadius(dropSize, drop.powerUp.currentScale);
     if (Math.hypot(player.x - drop.x, player.y - drop.y) <= hull + radius) {
       if (options.canCollect && !options.canCollect(drop)) {
-        // Eligible for overlap but not for pickup: keep it live and let the
-        // caller explain why (the drop may become collectable later).
+        // Eligible for overlap but not for pickup: keep it live, snap it onto
+        // the ship and start the stick window on this first refused frame
+        // (idempotent, so later overlapping frames never restart it), then let
+        // the caller explain why (the drop may become collectable later).
+        startBlockedStick(drop, player);
         options.onBlocked?.(drop);
         kept.push(drop);
         continue;
       }
+      // A slot freed inside the stick window: collect normally and cancel the
+      // throw (producer Q3a).
+      cancelBlockedDiscard(drop);
       onCollect(drop);
     } else {
       kept.push(drop);
@@ -297,7 +338,11 @@ export function applyDropMagnet<T extends DropLifecycleDrop>(
   dt: number,
 ): void {
   if (!player || stacks <= 0) return;
-  applyMagnetAttraction(drops, player, stacks, dt);
+  // A thrown-away drop keeps the straight-line flight its throw gave it — the
+  // Magnet never curbs it back toward the ship (parent AH-0MW0UAQ23005AC9L
+  // AC6). Sticking drops are already re-anchored to the ship by the stepper.
+  const pullable = drops.filter((drop) => !isDiscarding(drop));
+  applyMagnetAttraction(pullable, player, stacks, dt);
 }
 
 /**
