@@ -807,6 +807,13 @@ function applySweepAudio(
  * scheduled at that burst's own `delayMs` so the audio lands with its visual
  * (AC1 / Q3 = a).
  *
+ * Each burst also appears **exactly when it animates**, never before: the
+ * renderer (`spawnExplosionParticles`) keeps a delayed burst's display hidden
+ * until its tween starts (a sweep scheduled up front must not "show then
+ * animate" — producer review AH-0MVVEI7FD004TR2M). The first enemy burst
+ * (`delayMs` 0) is the defeat-frame flash; every later burst becomes visible
+ * at its own `delayMs`, in the same frame its cue plays.
+ *
  * The mini-boss's **own body** cue (`playBossDestructionSound()`) is *not*
  * dispatched here: it belongs to the entity's shared death seam, which already
  * plays it exactly once on the killing blow (`Boss.takeDamage` in the game and

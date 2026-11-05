@@ -729,9 +729,16 @@ export interface SpawnExplosionOptions {
   scale?: number;
   /**
    * Delay (ms) before the burst starts animating. Defaults to 0. Used by
-   * staggered firework sequences (`spawnVictoryFireworks`) so a whole
-   * multi-burst display can be scheduled up front with deterministic
-   * timing, without per-burst timers.
+   * staggered firework sequences (`spawnVictoryFireworks`) and the mini-boss
+   * death sweep so a whole multi-burst display can be scheduled up front with
+   * deterministic timing, without per-burst timers.
+   *
+   * A delayed burst is **invisible until the delay elapses**: its display
+   * container is created hidden and revealed by the tween's `onStart` (which
+   * Phaser fires exactly when the delay expires and the animation begins), so
+   * a burst never sits on screen fully-formed before it animates (producer
+   * review AH-0MVVEI7FD004TR2M — "shown and then, after a delay, they
+   * animate").
    */
   delay?: number;
   /**
@@ -806,6 +813,8 @@ export interface ExplosionFrameImage {
 /** The burst display container (a `Phaser.GameObjects.Container` subset). */
 export interface ExplosionDisplayContainer {
   setDepth(depth: number): unknown;
+  /** Container visibility — used to keep a delayed burst hidden until its animation starts. */
+  setVisible?(visible: boolean): unknown;
   add(child: unknown): unknown;
   destroy(): void;
 }
@@ -931,6 +940,17 @@ export function spawnExplosionParticles(
   const display =
     typeof scene.add.container === 'function' ? scene.add.container(x, y) : null;
   display?.setDepth(opts.depth ?? 5);
+  // A delayed burst must not sit on screen before its tween starts: the
+  // defeat sweep and firework cascades schedule bursts up front at their own
+  // `delay`, and a burst that appears fully-formed before animating reads as
+  // "shown then animated" (producer review AH-0MVVEI7FD004TR2M). The display
+  // stays hidden until the tween's `onStart`, which Phaser fires exactly when
+  // the delay expires and the animation begins (`TweenBuilderConfig.onStart`:
+  // a callback "when the tween starts playback, after any delays have
+  // expired"). An immediate burst (delay 0) is unchanged: visible from spawn.
+  const delayMs = opts.delay ?? 0;
+  const hiddenUntilStart = display !== null && delayMs > 0;
+  if (hiddenUntilStart) display?.setVisible?.(false);
   ensureExplosionFrameTextures(provider);
   const framesReady =
     display !== null &&
@@ -1029,7 +1049,15 @@ export function spawnExplosionParticles(
     targets: clock,
     alpha: { from: 1, to: 0 },
     duration: lifespan,
-    delay: opts.delay ?? 0,
+    delay: delayMs,
+    onStart: hiddenUntilStart
+      ? () => {
+          // Reveal exactly when the animation begins. A burst destroyed during
+          // its delay (scene teardown) must never be re-shown by a late
+          // `onStart` — the alive guard keeps the teardown contract intact.
+          if (alive && display) display.setVisible?.(true);
+        }
+      : undefined,
     onUpdate: () => {
       const elapsed = (1 - clock.alpha) * lifespan;
       // Incremental stepping keeps velocities linear in wall-clock time.

@@ -1007,6 +1007,28 @@ function maxInWindow(delays: readonly number[], windowMs: number): number {
   return best;
 }
 
+describe('mini-boss death sweep — burst visibility timing (AH-0MVVEI7FD004TR2M)', () => {
+  it('hands every burst its own delay to the renderer, so bursts appear when they animate', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    const scene = makeStubScene();
+
+    const handle = spawnMiniBossDeathSweep(scene, planInput(escorts(3)));
+
+    // The renderer keeps a delayed burst invisible until its tween starts, so
+    // the sweep never "shows then animates" (producer review: all explosions
+    // appeared on screen before their animation began). Each burst is handed
+    // to `spawnExplosionParticles` with its planned `delayMs`; the first enemy
+    // burst (delay 0) is the only defeat-frame flash.
+    expect(scene.tweenCfgs).toHaveLength(handle.plan.bursts.length);
+    handle.plan.bursts.forEach((burst, index) => {
+      expect(scene.tweenCfgs[index].delay, `burst ${index} (${burst.role})`).toBe(
+        burst.delayMs,
+      );
+    });
+    expect(scene.tweenCfgs[0].delay).toBe(0);
+  });
+});
+
 describe('mini-boss death sweep — SFX dispatch (AC1)', () => {
   it('dispatches exactly one cue per kept burst, at that burst’s own delay', async () => {
     const { spawnMiniBossDeathSweep } = await sweep();
