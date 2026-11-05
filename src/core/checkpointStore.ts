@@ -277,8 +277,14 @@ export function parseCheckpoint(raw: unknown): Checkpoint | null {
     weaponLevels: toLevelList<WeaponId>(value.weaponLevels, () => true),
     powerUpLevels: toLevelList<PowerUpId>(value.powerUpLevels, () => true),
     // Additive field (AH-0MVY3IGRC00954UD): a legacy payload missing it
-    // loads with an empty list — exactly today's resume behaviour (AC3).
-    consumablePools: toConsumablePoolList(value.consumablePools),
+    // keeps the field **absent** (`undefined`, so `toEqual` on a legacy
+    // fixture still passes) — exactly today's resume behaviour, where the
+    // restore path defaults to an empty list (AC3). A present-but-corrupt
+    // value parses defensively to the empty list.
+    consumablePools:
+      value.consumablePools !== undefined
+        ? toConsumablePoolList(value.consumablePools)
+        : undefined,
     runSeed,
     savedAt:
       typeof value.savedAt === 'string' ? value.savedAt : new Date(0).toISOString(),

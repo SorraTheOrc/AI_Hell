@@ -297,9 +297,11 @@ describe('checkpointStore (AH-0MVCRBTNF000DK51)', () => {
     };
     const loaded = parseCheckpoint(raw);
     expect(loaded).not.toBeNull();
-    // The additive field degrades to an empty list: the resume path replays
-    // the permanent grants and restores nothing, exactly as today (AC3).
-    expect(loaded!.consumablePools).toEqual([]);
+    // The additive field is **absent** on a legacy payload — the restore
+    // path defaults it to an empty list, so the resume behaviour is exactly
+    // as before (AC3), and a legacy object still `toEqual`s a fixture that
+    // predates the field.
+    expect(loaded!.consumablePools).toBeUndefined();
     // The schema version is unchanged — a legacy v3 payload still loads.
     expect(loaded!.version).toBe(CHECKPOINT_VERSION);
     expect(loadCheckpoint(storage)).toBeNull();
