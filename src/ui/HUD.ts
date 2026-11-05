@@ -14,7 +14,23 @@
  *   live `Ns` countdown while a temporary window is active;
  * - a lives counter (Extra Life), starting at 3 and incrementing on collection; and
  * - a fixed-length, hollow-outlined hold bar that fills proportionally as
- *   minerals are collected (replaces the former `Minerals: n/20` text).
+ *   minerals are collected (replaces the former `Minerals: n/20` text); and
+ * - on every row with a **live countdown**, a code-drawn **sweeping arc ring**
+ *   around the row's icon that reads the timing at a glance (parent
+ *   AH-0MVZ8YQQV006Q09W):
+ *   - an **`arriving`** countdown (consumable recharge, the single-use
+ *     Teleport readiness clock, the permanent Orbital Strike cadence)
+ *     **fills** the ring from empty to full as the wait elapses;
+ *   - an **`expiring`** countdown (a power-up or weapon field-pickup timed
+ *     window) **drains** the ring from full to empty as the window burns
+ *     down.
+ *
+ * The ring's fraction is the same `remaining / total` ratio the row's
+ * `Ns` / `next in Ns` text reports, resolved through the one shared progress
+ * seam (`resolveCountdownSweep` in `src/ui/hudCountdown.ts`) via the registry
+ * projections, so the arc and the text can never disagree. A row with **no
+ * live countdown draws no ring** — the `∞` value, a full charge pool and a
+ * ready single-use warp are all ring-free by design.
  *
  * Consumable charge counts that the level alone does not convey (Shield
  * absorptions, Thorn Field rams, Phase Shift charges, Teleport uses, Force

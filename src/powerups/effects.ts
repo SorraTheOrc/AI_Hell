@@ -626,7 +626,9 @@ export class EffectsRegistry {
    * reports the same timer {@link consumableRechargeRemaining} reports (so the
    * ring and the `next in Ns` label can never disagree) with the sweep already
    * direction-corrected by the shared seam (`arriving`: the ring fills as the
-   * wait elapses). `null` covers every "no countdown" case: the pool is full,
+   * wait elapses — `sweep = 1 − remaining / total`, the shared seam's arriving
+   * conversion of the row's own `remaining / total` ratio). `null` covers
+   * every "no countdown" case: the pool is full,
    * nothing is recharging, `id` is not a pooled consumable, or `id` is the
    * single-use kind whose readiness clock is {@link teleportRechargeProgress}.
    */
@@ -1591,9 +1593,10 @@ export class EffectsRegistry {
    *
    * Derived from the registry's own clock ({@link strikeNextBoltSeconds}) and
    * the same level-resolved interval the timer resets to
-   * ({@link strikeInterval}) — never a second timer. The sweep is
-   * `arriving`: empty the instant a bolt fires, complete when the next bolt is
-   * due, so the ring and the `next in Ns` label agree. `null` while no
+   * ({@link strikeInterval}) — never a second timer. The sweep is `arriving`:
+   * `1 − remaining / total` — empty the instant a bolt fires, complete when
+   * the next bolt is due — so the ring and the `next in Ns` label agree.
+   * `null` while no
    * permanent strike is armed, while a bolt is latched/landing (the timer is
    * frozen, see {@link strikeNextBoltSeconds}), or when the interval is not a
    * finite positive number.
@@ -1742,7 +1745,8 @@ export class EffectsRegistry {
    * The span is the level-derived {@link teleportRechargeTime} the timer was
    * started from, and `remaining` is the very clock
    * {@link teleportRechargeRemaining} reports, so the ring fills exactly as the
-   * row's `next in Ns` label counts down. `null` while nothing is owed, so a
+   * row's `next in Ns` label counts down (`sweep = 1 − remaining / total`).
+   * `null` while nothing is owed, so a
    * ready Teleport row (the `(ready)` label) draws no ring.
    */
   teleportRechargeProgress(): CountdownProgress | null {
@@ -1926,8 +1930,9 @@ export class EffectsRegistry {
    *
    * Reports exactly the timer {@link powerUpTemporaryRemaining} reports, plus
    * the window's own captured `duration` (never a hard-coded TTL) so the sweep
-   * is derivable. The sweep is `expiring`: complete at pickup, empty at
-   * expiry. The permanent-base-with-no-window case (the `∞` row) returns
+   * is derivable. The sweep is `expiring`: `remaining / total` — complete at
+   * pickup (`1`), empty at expiry (`0`). The permanent-base-with-no-window
+   * case (the `∞` row) returns
    * `null`, mirroring {@link powerUpTemporaryRemaining}.
    *
    * A weapon field-pickup window needs no projection: `activeWeapons()` already

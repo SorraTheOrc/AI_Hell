@@ -52,13 +52,16 @@ export interface CountdownFractionInput {
 /**
  * Resolve the `0 → 1` sweep fraction for one live countdown.
  *
- * `mode` intentionally does not alter the arithmetic (both directions are
- * `remaining / total`); it is part of the signature so a call site states which
- * way the ring sweeps, and so a future divergence has one seam to change. It is
- * read here to keep the contract explicit.
+ * The fraction is the time left over the span it belongs to — `remaining /
+ * total` for **both** modes: `1` means the whole countdown is still ahead and
+ * `0` means nothing is left. `mode` intentionally does not alter the
+ * arithmetic; it is part of the signature so a call site states which way the
+ * ring sweeps, and so a future divergence has one seam to change. It is read
+ * here to keep the contract explicit.
  *
  * @param input - `{ remaining, total, mode }`.
- * @returns A clamped fraction in `[0, 1]`, or `0` when the inputs are unusable.
+ * @returns `remaining / total` clamped into `[0, 1]`, or `0` when the inputs
+ *   are unusable (missing/non-finite values, or `total ≤ 0`).
  */
 export function resolveCountdownFraction({
   remaining,
