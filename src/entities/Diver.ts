@@ -117,6 +117,13 @@ export interface DiverConfig {
    * AH-0MUI820PM0038HS2). Defaults to `1` (single-hit).
    */
   /**
+   * Fixed dive speed (px/s) for the dive arc (AH-0MW0TY1AY003TDFC AC3).
+   * Consumed by AH-0MW3MWRZ5003KVR3, which applies the 320 px/s code default
+   * when this field is absent. The raw configured value is threaded through
+   * by `enemyFactory`; nothing in this file applies a default yet.
+   */
+  diveSpeed?: number;
+  /**
    * Remaining enemy force-field hits at spawn (epic AH-0MVJ8W4GE007OMNT
    * AC2; resolved once by `enemyForceFieldHits`). Defaults to `0`
    * (unshielded), so an entity built without a field behaves exactly as
@@ -201,6 +208,8 @@ export class Diver extends BaseEnemy {
   private _pauseTimer = 0;
   /** Pause duration in seconds (configured or default). */
   private _pauseDuration = DIVER_PAUSE_DURATION / 1000;
+  /** Configured dive speed (px/s); raw until AH-0MW3MWRZ5003KVR3 applies the 320 px/s code default. */
+  private _diveSpeed?: number;
   private readonly _burstCount: number;
 
   // ── Construction ─────────────────────────────────────────────────
@@ -226,6 +235,9 @@ export class Diver extends BaseEnemy {
     this._burstCount = config.burstCount ?? DIVER_BURST_COUNT;
     this._pauseDuration =
       (config.pauseDuration ?? DIVER_PAUSE_DURATION) / 1000;
+    // Data-driven dive speed (AH-0MW0TY1AY003TDFC AC3) — stored raw; the
+    // 320 px/s code default when absent is applied by AH-0MW3MWRZ5003KVR3.
+    this._diveSpeed = config.diveSpeed;
     this.target = new Phaser.Math.Vector2(
       scene.scale.width / 2,
       scene.scale.height - 40,
@@ -281,6 +293,15 @@ export class Diver extends BaseEnemy {
   get effectiveSize(): number { return this._size; }
   get effectiveColor(): number { return this._color; }
   get effectiveBurstCount(): number { return this._burstCount; }
+
+  /**
+   * The configured dive speed (px/s) threaded by `enemyFactory`
+   * (AH-0MW0TY1AY003TDFC AC3). `undefined` until AH-0MW3MWRZ5003KVR3
+   * resolves the 320 px/s code default at the dive site.
+   */
+  get diveSpeed(): number | undefined {
+    return this._diveSpeed;
+  }
 
   get shootEnabled(): boolean {
     return this._shootEnabled;

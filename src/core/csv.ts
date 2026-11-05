@@ -107,6 +107,9 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   // Defender raider tuning (AH-0MV01EM7U0033W7L): committed attack-run speed
   // and commit range; neutral for other archetypes.
   'attackSpeed', 'commitRange',
+  // Diver dive tuning (AH-0MW0TY1AY003TDFC): fixed dive speed for the `diver`
+  // archetype; neutral otherwise. A blank value falls back to the code default.
+  'diveSpeed',
   // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T): number of lanes and the
   // vertical gap between them; neutral for other archetypes.
   'laneCount', 'laneSpacing',
@@ -496,6 +499,9 @@ export function validateEnemyConfig(
     // Defender raider tuning (AH-0MV01EM7U0033W7L): optional and neutral for
     // other archetypes.
     'attackSpeed', 'commitRange',
+    // Diver dive tuning (AH-0MW0TY1AY003TDFC): optional and neutral for
+    // other archetypes.
+    'diveSpeed',
     // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T): optional and neutral
     // for other archetypes.
     'laneCount', 'laneSpacing',
@@ -740,6 +746,14 @@ export function coerceEnemyConfig(
   }
   if (row.commitRange != null && row.commitRange.trim() !== '') {
     merged.commitRange = coerceNumber(row.commitRange, merged.commitRange ?? 0);
+  }
+  // Diver dive tuning (AH-0MW0TY1AY003TDFC). Optional and neutral for other
+  // archetypes: only override when the CSV row actually carries a value, so
+  // non-diver rows keep their seed/default shape. A blank/absent cell falls
+  // back to the existing seed default (320 px/s for the diver) — never NaN,
+  // never a zero-speed dive.
+  if (row.diveSpeed != null && row.diveSpeed.trim() !== '') {
+    merged.diveSpeed = coerceNumber(row.diveSpeed, merged.diveSpeed ?? 0);
   }
   // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T). Optional and neutral
   // for other archetypes: only override when the CSV row carries a value.
