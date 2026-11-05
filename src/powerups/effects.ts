@@ -117,6 +117,10 @@ import {
   type PowerUpLevelStats,
 } from './powerUpLevels';
 import type { AoEDescriptor, WeaponId } from '../utils/weapons';
+import {
+  resolveCountdownSweep,
+  type CountdownProgress,
+} from '../ui/hudCountdown';
 
 // Re-export the magnet tuning values for convenience.
 export {
@@ -611,6 +615,33 @@ export class EffectsRegistry {
    */
   tryConsumeConsumableCharge(id: PowerUpId): boolean {
     return this._levelStore.consumeConsumableCharge(id);
+  }
+
+  /**
+   * Progress of the **soonest-returning** in-flight recharge of the pooled
+   * consumable `id`, or `null` when nothing is owed — the registry half of the
+   * HUD countdown ring (parent AH-0MVZ8YQQV006Q09W AC1/AC2).
+   *
+   * A thin projection of `PowerUpLevelStore.consumableRechargeProgress`: it
+   * reports the same timer {@link consumableRechargeRemaining} reports (so the
+   * ring and the `next in Ns` label can never disagree) with the sweep already
+   * direction-corrected by the shared seam (`arriving`: the ring fills as the
+   * wait elapses). `null` covers every "no countdown" case: the pool is full,
+   * nothing is recharging, `id` is not a pooled consumable, or `id` is the
+   * single-use kind whose readiness clock is {@link teleportRechargeProgress}.
+   */
+  consumableRechargeProgress(id: PowerUpId): CountdownProgress | null {
+    const progress = this._levelStore.consumableRechargeProgress(id);
+    if (!progress) return null;
+    return {
+      sweep: resolveCountdownSweep({
+        remaining: progress.remaining,
+        total: progress.total,
+        mode: 'arriving',
+      }),
+      total: progress.total,
+      remaining: progress.remaining,
+    };
   }
 
   /**
@@ -1554,6 +1585,32 @@ export class EffectsRegistry {
   }
 
   /**
+   * Progress of the permanent Orbital Strike's next-bolt cadence, or `null`
+   * when the cadence does not apply — the registry half of the HUD countdown
+   * ring for the fourth countdown source (parent AH-0MVZ8YQQV006Q09W AC1/AC2).
+   *
+   * Derived from the registry's own clock ({@link strikeNextBoltSeconds}) and
+   * the same level-resolved interval the timer resets to
+   * ({@link strikeInterval}) — never a second timer. The sweep is
+   * `arriving`: empty the instant a bolt fires, complete when the next bolt is
+   * due, so the ring and the `next in Ns` label agree. `null` while no
+   * permanent strike is armed, while a bolt is latched/landing (the timer is
+   * frozen, see {@link strikeNextBoltSeconds}), or when the interval is not a
+   * finite positive number.
+   */
+  strikeProgress(): CountdownProgress | null {
+    const remaining = this.strikeNextBoltSeconds();
+    const total = this.strikeInterval();
+    if (remaining === undefined) return null;
+    if (!Number.isFinite(total) || total <= 0) return null;
+    return {
+      sweep: resolveCountdownSweep({ remaining, total, mode: 'arriving' }),
+      total,
+      remaining,
+    };
+  }
+
+  /**
    * Activates Phase Shift (upgrade-level duration for Teleport arrivals) —
    * e.g. on Teleport teleport arrival. Refreshes if already active — never
    * additive. This is the direct, charge-free activation path; it does not
@@ -1675,6 +1732,29 @@ export class EffectsRegistry {
    */
   teleportRechargeRemaining(): number {
     return this._levelStore.teleportRechargeRemaining();
+  }
+
+  /**
+   * Progress of the single-use Teleport's readiness clock, or `null` when it
+   * is ready (or not held) — the registry half of the HUD countdown ring for
+   * this `arriving` countdown (parent AH-0MVZ8YQQV006Q09W AC1/AC3).
+   *
+   * The span is the level-derived {@link teleportRechargeTime} the timer was
+   * started from, and `remaining` is the very clock
+   * {@link teleportRechargeRemaining} reports, so the ring fills exactly as the
+   * row's `next in Ns` label counts down. `null` while nothing is owed, so a
+   * ready Teleport row (the `(ready)` label) draws no ring.
+   */
+  teleportRechargeProgress(): CountdownProgress | null {
+    const remaining = this.teleportRechargeRemaining();
+    const total = this.teleportRechargeTime();
+    if (remaining <= 0) return null;
+    if (!Number.isFinite(total) || total <= 0) return null;
+    return {
+      sweep: resolveCountdownSweep({ remaining, total, mode: 'arriving' }),
+      total,
+      remaining,
+    };
   }
 
   /**
@@ -1837,6 +1917,35 @@ export class EffectsRegistry {
     if (!effect) return undefined;
     if (effect.permanent && !effect.tempWindow) return undefined;
     return Math.max(0, effect.remaining);
+  }
+
+  /**
+   * Progress of the power-up's live **temporary window**, or `null` when no
+   * window is running — the registry half of the HUD countdown ring for the
+   * `expiring` sources (parent AH-0MVZ8YQQV006Q09W AC1/AC3).
+   *
+   * Reports exactly the timer {@link powerUpTemporaryRemaining} reports, plus
+   * the window's own captured `duration` (never a hard-coded TTL) so the sweep
+   * is derivable. The sweep is `expiring`: complete at pickup, empty at
+   * expiry. The permanent-base-with-no-window case (the `∞` row) returns
+   * `null`, mirroring {@link powerUpTemporaryRemaining}.
+   *
+   * A weapon field-pickup window needs no projection: `activeWeapons()` already
+   * carries `{ duration, remaining }` and the HUD resolves its sweep from the
+   * shared seam directly.
+   */
+  powerUpTemporaryProgress(id: PowerUpId): CountdownProgress | null {
+    const effect = this._timed.get(id);
+    if (!effect) return null;
+    if (effect.permanent && !effect.tempWindow) return null;
+    const total = effect.duration;
+    if (!Number.isFinite(total) || total <= 0) return null;
+    const remaining = Math.max(0, effect.remaining);
+    return {
+      sweep: resolveCountdownSweep({ remaining, total, mode: 'expiring' }),
+      total,
+      remaining,
+    };
   }
 
   /** Whether a specific timed weapon is currently active. */

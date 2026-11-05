@@ -75,3 +75,63 @@ export function resolveCountdownFraction({
 
   return Math.min(1, Math.max(0, remaining / total));
 }
+
+/**
+ * One live countdown as the renderer consumes it: the ring sweep to draw plus
+ * the raw timer the sweep came from.
+ *
+ * Projections (`EffectsRegistry.consumableRechargeProgress`,
+ * `powerUpTemporaryProgress`, `teleportRechargeProgress`, `strikeProgress`)
+ * return this shape so the HUD never does per-kind arithmetic — it copies
+ * `sweep` into the row and draws it.
+ */
+export interface CountdownProgress {
+  /**
+   * Direction-corrected fill amount of the ring in `[0, 1]`: an `arriving`
+   * countdown **fills** (0 at the spend/fire instant → 1 when due) and an
+   * `expiring` countdown **drains** (1 at pickup → 0 at expiry).
+   */
+  sweep: number;
+  /** The span the countdown belongs to in seconds (never a hard-coded TTL). */
+  total: number;
+  /** Seconds left of the countdown (`>= 0`). */
+  remaining: number;
+}
+
+/**
+ * Resolve the ring **sweep** for one live countdown — the single fraction the
+ * HUD draws, for all four countdown sources (parent AH-0MVZ8YQQV006Q09W AC1).
+ *
+ * {@link resolveCountdownFraction} reports the shared `remaining / total`
+ * ratio, which falls as any timer runs down. The ring's *fill* is
+ * direction-dependent, so this helper does the one conversion:
+ *
+ * - `arriving` — the wait fills the ring: `1 - remaining / total`, i.e. `0`
+ *   the moment a charge is spent or a bolt fires, `1` when the event is due.
+ * - `expiring` — the window drains the ring: `remaining / total`, i.e. `1` at
+ *   pickup and `0` at expiry.
+ *
+ * Both directions therefore derive from the one ratio, and a caller can never
+ * see the ring and the row's `next in Ns` / `Ns` text disagree: they are the
+ * same timer. An unusable timer (`total` missing, non-finite or `≤ 0`;
+ * `remaining` missing or non-finite) yields `0` — "nothing to draw" — never a
+ * full ring fabricated from a division guard.
+ *
+ * @param input - `{ remaining, total, mode }`; `remaining` is the time left.
+ * @returns A clamped sweep in `[0, 1]`: 0 when the timer is unusable.
+ */
+export function resolveCountdownSweep({
+  remaining,
+  total,
+  mode,
+}: CountdownFractionInput): number {
+  // `resolveCountdownFraction` returns 0 both for "nothing left" and for an
+  // unusable timer, so the usability guard is restated here: a missing/zero
+  // total must not read as a full `arriving` ring.
+  if (remaining === undefined || total === undefined) return 0;
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  if (!Number.isFinite(remaining)) return 0;
+
+  const ratio = resolveCountdownFraction({ remaining, total, mode });
+  return mode === 'arriving' ? 1 - ratio : ratio;
+}

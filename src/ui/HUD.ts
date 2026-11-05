@@ -77,12 +77,16 @@ import {
   isConsumablePowerUpId,
 } from '../powerups/powerUpLevels';
 import {
+  drawCountdownRing,
   drawPowerUpIcon,
   drawWeaponIcon,
+  ICON_COLORS,
   POWER_UP_GREY_COLOUR,
   POWER_UP_GREY_COLOUR_CSS,
+  weaponIconColour,
 } from '../powerups/icons';
 import type { WeaponDropIconId } from '../powerups/icons';
+import { resolveCountdownSweep } from './hudCountdown';
 import { HUD_DEPTH, POWER_UP_SLOT_CAP } from '../core/constants';
 import {
   isSlotCountedHeldKind,
@@ -110,6 +114,13 @@ const LIVES_GAP = 4;
 const ICON_X = 10;
 const NAME_X = 24;
 const VALUE_X = 160;
+/**
+ * Ring-redraw resolution: how many quantised steps of a full turn the
+ * redraw comparison uses for a live countdown ring. Finer than the eye reads on
+ * an ~10 px ring while bounding per-countdown arc redraws
+ * (parent AH-0MVZ8YQQV006Q09W AC8).
+ */
+const COUNTDOWN_RING_BUCKETS = 360;
 /**
  * Horizontal offset of the non-slot marker column. Sits right of the value
  * column so a marker never shifts a row's label or value (the existing
@@ -237,6 +248,21 @@ export interface HUDEntry {
    * slot-counted rows (AH-0MVVJRRN10038VFR).
    */
   marker?: string;
+  /**
+   * Fill amount of the row's countdown ring in `[0, 1]`, or `undefined` when
+   * the row has no live countdown ("no live countdown, no ring"):
+   *
+   * - `arriving` (consumable recharge, Teleport readiness, permanent Orbital
+   *   Strike cadence) **fills** — `0` the instant the charge is spent / the
+   *   bolt fires, `1` when the charge returns / the next bolt is due;
+   * - `expiring` (power-up timed window) **drains** — `1` at pickup, `0` at
+   *   expiry.
+   *
+   * The value comes from the shared seam (`resolveCountdownSweep`) via the
+   * registry projections, so the ring and the row's `next in Ns` / `Ns` text
+   * always report the same timer (parent AH-0MVZ8YQQV006Q09W AC1/AC2/AC3).
+   */
+  countdown?: number;
 }
 
 /**
@@ -322,6 +348,8 @@ type HudRowPlan =
       slotCounted: boolean;
       label: string;
       value: string;
+      /** Countdown ring fill (`[0, 1]`), absent when nothing is counting down. */
+      countdown?: number;
     }
   | { kind: 'heading'; row: number };
 
@@ -349,7 +377,25 @@ export class HUD extends Phaser.GameObjects.Container {
   private _getWeaponLevel?: (weaponId: string) => number;
   private _getSlotState?: () => PowerUpSlotState | null;
   /** Weapon rows rendered this frame (id + label), for the loadout read-out. */
-  private _weaponRows: Array<{ id: string; label: string }> = [];
+  private _weaponRows: Array<{
+    id: string;
+    label: string;
+    /** Countdown ring fill (`[0, 1]`), absent when nothing is counting down. */
+    countdown?: number;
+  }> = [];
+  /**
+   * The countdown rings currently drawn, one per row with a live countdown, in
+   * render order. Each entry can redraw its row icon **in place** — the glyph
+   * plus the ring on the row's existing `Graphics` object — so the arc follows
+   * a sub-second fraction without rebuilding any row objects
+   * (parent AH-0MVZ8YQQV006Q09W AC8). Cleared whenever the rows are rebuilt.
+   */
+  private _countdownRings: Array<{
+    /** The fraction last drawn (compared to decide whether a redraw is due). */
+    fraction: number;
+    /** Re-emits the glyph and the ring at `fraction` on the existing object. */
+    redraw: (fraction: number) => void;
+  }> = [];
   private _minerals = 0;
   private _mineralCapacity = 0;
   /**
@@ -477,13 +523,25 @@ export class HUD extends Phaser.GameObjects.Container {
       .filter((spec) => spec.kind === 'weapon')
       .map((spec) => {
         const weapon = spec as Extract<HudRowPlan, { kind: 'weapon' }>;
-        return { id: weapon.weapon.weaponId, label: weapon.label };
+        return {
+          id: weapon.weapon.weaponId,
+          label: weapon.label,
+          ...(weapon.countdown !== undefined
+            ? { countdown: weapon.countdown }
+            : {}),
+        };
       });
 
     if (plan.signature !== this._renderedRowSignature) {
       this._renderedRowSignature = plan.signature;
       this._renderRows(plan);
     }
+
+    // The countdown ring rides on the row's existing icon Graphics: update its
+    // sweep in place every frame (the row signature deliberately ignores the
+    // fraction, so sub-second movement never rebuilds a row)
+    // (parent AH-0MVZ8YQQV006Q09W AC2/AC8).
+    this._syncCountdownRings(plan);
 
     // Mineral hold bar row (drawn only when a capacity is configured).
     this._drawMineralBar();
@@ -606,6 +664,9 @@ export class HUD extends Phaser.GameObjects.Container {
       obj.destroy();
     }
     this._rowObjects = [];
+    // The rings live on the destroyed row icons; `_addRow`/`_addWeaponRow`
+    // re-register them as the rows are rebuilt.
+    this._countdownRings = [];
 
     for (const spec of plan.rows) {
       if (spec.kind === 'powerUp') this._addRow(spec.entry, spec.row);
@@ -622,6 +683,72 @@ export class HUD extends Phaser.GameObjects.Container {
     } else {
       this._livesLabel.setText(plan.livesText);
     }
+  }
+
+  /**
+   * Brings every live countdown ring in line with the current plan without
+   * rebuilding a row: the sweep is a sub-second value, so the ring must follow
+   * it while the row's text (and therefore its render signature) is unchanged
+   * (parent AH-0MVZ8YQQV006Q09W AC2/AC8).
+   *
+   * The plan's countdown rows and the registered rings are produced in the same
+   * render order, so they pair one-to-one. The comparison is bucketed to
+   * {@link COUNTDOWN_RING_BUCKETS} steps of a full turn: that is finer than the
+   * eye reads on a ~10 px ring while bounding the redraws per countdown, and it
+   * never re-emits geometry for an unchanged frame.
+   */
+  private _syncCountdownRings(plan: HudRenderPlan): void {
+    const desired: number[] = [];
+    for (const spec of plan.rows) {
+      if (spec.kind === 'powerUp') {
+        if (spec.entry.countdown !== undefined) desired.push(spec.entry.countdown);
+      } else if (spec.kind === 'weapon') {
+        if (spec.countdown !== undefined) desired.push(spec.countdown);
+      }
+    }
+
+    // Defensive: a countdown appearing/disappearing without a signature change
+    // would desynchronise the pairs. Rebuild instead of drawing a ring on the
+    // wrong row (the signature covers every text-bearing field, so this is
+    // unreachable in practice).
+    if (desired.length !== this._countdownRings.length) {
+      this._renderRows(plan);
+      return;
+    }
+
+    for (let i = 0; i < desired.length; i += 1) {
+      const ring = this._countdownRings[i];
+      const fraction = desired[i];
+      if (
+        this._countdownBucket(fraction) === this._countdownBucket(ring.fraction)
+      ) {
+        continue;
+      }
+      ring.fraction = fraction;
+      ring.redraw(fraction);
+    }
+  }
+
+  /** Quantise a sweep for ring-redraw comparison (a full turn / buckets). */
+  private _countdownBucket(fraction: number): number {
+    return Math.round(fraction * COUNTDOWN_RING_BUCKETS);
+  }
+
+  /**
+   * Registers a row's countdown ring (if any) and draws its first frame.
+   *
+   * `redraw` re-emits the glyph **and** the ring on the row's existing icon
+   * Graphics (the glyph must be re-drawn because the ring redraw clears the
+   * command buffer), so no object is ever created or destroyed to animate the
+   * ring.
+   */
+  private _registerCountdownRing(
+    fraction: number | undefined,
+    redraw: (fraction: number) => void,
+  ): void {
+    if (fraction === undefined) return;
+    this._countdownRings.push({ fraction, redraw });
+    redraw(fraction);
   }
 
   /** Phaser per-frame hook: keep the HUD in sync with the registry. */
@@ -782,16 +909,22 @@ export class HUD extends Phaser.GameObjects.Container {
   /** Builds one display row (icon + label + value) from a HUD entry. */
   private _addRow(entry: HUDEntry, row: number): void {
     const y = this._rowY(row);
+    const iconY = y + ROW_HEIGHT / 2;
 
     const icon = new Phaser.GameObjects.Graphics(this.scene);
-    drawPowerUpIcon(
-      icon,
-      entry.icon,
-      ICON_X,
-      y + ROW_HEIGHT / 2,
-      8,
-      entry.greyed ? POWER_UP_GREY_COLOUR : undefined,
-    );
+    // The icon and its countdown ring share one Graphics object, so the ring
+    // is re-emitted (glyph first, then arc) whenever the fraction moves rather
+    // than becoming a second scene child (parent AH-0MVZ8YQQV006Q09W AC8).
+    const glyph = (): void =>
+      drawPowerUpIcon(
+        icon,
+        entry.icon,
+        ICON_X,
+        iconY,
+        8,
+        entry.greyed ? POWER_UP_GREY_COLOUR : undefined,
+      );
+    glyph();
 
     const name = new Phaser.GameObjects.Text(
       this.scene,
@@ -810,7 +943,9 @@ export class HUD extends Phaser.GameObjects.Container {
     );
 
     // A greyed (owned-but-empty) row paints the icon, label and value with
-    // the one shared grey so they cannot diverge (AH-0MV82I97Y007MB6M).
+    // the one shared grey so they cannot diverge (AH-0MV82I97Y007MB6M). The
+    // ring follows the same rule: the grey is the row's state colour, so the
+    // arc never looks "live coloured" on an inactive row.
     if (entry.greyed) {
       name.setColor(POWER_UP_GREY_COLOUR_CSS);
       value.setColor(POWER_UP_GREY_COLOUR_CSS);
@@ -827,6 +962,16 @@ export class HUD extends Phaser.GameObjects.Container {
 
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
+
+    // Countdown ring: drawn only while the row reports a live countdown, in
+    // the row's own palette colour (or the shared grey when greyed out).
+    const ringColour = entry.greyed
+      ? POWER_UP_GREY_COLOUR
+      : ICON_COLORS[entry.icon];
+    this._registerCountdownRing(entry.countdown, (fraction) => {
+      glyph();
+      drawCountdownRing(icon, ICON_X, iconY, fraction, ringColour);
+    });
 
     // Non-slot marker: tells the player the row is not one of the six
     // loadout slots (exempt entry / charge pool) without changing the label
@@ -878,6 +1023,15 @@ export class HUD extends Phaser.GameObjects.Container {
       const stacks = this._powerUpStacks(id);
       const recharge = this._powerUpRecharge(id);
       const greyed = this._isPowerUpGreyed(id);
+      // The ring reports the very timer the row's text reports: the value
+      // column's `Ns` window (expiring) or the label's `next in Ns` wait
+      // (arriving). Deriving both from the same condition is what makes the
+      // arc and the text unable to disagree (parent AC2/AC3).
+      const countdown = temporary
+        ? reg.powerUpTemporaryProgress(id)?.sweep
+        : recharge !== undefined
+          ? this._powerUpRechargeProgress(id)
+          : undefined;
       // A single-use kind reads `ready` while its ability is armed
       // (AH-0MW231O8Q0095LQM): the catalogue flag decides, so no
       // `id === 'teleport'` branch lives here.
@@ -896,6 +1050,7 @@ export class HUD extends Phaser.GameObjects.Container {
         slotCounted: state ? isSlotCountedHeldKind(id, state) : true,
         ...(stacks !== undefined ? { stacks } : {}),
         ...(recharge !== undefined ? { recharge } : {}),
+        ...(countdown !== undefined ? { countdown } : {}),
         ...(marker !== undefined ? { marker } : {}),
       });
     }
@@ -1111,6 +1266,34 @@ export class HUD extends Phaser.GameObjects.Container {
   }
 
   /**
+   * The ring sweep that pairs with {@link _powerUpRecharge}: the soonest
+   * arriving countdown the `next in Ns` label reports, for the same kinds and
+   * under the same "is anything owed" rules. Kept as one mirror of the text
+   * path (one switch, one set of guards) so the icon and the label can never
+   * disagree about *whether* a countdown is live; the arithmetic itself lives
+   * in the shared seam / registry projections, never here
+   * (parent AH-0MVZ8YQQV006Q09W AC1/AC2).
+   */
+  private _powerUpRechargeProgress(id: PowerUpId): number | undefined {
+    const reg = this._registry!;
+    switch (id) {
+      case 'strike':
+        // The permanent cadence: `strikeProgress` is null while no strike is
+        // armed or a bolt is latched, exactly when `strikeNextBoltSeconds`
+        // reports nothing.
+        return reg.strikeProgress()?.sweep;
+      default:
+        // A **single-use** kind (Teleport) reads its readiness clock.
+        if (getPowerUpById(id).singleUse === true) {
+          return reg.teleportRechargeProgress()?.sweep;
+        }
+        return isConsumablePowerUpId(id)
+          ? reg.consumableRechargeProgress(id)?.sweep
+          : undefined;
+    }
+  }
+
+  /**
    * Whether the player **owns** a consumable's charge pool this run — the
    * hold-full ownership flag and a field-pickup level both count, while a
    * never-collected kind does not. Used to keep an owned-but-empty pool
@@ -1181,6 +1364,8 @@ export class HUD extends Phaser.GameObjects.Container {
     slotCounted: boolean;
     group: 'loadout' | 'non-slot';
     marker?: string;
+    /** Countdown ring fill (`[0, 1]`), absent when nothing is counting down. */
+    countdown?: number;
   }> {
     const state = this._slotState();
     const groupOf = (slotCounted: boolean): 'loadout' | 'non-slot' =>
@@ -1192,6 +1377,7 @@ export class HUD extends Phaser.GameObjects.Container {
         slotCounted: row.slotCounted ?? true,
         group: groupOf(row.slotCounted ?? true),
         ...(row.marker !== undefined ? { marker: row.marker } : {}),
+        ...(row.countdown !== undefined ? { countdown: row.countdown } : {}),
       })),
       ...this._weaponRows.map((row) => {
         const slotCounted = state
@@ -1202,6 +1388,7 @@ export class HUD extends Phaser.GameObjects.Container {
           label: row.label,
           slotCounted,
           group: groupOf(slotCounted),
+          ...(row.countdown !== undefined ? { countdown: row.countdown } : {}),
         };
       }),
     ];
@@ -1240,6 +1427,17 @@ export class HUD extends Phaser.GameObjects.Container {
   ): HudRowPlan {
     const level = this._getWeaponLevel?.(weapon.weaponId) ?? 0;
     const temporary = weapon.tempWindow === true;
+    // A live field-pickup window drains the ring from complete: the row's own
+    // captured `duration` is the span (never a hard-coded TTL), and the sweep
+    // comes from the one shared seam. A permanent weapon with no window has
+    // nothing counting down, so it draws no ring (parent AC3/AC4).
+    const countdown = temporary
+      ? resolveCountdownSweep({
+          remaining: weapon.remaining,
+          total: weapon.duration,
+          mode: 'expiring',
+        })
+      : undefined;
     return {
       kind: 'weapon',
       weapon,
@@ -1247,6 +1445,7 @@ export class HUD extends Phaser.GameObjects.Container {
       slotCounted,
       label: `${WEAPON_ROW_PREFIX}${weapon.weaponId} Lvl ${level}`,
       value: formatHUDValue(temporary, weapon.remaining),
+      ...(countdown !== undefined ? { countdown } : {}),
     };
   }
 
@@ -1255,16 +1454,20 @@ export class HUD extends Phaser.GameObjects.Container {
     spec: Extract<HudRowPlan, { kind: 'weapon' }>,
   ): void {
     const y = this._rowY(spec.row);
+    const iconY = y + ROW_HEIGHT / 2;
 
-    // Weapon icon.
+    // Weapon icon (shares its Graphics with the countdown ring, mirroring the
+    // power-up rows).
     const icon = new Phaser.GameObjects.Graphics(this.scene);
-    drawWeaponIcon(
-      icon,
-      spec.weapon.weaponId as WeaponDropIconId,
-      ICON_X,
-      y + ROW_HEIGHT / 2,
-      8,
-    );
+    const glyph = (): void =>
+      drawWeaponIcon(
+        icon,
+        spec.weapon.weaponId as WeaponDropIconId,
+        ICON_X,
+        iconY,
+        8,
+      );
+    glyph();
 
     const name = new Phaser.GameObjects.Text(
       this.scene,
@@ -1291,5 +1494,15 @@ export class HUD extends Phaser.GameObjects.Container {
       name.setAlpha(NON_SLOT_ROW_ALPHA);
       value.setAlpha(NON_SLOT_ROW_ALPHA);
     }
+
+    // A live field-pickup window draws the draining ring in the weapon's own
+    // palette colour; a permanent weapon row draws none (parent AC3/AC4).
+    const ringColour = weaponIconColour(
+      spec.weapon.weaponId as WeaponDropIconId,
+    );
+    this._registerCountdownRing(spec.countdown, (fraction) => {
+      glyph();
+      drawCountdownRing(icon, ICON_X, iconY, fraction, ringColour);
+    });
   }
 }

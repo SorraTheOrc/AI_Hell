@@ -21,6 +21,14 @@ import {
 } from './HUD';
 import { EffectsRegistry } from '../powerups/effects';
 import {
+  ICON_COLORS,
+  MIN_RING_SWEEP,
+  POWER_UP_GREY_COLOUR,
+  RING_RADIUS,
+  RING_STROKE_WIDTH,
+  weaponIconColour,
+} from '../powerups/icons';
+import {
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
 } from '../powerups/powerUpLevels';
@@ -1991,6 +1999,512 @@ describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
     expect(row.stacks).toBeUndefined();
     expect(row.recharge).toBeUndefined();
     expect(row.greyed).toBe(false);
+    destroy(game);
+  });
+});
+
+// ── Countdown ring (AH-0MW2AVRNL008F9FX) ─────────────────────────────
+//
+// Every row with a live countdown draws a sweeping arc ring around its icon
+// (parent AH-0MVZ8YQQV006Q09W): `arriving` countdowns fill from empty at the
+// spend/fire instant to complete when the event is due, `expiring` countdowns
+// drain from complete at pickup to empty at expiry. These tests pin the row
+// model's fraction, the rendered arc (geometry + palette) and the invariants
+// (no countdown ⇒ no ring, bounded objects, unmoved columns) from the command
+// buffer, which is the only rendering evidence available headless (see
+// `src/test/setup.ts`).
+
+/** Phaser Graphics command opcodes (subset the row icons emit). */
+const CMD = {
+  ARC: 0,
+  BEGIN_PATH: 1,
+  CLOSE_PATH: 2,
+  FILL_RECT: 3,
+  LINE_TO: 4,
+  MOVE_TO: 5,
+  LINE_STYLE: 6,
+  FILL_STYLE: 7,
+  FILL_PATH: 8,
+  STROKE_PATH: 9,
+  FILL_TRIANGLE: 10,
+  STROKE_TRIANGLE: 11,
+} as const;
+
+/** Parameter count per opcode (opcode + N params in the flat command buffer). */
+const CMD_PARAMS: Record<number, number> = {
+  [CMD.ARC]: 7,
+  [CMD.FILL_RECT]: 4,
+  [CMD.LINE_TO]: 2,
+  [CMD.MOVE_TO]: 2,
+  [CMD.LINE_STYLE]: 3,
+  [CMD.FILL_STYLE]: 2,
+  [CMD.FILL_TRIANGLE]: 6,
+  [CMD.STROKE_TRIANGLE]: 6,
+};
+
+interface ArcCommand {
+  x: number;
+  y: number;
+  radius: number;
+  startAngle: number;
+  endAngle: number;
+  anticlockwise: boolean;
+}
+
+interface ArcEntry {
+  arc: ArcCommand;
+  /** Index of the opcode in the command buffer (for the preceding lineStyle). */
+  index: number;
+}
+
+/** Every `arc()` emitted to a Graphics, in draw order. */
+function arcEntries(graphics?: Phaser.GameObjects.Graphics): ArcEntry[] {
+  const buf = graphics?.commandBuffer as number[] | undefined;
+  if (!buf) return [];
+  const entries: ArcEntry[] = [];
+  for (let i = 0; i < buf.length; ) {
+    const op = buf[i];
+    if (op === CMD.ARC) {
+      entries.push({
+        arc: {
+          x: buf[i + 1],
+          y: buf[i + 2],
+          radius: buf[i + 3],
+          startAngle: buf[i + 4],
+          endAngle: buf[i + 5],
+          anticlockwise: buf[i + 6] === 1,
+        },
+        index: i,
+      });
+      i += 1 + 7;
+      continue;
+    }
+    i += 1 + (CMD_PARAMS[op] ?? 0);
+  }
+  return entries;
+}
+
+/** The countdown ring arc on a row icon (drawn at {@link RING_RADIUS}). */
+function ringArc(graphics?: Phaser.GameObjects.Graphics): ArcCommand | undefined {
+  return arcEntries(graphics).find(
+    (entry) => Math.abs(entry.arc.radius - RING_RADIUS) < 1e-6,
+  )?.arc;
+}
+
+/** The stroke colour of the ring arc (the `lineStyle` that preceded it). */
+function ringColour(
+  graphics?: Phaser.GameObjects.Graphics,
+): number | undefined {
+  const buf = graphics?.commandBuffer as number[] | undefined;
+  const entry = arcEntries(graphics).find(
+    (candidate) => Math.abs(candidate.arc.radius - RING_RADIUS) < 1e-6,
+  );
+  if (!buf || !entry) return undefined;
+  for (let i = entry.index; i >= 0; i -= 1) {
+    if (buf[i - 3] === CMD.LINE_STYLE) return buf[i - 1];
+  }
+  return undefined;
+}
+
+/** The sweep of an arc as a fraction of a full turn. */
+function arcSweep(arc: ArcCommand): number {
+  return Math.abs(arc.endAngle - arc.startAngle) / (Math.PI * 2);
+}
+
+/** A registry with a permanently-owned consumable holding one spent charge. */
+function rechargingConsumable(): {
+  store: PowerUpLevelStore;
+  reg: EffectsRegistry;
+  total: number;
+} {
+  const store = new PowerUpLevelStore();
+  const reg = new EffectsRegistry(store);
+  reg.applyCollect('phase_shift', true); // hold-full: owned, one charge
+  expect(reg.tryConsumeConsumableCharge('phase_shift')).toBe(true);
+  return { store, reg, total: store.consumableRechargeTime('phase_shift') };
+}
+
+/** A registry with a permanent Orbital Strike cadence counting down. */
+function strikeCadence(): { reg: EffectsRegistry; total: number } {
+  const reg = new EffectsRegistry(new PowerUpLevelStore());
+  reg.applyCollect('strike', true);
+  // The grant queues one immediate bolt; resolve it so the cadence clock is the
+  // live countdown the row reports (a latched bolt freezes the timer).
+  expect(reg.updateStrike(0)).toBe(true);
+  reg.resolveStrike();
+  return { reg, total: reg.strikeInterval() };
+}
+
+describe('AH-0MW2AVRNL008F9FX AC1: the row model reports each countdown fraction', () => {
+  it('a recharging consumable reports an arriving (filling) fraction', async () => {
+    const { store, reg, total } = rechargingConsumable();
+    store.tickRecharge(total / 4); // a quarter of the wait has elapsed
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((entry) => entry.id === 'phase_shift')!;
+    expect(row.recharge).toBeCloseTo(total * 0.75, 6);
+    expect(row.countdown).toBeCloseTo(0.25, 6);
+    destroy(game);
+  });
+
+  it('several in-flight charges report the soonest-returning one (same timer as the label)', async () => {
+    const { store, reg, total } = rechargingConsumable();
+    // A second charge is spent later, so it returns later; the ring must show
+    // the soonest — the very timer the `next in Ns` label reports.
+    store.tickRecharge(total / 2);
+    reg.applyCollect('phase_shift', true); // one more charge…
+    expect(reg.tryConsumeConsumableCharge('phase_shift')).toBe(true); // …spent now
+    store.tickRecharge(total / 4);
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((entry) => entry.id === 'phase_shift')!;
+    expect(row.recharge).toBeCloseTo(total * 0.25, 6);
+    expect(row.countdown).toBeCloseTo(0.75, 6);
+    destroy(game);
+  });
+
+  it('the permanent Orbital Strike cadence reports an arriving (filling) fraction', async () => {
+    const { reg, total } = strikeCadence();
+    reg.updateStrike(total * 0.25); // a quarter of the cadence elapsed
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((entry) => entry.id === 'strike')!;
+    expect(row.recharge).toBeCloseTo(total * 0.75, 6);
+    expect(row.countdown).toBeCloseTo(0.25, 6);
+    destroy(game);
+  });
+
+  it('a power-up timed window reports an expiring (draining) fraction', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('speed_boost');
+    const total = reg.powerUpTemporaryRemaining('speed_boost')!;
+    reg.tick(total * 0.25);
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((entry) => entry.id === 'speed_boost')!;
+    expect(row.temporary).toBe(true);
+    expect(row.countdown).toBeCloseTo(0.75, 6);
+    destroy(game);
+  });
+
+  it('a weapon field-pickup window reports an expiring (draining) fraction', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyWeapon('spread');
+    const total = reg.activeWeapons()[0].duration;
+    reg.tick(total * 0.25);
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const weapon = hud.getLoadoutRows().find((row) => row.id === 'spread')!;
+    expect(weapon.countdown).toBeCloseTo(0.75, 6);
+    destroy(game);
+  });
+
+  it('rows with nothing counting down report no fraction', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('magnet', true); // permanent, no window
+    reg.applyCollect('speed_boost', true); // permanent, no window
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    for (const row of hud.getRows()) {
+      expect(row.countdown).toBeUndefined();
+    }
+    destroy(game);
+  });
+
+  it('a full consumable pool reports no fraction (nothing is owed)', async () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('phase_shift', true); // owned, one charge, no timer
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((entry) => entry.id === 'phase_shift')!;
+    expect(row.recharge).toBeUndefined();
+    expect(row.countdown).toBeUndefined();
+    destroy(game);
+  });
+});
+
+describe('AH-0MW2AVRNL008F9FX AC2: the rendered arc carries the row fraction', () => {
+  it('draws the ring at RING_RADIUS around the icon, clockwise from 12 o’clock, at half a turn for 0.5', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('speed_boost');
+    const total = reg.powerUpTemporaryRemaining('speed_boost')!;
+    reg.tick(total / 2);
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const icon = rowIcon(hud, hud.getRows()[0].label)!;
+    const arc = ringArc(icon)!;
+    expect(arc).toBeDefined();
+    expect(arc.anticlockwise).toBe(false);
+    expect(arc.startAngle).toBeCloseTo(-Math.PI / 2, 6); // 12 o'clock
+    expect(arcSweep(arc)).toBeCloseTo(0.5, 6);
+    destroy(game);
+  });
+
+  it('draws the row icon in the item palette and the ring in the same hue', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('speed_boost');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const icon = rowIcon(hud, hud.getRows()[0].label)!;
+    expect(firstStrokeColour(icon)).toBe(ICON_COLORS.speed_boost);
+    expect(ringColour(icon)).toBe(ICON_COLORS.speed_boost);
+    destroy(game);
+  });
+
+  it('draws a weapon row ring in the weapon palette colour', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyWeapon('spread');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const weapon = hud.getLoadoutRows().find((row) => row.id === 'spread')!;
+    const icon = rowIcon(hud, weapon.label)!;
+    expect(ringColour(icon)).toBe(weaponIconColour('spread'));
+    expect(arcSweep(ringArc(icon)!)).toBeCloseTo(1, 6);
+    destroy(game);
+  });
+
+  it('redraws the arc on the existing icon Graphics as the fraction moves (no new object)', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('speed_boost'); // 10 s window → whole seconds in the value
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const label = hud.getRows()[0].label;
+    const icon = rowIcon(hud, label)!;
+    expect(arcSweep(ringArc(icon)!)).toBeCloseTo(1, 6);
+    const childCount = hudChildren(hud).length;
+
+    reg.tick(0.5); // the value column still reads `10s`: same render plan
+    hud.refresh();
+
+    // The same Graphics object now carries the updated sweep.
+    expect(rowIcon(hud, label)).toBe(icon);
+    expect(hudChildren(hud).length).toBe(childCount);
+    expect(arcSweep(ringArc(icon)!)).toBeCloseTo(0.95, 6);
+    destroy(game);
+  });
+
+  it('keeps a minimum visible sweep while an expiring window is nearly done', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('speed_boost');
+    const total = reg.powerUpTemporaryRemaining('speed_boost')!;
+    reg.tick(total - 0.04); // 0.04 s of a 10 s window is left
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows()[0];
+    expect(row.countdown!).toBeLessThan(MIN_RING_SWEEP);
+    const icon = rowIcon(hud, row.label)!;
+    expect(arcSweep(ringArc(icon)!)).toBeCloseTo(MIN_RING_SWEEP, 6);
+    destroy(game);
+  });
+});
+
+describe('AH-0MW2AVRNL008F9FX AC3: per-state coverage for all four countdown sources', () => {
+  it('arriving consumable recharge: empty at spend → half → nearly full', async () => {
+    const { store, reg, total } = rechargingConsumable();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    const fractions: number[] = [];
+    const sample = () => {
+      hud.refresh();
+      fractions.push(
+        hud.getRows().find((entry) => entry.id === 'phase_shift')!.countdown!,
+      );
+    };
+
+    sample(); // just spent
+    store.tickRecharge(total / 2);
+    sample();
+    store.tickRecharge(total / 2 - 0.01); // still owed, but nearly returned
+    sample();
+    destroy(game);
+
+    expect(fractions[0]).toBeCloseTo(0, 6);
+    expect(fractions[1]).toBeCloseTo(0.5, 6);
+    // 0.01 s of the wait is still owed, so the ring is nearly complete.
+    expect(fractions[2]).toBeCloseTo(1 - 0.01 / total, 6);
+    expect(fractions[1]).toBeGreaterThan(fractions[0]);
+    expect(fractions[2]).toBeGreaterThan(fractions[1]);
+  });
+
+  it('arriving Orbital Strike cadence: empty after a bolt → half → nearly due', async () => {
+    const { reg, total } = strikeCadence();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    const sample = () => {
+      hud.refresh();
+      return hud.getRows().find((entry) => entry.id === 'strike')!.countdown!;
+    };
+
+    const empty = sample();
+    reg.updateStrike(total / 2);
+    const half = sample();
+    reg.updateStrike(total / 2 - 0.01);
+    const nearlyDue = sample();
+    destroy(game);
+
+    expect(empty).toBeCloseTo(0, 6);
+    expect(half).toBeCloseTo(0.5, 6);
+    expect(nearlyDue).toBeCloseTo(1 - 0.01 / total, 6);
+    expect(half).toBeGreaterThan(empty);
+    expect(nearlyDue).toBeGreaterThan(half);
+  });
+
+  it('expiring power-up window: complete at pickup → half → nearly empty', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('speed_boost');
+    const total = reg.powerUpTemporaryRemaining('speed_boost')!;
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    const sample = () => {
+      hud.refresh();
+      return hud.getRows().find((entry) => entry.id === 'speed_boost')!.countdown!;
+    };
+
+    const full = sample();
+    reg.tick(total / 2);
+    const half = sample();
+    reg.tick(total / 2 - 0.01);
+    const nearlyEmpty = sample();
+    destroy(game);
+
+    expect(full).toBeCloseTo(1, 6);
+    expect(half).toBeCloseTo(0.5, 6);
+    expect(nearlyEmpty).toBeCloseTo(0.01 / total, 6);
+    expect(half).toBeLessThan(full);
+    expect(nearlyEmpty).toBeLessThan(half);
+  });
+
+  it('expiring weapon window: complete at pickup → half → nearly empty', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyWeapon('spread');
+    const total = reg.activeWeapons()[0].duration;
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    const sample = () => {
+      hud.refresh();
+      return hud.getLoadoutRows().find((row) => row.id === 'spread')!.countdown!;
+    };
+
+    const full = sample();
+    reg.tick(total / 2);
+    const half = sample();
+    reg.tick(total / 2 - 0.01);
+    const nearlyEmpty = sample();
+    destroy(game);
+
+    expect(full).toBeCloseTo(1, 6);
+    expect(half).toBeCloseTo(0.5, 6);
+    expect(nearlyEmpty).toBeCloseTo(0.01 / total, 6);
+    expect(half).toBeLessThan(full);
+    expect(nearlyEmpty).toBeLessThan(half);
+  });
+});
+
+describe('AH-0MW2AVRNL008F9FX AC4: no countdown ⇒ no ring, and no object leak', () => {
+  it('draws no arc on a row with no live countdown', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('magnet', true);
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const icon = rowIcon(hud, hud.getRows()[0].label)!;
+    expect(ringArc(icon)).toBeUndefined();
+    destroy(game);
+  });
+
+  it('stops drawing the ring once the countdown is gone', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('magnet', true);
+    reg.applyCollect('magnet'); // temporary window on top of the permanent base
+    const total = reg.powerUpTemporaryRemaining('magnet')!;
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    expect(ringArc(rowIcon(hud, 'Magnet Lvl 2'))).toBeDefined();
+
+    reg.tick(total + 0.5); // window expired, permanent base remains
+    hud.refresh();
+    expect(hud.getRows()[0].label).toBe('Magnet Lvl 1');
+    expect(ringArc(rowIcon(hud, 'Magnet Lvl 1'))).toBeUndefined();
+    destroy(game);
+  });
+
+  it('keeps the rendered child count bounded across many refreshes with a live countdown', async () => {
+    const { store, reg, total } = rechargingConsumable();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    const baseline = hudChildren(hud).length;
+    expect(baseline).toBeGreaterThan(0);
+
+    for (let i = 0; i < 120; i += 1) {
+      store.tickRecharge(total / 300); // sub-second fraction movement per frame
+      hud.refresh();
+    }
+    expect(hudChildren(hud).length).toBe(baseline);
+
+    for (let i = 0; i < 120; i += 1) hud.refresh();
+    expect(hudChildren(hud).length).toBe(baseline);
+    destroy(game);
+  });
+});
+
+describe('AH-0MW2AVRNL008F9FX AC5: layout invariants', () => {
+  it('does not move the label, value or marker columns and fits inside the row', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('magnet', true); // no countdown: the layout baseline
+    reg.applyCollect('speed_boost'); // countdown row
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const plain = rowTexts(hud, 'Magnet Lvl 1', PERMANENT_VALUE);
+    const ringed = rowTexts(hud, 'Speed Boost Lvl 1', '10s');
+    expect(plain.labelText).toBeDefined();
+    expect(ringed.labelText).toBeDefined();
+
+    // Same columns, and the rows keep the shared row height apart.
+    expect(ringed.labelText!.x).toBe(plain.labelText!.x);
+    expect(ringed.valueText!.x).toBe(plain.valueText!.x);
+
+    const arc = ringArc(rowIcon(hud, 'Speed Boost Lvl 1'))!;
+    expect(arc).toBeDefined();
+    // The ring sits outside the 8 px glyph but clear of the label column.
+    expect(arc.radius).toBeGreaterThan(4);
+    expect(arc.x + arc.radius + RING_STROKE_WIDTH / 2).toBeLessThan(
+      ringed.labelText!.x,
+    );
+    // …and inside the 22 px row band it belongs to.
+    const row = hud.getRows().find((entry) => entry.id === 'speed_boost')!;
+    expect(row).toBeDefined();
+    expect(arc.radius * 2).toBeLessThan(HUD_ROW_HEIGHT);
+    destroy(game);
+  });
+
+  it('keeps the shared grey on a greyed empty-pool row’s ring', async () => {
+    // Owned with its charge spent → greyed, and half the wait elapsed so the
+    // ring actually has a sweep to draw (an arriving ring is empty at spend).
+    const { store, reg, total } = rechargingConsumable();
+    store.tickRecharge(total / 2);
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((entry) => entry.id === 'phase_shift')!;
+    expect(row.greyed).toBe(true);
+    const icon = rowIcon(hud, row.label)!;
+    expect(firstStrokeColour(icon)).toBe(POWER_UP_GREY_COLOUR);
+    expect(ringColour(icon)).toBe(POWER_UP_GREY_COLOUR);
     destroy(game);
   });
 });
