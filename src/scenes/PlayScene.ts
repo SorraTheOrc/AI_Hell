@@ -3905,6 +3905,13 @@ export class PlayScene extends CombatScene<
    * restarts cleanly at the beginning of a level. The **live** hold capacity
    * is persisted alongside the minerals, so Continue keeps the capacity
    * progression the run had earned (schema v2, AH-0MVT1DYO5004UC4P).
+   *
+   * The owned consumables' **charge pools and in-flight recharge timers** are
+   * captured too (AH-0MVY3IGRC00954UD AC1): the snapshot comes from the
+   * player's **one** shared `PowerUpLevelStore` — the same instance the HUD
+   * and effect path read — so the checkpoint is only a serialiser, never a
+   * second charge counter (the store's snapshot/restore seam is the only
+   * surface that touches the pools).
    */
   private _saveCheckpoint(context: MiniBossDefeatContext): void {
     // A hangar-war deployment is a separate session (AH-0MVUXC2DD003HN0I): it
@@ -3923,6 +3930,9 @@ export class PlayScene extends CombatScene<
         mineralHoldCapacity: this.gameState.mineralCapacity,
         weaponLevels: this.player?.getWeaponLevels() ?? [],
         powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+        consumablePools: this.player
+          ? this.player.getPowerUpLevelStore().snapshotConsumablePools()
+          : [],
         runSeed: this.getRunSeed(),
         savedAt: new Date().toISOString(),
       };
@@ -4156,6 +4166,15 @@ export class PlayScene extends CombatScene<
    * — the hold can never resume over-capacity, the HUD never paints more than
    * 100%, and the first hold-full choice after Continue needs a real fill, not
    * the discarded saved surplus (AH-0MVT1DZRG000Q1US).
+   *
+   * The consumable **charge pools and recharge timers** are restored through
+   * the store's snapshot/restore seam **between** the permanent-grant replay
+   * and the lives restore, so Continue keeps the exact pools and in-flight
+   * timers the run banked (additive `consumablePools`, AH-0MVY3IGRC00954UD
+   * AC2); a legacy payload without the field resumes with the replay-granted
+   * single charge per owned kind and no timers (AC3). No gym implements
+   * checkpoint resume, so the parity rule needs no gym counterpart for this
+   * path either.
    */
   private _restoreCheckpoint(checkpoint: Checkpoint): void {
     this.gameState.score = checkpoint.score;
@@ -4186,6 +4205,21 @@ export class PlayScene extends CombatScene<
         grantPermanentPowerUp(entry.id, this.effectsRegistry);
       }
     }
+    // The saved consumable charge pools and in-flight recharge timers are
+    // re-applied **after** the permanent-grant replay (which marks each
+    // owned kind and grants it one charge) and **before** the lives restore,
+    // so the saved values are authoritative and the replay's single
+    // per-level grant can never leak into the saved pool (AH-0MVY3IGRC00954UD
+    // AC2/AC4). The restore flows through the **one shared store instance**
+    // (`EffectsRegistry.levelStore()` — the player's store) the HUD and
+    // effect path read; the checkpoint never touches the store's internals,
+    // so it can never become a second charge counter (AC2). A legacy payload
+    // with no pool field restores nothing — the replay leaves each owned
+    // consumable with its single granted charge and no timers, exactly as
+    // before this field existed (AC3).
+    this.effectsRegistry
+      .levelStore()
+      .restoreConsumablePools(checkpoint.consumablePools ?? []);
     // Lives are restored **after** the replay: `extra_life` grants raise the
     // store's lives, and the checkpoint already reflects the lives the player
     // had when it was written. Replaying must never inflate them, so the saved

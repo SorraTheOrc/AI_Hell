@@ -1588,6 +1588,30 @@ export interface ConsumableRechargeProgress {
 }
 
 /**
+ * One row of the consumable pool snapshot/restore seam — the persistence
+ * surface for the run checkpoint (AH-0MVY3IGRC00954UD).
+ *
+ * Covers the five **pool-backed** consumables (charges plus every in-flight
+ * per-charge recharge timer) **and** the single-use Teleport (no pool:
+ * `charges` is always `0` and its whole state is the readiness timer carried
+ * in `rechargeTimers` — empty while ready, parent AH-0MVY096RT006QMF4).
+ * Structural twin of the checkpoint's `consumablePools` rows, so the save
+ * path hands the store's snapshot to the checkpoint verbatim and the restore
+ * path rehydrates the parsed payload through the same one seam.
+ */
+export interface ConsumablePoolSnapshot {
+  /** The consumable kind (a pooled kind or the single-use Teleport). */
+  id: PowerUpId;
+  /** Charges in the pool (always 0 for the single-use Teleport). */
+  charges: number;
+  /**
+   * In-flight recharge timers (Teleport: at most one — its readiness timer;
+   * an empty list means ready).
+   */
+  rechargeTimers: ConsumableRechargeTimer[];
+}
+
+/**
  * The catalogue axis that bounds each consumable's charge pool (parent
  * AH-0MVTQMREN009DSFW, AC2/AC3). Where a kind already had a spendable budget
  * axis, that axis **is** its charge cap; only Mystery UFO gained a new one.
@@ -2298,6 +2322,123 @@ export class PowerUpLevelStore {
     const next = Math.min(cap, pool + Math.max(0, count));
     this._charges.set(id, next);
     return next;
+  }
+
+  /**
+   * Snapshot of every **permanently owned** consumable's charge pool and
+   * in-flight recharge timers (AH-0MVY3IGRC00954UD AC1).
+   *
+   * The checkpoint seam: the save path serialises this list verbatim, so a
+   * resumed run rehydrates the exact pools and timers `tickRecharge` was
+   * advancing. Only permanently owned kinds are included — the same
+   * ownership predicate as {@link getLevels} (a hold-full grant, or a
+   * scripted permanent level), so a pool can never be restored for a kind a
+   * resumed run does not own (AC5). Teleport is the single-use carve-out
+   * (parent AH-0MVY096RT006QMF4): its entry carries `charges: 0` and its
+   * whole state is the readiness timer in `rechargeTimers` (one entry while
+   * the warp recharges, none while ready).
+   */
+  snapshotConsumablePools(): ConsumablePoolSnapshot[] {
+    const rows: ConsumablePoolSnapshot[] = [];
+    for (const id of CONSUMABLE_POWER_UP_IDS) {
+      const owned = this.isConsumableOwned(id) || this.permanentGrants(id) > 0;
+      if (!owned) continue;
+      if (this._isSingleUse(id)) {
+        rows.push({
+          id,
+          charges: 0,
+          rechargeTimers:
+            this._teleportRecharge > 0
+              ? [
+                  {
+                    // The scalar carries only the remaining seconds; the
+                    // snapshot's duration slot mirrors it (nothing derives a
+                    // fraction from the single-use clock).
+                    duration: this._teleportRecharge,
+                    remaining: this._teleportRecharge,
+                  },
+                ]
+              : [],
+        });
+        continue;
+      }
+      const timers = this._rechargeTimers.get(id);
+      rows.push({
+        id,
+        charges: this.consumableCharges(id),
+        rechargeTimers: timers
+          ? timers.map((timer) => ({
+              duration: timer.duration,
+              remaining: Math.max(0, timer.remaining),
+            }))
+          : [],
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * Re-applies saved consumable pools and timers (AH-0MVY3IGRC00954UD AC2).
+   *
+   * `PlayScene._restoreCheckpoint` calls this **after** the permanent-grant
+   * replay (which marks kinds owned and grants one charge each) and **before**
+   * the lives restore, so the saved values are authoritative and the replay's
+   * single per-level grant can never leak into the saved pool (AC4). The
+   * store is the one source of truth — the checkpoint never touches
+   * `_charges` / `_rechargeTimers` directly. Defensive like the rest of the
+   * store: entries for unknown or unowned kinds are ignored, non-finite
+   * charges restore as 0, over-cap charges clamp to the ceiling live play can
+   * hold (Phase Shift's shipped cap-3 pool, the others' level-derived cap),
+   * and a timer is dropped unless its duration/remaining are finite, with
+   * `remaining` clamped into `[0, duration]`.
+   */
+  restoreConsumablePools(entries: readonly ConsumablePoolSnapshot[]): void {
+    for (const entry of entries) {
+      if (!entry || typeof entry.id !== 'string') continue;
+      if (!isConsumablePowerUpId(entry.id)) continue;
+      // A pool can only ever be restored for a kind the resumed run owns —
+      // the replay's grant marks it owned, and a kind dropped by
+      // `capCheckpointLoadout`'s six-slot gate is never owned (AC5).
+      if (!this.isConsumableOwned(entry.id)) continue;
+      const timers: ConsumableRechargeTimer[] = Array.isArray(
+        entry.rechargeTimers,
+      )
+        ? entry.rechargeTimers
+            .filter(
+              (timer) =>
+                timer !== null &&
+                typeof timer === 'object' &&
+                Number.isFinite(timer.duration) &&
+                timer.duration > 0 &&
+                Number.isFinite(timer.remaining),
+            )
+            .map((timer) => ({
+              duration: timer.duration,
+              remaining: Math.max(
+                0,
+                Math.min(timer.remaining, timer.duration),
+              ),
+            }))
+        : [];
+      if (this._isSingleUse(entry.id)) {
+        // Teleport: the readiness timer is the whole state (one warp). The
+        // first saved timer (or none) decides ready vs recharging.
+        this._teleportRecharge = timers.length > 0 ? timers[0].remaining : 0;
+        continue;
+      }
+      const charges = Number.isFinite(entry.charges)
+        ? Math.max(
+            0,
+            Math.min(Math.floor(entry.charges), this._poolCap(entry.id)),
+          )
+        : 0;
+      this._charges.set(entry.id, charges);
+      if (timers.length > 0) {
+        this._rechargeTimers.set(entry.id, timers);
+      } else {
+        this._rechargeTimers.delete(entry.id);
+      }
+    }
   }
 
   /**

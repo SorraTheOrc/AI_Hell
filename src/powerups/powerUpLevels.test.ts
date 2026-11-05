@@ -33,6 +33,7 @@ import {
   POWER_UP_LIVES_START,
   PowerUpLevelStore,
   type PowerUpLevelVariable,
+  type ConsumablePoolSnapshot,
   resolveConsumableChargeCap,
   resolvePowerUpAtLevel,
   resolveTemporaryWindow,
@@ -2211,5 +2212,162 @@ describe('PowerUpLevelStore — recharge timer duration/remaining + progress (AH
       big.remaining,
       9,
     );
+  });
+});
+
+// ── Consumable pool snapshot/restore seam (AH-0MVY3IGRC00954UD) ─────
+//
+// The checkpoint persistence gap: a run checkpoint persists a consumable's
+// permanent level but not its charge pool or in-flight recharge timers.
+// `snapshotConsumablePools` / `restoreConsumablePools` are the one
+// snapshot/restore seam on the store, covering the five pool-backed kinds
+// **and** Teleport's single-use readiness (its whole state is the
+// `_teleportRecharge` timer, so a seam built only from the pool maps would
+// silently omit it — parent AH-0MVY096RT006QMF4).
+
+describe('PowerUpLevelStore — consumable pool snapshot/restore seam (AH-0MVY3IGRC00954UD)', () => {
+  it('snapshots an empty list when nothing is permanently owned', () => {
+    const store = new PowerUpLevelStore();
+    expect(store.snapshotConsumablePools()).toEqual([]);
+
+    // A temporary pickup alone never appears: the checkpoint only persists
+    // kinds the permanent-grant replay will re-derive as owned, so a pool
+    // can never be restored for a kind a resumed run does not own (AC5).
+    store.collect('phase_shift');
+    store.collect('shield');
+    store.consumeConsumableCharge('phase_shift');
+    store.tickRecharge(1);
+    expect(store.snapshotConsumablePools()).toEqual([]);
+  });
+
+  it('captures charges and every partially elapsed recharge timer (AC1/AC2)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('force_field', true);
+    store.grantConsumableCharge('force_field', 2); // pool of 3
+    expect(store.consumeConsumableCharge('force_field')).toBe(true);
+    expect(store.consumeConsumableCharge('force_field')).toBe(true);
+    store.tickRecharge(15); // both per-charge timers partially elapsed
+
+    const snapshot = store.snapshotConsumablePools();
+    expect(snapshot).toEqual([
+      {
+        id: 'force_field',
+        charges: 1,
+        rechargeTimers: [
+          { duration: 45, remaining: 30 },
+          { duration: 45, remaining: 30 },
+        ],
+      },
+    ]);
+
+    // The round trip through a fresh (freshly owned) store reproduces the
+    // pool exactly: charges, both in-flight timers and the HUD-facing
+    // countdown/progress all agree with the pre-save store (AC2).
+    const resumed = new PowerUpLevelStore();
+    resumed.collect('force_field', true); // the permanent-grant replay
+    resumed.restoreConsumablePools(snapshot);
+    expect(resumed.consumableCharges('force_field')).toBe(1);
+    expect(resumed.consumableRechargeRemaining('force_field')).toBeCloseTo(30, 9);
+    const progress = resumed.consumableRechargeProgress('force_field')!;
+    expect(progress.total).toBeCloseTo(45, 9);
+    expect(progress.remaining).toBeCloseTo(30, 9);
+    expect(progress.fraction).toBeCloseTo(30 / 45, 9);
+  });
+
+  it('a saved pool of zero charges restores as zero over the replay grant (AC4)', () => {
+    // The permanent-grant replay (`collect(id, true)`) adds one charge; the
+    // authoritative restore must overwrite it, so the replay's single
+    // per-level grant can never leak into a saved empty pool.
+    const resumed = new PowerUpLevelStore();
+    resumed.collect('force_field', true);
+    resumed.restoreConsumablePools([
+      { id: 'force_field', charges: 0, rechargeTimers: [] },
+    ]);
+    expect(resumed.isConsumableOwned('force_field')).toBe(true);
+    expect(resumed.consumableCharges('force_field')).toBe(0);
+    expect(resumed.consumableRechargeRemaining('force_field')).toBe(0);
+  });
+
+  it('captures and restores Teleport readiness — mid-recharge and ready (AC1/AC2)', () => {
+    const mid = new PowerUpLevelStore();
+    mid.collect('teleport', true);
+    mid.consumeTeleport();
+    const interval = mid.teleportRechargeTime();
+    mid.tickRecharge(interval / 4);
+    const expectedRemaining = interval - interval / 4;
+
+    const snap = mid.snapshotConsumablePools();
+    expect(snap).toHaveLength(1);
+    expect(snap[0].id).toBe('teleport');
+    expect(snap[0].charges).toBe(0);
+    expect(snap[0].rechargeTimers).toHaveLength(1);
+    expect(snap[0].rechargeTimers[0].remaining).toBeCloseTo(expectedRemaining, 9);
+
+    // A fresh store re-owned by the replay resumes mid-recharge.
+    const resumed = new PowerUpLevelStore();
+    resumed.collect('teleport', true);
+    resumed.restoreConsumablePools(snap);
+    expect(resumed.isTeleportRecharging()).toBe(true);
+    expect(resumed.hasTeleport()).toBe(false);
+    expect(resumed.teleportRechargeRemaining()).toBeCloseTo(expectedRemaining, 9);
+    // The countdown keeps advancing from the restored point.
+    resumed.tickRecharge(interval / 4);
+    expect(resumed.isTeleportRecharging()).toBe(true);
+    expect(resumed.teleportRechargeRemaining()).toBeCloseTo(interval / 2, 9);
+
+    // A saved ready warp restores ready (empty timer list), never recharging.
+    const ready = new PowerUpLevelStore();
+    ready.collect('teleport', true);
+    const readySnap = ready.snapshotConsumablePools();
+    expect(readySnap).toEqual([{ id: 'teleport', charges: 0, rechargeTimers: [] }]);
+    const resumedReady = new PowerUpLevelStore();
+    resumedReady.collect('teleport', true);
+    resumedReady.restoreConsumablePools(readySnap);
+    expect(resumedReady.hasTeleport()).toBe(true);
+    expect(resumedReady.teleportRechargeRemaining()).toBe(0);
+  });
+
+  it('clamps over-cap charges to the live ceiling on restore (risk mitigation)', () => {
+    // A hand-edited payload could name more charges than the level-derived
+    // cap. Restore clamps to the ceiling live play can actually hold
+    // (Phase Shift's shipped cap-3 pool, the others' level-derived cap), so
+    // a resumed run can never start over-cap.
+    const phase = new PowerUpLevelStore();
+    phase.collect('phase_shift', true);
+    phase.restoreConsumablePools([{ id: 'phase_shift', charges: 99, rechargeTimers: [] }]);
+    expect(phase.consumableCharges('phase_shift')).toBe(3); // POWER_UP_CHARGE_CAP
+
+    const force = new PowerUpLevelStore();
+    force.collect('force_field', true);
+    force.restoreConsumablePools([{ id: 'force_field', charges: 99, rechargeTimers: [] }]);
+    expect(force.consumableCharges('force_field')).toBe(force.consumableChargeCap('force_field'));
+  });
+
+  it('drops or clamps malformed and non-owned entries instead of throwing (AC5)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('force_field', true); // owned
+    store.collect('shield', true); // owned
+    store.restoreConsumablePools([
+      { id: 'bomb', charges: 9, rechargeTimers: [] }, // non-consumable → ignored
+      { id: 'force_field', charges: Number.NaN, rechargeTimers: [] }, // bad charges → 0
+      {
+        id: 'shield',
+        charges: 1,
+        rechargeTimers: [
+          { duration: 45, remaining: Number.NaN }, // bad timer → dropped
+          { duration: 45, remaining: 120 }, // remaining > duration → clamped
+        ],
+      },
+      { id: 'phase_shift', charges: 2, rechargeTimers: [] }, // not owned → ignored
+      { id: 'mystery_ufo', charges: 1, rechargeTimers: [] }, // not owned → ignored
+      // A non-object entry is skipped without throwing (defensive seam).
+      null as unknown as ConsumablePoolSnapshot,
+    ]);
+    expect(store.consumableCharges('bomb')).toBe(0);
+    expect(store.consumableCharges('force_field')).toBe(0);
+    expect(store.consumableCharges('shield')).toBe(1);
+    expect(store.consumableRechargeRemaining('shield')).toBeCloseTo(45, 9);
+    expect(store.consumableCharges('phase_shift')).toBe(0);
+    expect(store.consumableCharges('mystery_ufo')).toBe(0);
   });
 });

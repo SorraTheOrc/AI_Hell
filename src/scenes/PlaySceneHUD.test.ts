@@ -418,6 +418,63 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     expect(registry.consumableCharges('teleport')).toBe(0);
   });
 
+  it('AH-0MVY3IGRC00954UD AC2 — a resumed run restores the saved charge pools and timers', async () => {
+    const scene = await bootResumed({
+      consumablePools: [
+        // Pool-backed kind: a saved pool of three charges with two partially
+        // elapsed per-charge timers (AC2). `force_field` is permanently owned
+        // (level 1) in the resume fixture, so the replay marks it owned and
+        // the restore clamps at its level-0 cap of 3 — a no-op for a
+        // legitimate save.
+        {
+          id: 'force_field',
+          charges: 3,
+          rechargeTimers: [
+            { duration: 45, remaining: 30 },
+            { duration: 45, remaining: 12.5 },
+          ],
+        },
+        // A saved pool of ZERO charges: the permanent-grant replay's single
+        // charge must NOT reappear (AC4) — the authoritative restore runs
+        // after the replay and overwrites it.
+        { id: 'shield', charges: 0, rechargeTimers: [] },
+        // Teleport caught mid-recharge: resumes recharging, not ready (AC4).
+        {
+          id: 'teleport',
+          charges: 0,
+          rechargeTimers: [{ duration: 45, remaining: 30 }],
+        },
+      ],
+    });
+    const store = scene.getPlayer()!.getPowerUpLevelStore();
+
+    // The restored pool is the saved pool — through the one shared store, so
+    // the HUD/effect path and the checkpoint can never read different counts.
+    expect(store.consumableCharges('force_field')).toBe(3);
+    // The boot loop advances the shared recharge clock ~2.5 s after the
+    // restore, so the timer is mid-flight (strictly between 0 and the saved
+    // 12.5 s) and its captured duration is untouched.
+    expect(store.consumableRechargeRemaining('force_field')).toBeGreaterThan(0);
+    expect(
+      store.consumableRechargeRemaining('force_field'),
+    ).toBeLessThan(12.5);
+    const progress = store.consumableRechargeProgress('force_field')!;
+    expect(progress.total).toBeCloseTo(45, 6);
+
+    // The saved zero-charge pool stays zero: the replayed grant (one charge
+    // for the owned kind) never leaks into the saved pool (AC4).
+    expect(store.isConsumableOwned('shield')).toBe(true);
+    expect(store.consumableCharges('shield')).toBe(0);
+    expect(store.consumableRechargeRemaining('shield')).toBe(0);
+
+    // Teleport resumes mid-recharge exactly as saved (never a free warp).
+    expect(store.isConsumableOwned('teleport')).toBe(true);
+    expect(store.isTeleportRecharging()).toBe(true);
+    expect(store.hasTeleport()).toBe(false);
+    expect(store.teleportRechargeRemaining()).toBeGreaterThan(0);
+    expect(store.teleportRechargeRemaining()).toBeLessThan(30);
+  });
+
   it('AC3 — a fresh (non-resume) run starts with no upgrade rows or effects', async () => {
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     const scene = booted.scene as PlayScene;

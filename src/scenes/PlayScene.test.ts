@@ -8208,6 +8208,68 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(saved!.weaponLevels.some((entry) => entry.id === 'spread')).toBe(true);
   });
 
+  it('AH-0MVY3IGRC00954UD AC1 — the checkpoint saves the consumable charge pools and timers', async () => {
+    localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
+    const scene = await bootMiniBossCampaign();
+    const store = scene.getPlayer()!.getPowerUpLevelStore();
+    // An owned pooled kind with a partially spent pool: two of three charges
+    // spent, both per-charge timers in flight.
+    for (let i = 0; i < 3; i += 1) {
+      scene.getPlayer()!.collectPowerUp('force_field', true);
+    }
+    expect(store.consumableCharges('force_field')).toBe(3);
+    expect(store.consumeConsumableCharge('force_field')).toBe(true);
+    expect(store.consumeConsumableCharge('force_field')).toBe(true);
+    // Teleport caught mid-recharge (the single-use carve-out: its whole
+    // state is the readiness timer, AH-0MVY3IGRC00954UD AC1).
+    scene.getPlayer()!.collectPowerUp('teleport', true);
+    expect(store.consumeTeleport()).toBe(true);
+    store.tickRecharge(15);
+    expect(store.consumableRechargeRemaining('force_field')).toBeLessThanOrEqual(30);
+
+    advanceToMiniBoss(scene);
+    killMiniBoss(scene, false);
+
+    const saved = loadCheckpoint();
+    expect(saved).not.toBeNull();
+    const force = saved!.consumablePools!.find(
+      (entry) => entry.id === 'force_field',
+    );
+    expect(force).toBeDefined();
+    expect(force!.charges).toBe(1);
+    expect(force!.rechargeTimers).toHaveLength(2);
+    for (const timer of force!.rechargeTimers) {
+      expect(timer.duration).toBeCloseTo(45, 6);
+      // The remaining seconds only shrank from the 15 s already ticked: the
+      // wave walk ticks the shared clock a little more, so the exact value
+      // is timing-dependent, but the timer is clearly mid-flight (> 0).
+      expect(timer.remaining).toBeGreaterThan(0);
+      expect(timer.remaining).toBeLessThanOrEqual(30);
+    }
+    const teleport = saved!.consumablePools!.find(
+      (entry) => entry.id === 'teleport',
+    );
+    expect(teleport).toBeDefined();
+    expect(teleport!.charges).toBe(0);
+    expect(teleport!.rechargeTimers).toHaveLength(1);
+    // The single-use readiness timer round-trips as its own remaining
+    // seconds (duration mirrors remaining for the scalar clock).
+    expect(teleport!.rechargeTimers[0].remaining).toBeCloseTo(
+      teleport!.rechargeTimers[0].duration,
+      9,
+    );
+    expect(teleport!.rechargeTimers[0].remaining).toBeGreaterThan(0);
+    expect(teleport!.rechargeTimers[0].remaining).toBeLessThanOrEqual(45);
+    // Every saved pool entry belongs to an owned kind in the saved levels —
+    // the save-side slot gate never keeps a pool for a kind the loadout
+    // drops (AC5), so the resumed run can never own charges for a kind it
+    // does not permanently own.
+    const ownedIds = new Set(saved!.powerUpLevels.map((entry) => entry.id));
+    for (const entry of saved!.consumablePools!) {
+      expect(ownedIds.has(entry.id), entry.id).toBe(true);
+    }
+  });
+
   it('AH-0MVUXC118004B4OX AC1 — each checkpoint banks only the salvage earned since the previous one', async () => {
     localStorage.removeItem(HANGAR_WAR_STORAGE_KEY);
     const scene = await bootMiniBossCampaign();

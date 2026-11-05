@@ -504,6 +504,17 @@ alongside its level readout), `src/scenes/core/CombatEffectVisuals.test.ts`
 (armed/empty rendering per kind) and `src/scenes/core/CombatCoreScene.test.ts`
 (charge-budgeted drone spawning, no scene-local timer).
 
+**Checkpoint persistence has no gym counterpart (AH-0MVY3IGRC00954UD).** No
+gym implements checkpoint save or resume — `PlayScene._restoreCheckpoint`'s doc
+comment records that the game is the only consumer — so the pool/timer
+**persistence** seam needs no gym change. What the item adds is a
+`PowerUpLevelStore.snapshotConsumablePools` / `restoreConsumablePools` accessor
+pair on the **shared** store: the same pure class every gym already consumes,
+so the persisted rows are produced and rehydrated by the identical code the
+gyms run for live play. The parity matrix therefore lists no divergence here
+— the resume path is a game-only surface, and the shared seam it reads is
+already the one object of the parity rule.
+
 ## Shared enemy-body texture cache (AH-0MW2IRYAH0055WCN)
 
 Every regular enemy's **static body silhouette** is baked once into a cached

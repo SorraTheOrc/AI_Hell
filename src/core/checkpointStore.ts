@@ -23,7 +23,15 @@
 // from the gameplay value (AH-0MVT1DYO5004UC4P).
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from './rules';
 import { isWithinSlotPool, resolveSlotState } from '../powerups/slots';
-import type { DropId, PowerUpId } from '../powerups/types';
+import {
+  CONSUMABLE_POWER_UP_IDS,
+  type DropId,
+  type PowerUpId,
+} from '../powerups/types';
+import type {
+  ConsumablePoolSnapshot,
+  ConsumableRechargeTimer,
+} from '../powerups/powerUpLevels';
 import type { WeaponId } from '../utils/weapons';
 
 /** localStorage key for the run checkpoint. */
@@ -41,6 +49,13 @@ export const CHECKPOINT_STORAGE_KEY = 'ai_hell_checkpoint';
  *   version is rejected outright (see {@link parseCheckpoint}), so a stale
  *   pre-wheel checkpoint can never resume a run whose reward surface has
  *   changed underneath it.
+ *
+ * **`consumablePools` is additive and stays inside v3** (an optional field
+ * introduced after the bump, AH-0MVY3IGRC00954UD): the version gate rejects
+ * any payload stamped with another version, and legacy v3 payloads (which
+ * predate the field) must keep resuming, so the field is optional and a
+ * payload missing it loads exactly as before — the permanent-grant replay
+ * leaves each owned consumable with its single granted charge and no timers.
  */
 export const CHECKPOINT_VERSION = 3;
 
@@ -89,6 +104,21 @@ export interface Checkpoint {
   weaponLevels: CheckpointWeaponLevel[];
   /** Permanent power-up levels owned at the checkpoint. */
   powerUpLevels: CheckpointPowerUpLevel[];
+  /**
+   * The owned consumables' charge pools and in-flight recharge timers
+   * (AH-0MVY3IGRC00954UD, **additive field — schema v3 is not bumped**).
+   *
+   * One row per **permanently owned** consumable — the pool-backed kinds
+   * (charges plus every per-charge timer) and the single-use Teleport
+   * (`charges: 0`; its readiness timer in `rechargeTimers`, empty while
+   * ready). Optional because every legacy v3 payload predates the field:
+   * a missing list resumes exactly as before, re-deriving each owned
+   * consumable's single granted charge from the permanent-grant replay and
+   * persisting no timers (AC3). Types align with the store's
+   * `PowerUpLevelStore` snapshot/restore seam, so the checkpoint is only a
+   * serialiser — never a second charge counter.
+   */
+  consumablePools?: ConsumablePoolSnapshot[];
   /** The run's RNG seed, so a resumed run stays reproducible. */
   runSeed: number;
   /** ISO timestamp of when the checkpoint was written. */
@@ -131,6 +161,63 @@ function toLevelList<T extends string>(
     if (typeof id !== 'string' || !isValidId(id)) continue;
     if (!isFiniteNumber(level) || level < 0) continue;
     result.push({ id: id as T, level: Math.floor(level) });
+  }
+  return result;
+}
+
+/**
+ * Parses a checkpoint's `rechargeTimers` array defensively: every timer must
+ * carry finite, positive `duration` and `remaining` seconds, and anything
+ * else is dropped (never thrown). A non-array value degrades to an empty
+ * list, so an absent or corrupt timer field can never break a resume
+ * (AH-0MVY3IGRC00954UD AC5).
+ */
+function toRechargeTimerList(value: unknown): ConsumableRechargeTimer[] {
+  if (!Array.isArray(value)) return [];
+  const result: ConsumableRechargeTimer[] = [];
+  for (const timer of value) {
+    if (typeof timer !== 'object' || timer === null) continue;
+    const { duration, remaining } = timer as {
+      duration?: unknown;
+      remaining?: unknown;
+    };
+    if (!isFiniteNumber(duration) || duration <= 0) continue;
+    if (!isFiniteNumber(remaining) || remaining < 0) continue;
+    result.push({ duration, remaining });
+  }
+  return result;
+}
+
+/**
+ * Parses a checkpoint's optional `consumablePools` array defensively
+ * (AH-0MVY3IGRC00954UD AC5): entries whose id is not a catalogue consumable,
+ * or whose charge count is negative / non-finite / non-numeric, are **dropped**
+ * outright; a non-array value degrades to an empty list (the legacy resume
+ * path — AC3). Timer lists are parsed through {@link toRechargeTimerList}, so
+ * a malformed timer drops the timer, never the checkpoint. Over-cap charge
+ * counts survive parse and are clamped by the store restore to the ceiling
+ * live play can actually hold.
+ */
+function toConsumablePoolList(value: unknown): ConsumablePoolSnapshot[] {
+  if (!Array.isArray(value)) return [];
+  const result: ConsumablePoolSnapshot[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { id, charges, rechargeTimers } = entry as {
+      id?: unknown;
+      charges?: unknown;
+      rechargeTimers?: unknown;
+    };
+    if (typeof id !== 'string') continue;
+    // The same derived catalogue list the store's seam uses — a non-
+    // consumable or unknown id can never carry a pool into a resumed run.
+    if (!CONSUMABLE_POWER_UP_IDS.includes(id as PowerUpId)) continue;
+    if (!isFiniteNumber(charges) || charges < 0) continue;
+    result.push({
+      id: id as PowerUpId,
+      charges: Math.floor(charges),
+      rechargeTimers: toRechargeTimerList(rechargeTimers),
+    });
   }
   return result;
 }
@@ -189,6 +276,9 @@ export function parseCheckpoint(raw: unknown): Checkpoint | null {
     mineralHoldCapacity,
     weaponLevels: toLevelList<WeaponId>(value.weaponLevels, () => true),
     powerUpLevels: toLevelList<PowerUpId>(value.powerUpLevels, () => true),
+    // Additive field (AH-0MVY3IGRC00954UD): a legacy payload missing it
+    // loads with an empty list — exactly today's resume behaviour (AC3).
+    consumablePools: toConsumablePoolList(value.consumablePools),
     runSeed,
     savedAt:
       typeof value.savedAt === 'string' ? value.savedAt : new Date(0).toISOString(),
@@ -261,7 +351,17 @@ export function capCheckpointLoadout(checkpoint: Checkpoint): Checkpoint {
     const state = resolveSlotState(powerUpLevels, weaponLevels);
     if (isWithinSlotPool(entry.id as DropId, state)) powerUpLevels.push(entry);
   }
-  return { ...checkpoint, weaponLevels, powerUpLevels };
+  // A kind the gate drops loses its charge pool too (AH-0MVY3IGRC00954UD
+  // AC5): ownership on resume is re-derived from the **bounded** power-up
+  // levels, so a pool kept for a dropped kind would hand a resumed run
+  // charges for a kind it does not own. The pool set is the power-up set —
+  // the bounded permanent levels are exactly the kinds the replay marks
+  // owned — so only entries whose id survived the gate are carried.
+  const admitted = new Set(powerUpLevels.map((entry) => entry.id));
+  const consumablePools = checkpoint.consumablePools
+    ? checkpoint.consumablePools.filter((entry) => admitted.has(entry.id))
+    : undefined;
+  return { ...checkpoint, weaponLevels, powerUpLevels, consumablePools };
 }
 
 /**
