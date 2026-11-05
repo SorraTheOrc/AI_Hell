@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 import { configCsvPlugin } from './vite/plugins/configCsvPlugin';
 import { botTuningPlugin } from './vite/plugins/botTuningPlugin';
 import { telemetryUploadPlugin } from './vite/plugins/telemetryUploadPlugin';
+import { DEV_WATCH_IGNORE_PATTERNS } from './vite/watchIgnore';
 
 export default defineConfig({
   // Relative base so the built bundle works from any static host.
@@ -15,6 +16,14 @@ export default defineConfig({
     port: 5173,
     // AC2: `npm run dev` launches a browser window rendering the game.
     open: true,
+    // Exclude dev-output trees and .worklog/ worktree checkouts from the
+    // file watcher. Recursive watches into .worklog/worktrees exhaust
+    // fs.inotify.max_user_watches (ENOSPC), crashing the dev server
+    // on startup. Mirrors the core scaffold's `server.watch.ignored` guard
+    // (CG-0MV5SEHHG000ZKUA); the list lives in ./vite/watchIgnore.ts.
+    watch: {
+      ignored: [...DEV_WATCH_IGNORE_PATTERNS],
+    },
   },
   plugins: [
     // Dev-only CSV read/write endpoints for the committed config files
