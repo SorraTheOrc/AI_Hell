@@ -173,6 +173,47 @@ function pickCueSeed(cue: string): number | undefined {
   return seeds[Math.floor(Math.random() * seeds.length)];
 }
 
+// ── Family mix trims (AH-0MVZVMZOQ00076QF) ──────────────────────────
+//
+// The producer asked for "the audio for explosions and enemy weapons" to come
+// down by around 40%. The trim is a **runtime** mix change (linear ×0.6) so the
+// baked WAVs, ToneForge recipes and `public/audio/sfx/checksums.json` stay
+// untouched and the amplitude-tier / A-minor balance guards remain green — the
+// same mechanism as the earlier per-sequence trims
+// (`TANK_SCOUT_FIRE_VOLUME_SCALE`, `PHASER_FIRE_VOLUME_SCALE`,
+// `HOLD_FULL_FIRE_VOLUME_SCALE`).
+//
+// One named tunable per family keeps the whole trim retunable in one place.
+// Both **compose multiplicatively** with the existing per-cue scales and any
+// caller-supplied `volume` — they never replace them — so the relative balance
+// between cues (and every scripted caller trim) is preserved.
+
+/**
+ * Linear gain applied to the **enemy weapon fire family** — Tank/Scout/Phaser
+ * advance+fire, Diver fire, Boss fire and the Swarm burst — on top of the
+ * existing per-sequence scales (`TANK_SCOUT_FIRE_VOLUME_SCALE` /
+ * `PHASER_FIRE_VOLUME_SCALE`), so the family sits 40% lower than before
+ * (AH-0MVZVMZOQ00076QF). The advance (warmup) tells are part of the same
+ * audible fire sequence and are trimmed with it, matching the earlier
+ * Tank/Scout decision (AH-0MV74ROYR009X8U3).
+ *
+ * `playSwarmBurstSound` belongs to both the enemy-fire and explosion families
+ * by producer definition; it is scaled **exactly once**, here.
+ */
+export const ENEMY_WEAPON_FIRE_VOLUME_SCALE = 0.6;
+
+/**
+ * Linear gain applied to the **explosion / destruction family** — enemy,
+ * Diver, Boss and player destruction, the victory-explosion boom, the
+ * bullet-destruction tick (and its enemy-force-field-break alias) and the Boss
+ * hit cue — so the family sits 40% lower than before (AH-0MVZVMZOQ00076QF).
+ *
+ * Composes multiplicatively with a caller-supplied `volume` (the mini-boss
+ * death sweep's per-role trims, the victory firework volume and the player
+ * death `volumeScale`), never replacing it.
+ */
+export const EXPLOSION_VOLUME_SCALE = 0.6;
+
 // ── Beat-synchronised explosion accents (AH-0MV01HNLU008S5E3) ────────
 //
 // Player weapon fire is already phase-locked to a silent beat grid
@@ -307,15 +348,19 @@ function playExplosionCue(cue: string, options: SfxPlayOptions = {}): void {
  */
 export const TANK_ADVANCE_CUE_DURATION = 0.6;
 
-/** Rising mechanical whine — E3 Tank firing advance cue (half volume). */
+/** Rising mechanical whine — E3 Tank firing advance cue (runtime-trimmed). */
 export function playTankAdvanceCue(): void {
-  playCue('playTankAdvanceCue', { volume: TANK_SCOUT_FIRE_VOLUME_SCALE });
+  playCue('playTankAdvanceCue', {
+    volume: TANK_SCOUT_FIRE_VOLUME_SCALE * ENEMY_WEAPON_FIRE_VOLUME_SCALE,
+  });
 }
 
 /**
  * Linear gain applied to the Tank/Scout enemy **fire sequence** — the
  * advance whine/blip *and* the shot cue — so enemy fire sits at half volume
- * in the mix (AH-0MV74ROYR009X8U3). The producer confirmed the advance
+ * in the mix (AH-0MV74ROYR009X8U3). It composes with the enemy-weapon family
+ * trim (`ENEMY_WEAPON_FIRE_VOLUME_SCALE` ×0.6, AH-0MVZVMZOQ00076QF) for an
+ * effective 0.30. The producer confirmed the advance
  * (warmup) cues are part of the reduction. A single named constant keeps
  * the trim tunable in one place (precedent: `HOLD_FULL_FIRE_VOLUME_SCALE`).
  */
@@ -325,7 +370,7 @@ export const TANK_SCOUT_FIRE_VOLUME_SCALE = 0.5;
 export function playTankFireSound(): void {
   playCue('playTankFireSound', {
     delay: TANK_ADVANCE_CUE_DURATION,
-    volume: TANK_SCOUT_FIRE_VOLUME_SCALE,
+    volume: TANK_SCOUT_FIRE_VOLUME_SCALE * ENEMY_WEAPON_FIRE_VOLUME_SCALE,
   });
 }
 
@@ -346,25 +391,29 @@ export const PHASER_ADVANCE_CUE_DURATION = 0.6;
  */
 export const PHASER_FIRE_VOLUME_SCALE = 0.5;
 
-/** Rising warning blip — E4 Phaser firing advance cue (half volume). */
+/** Rising warning blip — E4 Phaser firing advance cue (runtime-trimmed). */
 export function playPhaserAdvanceCue(): void {
-  playCue('playPhaserAdvanceCue', { volume: PHASER_FIRE_VOLUME_SCALE });
+  playCue('playPhaserAdvanceCue', {
+    volume: PHASER_FIRE_VOLUME_SCALE * ENEMY_WEAPON_FIRE_VOLUME_SCALE,
+  });
 }
 
-/** Short sharp blip — E4 Phaser fire, scheduled at the advance cue's end (half volume). */
+/** Short sharp blip — E4 Phaser fire, scheduled at the advance cue's end (runtime-trimmed). */
 export function playPhaserFireSound(): void {
   playCue('playPhaserFireSound', {
     delay: PHASER_ADVANCE_CUE_DURATION,
-    volume: PHASER_FIRE_VOLUME_SCALE,
+    volume: PHASER_FIRE_VOLUME_SCALE * ENEMY_WEAPON_FIRE_VOLUME_SCALE,
   });
 }
 
 /** Duration (seconds) of the Scout advance tell. */
 export const SCOUT_ADVANCE_CUE_DURATION = 0.6;
 
-/** Rising warning blip — E1 Scout firing advance cue (half volume). */
+/** Rising warning blip — E1 Scout firing advance cue (runtime-trimmed). */
 export function playScoutAdvanceCue(): void {
-  playCue('playScoutAdvanceCue', { volume: TANK_SCOUT_FIRE_VOLUME_SCALE });
+  playCue('playScoutAdvanceCue', {
+    volume: TANK_SCOUT_FIRE_VOLUME_SCALE * ENEMY_WEAPON_FIRE_VOLUME_SCALE,
+  });
 }
 
 /**
@@ -376,7 +425,7 @@ export function playScoutAdvanceCue(): void {
 export function playScoutFireSound(): void {
   playCue('playScoutFireSound', {
     delay: SCOUT_ADVANCE_CUE_DURATION,
-    volume: TANK_SCOUT_FIRE_VOLUME_SCALE,
+    volume: TANK_SCOUT_FIRE_VOLUME_SCALE * ENEMY_WEAPON_FIRE_VOLUME_SCALE,
   });
 }
 
@@ -400,22 +449,30 @@ export function playSpawnSound(): void {
 export function playDestructionSound(
   options: SfxPlayOptions & { seed?: number } = {},
 ): void {
-  playExplosionCue('playDestructionSound', options);
+  playExplosionCue('playDestructionSound', {
+    ...options,
+    // Compose the family trim with any caller volume instead of replacing it.
+    volume: (options.volume ?? 1) * EXPLOSION_VOLUME_SCALE,
+  });
 }
 
 /** Heavier layered "hull breach" boom — player destruction (volume-scaled). */
 export function playPlayerDestructionSound(volumeScale = 1): void {
-  playExplosionCue('playPlayerDestructionSound', { volume: volumeScale });
+  playExplosionCue('playPlayerDestructionSound', {
+    volume: volumeScale * EXPLOSION_VOLUME_SCALE,
+  });
 }
 
 /** Short high tick — player bullet destroys an enemy bullet. */
 export function playBulletDestructionSound(): void {
-  playCue('playBulletDestructionSound');
+  playCue('playBulletDestructionSound', { volume: EXPLOSION_VOLUME_SCALE });
 }
 
 /** Buzzing whoosh — Swarm coordinated-burst volley. */
 export function playSwarmBurstSound(): void {
-  playCue('playSwarmBurstSound');
+  // Swarm burst is in both the enemy-fire and explosion families by producer
+  // definition; scaling it exactly once (here) keeps it at 0.6, not 0.36.
+  playCue('playSwarmBurstSound', { volume: ENEMY_WEAPON_FIRE_VOLUME_SCALE });
 }
 
 /** Rising whoosh — Diver dive-start cue. */
@@ -449,12 +506,14 @@ export function _getDiverDiveSoundStateForTests(): { active: boolean } | null {
 
 /** Short low crack — Diver fire cue. */
 export function playDiverFireSound(): void {
-  playCue('playDiverFireSound');
+  playCue('playDiverFireSound', { volume: ENEMY_WEAPON_FIRE_VOLUME_SCALE });
 }
 
 /** Deep resonant fall — Diver destruction cue (multi-seed jitter). */
 export function playDiverDestructionSound(): void {
-  playExplosionCue('playDiverDestructionSound');
+  playExplosionCue('playDiverDestructionSound', {
+    volume: EXPLOSION_VOLUME_SCALE,
+  });
 }
 
 // ── Mystery UFO feel cues (AH-0MVSAJMLL00835T8) ────────────────────
@@ -529,12 +588,12 @@ export function playMineralTinkleSound(): void {
 
 /** Deep resonant boom — Boss fire cue. */
 export function playBossFireSound(): void {
-  playCue('playBossFireSound');
+  playCue('playBossFireSound', { volume: ENEMY_WEAPON_FIRE_VOLUME_SCALE });
 }
 
 /** Short punchy impact — Boss hit feedback cue. */
 export function playBossHitSound(): void {
-  playCue('playBossHitSound');
+  playCue('playBossHitSound', { volume: EXPLOSION_VOLUME_SCALE });
 }
 
 /**
@@ -548,9 +607,13 @@ export function playBossHitSound(): void {
  * down" never sounds like "enemy killed", and it is distinct from the
  * per-weapon impact cues that absorbed hits keep using — so absorb and break
  * never sound the same. No unrendered audio asset is introduced.
+ *
+ * Dispatched through {@link playBulletDestructionSound} (not `playCue`
+ * directly) so the explosion family trim (AH-0MVZVMZOQ00076QF) is applied
+ * exactly once on this alias path too.
  */
 export function playEnemyForceFieldBreakSound(): void {
-  playCue('playBulletDestructionSound');
+  playBulletDestructionSound();
 }
 
 /**
@@ -1224,7 +1287,11 @@ export function playMiniBossSweepSound(
 export function playVictoryExplosionSound(
   options: SfxPlayOptions & { seed?: number } = {},
 ): void {
-  playCue('playVictoryExplosionSound', options);
+  playCue('playVictoryExplosionSound', {
+    ...options,
+    // Compose the family trim with the caller's firework volume.
+    volume: (options.volume ?? 1) * EXPLOSION_VOLUME_SCALE,
+  });
 }
 
 /** Sharp crack — mid-size victory firework (multi-seed jitter). */
@@ -1268,7 +1335,11 @@ export function playBossPhaseTransitionSound(): void {
 export function playBossDestructionSound(
   options: SfxPlayOptions & { seed?: number } = {},
 ): void {
-  playCue('playBossDestructionSound', options);
+  playCue('playBossDestructionSound', {
+    ...options,
+    // Compose the family trim with the caller's mix trim (mini-boss sweep).
+    volume: (options.volume ?? 1) * EXPLOSION_VOLUME_SCALE,
+  });
 }
 
 /**
@@ -1313,6 +1384,11 @@ export function stopThrusterSound(): void {
  * (AH-0MUADK77K008RBMB). Pitch is unchanged; `volume` in [0, 1] scales every
  * layer and is clamped. Volume 0 plays nothing. Routed through the master
  * gain so it respects mute/volume.
+ *
+ * Deliberately bypasses {@link playPlayerDestructionSound} and therefore the
+ * gameplay explosion family trim (AH-0MVZVMZOQ00076QF): this is a settings-UI
+ * preview of the *master* gain, not a gameplay explosion, so it keeps its
+ * pre-trim behaviour (and is never delayed by the beat clock).
  */
 export function playVolumeFeedback(volume: number): void {
   // Volume-preview feedback is UI, not a gameplay explosion: play the cue

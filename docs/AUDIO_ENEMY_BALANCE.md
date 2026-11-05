@@ -233,6 +233,73 @@ precedent. Expressing it as a named constant keeps it tunable and testable witho
 | `playPhaserAdvanceCue` | 0.0564 | 0.0564 | 0.0282 |
 | `playPhaserFireSound` | 0.0550 | 0.0550 | 0.0275 |
 
+### 4.4 SFX mix trim — explosions and enemy weapons (AH-0MVZVMZOQ00076QF)
+
+**Why:** dense waves turned into a wall of enemy noise — enemy fire and
+layered destruction booms masked the player's own weapons, impacts and pickup
+feedback. The producer asked for "the audio for explosions and enemy weapons"
+to come down by **around 40%**.
+
+**Fix (runtime trim):** two exported named constants in `src/audio/effects.ts`
+apply a uniform **linear ×0.6** scale to the two families:
+
+- `ENEMY_WEAPON_FIRE_VOLUME_SCALE = 0.6` — Tank/Scout/Phaser advance+fire,
+  Diver fire, Boss fire and the Swarm burst.
+- `EXPLOSION_VOLUME_SCALE = 0.6` — enemy/Diver/Boss/player destruction, the
+  victory-explosion boom, the bullet-destruction tick (and its
+  enemy-force-field-break alias) and the Boss hit cue.
+
+Both scales **compose multiplicatively** with the existing per-sequence scales
+(`TANK_SCOUT_FIRE_VOLUME_SCALE` / `PHASER_FIRE_VOLUME_SCALE`, both ×0.5) and
+with any caller-supplied `volume` — they never replace them — so the relative
+balance between cues and every scripted caller trim is preserved. The baked
+assets, ToneForge recipes and `public/audio/sfx/checksums.json` are
+**unchanged**, so the amplitude-tier and A-minor guards stay green.
+
+**Enemy weapons — effective playback gain (before → after):**
+
+| Cue | Previous | New (×0.6) |
+|---|---|---|
+| `playTankAdvanceCue`, `playTankFireSound` | 0.50 | **0.30** |
+| `playScoutAdvanceCue`, `playScoutFireSound` | 0.50 | **0.30** |
+| `playPhaserAdvanceCue`, `playPhaserFireSound` | 0.50 | **0.30** |
+| `playDiverFireSound` | 1.00 | **0.60** |
+| `playBossFireSound` | 1.00 | **0.60** |
+| `playSwarmBurstSound` | 1.00 | **0.60** |
+
+**Explosions and explosion-adjacent cues — effective playback gain:**
+
+| Cue | Previous | New (×0.6) |
+|---|---|---|
+| `playDestructionSound` | 1.0 × caller `volume` | **0.6 × caller `volume`** |
+| `playDiverDestructionSound` | 1.00 | **0.60** |
+| `playBossDestructionSound` | 1.0 × caller `volume` | **0.6 × caller `volume`** |
+| `playPlayerDestructionSound(volumeScale)` | `volumeScale` | **0.6 × `volumeScale`** |
+| `playVictoryExplosionSound` | caller `volume` (0.55 default) | **0.6 × caller `volume`** (0.33) |
+| `playBulletDestructionSound` | 1.00 | **0.60** |
+| `playEnemyForceFieldBreakSound` (alias) | 1.00 | **0.60** |
+| `playBossHitSound` | 1.00 | **0.60** |
+
+**Single-application rules.** `playSwarmBurstSound` belongs to both families by
+producer definition; it is scaled **exactly once** (0.60, not 0.36).
+`playEnemyForceFieldBreakSound` now dispatches through
+`playBulletDestructionSound()` instead of calling `playCue` directly, so the
+alias path is trimmed exactly once too.
+
+**Composed caller trims (verified):** the mini-boss death sweep's per-role
+volumes compose to 0.55 → **0.33**, 0.30 → **0.18**, 0.40 → **0.24**, 0.65 →
+**0.39**; the victory firework boom 0.55 → **0.33**; the player-death
+`volumeScale` argument carries through unchanged.
+
+**Out of scope (unchanged):** enemy spawn, Diver dive-loop/dive-start, Boss
+spawn/phase-cue/phase-transition, thruster hum, the whole player-weapon fire and
+impact family, Force Field reflect, power-up/pickup cues, countdown tick,
+mineral tinkle, Mystery UFO cues, victory/defeat stingers and the non-explosive
+victory firework accents (`playVictoryCrackSound`, `playVictoryPopSound`,
+`playVictorySparkleSound`). The settings **volume-preview** feedback
+(`playVolumeFeedback`) also keeps its pre-trim behaviour: it is UI, not a
+gameplay explosion.
+
 ## 5. Reproducibility
 
 - The raw per-file JSON produced by `tf analyze` (27 files) is byte-deterministic for a given

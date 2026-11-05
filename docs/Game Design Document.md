@@ -2385,11 +2385,31 @@ The former procedural Web Audio synthesis has been **removed**. The **one** runt
 | **Impacts** | Player bullet destroys enemy bullet | Dedicated high, very short tick (`playBulletDestructionSound()`; distinct from the heavier enemy-destruction fall) + small impact flash | Low | Immediate |
 | **Impacts** | Mystery UFO destroyed | Deep saw fall A3 → A1 + low-passed noise blast + sine sub thump (`playMysteryUfoDestroySound()`), with the crash-site particle burst and, when minerals spill, the mineral tinkle | Medium | Immediate |
 | **Enemy actions** | Enemy spawn | Subtle hum rise | Low | Immediate |
-| **Enemy actions** | Enemy fire (Level 4+) | Short zap; the per-enemy Tank/Scout fire sequences (heavy cannon thump / sharp laser blip *and* their advance whine/blip warmups) play at **half volume** (`TANK_SCOUT_FIRE_VOLUME_SCALE` 0.5, AH-0MV74ROYR009X8U3) | Low-medium | Immediate |
+| **Enemy actions** | Enemy fire (Level 4+) | Short zap; the per-enemy Tank/Scout fire sequences (heavy cannon thump / sharp laser blip *and* their advance whine/blip warmups) play at **half volume** (`TANK_SCOUT_FIRE_VOLUME_SCALE` 0.5, AH-0MV74ROYR009X8U3) further trimmed by the enemy-weapon family ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) → effective **0.30**; the Diver fire, Boss fire and Swarm burst play at **0.60** | Low-medium | Immediate |
 | **Enemy actions** | Dive bomb attack | Descending tone | Medium | ≥ 500 ms advance |
 | **Run flow** | Mystery UFO payout (drone reaches the ship) | Rising A-minor arpeggio A4 → E5 → A5 with a sine sparkle (`playMysteryUfoRewardSound()`), synchronised with the hold pay-in, not the start of the return leg | Medium | Immediate |
 | **Run flow** | Victory (boss defeated) | Bright **two-phrase** major fanfare: rising arpeggio (C5 → E5 → G5 → C6) then a faster rising cadence (C6 → E6 → G6 → C7) resolving into a sustained major chord over a C4/G4 bass bed, with a high sparkle flourish and a soft high-pass shimmer crackle tail (`playVictoryFanfareSound()`), ~3.3 s | Medium | Immediate |
 | **Run flow** | Defeat (run lost) | Slow **five-note** descending sombre line (G4 → F4 → D4 → B3 → G3) over a sinking 98 Hz drone with a dark low-pass rumble tail (`playDefeatStingSound()`), distinct from the player-destruction cue, ~2.9 s | Medium | Immediate |
+
+#### SFX mix trim — explosions and enemy weapons (AH-0MVZVMZOQ00076QF)
+
+A producer-requested **−40% mix trim** (linear ×0.6) is applied at playback to
+two cue families through named constants in `src/audio/effects.ts`:
+`ENEMY_WEAPON_FIRE_VOLUME_SCALE` (Tank/Scout/Phaser advance+fire, Diver fire,
+Boss fire, Swarm burst) and `EXPLOSION_VOLUME_SCALE` (enemy/Diver/Boss/player
+destruction, the victory-explosion boom, the bullet-destruction tick and its
+enemy-force-field-break alias, and the Boss hit cue). The trims compose
+multiplicatively with the existing per-sequence scales and caller volumes, so
+Tank/Scout/Phaser fire lands on an effective 0.30, the previously unscaled
+enemy fire and the explosion family on 0.60, and the mini-boss sweep's
+per-role trims on 0.33 / 0.18 / 0.24 / 0.39. This is a **runtime** change only:
+the baked assets, recipes and checksums are unchanged and the amplitude-tier /
+A-minor balance guards stay green. Out of scope (unchanged): enemy spawn, dive
+loop/start, Boss spawn/phase cues, thruster hum, the player-weapon fire/impact
+family, Force Field reflect, pickups, countdown tick, mineral tinkle, Mystery
+UFO cues, victory/defeat stingers and the non-explosive victory firework
+accents. See [Enemy audio balance](AUDIO_ENEMY_BALANCE.md#44-sfx-mix-trim--explosions-and-enemy-weapons-ah-0mvzvmzoq00076qf)
+for the full before→after table.
 
 #### Beat-synced explosion accents (AH-0MV01HNLU008S5E3)
 
@@ -2449,7 +2469,11 @@ cannon thump, one cue+thump pair per radial burst, instead of the generic
 and shot) play at **half volume** (`TANK_SCOUT_FIRE_VOLUME_SCALE` 0.5) so
 enemy fire reads clearly without dominating the mix (AH-0MV74ROYR009X8U3);
 the producer confirmed the advance (warmup) cues are part of that
-reduction. See `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` for the per-enemy
+reduction. The enemy-weapon family trim (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`
+0.6, AH-0MVZVMZOQ00076QF) composes on top, bringing the Tank/Scout (and
+Phaser) sequences to an effective **0.30** and the previously unscaled Diver
+fire, Boss fire and Swarm burst to **0.60**. See
+`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` for the per-enemy
 audio decisions and the implementation best practices (which audio is owned
 by the base scene, where entity-specific sounds are orchestrated, and the
 no-gap pattern).
