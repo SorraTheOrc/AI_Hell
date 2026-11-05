@@ -943,28 +943,40 @@ describe('Diver — fixed-speed, distance-proportional dive (AH-0MW3MWRZ5003KVR3
     // close to those lengths and check the observed completion matches
     // length / 320 (within one tick) — the reported "slow when close" bug.
     const cases = [
-      // start, aim, nominal arc
-      { x: 200, y: 100, aimX: 200, aimY: 230, label: 'close' },
-      { x: 200, y: 200, aimX: 440, aimY: 180, label: 'mid' },
-      { x: 200, y: 120, aimX: 580, aimY: 240, label: 'full' },
+      // start, aim, nominal arc and nominal duration (at 320 px/s)
+      { x: 200, y: 100, aimX: 200, aimY: 230, label: 'close', arc: 130, duration: 0.41 },
+      { x: 200, y: 200, aimX: 440, aimY: 180, label: 'mid', arc: 243, duration: 0.76 },
+      { x: 200, y: 120, aimX: 580, aimY: 240, label: 'full', arc: 399, duration: 1.25 },
     ];
+    const observed: Record<string, number> = {};
     for (const c of cases) {
       const diver = makeDiver(c.x, c.y);
       diver.setAimTarget(c.aimX, c.aimY);
       const arc = Diver.computeDiveArcLength(
         c.x, c.y, (c.x + c.aimX) / 2, GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION, c.aimX, c.aimY,
       );
+      // The shipped apex geometry reproduces the parent's sample arcs, so
+      // the sample set keeps describing the real dive once it ships.
+      expect(arc).toBeGreaterThan(c.arc - 5);
+      expect(arc).toBeLessThan(c.arc + 5);
       const expected = Diver.diveDurationForPath(arc, DIVER_DIVE_SPEED);
-      const observed = secondsToDiveComplete(diver, c.x, c.y);
-      expect(observed).toBeGreaterThanOrEqual(expected);
-      expect(observed).toBeLessThan(expected + 0.06);
-      // Every dive is materially shorter than the old fixed 2 s.
-      expect(observed).toBeLessThan(1.5);
+      expect(expected).toBeGreaterThan(c.duration - 0.05);
+      expect(expected).toBeLessThan(c.duration + 0.05);
+      const measured = secondsToDiveComplete(diver, c.x, c.y);
+      observed[c.label] = measured;
+      expect(measured).toBeGreaterThanOrEqual(expected);
+      expect(measured).toBeLessThan(expected + 0.06);
     }
-    // The close case is the reported bug: it must complete well under 1 s.
-    const closeDiver = makeDiver(200, 100);
-    closeDiver.setAimTarget(200, 230);
-    expect(secondsToDiveComplete(closeDiver, 200, 100)).toBeLessThan(0.6);
+    // AC3 — the reported bug is gone: the close dive completes in well under
+    // 0.6 s (≈ 0.41 s at 320 px/s) …
+    expect(observed.close).toBeGreaterThan(0.35);
+    expect(observed.close).toBeLessThan(0.6);
+    // … while the full dive still completes in ≈ 1.25 s. Both are materially
+    // shorter than the old fixed 2 s duration.
+    expect(observed.full).toBeGreaterThan(1.2);
+    expect(observed.full).toBeLessThan(1.32);
+    expect(observed.close).toBeLessThan(2);
+    expect(observed.full).toBeLessThan(2);
   });
 
   it('AC3/AC4 — near-zero path length clamps to MIN_DIVE_DURATION (no instant/teleport dive)', async () => {
@@ -978,6 +990,7 @@ describe('Diver — fixed-speed, distance-proportional dive (AH-0MW3MWRZ5003KVR3
     const arc = Diver.computeDiveArcLength(
       baseX, baseY, (baseX + baseX) / 2, GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION, baseX, baseY,
     );
+    expect(MIN_DIVE_DURATION).toBe(0.15);
     expect(Diver.diveDurationForPath(arc, DIVER_DIVE_SPEED)).toBe(MIN_DIVE_DURATION);
     // Behavioural: it takes ≈ MIN_DIVE_DURATION of ticks (≥ 1 tick of 0.1 s,
     // never 0 / a single-frame skip).
@@ -996,6 +1009,13 @@ describe('Diver — fixed-speed, distance-proportional dive (AH-0MW3MWRZ5003KVR3
     defaultDiver.setAimTarget(aim.x, aim.y);
     const fastDiver = makeDiver(baseX, baseY, { diveSpeed: 640 });
     fastDiver.setAimTarget(aim.x, aim.y);
+
+    // AC5 — the resolved speed is data-driven: the shipped 320 px/s code
+    // default applies when the config omits `diveSpeed`, and a configured
+    // value passes through to the entity unchanged.
+    expect(DIVER_DIVE_SPEED).toBe(320);
+    expect(defaultDiver.diveSpeed).toBe(DIVER_DIVE_SPEED);
+    expect(fastDiver.diveSpeed).toBe(640);
 
     const arc = Diver.computeDiveArcLength(
       baseX, baseY, (baseX + aim.x) / 2, GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION, aim.x, aim.y,
