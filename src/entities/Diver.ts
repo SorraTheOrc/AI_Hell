@@ -76,8 +76,19 @@ export const DIVER_FIRE_INTERVAL = 1000;
 /** Seconds the Diver holds formation before diving. */
 export const DIVER_HOLD_FORMATION_SECONDS = 3;
 
-/** Seconds the Diver spends on a dive (arc toward player). */
-export const DIVER_DIVE_DURATION = 2;
+/**
+ * Fixed dive speed (px/s) applied when `DiverConfig.diveSpeed` is omitted
+ * (AH-0MW0TY1AY003TDFC AC3). Matches the Raider `attackSpeed` baseline and
+ * makes a close dive (arc ≈ 130 px) complete in ≈ 0.41 s.
+ */
+export const DIVER_DIVE_SPEED = 320;
+
+/**
+ * Minimum per-dive duration (s). A dive whose path length would complete in
+ * less than this (a Diver overlapping the player) clamps to this floor so it
+ * never becomes an instantaneous/teleport or single-frame skip.
+ */
+export const MIN_DIVE_DURATION = 0.15;
 
 /** Dive apex height (fraction of screen height) — how far the dive arcs. */
 export const DIVER_DIVE_APEX_FRACTION = 0.3;
@@ -118,9 +129,9 @@ export interface DiverConfig {
    */
   /**
    * Fixed dive speed (px/s) for the dive arc (AH-0MW0TY1AY003TDFC AC3).
-   * Consumed by AH-0MW3MWRZ5003KVR3, which applies the 320 px/s code default
-   * when this field is absent. The raw configured value is threaded through
-   * by `enemyFactory`; nothing in this file applies a default yet.
+   * Absent resolves to the `DIVER_DIVE_SPEED` (320 px/s) code default, so a
+   * blank CSV cell or an omitted gym slider degrades to the same tuned value
+   * the game ships with.
    */
   diveSpeed?: number;
   /**
@@ -208,8 +219,13 @@ export class Diver extends BaseEnemy {
   private _pauseTimer = 0;
   /** Pause duration in seconds (configured or default). */
   private _pauseDuration = DIVER_PAUSE_DURATION / 1000;
-  /** Configured dive speed (px/s); raw until AH-0MW3MWRZ5003KVR3 applies the 320 px/s code default. */
-  private _diveSpeed?: number;
+  /**
+   * Resolved dive speed (px/s): the configured `diveSpeed`, or the
+   * `DIVER_DIVE_SPEED` (320 px/s) code default when omitted.
+   */
+  private readonly _diveSpeed: number;
+  /** Per-dive duration (s) computed at dive start from the path length. */
+  private _diveDuration = 0;
   private readonly _burstCount: number;
 
   // ── Construction ─────────────────────────────────────────────────
@@ -235,9 +251,10 @@ export class Diver extends BaseEnemy {
     this._burstCount = config.burstCount ?? DIVER_BURST_COUNT;
     this._pauseDuration =
       (config.pauseDuration ?? DIVER_PAUSE_DURATION) / 1000;
-    // Data-driven dive speed (AH-0MW0TY1AY003TDFC AC3) — stored raw; the
-    // 320 px/s code default when absent is applied by AH-0MW3MWRZ5003KVR3.
-    this._diveSpeed = config.diveSpeed;
+    // Fixed dive speed (AH-0MW0TY1AY003TDFC AC3): apply the 320 px/s code
+    // default when the config omits it, so an absent CSV cell / gym slider
+    // degrades to the shipped tuning.
+    this._diveSpeed = config.diveSpeed ?? DIVER_DIVE_SPEED;
     this.target = new Phaser.Math.Vector2(
       scene.scale.width / 2,
       scene.scale.height - 40,
@@ -295,11 +312,11 @@ export class Diver extends BaseEnemy {
   get effectiveBurstCount(): number { return this._burstCount; }
 
   /**
-   * The configured dive speed (px/s) threaded by `enemyFactory`
-   * (AH-0MW0TY1AY003TDFC AC3). `undefined` until AH-0MW3MWRZ5003KVR3
-   * resolves the 320 px/s code default at the dive site.
+   * The resolved dive speed (px/s) used for the dive arc — the configured
+   * `diveSpeed` or the `DIVER_DIVE_SPEED` (320 px/s) code default
+   * (AH-0MW0TY1AY003TDFC AC3).
    */
-  get diveSpeed(): number | undefined {
+  get diveSpeed(): number {
     return this._diveSpeed;
   }
 
@@ -520,6 +537,47 @@ export class Diver extends BaseEnemy {
   }
 
   /**
+   * Approximates the arc length (px) of the dive's quadratic-bezier path by
+   * numerically sampling `computeDivePoint` at 32 equal-parameter steps and
+   * summing the chord lengths. Chosen over the simpler straight-line
+   * start→target distance (parent Assumption 2 permits either) so the apex
+   * excursion is counted — a straight-line fallback would undercount the
+   * apex lift and speed the dive up. The 32-step sample is accurate to well
+   * under 1 px for the dive arc scale and costs ~32 evaluations at dive
+   * start only.
+   */
+  static computeDiveArcLength(
+    startX: number,
+    startY: number,
+    apexX: number,
+    apexY: number,
+    targetX: number,
+    targetY: number,
+  ): number {
+    const SAMPLES = 32;
+    let length = 0;
+    let prev = Diver.computeDivePoint(startX, startY, apexX, apexY, targetX, targetY, 0);
+    for (let i = 1; i <= SAMPLES; i++) {
+      const point = Diver.computeDivePoint(
+        startX, startY, apexX, apexY, targetX, targetY, i / SAMPLES,
+      );
+      length += Math.sqrt((point.x - prev.x) ** 2 + (point.y - prev.y) ** 2);
+      prev = point;
+    }
+    return length;
+  }
+
+  /**
+   * Per-dive duration (s) for a path of the given arc length at a fixed
+   * speed: `max(pathLength / diveSpeed, MIN_DIVE_DURATION)`. The floor
+   * guarantees a diver overlapping the player never teleports in a single
+   * frame.
+   */
+  static diveDurationForPath(pathLength: number, diveSpeed: number): number {
+    return Math.max(pathLength / diveSpeed, MIN_DIVE_DURATION);
+  }
+
+  /**
    * Updates the diver's position based on its current state.
    * Handles formation positioning (with smooth rotation toward player),
    * diving (diagonal parabolic arc toward the snapshotted player position),
@@ -631,10 +689,24 @@ export class Diver extends BaseEnemy {
     // Apex: midway between start and target horizontally, high on screen.
     this._diveApexX = (this._diveStartX + this._diveTargetX) / 2;
     this._diveApexY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION;
+
+    // Fixed-speed, distance-proportional dive (AH-0MW0TY1AY003TDFC AC1):
+    // the per-dive duration scales with the bezier arc length so a close
+    // dive completes at the same speed as a full-height dive (no more
+    // creeping ≈ 65 px/s close-to-player dives).
+    const pathLength = Diver.computeDiveArcLength(
+      this._diveStartX,
+      this._diveStartY,
+      this._diveApexX,
+      this._diveApexY,
+      this._diveTargetX,
+      this._diveTargetY,
+    );
+    this._diveDuration = Diver.diveDurationForPath(pathLength, this._diveSpeed);
   }
 
   private _handleDive(dt: number): void {
-    this._divePhase += dt / DIVER_DIVE_DURATION;
+    this._divePhase += dt / this._diveDuration;
     if (this._divePhase >= 1) {
       this._divePhase = 1;
       // Hold position through the 500 ms pause before re-forming.

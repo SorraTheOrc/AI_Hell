@@ -480,13 +480,19 @@ export function playDiverDiveStartSound(): void {
   playCue('playDiverDiveStartSound');
 }
 
-/** Duration (seconds) of the sustained dive sound (matches the ~2 s dive). */
+/**
+ * Advisory duration (seconds) of the sustained dive sound loop. The loop is
+ * explicitly stopped at dive end/destroy, so this constant is documentation
+ * only — the dive duration itself is variable (fixed-speed model,
+ * AH-0MW0TY1AY003TDFC: `max(pathLength / diveSpeed, MIN_DIVE_DURATION)`),
+ * not a fixed 2 s dive. No runtime behaviour depends on this value.
+ */
 export const DIVER_DIVE_SOUND_DURATION = 2;
 
 /** Shared continuous dive whoosh. Concurrent dives reuse one playback. */
 let diveSound: SfxSoundHandle | null = null;
 
-/** Starts (or shares) the sustained dive whoosh — ~2 s. */
+/** Starts (or shares) the sustained dive whoosh — stopped at dive end. */
 export function playDiveSound(): void {
   if (diveSound !== null) return;
   diveSound = playCue('playDiveSound');
