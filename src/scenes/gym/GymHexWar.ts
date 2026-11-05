@@ -429,6 +429,16 @@ export class GymHexWar extends Phaser.Scene {
     return this.view?.rows ?? [];
   }
 
+  /** The hex the read-only detail panel shows (defaults to the model's default/first hex). */
+  getMapPanelKey(): string | null {
+    return this.view?.getPanelKey() ?? null;
+  }
+
+  /** The read-only detail panel's current text (the default hex's full intel). */
+  getMapPanelText(): string {
+    return this.view?.getPanelText() ?? '';
+  }
+
   /** The summary lines the harness publishes (the ring's read-only summary). */
   getSummaryLines(): string[] {
     return hexWarSummaryLines(this.payload, this.fixtures, this.clock);

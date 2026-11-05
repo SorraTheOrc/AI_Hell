@@ -270,6 +270,16 @@ export class HexMapScene extends Phaser.Scene {
     return this.view?.getFocusedKey() ?? null;
   }
 
+  /** The hex the detail panel currently shows, or `null` when the map has no hexes. */
+  getPanelKey(): string | null {
+    return this.view?.getPanelKey() ?? null;
+  }
+
+  /** The detail panel's current text (the focused hex's full intel). */
+  getPanelText(): string {
+    return this.view?.getPanelText() ?? '';
+  }
+
   /** Moves focus to `key` when it is actionable (deterministic test seam). */
   focusRow(key: string): boolean {
     return this.view?.focusRow(key) ?? false;

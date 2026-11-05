@@ -2921,9 +2921,12 @@ can read the ring before committing — the mirror of the map's own `◀ HANGAR`
 row, so the two screens are one click apart in **both** directions
 (AH-0MVZ4S9ZU004GXUM).
 - **`HexMapScene`** — the hangar at the centre and the current ring around it,
-with every hex's **known-ahead intel**: held/unheld, aggression, the boss that
-holds it, what that boss is **strong and weak against**, the weapon or upgrade
-the hex grants, the defending hull and any queued attack. Activating an
+with every hex's **known-ahead intel**: held/unheld and aggression on the tile
+(tile colour plus a readable `AGG n` badge), and — in the **detail panel for
+the focused hex** (tab/arrows move focus; read-only renders default to the
+model's first hex) — the boss that holds it, what that boss is **strong and
+weak against**, the weapon or upgrade the hex grants, the defending hull and
+any queued attack (AH-0MW3VG6WJ004HRI9). Activating an
 **unheld** hex deploys at it; the `◀ HANGAR` row is one click from what the
 player owns (the design's "map and hangar one click apart"); ESC returns to the
 menu.
@@ -3155,7 +3158,9 @@ and its gym (AGENTS.md gym↔game parity):
   banked salvage, ring progress, the unlock tree and the deployment selector,
   with no handlers, so it is read-only by construction.
 - **`GymHexWar`** — renders the shipped hex map (`buildHexMapModel` +
-  `renderHexMap`) and the shipped **defence report** (`buildDefenceReport` +
+  `renderHexMap`) — read-only, so the tile aggression badges and the detail
+  panel defaulting to the model's first hex are what the game shows — and the
+  shipped **defence report** (`buildDefenceReport` +
   `renderDefenceReport`) from the **shipped** frontier tick's record
   (`runFrontierTick`), and exposes the `take hex → leave bot → tick` control
   surface through the documented deterministic harness double.

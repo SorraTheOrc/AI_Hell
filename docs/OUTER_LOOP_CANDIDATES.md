@@ -916,8 +916,11 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
 
 ### UI / scene surface
 
-- A **hex ring map screen**: the hangar at the centre, the ring around it, each
-  hex showing held/unheld, aggression, its defending hull and any pending attack.
+- A **hex ring map screen**: the hangar at the centre, the ring around it,
+  each hex showing held/unheld and its aggression on the tile (a readable
+  `AGG n` badge), with the full detail — boss, strengths/weaknesses, granted
+  weapon, defending hull and any pending attack — in a panel for the
+  **focused hex** (AH-0MW3VG6WJ004HRI9).
 - The **hangar screen** (Candidate B's unlock tree) reachable from the map, so
   "what I own" and "what I hold" sit one click apart.
 - A **deployment / hull-and-loadout selector** on the way into a hex.
@@ -996,7 +999,9 @@ content.
 **MVP — make the choice informed (in scope).** Before committing to a deployment
 the player can see, for every hex: which **boss** holds it, what that boss is
 **strong and weak against**, the **aggression** it is defended at, and exactly
-**which weapon or upgrade it grants**. The ring stops being a queue and becomes a
+**which weapon or upgrade it grants** — rendered readably in the map's detail
+panel for the focused hex, with the tile itself carrying only the aggression
+badge (AH-0MW3VG6WJ004HRI9). The ring stops being a queue and becomes a
 set of **strategic weapon grants** — "I need the weapon that is strong against
 the boss threatening my home hex, so I take *that* hex next" is a plan the player
 can form before spending a life — and the one-weapon hex becomes a real decision
