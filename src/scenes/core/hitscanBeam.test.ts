@@ -3,10 +3,10 @@
  * AC2/AC3/AC11).
  *
  * The Wave Laser resolves as an instant ray: 1 damage at the first intercept,
- * a full screen width when nothing intercepts it, wrapping at the arena
- * edges. The maths lives once in `hitscanBeam.ts` so the game and every gym
- * trace the identical beam; these tests pin the geometry through the public
- * pure API only (no scene, no Phaser).
+ * a short 240 px extent (25 % of the arena width) when nothing intercepts it,
+ * wrapping at the arena edges. The maths lives once in `hitscanBeam.ts` so the
+ * game and every gym trace the identical beam; these tests pin the geometry
+ * through the public pure API only (no scene, no Phaser).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -38,14 +38,16 @@ function totalLength(segments: ReturnType<typeof traceWrappedRay>): number {
 }
 
 describe('wave-laser beam extent', () => {
-  it('is one full arena width at level 0 (AC3)', () => {
-    // The catalogue mirrors GAME_WIDTH so the pure catalogue never imports
-    // core/constants (which would close a rules→weapons module cycle).
-    expect(WAVE_LASER_BEAM_LENGTH).toBe(GAME_WIDTH);
-    expect(WEAPON_CATALOGUE.wave_laser.hitscan!.length).toBe(GAME_WIDTH);
+  it('is a quarter of the arena width at level 0 (AC1)', () => {
+    // 25 % of the pre-tuning 960 px full width (AH-0MW10J31B0053E56). The
+    // catalogue mirrors the value as a literal so the pure catalogue never
+    // imports core/constants (which would close a rules→weapons cycle).
+    expect(WAVE_LASER_BEAM_LENGTH).toBe(240);
+    expect(WAVE_LASER_BEAM_LENGTH).toBe(GAME_WIDTH * 0.25);
+    expect(WEAPON_CATALOGUE.wave_laser.hitscan!.length).toBe(240);
   });
 
-  it('runs at least a full screen width unobstructed (AC3)', () => {
+  it('runs its short level-0 extent unobstructed (AC1)', () => {
     const segments = traceWrappedRay({
       originX: GAME_WIDTH / 2,
       originY: GAME_HEIGHT / 2,
@@ -53,8 +55,8 @@ describe('wave-laser beam extent', () => {
       length: WAVE_LASER_BEAM_LENGTH,
     });
 
-    expect(totalLength(segments)).toBeCloseTo(GAME_WIDTH, 6);
-    expect(totalLength(segments)).toBeGreaterThanOrEqual(GAME_WIDTH);
+    expect(totalLength(segments)).toBeCloseTo(240, 6);
+    expect(totalLength(segments)).toBeLessThan(GAME_WIDTH);
   });
 
   it('wraps from the right edge to the left and keeps extending (AC3)', () => {

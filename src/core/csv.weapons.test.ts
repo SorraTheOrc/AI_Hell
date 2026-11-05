@@ -266,6 +266,24 @@ cannon,Cannon,No bullet size here.,2,0x00ffff,circle,0.75
     expect(errors.join('\n')).toContain('bulletSize');
   });
 
+  it('rejects an aim bias outside the unit interval', () => {
+    // `hitscanAimBias` is a probability (0–1): 1.5 or a negative value would
+    // silently make every shot aimed or none (AH-0MW10J31B0053E56).
+    const tooHigh = weaponCodec().validateWeaponRow({
+      ...FULL_RAW_ROW,
+      hitscanAimBias: '1.5',
+    });
+    const negative = weaponCodec().validateWeaponRow({
+      ...FULL_RAW_ROW,
+      hitscanAimBias: '-0.2',
+    });
+
+    expect(tooHigh.ok).toBe(false);
+    expect(tooHigh.errors.join('\n')).toContain('hitscanAimBias');
+    expect(negative.ok).toBe(false);
+    expect(negative.errors.join('\n')).toContain('hitscanAimBias');
+  });
+
   it('rejects a row missing any of the eight required columns', () => {
     const required = [
       'id',
@@ -353,14 +371,19 @@ cannon,Cannon duplicate,Loses.,2,0xff0000,diamond,1,0.75
     });
   });
 
-  it('builds the hitscan descriptor from hitscanLength/hitscanDuration', () => {
+  it('builds the hitscan descriptor from hitscanLength/hitscanDuration/hitscanAimBias', () => {
     const { catalogue, errors } = parseOne({
-      hitscanLength: '960',
+      hitscanLength: '240',
       hitscanDuration: '0.3',
+      hitscanAimBias: '0.5',
     });
 
     expect(errors).toStrictEqual([]);
-    expect(catalogue.cannon?.hitscan).toStrictEqual({ length: 960, duration: 0.3 });
+    expect(catalogue.cannon?.hitscan).toStrictEqual({
+      length: 240,
+      duration: 0.3,
+      aimBias: 0.5,
+    });
   });
 
   it('builds the muzzle-flash and impact-FX specs from their flat columns', () => {
@@ -504,8 +527,9 @@ const FULL_RAW_ROW: Record<string, string> = {
   aoeDamage: '',
   aoeChains: '',
   aoeProjectileSpeed: '',
-  hitscanLength: '960',
+  hitscanLength: '240',
   hitscanDuration: '0.3',
+  hitscanAimBias: '0.5',
   muzzleColor: '0xff0000',
   muzzleRadius: '12',
   muzzleDuration: '0.15',
@@ -531,8 +555,9 @@ describe.skipIf(!weaponCodecReady)('coerceWeaponRow', () => {
       bulletShapeLength: 7,
       bulletRim: 0xffffff,
       bulletThickness: 3,
-      hitscanLength: 960,
+      hitscanLength: 240,
       hitscanDuration: 0.3,
+      hitscanAimBias: 0.5,
       muzzleColor: 0xff0000,
       muzzleRadius: 12,
       muzzleDuration: 0.15,

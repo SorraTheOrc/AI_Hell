@@ -95,6 +95,7 @@ export interface WeaponRow {
   aoeProjectileSpeed?: number;
   hitscanLength?: number;
   hitscanDuration?: number;
+  hitscanAimBias?: number;
   muzzleColor?: number;
   muzzleRadius?: number;
   muzzleDuration?: number;
@@ -191,6 +192,7 @@ export const CONTRACT_WEAPON_COLUMNS: readonly (keyof WeaponRow)[] = [
   'aoeProjectileSpeed',
   'hitscanLength',
   'hitscanDuration',
+  'hitscanAimBias',
   'muzzleColor',
   'muzzleRadius',
   'muzzleDuration',

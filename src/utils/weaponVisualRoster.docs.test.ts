@@ -228,7 +228,7 @@ describe('docs guard — the player-facing documentation records the visual rost
     { id: 'nova', phrase: 'Concentric neon rings' },
     { id: 'mortar', phrase: 'Random blast burst' },
     { id: 'arc', phrase: 'Jagged lightning bolt' },
-    { id: 'wave_laser', phrase: 'Long red beam that stops at the first hit' },
+    { id: 'wave_laser', phrase: 'Short chaotic red beam that stops at the first hit' },
     { id: 'ricochet', phrase: 'Zig-zag bank-shot path between two walls' },
     { id: 'cluster', phrase: 'Central shell bursting into a radial cluster of warheads' },
     { id: 'options', phrase: 'Ship ringed by orbiting satellite pods' },

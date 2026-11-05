@@ -64,7 +64,7 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   spread: 0xffaa00, // neon orange — fan arc
   dual: 0xff00ff, // neon magenta — parallel bars
   rapid: 0xffff00, // neon yellow — stacked dots
-  wave_laser: 0xff0000, // pure red — full-screen stopping beam
+  wave_laser: 0xff0000, // pure red — short stopping beam
   ricochet: 0x33ff66, // neon green — edge-bouncing pellet
   cluster: 0xff3366, // neon hot pink — splitting warhead cluster
   options: 0x00ffcc, // neon aquamarine — orbiting satellite pods
@@ -866,10 +866,10 @@ function drawRapidIcon(
 }
 
 /**
- * Wave laser icon — a long red beam that **stops** at a bright blocking edge,
+ * Wave laser icon — a short red beam that **stops** at a bright blocking edge,
  * hinting at the hitscan shot that deals 1 damage to the first thing it meets
- * and spans the whole screen when nothing intercepts it
- * (AH-0MVREBUJ5004HDRQ).
+ * and runs its short level-0 extent when nothing intercepts it
+ * (AH-0MVREBUJ5004HDRQ, AH-0MW10J31B0053E56).
  */
 function drawWaveLaserIcon(
   g: Phaser.GameObjects.Graphics,
@@ -877,7 +877,7 @@ function drawWaveLaserIcon(
   y: number,
   s: number,
 ): void {
-  // Long horizontal beam.
+  // Short horizontal beam.
   g.beginPath();
   g.moveTo(x - s * 0.9, y);
   g.lineTo(x + s * 0.9, y);

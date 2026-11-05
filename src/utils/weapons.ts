@@ -24,9 +24,10 @@
  * - **spread** — 3-bullet fan at -30° / 0° / +30° relative to heading (timed)
  * - **dual**   — 2 bullets offset perpendicular (±90°) to heading (timed)
  * - **rapid**  — single bullets at a much higher fire rate (timed)
- * - **wave_laser** — a single red **hitscan beam** fired along the heading: it
- *   deals exactly 1 damage to the first enemy it intercepts and stops there,
- *   or runs a full screen width (wrapping at the arena edges) when nothing
+ * - **wave_laser** — a single red **hitscan beam** whose direction is drawn
+ *   from the scene RNG (biased toward the nearest enemy): it deals exactly 1
+ *   damage to the first enemy it intercepts and stops there, or runs its
+ *   short extent (240 px at level 0, wrapping at the arena edges) when nothing
  *   intercepts it (R-Type homage, timed; see
  *   {@link WeaponDefinition.hitscan})
  * - **ricochet** — a single shot that reflects off the arena edges up to a
@@ -498,7 +499,8 @@ export const WEAPON_BULLET_LIFETIME = {
   rapid: 0.375,
   /**
    * Wave laser — the beam's **visible duration** (0.3 s, AC4): the hitscan ray
-   * resolves at launch and the beam column is held for this long. The
+   * resolves at launch and the beam column is held for this long. The beam's
+   * *extent* is authored separately (`hitscan.length`, 240 px at level 0). The
    * travelling-bullet path never applies to it.
    */
   wave_laser: 0.3,
@@ -780,14 +782,18 @@ export type BulletShape =
  * bullet colour, shape, and size multiplier.
  */
 /**
- * Wave-laser beam extent at level 0 (px) — one full arena width, so an
- * unobstructed shot always spans the screen (AC3). The arena width itself is
- * `GAME_WIDTH` in `core/constants`; it is mirrored here as a plain number
- * because `core/constants` imports `core/rules`, which imports this catalogue
- * — importing it back would create a module cycle. `hitscanBeam.test.ts`
- * asserts the two stay equal.
+ * Wave-laser beam extent at level 0 (px) — **25 % of the pre-tuning full
+ * arena width** (960 → 240 px), so an unobstructed shot is a short,
+ * close-range beam rather than a screen-wide sniper line
+ * (AH-0MW10J31B0053E56). The existing Range (`bulletLifetime`) ladder still
+ * grows it, so the top of the ladder approaches ~528 px.
+ *
+ * The arena width itself is `GAME_WIDTH` in `core/constants`; the number is
+ * mirrored here as a plain literal because `core/constants` imports
+ * `core/rules`, which imports this catalogue — importing it back would create
+ * a module cycle. `hitscanBeam.test.ts` pins the value and the 25 % ratio.
  */
-export const WAVE_LASER_BEAM_LENGTH = 960;
+export const WAVE_LASER_BEAM_LENGTH = 240;
 
 /**
  * Hitscan-beam descriptor — the Wave Laser's dedicated ray seam
@@ -800,13 +806,23 @@ export const WAVE_LASER_BEAM_LENGTH = 960;
 export interface HitscanDescriptor {
   /**
    * Total ray length (px) travelled before the beam stops, wrapping at the
-   * arena edges. One full arena width ({@link GAME_WIDTH}) at level 0, so an
-   * unobstructed shot always spans the screen (AC3). Weapon leveling grows it
-   * through the `bulletLifetime` (range) upgrade.
+   * arena edges. 240 px at level 0 — a quarter of the 960 px arena width
+   * (AH-0MW10J31B0053E56) — so an unobstructed shot is a short beam rather
+   * than a screen-wide line. Weapon leveling grows it through the
+   * `bulletLifetime` (range) upgrade.
    */
   length: number;
   /** Seconds the resolved beam stays visible after launch (AC4). */
   duration: number;
+  /**
+   * Probability (0–1) that a shot is aimed at the **nearest living enemy**
+   * instead of a uniform 360° direction (AH-0MW10J31B0053E56). `0` fires
+   * uniformly, `1` always aims (when a living enemy exists); with no living
+   * enemy every shot is uniform. Authored as data (`hitscanAimBias` in
+   * `src/data/weapons.csv`) so a designer can tune it, and grown with weapon
+   * level through the `homing` upgrade curve by `resolveWeaponDefinition`.
+   */
+  aimBias: number;
 }
 
 export interface WeaponDefinition {
@@ -1265,9 +1281,10 @@ export const DEFAULT_WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'wave_laser',
     name: 'Wave Laser',
     description:
-      'Adds a red laser beam that deals 1 damage to the first enemy it hits and spans the whole screen.',
-    // A single aimed beam along the ship's heading — exactly one beam per
-    // shot, never a fan or a pair (AC1).
+      'Adds a short red laser beam that fires in a random direction biased toward the nearest enemy and deals 1 damage to the first enemy it hits.',
+    // A single beam per shot, never a fan or a pair (AC1). Its direction is
+    // drawn per shot from the scene RNG, biased toward the nearest enemy,
+    // rather than always following the ship's heading (AH-0MW10J31B0053E56).
     offsets: [0],
     fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
     bulletColor: BULLET_COLORS.wave_laser,
@@ -1281,14 +1298,18 @@ export const DEFAULT_WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletThickness: 3,
     bulletSize: 1.2,
     bulletLifetime: WEAPON_BULLET_LIFETIME.wave_laser,
-    // Hitscan ray (AH-0MVREBUJ5004HDRQ): the shot resolves instantly along
-    // the heading, deals 1 damage at the first intercept and stops; with
-    // nothing in the way it runs one full screen width, wrapping at the arena
-    // edges. The beam column is visible for 0.3 s. There is no damage budget
-    // (fixed 1 damage at every level) and no travelling projectile.
+    // Hitscan ray (AH-0MVREBUJ5004HDRQ; retuned by AH-0MW10J31B0053E56): the
+    // shot resolves instantly, deals 1 damage at the first intercept and
+    // stops; with nothing in the way it runs its short 240 px extent, wrapping
+    // at the arena edges. Its direction is drawn per shot from the scene RNG —
+    // aimed at the nearest enemy with probability `aimBias`, otherwise uniform
+    // over 360° — and the bias grows with weapon level. The beam column is
+    // visible for 0.3 s. There is no damage budget (fixed 1 damage at every
+    // level) and no travelling projectile.
     hitscan: {
       length: WAVE_LASER_BEAM_LENGTH,
       duration: WEAPON_BULLET_LIFETIME.wave_laser,
+      aimBias: 0.5,
     },
     // Wide red muzzle flash / launch cue at the ship when the wave laser
     // fires — a substantial burst befitting the long beam it launches

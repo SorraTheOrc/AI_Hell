@@ -12,7 +12,18 @@
  * Distances are plain Euclidean (px). A target's hit radius is included in
  * the overlap test, so a large entity is caught when its edge intersects the
  * effect area even if its centre lies just outside.
+ *
+ * The one opt-in exception is {@link findNearestTarget}'s optional `world`
+ * argument: passing the playfield dimensions selects the **torus-nearest**
+ * target through the shared wrap model (`utils/wrapGeometry`), which is what
+ * the Wave Laser's aim bias needs so a target across a seam counts as near
+ * (AH-0MW10J31B0053E56). Omitting it keeps today's raw Euclidean behaviour.
  */
+
+import {
+  wrappedDistance,
+  type WrapWorld,
+} from './wrapGeometry';
 
 /** A positioned target the AOE geometry helpers can reason about. */
 export interface AoEGeometryTarget {
@@ -145,6 +156,11 @@ export function selectAoETargets<T extends AoEGeometryTarget>(
  * @param exclude - Targets to ignore (e.g. already-chained enemies).
  * @param accepts - Optional target-eligibility predicate; when supplied, a
  *   candidate must satisfy it to be selected.
+ * @param world - Optional four-edge wrap model. When supplied, "nearest"
+ *   means nearest along the **shortest torus path** (`wrappedDistance`), so a
+ *   target just across a seam beats a visually further one on the same side.
+ *   Omitting it keeps the historical raw Euclidean selection (the Arc chain
+ *   and every existing caller are unaffected).
  */
 export function findNearestTarget<T extends AoEGeometryTarget>(
   originX: number,
@@ -152,13 +168,17 @@ export function findNearestTarget<T extends AoEGeometryTarget>(
   targets: readonly T[],
   exclude: ReadonlySet<T> = new Set<T>(),
   accepts?: (target: T) => boolean,
+  world?: WrapWorld,
 ): T | null {
+  const origin = { x: originX, y: originY };
   let nearest: T | null = null;
   let nearestDistance = Infinity;
   for (const target of targets) {
     if (target.alive === false || exclude.has(target)) continue;
     if (accepts !== undefined && !accepts(target)) continue;
-    const distance = distanceSquared(originX, originY, target.x, target.y);
+    const distance = world
+      ? wrappedDistance(origin, target, world)
+      : distanceSquared(originX, originY, target.x, target.y);
     if (distance < nearestDistance) {
       nearest = target;
       nearestDistance = distance;

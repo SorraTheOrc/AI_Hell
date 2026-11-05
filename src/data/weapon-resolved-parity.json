@@ -248,7 +248,7 @@
       {
         "id": "wave_laser",
         "name": "Wave Laser",
-        "description": "Adds a red laser beam that deals 1 damage to the first enemy it hits and spans the whole screen.",
+        "description": "Adds a short red laser beam that fires in a random direction biased toward the nearest enemy and deals 1 damage to the first enemy it hits.",
         "offsets": [
           0
         ],
@@ -261,8 +261,9 @@
         "bulletRim": 16777215,
         "bulletThickness": 3,
         "hitscan": {
-          "length": 960,
-          "duration": 0.3
+          "length": 240,
+          "duration": 0.3,
+          "aimBias": 0.5
         },
         "muzzleFlash": {
           "color": 16711680,
@@ -279,7 +280,7 @@
       {
         "id": "wave_laser",
         "name": "Wave Laser",
-        "description": "Adds a red laser beam that deals 1 damage to the first enemy it hits and spans the whole screen.",
+        "description": "Adds a short red laser beam that fires in a random direction biased toward the nearest enemy and deals 1 damage to the first enemy it hits.",
         "offsets": [
           0
         ],
@@ -292,8 +293,9 @@
         "bulletRim": 16777215,
         "bulletThickness": 3,
         "hitscan": {
-          "length": 1308.2768723661723,
-          "duration": 0.3
+          "length": 327.06921809154306,
+          "duration": 0.3,
+          "aimBias": 0.663067331770202
         },
         "muzzleFlash": {
           "color": 16711680,

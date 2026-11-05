@@ -162,6 +162,12 @@ export const MVP_UPGRADE_VARIABLES: readonly WeaponUpgradeVariable[] = [
   'projectileCount',
   'bulletSize',
   'aoeRadius',
+  // `homing` is live since AH-0MW10J31B0053E56: it is the Wave Laser's
+  // **accuracy** lever (`aimBias` grows with level), so it is no longer a
+  // specification-only variable. Its curve keeps the generic "bullets curve
+  // toward nearby enemies" description for any future homing weapon; the
+  // wave laser consumes the same curve as a probability blend.
+  'homing',
 ];
 
 // ── Upgrade specification ───────────────────────────────────────────
@@ -348,13 +354,16 @@ export const WEAPON_UPGRADE_SPECS: Record<
     description: 'Bullets curve toward nearby enemies (0–1).',
     rationale:
       'Homing changes aiming feel; 0.9 is a strong-but-imperfect curve and ' +
-      'k=0.15 keeps it a late-game payoff rather than an early aim-bot.',
+      'k=0.15 keeps it a late-game payoff rather than an early aim-bot. Since ' +
+      'AH-0MW10J31B0053E56 it is also the Wave Laser\u2019s **accuracy** lever: ' +
+      '`aimBias` blends with this curve (base 0.5 → ~0.95), so the same ' +
+      'late-game payoff governs how often a chaotic shot is aimed.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 0.9,
     k: 0.15,
     discrete: false,
-    tier: 'planned',
+    tier: 'mvp',
   },
   aoeRadius: {
     variable: 'aoeRadius',
@@ -1432,6 +1441,9 @@ export function expandWeaponPattern(
  *   `bulletLifetime` (range) upgrade (hitscan weapons only, i.e. the wave
  *   laser, which never gains a damage budget and never widens into a fan —
  *   AH-0MVREBUJ5004HDRQ),
+ * - `hitscan.aimBias` — the beam's **accuracy** grown by the level's `homing`
+ *   curve: `base + (1 − base) × homing(level)` (0.5 at level 0, ~0.95 at the
+ *   top of the ladder; hitscan weapons only, AH-0MW10J31B0053E56),
  * - `bounce` — the base wall-bounce budget grown by the level's `bounce`
  *   upgrade and clamped to its spec cap (weapons with a base `bounce` only,
  *   e.g. the ricochet; AH-0MV1BIV5L005NJAI),
@@ -1494,12 +1506,17 @@ export function resolveWeaponDefinition(
   // Hitscan weapons opt in with a base ray descriptor. The ray's extent grows
   // with the level-resolved `bulletLifetime` (range) upgrade — a longer beam
   // still deals exactly 1 damage and stops at the first intercept — while the
-  // visible duration stays the fixed 0.3 s column (AC4). Weapons without a
-  // `hitscan` descriptor never gain one.
+  // visible duration stays the fixed 0.3 s column (AC4). The ray's **accuracy**
+  // (`aimBias`) grows with the level-resolved `homing` curve: the base bias is
+  // blended toward certainty, so a chaotic level-0 shot becomes an increasingly
+  // aimed one at higher levels (0.5 → ~0.95; AH-0MW10J31B0053E56). Weapons
+  // without a `hitscan` descriptor never gain one.
   if (base.hitscan) {
+    const baseBias = base.hitscan.aimBias;
     leveled.hitscan = {
       ...base.hitscan,
       length: base.hitscan.length * stats.bulletLifetime,
+      aimBias: Math.min(1, Math.max(0, baseBias + (1 - baseBias) * stats.homing)),
     };
   }
   // Ricochet-style weapons opt in with a base wall-bounce budget. Their
@@ -1571,10 +1588,15 @@ export function resolveVariable(
  * ({@link MVP_UPGRADE_VARIABLES}) are considered, and only those that can
  * actually change *this* weapon's behaviour:
  *
- * - The four MVP variables apply to every weapon.
+ * - The core MVP variables apply to every weapon.
  * - `aoeRadius` is only listed for weapons that declare an `aoe`
  *   descriptor (Nova, Mortar, Arc). A non-AoE weapon must never promise an
  *   "Area" gain it cannot deliver (AH-0MVL9P2SF009QFON AC2).
+ * - `homing` is only listed for weapons that declare a `hitscan` descriptor
+ *   (the Wave Laser), where the curve is the beam's **accuracy** lever; it is
+ *   reported as the observable aim-bias gain (`Aim accuracy`). Every other
+ *   weapon would otherwise promise a homing gain it cannot deliver
+ *   (AH-0MW10J31B0053E56).
  *
  * Each variable that actually changes between the two levels contributes one
  * formatted fragment (see {@link formatDelta}); fragments are joined with
@@ -1603,7 +1625,9 @@ export function summariseWeaponLevelChange(
   const to = resolveWeaponAtLevel(weaponId, toLevel);
   // Applicability is a per-weapon property, so it is resolved once rather
   // than inside the per-variable loop.
-  const hasAoe = getWeaponById(weaponId).aoe !== undefined;
+  const definition = getWeaponById(weaponId);
+  const hasAoe = definition.aoe !== undefined;
+  const hasHitscan = definition.hitscan !== undefined;
 
   const parts: string[] = [];
   for (const variable of MVP_UPGRADE_VARIABLES) {
@@ -1611,6 +1635,24 @@ export function summariseWeaponLevelChange(
     // descriptor; every other weapon would otherwise report a fictional
     // "+N% Area" delta (AH-0MVL9P2SF009QFON AC2).
     if (variable === 'aoeRadius' && !hasAoe) {
+      continue;
+    }
+    // `homing` is the Wave Laser's accuracy lever (AH-0MW10J31B0053E56), so
+    // it is reported as the observable aim-bias gain and only for weapons
+    // that actually consume the curve.
+    if (variable === 'homing') {
+      if (!hasHitscan) continue;
+      const fromBias =
+        resolveWeaponDefinition(weaponId, fromLevel).hitscan?.aimBias ?? 0;
+      const toBias =
+        resolveWeaponDefinition(weaponId, toLevel).hitscan?.aimBias ?? 0;
+      const formatted = formatDelta(
+        'Aim accuracy',
+        toBias - fromBias,
+        fromBias,
+        false,
+      );
+      if (formatted) parts.push(formatted);
       continue;
     }
     const delta = to[variable] - from[variable];

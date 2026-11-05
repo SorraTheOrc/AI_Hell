@@ -1211,6 +1211,7 @@ cell must be non-blank on every row; "optional" means a blank cell is legal
 | `aoeProjectileSpeed` | Projectile speed, required to sample an `onRandom` range. | px/s, > 0. Optional AOE extra. |
 | `hitscanLength` | Beam length. **Opens** the hitscan group. | px, > 0. Optional (blank = no beam). |
 | `hitscanDuration` | How long the resolved beam stays visible. | Seconds, > 0. Required when `hitscanLength` is present. |
+| `hitscanAimBias` | Probability a shot aims at the nearest living enemy instead of a uniform random direction. Grows with weapon level through the Homing curve. | Number in `[0, 1]`. Required when `hitscanLength` is present. |
 | `muzzleColor` | Launch-flash colour. **Opens** the muzzle-flash group. | `0xrrggbb`. Optional; defaults to `bulletColor`. |
 | `muzzleRadius` | Launch-flash core radius. | px, > 0. Optional; default `7`. |
 | `muzzleDuration` | Launch-flash fade duration. | Seconds, > 0. Optional; default `0.12`. |
@@ -1314,7 +1315,7 @@ Descriptors are **all-or-nothing groups**, declared by an opening column:
 |---|---|---|
 | orbit | `orbitPods` | `orbitRadius` |
 | AOE | `aoeTrigger` | `aoeRadius`, `aoeDamagesEnemies`, `aoeClearsEnemyBullets` (required); `aoeDamage`, `aoeChains`, `aoeProjectileSpeed` (extras) |
-| hitscan | `hitscanLength` | `hitscanDuration` |
+| hitscan | `hitscanLength` | `hitscanDuration`, `hitscanAimBias` |
 | muzzle flash | `muzzleColor` | `muzzleRadius`, `muzzleDuration` (both have defaults) |
 | impact | `impactColor` | `impactRadius`, `impactDuration`, `impactCue` |
 

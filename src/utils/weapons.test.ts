@@ -786,15 +786,24 @@ describe('Wave laser — single red hitscan beam (AH-0MVREBUJ5004HDRQ)', () => {
     expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBeUndefined();
   });
 
-  test('declares a hitscan ray one screen wide and visible for 0.3 s (AC3/AC4)', () => {
+  test('declares a short 240 px beam, visible for 0.3 s (AC1/AC3/AC4)', () => {
     const def = WEAPON_CATALOGUE.wave_laser;
     expect(def.hitscan).toBeDefined();
     expect(def.hitscan!.length).toBe(WAVE_LASER_BEAM_LENGTH);
-    expect(def.hitscan!.length).toBeGreaterThanOrEqual(GAME_WIDTH);
+    // 25 % of the pre-tuning full 960 px arena width (AH-0MW10J31B0053E56).
+    expect(def.hitscan!.length).toBe(GAME_WIDTH * 0.25);
+    expect(def.hitscan!.length).toBeLessThan(GAME_WIDTH);
     expect(def.hitscan!.duration).toBeCloseTo(0.3, 6);
     // The travelling-bullet lifetime mirrors the beam's visible duration; the
     // shot itself is resolved instantly by the shared ray seam.
     expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.wave_laser);
+  });
+
+  test('authors a tunable nearest-enemy aim bias of 0.5 at level 0 (AC3)', () => {
+    // A data parameter, never a literal in the shared fire path: the same
+    // number the designer edits in `src/data/weapons.csv`
+    // (AH-0MW10J31B0053E56).
+    expect(WEAPON_CATALOGUE.wave_laser.hitscan!.aimBias).toBe(0.5);
   });
 
   test('is a pure-red beam, distinct from the Heavy Slug\u2019s deep red (AC1, A5)', () => {

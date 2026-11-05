@@ -74,7 +74,7 @@ recorded in "Considered but not selected".
 
 ## Weapons
 
-### 1. R-Type wave laser — single-hit screen-spanning beam
+### 1. R-Type wave laser — single-hit short chaotic beam
 
 **Source game:** *R-Type* (Irem, 1987).
 
@@ -82,64 +82,62 @@ recorded in "Considered but not selected".
 horizontal beam that punches straight through enemies instead of stopping on
 the first hit, with a charge meter that grows the beam.
 
-**AI_Hell adaptation (AH-0MVREBUJ5004HDRQ):** A **single red hitscan beam**
-fired along the ship's heading. It resolves instantly through the shared ray
-seam (`src/scenes/core/hitscanBeam.ts`), deals **exactly 1 damage to the first
-enemy (or boss) it intercepts and stops there** — it never pierces and carries
-no damage budget at any weapon level. With nothing in its path the ray runs a
-**full screen width** (`GAME_WIDTH` = 960 px at level 0), **wrapping at the
-arena edges** so a beam fired near the right edge re-enters from the left and
-keeps extending; the level curve lengthens that run. The beam column is
-**visible for 0.3 s** with a wide red launch flash and its own sci-fi laser
-fire cue, and the fire cadence is **1 shot every 2 beats** (1500 ms at 80 BPM,
-after the level-0 output trim, AH-0MVWAVKS0005P9VN) so a beam never overlaps the
-next shot. It does not clear enemy bullets (that stays
-Nova/Arc/Bomb territory) so it does not eclipse the AOE family.
+**AI_Hell adaptation (AH-0MVREBUJ5004HDRQ, retuned by AH-0MW10J31B0053E56):** A
+**single short, chaotic red hitscan beam**. It resolves instantly through the
+shared ray seam (`src/scenes/core/hitscanBeam.ts`), deals **exactly 1 damage to
+the first enemy (or boss) it intercepts and stops there** — never piercing, with
+no damage budget. Its direction is drawn per shot from the run-seeded RNG
+(`src/scenes/core/hitscanAim.ts`): with probability `aimBias` it aims at the
+**nearest living enemy** (through the wrapped bearing), otherwise it is uniform
+over 360°; with no living enemy it is always uniform. `aimBias` is authored data
+(`hitscanAimBias` in `src/data/weapons.csv`, 0.5 at level 0) and grows with
+weapon level through the Homing curve (0.5 → ≈0.95). With nothing in its path
+the ray runs its **short 240 px level-0 extent** (a quarter of the 960 px arena
+width), wrapping at the arena edges; the Range ladder lengthens it (≈528 px at
+the top). The beam is **visible for 0.3 s** with a wide red launch flash aligned
+to the beam and its own sci-fi laser fire cue, firing **1 shot every 2 beats**
+(1500 ms at 80 BPM, AH-0MVWAVKS0005P9VN) so a beam never overlaps the next shot.
+It does not clear enemy bullets (that stays Nova/Arc/Bomb territory).
 
-**Divergence from original:** No charge meter — AI_Hell's weapons are
-cumulative pickups on the beat grid rather than chargeable, so the beam is a
-fixed cadence. It is deliberately **not** piercing: the R-Type's signature
-pass-through was replaced by a readable screen-spanning line shot with a single
-point of damage, so the beam reads as a precise aimed strike rather than a
-crowd-clearer (the bounded pass-through budget shipped earlier as
-AH-0MV1BIUSJ0090W92 / AH-0MV97RISJ002WR2S and was retired here). The
-catalogue's remaining pass-through weapon is the Railgun — from its first
-upgrade onward: a level-0 tracer carries a single hit point and stops at the
-first enemy it meets (AH-0MVY0A23A009MRK3).
+**Divergence from original:** No charge meter — AI_Hell's weapons are cumulative
+pickups on the beat grid. It is deliberately **not** piercing: the R-Type's
+pass-through became a short, randomly aimed single-damage strike (the bounded
+budget shipped earlier as AH-0MV1BIUSJ0090W92 / AH-0MV97RISJ002WR2S and was
+retired). The remaining pass-through weapon is the Railgun, from its first
+upgrade onward (AH-0MVY0A23A009MRK3).
 
 **Type:** weapon.
 
 **Pipeline fit:**
 
-- `WeaponId`: `'wave_laser'`; a new `WEAPON_CATALOGUE` entry with a single `[0]`
-  offset pattern (the beam is aimed along the ship's heading).
+- `WeaponId`: `'wave_laser'`; a `WEAPON_CATALOGUE` entry with a single `[0]`
+  offset pattern. The direction is not the ship's heading: the shared fire path
+  resolves it per shot through `scenes/core/hitscanAim.ts`.
 - Fire subdivision: **1 shot every 2 beats** (`0.5` in
   `DEFAULT_WEAPON_SUBDIVISIONS` → 1500 ms at 80 BPM), on the shared grid.
-- Seam: **dedicated shared hitscan-ray seam.** A new optional `HitscanDescriptor`
+- Seam: **dedicated shared hitscan-ray seam.** An optional `HitscanDescriptor`
   on `WeaponDefinition` marks the shot as a ray; the shared fire path in
   `CombatCoreScene` resolves it through the pure `scenes/core/hitscanBeam.ts`
-  helper (wrapped-width march, nearest intersection, endpoint) and applies the
-  single hit point through the shared damage seam in `CombatScene`, so the game
-  and every gym run the identical beam by construction. No `AoEDescriptor` is
-  used and the travelling-bullet flight/collision path is untouched for every
-  other weapon.
+  helper and applies the hit through the shared damage seam in `CombatScene`, so
+  the game and every gym (including `GymWeapons`, the scene that demonstrates
+  it) run the identical beam. No `AoEDescriptor` is used.
 - `weaponLevels.ts` variables: **Fire rate** (`fireRate`, MVP), **Bullet size**
-  (`bulletSize`, MVP — the beam column's thickness) and **Beam Extent**
-  (`bulletLifetime`, which scales the ray's length). The **Max Hit Points**
-  budget is retired for this weapon: damage is fixed at 1 at every level
-  (AH-0MVREBUJ5004HDRQ), so the level curve can never turn the beam into a
-  piercer.
+  (`bulletSize`, MVP — beam thickness), **Beam Extent** (`bulletLifetime`) and
+  **Aim accuracy** (`homing`, MVP — the `aimBias` blend). The **Max Hit Points**
+  budget is retired: damage is fixed at 1.
 
-**Balance / coverage:** A precise, screen-spanning line shot rather than an
-area clearer; it cannot clear bullets and cannot hit around corners, and its
-slow cadence keeps it from dominating Rapid or the AOE family. Because it stops
-at the first intercept, lining up a shot through a crowd is no longer a
-reward — hitting the right single target is.
+**Balance / coverage:** A short, chaotic line shot, not an area clearer: no
+bullet clearing, no hitting around corners, a 240 px level-0 extent that forces
+close range and a slow cadence. Because it stops at the first intercept, hitting
+the right single target is the reward; because each direction is drawn (biased
+toward the nearest enemy) it trades the old guaranteed full-screen snipe for an
+aim cost that shrinks as the weapon levels.
 
-**Gym scene:** `GymWeapons` (weapon drops plus the inert practice targets) —
-the level-0 beam visibly stops at the first aligned practice target, leaves
-the one behind it alive and spans a full screen width (wrapping at the edge)
-when nothing intercepts it, demonstrating the shared ray seam the game runs.
+**Gym scene:** `GymWeapons` (weapon drops plus the inert practice targets) — the
+level-0 beam visibly stops at the first practice target, leaves the one behind
+it alive, runs its short 240 px extent (wrapping at the edge) when nothing
+intercepts it, and fires in the RNG-drawn direction, demonstrating the shared
+ray and aim seams the game runs.
 
 ---
 

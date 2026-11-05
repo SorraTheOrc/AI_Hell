@@ -1523,6 +1523,11 @@ class HitscanStubScene extends StubCoreScene {
   hits: { target: StubTarget; x: number; y: number }[] = [];
   appliedDefs: string[] = [];
 
+  /** Replaces the scene's content RNG so the shot direction is pinnable. */
+  setSceneRng(rng: () => number): void {
+    this.sceneRng = rng;
+  }
+
   protected override getHitscanTargets() {
     return this.targets;
   }
@@ -1563,6 +1568,20 @@ describe('wave laser — hitscan dispatch from the shared fire path (AH-0MVREBUJ
     return booted.scene as unknown as HitscanStubScene;
   }
 
+  /**
+   * Pins the shot's two RNG draws: the uniform candidate angle and the
+   * aim-bias roll (see `hitscanAim.ts`).
+   */
+  function setShotDraws(
+    scene: HitscanStubScene,
+    uniformFraction: number,
+    aimRoll: number,
+  ): void {
+    const values = [uniformFraction, aimRoll];
+    let index = 0;
+    scene.setSceneRng(() => values[index++] ?? 0);
+  }
+
   it('spawns no travelling bullet — one beam resolved at launch instead', async () => {
     const scene = await boot();
     const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
@@ -1576,7 +1595,7 @@ describe('wave laser — hitscan dispatch from the shared fire path (AH-0MVREBUJ
     expect(
       scene.getPlayerBullets().filter((b) => b.color === 0xff0000),
     ).toHaveLength(0);
-    // Exactly one beam column per shot, one full screen wide (AC1/AC3).
+    // Exactly one beam column per shot (AC1/AC5).
     expect(beamSpy).toHaveBeenCalledTimes(1);
     const options = beamSpy.mock.calls[0][2]!;
     expect(options.color).toBe(BULLET_COLORS.wave_laser);
@@ -1585,21 +1604,59 @@ describe('wave laser — hitscan dispatch from the shared fire path (AH-0MVREBUJ
     expect(scene.hits).toHaveLength(0);
   });
 
-  it('applies exactly one hit at the nearest intercept and stops there (AC2)', async () => {
+  it('aims at the nearest enemy when the bias roll lands under aimBias (AC2/AC3)', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 200 });
-    player.setDefaultHeading(0); // fire right
+    player.setDefaultHeading(Math.PI); // the ship faces away from the target
     const near = scene.addTarget(300, 200);
     const far = scene.addTarget(600, 200);
     player.equipWeapon('wave_laser', true);
+    // Uniform candidate = half a turn; aim roll 0 < the 0.5 bias → aimed.
+    setShotDraws(scene, 0.5, 0);
 
     scene.runAutoFire(10);
 
+    // The beam left along the aimed bearing (toward +x), not the ship's
+    // heading, and stopped at the first intercept.
     expect(scene.hits).toHaveLength(1);
     expect(scene.hits[0].target).toBe(near);
     expect(scene.hits[0].x).toBeCloseTo(288, 6);
     expect(scene.appliedDefs).toEqual(['wave_laser']);
     // The entity behind the intercept is never reached.
     expect(scene.hits.some((hit) => hit.target === far)).toBe(false);
+  });
+
+  it('fires the uniform candidate when the bias roll misses (AC2)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 200 });
+    player.setDefaultHeading(0); // the ship faces the target
+    scene.addTarget(300, 200);
+    player.equipWeapon('wave_laser', true);
+    // Uniform candidate = a quarter turn (straight down); aim roll 0.9 > 0.5.
+    setShotDraws(scene, 0.25, 0.9);
+
+    scene.runAutoFire(10);
+
+    // Nothing was on the down-ray, so the shot misses entirely.
+    expect(scene.hits).toHaveLength(0);
+  });
+
+  it('points the muzzle flash along the resolved beam, not the ship heading (AC7)', async () => {
+    const scene = await boot();
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.setDefaultHeading(0); // the ship faces +x
+    player.equipWeapon('wave_laser', true);
+    // Uniform candidate = half a turn (straight back, -x); no enemy to aim at.
+    setShotDraws(scene, 0.5, 0.99);
+
+    scene.runAutoFire(10);
+
+    const waveFlash = flash.mock.calls.find(
+      (call) => (call[4] as { color?: number }).color === BULLET_COLORS.wave_laser,
+    );
+    expect(waveFlash).toBeDefined();
+    expect(waveFlash![3]).toBeCloseTo(Math.PI, 6);
   });
 });

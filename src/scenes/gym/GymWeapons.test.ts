@@ -1371,6 +1371,10 @@ describe('GymWeapons — wave-laser hitscan beam (AH-0MVREBUJ5004HDRQ, AC1/AC2/A
   it('fires one red beam that stops at the first practice target (AC1/AC2)', async () => {
     const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
     const scene = await bootWeapons();
+    // Pin the per-shot RNG draws so the (random, nearest-enemy-biased)
+    // direction is deterministic: 0 gives the +x uniform candidate AND an
+    // aimed roll that aims at the target straight to the right.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
     const targets = scene.getTargets();
     // targets[1] (455,205) and targets[2] (505,205) are horizontally aligned;
     // the ship fires from the left of both.
@@ -1411,14 +1415,16 @@ describe('GymWeapons — wave-laser hitscan beam (AH-0MVREBUJ5004HDRQ, AC1/AC2/A
     ).toHaveLength(1);
   });
 
-  it('spans a full screen width and wraps at the edge when nothing intercepts it (AC3)', async () => {
+  it('runs its short level-0 extent and wraps at the edge when nothing intercepts it (AC1/AC6)', async () => {
     const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
     const scene = await bootWeapons();
+    // Pin the RNG so the uniform candidate is +x and no target attracts it.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
     // Clear the practice targets so the ray meets nothing.
     for (const target of scene.getTargets()) target.destroySelf();
 
     // Fire right from 40 px inside the right edge: the ray leaves the right
-    // wall and re-enters from the left.
+    // wall and re-enters from the left for the remaining 200 px.
     fireWaveLaser(scene, { x: GAME_WIDTH - 40, y: 400 }, 0);
 
     expect(beamSpy).toHaveBeenCalledTimes(1);
@@ -1432,10 +1438,36 @@ describe('GymWeapons — wave-laser hitscan beam (AH-0MVREBUJ5004HDRQ, AC1/AC2/A
       (sum, s) => sum + Math.hypot(s.x2 - s.x1, s.y2 - s.y1),
       0,
     );
-    expect(total).toBeCloseTo(GAME_WIDTH, 6);
+    // A quarter of the old full-screen 960 px beam (AC1).
+    expect(total).toBeCloseTo(240, 6);
     expect(segments.length).toBeGreaterThanOrEqual(2);
     expect(segments[0].x2).toBeCloseTo(GAME_WIDTH, 6);
     expect(segments[1].x1).toBeCloseTo(0, 6);
+    expect(segments[1].x2).toBeCloseTo(200, 6);
+  });
+
+  it('fires in the RNG-drawn direction — uniform 360° with nothing alive (AC2)', async () => {
+    const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
+    const scene = await bootWeapons();
+    // A quarter of a turn: straight down, i.e. NOT along the ship's heading.
+    vi.spyOn(Math, 'random').mockReturnValue(0.25);
+    for (const target of scene.getTargets()) target.destroySelf();
+
+    fireWaveLaser(scene, { x: 400, y: 200 }, 0);
+
+    expect(beamSpy).toHaveBeenCalledTimes(1);
+    const segments = beamSpy.mock.calls[0][1] as {
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+    }[];
+    expect(segments).toHaveLength(1);
+    expect(segments[0].x1).toBeCloseTo(400, 6);
+    expect(segments[0].y1).toBeCloseTo(200, 6);
+    // 240 px down the uniform candidate ray, not 240 px along +x.
+    expect(segments[0].x2).toBeCloseTo(400, 6);
+    expect(segments[0].y2).toBeCloseTo(440, 6);
   });
 });
 

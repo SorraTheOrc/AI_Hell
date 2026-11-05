@@ -82,6 +82,7 @@ import {
   type HitscanSegment,
   type HitscanTarget,
 } from './hitscanBeam';
+import { resolveHitscanAimHeading } from './hitscanAim';
 import {
   CLUSTER_SPLIT_BURST_RADIUS,
   CLUSTER_WARHEAD_LIFETIME,
@@ -1017,12 +1018,27 @@ export class CombatCoreScene<
     for (const weaponId of fired) {
       this.onWeaponFired(weaponId);
       const def = player.getWeaponDef(weaponId);
+      // The shot's heading is resolved **once per shot, before** any VFX is
+      // spawned. Hitscan weapons (the wave laser) draw a random direction from
+      // the scene's seeded RNG, biased toward the nearest living enemy
+      // (AH-0MW10J31B0053E56), so the muzzle flash and the beam must share the
+      // same heading; every other weapon keeps firing along the ship's
+      // heading exactly as before.
+      const shotHeading = def.hitscan
+        ? resolveHitscanAimHeading({
+            originX: player.x,
+            originY: player.y,
+            aimBias: def.hitscan.aimBias,
+            targets: this.getHitscanTargets(),
+            rng: this.sceneRng,
+          })
+        : player.getHeading();
       // Per-weapon fire VFX (clean muzzle flash / launch cue) — spawned from
       // this single shared spawn path so the game and every gym show the
       // same flash (AH-0MV8228YW0050IXS). Weapons without `muzzleFlash`
       // metadata spawn nothing.
       if (def.muzzleFlash) {
-        spawnMuzzleFlash(this, player.x, player.y, player.getHeading(), {
+        spawnMuzzleFlash(this, player.x, player.y, shotHeading, {
           ...def.muzzleFlash,
           registry: this.fireFxEffects,
         });
@@ -1045,10 +1061,13 @@ export class CombatCoreScene<
       // Hitscan weapons (the wave laser, AH-0MVREBUJ5004HDRQ) spawn **no**
       // travelling bullet: the ray resolves at launch through the dedicated
       // shared seam, deals 1 damage at the first intercept and is rendered for
-      // its fixed visible duration. Dispatched from this one shared fire path
-      // so the game and every gym resolve the identical beam (AC8, AC11).
+      // its fixed visible duration. It fires along the per-shot `shotHeading`
+      // resolved above (random, biased toward the nearest enemy), not the
+      // ship's heading (AH-0MW10J31B0053E56). Dispatched from this one shared
+      // fire path so the game and every gym resolve the identical beam (AC8,
+      // AC11).
       if (def.hitscan) {
-        this.fireHitscanBeam(def, player.getHeading(), player.x, player.y);
+        this.fireHitscanBeam(def, shotHeading, player.x, player.y);
         continue;
       }
       // Orbit weapons (the Gradius Options escort) fire one bullet per pod

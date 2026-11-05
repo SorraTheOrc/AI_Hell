@@ -160,12 +160,15 @@ describe('upgrade variable catalogue (AC2)', () => {
     for (const variable of MVP_UPGRADE_VARIABLES) {
       expect(WEAPON_UPGRADE_SPECS[variable].tier).toBe('mvp');
     }
-    // Producer-confirmed MVP set: fire rate, projectile count, bullet size, AoE.
+    // Producer-confirmed MVP set: fire rate, projectile count, bullet size, AoE,
+    // plus `homing`, which became live as the Wave Laser's accuracy lever
+    // (AH-0MW10J31B0053E56).
     expect(MVP_UPGRADE_VARIABLES).toEqual([
       'fireRate',
       'projectileCount',
       'bulletSize',
       'aoeRadius',
+      'homing',
     ]);
   });
 
@@ -734,6 +737,19 @@ describe('summariseWeaponLevelChange (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
     }
   });
 
+  test('AC2 — a weapon without a hitscan descriptor never reports an accuracy delta', () => {
+    // `homing` is live only as the Wave Laser's accuracy lever
+    // (AH-0MW10J31B0053E56); every other weapon must not promise a homing gain.
+    for (const weaponId of ['cannon', 'spread', 'ricochet', 'railgun'] as const) {
+      expect(summariseWeaponLevelChange(weaponId, 2, 3)).not.toMatch(/Homing/i);
+      expect(summariseWeaponLevelChange(weaponId, 2, 3)).not.toMatch(/accuracy/i);
+    }
+  });
+
+  test('the wave laser reports its aim-accuracy gain', () => {
+    expect(summariseWeaponLevelChange('wave_laser', 0, 1)).toMatch(/Aim accuracy/);
+  });
+
   test('AC4(iv) — the summary differs between levels where the maths differ', () => {
     expect(summariseWeaponLevelChange('rapid', 1, 2)).not.toBe(
       summariseWeaponLevelChange('rapid', 2, 3),
@@ -813,22 +829,41 @@ describe('wave laser — fixed 1 damage at every level (AH-0MVREBUJ5004HDRQ)', (
     }
   });
 
-  test('the ray extent grows monotonically and never drops below one screen', () => {
+  test('the ray extent grows monotonically on the 240 px base and stays short', () => {
     const base = WEAPON_CATALOGUE.wave_laser.hitscan!.length;
-    expect(base).toBeGreaterThanOrEqual(GAME_WIDTH);
+    // Level 0 is 25 % of the old full-screen 960 px beam (AC1/AC6).
+    expect(base).toBe(240);
     let previous = base;
     for (let level = 1; level <= 100; level++) {
       const length = resolveWeaponDefinition('wave_laser', level).hitscan!.length;
       expect(length).toBeGreaterThanOrEqual(previous);
-      expect(length).toBeGreaterThanOrEqual(GAME_WIDTH);
       previous = length;
     }
     // The curve saturates at the shared `bulletLifetime` asymptote, so the
-    // beam's extent stays finite.
+    // beam's extent stays finite — and short: ~528 px at the top of the
+    // ladder, never back to full screen (Q2 = A, AC6).
     expect(previous).toBeCloseTo(
       base * WEAPON_UPGRADE_SPECS.bulletLifetime.cap,
       1,
     );
+    expect(previous).toBeLessThan(GAME_WIDTH);
+  });
+
+  test('the aim bias grows monotonically with level, from 0.5 toward ~0.95 (AC4)', () => {
+    // The `homing` curve is the accuracy lever (D1): effective bias is
+    // `base + (1 − base) × homing(level)`.
+    expect(resolveWeaponDefinition('wave_laser', 0).hitscan!.aimBias).toBe(0.5);
+    let previous = 0.5;
+    for (let level = 1; level <= 100; level++) {
+      const bias = resolveWeaponDefinition('wave_laser', level).hitscan!.aimBias;
+      expect(bias, `level ${level}`).toBeGreaterThanOrEqual(previous);
+      expect(bias).toBeLessThanOrEqual(1);
+      previous = bias;
+    }
+    // Level 1 is a visible step, and the top of the ladder approaches 0.95
+    // (0.5 + 0.5 × the 0.9 homing cap).
+    expect(resolveWeaponDefinition('wave_laser', 1).hitscan!.aimBias).toBeGreaterThan(0.5);
+    expect(previous).toBeCloseTo(0.95, 2);
   });
 
   test('the visible duration stays 0.3 s at every level (AC4)', () => {

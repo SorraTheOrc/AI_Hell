@@ -1160,6 +1160,7 @@ export interface WeaponRow {
   aoeProjectileSpeed?: number;
   hitscanLength?: number;
   hitscanDuration?: number;
+  hitscanAimBias?: number;
   muzzleColor?: number;
   muzzleRadius?: number;
   muzzleDuration?: number;
@@ -1202,6 +1203,7 @@ export const WEAPON_COLUMN_ORDER: readonly (keyof WeaponRow)[] = [
   'aoeProjectileSpeed',
   'hitscanLength',
   'hitscanDuration',
+  'hitscanAimBias',
   'muzzleColor',
   'muzzleRadius',
   'muzzleDuration',
@@ -1255,10 +1257,20 @@ const WEAPON_NON_NEGATIVE_NUMBER_COLUMNS: readonly (keyof WeaponRow)[] = [
   'aoeProjectileSpeed',
   'hitscanLength',
   'hitscanDuration',
+  'hitscanAimBias',
   'muzzleRadius',
   'muzzleDuration',
   'impactRadius',
   'impactDuration',
+];
+
+/**
+ * Numeric columns that must stay inside the unit interval `[0, 1]` — a
+ * probability or normalised strength (the Wave Laser's aim bias,
+ * AH-0MW10J31B0053E56).
+ */
+const WEAPON_UNIT_INTERVAL_COLUMNS: readonly (keyof WeaponRow)[] = [
+  'hitscanAimBias',
 ];
 
 /** Optional numeric columns coerced only when the cell carries a value. */
@@ -1278,6 +1290,7 @@ const WEAPON_OPTIONAL_NUMBER_FIELDS = [
   'aoeProjectileSpeed',
   'hitscanLength',
   'hitscanDuration',
+  'hitscanAimBias',
   'muzzleRadius',
   'muzzleDuration',
   'impactRadius',
@@ -1360,7 +1373,7 @@ const WEAPON_DESCRIPTOR_GROUPS: readonly WeaponDescriptorGroup[] = [
   {
     label: 'hitscan',
     opener: 'hitscanLength',
-    members: ['hitscanDuration'],
+    members: ['hitscanDuration', 'hitscanAimBias'],
     extras: [],
     defaults: {},
   },
@@ -1539,6 +1552,17 @@ export function validateWeaponRow(row: Record<string, string>): ValidationResult
       report(column, `Invalid number: "${value}"`);
     } else if (n < 0) {
       report(column, `Invalid number: "${value}" — must not be negative`);
+    }
+  }
+
+  for (const column of WEAPON_UNIT_INTERVAL_COLUMNS) {
+    const value = row[column];
+    if (isBlankWeaponCell(value)) continue;
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      report(column, `Invalid number: "${value}"`);
+    } else if (n < 0 || n > 1) {
+      report(column, `Invalid number: "${value}" — must be between 0 and 1`);
     }
   }
 
@@ -1777,10 +1801,15 @@ function buildWeaponDefinition(
     definition.aoe = aoe;
   }
 
-  if (row.hitscanLength !== undefined && row.hitscanDuration !== undefined) {
+  if (
+    row.hitscanLength !== undefined &&
+    row.hitscanDuration !== undefined &&
+    row.hitscanAimBias !== undefined
+  ) {
     definition.hitscan = {
       length: row.hitscanLength,
       duration: row.hitscanDuration,
+      aimBias: row.hitscanAimBias,
     };
   }
 
@@ -1915,6 +1944,7 @@ const WEAPON_CELL_WRITERS: Record<
   aoeProjectileSpeed: (definition) => formatWeaponNumber(definition.aoe?.projectileSpeed),
   hitscanLength: (definition) => formatWeaponNumber(definition.hitscan?.length),
   hitscanDuration: (definition) => formatWeaponNumber(definition.hitscan?.duration),
+  hitscanAimBias: (definition) => formatWeaponNumber(definition.hitscan?.aimBias),
   muzzleColor: (definition) => formatWeaponHex(definition.muzzleFlash?.color),
   muzzleRadius: (definition) => formatWeaponNumber(definition.muzzleFlash?.radius),
   muzzleDuration: (definition) => formatWeaponNumber(definition.muzzleFlash?.duration),
@@ -1958,6 +1988,7 @@ const WEAPON_CSV_COMMENT_BLOCK: readonly string[] = [
   '#   aoeProjectileSpeed    — Projectile speed (px/s); required to sample an onRandom range.',
   '#   hitscanLength         — Beam length in px (with hitscanDuration).',
   '#   hitscanDuration       — Seconds the resolved beam stays visible.',
+  '#   hitscanAimBias        — Probability (0–1) a shot aims at the nearest enemy (with hitscanLength).',
   '#   muzzleColor           — Launch-flash colour as 0xRRGGBB (defaults to bulletColor).',
   '#   muzzleRadius          — Launch-flash core radius in px (default 7).',
   '#   muzzleDuration        — Launch-flash fade duration in seconds (default 0.12).',
