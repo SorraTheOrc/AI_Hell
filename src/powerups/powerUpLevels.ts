@@ -189,6 +189,12 @@ import {
   WEAPON_TIMEOUT_MS,
 } from '../core/constants';
 import { DEFAULT_BPM, beatPeriodMs } from '../utils/beat';
+// The **one** countdown-fraction seam (pure, dependency-free leaf module). The
+// store does not duplicate the ratio arithmetic: `consumableRechargeProgress`
+// hands its captured `{ remaining, duration }` pair to this shared helper, so
+// the HUD timer ring and every gym read the identical fraction
+// (AH-0MW2AVP27005Y4XX AC1/AC2; parent AH-0MVZ8YQQV006Q09W AC1).
+import { resolveCountdownFraction } from '../ui/hudCountdown';
 
 /**
  * One beat of the shared 80 BPM grid in seconds (0.75 s), the unit the
@@ -1552,6 +1558,36 @@ export const POWER_UP_CHARGE_CAP = 3;
 const RECHARGE_EPSILON = 1e-9;
 
 /**
+ * One **in-flight recharge timer**: the span it was started with and the time
+ * still to wait (AH-0MW2AVP27005Y4XX AC1).
+ *
+ * `duration` is captured from the level-derived interval at the moment the
+ * charge is spent and is never rewritten; only `remaining` is advanced by
+ * {@link PowerUpLevelStore.tickRecharge}. The pair is what makes a progress
+ * fraction derivable without a second clock or a hard-coded TTL.
+ */
+export interface ConsumableRechargeTimer {
+  /** Seconds the wait was started with (the level-derived recharge interval). */
+  duration: number;
+  /** Seconds still to wait before the charge returns. */
+  remaining: number;
+}
+
+/**
+ * Snapshot of the **soonest-returning** in-flight recharge of one consumable
+ * (`PowerUpLevelStore.consumableRechargeProgress`), the store half of the HUD
+ * timer-ring seam (AH-0MW2AVP27005Y4XX AC2).
+ */
+export interface ConsumableRechargeProgress {
+  /** `remaining / total` clamped to `[0, 1]` — the shared seam's fraction. */
+  fraction: number;
+  /** The wait's captured span in seconds (never a hard-coded TTL). */
+  total: number;
+  /** Seconds still to wait before the charge returns (`>= 0`). */
+  remaining: number;
+}
+
+/**
  * The catalogue axis that bounds each consumable's charge pool (parent
  * AH-0MVTQMREN009DSFW, AC2/AC3). Where a kind already had a spendable budget
  * axis, that axis **is** its charge cap; only Mystery UFO gained a new one.
@@ -1713,10 +1749,17 @@ export class PowerUpLevelStore {
    */
   private _teleportRecharge = 0;
   /**
-   * Remaining seconds of each **in-flight recharge** per consumable kind: one
-   * entry per spent charge, advanced only by {@link tickRecharge}.
+   * In-flight **recharge timers** per consumable kind: one entry per spent
+   * charge, advanced only by {@link tickRecharge}.
+   *
+   * Each entry keeps both the span the timer was started with (`duration`, the
+   * level-derived interval captured at spend time) and the time still to wait
+   * (`remaining`). The pair is what makes a recharge **fraction** derivable
+   * (`remaining / duration`) without a second clock or a hard-coded TTL — the
+   * HUD timer ring's seam (AH-0MW2AVP27005Y4XX). `duration` is never rewritten
+   * by a later level change, so a running wait cannot jump mid-recharge.
    */
-  private _rechargeTimers = new Map<PowerUpId, number[]>();
+  private _rechargeTimers = new Map<PowerUpId, ConsumableRechargeTimer[]>();
   /**
    * Kinds a hold-full reward has made **owned** for the run. Ownership is a
    * flag, never an endless supply: an owned consumable with an empty pool is
@@ -2142,7 +2185,59 @@ export class PowerUpLevelStore {
   consumableRechargeRemaining(id: PowerUpId): number {
     const timers = this._rechargeTimers.get(id);
     if (!timers || timers.length === 0) return 0;
-    return Math.max(0, Math.min(...timers));
+    return Math.max(0, Math.min(...timers.map((timer) => timer.remaining)));
+  }
+
+  /**
+   * Progress of the **soonest-returning** in-flight recharge of the pooled
+   * consumable `id`, or `null` when no charge is recharging
+   * (AH-0MW2AVP27005Y4XX AC2).
+   *
+   * The returned snapshot is the store half of the HUD timer ring's seam: it
+   * reports the same timer {@link consumableRechargeRemaining} reports (so the
+   * ring and the `next in Ns` label can never disagree) together with the span
+   * that timer was **started** with, from which the sweep fraction follows.
+   *
+   * - `total` — the level-derived interval captured when the charge was spent,
+   *   never a hard-coded TTL and never re-resolved afterwards.
+   * - `remaining` — seconds still to wait (always `>= 0`).
+   * - `fraction` — `remaining / total` clamped to `[0, 1]`, computed by the one
+   *   shared pure seam {@link resolveCountdownFraction} (direction `arriving`: a
+   *   fresh timer is `1` and the ratio falls to `0` as the charge returns).
+   *
+   * A **single-use** kind (Teleport) has no charge pool, so it never reports
+   * progress here: its readiness clock is
+   * {@link teleportRechargeRemaining} / {@link teleportRechargeTime}, exactly as
+   * {@link consumableRechargeRemaining} treats it.
+   *
+   * @param id - The pool-backed consumable to read.
+   */
+  consumableRechargeProgress(
+    id: PowerUpId,
+  ): ConsumableRechargeProgress | null {
+    const timers = this._rechargeTimers.get(id);
+    if (!timers || timers.length === 0) return null;
+
+    // Several charges can be in flight: the ring reports the **soonest** —
+    // the same timer the `next in Ns` label shows (AC2/AC6). A later spend may
+    // be due first (a level-up shortens the interval it captured).
+    let soonest = timers[0];
+    for (const timer of timers) {
+      if (timer.remaining < soonest.remaining) soonest = timer;
+    }
+
+    // A fresh snapshot, never the live timer: a caller cannot reach into the
+    // store's clock through the value it was handed.
+    const remaining = Math.max(0, soonest.remaining);
+    return {
+      fraction: resolveCountdownFraction({
+        remaining,
+        total: soonest.duration,
+        mode: 'arriving',
+      }),
+      total: soonest.duration,
+      remaining,
+    };
   }
 
   /** Whether a hold-full reward has made `id` permanently owned this run. */
@@ -2171,7 +2266,10 @@ export class PowerUpLevelStore {
     const seconds = this.consumableRechargeTime(id);
     if (seconds > 0 && this.consumableRegenCeiling(id) > 0) {
       const timers = this._rechargeTimers.get(id) ?? [];
-      timers.push(seconds);
+      // The span is captured here, at the moment of consumption, so a later
+      // level-up cannot re-scale an already-running wait
+      // (AH-0MW2AVP27005Y4XX AC1).
+      timers.push({ duration: seconds, remaining: seconds });
       this._rechargeTimers.set(id, timers);
     }
     return true;
@@ -2237,9 +2335,12 @@ export class PowerUpLevelStore {
    * Decrements every recharging timer in `timers` by `dt`, moving each
    * completed timer's charge back into `pool` (clamped at the cap). Returns
    * the adjusted pool.
+   *
+   * Only `remaining` moves: a timer's captured `duration` is immutable, so the
+   * derived fraction stays the same wait throughout (AH-0MW2AVP27005Y4XX AC1).
    */
   private _advanceRechargeTimers(
-    timers: number[],
+    timers: ConsumableRechargeTimer[],
     pool: number,
     dt: number,
     cap: number,
@@ -2248,8 +2349,9 @@ export class PowerUpLevelStore {
     // sums to slightly less than 60 s, and a spent warp must still return
     // (frame-rate independence, parent AC5).
     for (let i = timers.length - 1; i >= 0; i--) {
-      timers[i] -= dt;
-      if (timers[i] > RECHARGE_EPSILON) continue;
+      const timer = timers[i];
+      timer.remaining -= dt;
+      if (timer.remaining > RECHARGE_EPSILON) continue;
       timers.splice(i, 1);
       pool = Math.min(pool + 1, cap);
     }

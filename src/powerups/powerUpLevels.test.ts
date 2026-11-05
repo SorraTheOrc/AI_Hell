@@ -2019,3 +2019,197 @@ describe('retired effect-window axes (AH-0MVVD8SXO004QLZW AC4)', () => {
     }
   });
 });
+
+describe('PowerUpLevelStore — recharge timer duration/remaining + progress (AH-0MW2AVP27005Y4XX)', () => {
+  /**
+   * Every **pool-backed** consumable with its level-0 charge cap and the
+   * level-0 regeneration interval the store captures when a charge is spent.
+   * Teleport is the sixth catalogue consumable and is **single-use** (parent
+   * AH-0MVY096RT006QMF4): it has no charge pool and keeps its readiness clock
+   * on `teleportRechargeRemaining`, so it is not part of this pooled-timer
+   * contract (asserted explicitly below).
+   */
+  const POOLED: ReadonlyArray<{
+    id: PowerUpId;
+    cap: number;
+    seconds: number;
+  }> = [
+    { id: 'shield', cap: 1, seconds: 45 },
+    { id: 'thorns', cap: 2, seconds: 12 },
+    { id: 'phase_shift', cap: 1, seconds: 30 },
+    { id: 'force_field', cap: 3, seconds: 45 },
+    { id: 'mystery_ufo', cap: 1, seconds: 30 },
+  ];
+
+  /**
+   * A store that permanently owns `id` (so a spent charge is genuinely owed —
+   * the three `regenRequiresOwnership` kinds start no timer while pickup-only)
+   * with **one** charge spent, so exactly one recharge timer is in flight.
+   */
+  function storeWithOneSpentCharge(id: PowerUpId): PowerUpLevelStore {
+    const store = new PowerUpLevelStore();
+    store.collect(id, true);
+    expect(store.consumableCharges(id), id).toBeGreaterThan(0);
+    expect(store.consumeConsumableCharge(id), id).toBe(true);
+    return store;
+  }
+
+  it('reports the captured duration and the live remaining of the soonest timer (AC1/AC2)', () => {
+    for (const { id, seconds } of POOLED) {
+      const store = storeWithOneSpentCharge(id);
+      const progress = store.consumableRechargeProgress(id);
+      expect(progress, id).not.toBeNull();
+      // A fresh timer is the whole interval, so the fraction starts full.
+      expect(progress!.total, id).toBeCloseTo(seconds, 6);
+      expect(progress!.remaining, id).toBeCloseTo(seconds, 6);
+      expect(progress!.fraction, id).toBeCloseTo(1, 9);
+      // Never a second clock: the fraction agrees with the shipped remaining
+      // accessor the HUD's `next in Ns` label already reads.
+      expect(progress!.remaining, id).toBeCloseTo(
+        store.consumableRechargeRemaining(id),
+        9,
+      );
+    }
+  });
+
+  it('tickRecharge decrements remaining and preserves the captured duration (AC1)', () => {
+    const store = storeWithOneSpentCharge('force_field');
+    const start = store.consumableRechargeProgress('force_field')!;
+
+    store.tickRecharge(15);
+    const afterTick = store.consumableRechargeProgress('force_field')!;
+    expect(afterTick.total).toBe(start.total);
+    expect(afterTick.remaining).toBeCloseTo(start.total - 15, 6);
+    expect(afterTick.fraction).toBeCloseTo(
+      (start.total - 15) / start.total,
+      9,
+    );
+
+    // The fraction falls monotonically as the wait elapses, and the timer's
+    // span is still the one captured at spend time.
+    store.tickRecharge(15);
+    const halfway = store.consumableRechargeProgress('force_field')!;
+    expect(halfway.total).toBe(start.total);
+    expect(halfway.remaining).toBeCloseTo(start.total - 30, 6);
+    expect(halfway.fraction).toBeLessThan(afterTick.fraction);
+
+    // Elapsing returns the charge and the timer disappears (no stale entry).
+    store.tickRecharge(store.consumableRechargeRemaining('force_field') + 1);
+    expect(store.consumableRechargeProgress('force_field')).toBeNull();
+    expect(store.consumableCharges('force_field')).toBe(1);
+  });
+
+  it('captures the level-derived duration at spend time, not the later interval (AC1)', () => {
+    const store = new PowerUpLevelStore();
+    store.setPermanentLevel('force_field', 1); // upgrade level 0 → 45 s
+    const capturedInterval = store.consumableRechargeTime('force_field');
+    expect(capturedInterval).toBeCloseTo(45, 6);
+    store.grantConsumableCharge('force_field', 3);
+    expect(store.consumeConsumableCharge('force_field')).toBe(true);
+
+    // Levelling shortens the *next* interval but never rewrites the running
+    // timer's duration (the ring must not jump mid-wait).
+    store.setPermanentLevel('force_field', 2); // upgrade level 1 → 40 s
+    expect(store.consumableRechargeTime('force_field')).toBeCloseTo(40, 6);
+    const progress = store.consumableRechargeProgress('force_field')!;
+    expect(progress.total).toBeCloseTo(capturedInterval, 6);
+    expect(progress.remaining).toBeCloseTo(capturedInterval, 6);
+  });
+
+  it('returns null when no charge is recharging (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    // A fresh store has no timers at all.
+    for (const { id } of POOLED) {
+      expect(store.consumableRechargeProgress(id), id).toBeNull();
+    }
+    // A full pool that never spent a charge owns no timer either.
+    for (const { id } of POOLED) {
+      store.collect(id, true);
+      store.grantConsumableCharge(id, store.consumableChargeCap(id));
+      expect(store.consumableRechargeProgress(id), id).toBeNull();
+    }
+    // Non-consumables never have a recharge timer.
+    expect(store.consumableRechargeProgress('bomb')).toBeNull();
+    expect(store.consumableRechargeProgress('strike')).toBeNull();
+    // Single-use Teleport keeps its readiness clock elsewhere: the pooled
+    // timer seam must never report a pool it does not have.
+    store.collect('teleport');
+    expect(store.consumeTeleport()).toBe(true);
+    expect(store.teleportRechargeRemaining()).toBeGreaterThan(0);
+    expect(store.consumableRechargeProgress('teleport')).toBeNull();
+  });
+
+  it('picks the soonest-returning charge, not the first one spent (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    store.setPermanentLevel('force_field', 1); // upgrade level 0 → 45 s
+    store.grantConsumableCharge('force_field', 3);
+    expect(store.consumeConsumableCharge('force_field')).toBe(true);
+
+    // A second charge spent later captures the now shorter interval, so it is
+    // due first even though it was spent second.
+    store.setPermanentLevel('force_field', 3); // upgrade level 2 → 35 s
+    expect(store.consumableRechargeTime('force_field')).toBeCloseTo(35, 6);
+    store.grantConsumableCharge('force_field', 3);
+    expect(store.consumeConsumableCharge('force_field')).toBe(true);
+
+    const soonest = store.consumableRechargeProgress('force_field')!;
+    expect(soonest.total).toBeCloseTo(35, 6);
+    expect(soonest.remaining).toBeCloseTo(35, 6);
+    expect(soonest.remaining).toBeCloseTo(
+      store.consumableRechargeRemaining('force_field'),
+      9,
+    );
+
+    // When the soonest charge returns, the report falls back to the older
+    // timer and keeps its own captured duration.
+    store.tickRecharge(36);
+    const next = store.consumableRechargeProgress('force_field');
+    expect(next).not.toBeNull();
+    expect(next!.total).toBeCloseTo(45, 6);
+    expect(next!.remaining).toBeCloseTo(9, 6);
+  });
+
+  it('reset clears the timer structure so no stale progress survives (AC3)', () => {
+    const store = new PowerUpLevelStore();
+    for (const { id } of POOLED) {
+      store.collect(id, true);
+      expect(store.consumeConsumableCharge(id), id).toBe(true);
+      expect(store.consumableRechargeProgress(id), id).not.toBeNull();
+    }
+
+    store.reset();
+
+    for (const { id } of POOLED) {
+      expect(store.consumableRechargeProgress(id), id).toBeNull();
+      expect(store.consumableRechargeRemaining(id), id).toBe(0);
+    }
+    // A long tick after the reset cannot resurrect a cleared timer.
+    store.tickRecharge(3600);
+    for (const { id } of POOLED) {
+      expect(store.consumableRechargeProgress(id), id).toBeNull();
+    }
+  });
+
+  it('keeps the shipped tickRecharge semantics frame-rate independently (AC3/AC4)', () => {
+    const oneBigTick = storeWithOneSpentCharge('phase_shift');
+    const manySmallTicks = storeWithOneSpentCharge('phase_shift');
+    const total = oneBigTick.consumableRechargeProgress('phase_shift')!.total;
+
+    oneBigTick.tickRecharge(total / 2);
+    for (let i = 0; i < 150; i++) manySmallTicks.tickRecharge(total / 300);
+
+    const big = oneBigTick.consumableRechargeProgress('phase_shift')!;
+    const small = manySmallTicks.consumableRechargeProgress('phase_shift')!;
+    expect(big.total).toBeCloseTo(small.total, 9);
+    expect(big.remaining).toBeCloseTo(small.remaining, 6);
+    expect(big.fraction).toBeCloseTo(small.fraction, 6);
+
+    // Negative and non-finite ticks are still no-ops (never a free recharge).
+    oneBigTick.tickRecharge(Number.NaN);
+    oneBigTick.tickRecharge(-10);
+    expect(oneBigTick.consumableRechargeProgress('phase_shift')!.remaining).toBeCloseTo(
+      big.remaining,
+      9,
+    );
+  });
+});
