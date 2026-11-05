@@ -23,6 +23,7 @@ import {
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
 import { grantPermanentPowerUp } from './choiceReward';
 import { beatPeriodMs } from '../utils/beat';
+import { resolveCountdownSweep } from '../ui/hudCountdown';
 import { createSeededRng } from '../core/rng';
 import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
 import {
@@ -2903,5 +2904,346 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
       replayed.registry.consumableCharges('shield'),
     );
     expect(replayed.registry.isConsumableOwned('shield')).toBe(true);
+  });
+});
+
+// ── Registry countdown projections (AH-0MW2AVQ1L002TJF7) ──────────────
+//
+// The four countdown sources the HUD's timer ring reads, unit-tested at the
+// **registry** seam (the store half and the pure fraction seam have their own
+// suites). Each projection must report the same timer the row's `next in Ns` /
+// `Ns` accessor already reports — so the ring and the text can never disagree —
+// together with the span that timer belongs to, and a sweep already
+// direction-corrected by `src/ui/hudCountdown.ts`. The HUD copies `sweep`; it
+// never does per-kind fraction arithmetic of its own (parent AC1).
+
+/** The pool-backed consumables (Teleport is single-use: no charge pool). */
+const POOLED_CONSUMABLES: PowerUpId[] = [
+  'shield',
+  'thorns',
+  'phase_shift',
+  'force_field',
+  'mystery_ufo',
+];
+
+describe('consumable recharge progress projection (AC1)', () => {
+  it('delegates to PowerUpLevelStore.consumableRechargeProgress for every pooled kind (AC1)', () => {
+    for (const id of POOLED_CONSUMABLES) {
+      const store = new PowerUpLevelStore();
+      const reg = new EffectsRegistry(store);
+      // Permanent ownership, so a spent charge genuinely regenerates.
+      reg.applyCollect(id, true);
+      expect(reg.tryConsumeConsumableCharge(id), id).toBe(true);
+
+      const fromStore = store.consumableRechargeProgress(id);
+      const projection = reg.consumableRechargeProgress(id);
+      expect(fromStore, id).not.toBeNull();
+      expect(projection, id).not.toBeNull();
+
+      // Same timer, same span: a pass-through with the sweep
+      // direction-corrected, never a second clock or a second formula.
+      expect(projection!.total, id).toBe(fromStore!.total);
+      expect(projection!.remaining, id).toBe(fromStore!.remaining);
+      expect(projection!.sweep, id).toBeCloseTo(
+        1 - fromStore!.fraction,
+        9,
+      );
+      // `arriving`: empty at the spend instant, complete when the charge is
+      // due again.
+      expect(projection!.sweep, id).toBeCloseTo(0, 9);
+      // The `next in Ns` label the HUD already prints reads the same timer.
+      expect(projection!.remaining, id).toBeCloseTo(
+        reg.consumableRechargeRemaining(id)!,
+        9,
+      );
+    }
+  });
+
+  it('fills monotonically from empty to complete as the shared tick returns the charge (AC1)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field', true);
+    expect(reg.tryConsumeConsumableCharge('force_field')).toBe(true);
+
+    const start = reg.consumableRechargeProgress('force_field')!;
+    const total = start.total;
+    expect(start.sweep).toBeCloseTo(0, 9);
+
+    const observed = [start.sweep];
+    for (const elapsed of [total / 4, total / 4, total / 4]) {
+      // Only the shared tick advances a recharge — never the projection.
+      reg.tick(elapsed);
+      const progress = reg.consumableRechargeProgress('force_field')!;
+      // The span is the interval captured at spend time.
+      expect(progress.total).toBeCloseTo(total, 9);
+      expect(progress.sweep).toBeCloseTo(1 - progress.remaining / total, 9);
+      // Ring and text, one timer.
+      expect(progress.remaining).toBeCloseTo(
+        reg.consumableRechargeRemaining('force_field')!,
+        9,
+      );
+      observed.push(progress.sweep);
+    }
+
+    for (let i = 1; i < observed.length; i++) {
+      expect(observed[i]).toBeGreaterThan(observed[i - 1]);
+    }
+    expect(observed[observed.length - 1]).toBeCloseTo(0.75, 6);
+
+    // The charge returns: no stale complete ring survives.
+    reg.tick(total);
+    expect(reg.consumableRechargeProgress('force_field')).toBeNull();
+  });
+
+  it('reports null for every "nothing counting down" case (AC1)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    // A fresh store owes nothing.
+    for (const id of POOLED_CONSUMABLES) {
+      expect(reg.consumableRechargeProgress(id), id).toBeNull();
+    }
+
+    // A full pool owns no timer: the level-0 Shield cap is one charge.
+    reg.applyCollect('shield', true);
+    expect(store.consumableCharges('shield')).toBe(
+      store.consumableChargeCap('shield'),
+    );
+    expect(reg.consumableRechargeProgress('shield')).toBeNull();
+
+    // Non-consumables have no charge pool at all.
+    expect(reg.consumableRechargeProgress('bomb')).toBeNull();
+
+    // Single-use Teleport keeps its readiness clock elsewhere, so the pooled
+    // projection must never report a pool it does not have.
+    reg.applyCollect('teleport', true);
+    expect(reg.consumeTeleport()).toBe(true);
+    expect(reg.teleportRechargeRemaining()).toBeGreaterThan(0);
+    expect(reg.consumableRechargeProgress('teleport')).toBeNull();
+  });
+});
+
+describe('power-up window total projection (AC2)', () => {
+  it('reports the window\'s captured duration and drains it with the shared tick (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('speed_boost'); // field pickup opens the timed window
+
+    const captured = resolveTemporaryWindow(
+      'speed_boost',
+      store.getUpgradeLevel('speed_boost'),
+    );
+    const start = reg.powerUpTemporaryProgress('speed_boost')!;
+    expect(start.total).toBeCloseTo(captured, 9);
+    expect(start.remaining).toBeCloseTo(captured, 9);
+    // `expiring`: complete at pickup, empty at expiry.
+    expect(start.sweep).toBeCloseTo(1, 9);
+
+    const observed = [start.sweep];
+    for (const elapsed of [captured / 4, captured / 4]) {
+      reg.tick(elapsed);
+      const progress = reg.powerUpTemporaryProgress('speed_boost')!;
+      // The span is the duration captured when the window opened.
+      expect(progress.total).toBeCloseTo(captured, 9);
+      expect(progress.sweep).toBeCloseTo(progress.remaining / progress.total, 9);
+      // The `Ns` value column reads the same timer.
+      expect(progress.remaining).toBeCloseTo(
+        reg.powerUpTemporaryRemaining('speed_boost')!,
+        9,
+      );
+      observed.push(progress.sweep);
+    }
+
+    expect(observed[1]).toBeCloseTo(0.75, 6);
+    expect(observed[2]).toBeCloseTo(0.5, 6);
+    expect(observed[1]).toBeLessThan(observed[0]);
+    expect(observed[2]).toBeLessThan(observed[1]);
+
+    // The window expires: no stale empty ring survives.
+    reg.tick(captured);
+    expect(reg.powerUpTemporaryProgress('speed_boost')).toBeNull();
+  });
+
+  it('reports an instant kind\'s level window from its `_timed` entry (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('bomb'); // one-shot pickup + per-upgrade level window
+
+    // A level window is not an "active effect", but it is a live countdown:
+    // the HUD's value column and its ring both read this projection.
+    expect(reg.remaining('bomb')).toBeUndefined();
+    const window = reg.powerUpTemporaryProgress('bomb')!;
+    expect(window.total).toBeCloseTo(
+      resolveTemporaryWindow('bomb', store.getUpgradeLevel('bomb')),
+      9,
+    );
+    expect(window.remaining).toBeCloseTo(window.total, 9);
+    expect(window.sweep).toBeCloseTo(1, 9);
+
+    reg.tick(window.total / 2);
+    expect(reg.powerUpTemporaryProgress('bomb')!.sweep).toBeCloseTo(0.5, 6);
+  });
+
+  it('reports null for a permanent-only base, and the field window above it (AC2)', () => {
+    const reg = new EffectsRegistry();
+
+    // The `∞` row: permanent, no window, nothing counting down.
+    reg.applyCollect('speed_boost', true);
+    expect(reg.powerUpTemporaryRemaining('speed_boost')).toBeUndefined();
+    expect(reg.powerUpTemporaryProgress('speed_boost')).toBeNull();
+
+    // A field pickup on top of the permanent base does count down.
+    reg.applyCollect('speed_boost');
+    const window = reg.powerUpTemporaryProgress('speed_boost')!;
+    expect(window.remaining).toBeCloseTo(window.total, 9);
+    expect(window.sweep).toBeCloseTo(1, 9);
+
+    // The window expires back to the permanent base.
+    reg.tick(window.total + 1);
+    expect(reg.powerUpTemporaryProgress('speed_boost')).toBeNull();
+    expect(reg.powerUpLevel('speed_boost')).toBe(1);
+  });
+
+  it('never re-resolves the span of a running window when the level changes (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('speed_boost');
+    const captured = reg.powerUpTemporaryProgress('speed_boost')!.total;
+
+    // A mid-window level-up changes the *next* window's length; the running
+    // timer keeps the duration it was started with, so the ring cannot jump.
+    store.setPermanentLevel('speed_boost', 6);
+    expect(
+      resolveTemporaryWindow('speed_boost', store.getUpgradeLevel('speed_boost')),
+    ).not.toBeCloseTo(captured, 6);
+
+    const progress = reg.powerUpTemporaryProgress('speed_boost')!;
+    expect(progress.total).toBeCloseTo(captured, 9);
+    expect(progress.remaining).toBeCloseTo(captured, 9);
+  });
+});
+
+describe('Orbital Strike cadence projection (AC3)', () => {
+  it('is null with no permanent strike and for a one-shot pickup (AC3)', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.strikeProgress()).toBeNull();
+
+    // A field pickup queues one bolt and leaves no interval to count down.
+    reg.applyCollect('strike');
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+    expect(reg.strikeProgress()).toBeNull();
+  });
+
+  it('derives the fraction from strikeNextBoltSeconds() and strikeInterval() (AC3)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true); // hold-full (permanent) reward
+    const interval = reg.strikeInterval();
+
+    // Land the opening bolt so the interval clock runs.
+    expect(reg.updateStrike(0.1)).toBe(true);
+    reg.resolveStrike();
+
+    const start = reg.strikeProgress()!;
+    expect(start.total).toBeCloseTo(interval, 9);
+    expect(start.remaining).toBeCloseTo(reg.strikeNextBoltSeconds()!, 9);
+    // `arriving`: empty the instant a bolt fires, complete when the next is
+    // due.
+    expect(start.sweep).toBeCloseTo(0, 6);
+
+    const observed = [start.sweep];
+    for (const elapsed of [interval / 4, interval / 4, interval / 4]) {
+      expect(reg.updateStrike(elapsed)).toBe(false);
+      const progress = reg.strikeProgress()!;
+      // One clock: the `next in Ns` label reads the same timer.
+      expect(progress.remaining).toBeCloseTo(
+        reg.strikeNextBoltSeconds()!,
+        9,
+      );
+      expect(progress.total).toBeCloseTo(interval, 9);
+      expect(progress.sweep).toBeCloseTo(1 - progress.remaining / interval, 9);
+      observed.push(progress.sweep);
+    }
+
+    for (let i = 1; i < observed.length; i++) {
+      expect(observed[i]).toBeGreaterThan(observed[i - 1]);
+    }
+    expect(observed[observed.length - 1]).toBeCloseTo(0.75, 6);
+  });
+
+  it('is null while a bolt is latched, because the interval clock is frozen (AC3)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true);
+    const interval = reg.strikeInterval();
+
+    // A bolt comes due with nobody able to resolve it: the timer is frozen, so
+    // there is no honest countdown and no ring.
+    expect(reg.updateStrike(interval + 1)).toBe(true);
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+    expect(reg.strikeProgress()).toBeNull();
+
+    // Landing the bolt resumes the cadence from empty.
+    reg.resolveStrike();
+    const resumed = reg.strikeProgress()!;
+    expect(resumed.remaining).toBeCloseTo(interval, 6);
+    expect(resumed.sweep).toBeCloseTo(0, 6);
+  });
+});
+
+describe('weapon window fraction derivation (AC4)', () => {
+  it('activeWeapons() data yields the expiring fraction for the shared seam (AC4)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+
+    const [fresh] = reg.activeWeapons();
+    expect(fresh.duration).toBe(10);
+    expect(fresh.remaining).toBe(10);
+    expect(fresh.tempWindow).toBe(true);
+    expect(
+      resolveCountdownSweep({
+        remaining: fresh.remaining,
+        total: fresh.duration,
+        mode: 'expiring',
+      }),
+    ).toBeCloseTo(1, 9);
+
+    reg.tick(2.5);
+    const [drained] = reg.activeWeapons();
+    // The span is never rewritten as the window burns down.
+    expect(drained.duration).toBe(10);
+    expect(drained.remaining).toBeCloseTo(7.5, 6);
+    expect(
+      resolveCountdownSweep({
+        remaining: drained.remaining,
+        total: drained.duration,
+        mode: 'expiring',
+      }),
+    ).toBeCloseTo(0.75, 6);
+  });
+
+  it('a refreshed window restarts the fraction at complete (AC4)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('rapid');
+    reg.tick(6);
+    const [partial] = reg.activeWeapons();
+    expect(partial.remaining / partial.duration).toBeCloseTo(0.4, 6);
+
+    reg.applyWeapon('rapid'); // re-collect refreshes to the full window
+    const [refreshed] = reg.activeWeapons();
+    expect(refreshed.remaining).toBe(refreshed.duration);
+    expect(
+      resolveCountdownSweep({
+        remaining: refreshed.remaining,
+        total: refreshed.duration,
+        mode: 'expiring',
+      }),
+    ).toBeCloseTo(1, 9);
+  });
+
+  it('a permanent-only weapon exposes no field window to count down (AC4)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('dual', true);
+    const [weapon] = reg.activeWeapons();
+    expect(weapon.permanent).toBe(true);
+    // No temporary window means no ring on the HUD's `∞` row.
+    expect(weapon.tempWindow).toBeFalsy();
   });
 });
