@@ -434,8 +434,12 @@ const AUTHORED_PROMO_LEVELS = [
     categories: ['weapons', 'pickups'],
     // Two extra phalanx waves (AH-0MVSDMDA1003ARV5): the first cut cleared
     // the three-wave level in under 30 s, well short of the ≥45 s promo
-    // target, so the wall now grinds through five waves. Composition only —
-    // the same tank/scout/diver/swarm group vocabulary, no new spawner.
+    // target, so the wall now grinds through five waves. The diver escorts
+    // were thinned after the fixed-speed dive retime (AH-0MW3MWRZ5003KVR3:
+    // close dives complete in ≈0.41 s instead of 2 s) — the old counts lost
+    // the bot on wave 2 (38.4 s), so the diver groups now stay sparse while
+    // the tank phalanxes carry the showcase. Composition only — the same
+    // tank/scout/diver/swarm group vocabulary, no new spawner.
     waves: [
       firing([
         group('tank', 'rect', 8, { spacingX: 50, spacingY: 44, startXMin: 160, startXMax: 260 }),
@@ -443,7 +447,7 @@ const AUTHORED_PROMO_LEVELS = [
       ]),
       firing([
         group('tank', 'rect', 10, { spacingX: 48, spacingY: 42, startXMin: 150, startXMax: 250 }),
-        group('diver', 'diver', 6, { spacingY: 28 }),
+        group('diver', 'diver', 2, { spacingY: 28 }),
       ]),
       firing([
         group('tank', 'rect', 12, { spacingX: 46, spacingY: 40, startXMin: 140, startXMax: 240 }),
@@ -459,7 +463,7 @@ const AUTHORED_PROMO_LEVELS = [
       ]),
       firing([
         group('tank', 'rect', 14, { spacingX: 42, spacingY: 36, startXMin: 130, startXMax: 220, startY: 330 }),
-        group('diver', 'diver', 10, { spacingY: 26, startYMin: 140, startYMax: 280 }),
+        group('diver', 'diver', 6, { spacingY: 26, startYMin: 140, startYMax: 280 }),
       ]),
     ],
   },
@@ -471,6 +475,10 @@ const AUTHORED_PROMO_LEVELS = [
     // arena edge, a recognisable silhouette (enemies) that keeps the player
     // firing into columns (weapons).
     categories: ['enemies', 'weapons'],
+    // The diver pair in wave 2 was trimmed from 8 after the fixed-speed dive
+    // retime (AH-0MW3MWRZ5003KVR3): the old count lost the bot on wave 2
+    // (44.6 s), so two fast-closing divers sit on the march columns instead of
+    // eight. Composition only — same archetypes and spawner flags.
     waves: [
       firing([
         group('march', 'march', 12, { spacingX: 26, spacingY: 24, startXMin: 160, startXMax: 260 }),
@@ -478,7 +486,7 @@ const AUTHORED_PROMO_LEVELS = [
       ]),
       firing([
         group('march', 'march', 14, { spacingX: 26, spacingY: 24, startXMin: 150, startXMax: 250 }),
-        group('diver', 'diver', 8, { spacingY: 28 }),
+        group('diver', 'diver', 3, { spacingY: 28 }),
       ]),
       firing([
         group('march', 'march', 16, { spacingX: 24, spacingY: 22, startXMin: 140, startXMax: 240 }),
@@ -520,10 +528,14 @@ const AUTHORED_PROMO_LEVELS = [
     // Calibrated against the real PlayScene (AH-0MVI5XI73000ZVYA, AC2): the
     // first cut lost the bot on wave 2 (39 s) with 21 pursuers still alive, so
     // the escort/pursuer density is trimmed and a fourth pursuit wave carries
-    // the scene past the 45 s target. Composition only — same archetypes.
+    // the scene past the 45 s target. The diver pursuer groups were thinned
+    // again after the fixed-speed dive retime (AH-0MW3MWRZ5003KVR3) — the old
+    // counts lost the bot at 43.3 s on wave 2, so the opening group drops to a
+    // fast-closing pair and the fourth wave to four. Composition only — same
+    // archetypes.
     waves: [
       firing([
-        group('diver', 'diver', 6, { spacingY: 28, startYMin: 140, startYMax: 280 }),
+        group('diver', 'diver', 2, { spacingY: 28, startYMin: 140, startYMax: 280 }),
         group('tank', 'rect', 3, { startX: ESCORT_X + 120, spacingX: 52 }),
       ], { ghosts: true }),
       firing([
@@ -535,7 +547,7 @@ const AUTHORED_PROMO_LEVELS = [
         group('tank', 'rect', 4, { startX: ESCORT_X + 120, spacingX: 50 }),
       ], { ghosts: true }),
       firing([
-        group('diver', 'diver', 6, { spacingY: 28, startYMin: 140, startYMax: 280 }),
+        group('diver', 'diver', 4, { spacingY: 28, startYMin: 140, startYMax: 280 }),
         group('swarm', 'swarm', 8, { startX: ESCORT_X + 120, spacingX: 24 }),
       ], { ghosts: true }),
     ],
