@@ -140,6 +140,10 @@ const RECORDED_SECTIONS: ReadonlyArray<RecordedSection> = [
     heading: '### Per-frame allocations (AH-0MVXV0F0Y004NENT)',
     facts: [COMMIT, DATE, { label: 'the platform', pattern: /Chromium/ }, { label: 'the throttle factor', pattern: /1×/ }],
   },
+  {
+    heading: '## Hardware-GPU desktop baseline',
+    facts: [COMMIT, DATE, { label: 'the platforms', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /1×/ }],
+  },
 ];
 
 describe('docs/PERFORMANCE.md — performance budget', () => {
@@ -311,6 +315,31 @@ describe('docs/PERFORMANCE.md — recorded numbers', () => {
         expect(recorded, `${section.heading} does not record ${fact.label}`).toMatch(fact.pattern);
       }
     }
+  });
+
+  it('publishes the hardware-GPU desktop runs for both hosts', () => {
+    const hardware = sectionBody(perfDoc(), '## Hardware-GPU desktop baseline');
+
+    // AC1: a hardware backend, not inferred from --gpu (both hosts report the
+    // same driver string, and webgl.kind is explicitly hardware).
+    expect(hardware).toContain(`webgl.kind: "hardware"`);
+    expect(hardware).toContain('NVIDIA GeForce RTX 3050 Ti');
+    expect(hardware).toContain('ANGLE (NVIDIA, Vulkan 1.4.329');
+
+    // AC2/AC3: a 60 s, 100-enemy GymPerformance run per host, with the frame
+    // times stated against the ≥ 60 FPS / p95 ≤ 16.7 ms bar.
+    for (const [host, runPrefix] of [
+      ['Desktop browser', '| Desktop browser (Chromium 140.0.7339.186, hardware ANGLE-Vulkan) | 1 (profiled)'],
+      ['Desktop Electron', '| Desktop Electron (45.2.3 / Chromium 156.0.8078.80, hardware ANGLE-Vulkan) | 1 (profiled)'],
+    ] as ReadonlyArray<[string, string]>) {
+      expect(hardware).toMatch(/--seconds 60 --warmup 3/);
+      expect(hardware).toContain('GymPerformance');
+      expect(hardware).toContain('Effective FPS');
+      const row = hardware.split('\n').find((line) => line.startsWith(runPrefix));
+      expect(row, `${host} hardware row is missing`).toBeDefined();
+      expect(row).toContain('16.7');
+    }
+    expect(hardware).toMatch(/59\.\d\d|60\.00/);
   });
 
   it('explains the provenance rule and names this guard', () => {
