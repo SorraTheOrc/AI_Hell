@@ -325,8 +325,11 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
    * the next bolt, derived from the run's own strike clock. Two independent
    * boots snapshot it at slightly different points in the interval (and one
    * may hold a bolt latched while the other's has landed), so the countdown is
-   * a property of *elapsed time*, not of the restored state under test.
-   * Everything else in the row must still match exactly.
+   * a property of *elapsed time*, not of the restored state under test. Both
+   * rendered forms of that same clock are dropped: the label text, the
+   * `recharge` seconds it formats and the `countdown` ring sweep derived from
+   * it (parent AH-0MVZ8YQQV006Q09W). Everything else in the row must still
+   * match exactly.
    */
   function withoutStrikeCountdown(rows: HUDEntry[]): HUDEntry[] {
     return rows.map((row) => {
@@ -336,6 +339,7 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
         label: row.label.replace(/ \(next in \d+s\)$/, ''),
       };
       delete stable.recharge;
+      delete stable.countdown;
       return stable;
     });
   }
