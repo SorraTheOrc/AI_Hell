@@ -75,10 +75,18 @@ describe('GymWeaponLeveling', () => {
     expect(player.getFireInterval('spread')).toBeLessThan(base.fireRateMs);
     expect(isOnBeatGrid(player.getFireInterval('spread'))).toBe(true);
     // The shared core spawns one bullet per pattern entry at the level size.
-    for (let i = 0; i < 120; i++) scene.tick(1 / 60);
-    const spreadBullets = scene
+    // Tick until the first shot lands: the trimmed spread plays 0.5 onsets/beat
+    // (one shot every two beats, AH-0MW23FEDK006BRHK), so a fixed 2 s window
+    // ends after its short-lived bullets have been culled.
+    let spreadBullets = scene
       .getBullets()
       .filter((b) => b.color === base.bulletColor);
+    for (let i = 0; i < 240 && spreadBullets.length === 0; i++) {
+      scene.tick(1 / 60);
+      spreadBullets = scene
+        .getBullets()
+        .filter((b) => b.color === base.bulletColor);
+    }
     expect(spreadBullets.length).toBeGreaterThan(0);
     // Bullet-size upgrade: the shared core sizes the bullet above the base.
     expect(spreadBullets[0].radius).toBeGreaterThan(3);

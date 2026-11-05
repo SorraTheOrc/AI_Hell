@@ -5,7 +5,7 @@
  * so these tests assert behaviour, not source: the six canonical voices fire
  * through the same `Player.tryFire` path the game runs, every onset is an
  * exact tick of the shared lattice, and the sixteen-step onset stack is the
- * documented canonical 46-onset superposition.
+ * documented canonical 31-onset superposition.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,12 +35,12 @@ import { createBeatClock, isOnGrid } from '../../utils/beat';
 import { createSeededRng } from '../../core/rng';
 
 /** The documented canonical per-step voice counts of the six-voice bar. */
-const CANONICAL_STEP_VOICES = [5, 2, 4, 2, 2, 3, 4, 2, 4, 1, 4, 4, 1, 4, 2, 2];
+const CANONICAL_STEP_VOICES = [6, 1, 2, 1, 2, 1, 2, 2, 4, 1, 1, 2, 2, 2, 1, 1];
 
 /** Fixed simulation step used to drive the scene deterministically. */
 const DT = 1 / 60;
 
-/** Ticks covering just over one 3 s bar (46 onsets + the next bar's start). */
+/** Ticks covering just over one 3 s bar (31 onsets + the next bar's start). */
 const TICKS = 200;
 
 /** Canonical onsets of one voice, from the shared pure generator. */
@@ -139,12 +139,12 @@ describe('GymRhythm — canonical cast runs the shared scheduler', () => {
     expect(stack.map((voices) => [...voices])).toEqual(expected);
   });
 
-  it('shows the documented canonical superposition: 46 onsets, slow/medium/fast', async () => {
+  it('shows the documented canonical superposition: 31 onsets, slow/medium/fast', async () => {
     booted = await bootScene([GymRhythm]);
     const scene = await bootRhythm(booted);
 
     expect(scene.getBarOnsetTotal()).toBe(GYM_RHYTHM_CANONICAL_ONSETS_PER_BAR);
-    expect(GYM_RHYTHM_CANONICAL_ONSETS_PER_BAR).toBe(46);
+    expect(GYM_RHYTHM_CANONICAL_ONSETS_PER_BAR).toBe(31);
     expect(scene.getOnsetStack().map((voices) => voices.length)).toEqual(
       CANONICAL_STEP_VOICES,
     );

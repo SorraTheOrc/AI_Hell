@@ -1314,17 +1314,17 @@ describe('Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
     });
   });
 
-  describe('canonical fixture and documented ledger', () => {
-    test('the six-weapon 16-step superposition totals 46 onsets per bar', () => {
+describe('canonical fixture and documented ledger', () => {
+    test('the six-weapon 16-step superposition totals 31 onsets per bar', () => {
       const fixture: ReadonlyArray<
         readonly [WeaponId, number, number]
       > = [
-        ['heavy_slug', 3, 0],
+        ['heavy_slug', 1, 0],
         ['railgun', 2, 0],
         ['cannon', 9, 0],
-        ['arc', 9, 4],
+        ['arc', 4, 4],
         ['rapid', 13, 0],
-        ['shard_swarm', 10, 0],
+        ['shard_swarm', 2, 0],
       ];
       let total = 0;
       for (const [weaponId, k, rotation] of fixture) {
@@ -1337,7 +1337,7 @@ describe('Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
         });
         total += pattern.k;
       }
-      expect(total).toBe(46);
+      expect(total).toBe(31);
     });
 
     test('the cannon walks the documented (k, n) ledger', () => {
@@ -1492,16 +1492,22 @@ describe('Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
       );
     });
 
-    test('cannon and arc share k=9 at level 0 and differ only by rotation', () => {
+    test('the level-0 trim takes the arc off the shared E(9,16) superposition rung', () => {
+      // Before the re-time the cannon and the arc shared k = 9 and differed
+      // only by rotation. The <= 60 % level-0 budget forces the arc down to a
+      // straight one-shot-per-beat rung (4/16), so the "two medium weapons at
+      // identical density" example is now the cannon alone
+      // (AH-0MW23FEDK006BRHK).
       const cannon = resolveWeaponPattern('cannon', 0);
       const arc = resolveWeaponPattern('arc', 0);
       expect(cannon.k).toBe(9);
-      expect(arc.k).toBe(9);
+      expect(arc.k).toBe(4);
       expect(cannon.n).toBe(arc.n);
       expect(cannon.stepMs).toBe(arc.stepMs);
       expect(cannon.rotation).toBe(0);
       expect(arc.rotation).toBe(4);
-      expect(euclideanOnsetsPerMinute(cannon)).toBe(
+      expect(isStraightEuclidean(arc)).toBe(true);
+      expect(euclideanOnsetsPerMinute(cannon)).toBeGreaterThan(
         euclideanOnsetsPerMinute(arc),
       );
     });
@@ -1740,11 +1746,14 @@ describe('flattened upgrade curve (AH-0MVRENEME004FS8T AC3)', () => {
 
   test('the recorded pre-change cannon spike is self-consistent', () => {
     // Both numbers are provenance literals: the ratio of the recorded
-    // saturated output to the (frozen) cannon level-0 output is the 27× this
-    // work item quotes, independently of the retune.
-    const cannonLevel0 = weaponStrength('cannon', 0).output;
+    // saturated output to the (frozen) recorded cannon level-0 output is the
+    // 27× this work item quotes, independently of the retune. It is measured
+    // against the *recorded* baseline literal, not against the live helper:
+    // since AH-0MW23FEDK006BRHK the helper reports the live ladder cadence
+    // (2.25 onsets/beat = 3 shots/s), while the frozen baseline was recorded
+    // from the legacy nominal 2/beat table.
     expect(
-      LEVEL_CAP_OUTPUT_PRE_CHANGE.cannon / cannonLevel0,
+      LEVEL_CAP_OUTPUT_PRE_CHANGE.cannon / (8 / 3),
     ).toBeCloseTo(PRE_CHANGE_CANNON_LEVEL_CAP_MULTIPLE, 9);
     // Every weapon carries a literal baseline, and none of them is zero (a
     // zero baseline would make the saturated share meaningless).

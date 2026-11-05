@@ -140,7 +140,7 @@ describe('weapon leveling is documented (AH-0MUQOT1I60038CO7 AC4/AC5)', () => {
     ]) {
       expect(balancing).toContain(`\`${weapon}\``);
     }
-    expect(balancing).toMatch(/46 onsets per bar/);
+    expect(balancing).toMatch(/31 onsets per bar/);
   });
 
   it('BALANCING.md documents the data-driven ladder format and fallback (AH-0MW0Q1TQV009M8AO)', () => {

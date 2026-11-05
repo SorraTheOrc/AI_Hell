@@ -8,9 +8,9 @@
  * inherited `CombatCoreScene._tickPlayer` → `Player.tryFire` path the game
  * uses. Nothing about the cadence is re-implemented here: the scene only
  *
- * - activates the canonical cast (`heavy_slug E(3,16)`, `railgun E(2,16)`,
- *   `cannon E(9,16)`, `arc E(9,16 rot 4)`, `rapid E(13,16)`,
- *   `shard_swarm E(10,16)` — the documented fixture in `docs/BALANCING.md`),
+ * - activates the canonical cast (`heavy_slug E(1,16)`, `railgun E(2,16)`,
+ *   `cannon E(9,16)`, `arc E(4,16 rot 4)`, `rapid E(13,16)`,
+ *   `shard_swarm E(2,16)` — the documented fixture in `docs/BALANCING.md`),
  * - renders the **onset stack** the shared scheduler resolves: for every
  *   voice it reads the live `Player.getFirePattern` and expands the tile with
  *   the pure `euclidPattern` generator, so the grid is the shipped pattern
@@ -21,11 +21,14 @@
  *   fires on.
  *
  * The resulting sixteen-step bar auditions **slow + medium + fast**
- * superposition: two sparse-irregular voices (3 and 2 onsets), two medium
- * voices at identical density differing only by rotation (9 + 9), and two
- * dense voices (13 and 10) — 46 onsets per bar, matching the canonical
- * fixture. Onsets are uneven by design; the lattice is the scheduling grid,
- * never a metronome.
+ * superposition: three sparse voices (1, 2 and 2 onsets), one medium voice
+ * (4 onsets) and two dense voices (9 and 13) — **31 onsets per bar**, matching
+ * the canonical fixture. Onsets are uneven by design; the lattice is the
+ * scheduling grid, never a metronome. The level-0 cadence trim
+ * (AH-0MW23FEDK006BRHK) moved the fixture from 46 to 31 onsets: the arc left
+ * the shared `E(9,16)` rung for a straight one-shot-per-beat rung and the
+ * shard swarm's cadence lever was cut to `E(2,16)` while it kept its five-shard
+ * fan.
  *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention.
  *
@@ -84,22 +87,21 @@ export interface RhythmVoice {
 }
 
 /**
- * The six canonical superposition voices, in ascending onsets-per-bar order
- * except the two same-density medium voices (`cannon` then `arc`). These are
- * the epic's agreed level-0 fixture (`docs/BALANCING.md` § Euclidean cadence
- * ladder): 3 + 2 + 9 + 9 + 13 + 10 = 46 onsets per bar.
+ * The six canonical superposition voices, in ascending onsets-per-bar order.
+ * These are the epic's agreed level-0 fixture (`docs/BALANCING.md`
+ * § Euclidean cadence ladder): 1 + 2 + 2 + 4 + 9 + 13 = 31 onsets per bar.
  */
 export const GYM_RHYTHM_VOICES: readonly RhythmVoice[] = Object.freeze([
   Object.freeze({ weaponId: 'heavy_slug', role: 'slow' }),
   Object.freeze({ weaponId: 'railgun', role: 'slow' }),
-  Object.freeze({ weaponId: 'cannon', role: 'medium' }),
+  Object.freeze({ weaponId: 'shard_swarm', role: 'slow' }),
   Object.freeze({ weaponId: 'arc', role: 'medium' }),
+  Object.freeze({ weaponId: 'cannon', role: 'fast' }),
   Object.freeze({ weaponId: 'rapid', role: 'fast' }),
-  Object.freeze({ weaponId: 'shard_swarm', role: 'fast' }),
 ]);
 
 /** Total onsets the canonical six voices contribute to one 16-step bar. */
-export const GYM_RHYTHM_CANONICAL_ONSETS_PER_BAR = 46;
+export const GYM_RHYTHM_CANONICAL_ONSETS_PER_BAR = 31;
 
 /** Hint line shown at the top of the gym. */
 export const GYM_RHYTHM_HINT =

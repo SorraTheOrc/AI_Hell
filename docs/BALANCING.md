@@ -1520,7 +1520,14 @@ fire rate. `weapons.csv` `subdivisions` remains the **legacy nominal** value
 (level-stat quantisation and the hold-full ghost metronome interval); the dev
 boot diagnostic reports where the two disagree and names
 `src/data/weapon-levels.json` as the cadence source, so the divergence is
-visible rather than folklore. The designer-facing schema, file shape and worked
+visible rather than folklore. The three deliberate divergences (`cannon`,
+`rapid`, `railgun`) are registered in `DELIBERATE_CADENCE_DIVERGENCES`
+(`src/utils/weaponDataDiagnostics.ts`) with their reason, so a dev boot is
+silent for the committed data while any *undocumented* drift — or a stale
+registry entry — still warns. The strength measurement
+(`src/utils/weaponStrength.ts`) reads the same live ladder, not the nominal
+`fireRateMs`, so a "cadence" in this document always means what the scheduler
+plays. The designer-facing schema, file shape and worked
 retune examples for all three data files are in
 [Weapon tuning CSV](#weapon-tuning-csv-ah-0mw0q01vm004epy7) above.
 
@@ -1567,17 +1574,68 @@ subdivision. Every shipped fire rate therefore remains available as the
 all-onsets subset of the ladder.
 
 **Canonical six-weapon superposition.** At level 0 the canonical fixture is
-`heavy_slug E(3,16)`, `railgun E(2,16)`, `cannon E(9,16)`, `arc E(9,16 rot 4)`,
-`rapid E(13,16)` and `shard_swarm E(10,16)`: **46 onsets per bar** in total
-(3 + 2 + 9 + 9 + 13 + 10), pinned by
-`src/utils/weaponLevels.test.ts`. `cannon` and `arc` share `k = 9` and differ
-only by rotation — the "two medium weapons at identical density" example.
+`heavy_slug E(1,16)`, `railgun E(2,16)`, `cannon E(9,16)`, `arc E(4,16 rot 4)`,
+`rapid E(13,16)` and `shard_swarm E(2,16)`: **31 onsets per bar** in total
+(1 + 2 + 9 + 4 + 13 + 2), pinned by
+`src/utils/weaponLevels.test.ts`. The cannon and the arc no longer share
+`k = 9`: the `<= 60 %` level-0 budget takes the arc down to a straight
+one-shot-per-beat rung, so the bar's uneven tiles are the cannon's `E(9,16)`
+and rapid's `E(13,16)` (see [the level-0 cadence
+retime](#the-level-0-cadence-retime-ah-0mw23fedk006brhk) below).
 
 The **Rhythm gym** (`src/scenes/gym/GymRhythm.ts`) auditions this exact fixture
 through the shipped scheduler, drawing the sixteen-step onset stack from the
 live `Player.getFirePattern` data; its playhead reads the shared beat clock and
 every recorded fire is the scheduler's own onset tick, so the gym and the game
 cannot drift (`src/scenes/gym/GymRhythm.test.ts`).
+
+### The level-0 cadence retime (AH-0MW23FEDK006BRHK)
+
+The **live** cadence of every non-cannon weapon was trimmed to the nominal
+`subdivisions` already authored for it — the level-0 output trim
+(AH-0MVWAVKS0005P9VN) reached the catalogue's *nominal* table only, so the
+shipped game was firing 10 of its 15 non-cannon weapons faster than the strength budget
+described. Each affected weapon's **whole ladder** was then scaled by the same
+factor as its level-0 rung and snapped up to a whole `k` on the 16-step tile,
+so the curve-derived `minLevel` thresholds and every producer-approved ceiling
+(`level1GrowthMultiple` 2.5×, `levelCapShareOfPreChange` 50 %) are
+**mathematically unchanged** — only the absolute density moved.
+
+| Weapon | Level-0 rung before | after | Onsets/beat | Live cut |
+|---|---|---|---|---|
+| `spread`, `options` | `E(4,16)` | **`E(2,16)`** | 1 → 0.5 | 2× slower |
+| `dual`, `ricochet` | `E(4,16)` | **`E(2,16)`** | 1 → 0.5 | 2× slower |
+| `wave_laser` | `E(4,16)` | **`E(2,16)`** | 1 → 0.5 | 2× slower |
+| `rear_guard` | `E(8,16)` | **`E(4,16)`** | 2 → 1 | 2× slower |
+| `cluster`, `broadside` | `E(2,16)` | **`E(1,16)`** | 0.5 → 0.25 | 2× slower |
+| `arc` | `E(9,16)` | **`E(4,16)`** | 2.25 → 1 | 2.25× slower |
+| `heavy_slug` | `E(3,16)` | **`E(1,16)`** | 0.75 → 0.25 | 3× slower |
+| `shard_swarm` | `E(10,16)` | **`E(2,16)`** | 2.5 → 0.5 | 5× slower |
+
+Consequences, all deliberate and test-pinned:
+
+- **The arc leaves the superposition set.** The `<= 60 %` level-0 budget forces
+  `E(9,16) → E(4,16)`, a straight (degenerate) rung; the arc's phase morph
+  (`rot 4 → rot 6`) survives, and `shard_swarm`/`heavy_slug` likewise become
+  straight at level 0.
+- **The wave laser's curve-flattening carve-out becomes real.** Its catalogue
+  `subdivisions` was already halved to 0.5 by AH-0MVWAVL6R001UI60 because the
+  beam has no projectile lever, but the live ladder never received it. The
+  live cut is required for a second reason: with the cadence measured live its
+  old saturated rung `E(8,16)` scored 66.7 % of the pre-change level cap,
+  breaching the 50 % ceiling.
+- **The railgun's top of ladder is trimmed, not its base.** Its level-0
+  `E(2,16)` rung is inside the level-0 budget (40 % of baseline, 0.33× the
+  cannon), but its old saturated rung `E(5,16)` scored 55.6 % of the pre-change
+  cap once measured live, so the ladder now ends at `E(3,16)`.
+- **Sparse ladders lose rungs.** A 2.2× fire-rate asymptote can carry only
+  whole-`k` steps above a small base: `cluster`, `broadside`, `heavy_slug` and
+  `railgun` keep two rungs, `spread`/`options`/`wave_laser`/`shard_swarm` three.
+- **Three nominal divergences remain, all documented** — `cannon` (2 vs 2.25),
+  `rapid` (3 vs 3.25) and `railgun` (0.25 vs 0.5) — because their level-0
+  superposition rungs are inside the budget. They are registered in
+  `DELIBERATE_CADENCE_DIVERGENCES`, so the dev boot diagnostic is silent for
+  the committed data and still warns for any other drift.
 
 **Machine-verifiable ledger.** The table below is the complete resolved
 ladder — one row per rung, in level order. It is compared row-for-row against
@@ -1592,70 +1650,57 @@ mirrored here fails the suite (and vice versa).
 | `cannon` | 4 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
 | `cannon` | 9 | 16 | 16 | 0 | 187.5 | 4 | 320 |
 | `cannon` | 10 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `spread` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `spread` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `spread` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `spread` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `dual` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `dual` | 1 | 4 | 16 | 2 | 187.5 | 1 | 80 |
-| `dual` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `dual` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `dual` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `spread` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `spread` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `spread` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `dual` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `dual` | 1 | 2 | 16 | 2 | 187.5 | 0.5 | 40 |
+| `dual` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `dual` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `rapid` | 0 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
 | `rapid` | 1 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
 | `rapid` | 2 | 15 | 16 | 0 | 187.5 | 3.75 | 300 |
 | `rapid` | 3 | 16 | 16 | 0 | 187.5 | 4 | 320 |
 | `rapid` | 4 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `wave_laser` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `wave_laser` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `wave_laser` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `wave_laser` | 9 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
-| `wave_laser` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `ricochet` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `ricochet` | 1 | 4 | 16 | 1 | 187.5 | 1 | 80 |
-| `ricochet` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `ricochet` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `cluster` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `cluster` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `cluster` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `options` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `options` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `options` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `options` | 9 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
-| `options` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `wave_laser` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `wave_laser` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `wave_laser` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `ricochet` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `ricochet` | 1 | 2 | 16 | 1 | 187.5 | 0.5 | 40 |
+| `ricochet` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `ricochet` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `cluster` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
+| `cluster` | 15 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `options` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `options` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `options` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `nova` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
 | `nova` | 15 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
 | `mortar` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
 | `mortar` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
 | `mortar` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `arc` | 0 | 9 | 16 | 4 | 187.5 | 2.25 | 180 |
-| `arc` | 1 | 9 | 16 | 6 | 187.5 | 2.25 | 180 |
-| `arc` | 2 | 10 | 16 | 6 | 187.5 | 2.5 | 200 |
-| `arc` | 4 | 13 | 16 | 6 | 187.5 | 3.25 | 260 |
-| `arc` | 9 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `arc` | 10 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `rear_guard` | 0 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `rear_guard` | 2 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
-| `rear_guard` | 5 | 12 | 16 | 0 | 187.5 | 3 | 240 |
-| `rear_guard` | 9 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
-| `rear_guard` | 15 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `rear_guard` | 16 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `broadside` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `broadside` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `broadside` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `arc` | 0 | 4 | 16 | 4 | 187.5 | 1 | 80 |
+| `arc` | 1 | 4 | 16 | 6 | 187.5 | 1 | 80 |
+| `arc` | 2 | 5 | 16 | 6 | 187.5 | 1.25 | 100 |
+| `arc` | 5 | 6 | 16 | 6 | 187.5 | 1.5 | 120 |
+| `arc` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `arc` | 16 | 4 | 8 | 0 | 187.5 | 2 | 160 |
+| `rear_guard` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `rear_guard` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `rear_guard` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `rear_guard` | 9 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
+| `rear_guard` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `rear_guard` | 16 | 4 | 8 | 0 | 187.5 | 2 | 160 |
+| `broadside` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
+| `broadside` | 15 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
 | `railgun` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
 | `railgun` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `railgun` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `shard_swarm` | 0 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
-| `shard_swarm` | 1 | 11 | 16 | 0 | 187.5 | 2.75 | 220 |
-| `shard_swarm` | 2 | 12 | 16 | 0 | 187.5 | 3 | 240 |
-| `shard_swarm` | 3 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
-| `shard_swarm` | 4 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
-| `shard_swarm` | 6 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `shard_swarm` | 7 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `heavy_slug` | 0 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `heavy_slug` | 3 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `heavy_slug` | 15 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `shard_swarm` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `shard_swarm` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `shard_swarm` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `shard_swarm` | 16 | 2 | 8 | 0 | 187.5 | 1 | 80 |
+| `heavy_slug` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
+| `heavy_slug` | 15 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
 <!-- euclidean-ladder:end -->
 
 Notes on individual ladders:
@@ -1666,24 +1711,31 @@ Notes on individual ladders:
   AH-0MVWAVL6R001UI60 (was cap 3× / `k = 0.18`), so the same rungs now arrive
   later, and any rung whose density sits at or above the 2.2× asymptote is
   omitted (the exponential curve approaches the density, never reaches it).
-  That is why `spread`, `dual`, `wave_laser`, `ricochet` and `options` stop at
-  their `E(8,16)` rung instead of the old `E(5,8)`, and why the sparse
-  `cluster`/`mortar`/`broadside`/`railgun` ladders now end at `E(4,16)` and
-  `heavy_slug` at `E(6,16)`.
+  After the level-0 retime that asymptote is also **absolute**: a weapon whose
+  level-0 rung is `E(2,16)` can never climb past `k = 4` (1 onset/beat), which
+  is why `spread`/`options`/`wave_laser`/`shard_swarm` end at `E(4,16)`,
+  `dual`/`ricochet` at the same density via a rotation / `E(2,8)` morph, and
+  `cluster`/`broadside`/`heavy_slug`/`railgun` stop at `E(2,16)`/`E(3,16)`.
 - `cannon` walks the documented shape morph
   `E(9,16) → E(10,16) → E(13,16) → E(16,16) → E(8,8)` (levels 0, 1, 4, 9 and
   10). The work item's example ledger starts at `E(8,16)`, but the canonical
   six-weapon fixture fixes the level-0 cannon rung at `E(9,16)` (so the
-  fixture totals 46 onsets per bar); the ladder above follows the same
+  fixture totals 31 onsets per bar); the ladder above follows the same
   `E(10,16) → E(13,16) → E(16,16) → E(8,8)` shape from that one-onset-higher
   base.
 - `heavy_slug`, `railgun`, `cluster`, `mortar`, `broadside` and `nova` stay
-  **sparse**, moving through irregular tiles such as `E(3,16)`, `E(5,16)` and
-  `E(6,16)` as well as the straight low-density `E(2,16)`/`E(1,16)` tiles — they
-  are never limited to whole-beat multiples.
+  **sparse**, moving through irregular tiles such as `E(3,16)` and `E(5,16)`
+  as well as the straight low-density `E(2,16)`/`E(1,16)` tiles — they are
+  never limited to whole-beat multiples. `heavy_slug` and `railgun` now walk
+  `E(1,16)`/`E(2,16)` and `E(2,16)`/`E(3,16)` respectively: the sparse end of
+  the lattice cannot carry more whole-`k` rungs under the 2.2× asymptote.
 - `rapid` starts near the lattice ceiling (`E(13,16)` = 3.25 onsets/beat) and
   reaches `E(8,8)` at 4 onsets/beat; faster-than-16th patterns need a
   sub-16th step size and are deferred to a follow-up tuning item.
+- `arc`, `rear_guard` and `shard_swarm` keep a **bar-halving shape morph** at
+  the top of their ladders (`E(4,16) → E(4,8)`, `E(8,16) → E(4,8)` and
+  `E(4,16) → E(2,8)`), so the density repeats twice per bar exactly as the
+  cannon's `E(16,16) → E(8,8)` does.
 
 ## Weapon 40 % trim / flattened curve — measured before/after gate (AH-0MVRENEME004FS8T)
 

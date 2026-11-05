@@ -770,10 +770,21 @@ export function quantiseEuclidean(
  * deliberate shape (bar-halving) or phase (rotation) morph that keeps the
  * density identical.
  *
- * Level 0 is the weapon's shipped cadence density (legacy onsets per bar) for
- * most weapons; the six canonical superposition weapons use the epic's
- * agreed fixture values (`heavy_slug` 3/16, `railgun` 2/16, `cannon` 9/16,
- * `arc` 9/16 rotated 4, `rapid` 13/16, `shard_swarm` 10/16).
+ * Level 0 is the weapon's shipped cadence density: since the level-0 output
+ * trim reached the live ladder (AH-0MW23FEDK006BRHK) it equals the trimmed
+ * nominal `subdivisions` in `src/data/weapons.csv` for every weapon whose
+ * cadence was re-timed (`spread`/`dual`/`ricochet`/`options` 2/16,
+ * `rear_guard` 4/16, `cluster`/`broadside` 1/16, `arc` 4/16, `shard_swarm`
+ * 2/16, `heavy_slug` 1/16). Three weapons deliberately keep an uneven level-0
+ * rung and are the documented nominal-vs-live divergences: `cannon` 9/16,
+ * `rapid` 13/16 and `railgun` 2/16. `wave_laser` 4/16 agrees with its
+ * (corrected) nominal of one shot per beat.
+ *
+ * Every rung of a re-timed weapon is scaled with its level 0, so the
+ * curve-derived `minLevel` thresholds and the producer-approved strength
+ * ceilings (`level1GrowthMultiple` 2.5x, `levelCapShareOfPreChange` 50 %)
+ * are unchanged; only the absolute density is halved (or more, where the
+ * superposition density exceeded the trimmed nominal).
  */
 export const CODE_WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
   WeaponId,
@@ -787,21 +798,18 @@ export const CODE_WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
     latticeEuclidean(16, 16),
     latticeEuclidean(8, 8), // bar-halving shape morph at equal density
   ],
+  // 0.5 onsets/beat (the trimmed nominal) rising to 1 onset/beat.
   spread: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
   ],
-  // Phase morph first: the same E(4, 16) density rotated by two steps.
+  // Phase morph first: the same E(2, 16) density rotated by two steps.
   dual: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(2, 16, 2),
+    latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
-    latticeEuclidean(4, 16, 2),
-    latticeEuclidean(5, 16),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
   ],
   rapid: [
     latticeEuclidean(13, 16),
@@ -810,35 +818,27 @@ export const CODE_WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
     latticeEuclidean(16, 16),
     latticeEuclidean(8, 8),
   ],
+  // The beam has no projectile lever, so the curve-flattening carve-out
+  // (AH-0MVWAVL6R001UI60) is realised here: 0.5 onsets/beat, matching the
+  // trimmed nominal `subdivisions` in the catalogue CSV.
   wave_laser: [
-    latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(7, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
-  ],
-  // Phase morph at equal density, then a faster irregular tile.
-  ricochet: [
-    latticeEuclidean(4, 16),
-    latticeEuclidean(4, 16, 1),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
-  ],
-  cluster: [
     latticeEuclidean(2, 16),
     latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
   ],
-  options: [
+  // Phase morph at equal density, then a faster irregular tile.
+  ricochet: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(2, 16, 1),
+    latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(7, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
+  ],
+  // 0.25 onsets/beat: one shot every four beats, doubled at level 15.
+  cluster: [latticeEuclidean(1, 16), latticeEuclidean(2, 16)],
+  options: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
+    latticeEuclidean(4, 16),
   ],
   nova: [latticeEuclidean(1, 16), latticeEuclidean(2, 16)],
   mortar: [
@@ -847,50 +847,39 @@ export const CODE_WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
     latticeEuclidean(4, 16),
     latticeEuclidean(5, 16),
   ],
-  // Shares E(9, 16) with the cannon at level 0, differing only by rotation.
+  // The <= 60 % level-0 budget forces the arc off the E(9, 16) superposition
+  // onto a straight one-shot-per-beat rung; the phase morph is retained.
   arc: [
-    latticeEuclidean(9, 16, 4),
-    latticeEuclidean(9, 16, 6), // phase morph at equal density
-    latticeEuclidean(10, 16, 6),
-    latticeEuclidean(13, 16, 6),
-    latticeEuclidean(16, 16),
-    latticeEuclidean(8, 8),
+    latticeEuclidean(4, 16, 4),
+    latticeEuclidean(4, 16, 6), // phase morph at equal density
+    latticeEuclidean(5, 16, 6),
+    latticeEuclidean(6, 16, 6),
+    latticeEuclidean(8, 16),
+    latticeEuclidean(4, 8), // bar-halving shape morph at equal density
   ],
   rear_guard: [
-    latticeEuclidean(8, 16),
-    latticeEuclidean(10, 16),
-    latticeEuclidean(12, 16),
-    latticeEuclidean(14, 16),
-    latticeEuclidean(16, 16),
-    latticeEuclidean(8, 8),
-  ],
-  broadside: [
-    latticeEuclidean(2, 16),
-    latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
     latticeEuclidean(5, 16),
-  ],
-  railgun: [
-    latticeEuclidean(2, 16),
-    latticeEuclidean(3, 16),
-    latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
-  ],
-  shard_swarm: [
-    latticeEuclidean(10, 16),
-    latticeEuclidean(11, 16),
-    latticeEuclidean(12, 16),
-    latticeEuclidean(13, 16),
-    latticeEuclidean(14, 16),
-    latticeEuclidean(16, 16),
-    latticeEuclidean(8, 8),
-  ],
-  heavy_slug: [
-    latticeEuclidean(3, 16),
-    latticeEuclidean(4, 16),
     latticeEuclidean(6, 16),
+    latticeEuclidean(7, 16),
     latticeEuclidean(8, 16),
+    latticeEuclidean(4, 8), // bar-halving shape morph at equal density
   ],
+  broadside: [latticeEuclidean(1, 16), latticeEuclidean(2, 16)],
+  // The 0.5 onsets/beat level-0 superposition rung is inside the level-0
+  // budget (40 % of baseline, 0.33x the cannon), but its old saturated rung
+  // E(5,16) breached the <= 50 % level-cap ceiling once the cadence is
+  // measured live (55.6 % of the pre-change cap), so the top of the ladder is
+  // trimmed to E(3,16) (AH-0MW23FEDK006BRHK).
+  railgun: [latticeEuclidean(2, 16), latticeEuclidean(3, 16)],
+  // The five-shard fan keeps its payload; the cadence trim takes 10/16 to 2/16.
+  shard_swarm: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
+    latticeEuclidean(4, 16),
+    latticeEuclidean(2, 8), // bar-halving shape morph at equal density
+  ],
+  heavy_slug: [latticeEuclidean(1, 16), latticeEuclidean(2, 16)],
 };
 
 // ── Runtime ladder specs: JSON source of truth + code fallback ──────

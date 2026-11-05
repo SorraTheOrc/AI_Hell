@@ -15,7 +15,11 @@
  *    the **live** fire cadence is the Euclidean ladder resolved by
  *    `resolveWeaponPattern`. A designer who edits a `subdivisions` cell
  *    expecting to retune firing is editing the wrong surface unless the
- *    divergence is visible.
+ *    divergence is visible. The known deliberate divergences (the `cannon`,
+ *    `rapid` and `railgun` superposition rungs) are registered in
+ *    {@link DELIBERATE_CADENCE_DIVERGENCES} and stay silent; anything else
+ *    warns, and a stale registry entry warns too
+ *    (AH-0MW23FEDK006BRHK AC3).
  * 3. **The ladder data is unreadable.** A malformed
  *    `src/data/weapon-levels.json` entry falls back to the in-code ladder for
  *    that weapon only, so the game boots and the typo would otherwise be
@@ -81,8 +85,77 @@ export function findWeaponCadenceDivergences(): WeaponCadenceDivergence[] {
 }
 
 /**
- * Formats the cadence-ownership diagnostic, or `null` when the nominal table
- * and the live ladder agree for every weapon.
+ * The **documented, deliberate** nominal-vs-live divergences, with the design
+ * reason recorded beside each weapon (AH-0MW23FEDK006BRHK AC3).
+ *
+ * After the level-0 trim reached the live ladder every re-timed weapon's
+ * `subdivisions` matches the rung the game plays. The three entries below are
+ * the conversely *deliberate* superposition rungs: their level-0 ladder
+ * density is intentionally not the legacy grid value, and every one of them
+ * is inside the producer-approved level-0 budget. A divergence outside this
+ * registry is an undocumented drift and still warns at dev boot.
+ */
+export const DELIBERATE_CADENCE_DIVERGENCES: Readonly<
+  Partial<Record<WeaponId, string>>
+> = Object.freeze({
+  cannon:
+    'Frozen default weapon: the cannon keeps the E(9,16) superposition rung ' +
+    '(2.25 onsets/beat) and is exempt from the level-0 budget, so its legacy ' +
+    'nominal 2/beat is documentation only (AH-0MVRENEME004FS8T).',
+  rapid:
+    'Deliberate superposition member: rapid plays E(13,16) (3.25 ' +
+    'onsets/beat) and still lands at 54 % of its pre-change level-0 output, ' +
+    'so rounding it to the nominal 3/beat would flatten its syncopation for ' +
+    'no budget gain.',
+  railgun:
+    'Deliberate superposition member: the railgun plays E(2,16) (0.5 ' +
+    'onsets/beat, twice the nominal 0.25) and pays for it with a 1 HP ' +
+    'pass-through budget, staying inside both level-0 ceilings (40 % of ' +
+    'baseline, 0.33x the cannon).',
+});
+
+/**
+ * The divergences that are **not** in the documented deliberate registry, in
+ * catalogue order — the ones a dev boot must still shout about.
+ *
+ * Pure and injectable so a test can feed a synthetic drift without editing the
+ * committed data.
+ */
+export function findUndocumentedCadenceDivergences(
+  divergences: readonly WeaponCadenceDivergence[] = findWeaponCadenceDivergences(),
+): WeaponCadenceDivergence[] {
+  return divergences.filter(
+    (divergence) => DELIBERATE_CADENCE_DIVERGENCES[divergence.weaponId] === undefined,
+  );
+}
+
+/**
+ * Stale-registry diagnostics: every weapon the registry *claims* is deliberately
+ * divergent but which now agrees with its nominal value.
+ *
+ * A stale entry is how the registry rots — if a later retune makes the cannon's
+ * live rung 2/beat, the exemption must be deleted rather than silently masking
+ * a future drift. Empty for the committed data.
+ */
+export function validateCadenceDivergenceRegistry(
+  divergences: readonly WeaponCadenceDivergence[] = findWeaponCadenceDivergences(),
+): string[] {
+  const divergentIds = new Set(
+    divergences.map((divergence) => divergence.weaponId),
+  );
+  return (Object.keys(DELIBERATE_CADENCE_DIVERGENCES) as WeaponId[])
+    .filter((weaponId) => !divergentIds.has(weaponId))
+    .map(
+      (weaponId) =>
+        `${weaponId}: listed in DELIBERATE_CADENCE_DIVERGENCES but its ` +
+        `nominal subdivisions now match the live ladder — drop the stale ` +
+        'registry entry.',
+    );
+}
+
+/**
+ * Formats the cadence-ownership diagnostic, or `null` when no **undocumented**
+ * divergence remains.
  *
  * The message names `src/data/weapon-levels.json` as the cadence source so the
  * reader is sent to the surface that actually gates firing. The live values
@@ -96,7 +169,9 @@ export function formatWeaponCadenceWarning(
   if (divergences.length === 0) return null;
   return [
     'Weapon cadence divergence: the legacy nominal `subdivisions` in ' +
-      `src/data/weapons.csv disagrees with the live Euclidean ladder for ${divergences.length} weapon(s).`,
+      `src/data/weapons.csv disagrees with the live Euclidean ladder for ${divergences.length} weapon(s), ` +
+      'and the weapon(s) are not in the documented deliberate set ' +
+      '(DELIBERATE_CADENCE_DIVERGENCES).',
     'The live fire cadence is `resolveWeaponPattern` — authored in ' +
       'src/data/weapon-levels.json (with the in-code ' +
       '`WEAPON_EUCLIDEAN_LADDERS` as the per-weapon fallback). The CSV ' +
@@ -113,7 +188,8 @@ export function formatWeaponCadenceWarning(
 /**
  * Every diagnostic a boot self-check would log, in reporting order:
  * ladder-load fallbacks first, then catalogue-load fallbacks, then the
- * catalogue invariant guard (AH-0MW0Q1FT1002Q6NJ), then cadence divergence.
+ * catalogue invariant guard (AH-0MW0Q1FT1002Q6NJ), then a stale cadence
+ * exemption registry, then **undocumented** cadence divergence.
  */
 export function collectWeaponDataDiagnostics(): string[] {
   const warnings: string[] = [];
@@ -129,8 +205,18 @@ export function collectWeaponDataDiagnostics(): string[] {
     WEAPON_CATALOGUE_INVARIANT_REPORT,
   );
   if (invariantWarning !== null) warnings.push(invariantWarning);
+  const divergences = findWeaponCadenceDivergences();
+  const staleRegistry = validateCadenceDivergenceRegistry(divergences);
+  if (staleRegistry.length > 0) {
+    warnings.push(
+      [
+        'Weapon cadence divergence registry is stale:',
+        ...staleRegistry.map((entry) => `  ${entry}`),
+      ].join('\n'),
+    );
+  }
   const cadenceWarning = formatWeaponCadenceWarning(
-    findWeaponCadenceDivergences(),
+    findUndocumentedCadenceDivergences(divergences),
   );
   if (cadenceWarning !== null) warnings.push(cadenceWarning);
   return warnings;

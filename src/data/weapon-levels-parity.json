@@ -83,67 +83,67 @@
     ],
     "spread": [
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
@@ -151,67 +151,67 @@
     ],
     "dual": [
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 2,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
+        "n": 16,
+        "rotation": 2,
+        "stepMs": 187.5
+      },
+      {
+        "k": 2,
+        "n": 16,
+        "rotation": 2,
+        "stepMs": 187.5
+      },
+      {
+        "k": 2,
+        "n": 16,
+        "rotation": 2,
+        "stepMs": 187.5
+      },
+      {
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
-        "n": 16,
-        "rotation": 0,
-        "stepMs": 187.5
-      },
-      {
-        "k": 6,
-        "n": 16,
-        "rotation": 0,
-        "stepMs": 187.5
-      },
-      {
-        "k": 6,
-        "n": 16,
-        "rotation": 0,
-        "stepMs": 187.5
-      },
-      {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
@@ -287,67 +287,67 @@
     ],
     "wave_laser": [
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 7,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 7,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
@@ -355,67 +355,67 @@
     ],
     "ricochet": [
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 1,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 1,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 1,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 1,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
@@ -423,67 +423,67 @@
     ],
     "cluster": [
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
@@ -491,67 +491,67 @@
     ],
     "options": [
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 5,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 6,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 7,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 7,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
@@ -695,135 +695,135 @@
     ],
     "arc": [
       {
-        "k": 9,
+        "k": 4,
         "n": 16,
         "rotation": 4,
         "stepMs": 187.5
       },
       {
-        "k": 9,
+        "k": 4,
         "n": 16,
         "rotation": 6,
         "stepMs": 187.5
       },
       {
-        "k": 10,
+        "k": 5,
         "n": 16,
         "rotation": 6,
         "stepMs": 187.5
       },
       {
-        "k": 10,
+        "k": 5,
         "n": 16,
         "rotation": 6,
         "stepMs": 187.5
       },
       {
-        "k": 13,
+        "k": 5,
         "n": 16,
         "rotation": 6,
         "stepMs": 187.5
       },
       {
-        "k": 13,
+        "k": 6,
         "n": 16,
         "rotation": 6,
         "stepMs": 187.5
       },
       {
-        "k": 13,
+        "k": 6,
         "n": 16,
         "rotation": 6,
         "stepMs": 187.5
       },
       {
-        "k": 13,
+        "k": 6,
         "n": 16,
         "rotation": 6,
         "stepMs": 187.5
       },
       {
-        "k": 13,
+        "k": 6,
         "n": 16,
         "rotation": 6,
         "stepMs": 187.5
       },
       {
-        "k": 16,
+        "k": 6,
         "n": 16,
-        "rotation": 0,
+        "rotation": 6,
         "stepMs": 187.5
       },
       {
-        "k": 8,
-        "n": 8,
-        "rotation": 0,
+        "k": 6,
+        "n": 16,
+        "rotation": 6,
         "stepMs": 187.5
       }
     ],
     "rear_guard": [
       {
-        "k": 8,
+        "k": 4,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 8,
+        "k": 4,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 10,
+        "k": 5,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 10,
+        "k": 5,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 10,
+        "k": 5,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 12,
+        "k": 6,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 12,
+        "k": 6,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 12,
+        "k": 6,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 12,
+        "k": 6,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 14,
+        "k": 7,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 14,
+        "k": 7,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
@@ -831,67 +831,67 @@
     ],
     "broadside": [
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 2,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
@@ -967,135 +967,135 @@
     ],
     "shard_swarm": [
       {
-        "k": 10,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 11,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 12,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 13,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 14,
+        "k": 2,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 14,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 16,
+        "k": 3,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 8,
-        "n": 8,
+        "k": 3,
+        "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 8,
-        "n": 8,
+        "k": 3,
+        "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 8,
-        "n": 8,
+        "k": 3,
+        "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 8,
-        "n": 8,
+        "k": 3,
+        "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       }
     ],
     "heavy_slug": [
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 3,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5
       },
       {
-        "k": 4,
+        "k": 1,
         "n": 16,
         "rotation": 0,
         "stepMs": 187.5

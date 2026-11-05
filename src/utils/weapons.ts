@@ -1037,6 +1037,12 @@ export interface ImpactFxSpec {
  * pre-change baselines below, and `utils/weaponLevels.test.ts` asserts the
  * level-1 / level-cap ceilings.
  *
+ * **Cadence is the live Euclidean ladder** (`resolveWeaponPattern`), not the
+ * catalogue's nominal `subdivisions`. AH-0MW23FEDK006BRHK found the level-0
+ * trim had only reached the nominal table, re-timed every affected ladder and
+ * switched this measurement to the cadence the game actually plays, so the
+ * percentages below describe the shipped game.
+ *
  * ### Output definition per family
  *
  * - **projectile** weapons — single-target **hits/s**:
@@ -1058,12 +1064,13 @@ export interface ImpactFxSpec {
  * - **Level 0:** every **non-cannon** weapon's output is **≤ 60 %** of its
  *   pre-change baseline below, and no non-cannon weapon's single-target
  *   output exceeds **1.5× the cannon's** (the cannon cap takes precedence
- *   where 60 % is still too strong — today `rapid`).
+ *   where 60 % is still too strong; since the cadence re-time the closest
+ *   weapon, `rapid`, sits at 1.44×).
  * - **Level 1:** a resolved weapon's output is **≤ 2.5×** its own level-0
  *   output.
  * - **Level cap (saturated):** **≤ 50 %** of the pre-change saturated output.
- *   The cannon pattern saturated at ≈27× its level 0 (≈72 hits/s, 9 bullets
- *   at 8 shots/s), so the post-change cap is ≤ ≈13.5× / 36 hits/s.
+ *   The cannon pattern saturated at ≈72 hits/s (9 bullets at 8 shots/s), so
+ *   the post-change cap is ≤ 36 hits/s.
  *
  * The ceilings are expressed in code as `WEAPON_STRENGTH_BUDGET`
  * (`utils/weaponStrength.ts`). Where an exact 60 % is not representable on

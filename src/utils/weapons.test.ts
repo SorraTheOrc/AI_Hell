@@ -70,6 +70,10 @@ import {
 } from './weapons';
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
 import {
+  euclideanOnsetsPerMinute,
+  resolveWeaponPattern,
+} from './weaponLevels';
+import {
   WEAPON_STRENGTH_BUDGET,
   weaponStrength,
   weaponStrengthTable,
@@ -642,7 +646,8 @@ describe('beat-grid fire rates (AH-0MUAYB8EH005RJ8B AC3)', () => {
     // dual — 0.5/beat (one shot every 2 beats) → 1500 ms
     expect(WEAPON_DUAL_SUBDIVISION).toBe(0.5);
     expect(WEAPON_CATALOGUE.dual.fireRateMs).toBe(1500);
-    // rapid — 3/beat (240 BPM) → 250 ms (the 1.5× cannon cap binds)
+    // rapid — 3/beat (240 BPM) → 250 ms (its nominal; the live ladder plays
+    // the E(13,16) superposition rung, AH-0MW23FEDK006BRHK)
     expect(WEAPON_RAPID_SUBDIVISION).toBe(3);
     expect(WEAPON_CATALOGUE.rapid.fireRateMs).toBe(250);
   });
@@ -1545,17 +1550,40 @@ describe('level-0 strength budget (AH-0MVRENEME004FS8T AC1/AC2)', () => {
     expect(cannon.hitscan).toBeUndefined();
   });
 
-  test("the helper reproduces the cannon's recorded baseline exactly", () => {
-    // Calibrates the measurement helper against an independent literal: the
-    // cannon fires 1 bullet at 2 shots/beat on the 80 BPM grid.
+  test('the helper measures the live ladder cadence, never the nominal one', () => {
+    // Calibrates the measurement helper against two independent numbers for
+    // the same weapon: the **live** Euclidean rung the player fires
+    // (E(9,16) = 2.25 onsets/beat = 3 shots/s) and the **legacy nominal**
+    // catalogue cadence (`subdivisions` 2 = 375 ms = 2.67 shots/s). The
+    // helper must report the former (AH-0MW23FEDK006BRHK AC2): measuring the
+    // nominal scores a cadence the game never plays.
     const cannon = weaponStrength('cannon');
+    const nominalShotsPerSecond = 1000 / WEAPON_CATALOGUE.cannon.fireRateMs;
     expect(cannon.family).toBe('projectile');
     expect(cannon.outputUnit).toBe('hits/s');
-    expect(cannon.shotsPerSecond).toBeCloseTo(8 / 3, 9);
+    expect(cannon.shotsPerSecond).toBeCloseTo(3, 9);
+    expect(cannon.shotsPerSecond).toBeCloseTo((9 / 16) * 4 * (80 / 60), 9);
+    expect(nominalShotsPerSecond).toBeCloseTo(8 / 3, 9);
+    expect(cannon.shotsPerSecond).not.toBeCloseTo(nominalShotsPerSecond, 9);
     expect(cannon.projectilesPerShot).toBe(1);
     expect(cannon.hitsPerProjectile).toBe(1);
-    expect(cannon.singleTargetOutput).toBeCloseTo(8 / 3, 9);
-    expect(cannon.output).toBeCloseTo(LEVEL0_OUTPUT_BASELINE.cannon, 9);
+    expect(cannon.singleTargetOutput).toBeCloseTo(3, 9);
+    expect(cannon.output).toBeCloseTo(3, 9);
+  });
+
+  test('every weapon is measured on the ladder onset rate at every sampled level', () => {
+    // The same calibration, swept: `shotsPerSecond` is exactly the resolved
+    // Euclidean pattern's own onset rate for every weapon and level, so no
+    // family can silently fall back to the nominal cadence.
+    for (const id of ALL_WEAPON_IDS) {
+      for (const level of [0, 1, 2, 5, 15, 100]) {
+        const shotsPerSecond = weaponStrength(id, level).shotsPerSecond;
+        expect(
+          shotsPerSecond,
+          `${id} @ level ${level}`,
+        ).toBeCloseTo(euclideanOnsetsPerMinute(resolveWeaponPattern(id, level)) / 60, 9);
+      }
+    }
   });
 
   test('every catalogue weapon is measured by its documented family', () => {
@@ -1654,23 +1682,27 @@ describe('level-0 strength budget (AH-0MVRENEME004FS8T AC1/AC2)', () => {
   const LEVEL0_TRIMMED: Readonly<
     Record<WeaponId, { output: number; sharePercent: number }>
   > = {
-    // The cannon is frozen at 1.00× — untouched by this trim.
-    cannon: { output: 8 / 3, sharePercent: 100 },
-    // 3 bullets × 0.5 shots/beat — cadence lever, 50 %.
+    // The cannon is frozen/exempt. Its *live* level-0 rung is the E(9,16)
+    // superposition (2.25 onsets/beat = 3 shots/s), so the live measurement
+    // is 112.5 % of the frozen nominal-cadence baseline literal.
+    cannon: { output: 3, sharePercent: 112.5 },
+    // 3 bullets × 0.5 shots/beat — the cadence lever, 50 %.
     spread: { output: 2, sharePercent: 50 },
-    // 2 parallel bullets × 0.5 shots/beat — cadence lever, 50 %.
+    // 2 parallel bullets × 0.5 shots/beat — the cadence lever, 50 %.
     dual: { output: 4 / 3, sharePercent: 50 },
-    // 1 bullet × 3 shots/beat — the 1.5× cannon cap binds, 50 %.
-    rapid: { output: 4, sharePercent: 50 },
+    // 1 bullet × the live E(13,16) superposition rung (3.25 onsets/beat) —
+    // 54.2 %, inside both level-0 ceilings.
+    rapid: { output: 13 / 3, sharePercent: (13 / 3 / 8) * 100 },
     // Already inside the bound (single-hit beam, AH-0MVREBUJ5004HDRQ); the
-    // curve-flattening work halved its cadence again because that cadence is
-    // the beam's only output axis (AH-0MVWAVL6R001UI60).
+    // curve-flattening carve-out halves its cadence to 0.5 onsets/beat, which
+    // is the beam's only output axis (AH-0MVWAVL6R001UI60 /
+    // AH-0MW23FEDK006BRHK) — 25 %.
     wave_laser: { output: 2 / 3, sharePercent: 25 },
-    // 1 pellet × 0.5 shots/beat × 3 bounce targets — cadence lever, 50 %.
+    // 1 pellet × 0.5 shots/beat × 3 bounce targets — the cadence lever, 50 %.
     ricochet: { output: 2, sharePercent: 50 },
-    // (missile + 2 warheads) × 0.25 shots/beat — cadence lever, 50 %.
+    // (missile + 2 warheads) × 0.25 shots/beat — the cadence lever, 50 %.
     cluster: { output: 1, sharePercent: 50 },
-    // 2 pods × 0.5 shots/beat — cadence lever, 50 %.
+    // 2 pods × 0.5 shots/beat — the cadence lever, 50 %.
     options: { output: 4 / 3, sharePercent: 50 },
     // 34 px radius² × 0.33 shots/beat — nearest whole px at or below 60 %.
     nova: { output: (34 * 34) / 3, sharePercent: (34 * 34) / 2025 * 100 },
@@ -1678,15 +1710,16 @@ describe('level-0 strength budget (AH-0MVRENEME004FS8T AC1/AC2)', () => {
     mortar: { output: (27 * 27 * 2) / 3, sharePercent: (27 * 27) / 1225 * 100 },
     // 46 px radius² × 1.33 shots/beat — 58.8 %.
     arc: { output: (46 * 46 * 4) / 3, sharePercent: (46 * 46) / 3600 * 100 },
-    // 1 backward bullet × 1 shot/beat — cadence lever, 50 %.
+    // 1 backward bullet × 1 shot/beat — the cadence lever, 50 %.
     rear_guard: { output: 4 / 3, sharePercent: 50 },
-    // 2 perpendicular bullets × 0.25 shots/beat — cadence lever, 50 %.
+    // 2 perpendicular bullets × 0.25 shots/beat — the cadence lever, 50 %.
     broadside: { output: 2 / 3, sharePercent: 50 },
-    // Already inside the bound (level-0 budget 1, AH-0MVY0A23A009MRK3).
-    railgun: { output: 1 / 3, sharePercent: 20 },
-    // 5 shards × 0.5 shots/beat — cadence lever keeps the five-shard fan, 50 %.
+    // Inside the bound on its 1 HP level-0 budget, paying for the live
+    // E(2,16) superposition rung (0.5 onsets/beat) — 40 %.
+    railgun: { output: 2 / 3, sharePercent: 40 },
+    // 5 shards × 0.5 shots/beat — the cadence lever keeps the five-shard fan, 50 %.
     shard_swarm: { output: 10 / 3, sharePercent: 50 },
-    // 1 slug × 0.25 shots/beat — cadence lever, 50 %.
+    // 1 slug × 0.25 shots/beat — the cadence lever, 50 %.
     heavy_slug: { output: 1 / 3, sharePercent: 50 },
   };
 

@@ -1423,14 +1423,16 @@ describe('Player ship entity', () => {
     const player = await freshPlayer();
 
     player.tryFire(0.2); // advance to t=200 ms
-    player.equipWeapon('spread'); // E(4, 16): onsets 0, 750, 1500, 2250
-    expect(player.getNextShotTime('spread')).toBe(750);
+    // The trimmed spread plays E(2, 16): onsets 0 and 1500 (0.5 onsets/beat,
+    // AH-0MW23FEDK006BRHK) — one shot every two beats.
+    player.equipWeapon('spread');
+    expect(player.getNextShotTime('spread')).toBe(1500);
 
     // t=700: the spread's first onset after collection has not arrived.
     expect(player.tryFire(0.5)).not.toContain('spread');
-    // t=800: the 750 ms onset has elapsed.
-    expect(player.tryFire(0.1)).toContain('spread');
-    expect(player.getLastShotTime('spread')).toBe(750);
+    // t=1500: the 1500 ms onset has elapsed.
+    expect(player.tryFire(0.8)).toContain('spread');
+    expect(player.getLastShotTime('spread')).toBe(1500);
   });
 
   it('identical time-driven input produces an identical shot schedule (determinism)', async () => {
@@ -1463,46 +1465,49 @@ describe('Player ship entity', () => {
   it('an upgrade morph changes the pattern only on a bar downbeat (AC: bar-boundary morph)', async () => {
     const player = await freshPlayer();
     player.tryFire(0.5); // t = 500 ms, mid-bar
-    player.equipWeapon('spread'); // level 1 → E(4, 16)
-    const levelOne = player.getFirePattern('spread')!;
-    expect(levelOne.k).toBe(4);
-    expect(levelOne.n).toBe(16);
+    // The arc's second ladder rung is a pure **rotation** morph: rung 0 is the
+    // straight E(4, 16) rotated 4, rung 1 is the same tile rotated 6
+    // (identical k, n and density, different phase) — the pair survives the
+    // level-0 cadence re-time (AH-0MW23FEDK006BRHK).
+    player.equipWeapon('arc'); // level 1 → upgrade index 0 → E(4, 16) rot 4
+    const levelZero = player.getFirePattern('arc')!;
+    expect(levelZero.k).toBe(4);
+    expect(levelZero.n).toBe(16);
+    expect(levelZero.rotation).toBe(4);
 
     player.tryFire(0.5); // t = 1000 ms, still mid-bar
-    player.equipWeapon('spread'); // level 2 (upgrade index 1) → still E(4, 16)
-    // The flattened fire-rate curve moves the E(5, 16) rung to upgrade index 2,
-    // so the first upgrade no longer changes the shape (AH-0MVWAVL6R001UI60).
-    expect(player.getPendingFirePattern('spread')).toBeUndefined();
-    player.equipWeapon('spread'); // level 3 (upgrade index 2) → E(5, 16), queued
-
-    const pending = player.getPendingFirePattern('spread')!;
-    expect(pending.pattern.k).toBe(5);
+    player.equipWeapon('arc'); // level 2 → upgrade index 1 → rot 6, queued
+    const pending = player.getPendingFirePattern('arc')!;
+    expect(pending.pattern.k).toBe(4);
+    expect(pending.pattern.n).toBe(16);
+    expect(pending.pattern.rotation).toBe(6);
     // The morph lands on the next bar downbeat (one bar = 16 × 187.5 ms).
     expect(pending.effectiveAtMs).toBe(3000);
-    // The level-1 pattern keeps sounding until then.
-    expect(player.getFirePattern('spread')).toEqual(levelOne);
+    // The level-0 pattern keeps sounding until then.
+    expect(player.getFirePattern('arc')).toEqual(levelZero);
 
-    // Drive to the downbeat: every spread shot before it is still an onset of
-    // E(4, 16). In particular 1125 ms (a 5/16 onset, not a 4/16 one) is
-    // silent, so the upgrade never leaks into the bar it was collected in.
-    const before = collectShots(player, ['spread'], 25, 80); // t → 3000
-    for (const tick of before.spread) {
-      expect(isOnset(tick, euclidPattern(4, 16), 187.5, 0)).toBe(true);
+    // Drive to the downbeat: every arc shot before it is still an onset of
+    // E(4, 16) rotated 4 (750/1500/2250/3000 …). In particular 1125 ms — a
+    // rot-6 onset, not a rot-4 one — is silent, so the upgrade never leaks
+    // into the bar it was collected in.
+    const before = collectShots(player, ['arc'], 25, 80); // t → 3000
+    for (const tick of before.arc) {
+      expect(isOnset(tick, euclidPattern(4, 16, 4), 187.5, 0)).toBe(true);
     }
-    expect(before.spread).not.toContain(1125);
+    expect(before.arc).not.toContain(1125);
 
-    // The downbeat itself is the first onset of the new pattern…
-    expect(before.spread).toContain(3000);
-    expect(player.getPendingFirePattern('spread')).toBeUndefined();
-    expect(player.getFirePattern('spread')!.k).toBe(5);
+    // The queued pattern lands at the downbeat…
+    expect(player.getPendingFirePattern('arc')).toBeUndefined();
+    expect(player.getFirePattern('arc')!.rotation).toBe(6);
 
-    // …and from then on the 5/16 onsets sound: E(5, 16) has onsets
-    // [0, 3, 6, 9, 12] steps, so its first onset after the downbeat is
-    // 3562.5 ms — a tick the old E(4, 16) never used.
-    const after = collectShots(player, ['spread'], 25, 24); // t → 3600
-    expect(after.spread).toContain(3562.5);
-    for (const tick of after.spread) {
-      expect(isOnset(tick, euclidPattern(5, 16), 187.5, 0)).toBe(true);
+    // …and the rot-6 phase sounds from then on: its bar-relative onsets are
+    // steps 6, 10, 14 and 2, so 3375 ms (step 18 in bar 1) is a tick the
+    // rot-4 pattern never used.
+    const after = collectShots(player, ['arc'], 25, 24); // t → 3600
+    expect(after.arc).toContain(3375);
+    expect(after.arc).not.toContain(3000);
+    for (const tick of after.arc) {
+      expect(isOnset(tick, euclidPattern(4, 16, 6), 187.5, 0)).toBe(true);
     }
   });
 

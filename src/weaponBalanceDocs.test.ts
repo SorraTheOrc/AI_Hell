@@ -191,9 +191,12 @@ describe('weapon balance documentation matches the catalogue (AC7)', () => {
         `${weaponStrength(weapon, 0).output.toFixed(2)} `,
       );
     }
-    // The worked example quotes the resolved cannon-pattern numbers.
+    // The worked example quotes the resolved cannon-pattern numbers. They are
+    // the **live ladder** walk (AH-0MW23FEDK006BRHK): level 1 lands on
+    // E(10,16) = 2.5 onsets/beat, and the level cap on the E(8,8) morph.
     const worked = slice(levelingSection, 'Worked example', '**Beat-grid invariant.**');
-    expect(worked).toContain('5.33 hits/s');
+    expect(worked).toContain('E(9,16)');
+    expect(worked).toContain('6.67 hits/s');
     expect(worked).toContain('26.67 hits/s');
     expect(worked).toContain('37 %');
   });

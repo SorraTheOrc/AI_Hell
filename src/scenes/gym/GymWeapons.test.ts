@@ -1511,12 +1511,18 @@ describe('GymWeapons — ricochet edge-bounce demonstration (AH-0MV1BIV5L005NJAI
     player.setInput({ up: false, down: false, left: false, right: true });
     player.physicsTick(0.1, scene.scale.width, scene.scale.height);
 
-    // Advance a full beat so the 1/beat ricochet fires (and past its own
-    // cue), then steer the spawned shot at the left wall.
-    scene.tick(0.8);
-    const bullet = scene
-      .getBullets()
-      .find((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    // Advance to the ricochet's first onset — the trimmed ladder plays
+    // E(2, 16), one shot every two beats (1500 ms at 80 BPM,
+    // AH-0MW23FEDK006BRHK) — then steer the spawned shot at the left wall.
+    const findBullet = () =>
+      scene
+        .getBullets()
+        .find((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    let bullet = findBullet();
+    for (let i = 0; i < 240 && bullet === undefined; i++) {
+      scene.tick(1 / 60);
+      bullet = findBullet();
+    }
     expect(bullet).toBeDefined();
     expect(typeof bullet!.onWallBounce).toBe('function');
     bullet!.x = 2;
@@ -1651,9 +1657,11 @@ describe('GymWeapons — Gradius Options escort demonstration (AH-0MV1BIVVK0043T
 
     // Drive the inherited shared auto-fire directly so the fired pods are
     // observable before the gym's bullet-advance culls short-lived bullets.
+    // One shot every two beats on the trimmed E(2, 16) ladder
+    // (AH-0MW23FEDK006BRHK): 1600 ms covers the first onset.
     (
       scene as unknown as { _autoFire(dt: number): void }
-    )._autoFire(0.8);
+    )._autoFire(1.6);
 
     const pods = scene
       .getBullets()

@@ -20,6 +20,15 @@
  * | `orbit` | **pod count × shots/s** — every pod fires once per trigger |
  * | `aoe` | **coverage × cadence** — `radius² × shots/s` in `px²/s` |
  *
+ * **`hits/s` is the live cadence, not the nominal one** (AH-0MW23FEDK006BRHK).
+ * The game fires on the **Euclidean ladder** (`resolveWeaponPattern`), while
+ * the catalogue's `subdivisions`/`fireRateMs` is only the legacy nominal used
+ * for level-stat quantisation and the hold-full ghost metronome. Measuring the
+ * nominal would score a cadence nobody plays, so {@link weaponStrength}
+ * derives `shotsPerSecond` from the ladder's own onset density
+ * (`euclideanOnsetsPerMinute`) — averaged over a tile, which is exact for the
+ * straight patterns and the honest long-run rate for the irregular ones.
+ *
  * `radius²` (rather than `π·radius²`) is deliberate: `π` is a constant scale
  * factor that cancels in every budget ratio, so the measure stays exact and
  * readable. AOE weapons never fire a pattern bullet, so their
@@ -37,7 +46,11 @@
  * under test.
  */
 
-import { resolveWeaponDefinition } from './weaponLevels';
+import {
+  euclideanOnsetsPerMinute,
+  resolveWeaponDefinition,
+  resolveWeaponPattern,
+} from './weaponLevels';
 import {
   WEAPON_CATALOGUE,
   type WeaponDefinition,
@@ -100,8 +113,11 @@ export interface WeaponStrength {
   /** The strength family (decides the output measure). */
   family: WeaponOutputFamily;
   /**
-   * Shots per second of the weapon's trigger: `1000 / fireRateMs` of the
-   * level-resolved definition, so it always follows the beat grid.
+   * Shots per second of the weapon's trigger, **as the game plays it**: the
+   * level-resolved Euclidean ladder's onset rate
+   * (`euclideanOnsetsPerMinute` / 60). At level 0 this is the authored
+   * level-0 rung (e.g. 9/16 → 180 onsets/min → 3 shots/s); it is never the legacy nominal
+   * `fireRateMs` cadence (AH-0MW23FEDK006BRHK).
    */
   shotsPerSecond: number;
   /**
@@ -225,7 +241,10 @@ export function weaponStrength(
   const definition = resolveWeaponDefinition(weaponId, level);
   const safeLevel = Number.isFinite(level) ? Math.max(0, Math.floor(level)) : 0;
   const family = weaponOutputFamily(definition);
-  const shotsPerSecond = 1000 / definition.fireRateMs;
+  // The cadence is the **live** Euclidean ladder (what `Player` schedules),
+  // not the nominal `fireRateMs` the catalogue stores (AH-0MW23FEDK006BRHK).
+  const shotsPerSecond =
+    euclideanOnsetsPerMinute(resolveWeaponPattern(weaponId, safeLevel)) / 60;
   const payload = projectilesPerShot(definition);
   const depth = hitsPerProjectile(definition);
   const singleTargetOutput = payload * shotsPerSecond;
