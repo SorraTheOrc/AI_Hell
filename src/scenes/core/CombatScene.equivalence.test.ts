@@ -2599,6 +2599,16 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['collectOverlappingDrops', 'src/scenes/core/dropLayer.ts'],
   ['applyDropMagnet', 'src/scenes/core/dropLayer.ts'],
   ['playDropPickupCue', 'src/scenes/core/dropLayer.ts'],
+  // Blocked-drop stick-then-throw discard (parent AH-0MW0UAQ23005AC9L,
+  // AH-0MW3H05GY009AU0C): the rule lives once in the shared stepper and is
+  // consumed by the shared drop layer, so a scene (or a drop layer copy) that
+  // re-introduces the stick/throw body fails the repo-wide duplicate guard.
+  ['randomUnitDirection', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['startBlockedStick', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['cancelBlockedDiscard', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['cancelAllBlockedDiscards', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['isDiscarding', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['stepBlockedDiscards', 'src/scenes/core/blockedDropDiscard.ts'],
   ['applyMineralScoop', 'src/powerups/mineralScoop.ts'],
   ['collectMinerals', 'src/scenes/core/mineralLayer.ts'],
   // The hold-full reward moved to the Phaser-free `powerups/choiceReward`

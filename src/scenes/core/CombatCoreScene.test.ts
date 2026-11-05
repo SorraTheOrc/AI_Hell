@@ -7,6 +7,7 @@ import {
   type UfoCueRecorder,
 } from '../../test/collectorDroneFixtures';
 import {
+  BLOCKED_DROP_STICK_SECONDS,
   BLOCKED_DROP_THROW_SPEED,
   GAME_HEIGHT,
   GAME_WIDTH,
@@ -31,6 +32,8 @@ import {
 } from './CombatCoreScene';
 import * as muzzleFlashModule from '../../vfx/muzzleFlash';
 import * as hitscanBeamModule from '../../vfx/hitscanBeam';
+import * as effectsModule from '../../audio/effects';
+import type { PowerUpId } from '../../powerups/types';
 import { isDiscarding, startBlockedStick, type BlockedDiscardState } from './blockedDropDiscard';
 import { BULLET_COLORS, WEAPON_CATALOGUE } from '../../utils/weapons';
 import { expectRangedClear } from '../../test/powerUpEffectFixtures';
@@ -56,7 +59,7 @@ class StubBullet implements CombatEnemyBullet {
 /** Minimal drop satisfying the shared collect contract. */
 class StubDrop implements CombatDrop {
   readonly powerUp: PowerUp;
-  readonly dropId: 'speed_boost' | 'bomb';
+  readonly dropId: PowerUpId;
   weaponDropId?: string;
   absorbing?: boolean;
   blockedDiscard?: BlockedDiscardState;
@@ -65,7 +68,7 @@ class StubDrop implements CombatDrop {
     public x: number,
     public y: number,
     public readonly graphics: Phaser.GameObjects.Graphics,
-    dropId: 'speed_boost' | 'bomb',
+    dropId: PowerUpId,
     weaponDropId?: string,
     growth = 0.5,
   ) {
@@ -229,14 +232,42 @@ class StubCoreScene extends BareCoreScene {
   runAdvanceDropLifecycles(drops: CombatDrop[], dt: number): CombatDrop[] {
     return this._advanceDropLifecycles(drops, dt);
   }
+  /**
+   * Drives the complete shared per-frame drop sequence — Magnet → lifecycle
+   * (with the blocked stepper) → overlap collection — exactly as every
+   * drop-spawning scene runs it through `_updateDropLayer`.
+   */
+  runUpdateDropLayer(drops: CombatDrop[], dt: number): CombatDrop[] {
+    return this._updateDropLayer(drops, dt);
+  }
   /** Pins the shared seeded RNG so a throw direction is reproducible. */
   setSceneRng(rng: () => number): void {
     this.sceneRng = rng;
   }
-  addDrop(id: 'speed_boost' | 'bomb', weaponDropId?: string): StubDrop {
+  addDrop(id: PowerUpId, weaponDropId?: string): StubDrop {
     const g = this.add.graphics();
     return new StubDrop(120, 120, g, id, weaponDropId);
   }
+}
+
+/**
+ * Grants six permanent kinds — four power-ups and two weapon drops — so the
+ * shared six-slot pool is exactly full (the same mixed build the six-slot
+ * parity suite uses: weapons consume power-up slots too).
+ */
+function fillSixSlots(player: Player): void {
+  for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift'] as const) {
+    player.getPowerUpLevelStore().collect(id, true);
+  }
+  for (const id of ['spread', 'dual'] as const) {
+    player.equipWeapon(id, true);
+  }
+}
+
+/** Frees the whole pool through the run-restart reset, so drops are collectable again. */
+function freeSixSlots(player: Player): void {
+  player.getPowerUpLevelStore().reset();
+  player.resetWeaponLevels();
 }
 
 describe('CombatCoreScene — shared base class', () => {
@@ -244,6 +275,7 @@ describe('CombatCoreScene — shared base class', () => {
 
   afterEach(() => {
     for (const game of games.splice(0)) game.game.destroy(true);
+    vi.restoreAllMocks();
   });
 
   async function boot<T>(sceneClass: typeof Phaser.Scene): Promise<T> {
@@ -1295,6 +1327,119 @@ describe('CombatCoreScene — shared base class', () => {
     expect(destroy, 'the Graphics of a drop discarded at the edge is destroyed').toHaveBeenCalledTimes(
       1,
     );
+  });
+
+  it('AC — the complete shared drop sequence refuses a non-exempt drop at a full pool, sticks it for 1.5 s, throws it and retires it at the edge with exactly one blocked cue', async () => {
+    const blockedCue = vi.spyOn(effectsModule, 'playPowerUpBlockedSound');
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
+    fillSixSlots(player);
+    // Q2a: this run owns no Magnet, so the stick must not depend on it.
+    expect(scene.effects.magnetEffectStacks(), 'no Magnet stacks in this run').toBe(0);
+    scene.setSceneRng(() => 0); // deterministic straight-right throw
+
+    // An unheld, non-exempt kind is refused by the six-slot gate.
+    const drop = scene.addDrop('teleport');
+    drop.x = player.x;
+    drop.y = player.y;
+
+    // First frame: the shared sequence refuses the drop, plays the cue once
+    // and starts the stick window on this frame (producer Q1a).
+    let kept = scene.runUpdateDropLayer([drop], 1 / 60);
+    expect(kept, 'a refused drop stays on the field').toContain(drop);
+    expect(
+      drop.blockedDiscard,
+      'the first refused frame starts the shared stick window',
+    ).toBeDefined();
+    expect(isDiscarding(drop), 'the drop is not thrown on the first frame').toBe(false);
+    expect(drop.x, 'the refused drop is snapped onto the ship').toBeCloseTo(player.x, 6);
+    expect(drop.y, 'the refused drop is snapped onto the ship').toBeCloseTo(player.y, 6);
+    expect(blockedCue, 'the blocked cue fires exactly once').toHaveBeenCalledTimes(1);
+
+    // 1.4 s of dt slices inside the window: the drop tracks the moving ship
+    // (explicitly, with no Magnet) and the cue never repeats.
+    for (let i = 0; i < 14; i++) {
+      player.setPosition(player.x + 3, player.y + 1);
+      kept = scene.runUpdateDropLayer(kept, 0.1);
+      expect(isDiscarding(drop), 'the 1.5 s window has not elapsed yet').toBe(false);
+      expect(drop.x, 'the sticking drop tracks the ship on x').toBeCloseTo(player.x, 6);
+      expect(drop.y, 'the sticking drop tracks the ship on y').toBeCloseTo(player.y, 6);
+      expect(
+        blockedCue,
+        'the cue never repeats while the drop stays on the field',
+      ).toHaveBeenCalledTimes(1);
+    }
+    expect(
+      drop.blockedDiscard?.stickSeconds,
+      'the shared step accumulated 1.4 s of dt',
+    ).toBeCloseTo(1.4, 6);
+
+    // The 1.5 s window elapses: the drop is launched on that frame.
+    kept = scene.runUpdateDropLayer(kept, 0.1);
+    expect(
+      drop.blockedDiscard?.stickSeconds,
+      'the window elapses at 1.5 s of accumulated dt',
+    ).toBeGreaterThanOrEqual(BLOCKED_DROP_STICK_SECONDS);
+    expect(isDiscarding(drop), 'the window elapses and launches the drop').toBe(true);
+    const launchX = drop.x;
+    const launchY = drop.y;
+
+    // The throw is a straight line at the shared speed and ignores the ship.
+    player.setPosition(0, 0);
+    kept = scene.runUpdateDropLayer(kept, 0.1);
+    expect(kept, 'a launched drop stays on the field while short of an edge').toContain(drop);
+    expect(drop.x - launchX, 'the throw advances BLOCKED_DROP_THROW_SPEED × dt').toBeCloseTo(
+      BLOCKED_DROP_THROW_SPEED * 0.1,
+      4,
+    );
+    expect(drop.y - launchY, 'the throw ignores where the ship moved').toBeCloseTo(0, 6);
+
+    // Fly to the edge: the shared step retires the drop and destroys its Graphics.
+    const destroy = vi.spyOn(drop.graphics, 'destroy');
+    let removed = false;
+    for (let i = 0; i < 200 && !removed; i++) {
+      kept = scene.runUpdateDropLayer(kept, 0.1);
+      removed = !kept.includes(drop);
+    }
+    expect(removed, 'a launched drop is removed once it reaches a screen edge').toBe(true);
+    expect(
+      destroy,
+      'the Graphics of the discarded drop is destroyed exactly once',
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC (Q3a) — a slot freeing inside the stick window collects the drop and cancels the throw', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
+    fillSixSlots(player);
+    scene.setSceneRng(() => 0);
+
+    const drop = scene.addDrop('teleport');
+    drop.x = player.x;
+    drop.y = player.y;
+
+    // The full pool refuses the drop, so it sticks.
+    let kept = scene.runUpdateDropLayer([drop], 0.1);
+    expect(drop.blockedDiscard, 'the full pool starts the stick window').toBeDefined();
+
+    // 1.0 s into the 1.5 s window.
+    for (let i = 0; i < 10; i++) kept = scene.runUpdateDropLayer(kept, 0.1);
+    expect(drop.blockedDiscard?.stickSeconds, '1.0 s into the window').toBeCloseTo(1.0, 6);
+    expect(isDiscarding(drop), 'still sticking').toBe(false);
+
+    // A slot frees before the window elapses: collect normally, cancel the throw.
+    freeSixSlots(player);
+    kept = scene.runUpdateDropLayer(kept, 0.1);
+    expect(kept, 'a collected drop leaves the field').not.toContain(drop);
+    expect(drop.absorbing, 'the freed slot collects the drop normally').toBe(true);
+    expect(
+      drop.blockedDiscard,
+      'collection clears the stick/throw state so no throw can follow',
+    ).toBeUndefined();
+
+    // Later frames never launch the collected drop.
+    kept = scene.runUpdateDropLayer(kept, 1);
+    expect(isDiscarding(drop), 'the cancelled throw never launches').toBe(false);
   });
 });
 
