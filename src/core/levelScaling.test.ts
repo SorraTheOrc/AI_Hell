@@ -9,14 +9,15 @@
  * **F1 (AH-0MVLJEE7O008RX9X) has since flipped every `it.fails` back to
  * `it`**: the contract is now enforced as a normal green test.
  *
- * **Halved supply dial (AH-0MW3MLRHL000DKPM).** The per-kill curve is being
- * halved (0.18 → 0.09 at level 1, 0.05 → 0.025 at level 10). The assertions
- * that pinned the old endpoints were rewritten **in place** (this file owns
- * that contract, AH-0MVLJCYGW001TRB3) and re-wrapped in `it.fails` so the
- * suite stays green until the production defaults change; the implementation
- * item flips them back to `it`. Tests that pin behaviour which must *not*
- * change (the ≤ 30 % late-level ratio, `dropChanceRatio`, count scaling) stay
- * plain `it` and are green on both sides of the change.
+ * **Halved supply dial (AH-0MW3MLRHL000DKPM).** The per-kill curve was halved
+ * (0.18 → 0.09 at level 1, 0.05 → 0.025 at level 10). The assertions that
+ * pinned the old endpoints were rewritten **in place** (this file owns that
+ * contract, AH-0MVLJCYGW001TRB3) and re-wrapped in `it.fails` so the suite
+ * stayed green until the production defaults changed; the implementation item
+ * (AH-0MW3MLTY3005MIXR) has now flipped them back to `it`. Tests that pin
+ * behaviour which must *not* change (the ≤ 30 % late-level ratio,
+ * `dropChanceRatio`, count scaling) stayed plain `it` and are green on both
+ * sides of the change.
  *
  * The module is loaded through a non-literal dynamic import on purpose: a
  * static `import './levelScaling'` would fail `tsc --noEmit` (and therefore
@@ -132,7 +133,7 @@ function vGroup(count: number): ScalingGroup {
 describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () => {
   // ── Level-1 identity and documented endpoints ─────────────────────
 
-  it.fails('exposes 0.09 as the level-1 per-kill drop chance', async () => {
+  it('exposes 0.09 as the level-1 per-kill drop chance', async () => {
     // `POWER_UP_DROP_CHANCE` is the documented **level-1 base** of the curve
     // (re-exported by `src/scenes/PlayScene.ts`), halved from 0.18.
     const scaling = await levelScaling();
@@ -160,7 +161,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     expect(scaling.enemyCountMultiplier(10)).toBe(2);
   });
 
-  it.fails('reaches a 0.025 per-kill drop chance at level 10', async () => {
+  it('reaches a 0.025 per-kill drop chance at level 10', async () => {
     const scaling = await levelScaling();
     expect(DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL).toBe(0.025);
     expect(scaling.powerUpDropChance(10)).toBeCloseTo(0.025, 10);
@@ -185,7 +186,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     }
   });
 
-  it.fails('ramps the per-kill drop chance linearly from 0.09 to 0.025', async () => {
+  it('ramps the per-kill drop chance linearly from 0.09 to 0.025', async () => {
     const scaling = await levelScaling();
     // 0.09 + (0.025 - 0.09) * (level - 1) / 9
     expect(scaling.powerUpDropChance(5)).toBeCloseTo(
@@ -202,7 +203,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     );
   });
 
-  it.fails('halves the per-kill drop chance at every campaign level', async () => {
+  it('halves the per-kill drop chance at every campaign level', async () => {
     const scaling = await levelScaling();
     // The contract is *exactly half the former curve at every level*, not
     // just at the endpoints: former(level) = 0.18 + (0.05 - 0.18) * t with
@@ -321,7 +322,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     }
   });
 
-  it.fails('keeps Extra Life at ≈ 0.47 % per kill at level 1 despite the halved roll', async () => {
+  it('keeps Extra Life at ≈ 0.47 % per kill at level 1 despite the halved roll', async () => {
     // AC2 of AH-0MW10ZVLH005IJRM: Extra Life's *share* of power-up draws is
     // untouched (weight 3 of the 58-point shared pool), so its absolute
     // per-kill chance simply halves with the roll: 0.09 × 3/58 ≈ 0.47 %.

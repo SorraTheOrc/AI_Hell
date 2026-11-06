@@ -123,6 +123,8 @@ import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
 import {
   DEFAULT_RULES,
   POWER_UP_WEIGHT_IDS,
+  type GameRules,
+  RULES_SCHEMA_VERSION,
   RULES_STORAGE_KEY,
   WEAPON_WEIGHT_IDS,
 } from '../core/rules';
@@ -3931,13 +3933,18 @@ describe('PlayScene — asteroid Extra Life kill drop (AH-0MV6M2M9P0078N4S)', ()
 
   /**
    * Boots the deterministic static campaign with the Extra Life roll forced
-   * to 1.0, and injects an RNG (0.99) that fails the generic 18 % per-kill
-   * pool so a drop can only come from the forced Extra Life roll.
+   * to 1.0, and injects an RNG (0.99) that fails the generic per-kill pool so
+   * a drop can only come from the forced Extra Life roll.
+   *
+   * The stored blob is stamped with the current schema version: the v5
+   * migration resets `asteroidExtraLifeDropChance` to its off (0) default for
+   * any older config, which would silently void this fixture.
    */
   async function bootWithForcedRoll(): Promise<PlayScene> {
     localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
         sequencedWavesEnabled: false,
         asteroidExtraLifeDropChance: 1,
       }),
@@ -4004,6 +4011,37 @@ describe('PlayScene — asteroid Extra Life kill drop (AH-0MV6M2M9P0078N4S)', ()
     expect(scene.getDrops().some((d) => d.dropId === 'extra_life')).toBe(false);
     // With the roll forced on, any small kill would have dropped — so the
     // static count proves the tier gate blocked large and medium.
+    expect(scene.getDrops().length).toBe(before);
+  });
+
+  it('AC3 — at the shipped default an asteroid kill never drops an Extra Life (AH-0MW3MLTY3005MIXR)', async () => {
+    // No stored rules ⇒ the shipped asteroid roll default (0, i.e. off). The
+    // generic per-kill pool is pinned off too (0.99 is above every level's
+    // chance), so a small-asteroid kill must leave no drop at all: the
+    // scene consumes the shared `rollAsteroidExtraLife` rule, not a bypass.
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      bootedScene.setRng(() => 0.99);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
+    expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0);
+
+    const before = scene.getDrops().length;
+    const small = scene.spawnAsteroidAt(
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2,
+      'small',
+    );
+    scene.spawnPlayerBullet(small.x, small.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(small.alive).toBe(false);
+    expect(scene.getDrops().some((d) => d.dropId === 'extra_life')).toBe(
+      false,
+    );
     expect(scene.getDrops().length).toBe(before);
   });
 });
@@ -9171,29 +9209,30 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
  * falls with level" (AH-0MVHT1M6O003PU7P): every kill-time drop roll in
  * `PlayScene` must resolve the per-level chance from the live campaign
  * (`WaveManager.currentLevel()?.level`), keep level 1 exactly at today's
- * flat `POWER_UP_DROP_CHANCE` (0.18) rate, fall to the level-10 endpoint
- * (0.05, ≤ 30 % of level 1), scale the small-asteroid Extra Life roll by
- * the same ratio, and leave drop types/weights, the mineral kill-drop rule
- * and timed power-up effects untouched.
+ * flat `POWER_UP_DROP_CHANCE` rate, fall to the level-10 endpoint (≤ 30 % of
+ * level 1), scale the small-asteroid Extra Life roll by the same ratio, and
+ * leave drop types/weights, the mineral kill-drop rule and timed power-up
+ * effects untouched.
  *
  * The level-scaled assertions (level-10 endpoint, mid-run level advance and
- * the level-10 Extra Life roll) **fail on the pre-change HEAD**, where
- * `_maybeDropPowerUp` still rolls a flat 0.18 for every level and the Extra
- * Life roll is the flat `asteroidExtraLifeDropChance`. They are wrapped in
- * Vitest's `it.fails(...)` — the repo's red-before/green-after convention
- * (see `src/core/levelScaling.test.ts` and AH-0MVLJCYGW001TRB3) — so the
- * suite stays green while the flat roll is still live. **F2
- * (AH-0MVLJF5P0005KF8X) works in this file**: the scene now resolves the
- * per-level chance, and the red tests are flipped back to `it` (these
- * three flipped tests are the green evidence the implementation landed).
+ * the level-10 Extra Life roll) **failed on the pre-change HEAD**, where
+ * `_maybeDropPowerUp` still rolled a flat level-1 rate for every level and
+ * the Extra Life roll was a flat `asteroidExtraLifeDropChance`. They were
+ * wrapped in Vitest's `it.fails(...)` — the repo's red-before/green-after
+ * convention — and **F2 (AH-0MVLJF5P0005KF8X) flipped them back to `it`**
+ * (these three flipped tests are the green evidence the implementation
+ * landed).
  *
  * Every roll is driven with a **constant injected RNG**, so the number of
  * drops over the N kill rolls is exact and deterministic — no statistical
  * or threshold sampling. The constants are derived from the documented
- * curve (`powerUpDropChance(1) = 0.18`, `powerUpDropChance(10) = 0.05`,
- * `extraLifeDropChance(10) ≈ 0.0139`), so a tuner who adjusts the curve in
- * `GameRules` updates these tests through the same module the scene
- * consumes.
+ * curve (`powerUpDropChance(1)` — 0.09 since AH-0MW3MLTY3005MIXR — and
+ * `powerUpDropChance(10)`), so a tuner who adjusts the curve in `GameRules`
+ * updates these tests through the same module the scene consumes. The
+ * Extra Life proportionality tests run on an explicit **designer-tuned**
+ * base chance, because the shipped default is now off (0) — a configurable
+ * rule with a zero default, so the proportion is pinned where it is still
+ * observable.
  *
  * @module scenes/PlayScene.dropChance (within PlayScene.test.ts)
  */
@@ -9201,28 +9240,43 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
 describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () => {
   let bootedGame: BootedGame | null = null;
 
-  /** The documented level-1 per-kill chance (0.18). */
+  /** The documented level-1 per-kill chance (0.09). */
   const CHANCE_L1 = powerUpDropChance(1);
-  /** The documented level-2 per-kill chance (≈ 0.1656). */
+  /** The documented level-2 per-kill chance (≈ 0.0828). */
   const CHANCE_L2 = powerUpDropChance(2);
-  /** The documented level-10 per-kill chance (0.05). */
+  /** The documented level-10 per-kill chance (0.025). */
   const CHANCE_L10 = powerUpDropChance(10);
-  /** Below the level-1 chance ⇒ the level-1 roll always drops (0.17). */
+  /** Just below the level-1 chance ⇒ the level-1 roll always drops. */
   const ROLL_BELOW_L1 = CHANCE_L1 - 0.01;
-  /** Above the level-1 chance ⇒ the level-1 roll never drops (0.19). */
+  /** Just above the level-1 chance ⇒ the level-1 roll never drops. */
   const ROLL_ABOVE_L1 = CHANCE_L1 + 0.01;
   /** Between the level-1 and level-2 chances ⇒ drops at 1, never at 2. */
   const ROLL_BETWEEN_L1_L2 = (CHANCE_L1 + CHANCE_L2) / 2;
   /** Between the level-1 and level-10 chances ⇒ drops at 1, never at 10. */
   const ROLL_BETWEEN_L1_L10 = (CHANCE_L1 + CHANCE_L10) / 2;
-  /** Below the level-10 chance ⇒ the level-10 roll still drops (0.049). */
+  /** Below the level-10 chance ⇒ the level-10 roll still drops. */
   const ROLL_BELOW_L10 = CHANCE_L10 - 0.001;
-  /** Extra Life chance at level 1 (unchanged default 0.05). */
-  const EXTRA_LIFE_L1 = DEFAULT_RULES.asteroidExtraLifeDropChance;
+  /**
+   * A **designer-tuned** Extra Life base chance. The shipped default is off
+   * (0) since AH-0MW3MLTY3005MIXR — the rule and its config key are retained
+   * and re-enable-able — so the proportionality contract is pinned on an
+   * explicit config value rather than on a default that would make every
+   * assertion below vacuously true.
+   */
+  const EXTRA_LIFE_TUNED_L1 = 0.4;
+  /** Rules carrying the tuned Extra Life roll (everything else shipped). */
+  const EXTRA_LIFE_TUNED_RULES = {
+    ...DEFAULT_RULES,
+    asteroidExtraLifeDropChance: EXTRA_LIFE_TUNED_L1,
+  };
   /** Extra Life chance at level 10 (same ratio as the per-kill chance). */
-  const EXTRA_LIFE_L10 = extraLifeDropChance(10);
-  /** Between the level-1 and level-10 Extra Life chances (≈ 0.0319). */
-  const ROLL_EXTRA_LIFE_MID = (EXTRA_LIFE_L1 + EXTRA_LIFE_L10) / 2;
+  const EXTRA_LIFE_TUNED_L10 = extraLifeDropChance(
+    10,
+    EXTRA_LIFE_TUNED_RULES,
+  );
+  /** Between the level-1 and level-10 Extra Life chances. */
+  const ROLL_EXTRA_LIFE_MID =
+    (EXTRA_LIFE_TUNED_L1 + EXTRA_LIFE_TUNED_L10) / 2;
   /** Every DropId the shared weighted spawner can hand out. */
   const DROP_POOL = new Set([...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS]);
 
@@ -9261,12 +9315,25 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
     }));
   }
 
-  /** Boots the PlayScene on the given campaign with the asteroid spawner off. */
-  async function bootDropScene(levels: LevelDefinition[]): Promise<PlayScene> {
+  /**
+   * Boots the PlayScene on the given campaign with the asteroid spawner off.
+   *
+   * `rules` are layered over the shipped defaults and stamped with the
+   * current schema version, so a fixture-supplied tunable (e.g. a designer
+   * Extra Life roll) is not reset by the v5 migration.
+   */
+  async function bootDropScene(
+    levels: LevelDefinition[],
+    rules: Partial<GameRules> = {},
+  ): Promise<PlayScene> {
     // Opt out of the sequenced campaign so the injected fixture is honoured.
     localStorage.setItem(
       RULES_STORAGE_KEY,
-      JSON.stringify({ sequencedWavesEnabled: false }),
+      JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
+        sequencedWavesEnabled: false,
+        ...rules,
+      }),
     );
     const { booted: game, scene } = await bootDeterministic(async () => {
       const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
@@ -9359,9 +9426,9 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
 
   // ── Level-1 identity (GREEN on pre-change HEAD) ─────────────────
 
-  it('level 1 — kill-time pool drops keep the documented 0.18 per-kill rate', async () => {
+  it('level 1 — kill-time pool drops keep the documented level-1 per-kill rate', async () => {
     const scene = await bootDropScene(dropCampaign(1));
-    // 0.17 ≤ 0.18 ⇒ the level-1 roll passes every kill, exactly N drops.
+    // A roll below the level-1 chance passes every kill ⇒ exactly N drops.
     scene.setRng(() => ROLL_BELOW_L1);
     finishSpawnSequence(scene);
     expect(scene.getWaveManager().level).toBe(1);
@@ -9378,9 +9445,9 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
     spawn.mockRestore();
   });
 
-  it('level 1 — a roll above the 0.18 rate never drops', async () => {
+  it('level 1 — a roll above the level-1 rate never drops', async () => {
     const scene = await bootDropScene(dropCampaign(1));
-    // 0.19 > 0.18 ⇒ with the exact level-1 chance no kill drops. This
+    // A roll above the exact level-1 chance never drops. This
     // brackets the scene's use of the level-1 value from above.
     scene.setRng(() => ROLL_ABOVE_L1);
     finishSpawnSequence(scene);
@@ -9413,10 +9480,10 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
     'level 10 — the per-kill chance falls to 0.05 (30 % of the level-1 supply)',
     async () => {
       const scene = await bootDropScene(dropCampaign(10));
-      // 0.115 sits between the level-1 (0.18) and level-10 (0.05) chances:
-      // the roll drops at level 1 and never at level 10. On the pre-change
-      // flat roll (0.18 at every level) every one of these kills drops —
-      // RED until F2 resolves the campaign level at roll time.
+      // A roll between the level-1 and level-10 chances: the roll drops at
+      // level 1 and never at level 10. On the pre-change flat roll (the
+      // level-1 rate at every level) every one of these kills drops —
+      // RED until F2 resolved the campaign level at roll time.
       scene.setRng(() => ROLL_BETWEEN_L1_L10);
       finishSpawnSequence(scene);
       expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
@@ -9435,8 +9502,8 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
     'mid-run — advancing a level re-resolves the drop chance for the next kills',
     async () => {
       const scene = await bootDropScene(dropCampaign(1, 2)); // levels 1 → 2
-      // 0.1728 sits between the level-1 (0.18) and level-2 (≈ 0.1656)
-      // chances: level-1 kills drop, level-2 kills never do.
+      // A roll between the level-1 and level-2 chances: level-1 kills drop,
+      // level-2 kills never do.
       scene.setRng(() => ROLL_BETWEEN_L1_L2);
       finishSpawnSequence(scene);
       const wm = scene.getWaveManager();
@@ -9455,9 +9522,9 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
       expect(wm.currentLevel()?.level).toBe(2);
       const callsAtLevel2 = spawn.mock.calls.length;
 
-      // Level 2: the same roll value must now fail (chance(2) < 0.1728), so
+      // Level 2: the same roll value must now fail (chance(2) < the roll), so
       // no new drops spawn. On the flat-roll HEAD it still drops 4 — RED
-      // until F2 reads the live level at kill time.
+      // until F2 read the live level at kill time.
       killExactlyNTargets(scene, 4);
       expect(spawn.mock.calls.length).toBe(callsAtLevel2);
       spawn.mockRestore();
@@ -9473,13 +9540,15 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
     expect(scene.getWaveManager().currentLevel()).toBeNull();
     const roll = scene as unknown as DropRollSeam;
 
-    // A roll just below 0.18 must still drop — the level-1 fallback rate.
+    // A roll just below the level-1 chance must still drop — the fallback
+    // rate.
     scene.setRng(() => ROLL_BELOW_L1);
     const before = scene.getDrops().length;
     roll._maybeDropPowerUp(GAME_WIDTH / 2, 120);
     expect(scene.getDrops().length).toBe(before + 1);
 
-    // A roll just above 0.18 must not drop — proving the fallback is the
+    // A roll just above the level-1 chance must not drop — proving the
+    // fallback is the
     // level-1 chance and not some higher rate.
     scene.setRng(() => ROLL_ABOVE_L1);
     const beforeHigh = scene.getDrops().length;
@@ -9492,11 +9561,14 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
 
   // ── Extra Life proportionality ──────────────────────────────────
 
-  it('Extra Life — the small-asteroid roll keeps the 0.05 chance unchanged at level 1', async () => {
-    const scene = await bootDropScene(dropCampaign(1));
-    // 0.0319 sits between the level-1 (0.05) and level-10 (≈ 0.0139) Extra
-    // Life chances: at level 1 every small-asteroid kill leaves an extra
-    // life, at level 10 none would.
+  it('Extra Life — the small-asteroid roll keeps a designer-tuned base chance at level 1', async () => {
+    const scene = await bootDropScene(dropCampaign(1), {
+      asteroidExtraLifeDropChance: EXTRA_LIFE_TUNED_L1,
+    });
+    // `ROLL_EXTRA_LIFE_MID` sits between the tuned level-1 base and the
+    // level-10 chance (the same ratio as the per-kill curve): at level 1
+    // every small-asteroid kill leaves an extra life, at level 10 none
+    // would.
     scene.setRng(() => ROLL_EXTRA_LIFE_MID);
     finishSpawnSequence(scene);
     expect(scene.getWaveManager().currentLevel()?.level).toBe(1);
@@ -9511,7 +9583,9 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
   it(
     'Extra Life — level 10 scales the roll by the same ratio as the per-kill chance',
     async () => {
-      const scene = await bootDropScene(dropCampaign(10));
+      const scene = await bootDropScene(dropCampaign(10), {
+        asteroidExtraLifeDropChance: EXTRA_LIFE_TUNED_L1,
+      });
       scene.setRng(() => ROLL_EXTRA_LIFE_MID);
       finishSpawnSequence(scene);
       expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
@@ -9519,9 +9593,11 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
       for (const [x, y] of ASTEROID_SITES)
         spawnAndDestroySmallAsteroid(scene, x, y);
 
-      // 0.0319 > extraLifeDropChance(10) ≈ 0.0139 ⇒ no extra life at level
-      // 10. RED on pre-change HEAD: the roll is a flat 0.05 at every level,
-      // so each kill leaves an extra life.
+      // The mid roll is above the level-10 chance (the tuned base scaled by
+      // the halved curve's own ratio) ⇒ no extra life at level 10. RED on
+      // pre-change HEAD: the roll was a flat base chance at every level, so
+      // each kill left an extra life.
+      expect(ROLL_EXTRA_LIFE_MID).toBeGreaterThan(EXTRA_LIFE_TUNED_L10);
       expect(
         scene.getDrops().filter((d) => d.dropId === 'extra_life'),
       ).toHaveLength(0);
@@ -9532,7 +9608,7 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
 
   it('the mineral kill-drop rule is level-independent: a level-10 small-asteroid kill still leaves exactly one mineral', async () => {
     const scene = await bootDropScene(dropCampaign(10));
-    // 0.5 > 0.18 (flat HEAD chance) and > 0.05 (level-10 chance): the power-up
+    // 0.5 is above the level-1 and level-10 per-kill chances: the power-up
     // pool is suppressed at every level, isolating the mineral rule from the
     // drop roll.
     scene.setRng(() => 0.5);
@@ -9788,7 +9864,8 @@ describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
   it('at six filled slots draws only owned kinds plus available-when-full entries (AC1)', async () => {
     const { drawn } = await collectGatedDraws(true);
 
-    // A meaningful sample (the 0.18-ish per-kill chance passes ~18 % of calls).
+    // A meaningful sample (the level-1 per-kill chance passes a solid share
+    // of the 3000 calls).
     expect(drawn.length).toBeGreaterThan(200);
     const allowed = new Set<DropId>([
       'shield',

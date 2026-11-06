@@ -28,7 +28,7 @@ import { Tank } from '../../entities/Tank';
 import { Harvester } from '../../entities/Harvester';
 import { Asteroid } from '../../entities/Asteroid';
 import type { EnemyEntity } from '../../entities/enemyFactory';
-import { RULES_STORAGE_KEY } from '../../core/rules';
+import { RULES_SCHEMA_VERSION, RULES_STORAGE_KEY } from '../../core/rules';
 import {
   getSpawnState,
   type SpawnAnimatable,
@@ -491,9 +491,14 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
   });
 
   it('AC4/AC5 — a small asteroid kill spawns one extra_life drop on the field', async () => {
+    // Stamped with the current schema version: the v5 migration resets the
+    // asteroid roll to its off (0) default for older configs.
     window.localStorage.setItem(
       RULES_STORAGE_KEY,
-      JSON.stringify({ asteroidExtraLifeDropChance: 1 }),
+      JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
+        asteroidExtraLifeDropChance: 1,
+      }),
     );
     const scene = await bootWith({
       level: makeLevel('Asteroid', [scoutWave(1)]),
@@ -525,6 +530,35 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     expect(extra).toBeDefined();
     expect(extra!.x).toBeCloseTo(123, 0);
     expect(extra!.y).toBeCloseTo(234, 0);
+  });
+
+  it('AC3 — at the shipped default a small asteroid kill drops no Extra Life (AH-0MW3MLTY3005MIXR)', async () => {
+    // No stored rules ⇒ the shipped asteroid roll default (0, off). This gym
+    // consumes the same shared `rollAsteroidExtraLife` rule.
+    const scene = await bootWith({
+      level: makeLevel('Asteroid', [scoutWave(1)]),
+    });
+    scene.setSupplyRng(() => 0.99);
+    const before = scene.getDrops().length;
+
+    const smallAsteroid = {
+      x: 123,
+      y: 234,
+      alive: true,
+      getSizeTier: () => 'small' as const,
+    };
+    (
+      scene as unknown as { onEnemyDestroyed(enemy: unknown): void }
+    ).onEnemyDestroyed(smallAsteroid);
+
+    // No kill drop at the death site (a cadence drop may exist elsewhere on
+    // the field, so the assertion is positional).
+    expect(
+      scene
+        .getDrops()
+        .filter((d) => d.dropId === 'extra_life' && d.x === 123 && d.y === 234),
+    ).toHaveLength(0);
+    expect(scene.getDrops().length).toBe(before);
   });
 });
 describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {

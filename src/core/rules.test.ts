@@ -663,7 +663,7 @@ describe('game rules configuration module', () => {
       expect(loaded).toEqual(custom);
     });
 
-    it.fails('stamps saved rules with the current schema version (5)', () => {
+    it('stamps saved rules with the current schema version (5)', () => {
       saveRules(DEFAULT_RULES);
       const raw = window.localStorage.getItem(RULES_STORAGE_KEY);
       expect(raw).not.toBeNull();
@@ -725,21 +725,20 @@ describe('sequenced-waves opt-in toggle (AH-0MUITS1SM008GPR9)', () => {
 
 // ── Asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S) ───────────
 //
-// The shipped default is now **0** (off), halved away by AH-0MW3MLRHL000DKPM:
-// the rule, the `GameRules` key and its clamping/persistence all stay in
-// place so a designer can re-enable the roll, but a fresh run (and any config
-// older than schema version 5) no longer hands out lives for rocks. The
-// value-level assertions below are wrapped in `it.fails` until the production
-// default changes; the clamping/fallback assertions run against blobs stamped
-// with the current schema version so they keep testing coercion rather than
-// the v5 reset.
+// The shipped default is now **0** (off), turned off by AH-0MW3MLRHL000DKPM
+// (implemented by AH-0MW3MLTY3005MIXR): the rule, the `GameRules` key and its
+// clamping/persistence all stay in place so a designer can re-enable the roll,
+// but a fresh run (and any config older than schema version 5) no longer
+// hands out lives for rocks. The clamping/fallback assertions run against
+// blobs stamped with the current schema version so they keep testing coercion
+// rather than the v5 reset.
 
 describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
 
-  it.fails('defaults to off (0), so asteroids no longer drop Extra Life', () => {
+  it('defaults to off (0), so asteroids no longer drop Extra Life', () => {
     expect(DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE).toBe(0);
     expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0);
     expect(loadRules().asteroidExtraLifeDropChance).toBe(0);
@@ -844,7 +843,8 @@ describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
 // change. Schema version 5 resets those three fields for any older config
 // (same precedent as the v2/v3 migrations); a blob explicitly stamped
 // version 5 keeps its tuned values. The assertions pinning the *new* values
-// are wrapped in `it.fails` until the implementation item lands.
+// were flipped from `it.fails` back to `it` by the implementation item
+// (AH-0MW3MLTY3005MIXR).
 
 /** The level-scaling fields F1 adds to `GameRules` (test-first contract). */
 interface LevelScalingRules {
@@ -870,7 +870,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     window.localStorage.clear();
   });
 
-  it.fails('exposes the documented scaling defaults on DEFAULT_RULES and loadRules', () => {
+  it('exposes the documented scaling defaults on DEFAULT_RULES and loadRules', () => {
     const defaults = scalingRules(DEFAULT_RULES);
     expect(defaults.enemyCountMultiplierAtMaxLevel).toBe(2);
     expect(defaults.powerUpDropChanceAtLevel1).toBe(0.09);
@@ -886,7 +886,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     expect(loaded.enemyCountCap).toBe(200);
   });
 
-  it.fails('merges the scaling defaults into a legacy blob that predates the fields', () => {
+  it('merges the scaling defaults into a legacy blob that predates the fields', () => {
     window.localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpSpawnInterval: 3 }),
@@ -933,7 +933,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     expect(scalingRules(loadRules()).enemyCountMultiplierAtMaxLevel).toBe(2);
   });
 
-  it.fails('clamps both drop-chance tunables into [0, 1] and never lets the curve rise', () => {
+  it('clamps both drop-chance tunables into [0, 1] and never lets the curve rise', () => {
     for (const [stored, expected] of [
       [1.7, 1],
       [-0.2, 0],
@@ -1084,17 +1084,18 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
 // defaults for any config stamped earlier than version 5 (the v2/v3 precedent),
 // while a blob explicitly stamped version 5 keeps its tuned values.
 //
-// Red-before/green-after: the migration and default assertions are wrapped in
-// `it.fails` until the implementation item lands. The opt-out assertions are
-// plain `it` on purpose — they must be green **both** before and after the
-// change, proving the reset never over-reaches to a current-schema config.
+// Red-before/green-after: the migration and default assertions were flipped
+// from `it.fails` back to `it` by the implementation item
+// (AH-0MW3MLTY3005MIXR). The opt-out assertions were plain `it` on purpose —
+// they are green **both** before and after the change, proving the reset never
+// over-reaches to a current-schema config.
 
 describe('rules schema v5 — halved supply dial (AH-0MW3MLRHL000DKPM)', () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
 
-  it.fails('defaults the supply dial to 0.09 / 0.025 and turns the asteroid roll off', () => {
+  it('defaults the supply dial to 0.09 / 0.025 and turns the asteroid roll off', () => {
     expect(DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1).toBe(0.09);
     expect(DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL).toBe(0.025);
     expect(DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE).toBe(0);
@@ -1105,7 +1106,7 @@ describe('rules schema v5 — halved supply dial (AH-0MW3MLRHL000DKPM)', () => {
     expect(loadRules().asteroidExtraLifeDropChance).toBe(0);
   });
 
-  it.fails('migrates a version-4 blob that stored the old 0.18 / 0.05 / 0.05 dial', () => {
+  it('migrates a version-4 blob that stored the old 0.18 / 0.05 / 0.05 dial', () => {
     window.localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({

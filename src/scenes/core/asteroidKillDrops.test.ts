@@ -9,9 +9,9 @@
  * runs before the RNG so a seeded stream is never advanced for them.
  *
  * The shipped chance is now **0 (off)** — AH-0MW3MLRHL000DKPM stopped rocks
- * from handing out lives, while keeping the rule, the `GameRules` key and its
- * clamping so a designer can re-enable it. The default-off assertions are
- * wrapped in `it.fails` until the production default changes.
+ * from handing out lives (implemented by AH-0MW3MLTY3005MIXR), while keeping
+ * the rule, the `GameRules` key and its clamping so a designer can re-enable
+ * it.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -97,8 +97,9 @@ describe('rollAsteroidExtraLife — chance boundaries (AC2)', () => {
 // The halved supply dial turns it **off** by default: the shared rule and the
 // `GameRules.asteroidExtraLifeDropChance` key stay configurable, but a shipped
 // run must never hand out a life for a rock. The kill-path assertions below
-// consume the *shipped* default, so they fail on the pre-change tree (5 %) and
-// pass once the default is 0.
+// consume the *shipped* default, so they were red on the pre-change tree
+// (5 %) and are green now that the default is 0
+// (AH-0MW3MLTY3005MIXR flipped them from `it.fails` to `it`).
 
 describe('rollAsteroidExtraLife — shipped default is off (AH-0MW3MLRHL000DKPM)', () => {
   /**
@@ -114,7 +115,7 @@ describe('rollAsteroidExtraLife — shipped default is off (AH-0MW3MLRHL000DKPM)
     };
   }
 
-  it.fails('ships a zero default chance for the small-asteroid roll', () => {
+  it('ships a zero default chance for the small-asteroid roll', () => {
     expect(DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE).toBe(0);
     expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0);
     // The documented chance-0 rule already says: never fires, even on rng 0.
@@ -127,7 +128,7 @@ describe('rollAsteroidExtraLife — shipped default is off (AH-0MW3MLRHL000DKPM)
     ).toBe(false);
   });
 
-  it.fails('never fires across a seeded kill path at the shipped default', () => {
+  it('never fires across a seeded kill path at the shipped default', () => {
     // At the old 5 % default this stream fires the roll ~20 times over 500
     // kills; at the shipped 0 it can never fire.
     const rng = makeSeededRng();
