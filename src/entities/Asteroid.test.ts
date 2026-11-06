@@ -13,6 +13,14 @@ import Phaser from 'phaser';
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import {
+  ASTEROID_ATLAS_KEY,
+  ASTEROID_PALETTE_VARIANTS_PER_TIER,
+} from '../utils/asteroidTextures';
+import { ENEMY_BODY_TEXTURE_KEY_PREFIX } from '../utils/enemyBodyTextures';
+import { createAsteroidFromEvent } from '../scenes/core/asteroidHazard';
+import { splitAsteroid } from '../scenes/core/asteroidSplit';
+import { Tank } from './Tank';
+import {
   ASTEROID_COLORS,
   ASTEROID_LARGE_COLOR,
   ASTEROID_LARGE_ROTATION_SPEED,
@@ -28,6 +36,7 @@ import {
   ASTEROID_SMALL_SPEED,
   ASTEROID_TIER_DATA,
   Asteroid,
+  AsteroidConfig,
   AsteroidSizeTier,
 } from './Asteroid';
 
@@ -35,6 +44,46 @@ class HarnessScene extends Phaser.Scene {
   constructor() {
     super('HarnessScene');
   }
+}
+
+/** Simple LCG so two generators with the same seed produce the same draws. */
+function makeSeededRng(seed: number): () => number {
+  let state = seed;
+  return () => {
+    state = (state * 1664525 + 1013904223) & 0xffffffff;
+    return (state >>> 0) / 0xffffffff;
+  };
+}
+
+/** A counting RNG that always returns `value`; records every draw taken. */
+function scriptedRng(value: number): { rng: () => number; draws: number[] } {
+  const draws: number[] = [];
+  return {
+    draws,
+    rng: () => {
+      draws.push(value);
+      return value;
+    },
+  };
+}
+
+/** The rendered body sprite of an enemy (absent when it kept a Graphics body). */
+function bodyImageOf(
+  entity: Phaser.GameObjects.Container,
+): Phaser.GameObjects.Image | null {
+  return (
+    entity.list.find(
+      (child): child is Phaser.GameObjects.Image =>
+        child instanceof Phaser.GameObjects.Image,
+    ) ?? null
+  );
+}
+
+/** Every baked per-silhouette body texture currently in the game. */
+function bakedBodyTextureKeys(scene: Phaser.Scene): string[] {
+  return scene.textures
+    .getTextureKeys()
+    .filter((key) => key.startsWith(`${ENEMY_BODY_TEXTURE_KEY_PREFIX}-`));
 }
 
 describe('Asteroid tier constants and data', () => {
@@ -545,37 +594,19 @@ describe('Asteroid shape randomness and RNG', () => {
     return JSON.stringify(body!.commandBuffer);
   }
 
-  it('two asteroids created consecutively have different shapes (AC2)', async () => {
-    booted = await bootScene([HarnessScene]);
-    const a1 = new Asteroid(booted!.scene, { x: 100, y: 100, formationOffset: { row: 0, col: 0 } });
-    const a2 = new Asteroid(booted!.scene, { x: 100, y: 100, formationOffset: { row: 0, col: 0 } });
-    expect(getAsteroidShape(a1)).not.toBe(getAsteroidShape(a2));
-  });
-
-  it('shape is deterministic with a seeded RNG — same seed produces identical shape (AC3)', async () => {
-    const makeRNGFactory = (seed: number) => {
-      let s = seed;
-      return () => {
-        // Simple LCG: same algorithm each call
-        s = (s * 1664525 + 1013904223) & 0xffffffff;
-        return (s >>> 0) / 0xffffffff;
-      };
-    };
-
-    const rng1 = makeRNGFactory(42);
-    const rng2 = makeRNGFactory(42);
+  it('shape is deterministic with a seeded RNG — same seed picks the same palette variant (AC3)', async () => {
+    const rng1 = makeSeededRng(42);
+    const rng2 = makeSeededRng(42);
 
     booted = await bootScene([HarnessScene]);
     const a1 = new Asteroid(booted!.scene, {
       x: 100, y: 100, formationOffset: { row: 0, col: 0 }, rng: rng1,
     });
-
-    booted!.game.destroy(true);
-    booted = await bootScene([HarnessScene]);
     const a2 = new Asteroid(booted!.scene, {
       x: 100, y: 100, formationOffset: { row: 0, col: 0 }, rng: rng2,
     });
 
+    expect(a1.shapeVariant).toBe(a2.shapeVariant);
     expect(getAsteroidShape(a1)).toBe(getAsteroidShape(a2));
   });
 
@@ -597,5 +628,207 @@ describe('Asteroid shape randomness and RNG', () => {
     const shapes = [large, medium, small].map(getAsteroidShape);
     expect(shapes).toHaveLength(3);
     shapes.forEach((s) => expect(s).not.toBe(''));
+  });
+});
+
+// ── Shared silhouette palette + single atlas (AH-0MW5088LA007XYQM) ──────
+
+describe('Asteroid shared palette and single texture atlas', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeAsteroid(
+    sizeTier: AsteroidSizeTier = 'large',
+    extra: Partial<AsteroidConfig> = {},
+  ): Asteroid {
+    return new Asteroid(booted!.scene, {
+      x: 100,
+      y: 100,
+      formationOffset: { row: 0, col: 0 },
+      sizeTier,
+      ...extra,
+    });
+  }
+
+  it('renders every asteroid from the one shared atlas texture (AC1)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const asteroids = [
+      makeAsteroid('large'),
+      makeAsteroid('medium'),
+      makeAsteroid('small'),
+      makeAsteroid('large'),
+      makeAsteroid('small'),
+    ];
+
+    const images = asteroids.map(bodyImageOf);
+    images.forEach((image) => expect(image).not.toBeNull());
+
+    // One texture for the whole field: the same `Texture` instance (hence one
+    // texture bind / one batched draw call for the asteroid bodies).
+    const textures = new Set(images.map((image) => image!.texture));
+    expect(textures.size).toBe(1);
+    expect(images[0]!.texture.key).toBe(ASTEROID_ATLAS_KEY);
+    expect(images[0]!.texture.source[0]).toBe(images[4]!.texture.source[0]);
+
+    // And no per-rock baked body texture was created at all.
+    expect(bakedBodyTextureKeys(booted.scene)).toHaveLength(0);
+  });
+
+  it('assigns variants from a bounded palette of 8–12 silhouettes per tier (AC2)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const tiers: AsteroidSizeTier[] = ['large', 'medium', 'small'];
+
+    for (const tier of tiers) {
+      const asteroids = Array.from({ length: 40 }, () => makeAsteroid(tier));
+      const frames = asteroids.map((asteroid) => bodyImageOf(asteroid)!.frame.name);
+      const variants = new Set(asteroids.map((asteroid) => asteroid.shapeVariant));
+
+      // Every rock is inside the palette, and the palette is bounded.
+      expect(frames.every((name) => name.startsWith(`${tier}-`))).toBe(true);
+      expect(variants.size).toBeLessThanOrEqual(
+        ASTEROID_PALETTE_VARIANTS_PER_TIER,
+      );
+      for (const variant of variants) {
+        expect(variant).toBeGreaterThanOrEqual(0);
+        expect(variant).toBeLessThan(ASTEROID_PALETTE_VARIANTS_PER_TIER);
+      }
+    }
+  });
+
+  it('derives each variant deterministically from the asteroid\'s own seed (AC2)', async () => {
+    booted = await bootScene([HarnessScene]);
+
+    const first = makeAsteroid('large', { rng: makeSeededRng(7) });
+    const twin = makeAsteroid('large', { rng: makeSeededRng(7) });
+    expect(first.shapeVariant).toBe(twin.shapeVariant);
+    expect(bodyImageOf(first)!.frame.name).toBe(bodyImageOf(twin)!.frame.name);
+
+    // Different seeds reach different palette variants (the palette is used,
+    // not one hard-coded frame).
+    const variants = new Set<number>();
+    for (let seed = 1; seed <= 30; seed += 1) {
+      variants.add(makeAsteroid('large', { rng: makeSeededRng(seed) }).shapeVariant);
+    }
+    expect(variants.size).toBeGreaterThan(1);
+  });
+
+  it('never exhausts the shared enemy-body texture budget (AC3)', async () => {
+    booted = await bootScene([HarnessScene]);
+
+    // 80 rocks — more than MAX_BAKED_ENEMY_BODY_TEXTURES (64) — must not
+    // consume a single per-silhouette texture.
+    const asteroids = Array.from({ length: 80 }, (_, index) =>
+      makeAsteroid(index % 2 === 0 ? 'large' : 'medium'),
+    );
+    expect(asteroids.every((asteroid) => asteroid.alive)).toBe(true);
+    expect(bakedBodyTextureKeys(booted.scene)).toHaveLength(0);
+
+    // A non-asteroid enemy still gets its own baked body sprite afterwards.
+    const tank = new Tank(booted.scene, {
+      x: 200,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+    });
+    const tankBody = bodyImageOf(tank);
+    expect(tankBody).not.toBeNull();
+    expect(tankBody!.texture.key.startsWith(`${ENEMY_BODY_TEXTURE_KEY_PREFIX}-`)).toBe(
+      true,
+    );
+    expect(bakedBodyTextureKeys(booted.scene)).toHaveLength(1);
+  });
+
+  it('keeps the seeded RNG stream identical to the pre-palette generator (AC4)', async () => {
+    booted = await bootScene([HarnessScene]);
+
+    // Old per-rock generator spent 1 heading draw + 1 vertex-count draw +
+    // 2 draws per vertex (7–9 vertices → 16, 18 or 20 draws total). The
+    // palette must not move the stream, or every later heading/split/fire roll
+    // would change.
+    for (const [value, expected] of [
+      [0, 16],
+      [0.5, 18],
+      [0.99, 20],
+    ] as const) {
+      const { rng, draws } = scriptedRng(value);
+      makeAsteroid('large', { rng });
+      expect(draws.length).toBe(expected);
+    }
+  });
+
+  it('leases the same shared render path to the game and gym spawn seams (AC5)', async () => {
+    booted = await bootScene([HarnessScene]);
+
+    // Both the game's scheduled hazard (`createAsteroidFromEvent`) and the
+    // shared split seam materialise plain `Asteroid` entities, so both render
+    // from the shared atlas.
+    const scheduled = createAsteroidFromEvent(
+      booted.scene,
+      {
+        sizeTier: 'large',
+        x: 300,
+        y: 200,
+        vx: 10,
+        vy: 0,
+        timeFraction: 0,
+        timeSeconds: 0,
+      },
+      makeSeededRng(3),
+    );
+    const children = splitAsteroid({
+      scene: booted.scene,
+      parent: scheduled,
+      register: () => {},
+      rng: makeSeededRng(4),
+    });
+
+    expect(children).not.toBeNull();
+    for (const asteroid of [scheduled, ...children!]) {
+      expect(asteroid).toBeInstanceOf(Asteroid);
+      expect(bodyImageOf(asteroid)!.texture.key).toBe(ASTEROID_ATLAS_KEY);
+    }
+  });
+
+  it('renders the atlas frame the silhouette record was drawn from (AC6)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const asteroid = makeAsteroid('medium', { rng: makeSeededRng(11) });
+    const image = bodyImageOf(asteroid)!;
+
+    // The frame index is the palette variant the body was drawn from, and the
+    // body record is a real (multi-vertex) stroked polygon.
+    expect(image.frame.name).toBe(`medium-${asteroid.shapeVariant}`);
+    expect(image.frame.width).toBeGreaterThan(0);
+    expect(image.frame.height).toBeGreaterThan(0);
+
+    const body = asteroid.bodyLayers.find(
+      (layer) => layer.commandBuffer.length > 0,
+    );
+    expect(body).toBeDefined();
+    expect(body!.commandBuffer.length).toBeGreaterThan(0);
+
+    // The whole silhouette (plus its 2 px stroke) fits inside the frame, so no
+    // rock is cropped; the sprite is centred on the entity origin and children
+    // the container so it rotates with the asteroid.
+    expect(image.x).toBe(0);
+    expect(image.y).toBe(0);
+    expect(image.displayWidth).toBeGreaterThanOrEqual(asteroid.effectiveSize);
+    expect(asteroid.list).toContain(image);
+  });
+
+  it('falls back to a per-silhouette bake for a bespoke body colour (AC1)', async () => {
+    booted = await bootScene([HarnessScene]);
+    // The atlas bakes the tier colour (visual parity for the shipped palette);
+    // a config override keeps the correct colour through the shared bake seam.
+    const recoloured = makeAsteroid('large', { color: 0x123456 });
+    const image = bodyImageOf(recoloured);
+
+    expect(image).not.toBeNull();
+    expect(image!.texture.key.startsWith(`${ENEMY_BODY_TEXTURE_KEY_PREFIX}-`)).toBe(
+      true,
+    );
   });
 });

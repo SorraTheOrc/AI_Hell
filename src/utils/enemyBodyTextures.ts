@@ -164,9 +164,10 @@ function bakedTextureCount(
  *
  * False for stub/headless scenes (no texture manager, no renderer, or no
  * canvas support), which is what keeps the change a no-op in the unit-test
- * harness.
+ * harness. Exported so every bake seam (this one and the shared asteroid
+ * atlas in `./asteroidTextures`) applies the **same** guard.
  */
-function canBakeTextures(scene: Phaser.Scene | undefined): boolean {
+export function canBakeTextures(scene: Phaser.Scene | undefined): boolean {
   if (!scene) return false;
   const textures = scene.textures;
   if (!textures || typeof textures.createCanvas !== 'function') return false;
