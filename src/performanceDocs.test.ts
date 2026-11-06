@@ -186,6 +186,10 @@ const RECORDED_SECTIONS: ReadonlyArray<RecordedSection> = [
     heading: '## Hardware-GPU desktop baseline',
     facts: [COMMIT, DATE, { label: 'the platforms', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /1×/ }],
   },
+  {
+    heading: '### Before: one texture per rock, per-frame `Graphics` fallback (AH-0MW507VYG009SFR5)',
+    facts: [COMMIT, DATE, { label: 'the platform', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /1×/ }],
+  },
 ];
 
 describe('docs/PERFORMANCE.md — performance budget', () => {

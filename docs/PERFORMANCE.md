@@ -19,7 +19,10 @@ and Electron, both on the reference host's RTX 3050 Ti — is recorded in
 (AH-0MW2IRYJ2006PV3P). The **mobile tier** re-measured on the same hardware
 WebGL backend, still under the 4× CPU throttle, is recorded in
 [Hardware-WebGL mobile tier](#hardware-webgl-mobile-tier-4-cpu-throttle)
-(AH-0MW3KP1R90030QY9). The
+(AH-0MW3KP1R90030QY9). The **asteroid field** pair for the batched-asteroid
+rendering work (parent AH-0MW4857B0004GMWR) is recorded in
+[Asteroid field rendering](#asteroid-field-rendering-gymasteroidstress) — the
+before half is AH-0MW507VYG009SFR5. The
 **final target verification** (AH-0MVXV6VOI006P7VG) measures the finished tree
 end to end and records the parity and determinism evidence — see
 [Final target verification](#final-target-verification-ah-0mvxv6voi006p7vg).
@@ -117,7 +120,10 @@ npm run perf:measure -- --scene GymAsteroidStress --seconds 60 --warmup 3
 ```
 
 Because the field is deterministic, a before/after pair on the same host,
-scene, window and throttle isolates the asteroid rendering change. The gym is
+scene, window and throttle isolates the asteroid rendering change. That pair is
+recorded in
+[Asteroid field rendering](#asteroid-field-rendering-gymasteroidstress) — the
+before half (pre-batched-rendering tree) is AH-0MW507VYG009SFR5. The gym is
 watchable/capturable like every other gym (`WATCHABLE_GYM_SCENE_KEYS`), and
 `docs/GYM_PARITY.md` records its parity row.
 
@@ -963,6 +969,111 @@ the re-stated verdict is in
 [the hardware balance note](#hardware-gpu-desktop-baseline) — the balance did
 **not** differ (JS 13.0–14.4 %, simulation 2.05–2.40 %, renderer 10.8–11.8 %), so
 [Ranked hotspots](#ranked-hotspots) keeps its ordering.
+
+## Asteroid field rendering (`GymAsteroidStress`)
+
+The batched-asteroid work (parent AH-0MW4857B0004GMWR) is judged on a
+**same-host before/after pair** of the
+[asteroid stress gym](#the-asteroid-stress-gym-gymasteroidstress): 200 live
+rocks plus the representative 12-enemy firing wave, 60 s after a 3 s warm-up on
+the reference host's RTX 3050 Ti. The **before** half — the pre-change tree,
+where every rock carries its own seeded silhouette texture and falls back to a
+per-frame `Graphics` body once the 64-texture bake budget is exhausted — is
+recorded below (AH-0MW507VYG009SFR5). The **after** half and the deltas are
+added to this section by AH-0MW508JS2004W3SR. Both halves use the same command,
+scene, window, throttle and host, so the pair isolates the asteroid rendering
+change:
+
+```bash
+npm run perf:measure -- --gpu --require-hardware-webgl --scene GymAsteroidStress \
+  --seconds 60 --warmup 3 --profile perf-output/asteroid-before.cpuprofile \
+  --out perf-output/asteroid-before.json
+```
+
+### Before: one texture per rock, per-frame `Graphics` fallback (AH-0MW507VYG009SFR5)
+
+**`Recorded:`** commit `63801fa0` (game code; this documentation change touches
+no game code) · 2026-11-06 · desktop browser (headless Chromium 140.0.7339.186)
+on the **NVIDIA RTX 3050 Ti through ANGLE-Vulkan** · CPU throttle 1× ·
+AH-0MW507VYG009SFR5.
+
+The tree measured here is the one the
+[asteroid stress gym](#the-asteroid-stress-gym-gymasteroidstress) landed on:
+every asteroid draws a unique seeded jagged polygon and bakes it into its own
+texture, so 200 rocks are 200 distinct textures and 200 separate draw
+submissions (plus a per-frame `Graphics` re-tessellation for any rock past the
+64-texture cache cap). That is the cost the pair has to show. Two runs, so the
+vsync-step percentiles are shown to be reproducible rather than a single lucky
+window; run 2 repeats the same command without `--profile` (the profile half is
+identical either way) and writes `perf-output/asteroid-before-2.json`.
+
+**Backend, exactly as recorded in the reports.** Both reports carry
+`webgl.kind: "hardware"` and the renderer string
+`ANGLE (NVIDIA, Vulkan 1.4.329 (NVIDIA NVIDIA GeForce RTX 3050 Ti Laptop GPU (0x000025A0)), NVIDIA)`;
+`runtime` is `{ kind: "browser", chromeVersion: "140.0.7339.186" }`. Host block
+(`host` in both reports): AMD Ryzen 7 4800H with Radeon Graphics, 16 logical
+CPUs, 30 223 MB memory, Linux 7.0.0-38-generic, Node v22.22.1. Host load is
+recorded per row (4.15 and 8.56) — both inside the quiet band the
+[noise floor](#noise-floor) describes.
+
+| Run | Host load | p50 (ms) | p95 (ms) | max (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms | Enemies peak/mean | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 (profiled) | 4.15 | **16.7** | **16.7** | 16.8 | 16.666 | **60.00** | 0 (0 %) | 0 (0 %) | 212 / 212 | 40 / 18.68 |
+| 2 | 8.56 | **16.7** | **16.7** | 16.8 | 16.666 | **60.00** | 0 (0 %) | 0 (0 %) | 212 / 212 | 35 / 17.90 |
+
+Counts (`counts` in the reports, sampled every 250 ms, 236 samples per run):
+`enemies` is exactly **212** in peak *and* mean in both runs — the 200 rocks
+plus the 12 firing enemies, so the load is fixed and the frame times are
+comparable run to run. Player bullets are 0 by design (the gym disables the
+player's auto-fire, so the rock load cannot be shot down mid-measurement);
+minerals are 0 in run 1 and peak 2 / mean 1.91 in run 2, i.e. the handful of
+salvage drops that accumulate during the window, not a field.
+
+CPU attribution over the profiled window (run 1, 60 s, 55 393 samples, share of
+the measured window, %):
+
+| JS | simulation | renderer | ui | audio | gc | idle | native | other |
+|---|---|---|---|---|---|---|---|---|
+| 11.15 | 1.66 | **9.34** | 0.11 | 0.03 | 0.21 | 85.44 | 3.20 | 0.01 |
+
+The renderer bucket is dominated by per-object draw submission, exactly the
+symbols the batched path targets (self time, share of the window):
+
+| Symbol | Source | Self time | Share |
+|---|---|---|---|
+| `ContainerWebGLRenderer` | Phaser (container render) | 987.0 ms | 1.63 % |
+| `batch` | Phaser (batch submission) | 628.3 ms | 1.04 % |
+| `GraphicsWebGLRenderer` | Phaser (Graphics pipeline) | 588.4 ms | 0.97 % |
+| `renderWebGLStep` | Phaser (render step) | 564.5 ms | 0.93 % |
+
+The hottest project functions are far smaller — `GymFormationScene.tick`
+0.46 %, `CombatScene._handleCollisions` 0.12 % — so the frame is not
+simulation-bound.
+
+**Read the numbers this way:**
+
+- **The frame time is already at the vsync step, so the win cannot be shown as
+  frame time on this host.** 200 rocks + 12 firing enemies hold p50 = p95 =
+  16.7 ms, 60.00 effective FPS and zero long frames in both runs. The batched
+  change removes JS draw-submission work, and on a hardware GPU the 60 Hz vsync
+  step absorbs the difference — so the **after** half is read from the renderer
+  attribution below, not from p50/p95. Any frame-time claim for this change on
+  this host would be inside the [noise floor](#noise-floor).
+- **The renderer is still the lever, by a wide margin.** The `renderer` bucket
+  (9.34 %) is **5.6×** the game's own `simulation` bucket (1.66 %), and 84 % of
+  the renderer bucket is the four draw-submission symbols above. The main thread
+  is idle for 85.44 % of the window and `native` (GL submission/raster) is
+  3.20 %, so this is CPU-side per-object submission, not a saturated GPU.
+- **The load is the gym's deterministic one.** 212 = 200 rocks + 12 enemies in
+  every sample of both runs, so a re-run on a matching host reproduces the same
+  scenario, and the before/after pair compares the same field.
+
+**Verdict.** This is the before half of the pair only: on the reference
+hardware-GPU desktop the asteroid field already meets the 60 FPS budget, and the
+measured cost the batched rendering targets is **9.34 % renderer** (5.6× the
+1.66 % simulation) concentrated in `ContainerWebGLRenderer`, `batch`,
+`GraphicsWebGLRenderer` and `renderWebGLStep`. AH-0MW508JS2004W3SR records the
+after half against these numbers.
 
 ## Ranked hotspots
 
