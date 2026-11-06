@@ -21,7 +21,7 @@
 #   splits                — Radial warhead count spawned once on impact/expiry.
 #   orbitPods             — Orbiting satellite-pod count (with orbitRadius).
 #   orbitRadius           — Orbit radius around the ship, in px.
-#   aoeTrigger            — When the area effect resolves: onFire | onImpact | onRandom | screenPulse.
+#   aoeTrigger            — When the area effect resolves: onFire | onRandom | screenPulse.
 #   aoeRadius             — Effect radius in px.
 #   aoeDamagesEnemies     — true/false: does the effect damage enemies inside the radius?
 #   aoeClearsEnemyBullets — true/false: does the effect clear enemy bullets inside the radius?

@@ -657,9 +657,7 @@ export class CombatCoreScene<
    * Shared AOE dispatch hook (parent AH-0MUOOB3OR001V8CD): called by
    * {@link CombatCoreScene._autoFire} once for every AOE weapon that fires,
    * with the firing weapon and the ship position. Default no-op; the shared
-   * {@link CombatScene} overrides it to resolve an `'onFire'` area effect, and
-   * an `'onImpact'` projectile later resolves its own blast through the same
-   * shared effect path.
+   * {@link CombatScene} overrides it to resolve an `'onFire'` area effect.
    *
    * @param _weaponId - The AOE weapon that fired.
    * @param _def - Its catalogue definition (carries the AOE descriptor).
@@ -689,21 +687,6 @@ export class CombatCoreScene<
     _def: WeaponDefinition,
     _x: number,
     _y: number,
-  ): void {}
-
-  /**
-   * Shared hook called once for every `'onImpact'` AOE projectile the moment
-   * it is spawned (parent AH-0MUOOB3OR001V8CD). Default no-op; the shared
-   * {@link CombatScene} overrides it to attach the projectile's expiry
-   * detonation. The projectile already carries its definition in
-   * {@link PlayerBullet.aoeWeapon}.
-   *
-   * @param _bullet - The freshly spawned projectile.
-   * @param _def - Its AOE weapon definition.
-   */
-  protected onAoeProjectileSpawned(
-    _bullet: PlayerBullet,
-    _def: WeaponDefinition,
   ): void {}
 
   /**
@@ -1047,16 +1030,14 @@ export class CombatCoreScene<
         // AOE dispatch: the shared core owns the hook, so the game and the
         // gyms resolve the same area effect from one implementation.
         this.onAoeFired(weaponId, def, player.x, player.y);
-        // Neither an `onFire` effect (nova ring / arc chain) nor an
-        // `onRandom` effect (mortar blast) launches a travelling projectile:
-        // both resolve their area effect at fire time. Only an `onImpact`
-        // effect launches a projectile through the normal bullet path, and
-        // the projectile resolves its blast on impact/expiry.
-        if (def.aoe.trigger === 'onFire') continue;
+        // Every AOE effect resolves at fire time — an `'onFire'` effect
+        // (nova ring / arc chain) immediately at the ship, an `'onRandom'`
+        // effect (mortar blast) at sampled points — so no AOE weapon launches
+        // a travelling projectile.
         if (def.aoe.trigger === 'onRandom') {
           this.onAoeRandomFired(def, player.x, player.y);
-          continue;
         }
+        continue;
       }
       // Hitscan weapons (the wave laser, AH-0MVREBUJ5004HDRQ) spawn **no**
       // travelling bullet: the ray resolves at launch through the dedicated
@@ -1085,10 +1066,9 @@ export class CombatCoreScene<
         player.x,
         player.y,
       )) {
-        // An `'onImpact'` projectile travels at its own (slower) speed so the
-        // detonation point stays legible; conventional bullets use the shared
-        // speed.
-        const speed = def.aoe?.projectileSpeed ?? PLAYER_BULLET_SPEED;
+        // AOE weapons resolve their effect before reaching this loop (see
+        // above), so a travelling bullet always uses the shared speed.
+        const speed = PLAYER_BULLET_SPEED;
         const vel = angleToVelocity(bd.angleDeg, speed);
         const bullet = this.spawnPlayerBullet(
           bd.x,
@@ -1131,13 +1111,7 @@ export class CombatCoreScene<
         if (def.bounce !== undefined) {
           bullet.onWallBounce = () => this.onPlayerBulletWallBounce(bullet);
         }
-        if (def.aoe?.trigger === 'onImpact') {
-          // Tag the projectile so the shared combat core can detonate its
-          // area effect on impact/expiry, then let the scene attach its
-          // detonation callback through the shared hook.
-          bullet.aoeWeapon = def;
-          this.onAoeProjectileSpawned(bullet, def);
-        } else if (def.splits !== undefined) {
+        if (def.splits !== undefined) {
           // Tag the projectile so the shared combat core splits it exactly
           // once on the first impact or on expiry (Missile Command cluster
           // missile, AH-0MV1BIVIJ007KYXU). The split seam lives in this

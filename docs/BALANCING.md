@@ -1202,7 +1202,7 @@ cell must be non-blank on every row; "optional" means a blank cell is legal
 | `splits` | Radial warheads spawned once on impact/expiry. | Number ≥ 0 (a whole count). Optional (blank = no split). |
 | `orbitPods` | Orbiting satellite-pod count. **Opens** the orbit group. | Number ≥ 1 (a whole count). Optional (blank = no orbit). |
 | `orbitRadius` | Orbit radius around the ship. | px, > 0. Required when `orbitPods` is present. |
-| `aoeTrigger` | When the area effect resolves. **Opens** the AOE group. | `onFire`, `onImpact`, `onRandom` or `screenPulse` (list below). Optional (blank = no AOE). |
+| `aoeTrigger` | When the area effect resolves. **Opens** the AOE group. | `onFire`, `onRandom` or `screenPulse` (list below). Optional (blank = no AOE). |
 | `aoeRadius` | Effect radius. | px, > 0. Required when `aoeTrigger` is present. |
 | `aoeDamagesEnemies` | Does the effect damage enemies inside the radius? | `true` or `false` (`1`/`0` are also accepted). Required when `aoeTrigger` is present. |
 | `aoeClearsEnemyBullets` | Does the effect clear enemy bullets inside the radius? | `true` or `false`. Required when `aoeTrigger` is present. |
@@ -1232,7 +1232,7 @@ that guard even though it parses.
 invariant compares the *canonical* shape family, so the two cannot be used to
 smuggle in a duplicate).
 
-**`aoeTrigger` legal values.** `onFire`, `onImpact`, `onRandom`, `screenPulse`.
+**`aoeTrigger` legal values.** `onFire`, `onRandom`, `screenPulse`.
 
 ### `weapon-patterns.csv` columns
 

@@ -5,7 +5,7 @@
  * These exercise the real `CombatScene` implementation through a minimal
  * stub subclass: the `_autoFire` dispatch hook, enemy damage through the
  * shared kill seam, enemy-bullet clearing with shared impact feedback, the
- * boss hook, and the `onFire`/`onImpact`/`onRandom` trigger split. Every
+ * boss hook, and the `onFire`/`onRandom` trigger split. Every
  * assertion is on observable behaviour (entity state, registered hooks,
  * spawned bullets).
  */
@@ -20,7 +20,6 @@ import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
-import { advanceAndCull } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { isOnGrid } from '../../utils/beat';
@@ -234,12 +233,6 @@ class AoeStubScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   runApplyAoeDescriptor(aoe: AoEDescriptor, x: number, y: number): void {
     this.applyAoEDescriptor(aoe, x, y);
   }
-  runOnAoeProjectileSpawned(bullet: PlayerBullet, def: WeaponDefinition): void {
-    this.onAoeProjectileSpawned(bullet, def);
-  }
-  runDetonateAoeProjectile(bullet: PlayerBullet): void {
-    this.detonateAoeProjectile(bullet);
-  }
   runCollisions(): void {
     this._handleCollisions();
   }
@@ -327,15 +320,14 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     scene.runAutoFire(1.5);
 
     // The permanent cannon still fires its own bullets, but none is a Mortar
-    // projectile: every spawned bullet travels at the shared speed and carries
-    // no AOE tag (the Mortar resolves instantly instead).
+    // projectile: every spawned bullet travels at the shared speed (the Mortar
+    // resolves instantly instead).
     expect(spawned.length).toBeGreaterThan(0);
     for (const bullet of spawned) {
       expect(Math.hypot(bullet.vx, bullet.vy)).toBeCloseTo(
         PLAYER_BULLET_SPEED,
         5,
       );
-      expect(bullet.aoeWeapon).toBeUndefined();
     }
   });
 
@@ -757,130 +749,6 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
       if (buf[i] === 9) strokes += 1;
     }
     expect(strokes).toBeGreaterThan(8);
-  });
-
-  // ── Retained onImpact projectile-detonation machinery (dead code) ──
-  // No catalogue weapon uses the `onImpact` trigger after the Mortar moved
-  // to `onRandom`, but the dispatch resolves through the same
-  // `onAoeProjectileSpawned` → `detonateAoeProjectile` path; these tests pin
-  // that retained behaviour so it cannot silently rot.
-
-  it('onImpact AC4 — a manually spawned projectile detonates on lifetime expiry', async () => {
-    const scene = await boot();
-    const def = WEAPON_CATALOGUE.mortar;
-    const enemy = new StubEnemy(scene, 100, 100);
-    scene.entities.push(enemy);
-    const bullet = scene.spawnPlayerBullet(
-      100,
-      100,
-      0,
-      0,
-      def.bulletColor,
-      def.bulletLifetime,
-    );
-    bullet.aoeWeapon = def;
-    scene.runOnAoeProjectileSpawned(bullet, def);
-    expect(scene.getAoeEffects()).toHaveLength(0);
-
-    // Advance past the lifetime: the expiry callback detonates the blast.
-    advanceAndCull(bullet, def.bulletLifetime + 0.01);
-
-    expect(bullet.active).toBe(false);
-    expect(enemy.destroyed).toBe(true);
-    expect(scene.getAoeEffects()).toHaveLength(1);
-  });
-
-  it('onImpact AC4 — the projectile detonates when it hits an enemy', async () => {
-    const scene = await boot();
-    const def = WEAPON_CATALOGUE.mortar;
-    const enemy = new StubEnemy(scene, 120, 100);
-    scene.entities.push(enemy);
-    const bullet = scene.spawnPlayerBullet(
-      120,
-      100,
-      0,
-      0,
-      def.bulletColor,
-      def.bulletLifetime,
-    );
-    bullet.aoeWeapon = def;
-    scene.runOnAoeProjectileSpawned(bullet, def);
-
-    scene.runCollisions();
-
-    // The blast (not a direct hit) resolved the damage and the VFX.
-    expect(enemy.destroyed).toBe(true);
-    expect(bullet.active).toBe(false);
-    expect(scene.getAoeEffects()).toHaveLength(1);
-    expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(1);
-  });
-
-  it('onImpact AC4 — the projectile detonates when it intercepts an enemy bullet', async () => {
-    const scene = await boot();
-    const def = WEAPON_CATALOGUE.mortar;
-    scene.bullets.push(new StubBullet(scene, 120, 100));
-    // Far enough not to be hit directly by the projectile's pass-1 scan, but
-    // inside the Mortar blast radius (35 px) from the interception point.
-    const enemy = new StubEnemy(scene, 150, 100);
-    scene.entities.push(enemy);
-    const bullet = scene.spawnPlayerBullet(
-      120,
-      100,
-      0,
-      0,
-      def.bulletColor,
-      def.bulletLifetime,
-    );
-    bullet.aoeWeapon = def;
-    scene.runOnAoeProjectileSpawned(bullet, def);
-
-    scene.runCollisions();
-
-    expect(scene.bullets).toHaveLength(0); // intercepted
-    expect(enemy.destroyed).toBe(true); // blast caught the nearby enemy
-    expect(scene.getAoeEffects()).toHaveLength(1);
-  });
-
-  it('onImpact AC4 — a projectile detonates at most once (collision + expiry)', async () => {
-    const scene = await boot();
-    const def = WEAPON_CATALOGUE.mortar;
-    const tough = new ToughEnemy(scene, 100, 100, 3);
-    scene.entities.push(tough);
-    const bullet = scene.spawnPlayerBullet(
-      100,
-      100,
-      0,
-      0,
-      def.bulletColor,
-      def.bulletLifetime,
-    );
-    bullet.aoeWeapon = def;
-    scene.runOnAoeProjectileSpawned(bullet, def);
-
-    scene.runDetonateAoeProjectile(bullet);
-    scene.runDetonateAoeProjectile(bullet);
-
-    expect(tough.damageCalls).toBe(1);
-    expect(scene.getAoeEffects()).toHaveLength(1);
-  });
-
-  it('onImpact AC6 — the detonation plays the dedicated Mortar detonation cue', async () => {
-    const scene = await boot();
-    const cue = vi.spyOn(effectsModule, 'playMortarDetonationSound');
-    const def = WEAPON_CATALOGUE.mortar;
-    const bullet = scene.spawnPlayerBullet(
-      100,
-      100,
-      0,
-      0,
-      def.bulletColor,
-      def.bulletLifetime,
-    );
-    bullet.aoeWeapon = def;
-
-    scene.runDetonateAoeProjectile(bullet);
-
-    expect(cue).toHaveBeenCalledTimes(1);
   });
 
   // ── F4 — Arc nearest-enemy targeting + chaining ─────────────────────

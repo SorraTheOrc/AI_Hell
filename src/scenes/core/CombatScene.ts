@@ -496,14 +496,6 @@ export abstract class CombatScene<
     if ((enemy as unknown as { isSpawning?: boolean }).isSpawning) {
       return false;
     }
-    // An `'onImpact'` AOE projectile detonates instead of dealing a direct
-    // hit: the blast resolves the damage for this and every other enemy in the
-    // radius, so the directly-hit enemy is not double-damaged.
-    if (bullet.aoeWeapon) {
-      this.detonateAoeProjectile(bullet);
-      bullet.destroy();
-      return true;
-    }
     // A splitting projectile (cluster missile) does not deal a direct hit: it
     // bursts into radial warheads at the impact point, which damage enemies
     // on contact through the ordinary bullet path. The split resolves exactly
@@ -673,8 +665,8 @@ export abstract class CombatScene<
    *    hook (the `onPlayerBulletHitsBoss`-style path).
    *
    * An `'onFire'` effect calls this at the ship from
-   * {@link CombatScene.onAoeFired}; an `'onImpact'` projectile calls it at the
-   * detonation point.
+   * {@link CombatScene.onAoeFired}; an `'onRandom'` effect calls it at the
+   * sampled point.
    */
   protected applyAoeEffect(def: WeaponDefinition, x: number, y: number): void {
     const aoe = def.aoe;
@@ -856,8 +848,7 @@ export abstract class CombatScene<
    * Shared AOE dispatch from `_autoFire`: resolves an `'onFire'` effect at
    * the ship immediately and spawns its distinctive VFX. An `'onRandom'`
    * effect (mortar blast) resolves at random points through
-   * {@link CombatScene.onAoeRandomFired}; an `'onImpact'` effect (retained
-   * dead-code path) resolves later, when its projectile detonates and calls
+   * {@link CombatScene.onAoeRandomFired}; an `'onFire'` effect calls
    * {@link CombatScene.applyAoeEffect}.
    */
   protected override onAoeFired(
@@ -1031,32 +1022,6 @@ export abstract class CombatScene<
   }
 
   /**
-   * Shared hook for an `'onImpact'` AOE projectile: attaches the expiry
-   * detonation so the blast resolves at the projectile's position whether it
-   * hits an enemy/enemy bullet or reaches the end of its lifetime.
-   */
-  protected override onAoeProjectileSpawned(
-    bullet: PlayerBullet,
-    _def: WeaponDefinition,
-  ): void {
-    bullet.onExpire = () => this.detonateAoeProjectile(bullet);
-  }
-
-  /**
-   * Detonates an `'onImpact'` AOE projectile at its current position: applies
-   * the descriptor's area effect, then spawns the shared detonation VFX/cue.
-   * Idempotent per projectile — a projectile detonates at most once even if
-   * both the collision and expiry paths observe it.
-   */
-  protected detonateAoeProjectile(bullet: PlayerBullet): void {
-    const def = bullet.aoeWeapon;
-    if (!def?.aoe || bullet.aoeDetonated) return;
-    bullet.aoeDetonated = true;
-    this.applyAoeEffect(def, bullet.x, bullet.y);
-    this.spawnAoeDetonationVfx(def, bullet.x, bullet.y);
-  }
-
-  /**
    * Spawns the distinctive detonation VFX/cue for an AOE weapon at (x, y).
    * Mortar's radial burst is the F3 implementation; the shared core owns it so
    * the game and every gym detonate identically. The detonation **cue always
@@ -1067,7 +1032,7 @@ export abstract class CombatScene<
    *
    * `origin` (when supplied) is the launcher's fire position, used to draw the
    * Mortar's inbound arcing shell trail from the ship into the blast point
-   * (AH-0MV822C250051OVN); absent for the retained `onImpact` projectile path.
+   * (AH-0MV822C250051OVN).
    */
   protected spawnAoeDetonationVfx(
     def: WeaponDefinition,
@@ -1567,8 +1532,6 @@ export abstract class CombatScene<
           // Impact feedback fires from the shared path before the bullets
           // are destroyed (so the impact point is still readable).
           this.onBulletVsBulletImpact(eb, pb);
-          // An AOE projectile detonates at the interception point.
-          if (pb.aoeWeapon) this.detonateAoeProjectile(pb);
           // A splitting projectile bursts into warheads at the interception
           // point (AH-0MV1BIVIJ007KYXU).
           if (pb.splitWeapon) this.splitProjectile(pb);

@@ -4648,28 +4648,18 @@ export class PlayScene extends CombatScene<
    */
   protected override onPlayerBulletHitsBoss(pb: PlayerBullet): boolean {
     if (this._playerBulletHitsEntity(pb, this.boss)) {
-      if (pb.aoeWeapon) {
-        // An `'onImpact'` AOE projectile detonates instead of dealing a direct
-        // phase hit; the blast damages the boss through `onAoeHitsBoss`.
-        this.detonateAoeProjectile(pb);
-      } else {
-        // Frenzy amplifies each bullet into `1 + bonus` phase hits
-        // (AH-0MVH80ZJ7009W18Z); the damage path stops once the boss dies.
-        for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-          this._damageBoss(pb.x, pb.y);
-        }
+      // Frenzy amplifies each bullet into `1 + bonus` phase hits
+      // (AH-0MVH80ZJ7009W18Z); the damage path stops once the boss dies.
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageBoss(pb.x, pb.y);
       }
       pb.destroy();
       return true;
     }
     // Mini-boss encounter (the final boss is not spawned at the same time).
     if (this._playerBulletHitsEntity(pb, this.miniBoss)) {
-      if (pb.aoeWeapon) {
-        this.detonateAoeProjectile(pb);
-      } else {
-        for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-          this._damageMiniBoss(pb.x, pb.y);
-        }
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageMiniBoss(pb.x, pb.y);
       }
       pb.destroy();
       return true;

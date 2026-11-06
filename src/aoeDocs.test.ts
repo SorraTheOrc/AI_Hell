@@ -53,7 +53,6 @@ describe('AOE weapons are documented (F7 AC1/AC2/AC5)', () => {
     }
     // The trigger model and the Bomb non-interference note.
     expect(gdd).toMatch(/onFire/);
-    expect(gdd).toMatch(/onImpact/);
     expect(gdd).toMatch(/AOE does not alter Bomb/);
   });
 

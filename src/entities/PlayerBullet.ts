@@ -127,25 +127,11 @@ export class PlayerBullet extends Phaser.GameObjects.Image {
   private readonly _animation: BulletViewAnimation = 'none';
 
   /**
-   * The AOE weapon definition when this bullet is an `'onImpact'` projectile
-   * (Mortar). The owning scene detonates the descriptor's area effect when
-   * the projectile hits or expires; `undefined` for an ordinary bullet.
-   */
-  aoeWeapon?: WeaponDefinition;
-
-  /**
    * Optional callback invoked when the bullet's lifetime expires, before its
-   * sprite is destroyed. The shared combat core uses it to detonate an AOE
+   * sprite is destroyed. The shared combat core uses it to split a cluster
    * projectile on expiry; ordinary bullets leave it undefined.
    */
   onExpire?: (bullet: PlayerBullet) => void;
-
-  /**
-   * True once an `'onImpact'` AOE projectile has detonated, so the blast
-   * resolves at most once even if both the collision and expiry paths observe
-   * the same projectile.
-   */
-  aoeDetonated = false;
 
   /**
    * The weapon definition when this bullet is a **splitting** projectile
@@ -431,8 +417,8 @@ export function advanceAndCull(
 ): boolean {
   bullet.advance(dt);
   if (bullet.isExpired()) {
-    // Notify an `'onImpact'` projectile so its AOE blast resolves at the
-    // expiry point before the sprite is destroyed.
+    // Notify the expiry callback (used by splitting projectiles) before
+    // the sprite is destroyed.
     bullet.onExpire?.(bullet);
     bullet.destroy();
     return false;

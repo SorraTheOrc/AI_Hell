@@ -3537,10 +3537,8 @@ const SHARED_AOE_METHODS = [
   'onAoeFired',
   'onAoeRandomFired',
   'applyAoeEffect',
-  'detonateAoeProjectile',
   'spawnAoeEffectVfx',
   'spawnArcChainVfx',
-  'onAoeProjectileSpawned',
 ] as const;
 
 /** The scenes that must inherit the shared AOE hooks unchanged. */
