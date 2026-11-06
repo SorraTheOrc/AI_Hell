@@ -220,8 +220,9 @@ describe('docs/GYM_PARITY.md records every gym scene (AH-0MVRMHUOG005P38A)', () 
   const matrix = fs.readFileSync(GYM_PARITY_MATRIX, 'utf8');
   const sceneKeys = gymSceneKeys(GYM_SCENE_DIR);
 
-  it('audits the 19 production gym scenes (AC1)', () => {
+  it('audits the 20 production gym scenes (AC1)', () => {
     expect(sceneKeys).toEqual([
+      'GymAsteroidStress',
       'GymBoss',
       'GymBotTuning',
       'GymCentipede',

@@ -53,6 +53,7 @@ export const PARAMETERISED_GYM_SCENE_KEYS = Object.freeze([
  * suite instead of silently diverging.
  */
 export const WATCHABLE_GYM_SCENE_KEYS = Object.freeze([
+  'GymAsteroidStress',
   'GymBoss',
   'GymBotTuning',
   'GymCentipede',

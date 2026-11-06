@@ -80,6 +80,47 @@ scene, warmup, window, CPU throttle and host all match. The gym is also
 watchable/capturable like every other gym (`WATCHABLE_GYM_SCENE_KEYS`, see
 [docs/dev/gameplay-capture.md](dev/gameplay-capture.md)).
 
+## The asteroid stress gym (`GymAsteroidStress`)
+
+The asteroid batched-rendering work (parent AH-0MW4857B0004GMWR) needs a
+reproducible field of hundreds of live rocks; `GymPerformance` is 100 firing
+ships, not asteroids. `GymAsteroidStress` (AH-0MW507M5L0084TSW) is that
+scenario on demand, again built entirely from the shared gym/combat core:
+
+- **200 live asteroids**, mixed `large`/`medium` tiers, scattered over the
+  playfield by a seeded pure planner (`buildAsteroidStressSpawnEvents`) and
+  materialised through the shared `createAsteroidFromEvent` seam — the same
+  code the game's scheduled asteroid hazard runs, so the measured render path
+  is the game's own.
+- **A representative late-game wave** of 12 firing enemies (two of each
+  `tank`, `swarm`, `phaser`, `diver`, `raider`, `march`), built by the shared
+  `createEnemyFromConfig` factory and firing through the shared `fireForEnemy`
+  dispatcher from the first frame (`shootEnabled: true`).
+- **Only the target load and a stable window**: the rock field is stationary
+  (zero velocity, with a rock-free pocket around the ship so a ram can never
+  split a rock and change the composition), formation drift 0, no wave
+  timeout, no power-up layer and no seeded mineral field. Player auto-fire is
+  disabled (the documented divergence the other stress gym also records), so
+  the 200-rock load cannot be shot down mid-measurement; every rock still
+  rotates through the shared `Asteroid` path, so the rendering work is the
+  game's own.
+- **Deterministic**: the field seed (`GYM_ASTEROID_STRESS_FIELD_SEED`, or a
+  capture setup's `seed`) reproduces identical rock positions, velocities,
+  tiers, rotations and count; the wave roster is derived from the grid offset.
+- **Live readout**: a top-left overlay reports FPS, the live asteroid count,
+  the wave count and the same shared `getPerformanceCounts()` fields the probe
+  samples every 250 ms, so a report's `counts` block (peak/mean `enemies` =
+  212 with the full load) is the authoritative load label.
+
+```bash
+npm run perf:measure -- --scene GymAsteroidStress --seconds 60 --warmup 3
+```
+
+Because the field is deterministic, a before/after pair on the same host,
+scene, window and throttle isolates the asteroid rendering change. The gym is
+watchable/capturable like every other gym (`WATCHABLE_GYM_SCENE_KEYS`), and
+`docs/GYM_PARITY.md` records its parity row.
+
 ## The desktop host (Electron)
 
 The budget is stated for "desktop browser **and Electron**". The browser half

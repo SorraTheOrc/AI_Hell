@@ -1,6 +1,23 @@
 {
   "scenes": [
     {
+      "target": "GymAsteroidStress",
+      "playMs": 1500,
+      "captureMs": 6000,
+      "label": "Gym family \u2014 asteroid stress (200 rocks + late-game wave)",
+      "setup": {
+        "player": {
+          "weapons": [
+            "spread",
+            "dual"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {},
+        "seed": 8080
+      }
+    },
+    {
       "target": "GymBoss",
       "playMs": 500,
       "captureMs": 10000,

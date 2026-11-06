@@ -103,6 +103,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     // sorted alphabetically. GymFodderEnemies is not listed as a bare scene
     // — a single fodder row boots it.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
+      'AsteroidStress',
       'BotTuning',
       'Hangar',
       'HexWar',
@@ -119,6 +120,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'WeaponTuning',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
+      'GymAsteroidStress',
       'GymBotTuning',
       'GymHangar',
       'GymHexWar',
