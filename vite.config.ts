@@ -16,10 +16,11 @@ export default defineConfig({
     port: 5173,
     // AC2: `npm run dev` launches a browser window rendering the game.
     open: true,
-    // Exclude dev-output trees and .worklog/ worktree checkouts from the
-    // file watcher. Recursive watches into .worklog/worktrees exhaust
-    // fs.inotify.max_user_watches (ENOSPC), crashing the dev server
-    // on startup. Mirrors the core scaffold's `server.watch.ignored` guard
+    // Exclude dev-output trees and the `.worklog/` worktree checkouts from the
+    // file watcher. `.worklog/worktrees/**` are symlinks into other full project
+    // checkouts, so a recursive watch walks them all and exhausts
+    // fs.inotify.max_user_watches (ENOSPC), crashing the dev server on startup.
+    // Mirrors the core scaffold's `server.watch.ignored` guard
     // (CG-0MV5SEHHG000ZKUA); the list lives in ./vite/watchIgnore.ts.
     watch: {
       ignored: [...DEV_WATCH_IGNORE_PATTERNS],

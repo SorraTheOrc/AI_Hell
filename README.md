@@ -392,6 +392,8 @@ Flow / scene keys:
 
 Run it with `npm run dev` and either click **Play Game** or press **Enter**. Leave the menu idle for 15 s — or press **Tab** then **Enter** on **👁 Watch Demo** — to watch the bot play the demo; press a movement key (W/A/S/D or an arrow key) to take over, or press any non-movement key (including ESC) to return to the menu.
 
+> **Dev-server file watching** — `npm run dev` excludes `.worklog/**` (the implement/plan/audit worktree checkouts) and the dev-output trees from the Vite file watcher: `server.watch.ignored` in [`vite.config.ts`](vite.config.ts) spreads the local ignore list in [`vite/watchIgnore.ts`](vite/watchIgnore.ts), which mirrors the core scaffold's canonical `DEV_WATCH_IGNORE_PATTERNS`. Without the exclusion the watcher walks `.worklog/worktrees/**` recursively and exhausts the host `fs.inotify.max_user_watches` budget, crashing the dev server with `ENOSPC: System limit for number of file watchers reached` (MS-0MV8M9IAF000KPNY, MS-0MVBEQ6MC004WRI0).
+
 #### Leaderboard
 
 The local high-score table is owned by `src/core/Leaderboard.ts` and rendered through the shared `src/ui/leaderboardView.ts` helper.
