@@ -27,9 +27,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CONSUMABLE_POWER_UP_IDS,
+  FIELD_PICKUP_ONLY_POWER_UP_IDS,
   NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS,
   POWER_UP_CATALOGUE,
   WEAPON_DROP_IDS,
+  isFieldPickupOnly,
   isRewardableWhenOwned,
   type PowerUpEntry,
   type PowerUpId,
@@ -242,6 +244,43 @@ describe('POWER_UP_CATALOGUE.rewardableWhenOwned (AH-0MW231NRP004HAT5)', () => {
     // still rewarded once owned, so the helper must read absence as `true`.
     expect(POWER_UP_CATALOGUE.shield.rewardableWhenOwned).toBeUndefined();
     expect(isRewardableWhenOwned('shield')).toBe(true);
+  });
+});
+
+// ── Field-pickup-only flag (AH-0MW3MLV2V001NWBR) ─────────────────────
+
+describe('POWER_UP_CATALOGUE.fieldPickupOnly (AH-0MW3MLV2V001NWBR)', () => {
+  it('derives the field-pickup-only set from the catalogue flag, in catalogue order', () => {
+    const expected = CATALOGUE_IDS.filter(
+      (id) => POWER_UP_CATALOGUE[id].fieldPickupOnly === true,
+    );
+
+    expect(FIELD_PICKUP_ONLY_POWER_UP_IDS).toEqual(expected);
+    // The live opt-out: Extra Life is never offered by a reward surface while
+    // it stays a working field pickup (parent AH-0MW10ZVLH005IJRM AC4).
+    expect(FIELD_PICKUP_ONLY_POWER_UP_IDS).toEqual(['extra_life']);
+  });
+
+  it('treats an absent flag as the documented rewardable default', () => {
+    for (const id of CATALOGUE_IDS) {
+      expect(isFieldPickupOnly(id), id).toBe(
+        POWER_UP_CATALOGUE[id].fieldPickupOnly === true,
+      );
+    }
+
+    // The default is a real, live data point: Shield declares no flag and is
+    // still offered by every reward surface, so absence must read as `false`.
+    expect(POWER_UP_CATALOGUE.shield.fieldPickupOnly).toBeUndefined();
+    expect(isFieldPickupOnly('shield')).toBe(false);
+  });
+
+  it('keeps every weapon drop out of the field-pickup-only set', () => {
+    for (const id of WEAPON_DROP_IDS) {
+      expect(
+        (FIELD_PICKUP_ONLY_POWER_UP_IDS as readonly string[]).includes(id),
+        id,
+      ).toBe(false);
+    }
   });
 });
 

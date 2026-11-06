@@ -154,6 +154,7 @@ import {
   applyWheelOutcome,
   buildWheelWedges,
   drawWheelOutcome,
+  orderedOwnedKinds,
   type MiniBossWheelOutcome,
   type MiniBossWheelWedge,
 } from '../powerups/miniBossWheel';
@@ -208,7 +209,7 @@ import {
   type HangarWarDeployment,
 } from './hangarWar/hangarDeployment';
 import { PowerUp } from '../powerups/PowerUp';
-import { EXTRA_LIFE_DROP_ID, getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
+import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
 import {
@@ -3735,8 +3736,15 @@ export class PlayScene extends CombatScene<
     // six-slot pool (weapon drops and power-up kinds alike), the same
     // accounting the hold-full choice reads. Temporary field stacks are
     // deliberately excluded: a spin levels permanent progress
-    // (parent AH-0MVLISU03006WDOD AC1/AC6).
-    const ownedKinds = [...resolvePlayerSlotState(this.player).ownedIds];
+    // (parent AH-0MVLISU03006WDOD AC1/AC6). `orderedOwnedKinds` applies the
+    // shared reward-surface filter (a field-pickup-only Extra Life, a retired
+    // owned Teleport), so the empty check below sees exactly the kinds the
+    // wheel can pay out — a run holding only excluded kinds takes the
+    // hold-full-style fallback instead of spinning a dud
+    // (parent AH-0MW10ZVLH005IJRM AC4).
+    const ownedKinds = orderedOwnedKinds(
+      resolvePlayerSlotState(this.player).ownedIds,
+    );
 
     if (ownedKinds.length === 0) {
       // Empty-owned fallback (AC4): a wheel with no owned wedge would be a
@@ -3849,7 +3857,10 @@ export class PlayScene extends CombatScene<
    * Reusing the shared choice strategy keeps one definition of "what a reward
    * may offer" — the base pool, the owned level-ups and the six-slot gate are
    * all applied by the strategy itself, so this fallback cannot drift from the
-   * hold-full choice.
+   * hold-full choice. It therefore also inherits the shared reward-surface
+   * exclusion for free: Extra Life is never offered here because it is flagged
+   * field-pickup-only in the catalogue, not because this fallback filters it
+   * (parent AH-0MW10ZVLH005IJRM AC4).
    */
   private _holdFullStyleRewardOptions(): ChoiceOption[] {
     return this.mineralChoiceStrategy.choose(3, this.rng, {
@@ -5910,9 +5921,10 @@ export class PlayScene extends CombatScene<
         fireSchedule: buildHoldFullFireSchedule(this.player),
         // Demo mode auto-selects after a human-like delay so the bot never
         // stalls on the overlay; normal play waits for a real selection
-        // (AH-0MUXXQ1MN002RXGB · AC4/AC5). Below the life cap the bot takes
-        // the offered Extra Life instead of the first option
-        // (AH-0MV03GXZQ00801T4 · AC1).
+        // (AH-0MUXXQ1MN002RXGB · AC4/AC5). The bot always takes the first
+        // option: the former Extra Life preference is retired because the kind
+        // is never offered by a reward surface any more
+        // (parent AH-0MW10ZVLH005IJRM AC4).
         ...(this.demoMode
           ? {
               autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS,
@@ -5929,19 +5941,25 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * The demo bot's preferred hold-full option index: the offered Extra Life
-   * while below the run's life cap, otherwise the first option (the previous
-   * behaviour). Only used by the demo auto-select, so normal play is
-   * unaffected (AH-0MV03GXZQ00801T4 · AC1).
+   * The demo bot's hold-full auto-select index: the first option.
+   *
+   * The former "prefer an offered Extra Life while below the life cap"
+   * preference (AH-0MV03GXZQ00801T4 · AC1) is **retired**: Extra Life is a
+   * field-pickup-only kind now, so no reward surface can offer it and the
+   * branch could never fire (parent AH-0MW10ZVLH005IJRM AC4). The retained
+   * behaviour is unchanged in every case that remains reachable:
+   *
+   * - a **forced** reward is the scripted pay-off and is always option 0;
+   * - a run at the life cap had nothing to gain from a life offer and took
+   *   option 0 as well.
+   *
+   * The bot's **on-screen** Extra Life pursuit is untouched — field pickups
+   * still exist and still grant +1 life.
    */
   private _preferredDemoChoiceIndex(): number {
-    // A forced reward is the scripted pay-off: always take it.
-    if (this.getForcedMineralReward() !== null) return 0;
-    if (this.gameState.lives >= MAX_LIVES) return 0;
-    const index = this.mineralChoiceOptions.findIndex(
-      (option) => option.id === EXTRA_LIFE_DROP_ID,
-    );
-    return index >= 0 ? index : 0;
+    // A forced reward is the scripted pay-off: always take it. Everything
+    // else (including a run at the life cap) takes the first option.
+    return 0;
   }
 
   /**

@@ -174,8 +174,9 @@ describe('hold-full choice pool — game ↔ gym parity (AH-0MVI4KTD8000FBJ7 AC2
 // also the game ↔ gym parity assertion for the exclusion: no scene can offer
 // or drop Extra Life separately.
 describe('hold-full pool — deliberate Extra Life exclusion (AH-0MW3MLSTW007U8BD)', () => {
-  // `it.fails` until the exclusion lands (implementation AH-0MW3MLV2V001NWBR).
-  it.fails(
+  // Activated (plain `it`) once the exclusion landed — implementation
+  // AH-0MW3MLV2V001NWBR; the assertions are unchanged.
+  it(
     'is the catalogue minus the reset utility and the documented Extra Life exclusion',
     () => {
       const catalogue = new Set<DropId>([

@@ -54,9 +54,9 @@ describe('power-up choice strategy', () => {
   // rather than granting one) and `extra_life` (removed from every reward
   // surface, while staying a working field pickup). Both are spelled out
   // explicitly so the catalogue-derived guard still catches a genuinely
-  // missing entry. `it.fails` until the exclusion lands
-  // (implementation AH-0MW3MLV2V001NWBR).
-  it.fails(
+  // missing entry. Activated as a plain `it(...)` once the exclusion landed
+  // (implementation AH-0MW3MLV2V001NWBR); the assertions are unchanged.
+  it(
     'offers every drop in the catalogue except the Reset utility and Extra Life (AH-0MVI4KTD8000FBJ7 AC1)',
     () => {
       // Derived from the catalogues, not a hand-maintained list: a newly
@@ -871,13 +871,24 @@ describe('power-up choice strategy', () => {
     }
 
     /**
+     * The `availableWhenSlotsFull` entries that are actually pooled.
+     *
+     * Extra Life keeps its slot exemption but is a `fieldPickupOnly` kind, so
+     * it never enters the hold-full pool (parent AH-0MW10ZVLH005IJRM AC4).
+     * Derived from the shared data rather than a second hand-written list.
+     */
+    const POOLED_EXEMPT_IDS = SLOTS_FULL_EXEMPT_IDS.filter((id) =>
+      CHOICE_POOL.includes(id),
+    );
+
+    /**
      * The ids the gated pool may still offer once full: the owned kinds plus
-     * the catalogue entries flagged `availableWhenSlotsFull`.
+     * the catalogue entries flagged `availableWhenSlotsFull` that are pooled.
      */
     function allowedAtFull(context: ChoiceContext): Set<DropId> {
       return new Set<DropId>([
         ...ownedIdsOf(context),
-        ...SLOTS_FULL_EXEMPT_IDS,
+        ...POOLED_EXEMPT_IDS,
       ]);
     }
 
@@ -914,7 +925,7 @@ describe('power-up choice strategy', () => {
           .filter((o) => o.kind === 'powerup' || o.kind === 'weapon')
           .map((o) => o.id)
           .sort();
-        expect(baseIds).toEqual([...SLOTS_FULL_EXEMPT_IDS].sort());
+        expect(baseIds).toEqual([...POOLED_EXEMPT_IDS].sort());
       }
     });
 
@@ -979,8 +990,8 @@ describe('power-up choice strategy', () => {
         .sort();
 
       // The temp-held weapon is offered as a base (permanent) pick alongside
-      // the exempt entries — and nothing else.
-      expect(baseIds).toEqual(['rapid', ...SLOTS_FULL_EXEMPT_IDS].sort());
+      // the pooled exempt entries — and nothing else.
+      expect(baseIds).toEqual(['rapid', ...POOLED_EXEMPT_IDS].sort());
       // The owned offers of the five permanently owned kinds survive (a
       // consumable contributes a charge grant, the rest a level-up).
       const levelUps = candidates
@@ -1373,9 +1384,10 @@ describe('power-up choice strategy', () => {
 // AC4): Extra Life must never be **offered** by the hold-full choice — neither
 // as a base `powerup` entry nor as an owned `power-up-level` offer — while it
 // stays a working field pickup (still spawned by the shared drop pool, still
-// granting +1 life on collection, still levelled by field pickups). The
-// value-level assertions are wrapped in `it.fails` until the exclusion lands
-// (implementation AH-0MW3MLV2V001NWBR).
+// granting +1 life on collection, still levelled by field pickups). Written
+// red-first in AH-0MW3MLSTW007U8BD and activated (plain `it`) by the exclusion
+// implementation AH-0MW3MLV2V001NWBR — only the wrapper changed, never the
+// assertions.
 describe('Extra Life is never offered by the hold-full choice (AH-0MW3MLSTW007U8BD)', () => {
   /** Deterministic 32-bit PRNG (mulberry32) — reproducible seeded draws. */
   function makeSeededRng(seed: number): () => number {
@@ -1398,7 +1410,7 @@ describe('Extra Life is never offered by the hold-full choice (AH-0MW3MLSTW007U8
     ],
   };
 
-  it.fails('offers no Extra Life option across 500 seeded hold-full draws', () => {
+  it('offers no Extra Life option across 500 seeded hold-full draws', () => {
     const draws = 500;
 
     for (let seed = 1; seed <= draws; seed += 1) {
@@ -1419,7 +1431,7 @@ describe('Extra Life is never offered by the hold-full choice (AH-0MW3MLSTW007U8
     }
   });
 
-  it.fails('gives an owned Extra Life no level-up or charge offer', () => {
+  it('gives an owned Extra Life no level-up or charge offer', () => {
     const candidates = buildChoiceCandidates(CHOICE_POOL, OWNING_EXTRA_LIFE);
 
     // No owned offer for the excluded kind — of any kind of option.

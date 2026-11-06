@@ -68,6 +68,7 @@ import type { EffectsRegistry } from './effects';
 import {
   POWER_UP_CATALOGUE,
   WEAPON_DROP_IDS,
+  isFieldPickupOnly,
   isRewardableWhenOwned,
   isWeaponDrop,
   type DropId,
@@ -167,9 +168,18 @@ const POWER_UP_ORDER: ReadonlyMap<string, number> = new Map(
  * gets no wedge — and therefore no level from the bonus slot either. The
  * exclusion is catalogue data read through {@link isRewardableWhenOwned},
  * never an id comparison.
+ *
+ * Finally it excludes a **field-pickup-only** kind (`fieldPickupOnly: true`,
+ * parent AH-0MW10ZVLH005IJRM AC4): the wheel is a **reward surface**, so a
+ * kind excluded from every reward surface gets no wedge and no level from any
+ * slot — including the bonus slot's "every owned kind" payout. The flag is read
+ * through {@link isFieldPickupOnly} — the same catalogue flag the hold-full
+ * pool and its owned offer consume — never an id comparison. The kind still
+ * works as a field pickup.
  */
 function isWheelKind(id: DropId): boolean {
   if (buildLevelUpOption(id, 1) === undefined) return false;
+  if (!isWeaponDrop(id) && isFieldPickupOnly(id)) return false;
   return isWeaponDrop(id) || isRewardableWhenOwned(id);
 }
 
@@ -205,7 +215,9 @@ export function orderedOwnedKinds(ownedKinds: Iterable<DropId>): DropId[] {
  * (`resolveSlotState(...).ownedIds`), so the wedge list and the resolved
  * outcome can never see a different pool. A kind that opts out of owned
  * rewards (an owned Teleport) contributes no wedge — it is filtered by
- * {@link orderedOwnedKinds} — while the bonus wedge stays last.
+ * {@link orderedOwnedKinds} — and neither does a **field-pickup-only** kind
+ * (an owned Extra Life, parent AH-0MW10ZVLH005IJRM AC4), while the bonus wedge
+ * stays last.
  *
  * @param ownedKinds — The run's owned permanent kinds.
  * @returns The wedges in stable order, bonus last.

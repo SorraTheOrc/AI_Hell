@@ -263,15 +263,15 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   (`createCompetentBotBrain`) values the ship's remaining lives. While the
   ship is **below the 5-life cap** it pursues a live **Extra Life** drop above
   every objective except immediate survival (the `secure-life` band, directly
-  below the hard-constraint survival tier and above minerals), and its
-  hold-full auto-select takes an offered **Extra Life** instead of the first
-  option. When a life would be wasted — at the cap — the drop receives no
-  special priority and the auto-select falls back to the first option. The
-  life count and cap are read from the run state (`GameState.lives` /
-  `MAX_LIVES`), so the bot introduces no cap constant of its own; survival
-  still dominates, so the bot never trades its life for a life. Normal play is
-  unaffected (the preference only drives the demo bot and the demo
-  auto-select).
+  below the hard-constraint survival tier and above minerals). The life count
+  and cap are read from the run state (`GameState.lives` / `MAX_LIVES`), so
+  the bot introduces no cap constant of its own; survival still dominates, so
+  the bot never trades its life for a life. The old **hold-full auto-select**
+  preference for an offered Extra Life is **retired** (AH-0MW3MLV2V001NWBR):
+  Extra Life is a field-pickup-only power-up, so no reward surface offers it
+  and the auto-select always takes the first option (§4.4). On-screen pursuit
+  is unchanged — field pickups still exist and still grant +1 life. Normal
+  play is unaffected (the preference only drives the demo bot).
 - **Take over (AH-0MUYP6M6W006Z1AY, AH-0MUYG8XHI0044MQ1):** pressing a **movement key** (W/A/S/D
   per the configured bindings, or an arrow key) leaves demo mode in place
   (`setDemoMode(false)`) — the run continues under player control, no restart.

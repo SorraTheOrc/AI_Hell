@@ -446,7 +446,13 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(play.isPaused()).toBe(false);
   });
 
-  it('AC1 — the demo bot takes an offered Extra Life below the cap', async () => {
+  it('AC1 — the demo bot takes the first option even when an Extra Life is offered', async () => {
+    // Parent AH-0MW10ZVLH005IJRM AC4 (AH-0MW3MLV2V001NWBR): the demo bot's
+    // former "prefer an offered Extra Life below the cap" hold-full preference
+    // is retired — Extra Life is a field-pickup-only kind, so no reward
+    // surface offers it and an injected strategy that does must not change
+    // the auto-select. The bot takes the first option (index 0) even though
+    // the Extra Life sits at index 2.
     const menu = await bootMenu();
     menu.startDemo();
     await wait(booted!.game, 150);
@@ -454,8 +460,6 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
 
-    // Offer the Extra Life at index 2 so a first-option fallback would pick
-    // the shield instead.
     play.setMineralChoiceStrategy({
       choose: () => [
         { id: 'shield', name: 'Shield', kind: 'powerup' },
@@ -469,8 +473,8 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     play.openMineralChoice();
     await wait(booted!.game, BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
-    // The bot took the Extra Life (index 2) rather than the first option.
-    expect(selected).toHaveBeenCalledWith(2);
+    // The bot took the first option, not the Extra Life at index 2.
+    expect(selected).toHaveBeenCalledWith(0);
     expect(play.isMineralChoiceOpen()).toBe(false);
   });
 

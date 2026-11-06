@@ -276,6 +276,30 @@ export interface PowerUpEntry {
    */
   rewardableWhenOwned?: boolean;
   /**
+   * Whether this entry is a **field-pickup-only** power-up: it is never
+   * offered by a **reward surface**, unowned or owned (parent
+   * AH-0MW10ZVLH005IJRM AC4).
+   *
+   * **Defaults to `false`** — an absent flag means the entry may be offered by
+   * the hold-full choice and the mini-boss reward: as a base `★ New` entry
+   * while unowned, and as its owned level-up/charge offer afterwards. A kind
+   * that opts in is excluded from **every** reward surface while staying a
+   * completely ordinary field pickup: the shared drop pool still spawns it,
+   * its collection effect is unchanged and a field pickup still levels it.
+   *
+   * This is broader than {@link PowerUpEntry.rewardableWhenOwned}, which only
+   * retires the **owned** offer. A field-pickup-only kind produces no reward
+   * offer at all: no `CHOICE_POOL` entry, no owned `power-up-level`/
+   * `power-up-charge` and no mini-boss wheel wedge — so the bonus slot's
+   * "every owned kind" payout skips it too.
+   *
+   * The flag is catalogue data, read through {@link isFieldPickupOnly} (and
+   * the derived {@link FIELD_PICKUP_ONLY_POWER_UP_IDS} set), so no reward
+   * builder, mini-boss wheel or scene branches on an id. Extra Life is the
+   * only opt-in today.
+   */
+  fieldPickupOnly?: boolean;
+  /**
    * Whether this entry remains drawable/offerable once all
    * `POWER_UP_SLOT_CAP` permanent slots are occupied (parent
    * AH-0MVLIJT3M005HPHF, AC5).
@@ -381,8 +405,17 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // after the 10 s weapon-style window (AH-0MVUGI3Q4009MW6A).
     temporaryWindow: 10,
     // Exempt: an extra life never opens a seventh permanent effect kind, so
-    // it stays available once the six slots are full (Q3 answer (a)).
+    // it stays available once the six slots are full (Q3 answer (a)). After
+    // the reward-surface exclusion below this only speaks for the *field
+    // pickup* side of the kind: no reward surface offers it any more.
     availableWhenSlotsFull: true,
+    // Field-pickup-only: Extra Life is removed from every **reward surface**
+    // (parent AH-0MW10ZVLH005IJRM AC4) — the hold-full choice pool, its owned
+    // level-up offer and the mini-boss wheel — while remaining a working
+    // field pickup (still in the shared drop pool, still +1 life on
+    // collection, still levelled by a pickup). See
+    // `PowerUpEntry.fieldPickupOnly`.
+    fieldPickupOnly: true,
   },
   magnet: {
     id: 'magnet',
@@ -580,8 +613,49 @@ export function isRewardableWhenOwned(id: PowerUpId): boolean {
 }
 
 /**
- * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full
- * choice and the demo bot's life premium (AH-0MV03GXZQ00801T4 · AC3).
+ * The power-up ids that are **field-pickup-only**, derived from the
+ * catalogue's `fieldPickupOnly` flag in catalogue order (parent
+ * AH-0MW10ZVLH005IJRM AC4).
+ *
+ * An absent flag is the documented `false` default, so only an explicit
+ * `fieldPickupOnly: true` entry appears here. Derived at module load, so the
+ * set can never drift from the entries and no reward builder, mini-boss wheel
+ * or scene spells it out again. Extra Life is the only member today.
+ */
+export const FIELD_PICKUP_ONLY_POWER_UP_IDS: readonly PowerUpId[] = (
+  Object.values(POWER_UP_CATALOGUE) as PowerUpEntry[]
+)
+  .filter((entry) => entry.fieldPickupOnly === true)
+  .map((entry) => entry.id);
+
+/**
+ * Whether a power-up kind is a **field-pickup-only** kind — never offered by
+ * any reward surface, unowned or owned (parent AH-0MW10ZVLH005IJRM AC4).
+ *
+ * Reads the catalogue flag through the derived
+ * {@link FIELD_PICKUP_ONLY_POWER_UP_IDS} set: `false` unless the entry
+ * explicitly opts in, so a newly added catalogue entry is rewardable by
+ * default. The single source of the "field pickup only" rule — the hold-full
+ * choice pool, the owned level-up/charge offer and the mini-boss wheel all
+ * read it instead of comparing ids. A field-pickup-only kind is untouched on
+ * the field side: the shared drop pool still spawns it and its collection
+ * effect is unchanged.
+ *
+ * @param id - The power-up kind being considered for a reward surface.
+ */
+export function isFieldPickupOnly(id: PowerUpId): boolean {
+  return FIELD_PICKUP_ONLY_POWER_UP_IDS.includes(id);
+}
+
+/**
+ * The Extra Life drop id (GDD §4.5). The single source every field-pickup
+ * consumer (the shared drop pool, the AI content layer) reads instead of
+ * spelling `'extra_life'` out again.
+ *
+ * It is deliberately **not** referenced by any reward surface: Extra Life is
+ * field-pickup-only (`POWER_UP_CATALOGUE.extra_life.fieldPickupOnly`, parent
+ * AH-0MW10ZVLH005IJRM AC4), so the hold-full choice, its owned offer and the
+ * mini-boss wheel never consult it.
  */
 export const EXTRA_LIFE_DROP_ID: PowerUpId = POWER_UP_CATALOGUE.extra_life.id;
 

@@ -8170,9 +8170,10 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
   });
 
   // Extra Life leaves every reward surface but stays a field pickup (parent
-  // AH-0MW10ZVLH005IJRM AC4). The value-level assertion is `it.fails` until
-  // the exclusion lands (implementation AH-0MW3MLV2V001NWBR).
-  it.fails('AC4 — the empty-owned fallback pool never offers Extra Life (AH-0MW3MLSTW007U8BD)', async () => {
+  // AH-0MW10ZVLH005IJRM AC4). Written red-first in AH-0MW3MLSTW007U8BD and
+  // activated (plain `it`) by the exclusion implementation
+  // AH-0MW3MLV2V001NWBR; the assertions are unchanged.
+  it('AC4 — the empty-owned fallback pool never offers Extra Life (AH-0MW3MLSTW007U8BD)', async () => {
     const scene = await bootMiniBossCampaign();
     const player = scene.getPlayer()!;
     player.resetWeaponLevels();
@@ -10109,10 +10110,10 @@ describe('PlayScene — dev-gated startLevel seam (AH-0MVE01EY0008QEVX AC3)', ()
 // wheel) but must stay a working field pickup: the shared drop pool still
 // spawns it, collecting it still grants +1 life and it still levels from the
 // pickup. The demo bot's old hold-full preference for an offered Extra Life
-// (`_preferredDemoChoiceIndex`, AH-0MV03GXZQ00801T4) becomes unreachable once
+// (`_preferredDemoChoiceIndex`, AH-0MV03GXZQ00801T4) became unreachable once
 // the kind is never offered, so it is retired to the previous "first option"
-// behaviour — its assertion is `it.fails` until that removal lands
-// (implementation AH-0MW3MLV2V001NWBR).
+// behaviour. Written red-first in AH-0MW3MLSTW007U8BD and activated (plain
+// `it`) by the removal in AH-0MW3MLV2V001NWBR.
 describe('PlayScene — Extra Life stays a field pickup (AH-0MW3MLSTW007U8BD)', () => {
   let booted: BootedGame | null = null;
 
@@ -10162,7 +10163,7 @@ describe('PlayScene — Extra Life stays a field pickup (AH-0MW3MLSTW007U8BD)', 
     expect(player.getPowerUpLevel('extra_life')).toBe(levelBefore + 1);
   });
 
-  it.fails('the demo auto-select has no Extra Life preference any more', async () => {
+  it('the demo auto-select has no Extra Life preference any more', async () => {
     const scene = await bootPlay();
     // A strategy that somehow offers Extra Life proves the preference is gone
     // rather than merely unreachable: the auto-select takes the first option

@@ -546,10 +546,11 @@ describe('wheel outcome application', () => {
 // **reward surface**, so a run that permanently owns Extra Life must get no
 // Extra Life wedge and no Extra Life level — including from the bonus slot
 // that upgrades "every owned kind". Extra Life stays a working field pickup.
-// The value-level assertions are `it.fails` until the exclusion lands
-// (implementation AH-0MW3MLV2V001NWBR).
+// Written red-first in AH-0MW3MLSTW007U8BD and activated (plain `it`) by the
+// exclusion implementation AH-0MW3MLV2V001NWBR — only the wrapper changed,
+// never the assertions.
 describe('Extra Life gets no mini-boss reward (AH-0MW3MLSTW007U8BD)', () => {
-  it.fails('builds no Extra Life wedge for a run that owns it', () => {
+  it('builds no Extra Life wedge for a run that owns it', () => {
     expect(
       buildWheelWedges(['extra_life', 'shield']).map((wedge) => wedge.id),
     ).toEqual(['shield', MINI_BOSS_WHEEL_BONUS_ID]);
@@ -562,7 +563,7 @@ describe('Extra Life gets no mini-boss reward (AH-0MW3MLSTW007U8BD)', () => {
     ).toEqual([MINI_BOSS_WHEEL_BONUS_ID]);
   });
 
-  it.fails('grants no Extra Life level from the bonus (every owned kind) slot', () => {
+  it('grants no Extra Life level from the bonus (every owned kind) slot', () => {
     const outcome = drawWheelOutcome(0, ['extra_life', 'spread', 'shield']);
 
     expect(outcome.slotKind).toBe('bonus');
@@ -573,7 +574,7 @@ describe('Extra Life gets no mini-boss reward (AH-0MW3MLSTW007U8BD)', () => {
     );
   });
 
-  it.fails('grants no Extra Life level on any of the 100 slots', () => {
+  it('grants no Extra Life level on any of the 100 slots', () => {
     for (let slot = 0; slot < MINI_BOSS_WHEEL_SLOT_COUNT; slot += 1) {
       expect(
         gainIds(drawWheelOutcome(slot, ['extra_life', 'spread', 'shield'])),
