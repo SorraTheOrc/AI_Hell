@@ -1041,14 +1041,15 @@ describe('Boss — spread volley projectile identity (AH-0MV822ETD008LLZX)', () 
     const bullets = boss.tryFireSpreadBullets(1_000_000);
     expect(bullets.length).toBeGreaterThanOrEqual(7);
 
-    // The volley spawns its pellet bullet Graphics **plus** one blood-red
-    // launch pop at the Boss's body — the enemy-side fire VFX for the whole
-    // volley (one pop per volley, not per pellet).
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), so the only
+    // new Graphics is the one blood-red launch pop at the Boss's body — the
+    // enemy-side fire VFX for the whole volley (one pop per volley, not per
+    // pellet).
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + bullets.length + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     // Each pellet keeps the established white Boss bullet colour (the shared
     // impact pass tints the hit flash with it).
@@ -1108,13 +1109,14 @@ describe('Boss — spiral volley projectile identity (AH-0MV822F5J006WFR0)', () 
     const bullets = boss.tryFireSpiralBullets(1_000_000);
     expect(bullets.length).toBeGreaterThanOrEqual(12);
 
-    // The volley spawns its pellet bullet Graphics **plus** one phase-tinted
-    // launch pop at the Boss's body — one pop per volley, not per pellet.
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), so the only
+    // new Graphics is the one phase-tinted launch pop at the Boss's body —
+    // one pop per volley, not per pellet.
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + bullets.length + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     // Each pellet keeps the established white Boss bullet colour (the shared
     // impact pass tints the hit flash with it).
@@ -1173,14 +1175,15 @@ describe('Boss — pulse pattern projectile identity (AH-0MV822FHN005PK37)', () 
     // 1 pulse wave + 3 aimed shots (phase 1).
     expect(bullets.length).toBeGreaterThanOrEqual(4);
 
-    // The pattern spawns its pulse-wave graphics + aimed-shot Graphics plus
-    // one pale launch pop at the Boss's body (one pop per volley, not per shot).
+    // Bullets (the pulse wave and the aimed shots) are cached-texture images
+    // (AH-0MW2DAY2L004QSKF), so the only new Graphics is the one pale launch
+    // pop at the Boss's body (one pop per volley, not per shot).
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
     // pulse wave (1) + aimed shots (3) + muzzle pop (1)
-    expect(graphicsAfter).toBe(graphicsBefore + bullets.length + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     // Exactly one bullet is the expanding pulse wave.
     const waves = bullets.filter((b) => b.isPulseWave);
@@ -1241,14 +1244,14 @@ describe('Boss — desperation burst projectile identity (AH-0MV822FTS00156F5)',
     // 5 spread + 8 spiral + 1 aimed + 1 pulse wave.
     expect(bullets.length).toBeGreaterThanOrEqual(15);
 
-    // The volley spawns its tracer bullet Graphics (all layers) + the pulse
-    // wave + one hot-gold launch pop at the Boss's body (one pop per volley,
-    // not per layer).
+    // Bullets (tracer shots and the pulse wave) are cached-texture images
+    // (AH-0MW2DAY2L004QSKF), so the only new Graphics is the one hot-gold
+    // launch pop at the Boss's body (one pop per volley, not per layer).
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + bullets.length + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     // Exactly one bullet is the expanding pulse wave; the rest are tracers.
     const waves = bullets.filter((b) => b.isPulseWave);

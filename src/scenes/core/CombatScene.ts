@@ -56,6 +56,7 @@ import { spawnOrbitalStrike } from '../../vfx/orbitalStrike';
 import { selectOrbitalStrikeTarget } from './strikeTargeting';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
 import { isEligibleAutoTarget } from '../../utils/targetEligibility';
+import { SpatialHash } from '../../utils/spatialHash';
 import type {
   AoEDescriptor,
   ImpactFxSpec,
@@ -63,6 +64,7 @@ import type {
   WeaponId,
 } from '../../utils/weapons';
 import type { HitscanTarget } from './hitscanBeam';
+import type { PerformanceCounts } from '../../core/perfProbe';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { resolveThornsAbsorb } from '../../vfx/thornsAbsorb';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -104,6 +106,37 @@ export const ARC_CHAIN_HALF_WIDTH = 14;
 
 /** Wipe → respawn countdown (s) — visible centred text, deterministic via tick(dt). */
 const RESPAWN_COUNTDOWN_SECONDS = 3;
+
+/**
+ * Cell size (px) of the shared collision broad phase
+ * (AH-0MVXV0EMF001WVQ1).
+ *
+ * Tuned for the pass that uses it — player bullets vs enemy bullets: the query
+ * radius is `PLAYER_BULLET_RADIUS + getEnemyBulletRadius()` (8 px at the
+ * shipped values), so a 64 px cell keeps each query to one or two cells while
+ * still rejecting the overwhelming majority of bullets. Larger cells trade
+ * fewer map lookups for more narrow-phase tests; smaller cells do the reverse
+ * and make a dense bullet stream pay for many empty lookups.
+ */
+export const COLLISION_BROAD_PHASE_CELL_SIZE = 64;
+
+/**
+ * Candidate-count diagnostics for the shared bullet-vs-bullet pass
+ * (AH-0MVXV0EMF001WVQ1 AC3).
+ *
+ * `candidateTests` is how many (player bullet, enemy bullet) pairs the pass
+ * actually handed to the narrow-phase overlap test; `naivePairTests` is the
+ * `n × m` count the pre-broad-phase nested loop would have tested for the same
+ * inputs. The pair exists so a test can prove the broad phase removes work
+ * rather than merely reshaping it — and it is the seam that turns "the pass is
+ * now cheap at high bullet density" from a claim into a measurement.
+ */
+export interface CollisionBroadPhaseStats {
+  /** Pairs handed to the overlap test by the most recent pass. */
+  candidateTests: number;
+  /** Pairs an all-pairs nested loop would have tested for the same input. */
+  naivePairTests: number;
+}
 
 /** Style for the centred respawn countdown overlay. */
 const COUNTDOWN_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
@@ -154,6 +187,40 @@ export abstract class CombatScene<
   protected playerHitCount = 0;
 
   /**
+   * Candidate-pair counts for the most recent bullet-vs-bullet pass — the
+   * broad-phase diagnostic surfaced by {@link getCollisionBroadPhaseStats}
+   * (AH-0MVXV0EMF001WVQ1 AC3).
+   */
+  private collisionStats: CollisionBroadPhaseStats = {
+    candidateTests: 0,
+    naivePairTests: 0,
+  };
+
+  /** Reused player-bullet index for the bullet-vs-bullet broad phase. */
+  private collisionBroadPhase: SpatialHash | null = null;
+
+  /** Reused candidate scratch for {@link SpatialHash.query}. */
+  private readonly collisionCandidates: number[] = [];
+
+  /** Reused consumed-bullet markers for one bullet-vs-bullet pass. */
+  private collisionConsumed = new Uint8Array(0);
+
+  // ── Recycled survivor buffers (AH-0MVXV0F0Y004NENT) ──────────────
+  // Each collision pass publishes its survivors through `setEnemyBullets` and
+  // then keeps the array the scene released to write the next frame's
+  // survivors into: the pass double-buffers the live list instead of building
+  // a fresh `kept*` array every frame. A scene whose `setEnemyBullets` assigns
+  // (every shipped scene does) therefore alternates between a fixed set of
+  // three buffers per list and allocates nothing on the hot path.
+
+  /** Survivor buffer for pass 1 (player bullets vs enemies). */
+  private collisionKeptPlayerBullets: PlayerBullet[] = [];
+  /** Survivor buffer for pass 2 (player bullets vs enemy bullets). */
+  private collisionKeptEnemy: TBullet[] = [];
+  /** Survivor buffer for pass 3 (enemy bullets vs player). */
+  private collisionKeptEnemy2: TBullet[] = [];
+
+  /**
    * Scene-clock timestamp (`this.time.now`, ms) until which an enemy force
    * field will not absorb another ram (epic AH-0MVJ8W4GE007OMNT AC2, Q6 = B).
    * One configured contact consumes exactly one field hit; a sustained
@@ -198,6 +265,41 @@ export abstract class CombatScene<
   /** Replaces the enemy-bullet collection after a collision pass. */
   protected abstract setEnemyBullets(bullets: TBullet[]): void;
 
+  /**
+   * The scene's **owned** enemy-bullet array, without a protective copy.
+   *
+   * Only the shared collision pass uses this (AH-0MVXV0F0Y004NENT): it
+   * double-buffers the live list, so it must be able to reclaim the array the
+   * scene has just released instead of allocating a fresh survivor list every
+   * frame. `getEnemyBullets()` stays the general accessor and may hand out a
+   * copy (a scene that wants that protection keeps it there).
+   *
+   * Default: whatever {@link getEnemyBullets} returns, which is already the
+   * owned array for scenes that do not copy.
+   */
+  protected getEnemyBulletStorage(): readonly TBullet[] {
+    return this.getEnemyBullets();
+  }
+
+  /**
+   * Live entity counts for the dev performance probe
+   * (AH-0MVXV0DER009ER70, parent AH-0MVWJQUN6009IS87).
+   *
+   * Read by `src/core/perfProbe.ts` at a low cadence to label every
+   * frame-time sample with the load that produced it, so a gym and the game
+   * report the same fields from the same implementation (games↔gym parity).
+   * `minerals` is `null` here because the shared core owns no minerals; a
+   * scene that has them overrides this to add the count.
+   */
+  getPerformanceCounts(): PerformanceCounts {
+    return {
+      enemies: this.getEnemyEntities().length,
+      enemyBullets: this.getEnemyBullets().length,
+      playerBullets: this.playerBullets.length,
+      minerals: null,
+    };
+  }
+
   // ── Overridable hooks (default = generic gym behaviour) ───────────
 
   // ── Automatic defence danger feed ──────────────────────────
@@ -210,11 +312,12 @@ export abstract class CombatScene<
    * within `DANGER_RADIUS` of the ship (via the pure `isInDanger` helper)
    * and hands the result to the effects registry. Under one shared re-arm
    * governor the registry selects — at most once per danger episode — which
-   * defence to spend by comparing the available counts ({@link
-   * selectAutoDefence}). When it reports Phase Shift it has already
+   * defence to spend from their readiness ({@link selectAutoDefence}: Phase
+   * Shift above zero charges, Teleport while ready, a uniform 50/50 when both
+   * are). When it reports Phase Shift it has already
    * activated the pass-through; when it selects Teleport the scene performs
-   * the warp through {@link CombatScene.triggerTeleport} (consuming one FIFO
-   * stack and granting Phase Shift on arrival). Every combat scene calls this
+   * the warp through {@link CombatScene.triggerTeleport} (spending the single
+   * ready warp and granting Phase Shift on arrival). Every combat scene calls this
    * once per frame immediately before `_handleCollisions`, so the game and
    * the gyms share one implementation and one ordering and cannot diverge.
    *
@@ -1125,9 +1228,11 @@ export abstract class CombatScene<
   // ── Teleport ─────────────────────────────────────────────────────
 
   /**
-   * Consumes one Teleport teleport stack and warps the player to the nearest
+   * Spends the single ready Teleport warp and warps the player to the nearest
    * safe spot along the heading (granting Phase Shift on arrival via the
-   * registry). Public so tests can trigger it deterministically.
+   * registry). The store starts the one level-derived recharge timer, so no
+   * second warp can fire until it elapses. Public so tests can trigger it
+   * deterministically.
    *
    * @returns true when a teleport was performed.
    */
@@ -1165,7 +1270,7 @@ export abstract class CombatScene<
       },
     );
 
-    // Consume one stack FIFO and grant Phase Shift phase shift at the landing spot.
+    // Spend the ready warp and grant Phase Shift at the landing spot.
     const phaseActivated = registry.consumeTeleport();
     // Direct activation also plays the dedicated cue (Q6).
     if (phaseActivated) playPhaseShiftSound();
@@ -1253,8 +1358,14 @@ export abstract class CombatScene<
    * (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S).
    */
   protected _resolvePlayerBulletsVsEnemies(): void {
-    const keptBullets: PlayerBullet[] = [];
-    for (const pb of this.playerBullets) {
+    // The survivor buffer is recycled from the list this pass releases
+    // (AH-0MVXV0F0Y004NENT): survivors keep their original order, exactly as
+    // the filtered copy this replaces did, but the pass allocates nothing.
+    const playerBullets = this.playerBullets;
+    const keptBullets = this.collisionKeptPlayerBullets;
+    let kept = 0;
+    for (let index = 0; index < playerBullets.length; index += 1) {
+      const pb = playerBullets[index];
       let spent = false;
       for (const enemy of this.getEnemyEntities()) {
         if (!enemy.alive) continue;
@@ -1273,9 +1384,80 @@ export abstract class CombatScene<
         }
       }
       if (!spent) spent = this.onPlayerBulletHitsBoss(pb);
-      if (!spent) keptBullets.push(pb);
+      if (!spent) keptBullets[kept++] = pb;
     }
+    keptBullets.length = kept;
     this.playerBullets = keptBullets;
+    this.collisionKeptPlayerBullets = playerBullets;
+  }
+
+  /**
+   * Cell size (px) of the bullet-vs-bullet broad phase
+   * (AH-0MVXV0EMF001WVQ1).
+   *
+   * A tuning point rather than a constant so the equivalence tests can
+   * degenerate the grid to a **single cell** (a full scan) and compare the
+   * broad-phased pass against the nested loop it replaced, for identical
+   * inputs, through the same resolution code — the broad phase changes which
+   * pairs are *tested*, never what happens to a pair that overlaps.
+   */
+  protected collisionBroadPhaseCellSize(): number {
+    return COLLISION_BROAD_PHASE_CELL_SIZE;
+  }
+
+  /**
+   * Candidate-pair counts from the most recent bullet-vs-bullet pass.
+   *
+   * Read-only diagnostics used by the broad-phase tests (AC3: assert the
+   * candidate count collapses versus the all-pairs count at high bullet
+   * density). Never consulted by gameplay, so it cannot affect determinism.
+   */
+  getCollisionBroadPhaseStats(): Readonly<CollisionBroadPhaseStats> {
+    return { ...this.collisionStats };
+  }
+
+  /**
+   * Rebuilds the broad-phase index for one bullet-vs-bullet pass.
+   *
+   * Repopulated per pass (not carried across frames) because bullets move: a
+   * stale index would silently drop hits. The grid, the candidate scratch and
+   * the consumed-marker buffer are all reused, so a pass with nothing to
+   * resolve allocates nothing — insertion and querying are plain array pushes
+   * over the live bullet count.
+   */
+  private rebuildPlayerBulletIndex(
+    bullets: readonly PlayerBullet[],
+  ): SpatialHash {
+    const cellSize = this.collisionBroadPhaseCellSize();
+    let grid = this.collisionBroadPhase;
+    if (grid === null || grid.cellSize !== cellSize) {
+      // First pass, or a scene that retuned the cell size: a fresh grid.
+      grid = new SpatialHash(cellSize);
+      this.collisionBroadPhase = grid;
+    } else {
+      grid.clear();
+    }
+    for (let index = 0; index < bullets.length; index += 1) {
+      grid.insert(index, bullets[index].x, bullets[index].y);
+    }
+    return grid;
+  }
+
+  /**
+   * Marks which player bullets a pass has consumed.
+   *
+   * A reused {@link Uint8Array} rather than a fresh one per frame so the hot
+   * path stays allocation-free; it grows on demand and is zeroed up to the
+   * live bullet count (never beyond, so a shorter pass never sees stale marks).
+   */
+  private acquireConsumedMarkers(count: number): Uint8Array {
+    const markers = this.collisionConsumed;
+    if (markers.length < count) {
+      this.collisionConsumed = new Uint8Array(count);
+      return this.collisionConsumed;
+    }
+    markers.fill(0, 0, count);
+    return markers;
   }
 
   /**
@@ -1286,6 +1468,32 @@ export abstract class CombatScene<
    * 2b. scene-specific stage (`onAfterBulletVsBullet`, e.g. minerals)
    * 3. enemy bullets vs player
    * 4. player body vs enemy body (and the boss, via hook)
+   *
+   * ## Broad phase (AH-0MVXV0EMF001WVQ1)
+   *
+   * Pass 2 is the only genuinely quadratic pair in this method: every enemy
+   * bullet used to be tested against every live player bullet, which is
+   * `m`-fold redundant because a bullet only ever meets the few bullets near
+   * it. It now runs against a {@link SpatialHash} of the player bullets, so a
+   * query touches one or two cells instead of the whole bullet list. The hash
+   * only *removes impossible pairs*: candidates are returned in ascending
+   * bullet order and re-tested with the same `_overlaps` predicate, so the
+   * first-hit selection, the destruction order and every hook call are
+   * identical to the nested loop it replaces (pinned by
+   * `CombatScene.broadPhase.test.ts`).
+   *
+   * The other passes are deliberately left as scans:
+   *
+   * - pass 1 (player bullets vs enemies) re-reads `getEnemyEntities()` for
+   *   **every bullet**, and that live snapshot is part of its contract — a kill
+   *   can spawn entities synchronously (an asteroid splits into children), and
+   *   a later bullet in the same pass may legitimately hit one. A per-pass
+   *   index would change that same-frame visibility, so it is not a candidate
+   *   for a broad phase without changing behaviour.
+   * - pass 3 (enemy bullets vs player) and pass 4 (player body vs enemies) are
+   *   already linear: there is exactly one player bullet list owner and one
+   *   player body, so a single scan is the lower bound and an index would cost
+   *   more to build than it saves.
    */
   protected _handleCollisions(): void {
     const playerHull = SHIP_SIZE / 2;
@@ -1295,18 +1503,64 @@ export abstract class CombatScene<
 
     // 2. Player bullets vs enemy bullets — both destroyed (shared AC5 path).
     const bulletRadius = this.getEnemyBulletRadius();
-    const keptEnemy: TBullet[] = [];
-    for (const eb of this.getEnemyBullets()) {
+    // Recycled survivor buffer + the scene's owned bullet list: survivors keep
+    // their original order, and the array this pass releases becomes next
+    // frame's buffer (AH-0MVXV0F0Y004NENT). The loop bound is captured up
+    // front so a hook that *appends* a bullet mid-pass is not picked up here —
+    // the same snapshot the previous `for (const eb of getEnemyBullets())`
+    // over a copy saw.
+    const keptEnemy = this.collisionKeptEnemy;
+    let keptEnemyCount = 0;
+    const enemyBullets = this.getEnemyBulletStorage();
+    const enemyBulletCount = enemyBullets.length;
+    const playerBullets = this.playerBullets;
+    const playerBulletCount = playerBullets.length;
+
+    // Broad phase: index the bullets once, then query per enemy bullet. An
+    // empty player-bullet list (the `GymPerformance` stress gym disables
+    // auto-fire) skips the index entirely, so the pass stays free there.
+    const broadPhase =
+      playerBullets.length > 0
+        ? this.rebuildPlayerBulletIndex(playerBullets)
+        : null;
+    const candidates = this.collisionCandidates;
+    // Consumed bullets are marked rather than spliced out so the index stays
+    // valid for the whole pass; the survivors are filtered back in the original
+    // order once the pass ends, exactly where `splice(i, 1)` used to leave them.
+    const consumedBullets = this.acquireConsumedMarkers(playerBullets.length);
+    let anyConsumed = false;
+    let candidateTests = 0;
+
+    for (let enemyIndex = 0; enemyIndex < enemyBulletCount; enemyIndex += 1) {
+      const eb = enemyBullets[enemyIndex];
+      const bulletX = eb.graphics.x;
+      const bulletY = eb.graphics.y;
+      let candidateCount: number;
+      if (broadPhase) {
+        candidateCount = broadPhase.query(
+          bulletX,
+          bulletY,
+          PLAYER_BULLET_RADIUS + bulletRadius,
+          candidates,
+        );
+      } else {
+        candidates.length = 0;
+        candidateCount = 0;
+      }
+      candidateTests += candidateCount;
+
       let consumed = false;
-      for (let i = 0; i < this.playerBullets.length; i++) {
-        const pb = this.playerBullets[i];
+      for (let candidate = 0; candidate < candidateCount; candidate += 1) {
+        const bulletIndex = candidates[candidate];
+        if (consumedBullets[bulletIndex] === 1) continue;
+        const pb = playerBullets[bulletIndex];
         if (
           this._overlaps(
             pb.x,
             pb.y,
             PLAYER_BULLET_RADIUS,
-            eb.graphics.x,
-            eb.graphics.y,
+            bulletX,
+            bulletY,
             bulletRadius,
           )
         ) {
@@ -1319,15 +1573,36 @@ export abstract class CombatScene<
           // point (AH-0MV1BIVIJ007KYXU).
           if (pb.splitWeapon) this.splitProjectile(pb);
           pb.destroy();
-          this.playerBullets.splice(i, 1);
+          consumedBullets[bulletIndex] = 1;
+          anyConsumed = true;
           eb.graphics.destroy();
           consumed = true;
           break;
         }
       }
-      if (!consumed) keptEnemy.push(eb);
+      if (!consumed) keptEnemy[keptEnemyCount++] = eb;
     }
+    keptEnemy.length = keptEnemyCount;
+
+    if (anyConsumed) {
+      // Stable in-place compaction of the survivors into the live array —
+      // identical to the `.filter` it replaces (order preserved, consumed
+      // bullets dropped), without a per-pass array (AH-0MVXV0F0Y004NENT).
+      let kept = 0;
+      for (let index = 0; index < playerBullets.length; index += 1) {
+        if (consumedBullets[index] === 0) playerBullets[kept++] =
+          playerBullets[index];
+      }
+      playerBullets.length = kept;
+    }
+    // Updated in place: the probe reads it every frame, so a fresh object per
+    // pass was another avoidable allocation. The pair counts describe the
+    // pass's input state, so they use the counts captured before compaction.
+    this.collisionStats.candidateTests = candidateTests;
+    this.collisionStats.naivePairTests = enemyBulletCount * playerBulletCount;
     this.setEnemyBullets(keptEnemy);
+    // Double-buffer: the list just released is next pass's survivor buffer.
+    this.collisionKeptEnemy = enemyBullets as TBullet[];
 
     // 2c. Enemy ordnance and enemy bodies vs collector drones (Mystery UFO
     //     reward, AH-0MV9G113S009B37I). Only enemies can destroy a drone —
@@ -1352,9 +1627,18 @@ export abstract class CombatScene<
     //    pickup field pops on the last reflection. A bullet the field cannot
     //    reflect (inactive or budget spent) falls through to the normal
     //    player-hit check below.
-    const keptEnemy2: TBullet[] = [];
+    const keptEnemy2 = this.collisionKeptEnemy2;
+    let keptEnemy2Count = 0;
     const effects = this.getEffectsRegistry();
-    for (const eb of this.getEnemyBullets()) {
+    // Same recycled-buffer contract as pass 2 (AH-0MVXV0F0Y004NENT).
+    const playerPhaseBullets = this.getEnemyBulletStorage();
+    const playerPhaseBulletCount = playerPhaseBullets.length;
+    for (
+      let enemyIndex = 0;
+      enemyIndex < playerPhaseBulletCount;
+      enemyIndex += 1
+    ) {
+      const eb = playerPhaseBullets[enemyIndex];
       const bulletX = eb.graphics.x;
       const bulletY = eb.graphics.y;
       if (
@@ -1402,10 +1686,13 @@ export abstract class CombatScene<
         this._spawnEnemyBulletHitImpact(eb);
         eb.graphics.destroy();
       } else {
-        keptEnemy2.push(eb);
+        keptEnemy2[keptEnemy2Count++] = eb;
       }
     }
+    keptEnemy2.length = keptEnemy2Count;
     this.setEnemyBullets(keptEnemy2);
+    // Double-buffer: the list just released is next pass's survivor buffer.
+    this.collisionKeptEnemy2 = playerPhaseBullets as TBullet[];
 
     // 4. Player body vs enemy body — both are hit.
     if (this.invulnerable <= 0) {

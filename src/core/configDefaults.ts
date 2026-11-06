@@ -66,6 +66,11 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     spacingX: 30,
     spacingY: 25,
     driftSpeed: 30,
+    // Fixed dive speed (px/s) — data-driven (AH-0MW0TY1AY003TDFC AC4),
+    // mirroring how `attackSpeed` is defaulted for the raider. Consumed by
+    // AH-0MW3MWRZ5003KVR3, which applies the 320 px/s code default when
+    // a config omits the field.
+    diveSpeed: 320,
     startX: GAME_WIDTH * 0.25,
     startY: GAME_HEIGHT * 0.45,
     startXMin: GAME_WIDTH * 0.25,

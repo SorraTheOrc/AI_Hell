@@ -204,8 +204,9 @@ export function sixSlotLoadoutState(
  * A row-kind oracle for the agreement tests: is `dropId` one of the kinds the
  * shared model counts towards the six slots?
  *
- * A row can be rendered without holding a slot (a residual Phase Shift /
- * Teleport charge pool, producer Resolved decision 1b), so "rendered" is not
+ * A row can be rendered without holding a slot (a residual Phase Shift charge
+ * pool, or a single-use Teleport's ready warp — producer Resolved decision 1b),
+ * so "rendered" is not
  * the same as "slot-counted": the kind must be **held** *and* non-exempt.
  * This mirrors `countsTowardsSlotCap` in `src/powerups/slots.ts`; the HUD must
  * derive its own classification from the same model rather than repeat it.

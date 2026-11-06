@@ -34,6 +34,7 @@ import {
   BACKGROUND_TEXTURE_KEYS,
   LEVEL_BACKGROUND_MANIFEST,
 } from './data/backgrounds';
+import { WEAPON_UPGRADE_SPECS } from './utils/weaponLevels';
 
 const README_PATH = path.resolve(process.cwd(), 'README.md');
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
@@ -133,8 +134,13 @@ describe('Level background documentation (AH-0MVSEC4RS003KQGV)', () => {
     expect(palette).toMatch(/hyperspace warp/i);
     expect(palette).toContain(String(LEVEL_TRANSITION_SECONDS));
 
-    // Readability rule that keeps neon bullets legible over a photo.
-    expect(palette).toContain('2.5×');
+    // Readability rule that keeps neon bullets legible over a photo. The
+    // ceiling is read from the shipped spec so a bullet-size retune cannot
+    // leave the aesthetic rule quoting a stale multiple
+    // (AH-0MVWAVL6R001UI60).
+    expect(palette).toContain(
+      `${WEAPON_UPGRADE_SPECS.bulletSize.cap.toFixed(1)}×`,
+    );
 
     // The stale near-black row is replaced by the actual fallback colour.
     expect(palette).not.toContain('#0a0a0a');

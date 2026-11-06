@@ -195,9 +195,10 @@ describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
     // At least one bullet should be on screen.
     expect(bullets.length).toBeGreaterThan(0);
 
-    // Bullets are Graphics objects.
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), never
+    // per-bullet Graphics objects.
     for (const b of bullets) {
-      expect(b.graphics).toBeInstanceOf(Phaser.GameObjects.Graphics);
+      expect(b.graphics).toBeInstanceOf(Phaser.GameObjects.Image);
     }
   });
 
@@ -735,19 +736,18 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
   });
 });
 
-// ── AC7: Teleport FIFO stacks + safe-spot ──────────────────────────
+// ── AC7: single-use Teleport + safe-spot ───────────────────────────
 
-describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
+describe('GymPowerUpsCombat AC7: single-use Teleport + safe-spot', () => {
 
-  it('collecting P7 stacks FIFO', async () => {
+  it('collecting Teleport keeps one ready warp', async () => {
     const scene = await bootCombat();
     const registry = scene.getEffectsRegistry();
 
     expect(registry.hasTeleport()).toBe(false);
-    collectCombatDrop(scene, 'teleport'); // level 1 → +1
-    expect(registry.teleportStacks()).toBe(1);
-    collectCombatDrop(scene, 'teleport'); // level 2 → +2 (level-derived grant)
-    expect(registry.teleportStacks()).toBe(3);
+    collectCombatDrop(scene, 'teleport'); // level 1 → one ready warp
+    expect(registry.hasTeleport()).toBe(true);
+    collectCombatDrop(scene, 'teleport'); // level 2 → still one ready warp
     expect(registry.hasTeleport()).toBe(true);
   });
 
@@ -759,7 +759,8 @@ describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
 
     const consumed = registry.consumeTeleport();
     expect(consumed).toBe(true);
-    expect(registry.teleportStacks()).toBe(2);
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.isTeleportRecharging()).toBe(true);
     expect(registry.isPhased).toBe(true);
   });
 });

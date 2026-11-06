@@ -49,7 +49,12 @@
  * `rotation` steps ({@link EuclideanPattern}). Each weapon owns an authored
  * ladder of patterns ({@link WEAPON_EUCLIDEAN_LADDERS}) whose rungs become
  * active at curve-derived levels, so a fire-rate upgrade can change the
- * rhythm's **shape and phase** as well as its density. The resolver
+ * rhythm's **shape and phase** as well as its density. The authored rungs are
+ * **data**, not TypeScript: `src/data/weapon-levels.json` holds
+ * `{ k, n, rotation }` per rung and {@link CODE_WEAPON_EUCLIDEAN_LADDER_SPECS}
+ * is only the fallback for a weapon whose entry is missing or malformed, so a
+ * designer retunes a weapon's rhythm evolution without a code edit
+ * (AH-0MW0Q1TQV009M8AO). The resolver
  * ({@link resolveWeaponPattern}) is the epic's `patternFor(weaponId, level)`:
  * pure, deterministic and monotonic in onsets-per-minute
  * (AH-0MVYA291J000CK64, parent AH-0MVYA1JFK003RLAW).
@@ -65,7 +70,14 @@
  * Pure and deterministic: no scene, DOM, Phaser or storage coupling.
  */
 
-import { WEAPON_CATALOGUE, getWeaponById, type WeaponId, type WeaponDefinition } from './weapons';
+import {
+  WEAPON_CATALOGUE,
+  WEAPON_IDS,
+  getWeaponById,
+  type WeaponId,
+  type WeaponDefinition,
+} from './weapons';
+import { bundledWeaponLevelsJson } from '../core/bundledConfig';
 import { resolveOptionsPodCount } from '../scenes/core/optionsEscort';
 import {
   DEFAULT_BPM,
@@ -150,6 +162,12 @@ export const MVP_UPGRADE_VARIABLES: readonly WeaponUpgradeVariable[] = [
   'projectileCount',
   'bulletSize',
   'aoeRadius',
+  // `homing` is live since AH-0MW10J31B0053E56: it is the Wave Laser's
+  // **accuracy** lever (`aimBias` grows with level), so it is no longer a
+  // specification-only variable. Its curve keeps the generic "bullets curve
+  // toward nearby enemies" description for any future homing weapon; the
+  // wave laser consumes the same curve as a probability blend.
+  'homing',
 ];
 
 // ── Upgrade specification ───────────────────────────────────────────
@@ -180,7 +198,8 @@ export interface WeaponUpgradeSpec extends CurveSpec {
 
 /**
  * The per-variable upgrade catalogue. Values are deliberately conservative:
- * the four MVP variables give an obvious, legible power spike while the
+ * every level is a step, not a spike — the four MVP variables ramp the
+ * weapon up over the run (the flattened curve, AH-0MVWAVL6R001UI60) while the
  * remaining variables sit ready for follow-up implementation.
  *
  * Caps/rates are tunable in one place by design (balance work stays here,
@@ -195,13 +214,15 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Fire rate',
     description: 'Fires more often (shots-per-second multiplier).',
     rationale:
-      'Cadence is the most feel-sensitive variable; a 3× ceiling keeps ' +
-      'indefinite levels from trivialising bullet density, and k=0.18 ' +
-      'front-loads the early gains (≈17 % of the span by level 1).',
+      'Cadence is the most feel-sensitive variable. The retuned ceiling is ' +
+      '2.2× (was 3×) with k=0.12 (was 0.18): level 1 is a step, not a spike ' +
+      '(≈1.14×, which mostly quantises to no extra beat step) and the ' +
+      'saturated cadence stops at ≈2.2× instead of 3× ' +
+      '(AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 1,
-    cap: 3,
-    k: 0.18,
+    cap: 2.2,
+    k: 0.12,
     discrete: false,
     tier: 'mvp',
   },
@@ -210,12 +231,14 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Projectiles',
     description: 'Adds projectiles to every shot.',
     rationale:
-      'Extra bullets multiply total damage, so the cap is deliberately ' +
-      'small (8) and k=0.22 lands the first extra bullet at level 1.',
+      'Extra bullets multiply total damage, so the cap stays deliberately ' +
+      'small (4 extra, was 8) and k=0.18 lands exactly one extra bullet at ' +
+      'level 1 (round(4·(1−e^−0.18)) = 1) rather than the old +2 spike ' +
+      '(AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 0,
-    cap: 8,
-    k: 0.22,
+    cap: 4,
+    k: 0.18,
     discrete: true,
     tier: 'mvp',
   },
@@ -238,12 +261,13 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Bullet size',
     description: 'Increases bullet radius.',
     rationale:
-      'Larger bullets improve hit probability; 2.5× keeps them legible ' +
-      'against the neon background, k=0.16 spreads the gain across the early levels.',
+      'Larger bullets improve hit probability; 2.0× (was 2.5×) keeps them ' +
+      'legible against the neon background and k=0.12 (was 0.16) makes ' +
+      'level 1 a step, not a spike (AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 1,
-    cap: 2.5,
-    k: 0.16,
+    cap: 2,
+    k: 0.12,
     discrete: false,
     tier: 'mvp',
   },
@@ -294,15 +318,17 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Max Hit Points',
     description: 'Beams deal more total damage before being consumed.',
     rationale:
-      'A damage budget is very strong in crowds; the cap is 5 and k=0.25 ' +
-      'grants the first extra hit point at level 1 so it feels responsive. ' +
+      'A damage budget is very strong in crowds; the cap stays 5 and k=0.10 ' +
+      '(was 0.25) places the first extra hit point at level 2 so the level-1 ' +
+      'output ceiling is not compounded by the +1 projectile step on the ' +
+      'pierce family (railgun; AH-0MVWAVL6R001UI60). ' +
       'The cap is the shared curve asymptote only — the weapon-level clamp ' +
       'was removed, so the budget saturates at ~7 rather than a hard 5 ' +
       '(AH-0MV97RISJ002WR2S).',
     curve: 'exponential-saturation',
     base: 0,
     cap: 5,
-    k: 0.25,
+    k: 0.1,
     discrete: true,
     tier: 'planned',
   },
@@ -311,12 +337,14 @@ export const WEAPON_UPGRADE_SPECS: Record<
     label: 'Bounce',
     description: 'Bullets bounce off walls/enemies more often.',
     rationale:
-      'Bounce mainly adds coverage in corridors; cap 4 with k=0.25 keeps ' +
-      'it from becoming a perpetual wall bounce.',
+      'Bounce mainly adds coverage in corridors; the cap stays 4 and k=0.13 ' +
+      '(was 0.25) places the first extra bounce at level 2 so level 1 does ' +
+      'not double-count against the +1 projectile step on the bounce family ' +
+      '(ricochet; AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 0,
     cap: 4,
-    k: 0.25,
+    k: 0.13,
     discrete: true,
     tier: 'planned',
   },
@@ -326,25 +354,29 @@ export const WEAPON_UPGRADE_SPECS: Record<
     description: 'Bullets curve toward nearby enemies (0–1).',
     rationale:
       'Homing changes aiming feel; 0.9 is a strong-but-imperfect curve and ' +
-      'k=0.15 keeps it a late-game payoff rather than an early aim-bot.',
+      'k=0.15 keeps it a late-game payoff rather than an early aim-bot. Since ' +
+      'AH-0MW10J31B0053E56 it is also the Wave Laser\u2019s **accuracy** lever: ' +
+      '`aimBias` blends with this curve (base 0.5 → ~0.95), so the same ' +
+      'late-game payoff governs how often a chaotic shot is aimed.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 0.9,
     k: 0.15,
     discrete: false,
-    tier: 'planned',
+    tier: 'mvp',
   },
   aoeRadius: {
     variable: 'aoeRadius',
     label: 'Area',
     description: 'Increases area-of-effect radius.',
     rationale:
-      'Area is the AOE family identity; 2.5× is a large but bounded blast, ' +
-      'and k=0.18 gives a visible early gain without screen-filling rings.',
+      'Area is the AOE family identity; 2.0× (was 2.5×) is a large but ' +
+      'bounded blast, and k=0.12 (was 0.18) gives a visible level-1 gain ' +
+      '(≈1.13× radius) without screen-filling rings (AH-0MVWAVL6R001UI60).',
     curve: 'exponential-saturation',
     base: 1,
-    cap: 2.5,
-    k: 0.18,
+    cap: 2,
+    k: 0.12,
     discrete: false,
     tier: 'mvp',
   },
@@ -512,6 +544,22 @@ export interface EuclideanPattern {
   readonly rotation: number;
   /** Duration of one step in milliseconds (`> 0`). */
   readonly stepMs: number;
+}
+
+/**
+ * One authored rung of a weapon's Euclidean ladder **as stored in data**.
+ *
+ * Only the tempo-independent shape is authored: `stepMs` is deliberately
+ * absent and injected at load time from {@link SIXTEENTH_NOTE_STEP_MS}, so a
+ * data edit cannot desynchronise a rung from the shared 16th-note lattice.
+ */
+export interface WeaponLadderRung {
+  /** Onsets per tile (`1 <= k <= n`). */
+  readonly k: number;
+  /** Steps per tile (`n > 0`). */
+  readonly n: number;
+  /** Phase shift in steps (`0 <= rotation < n`). */
+  readonly rotation: number;
 }
 
 /**
@@ -720,16 +768,34 @@ export function quantiseEuclidean(
 
 /**
  * The authored per-weapon ladder rungs, **before** the curve-derived level
- * thresholds are attached. Densities are non-decreasing in authored order;
- * a repeated density is a deliberate shape (bar-halving) or phase (rotation)
- * morph that keeps the density identical.
+ * thresholds are attached.
  *
- * Level 0 is the weapon's shipped cadence density (legacy onsets per bar) for
- * most weapons; the six canonical superposition weapons use the epic's
- * agreed fixture values (`heavy_slug` 3/16, `railgun` 2/16, `cannon` 9/16,
- * `arc` 9/16 rotated 4, `rapid` 13/16, `shard_swarm` 10/16).
+ * This is the **code fallback**: the runtime ladders come from
+ * `src/data/weapon-levels.json` (see {@link WEAPON_EUCLIDEAN_LADDER_SPECS}),
+ * and this literal is used only for a weapon whose JSON entry is missing or
+ * malformed — so a typo in the data file can never stop the game from booting.
+ *
+ * Densities are non-decreasing in authored order; a repeated density is a
+ * deliberate shape (bar-halving) or phase (rotation) morph that keeps the
+ * density identical.
+ *
+ * Level 0 is the weapon's shipped cadence density: since the level-0 output
+ * trim reached the live ladder (AH-0MW23FEDK006BRHK) it equals the trimmed
+ * nominal `subdivisions` in `src/data/weapons.csv` for every weapon whose
+ * cadence was re-timed (`spread`/`dual`/`ricochet`/`options` 2/16,
+ * `rear_guard` 4/16, `cluster`/`broadside` 1/16, `arc` 4/16, `shard_swarm`
+ * 2/16, `heavy_slug` 1/16). Three weapons deliberately keep an uneven level-0
+ * rung and are the documented nominal-vs-live divergences: `cannon` 9/16,
+ * `rapid` 13/16 and `railgun` 2/16. `wave_laser` 4/16 agrees with its
+ * (corrected) nominal of one shot per beat.
+ *
+ * Every rung of a re-timed weapon is scaled with its level 0, so the
+ * curve-derived `minLevel` thresholds and the producer-approved strength
+ * ceilings (`level1GrowthMultiple` 2.5x, `levelCapShareOfPreChange` 50 %)
+ * are unchanged; only the absolute density is halved (or more, where the
+ * superposition density exceeded the trimmed nominal).
  */
-const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
+export const CODE_WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
   WeaponId,
   readonly EuclideanPattern[]
 > = {
@@ -741,21 +807,18 @@ const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
     latticeEuclidean(16, 16),
     latticeEuclidean(8, 8), // bar-halving shape morph at equal density
   ],
+  // 0.5 onsets/beat (the trimmed nominal) rising to 1 onset/beat.
   spread: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
   ],
-  // Phase morph first: the same E(4, 16) density rotated by two steps.
+  // Phase morph first: the same E(2, 16) density rotated by two steps.
   dual: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(2, 16, 2),
+    latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
-    latticeEuclidean(4, 16, 2),
-    latticeEuclidean(5, 16),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
   ],
   rapid: [
     latticeEuclidean(13, 16),
@@ -764,35 +827,27 @@ const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
     latticeEuclidean(16, 16),
     latticeEuclidean(8, 8),
   ],
+  // The beam has no projectile lever, so the curve-flattening carve-out
+  // (AH-0MVWAVL6R001UI60) is realised here: 0.5 onsets/beat, matching the
+  // trimmed nominal `subdivisions` in the catalogue CSV.
   wave_laser: [
-    latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(7, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
-  ],
-  // Phase morph at equal density, then a faster irregular tile.
-  ricochet: [
-    latticeEuclidean(4, 16),
-    latticeEuclidean(4, 16, 1),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
-  ],
-  cluster: [
     latticeEuclidean(2, 16),
     latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
   ],
-  options: [
+  // Phase morph at equal density, then a faster irregular tile.
+  ricochet: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(2, 16, 1),
+    latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
-    latticeEuclidean(6, 16),
-    latticeEuclidean(7, 16),
-    latticeEuclidean(8, 16),
-    latticeEuclidean(5, 8),
+  ],
+  // 0.25 onsets/beat: one shot every four beats, doubled at level 15.
+  cluster: [latticeEuclidean(1, 16), latticeEuclidean(2, 16)],
+  options: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
+    latticeEuclidean(4, 16),
   ],
   nova: [latticeEuclidean(1, 16), latticeEuclidean(2, 16)],
   mortar: [
@@ -801,56 +856,281 @@ const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
     latticeEuclidean(4, 16),
     latticeEuclidean(5, 16),
   ],
-  // Shares E(9, 16) with the cannon at level 0, differing only by rotation.
+  // The <= 60 % level-0 budget forces the arc off the E(9, 16) superposition
+  // onto a straight one-shot-per-beat rung; the phase morph is retained.
   arc: [
-    latticeEuclidean(9, 16, 4),
-    latticeEuclidean(9, 16, 6), // phase morph at equal density
-    latticeEuclidean(10, 16, 6),
-    latticeEuclidean(13, 16, 6),
-    latticeEuclidean(16, 16),
-    latticeEuclidean(8, 8),
+    latticeEuclidean(4, 16, 4),
+    latticeEuclidean(4, 16, 6), // phase morph at equal density
+    latticeEuclidean(5, 16, 6),
+    latticeEuclidean(6, 16, 6),
+    latticeEuclidean(8, 16),
+    latticeEuclidean(4, 8), // bar-halving shape morph at equal density
   ],
   rear_guard: [
-    latticeEuclidean(8, 16),
-    latticeEuclidean(10, 16),
-    latticeEuclidean(12, 16),
-    latticeEuclidean(14, 16),
-    latticeEuclidean(16, 16),
-    latticeEuclidean(8, 8),
-  ],
-  broadside: [
-    latticeEuclidean(2, 16),
-    latticeEuclidean(3, 16),
     latticeEuclidean(4, 16),
     latticeEuclidean(5, 16),
-  ],
-  railgun: [
-    latticeEuclidean(2, 16),
-    latticeEuclidean(3, 16),
-    latticeEuclidean(4, 16),
-    latticeEuclidean(5, 16),
-  ],
-  shard_swarm: [
-    latticeEuclidean(10, 16),
-    latticeEuclidean(11, 16),
-    latticeEuclidean(12, 16),
-    latticeEuclidean(13, 16),
-    latticeEuclidean(14, 16),
-    latticeEuclidean(16, 16),
-    latticeEuclidean(8, 8),
-  ],
-  heavy_slug: [
-    latticeEuclidean(3, 16),
-    latticeEuclidean(4, 16),
     latticeEuclidean(6, 16),
+    latticeEuclidean(7, 16),
     latticeEuclidean(8, 16),
+    latticeEuclidean(4, 8), // bar-halving shape morph at equal density
   ],
+  broadside: [latticeEuclidean(1, 16), latticeEuclidean(2, 16)],
+  // The 0.5 onsets/beat level-0 superposition rung is inside the level-0
+  // budget (40 % of baseline, 0.33x the cannon), but its old saturated rung
+  // E(5,16) breached the <= 50 % level-cap ceiling once the cadence is
+  // measured live (55.6 % of the pre-change cap), so the top of the ladder is
+  // trimmed to E(3,16) (AH-0MW23FEDK006BRHK).
+  railgun: [latticeEuclidean(2, 16), latticeEuclidean(3, 16)],
+  // The five-shard fan keeps its payload; the cadence trim takes 10/16 to 2/16.
+  shard_swarm: [
+    latticeEuclidean(2, 16),
+    latticeEuclidean(3, 16),
+    latticeEuclidean(4, 16),
+    latticeEuclidean(2, 8), // bar-halving shape morph at equal density
+  ],
+  heavy_slug: [latticeEuclidean(1, 16), latticeEuclidean(2, 16)],
 };
+
+// ── Runtime ladder specs: JSON source of truth + code fallback ──────
+
+/**
+ * The result of parsing the bundled `src/data/weapon-levels.json` blob.
+ *
+ * A weapon whose entry is missing or malformed is omitted from `ladders` (the
+ * caller uses the code ladder for that weapon only), and every finding is
+ * recorded in `errors` in file order.
+ */
+export interface WeaponLadderParseResult {
+  /** Weapon ids whose ladder rungs came from the data file. */
+  ladders: Partial<Record<WeaponId, readonly WeaponLadderRung[]>>;
+  /** Human-readable diagnostics (empty for the committed file). */
+  errors: string[];
+}
+
+/** Every shipped weapon id, for id validation and reporting order. */
+const SHIPPED_WEAPON_ID_SET: ReadonlySet<string> = new Set(WEAPON_IDS);
+
+/**
+ * Parses the authored `src/data/weapon-levels.json` blob into per-weapon
+ * ladder rungs. **Never throws.**
+ *
+ * Accepted shape: a JSON object keyed by weapon id, each value a non-empty
+ * array of `{ k, n, rotation }` rungs. The three rung fields are validated
+ * here — not only at ladder build time — so a data typo is reported against
+ * the file a designer edited: `k`/`n` are positive whole numbers with
+ * `k <= n`, `rotation` is a whole number with `0 <= rotation < n`, and the
+ * rung densities (`k / n`) must not decrease along the ladder. Every rung
+ * shares the runtime 16th-note step (see {@link SIXTEENTH_NOTE_STEP_MS}), so
+ * `stepMs` is deliberately **not** authored.
+ *
+ * The density check is the one semantic invariant that would otherwise throw
+ * from {@link buildWeaponPatternLadder} at module load: validating it here
+ * keeps a well-formed but wrong data edit on the fallback path instead of
+ * crashing the boot.
+ */
+export function parseWeaponLevels(
+  raw: string | null | undefined,
+): WeaponLadderParseResult {
+  const errors: string[] = [];
+  const ladders: Partial<Record<WeaponId, readonly WeaponLadderRung[]>> = {};
+
+  if (raw === null || raw === undefined || raw.trim() === '') {
+    errors.push('src/data/weapon-levels.json: file is missing or empty');
+    return { ladders, errors };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    errors.push(`src/data/weapon-levels.json: invalid JSON (${reason})`);
+    return { ladders, errors };
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    errors.push(
+      'src/data/weapon-levels.json: expected an object keyed by weapon id',
+    );
+    return { ladders, errors };
+  }
+
+  const record = parsed as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (!SHIPPED_WEAPON_ID_SET.has(key)) {
+      errors.push(`${key}: unknown weapon id`);
+    }
+  }
+
+  for (const weaponId of WEAPON_IDS) {
+    const entry = record[weaponId];
+    if (entry === undefined) {
+      errors.push(`${weaponId}: missing ladder`);
+      continue;
+    }
+    if (!Array.isArray(entry) || entry.length === 0) {
+      errors.push(`${weaponId}: expected a non-empty array of rungs`);
+      continue;
+    }
+
+    const rungs: WeaponLadderRung[] = [];
+    let valid = true;
+    let previousDensity = Number.NEGATIVE_INFINITY;
+    entry.forEach((rung: unknown, index: number) => {
+      const where = `${weaponId}[${index}]`;
+      if (typeof rung !== 'object' || rung === null || Array.isArray(rung)) {
+        errors.push(`${where}: expected { k, n, rotation }`);
+        valid = false;
+        return;
+      }
+      const { k, n, rotation } = rung as Record<string, unknown>;
+      if (!isPositiveWhole(k as number) || !isPositiveWhole(n as number)) {
+        errors.push(`${where}: k and n must be positive whole numbers`);
+        valid = false;
+        return;
+      }
+      if ((k as number) > (n as number)) {
+        errors.push(`${where}: k (${String(k)}) must not exceed n (${String(n)})`);
+        valid = false;
+        return;
+      }
+      if (
+        !Number.isInteger(rotation) ||
+        (rotation as number) < 0 ||
+        (rotation as number) >= (n as number)
+      ) {
+        errors.push(
+          `${where}: rotation must be a whole number in [0, ${String(n)})`,
+        );
+        valid = false;
+        return;
+      }
+      const density = (k as number) / (n as number);
+      if (density + DENSITY_EPSILON < previousDensity) {
+        errors.push(
+          `${where}: density decreases (${String(k)}/${String(n)} < ${previousDensity.toFixed(4)})`,
+        );
+        valid = false;
+        return;
+      }
+      previousDensity = density;
+      rungs.push({
+        k: k as number,
+        n: n as number,
+        rotation: rotation as number,
+      });
+    });
+
+    if (valid) ladders[weaponId] = rungs;
+  }
+
+  return { ladders, errors };
+}
+
+/** What the module-load JSON parse resolved from data, and what fell back. */
+export interface WeaponLevelsLoadReport {
+  /** Ids whose ladder came from `src/data/weapon-levels.json`. */
+  resolvedFromJson: readonly WeaponId[];
+  /** Ids whose JSON entry was missing/invalid, resolved from the code ladder. */
+  resolvedFromFallback: readonly WeaponId[];
+  /** Flat parse diagnostics (empty for the committed file). */
+  errors: readonly string[];
+}
+
+/** Parsed-at-module-load view of the bundled `weapon-levels.json`. */
+const WEAPON_LEVELS_JSON_DATA = parseWeaponLevels(bundledWeaponLevelsJson);
+
+/**
+ * The result of loading the data-driven ladders at module load.
+ *
+ * Exposed so the dev boot self-check can surface a typo that silently fell
+ * back to code, and so tests can prove the JSON — not the TypeScript
+ * literal — built the runtime ladders.
+ */
+export const WEAPON_LEVELS_LOAD_REPORT: WeaponLevelsLoadReport = {
+  resolvedFromJson: WEAPON_IDS.filter(
+    (weaponId) => WEAPON_LEVELS_JSON_DATA.ladders[weaponId] !== undefined,
+  ),
+  resolvedFromFallback: WEAPON_IDS.filter(
+    (weaponId) => WEAPON_LEVELS_JSON_DATA.ladders[weaponId] === undefined,
+  ),
+  errors: [...WEAPON_LEVELS_JSON_DATA.errors],
+};
+
+/**
+ * Injects the shared 16th-note step into authored rungs, producing the full
+ * {@link EuclideanPattern}s the ladder builder consumes.
+ */
+function injectLatticeStep(
+  rungs: readonly WeaponLadderRung[],
+): readonly EuclideanPattern[] {
+  return rungs.map(({ k, n, rotation }) => latticeEuclidean(k, n, rotation));
+}
+
+/**
+ * The effective authored per-weapon ladder rungs: `src/data/weapon-levels.json`
+ * per weapon, falling back to {@link CODE_WEAPON_EUCLIDEAN_LADDER_SPECS} for
+ * that weapon only when its data entry is missing or malformed.
+ *
+ * This is the **single authored source of the live fire cadence**; editing a
+ * rung here (or in the JSON it loads) changes `resolveWeaponPattern` output
+ * with no TypeScript edit. The `stepMs` of every rung is
+ * {@link SIXTEENTH_NOTE_STEP_MS}.
+ */
+export const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
+  WeaponId,
+  readonly EuclideanPattern[]
+> = Object.fromEntries(
+  WEAPON_IDS.map((weaponId) => {
+    const dataRungs = WEAPON_LEVELS_JSON_DATA.ladders[weaponId];
+    return [
+      weaponId,
+      dataRungs === undefined
+        ? CODE_WEAPON_EUCLIDEAN_LADDER_SPECS[weaponId]
+        : injectLatticeStep(dataRungs),
+    ] as const;
+  }),
+) as Record<WeaponId, readonly EuclideanPattern[]>;
+
+/**
+ * Formats the ladder-load self-check as one actionable message, or `null`
+ * when the JSON resolved every weapon with no diagnostics.
+ *
+ * Kept pure so the dev-only boot warning
+ * (`utils/weaponDataDiagnostics.ts`) and its tests share the exact wording a
+ * developer sees.
+ */
+export function formatWeaponLevelsLoadWarning(
+  report: WeaponLevelsLoadReport,
+): string | null {
+  if (
+    report.resolvedFromFallback.length === 0 &&
+    report.errors.length === 0
+  ) {
+    return null;
+  }
+  const lines = [
+    'Weapon Euclidean ladder load self-check: the runtime fire cadence did ' +
+      'not resolve cleanly from src/data/weapon-levels.json.',
+  ];
+  if (report.resolvedFromFallback.length > 0) {
+    lines.push(
+      `Resolved from the code fallback instead of JSON: ${report.resolvedFromFallback.join(', ')}.`,
+    );
+  }
+  if (report.errors.length > 0) {
+    lines.push(
+      'JSON diagnostics:',
+      ...report.errors.map((error) => `  ${error}`),
+    );
+  }
+  return lines.join('\n');
+}
 
 /**
  * The onsets-per-beat a weapon's `fireRate` curve **desires** at `level`:
  * the level-0 rhythm density multiplied by the shared exponential-saturation
- * `fireRate` multiplier (base 1×, cap 3×, k = 0.18).
+ * `fireRate` multiplier (base 1×, cap 2.2×, k = 0.12).
  *
  * Level 0 always returns the authored base density, so the curve maps
  * directly onto the ladder without a second tuning table. Invalid levels are
@@ -892,7 +1172,7 @@ function firstLevelReaching(
  * A rung becomes active at the first level the `fireRate` curve's desired
  * density supports it, and never earlier than one level after the previous
  * rung — so equal-density shape and phase morphs are still displayed as
- * distinct upgrade steps. Rungs at or above the curve's 3× asymptote are
+ * distinct upgrade steps. Rungs at or above the curve's 2.2× asymptote are
  * omitted because the exponential curve only approaches that density, never
  * reaches it.
  */
@@ -1161,6 +1441,9 @@ export function expandWeaponPattern(
  *   `bulletLifetime` (range) upgrade (hitscan weapons only, i.e. the wave
  *   laser, which never gains a damage budget and never widens into a fan —
  *   AH-0MVREBUJ5004HDRQ),
+ * - `hitscan.aimBias` — the beam's **accuracy** grown by the level's `homing`
+ *   curve: `base + (1 − base) × homing(level)` (0.5 at level 0, ~0.95 at the
+ *   top of the ladder; hitscan weapons only, AH-0MW10J31B0053E56),
  * - `bounce` — the base wall-bounce budget grown by the level's `bounce`
  *   upgrade and clamped to its spec cap (weapons with a base `bounce` only,
  *   e.g. the ricochet; AH-0MV1BIV5L005NJAI),
@@ -1223,12 +1506,17 @@ export function resolveWeaponDefinition(
   // Hitscan weapons opt in with a base ray descriptor. The ray's extent grows
   // with the level-resolved `bulletLifetime` (range) upgrade — a longer beam
   // still deals exactly 1 damage and stops at the first intercept — while the
-  // visible duration stays the fixed 0.3 s column (AC4). Weapons without a
-  // `hitscan` descriptor never gain one.
+  // visible duration stays the fixed 0.3 s column (AC4). The ray's **accuracy**
+  // (`aimBias`) grows with the level-resolved `homing` curve: the base bias is
+  // blended toward certainty, so a chaotic level-0 shot becomes an increasingly
+  // aimed one at higher levels (0.5 → ~0.95; AH-0MW10J31B0053E56). Weapons
+  // without a `hitscan` descriptor never gain one.
   if (base.hitscan) {
+    const baseBias = base.hitscan.aimBias;
     leveled.hitscan = {
       ...base.hitscan,
       length: base.hitscan.length * stats.bulletLifetime,
+      aimBias: Math.min(1, Math.max(0, baseBias + (1 - baseBias) * stats.homing)),
     };
   }
   // Ricochet-style weapons opt in with a base wall-bounce budget. Their
@@ -1300,10 +1588,15 @@ export function resolveVariable(
  * ({@link MVP_UPGRADE_VARIABLES}) are considered, and only those that can
  * actually change *this* weapon's behaviour:
  *
- * - The four MVP variables apply to every weapon.
+ * - The core MVP variables apply to every weapon.
  * - `aoeRadius` is only listed for weapons that declare an `aoe`
  *   descriptor (Nova, Mortar, Arc). A non-AoE weapon must never promise an
  *   "Area" gain it cannot deliver (AH-0MVL9P2SF009QFON AC2).
+ * - `homing` is only listed for weapons that declare a `hitscan` descriptor
+ *   (the Wave Laser), where the curve is the beam's **accuracy** lever; it is
+ *   reported as the observable aim-bias gain (`Aim accuracy`). Every other
+ *   weapon would otherwise promise a homing gain it cannot deliver
+ *   (AH-0MW10J31B0053E56).
  *
  * Each variable that actually changes between the two levels contributes one
  * formatted fragment (see {@link formatDelta}); fragments are joined with
@@ -1332,7 +1625,9 @@ export function summariseWeaponLevelChange(
   const to = resolveWeaponAtLevel(weaponId, toLevel);
   // Applicability is a per-weapon property, so it is resolved once rather
   // than inside the per-variable loop.
-  const hasAoe = getWeaponById(weaponId).aoe !== undefined;
+  const definition = getWeaponById(weaponId);
+  const hasAoe = definition.aoe !== undefined;
+  const hasHitscan = definition.hitscan !== undefined;
 
   const parts: string[] = [];
   for (const variable of MVP_UPGRADE_VARIABLES) {
@@ -1340,6 +1635,24 @@ export function summariseWeaponLevelChange(
     // descriptor; every other weapon would otherwise report a fictional
     // "+N% Area" delta (AH-0MVL9P2SF009QFON AC2).
     if (variable === 'aoeRadius' && !hasAoe) {
+      continue;
+    }
+    // `homing` is the Wave Laser's accuracy lever (AH-0MW10J31B0053E56), so
+    // it is reported as the observable aim-bias gain and only for weapons
+    // that actually consume the curve.
+    if (variable === 'homing') {
+      if (!hasHitscan) continue;
+      const fromBias =
+        resolveWeaponDefinition(weaponId, fromLevel).hitscan?.aimBias ?? 0;
+      const toBias =
+        resolveWeaponDefinition(weaponId, toLevel).hitscan?.aimBias ?? 0;
+      const formatted = formatDelta(
+        'Aim accuracy',
+        toBias - fromBias,
+        fromBias,
+        false,
+      );
+      if (formatted) parts.push(formatted);
       continue;
     }
     const delta = to[variable] - from[variable];

@@ -99,13 +99,13 @@ class AudibleToughStubEnemy extends ToughStubEnemy {
 
 /** Minimal enemy bullet (graphics + velocity). */
 class StubBullet implements CombatEnemyBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  readonly graphics: Phaser.GameObjects.Image;
   vx = 0;
   vy = 0;
 
   constructor(scene: Phaser.Scene, x = 0, y = 0) {
-    this.graphics = scene.add.graphics();
-    this.graphics.setPosition(x, y);
+    // Bullets are cached-texture sprites (AH-0MW2DAY2L004QSKF).
+    this.graphics = scene.add.image(x, y, '__DEFAULT');
   }
 }
 
@@ -581,7 +581,7 @@ describe('CombatScene — shared combat core hook contract', () => {
 
   // ── Teleport ──────────────────────────────────────────────────────
 
-  it('AC3 — triggerTeleport consumes a stack and warps the player', async () => {
+  it('AC3 — triggerTeleport spends the ready warp and warps the player', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     scene.effects.applyCollect('teleport');
@@ -594,13 +594,13 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(player.x !== 100 || player.y !== 100).toBe(true);
   });
 
-  it('AC3/AC4 — triggerTeleport is blocked by canTeleport() and absent player/stack', async () => {
+  it('AC3/AC4 — triggerTeleport is blocked by canTeleport() and absent player/warp', async () => {
     const scene = await boot();
     // No player.
     expect(scene.triggerTeleport()).toBe(false);
 
     scene.addPlayer({ x: 100, y: 100 });
-    // No teleport stack.
+    // No ready Teleport warp.
     expect(scene.triggerTeleport()).toBe(false);
 
     scene.effects.applyCollect('teleport');
@@ -1914,7 +1914,7 @@ describe('damage-budget player bullets — Wave Laser maxHitPoints (AH-0MV97RISJ
 
 // ── Railgun pass-through budget (AH-0MVY0A23A009MRK3) ────────────────────────
 
-describe('Railgun pass-through budget — level 0 stops, level 1 pierces (AH-0MVY0A23A009MRK3)', () => {
+describe('Railgun pass-through budget — level 0 stops, level 2 pierces (AH-0MVY0A23A009MRK3)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -1967,13 +1967,16 @@ describe('Railgun pass-through budget — level 0 stops, level 1 pierces (AH-0MV
     expect(second.destroyed).toBe(false);
   });
 
-  it('the first upgrade (budget 2) pierces: it destroys both 1-HP enemies in the line', async () => {
+  it('the second upgrade (budget 2) pierces: it destroys both 1-HP enemies in the line', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 50, y: 50 });
     const first = addEnemy(scene, 200, 200);
     const second = addEnemy(scene, 260, 200);
 
-    const budget = resolveWeaponDefinition('railgun', 1).maxHitPoints!;
+    // Level 1 already spends its step on the extra projectile, so the flattened
+    // curve (k=0.10) grants the first extra hit point at level 2
+    // (AH-0MVWAVL6R001UI60) — the pass-through still arrives, one level later.
+    const budget = resolveWeaponDefinition('railgun', 2).maxHitPoints!;
     expect(budget).toBe(2);
     const bullet = scene.spawnPlayerBullet(
       200,

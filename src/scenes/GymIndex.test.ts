@@ -108,6 +108,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'HexWar',
       'Level',
       'Minerals',
+      'Performance',
       'Player',
       'PowerUpLeveling',
       'PowerUpsCombat',
@@ -115,6 +116,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'Rhythm',
       'WeaponLeveling',
       'Weapons',
+      'WeaponTuning',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymBotTuning',
@@ -122,6 +124,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymHexWar',
       'GymLevel',
       'GymMinerals',
+      'GymPerformance',
       'GymPlayer',
       'GymPowerUpLeveling',
       'GymPowerUpsCombat',
@@ -129,6 +132,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymRhythm',
       'GymWeaponLeveling',
       'GymWeapons',
+      'GymWeaponTuning',
     ]);
 
     // Middle column: the reusable fodder gym (its in-panel dropdown selects

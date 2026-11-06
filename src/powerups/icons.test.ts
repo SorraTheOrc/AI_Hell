@@ -17,6 +17,7 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import {
+  drawCountdownRing,
   drawDropBubble,
   drawPowerUpDrop,
   drawPowerUpIcon,
@@ -24,6 +25,11 @@ import {
   drawWeaponIcon,
   dropBubbleRadius,
   dropCollectRadius,
+  ICON_COLORS,
+  MIN_RING_SWEEP,
+  RING_RADIUS,
+  RING_STROKE_WIDTH,
+  weaponIconColour,
   WeaponDropIconId,
 } from './icons';
 import { POWER_UP_DROP_SIZE, WEAPON_DROP_SIZE } from '../core/constants';
@@ -390,5 +396,193 @@ describe('AOE weapon icons (F5 AC4)', () => {
     drawWeaponIcon(g, 'arc', 0, 0, 32);
     expect(countArcCommands(g.commandBuffer as number[])).toBe(0);
     expect(countLineSegments(g.commandBuffer as number[])).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// ── HUD countdown ring tests (AH-0MW2AXUEE0026OUY) ────────────────
+
+interface RingArcCommand {
+  x: number;
+  y: number;
+  radius: number;
+  startAngle: number;
+  endAngle: number;
+  anticlockwise: boolean;
+  /** The stroke width of the `lineStyle` in effect before the arc. */
+  strokeWidth: number | undefined;
+  /** The stroke colour of the `lineStyle` in effect before the arc. */
+  colour: number | undefined;
+}
+
+/**
+ * Every `arc()` emitted to a Graphics, each tagged with the `lineStyle`
+ * that was in effect when it was drawn (the command's parameters live
+ * immediately before the arc opcode in Phaser's flat command buffer).
+ * Table-driven so icon geometry (lines, triangles, fills) is skipped
+ * correctly when a ring is drawn on a Graphics that already holds a glyph.
+ */
+function ringArcCommands(buf: number[]): RingArcCommand[] {
+  // Opcode → parameter count (Phaser Commands.js; see the Cmd table above).
+  const PARAMS: Record<number, number> = {
+    [Cmd.ARC]: 7,
+    [Cmd.LINE_TO]: 2,
+    [Cmd.MOVE_TO]: 2,
+    [Cmd.LINE_STYLE]: 3,
+    [Cmd.FILL_STYLE]: 2,
+    [Cmd.FILL_RECT]: 4,
+    [Cmd.FILL_TRIANGLE]: 6,
+  };
+  const arcs: RingArcCommand[] = [];
+  let strokeWidth: number | undefined;
+  let colour: number | undefined;
+  for (let i = 0; i < buf.length; ) {
+    const op = buf[i];
+    if (op === Cmd.LINE_STYLE) {
+      strokeWidth = buf[i + 1];
+      colour = buf[i + 2];
+      i += 1 + PARAMS[op];
+    } else if (op === Cmd.ARC) {
+      arcs.push({
+        x: buf[i + 1],
+        y: buf[i + 2],
+        radius: buf[i + 3],
+        startAngle: buf[i + 4],
+        endAngle: buf[i + 5],
+        anticlockwise: buf[i + 6] === 1,
+        strokeWidth,
+        colour,
+      });
+      i += 1 + PARAMS[op];
+    } else {
+      i += 1 + (PARAMS[op] ?? 0);
+    }
+  }
+  return arcs;
+}
+
+/** The countdown ring arc (drawn at {@link RING_RADIUS}), if any. */
+function ringArcOf(buf: number[]): RingArcCommand | undefined {
+  return ringArcCommands(buf).find(
+    (entry) => Math.abs(entry.radius - RING_RADIUS) < 1e-6,
+  );
+}
+
+/** The sweep of an arc as a fraction of a full turn. */
+function ringArcSweep(arc: RingArcCommand): number {
+  return Math.abs(arc.endAngle - arc.startAngle) / (Math.PI * 2);
+}
+
+describe('HUD countdown ring (AH-0MW2AXUEE0026OUY): drawCountdownRing', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootBare(): Promise<Phaser.Scene> {
+    booted = await bootScene([BareScene]);
+    return booted!.scene as Phaser.Scene;
+  }
+
+  it('AC1: draws a single ring arc at RING_RADIUS with RING_STROKE_WIDTH centred on (x, y)', async () => {
+    const scene = await bootBare();
+    const g = scene.add.graphics();
+    drawCountdownRing(g, 12, 34, 0.5, 0x00ffff);
+
+    const ring = ringArcOf(g.commandBuffer as number[]);
+    expect(ring).toBeDefined();
+    expect(ring!.radius).toBe(RING_RADIUS);
+    expect(ring!.x).toBe(12); // centred on the icon
+    expect(ring!.y).toBe(34);
+    expect(ring!.strokeWidth).toBe(RING_STROKE_WIDTH);
+    // Exactly one arc: the ring, nothing else.
+    expect(ringArcCommands(g.commandBuffer as number[])).toHaveLength(1);
+  });
+
+  it('AC2: fraction 0.5 sweeps 180° clockwise from 12 o’clock', async () => {
+    const scene = await bootBare();
+    const g = scene.add.graphics();
+    drawCountdownRing(g, 0, 0, 0.5, 0xffffff);
+
+    const ring = ringArcOf(g.commandBuffer as number[]);
+    expect(ring).toBeDefined();
+    expect(ring!.startAngle).toBeCloseTo(-Math.PI / 2, 6); // 12 o'clock
+    expect(ring!.endAngle - ring!.startAngle).toBeCloseTo(Math.PI, 6); // 180°
+    expect(ring!.anticlockwise).toBe(false); // clockwise on screen
+  });
+
+  it('AC2b: the sweep grows linearly with the fraction across the unit range', async () => {
+    const scene = await bootBare();
+    for (const [fraction, expectedSweep] of [
+      [0.25, 0.25],
+      [0.5, 0.5],
+      [1, 1],
+    ] as const) {
+      const g = scene.add.graphics();
+      drawCountdownRing(g, 0, 0, fraction, 0xffffff);
+      expect(ringArcSweep(ringArcOf(g.commandBuffer as number[])!)).toBeCloseTo(
+        expectedSweep,
+        6,
+      );
+    }
+  });
+
+  it('AC3: draws the ring in the caller-supplied palette colour (item hue and weapon hue)', async () => {
+    const scene = await bootBare();
+
+    const item = scene.add.graphics();
+    drawCountdownRing(item, 0, 0, 0.5, ICON_COLORS.speed_boost);
+    expect(ringArcOf(item.commandBuffer as number[])!.colour).toBe(
+      ICON_COLORS.speed_boost,
+    );
+
+    const weapon = scene.add.graphics();
+    drawCountdownRing(weapon, 0, 0, 0.5, weaponIconColour('spread'));
+    const weaponRing = ringArcOf(weapon.commandBuffer as number[])!;
+    expect(weaponRing.colour).toBe(weaponIconColour('spread'));
+    // The weapon seam comes from the palette table, not a single constant:
+    // reset's white return-arrow colour differs from a weapon hue.
+    expect(weaponIconColour('reset')).toBe(0xffffff);
+    expect(weaponIconColour('spread')).not.toBe(weaponIconColour('reset'));
+  });
+
+  it('AC4: keeps a minimum visible sweep when the fraction is near zero, and draws nothing at zero', async () => {
+    const scene = await bootBare();
+
+    const nearZero = scene.add.graphics();
+    drawCountdownRing(nearZero, 0, 0, 0.001, 0xffffff);
+    const tiny = ringArcOf(nearZero.commandBuffer as number[]);
+    expect(tiny).toBeDefined();
+    expect(ringArcSweep(tiny!)).toBeCloseTo(MIN_RING_SWEEP, 6);
+
+    const zero = scene.add.graphics();
+    drawCountdownRing(zero, 0, 0, 0, 0xffffff);
+    expect(ringArcOf(zero.commandBuffer as number[])).toBeUndefined();
+  });
+
+  it('clamps out-of-range fractions into [0, 1]', async () => {
+    const scene = await bootBare();
+
+    const over = scene.add.graphics();
+    drawCountdownRing(over, 0, 0, 1.5, 0xffffff);
+    expect(ringArcSweep(ringArcOf(over.commandBuffer as number[])!)).toBeCloseTo(1, 6);
+
+    const under = scene.add.graphics();
+    drawCountdownRing(under, 0, 0, -0.5, 0xffffff);
+    expect(ringArcOf(under.commandBuffer as number[])).toBeUndefined();
+  });
+
+  it('AC5: appends the ring to the existing row Graphics and creates no new object', async () => {
+    const scene = await bootBare();
+    const icon = scene.add.graphics();
+    drawPowerUpIcon(icon, 'speed_boost', 0, 0, 8); // the row glyph, same Graphics
+    const childrenBefore = scene.children.list.length;
+
+    drawCountdownRing(icon, 0, 0, 0.5, ICON_COLORS.speed_boost);
+
+    expect(scene.children.list.length).toBe(childrenBefore); // no new object
+    // The ring arc rides on the same Graphics whose buffer holds the glyph.
+    expect(ringArcOf(icon.commandBuffer as number[])).toBeDefined();
   });
 });

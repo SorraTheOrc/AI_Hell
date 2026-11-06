@@ -10,11 +10,12 @@
  * - AC5: a wrapped bullet remains live (and therefore collidable).
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene } from '../test/gameHarness';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { bulletTextureKey } from '../utils/bulletTextures';
 import { WEAPON_BULLET_LIFETIME } from '../utils/weapons';
 import { advanceAndCull, createPlayerBullet, PlayerBullet } from './PlayerBullet';
 
@@ -132,7 +133,7 @@ describe('PlayerBullet — lifetime-based range (AC3, AC4)', () => {
     expect(bullet.isExpired()).toBe(true);
   });
 
-  it('destroys the bullet Graphics (removes it from the scene) when its lifetime elapses', async () => {
+  it('destroys the bullet sprite (removes it from the scene) when its lifetime elapses', async () => {
     const scene = await makeScene();
     const bullet = makeBullet(scene, 100, 100, 0, 0, 1.0);
 
@@ -398,243 +399,108 @@ describe('PlayerBullet — wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
   });
 });
 
-// ── Shared bullet-shape rendering seam (AH-0MV8228MD009UBF7) ─────
+// ── Cached-texture rendering seam (AH-0MW2DAY2L004QSKF AC1/AC2) ─────
 
-// Phaser Graphics `commandBuffer` opcodes (mirrors src/powerups/icons.test.ts).
-const Cmd = {
-  ARC: 0,
-  BEGIN_PATH: 1,
-  CLOSE_PATH: 2,
-  FILL_RECT: 3,
-  LINE_TO: 4,
-  MOVE_TO: 5,
-  LINE_STYLE: 6,
-  FILL_STYLE: 7,
-  FILL_PATH: 8,
-  STROKE_PATH: 9,
-  FILL_TRIANGLE: 10,
-} as const;
-
-/** Counts occurrences of an opcode in a Graphics command buffer. */
-function countCmd(buf: number[], target: number): number {
-  const widths: Record<number, number> = {
-    [Cmd.ARC]: 7,
-    [Cmd.FILL_RECT]: 4,
-    [Cmd.LINE_TO]: 2,
-    [Cmd.MOVE_TO]: 2,
-    [Cmd.LINE_STYLE]: 3,
-    [Cmd.FILL_STYLE]: 2,
-    [Cmd.FILL_TRIANGLE]: 6,
-  };
-  let count = 0;
-  for (let i = 0; i < buf.length; i += 1 + (widths[buf[i]] ?? 0)) {
-    if (buf[i] === target) count += 1;
-  }
-  return count;
-}
-
-describe('PlayerBullet — shared bullet-shape rendering seam (AC1)', () => {
-  it('defaults to a filled disc (the classic cannon look)', async () => {
+describe('PlayerBullet — cached-texture rendering (AC1)', () => {
+  it('is a sprite of its shape texture, never a per-bullet Graphics object', async () => {
     const scene = await makeScene();
+    const addGraphics = vi.spyOn(scene.add, 'graphics');
+
     const bullet = createPlayerBullet(scene, 100, 100, 0x00ffff, 3, 100, 0, 1.0);
 
-    expect(bullet.shape).toBe('circle');
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.ARC)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
+    expect(bullet).toBeInstanceOf(Phaser.GameObjects.Image);
+    expect(scene.textures.exists(bullet.texture.key)).toBe(true);
+    expect(bullet.texture.key).toBe(
+      bulletTextureKey({ shape: 'circle', color: 0x00ffff, radius: 3 }),
+    );
+    expect(addGraphics).not.toHaveBeenCalled();
+    addGraphics.mockRestore();
   });
 
-  it('renders a line/beam shape as a stroked segment, not a dot', async () => {
+  it('shares one cached texture between bullets of the same look', async () => {
     const scene = await makeScene();
-    const bullet = createPlayerBullet(
-      scene, 100, 100, 0x3366ff, 3, 350, 0, 1.0, 'line', 4,
+    const a = createPlayerBullet(scene, 10, 10, 0x00ffff, 3, 100, 0, 1.0);
+    const b = createPlayerBullet(scene, 20, 20, 0x00ffff, 3, 100, 0, 1.0);
+    expect(b.texture.key).toBe(a.texture.key);
+  });
+
+  it('bakes a distinct texture per weapon identity (shape, colour, rim, tail)', async () => {
+    const scene = await makeScene();
+    const disc = createPlayerBullet(scene, 0, 0, 0x00ffff, 3, 100, 0, 1.0);
+    const beam = createPlayerBullet(
+      scene, 0, 0, 0x3366ff, 3, 350, 0, 1.0, 'line', 4,
+    );
+    const rimmed = createPlayerBullet(
+      scene, 0, 0, 0x00ffff, 3, 100, 0, 1.0,
+      'circle', undefined, 0xffffff,
+    );
+    const tailed = createPlayerBullet(
+      scene, 0, 0, 0x00ffff, 3, 100, 0, 1.0,
+      'circle', undefined, undefined, undefined, 3.5,
     );
 
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.LINE_TO)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+    const keys = new Set([disc.texture.key, beam.texture.key, rimmed.texture.key, tailed.texture.key]);
+    expect(keys.size).toBe(4);
   });
 
-  it('orients the shape to its velocity heading (a beam flying right/up)', async () => {
+  it('orients the sprite to its velocity heading (a beam flies nose-first)', async () => {
     const scene = await makeScene();
-    const right = createPlayerBullet(scene, 100, 100, 0x3366ff, 3, 350, 0, 1.0, 'line', 4);
+    const right = createPlayerBullet(
+      scene, 100, 100, 0x3366ff, 3, 350, 0, 1.0, 'line', 4,
+    );
     expect(right.rotation).toBeCloseTo(0, 5);
 
-    const up = createPlayerBullet(scene, 100, 100, 0x3366ff, 3, 0, -350, 1.0, 'line', 4);
+    const up = createPlayerBullet(
+      scene, 100, 100, 0x3366ff, 3, 0, -350, 1.0, 'line', 4,
+    );
     expect(up.rotation).toBeCloseTo(-Math.PI / 2, 5);
   });
 
-  it('re-draws through the seam each frame (buffer holds only the current shape)', async () => {
-    const scene = await makeScene();
-    const bullet = makeBullet(scene, 100, 100, 100, 0, 3.0);
-    advanceAndCull(bullet, 0.01);
-
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.ARC)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.STROKE_PATH)).toBe(0);
-  });
-});
-
-// ── Cannon — compact neon disc with a short fading trail (AH-0MV8228YW0050IXS) ─
-
-describe('PlayerBullet — cannon visual identity (AC1/AC3)', () => {
-  it('the cannon shot renders as a neon disc with a fading trail (rim + tapering tail)', async () => {
+  it('re-orients after a wall bounce without re-drawing the shape', async () => {
     const scene = await makeScene();
     const bullet = createPlayerBullet(
-      scene, 100, 100, 0x00ffff, 3, 350, 0, 1.0,
-      'circle', undefined, 0xffffff, undefined, 3.5,
+      scene, 2, GAME_HEIGHT / 2, 0x3366ff, 3, -350, 0, 3.0, 'line', 4,
+    );
+    bullet.bounces = 2;
+
+    advanceAndCull(bullet, 0.01); // reflects: vx flips to +350
+
+    expect(bullet.rotation).toBeCloseTo(0, 5);
+  });
+
+  it('animates a time-driven shape with scale/alpha, not a redraw (AC2)', async () => {
+    const scene = await makeScene();
+    const pellet = createPlayerBullet(
+      scene, 100, 100, 0xff4444, 3, 100, 0, 3.0,
+      'pellet', undefined, 0x00ff66, undefined, 1.2,
     );
 
-    // The cannon signature: filled disc (ARC + FILL_PATH), neon rim
-    // (stroked ARC → a second ARC + STROKE_PATH) and a 3-segment fading
-    // tail (FILL_TRIANGLE).
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.ARC)).toBeGreaterThanOrEqual(2);
-    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
+    const scaleBefore = pellet.scaleX;
+    advanceAndCull(pellet, 0.1);
+
+    // The sprite's own transform animates; the texture is unchanged (a
+    // re-drawn Graphics would have mutated its command buffer instead).
+    expect(pellet.scaleX).not.toBe(scaleBefore);
+    expect(scene.textures.exists(pellet.texture.key)).toBe(true);
   });
 
-  it('an ordinary bullet draws no trail (no tapering tail segments)', async () => {
+  it('leaves a static shape untouched in flight (no per-frame animation cost)', async () => {
     const scene = await makeScene();
-    const bullet = createPlayerBullet(scene, 100, 100, 0x00ffff, 3, 350, 0, 1.0);
-
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(0);
+    const bullet = createPlayerBullet(scene, 100, 100, 0x00ffff, 3, 350, 0, 3.0);
+    advanceAndCull(bullet, 0.1);
+    expect(bullet.scaleX).toBe(1);
+    expect(bullet.alpha).toBe(1);
   });
-});
 
-// ── Spread — small glowing diamond with a brief fading trail (AH-0MV8229B9009DQGA) ─
-
-describe('PlayerBullet — spread visual identity (AC1/AC3)', () => {
-  it('the spread shot renders as a warm-rimmed diamond with a brief fading trail', async () => {
+  it('carries the weapon visual metadata resolved by the shared seam', async () => {
     const scene = await makeScene();
     const bullet = createPlayerBullet(
       scene, 100, 100, 0xffaa00, 2.4, 350, 0, 0.7,
       'diamond', undefined, 0xffdd66, undefined, 2.2,
     );
-
-    // The spread signature: the unique `diamond` shape family (filled
-    // rhombus → FILL_PATH with MOVE_TO/LINE_TO joins), a warm neon rim
-    // (stroked outline → STROKE_PATH) and a brief 3-segment fading trail
-    // (FILL_TRIANGLE). Distinct from the cannon's disc; same trail seam.
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
-  });
-});
-
-// ── Dual — twin short pulse bars with a quick fading wake (AH-0MV8229NM009CZOA) ─
-
-describe('PlayerBullet — dual visual identity (AC1/AC3)', () => {
-  it('the dual shot renders as a short stroked beam (not a dot) with a 3-segment fading trail', async () => {
-    const scene = await makeScene();
-    const bullet = createPlayerBullet(
-      scene, 100, 100, 0xff00ff, 3, 350, 0, 0.7,
-      'line', 2, undefined, 1.6, 1.6,
-    );
-
-    // The dual signature: a stroked line/beam (LINE_TO + STROKE_PATH, never
-    // a dot) with a chunkier stroke than the default hairline, plus a short
-    // 3-segment fading wake behind each bar (FILL_TRIANGLE via the shared
-    // seam).
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.LINE_TO)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
-  });
-});
-
-// ── Rapid — small fast staccato spark with a white-hot rim and short trail (AH-0MV822A03006UT2P) ─
-
-describe('PlayerBullet — rapid visual identity (AC1/AC3)', () => {
-  it('the rapid shot renders as a small white-rimmed spark with a short fading trail', async () => {
-    const scene = await makeScene();
-    const bullet = createPlayerBullet(
-      scene, 100, 100, 0xffff00, 2.1, 350, 0, 0.375,
-      'spark', undefined, 0xffffff, undefined, 1.8,
-    );
-
-    // The rapid signature: the unique `spark` star body (filled four-point
-    // star → MOVE_TO/LINE_TO joins + FILL_PATH), a white-hot rim highlight
-    // (stroked inner ARC → STROKE_PATH) and a short 3-segment fading trail
-    // (FILL_TRIANGLE via the shared seam) — the "small fast disc" read at
-    // stream pace, visually distinct from the cannon's plain rimmed disc.
-    expect(bullet.radius).toBeLessThan(3); // small
-    expect(bullet.rimColor).toBe(0xffffff);
-    expect(bullet.tail).toBe(1.8); // short, so the stream stays clean
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
-  });
-});
-
-// ── Cluster Missile — powered missile with flickering flame + smoke trail (AH-0MV822B1B0048UZT) ─
-
-describe('PlayerBullet — cluster missile visual identity (AC1/AC3)', () => {
-  it('the cluster shell renders as a rimmed missile with an exhaust flame and a fading smoke trail', async () => {
-    const scene = await makeScene();
-    const bullet = createPlayerBullet(
-      scene, 100, 100, 0xff3366, 2.7, 350, 0, 0.9,
-      'missile', undefined, 0xffffff, undefined, 2.4, 1.6,
-    );
-
-    // The cluster signature: the `missile` body family (body CMD.RECT +
-    // nose/fins/flame triangles), a white neon rim (STROKE_PATH) and a short
-    // 3-segment fading smoke trail (FILL_TRIANGLE via the shared seam).
-    expect(bullet.shape).toBe('missile');
-    expect(bullet.flame).toBe(1.6);
-    expect(bullet.tail).toBe(2.4);
-    const buf = bullet.commandBuffer as number[];
-    // Two flame triangles + two fins + one nose = at least five triangles.
-    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBeGreaterThanOrEqual(5);
-    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
-  });
-
-  it('the exhaust flame re-draws each frame so it flickers in flight', async () => {
-    const scene = await makeScene();
-    const bullet = createPlayerBullet(
-      scene, 100, 100, 0xff3366, 2.7, 350, 0, 0.9,
-      'missile', undefined, 0xffffff, undefined, 2.4, 1.6,
-    );
-    const before = [...(bullet.commandBuffer as number[])];
-    advanceAndCull(bullet, 0.01);
-    const after = bullet.commandBuffer as number[];
-    // The buffer is re-drawn through the seam; the animated flame's geometry
-    // changes with the elapsed time (a static shape would be byte-identical).
-    expect(after).not.toEqual(before);
-  });
-
-  it('an ordinary bullet draws no exhaust flame (no flame spec)', async () => {
-    const scene = await makeScene();
-    const bullet = createPlayerBullet(scene, 100, 100, 0x00ffff, 3, 350, 0, 1.0);
-    expect(bullet.flame).toBeUndefined();
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(0);
-  });
-});
-
-// ── Options — small pod shot: pale-aqua rimmed chevron with a light trail (AH-0MV822BDN008IYL6) ─
-
-describe('PlayerBullet — options pod-shot visual identity (AC1/AC3)', () => {
-  it('the pod shot renders as a rimmed chevron dart with a fading trail', async () => {
-    const scene = await makeScene();
-    const bullet = createPlayerBullet(
-      scene, 100, 100, 0x00ffcc, 2.4, 300, 0, 0.7,
-      'chevron', undefined, 0xd9fff2, undefined, 2.0,
-    );
-
-    // The options signature: the unique `chevron` pod-dart family (stroked V
-    // → MOVE_TO + 2 LINE_TO + STROKE_PATH, never the main gun's disc), a
-    // pale-aqua neon rim and a short 3-segment fading trail (FILL_TRIANGLE
-    // via the shared seam) — the small pod shot's own tint + light trail.
-    expect(bullet.shape).toBe('chevron');
-    expect(bullet.rimColor).toBe(0xd9fff2);
-    expect(bullet.tail).toBe(2.0);
-    const buf = bullet.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.LINE_TO)).toBe(2);
-    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
+    expect(bullet.shape).toBe('diamond');
+    expect(bullet.rimColor).toBe(0xffdd66);
+    expect(bullet.tail).toBe(2.2);
+    expect(bullet.radius).toBe(2.4);
   });
 });

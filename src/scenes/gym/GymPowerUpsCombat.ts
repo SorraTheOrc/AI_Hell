@@ -14,7 +14,7 @@
  *   use, and the shared danger feed activates a 1.5 s pass-through when three
  *   or more hostile bodies/bullets close within 40 px (parent
  *   AH-0MUIYX1EE008FVS8).
- * - **Teleport** — stored FIFO stacks; spent automatically when the ship is
+ * - **Teleport** — a **single-use** warp; spent automatically when the ship is
  *   in danger, to the nearest safe spot free of enemies/bullets in the
  *   direction of travel, clamped to screen bounds; grants Phase Shift (1.5 s)
  *   on arrival. If no safe
@@ -45,11 +45,11 @@
  * Teleport (automatic): selected by the shared per-frame defence feed and
  * routed through the shared `CombatScene.triggerTeleport` so the game and
  * every gym resolve teleports through one implementation;
- * it consumes one Teleport stack FIFO, warps to the nearest safe spot along the
+ * it spends the single ready Teleport warp, warps to the nearest safe spot along the
  * heading ray, clamped to screen bounds, then applies Phase Shift. The gym supplies
  * only its hit radii (`getTeleportEnemyHitRadius` / `getTeleportBulletHitRadius`)
- * and its enemy list (`getEnemyEntities`); destination selection, FIFO
- * consumption and the Phase Shift-on-arrival grant are shared (gap 7,
+ * and its enemy list (`getEnemyEntities`); destination selection, the single-use
+ * spend and the Phase Shift-on-arrival grant are shared (gap 7,
  * AH-0MUII3EPU0039R5O).
  *
  * The drop lifecycle, collection gate, Magnet magnet and per-type pickup cues
@@ -84,6 +84,7 @@ import {
   drawThornsAura,
 } from '../core/CombatEffectVisuals';
 import { Player } from '../../entities/Player';
+import { createBullet } from '../../entities/bulletUtils';
 import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
 import {
   createEnemyFromConfig,
@@ -769,10 +770,15 @@ export class GymPowerUpsCombat extends CombatScene<
 
   /** Exposes a bullet directly (for tests: place a bullet deterministically). */
   spawnEnemyBullet(x: number, y: number, vx: number, vy: number): ScoutBullet {
-    const graphics = this.add.graphics();
-    graphics.fillStyle(0xff4444, 1);
-    graphics.fillCircle(0, 0, 3);
-    graphics.setPosition(x, y);
+    // Legacy generic shot: the cached-disc texture, never a per-bullet
+    // Graphics object (AH-0MW2DAY2L004QSKF).
+    const { graphics } = createBullet({
+      scene: this,
+      color: 0xff4444,
+      size: 3,
+      x,
+      y,
+    });
     const b: ScoutBullet = { graphics, color: 0xff4444, vx, vy, lifetime: 1.5, elapsed: 0 };
     this.scoutBullets.push(b);
     return b;

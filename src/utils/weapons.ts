@@ -24,9 +24,10 @@
  * - **spread** — 3-bullet fan at -30° / 0° / +30° relative to heading (timed)
  * - **dual**   — 2 bullets offset perpendicular (±90°) to heading (timed)
  * - **rapid**  — single bullets at a much higher fire rate (timed)
- * - **wave_laser** — a single red **hitscan beam** fired along the heading: it
- *   deals exactly 1 damage to the first enemy it intercepts and stops there,
- *   or runs a full screen width (wrapping at the arena edges) when nothing
+ * - **wave_laser** — a single red **hitscan beam** whose direction is drawn
+ *   from the scene RNG (biased toward the nearest enemy): it deals exactly 1
+ *   damage to the first enemy it intercepts and stops there, or runs its
+ *   short extent (240 px at level 0, wrapping at the arena edges) when nothing
  *   intercepts it (R-Type homage, timed; see
  *   {@link WeaponDefinition.hitscan})
  * - **ricochet** — a single shot that reflects off the arena edges up to a
@@ -48,13 +49,43 @@
  * from the pure beat-clock module (`utils/beat.ts`) rather than hard-coded.
  * This keeps every current and future weapon on-grid by construction, and
  * `isOnBeatGrid` is the catalogue-wide invariant that guards it.
+ *
+ * ## Data source (AH-0MW0Q1EYJ007RRFI)
+ *
+ * The runtime catalogue is **loaded from the committed CSVs**
+ * (`src/data/weapons.csv` + `src/data/weapon-patterns.csv`) at module load,
+ * following the same ladder as `enemy-configs.csv` and `ship-config.csv`:
+ * the parsed CSV is the source of truth and the TypeScript literal below
+ * ({@link DEFAULT_WEAPON_CATALOGUE}) is only the per-weapon fallback for a
+ * missing or invalid row. Editing a CSV cell therefore changes the game with
+ * no TypeScript edit; the Vite build inlines the files (`?raw`), so
+ * production stays read-only with no runtime fetch.
+ *
+ * ## Cadence ownership
+ *
+ * `subdivisions`/`fireRateMs` are the **legacy nominal** cadence: level-stat
+ * quantisation and the hold-full ghost metronome interval only. The **live**
+ * fire cadence is the Euclidean ladder resolved by `resolveWeaponPattern`
+ * (`utils/weaponLevels.ts`), whose authored data is `src/data/weapon-levels.json`
+ * (migrated from the in-code ladders by AH-0MW0Q1TQV009M8AO). A dev-only
+ * diagnostic (`utils/weaponDataDiagnostics.ts`) reports any disagreement, so
+ * the split is visible instead of folklore.
  */
 
 import {
+  bundledWeaponPatternsCsv,
+  bundledWeaponsCsv,
+} from '../core/bundledConfig';
+import { parseWeaponCatalogue } from '../core/csv';
+import {
   DEFAULT_BPM,
-  beatPeriodMs,
   beatSubdivisionMs,
 } from './beat';
+import {
+  applyWeaponCatalogueGuards,
+  type WeaponCatalogueGuardResult,
+  type WeaponCatalogueInvariantReport,
+} from './weaponCatalogue';
 
 // ── Weapon IDs ───────────────────────────────────────────────────────
 
@@ -188,88 +219,141 @@ export function isTimedWeapon(id: WeaponId): boolean {
 /**
  * Shots per beat for each weapon — the musical subdivision that defines
  * its fire rate. The cannon is double-time (2/beat, 160 BPM); spread and
- * dual are whole-time (1/beat, 80 BPM); rapid is six-per-beat (6/beat,
- * 480 BPM). These are the **defaults**; the live values are configurable
- * through `core/rules.ts` (`weaponSubdivisions`), and every fire rate is
- * derived from them so it is an exact subdivision of the beat period
- * (AH-0MUAYB8EH005RJ8B).
+ * dual are half-time (0.5/beat, one shot every 2 beats); rapid is
+ * three-per-beat (3/beat, 240 BPM). These are the **defaults**; the live
+ * values are configurable through `core/rules.ts` (`weaponSubdivisions`), and
+ * every fire rate is derived from them so it is an exact subdivision of the
+ * beat period (AH-0MUAYB8EH005RJ8B).
  */
 export type WeaponSubdivisions = Record<WeaponId, number>;
 
 /**
- * Default shots-per-beat for each weapon. The four conventional weapons are
- * integer subdivisions (cannon 2, spread 1, dual 1, rapid 6). The AOE family
- * fires **slower than the beat**, so its entries are fractional subdivisions:
- * Nova fires once every 4 beats (`0.25`), Mortar once every 2 beats (`0.5`)
- * and Arc once per beat (`1`). `beatSubdivisionMs` accepts any positive
- * number, and every derived rate stays an exact subdivision/multiple of the
- * beat, so the on-grid invariant holds for the whole catalogue.
+ * **Code fallback** shots-per-beat for each weapon. The runtime default is
+ * {@link DEFAULT_WEAPON_SUBDIVISIONS}, derived from the parsed
+ * `src/data/weapons.csv`; this table is only used when a row is missing or
+ * invalid, and to derive {@link DEFAULT_WEAPON_CATALOGUE}'s `fireRateMs`
+ * values.
+ *
+ * The four conventional weapons are integral or reciprocal subdivisions
+ * (cannon 2, spread 0.5, dual 0.5, rapid 3). The AOE family fires **slower
+ * than the beat**, so its entries are fractional subdivisions: Nova fires
+ * once every 4 beats (`0.25`), Mortar once every 2 beats (`0.5`) and Arc once
+ * per beat (`1`). `beatSubdivisionMs` accepts any positive number, and every
+ * derived rate stays an exact subdivision/multiple of the beat, so the
+ * on-grid invariant holds for the whole catalogue.
+ *
+ * The non-cannon entries carry the **level-0 output trim**
+ * (AH-0MVWAVKS0005P9VN): each weapon's level-0 output is cut to ≤ 60 % of its
+ * pre-change baseline, realised by **slowing the on-beat cadence** (the
+ * identity-preserving lever) rather than deleting a pattern bullet, bounce or
+ * pierce budget. The Wave Laser's cadence was slowed a second time by the
+ * curve-flattening work (AH-0MVWAVL6R001UI60) because the beam's cadence is
+ * its only output axis (see its entry below). The cannon's `2` is frozen —
+ * its level-0 values may never change. The realised percentage per weapon is
+ * recorded in the strength budget block beside `WEAPON_CATALOGUE` (baselines)
+ * and in the committed post-change table in `utils/weapons.test.ts`
+ * (`LEVEL0_TRIMMED`), which pins both the output and the share.
  */
-export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
+export const CODE_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
+  // FROZEN: the cannon's level-0 values never move.
   cannon: 2,
-  spread: 1,
-  dual: 1,
-  rapid: 6,
-  wave_laser: 1,
-  ricochet: 1,
-  cluster: 0.5,
-  options: 1,
+  // 1/beat → 0.5/beat: 50 % of the pre-change level-0 output.
+  spread: 0.5,
+  // 1/beat → 0.5/beat: 50 %.
+  dual: 0.5,
+  // 6/beat → 3/beat: 50 % (the 1.5× cannon ceiling binds exactly).
+  rapid: 3,
+  // 1/beat → 0.5/beat: 25 % of the pre-change baseline. The beam has no
+  // projectile/AOE lever (fixed 1 hit, no budget), so its cadence is its only
+  // output axis; the flattened fire-rate curve (AH-0MVWAVL6R001UI60) left its
+  // saturated cadence at 2/beat (66.7 % of the pre-change level cap), so the
+  // level-0 cadence was halved to stay inside the ≤ 50 % level-cap ceiling.
+  wave_laser: 0.5,
+  // 1/beat → 0.5/beat: 50 %, so the 2-bounce budget stays intact.
+  ricochet: 0.5,
+  // 0.5/beat → 0.25/beat: 50 %, so the split payload stays intact.
+  cluster: 0.25,
+  // 1/beat → 0.5/beat: 50 %, so both orbiting pods stay.
+  options: 0.5,
+  // Unchanged: the AOE trim is the radius, not the cadence.
   nova: 0.25,
   mortar: 0.5,
   arc: 1,
-  rear_guard: 2,
-  broadside: 0.5,
+  // 2/beat → 1/beat: 50 %.
+  rear_guard: 1,
+  // 0.5/beat → 0.25/beat: 50 %.
+  broadside: 0.25,
+  // Unchanged — already at 20 % since the level-0 budget became 1
+  // (AH-0MVY0A23A009MRK3).
   railgun: 0.25,
-  shard_swarm: 1,
-  heavy_slug: 0.5,
+  // 1/beat → 0.5/beat: 50 %, so the five-shard fan stays intact.
+  shard_swarm: 0.5,
+  // 0.5/beat → 0.25/beat: 50 %.
+  heavy_slug: 0.25,
 };
 
-/** Default cannon subdivision (2 shots per beat). */
-export const WEAPON_CANNON_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.cannon;
-/** Default spread subdivision (1 shot per beat). */
-export const WEAPON_SPREAD_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.spread;
-/** Default dual subdivision (1 shot per beat). */
-export const WEAPON_DUAL_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.dual;
-/** Default rapid subdivision (6 shots per beat). */
-export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
-/** Default wave-laser subdivision (1 shot per beat → 750 ms at 80 BPM). */
-export const WEAPON_WAVE_LASER_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.wave_laser;
-/** Default ricochet subdivision (1 shot per beat → 750 ms at 80 BPM). */
-export const WEAPON_RICOCHET_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.ricochet;
 /**
- * Default cluster-missile subdivision (once every 2 beats → 1500 ms at
- * 80 BPM). The slow cadence is what the split payload pays for.
+ * Parsed-at-boot view of the bundled weapon CSVs: the source of the runtime
+ * catalogue and of {@link DEFAULT_WEAPON_SUBDIVISIONS}.
+ *
+ * `csv.ts` only type-imports this module, so the parse is not a runtime
+ * module cycle. Parsing happens once, here, and never throws: a malformed
+ * file yields an empty/partial `catalogue` plus diagnostics, and every
+ * missing id falls back to {@link DEFAULT_WEAPON_CATALOGUE}.
+ */
+const WEAPON_CSV_DATA = parseWeaponCatalogue(
+  bundledWeaponsCsv,
+  bundledWeaponPatternsCsv,
+);
+
+/** Default cannon subdivision (2 shots per beat) — code fallback value. */
+export const WEAPON_CANNON_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.cannon;
+/** Default spread subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
+export const WEAPON_SPREAD_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.spread;
+/** Default dual subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
+export const WEAPON_DUAL_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.dual;
+/** Default rapid subdivision (3 shots per beat → 250 ms at 80 BPM) — code fallback value. */
+export const WEAPON_RAPID_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.rapid;
+/** Default wave-laser subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
+export const WEAPON_WAVE_LASER_SUBDIVISION =
+  CODE_WEAPON_SUBDIVISIONS.wave_laser;
+/** Default ricochet subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
+export const WEAPON_RICOCHET_SUBDIVISION =
+  CODE_WEAPON_SUBDIVISIONS.ricochet;
+/**
+ * Default cluster-missile subdivision (once every 4 beats → 3000 ms at
+ * 80 BPM) — code fallback value. The slow cadence is what the split payload
+ * pays for.
  */
 export const WEAPON_CLUSTER_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.cluster;
+  CODE_WEAPON_SUBDIVISIONS.cluster;
 /**
- * Default Options subdivision (1 shot per beat → 750 ms at 80 BPM). The pods
- * fire on the same whole-beat cadence as the spread/dual weapons.
+ * Default Options subdivision (0.5 shots per beat → 1500 ms at 80 BPM) —
+ * code fallback value. The pods fire on the same half-beat cadence as the
+ * spread/dual weapons.
  */
 export const WEAPON_OPTIONS_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.options;
-/** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM). */
-export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
-/** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM). */
-export const WEAPON_MORTAR_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.mortar;
-/** Default Arc subdivision (once per beat → 750 ms at 80 BPM). */
-export const WEAPON_ARC_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.arc;
-/** Default Rear Guard subdivision (2 shots per beat → 375 ms at 80 BPM). */
+  CODE_WEAPON_SUBDIVISIONS.options;
+/** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM) — code fallback value. */
+export const WEAPON_NOVA_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.nova;
+/** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM) — code fallback value. */
+export const WEAPON_MORTAR_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.mortar;
+/** Default Arc subdivision (once per beat → 750 ms at 80 BPM) — code fallback value. */
+export const WEAPON_ARC_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.arc;
+/** Default Rear Guard subdivision (1 shot per beat → 750 ms at 80 BPM) — code fallback value. */
 export const WEAPON_REAR_GUARD_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.rear_guard;
-/** Default Broadside subdivision (once every 2 beats → 1500 ms at 80 BPM). */
+  CODE_WEAPON_SUBDIVISIONS.rear_guard;
+/** Default Broadside subdivision (once every 4 beats → 3000 ms at 80 BPM) — code fallback value. */
 export const WEAPON_BROADSIDE_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.broadside;
-/** Default Railgun subdivision (once every 4 beats → 3000 ms at 80 BPM). */
-export const WEAPON_RAILGUN_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.railgun;
-/** Default Shard Swarm subdivision (once per beat → 750 ms at 80 BPM). */
+  CODE_WEAPON_SUBDIVISIONS.broadside;
+/** Default Railgun subdivision (once every 4 beats → 3000 ms at 80 BPM) — code fallback value. */
+export const WEAPON_RAILGUN_SUBDIVISION = CODE_WEAPON_SUBDIVISIONS.railgun;
+/** Default Shard Swarm subdivision (0.5 shots per beat → 1500 ms at 80 BPM) — code fallback value. */
 export const WEAPON_SHARD_SWARM_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.shard_swarm;
-/** Default Heavy Slug subdivision (once every 2 beats → 1500 ms at 80 BPM). */
+  CODE_WEAPON_SUBDIVISIONS.shard_swarm;
+/** Default Heavy Slug subdivision (once every 4 beats → 3000 ms at 80 BPM) — code fallback value. */
 export const WEAPON_HEAVY_SLUG_SUBDIVISION =
-  DEFAULT_WEAPON_SUBDIVISIONS.heavy_slug;
+  CODE_WEAPON_SUBDIVISIONS.heavy_slug;
 
 /**
  * Derives a weapon's fire interval (ms) from a subdivision of the beat:
@@ -415,7 +499,8 @@ export const WEAPON_BULLET_LIFETIME = {
   rapid: 0.375,
   /**
    * Wave laser — the beam's **visible duration** (0.3 s, AC4): the hitscan ray
-   * resolves at launch and the beam column is held for this long. The
+   * resolves at launch and the beam column is held for this long. The beam's
+   * *extent* is authored separately (`hitscan.length`, 240 px at level 0). The
    * travelling-bullet path never applies to it.
    */
   wave_laser: 0.3,
@@ -515,15 +600,22 @@ export const BULLET_COLORS = {
  * AOE effect radii (px) — the single source of truth read by the catalogue
  * descriptors and (later) the distinctive VFX helpers. Halved alongside the
  * conventional bullet ranges so AOE coverage is tighter and more positional
- * (AH-0MUU131PU006O7ZD).
+ * (AH-0MUU131PU006O7ZD), then trimmed to ≤ 60 % of that level-0 coverage by
+ * the non-cannon output trim (AH-0MVWAVKS0005P9VN).
+ *
+ * The trim is realised as the **largest whole-pixel radius whose area stays
+ * inside the 60 % bound**, so a target that is not representable at an integer
+ * radius never rounds up: Nova 45 → 34 px (57.1 %), Mortar 35 → 27 px
+ * (59.5 %), Arc 60 → 46 px (58.8 %). Coverage is `radius² × cadence`, so the
+ * radius is the AOE family's output lever and its cadence is untouched.
  */
 export const AOE_RADII = {
-  /** Nova ring radius — a defensive pulse around the ship. */
-  nova: 45,
-  /** Mortar blast radius — a focused detonation at the impact point. */
-  mortar: 35,
-  /** Arc chaining reach — the longest AOE, spanning nearby targets. */
-  arc: 60,
+  /** Nova ring radius — a defensive pulse around the ship (57.1 % of 45 px). */
+  nova: 34,
+  /** Mortar blast radius — a focused detonation at the impact point (59.5 % of 35 px). */
+  mortar: 27,
+  /** Arc chaining reach — the longest AOE, spanning nearby targets (58.8 % of 60 px). */
+  arc: 46,
 } as const;
 
 /**
@@ -690,14 +782,18 @@ export type BulletShape =
  * bullet colour, shape, and size multiplier.
  */
 /**
- * Wave-laser beam extent at level 0 (px) — one full arena width, so an
- * unobstructed shot always spans the screen (AC3). The arena width itself is
- * `GAME_WIDTH` in `core/constants`; it is mirrored here as a plain number
- * because `core/constants` imports `core/rules`, which imports this catalogue
- * — importing it back would create a module cycle. `hitscanBeam.test.ts`
- * asserts the two stay equal.
+ * Wave-laser beam extent at level 0 (px) — **25 % of the pre-tuning full
+ * arena width** (960 → 240 px), so an unobstructed shot is a short,
+ * close-range beam rather than a screen-wide sniper line
+ * (AH-0MW10J31B0053E56). The existing Range (`bulletLifetime`) ladder still
+ * grows it, so the top of the ladder approaches ~528 px.
+ *
+ * The arena width itself is `GAME_WIDTH` in `core/constants`; the number is
+ * mirrored here as a plain literal because `core/constants` imports
+ * `core/rules`, which imports this catalogue — importing it back would create
+ * a module cycle. `hitscanBeam.test.ts` pins the value and the 25 % ratio.
  */
-export const WAVE_LASER_BEAM_LENGTH = 960;
+export const WAVE_LASER_BEAM_LENGTH = 240;
 
 /**
  * Hitscan-beam descriptor — the Wave Laser's dedicated ray seam
@@ -710,13 +806,23 @@ export const WAVE_LASER_BEAM_LENGTH = 960;
 export interface HitscanDescriptor {
   /**
    * Total ray length (px) travelled before the beam stops, wrapping at the
-   * arena edges. One full arena width ({@link GAME_WIDTH}) at level 0, so an
-   * unobstructed shot always spans the screen (AC3). Weapon leveling grows it
-   * through the `bulletLifetime` (range) upgrade.
+   * arena edges. 240 px at level 0 — a quarter of the 960 px arena width
+   * (AH-0MW10J31B0053E56) — so an unobstructed shot is a short beam rather
+   * than a screen-wide line. Weapon leveling grows it through the
+   * `bulletLifetime` (range) upgrade.
    */
   length: number;
   /** Seconds the resolved beam stays visible after launch (AC4). */
   duration: number;
+  /**
+   * Probability (0–1) that a shot is aimed at the **nearest living enemy**
+   * instead of a uniform 360° direction (AH-0MW10J31B0053E56). `0` fires
+   * uniformly, `1` always aims (when a living enemy exists); with no living
+   * enemy every shot is uniform. Authored as data (`hitscanAimBias` in
+   * `src/data/weapons.csv`) so a designer can tune it, and grown with weapon
+   * level through the `homing` upgrade curve by `resolveWeaponDefinition`.
+   */
+  aimBias: number;
 }
 
 export interface WeaponDefinition {
@@ -738,7 +844,16 @@ export interface WeaponDefinition {
    * (e.g. Dual) without changing their flight angles.
    */
   sideOffsets?: ReadonlyArray<number>;
-  /** Milliseconds between shots. */
+  /**
+   * Milliseconds between shots, derived from the authored CSV
+   * `subdivisions` cell (`beatPeriodMs / subdivisions`).
+   *
+   * This is the **legacy nominal** cadence (level-stat quantisation and the
+   * hold-full ghost metronome). The **live** fire cadence is the Euclidean
+   * ladder resolved by `resolveWeaponPattern` in `utils/weaponLevels.ts`,
+   * whose authored data is `src/data/weapon-levels.json`; see
+   * {@link DEFAULT_WEAPON_SUBDIVISIONS} and the module header.
+   */
   fireRateMs: number;
   /** Bullet colour (Phaser integer). */
   bulletColor: number;
@@ -928,7 +1043,101 @@ export interface ImpactFxSpec {
  * Spread uses a 3-bullet fan (-30°, 0°, +30°). Dual fires 2 bullets
  * perpendicular to the heading (±90°). Rapid fires single bullets fast.
  */
-export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
+/**
+ * ── Weapon strength budget (parent AH-0MVRENEME004FS8T, AC1/AC2) ───────
+ *
+ * The catalogue's balance intent lives here, beside the numbers it
+ * constrains. `utils/weaponStrength.ts` is the **executable** definition of a
+ * weapon's output at a given level — the single place the arithmetic lives;
+ * `utils/weapons.test.ts` asserts the level-0 budget against the literal
+ * pre-change baselines below, and `utils/weaponLevels.test.ts` asserts the
+ * level-1 / level-cap ceilings.
+ *
+ * **Cadence is the live Euclidean ladder** (`resolveWeaponPattern`), not the
+ * catalogue's nominal `subdivisions`. AH-0MW23FEDK006BRHK found the level-0
+ * trim had only reached the nominal table, re-timed every affected ladder and
+ * switched this measurement to the cadence the game actually plays, so the
+ * percentages below describe the shipped game.
+ *
+ * ### Output definition per family
+ *
+ * - **projectile** weapons — single-target **hits/s**:
+ *   `pattern bullets per shot × shots/s`.
+ * - **pierce** budget weapons — **hit-point budget × hits/s**
+ *   (the railgun's pass-through depth).
+ * - **bounce** budget weapons — **bounce depth × hits/s**, i.e.
+ *   `(1 + bounce) × shots/s` targets per pellet (the ricochet).
+ * - **split** payloads — the missile plus every radial warhead
+ *   (`CLUSTER_BASE_WARHEADS` and its level growth) **× hits/s**.
+ * - **orbit** (Options) — **pod count × shots/s** (every pod fires once per
+ *   trigger).
+ * - **AOE** family (nova, mortar, arc) — **coverage area × cadence**:
+ *   `radius² × shots/s` in `px²/s` (`π` is a constant scale factor and
+ *   cancels in every budget ratio).
+ *
+ * ### Budget ceilings (producer answers Q1 = A, Q2 = A)
+ *
+ * - **Level 0:** every **non-cannon** weapon's output is **≤ 60 %** of its
+ *   pre-change baseline below, and no non-cannon weapon's single-target
+ *   output exceeds **1.5× the cannon's** (the cannon cap takes precedence
+ *   where 60 % is still too strong; since the cadence re-time the closest
+ *   weapon, `rapid`, sits at 1.44×).
+ * - **Level 1:** a resolved weapon's output is **≤ 2.5×** its own level-0
+ *   output.
+ * - **Level cap (saturated):** **≤ 50 %** of the pre-change saturated output.
+ *   The cannon pattern saturated at ≈72 hits/s (9 bullets at 8 shots/s), so
+ *   the post-change cap is ≤ 36 hits/s.
+ *
+ * The ceilings are expressed in code as `WEAPON_STRENGTH_BUDGET`
+ * (`utils/weaponStrength.ts`). Where an exact 60 % is not representable on
+ * the beat grid / with integer counts, the nearest on-grid value **at or
+ * below** the target is used and the realised percentage is pinned per weapon
+ * by the committed post-change table in `weapons.test.ts` (`LEVEL0_TRIMMED`)
+ * and documented in GDD §4.4.2.
+ *
+ * ### Pre-change level-0 baselines (frozen fixture, never re-derived)
+ *
+ * Measured from the catalogue at the epic intake (80 BPM beat grid,
+ * `DEFAULT_WEAPON_SUBDIVISIONS` × pattern count × hit budget), relative to the
+ * cannon. These literal numbers are committed as the test fixture in
+ * `weapons.test.ts`; the cannon row is **frozen** (its level-0 values may
+ * never change).
+ *
+ * | Weapon | Pattern at L0 | Shots/s | Output | × cannon |
+ * |---|---|---|---|---|
+ * | cannon (frozen) | 1 bullet | 2.67 | 2.67 hits/s | 1.00× |
+ * | spread | 3-bullet fan ±30° | 1.33 | 4.00 hits/s | 1.50× |
+ * | dual | 2 parallel bullets | 1.33 | 2.67 hits/s | 1.00× |
+ * | rapid | 1 bullet, 6/beat | 8.00 | 8.00 hits/s | 3.00× |
+ * | wave_laser | 1 beam (2 HP then) | 1.33 | 2.67 hits/s | 1.00× |
+ * | ricochet | 1 pellet, 2 wall bounces | 1.33 | 4.00 hits/s | 1.50× |
+ * | cluster | missile + 2 warheads | 0.67 | 2.00 hits/s | 0.75× |
+ * | options | 2 orbiting pods | 1.33 | 2.67 hits/s | 1.00× |
+ * | nova | AOE ring, 45 px | 0.33 | 675 px²/s | role-defined |
+ * | mortar | AOE, 35 px, random point | 0.67 | 817 px²/s | role-defined |
+ * | arc | AOE + chain, 60 px | 1.33 | 4800 px²/s | role-defined |
+ * | rear_guard | 1 backward bullet | 2.67 | 2.67 hits/s | 1.00× |
+ * | broadside | 2 perpendicular bullets | 0.67 | 1.33 hits/s | 0.50× |
+ * | railgun | 1 tracer (5 HP then) | 0.33 | 1.67 hits/s | 0.63× |
+ * | shard_swarm | 5-shard fan ±15° | 1.33 | 6.67 hits/s | 2.50× |
+ * | heavy_slug | 1 oversized slug | 0.67 | 0.67 hits/s | 0.25× |
+ *
+ * The wave-laser and railgun rows are the intake measurement (a 2 HP beam and
+ * a 5 HP budget); both budgets were lowered afterwards by their own work items
+ * (AH-0MVREBUJ5004HDRQ, AH-0MVY0A23A009MRK3), so their shipped output already
+ * sits below the ceiling. Baselines are frozen history — they are never
+ * re-derived from the shipped data, or a regression in the catalogue would be
+ * invisible.
+ *
+ * Weapons are **cumulative**, so a run's total output is the sum of every
+ * active weapon plus the cannon — a single pick is not the unit of power.
+ *
+ * This literal is the **code fallback** for the data-driven catalogue
+ * (AH-0MW0Q1EYJ007RRFI): the runtime {@link WEAPON_CATALOGUE} is built from the
+ * parsed `src/data/weapons.csv` + `src/data/weapon-patterns.csv` and only
+ * reads an entry here when that weapon's CSV row is missing or invalid.
+ */
+export const DEFAULT_WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   cannon: {
     id: 'cannon',
     name: 'Cannon',
@@ -1072,9 +1281,10 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'wave_laser',
     name: 'Wave Laser',
     description:
-      'Adds a red laser beam that deals 1 damage to the first enemy it hits and spans the whole screen.',
-    // A single aimed beam along the ship's heading — exactly one beam per
-    // shot, never a fan or a pair (AC1).
+      'Adds a short red laser beam that fires in a random direction biased toward the nearest enemy and deals 1 damage to the first enemy it hits.',
+    // A single beam per shot, never a fan or a pair (AC1). Its direction is
+    // drawn per shot from the scene RNG, biased toward the nearest enemy,
+    // rather than always following the ship's heading (AH-0MW10J31B0053E56).
     offsets: [0],
     fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
     bulletColor: BULLET_COLORS.wave_laser,
@@ -1088,14 +1298,18 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletThickness: 3,
     bulletSize: 1.2,
     bulletLifetime: WEAPON_BULLET_LIFETIME.wave_laser,
-    // Hitscan ray (AH-0MVREBUJ5004HDRQ): the shot resolves instantly along
-    // the heading, deals 1 damage at the first intercept and stops; with
-    // nothing in the way it runs one full screen width, wrapping at the arena
-    // edges. The beam column is visible for 0.3 s. There is no damage budget
-    // (fixed 1 damage at every level) and no travelling projectile.
+    // Hitscan ray (AH-0MVREBUJ5004HDRQ; retuned by AH-0MW10J31B0053E56): the
+    // shot resolves instantly, deals 1 damage at the first intercept and
+    // stops; with nothing in the way it runs its short 240 px extent, wrapping
+    // at the arena edges. Its direction is drawn per shot from the scene RNG —
+    // aimed at the nearest enemy with probability `aimBias`, otherwise uniform
+    // over 360° — and the bias grows with weapon level. The beam column is
+    // visible for 0.3 s. There is no damage budget (fixed 1 damage at every
+    // level) and no travelling projectile.
     hitscan: {
       length: WAVE_LASER_BEAM_LENGTH,
       duration: WEAPON_BULLET_LIFETIME.wave_laser,
+      aimBias: 0.5,
     },
     // Wide red muzzle flash / launch cue at the ship when the wave laser
     // fires — a substantial burst befitting the long beam it launches
@@ -1550,6 +1764,163 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   },
 };
 
+// ── Runtime catalogue: CSV source of truth + code fallback ──────────
+
+/**
+ * Every valid weapon id, in catalogue order, derived from
+ * {@link DEFAULT_WEAPON_CATALOGUE}.
+ *
+ * The runtime catalogue comes from data, so `Record` key exhaustiveness no
+ * longer types the shipped roster. This explicit list (and the literal's
+ * `Record<WeaponId, WeaponDefinition>` type) keeps the roster compile-checked:
+ * adding an id to the `WeaponId` union without a fallback entry is a type
+ * error, and `weaponsCatalogueLoad.test.ts` asserts the runtime ids cover the
+ * list.
+ */
+export const WEAPON_IDS: readonly WeaponId[] = Object.keys(
+  DEFAULT_WEAPON_CATALOGUE,
+) as WeaponId[];
+
+/** What the module-load CSV parse resolved, and what fell back to code. */
+export interface WeaponCatalogueLoadReport {
+  /** Ids whose definition came from the parsed CSV. */
+  resolvedFromCsv: readonly WeaponId[];
+  /** Ids whose CSV row was missing/invalid, resolved from the code default. */
+  resolvedFromFallback: readonly WeaponId[];
+  /** Flat codec diagnostics (empty for the committed seed). */
+  errors: readonly string[];
+}
+
+/**
+ * The result of parsing the bundled weapon CSVs at module load.
+ *
+ * Exposed so a boot-time self-check can surface a typo that silently fell back
+ * to code, and so tests can prove the CSV — not the TypeScript literal — built
+ * the runtime catalogue.
+ */
+export const WEAPON_CATALOGUE_LOAD_REPORT: WeaponCatalogueLoadReport = {
+  resolvedFromCsv: WEAPON_IDS.filter(
+    (id) => WEAPON_CSV_DATA.catalogue[id] !== undefined,
+  ),
+  resolvedFromFallback: WEAPON_IDS.filter(
+    (id) => WEAPON_CSV_DATA.catalogue[id] === undefined,
+  ),
+  errors: [...WEAPON_CSV_DATA.errors],
+};
+
+/**
+ * Builds the runtime catalogue: the parsed CSV row per weapon, falling back to
+ * {@link DEFAULT_WEAPON_CATALOGUE} for that id only when its row is missing or
+ * invalid. Weapons with a valid row stay CSV-driven.
+ *
+ * The build then runs the runtime invariant guard
+ * (`utils/weaponCatalogue.ts`, AH-0MW0Q1FT1002Q6NJ): a weapon whose parsed data
+ * violates a roster invariant (off-beat rate, duplicate colour/shape family,
+ * out-of-range magnitude) is replaced by its code default, so a hand edit can
+ * never ship a broken roster. The fallback applies in every environment — the
+ * game and the gyms must run the same roster — and the findings are surfaced
+ * in a dev server by `utils/weaponDataDiagnostics.ts`.
+ */
+function buildWeaponCatalogue(): WeaponCatalogueGuardResult {
+  const unguarded = {} as Record<WeaponId, WeaponDefinition>;
+  for (const id of WEAPON_IDS) {
+    unguarded[id] =
+      WEAPON_CSV_DATA.catalogue[id] ?? DEFAULT_WEAPON_CATALOGUE[id];
+  }
+  return applyWeaponCatalogueGuards(unguarded, DEFAULT_WEAPON_CATALOGUE);
+}
+
+const WEAPON_CATALOGUE_BUILD = buildWeaponCatalogue();
+
+/**
+ * What the runtime invariant guard found while building the catalogue, and
+ * which weapons it repaired from the code default. Empty for the committed
+ * seed; a dev-server boot logs every finding once via
+ * `utils/weaponDataDiagnostics.ts`.
+ */
+export const WEAPON_CATALOGUE_INVARIANT_REPORT: WeaponCatalogueInvariantReport =
+  WEAPON_CATALOGUE_BUILD.report;
+
+/**
+ * The shipped weapon catalogue, built at module load from
+ * `src/data/weapons.csv` + `src/data/weapon-patterns.csv` with a per-weapon
+ * code fallback. Same exported name and type as before the CSV migration, so
+ * every consumer is unchanged.
+ */
+export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> =
+  WEAPON_CATALOGUE_BUILD.catalogue;
+
+/**
+ * Default shots-per-beat for each weapon, **derived from the parsed
+ * `src/data/weapons.csv`** (`subdivisions` column) with a per-weapon fallback
+ * to {@link CODE_WEAPON_SUBDIVISIONS}.
+ *
+ * Deriving the table (rather than hand-maintaining a second literal) means a
+ * designer's fire-rate edit is not silently overridden by a stale code
+ * default: a changed `subdivisions` cell changes `DEFAULT_RULES.weaponSubdivisions`
+ * (`core/rules.ts` seeds from this table) on the next boot. A persisted user
+ * override in the rules store still wins at runtime and remains a local,
+ * uncommitted setting. These values are the **legacy nominal** cadence — the
+ * live fire cadence is the Euclidean ladder (see the module header).
+ *
+ * A weapon whose authored row the runtime invariant guard rejected runs the
+ * code-default definition, so its nominal cadence falls back with it (below);
+ * otherwise `weaponFireRateMs` would keep reporting the rejected rate.
+ */
+export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions =
+  resolveDefaultWeaponSubdivisions(
+    WEAPON_CATALOGUE_INVARIANT_REPORT.resolvedFromFallback,
+  );
+
+/**
+ * Builds the nominal subdivision table from the authored CSV cells, restoring
+ * the code-default value for every weapon the invariant guard rejected so the
+ * nominal surface and the runtime definition cannot disagree.
+ */
+function resolveDefaultWeaponSubdivisions(
+  rejectedIds: readonly WeaponId[],
+): WeaponSubdivisions {
+  const table: WeaponSubdivisions = {
+    ...CODE_WEAPON_SUBDIVISIONS,
+    ...WEAPON_CSV_DATA.subdivisions,
+  };
+  for (const id of rejectedIds) {
+    table[id] = CODE_WEAPON_SUBDIVISIONS[id];
+  }
+  return table;
+}
+
+/**
+ * Formats the catalogue-load self-check as one actionable message, or `null`
+ * when the CSV resolved every weapon with no diagnostics.
+ *
+ * Kept pure so the dev-only boot warning (`utils/weaponDataDiagnostics.ts`)
+ * and its tests share the exact wording a developer sees.
+ */
+export function formatWeaponCatalogueLoadWarning(
+  report: WeaponCatalogueLoadReport,
+): string | null {
+  if (
+    report.resolvedFromFallback.length === 0 &&
+    report.errors.length === 0
+  ) {
+    return null;
+  }
+  const lines = [
+    'Weapon catalogue load self-check: the runtime catalogue did not resolve ' +
+      'cleanly from src/data/weapons.csv.',
+  ];
+  if (report.resolvedFromFallback.length > 0) {
+    lines.push(
+      `Resolved from the code fallback instead of CSV: ${report.resolvedFromFallback.join(', ')}.`,
+    );
+  }
+  if (report.errors.length > 0) {
+    lines.push('CSV diagnostics:', ...report.errors.map((error) => `  ${error}`));
+  }
+  return lines.join('\n');
+}
+
 /**
  * The **Reset** drop — not a weapon itself, but one of the weapon-pool
  * drops: collecting it clears every timed weapon, leaving only the
@@ -1586,42 +1957,10 @@ export function getWeaponById(id: WeaponId): WeaponDefinition {
 
 // ── Beat-grid invariant ─────────────────────────────────────────────
 
-/**
- * Returns true when `fireRateMs` is an exact subdivision of the beat period
- * for `bpm`: `beatPeriodMs(bpm) % fireRateMs === 0`. This is the
- * catalogue-wide invariant (AH-0MUAYB8EH005RJ8B): every weapon must fire on
- * the shared beat grid, so a future 20 BPM quarter-time weapon (or any other
- * addition) is on-grid by construction and an off-grid rate is rejected.
- *
- * @param fireRateMs - Fire interval in milliseconds.
- * @param bpm - Tempo in beats per minute (default 80).
- * @returns True when the interval divides the beat period exactly.
- */
-export function isOnBeatGrid(
-  fireRateMs: number,
-  bpm: number = DEFAULT_BPM,
-): boolean {
-  if (typeof fireRateMs !== 'number' || !Number.isFinite(fireRateMs) || fireRateMs <= 0) {
-    return false;
-  }
-  const period = beatPeriodMs(bpm);
-  // Compare in *ratio* space rather than via `%`: `period % fireRateMs` loses
-  // precision for high subdivisions (e.g. rapid at 11/beat = 68.18 ms), where
-  // 750 / 68.18… evaluates to 10.999… and the remainder check fails on a
-  // mathematically on-grid rate. A relative tolerance on the subdivision
-  // count is stable across the whole catalogue (AH-0MUQOV9JV00389E7).
-  const tolerance = 1e-6;
-  const subdivisions = period / fireRateMs;
-  if (subdivisions >= 1) {
-    return Math.abs(subdivisions - Math.round(subdivisions)) <= tolerance;
-  }
-  // Slower than the beat: the rate is an exact integer multiple of the beat
-  // period (the AOE family, e.g. Nova 3000 ms = 4 beats, Mortar 1500 ms = 2).
-  // This keeps an arbitrary off-grid rate (e.g. 200 ms, or 1000 ms = 1⅓
-  // beats) rejected.
-  const beats = fireRateMs / period;
-  return Math.abs(beats - Math.round(beats)) <= tolerance;
-}
+// The beat-grid predicate lives in the runtime guard's leaf module
+// (`utils/weaponCatalogue.ts`) and is re-exported here so every existing
+// consumer and test keeps importing it from the catalogue module.
+export { isOnBeatGrid } from './weaponCatalogue';
 
 // ── Round-robin drop order ──────────────────────────────────────────
 

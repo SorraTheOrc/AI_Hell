@@ -307,7 +307,8 @@ export const GYM_LEVEL_DROP_MARGIN = 24;
  * collision and lifecycle passes can consume it unchanged.
  */
 export interface GymLevelBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view: a sprite of its shape's cached texture. */
+  readonly graphics: Phaser.GameObjects.Image;
   vx: number;
   vy: number;
   lifetime: number;
@@ -558,6 +559,12 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   private player: Player | null = null;
   private spawned: LevelSpawn[] = [];
   private enemyBullets: GymLevelBullet[] = [];
+  /**
+   * {@link getEnemyEntities} snapshot, refilled in place on every call so the
+   * shared collision pass does not allocate a fresh list per bullet
+   * (AH-0MVXV0F0Y004NENT). Same contract, and same reason, as `PlayScene`.
+   */
+  private readonly enemyEntityCache: EnemyEntity[] = [];
   /**
    * Single-live wormhole lifecycle for the launched waves, shared with
    * `PlayScene` and every formation gym (AH-0MV9KHLV8006GMX6) so a wave
@@ -1903,7 +1910,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   }
 
   protected override getEnemyEntities(): readonly EnemyEntity[] {
-    return this.spawned.map((spawn) => spawn.entity);
+    const cache = this.enemyEntityCache;
+    cache.length = 0;
+    for (const spawn of this.spawned) cache.push(spawn.entity);
+    return cache;
   }
 
   /** Enemy bullets in flight (public, mirroring `PlayScene.getEnemyBullets`). */

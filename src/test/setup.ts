@@ -79,9 +79,10 @@ if (hasDom) {
 
 // ── Hermetic CSV fetch guard (AH-0MVS9UEHS009QH6J) ──────────────────
 // Installed for every integration test file. Non-CSV requests pass straight
-// through; CSV requests must use `installCsvFetchBridge(baseUrl)` (or a
-// per-test `vi.stubGlobal('fetch', ...)`) and are otherwise refused with no
-// network I/O.
+// through; an absolute CSV URL names its target deliberately and also passes
+// through; a **relative** CSV request must use `installCsvFetchBridge(baseUrl)`
+// (or a per-test `vi.stubGlobal('fetch', ...)`) and is otherwise refused with
+// no network I/O.
 if (typeof fetch === 'function') {
   installCsvFetchGuard();
 }

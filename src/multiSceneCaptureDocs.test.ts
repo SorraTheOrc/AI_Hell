@@ -221,6 +221,7 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
       'GymPowerUpsUtility',
       'GymRhythm',
       'GymWeaponLeveling',
+      'GymWeaponTuning',
       'GymWeapons',
     ]) {
       expect(covered, `${key} has no example entry`).toContain(key);

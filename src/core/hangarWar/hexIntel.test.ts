@@ -78,9 +78,12 @@ describe('hex map model (pure)', () => {
       expect(intel.aggression).toBe(definition.baseAggression);
       expect(intel.held).toBe(false);
       expect(intel.actionable).toBe(true);
+      // The short tile label is the readable aggression badge (`AGG n`).
+      expect(intel.tileLabel).toBe(`AGG ${definition.baseAggression}`);
 
-      // The tile text publishes boss, strengths, weaknesses, grant and the
-      // aggression *before* the player commits to a deployment.
+      // The full intel block (the detail panel's text) publishes boss,
+      // strengths, weaknesses, grant and the aggression *before* the player
+      // commits to a deployment.
       expect(intel.label).toContain(intel.id);
       expect(intel.label).toContain('UNHELD');
       expect(intel.label).toContain(`AGG ${definition.baseAggression}`);
@@ -129,6 +132,9 @@ describe('hex map model (pure)', () => {
       defenderRating: 2,
       margin: -8,
     });
+    // The tile badge is the aggression alone; the full block is panel text.
+    expect(held.tileLabel).toBe('AGG 1');
+    expect(other.tileLabel).toBe('AGG 2');
     expect(held.label).toContain('HELD · AGG 1 · !9');
     expect(held.label).toContain('bot hull-1 (2)');
     expect(held.label).toContain('atk 10 vs 2 · FALLS');
@@ -260,6 +266,7 @@ describe('hex map model (pure)', () => {
 
     expect(intel.aggression).toBe(0);
     expect(intel.pendingAttack).toBeNull();
+    expect(intel.tileLabel).toBe('AGG 0');
     expect(intel.label).toContain('HELD · AGG 0');
     expect(intel.label).toContain(definition.boss);
   });

@@ -17,6 +17,7 @@ import { createEnemyFromConfig } from './enemyFactory';
 import {
   DEFAULT_ENEMY_FIRE_METHOD,
   ENEMY_FIRE_METHODS,
+  collectEnemyFire,
   enemyFireMethod,
   fireForEnemy,
 } from './enemyFire';
@@ -207,6 +208,60 @@ describe('shared enemy-fire dispatcher — fallback and safety (AC3)', () => {
   it('leaves a silent method result as an empty array', () => {
     const entity = { tryFireAimedBullet: () => null };
     expect(fireForEnemy(entity, 'scout', 10)).toEqual([]);
+  });
+});
+
+// ── Allocation-free collection form (AH-0MVXV0F0Y004NENT) ────────────
+
+describe('shared enemy-fire dispatcher — allocation-free collection form', () => {
+  it('appends the fired bullets to the caller\'s array, in fire order', () => {
+    // The hot loop collects one frame of fire from every enemy straight into
+    // the scene's live bullet list, so the helper must append (never replace)
+    // and keep the per-enemy order.
+    const collected: { tag: string }[] = [];
+    const existing = { tag: 'already-in-flight' };
+    collected.push(existing);
+
+    for (const key of ['scout', 'diver', 'tank'] as const) {
+      collectEnemyFire(makeFireSpy(), key, 500, collected);
+    }
+
+    expect(collected).toHaveLength(4);
+    // The pre-existing bullet is untouched at index 0 and the new bullets
+    // follow in dispatch order.
+    expect(collected[0]).toBe(existing);
+    expect(collected.slice(1).map((bullet) => bullet.tag)).toEqual([
+      'aimed',
+      'spread',
+      'tank',
+    ]);
+  });
+
+  it('appends nothing for the same inputs that make fireForEnemy return []', () => {
+    const collected: { tag: string }[] = [];
+    // Unknown archetype with no method, a null entity, a spawning enemy and a
+    // non-firing archetype must all be no-ops.
+    collectEnemyFire({}, 'diver', 10, collected);
+    collectEnemyFire(null, 'scout', 10, collected);
+    collectEnemyFire({ isSpawning: true, tryFireAimedBullet: () => ({}) }, 'scout', 10, collected);
+    collectEnemyFire(makeFireSpy(), 'harvester', 10, collected);
+    collectEnemyFire({ tryFireAimedBullet: () => null }, 'scout', 10, collected);
+    expect(collected).toEqual([]);
+  });
+
+  it('is the same dispatch as fireForEnemy (one body, two entry points)', () => {
+    // `fireForEnemy` is documented as a thin wrapper: identical inputs must
+    // produce the same calls and the same bullets through both entry points.
+    for (const key of Object.keys(ENEMY_FIRE_METHODS)) {
+      const viaArray = makeFireSpy();
+      const viaCollect = makeFireSpy();
+      const allocated = fireForEnemy<{ tag: string }>(viaArray, key, 777);
+      const collected: { tag: string }[] = [];
+      collectEnemyFire(viaCollect, key, 777, collected);
+
+      expect(viaCollect.calls, `${key} calls`).toEqual(viaArray.calls);
+      expect(collected, `${key} bullets`).toEqual(allocated);
+    }
   });
 });
 

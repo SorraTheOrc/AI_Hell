@@ -1,6 +1,7 @@
 /**
  * Vite CSV plugin tests — GET/PUT, atomic write, validation
- * (AH-0MTZWZ9TE009CVUA — task AH-0MUE2MHE70052XPE).
+ * (AH-0MTZWZ9TE009CVUA — task AH-0MUE2MHE70052XPE; weapon-catalogue write
+ * API AH-0MW0Q1GMK005HOF0).
  *
  * Test-first suite for the dev-only `configCsvPlugin`. Tests run the
  * middleware behind a real ephemeral HTTP server against a temporary
@@ -30,16 +31,69 @@ import type { ViteDevServer } from 'vite';
 import {
   configCsvPlugin,
   CSV_API_PREFIX,
+  WEAPONS_CSV_PATH,
+  WEAPON_PATTERNS_CSV_PATH,
   atomicWrite,
   type ConfigCsvPluginOptions,
 } from './configCsvPlugin';
 import { DEFAULT_ENEMY_CONFIGS } from '../../src/core/enemyConfig';
+import { parseCsvRows, parseWeaponPatterns } from '../../src/core/csv';
 
 // ── Fixtures ────────────────────────────────────────────────────────
 
 const ENEMY_REL = 'src/data/enemy-configs.csv';
 const SHIP_REL = 'src/data/ship-config.csv';
 const DIFFICULTY_REL = 'src/data/difficulty-curves.csv';
+
+// ── Weapon-catalogue fixtures (AH-0MW0Q1GMK005HOF0) ─────────────────
+//
+// A two-weapon catalogue is enough to exercise the row-preserving write: one
+// row is edited, the other must stay byte-identical.
+
+const WEAPONS_COMMENT = [
+  '# Weapon Catalogue CSV — test fixture.',
+  '# This comment block must survive a save.',
+].join('\n');
+
+const WEAPONS_HEADER = [
+  'id', 'name', 'description', 'subdivisions', 'bulletColor', 'bulletShape',
+  'bulletSize', 'bulletLifetime', 'bulletRim', 'impactColor', 'impactRadius',
+  'impactDuration', 'impactCue',
+].join(',');
+
+const PATTERNS_HEADER = 'weaponId,index,angleDeg,sideOffsetPx';
+
+function weaponsCsvFixture(): string {
+  return [
+    WEAPONS_COMMENT,
+    WEAPONS_HEADER,
+    'cannon,Cannon,Permanent default weapon.,2,0x00ffff,circle,1,0.75,0xffffff,0x00ffff,9,0.16,playCannonImpactSound',
+    'spread,Spread,Three-bullet fan.,0.5,0xffaa00,diamond,0.8,0.7,0xffdd66,0xffaa00,9,0.16,playSpreadImpactSound',
+    '',
+  ].join('\n');
+}
+
+function patternsCsvFixture(): string {
+  return [
+    '# Weapon Shot-Pattern CSV — test fixture.',
+    PATTERNS_HEADER,
+    'cannon,0,0,',
+    'spread,0,-30,',
+    'spread,1,0,',
+    'spread,2,30,',
+    '',
+  ].join('\n');
+}
+
+/** A weapons PUT body: the header row plus the supplied data rows. */
+function weaponBody(rows: string[], header: string = WEAPONS_HEADER): string {
+  return [header, ...rows, ''].join('\n');
+}
+
+/** A patterns PUT body: the header row plus the supplied data rows. */
+function patternBody(rows: string[]): string {
+  return [PATTERNS_HEADER, ...rows, ''].join('\n');
+}
 
 function enemyCsv(scoutCount = 6): string {
   const header =
@@ -86,6 +140,8 @@ function createFixtures(root: string): void {
   writeFileSync(join(root, ENEMY_REL), enemyCsv());
   writeFileSync(join(root, SHIP_REL), shipCsv());
   writeFileSync(join(root, DIFFICULTY_REL), difficultyCsv());
+  writeFileSync(join(root, WEAPONS_CSV_PATH), weaponsCsvFixture());
+  writeFileSync(join(root, WEAPON_PATTERNS_CSV_PATH), patternsCsvFixture());
 }
 
 interface TestServer {
@@ -676,6 +732,385 @@ describe('Root isolation — escape refusal (AC2)', () => {
     const { url } = await startServer(tempRoot);
     const res = await rawRequest(url, `${CSV_API_PREFIX}src/data/other.csv`);
     expect(res.status).toBe(404);
+  });
+});
+
+// ── Weapon catalogue write API (AH-0MW0Q1GMK005HOF0) ───────────────
+
+/** Read a file from the fixture root as text. */
+function readRel(rel: string): string {
+  return readFileSync(join(tempRoot, rel), 'utf8');
+}
+
+/** The data lines (no comments, no blanks) of a fixture file. */
+function dataLines(rel: string): string[] {
+  return readRel(rel)
+    .split('\n')
+    .filter((line) => line.trim() !== '' && !line.trim().startsWith('#'));
+}
+
+/** The single persisted record matching `column === value`. */
+function persistedRecord(
+  rel: string,
+  column: string,
+  value: string,
+): Record<string, string> {
+  const record = parseCsvRows(readRel(rel)).find((row) => row[column] === value);
+  if (record === undefined) {
+    throw new Error(`No persisted row with ${column}="${value}" in ${rel}`);
+  }
+  return record;
+}
+
+describe('Weapon catalogue GET (AC1)', () => {
+  it('serves weapons.csv', async () => {
+    const { url } = await startServer(tempRoot);
+    const res = await fetch(`${url}${CSV_API_PREFIX}${WEAPONS_CSV_PATH}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/csv');
+    expect(await res.text()).toBe(weaponsCsvFixture());
+  });
+
+  it('serves weapon-patterns.csv', async () => {
+    const { url } = await startServer(tempRoot);
+    const res = await fetch(`${url}${CSV_API_PREFIX}${WEAPON_PATTERNS_CSV_PATH}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(patternsCsvFixture());
+  });
+});
+
+describe('Weapons PUT — upsert (AC1)', () => {
+  it('changes exactly the supplied cell and preserves the comment block, header and other rows', async () => {
+    const { url } = await startServer(tempRoot);
+    const before = readRel(WEAPONS_CSV_PATH);
+    const spreadBefore = dataLines(WEAPONS_CSV_PATH).find((line) =>
+      line.startsWith('spread,'),
+    );
+
+    const res = await fetch(`${url}${CSV_API_PREFIX}${WEAPONS_CSV_PATH}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/csv' },
+      body: weaponBody([
+        'cannon,Cannon,Permanent default weapon.,2,0x00ffff,circle,1.5,0.75',
+      ]),
+    });
+
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as {
+      ok: boolean;
+      mode: string;
+      definitions: Array<{ bulletSize: number; impactFx?: { cue: string } }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.mode).toBe('upsert');
+    expect(payload.definitions).toHaveLength(1);
+    expect(payload.definitions[0].bulletSize).toBe(1.5);
+    // Columns the payload omitted keep their authored values.
+    expect(payload.definitions[0].impactFx?.cue).toBe('playCannonImpactSound');
+
+    const after = readRel(WEAPONS_CSV_PATH);
+    expect(after).toContain(WEAPONS_COMMENT);
+    expect(after).toContain(WEAPONS_HEADER);
+
+    const cannon = persistedRecord(WEAPONS_CSV_PATH, 'id', 'cannon');
+    expect(cannon.bulletSize).toBe('1.5');
+    expect(cannon.name).toBe('Cannon');
+    expect(cannon.impactCue).toBe('playCannonImpactSound');
+
+    // The other weapon's line is byte-identical, and no row was added.
+    expect(
+      dataLines(WEAPONS_CSV_PATH).find((line) => line.startsWith('spread,')),
+    ).toBe(spreadBefore);
+    expect(dataLines(WEAPONS_CSV_PATH)).toHaveLength(3);
+    expect(before).not.toBe(after);
+  });
+
+  it('appends a valid id that has no row yet, returning 201', async () => {
+    const { url } = await startServer(tempRoot);
+    const res = await fetch(`${url}${CSV_API_PREFIX}${WEAPONS_CSV_PATH}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/csv' },
+      body: weaponBody([
+        'dual,Dual,Two side-by-side bullets.,0.5,0xff00ff,line,0.9,0.7',
+      ]),
+    });
+
+    expect(res.status).toBe(201);
+    const payload = (await res.json()) as { ok: boolean; mode: string };
+    expect(payload.mode).toBe('append');
+    expect(persistedRecord(WEAPONS_CSV_PATH, 'id', 'dual').name).toBe('Dual');
+    // The new row lands after the existing ones, and the comments survive.
+    expect(dataLines(WEAPONS_CSV_PATH)).toHaveLength(4);
+    expect(readRel(WEAPONS_CSV_PATH)).toContain(WEAPONS_COMMENT);
+  });
+
+  it('returns 409 for a duplicate id in append mode and does not duplicate the row', async () => {
+    const { url } = await startServer(tempRoot);
+    const before = readRel(WEAPONS_CSV_PATH);
+
+    const res = await fetch(
+      `${url}${CSV_API_PREFIX}${WEAPONS_CSV_PATH}?mode=append`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: weaponBody([
+          'cannon,Cannon,Duplicate.,2,0x00ffff,circle,1,0.75',
+        ]),
+      },
+    );
+
+    expect(res.status).toBe(409);
+    expect(readRel(WEAPONS_CSV_PATH)).toBe(before);
+  });
+
+  it('appends a new id in append mode (201)', async () => {
+    const { url } = await startServer(tempRoot);
+    const res = await fetch(
+      `${url}${CSV_API_PREFIX}${WEAPONS_CSV_PATH}?mode=append`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: weaponBody([
+          'dual,Dual,Two side-by-side bullets.,0.5,0xff00ff,line,0.9,0.7',
+        ]),
+      },
+    );
+
+    expect(res.status).toBe(201);
+    expect(persistedRecord(WEAPONS_CSV_PATH, 'id', 'dual').name).toBe('Dual');
+  });
+});
+
+describe('Weapons PUT — rejected payloads leave the file byte-identical (AC2)', () => {
+  /** PUT one weapons body and assert a 400 with the file untouched. */
+  async function expectRejected(body: string): Promise<string> {
+    const { url } = await startServer(tempRoot);
+    const before = readRel(WEAPONS_CSV_PATH);
+
+    const res = await fetch(`${url}${CSV_API_PREFIX}${WEAPONS_CSV_PATH}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/csv' },
+      body,
+    });
+
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { ok: boolean; errors: string[] };
+    expect(payload.ok).toBe(false);
+    expect(payload.errors.length).toBeGreaterThan(0);
+    expect(readRel(WEAPONS_CSV_PATH)).toBe(before);
+    return payload.errors.join('\n');
+  }
+
+  it('rejects a malformed colour and names the column', async () => {
+    const errors = await expectRejected(
+      weaponBody([
+        'cannon,Cannon,Permanent default weapon.,2,0xGGGGGG,circle,1,0.75',
+      ]),
+    );
+    expect(errors).toContain('bulletColor');
+  });
+
+  it('rejects an unknown bullet-shape enum', async () => {
+    const errors = await expectRejected(
+      weaponBody([
+        'cannon,Cannon,Permanent default weapon.,2,0x00ffff,triangle,1,0.75',
+      ]),
+    );
+    expect(errors).toContain('bulletShape');
+    expect(errors).toContain('triangle');
+  });
+
+  it('rejects an off-beat subdivision and reports the nearest on-grid value', async () => {
+    const errors = await expectRejected(
+      weaponBody([
+        'cannon,Cannon,Permanent default weapon.,1.37,0x00ffff,circle,1,0.75',
+      ]),
+    );
+    expect(errors).toContain('beat grid');
+    expect(errors).toContain('nearest on-grid value');
+  });
+
+  it('rejects an unknown weapon id (no fallback definition to resolve icon/cue)', async () => {
+    const errors = await expectRejected(
+      weaponBody([
+        'plasma,Plasma,Not a catalogue weapon.,2,0x00ffff,circle,1,0.75',
+      ]),
+    );
+    expect(errors).toContain('Unknown weapon id');
+  });
+
+  it('rejects a colour that collides with another weapon, naming both ids', async () => {
+    const errors = await expectRejected(
+      weaponBody([
+        'spread,Spread,Three-bullet fan.,0.5,0x00ffff,diamond,0.8,0.7',
+      ]),
+    );
+    expect(errors).toContain('cannon');
+    expect(errors).toContain('spread');
+    expect(errors).toContain('bulletColor');
+  });
+
+  it('rejects a column the file does not declare', async () => {
+    const errors = await expectRejected(
+      weaponBody(
+        ['cannon,Cannon,Permanent default weapon.,2,0x00ffff,circle,1,0.75,,,,,,hello'],
+        `${WEAPONS_HEADER},rarity`,
+      ),
+    );
+    expect(errors).toContain('rarity');
+  });
+
+  it('rejects a body with no header row rather than dropping a weapon', async () => {
+    const errors = await expectRejected(
+      'cannon,Cannon,Permanent default weapon.,2,0x00ffff,circle,1,0.75',
+    );
+    expect(errors).toContain('header row');
+  });
+
+  it('rejects an empty body (no header row)', async () => {
+    const errors = await expectRejected('');
+    expect(errors).toContain('header row');
+  });
+});
+
+describe('Weapon patterns PUT — replace-all per weapon (AC3)', () => {
+  it('replaces every row for one weapon and leaves other weapons byte-identical', async () => {
+    const { url } = await startServer(tempRoot);
+    const cannonBefore = dataLines(WEAPON_PATTERNS_CSV_PATH).find((line) =>
+      line.startsWith('cannon,'),
+    );
+
+    const res = await fetch(
+      `${url}${CSV_API_PREFIX}${WEAPON_PATTERNS_CSV_PATH}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: patternBody(['spread,0,0,', 'spread,1,45,']),
+      },
+    );
+
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as {
+      ok: boolean;
+      mode: string;
+      weaponIds: string[];
+      rowCount: number;
+    };
+    expect(payload).toMatchObject({
+      ok: true,
+      mode: 'replace',
+      weaponIds: ['spread'],
+      rowCount: 2,
+    });
+
+    const spreadRows = dataLines(WEAPON_PATTERNS_CSV_PATH).filter((line) =>
+      line.startsWith('spread,'),
+    );
+    expect(spreadRows).toEqual(['spread,0,0,', 'spread,1,45,']);
+    // The old third rung is gone: a shortened pattern cannot leave orphan rows.
+    expect(readRel(WEAPON_PATTERNS_CSV_PATH)).not.toContain('spread,2,');
+    // Other weapons and the comment block are untouched.
+    expect(
+      dataLines(WEAPON_PATTERNS_CSV_PATH).find((line) =>
+        line.startsWith('cannon,'),
+      ),
+    ).toBe(cannonBefore);
+    expect(readRel(WEAPON_PATTERNS_CSV_PATH)).toContain(
+      '# Weapon Shot-Pattern CSV — test fixture.',
+    );
+
+    // The persisted file re-parses to the edited pattern.
+    const parsed = parseWeaponPatterns(readRel(WEAPON_PATTERNS_CSV_PATH));
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.patterns.spread?.offsets).toHaveLength(2);
+    expect(parsed.patterns.spread?.offsets[1]).toBeCloseTo(Math.PI / 4, 10);
+  });
+
+  it('rejects an invalid index and leaves the file byte-identical', async () => {
+    const { url } = await startServer(tempRoot);
+    const before = readRel(WEAPON_PATTERNS_CSV_PATH);
+
+    const res = await fetch(
+      `${url}${CSV_API_PREFIX}${WEAPON_PATTERNS_CSV_PATH}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: patternBody(['spread,x,0,']),
+      },
+    );
+
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { errors: string[] };
+    expect(payload.errors.join('\n')).toContain('index');
+    expect(readRel(WEAPON_PATTERNS_CSV_PATH)).toBe(before);
+  });
+
+  it('rejects a body that omits a declared column rather than blanking it', async () => {
+    const { url } = await startServer(tempRoot);
+    const before = readRel(WEAPON_PATTERNS_CSV_PATH);
+
+    const res = await fetch(
+      `${url}${CSV_API_PREFIX}${WEAPON_PATTERNS_CSV_PATH}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: ['weaponId,index,angleDeg', 'spread,0,0', ''].join('\n'),
+      },
+    );
+
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { errors: string[] };
+    expect(payload.errors.join('\n')).toContain('Missing column "sideOffsetPx"');
+    expect(readRel(WEAPON_PATTERNS_CSV_PATH)).toBe(before);
+  });
+
+  it('rejects a pattern for a weapon that has no weapons.csv row', async () => {
+    const { url } = await startServer(tempRoot);
+    const before = readRel(WEAPON_PATTERNS_CSV_PATH);
+
+    const res = await fetch(
+      `${url}${CSV_API_PREFIX}${WEAPON_PATTERNS_CSV_PATH}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: patternBody(['plasma,0,0,']),
+      },
+    );
+
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { errors: string[] };
+    expect(payload.errors.join('\n')).toContain('plasma');
+    expect(readRel(WEAPON_PATTERNS_CSV_PATH)).toBe(before);
+  });
+
+  it('rejects a body with no header row', async () => {
+    const { url } = await startServer(tempRoot);
+    const res = await fetch(
+      `${url}${CSV_API_PREFIX}${WEAPON_PATTERNS_CSV_PATH}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: 'spread,0,0,',
+      },
+    );
+
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { errors: string[] };
+    expect(payload.errors.join('\n')).toContain('header row');
+  });
+});
+
+describe('Non-allowlisted paths stay refused (AC5)', () => {
+  it('refuses a PUT to a file outside the allow-list with 404', async () => {
+    const { url } = await startServer(tempRoot);
+    const target = join(tempRoot, 'src', 'data', 'bot-tuning.json');
+    const res = await fetch(`${url}${CSV_API_PREFIX}src/data/bot-tuning.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/csv' },
+      body: 'id\n',
+    });
+    expect(res.status).toBe(404);
+    expect(existsSync(target)).toBe(false);
   });
 });
 

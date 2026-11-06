@@ -135,12 +135,10 @@ describe('Asteroid entity construction and visual appearance', () => {
   it('draws a visible jagged polygon body (procedural neon shape)', async () => {
     booted = await bootScene([HarnessScene]);
     const asteroid = makeAsteroid(100, 100);
-    const children = (asteroid as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    const body = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics && c.commandBuffer.length > 0,
+    const body = asteroid.bodyLayers.find(
+      (layer) => layer.commandBuffer.length > 0,
     );
-    expect(body, 'expected a body Graphics child').toBeDefined();
+    expect(body, 'expected a drawn body layer').toBeDefined();
     expect(body!.commandBuffer.length).toBeGreaterThan(0);
   });
 });
@@ -539,12 +537,10 @@ describe('Asteroid shape randomness and RNG', () => {
   });
 
   function getAsteroidShape(asteroid: Asteroid): string {
-    const children = (asteroid as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    const body = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics && c.commandBuffer.length > 0,
+    const body = asteroid.bodyLayers.find(
+      (layer) => layer.commandBuffer.length > 0,
     );
-    expect(body, 'expected a body Graphics child').toBeDefined();
+    expect(body, 'expected a drawn body layer').toBeDefined();
     // Serialize the command buffer to a stable string representation for comparison.
     return JSON.stringify(body!.commandBuffer);
   }

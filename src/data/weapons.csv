@@ -1,0 +1,62 @@
+# Weapon Catalogue CSV — one row per player weapon.
+# Edit to retune; refresh `npm run dev` to see the change. Shot patterns (angles)
+# live in weapon-patterns.csv. Fire rate is derived from `subdivisions`, never stored.
+#
+# Columns:
+#   id                    — Weapon id (one of the 16 catalogue ids). Required.
+#   name                  — Display name. Required.
+#   description           — One-line player-facing effect description. Required.
+#   subdivisions          — Shots per beat on the 80 BPM grid (e.g. 2 = double time). Required.
+#   bulletColor           — Bullet colour as 0xRRGGBB. Required.
+#   bulletShape           — Bullet visual shape (see BulletShape in src/utils/weapons.ts). Required.
+#   bulletSize            — Bullet radius multiplier. Required.
+#   bulletLifetime        — Bullet lifetime in seconds (effective range = speed x lifetime). Required.
+#   bulletShapeLength     — Long-axis multiplier for elongated shapes.
+#   bulletRim             — Neon rim/outline colour as 0xRRGGBB.
+#   bulletThickness       — Stroke-thickness multiplier for stroked shapes.
+#   bulletTrail           — Trail length as a multiple of the bullet radius.
+#   bulletFlame           — Exhaust-flame length as a multiple of the bullet radius.
+#   maxHitPoints          — Pass-through hit-point budget (spent one hit point per hit).
+#   bounce                — Wall-bounce budget before the bullet expires.
+#   splits                — Radial warhead count spawned once on impact/expiry.
+#   orbitPods             — Orbiting satellite-pod count (with orbitRadius).
+#   orbitRadius           — Orbit radius around the ship, in px.
+#   aoeTrigger            — When the area effect resolves: onFire | onImpact | onRandom | screenPulse.
+#   aoeRadius             — Effect radius in px.
+#   aoeDamagesEnemies     — true/false: does the effect damage enemies inside the radius?
+#   aoeClearsEnemyBullets — true/false: does the effect clear enemy bullets inside the radius?
+#   aoeDamage             — Hit points each affected enemy takes per resolution.
+#   aoeChains             — Extra targets an onFire effect may chain to.
+#   aoeProjectileSpeed    — Projectile speed (px/s); required to sample an onRandom range.
+#   hitscanLength         — Beam length in px (with hitscanDuration).
+#   hitscanDuration       — Seconds the resolved beam stays visible.
+#   hitscanAimBias        — Probability (0–1) a shot aims at the nearest enemy (with hitscanLength).
+#   muzzleColor           — Launch-flash colour as 0xRRGGBB (defaults to bulletColor).
+#   muzzleRadius          — Launch-flash core radius in px (default 7).
+#   muzzleDuration        — Launch-flash fade duration in seconds (default 0.12).
+#   impactColor           — Impact-flash colour as 0xRRGGBB (with impactRadius/impactDuration/impactCue).
+#   impactRadius          — Impact-flash radius in px.
+#   impactDuration        — Impact-flash fade duration in seconds.
+#   impactCue             — Baked impact cue export name from src/audio/effects.ts.
+#
+# Blank optional cells mean "this weapon has no such capability" and are never
+# read as 0, because the combat core dispatches on the presence of a descriptor.
+# A descriptor group (orbit, aoe, hitscan, impact) is all-or-nothing; the muzzle
+# flash is always present (colour defaults to bulletColor, radius 7, duration 0.12).
+id,name,description,subdivisions,bulletColor,bulletShape,bulletSize,bulletLifetime,bulletShapeLength,bulletRim,bulletThickness,bulletTrail,bulletFlame,maxHitPoints,bounce,splits,orbitPods,orbitRadius,aoeTrigger,aoeRadius,aoeDamagesEnemies,aoeClearsEnemyBullets,aoeDamage,aoeChains,aoeProjectileSpeed,hitscanLength,hitscanDuration,hitscanAimBias,muzzleColor,muzzleRadius,muzzleDuration,impactColor,impactRadius,impactDuration,impactCue
+cannon,Cannon,Permanent default weapon — one bullet straight ahead.,2,0x00ffff,circle,1,0.75,,0xffffff,,3.5,,,,,,,,,,,,,,,,,0x00ffff,7,0.12,0x00ffff,9,0.16,playCannonImpactSound
+spread,Spread,Adds a 3-bullet fan (−30°/0°/+30°).,0.5,0xffaa00,diamond,0.8,0.7,,0xffdd66,,2.2,,,,,,,,,,,,,,,,,0xffaa00,7,0.14,0xffaa00,9,0.16,playSpreadImpactSound
+dual,Dual,Adds two side-by-side bullets.,0.5,0xff00ff,line,0.9,0.7,2,,1.6,1.6,,,,,,,,,,,,,,,,,0xff00ff,6,0.1,0xff00ff,8,0.14,playDualImpactSound
+rapid,Rapid,Adds single bullets at a much higher fire rate.,3,0xffff00,spark,0.7,0.375,,0xffffff,,1.8,,,,,,,,,,,,,,,,,0xffff00,5,0.07,0xffff00,7,0.1,playRapidImpactSound
+wave_laser,Wave Laser,Adds a short red laser beam that fires in a random direction biased toward the nearest enemy and deals 1 damage to the first enemy it hits.,0.5,0xff0000,line,1.2,0.3,7,0xffffff,3,,,,,,,,,,,,,,,240,0.3,0.5,0xff0000,12,0.15,0xff0000,12,0.18,playWaveLaserImpactSound
+ricochet,Ricochet,Adds edge-bouncing shots that ricochet off the arena walls.,0.5,0x33ff66,teardrop,0.8,1.6,,0xffffff,,2,,,2,,,,,,,,,,,,,,0x33ff66,7,0.12,0x33ff66,9,0.16,playRicochetImpactSound
+cluster,Cluster Missile,Adds a missile that splits into a radial cluster of warheads.,0.25,0xff3366,missile,0.9,0.9,,0xffffff,,2.4,1.6,,,2,,,,,,,,,,,,,0xff3366,9,0.16,0xff3366,10,0.18,playClusterImpactSound
+options,Options,"Adds orbiting satellite pods that each fire radially outward, in the direction of the orb.",0.5,0x00ffcc,chevron,0.8,0.7,,0xd9fff2,,2,,,,,2,28,,,,,,,,,,,0x00ffcc,6,0.12,0x00ffcc,8,0.15,playOptionsImpactSound
+nova,Nova,AOE: an expanding ring around the ship damages every enemy and clears bullets within its radius.,0.25,0x66ffff,ring,1.2,0.25,,,,,,,,,,,onFire,34,true,true,,,,,,,0x66ffff,10,0.16,,,,
+mortar,Mortar,"AOE: detonates at a random point within range, damaging enemies and clearing bullets in a blast.",0.5,0xff6600,shell,1.1,1,,,,,,,,,,,onRandom,27,true,true,,,180,,,,0xff6600,9,0.16,,,,
+arc,Arc,"AOE: a chaining bolt strikes the nearest enemy and arcs to nearby targets, clearing bullets along the path.",1,0xcc66ff,bolt,0.9,0.25,,,,,,,,,,,onFire,46,true,true,,2,,,,,0xcc66ff,10,0.16,0xcc66ff,9,0.16,playArcImpactSound
+rear_guard,Rear Guard,Adds a backward shot that covers the ship’s tail.,1,0xff5599,pellet,0.9,0.75,,0xffd0e0,,1.6,,,,,,,,,,,,,,,,,0xff5599,6,0.11,0xff5599,8,0.13,playRearGuardImpactSound
+broadside,Broadside,Adds two shots perpendicular to the heading (left and right).,0.25,0x44ffdd,dart,0.9,0.8,2.4,,1.4,1.4,,,,,,,,,,,,,,,,,0x44ffdd,9,0.12,0x44ffdd,8,0.12,playBroadsideImpactSound
+railgun,Railgun,"Adds a slow, long-range tracer that pierces a line once it is upgraded.",0.25,0x66aaff,tracer,1.15,1.4,8,0xe0f0ff,2.2,4.5,,1,,,,,,,,,,,,,,,0x66aaff,10,0.14,0x66aaff,10,0.16,playRailgunImpactSound
+shard_swarm,Shard Swarm,Adds a tight five-shard fan (±15°).,0.5,0xc0ff33,shard,0.72,0.55,1.6,,,1.2,,,,,,,,,,,,,,,,,0xc0ff33,8,0.12,0xc0ff33,8,0.12,playShardSwarmImpactSound
+heavy_slug,Heavy Slug,"Adds one huge, slow, long-range slug per shot.",0.25,0xff2222,heavy-shell,1.7,1.2,,0xffb0b0,3,2.4,,,,,,,,,,,,,,,,,0xff2222,12,0.16,0xff2222,12,0.16,playHeavySlugImpactSound

@@ -46,6 +46,36 @@ afterEach(() => {
   fm = null;
 });
 
+/* ─── Focus-change listener (the hex-map detail panel) ────────── */
+
+describe('FocusManager — focus-change listener', () => {
+  it('fires after every focus change and can be detached', () => {
+    const f1 = makeControl('a');
+    const f2 = makeControl('b');
+    fm = new FocusManager();
+
+    const listener = vi.fn();
+    fm.setFocusChangeListener(listener);
+
+    // First registration applies the default focus → notified.
+    fm.register(f1, vi.fn());
+    expect(listener).toHaveBeenCalledTimes(1);
+    // Later registrations do not move focus → no notification.
+    fm.register(f2, vi.fn());
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    fm.cycleFocus(1);
+    expect(listener).toHaveBeenCalledTimes(2);
+    fm.setFocusedIndex(0);
+    expect(listener).toHaveBeenCalledTimes(3);
+
+    // Detaching stops notifications.
+    fm.setFocusChangeListener(null);
+    fm.cycleFocus(1);
+    expect(listener).toHaveBeenCalledTimes(3);
+  });
+});
+
 /* ─── AC1 — register / unregister ─────────────────────────────── */
 
 describe('FocusManager — register / unregister (AC1)', () => {

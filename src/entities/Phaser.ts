@@ -144,7 +144,8 @@ export interface PhaserConfig {
  * lifetime elapses.
  */
 export interface PhaserBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view: a sprite of its shape's cached texture. */
+  readonly graphics: Phaser.GameObjects.Image;
   readonly color: number;
   /**
    * Per-frame redraw hook for shapes animated by the bullet's age, consumed by
@@ -229,15 +230,17 @@ export class PhaserEntity extends BaseEnemy {
     // Outer ring — magenta neon circle.
     this.ringGraphics = scene.add.graphics();
     this._drawBody();
-    this.ringGraphics.setDepth(1);
-    this.add(this.ringGraphics);
 
     // Inner core — solid magenta circle.
     this.coreGraphics = scene.add.graphics();
     this.coreGraphics.fillStyle(this._colorNumber, 0.8);
     this.coreGraphics.fillCircle(0, 0, PHASER_CORE_SIZE);
-    this.coreGraphics.setDepth(2);
-    this.add(this.coreGraphics);
+
+    // Ring + core are the static body silhouette: bake them into one cached
+    // texture so the per-frame cost is a single batched sprite draw instead of
+    // two Graphics pipeline passes (AH-0MW2IRYAH0055WCN). The tell layer stays
+    // a Graphics because it is only drawn while the Phaser is telegraphing.
+    this._addStaticBodyLayer([this.ringGraphics, this.coreGraphics]);
 
     // Explosion graphics.
     this.explosionGraphics.setDepth(3);
@@ -341,6 +344,16 @@ export class PhaserEntity extends BaseEnemy {
 
   // ── Behaviour ────────────────────────────────────────────────────
 
+  /**
+   * The Phaser's drawn body silhouette layers, in render order: the neon ring
+   * then the solid core. They stay readable after the composite is baked into
+   * one body sprite (AH-0MW2IRYAH0055WCN) — see
+   * {@link BaseEnemy.bodyLayers}.
+   */
+  override get bodyLayers(): readonly Phaser.GameObjects.Graphics[] {
+    return [this.ringGraphics, this.coreGraphics];
+  }
+
   /** Whether the Phaser's visible body (ring) is currently shown. */
   get bodyVisible(): boolean {
     return this.ringGraphics.alpha > 0 && this.ringGraphics.visible;
@@ -352,6 +365,7 @@ export class PhaserEntity extends BaseEnemy {
   protected hideBody(): void {
     this.ringGraphics.setAlpha(0);
     this.coreGraphics.setAlpha(0);
+    this.bodyImage?.setAlpha(0);
   }
 
   /**

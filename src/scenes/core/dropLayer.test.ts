@@ -10,7 +10,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import * as effects from '../../audio/effects';
-import { POWER_UP_DROP_SIZE } from '../../core/constants';
+import {
+  BLOCKED_DROP_STICK_SECONDS,
+  GAME_HEIGHT,
+  GAME_WIDTH,
+  POWER_UP_DROP_SIZE,
+} from '../../core/constants';
 import { DEFAULT_RULES } from '../../core/rules';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { WeightedRandomSpawner } from '../../powerups/spawner';
@@ -27,6 +32,11 @@ import {
 } from '../../powerups/types';
 import { dropCollectRadius } from '../../powerups/icons';
 import * as dropLayerModule from './dropLayer';
+import {
+  isDiscarding,
+  startBlockedStick,
+  stepBlockedDiscards,
+} from './blockedDropDiscard';
 import {
   advanceDropLifecycles,
   applyDropMagnet,
@@ -330,8 +340,129 @@ describe('dropLayer — collectOverlappingDrops six-slot gate (AC8)', () => {
   });
 });
 
-describe('dropLayer — applyDropMagnet (AC2)', () => {
-  it('pulls a collectible drop toward the player and syncs its graphics', () => {
+// ── Blocked stick-then-throw wiring (parent AH-0MW0UAQ23005AC9L) ────
+//
+// The pure stepper lives in `./blockedDropDiscard`; this suite pins the four
+// seams the shared drop layer owns: the stick starts on the first refused
+// frame (Q1a), collection cancels it (Q3a), and a thrown drop is exempt from
+// the collection gate, the lifecycle and the Magnet.
+
+describe('dropLayer — blocked stick-then-throw wiring (AH-0MW0UAQ23005AC9L)', () => {
+  const fullScale = 1;
+  const ship = { x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 };
+
+  it('starts the stick window and snaps the drop onto the ship on the first refused frame (Q1a)', () => {
+    const { drop, graphics } = makeDrop({ x: 0, y: 0, scale: fullScale });
+    const onBlocked = vi.fn();
+
+    const kept = collectOverlappingDrops([drop], { x: 5, y: 4 }, vi.fn(), undefined, {
+      canCollect: () => false,
+      onBlocked,
+    });
+
+    expect(kept, 'a refused drop stays on the field').toEqual([drop]);
+    expect(onBlocked, 'the refusal still reports itself so the cue can play').toHaveBeenCalledTimes(1);
+    expect(drop.blockedDiscard, 'the first refused frame starts the stick window').toEqual({
+      stickSeconds: 0,
+      discarding: false,
+      directionX: 0,
+      directionY: 0,
+    });
+    expect(drop.x, 'the sticking drop is snapped onto the ship on the first frame').toBe(5);
+    expect(drop.y, 'the sticking drop is snapped onto the ship on the first frame').toBe(4);
+    expect(
+      graphics.setPosition,
+      'the snapped drop syncs its Graphics to the ship position',
+    ).toHaveBeenLastCalledWith(5, 4);
+  });
+
+  it('never restarts the stick window on later refused frames', () => {
+    const { drop } = makeDrop({ x: 0, y: 0, scale: fullScale });
+    collectOverlappingDrops([drop], { x: 0, y: 0 }, vi.fn(), undefined, {
+      canCollect: () => false,
+    });
+    const state = drop.blockedDiscard;
+    expect(state, 'the window is running before the repeat refusal').toBeDefined();
+    state!.stickSeconds = 0.75;
+
+    collectOverlappingDrops([drop], { x: 0, y: 0 }, vi.fn(), undefined, {
+      canCollect: () => false,
+    });
+
+    expect(drop.blockedDiscard, 'the same stick state survives the repeat refusal').toBe(state);
+    expect(
+      drop.blockedDiscard?.stickSeconds,
+      'a later refused frame never resets the accumulated stick time',
+    ).toBe(0.75);
+  });
+
+  it('collects a sticking drop and cancels the throw when a slot frees (Q3a)', () => {
+    const { drop } = makeDrop({ x: 0, y: 0, scale: fullScale });
+    collectOverlappingDrops([drop], { x: 0, y: 0 }, vi.fn(), undefined, {
+      canCollect: () => false,
+    });
+    expect(drop.blockedDiscard, 'the drop is sticking before the slot frees').toBeDefined();
+
+    const onCollect = vi.fn();
+    const kept = collectOverlappingDrops([drop], { x: 0, y: 0 }, onCollect, undefined, {
+      canCollect: () => true,
+    });
+
+    expect(onCollect, 'a freed slot collects the drop normally').toHaveBeenCalledTimes(1);
+    expect(onCollect).toHaveBeenCalledWith(drop);
+    expect(kept, 'the collected drop leaves the field instead of being thrown').toEqual([]);
+    expect(drop.blockedDiscard, 'collection clears the stick state, cancelling the throw').toBeUndefined();
+  });
+
+  it('exempts a thrown drop from the collection gate', () => {
+    const { drop } = makeDrop({ x: ship.x, y: ship.y, scale: fullScale });
+    startBlockedStick(drop, ship);
+    stepBlockedDiscards([drop], ship, BLOCKED_DROP_STICK_SECONDS, () => 0);
+    expect(isDiscarding(drop), 'the drop has been thrown and is in flight').toBe(true);
+
+    const onCollect = vi.fn();
+    const kept = collectOverlappingDrops([drop], ship, onCollect, undefined, {
+      canCollect: () => true,
+    });
+
+    expect(onCollect, 'a drop being discarded is never picked up').not.toHaveBeenCalled();
+    expect(kept, 'the in-flight drop stays on the field until it reaches an edge').toEqual([drop]);
+  });
+
+  it('exempts a thrown drop from the grow/hold/shrink lifecycle', () => {
+    const { drop, graphics, powerUp } = makeDrop({ x: ship.x, y: ship.y, scale: 1 });
+    startBlockedStick(drop, ship);
+    stepBlockedDiscards([drop], ship, BLOCKED_DROP_STICK_SECONDS, () => 0);
+    expect(isDiscarding(drop), 'the drop has been thrown and is in flight').toBe(true);
+    const scaleAtLaunch = powerUp.currentScale;
+
+    const kept = advanceDropLifecycles([drop], 1);
+
+    expect(kept, 'the in-flight drop survives a lifecycle step').toEqual([drop]);
+    expect(powerUp.currentScale, 'the throw owns the drop, so it never grows or shrinks').toBe(
+      scaleAtLaunch,
+    );
+    expect(graphics.setScale, 'no lifecycle scale is pushed onto a thrown drop').not.toHaveBeenCalled();
+    expect(graphics.destroy, 'the lifecycle never despawns a thrown drop').not.toHaveBeenCalled();
+  });
+
+  it('never lets the Magnet pull a thrown drop back toward the ship', () => {
+    const { drop } = makeDrop({ x: ship.x, y: ship.y, scale: 1 });
+    startBlockedStick(drop, ship);
+    stepBlockedDiscards([drop], ship, BLOCKED_DROP_STICK_SECONDS, () => 0); // rng 0 → +x
+    stepBlockedDiscards([drop], ship, 0.05, () => 0); // one frame of flight
+    const xWhileFlying = drop.x;
+
+    // A player well inside the Magnet radius would normally pull the drop in.
+    applyDropMagnet([drop], { x: xWhileFlying + 10, y: drop.y }, 5, 1);
+
+    expect(drop.x, 'the Magnet never curbs a launched drop back toward the ship').toBe(
+      xWhileFlying,
+    );
+  });
+});
+
+describe('dropLayer — applyDropMagnet (AC2)', () => {  it('pulls a collectible drop toward the player and syncs its graphics', () => {
     const { drop, graphics } = makeDrop({ x: 30, y: 0, scale: 1 });
     applyDropMagnet([drop], { x: 0, y: 0 }, 1, 0.5); // 120 px/s × 0.5 s
     expect(drop.x).toBeCloseTo(0, 5);

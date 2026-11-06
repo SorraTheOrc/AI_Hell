@@ -12,10 +12,25 @@
  * @module scenes/core/bulletLifecycle
  */
 
-import Phaser from 'phaser';
-
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { advanceAndCull, type PlayerBullet } from '../../entities/PlayerBullet';
+
+/**
+ * The minimal visual-object contract a bullet view must satisfy: the shared
+ * lifecycle only reads its position and destroys it on expiry.
+ *
+ * Since AH-0MW2DAY2L004QSKF a bullet's view is a **sprite of a cached
+ * texture**, not a Graphics object; the structural type keeps the lifecycle
+ * agnostic (and lets tests supply a plain Graphics double).
+ */
+export interface BulletView {
+  /** World x position (px). */
+  x: number;
+  /** World y position (px). */
+  y: number;
+  /** Removes the view from the scene. */
+  destroy(fromScene?: boolean): void;
+}
 
 /**
  * Minimal structural contract an enemy bullet must satisfy for the shared
@@ -24,8 +39,8 @@ import { advanceAndCull, type PlayerBullet } from '../../entities/PlayerBullet';
  * satisfy it structurally.
  */
 export interface WrappingBullet {
-  /** The drawn shape — the helper advances its x/y position. */
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view — the helper advances its x/y position. */
+  readonly graphics: BulletView;
   /** Horizontal speed (px/s). */
   vx: number;
   /** Vertical speed (px/s). */
@@ -35,10 +50,11 @@ export interface WrappingBullet {
   /** Elapsed time since creation (seconds). */
   elapsed: number;
   /**
-   * Optional per-frame redraw hook for shapes animated by the bullet's age
-   * (the pellet's faint pulse, AH-0MV822CQL005R4MM). Present only on
+   * Optional per-frame animation hook for shapes that move with the bullet's
+   * age (the pellet's faint pulse, AH-0MV822CQL005R4MM). Present only on
    * identity bullets whose shape animates; called with the elapsed seconds.
-   * Absent → the bullet keeps its static draw (no per-frame cost).
+   * It animates the cached-texture sprite's scale/alpha, never a redraw;
+   * absent → a static sprite (no per-frame cost).
    */
   redraw?: (elapsed: number) => void;
 }
@@ -97,18 +113,34 @@ export function advanceWrappingBullets<T extends WrappingBullet>(
 }
 
 /**
- * Advances every player bullet by `dt` seconds and returns those still alive,
+ * Advances every player bullet by `dt` seconds and keeps those still alive,
  * delegating the per-bullet wrap/expiry to the existing `advanceAndCull` so
  * player-bullet semantics stay defined in exactly one place.
  *
- * @param bullets - The live player-bullet array.
+ * The survivors are compacted **in place** and the same array is returned
+ * (AH-0MVXV0F0Y004NENT): this helper runs once per frame in the game and every
+ * gym, so the previous `.filter` allocated a fresh, thrown-away array on the
+ * hot path. Compaction is a stable pass — survivors keep their relative order
+ * — and every scene assigns the return into its own `playerBullets` field, so
+ * the observable behaviour (which bullets survive, in which order) is
+ * identical to the filtered copy it replaces.
+ *
+ * @param bullets - The live player-bullet array; mutated in place.
  * @param dt - Time step in seconds.
- * @returns The surviving bullets (a new array, matching the previous
- *   `.filter` idiom used by every scene).
+ * @returns The same array, holding the surviving bullets in their original
+ *   order.
  */
 export function advancePlayerBullets(
   bullets: PlayerBullet[],
   dt: number,
 ): PlayerBullet[] {
-  return bullets.filter((bullet) => advanceAndCull(bullet, dt));
+  // Walk forward and write each survivor back at the compaction cursor —
+  // `kept` never passes the read index, so no unread entry is overwritten.
+  let kept = 0;
+  for (let i = 0; i < bullets.length; i += 1) {
+    const bullet = bullets[i];
+    if (advanceAndCull(bullet, dt)) bullets[kept++] = bullet;
+  }
+  bullets.length = kept;
+  return bullets;
 }

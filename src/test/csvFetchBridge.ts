@@ -17,8 +17,10 @@
  * - CSV requests go to the bridge installed with
  *   {@link installCsvFetchBridge} (a test-controlled origin) when there is
  *   one;
- * - otherwise the fetch rejects loudly — naming the calling test file and
- *   this helper — **without any network I/O**.
+ * - an **absolute** CSV URL names its target deliberately (e.g. a test's own
+ *   ephemeral server on `127.0.0.1:<port>`) and passes through unchanged;
+ * - otherwise a **relative** CSV fetch rejects loudly — naming the calling
+ *   test file and this helper — **without any network I/O**.
  *
  * Note for bridge servers in the happy-dom project: the bridge deliberately
  * crosses origins (`http://localhost:3000` → `http://127.0.0.1:<port>`), so a
@@ -83,18 +85,32 @@ function unbridgedMessage(url: string): string {
 }
 
 /**
- * Build a fetch implementation that refuses un-bridged CSV requests.
+ * True when `url` names its target explicitly (a scheme, or a protocol-relative
+ * `//host/...` URL) rather than resolving against the page origin.
  *
- * @param base — the fetch to forward non-CSV (and bridged) requests to.
- *   Defaults to the native fetch captured at module load; injectable so the
- *   guard's behaviour is unit-testable without any network.
+ * Only a *relative* `/api/csv/...` request can silently reach a stray dev
+ * server rooted at another checkout; an absolute URL is a deliberate target
+ * (a test's own ephemeral server) and must not be refused.
+ */
+function isAbsoluteUrl(url: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//');
+}
+
+/**
+ * Build a fetch implementation that refuses un-bridged **relative** CSV
+ * requests.
+ *
+ * @param base — the fetch to forward non-CSV, absolute and bridged requests
+ *   to. Defaults to the native fetch captured at module load; injectable so
+ *   the guard's behaviour is unit-testable without any network.
  */
 export function createCsvFetchGuard(base: typeof fetch = nativeFetch): typeof fetch {
   return ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = urlOf(input);
-    if (csvPathOf(url) === null) return base(input, init);
-    // A CSV request that reached the guard has no bridge: reject without I/O
-    // (a rejected promise, like a failed fetch — never a synchronous throw).
+    if (csvPathOf(url) === null || isAbsoluteUrl(url)) return base(input, init);
+    // A relative CSV request that reached the guard has no bridge: reject
+    // without I/O (a rejected promise, like a failed fetch — never a
+    // synchronous throw).
     return Promise.reject(new Error(unbridgedMessage(url)));
   }) as typeof fetch;
 }

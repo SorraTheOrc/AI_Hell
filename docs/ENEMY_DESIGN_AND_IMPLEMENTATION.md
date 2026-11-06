@@ -16,7 +16,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | ID | Name | Movement | Attack | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
 |----|------|----------|--------|-----|-----------|------------|---------------------|
 | E1 | Scout | `formation` | `projectile` | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium razor shard (`shard` primitive: high-contrast two-pass spine + sweeping glint), neon yellow | none → short-burst spread (3–5) |
+| E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), traversed at a **fixed, data-driven speed** (the `diveSpeed` column, **320 px/s** default) so the **dive duration is proportional to the arc length** — a close dive (arc ≈ 130 px) finishes in ≈ 0.41 s, a mid dive (≈ 243 px) in ≈ 0.76 s and a full-height dive (≈ 399 px) in ≈ 1.25 s, with a **≈ 0.15 s minimum-duration floor** (`MIN_DIVE_DURATION`) so a dive started on top of the player never teleports (AH-0MW0TY1AY003TDFC), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium razor shard (`shard` primitive: high-contrast two-pass spine + sweeping glint), neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | `formation` | `projectile` | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | `formation` | `projectile` | §4.1 (L5) | Fixed orbital path, predictable firing cycles; group members take distinct, evenly spaced phases (`phase_i = i × 2π / N`) on one ring, and spawn from the wormhole straight onto the live orbital slot (AH-0MVEXVME1004SIIS) | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | `formation` | `projectile` | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
@@ -974,9 +974,8 @@ the first three enemy gym scenes duplicated:
   `GymMinerals` has no field power-up drops, so its rewards come from the
   hold-full choice overlay. Because the choice can grant Teleport, the shared
   automatic-defence feed (`_updateAutoDefence()`) runs every tick —
-  independent of `powerUpsEnabled` — so a stored Teleport use is spent
-  automatically when the ship is in danger; `canTeleport()` accepts a stored
-  use in addition to the opt-in drop layer. The effects registry ticks (and the
+  independent of `powerUpsEnabled` — so the ready Teleport warp is spent
+  automatically when the ship is in danger; `canTeleport()` accepts a ready warp in addition to the opt-in drop layer. The effects registry ticks (and the
   HUD refreshes) every frame in all formation gyms, so a Phase Shift granted on
   teleport arrival expires normally. The overlay renders the caller's
   stored options, so the displayed label is the option applied.
@@ -1542,7 +1541,7 @@ resolver (`startSpawnAnimation`'s `destFn`):
 | Scene | Entity | Formation | Fire pattern | Audio |
 |-------|--------|-----------|--------------|-------+-------|
 | `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | advance cue (≥ 500 ms) + fire sound scheduled at cue end (entity-level, per aimed shot, no gap between cue and fire sound) |
-| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | `playDiverFireSound()` once per spread burst (entity-level, no advance cue); dive-phase sounds — `playDiverDiveStartSound()` once at the FORMATION→DIVING transition plus a refcounted shared sustained dive voice (`playDiveSound()`/`stopDiveSound()`, ~2 s, stopped at the end of the dive / destroy); distinct `playDiverDestructionSound()` via the optional `playDestructionAudio?()` seam (once per destruction) |
+| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | `playDiverFireSound()` once per spread burst (entity-level, no advance cue); dive-phase sounds — `playDiverDiveStartSound()` once at the FORMATION→DIVING transition plus a refcounted shared sustained dive voice (`playDiveSound()`/`stopDiveSound()`, a ~2 s **baked loop**, stopped at the end of the dive / destroy regardless of the **variable** dive duration — the dive runs at a fixed speed, so its duration scales with path length, AH-0MW0TY1AY003TDFC); distinct `playDiverDestructionSound()` via the optional `playDestructionAudio?()` seam (once per destruction) |
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (entity-level, one cue+thump pair per burst inside `tryFireRadialBurst()`, no gap between cue and thump) |
 | `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (`playSwarmBurstSound()`, entity-level, once per volley, no advance cue) |
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
@@ -1643,6 +1642,23 @@ covers it):
   (`spawnMiniBossDeathSweep`) plays them through the shared
   `spawnExplosionParticles` VFX and holds `onComplete` until the last finale
   pair has finished animating.
+- **Mini-boss burst magnitude (AH-0MVY06X16005EO8R).** The two roles clustered
+  on the mini-boss itself are deliberately **huge** and at least twice their
+  original budget-conscious sizing: the **anchored** bursts use
+  `MINI_BOSS_SWEEP_ANCHORED_SCALE` **1.8** (base size 16 ⇒ 28.8 px) and **32
+  particles** (was 0.9/16), and the **finale** uses
+  `MINI_BOSS_SWEEP_FINALE_SCALE` **2.4** (base size 18 ⇒ 43.2 px) and **40
+  particles** (was 1.2/20). The **swept-enemy** (`MINI_BOSS_SWEEP_ENEMY_SCALE`
+  0.8 / 14 particles) and **scattered celebration** (`..._SCATTER_SCALE` 0.7 /
+  12 particles) bursts keep that original modest sizing on purpose, so the
+  display's focus sits on the death point (`scatter < enemy < anchored <
+  finale`). Only the 30 mini-boss bursts (10 anchored + 20 finale) grow; the
+  burst counts, per-role stagger windows, cadence, the 360 ms per-burst
+  lifespan and the ~2.95 s completion delay are all unchanged, so the reward
+  overlay timing is untouched. The mini-boss **body's** own death burst
+  (inherited from `Boss`) is also unchanged. The doubled magnitudes and the
+  unchanged enemy/scatter values are pinned by
+  `miniBossDeathSweep.test.ts`.
 - **Completion is real animation time.** `spawnExplosionParticles` gained an
   optional `onComplete` seam; the executor completes when the last burst tween
   reports, with a `scene.time.delayedCall` watchdog at
@@ -1655,13 +1671,21 @@ covers it):
   the burst) and never route through the reward-bearing `_onEnemyKilled` path:
   no score, no drops, no kill telemetry.
 - **Sound.** Every planned burst schedules its matching explosion cue through
-  the shared audio layer: the swept-enemy, scatter and anchored bursts reuse
-  `playDestructionSound`, and the finale pairs use
-  `playBossDestructionSound`. Each cue carries the burst's explicit `delay`
+  the one shared dispatcher
+  (`playMiniBossSweepSound` in `src/audio/effects.ts`,
+  AH-0MVVEI7FD004TR2M): the swept-enemy, scatter and anchored bursts reuse
+  `playDestructionSound`, and the finale pairs reuse
+  `playVictoryExplosionSound` (the mini-boss's own body boom,
+  `playBossDestructionSound`, stays on the entity's shared death seam so the
+  sweep never doubles it). Each cue carries the burst's explicit `delay`
   (honoured verbatim by `playExplosionCue` instead of being snapped to the
-  beat grid) and a per-role mix trim, so no burst in the display is silent
-  (producer audit: "explosions with no SFX"). `spawnMiniBossDeathSweep`
+  beat grid), a per-role mix trim and a run-seeded baked-variant draw, so no
+  burst in the display is silent (producer audit: "explosions with no SFX")
+  and the same seed replays the same audio. `spawnMiniBossDeathSweep`
   exposes `soundEnabled` and `playSound` seams for custom routing/tests.
+  `PlayScene` and `GymMiniBoss` therefore dispatch the identical palette —
+  pinned on the game side by the `PlayScene.test.ts` AC3 case and on the gym
+  side by `GymMiniBoss.test.ts`, both spying on the shared dispatcher.
 - **Deferred finalisation.** `PlayScene._finaliseMiniBossDefeat` runs from the
   executor's `onComplete`: it opens the reward overlay
   (`openMiniBossReward`, `miniBossRewardOpen` latch ⇒ exactly one overlay per
@@ -1755,7 +1779,9 @@ hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
 `asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`, `enemyWrap`,
 `miniBossDeathSweep` — the mini-boss defeat cascade shared by `PlayScene` and
-`GymMiniBoss`, §3.3 — and `spawnTransit`, the wormhole-transit destination
+`GymMiniBoss`, §3.3 — whose anchored/finale bursts are deliberately huge
+(scale 1.8/2.4, particles 32/40) while the swept-enemy/scatter bursts stay
+small (scale 0.8/0.7, particles 14/12), and `spawnTransit`, the wormhole-transit destination
 rule below), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
@@ -2100,6 +2126,10 @@ seek minerals exactly as they do in the game:
   The dive is a **diagonal parabolic arc** — both x and y follow the
   quadratic bezier from the formation slot to the snapshotted player
   position (`computeDivePoint`; AH-0MTGBOKLC006N8UX); there is no x-lock.
+  The arc is traversed at a **fixed, data-driven speed** (`diveSpeed`,
+  320 px/s default), so the per-dive duration is
+  `max(arcLength / diveSpeed, MIN_DIVE_DURATION)` — proportional to the
+  path length (AH-0MW0TY1AY003TDFC).
   When the attack ends (`DIVING`/`PAUSING`) the Diver group re-anchors to the
   attack-end location (non-Divers do not move) — see §7.6.
 - **Tank** — deliberately **direction-agnostic**: its 10-spoke radial burst
@@ -2226,6 +2256,7 @@ animated by the shared `FormationGlide` helper
 | `count` | `number` | Formation size. Must be `1` for the `single` formation (one entity); `validateWaveGroups` reports violations. |
 | `spacingX` / `spacingY` | `number` | Slot spacing (px). |
 | `driftSpeed` | `number` | Rightward drift (px/s). |
+| `diveSpeed` | `number?` | Fixed dive-path speed (px/s) for the `diver` movement class. The Diver's per-dive duration is `max(arcLength / diveSpeed, MIN_DIVE_DURATION)`, so it scales with the bezier arc length instead of a constant 2 s; neutral/blank on other archetypes and a blank cell (or an omitted gym value) falls back to the code default of **320** px/s (AH-0MW0TY1AY003TDFC). |
 | `startX` / `startY` | `number` | Legacy scalar base position (px); used verbatim when the range fields below are absent or degenerate. |
 | `startXMin` / `startXMax` | `number?` | Optional spawn-band X (px). When a genuine range (`min !== max`), each wave group / gym formation draws a random base X within it; when absent or `min === max`, the scalar `startX` is used (backward compatible). |
 | `startYMin` / `startYMax` | `number?` | Optional spawn-band Y (px); see `startXMin` / `startXMax`. |
@@ -2900,9 +2931,9 @@ checklist item 6). Scope rules matter — base-class-owned sounds are played
 | Enemy | Advance cue | Fire sound | Scope & timing |
 |-------|-------------|------------|----------------|
 | E1 Scout | `playScoutAdvanceCue()` — at tell start, ≥ 500 ms lead | `playScoutFireSound()` — at the shot | **entity-level** two-phase tell, per aimed shot |
-| E2 Diver | none (no advance cue — fire sound alone is the tell); `playDiverDiveStartSound()` — rising whoosh/crack once at the FORMATION→DIVING transition (the dive danger cue) | `playDiverFireSound()` — short low/nasal crack; `playDiveSound()`/`stopDiveSound()` — refcounted shared sustained dive whoosh for the ~2 s dive (stopped at the end of the dive, `destroySelf()`, and `destroy()`) | **entity-level**, fire exactly once per spread burst inside `tryFireSpreadBurst()`; dive-start cue once per dive in `_startDive()` |
+| E2 Diver | none (no advance cue — fire sound alone is the tell); `playDiverDiveStartSound()` — rising whoosh/crack once at the FORMATION→DIVING transition (the dive danger cue) | `playDiverFireSound()` — short low/nasal crack; `playDiveSound()`/`stopDiveSound()` — refcounted shared sustained dive whoosh (a ~2 s **baked loop**; stopped at the end of the dive, `destroySelf()`, and `destroy()`, so the **variable** dive duration — fixed-speed model, AH-0MW0TY1AY003TDFC — never overruns it) | **entity-level**, fire exactly once per spread burst inside `tryFireSpreadBurst()`; dive-start cue once per dive in `_startDive()` |
 | E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **entity-level**, one cue+thump pair per radial burst inside `tryFireRadialBurst()` — the cue flows with **no gap** into the thump |
-| E4 Phaser | `playPhaserAdvanceCue()` — rising sine 660→880 Hz (replaces the old inline `_playAdvanceCue()`, `PHASER_ADVANCE_CUE_DURATION`); runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`) | `playPhaserFireSound()` — short sharp blip, scheduled at the cue's end; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`) | **entity-level**, one advance cue + fire sound pair at tell start inside `applyFormationPosition()` (matching the Scout no-gap pattern) — no audio on the firing branch (no double-play) |
+| E4 Phaser | `playPhaserAdvanceCue()` — rising sine 660→880 Hz (replaces the old inline `_playAdvanceCue()`, `PHASER_ADVANCE_CUE_DURATION`); runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`) × enemy-weapon family ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`) → effective 0.30 | `playPhaserFireSound()` — short sharp blip, scheduled at the cue's end; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`) × enemy-weapon family ×0.6 → effective 0.30 | **entity-level**, one advance cue + fire sound pair at tell start inside `applyFormationPosition()` (matching the Scout no-gap pattern) — no audio on the firing branch (no double-play) |
 | E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **entity-level** volley burst, once per volley inside `tryFireBurstBullet()` |
 | Boss | `playBossPhaseCue()` — per-phase telegraph tone (retained) | `playBossFireSound()` — deep resonant boom (in `src/audio/effects.ts`) | **entity-level**, once per volley in each attack method (`tryFireSpreadBullets`, `tryFireSpiralBullets`, `tryFirePulseBullets`, `tryFireDesperationBullets`) |
 
@@ -2916,9 +2947,17 @@ Scout's two-phase tell) — never re-added in a thin scene class.
 mix: `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×) for the Tank and Scout advance+fire pairs
 (AH-0MV74ROYR009X8U3), `HOLD_FULL_FIRE_VOLUME_SCALE` for the hold-to-full-fire warning, and
 `PHASER_FIRE_VOLUME_SCALE` (0.5×) for the Phaser advance+fire pair (AH-0MVFHE6VP006GEX0), which
-brought the previously full-volume Phaser sequence level with the Tank/Scout cues. Prefer a runtime
-scale when the asset tier is already correct and guard-pinned; prefer a recipe `mix`-bus retune when
-the baked amplitude itself is off-tier (see `docs/AUDIO_ENEMY_BALANCE.md`).
+brought the previously full-volume Phaser sequence level with the Tank/Scout cues. Two **family**
+scales now compose on top of those per-sequence trims (AH-0MVZVMZOQ00076QF):
+`ENEMY_WEAPON_FIRE_VOLUME_SCALE` (0.6×) trims the whole enemy-weapon fire family — Tank/Scout/Phaser
+advance+fire therefore land on an effective **0.30**, while the previously unscaled Diver fire, Boss
+fire and Swarm burst land on **0.60** — and `EXPLOSION_VOLUME_SCALE` (0.6×) trims the explosion family
+(enemy/Diver/Boss/player destruction, the victory-explosion boom, the bullet-destruction tick and its
+enemy-force-field-break alias, and the Boss hit cue), composing multiplicatively with caller volumes
+such as the mini-boss death sweep's per-role trims and the victory firework volume. Both are runtime
+scales only — the baked assets and their balance guards are untouched. Prefer a runtime scale when
+the asset tier is already correct and guard-pinned; prefer a recipe `mix`-bus retune when the baked
+amplitude itself is off-tier (see `docs/AUDIO_ENEMY_BALANCE.md`).
 
 **ToneForge recipes per cue:** Scout advance `aihell-scout-advance`, Scout fire
 `aihell-scout-fire` (baked, seed 32181 — AC4, AH-0MVCRR2H2007VPDU; replaces the

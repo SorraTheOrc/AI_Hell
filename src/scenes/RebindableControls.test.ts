@@ -163,22 +163,22 @@ describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () =>
 
   // ── AC4 — no layer-drop action; S / ↓ no longer wired to Teleport ──
 
-  it('AC4 — S / ↓ no longer consume a Teleport stack (automatic only)', async () => {
+  it('AC4 — S / ↓ no longer consume the ready Teleport (automatic only)', async () => {
     persistBindings(REBOUND);
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a Teleport stack.
+    // Collect a Teleport: the single ready warp.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
 
     // The dead layer-drop action has been removed from the settings model,
     // and the scene holds no Teleport key. Pressing S / ↓ / the formerly
-    // reserved 'o' key leaves the stored stack untouched (no danger here).
+    // reserved 'o' key leaves the ready warp untouched (no danger here).
     const asRecord = scene as unknown as Record<string, unknown>;
     expect(asRecord.teleportKey).toBeUndefined();
     expect(asRecord.downKey).toBeUndefined();
@@ -187,7 +187,7 @@ describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () =>
     pressKey('s');
     pressKey('ArrowDown');
     scene.tick(0.05);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
   });
 
   // ── AC2 — menu navigation uses configured bindings ──────────────

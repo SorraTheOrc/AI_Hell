@@ -1,7 +1,22 @@
+/**
+ * Shared enemy-bullet creation seam (`createBullet`).
+ *
+ * The bullet used to be a per-bullet `Graphics` object re-triangulated every
+ * frame — the measured #1 frame-time hotspot. Since AH-0MW2DAY2L004QSKF a
+ * bullet is one **sprite of its shape's cached texture**, so these tests pin
+ * the new observable contract:
+ *
+ * - every shape renders from a cached texture (AC1) and no display-list
+ *   Graphics object is created on the bullet path;
+ * - bullets of the same look share one texture (the cache);
+ * - the shape/rotation/depth are applied to the sprite;
+ * - time-driven shapes animate through scale/alpha, never a redraw (AC2).
+ */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene } from '../test/gameHarness';
+import { bulletTextureKey } from '../utils/bulletTextures';
 import { createBullet } from './bulletUtils';
 
 let game: Phaser.Game | undefined;
@@ -13,16 +28,23 @@ afterEach(async () => {
   }
 });
 
-describe('createBullet', () => {
-  it('creates a bullet with the correct color', async () => {
-    class HarnessScene extends Phaser.Scene {
-      constructor() { super('HarnessScene'); }
-    }
-    const result = await bootScene([HarnessScene]);
-    game = result.game;
+class HarnessScene extends Phaser.Scene {
+  constructor() {
+    super('BulletUtilsHarnessScene');
+  }
+}
 
+async function makeScene(): Promise<Phaser.Scene> {
+  const result = await bootScene([HarnessScene]);
+  game = result.game;
+  return result.scene;
+}
+
+describe('createBullet — cached-texture sprite (AC1)', () => {
+  it('creates a sprite from the shape texture and keeps the colour', async () => {
+    const scene = await makeScene();
     const bullet = createBullet({
-      scene: result.scene,
+      scene,
       color: 0xff0000,
       size: 4,
       x: 100,
@@ -30,124 +52,77 @@ describe('createBullet', () => {
     });
 
     expect(bullet.color).toBe(0xff0000);
+    expect(bullet.graphics).toBeInstanceOf(Phaser.GameObjects.Image);
+    expect(bullet.graphics.texture.key).toBe(
+      bulletTextureKey({ shape: 'circle', color: 0xff0000, radius: 4 }),
+    );
+    expect(bullet.graphics.x).toBe(100);
+    expect(bullet.graphics.y).toBe(200);
   });
 
-  it('returns a valid graphics object', async () => {
-    class HarnessScene extends Phaser.Scene {
-      constructor() { super('HarnessScene'); }
-    }
-    const result = await bootScene([HarnessScene]);
-    game = result.game;
+  it('never creates a Graphics object for a bullet', async () => {
+    const scene = await makeScene();
+    const addGraphics = vi.spyOn(scene.add, 'graphics');
 
+    createBullet({ scene, color: 0x0000ff, size: 5, x: 50, y: 50 });
+
+    expect(addGraphics).not.toHaveBeenCalled();
+    expect(
+      scene.children.list.filter(
+        (child) => child instanceof Phaser.GameObjects.Graphics,
+      ),
+    ).toHaveLength(0);
+    addGraphics.mockRestore();
+  });
+
+  it('shares one cached texture between bullets of the same look', async () => {
+    const scene = await makeScene();
+    const first = createBullet({ scene, color: 0x00ccff, size: 3, x: 0, y: 0 });
+    const second = createBullet({ scene, color: 0x00ccff, size: 3, x: 40, y: 9 });
+
+    expect(second.graphics.texture.key).toBe(first.graphics.texture.key);
+    // Two live sprites, one texture: the bake happened once.
+    expect(
+      scene.children.list.filter(
+        (child) => child instanceof Phaser.GameObjects.Image,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it.each(['circle', 'pellet', 'line', 'spark', 'missile', 'heavy-shell'] as const)(
+    'renders the %s shape from a texture',
+    async (shape) => {
+    const scene = await makeScene();
     const bullet = createBullet({
-      scene: result.scene,
-      color: 0x00ff00,
-      size: 3,
-      x: 0,
-      y: 0,
-    });
-
-    expect(bullet.graphics).toBeDefined();
-    expect(bullet.graphics.fillStyle).toBeDefined();
-  });
-
-  it('creates the graphics object via scene.add.graphics()', async () => {
-    class HarnessScene extends Phaser.Scene {
-      constructor() { super('HarnessScene'); }
-    }
-    const result = await bootScene([HarnessScene]);
-    game = result.game;
-
-    const addSpy = vi.spyOn(result.scene.add, 'graphics');
-
-    createBullet({
-      scene: result.scene,
-      color: 0x0000ff,
-      size: 5,
-      x: 50,
-      y: 50,
-    });
-
-    expect(addSpy).toHaveBeenCalled();
-  });
-});
-
-// ── Shared bullet-shape rendering seam (AH-0MV8228MD009UBF7) ─────
-
-const Cmd = {
-  ARC: 0,
-  LINE_TO: 4,
-  MOVE_TO: 5,
-  LINE_STYLE: 6,
-  FILL_STYLE: 7,
-  FILL_PATH: 8,
-  STROKE_PATH: 9,
-  FILL_TRIANGLE: 10,
-} as const;
-
-function countCmd(buf: number[], target: number): number {
-  const widths: Record<number, number> = {
-    [Cmd.ARC]: 7,
-    [Cmd.LINE_TO]: 2,
-    [Cmd.MOVE_TO]: 2,
-    [Cmd.LINE_STYLE]: 3,
-    [Cmd.FILL_STYLE]: 2,
-    [Cmd.FILL_TRIANGLE]: 6,
-  };
-  let count = 0;
-  for (let i = 0; i < buf.length; i += 1 + (widths[buf[i]] ?? 0)) {
-    if (buf[i] === target) count += 1;
-  }
-  return count;
-}
-
-describe('createBullet — shape seam (AH-0MV8228MD009UBF7)', () => {
-  async function bulletWith(
-    shape: Parameters<typeof createBullet>[0]['shape'],
-  ) {
-    class ShapeScene extends Phaser.Scene {
-      constructor() { super('ShapeScene'); }
-    }
-    const result = await bootScene([ShapeScene]);
-    game = result.game;
-    return createBullet({
-      scene: result.scene,
+      scene,
       color: 0x00ccff,
       size: 3,
       x: 10,
       y: 20,
       shape,
     });
-  }
+    expect(scene.textures.exists(bullet.graphics.texture.key)).toBe(true);
+    },
+  );
 
-  it('defaults to a filled disc (legacy fillCircle behaviour preserved)', async () => {
-    const bullet = await bulletWith(undefined);
-    const buf = bullet.graphics.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.ARC)).toBeGreaterThanOrEqual(1);
-    expect(countCmd(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
+  it('gives different shapes different textures (identity is preserved)', async () => {
+    const scene = await makeScene();
+    const disc = createBullet({ scene, color: 0x00ccff, size: 3, x: 0, y: 0 });
+    const beam = createBullet({
+      scene,
+      color: 0x00ccff,
+      size: 3,
+      x: 0,
+      y: 0,
+      shape: 'line',
+    });
+    expect(beam.graphics.texture.key).not.toBe(disc.graphics.texture.key);
   });
 
-  it('renders a spark shape with a filled multi-segment path', async () => {
-    const bullet = await bulletWith('spark');
-    const buf = bullet.graphics.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.LINE_TO)).toBeGreaterThanOrEqual(6);
-    expect(countCmd(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
-  });
-
-  it('renders a line/beam shape (capturer tractor-beam identity) as a stroked segment', async () => {
-    const bullet = await bulletWith('line');
-    const buf = bullet.graphics.commandBuffer as number[];
-    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
-  });
-
-  it('rotates the Graphics to a supplied travel angle', async () => {
-    class AngleScene extends Phaser.Scene {
-      constructor() { super('AngleScene'); }
-    }
-    const result = await bootScene([AngleScene]);
-    game = result.game;
+  it('rotates the sprite to a supplied travel angle', async () => {
+    const scene = await makeScene();
     const bullet = createBullet({
-      scene: result.scene,
+      scene,
       color: 0x00ccff,
       size: 3,
       x: 0,
@@ -156,5 +131,45 @@ describe('createBullet — shape seam (AH-0MV8228MD009UBF7)', () => {
       angle: Math.PI / 2,
     });
     expect(bullet.graphics.rotation).toBeCloseTo(Math.PI / 2, 5);
+  });
+
+  it('draws bullets above the playfield at depth 3', async () => {
+    const scene = await makeScene();
+    const bullet = createBullet({ scene, color: 0x00ccff, size: 3, x: 0, y: 0 });
+    expect(bullet.graphics.depth).toBe(3);
+  });
+});
+
+describe('createBullet — in-flight animation (AC2)', () => {
+  it('hands back an animation hook for a pulsing pellet', async () => {
+    const scene = await makeScene();
+    const bullet = createBullet({
+      scene,
+      color: 0xff4444,
+      size: 3,
+      x: 0,
+      y: 0,
+      shape: 'pellet',
+      rimColor: 0x00ff66,
+      tail: 1.2,
+    });
+
+    expect(bullet.redraw).toBeTypeOf('function');
+    const scaleBefore = bullet.graphics.scaleX;
+    bullet.redraw!(0.1);
+    expect(bullet.graphics.scaleX).not.toBe(scaleBefore);
+  });
+
+  it('leaves a static shape without an animation hook (no per-frame cost)', async () => {
+    const scene = await makeScene();
+    const bullet = createBullet({
+      scene,
+      color: 0x00ccff,
+      size: 3,
+      x: 0,
+      y: 0,
+      shape: 'disc',
+    });
+    expect(bullet.redraw).toBeUndefined();
   });
 });

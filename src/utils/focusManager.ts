@@ -80,6 +80,9 @@ export class FocusManager {
   /** The scene the keyboard listener was attached to (for removal). */
   private _scene: Phaser.Scene | null = null;
 
+  /** Optional listener invoked after every focus change (the hex-map detail panel). */
+  private _focusListener: (() => void) | null = null;
+
   /** Style applied to the focused control. */
   private focusStyle: Record<string, unknown>;
 
@@ -138,6 +141,7 @@ export class FocusManager {
       // First control — focus by default (AC2).
       this._focusedIndex = 0;
       this._applyFocusStyle(0);
+      this._notifyFocusChange();
     } else {
       // Subsequent controls — unfocused style.
       this._applyUnfocusStyle(index);
@@ -162,11 +166,13 @@ export class FocusManager {
 
     if (this.controls.length === 0) {
       this._focusedIndex = -1;
+      this._notifyFocusChange();
     } else if (this._focusedIndex === index) {
       this._focusedIndex = Math.min(index, this.controls.length - 1);
       this._repaintFocus();
     } else if (this._focusedIndex > index) {
       this._focusedIndex--;
+      this._notifyFocusChange();
     }
     return index;
   }
@@ -186,11 +192,23 @@ export class FocusManager {
   }
 
   /**
+   * Registers a listener invoked after every focus change (the hex-map detail
+   * panel subscribes so it re-renders the focused hex). Pass `null` to stop
+   * listening.
+   *
+   * @param listener — the callback, or `null` to detach.
+   */
+  setFocusChangeListener(listener: (() => void) | null): void {
+    this._focusListener = listener;
+  }
+
+  /**
    * Moves focus to the control at the given index (with wrap-around).
    */
   setFocusedIndex(index: number): void {
     if (this.controls.length === 0) {
       this._focusedIndex = -1;
+      this._notifyFocusChange();
       return;
     }
     this._focusedIndex =
@@ -334,5 +352,11 @@ export class FocusManager {
         this._applyUnfocusStyle(i);
       }
     });
+    this._notifyFocusChange();
+  }
+
+  /** Fires the focus-change listener, if one is registered. */
+  private _notifyFocusChange(): void {
+    this._focusListener?.();
   }
 }

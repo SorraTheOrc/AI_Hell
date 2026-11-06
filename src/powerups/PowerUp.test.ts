@@ -107,7 +107,7 @@ describe('power-up catalogue (types)', () => {
     // warp can be disorienting.
     const description = POWER_UP_CATALOGUE.teleport.description;
     expect(description).toBe(
-      'Stores up to 3 warps that regenerate on a level-derived timer; in danger one is spent automatically to warp you to safety. Teleporting can be disorienting. A hold-full reward adds a charge, not a level.',
+      'In danger the ready warp is spent automatically; it recharges on a level-derived timer (60 s → 20 s) and a pickup readies it again. Teleporting can be disorienting.',
     );
     expect(description).toMatch(/automatically/i);
     expect(description).toMatch(/in danger/i);

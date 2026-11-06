@@ -301,13 +301,14 @@ describe('Raider — aimed-shot projectile identity (AH-0MV822EH800780GI)', () =
     const bullet = r.tryFireAimedBullet(t0 + 600);
     expect(bullet).not.toBeNull();
 
-    // The shot spawns its dart bullet Graphics **plus** one pale-amber launch
-    // pop at the raider's body — the enemy-side fire VFX for the aimed shot.
+    // The bullet is a cached-texture image (AH-0MW2DAY2L004QSKF), so the
+    // only new Graphics is the one pale-amber launch pop at the raider's body
+    // — the enemy-side fire VFX for the aimed shot.
     const graphicsAfter = s.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + 1 + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     // The identity dart keeps the established pale-amber bullet colour (the
     // shared impact pass tints the hit flash with it).

@@ -255,4 +255,39 @@ describe('advancePlayerBullets — shared player-bullet lifecycle', () => {
 
     expect(kept).toEqual([longLived]);
   });
+
+  // ── Allocation-free survival (AH-0MVXV0F0Y004NENT) ──────────────
+
+  it('compacts survivors in place and returns the same array', async () => {
+    // The helper runs once per frame in the game and every gym, so it may not
+    // build a fresh survivor list per frame. In-place compaction must be a
+    // stable pass: the caller's array is the one that comes back, holding the
+    // survivors in their original order.
+    const scene = await makeScene();
+    const first = makePlayerBullet(scene, 10, 100, 0, 0, 5.0);
+    const doomed = makePlayerBullet(scene, 20, 100, 0, 0, 0.1);
+    const last = makePlayerBullet(scene, 30, 100, 0, 0, 5.0);
+    const live = [first, doomed, last];
+
+    const kept = advancePlayerBullets(live, 0.2);
+
+    expect(kept).toBe(live);
+    expect(live).toEqual([first, last]);
+    expect(doomed.active).toBe(false);
+  });
+
+  it('allocates no survivor list across repeated frames', async () => {
+    // Identity is the observable proof: the same array object survives many
+    // frames (nothing new is constructed to hold the survivors).
+    const scene = await makeScene();
+    const live = [
+      makePlayerBullet(scene, 100, 100, 10, 0, 5.0),
+      makePlayerBullet(scene, 200, 100, 10, 0, 5.0),
+    ];
+    const firstFrame = advancePlayerBullets(live, 0.016);
+    for (let frame = 0; frame < 10; frame += 1) {
+      expect(advancePlayerBullets(live, 0.016)).toBe(firstFrame);
+    }
+    expect(live).toHaveLength(2);
+  });
 });

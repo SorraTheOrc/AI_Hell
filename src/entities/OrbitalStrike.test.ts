@@ -254,16 +254,17 @@ describe('OrbitalStrike — falling-shell projectile identity (AH-0MV822GIO005B6
     // The warhead is rotated nose-first straight down the fall.
     expect(Math.abs(falling!.graphics.rotation - Math.PI / 2)).toBeLessThan(1e-3);
 
-    // The strike spawned its falling-shell Graphics **plus** one amber launch
-    // pop at the spawn point (the enemy-side fire VFX for the strike).
+    // The warhead is a cached-texture image (AH-0MW2DAY2L004QSKF), so the
+    // only new Graphics is the one amber launch pop at the spawn point (the
+    // enemy-side fire VFX for the strike).
     const graphicsAfter = s.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    // At least the falling-shell Graphics **plus** one amber launch pop at the
-    // spawn point joined the scene (the exact total also includes the strike's
-    // own body + telegraph marker graphics, so assert the increase).
-    expect(graphicsAfter).toBeGreaterThanOrEqual(graphicsBefore + 2);
+    // At least one amber launch pop at the spawn point joined the scene (the
+    // exact total also includes the strike's own body + telegraph marker
+    // graphics, so assert the increase).
+    expect(graphicsAfter).toBeGreaterThanOrEqual(graphicsBefore + 1);
 
     strike.destroy(true);
   });

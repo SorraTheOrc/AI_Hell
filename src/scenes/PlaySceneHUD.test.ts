@@ -209,8 +209,9 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
    * The permanent power-up levels the seeded checkpoint owns. Deliberately
    * exercises every HUD visibility rule: timed-but-permanent (shield, speed
    * boost, frenzy, chrono, force field), permanent pulses (bomb, smart bomb,
-   * strike), the thorns budget, the charge pools (phase shift, teleport —
-   * teleport is over-granted to prove the cap) and the permanent-stack hybrids
+   * strike), the thorns budget, the Phase Shift charge pool and the
+   * single-use Teleport warp (over-granted on purpose, to prove a replay
+   * readies it instead of banking a count) and the permanent-stack hybrids
    * (magnet, mineral scoop). Extra Life is included to pin the lives hazard.
    */
   const POWER_UP_LEVELS: Array<{ id: PowerUpId; level: number }> = [
@@ -224,7 +225,8 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     { id: 'chrono', level: 1 },
     { id: 'force_field', level: 1 },
     { id: 'phase_shift', level: 2 },
-    // Over the charge cap on purpose: the replay must clamp, never stack.
+    // Over-granted on purpose: the replay must clamp, never stack (Teleport
+    // is single-use, so every grant just keeps it ready).
     { id: 'teleport', level: POWER_UP_CHARGE_CAP + 2 },
     { id: 'magnet', level: 1 },
     { id: 'mineral_scoop', level: 1 },
@@ -323,8 +325,11 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
    * the next bolt, derived from the run's own strike clock. Two independent
    * boots snapshot it at slightly different points in the interval (and one
    * may hold a bolt latched while the other's has landed), so the countdown is
-   * a property of *elapsed time*, not of the restored state under test.
-   * Everything else in the row must still match exactly.
+   * a property of *elapsed time*, not of the restored state under test. Both
+   * rendered forms of that same clock are dropped: the label text, the
+   * `recharge` seconds it formats and the `countdown` ring sweep derived from
+   * it (parent AH-0MVZ8YQQV006Q09W). Everything else in the row must still
+   * match exactly.
    */
   function withoutStrikeCountdown(rows: HUDEntry[]): HUDEntry[] {
     return rows.map((row) => {
@@ -334,6 +339,7 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
         label: row.label.replace(/ \(next in \d+s\)$/, ''),
       };
       delete stable.recharge;
+      delete stable.countdown;
       return stable;
     });
   }
@@ -396,19 +402,77 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     expect(scene.getRunSeed()).toBe(CHECKPOINT.runSeed);
   });
 
-  it('AC5 — replaying an over-granted charge pool stays within POWER_UP_CHARGE_CAP', async () => {
+  it('AC5/AC7 — replaying an over-granted pool clamps Phase Shift and readies Teleport', async () => {
     const scene = await bootResumed();
     const registry = scene.getEffectsRegistry();
     // A replayed pool is clamped at the kind's level-derived charge cap
     // (parent AH-0MVTQMREN009DSFW AC2/AC3), which is itself within the
     // shipped POWER_UP_CHARGE_CAP ceiling.
-    const store = scene.getPlayer()!.getPowerUpLevelStore();
-    expect(registry.teleportStacks()).toBe(
-      store.consumableChargeCap('teleport'),
-    );
-    expect(registry.teleportStacks()).toBeLessThanOrEqual(POWER_UP_CHARGE_CAP);
     expect(registry.phaseCharges()).toBeLessThanOrEqual(POWER_UP_CHARGE_CAP);
     expect(registry.phaseCharges()).toBeGreaterThan(0);
+    // Teleport is single-use (parent AH-0MVY096RT006QMF4): the over-granted
+    // replay leaves it permanently owned and **ready**, with no stored count.
+    expect(registry.isConsumableOwned('teleport')).toBe(true);
+    expect(registry.hasTeleport()).toBe(true);
+    expect(registry.teleportRechargeRemaining()).toBe(0);
+    expect(registry.consumableCharges('teleport')).toBe(0);
+  });
+
+  it('AH-0MVY3IGRC00954UD AC2 — a resumed run restores the saved charge pools and timers', async () => {
+    const scene = await bootResumed({
+      consumablePools: [
+        // Pool-backed kind: a saved pool of three charges with two partially
+        // elapsed per-charge timers (AC2). `force_field` is permanently owned
+        // (level 1) in the resume fixture, so the replay marks it owned and
+        // the restore clamps at its level-0 cap of 3 — a no-op for a
+        // legitimate save.
+        {
+          id: 'force_field',
+          charges: 3,
+          rechargeTimers: [
+            { duration: 45, remaining: 30 },
+            { duration: 45, remaining: 12.5 },
+          ],
+        },
+        // A saved pool of ZERO charges: the permanent-grant replay's single
+        // charge must NOT reappear (AC4) — the authoritative restore runs
+        // after the replay and overwrites it.
+        { id: 'shield', charges: 0, rechargeTimers: [] },
+        // Teleport caught mid-recharge: resumes recharging, not ready (AC4).
+        {
+          id: 'teleport',
+          charges: 0,
+          rechargeTimers: [{ duration: 45, remaining: 30 }],
+        },
+      ],
+    });
+    const store = scene.getPlayer()!.getPowerUpLevelStore();
+
+    // The restored pool is the saved pool — through the one shared store, so
+    // the HUD/effect path and the checkpoint can never read different counts.
+    expect(store.consumableCharges('force_field')).toBe(3);
+    // The boot loop advances the shared recharge clock ~2.5 s after the
+    // restore, so the timer is mid-flight (strictly between 0 and the saved
+    // 12.5 s) and its captured duration is untouched.
+    expect(store.consumableRechargeRemaining('force_field')).toBeGreaterThan(0);
+    expect(
+      store.consumableRechargeRemaining('force_field'),
+    ).toBeLessThan(12.5);
+    const progress = store.consumableRechargeProgress('force_field')!;
+    expect(progress.total).toBeCloseTo(45, 6);
+
+    // The saved zero-charge pool stays zero: the replayed grant (one charge
+    // for the owned kind) never leaks into the saved pool (AC4).
+    expect(store.isConsumableOwned('shield')).toBe(true);
+    expect(store.consumableCharges('shield')).toBe(0);
+    expect(store.consumableRechargeRemaining('shield')).toBe(0);
+
+    // Teleport resumes mid-recharge exactly as saved (never a free warp).
+    expect(store.isConsumableOwned('teleport')).toBe(true);
+    expect(store.isTeleportRecharging()).toBe(true);
+    expect(store.hasTeleport()).toBe(false);
+    expect(store.teleportRechargeRemaining()).toBeGreaterThan(0);
+    expect(store.teleportRechargeRemaining()).toBeLessThan(30);
   });
 
   it('AC3 — a fresh (non-resume) run starts with no upgrade rows or effects', async () => {

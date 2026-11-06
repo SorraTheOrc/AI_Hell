@@ -47,6 +47,7 @@ import {
   reconcileJournal,
   writeJournal,
 } from './csvEditJournal.mjs';
+import { clearOwnJournal } from './evaluate.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../..');
 const REAL_CSV = resolve(REPO_ROOT, 'src/data/enemy-configs.csv');
@@ -264,6 +265,65 @@ describe('--tune reconciles a stale journal before validating (parent AC1/AC4)',
       expect(readFileSync(REAL_CSV)).toEqual(originalCsv);
     }
   }, 30_000);
+});
+
+describe('an abort between the journal write and the edit cleanup leaves no journal (AH-0MW251IE0006K5DS)', () => {
+  it("reconciles this process' journal and restores the original bytes", () => {
+    const { dir, csvPath } = makeTempCsv();
+    try {
+      // The state the watchdog leaves when it trips at its `applying the CSV
+      // edit` boundary: the journal exists and the edit has landed, but the
+      // edit call never returned, so there is no in-memory original to
+      // restore from.
+      writeJournal(csvPath, ORIGINAL_BYTES);
+      writeFileSync(csvPath, EDITED_TEXT);
+
+      expect(clearOwnJournal(csvPath)).toBe('reconciled');
+      expect(readFileSync(csvPath)).toEqual(ORIGINAL_BYTES);
+      expect(existsSync(journalPathFor(csvPath))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a journal written by another process untouched', () => {
+    const { dir, csvPath } = makeTempCsv();
+    try {
+      // The journal path is shared by every `--tune` run for the same CSV, so
+      // a concurrent run's journal must never be stolen.
+      writeJournal(csvPath, ORIGINAL_BYTES, { pid: process.pid + 1 });
+      writeFileSync(csvPath, EDITED_TEXT);
+
+      expect(clearOwnJournal(csvPath)).toBe('foreign');
+      expect(readFileSync(csvPath, 'utf8')).toBe(EDITED_TEXT);
+      expect(existsSync(journalPathFor(csvPath))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports nothing to do when the run wrote no journal', () => {
+    const { dir, csvPath } = makeTempCsv();
+    try {
+      expect(clearOwnJournal(csvPath)).toBe('none');
+      expect(readFileSync(csvPath)).toEqual(ORIGINAL_BYTES);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps an unreadable journal for the next invocation to report', () => {
+    const { dir, csvPath } = makeTempCsv();
+    try {
+      writeFileSync(journalPathFor(csvPath), 'not json at all');
+
+      expect(clearOwnJournal(csvPath)).toBe('unreadable');
+      expect(existsSync(journalPathFor(csvPath))).toBe(true);
+      expect(readFileSync(csvPath)).toEqual(ORIGINAL_BYTES);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('the journal path is git-ignored (parent AC3)', () => {

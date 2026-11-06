@@ -98,13 +98,10 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     booted = await bootScene([HarnessScene]);
     const swarm = makeSwarm(100, 100);
 
-    const children = (swarm as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    const body = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics &&
-        c.commandBuffer.includes(MOVE_TO),
+    const body = swarm.bodyLayers.find((layer) =>
+      layer.commandBuffer.includes(MOVE_TO),
     );
-    expect(body, 'expected a body Graphics child with a drawn path').toBeDefined();
+    expect(body, 'expected a body layer with a drawn path').toBeDefined();
 
     // Decode the buffer structurally — walking by each command's arg count so
     // vertex values that happen to equal a command id are never misread.
@@ -141,13 +138,10 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     booted = await bootScene([HarnessScene]);
     const swarm = makeSwarm(100, 100);
 
-    const children = (swarm as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    const body = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics &&
-        c.commandBuffer.includes(STROKE_PATH),
+    const body = swarm.bodyLayers.find((layer) =>
+      layer.commandBuffer.includes(STROKE_PATH),
     );
-    expect(body, 'expected a body Graphics child with a stroked path').toBeDefined();
+    expect(body, 'expected a body layer with a stroked path').toBeDefined();
 
     const buf: number[] = body!.commandBuffer as number[];
     const strokeIdx = buf.lastIndexOf(STROKE_PATH);
@@ -516,13 +510,14 @@ describe('Swarm — coordinated-burst projectile identity (AH-0MV822E4T006F37Y)'
     const bullet = swarm.tryFireBurstBullet(1_000_000);
     expect(bullet).not.toBeNull();
 
-    // The shot spawns its fleck bullet Graphics **plus** one cyan launch pop
-    // at the member body — the enemy-side fire VFX per emitted fleck.
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), so the only
+    // new Graphics is the one cyan launch pop at the member body — the
+    // enemy-side fire VFX per emitted fleck.
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + 1 + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     // The identity fleck keeps the established cyan bullet colour (the shared
     // impact pass tints the hit flash with it).

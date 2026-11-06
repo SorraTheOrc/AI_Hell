@@ -116,14 +116,15 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
 
 /** A bullet the base class advances and expires by lifetime. */
 class StubBullet implements FormationSceneBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  readonly graphics: Phaser.GameObjects.Image;
   vx: number;
   vy: number;
   lifetime: number;
   elapsed = 0;
 
   constructor(scene: Phaser.Scene, vx = 0, vy = 0, lifetime = 3.0) {
-    this.graphics = scene.add.graphics();
+    // Bullets are cached-texture sprites (AH-0MW2DAY2L004QSKF).
+    this.graphics = scene.add.image(0, 0, '__DEFAULT');
     this.vx = vx;
     this.vy = vy;
     this.lifetime = lifetime;
@@ -2174,16 +2175,16 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.aliveCount).toBe(aliveBefore);
   });
 
-  it('AC4 — P7 teleport consumes a stack, moves the ship and grants P6', async () => {
+  it('AC4 — P7 teleport spends the ready warp, moves the ship and grants P6', async () => {
     const scene = await boot(layer('teleport', CLEAR));
     const player = scene.getPlayer()!;
 
-    // Collect a Teleport to gain a teleport stack.
+    // Collect a Teleport to gain the single ready warp.
     scene.spawnPowerUpDrop('teleport', player.x, player.y);
     scene.tick(0.1);
 
     const registry = scene.getEffectsRegistry();
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
 
     // Move the ship off the grid-centre fallback so the safe-spot search
     // must pick a genuinely different landing position.
@@ -2192,7 +2193,7 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     const beforeY = player.y;
     expect(scene.triggerTeleport()).toBe(true);
 
-    expect(registry.teleportStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
     expect(registry.isPhased).toBe(true);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
     expect(player.x).toBeGreaterThanOrEqual(0);
@@ -3187,7 +3188,7 @@ describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
     registry.applyCollect('magnet', true); // permanent magnet stack
     registry.applyCollect('speed_boost', true); // permanent speed boost
     registry.applyWeapon('spread', true); // permanent weapon
-    registry.applyCollect('teleport'); // stored teleport use
+    registry.applyCollect('teleport'); // teleport readiness (single-use)
 
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.isActive('speed_boost')).toBe(true);

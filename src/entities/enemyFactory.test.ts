@@ -185,6 +185,19 @@ describe('Config-aware entity seam', () => {
     e.destroy(true);
   });
 
+  it('Diver threads the data-driven dive speed from config (AH-0MW0TY1AY003TDFC AC3)', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const cfg = { ...DEFAULT_ENEMY_CONFIGS.diver, diveSpeed: 411 };
+    const e = createEnemyFromConfig(scene, cfg, 100, 100, { row: 0, col: 0 }) as unknown as Diver;
+    expect(e instanceof Diver).toBe(true);
+    expect(e.archetype).toBe('diver');
+    // The factory threads the data-driven dive speed into `DiverConfig`;
+    // the 320 px/s code default when absent is applied by AH-0MW3MWRZ5003KVR3.
+    expect(e.diveSpeed).toBe(411);
+    e.destroy(true);
+  });
+
   it('AJ — the Galaga capturer threads beam tuning, is 2 HP and never fires', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;

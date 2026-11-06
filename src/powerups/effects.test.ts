@@ -8,6 +8,7 @@ import {
   applySpeedMultiplier,
   magnetRadius,
   selectAutoDefence,
+  type AutoDefenceChoice,
   MAGNET_ATTRACTION_SPEED,
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
@@ -20,7 +21,10 @@ import {
   resolveTemporaryWindow,
 } from './powerUpLevels';
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
+import { grantPermanentPowerUp } from './choiceReward';
 import { beatPeriodMs } from '../utils/beat';
+import { resolveCountdownSweep } from '../ui/hudCountdown';
+import { createSeededRng } from '../core/rng';
 import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
 import {
   activateEffectAtUpgradeLevel,
@@ -1043,57 +1047,87 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
 
 // ── Automatic defence selection: Phase Shift vs Teleport ─────────────
 
-describe('selectAutoDefence: finite-pool charge-count selection (AC2)', () => {
-  it('returns null when neither defence is available', () => {
-    expect(selectAutoDefence(0, 0)).toBeNull();
+describe('selectAutoDefence: readiness-based 50/50 selection (AH-0MW231NAR008K9IS)', () => {
+  it('returns null when neither defence is available and never consults the rng (AC3)', () => {
+    let draws = 0;
+    const rng = () => {
+      draws += 1;
+      return 0.5;
+    };
+    expect(selectAutoDefence(0, false, rng)).toBeNull();
+    expect(draws).toBe(0);
   });
 
-  it('returns the only available defence', () => {
-    expect(selectAutoDefence(1, 0)).toBe('phase_shift');
-    expect(selectAutoDefence(0, 2)).toBe('teleport');
+  it('returns the only available defence and never consults the rng (AC3)', () => {
+    let draws = 0;
+    const rng = () => {
+      draws += 1;
+      return 0.5;
+    };
+    // Phase Shift readiness is a non-zero charge count, whatever its size.
+    expect(selectAutoDefence(1, false, rng)).toBe('phase_shift');
+    expect(selectAutoDefence(3, false, rng)).toBe('phase_shift');
+    // Teleport readiness is a boolean flag.
+    expect(selectAutoDefence(0, true, rng)).toBe('teleport');
+    expect(draws).toBe(0);
   });
 
-  it('spends the ability with the greater available count', () => {
-    expect(selectAutoDefence(1, 3)).toBe('teleport');
-    expect(selectAutoDefence(3, 1)).toBe('phase_shift');
+  it('splits 50/50 when both are available, for 1 and for 3 Phase charges (AC1/AC2)', () => {
+    const DRAWS = 2000;
+    const TOLERANCE = 0.05;
+    for (const charges of [1, 3]) {
+      const rng = createSeededRng(20261104 + charges);
+      let phaseShift = 0;
+      let teleport = 0;
+      for (let i = 0; i < DRAWS; i += 1) {
+        const choice = selectAutoDefence(charges, true, rng);
+        expect(choice).not.toBeNull();
+        if (choice === 'phase_shift') phaseShift += 1;
+        else teleport += 1;
+      }
+      expect(Math.abs(phaseShift / DRAWS - 0.5)).toBeLessThanOrEqual(TOLERANCE);
+      expect(Math.abs(teleport / DRAWS - 0.5)).toBeLessThanOrEqual(TOLERANCE);
+    }
   });
 
-  it('breaks an exact tie with the injected RNG (both outcomes reachable)', () => {
-    expect(selectAutoDefence(2, 2, () => 0.0)).toBe('phase_shift');
-    expect(selectAutoDefence(2, 2, () => 0.49)).toBe('phase_shift');
-    expect(selectAutoDefence(2, 2, () => 0.5)).toBe('teleport');
-    expect(selectAutoDefence(2, 2, () => 0.99)).toBe('teleport');
+  it('is deterministic for a fixed seed and independent of the charge count (AC2)', () => {
+    const draws = (charges: number): AutoDefenceChoice[] => {
+      const rng = createSeededRng(4242);
+      return Array.from({ length: 50 }, () => selectAutoDefence(charges, true, rng)!);
+    };
+    const oneCharge = draws(1);
+    expect(draws(1)).toEqual(oneCharge); // replayable
+    expect(draws(3)).toEqual(oneCharge); // charge count never biases the draw
   });
 
-  it('never treats a pool as unbounded: an empty phase pool cannot outrank Teleport', () => {
-    // Both pools are finite — an empty phase pool contributes zero available
-    // count, so a stored Teleport is selected (the permanent-Infinity branch
-    // is gone, AH-0MV82I8IL0012RXY AC2).
-    expect(selectAutoDefence(0, 5)).toBe('teleport');
-    expect(selectAutoDefence(0, 0)).toBeNull();
+  it('maps a both-available draw onto the 50/50 boundary (AC1)', () => {
+    expect(selectAutoDefence(3, true, () => 0.0)).toBe('phase_shift');
+    expect(selectAutoDefence(3, true, () => 0.499)).toBe('phase_shift');
+    expect(selectAutoDefence(3, true, () => 0.5)).toBe('teleport');
+    expect(selectAutoDefence(3, true, () => 0.99)).toBe('teleport');
   });
 });
 
 describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
-  it('selects Teleport without consuming the stack (the scene warps)', () => {
+  it('selects Teleport without consuming the ready warp (the scene warps)', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('teleport');
 
     expect(reg.updateDanger(true, 0.016)).toBe('teleport');
-    // The registry does not own the warp, so it must not consume the stack.
-    expect(reg.teleportStacks()).toBe(1);
+    // The registry does not own the warp, so it must not spend it.
+    expect(reg.hasTeleport()).toBe(true);
     expect(reg.isPhased).toBe(false);
   });
 
   it('latches the danger episode so Teleport is not drained continuously', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('teleport');
-    reg.applyCollect('teleport'); // level 2 → 3 stacks
+    reg.applyCollect('teleport'); // second pickup is a no-op on the single-use pool
 
     expect(reg.updateDanger(true, 0.016)).toBe('teleport');
     // Still in danger on the same episode → no second selection.
     expect(reg.updateDanger(true, 5)).toBeNull();
-    expect(reg.teleportStacks()).toBe(3);
+    expect(reg.hasTeleport()).toBe(true);
   });
 
   it('re-arms only after danger clears and the phase cooldown elapses', () => {
@@ -1101,12 +1135,12 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     reg.applyCollect('teleport');
 
     expect(reg.updateDanger(true, 0.016)).toBe('teleport');
-    // The scene completes the warp: consume the stack + grant phase.
+    // The scene completes the warp: spend the warp + grant phase.
     expect(reg.consumeTeleport()).toBe(true);
     expect(reg.isPhased).toBe(true);
     reg.tick(PHASE_DURATION + 0.01); // phase expires → cooldown starts
 
-    // Re-collect a Teleport stack for the next episode.
+    // Re-collect a Teleport to ready the warp for the next episode.
     reg.applyCollect('teleport');
 
     reg.updateDanger(false, 0.1); // danger clears, cooldown still running
@@ -1114,18 +1148,22 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe('teleport');
   });
 
-  it('spends the more abundant stock when both are available', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('phase_shift'); // 1 charge
-    reg.applyCollect('teleport'); // 1 stack
-    reg.applyCollect('teleport'); // level 2 → 3 stacks
-    expect(reg.phaseCharges()).toBe(1);
-    expect(reg.teleportStacks()).toBe(3);
+  it('lets the seeded RNG decide when both are available, regardless of Phase charges', () => {
+    const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
+    phaseFirst.applyCollect('phase_shift');
+    phaseFirst.applyCollect('phase_shift'); // 3 charges
+    phaseFirst.applyCollect('teleport');
+    expect(phaseFirst.phaseCharges()).toBe(3);
+    expect(phaseFirst.updateDanger(true, 0.016)).toBe('phase_shift');
 
-    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    const teleportFirst = new EffectsRegistry(undefined, () => 0.99);
+    teleportFirst.applyCollect('phase_shift');
+    teleportFirst.applyCollect('phase_shift'); // 3 charges
+    teleportFirst.applyCollect('teleport');
+    expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
   });
 
-  it('uses the seeded RNG for the exact-tie pick', () => {
+  it('uses the seeded RNG for the both-available pick', () => {
     const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
     phaseFirst.applyCollect('phase_shift');
     phaseFirst.applyCollect('teleport');
@@ -1137,15 +1175,15 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
   });
 
-  it('a permanent Phase Shift ties Teleport by count (seeded RNG decides)', () => {
-    // The permanent reward is an ownership flag, not an unbounded supply: a
-    // single-charge finite pool exactly ties one stored Teleport, so the
-    // tie-break RNG decides (no permanent-Infinity branch, AC2).
+  it('a permanent Phase Shift plus a ready Teleport is a 50/50 pick (seeded RNG decides)', () => {
+    // The permanent reward is an ownership flag, not an unbounded supply: the
+    // two abilities are equally available, so the 50/50 RNG decides
+    // (AH-0MW231NAR008K9IS AC1).
     const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
     phaseFirst.applyCollect('phase_shift', true);
     phaseFirst.applyCollect('teleport');
     expect(phaseFirst.updateDanger(true, 0.016)).toBe('phase_shift');
-    expect(phaseFirst.teleportStacks()).toBe(1); // Teleport conserved
+    expect(phaseFirst.hasTeleport()).toBe(true); // Teleport conserved
 
     const teleportFirst = new EffectsRegistry(undefined, () => 0.99);
     teleportFirst.applyCollect('phase_shift', true);
@@ -1160,12 +1198,12 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     reg.tick(PHASE_DURATION + 0.01); // phase expires → re-arm cooldown starts
     expect(reg.phaseCharges()).toBe(0);
 
-    // Danger clears and the cooldown elapses; the empty phase pool now
-    // contributes zero available count, so a stored Teleport fires (AC3).
+    // Danger clears and the cooldown elapses; the empty phase pool is now
+    // unavailable, so the ready Teleport fires without consulting the rng (AC3).
     reg.applyCollect('teleport');
     reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
     expect(reg.updateDanger(true, 0.016)).toBe('teleport');
-    expect(reg.teleportStacks()).toBe(1); // not consumed here (scene warps)
+    expect(reg.hasTeleport()).toBe(true); // not consumed here (scene warps)
   });
 });
 
@@ -1186,15 +1224,19 @@ describe('shared tick advances the recharge clock (AH-0MV82I8IL0012RXY AC1/AC5)'
     expect(reg.phaseCharges()).toBe(1);
   });
 
-  it('EffectsRegistry.tick(dt) recovers a spent Teleport stack through the shared path', () => {
+  it('EffectsRegistry.tick(dt) returns a spent Teleport to ready through the shared path', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
-    reg.applyCollect('teleport');
-    reg.consumeTeleport(); // consumes the stack, starts its recharge timer
-    expect(reg.teleportStacks()).toBe(0);
+    // Permanently owned: a pickup-only Teleport would end with its level
+    // window before the 60 s base interval elapsed (parent AC5).
+    reg.applyCollect('teleport', true);
+    reg.consumeTeleport(); // spends the warp, starts its one recharge timer
+    expect(reg.hasTeleport()).toBe(false);
+    expect(reg.isTeleportRecharging()).toBe(true);
 
     reg.tick(store.teleportRechargeTime() + 1);
-    expect(reg.teleportStacks()).toBe(1);
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
   });
 
   it('the recharge advance is run-scoped: reset() clears it with the store', () => {
@@ -1223,7 +1265,7 @@ describe('registry HUD recharge accessors (AH-0MV82I8IL0012RXY AC4)', () => {
     const basePhase = reg.phaseRechargeTime();
     const baseTeleport = reg.teleportRechargeTime();
     expect(basePhase).toBeCloseTo(30, 6);
-    expect(baseTeleport).toBeCloseTo(15, 6);
+    expect(baseTeleport).toBeCloseTo(60, 6);
 
     reg.applyCollect('phase_shift');
     reg.applyCollect('phase_shift');
@@ -1294,38 +1336,159 @@ describe('P6 charge display model', () => {
 
 // ── Teleport ──────────────────────────────────────────────────────
 
-describe('P7 Teleport: derived FIFO stacks, consume, grants P6', () => {
-  it('stacks grow by the level-resolved grant on each collect', () => {
+describe('P7 Teleport: single readiness state, consume, grants P6', () => {
+  it('keeps one ready warp however many times Teleport is collected (single-use)', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
     expect(reg.hasTeleport()).toBe(false);
-    reg.applyCollect('teleport'); // level 1 → +1
-    expect(reg.teleportStacks()).toBe(1);
-    reg.applyCollect('teleport'); // level 2 → +2
-    expect(reg.teleportStacks()).toBe(3);
+    reg.applyCollect('teleport'); // level 1 → one ready warp
     expect(reg.hasTeleport()).toBe(true);
-    expect(store.teleportStacks()).toBe(3);
+    reg.applyCollect('teleport'); // level 2 → still one ready warp
+    expect(reg.hasTeleport()).toBe(true);
+    // Single-use: readiness is binary and there is no stored count anywhere.
+    expect(store.hasTeleport()).toBe(true);
+    expect(store.consumableCharges('teleport')).toBe(0);
   });
 
-  it('consumeTeleport removes one stack and grants P6', () => {
+  it('consumeTeleport spends the warp, starts the recharge and grants P6', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('teleport');
     reg.applyCollect('teleport');
-    const before = reg.teleportStacks();
     expect(reg.consumeTeleport()).toBe(true);
-    expect(reg.teleportStacks()).toBe(before - 1);
+    expect(reg.hasTeleport()).toBe(false);
+    expect(reg.isTeleportRecharging()).toBe(true);
+    expect(reg.teleportRechargeRemaining()).toBeGreaterThan(0);
+    // A second warp cannot fire inside the same interval.
+    expect(reg.consumeTeleport()).toBe(false);
     expect(reg.isPhased).toBe(true); // phase granted on teleport
     expect(reg.phaseCharges()).toBe(0); // does not consume a charge
   });
 
-  it('returns false when empty, and stacks appear in activeEffects', () => {
+  it('returns false when no warp is ready, and publishes readiness without a count', () => {
     const reg = new EffectsRegistry();
     expect(reg.consumeTeleport()).toBe(false);
+    expect(reg.activeEffects().some((e) => e.id === 'teleport')).toBe(false);
+
     reg.applyCollect('teleport');
     reg.applyCollect('teleport');
     const t = reg.activeEffects().find((e) => e.id === 'teleport');
     expect(t).toBeDefined();
-    expect(t!.stacks).toBe(3);
+    // Never a stack count — a single-use kind surfaces only its readiness.
+    expect(t!.stacks).toBeUndefined();
+    expect(t!.recharge).toBeUndefined();
+  });
+});
+
+// ── Teleport acquisitions set the readiness timer to 0 ────────────────
+//
+// Any Teleport acquisition — a field pickup or a hold-full permanent grant,
+// including the checkpoint replay seam — leaves the single warp **ready**:
+// the one recharge timer is reset to 0, so a timer started by spending the
+// warp can never fire afterwards and no second warp is banked
+// (AH-0MW231MTT005DE90).
+
+describe('Teleport acquisition readies the warp (AH-0MW231MTT005DE90)', () => {
+  /**
+   * A permanently-owned Teleport that has been spent and is mid-recharge.
+   *
+   * Ownership is granted at the start because a pickup-only Teleport ends
+   * with its 15 s temporary level window, long before the 60 s base recharge
+   * elapses — without it the kind would simply become unheld.
+   */
+  function midRecharge(): { reg: EffectsRegistry; store: PowerUpLevelStore } {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('teleport', true);
+    expect(reg.consumeTeleport()).toBe(true);
+    reg.tick(store.teleportRechargeTime() / 2);
+    expect(reg.isTeleportRecharging()).toBe(true);
+    return { reg, store };
+  }
+
+  it('AC1 — a field pickup mid-recharge readies the warp immediately', () => {
+    const { reg } = midRecharge();
+
+    reg.applyCollect('teleport');
+
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.isTeleportRecharging()).toBe(false);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+    // Still single-use: the pickup readies the one warp, it never banks one.
+    expect(reg.consumableCharges('teleport')).toBe(0);
+  });
+
+  it('AC1 — a hold-full permanent grant mid-recharge readies the warp', () => {
+    const { reg } = midRecharge();
+
+    reg.applyCollect('teleport', true);
+
+    expect(reg.isConsumableOwned('teleport')).toBe(true);
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.isTeleportRecharging()).toBe(false);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+  });
+
+  it('AC1 — the checkpoint replay seam readies a recharging warp', () => {
+    const { reg } = midRecharge();
+
+    // `_restoreCheckpoint` replays grants through `grantPermanentPowerUp`.
+    grantPermanentPowerUp('teleport', reg);
+
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+  });
+
+  it('AC2 — the replaced timer never fires and remaining stays 0', () => {
+    const { reg, store } = midRecharge();
+    const replacedInterval = store.teleportRechargeTime();
+
+    reg.applyCollect('teleport');
+
+    // Well past the interval that was running before the pickup: the reset
+    // discarded that timer, so nothing fires and readiness never decays into
+    // a phantom stored warp.
+    reg.tick(replacedInterval + 1);
+
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.isTeleportRecharging()).toBe(false);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+    expect(reg.consumableCharges('teleport')).toBe(0);
+    expect(reg.consumeTeleport()).toBe(true); // exactly the one warp
+  });
+
+  it('AC3 — a pickup while already ready is a no-op that still refreshes the window', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+    const fullWindow = reg.powerUpTemporaryRemaining('teleport')!;
+    expect(fullWindow).toBeGreaterThan(0);
+
+    reg.tick(fullWindow / 2);
+    expect(reg.powerUpTemporaryRemaining('teleport')!).toBeLessThan(fullWindow);
+    expect(reg.hasTeleport()).toBe(true);
+
+    // Re-collecting keeps it ready (the timer is already 0, so there is
+    // nothing to cancel) and refreshes the temporary level window to its
+    // full TTL rather than stacking.
+    reg.applyCollect('teleport');
+    expect(reg.hasTeleport()).toBe(true);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+    expect(reg.powerUpTemporaryRemaining('teleport')).toBeCloseTo(fullWindow, 6);
+    expect(reg.consumableCharges('teleport')).toBe(0);
+  });
+
+  it('AC4 — an expired pickup window without permanent ownership is unavailable', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+    expect(reg.hasTeleport()).toBe(true);
+
+    reg.tick(reg.powerUpTemporaryRemaining('teleport')! + 0.1);
+
+    // The field-pickup window is the only thing holding the ability: once it
+    // expires an unowned Teleport is unavailable, whatever its timer says.
+    expect(reg.hasTeleport()).toBe(false);
+    expect(reg.isTeleportRecharging()).toBe(false);
+    expect(reg.teleportRechargeRemaining()).toBe(0);
+    expect(reg.consumeTeleport()).toBe(false);
   });
 });
 
@@ -1568,18 +1731,22 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     expect(store.consumableCharges('shield')).toBe(1);
   });
 
-  it('keeps stored P6 charges / P7 teleports after the window expires (AC9)', () => {
+  it('keeps stored P6 charges after the window expires (AC9)', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
 
+    // Teleport is a readiness state, not a stored resource: once a
+    // pickup-only window expires the single warp is no longer held (parent
+    // AH-0MVY096RT006QMF4 AC5). A permanently owned Teleport keeps it.
     reg.applyCollect('teleport');
-    const teleports = reg.teleportStacks();
-    expect(teleports).toBeGreaterThan(0);
-    // Simulate the level window expiring (exactly what the TTL does at
-    // expiry) and check the granted teleports are kept.
+    expect(reg.hasTeleport()).toBe(true);
     store.clearTemporary('teleport');
     expect(store.getEffectiveLevel('teleport')).toBe(0);
-    expect(reg.teleportStacks()).toBe(teleports); // not clawed back
+    expect(reg.hasTeleport()).toBe(false);
+
+    reg.applyCollect('teleport', true); // permanent ownership
+    store.clearTemporary('teleport');
+    expect(reg.hasTeleport()).toBe(true);
 
     reg.applyCollect('phase_shift');
     const charges = reg.phaseCharges();
@@ -2115,7 +2282,7 @@ describe('instant-kind temporary windows (AH-0MVUGI448000GNMJ)', () => {
 
     const teleport = new EffectsRegistry();
     teleport.applyCollect('teleport');
-    expect(teleport.teleportStacks()).toBe(1);
+    expect(teleport.hasTeleport()).toBe(true);
 
     const life = new EffectsRegistry();
     life.applyCollect('extra_life');
@@ -2225,6 +2392,15 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
     'force_field',
     'mystery_ufo',
   ];
+
+  /**
+   * The five **pool-backed** consumables. Teleport is single-use (parent
+   * AH-0MVY096RT006QMF4) and has no pool, so it is exercised by its readiness
+   * accessors instead of the shared charge-pool contract.
+   */
+  const POOLED_IDS: PowerUpId[] = CONSUMABLE_IDS.filter(
+    (id) => id !== 'teleport',
+  );
 
   /** The four kinds whose one-event spend is a registry-local seam. */
   const SPENDABLE_IDS: PowerUpId[] = [
@@ -2409,26 +2585,30 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
     expect(registry.consumableCharges('phase_shift')).toBe(1);
   });
 
-  it('AC5 — Teleport spends and regenerates through the shared pool', () => {
+  it('AC5 — Teleport spends and recharges through its single readiness timer', () => {
     const { registry, store } = poolFixture();
     registry.applyCollect('teleport', true);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
+    // It is not a pool-backed kind: nothing is banked, nothing is reported.
+    expect(registry.consumableCharges('teleport')).toBe(0);
+    expect(registry.consumableRechargeRemaining('teleport')).toBeUndefined();
 
     expect(registry.consumeTeleport()).toBe(true);
+    expect(registry.hasTeleport()).toBe(false);
     expect(registry.consumableCharges('teleport')).toBe(0);
     expect(registry.consumeTeleport()).toBe(false);
-    expect(registry.consumableRechargeRemaining('teleport')).toBeCloseTo(
+    expect(registry.teleportRechargeRemaining()).toBeCloseTo(
       store.consumableRechargeTime('teleport'),
       6,
     );
 
-    registry.tick(registry.consumableRechargeRemaining('teleport')! + 0.01);
-    expect(registry.teleportStacks()).toBe(1);
+    registry.tick(registry.teleportRechargeRemaining() + 0.01);
+    expect(registry.hasTeleport()).toBe(true);
     expect(registry.consumeTeleport()).toBe(true);
   });
 
-  it('AC6 — reports charges and countdown for every consumable in every state', () => {
-    for (const id of CONSUMABLE_IDS) {
+  it('AC6 — reports charges and countdown for every pooled consumable in every state', () => {
+    for (const id of POOLED_IDS) {
       const { registry, store } = poolFixture();
       const cap = store.consumableChargeCap(id);
 
@@ -2628,46 +2808,67 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
     }
   });
 
-  it('AC4b — Phase Shift and Teleport field pickups keep their shipped regeneration (regression)', () => {
+  it('AC4b — a Phase Shift field pickup keeps its shipped regeneration (regression)', () => {
     // The Q-A1=b no-regeneration gate is scoped to the three budget kinds: a
-    // Phase Shift / Teleport **field pickup** still grants a charge that
-    // spends once and then refills on the shared tick — the shipped
-    // regeneration (AH-0MV82I7TX0009JMT) is unchanged by the absorbed-hit
-    // conversion.
-    for (const id of ['phase_shift', 'teleport'] as PowerUpId[]) {
-      const { registry, store } = poolFixture();
-      registry.applyCollect(id); // field pickup — never owned
-      expect(store.isConsumableOwned(id), id).toBe(false);
-      expect(registry.consumableCharges(id), id).toBe(1);
+    // Phase Shift **field pickup** still grants a charge that spends once and
+    // then refills on the shared tick — the shipped regeneration
+    // (AH-0MV82I7TX0009JMT) is unchanged by the absorbed-hit conversion.
+    const { registry, store } = poolFixture();
+    registry.applyCollect('phase_shift'); // field pickup — never owned
+    expect(store.isConsumableOwned('phase_shift')).toBe(false);
+    expect(registry.consumableCharges('phase_shift')).toBe(1);
 
-      // One pickup charge resolves exactly one event through the shipped seam
-      // and starts its own regeneration timer (no ownership gate here).
-      const spent =
-        id === 'phase_shift'
-          ? registry.updateDanger(true, 0.016) === 'phase_shift'
-          : registry.consumeTeleport();
-      expect(spent, id).toBe(true);
-      expect(registry.consumableCharges(id), id).toBe(0);
-      expect(registry.consumableRechargeRemaining(id), id).toBeCloseTo(
-        store.consumableRechargeTime(id),
-        6,
-      );
+    // One pickup charge resolves exactly one event through the shipped seam
+    // and starts its own regeneration timer (no ownership gate here).
+    expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
+    expect(registry.consumableCharges('phase_shift')).toBe(0);
+    expect(registry.consumableRechargeRemaining('phase_shift')).toBeCloseTo(
+      store.consumableRechargeTime('phase_shift'),
+      6,
+    );
 
-      // No charge returns without a tick; the shared tick completes the timer
-      // and the pool refills for reuse — pickup regeneration is intact.
-      registry.tick(store.consumableRechargeTime(id) / 2);
-      expect(registry.consumableCharges(id), id).toBe(0);
-      registry.tick(store.consumableRechargeTime(id) / 2 + 0.01);
-      expect(registry.consumableCharges(id), id).toBe(1);
+    // No charge returns without a tick; the shared tick completes the timer
+    // and the pool refills for reuse — pickup regeneration is intact.
+    registry.tick(store.consumableRechargeTime('phase_shift') / 2);
+    expect(registry.consumableCharges('phase_shift')).toBe(0);
+    registry.tick(store.consumableRechargeTime('phase_shift') / 2 + 0.01);
+    expect(registry.consumableCharges('phase_shift')).toBe(1);
 
-      if (id === 'phase_shift') {
-        registry.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
-        expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
-      } else {
-        expect(registry.consumeTeleport()).toBe(true);
-      }
-      expect(registry.consumableCharges(id), id).toBe(0);
-    }
+    registry.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
+    expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
+    expect(registry.consumableCharges('phase_shift')).toBe(0);
+  });
+
+  it('AC4b — a Teleport pickup is a one-shot: ready on pickup, spent until re-owned (AC5)', () => {
+    const { registry, store } = poolFixture();
+    registry.applyCollect('teleport'); // field pickup — never owned
+    expect(store.isConsumableOwned('teleport')).toBe(false);
+    expect(registry.hasTeleport()).toBe(true);
+    expect(registry.consumeTeleport()).toBe(true);
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.teleportRechargeRemaining()).toBeCloseTo(
+      store.teleportRechargeTime(),
+      6,
+    );
+
+    // The single recharge timer runs on the shared tick, so the countdown
+    // advances while the ability is still held…
+    const interval = store.teleportRechargeTime();
+    registry.tick(5);
+    expect(registry.teleportRechargeRemaining()).toBeCloseTo(interval - 5, 6);
+    // …but the pickup window (15 s) is far shorter than the 60 s base
+    // interval: once it expires the ability is no longer held (parent
+    // AH-0MVY096RT006QMF4 AC5), so a pickup alone never returns it.
+    registry.tick(11);
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.teleportRechargeRemaining()).toBe(0);
+
+    // A permanently owned Teleport does recharge through the shared tick.
+    registry.applyCollect('teleport', true);
+    expect(registry.hasTeleport()).toBe(true);
+    expect(registry.consumeTeleport()).toBe(true);
+    registry.tick(store.teleportRechargeTime() + 0.01);
+    expect(registry.hasTeleport()).toBe(true);
   });
 
   it('AC6 — temporary-level TTL expiry never reduces already-granted charges (no clawback)', () => {
@@ -2703,5 +2904,346 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
       replayed.registry.consumableCharges('shield'),
     );
     expect(replayed.registry.isConsumableOwned('shield')).toBe(true);
+  });
+});
+
+// ── Registry countdown projections (AH-0MW2AVQ1L002TJF7) ──────────────
+//
+// The four countdown sources the HUD's timer ring reads, unit-tested at the
+// **registry** seam (the store half and the pure fraction seam have their own
+// suites). Each projection must report the same timer the row's `next in Ns` /
+// `Ns` accessor already reports — so the ring and the text can never disagree —
+// together with the span that timer belongs to, and a sweep already
+// direction-corrected by `src/ui/hudCountdown.ts`. The HUD copies `sweep`; it
+// never does per-kind fraction arithmetic of its own (parent AC1).
+
+/** The pool-backed consumables (Teleport is single-use: no charge pool). */
+const POOLED_CONSUMABLES: PowerUpId[] = [
+  'shield',
+  'thorns',
+  'phase_shift',
+  'force_field',
+  'mystery_ufo',
+];
+
+describe('consumable recharge progress projection (AC1)', () => {
+  it('delegates to PowerUpLevelStore.consumableRechargeProgress for every pooled kind (AC1)', () => {
+    for (const id of POOLED_CONSUMABLES) {
+      const store = new PowerUpLevelStore();
+      const reg = new EffectsRegistry(store);
+      // Permanent ownership, so a spent charge genuinely regenerates.
+      reg.applyCollect(id, true);
+      expect(reg.tryConsumeConsumableCharge(id), id).toBe(true);
+
+      const fromStore = store.consumableRechargeProgress(id);
+      const projection = reg.consumableRechargeProgress(id);
+      expect(fromStore, id).not.toBeNull();
+      expect(projection, id).not.toBeNull();
+
+      // Same timer, same span: a pass-through with the sweep
+      // direction-corrected, never a second clock or a second formula.
+      expect(projection!.total, id).toBe(fromStore!.total);
+      expect(projection!.remaining, id).toBe(fromStore!.remaining);
+      expect(projection!.sweep, id).toBeCloseTo(
+        1 - fromStore!.fraction,
+        9,
+      );
+      // `arriving`: empty at the spend instant, complete when the charge is
+      // due again.
+      expect(projection!.sweep, id).toBeCloseTo(0, 9);
+      // The `next in Ns` label the HUD already prints reads the same timer.
+      expect(projection!.remaining, id).toBeCloseTo(
+        reg.consumableRechargeRemaining(id)!,
+        9,
+      );
+    }
+  });
+
+  it('fills monotonically from empty to complete as the shared tick returns the charge (AC1)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field', true);
+    expect(reg.tryConsumeConsumableCharge('force_field')).toBe(true);
+
+    const start = reg.consumableRechargeProgress('force_field')!;
+    const total = start.total;
+    expect(start.sweep).toBeCloseTo(0, 9);
+
+    const observed = [start.sweep];
+    for (const elapsed of [total / 4, total / 4, total / 4]) {
+      // Only the shared tick advances a recharge — never the projection.
+      reg.tick(elapsed);
+      const progress = reg.consumableRechargeProgress('force_field')!;
+      // The span is the interval captured at spend time.
+      expect(progress.total).toBeCloseTo(total, 9);
+      expect(progress.sweep).toBeCloseTo(1 - progress.remaining / total, 9);
+      // Ring and text, one timer.
+      expect(progress.remaining).toBeCloseTo(
+        reg.consumableRechargeRemaining('force_field')!,
+        9,
+      );
+      observed.push(progress.sweep);
+    }
+
+    for (let i = 1; i < observed.length; i++) {
+      expect(observed[i]).toBeGreaterThan(observed[i - 1]);
+    }
+    expect(observed[observed.length - 1]).toBeCloseTo(0.75, 6);
+
+    // The charge returns: no stale complete ring survives.
+    reg.tick(total);
+    expect(reg.consumableRechargeProgress('force_field')).toBeNull();
+  });
+
+  it('reports null for every "nothing counting down" case (AC1)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    // A fresh store owes nothing.
+    for (const id of POOLED_CONSUMABLES) {
+      expect(reg.consumableRechargeProgress(id), id).toBeNull();
+    }
+
+    // A full pool owns no timer: the level-0 Shield cap is one charge.
+    reg.applyCollect('shield', true);
+    expect(store.consumableCharges('shield')).toBe(
+      store.consumableChargeCap('shield'),
+    );
+    expect(reg.consumableRechargeProgress('shield')).toBeNull();
+
+    // Non-consumables have no charge pool at all.
+    expect(reg.consumableRechargeProgress('bomb')).toBeNull();
+
+    // Single-use Teleport keeps its readiness clock elsewhere, so the pooled
+    // projection must never report a pool it does not have.
+    reg.applyCollect('teleport', true);
+    expect(reg.consumeTeleport()).toBe(true);
+    expect(reg.teleportRechargeRemaining()).toBeGreaterThan(0);
+    expect(reg.consumableRechargeProgress('teleport')).toBeNull();
+  });
+});
+
+describe('power-up window total projection (AC2)', () => {
+  it('reports the window\'s captured duration and drains it with the shared tick (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('speed_boost'); // field pickup opens the timed window
+
+    const captured = resolveTemporaryWindow(
+      'speed_boost',
+      store.getUpgradeLevel('speed_boost'),
+    );
+    const start = reg.powerUpTemporaryProgress('speed_boost')!;
+    expect(start.total).toBeCloseTo(captured, 9);
+    expect(start.remaining).toBeCloseTo(captured, 9);
+    // `expiring`: complete at pickup, empty at expiry.
+    expect(start.sweep).toBeCloseTo(1, 9);
+
+    const observed = [start.sweep];
+    for (const elapsed of [captured / 4, captured / 4]) {
+      reg.tick(elapsed);
+      const progress = reg.powerUpTemporaryProgress('speed_boost')!;
+      // The span is the duration captured when the window opened.
+      expect(progress.total).toBeCloseTo(captured, 9);
+      expect(progress.sweep).toBeCloseTo(progress.remaining / progress.total, 9);
+      // The `Ns` value column reads the same timer.
+      expect(progress.remaining).toBeCloseTo(
+        reg.powerUpTemporaryRemaining('speed_boost')!,
+        9,
+      );
+      observed.push(progress.sweep);
+    }
+
+    expect(observed[1]).toBeCloseTo(0.75, 6);
+    expect(observed[2]).toBeCloseTo(0.5, 6);
+    expect(observed[1]).toBeLessThan(observed[0]);
+    expect(observed[2]).toBeLessThan(observed[1]);
+
+    // The window expires: no stale empty ring survives.
+    reg.tick(captured);
+    expect(reg.powerUpTemporaryProgress('speed_boost')).toBeNull();
+  });
+
+  it('reports an instant kind\'s level window from its `_timed` entry (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('bomb'); // one-shot pickup + per-upgrade level window
+
+    // A level window is not an "active effect", but it is a live countdown:
+    // the HUD's value column and its ring both read this projection.
+    expect(reg.remaining('bomb')).toBeUndefined();
+    const window = reg.powerUpTemporaryProgress('bomb')!;
+    expect(window.total).toBeCloseTo(
+      resolveTemporaryWindow('bomb', store.getUpgradeLevel('bomb')),
+      9,
+    );
+    expect(window.remaining).toBeCloseTo(window.total, 9);
+    expect(window.sweep).toBeCloseTo(1, 9);
+
+    reg.tick(window.total / 2);
+    expect(reg.powerUpTemporaryProgress('bomb')!.sweep).toBeCloseTo(0.5, 6);
+  });
+
+  it('reports null for a permanent-only base, and the field window above it (AC2)', () => {
+    const reg = new EffectsRegistry();
+
+    // The `∞` row: permanent, no window, nothing counting down.
+    reg.applyCollect('speed_boost', true);
+    expect(reg.powerUpTemporaryRemaining('speed_boost')).toBeUndefined();
+    expect(reg.powerUpTemporaryProgress('speed_boost')).toBeNull();
+
+    // A field pickup on top of the permanent base does count down.
+    reg.applyCollect('speed_boost');
+    const window = reg.powerUpTemporaryProgress('speed_boost')!;
+    expect(window.remaining).toBeCloseTo(window.total, 9);
+    expect(window.sweep).toBeCloseTo(1, 9);
+
+    // The window expires back to the permanent base.
+    reg.tick(window.total + 1);
+    expect(reg.powerUpTemporaryProgress('speed_boost')).toBeNull();
+    expect(reg.powerUpLevel('speed_boost')).toBe(1);
+  });
+
+  it('never re-resolves the span of a running window when the level changes (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('speed_boost');
+    const captured = reg.powerUpTemporaryProgress('speed_boost')!.total;
+
+    // A mid-window level-up changes the *next* window's length; the running
+    // timer keeps the duration it was started with, so the ring cannot jump.
+    store.setPermanentLevel('speed_boost', 6);
+    expect(
+      resolveTemporaryWindow('speed_boost', store.getUpgradeLevel('speed_boost')),
+    ).not.toBeCloseTo(captured, 6);
+
+    const progress = reg.powerUpTemporaryProgress('speed_boost')!;
+    expect(progress.total).toBeCloseTo(captured, 9);
+    expect(progress.remaining).toBeCloseTo(captured, 9);
+  });
+});
+
+describe('Orbital Strike cadence projection (AC3)', () => {
+  it('is null with no permanent strike and for a one-shot pickup (AC3)', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.strikeProgress()).toBeNull();
+
+    // A field pickup queues one bolt and leaves no interval to count down.
+    reg.applyCollect('strike');
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+    expect(reg.strikeProgress()).toBeNull();
+  });
+
+  it('derives the fraction from strikeNextBoltSeconds() and strikeInterval() (AC3)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true); // hold-full (permanent) reward
+    const interval = reg.strikeInterval();
+
+    // Land the opening bolt so the interval clock runs.
+    expect(reg.updateStrike(0.1)).toBe(true);
+    reg.resolveStrike();
+
+    const start = reg.strikeProgress()!;
+    expect(start.total).toBeCloseTo(interval, 9);
+    expect(start.remaining).toBeCloseTo(reg.strikeNextBoltSeconds()!, 9);
+    // `arriving`: empty the instant a bolt fires, complete when the next is
+    // due.
+    expect(start.sweep).toBeCloseTo(0, 6);
+
+    const observed = [start.sweep];
+    for (const elapsed of [interval / 4, interval / 4, interval / 4]) {
+      expect(reg.updateStrike(elapsed)).toBe(false);
+      const progress = reg.strikeProgress()!;
+      // One clock: the `next in Ns` label reads the same timer.
+      expect(progress.remaining).toBeCloseTo(
+        reg.strikeNextBoltSeconds()!,
+        9,
+      );
+      expect(progress.total).toBeCloseTo(interval, 9);
+      expect(progress.sweep).toBeCloseTo(1 - progress.remaining / interval, 9);
+      observed.push(progress.sweep);
+    }
+
+    for (let i = 1; i < observed.length; i++) {
+      expect(observed[i]).toBeGreaterThan(observed[i - 1]);
+    }
+    expect(observed[observed.length - 1]).toBeCloseTo(0.75, 6);
+  });
+
+  it('is null while a bolt is latched, because the interval clock is frozen (AC3)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true);
+    const interval = reg.strikeInterval();
+
+    // A bolt comes due with nobody able to resolve it: the timer is frozen, so
+    // there is no honest countdown and no ring.
+    expect(reg.updateStrike(interval + 1)).toBe(true);
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+    expect(reg.strikeProgress()).toBeNull();
+
+    // Landing the bolt resumes the cadence from empty.
+    reg.resolveStrike();
+    const resumed = reg.strikeProgress()!;
+    expect(resumed.remaining).toBeCloseTo(interval, 6);
+    expect(resumed.sweep).toBeCloseTo(0, 6);
+  });
+});
+
+describe('weapon window fraction derivation (AC4)', () => {
+  it('activeWeapons() data yields the expiring fraction for the shared seam (AC4)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+
+    const [fresh] = reg.activeWeapons();
+    expect(fresh.duration).toBe(10);
+    expect(fresh.remaining).toBe(10);
+    expect(fresh.tempWindow).toBe(true);
+    expect(
+      resolveCountdownSweep({
+        remaining: fresh.remaining,
+        total: fresh.duration,
+        mode: 'expiring',
+      }),
+    ).toBeCloseTo(1, 9);
+
+    reg.tick(2.5);
+    const [drained] = reg.activeWeapons();
+    // The span is never rewritten as the window burns down.
+    expect(drained.duration).toBe(10);
+    expect(drained.remaining).toBeCloseTo(7.5, 6);
+    expect(
+      resolveCountdownSweep({
+        remaining: drained.remaining,
+        total: drained.duration,
+        mode: 'expiring',
+      }),
+    ).toBeCloseTo(0.75, 6);
+  });
+
+  it('a refreshed window restarts the fraction at complete (AC4)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('rapid');
+    reg.tick(6);
+    const [partial] = reg.activeWeapons();
+    expect(partial.remaining / partial.duration).toBeCloseTo(0.4, 6);
+
+    reg.applyWeapon('rapid'); // re-collect refreshes to the full window
+    const [refreshed] = reg.activeWeapons();
+    expect(refreshed.remaining).toBe(refreshed.duration);
+    expect(
+      resolveCountdownSweep({
+        remaining: refreshed.remaining,
+        total: refreshed.duration,
+        mode: 'expiring',
+      }),
+    ).toBeCloseTo(1, 9);
+  });
+
+  it('a permanent-only weapon exposes no field window to count down (AC4)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('dual', true);
+    const [weapon] = reg.activeWeapons();
+    expect(weapon.permanent).toBe(true);
+    // No temporary window means no ring on the HUD's `∞` row.
+    expect(weapon.tempWindow).toBeFalsy();
   });
 });

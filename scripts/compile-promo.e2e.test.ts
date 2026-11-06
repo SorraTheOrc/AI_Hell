@@ -40,7 +40,7 @@
  * **expected rejection** for a deliberately short package — `targets.ok ===
  * false` with target-specific issues, and a non-zero exit whose *only* error
  * is that size verdict. Sizing on real footage is covered by the `assessTargets`
- * unit tests in `compile-promo.test.ts` and by `npm run compile:promo` against
+ * unit tests in `compile-promo.test.ts` and by `npm run capture:promo` against
  * a real capture pool (see `docs/dev/action-intensity.md` §7.6).
  *
  * Skipped when ffmpeg/ffprobe are unavailable.

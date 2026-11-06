@@ -1384,6 +1384,40 @@ describe('Enemy health column (F1)', () => {
     expect(coerced.commitRange).toBeUndefined();
   });
 
+  it('diver dive speed round-trips through serialisation (AH-0MW0TY1AY003TDFC)', async () => {
+    const m = await loadCsvModule();
+    const config = { ...DEFAULT_ENEMY_CONFIGS.diver, diveSpeed: 411 };
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs([config]));
+    const coerced = m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.diveSpeed).toBe(411);
+  });
+
+  it('a non-diver row leaves dive speed neutral', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs([{ ...DEFAULT_ENEMY_CONFIGS.scout }]));
+    const coerced = m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.diveSpeed).toBeUndefined();
+  });
+
+  it('a blank diveSpeed cell falls back to the seeded diver default of 320', async () => {
+    const m = await loadCsvModule();
+    // The diver seed carries `diveSpeed: 320` (AH-0MW0TY1AY003TDFC AC4); a
+    // blank/absent cell must keep that default instead of coercing to 0.
+    expect(m.coerceEnemyConfig(legacyEnemyRow('diver'), DEFAULT_ENEMY_CONFIGS).diveSpeed).toBe(320);
+  });
+
+  it('serialised output exposes the diveSpeed column in the header', async () => {
+    const m = await loadCsvModule();
+    const csvString = m.serializeEnemyConfigs([{ ...DEFAULT_ENEMY_CONFIGS.diver, diveSpeed: 320 }]);
+    const [header] = csvString.split('\n');
+    expect(header.split(',')).toContain('diveSpeed');
+  });
+
+  it('exposes diveSpeed in the stable enemy column order (serialisation + plugin validation)', async () => {
+    const m = await loadCsvModule();
+    expect(m.ENEMY_COLUMN_ORDER).toContain('diveSpeed');
+  });
+
   it('validateEnemyConfig rejects non-positive and non-integer health', async () => {
     const m = await loadCsvModule();
     const base: Record<string, string> = {

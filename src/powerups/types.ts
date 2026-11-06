@@ -24,10 +24,12 @@
  *   hostile bodies/bullets close within 40 px; the hold-full reward adds
  *   exactly one charge to that pool — it is never an unlimited supply
  *   (AH-0MV82I7TX0009JMT).
- * - **Teleport** — stored stacks (FIFO) in a **finite recharging pool** (cap 3,
- *   level-derived recharge time); activates automatically when the ship is in
- *   danger — one stack is spent to warp to the nearest safe spot and grant a
- *   1.5 s Phase Shift on arrival
+ * - **Teleport** — a **single-use** escape (parent AH-0MVY096RT006QMF4): no
+ *   stored-charge count and no FIFO pool, just a readiness timer (60 s at base
+ *   → 20 s at the upgrade cap); activates automatically when the ship is in
+ *   danger — the ready warp is spent to reach the nearest safe spot and grant
+ *   a 1.5 s Phase Shift on arrival. A Teleport pickup (or a hold-full grant)
+ *   resets the timer to ready
  * - **Smart Bomb** — Defender-inspired stored screen-wide pulse: a field
  *   pickup fires one screen-clearing blast (damages every enemy once and
  *   clears every enemy bullet); a hold-full reward makes the pulse repeat on
@@ -245,6 +247,35 @@ export interface PowerUpEntry {
    */
   regenRequiresOwnership?: boolean;
   /**
+   * Whether this consumable is a **single-use** ability rather than a
+   * multi-charge pool (parent AH-0MVY096RT006QMF4).
+   *
+   * **Defaults to `false`** — an absent flag means the kind keeps the shared
+   * charge-pool model. Teleport opts in: it holds no stored-charge count, its
+   * charge cap is always `1`, and its state is binary (ready / recharging on
+   * the level-derived interval). The cap is read by
+   * `resolveConsumableChargeCap`, so no store, HUD or scene needs an
+   * `id === 'teleport'` branch.
+   */
+  singleUse?: boolean;
+  /**
+   * Whether this entry is still a valid **reward** once it is **permanently
+   * owned** (parent AH-0MVY096RT006QMF4, AC5).
+   *
+   * **Defaults to `true`** — an absent flag means the owned kind keeps its
+   * reward offer (a `'power-up-charge'` in the hold-full choice, and a wedge on
+   * the mini-boss wheel). A kind that has no reward left to give once owned
+   * opts out with `false`: it then produces no hold-full option and no wheel
+   * wedge, while its **unowned** base `★ New` entry still stands and grants the
+   * permanent slot.
+   *
+   * The flag is catalogue data, read through {@link isRewardableWhenOwned}, so
+   * no reward builder (hold-full choice, mini-boss reward, mini-boss wheel)
+   * branches on an id. A **single-use** kind whose one event is already
+   * permanently available opts out: Teleport is the only such entry today.
+   */
+  rewardableWhenOwned?: boolean;
+  /**
    * Whether this entry remains drawable/offerable once all
    * `POWER_UP_SLOT_CAP` permanent slots are occupied (parent
    * AH-0MVLIJT3M005HPHF, AC5).
@@ -325,13 +356,20 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'teleport',
     name: 'Teleport',
     description:
-      'Stores up to 3 warps that regenerate on a level-derived timer; in danger one is spent automatically to warp you to safety. Teleporting can be disorienting. A hold-full reward adds a charge, not a level.',
+      'In danger the ready warp is spent automatically; it recharges on a level-derived timer (60 s → 20 s) and a pickup readies it again. Teleporting can be disorienting.',
     // Balance tuning: defensive kind, so the temporary level uses the same
     // 15 s window as Phase Shift / Shield (AH-0MVUGI3Q4009MW6A).
     temporaryWindow: 15,
-    // Charge model: one warp per charge, regenerating on the level-derived
-    // `teleportRechargeRate` interval (15 s → 5 s) (AH-0MVTQMREN009DSFW).
+    // Charge model: a **single-use** escape (parent AH-0MVY096RT006QMF4) —
+    // no stored-charge count and no FIFO pool. Spending the one ready warp
+    // starts a level-derived `teleportRechargeRate` interval (60 s → 20 s).
     consumable: true,
+    singleUse: true,
+    // No reward is left once Teleport is permanently owned: its one warp is
+    // always available (recharging on the interval above), so a charge offer
+    // and a wheel wedge would grant nothing (parent AH-0MVY096RT006QMF4 AC5).
+    // While unowned the base `★ New` choice entry still grants the slot.
+    rewardableWhenOwned: false,
   },
   extra_life: {
     id: 'extra_life',
@@ -508,6 +546,38 @@ export const CONSUMABLE_POWER_UP_IDS: readonly PowerUpId[] = (
 )
   .filter((entry) => entry.consumable === true)
   .map((entry) => entry.id);
+
+/**
+ * The power-up ids that opt **out** of owned rewards, derived from the
+ * catalogue's `rewardableWhenOwned` flag in catalogue order (parent
+ * AH-0MVY096RT006QMF4 AC5).
+ *
+ * An absent flag is the documented `true` default, so only an explicit
+ * `rewardableWhenOwned: false` entry appears here. Derived at module load, so
+ * the set can never drift from the entries and no builder spells it out again.
+ */
+export const NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS: readonly PowerUpId[] = (
+  Object.values(POWER_UP_CATALOGUE) as PowerUpEntry[]
+)
+  .filter((entry) => entry.rewardableWhenOwned === false)
+  .map((entry) => entry.id);
+
+/**
+ * Whether a permanently-owned kind still has a reward to give (parent
+ * AH-0MVY096RT006QMF4 AC5).
+ *
+ * Reads the catalogue flag through the derived
+ * {@link NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS} set: `true` unless the entry
+ * explicitly opts out, so a newly added catalogue entry is rewardable by
+ * default. The single source of the "retire an owned reward" rule — the
+ * hold-full choice and the mini-boss wheel both read it instead of comparing
+ * ids.
+ *
+ * @param id - The power-up kind being offered as a reward.
+ */
+export function isRewardableWhenOwned(id: PowerUpId): boolean {
+  return !NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS.includes(id);
+}
 
 /**
  * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full

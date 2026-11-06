@@ -24,11 +24,47 @@
  * Cosmetic only (parent AC4): the sweep awards no score, drops nothing and
  * emits no telemetry — swept entities are removed visually through the
  * caller's own teardown seam, never through the reward-bearing kill path.
- * It is **not** silent, though: every planned burst schedules its matching
- * explosion cue (producer audit: "explosions with no SFX") — the swept
- * enemies / celebration bursts reuse the shared enemy-destruction cue and the
- * finale pairs use the heavy boss-destruction boom, each at the burst's own
- * delay and trimmed to its role's mix level.
+ * It is **not** silent, though: the display is also the level's biggest audio
+ * moment. Every planned burst that passes the per-role thinning rule schedules
+ * its matching explosion cue at the burst's own `delayMs`; the mini-boss's own
+ * body plays its one boss-scale death cue from the entity's shared death seam
+ * (never doubled here — see the executor's note). The palette is
+ * **reuse-only** (producer decision Q1 = a): `enemy` / `scatter` / `anchored`
+ * bursts reuse the shared enemy-destruction cue, `finale` bursts use the
+ * victory-explosion boom and the body uses the boss-destruction boom — no new
+ * ToneForge recipe, asset or manifest entry. See
+ * {@link playMiniBossSweepSound} for the dispatch and
+ * [docs/AUDIO_TONEFORGE_CUE_MAPPING.md](../../../docs/AUDIO_TONEFORGE_CUE_MAPPING.md)
+ * for the palette record.
+ *
+ * ## Sweep audio density policy (AC2)
+ *
+ * A scripted 60-burst cascade voiced one-for-one would be a clipped wall, so
+ * the planner makes the audio decision **per burst** and this module owns the
+ * only tunables:
+ *
+ * - **Per-role thinning** — `MINI_BOSS_SWEEP_SFX_ENEMY_EVERY_N` (1) keeps
+ *   every escort burst, `..._SCATTER_EVERY_N` (2) and `..._ANCHORED_EVERY_N`
+ *   (2) keep one in every two celebration bursts, and `..._FINALE_EVERY_N` (1)
+ *   keeps **both** voices of every finale pair so the climax is never thinned.
+ * - **Per-role volume scales** — `MINI_BOSS_SWEEP_SFX_*_VOLUME`, trimmed
+ *   against the shared destruction cues; the finale is the loudest per-burst
+ *   layer so the 20-burst climax still reads as the biggest beat.
+ * - **Timing** — every cue is scheduled at its burst's own `delayMs`
+ *   (producer decision Q3 = a, **visual-timed**). The sweep deliberately does
+ *   **not** route through the shared 16th-note accent grid used by ordinary
+ *   enemy kills (`playExplosionCue`), because quantising would shift cues up
+ *   to 187.5 ms off their bursts and the 4-per-tick accent cap would drop most
+ *   of the cascade. This is the one documented divergence from the accent
+ *   grid, and it is why the cue layer's explicit-`delay` bypass exists.
+ * - **Mix backstop** — the shared per-cue voice limiter
+ *   (`MAX_CONCURRENT_CUE_VOICES` 4 / `CUE_VOICE_WINDOW_MS` 150) stays in place
+ *   and unchanged. It caps *immediate* cue bursts (a mass kill); a
+ *   caller-scheduled cascade is admitted up-front, which is why the plan
+ *   itself is bounded and pinned: no plan for the 60-burst maximum dispatches
+ *   more than `MINI_BOSS_SWEEP_SFX_MAX_PER_WINDOW` cues inside any
+ *   `MINI_BOSS_SWEEP_SFX_WINDOW_MS` (250 ms) window, asserted by
+ *   `miniBossDeathSweep.test.ts`.
  *
  * ## Sweep composition (parent AC2)
  *
@@ -51,9 +87,19 @@
  *
  * Total bursts `n + max(0, 30 - n) + 10 + 20`; for the realistic `n <= 30`
  * case that is `<= 60`, and above that the extras clamp to 0 so the sweep is
- * one enemy burst per target plus the 30 mini-boss bursts. Extras, anchored
- * and finale bursts use a reduced particle count so the whole display stays
- * inside the particle budget.
+ * one enemy burst per target plus the 30 mini-boss bursts.
+ *
+ * **Size contrast (AH-0MVY06X16005EO8R).** The mini-boss's *own* two roles are
+ * deliberately huge: the anchored bursts (`MINI_BOSS_SWEEP_ANCHORED_SCALE`
+ * 1.8 / 32 particles) and the finale (`MINI_BOSS_SWEEP_FINALE_SCALE` 2.4 / 40
+ * particles) are at least twice the original budget-conscious sizing, while
+ * the swept-enemy (0.8 / 14) and scattered celebration (0.7 / 12) bursts keep
+ * their modest sizing. The contrast is the point — the death point is the
+ * biggest visual event in the level — and the `scatter < enemy < anchored <
+ * finale` ordering is preserved and pinned by `miniBossDeathSweep.test.ts`.
+ * The 30 mini-boss bursts (10 anchored + 20 finale) are the only bursts that
+ * grew, so peak concurrent particles stay well inside the budget (still one
+ * `Graphics` + one tween per burst — no new object count).
  */
 
 import {
@@ -63,8 +109,8 @@ import {
   type ExplosionScene,
 } from '../../vfx/explosionParticles';
 import {
-  playBossDestructionSound,
-  playDestructionSound,
+  playMiniBossSweepSound,
+  type MiniBossSweepSoundCueName,
 } from '../../audio/effects';
 import { isNonBlockingHazard } from './waveTimeout';
 
@@ -125,11 +171,18 @@ export const MINI_BOSS_SWEEP_FINALE_START_MS =
  */
 export const MINI_BOSS_SWEEP_FINALE_SPREAD_PX = 160;
 
-/** Particle count per finale burst (denser than anchored: the biggest hit). */
-export const MINI_BOSS_SWEEP_FINALE_PARTICLES = 20;
+/**
+ * Particle count per finale burst — the mini-boss's own biggest hit, twice the
+ * anchored count and the display's densest single burst.
+ */
+export const MINI_BOSS_SWEEP_FINALE_PARTICLES = 40;
 
-/** Geometry scale for finale bursts (larger than anchored). */
-export const MINI_BOSS_SWEEP_FINALE_SCALE = 1.2;
+/**
+ * Geometry scale for finale bursts — the largest in the display, 1.33× the
+ * anchored scale and so far above the enemy/scatter roles that the mini-boss's
+ * own death dominates the screen (AH-0MVY06X16005EO8R).
+ */
+export const MINI_BOSS_SWEEP_FINALE_SCALE = 2.4;
 
 /** Particle count per swept-enemy burst (enemy-scale, modest). */
 export const MINI_BOSS_SWEEP_ENEMY_PARTICLES = 14;
@@ -137,8 +190,11 @@ export const MINI_BOSS_SWEEP_ENEMY_PARTICLES = 14;
 /** Reduced particle count per scatter burst (particle budget, AC2). */
 export const MINI_BOSS_SWEEP_SCATTER_PARTICLES = 12;
 
-/** Reduced particle count per anchored burst (particle budget, AC2). */
-export const MINI_BOSS_SWEEP_ANCHORED_PARTICLES = 16;
+/**
+ * Particle count per anchored burst — a heavy celebration on the death point
+ * (AH-0MVY06X16005EO8R doubled it from the original budget-conscious 16).
+ */
+export const MINI_BOSS_SWEEP_ANCHORED_PARTICLES = 32;
 
 /** Per-burst lifespan (ms) — same order as the shared explosion lifespan. */
 export const MINI_BOSS_SWEEP_LIFESPAN_MS = 360;
@@ -156,28 +212,93 @@ export const MINI_BOSS_SWEEP_ENEMY_SCALE = 0.8;
 /** Geometry scale for scatter bursts (reduced, cosmetic-only). */
 export const MINI_BOSS_SWEEP_SCATTER_SCALE = 0.7;
 
-/** Geometry scale for anchored bursts. */
-export const MINI_BOSS_SWEEP_ANCHORED_SCALE = 0.9;
+/**
+ * Geometry scale for anchored bursts — huge relative to the enemy/scatter
+ * roles (AH-0MVY06X16005EO8R doubled it from the original 0.9), so the death
+ * point reads as the biggest visual event in the level.
+ */
+export const MINI_BOSS_SWEEP_ANCHORED_SCALE = 1.8;
 
 /** Celebration colour palette for scatter/anchored bursts. */
 const MINI_BOSS_SWEEP_PALETTE: readonly number[] = [
   0xffd166, 0xff9f1c, 0xff6b35, 0xffe066,
 ];
 
-// ── Explosion SFX tunables ────────────────────────────────────────
+// ── Explosion SFX tunables (AC2/AC3) ──────────────────────────────
+//
+// Every audio knob of the sweep lives here and nowhere else (producer user
+// story: "named, tunable constants in one shared place"). The planner reads
+// them, the executor reads them, and no call site carries an inline tuning
+// literal.
+
+/** Master switch for the sweep's SFX (default on). */
+export const MINI_BOSS_SWEEP_SFX_ENABLED = true;
+
+/** Cue family for `enemy` / `scatter` / `anchored` bursts (reuse-only, Q1=a). */
+export const MINI_BOSS_SWEEP_SFX_DESTRUCTION_CUE: MiniBossSweepSoundCueName =
+  'playDestructionSound';
+
+/** Cue for the `finale` bursts — the victory-explosion boom (Q1=a). */
+export const MINI_BOSS_SWEEP_SFX_FINALE_CUE: MiniBossSweepSoundCueName =
+  'playVictoryExplosionSound';
+
+/** Every `enemy` (escort) burst is voiced — thinning stride 1. */
+export const MINI_BOSS_SWEEP_SFX_ENEMY_EVERY_N = 1;
+
+/** One in every two `scatter` bursts is voiced (thinning stride 2). */
+export const MINI_BOSS_SWEEP_SFX_SCATTER_EVERY_N = 2;
+
+/** One in every two `anchored` bursts is voiced (thinning stride 2). */
+export const MINI_BOSS_SWEEP_SFX_ANCHORED_EVERY_N = 2;
+
+/**
+ * Every `finale` burst is voiced — both voices of every pair, so the climax is
+ * never thinned (the display's biggest beat must not lose a voice).
+ */
+export const MINI_BOSS_SWEEP_SFX_FINALE_EVERY_N = 1;
 
 /**
  * Per-role mix trims for the sweep's explosion cues. The display is dense (a
  * scripted cascade of up to 60 bursts), so each cue is trimmed against the
  * shared destruction/boss cues rather than playing them at full kill volume.
  */
-export const MINI_BOSS_SWEEP_ENEMY_SOUND_VOLUME = 0.55;
+export const MINI_BOSS_SWEEP_SFX_ENEMY_VOLUME = 0.55;
 /** Mix trim for the scattered celebration bursts. */
-export const MINI_BOSS_SWEEP_SCATTER_SOUND_VOLUME = 0.3;
+export const MINI_BOSS_SWEEP_SFX_SCATTER_VOLUME = 0.3;
 /** Mix trim for the bursts anchored on the death point. */
-export const MINI_BOSS_SWEEP_ANCHORED_SOUND_VOLUME = 0.4;
-/** Mix trim for the finale pairs — the mini-boss's biggest beat. */
-export const MINI_BOSS_SWEEP_FINALE_SOUND_VOLUME = 0.65;
+export const MINI_BOSS_SWEEP_SFX_ANCHORED_VOLUME = 0.4;
+/** Mix trim for the finale pairs — the mini-boss's biggest beat (loudest). */
+export const MINI_BOSS_SWEEP_SFX_FINALE_VOLUME = 0.65;
+/**
+ * Window (ms) the density bound is expressed over — the audible overlap of the
+ * short baked explosion cues, and the same order as the shared per-cue voice
+ * window.
+ */
+export const MINI_BOSS_SWEEP_SFX_WINDOW_MS = 250;
+
+/**
+ * Documented density bound (AC2): the maximum number of kept cues any plan for
+ * the **60-burst maximum** may dispatch inside a
+ * {@link MINI_BOSS_SWEEP_SFX_WINDOW_MS} window.
+ *
+ * Derived from the shipping schedule with the per-role strides above, over
+ * every plan size `n ∈ [0, 30]` (the range in which the total stays at or
+ * below 60 bursts). The worst case is `n = 30` — 30 escort bursts staggered
+ * over `MINI_BOSS_SWEEP_ENEMY_WINDOW_MS` (360 ms) on top of the anchored
+ * celebration — where a window straddling the enemy cascade and the first
+ * anchored/finale beats holds 27 kept cues. Escalating any of the volume
+ * scales or dropping a stride to 1 raises this number: re-derive it and update
+ * this constant (and the pinning test) together.
+ */
+export const MINI_BOSS_SWEEP_SFX_MAX_PER_WINDOW = 27;
+
+/**
+ * Seed salt for the sweep's audio-decision RNG stream. The variant draws are
+ * taken from a stream *separate* from the placement RNG, so adding audio can
+ * never shift a single burst position (the display stays byte-identical to
+ * the shipped sweep for a given seed).
+ */
+export const MINI_BOSS_SWEEP_SFX_SEED_SALT = 0x85eb_ca6b;
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -203,6 +324,29 @@ export interface MiniBossSweepBounds {
   height: number;
 }
 
+/**
+ * The sweep's per-burst audio decision (AC1/AC2/AC3/AC5). Pure data: the
+ * planner decides the cue, the baked-variant draw, the mix trim and whether
+ * the thinning rule keeps the burst voiced — the executor only dispatches it.
+ */
+export interface MiniBossSweepBurstAudio {
+  /** Cue the burst plays (reuse-only palette, Q1 = a). */
+  cue: MiniBossSweepSoundCueName;
+  /**
+   * Run-seeded draw in `[0, 1)` selecting one of the cue's baked variants, so
+   * the same run seed replays the same audio (AC5).
+   */
+  variantPick: number;
+  /** Per-role mix trim ({@link MINI_BOSS_SWEEP_SFX_ENEMY_VOLUME} etc.). */
+  volume: number;
+  /**
+   * Whether the per-role thinning rule keeps this burst voiced (AC1/AC2). A
+   * dropped burst is silent **only** because of this rule; no other reason
+   * exists for a planned burst to go unvoiced.
+   */
+  kept: boolean;
+}
+
 /** A planned burst (pure data — no Phaser objects). */
 export interface MiniBossSweepBurst {
   /** Which sweep part the burst belongs to. */
@@ -217,12 +361,17 @@ export interface MiniBossSweepBurst {
   color: number;
   /** Base size handed to `spawnExplosionParticles` (geometry). */
   size: number;
-  /** Particle count for the burst (reduced for extras/anchored). */
+  /**
+   * Particle count for the burst — role-sized: modest for scattered extras,
+   * doubled (huge) for the mini-boss's own anchored/finale bursts.
+   */
   particleCount: number;
   /** Geometry scale for the burst. */
   scale: number;
   /** Animation lifespan (ms). */
   lifespanMs: number;
+  /** The burst's audio decision (cue, baked-variant draw, volume, kept). */
+  audio: MiniBossSweepBurstAudio;
 }
 
 /** The planner input. */
@@ -262,28 +411,60 @@ export interface MiniBossDeathSweepOptions {
   /** Fires exactly once, after every burst has finished animating. */
   onComplete?: () => void;
   /**
-   * Whether the sweep schedules its explosion SFX (default `true`). Every
-   * planned burst gets a cue, so no explosion in the display is silent.
+   * Whether the sweep schedules its SFX (default
+   * {@link MINI_BOSS_SWEEP_SFX_ENABLED}). When `false` the display rights
+   * play, nothing is dispatched and completion is unaffected (AC5/AC9).
    */
   soundEnabled?: boolean;
   /**
-   * Per-burst sound scheduler (test seam / custom audio routing). Receives the
-   * burst role, its scheduled delay (ms) and its index. Defaults to
-   * {@link playMiniBossSweepBurstSound}, gated by `soundEnabled`.
+   * Per-cue sound dispatcher (test seam / custom audio routing). Receives one
+   * request per dispatched cue — the mini-boss's own body first, then every
+   * kept burst at its own delay — and defaults to
+   * {@link MINI_BOSS_SWEEP_DEFAULT_SOUND_PLAYER}, gated by `soundEnabled`.
+   * A throwing seam never affects the display or `onComplete` (AC9).
    */
   playSound?: MiniBossSweepSoundPlayer;
 }
 
 /**
- * Per-burst sound player seam: schedules the cue matching a burst's role at
- * the burst's own delay, so the audio tracks the visual cascade. Injectable
- * for tests and custom audio routing.
+ * One cue the sweep dispatches: a kept burst, at the moment its visual plays.
+ */
+export interface MiniBossSweepSoundRequest {
+  /** The burst's role (which sweep layer the cue belongs to). */
+  role: MiniBossSweepBurst['role'];
+  /** Cue to play (reuse-only palette). */
+  cue: MiniBossSweepSoundCueName;
+  /** Scheduled offset (ms) from sweep start — the burst's own `delayMs`. */
+  delayMs: number;
+  /** Mix trim for this cue. */
+  volume: number;
+  /** Run-seeded baked-variant draw (AC5). */
+  variantPick?: number;
+}
+
+/**
+ * Per-cue sound player seam: dispatches one sweep cue. Injectable for tests
+ * and custom audio routing, so a suite can record the whole audio timeline
+ * without audio hardware (AC5).
  */
 export type MiniBossSweepSoundPlayer = (
-  role: MiniBossSweepBurst['role'],
-  delayMs: number,
-  index: number,
+  request: MiniBossSweepSoundRequest,
 ) => void;
+
+/**
+ * Default cue dispatcher: routes one sweep cue to the shared audio layer
+ * ({@link playMiniBossSweepSound}) at the burst's own delay. Safe no-op
+ * without an `AudioContext`, like every cue (AC5).
+ */
+export const MINI_BOSS_SWEEP_DEFAULT_SOUND_PLAYER: MiniBossSweepSoundPlayer = (
+  request,
+) => {
+  playMiniBossSweepSound(request.cue, {
+    delay: Math.max(0, request.delayMs) / 1000,
+    volume: request.volume,
+    variantPick: request.variantPick,
+  });
+};
 
 /**
  * The minimal Phaser `time` surface the executor's completion watchdog needs
@@ -423,13 +604,15 @@ export function planMiniBossDeathSweep(
   const n = targets.length;
   const extras = miniBossSweepExtras(n);
 
-  const bursts: MiniBossSweepBurst[] = [];
+  // Geometry first (positions/colours draw from the placement RNG), then the
+  // audio decision in a second pass so the two streams never interfere.
+  const planned: Array<Omit<MiniBossSweepBurst, 'audio'>> = [];
 
   // Enemy bursts — cascade starts immediately, staggered over a short window.
   const enemyDelays = staggerDelays(n, 0, MINI_BOSS_SWEEP_ENEMY_WINDOW_MS);
   for (let i = 0; i < n; i += 1) {
     const target = targets[i];
-    bursts.push({
+    planned.push({
       role: 'enemy',
       delayMs: enemyDelays[i],
       x: target.x,
@@ -450,7 +633,7 @@ export function planMiniBossDeathSweep(
   );
   for (let i = 0; i < extras; i += 1) {
     const { x, y } = scatterPosition(bounds, inset, rng);
-    bursts.push({
+    planned.push({
       role: 'scatter',
       delayMs: scatterDelays[i],
       x,
@@ -471,7 +654,7 @@ export function planMiniBossDeathSweep(
   );
   for (let i = 0; i < MINI_BOSS_SWEEP_ANCHORED_COUNT; i += 1) {
     const { x, y } = anchoredPosition(deathX, deathY, MINI_BOSS_SWEEP_ANCHOR_SPREAD_PX, rng);
-    bursts.push({
+    planned.push({
       role: 'anchored',
       delayMs: anchoredDelays[i],
       x,
@@ -500,7 +683,7 @@ export function planMiniBossDeathSweep(
       MINI_BOSS_SWEEP_FINALE_SPREAD_PX,
       rng,
     );
-    bursts.push({
+    planned.push({
       role: 'finale',
       delayMs: finaleDelays[i],
       x,
@@ -513,7 +696,9 @@ export function planMiniBossDeathSweep(
     });
   }
 
-  const completionDelayMs = bursts.reduce(
+  const bursts = applySweepAudio(planned, seed);
+
+  const completionDelayMs = planned.reduce(
     (latest, burst) => Math.max(latest, burst.delayMs + burst.lifespanMs),
     0,
   );
@@ -528,50 +713,86 @@ export function planMiniBossDeathSweep(
   };
 }
 
-// ── Thin Phaser executor ──────────────────────────────────────────
+// ── Planner: per-burst audio decision ─────────────────────────────
 
 /**
- * Default per-burst SFX routing (producer audit: "explosions with no SFX").
+ * The per-role thinning stride (how many bursts of a role share one voice).
  *
- * Swept-enemy, scatter and anchored bursts reuse the shared enemy
- * destruction cue; the finale pairs use the heavy boss-destruction boom, so
- * the mini-boss's own beat is the loudest part of the display. Every cue is
- * scheduled at the burst's `delayMs` — an explicit delay is honoured verbatim
- * by the audio layer (never snapped to the beat grid) — and trimmed to its
- * role's mix level so a 60-burst cascade stays inside the mix. A safe no-op
- * without an `AudioContext` (headless tests), like every cue.
+ * `1` voices every burst of that role; `2` voices one in every two. Exported
+ * as a table so the rule is one declarative lookup rather than a switch that
+ * can drift from the tunables.
  */
-export function playMiniBossSweepBurstSound(
-  role: MiniBossSweepBurst['role'],
-  delayMs: number,
-): void {
-  const delay = Math.max(0, delayMs) / 1000;
-  switch (role) {
-    case 'finale':
-      playBossDestructionSound({
-        delay,
-        volume: MINI_BOSS_SWEEP_FINALE_SOUND_VOLUME,
-      });
-      return;
-    case 'anchored':
-      playDestructionSound({
-        delay,
-        volume: MINI_BOSS_SWEEP_ANCHORED_SOUND_VOLUME,
-      });
-      return;
-    case 'scatter':
-      playDestructionSound({
-        delay,
-        volume: MINI_BOSS_SWEEP_SCATTER_SOUND_VOLUME,
-      });
-      return;
-    default:
-      playDestructionSound({
-        delay,
-        volume: MINI_BOSS_SWEEP_ENEMY_SOUND_VOLUME,
-      });
-  }
+const MINI_BOSS_SWEEP_SFX_EVERY_N: Readonly<
+  Record<MiniBossSweepBurst['role'], number>
+> = {
+  enemy: MINI_BOSS_SWEEP_SFX_ENEMY_EVERY_N,
+  scatter: MINI_BOSS_SWEEP_SFX_SCATTER_EVERY_N,
+  anchored: MINI_BOSS_SWEEP_SFX_ANCHORED_EVERY_N,
+  finale: MINI_BOSS_SWEEP_SFX_FINALE_EVERY_N,
+};
+
+/** The per-role mix trim table (same shape as the thinning table). */
+const MINI_BOSS_SWEEP_SFX_VOLUME: Readonly<
+  Record<MiniBossSweepBurst['role'], number>
+> = {
+  enemy: MINI_BOSS_SWEEP_SFX_ENEMY_VOLUME,
+  scatter: MINI_BOSS_SWEEP_SFX_SCATTER_VOLUME,
+  anchored: MINI_BOSS_SWEEP_SFX_ANCHORED_VOLUME,
+  finale: MINI_BOSS_SWEEP_SFX_FINALE_VOLUME,
+};
+
+/**
+ * Attaches the audio decision to every planned burst (pure, deterministic).
+ *
+ * Per burst, from its `role` and its **intra-role index**:
+ *
+ * - `cue` — {@link MINI_BOSS_SWEEP_SFX_FINALE_CUE} for `finale`, otherwise
+ *   {@link MINI_BOSS_SWEEP_SFX_DESTRUCTION_CUE} (reuse-only palette, Q1 = a).
+ * - `variantPick` — a run-seeded draw in `[0, 1)` taken from a stream salted
+ *   off the run seed ({@link MINI_BOSS_SWEEP_SFX_SEED_SALT}), so the same seed
+ *   replays the same baked variant and placement is untouched (AC5).
+ * - `volume` — the role's mix trim.
+ * - `kept` — the per-role thinning rule: burst `i` of a role is voiced when
+ *   `i % everyN === 0`. This is the **only** reason a planned burst is silent
+ *   (AC1), and `finale` has stride `1`, so the climax is never thinned (AC2).
+ *
+ * The stride is applied to the burst's **own role counter**, not its index in
+ * the plan, so dropping voices never shifts which bursts of another role are
+ * voiced.
+ */
+function applySweepAudio(
+  planned: readonly Omit<MiniBossSweepBurst, 'audio'>[],
+  seed: number,
+): MiniBossSweepBurst[] {
+  const sfxRng = createRng((seed ^ MINI_BOSS_SWEEP_SFX_SEED_SALT) >>> 0);
+  const roleIndex: Record<MiniBossSweepBurst['role'], number> = {
+    enemy: 0,
+    scatter: 0,
+    anchored: 0,
+    finale: 0,
+  };
+
+  return planned.map((burst) => {
+    const index = roleIndex[burst.role];
+    roleIndex[burst.role] = index + 1;
+    const everyN = Math.max(1, Math.floor(MINI_BOSS_SWEEP_SFX_EVERY_N[burst.role]));
+    const cue =
+      burst.role === 'finale'
+        ? MINI_BOSS_SWEEP_SFX_FINALE_CUE
+        : MINI_BOSS_SWEEP_SFX_DESTRUCTION_CUE;
+    return {
+      ...burst,
+      audio: {
+        cue,
+        variantPick: sfxRng(),
+        volume: MINI_BOSS_SWEEP_SFX_VOLUME[burst.role],
+        kept: index % everyN === 0,
+      },
+    };
+  });
 }
+
+// ── Thin Phaser executor ──────────────────────────────────────────
 
 /**
  * Plays a planned sweep on the given scene: every burst is dispatched through
@@ -580,10 +801,32 @@ export function playMiniBossSweepBurstSound(
  * once — only after every burst has finished animating, never on the spawn
  * frame and never on an explicit `destroy()` teardown (parent AC3).
  *
- * Every burst also schedules its matching explosion cue (unless
- * `soundEnabled` is `false`, or a custom `playSound` is supplied), so the
- * cascade is never silent; the cue is fire-and-forget and never affects
- * completion ordering.
+ * The **audio** for the cascade is dispatched from this one seam too (never
+ * from a scene), so `PlayScene` and `GymMiniBoss` are identical in what the
+ * sweep sounds like (AC4): one cue per burst the thinning rule **kept**,
+ * scheduled at that burst's own `delayMs` so the audio lands with its visual
+ * (AC1 / Q3 = a).
+ *
+ * Each burst also appears **exactly when it animates**, never before: the
+ * renderer (`spawnExplosionParticles`) keeps a delayed burst's display hidden
+ * until its tween starts (a sweep scheduled up front must not "show then
+ * animate" — producer review AH-0MVVEI7FD004TR2M). The first enemy burst
+ * (`delayMs` 0) is the defeat-frame flash; every later burst becomes visible
+ * at its own `delayMs`, in the same frame its cue plays.
+ *
+ * The mini-boss's **own body** cue (`playBossDestructionSound()`) is *not*
+ * dispatched here: it belongs to the entity's shared death seam, which already
+ * plays it exactly once on the killing blow (`Boss.takeDamage` in the game and
+ * the gym's DAMAGE control, `Boss.playDestructionAudio()` for the gym's
+ * EXPLODE). Re-dispatching it from the sweep would double the boom on every
+ * kill, which "exactly once" forbids — so the sweep deliberately stays out of
+ * it.
+ *
+ * Every dispatch happens synchronously on the spawn frame — the audio layer
+ * holds the schedule — so no cue can fire after the display ends, and the
+ * dispatch is fire-and-forget: it never affects completion ordering, and a
+ * throwing player seam is swallowed so `onComplete` still fires exactly once
+ * (AC9). `soundEnabled: false` dispatches nothing at all (AC5).
  *
  * Each burst spawn uses a deterministic per-burst seed derived from the
  * planner's run seed, so the particles themselves are reproducible for a
@@ -607,8 +850,21 @@ export function spawnMiniBossDeathSweep(
 ): MiniBossDeathSweepHandle {
   const plan = planMiniBossDeathSweep(input);
   const explosions: ExplosionHandle[] = [];
-  const soundEnabled = options.soundEnabled ?? true;
-  const playSound = options.playSound ?? playMiniBossSweepBurstSound;
+  const soundEnabled = options.soundEnabled ?? MINI_BOSS_SWEEP_SFX_ENABLED;
+  const playSound = options.playSound ?? MINI_BOSS_SWEEP_DEFAULT_SOUND_PLAYER;
+  /**
+   * Dispatches one cue, swallowing any failure from the player seam: the
+   * display is cosmetic and must never be broken — nor have its `onComplete`
+   * delayed — by audio (AC9).
+   */
+  const dispatchSound = (request: MiniBossSweepSoundRequest): void => {
+    if (!soundEnabled) return;
+    try {
+      playSound(request);
+    } catch {
+      // Audio is best-effort: a broken audio layer must never break the sweep.
+    }
+  };
   let finished = 0;
   let destroyed = false;
   let done = false;
@@ -657,10 +913,19 @@ export function spawnMiniBossDeathSweep(
       finished += 1;
     }
 
-    // Every burst also schedules its matching explosion cue, so the display
-    // is never silent (producer audit). Fire-and-forget: the cue is handed to
-    // the audio layer at the burst's own delay and never affects completion.
-    if (soundEnabled) playSound(burst.role, burst.delayMs, i);
+    // Every kept burst schedules its matching explosion cue at its own delay,
+    // so audio lands with the burst it belongs to (AC1). Fire-and-forget: the
+    // cue never affects completion, and a dropped burst (thinning rule) never
+    // produces one.
+    if (burst.audio.kept) {
+      dispatchSound({
+        role: burst.role,
+        cue: burst.audio.cue,
+        delayMs: burst.delayMs,
+        volume: burst.audio.volume,
+        variantPick: burst.audio.variantPick,
+      });
+    }
   }
 
   // Completion watchdog: an explicit lifespan + stagger timer, never a frame

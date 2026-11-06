@@ -62,14 +62,14 @@
  *   shared {@link EffectsRegistry.tick} recharge clock
  *   (AH-0MV82I8IL0012RXY). After expiry it re-arms only once danger has
  *   cleared and a short cooldown has elapsed (Q2/Q3).
- * - **Teleport** — a recharging FIFO pool (AH-0MV82I7TX0009JMT): the shared
- *   automatic defence feed spends one FIFO use when Teleport is selected
- *   (AH-0MUZE4AIP009HZWC) and grants Phase Shift for
- *   `teleportPhaseDuration` at the landing spot without consuming an
- *   auto-activation charge (Q6). A spent stack returns through the shared
- *   {@link EffectsRegistry.tick} recharge clock (AH-0MV82I8IL0012RXY).
- *   Safe-spot resolution is the scene's responsibility; this module tracks
- *   only the stored count.
+ * - **Teleport** — a **single-use** ability with one level-derived recharge
+ *   timer (parent AH-0MVY096RT006QMF4): the shared automatic defence feed
+ *   consumes the ready warp when Teleport is selected (AH-0MUZE4AIP009HZWC)
+ *   and grants Phase Shift for `teleportPhaseDuration` at the landing spot
+ *   without consuming an auto-activation charge (Q6). Spending it starts the
+ *   one timer, which the shared {@link EffectsRegistry.tick} clock counts
+ *   down; there is no stored-use count. Safe-spot resolution is the scene's
+ *   responsibility; this module tracks only the readiness state.
  *
  * ## Shared consumable charge pool (parent AH-0MVTQMREN009DSFW)
  *
@@ -98,6 +98,7 @@
 
 import {
   PowerUpId,
+  getPowerUpById,
 } from './types';
 import {
   MAGNET_ATTRACTION_SPEED,
@@ -109,7 +110,6 @@ import {
 } from '../core/constants';
 import {
   POWER_UP_LIVES_START,
-  POWER_UP_CHARGE_CAP,
   PowerUpLevelStore,
   isConsumablePowerUpId,
   resolvePowerUpAtLevel,
@@ -117,6 +117,10 @@ import {
   type PowerUpLevelStats,
 } from './powerUpLevels';
 import type { AoEDescriptor, WeaponId } from '../utils/weapons';
+import {
+  resolveCountdownSweep,
+  type CountdownProgress,
+} from '../ui/hudCountdown';
 
 // Re-export the magnet tuning values for convenience.
 export {
@@ -186,10 +190,18 @@ export interface ActiveEffect {
   /** Remaining seconds (timed types). */
   remaining?: number;
   /**
-   * Stack count (stackable types, e.g. Magnet magnet, Teleport teleport) or, for the
-   * Shield shield, the remaining absorptions before the bubble pops.
+   * Stack count (stackable types, e.g. the Magnet magnet) or, for the
+   * Shield shield, the remaining absorptions before the bubble pops. A
+   * **single-use** kind (Teleport) carries no stack count — it reports
+   * {@link recharge} instead (parent AH-0MVY096RT006QMF4).
    */
   stacks?: number;
+  /**
+   * Seconds until a **single-use** ability is ready again (Teleport), or
+   * absent when it is ready. A single-use kind has no stack count, so this
+   * countdown is the whole rendering state (parent AH-0MVY096RT006QMF4).
+   */
+  recharge?: number;
   /**
    * True when the effect is permanently owned for the run and has no timed
    * window (e.g. a hold-full Bomb, or the Phase Shift ownership marker).
@@ -241,53 +253,59 @@ export type AutoDefenceChoice = 'phase_shift' | 'teleport';
  *
  * - `'phase_shift'` — the registry activated Phase Shift itself.
  * - `'teleport'` — Teleport was selected; the scene must perform the warp
- *   through its shared `triggerTeleport` path (which consumes one FIFO
- *   stack and grants Phase Shift on arrival).
+ *   through its shared `triggerTeleport` path (which spends the single ready
+ *   warp and grants Phase Shift on arrival).
  * - `null` — nothing should fire this frame.
  */
 export type DangerDecision = AutoDefenceChoice | null;
 
 /**
- * Picks the defensive ability to spend from the available stocks, using the
- * producer's charge-count rule (AH-0MUZE4AIP009HZWC, AC2):
+ * Picks the defensive ability to spend from the two readiness flags
+ * (AH-0MVY096RT006QMF4 AC7 / AH-0MW231NAR008K9IS AC1):
  *
  * - Neither available → `null`.
  * - Only one available → that ability.
- * - Both available → the ability with the **greater** available count.
- * - Equal finite counts → a uniform 50/50 pick driven by `rng`.
+ * - Both available → a uniform 50/50 pick driven by `rng`.
  *
- * Both pools are **finite**: Phase Shift and Teleport are recharging pools
- * capped at {@link POWER_UP_CHARGE_CAP} (3) in the level store, an empty
- * pool contributes zero available count, and there is no unbounded
- * /permanent-Infinity branch — the permanent Phase Shift reward is an
- * ownership flag, not an unlimited supply, so it never outranks a stored
- * Teleport on ownership alone (AH-0MV82I8IL0012RXY AC2).
+ * Availability is decided by readiness, never by a stock count: Phase Shift is
+ * available while it holds **at least one** auto-activation charge, and
+ * Teleport is available while its single escape is **ready** (a boolean —
+ * Teleport has no stored count any more, parent AH-0MVY096RT006QMF4). The
+ * greater-count rule that used to rank the two was retired because Teleport
+ * has no count to compare: once it is ready the two escapes are equally
+ * valuable, and a levelled Phase Shift pool must not silently starve Teleport
+ * (producer answer Q3 = C). The rng is consulted **only** in the
+ * both-available case, so single-ability and neither-available frames stay
+ * deterministic.
+ *
+ * Phase Shift contributes its finite charge count only as a readiness test.
+ * There is no unbounded /permanent-Infinity branch — the permanent Phase Shift
+ * reward is an ownership flag, not an unlimited supply (AH-0MV82I8IL0012RXY
+ * AC2).
  *
  * Pure and engine-agnostic so the game and every gym share one rule and the
- * tie-break is deterministically testable via an injectable `rng`.
+ * 50/50 split is deterministically testable via an injectable `rng`.
  *
- * @param phaseCharges — stored Phase Shift auto-activation charges.
- * @param teleportStacks — stored Teleport FIFO stacks.
- * @param rng — random source in `[0, 1)`; only consulted for an exact tie
- *   between two finite counts. Injectable/seeded for deterministic tests.
+ * @param phaseCharges — available Phase Shift auto-activation charges; any
+ *   value `> 0` means available.
+ * @param teleportReady — `true` when the single ready Teleport is available,
+ *   `false` while it recharges or is not held (a single-use kind banks no
+ *   charge count — parent AH-0MVY096RT006QMF4).
+ * @param rng — random source in `[0, 1)`; consulted only when both abilities
+ *   are available. Injectable/seeded for deterministic tests.
  * @returns the ability to spend, or `null` when none is available.
  */
 export function selectAutoDefence(
   phaseCharges: number,
-  teleportStacks: number,
+  teleportReady: boolean,
   rng: () => number = Math.random,
 ): AutoDefenceChoice | null {
-  const phaseCount = Math.max(0, phaseCharges);
-  const teleportCount = Math.max(0, teleportStacks);
-  const phaseAvailable = phaseCount > 0;
-  const teleportAvailable = teleportCount > 0;
+  const phaseReady = Math.max(0, phaseCharges) > 0;
 
-  if (!phaseAvailable && !teleportAvailable) return null;
-  if (phaseAvailable && !teleportAvailable) return 'phase_shift';
-  if (teleportAvailable && !phaseAvailable) return 'teleport';
-  if (phaseCount > teleportCount) return 'phase_shift';
-  if (teleportCount > phaseCount) return 'teleport';
-  // Both finite and equal — uniform 50/50 tie-break.
+  if (!phaseReady && !teleportReady) return null;
+  if (phaseReady && !teleportReady) return 'phase_shift';
+  if (teleportReady && !phaseReady) return 'teleport';
+  // Both ready — uniform 50/50, independent of the Phase Shift charge count.
   return rng() < 0.5 ? 'phase_shift' : 'teleport';
 }
 
@@ -573,6 +591,9 @@ export class EffectsRegistry {
    */
   consumableRechargeRemaining(id: PowerUpId): number | undefined {
     if (!isConsumablePowerUpId(id)) return undefined;
+    // A single-use kind has no pool and no `next charge`: its countdown is the
+    // readiness clock, read through {@link teleportRechargeRemaining}.
+    if (getPowerUpById(id).singleUse === true) return undefined;
     const cap = this._levelStore.consumableChargeCap(id);
     if (cap <= 0) return undefined;
     if (this._levelStore.consumableCharges(id) >= cap) return undefined;
@@ -594,6 +615,35 @@ export class EffectsRegistry {
    */
   tryConsumeConsumableCharge(id: PowerUpId): boolean {
     return this._levelStore.consumeConsumableCharge(id);
+  }
+
+  /**
+   * Progress of the **soonest-returning** in-flight recharge of the pooled
+   * consumable `id`, or `null` when nothing is owed — the registry half of the
+   * HUD countdown ring (parent AH-0MVZ8YQQV006Q09W AC1/AC2).
+   *
+   * A thin projection of `PowerUpLevelStore.consumableRechargeProgress`: it
+   * reports the same timer {@link consumableRechargeRemaining} reports (so the
+   * ring and the `next in Ns` label can never disagree) with the sweep already
+   * direction-corrected by the shared seam (`arriving`: the ring fills as the
+   * wait elapses — `sweep = 1 − remaining / total`, the shared seam's arriving
+   * conversion of the row's own `remaining / total` ratio). `null` covers
+   * every "no countdown" case: the pool is full,
+   * nothing is recharging, `id` is not a pooled consumable, or `id` is the
+   * single-use kind whose readiness clock is {@link teleportRechargeProgress}.
+   */
+  consumableRechargeProgress(id: PowerUpId): CountdownProgress | null {
+    const progress = this._levelStore.consumableRechargeProgress(id);
+    if (!progress) return null;
+    return {
+      sweep: resolveCountdownSweep({
+        remaining: progress.remaining,
+        total: progress.total,
+        mode: 'arriving',
+      }),
+      total: progress.total,
+      remaining: progress.remaining,
+    };
   }
 
   /**
@@ -628,7 +678,8 @@ export class EffectsRegistry {
    * - phase_shift: stores the level-resolved `phaseCharges` (or marks the
    *   permanent reward); the phase itself is applied later by the shared
    *   combat core via `updateDanger`.
-   * - teleport: the store grants the level-resolved stored teleport uses.
+   * - teleport: the store readies the single warp (no stored count) — a
+   *   pickup or hold-full grant resets its one recharge timer to 0.
    * - extra_life: the store grants the level-resolved lives, clamped to the cap.
    * - magnet/mineral_scoop: a field pickup (no flag) starts the timed
    *   refresh-only attraction; the hold-full reward adds a permanent stack via
@@ -902,8 +953,9 @@ export class EffectsRegistry {
 
   /**
    * Advances timers by `dt` seconds: the run-scoped recharge clock (a spent
-   * Phase Shift/Teleport charge returns to its finite pool when its timer
-   * elapses) and the timed effect/weapon windows, removing expired effects
+   * Phase Shift charge returns to its finite pool and a spent single-use
+   * Teleport warp re-readies when its timer elapses) and the timed
+   * effect/weapon windows, removing expired effects
    * and weapons. Permanent effects (granted by the hold-full choice) never
    * expire, but an active temporary field-pickup window on top of one still
    * expires and clears the store's temporary level (AC1/AC2).
@@ -1535,6 +1587,33 @@ export class EffectsRegistry {
   }
 
   /**
+   * Progress of the permanent Orbital Strike's next-bolt cadence, or `null`
+   * when the cadence does not apply — the registry half of the HUD countdown
+   * ring for the fourth countdown source (parent AH-0MVZ8YQQV006Q09W AC1/AC2).
+   *
+   * Derived from the registry's own clock ({@link strikeNextBoltSeconds}) and
+   * the same level-resolved interval the timer resets to
+   * ({@link strikeInterval}) — never a second timer. The sweep is `arriving`:
+   * `1 − remaining / total` — empty the instant a bolt fires, complete when
+   * the next bolt is due — so the ring and the `next in Ns` label agree.
+   * `null` while no
+   * permanent strike is armed, while a bolt is latched/landing (the timer is
+   * frozen, see {@link strikeNextBoltSeconds}), or when the interval is not a
+   * finite positive number.
+   */
+  strikeProgress(): CountdownProgress | null {
+    const remaining = this.strikeNextBoltSeconds();
+    const total = this.strikeInterval();
+    if (remaining === undefined) return null;
+    if (!Number.isFinite(total) || total <= 0) return null;
+    return {
+      sweep: resolveCountdownSweep({ remaining, total, mode: 'arriving' }),
+      total,
+      remaining,
+    };
+  }
+
+  /**
    * Activates Phase Shift (upgrade-level duration for Teleport arrivals) —
    * e.g. on Teleport teleport arrival. Refreshes if already active — never
    * additive. This is the direct, charge-free activation path; it does not
@@ -1562,10 +1641,11 @@ export class EffectsRegistry {
    * When `inDanger` is true, the player is not already phased, danger has
    * cleared since the last activation and the shared re-arm cooldown has
    * elapsed, this selects which defensive ability to spend via
-   * {@link selectAutoDefence} (greater finite pool count wins; an exact tie
-   * is a seeded 50/50) and, for Phase Shift, activates the level-resolved
-   * `phaseDuration` and consumes one charge from the **finite** pool (the
-   * permanent reward is an ownership flag — never an unlimited supply).
+   * {@link selectAutoDefence} (Phase Shift available above zero charges,
+   * Teleport available while ready — a uniform 50/50 whenever both are) and,
+   * for Phase Shift, activates the level-resolved `phaseDuration` and consumes
+   * one charge from the **finite** pool (the permanent reward is an ownership
+   * flag — never an unlimited supply).
    * Teleport is **not** consumed here — the registry has no player or warp —
    * so the scene performs the warp on the returned decision. Either way the
    * danger episode is latched so at most one ability fires per episode
@@ -1591,7 +1671,7 @@ export class EffectsRegistry {
     const store = this._levelStore;
     const choice = selectAutoDefence(
       store.phaseCharges(),
-      store.teleportStacks(),
+      store.hasTeleport(),
       this._rng,
     );
     if (choice === null) return null;
@@ -1627,9 +1707,58 @@ export class EffectsRegistry {
     return this._levelStore.isPhasePermanent();
   }
 
-  /** Stored teleport uses (Teleport). */
-  teleportStacks(): number {
-    return this._levelStore.teleportStacks();
+  /**
+   * Whether the single ready Teleport is available (held and not recharging).
+   * The whole Teleport state is a readiness flag plus a countdown — there is
+   * no stored-use count anywhere (parent AH-0MVY096RT006QMF4 AC1).
+   */
+  hasTeleport(): boolean {
+    return this._levelStore.hasTeleport();
+  }
+
+  /** Whether a spent Teleport is still counting down (unavailable until 0). */
+  isTeleportRecharging(): boolean {
+    return this._levelStore.isTeleportRecharging();
+  }
+
+  /**
+   * Whether the held Teleport is ready to fire — the explicit HUD-facing alias
+   * of {@link hasTeleport} (parent AH-0MVY096RT006QMF4).
+   */
+  isTeleportReady(): boolean {
+    return this._levelStore.hasTeleport();
+  }
+
+  /**
+   * Seconds until the held Teleport is ready — 0 when it is ready or not held
+   * (parent AC4).
+   */
+  teleportRechargeRemaining(): number {
+    return this._levelStore.teleportRechargeRemaining();
+  }
+
+  /**
+   * Progress of the single-use Teleport's readiness clock, or `null` when it
+   * is ready (or not held) — the registry half of the HUD countdown ring for
+   * this `arriving` countdown (parent AH-0MVZ8YQQV006Q09W AC1/AC3).
+   *
+   * The span is the level-derived {@link teleportRechargeTime} the timer was
+   * started from, and `remaining` is the very clock
+   * {@link teleportRechargeRemaining} reports, so the ring fills exactly as the
+   * row's `next in Ns` label counts down (`sweep = 1 − remaining / total`).
+   * `null` while nothing is owed, so a
+   * ready Teleport row (the `(ready)` label) draws no ring.
+   */
+  teleportRechargeProgress(): CountdownProgress | null {
+    const remaining = this.teleportRechargeRemaining();
+    const total = this.teleportRechargeTime();
+    if (remaining <= 0) return null;
+    if (!Number.isFinite(total) || total <= 0) return null;
+    return {
+      sweep: resolveCountdownSweep({ remaining, total, mode: 'arriving' }),
+      total,
+      remaining,
+    };
   }
 
   /**
@@ -1644,23 +1773,18 @@ export class EffectsRegistry {
 
   /**
    * Teleport recharge time in seconds at the current level — the HUD-facing
-   * view of the recharge clock a spent stack is counting down (15 s base →
-   * 5 s cap, level-derived via `teleportRechargeRate`;
-   * AH-0MV82I8IL0012RXY AC4).
+   * view of the single readiness clock a spent warp is counting down (60 s
+   * base → 20 s cap, level-derived via `teleportRechargeRate`; parent
+   * AH-0MVY096RT006QMF4).
    */
   teleportRechargeTime(): number {
     return this._levelStore.teleportRechargeTime();
   }
 
-  /** Whether at least one teleport use is stored. */
-  hasTeleport(): boolean {
-    return this._levelStore.teleportStacks() > 0;
-  }
-
   /**
-   * Consumes one stored teleport use (FIFO — one stack) and grants
-   * Phase Shift at the landing spot. Returns true if consumed, false
-   * if none were stored.
+   * Spends the single ready Teleport warp (starting its one recharge timer)
+   * and grants Phase Shift at the landing spot. Returns true when the warp
+   * was available, false while it is recharging.
    */
   consumeTeleport(): boolean {
     if (!this._levelStore.consumeTeleport()) return false;
@@ -1799,6 +1923,36 @@ export class EffectsRegistry {
     return Math.max(0, effect.remaining);
   }
 
+  /**
+   * Progress of the power-up's live **temporary window**, or `null` when no
+   * window is running — the registry half of the HUD countdown ring for the
+   * `expiring` sources (parent AH-0MVZ8YQQV006Q09W AC1/AC3).
+   *
+   * Reports exactly the timer {@link powerUpTemporaryRemaining} reports, plus
+   * the window's own captured `duration` (never a hard-coded TTL) so the sweep
+   * is derivable. The sweep is `expiring`: `remaining / total` — complete at
+   * pickup (`1`), empty at expiry (`0`). The permanent-base-with-no-window
+   * case (the `∞` row) returns
+   * `null`, mirroring {@link powerUpTemporaryRemaining}.
+   *
+   * A weapon field-pickup window needs no projection: `activeWeapons()` already
+   * carries `{ duration, remaining }` and the HUD resolves its sweep from the
+   * shared seam directly.
+   */
+  powerUpTemporaryProgress(id: PowerUpId): CountdownProgress | null {
+    const effect = this._timed.get(id);
+    if (!effect) return null;
+    if (effect.permanent && !effect.tempWindow) return null;
+    const total = effect.duration;
+    if (!Number.isFinite(total) || total <= 0) return null;
+    const remaining = Math.max(0, effect.remaining);
+    return {
+      sweep: resolveCountdownSweep({ remaining, total, mode: 'expiring' }),
+      total,
+      remaining,
+    };
+  }
+
   /** Whether a specific timed weapon is currently active. */
   hasWeapon(weaponId: WeaponId): boolean {
     return this._weapons.has(weaponId);
@@ -1860,9 +2014,10 @@ export class EffectsRegistry {
 
   /**
    * Snapshot of the active timed effects plus permanent stack/lives state —
-   * the aggregated model the standalone HUD renders from. Teleport teleport is
-   * included as a stack entry when any uses are stored. Weapons are
-   * exposed separately via `activeWeapons()`.
+   * the aggregated model the standalone HUD renders from. Teleport is
+   * included while it is held, as a readiness entry with **no** stack count
+   * (a running recharge is published as `recharge` seconds instead). Weapons
+   * are exposed separately via `activeWeapons()`.
    */
   activeEffects(): ActiveEffect[] {
     const result: ActiveEffect[] = [];
@@ -1958,12 +2113,18 @@ export class EffectsRegistry {
         permanent: true,
       });
     }
-    const teleportStacks = this._levelStore.teleportStacks();
-    if (teleportStacks > 0) {
+    // Teleport is **single-use** (parent AH-0MVY096RT006QMF4): its row is
+    // published while held and never carries a stack count — a running
+    // recharge is surfaced as the remaining seconds instead.
+    if (this._levelStore.isTeleportHeld()) {
+      const recharge = this.teleportRechargeRemaining();
       result.push({
         id: 'teleport' as PowerUpId,
         type: 'teleport',
-        stacks: teleportStacks,
+        ...(this._levelStore.isConsumableOwned('teleport')
+          ? { permanent: true }
+          : {}),
+        ...(recharge > 0 ? { recharge } : {}),
       });
     }
     // Phase Shift auto-activation charges (parent AH-0MUIYX1EE008FVS8): a
