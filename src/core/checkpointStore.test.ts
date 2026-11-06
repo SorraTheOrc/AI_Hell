@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   CHECKPOINT_STORAGE_KEY,
   CHECKPOINT_VERSION,
+  capCheckpointLoadout,
   clearCheckpoint,
   hasCheckpoint,
   loadCheckpoint,
@@ -17,6 +18,7 @@ import {
   type CheckpointStorage,
 } from './checkpointStore';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from './rules';
+import type { PowerUpId } from '../powerups/types';
 
 /** Minimal in-memory storage double. */
 function memoryStorage(): CheckpointStorage & { map: Map<string, string> } {
@@ -45,6 +47,20 @@ function checkpoint(overrides: Partial<Checkpoint> = {}): Checkpoint {
     ...overrides,
   };
 }
+
+/** A saved pool the round-trip tests reuse (see the seam block below). */
+const SAVED_POOLS = [
+  {
+    id: 'shield' as PowerUpId,
+    charges: 1,
+    rechargeTimers: [{ duration: 45, remaining: 12.5 }],
+  },
+  {
+    id: 'teleport' as PowerUpId,
+    charges: 0,
+    rechargeTimers: [{ duration: 60, remaining: 40 }],
+  },
+];
 
 describe('checkpointStore (AH-0MVCRBTNF000DK51)', () => {
   let storage: ReturnType<typeof memoryStorage>;
@@ -237,5 +253,156 @@ describe('checkpointStore (AH-0MVCRBTNF000DK51)', () => {
       expect(parsed).not.toBeNull();
       expect(parsed!.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
     }
+  });
+
+  // ── Consumable charge pools (AH-0MVY3IGRC00954UD) ─────────────────
+  //
+  // A checkpoint persists a consumable's charge pool and in-flight recharge
+  // timers as an optional additive `consumablePools` field (schema version is
+  // NOT bumped — the version gate rejects any payload stamped with another
+  // version and the field is missing from every legacy save, so it must stay
+  // optional).
+
+  it('AC1 — a checkpoint round-trips the saved consumable pools and timers', () => {
+    // The fixture is a coherent save: every pooled kind is also in the
+    // permanent power-up levels (owned consumables report level 1 there), so
+    // the save-side slot gate keeps their pools untouched.
+    const saved = checkpoint({
+      powerUpLevels: [
+        { id: 'shield', level: 1 },
+        { id: 'teleport', level: 1 },
+      ],
+      consumablePools: SAVED_POOLS,
+    });
+    expect(saveCheckpoint(saved, storage)).toBe(true);
+
+    const loaded = loadCheckpoint(storage);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.consumablePools).toEqual(SAVED_POOLS);
+  });
+
+  it('AC3 — a legacy payload without the field loads with an empty pool list', () => {
+    const raw = {
+      version: CHECKPOINT_VERSION,
+      level: 4,
+      wave: 1,
+      lives: 2,
+      score: 1234,
+      minerals: 3,
+      mineralHoldCapacity: 5,
+      weaponLevels: [],
+      powerUpLevels: [],
+      runSeed: 4242,
+      savedAt: '2026-10-20T00:00:00.000Z',
+    };
+    const loaded = parseCheckpoint(raw);
+    expect(loaded).not.toBeNull();
+    // The additive field is **absent** on a legacy payload — the restore
+    // path defaults it to an empty list, so the resume behaviour is exactly
+    // as before (AC3), and a legacy object still `toEqual`s a fixture that
+    // predates the field.
+    expect(loaded!.consumablePools).toBeUndefined();
+    // The schema version is unchanged — a legacy v3 payload still loads.
+    expect(loaded!.version).toBe(CHECKPOINT_VERSION);
+    expect(loadCheckpoint(storage)).toBeNull();
+    storage.setItem(CHECKPOINT_STORAGE_KEY, JSON.stringify(raw));
+    expect(loadCheckpoint(storage)).not.toBeNull();
+  });
+
+  it('AC5 — malformed pool entries are dropped or clamped, never thrown', () => {
+    const parsed = parseCheckpoint({
+      version: CHECKPOINT_VERSION,
+      level: 4,
+      wave: 1,
+      lives: 2,
+      score: 1234,
+      minerals: 3,
+      mineralHoldCapacity: 5,
+      weaponLevels: [],
+      powerUpLevels: [],
+      runSeed: 4242,
+      savedAt: '2026-10-20T00:00:00.000Z',
+      consumablePools: [
+        // Not an array at all → empty list.
+        null,
+        // Non-consumable / unknown ids are dropped.
+        { id: 'bomb', charges: 2, rechargeTimers: [] },
+        { id: 'not-a-kind', charges: 2, rechargeTimers: [] },
+        // Negative / non-finite / non-numeric charges are dropped.
+        { id: 'shield', charges: -1, rechargeTimers: [] },
+        { id: 'shield', charges: Number.NaN, rechargeTimers: [] },
+        { id: 'shield', charges: '2', rechargeTimers: [] },
+        // Non-finite timers are dropped; a non-array timer list is kept empty.
+        {
+          id: 'force_field',
+          charges: 1,
+          rechargeTimers: [
+            { duration: Number.NaN, remaining: 10 },
+            { duration: 45, remaining: Number.POSITIVE_INFINITY },
+            { duration: -5, remaining: 10 },
+            { duration: 45, remaining: -3 },
+            null,
+          ],
+        },
+        { id: 'thorns', charges: 1, rechargeTimers: 'nope' },
+        // The one valid entry survives intact.
+        { id: 'mystery_ufo', charges: 2, rechargeTimers: [{ duration: 30, remaining: 7 }] },
+      ],
+    });
+
+    expect(parsed).not.toBeNull();
+    // Entries with a valid id and charge count survive with their (possibly
+    // emptied by dropping bad timers) timer list — the malformed timers are
+    // dropped, never the whole row's charges.
+    expect(parsed!.consumablePools).toEqual([
+      { id: 'force_field', charges: 1, rechargeTimers: [] },
+      { id: 'thorns', charges: 1, rechargeTimers: [] },
+      { id: 'mystery_ufo', charges: 2, rechargeTimers: [{ duration: 30, remaining: 7 }] },
+    ]);
+  });
+
+  it('AC5 — the six-slot gate drops a gated-out kind\'s pool too', () => {
+    const overCap = checkpoint({
+      weaponLevels: [{ id: 'spread', level: 1 }],
+      powerUpLevels: [
+        { id: 'shield', level: 1 },
+        { id: 'bomb', level: 1 },
+        { id: 'speed_boost', level: 1 },
+        { id: 'phase_shift', level: 1 },
+        { id: 'magnet', level: 1 },
+        // A seventh counted kind: the gate must drop it and its pool.
+        { id: 'force_field', level: 1 },
+      ],
+      consumablePools: [
+        // A kind the gate keeps keeps its pool.
+        { id: 'phase_shift', charges: 1, rechargeTimers: [] },
+        // A kind the gate drops loses its pool too (never charges for an
+        // unowned kind on resume).
+        { id: 'force_field', charges: 3, rechargeTimers: [{ duration: 45, remaining: 9 }] },
+      ],
+    });
+
+    const bounded = capCheckpointLoadout(overCap);
+    expect(bounded.powerUpLevels.map((entry) => entry.id)).not.toContain(
+      'force_field',
+    );
+    expect(bounded.powerUpLevels.map((entry) => entry.id)).toContain(
+      'phase_shift',
+    );
+    expect(bounded.consumablePools).toEqual([
+      { id: 'phase_shift', charges: 1, rechargeTimers: [] },
+    ]);
+  });
+
+  it('AC5 — an absent consumablePools field survives the gate untouched', () => {
+    const legacy = checkpoint({ consumablePools: undefined });
+    expect(legacy.consumablePools).toBeUndefined();
+    const bounded = capCheckpointLoadout(legacy);
+    expect(bounded.consumablePools).toBeUndefined();
+    // An absent field really behaves like a legacy save: JSON.stringify drops
+    // the undefined key entirely, so the persisted payload has no pool field.
+    expect(JSON.parse(JSON.stringify(legacy))).not.toHaveProperty(
+      'consumablePools',
+    );
   });
 });

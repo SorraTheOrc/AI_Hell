@@ -17,15 +17,35 @@ import {
   DIVER_BULLET_COLOR,
   DIVER_BURST_COUNT,
   DIVER_HOLD_FORMATION_SECONDS,
-  DIVER_DIVE_DURATION,
   DIVER_DIVE_APEX_FRACTION,
+  DIVER_DIVE_SPEED,
   DIVER_FIRE_INTERVAL,
   DIVER_PAUSE_DURATION,
+  MIN_DIVE_DURATION,
   Diver,
   DiverState,
   DiverConfig,
   FormationOffset,
 } from './Diver';
+
+/**
+ * Expected dive duration (s) for a dive from a formation base to an aim,
+ * mirroring the entity's fixed-speed model via the production helpers:
+ * `max(arcLength / diveSpeed, MIN_DIVE_DURATION)` with the entity's own
+ * apex geometry (midpoint x, `GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION` y).
+ */
+function diveDurationForAim(
+  baseX: number,
+  baseY: number,
+  aimX: number,
+  aimY: number,
+  diveSpeed = DIVER_DIVE_SPEED,
+): number {
+  const apexX = (baseX + aimX) / 2;
+  const apexY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION;
+  const pathLength = Diver.computeDiveArcLength(baseX, baseY, apexX, apexY, aimX, aimY);
+  return Diver.diveDurationForPath(pathLength, diveSpeed);
+}
 
 /** Minimal scene that only constructs Diver entities (no scene logic needed). */
 class HarnessScene extends Phaser.Scene {
@@ -100,8 +120,8 @@ describe('Diver entity (E2 diver, GDD §4.1 — live aim tracking)', () => {
     expect(diver.aimTarget.x).toBe(aimB.x); // the new aim IS live for the entity
     expect(diver.aimTarget.y).toBe(aimB.y);
 
-    // Advance the dive part-way (t=0.25 → 0.5s of the 2s dive).
-    diver.applyFormationPosition(baseX, baseY, DIVER_DIVE_DURATION * 0.25, 26, 22);
+    // Advance the dive part-way (t=0.25 → 25% of the per-dive duration).
+    diver.applyFormationPosition(baseX, baseY, diveDurationForAim(baseX, baseY, aimA.x, aimA.y) * 0.25, 26, 22);
     expect(diver.behaviourState).toBe(DiverState.DIVING);
 
     // The in-flight dive still follows the dive-start snapshot (aim A),
@@ -481,8 +501,9 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
     for (let i = 0; i < holdTicks; i++) diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
     expect(diver.behaviourState).toBe(DiverState.DIVING);
 
-    // Advance to t=0.5 (half the 2s dive) and verify both x and y follow the bezier.
-    diver.applyFormationPosition(baseX, baseY, DIVER_DIVE_DURATION * 0.5, 26, 22);
+    // Advance to t=0.5 (half the per-dive duration) and verify both x and
+    // y follow the bezier.
+    diver.applyFormationPosition(baseX, baseY, diveDurationForAim(baseX, baseY, aim.x, aim.y) * 0.5, 26, 22);
     expect(diver.behaviourState).toBe(DiverState.DIVING);
     const apexY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION;
     const apexX = (baseX + aim.x) / 2;
@@ -506,7 +527,7 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
 
     const aimB = { x: 100, y: 100 };
     diver.setAimTarget(aimB.x, aimB.y);
-    diver.applyFormationPosition(baseX, baseY, DIVER_DIVE_DURATION * 0.25, 26, 22);
+    diver.applyFormationPosition(baseX, baseY, diveDurationForAim(baseX, baseY, aimA.x, aimA.y) * 0.25, 26, 22);
     const apexY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION;
     const apexXA = (baseX + aimA.x) / 2;
     const apexXB = (baseX + aimB.x) / 2;
@@ -565,7 +586,7 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
       expect(diver.behaviourState).toBe(DiverState.DIVING);
 
       // Advance the dive to completion (enters PAUSING).
-      const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.05);
+      const diveTicks = Math.ceil(diveDurationForAim(baseX, baseY, 700, 500) / 0.05);
       for (let i = 0; i < diveTicks; i++) {
         diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
       }
@@ -687,7 +708,7 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     expect(diver.behaviourState).toBe(DiverState.DIVING);
 
     // Advance the dive to completion — diver should enter PAUSING.
-    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    const diveTicks = Math.ceil(diveDurationForAim(baseX, baseY, GAME_WIDTH / 2, GAME_HEIGHT - 40) / 0.5);
     for (let i = 0; i < diveTicks; i++) {
       diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
     }
@@ -702,7 +723,7 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
 
     // Hold until dive starts, then advance dive to completion.
     advanceToState(diver, baseX, baseY, DiverState.DIVING);
-    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    const diveTicks = Math.ceil(diveDurationForAim(baseX, baseY, GAME_WIDTH / 2, GAME_HEIGHT - 40) / 0.5);
     for (let i = 0; i < diveTicks; i++) {
       diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
     }
@@ -739,7 +760,7 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     advanceToState(diver, baseX, baseY, DiverState.DIVING);
 
     // Advance dive to completion (enter PAUSING).
-    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    const diveTicks = Math.ceil(diveDurationForAim(baseX, baseY, GAME_WIDTH / 2, GAME_HEIGHT - 40) / 0.5);
     for (let i = 0; i < diveTicks; i++) {
       diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
     }
@@ -766,7 +787,7 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     advanceToState(diver, baseX, baseY, DiverState.DIVING);
 
     // Advance dive to completion.
-    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    const diveTicks = Math.ceil(diveDurationForAim(baseX, baseY, GAME_WIDTH / 2, GAME_HEIGHT - 40) / 0.5);
     for (let i = 0; i < diveTicks; i++) {
       diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
     }
@@ -802,7 +823,7 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     advanceToState(diver, baseX, baseY, DiverState.DIVING);
 
     // Advance dive to completion.
-    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    const diveTicks = Math.ceil(diveDurationForAim(baseX, baseY, GAME_WIDTH / 2, GAME_HEIGHT - 40) / 0.5);
     for (let i = 0; i < diveTicks; i++) {
       diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
     }
@@ -822,6 +843,192 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     expect(pausingTicks).toBeGreaterThanOrEqual(13);
     expect(pausingTicks).toBeLessThanOrEqual(18);
     expect(diver.behaviourState).toBe(DiverState.FORMATION);
+  });
+});
+
+describe('Diver — fixed-speed, distance-proportional dive (AH-0MW3MWRZ5003KVR3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeDiver(
+    x: number,
+    y: number,
+    config: Partial<DiverConfig> = {},
+  ): Diver {
+    const scene = booted!.scene;
+    return new Diver(scene, { x, y, formationOffset: { row: 0, col: 0 }, ...config });
+  }
+
+  /**
+   * Holds the diver until DIVING starts, then ticks the dive (dt per tick)
+   * until it completes (PAUSING). Returns the elapsed dive seconds — the
+   * dive-exclusive time ticks took, excluding the formation hold.
+   */
+  function secondsToDiveComplete(
+    diver: Diver,
+    baseX: number,
+    baseY: number,
+    dt = 0.05,
+  ): number {
+    let guard = 0;
+    while (diver.behaviourState !== DiverState.DIVING && guard++ < 200) {
+      diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    }
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    let ticks = 0;
+    while (diver.behaviourState === DiverState.DIVING && ticks < 500) {
+      diver.applyFormationPosition(baseX, baseY, dt, 26, 22);
+      ticks++;
+    }
+    expect(diver.behaviourState).toBe(DiverState.PAUSING);
+    return ticks * dt;
+  }
+
+  it('AC1 — dive duration is distance-proportional: a dive twice as long takes twice as long (no fixed 2 s)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 400;
+    const baseY = 300;
+
+    // Two dives from the same formation slot to different aims: a short arc
+    // (≈ 160 px) and a long arc (≈ 434 px) by the production arc-length
+    // approximation with the entity's own apex geometry.
+    const closeAim = { x: 430, y: 330 };
+    const farAim = { x: 700, y: 500 };
+    const closeLen = Diver.computeDiveArcLength(
+      baseX, baseY, (baseX + closeAim.x) / 2, GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION, closeAim.x, closeAim.y,
+    );
+    const farLen = Diver.computeDiveArcLength(
+      baseX, baseY, (baseX + farAim.x) / 2, GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION, farAim.x, farAim.y,
+    );
+    const closeDur = Diver.diveDurationForPath(closeLen, DIVER_DIVE_SPEED);
+    const farDur = Diver.diveDurationForPath(farLen, DIVER_DIVE_SPEED);
+    expect(closeLen).toBeLessThan(farLen);
+    expect(closeDur).toBeLessThan(farDur);
+    // Both are distance-proportional at a fixed speed: duration = length / speed.
+    expect(farDur / closeDur).toBeCloseTo(farLen / closeLen, 2);
+
+    // Behavioural: each dive actually completes in ≈ its expected duration
+    // (within one 0.05 s tick), and the ratio of observed times matches the
+    // ratio of path lengths within a tick-quantisation band.
+    const closeDiver = makeDiver(baseX, baseY);
+    closeDiver.setAimTarget(closeAim.x, closeAim.y);
+    const farDiver = makeDiver(baseX, baseY);
+    farDiver.setAimTarget(farAim.x, farAim.y);
+    const closeObserved = secondsToDiveComplete(closeDiver, baseX, baseY);
+    const farObserved = secondsToDiveComplete(farDiver, baseX, baseY);
+    expect(closeObserved).toBeGreaterThanOrEqual(closeDur);
+    expect(closeObserved).toBeLessThan(closeDur + 0.06);
+    expect(farObserved).toBeGreaterThanOrEqual(farDur);
+    expect(farObserved).toBeLessThan(farDur + 0.06);
+    expect(farObserved / closeObserved).toBeGreaterThan(
+      (farLen / closeLen) * 0.8,
+    );
+    expect(farObserved / closeObserved).toBeLessThan(
+      (farLen / closeLen) * 1.2,
+    );
+    // No dive uses the fixed 2 s duration.
+    expect(closeObserved).toBeLessThan(2);
+    expect(farObserved).toBeLessThan(2);
+  });
+
+  it('AC5/AC3 — at 320 px/s close/mid/full dives complete in ≈ arc/320, all well under the old 2 s', async () => {
+    booted = await bootScene([HarnessScene]);
+    // The parent's shipped-geometry samples: close ≈ 130 px → ≈ 0.41 s,
+    // mid ≈ 243 px → ≈ 0.76 s, full ≈ 399 px → ≈ 1.25 s. Reproduce arcs
+    // close to those lengths and check the observed completion matches
+    // length / 320 (within one tick) — the reported "slow when close" bug.
+    const cases = [
+      // start, aim, nominal arc and nominal duration (at 320 px/s)
+      { x: 200, y: 100, aimX: 200, aimY: 230, label: 'close', arc: 130, duration: 0.41 },
+      { x: 200, y: 200, aimX: 440, aimY: 180, label: 'mid', arc: 243, duration: 0.76 },
+      { x: 200, y: 120, aimX: 580, aimY: 240, label: 'full', arc: 399, duration: 1.25 },
+    ];
+    const observed: Record<string, number> = {};
+    for (const c of cases) {
+      const diver = makeDiver(c.x, c.y);
+      diver.setAimTarget(c.aimX, c.aimY);
+      const arc = Diver.computeDiveArcLength(
+        c.x, c.y, (c.x + c.aimX) / 2, GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION, c.aimX, c.aimY,
+      );
+      // The shipped apex geometry reproduces the parent's sample arcs, so
+      // the sample set keeps describing the real dive once it ships.
+      expect(arc).toBeGreaterThan(c.arc - 5);
+      expect(arc).toBeLessThan(c.arc + 5);
+      const expected = Diver.diveDurationForPath(arc, DIVER_DIVE_SPEED);
+      expect(expected).toBeGreaterThan(c.duration - 0.05);
+      expect(expected).toBeLessThan(c.duration + 0.05);
+      const measured = secondsToDiveComplete(diver, c.x, c.y);
+      observed[c.label] = measured;
+      expect(measured).toBeGreaterThanOrEqual(expected);
+      expect(measured).toBeLessThan(expected + 0.06);
+    }
+    // AC3 — the reported bug is gone: the close dive completes in well under
+    // 0.6 s (≈ 0.41 s at 320 px/s) …
+    expect(observed.close).toBeGreaterThan(0.35);
+    expect(observed.close).toBeLessThan(0.6);
+    // … while the full dive still completes in ≈ 1.25 s. Both are materially
+    // shorter than the old fixed 2 s duration.
+    expect(observed.full).toBeGreaterThan(1.2);
+    expect(observed.full).toBeLessThan(1.32);
+    expect(observed.close).toBeLessThan(2);
+    expect(observed.full).toBeLessThan(2);
+  });
+
+  it('AC3/AC4 — near-zero path length clamps to MIN_DIVE_DURATION (no instant/teleport dive)', async () => {
+    booted = await bootScene([HarnessScene]);
+    // A diver sitting exactly on its aim point travels a ~0-length path:
+    // the floor guarantees a ~0.15 s dive instead of an instant skip.
+    const baseX = 400;
+    const baseY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION; // on the apex line
+    const diver = makeDiver(baseX, baseY);
+    diver.setAimTarget(baseX, baseY);
+    const arc = Diver.computeDiveArcLength(
+      baseX, baseY, (baseX + baseX) / 2, GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION, baseX, baseY,
+    );
+    expect(MIN_DIVE_DURATION).toBe(0.15);
+    expect(Diver.diveDurationForPath(arc, DIVER_DIVE_SPEED)).toBe(MIN_DIVE_DURATION);
+    // Behavioural: it takes ≈ MIN_DIVE_DURATION of ticks (≥ 1 tick of 0.1 s,
+    // never 0 / a single-frame skip).
+    const observed = secondsToDiveComplete(diver, baseX, baseY, 0.05);
+    expect(observed).toBeGreaterThanOrEqual(MIN_DIVE_DURATION);
+    expect(observed).toBeLessThan(MIN_DIVE_DURATION + 0.06);
+  });
+
+  it('AC1/AC5 — diveSpeed config reaches the dive: configured speed halves the duration, absent defaults to 320', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 400;
+    const baseY = 300;
+    const aim = { x: 700, y: 500 };
+
+    const defaultDiver = makeDiver(baseX, baseY);
+    defaultDiver.setAimTarget(aim.x, aim.y);
+    const fastDiver = makeDiver(baseX, baseY, { diveSpeed: 640 });
+    fastDiver.setAimTarget(aim.x, aim.y);
+
+    // AC5 — the resolved speed is data-driven: the shipped 320 px/s code
+    // default applies when the config omits `diveSpeed`, and a configured
+    // value passes through to the entity unchanged.
+    expect(DIVER_DIVE_SPEED).toBe(320);
+    expect(defaultDiver.diveSpeed).toBe(DIVER_DIVE_SPEED);
+    expect(fastDiver.diveSpeed).toBe(640);
+
+    const arc = Diver.computeDiveArcLength(
+      baseX, baseY, (baseX + aim.x) / 2, GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION, aim.x, aim.y,
+    );
+    const defaultObserved = secondsToDiveComplete(defaultDiver, baseX, baseY);
+    const fastObserved = secondsToDiveComplete(fastDiver, baseX, baseY);
+    // 640 px/s is double the default → roughly half the dive time.
+    expect(fastObserved).toBeLessThan(defaultObserved * 0.7);
+    // And each observed time matches its own length/speed (within one tick).
+    expect(defaultObserved).toBeGreaterThanOrEqual(arc / DIVER_DIVE_SPEED);
+    expect(defaultObserved).toBeLessThan(arc / DIVER_DIVE_SPEED + 0.06);
+    expect(fastObserved).toBeGreaterThanOrEqual(arc / 640);
+    expect(fastObserved).toBeLessThan(arc / 640 + 0.06);
   });
 });
 
@@ -1020,15 +1227,15 @@ describe('Diver — spread-burst projectile identity (AH-0MV822D2U000LRFV)', () 
     const bullets = diver.tryFireSpreadBurst(1_000_000);
     expect(bullets).toHaveLength(DIVER_BURST_COUNT);
 
-    // The burst spawns its shard bullet Graphics **plus** one pale-yellow
-    // launch pop at the diver body — the enemy-side fire VFX for the whole
-    // volley (one pop per burst, not per shard — the burst is one fire
-    // event that already plays one fire cue).
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), so the only
+    // new Graphics is the one pale-yellow launch pop at the diver body — the
+    // enemy-side fire VFX for the whole volley (one pop per burst, not per
+    // shard — the burst is one fire event that already plays one fire cue).
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + DIVER_BURST_COUNT + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     for (const bullet of bullets) {
       // The identity shard carries its pale-yellow colour (the shared

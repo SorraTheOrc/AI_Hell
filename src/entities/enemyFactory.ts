@@ -194,7 +194,15 @@ export function createEnemyFromConfig(
     case 'harvester':
       return new Harvester(scene, { x, y, formationOffset: offset, ...opts });
     case 'diver':
-      return new Diver(scene, { x, y, formationOffset: offset, ...opts });
+      return new Diver(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+        // Fixed dive speed (px/s) — data-driven (AH-0MW0TY1AY003TDFC AC3);
+        // absent falls back to the code default at the dive site.
+        diveSpeed: config.diveSpeed,
+      });
     case 'tank':
       return new Tank(scene, { x, y, formationOffset: offset, ...opts });
     case 'phaser':

@@ -444,11 +444,17 @@ describe('advance cues (parent AC8)', () => {
 // ── 3. Volume scaling + master delegation ───────────────────────────
 
 describe('volume and mute', () => {
-  it('playPlayerDestructionSound scales its playback volume', () => {
+  it('playPlayerDestructionSound scales its playback volume by the family trim', () => {
     effects.playPlayerDestructionSound(0.3);
-    expect(recording.plays[0].volume).toBe(0.3);
+    expect(recording.plays[0].volume).toBeCloseTo(
+      0.3 * effects.EXPLOSION_VOLUME_SCALE,
+      10,
+    );
     effects.playPlayerDestructionSound();
-    expect(recording.plays[1].volume).toBe(1);
+    expect(recording.plays[1].volume).toBeCloseTo(
+      effects.EXPLOSION_VOLUME_SCALE,
+      10,
+    );
   });
 
   it('playVolumeFeedback forwards the selected volume', () => {
@@ -467,42 +473,48 @@ describe('volume and mute', () => {
 // ── 3a. Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3) ──────
 
 describe('Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3)', () => {
+  // The per-sequence 0.5 precedent composed with the family trim
+  // (AH-0MVZVMZOQ00076QF) — effective gain 0.30.
+  const composed =
+    effects.TANK_SCOUT_FIRE_VOLUME_SCALE *
+    effects.ENEMY_WEAPON_FIRE_VOLUME_SCALE;
+
   it('TANK_SCOUT_FIRE_VOLUME_SCALE is a single named 0.5 tunable', () => {
     expect(effects.TANK_SCOUT_FIRE_VOLUME_SCALE).toBe(0.5);
   });
 
-  it('playTankAdvanceCue plays the tank advance whine at half volume', () => {
+  it('playTankAdvanceCue plays the tank advance whine at the composed trim', () => {
     effects.playTankAdvanceCue();
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/aihell-tank-advance.32140.wav');
-    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    expect(recording.plays[0].volume).toBeCloseTo(composed, 10);
     // The no-gap advance cue is not delayed.
     expect(recording.plays[0].delay).toBe(0);
   });
 
-  it('playTankFireSound plays the baked tank-fire asset at half volume', () => {
+  it('playTankFireSound plays the baked tank-fire asset at the composed trim', () => {
     effects.playTankFireSound();
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/aihell-tank-fire.32141.wav');
-    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    expect(recording.plays[0].volume).toBeCloseTo(composed, 10);
     // The advance-cue no-gap delay is preserved.
     expect(recording.plays[0].delay).toBe(effects.TANK_ADVANCE_CUE_DURATION);
   });
 
-  it('playScoutAdvanceCue plays the scout advance blip at half volume', () => {
+  it('playScoutAdvanceCue plays the scout advance blip at the composed trim', () => {
     effects.playScoutAdvanceCue();
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/aihell-scout-advance.32180.wav');
-    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    expect(recording.plays[0].volume).toBeCloseTo(composed, 10);
     // The no-gap advance cue is not delayed.
     expect(recording.plays[0].delay).toBe(0);
   });
 
-  it('playScoutFireSound plays the baked scout laser asset at half volume', () => {
+  it('playScoutFireSound plays the baked scout laser asset at the composed trim', () => {
     effects.playScoutFireSound();
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/aihell-scout-fire.32181.wav');
-    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    expect(recording.plays[0].volume).toBeCloseTo(composed, 10);
     // The advance-cue no-gap delay is preserved.
     expect(recording.plays[0].delay).toBe(effects.SCOUT_ADVANCE_CUE_DURATION);
   });
@@ -511,30 +523,187 @@ describe('Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3)', () => {
 // ── 3a-ii. Phaser fire-sequence volume (AH-0MVFHE6VP006GEX0) ─────────
 
 describe('Phaser fire-sequence volume (AH-0MVFHE6VP006GEX0)', () => {
+  // The per-sequence 0.5 precedent composed with the family trim
+  // (AH-0MVZVMZOQ00076QF) — effective gain 0.30.
+  const composed =
+    effects.PHASER_FIRE_VOLUME_SCALE * effects.ENEMY_WEAPON_FIRE_VOLUME_SCALE;
+
   it('PHASER_FIRE_VOLUME_SCALE is a single named 0.5 tunable', () => {
     expect(effects.PHASER_FIRE_VOLUME_SCALE).toBe(0.5);
   });
 
-  it('playPhaserAdvanceCue plays the phaser advance tell at half volume', () => {
+  it('playPhaserAdvanceCue plays the phaser advance tell at the composed trim', () => {
     effects.playPhaserAdvanceCue();
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe(
       assetUrlFor(cueEntry('playPhaserAdvanceCue')),
     );
-    expect(recording.plays[0].volume).toBe(effects.PHASER_FIRE_VOLUME_SCALE);
+    expect(recording.plays[0].volume).toBeCloseTo(composed, 10);
     // The no-gap advance cue is not delayed.
     expect(recording.plays[0].delay).toBe(0);
   });
 
-  it('playPhaserFireSound plays the baked phaser-fire asset at half volume', () => {
+  it('playPhaserFireSound plays the baked phaser-fire asset at the composed trim', () => {
     effects.playPhaserFireSound();
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe(
       assetUrlFor(cueEntry('playPhaserFireSound')),
     );
-    expect(recording.plays[0].volume).toBe(effects.PHASER_FIRE_VOLUME_SCALE);
+    expect(recording.plays[0].volume).toBeCloseTo(composed, 10);
     // The advance-cue no-gap delay is preserved unchanged.
     expect(recording.plays[0].delay).toBe(effects.PHASER_ADVANCE_CUE_DURATION);
+  });
+});
+
+// ── 3a-iii. SFX mix — explosion + enemy-weapon trim (AH-0MVZVMZOQ00076QF) ──
+//
+// The producer asked for enemy weapon fire and explosions to come down by
+// around 40%. The trim is a runtime ×0.6 family scale expressed as two named
+// constants; these tests assert the resulting **effective** playback gain
+// through the recording provider, the single-application rule, the preserved
+// caller trims, and that out-of-scope cues keep their previous gain.
+
+describe('SFX mix — explosion + enemy-weapon trim (AH-0MVZVMZOQ00076QF)', () => {
+  it('exports one named 0.6 tunable per family', () => {
+    expect(effects.ENEMY_WEAPON_FIRE_VOLUME_SCALE).toBe(0.6);
+    expect(effects.EXPLOSION_VOLUME_SCALE).toBe(0.6);
+  });
+
+  it('enemy weapon fire lands on the target effective gains (AC1)', () => {
+    const cases: Array<[string, () => void, number]> = [
+      ['playTankAdvanceCue', () => effects.playTankAdvanceCue(), 0.3],
+      ['playTankFireSound', () => effects.playTankFireSound(), 0.3],
+      ['playScoutAdvanceCue', () => effects.playScoutAdvanceCue(), 0.3],
+      ['playScoutFireSound', () => effects.playScoutFireSound(), 0.3],
+      ['playPhaserAdvanceCue', () => effects.playPhaserAdvanceCue(), 0.3],
+      ['playPhaserFireSound', () => effects.playPhaserFireSound(), 0.3],
+      ['playDiverFireSound', () => effects.playDiverFireSound(), 0.6],
+      ['playBossFireSound', () => effects.playBossFireSound(), 0.6],
+      ['playSwarmBurstSound', () => effects.playSwarmBurstSound(), 0.6],
+    ];
+    for (const [cue, play, gain] of cases) {
+      recording.plays.length = 0;
+      play();
+      expect(recording.plays.length, cue).toBe(1);
+      expect(recording.plays[0].volume, cue).toBeCloseTo(gain, 10);
+    }
+  });
+
+  it('keeps the advance→fire no-gap scheduling unchanged (AC1)', () => {
+    effects.playTankAdvanceCue();
+    effects.playTankFireSound();
+    effects.playScoutAdvanceCue();
+    effects.playScoutFireSound();
+    effects.playPhaserAdvanceCue();
+    effects.playPhaserFireSound();
+    expect(recording.plays.map((play) => play.delay)).toEqual([
+      0,
+      effects.TANK_ADVANCE_CUE_DURATION,
+      0,
+      effects.SCOUT_ADVANCE_CUE_DURATION,
+      0,
+      effects.PHASER_ADVANCE_CUE_DURATION,
+    ]);
+  });
+
+  it('explosion cues land on the target effective gains (AC2)', () => {
+    const cases: Array<[string, () => void]> = [
+      ['playDestructionSound', () => effects.playDestructionSound()],
+      ['playDiverDestructionSound', () => effects.playDiverDestructionSound()],
+      ['playBossDestructionSound', () => effects.playBossDestructionSound()],
+      ['playPlayerDestructionSound', () => effects.playPlayerDestructionSound()],
+      ['playVictoryExplosionSound', () => effects.playVictoryExplosionSound()],
+      ['playBulletDestructionSound', () => effects.playBulletDestructionSound()],
+      [
+        'playEnemyForceFieldBreakSound',
+        () => effects.playEnemyForceFieldBreakSound(),
+      ],
+      ['playBossHitSound', () => effects.playBossHitSound()],
+    ];
+    for (const [cue, play] of cases) {
+      recording.plays.length = 0;
+      play();
+      expect(recording.plays.length, cue).toBe(1);
+      expect(recording.plays[0].volume, cue).toBeCloseTo(0.6, 10);
+    }
+  });
+
+  it('the force-field-break alias plays the bullet tick at the same single trim (AC2)', () => {
+    effects.playBulletDestructionSound();
+    effects.playEnemyForceFieldBreakSound();
+    expect(recording.plays).toHaveLength(2);
+    expect(recording.plays[1].url).toBe(recording.plays[0].url);
+    expect(recording.plays[1].volume).toBeCloseTo(recording.plays[0].volume, 10);
+  });
+
+  it('composes caller volumes multiplicatively instead of replacing them (AC2)', () => {
+    effects.playDestructionSound({ volume: 0.3 });
+    effects.playBossDestructionSound({ volume: 0.65 });
+    effects.playPlayerDestructionSound(0.5);
+    effects.playVictoryExplosionSound({ volume: 0.55 });
+    expect(recording.plays.map((play) => play.volume)).toEqual([
+      0.18, 0.39, 0.3, 0.33,
+    ]);
+  });
+
+  it('applies the mini-boss sweep per-role trims on top of the family trim (AC2)', () => {
+    const cases: Array<[number, number]> = [
+      [0.55, 0.33],
+      [0.3, 0.18],
+      [0.4, 0.24],
+      [0.65, 0.39],
+    ];
+    for (const [caller, expected] of cases) {
+      recording.plays.length = 0;
+      effects.playMiniBossSweepSound('playDestructionSound', {
+        delay: 0.2,
+        volume: caller,
+      });
+      expect(recording.plays[0].volume).toBeCloseTo(expected, 10);
+    }
+  });
+
+  it('scales the shared swarm burst exactly once, never twice (AC2)', () => {
+    effects.playSwarmBurstSound();
+    expect(recording.plays).toHaveLength(1);
+    // 0.6, not 0.6 × 0.6 = 0.36.
+    expect(recording.plays[0].volume).toBeCloseTo(0.6, 10);
+  });
+
+  it('leaves out-of-scope cues at full gain (AC3)', () => {
+    const cases = [
+      'playSpawnSound',
+      'playDiverDiveStartSound',
+      'playBossSpawnSound',
+      'playBossPhaseTransitionSound',
+      'playBossPhaseCue',
+      'playForceFieldReflectSound',
+      'playPowerUpCollectSound',
+      'playPowerUpBlockedSound',
+      'playCannonFireSound',
+      'playCannonImpactSound',
+      'playNovaImpactSound',
+      'playMortarDetonationSound',
+      'playCountdownTickSound',
+      'playMineralTinkleSound',
+      'playVictoryFanfareSound',
+      'playDefeatStingSound',
+    ];
+    for (const cue of cases) {
+      recording.plays.length = 0;
+      invokeCue(cue);
+      expect(recording.plays.length, cue).toBe(1);
+      expect(recording.plays[0].volume, cue).toBe(1);
+    }
+  });
+
+  it('leaves the non-explosive victory firework accents at the caller volume (AC3)', () => {
+    effects.playVictoryCrackSound({ delay: 0.1, volume: 0.55 });
+    effects.playVictoryPopSound({ delay: 0.2, volume: 0.55 });
+    effects.playVictorySparkleSound({ delay: 0.3, volume: 0.55 });
+    expect(recording.plays.map((play) => play.volume)).toEqual([
+      0.55, 0.55, 0.55,
+    ]);
   });
 });
 
@@ -947,7 +1116,10 @@ describe('beat-synchronised explosion accents', () => {
       expect(play.delay).toBeCloseTo((SIXTEENTH_MS - 100) / 1000, 6);
     }
     // Player destruction keeps its volume scaling alongside the delay.
-    expect(recording.plays[2].volume).toBe(0.5);
+    expect(recording.plays[2].volume).toBeCloseTo(
+      0.5 * effects.EXPLOSION_VOLUME_SCALE,
+      10,
+    );
   });
 
   it('fires immediately when the request is already on a tick', () => {
@@ -970,9 +1142,15 @@ describe('beat-synchronised explosion accents', () => {
 
     expect(recording.plays).toHaveLength(2);
     expect(recording.plays[0].delay).toBe(0.25);
-    expect(recording.plays[0].volume).toBe(0.3);
+    expect(recording.plays[0].volume).toBeCloseTo(
+      0.3 * effects.EXPLOSION_VOLUME_SCALE,
+      10,
+    );
     expect(recording.plays[1].delay).toBe(0.5);
-    expect(recording.plays[1].volume).toBe(0.65);
+    expect(recording.plays[1].volume).toBeCloseTo(
+      0.65 * effects.EXPLOSION_VOLUME_SCALE,
+      10,
+    );
   });
 
   it('does not spend the per-tick accent cap on explicitly scheduled bursts', () => {
@@ -1123,5 +1301,130 @@ describe('per-cue concurrent-voice cap (AH-0MVH8RQR7007QG8E)', () => {
     // Another cue still has its own independent budget.
     effects.playWeaponFireSound('spread');
     expect(recording.plays.length).toBe(MAX_CONCURRENT_CUE_VOICES + 1);
+  });
+});
+
+// ── Mini-boss death sweep dispatcher (AH-0MVVEI7FD004TR2M) ─────────
+//
+// The sweep reuses only already-baked cues (producer decision Q1 = a), so the
+// dispatcher's job is narrow: resolve the cue name + baked variant, schedule
+// it at the burst's own delay and apply the per-role mix trim. No new recipe
+// and no manifest entry — pinned by `cueManifest.test.ts` /
+// `effects.contract.test.ts` staying unchanged.
+
+describe('playMiniBossSweepSound — reuse-only sweep dispatcher', () => {
+  it('routes each sweep cue onto its existing baked asset family', () => {
+    effects.playMiniBossSweepSound('playDestructionSound', { delay: 0.12 });
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-enemy-destruction.32113.wav',
+    );
+
+    effects.playMiniBossSweepSound('playVictoryExplosionSound', { delay: 0.34 });
+    expect(recording.plays[1].url).toBe(
+      'audio/sfx/aihell-victory-explosion.32250.wav',
+    );
+
+    effects.playMiniBossSweepSound('playBossDestructionSound', { delay: 0 });
+    expect(recording.plays[2].url).toBe('audio/sfx/aihell-boss-destruction.32203.wav');
+  });
+
+  it('schedules each cue at its burst’s own delay (visual-timed, never the beat grid)', () => {
+    // A registered beat clock would snap a non-explicit destruction cue to the
+    // next 16th note; the sweep's explicit delay must bypass that entirely.
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    try {
+      effects.playMiniBossSweepSound('playDestructionSound', { delay: 0.125 });
+      expect(recording.plays[0].delay).toBe(0.125);
+    } finally {
+      effects.setExplosionBeatClock(null);
+    }
+  });
+
+  it('applies the per-role mix trim to the playback volume', () => {
+    effects.playMiniBossSweepSound('playDestructionSound', {
+      delay: 0.2,
+      volume: 0.3,
+    });
+    expect(recording.plays[0].volume).toBeCloseTo(
+      0.3 * effects.EXPLOSION_VOLUME_SCALE,
+      10,
+    );
+  });
+
+  it('picks a deterministic baked variant from the run-seeded draw', () => {
+    for (const variantPick of [0, 0.4, 0.99]) {
+      recording.plays.length = 0;
+      effects.playMiniBossSweepSound('playVictoryExplosionSound', {
+        delay: 0.5,
+        variantPick,
+      });
+      const first = recording.plays[0].url;
+
+      // Same draw ⇒ same variant, every time (no Math.random in this path).
+      const random = vi.spyOn(Math, 'random');
+      try {
+        effects.playMiniBossSweepSound('playVictoryExplosionSound', {
+          delay: 0.5,
+          variantPick,
+        });
+        expect(recording.plays[1].url).toBe(first);
+        expect(random).not.toHaveBeenCalled();
+      } finally {
+        random.mockRestore();
+      }
+      expect(allowedUrls(cueEntry('playVictoryExplosionSound'))).toContain(first);
+    }
+  });
+
+  it('covers every baked variant of a multi-variant cue and clamps bad draws', () => {
+    const seeds = cueEntry('playVictoryExplosionSound').seeds;
+    const seen = new Set<string>();
+    for (let i = 0; i < seeds.length; i += 1) {
+      recording.plays.length = 0;
+      effects.playMiniBossSweepSound('playVictoryExplosionSound', {
+        // A non-zero delay keeps the request off the shared limiter (the sweep
+        // always schedules ahead — see the dispatcher's contract).
+        delay: 0.5,
+        variantPick: i / seeds.length,
+      });
+      seen.add(recording.plays[0].url);
+    }
+    expect(seen.size).toBe(seeds.length);
+
+    // Out-of-range / non-finite draws clamp instead of throwing.
+    for (const variantPick of [-5, 42, Number.NaN, Number.POSITIVE_INFINITY]) {
+      recording.plays.length = 0;
+      expect(() =>
+        effects.playMiniBossSweepSound('playDestructionSound', {
+          delay: 0.5,
+          variantPick,
+        }),
+      ).not.toThrow();
+      expect(allowedUrls(cueEntry('playDestructionSound'))).toContain(
+        recording.plays[0].url,
+      );
+    }
+  });
+
+  it('never throws with the mix muted, at zero volume, or headless', () => {
+    // Mute / volume 0: the cue still routes through the shared master gain
+    // (which is silent), so the dispatcher must not throw or special-case it.
+    effects.setSfxVolume(0);
+    effects.setSfxMuted(true);
+    expect(() =>
+      effects.playMiniBossSweepSound('playDestructionSound', { delay: 0.1 }),
+    ).not.toThrow();
+    expect(() =>
+      effects.playMiniBossSweepSound('playVictoryExplosionSound', { delay: 0.2 }),
+    ).not.toThrow();
+
+    // Headless (no AudioContext at all): a safe no-op, like every cue.
+    effects._resetAudioContextForTests();
+    effects.setSfxSoundProvider(null);
+    expect(effects.getAudioContext()).toBeNull();
+    expect(() =>
+      effects.playMiniBossSweepSound('playBossDestructionSound', { delay: 0 }),
+    ).not.toThrow();
   });
 });

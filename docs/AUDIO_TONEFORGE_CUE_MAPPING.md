@@ -82,32 +82,32 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | Cue (`src/audio/effects.ts`) | Original character | GDD §7.3 | Production consumer(s) | Disp. | Target recipe / preset |
 |------------------------------|--------------------|----------|------------------------|-------|------------------------|
 | `playSpawnSound` | Rising square blip 220→880 Hz, 0.18 s, vol 0.12 | Enemy spawn (subtle hum rise) | `PlayScene`, `GymFormationScene`, `GymPowerUpsCombat`, `GymLevel` | new | `aihell-enemy-spawn` |
-| `playDestructionSound` | Descending saw 440→60 Hz (× ±15 % pitch jitter), 0.28 s, vol 0.30 | Enemy destroyed (sharp pop/crack), scheduled on the next 16th-note beat accent; an explicit `delay` (mini-boss death sweep) is honoured verbatim instead | `PlayScene`, `CombatScene`, `GymFormationScene`, `enemyFactory`, `Asteroid`, `Scout`, `Phaser`, `Diver`, `playerDeathJuice`, `scenes/core/miniBossDeathSweep` | new | `aihell-enemy-destruction` (multi-seed) |
-| `playPlayerDestructionSound` | Layered hull breach: saw thump 120→32 Hz 0.4 s + triangle body 260→42 Hz 0.6 s + HP noise tail 0.28 s, ≤ 0.2 | Player hit / life lost, scheduled on the next 16th-note beat accent | `vfx/playerDeathJuice` | new | `aihell-player-hull-breach` (stack) |
+| `playDestructionSound` | Descending saw 440→60 Hz (× ±15 % pitch jitter), 0.28 s, vol 0.30; runtime volume ×0.6 (`EXPLOSION_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) | Enemy destroyed (sharp pop/crack), scheduled on the next 16th-note beat accent; an explicit `delay` (mini-boss death sweep) is honoured verbatim instead | `PlayScene`, `CombatScene`, `GymFormationScene`, `enemyFactory`, `Asteroid`, `Scout`, `Phaser`, `Diver`, `playerDeathJuice`, `scenes/core/miniBossDeathSweep` | new | `aihell-enemy-destruction` (multi-seed) |
+| `playPlayerDestructionSound` | Layered hull breach: saw thump 120→32 Hz 0.4 s + triangle body 260→42 Hz 0.6 s + HP noise tail 0.28 s, ≤ 0.2; runtime volume ×0.6 (`EXPLOSION_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) | Player hit / life lost, scheduled on the next 16th-note beat accent | `vfx/playerDeathJuice` | new | `aihell-player-hull-breach` (stack) |
 | `playMajorExplosionSound` | Layered major blast: saw thump 150→26 + triangle body 340→38 + LP noise tail, 4-voice limiter | Wave timeout — retained but unused | **none** | **retired** | — (see Retired cues) |
-| `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s, vol 0.12 | Player bullet destroys enemy bullet | `vfx/bulletImpact` | new | `aihell-bullet-destruction` |
+| `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s, vol 0.12; runtime volume ×0.6 (`EXPLOSION_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF), shared with the enemy-force-field-break alias | Player bullet destroys enemy bullet | `vfx/bulletImpact` | new | `aihell-bullet-destruction` |
 | `playForceFieldReflectSound` | Bright rising bounce — triangle 880→1320 Hz + short sine sparkle, ~0.11 s | Force Field reflects an enemy bullet (bounce-point feedback) | shared reflect branch in `CombatScene` (AH-0MVRDMMYO002SC5V) | new | `aihell-forcefield-reflect` |
 | `playTankDestructionSound` | Saw 220→30 Hz, 0.45 s, vol 0.2 | Intentionally unwired | **none** (test-only) | **retired** | — (see Retired cues) |
-| `playTankAdvanceCue` | Advancing saw 150→320 Hz + square sub 75→160 Hz, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Tank` | new | `aihell-tank-advance` |
-| `playTankFireSound` | Heavy saw+sine cannon thump ~90→25 Hz, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Tank` | new | `aihell-tank-fire` |
+| `playTankAdvanceCue` | Advancing saw 150→320 Hz + square sub 75→160 Hz, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) composed with the enemy-weapon family ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) → effective 0.30 | Advance cue (≥ 500 ms) | `entities/Tank` | new | `aihell-tank-advance` |
+| `playTankFireSound` | Heavy saw+sine cannon thump ~90→25 Hz, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) composed with the enemy-weapon family ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) → effective 0.30 | Enemy fire / no-gap | `entities/Tank` | new | `aihell-tank-fire` |
 | `playPowerUpSpawnSound` | Bright ascending blip (higher than enemy spawn) | Power-up spawn (advance) | `GymWeapons`, `GymWeaponLeveling` | new | `aihell-pickup-spawn` |
 | `playPowerUpDespawnSound` | Quick descending blip, lower vol, shorter | Power-up despawn | `GymWeapons`, `GymWeaponLeveling` | new | `aihell-pickup-despawn` |
 | `playPowerUpCollectSound` | Cheerful two-tone ascending chime | Power-up pickup | `dropLayer` | **existing** | `card-token-earn` |
 | `playPowerUpCollectPopSound` | Saw 600→100 Hz + filtered noise transient, ≤ 0.08 s | Power-up pickup (tactile pop) | `dropLayer` | new | `aihell-pickup-pop` |
 | `playPowerUpBlockedSound` | Low two-step descending square buzz 200→150→120 Hz, 0.18 s, vol 0.06 | Pickup refused — six-slot pool full (parent AH-0MVLIJT3M005HPHF, producer Q5b) | `scenes/core/CombatCoreScene` | new | `aihell-pickup-blocked` |
 | `playWeaponChangeSound` | Distinctive whoosh ("armed with new weapon") | Weapon change | **none** (no call sites) | **retired** | — (see Retired cues) |
-| `playSwarmBurstSound` | Saw buzz 120→80 Hz + sine whoosh 200→600 Hz, ~0.2 s | Swarm volley buzz | `entities/Swarm` | new | `aihell-swarm-burst` |
-| `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
-| `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s, scheduled at cue end; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) | Enemy fire / no-gap | `entities/Phaser` | new | `aihell-phaser-fire` |
-| `playScoutAdvanceCue` | Rising sine, pitched above Phaser, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Scout`, `entities/OrbitalStrike` | new | `aihell-scout-advance` |
-| `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Scout` | new | `aihell-scout-fire` (since AC4, AH-0MVCRR2H2007VPDU) |
+| `playSwarmBurstSound` | Saw buzz 120→80 Hz + sine whoosh 200→600 Hz, ~0.2 s; runtime volume ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF), scaled exactly once | Swarm volley buzz | `entities/Swarm` | new | `aihell-swarm-burst` |
+| `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) composed with the enemy-weapon family ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) → effective 0.30 | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
+| `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s, scheduled at cue end; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) composed with the enemy-weapon family ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) → effective 0.30 | Enemy fire / no-gap | `entities/Phaser` | new | `aihell-phaser-fire` |
+| `playScoutAdvanceCue` | Rising sine, pitched above Phaser, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) composed with the enemy-weapon family ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) → effective 0.30 | Advance cue (≥ 500 ms) | `entities/Scout`, `entities/OrbitalStrike` | new | `aihell-scout-advance` |
+| `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) composed with the enemy-weapon family ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) → effective 0.30 | Enemy fire / no-gap | `entities/Scout` | new | `aihell-scout-fire` (since AC4, AH-0MVCRR2H2007VPDU) |
 | `playDiverDiveStartSound` | Rising saw 150→600 Hz + filtered noise, ~0.25 s | Dive danger cue | `entities/Diver` | new | `aihell-diver-dive-start` |
 | `playDiveSound` | Bandpass noise sweep 300→900 Hz, refcounted shared ~2 s voice | Diver dive | `entities/Diver` | new | `aihell-diver-dive-loop` |
 | `stopDiveSound` | Stops/releases the shared dive voice | Diver dive | `entities/Diver` | control | (companion to `aihell-diver-dive-loop`) |
-| `playDiverFireSound` | Saw 280→120 Hz, 0.08 s | Enemy fire (spread burst) | `entities/Diver` | new | `aihell-diver-fire` |
-| `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s (× pitch jitter) | Enemy destroyed (heavy), scheduled on the next 16th-note beat accent | `entities/Diver` | new | `aihell-diver-destruction` (multi-seed) |
-| `playBossFireSound` | Saw 200→50 Hz + low sine undertone, ~0.2 s | Boss fire | `entities/Boss` | new | `aihell-boss-fire` |
-| `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s | Boss per-hit feedback | shared boss feedback path (wired by AH-0MUZMTTPE0074X59) | new | `aihell-boss-hit` |
+| `playDiverFireSound` | Saw 280→120 Hz, 0.08 s; runtime volume ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) | Enemy fire (spread burst) | `entities/Diver` | new | `aihell-diver-fire` |
+| `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s (× pitch jitter); runtime volume ×0.6 (`EXPLOSION_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) | Enemy destroyed (heavy), scheduled on the next 16th-note beat accent | `entities/Diver` | new | `aihell-diver-destruction` (multi-seed) |
+| `playBossFireSound` | Saw 200→50 Hz + low sine undertone, ~0.2 s; runtime volume ×0.6 (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) | Boss fire | `entities/Boss` | new | `aihell-boss-fire` |
+| `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s; runtime volume ×0.6 (`EXPLOSION_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) | Boss per-hit feedback | shared boss feedback path (wired by AH-0MUZMTTPE0074X59) | new | `aihell-boss-hit` |
 | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s, vol 0.15 | Player cannon fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-cannon-fire` |
 | `playCannonImpactSound` | Punchy saw impact 520→90 Hz + square click + HP noise smack, ~0.13 s | Player cannon hit (when a shot connects) | shared impact seam in `CombatScene` (AH-0MV8228YW0050IXS) | new | `aihell-cannon-impact` |
 | `playSpreadImpactSound` | Warm amber triangle wedge 900→150 Hz + soft noise tick, ~0.14 s | Player spread hit (when a shot connects) | shared impact seam in `CombatScene` (AH-0MV8229B9009DQGA) | new | `aihell-spread-impact` |
@@ -134,7 +134,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playBroadsideImpactSound` | Short teal dart tick — triangle 2400→1600 Hz + quiet 3600 Hz sine overtone + 3000 Hz HP noise contact tick, no square click, ~0.10 s | Player Broadside dart connects | shared impact seam in `CombatScene` (AH-0MVV0WNOX0078G9G) | new | `aihell-broadside-impact` |
 | `playHeavySlugFireSound` | Heaviest single shot — low saw boom 110→55 Hz + metallic square clank 1800→900 Hz transient + LP noise air, ~0.26 s (deepest fundamental of the player fire cues, below the Cannon's 800 Hz and the Mortar's 220 Hz; shorter sustain than the `aihell-mortar-detonation` 0.32 s boom, never aliasing it) | Player Heavy Slug fire (one huge slow deep-red shell) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`, incl. the hold-full metronome) | new | `aihell-heavy-slug-fire` |
 | `playHeavySlugImpactSound` | Dull red thud with debris — low triangle 220→60 Hz + quiet 110 Hz sine + 700 Hz LP noise debris burst, no square edge, ~0.15 s (duller and lower than the Mortar's dry shell crack) | Player Heavy Slug shell connects | shared impact seam in `CombatScene` (AH-0MVV0WO4M001KEDG) | new | `aihell-heavy-slug-impact` |
-| `playWaveLaserFireSound` | Sci-fi laser "pew": sawtooth sweep 2400→320 Hz with a square harmonic 1200→240 Hz and a band-passed noise sizzle, ~0.16 s | Player wave-laser fire (the single red screen-spanning beam) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
+| `playWaveLaserFireSound` | Sci-fi laser "pew": sawtooth sweep 2400→320 Hz with a square harmonic 1200→240 Hz and a band-passed noise sizzle, ~0.16 s | Player wave-laser fire (the single short chaotic red beam) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
 | `playWaveLaserImpactSound` | Sharp neon snap — saw 800→200 Hz + square click + BP noise crack, ~0.12 s | Player wave-laser hit (when the beam connects) | shared impact seam in `CombatScene` (AH-0MV822ACO007CEZF) | new | `aihell-wave-laser-impact` |
 | `playRicochetFireSound` | Bright springy ping — triangle 1400→500 Hz + square tick, ~0.1 s | Player ricochet fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-ricochet-fire` |
 | `playRicochetImpactSound` | Soft high bounce tick — triangle 1800→900 Hz + HP noise smack, ~0.09 s | Player ricochet wall bounce or connect | shared impact seam in `CombatScene` (AH-0MV822AP1006W2F9) | new | `aihell-ricochet-impact` |
@@ -151,7 +151,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | Magnet | `dropLayer` | new | `aihell-pickup-magnet` |
 | `playPhaseShiftSound` | Triangle chirp 320→1560 Hz + bandpass noise swing 600→3200 Hz | Phase Shift | `CombatScene` | new | `aihell-phase-shift` |
 | `playVictoryFanfareSound` | Two-phrase fanfare: arpeggio C5-E5-G5-C6 + cadence + sustained chord + bass + sparkle + shimmer, ~3.3 s, ≤ 0.2 | Victory | `PlayScene` | new | `aihell-victory-fanfare` (sequence + stack) |
-| `playVictoryExplosionSound` | Layered saw 110→32 Hz boom + sine sub-rumble + LP noise crackle, ~0.65 s | Victory firework burst/starburst | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-explosion` |
+| `playVictoryExplosionSound` | Layered saw 110→32 Hz boom + sine sub-rumble + LP noise crackle, ~0.65 s; runtime volume ×0.6 (`EXPLOSION_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) composed with the caller firework volume | Victory firework burst/starburst | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-explosion` |
 | `playVictoryCrackSound` | Quick saw 587→140 Hz + HP noise crack, ~0.18 s | Victory firework ring | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-crack` |
 | `playVictoryPopSound` | Short sine 784→240 Hz pop, ~0.09 s | Victory firework implosion | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-pop` |
 | `playVictorySparkleSound` | Bright sine 1400→600 Hz + HP shimmer, ~0.12 s | Victory firework sparkle | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-sparkle` |
@@ -164,6 +164,32 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playMysteryUfoRewardSound` | Rising A-minor arpeggio A4→E5→A5 + sine sparkle, ~0.9 s | Mystery UFO payout fanfare | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mystery-ufo-reward` |
 | `playMysteryUfoDestroySound` | Deep saw fall A3→A1 + low-passed noise blast + sine sub thump, ~0.55 s | Mystery UFO destruction explosion | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mystery-ufo-destroy` |
 | `playMineralTinkleSound` | Bright E7→A6 triangle chime + sine shimmer + noise tick, ~0.2 s | Dropped-mineral tinkle | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mineral-tinkle` |
+
+### Runtime mix trims (AH-0MVZVMZOQ00076QF)
+
+A producer-requested **−40% mix trim** (linear ×0.6) is applied at playback to
+two cue families through named constants in `src/audio/effects.ts`. It is a
+**runtime** change only: no baked asset, recipe, manifest entry or
+`public/audio/sfx/checksums.json` checksum changed, so the amplitude-tier and
+A-minor balance guards stay green. The scales **compose multiplicatively** with
+the existing per-sequence scales and any caller-supplied `volume`.
+
+| Family constant | Cues trimmed (effective gain after the trim) |
+|---|---|
+| `ENEMY_WEAPON_FIRE_VOLUME_SCALE` (0.6) | `playTankAdvanceCue` / `playTankFireSound` / `playScoutAdvanceCue` / `playScoutFireSound` / `playPhaserAdvanceCue` / `playPhaserFireSound` → **0.30** (0.5 × 0.6); `playDiverFireSound` / `playBossFireSound` / `playSwarmBurstSound` → **0.60** |
+| `EXPLOSION_VOLUME_SCALE` (0.6) | `playDestructionSound` / `playBossDestructionSound` / `playPlayerDestructionSound` / `playVictoryExplosionSound` → **0.6 × caller volume**; `playDiverDestructionSound` / `playBulletDestructionSound` / `playBossHitSound` → **0.60**; `playEnemyForceFieldBreakSound` (alias of the bullet-destruction tick) → **0.60** |
+
+**Single application:** `playSwarmBurstSound` is in both families and is scaled
+exactly once (0.60, not 0.36); `playEnemyForceFieldBreakSound` now dispatches
+through `playBulletDestructionSound()` so the alias path is trimmed exactly
+once too. **Composed caller trims:** the mini-boss death sweep's 0.55 / 0.30 /
+0.40 / 0.65 become 0.33 / 0.18 / 0.24 / 0.39, and the victory firework boom's
+0.55 becomes 0.33. **Out of scope:** spawn, dive-loop/dive-start, Boss
+spawn/phase-cue/phase-transition, thruster hum, the player-weapon fire/impact
+family, Force Field reflect, pickups, countdown tick, mineral tinkle, Mystery
+UFO cues, victory/defeat stingers and the non-explosive victory firework
+accents. See [Enemy audio balance §4.4](AUDIO_ENEMY_BALANCE.md#44-sfx-mix-trim--explosions-and-enemy-weapons-ah-0mvzvmzoq00076qf)
+for the full before→after table.
 
 ### Beat-synced explosion accents (AH-0MV01HNLU008S5E3)
 
@@ -374,12 +400,23 @@ avoid a partially migrated palette. Discovered during this audit.
 | `playBossPhaseCue(phase)` | Per-phase square rise — scale-degree variants: phases rise A3/A4/E5/A5 → A5 (AC3) | `aihell-boss-phase-cue` | 32242, 32227, 32207, 32204 |
 
 The mini-boss death sweep (`src/scenes/core/miniBossDeathSweep.ts`,
-AH-0MVOFGB6K003YD0Z) reuses `playDestructionSound` for its swept-enemy/scatter/
-anchored bursts and `playBossDestructionSound` for its 20-burst finale, each
-scheduled with the burst's explicit `delay` and a per-role mix trim. No new
-recipe is needed: the cue layer honours an explicit delay verbatim (bypassing
-the beat grid and the mass-kill accent cap), so the scripted cascade keeps its
-own rhythm.
+AH-0MVOFGB6K003YD0Z, audio added by AH-0MVVEI7FD004TR2M) is a **reuse-only**
+consumer: the mini-boss's own body plays `playBossDestructionSound`,
+the swept-enemy/scatter/anchored bursts reuse `playDestructionSound` and the
+20-burst finale reuses `playVictoryExplosionSound`. **No new recipe, baked
+asset or manifest entry is introduced** — the cue-manifest contract suite
+(`src/audio/cueManifest.test.ts`, `src/audio/effects.contract.test.ts`)
+passes unchanged, which is the guard that proves the palette stayed reuse-only.
+Every cue is dispatched through the one shared helper
+`playMiniBossSweepSound(cue, { delay, volume, variantPick })` in
+`src/audio/effects.ts`, scheduled with the burst's explicit `delay` and a
+per-role mix trim. Visual-timed rather than beat-quantised: the explicit delay
+is honoured verbatim (bypassing the 16th-note accent grid and its 4-per-tick
+cap), because a scripted cascade must land with the explosions on screen. The
+baked variant is drawn from the run seed (`variantPick`) rather than
+`Math.random()`, so the same seed replays the same audio. Per-role thinning and
+the density bound are owned by the sweep module's `MINI_BOSS_SWEEP_SFX_*`
+constants.
 
 ## Retired cues
 

@@ -114,15 +114,13 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     booted = await bootScene([HarnessScene]);
     const scout = makeScout(100, 100);
 
-    // The body is the container child whose buffer contains a stroked
-    // path (the explosion layer's buffer is empty until a destruction).
-    const children = (scout as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    const body = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics &&
-        c.commandBuffer.includes(STROKE_PATH),
+    // The body is the drawn silhouette layer, whose buffer contains a stroked
+    // path (the explosion layer's buffer is empty until a destruction). It is
+    // also the bake source of the rendered body sprite (AH-0MW2IRYAH0055WCN).
+    const body = scout.bodyLayers.find((layer) =>
+      layer.commandBuffer.includes(STROKE_PATH),
     );
-    expect(body, 'expected a body Graphics child with a stroked path').toBeDefined();
+    expect(body, 'expected a body layer with a stroked path').toBeDefined();
 
     const buf: number[] = body!.commandBuffer as number[];
     const strokeIdx = buf.lastIndexOf(STROKE_PATH);
@@ -225,13 +223,14 @@ describe('Scout entity (visuals, firing, destruction)', () => {
       1_000_000 + SCOUT_ADVANCE_CUE_DURATION,
     )!;
 
-    // The arriving shot spawns its bullet Graphics **plus** the launch pop —
-    // the enemy-side fire VFX, spawned from this shared fire seam.
+    // The bullet is a cached-texture image (AH-0MW2DAY2L004QSKF), so the
+    // only new Graphics is the launch pop — the enemy-side fire VFX, spawned
+    // from this shared fire seam.
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + 2);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     expect(bullet.color).toBe(SCOUT_BULLET_COLOR);
     // The pellet identity is animated — the faint pulse redraws each frame

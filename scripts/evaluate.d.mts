@@ -121,6 +121,15 @@ export function restoreCsvFile(
   keepEdit?: boolean,
 ): Promise<{ action: 'restored' | 'kept-edited' }>;
 
+/**
+ * Removes this process' crash-safety journal, restoring the CSV from it first
+ * (AH-0MW251IE0006K5DS). Only a journal recording this process' `pid` is
+ * touched; an unreadable journal is left in place and reported.
+ */
+export function clearOwnJournal(
+  csvPath: string,
+): 'reconciled' | 'none' | 'foreign' | 'unreadable';
+
 /** Raised when the opt-in `--watchdog` deadline expires (exit 124). */
 export class TuneWatchdogError extends Error {
   phase: string;

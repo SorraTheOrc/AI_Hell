@@ -27,8 +27,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CONSUMABLE_POWER_UP_IDS,
+  NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS,
   POWER_UP_CATALOGUE,
   WEAPON_DROP_IDS,
+  isRewardableWhenOwned,
   type PowerUpEntry,
   type PowerUpId,
 } from './types';
@@ -178,17 +180,25 @@ describe('POWER_UP_CATALOGUE.consumable (AH-0MVUXFDFN009QK84 AC1/AC2)', () => {
 });
 
 describe('consumable catalogue copy states the charge model (AC5)', () => {
-  it('describes one charge per event, level-derived regeneration and a charge-granting hold-full reward', () => {
+  it('describes one charge per event, level-derived regeneration and the reward model', () => {
     for (const id of CONSUMABLE_POWER_UP_IDS) {
-      const description = POWER_UP_CATALOGUE[id].description;
+      const entry = POWER_UP_CATALOGUE[id];
+      const description = entry.description;
       // One charge buys one event…
-      expect(description, id).toMatch(/charge/i);
+      expect(description, id).toMatch(/charge|warp|escape/i);
       // …charges come back on a level-derived interval…
       expect(description, id).toMatch(/level-derived/i);
       expect(description, id).toMatch(/regenerat|recharge/i);
-      // …and a hold-full reward adds a charge, not a level.
-      expect(description, id).toMatch(/hold-full/i);
-      expect(description, id).toMatch(/not a level|rather than a level/i);
+      if (entry.singleUse) {
+        // A single-use kind readies on a pickup and never banks a second
+        // charge (parent AH-0MVY096RT006QMF4).
+        expect(description, id).toMatch(/pickup/i);
+        expect(description, id).toMatch(/ready/i);
+      } else {
+        // …and a hold-full reward adds a charge, not a level.
+        expect(description, id).toMatch(/hold-full/i);
+        expect(description, id).toMatch(/not a level|rather than a level/i);
+      }
     }
   });
 
@@ -205,6 +215,33 @@ describe('consumable catalogue copy states the charge model (AC5)', () => {
         CHOICE_DESCRIPTION_MAX_LINES,
       );
     }
+  });
+});
+
+// ── Owned-reward opt-out flag (AH-0MW231NRP004HAT5 AC5) ─────────────
+
+describe('POWER_UP_CATALOGUE.rewardableWhenOwned (AH-0MW231NRP004HAT5)', () => {
+  it('derives the retired-when-owned set from the catalogue flag, in catalogue order', () => {
+    const expected = CATALOGUE_IDS.filter(
+      (id) => POWER_UP_CATALOGUE[id].rewardableWhenOwned === false,
+    );
+
+    expect(NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS).toEqual(expected);
+    // The live opt-out: an owned Teleport has no reward left to give.
+    expect(NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS).toEqual(['teleport']);
+  });
+
+  it('treats an absent flag as the documented rewardable default', () => {
+    for (const id of CATALOGUE_IDS) {
+      expect(isRewardableWhenOwned(id), id).toBe(
+        POWER_UP_CATALOGUE[id].rewardableWhenOwned !== false,
+      );
+    }
+
+    // The default is a real, live data point: Shield declares no flag and is
+    // still rewarded once owned, so the helper must read absence as `true`.
+    expect(POWER_UP_CATALOGUE.shield.rewardableWhenOwned).toBeUndefined();
+    expect(isRewardableWhenOwned('shield')).toBe(true);
   });
 });
 

@@ -1,10 +1,11 @@
 /**
- * Player bullet — a Graphics-drawn projectile with `vx`/`vy`, advanced
- * by the scene each frame and removed when its lifetime elapses.
+ * Player bullet — a cached-texture sprite projectile with `vx`/`vy`,
+ * advanced by the scene each frame and removed when its lifetime elapses.
  *
- * No physics body: bullets are pure Graphics objects (consistent with
- * the project's `ScoutBullet` precedent). The scene owns the bullet
- * lifecycle (creation, advancement, lifetime expiry).
+ * No physics body: a bullet is one sprite of its shape's cached texture (the
+ * same cached-texture seam every enemy bullet uses — see
+ * `src/utils/bulletTextures.ts`). The scene owns the bullet lifecycle
+ * (creation, advancement, lifetime expiry).
  *
  * Bullets wrap around all four screen edges (like the player ship and
  * asteroids) and remain effective within their configured lifetime
@@ -23,7 +24,11 @@
 
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
-import { drawBulletShape } from '../utils/bulletVisuals';
+import {
+  animateBulletView,
+  ensureBulletTexture,
+  type BulletViewAnimation,
+} from '../utils/bulletTextures';
 import {
   headingFromVelocity,
   type BulletShape,
@@ -32,10 +37,10 @@ import {
 } from '../utils/weapons';
 
 /**
- * A single player bullet: a Graphics object with position, velocity,
- * and a configurable colour/radius/shape. The scene creates bullets via
- * `createPlayerBullet`, advances them via `advanceAndCull`, and
- * removes them when their lifetime elapses.
+ * A single player bullet: a **cached-texture sprite** with position,
+ * velocity, and a configurable colour/radius/shape. The scene creates bullets
+ * via `createPlayerBullet`, advances them via `advanceAndCull`, and removes
+ * them when their lifetime elapses.
  *
  * Bullets wrap across all four screen edges (matching the player ship
  * and asteroid model) and survive until their lifetime expires, unless a
@@ -44,11 +49,15 @@ import {
  * Appearance (colour, shape, size, elongation) is resolved from the
  * weapon that fired it through the shared bullet-shape rendering seam
  * (`src/utils/bulletVisuals.ts`, AH-0MV8228MD009UBF7), so the game and
- * every gym draw the same shot for the same weapon. The bullet re-draws
- * itself each frame and orients to its velocity heading — a `'line'` beam
- * travels nose-first, never drawn sideways.
+ * every gym draw the same shot for the same weapon. The shape is baked once
+ * per visual spec into a cached texture (`src/utils/bulletTextures.ts`) and
+ * the bullet is one sprite of it — no per-bullet Graphics object and no
+ * per-frame path triangulation (AH-0MW2DAY2L004QSKF). The bullet orients to
+ * its velocity heading — a `'line'` beam travels nose-first, never drawn
+ * sideways — and shapes whose drawn parts move with age animate through
+ * sprite scale/alpha.
  */
-export class PlayerBullet extends Phaser.GameObjects.Graphics {
+export class PlayerBullet extends Phaser.GameObjects.Image {
   /** Horizontal velocity in px/s (reflected on a wall bounce). */
   vx: number;
 
@@ -114,6 +123,9 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
   /** Elapsed time (seconds) since this bullet was created. */
   private _elapsed = 0;
 
+  /** How the baked shape moves in flight (`none` → a static sprite). */
+  private readonly _animation: BulletViewAnimation = 'none';
+
   /**
    * The AOE weapon definition when this bullet is an `'onImpact'` projectile
    * (Mortar). The owning scene detonates the descriptor's area effect when
@@ -123,8 +135,8 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
 
   /**
    * Optional callback invoked when the bullet's lifetime expires, before its
-   * Graphics are destroyed. The shared combat core uses it to detonate an
-   * AOE projectile on expiry; ordinary bullets leave it undefined.
+   * sprite is destroyed. The shared combat core uses it to detonate an AOE
+   * projectile on expiry; ordinary bullets leave it undefined.
    */
   onExpire?: (bullet: PlayerBullet) => void;
 
@@ -193,8 +205,9 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
   readonly damagedEnemies = new Set<object>();
 
   /**
-   * Creates a new bullet Graphics object. Visuals are a filled circle
-   * (the project's bullet precedent — see ScoutBullet).
+   * Creates a new bullet sprite of the shape's cached texture. Visuals
+   * default to a filled disc (the project's bullet precedent — see
+   * ScoutBullet).
    *
    * @param scene - The Phaser scene.
    * @param x - World x position.
@@ -222,7 +235,21 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     tail?: number,
     flame?: number,
   ) {
-    super(scene, { x, y });
+    // The shape's silhouette is baked once per spec and cached in the
+    // game's TextureManager, so this is a texture-key lookup for every
+    // bullet after the first of its kind.
+    const texture = ensureBulletTexture(scene, {
+      shape,
+      color,
+      radius,
+      length: shapeLength,
+      rimColor,
+      thickness,
+      tail,
+      flame,
+    });
+    super(scene, x, y, texture.key);
+    this._animation = texture.animation;
     this.vx = vx;
     this.vy = vy;
     this.radius = radius;
@@ -234,28 +261,21 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     this.thickness = thickness;
     this.tail = tail;
     this.flame = flame;
-    this._draw();
+    this._applyView();
   }
 
   /**
-   * Draws the bullet through the shared shape seam, oriented to its
-   * velocity heading (an elongated shot flies nose-first). The bullet's
-   * elapsed time is threaded through so animated shape parts (a missile's
-   * exhaust flame) flicker as it flies (AH-0MV822B1B0048UZT).
+   * Applies the bullet's view for its current age: orients it to its velocity
+   * heading (an elongated shot flies nose-first, and a wall bounce re-orients
+   * it) and advances the scale/alpha animation of a time-driven shape.
+   *
+   * The texture is never re-drawn — the silhouette is static and already
+   * baked, so this is a rotation plus, for the handful of animated shapes, a
+   * pair of cheap property writes (AH-0MW2DAY2L004QSKF).
    */
-  private _draw(): void {
-    drawBulletShape(this, {
-      shape: this.shape,
-      color: this.color,
-      radius: this.radius,
-      length: this.shapeLength,
-      rimColor: this.rimColor,
-      thickness: this.thickness,
-      tail: this.tail,
-      flame: this.flame,
-      time: this._elapsed,
-    });
+  private _applyView(): void {
     this.setRotation(headingFromVelocity(this.vx, this.vy));
+    animateBulletView(this, this._animation, this._elapsed);
   }
 
   /**
@@ -281,7 +301,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     } else {
       this._bounceAtEdges();
     }
-    this._draw();
+    this._applyView();
   }
 
   /**
@@ -352,7 +372,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
  * @param tail - Optional short fading trail length (× radius; cannon).
  * @param flame - Optional animated exhaust-flame length (× radius; the
  *   cluster missile).
- * @returns The new bullet Graphics object.
+ * @returns The new bullet sprite.
  */
 export function createPlayerBullet(
   scene: Phaser.Scene,
@@ -396,8 +416,8 @@ export function createPlayerBullet(
  * exhausted). Bullets are never culled by off-screen position — they
  * wrap across the seam and persist until their lifetime elapses.
  *
- * When the lifetime is exhausted the bullet's Graphics object is
- * destroyed so it is removed from the scene's display list; a bullet
+ * When the lifetime is exhausted the bullet's sprite is destroyed so it is
+ * removed from the scene's display list; a bullet
  * that merely stopped advancing (but stayed rendered) was the defect
  * reported in AH-0MU960UTE001PTV0.
  *
@@ -412,7 +432,7 @@ export function advanceAndCull(
   bullet.advance(dt);
   if (bullet.isExpired()) {
     // Notify an `'onImpact'` projectile so its AOE blast resolves at the
-    // expiry point before the Graphics are destroyed.
+    // expiry point before the sprite is destroyed.
     bullet.onExpire?.(bullet);
     bullet.destroy();
     return false;

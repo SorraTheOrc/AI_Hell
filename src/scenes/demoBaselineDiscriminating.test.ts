@@ -22,6 +22,8 @@ import { resetBotTuningStore } from '../core/botTuningStore';
 // Hoisted *before* PlayScene/botTuningStore are imported so the whole module
 // graph sees a bundled baseline that differs from the factory defaults.
 vi.mock('../core/bundledConfig', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
   const distinctive = JSON.stringify({
     version: 1,
     current: 'ShippedTuned',
@@ -35,7 +37,27 @@ vi.mock('../core/bundledConfig', () => {
       },
     ],
   });
-  return { bundledBotTuningJson: distinctive };
+  // The mock replaces the whole module, so every consumer the graph pulls in
+  // must find its exports. The weapon catalogue (src/utils/weapons.ts) parses
+  // the bundled weapon CSVs at module load (AH-0MW0Q1EYJ007RRFI), and the
+  // Euclidean cadence ladders (src/utils/weaponLevels.ts) parse the bundled
+  // `weapon-levels.json` at module load (AH-0MW0Q1TQV009M8AO), so those three
+  // `?raw` strings are supplied from the committed files.
+  return {
+    bundledBotTuningJson: distinctive,
+    bundledWeaponsCsv: fs.readFileSync(
+      path.resolve(__dirname, '../data/weapons.csv'),
+      'utf8',
+    ),
+    bundledWeaponPatternsCsv: fs.readFileSync(
+      path.resolve(__dirname, '../data/weapon-patterns.csv'),
+      'utf8',
+    ),
+    bundledWeaponLevelsJson: fs.readFileSync(
+      path.resolve(__dirname, '../data/weapon-levels.json'),
+      'utf8',
+    ),
+  };
 });
 
 // Imported *after* the hoisted mock so botTuningStore seeds from the mocked

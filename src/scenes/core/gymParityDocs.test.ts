@@ -220,7 +220,7 @@ describe('docs/GYM_PARITY.md records every gym scene (AH-0MVRMHUOG005P38A)', () 
   const matrix = fs.readFileSync(GYM_PARITY_MATRIX, 'utf8');
   const sceneKeys = gymSceneKeys(GYM_SCENE_DIR);
 
-  it('audits the 17 production gym scenes (AC1)', () => {
+  it('audits the 19 production gym scenes (AC1)', () => {
     expect(sceneKeys).toEqual([
       'GymBoss',
       'GymBotTuning',
@@ -232,12 +232,14 @@ describe('docs/GYM_PARITY.md records every gym scene (AH-0MVRMHUOG005P38A)', () 
       'GymLevel',
       'GymMinerals',
       'GymMiniBoss',
+      'GymPerformance',
       'GymPlayer',
       'GymPowerUpLeveling',
       'GymPowerUpsCombat',
       'GymPowerUpsUtility',
       'GymRhythm',
       'GymWeaponLeveling',
+      'GymWeaponTuning',
       'GymWeapons',
     ]);
   });
@@ -441,5 +443,65 @@ describe('docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md §5.1 documents the shared spa
     expect(fs.existsSync(path.resolve(process.cwd(), 'docs/GYM_PARITY.md'))).toBe(
       true,
     );
+  });
+});
+
+// ── Blocked-drop stick/discard docs guard (AH-0MW3H06AC004R47P) ────
+//
+// The blocked-drop rule belongs to the shared drop core, not to any gym, so
+// the three places a reader looks (the matrix, the README's shared drop-layer
+// paragraph and GDD §4.4) must name the same module, the same two constants
+// and the same parent. `docs/GYM_PARITY.md` must record the behaviour as
+// shared core rather than a divergence, otherwise a future sweep could
+// "fix" it into a per-gym copy.
+
+const README_MD = path.resolve(process.cwd(), 'README.md');
+const GAME_DESIGN_MD = path.resolve(process.cwd(), 'docs/Game Design Document.md');
+const GYM_PARITY_DROP_SECTION = '## Blocked-drop stick and discard is shared core';
+const GDD_POWER_UPS_SECTION = '### 4.4 Power-Ups';
+
+describe('blocked-drop stick/discard is documented as shared core (AH-0MW3H06AC004R47P)', () => {
+  const matrix = fs.readFileSync(GYM_PARITY_MATRIX, 'utf8');
+  const readme = fs.readFileSync(README_MD, 'utf8');
+  const gdd = fs.readFileSync(GAME_DESIGN_MD, 'utf8');
+  const matrixSection = sectionBody(matrix, GYM_PARITY_DROP_SECTION).replace(
+    /\s+/g,
+    ' ',
+  );
+  const readmeDropParagraph = (readme.match(/Shared power-up drop layer[^\n]*/) ?? [
+    '',
+  ])[0];
+  const gddPowerUps = sectionBody(gdd, GDD_POWER_UPS_SECTION).replace(/\s+/g, ' ');
+
+  it('records the rule in docs/GYM_PARITY.md as shared core, not a divergence (AC3)', () => {
+    expect(matrix).toContain(GYM_PARITY_DROP_SECTION);
+    expect(matrixSection.trim().length).toBeGreaterThan(0);
+    expect(matrixSection).toMatch(/not a divergence/i);
+    expect(matrixSection).toMatch(/shared step|shared `CombatCoreScene/i);
+    expect(matrixSection).toContain('src/scenes/core/blockedDropDiscard.ts');
+    expect(matrixSection).toContain('AH-0MW0UAQ23005AC9L');
+  });
+
+  it('names both constants in the matrix section (AC3)', () => {
+    expect(matrixSection).toContain('BLOCKED_DROP_STICK_SECONDS');
+    expect(matrixSection).toContain('BLOCKED_DROP_THROW_SPEED');
+  });
+
+  it('names the stepper, its two constants and the eight consumers in the README (AC2)', () => {
+    expect(readmeDropParagraph).toContain('src/scenes/core/blockedDropDiscard.ts');
+    expect(readmeDropParagraph).toContain('BLOCKED_DROP_STICK_SECONDS');
+    expect(readmeDropParagraph).toContain('BLOCKED_DROP_THROW_SPEED');
+    expect(readmeDropParagraph).toMatch(/all eight drop consumers/i);
+    expect(readmeDropParagraph).toContain('AH-0MW0UAQ23005AC9L');
+  });
+
+  it('states the stick/throw/edge/cancel rule and the parent in GDD §4.4 (AC1)', () => {
+    expect(gdd).toContain(GDD_POWER_UPS_SECTION);
+    expect(gddPowerUps).toContain('AH-0MW0UAQ23005AC9L');
+    expect(gddPowerUps).toMatch(/sticks to the ship/i);
+    expect(gddPowerUps).toMatch(/random direction/i);
+    expect(gddPowerUps).toMatch(/screen edge/i);
+    expect(gddPowerUps).toMatch(/cancelled/i);
+    expect(gddPowerUps).toMatch(/no longer\s+collectable/i);
   });
 });

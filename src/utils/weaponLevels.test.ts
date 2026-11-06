@@ -55,6 +55,7 @@ import {
   type WeaponId,
 } from './weapons';
 import { beatPeriodMs, beatSubdivisionMs, createBeatClock, isOnGrid } from './beat';
+import { WEAPON_STRENGTH_BUDGET, weaponStrength } from './weaponStrength';
 import { GAME_WIDTH } from '../core/constants';
 
 // The AC4/AC5/AC6 sweeps resolve every weapon at every level 0..100 and
@@ -132,11 +133,25 @@ describe('upgrade variable catalogue (AC2)', () => {
     }
   });
 
-  test('every variable has a measurable level-1 gain (AC2 — per-level effect)', () => {
+  test('every variable has a measurable early gain (AC2 — per-level effect)', () => {
+    // Continuous variables gain at level 1, and so does every whole-number
+    // count except the two deliberately held back to level 2: `bounce` and
+    // `maxHitPoints`. Those two are held because their first step would
+    // otherwise compound the +1 projectile step on the bounce (ricochet) and
+    // pierce (railgun) families and breach the 2.5× level-1 output ceiling
+    // (AH-0MVWAVL6R001UI60).
+    const heldToLevelTwo: readonly WeaponUpgradeVariable[] = [
+      'bounce',
+      'maxHitPoints',
+    ];
     for (const variable of UPGRADE_VARIABLES) {
       const base = curveValue(WEAPON_UPGRADE_SPECS[variable], 0);
-      const levelOne = curveValue(WEAPON_UPGRADE_SPECS[variable], 1);
-      expect(levelOne).toBeGreaterThan(base);
+      const firstStep = heldToLevelTwo.includes(variable) ? 2 : 1;
+      const gained = curveValue(WEAPON_UPGRADE_SPECS[variable], firstStep);
+      expect(
+        gained,
+        `${variable} gain by level ${firstStep}`,
+      ).toBeGreaterThan(base);
     }
   });
 
@@ -145,12 +160,15 @@ describe('upgrade variable catalogue (AC2)', () => {
     for (const variable of MVP_UPGRADE_VARIABLES) {
       expect(WEAPON_UPGRADE_SPECS[variable].tier).toBe('mvp');
     }
-    // Producer-confirmed MVP set: fire rate, projectile count, bullet size, AoE.
+    // Producer-confirmed MVP set: fire rate, projectile count, bullet size, AoE,
+    // plus `homing`, which became live as the Wave Laser's accuracy lever
+    // (AH-0MW10J31B0053E56).
     expect(MVP_UPGRADE_VARIABLES).toEqual([
       'fireRate',
       'projectileCount',
       'bulletSize',
       'aoeRadius',
+      'homing',
     ]);
   });
 
@@ -626,12 +644,19 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
     expect(leveled.bulletLifetime).toBeCloseTo(preChangeCapped / 2, 10);
   });
 
-  test('AOE radius is half the pre-change value at level 0 and at the capped level', () => {
+  test('AOE radius carries the range halving (and the later level-0 trim) at level 0 and at the capped level', () => {
     for (const id of ['nova', 'mortar', 'arc'] as const) {
+      // The base radius carries the catalogue-wide range halving
+      // (AH-0MUU131PU006O7ZD) **and** the level-0 AOE coverage trim applied
+      // afterwards (AH-0MVWAVKS0005P9VN), so it is at or below half the
+      // pre-halving radius, never above it.
       const level0 = resolveWeaponDefinition(id, 0);
       expect(level0.aoe!.radius).toBeCloseTo(
-        PRE_CHANGE_AOE_RADIUS[id] / 2,
+        WEAPON_CATALOGUE[id].aoe!.radius,
         10,
+      );
+      expect(level0.aoe!.radius).toBeLessThanOrEqual(
+        PRE_CHANGE_AOE_RADIUS[id] / 2 + 1e-9,
       );
 
       const stats = resolveWeaponAtLevel(id, 1000);
@@ -640,9 +665,9 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
         6,
       );
       const capped = resolveWeaponDefinition(id, 1000);
-      const preChangeCapped =
-        PRE_CHANGE_AOE_RADIUS[id] * WEAPON_UPGRADE_SPECS.aoeRadius.cap;
-      expect(capped.aoe!.radius).toBeCloseTo(preChangeCapped / 2, 10);
+      const cappedRadius =
+        WEAPON_CATALOGUE[id].aoe!.radius * WEAPON_UPGRADE_SPECS.aoeRadius.cap;
+      expect(capped.aoe!.radius).toBeCloseTo(cappedRadius, 10);
     }
   });
 });
@@ -710,6 +735,19 @@ describe('summariseWeaponLevelChange (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
     for (const weaponId of ['nova', 'mortar', 'arc'] as const) {
       expect(summariseWeaponLevelChange(weaponId, 2, 3)).toMatch(/Area/i);
     }
+  });
+
+  test('AC2 — a weapon without a hitscan descriptor never reports an accuracy delta', () => {
+    // `homing` is live only as the Wave Laser's accuracy lever
+    // (AH-0MW10J31B0053E56); every other weapon must not promise a homing gain.
+    for (const weaponId of ['cannon', 'spread', 'ricochet', 'railgun'] as const) {
+      expect(summariseWeaponLevelChange(weaponId, 2, 3)).not.toMatch(/Homing/i);
+      expect(summariseWeaponLevelChange(weaponId, 2, 3)).not.toMatch(/accuracy/i);
+    }
+  });
+
+  test('the wave laser reports its aim-accuracy gain', () => {
+    expect(summariseWeaponLevelChange('wave_laser', 0, 1)).toMatch(/Aim accuracy/);
   });
 
   test('AC4(iv) — the summary differs between levels where the maths differ', () => {
@@ -791,22 +829,41 @@ describe('wave laser — fixed 1 damage at every level (AH-0MVREBUJ5004HDRQ)', (
     }
   });
 
-  test('the ray extent grows monotonically and never drops below one screen', () => {
+  test('the ray extent grows monotonically on the 240 px base and stays short', () => {
     const base = WEAPON_CATALOGUE.wave_laser.hitscan!.length;
-    expect(base).toBeGreaterThanOrEqual(GAME_WIDTH);
+    // Level 0 is 25 % of the old full-screen 960 px beam (AC1/AC6).
+    expect(base).toBe(240);
     let previous = base;
     for (let level = 1; level <= 100; level++) {
       const length = resolveWeaponDefinition('wave_laser', level).hitscan!.length;
       expect(length).toBeGreaterThanOrEqual(previous);
-      expect(length).toBeGreaterThanOrEqual(GAME_WIDTH);
       previous = length;
     }
     // The curve saturates at the shared `bulletLifetime` asymptote, so the
-    // beam's extent stays finite.
+    // beam's extent stays finite — and short: ~528 px at the top of the
+    // ladder, never back to full screen (Q2 = A, AC6).
     expect(previous).toBeCloseTo(
       base * WEAPON_UPGRADE_SPECS.bulletLifetime.cap,
       1,
     );
+    expect(previous).toBeLessThan(GAME_WIDTH);
+  });
+
+  test('the aim bias grows monotonically with level, from 0.5 toward ~0.95 (AC4)', () => {
+    // The `homing` curve is the accuracy lever (D1): effective bias is
+    // `base + (1 − base) × homing(level)`.
+    expect(resolveWeaponDefinition('wave_laser', 0).hitscan!.aimBias).toBe(0.5);
+    let previous = 0.5;
+    for (let level = 1; level <= 100; level++) {
+      const bias = resolveWeaponDefinition('wave_laser', level).hitscan!.aimBias;
+      expect(bias, `level ${level}`).toBeGreaterThanOrEqual(previous);
+      expect(bias).toBeLessThanOrEqual(1);
+      previous = bias;
+    }
+    // Level 1 is a visible step, and the top of the ladder approaches 0.95
+    // (0.5 + 0.5 × the 0.9 homing cap).
+    expect(resolveWeaponDefinition('wave_laser', 1).hitscan!.aimBias).toBeGreaterThan(0.5);
+    expect(previous).toBeCloseTo(0.95, 2);
   });
 
   test('the visible duration stays 0.3 s at every level (AC4)', () => {
@@ -827,13 +884,18 @@ describe('wave laser — fixed 1 damage at every level (AH-0MVREBUJ5004HDRQ)', (
     }
   });
 
-  test('the Railgun starts at one hit point and earns its pierce at level 1', () => {
+  test('the Railgun starts at one hit point and earns its pierce at level 2', () => {
     // Level 0: a single hit point, spent on the first enemy met, so a fresh
     // pickup is a heavy single shot with no pass-through (AH-0MVY0A23A009MRK3).
     expect(resolveWeaponDefinition('railgun', 0).maxHitPoints).toBe(1);
-    // Level 1: the shared curve's first step lands immediately, so the tracer
-    // now destroys a 1-HP ship and continues into the one behind it.
-    expect(resolveWeaponDefinition('railgun', 1).maxHitPoints).toBe(2);
+    // Level 1: the flattened curve's `projectileCount` step already adds a
+    // second tracer, so the damage budget is held back one level (k=0.10) to
+    // keep the resolved level-1 output inside its 2.5× ceiling
+    // (AH-0MVWAVL6R001UI60).
+    expect(resolveWeaponDefinition('railgun', 1).maxHitPoints).toBe(1);
+    // Level 2: the tracer now destroys a 1-HP ship and continues into the one
+    // behind it.
+    expect(resolveWeaponDefinition('railgun', 2).maxHitPoints).toBe(2);
     // Growth follows the shared curve alone (no weapon-level clamp, no
     // per-weapon override): monotonic non-decreasing in level and saturating
     // at base 1 + the shared curve's asymptote.
@@ -867,8 +929,11 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
       expect(value).toBeLessThanOrEqual(cap);
       previous = value;
     }
-    // The first level is responsive: it grants an extra bounce immediately.
-    expect(resolveWeaponAtLevel('ricochet', 1).bounce).toBeGreaterThan(0);
+    // The first extra bounce lands at level 2: `bounce` is held back one
+    // level (k=0.13) so a level-1 upgrade cannot compound the +1 projectile
+    // step and breach the 2.5× level-1 output ceiling (AH-0MVWAVL6R001UI60).
+    expect(resolveWeaponAtLevel('ricochet', 1).bounce).toBe(0);
+    expect(resolveWeaponAtLevel('ricochet', 2).bounce).toBeGreaterThan(0);
   });
 
   test('the resolved bounce budget grows monotonically and never exceeds the spec cap', () => {
@@ -1284,17 +1349,17 @@ describe('Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
     });
   });
 
-  describe('canonical fixture and documented ledger', () => {
-    test('the six-weapon 16-step superposition totals 46 onsets per bar', () => {
+describe('canonical fixture and documented ledger', () => {
+    test('the six-weapon 16-step superposition totals 31 onsets per bar', () => {
       const fixture: ReadonlyArray<
         readonly [WeaponId, number, number]
       > = [
-        ['heavy_slug', 3, 0],
+        ['heavy_slug', 1, 0],
         ['railgun', 2, 0],
         ['cannon', 9, 0],
-        ['arc', 9, 4],
+        ['arc', 4, 4],
         ['rapid', 13, 0],
-        ['shard_swarm', 10, 0],
+        ['shard_swarm', 2, 0],
       ];
       let total = 0;
       for (const [weaponId, k, rotation] of fixture) {
@@ -1307,23 +1372,32 @@ describe('Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
         });
         total += pattern.k;
       }
-      expect(total).toBe(46);
+      expect(total).toBe(31);
     });
 
     test('the cannon walks the documented (k, n) ledger', () => {
+      // Rung thresholds are derived from the flattened `fireRate` curve
+      // (cap 2.2×, k=0.12), so the shape morphs land later than they did under
+      // the old 3× / k=0.18 curve (AH-0MVWAVL6R001UI60).
       expect(resolveWeaponPattern('cannon', 0)).toEqual(
         latticeEuclidean(9, 16),
       );
       expect(resolveWeaponPattern('cannon', 1)).toEqual(
         latticeEuclidean(10, 16),
       );
-      expect(resolveWeaponPattern('cannon', 2)).toEqual(
+      expect(resolveWeaponPattern('cannon', 3)).toEqual(
+        latticeEuclidean(10, 16),
+      );
+      expect(resolveWeaponPattern('cannon', 4)).toEqual(
         latticeEuclidean(13, 16),
       );
-      expect(resolveWeaponPattern('cannon', 3)).toEqual(
+      expect(resolveWeaponPattern('cannon', 8)).toEqual(
+        latticeEuclidean(13, 16),
+      );
+      expect(resolveWeaponPattern('cannon', 9)).toEqual(
         latticeEuclidean(16, 16),
       );
-      expect(resolveWeaponPattern('cannon', 4)).toEqual(latticeEuclidean(8, 8));
+      expect(resolveWeaponPattern('cannon', 10)).toEqual(latticeEuclidean(8, 8));
       // Unbounded levels plateau at the final authored rung.
       expect(resolveWeaponPattern('cannon', 500)).toEqual(
         latticeEuclidean(8, 8),
@@ -1453,16 +1527,22 @@ describe('Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
       );
     });
 
-    test('cannon and arc share k=9 at level 0 and differ only by rotation', () => {
+    test('the level-0 trim takes the arc off the shared E(9,16) superposition rung', () => {
+      // Before the re-time the cannon and the arc shared k = 9 and differed
+      // only by rotation. The <= 60 % level-0 budget forces the arc down to a
+      // straight one-shot-per-beat rung (4/16), so the "two medium weapons at
+      // identical density" example is now the cannon alone
+      // (AH-0MW23FEDK006BRHK).
       const cannon = resolveWeaponPattern('cannon', 0);
       const arc = resolveWeaponPattern('arc', 0);
       expect(cannon.k).toBe(9);
-      expect(arc.k).toBe(9);
+      expect(arc.k).toBe(4);
       expect(cannon.n).toBe(arc.n);
       expect(cannon.stepMs).toBe(arc.stepMs);
       expect(cannon.rotation).toBe(0);
       expect(arc.rotation).toBe(4);
-      expect(euclideanOnsetsPerMinute(cannon)).toBe(
+      expect(isStraightEuclidean(arc)).toBe(true);
+      expect(euclideanOnsetsPerMinute(cannon)).toBeGreaterThan(
         euclideanOnsetsPerMinute(arc),
       );
     });
@@ -1537,5 +1617,240 @@ describe('Euclidean cadence ladder (AH-0MVYA291J000CK64)', () => {
         resolveWeaponPattern('not_a_weapon' as WeaponId, 0),
       ).toThrow(/Unknown weapon/);
     });
+  });
+});
+
+// ── Flattened upgrade curve (AH-0MVRENEME004FS8T AC3) ───────────────
+
+/**
+ * Pre-change **level-cap (saturated) output** per weapon — measured on the
+ * pre-retune baseline (`dev` @ 5c88d929) at weapon level 100, where the
+ * exponential-saturation curve has effectively reached its asymptote.
+ *
+ * `weaponStrength` (the shared measure from the sibling child
+ * AH-0MVWAVJYC006WKLF) supplies the number; the values are **literals** on
+ * purpose — a value re-derived from the catalogue under test could never
+ * catch a regression. Provenance: this work item's intake measurement
+ * (AH-0MVRENEME004FS8T), taken *before* `WEAPON_UPGRADE_SPECS` was retuned.
+ *
+ * The measure omits π (AOE rows are `radius² × shots/s`, so `π` cancels in
+ * every ratio) and is exact apart from float noise in the level-100
+ * fire-rate asymptote: it approaches the cap from below, so e.g. the arc's
+ * `22 500 px²/s × 4 = 90 000` reads `89 999.998`. Rounded literals are used.
+ */
+const LEVEL_CAP_OUTPUT_PRE_CHANGE: Readonly<Record<WeaponId, number>> = {
+  // 5 bullets × 8 shots/s (9 bullets × the 3× cadence cap, float-rounded).
+  cannon: 72,
+  spread: 44,
+  dual: 40,
+  // 9 bullets × 8 shots/s (the 3× cadence cap binds).
+  rapid: 216,
+  // 1 hit × 4 shots/s — the wave laser never gains a payload or a budget.
+  wave_laser: 4,
+  // 9 pellets × 4 shots/s × 5 targets (bounce depth).
+  ricochet: 180,
+  // (missile + 8 extra + 3 warheads) × 1.33 shots/s.
+  cluster: 16,
+  // 6 pods (OPTIONS_MAX_PODS) × 4 shots/s.
+  options: 24,
+  // 112.5 px radius² × 1.33 shots/s.
+  nova: 16875,
+  // 87.5 px radius² × 1.33 shots/s.
+  mortar: 10208.3333333333,
+  // 150 px radius² × 4 shots/s.
+  arc: 90000,
+  // 9 bullets × 8 shots/s.
+  rear_guard: 72,
+  // 10 bullets × 1.33 shots/s.
+  broadside: 13.3333333333,
+  // 9 pellets × 1.33 shots/s × 6 HP budget.
+  railgun: 72,
+  // 13 shards × 4 shots/s.
+  shard_swarm: 52,
+  // 9 slugs × 1.33 shots/s.
+  heavy_slug: 12,
+};
+
+/**
+ * The pre-change cannon-pattern spike this work item removes, recorded
+ * alongside the new bounds: level 1 tripled the bullet count **and** added a
+ * beat step (12.00 hits/s over the 2.67 L0 = **4.5×**), and saturation
+ * reached **27×** L0 (72 hits/s). Both numbers come from this work item's
+ * intake measurement, not from live data.
+ */
+const PRE_CHANGE_CANNON_LEVEL1_MULTIPLE = 4.5;
+const PRE_CHANGE_CANNON_LEVEL_CAP_MULTIPLE = 27;
+
+/** Levels the curve-shape sweep samples (0–10 plus the far asymptote). */
+const CURVE_SWEEP_LEVELS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100] as const;
+
+const CURVE_EPSILON = 1e-9;
+
+describe('flattened upgrade curve (AH-0MVRENEME004FS8T AC3)', () => {
+  /**
+   * Authored red first (Vitest's `test.fails`, the repo's
+   * red-before/green-after convention) by the sibling curve-ceiling child
+   * (AH-0MVWAVKD50063AC9), green once the retune landed
+   * (AH-0MVWAVL6R001UI60) — `projectileCount` cap 4 / k=0.18 resolves level 1
+   * to exactly one extra projectile (round(4·(1−e^−0.18)) = 1) instead of
+   * the old +2 spike.
+   */
+  test(
+    'level 1 adds exactly one projectile, or one orbit pod, for every weapon',
+    () => {
+      const offenders: string[] = [];
+      for (const id of WEAPON_IDS) {
+        const stats = resolveWeaponAtLevel(id, 1);
+        if (WEAPON_CATALOGUE[id].orbit) {
+          // Orbit weapons (the Gradius Options escort) grow their pod count
+          // by the same `projectileCount` step instead of fanning a pattern,
+          // so the step must resolve to exactly one extra pod.
+          const pods0 = resolveWeaponDefinition(id, 0).orbit!.pods;
+          const pods1 = resolveWeaponDefinition(id, 1).orbit!.pods;
+          if (pods1 !== pods0 + 1) {
+            offenders.push(`${id}: pods ${pods0} → ${pods1} (expected +1)`);
+          }
+          continue;
+        }
+        if (stats.projectileCount !== 1) {
+          offenders.push(`${id}: projectileCount ${stats.projectileCount}`);
+        }
+      }
+      expect(offenders, 'level-1 projectile step per weapon').toEqual([]);
+    },
+  );
+
+  /**
+   * Green with the retune (AH-0MVWAVL6R001UI60): every weapon's level-1
+   * multiple is now ≤ 2.5× its own level 0 (the cannon pattern drops from
+   * 4.5× to 2.0×).
+   */
+  test(
+    'resolved level-1 output stays at or below 2.5× level 0 for every weapon',
+    () => {
+      const ceiling = WEAPON_STRENGTH_BUDGET.level1GrowthMultiple;
+      const offenders = WEAPON_IDS.map((id) => {
+        const l0 = weaponStrength(id, 0).output;
+        const l1 = weaponStrength(id, 1).output;
+        return { id, multiple: l1 / l0 };
+      }).filter((row) => row.multiple > ceiling + CURVE_EPSILON);
+      expect(
+        offenders.map((row) => `${row.id}=${row.multiple.toFixed(2)}×`),
+        `level-1 growth ceiling is ${ceiling}× level 0`,
+      ).toEqual([]);
+    },
+  );
+
+  /**
+   * Green with the retune (AH-0MVWAVL6R001UI60): the `projectileCount` cap
+   * (4 extra), the `fireRate` cap (2.2×) and the deeper cadence trim on the
+   * Wave Laser — whose cadence is its only output axis — bring every weapon
+   * inside 50 % of its recorded pre-change level cap.
+   */
+  test(
+    'saturated output stays at or below 50 % of the recorded pre-change level cap',
+    () => {
+      const share = WEAPON_STRENGTH_BUDGET.levelCapShareOfPreChange;
+      const offenders = WEAPON_IDS.map((id) => {
+        const before = LEVEL_CAP_OUTPUT_PRE_CHANGE[id];
+        const after = weaponStrength(id, 100).output;
+        return { id, realised: after / before };
+      }).filter((row) => row.realised > share + CURVE_EPSILON);
+      expect(
+        offenders.map(
+          (row) => `${row.id}=${(row.realised * 100).toFixed(1)}%`,
+        ),
+        `level-cap ceiling is ${share * 100} % of the recorded pre-change output`,
+      ).toEqual([]);
+    },
+  );
+
+  /**
+   * The regression pin for the spike itself: the change must take the cannon
+   * pattern's level-1 multiple strictly below the measured pre-change 4.5×.
+   * Green with the retune (AH-0MVWAVL6R001UI60).
+   */
+  test(
+    'the removed spike: the cannon pattern gains less than 4.5× at level 1',
+    () => {
+      const l0 = weaponStrength('cannon', 0).output;
+      const l1 = weaponStrength('cannon', 1).output;
+      expect(l1 / l0).toBeLessThan(PRE_CHANGE_CANNON_LEVEL1_MULTIPLE);
+    },
+  );
+
+  test('the recorded pre-change cannon spike is self-consistent', () => {
+    // Both numbers are provenance literals: the ratio of the recorded
+    // saturated output to the (frozen) recorded cannon level-0 output is the
+    // 27× this work item quotes, independently of the retune. It is measured
+    // against the *recorded* baseline literal, not against the live helper:
+    // since AH-0MW23FEDK006BRHK the helper reports the live ladder cadence
+    // (2.25 onsets/beat = 3 shots/s), while the frozen baseline was recorded
+    // from the legacy nominal 2/beat table.
+    expect(
+      LEVEL_CAP_OUTPUT_PRE_CHANGE.cannon / (8 / 3),
+    ).toBeCloseTo(PRE_CHANGE_CANNON_LEVEL_CAP_MULTIPLE, 9);
+    // Every weapon carries a literal baseline, and none of them is zero (a
+    // zero baseline would make the saturated share meaningless).
+    for (const id of WEAPON_IDS) {
+      expect(LEVEL_CAP_OUTPUT_PRE_CHANGE[id], id).toBeGreaterThan(0);
+    }
+  });
+
+  test('the measured output never falls and stays on the beat grid across levels 0–10 and 100', () => {
+    // Complements the per-variable sweeps above: this asserts the *derived*
+    // strength measure (the same number the tests above bound) and re-checks
+    // the beat-grid invariant on the sampled levels the AC names.
+    for (const id of WEAPON_IDS) {
+      let previous = weaponStrength(id, 0).output;
+      for (const level of CURVE_SWEEP_LEVELS) {
+        const output = weaponStrength(id, level).output;
+        expect(output, `${id} level ${level}`).toBeGreaterThanOrEqual(
+          previous - CURVE_EPSILON,
+        );
+        previous = output;
+        expect(
+          isOnBeatGrid(resolveWeaponAtLevel(id, level).fireRateMs),
+          `${id} level ${level} fire rate`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  test('the four shipped curve variables stay inside their documented bands', () => {
+    // The intended band for each shipped variable is "never steeper than the
+    // pre-change spec" plus "level 1 is a step, not a spike": the first level
+    // may not cover 40 % of the base→cap span. A future edit that
+    // reintroduces a steep curve trips one of these bounds.
+    const bands: Readonly<
+      Record<
+        'fireRate' | 'projectileCount' | 'bulletSize' | 'aoeRadius',
+        { cap: number; k: number }
+      >
+    > = {
+      fireRate: { cap: 3, k: 0.18 },
+      projectileCount: { cap: 8, k: 0.22 },
+      bulletSize: { cap: 2.5, k: 0.16 },
+      aoeRadius: { cap: 2.5, k: 0.18 },
+    };
+
+    for (const variable of Object.keys(bands) as Array<
+      keyof typeof bands
+    >) {
+      const spec = WEAPON_UPGRADE_SPECS[variable];
+      const band = bands[variable];
+      expect(Number.isFinite(spec.cap), `${variable} cap`).toBe(true);
+      expect(spec.cap, `${variable} cap > base`).toBeGreaterThan(spec.base);
+      expect(spec.k, `${variable} k > 0`).toBeGreaterThan(0);
+      // Never steeper than the pre-change value it is replacing.
+      expect(spec.cap, `${variable} cap band`).toBeLessThanOrEqual(band.cap);
+      expect(spec.k, `${variable} k band`).toBeLessThanOrEqual(band.k);
+      // Level 1 is a step, not a spike.
+      const level1Share =
+        (curveValue(spec, 1) - spec.base) / (spec.cap - spec.base);
+      expect(level1Share, `${variable} level-1 share of the span`).toBeLessThan(
+        0.4,
+      );
+    }
   });
 });

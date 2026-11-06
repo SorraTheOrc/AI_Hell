@@ -48,6 +48,9 @@ function runCli(args: string[], timeoutMs = 180_000) {
     env: cliSpawnEnv(),
   });
   return {
+    // The spawned CLI's pid identifies the journal it writes (see
+    // `journalsOwnedBy`); a run killed before spawn reports `undefined`.
+    pid: result.pid,
     status: result.status,
     signal: result.signal,
     stdout: result.stdout ?? '',
@@ -63,6 +66,35 @@ function csvDigest(): string {
 /** The `[tune] …` progress lines, in order. */
 function progressLines(stderr: string): string[] {
   return stderr.split('\n').filter((line) => line.startsWith('[tune] '));
+}
+
+/**
+ * The `*.tune-journal` files in `src/data` written by process `pid`.
+ *
+ * `--tune` writes its crash-safety journal beside the tracked CSV, so the path
+ * `src/data/enemy-configs.csv.tune-journal` is shared by every suite that
+ * spawns the real CLI in the same parallel run (`evaluate-failfast.test.ts`'s
+ * happy path, `csvEditJournal.test.ts`'s stale-journal seeding). Matching the
+ * journal's recorded `pid` keeps this assertion about **this run**, which is
+ * the contract under test, instead of about the whole repository — the shared
+ * path is a property of the repository layout, not of the run
+ * (AH-0MW251IE0006K5DS).
+ *
+ * A journal is published by an atomic rename, so a visible journal is always a
+ * complete one: an unreadable journal is a real failure and counts as owned.
+ */
+function journalsOwnedBy(pid: number | undefined): string[] {
+  const dataDir = join(REPO_ROOT, 'src/data');
+  return readdirSync(dataDir)
+    .filter((file) => file.endsWith('.tune-journal'))
+    .filter((file) => {
+      try {
+        const journal = JSON.parse(readFileSync(join(dataDir, file), 'utf8')) as { pid?: number };
+        return journal.pid === pid;
+      } catch {
+        return true;
+      }
+    });
 }
 
 describe('--tune per-run progress on stderr (AC1/AC5)', () => {
@@ -125,9 +157,9 @@ describe('--watchdog bounded-runtime guard (AC2/AC6)', () => {
       expect(run.status, run.stderr).toBe(124);
       expect(run.stderr).toMatch(/tune watchdog expired after [\d.]+ s during /);
       expect(run.stderr).toContain('exit code 124');
-      // The guard restores before it exits: no journal, no dirty CSV.
+      // The guard restores before it exits: no journal of this run, no dirty CSV.
       expect(csvDigest()).toBe(before);
-      expect(readdirSync(join(REPO_ROOT, 'src/data')).filter((f) => f.endsWith('.tune-journal'))).toEqual([]);
+      expect(journalsOwnedBy(run.pid)).toEqual([]);
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }

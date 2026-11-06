@@ -2,7 +2,7 @@
  * Docs guard for the promo compile pipeline
  * (AH-0MVDV53RA0079F8N, parent AH-0MV9DB68T002IROX AC7).
  *
- * `npm run compile:promo` turns the captured footage into the promo,
+ * `npm run capture:promo` turns the captured footage into the promo,
  * showreel and highlight clips. Its inputs, outputs, `ffmpeg` prerequisite,
  * manifest formats and validation gates have to be discoverable from the
  * developer docs — otherwise the only description of the pipeline is the
@@ -43,9 +43,9 @@ const pkg = JSON.parse(fs.readFileSync(PACKAGE_PATH, 'utf8')) as {
 describe('Promo compile pipeline is documented (AH-0MVDV53RA0079F8N)', () => {
   it('documents the compile command and its inputs/outputs (AC1)', () => {
     expect(captureDoc).toMatch(/## Compiling a promo package/);
-    expect(captureDoc).toContain('npm run compile:promo');
+    expect(captureDoc).toContain('npm run capture:promo');
     // The npm entry point the docs promise actually exists.
-    expect(pkg.scripts['compile:promo']).toBe('node scripts/compile-promo.mjs --compile');
+    expect(pkg.scripts['capture:promo']).toBe('node scripts/compile-promo.mjs --compile');
     // Inputs: the WebM + series + anchor triple.
     for (const artefact of ['.webm', '.action.jsonl', '.capture.json']) {
       expect(captureDoc).toContain(artefact);

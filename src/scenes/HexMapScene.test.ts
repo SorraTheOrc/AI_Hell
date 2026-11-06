@@ -7,7 +7,8 @@
  * hex definitions, and the deployment reuses the shipped hangar deployment
  * path. This suite pins:
  *
- * - the map renders the hangar at the centre and every hex with its full intel
+ * - the map renders the hangar at the centre, a readable `AGG n` label on
+ *   every tile and the full intel of the focused hex in the detail panel
  *   before the player commits;
  * - ring 2's twelve generated hexes render and are selectable;
  * - focusing/activating a hex launches the shipped `PlayScene` at that hex;
@@ -106,26 +107,36 @@ describe('HexMapScene', () => {
 
     for (const intel of model.hexes) {
       const row = scene.getRows().find((entry) => entry.key === intel.key)!;
-      // The rendered tile publishes the boss, its strengths/weaknesses, the
-      // granted weapon/upgrade and the aggression.
-      expect(row.label).toContain(intel.id);
-      expect(row.label).toContain(`AGG ${intel.aggression}`);
-      expect(row.label).toContain(intel.boss!);
-      expect(row.label).toContain(`W:${intel.weaknesses.join(',')}`);
-      expect(row.label).toContain(`→${intel.grants}`);
+      // The tile carries only the short aggression label at a readable size;
+      // held/unheld stays encoded by the tile colour.
+      expect(row.label).toBe(`AGG ${intel.aggression}`);
       // The rendered text object carries exactly that label.
       expect(row.text.text).toBe(row.label);
       expect(scene.children.list).toContain(row.text);
     }
 
-    // A concrete authored hex: ring 1's easiest, its boss and its grant.
+    // The full intel block moved off the tiles into the detail panel, which
+    // follows focus: the default focus is the attract bot's weakest hex.
+    expect(scene.getPanelKey()).toBe(model.defaultFocusKey);
+    const panelHex = model.hexes.find(
+      (hex) => hex.key === model.defaultFocusKey,
+    )!;
+    const panel = scene.getPanelText();
+    expect(panel).toContain(panelHex.id);
+    expect(panel).toContain(panelHex.boss!);
+    expect(panel).toContain(`W:${panelHex.weaknesses.join(',')}`);
+    expect(panel).toContain(`→${panelHex.grants}`);
+    expect(panel).toContain(`AGG ${panelHex.aggression}`);
+
+    // A concrete authored hex: ring 1's easiest (the default focus), its boss
+    // and its grant all reachable through the panel.
     const easiest = scene
       .getRows()
       .find((row) => row.key === 'hex:hex-r1-2')!;
-    expect(easiest.label).toContain('shroud-merchant');
-    expect(easiest.label).toContain('W:waveLaser');
-    expect(easiest.label).toContain('→extra-life');
-    expect(easiest.label).toContain('AGG 1');
+    expect(easiest.label).toBe('AGG 1');
+    expect(panel).toContain('shroud-merchant');
+    expect(panel).toContain('W:waveLaser');
+    expect(panel).toContain('→extra-life');
   });
 
   it('renders ring 2\u2019s twelve generated hexes and makes them selectable', async () => {
@@ -161,6 +172,11 @@ describe('HexMapScene', () => {
     expect(scene.getFocusedKey()).toBe('hex:hex-r2-2');
     expect(scene.focusRow('hex:hex-r2-12')).toBe(true);
     expect(scene.getFocusedKey()).toBe('hex:hex-r2-12');
+    // The detail panel follows focus to the newly focused hex.
+    const weaponHex = model.hexes.find((hex) => hex.id === 'hex-r2-12')!;
+    expect(scene.getPanelKey()).toBe('hex:hex-r2-12');
+    expect(scene.getPanelText()).toContain(weaponHex.boss!);
+    expect(scene.getPanelText()).toContain(`AGG ${weaponHex.aggression}`);
   });
 
   it('deploys at the focused hex through the shipped PlayScene path', async () => {
@@ -227,6 +243,10 @@ describe('HexMapScene', () => {
     expect(scene.getFocusedKey()).toBe(HEX_MAP_HANGAR_ROW_KEY);
     // A held hex cannot be focused (nothing to deploy at).
     expect(scene.focusRow('hex:hex-r1-1')).toBe(false);
+    // The hangar focus is not a hex, so the panel falls back to the model's
+    // first hex rather than going blank.
+    expect(scene.getPanelKey()).toBe(scene.getModel().hexes[0].key);
+    expect(scene.getPanelText()).toContain(scene.getModel().hexes[0].id);
   });
 
   it('renders the generated ring for a fresh war and loads an injected store', async () => {

@@ -4,9 +4,9 @@
  * The Wave Laser is an **instant hitscan ray**, not a travelling projectile:
  * it resolves at launch, deals exactly 1 damage to the first entity it
  * intercepts and stops there; with nothing in its path it runs for its whole
- * length budget (one full arena width at level 0), **wrapping** at the arena
- * edges so a ray fired near the right edge re-emerges from the left and keeps
- * extending.
+ * length budget (240 px at level 0 — a quarter of the arena width —
+ * AH-0MW10J31B0053E56), **wrapping** at the arena edges so a ray fired near
+ * the right edge re-emerges from the left and keeps extending.
  *
  * Everything about that ray that affects gameplay is defined **once here**,
  * pure and side-effect free (no Phaser, no globals):
@@ -88,7 +88,7 @@ export interface HitscanResolution<T extends HitscanTarget> {
   end: HitscanPoint;
   /** The first intercepted entity, or `null` when the ray met nothing. */
   hit: HitscanHit<T> | null;
-  /** The requested ray length (px) — one full arena width at level 0. */
+  /** The requested ray length (px) — the weapon's length budget (240 px at level 0). */
   length: number;
 }
 

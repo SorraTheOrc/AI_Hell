@@ -137,14 +137,15 @@ class EquivEnemy
 }
 
 class EquivBullet implements FormationSceneBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** Bullets are cached-texture sprites (AH-0MW2DAY2L004QSKF). */
+  readonly graphics: Phaser.GameObjects.Image;
   vx = 0;
   vy = 0;
   lifetime = 3.0;
   elapsed = 0;
 
   constructor(scene: Phaser.Scene) {
-    this.graphics = scene.add.graphics();
+    this.graphics = scene.add.image(0, 0, '__DEFAULT');
   }
 }
 
@@ -448,7 +449,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     expect(gym.getPlayer()!.getActiveWeapons()).toEqual(['cannon']);
   });
 
-  it('teleport consumes a P7 stack and warps the player in both scenes', async () => {
+  it('teleport spends the single ready warp and warps the player in both scenes', async () => {
     const { play, gym } = await bootBoth();
 
     play.getEffectsRegistry().applyCollect('teleport');
@@ -706,7 +707,7 @@ interface EnemyBulletValues {
 function pushEnemyBullet(
   owner: EnemyBulletOwner,
   bullet: EnemyBulletValues,
-): Phaser.GameObjects.Graphics {
+): Phaser.GameObjects.Image {
   if (owner instanceof EquivGymScene) {
     const created = new EquivBullet(owner);
     created.graphics.setPosition(bullet.x, bullet.y);
@@ -747,15 +748,15 @@ function advanceEnemyBullets(owner: EnemyBulletOwner, dt: number): void {
   (owner as unknown as { _advanceBullets(dt: number): void })._advanceBullets(dt);
 }
 
-/** The Graphics of a scene's live enemy bullets. */
+/** The sprite views of a scene's live enemy bullets. */
 function enemyBulletGraphics(
   owner: EnemyBulletOwner,
-): Phaser.GameObjects.Graphics[] {
+): Phaser.GameObjects.Image[] {
   if (owner instanceof EquivGymScene) {
     return owner.activeBullets.map((bullet) => bullet.graphics);
   }
   const bullets = owner.getEnemyBullets() as Array<{
-    graphics: Phaser.GameObjects.Graphics;
+    graphics: Phaser.GameObjects.Image;
   }>;
   return bullets.map((bullet) => bullet.graphics);
 }
@@ -931,8 +932,16 @@ describe('shared projectile lifecycle — cross-scene equivalence (AC2)', () => 
 // ── Shared enemy-fire dispatcher guard (AH-0MUII3BBW000XZ46, AC1) ─────
 
 describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
-  const FIRE_HELPER = 'fireForEnemy';
+  /**
+   * The dispatcher's two entry points (AH-0MVXV0F0Y004NENT): the allocating
+   * `fireForEnemy` and the allocation-free `collectEnemyFire` it now delegates
+   * to. Both must be defined **only** in the shared helper, so the dispatch
+   * body stays single-sourced whichever form a scene consumes.
+   */
+  const FIRE_HELPERS = ['fireForEnemy', 'collectEnemyFire'] as const;
   const FIRE_HELPER_FILE = 'src/entities/enemyFire.ts';
+  /** Any dispatcher entry point at a call site counts as consuming it. */
+  const FIRE_CONSUMPTION = /(?:collectEnemyFire|fireForEnemy)\s*(?:<[^()]*>)?\(/;
 
   /** Every production TypeScript file under `src/` (excluding tests). */
   function productionSourceFiles(): string[] {
@@ -940,14 +949,16 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
   }
 
   it('defines the dispatcher exactly once, in the shared helper', () => {
-    const definers = productionSourceFiles()
-      .filter((file) =>
-        definesFunction(fs.readFileSync(file, 'utf8'), FIRE_HELPER),
-      )
-      .map((file) => path.relative(process.cwd(), file))
-      .sort();
+    for (const helper of FIRE_HELPERS) {
+      const definers = productionSourceFiles()
+        .filter((file) =>
+          definesFunction(fs.readFileSync(file, 'utf8'), helper),
+        )
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
 
-    expect(definers).toEqual([FIRE_HELPER_FILE]);
+      expect(definers, `${helper} definers`).toEqual([FIRE_HELPER_FILE]);
+    }
   });
 
   it('PlayScene and GymFodderEnemies consume the dispatcher and keep no local switch', () => {
@@ -961,8 +972,8 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
       'src/scenes/gym/GymFodderEnemies.ts',
     ]) {
       const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
-      expect(source, `${file} must consume the shared dispatcher`).toContain(
-        FIRE_HELPER,
+      expect(source, `${file} must consume the shared dispatcher`).toMatch(
+        FIRE_CONSUMPTION,
       );
       // ... and must not re-map archetype keys to fire method names itself.
       expect(source, `${file} must not map tryFire* names`).not.toMatch(
@@ -976,7 +987,7 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
       path.resolve(process.cwd(), 'src/scenes/gym/GymPowerUpsCombat.ts'),
       'utf8',
     );
-    expect(source).toContain(FIRE_HELPER);
+    expect(source).toMatch(FIRE_CONSUMPTION);
     // The fake fixed-16 ms frame accumulator is gone (AC2).
     expect(source).not.toContain('_nextFireTime');
   });
@@ -1115,7 +1126,7 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     expect(formationScene.getPlayer()!.y).toBeCloseTo(400, 5);
   });
 
-  it('destination selection, FIFO consumption and P6-on-arrival match the game', async () => {
+  it('destination selection and single-use consumption/P6-on-arrival match the game', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
       'teleport-play-host',
@@ -1150,13 +1161,11 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
       };
     }
 
-    // Two Teleport collects each → 3 stored uses (level-derived: +1 then +2), so
-    // FIFO consumption is observable.
+    // One Teleport collect each → one ready warp (single-use model).
     for (const registry of [
       playScene.getEffectsRegistry(),
       combatScene.getEffectsRegistry(),
     ]) {
-      registry.applyCollect('teleport');
       registry.applyCollect('teleport');
     }
 
@@ -1166,16 +1175,15 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     // Same inputs through the same shared algorithm → same landing spot.
     expect(combatScene.getPlayer()!.x).toBe(playScene.getPlayer()!.x);
     expect(combatScene.getPlayer()!.y).toBe(playScene.getPlayer()!.y);
-    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(2);
-    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(2);
+    // The single ready warp is spent → recharging, no second warp available.
+    expect(playScene.getEffectsRegistry().hasTeleport()).toBe(false);
+    expect(combatScene.getEffectsRegistry().hasTeleport()).toBe(false);
     expect(playScene.getEffectsRegistry().isPhased).toBe(true);
     expect(combatScene.getEffectsRegistry().isPhased).toBe(true);
 
-    // The second teleport consumes the remaining stack on both.
-    expect(playScene.triggerTeleport()).toBe(true);
-    expect(combatScene.triggerTeleport()).toBe(true);
-    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(1);
-    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(1);
+    // A second teleport request finds no ready warp on either scene.
+    expect(playScene.triggerTeleport()).toBe(false);
+    expect(combatScene.triggerTeleport()).toBe(false);
   });
 
   it('danger auto-triggers Phase Shift identically in the game and both gyms (Q1/Q2/Q3)', async () => {
@@ -1627,8 +1635,8 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     const { play, formation, combat } = await bootDrops();
     const owners: EnemyBulletOwner[] = [play, formation, combat];
 
-    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
-    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
+    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Image>();
+    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Image>();
 
     for (const owner of owners) {
       const player = owner.getPlayer()!;
@@ -1673,8 +1681,8 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     const { play, formation, combat } = await bootDrops();
     const owners: EnemyBulletOwner[] = [play, formation, combat];
 
-    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
-    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
+    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Image>();
+    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Image>();
 
     for (const owner of owners) {
       const player = owner.getPlayer()!;
@@ -1955,8 +1963,8 @@ function reachPlayBoss(play: PlayScene): void {
 }
 
 /** Stubs a boss to emit one deterministic bullet on its next update. */
-function stubBossSingleBullet(boss: Boss): Phaser.GameObjects.Graphics {
-  const graphics = boss.scene.add.graphics();
+function stubBossSingleBullet(boss: Boss): Phaser.GameObjects.Image {
+  const graphics = boss.scene.add.image(0, 0, '__DEFAULT');
   boss.update = (() =>
     [
       {
@@ -2591,6 +2599,16 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['collectOverlappingDrops', 'src/scenes/core/dropLayer.ts'],
   ['applyDropMagnet', 'src/scenes/core/dropLayer.ts'],
   ['playDropPickupCue', 'src/scenes/core/dropLayer.ts'],
+  // Blocked-drop stick-then-throw discard (parent AH-0MW0UAQ23005AC9L,
+  // AH-0MW3H05GY009AU0C): the rule lives once in the shared stepper and is
+  // consumed by the shared drop layer, so a scene (or a drop layer copy) that
+  // re-introduces the stick/throw body fails the repo-wide duplicate guard.
+  ['randomUnitDirection', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['startBlockedStick', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['cancelBlockedDiscard', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['cancelAllBlockedDiscards', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['isDiscarding', 'src/scenes/core/blockedDropDiscard.ts'],
+  ['stepBlockedDiscards', 'src/scenes/core/blockedDropDiscard.ts'],
   ['applyMineralScoop', 'src/powerups/mineralScoop.ts'],
   ['collectMinerals', 'src/scenes/core/mineralLayer.ts'],
   // The hold-full reward moved to the Phaser-free `powerups/choiceReward`

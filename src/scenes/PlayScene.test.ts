@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import {
+  BLOCKED_DROP_STICK_SECONDS,
   GAME_HEIGHT,
   GAME_WIDTH,
   MINERAL_COLOR,
@@ -42,6 +43,8 @@ import {
 } from '../vfx/wormholeSpawn';
 import type { EnemySpawn } from '../waves/WaveManager';
 import * as effectsModule from '../audio/effects';
+import * as enemyTargetingModule from './core/enemyTargeting';
+import * as enemyWrapModule from './core/enemyWrap';
 import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
@@ -61,6 +64,11 @@ import { Scout } from '../entities/Scout';
 import { Tank } from '../entities/Tank';
 import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
 import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss, type MiniBossConfig } from '../entities/MiniBoss';
+import {
+  MINI_BOSS_SWEEP_FINALE_COUNT,
+  MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS,
+  MINI_BOSS_SWEEP_FINALE_PAIR_SIZE,
+} from './core/miniBossDeathSweep';
 import { minionCountForPhase } from '../waves/BossMinions';
 import type { WeaponDefinition } from '../utils/weapons';
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
@@ -928,6 +936,168 @@ describe('PlayScene — deterministic boot helper (AH-0MVXWEE3L004SPTC)', () => 
     // The live loop stays stopped for the whole test.
     expect(second.game.loop.running).toBe(false);
     expect(fingerprint(second.scene)).toBe(firstFingerprint);
+  });
+});
+
+describe('PlayScene — hot-loop allocation removal (AH-0MVXV0F0Y004NENT)', () => {
+  let booted: BootedGame | null = null;
+
+  // The run seed / static campaign fix the wave composition, so the enemy
+  // list these tests walk is the same on every run and host load.
+  beforeEach(() => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** The private seams the allocation guarantees live on. */
+  interface HotLoopSeams {
+    spawned: {
+      entity: EnemyEntity & { alive: boolean };
+      enemyKey: string;
+    }[];
+    enemyBullets: unknown[];
+    getEnemyEntities(): readonly EnemyEntity[];
+    _collectAliveEnemies(): EnemyEntity[];
+    _collectEnemyFire(): void;
+    _moveEnemies(dt: number): void;
+    _applyFormationReanchor(): boolean;
+    positionedScratch: unknown[];
+    reanchorCandidates: unknown[];
+  }
+
+  function seams(scene: PlayScene): HotLoopSeams {
+    return scene as unknown as HotLoopSeams;
+  }
+
+  /** Boots a one-wave scene with its enemies fully spawned. */
+  async function bootWithWave(): Promise<PlayScene> {
+    const result = await bootSceneWithLevels(singleLevelCampaign(), {
+      asteroidSpawner: false,
+    });
+    booted = result.booted;
+    result.scene.finishSpawnAnimations();
+    return result.scene;
+  }
+
+  it('AC2 — getEnemyEntities caches its list and preserves live spawn order', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    expect(hot.spawned.length).toBeGreaterThan(0);
+
+    const first = hot.getEnemyEntities();
+    const second = hot.getEnemyEntities();
+
+    // Same buffer, refilled in place — no per-call `spawned.map(...)`.
+    expect(second).toBe(first);
+    // ... and the same content the map produced: every spawn, in spawn order.
+    expect([...second]).toEqual(hot.spawned.map((spawn) => spawn.entity));
+  });
+
+  it('AC1 — the aim-target push receives one reused live-enemy buffer per frame', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    const push = vi.spyOn(enemyTargetingModule, 'pushAimTargets');
+
+    try {
+      hot._collectEnemyFire();
+      hot._collectEnemyFire();
+
+      expect(push).toHaveBeenCalledTimes(2);
+      const [firstEnemies] = push.mock.calls[0];
+      const [secondEnemies] = push.mock.calls[1];
+      // Identity is the allocation guarantee: the same array is handed over
+      // every frame instead of a fresh `filter().map()` result.
+      expect(secondEnemies).toBe(firstEnemies);
+      // The buffer is the scene's own snapshot, refilled in place.
+      expect(secondEnemies).toBe(hot._collectAliveEnemies());
+      // Content and order are exactly what the filter+map produced.
+      expect([...secondEnemies]).toEqual(
+        hot.spawned
+          .filter((spawn) => spawn.entity.alive)
+          .map((spawn) => spawn.entity),
+      );
+    } finally {
+      push.mockRestore();
+    }
+  });
+
+  it('AC2 — the mineral-seek push reuses the same live-enemy buffer', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    const seek = vi.spyOn(enemyTargetingModule, 'pushSeekTargets');
+
+    try {
+      hot._moveEnemies(0.016);
+      hot._moveEnemies(0.016);
+
+      expect(seek).toHaveBeenCalledTimes(2);
+      const [firstEnemies] = seek.mock.calls[0];
+      const [secondEnemies] = seek.mock.calls[1];
+      expect(secondEnemies).toBe(firstEnemies);
+      expect(secondEnemies).toBe(hot._collectAliveEnemies());
+    } finally {
+      seek.mockRestore();
+    }
+  });
+
+  it('AC1 — enemy fire is collected into the scene\'s own bullet list', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    const bullets = hot.enemyBullets;
+
+    // A deterministic firing enemy: the shared dispatcher appends its bullet
+    // straight into the live list, so the list object never changes.
+    const fired = [
+      { vx: 1, vy: 0 },
+      { vx: 0, vy: 1 },
+    ];
+    let shots = 0;
+    hot.spawned.push({
+      enemyKey: 'scout',
+      entity: {
+        alive: true,
+        tryFireAimedBullet: () => fired[shots++] ?? null,
+      } as unknown as EnemyEntity & { alive: boolean },
+    });
+
+    hot._collectEnemyFire();
+    hot._collectEnemyFire();
+
+    expect(hot.enemyBullets).toBe(bullets);
+    expect(hot.enemyBullets.slice(-2)).toEqual(fired);
+  });
+
+  it('AC3 — the positioned-body buffer and the re-anchor candidate pool are reused', async () => {
+    const scene = await bootWithWave();
+    const hot = seams(scene);
+    const wrap = vi.spyOn(enemyWrapModule, 'applyPostMotionWrapAll');
+
+    try {
+      // Warm the run one frame, then capture the buffers the next frame uses.
+      scene.tick(0.016);
+      hot._moveEnemies(0.016);
+      const candidates = hot.reanchorCandidates;
+      const positioned = hot.positionedScratch;
+
+      hot._moveEnemies(0.016);
+
+      // The wrap seam (and the re-anchor pool) see the same array objects on
+      // the next frame: neither is rebuilt per frame.
+      const lastCall = wrap.mock.calls[wrap.mock.calls.length - 1];
+      expect(lastCall[0]).toBe(positioned);
+      expect(hot.reanchorCandidates).toBe(candidates);
+      expect(hot.positionedScratch).toBe(positioned);
+    } finally {
+      wrap.mockRestore();
+    }
   });
 });
 
@@ -2647,7 +2817,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // Override update to emit one deterministic bullet (attack logic itself
     // is covered by Boss.test.ts).
     const fakeBullet = {
-      graphics: scene.add.graphics(),
+      graphics: scene.add.image(0, 0, '__DEFAULT'),
       vx: 100,
       vy: 100,
       color: 0xffffff,
@@ -3173,17 +3343,17 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
   // ── Teleport (AH-0MU8QUY7U0069XC3) ───────────────────────────
 
-  it('P7 teleport with a stack warps the player, consumes the stack and grants P6', async () => {
+  it('P7 teleport with a ready warp warps the player, starts the recharge and grants P6', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a Teleport to gain a teleport stack.
+    // Collect a Teleport to gain the single ready warp.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
 
     // Move the ship off-centre so the safe-spot search picks a new location.
     player.setPosition(300, 400);
@@ -3192,7 +3362,13 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(scene.triggerTeleport()).toBe(true);
 
-    expect(registry.teleportStacks()).toBe(0);
+    // The single warp is spent: one level-derived recharge timer now runs.
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.isTeleportRecharging()).toBe(true);
+    expect(registry.teleportRechargeRemaining()).toBeCloseTo(
+      registry.teleportRechargeTime(),
+      6,
+    );
     expect(registry.isPhased).toBe(true); // Phase Shift granted on arrival
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
     expect(player.x).toBeGreaterThanOrEqual(0);
@@ -3201,7 +3377,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(player.y).toBeLessThanOrEqual(GAME_HEIGHT);
   });
 
-  it('P7 teleport with zero stacks is a no-op', async () => {
+  it('P7 teleport with no ready warp is a no-op', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
@@ -3212,10 +3388,10 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(scene.triggerTeleport()).toBe(false);
 
-    // Player did not move; no Phase Shift granted; still zero stacks.
+    // Player did not move; no Phase Shift granted; still no ready warp.
     expect(player.x).toBeCloseTo(beforeX);
     expect(player.y).toBeCloseTo(beforeY);
-    expect(registry.teleportStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
     expect(registry.isPhased).toBe(false);
   });
 
@@ -3224,12 +3400,12 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a Teleport stack.
+    // Collect a Teleport: the single ready warp.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
 
     // Park the ship inside a live enemy so the only safe spot is away from it.
     const enemy = scene.getEnemies().find((e) => e.alive)!;
@@ -3913,15 +4089,15 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Gain a teleport stack.
+    // Gain the single ready Teleport warp.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
 
     // Move, then place three hostile bullets within DANGER_RADIUS (40 px) so
-    // the shared danger feed selects the stored Teleport — no key input.
+    // the shared danger feed selects the ready Teleport — no key input.
     // `respawn` syncs the internal movement state so the next tick keeps the
     // ship here (a bare `setPosition` is overwritten by `physicsTick`).
     player.respawn(300, 400);
@@ -3932,8 +4108,10 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     const beforeY = player.y;
     scene.tick(0.016);
 
-    // The warp consumed the stack and moved the ship.
-    expect(registry.teleportStacks()).toBe(0);
+    // The warp spent the ready Teleport (starting its recharge) and moved the
+    // ship.
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.isTeleportRecharging()).toBe(true);
     expect(registry.isPhased).toBe(true);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
   });
@@ -8030,6 +8208,68 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(saved!.weaponLevels.some((entry) => entry.id === 'spread')).toBe(true);
   });
 
+  it('AH-0MVY3IGRC00954UD AC1 — the checkpoint saves the consumable charge pools and timers', async () => {
+    localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
+    const scene = await bootMiniBossCampaign();
+    const store = scene.getPlayer()!.getPowerUpLevelStore();
+    // An owned pooled kind with a partially spent pool: two of three charges
+    // spent, both per-charge timers in flight.
+    for (let i = 0; i < 3; i += 1) {
+      scene.getPlayer()!.collectPowerUp('force_field', true);
+    }
+    expect(store.consumableCharges('force_field')).toBe(3);
+    expect(store.consumeConsumableCharge('force_field')).toBe(true);
+    expect(store.consumeConsumableCharge('force_field')).toBe(true);
+    // Teleport caught mid-recharge (the single-use carve-out: its whole
+    // state is the readiness timer, AH-0MVY3IGRC00954UD AC1).
+    scene.getPlayer()!.collectPowerUp('teleport', true);
+    expect(store.consumeTeleport()).toBe(true);
+    store.tickRecharge(15);
+    expect(store.consumableRechargeRemaining('force_field')).toBeLessThanOrEqual(30);
+
+    advanceToMiniBoss(scene);
+    killMiniBoss(scene, false);
+
+    const saved = loadCheckpoint();
+    expect(saved).not.toBeNull();
+    const force = saved!.consumablePools!.find(
+      (entry) => entry.id === 'force_field',
+    );
+    expect(force).toBeDefined();
+    expect(force!.charges).toBe(1);
+    expect(force!.rechargeTimers).toHaveLength(2);
+    for (const timer of force!.rechargeTimers) {
+      expect(timer.duration).toBeCloseTo(45, 6);
+      // The remaining seconds only shrank from the 15 s already ticked: the
+      // wave walk ticks the shared clock a little more, so the exact value
+      // is timing-dependent, but the timer is clearly mid-flight (> 0).
+      expect(timer.remaining).toBeGreaterThan(0);
+      expect(timer.remaining).toBeLessThanOrEqual(30);
+    }
+    const teleport = saved!.consumablePools!.find(
+      (entry) => entry.id === 'teleport',
+    );
+    expect(teleport).toBeDefined();
+    expect(teleport!.charges).toBe(0);
+    expect(teleport!.rechargeTimers).toHaveLength(1);
+    // The single-use readiness timer round-trips as its own remaining
+    // seconds (duration mirrors remaining for the scalar clock).
+    expect(teleport!.rechargeTimers[0].remaining).toBeCloseTo(
+      teleport!.rechargeTimers[0].duration,
+      9,
+    );
+    expect(teleport!.rechargeTimers[0].remaining).toBeGreaterThan(0);
+    expect(teleport!.rechargeTimers[0].remaining).toBeLessThanOrEqual(45);
+    // Every saved pool entry belongs to an owned kind in the saved levels —
+    // the save-side slot gate never keeps a pool for a kind the loadout
+    // drops (AC5), so the resumed run can never own charges for a kind it
+    // does not permanently own.
+    const ownedIds = new Set(saved!.powerUpLevels.map((entry) => entry.id));
+    for (const entry of saved!.consumablePools!) {
+      expect(ownedIds.has(entry.id), entry.id).toBe(true);
+    }
+  });
+
   it('AH-0MVUXC118004B4OX AC1 — each checkpoint banks only the salvage earned since the previous one', async () => {
     localStorage.removeItem(HANGAR_WAR_STORAGE_KEY);
     const scene = await bootMiniBossCampaign();
@@ -8503,8 +8743,9 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
  * formula, scope split, determinism, anchored/scattered placement, completion
  * ordering) is pinned by `src/scenes/core/miniBossDeathSweep.test.ts`; this
  * suite pins the **scene wiring**: capture-before-teardown, the deferred
- * overlay, the single post-sweep advance, hazard survival and the
- * cosmetic-only teardown.
+ * overlay, the single post-sweep advance, hazard survival, the cosmetic-only
+ * teardown and the shared-dispatcher audio wiring (AH-0MVVEI7FD004TR2M — the
+ * game and the gym dispatch the identical cue palette).
  */
 describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () => {
   let booted: BootedGame | null = null;
@@ -8800,31 +9041,68 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     expect(scene.isPaused()).toBe(false);
   });
 
-  it('AC3 — every sweep burst schedules its explosion SFX (no silent explosions)', async () => {
+  it('AC3 — every sweep burst schedules its explosion SFX through the shared dispatcher (no silent explosions)', async () => {
     const scene = await bootSweepScene();
     advanceToMiniBoss(scene);
-    const destruction = vi.spyOn(effectsModule, 'playDestructionSound');
+    const sweepSound = vi.spyOn(effectsModule, 'playMiniBossSweepSound');
     const bossDestruction = vi.spyOn(effectsModule, 'playBossDestructionSound');
 
     hitMiniBossUntilDead(scene);
 
     const targets = scene.getMiniBossSweepTargets();
-    // The swept enemies, the `max(0, 30 - n)` scatter bursts and the 10
-    // anchored bursts share the enemy-destruction cue, each scheduled at its
-    // own burst delay (producer audit: explosions were silent).
-    expect(destruction.mock.calls.length).toBeGreaterThanOrEqual(
-      targets.length + 10,
+    expect(targets.length).toBeGreaterThan(0);
+
+    // Gym↔game parity (AH-0MVVEI7FD004TR2M AC3/AC4): the cascade is voiced
+    // through the **one** shared dispatcher — the swept enemies, the
+    // `max(0, 30 - n)` scatter bursts and the 10 anchored bursts reuse the
+    // enemy-destruction cue, and the 20-burst finale reuses the
+    // victory-explosion boom. The scene never picks its own cue.
+    const calls = sweepSound.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const cues = new Set(calls.map(([cue]) => cue));
+    expect([...cues].sort()).toEqual([
+      'playDestructionSound',
+      'playVictoryExplosionSound',
+    ]);
+
+    // Every cue is visual-timed at its burst's own delay and mix-trimmed, so
+    // no burst is dispatched silently or snapped to the beat grid.
+    for (const [, options] of calls) {
+      expect(options?.delay).toBeGreaterThanOrEqual(0);
+      expect(options?.volume).toBeGreaterThan(0);
+      expect(options?.variantPick).toBeGreaterThanOrEqual(0);
+      expect(options?.variantPick).toBeLessThan(1);
+    }
+
+    const destructionDelays = calls
+      .filter(([cue]) => cue === 'playDestructionSound')
+      .map(([, options]) => options?.delay ?? 0);
+    // Every swept enemy is voiced (role thinning stride 1) plus the scatter
+    // and anchored celebration bursts — the pre-change bug was 0 cues.
+    expect(destructionDelays.length).toBeGreaterThanOrEqual(targets.length + 10);
+    expect(destructionDelays.some((delay) => delay > 0)).toBe(true);
+
+    // The finale is the mini-boss's biggest beat: all 20 bursts voiced, in
+    // pairs two every 0.25 s, after the anchored celebration.
+    const finaleDelays = calls
+      .filter(([cue]) => cue === 'playVictoryExplosionSound')
+      .map(([, options]) => options?.delay ?? 0);
+    expect(finaleDelays).toHaveLength(MINI_BOSS_SWEEP_FINALE_COUNT);
+    expect(finaleDelays.every((delay) => delay > 0)).toBe(true);
+    const expectedPairGap =
+      MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS / 1000;
+    for (let i = MINI_BOSS_SWEEP_FINALE_PAIR_SIZE; i < finaleDelays.length; i++) {
+      expect(finaleDelays[i] - finaleDelays[i - MINI_BOSS_SWEEP_FINALE_PAIR_SIZE])
+        .toBeCloseTo(expectedPairGap, 6);
+    }
+
+    // The mini-boss's own body boom plays exactly once on the defeat frame
+    // (through the entity's shared death seam, at delay 0) — the cascade must
+    // never double it.
+    const bodyBooms = bossDestruction.mock.calls.filter(
+      ([options]) => (options?.delay ?? 0) === 0,
     );
-    expect(
-      destruction.mock.calls.some(([options]) => (options?.delay ?? 0) > 0),
-    ).toBe(true);
-    // The 20-burst finale is the mini-boss's own heavy boss-destruction boom
-    // (the mini-boss's single death cue, when routed through its
-    // `playDestructionAudio` seam, is unscheduled and therefore not counted).
-    const scheduledBossBooms = bossDestruction.mock.calls.filter(
-      ([options]) => (options?.delay ?? 0) > 0,
-    );
-    expect(scheduledBossBooms).toHaveLength(20);
+    expect(bodyBooms).toHaveLength(1);
 
     finishMiniBossSweep(scene);
   });
@@ -9562,6 +9840,80 @@ describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
     expect(popCue).toHaveBeenCalledTimes(1);
     expect(scene.getDrops()).not.toContain(drop);
     expect(scene.getCollectAnimations().length).toBeGreaterThan(0);
+  });
+
+  it('a blocked drop sticks to the ship and is then thrown away (AH-0MW0UAQ23005AC9L)', async () => {
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    player.getPowerUpLevelStore().collect('shield', true);
+    player.getPowerUpLevelStore().collect('bomb', true);
+    player.getPowerUpLevelStore().collect('speed_boost', true);
+    player.getPowerUpLevelStore().collect('phase_shift', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('dual', true);
+    expect(resolvePlayerSlotState(player).isFull).toBe(true);
+
+    // A deterministic throw direction (straight right) so the flight is known.
+    scene.setRng(() => 0);
+
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // clear the collect gate
+    player.setPosition(drop.x, drop.y);
+
+    // First refused frame: the drop stays on the field and starts sticking.
+    scene.tick(0.016);
+    expect(scene.getDrops()).toContain(drop);
+    expect(
+      drop.blockedDiscard,
+      'the first refused frame starts the shared stick window',
+    ).toBeDefined();
+
+    // The ship moves inside the window: the blocked drop follows it.
+    player.setPosition(player.x + 40, player.y + 10);
+    scene.tick(0.05);
+    expect(drop.x, 'a blocked drop follows the ship through the stick window').toBe(player.x);
+    expect(drop.y, 'a blocked drop follows the ship through the stick window').toBe(player.y);
+    expect(drop.blockedDiscard?.discarding, 'the drop is still sticking').toBe(false);
+
+    // Fast-forward to the end of the window (the pure stepper pins the full
+    // 1.5 s accumulation and the four edges; this test pins the scene wiring).
+    drop.blockedDiscard!.stickSeconds = BLOCKED_DROP_STICK_SECONDS;
+    scene.tick(0.016);
+    expect(drop.blockedDiscard?.discarding, 'the window elapses and launches the drop').toBe(true);
+    const launchX = drop.x;
+
+    // Straight-line flight: it ignores the ship and keeps travelling.
+    player.setPosition(10, 10);
+    scene.tick(0.1);
+    expect(scene.getDrops(), 'a launched drop stays on the field while in flight').toContain(drop);
+    expect(drop.x, 'the throw travels away from the ship in a straight line').toBeGreaterThan(
+      launchX,
+    );
+  });
+
+  it('clears blocked stick-then-throw state on run restart (AH-0MW0UAQ23005AC9L)', async () => {
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    player.getPowerUpLevelStore().collect('shield', true);
+    player.getPowerUpLevelStore().collect('bomb', true);
+    player.getPowerUpLevelStore().collect('speed_boost', true);
+    player.getPowerUpLevelStore().collect('phase_shift', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('dual', true);
+
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(drop.blockedDiscard, 'the drop is mid-stick before the restart').toBeDefined();
+
+    // A run restart runs `resetRunState()` at the top of `create()`, which
+    // clears the run's drop field — and with it every blocked stick/throw
+    // state. The new run never inherits a half-stuck drop.
+    (scene as unknown as { resetRunState(): void }).resetRunState();
+    expect(scene.getDrops(), 'a restarted run starts with an empty drop field').toHaveLength(0);
+    for (let i = 0; i < 5; i++) scene.tick(0.1);
+    expect(scene.getDrops(), 'the cleared half-stuck drop is never resurrected').not.toContain(drop);
   });
 
   it('below the cap the full weighted pool is still drawable (AC3)', async () => {

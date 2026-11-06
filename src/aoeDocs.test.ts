@@ -16,6 +16,8 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { AOE_RADII } from './utils/weapons';
+
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const README_PATH = path.resolve(process.cwd(), 'README.md');
 const ENEMY_DOCS_PATH = path.resolve(
@@ -36,14 +38,16 @@ describe('AOE weapons are documented (F7 AC1/AC2/AC5)', () => {
   });
 
   it('the GDD documents each AOE weapon’s fire rate and area effect', () => {
-    // Fire rates (on-grid) and effect radii from the catalogue.
+    // Fire rates (on-grid) and effect radii from the catalogue. The radii are
+    // read from `AOE_RADII` so a balance trim (AH-0MVWAVKS0005P9VN) cannot
+    // leave the GDD quoting a stale circle.
     for (const value of [
       '3000 ms',
       '1500 ms',
       '750 ms',
-      '45 px',
-      '35 px',
-      '60 px',
+      `${AOE_RADII.nova} px`,
+      `${AOE_RADII.mortar} px`,
+      `${AOE_RADII.arc} px`,
     ]) {
       expect(gdd).toContain(value);
     }

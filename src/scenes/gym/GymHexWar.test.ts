@@ -246,29 +246,40 @@ describe('GymHexWar', () => {
   it('renders the shipped hex-map intel through the shared map renderer', async () => {
     const scene = await bootHexWar();
     const model = scene.getMapModel();
-    const fixture = RING_1_HEX_FIXTURES.find((entry) => entry.id === 'hex-r1-2')!;
 
     expect(model).not.toBeNull();
     expect(model!.hexes.map((hex) => hex.id)).toEqual(
       RING_1_HEX_FIXTURES.map((entry) => entry.id),
     );
-    // Every published intel field is on the tile, not just the summary strings.
+    // Every tile carries only the short aggression label at a readable size;
+    // the full intel block lives on the detail panel (AC1/AC2).
     for (const intel of model!.hexes) {
       const row = scene.getMapRows().find((entry) => entry.key === `hex:${intel.id}`);
       expect(row, `no map tile for ${intel.id}`).toBeDefined();
-      expect(row!.label).toContain(intel.boss!);
-      expect(row!.label).toContain(`W:${intel.weaknesses.join(',')}`);
-      expect(row!.label).toContain(`→${intel.grants}`);
-      expect(row!.label).toContain(`AGG ${intel.aggression}`);
+      expect(row!.label).toBe(intel.tileLabel);
+      expect(row!.label).toBe(`AGG ${intel.aggression}`);
     }
     // The gym's render is read-only by construction.
     expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);
+
+    // The read-only render defaults the detail panel to the model's default
+    // hex and shows its full known-ahead intel.
+    expect(scene.getMapPanelKey()).toBe(model!.defaultFocusKey);
+    const panel = scene.getMapPanelText();
+    const defaultHex = model!.hexes.find(
+      (hex) => hex.key === model!.defaultFocusKey,
+    )!;
+    expect(panel).toContain(defaultHex.id);
+    expect(panel).toContain(defaultHex.boss!);
+    expect(panel).toContain(`W:${defaultHex.weaknesses.join(',')}`);
+    expect(panel).toContain(`→${defaultHex.grants}`);
+    expect(panel).toContain(`AGG ${defaultHex.aggression}`);
     expect(
       scene.children.list.some(
         (child) =>
           child instanceof Phaser.GameObjects.Text &&
-          child.text.includes(fixture.boss) &&
-          child.text.includes(`→${fixture.grants}`),
+          child.text.includes(defaultHex.boss!) &&
+          child.text.includes(`→${defaultHex.grants}`),
       ),
     ).toBe(true);
 
@@ -277,6 +288,23 @@ describe('GymHexWar', () => {
     expect(
       scene.getMapModel()!.hexes.find((hex) => hex.id === 'hex-r1-2')!.held,
     ).toBe(true);
+    expect(scene.getMapPanelKey()).not.toBeNull();
+  });
+
+  it('defaults the read-only detail panel to the model\u2019s default hex', async () => {
+    const scene = await bootHexWar();
+    const model = scene.getMapModel()!;
+
+    // Read-only by construction: nothing is focusable, yet the panel still
+    // shows detail for the model's default/first hex (AC3).
+    expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);
+    expect(scene.getMapPanelKey()).not.toBeNull();
+    const hex = model.hexes.find(
+      (candidate) => candidate.key === scene.getMapPanelKey(),
+    );
+    expect(hex).toBeDefined();
+    expect(scene.getMapPanelText()).toContain(hex!.id);
+    expect(scene.getMapPanelText()).toContain(`AGG ${hex!.aggression}`);
   });
 
   it('renders the shipped defence report from the shipped resolver record', async () => {

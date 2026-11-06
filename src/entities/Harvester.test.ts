@@ -83,14 +83,12 @@ describe('Harvester entity', () => {
     const LINE_STYLE = 6;
     const FILL_STYLE = 7;
 
-    // The body is the container child whose buffer strokes the hexagon shell.
-    const children = (h as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    const body = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics &&
-        c.commandBuffer.includes(LINE_STYLE),
+    // The body is the drawn silhouette layer, whose buffer strokes the hexagon
+    // shell (also the bake source of the rendered body sprite).
+    const body = h.bodyLayers.find((layer) =>
+      layer.commandBuffer.includes(LINE_STYLE),
     );
-    expect(body, 'expected a body Graphics child with a stroked shell').toBeDefined();
+    expect(body, 'expected a body layer with a stroked shell').toBeDefined();
 
     const buf = body!.commandBuffer as number[];
     // The purple hexagonal shell is still stroked...

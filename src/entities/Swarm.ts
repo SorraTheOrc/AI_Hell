@@ -104,7 +104,8 @@ export interface SwarmConfig {
  * identity — AH-0MV822E4T006F37Y) and travels toward the target.
  */
 export interface SwarmBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  /** The bullet's view: a sprite of its shape's cached texture. */
+  readonly graphics: Phaser.GameObjects.Image;
   readonly color: number;
   vx: number;
   vy: number;

@@ -105,12 +105,13 @@ export interface TankConfig {
  * A bullet fired by a tank in a radial burst.
  */
 export interface TankBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  readonly graphics: Phaser.GameObjects.Image;
   readonly color: number;
   /**
-   * Per-frame redraw hook (the heavy shell's slow glow) consumed by the shared
-   * enemy-bullet lifecycle, so the glow breathes identically in the game and
-   * every gym (AH-0MV822DF60001EPA).
+   * Per-frame animation hook (the heavy shell's slow glow) consumed by the
+   * shared enemy-bullet lifecycle, so the glow breathes identically in the
+   * game and every gym. It animates the cached-texture sprite's scale/alpha
+   * (AH-0MV822DF60001EPA, AH-0MW2DAY2L004QSKF).
    */
   redraw?: (elapsed: number) => void;
   vx: number;

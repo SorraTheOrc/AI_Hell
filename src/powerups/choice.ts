@@ -25,6 +25,7 @@
 
 import {
   POWER_UP_CATALOGUE,
+  isRewardableWhenOwned,
   isWeaponDrop as isWeaponDropId,
   type DropId,
   type PowerUpId,
@@ -314,6 +315,13 @@ export function buildChargeOption(
  * one **charge** ({@link buildChargeOption}), every other power-up as a
  * `'power-up-level'` (via {@link buildLevelUpOption}). The dispatch lives here
  * so no caller (hold-full pool, mini-boss reward) can re-derive it.
+ *
+ * A kind that opts out of owned rewards (`rewardableWhenOwned: false`,
+ * parent AH-0MVY096RT006QMF4 AC5) yields **no** offer: its one event is
+ * always available once permanently owned, so a charge (or level) would grant
+ * nothing. The opt-out is catalogue data read through
+ * {@link isRewardableWhenOwned}, never an id comparison, and the kind's
+ * unowned base `★ New` entry is unaffected.
  */
 function buildOwnedPowerUpOffer(
   id: PowerUpId,
@@ -321,6 +329,7 @@ function buildOwnedPowerUpOffer(
 ): ChoiceOption | undefined {
   if (!Number.isFinite(level) || level < 1) return undefined;
   if (!POWER_UP_CATALOGUE[id]) return undefined;
+  if (!isRewardableWhenOwned(id)) return undefined;
   return isConsumablePowerUpId(id)
     ? buildChargeOption(id, level)
     : buildLevelUpOption(id, level);
@@ -390,7 +399,10 @@ export function buildLevelUpOption(
  *
  * A permanently-owned **consumable** is offered as a **charge** grant
  * (`'power-up-charge'`) instead of a level-up, because a consumable never
- * levels up (AH-0MVUXH35J002WSAB AC1). Every other owned kind is unchanged.
+ * levels up (AH-0MVUXH35J002WSAB AC1). Every other owned kind is unchanged —
+ * except a kind whose catalogue entry opts out of owned rewards
+ * (`rewardableWhenOwned: false`), which yields no offer at all
+ * (parent AH-0MVY096RT006QMF4 AC5).
  *
  * Shared by the hold-full choice, the mini-boss reward and the checkpoint
  * reward path so every surface offers exactly the same options

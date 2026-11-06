@@ -97,7 +97,16 @@ export function enemyFireMethod(enemyKey: string): EnemyFireMethod {
 }
 
 /**
- * Fires an enemy once through the shared dispatcher.
+ * Fires an enemy once through the shared dispatcher, appending whatever it
+ * fired to `out`.
+ *
+ * This is the allocation-free form of {@link fireForEnemy}: it never creates
+ * the result array, so a scene that collects one frame of fire from every
+ * enemy can push straight into its live bullet list (AH-0MVXV0F0Y004NENT).
+ * The dispatch itself — the spawning gate, the archetype mapping and the
+ * single-bullet-or-array normalisation — lives **only** here, so the two
+ * entry points cannot drift (gym↔game parity, AH-0MUGZDTFX004RBD1):
+ * `fireForEnemy` is a thin wrapper that allocates `out` and delegates.
  *
  * @param entity — the enemy entity (structurally any object exposing the
  *   mapped `tryFire*(now)` method); typed `unknown` so every scene's entity
@@ -105,7 +114,43 @@ export function enemyFireMethod(enemyKey: string): EnemyFireMethod {
  * @param enemyKey — the archetype key (e.g. `scout`, `diver`); unknown keys
  *   fall back to the aimed shot.
  * @param now — the caller's scene clock in milliseconds.
- * @returns the bullets fired this call, always as an array (the mapping's
+ * @param out — the caller-owned array the fired bullets are appended to, in
+ *   fire order. Never reallocated or replaced by this helper.
+ */
+export function collectEnemyFire<TBullet>(
+  entity: unknown,
+  enemyKey: string,
+  now: number,
+  out: TBullet[],
+): void {
+  if (entity === null || entity === undefined) return;
+  // Spawning enemies are still growing — they cannot fire yet.
+  if ((entity as { isSpawning?: boolean }).isSpawning) return;
+  const method = enemyFireMethod(enemyKey);
+  const fn = (entity as Record<string, unknown>)[method];
+  if (typeof fn !== 'function') return;
+  const result = (fn as (n: number) => unknown).call(entity, now);
+  if (Array.isArray(result)) {
+    for (const bullet of result as TBullet[]) out.push(bullet);
+    return;
+  }
+  if (result !== null && result !== undefined) out.push(result as TBullet);
+}
+
+/**
+ * Fires an enemy once through the shared dispatcher.
+ *
+ * The allocating form: it owns the returned array. A per-frame hot loop that
+ * only needs to append the fire to an existing list should call
+ * {@link collectEnemyFire} instead (AH-0MVXV0F0Y004NENT).
+ *
+ * @param entity — the enemy entity (structurally any object exposing the
+ *   mapped `tryFire*(now)` method); typed `unknown` so every scene's entity
+ *   type can be passed without a cast.
+ * @param enemyKey — the archetype key (e.g. `scout`, `diver`); unknown keys
+ *   fall back to the aimed shot.
+ * @param now — the caller's scene clock in milliseconds.
+ * @returns the bullets fired this call, always as a new array (the mapping's
  *   methods return either a single bullet or an array).
  */
 export function fireForEnemy<TBullet>(
@@ -113,13 +158,7 @@ export function fireForEnemy<TBullet>(
   enemyKey: string,
   now: number,
 ): TBullet[] {
-  if (entity === null || entity === undefined) return [];
-  // Spawning enemies are still growing — they cannot fire yet.
-  if ((entity as { isSpawning?: boolean }).isSpawning) return [];
-  const method = enemyFireMethod(enemyKey);
-  const fn = (entity as Record<string, unknown>)[method];
-  if (typeof fn !== 'function') return [];
-  const result = (fn as (n: number) => unknown).call(entity, now);
-  if (Array.isArray(result)) return result as TBullet[];
-  return result === null || result === undefined ? [] : [result as TBullet];
+  const fired: TBullet[] = [];
+  collectEnemyFire<TBullet>(entity, enemyKey, now, fired);
+  return fired;
 }

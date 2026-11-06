@@ -156,6 +156,12 @@ export interface EnemyConfig {
    */
   commitRange?: number;
   /**
+   * Fixed dive speed (px/s) for the `diver` dive archetype
+   * (AH-0MW0TY1AY003TDFC AC3). Neutral for other archetypes; absent values
+   * fall back to the code default (320 px/s) at the dive site.
+   */
+  diveSpeed?: number;
+  /**
    * Number of horizontal traffic lanes for the Frogger `lane-traffic`
    * archetype (AH-0MV01EPM40008N8T). Neutral for other archetypes; absent
    * values fall back to `LANE_TRAFFIC_DEFAULT_LANE_COUNT` at the spawner site.

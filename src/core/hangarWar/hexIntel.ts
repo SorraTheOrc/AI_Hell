@@ -130,7 +130,9 @@ export interface HexIntel {
    * does not deploy at it.
    */
   readonly actionable: boolean;
-  /** The tile's rendered text (every intel line, newline separated). */
+  /** The short tile label (`AGG n`), rendered on the hex at a readable size. */
+  readonly tileLabel: string;
+  /** The full intel block the detail panel renders (every line, newline separated). */
   readonly label: string;
 }
 
@@ -351,6 +353,7 @@ export function buildHexIntel(
     defender,
     pendingAttack: pending,
     actionable: !held,
+    tileLabel: `AGG ${aggression}`,
     label: hexLabel(state, definition, pending, defender),
   };
 }

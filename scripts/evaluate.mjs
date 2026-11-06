@@ -42,6 +42,7 @@ import { fileURLToPath } from 'node:url';
 import {
   clearJournal,
   journalPathFor,
+  readJournal,
   reconcileJournal,
   writeJournal,
 } from './csvEditJournal.mjs';
@@ -611,6 +612,38 @@ export async function restoreCsvFile(
 
 
 /**
+ * Removes the crash-safety journal written by **this process**, restoring the
+ * CSV from it first (AH-0MW251IE0006K5DS).
+ *
+ * The journal is written before the edit is applied, so an abort in the window
+ * between the two — the watchdog tripping at its `applying the CSV edit`
+ * boundary, or the edit itself throwing — leaves a journal with no `attempt`
+ * record to restore from. The documented exit-`124` contract is "the CSV has
+ * been restored" and no journal survives (see `docs/BALANCING.md`), so this
+ * seam reconciles the journal exactly as a later invocation would.
+ *
+ * Only a journal owned by this process is touched (matched on the `pid` it
+ * records), so a journal another run wrote for the same CSV is never stolen.
+ * Never throws: an unreadable journal is left in place for the next invocation
+ * to report (`tune journal not reconcilable: …`).
+ *
+ * @param {string} csvPath The journalled CSV path (not the journal path).
+ * @returns {'reconciled' | 'none' | 'foreign' | 'unreadable'}
+ */
+export function clearOwnJournal(csvPath) {
+  let journal;
+  try {
+    journal = readJournal(csvPath);
+  } catch {
+    return 'unreadable';
+  }
+  if (!journal) return 'none';
+  if (journal.pid !== process.pid) return 'foreign';
+  reconcileJournal(csvPath);
+  return 'reconciled';
+}
+
+/**
  * The `--tune` loop: baseline batch → one declarative CSV edit → identical
  * re-run → before/after comparison (AH-0MVBNITA0005VQGN, parent AC1/AC2/AC4/AC5).
  *
@@ -718,6 +751,16 @@ export async function executeTune(options, io) {
         // has served its purpose. If the restore above throws, this line is
         // never reached and the journal is deliberately kept for recovery.
         clearJournal(csvPath);
+      } else {
+        // The journal was written but the edit never returned a record: the
+        // watchdog tripped at the `applying the CSV edit` boundary, or the
+        // edit threw. There is no `attempt` to restore from, so the journal is
+        // the only copy of the pre-edit bytes — reconcile it
+        // (AH-0MW251IE0006K5DS) instead of leaving it behind for a later
+        // invocation to repair.
+        if (clearOwnJournal(csvPath) === 'reconciled') {
+          io.err.write('[tune] restoring the edited CSV\n');
+        }
       }
     }
   } catch (error) {

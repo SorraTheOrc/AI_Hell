@@ -239,6 +239,22 @@ describe('findNearestTarget', () => {
       findNearestTarget(0, 0, [b, a], new Set(), isEligibleAutoTarget),
     ).toBe(b);
   });
+
+  test('AH-0MW10J31B0053E56 — a supplied world selects the torus-nearest target', () => {
+    // Origin 20 px inside the right edge of a 1000 px arena: `across` is 40 px
+    // away through the seam and 960 px away the long way, while `sameSide` is
+    // 80 px away on the same side.
+    const across = new Target(20, 500);
+    const sameSide = new Target(900, 500);
+    const world = { width: 1000, height: 1000 };
+
+    // Raw Euclidean selection keeps the historical behaviour…
+    expect(findNearestTarget(980, 500, [across, sameSide])).toBe(sameSide);
+    // …and the wrap model picks the seam-nearer target instead.
+    expect(
+      findNearestTarget(980, 500, [across, sameSide], new Set(), undefined, world),
+    ).toBe(across);
+  });
 });
 
 describe('selectChainTargets', () => {

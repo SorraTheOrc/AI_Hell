@@ -488,15 +488,16 @@ describe('Phaser — radial projectile identity (AH-0MV822DRX009RYUB)', () => {
     );
     expect(bullets).toHaveLength(8);
 
-    // The volley spawns its bolt bullet Graphics **plus** one magenta launch
-    // pop at the phaser body — the enemy-side fire VFX for the whole radial
-    // burst (one pop per volley, not per spoke — the burst is one fire event
-    // that already plays one cue+sound pair).
+    // Bullets are cached-texture images (AH-0MW2DAY2L004QSKF), so the only
+    // new Graphics is the one magenta launch pop at the phaser body — the
+    // enemy-side fire VFX for the whole radial burst (one pop per volley, not
+    // per spoke — the burst is one fire event that already plays one
+    // cue+sound pair).
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + 8 + 1);
+    expect(graphicsAfter).toBe(graphicsBefore + 1);
 
     for (const bullet of bullets) {
       // The identity bolt keeps the established lethal-red bullet colour (the

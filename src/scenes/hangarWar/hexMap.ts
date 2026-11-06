@@ -17,8 +17,10 @@
  * (AGENTS.md gym↔game parity, `docs/GYM_PARITY.md`).
  *
  * Layout is a pointy-top axial grid: ring 2's twelve hexes fit around the
- * hangar without overlapping, and each tile carries its whole intel block as
- * small monospace text so nothing has to be clicked to be read.
+ * hangar without overlapping. Each tile carries only its aggression (`AGG n`)
+ * as a short, readable label (held/unheld stays encoded by tile colour), and
+ * the focused hex's full known-ahead intel renders in the right-hand detail
+ * panel — so nothing has to be squinted at to be read (AH-0MW3VG6WJ004HRI9).
  *
  * @module src/scenes/hangarWar/hexMap
  */
@@ -28,6 +30,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import {
   HEX_MAP_HANGAR_ROW_KEY,
+  HEX_MAP_HEX_ROW_PREFIX,
   type HexIntel,
   type HexMapModel,
 } from '../../core/hangarWar/hexIntel';
@@ -59,6 +62,14 @@ const HANGAR_LINE = 0x00ffff;
 const TEXT_COLOR = '#a8e8ff';
 const HEADING_COLOR = '#00ffff';
 const MUTED_COLOR = '#557788';
+
+/** On-tile font size: the aggression badge must be readable at 960×540. */
+const TILE_FONT_SIZE = '14px';
+
+/** Right-hand detail panel: the focused hex's full intel. */
+const PANEL_X = GAME_WIDTH - 260;
+const PANEL_Y = 200;
+const PANEL_HEADING = 'SELECTED HEX — FULL INTEL';
 
 /** NS = north/south; pointy-top corner angle offset from the x axis. */
 const CORNER_ANGLES = [30, 90, 150, 210, 270, 330].map(
@@ -99,6 +110,10 @@ export interface HexMapView {
   readonly rows: readonly HexMapRow[];
   /** The focused row key, or `null` when nothing is focusable. */
   getFocusedKey(): string | null;
+  /** The hex the detail panel currently shows, or `null` when the map has no hexes. */
+  getPanelKey(): string | null;
+  /** The detail panel's current text (the full known-ahead intel). */
+  getPanelText(): string;
   /** Moves focus to `key` when it is focusable (deterministic test seam). */
   focusRow(key: string): boolean;
   /** Activates the focused row (what Enter/Space does). */
@@ -187,15 +202,10 @@ function renderLegend(
   const lines = [
     'READ THE MAP',
     'green tile — held',
-    'red tile    — unheld',
-    'AGG n       — aggression',
-    '!n          — incoming force',
-    'boss name',
-    'S: — strong against',
-    'W: — weak against',
-    '→ — grants',
-    'atk n vs bot n',
-    '… HOLDS / FALLS',
+    'red tile — unheld',
+    'AGG n — tile aggression',
+    'tab/arrows — focus a hex',
+    'detail panel — full intel',
   ];
   lines.forEach((line, index) => {
     objects.push(
@@ -227,12 +237,11 @@ function renderHexTile(
   objects.push(graphics);
 
   const text = scene.add
-    .text(x, y, intel.label, {
+    .text(x, y, intel.tileLabel, {
       fontFamily: 'monospace',
-      fontSize: '7px',
+      fontSize: TILE_FONT_SIZE,
       color: TEXT_COLOR,
       align: 'center',
-      lineSpacing: 1,
     })
     .setOrigin(0.5, 0.5);
   objects.push(text);
@@ -299,7 +308,7 @@ export function renderHexMap(
     const deployable = intel.actionable && handlers?.onDeploy !== undefined;
     rows.push({
       key: intel.key,
-      label: intel.label,
+      label: intel.tileLabel,
       actionable: deployable,
       text,
     });
@@ -362,6 +371,12 @@ export function renderHexMap(
 
   const focusable = (): HexMapRow[] => rows.filter((row) => row.actionable);
 
+  const focusedKey = (): string | null => {
+    const index = focusManager.getFocusedIndex();
+    if (index < 0) return null;
+    return focusable()[index]?.key ?? null;
+  };
+
   const focusRow = (key: string): boolean => {
     const list = focusable();
     const index = list.findIndex((row) => row.key === key);
@@ -370,19 +385,72 @@ export function renderHexMap(
     return true;
   };
 
+  // ── Detail panel: the focused hex's full known-ahead intel ────
+  const panelHeading = scene.add.text(PANEL_X, PANEL_Y, PANEL_HEADING, {
+    fontFamily: 'monospace',
+    fontSize: '10px',
+    color: HEADING_COLOR,
+  });
+  objects.push(panelHeading);
+  const panelBody = scene.add.text(PANEL_X, PANEL_Y + 16, '', {
+    fontFamily: 'monospace',
+    fontSize: '12px',
+    color: TEXT_COLOR,
+    lineSpacing: 4,
+  });
+  objects.push(panelBody);
+
+  let panelKey: string | null = null;
+  const hexByKey = (key: string | null): HexIntel | undefined =>
+    key === null ? undefined : model.hexes.find((hex) => hex.key === key);
+
+  const updatePanel = (): void => {
+    const focused = focusedKey();
+    const isHexKey = (key: string | null): key is string =>
+      key !== null && key.startsWith(HEX_MAP_HEX_ROW_PREFIX);
+
+    let key: string | null;
+    if (isHexKey(focused)) {
+      key = focused;
+    } else if (
+      model.defaultFocusKey !== null &&
+      model.defaultFocusKey.startsWith(HEX_MAP_HEX_ROW_PREFIX)
+    ) {
+      // Read-only render: nothing is focusable, so default to the model's
+      // default/first hex (AC3) and the panel still shows detail.
+      key = model.defaultFocusKey;
+    } else {
+      // A non-hex focus (e.g. the hangar row) → the map's first hex.
+      key = model.hexes[0]?.key ?? null;
+    }
+
+    const hex = hexByKey(key);
+    panelKey = hex?.key ?? null;
+    panelBody.setText(hex ? hex.label : '');
+    panelHeading.setText(
+      hex ? `SELECTED HEX — ${hex.id.toUpperCase()}` : PANEL_HEADING,
+    );
+  };
+
+  focusManager.setFocusChangeListener(updatePanel);
   if (model.defaultFocusKey !== null) focusRow(model.defaultFocusKey);
+  updatePanel(); // Covers read-only renders, where nothing is focusable.
 
   return {
     model,
     rows,
     getFocusedKey(): string | null {
-      const index = focusManager.getFocusedIndex();
-      if (index < 0) return null;
-      return focusable()[index]?.key ?? null;
+      return focusedKey();
     },
     focusRow,
     activateFocused(): void {
       focusManager.activateFocused();
+    },
+    getPanelKey(): string | null {
+      return panelKey;
+    },
+    getPanelText(): string {
+      return panelBody.text;
     },
     destroy(): void {
       focusManager.shutdown();

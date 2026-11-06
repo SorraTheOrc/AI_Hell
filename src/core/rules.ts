@@ -15,8 +15,10 @@
  * `loadRules()`, `saveRules()`, a `storage()` guard, defaults merge over
  * partial stored values and corrupt-JSON fallback).
  *
- * NOTE: `constants.ts` re-sources `POWER_UP_SPAWN_INTERVAL` from
- * `DEFAULT_RULES` so the interval has a single source of truth.
+ * NOTE: `rules.ts` seeds `POWER_UP_SPAWN_INTERVAL` from
+ * `constants.ts` so the interval has a single source of truth without making
+ * `constants.ts` depend on this module (which would close a module cycle now
+ * that the weapon catalogue parses its CSV at load — AH-0MW0Q1EYJ007RRFI).
  *
  * Consumers: the combat formation gym base (`src/scenes/gym/core/
  * GymFormationScene.ts`) reads the interval and per-ID weights to drive
@@ -31,6 +33,7 @@ import {
   type WeaponSubdivisions,
 } from '../utils/weapons';
 import { DEFAULT_BPM } from '../utils/beat';
+import { POWER_UP_SPAWN_INTERVAL } from './constants';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -155,8 +158,11 @@ export interface GameRules {
 
 // ── Defaults ────────────────────────────────────────────────────────
 
-/** Default seconds between power-up spawns (GDD §4.4). */
-export const DEFAULT_POWER_UP_SPAWN_INTERVAL = 12.5;
+/**
+ * Default seconds between power-up spawns (GDD §4.4). Seeds from the leaf
+ * `constants.ts` literal so the interval has one source of truth.
+ */
+export const DEFAULT_POWER_UP_SPAWN_INTERVAL = POWER_UP_SPAWN_INTERVAL;
 
 /** Default tempo for the shared player-fire beat grid (80 BPM → 750 ms/beat). */
 export const DEFAULT_BEAT_BPM = DEFAULT_BPM;

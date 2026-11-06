@@ -240,8 +240,10 @@ function expectPermanentGrantMidWindowReverts(id: PowerUpId): void {
 //
 // Driven through the registry's real expiry path (`tick`), not a manual
 // `clearTemporary`: a consumable is a resource, so reverting the level must
-// leave lives / charges / stored teleports untouched, and a long run must
-// never expire or auto-consume them.
+// leave lives / charges untouched, and a long run must never expire or
+// auto-consume them. Teleport is deliberately absent: since
+// AH-0MVY096RT006QMF4 it is a **readiness state** tied to being held, so a
+// pickup-only Teleport honestly ends with its level window (parent AC5).
 
 describe('consumables survive the temporary-level expiry (AH-0MVUGI4WG008HU3M AC1)', () => {
   const CONSUMABLES: ReadonlyArray<{
@@ -250,7 +252,6 @@ describe('consumables survive the temporary-level expiry (AH-0MVUGI4WG008HU3M AC
   }> = [
     { id: 'extra_life', resource: (store) => store.lives() },
     { id: 'phase_shift', resource: (store) => store.phaseCharges() },
-    { id: 'teleport', resource: (store) => store.teleportStacks() },
   ];
 
   for (const { id, resource } of CONSUMABLES) {

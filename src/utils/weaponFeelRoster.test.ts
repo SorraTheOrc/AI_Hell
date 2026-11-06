@@ -53,6 +53,7 @@ import {
   type WeaponDefinition,
   type WeaponId,
 } from './weapons';
+import { validateWeaponCatalogue } from './weaponCatalogue';
 import { CombatScene } from '../scenes/core/CombatScene';
 
 // ── The guard's data ────────────────────────────────────────────────
@@ -189,6 +190,13 @@ describe('catalogue-wide fire cues (AC1/AC2)', () => {
   it('covers all 16 catalogue ids with one asserted cue each', () => {
     expect(CATALOGUE_IDS).toHaveLength(16);
     expect(Object.keys(FIRE_CUE_BY_WEAPON).sort()).toEqual([...CATALOGUE_IDS].sort());
+  });
+
+  it('the parsed catalogue also passes the runtime invariant guard (AH-0MW0Q1FT1002Q6NJ)', () => {
+    // Derived from `WEAPON_CATALOGUE`, so this feel guard and the runtime
+    // roster guard read the same data-driven catalogue — a CSV edit is
+    // covered by both.
+    expect(validateWeaponCatalogue(WEAPON_CATALOGUE).ok).toBe(true);
   });
 
   it('every catalogue weapon dispatches exactly one manifest-mapped fire cue', () => {

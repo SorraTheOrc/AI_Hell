@@ -134,6 +134,10 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   // in live. The raider's patrol speed uses the existing `driftSpeed` slider.
   attackSpeed: { min: 40, max: 600, step: 5 },
   commitRange: { min: 40, max: 600, step: 10 },
+  // Diver dive tuning (AH-0MW0TY1AY003TDFC): fixed dive speed for the
+  // `diver` archetype, neutral for other kinds, editable so the dive speed
+  // can be dialled in live (same config surface the game reads).
+  diveSpeed: { min: 40, max: 600, step: 5 },
   startX: { min: 0, max: GAME_WIDTH, step: 1 },
   startY: { min: 0, max: GAME_HEIGHT, step: 1 },
   // Spawn-position ranges (AH-0MUKCLXLW0032R67): bound to the canvas so a

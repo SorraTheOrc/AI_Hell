@@ -25,7 +25,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -43,7 +43,12 @@ import {
 import { resolveSlotState } from '../slots';
 import type { MineralChoicePlayer } from '../choiceReward';
 import type { EffectsRegistry } from '../effects';
-import type { DropId } from '../types';
+import {
+  CONSUMABLE_POWER_UP_IDS,
+  isRewardableWhenOwned,
+  type DropId,
+  type PowerUpId,
+} from '../types';
 
 // ── Fixtures & helpers ──────────────────────────────────────────────
 
@@ -105,8 +110,12 @@ function gainIds(outcome: MiniBossWheelOutcome): DropId[] {
   return outcome.gains.map((gain) => gain.id);
 }
 
+// Resolved from the Vitest project root rather than `import.meta.url`: the
+// integration project runs under happy-dom, where `import.meta.url` is an
+// `http://localhost:3000/...` URL and `fileURLToPath` throws "The URL must be
+// of scheme file" while the file is being collected.
 const MODULE_SOURCE = readFileSync(
-  fileURLToPath(new URL('../miniBossWheel.ts', import.meta.url)),
+  resolve(process.cwd(), 'src/powerups/miniBossWheel.ts'),
   'utf8',
 );
 
@@ -266,6 +275,79 @@ describe('bonus outcome', () => {
         { id: 'shield', levels: 1 },
       ]),
     );
+  });
+});
+
+// ── Retired owned rewards ───────────────────────────────────────────
+
+describe('owned non-rewardable kinds (AH-0MW231NRP004HAT5)', () => {
+  /**
+   * The consumables that have **no reward left** once permanently owned —
+   * read from the catalogue opt-out through the shared helper, never a
+   * hand-written list, so a future opt-out is covered by these assertions.
+   */
+  const RETIRED: readonly PowerUpId[] = CONSUMABLE_POWER_UP_IDS.filter(
+    (id) => !isRewardableWhenOwned(id),
+  );
+
+  it('AC1/AC2 — a permanently-owned retired kind gets no wedge', () => {
+    // The catalogue opt-out is the only source of the retired set.
+    expect(RETIRED).toEqual(['teleport']);
+
+    for (const id of RETIRED) {
+      const wedges = buildWheelWedges([id, 'shield']);
+      // One wedge for the rewardable kind, then the bonus wedge; the retired
+      // kind is absent.
+      expect(wedges.map((wedge) => wedge.id), id).toEqual([
+        'shield',
+        MINI_BOSS_WHEEL_BONUS_ID,
+      ]);
+    }
+  });
+
+  it('AC2 — the bonus slot grants a retired kind no +1 level, other kinds unaffected', () => {
+    for (const id of RETIRED) {
+      const outcome = drawWheelOutcome(0, [id, 'spread', 'shield']);
+
+      expect(gainIds(outcome), id).not.toContain(id);
+      expect(new Set(gainIds(outcome)), id).toEqual(
+        new Set<DropId>(['spread', 'shield']),
+      );
+    }
+  });
+
+  it('AC2 — a retired kind never gains a level on any of the 100 slots', () => {
+    for (const id of RETIRED) {
+      for (let slot = 0; slot < MINI_BOSS_WHEEL_SLOT_COUNT; slot += 1) {
+        expect(gainIds(drawWheelOutcome(slot, [id])), `${id}@${slot}`).toEqual(
+          [],
+        );
+      }
+    }
+  });
+
+  it('AC4 — every other owned consumable keeps its wedge', () => {
+    const rewardable = CONSUMABLE_POWER_UP_IDS.filter(isRewardableWhenOwned);
+    expect(rewardable).toEqual([
+      'shield',
+      'phase_shift',
+      'force_field',
+      'mystery_ufo',
+      'thorns',
+    ]);
+
+    for (const id of rewardable) {
+      expect(buildWheelWedges([id]).map((wedge) => wedge.id), id).toEqual([
+        id,
+        MINI_BOSS_WHEEL_BONUS_ID,
+      ]);
+    }
+  });
+
+  it('AC5 — the exclusion is catalogue data, never an id branch in the wheel', () => {
+    // Structural guard for the producer's "no `id === 'teleport'`" rule.
+    expect(MODULE_CODE).not.toMatch(/===\s*['"]teleport['"]/);
+    expect(MODULE_CODE).toContain('isRewardableWhenOwned');
   });
 });
 

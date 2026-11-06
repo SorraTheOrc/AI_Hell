@@ -356,7 +356,12 @@ export class GymMiniBoss extends GymFormationScene<
     }
 
     // The mini-boss's own boss-scale death, then the shared sweep from the
-    // death point the entity occupied when the blow landed.
+    // death point the entity occupied when the blow landed. The body cue comes
+    // from the entity's shared audio seam (`Boss.playDestructionAudio`), the
+    // very call the base-class kill path makes when the boss dies from a hit —
+    // so EXPLODE sounds exactly like a real defeat and the sweep never doubles
+    // the boom (AH-0MVVEI7FD004TR2M AC1/AC4).
+    boss.playDestructionAudio();
     boss.destroySelf();
     boss.destroy(true);
 

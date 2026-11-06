@@ -7,6 +7,10 @@ import {
   type UfoCueRecorder,
 } from '../../test/collectorDroneFixtures';
 import {
+  BLOCKED_DROP_STICK_SECONDS,
+  BLOCKED_DROP_THROW_SPEED,
+  GAME_HEIGHT,
+  GAME_WIDTH,
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_RESPAWN_INVULNERABLE,
@@ -28,6 +32,9 @@ import {
 } from './CombatCoreScene';
 import * as muzzleFlashModule from '../../vfx/muzzleFlash';
 import * as hitscanBeamModule from '../../vfx/hitscanBeam';
+import * as effectsModule from '../../audio/effects';
+import type { PowerUpId } from '../../powerups/types';
+import { isDiscarding, startBlockedStick, type BlockedDiscardState } from './blockedDropDiscard';
 import { BULLET_COLORS, WEAPON_CATALOGUE } from '../../utils/weapons';
 import { expectRangedClear } from '../../test/powerUpEffectFixtures';
 
@@ -39,28 +46,29 @@ beforeEach(() => {
 
 /** Minimal enemy bullet (graphics + velocity). */
 class StubBullet implements CombatEnemyBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  readonly graphics: Phaser.GameObjects.Image;
   vx = 0;
   vy = 0;
 
   constructor(scene: Phaser.Scene, x = 0, y = 0) {
-    this.graphics = scene.add.graphics();
-    this.graphics.setPosition(x, y);
+    // Bullets are cached-texture sprites (AH-0MW2DAY2L004QSKF).
+    this.graphics = scene.add.image(x, y, '__DEFAULT');
   }
 }
 
 /** Minimal drop satisfying the shared collect contract. */
 class StubDrop implements CombatDrop {
   readonly powerUp: PowerUp;
-  readonly dropId: 'speed_boost' | 'bomb';
+  readonly dropId: PowerUpId;
   weaponDropId?: string;
   absorbing?: boolean;
+  blockedDiscard?: BlockedDiscardState;
 
   constructor(
     public x: number,
     public y: number,
     public readonly graphics: Phaser.GameObjects.Graphics,
-    dropId: 'speed_boost' | 'bomb',
+    dropId: PowerUpId,
     weaponDropId?: string,
     growth = 0.5,
   ) {
@@ -220,10 +228,46 @@ class StubCoreScene extends BareCoreScene {
   getCollectAnimations() {
     return this.collectAnimations;
   }
-  addDrop(id: 'speed_boost' | 'bomb', weaponDropId?: string): StubDrop {
+  /** Drives the shared per-frame blocked stick-then-throw step (AH-0MW0UAQ23005AC9L). */
+  runAdvanceDropLifecycles(drops: CombatDrop[], dt: number): CombatDrop[] {
+    return this._advanceDropLifecycles(drops, dt);
+  }
+  /**
+   * Drives the complete shared per-frame drop sequence — Magnet → lifecycle
+   * (with the blocked stepper) → overlap collection — exactly as every
+   * drop-spawning scene runs it through `_updateDropLayer`.
+   */
+  runUpdateDropLayer(drops: CombatDrop[], dt: number): CombatDrop[] {
+    return this._updateDropLayer(drops, dt);
+  }
+  /** Pins the shared seeded RNG so a throw direction is reproducible. */
+  setSceneRng(rng: () => number): void {
+    this.sceneRng = rng;
+  }
+  addDrop(id: PowerUpId, weaponDropId?: string): StubDrop {
     const g = this.add.graphics();
     return new StubDrop(120, 120, g, id, weaponDropId);
   }
+}
+
+/**
+ * Grants six permanent kinds — four power-ups and two weapon drops — so the
+ * shared six-slot pool is exactly full (the same mixed build the six-slot
+ * parity suite uses: weapons consume power-up slots too).
+ */
+function fillSixSlots(player: Player): void {
+  for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift'] as const) {
+    player.getPowerUpLevelStore().collect(id, true);
+  }
+  for (const id of ['spread', 'dual'] as const) {
+    player.equipWeapon(id, true);
+  }
+}
+
+/** Frees the whole pool through the run-restart reset, so drops are collectable again. */
+function freeSixSlots(player: Player): void {
+  player.getPowerUpLevelStore().reset();
+  player.resetWeaponLevels();
 }
 
 describe('CombatCoreScene — shared base class', () => {
@@ -231,6 +275,7 @@ describe('CombatCoreScene — shared base class', () => {
 
   afterEach(() => {
     for (const game of games.splice(0)) game.game.destroy(true);
+    vi.restoreAllMocks();
   });
 
   async function boot<T>(sceneClass: typeof Phaser.Scene): Promise<T> {
@@ -1233,6 +1278,169 @@ describe('CombatCoreScene — shared base class', () => {
     const scene = new ShortInvulnScene();
     expect(scene.runGetInvulnerabilityDuration()).toBe(0.8);
   });
+
+  // ── Blocked stick-then-throw (parent AH-0MW0UAQ23005AC9L) ────────
+
+  it('AC — advances the blocked stick window and the throw from the shared drop step', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
+    const drop = scene.addDrop('speed_boost');
+    drop.x = player.x;
+    drop.y = player.y;
+    scene.setSceneRng(() => 0); // straight right
+    startBlockedStick(drop, player);
+
+    // 1.0 s of the 1.5 s window: the drop follows the ship and is not thrown.
+    let kept = scene.runAdvanceDropLifecycles([drop], 1);
+    expect(kept, 'a sticking drop stays on the field').toEqual([drop]);
+    expect(drop.blockedDiscard?.stickSeconds, 'the shared step accumulates the stick time').toBeCloseTo(
+      1,
+      6,
+    );
+    expect(isDiscarding(drop), '1 s is inside the stick window').toBe(false);
+
+    // The ship moves during the window: the drop keeps following it.
+    player.setPosition(player.x + 30, player.y - 20);
+    kept = scene.runAdvanceDropLifecycles(kept, 0.5);
+    expect(drop.x, 'a sticking drop follows the ship while the window runs').toBe(player.x);
+    expect(drop.y, 'a sticking drop follows the ship while the window runs').toBe(player.y);
+    expect(isDiscarding(drop), '1.5 s elapses the window and launches the drop').toBe(true);
+
+    // The throw is a straight line at the shared speed, ignoring the ship.
+    const launchX = drop.x;
+    const launchY = drop.y;
+    player.setPosition(10, 10);
+    kept = scene.runAdvanceDropLifecycles(kept, 0.1);
+    expect(kept, 'a launched drop stays on the field while it is short of an edge').toEqual([drop]);
+    expect(drop.x, 'the throw advances BLOCKED_DROP_THROW_SPEED × dt').toBeCloseTo(
+      launchX + BLOCKED_DROP_THROW_SPEED * 0.1,
+      6,
+    );
+    expect(drop.y, 'the throw ignores where the ship moved').toBeCloseTo(launchY, 6);
+
+    // Fly to the edge: the shared step retires and destroys the drop.
+    const destroy = vi.spyOn(drop.graphics, 'destroy');
+    for (let i = 0; i < 100 && kept.length > 0; i++) {
+      kept = scene.runAdvanceDropLifecycles(kept, 0.1);
+    }
+    expect(kept, 'a launched drop is removed once it reaches a screen edge').toHaveLength(0);
+    expect(destroy, 'the Graphics of a drop discarded at the edge is destroyed').toHaveBeenCalledTimes(
+      1,
+    );
+  });
+
+  it('AC — the complete shared drop sequence refuses a non-exempt drop at a full pool, sticks it for 1.5 s, throws it and retires it at the edge with exactly one blocked cue', async () => {
+    const blockedCue = vi.spyOn(effectsModule, 'playPowerUpBlockedSound');
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
+    fillSixSlots(player);
+    // Q2a: this run owns no Magnet, so the stick must not depend on it.
+    expect(scene.effects.magnetEffectStacks(), 'no Magnet stacks in this run').toBe(0);
+    scene.setSceneRng(() => 0); // deterministic straight-right throw
+
+    // An unheld, non-exempt kind is refused by the six-slot gate.
+    const drop = scene.addDrop('teleport');
+    drop.x = player.x;
+    drop.y = player.y;
+
+    // First frame: the shared sequence refuses the drop, plays the cue once
+    // and starts the stick window on this frame (producer Q1a).
+    let kept = scene.runUpdateDropLayer([drop], 1 / 60);
+    expect(kept, 'a refused drop stays on the field').toContain(drop);
+    expect(
+      drop.blockedDiscard,
+      'the first refused frame starts the shared stick window',
+    ).toBeDefined();
+    expect(isDiscarding(drop), 'the drop is not thrown on the first frame').toBe(false);
+    expect(drop.x, 'the refused drop is snapped onto the ship').toBeCloseTo(player.x, 6);
+    expect(drop.y, 'the refused drop is snapped onto the ship').toBeCloseTo(player.y, 6);
+    expect(blockedCue, 'the blocked cue fires exactly once').toHaveBeenCalledTimes(1);
+
+    // 1.4 s of dt slices inside the window: the drop tracks the moving ship
+    // (explicitly, with no Magnet) and the cue never repeats.
+    for (let i = 0; i < 14; i++) {
+      player.setPosition(player.x + 3, player.y + 1);
+      kept = scene.runUpdateDropLayer(kept, 0.1);
+      expect(isDiscarding(drop), 'the 1.5 s window has not elapsed yet').toBe(false);
+      expect(drop.x, 'the sticking drop tracks the ship on x').toBeCloseTo(player.x, 6);
+      expect(drop.y, 'the sticking drop tracks the ship on y').toBeCloseTo(player.y, 6);
+      expect(
+        blockedCue,
+        'the cue never repeats while the drop stays on the field',
+      ).toHaveBeenCalledTimes(1);
+    }
+    expect(
+      drop.blockedDiscard?.stickSeconds,
+      'the shared step accumulated 1.4 s of dt',
+    ).toBeCloseTo(1.4, 6);
+
+    // The 1.5 s window elapses: the drop is launched on that frame.
+    kept = scene.runUpdateDropLayer(kept, 0.1);
+    expect(
+      drop.blockedDiscard?.stickSeconds,
+      'the window elapses at 1.5 s of accumulated dt',
+    ).toBeGreaterThanOrEqual(BLOCKED_DROP_STICK_SECONDS);
+    expect(isDiscarding(drop), 'the window elapses and launches the drop').toBe(true);
+    const launchX = drop.x;
+    const launchY = drop.y;
+
+    // The throw is a straight line at the shared speed and ignores the ship.
+    player.setPosition(0, 0);
+    kept = scene.runUpdateDropLayer(kept, 0.1);
+    expect(kept, 'a launched drop stays on the field while short of an edge').toContain(drop);
+    expect(drop.x - launchX, 'the throw advances BLOCKED_DROP_THROW_SPEED × dt').toBeCloseTo(
+      BLOCKED_DROP_THROW_SPEED * 0.1,
+      4,
+    );
+    expect(drop.y - launchY, 'the throw ignores where the ship moved').toBeCloseTo(0, 6);
+
+    // Fly to the edge: the shared step retires the drop and destroys its Graphics.
+    const destroy = vi.spyOn(drop.graphics, 'destroy');
+    let removed = false;
+    for (let i = 0; i < 200 && !removed; i++) {
+      kept = scene.runUpdateDropLayer(kept, 0.1);
+      removed = !kept.includes(drop);
+    }
+    expect(removed, 'a launched drop is removed once it reaches a screen edge').toBe(true);
+    expect(
+      destroy,
+      'the Graphics of the discarded drop is destroyed exactly once',
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC (Q3a) — a slot freeing inside the stick window collects the drop and cancels the throw', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
+    fillSixSlots(player);
+    scene.setSceneRng(() => 0);
+
+    const drop = scene.addDrop('teleport');
+    drop.x = player.x;
+    drop.y = player.y;
+
+    // The full pool refuses the drop, so it sticks.
+    let kept = scene.runUpdateDropLayer([drop], 0.1);
+    expect(drop.blockedDiscard, 'the full pool starts the stick window').toBeDefined();
+
+    // 1.0 s into the 1.5 s window.
+    for (let i = 0; i < 10; i++) kept = scene.runUpdateDropLayer(kept, 0.1);
+    expect(drop.blockedDiscard?.stickSeconds, '1.0 s into the window').toBeCloseTo(1.0, 6);
+    expect(isDiscarding(drop), 'still sticking').toBe(false);
+
+    // A slot frees before the window elapses: collect normally, cancel the throw.
+    freeSixSlots(player);
+    kept = scene.runUpdateDropLayer(kept, 0.1);
+    expect(kept, 'a collected drop leaves the field').not.toContain(drop);
+    expect(drop.absorbing, 'the freed slot collects the drop normally').toBe(true);
+    expect(
+      drop.blockedDiscard,
+      'collection clears the stick/throw state so no throw can follow',
+    ).toBeUndefined();
+
+    // Later frames never launch the collected drop.
+    kept = scene.runUpdateDropLayer(kept, 1);
+    expect(isDiscarding(drop), 'the cancelled throw never launches').toBe(false);
+  });
 });
 
 // ── Collector-drone spawn wiring (AH-0MVBMQ04X0051002) ────────────────
@@ -1460,6 +1668,11 @@ class HitscanStubScene extends StubCoreScene {
   hits: { target: StubTarget; x: number; y: number }[] = [];
   appliedDefs: string[] = [];
 
+  /** Replaces the scene's content RNG so the shot direction is pinnable. */
+  setSceneRng(rng: () => number): void {
+    this.sceneRng = rng;
+  }
+
   protected override getHitscanTargets() {
     return this.targets;
   }
@@ -1500,6 +1713,20 @@ describe('wave laser — hitscan dispatch from the shared fire path (AH-0MVREBUJ
     return booted.scene as unknown as HitscanStubScene;
   }
 
+  /**
+   * Pins the shot's two RNG draws: the uniform candidate angle and the
+   * aim-bias roll (see `hitscanAim.ts`).
+   */
+  function setShotDraws(
+    scene: HitscanStubScene,
+    uniformFraction: number,
+    aimRoll: number,
+  ): void {
+    const values = [uniformFraction, aimRoll];
+    let index = 0;
+    scene.setSceneRng(() => values[index++] ?? 0);
+  }
+
   it('spawns no travelling bullet — one beam resolved at launch instead', async () => {
     const scene = await boot();
     const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
@@ -1513,7 +1740,7 @@ describe('wave laser — hitscan dispatch from the shared fire path (AH-0MVREBUJ
     expect(
       scene.getPlayerBullets().filter((b) => b.color === 0xff0000),
     ).toHaveLength(0);
-    // Exactly one beam column per shot, one full screen wide (AC1/AC3).
+    // Exactly one beam column per shot (AC1/AC5).
     expect(beamSpy).toHaveBeenCalledTimes(1);
     const options = beamSpy.mock.calls[0][2]!;
     expect(options.color).toBe(BULLET_COLORS.wave_laser);
@@ -1522,21 +1749,59 @@ describe('wave laser — hitscan dispatch from the shared fire path (AH-0MVREBUJ
     expect(scene.hits).toHaveLength(0);
   });
 
-  it('applies exactly one hit at the nearest intercept and stops there (AC2)', async () => {
+  it('aims at the nearest enemy when the bias roll lands under aimBias (AC2/AC3)', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 200 });
-    player.setDefaultHeading(0); // fire right
+    player.setDefaultHeading(Math.PI); // the ship faces away from the target
     const near = scene.addTarget(300, 200);
     const far = scene.addTarget(600, 200);
     player.equipWeapon('wave_laser', true);
+    // Uniform candidate = half a turn; aim roll 0 < the 0.5 bias → aimed.
+    setShotDraws(scene, 0.5, 0);
 
     scene.runAutoFire(10);
 
+    // The beam left along the aimed bearing (toward +x), not the ship's
+    // heading, and stopped at the first intercept.
     expect(scene.hits).toHaveLength(1);
     expect(scene.hits[0].target).toBe(near);
     expect(scene.hits[0].x).toBeCloseTo(288, 6);
     expect(scene.appliedDefs).toEqual(['wave_laser']);
     // The entity behind the intercept is never reached.
     expect(scene.hits.some((hit) => hit.target === far)).toBe(false);
+  });
+
+  it('fires the uniform candidate when the bias roll misses (AC2)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 200 });
+    player.setDefaultHeading(0); // the ship faces the target
+    scene.addTarget(300, 200);
+    player.equipWeapon('wave_laser', true);
+    // Uniform candidate = a quarter turn (straight down); aim roll 0.9 > 0.5.
+    setShotDraws(scene, 0.25, 0.9);
+
+    scene.runAutoFire(10);
+
+    // Nothing was on the down-ray, so the shot misses entirely.
+    expect(scene.hits).toHaveLength(0);
+  });
+
+  it('points the muzzle flash along the resolved beam, not the ship heading (AC7)', async () => {
+    const scene = await boot();
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.setDefaultHeading(0); // the ship faces +x
+    player.equipWeapon('wave_laser', true);
+    // Uniform candidate = half a turn (straight back, -x); no enemy to aim at.
+    setShotDraws(scene, 0.5, 0.99);
+
+    scene.runAutoFire(10);
+
+    const waveFlash = flash.mock.calls.find(
+      (call) => (call[4] as { color?: number }).color === BULLET_COLORS.wave_laser,
+    );
+    expect(waveFlash).toBeDefined();
+    expect(waveFlash![3]).toBeCloseTo(Math.PI, 6);
   });
 });

@@ -64,7 +64,7 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   spread: 0xffaa00, // neon orange — fan arc
   dual: 0xff00ff, // neon magenta — parallel bars
   rapid: 0xffff00, // neon yellow — stacked dots
-  wave_laser: 0xff0000, // pure red — full-screen stopping beam
+  wave_laser: 0xff0000, // pure red — short stopping beam
   ricochet: 0x33ff66, // neon green — edge-bouncing pellet
   cluster: 0xff3366, // neon hot pink — splitting warhead cluster
   options: 0x00ffcc, // neon aquamarine — orbiting satellite pods
@@ -670,6 +670,87 @@ export function drawWeaponIcon(
   _drawWeaponIcon(graphics, weaponId, x, y, size);
 }
 
+// ── HUD countdown ring (parent AH-0MVZ8YQQV006Q09W) ───────────────────
+
+/**
+ * Radius (px) of the HUD countdown ring around a row icon. The glyph is drawn
+ * at 8 px (a 4 px radius), so a 6 px ring sits just outside it and, with a
+ * 2 px stroke, still clears the label column (`NAME_X = 24`, icon centre at
+ * `ICON_X = 10`) and the 22 px row band.
+ */
+export const RING_RADIUS = 6;
+
+/** Stroke width (px) of the HUD countdown ring — thin enough to read at 8 px. */
+export const RING_STROKE_WIDTH = 2;
+
+/**
+ * Minimum ring sweep (fraction of a full turn) drawn while a countdown is
+ * live. A nearly-expired window (`remaining / duration → 0`) would otherwise
+ * shrink the arc to nothing and flicker out before the timer actually ends;
+ * the floor keeps a visible sliver until the window expires and the row stops
+ * drawing a ring at all (the same legibility idea as
+ * `MINERAL_BAR_MIN_FILL`).
+ */
+export const MIN_RING_SWEEP = 0.02;
+
+/**
+ * The palette colour a weapon's icon (and its countdown ring) is drawn in.
+ * Exported so the HUD can colour a row's ring from the very same palette as
+ * the glyph it encircles instead of keeping a second colour table.
+ */
+export function weaponIconColour(weaponId: WeaponDropIconId): number {
+  return weaponId === 'reset' ? RESET_ICON_COLOR : WEAPON_ICON_COLORS[weaponId];
+}
+
+/**
+ * Draw the HUD countdown ring around a row icon (GDD §4.4): a thin arc of
+ * `fraction` of a full turn, started at 12 o'clock and swept **clockwise**,
+ * drawn onto the row's existing `Graphics` object (no mask, no new object, no
+ * external asset — code-first convention).
+ *
+ * The caller passes the direction-corrected sweep from
+ * `resolveCountdownSweep`, so this helper is deliberately direction-agnostic:
+ * an `arriving` sweep grows as the wait elapses and an `expiring` sweep shrinks
+ * as the window burns down. A fraction of `0` draws nothing ("no live
+ * countdown, no ring" — e.g. the instant a charge is spent or after expiry);
+ * any live fraction below {@link MIN_RING_SWEEP} still draws the minimum
+ * sliver so a nearly-done timer never flickers out.
+ *
+ * The glyph must be drawn **before** this helper: the ring is appended to the
+ * same command buffer rather than clearing it.
+ *
+ * @param graphics - The row icon's Graphics object (already holding the glyph).
+ * @param x - Icon centre x (container coordinates).
+ * @param y - Icon centre y (container coordinates).
+ * @param fraction - Direction-corrected sweep in `[0, 1]`.
+ * @param colour - Palette colour for the ring (the icon's own hue, or the
+ *   shared grey when the row is greyed out).
+ */
+export function drawCountdownRing(
+  graphics: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  fraction: number,
+  colour: number,
+): void {
+  const clamped = Math.min(1, Math.max(0, fraction));
+  if (clamped <= 0) return;
+  const sweep = Math.max(clamped, MIN_RING_SWEEP);
+  const startAngle = -Math.PI / 2; // 12 o'clock
+  graphics.lineStyle(RING_STROKE_WIDTH, colour, 1);
+  graphics.beginPath();
+  // `anticlockwise: false` sweeps increasing-angle = clockwise on screen.
+  graphics.arc(
+    x,
+    y,
+    RING_RADIUS,
+    startAngle,
+    startAngle + sweep * Math.PI * 2,
+    false,
+  );
+  graphics.strokePath();
+}
+
 /**
  * Inner weapon icon drawing WITHOUT clearing first — shared by
  * `drawWeaponIcon` (caller-owned buffers) and `drawWeaponDrop` (field
@@ -866,10 +947,10 @@ function drawRapidIcon(
 }
 
 /**
- * Wave laser icon — a long red beam that **stops** at a bright blocking edge,
+ * Wave laser icon — a short red beam that **stops** at a bright blocking edge,
  * hinting at the hitscan shot that deals 1 damage to the first thing it meets
- * and spans the whole screen when nothing intercepts it
- * (AH-0MVREBUJ5004HDRQ).
+ * and runs its short level-0 extent when nothing intercepts it
+ * (AH-0MVREBUJ5004HDRQ, AH-0MW10J31B0053E56).
  */
 function drawWaveLaserIcon(
   g: Phaser.GameObjects.Graphics,
@@ -877,7 +958,7 @@ function drawWaveLaserIcon(
   y: number,
   s: number,
 ): void {
-  // Long horizontal beam.
+  // Short horizontal beam.
   g.beginPath();
   g.moveTo(x - s * 0.9, y);
   g.lineTo(x + s * 0.9, y);

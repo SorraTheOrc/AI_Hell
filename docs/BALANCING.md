@@ -269,7 +269,11 @@ cap shapes what a run can become.
 - **Blocked pickups are visible (producer Q5b).** At the cap a drop that cannot
   be taken stays on the field, applies nothing and plays the distinct
   not-collectable cue once, so a full pool never silently swallows a pickup the
-  player is chasing.
+  player is chasing. It sticks to the ship for `BLOCKED_DROP_STICK_SECONDS =
+  1.5` s and is then thrown away at `BLOCKED_DROP_THROW_SPEED = 400` px/s until
+  it leaves the screen (parent AH-0MW0UAQ23005AC9L), so a full loadout does not
+  trail a permanent uncollectable icon; a slot freeing inside that window still
+  collects the drop normally.
 - **Eligibility only, not weights.** The cap gates *which* ids may be drawn,
   collected or offered once the pool is **full**; it never retunes a weight.
   Below the cap every id remains eligible with its existing weight, so
@@ -318,8 +322,9 @@ cap shapes what a run can become.
   (AH-0MVVJRRN10038VFR).** The HUD upgrade list is a *display* list, not the
   loadout, so it can legitimately show rows that hold no slot: an exempt entry
   (Mystery UFO — `always available`) and a Phase Shift / Teleport row that
-  survives on remaining charges after its temporary window expired
-  (`charges only`). To keep the cap legible the HUD renders an explicit
+  survives outside the loadout after its temporary window expired (a Phase
+  Shift charge pool on its remaining charges, a single-use Teleport on its
+  ready-or-recharging warp — `charges only`). To keep the cap legible the HUD renders an explicit
   **`Loadout n/6`** budget from the shared model
   (`resolvePlayerSlotState(player)`), marks those non-slot rows, and renders
   them **dimmed** (`NON_SLOT_ROW_ALPHA`, half opacity) so the slot-counted
@@ -333,8 +338,10 @@ cap shapes what a run can become.
   exceed `POWER_UP_SLOT_CAP`, and the same wiring (`combatHudOptions`) feeds
   `PlayScene` and every gym, so gym↔game parity holds for the display too.
   The row classes worth knowing: an exempt entry (Mystery UFO,
-  `always available`) and a charge pool surviving its expired window
-  (`charges only`, including a Phase Shift row opened by a Teleport arrival)
+  `always available`) and a held kind surviving outside the loadout
+  (`charges only` — a Phase Shift charge pool after its expired window, or the
+  single-use Teleport's ready-or-recharging warp, including a Phase Shift row
+  opened by a Teleport arrival)
   hold **no** slot; Extra Life has **no** row (the lives counter carries it);
   a temporary one-shot (Orbital Strike, Smart Bomb) holds a slot while its
   window is open and therefore renders a countdown row. A temporary **field
@@ -461,11 +468,29 @@ temporary level can never compound across a wave, and they are **not** scaled
 by the campaign-level supply curves above (those shape drop frequency, not
 window length).
 
-**Consumables are never clawed back.** Lives, Phase Shift charges and
-Teleport uses already granted by a temporary pickup survive the level revert
-and never carry a timer of their own (producer Q2 on AH-0MVSTKGC3003OMAC).
+**Consumables are never clawed back.** Lives, Phase Shift charges and the
+ready Teleport warp already granted by a temporary pickup survive the level
+revert and never carry a timer of their own (producer Q2 on AH-0MVSTKGC3003OMAC).
 Occupancy of a six-slot loadout still follows the window: the slot is released
 when the TTL expires (see the loadout subsection above).
+
+**Teleport is single-use — its recharge, not its TTL, is the balance lever**
+(parent AH-0MVY096RT006QMF4). The 15 s TTL above is the *temporary-level
+window*; the escape itself is one warp whose recharge interval is the
+level-derived `teleportRechargeRate` axis (stored charges/second, inverted to
+seconds by the store), so there is no stored-charge or stack count to tune:
+
+| Teleport recharge axis | Level 0 | Upgrade cap | Curve |
+|---|---:|---:|---|
+| `teleportRechargeRate` (seconds per warp) | **60 s** | **20 s** | exponential-saturation, `k = 0.3` |
+| `teleportPhaseDuration` (arrival phase) | 1.5 s | 3 s | exponential-saturation, `k = 0.2` |
+
+60 s at level 0 makes evading a threat a real decision and the 20 s cap keeps
+an upgraded escape from restoring near-permanent cover; the 3:1 base:cap ratio
+is the pre-existing one, only the numbers moved. The retired cap-3 pool
+(15 s → 5 s) is **not** a tuning surface any more: a pickup or a hold-full
+grant simply readies the one warp, so no grant can exceed a cap of one and no
+stack count exists to tune.
 
 > The AH-0MUX802450085VZZ *"Resolved decision 4"* exception (instant kinds
 > had no window at all) is **superseded** by AH-0MVSTKGC3003OMAC.
@@ -889,8 +914,15 @@ removed by the fail-fast validation above rather than by the watchdog.
   `src/data/<file>.tune-journal` (written to a sibling temp file, `fsync`ed and
   atomically renamed, so a kill at any moment leaves either no journal or a
   complete one). The journal is removed after a successful restore, and with
-  `--keep-edit` it is removed **without** restoring. It is git-ignored
-  (`src/data/*.tune-journal`), so a crashed run leaves no worktree change.
+  `--keep-edit` it is removed **without** restoring. An abort that lands
+  between the journal write and the edit — the watchdog's `applying the CSV
+  edit` boundary, or an edit that throws — reconciles the journal it wrote
+  itself (each journal records the `pid` that wrote it, so a concurrent run's
+  journal is never touched), restoring the CSV and removing the journal. A
+  finished run therefore never leaves one behind; only a hard-killed process
+  does, and that is what the next invocation reconciles. The journal is
+  git-ignored (`src/data/*.tune-journal`), so a crashed run leaves no worktree
+  change.
 
   A `SIGKILL` (OOM, an external timeout kill) runs no `finally`, so the
   in-memory restore cannot help — the journal is what makes the edit
@@ -1121,6 +1153,305 @@ all on the streaming path. Both are covered by tests in
 `src/ai/eval/cli.test.ts` (one sink chunk per run, in sweep order; streamed
 chunks byte-identical to the in-memory `runs.jsonl` artifact).
 
+## Weapon tuning CSV (AH-0MW0Q01VM004EPY7)
+
+The player-weapon catalogue is **data**. Every tunable value for the sixteen
+weapons lives in committed files that are parsed once at module load
+(`src/utils/weapons.ts` → `parseWeaponCatalogue` in `src/core/csv.ts`), checked
+by runtime invariants (`src/utils/weaponCatalogue.ts`) and bundled into the
+build (`?raw` imports in `src/core/bundledConfig.ts`), so the shipped game is
+read-only. Retuning a bullet colour, a bullet size, an impact cue or a Nova
+blast radius needs no TypeScript edit.
+
+### The three data files
+
+| File | Shape | Holds |
+|---|---|---|
+| [`src/data/weapons.csv`](../src/data/weapons.csv) | one row per weapon, one cell per column | every scalar tunable: colours, bullet size and lifetime, damage/bounce/split budgets, the AOE/orbit/hitscan descriptors, and the muzzle/impact feedback |
+| [`src/data/weapon-patterns.csv`](../src/data/weapon-patterns.csv) | long format, one row per pattern bullet | the heading-relative shot angles (`angleDeg`) and the perpendicular side offsets (`sideOffsetPx`) |
+| [`src/data/weapon-levels.json`](../src/data/weapon-levels.json) | `weaponId` → ordered rungs of `{ k, n, rotation }` | the **live fire cadence** — the Euclidean ladder documented in [Weapon Euclidean upgrade ladder](#weapon-euclidean-upgrade-ladder-ah-0mvya291j000ck64) |
+
+The sixteen catalogue ids, in catalogue order, are `cannon`, `spread`, `dual`,
+`rapid`, `wave_laser`, `ricochet`, `cluster`, `options`, `nova`, `mortar`,
+`arc`, `rear_guard`, `broadside`, `railgun`, `shard_swarm` and `heavy_slug`.
+Every file lists them in that order, and an `id` cell must be one of them.
+
+### `weapons.csv` columns
+
+One table row per column, in the committed header order. "Required" means the
+cell must be non-blank on every row; "optional" means a blank cell is legal
+(and means something — see [Blank means absent](#blank-means-absent)).
+
+| Column | Meaning | Units and legal values |
+|---|---|---|
+| `id` | Weapon id — the row's key. | One of the sixteen ids listed above. Required. |
+| `name` | Display name (weapon HUD, help overlay, choice offer). | Free text; quote it if it contains a comma. Required. |
+| `description` | One-line player-facing effect description. | Free text; quote it if it contains a comma. Required. |
+| `subdivisions` | Shots per beat on the 80 BPM grid (`2` = double time, `0.5` = half time). | Positive and an exact subdivision or multiple of the 750 ms beat period (`0.25`, `0.5`, `1`, `2`, `3`, `4`, …). Required. This is the **legacy nominal** cadence, not the live one. |
+| `bulletColor` | Bullet colour. | `0xrrggbb` (six hex digits, lower case in the committed file). Required. |
+| `bulletShape` | Bullet visual shape. | A `BulletShape` enum value (full list below). Required. |
+| `bulletSize` | Bullet radius multiplier. | Number > 0. Required. |
+| `bulletLifetime` | Bullet lifetime (effective range = bullet speed × lifetime). | Seconds, > 0. Required. |
+| `bulletShapeLength` | Long-axis multiplier for elongated shapes. | Number ≥ 0. Optional. |
+| `bulletRim` | Neon rim/outline colour. | `0xrrggbb`. Optional. |
+| `bulletThickness` | Stroke-thickness multiplier for stroked shapes. | Number ≥ 0. Optional. |
+| `bulletTrail` | Trail length. | Multiple of the bullet radius, ≥ 0. Optional. |
+| `bulletFlame` | Exhaust-flame length. | Multiple of the bullet radius, ≥ 0. Optional. |
+| `maxHitPoints` | Pass-through hit-point budget, spent one hit point per hit. | Number ≥ 0 (a whole count in practice). Optional (blank = no budget, the bullet expires on first hit). |
+| `bounce` | Wall-bounce budget before the bullet expires. | Number ≥ 0 (a whole count). Optional (blank = no bounce). |
+| `splits` | Radial warheads spawned once on impact/expiry. | Number ≥ 0 (a whole count). Optional (blank = no split). |
+| `orbitPods` | Orbiting satellite-pod count. **Opens** the orbit group. | Number ≥ 1 (a whole count). Optional (blank = no orbit). |
+| `orbitRadius` | Orbit radius around the ship. | px, > 0. Required when `orbitPods` is present. |
+| `aoeTrigger` | When the area effect resolves. **Opens** the AOE group. | `onFire`, `onImpact`, `onRandom` or `screenPulse` (list below). Optional (blank = no AOE). |
+| `aoeRadius` | Effect radius. | px, > 0. Required when `aoeTrigger` is present. |
+| `aoeDamagesEnemies` | Does the effect damage enemies inside the radius? | `true` or `false` (`1`/`0` are also accepted). Required when `aoeTrigger` is present. |
+| `aoeClearsEnemyBullets` | Does the effect clear enemy bullets inside the radius? | `true` or `false`. Required when `aoeTrigger` is present. |
+| `aoeDamage` | Hit points each affected enemy takes per resolution. | Number ≥ 0 (a whole count). Optional AOE extra. |
+| `aoeChains` | Extra targets an `onFire` effect may chain to. | Number ≥ 0 (a whole count). Optional AOE extra. |
+| `aoeProjectileSpeed` | Projectile speed, required to sample an `onRandom` range. | px/s, > 0. Optional AOE extra. |
+| `hitscanLength` | Beam length. **Opens** the hitscan group. | px, > 0. Optional (blank = no beam). |
+| `hitscanDuration` | How long the resolved beam stays visible. | Seconds, > 0. Required when `hitscanLength` is present. |
+| `hitscanAimBias` | Probability a shot aims at the nearest living enemy instead of a uniform random direction. Grows with weapon level through the Homing curve. | Number in `[0, 1]`. Required when `hitscanLength` is present. |
+| `muzzleColor` | Launch-flash colour. **Opens** the muzzle-flash group. | `0xrrggbb`. Optional; defaults to `bulletColor`. |
+| `muzzleRadius` | Launch-flash core radius. | px, > 0. Optional; default `7`. |
+| `muzzleDuration` | Launch-flash fade duration. | Seconds, > 0. Optional; default `0.12`. |
+| `impactColor` | Impact-flash colour. **Opens** the impact group. | `0xrrggbb`. Optional (blank = no impact flash, the generic warm-white fallback applies). |
+| `impactRadius` | Impact-flash radius. | px, > 0. Required when `impactColor` is present. |
+| `impactDuration` | Impact-flash fade duration. | Seconds, > 0. Required when `impactColor` is present. |
+| `impactCue` | Baked impact cue export name. | A cue exported by `src/audio/effects.ts` (e.g. `playCannonImpactSound`). Required when `impactColor` is present. |
+
+Hex colours are validated case-insensitively, but the committed files are
+written in lower case: `npm run generate:weapon-csv-seed` serialises through the
+codec, and the seed test compares the file bytes, so an upper-case cell fails
+that guard even though it parses.
+
+**`bulletShape` legal values.** `circle`, `disc`, `line`, `teardrop`, `missile`,
+`ring`, `shell`, `heavy-shell`, `shard`, `bolt`, `phaser-bolt`, `fleck`, `dart`,
+`boss-pellet`, `spiral-pellet`, `pulse-ring`, `tracer`, `warhead`, `diamond`,
+`spark`, `chevron`, `pellet`. `disc` is an alias of `circle` (the uniqueness
+invariant compares the *canonical* shape family, so the two cannot be used to
+smuggle in a duplicate).
+
+**`aoeTrigger` legal values.** `onFire`, `onImpact`, `onRandom`, `screenPulse`.
+
+### `weapon-patterns.csv` columns
+
+One row per pattern bullet, grouped by weapon; `index` must be a contiguous
+0-based sequence within each weapon.
+
+| Column | Meaning | Units and legal values |
+|---|---|---|
+| `weaponId` | Weapon the row belongs to. | One of the sixteen catalogue ids. Required. |
+| `index` | Bullet position within the pattern. | Non-negative whole number, 0-based. Required. |
+| `angleDeg` | Angle relative to the ship's heading. | **Degrees**, negative = anticlockwise. Required; converted to radians on parse. |
+| `sideOffsetPx` | Perpendicular positional offset (e.g. Dual's two parallel bullets). | px, may be negative. Optional; a blank cell means centred. |
+
+Angles are authored in **degrees** because that is what a spreadsheet and a
+level designer can read; the codec converts them with `(degrees × π) / 180` at
+the boundary (`parseWeaponPatterns` in `src/core/csv.ts`) and the engine works
+in **radians** everywhere after that. Edit `angleDeg`, never a radian value.
+
+### The designer workflow
+
+**By hand (either file).**
+
+1. Open `src/data/weapons.csv` (or `src/data/weapon-patterns.csv`). The `#`
+   block above the header lists every column; keep its wording in step with any
+   schema change.
+2. Change cells, keeping the canonical formatting: lower-case `0xrrggbb`
+   colours, plain decimal numbers (`2`, `0.75` — not `2.0`), `true`/`false`
+   booleans, and an **empty** cell where the weapon has no such capability.
+3. Save and refresh the `npm run dev` page. The files are bundled with `?raw`
+   and parsed at module load, so a refresh re-reads them and every consumer
+   (`Player`, the shared combat core, every gym) fires the new value on the
+   next shot.
+4. Verify the change (the worked examples below), then run the retune
+   tripwires listed under [Verifying a change](#verifying-a-change).
+5. Normalise the committed file with `npm run generate:weapon-csv-seed` — it
+   re-serialises the parsed catalogue through the same writer the panel uses —
+   and regenerate the frozen fixtures as part of the deliberate change.
+
+**From the panel (dev only).**
+
+1. Gym Index → **WeaponTuning** (the panel titled **Weapon Tuning**,
+   `src/scenes/gym/GymWeaponTuning.ts`).
+2. Select a weapon and change a control. Every input applies to the live
+   catalogue as a draft, and the preview ship fires the edited definition on
+   its next shot against an inert target — the preview runs the shared combat
+   core, so it cannot drift from the game.
+3. **Save** upserts the selected row into `src/data/weapons.csv` through the
+   dev-only CSV plugin and then re-reads both weapon files, so the running
+   catalogue is exactly the file just saved. **Save As** appends a row under a
+   new id and is refused unless that id already has a code fallback definition
+   (an icon arm in `src/powerups/icons.ts` and an audio cue arm in
+   `src/audio/effects.ts`) — a bare CSV row cannot add a weapon.
+4. The rhythm section of the panel is **read-only**: it renders the selected
+   weapon's ladder rungs from `WEAPON_EUCLIDEAN_LADDERS`, auditions them, and
+   states that cadence is authored in `src/data/weapon-levels.json`. There is
+   deliberately no fire-rate control.
+
+**Production is read-only and needs a rebuild.** The CSV cells are inlined
+into the bundle at build time, so a shipped build keeps the values it was built
+with: a retune reaches production only after `npm run build` and a redeploy.
+The write endpoint exists only under `npm run dev`; in a production or static
+build **Save**/**Save As** are disabled and the panel shows the message
+`Weapon writes are unavailable in production builds (read-only CSV).` Nothing
+is fetched or written at runtime.
+
+### Blank means absent
+
+**A blank cell means the weapon has no such capability** — it is never read as
+`0`. That matters because the combat core dispatches on the **presence** of a
+descriptor: a `0` bounce budget, a zero-radius AOE or a `false`
+`aoeDamagesEnemies` would be a live descriptor with inert behaviour instead of
+no descriptor at all. The coercion therefore omits a blank optional cell
+entirely, and presence-based dispatch keeps working unchanged. An explicit `0`
+is preserved (and, in a descriptor group, flagged as a data smell by the
+invariants — the cell should simply be blank).
+
+Descriptors are **all-or-nothing groups**, declared by an opening column:
+
+| Group | Opening column | Other columns in the group |
+|---|---|---|
+| orbit | `orbitPods` | `orbitRadius` |
+| AOE | `aoeTrigger` | `aoeRadius`, `aoeDamagesEnemies`, `aoeClearsEnemyBullets` (required); `aoeDamage`, `aoeChains`, `aoeProjectileSpeed` (extras) |
+| hitscan | `hitscanLength` | `hitscanDuration`, `hitscanAimBias` |
+| muzzle flash | `muzzleColor` | `muzzleRadius`, `muzzleDuration` (both have defaults) |
+| impact | `impactColor` | `impactRadius`, `impactDuration`, `impactCue` |
+
+A group's opener present and non-blank authors the group, so its required
+members must be non-blank too. An opener cell that is blank while every other
+cell in the group is blank means the group is absent (a header may list a group
+nobody uses). A member cell with the opener absent is a diagnostic: it belongs
+to a descriptor that was never opened. The muzzle flash is the one group that is
+always present — its colour defaults to `bulletColor` and its radius/duration to
+`7`/`0.12` — so `muzzleColor` is a pure override.
+
+### Fire rate: shots per beat, on the beat grid
+
+`subdivisions` is authored as **shots per beat** on the shared 80 BPM grid,
+and the runtime interval is derived, never stored:
+`fireRateMs = beatPeriodMs(80) / subdivisions` (`src/utils/beat.ts`). The value
+must stay **on the beat grid** — an exact subdivision or multiple of the beat
+period — which `isOnBeatGrid` enforces catalogue-wide. An off-grid cell (for
+example `1.37`) is rejected and the weapon falls back to its code default, so a
+hand edit can never desynchronise a weapon from the clock everything else moves
+on (the same lattice the Euclidean ladders step on, see
+[Weapon Euclidean upgrade ladder](#weapon-euclidean-upgrade-ladder-ah-0mvya291j000ck64)).
+
+**This cell is the legacy nominal cadence, not what you hear.** It drives the
+level-stat quantisation and the hold-full ghost metronome interval only. The
+**live** firing cadence is the Euclidean ladder in
+`src/data/weapon-levels.json` (resolved by `resolveWeaponPattern` in
+`src/utils/weaponLevels.ts`), which is why the ladder section below says that
+file — not `weapons.csv` `subdivisions` — is the fire rate. A dev-only boot
+diagnostic (`src/utils/weaponDataDiagnostics.ts`) reports where the two
+disagree, so editing the wrong surface is visible rather than folklore.
+
+### Runtime invariants and the code fallback
+
+The guarantees that used to be compiler-enforced are re-asserted against the
+**parsed catalogue** at module load (`src/utils/weaponCatalogue.ts`, applied by
+`applyWeaponCatalogueGuards`):
+
+- **On-beat grid** — every derived `fireRateMs` is an exact subdivision or
+  multiple of the beat period.
+- **Unique bullet colour** — no two weapons share `bulletColor`.
+- **Unique shape family** — no two weapons resolve the same canonical shape
+  (`disc`/`circle` collapse to one family). The single documented allowance is
+  the Dual / Wave Laser `line` beam pair, encoded as data with a reason.
+- **Sane magnitudes** — positive size/lifetime, non-negative budgets and AOE
+  radius, positive orbit radius, 24-bit colours.
+- **Structural coherence** — an AOE/orbit descriptor carries its companion
+  radius, and a degenerate `0` budget is flagged.
+
+A row that is missing, malformed or invariant-breaking falls back to its **code
+default** in `DEFAULT_WEAPON_CATALOGUE` (`src/utils/weapons.ts`) — for that
+weapon only, so one bad cell never changes the other fifteen. The fallback
+applies in **every** environment, not only production: the game and the gyms
+must run the same roster, and a dev-only broken roster is exactly the
+split-source divergence the parity rule forbids. Boot never throws — the game
+still boots and degrades to the shipped values — and the load report
+(`WEAPON_CATALOGUE_LOAD_REPORT`) records which ids came from data and which fell
+back. Under `npm run dev` a boot diagnostic
+(`warnOnWeaponDataDivergences` in `src/utils/weaponDataDiagnostics.ts`) logs one
+`console.warn` naming the file, the weapon and the problem, so a typo is
+visible instead of silently ignored.
+
+### What each surface cannot do
+
+| Surface | Cannot | Follow-up |
+|---|---|---|
+| `src/data/weapons.csv` | **Add a weapon.** A row whose `id` is not one of the sixteen is rejected; a new weapon needs the `WeaponId` union, an icon arm in `src/powerups/icons.ts`, an audio cue arm in `src/audio/effects.ts`, and a code fallback definition (which is exactly what **Save As** checks for). | Create a work item for the new weapon; the CSV can then tune it. |
+| `src/data/weapons.csv` | **Cannot change the fire cadence.** `subdivisions` is the legacy nominal value only. | Edit the rung in `src/data/weapon-levels.json`. |
+| `src/data/weapons.csv` | **Change the level ladder** (rungs, rotations, threshold curve). | Same file: `src/data/weapon-levels.json`; the `fireRate` curve lives in `WEAPON_UPGRADE_SPECS` (`src/utils/weaponLevels.ts`). |
+| `src/data/weapon-levels.json` | **Add a weapon.** A weapon with no entry (or a malformed one) falls back to its in-code ladder, and the catalogue still has no row for it. | The new-weapon path above. |
+| `src/data/weapon-patterns.csv` | **Add a weapon.** Rows for an unknown `weaponId` are rejected. | The new-weapon path above. |
+
+`src/data/weapon-levels.json` cannot add a weapon either: an entry tunes the
+cadence of an existing catalogue id, and a weapon the catalogue does not carry
+still has no icon arm and no audio cue arm, so it could never be dropped or
+drawn. Neither file can change the level ladder's activation curve: that is
+the `fireRate` spec in `WEAPON_UPGRADE_SPECS` (`src/utils/weaponLevels.ts`).
+
+The catalogue keeps its exported name and type
+(`Record<WeaponId, WeaponDefinition>`), so every consumer — `Player`, the shared
+combat core, the drop layer, the gym help and the gyms — reads the data without
+changing.
+
+### Worked examples
+
+**1. Change a bullet colour (Cannon).** In `src/data/weapons.csv`, find the
+`cannon` row and change `bulletColor` from `0x00ffff` to `0xff00ff`; save,
+refresh `npm run dev`, and fire — the bullets are magenta. Or do it live: Gym
+Index → **WeaponTuning**, select Cannon, use the colour input, watch the
+preview, press **Save**. Verify the change took effect by firing in the game
+and in **GymWeapons** (both read the same catalogue), and then run the retune
+tripwires — the frozen catalogue fixture will fail until it is regenerated as
+part of the deliberate change.
+
+**2. Change a fire rate (Cannon, level 0).** Edit the first rung in
+`src/data/weapon-levels.json` — for example `{ "k": 9, "n": 16, "rotation": 0
+}` → `{ "k": 10, "n": 16, "rotation": 0 }` — save and restart/refresh
+`npm run dev` (the ladders are built at module load). Audition it in Gym Index
+→ **Rhythm**, or in the tuning panel's read-only rhythm section, and update the
+machine-verified ledger table in the ladder section below: the suite compares
+that table row-for-row against `WEAPON_EUCLIDEAN_LADDERS`, so a rung edit that
+is not mirrored there fails. Regenerate `src/data/weapon-levels-parity.json` in
+the same change.
+
+**3. Change the Nova AoE radius.** In `src/data/weapons.csv`, find the `nova`
+row and change `aoeRadius` (shipped: `34`) to, say, `44`; save and refresh
+`npm run dev`. Keep the AOE group whole — `aoeTrigger`, `aoeRadius`,
+`aoeDamagesEnemies` and `aoeClearsEnemyBullets` are authored together. Trigger a
+Nova in **GymWeapons** (it demonstrates the shared AOE ring) or in
+**WeaponTuning** (select Nova and fire at the dummy target): the ring should
+clear enemies and bullets out to the new radius. A blank radius with a trigger
+present is rejected and falls back to the code default instead of shipping a
+zero-radius blast.
+
+### Verifying a change
+
+The suite is the tripwire, and each guard answers a different question:
+
+| Guard | Pins |
+|---|---|
+| `src/data/weaponsCsvSeed.test.ts` | the committed files parse with zero diagnostics, deep-equal the resolved catalogue, keep every column documented in the `#` block, and are **byte-identical** to `npm run generate:weapon-csv-seed` |
+| `src/data/weaponCatalogueParity.test.ts` | the resolved catalogue is deep-equal to the frozen snapshot `src/data/weapon-catalogue-parity.json` |
+| `src/data/weaponLevelsParity.test.ts` | `resolveWeaponPattern(weaponId, level)` for all sixteen weapons at levels 0–10 equals `src/data/weapon-levels-parity.json` |
+| `src/utils/weaponLevels.test.ts` | the machine-verified ladder ledger in this document, row for row against the resolved ladders |
+| `src/weaponDataRetuningDocs.test.ts` | this guide: every column, enum value and workflow claim above |
+| `src/utils/weaponsCatalogueLoad.test.ts` | the runtime roster covers all sixteen ids and the load report names what fell back |
+
+The two parity fixtures are **frozen snapshots**, not comparisons against the
+current fallback: they are the safety net that makes a typo a failing test
+rather than a silent retune. A deliberate balance change regenerates them in
+the same commit (a one-off snapshot of `WEAPON_CATALOGUE` /
+`resolveWeaponPattern` loaded through `vite.ssrLoadModule`, written with
+`JSON.stringify(value, null, 2)`), so the fixture diff is the reviewable record
+of exactly what moved. Never regenerate a fixture to make an accidental edit
+pass: read the diff first.
+
 ## Weapon Euclidean upgrade ladder (AH-0MVYA291J000CK64)
 
 Every weapon's fire cadence is a deterministic **Euclidean rhythm**
@@ -1132,6 +1463,78 @@ a `n = 16` tile spans one 4-beat bar. At another tempo the step scales with
 `beatPeriodMs(bpm)`; the `(k, n, rotation)` shape is tempo-independent. The
 pure resolver is `resolveWeaponPattern(weaponId, level)` in
 `src/utils/weaponLevels.ts`; the catalogue is `WEAPON_EUCLIDEAN_LADDERS`.
+
+### Where the ladders are authored — `src/data/weapon-levels.json`
+
+**AH-0MW0Q1TQV009M8AO.** The authored rungs are **data**, not TypeScript.
+`src/data/weapon-levels.json` maps every weapon id to its ordered rung list:
+
+```json
+{
+  "cannon": [
+    { "k": 9, "n": 16, "rotation": 0 },
+    { "k": 10, "n": 16, "rotation": 0 },
+    { "k": 13, "n": 16, "rotation": 0 }
+  ]
+}
+```
+
+- **Key:** `weaponId` — all sixteen shipped weapons must be present.
+- **Rung:** `{ k, n, rotation }`. `k` onsets are distributed as evenly as
+  possible over a tile of `n` steps, phase-shifted by `rotation` whole steps;
+  `1 <= k <= n` and `0 <= rotation < n` (all three are whole numbers).
+- **`stepMs` is not authored.** Every rung steps on the shared 16th-note
+  lattice — 187.5 ms at the 80 BPM default, scaled with `beatPeriodMs(bpm)` at
+  other tempos — so the loader injects `stepMs = SIXTEENTH_NOTE_STEP_MS` and a
+  data edit can never desynchronise a rung from the beat grid.
+- **Order:** rungs are listed in level order. A rung's **activation level is
+  derived, never authored**: it is the first level whose desired density
+  (`level-0 rung density × curveValue(WEAPON_UPGRADE_SPECS.fireRate, level)`,
+  base 1×, cap 2.2×, `k = 0.12`) supports the rung, and never earlier than one
+  level after the previous rung. Rungs at or above the 2.2× asymptote are
+  omitted (the exponential curve approaches their density but never reaches
+  it). Editing a rung therefore also moves the upgrade thresholds that follow
+  it.
+
+**Load order and fallback precedence.** The bundled file is imported as raw
+text (`src/core/bundledConfig.ts` → `?raw`) and parsed **once at module load**
+in `src/utils/weaponLevels.ts`:
+
+1. the parsed JSON rungs are the runtime ladders;
+2. a weapon whose entry is **missing or malformed** falls back to the
+   pre-migration in-code ladders (`CODE_WEAPON_EUCLIDEAN_LADDER_SPECS`) — for
+   that weapon only, so one bad rung never changes the other fifteen;
+3. `WEAPON_LEVELS_LOAD_REPORT` records what came from data and what fell back,
+   and the dev-only boot self-check (`warnOnWeaponDataDivergences`) logs one
+   `console.warn` naming the file, the fallback weapons and the parse
+   diagnostics. Boot never throws: malformed or missing data degrades to the
+   shipped code ladders instead of crashing the game.
+
+**Workflow.** Edit a rung, restart `npm run dev` (the ladders are built at
+module load) and the new rhythm is live — no TypeScript edit and no source
+rebuild. The machine-verifiable ledger below reflects the result on the next
+test run. `src/data/weapon-levels-parity.json` freezes
+`resolveWeaponPattern(weaponId, level)` for all sixteen weapons at levels 0–10
+and `src/data/weaponLevelsParity.test.ts` asserts it, so an accidental retune
+while editing data fails the suite: regenerate the fixture only as part of a
+deliberate balance change.
+
+**Single source of truth for cadence.** `weapon-levels.json` is the only
+surface that authors how a weapon's rhythm evolves across levels — it *is* the
+fire rate. `weapons.csv` `subdivisions` remains the **legacy nominal** value
+(level-stat quantisation and the hold-full ghost metronome interval); the dev
+boot diagnostic reports where the two disagree and names
+`src/data/weapon-levels.json` as the cadence source, so the divergence is
+visible rather than folklore. The three deliberate divergences (`cannon`,
+`rapid`, `railgun`) are registered in `DELIBERATE_CADENCE_DIVERGENCES`
+(`src/utils/weaponDataDiagnostics.ts`) with their reason, so a dev boot is
+silent for the committed data while any *undocumented* drift — or a stale
+registry entry — still warns. The strength measurement
+(`src/utils/weaponStrength.ts`) reads the same live ladder, not the nominal
+`fireRateMs`, so a "cadence" in this document always means what the scheduler
+plays. The designer-facing schema, file shape and worked
+retune examples for all three data files are in
+[Weapon tuning CSV](#weapon-tuning-csv-ah-0mw0q01vm004epy7) above.
 
 The generator that turns a tile into onset steps, and the helpers that turn
 those steps into exact tick times, live in `src/utils/euclid.ts`
@@ -1158,12 +1561,12 @@ morphs are deliberate:
   density is identical and only the groove's alignment moves.
 
 **Curve-derived rungs.** Each rung becomes active at the first level where the
-shipped `fireRate` exponential-saturation curve (base 1×, cap 3×, `k = 0.18`)
+shipped `fireRate` exponential-saturation curve (base 1×, cap 2.2×, `k = 0.12`)
 desires at least that rung's density, and never earlier than one level after the
 previous rung. The desired density is
 `baseDensity × curveValue(WEAPON_UPGRADE_SPECS.fireRate, level)`
 (`weaponPatternDesiredOnsetsPerBeat`). Because the curve is monotonic, so is the
-ladder. Rungs at or above the 3× asymptote are omitted: the exponential curve
+ladder. Rungs at or above the 2.2× asymptote are omitted: the exponential curve
 approaches but never reaches it, and the 16th-note lattice itself caps a v1
 pattern at one onset per step (4 onsets/beat).
 
@@ -1176,17 +1579,68 @@ subdivision. Every shipped fire rate therefore remains available as the
 all-onsets subset of the ladder.
 
 **Canonical six-weapon superposition.** At level 0 the canonical fixture is
-`heavy_slug E(3,16)`, `railgun E(2,16)`, `cannon E(9,16)`, `arc E(9,16 rot 4)`,
-`rapid E(13,16)` and `shard_swarm E(10,16)`: **46 onsets per bar** in total
-(3 + 2 + 9 + 9 + 13 + 10), pinned by
-`src/utils/weaponLevels.test.ts`. `cannon` and `arc` share `k = 9` and differ
-only by rotation — the "two medium weapons at identical density" example.
+`heavy_slug E(1,16)`, `railgun E(2,16)`, `cannon E(9,16)`, `arc E(4,16 rot 4)`,
+`rapid E(13,16)` and `shard_swarm E(2,16)`: **31 onsets per bar** in total
+(1 + 2 + 9 + 4 + 13 + 2), pinned by
+`src/utils/weaponLevels.test.ts`. The cannon and the arc no longer share
+`k = 9`: the `<= 60 %` level-0 budget takes the arc down to a straight
+one-shot-per-beat rung, so the bar's uneven tiles are the cannon's `E(9,16)`
+and rapid's `E(13,16)` (see [the level-0 cadence
+retime](#the-level-0-cadence-retime-ah-0mw23fedk006brhk) below).
 
 The **Rhythm gym** (`src/scenes/gym/GymRhythm.ts`) auditions this exact fixture
 through the shipped scheduler, drawing the sixteen-step onset stack from the
 live `Player.getFirePattern` data; its playhead reads the shared beat clock and
 every recorded fire is the scheduler's own onset tick, so the gym and the game
 cannot drift (`src/scenes/gym/GymRhythm.test.ts`).
+
+### The level-0 cadence retime (AH-0MW23FEDK006BRHK)
+
+The **live** cadence of every non-cannon weapon was trimmed to the nominal
+`subdivisions` already authored for it — the level-0 output trim
+(AH-0MVWAVKS0005P9VN) reached the catalogue's *nominal* table only, so the
+shipped game was firing 10 of its 15 non-cannon weapons faster than the strength budget
+described. Each affected weapon's **whole ladder** was then scaled by the same
+factor as its level-0 rung and snapped up to a whole `k` on the 16-step tile,
+so the curve-derived `minLevel` thresholds and every producer-approved ceiling
+(`level1GrowthMultiple` 2.5×, `levelCapShareOfPreChange` 50 %) are
+**mathematically unchanged** — only the absolute density moved.
+
+| Weapon | Level-0 rung before | after | Onsets/beat | Live cut |
+|---|---|---|---|---|
+| `spread`, `options` | `E(4,16)` | **`E(2,16)`** | 1 → 0.5 | 2× slower |
+| `dual`, `ricochet` | `E(4,16)` | **`E(2,16)`** | 1 → 0.5 | 2× slower |
+| `wave_laser` | `E(4,16)` | **`E(2,16)`** | 1 → 0.5 | 2× slower |
+| `rear_guard` | `E(8,16)` | **`E(4,16)`** | 2 → 1 | 2× slower |
+| `cluster`, `broadside` | `E(2,16)` | **`E(1,16)`** | 0.5 → 0.25 | 2× slower |
+| `arc` | `E(9,16)` | **`E(4,16)`** | 2.25 → 1 | 2.25× slower |
+| `heavy_slug` | `E(3,16)` | **`E(1,16)`** | 0.75 → 0.25 | 3× slower |
+| `shard_swarm` | `E(10,16)` | **`E(2,16)`** | 2.5 → 0.5 | 5× slower |
+
+Consequences, all deliberate and test-pinned:
+
+- **The arc leaves the superposition set.** The `<= 60 %` level-0 budget forces
+  `E(9,16) → E(4,16)`, a straight (degenerate) rung; the arc's phase morph
+  (`rot 4 → rot 6`) survives, and `shard_swarm`/`heavy_slug` likewise become
+  straight at level 0.
+- **The wave laser's curve-flattening carve-out becomes real.** Its catalogue
+  `subdivisions` was already halved to 0.5 by AH-0MVWAVL6R001UI60 because the
+  beam has no projectile lever, but the live ladder never received it. The
+  live cut is required for a second reason: with the cadence measured live its
+  old saturated rung `E(8,16)` scored 66.7 % of the pre-change level cap,
+  breaching the 50 % ceiling.
+- **The railgun's top of ladder is trimmed, not its base.** Its level-0
+  `E(2,16)` rung is inside the level-0 budget (40 % of baseline, 0.33× the
+  cannon), but its old saturated rung `E(5,16)` scored 55.6 % of the pre-change
+  cap once measured live, so the ladder now ends at `E(3,16)`.
+- **Sparse ladders lose rungs.** A 2.2× fire-rate asymptote can carry only
+  whole-`k` steps above a small base: `cluster`, `broadside`, `heavy_slug` and
+  `railgun` keep two rungs, `spread`/`options`/`wave_laser`/`shard_swarm` three.
+- **Three nominal divergences remain, all documented** — `cannon` (2 vs 2.25),
+  `rapid` (3 vs 3.25) and `railgun` (0.25 vs 0.5) — because their level-0
+  superposition rungs are inside the budget. They are registered in
+  `DELIBERATE_CADENCE_DIVERGENCES`, so the dev boot diagnostic is silent for
+  the committed data and still warns for any other drift.
 
 **Machine-verifiable ledger.** The table below is the complete resolved
 ladder — one row per rung, in level order. It is compared row-for-row against
@@ -1198,100 +1652,234 @@ mirrored here fails the suite (and vice versa).
 |--------|-------|---|---|----------|-----------|-------------|------------|
 | `cannon` | 0 | 9 | 16 | 0 | 187.5 | 2.25 | 180 |
 | `cannon` | 1 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
-| `cannon` | 2 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
-| `cannon` | 3 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `cannon` | 4 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `spread` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `spread` | 1 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `spread` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `spread` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `spread` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
-| `dual` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `dual` | 1 | 4 | 16 | 2 | 187.5 | 1 | 80 |
-| `dual` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `dual` | 3 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `dual` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `dual` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `cannon` | 4 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
+| `cannon` | 9 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `cannon` | 10 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `spread` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `spread` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `spread` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `dual` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `dual` | 1 | 2 | 16 | 2 | 187.5 | 0.5 | 40 |
+| `dual` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `dual` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `rapid` | 0 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
 | `rapid` | 1 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
 | `rapid` | 2 | 15 | 16 | 0 | 187.5 | 3.75 | 300 |
 | `rapid` | 3 | 16 | 16 | 0 | 187.5 | 4 | 320 |
 | `rapid` | 4 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `wave_laser` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `wave_laser` | 1 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `wave_laser` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `wave_laser` | 3 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
-| `wave_laser` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `wave_laser` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
-| `ricochet` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `ricochet` | 1 | 4 | 16 | 1 | 187.5 | 1 | 80 |
-| `ricochet` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `ricochet` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `ricochet` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
-| `cluster` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `cluster` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `cluster` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `cluster` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `options` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `options` | 1 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `options` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `options` | 3 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
-| `options` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `options` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `wave_laser` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `wave_laser` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `wave_laser` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `ricochet` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `ricochet` | 1 | 2 | 16 | 1 | 187.5 | 0.5 | 40 |
+| `ricochet` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `ricochet` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `cluster` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
+| `cluster` | 15 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `options` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `options` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `options` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
 | `nova` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
-| `nova` | 4 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `nova` | 15 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
 | `mortar` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `mortar` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `mortar` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `mortar` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `arc` | 0 | 9 | 16 | 4 | 187.5 | 2.25 | 180 |
-| `arc` | 1 | 9 | 16 | 6 | 187.5 | 2.25 | 180 |
-| `arc` | 2 | 10 | 16 | 6 | 187.5 | 2.5 | 200 |
-| `arc` | 3 | 13 | 16 | 6 | 187.5 | 3.25 | 260 |
-| `arc` | 4 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `arc` | 5 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `rear_guard` | 0 | 8 | 16 | 0 | 187.5 | 2 | 160 |
-| `rear_guard` | 1 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
-| `rear_guard` | 2 | 12 | 16 | 0 | 187.5 | 3 | 240 |
-| `rear_guard` | 3 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
-| `rear_guard` | 4 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `rear_guard` | 5 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `broadside` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `broadside` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `broadside` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `broadside` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `mortar` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `mortar` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `arc` | 0 | 4 | 16 | 4 | 187.5 | 1 | 80 |
+| `arc` | 1 | 4 | 16 | 6 | 187.5 | 1 | 80 |
+| `arc` | 2 | 5 | 16 | 6 | 187.5 | 1.25 | 100 |
+| `arc` | 5 | 6 | 16 | 6 | 187.5 | 1.5 | 120 |
+| `arc` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `arc` | 16 | 4 | 8 | 0 | 187.5 | 2 | 160 |
+| `rear_guard` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `rear_guard` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `rear_guard` | 5 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `rear_guard` | 9 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
+| `rear_guard` | 15 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `rear_guard` | 16 | 4 | 8 | 0 | 187.5 | 2 | 160 |
+| `broadside` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
+| `broadside` | 15 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
 | `railgun` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
-| `railgun` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `railgun` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `railgun` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
-| `shard_swarm` | 0 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
-| `shard_swarm` | 1 | 11 | 16 | 0 | 187.5 | 2.75 | 220 |
-| `shard_swarm` | 2 | 12 | 16 | 0 | 187.5 | 3 | 240 |
-| `shard_swarm` | 3 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
-| `shard_swarm` | 4 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
-| `shard_swarm` | 5 | 16 | 16 | 0 | 187.5 | 4 | 320 |
-| `shard_swarm` | 6 | 8 | 8 | 0 | 187.5 | 4 | 320 |
-| `heavy_slug` | 0 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
-| `heavy_slug` | 2 | 4 | 16 | 0 | 187.5 | 1 | 80 |
-| `heavy_slug` | 4 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
-| `heavy_slug` | 10 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `railgun` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `shard_swarm` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `shard_swarm` | 5 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `shard_swarm` | 15 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `shard_swarm` | 16 | 2 | 8 | 0 | 187.5 | 1 | 80 |
+| `heavy_slug` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
+| `heavy_slug` | 15 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
 <!-- euclidean-ladder:end -->
 
 Notes on individual ladders:
 
+- Rung thresholds are **derived** from the weapon `fireRate` curve (base 1×,
+  cap 2.2×, `k = 0.12`) — every desk above is the first level whose desired
+  onset density supports that rung. The curve was flattened by
+  AH-0MVWAVL6R001UI60 (was cap 3× / `k = 0.18`), so the same rungs now arrive
+  later, and any rung whose density sits at or above the 2.2× asymptote is
+  omitted (the exponential curve approaches the density, never reaches it).
+  After the level-0 retime that asymptote is also **absolute**: a weapon whose
+  level-0 rung is `E(2,16)` can never climb past `k = 4` (1 onset/beat), which
+  is why `spread`/`options`/`wave_laser`/`shard_swarm` end at `E(4,16)`,
+  `dual`/`ricochet` at the same density via a rotation / `E(2,8)` morph, and
+  `cluster`/`broadside`/`heavy_slug`/`railgun` stop at `E(2,16)`/`E(3,16)`.
 - `cannon` walks the documented shape morph
-  `E(9,16) → E(10,16) → E(13,16) → E(16,16) → E(8,8)`. The work item's example
-  ledger starts at `E(8,16)`, but the canonical six-weapon fixture fixes the
-  level-0 cannon rung at `E(9,16)` (so the fixture totals 46 onsets per bar);
-  the ladder above follows the same `E(10,16) → E(13,16) → E(16,16) →
-  E(8,8)` shape from that one-onset-higher base.
+  `E(9,16) → E(10,16) → E(13,16) → E(16,16) → E(8,8)` (levels 0, 1, 4, 9 and
+  10). The work item's example ledger starts at `E(8,16)`, but the canonical
+  six-weapon fixture fixes the level-0 cannon rung at `E(9,16)` (so the
+  fixture totals 31 onsets per bar); the ladder above follows the same
+  `E(10,16) → E(13,16) → E(16,16) → E(8,8)` shape from that one-onset-higher
+  base.
 - `heavy_slug`, `railgun`, `cluster`, `mortar`, `broadside` and `nova` stay
-  **sparse**, moving through irregular tiles such as `E(3,16)`, `E(5,16)` and
-  `E(6,16)` as well as the straight low-density `E(2,16)`/`E(1,16)` tiles — they
-  are never limited to whole-beat multiples.
+  **sparse**, moving through irregular tiles such as `E(3,16)` and `E(5,16)`
+  as well as the straight low-density `E(2,16)`/`E(1,16)` tiles — they are
+  never limited to whole-beat multiples. `heavy_slug` and `railgun` now walk
+  `E(1,16)`/`E(2,16)` and `E(2,16)`/`E(3,16)` respectively: the sparse end of
+  the lattice cannot carry more whole-`k` rungs under the 2.2× asymptote.
 - `rapid` starts near the lattice ceiling (`E(13,16)` = 3.25 onsets/beat) and
   reaches `E(8,8)` at 4 onsets/beat; faster-than-16th patterns need a
   sub-16th step size and are deferred to a follow-up tuning item.
+- `arc`, `rear_guard` and `shard_swarm` keep a **bar-halving shape morph** at
+  the top of their ladders (`E(4,16) → E(4,8)`, `E(8,16) → E(4,8)` and
+  `E(4,16) → E(2,8)`), so the density repeats twice per bar exactly as the
+  cannon's `E(16,16) → E(8,8)` does.
+
+## Weapon 40 % trim / flattened curve — measured before/after gate (AH-0MVRENEME004FS8T)
+
+Producer answer **Q3 = B** made the weapon nerf (40 % level-0 trim plus the
+flattened per-level curve, parent **Weapon upgrades are too powerful**
+(AH-0MVRENEME004FS8T)) acceptable only with a pre/post batch comparison. That
+comparison is recorded here. The strength budget it is *not* able to check —
+the `≤ 60 % of baseline` level-0 bound, the `≤ 1.5× cannon` ceiling and the
+`≤ 2.5× L0` / `≤ 50 % of the old saturated output` level bounds — is asserted
+numerically by `src/utils/weapons.test.ts` and
+`src/utils/weaponLevels.test.ts`; see GDD §4.4 / §4.4.2.
+
+### Strength budget (the numeric half of Q3 = B)
+
+The batch gate below cannot see weapon output (the arena fires on a fixed
+cadence constant and imports only the `WeaponId` type), so the binding
+acceptance evidence for the trim is the numeric budget. It is documented in
+full — per-family output definition, the frozen level-0 baseline table, the
+post-change table and the level-0 / level-1 / level-cap ceilings (60 %, 1.5×
+the cannon, 2.5× L0 and 50 % of the pre-change saturated output) — in the GDD
+[§4.4 Power-Ups](./Game%20Design%20Document.md#44-power-ups) and
+[§4.4.2 Weapon Leveling](./Game%20Design%20Document.md#442-weapon-leveling-ah-0mupmpcb2009j54j).
+In code, `WEAPON_STRENGTH_BUDGET` (`src/utils/weaponStrength.ts`) holds the
+ceilings, the frozen level-0 baselines sit beside `WEAPON_CATALOGUE`
+(`src/utils/weapons.ts`), and `src/utils/weapons.test.ts` /
+`src/utils/weaponLevels.test.ts` assert the bounds table-driven against literal
+baselines. Any future weapon must satisfy the same budget before it ships.
+
+### The two runs (same sweep)
+
+```bash
+# BEFORE — commit 47609296, clean tree, no weapon data edits
+npm run evaluate -- --batch --games 100 --out eval-output/baseline-run
+# (artefacts copied to the dated, retained-for-comparison path)
+#   eval-output/baseline-2026-11-03/balance-report.json|.txt
+
+# AFTER — commit ffd79aa2 (level-0 trim 9586e7f4 + flattened curve ffd79aa2)
+npm run evaluate -- --batch --games 100 --out eval-output/post-change-2026-11-04
+```
+
+Both batches are git-ignored artefacts under `eval-output/`; the durable
+record is this section plus the work-item comment on
+AH-0MVWAVM03002FLLL.
+
+| Side | Commit | Date | Artefact directory |
+|---|---|---|---|
+| before | `47609296` | 2026-11-03 | `eval-output/baseline-2026-11-03/` |
+| after | `ffd79aa2` | 2026-11-04 | `eval-output/post-change-2026-11-04/` |
+
+**Same sweep, verified from the report `config` block:** campaign mode,
+`policies: ["competent"]`, seeds `1..100`, `ticks: 18000`, `dt: 1/60`,
+`sampleEveryTicks: 1`. The two `config` blocks are byte-identical and the two
+`balance-report.json` files are **byte-identical**, including every per-run
+`recordsHash`.
+
+### Before / after / delta
+
+Aggregate means per 100-game campaign batch (`n = 100`):
+
+| Metric | Before (`47609296`) | After (`ffd79aa2`) | Delta |
+|---|---:|---:|---:|
+| `survivalSeconds` | 300.00 | 300.00 | **0.00** |
+| `waveReached` | 5.89 | 5.89 | **0.00** |
+| `levelReached` | 1.09 | 1.09 | **0.00** |
+| `upgradesSelected` (sum of per-choice-id means) | 2.00 | 2.00 | **0.00** |
+| `mineralsCollected` | 18.00 | 18.00 | **0.00** |
+| `avoidableHits` | 0.00 | 0.00 | **0.00** |
+| `powerUpsCollected` | 12.95 | 12.95 | **0.00** |
+| `asteroidsDestroyed` | 12.00 | 12.00 | **0.00** |
+
+Per-band deltas against `src/data/experience-targets.json`
+(`targetsVersion` 1) are likewise unchanged:
+
+| Band | Before | After | Band delta | Verdict |
+|---|---:|---:|---:|---|
+| `survivalSeconds` (300 ± 30) | 300 | 300 | 0 | in-band |
+| `mineralsCollected` (18 ± 1.8) | 18 | 18 | 0 | in-band |
+| `upgradesSelected` (2 ± 0.5) | 2.00 | 2.00 | 0 | in-band |
+| `waveReached` (6.46 ± 4.9592) | 5.89 | 5.89 | 0 | in-band (pre-existing −0.57) |
+| `levelReached` (1.15 ± 0.7141) | 1.09 | 1.09 | 0 | in-band (pre-existing −0.06) |
+| `avoidableHits` (0 ± 0.5) | 0 | 0 | 0 | in-band |
+
+`node scripts/validate-experience.mjs eval-output/post-change-2026-11-04/balance-report.json`
+returns `verdict: pass`, `driftedMetrics: []` and exit 0 — so **no band moved
+materially and `src/data/experience-targets.json` is deliberately NOT
+re-baselined** (no `targetsVersion` bump, and GDD §2.7 is unchanged).
+
+### Why the numbers cannot move: the harness does not model weapon output
+
+A byte-identical report is the **structurally expected** result of this change,
+not evidence that the nerf is ineffective in the game. The closed-loop headless
+arena fires the player's shots on a **fixed cadence constant**
+(`FIRE_INTERVAL_TICKS = 9` in `src/ai/eval/arena.ts`) and imports only the
+**type** `WeaponId` from `src/utils/weapons` — a type-only import is erased at
+compile time, so no `WEAPON_CATALOGUE`, `DEFAULT_WEAPON_SUBDIVISIONS`,
+`AOE_RADII`, hit-budget or `WEAPON_UPGRADE_SPECS` value can reach the
+simulation. This is the already-documented fidelity boundary above: "choices
+affect the ownership context used by later offers — the arena does **not** model
+the chosen weapon's fire pattern".
+
+Measured, not inferred — a sensitivity probe on the same tree:
+
+```bash
+node scripts/evaluate.mjs --batch --games 3 --out /tmp/probe/control   # control
+# temporary edit: DEFAULT_WEAPON_SUBDIVISIONS.cannon 2 -> 12 (6x cadence)
+node scripts/evaluate.mjs --batch --games 3 --out /tmp/probe/edited    # 6x cannon fire rate
+git checkout -- src/utils/weapons.ts    # reverted; `git status --porcelain` empty
+```
+
+`diff /tmp/probe/control/balance-report.json /tmp/probe/edited/balance-report.json`
+is **empty**: even a 6× change to the starting weapon's level-0 cadence —
+several times larger than the 40 % trim under test — leaves the batch report
+byte-identical. **The batch gate is blind to weapon-output levers.**
+
+### Decision, and what still gates the change
+
+- **No retune iteration is recorded, because no retune can change a metric the
+  harness never reads.** Re-tuning weapon data to move these numbers would be
+  evidence-free churn; the stated bounds were therefore not re-entered.
+- **The numeric half of Q3 = B is the binding gate** for this change: the
+  level-0 `≤ 60 %` bound, the `≤ 1.5× cannon` ceiling and the
+  `≤ 2.5× L0` / `≤ 50 % of the pre-change saturated output` level bounds are
+  asserted table-driven against literal baselines by
+  `src/utils/weapons.test.ts` and `src/utils/weaponLevels.test.ts`.
+- **What the batch gate does still verify** here: the change is not a
+  campaign-shape regression — the sweep stays playable, in-band and
+  deterministic, and the same seeds reproduce the same report byte-for-byte
+  (a stronger reproducibility statement than the same-tree replay in
+  §Determinism and reproducibility, since the two runs happened on different
+  trees).
+- **Evidence limitation (carry it forward):** this batch is *directional* bot
+  evidence and cannot speak to weapon feel. A **human play-check is required**
+  after merge before the nerf is considered validated.
+- **Follow-up:** modelling the player's weapon fire (catalogue cadence, pattern
+  count, bullet lifetime, budgets and the level curve) in the arena, so a
+  future weapon-output change is measurable by this gate, is filed as
+  **Model player weapon fire output in the balance harness**
+  (AH-0MW1OLFM20060MOE, `discovered-from:AH-0MVRENEME004FS8T`) — out of scope
+  here (AC4 scope guard) but the reason this gate cannot answer the question.
 
 ## Related work
 

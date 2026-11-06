@@ -2,10 +2,16 @@
  * CSV codec module (AH-0MTZWZ9TE009CVUA — task AH-0MUE7Y2940000LVE).
  *
  * RFC 4180 CSV parser and serializer with typed coercion and validation
- * for `EnemyConfig`, `ShipConfig` and the sequenced-campaign
- * `DifficultyCurveRow` (AH-0MUH6LEYY0054E63).  The codec reads flat CSV rows
+ * for `EnemyConfig`, `ShipConfig`, the sequenced-campaign
+ * `DifficultyCurveRow` (AH-0MUH6LEYY0054E63) and the player-weapon catalogue
+ * (`WeaponRow`, AH-0MW0Q1DCZ006AUGP).  The codec reads flat CSV rows
  * into typed configuration objects, validates required fields and enums, and
  * falls back to sensible defaults when data is missing or malformed.
+ *
+ * The weapon codec is deliberately **pure**: it never imports the shipped
+ * `WEAPON_CATALOGUE` (which imports this module), so a malformed row is
+ * reported rather than silently replaced by a code default. Falling back to
+ * the code default for an omitted id is the caller's job.
  *
  * Column mapping follows the seed configs in `src/core/enemyConfig.ts`
  * and `src/core/config.ts`; colours are stored as `0xRRGGBB` hex strings
@@ -25,6 +31,16 @@ import {
   type DifficultySource,
 } from './configTypes';
 import { DEFAULT_ENEMY_CONFIGS } from './configDefaults';
+import { DEFAULT_BPM, beatPeriodMs, beatSubdivisionMs } from '../utils/beat';
+import type {
+  AoEDescriptor,
+  AoETrigger,
+  BulletShape,
+  ImpactFxSpec,
+  MuzzleFlashSpec,
+  WeaponDefinition,
+  WeaponId,
+} from '../utils/weapons';
 
 // ── Valid enum values ───────────────────────────────────────────────
 
@@ -91,6 +107,9 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   // Defender raider tuning (AH-0MV01EM7U0033W7L): committed attack-run speed
   // and commit range; neutral for other archetypes.
   'attackSpeed', 'commitRange',
+  // Diver dive tuning (AH-0MW0TY1AY003TDFC): fixed dive speed for the `diver`
+  // archetype; neutral otherwise. A blank value falls back to the code default.
+  'diveSpeed',
   // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T): number of lanes and the
   // vertical gap between them; neutral for other archetypes.
   'laneCount', 'laneSpacing',
@@ -252,6 +271,28 @@ function unquoteCsvField(value: string): string {
   return value;
 }
 
+/**
+ * Serialise one CSV data line from a cell map, in `columns` order.
+ *
+ * A column the map does not carry becomes an empty cell. This is the
+ * line-level writer used by the dev write path
+ * (`vite/plugins/configCsvPlugin.ts`) to replace exactly one authored row:
+ * unlike {@link serializeWeaponCatalogue} it derives nothing (so a
+ * `subdivisions` cell round-trips verbatim), it writes no header and no
+ * comment block, and it therefore cannot disturb the rows and `#` notes
+ * around the edited row (AH-0MW0Q1GMK005HOF0).
+ *
+ * @param cells - The cell values, keyed by column name.
+ * @param columns - The column order to write (defaults may be supplied by the
+ *   caller from the file's own header).
+ */
+export function serializeCsvLine(
+  cells: Readonly<Record<string, string | undefined>>,
+  columns: readonly string[],
+): string {
+  return columns.map((column) => quoteCsvField(cells[column] ?? '')).join(',');
+}
+
 // ── CSV line parser ─────────────────────────────────────────────────
 
 /**
@@ -340,6 +381,33 @@ export function parseCsvRows(csv: string): Record<string, string>[] {
   }
 
   return records;
+}
+
+// ── Shared column diagnostics ───────────────────────────────────────
+
+/**
+ * Columns present in `rows` that `known` does not declare, in first-seen
+ * order.
+ *
+ * A hand-added spreadsheet column is otherwise silently ignored, so each
+ * parser reports it once (AH-0MW0Q1FT1002Q6NJ AC6): the designer sees that
+ * the column they added is not part of the schema, while the row still parses.
+ */
+function undeclaredColumns(
+  rows: readonly Record<string, string>[],
+  known: readonly string[],
+): string[] {
+  const knownSet = new Set(known);
+  const seen = new Set<string>();
+  const undeclared: string[] = [];
+  for (const row of rows) {
+    for (const column of Object.keys(row)) {
+      if (knownSet.has(column) || seen.has(column)) continue;
+      seen.add(column);
+      undeclared.push(column);
+    }
+  }
+  return undeclared;
 }
 
 // ── AC3: Validation result type ─────────────────────────────────────
@@ -431,6 +499,9 @@ export function validateEnemyConfig(
     // Defender raider tuning (AH-0MV01EM7U0033W7L): optional and neutral for
     // other archetypes.
     'attackSpeed', 'commitRange',
+    // Diver dive tuning (AH-0MW0TY1AY003TDFC): optional and neutral for
+    // other archetypes.
+    'diveSpeed',
     // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T): optional and neutral
     // for other archetypes.
     'laneCount', 'laneSpacing',
@@ -675,6 +746,14 @@ export function coerceEnemyConfig(
   }
   if (row.commitRange != null && row.commitRange.trim() !== '') {
     merged.commitRange = coerceNumber(row.commitRange, merged.commitRange ?? 0);
+  }
+  // Diver dive tuning (AH-0MW0TY1AY003TDFC). Optional and neutral for other
+  // archetypes: only override when the CSV row actually carries a value, so
+  // non-diver rows keep their seed/default shape. A blank/absent cell falls
+  // back to the existing seed default (320 px/s for the diver) — never NaN,
+  // never a zero-speed dive.
+  if (row.diveSpeed != null && row.diveSpeed.trim() !== '') {
+    merged.diveSpeed = coerceNumber(row.diveSpeed, merged.diveSpeed ?? 0);
   }
   // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T). Optional and neutral
   // for other archetypes: only override when the CSV row carries a value.
@@ -988,4 +1067,1024 @@ export function serializeShipConfigs(configs: ShipConfig[]): string {
     }).join(',');
   });
   return [header, ...rows].join('\n');
+}
+
+// ── Weapon catalogue codec (AH-0MW0Q1DCZ006AUGP) ────────────────────
+
+/**
+ * The runtime weapon-id roster.
+ *
+ * The codec must know the valid ids for two reasons: a row whose `id` is not
+ * a shipped weapon is a typo, not a new weapon (adding a weapon still needs an
+ * icon arm and an audio cue arm — epic AH-0MW0Q01VM004EPY7), and
+ * {@link parseWeaponPatterns} is used on its own, so it cannot learn the
+ * roster from the weapons CSV.
+ *
+ * It lives here, not in `src/utils/weapons.ts`, because the catalogue module
+ * imports this codec (a value back-import would be a module cycle). The
+ * object literal is typed `Record<WeaponId, true>`, so adding an id to the
+ * `WeaponId` union without adding it here — or vice versa — is a compile
+ * error. Keep the order: it is the catalogue order.
+ */
+const WEAPON_ID_EXHAUSTIVE: Record<WeaponId, true> = {
+  cannon: true,
+  spread: true,
+  dual: true,
+  rapid: true,
+  wave_laser: true,
+  ricochet: true,
+  cluster: true,
+  options: true,
+  nova: true,
+  mortar: true,
+  arc: true,
+  rear_guard: true,
+  broadside: true,
+  railgun: true,
+  shard_swarm: true,
+  heavy_slug: true,
+};
+
+/** Every valid weapon id, in catalogue order. */
+export const WEAPON_IDS: readonly WeaponId[] = Object.keys(
+  WEAPON_ID_EXHAUSTIVE,
+) as WeaponId[];
+
+/** Fast membership check for {@link WEAPON_IDS}. */
+const WEAPON_ID_SET: ReadonlySet<string> = new Set<string>(WEAPON_IDS);
+
+/**
+ * Every bullet shape the catalogue understands (mirrors `BulletShape`).
+ *
+ * Exported so the weapon tuning panel's shape selector offers exactly the
+ * enum the codec validates (AH-0MW0Q1HMH0037RNC).
+ */
+export const VALID_BULLET_SHAPES: BulletShape[] = [
+  'circle', 'disc', 'line', 'teardrop', 'missile', 'ring', 'shell',
+  'heavy-shell', 'shard', 'bolt', 'phaser-bolt', 'fleck', 'dart',
+  'boss-pellet', 'spiral-pellet', 'pulse-ring', 'tracer', 'warhead',
+  'diamond', 'spark', 'chevron', 'pellet',
+];
+
+/**
+ * Every AOE trigger the catalogue understands (mirrors `AoETrigger`).
+ *
+ * Exported so the weapon tuning panel's trigger selector offers exactly the
+ * enum the codec validates (AH-0MW0Q1HMH0037RNC).
+ */
+export const VALID_AOE_TRIGGERS: AoETrigger[] = [
+  'onFire', 'onImpact', 'onRandom', 'screenPulse',
+];
+
+/**
+ * The flat, scalar projection of `WeaponDefinition` authored in
+ * `src/data/weapons.csv` — one cell per column, no nested objects.
+ *
+ * `fireRateMs` is deliberately absent: it is derived from `subdivisions`
+ * through `beatSubdivisionMs`, never stored, so the on-beat-grid invariant
+ * holds by construction. `offsets` / `sideOffsets` are absent too — they live
+ * in the long-format `src/data/weapon-patterns.csv`
+ * ({@link parseWeaponPatterns}).
+ */
+export interface WeaponRow {
+  id: string;
+  name: string;
+  description: string;
+  subdivisions: number;
+  bulletColor: number;
+  bulletShape: BulletShape;
+  bulletSize: number;
+  bulletLifetime: number;
+  bulletShapeLength?: number;
+  bulletRim?: number;
+  bulletThickness?: number;
+  bulletTrail?: number;
+  bulletFlame?: number;
+  maxHitPoints?: number;
+  bounce?: number;
+  splits?: number;
+  orbitPods?: number;
+  orbitRadius?: number;
+  aoeTrigger?: AoETrigger;
+  aoeRadius?: number;
+  aoeDamagesEnemies?: boolean;
+  aoeClearsEnemyBullets?: boolean;
+  aoeDamage?: number;
+  aoeChains?: number;
+  aoeProjectileSpeed?: number;
+  hitscanLength?: number;
+  hitscanDuration?: number;
+  hitscanAimBias?: number;
+  muzzleColor?: number;
+  muzzleRadius?: number;
+  muzzleDuration?: number;
+  impactColor?: number;
+  impactRadius?: number;
+  impactDuration?: number;
+  impactCue?: string;
+}
+
+/**
+ * Stable column order for the weapon-catalogue CSV. Exported for the
+ * serialiser and the dev write path (header validation), exactly like
+ * {@link ENEMY_COLUMN_ORDER}. Reordering is a breaking spreadsheet change.
+ */
+export const WEAPON_COLUMN_ORDER: readonly (keyof WeaponRow)[] = [
+  'id',
+  'name',
+  'description',
+  'subdivisions',
+  'bulletColor',
+  'bulletShape',
+  'bulletSize',
+  'bulletLifetime',
+  'bulletShapeLength',
+  'bulletRim',
+  'bulletThickness',
+  'bulletTrail',
+  'bulletFlame',
+  'maxHitPoints',
+  'bounce',
+  'splits',
+  'orbitPods',
+  'orbitRadius',
+  'aoeTrigger',
+  'aoeRadius',
+  'aoeDamagesEnemies',
+  'aoeClearsEnemyBullets',
+  'aoeDamage',
+  'aoeChains',
+  'aoeProjectileSpeed',
+  'hitscanLength',
+  'hitscanDuration',
+  'hitscanAimBias',
+  'muzzleColor',
+  'muzzleRadius',
+  'muzzleDuration',
+  'impactColor',
+  'impactRadius',
+  'impactDuration',
+  'impactCue',
+];
+
+/** Stable column order for the long-format weapon-patterns CSV. */
+export const WEAPON_PATTERN_COLUMN_ORDER = [
+  'weaponId', 'index', 'angleDeg', 'sideOffsetPx',
+] as const;
+
+/** Columns every weapon row must carry, non-blank. */
+const REQUIRED_WEAPON_COLUMNS: readonly (keyof WeaponRow)[] = [
+  'id',
+  'name',
+  'description',
+  'subdivisions',
+  'bulletColor',
+  'bulletShape',
+  'bulletSize',
+  'bulletLifetime',
+];
+
+/** Columns written/read as `0xRRGGBB`. */
+const WEAPON_HEX_COLUMNS: readonly (keyof WeaponRow)[] = [
+  'bulletColor', 'bulletRim', 'muzzleColor', 'impactColor',
+];
+
+/** Numeric columns that must be strictly positive (a zero is meaningless). */
+const WEAPON_POSITIVE_NUMBER_COLUMNS: readonly (keyof WeaponRow)[] = [
+  'subdivisions', 'bulletSize', 'bulletLifetime',
+];
+
+/** Numeric columns that may be zero but never negative. */
+const WEAPON_NON_NEGATIVE_NUMBER_COLUMNS: readonly (keyof WeaponRow)[] = [
+  'bulletShapeLength',
+  'bulletThickness',
+  'bulletTrail',
+  'bulletFlame',
+  'maxHitPoints',
+  'bounce',
+  'splits',
+  'orbitPods',
+  'orbitRadius',
+  'aoeRadius',
+  'aoeDamage',
+  'aoeChains',
+  'aoeProjectileSpeed',
+  'hitscanLength',
+  'hitscanDuration',
+  'hitscanAimBias',
+  'muzzleRadius',
+  'muzzleDuration',
+  'impactRadius',
+  'impactDuration',
+];
+
+/**
+ * Numeric columns that must stay inside the unit interval `[0, 1]` — a
+ * probability or normalised strength (the Wave Laser's aim bias,
+ * AH-0MW10J31B0053E56).
+ */
+const WEAPON_UNIT_INTERVAL_COLUMNS: readonly (keyof WeaponRow)[] = [
+  'hitscanAimBias',
+];
+
+/** Optional numeric columns coerced only when the cell carries a value. */
+const WEAPON_OPTIONAL_NUMBER_FIELDS = [
+  'bulletShapeLength',
+  'bulletThickness',
+  'bulletTrail',
+  'bulletFlame',
+  'maxHitPoints',
+  'bounce',
+  'splits',
+  'orbitPods',
+  'orbitRadius',
+  'aoeRadius',
+  'aoeDamage',
+  'aoeChains',
+  'aoeProjectileSpeed',
+  'hitscanLength',
+  'hitscanDuration',
+  'hitscanAimBias',
+  'muzzleRadius',
+  'muzzleDuration',
+  'impactRadius',
+  'impactDuration',
+] as const;
+
+/** Optional hex-colour columns coerced only when the cell carries a value. */
+const WEAPON_OPTIONAL_HEX_FIELDS = [
+  'bulletRim', 'muzzleColor', 'impactColor',
+] as const;
+
+/** Optional boolean columns coerced only when the cell carries a value. */
+const WEAPON_OPTIONAL_BOOLEAN_FIELDS = [
+  'aoeDamagesEnemies', 'aoeClearsEnemyBullets',
+] as const;
+
+/** One flat-column descriptor group (`orbit`, `aoe`, `hitscan`, …). */
+interface WeaponDescriptorGroup {
+  /** Short label used in diagnostics. */
+  readonly label: string;
+  /** The column that declares the group (its "opening column"). */
+  readonly opener: keyof WeaponRow;
+  /** Further columns the descriptor needs a value for. */
+  readonly members: readonly (keyof WeaponRow)[];
+  /** Columns that refine the descriptor and are meaningless without it. */
+  readonly extras: readonly (keyof WeaponRow)[];
+  /**
+   * Fallbacks applied to a blank member once the opener is present. Only a
+   * member with no fallback is mandatory, so a group can be authored from its
+   * opening column alone only where the rest has a documented default.
+   */
+  readonly defaults: Partial<Record<keyof WeaponRow, number>>;
+}
+
+/**
+ * Fallback muzzle-flash core radius (px) when a row authors only its colour
+ * (or no muzzle columns at all).
+ *
+ * Mirrors `MUZZLE_FLASH_RADIUS` in `src/vfx/muzzleFlash.ts`: the codec is a
+ * leaf data module (it must stay importable from the Vite config loader), so
+ * it cannot import a VFX module to share the constant.
+ */
+export const DEFAULT_WEAPON_MUZZLE_RADIUS = 7;
+
+/** Fallback muzzle-flash fade duration (s); see {@link DEFAULT_WEAPON_MUZZLE_RADIUS}. */
+export const DEFAULT_WEAPON_MUZZLE_DURATION = 0.12;
+
+/**
+ * The descriptor groups. A descriptor is a nested object whose fields are read
+ * together, so a half-authored group would dispatch into a seam with an
+ * `undefined` field.
+ *
+ * Each group is declared by its **opening column**:
+ * - opener present and non-blank → the group is authored; every member without
+ *   a documented fallback must be non-blank.
+ * - opener present but blank with every other cell blank → the group is absent
+ *   (a header can list a group's columns without any weapon using it).
+ * - opener absent while another group column is declared → diagnostic: the
+ *   member belongs to a descriptor that was never opened.
+ *
+ * The muzzle flash is the one descriptor spec that is **always** present: its
+ * colour falls back to the bullet colour and its radius/duration to the
+ * documented defaults, so `muzzleColor` is a pure override.
+ */
+const WEAPON_DESCRIPTOR_GROUPS: readonly WeaponDescriptorGroup[] = [
+  {
+    label: 'orbit',
+    opener: 'orbitPods',
+    members: ['orbitRadius'],
+    extras: [],
+    defaults: {},
+  },
+  {
+    label: 'AOE',
+    opener: 'aoeTrigger',
+    members: ['aoeRadius', 'aoeDamagesEnemies', 'aoeClearsEnemyBullets'],
+    extras: ['aoeDamage', 'aoeChains', 'aoeProjectileSpeed'],
+    defaults: {},
+  },
+  {
+    label: 'hitscan',
+    opener: 'hitscanLength',
+    members: ['hitscanDuration', 'hitscanAimBias'],
+    extras: [],
+    defaults: {},
+  },
+  {
+    label: 'muzzle-flash',
+    opener: 'muzzleColor',
+    members: ['muzzleRadius', 'muzzleDuration'],
+    extras: [],
+    defaults: {
+      muzzleRadius: DEFAULT_WEAPON_MUZZLE_RADIUS,
+      muzzleDuration: DEFAULT_WEAPON_MUZZLE_DURATION,
+    },
+  },
+  {
+    label: 'impact-FX',
+    opener: 'impactColor',
+    members: ['impactRadius', 'impactDuration', 'impactCue'],
+    extras: [],
+    defaults: {},
+  },
+];
+
+/** True when a cell is absent or holds only whitespace. */
+function isBlankWeaponCell(value: string | undefined): boolean {
+  return value == null || value.trim() === '';
+}
+
+/**
+ * Coerce an optional numeric cell, or `undefined` when the cell is blank.
+ * A malformed value is also `undefined`: validation rejects the row before it
+ * is coerced, and a partial coercion must never invent a `0`.
+ */
+function optionalNumberCell(value: string | undefined): number | undefined {
+  if (value == null || value.trim() === '') return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** Coerce an optional `0xRRGGBB` cell, or `undefined` when blank/malformed. */
+function optionalHexCell(value: string | undefined): number | undefined {
+  if (value == null || value.trim() === '') return undefined;
+  const trimmed = value.trim();
+  if (!/^0x[0-9a-fA-F]{6}$/.test(trimmed)) return undefined;
+  return parseInt(trimmed.slice(2), 16);
+}
+
+/**
+ * Coerce an optional boolean cell (`true`/`false`/`1`/`0`), or `undefined`
+ * when blank/malformed. Presence-based dispatch means a blank cell must not
+ * become `false`.
+ */
+function optionalBooleanCell(value: string | undefined): boolean | undefined {
+  if (value == null || value.trim() === '') return undefined;
+  const normalised = value.trim().toLowerCase();
+  if (normalised === 'true' || normalised === '1') return true;
+  if (normalised === 'false' || normalised === '0') return false;
+  return undefined;
+}
+
+/**
+ * Coerce a flat weapons-CSV row into a typed {@link WeaponRow}.
+ *
+ * Blank optional cells are **omitted** (not set to `0`/`false`): every
+ * descriptor and budget field is dispatched on presence, so a zero standing in
+ * for "this weapon has no such capability" would change behaviour. An
+ * explicit `0` is preserved. Malformed cells are omitted as well; use
+ * {@link validateWeaponRow} to reject the row.
+ */
+export function coerceWeaponRow(row: Record<string, string>): WeaponRow {
+  const result: WeaponRow = {
+    id: (row.id ?? '').trim(),
+    name: (row.name ?? '').trim(),
+    description: (row.description ?? '').trim(),
+    subdivisions: coerceNumber(row.subdivisions, 0),
+    bulletColor: coerceHexColour(row.bulletColor, 0x000000),
+    bulletShape: coerceEnum(
+      row.bulletShape?.trim(),
+      VALID_BULLET_SHAPES,
+      'circle',
+    ),
+    bulletSize: coerceNumber(row.bulletSize, 0),
+    bulletLifetime: coerceNumber(row.bulletLifetime, 0),
+  };
+
+  for (const field of WEAPON_OPTIONAL_NUMBER_FIELDS) {
+    const value = optionalNumberCell(row[field]);
+    if (value !== undefined) result[field] = value;
+  }
+  for (const field of WEAPON_OPTIONAL_HEX_FIELDS) {
+    const value = optionalHexCell(row[field]);
+    if (value !== undefined) result[field] = value;
+  }
+  for (const field of WEAPON_OPTIONAL_BOOLEAN_FIELDS) {
+    const value = optionalBooleanCell(row[field]);
+    if (value !== undefined) result[field] = value;
+  }
+
+  const trigger = row.aoeTrigger?.trim();
+  if (trigger !== undefined && VALID_AOE_TRIGGERS.includes(trigger as AoETrigger)) {
+    result.aoeTrigger = trigger as AoETrigger;
+  }
+  if (!isBlankWeaponCell(row.impactCue)) {
+    result.impactCue = (row.impactCue as string).trim();
+  }
+
+  return result;
+}
+
+/**
+ * Validate a flat weapons-CSV row without modifying it.
+ *
+ * Reports **every** problem in one pass as a flat diagnostic naming the weapon
+ * id, the column and the offending value (house style, see
+ * {@link ValidationResult}), e.g.
+ * `spread: bulletShape: Invalid bulletShape: "triangle"`. Duplicate ids are a
+ * catalogue-level concern and are reported by
+ * {@link parseWeaponCatalogue}.
+ */
+export function validateWeaponRow(row: Record<string, string>): ValidationResult {
+  const errors: string[] = [];
+  const id = (row.id ?? '').trim();
+  const prefix = id === '' ? '' : `${id}: `;
+  const report = (column: string, reason: string): void => {
+    errors.push(`${prefix}${column}: ${reason}`);
+  };
+
+  for (const column of REQUIRED_WEAPON_COLUMNS) {
+    if (isBlankWeaponCell(row[column])) {
+      report(column, 'Missing required column');
+    }
+  }
+
+  if (id !== '' && !WEAPON_ID_SET.has(id)) {
+    report('id', `Unknown weapon id: "${id}"`);
+  }
+
+  const shape = row.bulletShape?.trim();
+  if (shape !== undefined && shape !== '' && !VALID_BULLET_SHAPES.includes(shape as BulletShape)) {
+    report(
+      'bulletShape',
+      `Invalid bulletShape: "${row.bulletShape}" — must be one of ${VALID_BULLET_SHAPES.join(', ')}`,
+    );
+  }
+
+  const trigger = row.aoeTrigger?.trim();
+  if (trigger !== undefined && trigger !== '' && !VALID_AOE_TRIGGERS.includes(trigger as AoETrigger)) {
+    report(
+      'aoeTrigger',
+      `Invalid aoeTrigger: "${row.aoeTrigger}" — must be one of ${VALID_AOE_TRIGGERS.join(', ')}`,
+    );
+  }
+
+  for (const column of WEAPON_HEX_COLUMNS) {
+    const value = row[column];
+    if (!isBlankWeaponCell(value) && !/^0x[0-9a-fA-F]{6}$/.test((value as string).trim())) {
+      report(column, `Invalid hex colour: "${value}" — expected 0xRRGGBB`);
+    }
+  }
+
+  for (const column of WEAPON_POSITIVE_NUMBER_COLUMNS) {
+    const value = row[column];
+    if (isBlankWeaponCell(value)) continue;
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      report(column, `Invalid number: "${value}"`);
+    } else if (n <= 0) {
+      report(column, `Invalid number: "${value}" — must be positive`);
+    }
+  }
+
+  for (const column of WEAPON_NON_NEGATIVE_NUMBER_COLUMNS) {
+    const value = row[column];
+    if (isBlankWeaponCell(value)) continue;
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      report(column, `Invalid number: "${value}"`);
+    } else if (n < 0) {
+      report(column, `Invalid number: "${value}" — must not be negative`);
+    }
+  }
+
+  for (const column of WEAPON_UNIT_INTERVAL_COLUMNS) {
+    const value = row[column];
+    if (isBlankWeaponCell(value)) continue;
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      report(column, `Invalid number: "${value}"`);
+    } else if (n < 0 || n > 1) {
+      report(column, `Invalid number: "${value}" — must be between 0 and 1`);
+    }
+  }
+
+  // A malformed boolean must be reported: coercion would drop it, leaving the
+  // AOE descriptor half-built (and therefore silently absent).
+  for (const column of WEAPON_OPTIONAL_BOOLEAN_FIELDS) {
+    const value = row[column];
+    if (isBlankWeaponCell(value)) continue;
+    if (optionalBooleanCell(value) === undefined) {
+      report(column, `Invalid boolean: "${value}" — expected true, false, 1 or 0`);
+    }
+  }
+
+  for (const group of WEAPON_DESCRIPTOR_GROUPS) {
+    const openerPresent = row[group.opener] !== undefined;
+
+    if (!openerPresent) {
+      // The group was never opened. A declared member would be silently
+      // dropped by the coercion, so name it instead.
+      const orphans = [...group.members, ...group.extras].filter(
+        (column) => row[column] !== undefined,
+      );
+      for (const column of orphans) {
+        report(
+          column,
+          `Requires the ${group.label} descriptor opener (${group.opener})`,
+        );
+      }
+      continue;
+    }
+
+    if (isBlankWeaponCell(row[group.opener])) {
+      // A blank opener with every other cell blank is a header that lists the
+      // group's columns without any weapon using it: the group is absent.
+      const hasValue = [...group.members, ...group.extras].some(
+        (column) => !isBlankWeaponCell(row[column]),
+      );
+      if (!hasValue) continue;
+      report(
+        group.opener,
+        `Missing value for the ${group.label} descriptor group opener`,
+      );
+    }
+
+    for (const column of group.members) {
+      if (group.defaults[column] !== undefined) continue;
+      if (isBlankWeaponCell(row[column])) {
+        report(
+          column,
+          `Missing required column for the ${group.label} descriptor group`,
+        );
+      }
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+/** One weapon's shot pattern, assembled from `weapon-patterns.csv`. */
+export interface WeaponPattern {
+  /**
+   * Relative shot angles in radians, ordered by the authored `index`.
+   * Always present (`[]` when the weapon has no pattern rows).
+   */
+  offsets: number[];
+  /**
+   * Per-bullet perpendicular positional offsets (px). Present only when at
+   * least one row carries a `sideOffsetPx`; an all-blank column means "no
+   * perpendicular offset" rather than "zero everywhere".
+   */
+  sideOffsets?: number[];
+}
+
+/** Result of {@link parseWeaponPatterns} — never throws. */
+export interface WeaponPatternParseResult {
+  patterns: Partial<Record<WeaponId, WeaponPattern>>;
+  errors: string[];
+}
+
+/** Result of {@link parseWeaponCatalogue} — never throws. */
+export interface WeaponCatalogueParseResult {
+  catalogue: Partial<Record<WeaponId, WeaponDefinition>>;
+  /**
+   * The validated `subdivisions` cell per weapon, in catalogue order.
+   *
+   * `fireRateMs` is derived from this cell, so the catalogue alone cannot
+   * recover the authored value. Exposing it lets the caller build the
+   * runtime default subdivision table from the CSV (with a per-id code
+   * fallback) without re-parsing the file (AH-0MW0Q1EYJ007RRFI). An omitted
+   * id means the row was missing or invalid, so the caller must fall back to
+   * the code default for that weapon.
+   */
+  subdivisions: Partial<Record<WeaponId, number>>;
+  errors: string[];
+}
+
+/** The two CSV files a weapon catalogue serialises to. */
+export interface WeaponCatalogueCsvPair {
+  weaponsCsv: string;
+  patternsCsv: string;
+}
+
+/** A single authored pattern row, before it is assembled per weapon. */
+interface WeaponPatternEntry {
+  index: number;
+  angleDeg: number;
+  sideOffsetPx: number | undefined;
+}
+
+/**
+ * Parse the long-format `weaponId,index,angleDeg,sideOffsetPx` patterns CSV
+ * into one {@link WeaponPattern} per weapon.
+ *
+ * Angles are authored in **degrees** (readable in a spreadsheet) and
+ * converted to radians here with `(degrees * Math.PI) / 180`; rows are
+ * ordered by their authored `index`. Never throws: a malformed row is
+ * reported and skipped, so no `NaN` angle ever reaches the catalogue.
+ */
+export function parseWeaponPatterns(csv: string): WeaponPatternParseResult {
+  const patterns: Partial<Record<WeaponId, WeaponPattern>> = {};
+  const errors: string[] = [];
+  const entriesByWeapon = new Map<WeaponId, WeaponPatternEntry[]>();
+
+  const rows = parseCsvRows(csv);
+  for (const column of undeclaredColumns(rows, WEAPON_PATTERN_COLUMN_ORDER)) {
+    errors.push(
+      `Unknown column "${column}" — ignored; not part of the weapon-pattern schema`,
+    );
+  }
+
+  for (const row of rows) {
+    const weaponId = (row.weaponId ?? '').trim();
+    if (weaponId === '') {
+      errors.push('weaponId: Missing required column');
+      continue;
+    }
+    if (!WEAPON_ID_SET.has(weaponId)) {
+      errors.push(`${weaponId}: weaponId: Unknown weapon id: "${weaponId}"`);
+      continue;
+    }
+    const id = weaponId as WeaponId;
+
+    const rawIndex = (row.index ?? '').trim();
+    const index = Number(rawIndex);
+    if (rawIndex === '' || !Number.isInteger(index) || index < 0) {
+      errors.push(
+        `${id}: index: Invalid pattern index: "${row.index}" — must be a non-negative integer`,
+      );
+      continue;
+    }
+
+    const angleDeg = optionalNumberCell(row.angleDeg);
+    if (angleDeg === undefined) {
+      errors.push(`${id}: angleDeg: Invalid pattern angle: "${row.angleDeg}"`);
+      continue;
+    }
+
+    const entries = entriesByWeapon.get(id) ?? [];
+    entries.push({
+      index,
+      angleDeg,
+      sideOffsetPx: optionalNumberCell(row.sideOffsetPx),
+    });
+    entriesByWeapon.set(id, entries);
+  }
+
+  for (const [id, entries] of entriesByWeapon) {
+    entries.sort((a, b) => a.index - b.index);
+    const pattern: WeaponPattern = {
+      offsets: entries.map((entry) => (entry.angleDeg * Math.PI) / 180),
+    };
+    if (entries.some((entry) => entry.sideOffsetPx !== undefined)) {
+      // Blank cells inside a populated column mean "no offset for this
+      // bullet", i.e. 0 — only an all-blank column means "no side offsets".
+      pattern.sideOffsets = entries.map((entry) => entry.sideOffsetPx ?? 0);
+    }
+    patterns[id] = pattern;
+  }
+
+  return { patterns, errors };
+}
+
+/**
+ * Assemble a {@link WeaponDefinition} from a coerced row and its pattern.
+ *
+ * Optional fields are only set when present, so `'bounce' in weapon` is false
+ * for a weapon without a bounce budget (presence-based dispatch).
+ */
+function buildWeaponDefinition(
+  row: WeaponRow,
+  pattern: WeaponPattern,
+): WeaponDefinition {
+  const definition: WeaponDefinition = {
+    id: row.id as WeaponId,
+    name: row.name,
+    description: row.description,
+    offsets: pattern.offsets,
+    // Derived, never authored: the on-beat-grid invariant holds by
+    // construction (AH-0MUAYB8EH005RJ8B).
+    fireRateMs: beatSubdivisionMs(row.subdivisions),
+    bulletColor: row.bulletColor,
+    bulletShape: row.bulletShape,
+    bulletSize: row.bulletSize,
+    bulletLifetime: row.bulletLifetime,
+  };
+
+  if (pattern.sideOffsets !== undefined) definition.sideOffsets = pattern.sideOffsets;
+  if (row.bulletShapeLength !== undefined) definition.bulletShapeLength = row.bulletShapeLength;
+  if (row.bulletRim !== undefined) definition.bulletRim = row.bulletRim;
+  if (row.bulletThickness !== undefined) definition.bulletThickness = row.bulletThickness;
+  if (row.bulletTrail !== undefined) definition.bulletTrail = row.bulletTrail;
+  if (row.bulletFlame !== undefined) definition.bulletFlame = row.bulletFlame;
+  if (row.maxHitPoints !== undefined) definition.maxHitPoints = row.maxHitPoints;
+  if (row.bounce !== undefined) definition.bounce = row.bounce;
+  if (row.splits !== undefined) definition.splits = row.splits;
+
+  if (row.orbitPods !== undefined && row.orbitRadius !== undefined) {
+    definition.orbit = { pods: row.orbitPods, radius: row.orbitRadius };
+  }
+
+  if (
+    row.aoeTrigger !== undefined &&
+    row.aoeRadius !== undefined &&
+    row.aoeDamagesEnemies !== undefined &&
+    row.aoeClearsEnemyBullets !== undefined
+  ) {
+    const aoe: AoEDescriptor = {
+      trigger: row.aoeTrigger,
+      radius: row.aoeRadius,
+      damagesEnemies: row.aoeDamagesEnemies,
+      clearsEnemyBullets: row.aoeClearsEnemyBullets,
+    };
+    if (row.aoeDamage !== undefined) aoe.damage = row.aoeDamage;
+    if (row.aoeChains !== undefined) aoe.chains = row.aoeChains;
+    if (row.aoeProjectileSpeed !== undefined) aoe.projectileSpeed = row.aoeProjectileSpeed;
+    definition.aoe = aoe;
+  }
+
+  if (
+    row.hitscanLength !== undefined &&
+    row.hitscanDuration !== undefined &&
+    row.hitscanAimBias !== undefined
+  ) {
+    definition.hitscan = {
+      length: row.hitscanLength,
+      duration: row.hitscanDuration,
+      aimBias: row.hitscanAimBias,
+    };
+  }
+
+  // The muzzle flash is always present (every shipped weapon carries one), so
+  // its colour falls back to the bullet colour and its radius/duration to the
+  // documented defaults: `muzzleColor` is a pure override.
+  const muzzleFlash: MuzzleFlashSpec = {
+    color: row.muzzleColor ?? row.bulletColor,
+    radius: row.muzzleRadius ?? DEFAULT_WEAPON_MUZZLE_RADIUS,
+    duration: row.muzzleDuration ?? DEFAULT_WEAPON_MUZZLE_DURATION,
+  };
+  definition.muzzleFlash = muzzleFlash;
+
+  if (
+    row.impactColor !== undefined &&
+    row.impactRadius !== undefined &&
+    row.impactDuration !== undefined &&
+    row.impactCue !== undefined
+  ) {
+    const impactFx: ImpactFxSpec = {
+      color: row.impactColor,
+      radius: row.impactRadius,
+      duration: row.impactDuration,
+      cue: row.impactCue,
+    };
+    definition.impactFx = impactFx;
+  }
+
+  return definition;
+}
+
+/**
+ * Parse a weapons CSV plus its patterns CSV into a typed catalogue.
+ *
+ * Never throws and never falls back silently: a row that fails validation (or
+ * repeats an id) is **omitted** and its diagnostic recorded in `errors`, so
+ * the caller can fall back to the code default for that id. Falling back here
+ * would be a module cycle — `src/utils/weapons.ts` imports this codec.
+ */
+export function parseWeaponCatalogue(
+  weaponsCsv: string,
+  patternsCsv: string,
+): WeaponCatalogueParseResult {
+  const errors: string[] = [];
+  const patternResult = parseWeaponPatterns(patternsCsv);
+  errors.push(...patternResult.errors);
+
+  const catalogue: Partial<Record<WeaponId, WeaponDefinition>> = {};
+  const subdivisions: Partial<Record<WeaponId, number>> = {};
+
+  const rows = parseCsvRows(weaponsCsv);
+  for (const column of undeclaredColumns(rows, WEAPON_COLUMN_ORDER)) {
+    errors.push(
+      `Unknown column "${column}" — ignored; not part of the weapon-catalogue schema`,
+    );
+  }
+
+  for (const row of rows) {
+    const validation = validateWeaponRow(row);
+    if (!validation.ok) {
+      errors.push(...validation.errors);
+      continue;
+    }
+
+    const coerced = coerceWeaponRow(row);
+    const id = coerced.id as WeaponId;
+    if (catalogue[id] !== undefined) {
+      errors.push(`${id}: id: Duplicate weapon id — keeping the first definition`);
+      continue;
+    }
+
+    const pattern = patternResult.patterns[id] ?? { offsets: [] };
+    catalogue[id] = buildWeaponDefinition(coerced, pattern);
+    subdivisions[id] = coerced.subdivisions;
+  }
+
+  return { catalogue, subdivisions, errors };
+}
+
+/** Format an optional number cell: shortest round-tripping form, blank if unusable. */
+function formatWeaponNumber(value: number | undefined): string {
+  return value === undefined || !Number.isFinite(value) ? '' : String(value);
+}
+
+/** Format an optional colour cell as `0xRRGGBB`, blank when absent. */
+function formatWeaponHex(value: number | undefined): string {
+  if (value === undefined) return '';
+  return `0x${value.toString(16).padStart(6, '0')}`;
+}
+
+/** Format an optional boolean cell as `true`/`false`, blank when absent. */
+function formatWeaponBoolean(value: boolean | undefined): string {
+  return value === undefined ? '' : String(value);
+}
+
+/**
+ * One cell writer per {@link WeaponRow} column. The `Record` type makes this
+ * exhaustive: a new column cannot be added to {@link WeaponRow} without a
+ * writer here.
+ */
+const WEAPON_CELL_WRITERS: Record<
+  keyof WeaponRow,
+  (definition: WeaponDefinition, bpm: number) => string
+> = {
+  id: (definition) => definition.id,
+  name: (definition) => definition.name,
+  description: (definition) => definition.description,
+  // The CSV stores subdivisions; the runtime fire rate is derived from them,
+  // so the serialiser inverts the derivation on the same beat grid.
+  subdivisions: (definition, bpm) =>
+    formatWeaponNumber(beatPeriodMs(bpm) / definition.fireRateMs),
+  bulletColor: (definition) => formatWeaponHex(definition.bulletColor),
+  bulletShape: (definition) => definition.bulletShape,
+  bulletSize: (definition) => formatWeaponNumber(definition.bulletSize),
+  bulletLifetime: (definition) => formatWeaponNumber(definition.bulletLifetime),
+  bulletShapeLength: (definition) => formatWeaponNumber(definition.bulletShapeLength),
+  bulletRim: (definition) => formatWeaponHex(definition.bulletRim),
+  bulletThickness: (definition) => formatWeaponNumber(definition.bulletThickness),
+  bulletTrail: (definition) => formatWeaponNumber(definition.bulletTrail),
+  bulletFlame: (definition) => formatWeaponNumber(definition.bulletFlame),
+  maxHitPoints: (definition) => formatWeaponNumber(definition.maxHitPoints),
+  bounce: (definition) => formatWeaponNumber(definition.bounce),
+  splits: (definition) => formatWeaponNumber(definition.splits),
+  orbitPods: (definition) => formatWeaponNumber(definition.orbit?.pods),
+  orbitRadius: (definition) => formatWeaponNumber(definition.orbit?.radius),
+  aoeTrigger: (definition) => definition.aoe?.trigger ?? '',
+  aoeRadius: (definition) => formatWeaponNumber(definition.aoe?.radius),
+  aoeDamagesEnemies: (definition) => formatWeaponBoolean(definition.aoe?.damagesEnemies),
+  aoeClearsEnemyBullets: (definition) => formatWeaponBoolean(definition.aoe?.clearsEnemyBullets),
+  aoeDamage: (definition) => formatWeaponNumber(definition.aoe?.damage),
+  aoeChains: (definition) => formatWeaponNumber(definition.aoe?.chains),
+  aoeProjectileSpeed: (definition) => formatWeaponNumber(definition.aoe?.projectileSpeed),
+  hitscanLength: (definition) => formatWeaponNumber(definition.hitscan?.length),
+  hitscanDuration: (definition) => formatWeaponNumber(definition.hitscan?.duration),
+  hitscanAimBias: (definition) => formatWeaponNumber(definition.hitscan?.aimBias),
+  muzzleColor: (definition) => formatWeaponHex(definition.muzzleFlash?.color),
+  muzzleRadius: (definition) => formatWeaponNumber(definition.muzzleFlash?.radius),
+  muzzleDuration: (definition) => formatWeaponNumber(definition.muzzleFlash?.duration),
+  impactColor: (definition) => formatWeaponHex(definition.impactFx?.color),
+  impactRadius: (definition) => formatWeaponNumber(definition.impactFx?.radius),
+  impactDuration: (definition) => formatWeaponNumber(definition.impactFx?.duration),
+  impactCue: (definition) => definition.impactFx?.cue ?? '',
+};
+
+/** Human-readable schema note written above the weapons CSV header. */
+const WEAPON_CSV_COMMENT_BLOCK: readonly string[] = [
+  '# Weapon Catalogue CSV — one row per player weapon.',
+  '# Edit to retune; refresh `npm run dev` to see the change. Shot patterns (angles)',
+  '# live in weapon-patterns.csv. Fire rate is derived from `subdivisions`, never stored.',
+  '#',
+  '# Columns:',
+  '#   id                    — Weapon id (one of the 16 catalogue ids). Required.',
+  '#   name                  — Display name. Required.',
+  '#   description           — One-line player-facing effect description. Required.',
+  '#   subdivisions          — Shots per beat on the 80 BPM grid (e.g. 2 = double time). Required.',
+  '#   bulletColor           — Bullet colour as 0xRRGGBB. Required.',
+  '#   bulletShape           — Bullet visual shape (see BulletShape in src/utils/weapons.ts). Required.',
+  '#   bulletSize            — Bullet radius multiplier. Required.',
+  '#   bulletLifetime        — Bullet lifetime in seconds (effective range = speed x lifetime). Required.',
+  '#   bulletShapeLength     — Long-axis multiplier for elongated shapes.',
+  '#   bulletRim             — Neon rim/outline colour as 0xRRGGBB.',
+  '#   bulletThickness       — Stroke-thickness multiplier for stroked shapes.',
+  '#   bulletTrail           — Trail length as a multiple of the bullet radius.',
+  '#   bulletFlame           — Exhaust-flame length as a multiple of the bullet radius.',
+  '#   maxHitPoints          — Pass-through hit-point budget (spent one hit point per hit).',
+  '#   bounce                — Wall-bounce budget before the bullet expires.',
+  '#   splits                — Radial warhead count spawned once on impact/expiry.',
+  '#   orbitPods             — Orbiting satellite-pod count (with orbitRadius).',
+  '#   orbitRadius           — Orbit radius around the ship, in px.',
+  '#   aoeTrigger            — When the area effect resolves: onFire | onImpact | onRandom | screenPulse.',
+  '#   aoeRadius             — Effect radius in px.',
+  '#   aoeDamagesEnemies     — true/false: does the effect damage enemies inside the radius?',
+  '#   aoeClearsEnemyBullets — true/false: does the effect clear enemy bullets inside the radius?',
+  '#   aoeDamage             — Hit points each affected enemy takes per resolution.',
+  '#   aoeChains             — Extra targets an onFire effect may chain to.',
+  '#   aoeProjectileSpeed    — Projectile speed (px/s); required to sample an onRandom range.',
+  '#   hitscanLength         — Beam length in px (with hitscanDuration).',
+  '#   hitscanDuration       — Seconds the resolved beam stays visible.',
+  '#   hitscanAimBias        — Probability (0–1) a shot aims at the nearest enemy (with hitscanLength).',
+  '#   muzzleColor           — Launch-flash colour as 0xRRGGBB (defaults to bulletColor).',
+  '#   muzzleRadius          — Launch-flash core radius in px (default 7).',
+  '#   muzzleDuration        — Launch-flash fade duration in seconds (default 0.12).',
+  '#   impactColor           — Impact-flash colour as 0xRRGGBB (with impactRadius/impactDuration/impactCue).',
+  '#   impactRadius          — Impact-flash radius in px.',
+  '#   impactDuration        — Impact-flash fade duration in seconds.',
+  '#   impactCue             — Baked impact cue export name from src/audio/effects.ts.',
+  '#',
+  '# Blank optional cells mean "this weapon has no such capability" and are never',
+  '# read as 0, because the combat core dispatches on the presence of a descriptor.',
+  '# A descriptor group (orbit, aoe, hitscan, impact) is all-or-nothing; the muzzle',
+  '# flash is always present (colour defaults to bulletColor, radius 7, duration 0.12).',
+];
+
+/** Human-readable schema note written above the pattern CSV header. */
+const WEAPON_PATTERN_CSV_COMMENT_BLOCK: readonly string[] = [
+  '# Weapon Shot-Pattern CSV — one row per pattern bullet, grouped by weapon.',
+  '# Angles are authored in DEGREES (readable in a spreadsheet) and converted to',
+  '# radians on parse. Edit to retune; refresh `npm run dev` to see the change.',
+  '#',
+  '# Columns:',
+  '#   weaponId     — Weapon id, matching a row in weapons.csv.',
+  '#   index        — Bullet index within the pattern (0-based, contiguous).',
+  '#   angleDeg     — Angle in degrees relative to the ship heading.',
+  '#   sideOffsetPx — Perpendicular positional offset in px; blank = centred.',
+];
+
+/**
+ * Serialise a weapon catalogue to the two committed CSV files.
+ *
+ * The inverse of {@link parseWeaponCatalogue} (on the same beat grid): absent
+ * optional cells are written blank, colours as `0xRRGGBB`, angles in degrees
+ * rounded to three decimals, and `subdivisions` is derived back from
+ * `fireRateMs`. A catalogue written here re-parses deep-equal, which is what
+ * the parity fixture asserts.
+ *
+ * The one asymmetry is the muzzle flash: it is **always** present on parse
+ * (see {@link DEFAULT_WEAPON_MUZZLE_RADIUS}), so a definition with no
+ * `muzzleFlash` would re-parse with the defaulted flash. Every shipped weapon
+ * carries one, so the parity round-trip is exact.
+ */
+export function serializeWeaponCatalogue(
+  catalogue: Partial<Record<WeaponId, WeaponDefinition>>,
+  bpm: number = DEFAULT_BPM,
+): WeaponCatalogueCsvPair {
+  const definitions = Object.values(catalogue).filter(
+    (definition): definition is WeaponDefinition => definition !== undefined,
+  );
+
+  const weaponHeader = WEAPON_COLUMN_ORDER.join(',');
+  const weaponRows = definitions.map((definition) =>
+    WEAPON_COLUMN_ORDER.map((column) =>
+      quoteCsvField(WEAPON_CELL_WRITERS[column](definition, bpm)),
+    ).join(','),
+  );
+  const weaponsCsv = [
+    ...WEAPON_CSV_COMMENT_BLOCK,
+    weaponHeader,
+    ...weaponRows,
+  ].join('\n');
+
+  const patternHeader = WEAPON_PATTERN_COLUMN_ORDER.join(',');
+  const patternRows: string[] = [];
+  for (const definition of definitions) {
+    definition.offsets.forEach((offset, index) => {
+      const angleDeg = ((offset * 180) / Math.PI).toFixed(3);
+      const sideOffsetPx = definition.sideOffsets?.[index];
+      patternRows.push(
+        [
+          quoteCsvField(definition.id),
+          String(index),
+          angleDeg,
+          sideOffsetPx === undefined ? '' : String(sideOffsetPx),
+        ].join(','),
+      );
+    });
+  }
+  const patternsCsv = [
+    ...WEAPON_PATTERN_CSV_COMMENT_BLOCK,
+    patternHeader,
+    ...patternRows,
+  ].join('\n');
+
+  return { weaponsCsv, patternsCsv };
 }

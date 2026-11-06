@@ -1,0 +1,978 @@
+{
+  "levels": [
+    0,
+    3
+  ],
+  "weapons": {
+    "cannon": [
+      {
+        "id": "cannon",
+        "name": "Cannon",
+        "description": "Permanent default weapon — one bullet straight ahead.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 375,
+        "bulletColor": 65535,
+        "bulletShape": "circle",
+        "bulletSize": 1,
+        "bulletLifetime": 0.75,
+        "bulletRim": 16777215,
+        "bulletTrail": 3.5,
+        "muzzleFlash": {
+          "color": 65535,
+          "radius": 7,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 65535,
+          "radius": 9,
+          "duration": 0.16,
+          "cue": "playCannonImpactSound"
+        }
+      },
+      {
+        "id": "cannon",
+        "name": "Cannon",
+        "description": "Permanent default weapon — one bullet straight ahead.",
+        "offsets": [
+          -0.3543625123580512,
+          0,
+          0.3543625123580512
+        ],
+        "fireRateMs": 250,
+        "bulletColor": 65535,
+        "bulletShape": "circle",
+        "bulletSize": 1,
+        "bulletLifetime": 1.0220913065360722,
+        "bulletRim": 16777215,
+        "bulletTrail": 3.5,
+        "muzzleFlash": {
+          "color": 65535,
+          "radius": 7,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 65535,
+          "radius": 9,
+          "duration": 0.16,
+          "cue": "playCannonImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "spread": [
+      {
+        "id": "spread",
+        "name": "Spread",
+        "description": "Adds a 3-bullet fan (−30°/0°/+30°).",
+        "offsets": [
+          -0.5235987755982988,
+          0,
+          0.5235987755982988
+        ],
+        "fireRateMs": 1500,
+        "bulletColor": 16755200,
+        "bulletShape": "diamond",
+        "bulletSize": 0.8,
+        "bulletLifetime": 0.7,
+        "bulletRim": 16768358,
+        "bulletTrail": 2.2,
+        "muzzleFlash": {
+          "color": 16755200,
+          "radius": 7,
+          "duration": 0.14
+        },
+        "impactFx": {
+          "color": 16755200,
+          "radius": 9,
+          "duration": 0.16,
+          "cue": "playSpreadImpactSound"
+        }
+      },
+      {
+        "id": "spread",
+        "name": "Spread",
+        "description": "Adds a 3-bullet fan (−30°/0°/+30°).",
+        "offsets": [
+          -0.8779612879563501,
+          -0.43898064397817504,
+          0,
+          0.43898064397817493,
+          0.8779612879563501
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 16755200,
+        "bulletShape": "diamond",
+        "bulletSize": 0.8,
+        "bulletLifetime": 0.9539518861003339,
+        "bulletRim": 16768358,
+        "bulletTrail": 2.2,
+        "muzzleFlash": {
+          "color": 16755200,
+          "radius": 7,
+          "duration": 0.14
+        },
+        "impactFx": {
+          "color": 16755200,
+          "radius": 9,
+          "duration": 0.16,
+          "cue": "playSpreadImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "dual": [
+      {
+        "id": "dual",
+        "name": "Dual",
+        "description": "Adds two side-by-side bullets.",
+        "offsets": [
+          0,
+          0
+        ],
+        "fireRateMs": 1500,
+        "bulletColor": 16711935,
+        "bulletShape": "line",
+        "bulletSize": 0.9,
+        "bulletLifetime": 0.7,
+        "sideOffsets": [
+          -8,
+          8
+        ],
+        "bulletShapeLength": 2,
+        "bulletThickness": 1.6,
+        "bulletTrail": 1.6,
+        "muzzleFlash": {
+          "color": 16711935,
+          "radius": 6,
+          "duration": 0.1
+        },
+        "impactFx": {
+          "color": 16711935,
+          "radius": 8,
+          "duration": 0.14,
+          "cue": "playDualImpactSound"
+        }
+      },
+      {
+        "id": "dual",
+        "name": "Dual",
+        "description": "Adds two side-by-side bullets.",
+        "offsets": [
+          -0.3543625123580512,
+          -0.11812083745268373,
+          0.11812083745268376,
+          0.3543625123580512
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 16711935,
+        "bulletShape": "line",
+        "bulletSize": 0.9,
+        "bulletLifetime": 0.9539518861003339,
+        "bulletShapeLength": 2,
+        "bulletThickness": 1.6,
+        "bulletTrail": 1.6,
+        "muzzleFlash": {
+          "color": 16711935,
+          "radius": 6,
+          "duration": 0.1
+        },
+        "impactFx": {
+          "color": 16711935,
+          "radius": 8,
+          "duration": 0.14,
+          "cue": "playDualImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "rapid": [
+      {
+        "id": "rapid",
+        "name": "Rapid",
+        "description": "Adds single bullets at a much higher fire rate.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 250,
+        "bulletColor": 16776960,
+        "bulletShape": "spark",
+        "bulletSize": 0.7,
+        "bulletLifetime": 0.375,
+        "bulletRim": 16777215,
+        "bulletTrail": 1.8,
+        "muzzleFlash": {
+          "color": 16776960,
+          "radius": 5,
+          "duration": 0.07
+        },
+        "impactFx": {
+          "color": 16776960,
+          "radius": 7,
+          "duration": 0.1,
+          "cue": "playRapidImpactSound"
+        }
+      },
+      {
+        "id": "rapid",
+        "name": "Rapid",
+        "description": "Adds single bullets at a much higher fire rate.",
+        "offsets": [
+          -0.3543625123580512,
+          0,
+          0.3543625123580512
+        ],
+        "fireRateMs": 187.5,
+        "bulletColor": 16776960,
+        "bulletShape": "spark",
+        "bulletSize": 0.7,
+        "bulletLifetime": 0.5110456532680361,
+        "bulletRim": 16777215,
+        "bulletTrail": 1.8,
+        "muzzleFlash": {
+          "color": 16776960,
+          "radius": 5,
+          "duration": 0.07
+        },
+        "impactFx": {
+          "color": 16776960,
+          "radius": 7,
+          "duration": 0.1,
+          "cue": "playRapidImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "wave_laser": [
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "description": "Adds a short red laser beam that fires in a random direction biased toward the nearest enemy and deals 1 damage to the first enemy it hits.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 1500,
+        "bulletColor": 16711680,
+        "bulletShape": "line",
+        "bulletSize": 1.2,
+        "bulletLifetime": 0.3,
+        "bulletShapeLength": 7,
+        "bulletRim": 16777215,
+        "bulletThickness": 3,
+        "hitscan": {
+          "length": 240,
+          "duration": 0.3,
+          "aimBias": 0.5
+        },
+        "muzzleFlash": {
+          "color": 16711680,
+          "radius": 12,
+          "duration": 0.15
+        },
+        "impactFx": {
+          "color": 16711680,
+          "radius": 12,
+          "duration": 0.18,
+          "cue": "playWaveLaserImpactSound"
+        }
+      },
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "description": "Adds a short red laser beam that fires in a random direction biased toward the nearest enemy and deals 1 damage to the first enemy it hits.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 16711680,
+        "bulletShape": "line",
+        "bulletSize": 1.2,
+        "bulletLifetime": 0.4088365226144288,
+        "bulletShapeLength": 7,
+        "bulletRim": 16777215,
+        "bulletThickness": 3,
+        "hitscan": {
+          "length": 327.06921809154306,
+          "duration": 0.3,
+          "aimBias": 0.663067331770202
+        },
+        "muzzleFlash": {
+          "color": 16711680,
+          "radius": 12,
+          "duration": 0.15
+        },
+        "impactFx": {
+          "color": 16711680,
+          "radius": 12,
+          "duration": 0.18,
+          "cue": "playWaveLaserImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "ricochet": [
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "description": "Adds edge-bouncing shots that ricochet off the arena walls.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 1500,
+        "bulletColor": 3407718,
+        "bulletShape": "teardrop",
+        "bulletSize": 0.8,
+        "bulletLifetime": 1.6,
+        "bulletRim": 16777215,
+        "bulletTrail": 2,
+        "bounce": 2,
+        "muzzleFlash": {
+          "color": 3407718,
+          "radius": 7,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 3407718,
+          "radius": 9,
+          "duration": 0.16,
+          "cue": "playRicochetImpactSound"
+        }
+      },
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "description": "Adds edge-bouncing shots that ricochet off the arena walls.",
+        "offsets": [
+          -0.3543625123580512,
+          0,
+          0.3543625123580512
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 3407718,
+        "bulletShape": "teardrop",
+        "bulletSize": 0.8,
+        "bulletLifetime": 2.1804614539436207,
+        "bulletRim": 16777215,
+        "bulletTrail": 2,
+        "bounce": 3,
+        "muzzleFlash": {
+          "color": 3407718,
+          "radius": 7,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 3407718,
+          "radius": 9,
+          "duration": 0.16,
+          "cue": "playRicochetImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "cluster": [
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "description": "Adds a missile that splits into a radial cluster of warheads.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 3000,
+        "bulletColor": 16724838,
+        "bulletShape": "missile",
+        "bulletSize": 0.9,
+        "bulletLifetime": 0.9,
+        "bulletRim": 16777215,
+        "bulletTrail": 2.4,
+        "bulletFlame": 1.6,
+        "splits": 2,
+        "muzzleFlash": {
+          "color": 16724838,
+          "radius": 9,
+          "duration": 0.16
+        },
+        "impactFx": {
+          "color": 16724838,
+          "radius": 10,
+          "duration": 0.18,
+          "cue": "playClusterImpactSound"
+        }
+      },
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "description": "Adds a missile that splits into a radial cluster of warheads.",
+        "offsets": [
+          -0.3543625123580512,
+          0,
+          0.3543625123580512
+        ],
+        "fireRateMs": 2250,
+        "bulletColor": 16724838,
+        "bulletShape": "missile",
+        "bulletSize": 0.9,
+        "bulletLifetime": 1.2265095678432865,
+        "bulletRim": 16777215,
+        "bulletTrail": 2.4,
+        "bulletFlame": 1.6,
+        "splits": 3,
+        "muzzleFlash": {
+          "color": 16724838,
+          "radius": 9,
+          "duration": 0.16
+        },
+        "impactFx": {
+          "color": 16724838,
+          "radius": 10,
+          "duration": 0.18,
+          "cue": "playClusterImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "options": [
+      {
+        "id": "options",
+        "name": "Options",
+        "description": "Adds orbiting satellite pods that each fire radially outward, in the direction of the orb.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 1500,
+        "bulletColor": 65484,
+        "bulletShape": "chevron",
+        "bulletSize": 0.8,
+        "bulletLifetime": 0.7,
+        "bulletRim": 14286834,
+        "bulletTrail": 2,
+        "orbit": {
+          "pods": 2,
+          "radius": 28
+        },
+        "muzzleFlash": {
+          "color": 65484,
+          "radius": 6,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 65484,
+          "radius": 8,
+          "duration": 0.15,
+          "cue": "playOptionsImpactSound"
+        }
+      },
+      {
+        "id": "options",
+        "name": "Options",
+        "description": "Adds orbiting satellite pods that each fire radially outward, in the direction of the orb.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 65484,
+        "bulletShape": "chevron",
+        "bulletSize": 0.8,
+        "bulletLifetime": 0.9539518861003339,
+        "bulletRim": 14286834,
+        "bulletTrail": 2,
+        "orbit": {
+          "pods": 4,
+          "radius": 28
+        },
+        "muzzleFlash": {
+          "color": 65484,
+          "radius": 6,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 65484,
+          "radius": 8,
+          "duration": 0.15,
+          "cue": "playOptionsImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "nova": [
+      {
+        "id": "nova",
+        "name": "Nova",
+        "description": "AOE: an expanding ring around the ship damages every enemy and clears bullets within its radius.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 3000,
+        "bulletColor": 6750207,
+        "bulletShape": "ring",
+        "bulletSize": 1.2,
+        "bulletLifetime": 0.25,
+        "aoe": {
+          "trigger": "onFire",
+          "radius": 34,
+          "damagesEnemies": true,
+          "clearsEnemyBullets": true
+        },
+        "muzzleFlash": {
+          "color": 6750207,
+          "radius": 10,
+          "duration": 0.16
+        }
+      },
+      {
+        "id": "nova",
+        "name": "Nova",
+        "description": "AOE: an expanding ring around the ship damages every enemy and clears bullets within its radius.",
+        "offsets": [
+          -0.3543625123580512,
+          0,
+          0.3543625123580512
+        ],
+        "fireRateMs": 2250,
+        "bulletColor": 6750207,
+        "bulletShape": "ring",
+        "bulletSize": 1.2,
+        "bulletLifetime": 0.3406971021786907,
+        "aoe": {
+          "trigger": "onFire",
+          "radius": 44.27900491358494,
+          "damagesEnemies": true,
+          "clearsEnemyBullets": true
+        },
+        "muzzleFlash": {
+          "color": 6750207,
+          "radius": 10,
+          "duration": 0.16
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "mortar": [
+      {
+        "id": "mortar",
+        "name": "Mortar",
+        "description": "AOE: detonates at a random point within range, damaging enemies and clearing bullets in a blast.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 1500,
+        "bulletColor": 16737792,
+        "bulletShape": "shell",
+        "bulletSize": 1.1,
+        "bulletLifetime": 1,
+        "aoe": {
+          "trigger": "onRandom",
+          "radius": 27,
+          "damagesEnemies": true,
+          "clearsEnemyBullets": true,
+          "projectileSpeed": 180
+        },
+        "muzzleFlash": {
+          "color": 16737792,
+          "radius": 9,
+          "duration": 0.16
+        }
+      },
+      {
+        "id": "mortar",
+        "name": "Mortar",
+        "description": "AOE: detonates at a random point within range, damaging enemies and clearing bullets in a blast.",
+        "offsets": [
+          -0.3543625123580512,
+          0,
+          0.3543625123580512
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 16737792,
+        "bulletShape": "shell",
+        "bulletSize": 1.1,
+        "bulletLifetime": 1.3627884087147628,
+        "aoe": {
+          "trigger": "onRandom",
+          "radius": 35.162739196082164,
+          "damagesEnemies": true,
+          "clearsEnemyBullets": true,
+          "projectileSpeed": 180
+        },
+        "muzzleFlash": {
+          "color": 16737792,
+          "radius": 9,
+          "duration": 0.16
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "arc": [
+      {
+        "id": "arc",
+        "name": "Arc",
+        "description": "AOE: a chaining bolt strikes the nearest enemy and arcs to nearby targets, clearing bullets along the path.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 13395711,
+        "bulletShape": "bolt",
+        "bulletSize": 0.9,
+        "bulletLifetime": 0.25,
+        "aoe": {
+          "trigger": "onFire",
+          "radius": 46,
+          "damagesEnemies": true,
+          "clearsEnemyBullets": true,
+          "chains": 2
+        },
+        "muzzleFlash": {
+          "color": 13395711,
+          "radius": 10,
+          "duration": 0.16
+        },
+        "impactFx": {
+          "color": 13395711,
+          "radius": 9,
+          "duration": 0.16,
+          "cue": "playArcImpactSound"
+        }
+      },
+      {
+        "id": "arc",
+        "name": "Arc",
+        "description": "AOE: a chaining bolt strikes the nearest enemy and arcs to nearby targets, clearing bullets along the path.",
+        "offsets": [
+          -0.3543625123580512,
+          0,
+          0.3543625123580512
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 13395711,
+        "bulletShape": "bolt",
+        "bulletSize": 0.9,
+        "bulletLifetime": 0.3406971021786907,
+        "aoe": {
+          "trigger": "onFire",
+          "radius": 59.906889000732576,
+          "damagesEnemies": true,
+          "clearsEnemyBullets": true,
+          "chains": 2
+        },
+        "muzzleFlash": {
+          "color": 13395711,
+          "radius": 10,
+          "duration": 0.16
+        },
+        "impactFx": {
+          "color": 13395711,
+          "radius": 9,
+          "duration": 0.16,
+          "cue": "playArcImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "rear_guard": [
+      {
+        "id": "rear_guard",
+        "name": "Rear Guard",
+        "description": "Adds a backward shot that covers the ship’s tail.",
+        "offsets": [
+          3.141592653589793
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 16733593,
+        "bulletShape": "pellet",
+        "bulletSize": 0.9,
+        "bulletLifetime": 0.75,
+        "bulletRim": 16765152,
+        "bulletTrail": 1.6,
+        "muzzleFlash": {
+          "color": 16733593,
+          "radius": 6,
+          "duration": 0.11
+        },
+        "impactFx": {
+          "color": 16733593,
+          "radius": 8,
+          "duration": 0.13,
+          "cue": "playRearGuardImpactSound"
+        }
+      },
+      {
+        "id": "rear_guard",
+        "name": "Rear Guard",
+        "description": "Adds a backward shot that covers the ship’s tail.",
+        "offsets": [
+          -3.4959551659478443,
+          0,
+          3.4959551659478443
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 16733593,
+        "bulletShape": "pellet",
+        "bulletSize": 0.9,
+        "bulletLifetime": 1.0220913065360722,
+        "bulletRim": 16765152,
+        "bulletTrail": 1.6,
+        "muzzleFlash": {
+          "color": 16733593,
+          "radius": 6,
+          "duration": 0.11
+        },
+        "impactFx": {
+          "color": 16733593,
+          "radius": 8,
+          "duration": 0.13,
+          "cue": "playRearGuardImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "broadside": [
+      {
+        "id": "broadside",
+        "name": "Broadside",
+        "description": "Adds two shots perpendicular to the heading (left and right).",
+        "offsets": [
+          -1.5707963267948966,
+          1.5707963267948966
+        ],
+        "fireRateMs": 3000,
+        "bulletColor": 4521949,
+        "bulletShape": "dart",
+        "bulletSize": 0.9,
+        "bulletLifetime": 0.8,
+        "bulletShapeLength": 2.4,
+        "bulletThickness": 1.4,
+        "bulletTrail": 1.4,
+        "muzzleFlash": {
+          "color": 4521949,
+          "radius": 9,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 4521949,
+          "radius": 8,
+          "duration": 0.12,
+          "cue": "playBroadsideImpactSound"
+        }
+      },
+      {
+        "id": "broadside",
+        "name": "Broadside",
+        "description": "Adds two shots perpendicular to the heading (left and right).",
+        "offsets": [
+          -1.9251588391529477,
+          -0.6417196130509826,
+          0.6417196130509826,
+          1.9251588391529477
+        ],
+        "fireRateMs": 2250,
+        "bulletColor": 4521949,
+        "bulletShape": "dart",
+        "bulletSize": 0.9,
+        "bulletLifetime": 1.0902307269718103,
+        "bulletShapeLength": 2.4,
+        "bulletThickness": 1.4,
+        "bulletTrail": 1.4,
+        "muzzleFlash": {
+          "color": 4521949,
+          "radius": 9,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 4521949,
+          "radius": 8,
+          "duration": 0.12,
+          "cue": "playBroadsideImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "railgun": [
+      {
+        "id": "railgun",
+        "name": "Railgun",
+        "description": "Adds a slow, long-range tracer that pierces a line once it is upgraded.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 3000,
+        "bulletColor": 6728447,
+        "bulletShape": "tracer",
+        "bulletSize": 1.15,
+        "bulletLifetime": 1.4,
+        "bulletShapeLength": 8,
+        "bulletRim": 14741759,
+        "bulletThickness": 2.2,
+        "bulletTrail": 4.5,
+        "maxHitPoints": 1,
+        "muzzleFlash": {
+          "color": 6728447,
+          "radius": 10,
+          "duration": 0.14
+        },
+        "impactFx": {
+          "color": 6728447,
+          "radius": 10,
+          "duration": 0.16,
+          "cue": "playRailgunImpactSound"
+        }
+      },
+      {
+        "id": "railgun",
+        "name": "Railgun",
+        "description": "Adds a slow, long-range tracer that pierces a line once it is upgraded.",
+        "offsets": [
+          -0.3543625123580512,
+          0,
+          0.3543625123580512
+        ],
+        "fireRateMs": 2250,
+        "bulletColor": 6728447,
+        "bulletShape": "tracer",
+        "bulletSize": 1.15,
+        "bulletLifetime": 1.9079037722006678,
+        "bulletShapeLength": 8,
+        "bulletRim": 14741759,
+        "bulletThickness": 2.2,
+        "bulletTrail": 4.5,
+        "maxHitPoints": 2,
+        "muzzleFlash": {
+          "color": 6728447,
+          "radius": 10,
+          "duration": 0.14
+        },
+        "impactFx": {
+          "color": 6728447,
+          "radius": 10,
+          "duration": 0.16,
+          "cue": "playRailgunImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "shard_swarm": [
+      {
+        "id": "shard_swarm",
+        "name": "Shard Swarm",
+        "description": "Adds a tight five-shard fan (±15°).",
+        "offsets": [
+          -0.2617993877991494,
+          -0.1308996938995747,
+          0,
+          0.1308996938995747,
+          0.2617993877991494
+        ],
+        "fireRateMs": 1500,
+        "bulletColor": 12648243,
+        "bulletShape": "shard",
+        "bulletSize": 0.72,
+        "bulletLifetime": 0.55,
+        "bulletShapeLength": 1.6,
+        "bulletTrail": 1.2,
+        "muzzleFlash": {
+          "color": 12648243,
+          "radius": 8,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 12648243,
+          "radius": 8,
+          "duration": 0.12,
+          "cue": "playShardSwarmImpactSound"
+        }
+      },
+      {
+        "id": "shard_swarm",
+        "name": "Shard Swarm",
+        "description": "Adds a tight five-shard fan (±15°).",
+        "offsets": [
+          -0.6161619001572006,
+          -0.4107746001048004,
+          -0.2053873000524002,
+          0,
+          0.20538730005240025,
+          0.4107746001048004,
+          0.6161619001572006
+        ],
+        "fireRateMs": 750,
+        "bulletColor": 12648243,
+        "bulletShape": "shard",
+        "bulletSize": 0.72,
+        "bulletLifetime": 0.7495336247931196,
+        "bulletShapeLength": 1.6,
+        "bulletTrail": 1.2,
+        "muzzleFlash": {
+          "color": 12648243,
+          "radius": 8,
+          "duration": 0.12
+        },
+        "impactFx": {
+          "color": 12648243,
+          "radius": 8,
+          "duration": 0.12,
+          "cue": "playShardSwarmImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ],
+    "heavy_slug": [
+      {
+        "id": "heavy_slug",
+        "name": "Heavy Slug",
+        "description": "Adds one huge, slow, long-range slug per shot.",
+        "offsets": [
+          0
+        ],
+        "fireRateMs": 3000,
+        "bulletColor": 16720418,
+        "bulletShape": "heavy-shell",
+        "bulletSize": 1.7,
+        "bulletLifetime": 1.2,
+        "bulletRim": 16756912,
+        "bulletThickness": 3,
+        "bulletTrail": 2.4,
+        "muzzleFlash": {
+          "color": 16720418,
+          "radius": 12,
+          "duration": 0.16
+        },
+        "impactFx": {
+          "color": 16720418,
+          "radius": 12,
+          "duration": 0.16,
+          "cue": "playHeavySlugImpactSound"
+        }
+      },
+      {
+        "id": "heavy_slug",
+        "name": "Heavy Slug",
+        "description": "Adds one huge, slow, long-range slug per shot.",
+        "offsets": [
+          -0.3543625123580512,
+          0,
+          0.3543625123580512
+        ],
+        "fireRateMs": 2250,
+        "bulletColor": 16720418,
+        "bulletShape": "heavy-shell",
+        "bulletSize": 1.7,
+        "bulletLifetime": 1.6353460904577153,
+        "bulletRim": 16756912,
+        "bulletThickness": 3,
+        "bulletTrail": 2.4,
+        "muzzleFlash": {
+          "color": 16720418,
+          "radius": 12,
+          "duration": 0.16
+        },
+        "impactFx": {
+          "color": 16720418,
+          "radius": 12,
+          "duration": 0.16,
+          "cue": "playHeavySlugImpactSound"
+        },
+        "levelBulletSize": 1.302323673928969
+      }
+    ]
+  }
+}

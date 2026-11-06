@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.1.19 (2026-11-06)
+> **Release focus:** This release focuses on rebalancing combat feel, making weapons and upgrades weaker so fights stay tense, retuning fire rates and weapon behaviour, and adding a teleport cooldown. It also improves audiovisual feedback for mini-boss defeats and enemy fire, clarifies hex map aggression levels and timed upgrade cooldowns, and delivers late-game performance and stability fixes.
+### Features
+- Weapon feel can now be retuned by designers without code changes, so balance tweaks arrive faster. (AH-0MW0Q01VM004EPY7)
+- Weapon fire rates now actually match the intended level-0 balance tuning. (AH-0MW23FEDK006BRHK)
+- Hex map tiles now show a clear aggression level, with full intel in a readable detail panel. (AH-0MW3VG6WJ004HRI9)
+- Mini-boss deaths now erupt in much bigger, denser explosions for a truly epic finish. (AH-0MVY06X16005EO8R)
+- Uncollectable pickups now bounce off your ship after a moment instead of trailing you forever. (AH-0MW0UAQ23005AC9L)
+- Mini-boss defeats now sound as big as they look, with every explosion in the finale voiced. (AH-0MVVEI7FD004TR2M)
+- Weapons and their upgrades are now weaker, so fights stay tense instead of becoming automatic. (AH-0MVRENEME004FS8T)
+- The Wave Laser is now a short, chaotic close-range beam that randomly sprays toward nearby enemies and gets more accurate as it levels up. (AH-0MW10J31B0053E56)
+- Enemy shots and explosions are now quieter, so your own weapons and pickups stand out in combat. (AH-0MVZVMZOQ00076QF)
+- Timed upgrades now show a ring around their icon so you can read cooldowns at a glance. (AH-0MVZ8YQQV006Q09W)
+- Late-game waves now run smoother with far fewer frame-rate drops. (AH-0MVWJQUN6009IS87)
+- Resuming from a checkpoint now keeps your consumable charges and recharge timers exactly as you left them. (AH-0MVY3IGRC00954UD)
+- Teleport now has a real cooldown, so escaping danger costs you something. (AH-0MVY096RT006QMF4)
+- Promo capture command renamed for clarity; nothing changes in-game. (AH-0MW1E6ESB004JRQA)
+### Bug Fixes
+- Fixed a test issue so the Mini-Boss Wheel power-up works reliably. (AH-0MW26VI520031ASB)
+- Fixed a test issue so game data files load reliably during development. (AH-0MW26VICK000X2WC)
+- Bug-fix plans no longer get stuck when linked test-failure items are attached, so fixes can move forward normally. (AH-0MVWNR4XF007FX5T)
+- Divers now dive at a consistent speed, so close attacks arrive fast and must be dodged. (AH-0MW0TY1AY003TDFC)
+### Other
+- Enabled real-GPU performance testing so the 60 FPS desktop target can be measured on actual hardware. (AH-0MW2L3JXU008I2Z8)
+- Keeps the game running smoothly with the latest stability fixes. (AH-0MW2RSBOI009DDIS)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.18 (2026-11-03)
 > **Release focus:** This release completes and enables the Hangar War mode by default, letting players build a fleet, capture hexes by defeating bosses, and earn permanent upgrades through a reward wheel. It also refines combat with evolving weapon fire patterns, a reworked Railgun and Wave Laser, better explosions, and smarter bots, while improving demo showcases, gameplay capture, and test reliability.
 ### Features

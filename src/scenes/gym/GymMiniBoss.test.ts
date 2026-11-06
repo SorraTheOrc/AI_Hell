@@ -304,19 +304,46 @@ describe('GymMiniBoss — config-driven mini-boss gym (AH-0MVCRAYSH0014BQJ)', ()
 
     it('plays the sweep explosion SFX (same shared cue routing as the game)', async () => {
       const scene = await bootMinionGym();
-      const destruction = vi.spyOn(effectsModule, 'playDestructionSound');
+      const sweepSound = vi.spyOn(effectsModule, 'playMiniBossSweepSound');
       const bossDestruction = vi.spyOn(effectsModule, 'playBossDestructionSound');
 
       scene.explodeRandom();
 
-      // Parity with PlayScene: every swept burst schedules a cue, and the
-      // finale pairs use the boss-destruction boom — the gym never runs a
-      // silent copy of the display.
-      expect(destruction.mock.calls.length).toBeGreaterThan(0);
-      const scheduledBossBooms = bossDestruction.mock.calls.filter(
-        ([options]) => (options?.delay ?? 0) > 0,
+      // Parity with PlayScene: the swept bursts reuse the shared
+      // enemy-destruction cue, and both voices of every finale pair use the
+      // victory-explosion boom, all through the one dispatcher — the gym never
+      // runs a silent copy of the display, and never its own cue choice
+      // (AH-0MVVEI7FD004TR2M AC3/AC4).
+      const calls = sweepSound.mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      const cues = new Set(calls.map(([cue]) => cue));
+      expect([...cues].sort()).toEqual([
+        'playDestructionSound',
+        'playVictoryExplosionSound',
+      ]);
+
+      // Every cue keeps its own (visual-timed) delay and mix trim instead of
+      // snapping to the beat grid.
+      for (const [, options] of calls) {
+        expect(options?.delay).toBeGreaterThanOrEqual(0);
+        expect(options?.volume).toBeGreaterThan(0);
+        expect(options?.variantPick).toBeGreaterThanOrEqual(0);
+      }
+
+      // The finale pairs are voiced on the 0.25 s cadence (two per pair).
+      const finaleDelays = calls
+        .filter(([cue]) => cue === 'playVictoryExplosionSound')
+        .map(([, options]) => options?.delay);
+      expect(finaleDelays.length).toBe(20);
+      expect(finaleDelays.every((delay) => (delay ?? 0) > 0)).toBe(true);
+
+      // The mini-boss's own body boom plays exactly once on the defeat frame
+      // (through the entity's shared death seam, at delay 0) — the cascade
+      // must never double it.
+      const bodyBooms = bossDestruction.mock.calls.filter(
+        ([options]) => (options?.delay ?? 0) === 0,
       );
-      expect(scheduledBossBooms).toHaveLength(20);
+      expect(bodyBooms).toHaveLength(1);
     });
 
   });

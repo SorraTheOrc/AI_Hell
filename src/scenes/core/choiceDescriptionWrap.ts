@@ -25,7 +25,7 @@ export const CHOICE_DESCRIPTION_MAX_LINES = 2;
  * description wrap width. A monospace glyph advances roughly 7.8 px
  * (0.6 em), so 880 px holds about 112 characters; 108 leaves headroom for
  * font-metric differences while still fitting the longest catalogue
- * description (Teleport, 210 characters) on two lines.
+ * description (Mystery UFO, 190 characters) on two lines.
  */
 export const CHOICE_DESCRIPTION_MAX_CHARS_PER_LINE = 108;
 

@@ -735,6 +735,7 @@ interface CapturedTween {
   duration: number;
   delay?: number;
   onUpdate?: () => void;
+  onStart?: () => void;
   onComplete?: () => void;
 }
 
@@ -762,9 +763,12 @@ interface StubContainer {
   x: number;
   y: number;
   depth: number;
+  /** Container visibility — starts true for an immediate burst. */
+  visible: boolean;
   children: StubImage[];
   destroyed: boolean;
   setDepth(d: number): void;
+  setVisible(visible: boolean): void;
   add(child: unknown): void;
   destroy(): void;
 }
@@ -838,10 +842,14 @@ function makeStubScene(): StubScene {
           x: x ?? 0,
           y: y ?? 0,
           depth: 0,
+          visible: true,
           children: [],
           destroyed: false,
           setDepth(d: number): void {
             container.depth = d;
+          },
+          setVisible(visible: boolean): void {
+            container.visible = visible;
           },
           add(child: unknown): void {
             container.children.push(child as StubImage);
@@ -1406,6 +1414,58 @@ describe('image-based burst rendering (AC1, AC2, AC7)', () => {
   it('honours the depth override for the burst container', () => {
     const { scene } = spawnBurst({ seed: 2, count: 6, depth: -7 });
     expect(scene.containers[0].depth).toBe(-7);
+  });
+
+  it('keeps a delayed burst off-screen until its animation starts', () => {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as SpawnScene, 100, 50, 0xff0000, 20,
+      { seed: 3, count: 8, patterns: ['radial'], delay: 120 },
+    );
+
+    // The burst is scheduled up front but must not sit on screen fully-formed
+    // before it animates (producer review AH-0MVVEI7FD004TR2M: all explosions
+    // were "shown and then, after a delay, they animate").
+    const container = scene.containers[0];
+    expect(handle).not.toBeNull();
+    expect(container.visible).toBe(false);
+
+    // The reveal is wired to the tween `onStart`, which Phaser fires exactly
+    // when the delay expires and the animation begins.
+    const cfg = scene.tweenCfgs[0];
+    expect(cfg.delay).toBe(120);
+    expect(typeof cfg.onStart).toBe('function');
+    cfg.onStart?.();
+    expect(container.visible).toBe(true);
+  });
+
+  it('shows an immediate burst from the spawn frame', () => {
+    const scene = makeStubScene();
+    spawnExplosionParticles(
+      scene as unknown as SpawnScene, 100, 50, 0xff0000, 20,
+      { seed: 3, count: 8, patterns: ['radial'] },
+    );
+
+    // No delay: nothing to hide and nothing to reveal.
+    expect(scene.containers.length).toBe(1);
+    expect(scene.containers[0].visible).toBe(true);
+    expect(scene.tweenCfgs[0].onStart).toBeUndefined();
+  });
+
+  it('never reveals a delayed burst after an explicit teardown', () => {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as SpawnScene, 100, 50, 0xff0000, 20,
+      { seed: 3, count: 8, patterns: ['radial'], delay: 120 },
+    );
+    expect(scene.containers[0].visible).toBe(false);
+
+    // SHUTDOWN mid-delay: the display is gone, and a late `onStart` must not
+    // resurrect it (a real Phaser container throws on post-destroy mutators).
+    handle!.destroy();
+    scene.tweenCfgs[0].onStart?.();
+    expect(scene.containers[0].destroyed).toBe(true);
+    expect(scene.containers[0].visible).toBe(false);
   });
 
   it('morphs every particle through the frame family as it ages (AC2)', () => {

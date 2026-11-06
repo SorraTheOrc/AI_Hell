@@ -1,0 +1,319 @@
+{
+  "cannon": [
+    {
+      "k": 9,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 10,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 13,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 16,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 8,
+      "n": 8,
+      "rotation": 0
+    }
+  ],
+  "spread": [
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 3,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "dual": [
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 2
+    },
+    {
+      "k": 3,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "rapid": [
+    {
+      "k": 13,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 14,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 15,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 16,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 8,
+      "n": 8,
+      "rotation": 0
+    }
+  ],
+  "wave_laser": [
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 3,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "ricochet": [
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 1
+    },
+    {
+      "k": 3,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "cluster": [
+    {
+      "k": 1,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "options": [
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 3,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "nova": [
+    {
+      "k": 1,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "mortar": [
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 3,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 5,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "arc": [
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 4
+    },
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 6
+    },
+    {
+      "k": 5,
+      "n": 16,
+      "rotation": 6
+    },
+    {
+      "k": 6,
+      "n": 16,
+      "rotation": 6
+    },
+    {
+      "k": 8,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 4,
+      "n": 8,
+      "rotation": 0
+    }
+  ],
+  "rear_guard": [
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 5,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 6,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 7,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 8,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 4,
+      "n": 8,
+      "rotation": 0
+    }
+  ],
+  "broadside": [
+    {
+      "k": 1,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "railgun": [
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 3,
+      "n": 16,
+      "rotation": 0
+    }
+  ],
+  "shard_swarm": [
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 3,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 4,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 2,
+      "n": 8,
+      "rotation": 0
+    }
+  ],
+  "heavy_slug": [
+    {
+      "k": 1,
+      "n": 16,
+      "rotation": 0
+    },
+    {
+      "k": 2,
+      "n": 16,
+      "rotation": 0
+    }
+  ]
+}

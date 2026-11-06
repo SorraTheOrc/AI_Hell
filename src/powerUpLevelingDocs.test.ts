@@ -25,6 +25,54 @@ import {
 
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const README_PATH = path.resolve(process.cwd(), 'README.md');
+const BALANCING_PATH = path.resolve(process.cwd(), 'docs/BALANCING.md');
+const GYM_PARITY_PATH = path.resolve(process.cwd(), 'docs/GYM_PARITY.md');
+const ENEMY_DESIGN_PATH = path.resolve(
+  process.cwd(),
+  'docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md',
+);
+
+/**
+ * The shipped surfaces that describe Teleport to a player or a maintainer.
+ * `CHANGELOG.md` is deliberately absent — it is the ship skill's release
+ * pipeline's to manage and must keep its historical entries.
+ */
+const TELEPORT_DOC_SURFACES = [
+  'docs/Game Design Document.md',
+  'docs/BALANCING.md',
+  'docs/GYM_PARITY.md',
+  'docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md',
+  'README.md',
+  'src/powerups/types.ts',
+  'src/powerups/effects.ts',
+  'src/powerups/powerUpLevels.ts',
+  'src/powerups/choice.ts',
+  'src/powerups/miniBossWheel.ts',
+  'src/scenes/gym/GymPowerUpsCombat.ts',
+  'src/scenes/gym/core/GymFormationScene.ts',
+  'src/ui/HUD.ts',
+] as const;
+
+/**
+ * The exact statements of the retired cap-3 / 15 s → 5 s / stored-FIFO
+ * Teleport. A shipped surface may mention one only when the same line marks
+ * it as history (`retired` / `superseded`), which is how the GDD records the
+ * superseded greater-count auto-defence rule (parent AH-0MVY096RT006QMF4 AC2).
+ */
+const RETIRED_TELEPORT_STATEMENTS: ReadonlyArray<[string, RegExp]> = [
+  ['a stored-teleport count', /stored teleports?/i],
+  ['a stored Teleport use', /stored Teleport (?:use|count|stack)/i],
+  ['a FIFO consumption order', /consumed on activation FIFO/i],
+  ['multiple Teleports stacking', /Multiple Teleports stack/i],
+  ['a cap-3 Teleport pool', /Teleport[^.]{0,60}\bcapped at 3\b/i],
+  ['a cap-of-3 Teleport pool', /Teleport[^.]{0,60}\bcap of 3\b/i],
+  ['a Teleport stack count', /teleport stacks?/i],
+  ['the 15 s → 5 s recharge pair', /\b1\/15\b|15 s (?:at base|base) → 5 s/],
+  ['the retired greater-count rule', /greater (?:available )?count/i],
+  ['granted Teleport uses', /Teleport uses already granted/i],
+];
+
+const RETIREMENT_MARKER = /retired|superseded/i;
 
 const ids = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
 
@@ -71,7 +119,7 @@ describe('power-up leveling is documented (AH-0MUU2QJE2007JNR6 AC8)', () => {
     expect(gdd).toContain(`Field recharge (${field0} s → ${fieldFloor} s,`);
     expect(gdd).toContain(`UFO charges (${ufo0} → ${ufoCap},`);
     expect(gdd).toContain('Phase recharge (1/30 → 1/10');
-    expect(gdd).toContain('Teleport recharge (1/15 → 1/5');
+    expect(gdd).toContain('Teleport recharge (1/60 → 1/20');
     expect(gdd).toContain('Thorn recharge (12 s → 5 s,');
   });
 
@@ -117,5 +165,80 @@ describe('power-up leveling is documented (AH-0MUU2QJE2007JNR6 AC8)', () => {
     expect(readme).toContain('src/powerups/powerUpLevels.ts');
     expect(readme).toContain('resolvePowerUpAtLevel');
     expect(readme).toMatch(/power-up leveling/i);
+  });
+
+  // ── Single-use Teleport docs sweep (parent AH-0MVY096RT006QMF4) ──────
+
+  it('the GDD, BALANCING and GYM_PARITY document the single-use Teleport recharge (AC1/AC3)', () => {
+    // The escape is one warp on a level-derived timer; the retired cap-3 pool
+    // had its own per-charge timers. Pin the shipped numbers against the
+    // catalogue so the docs cannot drift from it: the axis is stored as
+    // charges/second and inverted to seconds (1/60 base, 1/20 asymptote).
+    const spec = POWER_UP_LEVEL_SPECS.teleport.find(
+      (candidate) => candidate.variable === 'teleportRechargeRate',
+    );
+    expect(spec).toBeDefined();
+    expect(Math.round(1 / spec!.base)).toBe(60);
+    expect(Math.round(1 / spec!.cap)).toBe(20);
+    const rate0 = resolvePowerUpAtLevel('teleport', 0).teleportRechargeRate!;
+    expect(Math.round(1 / rate0)).toBe(60);
+
+    expect(gdd).toMatch(/Teleport is \*\*single-use\*\*/);
+    expect(gdd).toContain('60 s at base → 20 s at the upgrade cap');
+    expect(gdd).toContain('no FIFO queue');
+    expect(gdd).toContain('`PowerUpEntry.singleUse`');
+
+    const balancing = fs.readFileSync(BALANCING_PATH, 'utf8');
+    expect(balancing).toContain('teleportRechargeRate');
+    expect(balancing).toMatch(/\| \*\*60 s\*\* \| \*\*20 s\*\* \|/);
+
+    const gymParity = fs.readFileSync(GYM_PARITY_PATH, 'utf8');
+    expect(gymParity).toContain('single-use carve-out');
+    expect(gymParity).toContain('PowerUpLevelStore.consumeTeleport()');
+    expect(gymParity).toMatch(/uniform 50\/50/);
+  });
+
+  it('the GDD records the 50/50 auto-defence pick and why the greater-count rule was retired (AC2)', () => {
+    // The change is a rule change, not a tuning tweak, so the rationale has
+    // to survive in the GDD next to the numbers.
+    expect(gdd).toMatch(/uniform seeded 50\/50/);
+    expect(gdd).toMatch(/greater available count/);
+    expect(gdd).toMatch(/silently starved Teleport/);
+    expect(gdd).toMatch(/retired greater-count rule/i);
+  });
+
+  it('no shipped surface still states a cap-3 / 15 s → 5 s / stored-FIFO Teleport (AC5)', () => {
+    // A grep sweep as a test: every shipped doc, catalogue description and
+    // code comment must describe the single-use escape. `CHANGELOG.md` is
+    // excluded (release-managed history), and a line may quote a retired
+    // statement only when it marks it as history (`retired`/`superseded`).
+    const offenders: string[] = [];
+    for (const relative of TELEPORT_DOC_SURFACES) {
+      const absolute = path.resolve(process.cwd(), relative);
+      const lines = fs.readFileSync(absolute, 'utf8').split('\n');
+      lines.forEach((line, index) => {
+        if (RETIREMENT_MARKER.test(line)) return;
+        for (const [description, pattern] of RETIRED_TELEPORT_STATEMENTS) {
+          if (pattern.test(line)) {
+            offenders.push(`${relative}:${index + 1} — ${description}`);
+          }
+        }
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the Teleport catalogue description states one rechargeable escape and a pickup refreshing it (AC1)', () => {
+    const description = POWER_UP_CATALOGUE.teleport.description;
+    expect(description).toMatch(/ready warp/i);
+    expect(description).toMatch(/60 s → 20 s/);
+    expect(description).toMatch(/pickup readies it/i);
+    expect(description).not.toMatch(/stores up to/i);
+  });
+
+  it('the ENEMY_DESIGN_AND_IMPLEMENTATION hold-full note describes a ready warp, not a stored use (AC3)', () => {
+    const enemyDesign = fs.readFileSync(ENEMY_DESIGN_PATH, 'utf8');
+    expect(enemyDesign).toMatch(/ready Teleport warp/);
+    expect(enemyDesign).toContain('`canTeleport()` accepts a ready warp');
   });
 });

@@ -69,6 +69,16 @@ import {
   isTimedWeapon,
 } from './weapons';
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
+import {
+  euclideanOnsetsPerMinute,
+  resolveWeaponPattern,
+} from './weaponLevels';
+import {
+  WEAPON_STRENGTH_BUDGET,
+  weaponStrength,
+  weaponStrengthTable,
+  type WeaponOutputFamily,
+} from './weaponStrength';
 
 describe('WEAPON_CATALOGUE', () => {
   test('contains the eight conventional/beam weapons, the three AOE weapons and the five net-new weapons', () => {
@@ -287,28 +297,33 @@ describe('AOE weapons (parent AH-0MUOOB3OR001V8CD AC1)', () => {
     }
   });
 
-  test('every AOE radius is exactly half the pre-reduction value (AC2)', () => {
-    // Pre-change radii: Nova 90, Mortar 70, Arc 120 (AH-0MUU131PU006O7ZD).
-    expect(AOE_RADII.nova).toBe(45);
-    expect(AOE_RADII.mortar).toBe(35);
-    expect(AOE_RADII.arc).toBe(60);
-    expect(AOE_RADII.nova).toBeCloseTo(90 / 2, 10);
-    expect(AOE_RADII.mortar).toBeCloseTo(70 / 2, 10);
-    expect(AOE_RADII.arc).toBeCloseTo(120 / 2, 10);
+  test('every AOE radius is the trimmed on-grid value below its level-0 budget (AC2)', () => {
+    // The radii were halved by the range reduction (AH-0MUU131PU006O7ZD) to
+    // Nova 45 / Mortar 35 / Arc 60, then trimmed to ≤ 60 % of that level-0
+    // coverage by the non-cannon output trim (AH-0MVWAVKS0005P9VN). The trim
+    // is realised as the largest whole-pixel radius whose area stays inside
+    // the 60 % bound, so a non-representable target never rounds up.
+    expect(AOE_RADII.nova).toBe(34);
+    expect(AOE_RADII.mortar).toBe(27);
+    expect(AOE_RADII.arc).toBe(46);
+    // Nova: 45 → 34 px (57.1 % of the halved 45 px coverage).
+    expect(AOE_RADII.nova ** 2 / 45 ** 2).toBeLessThanOrEqual(0.6);
+    expect((AOE_RADII.nova + 1) ** 2 / 45 ** 2).toBeGreaterThan(0.6);
+    // Mortar: 35 → 27 px (59.5 %).
+    expect(AOE_RADII.mortar ** 2 / 35 ** 2).toBeLessThanOrEqual(0.6);
+    expect((AOE_RADII.mortar + 1) ** 2 / 35 ** 2).toBeGreaterThan(0.6);
+    // Arc: 60 → 46 px (58.8 %).
+    expect(AOE_RADII.arc ** 2 / 60 ** 2).toBeLessThanOrEqual(0.6);
+    expect((AOE_RADII.arc + 1) ** 2 / 60 ** 2).toBeGreaterThan(0.6);
   });
 
-  test('AOE radii are halved alongside the conventional bullet range (AC2/AC5)', () => {
-    // The conventional base lifetime and AOE radii were halved together, so
-    // the shared sources of truth stay in step (AH-0MUU131PU006O7ZD).
-    const halvings: Array<[number, number]> = [
-      [WEAPON_BULLET_LIFETIME.cannon, 1.5],
-      [AOE_RADII.nova, 90],
-      [AOE_RADII.mortar, 70],
-      [AOE_RADII.arc, 120],
-    ];
-    for (const [after, before] of halvings) {
-      expect(after).toBeCloseTo(before / 2, 10);
-    }
+  test('the conventional base lifetime still carries the range halving (AC2/AC5)', () => {
+    // The conventional base lifetime was halved by the range reduction
+    // (AH-0MUU131PU006O7ZD) and is untouched by the level-0 output trim.
+    expect(WEAPON_BULLET_LIFETIME.cannon).toBeCloseTo(1.5 / 2, 10);
+    // The AOE radii keep their ordering (Arc > Nova > Mortar) after the trim.
+    expect(AOE_RADII.arc).toBeGreaterThan(AOE_RADII.nova);
+    expect(AOE_RADII.nova).toBeGreaterThan(AOE_RADII.mortar);
   });
 
   test('each catalogue aoe.radius reflects the halved AOE_RADII value (AC2)', () => {
@@ -597,7 +612,7 @@ describe('fire rate ordering', () => {
   test('rapid < cannon < dual = spread (lower ms = faster)', () => {
     expect(WEAPON_RAPID_FIRE_RATE).toBeLessThan(WEAPON_CANNON_FIRE_RATE);
     expect(WEAPON_CANNON_FIRE_RATE).toBeLessThan(WEAPON_DUAL_FIRE_RATE);
-    // Spread and dual are both whole-time (1 shot per beat) — equal rates.
+    // Spread and dual are both half-time (1 shot every 2 beats) — equal rates.
     expect(WEAPON_DUAL_FIRE_RATE).toBe(WEAPON_SPREAD_FIRE_RATE);
   });
 });
@@ -625,15 +640,16 @@ describe('beat-grid fire rates (AH-0MUAYB8EH005RJ8B AC3)', () => {
     expect(WEAPON_CANNON_FIRE_RATE).toBe(beatSubdivisionMs(2));
     expect(period / WEAPON_CANNON_FIRE_RATE).toBe(2);
     expect(WEAPON_CATALOGUE.cannon.fireRateMs).toBe(375);
-    // spread — 1/beat (80 BPM) → 750 ms
-    expect(WEAPON_SPREAD_SUBDIVISION).toBe(1);
-    expect(WEAPON_CATALOGUE.spread.fireRateMs).toBe(750);
-    // dual — 1/beat (80 BPM) → 750 ms
-    expect(WEAPON_DUAL_SUBDIVISION).toBe(1);
-    expect(WEAPON_CATALOGUE.dual.fireRateMs).toBe(750);
-    // rapid — 6/beat (480 BPM) → 125 ms
-    expect(WEAPON_RAPID_SUBDIVISION).toBe(6);
-    expect(WEAPON_CATALOGUE.rapid.fireRateMs).toBe(125);
+    // spread — 0.5/beat (one shot every 2 beats) → 1500 ms
+    expect(WEAPON_SPREAD_SUBDIVISION).toBe(0.5);
+    expect(WEAPON_CATALOGUE.spread.fireRateMs).toBe(1500);
+    // dual — 0.5/beat (one shot every 2 beats) → 1500 ms
+    expect(WEAPON_DUAL_SUBDIVISION).toBe(0.5);
+    expect(WEAPON_CATALOGUE.dual.fireRateMs).toBe(1500);
+    // rapid — 3/beat (240 BPM) → 250 ms (its nominal; the live ladder plays
+    // the E(13,16) superposition rung, AH-0MW23FEDK006BRHK)
+    expect(WEAPON_RAPID_SUBDIVISION).toBe(3);
+    expect(WEAPON_CATALOGUE.rapid.fireRateMs).toBe(250);
   });
 
   test('the invariant rejects an off-grid fire rate (guards future weapons)', () => {
@@ -747,10 +763,13 @@ describe('Wave laser — single red hitscan beam (AH-0MVREBUJ5004HDRQ)', () => {
     expect(def.sideOffsets).toBeUndefined();
   });
 
-  test('fires once per beat (1 subdivision → 750 ms at 80 BPM) on the grid', () => {
-    expect(WEAPON_WAVE_LASER_SUBDIVISION).toBe(1);
-    expect(WEAPON_WAVE_LASER_FIRE_RATE).toBe(750);
-    expect(WEAPON_CATALOGUE.wave_laser.fireRateMs).toBe(750);
+  test('fires once every two beats (0.5 subdivision → 1500 ms at 80 BPM) on the grid', () => {
+    // Halved by the curve-flattening work (AH-0MVWAVL6R001UI60): the beam has
+    // no projectile/AOE lever, so its saturated output can only be held inside
+    // the ≤ 50 % level-cap ceiling on the cadence axis.
+    expect(WEAPON_WAVE_LASER_SUBDIVISION).toBe(0.5);
+    expect(WEAPON_WAVE_LASER_FIRE_RATE).toBe(1500);
+    expect(WEAPON_CATALOGUE.wave_laser.fireRateMs).toBe(1500);
     expect(isOnBeatGrid(WEAPON_CATALOGUE.wave_laser.fireRateMs)).toBe(true);
   });
 
@@ -767,15 +786,24 @@ describe('Wave laser — single red hitscan beam (AH-0MVREBUJ5004HDRQ)', () => {
     expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBeUndefined();
   });
 
-  test('declares a hitscan ray one screen wide and visible for 0.3 s (AC3/AC4)', () => {
+  test('declares a short 240 px beam, visible for 0.3 s (AC1/AC3/AC4)', () => {
     const def = WEAPON_CATALOGUE.wave_laser;
     expect(def.hitscan).toBeDefined();
     expect(def.hitscan!.length).toBe(WAVE_LASER_BEAM_LENGTH);
-    expect(def.hitscan!.length).toBeGreaterThanOrEqual(GAME_WIDTH);
+    // 25 % of the pre-tuning full 960 px arena width (AH-0MW10J31B0053E56).
+    expect(def.hitscan!.length).toBe(GAME_WIDTH * 0.25);
+    expect(def.hitscan!.length).toBeLessThan(GAME_WIDTH);
     expect(def.hitscan!.duration).toBeCloseTo(0.3, 6);
     // The travelling-bullet lifetime mirrors the beam's visible duration; the
     // shot itself is resolved instantly by the shared ray seam.
     expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.wave_laser);
+  });
+
+  test('authors a tunable nearest-enemy aim bias of 0.5 at level 0 (AC3)', () => {
+    // A data parameter, never a literal in the shared fire path: the same
+    // number the designer edits in `src/data/weapons.csv`
+    // (AH-0MW10J31B0053E56).
+    expect(WEAPON_CATALOGUE.wave_laser.hitscan!.aimBias).toBe(0.5);
   });
 
   test('is a pure-red beam, distinct from the Heavy Slug\u2019s deep red (AC1, A5)', () => {
@@ -821,10 +849,12 @@ describe('Centipede ricochet (AH-0MV1BIV5L005NJAI)', () => {
     expect(def.sideOffsets).toBeUndefined();
   });
 
-  test('fires once per beat (1 subdivision → 750 ms at 80 BPM) on the grid', () => {
-    expect(WEAPON_RICOCHET_SUBDIVISION).toBe(1);
-    expect(WEAPON_RICOCHET_FIRE_RATE).toBe(750);
-    expect(WEAPON_CATALOGUE.ricochet.fireRateMs).toBe(750);
+  test('fires once every 2 beats (0.5 subdivision → 1500 ms at 80 BPM) on the grid', () => {
+    // Trimmed from 1/beat by the non-cannon level-0 output trim
+    // (AH-0MVWAVKS0005P9VN): the cadence lever, so the bounce budget stays.
+    expect(WEAPON_RICOCHET_SUBDIVISION).toBe(0.5);
+    expect(WEAPON_RICOCHET_FIRE_RATE).toBe(1500);
+    expect(WEAPON_CATALOGUE.ricochet.fireRateMs).toBe(1500);
     expect(isOnBeatGrid(WEAPON_CATALOGUE.ricochet.fireRateMs)).toBe(true);
   });
 
@@ -859,10 +889,12 @@ describe('Missile Command cluster missile (AH-0MV1BIVIJ007KYXU)', () => {
     expect(def.sideOffsets).toBeUndefined();
   });
 
-  test('fires once every 2 beats (0.5 subdivision → 1500 ms at 80 BPM) on the grid', () => {
-    expect(WEAPON_CLUSTER_SUBDIVISION).toBe(0.5);
-    expect(WEAPON_CLUSTER_FIRE_RATE).toBe(1500);
-    expect(WEAPON_CATALOGUE.cluster.fireRateMs).toBe(1500);
+  test('fires once every 4 beats (0.25 subdivision → 3000 ms at 80 BPM) on the grid', () => {
+    // Trimmed from 0.5/beat by the non-cannon level-0 output trim
+    // (AH-0MVWAVKS0005P9VN): the cadence lever, so the split payload stays.
+    expect(WEAPON_CLUSTER_SUBDIVISION).toBe(0.25);
+    expect(WEAPON_CLUSTER_FIRE_RATE).toBe(3000);
+    expect(WEAPON_CATALOGUE.cluster.fireRateMs).toBe(3000);
     expect(isOnBeatGrid(WEAPON_CATALOGUE.cluster.fireRateMs)).toBe(true);
   });
 
@@ -924,10 +956,12 @@ describe('Gradius Options orbiting satellites (AH-0MV1BIVVK0043TEM)', () => {
     expect(def.description.length).toBeGreaterThan(0);
   });
 
-  test('fires once per beat (1 subdivision → 750 ms at 80 BPM) on the grid', () => {
-    expect(WEAPON_OPTIONS_SUBDIVISION).toBe(1);
-    expect(WEAPON_OPTIONS_FIRE_RATE).toBe(750);
-    expect(WEAPON_CATALOGUE.options.fireRateMs).toBe(750);
+  test('fires once every 2 beats (0.5 subdivision → 1500 ms at 80 BPM) on the grid', () => {
+    // Trimmed from 1/beat by the non-cannon level-0 output trim
+    // (AH-0MVWAVKS0005P9VN): the cadence lever, so the pod count stays.
+    expect(WEAPON_OPTIONS_SUBDIVISION).toBe(0.5);
+    expect(WEAPON_OPTIONS_FIRE_RATE).toBe(1500);
+    expect(WEAPON_CATALOGUE.options.fireRateMs).toBe(1500);
     expect(isOnBeatGrid(WEAPON_CATALOGUE.options.fireRateMs)).toBe(true);
   });
 
@@ -1385,6 +1419,334 @@ describe('net-new weapons (AH-0MVCRC52P001YIPW)', () => {
     const rotation = weaponDropOrder();
     for (const id of NEW_WEAPON_IDS) {
       expect(rotation).not.toContain(id);
+    }
+  });
+});
+
+// ── Level-0 strength budget (AH-0MVRENEME004FS8T AC1/AC2) ───────────
+
+/**
+ * Pre-change level-0 output baselines — the intake brief's measurement table
+ * (AH-0MVRENEME004FS8T), transcribed as **literals** on purpose: values
+ * re-derived from the catalogue under test could never catch a regression.
+ *
+ * Each row is `payload × shots/s` (× hit depth for the budget weapons), all
+ * from the pre-change catalogue: 80 BPM beat grid, the shipped
+ * `DEFAULT_WEAPON_SUBDIVISIONS`, and the then-current hit budgets. AOE rows
+ * are `radius² × shots/s` in `px²/s` (`π` cancels in every ratio, so it is
+ * omitted from the measure).
+ *
+ * The `wave_laser` (2 HP beam) and `railgun` (5 HP budget) rows are the intake
+ * measurement; both budgets were lowered by later work items
+ * (AH-0MVREBUJ5004HDRQ, AH-0MVY0A23A009MRK3), so those weapons already sit
+ * below the ceiling. The baseline is frozen history, not live data.
+ */
+const LEVEL0_OUTPUT_BASELINE: Readonly<Record<WeaponId, number>> = {
+  // 1 bullet × 2 shots/beat (2.67 shots/s) — FROZEN.
+  cannon: 8 / 3,
+  // 3 bullets × 1 shot/beat (1.33 shots/s).
+  spread: 4,
+  // 2 parallel bullets × 1 shot/beat.
+  dual: 8 / 3,
+  // 1 bullet × 6 shots/beat (8 shots/s).
+  rapid: 8,
+  // 1.33 shots/s × the then-2 HP beam budget.
+  wave_laser: 8 / 3,
+  // 1 pellet × 1.33 shots/s × (1 + 2 wall bounces) targets.
+  ricochet: 4,
+  // (missile + 2 warheads) × 0.67 shots/s (one shot every 2 beats).
+  cluster: 2,
+  // 2 pods × 1.33 shots/s.
+  options: 8 / 3,
+  // 45 px radius² × 0.33 shots/s (one pulse every 4 beats).
+  nova: (45 * 45) / 3,
+  // 35 px radius² × 0.67 shots/s (one blast every 2 beats).
+  mortar: (35 * 35 * 2) / 3,
+  // 60 px radius² × 1.33 shots/s (one bolt per beat).
+  arc: (60 * 60 * 4) / 3,
+  // 1 backward bullet × 2 shots/beat.
+  rear_guard: 8 / 3,
+  // 2 perpendicular bullets × 0.67 shots/s.
+  broadside: 4 / 3,
+  // 0.33 shots/s × the then-5 HP pass-through budget.
+  railgun: 5 / 3,
+  // 5 shards × 1.33 shots/s.
+  shard_swarm: 20 / 3,
+  // 1 slug × 0.67 shots/s.
+  heavy_slug: 2 / 3,
+};
+
+/** The family the budget measures each weapon by (AC1 definition). */
+const EXPECTED_FAMILY: Readonly<Record<WeaponId, WeaponOutputFamily>> = {
+  cannon: 'projectile',
+  spread: 'projectile',
+  dual: 'projectile',
+  rapid: 'projectile',
+  wave_laser: 'projectile',
+  ricochet: 'bounce',
+  cluster: 'split',
+  options: 'orbit',
+  nova: 'aoe',
+  mortar: 'aoe',
+  arc: 'aoe',
+  rear_guard: 'projectile',
+  broadside: 'projectile',
+  railgun: 'pierce',
+  shard_swarm: 'projectile',
+  heavy_slug: 'projectile',
+};
+
+/** One weapon's level-0 position against its recorded baseline. */
+interface Level0BudgetRow {
+  weaponId: WeaponId;
+  family: string;
+  output: number;
+  outputUnit: string;
+  baseline: number;
+  /** Realised output as a share of the baseline (1 = unchanged). */
+  realisedShare: number;
+  /** Single-target output as a multiple of the cannon's. */
+  cannonMultiple: number;
+}
+
+const BUDGET_EPSILON = 1e-9;
+const ALL_WEAPON_IDS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
+
+function level0BudgetRows(): Level0BudgetRow[] {
+  const cannon = weaponStrength('cannon');
+  return weaponStrengthTable(0).map((strength) => {
+    const baseline = LEVEL0_OUTPUT_BASELINE[strength.weaponId];
+    return {
+      weaponId: strength.weaponId,
+      family: strength.family,
+      output: strength.output,
+      outputUnit: strength.outputUnit,
+      baseline,
+      realisedShare: strength.output / baseline,
+      cannonMultiple: strength.singleTargetOutput / cannon.singleTargetOutput,
+    };
+  });
+}
+
+/** Human-readable budget table — used in every assertion message. */
+function formatBudgetReport(rows: Level0BudgetRow[]): string {
+  return rows
+    .map(
+      (row) =>
+        `${row.weaponId.padEnd(12)} ${row.family.padEnd(10)} ` +
+        `${row.output.toFixed(2).padStart(8)} ${row.outputUnit.padEnd(5)} ` +
+        `/ baseline ${row.baseline.toFixed(2).padStart(8)} = ` +
+        `${(row.realisedShare * 100).toFixed(1).padStart(5)} % ` +
+        `(${row.cannonMultiple.toFixed(2)}× cannon)`,
+    )
+    .join('\n');
+}
+
+describe('level-0 strength budget (AH-0MVRENEME004FS8T AC1/AC2)', () => {
+  test('the cannon level-0 snapshot is frozen', () => {
+    // AC2: the cannon's level-0 values are byte-identical to the pre-change
+    // data. The flattened upgrade curve touches its *levels*, never level 0.
+    const cannon = WEAPON_CATALOGUE.cannon;
+    expect(cannon.offsets).toEqual([0]);
+    expect(cannon.fireRateMs).toBe(375);
+    expect(cannon.bulletLifetime).toBe(0.75);
+    // No budget descriptor of any kind — an ordinary single-hit bullet.
+    expect(cannon.aoe).toBeUndefined();
+    expect(cannon.bounce).toBeUndefined();
+    expect(cannon.splits).toBeUndefined();
+    expect(cannon.maxHitPoints).toBeUndefined();
+    expect(cannon.orbit).toBeUndefined();
+    expect(cannon.hitscan).toBeUndefined();
+  });
+
+  test('the helper measures the live ladder cadence, never the nominal one', () => {
+    // Calibrates the measurement helper against two independent numbers for
+    // the same weapon: the **live** Euclidean rung the player fires
+    // (E(9,16) = 2.25 onsets/beat = 3 shots/s) and the **legacy nominal**
+    // catalogue cadence (`subdivisions` 2 = 375 ms = 2.67 shots/s). The
+    // helper must report the former (AH-0MW23FEDK006BRHK AC2): measuring the
+    // nominal scores a cadence the game never plays.
+    const cannon = weaponStrength('cannon');
+    const nominalShotsPerSecond = 1000 / WEAPON_CATALOGUE.cannon.fireRateMs;
+    expect(cannon.family).toBe('projectile');
+    expect(cannon.outputUnit).toBe('hits/s');
+    expect(cannon.shotsPerSecond).toBeCloseTo(3, 9);
+    expect(cannon.shotsPerSecond).toBeCloseTo((9 / 16) * 4 * (80 / 60), 9);
+    expect(nominalShotsPerSecond).toBeCloseTo(8 / 3, 9);
+    expect(cannon.shotsPerSecond).not.toBeCloseTo(nominalShotsPerSecond, 9);
+    expect(cannon.projectilesPerShot).toBe(1);
+    expect(cannon.hitsPerProjectile).toBe(1);
+    expect(cannon.singleTargetOutput).toBeCloseTo(3, 9);
+    expect(cannon.output).toBeCloseTo(3, 9);
+  });
+
+  test('every weapon is measured on the ladder onset rate at every sampled level', () => {
+    // The same calibration, swept: `shotsPerSecond` is exactly the resolved
+    // Euclidean pattern's own onset rate for every weapon and level, so no
+    // family can silently fall back to the nominal cadence.
+    for (const id of ALL_WEAPON_IDS) {
+      for (const level of [0, 1, 2, 5, 15, 100]) {
+        const shotsPerSecond = weaponStrength(id, level).shotsPerSecond;
+        expect(
+          shotsPerSecond,
+          `${id} @ level ${level}`,
+        ).toBeCloseTo(euclideanOnsetsPerMinute(resolveWeaponPattern(id, level)) / 60, 9);
+      }
+    }
+  });
+
+  test('every catalogue weapon is measured by its documented family', () => {
+    for (const id of ALL_WEAPON_IDS) {
+      const strength = weaponStrength(id);
+      expect(strength.family, id).toBe(EXPECTED_FAMILY[id]);
+      expect(strength.outputUnit, id).toBe(
+        strength.family === 'aoe' ? 'px²/s' : 'hits/s',
+      );
+      expect(strength.output, id).toBeGreaterThan(0);
+      expect(strength.descriptor.length, id).toBeGreaterThan(0);
+    }
+  });
+
+  test('the report covers every weapon with a literal baseline', () => {
+    // No weapon may be silently omitted from the budget: the report's ids and
+    // the baseline table's ids must both be exactly the catalogue.
+    const rows = level0BudgetRows();
+    expect(rows.map((row) => row.weaponId)).toEqual(ALL_WEAPON_IDS);
+    expect(Object.keys(LEVEL0_OUTPUT_BASELINE).sort()).toEqual(
+      [...ALL_WEAPON_IDS].sort(),
+    );
+  });
+
+  test('the documented ceilings match the asserted bounds', () => {
+    // Pin the code constants to literals so the documentation, the tests and
+    // the helper cannot drift apart — tightening/loosening the budget has to
+    // be a deliberate two-place edit.
+    expect(WEAPON_STRENGTH_BUDGET.level0BaselineShare).toBe(0.6);
+    expect(WEAPON_STRENGTH_BUDGET.level0CannonMultiple).toBe(1.5);
+    expect(WEAPON_STRENGTH_BUDGET.level1GrowthMultiple).toBe(2.5);
+    expect(WEAPON_STRENGTH_BUDGET.levelCapShareOfPreChange).toBe(0.5);
+  });
+
+  test('the measured output never falls as a weapon levels up', () => {
+    // The helper consumes the shared level resolver, so it inherits the
+    // curve's monotonicity for every family (projectile, pierce, bounce,
+    // split, orbit, AOE).
+    for (const id of ALL_WEAPON_IDS) {
+      const l0 = weaponStrength(id, 0).output;
+      const l1 = weaponStrength(id, 1).output;
+      const l3 = weaponStrength(id, 3).output;
+      expect(l1, `${id} level 1`).toBeGreaterThanOrEqual(l0 - BUDGET_EPSILON);
+      expect(l3, `${id} level 3`).toBeGreaterThanOrEqual(l1 - BUDGET_EPSILON);
+    }
+  });
+
+  /**
+   * **Green since the trim** (AH-0MVWAVKS0005P9VN). Authored red under
+   * Vitest's `test.fails` by the sibling budget child; the trim flipped it
+   * back to `test` once every non-cannon weapon was inside the bound.
+   */
+  test("every non-cannon weapon is at or below 60 % of its level-0 baseline", () => {
+    const rows = level0BudgetRows();
+    const overBudget = rows.filter(
+      (row) =>
+        row.weaponId !== 'cannon' &&
+        row.realisedShare > WEAPON_STRENGTH_BUDGET.level0BaselineShare + BUDGET_EPSILON,
+    );
+    expect(
+      overBudget.map(
+        (row) =>
+          `${row.weaponId}=${(row.realisedShare * 100).toFixed(1)}%`,
+      ),
+      `level-0 strength budget per weapon:\n${formatBudgetReport(rows)}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * **Green since the trim** (AH-0MVWAVKS0005P9VN). The cap took precedence
+   * where 60 % of the baseline was still above 1.5× the cannon (`rapid` was
+   * 3.00× and `shard_swarm` 2.50× pre-trim).
+   */
+  test("no non-cannon weapon's single-target output exceeds 1.5× the cannon's", () => {
+    const rows = level0BudgetRows();
+    const overCap = rows.filter(
+      (row) =>
+        row.weaponId !== 'cannon' &&
+        row.cannonMultiple > WEAPON_STRENGTH_BUDGET.level0CannonMultiple + BUDGET_EPSILON,
+    );
+    expect(
+      overCap.map(
+        (row) => `${row.weaponId}=${row.cannonMultiple.toFixed(2)}× cannon`,
+      ),
+      `level-0 single-target output vs the cannon:\n${formatBudgetReport(rows)}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * The committed post-change table (the catalogue doc block beside
+   * `WEAPON_CATALOGUE`) as **literals**: the realised level-0 output and the
+   * percentage of the frozen pre-change baseline, per weapon. Pinning both
+   * keeps the documentation, the values and this test in lock-step — a future
+   * retune has to edit all three deliberately (AH-0MVWAVKS0005P9VN).
+   */
+  const LEVEL0_TRIMMED: Readonly<
+    Record<WeaponId, { output: number; sharePercent: number }>
+  > = {
+    // The cannon is frozen/exempt. Its *live* level-0 rung is the E(9,16)
+    // superposition (2.25 onsets/beat = 3 shots/s), so the live measurement
+    // is 112.5 % of the frozen nominal-cadence baseline literal.
+    cannon: { output: 3, sharePercent: 112.5 },
+    // 3 bullets × 0.5 shots/beat — the cadence lever, 50 %.
+    spread: { output: 2, sharePercent: 50 },
+    // 2 parallel bullets × 0.5 shots/beat — the cadence lever, 50 %.
+    dual: { output: 4 / 3, sharePercent: 50 },
+    // 1 bullet × the live E(13,16) superposition rung (3.25 onsets/beat) —
+    // 54.2 %, inside both level-0 ceilings.
+    rapid: { output: 13 / 3, sharePercent: (13 / 3 / 8) * 100 },
+    // Already inside the bound (single-hit beam, AH-0MVREBUJ5004HDRQ); the
+    // curve-flattening carve-out halves its cadence to 0.5 onsets/beat, which
+    // is the beam's only output axis (AH-0MVWAVL6R001UI60 /
+    // AH-0MW23FEDK006BRHK) — 25 %.
+    wave_laser: { output: 2 / 3, sharePercent: 25 },
+    // 1 pellet × 0.5 shots/beat × 3 bounce targets — the cadence lever, 50 %.
+    ricochet: { output: 2, sharePercent: 50 },
+    // (missile + 2 warheads) × 0.25 shots/beat — the cadence lever, 50 %.
+    cluster: { output: 1, sharePercent: 50 },
+    // 2 pods × 0.5 shots/beat — the cadence lever, 50 %.
+    options: { output: 4 / 3, sharePercent: 50 },
+    // 34 px radius² × 0.33 shots/beat — nearest whole px at or below 60 %.
+    nova: { output: (34 * 34) / 3, sharePercent: (34 * 34) / 2025 * 100 },
+    // 27 px radius² × 0.67 shots/beat — 59.5 %.
+    mortar: { output: (27 * 27 * 2) / 3, sharePercent: (27 * 27) / 1225 * 100 },
+    // 46 px radius² × 1.33 shots/beat — 58.8 %.
+    arc: { output: (46 * 46 * 4) / 3, sharePercent: (46 * 46) / 3600 * 100 },
+    // 1 backward bullet × 1 shot/beat — the cadence lever, 50 %.
+    rear_guard: { output: 4 / 3, sharePercent: 50 },
+    // 2 perpendicular bullets × 0.25 shots/beat — the cadence lever, 50 %.
+    broadside: { output: 2 / 3, sharePercent: 50 },
+    // Inside the bound on its 1 HP level-0 budget, paying for the live
+    // E(2,16) superposition rung (0.5 onsets/beat) — 40 %.
+    railgun: { output: 2 / 3, sharePercent: 40 },
+    // 5 shards × 0.5 shots/beat — the cadence lever keeps the five-shard fan, 50 %.
+    shard_swarm: { output: 10 / 3, sharePercent: 50 },
+    // 1 slug × 0.25 shots/beat — the cadence lever, 50 %.
+    heavy_slug: { output: 1 / 3, sharePercent: 50 },
+  };
+
+  test('the committed post-change level-0 table matches the catalogue', () => {
+    const rows = level0BudgetRows();
+    expect(Object.keys(LEVEL0_TRIMMED).sort()).toEqual(
+      [...ALL_WEAPON_IDS].sort(),
+    );
+    for (const row of rows) {
+      const expected = LEVEL0_TRIMMED[row.weaponId];
+      expect(row.output, `${row.weaponId} output`).toBeCloseTo(
+        expected.output,
+        9,
+      );
+      expect(
+        row.realisedShare * 100,
+        `${row.weaponId} share`,
+      ).toBeCloseTo(expected.sharePercent, 9);
     }
   });
 });
