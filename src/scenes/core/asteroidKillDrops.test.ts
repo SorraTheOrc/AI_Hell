@@ -7,10 +7,19 @@
  * fully destroyed **small** asteroid can roll the Extra Life; large/medium
  * rocks (which split) and non-asteroid enemies never can, and the tier gate
  * runs before the RNG so a seeded stream is never advanced for them.
+ *
+ * The shipped chance is now **0 (off)** — AH-0MW3MLRHL000DKPM stopped rocks
+ * from handing out lives, while keeping the rule, the `GameRules` key and its
+ * clamping so a designer can re-enable it. The default-off assertions are
+ * wrapped in `it.fails` until the production default changes.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 
+import {
+  DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
+  DEFAULT_RULES,
+} from '../../core/rules';
 import {
   rollAsteroidExtraLife,
   type AsteroidKillDropEntity,
@@ -79,5 +88,75 @@ describe('rollAsteroidExtraLife — chance boundaries (AC2)', () => {
     expect(rollAsteroidExtraLife(entity('small'), rng, 0.05)).toBe(false);
     expect(rollAsteroidExtraLife(entity('small'), rng, 0.6)).toBe(true);
     expect(rollAsteroidExtraLife(entity('small'), rng, 0.5)).toBe(false);
+  });
+});
+
+// ── Shipped default is off (AH-0MW3MLRHL000DKPM) ─────────────────────
+//
+// Asteroid Extra Life was a 5 % add-on roll per fully destroyed small rock.
+// The halved supply dial turns it **off** by default: the shared rule and the
+// `GameRules.asteroidExtraLifeDropChance` key stay configurable, but a shipped
+// run must never hand out a life for a rock. The kill-path assertions below
+// consume the *shipped* default, so they fail on the pre-change tree (5 %) and
+// pass once the default is 0.
+
+describe('rollAsteroidExtraLife — shipped default is off (AH-0MW3MLRHL000DKPM)', () => {
+  /**
+   * Deterministic LCG (Numerical Recipes constants) returning values in
+   * `[0, 1)` — the same generator style the spawner suite uses, so a seeded
+   * kill path is reproducible.
+   */
+  function makeSeededRng(seed = 987654321): () => number {
+    let state = seed >>> 0;
+    return () => {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+  }
+
+  it.fails('ships a zero default chance for the small-asteroid roll', () => {
+    expect(DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE).toBe(0);
+    expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0);
+    // The documented chance-0 rule already says: never fires, even on rng 0.
+    expect(
+      rollAsteroidExtraLife(
+        entity('small'),
+        () => 0,
+        DEFAULT_RULES.asteroidExtraLifeDropChance,
+      ),
+    ).toBe(false);
+  });
+
+  it.fails('never fires across a seeded kill path at the shipped default', () => {
+    // At the old 5 % default this stream fires the roll ~20 times over 500
+    // kills; at the shipped 0 it can never fire.
+    const rng = makeSeededRng();
+
+    let fired = 0;
+    for (let kill = 0; kill < 500; kill += 1) {
+      if (
+        rollAsteroidExtraLife(
+          entity('small'),
+          rng,
+          DEFAULT_RULES.asteroidExtraLifeDropChance,
+        )
+      ) {
+        fired += 1;
+      }
+    }
+
+    expect(fired).toBe(0);
+  });
+
+  it('stays opt-in: a designer re-enabling the roll still gets it', () => {
+    // The rule was kept (operator decision): only the default moved.
+    const rng = makeSeededRng();
+
+    let fired = 0;
+    for (let kill = 0; kill < 500; kill += 1) {
+      if (rollAsteroidExtraLife(entity('small'), rng, 0.05)) fired += 1;
+    }
+
+    expect(fired).toBeGreaterThan(0);
   });
 });
