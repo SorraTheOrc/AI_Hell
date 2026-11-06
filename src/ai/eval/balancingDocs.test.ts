@@ -262,13 +262,22 @@ describe('Level-scaling curves and evidence are documented (AH-0MVHT1M6O003PU7P)
     expect(doc).toContain('## Level-scaling curves and evidence (AH-0MVHT1M6O003PU7P)');
     expect(doc).toContain('### Scaling table (levels 1–10)');
     // The table's endpoints are the tuning contract: 1.00× → 2.00× counts,
-    // 0.18 → 0.05 per-kill drop chance, level 1 = the identity.
-    expect(doc).toContain('| 1 | 1.000× | 0.1800 |');
-    expect(doc).toContain('| 5 | 1.444× | 0.1222 |');
-    expect(doc).toContain('| 10 | 2.000× | 0.0500 |');
+    // 0.09 → 0.025 per-kill drop chance (halved from 0.18/0.05 by
+    // AH-0MW10ZVLH005IJRM), level 1 = the identity.
+    expect(doc).toContain('| 1 | 1.000× | 0.0900 |');
+    expect(doc).toContain('| 5 | 1.444× | 0.0611 |');
+    expect(doc).toContain('| 10 | 2.000× | 0.0250 |');
     expect(doc).toContain('src/core/levelScaling.ts');
     expect(doc).toContain('applyEnemyCountScaling');
     expect(doc).toContain('powerUpDropChance');
+  });
+
+  it('documents the asteroid Extra Life roll as off at every level (AH-0MW10ZVLH005IJRM)', () => {
+    // The asteroid column is 0 at every level, so the table can never show a
+    // live rock-drops-lives chance while the shipped default is off.
+    expect(doc).toContain('| 1 | 1.000× | 0.0900 | 1.000 | 0 |');
+    expect(doc).toContain('| 10 | 2.000× | 0.0250 | 0.278 | 0 |');
+    expect(doc).toMatch(/asteroid Extra Life[^\n]*(off|0)/i);
   });
 
   it('documents the baseline vs post-change evidence with commands and seed set', () => {

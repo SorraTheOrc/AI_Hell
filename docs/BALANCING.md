@@ -193,22 +193,23 @@ harness resolve them through the same functions, never a copy.
 ### Scaling table (levels 1–10)
 
 Both curves are linear across the campaign range and clamp outside it. Level 1
-is exactly the pre-change behaviour (`1.00×` counts, `0.18` per-kill drop
-chance, `0.05` asteroid Extra Life chance), so onboarding and older baselines
-stay valid.
+is exactly the pre-change shape (`1.00×` counts, `0.09` per-kill drop chance,
+asteroid Extra Life off at `0`); the per-kill dial is the pre-v5 behaviour
+halved (`0.18 → 0.09`, `0.05 → 0.025`) by AH-0MW10ZVLH005IJRM, so older
+baselines still compare on the same relative curve.
 
 | Level | Enemy-count multiplier | Per-kill power-up drop chance | Relative supply vs L1 | Asteroid Extra Life chance |
 |---|---|---|---|---|
-| 1 | 1.000× | 0.1800 | 1.000 | 0.0500 |
-| 2 | 1.111× | 0.1656 | 0.920 | 0.0460 |
-| 3 | 1.222× | 0.1511 | 0.840 | 0.0420 |
-| 4 | 1.333× | 0.1367 | 0.759 | 0.0380 |
-| 5 | 1.444× | 0.1222 | 0.679 | 0.0340 |
-| 6 | 1.556× | 0.1078 | 0.599 | 0.0299 |
-| 7 | 1.667× | 0.0933 | 0.519 | 0.0259 |
-| 8 | 1.778× | 0.0789 | 0.438 | 0.0219 |
-| 9 | 1.889× | 0.0644 | 0.358 | 0.0179 |
-| 10 | 2.000× | 0.0500 | 0.278 | 0.0139 |
+| 1 | 1.000× | 0.0900 | 1.000 | 0 |
+| 2 | 1.111× | 0.0828 | 0.920 | 0 |
+| 3 | 1.222× | 0.0756 | 0.840 | 0 |
+| 4 | 1.333× | 0.0683 | 0.759 | 0 |
+| 5 | 1.444× | 0.0611 | 0.679 | 0 |
+| 6 | 1.556× | 0.0539 | 0.599 | 0 |
+| 7 | 1.667× | 0.0467 | 0.519 | 0 |
+| 8 | 1.778× | 0.0394 | 0.438 | 0 |
+| 9 | 1.889× | 0.0322 | 0.358 | 0 |
+| 10 | 2.000× | 0.0250 | 0.278 | 0 |
 
 - **Enemy counts.** Each non-`single` wave group's `count` is multiplied by
 the level's factor, rounded half up (`Math.round`), floored at 1 and capped at
@@ -220,15 +221,17 @@ counts (see
 §9.6 and §5.1).
 - **Supply.** Every kill-time drop roll in `PlayScene` uses
 `powerUpDropChance(level)` instead of the flat level-1 rate, and the asteroid
-Extra Life roll scales by the same ratio (`extraLifeDropChance`). Drop types,
-weights and timed effects are unchanged; the level gyms lengthen their supply
-cadence by the inverse ratio so their run is not over-supplied.
+Extra Life roll scales by the same ratio (`extraLifeDropChance`) but is **off
+at the shipped default** (`asteroidExtraLifeDropChance = 0`), so it is `0` at
+every level until a designer re-enables it. Drop types, weights and timed
+effects are unchanged; the level gyms lengthen their supply cadence by the
+inverse ratio so their run is not over-supplied.
 - **Rationale.** The player's permanent weapon/power-up levels compound through
 the run, so both axes compensate for that growth: each level adds enemy work
 while handing out proportionally less supply. The endpoints (1→2× counts,
-0.18→0.05 drop chance) are the tuning contract from the parent work item; the
-values are data, so a future tuning change edits `GameRules` and re-runs this
-evidence.
+0.09→0.025 drop chance, asteroid Extra Life `0`) are the shipped tuning
+contract (AH-0MVHT1M6O003PU7P, halved by AH-0MW10ZVLH005IJRM); the values are
+data, so a future tuning change edits `GameRules` and re-runs this evidence.
 - **Spawn parity for tuning.** A launched level also spawns, transits, marches
 and fires through the same shared seams as the shipped game: the wormhole
 destination rule in `src/scenes/core/spawnTransit.ts`, the `shootEnabled`
@@ -284,8 +287,12 @@ cap shapes what a run can become.
   may still appear when the pool is full carries `availableWhenSlotsFull` on its
   power-up catalogue entry (default `false`). **Extra Life** and **Mystery UFO**
   are exempt today; the flag also excludes them from the count, so taking an
-  exempt reward can never push a run past six. Adding or removing an exemption
-  is a catalogue edit, and a re-baseline of the affected batches is the only
+  exempt reward can never push a run past six. **Extra Life** is additionally a
+  **field-pickup-only** kind (`fieldPickupOnly`), so it is **never offered as a
+  reward** even while its slot exemption lets the drop spawn: the hold-full
+  pool, its owned offers, the mini-boss wheel and the empty-owned fallback all
+  exclude it (AH-0MW10ZVLH005IJRM AC4). Adding or removing an exemption is a
+  catalogue edit, and a re-baseline of the affected batches is the only
   harness work needed. The `reset` utility is likewise slot-exempt (it can never
   hold a level).
 - **Shared-pool starvation is intended semantics (producer Q1 answer (c),
@@ -560,7 +567,7 @@ Per-archetype kills (aggregate means, the field the work item requires):
    takes longer to wipe — which is the intended density escalation, not a
    starvation or crash signal (kills/run and survival do not fall).
 4. **No tuning was changed after the evidence run.** The endpoints arrived at
-   from the design (`1→2×`, `0.18→0.05`) already move both measured axes in
+   from the design (`1→2×`, `0.09→0.025`) already move both measured axes in
    the intended direction, so the documented values are the shipped ones. A
    future tuning change edits `GameRules`, records the reason, and re-runs the
    four commands above on the same seeds.

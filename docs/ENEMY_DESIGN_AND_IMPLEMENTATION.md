@@ -237,11 +237,13 @@ asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
 `PlayScene._onEnemyKilled`). Collision (ramming) kills award no points, as
 always.
 
-**Kill reward (AH-0MV6M2M9P0078N4S)**: in addition to the generic per-kill
-power-up roll, a fully destroyed **small** asteroid additionally rolls the
-configurable **Extra Life** chance (`GameRules.asteroidExtraLifeDropChance`,
-default **0.05**); a winning roll leaves exactly one `extra_life` pickup at
-the death site. The roll lives **once** in the shared helper
+**Kill reward (AH-0MV6M2M9P0078N4S, default off by AH-0MW10ZVLH005IJRM)**: in
+addition to the generic per-kill power-up roll, a fully destroyed **small**
+asteroid additionally rolls the configurable **Extra Life** chance
+(`GameRules.asteroidExtraLifeDropChance`, default **0**); a winning roll leaves
+exactly one `extra_life` pickup at the death site. At the shipped default the
+roll never fires, so rocks do not hand out lives; the rule and key are retained
+so a designer can re-enable it. The roll lives **once** in the shared helper
 `src/scenes/core/asteroidKillDrops.ts`
 (`rollAsteroidExtraLife(entity, rng, chance)` — tier gate first, then
 `rng() < chance`), consumed by `PlayScene._onEnemyKilled` and the gym kill
@@ -1955,7 +1957,8 @@ still visibly demonstrates the bolt under the rule that excludes the
 The campaign now scales two axes with the level (`src/core/levelScaling.ts`):
 wave group counts multiply by `enemyCountMultiplier(level)` (1.00→2.00 over
 levels 1–10) at the shared campaign-build seam, and each kill rolls
-`powerUpDropChance(level)` (0.18→0.05). `GymLevel` and `GymBotTuning` apply
+`powerUpDropChance(level)` (0.09→0.025, the pre-v5 `0.18`→`0.05` halved by
+AH-0MW10ZVLH005IJRM). `GymLevel` and `GymBotTuning` apply
 both: they scale launched counts through the same `applyEnemyCountScaling`
 seam and lengthen their seeded supply interval by the inverse drop-chance
 ratio, so a launched level matches the game. `GymFormationScene` and its

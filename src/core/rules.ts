@@ -103,10 +103,13 @@ export interface GameRules {
   mineralRedropBonusMax: number;
   /**
    * Probability that a fully destroyed **small** asteroid additionally drops
-   * an Extra Life power-up (default 0.05). Large/medium asteroids split
+   * an Extra Life power-up (default 0, off). Large/medium asteroids split
    * instead and never roll it; non-asteroid enemies are unaffected. This roll
    * is additive to the generic per-kill drop pool and the mineral kill-drop
-   * rule (AH-0MV6M2M9P0078N4S). Clamped to `[0, 1]` by {@link loadRules}.
+   * rule (AH-0MV6M2M9P0078N4S); the default was turned off by
+   * AH-0MW10ZVLH005IJRM so rocks do not hand out lives, and the rule/key are
+   * retained so a designer can re-enable it. Clamped to `[0, 1]` by
+   * {@link loadRules}.
    */
   asteroidExtraLifeDropChance: number;
   /**
@@ -125,18 +128,19 @@ export interface GameRules {
    */
   enemyCountMultiplierAtMaxLevel: number;
   /**
-   * Per-kill power-up drop chance at level 1 (default 0.18,
-   * AH-0MVLJEE7O008RX9X) — today's flat rate, preserved so level 1 behaves
-   * exactly as before. Clamped to `[0, 1]` by {@link loadRules};
-   * non-numeric values fall back to the default.
+   * Per-kill power-up drop chance at level 1 (default 0.09,
+   * AH-0MVLJEE7O008RX9X) — the pre-v5 flat `0.18` rate halved by
+   * AH-0MW10ZVLH005IJRM, so each pickup feels earned. Clamped to `[0, 1]` by
+   * {@link loadRules}; non-numeric values fall back to the default.
    */
   powerUpDropChanceAtLevel1: number;
   /**
-   * Per-kill power-up drop chance at the campaign maximum (default 0.05,
-   * AH-0MVLJEE7O008RX9X). Clamped to `[0, powerUpDropChanceAtLevel1]` by
-   * {@link loadRules} so a stored blob can never make the curve rise with
-   * level; non-numeric values fall back to the default. The small-asteroid
-   * Extra Life chance scales by the same ratio.
+   * Per-kill power-up drop chance at the campaign maximum (default 0.025,
+   * AH-0MVLJEE7O008RX9X; halved from `0.05` by AH-0MW10ZVLH005IJRM). Clamped
+   * to `[0, powerUpDropChanceAtLevel1]` by {@link loadRules} so a stored blob
+   * can never make the curve rise with level; non-numeric values fall back to
+   * the default. The small-asteroid Extra Life chance scales by the same
+   * ratio.
    */
   powerUpDropChanceAtMaxLevel: number;
   /**

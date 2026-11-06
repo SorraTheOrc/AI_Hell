@@ -406,3 +406,52 @@ describe('the HUD presentation and the disruption triage are documented (AH-0MVV
     expect(readme).toContain('combatHudOptions');
   });
 });
+
+// ── Extra Life is field-pickup-only (parent AH-0MW10ZVLH005IJRM AC4) ──
+//
+// The parent item made Extra Life a **field-pickup-only** kind: it leaves
+// every reward surface (the hold-full choice pool, its owned level-up/charge
+// offers, the mini-boss wheel and the empty-owned fallback) while still
+// dropping from the field and staying slot-exempt while on it. The docs must
+// say so, so a future reader cannot re-introduce a dead Extra Life offer path
+// or mistake the omission for a bug.
+
+describe('Extra Life is documented as field-pickup-only (AH-0MW10ZVLH005IJRM AC4)', () => {
+  const gdd = read(GDD_PATH);
+  const balancing = read(BALANCING_PATH);
+  const readme = read(path.resolve(process.cwd(), 'README.md'));
+
+  it('the GDD catalogue row and §4.4.1 record the reward-surface exclusion', () => {
+    expect(gdd).toMatch(/field-pickup-only/i);
+    const choice = holdFullChoiceSection(gdd);
+    expect(choice).toMatch(/field-pickup-only/i);
+    expect(choice).toContain('Extra Life');
+    // The pool description names the exclusion, not a silent omission.
+    expect(choice).toMatch(/every field-pickup-only kind/i);
+  });
+
+  it('the GDD mini-boss wheel records that Extra Life gets no wedge', () => {
+    const start = gdd.indexOf('#### 4.4.4 Mini-Boss Reward');
+    expect(start, 'the GDD has the §4.4.4 mini-boss wheel section').toBeGreaterThan(-1);
+    const end = gdd.indexOf('### 4.5 Scoring System', start);
+    const wheel = gdd.slice(start, end === -1 ? undefined : end);
+    expect(wheel).toMatch(/Extra Life is never on the wheel/i);
+    expect(wheel).toMatch(/no wedge/i);
+    expect(wheel).toMatch(/field-pickup-only/i);
+  });
+
+  it('docs/BALANCING.md records the exclusion despite the slot exemption', () => {
+    const section = balancingSection(balancing);
+    expect(section).toMatch(/field-pickup-only/i);
+    expect(section).toMatch(/never offered as a\s+reward/i);
+  });
+
+  it('the README records the field-pickup-only rule for the choice and wheel', () => {
+    expect(readme).toMatch(/field-pickup-only/i);
+    expect(readme).toMatch(/no reward surface|never offered/i);
+  });
+
+  it('the GDD records the retired demo-bot hold-full preference', () => {
+    expect(gdd).toMatch(/preference for an offered Extra Life is \*\*retired\*\*/i);
+  });
+});
