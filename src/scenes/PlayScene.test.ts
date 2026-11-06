@@ -2499,6 +2499,22 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // asteroids would keep the carried-over pile growing faster than the kill
     // helpers can clear it (AH-0MVCRBISU006NUN5).
     scene.setAsteroidSpawnerEnabled(false);
+    // Reward-pool independence (parent AH-0MW10ZVLH005IJRM AC4,
+    // AH-0MW3MLV2V001NWBR): the walk opens hold-full choices, and which kind
+    // it grants depends on the shared pool's composition (the seeded draw
+    // picks an index over the candidate list, so adding or removing a pooled
+    // kind shifts every grant). Pin the offer to a fixed, boss-damage-neutral
+    // set so these hit-pool assertions always face the same player state: a
+    // damage-boosting reward such as Frenzy (a bonus hit per bullet) would
+    // double-count a bullet and break the deliberately exact one-hit
+    // assertions below (the recorded AH-0MVXWEDOH002LO1M flake shape).
+    scene.setMineralChoiceStrategy({
+      choose: () => [
+        toChoiceOption('magnet'),
+        toChoiceOption('mineral_scoop'),
+        toChoiceOption('shield'),
+      ],
+    });
     return scene;
   }
 
