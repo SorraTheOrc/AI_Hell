@@ -60,8 +60,13 @@ import {
   type DiverBullet,
 } from '../../entities/Diver';
 import type { Player } from '../../entities/Player';
+import { Asteroid } from '../../entities/Asteroid';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 import { LEVELS } from '../../waves/Formations';
+import { createSeededRng } from '../../core/rng';
+import { ASTEROID_ATLAS_KEY } from '../../utils/asteroidTextures';
+import { createAsteroidFromEvent } from './asteroidHazard';
+import { GymAsteroidStress } from '../gym/GymAsteroidStress';
 
 // These equivalence tests boot full Phaser games and walk PlayScene to the
 // boss encounter; under full-suite parallel load the Vitest default 5 s
@@ -2624,6 +2629,17 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['rollAsteroidExtraLife', 'src/scenes/core/asteroidKillDrops.ts'],
   ['mapControlInput', 'src/utils/movementModel.ts'],
   ['splitAsteroid', 'src/scenes/core/asteroidSplit.ts'],
+  // Shared asteroid silhouette/atlas render path (AH-0MW5088LA007XYQM;
+  // registered by AH-0MW508UAQ002IC5N): the palette geometry, the
+  // deterministic variant choice, the single silhouette stroke implementation,
+  // the atlas layout and the once-per-game atlas bake all live once in
+  // `src/utils/asteroidTextures.ts`. A game or gym scene that re-introduces a
+  // divergent copy of the asteroid render path fails this guard.
+  ['asteroidPaletteShapes', 'src/utils/asteroidTextures.ts'],
+  ['asteroidVariantFromDraws', 'src/utils/asteroidTextures.ts'],
+  ['drawAsteroidSilhouette', 'src/utils/asteroidTextures.ts'],
+  ['asteroidAtlasLayout', 'src/utils/asteroidTextures.ts'],
+  ['acquireAsteroidPalette', 'src/utils/asteroidTextures.ts'],
   // Live-aim / live-mineral-seek seam (AH-0MV5SDM6G003A0US). The shared
   // helper lives in `src/scenes/core/enemyTargeting.ts` (created by
   // AH-0MV5SDN24006SD2B) and is consumed by PlayScene, GymFormationScene and
@@ -4533,5 +4549,244 @@ describe('CombatScene — wave-laser hitscan seam is shared, never per-scene', (
     // The boss/mini-boss route through their own damage path, then every
     // ordinary enemy keeps the shared implementation (no duplicate body).
     expect(source).toContain('super.applyHitscanHit(');
+  });
+});
+
+// ── Shared asteroid silhouette/atlas render path (AH-0MW508UAQ002IC5N) ──
+//
+// The batched asteroid renderer (AH-0MW5088LA007XYQM) is a shared seam: the
+// palette geometry, the deterministic variant choice, the one silhouette
+// stroke implementation and the atlas bake live once in
+// `src/utils/asteroidTextures.ts`, and the shared `Asteroid` entity selects the
+// atlas frame through `bakedBodyFrame()`. The palette/atlas functions are
+// registered in EPIC_SHARED_HELPERS; the assertions below additionally pin the
+// entity-side seam and prove every asteroid-bearing consumer (the game and
+// every gym) runs that shared entity rather than a copy.
+
+const ASTEROID_ATLAS_FILE = 'src/utils/asteroidTextures.ts';
+
+/** The shared silhouette/atlas functions the game and gyms both consume. */
+const ASTEROID_PALETTE_HELPERS = [
+  'asteroidPaletteShapes',
+  'asteroidVariantFromDraws',
+  'drawAsteroidSilhouette',
+  'asteroidAtlasLayout',
+  'acquireAsteroidPalette',
+] as const;
+
+/**
+ * The only production files allowed to define the baked-body-frame seam: the
+ * shared base class (`null` default → per-silhouette bake) and the shared
+ * `Asteroid` entity (the one shared atlas frame).
+ */
+const ASTEROID_BODY_FRAME_DEFINERS = [
+  'src/entities/Asteroid.ts',
+  'src/entities/BaseEnemy.ts',
+];
+
+/** Every scene/seam that must consume the shared `Asteroid` entity. */
+const ASTEROID_CONSUMERS = [
+  'src/scenes/PlayScene.ts',
+  'src/scenes/gym/core/GymFormationScene.ts',
+  'src/scenes/gym/GymLevel.ts',
+  'src/scenes/gym/GymMinerals.ts',
+  'src/scenes/gym/GymAsteroidStress.ts',
+  'src/scenes/gym/GymFodderEnemies.ts',
+  'src/scenes/core/asteroidHazard.ts',
+  'src/scenes/core/asteroidSplit.ts',
+  'src/entities/enemyFactory.ts',
+] as const;
+
+/** Contents of `file`, resolved from the repository root. */
+function productionSource(file: string): string {
+  return fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+}
+
+/** True when `source` imports the shared `Asteroid` entity class. */
+function importsSharedAsteroid(source: string): boolean {
+  return /import\s*\{[^}]*\bAsteroid\b[^}]*\}\s*from\s*'[^']*Asteroid'/.test(
+    source,
+  );
+}
+
+describe('shared asteroid render path — one silhouette/atlas seam (AC3)', () => {
+  it('defines each palette/atlas function once, in the shared asteroid module', () => {
+    for (const helper of ASTEROID_PALETTE_HELPERS) {
+      const definers = relativeProductionDefiners((source) =>
+        definesFunction(source, helper),
+      );
+      expect(definers, helper).toEqual([ASTEROID_ATLAS_FILE]);
+    }
+  });
+
+  it('lets only the shared base seam and the shared Asteroid entity choose a baked body frame', () => {
+    const definers = relativeProductionDefiners((source) =>
+      definesMethod(source, 'bakedBodyFrame'),
+    );
+    expect(definers).toEqual(ASTEROID_BODY_FRAME_DEFINERS);
+  });
+
+  it('makes every asteroid-bearing scene/seam consume the shared Asteroid entity', () => {
+    for (const file of ASTEROID_CONSUMERS) {
+      expect(
+        importsSharedAsteroid(productionSource(file)),
+        `${file} must import the shared Asteroid entity`,
+      ).toBe(true);
+    }
+  });
+
+  it('does not let a game or gym scene re-introduce the atlas bake (AC3 red-before)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'asteroid-atlas-guard-'));
+    try {
+      const fixture = path.join(dir, 'GymRogueAsteroids.ts');
+      fs.writeFileSync(
+        fixture,
+        [
+          'export function acquireAsteroidPalette(): null {',
+          '  return null;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+
+      // The scanner sees the scene-like fixture as production source, so the
+      // shared module plus the fixture violates the single-definer invariant.
+      expect(collectProductionSourceFiles(dir)).toEqual([fixture]);
+      const combined = [
+        ...collectProductionSourceFiles(dir),
+        ...collectProductionSourceFiles(path.resolve(process.cwd(), 'src')),
+      ];
+      const definers = combined
+        .filter((file) =>
+          definesFunction(
+            fs.readFileSync(file, 'utf8'),
+            'acquireAsteroidPalette',
+          ),
+        )
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers.length).toBeGreaterThan(1);
+      expect(definers).not.toEqual([ASTEROID_ATLAS_FILE]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not let a scene override the shared asteroid body-frame seam (AC3 red-before)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'asteroid-frame-guard-'));
+    try {
+      const fixture = path.join(dir, 'GymRogueRockScene.ts');
+      fs.writeFileSync(
+        fixture,
+        [
+          'export class GymRogueRockScene {',
+          '  protected bakedBodyFrame(): null {',
+          '    return null;',
+          '  }',
+          '}',
+          '',
+        ].join('\n'),
+      );
+
+      const definers = [
+        ...collectProductionSourceFiles(dir),
+        ...collectProductionSourceFiles(path.resolve(process.cwd(), 'src')),
+      ]
+        .filter((file) => definesMethod(fs.readFileSync(file, 'utf8'), 'bakedBodyFrame'))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers.length).toBeGreaterThan(
+        ASTEROID_BODY_FRAME_DEFINERS.length,
+      );
+      expect(definers).not.toEqual(ASTEROID_BODY_FRAME_DEFINERS);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('shared asteroid render path — game/gym equivalence (AC4)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  /** The rendered body image of an asteroid (the shared atlas sprite). */
+  function bodyImageOf(
+    entity: Phaser.GameObjects.Container,
+  ): Phaser.GameObjects.Image | null {
+    return (
+      entity.list.find(
+        (child): child is Phaser.GameObjects.Image =>
+          child instanceof Phaser.GameObjects.Image,
+      ) ?? null
+    );
+  }
+
+  it('renders the same shared atlas frame in PlayScene and the stress gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'asteroid-atlas-play-host',
+    );
+    const gym = await bootScene(
+      [GymAsteroidStress],
+      'asteroid-atlas-gym-host',
+    );
+    games.push(play, gym);
+
+    // The same planned hazard event + the same seed materialised through the
+    // shared `createAsteroidFromEvent` seam in both scenes.
+    const event = {
+      sizeTier: 'large' as const,
+      x: 300,
+      y: 200,
+      vx: 10,
+      vy: 0,
+      timeFraction: 0,
+      timeSeconds: 0,
+    };
+    const gameRock = createAsteroidFromEvent(
+      play.scene,
+      event,
+      createSeededRng(11),
+    );
+    const gymRock = createAsteroidFromEvent(
+      gym.scene,
+      event,
+      createSeededRng(11),
+    );
+
+    const gameBody = bodyImageOf(gameRock);
+    const gymBody = bodyImageOf(gymRock);
+    expect(gameBody, 'PlayScene asteroid renders an atlas sprite').not.toBeNull();
+    expect(gymBody, 'gym asteroid renders an atlas sprite').not.toBeNull();
+
+    // One shared seam: the same texture key, the same deterministic frame for
+    // the same seed, and the same on-screen size.
+    expect(gameBody!.texture.key).toBe(ASTEROID_ATLAS_KEY);
+    expect(gymBody!.texture.key).toBe(ASTEROID_ATLAS_KEY);
+    expect(gymBody!.frame.name).toBe(gameBody!.frame.name);
+    expect(gameRock.shapeVariant).toBe(gymRock.shapeVariant);
+    expect(gymBody!.displayWidth).toBeCloseTo(gameBody!.displayWidth, 6);
+    expect(gymBody!.displayHeight).toBeCloseTo(gameBody!.displayHeight, 6);
+  });
+
+  it('renders every stress-gym rock from the shared atlas, not a per-rock bake', async () => {
+    const gym = await bootScene([GymAsteroidStress], 'asteroid-atlas-field-host');
+    games.push(gym);
+    const scene = gym.scene as GymAsteroidStress;
+
+    const rocks = scene.formationEntities.filter(
+      (entity): entity is Asteroid => entity instanceof Asteroid,
+    );
+    expect(rocks.length).toBeGreaterThan(0);
+    for (const rock of rocks) {
+      const body = bodyImageOf(rock);
+      expect(body, 'each rock renders a body sprite').not.toBeNull();
+      expect(body!.texture.key, 'rock renders from the shared atlas').toBe(
+        ASTEROID_ATLAS_KEY,
+      );
+    }
   });
 });

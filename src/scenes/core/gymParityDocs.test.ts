@@ -506,3 +506,107 @@ describe('blocked-drop stick/discard is documented as shared core (AH-0MW3H06AC0
     expect(gddPowerUps).toMatch(/no longer\s+collectable/i);
   });
 });
+
+// ── Shared asteroid silhouette/atlas render path (AH-0MW508UAQ002IC5N) ──
+//
+// The batched asteroid rendering change (AH-0MW5088LA007XYQM) must be
+// recorded in the matrix as a **shared** seam, not a per-scene divergence, so
+// a future sweep cannot "fix" it into a per-gym copy. The row for the F1
+// stress gym has to agree with the render-path section: the same shared
+// `Asteroid` entity, a scenario-only divergence, and no claim of a divergent
+// rendering path.
+
+const ASTEROID_ATLAS_SECTION = '## Shared asteroid silhouette atlas';
+
+/** Statements the render-path section must keep, each with its evidence. */
+const ASTEROID_RENDER_DOC_REQUIREMENTS: ReadonlyArray<{
+  readonly label: string;
+  readonly pattern: RegExp;
+}> = [
+  {
+    label: 'the shared seam module',
+    pattern: /src\/utils\/asteroidTextures\.ts/,
+  },
+  { label: 'the palette geometry', pattern: /asteroidPaletteShapes/ },
+  { label: 'the deterministic variant choice', pattern: /asteroidVariantFromDraws/ },
+  { label: 'the one silhouette drawing implementation', pattern: /drawAsteroidSilhouette/ },
+  { label: 'the atlas layout', pattern: /asteroidAtlasLayout/ },
+  { label: 'the one-per-game atlas bake', pattern: /acquireAsteroidPalette/ },
+  { label: 'the shared texture key', pattern: /ASTEROID_ATLAS_KEY/ },
+  { label: 'the entity render seam', pattern: /Asteroid\.bakedBodyFrame/ },
+  { label: 'the game consumer', pattern: /PlayScene/ },
+  { label: 'the generic formation-gym consumer', pattern: /GymFormationScene/ },
+  { label: 'the stress-gym consumer', pattern: /GymAsteroidStress/ },
+  { label: 'the shared materialiser', pattern: /createAsteroidFromEvent/ },
+  { label: 'the render-path item', pattern: /AH-0MW5088LA007XYQM/ },
+  {
+    label: 'the no-divergence statement',
+    pattern: /no divergent rendering path|not a\s+divergence/i,
+  },
+];
+
+/** Requirements (by label) that `source` does not state. */
+function unmetAsteroidRenderDoc(source: string): string[] {
+  const text = source.replace(/\s+/g, ' ');
+  return ASTEROID_RENDER_DOC_REQUIREMENTS.filter(
+    (requirement) => !requirement.pattern.test(text),
+  ).map((requirement) => requirement.label);
+}
+
+describe('docs/GYM_PARITY.md records the shared asteroid render path (AH-0MW508UAQ002IC5N)', () => {
+  const matrix = fs.readFileSync(GYM_PARITY_MATRIX, 'utf8');
+  const section = sectionBody(matrix, ASTEROID_ATLAS_SECTION);
+
+  /** Raw cells of one scene's matrix row (empty when absent). */
+  const rowCells = (scene: string): string[] =>
+    matrixRows(matrix).find((cells) => cells[1].trim() === `\`${scene}\``) ?? [];
+
+  it('has a non-empty shared-asteroid-atlas section (AC1)', () => {
+    expect(matrix).toContain(ASTEROID_ATLAS_SECTION);
+    expect(section.trim().length).toBeGreaterThan(0);
+  });
+
+  it('names the seam, the consumers and the no-divergence position (AC1)', () => {
+    expect(unmetAsteroidRenderDoc(section)).toEqual([]);
+  });
+
+  it('fails when the shared seam module is deleted (AC3 red-before)', () => {
+    const stale = section.replace(/src\/utils\/asteroidTextures\.ts/g, '');
+    expect(unmetAsteroidRenderDoc(stale)).toContain(
+      'the shared seam module',
+    );
+  });
+
+  it('fails when a consumer is dropped (AC3 red-before)', () => {
+    const stale = section.replace(/GymAsteroidStress/g, 'a gym');
+    expect(unmetAsteroidRenderDoc(stale)).toContain(
+      'the stress-gym consumer',
+    );
+  });
+
+  it('points the F1 stress-gym row at the render-path section (AC2)', () => {
+    const cells = rowCells('GymAsteroidStress');
+    expect(cells.length).toBeGreaterThan(7);
+    // Enabled objects and reason both name the shared atlas path.
+    expect(cells[3]).toContain('asteroidTextures.ts');
+    expect(cells[7]).toContain('asteroidTextures.ts');
+    // The row links back to the section anchor, so the two cannot drift.
+    expect(cells[7]).toContain('#shared-asteroid-silhouette-atlas');
+  });
+
+  it('records no rendering divergence on the stress-gym row (AC2)', () => {
+    const cells = rowCells('GymAsteroidStress');
+    expect(cells[7]).toMatch(/no rendering divergence/i);
+    // A contradictory claim would re-introduce a rendering divergence.
+    expect(cells[7]).not.toMatch(/divergent render(ing)? path/i);
+    expect(rowVerdict(cells)).toBe('intentional divergence');
+  });
+
+  it('lists every asteroid-bearing consumer as the shared entity path (AC4)', () => {
+    // The section must name the base/gym consumers; the guard in
+    // `CombatScene.equivalence.test.ts` proves each imports the shared entity.
+    for (const scene of ['PlayScene', 'GymFormationScene', 'GymAsteroidStress']) {
+      expect(section).toContain(scene);
+    }
+  });
+});
