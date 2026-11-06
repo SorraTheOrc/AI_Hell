@@ -329,6 +329,30 @@ describe('MiniBossWheelScene', () => {
     );
   });
 
+  it.fails('renders no Extra Life wedge for a run that owns it (AH-0MW3MLSTW007U8BD)', async () => {
+    // Test-first half of parent AH-0MW10ZVLH005IJRM AC4: the overlay renders
+    // only the launcher's wedges, so a permanently-owned Extra Life must never
+    // reach it (no Extra Life wedge, and the remaining wedges unchanged).
+    // `it.fails` until the exclusion lands (implementation
+    // AH-0MW3MLV2V001NWBR).
+    const owned: readonly DropId[] = ['spread', 'extra_life', 'shield'];
+    const wedges = buildWheelWedges(owned);
+    const scene = await bootWheel({
+      wedges,
+      outcome: drawWheelOutcome(SLOT.single, owned),
+    });
+
+    const visuals = scene.getWedges();
+    expect(visuals.map((wedge) => wedge.id)).not.toContain('extra_life');
+    expect(visuals.map((wedge) => wedge.label)).not.toContain('Extra Life');
+    // The two genuine kinds and the bonus wedge remain.
+    expect(visuals.map((wedge) => wedge.id)).toEqual([
+      'spread',
+      'shield',
+      MINI_BOSS_WHEEL_BONUS_ID,
+    ]);
+  });
+
   it('auto-spins in demo mode after the supplied delay', async () => {
     const wedges = buildWheelWedges(OWNED_KINDS);
     const scene = await bootWheel({

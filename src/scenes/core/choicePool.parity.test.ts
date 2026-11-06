@@ -16,8 +16,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import type { EffectsRegistry } from '../../powerups/effects';
-import { toChoiceOption, type ChoiceOption } from '../../powerups/choice';
+import { toChoiceOption, CHOICE_POOL, type ChoiceOption } from '../../powerups/choice';
 import type { Player } from '../../entities/Player';
+import {
+  POWER_UP_CATALOGUE,
+  WEAPON_DROP_IDS,
+  type DropId,
+} from '../../powerups/types';
 import type { WeaponId } from '../../utils/weapons';
 import { PlayScene } from '../PlayScene';
 import { MineralChoiceScene } from '../MineralChoiceScene';
@@ -153,4 +158,39 @@ describe('hold-full choice pool — game ↔ gym parity (AH-0MVI4KTD8000FBJ7 AC2
       expect(gymStates[id], id).toEqual(gameStates[id]);
     }
   });
+});
+
+// ── Deliberate Extra Life exclusion (AH-0MW3MLSTW007U8BD) ───────────
+//
+// Extra Life leaves every **reward surface** (parent AH-0MW10ZVLH005IJRM AC4)
+// while staying a field pickup, so the shared pool is the catalogue minus two
+// deliberate, documented exclusions: the `reset` utility and `extra_life`.
+// Both are spelled out here — the catalogue-derived guard is **not** weakened
+// to "whatever happens to ship" — so a genuinely missing power-up or weapon
+// still fails the assertion.
+//
+// Both launchers (`PlayScene` and every gym) consume this one pool through
+// `buildChoiceCandidates` and the shared strategy, so pinning the pool here is
+// also the game ↔ gym parity assertion for the exclusion: no scene can offer
+// or drop Extra Life separately.
+describe('hold-full pool — deliberate Extra Life exclusion (AH-0MW3MLSTW007U8BD)', () => {
+  // `it.fails` until the exclusion lands (implementation AH-0MW3MLV2V001NWBR).
+  it.fails(
+    'is the catalogue minus the reset utility and the documented Extra Life exclusion',
+    () => {
+      const catalogue = new Set<DropId>([
+        ...(Object.keys(POWER_UP_CATALOGUE) as DropId[]),
+        ...WEAPON_DROP_IDS,
+      ]);
+      // `reset` removes weapons rather than granting one.
+      catalogue.delete('reset');
+      // Extra Life is reward-surface-only now: excluded by name, so the guard
+      // keeps catching a genuinely missing entry.
+      catalogue.delete('extra_life');
+
+      expect([...CHOICE_POOL].sort()).toEqual([...catalogue].sort());
+      expect(CHOICE_POOL).not.toContain('reset');
+      expect(CHOICE_POOL).not.toContain('extra_life');
+    },
+  );
 });

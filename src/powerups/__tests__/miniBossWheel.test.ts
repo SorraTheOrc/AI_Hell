@@ -539,3 +539,54 @@ describe('wheel outcome application', () => {
     expect(registry.applyCollect).toHaveBeenCalledWith('bomb', true);
   });
 });
+
+// ── Extra Life leaves the wheel (AH-0MW3MLSTW007U8BD) ───────────────
+//
+// Test-first half of parent AH-0MW10ZVLH005IJRM AC4: the mini-boss wheel is a
+// **reward surface**, so a run that permanently owns Extra Life must get no
+// Extra Life wedge and no Extra Life level — including from the bonus slot
+// that upgrades "every owned kind". Extra Life stays a working field pickup.
+// The value-level assertions are `it.fails` until the exclusion lands
+// (implementation AH-0MW3MLV2V001NWBR).
+describe('Extra Life gets no mini-boss reward (AH-0MW3MLSTW007U8BD)', () => {
+  it.fails('builds no Extra Life wedge for a run that owns it', () => {
+    expect(
+      buildWheelWedges(['extra_life', 'shield']).map((wedge) => wedge.id),
+    ).toEqual(['shield', MINI_BOSS_WHEEL_BONUS_ID]);
+
+    // Owning only Extra Life leaves the bonus wedge alone; the launcher then
+    // takes its empty-owned hold-full-style fallback instead of spinning a
+    // dud (parent AC4 — a mini-boss always pays out).
+    expect(
+      buildWheelWedges(['extra_life']).map((wedge) => wedge.id),
+    ).toEqual([MINI_BOSS_WHEEL_BONUS_ID]);
+  });
+
+  it.fails('grants no Extra Life level from the bonus (every owned kind) slot', () => {
+    const outcome = drawWheelOutcome(0, ['extra_life', 'spread', 'shield']);
+
+    expect(outcome.slotKind).toBe('bonus');
+    expect(gainIds(outcome)).not.toContain('extra_life');
+    // Every *other* owned kind still gains its level.
+    expect(new Set(gainIds(outcome))).toEqual(
+      new Set<DropId>(['spread', 'shield']),
+    );
+  });
+
+  it.fails('grants no Extra Life level on any of the 100 slots', () => {
+    for (let slot = 0; slot < MINI_BOSS_WHEEL_SLOT_COUNT; slot += 1) {
+      expect(
+        gainIds(drawWheelOutcome(slot, ['extra_life', 'spread', 'shield'])),
+        `slot ${slot}`,
+      ).not.toContain('extra_life');
+    }
+  });
+
+  it('expresses the exclusion as shared data, never an id branch in the wheel', () => {
+    // The exclusion must be declared once (a catalogue flag or a single
+    // exported exclusion set) and consumed here, exactly like the retired
+    // `rewardableWhenOwned` opt-out above — no `id === 'extra_life'` special
+    // case in the wheel core.
+    expect(MODULE_CODE).not.toMatch(/===\s*['"]extra_life['"]/);
+  });
+});

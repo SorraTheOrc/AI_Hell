@@ -145,6 +145,11 @@ import {
   type PowerUpId,
 } from '../powerups/types';
 import { resolvePlayerSlotState } from '../powerups/slots';
+import {
+  randomChoiceStrategy,
+  toChoiceOption,
+  type ChoiceOption,
+} from '../powerups/choice';
 
 // These integration tests boot full Phaser games and walk the run to the
 // boss; under the full-suite parallel load the Vitest default 5 s timeout
@@ -8103,6 +8108,57 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(scene.isPaused()).toBe(false);
   });
 
+  it('AC4 — the empty-owned fallback offers exactly the shared hold-full draw', async () => {
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+
+    // With nothing owned the reward takes the hold-full-style fallback, which
+    // must be the *shared* strategy — same seeded draw, same options — so no
+    // scene re-derives "what a reward may offer" (parent AC4, gym↔game
+    // parity AH-0MUGZDTFX004RBD1).
+    scene.setRng(createSeededRng(11));
+    const expected = randomChoiceStrategy.choose(3, createSeededRng(11), {
+      weaponLevels: [],
+      powerUpLevels: [],
+      tempPowerUpIds: [],
+      tempWeaponIds: [],
+    });
+
+    scene.openMiniBossReward(rewardContext);
+    expect(scene.getMiniBossRewardOptions()).toEqual(expected);
+    expect(scene.selectMiniBossReward(0)).not.toBeNull();
+  });
+
+  // Extra Life leaves every reward surface but stays a field pickup (parent
+  // AH-0MW10ZVLH005IJRM AC4). The value-level assertion is `it.fails` until
+  // the exclusion lands (implementation AH-0MW3MLV2V001NWBR).
+  it.fails('AC4 — the empty-owned fallback pool never offers Extra Life (AH-0MW3MLSTW007U8BD)', async () => {
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+
+    const fallback = (): ChoiceOption[] =>
+      (
+        scene as unknown as { _holdFullStyleRewardOptions(): ChoiceOption[] }
+      )._holdFullStyleRewardOptions();
+
+    // 500 seeded draws cover the whole offer space of the fallback pool: it
+    // must never include Extra Life and must still return the requested three
+    // options (the exclusion may not shrink the payout).
+    for (let seed = 1; seed <= 500; seed += 1) {
+      scene.setRng(createSeededRng(seed));
+      const options = fallback();
+
+      expect(options, `seed ${seed}`).toHaveLength(3);
+      expect(options.map((option) => option.id), `seed ${seed}`).not.toContain(
+        'extra_life',
+      );
+    }
+  });
+
   it('AC6 — the wheel outcome is drawn from the run-seeded RNG and reproduces', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
@@ -9966,5 +10022,95 @@ describe('PlayScene — dev-gated startLevel seam (AH-0MVE01EY0008QEVX AC3)', ()
     const scene = manager.getScene('PlayScene') as PlayScene;
 
     expect(scene.getWaveManager().level).toBe(scene.getWaveManager().levelCount);
+  });
+});
+
+// ── Extra Life stays a field pickup (AH-0MW3MLSTW007U8BD) ────────────
+//
+// Test-first half of parent AH-0MW10ZVLH005IJRM AC4. Extra Life leaves every
+// **reward surface** (hold-full choice, owned level-up offers, mini-boss
+// wheel) but must stay a working field pickup: the shared drop pool still
+// spawns it, collecting it still grants +1 life and it still levels from the
+// pickup. The demo bot's old hold-full preference for an offered Extra Life
+// (`_preferredDemoChoiceIndex`, AH-0MV03GXZQ00801T4) becomes unreachable once
+// the kind is never offered, so it is retired to the previous "first option"
+// behaviour — its assertion is `it.fails` until that removal lands
+// (implementation AH-0MW3MLV2V001NWBR).
+describe('PlayScene — Extra Life stays a field pickup (AH-0MW3MLSTW007U8BD)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootPlay(): Promise<PlayScene> {
+    // Deterministic boot through the shared helper: the run seed is pinned and
+    // the resumed live loop is stopped while the test asserts
+    // (AH-0MVXWEEJM00813GK).
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      // Isolate from random asteroid spawns: this suite asserts the pickup
+      // path only.
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
+    return scene;
+  }
+
+  /** Collects a fully-grown drop under the player (one tick). */
+  function collectDropInPlay(scene: PlayScene, id: string): void {
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop(id as never, player.x, player.y)!;
+    for (let i = 0; i < 40; i += 1) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+  }
+
+  it('collection still grants +1 life and still raises the field level', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const livesBefore = scene.getGameState().lives;
+    const levelBefore = player.getPowerUpLevel('extra_life');
+
+    collectDropInPlay(scene, 'extra_life');
+
+    // +1 life, clamped to the run's life cap (3 of 5 on a fresh run).
+    expect(scene.getGameState().lives).toBe(livesBefore + 1);
+    // …and the field pickup still levels the run-scoped store, exactly like
+    // every other field pickup.
+    expect(player.getPowerUpLevel('extra_life')).toBe(levelBefore + 1);
+  });
+
+  it.fails('the demo auto-select has no Extra Life preference any more', async () => {
+    const scene = await bootPlay();
+    // A strategy that somehow offers Extra Life proves the preference is gone
+    // rather than merely unreachable: the auto-select takes the first option
+    // (the pre-AH-0MV03GXZQ00801T4 behaviour) even when Extra Life is second.
+    scene.setMineralChoiceStrategy({
+      choose: () => [
+        toChoiceOption('shield'),
+        toChoiceOption('extra_life'),
+        toChoiceOption('bomb'),
+      ],
+    });
+
+    const offered = scene.openMineralChoice();
+    expect(offered.map((option) => option.id)).toEqual([
+      'shield',
+      'extra_life',
+      'bomb',
+    ]);
+
+    // A fresh run is below the life cap (3 of 5), so the retired preference
+    // would have picked Extra Life; it must now return the first option.
+    const index = (
+      scene as unknown as { _preferredDemoChoiceIndex(): number }
+    )._preferredDemoChoiceIndex();
+    expect(index).toBe(0);
+    scene.selectMineralChoice(index);
   });
 });
