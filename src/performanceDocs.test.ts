@@ -190,6 +190,10 @@ const RECORDED_SECTIONS: ReadonlyArray<RecordedSection> = [
     heading: '### Before: one texture per rock, per-frame `Graphics` fallback (AH-0MW507VYG009SFR5)',
     facts: [COMMIT, DATE, { label: 'the platform', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /1×/ }],
   },
+  {
+    heading: '### After: shared silhouette palette, one texture atlas (AH-0MW508JS2004W3SR)',
+    facts: [COMMIT, DATE, { label: 'the platform', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /1×/ }],
+  },
 ];
 
 describe('docs/PERFORMANCE.md — performance budget', () => {

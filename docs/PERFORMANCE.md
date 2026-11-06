@@ -22,7 +22,7 @@ WebGL backend, still under the 4× CPU throttle, is recorded in
 (AH-0MW3KP1R90030QY9). The **asteroid field** pair for the batched-asteroid
 rendering work (parent AH-0MW4857B0004GMWR) is recorded in
 [Asteroid field rendering](#asteroid-field-rendering-gymasteroidstress) — the
-before half is AH-0MW507VYG009SFR5. The
+before half is AH-0MW507VYG009SFR5 and the after half AH-0MW508JS2004W3SR. The
 **final target verification** (AH-0MVXV6VOI006P7VG) measures the finished tree
 end to end and records the parity and determinism evidence — see
 [Final target verification](#final-target-verification-ah-0mvxv6voi006p7vg).
@@ -979,10 +979,11 @@ rocks plus the representative 12-enemy firing wave, 60 s after a 3 s warm-up on
 the reference host's RTX 3050 Ti. The **before** half — the pre-change tree,
 where every rock carries its own seeded silhouette texture and falls back to a
 per-frame `Graphics` body once the 64-texture bake budget is exhausted — is
-recorded below (AH-0MW507VYG009SFR5). The **after** half and the deltas are
-added to this section by AH-0MW508JS2004W3SR. Both halves use the same command,
-scene, window, throttle and host, so the pair isolates the asteroid rendering
-change:
+recorded below (AH-0MW507VYG009SFR5), and the **after** half — the post-change
+tree, where every rock is a plain `Image` on one shared silhouette atlas — is
+recorded with the deltas by AH-0MW508JS2004W3SR. Both halves use the same
+command, scene, window, throttle and host, so the pair isolates the asteroid
+rendering change:
 
 ```bash
 npm run perf:measure -- --gpu --require-hardware-webgl --scene GymAsteroidStress \
@@ -1074,6 +1075,139 @@ measured cost the batched rendering targets is **9.34 % renderer** (5.6× the
 1.66 % simulation) concentrated in `ContainerWebGLRenderer`, `batch`,
 `GraphicsWebGLRenderer` and `renderWebGLStep`. AH-0MW508JS2004W3SR records the
 after half against these numbers.
+
+### After: shared silhouette palette, one texture atlas (AH-0MW508JS2004W3SR)
+
+**`Recorded:`** commit `57125ac1` (game code; this documentation change touches
+no game code) · 2026-11-06 · desktop browser (headless Chromium 140.0.7339.186)
+on the **NVIDIA RTX 3050 Ti through ANGLE-Vulkan** · CPU throttle 1× ·
+AH-0MW508JS2004W3SR.
+
+The tree measured here is the one the batched-asteroid change landed on
+(AH-0MW5088LA007XYQM, commit `57125ac1`): every asteroid draws as a plain
+`Phaser.GameObjects.Image` on one of **10 silhouettes per size tier**, all baked
+once into the **single** `asteroid-atlas-v1` texture
+(`src/utils/asteroidTextures.ts`), so 200 rocks share one texture bind instead
+of owning 200 distinct textures, and an asteroid field never touches the
+64-texture `enemy-body-` bake budget. The before half above is the same scene on
+the pre-change tree, so the pair isolates exactly that rendering change. Command
+— the before command with the after filenames:
+
+```bash
+npm run perf:measure -- --gpu --require-hardware-webgl --scene GymAsteroidStress \
+  --seconds 60 --warmup 3 --profile perf-output/asteroid-after.cpuprofile \
+  --out perf-output/asteroid-after.json
+```
+
+Run 2 repeats the same command without `--profile` and writes
+`perf-output/asteroid-after-2.json`, as the before half's run 2 did.
+
+**Backend, exactly as recorded in the reports.** Both reports carry
+`webgl.kind: "hardware"` and the renderer string
+`ANGLE (NVIDIA, Vulkan 1.4.329 (NVIDIA NVIDIA GeForce RTX 3050 Ti Laptop GPU (0x000025A0)), NVIDIA)`;
+`runtime` is `{ kind: "browser", chromeVersion: "140.0.7339.186" }`. Host block
+(`host` in both reports): AMD Ryzen 7 4800H with Radeon Graphics, 16 logical
+CPUs, 30 223 MB memory, Linux 7.0.0-38-generic, Node v22.22.1 — the same
+reference host as the before half. Host load is recorded per row (4.58 and
+3.69), both inside the quiet band the [noise floor](#noise-floor) describes.
+
+| Run | Host load | p50 (ms) | p95 (ms) | max (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms | Enemies peak/mean | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 (profiled) | 4.58 | **16.7** | **16.7** | 16.8 | 16.666 | **60.00** | 0 (0 %) | 0 (0 %) | 212 / 212 | 39 / 18.28 |
+| 2 | 3.69 | **16.7** | **16.8** | 16.8 | 16.666 | **60.00** | 0 (0 %) | 0 (0 %) | 212 / 212 | 41 / 18.85 |
+
+Counts (`counts` in the reports, sampled every 250 ms, 236 samples per run):
+`enemies` is exactly **212** in peak *and* mean in both runs — the 200 rocks plus
+the 12 firing enemies, the same fixed load the before half measured, so the pair
+compares the same field. Player bullets are 0 by design (the gym disables the
+player's auto-fire); minerals are peak 1 / mean 0.96 in run 1 and 0 / 0 in
+run 2, i.e. the same handful of salvage drops, not a field.
+
+CPU attribution over the profiled window (run 1, 60 s, 54 793 samples, share of
+the measured window, %):
+
+| JS | simulation | renderer | ui | audio | gc | idle | native | other |
+|---|---|---|---|---|---|---|---|---|
+| 9.45 | 1.72 | **7.61** | 0.08 | 0.03 | 0.11 | 87.31 | 3.13 | 0.01 |
+
+**The pair** — same host, scene, window, warm-up and throttle in every row:
+
+| Measure | Before (AH-0MW507VYG009SFR5) | After (this item) | Change |
+|---|---|---|---|
+| Effective FPS | 60.00 / 60.00 | 60.00 / 60.00 | none (both at the vsync step) |
+| p50 / p95 (ms) | 16.7 / 16.7 in both runs | 16.7 / 16.7 (run 1), 16.7 / 16.8 (run 2) | none measurable |
+| Frames > 33 ms | 0 / 0 | 0 / 0 | none |
+| Enemies peak/mean | 212 / 212 | 212 / 212 | identical load |
+| Main-thread JS | 11.15 % | **9.45 %** | **− 1.70 pp (− 15.2 %)** |
+| `renderer` bucket | 9.34 % | **7.61 %** | **− 1.73 pp (− 18.5 %)** |
+| `simulation` bucket | 1.66 % | 1.72 % | + 0.06 pp (noise) |
+| `idle` | 85.44 % | 87.31 % | + 1.87 pp |
+| `native` | 3.20 % | 3.13 % | − 0.07 pp |
+
+The draw-submission symbols the batched path targets (self time and share of
+the measured window; the before column is the recorded one, the after column is
+this run's top-entries):
+
+| Symbol | Source | Before | After | Change |
+|---|---|---|---|---|
+| `GraphicsWebGLRenderer` | Phaser (Graphics pipeline) | 588.4 ms / 0.97 % | 333.6 ms / 0.55 % | **− 43 %** |
+| `batch` (both entries summed after) | Phaser (batch submission) | 628.3 ms / 1.04 % | 182.2 ms / 0.30 % | **− 71 %** |
+| `renderWebGLStep` | Phaser (render step) | 564.5 ms / 0.93 % | 545.4 ms / 0.90 % | − 3 % (noise) |
+| `ContainerWebGLRenderer` | Phaser (container render) | 987.0 ms / 1.63 % | 1167.6 ms / 1.93 % | **+ 18 % — did not fall** |
+
+The after profile's top rows also carry the cheap sprite path the atlas feeds —
+`ImageWebGLRenderer` 129.6 ms / 0.21 % with its matrix helper `GetCalcMatrix`
+130.0 ms / 0.22 % — plus three Graphics render-node `run` entries (0.58 %,
+0.40 %, 0.30 %): the residual per-frame Graphics work is the player ship, muzzle
+flashes and the shield/force-field bubbles, not asteroid bodies. The hottest
+project functions are unchanged and small — `GymFormationScene.tick` 0.40 %,
+`CombatScene._handleCollisions` 0.12 % — so the frame is still not
+simulation-bound.
+
+**Read the numbers this way:**
+
+- **The frame time is identical because both halves sit on the vsync step.**
+  200 rocks + 12 firing enemies hold p50 = 16.7 ms, 60.00 effective FPS and zero
+  long frames before *and* after; the after run's p95 is 16.7 ms in run 1 and
+  16.8 ms (one vsync quantum) in run 2. A hardware GPU at 60 Hz absorbs the
+  saved main-thread time, so the change is read from the attribution below, not
+  from p50/p95 — exactly as the before half predicted.
+- **The cost the change targeted fell measurably.** The `renderer` bucket is
+  **18.5 % smaller** (9.34 % → 7.61 %) and main-thread JS 15.2 % smaller, with
+  the freed 1.87 pp of the window going to `idle`. Inside the bucket the two
+  symbols that *were* the per-rock path collapsed: `GraphicsWebGLRenderer`
+  − 43 % (the per-frame `Graphics` fallback the 64-texture cap used to force) and
+  `batch` − 71 % (200 separate texture submissions became one atlas bind).
+- **`ContainerWebGLRenderer` did not fall, and that is recorded rather than
+  claimed away.** Asteroids are still `Phaser.GameObjects.Container`s and are
+  still walked one by one every frame (212 of them); the change shares one
+  texture, it does not remove the per-rock container. It is now the largest
+  single renderer entry and the remaining measured draw-submission cost — the
+  exact shape of work that Option B (true GPU instancing, which bypasses the
+  container render path entirely) would remove.
+- **The load is the gym's deterministic one.** 212 = 200 rocks + 12 enemies in
+  every sample of both runs, identical to the before half, so the pair compares
+  the same field.
+
+**Verdict (AC3, and the AC4 trigger).** On the reference hardware-GPU desktop
+the asteroid field **meets the 60 FPS budget with the batched renderer in
+place**: 200 rocks + 12 firing enemies run at 60.00 effective FPS / p50 16.7 ms
+with zero frames over 33 ms, and the **minimal gate — no regression at the same
+asteroid count — is met** (p50/p95, effective FPS, long-frame counts and the
+212-rock load are all unchanged against the before half). The formal
+`p95 ≤ 16.7 ms` bar is met in run 1 and missed by one vsync quantum (16.8 ms) in
+run 2, the same quantised-vsync caveat the Electron desktop row records; no
+frame-time win is claimed on this host, because there is none to claim.
+
+What is claimed is the measured cost reduction: **`renderer` 9.34 % → 7.61 %
+(− 18.5 %), main-thread JS 11.15 % → 9.45 % (− 15.2 %)**, with the per-rock
+Graphics/batch submission path down 43 % / 71 % and 200 unique textures replaced
+by one atlas. **AC4 is therefore not triggered:** neither the frame-time target
+nor the no-regression gate is missed, so no Option B (true GPU instancing)
+follow-up is filed. The measured remainder that would justify it —
+`ContainerWebGLRenderer` 1.93 %, the per-rock container walk that did not fall —
+is recorded here so a future scenario that regresses the budget can escalate
+with evidence rather than an assumption.
 
 ## Ranked hotspots
 
