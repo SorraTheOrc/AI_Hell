@@ -79,8 +79,9 @@ export function isDevTelemetryBuild(env: DevModeEnv = import.meta.env): boolean 
  * upload path in production.
  *
  * The runtime gate ({@link isDevTelemetryUploadEnabled}) still decides
- * whether an actual upload happens at run end; this loader only decides
- * whether the uploader exists in the build.
+ * whether an actual upload happens (the streamed parts during the run and the
+ * final part at run end); this loader only decides whether the uploader exists
+ * in the build.
  *
  * @returns The uploader in a dev build; `undefined` in a production build.
  */

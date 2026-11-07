@@ -15,8 +15,9 @@
  *   ({@link createMemoryLineWriter}); it never touches browser storage, so a
  *   long run can neither exhaust the origin's storage quota nor break
  *   unrelated writes such as saving settings (AH-0MVIRYGD1000JVY3). The
- *   buffer is read back directly for the run-end upload and by the dev CLI
- *   tooling (`window.__aiHellTelemetry`), and is reset when a run starts.
+ *   buffer is read back directly for the streamed parts and the run-end final
+ *   part, and by the dev CLI tooling (`window.__aiHellTelemetry`), and is
+ *   reset when a run starts.
  * - {@link RemoteTelemetrySink} — the production sink. It forwards batches
  *   to an injected transport; {@link createTelemetrySink} wires an HTTP
  *   transport automatically when an endpoint is configured, otherwise the
@@ -61,9 +62,9 @@ export interface TelemetrySink {
  * The argument is **only that batch's** newline-delimited JSON — never the
  * whole buffer — so a consumer (the dev streaming uploader) can send the
  * delta it has not confirmed yet while the sink's buffer keeps accumulating
- * for the CLI tooling and the run-end upload. The observer is invoked after
- * the lines are appended, so a failure in the sink cannot lose the batch and
- * the buffer is never cleared here.
+ * for the CLI tooling and the run-end final part. The observer is invoked
+ * after the lines are appended, so a failure in the sink cannot lose the batch
+ * and the buffer is never cleared here.
  */
 export type TelemetryBatchObserver = (deltaNdjson: string) => void;
 
@@ -100,7 +101,8 @@ export interface TelemetryLineBuffer extends TelemetryLineWriter {
  * `localStorage` writer grew without bound until the origin quota filled,
  * after which every unrelated `setItem` — including saving settings — threw
  * `QuotaExceededError`. The buffer is read straight from memory for the
- * run-end upload and the dev CLI tooling, and reset when a run starts.
+ * streamed parts, the run-end final part and the dev CLI tooling, and reset
+ * when a run starts.
  */
 export function createMemoryLineWriter(): TelemetryLineBuffer & { readonly lines: string[] } {
   const lines: string[] = [];
@@ -167,7 +169,7 @@ export class JsonlTelemetrySink implements TelemetrySink {
    * delta to the post-flush observer.
    *
    * The observer runs **after** the append and never clears or rewrites the
-   * buffer: every record stays readable for the run-end upload and the dev
+   * buffer: every record stays readable for the run-end final part and the dev
    * CLI tooling. An observer that throws propagates to the caller, which is
    * the recorder's already-isolated sink write (it counts a failed batch
    * rather than stalling gameplay).

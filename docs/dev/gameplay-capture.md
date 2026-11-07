@@ -980,8 +980,8 @@ and the page retains only a bounded prefix, so node and page memory are
 [Streaming the recording to disk](#streaming-the-recording-to-disk-bounded-chunk-sink)
 and the budget table in
 [Long-run memory budget](#long-run-memory-budget-and-failure-salvage)). The
-measured budget on a 420 s `--diagnostics` soak (run-end telemetry capped;
-provenance in the table) was:
+measured budget on a 420 s `--diagnostics` soak (dev telemetry parts and the
+run-end final part capped; provenance in the table) was:
 
 - **Node process:** peak RSS **~411 MiB** on a 420 s clip — under the
   documented < 512 MiB target — with the recorder buffer contributing at most
@@ -1158,7 +1158,7 @@ grew — not to raise the number.
 | Node recorder buffer | **O(one chunk)** — decoded, written and dropped per chunk | 401 chunks, **max 253 KiB** (base64 payload total 48.1 MiB) |
 | Page-side retained Blobs | `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` = **32 MiB** prefix | heap used **95 MiB** / total **148 MiB** at clip end, backing 73 MiB |
 | Single recorder chunk | `MAX_CAPTURE_CHUNK_BYTES` = **16 MiB** (page slices above it) | max 253 KiB — ~0.05 % of V8's 512 MiB string limit |
-| Single CDP message | run-end telemetry upload capped at **8 MiB** | **4.63 MiB** largest message, `transport.overflow` empty |
+| Single CDP message | each dev telemetry part (one flushed batch) and the run-end final part capped at **8 MiB** | **4.63 MiB** largest message, `transport.overflow` empty |
 | Clip on disk | one WebM per clip, ≈8 Mbps | **37.8 MB** for 420 s |
 
 Provenance: the soak was a fixed-length 420 s clip (`--duration 420000`)
@@ -1166,7 +1166,8 @@ recorded with `--diagnostics` on the committed fix; the raw artefact is the
 run's `<stem>.diagnostics.json` (per-chunk size timeline, RSS samples, page
 heap, transport tap). The pre-fix comparison comes from the diagnosis runs
 recorded in AH-0MVNT25JI004OVKQ — a 226 s full run peaked at **531 MiB RSS**
-with a single **59.5 MiB** CDP message (the run-end telemetry upload) and a
+with a single **59.5 MiB** CDP message (the whole-run telemetry upload, which
+only existed before streaming) and a
 420 s clip at **416 MiB RSS** with a **14.7 MB** message — i.e. node RSS and
 page heap both tracked run length and telemetry density, which is exactly what
 the streaming sink, the 32 MiB prefix budget and the upload cap remove. The
@@ -1316,23 +1317,31 @@ The remux itself lives in `scripts/capture-seekable.mjs`
 `scripts/capture-seekable.test.ts` and the real-binary verification is
 `scripts/capture-seekable.e2e.test.ts` (`/skill:test --type e2e`).
 
-### Run-end telemetry upload cap
+### Dev telemetry upload cap (streamed parts and the run-end final part)
 
 A capture leaves the page's dev telemetry upload **on** (the action-intensity
-series and join anchor are read from the same in-memory buffer), so at run end
-the page POSTs the whole run's telemetry to `POST /api/telemetry/upload`. That
-body is reported by Playwright as `request.postData` inside a **single**
-`Network.requestWillBeSent` CDP message, so its size is the size of one
-page→node message and grows with the run — which is what killed long captures
-with `ERR_STRING_TOO_LONG` (diagnosed in AH-0MVNT25JI004OVKQ, fixed in
-AH-0MVNVGP55002G0KH).
+series and join anchor are read from the same in-memory buffer). The run is now
+**streamed** to `POST /api/telemetry/upload` while it is being captured — one
+**part** per flushed batch, each carrying only the records the dev server has
+not confirmed yet — and a **final part** at run end completes it
+(AH-0MW6NI6BW003RJWH / AH-0MW6NJ3VU0038JHZ, parent AH-0MVJUAADW0033QBD).
 
-The uploader therefore applies a **client-side cap** before `fetch`:
+That bounds the page→node message on the capture path: Playwright reports each
+request body as `request.postData` inside a single
+`Network.requestWillBeSent` CDP message, so a part's size is one message's
+size. A mid-run part is at most one flushed batch (tens of KB) and cannot grow
+with the run — which is the class that killed long captures with
+`ERR_STRING_TOO_LONG` before streaming (diagnosed in AH-0MVNT25JI004OVKQ,
+fixed in AH-0MVNVGP55002G0KH).
+
+After an outage the run-end final part carries the whole unconfirmed tail as
+one request, so it keeps the **client-side cap** applied before `fetch`:
 `DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES` = **8 MiB**
-(`src/telemetry/devUpload.ts`). A run whose upload message would exceed the cap
+(`src/telemetry/devUpload.ts`). A final part whose message would exceed the cap
 is **not uploaded** — it is skipped with one actionable line in the page
-console — while the capture artefacts are unaffected: `.action.jsonl` /
-`.capture.json` are read from the page's in-memory buffer, not from the upload.
+console (`[telemetry] run-end upload skipped: …`) — while the capture artefacts
+are unaffected: `.action.jsonl` / `.capture.json` are read from the page's
+in-memory buffer, not from the upload.
 `VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES` configures the cap (positive integer
 bytes, clamped to the server's 16 MiB bound), e.g.
 `VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES=4194304 npm run capture`.
@@ -1340,9 +1349,21 @@ bytes, clamped to the server's 16 MiB bound), e.g.
 The cap is metered on the **message**, not the raw telemetry: the body reaches
 Playwright as an escaped JSON string inside the CDP message, so real NDJSON
 inflates by ~2.4× (a 4.0 MiB body produced a **9.7 MiB** message). An 8 MiB cap
-therefore allows roughly 3 MiB of telemetry per upload — a normal demo run
-(0.67 MiB) still uploads, while a 420 s capture's 4.0 MiB run is skipped rather
-than shipped as one oversized message.
+therefore allows roughly 3 MiB of telemetry per request — a normal demo run
+(0.67 MiB) still finalises, while a 420 s capture that had buffered its whole
+4.0 MiB run for one final part is skipped rather than shipped as one oversized
+message.
+
+**What a capture keeps.** The page buffer is never cleared by streaming (only
+the upload watermark advances), so `window.__aiHellTelemetry.read()` still
+returns the full run and the capture's own reads are unchanged. A part is
+staged at `recordings/parts/<runKey>.jsonl`, deliberately outside the
+`session-*.jsonl` glob the CLI tooling matches, so a capture in progress is
+never mistaken for a finished recording; only the final part writes
+`recordings/session-<timestamp>.jsonl` and enqueues the one automatic
+evaluation. A capture whose page dies before its final part leaves that partial
+— valid NDJSON, inspectable with `npm run telemetry:inspect -- <partial>` and
+evaluable by hand — but it is not auto-evaluated.
 
 To confirm the bound on a real long run, add `--diagnostics` and check
 `transport.maxMessageBytes` in `<stem>.diagnostics.json`. The same
@@ -1351,7 +1372,7 @@ back for the series export, so that read is **chunked** too
 (`readDevTelemetryBufferInChunks`, ≤ `TELEMETRY_READ_CHUNK_CHARS` = 2 Mi chars
 per slice) — no single page→node message on the capture path grows with the
 run. Measured on a 420 s `--diagnostics` soak (AH-0MVNVGP55002G0KH):
-`transport.maxMessageBytes` fell from **37.9 MiB** pre-fix (the run-end
+`transport.maxMessageBytes` fell from **37.9 MiB** pre-fix (the whole run's
 upload delivered as one message) to **4.63 MiB** post-fix — the largest
 message left on the path is a single chunked telemetry read, comfortably under
 the 8 MiB cap — with `transport.overflow` empty and no transport error.

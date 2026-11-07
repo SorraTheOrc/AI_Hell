@@ -2,9 +2,11 @@
  * Dev-only telemetry upload middleware (AH-0MVBMRNAH001B8X4 — parent
  * AH-0MVBHRLY8004BGDN).
  *
- * The server half of the dev-mode auto-upload flow: the game's
- * `src/telemetry/devUpload.ts` uploader POSTs the local JSONL sink's content
- * to this endpoint at run end, and this middleware validates it against the
+ * The server half of the dev-mode auto-upload flow: the game streams each
+ * flushed telemetry batch to this endpoint during the run and sends a final
+ * part at run end (`src/telemetry/devStream.ts`), or — when no streamer is
+ * installed — POSTs the local JSONL sink's whole content at run end
+ * (`src/telemetry/devUpload.ts`). This middleware validates it against the
  * existing recording reader (`scripts/recording.mjs`) and stores it under
  * `recordings/session-<timestamp>.jsonl` — mirroring the `configCsvPlugin`
  * pattern and the `record-session.mjs` naming.

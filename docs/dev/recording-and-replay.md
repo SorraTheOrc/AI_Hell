@@ -66,38 +66,57 @@ npm run record -- --bot --seed 12345 --output recordings/bot.jsonl
 npm run replay  -- recordings/human.jsonl --bot-file recordings/bot.jsonl --svg ghost.svg
 ```
 
-### Automatic dev-mode upload and automatic evaluation at run end
+### Automatic dev-mode streaming upload and automatic evaluation
 
 > Landed in **Dev-mode telemetry upload to dev server with automatic evaluation**
-> (AH-0MVBHRLY8004BGDN; docs slice AH-0MVBMRR4R004UOLH). See
-> [../TELEMETRY.md#dev-mode-auto-upload-and-automatic-evaluation-dev-builds-only](../TELEMETRY.md)
+> (AH-0MVBHRLY8004BGDN; docs slice AH-0MVBMRR4R004UOLH) and extended by the
+> **streaming part protocol** (AH-0MVJUAADW0033QBD, children
+> AH-0MW6NFRQR0062D90 / AH-0MW6NI6BW003RJWH / AH-0MW6NJ3VU0038JHZ; docs slice
+> AH-0MW6NNRJ0009FRTO). See
+> [../TELEMETRY.md#streaming-upload-during-the-run-the-part-protocol](../TELEMETRY.md#streaming-upload-during-the-run-the-part-protocol)
 > for the full contract.
 
 A **stock** `npm run dev` (no `VITE_TELEMETRY_*` variables) is enough for the
 recording + evaluation loop: the game collects the run into the local JSONL
 sink by default (Settings → **Share with dev server: ON**, see
-[../TELEMETRY.md](../TELEMETRY.md)) and at run end POSTs the sink content to the
-dev server's `POST /api/telemetry/upload`. The dev-only middleware
-(`vite/plugins/telemetryUploadPlugin.ts`) validates the body against the
-recording reader, stores it as a collision-safe `recordings/session-<timestamp>.jsonl`,
-then runs the existing `--human` evaluation as a background, serialised child
-process:
+[../TELEMETRY.md](../TELEMETRY.md)) and **streams** it to the dev server's
+`POST /api/telemetry/upload` while the run is in progress — one request (one
+**part**) per flushed batch, each carrying only the records the server has not
+confirmed yet. At run end the game sends a **final part**; the dev-only
+middleware (`vite/plugins/telemetryUploadPlugin.ts`) then stores the run as a
+collision-safe `recordings/session-<timestamp>.jsonl` and runs the existing
+`--human` evaluation as a background, serialised child process:
 
 ```
-recordings/session-<timestamp>.jsonl
-                      └→ eval-output/uploaded/<session-stamp>/
-                           ├── evaluation.log          (child stdout/stderr, summary)
-                           ├── human-balance-report.json
-                           ├── comparison.json         (same-seed human vs bot)
-                           └── ghost.svg
+recordings/parts/<runKey>.jsonl        (staged during the run)
+                      └→ recordings/session-<timestamp>.jsonl   (on the final part)
+                           └→ eval-output/uploaded/<session-stamp>/
+                                ├── evaluation.log    (child stdout/stderr, summary)
+                                ├── human-balance-report.json
+                                ├── comparison.json   (same-seed human vs bot)
+                                └── ghost.svg
 ```
 
-The upload and the evaluation are fire-and-forget: run end, the upload response
-and the dev server never block on them, and the local sink is left intact so the
-`npm run record` / `npm run telemetry:inspect` / `npm run replay` flows above
-keep working. Turning the setting off stops both collection and upload. None of
-this is reachable from a production build — see the TELEMETRY docs section
-linked above.
+What this means for the recording flows in this document:
+
+- **The page buffer is never cleared mid-run.** Streaming advances an upload
+  watermark only; the sink keeps every record, so
+  `window.__aiHellTelemetry.read()` still returns the **full run** after run
+  end. `npm run record`, `npm run capture` and `npm run telemetry:inspect`
+  therefore behave exactly as before (AC3).
+- **Parts stay off the `session-*.jsonl` glob.** A run in progress lives in
+  `recordings/parts/<runKey>.jsonl`, so it can never be mistaken for a finished
+  recording. The `session-*.jsonl` name is written once, on finalisation, and
+  exactly one evaluation is enqueued per completed run.
+- **A crashed run leaves a usable partial.** A page reload/crash before the
+  final part leaves `recordings/parts/<runKey>.jsonl` — valid NDJSON, readable
+  with `npm run telemetry:inspect -- recordings/parts/<runKey>.jsonl` and
+  evaluable with `node scripts/evaluate.mjs --human <that file>`, but **not**
+  auto-evaluated (evaluation belongs to complete runs).
+- **Fire-and-forget.** The upload and the evaluation never block the dev
+  server or run end, and turning the setting off stops both collection and
+  upload (zero part requests). None of this is reachable from a production
+  build — see the TELEMETRY docs section linked above.
 
 ## 2. Dataset format and versioning (AC4)
 

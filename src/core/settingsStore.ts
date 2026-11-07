@@ -73,7 +73,8 @@ export const DEFAULT_SETTINGS: SettingsRecord = {
   sfxMuted: false,
   bindings: { ...DEFAULT_BINDINGS },
   // Dev-mode telemetry sharing is on by default: a stock `npm run dev`
-  // collects and uploads at run end unless the player opts out. The value is
+  // collects the run and streams it to the dev server while it is played
+  // (with a final part at run end) unless the player opts out. The value is
   // inert in a production build (see `src/telemetry/devMode.ts`).
   shareTelemetryDev: true,
   // Today's shipped behaviour (AH-0MUFE1N36007X48T) is the per-player

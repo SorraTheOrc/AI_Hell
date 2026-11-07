@@ -2,10 +2,16 @@
  * Game-side dev telemetry uploader (AH-0MVBMRK6X0069QDI, parent
  * AH-0MVBHRLY8004BGDN).
  *
- * The game half of the dev-mode auto-upload flow: at run end the run's
- * in-memory telemetry buffer holds the recording (see `sinks.ts` /
+ * The **whole-file** half of the dev-mode auto-upload flow: at run end the
+ * run's in-memory telemetry buffer holds the whole recording (see `sinks.ts` /
  * `isDevTelemetryCollectionEnabled`), and this module delivers that content to
- * the dev server the page was served from. The server side — the Vite
+ * the dev server the page was served from in one request.
+ *
+ * It is the fallback delivery path — used when the dev streaming uploader
+ * (`src/telemetry/devStream.ts`) could not be loaded — and it owns the pieces
+ * the streaming sender shares: the endpoint, the body content type, the 8 MiB
+ * CDP-message cap (`checkDevUploadSize` / `devUploadMessageBytes`) and the
+ * actionable over-cap skip line. The server side — the Vite
  * `POST /api/telemetry/upload` middleware — is a separate child (F5).
  *
  * Design constraints, all pinned by `devUpload.test.ts`:
