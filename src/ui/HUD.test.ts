@@ -478,36 +478,36 @@ describe('HUD pickup-row states for the budget kinds (AH-0MVVD8S4J007L8KX)', () 
   }
 });
 
-describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', () => {
-  it('shows a finite charge count in the label and a countdown while the pickup window is open', async () => {
+describe('HUD P6 auto-activation readiness display (parent AH-0MW6O1690007P2SL)', () => {
+  it('shows the single-use readiness state and a countdown while the pickup window is open', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('phase_shift'); // level 1 → +1 charge
-    reg.applyCollect('phase_shift'); // level 2 → +2 (level-derived grant)
+    reg.applyCollect('phase_shift'); // level 1 → one ready activation
+    reg.applyCollect('phase_shift'); // level 2 → still one ready activation
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
     const row = hud.getRows().find((r) => r.id === 'phase_shift')!;
-    expect(row.label).toBe(`Phase Shift Lvl 2 ×${reg.phaseCharges()}`);
+    // Single-use: no stored count — the row reads `(ready)`.
+    expect(row.label).toBe('Phase Shift Lvl 2 (ready)');
+    expect(row.stacks).toBeUndefined();
     // A field pickup now opens a temporary level window, so the value is a
     // countdown — not the infinity glyph (AH-0MVUGI448000GNMJ).
     expect(row.temporary).toBe(true);
     expect(row.value).toMatch(/s$/);
 
-    // Once the window expires the level is settled for the run and the value
-    // reverts to ∞, with the charge count still shown.
+    // Once the window expires the pickup-only readiness ends with it, so the
+    // row disappears (a permanent ownership would keep it).
     reg.tick(reg.powerUpTemporaryRemaining('phase_shift')! + 0.1);
     hud.refresh();
-    const settled = hud.getRows().find((r) => r.id === 'phase_shift')!;
-    expect(settled.temporary).toBe(false);
-    expect(settled.value).toBe(PERMANENT_VALUE);
+    expect(hud.getRows().find((r) => r.id === 'phase_shift')).toBeUndefined();
     destroy(game);
   });
 
-  it('merges the active phase timer and the charge count into one row', async () => {
+  it('merges the active phase timer and the readiness countdown into one row', async () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift');
     reg.applyCollect('phase_shift');
-    reg.updateDanger(true, 0.016); // consumes one charge, activates the phase
+    reg.updateDanger(true, 0.016); // spends the activation, starts the recharge
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
@@ -515,24 +515,25 @@ describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', (
     expect(rows).toHaveLength(1);
     expect(rows[0].temporary).toBe(true);
     expect(rows[0].value).toMatch(/s$/);
-    expect(rows[0].label).toBe(`Phase Shift Lvl 2 ×${reg.phaseCharges()}`);
+    expect(rows[0].label).toContain('(next in ');
+    expect(rows[0].stacks).toBeUndefined();
     destroy(game);
   });
 
   it(
-    'shows the permanent reward as a finite recharging pool (×N), not unlimited',
+    'shows the permanent reward as a single-use readiness state, not an unlimited supply',
     async () => {
       const store = new PowerUpLevelStore();
       const reg = new EffectsRegistry(store);
-      store.collect('phase_shift', true); // hold-full: owned + 1 charge
+      store.collect('phase_shift', true); // hold-full: owned + one ready activation
       const { game, hud } = await bootWithHUD(reg);
       hud.refresh();
       const p6 = hud.getRows().find((r) => r.id === 'phase_shift')!;
-      // The finite pool count is surfaced (previously the permanent reward
-      // implied an unlimited supply and showed no count).
-      expect(p6.label).toBe('Phase Shift Lvl 1 ×1');
+      // Single-use readiness — never a stored count.
+      expect(p6.label).toBe('Phase Shift Lvl 1 (ready)');
+      expect(p6.stacks).toBeUndefined();
       // `∞` still means the level is permanent for the run (GDD §4.5), not
-      // an unlimited charge supply.
+      // an unlimited activation supply.
       expect(p6.value).toBe(PERMANENT_VALUE);
       destroy(game);
     },
@@ -642,10 +643,10 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
   );
 
   it(
-    'surfaces the recharge-aware finite count (×N) and restores it after a recharge',
+    'surfaces readiness rather than a count, and restores it after a recharge',
     async () => {
       const { store, reg } = storeRegistry();
-      store.collect('phase_shift', true); // ×1
+      store.collect('phase_shift', true); // single-use: ready, never ×1
       store.collect('teleport', true); // single-use: ready, never ×1
       const { game, hud } = await bootWithHUD(reg);
       hud.refresh();
@@ -653,26 +654,24 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
       const phase = () => hud.getRows().find((r) => r.id === 'phase_shift');
       const tele = () => hud.getRows().find((r) => r.id === 'teleport');
 
-      // The finite pool count is surfaced (the permanent Phase Shift reward
-      // is no longer an unlimited supply). Teleport is single-use, so it
-      // carries no count — only its readiness (parent AH-0MVY096RT006QMF4).
-      expect(phase()!.label).toBe('Phase Shift Lvl 1 ×1');
+      // Both single-use kinds surface readiness only — no stored count.
+      expect(phase()!.label).toBe('Phase Shift Lvl 1 (ready)');
+      expect(phase()!.stacks).toBeUndefined();
       expect(tele()!.label).toBe('Teleport Lvl 1 (ready)');
       expect(tele()!.stacks).toBeUndefined();
 
-      // Spending empties the Phase Shift pool and starts the Teleport
-      // recharge, so both rows grey out…
+      // Spending starts each one's recharge, so both rows grey out…
       store.consumePhaseCharge();
       store.consumeTeleport();
       hud.refresh();
       expect(rowGreyed(phase())).toBe(true);
       expect(rowGreyed(tele())).toBe(true);
 
-      // …and a completed recharge returns the charge / the ready warp.
+      // …and a completed recharge restores the ready state.
       store.tickRecharge(store.phaseRechargeTime());
       store.tickRecharge(store.teleportRechargeTime());
       hud.refresh();
-      expect(phase()!.label).toBe('Phase Shift Lvl 1 ×1');
+      expect(phase()!.label).toBe('Phase Shift Lvl 1 (ready)');
       expect(tele()!.label).toBe('Teleport Lvl 1 (ready)');
       expect(tele()!.recharge).toBeUndefined();
       expect(rowGreyed(phase())).toBe(false);
@@ -1483,9 +1482,9 @@ describe('HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49)', () => {
           'heavy_slug',
           'mortar',
           'mystery_ufo',
-          'phase_shift',
           'rear_guard',
           'salvage',
+          'shield',
           'spread',
         ].sort(),
       );
@@ -1498,11 +1497,11 @@ describe('HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49)', () => {
       expect(counted.length).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
 
       // Non-slot rows are excluded whatever their reason: the exempt Mystery
-      // UFO, the residual Phase Shift charge pool, and the exempt Extra Life,
+      // UFO, the residual Shield charge pool, and the exempt Extra Life,
       // which is held but has no row at all.
       expect(rows.filter((row) => !row.slotCounted).map((row) => row.id).sort()).toEqual([
         'mystery_ufo',
-        'phase_shift',
+        'shield',
       ]);
       expect(state.heldIds.has('extra_life')).toBe(true);
       expect(rows.map((row) => row.id)).not.toContain('extra_life');
@@ -1560,8 +1559,8 @@ describe('HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49)', () => {
 
     // The exempt Mystery UFO is always available, never a slot holder (Q7a).
     expect(markerOf('mystery_ufo')).toBe(SLOT_MARKER_ALWAYS_AVAILABLE);
-    // The Phase Shift row survives its expired window on charges alone.
-    expect(markerOf('phase_shift')).toBe(SLOT_MARKER_CHARGES_ONLY);
+    // The Shield row survives its expired window on its charge alone.
+    expect(markerOf('shield')).toBe(SLOT_MARKER_CHARGES_ONLY);
     // Slot-counted kinds carry no marker: they are the loadout.
     for (const row of rows.filter((candidate) => candidate.slotCounted)) {
       expect(row.marker).toBeUndefined();
@@ -1824,11 +1823,12 @@ describe('HUD single-use Teleport row (AH-0MW231O8Q0095LQM)', () => {
 
 describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
   /**
-   * The five **pool-backed** consumables. Teleport is single-use (parent
-   * AH-0MVY096RT006QMF4) and has its own readiness-row coverage above.
+   * The four **pool-backed** consumables. Phase Shift and Teleport are
+   * single-use (parent AH-0MW6O1690007P2SL / AH-0MVY096RT006QMF4) and have
+   * their own readiness-row coverage above.
    */
   const POOLED_CONSUMABLE_IDS = CONSUMABLE_POWER_UP_IDS.filter(
-    (id) => id !== 'teleport',
+    (id) => id !== 'teleport' && id !== 'phase_shift',
   );
   /** The row for `id`, or `undefined` when the HUD renders none. */
   function rowFor(hud: HUD, id: string): HUDEntry | undefined {
@@ -2111,7 +2111,7 @@ function arcSweep(arc: ArcCommand): number {
   return Math.abs(arc.endAngle - arc.startAngle) / (Math.PI * 2);
 }
 
-/** A registry with a permanently-owned consumable holding one spent charge. */
+/** A registry with a permanently-owned pooled consumable holding one spent charge. */
 function rechargingConsumable(): {
   store: PowerUpLevelStore;
   reg: EffectsRegistry;
@@ -2119,9 +2119,9 @@ function rechargingConsumable(): {
 } {
   const store = new PowerUpLevelStore();
   const reg = new EffectsRegistry(store);
-  reg.applyCollect('phase_shift', true); // hold-full: owned, one charge
-  expect(reg.tryConsumeConsumableCharge('phase_shift')).toBe(true);
-  return { store, reg, total: store.consumableRechargeTime('phase_shift') };
+  reg.applyCollect('force_field', true); // hold-full: owned, one charge spent
+  expect(reg.tryConsumeConsumableCharge('force_field')).toBe(true);
+  return { store, reg, total: store.consumableRechargeTime('force_field') };
 }
 
 /** A registry with a permanent Orbital Strike cadence counting down. */
@@ -2142,7 +2142,7 @@ describe('AH-0MW2AVRNL008F9FX AC1: the row model reports each countdown fraction
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
-    const row = hud.getRows().find((entry) => entry.id === 'phase_shift')!;
+    const row = hud.getRows().find((entry) => entry.id === 'force_field')!;
     expect(row.recharge).toBeCloseTo(total * 0.75, 6);
     expect(row.countdown).toBeCloseTo(0.25, 6);
     destroy(game);
@@ -2153,14 +2153,14 @@ describe('AH-0MW2AVRNL008F9FX AC1: the row model reports each countdown fraction
     // A second charge is spent later, so it returns later; the ring must show
     // the soonest — the very timer the `next in Ns` label reports.
     store.tickRecharge(total / 2);
-    reg.applyCollect('phase_shift', true); // one more charge…
-    expect(reg.tryConsumeConsumableCharge('phase_shift')).toBe(true); // …spent now
+    reg.applyCollect('force_field', true); // one more charge…
+    expect(reg.tryConsumeConsumableCharge('force_field')).toBe(true); // …spent now
     store.tickRecharge(total / 4);
 
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
-    const row = hud.getRows().find((entry) => entry.id === 'phase_shift')!;
+    const row = hud.getRows().find((entry) => entry.id === 'force_field')!;
     expect(row.recharge).toBeCloseTo(total * 0.25, 6);
     expect(row.countdown).toBeCloseTo(0.75, 6);
     destroy(game);
@@ -2321,7 +2321,7 @@ describe('AH-0MW2AVRNL008F9FX AC3: per-state coverage for all four countdown sou
     const sample = () => {
       hud.refresh();
       fractions.push(
-        hud.getRows().find((entry) => entry.id === 'phase_shift')!.countdown!,
+        hud.getRows().find((entry) => entry.id === 'force_field')!.countdown!,
       );
     };
 
@@ -2500,7 +2500,7 @@ describe('AH-0MW2AVRNL008F9FX AC5: layout invariants', () => {
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
-    const row = hud.getRows().find((entry) => entry.id === 'phase_shift')!;
+    const row = hud.getRows().find((entry) => entry.id === 'force_field')!;
     expect(row.greyed).toBe(true);
     const icon = rowIcon(hud, row.label)!;
     expect(firstStrokeColour(icon)).toBe(POWER_UP_GREY_COLOUR);

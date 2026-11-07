@@ -1151,14 +1151,15 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
   it('lets the seeded RNG decide when both are available, regardless of Phase charges', () => {
     const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
     phaseFirst.applyCollect('phase_shift');
-    phaseFirst.applyCollect('phase_shift'); // 3 charges
+    phaseFirst.applyCollect('phase_shift'); // still one ready activation
     phaseFirst.applyCollect('teleport');
-    expect(phaseFirst.phaseCharges()).toBe(3);
+    expect(phaseFirst.phaseCharges()).toBe(1);
+    expect(phaseFirst.hasPhaseShift()).toBe(true);
     expect(phaseFirst.updateDanger(true, 0.016)).toBe('phase_shift');
 
     const teleportFirst = new EffectsRegistry(undefined, () => 0.99);
     teleportFirst.applyCollect('phase_shift');
-    teleportFirst.applyCollect('phase_shift'); // 3 charges
+    teleportFirst.applyCollect('phase_shift'); // still one ready activation
     teleportFirst.applyCollect('teleport');
     expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
   });
@@ -1208,18 +1209,21 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
 });
 
 describe('shared tick advances the recharge clock (AH-0MV82I8IL0012RXY AC1/AC5)', () => {
-  it('EffectsRegistry.tick(dt) recovers a spent Phase Shift charge through the shared path', () => {
+  it('EffectsRegistry.tick(dt) readies a spent Phase Shift through the shared path', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
-    reg.applyCollect('phase_shift');
-    reg.updateDanger(true, 0.016); // consumes the single charge
+    // Permanently owned so the 15 s pickup window cannot expire before the
+    // 30 s readiness interval completes (single-use readiness is tied to
+    // being held).
+    reg.applyCollect('phase_shift', true);
+    reg.updateDanger(true, 0.016); // spends the one activation
     expect(reg.phaseCharges()).toBe(0);
 
-    // Mid-recharge the pool stays empty...
+    // Mid-recharge the activation stays unavailable...
     reg.tick(store.phaseRechargeTime() / 2);
     expect(reg.phaseCharges()).toBe(0);
 
-    // ...and the shared tick completes the timer and returns the charge.
+    // ...and the shared tick completes the timer and readies it.
     reg.tick(store.phaseRechargeTime() / 2 + 1);
     expect(reg.phaseCharges()).toBe(1);
   });
@@ -1286,34 +1290,40 @@ describe('registry HUD recharge accessors (AH-0MV82I8IL0012RXY AC4)', () => {
   });
 });
 
-describe('P6 charge display model', () => {
-  it('surfaces a finite charge as a P6 stack entry', () => {
+describe('P6 single-use display model', () => {
+  it('surfaces one ready activation as a readiness entry, never a stack count', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift');
     const p6 = reg.activeEffects().find((e) => e.id === 'phase_shift')!;
     expect(p6).toBeDefined();
-    expect(p6.stacks).toBe(1);
+    expect(p6.stacks).toBeUndefined();
+    expect(p6.recharge).toBeUndefined();
     expect(p6.permanent).toBeUndefined();
   });
 
-  it('accumulates the level-derived grants into the displayed count', () => {
+  it('never accumulates stored activations across repeated pickups', () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('phase_shift'); // level 1 → +1
-    reg.applyCollect('phase_shift'); // level 2 → +2 (upgrade)
+    reg.applyCollect('phase_shift'); // level 1 → one ready activation
+    reg.applyCollect('phase_shift'); // level 2 → still one ready activation
     const p6 = reg.activeEffects().find((e) => e.id === 'phase_shift')!;
-    expect(p6.stacks).toBe(3);
+    expect(p6.stacks).toBeUndefined();
+    expect(p6.recharge).toBeUndefined();
   });
 
-  it('drops the charge entry once the charge is consumed', () => {
+  it('surfaces the readiness countdown once the activation is spent', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift');
     reg.updateDanger(true, 0.016);
 
-    const chargeEntries = reg
+    // The active phase and its readiness entry coexist (the HUD merges them
+    // into one row); the readiness entry carries the countdown.
+    const p6 = reg
       .activeEffects()
-      .filter((e) => e.id === 'phase_shift' && e.stacks !== undefined);
-    expect(chargeEntries).toHaveLength(0);
-    expect(reg.activeEffects().some((e) => e.id === 'phase_shift')).toBe(true);
+      .find((e) => e.id === 'phase_shift' && e.recharge !== undefined)!;
+    expect(p6).toBeDefined();
+    expect(p6.stacks).toBeUndefined();
+    expect(p6.recharge!).toBeGreaterThan(0);
+    expect(p6.recharge!).toBeCloseTo(reg.phaseShiftRechargeRemaining(), 9);
   });
 
   it('surfaces the permanent reward via the ownership marker, not an unlimited supply', () => {
@@ -1322,13 +1332,12 @@ describe('P6 charge display model', () => {
     const p6 = reg.activeEffects().find((e) => e.id === 'phase_shift')!;
     expect(p6).toBeDefined();
     expect(p6.permanent).toBe(true);
-    // The pool is finite and recharges (AH-0MV82I7TX0009JMT): the
-    // permanent reward gates ownership, the finite charge count is read
-    // via phaseCharges() (surfaced by the HUD as ` ×N`), not as stacks here.
+    // The permanent reward gates ownership; the single activation recharges
+    // on the level-derived interval (AH-0MW6O1690007P2SL).
     expect(p6.stacks).toBeUndefined();
   });
 
-  it('does not surface a zero charge count', () => {
+  it('does not surface a phase row when the ability is not held', () => {
     const reg = new EffectsRegistry();
     expect(reg.activeEffects().filter((e) => e.id === 'phase_shift')).toHaveLength(0);
   });
@@ -1731,7 +1740,7 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     expect(store.consumableCharges('shield')).toBe(1);
   });
 
-  it('keeps stored P6 charges after the window expires (AC9)', () => {
+  it('keeps a permanent P6 readiness after the pickup window expires (AC9)', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
 
@@ -1748,11 +1757,19 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     store.clearTemporary('teleport');
     expect(reg.hasTeleport()).toBe(true);
 
+    // Phase Shift follows the same single-use rule (parent
+    // AH-0MW6O1690007P2SL): a pickup-only readiness ends with its level
+    // window, while a permanent ownership keeps it.
     reg.applyCollect('phase_shift');
-    const charges = reg.phaseCharges();
-    expect(charges).toBeGreaterThan(0);
+    expect(reg.hasPhaseShift()).toBe(true);
     store.clearTemporary('phase_shift');
-    expect(reg.phaseCharges()).toBe(charges);
+    expect(store.getEffectiveLevel('phase_shift')).toBe(0);
+    expect(reg.hasPhaseShift()).toBe(false);
+
+    reg.applyCollect('phase_shift', true); // permanent ownership
+    store.clearTemporary('phase_shift');
+    expect(reg.isPhasePermanent()).toBe(true);
+    expect(reg.hasPhaseShift()).toBe(true);
   });
 
   it('P9 hybrid: a hold-full stack is unaffected by a later field expiry', () => {
@@ -2399,7 +2416,7 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
    * accessors instead of the shared charge-pool contract.
    */
   const POOLED_IDS: PowerUpId[] = CONSUMABLE_IDS.filter(
-    (id) => id !== 'teleport',
+    (id) => id !== 'teleport' && id !== 'phase_shift',
   );
 
   /** The four kinds whose one-event spend is a registry-local seam. */
@@ -2566,23 +2583,25 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
     expect(registry.consumableCharges('mystery_ufo')).toBe(0);
   });
 
-  it('AC5 — Phase Shift spends and regenerates through the shared pool', () => {
+  it('AC5 — Phase Shift spends and readies through its single readiness timer', () => {
     const { registry, store } = poolFixture();
     registry.applyCollect('phase_shift', true);
-    expect(registry.phaseCharges()).toBe(1);
-    expect(registry.consumableCharges('phase_shift')).toBe(1);
+    expect(registry.hasPhaseShift()).toBe(true);
+    // It is not a pool-backed kind: nothing is banked, nothing is reported.
+    expect(registry.consumableCharges('phase_shift')).toBe(0);
+    expect(registry.consumableRechargeRemaining('phase_shift')).toBeUndefined();
 
     expect(registry.updateDanger(true, 0)).toBe('phase_shift');
-    expect(registry.consumableCharges('phase_shift')).toBe(0);
-    // Nothing regenerates without a tick.
-    expect(registry.consumableCharges('phase_shift')).toBe(0);
-    expect(registry.consumableRechargeRemaining('phase_shift')).toBeCloseTo(
+    expect(registry.hasPhaseShift()).toBe(false);
+    // Nothing readies without a tick.
+    expect(registry.hasPhaseShift()).toBe(false);
+    expect(registry.phaseShiftRechargeRemaining()).toBeCloseTo(
       store.consumableRechargeTime('phase_shift'),
       6,
     );
 
-    registry.tick(registry.consumableRechargeRemaining('phase_shift')! + 0.01);
-    expect(registry.consumableCharges('phase_shift')).toBe(1);
+    registry.tick(registry.phaseShiftRechargeRemaining() + 0.01);
+    expect(registry.hasPhaseShift()).toBe(true);
   });
 
   it('AC5 — Teleport spends and recharges through its single readiness timer', () => {
@@ -2808,35 +2827,41 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
     }
   });
 
-  it('AC4b — a Phase Shift field pickup keeps its shipped regeneration (regression)', () => {
-    // The Q-A1=b no-regeneration gate is scoped to the three budget kinds: a
-    // Phase Shift **field pickup** still grants a charge that spends once and
-    // then refills on the shared tick — the shipped regeneration
-    // (AH-0MV82I7TX0009JMT) is unchanged by the absorbed-hit conversion.
+  it('AC4b — a Phase Shift field pickup is ready, spends once and recharges (regression)', () => {
+    // A Phase Shift **field pickup** readies the one activation; spending it
+    // starts the single level-derived recharge timer, and the shared tick
+    // readies it again (parent AH-0MW6O1690007P2SL).
     const { registry, store } = poolFixture();
     registry.applyCollect('phase_shift'); // field pickup — never owned
     expect(store.isConsumableOwned('phase_shift')).toBe(false);
-    expect(registry.consumableCharges('phase_shift')).toBe(1);
+    expect(registry.hasPhaseShift()).toBe(true);
 
-    // One pickup charge resolves exactly one event through the shipped seam
-    // and starts its own regeneration timer (no ownership gate here).
+    // A gym-style override keeps the single recharge interval (8 s) inside
+    // the 15 s pickup window, so a pickup-only activation can be observed
+    // recharging without owning the kind.
+    store.setRechargeTimeOverride(8, null);
+
+    // One pickup resolves exactly one event through the shipped seam and
+    // starts its single recharge timer.
     expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
-    expect(registry.consumableCharges('phase_shift')).toBe(0);
-    expect(registry.consumableRechargeRemaining('phase_shift')).toBeCloseTo(
+    expect(registry.hasPhaseShift()).toBe(false);
+    expect(registry.phaseShiftRechargeRemaining()).toBeCloseTo(
       store.consumableRechargeTime('phase_shift'),
       6,
     );
 
-    // No charge returns without a tick; the shared tick completes the timer
-    // and the pool refills for reuse — pickup regeneration is intact.
+    // No activation returns without a tick; the shared tick completes the
+    // timer and readies it for reuse.
     registry.tick(store.consumableRechargeTime('phase_shift') / 2);
-    expect(registry.consumableCharges('phase_shift')).toBe(0);
+    expect(registry.hasPhaseShift()).toBe(false);
     registry.tick(store.consumableRechargeTime('phase_shift') / 2 + 0.01);
-    expect(registry.consumableCharges('phase_shift')).toBe(1);
+    expect(registry.hasPhaseShift()).toBe(true);
 
+    // Keep the window open long enough for the danger governor to re-arm.
+    registry.tick(1);
     registry.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
     expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
-    expect(registry.consumableCharges('phase_shift')).toBe(0);
+    expect(registry.hasPhaseShift()).toBe(false);
   });
 
   it('AC4b — a Teleport pickup is a one-shot: ready on pickup, spent until re-owned (AC5)', () => {
@@ -2917,11 +2942,10 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
 // direction-corrected by `src/ui/hudCountdown.ts`. The HUD copies `sweep`; it
 // never does per-kind fraction arithmetic of its own (parent AC1).
 
-/** The pool-backed consumables (Teleport is single-use: no charge pool). */
+/** The four pool-backed consumables (Phase Shift and Teleport are single-use). */
 const POOLED_CONSUMABLES: PowerUpId[] = [
   'shield',
   'thorns',
-  'phase_shift',
   'force_field',
   'mystery_ufo',
 ];

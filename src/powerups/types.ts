@@ -17,12 +17,12 @@
  *   (base 1, cap 3) before popping (timed)
  * - **Bomb** — ranged periodic enemy-bullet clear (no enemy damage); a
  *   field pickup is a single explosion, a hold-full reward pulses
- * - **Phase Shift** — charge-based automatic pass-through (parent
- *   AH-0MUIYX1EE008FVS8): collecting grants level-derived auto-activation
- *   charges into a **finite recharging pool** (cap 3, level-derived recharge
- *   time); the shared danger feed triggers a 1.5 s pass-through when 3+
- *   hostile bodies/bullets close within 40 px; the hold-full reward adds
- *   exactly one charge to that pool — it is never an unlimited supply
+ * - **Phase Shift** — a **single-use** automatic pass-through (parent
+ *   AH-0MW6O1690007P2SL): one activation, spent by the shared danger feed to
+ *   trigger a 1.5 s pass-through when 3+ hostile bodies/bullets close within
+ *   40 px, then a single level-derived recharge timer (30 s → 10 s) before it
+ *   is ready again. A field pickup or hold-full reward **readies** it (timer
+ *   0) instead of banking a count — it is never an unlimited supply
  *   (AH-0MV82I7TX0009JMT).
  * - **Teleport** — a **single-use** escape (parent AH-0MVY096RT006QMF4): no
  *   stored-charge count and no FIFO pool, just a readiness timer (60 s at base
@@ -227,7 +227,8 @@ export interface PowerUpEntry {
    *
    * A consumable holds a **charge pool**: one charge buys one event, charges
    * regenerate on a level-derived interval, and a hold-full reward adds a
-   * charge rather than a level.
+   * charge rather than a level. A kind that opts into {@link singleUse} holds
+   * exactly one activation instead of a pool.
    */
   consumable?: boolean;
   /**
@@ -242,8 +243,8 @@ export interface PowerUpEntry {
    * regenerating ceiling for these kinds is the level-resolved cap only while
    * `permanentGrants(id) > 0`, else `0`. A permanently owned kind keeps the
    * spend → empty → regenerate → reuse cycle. Phase Shift and Teleport leave
-   * this unset, so their shipped pickup regeneration (AH-0MV82I7TX0009JMT) is
-   * unchanged.
+   * this unset: a single-use kind's one activation recharges on its
+   * level-derived interval regardless of how it was acquired.
    */
   regenRequiresOwnership?: boolean;
   /**
@@ -251,11 +252,12 @@ export interface PowerUpEntry {
    * multi-charge pool (parent AH-0MVY096RT006QMF4).
    *
    * **Defaults to `false`** — an absent flag means the kind keeps the shared
-   * charge-pool model. Teleport opts in: it holds no stored-charge count, its
-   * charge cap is always `1`, and its state is binary (ready / recharging on
-   * the level-derived interval). The cap is read by
-   * `resolveConsumableChargeCap`, so no store, HUD or scene needs an
-   * `id === 'teleport'` branch.
+   * charge-pool model. Teleport and Phase Shift opt in: they hold no
+   * stored-charge count, their charge cap is always `1`, and their state is
+   * binary (ready / recharging on the level-derived interval). The store
+   * resolves the per-kind readiness scalar through this flag, and the cap is
+   * read by `resolveConsumableChargeCap`, so no store, HUD or scene needs an
+   * `id === 'teleport'` / `id === 'phase_shift'` branch.
    */
   singleUse?: boolean;
   /**
@@ -365,16 +367,18 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'phase_shift',
     name: 'Phase Shift',
     description:
-      'Stores up to 3 auto-activation charges that regenerate on a level-derived timer; one charge phases you past danger. A hold-full reward adds a charge, not a level.',
+      'One activation phases you past danger automatically, then recharges on a level-derived timer (30 s → 10 s); a pickup or reward makes it ready again.',
     // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
     duration: 1.5,
     // Balance tuning: the defensive kinds use the shield-style 15 s window
     // for the temporary level a field pickup grants (AH-0MVUGI3Q4009MW6A).
     temporaryWindow: 15,
-    // Charge model: one charge per auto-activation, regenerating on the
-    // level-derived `phaseRechargeRate` interval (30 s → 10 s)
-    // (AH-0MVTQMREN009DSFW).
+    // Charge model: a **single-use** activation (parent AH-0MW6O1690007P2SL,
+    // mirroring Teleport) — no stored-charge count and no FIFO pool. Spending
+    // the one ready activation starts a level-derived `phaseRechargeRate`
+    // interval (30 s → 10 s); a field pickup or hold-full reward readies it.
     consumable: true,
+    singleUse: true,
   },
   teleport: {
     id: 'teleport',

@@ -124,15 +124,15 @@ describe('sixSlotLoadoutFixtures — committed loadout states', () => {
     expect(isSlotCountedKind('mystery_ufo', state)).toBe(false);
     expect(isSlotCountedKind('extra_life', state)).toBe(false);
 
-    // The Phase Shift charge pool outlives its expired temporary window
+    // The Shield charge pool outlives its expired temporary window
     // (producer Resolved decision 1b): the row stays, the slot is released.
-    expect(loadout.registry.powerUpLevel('phase_shift')).toBe(0);
-    expect(loadout.registry.phaseCharges()).toBeGreaterThan(0);
-    expect(state.heldIds.has('phase_shift')).toBe(false);
-    expect(isSlotCountedKind('phase_shift', state)).toBe(false);
+    expect(loadout.registry.powerUpLevel('shield')).toBe(0);
+    expect(loadout.registry.consumableCharges('shield')).toBeGreaterThan(0);
+    expect(state.heldIds.has('shield')).toBe(false);
+    expect(isSlotCountedKind('shield', state)).toBe(false);
 
     // The temporary window whose expiry released the slot is really closed.
-    expect(loadout.registry.powerUpTemporaryRemaining('phase_shift')).toBeUndefined();
+    expect(loadout.registry.powerUpTemporaryRemaining('shield')).toBeUndefined();
   });
 
   it('is deterministic — the same loadout builds the same occupancy twice', async () => {

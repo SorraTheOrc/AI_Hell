@@ -91,12 +91,12 @@ describe('GymRechargeTuning: permanent Phase Shift + Teleport grants', () => {
     const registry = scene.getEffectsRegistry();
 
     expect(registry.isConsumableOwned('phase_shift')).toBe(true);
-    // Phase Shift is a recharging pool: the grant banks a charge and completed
-    // recharges fill the pool up to its regenerating ceiling of 3.
-    expect(registry.phaseCharges()).toBeGreaterThanOrEqual(1);
+    // Phase Shift is single-use: the grant leaves its one activation ready,
+    // and a spent activation recharges on the level-derived interval.
+    expect(registry.hasPhaseShift()).toBe(true);
     expect(
       registry.levelStore().consumableRegenCeiling('phase_shift'),
-    ).toBe(3);
+    ).toBe(1);
     expect(registry.isConsumableOwned('teleport')).toBe(true);
     // Teleport is single-use: its permanent grant leaves the warp ready.
     expect(registry.hasTeleport()).toBe(true);
@@ -173,8 +173,8 @@ describe('GymRechargeTuning: recharge slider DOM', () => {
 
 // ── Live application to the recharge timers ───────────────────────
 
-describe('GymRechargeTuning: slider changes apply to subsequently spent charges', () => {
-  it('applies a new Phase Shift recharge time to the next spent charge', async () => {
+describe('GymRechargeTuning: slider changes apply to subsequently spent activations', () => {
+  it('applies a new Phase Shift recharge time to the next spent activation', async () => {
     const scene = await bootTuning();
     const store = scene.getEffectsRegistry().levelStore();
 
@@ -182,11 +182,9 @@ describe('GymRechargeTuning: slider changes apply to subsequently spent charges'
     expect(store.phaseRechargeTime()).toBe(8);
     expect(store.rechargeTimeOverride('phase_shift')).toBe(8);
 
-    expect(store.consumeConsumableCharge('phase_shift')).toBe(true);
-    const progress = store.consumableRechargeProgress('phase_shift');
-    expect(progress).not.toBeNull();
-    expect(progress!.total).toBe(8);
-    expect(progress!.remaining).toBeCloseTo(8);
+    expect(store.consumePhaseShift()).toBe(true);
+    expect(store.hasPhaseShift()).toBe(false);
+    expect(store.phaseShiftRechargeRemaining()).toBeCloseTo(8, 9);
   });
 
   it('applies a new Teleport recharge time to the next spent warp', async () => {
@@ -205,11 +203,17 @@ describe('GymRechargeTuning: slider changes apply to subsequently spent charges'
     const store = scene.getEffectsRegistry().levelStore();
 
     setSlider(PHASE_RECHARGE_SLIDER_ID, 8);
-    expect(store.consumeConsumableCharge('phase_shift')).toBe(true);
+    expect(store.consumePhaseShift()).toBe(true);
+    expect(store.phaseShiftRechargeRemaining()).toBeCloseTo(8, 9);
     // The wait captured at spend time is immutable.
     setSlider(PHASE_RECHARGE_SLIDER_ID, 20);
     expect(store.phaseRechargeTime()).toBe(20);
-    expect(store.consumableRechargeProgress('phase_shift')!.total).toBe(8);
+    expect(store.phaseShiftRechargeRemaining()).toBeCloseTo(8, 9);
+    // The next spend uses the new override.
+    store.tickRecharge(9);
+    expect(store.hasPhaseShift()).toBe(true);
+    expect(store.consumePhaseShift()).toBe(true);
+    expect(store.phaseShiftRechargeRemaining()).toBeCloseTo(20, 9);
   });
 });
 

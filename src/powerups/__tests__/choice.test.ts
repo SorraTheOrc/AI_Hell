@@ -1264,7 +1264,7 @@ describe('power-up choice strategy', () => {
       expect(store.getPermanentLevel('shield')).toBe(0);
     });
 
-    it('AC5 — a checkpoint replay through the shared grant helper reproduces the charge state', () => {
+    it('AC5 — a checkpoint replay through the shared grant helper reproduces the readiness state', () => {
       const option = buildChoiceCandidates(
         CHOICE_POOL,
         ownedContext('phase_shift'),
@@ -1279,11 +1279,16 @@ describe('power-up choice strategy', () => {
       const resumed = new EffectsRegistry();
       grantPermanentPowerUp('phase_shift', resumed);
 
+      // Phase Shift is single-use (parent AH-0MW6O1690007P2SL): both paths
+      // leave its one activation ready and never bank a stored count.
+      expect(resumed.levelStore().hasPhaseShift()).toBe(
+        live.levelStore().hasPhaseShift(),
+      );
+      expect(resumed.levelStore().hasPhaseShift()).toBe(true);
       expect(resumed.levelStore().consumableCharges('phase_shift')).toBe(
         live.levelStore().consumableCharges('phase_shift'),
       );
-      // Exactly one charge — the replay never double-counts a level + charge.
-      expect(resumed.levelStore().consumableCharges('phase_shift')).toBe(1);
+      expect(resumed.levelStore().consumableCharges('phase_shift')).toBe(0);
       expect(resumed.levelStore().getPermanentLevel('phase_shift')).toBe(
         live.levelStore().getPermanentLevel('phase_shift'),
       );

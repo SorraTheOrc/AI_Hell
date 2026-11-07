@@ -57,9 +57,9 @@
  * The row list is **not** the loadout: the six-slot model
  * (`powerups/slots.ts`) counts distinct kinds a run holds, while a row is a
  * display entry — and two row classes never hold a slot (exempt entries such
- * as the Mystery UFO, and a held kind kept alive outside the loadout: a Phase
- * Shift charge pool that outlives a temporary window, or a single-use
- * Teleport's ready-or-recharging warp). When a scene supplies `HUDOptions.getSlotState`
+ * as the Mystery UFO, and a held kind kept alive outside the loadout: a
+ * pooled consumable charge that outlives a temporary window, or a single-use
+ * kind's ready-or-recharging activation). When a scene supplies `HUDOptions.getSlotState`
  * (`resolvePlayerSlotState(player)`, wired once through
  * `scenes/core/hudWiring.ts`), the HUD:
  *
@@ -1049,10 +1049,10 @@ export class HUD extends Phaser.GameObjects.Container {
           ? this._powerUpRechargeProgress(id)
           : undefined;
       // A single-use kind reads `ready` while its ability is armed
-      // (AH-0MW231O8Q0095LQM): the catalogue flag decides, so no
-      // `id === 'teleport'` branch lives here.
+      // (AH-0MW231O8Q0095LQM): the catalogue flag decides and the registry
+      // resolves the per-kind readiness, so no `id === …` branch lives here.
       const ready =
-        getPowerUpById(id).singleUse === true && reg.isTeleportReady();
+        getPowerUpById(id).singleUse === true && reg.isSingleUseReady(id);
       const marker = state ? this._slotMarker(id, state) : undefined;
       rows.push({
         id,
@@ -1078,10 +1078,9 @@ export class HUD extends Phaser.GameObjects.Container {
    * holds a slot. Derived from the shared model, never from row knowledge:
    *
    * - exempt entries (`availableWhenSlotsFull`) → "always available";
-   * - anything else held-only by a consumable outside the loadout (a Phase
-   *   Shift charge pool kept alive by remaining charges after its window
-   *   expired, or a single-use Teleport's ready-or-recharging warp) →
-   *   "charges only".
+   * - anything else held-only by a consumable outside the loadout (a pooled
+   *   consumable charge kept alive after its window expired, or a single-use
+   *   kind's ready-or-recharging activation) → "charges only".
    */
   private _slotMarker(
     id: PowerUpId,
@@ -1123,9 +1122,9 @@ export class HUD extends Phaser.GameObjects.Container {
       case 'speed_boost':
         return reg.isActive('speed_boost');
       case 'phase_shift':
-        // A live phase boundary keeps its row; ownership and the finite
-        // recharging pool are handled by the consumable rule above
-        // (AH-0MV82I97Y007MB6M).
+        // A live phase boundary keeps its row; ownership and single-use
+        // readiness are handled by the consumable rule above
+        // (AH-0MW6O1690007P2SL).
         return reg.isActive('phase_shift');
       case 'teleport':
         // A single-use kind (parent AH-0MVY096RT006QMF4) has no charge pool:
@@ -1187,9 +1186,9 @@ export class HUD extends Phaser.GameObjects.Container {
    * path — a field pickup grants exactly one charge and opens no effect
    * window under the absorbed-hit model (parent AH-0MVUVSW4J0009QUW), so the
    * pool is never misread from a parallel window counter. Phase Shift and
-   * Mystery UFO surface their pooled count; Teleport is **single-use** and
-   * surfaces no count at all (parent AH-0MVY096RT006QMF4), and kinds without
-   * a pool surface nothing.
+   * Mystery UFO surface their pooled count; the single-use kinds (Teleport,
+   * Phase Shift) surface no count at all (parent AH-0MVY096RT006QMF4 /
+   * AH-0MW6O1690007P2SL), and kinds without a pool surface nothing.
    *
    * Non-consumable kinds surface no count (their level alone is the state).
    */
@@ -1217,9 +1216,10 @@ export class HUD extends Phaser.GameObjects.Container {
       case 'force_field':
         return reg.forceFieldRemaining();
       default:
-        // Phase Shift / Mystery UFO: the pool is the whole budget. Teleport
-        // is **single-use**, so it banks no charges — its row reads the
-        // readiness flag and countdown instead (parent AH-0MVY096RT006QMF4).
+        // Mystery UFO: the pool is the whole budget. Phase Shift and
+        // Teleport are **single-use**, so they bank no charges — their rows
+        // read the readiness flag and countdown instead
+        // (parent AH-0MW6O1690007P2SL / AH-0MVY096RT006QMF4).
         return reg.consumableCharges(id);
     }
   }
@@ -1265,10 +1265,11 @@ export class HUD extends Phaser.GameObjects.Container {
         // negative countdown.
         return reg.strikeNextBoltSeconds();
       default:
-        // A **single-use** kind (Teleport) has no pool: its countdown is the
-        // readiness clock in the level store (parent AH-0MVY096RT006QMF4).
+        // A **single-use** kind (Teleport, Phase Shift) has no pool: its
+        // countdown is the readiness clock in the level store (parent
+        // AH-0MVY096RT006QMF4 / AH-0MW6O1690007P2SL).
         if (getPowerUpById(id).singleUse === true) {
-          return reg.teleportRechargeRemaining() || undefined;
+          return reg.singleUseRechargeRemaining(id) || undefined;
         }
         // Every pooled consumable regenerates through the shared pool clock —
         // the Thorn Field special case that predated the charge pool is
@@ -1299,9 +1300,10 @@ export class HUD extends Phaser.GameObjects.Container {
         // reports nothing.
         return reg.strikeProgress()?.sweep;
       default:
-        // A **single-use** kind (Teleport) reads its readiness clock.
+        // A **single-use** kind (Teleport, Phase Shift) reads its readiness
+        // clock.
         if (getPowerUpById(id).singleUse === true) {
-          return reg.teleportRechargeProgress()?.sweep;
+          return reg.singleUseRechargeProgress(id)?.sweep;
         }
         return isConsumablePowerUpId(id)
           ? reg.consumableRechargeProgress(id)?.sweep
@@ -1338,11 +1340,11 @@ export class HUD extends Phaser.GameObjects.Container {
    */
   private _isPowerUpGreyed(id: PowerUpId): boolean {
     if (!this._ownsChargePool(id)) return false;
-    // A **single-use** kind (Teleport) has no charge count to read: it is
-    // available while ready and unavailable while its one recharge timer runs
-    // (parent AH-0MVY096RT006QMF4).
+    // A **single-use** kind (Teleport, Phase Shift) has no charge count to
+    // read: it is available while ready and unavailable while its one
+    // recharge timer runs (parent AH-0MVY096RT006QMF4 / AH-0MW6O1690007P2SL).
     if (getPowerUpById(id).singleUse === true) {
-      return !this._registry!.isTeleportReady();
+      return !this._registry!.isSingleUseReady(id);
     }
     return this._consumableCharges(id) === 0;
   }
