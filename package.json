@@ -23,6 +23,7 @@
     "ring-timing": "node scripts/ring-timing.mjs",
     "perf:measure": "node scripts/measure-performance.mjs",
     "perf:measure:electron": "node scripts/measure-performance.mjs --host electron",
+    "perf:sweep": "node scripts/perf-sweep.mjs",
     "validate-experience": "node scripts/validate-experience.mjs",
     "capture:install": "playwright install chromium",
     "generate:mode-ledger": "node scripts/generate-mode-ledger.mjs",

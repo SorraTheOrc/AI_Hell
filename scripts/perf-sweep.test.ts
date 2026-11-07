@@ -23,14 +23,15 @@
  *   raw report paths);
  * - **exit codes** — `0` completed sweep, `1` failed run, `2` usage error.
  *
- * ## Red-by-design convention
+ * ## Red-by-design convention (now active)
  *
- * Every spec is `it.fails` (the repo's red-before/green-after convention, the
- * same one the planner contract AH-0MW5IUBGV005IFHM used) against the
- * `scripts/perf-sweep.mjs` skeleton whose bodies throw `not implemented`, so
- * the suite is green today while each marker records a red expectation. The
- * implementing sibling (AH-0MW5IUEX1004AZRH) fills the bodies and flips each
- * marker back to `it`.
+ * These specs were authored as `it.fails` markers (the repo's
+ * red-before/green-after convention, the same one the planner contract
+ * AH-0MW5IUBGV005IFHM used) against the `scripts/perf-sweep.mjs` skeleton
+ * whose bodies threw `not implemented`, so the suite stayed green while each
+ * marker recorded a red expectation. The implementing sibling
+ * (AH-0MW5IUEX1004AZRH) filled the bodies and flipped each marker back to a
+ * plain `it` — every expectation below is live and must pass.
  *
  * ## Injected seams — no browser, Playwright or Vite
  *
@@ -223,7 +224,7 @@ function sweepDeps(
 // ── Argument parsing ──────────────────────────────────────────────────
 
 describe('sweep driver — argument parsing', () => {
-  it.fails('parses every documented option', () => {
+  it('parses every documented option', () => {
     const args = parseSweepArgs([
       '--seed',
       '42',
@@ -260,7 +261,7 @@ describe('sweep driver — argument parsing', () => {
     });
   });
 
-  it.fails('fills the documented defaults and mirrors the planner constants', () => {
+  it('fills the documented defaults and mirrors the planner constants', () => {
     const args = parseSweepArgs([]);
 
     expect(args.seed).toBeNull();
@@ -283,17 +284,17 @@ describe('sweep driver — argument parsing', () => {
     expect(args.budgetMinutes * 60_000).toBe(planner.SWEEP_RUN_BUDGET_MS);
   });
 
-  it.fails('accepts exactly the 15-second minimum window', () => {
+  it('accepts exactly the 15-second minimum window', () => {
     expect(parseSweepArgs(['--seconds', '15']).seconds).toBe(15);
   });
 
-  it.fails('rejects a measured window shorter than 15 seconds', () => {
+  it('rejects a measured window shorter than 15 seconds', () => {
     expect(() => parseSweepArgs(['--seconds', '14'])).toThrow(SweepArgsError);
     expect(() => parseSweepArgs(['--seconds', '14'])).toThrow(/\b15\b/);
     expect(() => parseSweepArgs(['--seconds', '0'])).toThrow(SweepArgsError);
   });
 
-  it.fails('rejects an unknown option with the actionable usage text', () => {
+  it('rejects an unknown option with the actionable usage text', () => {
     expect(() => parseSweepArgs(['--bogus'])).toThrow(SweepArgsError);
     expect(() => parseSweepArgs(['--bogus'])).toThrow(
       /Unknown argument: --bogus/,
@@ -303,7 +304,7 @@ describe('sweep driver — argument parsing', () => {
     );
   });
 
-  it.fails('rejects a flag that is given no value', () => {
+  it('rejects a flag that is given no value', () => {
     expect(() => parseSweepArgs(['--seed'])).toThrow(SweepArgsError);
     expect(() => parseSweepArgs(['--seed'])).toThrow(/--seed/);
   });
@@ -312,7 +313,7 @@ describe('sweep driver — argument parsing', () => {
 // ── Step loop ─────────────────────────────────────────────────────────
 
 describe('sweep driver — step loop', () => {
-  it.fails('measures 50, 100, 150 … in order, exactly once per step', async () => {
+  it('measures 50, 100, 150 … in order, exactly once per step', async () => {
     const { setups, measure } = scriptedMeasure({ 50: 60, 100: 55, 150: 45 });
     const files = fileWriter();
 
@@ -343,7 +344,7 @@ describe('sweep driver — step loop', () => {
     ]);
   });
 
-  it.fails(
+  it(
     'stops at the first step below 30 average FPS and reports the previous step as playable',
     async () => {
       const { setups, measure } = scriptedMeasure({
@@ -367,7 +368,7 @@ describe('sweep driver — step loop', () => {
     },
   );
 
-  it.fails('walks the whole plan to the ceiling when every step is playable', async () => {
+  it('walks the whole plan to the ceiling when every step is playable', async () => {
     const { setups, measure } = scriptedMeasure({
       50: 60,
       100: 60,
@@ -390,7 +391,7 @@ describe('sweep driver — step loop', () => {
     );
   });
 
-  it.fails('aborts at the total-run budget without measuring an unaffordable step', async () => {
+  it('aborts at the total-run budget without measuring an unaffordable step', async () => {
     const { setups, measure } = scriptedMeasure({});
 
     // 60 s window + 30 s warm-up = 90 s per step; a 1-minute budget fits none.
@@ -409,7 +410,7 @@ describe('sweep driver — step loop', () => {
     expect(run.report.steps).toEqual([]);
   });
 
-  it.fails('delegates every sweep decision to the injected planner', async () => {
+  it('delegates every sweep decision to the injected planner', async () => {
     const calls = {
       plan: 0,
       loadout: 0,
@@ -462,7 +463,7 @@ describe('sweep driver — step loop', () => {
 // ── A failed measurement must abort, not publish ──────────────────────
 
 describe('sweep driver — a failed measurement aborts the run', () => {
-  it.fails('rejects with a SweepRunError naming the step and writes no verdict', async () => {
+  it('rejects with a SweepRunError naming the step and writes no verdict', async () => {
     const { measure } = scriptedMeasure({ 50: 60, 100: 'fail' });
     const files = fileWriter();
 
@@ -478,7 +479,7 @@ describe('sweep driver — a failed measurement aborts the run', () => {
     expect(files.files.has(OUT)).toBe(false);
   });
 
-  it.fails(
+  it(
     'rejects an unusable measurement report instead of publishing a partial verdict',
     async () => {
       const { measure } = scriptedMeasure({ 50: 60, 100: 'no-fps' });
@@ -499,7 +500,7 @@ describe('sweep driver — a failed measurement aborts the run', () => {
 // ── The table and the verdict JSON ────────────────────────────────────
 
 describe('sweep driver — table and JSON report', () => {
-  it.fails('formats a per-step table with loadout levels, mix, FPS and verdict plus the headline', async () => {
+  it('formats a per-step table with loadout levels, mix, FPS and verdict plus the headline', async () => {
     const { measure } = scriptedMeasure({ 50: 60, 100: 55, 150: 25 });
 
     const run = await runSweep(sweepArgs(), sweepDeps(measure));
@@ -532,7 +533,7 @@ describe('sweep driver — table and JSON report', () => {
     expect(formatSweepTable(run.report)).toBe(run.table);
   });
 
-  it.fails('records the provenance fields and each step raw report path', async () => {
+  it('records the provenance fields and each step raw report path', async () => {
     const { measure } = scriptedMeasure({ 50: 60, 100: 25 });
 
     const run = await runSweep(
@@ -568,7 +569,7 @@ describe('sweep driver — table and JSON report', () => {
     expect(first.webgl?.renderer).toBe('test-renderer');
   });
 
-  it.fails('writes each raw step report and the verdict JSON through the injected writer', async () => {
+  it('writes each raw step report and the verdict JSON through the injected writer', async () => {
     const files = fileWriter();
     const { measure } = scriptedMeasure({ 50: 60, 100: 25 });
 
@@ -593,7 +594,7 @@ describe('sweep driver — table and JSON report', () => {
     expect(raw.fps.mean).toBe(60);
   });
 
-  it.fails('derives one seed and a perf-output verdict path when both are omitted', async () => {
+  it('derives one seed and a perf-output verdict path when both are omitted', async () => {
     const files = fileWriter();
     const { setups, measure } = scriptedMeasure({ 50: 25 });
 
@@ -615,7 +616,7 @@ describe('sweep driver — table and JSON report', () => {
 // ── Exit codes ────────────────────────────────────────────────────────
 
 describe('sweep driver — exit codes', () => {
-  it.fails('returns 0 for a completed sweep and prints the table by default', async () => {
+  it('returns 0 for a completed sweep and prints the table by default', async () => {
     const { measure } = scriptedMeasure({ 50: 60, 100: 60, 150: 60 });
     const capture = capturingIo();
 
@@ -634,7 +635,7 @@ describe('sweep driver — exit codes', () => {
     expect(capture.stderrText()).toBe('');
   });
 
-  it.fails('returns 0 and emits the verdict JSON on stdout with --json', async () => {
+  it('returns 0 and emits the verdict JSON on stdout with --json', async () => {
     const { measure } = scriptedMeasure({ 50: 25 });
     const capture = capturingIo();
 
@@ -651,7 +652,7 @@ describe('sweep driver — exit codes', () => {
     expect(verdict.steps[0].verdict).toBe('failure');
   });
 
-  it.fails('returns 2 with the usage text for an unknown option', async () => {
+  it('returns 2 with the usage text for an unknown option', async () => {
     const capture = capturingIo();
 
     const code = await main(
@@ -666,7 +667,7 @@ describe('sweep driver — exit codes', () => {
     expect(capture.stdoutText()).toBe('');
   });
 
-  it.fails('returns 2 for a measured window below 15 seconds', async () => {
+  it('returns 2 for a measured window below 15 seconds', async () => {
     const capture = capturingIo();
 
     const code = await main(
@@ -680,7 +681,7 @@ describe('sweep driver — exit codes', () => {
     expect(capture.stdoutText()).toBe('');
   });
 
-  it.fails('returns 1 with a clear error when a measurement fails, publishing no verdict', async () => {
+  it('returns 1 with a clear error when a measurement fails, publishing no verdict', async () => {
     const { measure } = scriptedMeasure({ 50: 'fail' });
     const files = fileWriter();
     const capture = capturingIo();
