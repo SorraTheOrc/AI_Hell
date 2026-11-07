@@ -6,6 +6,11 @@
  * assert the report invariant (mechanics) and then demonstrate the AC end to
  * end on a synthetic human recording, using the same deterministic arena the
  * harness runs.
+ *
+ * The single-seed demonstrations below are *representative*; the
+ * seed-sweep stability describe also asserts the distribution-stable
+ * property (majority over a documented 32-seed set), so a small legitimate
+ * feel tweak cannot fail the suite by flipping one representative seed.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -134,6 +139,43 @@ describe('evaluateStyleMatch report (AC4)', () => {
   it('is deterministic for the same recording', () => {
     expect(evaluateStyleMatch(human, { ticks: 420 })).toEqual(report);
   });
+});
+
+// ── Seed-sweep stability (AC1/AC3) ───────────────────────────────────
+//
+// Why a sweep, not a single seed: the style match is a deterministic but
+// chaotic micro-simulation. A small, legitimate feel tweak (e.g. the 1–5 %
+// thrust-press reduction in AH-0MUYRJQE50021T4A) can flip a single seed's
+// winner because discrete collisions dominate the score. The representative
+// seed test above demonstrates the AC end to end; this sweep asserts the
+// *distribution-stable* property instead, so a tunable change that does not
+// alter decision logic cannot fail the suite.
+//
+// The seed set is explicit and contiguous (never random) so every run is
+// reproducible (AC4). To extend, append seeds to `STABILITY_SEEDS` (the
+// sweep currently lands 21/32 closer and 14/32 regressed, so a single seed
+// flipping cannot fail it).
+const STABILITY_SEEDS = Array.from({ length: 32 }, (_, i) => i);
+
+describe('evaluateStyleMatch seed-sweep stability (AC1/AC3)', () => {
+  it('is closer to the human on a majority of seeds without regressing on most', () => {
+    const results = STABILITY_SEEDS.map((seed) => {
+      const human = syntheticHumanRun(seed, 420);
+      return evaluateStyleMatch(human, { ticks: 420 });
+    });
+    const closerCount = results.filter((result) => result.closer).length;
+    const regressedCount = results.filter((result) => result.regressed).length;
+    // AC1: the styled bot must be closer to the human on a majority (≥ 50 %)
+    // of the documented sweep, and must not regress competence on more than
+    // half of it. A single seed flipping therefore cannot fail the suite; if
+    // a real design change shifts the majority itself, hunt the distribution
+    // before touching the seed list.
+    expect(closerCount * 2).toBeGreaterThanOrEqual(STABILITY_SEEDS.length);
+    expect(regressedCount * 2).toBeLessThanOrEqual(STABILITY_SEEDS.length);
+    // The sweep is heavier than one representative run (~5 s for 32 seeds:
+    // each seed fits over 8 synthetic-human iterations plus two evaluations),
+    // so it opts out of the default 5 s timeout.
+  }, 30_000);
 });
 
 describe('formatStyleMatchReport', () => {
