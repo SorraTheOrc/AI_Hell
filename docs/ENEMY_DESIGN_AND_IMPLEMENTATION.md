@@ -2089,8 +2089,9 @@ inherited from the shared `CombatScene`, not re-implemented in the gym:
   shared per-frame danger feed (`CombatScene._updateAutoDefence`,
   called in `PlayScene`, `GymFormationScene` and `GymPowerUpsCombat`
   immediately before `_handleCollisions`): when **3 or more** hostile
-  bodies/bullets are within **40 px** (`2 × SHIP_SIZE`) of the ship and a
-  stored charge (or the permanent hold-full reward) is available, the phase
+  bodies/bullets are within **40 px** (`2 × SHIP_SIZE`) of the ship and
+  Phase Shift is **ready** (its single activation, readied by a pickup or the
+  permanent hold-full reward), the phase
   activates automatically; after expiry it re-arms only once danger has
   dropped below the threshold and a **~0.5 s** cooldown has elapsed. While
   phased the shared mineral layer (`collectMinerals({ playerPhased: true })`)

@@ -1212,7 +1212,8 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     ];
 
     // Same starting state in every scene: ship parked at a clear corner with
-    // one stored Phase Shift auto-activation charge.
+    // its single Phase Shift activation readied (single-use since parent
+    // AH-0MW6O1690007P2SL).
     for (const scene of scenes) {
       const player = scene.getPlayer()!;
       player.setPosition(120, 120);
@@ -1250,10 +1251,11 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
 
     for (const scene of scenes) scene.tick(0.016);
 
-    // Every scene auto-activated the phase and consumed the same charge.
+    // Every scene auto-activated the phase and spent the same single-use
+    // activation, so Phase Shift is recharging (not ready) in all three.
     for (const scene of scenes) {
       expect(scene.getEffectsRegistry().isPhased).toBe(true);
-      expect(scene.getEffectsRegistry().phaseCharges()).toBe(0);
+      expect(scene.getEffectsRegistry().hasPhaseShift()).toBe(false);
     }
   });
 

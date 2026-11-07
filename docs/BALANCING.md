@@ -330,8 +330,8 @@ cap shapes what a run can become.
   loadout, so it can legitimately show rows that hold no slot: an exempt entry
   (Mystery UFO — `always available`) and a Phase Shift / Teleport row that
   survives outside the loadout after its temporary window expired (a Phase
-  Shift charge pool on its remaining charges, a single-use Teleport on its
-  ready-or-recharging warp — `charges only`). To keep the cap legible the HUD renders an explicit
+  Shift activation that is ready-or-recharging, or a single-use Teleport warp
+  that is ready-or-recharging — `charges only`). To keep the cap legible the HUD renders an explicit
   **`Loadout n/6`** budget from the shared model
   (`resolvePlayerSlotState(player)`), marks those non-slot rows, and renders
   them **dimmed** (`NON_SLOT_ROW_ALPHA`, half opacity) so the slot-counted
@@ -346,9 +346,9 @@ cap shapes what a run can become.
   `PlayScene` and every gym, so gym↔game parity holds for the display too.
   The row classes worth knowing: an exempt entry (Mystery UFO,
   `always available`) and a held kind surviving outside the loadout
-  (`charges only` — a Phase Shift charge pool after its expired window, or the
-  single-use Teleport's ready-or-recharging warp, including a Phase Shift row
-  opened by a Teleport arrival)
+  (`charges only` — a Phase Shift activation that is ready-or-recharging after
+  its expired window, or the single-use Teleport's ready-or-recharging warp,
+  including a Phase Shift row opened by a Teleport arrival)
   hold **no** slot; Extra Life has **no** row (the lives counter carries it);
   a temporary one-shot (Orbital Strike, Smart Bomb) holds a slot while its
   window is open and therefore renders a countdown row. A temporary **field
@@ -475,22 +475,25 @@ temporary level can never compound across a wave, and they are **not** scaled
 by the campaign-level supply curves above (those shape drop frequency, not
 window length).
 
-**Consumables are never clawed back.** Lives, Phase Shift charges and the
-ready Teleport warp already granted by a temporary pickup survive the level
-revert and never carry a timer of their own (producer Q2 on AH-0MVSTKGC3003OMAC).
+**Consumables are never clawed back.** Lives, the ready Phase Shift activation
+and the ready Teleport warp already granted by a temporary pickup survive the
+level revert and never carry a timer of their own (producer Q2 on AH-0MVSTKGC3003OMAC).
 Occupancy of a six-slot loadout still follows the window: the slot is released
 when the TTL expires (see the loadout subsection above).
 
-**Teleport is single-use — its recharge, not its TTL, is the balance lever**
-(parent AH-0MVY096RT006QMF4). The 15 s TTL above is the *temporary-level
-window*; the escape itself is one warp whose recharge interval is the
-level-derived `teleportRechargeRate` axis (stored charges/second, inverted to
+**Teleport and Phase Shift are single-use — their recharge, not their TTL, is
+the balance lever** (Teleport parent AH-0MVY096RT006QMF4; Phase Shift parent
+AH-0MW6O1690007P2SL). The 15 s TTL above is each kind's *temporary-level
+window*; the ability itself is **one activation** whose recharge interval is
+its level-derived recharge-rate axis (stored charges/second, inverted to
 seconds by the store), so there is no stored-charge or stack count to tune:
 
 | Teleport recharge axis | Level 0 | Upgrade cap | Curve |
 |---|---:|---:|---|
 | `teleportRechargeRate` (seconds per warp) | **60 s** | **20 s** | exponential-saturation, `k = 0.3` |
 | `teleportPhaseDuration` (arrival phase) | 1.5 s | 3 s | exponential-saturation, `k = 0.2` |
+| `phaseRechargeRate` (seconds per Phase Shift activation) | **30 s** | **10 s** | exponential-saturation, `k = 0.3` |
+| `phaseDuration` (phase length) | 1.5 s | 3 s | exponential-saturation, `k = 0.2` |
 
 60 s at level 0 makes evading a threat a real decision and the 20 s cap keeps
 an upgraded escape from restoring near-permanent cover; the 3:1 base:cap ratio
@@ -498,6 +501,15 @@ is the pre-existing one, only the numbers moved. The retired cap-3 pool
 (15 s → 5 s) is **not** a tuning surface any more: a pickup or a hold-full
 grant simply readies the one warp, so no grant can exceed a cap of one and no
 stack count exists to tune.
+
+Phase Shift mirrors that shape (parent AH-0MW6O1690007P2SL): the player holds
+**one** automatic phase, a pickup or hold-full grant **readies** it, and a
+spent activation waits out the level-derived `phaseRechargeRate` (30 s at level
+0 → 10 s at the cap), so the two automatic defences cost the same one
+activation each. The retired `phaseCharges` level axis (1 → 3) is **not** a
+tuning surface any more — the recharge interval is the whole balance lever —
+which also removes the old asymmetry where Phase Shift could bank three
+activations while Teleport held one.
 
 > The AH-0MUX802450085VZZ *"Resolved decision 4"* exception (instant kinds
 > had no window at all) is **superseded** by AH-0MVSTKGC3003OMAC.

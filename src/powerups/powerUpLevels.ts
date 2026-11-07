@@ -21,7 +21,8 @@
  *   window). The effective level is `permanent + temporary`; only the
  *   permanent component governs the hold-full choice. Both components are
  *   cleared on run restart. Existing stack/charge semantics (Magnet/Mineral Scoop
- *   permanent stacks, Teleport readiness, Phase Shift charges, Extra Life lives) are
+ *   permanent stacks, the single-use Phase Shift activation and Teleport warp
+ *   readiness, Extra Life lives) are
  *   **derived from this model** rather than tracked by a second, independent
  *   counter (AC3).
  *

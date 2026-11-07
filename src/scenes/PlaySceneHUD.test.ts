@@ -208,9 +208,9 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
    * The permanent power-up levels the seeded checkpoint owns. Deliberately
    * exercises every HUD visibility rule: timed-but-permanent (shield, speed
    * boost, frenzy, chrono, force field), permanent pulses (bomb, smart bomb,
-   * strike), the thorns budget, the Phase Shift charge pool and the
-   * single-use Teleport warp (over-granted on purpose, to prove a replay
-   * readies it instead of banking a count) and the permanent-stack hybrids
+   * strike), the thorns budget, the Phase Shift activation and the
+   * single-use Teleport warp (both over-granted on purpose, to prove a replay
+   * readies the one activation instead of banking a count) and the permanent-stack hybrids
    * (magnet, mineral scoop). Extra Life is included to pin the lives hazard.
    */
   const POWER_UP_LEVELS: Array<{ id: PowerUpId; level: number }> = [

@@ -27,15 +27,13 @@
  * (`PowerUpLevelStore.setRechargeTimeOverride`), so the level catalogue stays
  * authoritative for gameplay.
  *
- * **Permanent-grant model note.** Phase Shift is a recharging charge pool
- * whose regenerating ceiling is 3 (`POWER_UP_CHARGE_CAP`): the permanent
- * grant owns the kind and banks one charge, and completed recharges fill the
- * pool up to that ceiling. Teleport is a **single-use** ability (parent
- * AH-0MVY096RT006QMF4) whose whole state is its level-derived readiness
- * timer, so its permanent grant simply leaves the warp ready. The work item's
- * "cap 3" wording is honoured by the Phase Shift pool's regenerating ceiling;
- * giving Teleport a stored multi-charge pool would change shipped gameplay,
- * which this gym must not do.
+ * **Permanent-grant model note.** Both abilities are **single-use**: Phase
+ * Shift's whole state is its one level-derived readiness timer (parent
+ * AH-0MW6O1690007P2SL, mirroring Teleport parent AH-0MVY096RT006QMF4), so a
+ * permanent grant simply leaves its one activation ready and a spent
+ * activation recharges on the level-derived interval (30 s → 10 s). Teleport's
+ * permanent grant likewise leaves its single warp ready. There is no stored
+ * multi-charge pool for either kind, matching the shipped store.
  *
  * Gym ↔ game parity (AGENTS.md § Game Architecture Conventions): the threats
  * are built through the shared `createEnemyFromConfig` factory and emerge
@@ -187,9 +185,10 @@ export class GymRechargeTuning extends CombatScene<Raider, ScoutBullet, never> {
       | undefined;
 
     // Permanent grants: both abilities are owned from the first frame so the
-    // observer needs no drops. Phase Shift's grant banks one charge into its
-    // recharging pool (whose regenerating ceiling is 3), so both abilities
-    // cycle under the sustained threat the raiders provide.
+    // observer needs no drops. Each grant leaves the kind's one single-use
+    // activation ready (Phase Shift's phase and Teleport's warp, parent
+    // AH-0MW6O1690007P2SL / AH-0MVY096RT006QMF4), so both abilities cycle
+    // under the sustained threat the raiders provide.
     grantPermanentPowerUp('phase_shift', this.effectsRegistry);
     grantPermanentPowerUp('teleport', this.effectsRegistry);
 

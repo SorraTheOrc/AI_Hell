@@ -1377,7 +1377,7 @@ describe('HUD weapon level readout (parent AH-0MUPMPCB2009J54J)', () => {
 // (parent AH-0MVVF0POV001JNKX) established that the cap is enforced but the
 // HUD renders rows per `EffectsRegistry` visibility, never per slot: a held
 // temporary Strike shows no row (tick 4540 → 5 rows for 6 slots) and a
-// slot-exempt Mystery UFO plus a residual Phase Shift charge pool add rows
+// slot-exempt Mystery UFO plus a residual Phase Shift single-use row add rows
 // that hold no slot (tick 5899 → 7 rows for 5 slots).
 //
 // The fixtures in `src/test/sixSlotLoadoutFixtures.ts` replay those two

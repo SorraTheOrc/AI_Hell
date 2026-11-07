@@ -438,28 +438,32 @@ workflow, invariants and "what each surface cannot do" are documented in
 ## Consumable charge parity (AH-0MVUXH3X60078QR3, F6 of AH-0MVTQMREN009DSFW)
 
 The consumable upgrade parent made a permanently-owned consumable (Shield,
-Thorn Field, Phase Shift, Teleport, Force Field, Mystery UFO) a **charge pool
-of one-event uses**: a hold-full reward adds one charge (never a level), one
-charge buys one event (one absorbed hit, one free ram, one reflected bullet,
-one warp, one phase, one drone spawn), and the pool regenerates on the
+Thorn Field, Phase Shift, Teleport, Force Field, Mystery UFO) a **pool of
+one-event uses**: a hold-full reward adds one use (never a level), one use
+buys one event (one absorbed hit, one free ram, one reflected bullet, one
+warp, one phase, one drone spawn), and the pool regenerates on the
 level-derived interval through the shared `EffectsRegistry.tick(dt)` clock.
 No scene keeps a consumption counter or a regeneration timer of its own — the
 spends and recharges below are the **shared seams** the game and every gym
 run, so they cannot drift.
 
-**Teleport is the one single-use carve-out (parent AH-0MVY096RT006QMF4).** The
-pool model holds for the five pool-backed kinds; Teleport instead holds
-**exactly one warp** and its whole state is a readiness flag plus one
-level-derived recharge timer (60 s base → 20 s at the upgrade cap), so a
-pickup or hold-full grant **readies** the warp rather than adding a charge and
-there is no stored count or FIFO queue. The shared seam is unchanged in shape —
+**The single-use carve-out — Teleport and Phase Shift (Teleport parent
+AH-0MVY096RT006QMF4, Phase Shift parent AH-0MW6O1690007P2SL).** The pool model
+holds for the four pool-backed kinds; Teleport and Phase Shift instead hold
+**exactly one activation** each and their whole state is a readiness flag plus
+one level-derived recharge timer (Teleport 60 s base → 20 s at the upgrade
+cap, Phase Shift 30 s → 10 s), so a pickup or hold-full grant **readies** the
+activation rather than adding a charge and there is no stored count or FIFO
+queue. The shared seam is unchanged in shape —
 `EffectsRegistry.consumeTeleport()` → `PowerUpLevelStore.consumeTeleport()`
 starts the timer, `hasTeleport()` / `isTeleportReady()` report readiness and
-`teleportRechargeRemaining()` is the countdown — and it is consumed by
+`teleportRechargeRemaining()` is the countdown, and
+`consumePhaseShift()` / `hasPhaseShift()` / `isPhaseShiftRecharging()` /
+`phaseShiftRechargeRemaining()` mirror it for the phase — and it is consumed by
 `CombatScene._updateAutoDefence` / `triggerTeleport` in the game and every
 gym, so the single-use rule cannot be re-implemented per scene. The
-automatic-defence pick is a **uniform 50/50** whenever both a Phase Shift
-charge and a ready warp are available (the retired greater-count comparison
+automatic-defence pick is a **uniform 50/50** whenever both a ready Phase
+Shift and a ready warp are available (the retired greater-count comparison
 could starve the escape). No gym overrides the model, and the HUD row is
 projected from the same readiness flag.
 
@@ -470,6 +474,7 @@ projected from the same readiness flag.
 | Force Field — one reflected bullet spends one charge | `EffectsRegistry.tryConsumeForceFieldReflect()` → shared `CombatScene` reflect branch | Force bubble (`drawForceFieldBubble`): a **pickup** bubble pops on its last spend (an unowned field reads inactive at zero); an **owned** field stays up but **dimmed** while the pool is empty, bright again on recharge (Q1 = b) |
 | Mystery UFO — one drone spawn spends one charge | `EffectsRegistry.consumeMysteryUfoCharge()` → shared `CombatCoreScene._updateDroneSpawning` (registered in `EPIC_SHARED_METHODS` in `CombatScene.equivalence.test.ts`); a **field pickup** keeps its queued one-shot (`consumeMysteryUfoSpawns`) and spends no charge | the drone itself (spawned through `spawnDrone` in `src/scenes/core/combatDrone.ts`) |
 | Teleport — the single warp is spent by one escape (**single-use**) | `EffectsRegistry.consumeTeleport()` → `PowerUpLevelStore.consumeTeleport()` from the shared `CombatScene.triggerTeleport`; a pickup or grant readies it (the store's `applyCollect` single-use branch resets the readiness timer to 0) instead of adding a charge | the HUD Teleport row: the readiness state plus the `next in Ns` recharge countdown while the one warp recharges, greyed while it is spent |
+| Phase Shift — the single activation is spent by one auto-defence phase (**single-use**) | `EffectsRegistry.consumePhaseShift()` → `PowerUpLevelStore.consumePhaseShift()` from the shared `CombatScene._updateAutoDefence`; a pickup or grant readies it (the store's `applyCollect` single-use branch resets the readiness timer to 0) instead of adding a charge | the HUD Phase Shift row: the readiness state plus the `next in Ns` recharge countdown while the one activation recharges, greyed while it is spent |
 
 Gyms that exercise the consumables: `GymPowerUpsCombat` (Shield/Bomb/Phase
 Shift/Teleport/Force Field through the shared `EffectsRegistry`), `GymPowerUpLeveling`
@@ -494,12 +499,12 @@ permanent grant differ only in whether the pool refills. The three rows above
 pin (AH-0MVVD8U6F0011UOG): no retained divergence changed — the
 `GymFodderEnemies` editors expose the **enemy** force-field axis
 (`forceFieldStartHits`), which the pickup conversion never touches. The
-single-use Teleport carve-out above is pinned by the parity/equivalence
+single-use Teleport and Phase Shift carve-outs above are pinned by the parity/equivalence
 suites (`src/scenes/core/powerUpLeveling.parity.test.ts` compares
-`hasTeleport()` readiness across `PlayScene` and the gym, and
-`src/scenes/core/CombatScene.equivalence.test.ts` asserts the shared
+`hasTeleport()` and `hasPhaseShift()` readiness across `PlayScene` and the gym,
+and `src/scenes/core/CombatScene.equivalence.test.ts` asserts the shared
 `triggerTeleport` spend warps and spends identically in both scenes), so a gym
-cannot reintroduce a banked Teleport charge.
+cannot reintroduce a banked Teleport or Phase Shift charge.
 
 Pinned by `src/scenes/core/consumableChargeParity.test.ts` (the same spend →
 empty → regenerate → re-use cycle in `PlayScene` and `GymPowerUpsCombat`, plus

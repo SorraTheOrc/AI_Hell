@@ -1017,7 +1017,7 @@ export class HUD extends Phaser.GameObjects.Container {
    * with the effective level in the label and `∞`/countdown in the value
    * (AH-0MUX802450085VZZ). Extra Life is represented by the dedicated lives counter
    * and is never a row. Preserves the pre-existing visibility rules (a
-   * permanent Bomb bomb, Phase Shift charges/permanent/active phase, the
+   * permanent Bomb bomb, Phase Shift permanent/readiness/active phase, the
    * single-use Teleport's ready-or-recharging warp, Magnet/Mineral Scoop timed
    * or permanent).
    */
