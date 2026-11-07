@@ -42,7 +42,18 @@ import {
   collectProductionSourceFiles,
   definesFunction,
 } from '../../test/duplicateBodyGuard';
-import { HeadlessChoicePlayer, advanceBulletPosition, hostileAimVelocity, runArena } from './arena';
+import {
+  HeadlessChoicePlayer,
+  advanceBulletPosition,
+  hostileAimVelocity,
+  resolveWeaponLoadout,
+  runArena,
+} from './arena';
+import {
+  resolveWeaponAtLevel,
+  resolveWeaponDefinition,
+} from '../../utils/weaponLevels';
+import { AOE_RADII } from '../../utils/weapons';
 import { loadBalanceConfig } from './balanceConfig';
 import { runBatch } from './engine';
 import { extractBalanceStats } from './metrics';
@@ -1303,5 +1314,63 @@ describe('shared weapon seam guard (AH-0MW5DV9I6001D4HN AC4)', () => {
     expect(bindings('../../utils/weapons')).toContain('createBulletsFromHeading');
     expect(bindings('../../utils/weaponLevels')).toContain('resolveWeaponAtLevel');
     expect(bindings('../../utils/weaponLevels')).toContain('resolveWeaponDefinition');
+  });
+});
+
+// ── Owned-weapon fire loadout (AH-0MW5DVAME0062GQO) ─────────────────────────
+
+/**
+ * The arena fires from the run's ownership context (AC1/AC2): the always-active
+ * cannon at upgrade level 0 plus one entry per permanent weapon grant, at the
+ * grant's level-resolved upgrade index — the same `collections − 1` mapping
+ * `Player._weaponUpgradeIndex` uses. These tests pin the mapping and its tether
+ * to the shared resolvers; `arenaWeaponSensitivity.test.ts` pins that the
+ * resolved loadout actually drives the simulated fire output.
+ */
+describe('owned-weapon fire loadout (AH-0MW5DVAME0062GQO)', () => {
+  it('fires the always-active cannon at level 0 plus each permanent grant', () => {
+    const loadout = resolveWeaponLoadout([
+      { id: 'nova', level: 1 },
+      { id: 'spread', level: 3 },
+    ]);
+
+    expect(
+      loadout.map((weapon) => [weapon.id, weapon.ownedLevel, weapon.level]),
+    ).toEqual([
+      // The cannon owns no permanent grant, so it resolves at level 0 — the
+      // same upgrade index the game's `Player` uses for its starting weapon.
+      ['cannon', 0, 0],
+      // The first permanent grant unlocks a weapon at its base stats
+      // (`getWeaponLevel` 1 → upgrade index 0); the third grant is index 2.
+      ['nova', 1, 0],
+      ['spread', 3, 2],
+    ]);
+  });
+
+  it('resolves every weapon through the shared definition and stat resolvers', () => {
+    const [, nova, spread] = resolveWeaponLoadout([
+      { id: 'nova', level: 1 },
+      { id: 'spread', level: 3 },
+    ]);
+
+    expect(nova.definition).toEqual(resolveWeaponDefinition('nova', 0));
+    expect(spread.definition).toEqual(resolveWeaponDefinition('spread', 2));
+    expect(spread.stats).toEqual(resolveWeaponAtLevel('spread', 2));
+  });
+
+  it('carries the level-resolved cadence, damage and AOE radius', () => {
+    // Owned level 1 = upgrade index 0 (base); owned level 4 = index 3.
+    const firstGrant = resolveWeaponLoadout([{ id: 'nova', level: 1 }])[1];
+    const levelled = resolveWeaponLoadout([{ id: 'nova', level: 4 }])[1];
+
+    // A levelled weapon fires faster and hits harder...
+    expect(levelled.stats.fireRateMs).toBeLessThan(firstGrant.stats.fireRateMs);
+    expect(levelled.stats.damage).toBeGreaterThan(firstGrant.stats.damage);
+    // ...and its blast radius is the shipped `AOE_RADII.nova` grown by the
+    // level-resolved `aoeRadius` multiplier (the shared resolver's maths).
+    expect(firstGrant.definition.aoe?.radius).toBe(AOE_RADII.nova);
+    expect(levelled.definition.aoe?.radius).toBeCloseTo(
+      AOE_RADII.nova * levelled.stats.aoeRadius,
+    );
   });
 });

@@ -43,6 +43,36 @@
  * evaluation harness's counterpart to the browser capture path; both feed the
  * same telemetry schema.
  *
+ * ## Player weapon fire (AH-0MW5DV9I6001D4HN, AH-0MW5DVAME0062GQO)
+ *
+ * The arena fires from the run's **ownership context**, never from a fixed
+ * cadence or a hardcoded bullet. {@link resolveWeaponLoadout} resolves the
+ * always-active cannon (level 0) plus every permanent weapon grant the
+ * hold-full choice flow recorded, at each grant's level-resolved upgrade
+ * index — mirroring the shipped `Player.getActiveWeapons()` /
+ * `getWeaponLevel()` semantics. Cadence comes from the resolved `fireRateMs`,
+ * the projectile pattern from the resolved `offsets`/`sideOffsets`, and AOE
+ * weapons (nova/mortar/arc) resolve their blast **at fire time** through the
+ * shared `utils/aoe` geometry with `AOE_RADII[id] × level aoeRadius` (the
+ * radius `resolveWeaponDefinition` produces). Every shot is pure geometry
+ * over the existing seeded simulation, so the same seed + policy + build stays
+ * byte-identical.
+ *
+ * **Modelled:** active permanent weapons (cannon + choice grants), their
+ * levels, cadence (`fireRateMs`), pattern count/offsets/side offsets, bullet
+ * lifetime, bullet size, damage multiplier, AOE radius/AOE damage, and the
+ * AOE bullet clear at the blast radius.
+ *
+ * **Not modelled (documented, per the parent's fidelity boundary):** timed
+ * field-pickup weapons (only permanent ownership fires; the arena's drop
+ * model stays generic), homing arcs and chain jumps (the Arc resolves as one
+ * radius blast with no hop path or along-path bullet clear), cluster split
+ * trajectories, the Wave Laser's hitscan ray and the Options pods' orbits
+ * (both fire as a travelling bullet), wall bounce, the max-hit-point pierce
+ * budget, crit/status/knockback, per-weapon impact feedback, and the game's
+ * beat clock (an integer tick interval derived from the same `fireRateMs`
+ * replaces it — see {@link fireRateTicks}).
+ *
  * ## Per-level campaign mode (AH-0MVLJFB1I0099X4Z)
  *
  * Setting {@link ArenaConfig.level} switches the arena to an **additive**
@@ -169,12 +199,20 @@ import { applyMineralChoiceReward, type MineralChoicePlayer } from '../../poweru
 import type { PowerUpId } from '../../powerups/types';
 import {
   createBulletsFromHeading,
+  type AoEDescriptor,
+  type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
 import {
   resolveWeaponAtLevel,
   resolveWeaponDefinition,
+  type WeaponLevelStats,
 } from '../../utils/weaponLevels';
+import {
+  isInAoEArea,
+  selectAoETargets,
+  selectRandomPoint,
+} from '../../utils/aoe';
 import { PLAYER_BULLET_RADIUS, PLAYER_BULLET_SPEED } from '../../core/constants';
 import { AsteroidsModel } from '../../utils/movementModel';
 import { wrapAxis, wrappedAxisDelta } from '../../utils/wrapGeometry';
@@ -273,6 +311,11 @@ interface Hostile {
   bulletSpeed: number;
   /** Chance (0..1) of firing per cycle, from config `shotProbability`. */
   shotProbability: number;
+  /**
+   * Body radius for the shared AOE geometry (`utils/aoe`), so a blast catches
+   * a hostile when its edge intersects the effect area (AH-0MW5DVAME0062GQO).
+   */
+  getHitRadius(): number;
 }
 
 interface Bullet extends Vec {
@@ -816,6 +859,89 @@ export class HeadlessChoicePlayer implements MineralChoicePlayer {
 }
 
 /**
+ * One weapon the arena fires, resolved from the run's ownership context
+ * (AH-0MW5DVAME0062GQO).
+ */
+export interface ArenaWeaponLoadout {
+  /** The catalogued weapon id. */
+  readonly id: WeaponId;
+  /**
+   * The **owned** level as the choice flow records it: `0` for the
+   * always-active cannon, otherwise the permanent grant count
+   * (`getWeaponLevels()`).
+   */
+  readonly ownedLevel: number;
+  /**
+   * The **upgrade index** the shared resolvers are called with:
+   * `max(0, ownedLevel − 1)`, mirroring `Player._weaponUpgradeIndex`
+   * (`collections − 1`), so a weapon's first permanent grant fires at its
+   * base stats exactly as it does in the game.
+   */
+  readonly level: number;
+  /** The level-resolved catalogue definition (pattern, cadence, AOE). */
+  readonly definition: WeaponDefinition;
+  /** The level-resolved scalar statistics (damage, `aoeRadius`, …). */
+  readonly stats: WeaponLevelStats;
+}
+
+/** The two shared-resolver outputs for one `(weapon, level)` pair. */
+interface ResolvedWeapon {
+  definition: WeaponDefinition;
+  stats: WeaponLevelStats;
+}
+
+/**
+ * Resolves the arena's fire loadout from the run's ownership context
+ * (AH-0MW5DVAME0062GQO): the **always-active cannon** at upgrade level 0 plus
+ * one entry per permanent weapon grant recorded by the hold-full choice flow,
+ * in the context's order — mirroring `Player.getActiveWeapons()` (cannon
+ * first) and `Player.getWeaponLevel()` / `_weaponUpgradeIndex`.
+ *
+ * Every entry is resolved through the **shared** `resolveWeaponDefinition` /
+ * `resolveWeaponAtLevel` seams, so the fire model reads the one weapon
+ * catalogue and level curves the game reads (gym↔game parity,
+ * AH-0MUGZDTFX004RBD1). Timed field-pickup weapons never appear here: the
+ * arena models permanent ownership only (see the module's fidelity boundary).
+ *
+ * Pure and deterministic. The optional `cache` lets a long run memoise the
+ * resolved pair per `(id, level)` — a level change is the only invalidation a
+ * run needs, and the key includes the level.
+ *
+ * @param owned - The run's permanent weapon grants (id → level ≥ 1).
+ * @param cache - Optional per-run resolution cache.
+ */
+export function resolveWeaponLoadout(
+  owned: ReadonlyArray<{ id: WeaponId; level: number }> = [],
+  cache: Map<string, ResolvedWeapon> = new Map(),
+): ArenaWeaponLoadout[] {
+  // The cannon is always active at its base level, exactly like the game's
+  // `Player._permanentWeapons = new Set(['cannon'])`.
+  const ownedLevels = new Map<WeaponId, number>([['cannon', 0]]);
+  for (const { id, level } of owned) {
+    // Defensive merge: the choice flow records one entry per weapon, but a
+    // duplicate must never make a weapon fire twice or lose an earned level.
+    const current = ownedLevels.get(id) ?? 0;
+    ownedLevels.set(
+      id,
+      Number.isFinite(level) ? Math.max(current, Math.max(0, Math.floor(level))) : current,
+    );
+  }
+  return [...ownedLevels.entries()].map(([id, ownedLevel]) => {
+    const level = Math.max(0, ownedLevel - 1);
+    const key = `${id}:${level}`;
+    let resolved = cache.get(key);
+    if (!resolved) {
+      resolved = {
+        definition: resolveWeaponDefinition(id, level),
+        stats: resolveWeaponAtLevel(id, level),
+      };
+      cache.set(key, resolved);
+    }
+    return { id, ownedLevel, level, ...resolved };
+  });
+}
+
+/**
  * Runs one headless arena run for `policy` (AC1).
  *
  * The returned {@link ArenaRunResult.records} are telemetry-shaped and can be
@@ -1042,6 +1168,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // 1–3 do not fire), exactly as the shared manager tells the game.
     const enemy = enemyByKey.get(spec.archetype);
     const health = Math.max(1, Math.trunc(positiveOr(enemy?.health, 1)));
+    const radius = positiveOr(enemy?.size, FALLBACK_HOSTILE_RADIUS);
     // Force-field hits for evidence mode (epic AH-0MVJ8W4GE007OMNT, AC5):
     // resolved from the SAME shared curve as the game and the level gym, so
     // a before/after bot batch reflects the barrier's durability cost. The
@@ -1068,7 +1195,8 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       archetype: spec.archetype,
       isAsteroid: spec.isAsteroid,
       wave,
-      radius: positiveOr(enemy?.size, FALLBACK_HOSTILE_RADIUS),
+      radius,
+      getHitRadius: () => radius,
       health,
       fieldHits,
       fireTicks: fireIntervalTicks(
@@ -1212,7 +1340,158 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     }
   }
 
-  let fireCooldown = 0;
+  /**
+   * Destroys one hostile through the single kill seam: the destruction event,
+   * the real per-kill drop rolls and the shared campaign accounting run
+   * exactly once per kill, whichever damage source (bullet or AOE) landed the
+   * lethal blow (AH-0MW5DVAME0062GQO).
+   */
+  const destroyHostile = (hostile: Hostile, tick: number): void => {
+    hostile.alive = false;
+    pushEvent(
+      tick,
+      hostile.isAsteroid ? 'asteroid_destroyed' : 'enemy_killed',
+      {
+        x: hostile.x,
+        y: hostile.y,
+        archetype: hostile.archetype,
+      },
+    );
+    // Campaign modes: the **real per-kill drop rule** (the shared
+    // levelScaling module) replaces the seeded power-up reservoir. The
+    // level is the wave's current campaign level (identified before the
+    // manager advances on this kill), so the supply tightens through the
+    // campaign exactly as it does in the game. A kill rolls the per-kill
+    // drop chance once; a destroyed asteroid additionally rolls the
+    // level-scaled Extra Life chance — at most one generic drop plus one
+    // Extra Life per kill.
+    if (realSupplyMode) {
+      const supplyLevel = campaignEnabled ? campaignManager!.level : resolvedLevel;
+      if (simRng() < powerUpDropChance(supplyLevel, DEFAULT_RULES)) {
+        world.drops.push({ x: hostile.x, y: hostile.y });
+      }
+      if (hostile.isAsteroid && simRng() < extraLifeDropChance(supplyLevel, DEFAULT_RULES)) {
+        world.drops.push({ x: hostile.x, y: hostile.y });
+      }
+    }
+    // Wave/level progression is driven exclusively by the shared manager
+    // (full-campaign mode). Asteroids and lane traffic are non-blocking
+    // hazards (shared `isNonBlockingHazard`) and never advance it.
+    if (campaignEnabled && !isNonBlockingHazard(hostile.archetype)) {
+      onCampaignEnemyDestroyed(tick);
+    }
+  };
+
+  /**
+   * Resolves one AOE blast at fire time through the shared `utils/aoe`
+   * geometry (AH-0MW5DVAME0062GQO). Mirrors the game's
+   * `CombatScene.applyAoEDescriptor`: every live hostile inside the radius
+   * takes the resolved damage **barrier first** (the same ordering every
+   * player damage source obeys), and a descriptor that clears enemy bullets
+   * removes those inside the radius.
+   */
+  const applyAoeBlast = (
+    aoe: AoEDescriptor,
+    originX: number,
+    originY: number,
+    damage: number,
+    tick: number,
+  ): void => {
+    if (aoe.damagesEnemies) {
+      // Pure shared target selection (`utils/aoe`) keeps the arena and the
+      // game identical for the same blast geometry.
+      const targets = selectAoETargets(originX, originY, aoe.radius, world.hostiles);
+      for (const hostile of targets) {
+        if (!hostile.alive || campaignFinished) continue;
+        if (hostile.fieldHits > 0) {
+          // Barrier first (epic AH-0MVJ8W4GE007OMNT AC2).
+          hostile.fieldHits -= 1;
+          continue;
+        }
+        hostile.health -= damage;
+        if (hostile.health > 0) continue;
+        destroyHostile(hostile, tick);
+      }
+    }
+    if (aoe.clearsEnemyBullets) {
+      world.enemyBullets = world.enemyBullets.filter(
+        (bullet) => !isInAoEArea(originX, originY, aoe.radius, bullet),
+      );
+    }
+  };
+
+  /**
+   * Fires one resolved weapon (AH-0MW5DVAME0062GQO): an AOE weapon resolves
+   * its blast at fire time through {@link applyAoeBlast} (no travelling
+   * projectile, exactly like the game's shared combat core), every other
+   * weapon spawns its resolved pattern through the shared
+   * `createBulletsFromHeading` seam.
+   */
+  const fireWeapon = (weapon: ArenaWeaponLoadout, tick: number): void => {
+    const aoe = weapon.definition.aoe;
+    if (aoe) {
+      if (aoe.trigger === 'onRandom') {
+        // Mortar: one detonation per pattern bullet (`def.offsets.length`, so
+        // the `projectileCount` leveling adds detonations), each sampled
+        // uniformly over the disc the game uses (speed × lifetime) from the
+        // run's existing seeded stream — never the wall clock or Math.random.
+        const range =
+          (aoe.projectileSpeed ?? 0) * weapon.definition.bulletLifetime;
+        const detonations = Math.max(1, weapon.definition.offsets.length);
+        for (let i = 0; i < detonations; i += 1) {
+          const point = selectRandomPoint(
+            world.player.x,
+            world.player.y,
+            range,
+            simRng,
+          );
+          applyAoeBlast(aoe, point.x, point.y, weapon.stats.damage, tick);
+        }
+        return;
+      }
+      // Nova / Arc: an `'onFire'` effect resolves at the ship. (The Arc's chain
+      // hops and along-path bullet clear are not modelled — see the module's
+      // fidelity boundary.)
+      applyAoeBlast(
+        aoe,
+        world.player.x,
+        world.player.y,
+        weapon.stats.damage,
+        tick,
+      );
+      return;
+    }
+    const headingDeg = (world.player.facing * 180) / Math.PI;
+    for (const shot of createBulletsFromHeading(
+      weapon.definition,
+      headingDeg,
+      world.player.x,
+      world.player.y,
+    )) {
+      const headingRad = (shot.angleDeg * Math.PI) / 180;
+      world.playerBullets.push({
+        x: shot.x,
+        y: shot.y,
+        vx: Math.cos(headingRad) * PLAYER_BULLET_SPEED,
+        vy: Math.sin(headingRad) * PLAYER_BULLET_SPEED,
+        lifetime: weapon.definition.bulletLifetime,
+        elapsed: 0,
+        radius:
+          PLAYER_BULLET_RADIUS * (weapon.definition.levelBulletSize ?? 1),
+        damage: weapon.stats.damage,
+      });
+    }
+  };
+
+  /**
+   * Per-weapon fire cooldowns in ticks. Each weapon keeps its own countdown
+   * derived from its resolved `fireRateMs` at the owned level, so a levelled
+   * weapon fires on its own cadence instead of sharing one global counter.
+   */
+  const weaponCooldowns = new Map<WeaponId, number>();
+  /** Memoises the shared `(id, level)` resolution for the length of the run. */
+  const weaponCache = new Map<string, ResolvedWeapon>();
+
   let simulated = 0;
   let won = false;
   const hostileSpawned = targetHostiles;
@@ -1276,48 +1555,36 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     };
     if (world.invulnerableTicks > 0) world.invulnerableTicks -= 1;
 
-    // 2. Auto-fire along the facing from the **resolved weapon definition**
-    // (AH-0MW5DV9I6001D4HN). The harness fires the always-active cannon
-    // through the same shared resolvers the game's `Player` uses
-    // (`resolveWeaponAtLevel` / `resolveWeaponDefinition`), and spawns its
-    // bullets through the shared `createBulletsFromHeading` seam — so cadence,
-    // pattern offsets / side offsets, lifetime, bullet size and the damage
-    // multiplier all come from `src/utils/weapons.ts`/
-    // `src/utils/weaponLevels.ts`. A weapon-data edit therefore reaches the
-    // simulation (gym↔game parity, AH-0MUGZDTFX004RBD1); no arena-local
-    // weapon constant or resolver exists.
+    // 2. Auto-fire every owned weapon along the facing (AH-0MW5DV9I6001D4HN,
+    // AH-0MW5DVAME0062GQO). The loadout comes from the run's ownership context
+    // — the always-active cannon at level 0 plus every permanent grant the
+    // hold-full choice flow recorded, each at its level-resolved upgrade index
+    // — and fires through the same shared resolvers the game's `Player` uses
+    // (`resolveWeaponAtLevel` / `resolveWeaponDefinition` /
+    // `createBulletsFromHeading` / `utils/aoe`). Cadence, pattern offsets /
+    // side offsets, lifetime, bullet size, damage and AOE radius therefore all
+    // come from the shared weapon data (gym↔game parity,
+    // AH-0MUGZDTFX004RBD1); no arena-local weapon constant or resolver exists.
     //
     // Cadence divergence: the game's beat clock is replaced by an integer tick
     // interval derived from the resolved `fireRateMs` (see `fireRateTicks`).
-    // The shot itself is pure geometry over the existing seeded simulation.
-    fireCooldown -= 1;
-    if (fireCooldown <= 0) {
-      const weaponId: WeaponId = 'cannon';
-      // Only the permanent cannon fires in this slice; the ownership context
-      // (choice-granted weapons and their levels) lands in AH-0MW5DVAME0062GQO.
-      const stats = resolveWeaponAtLevel(weaponId, 0);
-      const definition = resolveWeaponDefinition(weaponId, 0);
-      fireCooldown = fireRateTicks(definition.fireRateMs, dt);
-      const headingDeg = (world.player.facing * 180) / Math.PI;
-      for (const shot of createBulletsFromHeading(
-        definition,
-        headingDeg,
-        world.player.x,
-        world.player.y,
-      )) {
-        const headingRad = (shot.angleDeg * Math.PI) / 180;
-        world.playerBullets.push({
-          x: shot.x,
-          y: shot.y,
-          vx: Math.cos(headingRad) * PLAYER_BULLET_SPEED,
-          vy: Math.sin(headingRad) * PLAYER_BULLET_SPEED,
-          lifetime: definition.bulletLifetime,
-          elapsed: 0,
-          radius: PLAYER_BULLET_RADIUS * (definition.levelBulletSize ?? 1),
-          damage: stats.damage,
-        });
+    for (const weapon of resolveWeaponLoadout(
+      holdChoice.getWeaponLevels(),
+      weaponCache,
+    )) {
+      const cooldown = weaponCooldowns.get(weapon.id) ?? 0;
+      if (cooldown > 0) {
+        weaponCooldowns.set(weapon.id, cooldown - 1);
+        continue;
       }
+      weaponCooldowns.set(
+        weapon.id,
+        fireRateTicks(weapon.definition.fireRateMs, dt),
+      );
+      fireWeapon(weapon, tick);
+      if (campaignFinished) break;
     }
+    if (campaignFinished) break;
 
     // 3. Hostile fire (config-driven cadence, speed and shot probability).
     for (const hostile of world.hostiles) {
@@ -1383,39 +1650,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         }
         hostile.health -= bullet.damage;
         if (hostile.health > 0) break; // wounded, but alive
-        hostile.alive = false;
-        pushEvent(
-          tick,
-          hostile.isAsteroid ? 'asteroid_destroyed' : 'enemy_killed',
-          {
-            x: hostile.x,
-            y: hostile.y,
-            archetype: hostile.archetype,
-          },
-        );
-        // Campaign modes: the **real per-kill drop rule** (the shared
-        // levelScaling module) replaces the seeded power-up reservoir. The
-        // level is the wave's current campaign level (identified before the
-        // manager advances on this kill), so the supply tightens through the
-        // campaign exactly as it does in the game. A kill rolls the per-kill
-        // drop chance once; a destroyed asteroid additionally rolls the
-        // level-scaled Extra Life chance — at most one generic drop plus one
-        // Extra Life per kill.
-        if (realSupplyMode) {
-          const supplyLevel = campaignEnabled ? campaignManager!.level : resolvedLevel;
-          if (simRng() < powerUpDropChance(supplyLevel, DEFAULT_RULES)) {
-            world.drops.push({ x: hostile.x, y: hostile.y });
-          }
-          if (hostile.isAsteroid && simRng() < extraLifeDropChance(supplyLevel, DEFAULT_RULES)) {
-            world.drops.push({ x: hostile.x, y: hostile.y });
-          }
-        }
-        // Wave/level progression is driven exclusively by the shared manager
-        // (full-campaign mode). Asteroids and lane traffic are non-blocking
-        // hazards (shared `isNonBlockingHazard`) and never advance it.
-        if (campaignEnabled && !isNonBlockingHazard(hostile.archetype)) {
-          onCampaignEnemyDestroyed(tick);
-        }
+        destroyHostile(hostile, tick);
         break;
       }
     }

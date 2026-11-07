@@ -19,15 +19,14 @@
  * ignored weapon data entirely, so each pair was **byte-identical** and the
  * pinned assertion failed — the suite stayed green because the failure was
  * expected. A leftover `it.fails` fails the suite, so each flip is deliberate;
- * the cadence and pattern arms are now plain `it` (flipped by
- * **AH-0MW5DV9I6001D4HN**), while the AOE arm stays pinned until
- * **AH-0MW5DVAME0062GQO** lands:
+ * all three arms are now plain `it` (the cadence and pattern arms were flipped
+ * by **AH-0MW5DV9I6001D4HN**, the AOE arm by **AH-0MW5DVAME0062GQO**):
  *
  * | Test | Flips to `it` when |
  * |------|--------------------|
  * | cadence (`fireRateMs`) | **AH-0MW5DV9I6001D4HN** resolves the cannon's cadence from `fireRateMs` — **flipped** |
  * | pattern count (`offsets`) | **AH-0MW5DV9I6001D4HN** spawns the cannon's resolved pattern — **flipped** |
- * | AOE radius | **AH-0MW5DVAME0062GQO** fires the owned AOE weapons through the shared AOE seam |
+ * | AOE radius | **AH-0MW5DVAME0062GQO** fires the owned AOE weapons through the shared AOE seam — **flipped** |
  *
  * The control pair (identical seed + config + policy is byte-identical) is
  * **already green** and must stay green: sensitivity is worthless if the
@@ -97,6 +96,13 @@ interface BatchArm {
   readonly json: string;
   /** Every choice id the runs selected (`choice_selected` events). */
   readonly selectedChoiceIds: ReadonlySet<string>;
+  /**
+   * Number of `choice_selected` events across the batch. With a single-id
+   * `weapon` pool the first selection is the grant and every later one is a
+   * `weapon-level` upgrade of the now-owned weapon, so `> 1` proves a
+   * weapon-level choice was actually taken (AH-0MW5DVAME0062GQO).
+   */
+  readonly selections: number;
 }
 
 /**
@@ -107,6 +113,7 @@ interface BatchArm {
  */
 function batch(overrides: Partial<BatchConfig> = {}): BatchArm {
   const selectedChoiceIds = new Set<string>();
+  let selections = 0;
   const output = runBatch({
     seeds: [...SENSITIVITY_SEEDS],
     ticks: SENSITIVITY_TICKS,
@@ -122,6 +129,7 @@ function batch(overrides: Partial<BatchConfig> = {}): BatchArm {
     onRun: (run) => {
       for (const record of run.records) {
         if (record.kind === 'event' && record.event === 'choice_selected') {
+          selections += 1;
           selectedChoiceIds.add(String(record.payload.id));
         }
       }
@@ -132,6 +140,7 @@ function batch(overrides: Partial<BatchConfig> = {}): BatchArm {
     aggregate: output.aggregate,
     json: output.json,
     selectedChoiceIds,
+    selections,
   };
 }
 
@@ -259,8 +268,9 @@ describe('arena weapon-output sensitivity (AH-0MW5DV8AQ002ZQB6, pinned test-firs
     },
   );
 
-  // TEST-FIRST: flip to `it` when AH-0MW5DVAME0062GQO lands (see module doc).
-  it.fails(
+  // FLIPPED by AH-0MW5DVAME0062GQO: the owned AOE weapons resolve their blast
+  // through the shared `selectAoETargets` seam with the level-resolved radius.
+  it(
     'an AOE weapon radius edit alone moves every per-run recordsHash and the aggregate metrics',
     () => {
       const nova = WEAPON_CATALOGUE.nova;
@@ -285,6 +295,43 @@ describe('arena weapon-output sensitivity (AH-0MW5DV8AQ002ZQB6, pinned test-firs
       expect(
         movedMetrics(tagged.aggregate, wide.aggregate),
         'an AOE-radius change alone must move at least one aggregate metric',
+      ).not.toEqual([]);
+    },
+  );
+
+  // AH-0MW5DVAME0062GQO: the ownership context feeds the fire output, so a
+  // `weapon-level` choice taken during a run is observable in the metrics.
+  it(
+    'a weapon-level choice on an owned weapon moves every per-run recordsHash and the aggregate metrics',
+    () => {
+      // With a single-id weapon pool the first hold-full choice grants `nova`
+      // and every later choice is its `weapon-level` offer (the pool has no
+      // other candidate). The control arm offers no options at all, so the
+      // same seed/loadout/hold cadence produces cannon-only fire.
+      const levelled = batch();
+      const cannonOnly = batch({ choicePool: [] });
+
+      // Premise guard: two or more nova selections means at least one
+      // `weapon-level` upgrade was taken, not merely the initial grant.
+      expect([...levelled.selectedChoiceIds]).toEqual(['nova']);
+      expect(levelled.selections).toBeGreaterThan(1);
+      expect(cannonOnly.selections).toBe(0);
+
+      // Compare only the metrics the simulation produces: the per-choice-id
+      // `upgradesSelected` bookkeeping differs by construction, so asserting on
+      // the whole aggregate would pass even if the weapon never fired. A moved
+      // combat statistic is the observable claim.
+      const combat = (arm: BatchArm) => ({
+        survivalSeconds: arm.aggregate.survivalSeconds,
+        waveReached: arm.aggregate.waveReached,
+        levelReached: arm.aggregate.levelReached,
+        asteroidsDestroyed: arm.aggregate.asteroidsDestroyed,
+        avoidableHits: arm.aggregate.avoidableHits,
+        enemiesKilledByArchetype: arm.aggregate.enemiesKilledByArchetype,
+      });
+      expect(
+        movedMetrics(combat(levelled), combat(cannonOnly)),
+        'a weapon-level choice on an owned weapon must move a simulated combat metric',
       ).not.toEqual([]);
     },
   );
