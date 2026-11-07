@@ -43,6 +43,23 @@ const GATE_MODULE = 'src/telemetry/devMode.ts';
 /** The dev upload endpoint the later slices add (dev-only). */
 const DEV_UPLOAD_ENDPOINT = '/api/telemetry/upload';
 
+/**
+ * The dev streaming part-protocol strings (AH-0MW6NMQPQ0076BE4, parent
+ * AH-0MVJUAADW0033QBD): the four framing header names and the server-side part
+ * staging path. The streamer is statically eliminated from a production
+ * build, so none of these may appear in a shipped bundle.
+ */
+const PART_PROTOCOL_MARKERS = [
+  'x-telemetry-part',
+  'x-telemetry-run-key',
+  'x-telemetry-offset',
+  'x-telemetry-final',
+  'recordings/parts',
+] as const;
+
+/** The dev-only streamer module the gate's loader dynamically imports. */
+const DEV_STREAM_DYNAMIC_IMPORT = /import\(\s*['"]\.\/devStream['"]\s*\)/;
+
 /** Identifiers of the sanctioned gate predicates. */
 const GATE_CALLS = ['isDevTelemetryCollectionEnabled', 'isDevTelemetryUploadEnabled'] as const;
 
@@ -125,6 +142,22 @@ function devTelemetryDecisionFiles(files: readonly SourceFile[]): string[] {
   return files
     .filter((file) => readsDevFlag(file.source))
     .filter((file) => /telemetry/i.test(stripComments(file.source)))
+    .map((file) => file.file)
+    .sort();
+}
+
+/**
+ * Production modules that dynamically import the dev-only streamer module.
+ *
+ * The gate module's `loadDevTelemetryStreamer` is the only sanctioned entry
+ * point: its literal `import.meta.env.DEV` check is folded to `false` by Vite,
+ * so the dynamic import (and the streamer) are dead-code-eliminated from a
+ * production build. Any other module importing `./devStream` directly would
+ * defeat that elimination.
+ */
+function streamerDynamicImportSites(files: readonly SourceFile[]): string[] {
+  return files
+    .filter((file) => DEV_STREAM_DYNAMIC_IMPORT.test(stripComments(file.source)))
     .map((file) => file.file)
     .sort();
 }
@@ -296,6 +329,32 @@ describe('dev-only telemetry gate — consumers (AC3a)', () => {
   });
 });
 
+describe('dev-only telemetry gate — streamer containment (AC1)', () => {
+  it('reaches the dev-only streamer only through the gate loader', () => {
+    expect(streamerDynamicImportSites(LIVE_SOURCES)).toEqual([GATE_MODULE]);
+  });
+
+  it('detects a direct streamer import outside the gate (self-test)', () => {
+    const files = [
+      fixture(GATE_MODULE, "const create = await import('./devStream');"),
+      fixture('src/scenes/PlayScene.ts', "const create = await import('./devStream');"),
+    ];
+
+    expect(streamerDynamicImportSites(files)).toEqual([
+      'src/scenes/PlayScene.ts',
+      GATE_MODULE,
+    ]);
+  });
+
+  it('keeps the part protocol out of the telemetry barrel', () => {
+    // A barrel re-export would drag the protocol strings into any module that
+    // imports the telemetry framework — including production-reachable ones.
+    const barrel = readSource('src/telemetry/index.ts');
+    for (const marker of PART_PROTOCOL_MARKERS) expect(barrel).not.toContain(marker);
+    expect(barrel).not.toContain('devStreamProtocol');
+  });
+});
+
 describe('dev-only telemetry gate — production defaults (AC3b)', () => {
   it('keeps the dev setting out of the consent-gated production config', () => {
     // `resolveTelemetryConfig` decides production recording via
@@ -342,6 +401,13 @@ describe('dev-only telemetry gate — bundle reachability (AC4)', () => {
     // The dev-gated `window.__aiHellTelemetry` accessor must be statically
     // eliminated from a production bundle (AH-0MVIRYGD1000JVY3, AC7).
     expect(FORBIDDEN_MARKERS.map((entry) => entry.marker)).toContain('__aiHellTelemetry');
+  });
+
+  it('forbids every dev-only part-protocol string in the bundle', () => {
+    // The streamer and its framing constants are dev-only: a production
+    // bundle must contain none of them (AH-0MW6NMQPQ0076BE4, parent AC6).
+    const markers = FORBIDDEN_MARKERS.map((entry) => entry.marker);
+    for (const marker of PART_PROTOCOL_MARKERS) expect(markers).toContain(marker);
   });
 
   it('leaves production-reachable telemetry markers untouched', () => {

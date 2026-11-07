@@ -630,6 +630,31 @@ describe('dev stream — bounded bodies (AC4)', () => {
     expect(skip.maxMessageBytes).toBe(200);
   });
 
+  it('skips an over-cap run-end tail with one actionable line and never posts it', async () => {
+    // An offline stretch leaves the whole run pending: the run-end final part
+    // carries the entire tail, so it is the part that must respect the 8 MiB
+    // CDP cap and degrade to today's skip line instead of posting an
+    // unbounded body (AC4).
+    const buffer = new FakeBuffer();
+    const onSkip = vi.fn();
+    const server = createServer();
+    const stream = streamer(buffer, server.fetchImpl, {
+      onSkip,
+      maxMessageBytes: 200,
+    });
+
+    buffer.append(...Array.from({ length: 20 }, (_, index) => index));
+    const finalised = await stream.finalise();
+
+    expect(server.calls).toEqual([]);
+    expect(finalised).toBe(false);
+    expect(stream.confirmedCount).toBe(0);
+    expect(stream.finalised).toBe(false);
+    expect(onSkip).toHaveBeenCalledTimes(1);
+    const skip = onSkip.mock.calls[0]![0] as { maxMessageBytes: number };
+    expect(skip.maxMessageBytes).toBe(200);
+  });
+
   it('keeps a part small enough by construction when each part is one batch', async () => {
     const buffer = new FakeBuffer();
     const server = createServer();

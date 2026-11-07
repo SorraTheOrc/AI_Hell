@@ -787,6 +787,60 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
     // Let the fire-and-forget bridge settle before asserting it never fired.
     await drainMicrotasks();
     expect(uploadFetch).not.toHaveBeenCalled();
+    // Nothing was uploaded, so nothing could have been recorded server-side
+    // either: the opt-out path is clean (AC2).
+    expect(
+      streamedParts(uploadFetch).filter(
+        (part) => part.headers['x-telemetry-part'] === '1',
+      ),
+    ).toEqual([]);
+  });
+
+  it('dev switched off mid-run — no further parts and no final part', async () => {
+    // The setting is read at every send, so opting out during a run must stop
+    // the stream immediately: no further part uploads, and run end must not
+    // finalise (which would store a partial run and enqueue an evaluation).
+    const play = await bootWithMemoryBuffer(true, { batchSize: 16 });
+    const uploadFetch = uploadFetchSpy();
+    vi.stubGlobal('fetch', uploadFetch);
+
+    for (let chunk = 0; chunk < 4; chunk += 1) {
+      for (let i = 0; i < 20; i += 1) {
+        simTime += STEP_MS;
+        booted!.game.step(simTime, STEP_MS);
+      }
+      await drainMicrotasks();
+    }
+    await vi.waitFor(
+      () => expect(streamedParts(uploadFetch).length).toBeGreaterThanOrEqual(2),
+      { timeout: 5000 },
+    );
+
+    // The player turns the share setting off mid-run; settle anything already
+    // in flight, then record the baseline.
+    saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
+    await drainMicrotasks();
+    const partsBeforeOptOut = streamedParts(uploadFetch).length;
+
+    for (let chunk = 0; chunk < 3; chunk += 1) {
+      for (let i = 0; i < 20; i += 1) {
+        simTime += STEP_MS;
+        booted!.game.step(simTime, STEP_MS);
+      }
+      await drainMicrotasks();
+    }
+    expect(streamedParts(uploadFetch).length).toBe(partsBeforeOptOut);
+
+    endRun(play);
+    stepUntil('GameOverScene active', () => booted!.game.scene.isActive('GameOverScene'));
+    await drainMicrotasks();
+
+    const parts = streamedParts(uploadFetch);
+    expect(parts.length).toBe(partsBeforeOptOut);
+    expect(parts.some((part) => part.headers['x-telemetry-final'] === '1')).toBe(false);
+    // The run still ends and the page buffer still holds the whole run.
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    expect(partRecords(window.__aiHellTelemetry!.read()!).length).toBeGreaterThan(0);
   });
 
   it('prod build — no fetch, run end still transitions', async () => {
