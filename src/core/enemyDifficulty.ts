@@ -313,7 +313,7 @@ function groupEnemyConfig(
     bulletSize: 3,
     shotPattern: 'aimed',
     fireInterval: 1200,
-    bulletSpeed: 200,
+    bulletSpeed: 100,
     burstCount: 1,
     shotProbability: 1.0,
   };

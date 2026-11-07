@@ -414,7 +414,7 @@ function genericEnemyDefault(key: string): EnemyConfig {
     bulletSize: 3,
     shotPattern: 'aimed',
     fireInterval: 1200,
-    bulletSpeed: 200,
+    bulletSpeed: 100,
     bulletLifetime: 1.5,
     burstCount: 1,
     shotProbability: 1.0,
