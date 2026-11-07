@@ -2,18 +2,14 @@
  * Sweep planner — test-first contract (AH-0MW5IUBGV005IFHM, paired
  * implementation AH-0MW5IUC0B00346QE).
  *
- * These specs pin the planner's behaviour **before** the module is
- * implemented, so the implementation is driven by explicit expectations
- * rather than by whatever the code happens to do. The skeleton in
- * `./sweepPlan.ts` exports the types, constants and signatures and throws
- * `not implemented` from every body, so every spec below is authored with
- * Vitest's `it.fails` (the repo's red-before/green-after convention):
- *
- * - today each body fails with the skeleton's `not implemented` error, so the
- *   suite is green and nothing is vacuous;
- * - once the implementing sibling fills the bodies the spec **passes**, which
- *   makes its `it.fails` marker fail; that is the deliberate signal to flip
- *   each marker back to `it`.
+ * These specs pinned the planner's behaviour **before** the module existed
+ * (sibling AH-0MW5IUBGV005IFHM), so the implementation was driven by explicit
+ * expectations rather than by whatever the code happened to do. They were
+ * authored with Vitest's `it.fails` (the repo's red-before/green-after
+ * convention) against the skeleton's `not implemented` bodies; the
+ * implementing sibling (AH-0MW5IUC0B00346QE) filled the bodies and flipped
+ * each marker back to `it`, so every spec below now asserts the shipped
+ * behaviour directly. The expectations are unchanged in intent.
  *
  * The contract covers the parent's AC4 (stop rule / ceiling / budget) and AC6
  * (seeded, reproducible loadout and mix):
@@ -118,7 +114,7 @@ function levelSum(loadout: SweepLoadout): number {
 // ── Step list ─────────────────────────────────────────────────────────
 
 describe('sweep step list', () => {
-  it.fails('starts at 50, grows by 50 and stops at the 400-enemy ceiling', () => {
+  it('starts at 50, grows by 50 and stops at the 400-enemy ceiling', () => {
     const plan = planSweepSteps();
 
     expect(SWEEP_START_COUNT).toBe(50);
@@ -144,7 +140,7 @@ describe('sweep step list', () => {
     expect(elapsedMs).toBeLessThanOrEqual(SWEEP_RUN_BUDGET_MS);
   });
 
-  it.fails('honours the configured start count, increment and ceiling', () => {
+  it('honours the configured start count, increment and ceiling', () => {
     const plan = planSweepSteps({
       startCount: 100,
       countStep: 25,
@@ -158,7 +154,7 @@ describe('sweep step list', () => {
     expect(plan.steps[0].index).toBe(0);
   });
 
-  it.fails('truncates before the total-run budget would be exceeded', () => {
+  it('truncates before the total-run budget would be exceeded', () => {
     const stepSeconds = 100;
     const warmupSeconds = 5;
     const budgetMs = 250_000;
@@ -181,7 +177,7 @@ describe('sweep step list', () => {
     ).toBeGreaterThan(budgetMs);
   });
 
-  it.fails('plans no step when the budget cannot fit even the first one', () => {
+  it('plans no step when the budget cannot fit even the first one', () => {
     const plan = planSweepSteps({ budgetMs: 1_000 });
 
     expect(plan.steps).toEqual([]);
@@ -192,7 +188,7 @@ describe('sweep step list', () => {
 // ── Loadout ───────────────────────────────────────────────────────────
 
 describe('seeded loadout', () => {
-  it.fails('is identical for the same seed and aggression', () => {
+  it('is identical for the same seed and aggression', () => {
     const first = selectLoadout({ seed: 1234, aggression: 3 });
     const second = selectLoadout({ seed: 1234, aggression: 3 });
 
@@ -202,7 +198,7 @@ describe('seeded loadout', () => {
     expect(first.campaignLevel).toBe(hexAggressionLevel(3));
   });
 
-  it.fails('draws one weapon from every broad category plus the base cannon', () => {
+  it('draws one weapon from every broad category plus the base cannon', () => {
     const loadout = loadoutFor();
 
     expect(loadout.baseWeapon).toBe('cannon');
@@ -225,7 +221,7 @@ describe('seeded loadout', () => {
     expect([...covered].sort()).toEqual([...nonCannon].sort());
   });
 
-  it.fails('grants at least one power-up and never exceeds the six-slot cap', () => {
+  it('grants at least one power-up and never exceeds the six-slot cap', () => {
     const loadout = loadoutFor();
 
     expect(loadout.powerUps.length).toBeGreaterThanOrEqual(1);
@@ -242,7 +238,7 @@ describe('seeded loadout', () => {
     );
   });
 
-  it.fails('uses non-maxed levels that grow with the configured aggression', () => {
+  it('uses non-maxed levels that grow with the configured aggression', () => {
     const low = selectLoadout({ seed: SEED, aggression: 0 });
     const mid = selectLoadout({ seed: SEED, aggression: 4 });
     const high = selectLoadout({ seed: SEED, aggression: 9 });
@@ -270,7 +266,7 @@ describe('seeded loadout', () => {
     expect(levelSum(high)).toBeGreaterThanOrEqual(levelSum(mid));
   });
 
-  it.fails('draws different loadouts for different seeds', () => {
+  it('draws different loadouts for different seeds', () => {
     const signatures = new Set(
       [1, 2, 3, 4, 5, 6, 7, 8].map((seed) =>
         JSON.stringify(selectLoadout({ seed, aggression: 2 })),
@@ -284,19 +280,19 @@ describe('seeded loadout', () => {
 // ── Representative level ──────────────────────────────────────────────
 
 describe('representative level', () => {
-  it.fails('maps campaign level 1 to 1 and MAX_LEVEL to the cap', () => {
+  it('maps campaign level 1 to 1 and MAX_LEVEL to the cap', () => {
     expect(representativeLevel(1)).toBe(1);
     expect(representativeLevel(MAX_LEVEL)).toBe(REPRESENTATIVE_LEVEL_MAX);
     expect(REPRESENTATIVE_LEVEL_MAX).toBeLessThan(MAX_LEVEL);
   });
 
-  it.fails('clamps out-of-range campaign levels', () => {
+  it('clamps out-of-range campaign levels', () => {
     expect(representativeLevel(0)).toBe(1);
     expect(representativeLevel(-4)).toBe(1);
     expect(representativeLevel(MAX_LEVEL + 5)).toBe(REPRESENTATIVE_LEVEL_MAX);
   });
 
-  it.fails('is monotone across the campaign ladder', () => {
+  it('is monotone across the campaign ladder', () => {
     const levels = Array.from({ length: MAX_LEVEL }, (_, index) =>
       representativeLevel(index + 1),
     );
@@ -311,7 +307,7 @@ describe('representative level', () => {
 // ── Enemy mix ─────────────────────────────────────────────────────────
 
 describe('seeded enemy mix', () => {
-  it.fails('sums exactly to the step enemy count using roster archetypes', () => {
+  it('sums exactly to the step enemy count using roster archetypes', () => {
     for (const count of [50, 51, 150, 401]) {
       const mix = selectEnemyMix({ seed: 99, count, stepIndex: 2 });
 
@@ -340,7 +336,7 @@ describe('seeded enemy mix', () => {
     }
   });
 
-  it.fails('reports the diving share as the diver count fraction', () => {
+  it('reports the diving share as the diver count fraction', () => {
     const count = 150;
     const mix = selectEnemyMix({ seed: 99, count, stepIndex: 2 });
     const divers = mix.entries
@@ -352,13 +348,13 @@ describe('seeded enemy mix', () => {
     expect(mix.divingProportion).toBeLessThan(1);
   });
 
-  it.fails('is identical for the same seed, count and step', () => {
+  it('is identical for the same seed, count and step', () => {
     const options = { seed: 4242, count: 200, stepIndex: 3 };
 
     expect(selectEnemyMix(options)).toEqual(selectEnemyMix(options));
   });
 
-  it.fails('varies the diving proportion across steps', () => {
+  it('varies the diving proportion across steps', () => {
     const proportions = Array.from({ length: 20 }, (_, stepIndex) =>
       selectEnemyMix({ seed: SEED, count: 150, stepIndex }).divingProportion,
     );
@@ -372,7 +368,7 @@ describe('seeded enemy mix', () => {
 // ── Step evaluation and summary ───────────────────────────────────────
 
 describe('step evaluation', () => {
-  it.fails('fails a step strictly below 30 average FPS', () => {
+  it('fails a step strictly below 30 average FPS', () => {
     const atThreshold = measuredStep(0, 50, SWEEP_MIN_AVERAGE_FPS);
     expect(atThreshold.verdict).toBe('playable');
     expect(atThreshold.measurement.averageFps).toBe(SWEEP_MIN_AVERAGE_FPS);
@@ -393,7 +389,7 @@ describe('step evaluation', () => {
 });
 
 describe('sweep summary', () => {
-  it.fails('reports the first failure, the last playable load and the headline', () => {
+  it('reports the first failure, the last playable load and the headline', () => {
     const steps = [
       measuredStep(0, 50, 58),
       measuredStep(1, 100, 44),
@@ -428,7 +424,7 @@ describe('sweep summary', () => {
     expect(failing.maxFps).toBe(32);
   });
 
-  it.fails('reports no failure when the ceiling stopped the sweep', () => {
+  it('reports no failure when the ceiling stopped the sweep', () => {
     const steps = [measuredStep(0, 50, 60), measuredStep(1, 100, 55)];
 
     const summary = summariseSweep(steps, 'ceiling');
@@ -442,7 +438,7 @@ describe('sweep summary', () => {
     expect(summary.rows).toHaveLength(2);
   });
 
-  it.fails('reports no failure when the run budget stopped the sweep', () => {
+  it('reports no failure when the run budget stopped the sweep', () => {
     const summary = summariseSweep([measuredStep(0, 50, 60)], 'budget');
 
     expect(summary.stopReason).toBe('budget');
@@ -453,7 +449,7 @@ describe('sweep summary', () => {
     );
   });
 
-  it.fails('reports a null playable load when the first step fails', () => {
+  it('reports a null playable load when the first step fails', () => {
     const summary = summariseSweep(
       [measuredStep(0, 50, 18), measuredStep(1, 100, 12)],
       'ceiling',

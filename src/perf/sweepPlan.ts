@@ -2,20 +2,14 @@
  * Sweep planner — the pure step list, seeded loadout/mix and stop rule of the
  * performance sweep (parent AH-0MW3MGY3Z003R1M6).
  *
- * ## Status: TEST-FIRST SKELETON (AH-0MW5IUBGV005IFHM)
+ * ## Status: implemented (AH-0MW5IUC0B00346QE)
  *
- * This module is the contract the red specs in `./sweepPlan.test.ts` pin
- * **before** the implementation exists (paired implementation
- * AH-0MW5IUC0B00346QE). It exports the types, constants and function
- * signatures only; every body throws `not implemented`, so
- *
- * - `npm run typecheck` stays clean (fully typed, no `any` escape), and
- * - every contract spec fails for that documented reason rather than passing
- *   vacuously.
- *
- * The implementing sibling fills the bodies and flips each spec's `it.fails`
- * back to `it` (the repo's red-before/green-after convention). Nothing imports
- * this module yet, so there is no production behaviour change.
+ * The contract was pinned first by the red specs in `./sweepPlan.test.ts`
+ * (sibling AH-0MW5IUBGV005IFHM); this item filled the bodies and flipped each
+ * spec's `it.fails` marker back to `it` (the repo's red-before/green-after
+ * convention). Every figure below is a pure function of its inputs, so the
+ * whole planner — step list, seeded loadout, seeded mix, stop rule and
+ * summary — runs in the fast `unit` vitest project with no browser.
  *
  * ## Why it is a separate, Phaser-free module
  *
@@ -51,7 +45,11 @@
  * @module src/perf/sweepPlan
  */
 
-import type { PowerUpId } from '../powerups/types';
+import { POWER_UP_SLOT_CAP } from '../core/constants';
+import { MAX_LEVEL, MIN_LEVEL } from '../core/GameState';
+import { hexAggressionLevel } from '../core/hangarWar/hexDifficulty';
+import { createSeededRng, normaliseSeed } from '../core/rng';
+import { POWER_UP_CATALOGUE, type PowerUpId } from '../powerups/types';
 import type { WeaponId } from '../utils/weapons';
 
 // ── Step-list constants ───────────────────────────────────────────────
@@ -112,9 +110,15 @@ export const SWEEP_RUN_BUDGET_MS = 30 * 60 * 1000;
 /**
  * Highest representative upgrade level a grant may carry (7).
  *
- * Deliberately below `MAX_LEVEL` (10) and below the shipped upgrade-curve
- * saturation, so even the strongest aggression deploys a strong-but-not-maxed
- * loadout: a representative late-game player, never a fully invested one.
+ * Deliberately below `MAX_LEVEL` (10) and below the shipped
+ * exponential-saturation upgrade curve (`src/utils/weaponLevels.ts`), so even
+ * the strongest aggression deploys a strong-but-not-maxed loadout: a
+ * representative late-game player, never a fully invested one. The curve
+ * approaches its finite `cap` asymptotically (`effective(level) → cap`), so a
+ * level-7 grant has climbed roughly three quarters of the curve's headroom
+ * while still leaving the remaining levels to earn — the campaign-level
+ * fraction (`(7 - 1) / (10 - 1)`) is the documented tuning rule, not a second
+ * difficulty system.
  */
 export const REPRESENTATIVE_LEVEL_MAX = 7;
 
@@ -158,6 +162,23 @@ export type SweepArchetypeKey = (typeof SWEEP_ARCHETYPE_KEYS)[number];
  * exactly once.
  */
 export type SweepWeaponCategory = 'projectile' | 'beam' | 'area' | 'exotic';
+
+/**
+ * Lowest share of a step's enemies that may be the diving archetype.
+ *
+ * The diving proportion is drawn per step in
+ * `[SWEEP_DIVING_MIN_PROPORTION, SWEEP_DIVING_MAX_PROPORTION)`, so every step
+ * mixes shooting and diving behaviour while the mix still varies across the
+ * sweep (producer decision 3: "vary them").
+ */
+export const SWEEP_DIVING_MIN_PROPORTION = 0.2;
+
+/**
+ * Upper bound (exclusive) of the per-step diving share.
+ *
+ * Kept below 1 so every step always fields shooting archetypes as well.
+ */
+export const SWEEP_DIVING_MAX_PROPORTION = 0.5;
 
 /**
  * The shipped non-cannon weapons grouped by the parent's four broad
@@ -345,8 +366,53 @@ export interface SweepSummary {
  * `stopReason` is `'ceiling'` when the next increment would pass the ceiling,
  * `'budget'` when the next step would not fit the remaining budget.
  */
-export function planSweepSteps(_options: SweepPlanOptions = {}): SweepPlan {
-  throw new Error('not implemented');
+export function planSweepSteps(options: SweepPlanOptions = {}): SweepPlan {
+  const startCount = Math.trunc(options.startCount ?? SWEEP_START_COUNT);
+  const countStep = Math.trunc(options.countStep ?? SWEEP_COUNT_STEP);
+  const ceiling = Math.trunc(options.ceiling ?? SWEEP_COUNT_CEILING);
+  // The measured window may never shrink below the parent's 15 s minimum.
+  const durationSeconds = Math.max(
+    SWEEP_MIN_SECONDS,
+    options.stepSeconds ?? SWEEP_MIN_SECONDS,
+  );
+  const warmupSeconds = Math.max(
+    0,
+    options.warmupSeconds ?? SWEEP_WARMUP_SECONDS,
+  );
+  const budgetMs = Math.max(0, options.budgetMs ?? SWEEP_RUN_BUDGET_MS);
+  const stepMs = (warmupSeconds + durationSeconds) * 1000;
+
+  const steps: SweepStepPlan[] = [];
+  let stopReason: SweepPlanStopReason = 'ceiling';
+  let enemyCount = startCount;
+  let elapsedMs = 0;
+
+  for (;;) {
+    if (enemyCount > ceiling) {
+      stopReason = 'ceiling';
+      break;
+    }
+    if (elapsedMs + stepMs > budgetMs) {
+      stopReason = 'budget';
+      break;
+    }
+    steps.push({
+      index: steps.length,
+      enemyCount,
+      warmupSeconds,
+      durationSeconds,
+      startOffsetMs: elapsedMs,
+    });
+    elapsedMs += stepMs;
+    enemyCount += countStep;
+    // Guard against a non-positive increment (would otherwise never advance).
+    if (countStep <= 0) {
+      stopReason = 'ceiling';
+      break;
+    }
+  }
+
+  return { steps, stopReason };
 }
 
 /**
@@ -357,8 +423,15 @@ export function planSweepSteps(_options: SweepPlanOptions = {}): SweepPlan {
  * clamped for out-of-range input. It stays below the shipped upgrade-curve
  * saturation, so a late aggression is strong but never maxed.
  */
-export function representativeLevel(_campaignLevel: number): number {
-  throw new Error('not implemented');
+export function representativeLevel(campaignLevel: number): number {
+  const whole = Number.isFinite(campaignLevel)
+    ? Math.trunc(campaignLevel)
+    : MIN_LEVEL;
+  const clamped = Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, whole));
+  const span = MAX_LEVEL - MIN_LEVEL;
+  const scaled =
+    (clamped - MIN_LEVEL) * (REPRESENTATIVE_LEVEL_MAX - MIN_LEVEL);
+  return MIN_LEVEL + Math.round(scaled / span);
 }
 
 /**
@@ -372,8 +445,67 @@ export function representativeLevel(_campaignLevel: number): number {
  * Every level is {@link representativeLevel} of the aggression's campaign
  * level. The same options always produce an identical loadout.
  */
-export function selectLoadout(_options: SelectLoadoutOptions): SweepLoadout {
-  throw new Error('not implemented');
+export function selectLoadout(options: SelectLoadoutOptions): SweepLoadout {
+  const { seed, aggression } = options;
+  const campaignLevel = hexAggressionLevel(aggression);
+  const level = representativeLevel(campaignLevel);
+  // Salt the seed so the loadout stream is independent of the mix stream.
+  const rng = createSeededRng(saltedSeed(seed, LOADOUT_SEED_SALT));
+
+  const categories = Object.keys(
+    SWEEP_WEAPON_CATEGORIES,
+  ) as SweepWeaponCategory[];
+  const weapons: SweepWeaponGrant[] = categories.map((category) => ({
+    id: pickOne(rng, SWEEP_WEAPON_CATEGORIES[category]),
+    category,
+    level,
+  }));
+
+  const unchosenPowerUps = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
+  const powerUps: SweepPowerUpGrant[] = [];
+
+  // At least one power-up (producer decision 2), then fill the remaining
+  // counted slots with a seeded choice of another weapon or another power-up.
+  pushPowerUp(powerUps, unchosenPowerUps, rng, level);
+
+  const unchosenWeapons = categories.flatMap((category) =>
+    SWEEP_WEAPON_CATEGORIES[category]
+      .filter((id) => !weapons.some((grant) => grant.id === id))
+      .map((id) => ({ id, category })),
+  );
+
+  let remainingSlots = POWER_UP_SLOT_CAP - weapons.length - powerUps.length;
+  while (
+    remainingSlots > 0 &&
+    (unchosenPowerUps.length > 0 || unchosenWeapons.length > 0)
+  ) {
+    const preferWeapon = rng() < 0.5;
+    if (preferWeapon && unchosenWeapons.length > 0) {
+      const next = unchosenWeapons.splice(
+        pickIndex(rng, unchosenWeapons.length),
+        1,
+      )[0];
+      weapons.push({ id: next.id, category: next.category, level });
+    } else if (unchosenPowerUps.length > 0) {
+      pushPowerUp(powerUps, unchosenPowerUps, rng, level);
+    } else {
+      const next = unchosenWeapons.splice(
+        pickIndex(rng, unchosenWeapons.length),
+        1,
+      )[0];
+      weapons.push({ id: next.id, category: next.category, level });
+    }
+    remainingSlots = POWER_UP_SLOT_CAP - weapons.length - powerUps.length;
+  }
+
+  return {
+    seed,
+    aggression,
+    campaignLevel,
+    baseWeapon: 'cannon',
+    weapons,
+    powerUps,
+  };
 }
 
 /**
@@ -383,8 +515,51 @@ export function selectLoadout(_options: SelectLoadoutOptions): SweepLoadout {
  * to `count`, the `divingProportion` is the `diver` share, and the proportion
  * varies per `stepIndex` while remaining reproducible from the seed.
  */
-export function selectEnemyMix(_options: SelectEnemyMixOptions): SweepEnemyMix {
-  throw new Error('not implemented');
+export function selectEnemyMix(options: SelectEnemyMixOptions): SweepEnemyMix {
+  const { seed, stepIndex } = options;
+  const count = Math.max(0, Math.trunc(options.count));
+  // Salt with the step index so each step draws a fresh, reproducible share.
+  const rng = createSeededRng(
+    saltedSeed(
+      normaliseSeed(seed ^ Math.imul(stepIndex + 1, 0x9e3779b9)),
+      MIX_SEED_SALT,
+    ),
+  );
+
+  const divingShare =
+    SWEEP_DIVING_MIN_PROPORTION +
+    rng() * (SWEEP_DIVING_MAX_PROPORTION - SWEEP_DIVING_MIN_PROPORTION);
+
+  if (count === 0) {
+    return { seed, stepIndex, entries: [], divingProportion: 0 };
+  }
+
+  const shootingArchetypes = SWEEP_ARCHETYPE_KEYS.filter(
+    (archetype) => archetype !== 'diver',
+  );
+  // Keep both behaviours present for any count of two or more enemies.
+  const diverCount = Math.min(
+    count - 1,
+    Math.max(1, Math.round(count * divingShare)),
+  );
+  const shootingCount = count - diverCount;
+
+  const weights = shootingArchetypes.map(() => 0.5 + rng());
+  const shares = distribute(shootingCount, weights);
+
+  const entries: SweepEnemyMixEntry[] = [
+    { archetype: 'diver', count: diverCount },
+    ...shootingArchetypes
+      .map((archetype, index) => ({ archetype, count: shares[index] }))
+      .filter((entry) => entry.count > 0),
+  ];
+
+  return {
+    seed,
+    stepIndex,
+    entries,
+    divingProportion: diverCount / count,
+  };
 }
 
 /**
@@ -394,8 +569,17 @@ export function selectEnemyMix(_options: SelectEnemyMixOptions): SweepEnemyMix {
  * {@link SWEEP_MIN_AVERAGE_FPS} (exactly the threshold stays playable), and
  * `'playable'` otherwise.
  */
-export function evaluateStep(_step: SweepStepInput): SweepStepResult {
-  throw new Error('not implemented');
+export function evaluateStep(step: SweepStepInput): SweepStepResult {
+  return {
+    plan: step.plan,
+    loadout: step.loadout,
+    mix: step.mix,
+    measurement: step.measurement,
+    verdict:
+      step.measurement.averageFps < SWEEP_MIN_AVERAGE_FPS
+        ? 'failure'
+        : 'playable',
+  };
 }
 
 /**
@@ -414,8 +598,147 @@ export function evaluateStep(_step: SweepStepInput): SweepStepResult {
  *   for a budget stop.
  */
 export function summariseSweep(
-  _steps: readonly SweepStepResult[],
-  _planStopReason: SweepPlanStopReason,
+  steps: readonly SweepStepResult[],
+  planStopReason: SweepPlanStopReason,
 ): SweepSummary {
-  throw new Error('not implemented');
+  const failureIndex = steps.findIndex((step) => step.verdict === 'failure');
+
+  if (failureIndex >= 0) {
+    const rows = steps.slice(0, failureIndex + 1).map(toSummaryRow);
+    const failure = rows[rows.length - 1];
+    const playableEnemyCount =
+      failureIndex > 0 ? steps[failureIndex - 1].plan.enemyCount : null;
+    const playable = playableEnemyCount ?? 0;
+    return {
+      stopReason: 'below-threshold',
+      playableEnemyCount,
+      failure,
+      headline:
+        `playable to ${playable} enemies; first failure at ` +
+        `${failure.enemyCount} with average ` +
+        `${failure.averageFps.toFixed(1)} FPS`,
+      rows,
+    };
+  }
+
+  const rows = steps.map(toSummaryRow);
+  const lastStep = steps[steps.length - 1];
+  const playableEnemyCount = lastStep ? lastStep.plan.enemyCount : null;
+  const playable = playableEnemyCount ?? 0;
+  const tail =
+    planStopReason === 'budget'
+      ? 'no failure before the run budget'
+      : 'no failure within the sweep';
+  return {
+    stopReason: planStopReason,
+    playableEnemyCount,
+    failure: null,
+    headline: `playable to ${playable} enemies; ${tail}`,
+    rows,
+  };
+}
+
+// ── Internal helpers ─────────────────────────────────────────────────
+
+/** Seed salt that separates the loadout stream from the enemy-mix stream. */
+const LOADOUT_SEED_SALT = 0x9e3779b9;
+
+/** Seed salt that separates the enemy-mix stream from the loadout stream. */
+const MIX_SEED_SALT = 0x85ebca6b;
+
+/**
+ * Derives an independent, deterministic stream seed from a run seed.
+ *
+ * Two consumers of the same run seed (the loadout and the mix) must not share
+ * one stream, or a draw in one would shift the other. Salting keeps each
+ * stream a pure function of the seed while remaining reproducible.
+ */
+function saltedSeed(seed: number, salt: number): number {
+  return normaliseSeed(seed ^ salt);
+}
+
+/** Uniformly picks an index in `[0, length)`, clamped at the last element. */
+function pickIndex(rng: () => number, length: number): number {
+  return Math.min(length - 1, Math.floor(rng() * length));
+}
+
+/** Picks one element of a non-empty list with the supplied seeded stream. */
+function pickOne<T>(rng: () => number, items: readonly T[]): T {
+  return items[pickIndex(rng, items.length)];
+}
+
+/**
+ * Appends a power-up drawn (and removed) from the unchosen pool.
+ *
+ * Removing the picked kind keeps the loadout free of repeated power-up kinds.
+ */
+function pushPowerUp(
+  powerUps: SweepPowerUpGrant[],
+  unchosen: PowerUpId[],
+  rng: () => number,
+  level: number,
+): void {
+  const [id] = unchosen.splice(pickIndex(rng, unchosen.length), 1);
+  powerUps.push({ id, level });
+}
+
+/**
+ * Distributes `total` items over `weights` so every slot gets at least one
+ * when the total allows it.
+ *
+ * Each slot is seeded first with one item, the excess is split in proportion
+ * to the weights, and the rounding leftover goes to the largest fractional
+ * remainders (ties broken by slot order) — so the counts always sum exactly to
+ * `total` and the split is reproducible.
+ */
+function distribute(total: number, weights: readonly number[]): number[] {
+  const slots = weights.length;
+  const counts = new Array<number>(slots).fill(0);
+  if (slots === 0 || total <= 0) return counts;
+
+  // Too few items for one each: hand them out in slot order.
+  if (total <= slots) {
+    for (let index = 0; index < total; index += 1) counts[index] = 1;
+    return counts;
+  }
+
+  counts.fill(1);
+  const excess = total - slots;
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+  const fractions: { index: number; fraction: number }[] = [];
+  let assigned = 0;
+
+  for (let index = 0; index < slots; index += 1) {
+    const raw = (excess * weights[index]) / weightTotal;
+    const whole = Math.floor(raw);
+    counts[index] += whole;
+    assigned += whole;
+    fractions.push({ index, fraction: raw - whole });
+  }
+
+  fractions.sort(
+    (left, right) =>
+      right.fraction - left.fraction || left.index - right.index,
+  );
+  let leftover = excess - assigned;
+  for (let index = 0; leftover > 0; index += 1) {
+    counts[fractions[index % slots].index] += 1;
+    leftover -= 1;
+  }
+
+  return counts;
+}
+
+/** Flattens one measured step into a summary-table row. */
+function toSummaryRow(step: SweepStepResult): SweepSummaryRow {
+  return {
+    enemyCount: step.plan.enemyCount,
+    weapons: step.loadout.weapons,
+    powerUps: step.loadout.powerUps,
+    mix: step.mix,
+    minFps: step.measurement.minFps,
+    averageFps: step.measurement.averageFps,
+    maxFps: step.measurement.maxFps,
+    verdict: step.verdict,
+  };
 }
