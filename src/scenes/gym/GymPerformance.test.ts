@@ -9,15 +9,14 @@
  * neither the count nor the archetype mix can drift silently.
  *
  * The second half of this file pins the **sweep parameterisation**
- * (AH-0MW5IUD410063FSI, paired implementation AH-0MW5IUDQD001WOXI): one scene
- * measured at any enemy count, with a per-step shoot/dive mix, a firing player
- * and a seeded loadout, all through the existing shared seams. Those specs are
+ * (AH-0MW5IUD410063FSI, implementation AH-0MW5IUDQD001WOXI): one scene measured
+ * at any enemy count, with a per-step shoot/dive mix, a firing player and a
+ * seeded loadout, all through the existing shared seams. Those specs were
  * authored red under Vitest's `it.fails` (the repo's red-before/green-after
- * convention) against the declarations-only skeleton in `GymPerformance.ts`, so
- * each one fails for the documented reason — the scene does not read the
- * parameters yet — instead of passing vacuously. The paired implementation
- * fills the bodies and flips every marker back to `it`; a leftover `it.fails`
- * then fails the suite, so the flip is deliberate.
+ * convention) and are green now that the scene reads its parameters. The paired
+ * implementation (AH-0MW5IUDQD001WOXI) filled the bodies and flipped every
+ * marker back to `it`; a re-introduced `it.fails` here would silently weaken
+ * the contract.
  *
  * The plain `it` specs in that block are **invariants that must hold before and
  * after** the change, not placeholders: the sweep roster mirrors the scene
@@ -377,7 +376,7 @@ describe('GymPerformance — sweep parameterisation (AH-0MW5IUD410063FSI)', () =
     expect(Math.sin(player.getHeading())).toBeCloseTo(-1, 5);
   });
 
-  it.fails(
+  it(
     'spawns exactly the configured count through the shared config.count seam (AC1)',
     async () => {
       const scene = await bootWithLaunch({ count: 150 });
@@ -397,7 +396,7 @@ describe('GymPerformance — sweep parameterisation (AH-0MW5IUD410063FSI)', () =
     },
   );
 
-  it.fails(
+  it(
     'applies a supplied enemy mix exactly and deterministically (AC2)',
     async () => {
       const mix: GymPerformanceMixEntry[] = [
@@ -430,7 +429,7 @@ describe('GymPerformance — sweep parameterisation (AH-0MW5IUD410063FSI)', () =
     },
   );
 
-  it.fails(
+  it(
     "accepts the planner's seeded mix entries verbatim (sweep driver seam, AC2)",
     async () => {
       const mix = selectEnemyMix({ seed: 0x5eed_3a71, count: 24, stepIndex: 2 });
@@ -446,7 +445,7 @@ describe('GymPerformance — sweep parameterisation (AH-0MW5IUD410063FSI)', () =
     },
   );
 
-  it.fails(
+  it(
     'enables the shared player auto-fire path only when asked (AC3)',
     async () => {
       const scene = await bootWithLaunch({ autoFire: true });
@@ -459,7 +458,7 @@ describe('GymPerformance — sweep parameterisation (AH-0MW5IUD410063FSI)', () =
     },
   );
 
-  it.fails(
+  it(
     'lays a fully on-screen grid for every swept count with the documented minimum spacing (AC5)',
     () => {
       // The box itself must sit inside the canvas, clear of the HUD.
@@ -513,7 +512,7 @@ describe('GymPerformance — sweep parameterisation (AH-0MW5IUD410063FSI)', () =
     },
   );
 
-  it.fails(
+  it(
     'keeps the historical 10 × 10 geometry at the default count (AC5)',
     () => {
       const layout = layoutForCount(GYM_PERFORMANCE_ENEMY_COUNT);
@@ -530,7 +529,7 @@ describe('GymPerformance — sweep parameterisation (AH-0MW5IUD410063FSI)', () =
     },
   );
 
-  it.fails(
+  it(
     'names the configured count in the stress overlay and hint (AC6)',
     async () => {
       const scene = await bootWithLaunch({ count: 150 });

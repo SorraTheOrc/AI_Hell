@@ -10,26 +10,28 @@
  * combat/collision loop — measurable with
  * `npm run perf:measure -- --scene GymPerformance --seconds 60`.
  *
- * ## Status: test-first skeleton (AH-0MW5IUD410063FSI)
+ * ## Sweep parameterisation (AH-0MW5IUDQD001WOXI)
  *
- * The 100-enemy scenario above is shipped and unchanged. The **sweep**
- * parameters (enemy count, per-step shoot/dive mix, player auto-fire and the
- * seeded loadout) are pinned first by the red specs in
- * `GymPerformance.test.ts` against the declarations below — the launch-data
- * type, the documented layout limits and the {@link layoutForCount} signature.
- * Only the declarations exist today: {@link layoutForCount} throws
- * `not implemented` and {@link GymPerformance.init} merely widens the
- * launch-data type, so
+ * The same scene is the measured step of the enemy-count sweep
+ * (AH-0MW3MGY3Z003R1M6): its launch data carries the enemy `count`, the
+ * per-step shoot/dive `enemyMix` and an `autoFire` flag, and the player
+ * loadout arrives through the shared `SceneSetupState` (`applySceneSetup`).
+ * Nothing is forked for the sweep:
  *
- * - `npm run typecheck` stays clean (fully typed, no `any` escape), and
- * - every parameterisation spec fails for that documented reason rather than
- *   passing vacuously against today's hard-coded scene.
+ * - `count` is written to the existing `config.count` seam and laid out by
+ *   {@link layoutForCount}, which keeps the whole block on screen at every
+ *   swept count — and reproduces the historical 10 × 10, 66 × 34 geometry at
+ *   the default count;
+ * - `enemyMix` assigns one archetype per grid slot from the slot index (never
+ *   a mutable spawn counter), still built by `createEnemyFromConfig` and fired
+ *   by `fireForEnemy`;
+ * - `autoFire` (default **off**) enables the shared player auto-fire step, so
+ *   a sweep step measures the player's own bullets and kills.
  *
- * The paired implementation (AH-0MW5IUDQD001WOXI) fills the bodies and flips
- * each `it.fails` marker back to `it`; the default-behaviour specs in
- * `GymPerformance.test.ts` (100 enemies, 10 × 10 grid, no player fire) pin the
- * shipped scenario throughout, so the sweep parameters cannot silently change
- * it.
+ * Absent launch data reproduces the shipped 100-enemy stress scenario exactly
+ * (10 × 10 block, no player fire); `GymPerformance.test.ts` pins both the
+ * default and the parameterised behaviour, so the sweep parameters cannot
+ * silently change the shipped scenario.
  *
  * ## Parity by construction
  *
@@ -54,16 +56,19 @@
  * ## Determinism of the load
  *
  * - formation drift is **0** — the block does not scroll off mid-measurement;
- * - there is **no wave timeout** — the enemy count stays at 100 for the whole
- *   measured window;
- * - there is **no seeded mineral field** and no power-up layer — the measured
- *   scenario is exactly the 100 enemies and their fire, nothing else;
+ * - there is **no wave timeout** — the configured enemy count stays at the
+ *   launch-data count for the whole measured window;
+ * - there is **no seeded mineral field** and no power-up drop layer — with no
+ *   launch data the measured scenario is exactly the 100 enemies and their
+ *   fire, nothing else (a sweep setup may grant a loadout through the shared
+ *   `applySceneSetup`; it enables no drop layer of its own);
  * - the spawn is a fixed row-major grid, and every enemy's archetype is
- *   derived from its grid offset (never from a mutable spawn counter), so two
- *   boots of the scene produce the identical roster;
- * - the player ship is present (enemy aimed/spread fire targets it) but its
- *   auto-fire is **disabled**, so the 100-enemy load cannot decay during the
- *   measured window.
+ *   derived from its grid offset or slot index (never from a mutable spawn
+ *   counter), so two boots of the scene produce the identical roster;
+ * - the player ship is present (enemy aimed/spread fire targets it) and its
+ *   auto-fire defaults to **disabled**, so the shipped 100-enemy load cannot
+ *   decay during the measured window; a sweep step opts in with
+ *   `autoFire: true` to measure the player's own bullets and kills.
  *
  * The live readout (top-left) reports FPS and the live entity counts the
  * performance probe samples (`getPerformanceCounts()`); it refreshes at a low
@@ -197,6 +202,24 @@ export interface GymPerformanceMixEntry {
   readonly count: number;
 }
 
+/**
+ * The mutable scene parameters a boot resolves from its launch data.
+ *
+ * Shared by reference with the constructor-built {@link EnemyFormationConfig}
+ * closures, so `init` can re-point the geometry and the slot roster before
+ * `create()` spawns anything — without rebuilding (or forking) the config.
+ */
+interface GymPerformanceParameters {
+  /** Resolved block geometry for this boot's count. */
+  layout: GymPerformanceLayout;
+  /** Configured mix, or `null` for the historical round-robin roster. */
+  mix: readonly GymPerformanceMixEntry[] | null;
+  /** Archetype per grid slot, in spawn order (`layout.count` entries). */
+  roster: GymPerformanceArchetypeKey[];
+  /** Whether the shared player auto-fire step runs for this boot. */
+  autoFire: boolean;
+}
+
 /** The resolved block geometry for one enemy count. */
 export interface GymPerformanceLayout {
   /** Enemy count this geometry lays out. */
@@ -250,8 +273,109 @@ export interface GymPerformanceLaunchData extends SceneSetupState {
  * 66 × 34 geometry. Pure and deterministic: the same count always yields the
  * same geometry.
  */
-export function layoutForCount(_count: number): GymPerformanceLayout {
-  throw new Error('not implemented');
+export function layoutForCount(count: number): GymPerformanceLayout {
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error(
+      `layoutForCount(${count}): expected a positive integer enemy count`,
+    );
+  }
+
+  // As square as the count allows: the block stays closest to the historical
+  // 10 × 10 shape as the sweep walks the count upward.
+  const columns = Math.max(1, Math.ceil(Math.sqrt(count)));
+  const rows = Math.ceil(count / columns);
+
+  // Use the historical spacing when it still fits, otherwise the widest
+  // integer spacing the playfield box can hold. Below the documented minimum
+  // the block would overlap into one blurred mass, so that count is refused
+  // rather than measured at an invalid load.
+  const spacingX =
+    columns > 1
+      ? Math.min(
+          GYM_PERFORMANCE_SPACING_X,
+          Math.floor(GYM_PERFORMANCE_PLAYFIELD.width / (columns - 1)),
+        )
+      : GYM_PERFORMANCE_SPACING_X;
+  const spacingY =
+    rows > 1
+      ? Math.min(
+          GYM_PERFORMANCE_SPACING_Y,
+          Math.floor(GYM_PERFORMANCE_PLAYFIELD.height / (rows - 1)),
+        )
+      : GYM_PERFORMANCE_SPACING_Y;
+
+  if (
+    spacingX < GYM_PERFORMANCE_MIN_SPACING_X ||
+    spacingY < GYM_PERFORMANCE_MIN_SPACING_Y
+  ) {
+    throw new Error(
+      `layoutForCount(${count}): no on-screen ${columns} × ${rows} grid fits `
+        + `the ${GYM_PERFORMANCE_PLAYFIELD.width} × `
+        + `${GYM_PERFORMANCE_PLAYFIELD.height} px playfield at the documented `
+        + `minimum spacing (${GYM_PERFORMANCE_MIN_SPACING_X} × `
+        + `${GYM_PERFORMANCE_MIN_SPACING_Y} px)`,
+    );
+  }
+
+  const blockWidth = (columns - 1) * spacingX;
+  // The block is centred horizontally and top-aligned at the playfield top —
+  // which is exactly the historical base at the default count.
+  const startX =
+    GYM_PERFORMANCE_PLAYFIELD.left +
+    Math.round((GYM_PERFORMANCE_PLAYFIELD.width - blockWidth) / 2);
+  const startY = GYM_PERFORMANCE_PLAYFIELD.top;
+
+  return {
+    count,
+    columns,
+    rows,
+    spacingX,
+    spacingY,
+    startX,
+    startY,
+    offsets: buildStressGridOffsets(count, columns),
+  };
+}
+
+/**
+ * Expands a configured mix into one archetype per grid slot, in spawn order.
+ *
+ * The slot's archetype is derived from its **slot index** (the concatenated
+ * mix), never from a mutable spawn counter, so two boots of the same setup
+ * produce the identical slot-by-slot roster. Slots the mix does not cover fall
+ * back to the historical round-robin roster at that index.
+ *
+ * @param layout - Resolved geometry whose slot count bounds the roster.
+ * @param mix - Configured per-archetype shares, or `null` for the default.
+ */
+function buildSlotArchetypes(
+  layout: GymPerformanceLayout,
+  mix: readonly GymPerformanceMixEntry[] | null | undefined,
+): GymPerformanceArchetypeKey[] {
+  const roster: GymPerformanceArchetypeKey[] = [];
+  for (const entry of mix ?? []) {
+    const copies = Math.max(0, Math.floor(entry.count));
+    for (let i = 0; i < copies && roster.length < layout.count; i += 1) {
+      roster.push(entry.archetype);
+    }
+    if (roster.length >= layout.count) break;
+  }
+  for (let index = roster.length; index < layout.count; index += 1) {
+    roster.push(archetypeForOffset(layout.offsets[index], layout.columns));
+  }
+  return roster;
+}
+
+/**
+ * The bottom hint line for a configured count (the historical string at the
+ * default count, with the count interpolated so no label advertises the
+ * default load at a parameterised count).
+ */
+function stressHintText(count: number): string {
+  return (
+    `STRESS — ${count} late-game enemies + live fire `
+    + '(perf: npm run perf:measure -- --scene GymPerformance)'
+  );
 }
 
 /**
@@ -299,6 +423,7 @@ export function archetypeForOffset(
  */
 function buildFormationConfig(
   archetypesByEntity: WeakMap<EnemyEntity, GymPerformanceArchetypeKey>,
+  parameters: GymPerformanceParameters,
 ): EnemyFormationConfig<EnemyEntity, FormationSceneBullet> {
   const configs = new Map<GymPerformanceArchetypeKey, EnemyConfig>();
   for (const key of GYM_PERFORMANCE_ARCHETYPE_KEYS) {
@@ -309,24 +434,33 @@ function buildFormationConfig(
 
   return {
     sceneKey: GYM_PERFORMANCE_SCENE_KEY,
-    buildOffsets: (count) => buildStressGridOffsets(count),
-    count: GYM_PERFORMANCE_ENEMY_COUNT,
-    spacingX: GYM_PERFORMANCE_SPACING_X,
-    spacingY: GYM_PERFORMANCE_SPACING_Y,
+    // The block geometry and roster are resolved per boot by `init`; the
+    // closures read the shared parameters object, so they follow a
+    // parameterised count without a second scene or a forked spawn loop.
+    buildOffsets: (count) =>
+      buildStressGridOffsets(count, parameters.layout.columns),
+    count: parameters.layout.count,
+    spacingX: parameters.layout.spacingX,
+    spacingY: parameters.layout.spacingY,
     driftSpeed: GYM_PERFORMANCE_DRIFT_SPEED,
-    startX: GYM_PERFORMANCE_START_X,
-    startY: GYM_PERFORMANCE_START_Y,
+    startX: parameters.layout.startX,
+    startY: parameters.layout.startY,
     statusLabel: 'late-game enemies',
-    hintText:
-      'STRESS — 100 late-game enemies + live fire (perf: npm run perf:measure -- --scene GymPerformance)',
+    hintText: stressHintText(parameters.layout.count),
     player: { ...GYM_PERFORMANCE_PLAYER_SPAWN },
     // The measured scenario is *enemies and their fire*: the scene boots with
     // the HUD SHOOT toggle ON and every spawned entity firing.
     shootEnabled: true,
-    // No demonstration mineral field: the only load is the 100 enemies + fire.
+    // No demonstration mineral field: the only load is the configured
+    // enemies + fire.
     minerals: false,
     createEntity: (scene, x, y, offset) => {
-      const key = archetypeForOffset(offset);
+      // Slot index, derived from the offset (never a spawn counter), selects
+      // the configured mix entry; the fallback keeps the historical roster.
+      const index = offset.row * parameters.layout.columns + offset.col;
+      const key =
+        parameters.roster[index] ??
+        archetypeForOffset(offset, parameters.layout.columns);
       const entity = createEnemyFromConfig(scene, configs.get(key)!, x, y, offset);
       archetypesByEntity.set(entity, key);
       return entity;
@@ -343,7 +477,9 @@ function buildFormationConfig(
 }
 
 /**
- * 100 late-game enemies + live fire — the reproducible performance worst case.
+ * The stress gym — 100 late-game enemies + live fire by default, and the
+ * parameterisable measured scene of the enemy-count sweep (count, shoot/dive
+ * mix and player auto-fire, all through the shared core seams).
  */
 export class GymPerformance extends GymFormationScene<
   EnemyEntity,
@@ -355,6 +491,12 @@ export class GymPerformance extends GymFormationScene<
     GymPerformanceArchetypeKey
   >;
 
+  /**
+   * The boot's parameters, shared by reference with the config closures above
+   * so {@link init} can re-point them before {@link create} spawns.
+   */
+  private readonly parameters: GymPerformanceParameters;
+
   private stressOverlay: Phaser.GameObjects.Text | null = null;
 
   private overlayClockMs = 0;
@@ -364,21 +506,50 @@ export class GymPerformance extends GymFormationScene<
       EnemyEntity,
       GymPerformanceArchetypeKey
     >();
-    super(buildFormationConfig(archetypesByEntity));
+    const layout = layoutForCount(GYM_PERFORMANCE_ENEMY_COUNT);
+    const parameters: GymPerformanceParameters = {
+      layout,
+      mix: null,
+      roster: buildSlotArchetypes(layout, null),
+      autoFire: false,
+    };
+    super(buildFormationConfig(archetypesByEntity, parameters));
     this.archetypesByEntity = archetypesByEntity;
+    this.parameters = parameters;
   }
 
   /**
-   * Captures the sweep launch data (test-first skeleton, AH-0MW5IUD410063FSI;
-   * paired implementation AH-0MW5IUDQD001WOXI).
+   * Resolves the sweep parameters from the scene launch data
+   * (AH-0MW5IUDQD001WOXI).
    *
-   * The signature is widened to {@link GymPerformanceLaunchData} so the
-   * parameterisation specs can supply their parameters, but today it only
-   * forwards to the shared scene-setup handling — reading and applying `count`,
-   * `enemyMix` and `autoFire` is the paired implementation's body.
+   * `count`/`enemyMix`/`autoFire` are scene configuration: the count and its
+   * layout go into the existing `config.count`/`buildOffsets` seam, the mix
+   * becomes one archetype per grid slot, and `autoFire` gates the shared
+   * player auto-fire step. The loadout itself is *not* read here — it is the
+   * shared {@link SceneSetupState} half of the launch data, applied by the
+   * inherited `applySceneSetup` path in `create()`. Absent launch data keeps
+   * the shipped 100-enemy, no-player-fire scenario (and resets a restarted
+   * scene to it).
    */
   override init(data?: GymPerformanceLaunchData | null): void {
+    const layout = layoutForCount(data?.count ?? GYM_PERFORMANCE_ENEMY_COUNT);
+    const mix = data?.enemyMix ?? null;
+    this.parameters.layout = layout;
+    this.parameters.mix = mix;
+    this.parameters.roster = buildSlotArchetypes(layout, mix);
+    this.parameters.autoFire = data?.autoFire === true;
+    this.applyLayoutToConfig(layout);
     super.init(data);
+  }
+
+  /** Writes the resolved geometry into the shared formation config seam. */
+  private applyLayoutToConfig(layout: GymPerformanceLayout): void {
+    this.config.count = layout.count;
+    this.config.spacingX = layout.spacingX;
+    this.config.spacingY = layout.spacingY;
+    this.config.startX = layout.startX;
+    this.config.startY = layout.startY;
+    this.config.hintText = stressHintText(layout.count);
   }
 
   override create(): void {
@@ -407,16 +578,20 @@ export class GymPerformance extends GymFormationScene<
   }
 
   /**
-   * Player auto-fire is **disabled**: the stress scenario is "100 enemies
-   * alive", and a firing player would shoot the top rows out during the
-   * measured window, turning the worst case into an easier one. Enemies still
-   * aim and fire at the live ship, so their fire is unchanged; disabling a
-   * feature is the permitted gym difference (a divergent copy never is). See
-   * `docs/GYM_PARITY.md`. Capture setups that grant weapons do not re-enable
-   * it — the load must stay at 100 enemies.
+   * Player auto-fire follows the sweep step's `autoFire` flag (default
+   * **off**).
+   *
+   * The shipped stress scenario is "100 enemies alive", and a firing player
+   * would shoot the top rows out during the measured window, turning the worst
+   * case into an easier one. Enemies still aim and fire at the live ship, so
+   * their fire is unchanged; disabling a feature is the permitted gym
+   * difference (a divergent copy never is). See `docs/GYM_PARITY.md`. A sweep
+   * step opts in (`autoFire: true`) so its measured load includes the player's
+   * own bullets and kills through the same shared step; a capture setup that
+   * grants weapons does not re-enable it on its own.
    */
   protected override autoFireEnabled(): boolean {
-    return false;
+    return this.parameters.autoFire;
   }
 
   /**
@@ -446,7 +621,7 @@ export class GymPerformance extends GymFormationScene<
     return this.stressOverlay?.text ?? '';
   }
 
-  /** Writes the FPS + live-count readout. */
+  /** Writes the FPS + live-count readout, naming the configured load. */
   private renderStressOverlay(): void {
     if (!this.stressOverlay) return;
     const counts = this.getPerformanceCounts();
@@ -457,9 +632,20 @@ export class GymPerformance extends GymFormationScene<
         : '—';
     this.stressOverlay.setText(
       [
-        'STRESS — 100 late-game enemies, live fire',
+        `STRESS — ${this.parameters.layout.count} late-game enemies`
+          + `${this.mixLabel()}, live fire`,
         `FPS ${fpsText} | enemies ${counts.enemies} | enemy bullets ${counts.enemyBullets} | player bullets ${counts.playerBullets}`,
       ].join('\n'),
     );
+  }
+
+  /**
+   * The configured shoot/dive mix, as a parenthesised overlay suffix — empty
+   * when the boot uses the historical round-robin roster.
+   */
+  private mixLabel(): string {
+    const mix = this.parameters.mix;
+    if (!mix || mix.length === 0) return '';
+    return ` (${mix.map((entry) => `${entry.archetype} ${entry.count}`).join(', ')})`;
   }
 }
