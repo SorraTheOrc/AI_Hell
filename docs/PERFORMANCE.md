@@ -529,8 +529,6 @@ CPU attribution over the profiled window (share of the measured window, %):
   33.3 → 49.9 ms) but p50 stays pinned at the 16.7 ms vsync step in all four
   runs, which is the same load-sensitivity pattern the
   [noise floor](#noise-floor) describes.
-  never approaches the ≥ 30 FPS floor (33.3 ms p95), which is the same
-  load-sensitivity pattern the [noise floor](#noise-floor) describes.
 - **The mobile shortfall was the software rasteriser, as attributed.**
   `native` — the CPU rasterisation bucket that dominated the software rows —
   falls from **76.92 %** of the 4× window to **16.35 %**, and the frame time
@@ -1805,10 +1803,14 @@ for a garbage-free hot loop, and neither claims a frame-time win.
    33 ms in one run and one in the other, which is the confirmation that turns
    it into one ([Hardware-GPU desktop
    baseline](#hardware-gpu-desktop-baseline)).
-3. **Mobile tier — target missed.** 24.21 FPS against the ≥ 30 FPS bar at a
-   fixed 4× throttle. It is a real improvement over the recorded 19.92 FPS
-   baseline (+21.5 %; the 4× `renderer` bucket fell from 33.51 % to 18.87 % of
-   the window), but it is not the target.
+3. **Mobile tier — target missed on the software rasteriser, met on hardware WebGL.**
+   The 4× row measures 24.21 FPS against the ≥ 30 FPS bar on **SwiftShader**,
+   this host's CPU-rasteriser floor, which is not a verdict on the mobile
+   target: the same tier on the host's hardware GPU holds 46.85–59.44 FPS — see
+   [Hardware-WebGL mobile tier](#hardware-webgl-mobile-tier-4-cpu-throttle).
+   The software row is a real improvement over the recorded 19.92 FPS baseline
+   (+21.5 %; the 4× `renderer` bucket fell from 33.51 % to 18.87 % of the
+   window), but it is not the target on that backend.
    The remaining cost is draw submission (`renderer` 18.87 % of the window,
    84.91 % of JS) on top of software rasterisation (`native` 76.92 %).
    Escalated as **AH-0MW2IRYAH0055WCN** with the measured hotspot shares, and

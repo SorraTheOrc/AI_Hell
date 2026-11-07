@@ -399,6 +399,52 @@ describe('docs/PERFORMANCE.md — recorded numbers', () => {
     expect(sectionBody(doc, '### Verdicts')).toContain('AH-0MW3KP1R90030QY9');
   });
 
+  it('splits the mobile-tier verdict by backend and cross-references the hardware rows', () => {
+    const doc = perfDoc();
+    const verdicts = sectionBody(doc, '### Verdicts');
+
+    // The mobile entry is item 3 of the verdict list. Take it up to the next
+    // numbered item so an assertion cannot be satisfied by a sibling verdict.
+    const lines = verdicts.split('\n');
+    const start = lines.findIndex((line) => /^3\.\s+\*\*Mobile tier/.test(line));
+    expect(start, 'the Verdicts mobile-tier entry (item 3) is missing').toBeGreaterThanOrEqual(0);
+    const entryLines: string[] = [];
+    for (let i = start; i < lines.length; i += 1) {
+      if (i > start && /^\d+\.\s/.test(lines[i])) break;
+      entryLines.push(lines[i]);
+    }
+    const mobile = entryLines.join('\n');
+
+    // AC2: the verdict is split by backend — missed on the software rasteriser,
+    // met on hardware WebGL — never an unqualified "target missed".
+    expect(mobile).toMatch(/software rasteri[sz]er/i);
+    expect(mobile).toMatch(/hardware WebGL/i);
+
+    // AC2: the cross-reference sits in the lead of the entry, before the
+    // follow-up paragraphs, so a reader who stops early still lands on the
+    // hardware rows. (Left in a follow-up only, the verdict reads as unmet.)
+    const lead = mobile.split('**Follow-up result')[0];
+    expect(lead).toContain('[Hardware-WebGL mobile tier]');
+    expect(lead).toContain('#hardware-webgl-mobile-tier-4-cpu-throttle');
+
+    // The historical software measurement and its provenance are retained:
+    // this is a relabel by backend, not a rewrite of recorded history.
+    expect(mobile).toContain('24.21 FPS');
+    expect(mobile).toContain('AH-0MW2IRYAH0055WCN');
+    expect(mobile).toContain('AH-0MW3KP1R90030QY9');
+  });
+
+  it('states the hardware mobile tier\u2019s load sensitivity once, without an orphaned fragment', () => {
+    const mobile = sectionBody(perfDoc(), '### Hardware-WebGL mobile tier (4× CPU throttle)');
+
+    // The "pass is not a single lucky window" bullet carried a dangling
+    // duplicate of its own closing sentence after an earlier edit; the
+    // noise-floor reference belongs to that bullet exactly once.
+    const duplicates = mobile.match(/load-sensitivity pattern the/g) ?? [];
+    expect(duplicates.length, 'the mobile-tier load-sensitivity sentence is duplicated').toBe(1);
+    expect(mobile).not.toMatch(/never approaches the ≥ 30 FPS floor/);
+  });
+
   it('publishes the hardware-GPU desktop runs for both hosts', () => {
     const hardware = sectionBody(perfDoc(), '## Hardware-GPU desktop baseline');
 
