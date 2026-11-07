@@ -10,6 +10,27 @@
  * combat/collision loop — measurable with
  * `npm run perf:measure -- --scene GymPerformance --seconds 60`.
  *
+ * ## Status: test-first skeleton (AH-0MW5IUD410063FSI)
+ *
+ * The 100-enemy scenario above is shipped and unchanged. The **sweep**
+ * parameters (enemy count, per-step shoot/dive mix, player auto-fire and the
+ * seeded loadout) are pinned first by the red specs in
+ * `GymPerformance.test.ts` against the declarations below — the launch-data
+ * type, the documented layout limits and the {@link layoutForCount} signature.
+ * Only the declarations exist today: {@link layoutForCount} throws
+ * `not implemented` and {@link GymPerformance.init} merely widens the
+ * launch-data type, so
+ *
+ * - `npm run typecheck` stays clean (fully typed, no `any` escape), and
+ * - every parameterisation spec fails for that documented reason rather than
+ *   passing vacuously against today's hard-coded scene.
+ *
+ * The paired implementation (AH-0MW5IUDQD001WOXI) fills the bodies and flips
+ * each `it.fails` marker back to `it`; the default-behaviour specs in
+ * `GymPerformance.test.ts` (100 enemies, 10 × 10 grid, no player fire) pin the
+ * shipped scenario throughout, so the sweep parameters cannot silently change
+ * it.
+ *
  * ## Parity by construction
  *
  * The scene is a thin `GymFormationScene` subclass: every enemy is built by
@@ -56,6 +77,7 @@ import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import type { EnemyConfig } from '../../core/enemyConfig';
 import type { PerformanceCounts } from '../../core/perfProbe';
+import type { SceneSetupState } from '../core/sceneSetup';
 import type { FormationOffset } from '../../utils/formations';
 import {
   createEnemyFromConfig,
@@ -96,6 +118,39 @@ export const GYM_PERFORMANCE_START_Y = 80;
  */
 export const GYM_PERFORMANCE_DRIFT_SPEED = 0;
 
+/**
+ * The on-screen box a formation block must stay inside (px).
+ *
+ * The measured load must be visible: a fixed 66 × 34 spacing puts a
+ * 400-enemy block ~1300 px below the canvas, which would measure an
+ * off-screen load. {@link layoutForCount} therefore chooses the block's
+ * columns, rows and spacing so the whole block fits this box, which itself
+ * sits inside the canvas (30 px margins either side, top at
+ * {@link GYM_PERFORMANCE_START_Y}, bottom clear of the HUD controls).
+ */
+export const GYM_PERFORMANCE_PLAYFIELD = {
+  left: (GAME_WIDTH - 900) / 2,
+  top: GYM_PERFORMANCE_START_Y,
+  width: 900,
+  height: 380,
+} as const;
+
+/**
+ * Documented minimum horizontal slot spacing (px) for a parameterised block.
+ *
+ * Below this the archetype bodies overlap enough to blur the measured load;
+ * the historical 66 px default spacing is well above it.
+ */
+export const GYM_PERFORMANCE_MIN_SPACING_X = 20;
+
+/**
+ * Documented minimum vertical slot spacing (px) for a parameterised block.
+ *
+ * Below this the rows overlap; the historical 34 px default spacing is well
+ * above it.
+ */
+export const GYM_PERFORMANCE_MIN_SPACING_Y = 18;
+
 /** Player spawn (bottom centre), mirroring the other combat gyms. */
 export const GYM_PERFORMANCE_PLAYER_SPAWN = {
   x: GAME_WIDTH / 2,
@@ -133,6 +188,71 @@ const OVERLAY_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   backgroundColor: '#101010',
   padding: { x: 8, y: 6 },
 };
+
+/** One archetype's share of a step's configured enemy count. */
+export interface GymPerformanceMixEntry {
+  /** Roster archetype the slots spawn. */
+  readonly archetype: GymPerformanceArchetypeKey;
+  /** How many grid slots this archetype fills. */
+  readonly count: number;
+}
+
+/** The resolved block geometry for one enemy count. */
+export interface GymPerformanceLayout {
+  /** Enemy count this geometry lays out. */
+  readonly count: number;
+  /** Grid columns in the block. */
+  readonly columns: number;
+  /** Grid rows in the block (`columns × rows >= count`). */
+  readonly rows: number;
+  /** Horizontal slot spacing (px), at least the documented minimum. */
+  readonly spacingX: number;
+  /** Vertical slot spacing (px), at least the documented minimum. */
+  readonly spacingY: number;
+  /** Formation base x (px): the left edge of the block. */
+  readonly startX: number;
+  /** Formation base y (px): the top edge of the block. */
+  readonly startY: number;
+  /** Deterministic row-major slot offsets, exactly `count` of them. */
+  readonly offsets: readonly FormationOffset[];
+}
+
+/**
+ * Scene launch data: the shared capture setup plus the sweep's parameters
+ * (AH-0MW5IUDQD001WOXI).
+ *
+ * Extends {@link SceneSetupState} rather than nesting it, so the seeded
+ * loadout arrives through the one shared `applySceneSetup` seam the game and
+ * every other gym use — no test-only grant path.
+ */
+export interface GymPerformanceLaunchData extends SceneSetupState {
+  /** Enemy count for this run; the only source of the number. */
+  count?: number;
+  /**
+   * Per-archetype shares of {@link count}, in spawn order. The scene assigns
+   * each grid slot from this roster deterministically; absent keeps the
+   * historical late-game round-robin roster.
+   */
+  enemyMix?: readonly GymPerformanceMixEntry[];
+  /**
+   * Whether the shared player auto-fire path runs. Default `false`: the
+   * shipped 100-enemy stress scenario must not decay during a measurement.
+   */
+  autoFire?: boolean;
+}
+
+/**
+ * Resolves the block geometry for `count` enemies.
+ *
+ * The block must be fully **on screen** (inside
+ * {@link GYM_PERFORMANCE_PLAYFIELD}) with slot spacing at or above the
+ * documented minimums, and the default count keeps the historical 10 × 10,
+ * 66 × 34 geometry. Pure and deterministic: the same count always yields the
+ * same geometry.
+ */
+export function layoutForCount(_count: number): GymPerformanceLayout {
+  throw new Error('not implemented');
+}
 
 /**
  * Builds the deterministic row-major grid offsets for `count` enemies.
@@ -246,6 +366,19 @@ export class GymPerformance extends GymFormationScene<
     >();
     super(buildFormationConfig(archetypesByEntity));
     this.archetypesByEntity = archetypesByEntity;
+  }
+
+  /**
+   * Captures the sweep launch data (test-first skeleton, AH-0MW5IUD410063FSI;
+   * paired implementation AH-0MW5IUDQD001WOXI).
+   *
+   * The signature is widened to {@link GymPerformanceLaunchData} so the
+   * parameterisation specs can supply their parameters, but today it only
+   * forwards to the shared scene-setup handling — reading and applying `count`,
+   * `enemyMix` and `autoFire` is the paired implementation's body.
+   */
+  override init(data?: GymPerformanceLaunchData | null): void {
+    super.init(data);
   }
 
   override create(): void {
