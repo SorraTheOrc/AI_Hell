@@ -24,7 +24,7 @@
  *
  * ## Wire shape
  *
- * Parts reuse the existing `POST /api/telemetry/upload` path (so the dev
+ * Parts reuse the existing dev upload endpoint (so the dev
  * tooling keeps observing uploads and the production bundle marker stays
  * valid) and are discriminated by an **explicit marker** — the
  * {@link PART_MARKER_HEADER} header or the `?part=1` query flag — with the
@@ -116,7 +116,7 @@ export type PartRequestDiscrimination =
 export interface PartRequestInput {
   /** Request headers; names are matched case-insensitively. */
   readonly headers?: Readonly<Record<string, string | readonly string[] | undefined>>;
-  /** Request URL (`/api/telemetry/upload?part=1&offset=64`). */
+  /** Request URL, including its query string (`?part=1&offset=64`). */
   readonly url?: string;
 }
 
