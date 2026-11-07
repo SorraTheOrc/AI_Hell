@@ -289,8 +289,10 @@ Report fields:
 | `startedAt`, `host` | When and where the run happened (see [reference machine](#reference-machine)). |
 | `webgl` | The WebGL backend the page actually used (`vendor`/`renderer`/`version`), plus `kind`: `software` for a CPU rasteriser (SwiftShader, llvmpipe, …), `hardware` for a real GPU driver string, `unknown` when there is no context. Headless Chromium falls back to SwiftShader, so a run can never be mistaken for a hardware-GPU run on a label alone. |
 | `elapsedSeconds`, `frames` | The measured wall-clock span and the number of sampled frame intervals. |
-| `frameTimeMs.p50`, `frameTimeMs.p95`, `frameTimeMs.max`, `frameTimeMs.mean` | Frame-time percentiles in milliseconds. Percentiles, not means, so one hitch does not hide the typical frame. |
+| `frameTimeMs.min`, `frameTimeMs.p50`, `frameTimeMs.p95`, `frameTimeMs.max`, `frameTimeMs.mean` | Frame-time percentiles in milliseconds. Percentiles, not means, so one hitch does not hide the typical frame. `min` is the fastest frame and `max` the slowest. |
 | `fps.effective` | `frames ÷ elapsedSeconds` — the loop's real throughput. |
+| `fps.min`, `fps.max` | The slowest and fastest frame expressed as a rate (`1000 ÷ frameTimeMs.max` and `1000 ÷ frameTimeMs.min`), so min/max FPS never have to be re-derived from a partial record. |
+| `fps.mean` | `frames ÷ elapsedSeconds` — the average rate (the same arithmetic as `fps.effective`, recorded under its own name for min/mean/max reporting). |
 | `fps.phaserActualFps` | Phaser's own smoothed `game.loop.actualFps` reading at the end of the window (cross-check). |
 | `longFrames.over33Ms`, `longFrames.over50Ms` (+ percentages) | Frames slower than 33 ms (a missed 30 FPS frame) and 50 ms (a visible hitch). Counts are strict (`>`), so a frame at exactly 33.0 ms is not a long frame. |
 | `counts.peak`, `counts.mean`, `counts.last`, `counts.samples` | Live enemies, enemy bullets, player bullets and minerals sampled every 250 ms — the load that produced the frame times. `counts` is `null` when the scene exposes none. |

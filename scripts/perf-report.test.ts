@@ -85,11 +85,12 @@ describe('mean and countAbove', () => {
 describe('summariseFrameTimes', () => {
   const frames = [16, 16, 17, 20, 34, 52];
 
-  it('reports p50/p95/max/mean, long-frame counts and percentages', () => {
+  it('reports min/p50/p95/max/mean, long-frame counts and percentages', () => {
     const summary = summariseFrameTimes(frames, { elapsedSeconds: 2 });
 
     expect(summary.frames).toBe(6);
     expect(summary.elapsedSeconds).toBe(2);
+    expect(summary.frameTimeMs.min).toBe(16);
     expect(summary.frameTimeMs.p50).toBeCloseTo(18.5, 10);
     expect(summary.frameTimeMs.p95).toBeCloseTo(47.5, 10);
     expect(summary.frameTimeMs.max).toBe(52);
@@ -109,6 +110,25 @@ describe('summariseFrameTimes', () => {
     expect(summary.fps.effective).toBe(2);
   });
 
+  it('derives min, max and mean FPS so the slowest frame is readable as a rate', () => {
+    // The worst frame (52 ms) is the minimum rate; the fastest (16 ms) is the max.
+    const summary = summariseFrameTimes(frames, { elapsedSeconds: 2 });
+
+    expect(summary.fps.min).toBeCloseTo(19.23, 2);
+    expect(summary.fps.max).toBe(62.5);
+    expect(summary.fps.mean).toBe(3);
+  });
+
+  it('reports the same rate as min and max for a single-frame window', () => {
+    const summary = summariseFrameTimes([50], { elapsedSeconds: 1 });
+
+    expect(summary.frameTimeMs.min).toBe(50);
+    expect(summary.frameTimeMs.max).toBe(50);
+    expect(summary.fps.min).toBe(20);
+    expect(summary.fps.max).toBe(20);
+    expect(summary.fps.mean).toBe(1);
+  });
+
   it('counts a frame at the threshold as acceptable, and only sums above it', () => {
     const atThresholds = summariseFrameTimes([LONG_FRAME_MS], { elapsedSeconds: 1 });
     expect(atThresholds.longFrames.over33Ms).toBe(0);
@@ -124,8 +144,8 @@ describe('summariseFrameTimes', () => {
 
     expect(summary.frames).toBe(0);
     expect(summary.elapsedSeconds).toBeNull();
-    expect(summary.frameTimeMs).toEqual({ p50: null, p95: null, max: null, mean: null });
-    expect(summary.fps.effective).toBeNull();
+    expect(summary.frameTimeMs).toEqual({ min: null, p50: null, p95: null, max: null, mean: null });
+    expect(summary.fps).toEqual({ effective: null, min: null, max: null, mean: null });
     expect(summary.longFrames).toEqual({
       over33Ms: 0,
       over50Ms: 0,
@@ -139,6 +159,7 @@ describe('summariseFrameTimes', () => {
 
     expect(summary.elapsedSeconds).toBeNull();
     expect(summary.fps.effective).toBeNull();
+    expect(summary.fps.mean).toBeNull();
   });
 });
 
@@ -228,9 +249,26 @@ describe('buildPerfReport', () => {
     expect(report.elapsedSeconds).toBe(0.066);
     expect(report.fps.effective).toBeCloseTo(61.07, 2);
     expect(report.fps.phaserActualFps).toBe(58.4);
+    expect(report.frameTimeMs.min).toBe(16);
     expect(report.frameTimeMs.p50).toBeCloseTo(16.75, 10);
     expect(report.frameTimeMs.max).toBe(40);
+    expect(report.fps.min).toBe(25);
+    expect(report.fps.max).toBe(62.5);
+    expect(report.fps.mean).toBeCloseTo(61.07, 2);
     expect(report.longFrames.over33Ms).toBe(1);
+  });
+
+  it('records a 50 ms frame as a 20 FPS minimum, never a fabricated rate', () => {
+    const report = buildPerfReport({
+      meta,
+      result: { frameTimesMs: [16, 16, 16, 50], durationMs: 1000 },
+    });
+
+    expect(report.frameTimeMs.min).toBe(16);
+    expect(report.frameTimeMs.max).toBe(50);
+    expect(report.fps.min).toBe(20);
+    expect(report.fps.max).toBe(62.5);
+    expect(report.fps.mean).toBe(4);
   });
 
   it('ignores non-finite frame samples and defaults the method when absent', () => {
@@ -381,6 +419,9 @@ describe('formatPerfSummary', () => {
     expect(text).toContain('p95');
     expect(text).toContain('max');
     expect(text).toContain('effective 40.0 FPS');
+    expect(text).toContain('min 16.0 ms');
+    expect(text).toContain('min 16.7');
+    expect(text).toContain('max 62.5');
     expect(text).toContain(`>${LONG_FRAME_MS} ms 2`);
     expect(text).toContain(`>${SUPPLY_LONG_FRAME_MS} ms 1`);
     expect(text).toContain('enemies 100/100.0');
@@ -461,6 +502,26 @@ describe('comparePerfReports', () => {
     expect(fps?.deltaPercent).toBe(10);
     const max = comparison.rows.find((row) => row.key === 'max');
     expect(max?.deltaPercent).toBe(-25);
+  });
+
+  it('compares the min and max FPS so a worst-frame regression is visible', () => {
+    const withRates = {
+      scene: 'PlayScene',
+      frameTimeMs: { min: 10, p50: 16, p95: 20, max: 40 },
+      fps: { effective: 60, min: 25, max: 100 },
+      longFrames: { over33Ms: 4 },
+    };
+    const slowerWorstFrame = {
+      ...withRates,
+      frameTimeMs: { ...withRates.frameTimeMs, max: 50 },
+      fps: { effective: 60, min: 20, max: 100 },
+    };
+
+    const comparison = comparePerfReports(withRates, slowerWorstFrame);
+
+    expect(comparison.rows.find((row) => row.key === 'frameTimeMin')?.next).toBe(10);
+    expect(comparison.rows.find((row) => row.key === 'fpsMin')?.deltaPercent).toBe(-20);
+    expect(comparison.rows.find((row) => row.key === 'fpsMax')?.deltaPercent).toBe(0);
   });
 
   it('flags a p95 change beyond 20%', () => {

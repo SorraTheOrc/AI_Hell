@@ -29,12 +29,21 @@ export interface FrameTimeSummary {
   frames: number;
   elapsedSeconds: number | null;
   frameTimeMs: {
+    min: number | null;
     p50: number | null;
     p95: number | null;
     max: number | null;
     mean: number | null;
   };
-  fps: { effective: number | null };
+  fps: {
+    effective: number | null;
+    /** The slowest frame's rate (`1000 / frameTimeMs.max`). */
+    min: number | null;
+    /** The fastest frame's rate (`1000 / frameTimeMs.min`). */
+    max: number | null;
+    /** Average rate over the window (`frames / elapsedSeconds`). */
+    mean: number | null;
+  };
   longFrames: {
     over33Ms: number;
     over50Ms: number;
@@ -96,7 +105,13 @@ export interface PerfReport {
   elapsedSeconds: number | null;
   frames: number;
   frameTimeMs: FrameTimeSummary['frameTimeMs'];
-  fps: { effective: number | null; phaserActualFps: number | null };
+  fps: {
+    effective: number | null;
+    min: number | null;
+    max: number | null;
+    mean: number | null;
+    phaserActualFps: number | null;
+  };
   longFrames: FrameTimeSummary['longFrames'];
   counts: CountsSummary | null;
   /** The WebGL backend the run actually used (vendor/renderer/version). */
@@ -161,12 +176,18 @@ export function formatPerfSummary(report: Partial<PerfReport>): string;
 /** A report-shaped input for the comparison: only the read fields matter. */
 export interface PerfReportLike {
   frameTimeMs?: {
+    min?: number | null;
     p50?: number | null;
     p95?: number | null;
     max?: number | null;
     mean?: number | null;
   };
-  fps?: { effective?: number | null };
+  fps?: {
+    effective?: number | null;
+    min?: number | null;
+    max?: number | null;
+    mean?: number | null;
+  };
   longFrames?: { over33Ms?: number | null };
   scene?: string;
 }

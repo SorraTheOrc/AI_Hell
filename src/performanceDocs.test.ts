@@ -254,10 +254,14 @@ describe('docs/PERFORMANCE.md — harness usage', () => {
     }
 
     for (const field of [
+      'frameTimeMs.min',
       'frameTimeMs.p50',
       'frameTimeMs.p95',
       'frameTimeMs.max',
       'fps.effective',
+      'fps.min',
+      'fps.max',
+      'fps.mean',
       'longFrames.over33Ms',
       'longFrames.over50Ms',
       'counts.peak',
