@@ -29,7 +29,10 @@ import {
   DEV_TELEMETRY_UPLOAD_ENDPOINT,
   DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES,
   MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING,
+  checkDevUploadSize,
   devUploadMessageBytes,
+  reportDevUploadSkip,
+  resolveDevUploadLimit,
   resolveDevUploadMaxMessageBytes,
   uploadDevTelemetry,
   type DevUploadFetch,
@@ -423,5 +426,44 @@ describe('uploadDevTelemetry — run-end upload size cap (AH-0MVNVGP55002G0KH)',
 
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(onSkip).toHaveBeenCalledWith({ bytes: 30, messageBytes: 30, maxMessageBytes: 20 });
+  });
+});
+
+describe('shared upload-size seams (AH-0MW6NI6BW003RJWH)', () => {
+  it('checkDevUploadSize passes a body that fits and reports one that does not', () => {
+    expect(checkDevUploadSize(SINK_CONTENT, 8 * 1024 * 1024)).toBeNull();
+
+    const over = checkDevUploadSize(SINK_CONTENT, 32);
+    expect(over).not.toBeNull();
+    expect(over!.bytes).toBeGreaterThan(32);
+    expect(over!.maxMessageBytes).toBe(32);
+  });
+
+  it('resolveDevUploadLimit honours an override, clamps it, and falls back to the env cap', () => {
+    expect(resolveDevUploadLimit({}, 1024)).toBe(1024);
+    // An override can never promise more than the server would accept.
+    expect(resolveDevUploadLimit({}, 64 * 1024 * 1024)).toBe(
+      MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING,
+    );
+    expect(
+      resolveDevUploadLimit({ VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES: '2048' }),
+    ).toBe(2048);
+    expect(resolveDevUploadLimit({})).toBe(DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES);
+  });
+
+  it('reportDevUploadSkip emits the actionable over-cap line', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      reportDevUploadSkip({ bytes: 2048, messageBytes: 4096, maxMessageBytes: 1024 });
+      const lines = warn.mock.calls.map((call) => String(call[0]));
+      expect(lines.some((line) => line.includes('run-end upload skipped'))).toBe(true);
+      expect(
+        lines.some((line) =>
+          line.includes('VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES'),
+        ),
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

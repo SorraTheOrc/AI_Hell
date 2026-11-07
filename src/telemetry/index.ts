@@ -51,10 +51,14 @@ export {
   isDevTelemetryBuild,
   isDevTelemetryCollectionEnabled,
   isDevTelemetryUploadEnabled,
+  loadDevTelemetryStreamer,
   loadDevTelemetryUploader,
   type DevModeEnv,
   type DevTelemetryBuffer,
   type DevTelemetrySetting,
+  type DevTelemetryStreamer,
+  type DevTelemetryStreamerFactory,
+  type DevTelemetryStreamerOptions,
   type DevTelemetryUploader,
 } from './devMode';
 
