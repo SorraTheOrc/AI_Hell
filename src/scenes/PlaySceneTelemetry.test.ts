@@ -72,6 +72,13 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
+    // Hermetic by default: a scene whose dev streamer is active must never
+    // POST to (and back off against) a real dev server. The upload tests below
+    // stub `fetch` with their own spy, which replaces this one.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200 })),
+    );
     localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
@@ -82,6 +89,7 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
     booted?.game.destroy(true);
     booted = null;
     localStorage.clear();
+    vi.unstubAllGlobals();
   });
 
   /** Steps the stopped game until `predicate` holds (or fails loudly). */
@@ -686,6 +694,87 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
     expect(records.filter((record) => record.kind === 'run_header')).toHaveLength(1);
     expect(records.filter((record) => record.kind === 'tick').length).toBeGreaterThan(16);
     expect(partRecords(window.__aiHellTelemetry!.read()!)).toEqual(records);
+  });
+
+  it('a new run gets a fresh run key and an empty buffer (no cross-run mixing)', async () => {
+    const play = await bootWithMemoryBuffer(true);
+    const uploadFetch = uploadFetchSpy();
+    vi.stubGlobal('fetch', uploadFetch);
+
+    // Run 1: play and end it, so its run is fully streamed and finalised.
+    endRun(play);
+    stepUntil('GameOverScene active after run 1', () =>
+      booted!.game.scene.isActive('GameOverScene'),
+    );
+    await vi.waitFor(
+      () =>
+        expect(
+          streamedParts(uploadFetch).filter(
+            (part) => part.headers['x-telemetry-final'] === '1',
+          ).length,
+        ).toBe(1),
+      { timeout: 5000 },
+    );
+
+    const runOneParts = streamedParts(uploadFetch);
+    const runOneKey = runOneParts[0]!.headers['x-telemetry-run-key'];
+    expect(runOneKey).toBeDefined();
+    const runOneRecords = runOneParts.flatMap((part) => partRecords(part.body));
+    expect(runOneRecords.filter((record) => record.kind === 'run_header')).toHaveLength(1);
+
+    // Run 2: a fresh start (different seed), after run 1 finished.
+    const playTwo = restartAndSettle(booted!.game, { seed: SEED + 1 });
+    await drainMicrotasks();
+    endRun(playTwo);
+    stepUntil('GameOverScene active after run 2', () =>
+      booted!.game.scene.isActive('GameOverScene'),
+    );
+    await vi.waitFor(
+      () =>
+        expect(
+          streamedParts(uploadFetch).filter(
+            (part) => part.headers['x-telemetry-final'] === '1',
+          ).length,
+        ).toBe(2),
+      { timeout: 5000 },
+    );
+
+    const runTwoParts = streamedParts(uploadFetch).filter(
+      (part) => part.headers['x-telemetry-run-key'] !== runOneKey,
+    );
+    expect(runTwoParts.length).toBeGreaterThanOrEqual(2);
+    const runTwoKey = runTwoParts[0]!.headers['x-telemetry-run-key'];
+    expect(runTwoKey).toBeDefined();
+    expect(runTwoKey).not.toBe(runOneKey);
+    // A new run starts from a zero watermark: run 1's confirmed count is not
+    // inherited, so no record is skipped and none is re-sent.
+    expect(runTwoParts[0]!.headers['x-telemetry-offset']).toBe('0');
+    expect(
+      runTwoParts.every((part) => part.headers['x-telemetry-run-key'] === runTwoKey),
+    ).toBe(true);
+
+    const runTwoRecords = runTwoParts.flatMap((part) => partRecords(part.body));
+    const runTwoHeaders = runTwoRecords.filter((record) => record.kind === 'run_header');
+    expect(runTwoHeaders).toHaveLength(1);
+    expect((runTwoHeaders[0] as { runSeed: number }).runSeed).toBe(SEED + 1);
+
+    // No run-1 body is re-sent as part of run 2 (empty finalisation bodies are
+    // shared by every run, so compare the parts that carry records), and the
+    // page buffer was reset at startRun: it holds the second run only, so a
+    // crashed run's records can never be merged into a later one.
+    const runTwoBodies = new Set(
+      runTwoParts.map((part) => part.body).filter((body) => body.length > 0),
+    );
+    for (const part of runOneParts) {
+      if (part.body.length > 0) expect(runTwoBodies.has(part.body)).toBe(false);
+    }
+    const buffer = window.__aiHellTelemetry!.read();
+    expect(partRecords(buffer!)).toEqual(runTwoRecords);
+    expect(
+      partRecords(buffer!).some(
+        (record) => record.kind === 'run_header' && (record as { runSeed: number }).runSeed === SEED,
+      ),
+    ).toBe(false);
   });
 
   it('dev+off — no fetch, run end still transitions', async () => {
