@@ -34,14 +34,15 @@
  *
  * This is a *closed-loop headless arena*, not Phaser. It models the parts the
  * bot reasons about — player Newtonian physics, collectable/hazard positions,
- * auto-fire, enemy fire and collisions — so it runs under Node/vitest in
- * milliseconds. The **full-campaign** and **per-level** modes additionally
- * drive the shared wave/level sequencer and upgrade-choice flow (below), so
- * `waveReached`/`levelReached`/`upgradesSelected` are populated from real
- * runs. What stays simplified: boss/mini-boss encounters (the boss trigger
- * ends the run), formation movement, VFX and all rendering. It is the
- * evaluation harness's counterpart to the browser capture path; both feed the
- * same telemetry schema.
+ * auto-fire from the owned weapon loadout, enemy fire and collisions — so it
+ * runs under Node/vitest in milliseconds. The **full-campaign** and
+ * **per-level** modes additionally drive the shared wave/level sequencer and
+ * upgrade-choice flow (below), so `waveReached`/`levelReached`/
+ * `upgradesSelected` are populated from real runs. What stays simplified:
+ * boss/mini-boss encounters (the boss trigger ends the run), formation
+ * movement, VFX and all rendering, plus the weapon-output gaps listed under
+ * "Player weapon fire" below. It is the evaluation harness's counterpart to
+ * the browser capture path; both feed the same telemetry schema.
  *
  * ## Player weapon fire (AH-0MW5DV9I6001D4HN, AH-0MW5DVAME0062GQO)
  *
@@ -148,10 +149,11 @@
  *
  * Rewards permanently affect the run: owned weapons/power-ups feed the
  * `choice` context, so later offers carry `weapon-level`/`power-up-level`
- * upgrades exactly as the game does. **Fidelity boundary:** choices affect
- * the ownership context used by later offers — the arena does **not** model
- * the chosen weapon's fire pattern, shield/effect timing or Extra Life
- * lifegain in the closed-loop simulation (the arena's auto-fire is fixed).
+ * upgrades exactly as the game does, and the chosen weapon's **fire output**
+ * is simulated from that ownership context (see "Player weapon fire" below).
+ * **Fidelity boundary:** the arena does **not** model the non-weapon reward
+ * effects — shield/effect timing and Extra Life lifegain — in the closed-loop
+ * simulation.
  *
  * The offer/selection draws come from a **dedicated stream seeded from the
  * run seed** (like the campaign/sim streams), so the choice sequence is

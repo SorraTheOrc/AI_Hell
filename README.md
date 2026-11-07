@@ -970,8 +970,10 @@ human-readable report. Run it with `npm run evaluate -- --batch`; every batch
 game now plays the **full shipped campaign** by default (bounded by an
 `18000`-tick budget), and `--skirmish` opts back into the legacy single-level
 skirmish. The default campaign batch models real wave/level progression
-(through the shared sequencer, including `fixed`/`curve`/`dynamic` waves) and
-the shared hold-full upgrade-choice flow, so `waveReached`, `levelReached` and
+(through the shared sequencer, including `fixed`/`curve`/`dynamic` waves), the
+shared hold-full upgrade-choice flow and the player's **weapon fire output**
+(catalogue cadence, pattern, bullet lifetime, size, damage and AOE — resolved
+from the run's ownership context), so `waveReached`, `levelReached` and
 `upgradesSelected` carry real distributions; it does **not** model boss /
 mini-boss encounters, VFX, formations or rendering, so treat a report as a
 directional signal — see the **fidelity boundary** in
