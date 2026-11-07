@@ -90,7 +90,9 @@ the CLI fix AH-0MW6CORAZ001FZZ3 — the tooling this section documents) ·
 2026-11-07 · [reference machine](#reference-machine) — headless Chromium
 (**SwiftShader software WebGL**, the default backend) · CPU throttle **1×**
 (the default) · AH-0MW5IUG0D004LX0E. The recorded reference sweep
-(AH-0MW5IUGKO003UC6T) publishes the per-step numbers this tool produces.
+(AH-0MW5IUGKO003UC6T) publishes the per-step numbers this tool produces — see
+[Recorded reference sweep](#recorded-reference-sweep-ah-0mw5iugko003uc6t)
+below.
 
 The stress gym measures **one** fixed load — exactly 100 late-game enemies —
 because that is the number the budget is stated against; it leaves "how many
@@ -111,6 +113,52 @@ by the test skill. Run it from the repo root on the
 [reference machine](#reference-machine) and compare numbers only within one
 host load band ([noise floor](#noise-floor)) — host load is recorded per step,
 so a noisy sweep is identifiable rather than silently comparable.
+
+### Recorded reference sweep (AH-0MW5IUGKO003UC6T)
+
+**`Recorded:`** commit `3e81aae8` (the measured tree; this documentation
+change touches no game code) · 2026-11-07 ·
+[reference machine](#reference-machine) — headless Chromium 140
+(**SwiftShader** software WebGL, the default backend) · CPU throttle **1×**
+(the default) · host load (1/5/15 min) **5.77 / 6.58 / 4.87** at the 50-enemy
+step and **7.11 / 6.78 / 4.98** at the 100-enemy step · AH-0MW5IUGKO003UC6T.
+
+One `npm run perf:sweep` at the documented defaults — derived seed
+`2013458503`, aggression 5, 15 s window with a 5 s warm-up, 1× CPU throttle,
+400-enemy ceiling, 30-minute budget — on a quiet reference host (no other
+agent's suite was running; the 1-minute load was 3.2 at launch). The sweep
+stopped at the first below-30 step:
+
+> **playable to 50 enemies; first failure at 100 with average 27.3 FPS**
+
+| Step | Enemies | Dive % | Loadout (level) | Min FPS | Avg FPS | Max FPS | Verdict | Host load (1/5/15 min) |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 50 | 28 % (14 divers) | `cannon`, `rapid L4`, `wave_laser L4`, `arc L4`, `shard_swarm L4`, `phase_shift L4`, `teleport L4` | 5.0 | 46.7 | 60.6 | playable | 5.77 / 6.58 / 4.87 |
+| 1 | 100 | 48 % (48 divers) | `cannon`, `rapid L4`, `wave_laser L4`, `arc L4`, `shard_swarm L4`, `phase_shift L4`, `teleport L4` | 5.0 | 27.3 | 60.2 | failure | 7.11 / 6.78 / 4.98 |
+
+The loadout is the run-level representative late-game player — campaign level
+5 → upgrade level 4, not maxed — so only the **shoot/dive mix varies per
+step**. The full archetype mix was: step 0 (50) `diver` 14, `tank` 6, `swarm`
+7, `phaser` 10, `raider` 8, `march` 5; step 1 (100) `diver` 48, `tank` 9,
+`swarm` 14, `phaser` 9, `raider` 8, `march` 12. The **minimum FPS of 5.0** in
+both rows is a single ~200 ms frame at the start of the window (a GC/OS
+hitch), not the sustained load — the 50-enemy step's p95 is 33.4 ms — so judge
+the load on the average and p95, per the [noise floor](#noise-floor). The
+full frame-time distribution, the live enemy/bullet counts and each step's
+host block are in the raw harness reports the verdict names.
+
+The **last playable load is 50 enemies** (average 46.7 FPS); the **first
+failing step is 100 enemies** (average 27.3 FPS, p50 33.3 ms). The
+machine-readable verdict — scene, seed, aggression, throttle, host, commit,
+both steps' loadout and levels, mix, min/average/max FPS, live counts and the
+`webgl` backend — is committed at
+[`docs/perf/sweep-reference.json`](./perf/sweep-reference.json).
+
+No regression or hotspot beyond this expected playability boundary was
+exposed — see [How it differs from the fixed 100-enemy
+rows](#how-it-differs-from-the-fixed-100-enemy-rows) for why the sweep is not
+comparable to the budget baseline — so no `discovered-from` work item was
+needed.
 
 ### What the sweep measures
 
