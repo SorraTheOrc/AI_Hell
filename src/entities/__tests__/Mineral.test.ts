@@ -81,7 +81,7 @@ describe('Mineral constants', () => {
   });
 
   it('defines MINERAL_COLOR as gold', () => {
-    expect(MINERAL_COLOR).toBe(0xffdd44); // gold hex
+    expect(MINERAL_COLOR).toBe(0xccaa33); // gold hex
   });
 
   it('defines MINERAL_SALVAGE_COLOR as a distinct orange (AH-0MVJ72I8O0009T09)', () => {

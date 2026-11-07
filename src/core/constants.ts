@@ -447,7 +447,7 @@ export const PLAYER_HIT_SCALE_PULSE_DURATION = 0.4;
 export const MINERAL_SIZE = 5;
 
 /** Mineral body colour — gold (hex). */
-export const MINERAL_COLOR = 0xffdd44;
+export const MINERAL_COLOR = 0xccaa33;
 
 /**
  * Salvage bonus mineral body colour — orange (hex, AH-0MVJ72I8O0009T09).
