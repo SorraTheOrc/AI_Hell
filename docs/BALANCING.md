@@ -126,7 +126,7 @@ AH-0MVD1RGKM005GW0C and AH-0MVD1RIH2008YCNV):
 | Field | What it measures | How to read it |
 |---|---|---|
 | `waveReached` | The highest **within-level** wave number reached. `WaveManager.waveNumber` is 1-based *within the active level* and resets to 1 when the next level starts, so this is wave progress inside a level, **not** a cumulative campaign wave count. | Pair it with `levelReached`: `levelReached` 1 with a high `waveReached` means runs get deep into level 1; a low `waveReached` with `levelReached` 3 means runs reach level 3 but die early in it. It is also a density signal — a wave with more enemies takes longer to wipe, which shows up as a lower `waveReached` at a fixed tick budget even when kills/run and survival are flat. |
-| `levelReached` | The highest campaign level entered (1–10). | The headline progression metric. `mean` 1.15 with `min` 1 / `max` 2 says most runs stay in level 1; a rising mean means the campaign is getting easier (or the bot better). |
+| `levelReached` | The highest campaign level entered (1–10). | The headline progression metric. `mean` 1.81 with `min` 1 / `max` 3 says most runs reach level 2; a rising mean means the campaign is getting easier (or the bot better). |
 | `upgradesSelected` | Per-choice-id counts of the upgrade the bot took through the shared hold-full flow. | Each key (a weapon/power-up/level id) has its own `DistributionStats`. A key whose `mean` collapses after a tuning edit while `stdDev` stays low made that choice consistently unappealing; a key that is never offered is a supply problem, not a balance one. |
 
 The per-wave aggregation is the **distribution over runs** of those per-run

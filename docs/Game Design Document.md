@@ -425,13 +425,13 @@ periodically instead of remembered (AH-0MV7WVHU0000U775).
 - **Narrative:** this section. The two are updated in the same change whenever
   a band moves materially.
 
-| Experience dimension | Metric | Intended band (targets v1) | What it means in play |
+| Experience dimension | Metric | Intended band (targets v2) | What it means in play |
 |---|---|---|---|
 | Survival | `survivalSeconds` | 300.00 ± 30.00 s | A competent run lasts about five simulated minutes — the batch tick budget — i.e. the run is not cut short by a death spiral. |
 | Reward cadence | `mineralsCollected` | 18.00 ± 1.80 | A run collects about eighteen minerals, enough for roughly two hold-full resolutions. |
 | Build progression | `upgradesSelected` (per run) | 2.00 ± 0.50 | A run takes about two upgrades through the shared hold-full choice flow, so a run develops a build identity. |
-| Pacing (within a level) | `waveReached` | 6.46 ± 4.96 | A run progresses to the middle of a level's wave list, not just the opening waves. |
-| Pacing (campaign) | `levelReached` | 1.15 ± 0.71 | Most runs stay in level 1–2, so later-level content is reached only by better play. |
+| Pacing (within a level) | `waveReached` | 7.83 ± 5.92 | A run typically clears most of a level's wave list, not just the opening waves. |
+| Pacing (campaign) | `levelReached` | 1.81 ± 1.69 | A competent run usually reaches level 2 (sometimes level 3), so later-level content is reached as the build develops. |
 | Challenge | `avoidableHits` | 0.00 ± 0.50 | A competent run takes no hits that cost a life; a human run taking a hit is a prompt to investigate, not automatically a defect. |
 
 The band width is `max(2 × baseline std-dev, 10 % of |centre|, 0.5)` (the exact
