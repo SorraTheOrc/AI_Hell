@@ -6,7 +6,11 @@
  *
  * - {@link NoopTelemetrySink} — used whenever recording is disabled.
  * - {@link JsonlTelemetrySink} — the local dev sink: one JSON object per
- *   line, written through a pluggable {@link TelemetryLineWriter}. The
+ *   line, written through a pluggable {@link TelemetryLineWriter}. Its
+ *   optional {@link TelemetryBatchObserver} (`onFlush`) sees each batch's
+ *   **delta** NDJSON right after it is appended, which is how the dev
+ *   streaming uploader observes flushed batches without ever clearing the
+ *   buffer (AH-0MW6NFRQR0062D90). The
  *   default writer is an **in-memory, run-scoped buffer**
  *   ({@link createMemoryLineWriter}); it never touches browser storage, so a
  *   long run can neither exhaust the origin's storage quota nor break
@@ -49,6 +53,19 @@ export interface TelemetrySink {
   /** Releases the sink's resources. */
   close?(): void | Promise<void>;
 }
+
+/**
+ * Observes the batch a buffering sink has just appended
+ * (AH-0MW6NFRQR0062D90, parent AH-0MVJUAADW0033QBD).
+ *
+ * The argument is **only that batch's** newline-delimited JSON — never the
+ * whole buffer — so a consumer (the dev streaming uploader) can send the
+ * delta it has not confirmed yet while the sink's buffer keeps accumulating
+ * for the CLI tooling and the run-end upload. The observer is invoked after
+ * the lines are appended, so a failure in the sink cannot lose the batch and
+ * the buffer is never cleared here.
+ */
+export type TelemetryBatchObserver = (deltaNdjson: string) => void;
 
 /** A sink that discards everything; used when telemetry is disabled. */
 export class NoopTelemetrySink implements TelemetrySink {
@@ -93,12 +110,24 @@ export function createMemoryLineWriter(): TelemetryLineBuffer & { readonly lines
       lines.push(line);
     },
     read(): string {
-      return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
+      return linesToNdjson(lines);
     },
     reset(): void {
       lines.length = 0;
     },
   };
+}
+
+/**
+ * NDJSON text for already-serialised record lines (`''` when there are none).
+ *
+ * The batch half of the delta-observer contract: `read()` formats the whole
+ * buffer this way and {@link TelemetryBatchObserver} receives exactly one
+ * batch formatted this way. `splitNdjsonLines` in `./devStreamProtocol` is its
+ * inverse.
+ */
+export function linesToNdjson(lines: readonly string[]): string {
+  return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
 }
 
 /** True when a writer can be read back as a buffer. */
@@ -109,21 +138,51 @@ function isLineBuffer(writer: TelemetryLineWriter): writer is TelemetryLineBuffe
   );
 }
 
+/** Construction options for {@link JsonlTelemetrySink}. */
+export interface JsonlTelemetrySinkOptions {
+  /**
+   * Post-flush observer: called once per **non-empty** batch, after its lines
+   * have been appended, with only that batch's NDJSON. The buffer's content
+   * and lifetime are unchanged, and an empty batch is not an event (there is
+   * nothing to stream).
+   */
+  readonly onFlush?: TelemetryBatchObserver;
+}
+
 /** The local JSONL dev sink: serialises each record to one JSON line. */
 export class JsonlTelemetrySink implements TelemetrySink {
   readonly name = 'jsonl';
 
-  constructor(private readonly writer: TelemetryLineWriter) {}
+  private readonly onFlush: TelemetryBatchObserver | undefined;
+
+  constructor(
+    private readonly writer: TelemetryLineWriter,
+    options: JsonlTelemetrySinkOptions = {},
+  ) {
+    this.onFlush = options.onFlush;
+  }
 
   /**
-   * Serialises and writes each record as a single line.
+   * Serialises and writes each record as a single line, then hands the batch
+   * delta to the post-flush observer.
+   *
+   * The observer runs **after** the append and never clears or rewrites the
+   * buffer: every record stays readable for the run-end upload and the dev
+   * CLI tooling. An observer that throws propagates to the caller, which is
+   * the recorder's already-isolated sink write (it counts a failed batch
+   * rather than stalling gameplay).
    *
    * @param records - The batch to write.
    */
   write(records: readonly TelemetryRecord[]): void {
+    if (records.length === 0) return;
+    const lines: string[] = [];
     for (const record of records) {
-      this.writer.writeLine(JSON.stringify(record));
+      const line = JSON.stringify(record);
+      this.writer.writeLine(line);
+      lines.push(line);
     }
+    this.onFlush?.(linesToNdjson(lines));
   }
 
   /**
@@ -191,6 +250,12 @@ export interface TelemetrySinkDeps {
   readonly transport?: TelemetryTransport;
   /** Tuning/injections for the auto-created HTTP transport (AC2). */
   readonly transportOptions?: Omit<HttpTelemetryTransportOptions, 'endpoint'>;
+  /**
+   * Post-flush observer for the `jsonl` sink's batch deltas
+   * (AH-0MW6NFRQR0062D90): the dev streaming uploader subscribes here. The
+   * other sinks do not buffer, so they ignore it.
+   */
+  readonly onFlush?: TelemetryBatchObserver;
 }
 
 /**
@@ -212,7 +277,9 @@ export function createTelemetrySink(
 
   switch (config.sink) {
     case 'jsonl':
-      return new JsonlTelemetrySink(deps.lineWriter ?? createMemoryLineWriter());
+      return new JsonlTelemetrySink(deps.lineWriter ?? createMemoryLineWriter(), {
+        onFlush: deps.onFlush,
+      });
     case 'remote': {
       const transport =
         deps.transport ?? createHttpTransport(config.endpoint, deps.transportOptions);
