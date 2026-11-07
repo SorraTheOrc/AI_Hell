@@ -21,9 +21,11 @@ import {
   DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1,
   DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
   DEFAULT_POWER_UP_SPAWN_INTERVAL,
+  DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS,
   DEFAULT_RULES,
   DEFAULT_SEQUENCED_WAVES_ENABLED,
   DEFAULT_STANDARD_POWER_UP_WEIGHT,
+  DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS,
   DEFAULT_WEAPON_WEIGHT,
   POWER_UP_WEIGHT_IDS,
   RULES_SCHEMA_VERSION,
@@ -164,6 +166,8 @@ describe('game rules configuration module', () => {
         powerUpDropChanceAtMaxLevel: 0.06,
         levelScalingMaxLevel: 12,
         enemyCountCap: 120,
+        phaseRechargeOverrideSeconds: 9.5,
+        teleportRechargeOverrideSeconds: 33,
       };
       saveRules(custom);
 
@@ -189,6 +193,8 @@ describe('game rules configuration module', () => {
       expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.06);
       expect(loaded.levelScalingMaxLevel).toBe(12);
       expect(loaded.enemyCountCap).toBe(120);
+      expect(loaded.phaseRechargeOverrideSeconds).toBe(9.5);
+      expect(loaded.teleportRechargeOverrideSeconds).toBe(33);
     });
 
     it('merges a partial weapon weight table over the weapon defaults', () => {
@@ -1160,5 +1166,75 @@ describe('rules schema v5 — halved supply dial (AH-0MW3MLRHL000DKPM)', () => {
     expect(scalingRules(loaded).powerUpDropChanceAtLevel1).toBe(0.2);
     expect(scalingRules(loaded).powerUpDropChanceAtMaxLevel).toBe(0.1);
     expect(loaded.asteroidExtraLifeDropChance).toBe(0.4);
+  });
+});
+
+describe('gym-only recharge overrides (AH-0MV82IAYG000WS8B)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('defaults both overrides to null, so gameplay stays level-derived', () => {
+    expect(DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS).toBeNull();
+    expect(DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS).toBeNull();
+    expect(DEFAULT_RULES.phaseRechargeOverrideSeconds).toBeNull();
+    expect(DEFAULT_RULES.teleportRechargeOverrideSeconds).toBeNull();
+    expect(loadRules().phaseRechargeOverrideSeconds).toBeNull();
+    expect(loadRules().teleportRechargeOverrideSeconds).toBeNull();
+  });
+
+  it('round-trips persisted override seconds through saveRules/loadRules', () => {
+    saveRules({
+      ...DEFAULT_RULES,
+      phaseRechargeOverrideSeconds: 8.5,
+      teleportRechargeOverrideSeconds: 42,
+    });
+
+    const loaded = loadRules();
+    expect(loaded.phaseRechargeOverrideSeconds).toBe(8.5);
+    expect(loaded.teleportRechargeOverrideSeconds).toBe(42);
+  });
+
+  it('keeps each override independent of the other', () => {
+    saveRules({ ...DEFAULT_RULES, phaseRechargeOverrideSeconds: 12 });
+    expect(loadRules().phaseRechargeOverrideSeconds).toBe(12);
+    expect(loadRules().teleportRechargeOverrideSeconds).toBeNull();
+  });
+
+  it('coerces absent, null, non-numeric and non-positive values to null', () => {
+    // Absent key (a pre-feature blob) → null, no migration needed.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpSpawnInterval: 5 }),
+    );
+    let loaded = loadRules();
+    expect(loaded.phaseRechargeOverrideSeconds).toBeNull();
+    expect(loaded.teleportRechargeOverrideSeconds).toBeNull();
+
+    // Explicit null → null.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
+        phaseRechargeOverrideSeconds: null,
+        teleportRechargeOverrideSeconds: null,
+      }),
+    );
+    loaded = loadRules();
+    expect(loaded.phaseRechargeOverrideSeconds).toBeNull();
+    expect(loaded.teleportRechargeOverrideSeconds).toBeNull();
+
+    // Corrupt values → null rather than a NaN/negative recharge time.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
+        phaseRechargeOverrideSeconds: 'fast',
+        teleportRechargeOverrideSeconds: -3,
+      }),
+    );
+    loaded = loadRules();
+    expect(loaded.phaseRechargeOverrideSeconds).toBeNull();
+    expect(loaded.teleportRechargeOverrideSeconds).toBeNull();
   });
 });

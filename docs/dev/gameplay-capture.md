@@ -1652,8 +1652,9 @@ shared `applySceneSetup` applier and re-seeds its content RNG from
 `resolveSetupSeed` (through `CombatCoreScene._adoptCaptureSetup`), so the
 `player`, `powerUps` and `seed` fields are live **before the first captured
 frame** in every gym — including the six combat gyms (`GymPlayer`, `GymWeapons`,
-`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymWeaponLeveling`,
-`GymPowerUpLeveling`) that previously ignored an incoming setup, and the
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymRechargeTuning`,
+`GymWeaponLeveling`, `GymPowerUpLeveling`) that previously ignored an incoming
+setup, and the
 `GymRhythm` audition, whose fixed six-voice cast is completed on top of any
 setup-granted voices. An absent setup
 remains a no-op. `GymCurveSequencer` has no player and no intrinsic random
@@ -2057,8 +2058,8 @@ that cannot start without a caller-supplied parameter:
 `GymCurveSequencer`, `GymHangar`,
 `GymHexWar`, `GymMinerals`, `GymMiniBoss`, `GymPerformance`, `GymPlayer`,
 `GymPowerUpLeveling`,
-`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymRhythm`, `GymWeaponLeveling`,
-`GymWeapons`, `GymWeaponTuning`.
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymRechargeTuning`, `GymRhythm`,
+`GymWeaponLeveling`, `GymWeapons`, `GymWeaponTuning`.
 
 `GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
 setup) are **rejected** with `unsupported-target` when no setup is supplied;

@@ -1785,6 +1785,19 @@ export class PowerUpLevelStore {
    */
   private _rechargeTimers = new Map<PowerUpId, ConsumableRechargeTimer[]>();
   /**
+   * Optional per-kind **recharge-time overrides**, in seconds
+   * (AH-0MV82IAYG000WS8B).
+   *
+   * A kind absent from the map keeps its level-derived recharge interval.
+   * Only the two defensive abilities the dedicated tuning gym observes
+   * (Phase Shift and Teleport) can be overridden, through
+   * {@link setRechargeTimeOverride}. The override is a gym/rules layer: it is
+   * never applied to the shipped level catalogue, so gameplay defaults stay
+   * authoritative. Like every recharge timer it is run-scoped and cleared by
+   * {@link reset}.
+   */
+  private _rechargeTimeOverrides = new Map<PowerUpId, number>();
+  /**
    * Kinds a hold-full reward has made **owned** for the run. Ownership is a
    * flag, never an endless supply: an owned consumable with an empty pool is
    * still visible (greyed out) and still regenerating.
@@ -2196,9 +2209,57 @@ export class PowerUpLevelStore {
    * no interval axis.
    */
   consumableRechargeTime(id: PowerUpId): number {
+    // A gym/rules override (AH-0MV82IAYG000WS8B) wins over the level-derived
+    // interval. It only ever holds the Phase Shift / Teleport keys set through
+    // {@link setRechargeTimeOverride}, so the other consumables keep their
+    // catalogue intervals. The override is read **now**, at consumption time,
+    // so a slider change applies to subsequently spent charges while an
+    // in-flight timer keeps the duration it captured.
+    const override = this._rechargeTimeOverrides.get(id);
+    if (override !== undefined) return override;
     // Delegates to the store-free resolver (AH-0MVUXH35J002WSAB AC2): the
     // hold-full charge offer publishes exactly the interval the store uses.
     return resolveConsumableRechargeTime(id, this.getUpgradeLevel(id));
+  }
+
+  /**
+   * Sets (or clears) the **gym-only** recharge-time overrides for the two
+   * defensive abilities (AH-0MV82IAYG000WS8B).
+   *
+   * `null`, a non-finite value or a non-positive value clears that kind's
+   * override so it falls back to its level-derived interval. The override is
+   * honoured by {@link phaseRechargeTime} / {@link teleportRechargeTime} (and
+   * therefore by the spend paths that capture those durations) without
+   * touching the level catalogue, so the shipped `PlayScene` and every other
+   * gym keep level-derived recharge times.
+   *
+   * @param phaseSeconds - Phase Shift recharge override in seconds, or `null`.
+   * @param teleportSeconds - Teleport recharge override in seconds, or `null`.
+   */
+  setRechargeTimeOverride(
+    phaseSeconds: number | null,
+    teleportSeconds: number | null,
+  ): void {
+    this._setRechargeTimeOverride('phase_shift', phaseSeconds);
+    this._setRechargeTimeOverride('teleport', teleportSeconds);
+  }
+
+  /**
+   * The active override for `id` in seconds, or `null` when the kind uses its
+   * level-derived interval (`id` may be any consumable; only Phase Shift and
+   * Teleport can ever resolve a non-null value).
+   */
+  rechargeTimeOverride(id: PowerUpId): number | null {
+    return this._rechargeTimeOverrides.get(id) ?? null;
+  }
+
+  /** Writes (or clears) one kind's override, rejecting unusable values. */
+  private _setRechargeTimeOverride(id: PowerUpId, seconds: number | null): void {
+    if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) {
+      this._rechargeTimeOverrides.set(id, seconds);
+    } else {
+      this._rechargeTimeOverrides.delete(id);
+    }
   }
 
   /**
@@ -2537,6 +2598,7 @@ export class PowerUpLevelStore {
     this._tempStacks.clear();
     this._charges.clear();
     this._rechargeTimers.clear();
+    this._rechargeTimeOverrides.clear();
     this._teleportRecharge = 0;
     this._owned.clear();
     this._lives = this._livesStart;

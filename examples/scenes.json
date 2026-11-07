@@ -378,6 +378,20 @@
       }
     },
     {
+      "target": "GymRechargeTuning",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family \u2014 recharge tuning (Phase Shift + Teleport versus two raider groups)",
+      "setup": {
+        "player": {
+          "weapons": [],
+          "timedWeapons": []
+        },
+        "powerUps": {},
+        "seed": 8092
+      }
+    },
+    {
       "target": "GymRhythm",
       "playMs": 1500,
       "captureMs": 5000,

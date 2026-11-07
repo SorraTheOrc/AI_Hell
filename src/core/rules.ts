@@ -158,6 +158,23 @@ export interface GameRules {
    * the default. Guards doubled large formations from overflowing the arena.
    */
   enemyCountCap: number;
+  /**
+   * Gym-only Phase Shift recharge-time override in seconds, or `null` for the
+   * level-derived interval (AH-0MV82IAYG000WS8B). Persisted so the dedicated
+   * recharge-tuning gym seeds its slider from the last chosen value. It is
+   * **never** read by the shipped `PlayScene`, so gameplay defaults stay
+   * authoritative; only a kind absent from the override map falls back to the
+   * level catalogue. A non-finite or non-positive stored value is coerced to
+   * `null` by {@link loadRules} (and an absent key is `null`), so existing
+   * rules blobs load unchanged.
+   */
+  phaseRechargeOverrideSeconds: number | null;
+  /**
+   * Gym-only Teleport recharge-time override in seconds, or `null` for the
+   * level-derived interval (AH-0MV82IAYG000WS8B). Mirrors
+   * {@link phaseRechargeOverrideSeconds}.
+   */
+  teleportRechargeOverrideSeconds: number | null;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -371,6 +388,14 @@ export const DEFAULT_LEVEL_SCALING_MAX_LEVEL = 10;
 export const DEFAULT_ENEMY_COUNT_CAP = 200;
 
 /**
+ * Default gym-only recharge overrides (AH-0MV82IAYG000WS8B): `null` means
+ * "level-derived", so a fresh install and every existing rules blob keep the
+ * shipped recharge times until a balance tuner moves a tuning-gym slider.
+ */
+export const DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS: number | null = null;
+export const DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS: number | null = null;
+
+/**
  * Builds a fresh default weight table: every standard ID carries
  * {@link DEFAULT_STANDARD_POWER_UP_WEIGHT}, Extra Life the rarer
  * {@link DEFAULT_EXTRA_LIFE_WEIGHT}.
@@ -426,6 +451,8 @@ export const DEFAULT_RULES: GameRules = {
   powerUpDropChanceAtMaxLevel: DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
   levelScalingMaxLevel: DEFAULT_LEVEL_SCALING_MAX_LEVEL,
   enemyCountCap: DEFAULT_ENEMY_COUNT_CAP,
+  phaseRechargeOverrideSeconds: DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS,
+  teleportRechargeOverrideSeconds: DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS,
 };
 
 /** localStorage key under which the game-rules JSON is persisted. */
@@ -503,6 +530,9 @@ function cloneDefaultRules(): GameRules {
     powerUpDropChanceAtMaxLevel: DEFAULT_RULES.powerUpDropChanceAtMaxLevel,
     levelScalingMaxLevel: DEFAULT_RULES.levelScalingMaxLevel,
     enemyCountCap: DEFAULT_RULES.enemyCountCap,
+    phaseRechargeOverrideSeconds: DEFAULT_RULES.phaseRechargeOverrideSeconds,
+    teleportRechargeOverrideSeconds:
+      DEFAULT_RULES.teleportRechargeOverrideSeconds,
   };
 }
 
@@ -597,6 +627,18 @@ function coerceChanceAtMost(
   const candidate =
     typeof value === 'number' && Number.isFinite(value) ? value : fallback;
   return Math.min(safeCeiling, Math.max(0, candidate));
+}
+
+/**
+ * Coerces a stored override to a usable positive finite number of seconds, or
+ * `null` for the level-derived fallback (AH-0MV82IAYG000WS8B). An absent key,
+ * an explicit `null`, and any non-finite/non-positive value all resolve to
+ * `null`, so existing rules blobs load unchanged.
+ */
+function coerceNullablePositiveNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
 /**
@@ -823,6 +865,12 @@ export function loadRules(): GameRules {
         DEFAULT_ENEMY_COUNT_CAP,
         1,
         1000,
+      ),
+      phaseRechargeOverrideSeconds: coerceNullablePositiveNumber(
+        parsed.phaseRechargeOverrideSeconds,
+      ),
+      teleportRechargeOverrideSeconds: coerceNullablePositiveNumber(
+        parsed.teleportRechargeOverrideSeconds,
       ),
     };
   } catch {

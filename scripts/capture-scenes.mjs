@@ -67,6 +67,7 @@ export const WATCHABLE_GYM_SCENE_KEYS = Object.freeze([
   'GymPowerUpLeveling',
   'GymPowerUpsCombat',
   'GymPowerUpsUtility',
+  'GymRechargeTuning',
   'GymRhythm',
   'GymWeaponLeveling',
   'GymWeaponTuning',

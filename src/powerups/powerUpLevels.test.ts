@@ -2371,3 +2371,74 @@ describe('PowerUpLevelStore — consumable pool snapshot/restore seam (AH-0MVY3I
     expect(store.consumableCharges('mystery_ufo')).toBe(0);
   });
 });
+
+// ── Gym-only recharge-time override (AH-0MV82IAYG000WS8B) ──────────
+
+describe('PowerUpLevelStore.setRechargeTimeOverride', () => {
+  it('overrides the level-derived Phase Shift and Teleport recharge times', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('phase_shift', true);
+    store.collect('teleport', true);
+
+    expect(store.phaseRechargeTime()).toBe(30);
+    expect(store.teleportRechargeTime()).toBe(60);
+
+    store.setRechargeTimeOverride(8, 12);
+
+    expect(store.rechargeTimeOverride('phase_shift')).toBe(8);
+    expect(store.rechargeTimeOverride('teleport')).toBe(12);
+    expect(store.phaseRechargeTime()).toBe(8);
+    expect(store.teleportRechargeTime()).toBe(12);
+  });
+
+  it('falls back to the level-derived time for null and unusable values', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('phase_shift', true);
+    store.collect('teleport', true);
+    store.setRechargeTimeOverride(8, 12);
+
+    store.setRechargeTimeOverride(null, Number.NaN);
+    expect(store.rechargeTimeOverride('phase_shift')).toBeNull();
+    expect(store.rechargeTimeOverride('teleport')).toBeNull();
+    expect(store.phaseRechargeTime()).toBe(30);
+    expect(store.teleportRechargeTime()).toBe(60);
+
+    store.setRechargeTimeOverride(-5, 0);
+    expect(store.rechargeTimeOverride('phase_shift')).toBeNull();
+    expect(store.rechargeTimeOverride('teleport')).toBeNull();
+  });
+
+  it('applies the override to a charge spent after it is set, not one already in flight', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('phase_shift', true);
+
+    store.setRechargeTimeOverride(8, null);
+    expect(store.consumeConsumableCharge('phase_shift')).toBe(true);
+    expect(store.consumableRechargeProgress('phase_shift')!.total).toBe(8);
+
+    // A slider move mid-recharge changes the next spend only: the running
+    // timer keeps the span it captured (run-scoped recharge model).
+    store.setRechargeTimeOverride(20, null);
+    expect(store.consumableRechargeProgress('phase_shift')!.total).toBe(8);
+  });
+
+  it('does not change the recharge interval of any other consumable', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('shield', true);
+    expect(store.consumableRechargeTime('shield')).toBe(45);
+
+    store.setRechargeTimeOverride(8, 12);
+
+    expect(store.consumableRechargeTime('shield')).toBe(45);
+    expect(store.rechargeTimeOverride('shield')).toBeNull();
+  });
+
+  it('is cleared on run reset', () => {
+    const store = new PowerUpLevelStore();
+    store.setRechargeTimeOverride(8, 12);
+    store.reset();
+
+    expect(store.rechargeTimeOverride('phase_shift')).toBeNull();
+    expect(store.rechargeTimeOverride('teleport')).toBeNull();
+  });
+});
