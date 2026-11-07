@@ -574,6 +574,7 @@ scene owns a copy.
 | Silhouette drawing | `drawAsteroidSilhouette()` — the one stroke implementation used by both the atlas bake and the entity's drawn record |
 | Atlas layout + bake | `asteroidAtlasLayout()` + `acquireAsteroidPalette()` — baked once per game under `ASTEROID_ATLAS_KEY`, with one registered frame per silhouette |
 | Entity body render | `Asteroid._drawBody()` records the palette silhouette; `Asteroid.bakedBodyFrame()` returns the shared atlas frame, rendered by the shared `BaseEnemy._addStaticBodyLayer()` as one plain `Image` |
+| Entity scene depth | `ASTEROID_DEPTH` (`-1`, `src/core/constants.ts`), applied **once** in the `Asteroid` constructor (`src/entities/Asteroid.ts`): the lowest foreground layer — below every depth-`0` ship/enemy/bullet/mineral/power-up and above the background/dim/warp layers (`BACKGROUND_DEPTH` `-1000`, `BACKGROUND_DIM_DEPTH` `-950`, `BACKGROUND_WARP_DEPTH` `-900`). Because it lives on the shared entity, every spawn path (scheduled hazard, `PlayScene`, shared split children, every gym) resolves the identical depth (AH-0MVBJDP72004VXE5) |
 
 The path is consumed by the game and every asteroid-bearing gym through the
 shared `Asteroid` entity, never a per-scene copy:
@@ -599,13 +600,17 @@ configuration only (stationary field, player auto-fire disabled) — it claims
 **no** divergent rendering path and points back at this section.
 
 Pinned by `src/entities/Asteroid.test.ts` (one shared texture for a whole field,
-bounded variants, the per-silhouette colour fallback),
+bounded variants, the per-silhouette colour fallback, **and the entity
+scene depth on a fresh asteroid and a split child with the intra-container
+layer order unchanged**, AH-0MVBJDP72004VXE5),
 `src/utils/asteroidTextures.test.ts` (pure palette geometry, layout and the
 one-per-game bake), the equivalence suite
 (`src/scenes/core/CombatScene.equivalence.test.ts`: the palette/atlas functions
-are defined once and only `BaseEnemy`/`Asteroid` choose a baked body frame) and
-`src/scenes/gym/GymAsteroidStress.test.ts` (the stress field is the shared
-entity).
+are defined once and only `BaseEnemy`/`Asteroid` choose a baked body frame),
+and `src/scenes/gym/GymAsteroidStress.test.ts` (the stress field is the shared
+entity, and **every rock resolves `ASTEROID_DEPTH` — the same value the game
+resolves — so the lowest foreground layer cannot drift between the gym and the
+game**).
 
 ## Blocked-drop stick and discard is shared core (parent AH-0MW0UAQ23005AC9L)
 

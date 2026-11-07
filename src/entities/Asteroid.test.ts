@@ -11,7 +11,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
-import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import {
+  ASTEROID_DEPTH,
+  BACKGROUND_DEPTH,
+  BACKGROUND_DIM_DEPTH,
+  BACKGROUND_WARP_DEPTH,
+  GAME_HEIGHT,
+  GAME_WIDTH,
+} from '../core/constants';
 import {
   ASTEROID_ATLAS_KEY,
   ASTEROID_PALETTE_VARIANTS_PER_TIER,
@@ -189,6 +196,99 @@ describe('Asteroid entity construction and visual appearance', () => {
     );
     expect(body, 'expected a drawn body layer').toBeDefined();
     expect(body!.commandBuffer.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Asteroid render depth: lowest foreground layer (AH-0MVBJDP72004VXE5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeAsteroid(sizeTier: AsteroidSizeTier = 'large'): Asteroid {
+    return new Asteroid(booted!.scene, {
+      x: 100,
+      y: 100,
+      formationOffset: { row: 0, col: 0 },
+      sizeTier,
+    });
+  }
+
+  it('sits strictly below the gameplay baseline and above every background layer', () => {
+    const gameplayBaseline = 0;
+    // The background stack the asteroid must stay in front of, ordered
+    // back-to-front, all below the gameplay baseline.
+    expect(BACKGROUND_DEPTH).toBeLessThan(BACKGROUND_DIM_DEPTH);
+    expect(BACKGROUND_DIM_DEPTH).toBeLessThan(BACKGROUND_WARP_DEPTH);
+    expect(BACKGROUND_WARP_DEPTH).toBeLessThan(gameplayBaseline);
+
+    // "Lowest foreground layer": below every gameplay object (depth 0) and
+    // above the whole background/dim/warp stack.
+    expect(ASTEROID_DEPTH).toBeLessThan(gameplayBaseline);
+    expect(ASTEROID_DEPTH).toBeGreaterThan(BACKGROUND_WARP_DEPTH);
+    expect(ASTEROID_DEPTH).toBeGreaterThan(BACKGROUND_DIM_DEPTH);
+    expect(ASTEROID_DEPTH).toBeGreaterThan(BACKGROUND_DEPTH);
+  });
+
+  it('applies the depth once to a newly constructed asteroid of every tier', async () => {
+    booted = await bootScene([HarnessScene]);
+    for (const tier of ['large', 'medium', 'small'] as const) {
+      expect(makeAsteroid(tier).depth).toBe(ASTEROID_DEPTH);
+    }
+  });
+
+  it('applies the same depth to split children, so splitting cannot drift', async () => {
+    booted = await bootScene([HarnessScene]);
+    const parent = makeAsteroid('large');
+    const children = splitAsteroid({
+      scene: booted.scene,
+      parent,
+      register: () => {},
+      rng: makeSeededRng(7),
+    });
+
+    expect(children).not.toBeNull();
+    for (const child of children!) {
+      expect(child.depth).toBe(ASTEROID_DEPTH);
+    }
+  });
+
+  it('resolves the identical depth through the shared game spawn seam', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scheduled = createAsteroidFromEvent(
+      booted.scene,
+      {
+        sizeTier: 'large',
+        x: 300,
+        y: 200,
+        vx: 10,
+        vy: 0,
+        timeFraction: 0,
+        timeSeconds: 0,
+      },
+      makeSeededRng(3),
+    );
+
+    expect(scheduled.depth).toBe(ASTEROID_DEPTH);
+  });
+
+  it('keeps the intra-container body/force-field/explosion layer order unchanged', async () => {
+    booted = await bootScene([HarnessScene]);
+    const asteroid = makeAsteroid('large');
+
+    // Only the container's own scene depth changes; the children keep their
+    // canonical local depths (body 1, force-field 1.5, explosion 2).
+    expect(asteroid.bodyLayers[0].depth).toBe(1);
+    const localDepths = asteroid.list
+      .map((child) => (child as Phaser.GameObjects.Graphics).depth)
+      .sort((a, b) => a - b);
+    expect(localDepths).toEqual([1, 1.5, 2]);
+    // The container is a separate scene-list entry at the lowest foreground
+    // depth, so the local order above is not disturbed.
+    expect(asteroid.depth).toBe(ASTEROID_DEPTH);
   });
 });
 

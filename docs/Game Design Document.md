@@ -918,6 +918,14 @@ reward overlay (§4.4.4) appears.
 - **Appearance**: Jagged procedural neon polygon (grey), in three size tiers:
   large (28 px), medium (18 px), small (12 px). Speeds: large ≈ 18 px/s
   (Tank-like), medium 27 px/s, small 36 px/s — slow overall.
+- **Render depth (AH-0MVBJDP72004VXE5)**: every asteroid renders at
+  `ASTEROID_DEPTH` (`-1`, `src/core/constants.ts`) — the **lowest foreground
+  gameplay layer**. Rocks therefore draw *behind* the player ship, every other
+  enemy, bullets, minerals and power-ups (gameplay baseline `0`) and *above*
+  the background photo, dim overlay and warp layers (`-1000` / `-950` / `-900`),
+  reading as distant scenery while staying in front of the backdrop. The depth
+  is set once on the shared `Asteroid` entity, so the game and every
+  asteroid-bearing gym resolve the same value and cannot drift.
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
   children at its position; a `medium` spawns two `small`; a `small` destroys

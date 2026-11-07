@@ -29,12 +29,23 @@
  * Audio (GDD §7.3): destruction audio is owned by the base scene
  * (`playDestructionSound()`), not by this entity (no double-play).
  *
+ * **Render layering (AH-0MVBJDP72004VXE5):** the container renders at
+ * {@link ASTEROID_DEPTH} — the lowest **foreground** gameplay layer — so a
+ * drifting rock passes *behind* the player ship, every other enemy, bullets,
+ * minerals and power-ups, while staying above the background photo, its dim
+ * overlay and the warp layers. The depth is applied once here in the
+ * constructor, so every spawn path (scheduled hazard, `PlayScene` spawn,
+ * shared split children, every gym) inherits it and gym↔game parity holds by
+ * construction. The intra-container body/force-field/explosion depths are
+ * unchanged.
+ *
  * @module src/entities/Asteroid
  */
 
 import Phaser from 'phaser';
 
 import { BaseEnemy, BaseEnemyConfig, BakedBodyFrame } from './BaseEnemy';
+import { ASTEROID_DEPTH } from '../core/constants';
 import type { FormationOffset } from '../utils/formations';
 import {
   acquireAsteroidPalette,
@@ -288,6 +299,12 @@ export class Asteroid extends BaseEnemy {
     // explosion).
     this._drawBody();
     this.addSharedGraphics();
+
+    // Lowest foreground gameplay layer: below the player, every other enemy,
+    // bullets, minerals and power-ups (all at the baseline depth 0) and above
+    // the background/dim/warp layers. Set once on the shared container so every
+    // spawn path inherits it (AH-0MVBJDP72004VXE5).
+    this.setDepth(ASTEROID_DEPTH);
   }
 
   /** VFX pattern name for Asteroid explosions. */

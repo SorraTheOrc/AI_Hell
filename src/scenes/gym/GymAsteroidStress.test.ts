@@ -12,7 +12,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { createReusableBoot, type BootedGame } from '../../test/gameHarness';
 import { createSeededRng } from '../../core/rng';
-import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
+import { ASTEROID_DEPTH, GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { Asteroid } from '../../entities/Asteroid';
 import { ENEMY_FIRE_METHODS } from '../../entities/enemyFire';
 import { LEVELS } from '../../waves/Formations';
@@ -151,6 +151,20 @@ describe('GymAsteroidStress — 200-rock asteroid stress scenario', () => {
 
     expect(first).toHaveLength(200);
     expect(second).toEqual(first);
+  });
+
+  it('renders every rock at the shared lowest foreground depth (gym↔game parity)', async () => {
+    const scene = await boot();
+    const rocks = liveAsteroids(scene);
+
+    // The gym materialises rocks through the shared `createAsteroidFromEvent`
+    // seam, so the depth applied once by the `Asteroid` constructor is the
+    // identical value the game resolves — no per-scene wiring can diverge
+    // (AH-0MVBJDP72004VXE5).
+    expect(rocks.length).toBe(GYM_ASTEROID_STRESS_ASTEROID_COUNT);
+    for (const rock of rocks) {
+      expect(rock.depth).toBe(ASTEROID_DEPTH);
+    }
   });
 
   it('keeps the full load alive and the wave timeout off for the measured window (AC2)', async () => {

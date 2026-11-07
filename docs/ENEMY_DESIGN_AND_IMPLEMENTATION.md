@@ -215,6 +215,22 @@ no-op setter and the effective shot pattern is always `none`.
 | medium | 18 px | 27 px/s | 0.9 rad/s | 0xaaaa88 |
 | small | 12 px | 36 px/s | 1.4 rad/s | 0xccccaa |
 
+**Render layering (AH-0MVBJDP72004VXE5)**: asteroids render at
+`ASTEROID_DEPTH` (`-1`, `src/core/constants.ts`) — the **lowest foreground
+gameplay layer**. A drifting rock therefore always draws *behind* the player
+ship, every other enemy, bullets, minerals and power-ups (all at the gameplay
+baseline depth `0`) while staying *above* the background photo, its dim overlay
+and the hyperspace warp layers (`BACKGROUND_DEPTH` `-1000`,
+`BACKGROUND_DIM_DEPTH` `-950`, `BACKGROUND_WARP_DEPTH` `-900`), so a rock reads
+as distant scenery rather than a foreground object. The depth is applied
+**once** in the `Asteroid` constructor, so every spawn path — the scheduled
+hazard (`createAsteroidFromEvent`), `PlayScene.spawnAsteroidAt`, the shared
+`splitAsteroid` children and every gym spawn — inherits the identical value and
+cannot drift (gym↔game parity). Only the container's own scene depth changes;
+the intra-container body/force-field/explosion depths (`1` / `1.5` / `2`) are
+unchanged. Pinned by `src/entities/Asteroid.test.ts` and
+`src/scenes/gym/GymAsteroidStress.test.ts`.
+
 **Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
 children at its position; a `medium` spawns two `small`; a `small` destroys
 cleanly with no children (the chain from one large is 1 + 2 + 4 = **7**
