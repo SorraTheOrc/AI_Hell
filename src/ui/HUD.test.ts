@@ -33,7 +33,11 @@ import {
   resolvePowerUpAtLevel,
 } from '../powerups/powerUpLevels';
 import { POWER_UP_SLOT_CAP } from '../core/constants';
-import { CONSUMABLE_POWER_UP_IDS, type PowerUpId } from '../powerups/types';
+import {
+  CONSUMABLE_POWER_UP_IDS,
+  getPowerUpById,
+  type PowerUpId,
+} from '../powerups/types';
 import { resolvePlayerSlotState } from '../powerups/slots';
 import {
   SIX_SLOT_LOADOUT_IDS,
@@ -562,8 +566,10 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
    * once the implementation landed.
    *
    * Contract pinned here:
-   * - a row is `greyed` when the player **owns** a charge-based pool
-   *   (Phase Shift / Teleport) but has **zero** available charges;
+   * - a row is `greyed` when the player **owns** a consumable that is
+   *   currently unavailable: a pooled kind (Shield / Thorn Field / Force
+   *   Field / Mystery UFO) with **zero** charges, or a single-use kind
+   *   (Phase Shift / Teleport) whose one activation is recharging;
    * - an owned-but-empty row stays **visible** (never hidden);
    * - the icon + label + value share one desaturated grey colour so they
    *   cannot diverge;
@@ -581,11 +587,11 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
   }
 
   it(
-    'greys out an owned Phase Shift row while its pool recharges',
+    'greys out an owned Phase Shift row while it recharges',
     async () => {
       const { store, reg } = storeRegistry();
-      store.collect('phase_shift', true); // hold-full: owned, 1 charge
-      store.consumePhaseCharge(); // spent → 0 charges, recharging
+      store.collect('phase_shift', true); // hold-full: owned and ready
+      store.consumePhaseCharge(); // spent → the one activation recharges
       const { game, hud } = await bootWithHUD(reg);
       hud.refresh();
 
@@ -597,10 +603,10 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
   );
 
   it(
-    'renders the owned Phase Shift row normally while charges remain',
+    'renders the owned Phase Shift row normally while it is ready',
     async () => {
       const { store, reg } = storeRegistry();
-      store.collect('phase_shift', true); // owned, 1 charge
+      store.collect('phase_shift', true); // owned, ready (single-use)
       const { game, hud } = await bootWithHUD(reg);
       hud.refresh();
 
@@ -732,9 +738,9 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
     destroy(game);
   });
 
-  it('leaves a charged row visually unchanged (white label + value)', async () => {
+  it('leaves a ready row visually unchanged (white label + value)', async () => {
     const { store, reg } = storeRegistry();
-    store.collect('phase_shift', true); // owned, 1 charge
+    store.collect('phase_shift', true); // owned, ready (single-use)
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
@@ -773,9 +779,9 @@ describe('HUD label builder (AH-0MUX802450085VZZ)', () => {
       'Teleport Lvl 1 (next in 5s)',
     );
     // Without the flag the label is byte-for-byte unchanged (pooled kinds).
-    expect(buildHUDLabel('Phase Shift', 1, 1)).toBe('Phase Shift Lvl 1 ×1');
-    expect(buildHUDLabel('Phase Shift', 1, 1, 7.2)).toBe(
-      'Phase Shift Lvl 1 ×1 (next in 8s)',
+    expect(buildHUDLabel('Shield', 1, 1)).toBe('Shield Lvl 1 ×1');
+    expect(buildHUDLabel('Shield', 1, 1, 7.2)).toBe(
+      'Shield Lvl 1 ×1 (next in 8s)',
     );
   });
 });
@@ -1811,6 +1817,128 @@ describe('HUD single-use Teleport row (AH-0MW231O8Q0095LQM)', () => {
   });
 });
 
+// ── Single-use Phase Shift row (AH-0MW6QY70A00171QB, parent
+//    AH-0MW6O1690007P2SL AC4) ──────────────────────────────────────────
+//
+// Phase Shift holds the same single activation model as Teleport: its row
+// reads `ready` while the readiness timer is 0 and the shared `next in Ns`
+// countdown while it recharges, greys out while recharging, and never carries
+// a `×N` stack suffix. Every one of those comes from the shared HUD model
+// keyed on the catalogue `singleUse` flag, so `PlayScene` and every gym
+// inherit it (`src/scenes/core/hudSingleUseTeleport.parity.test.ts` pins that
+// parity).
+
+describe('HUD single-use Phase Shift row (AH-0MW6QY70A00171QB)', () => {
+  /** A registry whose store the test drives, with a permanently owned Phase Shift. */
+  function ownedPhaseShift(): {
+    store: PowerUpLevelStore;
+    reg: EffectsRegistry;
+  } {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    store.collect('phase_shift', true); // hold-full grant: owned and ready
+    return { store, reg };
+  }
+
+  it('renders `ready` for an owned Phase Shift, with no stack suffix (AC1/AC4)', async () => {
+    const { reg } = ownedPhaseShift();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'phase_shift')!;
+    expect(row).toBeDefined();
+    expect(row.label).toBe('Phase Shift Lvl 1 (ready)');
+    expect(row.label).not.toContain('×');
+    expect(row.stacks).toBeUndefined();
+    expect(row.recharge).toBeUndefined();
+    expect(rowGreyed(row)).toBe(false);
+    destroy(game);
+  });
+
+  it('renders `next in Ns` from the store timer and greys the row while recharging (AC2/AC3)', async () => {
+    const { store, reg } = ownedPhaseShift();
+    expect(reg.consumePhaseShift()).toBe(true);
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const remaining = store.phaseShiftRechargeRemaining();
+    expect(remaining).toBeCloseTo(store.phaseRechargeTime(), 6);
+
+    const row = hud.getRows().find((r) => r.id === 'phase_shift')!;
+    expect(row).toBeDefined();
+    // N is the store's remaining seconds through the shared label formatter.
+    expect(row.recharge).toBeCloseTo(remaining, 6);
+    expect(row.label).toBe(
+      `Phase Shift Lvl 1 (next in ${Math.ceil(remaining)}s)`,
+    );
+    expect(row.label).not.toContain('×');
+    expect(row.stacks).toBeUndefined();
+    expect(rowGreyed(row)).toBe(true);
+
+    // The countdown is live: only the shared recharge clock advances it.
+    store.tickRecharge(10);
+    hud.refresh();
+    const ticking = hud.getRows().find((r) => r.id === 'phase_shift')!;
+    expect(ticking.recharge).toBeCloseTo(remaining - 10, 6);
+    expect(ticking.label).toBe(
+      `Phase Shift Lvl 1 (next in ${Math.ceil(remaining - 10)}s)`,
+    );
+    expect(rowGreyed(ticking)).toBe(true);
+
+    // Elapsed interval: the row returns to `ready` and un-greys.
+    store.tickRecharge(store.phaseRechargeTime());
+    hud.refresh();
+    const settled = hud.getRows().find((r) => r.id === 'phase_shift')!;
+    expect(settled.label).toBe('Phase Shift Lvl 1 (ready)');
+    expect(settled.recharge).toBeUndefined();
+    expect(settled.label).not.toContain('next in');
+    expect(rowGreyed(settled)).toBe(false);
+    destroy(game);
+  });
+
+  it('keeps the recharging row visible through the shared ownership rule, not a charge count (AC3/AC4)', async () => {
+    const { reg } = ownedPhaseShift();
+    expect(reg.consumePhaseShift()).toBe(true);
+    // A single-use kind never holds a pool charge, so the pooled-charge half
+    // of the generalised visibility rule can never be what keeps this row
+    // alive — ownership does, exactly as for Teleport.
+    expect(reg.consumableCharges('phase_shift')).toBe(0);
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'phase_shift');
+    expect(row).toBeDefined();
+    expect(rowGreyed(row)).toBe(true);
+    // The row is owned, so it is loadout-counted — no non-slot marker is
+    // needed to explain it away.
+    expect(row!.slotCounted).toBe(true);
+    expect(row!.marker).toBeUndefined();
+    destroy(game);
+  });
+
+  it('drives the single-use presentation from the catalogue flag, never an id branch (AC1)', () => {
+    // Phase Shift is on the catalogue single-use list exactly like Teleport,
+    // so the shared HUD path (stack suppression, readiness label, grey-out)
+    // applies to both without a per-kind branch.
+    expect(CONSUMABLE_POWER_UP_IDS).toContain('phase_shift');
+    const entry = getPowerUpById('phase_shift');
+    expect(entry.singleUse).toBe(true);
+    expect(entry.consumable).toBe(true);
+    // The shared formatter renders the readiness state for a single-use row.
+    expect(buildHUDLabel('Phase Shift', 1, undefined, undefined, true)).toBe(
+      'Phase Shift Lvl 1 (ready)',
+    );
+    expect(buildHUDLabel('Phase Shift', 1, undefined, 4.2, true)).toBe(
+      'Phase Shift Lvl 1 (next in 5s)',
+    );
+    // No state ever produces a `×N` charge suffix for Phase Shift.
+    expect(
+      buildHUDLabel('Phase Shift', 1, undefined, undefined, true),
+    ).not.toContain('×');
+  });
+});
+
 // ── Consumable charges and regeneration countdown (parent AH-0MVTQMREN009DSFW
 //    AC4) ────────────────────────────────────────────────────────────────
 //
@@ -2218,10 +2346,10 @@ describe('AH-0MW2AVRNL008F9FX AC1: the row model reports each countdown fraction
     destroy(game);
   });
 
-  it('a full consumable pool reports no fraction (nothing is owed)', async () => {
+  it('a ready single-use row reports no fraction (nothing is owed)', async () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
-    reg.applyCollect('phase_shift', true); // owned, one charge, no timer
+    reg.applyCollect('phase_shift', true); // owned, ready, no recharge timer
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 

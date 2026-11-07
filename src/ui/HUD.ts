@@ -19,7 +19,8 @@
  *   around the row's icon that reads the timing at a glance (parent
  *   AH-0MVZ8YQQV006Q09W):
  *   - an **`arriving`** countdown (consumable recharge, the single-use
- *     Teleport readiness clock, the permanent Orbital Strike cadence)
+ *     Phase Shift / Teleport readiness clocks, the permanent Orbital Strike
+ *     cadence)
  *     **fills** the ring from empty to full as the wait elapses;
  *   - an **`expiring`** countdown (a power-up or weapon field-pickup timed
  *     window) **drains** the ring from full to empty as the window burns
@@ -30,11 +31,11 @@
  * seam (`resolveCountdownSweep` in `src/ui/hudCountdown.ts`) via the registry
  * projections, so the arc and the text can never disagree. A row with **no
  * live countdown draws no ring** — the `∞` value, a full charge pool and a
- * ready single-use warp are all ring-free by design.
+ * ready single-use activation are all ring-free by design.
  *
  * Consumable charge counts that the level alone does not convey (Shield
- * absorptions, Thorn Field rams, Phase Shift charges, Teleport uses, Force
- * Field reflects, Mystery UFO drones) are appended to the label as ` ×N` so
+ * absorptions, Thorn Field rams, Force Field reflects, Mystery UFO drones)
+ * are appended to the label as ` ×N` so
  * the value column stays strictly `∞`/countdown. Every consumable row
  * (`powerups/types.ts` `CONSUMABLE_POWER_UP_IDS`, the one catalogue source of
  * truth) also appends a live `next in Ns` countdown to its next regenerating
@@ -45,11 +46,13 @@
  * window, never a timed cover, so a `Ns` value would be a countdown the
  * charge alone cannot honour (parent AH-0MVUVSW4J0009QUW AC3).
  *
- * A consumable the player **owns** but whose pool is currently **empty** stays
- * visible as a greyed-out row (icon + label + value all in the shared grey
- * from `powerups/icons.ts`) instead of being hidden, so the recharging pool is
- * always legible (AH-0MV82I97Y007MB6M, generalised to every consumable by
- * AH-0MVTQMREN009DSFW AC4). A power-up the player has never owned is still
+ * A consumable the player **owns** but which is currently **unavailable**
+ * stays visible as a greyed-out row (icon + label + value all in the shared
+ * grey from `powerups/icons.ts`) instead of being hidden — an empty pooled
+ * kind and a single-use kind whose one activation is recharging alike — so
+ * the recharge is always legible (AH-0MV82I97Y007MB6M, generalised to every
+ * consumable by AH-0MVTQMREN009DSFW AC4 and to single-use Phase Shift by
+ * AH-0MW6QY70A00171QB). A power-up the player has never owned is still
  * hidden.
  *
  * ## Slot budget and non-slot rows (AH-0MVVJRRN10038VFR)
@@ -234,7 +237,7 @@ export interface HUDEntry {
    * AH-0MVUVSW4J0009QUW AC3).
    */
   temporary: boolean;
-  /** Consumable charge count (Shield absorptions, Thorn Field rams, Phase Shift charges, Force Field reflects, Mystery UFO drones), if any. A single-use kind (Teleport) has no count. */
+  /** Consumable charge count (Shield absorptions, Thorn Field rams, Force Field reflects, Mystery UFO drones), if any. A single-use kind (Phase Shift, Teleport) has no count. */
   stacks?: number;
   /**
    * Seconds until the next regenerating charge of a consumable, or
@@ -268,9 +271,10 @@ export interface HUDEntry {
    * Fill amount of the row's countdown ring in `[0, 1]`, or `undefined` when
    * the row has no live countdown ("no live countdown, no ring"):
    *
-   * - `arriving` (consumable recharge, Teleport readiness, permanent Orbital
-   *   Strike cadence) **fills** — `0` the instant the charge is spent / the
-   *   bolt fires, `1` when the charge returns / the next bolt is due;
+   * - `arriving` (consumable recharge, Phase Shift / Teleport readiness,
+   *   permanent Orbital Strike cadence) **fills** — `0` the instant the
+   *   charge is spent / the bolt fires, `1` when the charge returns / the next
+   *   bolt is due;
    * - `expiring` (power-up timed window) **drains** — `1` at pickup, `0` at
    *   expiry.
    *
@@ -300,10 +304,11 @@ export function formatHUDValue(
  * plus an optional `next in Ns` recharge countdown (Thorn Field,
  * AH-0MVJ8YKR70096C6T) so a recharging row is never an inert bare label.
  *
- * A **single-use** kind (Teleport, parent AH-0MVY096RT006QMF4) passes `ready`
- * instead of a count, so its row reads `(ready)` while the ability is armed
- * and the same `(next in Ns)` form while it recharges (AH-0MW231O8Q0095LQM).
- * A live countdown always wins: a row can never read `ready` mid-recharge.
+ * A **single-use** kind (Phase Shift / Teleport, parent AH-0MW6O1690007P2SL /
+ * AH-0MVY096RT006QMF4) passes `ready` instead of a count, so its row reads
+ * `(ready)` while the activation is armed and the same `(next in Ns)` form
+ * while it recharges (AH-0MW231O8Q0095LQM / AH-0MW6QY70A00171QB). A live
+ * countdown always wins: a row can never read `ready` mid-recharge.
  */
 export function buildHUDLabel(
   name: string,
