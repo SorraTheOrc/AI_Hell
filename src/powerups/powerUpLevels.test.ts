@@ -1444,6 +1444,83 @@ describe('recharge engine and single-use abilities (AH-0MW6O1690007P2SL test-fir
   });
 });
 
+// ── Phase Shift grants ready the one activation (AH-0MW6QY1ZD0098JQS) ──
+//
+// Mirrors Teleport's pickup-readies rule: a Phase Shift field pickup or
+// hold-full reward resets the single recharge timer to 0, so a grant landing
+// mid-recharge readies the activation immediately. For a single-use kind that
+// is a **readiness reset, never a charge bank** — no grant can create a second
+// stored activation.
+
+describe('Phase Shift grants ready the one activation (AH-0MW6QY1ZD0098JQS)', () => {
+  /**
+   * A permanently-owned Phase Shift that has been spent and is mid-recharge.
+   *
+   * Ownership is granted up front because a pickup-only Phase Shift ends with
+   * its temporary level window, long before the 30 s base recharge elapses —
+   * without it the kind would simply become unheld.
+   */
+  function midRecharge(): PowerUpLevelStore {
+    const store = new PowerUpLevelStore();
+    store.collect('phase_shift', true);
+    expect(store.consumePhaseShift()).toBe(true);
+    store.tickRecharge(0.5);
+    expect(store.isPhaseShiftRecharging()).toBe(true);
+    return store;
+  }
+
+  it('AC4 — a field pickup mid-recharge readies Phase Shift immediately', () => {
+    const store = midRecharge();
+
+    store.collect('phase_shift');
+
+    expect(store.hasPhaseShift()).toBe(true);
+    expect(store.phaseShiftRechargeRemaining()).toBe(0);
+    // Still single-use: readiness, never a second stored activation.
+    expect(store.consumableCharges('phase_shift')).toBe(0);
+    // The readied activation costs exactly one fresh recharge interval.
+    expect(store.consumePhaseShift()).toBe(true);
+    expect(store.phaseShiftRechargeRemaining()).toBeCloseTo(
+      store.phaseRechargeTime(),
+      6,
+    );
+    expect(store.consumePhaseShift()).toBe(false);
+  });
+
+  it('AC5 — a hold-full grant mid-recharge readies Phase Shift immediately', () => {
+    const store = midRecharge();
+
+    store.collect('phase_shift', true);
+
+    expect(store.isPhasePermanent()).toBe(true);
+    expect(store.hasPhaseShift()).toBe(true);
+    expect(store.phaseShiftRechargeRemaining()).toBe(0);
+    expect(store.consumableCharges('phase_shift')).toBe(0);
+    // Spending it still starts one timer — the grant banked nothing.
+    expect(store.consumePhaseShift()).toBe(true);
+    expect(store.isPhaseShiftRecharging()).toBe(true);
+  });
+
+  it('AC3 — grantConsumableCharge readies Phase Shift and banks no charge', () => {
+    const store = midRecharge();
+
+    // The hold-full (`power-up-charge`) reward seam: a grant is a readiness
+    // reset, so it reports no banked charge and cannot create a second
+    // activation.
+    expect(store.grantConsumableCharge('phase_shift', 3)).toBe(0);
+    expect(store.hasPhaseShift()).toBe(true);
+    expect(store.phaseShiftRechargeRemaining()).toBe(0);
+    expect(store.consumableCharges('phase_shift')).toBe(0);
+
+    // A grant while already ready is a harmless no-op.
+    expect(store.grantConsumableCharge('phase_shift', 1)).toBe(0);
+    expect(store.hasPhaseShift()).toBe(true);
+    expect(store.phaseShiftRechargeRemaining()).toBe(0);
+    expect(store.consumePhaseShift()).toBe(true);
+    expect(store.consumePhaseShift()).toBe(false);
+  });
+});
+
 // ── Teleport's single readiness state (AH-0MW231MCL000MMUU) ──────────
 //
 // Teleport is one readiness state — `ready` / `recharging` plus a

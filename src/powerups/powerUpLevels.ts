@@ -1696,16 +1696,16 @@ export function resolveConsumableRechargeTime(
  *   - Magnet/Mineral Scoop permanent stacks = `min(permanentGrants, levelCap)`,
  *   - Phase Shift readiness = a single level-derived recharge timer (no pool,
  *     no stored count; a pickup or hold-full grant resets it to ready —
- *     parent AH-0MW6O1690007P2SL). It mirrors Teleport: the generic pool
- *     methods refuse a single-use kind and {@link hasPhaseShift} /
- *     `isPhaseShiftRecharging` / `phaseShiftRechargeRemaining` are its whole
- *     state,
+ *     parent AH-0MW6O1690007P2SL). It mirrors Teleport: readiness is the
+ *     whole state — the charge-pool consume method refuses a single-use kind,
+ *     a grant readies it, and {@link hasPhaseShift} / `isPhaseShiftRecharging`
+ *     / `phaseShiftRechargeRemaining` expose it,
  *   - Teleport readiness = a single level-derived recharge timer (no pool, no
  *     stored count; a pickup or hold-full grant resets it to ready — parent
  *     AH-0MVY096RT006QMF4). It is *not* a member of the charge pool: the
- *     generic pool methods refuse a single-use kind and
- *     {@link PowerUpLevelStore.hasTeleport} / `isTeleportRecharging` /
- *     `teleportRechargeRemaining` are its whole state,
+ *     charge-pool consume method refuses a single-use kind, a grant readies
+ *     it, and {@link PowerUpLevelStore.hasTeleport} / `isTeleportRecharging`
+ *     / `teleportRechargeRemaining` are its whole state,
  *   - Extra Life lives = `min(livesStart + Σ lifeGain(level), livesCap)`.
  *
  * The hold-full Phase Shift reward is an **owned flag** (`isPhasePermanent`),
@@ -1828,25 +1828,19 @@ export class PowerUpLevelStore {
     const stats = this.stats(id);
     if (isConsumablePowerUpId(id)) {
       if (permanent) {
-        // **Hold-full reward = one charge, never a level**
-        // (parent AC1). The permanent-grant count deliberately stays
-        // untouched, so `getPermanentLevel` / `getEffectiveLevel` do not
-        // move; the kind becomes *owned* through the flag and a pooled
-        // grant is clamped at the level-derived cap (parent AC2).
+        // **Hold-full reward = one grant, never a level** (parent AC1). The
+        // permanent-grant count deliberately stays untouched, so
+        // `getPermanentLevel` / `getEffectiveLevel` do not move; the kind
+        // becomes *owned* through the flag and the grant either readies a
+        // single-use kind or lands one pooled charge clamped at the
+        // level-derived cap (parent AC2).
         this._owned.add(id);
-        if (this._isSingleUse(id)) {
-          // A hold-full single-use grant leaves the ability **ready** (timer
-          // 0) — there is no charge to bank (parent AC7).
-          this._setSingleUseRecharge(id, 0);
-        } else {
-          this.grantConsumableCharge(id, 1);
-        }
-      } else if (this._isSingleUse(id)) {
-        // **Single-use pickup** (parent AH-0MVY096RT006QMF4 /
-        // AH-0MW6O1690007P2SL): the drop makes the one activation ready
-        // immediately, including mid-recharge. No charge is banked — the
-        // readiness timer is the whole state.
-        this._setSingleUseRecharge(id, 0);
+      }
+      // The single grant seam: a single-use kind is readied (timer 0) and a
+      // pooled hold-full reward gains one charge. The field pickup of a
+      // **pooled** kind is granted by the effects registry instead.
+      if (permanent || this._isSingleUse(id)) {
+        this.grantConsumableCharge(id, 1);
       }
     }
     switch (id) {
@@ -2230,7 +2224,8 @@ export class PowerUpLevelStore {
   // are **single-use** (parent AH-0MW6O1690007P2SL / AH-0MVY096RT006QMF4):
   // they have no pool at all — their readiness timers
   // (`_phaseShiftRecharge` / `_teleportRecharge`) are the state, so the pool
-  // methods below refuse a catalogue `singleUse` kind.
+  // consume method refuses a catalogue `singleUse` kind while a grant readies
+  // it.
 
   /**
    * Whether `id` is a **single-use** kind (catalogue `singleUse` flag, parent
@@ -2428,7 +2423,8 @@ export class PowerUpLevelStore {
   consumeConsumableCharge(id: PowerUpId): boolean {
     if (!isConsumablePowerUpId(id)) return false;
     // A single-use kind is spent through its readiness API
-    // (`consumeTeleport`), never the pool (parent AH-0MVY096RT006QMF4).
+    // (`consumePhaseShift` / `consumeTeleport`), never the pool (parent
+    // AH-0MVY096RT006QMF4 / AH-0MW6O1690007P2SL).
     if (this._isSingleUse(id)) return false;
     const pool = this.consumableCharges(id);
     if (pool <= 0) return false;
@@ -2449,12 +2445,22 @@ export class PowerUpLevelStore {
    * Grants up to `count` charges of `id`, clamped at the level-derived cap
    * (parent AC2). A grant landing on a full pool is discarded, so no charge is
    * banked while the pool is full.
+   *
+   * A **single-use** kind has no pool to bank a charge in (parents
+   * AH-0MVY096RT006QMF4 / AH-0MW6O1690007P2SL), so its grant is a **readiness
+   * reset** instead: a Phase Shift or Teleport pickup / hold-full reward sets
+   * the one activation's recharge timer to 0, readying it immediately even
+   * mid-recharge. The return value stays 0 — readiness is not a count, so no
+   * grant can create a second stored activation
+   * (AH-0MW6QY1ZD0098JQS AC2/AC3).
    */
   grantConsumableCharge(id: PowerUpId, count = 1): number {
     if (!isConsumablePowerUpId(id)) return 0;
-    // A single-use kind has no pool to bank a charge in (parent
-    // AH-0MVY096RT006QMF4); its grant is a readiness reset on `collect`.
-    if (this._isSingleUse(id)) return 0;
+    // Grants ready, never bank: the readiness timer is the whole state.
+    if (this._isSingleUse(id)) {
+      this._setSingleUseRecharge(id, 0);
+      return 0;
+    }
     const cap = this.consumableChargeCap(id);
     const pool = this.consumableCharges(id);
     const next = Math.min(cap, pool + Math.max(0, Math.floor(count)));
