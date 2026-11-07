@@ -2535,10 +2535,13 @@ list, and `GymBoss` is likewise excluded there so the real boss is not
 duplicated (AH-0MV13G5EV008D41E; formerly AH-0MUAYB28C004KK7X,
 AH-0MTV8OV9V002D8B7). Index rows are
 keyboard-operable through the shared `src/utils/focusManager.ts`
-(`FocusManager`): rows are focused in reading order with the first row
-focused by default, Tab/Shift+Tab and the arrow keys cycle with wrap-around,
-and Enter/Space launch the focused row through the same path as a pointer
-click (AH-0MUDZFBYY008P7ZE).
+(`FocusManager`), which the index opts into in **grid** mode: the first row is
+focused by default, **Left**/**Right** move between the three columns
+(wrapping at both ends and clamping to a shorter column's last valid row),
+**Up**/**Down** move within the current column (wrapping top ↔ bottom), and
+**Tab**/**Shift+Tab** keep their linear reading-order cycling; Enter/Space
+launch the focused row through the same path as a pointer click
+(AH-0MUDZFBYY008P7ZE, AH-0MV1BKZ0J00946EX).
 
 **Level Gym (`GymLevel`, AH-0MUNU6MGM007CI45).** The left column also lists
 `GymLevel` (label **Level**). It is a parameterised level-playback gym that

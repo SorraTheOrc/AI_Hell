@@ -6,8 +6,9 @@
  *    by label, excluding `.test.ts` modules and itself,
  *  - clicking an entry immediately starts that scene by its key,
  *  - the shared "← INDEX" button on a gym scene returns to the index,
- *  - keyboard navigation: default focus, Tab/arrow cycling with wrap,
- *    Enter/Space activation per row flavour, and shutdown cleanup.
+ *  - keyboard navigation: default focus, grid-aware arrow movement
+ *    (Left/Right between columns, Up/Down within a column), linear
+ *    Tab cycling, Enter/Space activation and shutdown cleanup.
  *
  * Since AH-0MV13G5EV008D41E the ENEMIES column is a single "Fodder Enemies"
  * row (booting the reusable `GymFodderEnemies` scene bare, whose in-panel
@@ -30,6 +31,7 @@ import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../utils/gymNavigation';
 import {
   GymIndex,
   GYM_INDEX_TITLE,
+  GYM_INDEX_HINT,
   GYM_INDEX_COLUMN_X,
   GYM_INDEX_ENEMIES_HEADER,
   GYM_INDEX_DEV_UTILITIES_HEADER,
@@ -414,6 +416,15 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     ];
   }
 
+  /** Labels per column, left-to-right, top-to-bottom (the visual grid). */
+  function columnLabels(scene: GymIndex): string[][] {
+    return [
+      scene.listedScenes.map((s) => s.label),
+      scene.listedEnemyScenes.map((s) => s.label),
+      scene.listedDevUtilityScenes.map((s) => s.label),
+    ];
+  }
+
   /** Focusable on-screen rows (interactive text objects, headers excluded). */
   function focusableRows(scene: GymIndex): Phaser.GameObjects.Text[] {
     return (scene.children.list as Phaser.GameObjects.Text[]).filter(
@@ -444,38 +455,109 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     }
   });
 
-  it('AC2 — Tab/arrows cycle focus in reading order and wrap at both ends', async () => {
+  it('AC2 — Left/Right move between columns and wrap at both ends', async () => {
+    const scene = await bootIndex();
+    const cols = columnLabels(scene);
+
+    // Start in the left column, first row.
+    expect(scene.getFocusedLabel()).toBe(cols[0][0]);
+
+    pressKey(scene, { key: 'ArrowRight' });
+    expect(scene.getFocusedLabel()).toBe(cols[1][0]);
+    pressKey(scene, { key: 'ArrowRight' });
+    expect(scene.getFocusedLabel()).toBe(cols[2][0]);
+    pressKey(scene, { key: 'ArrowRight' }); // wraps to the leftmost column
+    expect(scene.getFocusedLabel()).toBe(cols[0][0]);
+
+    pressKey(scene, { key: 'ArrowLeft' }); // wraps to the rightmost column
+    expect(scene.getFocusedLabel()).toBe(cols[2][0]);
+    pressKey(scene, { key: 'ArrowLeft' });
+    expect(scene.getFocusedLabel()).toBe(cols[1][0]);
+    pressKey(scene, { key: 'ArrowLeft' });
+    expect(scene.getFocusedLabel()).toBe(cols[0][0]);
+  });
+
+  it('AC3 — Up/Down move within the current column and never change column', async () => {
+    const scene = await bootIndex();
+    const cols = columnLabels(scene);
+
+    // Vertical movement in the left (plain scenes) column.
+    expect(scene.getFocusedLabel()).toBe(cols[0][0]);
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe(cols[0][1]);
+    pressKey(scene, { key: 'ArrowUp' });
+    expect(scene.getFocusedLabel()).toBe(cols[0][0]);
+    pressKey(scene, { key: 'ArrowUp' }); // wraps to the bottom of column 0
+    expect(scene.getFocusedLabel()).toBe(cols[0][cols[0].length - 1]);
+    pressKey(scene, { key: 'ArrowDown' }); // wraps to the top of column 0
+    expect(scene.getFocusedLabel()).toBe(cols[0][0]);
+
+    // Move to the ENEMIES column; Up/Down wrap within that column too.
+    pressKey(scene, { key: 'ArrowRight' });
+    expect(scene.getFocusedLabel()).toBe(cols[1][0]);
+    pressKey(scene, { key: 'ArrowUp' });
+    expect(scene.getFocusedLabel()).toBe(cols[1][cols[1].length - 1]);
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe(cols[1][0]);
+    expect(cols[1]).toContain(scene.getFocusedLabel());
+  });
+
+  it('AC4 — entering a shorter column always focuses a valid, highlighted row', async () => {
+    const scene = await bootIndex();
+    const cols = columnLabels(scene);
+
+    // Drive focus to the bottom of the longest (plain scenes) column.
+    for (let i = 0; i < cols[0].length - 1; i++) pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe(cols[0][cols[0].length - 1]);
+
+    // Right into the shorter ENEMIES column — clamps to its last valid row.
+    pressKey(scene, { key: 'ArrowRight' });
+    expect(scene.getFocusedLabel()).toBe(cols[1][cols[1].length - 1]);
+    expect(scene.getFocusedIndex()).toBeLessThan(scene.getFocusControlCount());
+
+    // Right again into the single-row Dev Utilities column.
+    pressKey(scene, { key: 'ArrowRight' });
+    expect(scene.getFocusedLabel()).toBe(cols[2][0]);
+
+    // The focused row is a real on-screen row carrying the focus highlight —
+    // never an out-of-range index or a header.
+    const focused = focusableRows(scene).find((c) => c.text === scene.getFocusedLabel());
+    expect(focused).toBeDefined();
+    expect(focused!.style.strokeThickness ?? 0).toBeGreaterThan(0);
+  });
+
+  it('AC5 — Tab stays linear in reading order while arrows are grid-aware', async () => {
     const scene = await bootIndex();
     const order = readingOrder(scene);
-    const n = order.length;
 
-    expect(scene.getFocusedIndex()).toBe(0);
-
-    // Forward: Tab, ArrowDown, ArrowRight.
     pressKey(scene, { key: 'Tab' });
-    expect(scene.getFocusedLabel()).toBe(order[1 % n]);
-    pressKey(scene, { key: 'ArrowDown' });
-    expect(scene.getFocusedLabel()).toBe(order[2 % n]);
-    pressKey(scene, { key: 'ArrowRight' });
-    expect(scene.getFocusedLabel()).toBe(order[3 % n]);
-
-    // Backward: Shift+Tab, ArrowUp, ArrowLeft.
+    expect(scene.getFocusedLabel()).toBe(order[1]);
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe(order[2]);
     pressKey(scene, { key: 'Tab', shiftKey: true });
-    expect(scene.getFocusedLabel()).toBe(order[2 % n]);
-    pressKey(scene, { key: 'ArrowUp' });
-    expect(scene.getFocusedLabel()).toBe(order[1 % n]);
-    pressKey(scene, { key: 'ArrowLeft' });
-    expect(scene.getFocusedIndex()).toBe(0);
+    expect(scene.getFocusedLabel()).toBe(order[1]);
+  });
 
-    // Wrap backwards from the first row to the last.
-    pressKey(scene, { key: 'ArrowLeft' });
-    expect(scene.getFocusedIndex()).toBe(n - 1);
-    expect(scene.getFocusedLabel()).toBe(order[n - 1]);
+  it('AC5 — activation works after moving between columns', async () => {
+    const scene = await bootIndex();
 
-    // Wrap forwards from the last row back to the first.
-    pressKey(scene, { key: 'Tab' });
-    expect(scene.getFocusedIndex()).toBe(0);
-    expect(scene.getFocusedLabel()).toBe(order[0]);
+    // Move Right into the ENEMIES column, then activate its first row.
+    pressKey(scene, { key: 'ArrowRight' });
+    expect(scene.getFocusedLabel()).toBe(FODDER_ENEMIES_LABEL);
+
+    pressKey(scene, { key: 'Enter' });
+    await advanceGame(booted!.game, 350);
+
+    expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isActive('GymIndex')).toBe(false);
+  });
+
+  it('AC6 — the hint advertises Left/Right column and Up/Down row movement', async () => {
+    const scene = await bootIndex();
+    const hint = findText(scene, GYM_INDEX_HINT);
+
+    expect(hint.text).toContain('←/→');
+    expect(hint.text).toContain('↑/↓');
   });
 
   it('AC3 — Enter activates the default-focused plain scene row', async () => {

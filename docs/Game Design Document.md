@@ -2084,7 +2084,8 @@ src/
 │   ├── GymIndex.ts      — Dev-mode gym entry scene (dev tool, reachable via the
 │   │                      main menu's Gym Scene Index button; discovers + lists gym
 │   │                      scenes from scenes/gym/ via import.meta.glob;
-│   │                      FocusManager keyboard navigation — Tab/arrows move focus,
+│   │                      FocusManager grid keyboard navigation — Left/Right move
+│   │                      between columns, Up/Down within a column, Tab stays linear,
 │   │                      Enter/Space launch the focused row)
 │   └── gym/
 │       ├── core/

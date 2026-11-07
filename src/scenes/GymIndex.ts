@@ -24,12 +24,15 @@
  * `GymMiniBoss` are excluded from the plain scene list because both are
  * surfaced as dedicated ENEMIES rows.
  *
- * Keyboard navigation (AH-0MUDZFBYY008P7ZE) is provided by the shared
- * {@link FocusManager}: the first row is focused by default, Tab / Shift+Tab
- * and the arrow keys cycle focus through every row in reading order (wrapping
- * at both ends), and Enter/Space activate the focused row through the same
- * code path as a pointer click. Pointer handlers and ESC-to-menu remain
- * unchanged (keyboard support is additive).
+ * Keyboard navigation (AH-0MUDZFBYY008P7ZE, AH-0MV1BKZ0J00946EX) is
+ * provided by the shared {@link FocusManager}. The index opts in to its
+ * **grid** navigation model: the first row is focused by default, **Left /
+ * Right** move focus between the three columns (wrapping at both ends, and
+ * clamping to a shorter column's last valid row), **Up / Down** move within
+ * the current column (wrapping top ↔ bottom), and **Tab / Shift+Tab** keep
+ * their linear reading-order cycling. Enter/Space activate the focused row
+ * through the same code path as a pointer click. Pointer handlers and
+ * ESC-to-menu remain unchanged (keyboard support is additive).
  */
 
 import Phaser from 'phaser';
@@ -48,7 +51,7 @@ import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 export const GYM_INDEX_TITLE = 'GYM INDEX';
 /** Bottom hint line (advertises the keyboard controls). */
 export const GYM_INDEX_HINT =
-  'tab/arrows move · enter/space select · ESC returns to menu';
+  '←/→ column · ↑/↓ row · tab cycles · enter/space select · ESC returns to menu';
 
 /** Scene key of the reusable fodder-enemy gym (formerly `GymEnemies`). */
 export const FODDER_ENEMIES_SCENE_KEY = 'GymFodderEnemies';
@@ -233,26 +236,36 @@ export class GymIndex extends Phaser.Scene {
     const enemiesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
     const devUtilitiesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
 
-    // Left column — scene entries (alphabetical).
+    // Left column — scene entries (alphabetical). Track the registered
+    // control indices so the focus manager can treat each column as a
+    // grid column (AH-0MV1BKZ0J00946EX).
+    const sceneColumn: number[] = [];
     this.entries.forEach((entry, index) => {
       const row = this.add
         .text(scenesColX, startY + index * rowGap, entry.label, entryStyle)
         .setOrigin(0.5);
-      this.registerRow(row, entry.label, () => this.scene.start(entry.key));
+      sceneColumn.push(
+        this.registerRow(row, entry.label, () => this.scene.start(entry.key)),
+      );
     });
 
     // Middle column — ENEMIES header + fodder/boss/mini-boss rows.
-    this.renderColumn(this.enemyEntries, enemiesColX, GYM_INDEX_ENEMIES_HEADER, {
-      startY,
-      headerY,
-      rowGap,
-      entryStyle,
-      headerStyle,
-    });
+    const enemiesColumn = this.renderColumn(
+      this.enemyEntries,
+      enemiesColX,
+      GYM_INDEX_ENEMIES_HEADER,
+      {
+        startY,
+        headerY,
+        rowGap,
+        entryStyle,
+        headerStyle,
+      },
+    );
 
     // Far-right column — Dev Utilities header + tooling scene entries
     // (AH-0MUGXDVPH005TIZL).
-    this.renderColumn(
+    const devUtilitiesColumn = this.renderColumn(
       this.devEntries,
       devUtilitiesColX,
       GYM_INDEX_DEV_UTILITIES_HEADER,
@@ -263,9 +276,14 @@ export class GymIndex extends Phaser.Scene {
     // The shared FocusManager owns Tab / arrow cycling and Enter / Space
     // activation. Rows are registered in reading order (plain scenes →
     // ENEMIES → Dev Utilities), so the first row is focused by default.
-    // Pointer handlers stay unchanged — keyboard support is additive. Tear
-    // the listener down on scene shutdown so a restart does not leak it.
-    this.focusManager.attachKeyboard(this);
+    // Grid mode makes Left/Right move between the three columns and Up/Down
+    // move within a column (AH-0MV1BKZ0J00946EX); Tab stays linear. Pointer
+    // handlers stay unchanged — keyboard support is additive. Tear the
+    // listener down on scene shutdown so a restart does not leak it.
+    this.focusManager.attachKeyboard(this, {
+      navigation: 'grid',
+      columns: [sceneColumn, enemiesColumn, devUtilitiesColumn],
+    });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.focusManager.shutdown();
     });
@@ -286,6 +304,10 @@ export class GymIndex extends Phaser.Scene {
    * Renders one header + clickable rows for an index column (ENEMIES or Dev
    * Utilities). No-op when the column has no entries, so the header never
    * floats alone.
+   *
+   * @returns the registered focus-control indices for this column, in visual
+   *   order (empty when the column has no entries), so the caller can supply
+   *   them to grid navigation.
    */
   private renderColumn(
     entries: EnemyColumnEntry[],
@@ -298,17 +320,19 @@ export class GymIndex extends Phaser.Scene {
       entryStyle: Phaser.Types.GameObjects.Text.TextStyle;
       headerStyle: Phaser.Types.GameObjects.Text.TextStyle;
     },
-  ): void {
-    if (entries.length === 0) return;
+  ): number[] {
+    if (entries.length === 0) return [];
     this.add.text(x, layout.headerY, headerText, layout.headerStyle).setOrigin(0.5);
+    const column: number[] = [];
     entries.forEach((entry, index) => {
       const row = this.add
         .text(x, layout.startY + index * layout.rowGap, entry.label, layout.entryStyle)
         .setOrigin(0.5);
       if (entry.enemyKey) row.setData('enemyKey', entry.enemyKey);
       if (entry.sceneKey) row.setData('sceneKey', entry.sceneKey);
-      this.registerRow(row, entry.label, () => this.activateEntry(entry));
+      column.push(this.registerRow(row, entry.label, () => this.activateEntry(entry)));
     });
+    return column;
   }
 
   // ── Activation & focus helpers ────────────────────────────────────
@@ -328,16 +352,20 @@ export class GymIndex extends Phaser.Scene {
    * Wires a row for pointer (`pointerdown`) and keyboard (FocusManager)
    * activation through the same callback, and records its label so
    * {@link getFocusedLabel} can report the focused row in tests.
+   *
+   * @returns the row's index in the focus manager, so the caller can build
+   *   the grid columns.
    */
   private registerRow(
     row: Phaser.GameObjects.Text,
     label: string,
     activate: () => void,
-  ): void {
+  ): number {
     row.setInteractive({ useHandCursor: true });
     row.on('pointerdown', activate);
-    this.focusManager.register(row, activate);
+    const index = this.focusManager.register(row, activate);
     this.controls.push({ label, text: row });
+    return index;
   }
 
   // ── Public test accessors ─────────────────────────────────────────
