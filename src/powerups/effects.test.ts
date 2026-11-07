@@ -1048,63 +1048,66 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
 // ── Automatic defence selection: Phase Shift vs Teleport ─────────────
 
 describe('selectAutoDefence: readiness-based 50/50 selection (AH-0MW231NAR008K9IS)', () => {
-  it('returns null when neither defence is available and never consults the rng (AC3)', () => {
+  it('returns null when neither defence is ready and never consults the rng (AC4)', () => {
     let draws = 0;
     const rng = () => {
       draws += 1;
       return 0.5;
     };
-    expect(selectAutoDefence(0, false, rng)).toBeNull();
+    expect(selectAutoDefence(false, false, rng)).toBeNull();
     expect(draws).toBe(0);
   });
 
-  it('returns the only available defence and never consults the rng (AC3)', () => {
+  it('returns the only ready defence and never consults the rng (AC4)', () => {
     let draws = 0;
     const rng = () => {
       draws += 1;
       return 0.5;
     };
-    // Phase Shift readiness is a non-zero charge count, whatever its size.
-    expect(selectAutoDefence(1, false, rng)).toBe('phase_shift');
-    expect(selectAutoDefence(3, false, rng)).toBe('phase_shift');
-    // Teleport readiness is a boolean flag.
-    expect(selectAutoDefence(0, true, rng)).toBe('teleport');
+    // Readiness is a boolean for both single-use abilities.
+    expect(selectAutoDefence(true, false, rng)).toBe('phase_shift');
+    expect(selectAutoDefence(false, true, rng)).toBe('teleport');
     expect(draws).toBe(0);
   });
 
-  it('splits 50/50 when both are available, for 1 and for 3 Phase charges (AC1/AC2)', () => {
+  it('covers all four readiness combinations (AC5)', () => {
+    expect(selectAutoDefence(false, false, () => 0.25)).toBeNull();
+    expect(selectAutoDefence(true, false, () => 0.25)).toBe('phase_shift');
+    expect(selectAutoDefence(false, true, () => 0.25)).toBe('teleport');
+    // Both ready resolves through the injected rng to either ability.
+    expect(selectAutoDefence(true, true, () => 0.25)).toBe('phase_shift');
+    expect(selectAutoDefence(true, true, () => 0.75)).toBe('teleport');
+  });
+
+  it('splits 50/50 when both are ready, across a seeded run (AC3/AC5)', () => {
     const DRAWS = 2000;
     const TOLERANCE = 0.05;
-    for (const charges of [1, 3]) {
-      const rng = createSeededRng(20261104 + charges);
-      let phaseShift = 0;
-      let teleport = 0;
-      for (let i = 0; i < DRAWS; i += 1) {
-        const choice = selectAutoDefence(charges, true, rng);
-        expect(choice).not.toBeNull();
-        if (choice === 'phase_shift') phaseShift += 1;
-        else teleport += 1;
-      }
-      expect(Math.abs(phaseShift / DRAWS - 0.5)).toBeLessThanOrEqual(TOLERANCE);
-      expect(Math.abs(teleport / DRAWS - 0.5)).toBeLessThanOrEqual(TOLERANCE);
+    const rng = createSeededRng(20261104);
+    let phaseShift = 0;
+    let teleport = 0;
+    for (let i = 0; i < DRAWS; i += 1) {
+      const choice = selectAutoDefence(true, true, rng);
+      expect(choice).not.toBeNull();
+      if (choice === 'phase_shift') phaseShift += 1;
+      else teleport += 1;
     }
+    expect(Math.abs(phaseShift / DRAWS - 0.5)).toBeLessThanOrEqual(TOLERANCE);
+    expect(Math.abs(teleport / DRAWS - 0.5)).toBeLessThanOrEqual(TOLERANCE);
   });
 
-  it('is deterministic for a fixed seed and independent of the charge count (AC2)', () => {
-    const draws = (charges: number): AutoDefenceChoice[] => {
+  it('is deterministic for a fixed seed (AC3)', () => {
+    const draws = (): AutoDefenceChoice[] => {
       const rng = createSeededRng(4242);
-      return Array.from({ length: 50 }, () => selectAutoDefence(charges, true, rng)!);
+      return Array.from({ length: 50 }, () => selectAutoDefence(true, true, rng)!);
     };
-    const oneCharge = draws(1);
-    expect(draws(1)).toEqual(oneCharge); // replayable
-    expect(draws(3)).toEqual(oneCharge); // charge count never biases the draw
+    expect(draws()).toEqual(draws()); // replayable
   });
 
-  it('maps a both-available draw onto the 50/50 boundary (AC1)', () => {
-    expect(selectAutoDefence(3, true, () => 0.0)).toBe('phase_shift');
-    expect(selectAutoDefence(3, true, () => 0.499)).toBe('phase_shift');
-    expect(selectAutoDefence(3, true, () => 0.5)).toBe('teleport');
-    expect(selectAutoDefence(3, true, () => 0.99)).toBe('teleport');
+  it('maps a both-ready draw onto the 50/50 boundary (AC3)', () => {
+    expect(selectAutoDefence(true, true, () => 0.0)).toBe('phase_shift');
+    expect(selectAutoDefence(true, true, () => 0.499)).toBe('phase_shift');
+    expect(selectAutoDefence(true, true, () => 0.5)).toBe('teleport');
+    expect(selectAutoDefence(true, true, () => 0.99)).toBe('teleport');
   });
 });
 
@@ -1205,6 +1208,29 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
     expect(reg.updateDanger(true, 0.016)).toBe('teleport');
     expect(reg.hasTeleport()).toBe(true); // not consumed here (scene warps)
+  });
+
+  it('never selects a recharging Phase Shift, either alone or against Teleport (AC2)', () => {
+    // Phase Shift recharging with no Teleport → nothing is selected at all.
+    const phaseOnly = new EffectsRegistry();
+    phaseOnly.applyCollect('phase_shift', true); // permanently owned, ready
+    expect(phaseOnly.updateDanger(true, 0.016)).toBe('phase_shift'); // spends it
+    phaseOnly.tick(PHASE_DURATION + 0.01); // phase expires → re-arm cooldown
+    phaseOnly.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01); // danger clears
+    expect(phaseOnly.hasPhaseShift()).toBe(false);
+    expect(phaseOnly.isPhaseShiftRecharging()).toBe(true);
+    expect(phaseOnly.updateDanger(true, 0.016)).toBeNull();
+
+    // Phase Shift recharging with a ready Teleport → Teleport, even when the
+    // injected rng would favour Phase Shift on a both-ready draw.
+    const both = new EffectsRegistry(undefined, () => 0.0);
+    both.applyCollect('phase_shift', true);
+    both.applyCollect('teleport');
+    expect(both.updateDanger(true, 0.016)).toBe('phase_shift');
+    both.tick(PHASE_DURATION + 0.01);
+    both.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
+    expect(both.isPhaseShiftRecharging()).toBe(true);
+    expect(both.updateDanger(true, 0.016)).toBe('teleport');
   });
 });
 
