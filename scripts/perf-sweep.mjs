@@ -647,5 +647,9 @@ const invokedDirectly =
   process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (invokedDirectly) {
-  process.exitCode = await main();
+  // Forward the real shell argv: without it every documented flag (`--help`,
+  // `--seed`, `--seconds`, `--ceiling`, `--out`, …) is silently ignored and
+  // `node scripts/perf-sweep.mjs --help` starts the default sweep instead of
+  // printing usage (AH-0MW6CORAZ001FZZ3).
+  process.exitCode = await main(process.argv.slice(2));
 }

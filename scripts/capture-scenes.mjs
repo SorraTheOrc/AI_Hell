@@ -507,6 +507,12 @@ export const SCENE_SETUP_TARGET_EXTRA_FIELDS = Object.freeze({
   // the utility gym's demonstration mineral field is sized per capture.
   GymWeapons: Object.freeze(['practiceTargets']),
   GymPowerUpsUtility: Object.freeze(['minerals']),
+  // The performance gym is the parameterised sweep target: its launch data
+  // sizes the measured load (enemy count), picks the per-archetype mix and
+  // toggles the shared auto-fire path (`GymPerformanceLaunchData`). Without
+  // this entry the sweep driver's step-0 setup is rejected before any
+  // measurement runs (AH-0MW6CORAZ001FZZ3).
+  GymPerformance: Object.freeze(['count', 'enemyMix', 'autoFire']),
 });
 
 /**
@@ -551,6 +557,9 @@ const SETUP_ALL_FIELDS = Object.freeze([
   'practiceTargets',
   'threatCount',
   'minerals',
+  'count',
+  'enemyMix',
+  'autoFire',
   'demo',
   'demoDwellMs',
 ]);
@@ -1291,6 +1300,14 @@ export function normaliseSceneSetup(rawSetup = {}, target) {
     }
   }
   for (const field of ['threatCount', 'minerals']) {
+    if (include(field) && setup[field] !== undefined) {
+      normalised[field] = setup[field];
+    }
+  }
+  // The performance gym's sweep parameters are only emitted when supplied:
+  // the scene's own defaults (historical 100-enemy stress load, no auto-fire)
+  // stay in place for a setup-less capture (AH-0MW6CORAZ001FZZ3).
+  for (const field of ['count', 'enemyMix', 'autoFire']) {
     if (include(field) && setup[field] !== undefined) {
       normalised[field] = setup[field];
     }

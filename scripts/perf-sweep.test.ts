@@ -43,9 +43,11 @@
  * `unit` vitest project.
  */
 
-import { dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { cliSpawnEnv } from './cliChildEnv';
 import * as planner from '../src/perf/sweepPlan';
 import type { PerfReport } from './perf-report.mjs';
 import {
@@ -697,5 +699,44 @@ describe('sweep driver — exit codes', () => {
     expect(capture.stderrText()).toContain('step 0 (50 enemies)');
     expect(capture.stdoutText()).toBe('');
     expect(files.files.has(OUT)).toBe(false);
+  });
+});
+
+// ── Direct invocation (the shell contract) ──────────────────────────
+
+describe('sweep driver — direct invocation forwards argv (AH-0MW6CORAZ001FZZ3)', () => {
+  /** The script the `npm run perf:sweep` entry runs. */
+  const scriptPath = resolve(process.cwd(), 'scripts/perf-sweep.mjs');
+
+  /**
+   * Run the script exactly as the shell does (`node scripts/perf-sweep.mjs
+   * <args>`). A regression that drops argv (the reported bug) starts the
+   * default sweep — Vite plus a headless Chromium for a 30-minute budget — so
+   * the timeout turns that hang into a fast, obvious failure instead of a
+   * stuck suite.
+   */
+  function runShell(...args: string[]) {
+    return spawnSync(process.execPath, [scriptPath, ...args], {
+      encoding: 'utf8',
+      env: cliSpawnEnv(),
+      timeout: 20_000,
+    });
+  }
+
+  it('prints the usage text and exits 0 for --help, without booting a browser', () => {
+    const result = runShell('--help');
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('usage: node scripts/perf-sweep.mjs');
+    expect(result.stdout).toContain('--ceiling N');
+    expect(result.stderr).toBe('');
+  });
+
+  it('reports a usage error for an unknown shell flag instead of running the sweep', () => {
+    const result = runShell('--bogus');
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Unknown argument: --bogus');
+    expect(result.stdout).toBe('');
   });
 });

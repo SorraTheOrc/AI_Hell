@@ -1625,6 +1625,9 @@ setup is validated before boot and forwarded to the scene as its launch data.
 | `practiceTargets` | boolean | `GymWeapons` | `true` | `false` omits the inert AOE practice-target tripod |
 | `threatCount` | integer `1`–`12` | `GymPowerUpsCombat` | `3` | size of the scout threat wave (`SCENE_SETUP_SCENARIO_COUNT_BOUNDS.threatCount`) |
 | `minerals` | integer `0`–`200` | `GymPowerUpsUtility` | `40` | size of the seeded demonstration mineral field (`SCENE_SETUP_SCENARIO_COUNT_BOUNDS.minerals`) |
+| `count` | positive integer | `GymPerformance` | `100` (the historical stress load) | enemy count for the measured load; the sweep driver sets it per step (50, 100, 150, …) |
+| `enemyMix` | `{ archetype, count }[]` | `GymPerformance` | the historical late-game round-robin roster | per-archetype shares of `count`, in spawn order; the scene assigns each grid slot from this roster deterministically |
+| `autoFire` | boolean | `GymPerformance` | `false` | whether the shared player auto-fire path runs; the sweep turns it on so the measured load keeps firing (a capture of the shipped 100-enemy stress load leaves it off so the load cannot decay) |
 | `demo` | boolean | `HangarScene`, `HexMapScene`, `DefenceReportScene` | `false` | attract traversal: `true` auto-advances the screen after the dwell (buy, then deploy/continue), `false` records the static, player-facing screen |
 | `demoDwellMs` | positive integer | `HangarScene`, `HexMapScene`, `DefenceReportScene` | the shared traversal dwell | how long the attract traversal pauses on the screen before acting |
 | `seed` | uint32 | all setup-capable gyms | `0` | determinism seed for content RNGs |
