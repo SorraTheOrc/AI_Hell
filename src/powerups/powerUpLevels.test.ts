@@ -737,6 +737,53 @@ describe('PowerUpLevelStore (AC3 — stack/charge reconciliation)', () => {
     expect(store.phaseCharges()).toBe(1);
   });
 
+  it('spend → unavailable → ready: one level-derived recharge interval (AC4)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('phase_shift');
+    const base = store.phaseRechargeTime();
+    expect(base).toBeCloseTo(30, 6);
+    expect(store.hasPhaseShift()).toBe(true);
+
+    // Spending the one ready activation is what starts the timer.
+    expect(store.consumePhaseShift()).toBe(true);
+    expect(store.hasPhaseShift()).toBe(false);
+    expect(store.isPhaseShiftRecharging()).toBe(true);
+    expect(store.phaseShiftRechargeRemaining()).toBeCloseTo(base, 6);
+
+    // Mid-recharge (base − ε) it is still unavailable; a second spend is a
+    // no-op rather than a throw (single-use, no charge pool).
+    const epsilon = 1e-3;
+    store.tickRecharge(base - epsilon);
+    expect(store.hasPhaseShift()).toBe(false);
+    expect(store.isPhaseShiftRecharging()).toBe(true);
+    expect(store.phaseShiftRechargeRemaining()).toBeCloseTo(epsilon, 6);
+    expect(() => store.consumePhaseShift()).not.toThrow();
+    expect(store.consumePhaseShift()).toBe(false);
+
+    // (+ε) completes the one timer and readies the activation again.
+    store.tickRecharge(2 * epsilon);
+    expect(store.phaseShiftRechargeRemaining()).toBe(0);
+    expect(store.isPhaseShiftRecharging()).toBe(false);
+    expect(store.hasPhaseShift()).toBe(true);
+
+    // The ready state persists until the next spend.
+    store.tickRecharge(store.phaseRechargeTime() + 1);
+    expect(store.hasPhaseShift()).toBe(true);
+  });
+
+  it('spend captures the recharge interval at the current level (AC1)', () => {
+    const store = new PowerUpLevelStore();
+    for (let i = 0; i < 5; i++) store.collect('phase_shift');
+    const levelled = store.phaseRechargeTime();
+    expect(levelled).toBeLessThan(30);
+    expect(levelled).toBeGreaterThanOrEqual(10);
+
+    expect(store.consumePhaseShift()).toBe(true);
+    // The captured interval is the level-derived one, not the base 30 s.
+    expect(store.phaseShiftRechargeRemaining()).toBeCloseTo(levelled, 6);
+    expect(store.phaseShiftRechargeRemaining()).toBeLessThan(30);
+  });
+
   it('grants level-derived lives, clamped to the level-derived cap of 5', () => {
     const store = new PowerUpLevelStore();
     expect(store.lives()).toBe(POWER_UP_LIVES_START);
