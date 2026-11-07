@@ -890,6 +890,14 @@ npm run perf:measure -- --scene PlayScene --setup '{"demo":true,"seed":1,"startL
   FPS/entity-count overlay. See
   [docs/PERFORMANCE.md § The stress gym](./docs/PERFORMANCE.md#the-stress-gym-gymperformance).
 
+- **Find the playable enemy ceiling:** `npm run perf:sweep`
+  (`scripts/perf-sweep.mjs`, AH-0MW5IUEX1004AZRH) walks the enemy load up in
+  50-enemy steps — 50, 100, 150, … — with a seeded representative player
+  loadout and a varying shoot/dive enemy mix, sampling each step for at least
+  15 s and stopping at the first step whose **average FPS is below 30**: one
+  command answers "how many enemies can we actually hold". See
+  [docs/PERFORMANCE.md § Enemy-count sweep](./docs/PERFORMANCE.md#enemy-count-sweep).
+
 - **Method:** frame times are the differences between consecutive Phaser
   `poststep` timestamps, sampled through the dev-gated page probe
   (`window.__aiHellPerfProbe`, `src/core/perfProbe.ts`; never written in a

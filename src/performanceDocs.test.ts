@@ -194,6 +194,20 @@ const RECORDED_SECTIONS: ReadonlyArray<RecordedSection> = [
     heading: '### After: shared silhouette palette, one texture atlas (AH-0MW508JS2004W3SR)',
     facts: [COMMIT, DATE, { label: 'the platform', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /1×/ }],
   },
+  {
+    // The sweep section (AH-0MW5IUG0D004LX0E) documents the perf:sweep tool:
+    // its provenance line names the commit/date the tooling describes, the
+    // reference machine (headless Chromium, the default software WebGL
+    // backend) and the default CPU throttle, per the file's Recorded: rule.
+    heading: '## Enemy-count sweep',
+    facts: [
+      COMMIT,
+      DATE,
+      { label: 'the platform', pattern: /Chromium/ },
+      { label: 'the webgl backend', pattern: /SwiftShader/ },
+      { label: 'the throttle factor', pattern: /1×/ },
+    ],
+  },
 ];
 
 describe('docs/PERFORMANCE.md — performance budget', () => {
@@ -503,5 +517,73 @@ describe('docs/PERFORMANCE.md — discoverability', () => {
     expect(row, 'the stress-gym row does not link docs/PERFORMANCE.md').toMatch(
       /\]\(\.?\/?PERFORMANCE\.md[^)]*\)/,
     );
+  });
+});
+
+describe('docs/PERFORMANCE.md — the enemy-count sweep (AH-0MW5IUG0D004LX0E)', () => {
+  it('documents the sweep command, its options, the window and the load definition', () => {
+    const sweep = sectionBody(perfDoc(), '## Enemy-count sweep');
+
+    // The command and its entry point, so the documented tool stays concrete.
+    expect(sweep).toContain('npm run perf:sweep');
+    expect(sweep).toContain('node scripts/perf-sweep.mjs');
+
+    // Every option the CLI documents appears in the section's options table.
+    for (const option of [
+      '--seed',
+      '--aggression',
+      '--seconds',
+      '--warmup',
+      '--ceiling',
+      '--budget',
+      '--cpu-throttle',
+      '--scene',
+      '--out',
+      '--json',
+    ]) {
+      expect(sweep, `sweep options table is missing ${option}`).toContain(option);
+    }
+
+    // The 15-second minimum measurement window, warm-up excluded.
+    expect(sweep).toMatch(/15 seconds/);
+    expect(sweep).toMatch(/warm-up/i);
+
+    // The load definition: a varying shoot/dive mix, a representative
+    // non-maxed loadout and the as-played deterministic (seeded) mode.
+    expect(sweep).toMatch(/shoot/i);
+    expect(sweep).toMatch(/dive/i);
+    expect(sweep).toMatch(/POWER_UP_SLOT_CAP/);
+    expect(sweep).toMatch(/levels are not maxed/i);
+    expect(sweep).toMatch(/seed/i);
+  });
+
+  it('states the stop rule and why the sweep and the fixed 100-enemy rows both exist', () => {
+    const sweep = sectionBody(perfDoc(), '## Enemy-count sweep');
+
+    // The stop rule: the first step below 30 average FPS is the failure
+    // point, the previous step the last playable load; a ceiling/budget
+    // bounds a clean sweep.
+    expect(sweep).toMatch(/below\s+30/);
+    expect(sweep).toMatch(/failure point/i);
+    expect(sweep).toMatch(/last playable/i);
+    expect(sweep).toMatch(/--ceiling/);
+    expect(sweep).toMatch(/--budget/);
+
+    // The sweep is distinguished from — not merged into — the fixed 100-enemy
+    // rows: both exist and are not comparable.
+    expect(sweep).toMatch(/100-enemy/);
+    expect(sweep).toMatch(/not comparable/i);
+  });
+
+  it('is linked from the README harness section', () => {
+    const readme = fs.readFileSync(README_PATH, 'utf8');
+
+    // The harness section this guard already keys on, with a deep link to the
+    // sweep section of the performance doc, so a reader of the README lands on
+    // the new section.
+    const harness = readme.slice(readme.indexOf('#### Frame-time performance measurement'));
+    expect(harness.indexOf('#### Frame-time performance measurement')).toBeGreaterThanOrEqual(0);
+    expect(harness).toContain('npm run perf:sweep');
+    expect(harness).toContain('docs/PERFORMANCE.md#enemy-count-sweep');
   });
 });

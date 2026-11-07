@@ -83,6 +83,142 @@ scene, warmup, window, CPU throttle and host all match. The gym is also
 watchable/capturable like every other gym (`WATCHABLE_GYM_SCENE_KEYS`, see
 [docs/dev/gameplay-capture.md](dev/gameplay-capture.md)).
 
+## Enemy-count sweep
+
+**`Recorded:`** commit `4901620d` (the sweep driver AH-0MW5IUEX1004AZRH plus
+the CLI fix AH-0MW6CORAZ001FZZ3 — the tooling this section documents) ·
+2026-11-07 · [reference machine](#reference-machine) — headless Chromium
+(**SwiftShader software WebGL**, the default backend) · CPU throttle **1×**
+(the default) · AH-0MW5IUG0D004LX0E. The recorded reference sweep
+(AH-0MW5IUGKO003UC6T) publishes the per-step numbers this tool produces.
+
+The stress gym measures **one** fixed load — exactly 100 late-game enemies —
+because that is the number the budget is stated against; it leaves "how many
+enemies can the game actually hold at a playable frame rate?" unanswered.
+`npm run perf:sweep` answers that deterministically: it walks the enemy load
+upward in 50-enemy steps (50, 100, 150, …), measures each step **once** for at
+least **15 seconds**, and stops at the first step whose **average FPS is below
+30** — that step is the failure point, the previous one the last playable
+load. One command produces the headroom curve (min / average / max FPS per
+load) as a per-step table plus a headline verdict, with the same data written
+to a machine-readable JSON report. The skill usage guide lives in
+[`.pi/skills/perf-sweep/`](../.pi/skills/perf-sweep/SKILL.md)
+(AH-0MW5IUFGX00500XT).
+
+The sweep is a **measurement tool, not a test run**: it boots a browser and
+takes minutes, so it is intentionally not part of the vitest suite and not run
+by the test skill. Run it from the repo root on the
+[reference machine](#reference-machine) and compare numbers only within one
+host load band ([noise floor](#noise-floor)) — host load is recorded per step,
+so a noisy sweep is identifiable rather than silently comparable.
+
+### What the sweep measures
+
+- **Enemies that shoot *and* dive.** Every step fields the six late-game
+  firing archetypes of the stress gym — `tank`, `swarm`, `phaser`, `diver`,
+  `raider`, `march` — created by the shared `createEnemyFromConfig` factory
+  and firing through the shared `fireForEnemy` dispatcher. The `diver`
+  archetype dives; the other five shoot. Enemies are **not** invulnerable: the
+  player's fire can kill them, so the live enemy count decays within a step
+  and the step's count is the peak/target load (the live counts are recorded).
+- **The player fires.** Auto-fire is on with the step's loadout, so the
+  measured frame cost includes the player's own bullets and kills. Minerals
+  are off (`minerals: false`).
+- **A semi-random, representative loadout per step**, built through the
+  shipped seams and recorded with the step (ids *and* levels):
+  - the permanent `cannon` is always the base weapon;
+  - one weapon from **each** broad category — projectile (`spread`, `dual`,
+    `rapid`), beam (`wave_laser`), area-of-effect (`nova`, `mortar`, `arc`)
+    and exotic/positional (`ricochet`, `cluster`, `options`, `rear_guard`,
+    `broadside`, `railgun`, `shard_swarm`, `heavy_slug`);
+  - **at least one power-up** from `POWER_UP_CATALOGUE`;
+  - the remaining slots are seeded picks, capped at the shipped six-slot limit
+    (`POWER_UP_SLOT_CAP = 6`);
+  - **levels are not maxed.** A weapon/power-up is granted at the
+    *representative level* of the campaign level a hex of the configured
+    `--aggression` deploys at: campaign level 1 → upgrade level 1, campaign
+    `MAX_LEVEL` (10) → level 7 (`REPRESENTATIVE_LEVEL_MAX`), monotone in
+    between — a strong-but-not-maxed late-game player even at the highest
+    aggression.
+- **A varying shoot/dive mix per step**: the `diver` share is drawn seeded per
+  step in `[0.2, 0.5)`, so the mix varies across the sweep while always
+  containing both behaviours. The roster is fixed at step setup, so the load
+  is constant for that step's measurement window.
+- **As-played, deterministic mode**: one seed for the whole run and a fixed
+  per-step duration — the same seed reproduces the same loadout sequence and
+  the same mixes. The seed is recorded in the verdict JSON.
+
+### The measurement window
+
+Each step measures for **at least 15 seconds** (`--seconds`, minimum enforced,
+default 15). A 5-second warm-up (`--warmup`, default 5) lets the scene settle
+before the window and is **excluded** from the measured time. Per step the
+harness records **min, average and max FPS** alongside the frame-time
+percentiles (p50/p95), long-frame counts and the live enemy/bullet counts
+sampled through the shared `CombatScene` counts seam.
+
+### The stop rule
+
+- A step whose **average FPS is strictly below 30** is the sweep's
+  **failure point**; exactly 30 FPS is still playable.
+- The **previous step is the last playable load** (the headline reads
+  *playable to N enemies; first failure at M with average X FPS*).
+- A **hard ceiling** (400 enemies by default, `--ceiling`) and a
+  **total-run budget** (30 minutes, `--budget`) stop a runaway sweep when no
+  step ever fails.
+
+### How to run it
+
+Prerequisite: the Playwright Chromium build (`npm run capture:install`), the
+same prerequisite the `perf:measure` harness needs.
+
+```bash
+npm run perf:sweep                                  # defaults: seed derived, aggression 5
+npm run perf:sweep -- --seed 42 --aggression 6      # reproducible runs
+npm run perf:sweep -- --ceiling 200 --budget 60     # bound the run
+npm run perf:sweep -- --json                        # verdict JSON on stdout
+npm run perf:sweep -- --out perf-output/my-sweep.json
+```
+
+`npm run perf:sweep` is `node scripts/perf-sweep.mjs`. It starts the Vite dev
+server itself, launches headless Chromium through Playwright, switches to the
+parameterised stress gym and walks the steps — no manual load selection.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--seed N` | derived per run | Run seed for the loadout and mix streams; recorded, so an implicit seed is still reproducible. |
+| `--aggression N` | `5` | Hex aggression whose campaign level the loadout levels derive from. |
+| `--seconds N` | `15` | Measured window per step; rejected below 15. |
+| `--warmup N` | `5` | Scene-settling seconds before each measured window (excluded from measurement). |
+| `--ceiling N` | `400` | Hard upper bound on a planned step. |
+| `--budget N` | `30` | Total-run budget in minutes. |
+| `--cpu-throttle N` | `1` | Pass-through Chromium CPU throttle factor (e.g. `4` for the mobile tier). |
+| `--scene KEY` | `GymPerformance` | Registered scene key to measure. |
+| `--out FILE` | `perf-output/sweep-<ts>.json` | Verdict JSON path (under the git-ignored `perf-output/`). |
+| `--json` | off | Emit the verdict JSON on stdout instead of the table. |
+| `-h`, `--help` | — | Show the usage text. |
+
+Human output is the headline verdict plus one row per step (step index, target
+enemy count, the step's `diver` share, min / average / max FPS and the
+`playable`/`failure` verdict); the JSON verdict names the scene, seed,
+aggression, CPU throttle, started time, **host** and **commit**, the step
+list, each step's loadout *and levels*, shoot/dive mix, the per-step raw
+report paths and the verdict. Exit codes: `0` a completed sweep, `1` a failed
+run (no partial verdict is published), `2` a usage error.
+
+### How it differs from the fixed 100-enemy rows
+
+The [100-enemy baseline rows](#baseline-100-enemies-60-s) are the **budget's**
+worst case: exactly the 100 enemies the 60 FPS target is stated against, with
+the player's auto-fire disabled so the load cannot be shot down
+mid-measurement. The sweep answers the **playability** question — how many
+enemies the game holds before average FPS falls below 30 — with the player
+*actually playing* (auto-fire on, semi-random loadout), so the measured frame
+cost includes the player's own bullets and kills. Both exist because they ask
+different questions, and they are **not comparable**: different enemy counts
+and composition, different player load, different window and a different
+verdict metric (average FPS vs the budget's p95 frame time).
+
 ## The asteroid stress gym (`GymAsteroidStress`)
 
 The asteroid batched-rendering work (parent AH-0MW4857B0004GMWR) needs a
