@@ -349,6 +349,29 @@ describe('owned non-rewardable kinds (AH-0MW231NRP004HAT5)', () => {
     expect(MODULE_CODE).not.toMatch(/===\s*['"]teleport['"]/);
     expect(MODULE_CODE).toContain('isRewardableWhenOwned');
   });
+
+  it('keeps a permanently-owned Phase Shift on the wheel and routes its grant through the shared seam (AH-0MW6QY3NP001NZKE)', () => {
+    // Reward decision: unlike Teleport, an owned Phase Shift stays
+    // rewardable — a grant readies the one activation (timer 0) instead of
+    // banking a charge, so the wheel keeps its wedge and its bonus payout.
+    expect(isRewardableWhenOwned('phase_shift')).toBe(true);
+
+    expect(buildWheelWedges(['phase_shift']).map((wedge) => wedge.id)).toEqual([
+      'phase_shift',
+      MINI_BOSS_WHEEL_BONUS_ID,
+    ]);
+
+    // The bonus slot grants its +1, and the shared reward seam applies it as a
+    // permanent grant — the store's grant path is what readies the single-use
+    // activation (asserted end-to-end against the real store in
+    // `__tests__/choice.test.ts`).
+    const bonus = drawWheelOutcome(0, ['phase_shift']);
+    expect(bonus.gains).toEqual([{ id: 'phase_shift', levels: 1 }]);
+
+    const { registry } = makeApplyFakes();
+    applyWheelOutcome(bonus, registry as unknown as EffectsRegistry, null);
+    expect(registry.applyCollect).toHaveBeenCalledWith('phase_shift', true);
+  });
 });
 
 // ── Shared six-slot pool coverage ───────────────────────────────────

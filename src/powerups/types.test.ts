@@ -247,6 +247,42 @@ describe('POWER_UP_CATALOGUE.rewardableWhenOwned (AH-0MW231NRP004HAT5)', () => {
   });
 });
 
+// ── Single-use reward semantics (AH-0MW6QY3NP001NZKE) ─────────────
+
+describe('POWER_UP_CATALOGUE single-use reward semantics (AH-0MW6QY3NP001NZKE)', () => {
+  it('puts exactly Phase Shift and Teleport on the single-use model', () => {
+    const singleUse = CATALOGUE_IDS.filter(
+      (id) => POWER_UP_CATALOGUE[id].singleUse === true,
+    );
+
+    // Catalogue order: phase_shift precedes teleport. Enumerated from the
+    // flags so a third single-use kind — or a kind silently dropping the
+    // flag — cannot pass unnoticed.
+    expect(singleUse).toEqual(['phase_shift', 'teleport']);
+  });
+
+  it('records the owned Phase Shift reward decision: it stays rewardable', () => {
+    // Parent desired behaviour #4: a hold-full grant READIES the one
+    // activation (timer 0) rather than banking a charge, so the kind keeps
+    // its owned reward. Retiring it like Teleport would silently remove that
+    // reward, so the flag must stay absent (the documented rewardable
+    // default) and the kind must stay out of the retired set.
+    expect(POWER_UP_CATALOGUE.phase_shift.rewardableWhenOwned).toBeUndefined();
+    expect(isRewardableWhenOwned('phase_shift')).toBe(true);
+    expect(NON_REWARDABLE_WHEN_OWNED_POWER_UP_IDS).not.toContain('phase_shift');
+  });
+
+  it('states the readiness reward rule in the catalogue description', () => {
+    const description = POWER_UP_CATALOGUE.phase_shift.description;
+
+    // The player-facing copy must name the reward path — the reason the kind
+    // stays rewardable — alongside the pickup that also readies it.
+    expect(description).toMatch(/pickup/i);
+    expect(description).toMatch(/reward/i);
+    expect(description).toMatch(/ready/i);
+  });
+});
+
 // ── Field-pickup-only flag (AH-0MW3MLV2V001NWBR) ─────────────────────
 
 describe('POWER_UP_CATALOGUE.fieldPickupOnly (AH-0MW3MLV2V001NWBR)', () => {

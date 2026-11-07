@@ -1168,6 +1168,50 @@ describe('power-up choice strategy', () => {
       expect(levelled.changeSummary).not.toBe(base.changeSummary);
     });
 
+    it('AC3 — an owned Phase Shift keeps the charge offer and the grant readies it (no banked charge)', () => {
+      // Decision recorded on the catalogue entry (AH-0MW6QY3NP001NZKE): a
+      // permanently-owned Phase Shift stays rewardable because a hold-full
+      // grant READIES the one activation instead of banking a charge —
+      // deliberately unlike Teleport's retirement.
+      expect(isRewardableWhenOwned('phase_shift')).toBe(true);
+
+      const option = buildChoiceCandidates(
+        CHOICE_POOL,
+        ownedContext('phase_shift'),
+      ).find((o) => o.id === 'phase_shift');
+      expect(option?.kind).toBe('power-up-charge');
+
+      const registry = new EffectsRegistry();
+      const store = registry.levelStore();
+
+      // The first reward owns the kind and readies its one activation.
+      applyMineralChoiceReward(option!, registry, null);
+      expect(store.hasPhaseShift()).toBe(true);
+      expect(store.consumableCharges('phase_shift')).toBe(0);
+
+      // Spend it: the single activation is now counting down.
+      expect(store.consumePhaseShift()).toBe(true);
+      expect(store.hasPhaseShift()).toBe(false);
+      expect(store.isPhaseShiftRecharging()).toBe(true);
+      expect(store.phaseShiftRechargeRemaining()).toBeGreaterThan(0);
+
+      // A second hold-full reward readies it immediately (timer 0) through the
+      // store's grant path and still banks no charge — readiness is not a
+      // count.
+      applyMineralChoiceReward(option!, registry, null);
+      expect(store.hasPhaseShift()).toBe(true);
+      expect(store.isPhaseShiftRecharging()).toBe(false);
+      expect(store.phaseShiftRechargeRemaining()).toBe(0);
+      expect(store.consumableCharges('phase_shift')).toBe(0);
+      // A charge is not a level-up: the permanent level is untouched.
+      expect(store.getPermanentLevel('phase_shift')).toBe(0);
+
+      // Exactly one activation exists: one spend succeeds, the next cannot
+      // fire until the timer completes — nothing was stockpiled.
+      expect(store.consumePhaseShift()).toBe(true);
+      expect(store.consumePhaseShift()).toBe(false);
+    });
+
     it('AC1 — the catalogue-driven opt-out gives a permanently-owned Teleport no offer at all', () => {
       // The retired set is catalogue data, never a hand-written id list: the
       // single opt-out entry is named here only as the expected live value.

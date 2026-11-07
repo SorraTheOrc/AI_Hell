@@ -377,6 +377,16 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // mirroring Teleport) — no stored-charge count and no FIFO pool. Spending
     // the one ready activation starts a level-derived `phaseRechargeRate`
     // interval (30 s → 10 s); a field pickup or hold-full reward readies it.
+    //
+    // Reward surface (AH-0MW6QY3NP001NZKE, parent desired behaviour #4): a
+    // permanently-owned Phase Shift **stays rewardable**, so this entry
+    // deliberately does NOT set `rewardableWhenOwned: false` the way Teleport
+    // does. The reward has a real effect — a hold-full grant readies the one
+    // activation (timer 0, via `PowerUpLevelStore.grantConsumableCharge`)
+    // instead of banking a charge, so the offer skips the remaining recharge
+    // wait and never tricks the player with a second stored activation. Both
+    // reward builders therefore keep the kind: a `power-up-charge` option in
+    // the hold-full choice and a wedge on the mini-boss wheel.
     consumable: true,
     singleUse: true,
   },
