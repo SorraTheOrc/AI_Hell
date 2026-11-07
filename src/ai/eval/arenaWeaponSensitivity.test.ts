@@ -13,17 +13,20 @@
  *
  * ## Red-before/green-after (the repo convention)
  *
- * Every sensitivity test below is authored under Vitest's `it.fails` (the
+ * Every sensitivity test below was authored under Vitest's `it.fails` (the
  * repo's red-before/green-after convention, see `src/core/levelScaling.test.ts`
- * and the per-level block in `arena.test.ts`). On pre-change HEAD the arena
- * ignores weapon data entirely, so each pair is **byte-identical** and the
- * pinned assertion fails — the suite stays green because the failure is
- * expected. A leftover `it.fails` fails the suite, so the flip is deliberate:
+ * and the per-level block in `arena.test.ts`). On the pre-change HEAD the arena
+ * ignored weapon data entirely, so each pair was **byte-identical** and the
+ * pinned assertion failed — the suite stayed green because the failure was
+ * expected. A leftover `it.fails` fails the suite, so each flip is deliberate;
+ * the cadence and pattern arms are now plain `it` (flipped by
+ * **AH-0MW5DV9I6001D4HN**), while the AOE arm stays pinned until
+ * **AH-0MW5DVAME0062GQO** lands:
  *
  * | Test | Flips to `it` when |
  * |------|--------------------|
- * | cadence (`fireRateMs`) | **AH-0MW5DV9I6001D4HN** resolves the cannon's cadence from `fireRateMs` |
- * | pattern count (`offsets`) | **AH-0MW5DV9I6001D4HN** spawns the cannon's resolved pattern |
+ * | cadence (`fireRateMs`) | **AH-0MW5DV9I6001D4HN** resolves the cannon's cadence from `fireRateMs` — **flipped** |
+ * | pattern count (`offsets`) | **AH-0MW5DV9I6001D4HN** spawns the cannon's resolved pattern — **flipped** |
  * | AOE radius | **AH-0MW5DVAME0062GQO** fires the owned AOE weapons through the shared AOE seam |
  *
  * The control pair (identical seed + config + policy is byte-identical) is
@@ -203,8 +206,9 @@ function movedMetrics(a: unknown, b: unknown, path = ''): string[] {
 }
 
 describe('arena weapon-output sensitivity (AH-0MW5DV8AQ002ZQB6, pinned test-first)', () => {
-  // TEST-FIRST: flip to `it` when AH-0MW5DV9I6001D4HN lands (see module doc).
-  it.fails(
+  // FLIPPED by AH-0MW5DV9I6001D4HN: the cannon's cadence resolves from
+  // `fireRateMs` through `resolveWeaponDefinition`.
+  it(
     'a weapon-cadence edit alone moves every per-run recordsHash and the aggregate metrics',
     () => {
       // The cadence lever is the shared subdivision table — the same table the
@@ -230,8 +234,9 @@ describe('arena weapon-output sensitivity (AH-0MW5DV8AQ002ZQB6, pinned test-firs
     },
   );
 
-  // TEST-FIRST: flip to `it` when AH-0MW5DV9I6001D4HN lands (see module doc).
-  it.fails(
+  // FLIPPED by AH-0MW5DV9I6001D4HN: the cannon spawns the resolved
+  // `offsets` pattern through `createBulletsFromHeading`.
+  it(
     'a weapon pattern-count edit alone moves every per-run recordsHash and the aggregate metrics',
     () => {
       // The catalogue's pattern count is its `offsets` fan: the shipped cannon

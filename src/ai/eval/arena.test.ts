@@ -38,6 +38,10 @@ import { loadAllEnemyConfigs, resetConfigStore, seedConfigStore } from '../../co
 import { createSeededRng } from '../../core/rng';
 import type { EnemyConfig } from '../../core/configTypes';
 import { createLegacyBotPolicy } from '../framework/legacyPolicy';
+import {
+  collectProductionSourceFiles,
+  definesFunction,
+} from '../../test/duplicateBodyGuard';
 import { HeadlessChoicePlayer, advanceBulletPosition, hostileAimVelocity, runArena } from './arena';
 import { loadBalanceConfig } from './balanceConfig';
 import { runBatch } from './engine';
@@ -1141,5 +1145,163 @@ describe('wrap parity with the game (AH-0MVT2W5EL004OXNN)', () => {
       expect(bullet.y).toBeGreaterThanOrEqual(0);
       expect(bullet.y).toBeLessThan(H);
     }
+  });
+});
+
+// ── Shared weapon seam guard (AH-0MW5DV9I6001D4HN) ──────────────────────────
+
+/**
+ * Structural complement to the weapon-output sensitivity tests
+ * (`arenaWeaponSensitivity.test.ts`, AH-0MW5DV8AQ002ZQB6): the arena's fire
+ * output must be a function of the **shared** weapon data, so `src/ai/eval/`
+ * may not grow its own copy of a weapon resolver, catalogue table or fire
+ * constant (gym↔game parity, AH-0MUGZDTFX004RBD1).
+ *
+ * The behavioural sensitivity tests prove an edit to `src/utils/weapons.ts`
+ * reaches the simulation; this guard proves the arena reaches it through the
+ * shared modules rather than through a duplicated local copy that a future
+ * edit could drift back into. Mirrors the repo's existing structural guards
+ * (`duplicateBodyGuard`, `CombatScene.equivalence.test.ts`).
+ */
+describe('shared weapon seam guard (AH-0MW5DV9I6001D4HN AC4)', () => {
+  const ROOT = process.cwd();
+
+  /** Weapon resolvers/helpers that must live once, in `src/utils/`. */
+  const SHARED_WEAPON_FUNCTIONS = [
+    'createBulletsFromHeading',
+    'allBulletsForShot',
+    'weaponFireRateMs',
+    'getWeaponById',
+    'resolveWeaponAtLevel',
+    'resolveWeaponDefinition',
+    'resolveWeaponPattern',
+    'expandWeaponPattern',
+  ] as const;
+
+  /** Weapon catalogue tables that must live once, in `src/utils/`. */
+  const SHARED_WEAPON_TABLES = [
+    'WEAPON_CATALOGUE',
+    'DEFAULT_WEAPON_SUBDIVISIONS',
+    'AOE_RADII',
+    'WEAPON_UPGRADE_SPECS',
+  ] as const;
+
+  /** The retired arena-local fire constants (replaced by resolved stats). */
+  const RETIRED_LOCAL_CONSTANTS = [
+    'FIRE_INTERVAL_TICKS',
+    'PLAYER_BULLET_LIFETIME',
+  ] as const;
+
+  /** Strips comments and string literals so prose is never a definition. */
+  function codeOnly(source: string): string {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '')
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+      .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+  }
+
+  /** True when `source` declares a `const`/`let`/`type`/`interface` `name`. */
+  function definesDeclaration(source: string, name: string): boolean {
+    return new RegExp(
+      `^[ \\t]*(?:export\\s+)?(?:const|let|type|interface|class)\\s+${name}\\b`,
+      'm',
+    ).test(source);
+  }
+
+  /** Production (non-test) sources under `src/ai/eval/`. */
+  const evalSources = collectProductionSourceFiles(
+    path.join(ROOT, 'src/ai/eval'),
+  ).map((file) => ({
+    file: path.relative(ROOT, file),
+    source: fs.readFileSync(file, 'utf8'),
+  }));
+
+  it('is not vacuous: the shared modules define every guarded symbol', () => {
+    const weapons = codeOnly(
+      fs.readFileSync(path.join(ROOT, 'src/utils/weapons.ts'), 'utf8'),
+    );
+    const levels = codeOnly(
+      fs.readFileSync(path.join(ROOT, 'src/utils/weaponLevels.ts'), 'utf8'),
+    );
+    for (const name of SHARED_WEAPON_FUNCTIONS) {
+      expect(
+        definesFunction(weapons, name) || definesFunction(levels, name),
+        `${name} must be defined in src/utils/`,
+      ).toBe(true);
+    }
+    for (const name of SHARED_WEAPON_TABLES) {
+      expect(
+        definesDeclaration(weapons, name) || definesDeclaration(levels, name),
+        `${name} must be defined in src/utils/`,
+      ).toBe(true);
+    }
+  });
+
+  it('declares no weapon resolver or catalogue table inside src/ai/eval', () => {
+    const offenders: string[] = [];
+    for (const { file, source } of evalSources) {
+      const code = codeOnly(source);
+      for (const name of SHARED_WEAPON_FUNCTIONS) {
+        if (definesFunction(code, name)) offenders.push(`${file}: ${name}()`);
+      }
+      for (const name of SHARED_WEAPON_TABLES) {
+        if (definesDeclaration(code, name)) offenders.push(`${file}: ${name}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps no arena-local fire constant for the player shot', () => {
+    const offenders: string[] = [];
+    for (const { file, source } of evalSources) {
+      const code = codeOnly(source);
+      for (const name of RETIRED_LOCAL_CONSTANTS) {
+        if (definesDeclaration(code, name)) offenders.push(`${file}: ${name}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('imports the fire seam at runtime, not type-only', () => {
+    const arena = fs.readFileSync(
+      path.join(ROOT, 'src/ai/eval/arena.ts'),
+      'utf8',
+    );
+    // Drop whole-statement `import type { … } from '…';` declarations: a
+    // type-only weapon import is erased at compile time, which is exactly the
+    // defect this guard exists to catch.
+    const valueSource = arena.replace(
+      /^[ \t]*import\s+type\s[\s\S]*?from\s*['"][^'"]+['"]\s*;?/gm,
+      '',
+    );
+    /** Named value bindings imported from `specifier`, in order. */
+    const bindings = (specifier: string): string[] => {
+      const re = new RegExp(
+        // `[^;]*?` (not `[\s\S]*?`) keeps the match inside one import
+        // statement: a clause never contains `;`, so the lazy scan cannot span
+        // several import blocks to find the specifier.
+        `^[ \\t]*import\\s+(?!type\\b)([^;]*?)\\s+from\\s*['"]${specifier.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          '\\$&',
+        )}['"]\\s*;?`,
+        'gm',
+      );
+      const names: string[] = [];
+      for (const match of valueSource.matchAll(re)) {
+        const named = match[1].match(/\{([\s\S]*)\}/);
+        if (!named) continue;
+        for (const raw of named[1].split(',')) {
+          const name = raw.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim();
+          if (name) names.push(name);
+        }
+      }
+      return names;
+    };
+
+    expect(bindings('../../utils/weapons')).toContain('createBulletsFromHeading');
+    expect(bindings('../../utils/weaponLevels')).toContain('resolveWeaponAtLevel');
+    expect(bindings('../../utils/weaponLevels')).toContain('resolveWeaponDefinition');
   });
 });

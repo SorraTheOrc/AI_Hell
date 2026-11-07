@@ -167,7 +167,15 @@ import {
 } from '../../powerups/choice';
 import { applyMineralChoiceReward, type MineralChoicePlayer } from '../../powerups/choiceReward';
 import type { PowerUpId } from '../../powerups/types';
-import type { WeaponId } from '../../utils/weapons';
+import {
+  createBulletsFromHeading,
+  type WeaponId,
+} from '../../utils/weapons';
+import {
+  resolveWeaponAtLevel,
+  resolveWeaponDefinition,
+} from '../../utils/weaponLevels';
+import { PLAYER_BULLET_RADIUS, PLAYER_BULLET_SPEED } from '../../core/constants';
 import { AsteroidsModel } from '../../utils/movementModel';
 import { wrapAxis, wrappedAxisDelta } from '../../utils/wrapGeometry';
 import type {
@@ -205,14 +213,9 @@ const PLAYER_START_LIVES = 3;
 const INVULNERABLE_TICKS = 90;
 /** Distance at which a collectable is scooped up (matches the bot tunable). */
 const COLLECT_RADIUS = 18;
-/** Auto-fire cadence and projectile speed. */
-const FIRE_INTERVAL_TICKS = 9;
-const PLAYER_BULLET_SPEED = 420;
 /** Ticks between replenishing the collectable/hostile reservoirs. */
 const COLLECTABLE_RESPAWN_TICKS = 150;
 const HOSTILE_RESPAWN_TICKS = 240;
-/** Player-bullet lifetime (seconds), matching the game's PlayerBullet default. */
-const PLAYER_BULLET_LIFETIME = 0.75;
 /** Enemy-bullet lifetime (seconds), matching the game's enemy-bullet default. */
 const ENEMY_BULLET_LIFETIME = 1.5;
 /**
@@ -281,6 +284,24 @@ interface Bullet extends Vec {
   elapsed: number;
 }
 
+/**
+ * A player projectile: a {@link Bullet} whose size and damage come from the
+ * resolved weapon definition (AH-0MW5DV9I6001D4HN). Hostile bullets carry
+ * neither — they only ever hit the player, and collide as points.
+ */
+interface PlayerBullet extends Bullet {
+  /**
+   * Collision radius in px (`PLAYER_BULLET_RADIUS × levelBulletSize`) — the
+   * size the game's player bullet spawns with.
+   */
+  radius: number;
+  /**
+   * Damage dealt to a hostile hull on a non-barrier hit, from the resolved
+   * weapon's `damage` multiplier (1 at the base level).
+   */
+  damage: number;
+}
+
 /** A seed-derived hostile spec held in the spawn reservoir. */
 interface HostileSpec {
   x: number;
@@ -297,7 +318,7 @@ interface ArenaWorld {
   minerals: Vec[];
   drops: Vec[];
   hostiles: Hostile[];
-  playerBullets: Bullet[];
+  playerBullets: PlayerBullet[];
   enemyBullets: Bullet[];
   /** The run-scoped shared mineral hold (capacity/growth/overflow). */
   hold: MineralHold;
@@ -306,6 +327,22 @@ interface ArenaWorld {
 /** Coerces a finite positive number, else `fallback`. */
 function positiveOr(value: number | undefined, fallback: number): number {
   return Number.isFinite(value) && (value as number) > 0 ? (value as number) : fallback;
+}
+
+/**
+ * Converts a resolved weapon cadence (`fireRateMs`) into an integer tick
+ * interval for the headless harness (AH-0MW5DV9I6001D4HN).
+ *
+ * Documented harness divergence: the game schedules shots on the shared beat
+ * clock (`Player.tryFire` resolves Euclidean onsets on the beat lattice),
+ * while a fixed-step simulation has no beat clock. Deriving the interval from
+ * the **same** resolved `fireRateMs` keeps the harness's fire output a
+ * function of the shared weapon data — the cadence lever the sensitivity
+ * tests need — and stays seed-deterministic (no clock, no RNG).
+ */
+function fireRateTicks(fireRateMs: number, dt: number): number {
+  const ticks = Math.round(fireRateMs / 1000 / dt);
+  return Number.isFinite(ticks) && ticks > 0 ? ticks : 1;
 }
 
 /** Resolves the full spawn config from a partial override. */
@@ -1239,18 +1276,47 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     };
     if (world.invulnerableTicks > 0) world.invulnerableTicks -= 1;
 
-    // 2. Auto-fire along the facing.
+    // 2. Auto-fire along the facing from the **resolved weapon definition**
+    // (AH-0MW5DV9I6001D4HN). The harness fires the always-active cannon
+    // through the same shared resolvers the game's `Player` uses
+    // (`resolveWeaponAtLevel` / `resolveWeaponDefinition`), and spawns its
+    // bullets through the shared `createBulletsFromHeading` seam — so cadence,
+    // pattern offsets / side offsets, lifetime, bullet size and the damage
+    // multiplier all come from `src/utils/weapons.ts`/
+    // `src/utils/weaponLevels.ts`. A weapon-data edit therefore reaches the
+    // simulation (gym↔game parity, AH-0MUGZDTFX004RBD1); no arena-local
+    // weapon constant or resolver exists.
+    //
+    // Cadence divergence: the game's beat clock is replaced by an integer tick
+    // interval derived from the resolved `fireRateMs` (see `fireRateTicks`).
+    // The shot itself is pure geometry over the existing seeded simulation.
     fireCooldown -= 1;
     if (fireCooldown <= 0) {
-      fireCooldown = FIRE_INTERVAL_TICKS;
-      world.playerBullets.push({
-        x: world.player.x,
-        y: world.player.y,
-        vx: Math.cos(world.player.facing) * PLAYER_BULLET_SPEED,
-        vy: Math.sin(world.player.facing) * PLAYER_BULLET_SPEED,
-        lifetime: PLAYER_BULLET_LIFETIME,
-        elapsed: 0,
-      });
+      const weaponId: WeaponId = 'cannon';
+      // Only the permanent cannon fires in this slice; the ownership context
+      // (choice-granted weapons and their levels) lands in AH-0MW5DVAME0062GQO.
+      const stats = resolveWeaponAtLevel(weaponId, 0);
+      const definition = resolveWeaponDefinition(weaponId, 0);
+      fireCooldown = fireRateTicks(definition.fireRateMs, dt);
+      const headingDeg = (world.player.facing * 180) / Math.PI;
+      for (const shot of createBulletsFromHeading(
+        definition,
+        headingDeg,
+        world.player.x,
+        world.player.y,
+      )) {
+        const headingRad = (shot.angleDeg * Math.PI) / 180;
+        world.playerBullets.push({
+          x: shot.x,
+          y: shot.y,
+          vx: Math.cos(headingRad) * PLAYER_BULLET_SPEED,
+          vy: Math.sin(headingRad) * PLAYER_BULLET_SPEED,
+          lifetime: definition.bulletLifetime,
+          elapsed: 0,
+          radius: PLAYER_BULLET_RADIUS * (definition.levelBulletSize ?? 1),
+          damage: stats.damage,
+        });
+      }
     }
 
     // 3. Hostile fire (config-driven cadence, speed and shot probability).
@@ -1306,7 +1372,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       if (campaignFinished) break;
       for (const hostile of world.hostiles) {
         if (!hostile.alive) continue;
-        if (distance(bullet, hostile) > hostile.radius) continue;
+        if (distance(bullet, hostile) > hostile.radius + bullet.radius) continue;
         bullet.x = Number.NaN; // retired below (one bullet never passes through)
         if (hostile.fieldHits > 0) {
           // Barrier first (epic AH-0MVJ8W4GE007OMNT AC2): the force field
@@ -1315,7 +1381,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
           hostile.fieldHits -= 1;
           break;
         }
-        hostile.health -= 1;
+        hostile.health -= bullet.damage;
         if (hostile.health > 0) break; // wounded, but alive
         hostile.alive = false;
         pushEvent(
