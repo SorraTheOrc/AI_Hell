@@ -361,6 +361,39 @@ describe('checkpointStore (AH-0MVCRBTNF000DK51)', () => {
     ]);
   });
 
+  it('AC6 — a legacy Phase Shift phaseCharges count survives parsing for the store coercion', () => {
+    // A pre-single-use checkpoint carried Phase Shift's charge count as
+    // `phaseCharges` on its pool row. The parser must carry it through to the
+    // store's restore coercion instead of silently dropping the only signal
+    // of whether the ability was ready (AH-0MW6QY8OU007JOTP AC4).
+    const parsed = parseCheckpoint({
+      ...checkpoint(),
+      powerUpLevels: [
+        { id: 'phase_shift', level: 1 },
+        { id: 'teleport', level: 1 },
+      ],
+      consumablePools: [
+        { id: 'phase_shift', charges: 2, phaseCharges: 2, rechargeTimers: [] },
+        { id: 'phase_shift', charges: 0, phaseCharges: 0, rechargeTimers: [] },
+        // A malformed legacy count is dropped, never the row itself.
+        { id: 'phase_shift', charges: 1, phaseCharges: 'nope', rechargeTimers: [] },
+        { id: 'phase_shift', charges: 1, phaseCharges: -1, rechargeTimers: [] },
+        // Only Phase Shift has a legacy count: a stray value on Teleport's
+        // row is meaningless and dropped.
+        { id: 'teleport', charges: 0, phaseCharges: 1, rechargeTimers: [] },
+      ],
+    } as unknown as Checkpoint);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.consumablePools).toEqual([
+      { id: 'phase_shift', charges: 2, phaseCharges: 2, rechargeTimers: [] },
+      { id: 'phase_shift', charges: 0, phaseCharges: 0, rechargeTimers: [] },
+      { id: 'phase_shift', charges: 1, rechargeTimers: [] },
+      { id: 'phase_shift', charges: 1, rechargeTimers: [] },
+      { id: 'teleport', charges: 0, rechargeTimers: [] },
+    ]);
+  });
+
   it('AC5 — the six-slot gate drops a gated-out kind\'s pool too', () => {
     const overCap = checkpoint({
       weaponLevels: [{ id: 'spread', level: 1 }],

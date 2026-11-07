@@ -482,6 +482,44 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     expect(store.teleportRechargeRemaining()).toBeLessThan(30);
   });
 
+  it('AH-0MW6QY8OU007JOTP AC4 — a legacy phaseCharges checkpoint loads and coerces to single-use', async () => {
+    // A checkpoint written before Phase Shift became single-use carried the
+    // retired pool's charge count instead of the readiness clock. It must
+    // still load: any held charge resumes the ability ready, and the saved
+    // count never reappears as a multi-charge pool.
+    const ready = await bootResumed({
+      consumablePools: [
+        { id: 'phase_shift', charges: 0, phaseCharges: 2, rechargeTimers: [] },
+      ],
+    });
+    const readyStore = ready.getPlayer()!.getPowerUpLevelStore();
+    expect(readyStore.isConsumableOwned('phase_shift')).toBe(true);
+    expect(readyStore.hasPhaseShift()).toBe(true);
+    expect(readyStore.isPhaseShiftRecharging()).toBe(false);
+    expect(readyStore.phaseShiftRechargeRemaining()).toBe(0);
+    // The single-use store exposes no pooled count: the compatibility
+    // projection reports one ready activation, never the legacy count.
+    expect(readyStore.phaseCharges()).toBe(1);
+
+    // A legacy save with no held charge resumes mid-recharge for one
+    // level-derived interval, so the spent ability is never handed back free.
+    const spent = await bootResumed({
+      consumablePools: [
+        { id: 'phase_shift', charges: 0, phaseCharges: 0, rechargeTimers: [] },
+      ],
+    });
+    const spentStore = spent.getPlayer()!.getPowerUpLevelStore();
+    expect(spentStore.isConsumableOwned('phase_shift')).toBe(true);
+    expect(spentStore.hasPhaseShift()).toBe(false);
+    expect(spentStore.isPhaseShiftRecharging()).toBe(true);
+    // The boot loop advances the shared clock a little after the restore, so
+    // the timer is mid-flight (strictly between 0 and the full interval).
+    expect(spentStore.phaseShiftRechargeRemaining()).toBeGreaterThan(0);
+    expect(spentStore.phaseShiftRechargeRemaining()).toBeLessThan(
+      spentStore.phaseRechargeTime(),
+    );
+  });
+
   it('AC3 — a fresh (non-resume) run starts with no upgrade rows or effects', async () => {
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     const scene = booted.scene as PlayScene;

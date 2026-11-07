@@ -213,11 +213,25 @@ function toConsumablePoolList(value: unknown): ConsumablePoolSnapshot[] {
     // consumable or unknown id can never carry a pool into a resumed run.
     if (!CONSUMABLE_POWER_UP_IDS.includes(id as PowerUpId)) continue;
     if (!isFiniteNumber(charges) || charges < 0) continue;
-    result.push({
+    const row: ConsumablePoolSnapshot = {
       id: id as PowerUpId,
       charges: Math.floor(charges),
       rechargeTimers: toRechargeTimerList(rechargeTimers),
-    });
+    };
+    // A legacy Phase Shift row carried the retired pool's charge count as
+    // `phaseCharges`; carry a usable value through so the store can coerce it
+    // to a valid single-use state (AH-0MW6QY8OU007JOTP AC4). A malformed
+    // value drops only the field, never the row.
+    const legacyPhaseCharges = (entry as { phaseCharges?: unknown })
+      .phaseCharges;
+    if (
+      id === 'phase_shift' &&
+      isFiniteNumber(legacyPhaseCharges) &&
+      legacyPhaseCharges >= 0
+    ) {
+      row.phaseCharges = Math.floor(legacyPhaseCharges);
+    }
+    result.push(row);
   }
   return result;
 }

@@ -1576,6 +1576,15 @@ export interface ConsumablePoolSnapshot {
    * timer; an empty list means ready).
    */
   rechargeTimers: ConsumableRechargeTimer[];
+  /**
+   * Legacy Phase Shift charge count (0–3) carried by a checkpoint written
+   * before Phase Shift became single-use. The snapshot never writes it; the
+   * restore path coerces it to a valid single-use state — any held charge
+   * resumes **ready**, no held charge resumes **recharging for one full
+   * level-derived interval** — and ignores it for every other kind
+   * (AH-0MW6QY8OU007JOTP AC3).
+   */
+  phaseCharges?: number;
 }
 
 /**
@@ -2215,6 +2224,25 @@ export class PowerUpLevelStore {
     else if (id === 'teleport') this._teleportRecharge = value;
   }
 
+  /**
+   * A retired pooled Phase Shift charge count from a pre-single-use
+   * checkpoint row, or `null` when the row carries no usable legacy count.
+   *
+   * Only Phase Shift ever had a charge pool of the two single-use kinds, so
+   * only its rows are read; every other kind's readiness always comes from
+   * the saved timer. A non-finite or negative value is unusable and is
+   * ignored (the readiness then comes from the saved timer), so a corrupt
+   * legacy save never throws (AH-0MW6QY8OU007JOTP AC3/AC4).
+   */
+  private _legacyPhaseCharges(entry: ConsumablePoolSnapshot): number | null {
+    if (entry.id !== 'phase_shift') return null;
+    const legacy = entry.phaseCharges;
+    if (typeof legacy !== 'number' || !Number.isFinite(legacy) || legacy < 0) {
+      return null;
+    }
+    return Math.floor(legacy);
+  }
+
   // ── Shared consumable charge pool (parent AH-0MVTQMREN009DSFW) ──────
   //
   // One pool serves the four pooled consumables: Shield, Thorn Field, Force
@@ -2534,8 +2562,9 @@ export class PowerUpLevelStore {
    * `_charges` / `_rechargeTimers` directly. Defensive like the rest of the
    * store: entries for unknown or unowned kinds are ignored, non-finite
    * charges restore as 0, over-cap charges clamp to the level-derived cap,
-   * a single-use kind's legacy charge count is ignored (its readiness comes
-   * from the saved timer), and a timer is dropped unless its
+   * a single-use kind's readiness comes from the saved timer (or, for a
+   * legacy Phase Shift row, from its retired `phaseCharges` count coerced to
+   * a valid single-use state), and a timer is dropped unless its
    * duration/remaining are finite, with `remaining` clamped into
    * `[0, duration]`.
    */
@@ -2570,8 +2599,18 @@ export class PowerUpLevelStore {
       if (this._isSingleUse(entry.id)) {
         // Single-use (Teleport / Phase Shift): the readiness timer is the
         // whole state. The first saved timer (or none) decides ready vs
-        // recharging; a legacy charge count is ignored (coerced to a valid
-        // single-use state).
+        // recharging. A legacy Phase Shift row instead carries the retired
+        // pool's `phaseCharges` count, coerced to a valid single-use state:
+        // any held charge resumes ready, no held charge resumes recharging
+        // for one full level-derived interval (AH-0MW6QY8OU007JOTP AC3).
+        const legacyCharges = this._legacyPhaseCharges(entry);
+        if (legacyCharges !== null) {
+          this._setSingleUseRecharge(
+            entry.id,
+            legacyCharges > 0 ? 0 : this.phaseRechargeTime(),
+          );
+          continue;
+        }
         this._setSingleUseRecharge(
           entry.id,
           timers.length > 0 ? timers[0].remaining : 0,

@@ -2533,6 +2533,85 @@ describe('PowerUpLevelStore — consumable pool snapshot/restore seam (AH-0MVY3I
     );
   });
 
+  it('coerces a legacy phaseCharges count — ready when > 0, base recharge when 0 (AC3)', () => {
+    // A checkpoint written before Phase Shift became single-use carried the
+    // retired pool's `phaseCharges` count. Any held charge means the player
+    // could still phase-shift, so the ability resumes **ready** (timer 0).
+    const legacyReady = new PowerUpLevelStore();
+    legacyReady.collect('phase_shift', true);
+    legacyReady.restoreConsumablePools([
+      { id: 'phase_shift', charges: 0, phaseCharges: 2, rechargeTimers: [] },
+    ]);
+    expect(legacyReady.hasPhaseShift()).toBe(true);
+    expect(legacyReady.isPhaseShiftRecharging()).toBe(false);
+    expect(legacyReady.phaseShiftRechargeRemaining()).toBe(0);
+
+    // No held charge means the ability was spent, so it resumes recharging
+    // for one full level-derived interval at the moment of restore.
+    const legacySpent = new PowerUpLevelStore();
+    legacySpent.collect('phase_shift', true);
+    legacySpent.restoreConsumablePools([
+      { id: 'phase_shift', charges: 0, phaseCharges: 0, rechargeTimers: [] },
+    ]);
+    expect(legacySpent.hasPhaseShift()).toBe(false);
+    expect(legacySpent.isPhaseShiftRecharging()).toBe(true);
+    expect(legacySpent.phaseShiftRechargeRemaining()).toBeCloseTo(
+      legacySpent.phaseRechargeTime(),
+      9,
+    );
+
+    // The legacy count decides the state even when the row also carries a
+    // pooled per-charge timer list: a banked charge readies the ability.
+    const legacyPooled = new PowerUpLevelStore();
+    legacyPooled.collect('phase_shift', true);
+    legacyPooled.restoreConsumablePools([
+      {
+        id: 'phase_shift',
+        charges: 1,
+        phaseCharges: 1,
+        rechargeTimers: [{ duration: 30, remaining: 12 }],
+      },
+    ]);
+    expect(legacyPooled.hasPhaseShift()).toBe(true);
+    expect(legacyPooled.phaseShiftRechargeRemaining()).toBe(0);
+
+    // An unusable legacy count is ignored (never thrown): the readiness then
+    // comes from the saved timer, exactly as a new-format entry would.
+    const malformed = new PowerUpLevelStore();
+    malformed.collect('phase_shift', true);
+    malformed.restoreConsumablePools([
+      {
+        id: 'phase_shift',
+        charges: 0,
+        phaseCharges: Number.NaN,
+        rechargeTimers: [{ duration: 30, remaining: 9 }],
+      },
+    ]);
+    expect(malformed.hasPhaseShift()).toBe(false);
+    expect(malformed.phaseShiftRechargeRemaining()).toBeCloseTo(9, 9);
+
+    const negative = new PowerUpLevelStore();
+    negative.collect('phase_shift', true);
+    negative.restoreConsumablePools([
+      { id: 'phase_shift', charges: 0, phaseCharges: -1, rechargeTimers: [] },
+    ]);
+    expect(negative.hasPhaseShift()).toBe(true);
+
+    // Teleport has no legacy count: a stray `phaseCharges` on its row is
+    // ignored and its readiness still comes from the saved timer.
+    const teleport = new PowerUpLevelStore();
+    teleport.collect('teleport', true);
+    teleport.restoreConsumablePools([
+      {
+        id: 'teleport',
+        charges: 0,
+        phaseCharges: 0,
+        rechargeTimers: [{ duration: 60, remaining: 40 }],
+      },
+    ]);
+    expect(teleport.teleportRechargeRemaining()).toBeCloseTo(40, 9);
+  });
+
   it('drops or clamps malformed and non-owned entries instead of throwing (AC5)', () => {
     const store = new PowerUpLevelStore();
     store.collect('force_field', true); // owned
