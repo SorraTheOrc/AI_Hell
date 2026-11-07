@@ -970,9 +970,39 @@ export function playArcImpactSound(): void {
   playCue('playArcImpactSound');
 }
 
-/** High-energy beam crack — Wave Laser fire (AH-0MV822ACO007CEZF). */
+// ── Wave laser level (AH-0MW10K39E006CG0A) ──────────────────────────
+//
+// The producer asked for the wave laser to sit 1.5× louder than before, so
+// the long red screen-spanning beam reads with the prominence its visual
+// impact has. The boost rides the same named-constant runtime mechanism as the
+// family trims (`TANK_SCOUT_FIRE_VOLUME_SCALE`, `PHASER_FIRE_VOLUME_SCALE`),
+// so the baked WAVs, ToneForge recipes and the checksum/amplitude-tier guards
+// stay untouched.
+
+/**
+ * Linear gain applied to the **wave laser** fire and impact cues — a ×1.5
+ * boost, one named tunable for both cues (AH-0MW10K39E006CG0A).
+ *
+ * Unlike the enemy/explosion family trims this **amplifies** (×1.5 > unity),
+ * which is why the per-play cue gain allows values above 1 up to
+ * `MAX_CUE_GAIN` (`src/audio/sfxPlayback.ts`) instead of clamping them back to
+ * 1. No clipping risk: the baked assets peak at 0.20 (fire) and 0.32
+ * (impact), so 1.5× peaks at ~0.30 / ~0.48, far below full scale. If the
+ * producer ever hears distortion, lower this constant rather than editing the
+ * recipes.
+ *
+ * Composes **multiplicatively** with a caller-supplied `volume` — the hold-full
+ * metronome's `HOLD_FULL_FIRE_VOLUME_SCALE` (0.3) plays at 0.45 — so it never
+ * replaces a caller trim.
+ */
+export const WAVE_LASER_VOLUME_SCALE = 1.5;
+
+/**
+ * High-energy beam crack — Wave Laser fire (AH-0MV822ACO007CEZF). Carries the
+ * wave laser's own level ({@link WAVE_LASER_VOLUME_SCALE}).
+ */
 export function playWaveLaserFireSound(): void {
-  playCue('playWaveLaserFireSound');
+  playCue('playWaveLaserFireSound', { volume: WAVE_LASER_VOLUME_SCALE });
 }
 
 /** Low missile launch whoosh + click — Cluster Missile fire (AH-0MV822B1B0048UZT). */
@@ -985,9 +1015,13 @@ export function playOptionsFireSound(): void {
   playCue('playOptionsFireSound');
 }
 
-/** Sharp neon snap — Wave Laser bullet connects (AH-0MV822ACO007CEZF). */
+/**
+ * Sharp neon snap — Wave Laser bullet connects (AH-0MV822ACO007CEZF). Reached
+ * at runtime through {@link playWeaponImpactCue}, so it carries the wave
+ * laser's level ({@link WAVE_LASER_VOLUME_SCALE}) for live impacts too.
+ */
 export function playWaveLaserImpactSound(): void {
-  playCue('playWaveLaserImpactSound');
+  playCue('playWaveLaserImpactSound', { volume: WAVE_LASER_VOLUME_SCALE });
 }
 
 /**
@@ -1009,6 +1043,10 @@ export function playWaveLaserImpactSound(): void {
  *
  * @param weaponId - The firing weapon id.
  * @param options - Per-play options (e.g. `{ volume }` for the metronome).
+ *
+ * The wave laser also applies its own {@link WAVE_LASER_VOLUME_SCALE} boost on
+ * this path (AH-0MW10K39E006CG0A) — composed multiplicatively with `options.volume`,
+ * never replacing it, so the metronome ghost stays quieter than live fire.
  */
 export function playWeaponFireSound(
   weaponId: WeaponId,
@@ -1037,7 +1075,13 @@ export function playWeaponFireSound(
       playCue('playArcFireSound', options);
       break;
     case 'wave_laser':
-      playCue('playWaveLaserFireSound', options);
+      // The wave laser carries its own level on top of any caller volume
+      // (AH-0MW10K39E006CG0A); the scales multiply so the hold-full metronome
+      // ghost stays proportionally quieter than live fire.
+      playCue('playWaveLaserFireSound', {
+        ...options,
+        volume: (options.volume ?? 1) * WAVE_LASER_VOLUME_SCALE,
+      });
       break;
     case 'ricochet':
       playCue('playRicochetFireSound', options);

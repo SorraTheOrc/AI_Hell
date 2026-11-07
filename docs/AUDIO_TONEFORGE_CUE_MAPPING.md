@@ -134,8 +134,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playBroadsideImpactSound` | Short teal dart tick — triangle 2400→1600 Hz + quiet 3600 Hz sine overtone + 3000 Hz HP noise contact tick, no square click, ~0.10 s | Player Broadside dart connects | shared impact seam in `CombatScene` (AH-0MVV0WNOX0078G9G) | new | `aihell-broadside-impact` |
 | `playHeavySlugFireSound` | Heaviest single shot — low saw boom 110→55 Hz + metallic square clank 1800→900 Hz transient + LP noise air, ~0.26 s (deepest fundamental of the player fire cues, below the Cannon's 800 Hz and the Mortar's 220 Hz; shorter sustain than the `aihell-mortar-detonation` 0.32 s boom, never aliasing it) | Player Heavy Slug fire (one huge slow deep-red shell) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`, incl. the hold-full metronome) | new | `aihell-heavy-slug-fire` |
 | `playHeavySlugImpactSound` | Dull red thud with debris — low triangle 220→60 Hz + quiet 110 Hz sine + 700 Hz LP noise debris burst, no square edge, ~0.15 s (duller and lower than the Mortar's dry shell crack) | Player Heavy Slug shell connects | shared impact seam in `CombatScene` (AH-0MVV0WO4M001KEDG) | new | `aihell-heavy-slug-impact` |
-| `playWaveLaserFireSound` | Sci-fi laser "pew": sawtooth sweep 2400→320 Hz with a square harmonic 1200→240 Hz and a band-passed noise sizzle, ~0.16 s | Player wave-laser fire (the single short chaotic red beam) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
-| `playWaveLaserImpactSound` | Sharp neon snap — saw 800→200 Hz + square click + BP noise crack, ~0.12 s | Player wave-laser hit (when the beam connects) | shared impact seam in `CombatScene` (AH-0MV822ACO007CEZF) | new | `aihell-wave-laser-impact` |
+| `playWaveLaserFireSound` | Sci-fi laser "pew": sawtooth sweep 2400→320 Hz with a square harmonic 1200→240 Hz and a band-passed noise sizzle, ~0.16 s; runtime volume ×1.5 (`WAVE_LASER_VOLUME_SCALE`, AH-0MW10K39E006CG0A) composed with the caller volume on the dispatcher path (hold-full metronome 0.3 → 0.45) | Player wave-laser fire (the single short chaotic red beam) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
+| `playWaveLaserImpactSound` | Sharp neon snap — saw 800→200 Hz + square click + BP noise crack, ~0.12 s; runtime volume ×1.5 (`WAVE_LASER_VOLUME_SCALE`, AH-0MW10K39E006CG0A) | Player wave-laser hit (when the beam connects) | shared impact seam in `CombatScene` (AH-0MV822ACO007CEZF) | new | `aihell-wave-laser-impact` |
 | `playRicochetFireSound` | Bright springy ping — triangle 1400→500 Hz + square tick, ~0.1 s | Player ricochet fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-ricochet-fire` |
 | `playRicochetImpactSound` | Soft high bounce tick — triangle 1800→900 Hz + HP noise smack, ~0.09 s | Player ricochet wall bounce or connect | shared impact seam in `CombatScene` (AH-0MV822AP1006W2F9) | new | `aihell-ricochet-impact` |
 | `playClusterFireSound` | Low missile launch — square 300→90 Hz + swept lowpass noise whoosh + bright ignition click, ~0.16 s | Player cluster-missile fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-cluster-fire` |
@@ -190,6 +190,36 @@ family, Force Field reflect, pickups, countdown tick, mineral tinkle, Mystery
 UFO cues, victory/defeat stingers and the non-explosive victory firework
 accents. See [Enemy audio balance §4.4](AUDIO_ENEMY_BALANCE.md#44-sfx-mix-trim--explosions-and-enemy-weapons-ah-0mvzvmzoq00076qf)
 for the full before→after table.
+
+### Per-cue amplification — the wave laser (AH-0MW10K39E006CG0A)
+
+The producer asked for the wave laser **1.5× louder** than before, because the
+long red screen-spanning beam is visually the heaviest player weapon but was
+one of the quieter cues in the mix. The change is a **runtime** level change
+through one named constant in `src/audio/effects.ts` — no baked asset, recipe,
+manifest entry or `public/audio/sfx/checksums.json` checksum changed, so the
+amplitude-tier and A-minor balance guards stay green.
+
+| Constant | Value | Cues |
+|---|---|---|
+| `WAVE_LASER_VOLUME_SCALE` | `1.5` (amplify) | `playWaveLaserFireSound` (live fire through the shared `playWeaponFireSound` dispatcher, and the hold-full metronome ghost), `playWaveLaserImpactSound` (through `playWeaponImpactCue`) |
+
+**Composition, never replacement.** The scale multiplies any caller-supplied
+`volume`, so the hold-full metronome's `HOLD_FULL_FIRE_VOLUME_SCALE` (0.3)
+plays the wave laser at **0.45** — still proportionally quieter than live fire
+(1.5). Both fire entry points are scaled: the live path is the shared
+dispatcher (`case 'wave_laser'`), and the direct export used by tests matches
+it, so the two cannot drift.
+
+**Above unity is deliberate, and bounded.** This is the first cue that
+*amplifies*: the per-play cue gain (`SfxPlayOptions.volume`,
+`src/audio/sfxPlayback.ts`) is clamped to `[0, MAX_CUE_GAIN]` (`MAX_CUE_GAIN` =
+2) rather than the old `[0, 1]`, so an approved boost reaches the mix instead
+of being silently flattened to unity; the ceiling keeps a corrupt or runaway
+value from blasting the mix. No clipping risk: the baked assets peak at 0.20
+(fire) and 0.32 (impact), so 1.5× peaks at ~0.30 / ~0.48, far below full scale.
+If the producer ever hears distortion, lower `WAVE_LASER_VOLUME_SCALE` (1.3 /
+1.25) rather than editing the recipes.
 
 ### Beat-synced explosion accents (AH-0MV01HNLU008S5E3)
 
