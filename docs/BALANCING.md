@@ -1323,7 +1323,7 @@ in **radians** everywhere after that. Edit `angleDeg`, never a radian value.
 
 **From the panel (dev only).**
 
-1. Gym Index → **WeaponTuning** (the panel titled **Weapon Tuning**,
+1. Gym Index → the **Weapons** group → **WeaponTuning** (the panel titled **Weapon Tuning**,
    `src/scenes/gym/GymWeaponTuning.ts`).
 2. Select a weapon and change a control. Every input applies to the live
    catalogue as a draft, and the preview ship fires the edited definition on
@@ -1454,7 +1454,7 @@ changing.
 **1. Change a bullet colour (Cannon).** In `src/data/weapons.csv`, find the
 `cannon` row and change `bulletColor` from `0x00ffff` to `0xff00ff`; save,
 refresh `npm run dev`, and fire — the bullets are magenta. Or do it live: Gym
-Index → **WeaponTuning**, select Cannon, use the colour input, watch the
+Index → the **Weapons** group → **WeaponTuning**, select Cannon, use the colour input, watch the
 preview, press **Save**. Verify the change took effect by firing in the game
 and in **GymWeapons** (both read the same catalogue), and then run the retune
 tripwires — the frozen catalogue fixture will fail until it is regenerated as
@@ -1464,7 +1464,7 @@ part of the deliberate change.
 `src/data/weapon-levels.json` — for example `{ "k": 9, "n": 16, "rotation": 0
 }` → `{ "k": 10, "n": 16, "rotation": 0 }` — save and restart/refresh
 `npm run dev` (the ladders are built at module load). Audition it in Gym Index
-→ **Rhythm**, or in the tuning panel's read-only rhythm section, and update the
+→ the **Player & Combat** group → **Rhythm**, or in the tuning panel's read-only rhythm section, and update the
 machine-verified ledger table in the ladder section below: the suite compares
 that table row-for-row against `WEAPON_EUCLIDEAN_LADDERS`, so a rung edit that
 is not mirrored there fails. Regenerate `src/data/weapon-levels-parity.json` in

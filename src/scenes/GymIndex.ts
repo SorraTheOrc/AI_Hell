@@ -24,15 +24,34 @@
  * `GymMiniBoss` are excluded from the plain scene list because both are
  * surfaced as dedicated ENEMIES rows.
  *
+ * ### Collapsible groups (AH-0MW6OIQAA001YVGA)
+ *
+ * There are more plain scenes than fit between the title and the bottom
+ * hint, so a column that overflows its flat capacity renders **collapsible
+ * groups** instead of one long list: one focusable header row per category
+ * (with a `▸`/`▾` expand indicator) and, when a group is expanded, its
+ * member rows directly below it. Groups are an accordion — at most one group
+ * expanded per column, all collapsed on create, and expansion is not
+ * persisted. Grouping is data-driven (`./gymIndexGroups`) with an **Other**
+ * fallback, so a new `Gym<Name>.ts` still appears without an index edit.
+ *
+ * The mechanism is column-agnostic: the short ENEMIES (3 rows) and Dev
+ * Utilities (1 row) columns stay flat because they fit, and a column that
+ * outgrows the screen in future groups automatically. Row pitch comes from
+ * the same fit maths, so every rendered row stays between the title and the
+ * bottom hint.
+ *
  * Keyboard navigation (AH-0MUDZFBYY008P7ZE, AH-0MV1BKZ0J00946EX) is
  * provided by the shared {@link FocusManager}. The index opts in to its
- * **grid** navigation model: the first row is focused by default, **Left /
- * Right** move focus between the three columns (wrapping at both ends, and
- * clamping to a shorter column's last valid row), **Up / Down** move within
- * the current column (wrapping top ↔ bottom), and **Tab / Shift+Tab** keep
- * their linear reading-order cycling. Enter/Space activate the focused row
- * through the same code path as a pointer click. Pointer handlers and
- * ESC-to-menu remain unchanged (keyboard support is additive).
+ * **grid** navigation model over the *visible* rows only: the first row is
+ * focused by default, **Left / Right** move focus between the three columns
+ * (wrapping at both ends, and clamping to a shorter column's last valid row),
+ * **Up / Down** move within the current column (wrapping top ↔ bottom), and
+ * **Tab / Shift+Tab** keep their linear reading-order cycling. Enter/Space
+ * launch a focused member, or toggle a focused group header, through the same
+ * code path as a pointer click. Collapsed members are never rendered, so
+ * they are never focusable. Pointer handlers and ESC-to-menu remain
+ * unchanged (keyboard support is additive).
  */
 
 import Phaser from 'phaser';
@@ -46,12 +65,21 @@ import {
 } from '../utils/gymDiscovery';
 import { FocusManager } from '../utils/focusManager';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
+import {
+  buildColumnRows,
+  columnRowY,
+  type GymIndexGroup,
+  type GymIndexGroupMember,
+  type GymIndexRow,
+  type GymIndexRowKind,
+  groupGymScenes,
+} from './gymIndexGroups';
 
 /** Index title text (asserted by tests). */
 export const GYM_INDEX_TITLE = 'GYM INDEX';
 /** Bottom hint line (advertises the keyboard controls). */
 export const GYM_INDEX_HINT =
-  '←/→ column · ↑/↓ row · tab cycles · enter/space select · ESC returns to menu';
+  '←/→ column · ↑/↓ row · enter/space select or expand · tab cycles · ESC menu';
 
 /** Scene key of the reusable fodder-enemy gym (formerly `GymEnemies`). */
 export const FODDER_ENEMIES_SCENE_KEY = 'GymFodderEnemies';
@@ -93,10 +121,52 @@ export const GYM_INDEX_COLUMN_X = {
   devUtilities: 0.85,
 } as const;
 
+/** Identifier of one index column (mirrors {@link GYM_INDEX_COLUMN_X} keys). */
+export type GymIndexColumnId = keyof typeof GYM_INDEX_COLUMN_X;
+
+/** Column ids in reading order (left → right). */
+const COLUMN_ORDER: readonly GymIndexColumnId[] = ['scenes', 'enemies', 'devUtilities'];
+
 /** Header label for the middle ENEMIES column (kept uppercase). */
 export const GYM_INDEX_ENEMIES_HEADER = 'ENEMIES';
 /** Header label for the far-right Dev Utilities column. */
 export const GYM_INDEX_DEV_UTILITIES_HEADER = 'Dev Utilities';
+
+/** Y of the per-column header text (ENEMIES / Dev Utilities). */
+const COLUMN_HEADER_Y = 150 - 18;
+
+const TITLE_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
+  fontFamily: 'monospace',
+  fontSize: '28px',
+  color: '#00ffff',
+};
+const ENTRY_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
+  fontFamily: 'monospace',
+  fontSize: '18px',
+  color: '#00ff00',
+  backgroundColor: '#1a1a1a',
+  padding: { x: 10, y: 6 },
+};
+/**
+ * Group header style: same box metrics as a member row (so the column stays
+ * aligned) with a tinted background — the focus manager recolours the text,
+ * so the tint has to live on the background to survive a focus change.
+ */
+const GROUP_HEADER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
+  ...ENTRY_STYLE,
+  color: '#55ccff',
+  backgroundColor: '#233a55',
+};
+const COLUMN_HEADER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
+  fontFamily: 'monospace',
+  fontSize: '12px',
+  color: '#888888',
+};
+const HINT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
+  fontFamily: 'monospace',
+  fontSize: '12px',
+  color: '#555555',
+};
 
 /**
  * A clickable row rendered in the ENEMIES or Dev Utilities column.
@@ -119,6 +189,30 @@ export interface EnemyColumnEntry {
   sceneKey?: string;
 }
 
+/** One visible index row (group header or member) in reading order. */
+export interface GymIndexVisibleRow {
+  /** Column the row belongs to. */
+  columnId: GymIndexColumnId;
+  /** Header or member row. */
+  kind: GymIndexRowKind;
+  /** Owning group id (`''` for flat columns' rows). */
+  groupId: string;
+  /** Row label (indicator-prefixed group title, or the scene label). */
+  label: string;
+  /** Scene key for member rows. */
+  sceneKey?: string;
+}
+
+/** A column row before rendering: its label, activation and scene routing. */
+interface ColumnSource extends GymIndexGroupMember {
+  /** Boots the row's scene (shared by pointer and keyboard). */
+  activate: () => void;
+  /** Enemy config key for rows routed to `GymFodderEnemies` as `{ enemyKey }`. */
+  enemyKey?: string;
+  /** Scene key exposed as row data (and used by direct-boot rows). */
+  sceneKey?: string;
+}
+
 export class GymIndex extends Phaser.Scene {
   /** Shared in-canvas focus manager (AH-0MU9LKQEP008LCX9-C1). */
   private focusManager = new FocusManager();
@@ -130,15 +224,28 @@ export class GymIndex extends Phaser.Scene {
   private enemyEntries: EnemyColumnEntry[] = [];
   private devEntries: EnemyColumnEntry[] = [];
 
+  /** The single expanded group per column (accordion; reset on create). */
+  private expandedGroups: Partial<Record<GymIndexColumnId, string | null>> = {};
+
+  /** Rendered rows per column, in visual order (aligned with the controls). */
+  private renderedRows: Partial<Record<GymIndexColumnId, GymIndexRow<ColumnSource>[]>> = {};
+
+  /** Focus-control indices per column, aligned with {@link renderedRows}. */
+  private renderedColumns: Partial<Record<GymIndexColumnId, number[]>> = {};
+
   constructor() {
     super({ key: 'GymIndex' });
   }
 
   create(): void {
-    // Fresh focus registry on every create() so a restarted scene does not
-    // accumulate stale controls from a previous run.
+    // Fresh focus registry + collapsed groups on every create() so a
+    // restarted scene neither accumulates stale controls nor remembers an
+    // expanded group (expanded state is deliberately not persisted).
     this.focusManager = new FocusManager();
     this.controls = [];
+    this.expandedGroups = {};
+    this.renderedRows = {};
+    this.renderedColumns = {};
 
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
@@ -205,134 +312,172 @@ export class GymIndex extends Phaser.Scene {
       },
     ];
 
-    // ── Title ────────────────────────────────────────────────────────
-    this.add
-      .text(GAME_WIDTH / 2, 90, GYM_INDEX_TITLE, {
-        fontFamily: 'monospace',
-        fontSize: '28px',
-        color: '#00ffff',
-      })
-      .setOrigin(0.5);
+    // Render the index. Rebuilding goes through the same path on every
+    // expand/collapse toggle, so a toggle can never leave a stale control
+    // registered (collapsed members must not be focusable).
+    this.renderIndex();
 
-    // ── Three-column layout ────────────────────────────────────────
-    const entryStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontFamily: 'monospace',
-      fontSize: '18px',
-      color: '#00ff00',
-      backgroundColor: '#1a1a1a',
-      padding: { x: 10, y: 6 },
-    };
-    const headerStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontFamily: 'monospace',
-      fontSize: '12px',
-      color: '#888888',
-    };
-    const rowGap = 42;
-    const startY = 150;
-    const headerY = startY - 18;
-    // Left column = plain scenes; middle = ENEMIES; far-right = Dev Utilities
-    // tooling scenes. Columns are distributed left-to-right across the width.
-    const scenesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.scenes;
-    const enemiesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
-    const devUtilitiesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
-
-    // Left column — scene entries (alphabetical). Track the registered
-    // control indices so the focus manager can treat each column as a
-    // grid column (AH-0MV1BKZ0J00946EX).
-    const sceneColumn: number[] = [];
-    this.entries.forEach((entry, index) => {
-      const row = this.add
-        .text(scenesColX, startY + index * rowGap, entry.label, entryStyle)
-        .setOrigin(0.5);
-      sceneColumn.push(
-        this.registerRow(row, entry.label, () => this.scene.start(entry.key)),
-      );
+    // Tear the keyboard listener down on scene shutdown so a restart does
+    // not leak it. Registered once, outside the re-render path.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.focusManager.shutdown();
     });
+  }
 
-    // Middle column — ENEMIES header + fodder/boss/mini-boss rows.
-    const enemiesColumn = this.renderColumn(
-      this.enemyEntries,
-      enemiesColX,
-      GYM_INDEX_ENEMIES_HEADER,
-      {
-        startY,
-        headerY,
-        rowGap,
-        entryStyle,
-        headerStyle,
-      },
+  // ── Rendering ─────────────────────────────────────────────────────
+
+  /**
+   * Renders (or re-renders) the whole index: title, grouped columns, hint and
+   * focus wiring. Called from `create()` and from every expand/collapse
+   * toggle, so hidden members are never registered as focus controls.
+   *
+   * @param focus — optional group header to focus after the re-render (the
+   *   header the user just toggled, via pointer or Enter/Space).
+   */
+  private renderIndex(focus?: { columnId: GymIndexColumnId; groupId: string }): void {
+    // A rebuild replaces the focus registry wholesale: detach the previous
+    // keyboard listener first, then start a fresh manager.
+    this.focusManager.shutdown();
+    this.focusManager = new FocusManager();
+    this.controls = [];
+    this.renderedRows = {};
+    this.renderedColumns = {};
+
+    // Drop the previous render (rows, headers, title, hint) so repeated
+    // toggles do not accumulate display objects.
+    this.children.removeAll(true);
+
+    // ── Title ────────────────────────────────────────────────────────
+    this.add.text(GAME_WIDTH / 2, 90, GYM_INDEX_TITLE, TITLE_STYLE).setOrigin(0.5);
+
+    // ── Grouped three-column layout ────────────────────────────────
+    // Columns are distributed left-to-right across the width. The plain
+    // scenes column has no column header; ENEMIES and Dev Utilities keep
+    // theirs. Every column goes through the same row builder, so the short
+    // columns stay flat and only an overflowing column groups.
+    this.renderedColumns.scenes = this.renderColumn(
+      'scenes',
+      this.entries.map((entry) => ({
+        key: entry.key,
+        label: entry.label,
+        sceneKey: entry.key,
+        activate: () => this.scene.start(entry.key),
+      })),
+      GYM_INDEX_COLUMN_X.scenes,
     );
-
-    // Far-right column — Dev Utilities header + tooling scene entries
-    // (AH-0MUGXDVPH005TIZL).
-    const devUtilitiesColumn = this.renderColumn(
-      this.devEntries,
-      devUtilitiesColX,
+    this.renderedColumns.enemies = this.renderColumn(
+      'enemies',
+      this.enemyEntries.map((entry) => this.columnSourceFromEntry(entry)),
+      GYM_INDEX_COLUMN_X.enemies,
+      GYM_INDEX_ENEMIES_HEADER,
+    );
+    this.renderedColumns.devUtilities = this.renderColumn(
+      'devUtilities',
+      this.devEntries.map((entry) => this.columnSourceFromEntry(entry)),
+      GYM_INDEX_COLUMN_X.devUtilities,
       GYM_INDEX_DEV_UTILITIES_HEADER,
-      { startY, headerY, rowGap, entryStyle, headerStyle },
     );
 
     // ── Keyboard focus (AH-0MUDZFBYY008P7ZE) ─────────────────────────
     // The shared FocusManager owns Tab / arrow cycling and Enter / Space
-    // activation. Rows are registered in reading order (plain scenes →
-    // ENEMIES → Dev Utilities), so the first row is focused by default.
-    // Grid mode makes Left/Right move between the three columns and Up/Down
-    // move within a column (AH-0MV1BKZ0J00946EX); Tab stays linear. Pointer
-    // handlers stay unchanged — keyboard support is additive. Tear the
-    // listener down on scene shutdown so a restart does not leak it.
+    // activation. Rows are registered in reading order (visible plain-scene
+    // rows → ENEMIES → Dev Utilities), so the first row is the first group
+    // header when the scenes column groups. Grid mode makes Left/Right move
+    // between the three columns and Up/Down move within a column
+    // (AH-0MV1BKZ0J00946EX); Tab stays linear. Pointer handlers stay
+    // unchanged — keyboard support is additive.
     this.focusManager.attachKeyboard(this, {
       navigation: 'grid',
-      columns: [sceneColumn, enemiesColumn, devUtilitiesColumn],
-    });
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.focusManager.shutdown();
+      columns: COLUMN_ORDER.map((columnId) => this.renderedColumns[columnId] ?? []),
     });
 
     // ── Hint ─────────────────────────────────────────────────────────
     this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT - 16, GYM_INDEX_HINT, {
-        fontFamily: 'monospace',
-        fontSize: '12px',
-        color: '#555555',
-      })
+      .text(GAME_WIDTH / 2, GAME_HEIGHT - 16, GYM_INDEX_HINT, HINT_STYLE)
       .setOrigin(0.5);
+
+    if (focus) this.focusGroupHeader(focus.columnId, focus.groupId);
   }
 
-  // ── Rendering helpers ─────────────────────────────────────────────
-
   /**
-   * Renders one header + clickable rows for an index column (ENEMIES or Dev
-   * Utilities). No-op when the column has no entries, so the header never
-   * floats alone.
+   * Renders one column: its optional column header plus the rows the shared
+   * builder returns (flat while the column fits, grouped once it overflows).
    *
    * @returns the registered focus-control indices for this column, in visual
-   *   order (empty when the column has no entries), so the caller can supply
-   *   them to grid navigation.
+   *   order (empty when the column has no entries).
    */
   private renderColumn(
-    entries: EnemyColumnEntry[],
-    x: number,
-    headerText: string,
-    layout: {
-      startY: number;
-      headerY: number;
-      rowGap: number;
-      entryStyle: Phaser.Types.GameObjects.Text.TextStyle;
-      headerStyle: Phaser.Types.GameObjects.Text.TextStyle;
-    },
+    columnId: GymIndexColumnId,
+    sources: ColumnSource[],
+    xFraction: number,
+    columnHeaderText?: string,
   ): number[] {
-    if (entries.length === 0) return [];
-    this.add.text(x, layout.headerY, headerText, layout.headerStyle).setOrigin(0.5);
+    if (sources.length === 0) return [];
+
+    const x = GAME_WIDTH * xFraction;
+    if (columnHeaderText) {
+      this.add.text(x, COLUMN_HEADER_Y, columnHeaderText, COLUMN_HEADER_STYLE).setOrigin(0.5);
+    }
+
+    const { rows } = buildColumnRows(sources, {
+      expandedGroupId: this.expandedGroups[columnId] ?? null,
+    });
+    this.renderedRows[columnId] = rows;
+
     const column: number[] = [];
-    entries.forEach((entry, index) => {
-      const row = this.add
-        .text(x, layout.startY + index * layout.rowGap, entry.label, layout.entryStyle)
+    rows.forEach((row, index) => {
+      const style = row.kind === 'header' ? GROUP_HEADER_STYLE : ENTRY_STYLE;
+      const text = this.add
+        .text(x, columnRowY(index, rows.length), row.label, style)
         .setOrigin(0.5);
-      if (entry.enemyKey) row.setData('enemyKey', entry.enemyKey);
-      if (entry.sceneKey) row.setData('sceneKey', entry.sceneKey);
-      column.push(this.registerRow(row, entry.label, () => this.activateEntry(entry)));
+
+      if (row.kind === 'header') {
+        column.push(
+          this.registerRow(text, row.label, () => this.toggleGroup(columnId, row.groupId)),
+        );
+        return;
+      }
+
+      const source = row.entry as ColumnSource;
+      if (source.enemyKey) text.setData('enemyKey', source.enemyKey);
+      if (source.sceneKey) text.setData('sceneKey', source.sceneKey);
+      column.push(this.registerRow(text, row.label, source.activate));
     });
     return column;
+  }
+
+  /** Maps an ENEMIES/Dev Utilities entry onto a column row source. */
+  private columnSourceFromEntry(entry: EnemyColumnEntry): ColumnSource {
+    return {
+      key: entry.key,
+      label: entry.label,
+      sceneKey: entry.sceneKey,
+      enemyKey: entry.enemyKey,
+      activate: () => this.activateEntry(entry),
+    };
+  }
+
+  // ── Group toggling ────────────────────────────────────────────────
+
+  /**
+   * Expands or collapses one group (accordion: expanding a group collapses
+   * whichever group was expanded in the same column), then re-renders with
+   * focus back on the toggled header.
+   */
+  private toggleGroup(columnId: GymIndexColumnId, groupId: string): void {
+    const current = this.expandedGroups[columnId] ?? null;
+    this.expandedGroups[columnId] = current === groupId ? null : groupId;
+    this.renderIndex({ columnId, groupId });
+  }
+
+  /** Focuses the rendered header of `groupId` in `columnId` (after re-render). */
+  private focusGroupHeader(columnId: GymIndexColumnId, groupId: string): void {
+    const rows = this.renderedRows[columnId] ?? [];
+    const controls = this.renderedColumns[columnId] ?? [];
+    const index = rows.findIndex((row) => row.kind === 'header' && row.groupId === groupId);
+    if (index >= 0 && index < controls.length) {
+      this.focusManager.setFocusedIndex(controls[index]);
+    }
   }
 
   // ── Activation & focus helpers ────────────────────────────────────
@@ -375,6 +520,15 @@ export class GymIndex extends Phaser.Scene {
     return this.entries.map((e) => ({ key: e.key, label: e.label }));
   }
 
+  /** Ordered, category-grouped view of {@link listedScenes} (empty groups omitted). */
+  get listedGroups(): { id: string; title: string; members: { key: string; label: string }[] }[] {
+    return groupGymScenes(this.entries).map((group: GymIndexGroup<GymSceneEntry>) => ({
+      id: group.id,
+      title: group.title,
+      members: group.members.map((entry) => ({ key: entry.key, label: entry.label })),
+    }));
+  }
+
   /**
    * Middle ENEMIES column rows: the single reusable fodder-enemy row
    * (booted bare; its dropdown selects the archetype, including the Centipede
@@ -390,6 +544,27 @@ export class GymIndex extends Phaser.Scene {
    */
   get listedDevUtilityScenes(): EnemyColumnEntry[] {
     return this.devEntries.map((e) => ({ ...e }));
+  }
+
+  /** Currently expanded group id for a column (`null` when all collapsed). */
+  getExpandedGroup(columnId: GymIndexColumnId): string | null {
+    return this.expandedGroups[columnId] ?? null;
+  }
+
+  /** Rows rendered per column (group headers + visible members only), in visual order. */
+  getColumnRows(columnId: GymIndexColumnId): GymIndexVisibleRow[] {
+    return (this.renderedRows[columnId] ?? []).map((row) => ({
+      columnId,
+      kind: row.kind,
+      groupId: row.groupId,
+      label: row.label,
+      sceneKey: row.sceneKey,
+    }));
+  }
+
+  /** Every rendered row in reading order (columns left → right, rows top → bottom). */
+  get visibleRows(): GymIndexVisibleRow[] {
+    return COLUMN_ORDER.flatMap((columnId) => this.getColumnRows(columnId));
   }
 
   /** Index of the currently focused row in reading order (−1 when none). */

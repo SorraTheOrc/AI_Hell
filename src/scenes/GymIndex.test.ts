@@ -1,14 +1,18 @@
 /**
  * Tests for the GymIndex entry scene (AC2/AC3/AC4/AC6) and its keyboard
- * navigation (AH-0MUDZFBYY008P7ZE):
+ * navigation (AH-0MUDZFBYY008P7ZE) plus the collapsible group layout
+ * (AH-0MW6OIQAA001YVGA):
  *  - boots as the entry scene and shows the title,
  *  - lists every gym scene under `src/scenes/gym/` sorted alphabetically
  *    by label, excluding `.test.ts` modules and itself,
  *  - clicking an entry immediately starts that scene by its key,
  *  - the shared "← INDEX" button on a gym scene returns to the index,
- *  - keyboard navigation: default focus, grid-aware arrow movement
- *    (Left/Right between columns, Up/Down within a column), linear
- *    Tab cycling, Enter/Space activation and shutdown cleanup.
+ *  - the plain-scenes column groups its rows into collapsible, accordion
+ *    headers that never leave the title-to-hint band,
+ *  - keyboard navigation: default focus, grid-aware arrow movement over the
+ *    *visible* rows only (Left/Right between columns, Up/Down within a
+ *    column), linear Tab cycling, Enter/Space activation and group toggling,
+ *    and shutdown cleanup.
  *
  * Since AH-0MV13G5EV008D41E the ENEMIES column is a single "Fodder Enemies"
  * row (booting the reusable `GymFodderEnemies` scene bare, whose in-panel
@@ -25,11 +29,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { advanceGame, bootScene, BootedGame } from '../test/gameHarness';
-import { GAME_WIDTH } from '../core/constants';
+import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { FocusManager } from '../utils/focusManager';
 import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../utils/gymNavigation';
 import {
   GymIndex,
+  type GymIndexVisibleRow,
   GYM_INDEX_TITLE,
   GYM_INDEX_HINT,
   GYM_INDEX_COLUMN_X,
@@ -43,6 +48,11 @@ import {
   MINI_BOSS_SCENE_LABEL,
   CENTIPEDE_SCENE_KEY,
 } from './GymIndex';
+import {
+  GYM_INDEX_OTHER_GROUP_ID,
+  GYM_INDEX_ROW_HEIGHT,
+  groupHeaderLabel,
+} from './gymIndexGroups';
 import { GymBoss } from './gym/GymBoss';
 import { MenuScene } from './MenuScene';
 
@@ -66,6 +76,30 @@ function findTextAt(scene: Phaser.Scene, label: string, x: number): Phaser.GameO
   );
   expect(found, `text "${label}" at x=${x} not found`).toBeDefined();
   return found!;
+}
+
+/** Finds a group header by its title, whatever its expanded/collapsed indicator. */
+function findGroupHeader(scene: Phaser.Scene, title: string): Phaser.GameObjects.Text {
+  const found = scene.children.list.find(
+    (child): child is Phaser.GameObjects.Text =>
+      child instanceof Phaser.GameObjects.Text &&
+      (child.text === groupHeaderLabel(title, false) ||
+        child.text === groupHeaderLabel(title, true)),
+  );
+  expect(found, `group header "${title}" not found`).toBeDefined();
+  return found!;
+}
+
+/** Interactive (focusable) row texts, in display order. */
+function focusableRows(scene: Phaser.Scene): Phaser.GameObjects.Text[] {
+  return (scene.children.list as Phaser.GameObjects.Text[]).filter(
+    (c) => c instanceof Phaser.GameObjects.Text && c.input?.enabled,
+  );
+}
+
+/** Reserves the row box height when Phaser's text metrics are unavailable in the stub renderer. */
+function rowBoxHeight(row: Phaser.GameObjects.Text): number {
+  return Number.isFinite(row.height) && row.height > 0 ? row.height : GYM_INDEX_ROW_HEIGHT;
 }
 
 describe('GymIndex — gym entry scene (AC2-AC4)', () => {
@@ -251,7 +285,7 @@ describe('GymIndex — back to index from a gym scene (AC5)', () => {
   });
 });
 
-describe('GymIndex — layout (AH-0MV13G5EV008D41E)', () => {
+describe('GymIndex — three-column layout (AH-0MV13G5EV008D41E)', () => {
   let booted: BootedGame | null = null;
   afterEach(() => {
     booted?.game.destroy(true);
@@ -286,12 +320,14 @@ describe('GymIndex — layout (AH-0MV13G5EV008D41E)', () => {
     // No per-enemy config rows remain in the index.
     expect(idx.listedEnemyScenes.some((s) => s.enemyKey !== undefined)).toBe(false);
 
-    // A plain scene (Minerals) is in the left column.
-    expect(findTextAt(idx, 'Minerals', scenesCol)).toBeDefined();
+    // The plain-scenes column is grouped, so a scene is reached through its
+    // group header: Minerals is the collapsed "▸ Minerals" header.
+    expect(findTextAt(idx, groupHeaderLabel('Minerals', false), scenesCol)).toBeDefined();
 
     // Columns are strictly ordered left-to-right.
     expect(scenesCol).toBeLessThan(enemiesCol);
     expect(enemiesCol).toBeLessThan(devCol);
+    expect(GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities).toBeLessThan(GAME_WIDTH);
   });
 });
 
@@ -381,7 +417,7 @@ describe('GymIndex — ESC key navigation (AH-0MU9LRTK3004KR04)', () => {
   });
 });
 
-describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
+describe('GymIndex — collapsible groups (AH-0MW6OIQAA001YVGA, AC1-AC5)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -407,43 +443,260 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     } as KeyboardEvent);
   }
 
-  /** Expected focus order: columns left→right, top→bottom within a column. */
+  /** Asserts every rendered row sits between the title and the bottom hint. */
+  function expectRowsInsideBand(scene: GymIndex): void {
+    const title = findText(scene, GYM_INDEX_TITLE);
+    const hint = findText(scene, GYM_INDEX_HINT);
+    const titleBottom =
+      title.y + (Number.isFinite(title.height) && title.height > 0 ? title.height / 2 : 14);
+    const hintTop = hint.y - (Number.isFinite(hint.height) && hint.height > 0 ? hint.height / 2 : 7);
+
+    const rows = focusableRows(scene);
+    expect(rows).toHaveLength(scene.visibleRows.length);
+    for (const row of rows) {
+      const half = rowBoxHeight(row) / 2;
+      expect(row.y - half, `"${row.text}" overlaps the title`).toBeGreaterThanOrEqual(titleBottom);
+      expect(row.y + half, `"${row.text}" overlaps the bottom hint`).toBeLessThanOrEqual(hintTop);
+      expect(row.y + half, `"${row.text}" falls off the canvas`).toBeLessThanOrEqual(GAME_HEIGHT);
+      // Every row stays inside the canvas horizontally as well.
+      const halfWidth = Number.isFinite(row.width) && row.width > 0 ? row.width / 2 : 0;
+      expect(row.x - halfWidth).toBeGreaterThanOrEqual(0);
+      expect(row.x + halfWidth).toBeLessThanOrEqual(GAME_WIDTH);
+    }
+  }
+
+  it('AC2 — groups every discovered plain scene into the documented categories', async () => {
+    const scene = await bootIndex();
+
+    expect(scene.listedGroups.map((g) => g.title)).toEqual([
+      'Player & Combat',
+      'Worlds',
+      'Power-ups',
+      'Weapons',
+      'Tuning',
+      'Minerals',
+    ]);
+    // Totality: every discovered scene sits in exactly one group.
+    const grouped = scene.listedGroups.flatMap((g) => g.members.map((m) => m.key));
+    expect([...grouped].sort()).toEqual(scene.listedScenes.map((s) => s.key).sort());
+    expect(new Set(grouped).size).toBe(scene.listedScenes.length);
+    expect(scene.listedGroups.some((g) => g.id === GYM_INDEX_OTHER_GROUP_ID)).toBe(false);
+  });
+
+  it('AC3 — all groups start collapsed, showing one header row per group and no members', async () => {
+    const scene = await bootIndex();
+
+    expect(scene.getExpandedGroup('scenes')).toBeNull();
+    for (const group of scene.listedGroups) {
+      const header = findGroupHeader(scene, group.title);
+      expect(header.text).toBe(groupHeaderLabel(group.title, false));
+      for (const member of group.members) {
+        expect(
+          (scene.children.list as Phaser.GameObjects.Text[]).some(
+            (c) => c instanceof Phaser.GameObjects.Text && c.text === member.label,
+          ),
+          `collapsed member "${member.label}" must not render`,
+        ).toBe(false);
+      }
+    }
+
+    // 6 group headers + 3 ENEMIES rows + 1 Dev Utilities row.
+    expect(scene.getFocusControlCount()).toBe(6 + 3 + 1);
+  });
+
+  it('AC1 — every rendered row stays between the title and the bottom hint in every expanded state', async () => {
+    const scene = await bootIndex();
+    expectRowsInsideBand(scene);
+
+    // Expand each group in turn (accordion); every visible row must still fit.
+    for (const group of scene.listedGroups) {
+      findGroupHeader(scene, group.title).emit('pointerdown');
+      expect(scene.getExpandedGroup('scenes')).toBe(group.id);
+      expectRowsInsideBand(scene);
+    }
+  });
+
+  it('AC3 — clicking a header toggles it, revealing its members directly below', async () => {
+    const scene = await bootIndex();
+
+    findGroupHeader(scene, 'Worlds').emit('pointerdown');
+
+    const rows = scene.getColumnRows('scenes');
+    expect(scene.getExpandedGroup('scenes')).toBe('worlds');
+    expect(rows.map((r) => `${r.kind}:${r.label}`)).toEqual([
+      `header:${groupHeaderLabel('Player & Combat', false)}`,
+      `header:${groupHeaderLabel('Worlds', true)}`,
+      'member:Hangar',
+      'member:HexWar',
+      'member:Level',
+      `header:${groupHeaderLabel('Power-ups', false)}`,
+      `header:${groupHeaderLabel('Weapons', false)}`,
+      `header:${groupHeaderLabel('Tuning', false)}`,
+      `header:${groupHeaderLabel('Minerals', false)}`,
+    ]);
+    // Members render at the column X, tinted differently from their header.
+    const scenesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.scenes;
+    const member = findTextAt(scene, 'HexWar', scenesCol);
+    const header = findGroupHeader(scene, 'Worlds');
+    expect(member.style.backgroundColor).not.toBe(header.style.backgroundColor);
+    // Focus follows the toggled header.
+    expect(scene.getFocusedLabel()).toBe(groupHeaderLabel('Worlds', true));
+
+    // Clicking it again collapses it and hides the members.
+    findGroupHeader(scene, 'Worlds').emit('pointerdown');
+    expect(scene.getExpandedGroup('scenes')).toBeNull();
+    expect(findGroupHeader(scene, 'Worlds').text).toBe(groupHeaderLabel('Worlds', false));
+    expect(
+      (scene.children.list as Phaser.GameObjects.Text[]).some(
+        (c) => c instanceof Phaser.GameObjects.Text && c.text === 'HexWar',
+      ),
+    ).toBe(false);
+  });
+
+  it('AC3 — Enter/Space toggle a focused header and keep focus on it', async () => {
+    const scene = await bootIndex();
+    expect(scene.getFocusedLabel()).toBe(groupHeaderLabel('Player & Combat', false));
+
+    pressKey(scene, { key: 'Enter' });
+    expect(scene.getExpandedGroup('scenes')).toBe('playerAndCombat');
+    expect(scene.getFocusedLabel()).toBe(groupHeaderLabel('Player & Combat', true));
+    expect(scene.getColumnRows('scenes').filter((r) => r.kind === 'member')).toHaveLength(4);
+
+    pressKey(scene, { key: ' ' });
+    expect(scene.getExpandedGroup('scenes')).toBeNull();
+    expect(scene.getFocusedLabel()).toBe(groupHeaderLabel('Player & Combat', false));
+    expect(scene.getColumnRows('scenes').filter((r) => r.kind === 'member')).toHaveLength(0);
+  });
+
+  it('AC3 — expanding one group collapses the previously expanded group (accordion)', async () => {
+    const scene = await bootIndex();
+
+    findGroupHeader(scene, 'Weapons').emit('pointerdown');
+    expect(scene.getColumnRows('scenes').filter((r) => r.kind === 'member')).toHaveLength(3);
+
+    findGroupHeader(scene, 'Tuning').emit('pointerdown');
+    const members = scene.getColumnRows('scenes').filter((r) => r.kind === 'member');
+    expect(members.map((r) => r.label)).toEqual(['BotTuning', 'RechargeTuning']);
+    expect(members.every((r) => r.groupId === 'tuning')).toBe(true);
+    expect(findGroupHeader(scene, 'Weapons').text).toBe(groupHeaderLabel('Weapons', false));
+    // One header per group, only one of them expanded.
+    const headers = scene.getColumnRows('scenes').filter((r) => r.kind === 'header');
+    expect(headers.filter((r) => r.groupId === 'tuning')).toHaveLength(1);
+    expect(scene.getColumnRows('scenes').some((r) => r.groupId === 'weapons')).toBe(true);
+  });
+
+  it('AC5 — ENEMIES and Dev Utilities stay flat (they fit) and keep their launch rows', async () => {
+    const scene = await bootIndex();
+
+    // No group headers outside the plain-scenes column.
+    const enemiesRows = scene.getColumnRows('enemies');
+    const devRows = scene.getColumnRows('devUtilities');
+    expect(enemiesRows.map((r) => `${r.kind}:${r.label}`)).toEqual([
+      `member:${FODDER_ENEMIES_LABEL}`,
+      `member:${BOSS_SCENE_LABEL}`,
+      `member:${MINI_BOSS_SCENE_LABEL}`,
+    ]);
+    expect(devRows.map((r) => `${r.kind}:${r.label}`)).toEqual(['member:CurveSequencer']);
+
+    // Their launch rows still boot the same scenes.
+    const enemiesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
+    expect(findTextAt(scene, BOSS_SCENE_LABEL, enemiesCol).getData('sceneKey')).toBe(BOSS_SCENE_KEY);
+    const devCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
+    findTextAt(scene, 'CurveSequencer', devCol).emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+    expect(booted!.game.scene.isActive('GymCurveSequencer')).toBe(true);
+  });
+
+  it('AC6 — a grouped member launches exactly the scene key the flat row used', async () => {
+    const scene = await bootIndex();
+
+    findGroupHeader(scene, 'Worlds').emit('pointerdown');
+    const scenesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.scenes;
+    const hexWar = findTextAt(scene, 'HexWar', scenesCol);
+    expect(hexWar.getData('sceneKey')).toBe('GymHexWar');
+
+    hexWar.emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+
+    expect(booted!.game.scene.isActive('GymHexWar')).toBe(true);
+    expect(booted!.game.scene.isActive(GYM_INDEX_KEY)).toBe(false);
+  });
+
+  it('AC6 — expanded state is not persisted: a re-created index starts all-collapsed', async () => {
+    const scene = await bootIndex();
+
+    findGroupHeader(scene, 'Weapons').emit('pointerdown');
+    expect(scene.getExpandedGroup('scenes')).toBe('weapons');
+
+    scene.scene.restart();
+    await advanceGame(booted!.game, 350);
+
+    expect(scene.getExpandedGroup('scenes')).toBeNull();
+    expect(
+      scene.visibleRows.filter((row) => row.kind === 'member' && row.columnId === 'scenes'),
+    ).toHaveLength(0);
+    expect(scene.getFocusedLabel()).toBe(groupHeaderLabel('Player & Combat', false));
+  });
+});
+
+describe('GymIndex — keyboard navigation over visible rows (AH-0MUDZFBYY008P7ZE)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    document.getElementById('gym-config-panel')?.remove();
+    document.getElementById('gym-curve-panel')?.remove();
+  });
+
+  async function bootIndex(): Promise<GymIndex> {
+    booted = await bootScene([GymIndex]);
+    return booted!.scene as GymIndex;
+  }
+
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressKey(scene: GymIndex, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  /** Visible rows of one column (group headers + expanded members), top → bottom. */
+  function columnLabels(scene: GymIndex, columnId: 'scenes' | 'enemies' | 'devUtilities'): string[] {
+    return scene.getColumnRows(columnId).map((row) => row.label);
+  }
+
+  /** Visible labels per column, left-to-right (the visual grid). */
+  function gridLabels(scene: GymIndex): string[][] {
+    return [
+      columnLabels(scene, 'scenes'),
+      columnLabels(scene, 'enemies'),
+      columnLabels(scene, 'devUtilities'),
+    ];
+  }
+
+  /** Visible labels in reading order (columns left → right). */
   function readingOrder(scene: GymIndex): string[] {
-    return [
-      ...scene.listedScenes.map((s) => s.label),
-      ...scene.listedEnemyScenes.map((s) => s.label),
-      ...scene.listedDevUtilityScenes.map((s) => s.label),
-    ];
+    return scene.visibleRows.map((row: GymIndexVisibleRow) => row.label);
   }
 
-  /** Labels per column, left-to-right, top-to-bottom (the visual grid). */
-  function columnLabels(scene: GymIndex): string[][] {
-    return [
-      scene.listedScenes.map((s) => s.label),
-      scene.listedEnemyScenes.map((s) => s.label),
-      scene.listedDevUtilityScenes.map((s) => s.label),
-    ];
-  }
-
-  /** Focusable on-screen rows (interactive text objects, headers excluded). */
-  function focusableRows(scene: GymIndex): Phaser.GameObjects.Text[] {
-    return (scene.children.list as Phaser.GameObjects.Text[]).filter(
-      (c) => c instanceof Phaser.GameObjects.Text && c.input?.enabled,
-    );
-  }
-
-  it('AC1 — every row is registered and the first is focused + highlighted', async () => {
+  it('AC4 — every visible row is registered and the first is focused + highlighted', async () => {
     const scene = await bootIndex();
     const order = readingOrder(scene);
 
     expect(order.length).toBeGreaterThan(0);
-    // Every rendered row across all three columns is registered.
+    // Only visible rows are focusable: collapsed members are absent.
     expect(scene.getFocusControlCount()).toBe(order.length);
     expect(focusableRows(scene)).toHaveLength(order.length);
 
-    // Exactly one row focused by default — the first in reading order.
+    // Exactly one row focused by default — the first group header.
     expect(scene.getFocusedIndex()).toBe(0);
     expect(scene.getFocusedLabel()).toBe(order[0]);
+    expect(scene.getFocusedLabel()).toBe(groupHeaderLabel('Player & Combat', false));
 
     const rows = focusableRows(scene);
     // Default row carries the focus highlight (bright colour + stroke)...
@@ -455,11 +708,10 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     }
   });
 
-  it('AC2 — Left/Right move between columns and wrap at both ends', async () => {
+  it('AC4 — Left/Right move between columns and wrap at both ends', async () => {
     const scene = await bootIndex();
-    const cols = columnLabels(scene);
+    const cols = gridLabels(scene);
 
-    // Start in the left column, first row.
     expect(scene.getFocusedLabel()).toBe(cols[0][0]);
 
     pressKey(scene, { key: 'ArrowRight' });
@@ -477,40 +729,64 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(scene.getFocusedLabel()).toBe(cols[0][0]);
   });
 
-  it('AC3 — Up/Down move within the current column and never change column', async () => {
+  it('AC4 — Up/Down cycle the visible rows of the current column, headers included', async () => {
     const scene = await bootIndex();
-    const cols = columnLabels(scene);
+    const scenesCol = columnLabels(scene, 'scenes');
 
-    // Vertical movement in the left (plain scenes) column.
-    expect(scene.getFocusedLabel()).toBe(cols[0][0]);
+    expect(scene.getFocusedLabel()).toBe(scenesCol[0]);
     pressKey(scene, { key: 'ArrowDown' });
-    expect(scene.getFocusedLabel()).toBe(cols[0][1]);
+    expect(scene.getFocusedLabel()).toBe(scenesCol[1]);
     pressKey(scene, { key: 'ArrowUp' });
-    expect(scene.getFocusedLabel()).toBe(cols[0][0]);
-    pressKey(scene, { key: 'ArrowUp' }); // wraps to the bottom of column 0
-    expect(scene.getFocusedLabel()).toBe(cols[0][cols[0].length - 1]);
-    pressKey(scene, { key: 'ArrowDown' }); // wraps to the top of column 0
-    expect(scene.getFocusedLabel()).toBe(cols[0][0]);
+    expect(scene.getFocusedLabel()).toBe(scenesCol[0]);
+    pressKey(scene, { key: 'ArrowUp' }); // wraps to the bottom of the column
+    expect(scene.getFocusedLabel()).toBe(scenesCol[scenesCol.length - 1]);
+    pressKey(scene, { key: 'ArrowDown' }); // wraps back to the top
+    expect(scene.getFocusedLabel()).toBe(scenesCol[0]);
 
-    // Move to the ENEMIES column; Up/Down wrap within that column too.
+    // ENEMIES column wraps within itself too.
     pressKey(scene, { key: 'ArrowRight' });
-    expect(scene.getFocusedLabel()).toBe(cols[1][0]);
+    expect(scene.getFocusedLabel()).toBe(columnLabels(scene, 'enemies')[0]);
     pressKey(scene, { key: 'ArrowUp' });
-    expect(scene.getFocusedLabel()).toBe(cols[1][cols[1].length - 1]);
+    expect(scene.getFocusedLabel()).toBe(
+      columnLabels(scene, 'enemies')[columnLabels(scene, 'enemies').length - 1],
+    );
     pressKey(scene, { key: 'ArrowDown' });
-    expect(scene.getFocusedLabel()).toBe(cols[1][0]);
-    expect(cols[1]).toContain(scene.getFocusedLabel());
+    expect(scene.getFocusedLabel()).toBe(columnLabels(scene, 'enemies')[0]);
   });
 
-  it('AC4 — entering a shorter column always focuses a valid, highlighted row', async () => {
+  it('AC4 — Up/Down also reach the expanded group members', async () => {
     const scene = await bootIndex();
-    const cols = columnLabels(scene);
+
+    // Expand the first group: its members join the column's visible rows.
+    pressKey(scene, { key: 'Enter' });
+    const scenesCol = columnLabels(scene, 'scenes');
+    expect(scenesCol.slice(0, 5)).toEqual([
+      groupHeaderLabel('Player & Combat', true),
+      'AsteroidStress',
+      'Performance',
+      'Player',
+      'Rhythm',
+    ]);
+
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('AsteroidStress');
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('Performance');
+    pressKey(scene, { key: 'ArrowUp' });
+    expect(scene.getFocusedLabel()).toBe('AsteroidStress');
+    pressKey(scene, { key: 'ArrowUp' });
+    expect(scene.getFocusedLabel()).toBe(groupHeaderLabel('Player & Combat', true));
+  });
+
+  it('AC4 — entering a shorter column clamps to a valid, highlighted visible row', async () => {
+    const scene = await bootIndex();
+    const cols = gridLabels(scene);
 
     // Drive focus to the bottom of the longest (plain scenes) column.
     for (let i = 0; i < cols[0].length - 1; i++) pressKey(scene, { key: 'ArrowDown' });
     expect(scene.getFocusedLabel()).toBe(cols[0][cols[0].length - 1]);
 
-    // Right into the shorter ENEMIES column — clamps to its last valid row.
+    // Right into the shorter ENEMIES column — clamps to its last visible row.
     pressKey(scene, { key: 'ArrowRight' });
     expect(scene.getFocusedLabel()).toBe(cols[1][cols[1].length - 1]);
     expect(scene.getFocusedIndex()).toBeLessThan(scene.getFocusControlCount());
@@ -526,19 +802,41 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(focused!.style.strokeThickness ?? 0).toBeGreaterThan(0);
   });
 
-  it('AC5 — Tab stays linear in reading order while arrows are grid-aware', async () => {
+  it('AC4 — Tab stays linear over visible rows while collapsed members are never focusable', async () => {
     const scene = await bootIndex();
     const order = readingOrder(scene);
 
+    // Cycle the whole visible set; each step lands on the next visible row.
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe(order[1]);
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe(order[2]);
     pressKey(scene, { key: 'Tab', shiftKey: true });
     expect(scene.getFocusedLabel()).toBe(order[1]);
+
+    // Walk every visible row and back: the cycle contains no collapsed member.
+    // Reset to the first visible row (bounded, so a broken cycle cannot hang).
+    for (let i = 0; i < order.length && scene.getFocusedLabel() !== order[0]; i++) {
+      pressKey(scene, { key: 'Tab' });
+    }
+    expect(scene.getFocusedLabel()).toBe(order[0]);
+    const seen: string[] = [scene.getFocusedLabel()];
+    for (let i = 1; i < order.length; i++) {
+      pressKey(scene, { key: 'Tab' });
+      seen.push(scene.getFocusedLabel());
+    }
+    expect(seen).toEqual(order);
+    // No collapsed member ever enters the cycle.
+    const collapsedMembers = scene.listedScenes.map((s) => s.label);
+    for (const label of seen) {
+      expect(collapsedMembers, `"${label}" is a collapsed member`).not.toContain(label);
+    }
+    // Wraps back to the first visible row.
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe(order[0]);
   });
 
-  it('AC5 — activation works after moving between columns', async () => {
+  it('AC4 — activation works after moving between columns', async () => {
     const scene = await bootIndex();
 
     // Move Right into the ENEMIES column, then activate its first row.
@@ -552,33 +850,36 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(booted!.game.scene.isActive('GymIndex')).toBe(false);
   });
 
-  it('AC6 — the hint advertises Left/Right column and Up/Down row movement', async () => {
+  it('AC4 — Enter launches a group member reached with the arrow keys', async () => {
+    const scene = await bootIndex();
+
+    // Expand the Worlds group from the keyboard, then walk to its first member.
+    pressKey(scene, { key: 'ArrowDown' }); // → Worlds
+    expect(scene.getFocusedLabel()).toBe(groupHeaderLabel('Worlds', false));
+    pressKey(scene, { key: 'Enter' });
+    expect(scene.getFocusedLabel()).toBe(groupHeaderLabel('Worlds', true));
+
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('Hangar');
+    pressKey(scene, { key: 'Enter' });
+    await advanceGame(booted!.game, 350);
+
+    expect(booted!.game.scene.isActive('GymHangar')).toBe(true);
+    expect(booted!.game.scene.isActive('GymIndex')).toBe(false);
+  });
+
+  it('AC6+AC7 — the hint advertises columns, rows and expand/collapse', async () => {
     const scene = await bootIndex();
     const hint = findText(scene, GYM_INDEX_HINT);
 
     expect(hint.text).toContain('←/→');
     expect(hint.text).toContain('↑/↓');
+    expect(hint.text).toContain('expand');
   });
 
-  it('AC3 — Enter activates the default-focused plain scene row', async () => {
+  it('AC6 — Space activates the focused "Fodder Enemies" row via GymFodderEnemies', async () => {
     const scene = await bootIndex();
-    const first = scene.listedScenes[0];
-    expect(scene.getFocusedLabel()).toBe(first.label);
-
-    pressKey(scene, { key: 'Enter' });
-    await advanceGame(booted!.game, 350);
-
-    expect(booted!.game.scene.isActive(first.key)).toBe(true);
-    expect(booted!.game.scene.isActive('GymIndex')).toBe(false);
-  });
-
-  it('AC3 — Space activates the focused "Fodder Enemies" row via GymFodderEnemies', async () => {
-    const scene = await bootIndex();
-    const enemyIndex = scene.listedEnemyScenes.findIndex(
-      (e) => e.key === FODDER_ENEMIES_SCENE_KEY,
-    );
-    expect(enemyIndex).toBeGreaterThanOrEqual(0);
-    const targetIndex = scene.listedScenes.length + enemyIndex;
+    const targetIndex = columnLabels(scene, 'scenes').length; // first ENEMIES row
 
     for (let i = 0; i < targetIndex; i++) pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe(FODDER_ENEMIES_LABEL);
@@ -593,11 +894,12 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(gym.activeEnemyKey).toBe('scout');
   });
 
-  it('AC3 — Enter activates the focused dedicated boss (GymBoss) row', async () => {
+  it('AC6 — Enter activates the focused dedicated boss (GymBoss) row', async () => {
     const scene = await bootIndex();
-    const bossIndex = scene.listedEnemyScenes.findIndex((e) => e.sceneKey === BOSS_SCENE_KEY);
-    expect(bossIndex).toBeGreaterThanOrEqual(0);
-    const targetIndex = scene.listedScenes.length + bossIndex;
+    const targetIndex =
+      columnLabels(scene, 'scenes').length +
+      scene.listedEnemyScenes.findIndex((e) => e.sceneKey === BOSS_SCENE_KEY);
+    expect(targetIndex).toBeGreaterThanOrEqual(0);
 
     for (let i = 0; i < targetIndex; i++) pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe(BOSS_SCENE_LABEL);
@@ -609,13 +911,11 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(false);
   });
 
-  it('AC3 — Enter activates the focused Dev Utilities row directly', async () => {
+  it('AC6 — Enter activates the focused Dev Utilities row directly', async () => {
     const scene = await bootIndex();
     const dev = scene.listedDevUtilityScenes[0];
     expect(dev).toBeDefined();
-    const targetIndex =
-      scene.listedScenes.length +
-      scene.listedEnemyScenes.length;
+    const targetIndex = columnLabels(scene, 'scenes').length + columnLabels(scene, 'enemies').length;
 
     for (let i = 0; i < targetIndex; i++) pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe(dev!.label);
@@ -626,7 +926,7 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(booted!.game.scene.isActive(dev!.key)).toBe(true);
   });
 
-  it('AC4 — ESC still returns to the menu and scene shutdown releases the focus manager', async () => {
+  it('AC6 — ESC still returns to the menu and scene shutdown releases the focus manager', async () => {
     const shutdownSpy = vi.spyOn(FocusManager.prototype, 'shutdown');
     try {
       booted = await bootScene([GymIndex, MenuScene]);
