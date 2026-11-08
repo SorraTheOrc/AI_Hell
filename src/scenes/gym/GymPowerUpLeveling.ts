@@ -15,7 +15,12 @@
  *   on hold-full the shared `MineralChoiceScene` offers (among others) a
  *   permanent power-up grant or a permanent **level-up** for every power-up
  *   already owned this run. Choosing one permanently levels the power-up
- *   for the rest of the run.
+ *   for the rest of the run. The gym's periodic mineral supply mixes in
+ *   **red 10-value deposits**: every third spawn is a shared
+ *   `createMineralDeposit` mineral (`RED_MINERAL_SHARE`, ≥ 30 %), so the hold
+ *   fills at a usable pace at higher capacities, and a pickup credits the
+ *   mineral's own value (10 red, 1 gold) rather than a flat amount
+ *   (AH-0MW6OGSJP007K9W6).
  * - **Visible levels and stats:** the shared HUD renders each owned
  *   power-up's row with its effective level, and a gym-local `.gym-panel`
  *   readout lists **every** levelled power-up with its current run-scoped
@@ -27,8 +32,8 @@
  * `resolvePowerUpAtLevel` and applies every collection through
  * `EffectsRegistry` — it defines no copy of the curve, the catalogue or the
  * level arithmetic (gym↔game parity, AGENTS.md). The only gym-specific
- * parts are the deterministic spawn source, the mineral hold cadence and the
- * level/stats readout.
+ * parts are the deterministic spawn source, the mineral hold cadence and
+ * supply mix, and the level/stats readout.
  *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention.
  *
@@ -92,6 +97,7 @@ import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
 import { buildChoiceCandidates, CHOICE_POOL } from '../../powerups/choice';
 import { applyMineralChoiceReward } from '../core/mineralLayer';
+import { createMineralDeposit } from '../core/mineralKillDrops';
 import { buildOwnedLoadout } from '../../powerups/ownedLoadout';
 import type { DroneMineralSink } from '../core/combatDrone';
 
@@ -108,8 +114,26 @@ export const POWER_UP_STATS_CLASS = 'gym-powerup-level-stats';
 export const GYM_POWER_UP_LEVELING_HINT =
   'Power-Up Leveling — collect drops to level up; fill the hold for a permanent level-up';
 
-/** Minerals granted by each collected mineral in the gym. */
-const MINERAL_COLLECT_AMOUNT = 1;
+/**
+ * Share of the gym's periodic mineral spawn stream that are **red 10-value
+ * deposits** (AH-0MW6OGSJP007K9W6).
+ *
+ * The hold capacity doubles on every hold-full choice (3 → 6 → 12 → …), so a
+ * stream of single-value gold minerals makes the permanent level-up
+ * demonstration bog down at higher holds. The gym therefore guarantees a
+ * meaningful share of high-value minerals: a **fixed rotation** turns every
+ * third spawn into a red deposit, so any ten consecutive spawns contain at
+ * least three red minerals (≥ 30 %) without relying on a per-spawn
+ * probability.
+ */
+export const RED_MINERAL_SHARE = 0.3;
+
+/**
+ * Spawns per red deposit: `round(1 / RED_MINERAL_SHARE)` (3), giving one red
+ * mineral every third spawn. Derived from the named share so the guarantee and
+ * the rotation can never disagree.
+ */
+const RED_MINERAL_ROTATION = Math.round(1 / RED_MINERAL_SHARE);
 
 /** First hold capacity — small so the choice is demonstrable quickly. */
 const GYM_HOLD_CAPACITY = 3;
@@ -183,7 +207,7 @@ function formatLevelStats(stats: PowerUpLevelStats): string {
  * Power-up leveling gym. Extends the shared {@link CombatScene} core so
  * drop collection, effect application and player control all flow through
  * the one implementation; only the deterministic spawn source, the mineral
- * hold cadence and the level/stats readout are gym-specific.
+ * hold cadence and supply mix, and the level/stats readout are gym-specific.
  */
 export class GymPowerUpLeveling extends CombatScene<
   CombatEnemyEntity,
@@ -200,6 +224,8 @@ export class GymPowerUpLeveling extends CombatScene<
   );
   private spawnTimer = 0;
   private mineralTimer = 0;
+  /** Spawns seen by the red/gold rotation (deterministic, never from RNG). */
+  private mineralSpawnCount = 0;
   private hold = new MineralHold({
     capacity: GYM_HOLD_CAPACITY,
     growthMultiplier: 2,
@@ -301,6 +327,7 @@ export class GymPowerUpLeveling extends CombatScene<
     this.hud = null;
     this.spawnTimer = 0;
     this.mineralTimer = 0;
+    this.mineralSpawnCount = 0;
     this.hold = new MineralHold({
       capacity: GYM_HOLD_CAPACITY,
       growthMultiplier: 2,
@@ -412,17 +439,38 @@ export class GymPowerUpLeveling extends CombatScene<
     this.drops = this._collectOverlappingDrops(this.drops);
   }
 
-  /** Spawns a mineral at a random position. Public test seam. */
+  /**
+   * Spawns a mineral at a random position (or the supplied one). Public test
+   * seam.
+   *
+   * Every third spawn in the stream is a red 10-value deposit built through
+   * the shared `createMineralDeposit` seam (colour and value paired once), so
+   * the hold fills at a usable pace at higher capacities; the rest keep the
+   * ordinary gold 1-value mineral. The decision is a fixed rotation, not an
+   * RNG draw, so the seeded position stream (and a seeded capture) is
+   * unchanged (AH-0MW6OGSJP007K9W6).
+   */
   spawnMineral(x?: number, y?: number): LevelingMineral {
     const px = x ?? 80 + this.sceneRng() * (GAME_WIDTH - 160);
     const py = y ?? 120 + this.sceneRng() * (GAME_HEIGHT - 240);
-    const entity = new Mineral(this, { x: px, y: py });
+    const entity = this._isRedMineralSpawn()
+      ? createMineralDeposit(this, px, py)
+      : new Mineral(this, { x: px, y: py });
     const mineral: LevelingMineral = {
       entity,
       destroy: () => entity.destroy(),
     };
     this.minerals.push(mineral);
     return mineral;
+  }
+
+  /**
+   * Advances the deterministic red/gold rotation and reports whether this
+   * spawn is a red deposit (every third spawn).
+   */
+  private _isRedMineralSpawn(): boolean {
+    this.mineralSpawnCount += 1;
+    return this.mineralSpawnCount % RED_MINERAL_ROTATION === 0;
   }
 
   private _spawnMineral(): void {
@@ -449,7 +497,10 @@ export class GymPowerUpLeveling extends CombatScene<
       const dx = mineral.entity.x - player.x;
       const dy = mineral.entity.y - player.y;
       if (dx * dx + dy * dy <= collectRadius * collectRadius) {
-        this.hold.collect(MINERAL_COLLECT_AMOUNT);
+        // Credit the mineral's own value (10 for a red deposit, 1 for a gold
+        // dot) — the same rule the game and the other gyms apply, so one red
+        // pickup fills ten minerals' worth of the hold (AH-0MW6OGSJP007K9W6).
+        this.hold.collect(mineral.entity.value);
         mineral.destroy();
       } else {
         remaining.push(mineral);
