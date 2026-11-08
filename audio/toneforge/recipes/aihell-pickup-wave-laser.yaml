@@ -1,0 +1,49 @@
+# AI Hell cue: aihell-pickup-wave-laser — Wave Laser pickup — rising triangle shimmer.
+# A bright, short rising chirp (800 to 2000 Hz) conveys the activation of the
+# piercing wave laser. Shorter than every existing weapon pickup cue so it
+# remains distinct.
+version: "0.1"
+meta:
+  name: aihell-pickup-wave-laser
+  description: Wave Laser pickup — rising triangle shimmer 800 to 2000 Hz.
+  category: AIHell
+  tags:
+    - pickup
+    - weapon
+    - wave-laser
+  duration: 0.09
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 800
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 800
+        - kind: exponentialRamp
+          time: 0.08
+          value: 2000
+  e0:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.087
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.15
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

@@ -146,6 +146,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playDualPickupSound` | Saw 1000→500 then 1200→700 Hz, 0.06 s apart | Dual pickup | `dropLayer` | new | `aihell-pickup-dual` |
 | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | Rapid pickup | `dropLayer` | new | `aihell-pickup-rapid` |
 | `playResetPickupSound` | Sine 900→300 Hz, ~0.2 s | Reset pickup | `dropLayer` | new | `aihell-pickup-reset` |
+| `playWaveLaserPickupSound` | Triangle 800→2000 Hz, 0.09 s | Wave Laser pickup | `dropLayer` | new | `aihell-pickup-wave-laser` |
 | `playSpeedBoostCollectSound` | Square 600→1800 Hz, 0.1 s | Speed Boost | `dropLayer` | new | `aihell-pickup-speed` |
 | `playExtraLifeCollectSound` | Sine 440→880 then 660→990 Hz | Extra Life | `dropLayer` | new | `aihell-pickup-extralife` |
 | `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | Magnet | `dropLayer` | new | `aihell-pickup-magnet` |
@@ -398,6 +399,7 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-pickup-dual` | `playDualPickupSound` | Two saw drops 1000→500 / 1200→700 Hz | 32221 |
 | `aihell-pickup-rapid` | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | 32222 |
 | `aihell-pickup-reset` | `playResetPickupSound` | Sine 900→300 Hz, ~0.2 s | 32223 |
+| `aihell-pickup-wave-laser` | `playWaveLaserPickupSound` | Triangle 800→2000 Hz, 0.09 s | 32228 |
 | `aihell-pickup-speed` | `playSpeedBoostCollectSound` | Square 600→1800 Hz, 0.1 s | 32224 |
 | `aihell-pickup-extralife` | `playExtraLifeCollectSound` | Two warm sine chimes 440→880 / 660→990 Hz | 32225 |
 | `aihell-pickup-magnet` | `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | 32226 |

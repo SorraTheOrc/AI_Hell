@@ -1205,6 +1205,11 @@ export function playResetPickupSound(): void {
   playCue('playResetPickupSound');
 }
 
+/** Piercing shimmer — Wave Laser activation. */
+export function playWaveLaserPickupSound(): void {
+  playCue('playWaveLaserPickupSound');
+}
+
 /** Quick ascending zip — Speed Boost activation. */
 export function playSpeedBoostCollectSound(): void {
   playCue('playSpeedBoostCollectSound');
