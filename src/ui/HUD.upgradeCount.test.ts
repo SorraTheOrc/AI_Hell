@@ -321,14 +321,12 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
       grantPermanentPowerUp(registry, powerUpId);
     }
 
-    // A Phase Shift **field pickup**, whose temporary window is then allowed
-    // to expire. Its granted charges survive the expiry (Resolved decision
-    // 1b), so the HUD keeps a row for it — but the kind holds no slot and is
-    // not permanent, so neither the budget nor the upgrade panel counts it.
-    registry.applyCollect('phase_shift');
-    registry.tick(
-      resolveTemporaryWindow('phase_shift', 0) + EXPIRY_MARGIN_SECONDS,
-    );
+    // A Shield **field pickup**, whose temporary window is then allowed to
+    // expire. Its granted charge survives the expiry (Resolved decision 1b),
+    // so the HUD keeps a row for it — but the kind holds no slot and is not
+    // permanent, so neither the budget nor the upgrade panel counts it.
+    registry.applyCollect('shield');
+    registry.tick(resolveTemporaryWindow('shield', 0) + EXPIRY_MARGIN_SECONDS);
 
     const hud = makeHud(scene, player, registry);
     const state = resolvePlayerSlotState(player);
@@ -343,11 +341,11 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
     // Capture the rendered opacity before teardown: the non-slot row must be
     // de-emphasised so a player cannot read it as a loadout entry.
     const texts = renderedTexts(hud);
-    const phaseRow = allRows.find((row) => row.id === 'phase_shift');
+    const chargeRow = allRows.find((row) => row.id === 'shield');
     const slotRow = allRows.find((row) => row.id === 'spread');
     const alphaOf = (label: string | undefined): number | undefined =>
       texts.find((text) => text.text === label)?.alpha;
-    const phaseAlpha = alphaOf(phaseRow?.label);
+    const chargeAlpha = alphaOf(chargeRow?.label);
     const slotAlpha = alphaOf(slotRow?.label);
 
     destroy(game);
@@ -355,7 +353,7 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
     // This is the operator's observation: **six** rows are visible in the
     // HUD list, while the label reads **5/6** and the upgrade panel lists
     // **five**. The numbers agree with the model — the sixth row is the
-    // non-slot Phase Shift residue, not a sixth upgrade.
+    // non-slot Shield charge residue, not a sixth upgrade.
     expect(allRows).toHaveLength(6);
     expect(budget).toEqual({ used: 5, cap: POWER_UP_SLOT_CAP });
     expect(hud.getSlotBudgetLabel()).toBe(`Loadout 5/${POWER_UP_SLOT_CAP}`);
@@ -366,11 +364,11 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
     // is excluded from the slot count, and is rendered dimmed so it recedes
     // below the five slot-counted rows. A slot-counted row stays at full
     // opacity, so the loadout is visually distinct from the residue.
-    expect(phaseRow).toBeDefined();
-    expect(phaseRow!.slotCounted).toBe(false);
-    expect(phaseRow!.marker).toBe('charges only');
-    expect(state.heldIds.has('phase_shift')).toBe(false);
-    expect(phaseAlpha).toBeCloseTo(NON_SLOT_ROW_ALPHA);
+    expect(chargeRow).toBeDefined();
+    expect(chargeRow!.slotCounted).toBe(false);
+    expect(chargeRow!.marker).toBe('charges only');
+    expect(state.heldIds.has('shield')).toBe(false);
+    expect(chargeAlpha).toBeCloseTo(NON_SLOT_ROW_ALPHA);
     expect(slotAlpha).toBe(1);
   });
 });

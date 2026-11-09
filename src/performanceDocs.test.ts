@@ -186,6 +186,28 @@ const RECORDED_SECTIONS: ReadonlyArray<RecordedSection> = [
     heading: '## Hardware-GPU desktop baseline',
     facts: [COMMIT, DATE, { label: 'the platforms', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /1×/ }],
   },
+  {
+    heading: '### Before: one texture per rock, per-frame `Graphics` fallback (AH-0MW507VYG009SFR5)',
+    facts: [COMMIT, DATE, { label: 'the platform', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /1×/ }],
+  },
+  {
+    heading: '### After: shared silhouette palette, one texture atlas (AH-0MW508JS2004W3SR)',
+    facts: [COMMIT, DATE, { label: 'the platform', pattern: /Chromium/ }, { label: 'the hardware backend', pattern: /NVIDIA/ }, { label: 'the throttle factor', pattern: /1×/ }],
+  },
+  {
+    // The sweep section (AH-0MW5IUG0D004LX0E) documents the perf:sweep tool:
+    // its provenance line names the commit/date the tooling describes, the
+    // reference machine (headless Chromium, the default software WebGL
+    // backend) and the default CPU throttle, per the file's Recorded: rule.
+    heading: '## Enemy-count sweep',
+    facts: [
+      COMMIT,
+      DATE,
+      { label: 'the platform', pattern: /Chromium/ },
+      { label: 'the webgl backend', pattern: /SwiftShader/ },
+      { label: 'the throttle factor', pattern: /1×/ },
+    ],
+  },
 ];
 
 describe('docs/PERFORMANCE.md — performance budget', () => {
@@ -246,10 +268,14 @@ describe('docs/PERFORMANCE.md — harness usage', () => {
     }
 
     for (const field of [
+      'frameTimeMs.min',
       'frameTimeMs.p50',
       'frameTimeMs.p95',
       'frameTimeMs.max',
       'fps.effective',
+      'fps.min',
+      'fps.max',
+      'fps.mean',
       'longFrames.over33Ms',
       'longFrames.over50Ms',
       'counts.peak',
@@ -387,6 +413,52 @@ describe('docs/PERFORMANCE.md — recorded numbers', () => {
     expect(sectionBody(doc, '### Verdicts')).toContain('AH-0MW3KP1R90030QY9');
   });
 
+  it('splits the mobile-tier verdict by backend and cross-references the hardware rows', () => {
+    const doc = perfDoc();
+    const verdicts = sectionBody(doc, '### Verdicts');
+
+    // The mobile entry is item 3 of the verdict list. Take it up to the next
+    // numbered item so an assertion cannot be satisfied by a sibling verdict.
+    const lines = verdicts.split('\n');
+    const start = lines.findIndex((line) => /^3\.\s+\*\*Mobile tier/.test(line));
+    expect(start, 'the Verdicts mobile-tier entry (item 3) is missing').toBeGreaterThanOrEqual(0);
+    const entryLines: string[] = [];
+    for (let i = start; i < lines.length; i += 1) {
+      if (i > start && /^\d+\.\s/.test(lines[i])) break;
+      entryLines.push(lines[i]);
+    }
+    const mobile = entryLines.join('\n');
+
+    // AC2: the verdict is split by backend — missed on the software rasteriser,
+    // met on hardware WebGL — never an unqualified "target missed".
+    expect(mobile).toMatch(/software rasteri[sz]er/i);
+    expect(mobile).toMatch(/hardware WebGL/i);
+
+    // AC2: the cross-reference sits in the lead of the entry, before the
+    // follow-up paragraphs, so a reader who stops early still lands on the
+    // hardware rows. (Left in a follow-up only, the verdict reads as unmet.)
+    const lead = mobile.split('**Follow-up result')[0];
+    expect(lead).toContain('[Hardware-WebGL mobile tier]');
+    expect(lead).toContain('#hardware-webgl-mobile-tier-4-cpu-throttle');
+
+    // The historical software measurement and its provenance are retained:
+    // this is a relabel by backend, not a rewrite of recorded history.
+    expect(mobile).toContain('24.21 FPS');
+    expect(mobile).toContain('AH-0MW2IRYAH0055WCN');
+    expect(mobile).toContain('AH-0MW3KP1R90030QY9');
+  });
+
+  it('states the hardware mobile tier\u2019s load sensitivity once, without an orphaned fragment', () => {
+    const mobile = sectionBody(perfDoc(), '### Hardware-WebGL mobile tier (4× CPU throttle)');
+
+    // The "pass is not a single lucky window" bullet carried a dangling
+    // duplicate of its own closing sentence after an earlier edit; the
+    // noise-floor reference belongs to that bullet exactly once.
+    const duplicates = mobile.match(/load-sensitivity pattern the/g) ?? [];
+    expect(duplicates.length, 'the mobile-tier load-sensitivity sentence is duplicated').toBe(1);
+    expect(mobile).not.toMatch(/never approaches the ≥ 30 FPS floor/);
+  });
+
   it('publishes the hardware-GPU desktop runs for both hosts', () => {
     const hardware = sectionBody(perfDoc(), '## Hardware-GPU desktop baseline');
 
@@ -445,5 +517,73 @@ describe('docs/PERFORMANCE.md — discoverability', () => {
     expect(row, 'the stress-gym row does not link docs/PERFORMANCE.md').toMatch(
       /\]\(\.?\/?PERFORMANCE\.md[^)]*\)/,
     );
+  });
+});
+
+describe('docs/PERFORMANCE.md — the enemy-count sweep (AH-0MW5IUG0D004LX0E)', () => {
+  it('documents the sweep command, its options, the window and the load definition', () => {
+    const sweep = sectionBody(perfDoc(), '## Enemy-count sweep');
+
+    // The command and its entry point, so the documented tool stays concrete.
+    expect(sweep).toContain('npm run perf:sweep');
+    expect(sweep).toContain('node scripts/perf-sweep.mjs');
+
+    // Every option the CLI documents appears in the section's options table.
+    for (const option of [
+      '--seed',
+      '--aggression',
+      '--seconds',
+      '--warmup',
+      '--ceiling',
+      '--budget',
+      '--cpu-throttle',
+      '--scene',
+      '--out',
+      '--json',
+    ]) {
+      expect(sweep, `sweep options table is missing ${option}`).toContain(option);
+    }
+
+    // The 15-second minimum measurement window, warm-up excluded.
+    expect(sweep).toMatch(/15 seconds/);
+    expect(sweep).toMatch(/warm-up/i);
+
+    // The load definition: a varying shoot/dive mix, a representative
+    // non-maxed loadout and the as-played deterministic (seeded) mode.
+    expect(sweep).toMatch(/shoot/i);
+    expect(sweep).toMatch(/dive/i);
+    expect(sweep).toMatch(/POWER_UP_SLOT_CAP/);
+    expect(sweep).toMatch(/levels are not maxed/i);
+    expect(sweep).toMatch(/seed/i);
+  });
+
+  it('states the stop rule and why the sweep and the fixed 100-enemy rows both exist', () => {
+    const sweep = sectionBody(perfDoc(), '## Enemy-count sweep');
+
+    // The stop rule: the first step below 30 average FPS is the failure
+    // point, the previous step the last playable load; a ceiling/budget
+    // bounds a clean sweep.
+    expect(sweep).toMatch(/below\s+30/);
+    expect(sweep).toMatch(/failure point/i);
+    expect(sweep).toMatch(/last playable/i);
+    expect(sweep).toMatch(/--ceiling/);
+    expect(sweep).toMatch(/--budget/);
+
+    // The sweep is distinguished from — not merged into — the fixed 100-enemy
+    // rows: both exist and are not comparable.
+    expect(sweep).toMatch(/100-enemy/);
+    expect(sweep).toMatch(/not comparable/i);
+  });
+
+  it('is linked from the README harness section', () => {
+    const readme = fs.readFileSync(README_PATH, 'utf8');
+
+    // The harness section this guard already keys on, with a deep link to the
+    // sweep section of the performance doc, so a reader of the README lands on
+    // the new section.
+    const harness = readme.slice(readme.indexOf('#### Frame-time performance measurement'));
+    expect(harness.indexOf('#### Frame-time performance measurement')).toBeGreaterThanOrEqual(0);
+    expect(harness).toContain('npm run perf:sweep');
+    expect(harness).toContain('docs/PERFORMANCE.md#enemy-count-sweep');
   });
 });

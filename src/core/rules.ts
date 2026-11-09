@@ -103,10 +103,13 @@ export interface GameRules {
   mineralRedropBonusMax: number;
   /**
    * Probability that a fully destroyed **small** asteroid additionally drops
-   * an Extra Life power-up (default 0.05). Large/medium asteroids split
+   * an Extra Life power-up (default 0, off). Large/medium asteroids split
    * instead and never roll it; non-asteroid enemies are unaffected. This roll
    * is additive to the generic per-kill drop pool and the mineral kill-drop
-   * rule (AH-0MV6M2M9P0078N4S). Clamped to `[0, 1]` by {@link loadRules}.
+   * rule (AH-0MV6M2M9P0078N4S); the default was turned off by
+   * AH-0MW10ZVLH005IJRM so rocks do not hand out lives, and the rule/key are
+   * retained so a designer can re-enable it. Clamped to `[0, 1]` by
+   * {@link loadRules}.
    */
   asteroidExtraLifeDropChance: number;
   /**
@@ -125,18 +128,19 @@ export interface GameRules {
    */
   enemyCountMultiplierAtMaxLevel: number;
   /**
-   * Per-kill power-up drop chance at level 1 (default 0.18,
-   * AH-0MVLJEE7O008RX9X) — today's flat rate, preserved so level 1 behaves
-   * exactly as before. Clamped to `[0, 1]` by {@link loadRules};
-   * non-numeric values fall back to the default.
+   * Per-kill power-up drop chance at level 1 (default 0.09,
+   * AH-0MVLJEE7O008RX9X) — the pre-v5 flat `0.18` rate halved by
+   * AH-0MW10ZVLH005IJRM, so each pickup feels earned. Clamped to `[0, 1]` by
+   * {@link loadRules}; non-numeric values fall back to the default.
    */
   powerUpDropChanceAtLevel1: number;
   /**
-   * Per-kill power-up drop chance at the campaign maximum (default 0.05,
-   * AH-0MVLJEE7O008RX9X). Clamped to `[0, powerUpDropChanceAtLevel1]` by
-   * {@link loadRules} so a stored blob can never make the curve rise with
-   * level; non-numeric values fall back to the default. The small-asteroid
-   * Extra Life chance scales by the same ratio.
+   * Per-kill power-up drop chance at the campaign maximum (default 0.025,
+   * AH-0MVLJEE7O008RX9X; halved from `0.05` by AH-0MW10ZVLH005IJRM). Clamped
+   * to `[0, powerUpDropChanceAtLevel1]` by {@link loadRules} so a stored blob
+   * can never make the curve rise with level; non-numeric values fall back to
+   * the default. The small-asteroid Extra Life chance scales by the same
+   * ratio.
    */
   powerUpDropChanceAtMaxLevel: number;
   /**
@@ -154,6 +158,23 @@ export interface GameRules {
    * the default. Guards doubled large formations from overflowing the arena.
    */
   enemyCountCap: number;
+  /**
+   * Gym-only Phase Shift recharge-time override in seconds, or `null` for the
+   * level-derived interval (AH-0MV82IAYG000WS8B). Persisted so the dedicated
+   * recharge-tuning gym seeds its slider from the last chosen value. It is
+   * **never** read by the shipped `PlayScene`, so gameplay defaults stay
+   * authoritative; only a kind absent from the override map falls back to the
+   * level catalogue. A non-finite or non-positive stored value is coerced to
+   * `null` by {@link loadRules} (and an absent key is `null`), so existing
+   * rules blobs load unchanged.
+   */
+  phaseRechargeOverrideSeconds: number | null;
+  /**
+   * Gym-only Teleport recharge-time override in seconds, or `null` for the
+   * level-derived interval (AH-0MV82IAYG000WS8B). Mirrors
+   * {@link phaseRechargeOverrideSeconds}.
+   */
+  teleportRechargeOverrideSeconds: number | null;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -306,12 +327,18 @@ export const DEFAULT_MINERAL_REDROP_BONUS_MIN = 0.25;
 export const DEFAULT_MINERAL_REDROP_BONUS_MAX = 1.25;
 
 /**
- * Default chance (5 %) that a fully destroyed small asteroid additionally
- * drops an Extra Life power-up (AH-0MV6M2M9P0078N4S). Deliberately small so
- * clearing the asteroid field offers a recovery opportunity without grinding
- * runs to the 5-life cap; additive to the generic per-kill drop pool.
+ * Default chance (0 — **off**) that a fully destroyed small asteroid
+ * additionally drops an Extra Life power-up (AH-0MV6M2M9P0078N4S).
+ *
+ * The rule and this `GameRules` key are deliberately retained (operator
+ * decision, AH-0MW10ZVLH005IJRM): a designer can re-enable rocks handing out
+ * lives with one config value. The default was turned off by
+ * AH-0MW3MLTY3005MIXR, which halved the per-kill supply dial — lives should
+ * come from deliberate play, not rock-grinding, and the additive asteroid
+ * roll would otherwise partly undo the halving. Still additive to (and never
+ * a replacement for) the generic per-kill drop pool.
  */
-export const DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE = 0.05;
+export const DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE = 0;
 
 /**
  * Default for the sequenced-waves toggle — **on** (AH-0MUJSUTLA006Q8E1). The
@@ -329,19 +356,24 @@ export const DEFAULT_SEQUENCED_WAVES_ENABLED = true;
 export const DEFAULT_ENEMY_COUNT_MULTIPLIER_AT_MAX_LEVEL = 2;
 
 /**
- * Default per-kill power-up drop chance at level 1 (0.18,
- * AH-0MVLJEE7O008RX9X) — the game's long-standing flat rate, kept as the
- * level-1 identity so onboarding is unchanged.
+ * Default per-kill power-up drop chance at level 1 (0.09,
+ * AH-0MVLJEE7O008RX9X). Halved from the game's long-standing flat 0.18 rate
+ * by AH-0MW3MLTY3005MIXR, which brought the whole supply dial down so each
+ * pickup feels earned (operator decision: halve the per-kill drop chance for
+ * every power-up, not just Extra Life). The level-1 value stays the base
+ * (identity) of the campaign curve.
  */
-export const DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1 = 0.18;
+export const DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1 = 0.09;
 
 /**
- * Default per-kill power-up drop chance at the campaign maximum (0.05,
- * AH-0MVLJEE7O008RX9X). Tuned down from the 0.18 level-1 rate because the
- * player's permanent upgrades have accumulated by the late campaign and the
- * old flat supply left runs over-supplied.
+ * Default per-kill power-up drop chance at the campaign maximum (0.025,
+ * AH-0MVLJEE7O008RX9X). Tuned down from the level-1 rate because the player's
+ * permanent upgrades have accumulated by the late campaign and a flat supply
+ * left runs over-supplied. Halved alongside the level-1 value by
+ * AH-0MW3MLTY3005MIXR, so the ramp and the L10 ≈ 27.8 % of L1 property are
+ * preserved rather than flattened.
  */
-export const DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL = 0.05;
+export const DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL = 0.025;
 
 /**
  * Default campaign level span for the scaling curves (10,
@@ -354,6 +386,14 @@ export const DEFAULT_LEVEL_SCALING_MAX_LEVEL = 10;
  * AH-0MVLJEE7O008RX9X) — the existing formation cap (AH-0MTV8Q1LV001KOA5).
  */
 export const DEFAULT_ENEMY_COUNT_CAP = 200;
+
+/**
+ * Default gym-only recharge overrides (AH-0MV82IAYG000WS8B): `null` means
+ * "level-derived", so a fresh install and every existing rules blob keep the
+ * shipped recharge times until a balance tuner moves a tuning-gym slider.
+ */
+export const DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS: number | null = null;
+export const DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS: number | null = null;
 
 /**
  * Builds a fresh default weight table: every standard ID carries
@@ -411,6 +451,8 @@ export const DEFAULT_RULES: GameRules = {
   powerUpDropChanceAtMaxLevel: DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
   levelScalingMaxLevel: DEFAULT_LEVEL_SCALING_MAX_LEVEL,
   enemyCountCap: DEFAULT_ENEMY_COUNT_CAP,
+  phaseRechargeOverrideSeconds: DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS,
+  teleportRechargeOverrideSeconds: DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS,
 };
 
 /** localStorage key under which the game-rules JSON is persisted. */
@@ -438,8 +480,18 @@ export const RULES_STORAGE_KEY = 'ai-hell-game-rules';
  * {@link loadRules} translates a legacy `powerUpWeights` table keyed by the
  * old codes through {@link LEGACY_POWER_UP_ID_BY_CODE} so customised drop
  * weights survive the upgrade (F4 AH-0MUY0GP4Q008LYO7).
+ *
+ * Version 5 halved the per-kill supply dial (level-1 chance `0.18 → 0.09`,
+ * max-level chance `0.05 → 0.025`) and turned the small-asteroid Extra Life
+ * roll off (`0.05 → 0`) (AH-0MW3MLTY3005MIXR). {@link saveRules} persists
+ * the whole blob, so a stored `0.18`/`0.05` would silently keep the old
+ * supply rate at runtime; {@link loadRules} therefore resets
+ * `powerUpDropChanceAtLevel1`, `powerUpDropChanceAtMaxLevel` and
+ * `asteroidExtraLifeDropChance` to the new defaults for any config older
+ * than version 5 (the v2/v3 precedent), while a blob explicitly stamped
+ * version 5 keeps its tuned values.
  */
-export const RULES_SCHEMA_VERSION = 4;
+export const RULES_SCHEMA_VERSION = 5;
 
 // ── Internals ───────────────────────────────────────────────────────
 
@@ -478,6 +530,9 @@ function cloneDefaultRules(): GameRules {
     powerUpDropChanceAtMaxLevel: DEFAULT_RULES.powerUpDropChanceAtMaxLevel,
     levelScalingMaxLevel: DEFAULT_RULES.levelScalingMaxLevel,
     enemyCountCap: DEFAULT_RULES.enemyCountCap,
+    phaseRechargeOverrideSeconds: DEFAULT_RULES.phaseRechargeOverrideSeconds,
+    teleportRechargeOverrideSeconds:
+      DEFAULT_RULES.teleportRechargeOverrideSeconds,
   };
 }
 
@@ -572,6 +627,18 @@ function coerceChanceAtMost(
   const candidate =
     typeof value === 'number' && Number.isFinite(value) ? value : fallback;
   return Math.min(safeCeiling, Math.max(0, candidate));
+}
+
+/**
+ * Coerces a stored override to a usable positive finite number of seconds, or
+ * `null` for the level-derived fallback (AH-0MV82IAYG000WS8B). An absent key,
+ * an explicit `null`, and any non-finite/non-positive value all resolve to
+ * `null`, so existing rules blobs load unchanged.
+ */
+function coerceNullablePositiveNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
 /**
@@ -702,22 +769,33 @@ export function loadRules(): GameRules {
     // Versions 1–3 keyed `powerUpWeights` by the opaque GDD codes
     // (`Shield`–`Mineral Scoop`); version 4 renamed the keys to the canonical snake_case
     // names. Translate legacy keys so customised weights survive the rename.
-    const legacyPowerUpWeights = !isVersionAtLeast(
-      parsed.version,
-      RULES_SCHEMA_VERSION,
-    );
+    // The boundary is the literal historical version 4 — a later bump of
+    // {@link RULES_SCHEMA_VERSION} must not re-run the rename over blobs
+    // that already use the snake_case names.
+    const legacyPowerUpWeights = !isVersionAtLeast(parsed.version, 4);
+    // Version 5 halved the supply dial and turned the asteroid Extra Life roll
+    // off. `saveRules` persists the whole blob, so a stored `0.18`/`0.05`
+    // would silently defeat the change at runtime: reset the three supply
+    // tunables for any config older than version 5 (the v2/v3 precedent).
+    // Blobs stamped version 5 keep their tuned values. The boundary is the
+    // literal historical version 5 so a future bump never re-runs this reset.
+    const legacySupplyDial = !isVersionAtLeast(parsed.version, 5);
     // Level-scaling tunables (AH-0MVLJEE7O008RX9X). Resolve the level-1
     // chance first: the max-level chance is clamped against it so a stored
     // blob can never make the per-kill drop curve rise with level.
-    const powerUpDropChanceAtLevel1 = coerceChance(
-      parsed.powerUpDropChanceAtLevel1,
-      DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1,
-    );
-    const powerUpDropChanceAtMaxLevel = coerceChanceAtMost(
-      parsed.powerUpDropChanceAtMaxLevel,
-      DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
-      powerUpDropChanceAtLevel1,
-    );
+    const powerUpDropChanceAtLevel1 = legacySupplyDial
+      ? DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1
+      : coerceChance(
+          parsed.powerUpDropChanceAtLevel1,
+          DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1,
+        );
+    const powerUpDropChanceAtMaxLevel = legacySupplyDial
+      ? DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL
+      : coerceChanceAtMost(
+          parsed.powerUpDropChanceAtMaxLevel,
+          DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
+          powerUpDropChanceAtLevel1,
+        );
     return {
       powerUpSpawnInterval: coerceInterval(parsed.powerUpSpawnInterval),
       beatBpm: coercePositiveNumber(parsed.beatBpm, DEFAULT_BEAT_BPM),
@@ -758,10 +836,12 @@ export function loadRules(): GameRules {
             parsed.mineralRedropBonusMax,
             DEFAULT_MINERAL_REDROP_BONUS_MAX,
           ),
-      asteroidExtraLifeDropChance: coerceChance(
-        parsed.asteroidExtraLifeDropChance,
-        DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
-      ),
+      asteroidExtraLifeDropChance: legacySupplyDial
+        ? DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE
+        : coerceChance(
+            parsed.asteroidExtraLifeDropChance,
+            DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
+          ),
       sequencedWavesEnabled: coerceBoolean(
         parsed.sequencedWavesEnabled,
         DEFAULT_SEQUENCED_WAVES_ENABLED,
@@ -785,6 +865,12 @@ export function loadRules(): GameRules {
         DEFAULT_ENEMY_COUNT_CAP,
         1,
         1000,
+      ),
+      phaseRechargeOverrideSeconds: coerceNullablePositiveNumber(
+        parsed.phaseRechargeOverrideSeconds,
+      ),
+      teleportRechargeOverrideSeconds: coerceNullablePositiveNumber(
+        parsed.teleportRechargeOverrideSeconds,
       ),
     };
   } catch {

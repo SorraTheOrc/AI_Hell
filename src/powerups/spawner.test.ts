@@ -7,6 +7,12 @@ import {
   WeightedRandomSpawner,
 } from './spawner';
 
+import {
+  DEFAULT_EXTRA_LIFE_WEIGHT,
+  DEFAULT_RULES,
+  POWER_UP_WEIGHT_IDS,
+} from '../core/rules';
+
 // ── Test fixtures ──────────────────────────────────────────────────
 
 const NON_COMBAT: PowerUpId[] = ['speed_boost', 'extra_life', 'magnet'];
@@ -309,5 +315,63 @@ describe('WeightedRandomSpawner: eligibility filter (six-slot drop gating)', () 
     s.setEligibleIds(null);
     const seen = new Set(Array.from({ length: 500 }, () => s.next()));
     expect([...seen].sort()).toEqual([...POOL].sort());
+  });
+});
+
+// ── Extra Life's unchanged share of the shared pool ─────────────────
+//
+// AH-0MW3MLRHL000DKPM halves the per-kill drop **roll** and stops asteroids
+// handing out lives, but deliberately leaves every drop **weight** alone:
+// Extra Life already carries the rarer weight 3 of the 58-point shared pool
+// (≈ 5.17 % of power-up draws), so halving the roll must not double-halve it.
+// These are invariance tests: they are green on both sides of the supply-dial
+// change on purpose, because the weight table is the thing that must not move.
+
+describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKPM)", () => {
+  /** Builds the spawner with the shipped `GameRules.powerUpWeights` table. */
+  function shippedSpawner(seed = 11): WeightedRandomSpawner<PowerUpId> {
+    const pool = [...POWER_UP_WEIGHT_IDS];
+    const spawner = new WeightedRandomSpawner<PowerUpId>(pool, makeSeededRng(seed));
+    for (const id of pool) spawner.setWeight(id, DEFAULT_RULES.powerUpWeights[id]);
+    return spawner;
+  }
+
+  it('keeps Extra Life at weight 3 of the 58-point default pool', () => {
+    const spawner = shippedSpawner();
+    const weights = spawner.getWeights();
+    const total = POWER_UP_WEIGHT_IDS.reduce(
+      (sum, id) => sum + (weights[id] ?? 0),
+      0,
+    );
+
+    expect(DEFAULT_EXTRA_LIFE_WEIGHT).toBe(3);
+    expect(weights.extra_life).toBe(3);
+    expect(total).toBe(58);
+    expect((weights.extra_life ?? 0) / total).toBeCloseTo(3 / 58, 12);
+    expect((weights.extra_life ?? 0) / total).toBeCloseTo(0.0517, 4);
+  });
+
+  it('draws Extra Life at the unchanged ≈ 5.2 % share over many seeded draws', () => {
+    const spawner = shippedSpawner(23);
+    const draws = 20_000;
+    let extraLives = 0;
+    for (let i = 0; i < draws; i += 1) {
+      if (spawner.next() === 'extra_life') extraLives += 1;
+    }
+
+    expect(extraLives / draws).toBeCloseTo(3 / 58, 2);
+  });
+
+  it('leaves every other drop weight at its documented default', () => {
+    // Guard against a "rebalance" that silently changes another weight while
+    // halving the roll (AC2 of AH-0MW10ZVLH005IJRM): only the roll moves.
+    const weights = shippedSpawner().getWeights();
+
+    expect(weights.mystery_ufo).toBe(3);
+    expect(weights.smart_bomb).toBe(2);
+    expect(weights.strike).toBe(2);
+    expect(weights.magnet).toBe(4);
+    expect(weights.shield).toBe(4);
+    expect(weights.mineral_scoop).toBe(4);
   });
 });

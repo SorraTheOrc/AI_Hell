@@ -1083,7 +1083,7 @@ function drawNovaIcon(
 
 /**
  * Mortar icon — a lobbed shell (rounded body) with an arced trajectory and
- * a small blast burst, hinting at the onImpact detonation.
+ * a small blast burst, hinting at the random detonation.
  */
 function drawMortarIcon(
   g: Phaser.GameObjects.Graphics,

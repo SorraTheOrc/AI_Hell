@@ -268,6 +268,6 @@ describe('weapon balance documentation matches the catalogue (AC7)', () => {
     expect(experience).toContain(`targets v${targets.targetsVersion}`);
     // waveReached is the band the measured gate compared against; it may only
     // change together with the artefact (targetsVersion bump + this narrative).
-    expect(experience).toContain('6.46 ± 4.96');
+    expect(experience).toContain('7.83 ± 5.92');
   });
 });

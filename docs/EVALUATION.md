@@ -216,6 +216,28 @@ Use more seeds (`--seeds N`) to tighten the interval. The CI is a *directional
 tuning signal*, not a proof; treat a significant score change as worth
 investigating, then inspect the per-metric breakdown for *why* it changed.
 
+### Aggregate assertions in regression tests
+
+The bot micro-simulation tests follow the same principle: a single
+hand-picked seed is a knife-edge calibration that a small, legitimate feel
+tweak can flip without any change in decision quality. Tests therefore assert
+**distribution-stable** properties — a majority over a documented, explicit
+seed set — instead of one lucky run. The documented seed list (never an RNG and
+never a cherry-picked subset) keeps every run reproducible, and the majority
+rule means one seed flipping cannot fail the suite.
+
+- The style-match sweep (`src/ai/style/evaluation.test.ts`) asserts the styled
+  bot is closer to the human on a majority of its seed set without regressing
+  competence on more than half.
+- The competent-vs-legacy sweep
+  (`src/ai/framework/competent/competentBot.integration.test.ts`) asserts an
+  **objective** advantage (minerals, power-ups, enemies) on a bullet-free
+  scenario over a majority of seeds, so chaotic collision luck cannot distort
+  the comparison.
+
+The single-seed demonstrations remain as readable representative cases; they
+are no longer the sole determinant of the assertion.
+
 ## Same-seed human comparison
 
 `--human recordings/human.jsonl` loads a recording produced by the existing

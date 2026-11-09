@@ -640,7 +640,7 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.effects.isPhased).toBe(false);
   });
 
-  it('AC1 — automatic defence auto-triggers Phase Shift when only phase charges are held', async () => {
+  it('AC1 — automatic defence auto-triggers Phase Shift when the single-use activation is ready', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 100, y: 100 });
     scene.effects.applyCollect('phase_shift');
@@ -651,7 +651,7 @@ describe('CombatScene — shared combat core hook contract', () => {
     scene.runUpdateAutoDefence(0.016);
 
     expect(scene.effects.isPhased).toBe(true);
-    expect(scene.effects.phaseCharges()).toBe(0);
+    expect(scene.effects.hasPhaseShift()).toBe(false);
   });
 
   // ── AC5 — shared bullet-vs-bullet impact path ────────────────────

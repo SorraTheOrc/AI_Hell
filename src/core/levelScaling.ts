@@ -11,14 +11,16 @@
  *    by default) at the campaign maximum (level 10). {@link
  *    applyEnemyCountScaling} applies it to a wave's groups.
  * 2. **Fewer power-ups per kill** — {@link powerUpDropChance} ramps linearly
- *    from **0.18 at level 1** (today's flat `POWER_UP_DROP_CHANCE`) down to
- *    `powerUpDropChanceAtMaxLevel` (**0.05** by default). The small-asteroid
+ *    from **0.09 at level 1** (today's flat `POWER_UP_DROP_CHANCE`, halved
+ *    from the pre-v5 `0.18` by AH-0MW3MLTY3005MIXR) down to
+ *    `powerUpDropChanceAtMaxLevel` (**0.025** by default). The small-asteroid
  *    Extra Life roll scales by the same ratio ({@link extraLifeDropChance}).
  *
  * Level 1 reproduces today's behaviour exactly: multiplier 1, drop chance
- * `POWER_UP_DROP_CHANCE`, Extra Life `asteroidExtraLifeDropChance`. The
- * curves are tuning data (see `GameRules` in `./rules`) — change the defaults
- * there, not here.
+ * `POWER_UP_DROP_CHANCE`, Extra Life `asteroidExtraLifeDropChance` (which is
+ * **0 by default** since AH-0MW3MLTY3005MIXR — asteroids no longer hand out
+ * lives unless a designer re-enables the roll). The curves are tuning data
+ * (see `GameRules` in `./rules`) — change the defaults there, not here.
  *
  * ## Formulas and rules
  *
@@ -60,10 +62,10 @@ import {
 import type { LevelDefinition } from '../waves/Formations';
 
 /**
- * Documented **level-1** per-kill power-up drop chance (0.18) — today's flat
- * rate. Re-exported by `src/scenes/PlayScene.ts` so existing imports keep
- * their meaning; higher levels derive from it through {@link
- * powerUpDropChance}.
+ * Documented **level-1** per-kill power-up drop chance (0.09) — today's flat
+ * rate, halved from `0.18` by AH-0MW3MLTY3005MIXR. Re-exported by
+ * `src/scenes/PlayScene.ts` so existing imports keep their meaning; higher
+ * levels derive from it through {@link powerUpDropChance}.
  */
 export const POWER_UP_DROP_CHANCE = DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1;
 
@@ -134,8 +136,8 @@ export function enemyCountMultiplier(
  * Per-kill power-up drop chance for a campaign level.
  *
  * Linear from `rules.powerUpDropChanceAtLevel1` (default
- * {@link POWER_UP_DROP_CHANCE}, 0.18) at level 1 down to
- * `rules.powerUpDropChanceAtMaxLevel` (default 0.05) at the campaign
+ * {@link POWER_UP_DROP_CHANCE}, 0.09) at level 1 down to
+ * `rules.powerUpDropChanceAtMaxLevel` (default 0.025) at the campaign
  * maximum, so it is monotonically non-increasing across the campaign.
  *
  * @param level - Campaign level (clamped by {@link clampLevel}).

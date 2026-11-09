@@ -572,8 +572,7 @@ one-line deferral reason so the pool can be revisited.
 | Space Invaders mystery UFO | power-up | `PowerUpId: 'mystery_ufo'` / `POWER_UP_CATALOGUE` | — | Shared collector-drone pass (`scenes/core/combatDrone.ts`) | `mysteryUfoLifetime`, `mysteryUfoCapacity`, `mysteryUfoRadius`, `mysteryUfoSpawnInterval` | `GymPowerUpsUtility` |
 
 **Existing seams reused without modification:** `WeaponDefinition.offsets` /
-`sideOffsets`, `AoEDescriptor` (`'onImpact'` retained as the AOE projectile
-path), the `EffectsRegistry`, the shared `curve.ts` exponential-saturation
+`sideOffsets`, `AoEDescriptor`, the `EffectsRegistry`, the shared `curve.ts` exponential-saturation
 curve, the `WeightedRandomSpawner` drop pipeline and `src/powerups/icons.ts`.
 
 **New seams to be created (per child work item):** shared damage-budget collision,

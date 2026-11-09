@@ -32,12 +32,19 @@ import {
   DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES,
   MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING,
 } from '../../src/telemetry/devUpload';
+import {
+  PART_FINAL_HEADER,
+  PART_MARKER_HEADER,
+  PART_OFFSET_HEADER,
+  PART_RUN_KEY_HEADER,
+} from '../../src/telemetry/devStreamProtocol';
 
 import {
   DEFAULT_MAX_UPLOAD_BYTES,
   EVALUATION_LOG_FILE,
   EVALUATION_OUTPUT_DIR,
   EvaluationQueue,
+  PARTS_DIR,
   RECORDINGS_DIR,
   readEvaluationSummary,
   telemetryUploadPlugin,
@@ -836,5 +843,279 @@ describe('readEvaluationSummary', () => {
     const emptyPath = join(tempRoot, 'empty.log');
     writeFileSync(emptyPath, '\n\n');
     expect(readEvaluationSummary(emptyPath)).toBeNull();
+  });
+});
+
+// ── Streaming part protocol (AH-0MW6NI6BW003RJWH) ───────────────────
+
+/** Path of the run's staged part file. */
+function stagedPath(runKey: string): string {
+  return join(tempRoot, RECORDINGS_DIR, PARTS_DIR, `${runKey}.jsonl`);
+}
+
+/** The staged records for a run, or `[]` when nothing is staged. */
+function stagedLines(runKey: string): string[] {
+  const file = stagedPath(runKey);
+  if (!existsSync(file)) return [];
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim().length > 0);
+}
+
+/** POSTs one streamed part and returns the status plus the JSON payload. */
+async function uploadPart(
+  url: string,
+  part: { runKey: string; offset: number; final?: boolean },
+  body: string,
+): Promise<{ status: number; payload: Record<string, unknown> }> {
+  const res = await fetch(`${url}${TELEMETRY_UPLOAD_PATH}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-ndjson',
+      [PART_MARKER_HEADER]: '1',
+      [PART_RUN_KEY_HEADER]: part.runKey,
+      [PART_OFFSET_HEADER]: String(part.offset),
+      ...(part.final ? { [PART_FINAL_HEADER]: '1' } : {}),
+    },
+    body,
+  });
+  return { status: res.status, payload: (await res.json()) as Record<string, unknown> };
+}
+
+/** The completed recordings under `recordings/` (never the `parts/` staging). */
+function sessionRecordings(): string[] {
+  return storedRecordings().filter((name) => name.startsWith('session-'));
+}
+
+describe('streaming parts — staging off the session glob', () => {
+  it('stages a part under recordings/parts/<runKey>.jsonl and stores no recording', async () => {
+    const { url, evaluations } = await startServer();
+    const body = `${header(42)}\n${tickLine(1)}\n`;
+
+    const { status, payload } = await uploadPart(url, { runKey: 'run-a', offset: 0 }, body);
+
+    expect(status).toBe(200);
+    expect(payload).toMatchObject({
+      ok: true,
+      runKey: 'run-a',
+      confirmedCount: 2,
+      appendedCount: 2,
+      finalised: false,
+    });
+    expect(stagedLines('run-a')).toEqual([header(42), tickLine(1)]);
+    // A mid-run session is never mistaken for a completed recording, and it is
+    // never auto-evaluated.
+    expect(sessionRecordings()).toEqual([]);
+    expect(evaluations.requests).toEqual([]);
+  });
+
+  it('appends only the records beyond the claimed offset, in order', async () => {
+    const { url } = await startServer();
+    await uploadPart(url, { runKey: 'run-b', offset: 0 }, `${header(42)}\n${tickLine(1)}\n`);
+
+    const { payload } = await uploadPart(
+      url,
+      { runKey: 'run-b', offset: 2 },
+      `${tickLine(2)}\n${tickLine(3)}\n`,
+    );
+
+    expect(payload).toMatchObject({ confirmedCount: 4, appendedCount: 2 });
+    expect(stagedLines('run-b')).toEqual([
+      header(42),
+      tickLine(1),
+      tickLine(2),
+      tickLine(3),
+    ]);
+  });
+
+  it('keeps two concurrent runs in separate staged files', async () => {
+    const { url } = await startServer();
+    await uploadPart(url, { runKey: 'run-x', offset: 0 }, `${header(1)}\n`);
+    await uploadPart(url, { runKey: 'run-y', offset: 0 }, `${header(2)}\n`);
+
+    expect(stagedLines('run-x')).toEqual([header(1)]);
+    expect(stagedLines('run-y')).toEqual([header(2)]);
+  });
+});
+
+describe('streaming parts — dedupe and gap rules', () => {
+  it('drops an already-stored prefix when a part is retried (lost 2xx)', async () => {
+    const { url } = await startServer();
+    const first = `${header(42)}\n${tickLine(1)}\n`;
+    await uploadPart(url, { runKey: 'run-c', offset: 0 }, first);
+
+    // The client never saw the 2xx, so it re-sends the same part with the same
+    // two records plus two new ones.
+    const { status, payload } = await uploadPart(
+      url,
+      { runKey: 'run-c', offset: 0 },
+      `${first}${tickLine(2)}\n${tickLine(3)}\n`,
+    );
+
+    expect(status).toBe(200);
+    expect(payload).toMatchObject({ confirmedCount: 4, appendedCount: 2 });
+    expect(stagedLines('run-c')).toEqual([
+      header(42),
+      tickLine(1),
+      tickLine(2),
+      tickLine(3),
+    ]);
+  });
+
+  it('refuses a part whose offset is beyond the stored count and reports the count', async () => {
+    const { url } = await startServer();
+    await uploadPart(url, { runKey: 'run-d', offset: 0 }, `${header(42)}\n`);
+
+    const { status, payload } = await uploadPart(
+      url,
+      { runKey: 'run-d', offset: 5 },
+      `${tickLine(1)}\n`,
+    );
+
+    expect(status).toBe(409);
+    expect(payload).toMatchObject({ ok: false, confirmedCount: 1 });
+    expect(String(payload.errors)).toContain('beyond the 1 record(s) already stored');
+    // A refused part is never partially applied.
+    expect(stagedLines('run-d')).toEqual([header(42)]);
+  });
+
+  it('rejects a malformed part body without staging it', async () => {
+    const { url } = await startServer();
+
+    const { status } = await uploadPart(
+      url,
+      { runKey: 'run-e', offset: 0 },
+      `${header(42)}\nnot-json\n`,
+    );
+
+    expect(status).toBe(400);
+    expect(stagedLines('run-e')).toEqual([]);
+  });
+
+  it('rejects a part request without a run key', async () => {
+    const { url } = await startServer();
+    const res = await fetch(`${url}${TELEMETRY_UPLOAD_PATH}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-ndjson',
+        [PART_MARKER_HEADER]: '1',
+        [PART_OFFSET_HEADER]: '0',
+      },
+      body: recording(),
+    });
+
+    expect(res.status).toBe(400);
+    expect(sessionRecordings()).toEqual([]);
+  });
+});
+
+describe('streaming parts — finalisation stores once and evaluates once', () => {
+  it('stores one session file with every record and enqueues exactly one evaluation', async () => {
+    const { url, evaluations } = await startServer();
+    const runKey = 'run-final';
+    await uploadPart(url, { runKey, offset: 0 }, `${header(42)}\n${tickLine(1)}\n`);
+
+    const { status, payload } = await uploadPart(
+      url,
+      { runKey, offset: 2, final: true },
+      `${tickLine(2)}\n`,
+    );
+
+    expect(status).toBe(200);
+    expect(payload).toMatchObject({
+      ok: true,
+      runKey,
+      confirmedCount: 3,
+      appendedCount: 1,
+      finalised: true,
+    });
+    const stored = sessionRecordings();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.startsWith('session-')).toBe(true);
+    const storedLines = readFileSync(
+      join(tempRoot, RECORDINGS_DIR, stored[0]!),
+      'utf8',
+    )
+      .split('\n')
+      .filter((line) => line.trim().length > 0);
+    expect(storedLines).toEqual([header(42), tickLine(1), tickLine(2)]);
+    // The staged part is retired, so a crashed-run partial cannot linger.
+    expect(existsSync(stagedPath(runKey))).toBe(false);
+    expect(payload.storedPath).toBe(`${RECORDINGS_DIR}/${stored[0]}`);
+    // Exactly one evaluation, pointed at the finalised recording.
+    expect(evaluations.requests).toHaveLength(1);
+    expect(evaluations.requests[0]!.args[2]).toBe(
+      join(tempRoot, RECORDINGS_DIR, stored[0]!),
+    );
+  });
+
+  it('is idempotent for a repeated final part (one file, one evaluation)', async () => {
+    const { url, evaluations } = await startServer();
+    const runKey = 'run-final-twice';
+    await uploadPart(url, { runKey, offset: 0 }, `${header(42)}\n${tickLine(1)}\n`);
+    await uploadPart(url, { runKey, offset: 1, final: true }, `${tickLine(2)}\n`);
+
+    const { status, payload } = await uploadPart(
+      url,
+      { runKey, offset: 1, final: true },
+      `${tickLine(2)}\n`,
+    );
+
+    expect(status).toBe(200);
+    expect(payload).toMatchObject({
+      ok: true,
+      confirmedCount: 2,
+      appendedCount: 0,
+      finalised: true,
+    });
+    expect(sessionRecordings()).toHaveLength(1);
+    expect(evaluations.requests).toHaveLength(1);
+  });
+
+  it('refuses to finalise a run with no records (nothing to store or evaluate)', async () => {
+    const { url, evaluations } = await startServer();
+
+    const { status, payload } = await uploadPart(
+      url,
+      { runKey: 'run-empty', offset: 0, final: true },
+      '',
+    );
+
+    expect(status).toBe(400);
+    expect(payload).toMatchObject({ ok: false, confirmedCount: 0 });
+    expect(String(payload.errors)).toContain('No records were staged for run run-empty');
+    // Nothing was stored and nothing was evaluated.
+    expect(sessionRecordings()).toHaveLength(0);
+    expect(evaluations.requests).toHaveLength(0);
+  });
+});
+
+describe('whole-file contract is unchanged by the part protocol (AC3)', () => {
+  it('still stores one session file and enqueues one evaluation for an unmarked upload', async () => {
+    const { url, evaluations } = await startServer();
+
+    const { status, payload } = await upload(url, recording());
+
+    expect(status).toBe(200);
+    expect(payload).toMatchObject({ ok: true, recordCount: 3, runCount: 1 });
+    expect(sessionRecordings()).toHaveLength(1);
+    expect(evaluations.requests).toHaveLength(1);
+    // Nothing was staged for the whole-file path.
+    expect(storedRecordings()).not.toContain(PARTS_DIR);
+  });
+
+  it('ignores unrelated headers and query parameters', async () => {
+    const { url } = await startServer();
+    const res = await fetch(`${url}${TELEMETRY_UPLOAD_PATH}?foo=bar&final=1`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-ndjson',
+        'x-unrelated-header': '1',
+      },
+      body: recording(),
+    });
+
+    expect(res.status).toBe(200);
+    expect(sessionRecordings()).toHaveLength(1);
   });
 });

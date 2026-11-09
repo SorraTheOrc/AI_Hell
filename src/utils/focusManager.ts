@@ -22,6 +22,25 @@
  *   keys themselves and delegate focus keys to the manager instead of
  *   using {@link FocusManager.attachKeyboard}.
  *
+ * ### Optional grid (column-aware) navigation
+ *
+ * A scene may opt in to a two-dimensional navigation model by passing
+ * `{ navigation: 'grid', columns }` to {@link FocusManager.attachKeyboard}
+ * (AH-0MV1BKZ0J00946EX). `columns` is an ordered list of columns, each an
+ * ordered list of registered control indices (left-to-right by column,
+ * top-to-bottom by row). With grid navigation enabled:
+ *   - **ArrowLeft / ArrowRight** move to the adjacent column, wrapping at the
+ *     outer columns. Entering a shorter column clamps to its last valid row
+ *     (there is no per-column row memory).
+ *   - **ArrowUp / ArrowDown** move within the current column, wrapping top ↔
+ *     bottom, and never change column.
+ *   - **Tab / Shift+Tab** keep their linear reading-order cycling.
+ *   - **Enter / Space** activation is unchanged.
+ * The default remains the linear model above, so every other consumer
+ * (`MenuScene`, `GameOverScene`, `PauseScene`, `HelpScene`,
+ * `LeaderboardScene`, `TelemetryConsentScene` and the Hangar War screens) is
+ * untouched.
+ *
  * ## Usage pattern
  *
  * ```ts
@@ -62,6 +81,22 @@ interface FocusControl {
 }
 
 /**
+ * Options for {@link FocusManager.attachKeyboard}.
+ */
+export interface KeyboardNavigationOptions {
+  /**
+   * Navigation model: `'linear'` (default) or `'grid'` (column-aware arrows).
+   */
+  navigation?: 'linear' | 'grid';
+  /**
+   * Ordered columns of registered control indices used by grid navigation.
+   * Each column lists its controls top-to-bottom; columns are ordered
+   * left-to-right. Ignored in linear mode.
+   */
+  columns?: ReadonlyArray<ReadonlyArray<number>>;
+}
+
+/**
  * In-canvas focus manager for keyboard navigation in Phaser scenes.
  *
  * Tracks focusable controls, cycles focus on Tab/arrow keys, activates on
@@ -79,6 +114,12 @@ export class FocusManager {
 
   /** The scene the keyboard listener was attached to (for removal). */
   private _scene: Phaser.Scene | null = null;
+
+  /** Active navigation model (linear by default). */
+  private _navigation: 'linear' | 'grid' = 'linear';
+
+  /** Ordered grid columns of control indices (empty in linear mode). */
+  private _columns: number[][] = [];
 
   /** Optional listener invoked after every focus change (the hex-map detail panel). */
   private _focusListener: (() => void) | null = null;
@@ -264,9 +305,18 @@ export class FocusManager {
    * Handles Tab, Shift+Tab, arrow keys, Enter, and Space. Call once from the
    * scene's `create()` method and let {@link shutdown} tear it down.
    *
+   * Pass `{ navigation: 'grid', columns }` to opt in to column-aware arrow
+   * navigation; the default (`'linear'`) keeps the historical behaviour.
+   *
    * @param scene — the Phaser.Scene that owns these controls.
+   * @param options — optional navigation model and grid columns.
    */
-  attachKeyboard(scene: Phaser.Scene): void {
+  attachKeyboard(
+    scene: Phaser.Scene,
+    options: KeyboardNavigationOptions = {},
+  ): void {
+    this._navigation = options.navigation ?? 'linear';
+    this._columns = (options.columns ?? []).map((column) => [...column]);
     this._scene = scene;
     this._keyHandler = (event: KeyboardEvent) => {
       this.handleKey(event);
@@ -303,6 +353,8 @@ export class FocusManager {
     }
     this._keyHandler = null;
     this._scene = null;
+    this._navigation = 'linear';
+    this._columns = [];
 
     this.controls = [];
     this._focusedIndex = -1;
@@ -314,23 +366,104 @@ export class FocusManager {
   private _handleKey(event: KeyboardEvent): boolean {
     if (this.controls.length === 0) return false;
 
-    if (
-      event.key === 'Tab' ||
-      event.key === 'ArrowDown' ||
-      event.key === 'ArrowRight'
-    ) {
-      this.cycleFocus(event.shiftKey ? -1 : 1);
-      return true;
+    if (this._isGridActive()) {
+      if (event.key === 'Tab') {
+        this.cycleFocus(event.shiftKey ? -1 : 1);
+        return true;
+      }
+      if (event.key === 'ArrowRight') {
+        this._moveGridHorizontally(1);
+        return true;
+      }
+      if (event.key === 'ArrowLeft') {
+        this._moveGridHorizontally(-1);
+        return true;
+      }
+      if (event.key === 'ArrowDown') {
+        this._moveGridVertically(1);
+        return true;
+      }
+      if (event.key === 'ArrowUp') {
+        this._moveGridVertically(-1);
+        return true;
+      }
+    } else {
+      if (
+        event.key === 'Tab' ||
+        event.key === 'ArrowDown' ||
+        event.key === 'ArrowRight'
+      ) {
+        this.cycleFocus(event.shiftKey ? -1 : 1);
+        return true;
+      }
+      if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+        this.cycleFocus(-1);
+        return true;
+      }
     }
-    if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
-      this.cycleFocus(-1);
-      return true;
-    }
+
     if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
       this.activateFocused();
       return true;
     }
     return false;
+  }
+
+  /** Whether grid navigation is configured and usable. */
+  private _isGridActive(): boolean {
+    return this._navigation === 'grid' && this._columns.length > 0;
+  }
+
+  /**
+   * Locates the focused control inside the grid.
+   *
+   * @returns the column and row indices, or `null` when the focused control is
+   *   not part of any configured column.
+   */
+  private _findGridPosition(index: number): { col: number; row: number } | null {
+    for (let col = 0; col < this._columns.length; col++) {
+      const row = this._columns[col].indexOf(index);
+      if (row >= 0) return { col, row };
+    }
+    return null;
+  }
+
+  /**
+   * Moves focus to the adjacent column (wrapping), clamping the row to the
+   * target column's last valid row. Skips empty columns.
+   */
+  private _moveGridHorizontally(delta: 1 | -1): boolean {
+    const position = this._findGridPosition(this._focusedIndex);
+    if (!position) return false;
+
+    const columnCount = this._columns.length;
+    for (let step = 1; step <= columnCount; step++) {
+      const targetCol =
+        ((position.col + delta * step) % columnCount + columnCount) %
+        columnCount;
+      const targetRows = this._columns[targetCol];
+      if (targetRows.length === 0) continue;
+      const targetRow = Math.min(position.row, targetRows.length - 1);
+      this.setFocusedIndex(targetRows[targetRow]);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Moves focus to the adjacent row within the current column (wrapping).
+   * Never changes column.
+   */
+  private _moveGridVertically(delta: 1 | -1): boolean {
+    const position = this._findGridPosition(this._focusedIndex);
+    if (!position) return false;
+
+    const rows = this._columns[position.col];
+    if (rows.length === 0) return false;
+    const targetRow =
+      ((position.row + delta) % rows.length + rows.length) % rows.length;
+    this.setFocusedIndex(rows[targetRow]);
+    return true;
   }
 
   /** Applies the focus style to the control at `index`. */

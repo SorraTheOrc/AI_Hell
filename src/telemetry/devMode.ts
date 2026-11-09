@@ -79,8 +79,9 @@ export function isDevTelemetryBuild(env: DevModeEnv = import.meta.env): boolean 
  * upload path in production.
  *
  * The runtime gate ({@link isDevTelemetryUploadEnabled}) still decides
- * whether an actual upload happens at run end; this loader only decides
- * whether the uploader exists in the build.
+ * whether an actual upload happens (the streamed parts during the run and the
+ * final part at run end); this loader only decides whether the uploader exists
+ * in the build.
  *
  * @returns The uploader in a dev build; `undefined` in a production build.
  */
@@ -89,6 +90,35 @@ export async function loadDevTelemetryUploader(): Promise<DevTelemetryUploader |
   if (!import.meta.env.DEV) return undefined;
   const { uploadDevTelemetry } = await import('./devUpload');
   return uploadDevTelemetry;
+}
+
+/**
+ * Loads the dev-only streaming telemetry uploader factory, or `undefined` when
+ * this build has no dev streaming path at all
+ * (AH-0MW6NI6BW003RJWH, parent AH-0MVJUAADW0033QBD).
+ *
+ * Uses the same static-elimination pattern as
+ * {@link loadDevTelemetryUploader}: Vite replaces `import.meta.env.DEV` in this
+ * literal position, so in a production build the branch is constant and Rollup
+ * removes the dynamic import — the dev-only `devStream` module, the part
+ * protocol and its endpoint never reach the shipped bundle (enforced by
+ * `scripts/check-bundle-hygiene.mjs`). This helper is deliberately the **only**
+ * dynamic-entry point into `devStream`.
+ *
+ * The runtime gate ({@link isDevTelemetryUploadEnabled}) still decides whether
+ * an actual part is sent; this loader only decides whether the streamer exists
+ * in the build.
+ *
+ * @returns The streamer factory in a dev build; `undefined` in a production
+ *   build.
+ */
+export async function loadDevTelemetryStreamer(): Promise<
+  DevTelemetryStreamerFactory | undefined
+> {
+  // Statically replaced by Vite: `false` in a production build, `true` in dev.
+  if (!import.meta.env.DEV) return undefined;
+  const { createDevTelemetryStreamer } = await import('./devStream');
+  return createDevTelemetryStreamer;
 }
 
 /**
@@ -155,6 +185,23 @@ export type DevTelemetryUploader = (options: {
   /** Failure reporter; never thrown to the caller. */
   readonly onError?: (error: unknown) => void;
 }) => Promise<boolean>;
+
+/**
+ * The streaming uploader's public surface, re-declared here (type-only) so the
+ * dev gate module never imports the dev-only streamer at build time.
+ */
+export type {
+  DevTelemetryStreamer,
+  DevTelemetryStreamerOptions,
+} from './devStream';
+
+/**
+ * The streamer factory {@link loadDevTelemetryStreamer} resolves to. A type-only
+ * import of the dev module, so it is erased from every build.
+ */
+export type DevTelemetryStreamerFactory = (
+  options: import('./devStream').DevTelemetryStreamerOptions,
+) => import('./devStream').DevTelemetryStreamer;
 
 /**
  * True when this dev build may **collect** telemetry by default.

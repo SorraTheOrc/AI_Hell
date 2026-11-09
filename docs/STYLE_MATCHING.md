@@ -169,6 +169,24 @@ so the report can show **which** feature moved. It is a directional tuning
 signal, not a perceptual model. Every component is skipped when either side
 lacks a sample, so a featureless run never manufactures a difference.
 
+## Seed-sweep stability
+
+The style match is a deterministic but chaotic micro-simulation: a small,
+legitimate feel tweak (for example the 1–5 % gentler thrust-press reduction in
+AH-0MUYRJQE50021T4A) can flip which of a styled and structured bot is closer on
+a *single* seed because discrete collisions dominate the score. Asserting one
+hand-picked seed therefore turns every feel tuning pass into a re-seeding hunt.
+
+`src/ai/style/evaluation.test.ts` keeps its single-seed demonstrations as
+readable **representative** cases, and additionally asserts the
+distribution-stable property over a documented, explicit, contiguous seed set
+(currently 32 seeds, `0…31`, so every run is reproducible and no RNG is
+involved): the styled bot must be closer to the human on a **majority** of the
+sweep and must not regress competence on more than half of it. A single seed
+flipping cannot fail the suite; only a genuine shift in the distribution can.
+To extend coverage, append seeds to `STABILITY_SEEDS` — never cherry-pick a
+subset that happens to pass.
+
 ## Reproducibility
 
 Everything in the pipeline is a pure function of the recording and the seed:

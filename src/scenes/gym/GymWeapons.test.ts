@@ -1311,8 +1311,6 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
       'onAoeFired',
       'onAoeRandomFired',
       'applyAoeEffect',
-      'onAoeProjectileSpawned',
-      'detonateAoeProjectile',
       'spawnAoeEffectVfx',
       'spawnArcChainVfx',
     ] as const) {

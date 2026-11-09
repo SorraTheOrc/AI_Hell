@@ -15,6 +15,7 @@ import {
   RemoteTelemetrySink,
   createMemoryLineWriter,
   createTelemetrySink,
+  linesToNdjson,
   type TelemetryTransport,
 } from './sinks';
 import { TELEMETRY_SCHEMA_VERSION, type TelemetryRecord } from './schema';
@@ -130,6 +131,79 @@ describe('JSONL sink (AC2/AC6)', () => {
     expect(setItem).not.toHaveBeenCalled();
     expect(sink.read?.()).toContain('"kind":"run_header"');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('JSONL sink batch observer (AH-0MW6NFRQR0062D90, AC5)', () => {
+  it('hands over exactly one batch of NDJSON per flush', () => {
+    const deltas: string[] = [];
+    const sink = new JsonlTelemetrySink(createMemoryLineWriter(), {
+      onFlush: (delta) => deltas.push(delta),
+    });
+
+    sink.write([HEADER]);
+    sink.write([EVENT]);
+
+    expect(deltas).toEqual([`${JSON.stringify(HEADER)}\n`, `${JSON.stringify(EVENT)}\n`]);
+    // The delta is the batch alone, so a streaming uploader never re-sends
+    // records an earlier part already carried.
+    expect(deltas.map((delta) => JSON.parse(delta.trimEnd()))).toEqual([HEADER, EVENT]);
+  });
+
+  it('leaves the buffer accumulating and never clears it mid-run', () => {
+    const writer = createMemoryLineWriter();
+    const sink = new JsonlTelemetrySink(writer, { onFlush: () => {} });
+
+    sink.write([HEADER]);
+    sink.write([EVENT]);
+
+    expect(writer.lines).toHaveLength(2);
+    // The whole run is still readable after both flushes (the dev CLI tooling
+    // and the run-end upload depend on it).
+    expect(sink.read()).toBe(linesToNdjson(writer.lines));
+    expect(sink.read()!.trimEnd().split('\n').map((line) => JSON.parse(line))).toEqual([
+      HEADER,
+      EVENT,
+    ]);
+  });
+
+  it('does not report an empty batch', () => {
+    const onFlush = vi.fn();
+    const sink = new JsonlTelemetrySink(createMemoryLineWriter(), { onFlush });
+
+    sink.write([]);
+
+    expect(onFlush).not.toHaveBeenCalled();
+    expect(sink.read()).toBe('');
+  });
+
+  it('is not invoked by a reset, which only clears the buffer', () => {
+    const onFlush = vi.fn();
+    const sink = new JsonlTelemetrySink(createMemoryLineWriter(), { onFlush });
+
+    sink.write([HEADER]);
+    sink.reset();
+
+    expect(onFlush).toHaveBeenCalledTimes(1);
+    expect(sink.read()).toBe('');
+  });
+
+  it('is wired from the factory sink dependencies', () => {
+    const deltas: string[] = [];
+    const sink = createTelemetrySink(config({ sink: 'jsonl' }), {
+      onFlush: (delta) => deltas.push(delta),
+    });
+
+    sink.write([HEADER, EVENT]);
+
+    expect(deltas).toEqual([`${JSON.stringify(HEADER)}\n${JSON.stringify(EVENT)}\n`]);
+  });
+
+  it('is simply absent when no observer is injected', () => {
+    const sink = new JsonlTelemetrySink(createMemoryLineWriter());
+
+    expect(() => sink.write([HEADER])).not.toThrow();
+    expect(sink.read()).toBe(`${JSON.stringify(HEADER)}\n`);
   });
 });
 

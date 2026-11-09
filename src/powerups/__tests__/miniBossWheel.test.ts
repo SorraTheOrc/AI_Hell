@@ -349,6 +349,29 @@ describe('owned non-rewardable kinds (AH-0MW231NRP004HAT5)', () => {
     expect(MODULE_CODE).not.toMatch(/===\s*['"]teleport['"]/);
     expect(MODULE_CODE).toContain('isRewardableWhenOwned');
   });
+
+  it('keeps a permanently-owned Phase Shift on the wheel and routes its grant through the shared seam (AH-0MW6QY3NP001NZKE)', () => {
+    // Reward decision: unlike Teleport, an owned Phase Shift stays
+    // rewardable — a grant readies the one activation (timer 0) instead of
+    // banking a charge, so the wheel keeps its wedge and its bonus payout.
+    expect(isRewardableWhenOwned('phase_shift')).toBe(true);
+
+    expect(buildWheelWedges(['phase_shift']).map((wedge) => wedge.id)).toEqual([
+      'phase_shift',
+      MINI_BOSS_WHEEL_BONUS_ID,
+    ]);
+
+    // The bonus slot grants its +1, and the shared reward seam applies it as a
+    // permanent grant — the store's grant path is what readies the single-use
+    // activation (asserted end-to-end against the real store in
+    // `__tests__/choice.test.ts`).
+    const bonus = drawWheelOutcome(0, ['phase_shift']);
+    expect(bonus.gains).toEqual([{ id: 'phase_shift', levels: 1 }]);
+
+    const { registry } = makeApplyFakes();
+    applyWheelOutcome(bonus, registry as unknown as EffectsRegistry, null);
+    expect(registry.applyCollect).toHaveBeenCalledWith('phase_shift', true);
+  });
 });
 
 // ── Shared six-slot pool coverage ───────────────────────────────────
@@ -537,5 +560,57 @@ describe('wheel outcome application', () => {
     );
 
     expect(registry.applyCollect).toHaveBeenCalledWith('bomb', true);
+  });
+});
+
+// ── Extra Life leaves the wheel (AH-0MW3MLSTW007U8BD) ───────────────
+//
+// Test-first half of parent AH-0MW10ZVLH005IJRM AC4: the mini-boss wheel is a
+// **reward surface**, so a run that permanently owns Extra Life must get no
+// Extra Life wedge and no Extra Life level — including from the bonus slot
+// that upgrades "every owned kind". Extra Life stays a working field pickup.
+// Written red-first in AH-0MW3MLSTW007U8BD and activated (plain `it`) by the
+// exclusion implementation AH-0MW3MLV2V001NWBR — only the wrapper changed,
+// never the assertions.
+describe('Extra Life gets no mini-boss reward (AH-0MW3MLSTW007U8BD)', () => {
+  it('builds no Extra Life wedge for a run that owns it', () => {
+    expect(
+      buildWheelWedges(['extra_life', 'shield']).map((wedge) => wedge.id),
+    ).toEqual(['shield', MINI_BOSS_WHEEL_BONUS_ID]);
+
+    // Owning only Extra Life leaves the bonus wedge alone; the launcher then
+    // takes its empty-owned hold-full-style fallback instead of spinning a
+    // dud (parent AC4 — a mini-boss always pays out).
+    expect(
+      buildWheelWedges(['extra_life']).map((wedge) => wedge.id),
+    ).toEqual([MINI_BOSS_WHEEL_BONUS_ID]);
+  });
+
+  it('grants no Extra Life level from the bonus (every owned kind) slot', () => {
+    const outcome = drawWheelOutcome(0, ['extra_life', 'spread', 'shield']);
+
+    expect(outcome.slotKind).toBe('bonus');
+    expect(gainIds(outcome)).not.toContain('extra_life');
+    // Every *other* owned kind still gains its level.
+    expect(new Set(gainIds(outcome))).toEqual(
+      new Set<DropId>(['spread', 'shield']),
+    );
+  });
+
+  it('grants no Extra Life level on any of the 100 slots', () => {
+    for (let slot = 0; slot < MINI_BOSS_WHEEL_SLOT_COUNT; slot += 1) {
+      expect(
+        gainIds(drawWheelOutcome(slot, ['extra_life', 'spread', 'shield'])),
+        `slot ${slot}`,
+      ).not.toContain('extra_life');
+    }
+  });
+
+  it('expresses the exclusion as shared data, never an id branch in the wheel', () => {
+    // The exclusion must be declared once (a catalogue flag or a single
+    // exported exclusion set) and consumed here, exactly like the retired
+    // `rewardableWhenOwned` opt-out above — no `id === 'extra_life'` special
+    // case in the wheel core.
+    expect(MODULE_CODE).not.toMatch(/===\s*['"]extra_life['"]/);
   });
 });

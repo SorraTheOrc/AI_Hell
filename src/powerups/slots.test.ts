@@ -34,6 +34,7 @@ import {
   filterOptionsWithinSlotPool,
   isWithinSlotPool,
   resolveSlotState,
+  SLOTS_FULL_EXEMPT_IDS,
   type PowerUpSlotState,
 } from './slots';
 import type { WeaponId } from '../utils/weapons';
@@ -257,6 +258,19 @@ describe('resolveSlotState (AC1 — one shared pool of six held kinds)', () => {
 // ── AC2/AC3/AC5 — eligibility ───────────────────────────────────────
 
 describe('drop eligibility (AC3 below the cap, AC2+AC5 at the cap)', () => {
+  /**
+   * The `availableWhenSlotsFull` entries that are actually **pooled**.
+   *
+   * Extra Life keeps its slot exemption (a picked-up life still never occupies
+   * a slot) but is a `fieldPickupOnly` kind now, so it is never part of the
+   * hold-full pool and therefore never an eligible *offer* at the cap
+   * (parent AH-0MW10ZVLH005IJRM AC4). Derived from the shared data, not a
+   * second hand-written list.
+   */
+  const POOLED_EXEMPT_IDS = SLOTS_FULL_EXEMPT_IDS.filter((id) =>
+    CHOICE_POOL.includes(id),
+  );
+
   it('keeps the whole catalogue eligible below the cap (AC3 — no behaviour change)', () => {
     const state = resolveSlotState(ownedPowerUps('shield'), []);
 
@@ -274,7 +288,7 @@ describe('drop eligibility (AC3 below the cap, AC2+AC5 at the cap)', () => {
 
     expect(state.isFull).toBe(true);
     expect(eligibleForSlotPool(CHOICE_POOL, state).sort()).toEqual(
-      [...owned, 'extra_life', 'mystery_ufo'].sort(),
+      [...owned, ...POOLED_EXEMPT_IDS].sort(),
     );
   });
 
@@ -323,8 +337,10 @@ describe('drop eligibility (AC3 below the cap, AC2+AC5 at the cap)', () => {
     expect(state.isFull).toBe(true);
     expect(eligible.length).toBeGreaterThan(0);
     expect(eligible).toContain('spread');
-    expect(eligible).toContain('extra_life');
-    expect(eligible).toContain('mystery_ufo');
+    for (const id of POOLED_EXEMPT_IDS) expect(eligible).toContain(id);
+    // Extra Life keeps its slot exemption for field pickups but is never a
+    // pooled offer (parent AH-0MW10ZVLH005IJRM AC4).
+    expect(eligible).not.toContain('extra_life');
     expect(eligible).not.toContain('shield');
   });
 

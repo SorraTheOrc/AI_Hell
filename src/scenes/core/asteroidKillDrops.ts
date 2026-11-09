@@ -21,6 +21,15 @@
  * The chance is additive to — not instead of — the generic per-kill drop pool
  * and the mineral kill-drop rule, which are unchanged.
  *
+ * **Shipped default is off (0).** AH-0MW3MLTY3005MIXR halved the per-kill
+ * supply dial and turned this roll off so lives come from deliberate play
+ * rather than rock-grinding. The rule, the `GameRules`
+ * `asteroidExtraLifeDropChance` key and its clamping/persistence are
+ * deliberately **retained** (operator decision, AH-0MW10ZVLH005IJRM): a
+ * designer re-enables rocks dropping lives with one config value, and the
+ * game and every asteroid-bearing gym pick it up through this single shared
+ * implementation.
+ *
  * @module scenes/core/asteroidKillDrops
  */
 

@@ -17,12 +17,12 @@
  *   (base 1, cap 3) before popping (timed)
  * - **Bomb** — ranged periodic enemy-bullet clear (no enemy damage); a
  *   field pickup is a single explosion, a hold-full reward pulses
- * - **Phase Shift** — charge-based automatic pass-through (parent
- *   AH-0MUIYX1EE008FVS8): collecting grants level-derived auto-activation
- *   charges into a **finite recharging pool** (cap 3, level-derived recharge
- *   time); the shared danger feed triggers a 1.5 s pass-through when 3+
- *   hostile bodies/bullets close within 40 px; the hold-full reward adds
- *   exactly one charge to that pool — it is never an unlimited supply
+ * - **Phase Shift** — a **single-use** automatic pass-through (parent
+ *   AH-0MW6O1690007P2SL): one activation, spent by the shared danger feed to
+ *   trigger a 1.5 s pass-through when 3+ hostile bodies/bullets close within
+ *   40 px, then a single level-derived recharge timer (30 s → 10 s) before it
+ *   is ready again. A field pickup or hold-full reward **readies** it (timer
+ *   0) instead of banking a count — it is never an unlimited supply
  *   (AH-0MV82I7TX0009JMT).
  * - **Teleport** — a **single-use** escape (parent AH-0MVY096RT006QMF4): no
  *   stored-charge count and no FIFO pool, just a readiness timer (60 s at base
@@ -227,7 +227,8 @@ export interface PowerUpEntry {
    *
    * A consumable holds a **charge pool**: one charge buys one event, charges
    * regenerate on a level-derived interval, and a hold-full reward adds a
-   * charge rather than a level.
+   * charge rather than a level. A kind that opts into {@link singleUse} holds
+   * exactly one activation instead of a pool.
    */
   consumable?: boolean;
   /**
@@ -242,8 +243,8 @@ export interface PowerUpEntry {
    * regenerating ceiling for these kinds is the level-resolved cap only while
    * `permanentGrants(id) > 0`, else `0`. A permanently owned kind keeps the
    * spend → empty → regenerate → reuse cycle. Phase Shift and Teleport leave
-   * this unset, so their shipped pickup regeneration (AH-0MV82I7TX0009JMT) is
-   * unchanged.
+   * this unset: a single-use kind's one activation recharges on its
+   * level-derived interval regardless of how it was acquired.
    */
   regenRequiresOwnership?: boolean;
   /**
@@ -251,11 +252,12 @@ export interface PowerUpEntry {
    * multi-charge pool (parent AH-0MVY096RT006QMF4).
    *
    * **Defaults to `false`** — an absent flag means the kind keeps the shared
-   * charge-pool model. Teleport opts in: it holds no stored-charge count, its
-   * charge cap is always `1`, and its state is binary (ready / recharging on
-   * the level-derived interval). The cap is read by
-   * `resolveConsumableChargeCap`, so no store, HUD or scene needs an
-   * `id === 'teleport'` branch.
+   * charge-pool model. Teleport and Phase Shift opt in: they hold no
+   * stored-charge count, their charge cap is always `1`, and their state is
+   * binary (ready / recharging on the level-derived interval). The store
+   * resolves the per-kind readiness scalar through this flag, and the cap is
+   * read by `resolveConsumableChargeCap`, so no store, HUD or scene needs an
+   * `id === 'teleport'` / `id === 'phase_shift'` branch.
    */
   singleUse?: boolean;
   /**
@@ -275,6 +277,30 @@ export interface PowerUpEntry {
    * permanently available opts out: Teleport is the only such entry today.
    */
   rewardableWhenOwned?: boolean;
+  /**
+   * Whether this entry is a **field-pickup-only** power-up: it is never
+   * offered by a **reward surface**, unowned or owned (parent
+   * AH-0MW10ZVLH005IJRM AC4).
+   *
+   * **Defaults to `false`** — an absent flag means the entry may be offered by
+   * the hold-full choice and the mini-boss reward: as a base `★ New` entry
+   * while unowned, and as its owned level-up/charge offer afterwards. A kind
+   * that opts in is excluded from **every** reward surface while staying a
+   * completely ordinary field pickup: the shared drop pool still spawns it,
+   * its collection effect is unchanged and a field pickup still levels it.
+   *
+   * This is broader than {@link PowerUpEntry.rewardableWhenOwned}, which only
+   * retires the **owned** offer. A field-pickup-only kind produces no reward
+   * offer at all: no `CHOICE_POOL` entry, no owned `power-up-level`/
+   * `power-up-charge` and no mini-boss wheel wedge — so the bonus slot's
+   * "every owned kind" payout skips it too.
+   *
+   * The flag is catalogue data, read through {@link isFieldPickupOnly} (and
+   * the derived {@link FIELD_PICKUP_ONLY_POWER_UP_IDS} set), so no reward
+   * builder, mini-boss wheel or scene branches on an id. Extra Life is the
+   * only opt-in today.
+   */
+  fieldPickupOnly?: boolean;
   /**
    * Whether this entry remains drawable/offerable once all
    * `POWER_UP_SLOT_CAP` permanent slots are occupied (parent
@@ -341,16 +367,28 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'phase_shift',
     name: 'Phase Shift',
     description:
-      'Stores up to 3 auto-activation charges that regenerate on a level-derived timer; one charge phases you past danger. A hold-full reward adds a charge, not a level.',
+      'One activation phases you past danger automatically, then recharges on a level-derived timer (30 s → 10 s); a pickup or reward makes it ready again.',
     // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
     duration: 1.5,
     // Balance tuning: the defensive kinds use the shield-style 15 s window
     // for the temporary level a field pickup grants (AH-0MVUGI3Q4009MW6A).
     temporaryWindow: 15,
-    // Charge model: one charge per auto-activation, regenerating on the
-    // level-derived `phaseRechargeRate` interval (30 s → 10 s)
-    // (AH-0MVTQMREN009DSFW).
+    // Charge model: a **single-use** activation (parent AH-0MW6O1690007P2SL,
+    // mirroring Teleport) — no stored-charge count and no FIFO pool. Spending
+    // the one ready activation starts a level-derived `phaseRechargeRate`
+    // interval (30 s → 10 s); a field pickup or hold-full reward readies it.
+    //
+    // Reward surface (AH-0MW6QY3NP001NZKE, parent desired behaviour #4): a
+    // permanently-owned Phase Shift **stays rewardable**, so this entry
+    // deliberately does NOT set `rewardableWhenOwned: false` the way Teleport
+    // does. The reward has a real effect — a hold-full grant readies the one
+    // activation (timer 0, via `PowerUpLevelStore.grantConsumableCharge`)
+    // instead of banking a charge, so the offer skips the remaining recharge
+    // wait and never tricks the player with a second stored activation. Both
+    // reward builders therefore keep the kind: a `power-up-charge` option in
+    // the hold-full choice and a wedge on the mini-boss wheel.
     consumable: true,
+    singleUse: true,
   },
   teleport: {
     id: 'teleport',
@@ -381,8 +419,17 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // after the 10 s weapon-style window (AH-0MVUGI3Q4009MW6A).
     temporaryWindow: 10,
     // Exempt: an extra life never opens a seventh permanent effect kind, so
-    // it stays available once the six slots are full (Q3 answer (a)).
+    // it stays available once the six slots are full (Q3 answer (a)). After
+    // the reward-surface exclusion below this only speaks for the *field
+    // pickup* side of the kind: no reward surface offers it any more.
     availableWhenSlotsFull: true,
+    // Field-pickup-only: Extra Life is removed from every **reward surface**
+    // (parent AH-0MW10ZVLH005IJRM AC4) — the hold-full choice pool, its owned
+    // level-up offer and the mini-boss wheel — while remaining a working
+    // field pickup (still in the shared drop pool, still +1 life on
+    // collection, still levelled by a pickup). See
+    // `PowerUpEntry.fieldPickupOnly`.
+    fieldPickupOnly: true,
   },
   magnet: {
     id: 'magnet',
@@ -580,8 +627,49 @@ export function isRewardableWhenOwned(id: PowerUpId): boolean {
 }
 
 /**
- * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full
- * choice and the demo bot's life premium (AH-0MV03GXZQ00801T4 · AC3).
+ * The power-up ids that are **field-pickup-only**, derived from the
+ * catalogue's `fieldPickupOnly` flag in catalogue order (parent
+ * AH-0MW10ZVLH005IJRM AC4).
+ *
+ * An absent flag is the documented `false` default, so only an explicit
+ * `fieldPickupOnly: true` entry appears here. Derived at module load, so the
+ * set can never drift from the entries and no reward builder, mini-boss wheel
+ * or scene spells it out again. Extra Life is the only member today.
+ */
+export const FIELD_PICKUP_ONLY_POWER_UP_IDS: readonly PowerUpId[] = (
+  Object.values(POWER_UP_CATALOGUE) as PowerUpEntry[]
+)
+  .filter((entry) => entry.fieldPickupOnly === true)
+  .map((entry) => entry.id);
+
+/**
+ * Whether a power-up kind is a **field-pickup-only** kind — never offered by
+ * any reward surface, unowned or owned (parent AH-0MW10ZVLH005IJRM AC4).
+ *
+ * Reads the catalogue flag through the derived
+ * {@link FIELD_PICKUP_ONLY_POWER_UP_IDS} set: `false` unless the entry
+ * explicitly opts in, so a newly added catalogue entry is rewardable by
+ * default. The single source of the "field pickup only" rule — the hold-full
+ * choice pool, the owned level-up/charge offer and the mini-boss wheel all
+ * read it instead of comparing ids. A field-pickup-only kind is untouched on
+ * the field side: the shared drop pool still spawns it and its collection
+ * effect is unchanged.
+ *
+ * @param id - The power-up kind being considered for a reward surface.
+ */
+export function isFieldPickupOnly(id: PowerUpId): boolean {
+  return FIELD_PICKUP_ONLY_POWER_UP_IDS.includes(id);
+}
+
+/**
+ * The Extra Life drop id (GDD §4.5). The single source every field-pickup
+ * consumer (the shared drop pool, the AI content layer) reads instead of
+ * spelling `'extra_life'` out again.
+ *
+ * It is deliberately **not** referenced by any reward surface: Extra Life is
+ * field-pickup-only (`POWER_UP_CATALOGUE.extra_life.fieldPickupOnly`, parent
+ * AH-0MW10ZVLH005IJRM AC4), so the hold-full choice, its owned offer and the
+ * mini-boss wheel never consult it.
  */
 export const EXTRA_LIFE_DROP_ID: PowerUpId = POWER_UP_CATALOGUE.extra_life.id;
 

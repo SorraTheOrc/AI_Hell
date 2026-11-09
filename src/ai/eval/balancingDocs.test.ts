@@ -262,13 +262,22 @@ describe('Level-scaling curves and evidence are documented (AH-0MVHT1M6O003PU7P)
     expect(doc).toContain('## Level-scaling curves and evidence (AH-0MVHT1M6O003PU7P)');
     expect(doc).toContain('### Scaling table (levels 1–10)');
     // The table's endpoints are the tuning contract: 1.00× → 2.00× counts,
-    // 0.18 → 0.05 per-kill drop chance, level 1 = the identity.
-    expect(doc).toContain('| 1 | 1.000× | 0.1800 |');
-    expect(doc).toContain('| 5 | 1.444× | 0.1222 |');
-    expect(doc).toContain('| 10 | 2.000× | 0.0500 |');
+    // 0.09 → 0.025 per-kill drop chance (halved from 0.18/0.05 by
+    // AH-0MW10ZVLH005IJRM), level 1 = the identity.
+    expect(doc).toContain('| 1 | 1.000× | 0.0900 |');
+    expect(doc).toContain('| 5 | 1.444× | 0.0611 |');
+    expect(doc).toContain('| 10 | 2.000× | 0.0250 |');
     expect(doc).toContain('src/core/levelScaling.ts');
     expect(doc).toContain('applyEnemyCountScaling');
     expect(doc).toContain('powerUpDropChance');
+  });
+
+  it('documents the asteroid Extra Life roll as off at every level (AH-0MW10ZVLH005IJRM)', () => {
+    // The asteroid column is 0 at every level, so the table can never show a
+    // live rock-drops-lives chance while the shipped default is off.
+    expect(doc).toContain('| 1 | 1.000× | 0.0900 | 1.000 | 0 |');
+    expect(doc).toContain('| 10 | 2.000× | 0.0250 | 0.278 | 0 |');
+    expect(doc).toMatch(/asteroid Extra Life[^\n]*(off|0)/i);
   });
 
   it('documents the baseline vs post-change evidence with commands and seed set', () => {
@@ -337,22 +346,60 @@ describe('Campaign fidelity boundary is documented (AH-0MVD1RO7D000AC4X)', () =>
   });
 });
 
+describe('Weapon fire output in the fidelity boundary is documented (AH-0MW5DVEPL0029S5C)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+  const boundary = doc.slice(
+    doc.indexOf('## Fidelity boundary and limitations'),
+    doc.indexOf('## Testing'),
+  );
+
+  it('moves weapon fire output from "simplified" to "modelled" (AC1)', () => {
+    expect(boundary.length).toBeGreaterThan(0);
+    expect(boundary).toMatch(/player weapon fire output/i);
+    for (const lever of ['cadence', 'pattern', 'lifetime', 'size', 'damage', 'AOE']) {
+      expect(boundary).toContain(lever);
+    }
+    // The ownership context and the shared resolvers are the authority, not a
+    // fixed fire constant.
+    expect(boundary).toContain('ownership context');
+    expect(boundary).toContain('resolveWeaponDefinition');
+    // The retired claim is replaced, not duplicated: no reader can still find
+    // "the arena's auto-fire is fixed" in the boundary.
+    expect(boundary).not.toMatch(/auto-fire is fixed/i);
+  });
+
+  it('keeps the explicit list of what the fire model still does not model (AC1)', () => {
+    for (const gap of [
+      'timed field-pickup weapons',
+      'homing arcs',
+      'chain jumps',
+      'cluster split trajectories',
+    ]) {
+      expect(boundary).toContain(gap);
+    }
+  });
+});
+
 describe('Weapon-trim measured before/after gate is documented (AH-0MVWAVM03002FLLL)', () => {
   const doc = fs.readFileSync(DOC_PATH, 'utf8');
-  const section = doc.slice(
-    doc.indexOf('## Weapon 40 % trim / flattened curve — measured before/after gate'),
+  const start = doc.indexOf(
+    '## Weapon 40 % trim / flattened curve — measured before/after gate',
   );
+  const section = start >= 0 ? doc.slice(start) : '';
   const hasSection = section.length > 0;
 
   it('records the gate as its own section naming the item and both sides of the comparison (parent AC6)', () => {
     expect(hasSection).toBe(true);
     expect(section).toContain('AH-0MVWAVM03002FLLL');
     expect(section).toContain('AH-0MVRENEME004FS8T');
+    // The weapon-fire model the re-run depends on, and this docs update.
+    expect(section).toContain('AH-0MW1OLFM20060MOE');
+    expect(section).toContain('AH-0MW5DVEPL0029S5C');
     // The before/after provenance: the two commits and the dated artefact paths.
     expect(section).toContain('47609296');
     expect(section).toContain('ffd79aa2');
-    expect(section).toContain('eval-output/baseline-2026-11-03/');
-    expect(section).toContain('eval-output/post-change-2026-11-04/');
+    expect(section).toContain('eval-output/rerun-baseline-2026-11-07/');
+    expect(section).toContain('eval-output/rerun-post-trim-2026-11-07/');
     expect(section).toContain('npm run evaluate -- --batch --games 100');
   });
 
@@ -371,26 +418,45 @@ describe('Weapon-trim measured before/after gate is documented (AH-0MVWAVM03002F
     expect(section).toMatch(/campaign mode/);
     expect(section).toMatch(/seeds `1\.\.100`/);
     expect(section).toContain('18000');
+    // The re-run's measured deltas — not the old blind-harness zeroes.
+    expect(section).toContain('| 8.11 | 8.09 |');
+    expect(section).toContain('| 1.86 | 1.72 |');
   });
 
-  it('records why the metrics cannot move, so the zero delta is not over-read (AC3)', () => {
-    // The structural reason: the arena fires on a fixed constant and imports
-    // only the *type* from the weapon catalogue.
-    expect(section).toContain('FIRE_INTERVAL_TICKS');
-    expect(section).toMatch(/type-only import|imports only the\s+\*\*type\*\*/);
-    // The measured sensitivity probe, not an inference.
-    expect(section).toMatch(/sensitivity probe/i);
-    expect(section).toContain('/tmp/probe/control');
-    expect(section).toContain('/tmp/probe/edited');
-    // The carried-forward limitation and the follow-up.
+  it('states that weapon output is modelled and the re-run sees it (AC2/AC3)', () => {
+    // The present-tense capability claim that replaced "the gate is blind".
+    expect(section).toMatch(/now\s+\*{0,2}models weapon output/i);
+    // The structural reason the numbers move: ownership context + shared catalogue.
+    expect(section).toContain('ownership context');
+    expect(section).toContain('WEAPON_CATALOGUE');
+    // The measured evidence, not an inference: 69 / 100 per-run hashes move.
+    expect(section).toMatch(/69\s*\/\s*100/);
+    for (const hash of [
+      'cc943ec4',
+      'fc0af8b9',
+      '919486c3',
+      '4da435d2',
+      '745a2844',
+      'cfa0948f',
+    ]) {
+      expect(section).toContain(hash);
+    }
+    // The inverse contract now pins sensitivity, so the claim cannot rot.
+    expect(section).toContain('src/ai/eval/arenaWeaponSensitivity.test.ts');
+    // The carried-forward limitation and the follow-up provenance.
     expect(section).toMatch(/human play-check is required/i);
     expect(section).toContain('discovered-from:AH-0MVRENEME004FS8T');
+    // The old claims are replaced, not left beside the new ones.
+    expect(section).not.toContain('### Why the numbers cannot move');
+    expect(section).not.toMatch(/cannot see weapon output/i);
+    expect(section).not.toMatch(/blind to weapon-output levers/i);
+    expect(section).not.toMatch(/does not model weapon output/i);
   });
 
   it('records the no-re-baseline decision with the per-band deltas as evidence (AC4)', () => {
     expect(section).toMatch(/deliberately NOT\s+re-baselined/);
     expect(section).toContain('validate-experience');
-    expect(section).toMatch(/no band moved\s+materially/);
+    expect(section).toMatch(/no band moved materially|no band left its tolerance/i);
     expect(section).toMatch(/in-band/);
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "ai-hell",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "private": true,
   "type": "module",
   "description": "AI Hell — a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
@@ -23,6 +23,7 @@
     "ring-timing": "node scripts/ring-timing.mjs",
     "perf:measure": "node scripts/measure-performance.mjs",
     "perf:measure:electron": "node scripts/measure-performance.mjs --host electron",
+    "perf:sweep": "node scripts/perf-sweep.mjs",
     "validate-experience": "node scripts/validate-experience.mjs",
     "capture:install": "playwright install chromium",
     "generate:mode-ledger": "node scripts/generate-mode-ledger.mjs",

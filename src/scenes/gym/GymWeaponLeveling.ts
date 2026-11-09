@@ -95,6 +95,7 @@ const LEVELING_DROP_ORDER: readonly WeaponDropId[] = [
   'railgun',
   'shard_swarm',
   'heavy_slug',
+  'wave_laser',
 ];
 
 /** Deterministic drop spawn position (top-centre, easy to fly into). */

@@ -28,7 +28,7 @@ experience from a bot batch and update the GDD to match.** Concretely:
 - [`docs/Game Design Document.md`](./Game%20Design%20Document.md) §2.7 states
   the same experience in prose, so the narrative and the artifact agree.
 
-### The committed baseline (targets v1)
+### The committed baseline (targets v2)
 
 | Field | Value |
 |---|---|
@@ -36,9 +36,9 @@ experience from a bot batch and update the GDD to match.** Concretely:
 | Mode | full shipped campaign (batch default) |
 | Tick budget | 18 000 per game (5 simulated min at 60 Hz) |
 | State sampling | every 5th tick (`--sample-every 5`; events, and so every metric, are recorded every tick) |
-| Recorded on | the `dev` tree at commit `dc47d782` |
+| Recorded on | the `dev` tree at commit `6ecbab23` |
 | Balance schema | `BALANCE_STATISTICS_SCHEMA_VERSION` 1 |
-| Targets version | `targetsVersion` 1, artifact `schemaVersion` 1 |
+| Targets version | `targetsVersion` 2, artifact `schemaVersion` 1 |
 
 ### The bands
 
@@ -50,8 +50,8 @@ experience from a bot batch and update the GDD to match.** Concretely:
 | `survivalSeconds` | 300.00 | 0.00 | 300.00 ± 30.00 → 270.00 – 330.00 |
 | `mineralsCollected` | 18.00 | 0.00 | 18.00 ± 1.80 → 16.20 – 19.80 |
 | `upgradesSelected` | 2.00 (per run) | — (per-key map) | 2.00 ± 0.50 → 1.50 – 2.50 |
-| `waveReached` | 6.46 | 2.48 | 6.46 ± 4.96 → 1.50 – 11.42 |
-| `levelReached` | 1.15 | 0.36 | 1.15 ± 0.71 → 0.44 – 1.86 |
+| `waveReached` | 7.83 | 2.96 | 7.83 ± 5.92 → 1.91 – 13.75 |
+| `levelReached` | 1.81 | 0.84 | 1.81 ± 1.69 → 0.12 – 3.50 |
 | `avoidableHits` | 0.00 | 0.00 | 0.00 ± 0.50 → −0.50 – 0.50 |
 
 ### The tolerance rule
@@ -185,7 +185,7 @@ the expected green case):
 ```
 # Experience validation — bot:competent
 
-- Targets: v1 (baseline: competent, 100 games, 18000 ticks, campaign=true)
+- Targets: v2 (baseline: competent, 100 games, 18000 ticks, campaign=true)
 - Measured: 100 run(s), balance schema v1
 - Result: **PASS** (6/6 metrics in band)
 
@@ -194,8 +194,8 @@ the expected green case):
 | survival (s) | 300.00 | 270.00 – 330.00 (±30.00) | 0.00 (0.0 %) | in-band |
 | minerals collected | 18.00 | 16.20 – 19.80 (±1.80) | 0.00 (0.0 %) | in-band |
 | upgrades selected / run | 2.00 | 1.50 – 2.50 (±0.50) | 0.00 (0.0 %) | in-band |
-| wave reached | 6.46 | 1.50 – 11.42 (±4.96) | 0.00 (0.0 %) | in-band |
-| level reached | 1.15 | 0.44 – 1.86 (±0.71) | 0.00 (0.0 %) | in-band |
+| wave reached | 7.83 | 1.91 – 13.75 (±5.92) | 0.00 (0.0 %) | in-band |
+| level reached | 1.81 | 0.12 – 3.50 (±1.69) | 0.00 (0.0 %) | in-band |
 | avoidable hits | 0.00 | -0.50 – 0.50 (±0.50) | 0.00 | in-band |
 ```
 

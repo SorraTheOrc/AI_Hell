@@ -240,10 +240,11 @@ function expectPermanentGrantMidWindowReverts(id: PowerUpId): void {
 //
 // Driven through the registry's real expiry path (`tick`), not a manual
 // `clearTemporary`: a consumable is a resource, so reverting the level must
-// leave lives / charges untouched, and a long run must never expire or
-// auto-consume them. Teleport is deliberately absent: since
-// AH-0MVY096RT006QMF4 it is a **readiness state** tied to being held, so a
-// pickup-only Teleport honestly ends with its level window (parent AC5).
+// leave lives untouched, and a long run must never expire or auto-consume
+// them. Teleport and Phase Shift are deliberately absent: since
+// AH-0MVY096RT006QMF4 / AH-0MW6O1690007P2SL they are **readiness states**
+// tied to being held, so a pickup-only ability honestly ends with its level
+// window (parent AC5).
 
 describe('consumables survive the temporary-level expiry (AH-0MVUGI4WG008HU3M AC1)', () => {
   const CONSUMABLES: ReadonlyArray<{
@@ -251,7 +252,6 @@ describe('consumables survive the temporary-level expiry (AH-0MVUGI4WG008HU3M AC
     resource: (store: PowerUpLevelStore) => number;
   }> = [
     { id: 'extra_life', resource: (store) => store.lives() },
-    { id: 'phase_shift', resource: (store) => store.phaseCharges() },
   ];
 
   for (const { id, resource } of CONSUMABLES) {
@@ -274,6 +274,32 @@ describe('consumables survive the temporary-level expiry (AH-0MVUGI4WG008HU3M AC
       // consumable: only the level had a timer, the resource never does.
       reg.tick(600);
       expect(resource(store)).toBe(granted);
+    });
+  }
+
+  for (const id of ['phase_shift', 'teleport'] as const) {
+    it(`${id}: a pickup-only readiness ends with its level window`, () => {
+      const store = new PowerUpLevelStore();
+      const reg = new EffectsRegistry(store);
+
+      reg.applyCollect(id, false);
+      expect(store.getEffectiveLevel(id)).toBe(1);
+      expect(
+        id === 'phase_shift' ? store.hasPhaseShift() : store.hasTeleport(),
+      ).toBe(true);
+
+      reg.tick(expiryTick(id, 0));
+
+      // The level window closed and the ability is no longer held: the ready
+      // activation cannot outlive it, and a long tick never resurrects it.
+      expect(store.getEffectiveLevel(id)).toBe(0);
+      expect(
+        id === 'phase_shift' ? store.hasPhaseShift() : store.hasTeleport(),
+      ).toBe(false);
+      reg.tick(600);
+      expect(
+        id === 'phase_shift' ? store.hasPhaseShift() : store.hasTeleport(),
+      ).toBe(false);
     });
   }
 });

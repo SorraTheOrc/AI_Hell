@@ -2,10 +2,16 @@
  * Game-side dev telemetry uploader (AH-0MVBMRK6X0069QDI, parent
  * AH-0MVBHRLY8004BGDN).
  *
- * The game half of the dev-mode auto-upload flow: at run end the run's
- * in-memory telemetry buffer holds the recording (see `sinks.ts` /
+ * The **whole-file** half of the dev-mode auto-upload flow: at run end the
+ * run's in-memory telemetry buffer holds the whole recording (see `sinks.ts` /
  * `isDevTelemetryCollectionEnabled`), and this module delivers that content to
- * the dev server the page was served from. The server side — the Vite
+ * the dev server the page was served from in one request.
+ *
+ * It is the fallback delivery path — used when the dev streaming uploader
+ * (`src/telemetry/devStream.ts`) could not be loaded — and it owns the pieces
+ * the streaming sender shares: the endpoint, the body content type, the 8 MiB
+ * CDP-message cap (`checkDevUploadSize` / `devUploadMessageBytes`) and the
+ * actionable over-cap skip line. The server side — the Vite
  * `POST /api/telemetry/upload` middleware — is a separate child (F5).
  *
  * Design constraints, all pinned by `devUpload.test.ts`:
@@ -133,6 +139,12 @@ export interface DevUploadFetchResponse {
   readonly ok: boolean;
   /** HTTP status code. */
   readonly status: number;
+  /**
+   * Parses the JSON response body, when the implementation can (the streaming
+   * uploader reads the server-authoritative record count from it). Optional so
+   * the whole-file path and the tests keep their minimal stand-in.
+   */
+  readonly json?: () => Promise<unknown>;
 }
 
 /** The minimal `fetch` surface the uploader needs, for injection in tests. */
@@ -205,13 +217,9 @@ export async function uploadDevTelemetry(
     const maxMessageBytes =
       options.maxMessageBytes ??
       resolveDevUploadMaxMessageBytes(env.VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES);
-    const bytes = utf8ByteLength(body);
-    // Cheap first pass: escaping only ever grows the payload, so a raw body
-    // larger than the whole budget is already over it (and never needs the
-    // escaping allocation below) — `bytes` is then a lower bound on the message.
-    const messageBytes = bytes > maxMessageBytes ? bytes : devUploadMessageBytes(body);
-    if (messageBytes > maxMessageBytes) {
-      (onSkip ?? reportSkip)({ bytes, messageBytes, maxMessageBytes });
+    const over = checkDevUploadSize(body, maxMessageBytes);
+    if (over) {
+      (onSkip ?? reportDevUploadSkip)(over);
       return false;
     }
 
@@ -263,13 +271,53 @@ export function devUploadMessageBytes(body: string): number {
   return utf8ByteLength(JSON.stringify(body)) + DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES;
 }
 
+/**
+ * Measures an upload body against the CDP message cap.
+ *
+ * Shared by the whole-file run-end upload and the streaming part sender so
+ * both apply exactly the same bound: a body whose escaped CDP message would
+ * exceed the cap is never posted. Returns `null` when the body fits.
+ *
+ * @param body - The upload body.
+ * @param maxMessageBytes - The cap, in bytes of CDP message.
+ */
+export function checkDevUploadSize(
+  body: string,
+  maxMessageBytes: number,
+): DevUploadSkip | null {
+  const bytes = utf8ByteLength(body);
+  // Cheap first pass: escaping only ever grows the payload, so a raw body
+  // larger than the whole budget is already over it (and never needs the
+  // escaping allocation) — `bytes` is then a lower bound on the message.
+  const messageBytes = bytes > maxMessageBytes ? bytes : devUploadMessageBytes(body);
+  return messageBytes > maxMessageBytes ? { bytes, messageBytes, maxMessageBytes } : null;
+}
+
+/**
+ * Resolves the applied CDP message cap for a caller: an explicit override,
+ * else the environment's configured value, else the default — always clamped
+ * to {@link MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING}.
+ *
+ * @param env - Environment slice carrying the configured cap.
+ * @param override - Explicit cap; wins when provided.
+ */
+export function resolveDevUploadLimit(
+  env: DevModeEnv & DevUploadCapEnv = import.meta.env,
+  override?: number,
+): number {
+  if (override !== undefined) {
+    return Math.min(override, MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING);
+  }
+  return resolveDevUploadMaxMessageBytes(env.VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES);
+}
+
 /** Size of a string in UTF-8 bytes (the unit the cap is expressed in). */
 function utf8ByteLength(text: string): number {
   return typeof TextEncoder === 'function' ? new TextEncoder().encode(text).length : text.length;
 }
 
 /** One actionable line for a skipped upload (the default `onSkip`). */
-function reportSkip({ bytes, maxMessageBytes }: DevUploadSkip): void {
+export function reportDevUploadSkip({ bytes, maxMessageBytes }: DevUploadSkip): void {
   const formatBytes = (value: number): string =>
     value >= 1024 * 1024
       ? `${(value / (1024 * 1024)).toFixed(1)} MiB (${value} bytes)`

@@ -45,6 +45,29 @@ describe('GymWeaponLeveling', () => {
     expect(player.getWeaponDef('spread').levelBulletSize).toBeGreaterThan(1);
   });
 
+  it('AC — the round-robin drop cycle includes wave_laser (AH-0MV1EDVNF004MTYN)', async () => {
+    const scene = await boot();
+    const seen = new Set<string>();
+    // Drops spawn on the `WEAPON_DROP_LIFETIME` (7 s) cadence; the freshly
+    // spawned drop is readable until the next tick. Cycle at most one full
+    // round-robin lap and assert the wave laser appears in it.
+    for (let i = 0; i < 20 && !seen.has('wave_laser'); i++) {
+      scene.tick(7.1);
+      for (const drop of scene.getDrops()) seen.add(drop.weaponType);
+    }
+    expect(seen.has('wave_laser')).toBe(true);
+  });
+
+  it('AC — collecting a wave_laser drop levels the wave laser', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+
+    const drop = scene.spawnDrop('wave_laser', player.x, player.y);
+    scene.tick(0.1);
+    expect(drop.absorbing).toBe(true);
+    expect(player.getWeaponLevel('wave_laser')).toBe(1);
+  });
+
   it('AC2 — the MVP variables change the shared core output at higher levels', async () => {
     const scene = await boot();
     const player = scene.getPlayer()!;
@@ -129,8 +152,7 @@ describe('GymWeaponLeveling', () => {
     expect(texts.some((t) => t.startsWith('Weapon: rapid Lvl '))).toBe(true);
   });
 
-  it('AC1/AC5 — the hold-full choice permanently levels an owned weapon', async () => {
-    const scene = await boot();
+  it('AC1/AC5 — the hold-full choice permanently levels an owned weapon', async () => {    const scene = await boot();
     const player = scene.getPlayer()!;
 
     // Own a weapon permanently (level 1) so a level-up offer exists.

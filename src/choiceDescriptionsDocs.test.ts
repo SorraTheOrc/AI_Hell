@@ -56,6 +56,12 @@ describe('hold-full option descriptions are documented (AH-0MV2N2591007UGPD)', (
     expect(readme).toMatch(/two-line shared-catalogue description area/i);
     expect(readme).toContain('getHelpDescription');
   });
+  it('the GDD §4.4.1 and README record the field-pickup-only exclusion (AH-0MW10ZVLH005IJRM)', () => {
+    // The option block can never offer Extra Life, so the docs that describe
+    // the offered options must say the pool excludes field-pickup-only kinds.
+    expect(holdFullChoiceSection(gdd)).toMatch(/field-pickup-only/i);
+    expect(readme).toMatch(/field-pickup-only/i);
+  });
 });
 
 /**

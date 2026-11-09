@@ -97,6 +97,47 @@ describe('checkBundleHygiene', () => {
     );
   });
 
+  // Every string of the dev-only streaming part protocol (AH-0MW6NMQPQ0076BE4)
+  // must fail the check on its own: the streamer and its framing constants are
+  // statically eliminated from a production build, so none may appear in `dist/`.
+  const PART_PROTOCOL_MARKERS = [
+    'x-telemetry-part',
+    'x-telemetry-run-key',
+    'x-telemetry-offset',
+    'x-telemetry-final',
+    'recordings/parts',
+  ] as const;
+
+  it.each(PART_PROTOCOL_MARKERS)(
+    'fails when the dev-only part-protocol string %s leaks into the bundle',
+    (marker) => {
+      writeFileSync(
+        join(distDir, 'assets', 'index.js'),
+        `const marker = "${marker}";`,
+      );
+
+      const result = checkBundleHygiene({ distDir });
+
+      expect(result.ok).toBe(false);
+      expect(result.violations.map((violation) => violation.marker)).toContain(marker);
+    },
+  );
+
+  it('leaves production-reachable telemetry strings legal in the bundle', () => {
+    // The local JSONL sink key ships with the telemetry framework (it is the
+    // production `jsonl` sink too), so only the dev-only protocol strings are
+    // forbidden.
+    writeFileSync(
+      join(distDir, 'assets', 'index.js'),
+      'const key = "ai_hell_telemetry_jsonl"; const sink = "jsonl";',
+    );
+
+    const result = checkBundleHygiene({ distDir });
+
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
   it('reports a missing bundle as a failure', () => {
     rmSync(distDir, { recursive: true, force: true });
 

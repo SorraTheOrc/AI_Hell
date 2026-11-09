@@ -9,6 +9,16 @@
  * **F1 (AH-0MVLJEE7O008RX9X) has since flipped every `it.fails` back to
  * `it`**: the contract is now enforced as a normal green test.
  *
+ * **Halved supply dial (AH-0MW3MLRHL000DKPM).** The per-kill curve was halved
+ * (0.18 → 0.09 at level 1, 0.05 → 0.025 at level 10). The assertions that
+ * pinned the old endpoints were rewritten **in place** (this file owns that
+ * contract, AH-0MVLJCYGW001TRB3) and re-wrapped in `it.fails` so the suite
+ * stayed green until the production defaults changed; the implementation item
+ * (AH-0MW3MLTY3005MIXR) has now flipped them back to `it`. Tests that pin
+ * behaviour which must *not* change (the ≤ 30 % late-level ratio,
+ * `dropChanceRatio`, count scaling) stayed plain `it` and are green on both
+ * sides of the change.
+ *
  * The module is loaded through a non-literal dynamic import on purpose: a
  * static `import './levelScaling'` would fail `tsc --noEmit` (and therefore
  * the build) on pre-change HEAD, when the module does not exist yet.
@@ -17,10 +27,10 @@
  *
  * `src/core/levelScaling.ts` — Phaser-free, pure, no I/O:
  *
- * - `POWER_UP_DROP_CHANCE = 0.18` — the documented **level-1** per-kill
- *   power-up drop chance (today's flat value). It stays importable from
- *   `src/scenes/PlayScene.ts` (as a re-export) so existing imports keep their
- *   meaning.
+ * - `POWER_UP_DROP_CHANCE = 0.09` — the documented **level-1** per-kill
+ *   power-up drop chance (the base of the curve, halved from 0.18 by
+ *   AH-0MW3MLRHL000DKPM). It stays importable from `src/scenes/PlayScene.ts`
+ *   (as a re-export) so existing imports keep their meaning.
  * - `LEVEL_SCALING_MAX_LEVEL = 10` — the far end of the campaign range (the
  *   campaign spans levels 1–10).
  * - `clampLevel(level)` — resolves an arbitrary caller value to a campaign
@@ -31,9 +41,10 @@
  *   campaign maximum, **linear** in between. The trailing `rules` argument is
  *   optional and defaults to `DEFAULT_RULES`, so the one-argument form pins
  *   the shipped curve.
- * - `powerUpDropChance(level, rules?)` — `POWER_UP_DROP_CHANCE` (0.18) at
- *   level 1, `powerUpDropChanceAtMaxLevel` (0.05) at the campaign maximum,
- *   linear in between (monotonically non-increasing).
+ * - `powerUpDropChance(level, rules?)` — `POWER_UP_DROP_CHANCE` (0.09) at
+ *   level 1, `powerUpDropChanceAtMaxLevel` (0.025) at the campaign maximum,
+ *   linear in between (monotonically non-increasing), i.e. half the former
+ *   value at **every** level of the 1–10 campaign.
  * - `dropChanceRatio(level, rules?)` — `powerUpDropChance(level) /
  *   powerUpDropChance(1)`; exactly `1` at level 1 and `1` when the level-1
  *   chance is 0 (documented guard against `NaN`).
@@ -57,7 +68,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_RULES, type GameRules } from './rules';
+import {
+  DEFAULT_EXTRA_LIFE_WEIGHT,
+  DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1,
+  DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
+  DEFAULT_RULES,
+  POWER_UP_WEIGHT_IDS,
+  type GameRules,
+} from './rules';
 
 /** A wave group as seen by the scaling helper (the real one is `WaveGroup`). */
 interface ScalingGroup {
@@ -115,9 +133,12 @@ function vGroup(count: number): ScalingGroup {
 describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () => {
   // ── Level-1 identity and documented endpoints ─────────────────────
 
-  it('exposes 0.18 as the level-1 per-kill drop chance', async () => {
+  it('exposes 0.09 as the level-1 per-kill drop chance', async () => {
+    // `POWER_UP_DROP_CHANCE` is the documented **level-1 base** of the curve
+    // (re-exported by `src/scenes/PlayScene.ts`), halved from 0.18.
     const scaling = await levelScaling();
-    expect(scaling.POWER_UP_DROP_CHANCE).toBe(0.18);
+    expect(scaling.POWER_UP_DROP_CHANCE).toBe(0.09);
+    expect(DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1).toBe(0.09);
     expect(scaling.powerUpDropChance(1)).toBe(
       scaling.POWER_UP_DROP_CHANCE,
     );
@@ -140,9 +161,10 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     expect(scaling.enemyCountMultiplier(10)).toBe(2);
   });
 
-  it('reaches a 0.05 per-kill drop chance at level 10', async () => {
+  it('reaches a 0.025 per-kill drop chance at level 10', async () => {
     const scaling = await levelScaling();
-    expect(scaling.powerUpDropChance(10)).toBeCloseTo(0.05, 10);
+    expect(DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL).toBe(0.025);
+    expect(scaling.powerUpDropChance(10)).toBeCloseTo(0.025, 10);
   });
 
   // ── Linearity and monotonicity ────────────────────────────────────
@@ -164,14 +186,35 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     }
   });
 
-  it('ramps the per-kill drop chance linearly from 0.18 to 0.05', async () => {
+  it('ramps the per-kill drop chance linearly from 0.09 to 0.025', async () => {
     const scaling = await levelScaling();
-    // 0.18 + (0.05 - 0.18) * (level - 1) / 9
+    // 0.09 + (0.025 - 0.09) * (level - 1) / 9
     expect(scaling.powerUpDropChance(5)).toBeCloseTo(
-      0.18 - (0.13 * 4) / 9,
+      0.09 - (0.065 * 4) / 9,
       10,
     );
-    expect(scaling.powerUpDropChance(2)).toBeCloseTo(0.18 - (0.13 * 1) / 9, 10);
+    expect(scaling.powerUpDropChance(2)).toBeCloseTo(
+      0.09 - (0.065 * 1) / 9,
+      10,
+    );
+    expect(scaling.powerUpDropChance(9)).toBeCloseTo(
+      0.09 - (0.065 * 8) / 9,
+      10,
+    );
+  });
+
+  it('halves the per-kill drop chance at every campaign level', async () => {
+    const scaling = await levelScaling();
+    // The contract is *exactly half the former curve at every level*, not
+    // just at the endpoints: former(level) = 0.18 + (0.05 - 0.18) * t with
+    // t = (level - 1) / 9 over the 1–10 campaign.
+    for (let level = 1; level <= 10; level += 1) {
+      const t = (level - 1) / 9;
+      const former = 0.18 + (0.05 - 0.18) * t;
+      expect(scaling.powerUpDropChance(level)).toBeCloseTo(former / 2, 12);
+    }
+    // An intermediate level, pinned by value as well as by the formula.
+    expect(scaling.powerUpDropChance(5)).toBeCloseTo(0.0611111, 6);
   });
 
   it('never increases the per-kill drop chance across levels 1–10', async () => {
@@ -279,16 +322,40 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     }
   });
 
+  it('keeps Extra Life at ≈ 0.47 % per kill at level 1 despite the halved roll', async () => {
+    // AC2 of AH-0MW10ZVLH005IJRM: Extra Life's *share* of power-up draws is
+    // untouched (weight 3 of the 58-point shared pool), so its absolute
+    // per-kill chance simply halves with the roll: 0.09 × 3/58 ≈ 0.47 %.
+    const scaling = await levelScaling();
+    const poolWeights = Object.values(DEFAULT_RULES.powerUpWeights);
+    const poolTotal = poolWeights.reduce((sum, weight) => sum + weight, 0);
+
+    expect(DEFAULT_EXTRA_LIFE_WEIGHT).toBe(3);
+    expect(poolTotal).toBe(58);
+    expect(poolWeights).toHaveLength(POWER_UP_WEIGHT_IDS.length);
+
+    const share = DEFAULT_EXTRA_LIFE_WEIGHT / poolTotal;
+    const perKill = scaling.powerUpDropChance(1) * share;
+    expect(share).toBeCloseTo(3 / 58, 12);
+    // 0.09 × 3/58 ≈ 0.004655 — i.e. ≈ 0.47 % per kill, half the former 0.93 %.
+    expect(perKill).toBeCloseTo(0.09 * (3 / 58), 12);
+    expect(perKill).toBeCloseTo(0.004655, 6);
+  });
+
   it('honours a tuned Extra Life base chance and never returns NaN', async () => {
     const scaling = await levelScaling();
     // The Extra Life base is already a shipable GameRules field (0.05 default).
+    // Note: the Extra Life *ratio* (0.025 / 0.09 === 0.05 / 0.18) is invariant
+    // under the halving, so this test is green on both sides of the change —
+    // only the absolute per-kill chance moves (pinned above).
     const tuned: GameRules = {
       ...DEFAULT_RULES,
       asteroidExtraLifeDropChance: 0.4,
     } as unknown as GameRules;
     expect(scaling.extraLifeDropChance(1, tuned)).toBe(0.4);
+    // The ratio is the halved curve's own ratio: 0.025 / 0.09.
     expect(scaling.extraLifeDropChance(10, tuned)).toBeCloseTo(
-      0.4 * (0.05 / 0.18),
+      0.4 * (0.025 / 0.09),
       10,
     );
     // Documented guard: a zero level-1 chance yields ratio 1, not NaN.

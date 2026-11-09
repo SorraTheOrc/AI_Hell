@@ -72,6 +72,13 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
+    // Hermetic by default: a scene whose dev streamer is active must never
+    // POST to (and back off against) a real dev server. The upload tests below
+    // stub `fetch` with their own spy, which replaces this one.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200 })),
+    );
     localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
@@ -82,6 +89,7 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
     booted?.game.destroy(true);
     booted = null;
     localStorage.clear();
+    vi.unstubAllGlobals();
   });
 
   /** Steps the stopped game until `predicate` holds (or fails loudly). */
@@ -501,23 +509,62 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
    * upload body is exactly the buffer content the dev-gated accessor exposes
    * (AH-0MVIRYGD1000JVY3). The uploader reads the setting at run end, so
    * applying it afterwards is the state the run-end hook sees.
+   *
+   * The sink's post-flush observer is the scene's own seam, so the dev
+   * streaming uploader receives every flushed batch exactly as it does in a
+   * real run (AH-0MW6NI6BW003RJWH).
    */
-  async function bootWithMemoryBuffer(shareTelemetryDev: boolean): Promise<PlayScene> {
+  async function bootWithMemoryBuffer(
+    shareTelemetryDev: boolean,
+    batch: { batchSize?: number } = {},
+  ): Promise<PlayScene> {
     saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
     simTime = 0;
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     play.setTelemetryRecorder(
-      new BufferedTelemetryRecorder(new JsonlTelemetrySink(createMemoryLineWriter()), {
-        capacity: 8192,
-        batchSize: 8192,
-        sampleRate: 1,
-      }),
+      new BufferedTelemetryRecorder(
+        new JsonlTelemetrySink(createMemoryLineWriter(), {
+          onFlush: play.getTelemetryBatchObserver(),
+        }),
+        {
+          capacity: 8192,
+          batchSize: batch.batchSize ?? 8192,
+          sampleRate: 1,
+        },
+      ),
     );
     restartAndSettle(booted.game, { seed: SEED });
     saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev });
     return play;
+  }
+
+  /** A streamed part request, as the dev uploader sent it. */
+  interface StreamedPart {
+    readonly url: string;
+    readonly headers: Record<string, string>;
+    readonly body: string;
+  }
+
+  /** The part requests recorded so far, in send order. */
+  function streamedParts(
+    uploadFetch: ReturnType<typeof uploadFetchSpy>,
+  ): StreamedPart[] {
+    return uploadFetch.mock.calls.map(([url, init]) => ({
+      url,
+      headers: init.headers as Record<string, string>,
+      body: init.body,
+    }));
+  }
+
+  /** Parses a part body into its records. */
+  function partRecords(body: string): TelemetryRecord[] {
+    return body
+      .trimEnd()
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as TelemetryRecord);
   }
 
   /** Ram the final-life ship into a live enemy: synchronously ends the run. */
@@ -537,7 +584,7 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
     booted!.game.step(simTime, STEP_MS);
   }
 
-  it('dev+on — posts the run buffer at run end and still reaches GameOverScene', async () => {
+  it('dev+on — streams the run as parts and finalises once at run end', async () => {
     const play = await bootWithMemoryBuffer(true);
     const uploadFetch = uploadFetchSpy();
     vi.stubGlobal('fetch', uploadFetch);
@@ -547,34 +594,187 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
     stepUntil('GameOverScene active', () => booted!.game.scene.isActive('GameOverScene'));
 
     await vi.waitFor(
-      () => expect(uploadFetch).toHaveBeenCalledTimes(1),
+      () => {
+        const parts = streamedParts(uploadFetch).filter(
+          (part) => part.headers['x-telemetry-part'] === '1',
+        );
+        expect(parts.some((part) => part.headers['x-telemetry-final'] === '1')).toBe(true);
+      },
       { timeout: 5000 },
     );
-    const [url, init] = uploadFetch.mock.calls[0]!;
-    expect(url).toBe('/api/telemetry/upload');
-    expect(init).toMatchObject({
-      method: 'POST',
-      headers: { 'content-type': 'application/x-ndjson' },
-    });
-    // The body is this run's records, read straight out of the in-memory
-    // buffer: exactly one run_header, ticks, and the run_end event.
-    const records = init.body
-      .trimEnd()
-      .split('\n')
-      .map((line) => JSON.parse(line) as TelemetryRecord);
+
+    const parts = streamedParts(uploadFetch);
+    // Every request is a marked part on the existing dev endpoint.
+    expect(parts.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(parts.map((part) => part.url))).toEqual(
+      new Set(['/api/telemetry/upload']),
+    );
+    for (const part of parts) {
+      expect(part.headers['x-telemetry-part']).toBe('1');
+      expect(part.headers['content-type']).toBe('application/x-ndjson');
+    }
+    // Exactly one final part, and it is the last one: run end finalises once.
+    const finals = parts.filter((part) => part.headers['x-telemetry-final'] === '1');
+    expect(finals).toHaveLength(1);
+    expect(parts[parts.length - 1]).toBe(finals[0]);
+
+    // The records tile the run exactly once: one header, ticks, one run_end.
+    const records = parts.flatMap((part) => partRecords(part.body));
     expect(records.filter((record) => record.kind === 'run_header')).toHaveLength(1);
     expect(records[0]).toMatchObject({ kind: 'run_header', runSeed: SEED });
     expect(records.some((record) => record.kind === 'tick')).toBe(true);
     expect(
-      records.some((record) => record.kind === 'event' && record.event === 'run_end'),
-    ).toBe(true);
-    // The dev-gated accessor exposes the same buffer, and no telemetry reached
-    // storage (AC1/AC5).
-    expect(window.__aiHellTelemetry?.read()).toBe(init.body);
+      records.filter((record) => record.kind === 'event' && record.event === 'run_end'),
+    ).toHaveLength(1);
+
+    // The run key is derived from the stored run header's start time and seed,
+    // so parts can never be attributed to another run.
+    const header = records[0] as { startedAt: number };
+    expect(parts[0]!.headers['x-telemetry-run-key']).toBe(`${header.startedAt}-${SEED}`);
+    // Offsets are the confirmed cumulative counts, starting at zero.
+    expect(parts[0]!.headers['x-telemetry-offset']).toBe('0');
+    expect(finals[0]!.headers['x-telemetry-offset']).toBe(String(records.length));
+
+    // The page buffer is never cleared: the dev-gated accessor still returns
+    // the whole run after run end (AC2/AC3).
+    const buffer = window.__aiHellTelemetry?.read();
+    expect(buffer).toBe(parts.map((part) => part.body).join(''));
+    expect(partRecords(buffer!)).toEqual(records);
     expect(telemetryStorageKeys()).toEqual([]);
-    // The scene transition still happened alongside the upload.
+    // The scene transition still happened alongside the streaming.
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
+  it('dev+on — parts reach the server during the run, before run end', async () => {
+    const play = await bootWithMemoryBuffer(true, { batchSize: 16 });
+    const uploadFetch = uploadFetchSpy();
+    vi.stubGlobal('fetch', uploadFetch);
+
+    // Play a stretch of the run without ending it: enough records to cross the
+    // 16-record batch size several times, draining the fire-and-forget bridge
+    // between stretches so each flush reaches the server separately.
+    for (let chunk = 0; chunk < 4; chunk += 1) {
+      for (let i = 0; i < 20; i += 1) {
+        simTime += STEP_MS;
+        booted!.game.step(simTime, STEP_MS);
+      }
+      await drainMicrotasks();
+    }
+
+    await vi.waitFor(
+      () => expect(streamedParts(uploadFetch).length).toBeGreaterThanOrEqual(2),
+      { timeout: 5000 },
+    );
+    // The run is still live: these parts arrived mid-run, which is what bounds
+    // the loss from a reload (AC1).
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    expect(booted!.game.scene.isActive('GameOverScene')).toBe(false);
+    expect(
+      streamedParts(uploadFetch).some(
+        (part) => part.headers['x-telemetry-final'] === '1',
+      ),
+    ).toBe(false);
+
+    endRun(play);
+    stepUntil('GameOverScene active', () => booted!.game.scene.isActive('GameOverScene'));
+    await vi.waitFor(
+      () =>
+        expect(
+          streamedParts(uploadFetch).filter(
+            (part) => part.headers['x-telemetry-final'] === '1',
+          ).length,
+        ).toBe(1),
+      { timeout: 5000 },
+    );
+
+    // Concatenated, the mid-run parts plus the final part hold each record of
+    // the run exactly once — and the whole run is still in the page buffer.
+    const records = streamedParts(uploadFetch).flatMap((part) => partRecords(part.body));
+    expect(records.filter((record) => record.kind === 'run_header')).toHaveLength(1);
+    expect(records.filter((record) => record.kind === 'tick').length).toBeGreaterThan(16);
+    expect(partRecords(window.__aiHellTelemetry!.read()!)).toEqual(records);
+  });
+
+  it('a new run gets a fresh run key and an empty buffer (no cross-run mixing)', async () => {
+    const play = await bootWithMemoryBuffer(true);
+    const uploadFetch = uploadFetchSpy();
+    vi.stubGlobal('fetch', uploadFetch);
+
+    // Run 1: play and end it, so its run is fully streamed and finalised.
+    endRun(play);
+    stepUntil('GameOverScene active after run 1', () =>
+      booted!.game.scene.isActive('GameOverScene'),
+    );
+    await vi.waitFor(
+      () =>
+        expect(
+          streamedParts(uploadFetch).filter(
+            (part) => part.headers['x-telemetry-final'] === '1',
+          ).length,
+        ).toBe(1),
+      { timeout: 5000 },
+    );
+
+    const runOneParts = streamedParts(uploadFetch);
+    const runOneKey = runOneParts[0]!.headers['x-telemetry-run-key'];
+    expect(runOneKey).toBeDefined();
+    const runOneRecords = runOneParts.flatMap((part) => partRecords(part.body));
+    expect(runOneRecords.filter((record) => record.kind === 'run_header')).toHaveLength(1);
+
+    // Run 2: a fresh start (different seed), after run 1 finished.
+    const playTwo = restartAndSettle(booted!.game, { seed: SEED + 1 });
+    await drainMicrotasks();
+    endRun(playTwo);
+    stepUntil('GameOverScene active after run 2', () =>
+      booted!.game.scene.isActive('GameOverScene'),
+    );
+    await vi.waitFor(
+      () =>
+        expect(
+          streamedParts(uploadFetch).filter(
+            (part) => part.headers['x-telemetry-final'] === '1',
+          ).length,
+        ).toBe(2),
+      { timeout: 5000 },
+    );
+
+    const runTwoParts = streamedParts(uploadFetch).filter(
+      (part) => part.headers['x-telemetry-run-key'] !== runOneKey,
+    );
+    expect(runTwoParts.length).toBeGreaterThanOrEqual(2);
+    const runTwoKey = runTwoParts[0]!.headers['x-telemetry-run-key'];
+    expect(runTwoKey).toBeDefined();
+    expect(runTwoKey).not.toBe(runOneKey);
+    // A new run starts from a zero watermark: run 1's confirmed count is not
+    // inherited, so no record is skipped and none is re-sent.
+    expect(runTwoParts[0]!.headers['x-telemetry-offset']).toBe('0');
+    expect(
+      runTwoParts.every((part) => part.headers['x-telemetry-run-key'] === runTwoKey),
+    ).toBe(true);
+
+    const runTwoRecords = runTwoParts.flatMap((part) => partRecords(part.body));
+    const runTwoHeaders = runTwoRecords.filter((record) => record.kind === 'run_header');
+    expect(runTwoHeaders).toHaveLength(1);
+    expect((runTwoHeaders[0] as { runSeed: number }).runSeed).toBe(SEED + 1);
+
+    // No run-1 body is re-sent as part of run 2 (empty finalisation bodies are
+    // shared by every run, so compare the parts that carry records), and the
+    // page buffer was reset at startRun: it holds the second run only, so a
+    // crashed run's records can never be merged into a later one.
+    const runTwoBodies = new Set(
+      runTwoParts.map((part) => part.body).filter((body) => body.length > 0),
+    );
+    for (const part of runOneParts) {
+      if (part.body.length > 0) expect(runTwoBodies.has(part.body)).toBe(false);
+    }
+    const buffer = window.__aiHellTelemetry!.read();
+    expect(partRecords(buffer!)).toEqual(runTwoRecords);
+    expect(
+      partRecords(buffer!).some(
+        (record) => record.kind === 'run_header' && (record as { runSeed: number }).runSeed === SEED,
+      ),
+    ).toBe(false);
   });
 
   it('dev+off — no fetch, run end still transitions', async () => {
@@ -587,6 +787,60 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
     // Let the fire-and-forget bridge settle before asserting it never fired.
     await drainMicrotasks();
     expect(uploadFetch).not.toHaveBeenCalled();
+    // Nothing was uploaded, so nothing could have been recorded server-side
+    // either: the opt-out path is clean (AC2).
+    expect(
+      streamedParts(uploadFetch).filter(
+        (part) => part.headers['x-telemetry-part'] === '1',
+      ),
+    ).toEqual([]);
+  });
+
+  it('dev switched off mid-run — no further parts and no final part', async () => {
+    // The setting is read at every send, so opting out during a run must stop
+    // the stream immediately: no further part uploads, and run end must not
+    // finalise (which would store a partial run and enqueue an evaluation).
+    const play = await bootWithMemoryBuffer(true, { batchSize: 16 });
+    const uploadFetch = uploadFetchSpy();
+    vi.stubGlobal('fetch', uploadFetch);
+
+    for (let chunk = 0; chunk < 4; chunk += 1) {
+      for (let i = 0; i < 20; i += 1) {
+        simTime += STEP_MS;
+        booted!.game.step(simTime, STEP_MS);
+      }
+      await drainMicrotasks();
+    }
+    await vi.waitFor(
+      () => expect(streamedParts(uploadFetch).length).toBeGreaterThanOrEqual(2),
+      { timeout: 5000 },
+    );
+
+    // The player turns the share setting off mid-run; settle anything already
+    // in flight, then record the baseline.
+    saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
+    await drainMicrotasks();
+    const partsBeforeOptOut = streamedParts(uploadFetch).length;
+
+    for (let chunk = 0; chunk < 3; chunk += 1) {
+      for (let i = 0; i < 20; i += 1) {
+        simTime += STEP_MS;
+        booted!.game.step(simTime, STEP_MS);
+      }
+      await drainMicrotasks();
+    }
+    expect(streamedParts(uploadFetch).length).toBe(partsBeforeOptOut);
+
+    endRun(play);
+    stepUntil('GameOverScene active', () => booted!.game.scene.isActive('GameOverScene'));
+    await drainMicrotasks();
+
+    const parts = streamedParts(uploadFetch);
+    expect(parts.length).toBe(partsBeforeOptOut);
+    expect(parts.some((part) => part.headers['x-telemetry-final'] === '1')).toBe(false);
+    // The run still ends and the page buffer still holds the whole run.
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    expect(partRecords(window.__aiHellTelemetry!.read()!).length).toBeGreaterThan(0);
   });
 
   it('prod build — no fetch, run end still transitions', async () => {

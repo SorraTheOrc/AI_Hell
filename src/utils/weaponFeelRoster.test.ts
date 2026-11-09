@@ -227,8 +227,15 @@ describe('catalogue-wide fire cues (AC1/AC2)', () => {
       expect(recording.plays[1].url, `${id} must not drift between paths`).toBe(
         recording.plays[0].url,
       );
-      expect(recording.plays[1].volume, `${id} reduced volume`).toBe(
-        HOLD_FULL_FIRE_VOLUME_SCALE,
+      // The wave laser carries its own producer-requested level on top of the
+      // metronome trim (AH-0MW10K39E006CG0A), so its ghost composites both
+      // scales; every other weapon's ghost is the metronome trim alone.
+      const expectedVolume =
+        id === 'wave_laser'
+          ? HOLD_FULL_FIRE_VOLUME_SCALE * effectsModule.WAVE_LASER_VOLUME_SCALE
+          : HOLD_FULL_FIRE_VOLUME_SCALE;
+      expect(recording.plays[1].volume, `${id} reduced volume`).toBeCloseTo(
+        expectedVolume,
       );
     }
   });

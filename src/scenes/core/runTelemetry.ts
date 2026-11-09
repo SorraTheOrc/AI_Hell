@@ -429,6 +429,23 @@ export interface RunTelemetryOptions {
   readonly config?: ActionIntensityConfig;
   /** Monotonic clock in milliseconds; overridden in tests. */
   readonly now?: () => number;
+  /**
+   * Wall clock in epoch milliseconds, used for the run header's `startedAt` and
+   * the dev streaming run key; defaults to `Date.now`.
+   */
+  readonly wallClock?: () => number;
+}
+
+/**
+ * The identity the run header carries (AH-0MW6NI6BW003RJWH). The dev streaming
+ * uploader derives its run key from these two values, so a run's parts can
+ * never be mixed into another run's session file.
+ */
+export interface RunTelemetryIdentity {
+  /** The per-run RNG seed. */
+  readonly runSeed: number;
+  /** The run's start timestamp, epoch ms (the value written to the header). */
+  readonly startedAt: number;
 }
 
 /**
@@ -456,12 +473,15 @@ export class RunTelemetry {
     this.actionIntensityConfig =
       options.config ?? DEFAULT_ACTION_INTENSITY_CONFIG;
     this.now = options.now ?? defaultNow;
+    this.wallClock = options.wallClock ?? (() => Date.now());
     this.eventWindow = new EventWindowAccumulator(this.actionIntensityConfig);
     this.runStartedAtMs = this.now();
   }
 
   private readonly actionIntensityConfig: ActionIntensityConfig;
   private readonly now: () => number;
+  private readonly wallClock: () => number;
+  private runIdentityValue: RunTelemetryIdentity | null = null;
   private readonly eventWindow: EventWindowAccumulator;
   private previousSmoothed: number | undefined;
   private runStartedAtMs: number;
@@ -476,6 +496,16 @@ export class RunTelemetry {
   /** `false` when the underlying recorder is disabled (AC5). */
   get enabled(): boolean {
     return this.recorder.enabled;
+  }
+
+  /**
+   * The current run's identity (seed + start time), or `null` before
+   * {@link startRun}. The dev streaming uploader derives its run key from it,
+   * so the key always matches the run header that is actually stored
+   * (AH-0MW6NI6BW003RJWH).
+   */
+  get runIdentity(): RunTelemetryIdentity | null {
+    return this.runIdentityValue;
   }
 
   /**
@@ -498,7 +528,11 @@ export class RunTelemetry {
   startRun(runSeed: number, build?: Partial<TelemetryBuildInfo>): void {
     if (!this.enabled) return;
     this.resetActionIntensity();
-    this.recorder.startRun({ runSeed, build });
+    // One wall-clock read feeds both the stored run header and the streaming
+    // run key, so the two can never disagree (AH-0MW6NI6BW003RJWH).
+    const startedAt = this.wallClock();
+    this.recorder.startRun({ runSeed, build, startedAt });
+    this.runIdentityValue = { runSeed, startedAt };
     this.recordEvent('run_start', { seed: runSeed });
   }
 

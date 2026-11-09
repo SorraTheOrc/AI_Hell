@@ -730,11 +730,18 @@ const AUTHORED_PROMO_LEVELS = [
     // wall, then a double-raider mini-boss cordon — the widest coverage
     // (weapons, pickups, enemies, boss) in the catalogue.
     categories: ['weapons', 'pickups', 'enemies', 'boss'],
+    // Recalibrated for the halved per-kill supply dial (AH-0MW3MLTY3005MIXR,
+    // parent AH-0MW10ZVLH005IJRM): the halved drop rate plus the now-off
+    // small-asteroid Extra Life roll cost the bot its early upgrades, and this
+    // scenario — the busiest in the catalogue — lost the run on wave 1 (8.9 s,
+    // 44 enemies alive) against the ≥45 s target. The opening wave is thinned
+    // (the later waves and the mini-boss cordon are unchanged) so the widest
+    // coverage survives the leaner economy.
     waves: [
       firing([
-        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42, startXMin: 140, startXMax: 240 }),
-        group('diver', 'diver', 10, { spacingY: 26 }),
-        group('swarm', 'swarm', 12, { startX: ESCORT_X + 160, spacingX: 24 }),
+        group('tank', 'rect', 7, { spacingX: 48, spacingY: 42, startXMin: 140, startXMax: 240 }),
+        group('diver', 'diver', 7, { spacingY: 26 }),
+        group('swarm', 'swarm', 9, { startX: ESCORT_X + 160, spacingX: 24 }),
       ], { ghosts: true, horde: true }),
       firing([
         group('tank', 'rect', 10, { spacingX: 46, spacingY: 40, startXMin: 130, startXMax: 230 }),

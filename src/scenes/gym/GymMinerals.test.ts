@@ -19,7 +19,7 @@ import type { ChoiceContext, ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
-import { RULES_STORAGE_KEY } from '../../core/rules';
+import { RULES_SCHEMA_VERSION, RULES_STORAGE_KEY } from '../../core/rules';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 
 /**
@@ -197,9 +197,14 @@ describe('GymMinerals', () => {
   });
 
   it('AC4/AC5 — a small-asteroid kill spawns one extra_life drop even without the cadence layer', async () => {
+    // Stamped with the current schema version: the v5 migration resets the
+    // asteroid roll to its off (0) default for older configs.
     localStorage.setItem(
       RULES_STORAGE_KEY,
-      JSON.stringify({ asteroidExtraLifeDropChance: 1 }),
+      JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
+        asteroidExtraLifeDropChance: 1,
+      }),
     );
     booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
@@ -244,6 +249,50 @@ describe('GymMinerals', () => {
     expect(drops[0].dropId).toBe('extra_life');
     // The drop is at the death site (single-tick drift allowed).
     expect(Math.hypot(drops[0].x - sx, drops[0].y - sy)).toBeLessThanOrEqual(2);
+  });
+
+  it('AC3 — at the shipped default a small-asteroid kill never drops an Extra Life (AH-0MW3MLTY3005MIXR)', async () => {
+    // No stored rules ⇒ the shipped asteroid roll default (0, off). The
+    // minerals gym runs the same shared `rollAsteroidExtraLife` rule through
+    // `GymFormationScene`, so the kill must leave no Extra Life behind.
+    window.localStorage.clear();
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
+    const scene = booted.scene as GymMinerals;
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
+    // 0.99 fails the generic pool and would pass any non-zero forced roll.
+    scene.setSceneRng(() => 0.99);
+    clearMinerals(scene);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+
+    // Split a large rock, then a medium one, down to the terminal small tier
+    // (a fresh gym seeds no small asteroids). Neither split tier rolls the
+    // Extra Life, and the pinned RNG fails the generic pool.
+    const large = liveAsteroids(scene).find((a) => a.getSizeTier() === 'large')!;
+    clearPlayerBullets(scene);
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+
+    const medium = liveAsteroids(scene).find(
+      (a) => a.getSizeTier() === 'medium',
+    )!;
+    clearPlayerBullets(scene);
+    scene.spawnPlayerBullet(medium.x, medium.y, 0, 0);
+    scene.tick(0.016);
+
+    const small = liveAsteroids(scene).find((a) => a.getSizeTier() === 'small')!;
+    for (const other of liveAsteroids(scene)) {
+      if (other !== small) other.destroySelf();
+    }
+    clearPlayerBullets(scene);
+    scene.spawnPlayerBullet(small.x, small.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(small.alive).toBe(false);
+    expect(
+      scene.getPowerUpDrops().filter((d) => d.dropId === 'extra_life'),
+    ).toHaveLength(0);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
   });
 });
 

@@ -60,7 +60,6 @@ import {
   isAoeWeapon,
   AOE_WEAPON_IDS,
   AOE_RADII,
-  AOE_PROJECTILE_SPEEDS,
   type WeaponId,
   BULLET_SPEED,
   BULLET_COLORS,
@@ -348,7 +347,7 @@ describe('AOE weapons (parent AH-0MUOOB3OR001V8CD AC1)', () => {
     expect(aoe.clearsEnemyBullets).toBe(true);
     // `projectileSpeed × bulletLifetime` is the random-detonation range
     // basis (180 px at level 0); it stays slower than a conventional bullet.
-    expect(aoe.projectileSpeed).toBe(AOE_PROJECTILE_SPEEDS.mortar);
+    expect(aoe.projectileSpeed).toBe(180);
     expect(aoe.projectileSpeed!).toBeLessThan(BULLET_SPEED);
     expect(WEAPON_CATALOGUE.mortar.bulletLifetime).toBeGreaterThan(0);
   });
@@ -1036,7 +1035,7 @@ describe('Mortar arcing-shell blast (AH-0MV822C250051OVN)', () => {
     expect(mortar.bulletShape).toBe('shell');
     expect(mortar.bulletColor).toBe(BULLET_COLORS.mortar);
     expect(mortar.aoe?.trigger).toBe('onRandom');
-    expect(mortar.aoe?.projectileSpeed).toBe(AOE_PROJECTILE_SPEEDS.mortar);
+    expect(mortar.aoe?.projectileSpeed).toBe(180);
   });
 
   test('carries the launch-flash fire VFX through the shared combat-core path (AH-0MV822C250051OVN)', () => {

@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32299",
-  "inputs": "c9733ace765311d8245f40051dd310c3c8d37ee9d0c905664c77332ea5b183dd",
+  "inputs": "dfaf170b74b2fb981ace405b46559297b1fcdf4ef14abb76e79ea848b6e19f6f",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",
@@ -65,6 +65,7 @@
     "audio/sfx/aihell-pickup-spawn.32150.wav": "e4b84dafb8e55d6b941e4d20c94f2c9d098a9ba20d81558857119536a39345b7",
     "audio/sfx/aihell-pickup-speed.32224.wav": "814fff958804d41b98caad50c535385b8ed6aabd3f3cb25e8ae552f7ab45bf0d",
     "audio/sfx/aihell-pickup-spread.32220.wav": "d0cf23167e6bd2995bb1ee57e7315f07dd17d2c7f34c603af0e3e9ef88aa3037",
+    "audio/sfx/aihell-pickup-wave-laser.32228.wav": "e80a28d23621f9d7e987fdcdbe93b46a0047f75fa62882a3cbc8f1520121ed5f",
     "audio/sfx/aihell-player-hull-breach.32120.wav": "68e7be9488bfe78477a263f7b865f482e1e45d6a8555396b6517d46410be3160",
     "audio/sfx/aihell-railgun-fire.32277.wav": "ae5676e4bd24f9610f1462069bf42a99225888c61340f8d64939bfe654134065",
     "audio/sfx/aihell-railgun-impact.32278.wav": "62046e7b58a63b6e22de7c39a42c4704143490261bc6a54b2beeb5a606aecae2",

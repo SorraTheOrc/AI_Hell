@@ -1,6 +1,23 @@
 {
   "scenes": [
     {
+      "target": "GymAsteroidStress",
+      "playMs": 1500,
+      "captureMs": 6000,
+      "label": "Gym family \u2014 asteroid stress (200 rocks + late-game wave)",
+      "setup": {
+        "player": {
+          "weapons": [
+            "spread",
+            "dual"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {},
+        "seed": 8080
+      }
+    },
+    {
       "target": "GymBoss",
       "playMs": 500,
       "captureMs": 10000,
@@ -358,6 +375,20 @@
         },
         "minerals": 60,
         "seed": 8089
+      }
+    },
+    {
+      "target": "GymRechargeTuning",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family \u2014 recharge tuning (Phase Shift + Teleport versus two raider groups)",
+      "setup": {
+        "player": {
+          "weapons": [],
+          "timedWeapons": []
+        },
+        "powerUps": {},
+        "seed": 8092
       }
     },
     {

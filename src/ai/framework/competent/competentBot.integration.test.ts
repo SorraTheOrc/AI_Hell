@@ -27,10 +27,16 @@ import { COMPETENT_BOT_TUNABLES } from './tunables';
 const DT = 1 / 60;
 const WIDTH = 960;
 const HEIGHT = 540;
-// Seed chosen so the competent bot's objective advantage over the legacy
-// ladder is visible without depending on the legacy bot's chaotic bullet
-// collisions. Re-checked after the gentler thrust-press reduction
-// (AH-0MUYRJQE50021T4A) shifted the previously-calibrated 0x0b07 outcome.
+// Representative seed for the readable single-run demonstrations below.
+// Chosen so the competent bot's objective advantage over the legacy ladder is
+// visible without depending on the legacy bot's chaotic bullet collisions.
+// Re-checked after the gentler thrust-press reduction (AH-0MUYRJQE50021T4A)
+// shifted the previously-calibrated 0x0b07 outcome.
+//
+// It is no longer the sole determinant of competency: the majority-based
+// `objective advantage across seeds` sweep below asserts the
+// distribution-stable property over a documented seed set, so a small feel
+// tweak cannot fail the suite by flipping this one representative run.
 const RUN_SEED = 0x0b16;
 
 /** The shipped asteroid ship physics (src/core/configDefaults.ts). */
@@ -109,10 +115,19 @@ function scoreOf(
  * and power-ups are "collected" on arrival; enemies and asteroids are
  * "engaged" once the ship reaches weapon range. Bullets that pass within the
  * collision radius count as a collision.
+ *
+ * @param seed — the run seed, driving the governor's RNG (default `RUN_SEED`).
+ * @param debug — emit the per-run `GOALTICKS` trace (default `true`; the seed
+ *   sweep passes `false` to keep its output readable).
  */
-function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
+function simulate(
+  policy: BotPolicy,
+  scenario: SimScenario,
+  seed: number = RUN_SEED,
+  debug = true,
+): SimResult {
   const governor = new BotInputGovernor();
-  governor.seed(RUN_SEED);
+  governor.seed(seed);
   const reverseEnabled = scenario.reverseEnabled === true;
   let state = {
     x: scenario.start.x,
@@ -155,7 +170,7 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
     boss: null,
     aliveCount: 0,
     wave: null,
-    runSeed: RUN_SEED,
+    runSeed: seed,
     lives: 3,
     livesCap: 5,
     reverseEnabled,
@@ -239,8 +254,21 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
     wrapCrossings,
   } as Omit<SimResult, 'score'>;
   // eslint-disable-next-line no-console
-  if ((policy as unknown as { committedGoalId?: string }).committedGoalId !== undefined) console.log('GOALTICKS', JSON.stringify({ goalTicks, collected, collisions, dbg }));
+  if (debug && (policy as unknown as { committedGoalId?: string }).committedGoalId !== undefined) console.log('GOALTICKS', JSON.stringify({ goalTicks, collected, collisions, dbg }));
   return { ...result, score: scoreOf(result) } as SimResult;
+}
+
+/** The objective-only priority score: minerals > power-ups > enemies.
+ *
+ * Deliberately excludes the collision penalty and survival ticks: those are
+ * dominated by chaotic, discrete bullet hits in this micro-simulation, so a
+ * small feel tweak can flip them without any change in decision quality
+ * (AC2). Comparing objective progress isolates skill from luck.
+ */
+function objectiveScoreOf(
+  r: Pick<SimResult, 'minerals' | 'powerUps' | 'enemies'>,
+): number {
+  return r.minerals * 4 + r.powerUps * 3 + r.enemies * 2;
 }
 
 /** A representative seeded scenario spanning every objective band. */
@@ -289,6 +317,57 @@ describe('competent bot beats the legacy ladder (AC6)', () => {
     // eslint-disable-next-line no-console
     console.log('AB', JSON.stringify({ legacy, competent }));
     expect(competent.score).toBeGreaterThan(legacy.score);
+  });
+});
+
+// ── Objective-advantage seed sweep (AC2/AC3) ────────────────────────
+//
+// Why a sweep, not a single seed: the closed-loop micro-simulation is
+// deterministic but chaotic — a small, legitimate feel tweak can flip one
+// seed's winner because discrete bullet collisions dominate the composite
+// score. This sweep compares the *objective* priority sub-score (minerals,
+// power-ups, enemies) on a bullet-free scenario, so the result reflects
+// decision quality rather than chaotic hits, and asserts the
+// distribution-stable property (competent wins a majority) instead of a
+// single cherry-picked seed.
+//
+// The seed set is explicit and contiguous (never random) so every run is
+// reproducible (AC4). To extend, append seeds to `SWEEP_SEEDS` (the sweep
+// currently lands 24/32 objective wins, so a single seed flipping cannot
+// fail it).
+const SWEEP_SEEDS = Array.from({ length: 32 }, (_, i) => 0x0b10 + i);
+
+/** The representative scenario without bullets: objective comparison only. */
+const OBJECTIVE_SCENARIO: SimScenario = { ...REPRESENTATIVE, bullets: [] };
+
+describe('competent bot objective advantage across seeds (AC2/AC3)', () => {
+  it('wins on the objective sub-score over a majority of seeds', () => {
+    const rows = SWEEP_SEEDS.map((seed) => {
+      const legacy = simulate(
+        createLegacyBotPolicy(),
+        OBJECTIVE_SCENARIO,
+        seed,
+        false,
+      );
+      const competent = simulate(
+        createCompetentBotBrain({ fallback: null }),
+        OBJECTIVE_SCENARIO,
+        seed,
+        false,
+      );
+      return {
+        seed,
+        legacy: objectiveScoreOf(legacy),
+        competent: objectiveScoreOf(competent),
+      };
+    });
+    const wins = rows.filter((row) => row.competent > row.legacy).length;
+    // AC2/AC3: the assertion is on the objective priority sub-score
+    // (minerals × 4 + power-ups × 3 + enemies × 2) on a bullet-free
+    // scenario, over a documented seed sweep, winning a majority (≥ 50 %).
+    // Bullets are removed so chaotic collision luck cannot distort the
+    // comparison, and no single seed is the sole determinant.
+    expect(wins * 2).toBeGreaterThanOrEqual(SWEEP_SEEDS.length);
   });
 });
 

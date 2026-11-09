@@ -21,6 +21,7 @@ import {
   createRandomChoiceStrategy,
   isWeaponOption,
   randomChoiceStrategy,
+  toChoiceOption,
   type ChoiceContext,
 } from '../choice';
 import { SLOTS_FULL_EXEMPT_IDS } from '../slots';
@@ -48,24 +49,38 @@ import {
 } from '../types';
 
 describe('power-up choice strategy', () => {
-  it('offers every drop in the catalogue except the Reset utility (AH-0MVI4KTD8000FBJ7 AC1)', () => {
-    // Derived from the catalogues, not a hand-maintained list: a newly shipped
-    // power-up or weapon drop can never silently go missing from the
-    // hold-full choice again (the stale 21-entry list did exactly that).
-    const catalogue = new Set<DropId>([
-      ...(Object.keys(POWER_UP_CATALOGUE) as DropId[]),
-      ...WEAPON_DROP_IDS,
-    ]);
-    catalogue.delete('reset');
+  // AH-0MW3MLSTW007U8BD: the pool is now the catalogue minus **two**
+  // deliberate, documented exclusions — the `reset` utility (removes weapons
+  // rather than granting one) and `extra_life` (removed from every reward
+  // surface, while staying a working field pickup). Both are spelled out
+  // explicitly so the catalogue-derived guard still catches a genuinely
+  // missing entry. Activated as a plain `it(...)` once the exclusion landed
+  // (implementation AH-0MW3MLV2V001NWBR); the assertions are unchanged.
+  it(
+    'offers every drop in the catalogue except the Reset utility and Extra Life (AH-0MVI4KTD8000FBJ7 AC1)',
+    () => {
+      // Derived from the catalogues, not a hand-maintained list: a newly
+      // shipped power-up or weapon drop can never silently go missing from
+      // the hold-full choice again (the stale 21-entry list did exactly that).
+      const catalogue = new Set<DropId>([
+        ...(Object.keys(POWER_UP_CATALOGUE) as DropId[]),
+        ...WEAPON_DROP_IDS,
+      ]);
+      catalogue.delete('reset');
+      catalogue.delete('extra_life');
 
-    expect([...CHOICE_POOL].sort()).toEqual([...catalogue].sort());
-    // No duplicate ids: a repeat would double that item's draw weight.
-    expect(new Set(CHOICE_POOL).size).toBe(CHOICE_POOL.length);
-    // 16 power-ups + 15 weapon drops (every weapon except Reset).
-    expect(CHOICE_POOL).toHaveLength(31);
-    // The reset utility drop removes weapons rather than granting one.
-    expect(CHOICE_POOL).not.toContain('reset');
-  });
+      expect([...CHOICE_POOL].sort()).toEqual([...catalogue].sort());
+      // No duplicate ids: a repeat would double that item's draw weight.
+      expect(new Set(CHOICE_POOL).size).toBe(CHOICE_POOL.length);
+      // 15 power-ups (16 − Extra Life) + 15 weapon drops (every weapon but
+      // Reset).
+      expect(CHOICE_POOL).toHaveLength(30);
+      // The reset utility drop removes weapons rather than granting one.
+      expect(CHOICE_POOL).not.toContain('reset');
+      // Extra Life is deliberately reward-surface-only (field pickup stays).
+      expect(CHOICE_POOL).not.toContain('extra_life');
+    },
+  );
 
   describe('newly pooled drops (AH-0MVI4KTD8000FBJ7)', () => {
     /** Power-ups shipped after the original pool was written. */
@@ -856,13 +871,24 @@ describe('power-up choice strategy', () => {
     }
 
     /**
+     * The `availableWhenSlotsFull` entries that are actually pooled.
+     *
+     * Extra Life keeps its slot exemption but is a `fieldPickupOnly` kind, so
+     * it never enters the hold-full pool (parent AH-0MW10ZVLH005IJRM AC4).
+     * Derived from the shared data rather than a second hand-written list.
+     */
+    const POOLED_EXEMPT_IDS = SLOTS_FULL_EXEMPT_IDS.filter((id) =>
+      CHOICE_POOL.includes(id),
+    );
+
+    /**
      * The ids the gated pool may still offer once full: the owned kinds plus
-     * the catalogue entries flagged `availableWhenSlotsFull`.
+     * the catalogue entries flagged `availableWhenSlotsFull` that are pooled.
      */
     function allowedAtFull(context: ChoiceContext): Set<DropId> {
       return new Set<DropId>([
         ...ownedIdsOf(context),
-        ...SLOTS_FULL_EXEMPT_IDS,
+        ...POOLED_EXEMPT_IDS,
       ]);
     }
 
@@ -899,7 +925,7 @@ describe('power-up choice strategy', () => {
           .filter((o) => o.kind === 'powerup' || o.kind === 'weapon')
           .map((o) => o.id)
           .sort();
-        expect(baseIds).toEqual([...SLOTS_FULL_EXEMPT_IDS].sort());
+        expect(baseIds).toEqual([...POOLED_EXEMPT_IDS].sort());
       }
     });
 
@@ -964,8 +990,8 @@ describe('power-up choice strategy', () => {
         .sort();
 
       // The temp-held weapon is offered as a base (permanent) pick alongside
-      // the exempt entries — and nothing else.
-      expect(baseIds).toEqual(['rapid', ...SLOTS_FULL_EXEMPT_IDS].sort());
+      // the pooled exempt entries — and nothing else.
+      expect(baseIds).toEqual(['rapid', ...POOLED_EXEMPT_IDS].sort());
       // The owned offers of the five permanently owned kinds survive (a
       // consumable contributes a charge grant, the rest a level-up).
       const levelUps = candidates
@@ -1142,6 +1168,50 @@ describe('power-up choice strategy', () => {
       expect(levelled.changeSummary).not.toBe(base.changeSummary);
     });
 
+    it('AC3 — an owned Phase Shift keeps the charge offer and the grant readies it (no banked charge)', () => {
+      // Decision recorded on the catalogue entry (AH-0MW6QY3NP001NZKE): a
+      // permanently-owned Phase Shift stays rewardable because a hold-full
+      // grant READIES the one activation instead of banking a charge —
+      // deliberately unlike Teleport's retirement.
+      expect(isRewardableWhenOwned('phase_shift')).toBe(true);
+
+      const option = buildChoiceCandidates(
+        CHOICE_POOL,
+        ownedContext('phase_shift'),
+      ).find((o) => o.id === 'phase_shift');
+      expect(option?.kind).toBe('power-up-charge');
+
+      const registry = new EffectsRegistry();
+      const store = registry.levelStore();
+
+      // The first reward owns the kind and readies its one activation.
+      applyMineralChoiceReward(option!, registry, null);
+      expect(store.hasPhaseShift()).toBe(true);
+      expect(store.consumableCharges('phase_shift')).toBe(0);
+
+      // Spend it: the single activation is now counting down.
+      expect(store.consumePhaseShift()).toBe(true);
+      expect(store.hasPhaseShift()).toBe(false);
+      expect(store.isPhaseShiftRecharging()).toBe(true);
+      expect(store.phaseShiftRechargeRemaining()).toBeGreaterThan(0);
+
+      // A second hold-full reward readies it immediately (timer 0) through the
+      // store's grant path and still banks no charge — readiness is not a
+      // count.
+      applyMineralChoiceReward(option!, registry, null);
+      expect(store.hasPhaseShift()).toBe(true);
+      expect(store.isPhaseShiftRecharging()).toBe(false);
+      expect(store.phaseShiftRechargeRemaining()).toBe(0);
+      expect(store.consumableCharges('phase_shift')).toBe(0);
+      // A charge is not a level-up: the permanent level is untouched.
+      expect(store.getPermanentLevel('phase_shift')).toBe(0);
+
+      // Exactly one activation exists: one spend succeeds, the next cannot
+      // fire until the timer completes — nothing was stockpiled.
+      expect(store.consumePhaseShift()).toBe(true);
+      expect(store.consumePhaseShift()).toBe(false);
+    });
+
     it('AC1 — the catalogue-driven opt-out gives a permanently-owned Teleport no offer at all', () => {
       // The retired set is catalogue data, never a hand-written id list: the
       // single opt-out entry is named here only as the expected live value.
@@ -1238,7 +1308,7 @@ describe('power-up choice strategy', () => {
       expect(store.getPermanentLevel('shield')).toBe(0);
     });
 
-    it('AC5 — a checkpoint replay through the shared grant helper reproduces the charge state', () => {
+    it('AC5 — a checkpoint replay through the shared grant helper reproduces the readiness state', () => {
       const option = buildChoiceCandidates(
         CHOICE_POOL,
         ownedContext('phase_shift'),
@@ -1253,11 +1323,16 @@ describe('power-up choice strategy', () => {
       const resumed = new EffectsRegistry();
       grantPermanentPowerUp('phase_shift', resumed);
 
+      // Phase Shift is single-use (parent AH-0MW6O1690007P2SL): both paths
+      // leave its one activation ready and never bank a stored count.
+      expect(resumed.levelStore().hasPhaseShift()).toBe(
+        live.levelStore().hasPhaseShift(),
+      );
+      expect(resumed.levelStore().hasPhaseShift()).toBe(true);
       expect(resumed.levelStore().consumableCharges('phase_shift')).toBe(
         live.levelStore().consumableCharges('phase_shift'),
       );
-      // Exactly one charge — the replay never double-counts a level + charge.
-      expect(resumed.levelStore().consumableCharges('phase_shift')).toBe(1);
+      expect(resumed.levelStore().consumableCharges('phase_shift')).toBe(0);
       expect(resumed.levelStore().getPermanentLevel('phase_shift')).toBe(
         live.levelStore().getPermanentLevel('phase_shift'),
       );
@@ -1271,7 +1346,7 @@ describe('power-up choice strategy', () => {
         weaponLevels: [{ id: 'spread', level: 1 }],
         powerUpLevels: [
           { id: 'magnet', level: 2 },
-          { id: 'extra_life', level: 1 },
+          { id: 'bomb', level: 1 },
         ],
       };
       const candidates = buildChoiceCandidates(CHOICE_POOL, context);
@@ -1309,12 +1384,12 @@ describe('power-up choice strategy', () => {
           description: POWER_UP_CATALOGUE.magnet.description,
         },
         {
-          id: 'extra_life',
+          id: 'bomb',
           kind: 'power-up-level',
           level: 2,
-          name: 'Extra Life Lv.2',
-          changeSummary: summarisePowerUpLevelChange('extra_life', 1, 2),
-          description: POWER_UP_CATALOGUE.extra_life.description,
+          name: 'Bomb Lv.2',
+          changeSummary: summarisePowerUpLevelChange('bomb', 1, 2),
+          description: POWER_UP_CATALOGUE.bomb.description,
         },
       ]);
 
@@ -1349,5 +1424,90 @@ describe('power-up choice strategy', () => {
         }),
       ).toBe(OWNED_UPGRADE_BONUS_WEIGHT);
     });
+  });
+});
+
+// ── Extra Life leaves every reward surface (AH-0MW3MLSTW007U8BD) ────
+//
+// Test-first half of the reward-surface exclusion (parent AH-0MW10ZVLH005IJRM
+// AC4): Extra Life must never be **offered** by the hold-full choice — neither
+// as a base `powerup` entry nor as an owned `power-up-level` offer — while it
+// stays a working field pickup (still spawned by the shared drop pool, still
+// granting +1 life on collection, still levelled by field pickups). Written
+// red-first in AH-0MW3MLSTW007U8BD and activated (plain `it`) by the exclusion
+// implementation AH-0MW3MLV2V001NWBR — only the wrapper changed, never the
+// assertions.
+describe('Extra Life is never offered by the hold-full choice (AH-0MW3MLSTW007U8BD)', () => {
+  /** Deterministic 32-bit PRNG (mulberry32) — reproducible seeded draws. */
+  function makeSeededRng(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /** A run that permanently owns Extra Life, a weapon and another kind. */
+  const OWNING_EXTRA_LIFE: ChoiceContext = {
+    weaponLevels: [{ id: 'spread', level: 1 }],
+    powerUpLevels: [
+      { id: 'extra_life', level: 1 },
+      { id: 'magnet', level: 2 },
+    ],
+  };
+
+  it('offers no Extra Life option across 500 seeded hold-full draws', () => {
+    const draws = 500;
+
+    for (let seed = 1; seed <= draws; seed += 1) {
+      const options = randomChoiceStrategy.choose(
+        3,
+        makeSeededRng(seed),
+        OWNING_EXTRA_LIFE,
+      );
+
+      // The exclusion must not shorten the draw: three distinct options are
+      // still requested and the pool is far larger than three.
+      expect(options, `seed ${seed}`).toHaveLength(3);
+      for (const option of options) {
+        expect(option.id, `seed ${seed} (${option.kind})`).not.toBe(
+          'extra_life',
+        );
+      }
+    }
+  });
+
+  it('gives an owned Extra Life no level-up or charge offer', () => {
+    const candidates = buildChoiceCandidates(CHOICE_POOL, OWNING_EXTRA_LIFE);
+
+    // No owned offer for the excluded kind — of any kind of option.
+    expect(candidates.some((option) => option.id === 'extra_life')).toBe(false);
+    // The exclusion is targeted, not a blanket "no owned offers" toggle: the
+    // other owned kinds keep their level-up offers.
+    expect(
+      candidates.some(
+        (option) => option.id === 'spread' && option.kind === 'weapon-level',
+      ),
+    ).toBe(true);
+    expect(
+      candidates.some(
+        (option) => option.id === 'magnet' && option.kind === 'power-up-level',
+      ),
+    ).toBe(true);
+  });
+
+  it('still models Extra Life as a working field pickup', () => {
+    // The exclusion is a *reward-surface* rule only: the shared catalogue
+    // entry and its option descriptor are untouched, so a field pickup can
+    // still be spawned, described and applied. Green on both sides of the
+    // change on purpose (regression guard for the field-pickup half).
+    const option = toChoiceOption('extra_life');
+
+    expect(option.kind).toBe('powerup');
+    expect(option.name).toBe(POWER_UP_CATALOGUE.extra_life.name);
+    expect(option.description).toBe(POWER_UP_CATALOGUE.extra_life.description);
   });
 });
