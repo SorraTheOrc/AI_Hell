@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.1.20 (2026-11-09)
+> **Release focus:** This release focuses on performance and balance tuning, letting hundreds of asteroids fill the screen smoothly while reducing power-up drops and replacing free lives with upgrade rewards. It also overhauls gym navigation and adds dedicated testing for Phase Shift and Teleport, alongside various audio, visual, and reliability improvements.
+### Features
+- Hundreds of asteroids can now fill the screen without frame drops. (AH-0MW4857B0004GMWR)
+- Every gym is now reachable from the Gym Index, organized into collapsible groups that fit on screen. (AH-0MW6OIQAA001YVGA)
+- Power-ups drop half as often, asteroids no longer give extra lives, and reward screens offer upgrades instead of free lives. (AH-0MW10ZVLH005IJRM)
+- Balance testing now properly accounts for your equipped weapons, so future weapon tuning is measured accurately. (AH-0MW1OLFM20060MOE)
+- Find out exactly how many enemies your device can handle at a smooth frame rate. (AH-0MW3MGY3Z003R1M6)
+- Phase Shift now works like Teleport: one use, then a recharge wait. (AH-0MW6O1690007P2SL)
+- Minerals are now a softer gold, so busy screens stay easier to read. (AH-0MW47Q3GQ009E743)
+- The Power-Up Levelling Gym now spawns red 10x minerals, so levelling up is much faster. (AH-0MW6OGSJP007K9W6)
+- The wave laser now sounds as powerful as it looks, with louder fire and impact effects. (AH-0MW10K39E006CG0A)
+- Mobile performance is confirmed solid on real devices, so no visual quality changes were needed. (AH-0MW2KPTRT002DSYQ)
+- Bot demo tests are now more reliable, so small gameplay tweaks won't cause false failures. (AH-0MV03PVZI009870X)
+- Enemies with unknown types now fire at the same speed as all other enemies. (AH-0MUX3VFUW009M539)
+- Asteroids now drift behind ships, enemies, and pickups so the action stays clear. (AH-0MVBJDP72004VXE5)
+- Test and fine-tune Phase Shift and Teleport recharge times in a dedicated gym. (AH-0MV82IAYG000WS8B)
+- Gym menu arrow keys now move between columns and rows, matching the on-screen layout. (AH-0MV1BKZ0J00946EX)
+- Dev runs now save telemetry as you play, so a crash or reload loses only the last second instead of the whole session. (AH-0MVJUAADW0033QBD)
+- Collecting a wave laser now plays its own distinct pickup sound, and it can be levelled in the weapon gym. (AH-0MV1EDVNF004MTYN)
+### Bug Fixes
+- Audit results now save reliably even when the worklog database is out of date. (AH-0MW4W2CAJ000NUJZ)
+### Other
+- Worklog warnings are gone and your review flags stay safe after the upgrade. (AH-0MW1VJK63003KHD8)
+- Removed unused code behind the old Mortar impact trigger; gameplay is unchanged. (AH-0MUV6K4ZG005NQ74)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.19 (2026-11-06)
 > **Release focus:** This release focuses on rebalancing combat feel, making weapons and upgrades weaker so fights stay tense, retuning fire rates and weapon behaviour, and adding a teleport cooldown. It also improves audiovisual feedback for mini-boss defeats and enemy fire, clarifies hex map aggression levels and timed upgrade cooldowns, and delivers late-game performance and stability fixes.
 ### Features
