@@ -289,6 +289,31 @@ export const STRIKE_INTERVAL_BEATS_PER_LEVEL = 1;
  */
 export const STRIKE_INTERVAL_BEATS_FLOOR = 3;
 
+// ── Mining Laser (AH-0MW9QMNYP006ZO6T) ────────────────────────────────
+//
+// The permanent Mining Laser's fire cadence is expressed in whole
+// **sixteenth-note steps** of the shared 80 BPM lattice
+// (`SIXTEENTH_NOTE_SUBDIVISIONS` in `src/utils/beat.ts`): one beat is four
+// steps (750 ms), so a step is 187.5 ms. Expressing the cadence in steps keeps
+// every shot on the same lattice the rest of the game's cues are quantised to
+// (mirroring `STRIKE_INTERVAL_BEATS_*`).
+
+/**
+ * Mining Laser interval at level 0, in sixteenth-note steps of the shared
+ * 80 BPM grid: **4 steps = one beat = 750 ms** between shots on the first
+ * grant.
+ */
+export const MINING_LASER_INTERVAL_STEPS_BASE = 4;
+
+/** Mining Laser interval shortening per level, in steps (−1 step = −187.5 ms). */
+export const MINING_LASER_INTERVAL_STEPS_PER_LEVEL = 1;
+
+/**
+ * Mining Laser interval floor, in steps: never faster than once per
+ * **1 step (187.5 ms)**, reached three upgrades after the first grant.
+ */
+export const MINING_LASER_INTERVAL_STEPS_FLOOR = 1;
+
 // ── UI ───────────────────────────────────────────────────────────────
 
 /** Render depth of the standalone HUD — above gameplay objects. */

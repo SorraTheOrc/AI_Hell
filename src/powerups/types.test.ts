@@ -39,6 +39,7 @@ import {
 import {
   DEFAULT_WEAPON_TEMPORARY_WINDOW,
   POWER_UP_LEVEL_IDS,
+  POWER_UP_LEVEL_SPECS,
   resolvePowerUpAtLevel,
   resolveTemporaryWindow,
   resolveWeaponTemporaryWindow,
@@ -343,15 +344,19 @@ const INSTANT_WINDOWS: ReadonlyMap<PowerUpId, number> = new Map([
   ['shield', 15],
   ['thorns', 8],
   ['force_field', 8],
+  // The Mining Laser (AH-0MW9QMNYP006ZO6T) is an instant-TTL kind too: its
+  // field pickup grants a temporary level window sized by the catalogue TTL
+  // (the rapid-fire cadence is level-resolved separately).
+  ['mining_laser', 10],
 ]);
 
 /** Time-cost-free level-scaled sample levels for the timed kinds. */
 const SAMPLE_LEVELS = [0, 1, 7] as const;
 
 describe('per-upgrade temporary window (AH-0MVUGI3Q4009MW6A, F2)', () => {
-  it('declares the approved TTL on each of the ten instant catalogue entries', () => {
-    // Guard the guard: the table must cover exactly ten kinds.
-    expect(INSTANT_WINDOWS.size).toBe(10);
+  it('declares the approved TTL on each of the eleven instant catalogue entries', () => {
+    // Guard the guard: the table must cover exactly eleven kinds.
+    expect(INSTANT_WINDOWS.size).toBe(11);
 
     for (const [id, seconds] of INSTANT_WINDOWS) {
       expect(POWER_UP_CATALOGUE[id].temporaryWindow).toBe(seconds);
@@ -360,7 +365,7 @@ describe('per-upgrade temporary window (AH-0MVUGI3Q4009MW6A, F2)', () => {
 
   it('leaves the timed kinds to their level-resolved effect duration', () => {
     const timedIds = POWER_UP_LEVEL_IDS.filter((id) => !INSTANT_WINDOWS.has(id));
-    // 16 kinds total, 10 instant → 6 timed.
+    // 17 kinds total, 11 instant → 6 timed.
     expect(timedIds).toHaveLength(6);
 
     for (const id of timedIds) {
@@ -442,5 +447,47 @@ describe('per-upgrade temporary window (AH-0MVUGI3Q4009MW6A, F2)', () => {
     expect(resolveWeaponTemporaryWindow({ temporaryWindow: 4 })).toBe(4);
     // …but an invalid declaration fails loudly rather than shortening to 0.
     expect(() => resolveWeaponTemporaryWindow({ temporaryWindow: 0 })).toThrow();
+  });
+});
+
+// ── Mining Laser catalogue kind (AH-0MW9QMNYP006ZO6T) ───────────────
+
+describe('POWER_UP_CATALOGUE.mining_laser (AH-0MW9QMNYP006ZO6T)', () => {
+  it('is a normal slot-occupying, levelled kind — not exempt or special-cased', () => {
+    const entry = POWER_UP_CATALOGUE.mining_laser;
+    expect(entry.id).toBe('mining_laser');
+    expect(entry.name).toBe('Mining Laser');
+    // Player-facing copy states the asteroid-only rule and the silence rule.
+    expect(entry.description).toMatch(/asteroid/i);
+    expect(entry.description).toMatch(/enem/i);
+    expect(entry.description).toMatch(/silent|nothing/i);
+    // A normal kind: it counts toward the six-slot cap and is offered by every
+    // reward surface (no consumable / single-use / field-pickup-only / exempt
+    // flags).
+    expect(entry.availableWhenSlotsFull).toBeUndefined();
+    expect(entry.consumable).toBeUndefined();
+    expect(entry.singleUse).toBeUndefined();
+    expect(entry.fieldPickupOnly).toBeUndefined();
+    expect(entry.rewardableWhenOwned).toBeUndefined();
+    expect(isExemptWhenFull(entry)).toBe(false);
+    expect(isConsumable(entry)).toBe(false);
+    expect(isFieldPickupOnly('mining_laser')).toBe(false);
+    expect(isRewardableWhenOwned('mining_laser')).toBe(true);
+    expect(CONSUMABLE_POWER_UP_IDS).not.toContain('mining_laser');
+  });
+
+  it('declares the generic duration and the 10 s field-pickup window', () => {
+    const entry = POWER_UP_CATALOGUE.mining_laser;
+    expect(entry.duration).toBe(10);
+    expect(entry.temporaryWindow).toBe(10);
+    // The resolver reads the declared window (the cadence is a separate,
+    // level-resolved axis, not a timed effect).
+    expect(resolveTemporaryWindow('mining_laser', 0)).toBe(10);
+    expect(resolveTemporaryWindow('mining_laser', 9)).toBe(10);
+  });
+
+  it('is a member of the level catalogue and the drop weight table', () => {
+    expect(POWER_UP_LEVEL_IDS).toContain('mining_laser');
+    expect(POWER_UP_LEVEL_SPECS.mining_laser.length).toBeGreaterThanOrEqual(1);
   });
 });

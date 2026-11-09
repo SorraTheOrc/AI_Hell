@@ -114,6 +114,11 @@
  * - **Orbital Strike** — a periodic auto-targeting bolt (field pickup = one
  *   immediate strike, hold-full = repeating on a level-resolved interval) that
  *   damages the nearest live enemy.
+ * - **Mining Laser** — a periodic auto-targeting beam (field pickup = a rapid
+ *   fire window, hold-full = repeating for the rest of the run on a
+ *   level-resolved cadence) that damages the **nearest live asteroid**. It is
+ *   the explicit inverse of the Orbital Strike's asteroid-skip rule: it never
+ *   targets a non-asteroid enemy and fires nothing when no asteroid exists.
  *
  * Weapon types (P1/P2) remain in `src/utils/weapons.ts`.
  */
@@ -136,7 +141,8 @@ export type PowerUpId =
   | 'chrono'
   | 'thorns'
   | 'salvage'
-  | 'strike';
+  | 'strike'
+  | 'mining_laser';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
@@ -552,6 +558,23 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // Balance tuning: 10 s weapon-style window for the temporary level a
     // field pickup grants — the `duration` above is *not* that window
     // (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 10,
+  },
+  mining_laser: {
+    id: 'mining_laser',
+    name: 'Mining Laser',
+    description:
+      'Auto-fires rapid laser shots at the nearest asteroid — never at enemies, and silent when no rock is in the field.',
+    // A field pickup has no timed effect of its own; this catalogue `duration`
+    // is only the generic drop guardrail. The permanent fire cadence lives in
+    // `POWER_UP_LEVEL_SPECS.mining_laser` (whole sixteenth-note steps of the
+    // shared 80 BPM lattice: 0.75 s → 0.1875 s), and the field pickup's
+    // temporary *level* window is `temporaryWindow` below.
+    duration: 10,
+    // Balance tuning: 10 s weapon-style window for the temporary level a
+    // field pickup grants, mirroring the Orbital Strike (AH-0MVUGI3Q4009MW6A).
+    // It is a normal slot-occupying kind: no `availableWhenSlotsFull`, no
+    // `consumable`/`singleUse`/`fieldPickupOnly` flag.
     temporaryWindow: 10,
   },
 };

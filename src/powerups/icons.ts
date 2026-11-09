@@ -39,6 +39,11 @@ export const ICON_COLORS: Record<PowerUpId, number> = {
   thorns: 0x99ff33, // neon lime — spiked counter
   salvage: 0xffd700, // gold — mineral bounty at the wreck
   strike: 0xaa66ff, // light violet — descending lightning bolt
+  // Mining Laser (AH-0MW9QMNYP006ZO6T): mint green reads as the mineral
+  // economy the beam feeds. The drawing arm is added by the surfaces phase
+  // (AH-0MW9QMRC7007HVHQ); this palette entry is required for the exhaustive
+  // `Record<PowerUpId, number>` so the kind cannot be colourless.
+  mining_laser: 0x7cffb2,
 };
 
 /**

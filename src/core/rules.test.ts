@@ -18,6 +18,7 @@ import {
   DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
   DEFAULT_MINERAL_REDROP_BONUS_MAX,
   DEFAULT_MINERAL_REDROP_BONUS_MIN,
+  DEFAULT_MINING_LASER_WEIGHT,
   DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1,
   DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
   DEFAULT_POWER_UP_SPAWN_INTERVAL,
@@ -57,12 +58,12 @@ describe('game rules configuration module', () => {
       );
     });
 
-    it('gives standard IDs equal weight and makes Extra Life, the Smart Bomb, the Mystery UFO and the Orbital Strike rarer', () => {
+    it('gives standard IDs equal weight and holds the Mining Laser out of the drop rotation', () => {
       const weights = DEFAULT_RULES.powerUpWeights;
       for (const id of POWER_UP_WEIGHT_IDS) {
         if (
           id === 'extra_life' || id === 'smart_bomb' || id === 'mystery_ufo'
-          || id === 'strike'
+          || id === 'strike' || id === 'mining_laser'
         ) continue;
         expect(weights[id]).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
       }
@@ -89,6 +90,14 @@ describe('game rules configuration module', () => {
       expect(defaultPowerUpWeights().mystery_ufo).toBe(3);
       expect(weights.mystery_ufo).toBeLessThan(weights.shield);
       expect(weights.mystery_ufo).toBeGreaterThan(weights.smart_bomb);
+      // The Mining Laser is catalogued and rewardable but deliberately held
+      // out of the field-drop rotation (weight 0) until the surfaces phase
+      // sets its rare weight (AH-0MW9QMRC7007HVHQ). A zero weight contributes
+      // nothing to the seeded draw, so ordinary runs are unchanged.
+      expect(DEFAULT_MINING_LASER_WEIGHT).toBe(0);
+      expect(weights.mining_laser).toBe(0);
+      expect(defaultPowerUpWeights().mining_laser).toBe(0);
+      expect(weights.mining_laser).toBeLessThan(weights.shield);
       // The standard and weapon weights are untouched by the Extra Life change.
       expect(DEFAULT_STANDARD_POWER_UP_WEIGHT).toBe(4);
       expect(DEFAULT_WEAPON_WEIGHT).toBe(2);
@@ -133,7 +142,7 @@ describe('game rules configuration module', () => {
           rear_guard: 2,
           shard_swarm: 1,
         },
-        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, smart_bomb: 2, force_field: 4, mystery_ufo: 3, frenzy: 4, chrono: 4, thorns: 4, salvage: 4, strike: 2 },
+        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, smart_bomb: 2, force_field: 4, mystery_ufo: 3, frenzy: 4, chrono: 4, thorns: 4, salvage: 4, strike: 2, mining_laser: 0 },
         weaponWeights: {
           spread: 3,
           dual: 4,

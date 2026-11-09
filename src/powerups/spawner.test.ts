@@ -144,7 +144,7 @@ describe('WeightedRandomSpawner: runtime weight mutation', () => {
     s.setWeight('magnet', 0.2);
 
     const N = 10_000;
-    const counts: Record<PowerUpId, number> = { shield: 0, bomb: 0, speed_boost: 0, phase_shift: 0, teleport: 0, extra_life: 0, magnet: 0, mineral_scoop: 0, smart_bomb: 0, force_field: 0, mystery_ufo: 0, frenzy: 0, chrono: 0, thorns: 0, salvage: 0, strike: 0 };
+    const counts: Record<PowerUpId, number> = { shield: 0, bomb: 0, speed_boost: 0, phase_shift: 0, teleport: 0, extra_life: 0, magnet: 0, mineral_scoop: 0, smart_bomb: 0, force_field: 0, mystery_ufo: 0, frenzy: 0, chrono: 0, thorns: 0, salvage: 0, strike: 0, mining_laser: 0 };
     for (let i = 0; i < N; i++) {
       counts[s.next()] += 1;
     }
@@ -370,6 +370,9 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
     expect(weights.mystery_ufo).toBe(3);
     expect(weights.smart_bomb).toBe(2);
     expect(weights.strike).toBe(2);
+    // Catalogued but held out of the field-drop rotation until the surfaces
+    // phase (AH-0MW9QMRC7007HVHQ).
+    expect(weights.mining_laser).toBe(0);
     expect(weights.magnet).toBe(4);
     expect(weights.shield).toBe(4);
     expect(weights.mineral_scoop).toBe(4);

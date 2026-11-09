@@ -72,9 +72,9 @@ describe('power-up choice strategy', () => {
       expect([...CHOICE_POOL].sort()).toEqual([...catalogue].sort());
       // No duplicate ids: a repeat would double that item's draw weight.
       expect(new Set(CHOICE_POOL).size).toBe(CHOICE_POOL.length);
-      // 15 power-ups (16 − Extra Life) + 15 weapon drops (every weapon but
+      // 16 power-ups (17 − Extra Life) + 15 weapon drops (every weapon but
       // Reset).
-      expect(CHOICE_POOL).toHaveLength(30);
+      expect(CHOICE_POOL).toHaveLength(31);
       // The reset utility drop removes weapons rather than granting one.
       expect(CHOICE_POOL).not.toContain('reset');
       // Extra Life is deliberately reward-surface-only (field pickup stays).
@@ -90,6 +90,7 @@ describe('power-up choice strategy', () => {
       'thorns',
       'salvage',
       'strike',
+      'mining_laser',
     ] as const;
     /** Mini-boss-pool weapons shipped after the original pool was written. */
     const NEW_WEAPON_IDS = [
