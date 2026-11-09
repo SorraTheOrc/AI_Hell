@@ -126,7 +126,7 @@ AH-0MVD1RGKM005GW0C and AH-0MVD1RIH2008YCNV):
 | Field | What it measures | How to read it |
 |---|---|---|
 | `waveReached` | The highest **within-level** wave number reached. `WaveManager.waveNumber` is 1-based *within the active level* and resets to 1 when the next level starts, so this is wave progress inside a level, **not** a cumulative campaign wave count. | Pair it with `levelReached`: `levelReached` 1 with a high `waveReached` means runs get deep into level 1; a low `waveReached` with `levelReached` 3 means runs reach level 3 but die early in it. It is also a density signal — a wave with more enemies takes longer to wipe, which shows up as a lower `waveReached` at a fixed tick budget even when kills/run and survival are flat. |
-| `levelReached` | The highest campaign level entered (1–10). | The headline progression metric. `mean` 1.15 with `min` 1 / `max` 2 says most runs stay in level 1; a rising mean means the campaign is getting easier (or the bot better). |
+| `levelReached` | The highest campaign level entered (1–10). | The headline progression metric. `mean` 1.81 with `min` 1 / `max` 3 says most runs reach level 2; a rising mean means the campaign is getting easier (or the bot better). |
 | `upgradesSelected` | Per-choice-id counts of the upgrade the bot took through the shared hold-full flow. | Each key (a weapon/power-up/level id) has its own `DistributionStats`. A key whose `mean` collapses after a tuning edit while `stdDev` stays low made that choice consistently unappealing; a key that is never offered is a supply problem, not a balance one. |
 
 The per-wave aggregation is the **distribution over runs** of those per-run
@@ -193,22 +193,23 @@ harness resolve them through the same functions, never a copy.
 ### Scaling table (levels 1–10)
 
 Both curves are linear across the campaign range and clamp outside it. Level 1
-is exactly the pre-change behaviour (`1.00×` counts, `0.18` per-kill drop
-chance, `0.05` asteroid Extra Life chance), so onboarding and older baselines
-stay valid.
+is exactly the pre-change shape (`1.00×` counts, `0.09` per-kill drop chance,
+asteroid Extra Life off at `0`); the per-kill dial is the pre-v5 behaviour
+halved (`0.18 → 0.09`, `0.05 → 0.025`) by AH-0MW10ZVLH005IJRM, so older
+baselines still compare on the same relative curve.
 
 | Level | Enemy-count multiplier | Per-kill power-up drop chance | Relative supply vs L1 | Asteroid Extra Life chance |
 |---|---|---|---|---|
-| 1 | 1.000× | 0.1800 | 1.000 | 0.0500 |
-| 2 | 1.111× | 0.1656 | 0.920 | 0.0460 |
-| 3 | 1.222× | 0.1511 | 0.840 | 0.0420 |
-| 4 | 1.333× | 0.1367 | 0.759 | 0.0380 |
-| 5 | 1.444× | 0.1222 | 0.679 | 0.0340 |
-| 6 | 1.556× | 0.1078 | 0.599 | 0.0299 |
-| 7 | 1.667× | 0.0933 | 0.519 | 0.0259 |
-| 8 | 1.778× | 0.0789 | 0.438 | 0.0219 |
-| 9 | 1.889× | 0.0644 | 0.358 | 0.0179 |
-| 10 | 2.000× | 0.0500 | 0.278 | 0.0139 |
+| 1 | 1.000× | 0.0900 | 1.000 | 0 |
+| 2 | 1.111× | 0.0828 | 0.920 | 0 |
+| 3 | 1.222× | 0.0756 | 0.840 | 0 |
+| 4 | 1.333× | 0.0683 | 0.759 | 0 |
+| 5 | 1.444× | 0.0611 | 0.679 | 0 |
+| 6 | 1.556× | 0.0539 | 0.599 | 0 |
+| 7 | 1.667× | 0.0467 | 0.519 | 0 |
+| 8 | 1.778× | 0.0394 | 0.438 | 0 |
+| 9 | 1.889× | 0.0322 | 0.358 | 0 |
+| 10 | 2.000× | 0.0250 | 0.278 | 0 |
 
 - **Enemy counts.** Each non-`single` wave group's `count` is multiplied by
 the level's factor, rounded half up (`Math.round`), floored at 1 and capped at
@@ -220,15 +221,17 @@ counts (see
 §9.6 and §5.1).
 - **Supply.** Every kill-time drop roll in `PlayScene` uses
 `powerUpDropChance(level)` instead of the flat level-1 rate, and the asteroid
-Extra Life roll scales by the same ratio (`extraLifeDropChance`). Drop types,
-weights and timed effects are unchanged; the level gyms lengthen their supply
-cadence by the inverse ratio so their run is not over-supplied.
+Extra Life roll scales by the same ratio (`extraLifeDropChance`) but is **off
+at the shipped default** (`asteroidExtraLifeDropChance = 0`), so it is `0` at
+every level until a designer re-enables it. Drop types, weights and timed
+effects are unchanged; the level gyms lengthen their supply cadence by the
+inverse ratio so their run is not over-supplied.
 - **Rationale.** The player's permanent weapon/power-up levels compound through
 the run, so both axes compensate for that growth: each level adds enemy work
 while handing out proportionally less supply. The endpoints (1→2× counts,
-0.18→0.05 drop chance) are the tuning contract from the parent work item; the
-values are data, so a future tuning change edits `GameRules` and re-runs this
-evidence.
+0.09→0.025 drop chance, asteroid Extra Life `0`) are the shipped tuning
+contract (AH-0MVHT1M6O003PU7P, halved by AH-0MW10ZVLH005IJRM); the values are
+data, so a future tuning change edits `GameRules` and re-runs this evidence.
 - **Spawn parity for tuning.** A launched level also spawns, transits, marches
 and fires through the same shared seams as the shipped game: the wormhole
 destination rule in `src/scenes/core/spawnTransit.ts`, the `shootEnabled`
@@ -284,8 +287,12 @@ cap shapes what a run can become.
   may still appear when the pool is full carries `availableWhenSlotsFull` on its
   power-up catalogue entry (default `false`). **Extra Life** and **Mystery UFO**
   are exempt today; the flag also excludes them from the count, so taking an
-  exempt reward can never push a run past six. Adding or removing an exemption
-  is a catalogue edit, and a re-baseline of the affected batches is the only
+  exempt reward can never push a run past six. **Extra Life** is additionally a
+  **field-pickup-only** kind (`fieldPickupOnly`), so it is **never offered as a
+  reward** even while its slot exemption lets the drop spawn: the hold-full
+  pool, its owned offers, the mini-boss wheel and the empty-owned fallback all
+  exclude it (AH-0MW10ZVLH005IJRM AC4). Adding or removing an exemption is a
+  catalogue edit, and a re-baseline of the affected batches is the only
   harness work needed. The `reset` utility is likewise slot-exempt (it can never
   hold a level).
 - **Shared-pool starvation is intended semantics (producer Q1 answer (c),
@@ -323,8 +330,8 @@ cap shapes what a run can become.
   loadout, so it can legitimately show rows that hold no slot: an exempt entry
   (Mystery UFO — `always available`) and a Phase Shift / Teleport row that
   survives outside the loadout after its temporary window expired (a Phase
-  Shift charge pool on its remaining charges, a single-use Teleport on its
-  ready-or-recharging warp — `charges only`). To keep the cap legible the HUD renders an explicit
+  Shift activation that is ready-or-recharging, or a single-use Teleport warp
+  that is ready-or-recharging — `charges only`). To keep the cap legible the HUD renders an explicit
   **`Loadout n/6`** budget from the shared model
   (`resolvePlayerSlotState(player)`), marks those non-slot rows, and renders
   them **dimmed** (`NON_SLOT_ROW_ALPHA`, half opacity) so the slot-counted
@@ -339,9 +346,9 @@ cap shapes what a run can become.
   `PlayScene` and every gym, so gym↔game parity holds for the display too.
   The row classes worth knowing: an exempt entry (Mystery UFO,
   `always available`) and a held kind surviving outside the loadout
-  (`charges only` — a Phase Shift charge pool after its expired window, or the
-  single-use Teleport's ready-or-recharging warp, including a Phase Shift row
-  opened by a Teleport arrival)
+  (`charges only` — a Phase Shift activation that is ready-or-recharging after
+  its expired window, or the single-use Teleport's ready-or-recharging warp,
+  including a Phase Shift row opened by a Teleport arrival)
   hold **no** slot; Extra Life has **no** row (the lives counter carries it);
   a temporary one-shot (Orbital Strike, Smart Bomb) holds a slot while its
   window is open and therefore renders a countdown row. A temporary **field
@@ -468,22 +475,25 @@ temporary level can never compound across a wave, and they are **not** scaled
 by the campaign-level supply curves above (those shape drop frequency, not
 window length).
 
-**Consumables are never clawed back.** Lives, Phase Shift charges and the
-ready Teleport warp already granted by a temporary pickup survive the level
-revert and never carry a timer of their own (producer Q2 on AH-0MVSTKGC3003OMAC).
+**Consumables are never clawed back.** Lives, the ready Phase Shift activation
+and the ready Teleport warp already granted by a temporary pickup survive the
+level revert and never carry a timer of their own (producer Q2 on AH-0MVSTKGC3003OMAC).
 Occupancy of a six-slot loadout still follows the window: the slot is released
 when the TTL expires (see the loadout subsection above).
 
-**Teleport is single-use — its recharge, not its TTL, is the balance lever**
-(parent AH-0MVY096RT006QMF4). The 15 s TTL above is the *temporary-level
-window*; the escape itself is one warp whose recharge interval is the
-level-derived `teleportRechargeRate` axis (stored charges/second, inverted to
+**Teleport and Phase Shift are single-use — their recharge, not their TTL, is
+the balance lever** (Teleport parent AH-0MVY096RT006QMF4; Phase Shift parent
+AH-0MW6O1690007P2SL). The 15 s TTL above is each kind's *temporary-level
+window*; the ability itself is **one activation** whose recharge interval is
+its level-derived recharge-rate axis (stored charges/second, inverted to
 seconds by the store), so there is no stored-charge or stack count to tune:
 
 | Teleport recharge axis | Level 0 | Upgrade cap | Curve |
 |---|---:|---:|---|
 | `teleportRechargeRate` (seconds per warp) | **60 s** | **20 s** | exponential-saturation, `k = 0.3` |
 | `teleportPhaseDuration` (arrival phase) | 1.5 s | 3 s | exponential-saturation, `k = 0.2` |
+| `phaseRechargeRate` (seconds per Phase Shift activation) | **30 s** | **10 s** | exponential-saturation, `k = 0.3` |
+| `phaseDuration` (phase length) | 1.5 s | 3 s | exponential-saturation, `k = 0.2` |
 
 60 s at level 0 makes evading a threat a real decision and the 20 s cap keeps
 an upgraded escape from restoring near-permanent cover; the 3:1 base:cap ratio
@@ -491,6 +501,15 @@ is the pre-existing one, only the numbers moved. The retired cap-3 pool
 (15 s → 5 s) is **not** a tuning surface any more: a pickup or a hold-full
 grant simply readies the one warp, so no grant can exceed a cap of one and no
 stack count exists to tune.
+
+Phase Shift mirrors that shape (parent AH-0MW6O1690007P2SL): the player holds
+**one** automatic phase, a pickup or hold-full grant **readies** it, and a
+spent activation waits out the level-derived `phaseRechargeRate` (30 s at level
+0 → 10 s at the cap), so the two automatic defences cost the same one
+activation each. The retired `phaseCharges` level axis (1 → 3) is **not** a
+tuning surface any more — the recharge interval is the whole balance lever —
+which also removes the old asymmetry where Phase Shift could bank three
+activations while Teleport held one.
 
 > The AH-0MUX802450085VZZ *"Resolved decision 4"* exception (instant kinds
 > had no window at all) is **superseded** by AH-0MVSTKGC3003OMAC.
@@ -560,7 +579,7 @@ Per-archetype kills (aggregate means, the field the work item requires):
    takes longer to wipe — which is the intended density escalation, not a
    starvation or crash signal (kills/run and survival do not fall).
 4. **No tuning was changed after the evidence run.** The endpoints arrived at
-   from the design (`1→2×`, `0.18→0.05`) already move both measured axes in
+   from the design (`1→2×`, `0.09→0.025`) already move both measured axes in
    the intended direction, so the documented values are the shipped ones. A
    future tuning change edits `GameRules`, records the reason, and re-runs the
    four commands above on the same seeds.
@@ -993,9 +1012,21 @@ balance report.
   seeded stream and the arena emits `choice_selected`, so `upgradesSelected`
   carries a real per-choice-id distribution.
 - **Combat quantities the bot reasons about** — player Newtonian physics (the
-  shipped `AsteroidsModel`), collectables, minerals, hazards, auto-fire, enemy
-  fire and collisions, all driven by the real per-kill drop rule at the
-  current campaign level.
+  shipped `AsteroidsModel`), collectables, minerals, hazards, enemy fire and
+  collisions, all driven by the real per-kill drop rule at the current
+  campaign level.
+- **Player weapon fire output** (AH-0MW1OLFM20060MOE) — the arena fires from
+  the run's **ownership context**, never a fixed cadence: the always-active
+  cannon (level 0) plus every permanent weapon grant the hold-full choice flow
+  recorded, each at its level-resolved upgrade index, resolved through the
+  same shared helpers the shipped `Player` uses (`resolveWeaponAtLevel` /
+  `resolveWeaponDefinition` / `createBulletsFromHeading` / `utils/aoe`). So
+  **cadence** (`fireRateMs`), **pattern** count/offsets/side offsets, **bullet
+  lifetime**, **bullet size**, **damage** multiplier and **AOE** radius/damage
+  all come from the shared weapon data, and a weapon-data edit is visible in a
+  batch. The one deliberate divergence is the beat clock: an integer tick
+  interval derived from the same `fireRateMs` (`fireRateTicks`) replaces it,
+  so a run stays a fixed-step, seeded simulation.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 
@@ -1004,16 +1035,30 @@ balance report.
   simulated; a mini-boss wave is only its authored group composition. A boss
   balance question cannot be answered from a batch report alone.
 - **VFX** — explosions, particles, shake and audio cues are absent.
-- **Formations** — formation movement, burst patterns, bullet lifetimes and
-  the Phaser spawner's behaviour are not modelled; wave members are stationary
-  hostiles whose stats come from their archetype's `EnemyConfig`. Opt-in
-  spawner archetypes appear as ordinary config-driven hostiles so the roster
-  matches the game's wave accounting.
+- **Formations** — formation movement, enemy burst patterns, enemy bullet
+  lifetimes and the Phaser spawner's behaviour are not modelled; wave members
+  are stationary hostiles whose stats come from their archetype's
+  `EnemyConfig`. Opt-in spawner archetypes appear as ordinary config-driven
+  hostiles so the roster matches the game's wave accounting.
 - **Rendering** — there is no renderer, camera, resize or frame-rate coupling;
   a run never boots Phaser.
-- **Chosen-upgrade effects** — a selection updates the ownership context used
-  by later offers, but the chosen weapon's fire pattern, shield/effect timing
-  and Extra Life lifegain are not simulated (the arena's auto-fire is fixed).
+- **Non-weapon chosen-upgrade effects** — a selection updates the ownership
+  context used by later offers, and the chosen weapon's fire output **is**
+  simulated (above); what is still not simulated is the non-weapon reward
+  side — shield/effect timing and Extra Life lifegain.
+- **Weapon-output details that remain unmodelled** — the documented gaps in
+  the fire model:
+  - **timed field-pickup weapons** — only permanent ownership fires; the drop
+    model stays generic,
+  - **homing arcs and chain jumps** — the Arc resolves as one radius blast
+    with no hop path or along-path bullet clear,
+  - **cluster split trajectories** — a cluster weapon's fragments travel their
+    pattern offsets and never split again,
+  - **Wave Laser and Options** — the Wave Laser's hitscan ray and the Options
+    pods' orbits both fire as a travelling bullet.
+
+  Also unmodelled: wall bounce, the max-hit-point pierce budget,
+  crit/status/knockback and per-weapon impact feedback.
 
 Clearing the final level is therefore the run boundary, and a stall stops at
 the finite tick budget. Balance conclusions drawn from a batch are a
@@ -1028,6 +1073,11 @@ pixel-accurate, full-stack verification use the browser capture path
   correctness), empty-series and determinism over the pure core.
 - `src/ai/eval/arena.test.ts` — config-driven arena: CSV edits change outcomes
   for the same seed; determinism preserved.
+- `src/ai/eval/arenaWeaponSensitivity.test.ts` — the inverse contract for the
+  player weapon fire model (AH-0MW5DV8AQ002ZQB6): one weapon-catalogue edit at
+  a time (cadence, pattern count, AOE radius, a `weapon-level` choice on an
+  owned weapon) must move every per-run `recordsHash` and at least one
+  aggregate metric, while the same-seed control pair stays byte-identical.
 - `src/ai/eval/engine.test.ts` — batch size handling, reproducibility and
   incremental-aggregation equivalence.
 - `src/ai/eval/report.test.ts` — stable serialisation and the human-readable
@@ -1202,7 +1252,7 @@ cell must be non-blank on every row; "optional" means a blank cell is legal
 | `splits` | Radial warheads spawned once on impact/expiry. | Number ≥ 0 (a whole count). Optional (blank = no split). |
 | `orbitPods` | Orbiting satellite-pod count. **Opens** the orbit group. | Number ≥ 1 (a whole count). Optional (blank = no orbit). |
 | `orbitRadius` | Orbit radius around the ship. | px, > 0. Required when `orbitPods` is present. |
-| `aoeTrigger` | When the area effect resolves. **Opens** the AOE group. | `onFire`, `onImpact`, `onRandom` or `screenPulse` (list below). Optional (blank = no AOE). |
+| `aoeTrigger` | When the area effect resolves. **Opens** the AOE group. | `onFire`, `onRandom` or `screenPulse` (list below). Optional (blank = no AOE). |
 | `aoeRadius` | Effect radius. | px, > 0. Required when `aoeTrigger` is present. |
 | `aoeDamagesEnemies` | Does the effect damage enemies inside the radius? | `true` or `false` (`1`/`0` are also accepted). Required when `aoeTrigger` is present. |
 | `aoeClearsEnemyBullets` | Does the effect clear enemy bullets inside the radius? | `true` or `false`. Required when `aoeTrigger` is present. |
@@ -1232,7 +1282,7 @@ that guard even though it parses.
 invariant compares the *canonical* shape family, so the two cannot be used to
 smuggle in a duplicate).
 
-**`aoeTrigger` legal values.** `onFire`, `onImpact`, `onRandom`, `screenPulse`.
+**`aoeTrigger` legal values.** `onFire`, `onRandom`, `screenPulse`.
 
 ### `weapon-patterns.csv` columns
 
@@ -1273,7 +1323,7 @@ in **radians** everywhere after that. Edit `angleDeg`, never a radian value.
 
 **From the panel (dev only).**
 
-1. Gym Index → **WeaponTuning** (the panel titled **Weapon Tuning**,
+1. Gym Index → the **Weapons** group → **WeaponTuning** (the panel titled **Weapon Tuning**,
    `src/scenes/gym/GymWeaponTuning.ts`).
 2. Select a weapon and change a control. Every input applies to the live
    catalogue as a draft, and the preview ship fires the edited definition on
@@ -1404,7 +1454,7 @@ changing.
 **1. Change a bullet colour (Cannon).** In `src/data/weapons.csv`, find the
 `cannon` row and change `bulletColor` from `0x00ffff` to `0xff00ff`; save,
 refresh `npm run dev`, and fire — the bullets are magenta. Or do it live: Gym
-Index → **WeaponTuning**, select Cannon, use the colour input, watch the
+Index → the **Weapons** group → **WeaponTuning**, select Cannon, use the colour input, watch the
 preview, press **Save**. Verify the change took effect by firing in the game
 and in **GymWeapons** (both read the same catalogue), and then run the retune
 tripwires — the frozen catalogue fixture will fail until it is regenerated as
@@ -1414,7 +1464,7 @@ part of the deliberate change.
 `src/data/weapon-levels.json` — for example `{ "k": 9, "n": 16, "rotation": 0
 }` → `{ "k": 10, "n": 16, "rotation": 0 }` — save and restart/refresh
 `npm run dev` (the ladders are built at module load). Audition it in Gym Index
-→ **Rhythm**, or in the tuning panel's read-only rhythm section, and update the
+→ the **Player & Combat** group → **Rhythm**, or in the tuning panel's read-only rhythm section, and update the
 machine-verified ledger table in the ladder section below: the suite compares
 that table row-for-row against `WEAPON_EUCLIDEAN_LADDERS`, so a rung edit that
 is not mirrored there fails. Regenerate `src/data/weapon-levels-parity.json` in
@@ -1755,12 +1805,14 @@ numerically by `src/utils/weapons.test.ts` and
 
 ### Strength budget (the numeric half of Q3 = B)
 
-The batch gate below cannot see weapon output (the arena fires on a fixed
-cadence constant and imports only the `WeaponId` type), so the binding
-acceptance evidence for the trim is the numeric budget. It is documented in
-full — per-family output definition, the frozen level-0 baseline table, the
-post-change table and the level-0 / level-1 / level-cap ceilings (60 %, 1.5×
-the cannon, 2.5× L0 and 50 % of the pre-change saturated output) — in the GDD
+The batch now **models weapon output** (see §Fidelity boundary), so the re-run
+below measures the trim inside the simulation rather than over a blind harness.
+The **binding** acceptance evidence for the trim nevertheless remains the
+numeric budget, because the budget pins the shipped ceilings while the batch
+measures directional bot behaviour. It is documented in full — per-family
+output definition, the frozen level-0 baseline table, the post-change table and
+the level-0 / level-1 / level-cap ceilings (60 %, 1.5× the cannon, 2.5× L0 and
+50 % of the pre-change saturated output) — in the GDD
 [§4.4 Power-Ups](./Game%20Design%20Document.md#44-power-ups) and
 [§4.4.2 Weapon Leveling](./Game%20Design%20Document.md#442-weapon-leveling-ah-0mupmpcb2009j54j).
 In code, `WEAPON_STRENGTH_BUDGET` (`src/utils/weaponStrength.ts`) holds the
@@ -1769,32 +1821,36 @@ ceilings, the frozen level-0 baselines sit beside `WEAPON_CATALOGUE`
 `src/utils/weaponLevels.test.ts` assert the bounds table-driven against literal
 baselines. Any future weapon must satisfy the same budget before it ships.
 
-### The two runs (same sweep)
+### The two runs (same sweep, same harness)
+
+Both sides were measured with the **new, weapon-sensitive harness** —
+`src/ai/eval/**` at `d06a6395` (the parent's fire model) overlaid identically
+onto both commits — so only the weapon data differs between the sides.
 
 ```bash
-# BEFORE — commit 47609296, clean tree, no weapon data edits
-npm run evaluate -- --batch --games 100 --out eval-output/baseline-run
-# (artefacts copied to the dated, retained-for-comparison path)
-#   eval-output/baseline-2026-11-03/balance-report.json|.txt
-
+# BEFORE — commit 47609296 (pre-trim weapon data), same new harness
+npm run evaluate -- --batch --games 100 --out eval-output/rerun-baseline-2026-11-07
 # AFTER — commit ffd79aa2 (level-0 trim 9586e7f4 + flattened curve ffd79aa2)
-npm run evaluate -- --batch --games 100 --out eval-output/post-change-2026-11-04
+npm run evaluate -- --batch --games 100 --out eval-output/rerun-post-trim-2026-11-07
 ```
 
 Both batches are git-ignored artefacts under `eval-output/`; the durable
-record is this section plus the work-item comment on
-AH-0MVWAVM03002FLLL.
+record is this section plus the work-item comments on AH-0MW5DVD8D000IQM1 (the
+re-run) and AH-0MW5DVEPL0029S5C (this docs update). The original gate item is
+AH-0MVWAVM03002FLLL — its 2026-11-03/04 blind-harness run is superseded by the
+re-run below.
 
-| Side | Commit | Date | Artefact directory |
+| Side | Weapon-data commit | Date | Artefact directory |
 |---|---|---|---|
-| before | `47609296` | 2026-11-03 | `eval-output/baseline-2026-11-03/` |
-| after | `ffd79aa2` | 2026-11-04 | `eval-output/post-change-2026-11-04/` |
+| before | `47609296` | 2026-11-07 | `eval-output/rerun-baseline-2026-11-07/` |
+| after | `ffd79aa2` | 2026-11-07 | `eval-output/rerun-post-trim-2026-11-07/` |
 
 **Same sweep, verified from the report `config` block:** campaign mode,
 `policies: ["competent"]`, seeds `1..100`, `ticks: 18000`, `dt: 1/60`,
-`sampleEveryTicks: 1`. The two `config` blocks are byte-identical and the two
-`balance-report.json` files are **byte-identical**, including every per-run
-`recordsHash`.
+`sampleEveryTicks: 1`. The two `config` blocks are byte-identical. Unlike the
+original blind-harness run (0 / 100 differing `recordsHash` — see the history
+note below), **69 / 100 per-run `recordsHash` values now differ**: the harness
+sees the weapon change.
 
 ### Before / after / delta
 
@@ -1802,88 +1858,109 @@ Aggregate means per 100-game campaign batch (`n = 100`):
 
 | Metric | Before (`47609296`) | After (`ffd79aa2`) | Delta |
 |---|---:|---:|---:|
-| `survivalSeconds` | 300.00 | 300.00 | **0.00** |
-| `waveReached` | 5.89 | 5.89 | **0.00** |
-| `levelReached` | 1.09 | 1.09 | **0.00** |
-| `upgradesSelected` (sum of per-choice-id means) | 2.00 | 2.00 | **0.00** |
-| `mineralsCollected` | 18.00 | 18.00 | **0.00** |
-| `avoidableHits` | 0.00 | 0.00 | **0.00** |
-| `powerUpsCollected` | 12.95 | 12.95 | **0.00** |
-| `asteroidsDestroyed` | 12.00 | 12.00 | **0.00** |
+| `survivalSeconds` | 300.00 | 300.00 | 0.00 |
+| `waveReached` | 8.11 | 8.09 | **−0.02** |
+| `levelReached` | 1.86 | 1.72 | **−0.14** |
+| `upgradesSelected` (sum of per-choice-id means) | 2.00 | 2.00 | 0.00 |
+| `mineralsCollected` | 18.00 | 18.00 | 0.00 |
+| `avoidableHits` | 0.00 | 0.00 | 0.00 |
+| `powerUpsCollected` | 32.18 | 28.61 | **−3.57** |
+| `asteroidsDestroyed` | 11.77 | 11.74 | **−0.03** |
+
+The choice distribution is identical on both sides (the same upgrade sequence),
+so the deltas are the combat effect of the weaker weapon data, not a changed
+build path. `survivalSeconds` stays at the 300 s tick budget by construction.
 
 Per-band deltas against `src/data/experience-targets.json`
-(`targetsVersion` 1) are likewise unchanged:
+(`targetsVersion` 2) — both sides are in band:
 
-| Band | Before | After | Band delta | Verdict |
+| Band (v2) | Before | After | Band delta | Verdict |
 |---|---:|---:|---:|---|
-| `survivalSeconds` (300 ± 30) | 300 | 300 | 0 | in-band |
-| `mineralsCollected` (18 ± 1.8) | 18 | 18 | 0 | in-band |
+| `survivalSeconds` (300 ± 30) | 300.00 | 300.00 | 0 | in-band |
+| `mineralsCollected` (18 ± 1.8) | 18.00 | 18.00 | 0 | in-band |
 | `upgradesSelected` (2 ± 0.5) | 2.00 | 2.00 | 0 | in-band |
-| `waveReached` (6.46 ± 4.9592) | 5.89 | 5.89 | 0 | in-band (pre-existing −0.57) |
-| `levelReached` (1.15 ± 0.7141) | 1.09 | 1.09 | 0 | in-band (pre-existing −0.06) |
+| `waveReached` (7.83 ± 5.92) | 8.11 (+3.6 %) | 8.09 (+3.3 %) | −0.02 | in-band |
+| `levelReached` (1.81 ± 1.69) | 1.86 (+2.8 %) | 1.72 (−5.0 %) | −0.14 | in-band |
 | `avoidableHits` (0 ± 0.5) | 0 | 0 | 0 | in-band |
 
-`node scripts/validate-experience.mjs eval-output/post-change-2026-11-04/balance-report.json`
-returns `verdict: pass`, `driftedMetrics: []` and exit 0 — so **no band moved
-materially and `src/data/experience-targets.json` is deliberately NOT
-re-baselined** (no `targetsVersion` bump, and GDD §2.7 is unchanged).
+`node scripts/validate-experience.mjs eval-output/rerun-post-trim-2026-11-07/balance-report.json`
+returns `verdict: pass`, `driftedMetrics: []` and exit 0 (6/6 in band; the
+before side is likewise 6/6). **No band left its tolerance and
+`src/data/experience-targets.json` is deliberately NOT re-baselined** (no
+`targetsVersion` bump, and GDD §2.7 is unchanged).
 
-### Why the numbers cannot move: the harness does not model weapon output
+### The original blind-harness result, and why it is superseded
 
-A byte-identical report is the **structurally expected** result of this change,
-not evidence that the nerf is ineffective in the game. The closed-loop headless
-arena fires the player's shots on a **fixed cadence constant**
-(`FIRE_INTERVAL_TICKS = 9` in `src/ai/eval/arena.ts`) and imports only the
-**type** `WeaponId` from `src/utils/weapons` — a type-only import is erased at
-compile time, so no `WEAPON_CATALOGUE`, `DEFAULT_WEAPON_SUBDIVISIONS`,
-`AOE_RADII`, hit-budget or `WEAPON_UPGRADE_SPECS` value can reach the
-simulation. This is the already-documented fidelity boundary above: "choices
-affect the ownership context used by later offers — the arena does **not** model
-the chosen weapon's fire pattern".
+The first gate (2026-11-03/04) compared the trim on the **old** arena, which
+fired the player's shots on a fixed cadence constant and imported only the
+`WeaponId` **type** from `src/utils/weapons` — a type-only import is erased at
+compile time. The two reports were therefore **byte-identical**, including
+every per-run `recordsHash`. That was the structurally expected result of a
+harness that could not see weapon data, not a finding about the nerf, and it is
+why the fire model was built (AH-0MW1OLFM20060MOE).
 
-Measured, not inferred — a sensitivity probe on the same tree:
+A sensitivity probe on the same tree measured the gap rather than inferring it:
+a temporary `DEFAULT_WEAPON_SUBDIVISIONS.cannon` 2 → 12 edit (6× cadence) left
+the batch report byte-identical, then the edit was reverted. **That gate could
+not see weapon-output levers at all.**
 
-```bash
-node scripts/evaluate.mjs --batch --games 3 --out /tmp/probe/control   # control
-# temporary edit: DEFAULT_WEAPON_SUBDIVISIONS.cannon 2 -> 12 (6x cadence)
-node scripts/evaluate.mjs --batch --games 3 --out /tmp/probe/edited    # 6x cannon fire rate
-git checkout -- src/utils/weapons.ts    # reverted; `git status --porcelain` empty
-```
+### Why the numbers move now: the harness models weapon output
 
-`diff /tmp/probe/control/balance-report.json /tmp/probe/edited/balance-report.json`
-is **empty**: even a 6× change to the starting weapon's level-0 cadence —
-several times larger than the 40 % trim under test — leaves the batch report
-byte-identical. **The batch gate is blind to weapon-output levers.**
+The arena now fires from the run's ownership context through the shared weapon
+catalogue (§Fidelity boundary), so the trim is a visible lever:
+
+- **69 / 100 per-run `recordsHash` values differ** between the two sides
+  (previously 0 / 100). Seed 1 `cc943ec4` → `fc0af8b9`, seed 7 `919486c3` →
+  `4da435d2`, seed 10 `745a2844` → `cfa0948f`.
+- The aggregate moves the way a weaker weapon predicts: `levelReached` −0.14,
+  `powerUpsCollected` −3.57 and `asteroidsDestroyed` −0.03 — real, and small
+  enough to stay in band.
+- The inverse contract is pinned by
+  `src/ai/eval/arenaWeaponSensitivity.test.ts`: one catalogue edit at a time
+  (cadence `fireRateMs`, pattern count, AOE radius, and a `weapon-level` choice
+  on an owned weapon) must move every per-run `recordsHash` and at least one
+  aggregate metric, while the same-seed control pair stays byte-identical. A
+  structural guard in `src/ai/eval/arena.test.ts` keeps the arena on the shared
+  resolvers — `WEAPON_CATALOGUE` / `resolveWeaponDefinition` / the shared AOE
+  geometry — so no arena-local fire constant or duplicate weapon table can
+  drift back in.
 
 ### Decision, and what still gates the change
 
-- **No retune iteration is recorded, because no retune can change a metric the
-  harness never reads.** Re-tuning weapon data to move these numbers would be
-  evidence-free churn; the stated bounds were therefore not re-entered.
-- **The numeric half of Q3 = B is the binding gate** for this change: the
+- **The batch now measures the trim, and no retune iteration is needed.** The
+  re-run moves 69 / 100 per-run `recordsHash` values and the combat aggregates,
+  and every band stays in tolerance on both sides; the measured effect is
+  consistent with the intended 40 % level-0 trim, so no shipped curve is moved
+  on the strength of it.
+- **The numeric half of Q3 = B remains the binding gate** for this change: the
   level-0 `≤ 60 %` bound, the `≤ 1.5× cannon` ceiling and the
   `≤ 2.5× L0` / `≤ 50 % of the pre-change saturated output` level bounds are
   asserted table-driven against literal baselines by
   `src/utils/weapons.test.ts` and `src/utils/weaponLevels.test.ts`.
-- **What the batch gate does still verify** here: the change is not a
-  campaign-shape regression — the sweep stays playable, in-band and
-  deterministic, and the same seeds reproduce the same report byte-for-byte
-  (a stronger reproducibility statement than the same-tree replay in
-  §Determinism and reproducibility, since the two runs happened on different
-  trees).
-- **Evidence limitation (carry it forward):** this batch is *directional* bot
-  evidence and cannot speak to weapon feel. A **human play-check is required**
-  after merge before the nerf is considered validated.
-- **Follow-up:** modelling the player's weapon fire (catalogue cadence, pattern
-  count, bullet lifetime, budgets and the level curve) in the arena, so a
-  future weapon-output change is measurable by this gate, is filed as
-  **Model player weapon fire output in the balance harness**
-  (AH-0MW1OLFM20060MOE, `discovered-from:AH-0MVRENEME004FS8T`) — out of scope
-  here (AC4 scope guard) but the reason this gate cannot answer the question.
+- **What the batch gate verifies** here: the trim is not a campaign-shape
+  regression — both sweeps stay playable and deterministic, every band is in
+  tolerance, the same seeds reproduce the same report byte-for-byte within a
+  side, and the only cross-side differences are the weapon-output deltas
+  tabulated above.
+- **Evidence limitation (carry it forward):** this is bot evidence and cannot
+  speak to weapon *feel*. A **human play-check is required** after merge before
+  the nerf is considered validated.
+- **Follow-up delivered:** modelling the player's weapon fire output in the
+  arena — catalogue cadence, pattern count, bullet lifetime, size, damage and
+  AOE, plus the level curve — shipped as **Model player weapon fire output in
+  the balance harness** (AH-0MW1OLFM20060MOE,
+  `discovered-from:AH-0MVRENEME004FS8T`). This re-run (AH-0MW5DVD8D000IQM1) is
+  its measured evidence and this section's update is AH-0MW5DVEPL0029S5C. The
+  remaining gaps (homing arcs, chain jumps, cluster split trajectories and
+  timed field-pickup weapons) are listed in §Fidelity boundary and stay out of
+  scope.
 
 ## Related work
 
 - Epic: **Automated Balancing** (AH-0MV1DLUZ8009OCJW).
+- Player weapon fire output in the balance harness (AH-0MW1OLFM20060MOE): the
+  arena fires from the ownership context through the shared weapon catalogue;
+  model scope and the remaining gaps are in §Fidelity boundary.
 - Weapon Euclidean upgrade ladder (AH-0MVYA291J000CK64): the per-weapon
   `E(k, n, rotation)` ledger above, resolved by
   `src/utils/weaponLevels.ts` (`WEAPON_EUCLIDEAN_LADDERS` /

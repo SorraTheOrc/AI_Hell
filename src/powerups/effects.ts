@@ -51,34 +51,33 @@
  *   clears on-screen enemy bullets within the resolved range (a single pulse
  *   for a field pickup, an immediate-then-periodic pulse when permanent),
  *   without damaging 1-HP enemies (GDD §4.4).
- * - **Phase Shift** — charge-based auto-trigger (parent
- *   AH-0MUIYX1EE008FVS8). Collecting Phase Shift stores the level-resolved
- *   `phaseCharges` auto-activation charges in a **finite recharging pool**
- *   (the hold-full reward adds exactly one charge — never unlimited,
- *   AH-0MV82I7TX0009JMT); the shared combat core calls
+ * - **Phase Shift** — a **single-use** auto-trigger (parent
+ *   AH-0MW6O1690007P2SL). One activation is held; the shared combat core calls
  *   {@link EffectsRegistry.updateDanger} each frame and the registry
  *   activates a `phaseDuration` pass-through the moment the player is in
- *   real danger and a charge is available. Spent charges return through the
- *   shared {@link EffectsRegistry.tick} recharge clock
- *   (AH-0MV82I8IL0012RXY). After expiry it re-arms only once danger has
- *   cleared and a short cooldown has elapsed (Q2/Q3).
+ *   real danger and the activation is ready (a pickup or hold-full reward
+ *   readies it — never unlimited, AH-0MV82I7TX0009JMT). Spending it starts
+ *   the one level-derived recharge timer, which the shared
+ *   {@link EffectsRegistry.tick} clock counts down. After expiry it re-arms
+ *   only once danger has cleared and a short cooldown has elapsed (Q2/Q3).
  * - **Teleport** — a **single-use** ability with one level-derived recharge
  *   timer (parent AH-0MVY096RT006QMF4): the shared automatic defence feed
  *   consumes the ready warp when Teleport is selected (AH-0MUZE4AIP009HZWC)
  *   and grants Phase Shift for `teleportPhaseDuration` at the landing spot
- *   without consuming an auto-activation charge (Q6). Spending it starts the
+ *   without consuming the Phase Shift activation (Q6). Spending it starts the
  *   one timer, which the shared {@link EffectsRegistry.tick} clock counts
  *   down; there is no stored-use count. Safe-spot resolution is the scene's
  *   responsibility; this module tracks only the readiness state.
  *
  * ## Shared consumable charge pool (parent AH-0MVTQMREN009DSFW)
  *
- * The six consumables (Shield, Thorn Field, Phase Shift, Teleport, Force
- * Field, Mystery UFO) share **one** charge pool in the run-scoped
- * `PowerUpLevelStore`. A hold-full reward adds one charge (never a level); a
- * charge buys exactly one event — one absorbed hit, one free ram, one
- * reflected bullet, one phase, one warp, one drone spawn — and starts its own
- * level-derived regeneration timer. Regeneration advances only from
+ * The four **pooled** consumables (Shield, Thorn Field, Force Field, Mystery
+ * UFO) share **one** charge pool in the run-scoped `PowerUpLevelStore`.
+ * Phase Shift and Teleport are **single-use** instead: one activation and one
+ * readiness timer, no stored count. A hold-full reward adds one pool charge
+ * or readies a single-use activation (never a level); a pooled charge buys
+ * exactly one event — one absorbed hit, one free ram, one reflected bullet,
+ * one drone spawn — and starts its own level-derived regeneration timer. Regeneration advances only from
  * {@link EffectsRegistry.tick}, the single call site the game and every gym
  * share. The armed state and the budget
  * accessors ({@link EffectsRegistry.shieldAbsorptionsRemaining},
@@ -267,27 +266,27 @@ export type DangerDecision = AutoDefenceChoice | null;
  * - Only one available → that ability.
  * - Both available → a uniform 50/50 pick driven by `rng`.
  *
- * Availability is decided by readiness, never by a stock count: Phase Shift is
- * available while it holds **at least one** auto-activation charge, and
- * Teleport is available while its single escape is **ready** (a boolean —
- * Teleport has no stored count any more, parent AH-0MVY096RT006QMF4). The
- * greater-count rule that used to rank the two was retired because Teleport
- * has no count to compare: once it is ready the two escapes are equally
- * valuable, and a levelled Phase Shift pool must not silently starve Teleport
- * (producer answer Q3 = C). The rng is consulted **only** in the
- * both-available case, so single-ability and neither-available frames stay
+ * Availability is decided by readiness, never by a stock count: both Phase
+ * Shift and Teleport are **single-use** and report readiness as a boolean —
+ * ready while held and not recharging (parent AH-0MW6O1690007P2SL for Phase
+ * Shift; parent AH-0MVY096RT006QMF4 for Teleport). A recharging Phase Shift
+ * therefore drops out of the draw entirely; it is never selected. The
+ * greater-count rule that used to rank the two was retired because neither
+ * ability has a count any more: once both are ready the two escapes are
+ * equally valuable (producer answer Q3 = C). The rng is consulted **only** in
+ * the both-ready case, so single-ability and neither-ready frames stay
  * deterministic.
  *
- * Phase Shift contributes its finite charge count only as a readiness test.
- * There is no unbounded /permanent-Infinity branch — the permanent Phase Shift
+ * There is no unbounded /permanent-Infinity branch — a permanent Phase Shift
  * reward is an ownership flag, not an unlimited supply (AH-0MV82I8IL0012RXY
  * AC2).
  *
  * Pure and engine-agnostic so the game and every gym share one rule and the
  * 50/50 split is deterministically testable via an injectable `rng`.
  *
- * @param phaseCharges — available Phase Shift auto-activation charges; any
- *   value `> 0` means available.
+ * @param phaseReady — `true` when the single Phase Shift activation is ready,
+ *   `false` while it recharges or is not held (`hasPhaseShift()` on the
+ *   store; parent AH-0MW6O1690007P2SL).
  * @param teleportReady — `true` when the single ready Teleport is available,
  *   `false` while it recharges or is not held (a single-use kind banks no
  *   charge count — parent AH-0MVY096RT006QMF4).
@@ -296,16 +295,14 @@ export type DangerDecision = AutoDefenceChoice | null;
  * @returns the ability to spend, or `null` when none is available.
  */
 export function selectAutoDefence(
-  phaseCharges: number,
+  phaseReady: boolean,
   teleportReady: boolean,
   rng: () => number = Math.random,
 ): AutoDefenceChoice | null {
-  const phaseReady = Math.max(0, phaseCharges) > 0;
-
   if (!phaseReady && !teleportReady) return null;
   if (phaseReady && !teleportReady) return 'phase_shift';
   if (teleportReady && !phaseReady) return 'teleport';
-  // Both ready — uniform 50/50, independent of the Phase Shift charge count.
+  // Both ready — uniform 50/50.
   return rng() < 0.5 ? 'phase_shift' : 'teleport';
 }
 
@@ -675,9 +672,9 @@ export class EffectsRegistry {
    *   state); the hold-full reward sets the run-scoped permanent flag and
    *   pulses every resolved interval. The shared combat core performs the
    *   actual clear from these requests (it alone knows the player/bullets).
-   * - phase_shift: stores the level-resolved `phaseCharges` (or marks the
-   *   permanent reward); the phase itself is applied later by the shared
-   *   combat core via `updateDanger`.
+   * - phase_shift: a single-use activation (parent AH-0MW6O1690007P2SL) — the
+   *   store readies it (no stored count) and the phase itself is applied later
+   *   by the shared combat core via `updateDanger`.
    * - teleport: the store readies the single warp (no stored count) — a
    *   pickup or hold-full grant resets its one recharge timer to 0.
    * - extra_life: the store grants the level-resolved lives, clamped to the cap.
@@ -1641,11 +1638,11 @@ export class EffectsRegistry {
    * When `inDanger` is true, the player is not already phased, danger has
    * cleared since the last activation and the shared re-arm cooldown has
    * elapsed, this selects which defensive ability to spend via
-   * {@link selectAutoDefence} (Phase Shift available above zero charges,
-   * Teleport available while ready — a uniform 50/50 whenever both are) and,
-   * for Phase Shift, activates the level-resolved `phaseDuration` and consumes
-   * one charge from the **finite** pool (the permanent reward is an ownership
-   * flag — never an unlimited supply).
+   * {@link selectAutoDefence} (both Phase Shift and Teleport available while
+   * ready — a uniform 50/50 whenever both are) and,
+   * for Phase Shift, activates the level-resolved `phaseDuration` and spends
+   * the one ready activation, starting its recharge timer (the permanent
+   * reward is an ownership flag — never an unlimited supply).
    * Teleport is **not** consumed here — the registry has no player or warp —
    * so the scene performs the warp on the returned decision. Either way the
    * danger episode is latched so at most one ability fires per episode
@@ -1670,7 +1667,7 @@ export class EffectsRegistry {
 
     const store = this._levelStore;
     const choice = selectAutoDefence(
-      store.phaseCharges(),
+      store.hasPhaseShift(),
       store.hasTeleport(),
       this._rng,
     );
@@ -1681,27 +1678,97 @@ export class EffectsRegistry {
     this._dangerCleared = false;
 
     if (choice === 'phase_shift') {
-      // `consumePhaseCharge` returns false only when the finite pool is
-      // empty (AC3); `selectAutoDefence` already required a non-zero count,
-      // so the fallback only guards a raced consumption.
-      if (!store.consumePhaseCharge()) return null;
+      // `consumePhaseShift` returns false only when the one activation is
+      // unavailable (a raced consumption); `selectAutoDefence` already
+      // required readiness, so the fallback is a guard.
+      if (!store.consumePhaseShift()) return null;
       this._activatePhase(store.stats('phase_shift').phaseDuration ?? 1.5);
     }
     return choice;
   }
 
   /**
-   * Stored Phase Shift auto-activation charges (0 when the finite pool is
-   * empty — even for a permanent owner, AH-0MV82I8IL0012RXY AC3). HUD-facing.
+   * Phase Shift readiness expressed as a **count** (`1` ready, `0` otherwise)
+   * — the compatibility projection of the retired charge pool
+   * (parent AH-0MW6O1690007P2SL). HUD-facing callers should prefer
+   * {@link hasPhaseShift} / {@link phaseShiftRechargeRemaining}.
    */
   phaseCharges(): number {
     return this._levelStore.phaseCharges();
   }
 
   /**
+   * Whether the single ready Phase Shift activation is available (held and
+   * not recharging). The whole Phase Shift state is a readiness flag plus a
+   * countdown — there is no stored-use count anywhere (parent
+   * AH-0MW6O1690007P2SL AC1).
+   */
+  hasPhaseShift(): boolean {
+    return this._levelStore.hasPhaseShift();
+  }
+
+  /** Whether a spent Phase Shift is still counting down (unavailable until 0). */
+  isPhaseShiftRecharging(): boolean {
+    return this._levelStore.isPhaseShiftRecharging();
+  }
+
+  /**
+   * Seconds until the held Phase Shift is ready — 0 when it is ready or not
+   * held (parent AH-0MW6O1690007P2SL).
+   */
+  phaseShiftRechargeRemaining(): number {
+    return this._levelStore.phaseShiftRechargeRemaining();
+  }
+
+  /**
+   * Spends the single ready Phase Shift activation, starting its one
+   * level-derived recharge timer. Returns false while it recharges or when it
+   * is not held.
+   */
+  consumePhaseShift(): boolean {
+    return this._levelStore.consumePhaseShift();
+  }
+
+  /**
+   * Whether a **single-use** kind's one activation is ready — the generic HUD
+   * seam, so the catalogue `singleUse` flag alone decides presentation and no
+   * `id === 'teleport'` / `id === 'phase_shift'` branch lives in the HUD.
+   * Returns false for a pooled or non-consumable kind.
+   */
+  isSingleUseReady(id: PowerUpId): boolean {
+    return this._levelStore.hasSingleUse(id);
+  }
+
+  /**
+   * Seconds until a **single-use** kind's activation is ready (`0` when ready
+   * or not held). Generic HUD seam for the readiness countdown.
+   */
+  singleUseRechargeRemaining(id: PowerUpId): number {
+    return this._levelStore.singleUseRechargeRemaining(id);
+  }
+
+  /**
+   * Progress of a **single-use** kind's readiness clock, or `null` when it is
+   * ready (or not held) — the registry half of the HUD countdown ring for an
+   * `arriving` countdown. Same arithmetic as the Teleport projection, so the
+   * ring and the label can never disagree.
+   */
+  singleUseRechargeProgress(id: PowerUpId): CountdownProgress | null {
+    const remaining = this.singleUseRechargeRemaining(id);
+    const total = this._levelStore.consumableRechargeTime(id);
+    if (remaining <= 0) return null;
+    if (!Number.isFinite(total) || total <= 0) return null;
+    return {
+      sweep: resolveCountdownSweep({ remaining, total, mode: 'arriving' }),
+      total,
+      remaining,
+    };
+  }
+
+  /**
    * Whether the hold-full reward made Phase Shift permanently owned. This is
-   * an ownership flag only — the pool is finite and recharges like any
-   * other charge (AH-0MV82I7TX0009JMT AC4).
+   * an ownership flag only — the one activation still recharges on the
+   * level-derived interval (AH-0MW6O1690007P2SL).
    */
   isPhasePermanent(): boolean {
     return this._levelStore.isPhasePermanent();
@@ -2127,12 +2194,10 @@ export class EffectsRegistry {
         ...(recharge > 0 ? { recharge } : {}),
       });
     }
-    // Phase Shift auto-activation charges (parent AH-0MUIYX1EE008FVS8): a
-    // finite stock-pile renders as a count; the permanent owner marker as an
-    // ∞ value (the level is permanent for the run) — never an unlimited
-    // supply, the pool is finite, recharges and is surfaced via phaseCharges()
-    // (the HUD grey-out for an empty pool is AH-0MV82I97Y007MB6M). A zero
-    // charge count is never surfaced (no misleading "x0").
+    // Phase Shift is a single-use activation (parent AH-0MW6O1690007P2SL):
+    // its row reports the ownership marker and, while spent, the one
+    // readiness countdown — never a stored charge count (a zero count is
+    // never surfaced).
     if (this.isPhasePermanent()) {
       result.push({
         id: 'phase_shift' as PowerUpId,
@@ -2140,12 +2205,12 @@ export class EffectsRegistry {
         permanent: true,
       });
     } else {
-      const phaseCharges = this._levelStore.phaseCharges();
-      if (phaseCharges > 0) {
+      const phaseRecharge = this._levelStore.phaseShiftRechargeRemaining();
+      if (this._levelStore.isPhaseShiftHeld()) {
         result.push({
           id: 'phase_shift' as PowerUpId,
           type: 'phase_shift',
-          stacks: phaseCharges,
+          ...(phaseRecharge > 0 ? { recharge: phaseRecharge } : {}),
         });
       }
     }

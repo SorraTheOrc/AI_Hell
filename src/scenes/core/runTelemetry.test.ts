@@ -269,13 +269,51 @@ describe('RunTelemetry (AC3, AC6)', () => {
 
   it('writes the run header and a versioned run_start event', () => {
     const recorder = new FakeRecorder();
-    new RunTelemetry(recorder).startRun(1234, { appVersion: '9.9.9' });
+    new RunTelemetry(recorder, { wallClock: () => 1_700_000_000_000 }).startRun(1234, {
+      appVersion: '9.9.9',
+    });
 
-    expect(recorder.header).toEqual({ runSeed: 1234, build: { appVersion: '9.9.9' } });
+    expect(recorder.header).toEqual({
+      runSeed: 1234,
+      build: { appVersion: '9.9.9' },
+      startedAt: 1_700_000_000_000,
+    });
     expect(recorder.events[0]).toEqual({
       event: 'run_start',
       payload: { v: RUN_TELEMETRY_EVENT_VERSION, seed: 1234 },
     });
+  });
+
+  it('exposes the run identity the header carries, for the streaming run key', () => {
+    const recorder = new FakeRecorder();
+    const telemetry = new RunTelemetry(recorder, { wallClock: () => 1_700_000_123_456 });
+
+    // Nothing has started yet, so there is no run to key anything on.
+    expect(telemetry.runIdentity).toBeNull();
+
+    telemetry.startRun(99);
+
+    // The identity is exactly what the stored header carries, so a run key
+    // derived from it can never disagree with the recording.
+    expect(telemetry.runIdentity).toEqual({ runSeed: 99, startedAt: 1_700_000_123_456 });
+    expect(recorder.header).toMatchObject({
+      runSeed: 99,
+      startedAt: 1_700_000_123_456,
+    });
+  });
+
+  it('gives a second run a fresh identity, so runs never mix', () => {
+    const recorder = new FakeRecorder();
+    let clock = 1_000;
+    const telemetry = new RunTelemetry(recorder, { wallClock: () => clock });
+
+    telemetry.startRun(1);
+    const first = telemetry.runIdentity;
+    clock = 2_000;
+    telemetry.startRun(2);
+
+    expect(telemetry.runIdentity).toEqual({ runSeed: 2, startedAt: 2_000 });
+    expect(telemetry.runIdentity).not.toEqual(first);
   });
 
   it('forwards a tick state + serialised input', () => {

@@ -707,8 +707,11 @@ The competent content is tested in `src/ai/framework/competent/`:
   registry completeness guard, and graceful unknown content (AC3/AC4).
 - `competentBot.test.ts` — commitment/hysteresis and dispatch.
 - `competentBot.integration.test.ts` — a deterministic seeded run, the
-  hard-constraint dodge, and the priority-weighted A/B against the legacy
-  ladder (AC6).
+  hard-constraint dodge, the priority-weighted A/B against the legacy ladder
+  (AC6), and a majority-based **objective-advantage seed sweep** that compares
+  the objective sub-score (minerals, power-ups, enemies) on a bullet-free
+  scenario over a documented 32-seed set, so a small feel tweak cannot fail
+  the suite by flipping one representative run.
 
 `botFrameworkDocs.test.ts`, `competent/competentBotDocs.test.ts` and
 `contentDocs.test.ts` guard the presence of this document and its key

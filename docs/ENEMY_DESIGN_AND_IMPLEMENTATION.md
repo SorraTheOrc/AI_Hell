@@ -215,6 +215,22 @@ no-op setter and the effective shot pattern is always `none`.
 | medium | 18 px | 27 px/s | 0.9 rad/s | 0xaaaa88 |
 | small | 12 px | 36 px/s | 1.4 rad/s | 0xccccaa |
 
+**Render layering (AH-0MVBJDP72004VXE5)**: asteroids render at
+`ASTEROID_DEPTH` (`-1`, `src/core/constants.ts`) — the **lowest foreground
+gameplay layer**. A drifting rock therefore always draws *behind* the player
+ship, every other enemy, bullets, minerals and power-ups (all at the gameplay
+baseline depth `0`) while staying *above* the background photo, its dim overlay
+and the hyperspace warp layers (`BACKGROUND_DEPTH` `-1000`,
+`BACKGROUND_DIM_DEPTH` `-950`, `BACKGROUND_WARP_DEPTH` `-900`), so a rock reads
+as distant scenery rather than a foreground object. The depth is applied
+**once** in the `Asteroid` constructor, so every spawn path — the scheduled
+hazard (`createAsteroidFromEvent`), `PlayScene.spawnAsteroidAt`, the shared
+`splitAsteroid` children and every gym spawn — inherits the identical value and
+cannot drift (gym↔game parity). Only the container's own scene depth changes;
+the intra-container body/force-field/explosion depths (`1` / `1.5` / `2`) are
+unchanged. Pinned by `src/entities/Asteroid.test.ts` and
+`src/scenes/gym/GymAsteroidStress.test.ts`.
+
 **Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
 children at its position; a `medium` spawns two `small`; a `small` destroys
 cleanly with no children (the chain from one large is 1 + 2 + 4 = **7**
@@ -237,11 +253,13 @@ asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
 `PlayScene._onEnemyKilled`). Collision (ramming) kills award no points, as
 always.
 
-**Kill reward (AH-0MV6M2M9P0078N4S)**: in addition to the generic per-kill
-power-up roll, a fully destroyed **small** asteroid additionally rolls the
-configurable **Extra Life** chance (`GameRules.asteroidExtraLifeDropChance`,
-default **0.05**); a winning roll leaves exactly one `extra_life` pickup at
-the death site. The roll lives **once** in the shared helper
+**Kill reward (AH-0MV6M2M9P0078N4S, default off by AH-0MW10ZVLH005IJRM)**: in
+addition to the generic per-kill power-up roll, a fully destroyed **small**
+asteroid additionally rolls the configurable **Extra Life** chance
+(`GameRules.asteroidExtraLifeDropChance`, default **0**); a winning roll leaves
+exactly one `extra_life` pickup at the death site. At the shipped default the
+roll never fires, so rocks do not hand out lives; the rule and key are retained
+so a designer can re-enable it. The roll lives **once** in the shared helper
 `src/scenes/core/asteroidKillDrops.ts`
 (`rollAsteroidExtraLife(entity, rng, chance)` — tier gate first, then
 `rng() < chance`), consumed by `PlayScene._onEnemyKilled` and the gym kill
@@ -1955,7 +1973,8 @@ still visibly demonstrates the bolt under the rule that excludes the
 The campaign now scales two axes with the level (`src/core/levelScaling.ts`):
 wave group counts multiply by `enemyCountMultiplier(level)` (1.00→2.00 over
 levels 1–10) at the shared campaign-build seam, and each kill rolls
-`powerUpDropChance(level)` (0.18→0.05). `GymLevel` and `GymBotTuning` apply
+`powerUpDropChance(level)` (0.09→0.025, the pre-v5 `0.18`→`0.05` halved by
+AH-0MW10ZVLH005IJRM). `GymLevel` and `GymBotTuning` apply
 both: they scale launched counts through the same `applyEnemyCountScaling`
 seam and lengthen their seeded supply interval by the inverse drop-chance
 ratio, so a launched level matches the game. `GymFormationScene` and its
@@ -2070,8 +2089,9 @@ inherited from the shared `CombatScene`, not re-implemented in the gym:
   shared per-frame danger feed (`CombatScene._updateAutoDefence`,
   called in `PlayScene`, `GymFormationScene` and `GymPowerUpsCombat`
   immediately before `_handleCollisions`): when **3 or more** hostile
-  bodies/bullets are within **40 px** (`2 × SHIP_SIZE`) of the ship and a
-  stored charge (or the permanent hold-full reward) is available, the phase
+  bodies/bullets are within **40 px** (`2 × SHIP_SIZE`) of the ship and
+  Phase Shift is **ready** (its single activation, readied by a pickup or the
+  permanent hold-full reward), the phase
   activates automatically; after expiry it re-arms only once danger has
   dropped below the threshold and a **~0.5 s** cooldown has elapsed. While
   phased the shared mineral layer (`collectMinerals({ playerPhased: true })`)
@@ -2516,10 +2536,13 @@ list, and `GymBoss` is likewise excluded there so the real boss is not
 duplicated (AH-0MV13G5EV008D41E; formerly AH-0MUAYB28C004KK7X,
 AH-0MTV8OV9V002D8B7). Index rows are
 keyboard-operable through the shared `src/utils/focusManager.ts`
-(`FocusManager`): rows are focused in reading order with the first row
-focused by default, Tab/Shift+Tab and the arrow keys cycle with wrap-around,
-and Enter/Space launch the focused row through the same path as a pointer
-click (AH-0MUDZFBYY008P7ZE).
+(`FocusManager`), which the index opts into in **grid** mode: the first row is
+focused by default, **Left**/**Right** move between the three columns
+(wrapping at both ends and clamping to a shorter column's last valid row),
+**Up**/**Down** move within the current column (wrapping top ↔ bottom), and
+**Tab**/**Shift+Tab** keep their linear reading-order cycling; Enter/Space
+launch the focused row through the same path as a pointer click
+(AH-0MUDZFBYY008P7ZE, AH-0MV1BKZ0J00946EX).
 
 **Level Gym (`GymLevel`, AH-0MUNU6MGM007CI45).** The left column also lists
 `GymLevel` (label **Level**). It is a parameterised level-playback gym that

@@ -19,6 +19,7 @@ import {
   isDevTelemetryBuild,
   isDevTelemetryCollectionEnabled,
   isDevTelemetryUploadEnabled,
+  loadDevTelemetryStreamer,
   loadDevTelemetryUploader,
   type DevModeEnv,
   type DevTelemetrySetting,
@@ -159,6 +160,25 @@ describe('loadDevTelemetryUploader — build-folded dev-only loader', () => {
     vi.stubEnv('PROD', true);
 
     await expect(loadDevTelemetryUploader()).resolves.toBeUndefined();
+  });
+});
+
+describe('loadDevTelemetryStreamer — build-folded dev-only loader (AH-0MW6NI6BW003RJWH)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('resolves to the streamer factory in a dev build', async () => {
+    const create = await loadDevTelemetryStreamer();
+
+    expect(typeof create).toBe('function');
+  });
+
+  it('resolves to undefined in a production build (streamer never loaded)', async () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('PROD', true);
+
+    await expect(loadDevTelemetryStreamer()).resolves.toBeUndefined();
   });
 });
 

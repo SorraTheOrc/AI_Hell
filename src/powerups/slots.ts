@@ -135,6 +135,11 @@ function isExemptWhenSlotsFull(dropId: DropId): boolean {
  * Exempt entries (`availableWhenSlotsFull` → Extra Life, Mystery UFO) never
  * consume a slot (producer Q7a), and neither do slot-exempt utilities such as
  * `reset` — they can never occupy a slot, so they never push `used` up.
+ *
+ * Extra Life's exemption now only speaks for the **field-pickup** side of the
+ * kind: it is a field-pickup-only power-up, so no reward surface offers it any
+ * more (parent AH-0MW10ZVLH005IJRM AC4). The flag itself is unchanged, so a
+ * picked-up extra life still never occupies a slot.
  */
 function countsTowardsSlotCap(dropId: DropId): boolean {
   return !isExemptWhenSlotsFull(dropId) && !SLOT_EXEMPT_UTILITY_DROP_IDS.has(dropId);

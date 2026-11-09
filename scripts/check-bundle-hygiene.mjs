@@ -40,6 +40,15 @@ export const DEFAULT_DIST_DIR = join(REPO_ROOT, 'dist');
  * `jsonl` sink ships with the telemetry framework) and must stay legal. The
  * dev-only page accessor (`__aiHellTelemetry`, AH-0MVIRYGD1000JVY3) is a
  * second dev-only marker: a production bundle must not contain its global.
+ *
+ * The dev-only streaming part protocol (AH-0MW6NMQPQ0076BE4, parent
+ * AH-0MVJUAADW0033QBD) adds its own markers: the four framing header names
+ * (`x-telemetry-part` / `-run-key` / `-offset` / `-final`, see
+ * `src/telemetry/devStreamProtocol.ts`) and the server-side part staging path
+ * (`recordings/parts`). None of them may reach a production bundle: the
+ * streamer is reached only through `loadDevTelemetryStreamer`, whose literal
+ * `import.meta.env.DEV` check Vite folds to `false` so Rollup eliminates the
+ * module (and the protocol constants it imports) from `dist/`.
  */
 export const FORBIDDEN_MARKERS = [
   { marker: 'node-web-audio-api', label: 'Node-only audio backend' },
@@ -59,6 +68,26 @@ export const FORBIDDEN_MARKERS = [
   {
     marker: '__aiHellTelemetry',
     label: 'Dev-only telemetry page accessor',
+  },
+  {
+    marker: 'x-telemetry-part',
+    label: 'Dev-only telemetry part marker',
+  },
+  {
+    marker: 'x-telemetry-run-key',
+    label: 'Dev-only telemetry part run key',
+  },
+  {
+    marker: 'x-telemetry-offset',
+    label: 'Dev-only telemetry part offset',
+  },
+  {
+    marker: 'x-telemetry-final',
+    label: 'Dev-only telemetry part final flag',
+  },
+  {
+    marker: 'recordings/parts',
+    label: 'Dev-only telemetry part staging path',
   },
 ];
 

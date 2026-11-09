@@ -514,6 +514,14 @@
       ]
     },
     {
+      "cue": "playWaveLaserPickupSound",
+      "recipe": "aihell-pickup-wave-laser",
+      "delivery": "baked",
+      "seeds": [
+        32228
+      ]
+    },
+    {
       "cue": "playSpeedBoostCollectSound",
       "recipe": "aihell-pickup-speed",
       "delivery": "baked",

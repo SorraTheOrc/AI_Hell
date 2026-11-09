@@ -18,6 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import * as effects from './effects';
+import { MAX_CUE_GAIN } from './sfxPlayback';
 import {
   playBossSpawnSound,
   playBossPhaseTransitionSound,
@@ -35,6 +36,7 @@ import {
 import {
   RecordingAudioContext,
   latestRecordingContext,
+  latestGain,
   lastGainValue,
   masterGain,
   resetRecordingAudioContext,
@@ -228,6 +230,40 @@ describe('contract — global volume and mute', () => {
         masterNode,
       );
     }
+  });
+});
+
+// ── 4b. Per-cue amplification (AH-0MW10K39E006CG0A) ─────────────────
+//
+// A producer-approved cue may need to sit **louder** than its baked asset
+// (the wave laser's 1.5×, AH-0MW10K39E006CG0A), so the per-play gain the
+// provider schedules has to carry values above unity rather than clamping
+// them back to 1 — which would make the boost inaudible. These assertions read
+// the gain node the real provider schedules, so a clamped boost cannot pass.
+
+describe('contract — per-cue amplification', () => {
+  beforeEach(() => {
+    installRecordingContext();
+    // Prime the context + master gain so the next created gain is per-play.
+    invokeCue('playSpawnSound');
+    expect(masterGain()).toBeDefined();
+  });
+
+  it('applies the wave laser boost above unity instead of clamping it', () => {
+    effects.playWeaponFireSound('wave_laser');
+    const perPlayGain = latestGain();
+    expect(perPlayGain).toBeDefined();
+    expect(lastGainValue(perPlayGain!)).toBe(effects.WAVE_LASER_VOLUME_SCALE);
+    // Per-cue only: the shared master gain is untouched by a cue boost.
+    expect(lastGainValue(masterGain()!)).toBe(1);
+  });
+
+  it('bounds a runaway per-play gain at the documented ceiling', () => {
+    // The ceiling keeps a corrupt or runaway scale from blasting the mix; it
+    // only has to sit above the loudest producer-approved boost.
+    expect(MAX_CUE_GAIN).toBe(2);
+    effects.playWeaponFireSound('cannon', { volume: 99 });
+    expect(lastGainValue(latestGain()!)).toBe(MAX_CUE_GAIN);
   });
 });
 

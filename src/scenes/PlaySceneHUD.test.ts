@@ -16,7 +16,6 @@ import {
   CHECKPOINT_VERSION,
   type Checkpoint,
 } from '../core/checkpointStore';
-import { POWER_UP_CHARGE_CAP } from '../powerups/powerUpLevels';
 import type { PowerUpId, WeaponDropId } from '../powerups/types';
 import type { HUDEntry } from '../ui/HUD';
 import { toChoiceOption } from '../powerups/choice';
@@ -209,9 +208,9 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
    * The permanent power-up levels the seeded checkpoint owns. Deliberately
    * exercises every HUD visibility rule: timed-but-permanent (shield, speed
    * boost, frenzy, chrono, force field), permanent pulses (bomb, smart bomb,
-   * strike), the thorns budget, the Phase Shift charge pool and the
-   * single-use Teleport warp (over-granted on purpose, to prove a replay
-   * readies it instead of banking a count) and the permanent-stack hybrids
+   * strike), the thorns budget, the Phase Shift activation and the
+   * single-use Teleport warp (both over-granted on purpose, to prove a replay
+   * readies the one activation instead of banking a count) and the permanent-stack hybrids
    * (magnet, mineral scoop). Extra Life is included to pin the lives hazard.
    */
   const POWER_UP_LEVELS: Array<{ id: PowerUpId; level: number }> = [
@@ -227,7 +226,7 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     { id: 'phase_shift', level: 2 },
     // Over-granted on purpose: the replay must clamp, never stack (Teleport
     // is single-use, so every grant just keeps it ready).
-    { id: 'teleport', level: POWER_UP_CHARGE_CAP + 2 },
+    { id: 'teleport', level: 5 },
     { id: 'magnet', level: 1 },
     { id: 'mineral_scoop', level: 1 },
     { id: 'extra_life', level: 2 },
@@ -402,20 +401,28 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     expect(scene.getRunSeed()).toBe(CHECKPOINT.runSeed);
   });
 
-  it('AC5/AC7 — replaying an over-granted pool clamps Phase Shift and readies Teleport', async () => {
+  it('AC5/AC7 — replaying an over-granted loadout readies Phase Shift and Teleport', async () => {
     const scene = await bootResumed();
     const registry = scene.getEffectsRegistry();
-    // A replayed pool is clamped at the kind's level-derived charge cap
-    // (parent AH-0MVTQMREN009DSFW AC2/AC3), which is itself within the
-    // shipped POWER_UP_CHARGE_CAP ceiling.
-    expect(registry.phaseCharges()).toBeLessThanOrEqual(POWER_UP_CHARGE_CAP);
-    expect(registry.phaseCharges()).toBeGreaterThan(0);
+    // Phase Shift is single-use (parent AH-0MW6O1690007P2SL): an over-granted
+    // replays leaves one activation ready and no stored count.
+    expect(registry.phaseCharges()).toBe(1);
+    expect(registry.hasPhaseShift()).toBe(true);
+    expect(registry.phaseShiftRechargeRemaining()).toBe(0);
+    expect(registry.consumableCharges('phase_shift')).toBe(0);
     // Teleport is single-use (parent AH-0MVY096RT006QMF4): the over-granted
     // replay leaves it permanently owned and **ready**, with no stored count.
     expect(registry.isConsumableOwned('teleport')).toBe(true);
     expect(registry.hasTeleport()).toBe(true);
     expect(registry.teleportRechargeRemaining()).toBe(0);
     expect(registry.consumableCharges('teleport')).toBe(0);
+
+    // Neither ability has a pending recharge timer after the replay, so the
+    // pool snapshot carries no readiness entry for either kind.
+    const pools = scene.getEffectsRegistry().levelStore().snapshotConsumablePools();
+    for (const id of ['phase_shift', 'teleport'] as const) {
+      expect(pools.find((p) => p.id === id)?.rechargeTimers ?? []).toHaveLength(0);
+    }
   });
 
   it('AH-0MVY3IGRC00954UD AC2 — a resumed run restores the saved charge pools and timers', async () => {
@@ -473,6 +480,44 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     expect(store.hasTeleport()).toBe(false);
     expect(store.teleportRechargeRemaining()).toBeGreaterThan(0);
     expect(store.teleportRechargeRemaining()).toBeLessThan(30);
+  });
+
+  it('AH-0MW6QY8OU007JOTP AC4 — a legacy phaseCharges checkpoint loads and coerces to single-use', async () => {
+    // A checkpoint written before Phase Shift became single-use carried the
+    // retired pool's charge count instead of the readiness clock. It must
+    // still load: any held charge resumes the ability ready, and the saved
+    // count never reappears as a multi-charge pool.
+    const ready = await bootResumed({
+      consumablePools: [
+        { id: 'phase_shift', charges: 0, phaseCharges: 2, rechargeTimers: [] },
+      ],
+    });
+    const readyStore = ready.getPlayer()!.getPowerUpLevelStore();
+    expect(readyStore.isConsumableOwned('phase_shift')).toBe(true);
+    expect(readyStore.hasPhaseShift()).toBe(true);
+    expect(readyStore.isPhaseShiftRecharging()).toBe(false);
+    expect(readyStore.phaseShiftRechargeRemaining()).toBe(0);
+    // The single-use store exposes no pooled count: the compatibility
+    // projection reports one ready activation, never the legacy count.
+    expect(readyStore.phaseCharges()).toBe(1);
+
+    // A legacy save with no held charge resumes mid-recharge for one
+    // level-derived interval, so the spent ability is never handed back free.
+    const spent = await bootResumed({
+      consumablePools: [
+        { id: 'phase_shift', charges: 0, phaseCharges: 0, rechargeTimers: [] },
+      ],
+    });
+    const spentStore = spent.getPlayer()!.getPowerUpLevelStore();
+    expect(spentStore.isConsumableOwned('phase_shift')).toBe(true);
+    expect(spentStore.hasPhaseShift()).toBe(false);
+    expect(spentStore.isPhaseShiftRecharging()).toBe(true);
+    // The boot loop advances the shared clock a little after the restore, so
+    // the timer is mid-flight (strictly between 0 and the full interval).
+    expect(spentStore.phaseShiftRechargeRemaining()).toBeGreaterThan(0);
+    expect(spentStore.phaseShiftRechargeRemaining()).toBeLessThan(
+      spentStore.phaseRechargeTime(),
+    );
   });
 
   it('AC3 — a fresh (non-resume) run starts with no upgrade rows or effects', async () => {

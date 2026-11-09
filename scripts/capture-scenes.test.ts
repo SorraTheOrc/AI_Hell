@@ -1106,6 +1106,39 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
     expect(error.message).toContain('level.level');
   });
 
+  it('accepts the GymPerformance sweep parameters the sweep driver serialises (AH-0MW6CORAZ001FZZ3)', () => {
+    // The sweep driver sends `{ count, enemyMix, autoFire, player, powerUps }`
+    // as the step-0 launch data; the shared registry must accept exactly the
+    // three performance parameters on top of the common setup fields, or the
+    // sweep is rejected before its first measurement (the reported bug).
+    expect(SCENE_SETUP_TARGET_EXTRA_FIELDS.GymPerformance).toEqual(
+      Object.freeze(['count', 'enemyMix', 'autoFire']),
+    );
+    expect(sceneSetupFieldsFor('GymPerformance')).toEqual([
+      ...SCENE_SETUP_COMMON_FIELDS,
+      'count',
+      'enemyMix',
+      'autoFire',
+    ]);
+
+    const sweepSetup = {
+      count: 50,
+      enemyMix: [{ archetype: 'scout', count: 50 }],
+      autoFire: true,
+      player: { weapons: ['spread'] },
+      powerUps: {},
+    };
+    // The driver's payload validates…
+    expect(() => validateSceneSetup(sweepSetup, 'GymPerformance')).not.toThrow();
+    // …and normalisation keeps the parameters instead of silently dropping
+    // them, so a capture config can carry the same load.
+    expect(normaliseSceneSetup(sweepSetup, 'GymPerformance')).toMatchObject({
+      count: 50,
+      enemyMix: [{ archetype: 'scout', count: 50 }],
+      autoFire: true,
+    });
+  });
+
   it('exposes the required parameter per parameterised target', () => {
     expect(requiredSceneSetupFieldsFor('GymLevel')).toEqual(['level']);
     expect(requiredSceneSetupFieldsFor('GymFodderEnemies')).toEqual(['enemy']);

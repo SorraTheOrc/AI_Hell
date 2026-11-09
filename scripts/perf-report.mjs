@@ -195,6 +195,10 @@ export function countAbove(values, threshold) {
  * effective FPS is `frames / elapsedSeconds` — the honest "how many frames did
  * the loop actually produce per second" number — not a nominal 60.
  *
+ * `frameTimeMs.min` and the derived `fps.min` / `fps.max` expose the worst and
+ * best frame as a rate, so a sweep can record min/max/mean FPS without
+ * re-deriving them from a partial record (AH-0MW5IUCKA009AOF5).
+ *
  * @param {readonly number[]} frameTimesMs
  * @param {{ elapsedSeconds?: number | null }} [options]
  */
@@ -206,18 +210,26 @@ export function summariseFrameTimes(frameTimesMs, { elapsedSeconds = null } = {}
     typeof elapsedSeconds === 'number' && Number.isFinite(elapsedSeconds) && elapsedSeconds > 0
       ? elapsedSeconds
       : null;
+  const minFrameMs = frames === 0 ? null : Math.min(...frameTimesMs);
+  const maxFrameMs = frames === 0 ? null : Math.max(...frameTimesMs);
 
   return {
     frames,
     elapsedSeconds: round(usableElapsed, 3),
     frameTimeMs: {
+      min: round(minFrameMs),
       p50: round(percentile(frameTimesMs, 50)),
       p95: round(percentile(frameTimesMs, 95)),
-      max: frames === 0 ? null : round(Math.max(...frameTimesMs)),
+      max: round(maxFrameMs),
       mean: round(mean(frameTimesMs)),
     },
     fps: {
       effective: usableElapsed === null ? null : round(frames / usableElapsed, 2),
+      // A frame time is the loop's interval, so its rate is 1000 / ms. The
+      // worst frame (longest interval) is the minimum rate and vice versa.
+      min: maxFrameMs === null || maxFrameMs <= 0 ? null : round(1000 / maxFrameMs, 2),
+      max: minFrameMs === null || minFrameMs <= 0 ? null : round(1000 / minFrameMs, 2),
+      mean: usableElapsed === null ? null : round(frames / usableElapsed, 2),
     },
     longFrames: {
       over33Ms,
@@ -341,7 +353,8 @@ export function formatPerfSummary(report = {}) {
       `${throttle > 1 ? `, CPU throttle ×${throttle}` : ''}`,
     `  frames: ${report.frames ?? 0}  (effective ${num(fps.effective, 1)} FPS` +
       `${typeof fps.phaserActualFps === 'number' ? `, Phaser actualFps ${num(fps.phaserActualFps, 1)}` : ''})`,
-    `  frame time: p50 ${num(frameTime.p50)} ms | p95 ${num(frameTime.p95)} ms | max ${num(frameTime.max)} ms`,
+    `  fps: min ${num(fps.min, 1)} | mean ${num(fps.mean, 1)} | max ${num(fps.max, 1)}`,
+    `  frame time: min ${num(frameTime.min)} ms | p50 ${num(frameTime.p50)} ms | p95 ${num(frameTime.p95)} ms | max ${num(frameTime.max)} ms`,
     `  long frames: >${LONG_FRAME_MS} ms ${longFrames.over33Ms ?? 0} (${num(longFrames.over33Percent, 2)}%)` +
       ` | >${SUPPLY_LONG_FRAME_MS} ms ${longFrames.over50Ms ?? 0} (${num(longFrames.over50Percent, 2)}%)`,
   ];
@@ -374,9 +387,12 @@ export function formatPerfSummary(report = {}) {
 
 /** The metrics a two-run comparison reports, in display order. */
 const COMPARISON_METRICS = [
+  { key: 'frameTimeMin', label: 'min frame time (ms)', read: (r) => r?.frameTimeMs?.min ?? null },
   { key: 'p50', label: 'p50 frame time (ms)', read: (r) => r?.frameTimeMs?.p50 ?? null },
   { key: 'p95', label: 'p95 frame time (ms)', read: (r) => r?.frameTimeMs?.p95 ?? null },
   { key: 'max', label: 'max frame time (ms)', read: (r) => r?.frameTimeMs?.max ?? null },
+  { key: 'fpsMin', label: 'min FPS', read: (r) => r?.fps?.min ?? null },
+  { key: 'fpsMax', label: 'max FPS', read: (r) => r?.fps?.max ?? null },
   { key: 'fps', label: 'effective FPS', read: (r) => r?.fps?.effective ?? null },
   { key: 'over33Ms', label: `long frames (>${LONG_FRAME_MS} ms)`, read: (r) => r?.longFrames?.over33Ms ?? null },
 ];

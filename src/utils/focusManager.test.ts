@@ -466,3 +466,148 @@ describe('FocusManager — keyboard event integration (AC8)', () => {
     expect(preventDefault).not.toHaveBeenCalled();
   });
 });
+
+/* ─── Grid navigation (AH-0MV1BKZ0J00946EX) ───────────────────── */
+
+/** Creates `n` controls and registers them, returning the manager. */
+function makeGrid(count: number): FocusManager {
+  const manager = new FocusManager();
+  for (let i = 0; i < count; i++) {
+    manager.register(makeControl(String(i)), vi.fn());
+  }
+  return manager;
+}
+
+/** Dispatches a keydown through the attached scene keyboard handler. */
+function press(scene: Phaser.Scene, event: Partial<KeyboardEvent>): boolean {
+  const preventDefault = vi.fn();
+  keyHandler(scene)({
+    repeat: false,
+    preventDefault,
+    ...event,
+  } as KeyboardEvent);
+  return preventDefault.mock.calls.length > 0;
+}
+
+describe('FocusManager — grid navigation (AH-0MV1BKZ0J00946EX)', () => {
+  // 2 × 2 grid in reading order: col 0 → [0, 1], col 1 → [2, 3].
+  const columns = [
+    [0, 1],
+    [2, 3],
+  ];
+
+  it('AC1 — the default navigation mode stays linear', () => {
+    fm = makeGrid(4);
+    const scene = makeScene();
+    fm.attachKeyboard(scene);
+
+    // Linear: ArrowRight from 0 moves to index 1 (reading order), not to the
+    // next column's first row (index 2).
+    press(scene, { key: 'ArrowRight' });
+    expect(fm.getFocusedIndex()).toBe(1);
+    press(scene, { key: 'ArrowDown' });
+    expect(fm.getFocusedIndex()).toBe(2);
+  });
+
+  it('AC1 — grid mode is opt-in via attachKeyboard options', () => {
+    fm = makeGrid(4);
+    const scene = makeScene();
+    fm.attachKeyboard(scene, { navigation: 'grid', columns });
+
+    press(scene, { key: 'ArrowRight' });
+    expect(fm.getFocusedIndex()).toBe(2);
+  });
+
+  it('AC2 — Left/Right move between columns, wrapping at both ends', () => {
+    fm = makeGrid(4);
+    const scene = makeScene();
+    fm.attachKeyboard(scene, { navigation: 'grid', columns });
+
+    expect(fm.getFocusedIndex()).toBe(0);
+    press(scene, { key: 'ArrowRight' });
+    expect(fm.getFocusedIndex()).toBe(2);
+    press(scene, { key: 'ArrowRight' }); // wraps to leftmost column
+    expect(fm.getFocusedIndex()).toBe(0);
+    press(scene, { key: 'ArrowLeft' }); // wraps to rightmost column
+    expect(fm.getFocusedIndex()).toBe(2);
+    press(scene, { key: 'ArrowLeft' });
+    expect(fm.getFocusedIndex()).toBe(0);
+  });
+
+  it('AC3 — Up/Down move within the current column and wrap top ↔ bottom', () => {
+    fm = makeGrid(4);
+    const scene = makeScene();
+    fm.attachKeyboard(scene, { navigation: 'grid', columns });
+
+    press(scene, { key: 'ArrowDown' });
+    expect(fm.getFocusedIndex()).toBe(1); // col 0, row 1
+    press(scene, { key: 'ArrowDown' });
+    expect(fm.getFocusedIndex()).toBe(0); // wraps to top of col 0
+    press(scene, { key: 'ArrowUp' });
+    expect(fm.getFocusedIndex()).toBe(1); // wraps to bottom of col 0
+
+    // Moving right and then vertically never leaves the new column.
+    press(scene, { key: 'ArrowRight' });
+    expect(fm.getFocusedIndex()).toBe(3); // col 1, row clamped to 1
+    press(scene, { key: 'ArrowDown' });
+    expect(fm.getFocusedIndex()).toBe(2); // wraps within col 1
+  });
+
+  it('AC4 — entering a shorter column clamps to its last valid row', () => {
+    // col 0 has three rows, col 1 has one, col 2 has two.
+    const uneven = [
+      [0, 1, 2],
+      [3],
+      [4, 5],
+    ];
+    fm = makeGrid(6);
+    const scene = makeScene();
+    fm.attachKeyboard(scene, { navigation: 'grid', columns: uneven });
+
+    fm.setFocusedIndex(2); // col 0, bottom row
+    press(scene, { key: 'ArrowRight' });
+    expect(fm.getFocusedIndex()).toBe(3); // clamped to col 1's only row
+    press(scene, { key: 'ArrowRight' });
+    expect(fm.getFocusedIndex()).toBe(4); // col 2 row 0 (clamped from row 0)
+    press(scene, { key: 'ArrowLeft' });
+    expect(fm.getFocusedIndex()).toBe(3);
+  });
+
+  it('AC5 — Tab stays linear in grid mode and activation is unchanged', () => {
+    const action = vi.fn();
+    fm = new FocusManager();
+    for (let i = 0; i < 4; i++) fm.register(makeControl(String(i)), action);
+    const scene = makeScene();
+    fm.attachKeyboard(scene, { navigation: 'grid', columns });
+
+    press(scene, { key: 'Tab' });
+    expect(fm.getFocusedIndex()).toBe(1); // reading order, not column-aware
+    press(scene, { key: 'Tab' });
+    expect(fm.getFocusedIndex()).toBe(2);
+    press(scene, { key: 'Tab', shiftKey: true });
+    expect(fm.getFocusedIndex()).toBe(1);
+
+    press(scene, { key: 'Enter' });
+    expect(action).toHaveBeenCalledOnce();
+    expect(fm.getFocusedIndex()).toBe(1);
+  });
+
+  it('grid navigation is consumed (preventDefault) and ignores repeat', () => {
+    fm = makeGrid(4);
+    const scene = makeScene();
+    fm.attachKeyboard(scene, { navigation: 'grid', columns });
+
+    expect(press(scene, { key: 'ArrowRight' })).toBe(true);
+    expect(fm.getFocusedIndex()).toBe(2);
+
+    // A key repeat is ignored, so focus does not move again.
+    const preventDefault = vi.fn();
+    keyHandler(scene)({
+      key: 'ArrowRight',
+      repeat: true,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+    expect(fm.getFocusedIndex()).toBe(2);
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+});

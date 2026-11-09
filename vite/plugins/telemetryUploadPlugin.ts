@@ -2,9 +2,11 @@
  * Dev-only telemetry upload middleware (AH-0MVBMRNAH001B8X4 — parent
  * AH-0MVBHRLY8004BGDN).
  *
- * The server half of the dev-mode auto-upload flow: the game's
- * `src/telemetry/devUpload.ts` uploader POSTs the local JSONL sink's content
- * to this endpoint at run end, and this middleware validates it against the
+ * The server half of the dev-mode auto-upload flow: the game streams each
+ * flushed telemetry batch to this endpoint during the run and sends a final
+ * part at run end (`src/telemetry/devStream.ts`), or — when no streamer is
+ * installed — POSTs the local JSONL sink's whole content at run end
+ * (`src/telemetry/devUpload.ts`). This middleware validates it against the
  * existing recording reader (`scripts/recording.mjs`) and stores it under
  * `recordings/session-<timestamp>.jsonl` — mirroring the `configCsvPlugin`
  * pattern and the `record-session.mjs` naming.
@@ -36,6 +38,34 @@
  *   the evaluation. The existing `npm run record` / `npm run evaluate --
  *   --human` flows are unchanged — the CLI is reused as-is.
  *
+ * ## Streaming part protocol (AH-0MW6NI6BW003RJWH, parent AH-0MVJUAADW0033QBD)
+ *
+ * The same endpoint also accepts **parts**: a request that carries an explicit
+ * part marker (see `src/telemetry/devStreamProtocol.ts`) and only the records
+ * the client has not had confirmed yet. Rules, all pure functions of the
+ * request and the staged file:
+ *
+ * - Parts are staged **off** the `session-*.jsonl` glob, in
+ *   `recordings/parts/<runKey>.jsonl`, so a mid-run session is never mistaken
+ *   for a completed recording by `recordings()` helpers or
+ *   `scripts/verify-dev-telemetry.mjs`.
+ * - Each part appends only the records beyond its claimed cumulative `offset`.
+ *   A part whose offset trails the stored count is a retried part whose 2xx was
+ *   lost, so its already-stored prefix is dropped (no duplication); a part whose
+ *   offset is beyond the stored count is a **gap** and is refused with 409 and
+ *   the server's authoritative count, so the client re-syncs.
+ * - On `final: true` the staged file is renamed (by storing its content under
+ *   the existing collision-safe `session-<stamp>.jsonl` name) and **exactly
+ *   one** evaluation is enqueued. A repeated final part for an already
+ *   finalised run is answered idempotently with the confirmed count and never
+ *   stores or evaluates again.
+ * - A request **without** the marker keeps the whole-file behaviour
+ *   byte-for-byte: one `session-<stamp>.jsonl` and one evaluation.
+ *
+ * A run that crashes mid-run leaves only `recordings/parts/<runKey>.jsonl`:
+ * valid NDJSON, readable by `scripts/inspect-telemetry.mjs`, but not
+ * auto-evaluated (evaluation belongs to complete runs).
+ *
  * ## Background evaluation rules (pinned by the same test suite)
  *
  * - Each stored recording enqueues one evaluation whose output lands in a
@@ -56,6 +86,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -66,12 +97,34 @@ import {
   SUPPORTED_TELEMETRY_SCHEMA_VERSIONS,
   parseRecording,
 } from '../../scripts/recording.mjs';
+import {
+  applyPartRecords,
+  parsePartRequest,
+  splitNdjsonLines,
+  type TelemetryPartRequest,
+} from '../../src/telemetry/devStreamProtocol';
 
 /** Endpoint the game-side uploader posts to (`src/telemetry/devUpload.ts`). */
 export const TELEMETRY_UPLOAD_PATH = '/api/telemetry/upload';
 
 /** Directory (under the plugin root) recordings are stored in. */
 export const RECORDINGS_DIR = 'recordings';
+
+/**
+ * Subdirectory of {@link RECORDINGS_DIR} that streaming parts are staged in
+ * (deliberately outside the `session-*.jsonl` glob that marks completed
+ * recordings).
+ */
+export const PARTS_DIR = 'parts';
+
+/**
+ * How many finalised run keys the middleware remembers.
+ *
+ * A repeated final part for a remembered run is answered idempotently (same
+ * confirmed count, no second store, no second evaluation). Bounded so a long
+ * dev session cannot grow the map without limit.
+ */
+export const MAX_REMEMBERED_RUNS = 256;
 
 /** Upper bound for an accepted upload body. 16 MiB covers the multi-megabyte
  * local sink content a long dev session accumulates; larger payloads are
@@ -485,14 +538,202 @@ function storeRecording(recordingsDir: string, body: string): string {
   );
 }
 
-function handleUpload(
+/**
+ * Staged-part bookkeeping for one dev server (AH-0MW6NI6BW003RJWH).
+ *
+ * Holds the bounded memory of finalised runs: a repeated final part for a run
+ * that is already stored is answered with the run's confirmed count and never
+ * stores or evaluates a second time, which is what makes "exactly one
+ * evaluation per run" hold even when a 2xx was lost and the client retried.
+ */
+export class PartStaging {
+  private readonly finalised = new Map<string, number>();
+
+  /** Absolute path of the run's staged part file. */
+  static stagedPath(root: string, runKey: string): string {
+    return join(root, RECORDINGS_DIR, PARTS_DIR, `${runKey}.jsonl`);
+  }
+
+  /** The confirmed count of an already-finalised run, if remembered. */
+  finalisedCount(runKey: string): number | undefined {
+    return this.finalised.get(runKey);
+  }
+
+  /** Remembers a finalised run, evicting the oldest entry past the bound. */
+  rememberFinalised(runKey: string, confirmedCount: number): void {
+    this.finalised.delete(runKey);
+    this.finalised.set(runKey, confirmedCount);
+    while (this.finalised.size > MAX_REMEMBERED_RUNS) {
+      const oldest = this.finalised.keys().next().value;
+      if (oldest === undefined) break;
+      this.finalised.delete(oldest);
+    }
+  }
+
+  /** The records already staged for the run (empty when nothing is staged). */
+  readStaged(root: string, runKey: string): string[] {
+    try {
+      return splitNdjsonLines(
+        readFileSync(PartStaging.stagedPath(root, runKey), 'utf8'),
+      );
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw err;
+    }
+  }
+
+  /** Replaces the run's staged file with the merged records. */
+  writeStaged(root: string, runKey: string, lines: readonly string[]): void {
+    const stagedPath = PartStaging.stagedPath(root, runKey);
+    mkdirSync(dirname(stagedPath), { recursive: true });
+    writeFileSync(stagedPath, `${lines.join('\n')}\n`, 'utf8');
+  }
+
+  /** Removes the run's staged file once the run is finalised. */
+  removeStaged(root: string, runKey: string): void {
+    rmSync(PartStaging.stagedPath(root, runKey), { force: true });
+  }
+}
+
+/** Enqueues one background evaluation for a just-stored recording. */
+function enqueueEvaluation(
   root: string,
-  maxBytes: number,
   evaluationQueue: EvaluationQueue,
   log: (message: string) => void,
+  fileName: string,
+): void {
+  // Fire-and-forget: enqueue first, respond after — the spawn itself is
+  // non-blocking and never awaited, so the game gets its 2xx immediately.
+  // A failure here must never fail the upload, so it is caught and logged.
+  try {
+    const runName = basename(fileName, '.jsonl');
+    const outputDir = join(root, EVALUATION_OUTPUT_DIR, runName);
+    evaluationQueue.enqueue({
+      recordingPath: join(root, RECORDINGS_DIR, fileName),
+      outputDir,
+      logPath: join(outputDir, EVALUATION_LOG_FILE),
+    });
+  } catch (err) {
+    log(
+      `evaluation enqueue failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/** Everything a part or whole-file request needs to act. */
+interface UploadContext {
+  readonly root: string;
+  readonly maxBytes: number;
+  readonly evaluationQueue: EvaluationQueue;
+  readonly staging: PartStaging;
+  readonly log: (message: string) => void;
+}
+
+/**
+ * Handles one streamed part: stage the unconfirmed records, and on the final
+ * part store the run as one session file and enqueue exactly one evaluation.
+ */
+function handlePart(
+  context: UploadContext,
+  part: TelemetryPartRequest,
+  body: string,
+  res: ServerResponse,
+): void {
+  const { root, evaluationQueue, staging, log } = context;
+
+  const alreadyFinalised = staging.finalisedCount(part.runKey);
+  if (alreadyFinalised !== undefined) {
+    // A retried/duplicated part for a finalised run: report the
+    // server-authoritative count so the client's watermark converges, and
+    // never store or evaluate again.
+    sendJson(res, 200, {
+      ok: true,
+      runKey: part.runKey,
+      confirmedCount: alreadyFinalised,
+      appendedCount: 0,
+      finalised: true,
+    });
+    return;
+  }
+
+  const partLines = splitNdjsonLines(body);
+  // A finalisation-only part carries no records; every part that does carry
+  // records must be valid NDJSON of schema-valid telemetry, so a malformed
+  // part is never staged.
+  if (partLines.length > 0) {
+    const validation = validateTelemetryUpload(body);
+    if (!validation.ok) {
+      sendJson(res, 400, { ok: false, errors: validation.errors });
+      return;
+    }
+  }
+
+  const applied = applyPartRecords(
+    staging.readStaged(root, part.runKey),
+    partLines,
+    part.offset,
+  );
+  if (!applied.ok) {
+    sendJson(res, 409, {
+      ok: false,
+      runKey: part.runKey,
+      confirmedCount: applied.confirmedCount,
+      errors: [
+        `Part offset ${part.offset} is beyond the ${applied.confirmedCount} record(s) already stored for run ${part.runKey}`,
+      ],
+    });
+    return;
+  }
+
+  staging.writeStaged(root, part.runKey, applied.lines);
+
+  if (!part.final) {
+    sendJson(res, 200, {
+      ok: true,
+      runKey: part.runKey,
+      confirmedCount: applied.confirmedCount,
+      appendedCount: applied.appendedCount,
+      finalised: false,
+    });
+    return;
+  }
+
+  // Finalise: the run becomes one completed recording, exactly as an unmarked
+  // whole-file upload would have produced, and one evaluation is enqueued. A
+  // run with no staged records is refused rather than stored as an unusable
+  // (and un-evaluable) empty recording.
+  if (applied.lines.length === 0) {
+    sendJson(res, 400, {
+      ok: false,
+      runKey: part.runKey,
+      confirmedCount: applied.confirmedCount,
+      errors: [`No records were staged for run ${part.runKey}`],
+    });
+    return;
+  }
+  const fileName = storeRecording(
+    join(root, RECORDINGS_DIR),
+    `${applied.lines.join('\n')}\n`,
+  );
+  staging.removeStaged(root, part.runKey);
+  staging.rememberFinalised(part.runKey, applied.confirmedCount);
+  enqueueEvaluation(root, evaluationQueue, log, fileName);
+  sendJson(res, 200, {
+    ok: true,
+    runKey: part.runKey,
+    confirmedCount: applied.confirmedCount,
+    appendedCount: applied.appendedCount,
+    finalised: true,
+    storedPath: `${RECORDINGS_DIR}/${fileName}`,
+  });
+}
+
+function handleUpload(
+  context: UploadContext,
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
+  const { root, maxBytes, evaluationQueue, log } = context;
   readRequestBody(req, maxBytes)
     .then((result) => {
       if (!result.ok) {
@@ -502,6 +743,19 @@ function handleUpload(
         });
         return;
       }
+      const discrimination = parsePartRequest({
+        headers: req.headers,
+        url: req.url ?? '',
+      });
+      if (discrimination.kind === 'invalid') {
+        sendJson(res, 400, { ok: false, errors: discrimination.errors });
+        return;
+      }
+      if (discrimination.kind === 'part') {
+        handlePart(context, discrimination.part, result.body, res);
+        return;
+      }
+
       const validation = validateTelemetryUpload(result.body);
       if (!validation.ok) {
         sendJson(res, 400, { ok: false, errors: validation.errors });
@@ -510,22 +764,7 @@ function handleUpload(
       const recordingsDir = join(root, RECORDINGS_DIR);
       const fileName = storeRecording(recordingsDir, result.body);
       const storedPath = `${RECORDINGS_DIR}/${fileName}`;
-      // Fire-and-forget: enqueue first, respond after — the spawn itself is
-      // non-blocking and never awaited, so the game gets its 2xx immediately.
-      // A failure here must never fail the upload, so it is caught and logged.
-      try {
-        const runName = basename(fileName, '.jsonl');
-        const outputDir = join(root, EVALUATION_OUTPUT_DIR, runName);
-        evaluationQueue.enqueue({
-          recordingPath: join(root, storedPath),
-          outputDir,
-          logPath: join(outputDir, EVALUATION_LOG_FILE),
-        });
-      } catch (err) {
-        log(
-          `evaluation enqueue failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+      enqueueEvaluation(root, evaluationQueue, log, fileName);
       sendJson(res, 200, {
         ok: true,
         storedPath,
@@ -575,6 +814,13 @@ export function telemetryUploadPlugin(
     maxConcurrent: options.maxConcurrentEvaluations,
     log,
   });
+  const context: UploadContext = {
+    root,
+    maxBytes,
+    evaluationQueue,
+    staging: new PartStaging(),
+    log,
+  };
 
   return {
     name: 'ai-hell:telemetry-upload',
@@ -596,7 +842,7 @@ export function telemetryUploadPlugin(
           });
           return;
         }
-        handleUpload(root, maxBytes, evaluationQueue, log, req, res);
+        handleUpload(context, req, res);
       });
     },
   };

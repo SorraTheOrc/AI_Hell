@@ -359,29 +359,6 @@ describe('CombatScene — shared collision broad phase (AH-0MVXV0EMF001WVQ1)', (
     expect(outcome.playerHits).toBe(0);
   });
 
-  it('AC2 — an interposed AOE projectile detonates at the same point', async () => {
-    const fixture = (scene: BroadPhaseStubScene) => {
-      const aoe = scene.addPlayerBullet(200, 200);
-      aoe.aoeWeapon = WEAPON_CATALOGUE.mortar;
-      scene.addPlayerBullet(900, 700);
-      scene.addEnemy(200, 200, 10);
-      scene.addEnemy(215, 200, 10);
-      scene.addEnemy(1200, 700, 10);
-      scene.addEnemyBullet(200, 200);
-    };
-
-    await expectEquivalent(fixture);
-
-    destroyBooted();
-    const { outcome } = await runPass(fixture);
-
-    // The interception consumed the projectile and its blast killed the two
-    // enemies in range; the far enemy and the stray player bullet survive.
-    expect(outcome.enemiesAlive).toEqual([false, false, true]);
-    expect(outcome.playerBullets).toEqual(['900,700']);
-    expect(outcome.aoeEffects).toBeGreaterThan(0);
-  });
-
   it('AC2 — a splitting projectile bursts into the same warheads', async () => {
     const fixture = (scene: BroadPhaseStubScene) => {
       const cluster = scene.addPlayerBullet(300, 300);

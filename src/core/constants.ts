@@ -66,6 +66,33 @@ export const BACKGROUND_FALLBACK_COLOR: string | null =
  */
 export const BACKGROUND_WARP_DEPTH = -900;
 
+// ── Asteroid render layer (AH-0MVBJDP72004VXE5) ─────────────────────
+
+/**
+ * Render depth of asteroid entities — the **lowest foreground gameplay
+ * layer** (AH-0MVBJDP72004VXE5).
+ *
+ * Strictly below the gameplay baseline (`0`), so a drifting rock always draws
+ * behind the player ship, every other enemy, bullets, minerals and power-ups;
+ * and strictly above the background photo, its dim overlay and the hyperspace
+ * warp layers ({@link BACKGROUND_DEPTH}, {@link BACKGROUND_DIM_DEPTH},
+ * {@link BACKGROUND_WARP_DEPTH}), so the rock still reads as distant
+ * foreground scenery rather than disappearing behind the backdrop.
+ *
+ * Applied **once** on the shared `Asteroid` container
+ * (`src/entities/Asteroid.ts`), so every spawn path — the scheduled hazard
+ * (`createAsteroidFromEvent`), `PlayScene.spawnAsteroidAt`, the shared
+ * `splitAsteroid` children and every gym spawn — inherits the identical value
+ * and can never drift (gym↔game parity). Only the container's own scene depth
+ * changes; the intra-container body/force-field/explosion depths are untouched.
+ *
+ * `-1` is the only simple integer in the open interval
+ * (`BACKGROUND_WARP_DEPTH`, `0`); if another foreground layer is later
+ * introduced between the backdrop and the gameplay baseline, this constant is
+ * the single place to re-tune.
+ */
+export const ASTEROID_DEPTH = -1;
+
 // ── Level transitions ───────────────────────────────────────────────
 
 /**
@@ -447,7 +474,7 @@ export const PLAYER_HIT_SCALE_PULSE_DURATION = 0.4;
 export const MINERAL_SIZE = 5;
 
 /** Mineral body colour — gold (hex). */
-export const MINERAL_COLOR = 0xffdd44;
+export const MINERAL_COLOR = 0xccaa33;
 
 /**
  * Salvage bonus mineral body colour — orange (hex, AH-0MVJ72I8O0009T09).

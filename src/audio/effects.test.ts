@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as effects from './effects';
 import { MAX_CONCURRENT_CUE_VOICES } from './cueVoiceLimiter';
+import { HOLD_FULL_FIRE_VOLUME_SCALE } from '../core/rules';
 import {
   CUE_MANIFEST,
   RETIRED_CUES,
@@ -933,6 +934,77 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     expect(recording.plays).toHaveLength(4);
     expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
     expect(recording.plays[3].url).not.toBe(recording.plays[2].url);
+  });
+});
+
+// ── 3c. Wave laser level (AH-0MW10K39E006CG0A) ──────────────────────
+//
+// The producer asked for the wave laser to sit 1.5× louder than before. The
+// boost rides the same named-constant runtime mechanism as the family trims
+// (`WAVE_LASER_VOLUME_SCALE`) so the baked WAVs, recipes and checksums stay
+// untouched, and it composes multiplicatively with a caller volume so the
+// hold-full metronome still composites rather than being replaced. Both entry
+// points are pinned: the live fire path is the shared dispatcher (the direct
+// export has no runtime caller), the live impact path is the shared impact
+// seam, which dispatches through the direct export.
+
+describe('wave laser level (AH-0MW10K39E006CG0A)', () => {
+  it('exports a single named 1.5× scale', () => {
+    expect(effects.WAVE_LASER_VOLUME_SCALE).toBe(1.5);
+  });
+
+  it('plays live fire 1.5× louder through the shared dispatcher', () => {
+    effects.playWeaponFireSound('wave_laser');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-wave-laser-fire.32219.wav',
+    );
+    expect(recording.plays[0].volume).toBe(effects.WAVE_LASER_VOLUME_SCALE);
+  });
+
+  it('composes the boost with the hold-full metronome volume', () => {
+    // The metronome ghost must stay quieter than live fire while still
+    // carrying the boost — the scales multiply, neither replaces the other.
+    effects.playWeaponFireSound('wave_laser', {
+      volume: HOLD_FULL_FIRE_VOLUME_SCALE,
+    });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].volume).toBeCloseTo(
+      HOLD_FULL_FIRE_VOLUME_SCALE * effects.WAVE_LASER_VOLUME_SCALE,
+    );
+  });
+
+  it('the direct fire and impact exports carry the boost', () => {
+    effects.playWaveLaserFireSound();
+    effects.playWaveLaserImpactSound();
+    expect(recording.plays.map((play) => play.url)).toEqual([
+      'audio/sfx/aihell-wave-laser-fire.32219.wav',
+      'audio/sfx/aihell-wave-laser-impact.32231.wav',
+    ]);
+    expect(recording.plays.map((play) => play.volume)).toEqual([
+      effects.WAVE_LASER_VOLUME_SCALE,
+      effects.WAVE_LASER_VOLUME_SCALE,
+    ]);
+  });
+
+  it('carries the boost on the live impact path (weapon-catalogue cue)', () => {
+    effects.playWeaponImpactCue('playWaveLaserImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-wave-laser-impact.32231.wav',
+    );
+    expect(recording.plays[0].volume).toBe(effects.WAVE_LASER_VOLUME_SCALE);
+  });
+
+  it('leaves every other player weapon at its existing level (scope guard)', () => {
+    effects.playWeaponFireSound('cannon');
+    effects.playWeaponImpactCue('playCannonImpactSound');
+    effects.playWeaponFireSound('railgun');
+    effects.playWeaponImpactCue('playRailgunImpactSound');
+    effects.playWeaponFireSound('heavy_slug');
+    expect(recording.plays.map((play) => play.volume)).toEqual([
+      1, 1, 1, 1, 1,
+    ]);
   });
 });
 

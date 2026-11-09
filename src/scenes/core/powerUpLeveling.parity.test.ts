@@ -11,7 +11,7 @@
  * - the resolved stats (`PowerUpLevelStore.stats` === the shared
  *   `resolvePowerUpAtLevel`), and
  * - the observable effect-path outputs (Shield absorptions, Bomb range,
- *   Speed multiplier, Phase Shift charges, Teleport readiness, Extra Life
+ *   Speed multiplier, Phase Shift readiness, Teleport readiness, Extra Life
  *   lives, Magnet / Mineral Scoop stack caps, Smart Bomb pulse rate, Force
  *   Field reflect budget, Mystery UFO bounty).
  *
@@ -76,7 +76,10 @@ const OBSERVABLE: Record<PowerUpId, (registry: EffectsRegistry) => number> = {
   shield: (r) => r.shieldAbsorptionsRemaining(),
   bomb: (r) => r.bombRange(),
   speed_boost: (r) => r.speedMultiplier(),
-  phase_shift: (r) => r.phaseCharges(),
+  // Readiness is binary for both single-use kinds (Phase Shift parent
+  // AH-0MW6O1690007P2SL, Teleport parent AH-0MVY096RT006QMF4): 1 while the
+  // one activation is ready, 0 while it recharges — there is no stored count.
+  phase_shift: (r) => (r.hasPhaseShift() ? 1 : 0),
   // Readiness is binary (parent AH-0MVY096RT006QMF4): 1 while the single warp
   // is ready, 0 while it recharges — there is no stored count.
   teleport: (r) => (r.hasTeleport() ? 1 : 0),

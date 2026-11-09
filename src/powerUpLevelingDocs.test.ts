@@ -74,6 +74,52 @@ const RETIRED_TELEPORT_STATEMENTS: ReadonlyArray<[string, RegExp]> = [
 
 const RETIREMENT_MARKER = /retired|superseded/i;
 
+/**
+ * The shipped surfaces that describe Phase Shift to a player or a maintainer
+ * (parent AH-0MW6O1690007P2SL). `CHANGELOG.md` is deliberately absent — the
+ * ship skill's release pipeline owns it and keeps its historical entries.
+ */
+const PHASE_SHIFT_DOC_SURFACES = [
+  ...TELEPORT_DOC_SURFACES,
+  'docs/BALANCING.md',
+  'src/scenes/gym/GymRechargeTuning.ts',
+] as const;
+
+/**
+ * The exact statements of the retired multi-charge Phase Shift pool. A
+ * shipped surface may mention one only when the same line marks it as history
+ * (`retired` / `superseded` / `legacy`), which is how the GDD and the store
+ * record the retired `phaseCharges` axis.
+ */
+const RETIRED_PHASE_SHIFT_STATEMENTS: ReadonlyArray<[string, RegExp]> = [
+  [
+    'a Phase Shift charge pool',
+    /Phase Shift[^.]{0,20}\bis (?:a )?(?:recharging )?charge pool/i,
+  ],
+  [
+    "Phase Shift's charge pool",
+    /Phase Shift's[^.]{0,80}\bcharge pool/i,
+  ],
+  [
+    'a Phase Shift recharging pool',
+    /Phase Shift[^.]{0,20}\brecharging (?:charge )?pool/i,
+  ],
+  ['a cap-3 Phase Shift pool', /Phase Shift[^.]{0,40}\bcapped at 3\b/i],
+  ['a cap-of-3 Phase Shift pool', /Phase Shift[^.]{0,40}\bcap of 3\b/i],
+  [
+    'a base-1 cap-3 Phase Shift count',
+    /Phase Shift[^.]{0,40}base 1 → cap 3/i,
+  ],
+  [
+    'Phase Shift activation charges',
+    /Phase Shift (?:auto-activation )?charges\b/i,
+  ],
+  [
+    'the retired POWER_UP_CHARGE_CAP Phase Shift ceiling',
+    /POWER_UP_CHARGE_CAP/,
+  ],
+];
+
 const ids = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
 
 describe('power-up leveling is documented (AH-0MUU2QJE2007JNR6 AC8)', () => {
@@ -240,5 +286,105 @@ describe('power-up leveling is documented (AH-0MUU2QJE2007JNR6 AC8)', () => {
     const enemyDesign = fs.readFileSync(ENEMY_DESIGN_PATH, 'utf8');
     expect(enemyDesign).toMatch(/ready Teleport warp/);
     expect(enemyDesign).toContain('`canTeleport()` accepts a ready warp');
+  });
+
+  // ── Single-use Phase Shift docs sweep (parent AH-0MW6O1690007P2SL) ──
+
+  it('the GDD describes Phase Shift as single-use with a readiness + countdown row (AC1/AC2)', () => {
+    // The catalogue row, not just the §4.4.3 table, must describe one held
+    // activation that readies on pickup/reward and then recharges once spent
+    // — the player-facing statement of the shipped model.
+    expect(gdd).toContain('single-use** since parent AH-0MW6O1690007P2SL');
+    expect(gdd).toMatch(/The player holds exactly \*\*one\*\* Phase Shift activation/);
+    expect(gdd).toContain('a field pickup or a hold-full grant **readies** it');
+    expect(gdd).toContain(
+      'the HUD row shows the readiness state and a live **`next in Ns`** countdown while it recharges',
+    );
+    expect(gdd).toContain('a recharging Phase Shift drops out of the auto-defence draw');
+  });
+
+  it('the GDD §4.4.3 level table pins Phase Shift to the catalogue recharge interval (AC1)', () => {
+    // The interval is stored as charges/second and inverted to seconds by the
+    // store (1/30 base, 1/10 asymptote); pin both so the docs cannot drift.
+    const spec = POWER_UP_LEVEL_SPECS.phase_shift.find(
+      (candidate) => candidate.variable === 'phaseRechargeRate',
+    );
+    expect(spec).toBeDefined();
+    expect(Math.round(1 / spec!.base)).toBe(30);
+    expect(Math.round(1 / spec!.cap)).toBe(10);
+    const rate0 = resolvePowerUpAtLevel('phase_shift', 0).phaseRechargeRate!;
+    expect(Math.round(1 / rate0)).toBe(30);
+
+    expect(gdd).toContain('Phase recharge (1/30 → 1/10');
+    expect(gdd).toContain('30 s at base → 10 s at the cap');
+  });
+
+  it('the retired phaseCharges level axis is recorded as history (AC5)', () => {
+    // The axis no longer exists in the catalogue; the docs must say so next to
+    // the table rather than quietly dropping it (a reader may still have an
+    // older build in mind).
+    const variables = POWER_UP_LEVEL_SPECS.phase_shift.map(
+      (candidate) => candidate.variable,
+    );
+    expect(variables).not.toContain('phaseCharges');
+    expect(gdd).toMatch(/retired `phaseCharges` axis/);
+  });
+
+  it('the README, BALANCING and GYM_PARITY document the single-use Phase Shift (AC1/AC6)', () => {
+    expect(readme).toContain('single-use since parent AH-0MW6O1690007P2SL');
+    expect(readme).toMatch(/A normally-collected Phase Shift \*\*readies\*\* its one activation/);
+
+    const balancing = fs.readFileSync(BALANCING_PATH, 'utf8');
+    expect(balancing).toContain('phaseRechargeRate');
+    expect(balancing).toMatch(/\| \*\*30 s\*\* \| \*\*10 s\*\* \|/);
+    expect(balancing).toMatch(/Phase Shift mirrors that shape/);
+
+    const gymParity = fs.readFileSync(GYM_PARITY_PATH, 'utf8');
+    expect(gymParity).toContain('hasPhaseShift()');
+    expect(gymParity).toContain(
+      'Phase Shift — the single activation is spent by one auto-defence phase (**single-use**)',
+    );
+  });
+
+  it('the GymRechargeTuning comments describe single-use Phase Shift (AC4)', () => {
+    // The gym needs no behaviour change (it reads the store readiness API);
+    // only its explanatory comment had to follow the model.
+    const gym = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/scenes/gym/GymRechargeTuning.ts'),
+      'utf8',
+    );
+    expect(gym).toMatch(/Both abilities are \*\*single-use\*\*/);
+    expect(gym).toContain('spent\n * activation recharges on the level-derived interval');
+    expect(gym).not.toMatch(/regenerating ceiling is 3/);
+  });
+
+  it('no shipped surface still states a multi-charge Phase Shift pool (AC3/AC6)', () => {
+    // A grep sweep as a test: every shipped doc, catalogue description and
+    // code comment must describe the single-use activation. `CHANGELOG.md` is
+    // excluded (release-managed history), and a line may quote a retired
+    // statement only when it marks it as history.
+    const offenders: string[] = [];
+    for (const relative of PHASE_SHIFT_DOC_SURFACES) {
+      const absolute = path.resolve(process.cwd(), relative);
+      const lines = fs.readFileSync(absolute, 'utf8').split('\n');
+      lines.forEach((line, index) => {
+        if (RETIREMENT_MARKER.test(line)) return;
+        for (const [description, pattern] of RETIRED_PHASE_SHIFT_STATEMENTS) {
+          if (pattern.test(line)) {
+            offenders.push(`${relative}:${index + 1} — ${description}`);
+          }
+        }
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the Phase Shift catalogue description states one activation and its recharge (AC1)', () => {
+    const description = POWER_UP_CATALOGUE.phase_shift.description;
+    expect(description).toMatch(/one activation/i);
+    expect(description).toMatch(/30 s → 10 s/);
+    expect(description).toMatch(/ready again/i);
+    expect(description).not.toMatch(/charge pool/i);
+    expect(POWER_UP_CATALOGUE.phase_shift.singleUse).toBe(true);
   });
 });

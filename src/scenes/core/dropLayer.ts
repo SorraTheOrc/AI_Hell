@@ -41,6 +41,7 @@ import {
   playPowerUpCollectSound,
   playRapidPickupSound,
   playResetPickupSound,
+  playWaveLaserPickupSound,
   playSpeedBoostCollectSound,
   playSpreadPickupSound,
 } from '../../audio/effects';
@@ -375,6 +376,9 @@ export function playDropPickupCue(drop: PickupCueDrop): void {
           break;
         case 'rapid':
           playRapidPickupSound();
+          break;
+        case 'wave_laser':
+          playWaveLaserPickupSound();
           break;
         default:
           playPowerUpCollectSound();

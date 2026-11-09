@@ -17,7 +17,7 @@ Governing rule: [`AGENTS.md` § Game Architecture Conventions](../AGENTS.md#game
 | Audited at commit | `1e335eb0` (2026-10-29) |
 | Divergences fixed by | AH-0MVRMHWNC002H4B5 (D1–D4, all rows now `parity`) |
 | Hangar War rows refreshed by | AH-0MVUXCC5J0028OGQ (the Hangar War ring specification, GDD §8.2): the `GymHangar` and `GymHexWar` rows were re-checked against the shipped hangar screen, hex map and defence report, so the enabled-objects and reason cells name the same model/renderer pairs the game runs |
-| Scope | every production scene under `src/scenes/gym/` (19) plus the generic base `src/scenes/gym/core/GymFormationScene.ts` |
+| Scope | every production scene under `src/scenes/gym/` (21) plus the generic base `src/scenes/gym/core/GymFormationScene.ts` |
 | Automated guard | [`src/scenes/core/gymParityDocs.test.ts`](../src/scenes/core/gymParityDocs.test.ts) fails if a gym scene has no row here, or if a row loses its verdict or evidence |
 
 ## How to re-audit
@@ -32,6 +32,13 @@ The next sweep is cheap because most of the matrix is guarded mechanically.
   production scene re-introduces a copy of a shared helper or template method.
   The wormhole-transit destination rule is registered at `:2615`
   (`resolveSpawnTransitTarget` → `src/scenes/core/spawnTransit.ts`).
+  The asteroid silhouette/atlas render path (AH-0MW508UAQ002IC5N) is registered
+  the same way — `asteroidPaletteShapes` / `asteroidVariantFromDraws` /
+  `drawAsteroidSilhouette` / `asteroidAtlasLayout` / `acquireAsteroidPalette` →
+  `src/utils/asteroidTextures.ts` — and the dedicated guard allows
+  `bakedBodyFrame` to be defined only by `BaseEnemy` (the `null` default) and
+  `Asteroid` (the shared atlas frame), so no game or gym scene can re-introduce
+  a divergent asteroid render path.
 - **Matrix coverage and classification** —
   [`src/scenes/core/gymParityDocs.test.ts`](../src/scenes/core/gymParityDocs.test.ts)
   scans `src/scenes/gym/Gym*.ts`, requires one row here per scene, requires the
@@ -82,6 +89,7 @@ column). No other verdict is accepted by the guard.
 | Scene | Derives from | Enabled shipped objects | Spawn seam | Combat loop inherited | Verdict | Reason / evidence |
 |---|---|---|---|---|---|---|
 | `GymFormationScene` (generic base) | `CombatScene` (`src/scenes/gym/core/GymFormationScene.ts:502`) | every config-driven formation entity (`createEnemyFromConfig`), shared mineral layer + kill drops, opt-in power-up/weapon drop layer, shared wave timeout, shared background layer (`_createSceneBackground` → `createBackgroundLayer`) | `_spawnFormation` → `placeWavePortal` + `resolveSpawnTransitTarget` + `startSpawnAnimation` + single-live `WormholeController` (`:1790`, `:1848`, `:1861`) | yes — `_tickPlayer` `:1692`, `_updateAutoDefence` `:1698`, `_handleCollisions` `:1701`, `_advanceWaveTimeout` `:1726`, `applyPostMotionWrapAll` `:1671` | `parity` | Diver re-anchor + glide are applied (`:1644`, `:1662`, `:1898`). Intentional: flat `rules.powerUpSpawnInterval` cadence (`:982`, §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`), gym HUD/controls and demonstration mineral seeding (`:1371`), no run telemetry (game only, `src/scenes/core/runTelemetry.ts`), fixed level-1 backdrop and no level-change warp (`src/scenes/gym/core/gymBackground.ts`, divergence 11 below) |
+| `GymAsteroidStress` | `GymFormationScene` (`src/scenes/gym/GymAsteroidStress.ts:310`) | 200 shared `Asteroid` entities (body rendered from the shared asteroid atlas, [Shared asteroid silhouette atlas](#shared-asteroid-silhouette-atlas-ah-0mw5088la007xyqm), `src/utils/asteroidTextures.ts`) materialised through the shared `createAsteroidFromEvent` seam (`src/scenes/core/asteroidHazard.ts`) and splitting through the shared `splitAsteroid` (`src/scenes/core/asteroidSplit.ts`); a representative late-game wave (`tank`, `swarm`, `phaser`, `diver`, `raider`, `march`) built through the shared `createEnemyFromConfig` and firing through the shared `fireForEnemy` dispatcher; the shared player ship and collision loop | the wave uses the inherited `_spawnFormation` portal/wormhole seam (`GymFormationScene.ts:1879`); the rock field is planned by the pure `buildAsteroidStressSpawnEvents` (`GymAsteroidStress.ts:197`) and spawned in `create()` through `createAsteroidFromEvent`, then registered with `registerDynamicEntity` — the same materialiser `PlayScene` uses for its scheduled asteroid hazard | yes — inherited `CombatScene` loop plus the scene's simulation step, which only refreshes the stress overlay after `super.tick` (`GymAsteroidStress.ts:365`) | `intentional divergence` | Scenario configuration only, no divergent code (see [`docs/PERFORMANCE.md`](./PERFORMANCE.md#the-asteroid-stress-gym-gymasteroidstress)): 200 mixed-tier rocks plus a 12-enemy late-game wave, field seed fixed (`GYM_ASTEROID_STRESS_FIELD_SEED`) so positions, tiers and rotations reproduce, formation drift 0, no wave timeout, no power-up layer and `minerals: false`. **Documented divergence**: the rock field is stationary (zero velocity, a player-safe pocket keeps every rock out of ramming range) so no ram-split can change the composition mid-window, and player auto-fire is disabled (`GymAsteroidStress.ts:382`) so the measured load cannot decay — a disabled feature, never a copied rule; the wave's fire is the shared `fireForEnemy` dispatch and the rocks' motion/wrap/split are the shared `Asteroid` path. **No rendering divergence**: every rock body renders through the shared silhouette/atlas seam ([Shared asteroid silhouette atlas](#shared-asteroid-silhouette-atlas-ah-0mw5088la007xyqm), `src/utils/asteroidTextures.ts`), verified against this row by `src/scenes/core/gymParityDocs.test.ts` |
 | `GymBoss` | `GymFormationScene` (`src/scenes/gym/GymBoss.ts:149`) | `Boss` (all four phases), phase minions via shared `planMinionSpawns`, shared `fireForEnemy` dispatcher | Boss in place (matches `PlayScene.spawnBoss`); minions in place through the shared transit exemption (`transit:false` `:287`) + `startSpawnAnimation` (`:295`) | yes — inherits `CombatScene`/`CombatCoreScene`; Boss advances through the shared `_advanceBoss` hook | `parity` | **D1 closed by AH-0MVRMHWNC002H4B5** — the per-phase hit pool is `scaledEncounterHp(BOSS_HIT_POINTS_PER_PHASE, playerPowerScore(...))` from the shared `src/core/difficultyScaling.ts`, resolved from the live setup-upgraded player (`src/scenes/gym/GymBoss.ts:115`); pinned by `src/scenes/gym/GymBoss.test.ts` (D1 parity). Intentional: gym-only health bar, DAMAGE and SHOOT controls (`GymBoss.ts:186`), no wave timer (same as the game's boss) |
 | `GymBotTuning` | `GymLevel` (`src/scenes/gym/GymBotTuning.ts:173`) | shared bot brain/governor (`createCompetentBotBrain` `:179`, `getBotInput` `:231`), random generated levels (`generateRandomLevel` `:212`), inherited supply layer, asteroid hazard, wave clock and spawner-delivered content | inherited from `GymLevel` (`src/scenes/gym/GymLevel.ts:359`) | yes — inherited `CombatScene` loop plus the shared bot input seam | `parity` | **D2/D3 closed by AH-0MVRMHWNC002H4B5** (fixed in the inherited `GymLevel`: shared `formationReanchor` controller and shared `dynamicSpawnPlan`); pinned by `src/scenes/gym/spawnParity.test.ts` (D2, D3). Intentional: gym-only tuning panel/export and the random-level scenario, no run telemetry |
 | `GymCentipede` | `GymFormationScene` (`src/scenes/gym/GymCentipede.ts:41`) | `Centipede` + shared `CentipedeChain` (`src/scenes/gym/core/centipedeFormation.ts:87`); segments never fire by entity override | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Chain construction matches the game's direct `new Centipede` spawn (`PlayScene.ts:2196`); classic `wrapAware:false` exclusion applied (`centipedeFormation.ts:87`). Segments never fire in the game either (`src/entities/Centipede.ts:170`) |
@@ -90,13 +98,14 @@ column). No other verdict is accepted by the guard.
 | `GymHexWar` | `Phaser.Scene` (`src/scenes/gym/GymHexWar.ts:1`) | none — renders the **shipped hex-map screen** (`buildHexMapModel` + `renderHexMap`, `src/core/hangarWar/hexIntel.ts` / `src/scenes/hangarWar/hexMap.ts`) against an injected hangar-war ring payload, read-only: the hangar at the centre, the ring around it, a short `AGG n` aggression label on every tile and the full known-ahead intel (held/unheld, aggression, boss, strengths, weaknesses, grant, defender, queued attack) in the detail panel for the focused hex (defaulting to the model's default/first hex in the read-only render, AH-0MW3VG6WJ004HRI9); also exposes the `take hex → leave bot → tick` control surface **and a `report` view** that renders the shipped **defence report** (`buildDefenceReport` + `renderDefenceReport`, `src/core/hangarWar/defenceReport.ts` / `src/scenes/hangarWar/defenceReport.ts`) from the **shipped** frontier tick's record (`runFrontierTick`, `src/core/hangarWar/hexDefence.ts`). The control-surface tick still uses the deterministic harness double in `src/core/hangarWar/fakeFrontierClock.ts` and the ring fixtures live in `src/core/hangarWar/__fixtures__/ringFixtures.ts` | n/a — no gameplay objects | n/a — not a combat scene | `intentional divergence` | Verification harness for the pure ring logic: the scene owns **no resolver, map or report rule** — each control-surface tick delegates to the documented harness double, the map is the same model/renderer pair the game's `HexMapScene` uses, and the report view is the same model/renderer pair the game's `DefenceReportScene` uses (both with no handlers, so every row is non-actionable). The report's record comes from the shipped resolver, so the numbers the gym shows are the numbers the game shows, and the gym exercises `take hex → leave bot → tick → holds or falls` and `attacks → defence report` without a browser boot. Consumes the shared setup seam as a documented no-op (no player) and uses the setup seed for its deterministic sample payload (`src/scenes/gym/GymHexWar.ts:1`, `src/core/hangarWar/fakeFrontierClock.ts:1`, `docs/dev/gameplay-capture.md`) |
 | `GymFodderEnemies` | `GymFormationScene` (`src/scenes/gym/GymFodderEnemies.ts:343`) | every non-boss `EnemyConfig` via the shared factory (`:276`, `:916`), shared `fireForEnemy` dispatcher (`:246`), shared asteroid split/mineral layers, centipede option | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Intentional (documented): editor/tuning panel, boss excluded from the dropdown (`src/scenes/gym/GymFodderEnemies.ts:652`) and the wave timeout (`:270`), and force-field sliders set hits directly with no campaign level (`:283`, `:431`). The slider is the **enemy** force-field axis (`forceFieldStartHits`, resolved by `enemyForceFieldHits` in `src/core/enemyForceField.ts`), untouched by the player's absorbed-hit Force Field conversion (`src/powerups/effects.ts`, AH-0MVVD8SIT000CO9H) |
 | `GymLevel` | `CombatScene` (`src/scenes/gym/GymLevel.ts:509`) | wave-group enemies via the shared factory + `fireForEnemy`, march block, supply layer (minerals/drops), asteroid hazard, spawner-delivered ghosts/centipede/horde/lane traffic/orbital strikes, shared wave timeout | `spawnWave` → `resolveSpawnTransitTarget` + `startSpawnAnimation` + `WormholeController`; `shootEnabled` hand-off, march and the shared `formationReanchor` controller; dynamic content planned/released through shared `dynamicSpawnPlan` (`src/scenes/gym/GymLevel.ts:946`, `:981`) | yes — `_tickPlayer`, `_handleCollisions`, shared wrap and shared boss hooks | `parity` | **D2/D3 closed by AH-0MVRMHWNC002H4B5** — the Diver group uses the shared `FormationReanchorController` (`src/scenes/core/formationReanchor.ts`) and the per-wave dynamic content uses the shared `dynamicSpawnPlan` planners + `releaseDueSpawns`; pinned by `src/scenes/gym/spawnParity.test.ts` (D2, D3). Intentional: full-hold reward resolves without a modal pause so an autonomous bot keeps playing (`:1144`, `:1312`); mineral field seeded for the demo (`:1176`) |
-| `GymMinerals` | `GymFormationScene` (`src/scenes/gym/GymMinerals.ts:89`) | `Asteroid` (+ shared `splitAsteroid` `:80`), shared mineral kill drops/hold/choice, shared per-kill Extra Life roll | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Asteroid construction matches the game's `new Asteroid` hazard spawn (`PlayScene.ts:4738`); intentional: asteroids-only field with 3 seeded rocks (`GymMinerals.ts:69`) and the base class's 100 demonstration minerals (`GymFormationScene.ts:1371`) |
+| `GymMinerals` | `GymFormationScene` (`src/scenes/gym/GymMinerals.ts:89`) | `Asteroid` (shared silhouette/atlas render path, [Shared asteroid silhouette atlas](#shared-asteroid-silhouette-atlas-ah-0mw5088la007xyqm); + shared `splitAsteroid` `:80`), shared mineral kill drops/hold/choice, shared per-kill Extra Life roll (default chance **0**, so it never fires unless a designer raises `asteroidExtraLifeDropChance`; AH-0MW10ZVLH005IJRM) | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Asteroid construction matches the game's `new Asteroid` hazard spawn (`PlayScene.ts:4738`); intentional: asteroids-only field with 3 seeded rocks (`GymMinerals.ts:69`) and the base class's 100 demonstration minerals (`GymFormationScene.ts:1371`) |
 | `GymMiniBoss` | `GymFormationScene` (`src/scenes/gym/GymMiniBoss.ts:174`) | `MiniBoss` through the shared design helper (`:156`), shared minion planner/factory/fire seam, shared `miniBossDeathSweep` | inherited `_spawnFormation` (`GymFormationScene.ts:1790`); `MiniBoss` has no spawning seam so it spawns in place, exactly as `PlayScene` spawns it (`PlayScene.ts:1618`) | yes — inherited `CombatScene`/`_advanceBoss` loop | `parity` | Intentional (documented): gym-only fixed hit pool for fast phase stepping (`MINI_BOSS_GYM_HP_PER_PHASE`, `GymMiniBoss.ts:78`), DAMAGE/EXPLODE/SHOOT controls; the shared death sweep is used for EXPLODE (`GymMiniBoss.ts:267`); the sweep's audio is dispatched from the shared executor (`playMiniBossSweepSound`, AH-0MVVEI7FD004TR2M), so EXPLODE sounds exactly like the game's defeat with no per-scene cue logic |
-| `GymPerformance` | `GymFormationScene` (`src/scenes/gym/GymPerformance.ts:228`) | the late-game firing archetypes — `tank`, `swarm`, `phaser`, `diver`, `raider`, `march` — built through the shared `createEnemyFromConfig` (`:180`, `:208`) and firing through the shared `fireForEnemy` dispatcher (`:216`), plus the shared player ship and shared collision loop | inherited `_spawnFormation` (`GymFormationScene.ts:1879`); the grid offsets are the scene's only spawn input (`buildStressGridOffsets`, `:145`) and the archetype is derived from the offset, never a spawn counter | yes — inherited `CombatScene` loop plus the scene's simulation step, which only refreshes the stress overlay after `super.tick` (`:267`) | `intentional divergence` | Scenario configuration only, no divergent code: 100 enemies (the performance budget), formation drift 0, no wave timeout, no power-up layer and `minerals: false` (`:180`) so the measured load is exactly enemies + fire; the scene boots with `shootEnabled: true` through the optional config flag (`GymFormationScene.ts:431`, `:820`) instead of clicking SHOOT. **Documented divergence**: player auto-fire is disabled (`:285`) so the 100-enemy load cannot decay during a measurement — a disabled feature, never a copied rule; enemy fire is the shared dispatch. Live counts come from the shared `getPerformanceCounts()` seam (`:293`) — the same accessor `PlayScene` and the perf probe use, so the gym and the game report identical fields ([`docs/PERFORMANCE.md`](./PERFORMANCE.md)). The 100 enemies it spawns render through the shared body-texture cache, so the mobile-tier measurement of the remaining draw submission is the game's own rendering path (see [Shared enemy-body texture cache](#shared-enemy-body-texture-cache-ah-0mw2iryah0055wcn)) |
+| `GymPerformance` | `GymFormationScene` (`src/scenes/gym/GymPerformance.ts:481`) | the late-game firing archetypes — `tank`, `swarm`, `phaser`, `diver`, `raider`, `march` — built through the shared `createEnemyFromConfig` (`:454`) and firing through the shared `fireForEnemy` dispatcher (`:467`), plus the shared player ship and shared collision loop | inherited `_spawnFormation` (`GymFormationScene.ts:1879`); the grid offsets are the scene's only spawn input (`buildOffsets` → `buildStressGridOffsets`, `:437`, `:386`) and the archetype is derived from the slot index (`buildSlotArchetypes`, `:348`), never a spawn counter | yes — inherited `CombatScene` loop plus the scene's simulation step, which only refreshes the stress overlay after `super.tick` (`:622`) | `intentional divergence` | Scenario configuration only, no divergent code: the default run is 100 enemies (the performance budget), formation drift 0, no wave timeout, no power-up layer and `minerals: false` (`:437`), so the measured load is exactly enemies + fire; the scene boots with `shootEnabled: true` through the optional config flag (`GymFormationScene.ts:431`, `:820`) instead of clicking SHOOT. **Sweep parameterisation is configuration, not a fork** (AH-0MW5IUDQD001WOXI): the launched `count` is written to the existing `config.count`/`buildOffsets` seam and laid out fully on screen by `layoutForCount` (`:273`, historical 10 × 10 / 66 × 34 at the default count), a launched `enemyMix` assigns one archetype per grid slot from the slot index (still `createEnemyFromConfig` + `fireForEnemy`), and the loadout still arrives only through the shared `applySceneSetup`. **Documented divergence**: player auto-fire defaults to off (`:590`) so the shipped 100-enemy load cannot decay during a measurement — a disabled feature, never a copied rule; a sweep step opts in with `autoFire: true` and then runs the shared `_autoFire` step. Enemy fire is the shared dispatch. Live counts come from the shared `getPerformanceCounts()` seam — the same accessor `PlayScene` and the perf probe use, so the gym and the game report identical fields ([`docs/PERFORMANCE.md`](./PERFORMANCE.md)). The enemies render through the shared body-texture cache, so the mobile-tier measurement of the remaining draw submission is the game's own rendering path (see [Shared enemy-body texture cache](#shared-enemy-body-texture-cache-ah-0mw2iryah0055wcn)) |
 | `GymPlayer` | `CombatScene` (`src/scenes/gym/GymPlayer.ts:152`) | `Player`, `PlayerBullet`, shared auto-fire/input/collision lifecycle; `Obstacle` (shared entity, gym-only scenario) | n/a — no enemy spawn | yes — `_tickPlayer` `:574`, `_handleCollisions` `:584`; only the destruction hooks are overridden | `intentional divergence` | Obstacle course is the documented gym-only training scenario (`GymPlayer.ts:23`; §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). The obstacle entity and the collision/auto-fire code are shared |
-| `GymPowerUpLeveling` | `CombatScene` (`src/scenes/gym/GymPowerUpLeveling.ts:185`) | `Player` + every power-up through the shared `EffectsRegistry`/`resolvePowerUpAtLevel`, shared drop layer, minerals, `MineralHold` and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:306`, shared drop/mineral/hold-full passes | `parity` | Intentional: gym-only round-robin drop source (no kills to roll) and the level/stats readout panel (`src/scenes/gym/GymPowerUpLeveling.ts:185`, `gym-powerup-level-readout`); the level curve and effects are shared, not copied; the leveling gym asserts the absorbed-hit charge/lifetime grants through the shared store — `consumableCharges('shield')`, field-pickup levelling, no dedicated pickup window (AH-0MVVD8U6F0011UOG, `GymPowerUpLeveling.test.ts`) |
+| `GymPowerUpLeveling` | `CombatScene` (`src/scenes/gym/GymPowerUpLeveling.ts:212`) | `Player` + every power-up through the shared `EffectsRegistry`/`resolvePowerUpAtLevel`, shared drop layer, minerals, `MineralHold` and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:362`, shared drop/mineral/hold-full passes | `parity` | Intentional: gym-only round-robin drop source (no kills to roll) and the level/stats readout panel (`src/scenes/gym/GymPowerUpLeveling.ts:212`, `gym-powerup-level-readout`); the level curve and effects are shared, not copied; the gym-only mineral supply mixes a fixed red/gold rotation (`RED_MINERAL_SHARE` ≥ 30 %, every third spawn a shared `createMineralDeposit` 10-value deposit, pickup credits `Mineral.value`) so the hold stays demonstrable at high capacities (AH-0MW6OGSJP007K9W6); the leveling gym asserts the absorbed-hit charge/lifetime grants through the shared store — `consumableCharges('shield')`, field-pickup levelling, no dedicated pickup window (AH-0MVVD8U6F0011UOG, `GymPowerUpLeveling.test.ts`) |
 | `GymPowerUpsCombat` | `CombatScene` (`src/scenes/gym/GymPowerUpsCombat.ts:171`) | `Scout` threat formation + shared `fireForEnemy` (`:554`), Shield/Bomb/Phase Shift/Teleport/Thorn Field/Force Field through the shared `EffectsRegistry`, shared drop layer, shared teleport/auto-defence seams | `_spawnScoutFormation` → `createEnemyFromConfig` + `resolveSpawnTransitTarget({transit:false})` + `startSpawnAnimation`/`updateSpawnEmergence` (`src/scenes/gym/GymPowerUpsCombat.ts:405`), matching the shared factory + in-place spawn presentation | yes — `_tickPlayer` `:333`, `_handleCollisions` `:361` | `parity` | **D4 closed by AH-0MVRMHWNC002H4B5** — threats are built through the shared factory (the active `scout` `EnemyConfig` reaches them) and grow from 1 px behind the shared spawn protection, in place; pinned by `src/scenes/gym/GymPowerUpsCombat.test.ts` (D4 parity). Intentional: auto-fire disabled (`:317`) so the defensive power-ups, not player fire, are the demonstration; HUD is gym-only. The absorbed-hit pickup→charge→event cycle is pinned here and against `PlayScene` (`GymPowerUpsCombat.test.ts` + `src/scenes/core/consumableChargeParity.test.ts`, AH-0MVVD8U6F0011UOG) |
 | `GymPowerUpsUtility` | `CombatCoreScene` (`src/scenes/gym/GymPowerUpsUtility.ts:116`) | `Player` + Speed Boost/Extra Life/Magnet/Mineral Scoop/Mystery UFO through the shared `EffectsRegistry`, shared drop layer, `MineralHold` and mineral scoop | no enemy spawn; round-robin drop source | partial — `CombatCoreScene` only (`_tickPlayer` `:247`, input/auto-fire/drop passes); no collision pass because the scene is threat-free | `parity` | Intentional: threat-free utility gallery (no enemy objects to collide with), auto-fire disabled (`src/scenes/gym/GymPowerUpsUtility.ts:232`), gym-only round-robin source and 40 seeded minerals (`:176`). Disabling a feature is a permitted difference; no enabled object runs divergent code |
+| `GymRechargeTuning` | `CombatScene` (`src/scenes/gym/GymRechargeTuning.ts:128`) | `Raider` groups (two × 3, left/right of the ship) through the shared `createEnemyFromConfig`, shared `collectEnemyFire` dispatcher (`:435`), Phase Shift/Teleport through the shared `EffectsRegistry`, shared auto-defence/teleport seams, shared wave timeout, shared background layer | `_spawnRaiderGroups` → `createEnemyFromConfig` + `resolveSpawnTransitTarget({transit:false})` + `startSpawnAnimation`/`updateSpawnEmergence` (`src/scenes/gym/GymRechargeTuning.ts:322`), matching the shared factory + in-place spawn presentation | yes — `_tickPlayer` `:277`, `_handleCollisions` `:298`, `_advanceWaveTimeout` `:307` | `intentional divergence` | Auto-fire is disabled (`src/scenes/gym/GymRechargeTuning.ts:263`) and raiders are persistent demonstration threats (ramming does not destroy them, mirroring `GymPowerUpsCombat`) so the recharge cycle — not player fire — is the observation; the wave-timeout refresh respawns exactly two fresh groups so the tuned population stays constant. The gym-only recharge sliders (`src/utils/gymPowerUpControl.ts`) persist `phaseRechargeOverrideSeconds` / `teleportRechargeOverrideSeconds` through `src/core/rules.ts` and apply them through the store's `setRechargeTimeOverride` seam (`src/powerups/powerUpLevels.ts`); the level catalogue stays authoritative for `PlayScene` and every other gym. Pinned by `src/scenes/gym/GymRechargeTuning.test.ts` |
 | `GymRhythm` | `CombatCoreScene` (`src/scenes/gym/GymRhythm.ts:154`) | `Player` + the six canonical Euclidean voices (`heavy_slug`, `railgun`, `cannon`, `arc`, `rapid`, `shard_swarm`) through the **shared fire scheduler**: `_tickPlayer` → `_autoFire` → `Player.tryFire` → the shared `PlayerBullet`/AOE spawn path. No enemies, no enemy bullets | n/a — no enemy spawn (player fire only) | shared player/auto-fire step (`src/scenes/core/CombatCoreScene.ts:913` → `:988`); no collision pass because the scene is threat-free | `parity` | The gym runs the shipped cadence, not a copy: voices are granted through the shared `Player.equipWeapon` (so each is at its level-0 ladder rung), the onset grid is expanded from the scheduler's live `Player.getFirePattern` through the pure `euclidPattern` generator (`GymRhythm.ts:342`), and every recorded fire carries `Player.getLastShotTime` — the scheduler's own attributed onset tick, always an exact lattice tick. Pinned by `src/scenes/gym/GymRhythm.test.ts` (canonical 31-onset stack and per-step voice counts, slow/medium/fast coverage, exact-tick/on-pattern fires, bar-0 per-voice `k` counts, and an identical onset sequence to a bare `Player` driven with the same input). Intentional: a fixed gym-only audition cast with no enemies (the game's equivalent is `PlayScene`'s auto-fire); the overlay playhead and dot grid are presentation only; a capture setup may add extra voices, which sound alongside the fixed six |
 | `GymWeaponLeveling` | `CombatScene` (`src/scenes/gym/GymWeaponLeveling.ts:145`) | `Player` + every weapon through the shared `EffectsRegistry`/level resolver, shared AOE dispatch/VFX, shared drop layer, minerals and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:250`, shared effect/drop/mineral passes | `parity` | Intentional: gym-only round-robin drop source and level readout; weapon behaviour lives once in the shared arsenal (`src/utils/weapons.ts`, `src/powerups/effects.ts`) |
 | `GymWeaponTuning` | `CombatScene` (`src/scenes/gym/GymWeaponTuning.ts:655`) | `Player` + the selected catalogue weapon through the shared auto-fire scheduler, shared AOE dispatch/VFX, shared impact feedback and the shared weapon-catalogue store (`src/core/weaponCatalogueStore.ts`) | no enemy spawn; one indestructible `TuningTarget` fixture (`:611`) | yes — `tick` calls `_tickPlayer` `:771` and `_handleCollisions` `:775` | `intentional divergence` | The dummy target is the documented gym-only tuning fixture (the game has no static targets); every enabled weapon, AOE and impact path is the shared shipped code. The panel is the designer retuning surface: Save upserts the row and re-reads `src/data/weapons.csv` (dev only), Save As is refused without a code icon/audio fallback (`src/core/weaponCatalogueStore.ts`), production stays read-only with a visible message. The rhythm section is read-only and rendered from `WEAPON_EUCLIDEAN_LADDERS` (`GymWeaponTuning.ts:368`); its stated cadence authority is `src/data/weapon-levels.json` (`WEAPON_RHYTHM_READ_ONLY_NOTE`, `:152`) — no fire-rate control exists. The capture setup is adopted for power-up levels/seed, then the preview selection takes over the player loadout (`:913`) |
@@ -185,8 +194,12 @@ total), so setup-less gym behaviour is unchanged.
   they stay at the shipped cadence.
 - **`GymPowerUpLeveling`** — consumes `player`, `powerUps`, `seed` (seeds the
   mineral field). Limitation: the round-robin drop and mineral-hold cadences
-  are fixed gym-only scenarios (`src/scenes/gym/GymPowerUpLeveling.ts:185`);
-  they stay at the shipped cadence.
+  are fixed gym-only scenarios (`src/scenes/gym/GymPowerUpLeveling.ts:212`);
+  they stay at the shipped cadence. The mineral **supply mix** is also a fixed
+  gym-only scenario: a deterministic red/gold rotation (`RED_MINERAL_SHARE`,
+  every third spawn a red 10-value deposit) keeps the hold demonstrable at
+  higher capacities while the placement draws keep consuming the seeded
+  content RNG unchanged (AH-0MW6OGSJP007K9W6).
 - **`GymCurveSequencer`** — consumes `player`, `powerUps`, `seed` by
   **forwarding** them to the launched `GymLevel` (`_launchData`,
   `src/scenes/gym/GymCurveSequencer.ts:702`), and is no longer
@@ -429,28 +442,32 @@ workflow, invariants and "what each surface cannot do" are documented in
 ## Consumable charge parity (AH-0MVUXH3X60078QR3, F6 of AH-0MVTQMREN009DSFW)
 
 The consumable upgrade parent made a permanently-owned consumable (Shield,
-Thorn Field, Phase Shift, Teleport, Force Field, Mystery UFO) a **charge pool
-of one-event uses**: a hold-full reward adds one charge (never a level), one
-charge buys one event (one absorbed hit, one free ram, one reflected bullet,
-one warp, one phase, one drone spawn), and the pool regenerates on the
+Thorn Field, Phase Shift, Teleport, Force Field, Mystery UFO) a **pool of
+one-event uses**: a hold-full reward adds one use (never a level), one use
+buys one event (one absorbed hit, one free ram, one reflected bullet, one
+warp, one phase, one drone spawn), and the pool regenerates on the
 level-derived interval through the shared `EffectsRegistry.tick(dt)` clock.
 No scene keeps a consumption counter or a regeneration timer of its own — the
 spends and recharges below are the **shared seams** the game and every gym
 run, so they cannot drift.
 
-**Teleport is the one single-use carve-out (parent AH-0MVY096RT006QMF4).** The
-pool model holds for the five pool-backed kinds; Teleport instead holds
-**exactly one warp** and its whole state is a readiness flag plus one
-level-derived recharge timer (60 s base → 20 s at the upgrade cap), so a
-pickup or hold-full grant **readies** the warp rather than adding a charge and
-there is no stored count or FIFO queue. The shared seam is unchanged in shape —
+**The single-use carve-out — Teleport and Phase Shift (Teleport parent
+AH-0MVY096RT006QMF4, Phase Shift parent AH-0MW6O1690007P2SL).** The pool model
+holds for the four pool-backed kinds; Teleport and Phase Shift instead hold
+**exactly one activation** each and their whole state is a readiness flag plus
+one level-derived recharge timer (Teleport 60 s base → 20 s at the upgrade
+cap, Phase Shift 30 s → 10 s), so a pickup or hold-full grant **readies** the
+activation rather than adding a charge and there is no stored count or FIFO
+queue. The shared seam is unchanged in shape —
 `EffectsRegistry.consumeTeleport()` → `PowerUpLevelStore.consumeTeleport()`
 starts the timer, `hasTeleport()` / `isTeleportReady()` report readiness and
-`teleportRechargeRemaining()` is the countdown — and it is consumed by
+`teleportRechargeRemaining()` is the countdown, and
+`consumePhaseShift()` / `hasPhaseShift()` / `isPhaseShiftRecharging()` /
+`phaseShiftRechargeRemaining()` mirror it for the phase — and it is consumed by
 `CombatScene._updateAutoDefence` / `triggerTeleport` in the game and every
 gym, so the single-use rule cannot be re-implemented per scene. The
-automatic-defence pick is a **uniform 50/50** whenever both a Phase Shift
-charge and a ready warp are available (the retired greater-count comparison
+automatic-defence pick is a **uniform 50/50** whenever both a ready Phase
+Shift and a ready warp are available (the retired greater-count comparison
 could starve the escape). No gym overrides the model, and the HUD row is
 projected from the same readiness flag.
 
@@ -461,6 +478,7 @@ projected from the same readiness flag.
 | Force Field — one reflected bullet spends one charge | `EffectsRegistry.tryConsumeForceFieldReflect()` → shared `CombatScene` reflect branch | Force bubble (`drawForceFieldBubble`): a **pickup** bubble pops on its last spend (an unowned field reads inactive at zero); an **owned** field stays up but **dimmed** while the pool is empty, bright again on recharge (Q1 = b) |
 | Mystery UFO — one drone spawn spends one charge | `EffectsRegistry.consumeMysteryUfoCharge()` → shared `CombatCoreScene._updateDroneSpawning` (registered in `EPIC_SHARED_METHODS` in `CombatScene.equivalence.test.ts`); a **field pickup** keeps its queued one-shot (`consumeMysteryUfoSpawns`) and spends no charge | the drone itself (spawned through `spawnDrone` in `src/scenes/core/combatDrone.ts`) |
 | Teleport — the single warp is spent by one escape (**single-use**) | `EffectsRegistry.consumeTeleport()` → `PowerUpLevelStore.consumeTeleport()` from the shared `CombatScene.triggerTeleport`; a pickup or grant readies it (the store's `applyCollect` single-use branch resets the readiness timer to 0) instead of adding a charge | the HUD Teleport row: the readiness state plus the `next in Ns` recharge countdown while the one warp recharges, greyed while it is spent |
+| Phase Shift — the single activation is spent by one auto-defence phase (**single-use**) | `EffectsRegistry.consumePhaseShift()` → `PowerUpLevelStore.consumePhaseShift()` from the shared `CombatScene._updateAutoDefence`; a pickup or grant readies it (the store's `applyCollect` single-use branch resets the readiness timer to 0) instead of adding a charge | the HUD Phase Shift row: the readiness state plus the `next in Ns` recharge countdown while the one activation recharges, greyed while it is spent |
 
 Gyms that exercise the consumables: `GymPowerUpsCombat` (Shield/Bomb/Phase
 Shift/Teleport/Force Field through the shared `EffectsRegistry`), `GymPowerUpLeveling`
@@ -485,12 +503,12 @@ permanent grant differ only in whether the pool refills. The three rows above
 pin (AH-0MVVD8U6F0011UOG): no retained divergence changed — the
 `GymFodderEnemies` editors expose the **enemy** force-field axis
 (`forceFieldStartHits`), which the pickup conversion never touches. The
-single-use Teleport carve-out above is pinned by the parity/equivalence
+single-use Teleport and Phase Shift carve-outs above are pinned by the parity/equivalence
 suites (`src/scenes/core/powerUpLeveling.parity.test.ts` compares
-`hasTeleport()` readiness across `PlayScene` and the gym, and
-`src/scenes/core/CombatScene.equivalence.test.ts` asserts the shared
+`hasTeleport()` and `hasPhaseShift()` readiness across `PlayScene` and the gym,
+and `src/scenes/core/CombatScene.equivalence.test.ts` asserts the shared
 `triggerTeleport` spend warps and spends identically in both scenes), so a gym
-cannot reintroduce a banked Teleport charge.
+cannot reintroduce a banked Teleport or Phase Shift charge.
 
 Pinned by `src/scenes/core/consumableChargeParity.test.ts` (the same spend →
 empty → regenerate → re-use cycle in `PlayScene` and `GymPowerUpsCombat`, plus
@@ -538,8 +556,11 @@ cache is per game (`TextureManager`), keyed by a pure hash of the drawn
 commands and the texture extent, so identical silhouettes share one texture and
 different ones never collide. A scene that cannot create canvas textures
 (unit-test/stub scenes) keeps the `Graphics` body — the pre-change path — and
-the cache is bounded, so a stream of unique silhouettes (each asteroid's seeded
-jagged polygon) cannot grow it without limit.
+the cache is bounded, so a stream of unique silhouettes cannot grow it without
+limit. Asteroid bodies have not baked per-rock silhouettes since the batched
+rendering change: they render from the shared palette atlas (see
+[Shared asteroid silhouette atlas](#shared-asteroid-silhouette-atlas-ah-0mw5088la007xyqm)),
+so the per-silhouette cache is left to the other enemy types.
 
 Pinned by `src/entities/BaseEnemy.bodyTexture.test.ts` (one cached body sprite
 per enemy, one shared texture across identical silhouettes, a distinct texture
@@ -547,6 +568,59 @@ for a distinct colour, the ring+core composite, and the `Graphics` fallback when
 the scene cannot bake) and `src/utils/enemyBodyTextures.test.ts` (the cache key
 is a pure function of the drawn commands, the texture sizing and the
 cannot-bake/cache-bound guards).
+
+## Shared asteroid silhouette atlas (AH-0MW5088LA007XYQM)
+
+Every asteroid body renders from **one** shared texture atlas, so the shipped
+game and every asteroid-bearing gym run the same batched silhouette path
+instead of one unique baked texture (or a per-frame `Graphics` body) per rock.
+The seam lives **once**, in `src/utils/asteroidTextures.ts`; no game or gym
+scene owns a copy.
+
+| Layer | Shared seam (game + every asteroid-bearing gym) |
+|---|---|
+| Palette geometry | `asteroidPaletteShapes()` — 10 fixed-seed jagged silhouettes per size tier (`large`, `medium`, `small`) |
+| Variant choice | `asteroidVariantFromDraws()` — deterministic from the draws the rock takes from its **own** seeded RNG (the stream position is unchanged from the pre-palette generator) |
+| Silhouette drawing | `drawAsteroidSilhouette()` — the one stroke implementation used by both the atlas bake and the entity's drawn record |
+| Atlas layout + bake | `asteroidAtlasLayout()` + `acquireAsteroidPalette()` — baked once per game under `ASTEROID_ATLAS_KEY`, with one registered frame per silhouette |
+| Entity body render | `Asteroid._drawBody()` records the palette silhouette; `Asteroid.bakedBodyFrame()` returns the shared atlas frame, rendered by the shared `BaseEnemy._addStaticBodyLayer()` as one plain `Image` |
+| Entity scene depth | `ASTEROID_DEPTH` (`-1`, `src/core/constants.ts`), applied **once** in the `Asteroid` constructor (`src/entities/Asteroid.ts`): the lowest foreground layer — below every depth-`0` ship/enemy/bullet/mineral/power-up and above the background/dim/warp layers (`BACKGROUND_DEPTH` `-1000`, `BACKGROUND_DIM_DEPTH` `-950`, `BACKGROUND_WARP_DEPTH` `-900`). Because it lives on the shared entity, every spawn path (scheduled hazard, `PlayScene`, shared split children, every gym) resolves the identical depth (AH-0MVBJDP72004VXE5) |
+
+The path is consumed by the game and every asteroid-bearing gym through the
+shared `Asteroid` entity, never a per-scene copy:
+
+- `PlayScene` — the scheduled hazard materialiser `createAsteroidFromEvent()`
+  (`src/scenes/core/asteroidHazard.ts`; `PlayScene.ts:5801`) and the split seam
+  `splitAsteroid()` (`src/scenes/core/asteroidSplit.ts`);
+- `GymFormationScene` and every subclass that fields rocks —
+  `GymMinerals.ts:69`, `GymAsteroidStress.ts` (200 shared rocks) and the
+  `GymFodderEnemies` split/mineral layer — plus the level gyms' shared asteroid
+  hazard layer.
+
+The only render variant is a bespoke body colour, which has no atlas cell: it
+falls back to the shared per-silhouette bake seam (still a batched sprite), so
+the colour can never drift. A scene that cannot bake canvas textures keeps the
+draw-recorded `Graphics` body — the documented headless fallback, not a
+divergence.
+
+**Stress-gym consistency (AH-0MW508UAQ002IC5N AC2).** The `GymAsteroidStress`
+row fields the same shared `Asteroid` entity materialised by
+`createAsteroidFromEvent`, so its documented divergences are scenario
+configuration only (stationary field, player auto-fire disabled) — it claims
+**no** divergent rendering path and points back at this section.
+
+Pinned by `src/entities/Asteroid.test.ts` (one shared texture for a whole field,
+bounded variants, the per-silhouette colour fallback, **and the entity
+scene depth on a fresh asteroid and a split child with the intra-container
+layer order unchanged**, AH-0MVBJDP72004VXE5),
+`src/utils/asteroidTextures.test.ts` (pure palette geometry, layout and the
+one-per-game bake), the equivalence suite
+(`src/scenes/core/CombatScene.equivalence.test.ts`: the palette/atlas functions
+are defined once and only `BaseEnemy`/`Asteroid` choose a baked body frame),
+and `src/scenes/gym/GymAsteroidStress.test.ts` (the stress field is the shared
+entity, and **every rock resolves `ASTEROID_DEPTH` — the same value the game
+resolves — so the lowest foreground layer cannot drift between the gym and the
+game**).
 
 ## Blocked-drop stick and discard is shared core (parent AH-0MW0UAQ23005AC9L)
 

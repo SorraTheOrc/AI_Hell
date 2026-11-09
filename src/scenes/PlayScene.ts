@@ -154,6 +154,7 @@ import {
   applyWheelOutcome,
   buildWheelWedges,
   drawWheelOutcome,
+  orderedOwnedKinds,
   type MiniBossWheelOutcome,
   type MiniBossWheelWedge,
 } from '../powerups/miniBossWheel';
@@ -208,7 +209,7 @@ import {
   type HangarWarDeployment,
 } from './hangarWar/hangarDeployment';
 import { PowerUp } from '../powerups/PowerUp';
-import { EXTRA_LIFE_DROP_ID, getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
+import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
 import {
@@ -243,9 +244,12 @@ import type { HitscanTarget } from './core/hitscanBeam';
 import {
   createTelemetryRecorder,
   installDevTelemetryBuffer,
+  loadDevTelemetryStreamer,
   loadDevTelemetryUploader,
   resolveBuildInfo,
   resolveEffectiveTelemetryConfig,
+  type DevTelemetryStreamer,
+  type TelemetryBatchObserver,
   type TelemetryRecorder,
 } from '../telemetry';
 import {
@@ -1057,6 +1061,39 @@ export class PlayScene extends CombatScene<
    * guard.
    */
   private runTelemetry: RunTelemetry = RunTelemetry.noop();
+
+  /**
+   * The dev-only streaming telemetry uploader for this run
+   * (AH-0MW6NI6BW003RJWH), or `null` outside a dev build / when it has not
+   * finished loading. Loaded through the dev gate, so a production bundle
+   * never contains the streamer or the part protocol.
+   */
+  private devTelemetryStreamer: DevTelemetryStreamer | null = null;
+
+  /**
+   * The in-flight streamer load, awaited at run end before deciding between the
+   * streaming final part and the whole-file fallback.
+   */
+  private devTelemetryStreamerReady: Promise<void> = Promise.resolve();
+
+  /**
+   * Set when a batch was flushed before the dev streamer finished loading.
+   *
+   * A boolean, not a queue: the streamer reads the in-memory buffer, so one
+   * trigger after it arrives streams every record that was buffered in the
+   * meantime — and a build with no streamer at all cannot grow it.
+   */
+  private devTelemetryFlushPending = false;
+
+  /**
+   * Generation of the current run, bumped by every {@link _initTelemetry}.
+   *
+   * The streamer load is async (a dynamic import), and this scene instance
+   * survives a `scene.restart()`. Without this guard a load started by the
+   * previous run could install its streamer after the new run began, giving the
+   * run two streamers — and therefore two parts claiming offset zero.
+   */
+  private devTelemetryGeneration = 0;
 
   /**
    * Scheduled asteroid hazard for the active wave (shared with the level
@@ -3735,8 +3772,15 @@ export class PlayScene extends CombatScene<
     // six-slot pool (weapon drops and power-up kinds alike), the same
     // accounting the hold-full choice reads. Temporary field stacks are
     // deliberately excluded: a spin levels permanent progress
-    // (parent AH-0MVLISU03006WDOD AC1/AC6).
-    const ownedKinds = [...resolvePlayerSlotState(this.player).ownedIds];
+    // (parent AH-0MVLISU03006WDOD AC1/AC6). `orderedOwnedKinds` applies the
+    // shared reward-surface filter (a field-pickup-only Extra Life, a retired
+    // owned Teleport), so the empty check below sees exactly the kinds the
+    // wheel can pay out — a run holding only excluded kinds takes the
+    // hold-full-style fallback instead of spinning a dud
+    // (parent AH-0MW10ZVLH005IJRM AC4).
+    const ownedKinds = orderedOwnedKinds(
+      resolvePlayerSlotState(this.player).ownedIds,
+    );
 
     if (ownedKinds.length === 0) {
       // Empty-owned fallback (AC4): a wheel with no owned wedge would be a
@@ -3849,7 +3893,10 @@ export class PlayScene extends CombatScene<
    * Reusing the shared choice strategy keeps one definition of "what a reward
    * may offer" — the base pool, the owned level-ups and the six-slot gate are
    * all applied by the strategy itself, so this fallback cannot drift from the
-   * hold-full choice.
+   * hold-full choice. It therefore also inherits the shared reward-surface
+   * exclusion for free: Extra Life is never offered here because it is flagged
+   * field-pickup-only in the catalogue, not because this fallback filters it
+   * (parent AH-0MW10ZVLH005IJRM AC4).
    */
   private _holdFullStyleRewardOptions(): ChoiceOption[] {
     return this.mineralChoiceStrategy.choose(3, this.rng, {
@@ -4648,28 +4695,18 @@ export class PlayScene extends CombatScene<
    */
   protected override onPlayerBulletHitsBoss(pb: PlayerBullet): boolean {
     if (this._playerBulletHitsEntity(pb, this.boss)) {
-      if (pb.aoeWeapon) {
-        // An `'onImpact'` AOE projectile detonates instead of dealing a direct
-        // phase hit; the blast damages the boss through `onAoeHitsBoss`.
-        this.detonateAoeProjectile(pb);
-      } else {
-        // Frenzy amplifies each bullet into `1 + bonus` phase hits
-        // (AH-0MVH80ZJ7009W18Z); the damage path stops once the boss dies.
-        for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-          this._damageBoss(pb.x, pb.y);
-        }
+      // Frenzy amplifies each bullet into `1 + bonus` phase hits
+      // (AH-0MVH80ZJ7009W18Z); the damage path stops once the boss dies.
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageBoss(pb.x, pb.y);
       }
       pb.destroy();
       return true;
     }
     // Mini-boss encounter (the final boss is not spawned at the same time).
     if (this._playerBulletHitsEntity(pb, this.miniBoss)) {
-      if (pb.aoeWeapon) {
-        this.detonateAoeProjectile(pb);
-      } else {
-        for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-          this._damageMiniBoss(pb.x, pb.y);
-        }
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageMiniBoss(pb.x, pb.y);
       }
       pb.destroy();
       return true;
@@ -5403,18 +5440,19 @@ export class PlayScene extends CombatScene<
 
   /**
    * Flushes the recorder's buffered records into the dev JSONL sink, then
-   * delivers the run's in-memory buffer to the dev server
-   * (AH-0MVBMRK6X0069QDI, AH-0MVIRYGD1000JVY3).
+   * delivers the run to the dev server (AH-0MVBMRK6X0069QDI,
+   * AH-0MVIRYGD1000JVY3, AH-0MW6NI6BW003RJWH).
+   *
+   * The dev streaming uploader has already sent every flushed batch; run end
+   * sends the run's **final part** (`final: true`), which makes the server
+   * store the run as one `session-*.jsonl` and enqueue exactly one evaluation.
+   * When no streamer exists (a production build, or the dev import failed) the
+   * pre-streaming whole-file upload is used unchanged.
    *
    * Fire-and-forget by contract: the caller uses `void`, every failure is
    * caught here (a dev-server outage must never block or crash run end), and
    * the uploader itself is a no-op outside a dev build or when the
    * share-telemetry setting is off.
-   *
-   * The uploader is loaded dynamically through the gate module
-   * ({@link loadDevTelemetryUploader}): Vite folds the loader's dev check to
-   * `false` in a production build, so the dev-only endpoint never ships in
-   * the bundle (`npm run check-bundle`, F1 AC4).
    */
   private async flushAndUploadDevTelemetry(): Promise<void> {
     try {
@@ -5424,6 +5462,18 @@ export class PlayScene extends CombatScene<
       reportDevTelemetryFailure(error);
     }
     try {
+      // The streamer is loaded through the gate ({@link
+      // loadDevTelemetryStreamer}): Vite folds the loader's dev check to
+      // `false` in a production build, so the dev-only protocol never ships in
+      // the bundle (`npm run check-bundle`).
+      await this.devTelemetryStreamerReady;
+      const streamer = this.devTelemetryStreamer;
+      if (streamer) {
+        // The final part carries whatever the server has not confirmed yet,
+        // including the records just flushed above.
+        await streamer.finalise();
+        return;
+      }
       const upload = await loadDevTelemetryUploader();
       if (!upload) return;
       await upload({
@@ -5920,9 +5970,10 @@ export class PlayScene extends CombatScene<
         fireSchedule: buildHoldFullFireSchedule(this.player),
         // Demo mode auto-selects after a human-like delay so the bot never
         // stalls on the overlay; normal play waits for a real selection
-        // (AH-0MUXXQ1MN002RXGB · AC4/AC5). Below the life cap the bot takes
-        // the offered Extra Life instead of the first option
-        // (AH-0MV03GXZQ00801T4 · AC1).
+        // (AH-0MUXXQ1MN002RXGB · AC4/AC5). The bot always takes the first
+        // option: the former Extra Life preference is retired because the kind
+        // is never offered by a reward surface any more
+        // (parent AH-0MW10ZVLH005IJRM AC4).
         ...(this.demoMode
           ? {
               autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS,
@@ -5939,19 +5990,25 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * The demo bot's preferred hold-full option index: the offered Extra Life
-   * while below the run's life cap, otherwise the first option (the previous
-   * behaviour). Only used by the demo auto-select, so normal play is
-   * unaffected (AH-0MV03GXZQ00801T4 · AC1).
+   * The demo bot's hold-full auto-select index: the first option.
+   *
+   * The former "prefer an offered Extra Life while below the life cap"
+   * preference (AH-0MV03GXZQ00801T4 · AC1) is **retired**: Extra Life is a
+   * field-pickup-only kind now, so no reward surface can offer it and the
+   * branch could never fire (parent AH-0MW10ZVLH005IJRM AC4). The retained
+   * behaviour is unchanged in every case that remains reachable:
+   *
+   * - a **forced** reward is the scripted pay-off and is always option 0;
+   * - a run at the life cap had nothing to gain from a life offer and took
+   *   option 0 as well.
+   *
+   * The bot's **on-screen** Extra Life pursuit is untouched — field pickups
+   * still exist and still grant +1 life.
    */
   private _preferredDemoChoiceIndex(): number {
-    // A forced reward is the scripted pay-off: always take it.
-    if (this.getForcedMineralReward() !== null) return 0;
-    if (this.gameState.lives >= MAX_LIVES) return 0;
-    const index = this.mineralChoiceOptions.findIndex(
-      (option) => option.id === EXTRA_LIFE_DROP_ID,
-    );
-    return index >= 0 ? index : 0;
+    // A forced reward is the scripted pay-off: always take it. Everything
+    // else (including a run at the life cap) takes the first option.
+    return 0;
   }
 
   /**
@@ -6237,7 +6294,13 @@ export class PlayScene extends CombatScene<
           loadTelemetryConsent(),
           settings,
         ),
-        { build: resolveBuildInfo() },
+        {
+          build: resolveBuildInfo(),
+          // Every flushed batch becomes one streamed part: the observer never
+          // clears the buffer, it is only the trigger
+          // (AH-0MW6NI6BW003RJWH).
+          onFlush: this.getTelemetryBatchObserver(),
+        },
       );
     this.runTelemetry = new RunTelemetry(recorder);
     // Dev-only page accessor over the run's in-memory buffer: the dev CLI
@@ -6247,6 +6310,83 @@ export class PlayScene extends CombatScene<
     // bundle never writes the global.
     installDevTelemetryBuffer(() => this.runTelemetry.readBuffer());
     this.runTelemetry.startRun(this.getRunSeed());
+    // Subscribe the streaming uploader to the run that just started. The load
+    // is async (a dynamic import the production build eliminates) but the
+    // streamer reads the buffer, so a late load still streams every record.
+    this.devTelemetryStreamer = null;
+    this.devTelemetryFlushPending = false;
+    this.devTelemetryGeneration += 1;
+    // Bind the load to the run's own instrumentation, so a streamer that
+    // outlives this run reads that run's buffer (never the next run's).
+    this.devTelemetryStreamerReady = this._connectDevTelemetryStream(
+      this.devTelemetryGeneration,
+      this.runTelemetry,
+    );
+  }
+
+  /**
+   * The dev sink's post-flush observer for this scene: each flushed batch is
+   * handed to the streaming uploader, which streams the records beyond the
+   * server-confirmed offset (AH-0MW6NI6BW003RJWH).
+   *
+   * Public as a test/headless seam, mirroring {@link setTelemetryRecorder}: an
+   * injected recorder's sink is wired with this observer so the streaming path
+   * is exercised through the real seam rather than a copy.
+   */
+  getTelemetryBatchObserver(): TelemetryBatchObserver {
+    return (deltaNdjson: string): void => {
+      const streamer = this.devTelemetryStreamer;
+      if (streamer) {
+        streamer.push(deltaNdjson);
+        return;
+      }
+      // The dev loader is still resolving: remember that there is work pending
+      // so the batches already flushed are streamed as soon as it arrives.
+      this.devTelemetryFlushPending = true;
+    };
+  }
+
+  /**
+   * Loads the dev-only streaming uploader (never throws) and binds it to the
+   * current run's identity.
+   *
+   * @param generation - The run generation this load belongs to; a load that
+   *   resolves after a newer run started is discarded.
+   * @param runTelemetry - The run's instrumentation (its buffer is the source
+   *   of truth for the parts).
+   */
+  private async _connectDevTelemetryStream(
+    generation: number,
+    runTelemetry: RunTelemetry,
+  ): Promise<void> {
+    try {
+      const create = await loadDevTelemetryStreamer();
+      if (!create) return;
+      // A newer run took over while the module was loading: this streamer would
+      // belong to a finished run and must not be installed.
+      if (generation !== this.devTelemetryGeneration) return;
+      const identity = runTelemetry.runIdentity;
+      if (!identity) return;
+      this.devTelemetryStreamer = create({
+        runSeed: identity.runSeed,
+        startedAt: identity.startedAt,
+        // The buffer is canonical and never cleared by the streamer.
+        readBuffer: () => runTelemetry.readBuffer(),
+        // Read at send time, so the setting behaves exactly as it does for the
+        // whole-file run-end upload.
+        getSetting: () => loadSettings(),
+        onError: reportDevTelemetryFailure,
+      });
+      if (this.devTelemetryFlushPending) {
+        this.devTelemetryFlushPending = false;
+        // The streamer re-reads the buffer, so the buffered content is both a
+        // valid trigger and exactly what still needs streaming.
+        this.devTelemetryStreamer.push(runTelemetry.readBuffer() ?? '');
+      }
+    } catch (error) {
+      // Covers a dynamic-import failure in a dev build; run end is unaffected.
+      reportDevTelemetryFailure(error);
+    }
   }
 
   /**

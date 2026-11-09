@@ -28,8 +28,8 @@
  * - **tick 5899** — seven rendered rows for five slots: five slot-counted
  *   kinds (three permanent weapons, one temporary weapon, one temporary
  *   power-up) plus the slot-exempt **Mystery UFO** (`availableWhenSlotsFull`,
- *   producer Q7a) and a **Phase Shift** row kept alive by residual charges
- *   after its 15 s temporary window expired (producer Resolved decision 1b).
+ *   producer Q7a) and a **Shield** row kept alive by a residual charge after
+ *   its 15 s temporary window expired (producer Resolved decision 1b).
  *
  * The fixtures are *states*, not expectations: the tests derive every expected
  * number from `resolveSlotState`/`POWER_UP_SLOT_CAP`, so a fixture can never
@@ -118,7 +118,7 @@ export const SIX_SLOT_LOADOUTS: Readonly<
     temporaryPowerUps: ['salvage'],
     permanentWeapons: ['heavy_slug', 'mortar', 'spread'],
     temporaryWeapons: ['rear_guard'],
-    expiredPowerUpWindows: ['phase_shift'],
+    expiredPowerUpWindows: ['shield'],
   },
 };
 

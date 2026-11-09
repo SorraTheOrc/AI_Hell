@@ -19,7 +19,10 @@ and Electron, both on the reference host's RTX 3050 Ti — is recorded in
 (AH-0MW2IRYJ2006PV3P). The **mobile tier** re-measured on the same hardware
 WebGL backend, still under the 4× CPU throttle, is recorded in
 [Hardware-WebGL mobile tier](#hardware-webgl-mobile-tier-4-cpu-throttle)
-(AH-0MW3KP1R90030QY9). The
+(AH-0MW3KP1R90030QY9). The **asteroid field** pair for the batched-asteroid
+rendering work (parent AH-0MW4857B0004GMWR) is recorded in
+[Asteroid field rendering](#asteroid-field-rendering-gymasteroidstress) — the
+before half is AH-0MW507VYG009SFR5 and the after half AH-0MW508JS2004W3SR. The
 **final target verification** (AH-0MVXV6VOI006P7VG) measures the finished tree
 end to end and records the parity and determinism evidence — see
 [Final target verification](#final-target-verification-ah-0mvxv6voi006p7vg).
@@ -79,6 +82,234 @@ raiders break formation, so compare two `GymPerformance` runs only when the
 scene, warmup, window, CPU throttle and host all match. The gym is also
 watchable/capturable like every other gym (`WATCHABLE_GYM_SCENE_KEYS`, see
 [docs/dev/gameplay-capture.md](dev/gameplay-capture.md)).
+
+## Enemy-count sweep
+
+**`Recorded:`** commit `4901620d` (the sweep driver AH-0MW5IUEX1004AZRH plus
+the CLI fix AH-0MW6CORAZ001FZZ3 — the tooling this section documents) ·
+2026-11-07 · [reference machine](#reference-machine) — headless Chromium
+(**SwiftShader software WebGL**, the default backend) · CPU throttle **1×**
+(the default) · AH-0MW5IUG0D004LX0E. The recorded reference sweep
+(AH-0MW5IUGKO003UC6T) publishes the per-step numbers this tool produces — see
+[Recorded reference sweep](#recorded-reference-sweep-ah-0mw5iugko003uc6t)
+below.
+
+The stress gym measures **one** fixed load — exactly 100 late-game enemies —
+because that is the number the budget is stated against; it leaves "how many
+enemies can the game actually hold at a playable frame rate?" unanswered.
+`npm run perf:sweep` answers that deterministically: it walks the enemy load
+upward in 50-enemy steps (50, 100, 150, …), measures each step **once** for at
+least **15 seconds**, and stops at the first step whose **average FPS is below
+30** — that step is the failure point, the previous one the last playable
+load. One command produces the headroom curve (min / average / max FPS per
+load) as a per-step table plus a headline verdict, with the same data written
+to a machine-readable JSON report. The skill usage guide lives in
+[`.pi/skills/perf-sweep/`](../.pi/skills/perf-sweep/SKILL.md)
+(AH-0MW5IUFGX00500XT).
+
+The sweep is a **measurement tool, not a test run**: it boots a browser and
+takes minutes, so it is intentionally not part of the vitest suite and not run
+by the test skill. Run it from the repo root on the
+[reference machine](#reference-machine) and compare numbers only within one
+host load band ([noise floor](#noise-floor)) — host load is recorded per step,
+so a noisy sweep is identifiable rather than silently comparable.
+
+### Recorded reference sweep (AH-0MW5IUGKO003UC6T)
+
+**`Recorded:`** commit `3e81aae8` (the measured tree; this documentation
+change touches no game code) · 2026-11-07 ·
+[reference machine](#reference-machine) — headless Chromium 140
+(**SwiftShader** software WebGL, the default backend) · CPU throttle **1×**
+(the default) · host load (1/5/15 min) **5.77 / 6.58 / 4.87** at the 50-enemy
+step and **7.11 / 6.78 / 4.98** at the 100-enemy step · AH-0MW5IUGKO003UC6T.
+
+One `npm run perf:sweep` at the documented defaults — derived seed
+`2013458503`, aggression 5, 15 s window with a 5 s warm-up, 1× CPU throttle,
+400-enemy ceiling, 30-minute budget — on a quiet reference host (no other
+agent's suite was running; the 1-minute load was 3.2 at launch). The sweep
+stopped at the first below-30 step:
+
+> **playable to 50 enemies; first failure at 100 with average 27.3 FPS**
+
+| Step | Enemies | Dive % | Loadout (level) | Min FPS | Avg FPS | Max FPS | Verdict | Host load (1/5/15 min) |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 50 | 28 % (14 divers) | `cannon`, `rapid L4`, `wave_laser L4`, `arc L4`, `shard_swarm L4`, `phase_shift L4`, `teleport L4` | 5.0 | 46.7 | 60.6 | playable | 5.77 / 6.58 / 4.87 |
+| 1 | 100 | 48 % (48 divers) | `cannon`, `rapid L4`, `wave_laser L4`, `arc L4`, `shard_swarm L4`, `phase_shift L4`, `teleport L4` | 5.0 | 27.3 | 60.2 | failure | 7.11 / 6.78 / 4.98 |
+
+The loadout is the run-level representative late-game player — campaign level
+5 → upgrade level 4, not maxed — so only the **shoot/dive mix varies per
+step**. The full archetype mix was: step 0 (50) `diver` 14, `tank` 6, `swarm`
+7, `phaser` 10, `raider` 8, `march` 5; step 1 (100) `diver` 48, `tank` 9,
+`swarm` 14, `phaser` 9, `raider` 8, `march` 12. The **minimum FPS of 5.0** in
+both rows is a single ~200 ms frame at the start of the window (a GC/OS
+hitch), not the sustained load — the 50-enemy step's p95 is 33.4 ms — so judge
+the load on the average and p95, per the [noise floor](#noise-floor). The
+full frame-time distribution, the live enemy/bullet counts and each step's
+host block are in the raw harness reports the verdict names.
+
+The **last playable load is 50 enemies** (average 46.7 FPS); the **first
+failing step is 100 enemies** (average 27.3 FPS, p50 33.3 ms). The
+machine-readable verdict — scene, seed, aggression, throttle, host, commit,
+both steps' loadout and levels, mix, min/average/max FPS, live counts and the
+`webgl` backend — is committed at
+[`docs/perf/sweep-reference.json`](./perf/sweep-reference.json).
+
+No regression or hotspot beyond this expected playability boundary was
+exposed — see [How it differs from the fixed 100-enemy
+rows](#how-it-differs-from-the-fixed-100-enemy-rows) for why the sweep is not
+comparable to the budget baseline — so no `discovered-from` work item was
+needed.
+
+### What the sweep measures
+
+- **Enemies that shoot *and* dive.** Every step fields the six late-game
+  firing archetypes of the stress gym — `tank`, `swarm`, `phaser`, `diver`,
+  `raider`, `march` — created by the shared `createEnemyFromConfig` factory
+  and firing through the shared `fireForEnemy` dispatcher. The `diver`
+  archetype dives; the other five shoot. Enemies are **not** invulnerable: the
+  player's fire can kill them, so the live enemy count decays within a step
+  and the step's count is the peak/target load (the live counts are recorded).
+- **The player fires.** Auto-fire is on with the step's loadout, so the
+  measured frame cost includes the player's own bullets and kills. Minerals
+  are off (`minerals: false`).
+- **A semi-random, representative loadout per step**, built through the
+  shipped seams and recorded with the step (ids *and* levels):
+  - the permanent `cannon` is always the base weapon;
+  - one weapon from **each** broad category — projectile (`spread`, `dual`,
+    `rapid`), beam (`wave_laser`), area-of-effect (`nova`, `mortar`, `arc`)
+    and exotic/positional (`ricochet`, `cluster`, `options`, `rear_guard`,
+    `broadside`, `railgun`, `shard_swarm`, `heavy_slug`);
+  - **at least one power-up** from `POWER_UP_CATALOGUE`;
+  - the remaining slots are seeded picks, capped at the shipped six-slot limit
+    (`POWER_UP_SLOT_CAP = 6`);
+  - **levels are not maxed.** A weapon/power-up is granted at the
+    *representative level* of the campaign level a hex of the configured
+    `--aggression` deploys at: campaign level 1 → upgrade level 1, campaign
+    `MAX_LEVEL` (10) → level 7 (`REPRESENTATIVE_LEVEL_MAX`), monotone in
+    between — a strong-but-not-maxed late-game player even at the highest
+    aggression.
+- **A varying shoot/dive mix per step**: the `diver` share is drawn seeded per
+  step in `[0.2, 0.5)`, so the mix varies across the sweep while always
+  containing both behaviours. The roster is fixed at step setup, so the load
+  is constant for that step's measurement window.
+- **As-played, deterministic mode**: one seed for the whole run and a fixed
+  per-step duration — the same seed reproduces the same loadout sequence and
+  the same mixes. The seed is recorded in the verdict JSON.
+
+### The measurement window
+
+Each step measures for **at least 15 seconds** (`--seconds`, minimum enforced,
+default 15). A 5-second warm-up (`--warmup`, default 5) lets the scene settle
+before the window and is **excluded** from the measured time. Per step the
+harness records **min, average and max FPS** alongside the frame-time
+percentiles (p50/p95), long-frame counts and the live enemy/bullet counts
+sampled through the shared `CombatScene` counts seam.
+
+### The stop rule
+
+- A step whose **average FPS is strictly below 30** is the sweep's
+  **failure point**; exactly 30 FPS is still playable.
+- The **previous step is the last playable load** (the headline reads
+  *playable to N enemies; first failure at M with average X FPS*).
+- A **hard ceiling** (400 enemies by default, `--ceiling`) and a
+  **total-run budget** (30 minutes, `--budget`) stop a runaway sweep when no
+  step ever fails.
+
+### How to run it
+
+Prerequisite: the Playwright Chromium build (`npm run capture:install`), the
+same prerequisite the `perf:measure` harness needs.
+
+```bash
+npm run perf:sweep                                  # defaults: seed derived, aggression 5
+npm run perf:sweep -- --seed 42 --aggression 6      # reproducible runs
+npm run perf:sweep -- --ceiling 200 --budget 60     # bound the run
+npm run perf:sweep -- --json                        # verdict JSON on stdout
+npm run perf:sweep -- --out perf-output/my-sweep.json
+```
+
+`npm run perf:sweep` is `node scripts/perf-sweep.mjs`. It starts the Vite dev
+server itself, launches headless Chromium through Playwright, switches to the
+parameterised stress gym and walks the steps — no manual load selection.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--seed N` | derived per run | Run seed for the loadout and mix streams; recorded, so an implicit seed is still reproducible. |
+| `--aggression N` | `5` | Hex aggression whose campaign level the loadout levels derive from. |
+| `--seconds N` | `15` | Measured window per step; rejected below 15. |
+| `--warmup N` | `5` | Scene-settling seconds before each measured window (excluded from measurement). |
+| `--ceiling N` | `400` | Hard upper bound on a planned step. |
+| `--budget N` | `30` | Total-run budget in minutes. |
+| `--cpu-throttle N` | `1` | Pass-through Chromium CPU throttle factor (e.g. `4` for the mobile tier). |
+| `--scene KEY` | `GymPerformance` | Registered scene key to measure. |
+| `--out FILE` | `perf-output/sweep-<ts>.json` | Verdict JSON path (under the git-ignored `perf-output/`). |
+| `--json` | off | Emit the verdict JSON on stdout instead of the table. |
+| `-h`, `--help` | — | Show the usage text. |
+
+Human output is the headline verdict plus one row per step (step index, target
+enemy count, the step's `diver` share, min / average / max FPS and the
+`playable`/`failure` verdict); the JSON verdict names the scene, seed,
+aggression, CPU throttle, started time, **host** and **commit**, the step
+list, each step's loadout *and levels*, shoot/dive mix, the per-step raw
+report paths and the verdict. Exit codes: `0` a completed sweep, `1` a failed
+run (no partial verdict is published), `2` a usage error.
+
+### How it differs from the fixed 100-enemy rows
+
+The [100-enemy baseline rows](#baseline-100-enemies-60-s) are the **budget's**
+worst case: exactly the 100 enemies the 60 FPS target is stated against, with
+the player's auto-fire disabled so the load cannot be shot down
+mid-measurement. The sweep answers the **playability** question — how many
+enemies the game holds before average FPS falls below 30 — with the player
+*actually playing* (auto-fire on, semi-random loadout), so the measured frame
+cost includes the player's own bullets and kills. Both exist because they ask
+different questions, and they are **not comparable**: different enemy counts
+and composition, different player load, different window and a different
+verdict metric (average FPS vs the budget's p95 frame time).
+
+## The asteroid stress gym (`GymAsteroidStress`)
+
+The asteroid batched-rendering work (parent AH-0MW4857B0004GMWR) needs a
+reproducible field of hundreds of live rocks; `GymPerformance` is 100 firing
+ships, not asteroids. `GymAsteroidStress` (AH-0MW507M5L0084TSW) is that
+scenario on demand, again built entirely from the shared gym/combat core:
+
+- **200 live asteroids**, mixed `large`/`medium` tiers, scattered over the
+  playfield by a seeded pure planner (`buildAsteroidStressSpawnEvents`) and
+  materialised through the shared `createAsteroidFromEvent` seam — the same
+  code the game's scheduled asteroid hazard runs, so the measured render path
+  is the game's own.
+- **A representative late-game wave** of 12 firing enemies (two of each
+  `tank`, `swarm`, `phaser`, `diver`, `raider`, `march`), built by the shared
+  `createEnemyFromConfig` factory and firing through the shared `fireForEnemy`
+  dispatcher from the first frame (`shootEnabled: true`).
+- **Only the target load and a stable window**: the rock field is stationary
+  (zero velocity, with a rock-free pocket around the ship so a ram can never
+  split a rock and change the composition), formation drift 0, no wave
+  timeout, no power-up layer and no seeded mineral field. Player auto-fire is
+  disabled (the documented divergence the other stress gym also records), so
+  the 200-rock load cannot be shot down mid-measurement; every rock still
+  rotates through the shared `Asteroid` path, so the rendering work is the
+  game's own.
+- **Deterministic**: the field seed (`GYM_ASTEROID_STRESS_FIELD_SEED`, or a
+  capture setup's `seed`) reproduces identical rock positions, velocities,
+  tiers, rotations and count; the wave roster is derived from the grid offset.
+- **Live readout**: a top-left overlay reports FPS, the live asteroid count,
+  the wave count and the same shared `getPerformanceCounts()` fields the probe
+  samples every 250 ms, so a report's `counts` block (peak/mean `enemies` =
+  212 with the full load) is the authoritative load label.
+
+```bash
+npm run perf:measure -- --scene GymAsteroidStress --seconds 60 --warmup 3
+```
+
+Because the field is deterministic, a before/after pair on the same host,
+scene, window and throttle isolates the asteroid rendering change. That pair is
+recorded in
+[Asteroid field rendering](#asteroid-field-rendering-gymasteroidstress) — the
+before half (pre-batched-rendering tree) is AH-0MW507VYG009SFR5. The gym is
+watchable/capturable like every other gym (`WATCHABLE_GYM_SCENE_KEYS`), and
+`docs/GYM_PARITY.md` records its parity row.
 
 ## The desktop host (Electron)
 
@@ -242,8 +473,10 @@ Report fields:
 | `startedAt`, `host` | When and where the run happened (see [reference machine](#reference-machine)). |
 | `webgl` | The WebGL backend the page actually used (`vendor`/`renderer`/`version`), plus `kind`: `software` for a CPU rasteriser (SwiftShader, llvmpipe, …), `hardware` for a real GPU driver string, `unknown` when there is no context. Headless Chromium falls back to SwiftShader, so a run can never be mistaken for a hardware-GPU run on a label alone. |
 | `elapsedSeconds`, `frames` | The measured wall-clock span and the number of sampled frame intervals. |
-| `frameTimeMs.p50`, `frameTimeMs.p95`, `frameTimeMs.max`, `frameTimeMs.mean` | Frame-time percentiles in milliseconds. Percentiles, not means, so one hitch does not hide the typical frame. |
+| `frameTimeMs.min`, `frameTimeMs.p50`, `frameTimeMs.p95`, `frameTimeMs.max`, `frameTimeMs.mean` | Frame-time percentiles in milliseconds. Percentiles, not means, so one hitch does not hide the typical frame. `min` is the fastest frame and `max` the slowest. |
 | `fps.effective` | `frames ÷ elapsedSeconds` — the loop's real throughput. |
+| `fps.min`, `fps.max` | The slowest and fastest frame expressed as a rate (`1000 ÷ frameTimeMs.max` and `1000 ÷ frameTimeMs.min`), so min/max FPS never have to be re-derived from a partial record. |
+| `fps.mean` | `frames ÷ elapsedSeconds` — the average rate (the same arithmetic as `fps.effective`, recorded under its own name for min/mean/max reporting). |
 | `fps.phaserActualFps` | Phaser's own smoothed `game.loop.actualFps` reading at the end of the window (cross-check). |
 | `longFrames.over33Ms`, `longFrames.over50Ms` (+ percentages) | Frames slower than 33 ms (a missed 30 FPS frame) and 50 ms (a visible hitch). Counts are strict (`>`), so a frame at exactly 33.0 ms is not a long frame. |
 | `counts.peak`, `counts.mean`, `counts.last`, `counts.samples` | Live enemies, enemy bullets, player bullets and minerals sampled every 250 ms — the load that produced the frame times. `counts` is `null` when the scene exposes none. |
@@ -480,8 +713,6 @@ CPU attribution over the profiled window (share of the measured window, %):
   33.3 → 49.9 ms) but p50 stays pinned at the 16.7 ms vsync step in all four
   runs, which is the same load-sensitivity pattern the
   [noise floor](#noise-floor) describes.
-  never approaches the ≥ 30 FPS floor (33.3 ms p95), which is the same
-  load-sensitivity pattern the [noise floor](#noise-floor) describes.
 - **The mobile shortfall was the software rasteriser, as attributed.**
   `native` — the CPU rasterisation bucket that dominated the software rows —
   falls from **76.92 %** of the 4× window to **16.35 %**, and the frame time
@@ -922,6 +1153,245 @@ the re-stated verdict is in
 [the hardware balance note](#hardware-gpu-desktop-baseline) — the balance did
 **not** differ (JS 13.0–14.4 %, simulation 2.05–2.40 %, renderer 10.8–11.8 %), so
 [Ranked hotspots](#ranked-hotspots) keeps its ordering.
+
+## Asteroid field rendering (`GymAsteroidStress`)
+
+The batched-asteroid work (parent AH-0MW4857B0004GMWR) is judged on a
+**same-host before/after pair** of the
+[asteroid stress gym](#the-asteroid-stress-gym-gymasteroidstress): 200 live
+rocks plus the representative 12-enemy firing wave, 60 s after a 3 s warm-up on
+the reference host's RTX 3050 Ti. The **before** half — the pre-change tree,
+where every rock carries its own seeded silhouette texture and falls back to a
+per-frame `Graphics` body once the 64-texture bake budget is exhausted — is
+recorded below (AH-0MW507VYG009SFR5), and the **after** half — the post-change
+tree, where every rock is a plain `Image` on one shared silhouette atlas — is
+recorded with the deltas by AH-0MW508JS2004W3SR. Both halves use the same
+command, scene, window, throttle and host, so the pair isolates the asteroid
+rendering change:
+
+```bash
+npm run perf:measure -- --gpu --require-hardware-webgl --scene GymAsteroidStress \
+  --seconds 60 --warmup 3 --profile perf-output/asteroid-before.cpuprofile \
+  --out perf-output/asteroid-before.json
+```
+
+### Before: one texture per rock, per-frame `Graphics` fallback (AH-0MW507VYG009SFR5)
+
+**`Recorded:`** commit `63801fa0` (game code; this documentation change touches
+no game code) · 2026-11-06 · desktop browser (headless Chromium 140.0.7339.186)
+on the **NVIDIA RTX 3050 Ti through ANGLE-Vulkan** · CPU throttle 1× ·
+AH-0MW507VYG009SFR5.
+
+The tree measured here is the one the
+[asteroid stress gym](#the-asteroid-stress-gym-gymasteroidstress) landed on:
+every asteroid draws a unique seeded jagged polygon and bakes it into its own
+texture, so 200 rocks are 200 distinct textures and 200 separate draw
+submissions (plus a per-frame `Graphics` re-tessellation for any rock past the
+64-texture cache cap). That is the cost the pair has to show. Two runs, so the
+vsync-step percentiles are shown to be reproducible rather than a single lucky
+window; run 2 repeats the same command without `--profile` (the profile half is
+identical either way) and writes `perf-output/asteroid-before-2.json`.
+
+**Backend, exactly as recorded in the reports.** Both reports carry
+`webgl.kind: "hardware"` and the renderer string
+`ANGLE (NVIDIA, Vulkan 1.4.329 (NVIDIA NVIDIA GeForce RTX 3050 Ti Laptop GPU (0x000025A0)), NVIDIA)`;
+`runtime` is `{ kind: "browser", chromeVersion: "140.0.7339.186" }`. Host block
+(`host` in both reports): AMD Ryzen 7 4800H with Radeon Graphics, 16 logical
+CPUs, 30 223 MB memory, Linux 7.0.0-38-generic, Node v22.22.1. Host load is
+recorded per row (4.15 and 8.56) — both inside the quiet band the
+[noise floor](#noise-floor) describes.
+
+| Run | Host load | p50 (ms) | p95 (ms) | max (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms | Enemies peak/mean | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 (profiled) | 4.15 | **16.7** | **16.7** | 16.8 | 16.666 | **60.00** | 0 (0 %) | 0 (0 %) | 212 / 212 | 40 / 18.68 |
+| 2 | 8.56 | **16.7** | **16.7** | 16.8 | 16.666 | **60.00** | 0 (0 %) | 0 (0 %) | 212 / 212 | 35 / 17.90 |
+
+Counts (`counts` in the reports, sampled every 250 ms, 236 samples per run):
+`enemies` is exactly **212** in peak *and* mean in both runs — the 200 rocks
+plus the 12 firing enemies, so the load is fixed and the frame times are
+comparable run to run. Player bullets are 0 by design (the gym disables the
+player's auto-fire, so the rock load cannot be shot down mid-measurement);
+minerals are 0 in run 1 and peak 2 / mean 1.91 in run 2, i.e. the handful of
+salvage drops that accumulate during the window, not a field.
+
+CPU attribution over the profiled window (run 1, 60 s, 55 393 samples, share of
+the measured window, %):
+
+| JS | simulation | renderer | ui | audio | gc | idle | native | other |
+|---|---|---|---|---|---|---|---|---|
+| 11.15 | 1.66 | **9.34** | 0.11 | 0.03 | 0.21 | 85.44 | 3.20 | 0.01 |
+
+The renderer bucket is dominated by per-object draw submission, exactly the
+symbols the batched path targets (self time, share of the window):
+
+| Symbol | Source | Self time | Share |
+|---|---|---|---|
+| `ContainerWebGLRenderer` | Phaser (container render) | 987.0 ms | 1.63 % |
+| `batch` | Phaser (batch submission) | 628.3 ms | 1.04 % |
+| `GraphicsWebGLRenderer` | Phaser (Graphics pipeline) | 588.4 ms | 0.97 % |
+| `renderWebGLStep` | Phaser (render step) | 564.5 ms | 0.93 % |
+
+The hottest project functions are far smaller — `GymFormationScene.tick`
+0.46 %, `CombatScene._handleCollisions` 0.12 % — so the frame is not
+simulation-bound.
+
+**Read the numbers this way:**
+
+- **The frame time is already at the vsync step, so the win cannot be shown as
+  frame time on this host.** 200 rocks + 12 firing enemies hold p50 = p95 =
+  16.7 ms, 60.00 effective FPS and zero long frames in both runs. The batched
+  change removes JS draw-submission work, and on a hardware GPU the 60 Hz vsync
+  step absorbs the difference — so the **after** half is read from the renderer
+  attribution below, not from p50/p95. Any frame-time claim for this change on
+  this host would be inside the [noise floor](#noise-floor).
+- **The renderer is still the lever, by a wide margin.** The `renderer` bucket
+  (9.34 %) is **5.6×** the game's own `simulation` bucket (1.66 %), and 84 % of
+  the renderer bucket is the four draw-submission symbols above. The main thread
+  is idle for 85.44 % of the window and `native` (GL submission/raster) is
+  3.20 %, so this is CPU-side per-object submission, not a saturated GPU.
+- **The load is the gym's deterministic one.** 212 = 200 rocks + 12 enemies in
+  every sample of both runs, so a re-run on a matching host reproduces the same
+  scenario, and the before/after pair compares the same field.
+
+**Verdict.** This is the before half of the pair only: on the reference
+hardware-GPU desktop the asteroid field already meets the 60 FPS budget, and the
+measured cost the batched rendering targets is **9.34 % renderer** (5.6× the
+1.66 % simulation) concentrated in `ContainerWebGLRenderer`, `batch`,
+`GraphicsWebGLRenderer` and `renderWebGLStep`. AH-0MW508JS2004W3SR records the
+after half against these numbers.
+
+### After: shared silhouette palette, one texture atlas (AH-0MW508JS2004W3SR)
+
+**`Recorded:`** commit `57125ac1` (game code; this documentation change touches
+no game code) · 2026-11-06 · desktop browser (headless Chromium 140.0.7339.186)
+on the **NVIDIA RTX 3050 Ti through ANGLE-Vulkan** · CPU throttle 1× ·
+AH-0MW508JS2004W3SR.
+
+The tree measured here is the one the batched-asteroid change landed on
+(AH-0MW5088LA007XYQM, commit `57125ac1`): every asteroid draws as a plain
+`Phaser.GameObjects.Image` on one of **10 silhouettes per size tier**, all baked
+once into the **single** `asteroid-atlas-v1` texture
+(`src/utils/asteroidTextures.ts`), so 200 rocks share one texture bind instead
+of owning 200 distinct textures, and an asteroid field never touches the
+64-texture `enemy-body-` bake budget. The before half above is the same scene on
+the pre-change tree, so the pair isolates exactly that rendering change. Command
+— the before command with the after filenames:
+
+```bash
+npm run perf:measure -- --gpu --require-hardware-webgl --scene GymAsteroidStress \
+  --seconds 60 --warmup 3 --profile perf-output/asteroid-after.cpuprofile \
+  --out perf-output/asteroid-after.json
+```
+
+Run 2 repeats the same command without `--profile` and writes
+`perf-output/asteroid-after-2.json`, as the before half's run 2 did.
+
+**Backend, exactly as recorded in the reports.** Both reports carry
+`webgl.kind: "hardware"` and the renderer string
+`ANGLE (NVIDIA, Vulkan 1.4.329 (NVIDIA NVIDIA GeForce RTX 3050 Ti Laptop GPU (0x000025A0)), NVIDIA)`;
+`runtime` is `{ kind: "browser", chromeVersion: "140.0.7339.186" }`. Host block
+(`host` in both reports): AMD Ryzen 7 4800H with Radeon Graphics, 16 logical
+CPUs, 30 223 MB memory, Linux 7.0.0-38-generic, Node v22.22.1 — the same
+reference host as the before half. Host load is recorded per row (4.58 and
+3.69), both inside the quiet band the [noise floor](#noise-floor) describes.
+
+| Run | Host load | p50 (ms) | p95 (ms) | max (ms) | mean (ms) | Effective FPS | Frames > 33 ms | Frames > 50 ms | Enemies peak/mean | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 (profiled) | 4.58 | **16.7** | **16.7** | 16.8 | 16.666 | **60.00** | 0 (0 %) | 0 (0 %) | 212 / 212 | 39 / 18.28 |
+| 2 | 3.69 | **16.7** | **16.8** | 16.8 | 16.666 | **60.00** | 0 (0 %) | 0 (0 %) | 212 / 212 | 41 / 18.85 |
+
+Counts (`counts` in the reports, sampled every 250 ms, 236 samples per run):
+`enemies` is exactly **212** in peak *and* mean in both runs — the 200 rocks plus
+the 12 firing enemies, the same fixed load the before half measured, so the pair
+compares the same field. Player bullets are 0 by design (the gym disables the
+player's auto-fire); minerals are peak 1 / mean 0.96 in run 1 and 0 / 0 in
+run 2, i.e. the same handful of salvage drops, not a field.
+
+CPU attribution over the profiled window (run 1, 60 s, 54 793 samples, share of
+the measured window, %):
+
+| JS | simulation | renderer | ui | audio | gc | idle | native | other |
+|---|---|---|---|---|---|---|---|---|
+| 9.45 | 1.72 | **7.61** | 0.08 | 0.03 | 0.11 | 87.31 | 3.13 | 0.01 |
+
+**The pair** — same host, scene, window, warm-up and throttle in every row:
+
+| Measure | Before (AH-0MW507VYG009SFR5) | After (this item) | Change |
+|---|---|---|---|
+| Effective FPS | 60.00 / 60.00 | 60.00 / 60.00 | none (both at the vsync step) |
+| p50 / p95 (ms) | 16.7 / 16.7 in both runs | 16.7 / 16.7 (run 1), 16.7 / 16.8 (run 2) | none measurable |
+| Frames > 33 ms | 0 / 0 | 0 / 0 | none |
+| Enemies peak/mean | 212 / 212 | 212 / 212 | identical load |
+| Main-thread JS | 11.15 % | **9.45 %** | **− 1.70 pp (− 15.2 %)** |
+| `renderer` bucket | 9.34 % | **7.61 %** | **− 1.73 pp (− 18.5 %)** |
+| `simulation` bucket | 1.66 % | 1.72 % | + 0.06 pp (noise) |
+| `idle` | 85.44 % | 87.31 % | + 1.87 pp |
+| `native` | 3.20 % | 3.13 % | − 0.07 pp |
+
+The draw-submission symbols the batched path targets (self time and share of
+the measured window; the before column is the recorded one, the after column is
+this run's top-entries):
+
+| Symbol | Source | Before | After | Change |
+|---|---|---|---|---|
+| `GraphicsWebGLRenderer` | Phaser (Graphics pipeline) | 588.4 ms / 0.97 % | 333.6 ms / 0.55 % | **− 43 %** |
+| `batch` (both entries summed after) | Phaser (batch submission) | 628.3 ms / 1.04 % | 182.2 ms / 0.30 % | **− 71 %** |
+| `renderWebGLStep` | Phaser (render step) | 564.5 ms / 0.93 % | 545.4 ms / 0.90 % | − 3 % (noise) |
+| `ContainerWebGLRenderer` | Phaser (container render) | 987.0 ms / 1.63 % | 1167.6 ms / 1.93 % | **+ 18 % — did not fall** |
+
+The after profile's top rows also carry the cheap sprite path the atlas feeds —
+`ImageWebGLRenderer` 129.6 ms / 0.21 % with its matrix helper `GetCalcMatrix`
+130.0 ms / 0.22 % — plus three Graphics render-node `run` entries (0.58 %,
+0.40 %, 0.30 %): the residual per-frame Graphics work is the player ship, muzzle
+flashes and the shield/force-field bubbles, not asteroid bodies. The hottest
+project functions are unchanged and small — `GymFormationScene.tick` 0.40 %,
+`CombatScene._handleCollisions` 0.12 % — so the frame is still not
+simulation-bound.
+
+**Read the numbers this way:**
+
+- **The frame time is identical because both halves sit on the vsync step.**
+  200 rocks + 12 firing enemies hold p50 = 16.7 ms, 60.00 effective FPS and zero
+  long frames before *and* after; the after run's p95 is 16.7 ms in run 1 and
+  16.8 ms (one vsync quantum) in run 2. A hardware GPU at 60 Hz absorbs the
+  saved main-thread time, so the change is read from the attribution below, not
+  from p50/p95 — exactly as the before half predicted.
+- **The cost the change targeted fell measurably.** The `renderer` bucket is
+  **18.5 % smaller** (9.34 % → 7.61 %) and main-thread JS 15.2 % smaller, with
+  the freed 1.87 pp of the window going to `idle`. Inside the bucket the two
+  symbols that *were* the per-rock path collapsed: `GraphicsWebGLRenderer`
+  − 43 % (the per-frame `Graphics` fallback the 64-texture cap used to force) and
+  `batch` − 71 % (200 separate texture submissions became one atlas bind).
+- **`ContainerWebGLRenderer` did not fall, and that is recorded rather than
+  claimed away.** Asteroids are still `Phaser.GameObjects.Container`s and are
+  still walked one by one every frame (212 of them); the change shares one
+  texture, it does not remove the per-rock container. It is now the largest
+  single renderer entry and the remaining measured draw-submission cost — the
+  exact shape of work that Option B (true GPU instancing, which bypasses the
+  container render path entirely) would remove.
+- **The load is the gym's deterministic one.** 212 = 200 rocks + 12 enemies in
+  every sample of both runs, identical to the before half, so the pair compares
+  the same field.
+
+**Verdict (AC3, and the AC4 trigger).** On the reference hardware-GPU desktop
+the asteroid field **meets the 60 FPS budget with the batched renderer in
+place**: 200 rocks + 12 firing enemies run at 60.00 effective FPS / p50 16.7 ms
+with zero frames over 33 ms, and the **minimal gate — no regression at the same
+asteroid count — is met** (p50/p95, effective FPS, long-frame counts and the
+212-rock load are all unchanged against the before half). The formal
+`p95 ≤ 16.7 ms` bar is met in run 1 and missed by one vsync quantum (16.8 ms) in
+run 2, the same quantised-vsync caveat the Electron desktop row records; no
+frame-time win is claimed on this host, because there is none to claim.
+
+What is claimed is the measured cost reduction: **`renderer` 9.34 % → 7.61 %
+(− 18.5 %), main-thread JS 11.15 % → 9.45 % (− 15.2 %)**, with the per-rock
+Graphics/batch submission path down 43 % / 71 % and 200 unique textures replaced
+by one atlas. **AC4 is therefore not triggered:** neither the frame-time target
+nor the no-regression gate is missed, so no Option B (true GPU instancing)
+follow-up is filed. The measured remainder that would justify it —
+`ContainerWebGLRenderer` 1.93 %, the per-rock container walk that did not fall —
+is recorded here so a future scenario that regresses the budget can escalate
+with evidence rather than an assumption.
 
 ## Ranked hotspots
 
@@ -1517,10 +1987,14 @@ for a garbage-free hot loop, and neither claims a frame-time win.
    33 ms in one run and one in the other, which is the confirmation that turns
    it into one ([Hardware-GPU desktop
    baseline](#hardware-gpu-desktop-baseline)).
-3. **Mobile tier — target missed.** 24.21 FPS against the ≥ 30 FPS bar at a
-   fixed 4× throttle. It is a real improvement over the recorded 19.92 FPS
-   baseline (+21.5 %; the 4× `renderer` bucket fell from 33.51 % to 18.87 % of
-   the window), but it is not the target.
+3. **Mobile tier — target missed on the software rasteriser, met on hardware WebGL.**
+   The 4× row measures 24.21 FPS against the ≥ 30 FPS bar on **SwiftShader**,
+   this host's CPU-rasteriser floor, which is not a verdict on the mobile
+   target: the same tier on the host's hardware GPU holds 46.85–59.44 FPS — see
+   [Hardware-WebGL mobile tier](#hardware-webgl-mobile-tier-4-cpu-throttle).
+   The software row is a real improvement over the recorded 19.92 FPS baseline
+   (+21.5 %; the 4× `renderer` bucket fell from 33.51 % to 18.87 % of the
+   window), but it is not the target on that backend.
    The remaining cost is draw submission (`renderer` 18.87 % of the window,
    84.91 % of JS) on top of software rasterisation (`native` 76.92 %).
    Escalated as **AH-0MW2IRYAH0055WCN** with the measured hotspot shares, and

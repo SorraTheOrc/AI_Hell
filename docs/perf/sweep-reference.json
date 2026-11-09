@@ -1,0 +1,836 @@
+{
+  "schemaVersion": 1,
+  "mode": "as-played",
+  "scene": "GymPerformance",
+  "seed": 2013458503,
+  "aggression": 5,
+  "cpuThrottle": 1,
+  "startedAt": "2026-11-07T13:01:42.160Z",
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "release": "7.0.0-38-generic",
+    "cpuModel": "AMD Ryzen 7 4800H with Radeon Graphics",
+    "cpuCount": 16,
+    "totalMemoryMb": 30223,
+    "loadAverage": [
+      3.22,
+      6.27,
+      4.73
+    ],
+    "node": "v22.22.1"
+  },
+  "commit": "3e81aae8",
+  "stopReason": "below-threshold",
+  "headline": "playable to 50 enemies; first failure at 100 with average 27.3 FPS",
+  "playableEnemyCount": 50,
+  "out": "perf-output/sweep-2026-11-07T13-01-42-160Z.json",
+  "steps": [
+    {
+      "index": 0,
+      "enemyCount": 50,
+      "warmupSeconds": 5,
+      "durationSeconds": 15,
+      "setup": {
+        "scene": "GymPerformance",
+        "seed": 2013458503,
+        "aggression": 5,
+        "enemyCount": 50,
+        "warmupSeconds": 5,
+        "durationSeconds": 15,
+        "cpuThrottle": 1,
+        "autoFire": true,
+        "minerals": false,
+        "loadout": {
+          "seed": 2013458503,
+          "aggression": 5,
+          "campaignLevel": 6,
+          "baseWeapon": "cannon",
+          "weapons": [
+            {
+              "id": "rapid",
+              "category": "projectile",
+              "level": 4
+            },
+            {
+              "id": "wave_laser",
+              "category": "beam",
+              "level": 4
+            },
+            {
+              "id": "arc",
+              "category": "area",
+              "level": 4
+            },
+            {
+              "id": "shard_swarm",
+              "category": "exotic",
+              "level": 4
+            }
+          ],
+          "powerUps": [
+            {
+              "id": "phase_shift",
+              "level": 4
+            },
+            {
+              "id": "teleport",
+              "level": 4
+            }
+          ]
+        },
+        "mix": {
+          "seed": 2013458503,
+          "stepIndex": 0,
+          "entries": [
+            {
+              "archetype": "diver",
+              "count": 14
+            },
+            {
+              "archetype": "tank",
+              "count": 6
+            },
+            {
+              "archetype": "swarm",
+              "count": 7
+            },
+            {
+              "archetype": "phaser",
+              "count": 10
+            },
+            {
+              "archetype": "raider",
+              "count": 8
+            },
+            {
+              "archetype": "march",
+              "count": 5
+            }
+          ],
+          "divingProportion": 0.28
+        }
+      },
+      "fps": {
+        "min": 5,
+        "average": 46.68,
+        "max": 60.61
+      },
+      "counts": {
+        "source": "GymPerformance",
+        "sampleCount": 58,
+        "peak": {
+          "enemies": 50,
+          "enemyBullets": 128,
+          "playerBullets": 19,
+          "minerals": 13
+        },
+        "mean": {
+          "enemies": 50,
+          "enemyBullets": 76.52,
+          "playerBullets": 14.29,
+          "minerals": 12.17
+        },
+        "last": {
+          "enemies": 50,
+          "enemyBullets": 82,
+          "playerBullets": 11,
+          "minerals": 13
+        },
+        "samples": [
+          {
+            "atMs": 0,
+            "enemies": 50,
+            "enemyBullets": 54,
+            "playerBullets": 8,
+            "minerals": 12
+          },
+          {
+            "atMs": 266.6,
+            "enemies": 50,
+            "enemyBullets": 51,
+            "playerBullets": 14,
+            "minerals": 12
+          },
+          {
+            "atMs": 516.6,
+            "enemies": 50,
+            "enemyBullets": 128,
+            "playerBullets": 14,
+            "minerals": 12
+          },
+          {
+            "atMs": 766.6,
+            "enemies": 50,
+            "enemyBullets": 99,
+            "playerBullets": 13,
+            "minerals": 12
+          },
+          {
+            "atMs": 1049.9,
+            "enemies": 50,
+            "enemyBullets": 99,
+            "playerBullets": 11,
+            "minerals": 12
+          },
+          {
+            "atMs": 1316.6,
+            "enemies": 50,
+            "enemyBullets": 99,
+            "playerBullets": 12,
+            "minerals": 12
+          },
+          {
+            "atMs": 1583.2,
+            "enemies": 50,
+            "enemyBullets": 99,
+            "playerBullets": 11,
+            "minerals": 12
+          },
+          {
+            "atMs": 1849.9,
+            "enemies": 50,
+            "enemyBullets": 98,
+            "playerBullets": 16,
+            "minerals": 12
+          },
+          {
+            "atMs": 2099.9,
+            "enemies": 50,
+            "enemyBullets": 99,
+            "playerBullets": 18,
+            "minerals": 12
+          },
+          {
+            "atMs": 2366.5,
+            "enemies": 50,
+            "enemyBullets": 2,
+            "playerBullets": 18,
+            "minerals": 12
+          },
+          {
+            "atMs": 2616.5,
+            "enemies": 50,
+            "enemyBullets": 82,
+            "playerBullets": 11,
+            "minerals": 12
+          },
+          {
+            "atMs": 2866.5,
+            "enemies": 50,
+            "enemyBullets": 84,
+            "playerBullets": 11,
+            "minerals": 12
+          },
+          {
+            "atMs": 3116.5,
+            "enemies": 50,
+            "enemyBullets": 85,
+            "playerBullets": 12,
+            "minerals": 12
+          },
+          {
+            "atMs": 3383.1,
+            "enemies": 50,
+            "enemyBullets": 85,
+            "playerBullets": 19,
+            "minerals": 12
+          },
+          {
+            "atMs": 3633.1,
+            "enemies": 50,
+            "enemyBullets": 84,
+            "playerBullets": 18,
+            "minerals": 12
+          },
+          {
+            "atMs": 3899.8,
+            "enemies": 50,
+            "enemyBullets": 86,
+            "playerBullets": 17,
+            "minerals": 12
+          },
+          {
+            "atMs": 4149.8,
+            "enemies": 50,
+            "enemyBullets": 6,
+            "playerBullets": 11,
+            "minerals": 12
+          },
+          {
+            "atMs": 4399.8,
+            "enemies": 50,
+            "enemyBullets": 6,
+            "playerBullets": 12,
+            "minerals": 12
+          },
+          {
+            "atMs": 4683.1,
+            "enemies": 50,
+            "enemyBullets": 89,
+            "playerBullets": 19,
+            "minerals": 12
+          },
+          {
+            "atMs": 4933.1,
+            "enemies": 50,
+            "enemyBullets": 89,
+            "playerBullets": 18,
+            "minerals": 12
+          },
+          {
+            "atMs": 5183.1,
+            "enemies": 50,
+            "enemyBullets": 90,
+            "playerBullets": 18,
+            "minerals": 12
+          },
+          {
+            "atMs": 5449.8,
+            "enemies": 50,
+            "enemyBullets": 86,
+            "playerBullets": 18,
+            "minerals": 12
+          },
+          {
+            "atMs": 5716.3,
+            "enemies": 50,
+            "enemyBullets": 101,
+            "playerBullets": 11,
+            "minerals": 12
+          },
+          {
+            "atMs": 5983,
+            "enemies": 50,
+            "enemyBullets": 101,
+            "playerBullets": 8,
+            "minerals": 12
+          },
+          {
+            "atMs": 6249.7,
+            "enemies": 50,
+            "enemyBullets": 17,
+            "playerBullets": 18,
+            "minerals": 13
+          },
+          {
+            "atMs": 6533,
+            "enemies": 50,
+            "enemyBullets": 98,
+            "playerBullets": 19,
+            "minerals": 13
+          },
+          {
+            "atMs": 6783,
+            "enemies": 50,
+            "enemyBullets": 99,
+            "playerBullets": 18,
+            "minerals": 12
+          },
+          {
+            "atMs": 7033,
+            "enemies": 50,
+            "enemyBullets": 87,
+            "playerBullets": 11,
+            "minerals": 12
+          },
+          {
+            "atMs": 7299.7,
+            "enemies": 50,
+            "enemyBullets": 84,
+            "playerBullets": 12,
+            "minerals": 12
+          },
+          {
+            "atMs": 7583,
+            "enemies": 50,
+            "enemyBullets": 86,
+            "playerBullets": 11,
+            "minerals": 12
+          },
+          {
+            "atMs": 7849.6,
+            "enemies": 50,
+            "enemyBullets": 85,
+            "playerBullets": 15,
+            "minerals": 13
+          },
+          {
+            "atMs": 8099.6,
+            "enemies": 50,
+            "enemyBullets": 95,
+            "playerBullets": 18,
+            "minerals": 13
+          },
+          {
+            "atMs": 8382.9,
+            "enemies": 50,
+            "enemyBullets": 15,
+            "playerBullets": 18,
+            "minerals": 13
+          },
+          {
+            "atMs": 8649.6,
+            "enemies": 50,
+            "enemyBullets": 94,
+            "playerBullets": 14,
+            "minerals": 13
+          },
+          {
+            "atMs": 8916.3,
+            "enemies": 50,
+            "enemyBullets": 93,
+            "playerBullets": 11,
+            "minerals": 13
+          },
+          {
+            "atMs": 9182.9,
+            "enemies": 50,
+            "enemyBullets": 92,
+            "playerBullets": 8,
+            "minerals": 13
+          },
+          {
+            "atMs": 9432.9,
+            "enemies": 50,
+            "enemyBullets": 97,
+            "playerBullets": 18,
+            "minerals": 13
+          },
+          {
+            "atMs": 9699.6,
+            "enemies": 50,
+            "enemyBullets": 85,
+            "playerBullets": 19,
+            "minerals": 13
+          },
+          {
+            "atMs": 9982.9,
+            "enemies": 50,
+            "enemyBullets": 83,
+            "playerBullets": 16,
+            "minerals": 13
+          },
+          {
+            "atMs": 10232.9,
+            "enemies": 50,
+            "enemyBullets": 5,
+            "playerBullets": 11,
+            "minerals": 13
+          },
+          {
+            "atMs": 10499.5,
+            "enemies": 50,
+            "enemyBullets": 11,
+            "playerBullets": 12,
+            "minerals": 13
+          },
+          {
+            "atMs": 10766.2,
+            "enemies": 50,
+            "enemyBullets": 87,
+            "playerBullets": 10,
+            "minerals": 11
+          },
+          {
+            "atMs": 11016.2,
+            "enemies": 50,
+            "enemyBullets": 87,
+            "playerBullets": 16,
+            "minerals": 11
+          },
+          {
+            "atMs": 11282.8,
+            "enemies": 50,
+            "enemyBullets": 91,
+            "playerBullets": 18,
+            "minerals": 11
+          },
+          {
+            "atMs": 11532.8,
+            "enemies": 50,
+            "enemyBullets": 92,
+            "playerBullets": 18,
+            "minerals": 11
+          },
+          {
+            "atMs": 11782.8,
+            "enemies": 50,
+            "enemyBullets": 90,
+            "playerBullets": 8,
+            "minerals": 11
+          },
+          {
+            "atMs": 12049.4,
+            "enemies": 50,
+            "enemyBullets": 85,
+            "playerBullets": 11,
+            "minerals": 11
+          },
+          {
+            "atMs": 12299.4,
+            "enemies": 50,
+            "enemyBullets": 4,
+            "playerBullets": 11,
+            "minerals": 11
+          },
+          {
+            "atMs": 12549.4,
+            "enemies": 50,
+            "enemyBullets": 84,
+            "playerBullets": 19,
+            "minerals": 11
+          },
+          {
+            "atMs": 12799.4,
+            "enemies": 50,
+            "enemyBullets": 86,
+            "playerBullets": 18,
+            "minerals": 11
+          },
+          {
+            "atMs": 13049.4,
+            "enemies": 50,
+            "enemyBullets": 86,
+            "playerBullets": 18,
+            "minerals": 11
+          },
+          {
+            "atMs": 13299.4,
+            "enemies": 50,
+            "enemyBullets": 86,
+            "playerBullets": 11,
+            "minerals": 13
+          },
+          {
+            "atMs": 13549.4,
+            "enemies": 50,
+            "enemyBullets": 87,
+            "playerBullets": 12,
+            "minerals": 13
+          },
+          {
+            "atMs": 13816.1,
+            "enemies": 50,
+            "enemyBullets": 88,
+            "playerBullets": 11,
+            "minerals": 13
+          },
+          {
+            "atMs": 14082.7,
+            "enemies": 50,
+            "enemyBullets": 88,
+            "playerBullets": 18,
+            "minerals": 13
+          },
+          {
+            "atMs": 14332.7,
+            "enemies": 50,
+            "enemyBullets": 4,
+            "playerBullets": 18,
+            "minerals": 13
+          },
+          {
+            "atMs": 14582.7,
+            "enemies": 50,
+            "enemyBullets": 83,
+            "playerBullets": 14,
+            "minerals": 13
+          },
+          {
+            "atMs": 14849.4,
+            "enemies": 50,
+            "enemyBullets": 82,
+            "playerBullets": 11,
+            "minerals": 13
+          }
+        ]
+      },
+      "webgl": {
+        "vendor": "Google Inc. (Google)",
+        "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+        "kind": "software"
+      },
+      "reportFile": "perf-output/step-050.json",
+      "verdict": "playable"
+    },
+    {
+      "index": 1,
+      "enemyCount": 100,
+      "warmupSeconds": 5,
+      "durationSeconds": 15,
+      "setup": {
+        "scene": "GymPerformance",
+        "seed": 2013458503,
+        "aggression": 5,
+        "enemyCount": 100,
+        "warmupSeconds": 5,
+        "durationSeconds": 15,
+        "cpuThrottle": 1,
+        "autoFire": true,
+        "minerals": false,
+        "loadout": {
+          "seed": 2013458503,
+          "aggression": 5,
+          "campaignLevel": 6,
+          "baseWeapon": "cannon",
+          "weapons": [
+            {
+              "id": "rapid",
+              "category": "projectile",
+              "level": 4
+            },
+            {
+              "id": "wave_laser",
+              "category": "beam",
+              "level": 4
+            },
+            {
+              "id": "arc",
+              "category": "area",
+              "level": 4
+            },
+            {
+              "id": "shard_swarm",
+              "category": "exotic",
+              "level": 4
+            }
+          ],
+          "powerUps": [
+            {
+              "id": "phase_shift",
+              "level": 4
+            },
+            {
+              "id": "teleport",
+              "level": 4
+            }
+          ]
+        },
+        "mix": {
+          "seed": 2013458503,
+          "stepIndex": 1,
+          "entries": [
+            {
+              "archetype": "diver",
+              "count": 48
+            },
+            {
+              "archetype": "tank",
+              "count": 9
+            },
+            {
+              "archetype": "swarm",
+              "count": 14
+            },
+            {
+              "archetype": "phaser",
+              "count": 9
+            },
+            {
+              "archetype": "raider",
+              "count": 8
+            },
+            {
+              "archetype": "march",
+              "count": 12
+            }
+          ],
+          "divingProportion": 0.48
+        }
+      },
+      "fps": {
+        "min": 5,
+        "average": 27.33,
+        "max": 60.24
+      },
+      "counts": {
+        "source": "GymPerformance",
+        "sampleCount": 22,
+        "peak": {
+          "enemies": 100,
+          "enemyBullets": 461,
+          "playerBullets": 15,
+          "minerals": 19
+        },
+        "mean": {
+          "enemies": 100,
+          "enemyBullets": 256.45,
+          "playerBullets": 6.91,
+          "minerals": 6.14
+        },
+        "last": {
+          "enemies": 100,
+          "enemyBullets": 188,
+          "playerBullets": 7,
+          "minerals": 19
+        },
+        "samples": [
+          {
+            "atMs": 0,
+            "enemies": 100,
+            "enemyBullets": 461,
+            "playerBullets": 9,
+            "minerals": 1
+          },
+          {
+            "atMs": 283.3,
+            "enemies": 100,
+            "enemyBullets": 264,
+            "playerBullets": 0,
+            "minerals": 3
+          },
+          {
+            "atMs": 549.9,
+            "enemies": 100,
+            "enemyBullets": 264,
+            "playerBullets": 4,
+            "minerals": 2
+          },
+          {
+            "atMs": 800,
+            "enemies": 100,
+            "enemyBullets": 197,
+            "playerBullets": 7,
+            "minerals": 0
+          },
+          {
+            "atMs": 1050,
+            "enemies": 100,
+            "enemyBullets": 409,
+            "playerBullets": 15,
+            "minerals": 0
+          },
+          {
+            "atMs": 1366.6,
+            "enemies": 100,
+            "enemyBullets": 242,
+            "playerBullets": 12,
+            "minerals": 3
+          },
+          {
+            "atMs": 1616.6,
+            "enemies": 100,
+            "enemyBullets": 245,
+            "playerBullets": 5,
+            "minerals": 4
+          },
+          {
+            "atMs": 1899.9,
+            "enemies": 100,
+            "enemyBullets": 357,
+            "playerBullets": 4,
+            "minerals": 4
+          },
+          {
+            "atMs": 2149.9,
+            "enemies": 100,
+            "enemyBullets": 343,
+            "playerBullets": 0,
+            "minerals": 4
+          },
+          {
+            "atMs": 2416.6,
+            "enemies": 100,
+            "enemyBullets": 218,
+            "playerBullets": 8,
+            "minerals": 6
+          },
+          {
+            "atMs": 2683.2,
+            "enemies": 100,
+            "enemyBullets": 118,
+            "playerBullets": 4,
+            "minerals": 6
+          },
+          {
+            "atMs": 2933.2,
+            "enemies": 100,
+            "enemyBullets": 228,
+            "playerBullets": 2,
+            "minerals": 8
+          },
+          {
+            "atMs": 3199.9,
+            "enemies": 100,
+            "enemyBullets": 292,
+            "playerBullets": 4,
+            "minerals": 8
+          },
+          {
+            "atMs": 3466.5,
+            "enemies": 100,
+            "enemyBullets": 190,
+            "playerBullets": 4,
+            "minerals": 8
+          },
+          {
+            "atMs": 3733.2,
+            "enemies": 100,
+            "enemyBullets": 191,
+            "playerBullets": 14,
+            "minerals": 8
+          },
+          {
+            "atMs": 4016.5,
+            "enemies": 100,
+            "enemyBullets": 284,
+            "playerBullets": 9,
+            "minerals": 9
+          },
+          {
+            "atMs": 4283.2,
+            "enemies": 100,
+            "enemyBullets": 280,
+            "playerBullets": 9,
+            "minerals": 7
+          },
+          {
+            "atMs": 4533.2,
+            "enemies": 100,
+            "enemyBullets": 186,
+            "playerBullets": 7,
+            "minerals": 7
+          },
+          {
+            "atMs": 4799.7,
+            "enemies": 100,
+            "enemyBullets": 113,
+            "playerBullets": 7,
+            "minerals": 7
+          },
+          {
+            "atMs": 5049.7,
+            "enemies": 100,
+            "enemyBullets": 287,
+            "playerBullets": 10,
+            "minerals": 9
+          },
+          {
+            "atMs": 5316.4,
+            "enemies": 100,
+            "enemyBullets": 285,
+            "playerBullets": 11,
+            "minerals": 12
+          },
+          {
+            "atMs": 5583.1,
+            "enemies": 100,
+            "enemyBullets": 188,
+            "playerBullets": 7,
+            "minerals": 19
+          }
+        ]
+      },
+      "webgl": {
+        "vendor": "Google Inc. (Google)",
+        "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+        "kind": "software"
+      },
+      "reportFile": "perf-output/step-100.json",
+      "verdict": "failure"
+    }
+  ]
+}

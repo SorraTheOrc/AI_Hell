@@ -14,6 +14,7 @@
  * `src/audio/effects.test.ts` and the hold-full overlay suites.
  */
 
+import { clampCueGain } from '../audio/sfxPlayback';
 import type {
   SfxPlayOptions,
   SfxSoundHandle,
@@ -326,7 +327,12 @@ export interface RecordedSfxPlay {
   url: string;
   /** Scheduled start delay in seconds, normalised from `options.delay` (default 0). */
   delay: number;
-  /** Per-play gain in [0, 1], normalised from `options.volume` (default 1). */
+  /**
+   * Effective per-play gain in `[0, MAX_CUE_GAIN]`, normalised from
+   * `options.volume` (default 1) through the provider's clamp so the double
+   * can never report a value the Web Audio provider would discard. Values
+   * above 1 are producer-approved boosts (AH-0MW10K39E006CG0A).
+   */
   volume: number;
   /** Whether the play loops, normalised from `options.loop` (default false). */
   loop: boolean;
@@ -372,7 +378,7 @@ export class RecordingSfxProvider implements SfxSoundProvider {
     this.plays.push({
       url,
       delay: options.delay ?? 0,
-      volume: options.volume ?? 1,
+      volume: clampCueGain(options.volume ?? 1),
       loop: options.loop ?? false,
       rate: options.rate ?? 1,
     });

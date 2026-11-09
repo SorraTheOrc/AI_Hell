@@ -1,7 +1,13 @@
 /**
  * Asteroid enemy entity (GDD §4.1 — E6 Asteroid).
  *
- * Renders as a jagged procedural neon polygon. Moves in a straight line at
+ * Renders a jagged neon polygon drawn from a **shared silhouette palette**:
+ * each size tier owns a fixed set of 8–12 seeded shapes baked once into one
+ * texture atlas (`src/utils/asteroidTextures.ts`), and each asteroid picks its
+ * variant deterministically from its own seeded RNG
+ * (AH-0MW5088LA007XYQM). Every rock therefore renders as one batched sprite
+ * sharing a single texture instead of a unique baked texture (or a per-frame
+ * `Graphics` fallback) per rock. Moves in a straight line at
  * constant speed (no formation drift, no wiggle, no state machine), wraps
  * around all four screen edges, rotates continuously, and never fires.
  *
@@ -23,13 +29,30 @@
  * Audio (GDD §7.3): destruction audio is owned by the base scene
  * (`playDestructionSound()`), not by this entity (no double-play).
  *
+ * **Render layering (AH-0MVBJDP72004VXE5):** the container renders at
+ * {@link ASTEROID_DEPTH} — the lowest **foreground** gameplay layer — so a
+ * drifting rock passes *behind* the player ship, every other enemy, bullets,
+ * minerals and power-ups, while staying above the background photo, its dim
+ * overlay and the warp layers. The depth is applied once here in the
+ * constructor, so every spawn path (scheduled hazard, `PlayScene` spawn,
+ * shared split children, every gym) inherits it and gym↔game parity holds by
+ * construction. The intra-container body/force-field/explosion depths are
+ * unchanged.
+ *
  * @module src/entities/Asteroid
  */
 
 import Phaser from 'phaser';
 
-import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
+import { BaseEnemy, BaseEnemyConfig, BakedBodyFrame } from './BaseEnemy';
+import { ASTEROID_DEPTH } from '../core/constants';
 import type { FormationOffset } from '../utils/formations';
+import {
+  acquireAsteroidPalette,
+  asteroidPaletteShapes,
+  asteroidVariantFromDraws,
+  drawAsteroidSilhouette,
+} from '../utils/asteroidTextures';
 import { EnemyShotPattern } from '../core/enemyConfig';
 
 // ── Visual / behaviour tuning (per ACs) ────────────────────────────
@@ -212,6 +235,14 @@ export class Asteroid extends BaseEnemy {
    */
   private _enteredViewport: boolean;
 
+  /**
+   * Index of this asteroid's silhouette in the shared per-tier palette
+   * (AH-0MW5088LA007XYQM). Derived from the draws this asteroid takes from its
+   * own seeded RNG stream — see `_drawBody()` — so a seeded run reproduces
+   * every rock's look without consuming any extra randomness.
+   */
+  private _shapeVariant = 0;
+
   // ── Construction ─────────────────────────────────────────────────
 
   constructor(scene: Phaser.Scene, config: AsteroidConfig) {
@@ -263,10 +294,17 @@ export class Asteroid extends BaseEnemy {
     // Offscreen spawns defer wrapping until the centre enters the viewport.
     this._enteredViewport = !config.enterFromOffscreen;
 
-    // Draw the unique body shape and add the shared graphics in the
-    // canonical render order (body then explosion).
+    // Draw this asteroid's palette silhouette (the atlas bake source/record)
+    // and add the shared graphics in the canonical render order (body then
+    // explosion).
     this._drawBody();
     this.addSharedGraphics();
+
+    // Lowest foreground gameplay layer: below the player, every other enemy,
+    // bullets, minerals and power-ups (all at the baseline depth 0) and above
+    // the background/dim/warp layers. Set once on the shared container so every
+    // spawn path inherits it (AH-0MVBJDP72004VXE5).
+    this.setDepth(ASTEROID_DEPTH);
   }
 
   /** VFX pattern name for Asteroid explosions. */
@@ -282,47 +320,72 @@ export class Asteroid extends BaseEnemy {
   // ── Drawing ──────────────────────────────────────────────────────
 
   /**
-   * Draw a jagged polygon to represent the asteroid body.
-   * The shape is procedurally generated from a small set of vertices
-   * with randomised offsets, giving each asteroid a distinctive
-   * rocky appearance.
+   * Draw the asteroid body, selecting one silhouette from the **shared**
+   * per-tier palette (AH-0MW5088LA007XYQM).
+   *
+   * The shape is no longer unique per rock: the palette holds 8–12 jagged
+   * silhouettes per tier, baked once into one texture atlas, and each asteroid
+   * picks its variant from its own seeded RNG. The drawn `Graphics` below is
+   * the silhouette's record — the same polygon the atlas frame is baked from —
+   * and is what the entity renders only when the scene cannot bake textures.
+   *
+   * **RNG determinism (AC4):** the draws consumed here are exactly the draws
+   * the pre-palette unique-shape generator took — one for the vertex count plus
+   * two per vertex — because only *how the shape is chosen* changed, not how
+   * much randomness it spends. The next consumer of the stream (the next
+   * asteroid's heading, a split fan, an enemy fire roll) therefore sees the
+   * same values it always did.
    */
   protected _drawBody(): void {
     this.bodyGraphics.clear();
-    const half = this._size / 2;
 
-    this.bodyGraphics.lineStyle(2, this._color, 1);
-
-    // Generate 7–9 jagged vertices for the polygon.
+    const draws: number[] = [];
     const numVertices = 7 + Math.floor(this._rng() * 3);
-    const radius = half;
-    const angles: number[] = [];
-
-    // Distribute angles somewhat evenly with some jitter.
-    for (let i = 0; i < numVertices; i++) {
-      const baseAngle = (i / numVertices) * Math.PI * 2;
-      const jitter = (this._rng() - 0.5) * 0.4; // ±0.2 rad jitter
-      angles.push(baseAngle + jitter);
+    draws.push(numVertices);
+    for (let index = 0; index < numVertices; index += 1) {
+      draws.push(this._rng()); // angular jitter
+      draws.push(this._rng()); // radial variation
     }
+    this._shapeVariant = asteroidVariantFromDraws(draws);
 
-    // Compute vertices with radial variation.
-    const vertices: { x: number; y: number }[] = [];
-    for (const angle of angles) {
-      const radialVariation = 0.7 + this._rng() * 0.3; // 0.7–1.0 × radius
-      vertices.push({
-        x: Math.cos(angle) * radius * radialVariation,
-        y: Math.sin(angle) * radius * radialVariation,
-      });
-    }
+    const tierData = ASTEROID_TIER_DATA[this.sizeTier];
+    const silhouette = asteroidPaletteShapes(ASTEROID_TIER_DATA)[
+      this.sizeTier
+    ][this._shapeVariant];
+    drawAsteroidSilhouette(
+      this.bodyGraphics,
+      silhouette,
+      this._size / tierData.size,
+      this._color,
+    );
+  }
 
-    // Draw the jagged polygon.
-    this.bodyGraphics.beginPath();
-    this.bodyGraphics.moveTo(vertices[0].x, vertices[0].y);
-    for (let i = 1; i < vertices.length; i++) {
-      this.bodyGraphics.lineTo(vertices[i].x, vertices[i].y);
-    }
-    this.bodyGraphics.closePath();
-    this.bodyGraphics.strokePath();
+  /**
+   * Render the body from the shared asteroid atlas (AC1/AC3).
+   *
+   * Every asteroid renders from the **one** palette texture, so the field
+   * batches into a single texture bind and never grows the per-silhouette
+   * `enemy-body-*` cache. A custom body colour has no cell in the atlas (the
+   * palette bakes the tier colour), so it falls back to the shared
+   * per-silhouette bake — still a batched sprite, just not the shared palette.
+   */
+  protected override bakedBodyFrame(): BakedBodyFrame | null {
+    const tierData = ASTEROID_TIER_DATA[this.sizeTier];
+    if (this._color !== tierData.color) return null;
+
+    const scene = this.scene as Phaser.Scene | undefined;
+    const palette = acquireAsteroidPalette(scene, ASTEROID_TIER_DATA);
+    if (!palette) return null;
+
+    const tierPalette = palette.tiers[this.sizeTier];
+    // Custom `size` overrides keep the tier's look by scaling the cell.
+    const scale = this._size / tierData.size;
+    return {
+      textureKey: palette.key,
+      frame: tierPalette.frames[this._shapeVariant],
+      displayWidth: tierPalette.cellSize * scale,
+      displayHeight: tierPalette.cellSize * scale,
+    };
   }
 
   // ── Public state ─────────────────────────────────────────────────
@@ -340,6 +403,15 @@ export class Asteroid extends BaseEnemy {
   /** The current size tier. */
   getSizeTier(): AsteroidSizeTier {
     return this.sizeTier;
+  }
+
+  /**
+   * Index of this asteroid's silhouette in the shared per-tier palette
+   * (0-based). Exposed for tests/consumers that verify palette boundedness and
+   * deterministic assignment (AH-0MW5088LA007XYQM).
+   */
+  get shapeVariant(): number {
+    return this._shapeVariant;
   }
 
   /** Current velocity x (px/s). */

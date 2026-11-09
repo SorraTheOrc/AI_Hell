@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { POWER_UP_CATALOGUE, COMBAT_POWER_UP_IDS } from './types';
+import { POWER_UP_CATALOGUE, COMBAT_POWER_UP_IDS, isFieldPickupOnly } from './types';
 import { CHOICE_POOL } from './choice';
 import { POWER_UP_LEVEL_IDS, POWER_UP_LEVEL_VARIABLES } from './powerUpLevels';
 import {
@@ -85,8 +85,13 @@ describe('Power Pellet removal — cannot be spawned or offered (AH-0MV5CB6KO007
       expect(POWER_UP_CATALOGUE).toHaveProperty(id);
       expect(POWER_UP_WEIGHT_IDS).toContain(id);
       expect(DEFAULT_RULES.powerUpWeights).toHaveProperty(id);
-      expect(CHOICE_POOL).toContain(id);
       expect(POWER_UP_LEVEL_IDS).toContain(id);
+      // The hold-full pool is the catalogue minus the documented
+      // reward-surface exclusions, so a **field-pickup-only** kind (Extra
+      // Life, parent AH-0MW10ZVLH005IJRM AC4) is a shipped power-up that is
+      // deliberately not pooled while every other remaining kind still is.
+      // Read from the shared catalogue flag, never a hand-listed id.
+      expect(CHOICE_POOL.includes(id), id).toBe(!isFieldPickupOnly(id));
     }
   });
 });

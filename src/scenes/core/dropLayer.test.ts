@@ -512,17 +512,20 @@ describe('dropLayer — playDropPickupCue (AC4)', () => {
     const dual = vi.spyOn(effects, 'playDualPickupSound');
     const rapid = vi.spyOn(effects, 'playRapidPickupSound');
     const reset = vi.spyOn(effects, 'playResetPickupSound');
+    const waveLaser = vi.spyOn(effects, 'playWaveLaserPickupSound');
     const generic = vi.spyOn(effects, 'playPowerUpCollectSound');
 
     playDropPickupCue({ dropId: 'spread', weaponDropId: 'spread' });
     playDropPickupCue({ dropId: 'dual', weaponDropId: 'dual' });
     playDropPickupCue({ dropId: 'rapid', weaponDropId: 'rapid' });
     playDropPickupCue({ dropId: 'reset', weaponDropId: 'reset' });
+    playDropPickupCue({ dropId: 'wave_laser', weaponDropId: 'wave_laser' });
 
     expect(spread).toHaveBeenCalledTimes(1);
     expect(dual).toHaveBeenCalledTimes(1);
     expect(rapid).toHaveBeenCalledTimes(1);
     expect(reset).toHaveBeenCalledTimes(1);
+    expect(waveLaser).toHaveBeenCalledTimes(1);
     expect(generic).not.toHaveBeenCalled();
   });
 

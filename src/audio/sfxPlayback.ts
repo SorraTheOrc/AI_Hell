@@ -29,7 +29,13 @@ export interface SfxPlayOptions {
   readonly delay?: number;
   /** Loop the asset until {@link SfxSoundHandle.stop} (default false). */
   readonly loop?: boolean;
-  /** Per-play gain in [0, 1] (default 1); the master gain still applies. */
+  /**
+   * Per-play gain in `[0, MAX_CUE_GAIN]` (default 1). Values **below 1**
+   * attenuate the cue; values **above 1** amplify it, so a producer-approved
+   * cue that must sit louder than its baked asset (e.g. the wave laser's
+   * ×1.5, AH-0MW10K39E006CG0A) can carry its boost through this one mechanism.
+   * The shared master gain still applies on top.
+   */
   readonly volume?: number;
   /**
    * Per-play playback rate (default 1). Values > 1 play the asset faster and
@@ -71,6 +77,27 @@ function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   if (value <= 0) return 0;
   if (value >= 1) return 1;
+  return value;
+}
+
+/**
+ * Ceiling for a **per-play cue gain** (see {@link SfxPlayOptions.volume}).
+ *
+ * Per-play gain used to be a `[0, 1]` attenuation only, which made a
+ * producer-requested boost above the baked asset impossible: the cue asked for
+ * a louder gain and the provider silently flattened it back to unity. Boosted
+ * cues therefore clamp to this ceiling instead, so a corrupt or runaway value
+ * can never blast the mix while an approved boost still reaches the mix. Baked
+ * one-shots are gain-staged to a ≤ 0.5 peak (the amplitude-tier guard), so even
+ * the full ceiling cannot reach full scale for a single cue.
+ */
+export const MAX_CUE_GAIN = 2;
+
+/** Clamps a per-play cue gain to `[0, MAX_CUE_GAIN]`; non-finite values become 0. */
+export function clampCueGain(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value <= 0) return 0;
+  if (value >= MAX_CUE_GAIN) return MAX_CUE_GAIN;
   return value;
 }
 
@@ -149,7 +176,7 @@ export class WebAudioSfxProvider implements SfxSoundProvider {
     if ('playbackRate' in source) {
       source.playbackRate.value = rate;
     }
-    gain.gain.setValueAtTime(clamp01(options.volume ?? 1), context.currentTime);
+    gain.gain.setValueAtTime(clampCueGain(options.volume ?? 1), context.currentTime);
     source.connect(gain);
     gain.connect(this.ensureMaster(context));
 

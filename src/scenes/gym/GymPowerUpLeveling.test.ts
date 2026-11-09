@@ -15,8 +15,14 @@ import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness'
 import {
   GymPowerUpLeveling,
   POWER_UP_READOUT_PANEL_ID,
+  RED_MINERAL_SHARE,
   type PowerUpLevelReadout,
 } from './GymPowerUpLeveling';
+import {
+  MINERAL_COLOR,
+  MINERAL_DEPOSIT_COLOR,
+  MINERAL_DEPOSIT_VALUE,
+} from '../../core/constants';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
 import {
@@ -47,6 +53,114 @@ describe('GymPowerUpLeveling', () => {
     booted = await bootScene([GymPowerUpLeveling, MineralChoiceScene]);
     return booted.scene as GymPowerUpLeveling;
   }
+
+  /** True when a spawned mineral is the shared red 10-value deposit. */
+  function isRedDeposit(
+    mineral: ReturnType<GymPowerUpLeveling['spawnMineral']>,
+  ): boolean {
+    return mineral.entity.value === MINERAL_DEPOSIT_VALUE;
+  }
+
+  it('AC1/AC2 — the periodic mineral stream guarantees >= 30% red 10-value deposits', async () => {
+    const scene = await boot();
+    // The guarantee is a named constant (`RED_MINERAL_SHARE`, >= 30%); the
+    // fixed rotation must keep every window of ten consecutive spawns at or
+    // above it rather than relying on a per-spawn probability.
+    expect(RED_MINERAL_SHARE).toBeGreaterThanOrEqual(0.3);
+
+    const stream = Array.from({ length: 30 }, () => scene.spawnMineral());
+    for (let start = 0; start + 10 <= stream.length; start++) {
+      const red = stream.slice(start, start + 10).filter(isRedDeposit);
+      expect(red.length, `red minerals in window at ${start}`).toBeGreaterThanOrEqual(3);
+    }
+
+    // Red spawns are the existing deposit; every other spawn keeps the
+    // ordinary gold 1-value mineral.
+    for (const mineral of stream) {
+      if (isRedDeposit(mineral)) {
+        expect(mineral.entity.color).toBe(MINERAL_DEPOSIT_COLOR);
+        expect(mineral.entity.value).toBe(MINERAL_DEPOSIT_VALUE);
+      } else {
+        expect(mineral.entity.color).toBe(MINERAL_COLOR);
+        expect(mineral.entity.value).toBe(1);
+      }
+    }
+  });
+
+  it('AC1/AC4 — the red/gold mix is a fixed rotation, unaffected by the content RNG', async () => {
+    const scene = await boot();
+    // A fixed three-spawn rotation: the colour repeats every three spawns and
+    // exactly one mineral in each triple is red. The absolute phase is not
+    // asserted because a booted scene may already have spawned a mineral.
+    const defaultPlacement = Array.from({ length: 6 }, () => scene.spawnMineral());
+    for (let i = 0; i + 3 < defaultPlacement.length; i++) {
+      expect(
+        isRedDeposit(defaultPlacement[i + 3]),
+        `spawn ${i + 3} repeats the rotation of spawn ${i}`,
+      ).toBe(isRedDeposit(defaultPlacement[i]));
+    }
+    for (const start of [0, 1, 2]) {
+      const triple = defaultPlacement.slice(start, start + 3);
+      expect(triple.filter(isRedDeposit), `triple at ${start}`).toHaveLength(1);
+    }
+
+    // The colour is not drawn from `sceneRng`: spawning at explicit positions
+    // (no position draws) continues the same red/gold sequence, so a capture
+    // seed can never change the mix.
+    const explicitPlacement = Array.from({ length: 6 }, (_, i) =>
+      scene.spawnMineral(100 + i * 10, 200),
+    );
+    expect(explicitPlacement.map(isRedDeposit)).toEqual(
+      defaultPlacement.map(isRedDeposit),
+    );
+  });
+
+  it('AC1 — the periodic cadence emits the red deposit and keeps the 2.0 s interval', async () => {
+    const scene = await boot();
+    // The cadence spawns immediately, then one mineral every 2.0 s. Only the
+    // minerals this cadence adds are inspected (a booted scene may already
+    // have spawned one).
+    const before = scene.getMinerals().length;
+    scene.tick(2.0);
+    scene.tick(2.0);
+    scene.tick(2.0);
+
+    const spawned = scene.getMinerals().slice(before);
+    expect(spawned).toHaveLength(3);
+    // Three consecutive spawns hold exactly one red deposit; the rest are the
+    // ordinary gold 1-value minerals.
+    const red = spawned.filter(isRedDeposit);
+    expect(red).toHaveLength(1);
+    expect(red[0].entity.color).toBe(MINERAL_DEPOSIT_COLOR);
+    expect(red[0].entity.value).toBe(MINERAL_DEPOSIT_VALUE);
+    for (const gold of spawned.filter((m) => !isRedDeposit(m))) {
+      expect(gold.entity.color).toBe(MINERAL_COLOR);
+      expect(gold.entity.value).toBe(1);
+    }
+  });
+
+  it('AC3 — collecting a red mineral credits 10 in one pickup; gold still credits 1', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const hold = scene.getHold();
+    // Headroom above the 3-mineral first hold so the 10-value pickup is not
+    // capped by the hold (the shared overflow carry is covered elsewhere).
+    hold.capacity = 30;
+
+    const spawns = Array.from({ length: 3 }, () => scene.spawnMineral());
+    const red = spawns.find(isRedDeposit);
+    const gold = spawns.find((mineral) => !isRedDeposit(mineral));
+    expect(red).toBeDefined();
+    expect(gold).toBeDefined();
+
+    red!.entity.setPosition(player.x, player.y);
+    scene.collectMineralsOverlapping();
+    expect(hold.store).toBe(MINERAL_DEPOSIT_VALUE);
+
+    gold!.entity.setPosition(player.x, player.y);
+    scene.collectMineralsOverlapping();
+    expect(hold.store).toBe(MINERAL_DEPOSIT_VALUE + 1);
+  });
 
   it('AC1 — the gym is auto-discovered by GymIndex as PowerUpLeveling', async () => {
     const entries = discoverGymScenes({

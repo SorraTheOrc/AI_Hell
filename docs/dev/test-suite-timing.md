@@ -411,6 +411,69 @@ Include the `cache_entry` dir for traceability. The phase figures are
 summed across parallel workers so they exceed wall clock; they diagnose
 *where* time goes, they are not the elapsed time.
 
+## Cache hygiene — orphaned `deps_temp_*` directories (AH-0MVFR1LGB001BIZ7)
+
+`node_modules/.vite` is Vite's dependency-optimisation cache. When a dep
+optimisation is interrupted or two runs collide, Vite leaves a partially
+written `deps_temp_<hash>` directory behind. These are pure cache debris —
+only the finished `deps/` (and `deps_ssr/`) pre-bundles are usable — but they
+accumulate (95 dirs / 158 MB at intake), waste disk, and slow directory scans.
+
+### Why the cache is shared across worktrees
+
+On this host every worktree under `.worklog/worktrees/` materialises its
+`node_modules` as a **link farm** into the main checkout's `node_modules`
+(see the implement skill's worktree notes). The `.vite` dep cache therefore
+lives once, in `<main-checkout>/node_modules/.vite`, and is read by the game,
+the gyms, and every concurrent agent's test suite. Deleting it from one
+worktree deletes it for everyone.
+
+Because of that sharing, an opportunistic `rm -rf node_modules/.vite` is
+**forbidden**: another agent's suite or dev server may be mid-run against
+that cache, and removing it underneath them corrupts the run. Cleanup must go
+through the quiescence-guarded script.
+
+### The cleanup script
+
+```bash
+# Read-only by default: reports the orphaned deps_temp_* count and bytes.
+node scripts/clean-vite-cache.mjs
+
+# Remove only deps_temp_* and print the reclaimed bytes.
+node scripts/clean-vite-cache.mjs --apply
+
+# Machine-readable result for tooling.
+node scripts/clean-vite-cache.mjs --json
+```
+
+Behaviour (covered by `scripts/clean-vite-cache.test.ts`):
+
+- **`--dry-run` is the default.** It reports the orphaned `deps_temp_*`
+  count and total bytes and removes nothing.
+- **`--apply` removes only `deps_temp_*` directories.** The valid `deps/`
+  and `deps_ssr/` pre-bundles and any other entry (e.g. `vitest/`) are never
+  touched. It prints the bytes reclaimed.
+- **Quiescence guard.** `--apply` refuses while any `vite`/`vitest` process
+  is alive on the host (the shared cache may be in use), and also refuses,
+  fail-closed, when the process table cannot be read. `--force` overrides the
+  guard for an operator who is certain the cache is idle.
+
+### Verifying a clean apply (AC4)
+
+After `--apply` on an **idle** host, run the unit project — the cache
+regenerates cleanly and the suite is green:
+
+```bash
+node scripts/clean-vite-cache.mjs --apply
+npx vitest run --project unit
+```
+
+On a busy host (a dev server or another agent's suite running) the script
+deliberately refuses instead of deleting; that refusal is the guard working
+as intended, not a failure. The unit project is the cheapest check that a
+regenerated dep cache is healthy; the full suite still runs at the dev-push
+gate.
+
 ## FAQs
 
 - **Why do the phase sums exceed the wall clock?** Workers run in parallel;

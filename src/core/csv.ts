@@ -1133,7 +1133,7 @@ export const VALID_BULLET_SHAPES: BulletShape[] = [
  * enum the codec validates (AH-0MW0Q1HMH0037RNC).
  */
 export const VALID_AOE_TRIGGERS: AoETrigger[] = [
-  'onFire', 'onImpact', 'onRandom', 'screenPulse',
+  'onFire', 'onRandom', 'screenPulse',
 ];
 
 /**
@@ -1993,7 +1993,7 @@ const WEAPON_CSV_COMMENT_BLOCK: readonly string[] = [
   '#   splits                — Radial warhead count spawned once on impact/expiry.',
   '#   orbitPods             — Orbiting satellite-pod count (with orbitRadius).',
   '#   orbitRadius           — Orbit radius around the ship, in px.',
-  '#   aoeTrigger            — When the area effect resolves: onFire | onImpact | onRandom | screenPulse.',
+  '#   aoeTrigger            — When the area effect resolves: onFire | onRandom | screenPulse.',
   '#   aoeRadius             — Effect radius in px.',
   '#   aoeDamagesEnemies     — true/false: does the effect damage enemies inside the radius?',
   '#   aoeClearsEnemyBullets — true/false: does the effect clear enemy bullets inside the radius?',

@@ -40,6 +40,26 @@ import {
 import { Mineral, scatterMineralDrops } from './Mineral';
 
 /**
+ * A body rendered from a **pre-baked shared frame** (a texture atlas).
+ *
+ * Returned by {@link BaseEnemy.bakedBodyFrame} by subclasses that render from a
+ * shared palette instead of a per-silhouette bake (currently the asteroid
+ * palette, `src/utils/asteroidTextures.ts`). The entity renders as one plain
+ * `Image` pointing at the frame, so every instance shares the atlas texture and
+ * Phaser batches them into a single texture bind.
+ */
+export interface BakedBodyFrame {
+  /** Texture key of the shared atlas. */
+  readonly textureKey: string;
+  /** Frame name inside that atlas. */
+  readonly frame: string;
+  /** On-screen width (px) — the cell scaled to the entity's own size. */
+  readonly displayWidth: number;
+  /** On-screen height (px). */
+  readonly displayHeight: number;
+}
+
+/**
  * Minimal shared config fields accepted by every regular enemy subclass.
  * Type-specific fields (burst count, pause duration, etc.) live on the
  * subclass's config type.
@@ -320,6 +340,23 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     sources: readonly Phaser.GameObjects.Graphics[],
   ): void {
     const scene = this.scene as Phaser.Scene | undefined;
+    const sharedFrame = this.bakedBodyFrame();
+    if (sharedFrame && scene) {
+      const image = scene.add.image(
+        0,
+        0,
+        sharedFrame.textureKey,
+        sharedFrame.frame,
+      );
+      image.setDisplaySize(sharedFrame.displayWidth, sharedFrame.displayHeight);
+      image.setDepth(1);
+      this.add(image);
+      this.bodyImage = image;
+      // The drawn silhouette is kept as the record (tests/debug) but is never
+      // rendered again; the shared atlas frame is what is drawn.
+      for (const source of sources) source.removeFromDisplayList();
+      return;
+    }
     const baked = bakeEnemyBodyTexture(
       scene,
       sources,
@@ -336,6 +373,21 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     // The bake sources are kept alive (they are the silhouette's record and
     // subclasses still address them) but never rendered again.
     for (const source of sources) source.removeFromDisplayList();
+  }
+
+  /**
+   * Body frame from a **shared, pre-baked atlas**, or `null` (the default) to
+   * bake this entity's own drawn silhouette via
+   * {@link bakeEnemyBodyTexture}.
+   *
+   * Overridden by subclasses whose silhouettes come from a bounded shared
+   * palette (the asteroid field, AH-0MW5088LA007XYQM): rendering every instance
+   * from one texture means one texture bind for the whole field instead of one
+   * texture per unique silhouette, and it never consumes the per-silhouette
+   * `MAX_BAKED_ENEMY_BODY_TEXTURES` budget.
+   */
+  protected bakedBodyFrame(): BakedBodyFrame | null {
+    return null;
   }
 
   // ── Force-field bubble (AC3, AH-0MVM8GW7W004SI0E) ──────────────────

@@ -18,10 +18,14 @@ import {
   DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
   DEFAULT_MINERAL_REDROP_BONUS_MAX,
   DEFAULT_MINERAL_REDROP_BONUS_MIN,
+  DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1,
+  DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
   DEFAULT_POWER_UP_SPAWN_INTERVAL,
+  DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS,
   DEFAULT_RULES,
   DEFAULT_SEQUENCED_WAVES_ENABLED,
   DEFAULT_STANDARD_POWER_UP_WEIGHT,
+  DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS,
   DEFAULT_WEAPON_WEIGHT,
   POWER_UP_WEIGHT_IDS,
   RULES_SCHEMA_VERSION,
@@ -162,6 +166,8 @@ describe('game rules configuration module', () => {
         powerUpDropChanceAtMaxLevel: 0.06,
         levelScalingMaxLevel: 12,
         enemyCountCap: 120,
+        phaseRechargeOverrideSeconds: 9.5,
+        teleportRechargeOverrideSeconds: 33,
       };
       saveRules(custom);
 
@@ -187,6 +193,8 @@ describe('game rules configuration module', () => {
       expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.06);
       expect(loaded.levelScalingMaxLevel).toBe(12);
       expect(loaded.enemyCountCap).toBe(120);
+      expect(loaded.phaseRechargeOverrideSeconds).toBe(9.5);
+      expect(loaded.teleportRechargeOverrideSeconds).toBe(33);
     });
 
     it('merges a partial weapon weight table over the weapon defaults', () => {
@@ -661,12 +669,12 @@ describe('game rules configuration module', () => {
       expect(loaded).toEqual(custom);
     });
 
-    it('stamps saved rules with the current schema version', () => {
+    it('stamps saved rules with the current schema version (5)', () => {
       saveRules(DEFAULT_RULES);
       const raw = window.localStorage.getItem(RULES_STORAGE_KEY);
       expect(raw).not.toBeNull();
       expect(JSON.parse(raw as string).version).toBe(RULES_SCHEMA_VERSION);
-      expect(RULES_SCHEMA_VERSION).toBe(4);
+      expect(RULES_SCHEMA_VERSION).toBe(5);
     });
   });
 });
@@ -722,16 +730,24 @@ describe('sequenced-waves opt-in toggle (AH-0MUITS1SM008GPR9)', () => {
 });
 
 // ── Asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S) ───────────
+//
+// The shipped default is now **0** (off), turned off by AH-0MW3MLRHL000DKPM
+// (implemented by AH-0MW3MLTY3005MIXR): the rule, the `GameRules` key and its
+// clamping/persistence all stay in place so a designer can re-enable the roll,
+// but a fresh run (and any config older than schema version 5) no longer
+// hands out lives for rocks. The clamping/fallback assertions run against
+// blobs stamped with the current schema version so they keep testing coercion
+// rather than the v5 reset.
 
 describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
 
-  it('defaults to 5 %', () => {
-    expect(DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE).toBe(0.05);
-    expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0.05);
-    expect(loadRules().asteroidExtraLifeDropChance).toBe(0.05);
+  it('defaults to off (0), so asteroids no longer drop Extra Life', () => {
+    expect(DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE).toBe(0);
+    expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0);
+    expect(loadRules().asteroidExtraLifeDropChance).toBe(0);
   });
 
   it('loads a persisted value', () => {
@@ -759,7 +775,10 @@ describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
       window.localStorage.clear();
       window.localStorage.setItem(
         RULES_STORAGE_KEY,
-        JSON.stringify({ asteroidExtraLifeDropChance: stored }),
+        JSON.stringify({
+          version: RULES_SCHEMA_VERSION,
+          asteroidExtraLifeDropChance: stored,
+        }),
       );
       expect(loadRules().asteroidExtraLifeDropChance).toBe(expected);
     }
@@ -770,7 +789,10 @@ describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
       window.localStorage.clear();
       window.localStorage.setItem(
         RULES_STORAGE_KEY,
-        JSON.stringify({ asteroidExtraLifeDropChance: stored }),
+        JSON.stringify({
+          version: RULES_SCHEMA_VERSION,
+          asteroidExtraLifeDropChance: stored,
+        }),
       );
       expect(loadRules().asteroidExtraLifeDropChance).toBe(
         DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
@@ -781,8 +803,12 @@ describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
   it('returns a fresh copy so mutating it does not change the defaults', () => {
     const loaded = loadRules();
     loaded.asteroidExtraLifeDropChance = 1;
-    expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0.05);
-    expect(loadRules().asteroidExtraLifeDropChance).toBe(0.05);
+    expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(
+      DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
+    );
+    expect(loadRules().asteroidExtraLifeDropChance).toBe(
+      DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
+    );
   });
 });
 
@@ -803,17 +829,28 @@ describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
 //   campaign maximum (default 2.00; level 1 is always 1). Loaded value is
 //   clamped to `[1, 10]`; a non-finite/non-number falls back to 2.
 // - `powerUpDropChanceAtLevel1` — per-kill drop chance at level 1 (default
-//   `POWER_UP_DROP_CHANCE`, 0.18). Clamped to `[0, 1]`; invalid → 0.18.
+//   `POWER_UP_DROP_CHANCE`, 0.09). Clamped to `[0, 1]`; invalid → 0.09.
 // - `powerUpDropChanceAtMaxLevel` — per-kill drop chance at the campaign
-//   maximum (default 0.05). Clamped to `[0, powerUpDropChanceAtLevel1]` so a
-//   stored blob can never make the curve rise with level; invalid → 0.05.
+//   maximum (default 0.025). Clamped to `[0, powerUpDropChanceAtLevel1]` so a
+//   stored blob can never make the curve rise with level; invalid → 0.025.
 // - `levelScalingMaxLevel` — the campaign level span (default 10). Integers
 //   clamped to `[2, 100]`; non-integer/non-number → 10.
 // - `enemyCountCap` — per-group safety cap for scaled counts (default 200).
 //   Integers clamped to `[1, 1000]`; non-integer/non-number → 200.
 //
 // Backwards compatibility: a legacy persisted blob that predates these five
-// keys must load with the defaults merged in — no schema-version bump.
+// keys must load with the defaults merged in — no schema-version bump for the
+// *fields themselves*.
+//
+// **Supply-dial halving (AH-0MW3MLRHL000DKPM).** The halved defaults
+// (`powerUpDropChanceAtLevel1` 0.09, `powerUpDropChanceAtMaxLevel` 0.025) and
+// the now-off asteroid roll (0) do **need** a migration, because `saveRules`
+// persists the whole blob: a stored `0.18`/`0.05` would silently defeat the
+// change. Schema version 5 resets those three fields for any older config
+// (same precedent as the v2/v3 migrations); a blob explicitly stamped
+// version 5 keeps its tuned values. The assertions pinning the *new* values
+// were flipped from `it.fails` back to `it` by the implementation item
+// (AH-0MW3MLTY3005MIXR).
 
 /** The level-scaling fields F1 adds to `GameRules` (test-first contract). */
 interface LevelScalingRules {
@@ -842,15 +879,15 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
   it('exposes the documented scaling defaults on DEFAULT_RULES and loadRules', () => {
     const defaults = scalingRules(DEFAULT_RULES);
     expect(defaults.enemyCountMultiplierAtMaxLevel).toBe(2);
-    expect(defaults.powerUpDropChanceAtLevel1).toBe(0.18);
-    expect(defaults.powerUpDropChanceAtMaxLevel).toBe(0.05);
+    expect(defaults.powerUpDropChanceAtLevel1).toBe(0.09);
+    expect(defaults.powerUpDropChanceAtMaxLevel).toBe(0.025);
     expect(defaults.levelScalingMaxLevel).toBe(10);
     expect(defaults.enemyCountCap).toBe(200);
 
     const loaded = scalingRules(loadRules());
     expect(loaded.enemyCountMultiplierAtMaxLevel).toBe(2);
-    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.18);
-    expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.05);
+    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.09);
+    expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.025);
     expect(loaded.levelScalingMaxLevel).toBe(10);
     expect(loaded.enemyCountCap).toBe(200);
   });
@@ -863,8 +900,8 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
 
     const loaded = scalingRules(loadRules());
     expect(loaded.enemyCountMultiplierAtMaxLevel).toBe(2);
-    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.18);
-    expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.05);
+    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.09);
+    expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.025);
     expect(loaded.levelScalingMaxLevel).toBe(10);
     expect(loaded.enemyCountCap).toBe(200);
     // The pre-existing persisted rule survives the merge untouched.
@@ -920,12 +957,12 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
       );
     }
 
-    // Non-numeric level-1 chance falls back to the 0.18 default.
+    // Non-numeric level-1 chance falls back to the 0.09 default.
     window.localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpDropChanceAtLevel1: 'often' }),
     );
-    expect(scalingRules(loadRules()).powerUpDropChanceAtLevel1).toBe(0.18);
+    expect(scalingRules(loadRules()).powerUpDropChanceAtLevel1).toBe(0.09);
 
     // A max-level chance above the level-1 chance clamps down to it.
     window.localStorage.setItem(
@@ -949,12 +986,12 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     );
     expect(scalingRules(loadRules()).powerUpDropChanceAtMaxLevel).toBe(0);
 
-    // Non-numeric max-level chance falls back to the 0.05 default.
+    // Non-numeric max-level chance falls back to the 0.025 default.
     window.localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpDropChanceAtMaxLevel: 'rare' }),
     );
-    expect(scalingRules(loadRules()).powerUpDropChanceAtMaxLevel).toBe(0.05);
+    expect(scalingRules(loadRules()).powerUpDropChanceAtMaxLevel).toBe(0.025);
   });
 
   it('clamps the campaign level span to [2, 100] and the count cap to [1, 1000]', () => {
@@ -1019,9 +1056,10 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
 
   it('feeds the documented per-level curve from the loaded runtime rules (AH-0MVLJF4DI000BKMQ)', () => {
     // The runtime rules (defaults merged by loadRules) drive the shared
-    // scaling module exactly as documented: level 1 reproduces today's flat
-    // 0.18 rate, the level-10 chance is ≤ 30 % of it, and the Extra Life
-    // roll follows the same ratio while staying unchanged at level 1.
+    // scaling module exactly as documented: level 1 is the exported
+    // `POWER_UP_DROP_CHANCE` base, the level-10 chance is ≤ 30 % of it, and
+    // the Extra Life roll follows the same ratio while staying unchanged at
+    // level 1.
     const loaded = loadRules();
     expect(powerUpDropChance(1, loaded)).toBeCloseTo(POWER_UP_DROP_CHANCE, 10);
     expect(powerUpDropChance(10, loaded)).toBeLessThanOrEqual(
@@ -1031,8 +1069,172 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
       loaded.asteroidExtraLifeDropChance,
       10,
     );
-    expect(extraLifeDropChance(10, loaded)).toBeLessThan(
-      extraLifeDropChance(1, loaded),
+    // The shipped asteroid roll is off (0) by default, so the strictly-falling
+    // proportionality property is asserted on a designer-tuned base instead of
+    // the now-zero default — 0 is not strictly greater than 0.
+    const tuned: GameRules = { ...loaded, asteroidExtraLifeDropChance: 0.4 };
+    expect(extraLifeDropChance(1, tuned)).toBe(0.4);
+    expect(extraLifeDropChance(10, tuned)).toBeLessThan(
+      extraLifeDropChance(1, tuned),
     );
+  });
+});
+
+// ── Rules schema v5: halved supply dial (AH-0MW3MLRHL000DKPM) ───────
+//
+// `saveRules` persists the **whole** rules blob, so changing the drop-chance
+// defaults is not enough on its own: an existing install carries a stored
+// `0.18` / `0.05` that would silently keep the old supply rate at runtime.
+// Schema version 5 therefore resets `powerUpDropChanceAtLevel1`,
+// `powerUpDropChanceAtMaxLevel` and `asteroidExtraLifeDropChance` to the new
+// defaults for any config stamped earlier than version 5 (the v2/v3 precedent),
+// while a blob explicitly stamped version 5 keeps its tuned values.
+//
+// Red-before/green-after: the migration and default assertions were flipped
+// from `it.fails` back to `it` by the implementation item
+// (AH-0MW3MLTY3005MIXR). The opt-out assertions were plain `it` on purpose —
+// they are green **both** before and after the change, proving the reset never
+// over-reaches to a current-schema config.
+
+describe('rules schema v5 — halved supply dial (AH-0MW3MLRHL000DKPM)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('defaults the supply dial to 0.09 / 0.025 and turns the asteroid roll off', () => {
+    expect(DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1).toBe(0.09);
+    expect(DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL).toBe(0.025);
+    expect(DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE).toBe(0);
+
+    const loaded = scalingRules(loadRules());
+    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.09);
+    expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.025);
+    expect(loadRules().asteroidExtraLifeDropChance).toBe(0);
+  });
+
+  it('migrates a version-4 blob that stored the old 0.18 / 0.05 / 0.05 dial', () => {
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: 4,
+        powerUpSpawnInterval: 3,
+        powerUpDropChanceAtLevel1: 0.18,
+        powerUpDropChanceAtMaxLevel: 0.05,
+        asteroidExtraLifeDropChance: 0.05,
+      }),
+    );
+
+    const loaded = loadRules();
+    expect(scalingRules(loaded).powerUpDropChanceAtLevel1).toBe(0.09);
+    expect(scalingRules(loaded).powerUpDropChanceAtMaxLevel).toBe(0.025);
+    expect(loaded.asteroidExtraLifeDropChance).toBe(0);
+    // The v5 reset is scoped to the supply dial: unrelated stored rules and
+    // the untouched Extra Life *weight* survive the migration.
+    expect(loaded.powerUpSpawnInterval).toBe(3);
+    expect(loaded.powerUpWeights.extra_life).toBe(DEFAULT_EXTRA_LIFE_WEIGHT);
+  });
+
+  it('keeps the tuned supply dial of a blob stamped version 5 (migration opt-out)', () => {
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: 5,
+        powerUpDropChanceAtLevel1: 0.2,
+        powerUpDropChanceAtMaxLevel: 0.1,
+        asteroidExtraLifeDropChance: 0.4,
+      }),
+    );
+
+    const loaded = loadRules();
+    expect(scalingRules(loaded).powerUpDropChanceAtLevel1).toBe(0.2);
+    expect(scalingRules(loaded).powerUpDropChanceAtMaxLevel).toBe(0.1);
+    expect(loaded.asteroidExtraLifeDropChance).toBe(0.4);
+  });
+
+  it('keeps a designer-tuned supply dial round-tripped through saveRules', () => {
+    // `saveRules` stamps the current version, so a config written by this
+    // build is a current-schema config on the next load and must never be
+    // reset — the migration targets *older* blobs only.
+    saveRules({
+      ...DEFAULT_RULES,
+      powerUpDropChanceAtLevel1: 0.2,
+      powerUpDropChanceAtMaxLevel: 0.1,
+      asteroidExtraLifeDropChance: 0.4,
+    });
+
+    const loaded = loadRules();
+    expect(scalingRules(loaded).powerUpDropChanceAtLevel1).toBe(0.2);
+    expect(scalingRules(loaded).powerUpDropChanceAtMaxLevel).toBe(0.1);
+    expect(loaded.asteroidExtraLifeDropChance).toBe(0.4);
+  });
+});
+
+describe('gym-only recharge overrides (AH-0MV82IAYG000WS8B)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('defaults both overrides to null, so gameplay stays level-derived', () => {
+    expect(DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS).toBeNull();
+    expect(DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS).toBeNull();
+    expect(DEFAULT_RULES.phaseRechargeOverrideSeconds).toBeNull();
+    expect(DEFAULT_RULES.teleportRechargeOverrideSeconds).toBeNull();
+    expect(loadRules().phaseRechargeOverrideSeconds).toBeNull();
+    expect(loadRules().teleportRechargeOverrideSeconds).toBeNull();
+  });
+
+  it('round-trips persisted override seconds through saveRules/loadRules', () => {
+    saveRules({
+      ...DEFAULT_RULES,
+      phaseRechargeOverrideSeconds: 8.5,
+      teleportRechargeOverrideSeconds: 42,
+    });
+
+    const loaded = loadRules();
+    expect(loaded.phaseRechargeOverrideSeconds).toBe(8.5);
+    expect(loaded.teleportRechargeOverrideSeconds).toBe(42);
+  });
+
+  it('keeps each override independent of the other', () => {
+    saveRules({ ...DEFAULT_RULES, phaseRechargeOverrideSeconds: 12 });
+    expect(loadRules().phaseRechargeOverrideSeconds).toBe(12);
+    expect(loadRules().teleportRechargeOverrideSeconds).toBeNull();
+  });
+
+  it('coerces absent, null, non-numeric and non-positive values to null', () => {
+    // Absent key (a pre-feature blob) → null, no migration needed.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpSpawnInterval: 5 }),
+    );
+    let loaded = loadRules();
+    expect(loaded.phaseRechargeOverrideSeconds).toBeNull();
+    expect(loaded.teleportRechargeOverrideSeconds).toBeNull();
+
+    // Explicit null → null.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
+        phaseRechargeOverrideSeconds: null,
+        teleportRechargeOverrideSeconds: null,
+      }),
+    );
+    loaded = loadRules();
+    expect(loaded.phaseRechargeOverrideSeconds).toBeNull();
+    expect(loaded.teleportRechargeOverrideSeconds).toBeNull();
+
+    // Corrupt values → null rather than a NaN/negative recharge time.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
+        phaseRechargeOverrideSeconds: 'fast',
+        teleportRechargeOverrideSeconds: -3,
+      }),
+    );
+    loaded = loadRules();
+    expect(loaded.phaseRechargeOverrideSeconds).toBeNull();
+    expect(loaded.teleportRechargeOverrideSeconds).toBeNull();
   });
 });

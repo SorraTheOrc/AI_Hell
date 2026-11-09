@@ -9,7 +9,9 @@
  *
  * The default strategy draws `count` **distinct** entries at weighted random
  * from the candidate list — the base drop pool (every power-up and every
- * collectable weapon drop, i.e. the full catalogue minus the `reset` utility)
+ * collectable weapon drop, i.e. the drop catalogue minus the `reset` utility
+ * and minus the catalogue entries flagged
+ * {@link PowerUpEntry.fieldPickupOnly field-pickup-only})
  * with each owned item's base entry replaced by its level-up offer (see
  * {@link buildChoiceCandidates}) — degrading gracefully (returning fewer
  * options) when the list cannot supply the requested count. Owned level-up
@@ -25,6 +27,8 @@
 
 import {
   POWER_UP_CATALOGUE,
+  WEAPON_DROP_IDS,
+  isFieldPickupOnly,
   isRewardableWhenOwned,
   isWeaponDrop as isWeaponDropId,
   type DropId,
@@ -41,52 +45,36 @@ import { isWithinSlotPool, resolveSlotState } from './slots';
 
 /**
  * Every drop the hold-full choice can offer: the **whole** drop catalogue —
- * all sixteen power-ups plus every collectable weapon drop — minus only the
- * `reset` utility drop, which is intentionally excluded because it removes
- * weapons rather than granting one.
+ * all sixteen power-ups plus every collectable weapon drop — minus the two
+ * deliberate, documented exclusions:
  *
- * Kept catalogue-derived by the regression test in
- * `__tests__/choice.test.ts` (pool === catalogue − `reset`), so a newly
- * shipped power-up or weapon can never silently go missing from the choice
- * again (AH-0MVI4KTD8000FBJ7). There is deliberately **no** unlock-state
- * gating: every drop is a candidate in the game and in every gym, because
- * both consume this one pool (gym↔game parity, AH-0MUGZDTFX004RBD1).
+ * - the `reset` utility drop, which removes weapons rather than granting one;
+ * - every kind flagged
+ *   {@link PowerUpEntry.fieldPickupOnly field-pickup-only} (`extra_life`
+ *   today): Extra Life leaves **every** reward surface but stays a working
+ *   field pickup (parent AH-0MW10ZVLH005IJRM AC4, AH-0MW3MLV2V001NWBR).
+ *
+ * Both exclusions are **data**: this list is derived from the catalogue and
+ * {@link WEAPON_DROP_IDS} at module load, so a newly shipped power-up or
+ * weapon can never silently go missing from the choice again
+ * (AH-0MVI4KTD8000FBJ7) while a field-pickup-only kind can never be re-listed
+ * here by hand. The field-pickup-only half is the single documented exclusion
+ * for Extra Life: the regression test in `__tests__/choice.test.ts` and the
+ * game↔gym parity guard in `../scenes/core/choicePool.parity.test.ts` both
+ * spell the two exclusions out, so a genuinely missing entry still fails.
+ * There is deliberately **no** unlock-state gating: every drop is a candidate
+ * in the game and in every gym, because both consume this one pool (gym↔game
+ * parity, AH-0MUGZDTFX004RBD1).
  */
 export const CHOICE_POOL: readonly DropId[] = [
-  // Power-ups (Shield–Mineral Scoop, the classic trio, and the net-new
-  // frenzy/chrono/thorns/salvage/strike).
-  'shield',
-  'bomb',
-  'speed_boost',
-  'phase_shift',
-  'teleport',
-  'extra_life',
-  'magnet',
-  'mineral_scoop',
-  'smart_bomb',
-  'force_field',
-  'mystery_ufo',
-  'frenzy',
-  'chrono',
-  'thorns',
-  'salvage',
-  'strike',
-  // Collectable weapon drops (every weapon except the Reset utility).
-  'spread',
-  'dual',
-  'rapid',
-  'wave_laser',
-  'ricochet',
-  'cluster',
-  'options',
-  'nova',
-  'mortar',
-  'arc',
-  'rear_guard',
-  'broadside',
-  'railgun',
-  'shard_swarm',
-  'heavy_slug',
+  // Every power-up except the field-pickup-only kinds (Extra Life today),
+  // in catalogue order — shield → strike.
+  ...(Object.keys(POWER_UP_CATALOGUE) as PowerUpId[]).filter(
+    (id) => !isFieldPickupOnly(id),
+  ),
+  // Collectable weapon drops: every weapon except the Reset utility, in
+  // catalogue order — spread → heavy_slug.
+  ...WEAPON_DROP_IDS.filter((id) => id !== 'reset'),
 ];
 
 // ── Option model ────────────────────────────────────────────────────
@@ -322,6 +310,13 @@ export function buildChargeOption(
  * nothing. The opt-out is catalogue data read through
  * {@link isRewardableWhenOwned}, never an id comparison, and the kind's
  * unowned base `★ New` entry is unaffected.
+ *
+ * A **field-pickup-only** kind (`fieldPickupOnly: true`, parent
+ * AH-0MW10ZVLH005IJRM AC4) yields **no** offer either — this is the owned half
+ * of the same exclusion that keeps it out of {@link CHOICE_POOL}: even if a
+ * caller passes an owned Extra Life from the run's stores, it produces no
+ * `power-up-level`/`power-up-charge`. The flag is read through
+ * {@link isFieldPickupOnly}, so no reward builder branches on an id.
  */
 function buildOwnedPowerUpOffer(
   id: PowerUpId,
@@ -329,6 +324,7 @@ function buildOwnedPowerUpOffer(
 ): ChoiceOption | undefined {
   if (!Number.isFinite(level) || level < 1) return undefined;
   if (!POWER_UP_CATALOGUE[id]) return undefined;
+  if (isFieldPickupOnly(id)) return undefined;
   if (!isRewardableWhenOwned(id)) return undefined;
   return isConsumablePowerUpId(id)
     ? buildChargeOption(id, level)
@@ -565,6 +561,12 @@ export function buildChoiceCandidates(
 
   const candidates: ChoiceOption[] = [];
   for (const dropId of new Set(pool)) {
+    // Reward-surface exclusion, applied to **every** pool a caller passes
+    // (including an experiment's restricted set): a field-pickup-only kind is
+    // never offered as a base entry. The rule is catalogue data read through
+    // `isFieldPickupOnly`, so no caller re-lists an id to filter it (parent
+    // AH-0MW10ZVLH005IJRM AC4).
+    if (!isWeaponDrop(dropId) && isFieldPickupOnly(dropId)) continue;
     const option = toChoiceOption(dropId);
     // Suppress the base-pool entry for an owned item: it is offered once, as
     // its level-up offer (appended below), never twice (AC1/AC2).
