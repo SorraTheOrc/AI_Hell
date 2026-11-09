@@ -772,6 +772,15 @@ A Hangar War **screen has no run-end signal**, so `--hangar` is a
 than waiting for `aihell:run-ended`, and `--tail` / `--max-duration` do not
 apply.
 
+**The `⟲ RESTART WAR` row is never selected by capture tooling.** It sits in a
+third bottom-row slot beneath `▶ DEPLOY` and `⌗ HEX MAP`, but the attract
+traversal's decision function (`decideHangarAction`) gains no restart branch, so
+the bot that drives `--hangar` never focuses or activates it. The reset is a
+two-step confirm driven only by a real player (arm, then confirm inside the 5 s
+window); under `demo` the row is rendered non-actionable and the scene performs
+no store write. A capture that wants to show a fresh war should start from a
+fresh profile rather than drive the control (AH-0MW8F7NH1002PQE3).
+
 **The menu entry is enabled for the capture.** The Hangar War control sits
 behind the `hangarWar` feature flag (AH-0MVZ0VGGQ0032KDP), which ships ON by
 default now that the flow works (AH-0MVZ4S9ZU004GXUM). `--hangar` still seeds

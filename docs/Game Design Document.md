@@ -2950,7 +2950,20 @@ deployment/loadout selector. Its `▶ DEPLOY` row starts a run with the
 hangar-resolved loadout, and its `⌗ HEX MAP` row opens the map so the player
 can read the ring before committing — the mirror of the map's own `◀ HANGAR`
 row, so the two screens are one click apart in **both** directions
-(AH-0MVZ4S9ZU004GXUM).
+(AH-0MVZ4S9ZU004GXUM). Its `⟲ RESTART WAR` row — a third bottom-row slot beneath
+DEPLOY and HEX MAP — resets the whole war to its documented starting position
+behind a **two-step confirm**: the first activation arms it
+(`⚠ PRESS AGAIN TO CONFIRM`), a second inside a 5 s window commits the reset.
+The reset returns the hangar to its starting kit (basic hull, starter weapon
+owned but **not equipped**, no modifiers, zero salvage, empty loadout), the ring
+to ring 1 with no hexes, and clears queued attacks and the frontier clock — with
+a **fresh random seed**, **preserving `bestScore`**, persisted immediately through
+the `ai_hell_hangar_war` store (the arcade checkpoint, leaderboard and settings
+keys are untouched) (AH-0MW8F7NH1002PQE3). The armed state lives on the scene,
+not the row: any focus move to another row, leaving the screen, or the window
+expiring disarms it, so a stray Enter only ever arms the control and never wipes
+the war. The attract demo renders the row non-actionable and never resets or
+writes the war.
 - **`HexMapScene`** — the hangar at the centre and the current ring around it,
 with every hex's **known-ahead intel**: held/unheld and aggression on the tile
 (tile colour plus a readable `AGG n` badge), and — in the **detail panel for

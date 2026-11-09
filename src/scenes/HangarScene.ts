@@ -31,6 +31,16 @@
  * deployment is a separate session that neither clears nor overwrites the
  * arcade save.
  *
+ * The `⟲ RESTART WAR` row (AH-0MW8F7NH1002PQE3) returns the war to its
+ * documented starting position behind a two-step confirm. The scene owns the
+ * arming bit and its 5 s timer (the screen is rebuilt on every change, so the
+ * row cannot hold them); the pure `advanceRestartConfirm` decides arm/confirm/
+ * disarm and `restartHangarWar` builds the fresh payload, which is persisted
+ * through the same store. A focus move to another row, leaving the screen or
+ * the window expiring disarms it, so a stray Enter can only ever arm the
+ * control. Under `demo` the row is rendered non-actionable and nothing is
+ * written — a demo is not progress.
+ *
  * The payload can be injected as launch data (`{ payload, storage }`) so tests
  * (and later the attract traversal) boot a deterministic war without touching
  * `localStorage`; production callers pass nothing and the versioned store is
@@ -42,6 +52,7 @@
 import Phaser from 'phaser';
 
 import { createDefaultPayload, loadHangarWarPayload, saveHangarWarPayload } from '../core/hangarWar/hangarWarStore';
+import { randomSeed } from '../core/rng';
 import type {
   HangarWarPayload,
   HangarWarStorage,
@@ -57,12 +68,17 @@ import {
 } from '../ai/hangarWarTraversal';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 import {
+  advanceRestartConfirm,
   buildHangarScreenModel,
   equipHangarHull,
   purchaseHangarEntry,
   renderHangarScreen,
+  restartHangarWar,
   toggleHangarModifier,
   toggleHangarWeapon,
+  RESTART_CONFIRM_TIMEOUT_MS,
+  RESTART_ROW_KEY,
+  type HangarScreenHandlers,
   type HangarScreenModel,
   type HangarScreenRow,
   type HangarScreenView,
@@ -130,6 +146,18 @@ export class HangarScene extends Phaser.Scene {
   /** Demo actions applied so far (bounded by the shared safety cap). */
   private demoActions = 0;
 
+  /**
+   * Whether the `⟲ RESTART WAR` row is armed — the first step of the two-step
+   * confirm has happened and the next activation wipes the war. The arming
+   * state lives in the scene (not the row) because every change rebuilds the
+   * screen, and the confirm window must survive that rebuild
+   * (AH-0MW8F7NH1002PQE3).
+   */
+  private restartArmed = false;
+
+  /** The pending confirm-window timer, cleared on disarm/shutdown. */
+  private restartTimer: Phaser.Time.TimerEvent | null = null;
+
   constructor() {
     super(HANGAR_SCENE_KEY);
   }
@@ -148,6 +176,9 @@ export class HangarScene extends Phaser.Scene {
     this.build();
     addBackToMenuOnEsc(this);
     if (this.demo) this.scheduleDemoAdvance();
+    // Leaving the screen disarms the restart confirm, so re-entering the
+    // hangar can never inherit a half-armed confirm (AH-0MW8F7NH1002PQE3).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.disarmRestart());
   }
 
   /** Loads the stored payload, or a fresh default war when there is none. */
@@ -177,14 +208,25 @@ export class HangarScene extends Phaser.Scene {
    */
   private build(): void {
     this.view?.destroy();
-    const model = buildHangarScreenModel(this.payload, this.catalogue);
-    this.view = renderHangarScreen(this, model, {
+    const model = buildHangarScreenModel(this.payload, this.catalogue, {
+      restartArmed: this.restartArmed,
+    });
+    const handlers: Partial<HangarScreenHandlers> = {
       onBuy: (entryId) => this.buy(entryId),
       onEquipHull: (hullId) => this.equipHull(hullId),
       onToggleWeapon: (weaponId) => this.toggleWeapon(weaponId),
       onToggleModifier: (modifierId) => this.toggleModifier(modifierId),
       onDeploy: (hexId) => this.deploy(hexId),
       onOpenMap: () => this.openMap(),
+    };
+    // A demo is a demonstration, not progress: the bot never selects the
+    // restart row (its decision function gains no restart branch) and the row
+    // is rendered non-actionable under `demo`, so it can neither reset the war
+    // nor write to the store (the same rule that keeps a demo off the
+    // leaderboard). AH-0MW8F7NH1002PQE3.
+    if (!this.demo) handlers.onRestart = () => this.restart();
+    this.view = renderHangarScreen(this, model, handlers, {
+      onFocusChange: (key) => this.onRowFocusChange(key),
     });
     const key = this.pendingFocusKey;
     this.pendingFocusKey = null;
@@ -203,6 +245,7 @@ export class HangarScene extends Phaser.Scene {
    * spend salvage the economy did not authorise.
    */
   buy(entryId: string): boolean {
+    this.disarmRestart();
     const result = purchaseHangarEntry(this.payload, entryId, this.catalogue);
     if (result.ok) {
       this.payload = result.payload;
@@ -214,6 +257,7 @@ export class HangarScene extends Phaser.Scene {
 
   /** Equips an owned hull and persists it (no-op for an unowned hull). */
   equipHull(hullId: string): boolean {
+    this.disarmRestart();
     const result = equipHangarHull(this.payload, hullId);
     if (result.ok) {
       this.payload = result.payload;
@@ -225,6 +269,7 @@ export class HangarScene extends Phaser.Scene {
 
   /** Toggles an owned starting weapon in the loadout and persists it. */
   toggleWeapon(weaponId: string): boolean {
+    this.disarmRestart();
     const result = toggleHangarWeapon(this.payload, weaponId);
     if (result.ok) {
       this.payload = result.payload;
@@ -236,6 +281,7 @@ export class HangarScene extends Phaser.Scene {
 
   /** Toggles an owned permanent modifier on the loadout and persists it. */
   toggleModifier(modifierId: string): boolean {
+    this.disarmRestart();
     const result = toggleHangarModifier(this.payload, modifierId);
     if (result.ok) {
       this.payload = result.payload;
@@ -243,6 +289,85 @@ export class HangarScene extends Phaser.Scene {
     }
     this.rebuildKeepingFocus(`modifier:${modifierId}`);
     return result.ok;
+  }
+
+  /**
+   * Handles the `⟲ RESTART WAR` row (AH-0MW8F7NH1002PQE3).
+   *
+   * The first activation only **arms** the row (`⚠ PRESS AGAIN TO CONFIRM`)
+   * and starts the confirm window; a second activation inside that window
+   * commits the reset. The arming state and timer live on the scene (they
+   * must survive the rebuild every change triggers). Under `demo` the row is
+   * never wired, so this method is unreachable — the guard is belt and braces.
+   *
+   * @returns true when the war was reset (the second activation).
+   */
+  restart(): boolean {
+    // A demo is a demonstration, not progress: it never resets the war.
+    if (this.demo) return false;
+    const transition = advanceRestartConfirm(this.restartArmed, {
+      kind: 'activate',
+    });
+    if (transition.reset) {
+      // Second activation inside the window: wipe the war to its starting
+      // position with a fresh seed, keeping the all-time best score.
+      this.disarmRestart();
+      this.payload = restartHangarWar(this.payload, randomSeed());
+      this.persist();
+      this.rebuildKeepingFocus(RESTART_ROW_KEY);
+      return true;
+    }
+    // First activation: arm and start the confirm window.
+    this.restartArmed = true;
+    this.startRestartTimer();
+    this.rebuildKeepingFocus(RESTART_ROW_KEY);
+    return false;
+  }
+
+  /** Starts (or restarts) the confirm window timer for the armed restart row. */
+  private startRestartTimer(): void {
+    this.clearRestartTimer();
+    this.restartTimer = this.time.delayedCall(RESTART_CONFIRM_TIMEOUT_MS, () => {
+      this.restartTimer = null;
+      if (!this.restartArmed) return;
+      // The confirm window expired: revert to the idle label.
+      this.restartArmed = false;
+      this.rebuildKeepingFocus(RESTART_ROW_KEY);
+    });
+  }
+
+  /** Removes the pending confirm-window timer (safe when none is armed). */
+  private clearRestartTimer(): void {
+    this.restartTimer?.remove(false);
+    this.restartTimer = null;
+  }
+
+  /** Clears the armed bit and its timer (a focus move, an abort or an exit). */
+  private disarmRestart(): void {
+    this.clearRestartTimer();
+    this.restartArmed = false;
+  }
+
+  /**
+   * Keeps the two-step confirm honest when focus moves: focusing any row other
+   * than the restart row disarms it (a stray Enter can then only re-arm it).
+   * The rebuild keeps the newly focused row, so navigation does not jump back
+   * to the top of the screen.
+   */
+  private onRowFocusChange(key: string | null): void {
+    if (!this.restartArmed) return;
+    const transition = advanceRestartConfirm(this.restartArmed, {
+      kind: 'focus',
+      key,
+    });
+    if (transition.armed) return;
+    this.clearRestartTimer();
+    this.restartArmed = false;
+    if (key !== null) {
+      this.rebuildKeepingFocus(key);
+    } else {
+      this.build();
+    }
   }
 
   /**
@@ -258,6 +383,7 @@ export class HangarScene extends Phaser.Scene {
    * and importing the key back would create a module cycle.
    */
   openMap(): void {
+    this.disarmRestart();
     this.scene.start('HexMapScene', {
       payload: this.payload,
       storage: this.storage,
@@ -278,6 +404,7 @@ export class HangarScene extends Phaser.Scene {
    * @returns the deployment payload that was launched (test seam).
    */
   deploy(hexId?: string | null): HangarWarDeployment {
+    this.disarmRestart();
     const deployment = buildHangarDeployment(this.payload, {
       hexId: hexId ?? null,
       catalogue: this.catalogue,
@@ -327,6 +454,11 @@ export class HangarScene extends Phaser.Scene {
   /** Whether the attract traversal is driving this screen (test seam). */
   isDemo(): boolean {
     return this.demo;
+  }
+
+  /** Whether the `⟲ RESTART WAR` row is currently armed (test seam). */
+  isRestartArmed(): boolean {
+    return this.restartArmed;
   }
 
   // ── Public query seams (keyboard/pointer tests use these) ───────
