@@ -25,6 +25,12 @@
  *    dynamic import the static scan cannot follow (e.g.
  *    `gymDiscovery.ts` globs `src/scenes/gym/**`, which imports Phaser).
  *
+ * Import specifiers may use the `@/` alias (mapped to `src/` in
+ * `tsconfig.json`, `vite.config.ts` and `vitest.config.ts`). `resolveImport`
+ * follows it exactly like a relative specifier, so transitive Phaser/DOM
+ * detection survives relocating tests into the top-level `tests/` tree
+ * (AH-0MVHWG20L002EOR1).
+ *
  * Everything else belongs to the **unit** project (`environment: 'node'`, no
  * DOM setup, no Phaser inline transform).
  *
@@ -40,14 +46,21 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-/** Directories scanned for `*.test.ts` files (mirrors the suite include globs). */
-export const TEST_ROOTS = ['src', 'scripts', 'vite'] as const;
+/**
+ * Directories scanned for `*.test.ts` files (mirrors the suite include globs).
+ *
+ * `tests` is the top-level tree the migration (AH-0MVHWG20L002EOR1) is moving
+ * the suite into; it is scanned alongside the legacy co-located roots until
+ * the migration completes, so a test is never missed mid-flight.
+ */
+export const TEST_ROOTS = ['src', 'scripts', 'vite', 'tests'] as const;
 
 /** Vitest include globs for the whole suite (kept for documentation/tests). */
 export const TEST_INCLUDE_GLOBS = [
   'src/**/*.test.ts',
   'scripts/**/*.test.ts',
   'vite/**/*.test.ts',
+  'tests/**/*.test.ts',
 ] as const;
 
 /**
@@ -66,6 +79,12 @@ const INTEGRATION_MODULES = [
   'src/test/gameHarness.ts',
   'src/test/setup.ts',
 ];
+
+/** `@/` alias prefix shared by `tsconfig.json`, `vite.config.ts` and `vitest.config.ts`. */
+export const SRC_ALIAS_PREFIX = '@/';
+
+/** Directory the `@/` alias maps to. */
+export const SRC_ALIAS_ROOT = 'src';
 
 /** DOM globals that force integration membership (happy-dom is required). */
 const DOM_GLOBAL =
@@ -137,12 +156,23 @@ export function importSpecifiers(source: string): string[] {
 }
 
 /**
- * Resolves a relative import specifier to an existing project file
- * (repo-relative), trying `x.ts`, `x.tsx`, `x/index.ts`, `x.d.ts`.
+ * Resolves an import specifier to an existing project file (repo-relative),
+ * following both relative (`./`, `../`) and `@/`-aliased specifiers and trying
+ * `x`, `x.ts`, `x.tsx`, `x/index.ts`.
+ *
+ * The `@/` alias maps to `src/` in `tsconfig.json`, `vite.config.ts` and
+ * `vitest.config.ts`; following it here keeps transitive Phaser/DOM detection
+ * correct for tests that import source through the alias.
  */
-function resolveRelative(root: string, fromFile: string, specifier: string): string | null {
-  if (!specifier.startsWith('.')) return null;
-  const base = path.resolve(path.dirname(path.join(root, fromFile)), specifier);
+export function resolveImport(root: string, fromFile: string, specifier: string): string | null {
+  let base: string;
+  if (specifier.startsWith(SRC_ALIAS_PREFIX)) {
+    base = path.resolve(root, SRC_ALIAS_ROOT, specifier.slice(SRC_ALIAS_PREFIX.length));
+  } else if (specifier.startsWith('.')) {
+    base = path.resolve(path.dirname(path.join(root, fromFile)), specifier);
+  } else {
+    return null;
+  }
   const candidates = [base, `${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
@@ -180,7 +210,7 @@ export function isIntegrationTest(root: string, file: string): boolean {
         integration = true;
         break;
       }
-      const resolved = resolveRelative(root, current, specifier);
+      const resolved = resolveImport(root, current, specifier);
       if (resolved === null) continue;
       if (INTEGRATION_MODULES.includes(resolved)) {
         integration = true;
