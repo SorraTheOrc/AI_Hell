@@ -49,6 +49,7 @@ npm run record -- --auto --output recordings/human.jsonl
 | `--auto` | Stop as soon as the run ends (no Ctrl+C needed) | wait for Ctrl+C |
 | `--max-duration MS` | Safety cap on recording length | 30 min |
 | `--poll MS` | Run-end poll interval | 250 ms |
+| `--checkpoint-ms MS` | Interval between crash-safe appends of new telemetry to `<output>.partial.jsonl` (a browser close keeps everything up to the last checkpoint); `0` disables checkpointing (AH-0MVWIDN5G006IZ58) | 15 s |
 | `--json` | Print the summary as JSON | text |
 
 On Ctrl+C the tool still exports whatever the sink has already flushed (the

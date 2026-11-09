@@ -20,6 +20,7 @@ import { parseAnalyseArgs, selectRun as selectAnalyseRun } from './analyse-recor
 import { parseReplayArgs, selectRun as selectReplayRun } from './replay-recording.mjs';
 import {
   buildHumanBalanceStatsArtifact,
+  DEFAULT_CHECKPOINT_MS,
   parseRecordArgs,
   recordUrl,
   resolveBalanceStatsOutputPath,
@@ -109,6 +110,12 @@ describe('record-session CLI', () => {
     expect(parseRecordArgs(['--bot', '--bot-config', 'bot-tuning.json']).botConfig).toBe(
       'bot-tuning.json',
     );
+  });
+
+  it('parses --checkpoint-ms, defaulting to 15 s and treating 0 as disabled', () => {
+    expect(parseRecordArgs([]).checkpointMs).toBe(DEFAULT_CHECKPOINT_MS);
+    expect(parseRecordArgs(['--checkpoint-ms', '5000']).checkpointMs).toBe(5_000);
+    expect(parseRecordArgs(['--checkpoint-ms', '0']).checkpointMs).toBe(0);
   });
 
   it('appends the dev seed to the game URL', () => {
@@ -203,6 +210,16 @@ describe('CLI entry points (AH-0MV2RY8XT007I91E)', () => {
       15_000,
     );
   }
+
+  it(
+    'documents the crash-safe checkpoint flag in --help',
+    () => {
+      const result = runCli('record-session.mjs', ['--help']);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('--checkpoint-ms');
+    },
+    15_000,
+  );
 
   it('analyse reads a piped recording rather than its own source', () => {
     // Before the fix, argv[0] became options.file, so stdin was ignored and

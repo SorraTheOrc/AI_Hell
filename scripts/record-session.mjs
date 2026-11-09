@@ -11,6 +11,11 @@
  * and writes it to a file. Telemetry never touches `localStorage`
  * (AH-0MVIRYGD1000JVY3).
  *
+ * While recording, the buffer is also checkpointed incrementally to
+ * `<output>.partial.jsonl` (AH-0MVWIDN5G006IZ58, `--checkpoint-ms`), so closing
+ * the browser instead of pressing Ctrl+C salvages everything up to the last
+ * checkpoint instead of losing the session outright.
+ *
  * The recording is the framework's `run_header` + per-tick state/input +
  * discrete events, all schema-versioned (`docs/TELEMETRY.md`). No new
  * recording path is introduced here — the tool only drives the existing
@@ -26,7 +31,7 @@
  *   npm run record -- --auto --output rec.jsonl # stop at run end (human death or bot)
  */
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,7 +44,10 @@ import {
   installRunEndedListener,
   loadBotTuningConfigFile,
   readDevTelemetryBufferInChunks,
+  readDevTelemetryChunk,
   readRunEndedSignal,
+  TELEMETRY_READ_CHUNK_CHARS,
+  uniquifyOutputPath,
 } from './capture-gameplay.mjs';
 import { decodeRunEndedDetail } from './capture-run-lifecycle.mjs';
 import { formatSummary, parseTelemetryJsonl, summariseTelemetry } from './inspect-telemetry.mjs';
@@ -52,6 +60,13 @@ export const DEFAULT_RECORD_MAX_DURATION_MS = 30 * 60 * 1_000;
 
 /** Default poll interval, in milliseconds. */
 export const DEFAULT_RECORD_POLL_MS = 250;
+
+/**
+ * Default interval between crash-safe checkpoints of the page's telemetry
+ * buffer, in milliseconds (`--checkpoint-ms`; `0` disables checkpointing).
+ * 15 s bounds the loss of a browser close to at most the last interval.
+ */
+export const DEFAULT_CHECKPOINT_MS = 15_000;
 
 /** Interval (ms) between the demo's Tab and Enter, matching the capture tool. */
 const START_KEY_GAP_MS = 250;
@@ -133,6 +148,20 @@ export function partialPathForJsonl(outputPath) {
 }
 
 /**
+ * Resolves the crash-safe partial write target for a recording
+ * (AH-0MVWIDN5G006IZ58): {@link partialPathForJsonl} made collision-safe with
+ * the shared {@link uniquifyOutputPath} numeric-suffix resolver, so a salvage
+ * never overwrites an existing final recording **or** an earlier salvage.
+ *
+ * @param {string} outputPath — final recording path.
+ * @param {(path: string) => boolean} [exists] — reports a path already in use.
+ * @returns {string} e.g. `recordings/session-x.partial.jsonl`.
+ */
+export function resolvePartialRecordingPath(outputPath, exists = () => false) {
+  return uniquifyOutputPath(partialPathForJsonl(outputPath), exists);
+}
+
+/**
  * Builds the single actionable lost-session line (AC4): the mandated sentence
  * plus the resolved output path that was **not** written, so the operator can
  * see exactly what is missing. Exactly one line, so it can be printed first.
@@ -170,6 +199,7 @@ export function parseRecordArgs(argv = process.argv.slice(2)) {
     auto: false,
     maxDurationMs: DEFAULT_RECORD_MAX_DURATION_MS,
     pollMs: DEFAULT_RECORD_POLL_MS,
+    checkpointMs: DEFAULT_CHECKPOINT_MS,
     json: false,
     botConfig: null,
   };
@@ -196,6 +226,12 @@ export function parseRecordArgs(argv = process.argv.slice(2)) {
         break;
       case '--poll':
         options.pollMs = Number(next());
+        break;
+      case '--checkpoint-ms':
+        // Crash-safe partial capture (AH-0MVWIDN5G006IZ58): interval between
+        // incremental appends of new telemetry to `<output>.partial.jsonl`.
+        // `0` disables checkpointing (an interrupted run then loses the run).
+        options.checkpointMs = Number(next());
         break;
       case '--bot':
         options.bot = true;
@@ -318,6 +354,152 @@ export function buildHumanBalanceStatsArtifact(records, core) {
  */
 
 /**
+ * Advances the crash-safe checkpoint state by one bounded page read
+ * (AH-0MVWIDN5G006IZ58).
+ *
+ * Pure so the append/reset rules are hermetically testable:
+ *
+ * - **Append only up to the last newline.** A chunk that ends mid-record
+ *   carries the incomplete tail in `remainder`, so a partial file never holds
+ *   a half-written line and every written line parses.
+ * - **Restart from offset 0 when the reported `total` shrinks.** A smaller
+ *   buffer means the game started a new run; `reset: true` tells the caller to
+ *   truncate the partial and re-read from 0, so two runs never share one file
+ *   (mirrors `readDevTelemetryBufferInChunks`).
+ *
+ * @param {{ offset: number, total: number, remainder: string, bytesWritten: number }} state
+ * @param {{ total: number, chunk: string }} read — one {@link readDevTelemetryChunk} result.
+ * @returns {{ state: typeof state, append: string, reset: boolean }}
+ */
+export function applyCheckpointRead(state, read) {
+  const reported = Number(read && read.total);
+  const total = Number.isFinite(reported) ? reported : 0;
+  const chunk = read && typeof read.chunk === 'string' ? read.chunk : '';
+
+  // A buffer smaller than the one this run has already read (or than the
+  // offset reached) is a new run: discard everything captured so far.
+  if (total > 0 && (total < state.total || total < state.offset)) {
+    return {
+      state: { offset: 0, total: 0, remainder: '', bytesWritten: 0 },
+      append: '',
+      reset: true,
+    };
+  }
+
+  const combined = state.remainder + chunk;
+  const lastNewline = combined.lastIndexOf('\n');
+  const append = lastNewline >= 0 ? combined.slice(0, lastNewline + 1) : '';
+  const remainder = lastNewline >= 0 ? combined.slice(lastNewline + 1) : combined;
+
+  return {
+    state: {
+      offset: state.offset + chunk.length,
+      total,
+      remainder,
+      bytesWritten: state.bytesWritten + append.length,
+    },
+    append,
+    reset: false,
+  };
+}
+
+/**
+ * Incremental crash-safe checkpoint writer for a recording's page buffer
+ * (AH-0MVWIDN5G006IZ58 AC1/2/5).
+ *
+ * On each due tick it reads **only new bytes** through the bounded
+ * {@link readDevTelemetryChunk} offset loop — never a whole-buffer single CDP
+ * message (AH-0MVNVGP55002G0KH) — appends only complete newline-terminated
+ * records, and restarts at offset 0 (truncating the partial) when the reported
+ * `total` shrinks. Filesystem effects and the clock are injected so the writer
+ * is testable without a browser or a real recording tree.
+ *
+ * @param {{
+ *   partialPath?: string | null,
+ *   readChunk: (offset: number, chunkChars: number) => Promise<{ total: number, chunk: string }>,
+ *   appendText: (path: string, text: string) => void,
+ *   truncateFile: (path: string) => void,
+ *   intervalMs?: number,
+ *   now?: () => number,
+ *   chunkChars?: number,
+ * }} params
+ */
+export function createRecordingCheckpoint({
+  partialPath = null,
+  readChunk,
+  appendText = () => {},
+  truncateFile = () => {},
+  intervalMs = DEFAULT_CHECKPOINT_MS,
+  now = () => Date.now(),
+  chunkChars = TELEMETRY_READ_CHUNK_CHARS,
+} = {}) {
+  let state = { offset: 0, total: 0, remainder: '', bytesWritten: 0 };
+  let lastTickAt = null;
+  const enabled =
+    typeof partialPath === 'string' && partialPath !== '' && Number(intervalMs) > 0;
+
+  async function tick() {
+    if (!enabled) return { skipped: true, appended: '', bytesWritten: 0 };
+    const at = now();
+    if (lastTickAt !== null && at - lastTickAt < Number(intervalMs)) {
+      return { skipped: true, appended: '', bytesWritten: state.bytesWritten };
+    }
+    lastTickAt = at;
+
+    let appended = '';
+    for (;;) {
+      const read = await readChunk(state.offset, chunkChars);
+      const reported = Number(read && read.total);
+      const chunk = read && typeof read.chunk === 'string' ? read.chunk : '';
+      // An unreachable accessor ends this tick; the next one resumes from the
+      // same offset, so nothing is re-read.
+      if (!Number.isFinite(reported) || reported <= 0) {
+        return { skipped: false, appended, bytesWritten: state.bytesWritten };
+      }
+
+      const next = applyCheckpointRead(state, { total: reported, chunk });
+      if (next.reset) {
+        truncateFile(partialPath);
+        state = next.state;
+        appended = '';
+        continue;
+      }
+      // A chunk past the reported end (only possible on a racing reset) ends
+      // the tick without advancing; the next tick re-checks the total.
+      if (chunk === '') {
+        return { skipped: false, appended, bytesWritten: state.bytesWritten };
+      }
+      state = next.state;
+      if (next.append) {
+        appendText(partialPath, next.append);
+        appended += next.append;
+      }
+      if (state.offset >= reported) {
+        return { skipped: false, appended, bytesWritten: state.bytesWritten };
+      }
+    }
+  }
+
+  return {
+    /** The partial path written to, or `null` when checkpointing is disabled. */
+    partialPath: enabled ? partialPath : null,
+    get enabled() {
+      return enabled;
+    },
+    get offset() {
+      return state.offset;
+    },
+    get bytesWritten() {
+      return state.bytesWritten;
+    },
+    get remainder() {
+      return state.remainder;
+    },
+    tick,
+  };
+}
+
+/**
  * Waits for a recording to end and classifies **why** it stopped
  * (AH-0MVWIDLX200526P1 AC2/AC3).
  *
@@ -339,6 +521,7 @@ export function buildHumanBalanceStatsArtifact(records, core) {
  *   isPageClosed?: (() => boolean) | null,
  *   isBrowserConnected?: (() => boolean) | null,
  *   onInterruption?: ((info: { error: unknown, targetClosed: boolean }) => void) | null,
+ *   onTick?: ((info: { elapsedMs: number }) => Promise<unknown> | unknown) | null,
  * }} [options]
  * @returns {Promise<RecordingStopReason>}
  */
@@ -353,6 +536,7 @@ export async function runRecordingWaitLoop({
   isPageClosed = null,
   isBrowserConnected = null,
   onInterruption = null,
+  onTick = null,
 } = {}) {
   const startedAt = now();
   const pageGone = () =>
@@ -365,6 +549,10 @@ export async function runRecordingWaitLoop({
       const decoded = decodeRunEndedDetail(await evaluate(readRunEndedSignal));
       if (decoded !== null && auto) return 'run_end';
       if (now() - startedAt >= maxDurationMs) return 'max_duration';
+      // The checkpoint hook (AH-0MVWIDN5G006IZ58) runs between polls; it is
+      // awaited so a page-side target-closed failure still routes to the
+      // interruption path instead of racing the next evaluate.
+      if (typeof onTick === 'function') await onTick({ elapsedMs: now() - startedAt });
       await wait(pollMs);
     }
     return 'sigint';
@@ -386,10 +574,10 @@ export async function runRecordingWaitLoop({
  * On a clean stop (`sigint`/`run_end`/`max_duration`) it reads the run back,
  * writes the final recording, removes any leftover partial and returns exit
  * code 0. On `target_closed` it never writes a "complete" recording: it keeps
- * whatever partial bytes were captured (the checkpoint writer lands in
- * AH-0MVWIDN5G006IZ58) and prints exactly one actionable line, returning exit
- * code 1. Filesystem writes are injected so both paths are covered
- * hermetically.
+ * whatever partial bytes the checkpoint writer (AH-0MVWIDN5G006IZ58) captured
+ * and prints exactly one actionable line, returning exit code 1 — no final
+ * recording and no `balance-stats.json` for a salvaged partial. Filesystem
+ * writes are injected so both paths are covered hermetically.
  *
  * @param {{
  *   reason: RecordingStopReason,
@@ -464,8 +652,8 @@ async function main(argv) {
   if (options.help) {
     process.stdout.write(
       'Usage: node scripts/record-session.mjs [--output FILE] [--seed N] [--bot] [--headless]\n' +
-        '                                       [--auto] [--max-duration MS] [--poll MS] [--json]\n' +
-        '                                       [--bot-config FILE]\n',
+        '                                       [--auto] [--max-duration MS] [--poll MS]\n' +
+        '                                       [--checkpoint-ms MS] [--json] [--bot-config FILE]\n',
     );
     return 0;
   }
@@ -474,6 +662,14 @@ async function main(argv) {
   // for prefixed keys), and dev builds need no consent.
   process.env.VITE_TELEMETRY_ENABLED = 'true';
   process.env.VITE_TELEMETRY_SINK = 'jsonl';
+
+  // Resolve both paths **before** anything launches (AH-0MVWIDLX200526P1):
+  // the crash-safe partial must exist as a target at crash time, and the
+  // default `session-<timestamp>` stamp therefore records the run's **start**
+  // time. The partial name is collision-safe so a salvage never overwrites an
+  // existing final recording or an earlier salvage (AH-0MVWIDN5G006IZ58).
+  const output = resolveRecordingOutputPath(options.output, options);
+  const partialPath = resolvePartialRecordingPath(output, existsSync);
 
   let server;
   let browser;
@@ -538,11 +734,25 @@ async function main(argv) {
       );
     }
 
-    // Resolve the output path up front (AH-0MVWIDLX200526P1): the lost-session
-    // message must name the exact path that was not written, and the default
-    // `session-<timestamp>` stamp therefore records the run's **start** time.
-    const output = resolveRecordingOutputPath(options.output, options);
-    const partialPath = partialPathForJsonl(output);
+    // Crash-safe checkpoint writer (AH-0MVWIDN5G006IZ58): each due tick reads
+    // only the bytes the page buffer gained since the last read and appends the
+    // complete records to the partial resolved above.
+    const checkpoint = createRecordingCheckpoint({
+      partialPath,
+      readChunk: (offset, chunkChars) =>
+        page.evaluate(readDevTelemetryChunk, { offset, chunkChars }),
+      appendText: (path, text) => {
+        mkdirSync(dirname(path), { recursive: true });
+        appendFileSync(path, text);
+      },
+      // A new run (buffer reset) must never mix with the previous one: drop
+      // the bytes captured so far and restart from offset 0.
+      truncateFile: (path) => {
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, '');
+      },
+      intervalMs: options.checkpointMs,
+    });
 
     const reason = await runRecordingWaitLoop({
       evaluate: (fn, arg) => page.evaluate(fn, arg),
@@ -564,6 +774,18 @@ async function main(argv) {
           reporter.step(`Recording interrupted: ${firstLine(error)}`);
         }
       },
+      // Crash-safe checkpointing (AH-0MVWIDN5G006IZ58): each due tick appends
+      // only the bytes the buffer gained since the last read. A checkpoint
+      // failure is never fatal — unless the page itself went away, which the
+      // wait loop must classify as an interruption.
+      onTick: async () => {
+        try {
+          await checkpoint.tick();
+        } catch (error) {
+          if (isTargetClosedError(error)) throw error;
+          reporter.step(`Checkpoint skipped: ${firstLine(error)}`);
+        }
+      },
     });
     stop.dispose();
 
@@ -571,9 +793,7 @@ async function main(argv) {
       reason,
       outputPath: output,
       partialPath,
-      // No checkpoint writer yet (AH-0MVWIDN5G006IZ58): an interrupted run has
-      // captured nothing, so it takes the lost-session branch.
-      capturedBytes: 0,
+      capturedBytes: checkpoint.bytesWritten,
       readJsonl: () => readDevTelemetryBufferInChunks((fn, arg) => page.evaluate(fn, arg)),
       writeRecording: (path, jsonl) => {
         mkdirSync(dirname(path), { recursive: true });

@@ -15,6 +15,7 @@
 
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -26,13 +27,18 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import {
+  DEFAULT_CHECKPOINT_MS,
+  applyCheckpointRead,
+  createRecordingCheckpoint,
   finaliseRecording,
   formatLostRecordingLine,
   isTargetClosedError,
   LOST_RECORDING_MESSAGE,
   partialPathForJsonl,
+  resolvePartialRecordingPath,
   runRecordingWaitLoop,
 } from './record-session.mjs';
+import { parseTelemetryJsonl } from './inspect-telemetry.mjs';
 
 /* ------------------------------------------------------------------ */
 /*  Fixture helpers                                                    */
@@ -82,6 +88,11 @@ function fakeClock(initial = 0) {
       value += ms;
     },
   };
+}
+
+/** One schema-v1 telemetry record as a newline-terminated JSONL line. */
+function recordLine(tick: number): string {
+  return `${JSON.stringify({ kind: 'tick', schemaVersion: 1, tick, state: {}, input: {} })}\n`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -441,5 +452,333 @@ describe('finaliseRecording (AH-0MVWIDLX200526P1 AC1b/4/5)', () => {
       expect(result.exitCode, reason).toBe(0);
       expect(existsSync(outputPath), reason).toBe(true);
     }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Checkpointed crash-safe partial capture (AH-0MVWIDN5G006IZ58)      */
+/* ------------------------------------------------------------------ */
+
+/** In-page telemetry buffer fake: `readChunk` records every offset asked. */
+function fakeBuffer(initial: string, chunkChars = 64) {
+  let text = initial;
+  const offsets: number[] = [];
+  return {
+    get text() {
+      return text;
+    },
+    set text(value: string) {
+      text = value;
+    },
+    offsets,
+    readChunk(offset: number) {
+      offsets.push(offset);
+      return Promise.resolve({ total: text.length, chunk: text.slice(offset, offset + chunkChars) });
+    },
+  };
+}
+
+/** Checkpoint writer harness with a fake buffer, fake file and fake clock. */
+function checkpointHarness(buffer: ReturnType<typeof fakeBuffer>, intervalMs = 1_000) {
+  let clock = 0;
+  const file: string[] = [];
+  const checkpoint = createRecordingCheckpoint({
+    partialPath: '/tmp/partial.jsonl',
+    readChunk: buffer.readChunk,
+    appendText: (_path: string, text: string) => file.push(text),
+    truncateFile: () => {
+      file.length = 0;
+    },
+    intervalMs,
+    now: () => clock,
+    chunkChars: 64,
+  });
+  return {
+    checkpoint,
+    get content() {
+      return file.join('');
+    },
+    advance(ms: number) {
+      clock += ms;
+    },
+  };
+}
+
+describe('resolvePartialRecordingPath (AH-0MVWIDN5G006IZ58 AC3)', () => {
+  it('resolves the documented partial path when it is free', () => {
+    expect(resolvePartialRecordingPath('/rec/session-x.jsonl', () => false)).toBe(
+      '/rec/session-x.partial.jsonl',
+    );
+  });
+
+  it('uses a collision-safe numeric suffix before the extension', () => {
+    const taken = new Set(['/rec/session-x.partial.jsonl', '/rec/session-x.partial-2.jsonl']);
+    expect(resolvePartialRecordingPath('/rec/session-x.jsonl', (p) => taken.has(p))).toBe(
+      '/rec/session-x.partial-3.jsonl',
+    );
+  });
+
+  it('never resolves to the final recording path', () => {
+    const existing = new Set(['/rec/session-x.jsonl']);
+    const resolved = resolvePartialRecordingPath('/rec/session-x.jsonl', (p) => existing.has(p));
+    expect(resolved).not.toBe('/rec/session-x.jsonl');
+    expect(resolved.endsWith('.partial.jsonl')).toBe(true);
+  });
+});
+
+describe('applyCheckpointRead (AH-0MVWIDN5G006IZ58 AC2)', () => {
+  const emptyState = { offset: 0, total: 0, remainder: '', bytesWritten: 0 };
+
+  it('appends only complete newline-terminated records and carries the tail', () => {
+    const complete = recordLine(0);
+    const half = recordLine(1).slice(0, 20);
+    const result = applyCheckpointRead(emptyState, { total: complete.length + half.length, chunk: complete + half });
+
+    expect(result.reset).toBe(false);
+    expect(result.append).toBe(complete);
+    expect(result.state.remainder).toBe(half);
+    expect(result.state.offset).toBe(complete.length + half.length);
+    expect(result.state.bytesWritten).toBe(complete.length);
+  });
+
+  it('restarts from offset 0 when the reported total shrinks', () => {
+    const state = { offset: 500, total: 500, remainder: '', bytesWritten: 400 };
+    const result = applyCheckpointRead(state, { total: 120, chunk: '' });
+
+    expect(result.reset).toBe(true);
+    expect(result.append).toBe('');
+    expect(result.state).toEqual({ offset: 0, total: 0, remainder: '', bytesWritten: 0 });
+  });
+
+  it('does not reset on an unreachable accessor (total 0)', () => {
+    const state = { offset: 500, total: 500, remainder: '', bytesWritten: 400 };
+    const result = applyCheckpointRead(state, { total: 0, chunk: '' });
+    expect(result.reset).toBe(false);
+    expect(result.state.offset).toBe(500);
+  });
+});
+
+describe('createRecordingCheckpoint (AH-0MVWIDN5G006IZ58 AC1/2/5)', () => {
+  it('defaults to a 15 s interval and is disabled by 0', () => {
+    expect(DEFAULT_CHECKPOINT_MS).toBe(15_000);
+    const buffer = fakeBuffer(recordLine(0));
+    const enabled = checkpointHarness(buffer);
+    expect(enabled.checkpoint.enabled).toBe(true);
+    const disabled = checkpointHarness(buffer, 0);
+    expect(disabled.checkpoint.enabled).toBe(false);
+    expect(disabled.checkpoint.partialPath).toBeNull();
+  });
+
+  it('appends only new bytes, resuming at the last offset (never a full re-read)', async () => {
+    const buffer = fakeBuffer(recordLine(0) + recordLine(1));
+    const harness = checkpointHarness(buffer);
+
+    await harness.checkpoint.tick();
+    const firstLength = buffer.text.length;
+    const offsetsAfterFirstTick = buffer.offsets.length;
+    expect(harness.content).toBe(buffer.text);
+
+    buffer.text += recordLine(2) + recordLine(3);
+    harness.advance(1_000);
+    await harness.checkpoint.tick();
+
+    // Every read in the second tick starts at or after the first run's end.
+    const secondTickOffsets = buffer.offsets.slice(offsetsAfterFirstTick);
+    expect(secondTickOffsets[0]).toBe(firstLength);
+    expect(secondTickOffsets.every((offset) => offset >= firstLength)).toBe(true);
+
+    expect(harness.content).toBe(buffer.text);
+    expect(harness.checkpoint.bytesWritten).toBe(buffer.text.length);
+    const parsed = parseTelemetryJsonl(harness.content);
+    expect(parsed.skipped).toBe(0);
+    expect(parsed.records.map((r: any) => r.tick)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('never writes a half-written record, carrying the remainder into the next read', async () => {
+    const complete = recordLine(0);
+    const tail = recordLine(1).slice(0, 20);
+    const buffer = fakeBuffer(complete + tail);
+    const harness = checkpointHarness(buffer);
+
+    await harness.checkpoint.tick();
+    expect(harness.content).toBe(complete);
+    expect(harness.checkpoint.remainder).toBe(tail);
+    expect(parseTelemetryJsonl(harness.content).skipped).toBe(0);
+
+    // The page finishes the record.
+    buffer.text = complete + recordLine(1);
+    harness.advance(1_000);
+    await harness.checkpoint.tick();
+
+    expect(harness.content).toBe(complete + recordLine(1));
+    expect(harness.checkpoint.remainder).toBe('');
+    expect(parseTelemetryJsonl(harness.content).skipped).toBe(0);
+  });
+
+  it('restarts at offset 0 and truncates when the buffer total shrinks (no two-run mixing)', async () => {
+    const firstRun = recordLine(0) + recordLine(1) + recordLine(2);
+    const buffer = fakeBuffer(firstRun);
+    const harness = checkpointHarness(buffer);
+
+    await harness.checkpoint.tick();
+    expect(harness.content).toBe(firstRun);
+
+    // The game started a new run: the buffer is reset to a shorter content.
+    const secondRun = recordLine(10);
+    expect(secondRun.length).toBeLessThan(firstRun.length);
+    buffer.text = secondRun;
+    harness.advance(1_000);
+    await harness.checkpoint.tick();
+
+    expect(harness.content).toBe(secondRun);
+    expect(harness.content).not.toContain('"tick":0');
+    expect(harness.checkpoint.offset).toBe(secondRun.length);
+    expect(harness.checkpoint.bytesWritten).toBe(secondRun.length);
+    // It re-read from 0 after the reset rather than continuing past the end.
+    expect(buffer.offsets.filter((offset) => offset === 0).length).toBeGreaterThan(1);
+    const parsed = parseTelemetryJsonl(harness.content);
+    expect(parsed.skipped).toBe(0);
+    expect(parsed.records.map((r: any) => r.tick)).toEqual([10]);
+  });
+
+  it('does not read again before the checkpoint interval elapses', async () => {
+    const buffer = fakeBuffer(recordLine(0));
+    const harness = checkpointHarness(buffer);
+
+    await harness.checkpoint.tick();
+    const readsAfterFirstTick = buffer.offsets.length;
+
+    buffer.text += recordLine(1);
+    harness.advance(999);
+    const skipped = await harness.checkpoint.tick();
+    expect(skipped.skipped).toBe(true);
+    expect(buffer.offsets.length).toBe(readsAfterFirstTick);
+
+    harness.advance(1);
+    await harness.checkpoint.tick();
+    expect(harness.content).toBe(buffer.text);
+  });
+
+  it('checkpoints complete records to the partial and salvages them on a crash', async () => {
+    const dir = tempDir();
+    const outputPath = join(dir, 'session-crash.jsonl');
+    const partialPath = resolvePartialRecordingPath(outputPath, existsSync);
+    const buffer = fakeBuffer(recordLine(0) + recordLine(1) + recordLine(2).slice(0, 12));
+    let clock = 0;
+
+    const checkpoint = createRecordingCheckpoint({
+      partialPath,
+      readChunk: buffer.readChunk,
+      appendText: (path, text) => appendFileSync(path, text),
+      truncateFile: (path) => writeFileSync(path, ''),
+      intervalMs: 1_000,
+      now: () => clock,
+      chunkChars: 64,
+    });
+
+    await checkpoint.tick();
+    const written = readFileSync(partialPath, 'utf8');
+    expect(written).toBe(recordLine(0) + recordLine(1));
+    expect(parseTelemetryJsonl(written).skipped).toBe(0);
+
+    const result = await finaliseRecording({
+      reason: 'target_closed',
+      outputPath,
+      partialPath,
+      capturedBytes: checkpoint.bytesWritten,
+      readJsonl: () => Promise.resolve(''),
+      writeRecording: (path: string, data: string) => writeFileSync(path, data),
+      removeFile: (path: string) => rmSync(path, { force: true }),
+      log: () => {},
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.salvaged).toBe(true);
+    expect(result.partialPath).toBe(partialPath);
+    expect(existsSync(outputPath)).toBe(false);
+    expect(readFileSync(partialPath, 'utf8')).toBe(written);
+  });
+
+  it('salvages to a collision-safe partial, leaving an existing final recording untouched', async () => {
+    const dir = tempDir();
+    const outputPath = join(dir, 'session-x.jsonl');
+    const existingFinal = recordLine(99);
+    writeFileSync(outputPath, existingFinal);
+
+    // An earlier salvage already occupies the documented partial path.
+    const earlierPartial = partialPathForJsonl(outputPath);
+    const earlierSalvage = recordLine(50);
+    writeFileSync(earlierPartial, earlierSalvage);
+
+    const partialPath = resolvePartialRecordingPath(outputPath, existsSync);
+    expect(partialPath).toBe(join(dir, 'session-x.partial-2.jsonl'));
+    const salvagedLines = recordLine(0) + recordLine(1);
+    writeFileSync(partialPath, salvagedLines);
+
+    const writeRecording = vi.fn();
+    const result = await finaliseRecording({
+      reason: 'target_closed',
+      outputPath,
+      partialPath,
+      capturedBytes: salvagedLines.length,
+      readJsonl: () => Promise.resolve(''),
+      writeRecording,
+      removeFile: vi.fn(),
+      log: () => {},
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.salvaged).toBe(true);
+    expect(result.partialPath).toBe(partialPath);
+    // The salvage never writes the final recording and never overwrites it.
+    expect(writeRecording).not.toHaveBeenCalled();
+    expect(readFileSync(outputPath, 'utf8')).toBe(existingFinal);
+    expect(readFileSync(earlierPartial, 'utf8')).toBe(earlierSalvage);
+    expect(readFileSync(partialPath, 'utf8')).toBe(salvagedLines);
+  });
+});
+
+describe('runRecordingWaitLoop onTick hook (AH-0MVWIDN5G006IZ58)', () => {
+  it('awaits the checkpoint hook between polls', async () => {
+    const { stop, setRequested } = fakeStop();
+    let ticks = 0;
+    let waits = 0;
+
+    const reason = await runRecordingWaitLoop({
+      evaluate: () => Promise.resolve({ ended: false }),
+      stop,
+      now: Date.now,
+      wait: () => {
+        waits += 1;
+        if (waits >= 2) setRequested(true);
+        return Promise.resolve();
+      },
+      maxDurationMs: 30_000,
+      pollMs: 250,
+      auto: false,
+      onTick: () => {
+        ticks += 1;
+      },
+    });
+
+    expect(reason).toBe('sigint');
+    expect(ticks).toBe(waits);
+  });
+
+  it('routes an onTick target-closed failure to the interruption path', async () => {
+    const { stop } = fakeStop();
+
+    const reason = await runRecordingWaitLoop({
+      evaluate: () => Promise.resolve({ ended: false }),
+      stop,
+      now: Date.now,
+      wait: vi.fn(),
+      maxDurationMs: 30_000,
+      pollMs: 250,
+      auto: false,
+      onTick: () => Promise.reject(new Error('Target page, context or browser has been closed')),
+    });
+
+    expect(reason).toBe('target_closed');
   });
 });

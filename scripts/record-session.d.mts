@@ -6,6 +6,8 @@
 
 export const DEFAULT_RECORD_MAX_DURATION_MS: number;
 export const DEFAULT_RECORD_POLL_MS: number;
+/** Default interval between crash-safe checkpoints (`--checkpoint-ms`), in ms. */
+export const DEFAULT_CHECKPOINT_MS: number;
 
 /** The single actionable line printed when an interrupted run captured nothing. */
 export const LOST_RECORDING_MESSAGE: string;
@@ -25,6 +27,8 @@ export interface RecordArgs {
   auto: boolean;
   maxDurationMs: number;
   pollMs: number;
+  /** `--checkpoint-ms`; `0` disables crash-safe checkpointing. */
+  checkpointMs: number;
   json: boolean;
   /** `--bot-config` file path holding exported bot-tuning state, or null. */
   botConfig: string | null;
@@ -49,6 +53,11 @@ export function buildHumanBalanceStatsArtifact(
 export function isTargetClosedError(error: unknown): boolean;
 /** Resolves `<stem>.partial.jsonl` for a recording path. */
 export function partialPathForJsonl(outputPath: string): string;
+/** Resolves the collision-safe partial write target for a recording path. */
+export function resolvePartialRecordingPath(
+  outputPath: string,
+  exists?: (path: string) => boolean,
+): string;
 /** Builds the single actionable lost-session line naming the unwritten path. */
 export function formatLostRecordingLine(outputPath: string): string;
 /** Builds the single actionable salvaged-partial line. */
@@ -65,6 +74,7 @@ export interface RecordingWaitLoopOptions {
   isPageClosed?: (() => boolean) | null;
   isBrowserConnected?: (() => boolean) | null;
   onInterruption?: ((info: { error: unknown; targetClosed: boolean }) => void) | null;
+  onTick?: ((info: { elapsedMs: number }) => Promise<unknown> | unknown) | null;
 }
 
 export function runRecordingWaitLoop(
@@ -94,3 +104,45 @@ export interface FinaliseRecordingResult {
 export function finaliseRecording(
   options: FinaliseRecordingOptions,
 ): Promise<FinaliseRecordingResult>;
+
+export interface CheckpointState {
+  offset: number;
+  total: number;
+  remainder: string;
+  bytesWritten: number;
+}
+
+export interface CheckpointRead {
+  total: number;
+  chunk: string;
+}
+
+/** Advances the checkpoint state by one bounded page read (pure). */
+export function applyCheckpointRead(
+  state: CheckpointState,
+  read: CheckpointRead,
+): { state: CheckpointState; append: string; reset: boolean };
+
+export interface RecordingCheckpoint {
+  readonly partialPath: string | null;
+  readonly enabled: boolean;
+  readonly offset: number;
+  readonly bytesWritten: number;
+  readonly remainder: string;
+  tick(): Promise<{ skipped: boolean; appended: string; bytesWritten: number }>;
+}
+
+export interface CreateRecordingCheckpointOptions {
+  partialPath?: string | null;
+  readChunk: (offset: number, chunkChars: number) => Promise<CheckpointRead>;
+  appendText?: (path: string, text: string) => void;
+  truncateFile?: (path: string) => void;
+  intervalMs?: number;
+  now?: () => number;
+  chunkChars?: number;
+}
+
+/** Creates the incremental crash-safe checkpoint writer. */
+export function createRecordingCheckpoint(
+  options?: CreateRecordingCheckpointOptions,
+): RecordingCheckpoint;
