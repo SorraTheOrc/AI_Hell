@@ -129,6 +129,11 @@ Node tooling through the dev-gated `window.__aiHellTelemetry` accessor, so
 `npm run record`, `npm run capture` and `npm run verify-dev-telemetry` read
 exactly the run the page just recorded.
 
+Because the run lives only in the page's memory, **how the recorder is stopped
+decides whether the recording survives** — see
+[*Stopping a `npm run record` session*](#stopping-a-npm-run-record-session-ctrlc-saves-a-browser-close-salvages-a-partial)
+below: Ctrl+C in the terminal saves; closing the browser window does not.
+
 **Telemetry never uses `localStorage`** (AH-0MVIRYGD1000JVY3). The buffer lives
 in the page's memory, so a long run can neither exhaust the origin's storage
 quota nor make unrelated writes throw: before this, the per-tick JSONL sink
@@ -715,6 +720,32 @@ recording/analysis tooling (AH-0MUY08W7Y004GATZ): `npm run record`,
 [docs/dev/recording-and-replay.md](./dev/recording-and-replay.md). The
 inspector is the quick, dependency-free first look at any recording, and its
 summary shape is the stable interface the analysis tool builds on.
+
+### Stopping a `npm run record` session (Ctrl+C saves; a browser close salvages a partial)
+
+`npm run record` reads the run from the page's in-memory buffer (above), so the
+stop procedure decides whether anything is kept (AH-0MVVH57LL00038WQ):
+
+- **Ctrl+C in the recorder's terminal** finishes and saves: the whole run is
+  written to `<output>` (`recordings/session-<seed-><timestamp>.jsonl` by
+default), `balance-stats.json` beside it, exit code `0`.
+- **Closing the browser window** (or a page crash) does **not** save a completed
+  recording. While recording, the CLI increments the page buffer to
+  `<output>.partial.jsonl` every `--checkpoint-ms` (default 15 000 ms; `0`
+  disables), appending only the records the buffer gained since its previous
+  read, so an interrupted session keeps the partial capture up to the last
+  checkpoint: a readable NDJSON file, named in one actionable line, with the
+  un-checkpointed tail (at most one interval) lost, **no** `balance-stats.json`
+  and exit code `1`. A salvage is collision-safe — it never overwrites an
+  existing recording or an earlier salvage.
+- **Nothing checkpointed** (the browser closes before the first checkpoint, or
+  the buffer is unreachable): one actionable line names the output path that was
+  not written and the Ctrl+C procedure, and the exit code is `1`.
+
+`--auto` must be passed **after `--`** (`npm run record -- --auto`): a bare
+`npm run record --auto` is consumed by npm, so the recorder waits for Ctrl+C
+instead of stopping at run end. The full flag table, including `--checkpoint-ms`,
+is in [docs/dev/recording-and-replay.md](./dev/recording-and-replay.md).
 
 ### Human balance statistics (`npm run record`)
 

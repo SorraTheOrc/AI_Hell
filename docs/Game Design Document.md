@@ -1477,9 +1477,11 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
      ([`docs/TELEMETRY.md`](./TELEMETRY.md)); `npm run record -- --auto
      --output recordings/<name>.jsonl` records a scripted run and
      `--max-duration <ms>` bounds a manual one. Let the run end, or stop the
-     recorder with **Ctrl+C in its own terminal** — closing the browser instead
-     discards the in-memory buffer (recorder defect tracked by
-     **AH-0MVVH57LL00038WQ**).
+     recorder with **Ctrl+C in its own terminal** — closing the browser window
+     instead does **not** save a complete recording: it keeps only the
+     `<output>.partial.jsonl` checkpoint written every `--checkpoint-ms`
+     (default 15 s), so the un-checkpointed tail is lost (recorder defect
+     tracked by **AH-0MVVH57LL00038WQ**).
   2. **Replay it against the shared model.** Rebuild occupancy from the
      recording — permanent kinds from the per-tick `weaponLevels` /
      `powerUpLevels`, temporary holdings from the `pickup` events plus each

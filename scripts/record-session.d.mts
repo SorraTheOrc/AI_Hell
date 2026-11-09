@@ -36,6 +36,8 @@ export interface RecordArgs {
 }
 
 export function parseRecordArgs(argv?: string[]): RecordArgs;
+/** The recorder's `--help` text, including the stop procedure and `--auto` separator. */
+export function formatRecordHelp(): string;
 export function recordUrl(baseUrl: string, options?: { seed?: number | null }): string;
 export function resolveRecordingOutputPath(
   requested: string | null | undefined,

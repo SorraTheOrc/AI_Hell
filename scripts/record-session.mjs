@@ -188,6 +188,45 @@ export function formatSalvagedRecordingLine(partialPath) {
   );
 }
 
+/**
+ * Builds the recorder's `--help` text (AH-0MVWIDOI70015EO0).
+ *
+ * The stop procedure belongs here and not only in the docs: closing the
+ * browser window instead of pressing Ctrl+C is the mistake that costs a
+ * session, and it is made at the terminal. The same text states the working
+ * `--auto` form, because npm consumes a bare `--auto` (`npm run record
+ * --auto` runs a normal wait-for-Ctrl+C session; `npm run record -- --auto`
+ * forwards the flag — AH-0MVVH57LL00038WQ).
+ *
+ * Kept as one exported builder so the test suite asserts the exact lines the
+ * CLI prints instead of duplicating them.
+ *
+ * @returns {string} the full usage text, newline-terminated.
+ */
+export function formatRecordHelp() {
+  return [
+    'Usage: node scripts/record-session.mjs [--output FILE] [--seed N] [--bot] [--headless]',
+    '                                       [--auto] [--max-duration MS] [--poll MS]',
+    '                                       [--checkpoint-ms MS] [--json] [--bot-config FILE]',
+    '',
+    'Stop procedure:',
+    '  Press Ctrl+C in this terminal to finish and save the recording.',
+    '  Closing the browser window does NOT save a completed recording: the run ends',
+    `  and at best the crash-safe partial capture is kept at <output>${RECORDING_PARTIAL_SUFFIX}`,
+    '  (whatever the checkpoint writer had appended, at worst nothing).',
+    '',
+    '  --checkpoint-ms MS  Interval between crash-safe appends of new telemetry to',
+    `                      <output>${RECORDING_PARTIAL_SUFFIX} (default ${DEFAULT_CHECKPOINT_MS} ms).`,
+    '                      A browser close keeps everything up to the last checkpoint;',
+    '                      0 disables checkpointing (an interrupted run then saves nothing).',
+    '',
+    '  Pass --auto after `--` so npm forwards it: npm run record -- --auto',
+    '  (a bare `npm run record --auto` is consumed by npm, so the recorder still',
+    '  waits for Ctrl+C instead of stopping when the run ends).',
+    '',
+  ].join('\n');
+}
+
 /** Parses `process.argv`-style flags. */
 export function parseRecordArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -650,11 +689,7 @@ async function main(argv) {
   const options = parseRecordArgs(argv);
   const reporter = createReporter(process.stderr);
   if (options.help) {
-    process.stdout.write(
-      'Usage: node scripts/record-session.mjs [--output FILE] [--seed N] [--bot] [--headless]\n' +
-        '                                       [--auto] [--max-duration MS] [--poll MS]\n' +
-        '                                       [--checkpoint-ms MS] [--json] [--bot-config FILE]\n',
-    );
+    process.stdout.write(formatRecordHelp());
     return 0;
   }
 

@@ -383,8 +383,10 @@ cap shapes what a run can become.
   rows are not slots, a report is classified from a recording, not a row count:
   capture the run (a stock `npm run dev` auto-records to
   `recordings/session-<timestamp>.jsonl`; or `npm run record -- --auto`, stopping
-  the recorder with Ctrl+C in its own terminal — closing the browser loses the
-  buffer, recorder defect **AH-0MVVH57LL00038WQ**), replay it against
+  the recorder with Ctrl+C in its own terminal — closing the browser window does
+  not save a complete recording, it keeps only the `<output>.partial.jsonl`
+  checkpoint written every `--checkpoint-ms`, so the run tail is lost (recorder
+  defect **AH-0MVVH57LL00038WQ**)), replay it against
   `resolveSlotState(...)` (permanent kinds from the tick vector, temporary
   holdings from the `pickup` events plus each kind's TTL) and classify every row
   as slot-counted or not. A counted kind above six is a real gate bug on a named
