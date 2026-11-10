@@ -83,6 +83,8 @@ import {
   type HitscanTarget,
 } from './hitscanBeam';
 import { resolveHitscanAimHeading } from './hitscanAim';
+import { selectMiningLaserTarget } from './miningLaserTargeting';
+import { PLAYFIELD_WORLD } from './enemyWrap';
 import {
   CLUSTER_SPLIT_BURST_RADIUS,
   CLUSTER_WARHEAD_LIFETIME,
@@ -975,6 +977,12 @@ export class CombatCoreScene<
     // interval. Detection lives in this shared step, application behind one
     // hook, so the game and every gym cannot diverge.
     this._updateOrbitalStrike(dt);
+    // Mining Laser (AH-0MW9QMP2P0032BWW): a field pickup / hold-full reward
+    // auto-fires at the nearest live **asteroid** on the level-resolved beat
+    // cadence. Detection lives in this shared step, the target rule in the
+    // shared `selectMiningLaserTarget`, and application behind one hook, so
+    // the game and every gym cannot diverge (parent AH-0MW81181P007BDRU).
+    this._updateMiningLaser(dt);
     // Collector drones (Mystery UFO reward) run after physics so they track
     // the ship's current position on their return leg; minerals vacuumed
     // this step are cleaned up by the same frame's later mineral pass
@@ -1899,6 +1907,61 @@ export class CombatCoreScene<
   protected onOrbitalStrike(_damage: number): boolean {
     return false;
   }
+
+  /**
+   * Advances the shared Mining Laser cadence and, when a shot is due, resolves
+   * it through {@link onMiningLaserFire} against the nearest live asteroid
+   * (AH-0MW9QMP2P0032BWW, parent **Mining laser** AH-0MW81181P007BDRU).
+   *
+   * Mirrors {@link _updateOrbitalStrike}: the registry owns the cadence and
+   * reports whether a shot is due; this shared step owns the target rule
+   * ({@link selectMiningLaserTarget} over {@link getEnemyEntities}, measured
+   * on the canonical wrapped playfield); the concrete scene applies the damage
+   * and beam behind {@link onMiningLaserFire}. Living once here means the game
+   * and every gym inherit the same targeting and cadence (AGENTS.md §
+   * Gym↔game parity).
+   *
+   * A shot is resolved **only** when a live asteroid exists: with no eligible
+   * rock in the field the step returns without calling the hook, so there is
+   * no empty-space or forward-fallback fire. The registry never banks a shot,
+   * so a due tick with no asteroid is simply skipped and the next shot waits
+   * one full interval (parent AC).
+   *
+   * The selection is asteroid-only ({@link selectMiningLaserTarget}), so a
+   * nearer scout, harvester, boss or other non-asteroid body is never
+   * selected — the deliberate inverse of the Orbital Strike's asteroid-skip
+   * rule (parent AC).
+   *
+   * @param dt - Frame delta in seconds.
+   */
+  protected _updateMiningLaser(dt: number): void {
+    const registry = this.getEffectsRegistry();
+    if (!registry.updateMiningLaser(dt)) return;
+    const player = this.getPlayer();
+    if (!player) return;
+    const target = selectMiningLaserTarget(
+      player,
+      this.getEnemyEntities(),
+      PLAYFIELD_WORLD,
+    );
+    if (!target) return;
+    this.onMiningLaserFire(target);
+  }
+
+  /**
+   * Resolves one Mining Laser shot at `target` — the nearest live asteroid the
+   * shared {@link _updateMiningLaser} step selected from
+   * {@link selectMiningLaserTarget} over {@link getEnemyEntities}.
+   *
+   * Default no-op, so a scene that owns no asteroid seam (or simply does not
+   * override the hook) stays silent. The concrete combat scene overrides it to
+   * apply the level-resolved damage through the shared kill seam
+   * (`damageEnemyViaAoe`) and spawn the beam VFX/cue, so score/drop/wave
+   * accounting runs exactly once per shot.
+   *
+   * @param _target - The live asteroid the shot landed on.
+   */
+  protected onMiningLaserFire(_target: TEnemy): void {}
 
   /**
    * Resolves one Smart Bomb pulse at (x, y) through the shared area-effect

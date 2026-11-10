@@ -815,6 +815,33 @@ export abstract class CombatScene<
   }
 
   /**
+   * Resolves one Mining Laser shot (AH-0MW9QMP2P0032BWW, parent **Mining
+   * laser** AH-0MW81181P007BDRU) at the asteroid the shared
+   * {@link CombatCoreScene._updateMiningLaser} step selected with
+   * {@link selectMiningLaserTarget} over {@link getEnemyEntities}.
+   *
+   * The level-resolved damage is applied through the shared kill seam
+   * {@link damageEnemyViaAoe}, so destruction audio, score/drop/wave accounting
+   * and mineral drops run exactly once per shot — identical to a player bullet
+   * or an AOE effect. The selection step never offers a non-asteroid body, so
+   * this override only ever damages rock (parent AC).
+   *
+   * **Beam VFX/cue deferred to F4 (AH-0MW9QMQ7B005WFH9).** The dedicated
+   * `spawnMiningLaserBeam` module does not exist yet — F4 depends on this item
+   * (F3) and is treated as part of the same reviewable slice, so this hook is
+   * damage-only for now. The F4 change wires the beam/cue call here; no
+   * placeholder or import guard is used (the review note records the deferral).
+   *
+   * @param target - The live asteroid the shot landed on.
+   */
+  protected override onMiningLaserFire(target: TEnemy): void {
+    this.damageEnemyViaAoe(
+      target,
+      this.getEffectsRegistry().miningLaserDamage(),
+    );
+  }
+
+  /**
    * Resolves one Smart Bomb pulse (AH-0MV1BIWP9003EHRQ): applies the
    * level-resolved {@link AoEDescriptor} through the shared AOE seam and
    * spawns the expanding-ring VFX. Defined on the concrete combat scene
