@@ -2073,7 +2073,12 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
     reachPlayBoss(playScene);
 
     const playBoss = playScene.getBoss()!;
-    const gymBoss = gymScene.getBoss()!;
+    // `CombatScene.getBoss()` is protected and `GymBoss` overrides it as
+    // protected, so the gym is read through the same structural seam the rest
+    // of this test uses for the boss's private members (AH-0MWBAFTPK0081IAH).
+    const gymBoss = (
+      gymScene as unknown as { getBoss: () => typeof playBoss }
+    ).getBoss()!;
     const dt = 0.016; // ~60 fps frame time
     const expectedDelta = 300 * dt; // 300 px/s × dt
     const pulseWaveSpeed = (playBoss as unknown as {
