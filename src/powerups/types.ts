@@ -583,7 +583,11 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
  * Power-up IDs cycled by the combat gym round-robin spawner. The five
  * net-new combat-coupled power-ups (epic AH-0MVCRC1Q0007JAV1) are appended so
  * the gym exercises each: Frenzy (damage amp), Chrono Field (bullet slow),
- * Thorn Field (ram counter) and Orbital Strike (auto-targeting bolt).
+ * Thorn Field (ram counter) and Orbital Strike (auto-targeting bolt). The
+ * Mining Laser joins for its **silence** rule (AH-0MW9QMSI7005UU9P): the gym
+ * fields scouts only, so the kind is owned and its cadence is due while no shot
+ * is ever emitted and no scout is ever damaged — the shared asteroid-only
+ * target rule observed in play.
  */
 export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = [
   'shield',
@@ -596,6 +600,7 @@ export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = [
   'chrono',
   'thorns',
   'strike',
+  'mining_laser',
 ] as const;
 
 /**

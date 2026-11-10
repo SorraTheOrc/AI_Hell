@@ -989,8 +989,8 @@ the first three enemy gym scenes duplicated:
   (see §7.2).
 
   **Hold-full rewards in the mineral gym (**AH-0MUHMXWGC0058BO4**).**
-  `GymMinerals` has no field power-up drops, so its rewards come from the
-  hold-full choice overlay. Because the choice can grant Teleport, the shared
+  `GymMinerals` drops only the Mining Laser (AH-0MW9QMSI7005UU9P), so its
+  Shield/Phase Shift/Teleport rewards come from the hold-full choice overlay. Because the choice can grant Teleport, the shared
   automatic-defence feed (`_updateAutoDefence()`) runs every tick —
   independent of `powerUpsEnabled` — so the ready Teleport warp is spent
   automatically when the ship is in danger; `canTeleport()` accepts a ready warp in addition to the opt-in drop layer. The effects registry ticks (and the

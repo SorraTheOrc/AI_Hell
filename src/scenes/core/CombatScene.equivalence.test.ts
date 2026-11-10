@@ -2698,6 +2698,14 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['planLaneTrafficWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
   ['planStrikeWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
   ['releaseDueSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  // Mining Laser target rule (AH-0MW9QMSI7005UU9P, parent
+  // AH-0MW81181P007BDRU): the asteroid-only predicate and the nearest-rock
+  // selector are defined once in this pure module and consumed by the shared
+  // combat core, so `PlayScene` and every gym inherit them. Registering them
+  // means a scene that re-introduces a copy of the target rule fails the
+  // repo-wide duplicate-body guard (gym↔game parity, AGENTS.md).
+  ['isMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
+  ['selectMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
 ];
 
 /**
@@ -2731,6 +2739,13 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['_updateAutoDefence', 'src/scenes/core/CombatScene.ts'],
   ['triggerTeleport', 'src/scenes/core/CombatScene.ts'],
   ['_advanceBoss', 'src/scenes/core/CombatScene.ts'],
+  // Mining Laser shared fire step (AH-0MW9QMSI7005UU9P, parent
+  // AH-0MW81181P007BDRU): cadence detection + the asteroid-only target rule
+  // live once in the shared core, so `PlayScene` and every gym fire the power
+  // up through identical code. The `onMiningLaserFire` application hook is
+  // deliberately excluded — an overridable seam a scene may override but must
+  // not duplicate. A gym that re-introduces a fire step fails this guard.
+  ['_updateMiningLaser', 'src/scenes/core/CombatCoreScene.ts'],
   ['getAdditionalTeleportBodies', 'src/scenes/core/CombatScene.ts'],
   // F8 (Harvester, AH-0MUI820PM0038HS2): the shared multi-hit kill
   // finalisation (destruction audio + `onEnemyDestroyed`) is defined once in

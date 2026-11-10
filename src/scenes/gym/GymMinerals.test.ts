@@ -10,7 +10,7 @@ import Phaser from 'phaser';
 
 import { advanceGame, type BootedGame, createReusableBoot } from '../../test/gameHarness';
 import * as effectsModule from '../../audio/effects';
-import { GymMinerals } from './GymMinerals';
+import { GYM_MINERALS_HINT, GymMinerals } from './GymMinerals';
 import { GymFodderEnemies } from './GymFodderEnemies';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
@@ -41,6 +41,11 @@ function liveAsteroids(scene: GymMinerals): Asteroid[] {
 /** Empties the player-bullet list so only the test's bullet can hit a target. */
 function clearPlayerBullets(scene: GymMinerals): void {
   (scene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+}
+
+/** Every live Extra Life drop (the per-kill roll's output). */
+function extraLifeDrops(scene: GymMinerals) {
+  return scene.getPowerUpDrops().filter((drop) => drop.dropId === 'extra_life');
 }
 
 /** Removes every live mineral from the field (via the public collect seam). */
@@ -196,7 +201,7 @@ describe('GymMinerals', () => {
     expect(Math.hypot(minerals[0].x - sx, minerals[0].y - sy)).toBeLessThanOrEqual(2);
   });
 
-  it('AC4/AC5 — a small-asteroid kill spawns one extra_life drop even without the cadence layer', async () => {
+  it('AC4/AC5 — a small-asteroid kill spawns one extra_life drop alongside the cadence layer', async () => {
     // Stamped with the current schema version: the v5 migration resets the
     // asteroid roll to its off (0) default for older configs.
     localStorage.setItem(
@@ -214,15 +219,19 @@ describe('GymMinerals', () => {
     // Extra Life roll.
     scene.setSceneRng(() => 0.99);
     clearMinerals(scene);
-    // No cadence layer: no field drops appear on their own.
-    expect(scene.getPowerUpDrops()).toHaveLength(0);
+    // The cadence layer's only source is the Mining Laser (AH-0MW9QMSI7005UU9P),
+    // so nothing else appears on its own.
+    expect(
+      scene.getPowerUpDrops().every((drop) => drop.dropId === 'mining_laser'),
+    ).toBe(true);
+    expect(extraLifeDrops(scene)).toHaveLength(0);
 
     // Split down to a small asteroid; large/medium never roll the Extra Life.
     const large = liveAsteroids(scene).find((a) => a.getSizeTier() === 'large')!;
     clearPlayerBullets(scene);
     scene.spawnPlayerBullet(large.x, large.y, 0, 0);
     scene.tick(0.016);
-    expect(scene.getPowerUpDrops()).toHaveLength(0);
+    expect(extraLifeDrops(scene)).toHaveLength(0);
 
     const medium = liveAsteroids(scene).find(
       (a) => a.getSizeTier() === 'medium',
@@ -230,7 +239,7 @@ describe('GymMinerals', () => {
     clearPlayerBullets(scene);
     scene.spawnPlayerBullet(medium.x, medium.y, 0, 0);
     scene.tick(0.016);
-    expect(scene.getPowerUpDrops()).toHaveLength(0);
+    expect(extraLifeDrops(scene)).toHaveLength(0);
 
     const small = liveAsteroids(scene).find((a) => a.getSizeTier() === 'small')!;
     // Remove every other live asteroid so the bullet can only hit the target
@@ -244,9 +253,8 @@ describe('GymMinerals', () => {
     scene.spawnPlayerBullet(small.x, small.y, 0, 0);
     scene.tick(0.016);
 
-    const drops = scene.getPowerUpDrops();
+    const drops = extraLifeDrops(scene);
     expect(drops).toHaveLength(1);
-    expect(drops[0].dropId).toBe('extra_life');
     // The drop is at the death site (single-tick drift allowed).
     expect(Math.hypot(drops[0].x - sx, drops[0].y - sy)).toBeLessThanOrEqual(2);
   });
@@ -263,7 +271,7 @@ describe('GymMinerals', () => {
     // 0.99 fails the generic pool and would pass any non-zero forced roll.
     scene.setSceneRng(() => 0.99);
     clearMinerals(scene);
-    expect(scene.getPowerUpDrops()).toHaveLength(0);
+    expect(extraLifeDrops(scene)).toHaveLength(0);
 
     // Split a large rock, then a medium one, down to the terminal small tier
     // (a fresh gym seeds no small asteroids). Neither split tier rolls the
@@ -289,10 +297,7 @@ describe('GymMinerals', () => {
     scene.tick(0.016);
 
     expect(small.alive).toBe(false);
-    expect(
-      scene.getPowerUpDrops().filter((d) => d.dropId === 'extra_life'),
-    ).toHaveLength(0);
-    expect(scene.getPowerUpDrops()).toHaveLength(0);
+    expect(extraLifeDrops(scene)).toHaveLength(0);
   });
 });
 
@@ -512,9 +517,10 @@ describe('GymMinerals — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)'
     const scene = await bootMinerals();
     const registry = scene.getEffectsRegistry();
 
-    // The minerals gym has no field-drop layer, so this is the exact
-    // stale-registry vector from gap 10: apply a permanent effect as the
-    // hold-full choice does, then stop/restart the same instance.
+    // The minerals gym's only field drop is the mining laser, so a permanent
+    // effect granted the way the hold-full choice does is the exact
+    // stale-registry vector from gap 10: apply it, then stop/restart the same
+    // instance.
     registry.applyCollect('magnet', true);
     registry.applyWeapon('spread', true);
     registry.applyCollect('teleport');
@@ -592,5 +598,186 @@ describe('GymMinerals — shared wave-timeout (AH-0MUNR5LM1004B223)', () => {
     scene.tick(0.016);
 
     expect(scene.getWaveTimeoutBar()?.visible).toBe(true);
+  });
+});
+
+// ── Mining Laser gym coverage (AH-0MW9QMSI7005UU9P) ───────────────────
+//
+// The asteroid gym is the natural observation scene for the Mining Laser
+// (parent AH-0MW81181P007BDRU): it opts into the existing shared drop layer
+// with a **mining-laser-only** deterministic spawner, so a QA observer can
+// watch the shipped fire step chew rocks, retarget across a split chain and
+// pay minerals into the field. No fire, target or cadence code lives here —
+// every shot is the shared `CombatCoreScene._updateMiningLaser` step resolving
+// through the shared `CombatScene.onMiningLaserFire` damage/beam seam.
+
+describe('GymMinerals — Mining Laser coverage (AH-0MW9QMSI7005UU9P)', () => {
+  let booted: BootedGame | null = null;
+
+  /** One simulation frame (seconds) — the deterministic harness step. */
+  const FRAME = 1 / 60;
+
+  async function boot(): Promise<GymMinerals> {
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
+    return booted.scene as GymMinerals;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted = null;
+  });
+
+  /**
+   * Advances the gym frame-by-frame, clearing the player's cannon bullets
+   * before each step. The ship auto-fires continuously, so without this the
+   * cannon — not the Mining Laser — would destroy the seeded rocks and the
+   * assertions could not attribute a kill to the shared laser step. One
+   * frame of bullet travel (~8 px) can never reach a rock >100 px away.
+   */
+  function tickWithoutPlayerBullets(scene: GymMinerals, seconds: number): void {
+    const frames = Math.ceil(seconds / FRAME);
+    for (let i = 0; i < frames; i += 1) {
+      clearPlayerBullets(scene);
+      scene.tick(FRAME);
+    }
+  }
+
+  /** Live asteroid nearest the ship (plain distance — the ship is central). */
+  function nearestAsteroid(scene: GymMinerals): Asteroid {
+    const player = scene.getPlayer()!;
+    const live = liveAsteroids(scene);
+    expect(live.length).toBeGreaterThan(0);
+    return live.reduce((best, rock) => {
+      const d = (rock.x - player.x) ** 2 + (rock.y - player.y) ** 2;
+      const bd = (best.x - player.x) ** 2 + (best.y - player.y) ** 2;
+      return d < bd ? rock : best;
+    });
+  }
+
+  /** Grows a freshly spawned drop to full scale (the shared collect gate). */
+  function growDrop(drop: { powerUp: { advance(dt: number): void } }): void {
+    for (let i = 0; i < 20; i += 1) drop.powerUp.advance(0.05);
+  }
+
+  it('AC1 — opts into the shared drop layer with a mining-laser-only spawner', async () => {
+    const scene = await boot();
+
+    expect(scene.isPowerUpLayerEnabled()).toBe(true);
+    const drops = scene.getPowerUpDrops();
+    expect(drops.length).toBeGreaterThanOrEqual(1);
+    // Deterministic single-kind source: every spawn is the Mining Laser.
+    expect(drops[0].id).toBe('mining_laser');
+
+    // The hint names the kind so the gym is self-describing.
+    expect(GYM_MINERALS_HINT).toMatch(/Mining Laser/);
+  });
+
+  it('AC2 — collecting the field drop grants the shared laser and cuts the nearest asteroid', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+
+    // The nearest rock before the pickup: this shot's target through the
+    // shared asteroid-only selector.
+    const target = nearestAsteroid(scene);
+
+    const drop = scene.spawnPowerUpDrop(
+      'mining_laser',
+      player.x,
+      player.y,
+    );
+    expect(drop).not.toBeNull();
+    growDrop(drop!); // full scale, so the shared 3 % gate is satisfied
+    tickWithoutPlayerBullets(scene, FRAME); // hull overlap → shared collect path
+
+    const registry = scene.getEffectsRegistry();
+    expect(registry.isMiningLaserActive()).toBe(true);
+    expect(target.alive).toBe(true);
+
+    // The first due shot fires from the shared step (no banked/latched shot).
+    tickWithoutPlayerBullets(scene, FRAME);
+    expect(target.alive).toBe(false);
+    // A large rock splits through the shared `splitAsteroid` seam, so the
+    // live field grows by one net rock.
+    expect(liveAsteroids(scene).length).toBe(4);
+  });
+
+  it('AC3 — cadence comes from the shared level store, not the gym', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    const drop = scene.spawnPowerUpDrop('mining_laser', player.x, player.y)!;
+    growDrop(drop);
+    tickWithoutPlayerBullets(scene, FRAME); // collect (shot not yet due)
+    expect(registry.isMiningLaserActive()).toBe(true);
+
+    const interval = registry.miningLaserInterval();
+    expect(Number.isFinite(interval)).toBe(true);
+    expect(interval).toBeGreaterThan(0);
+
+    // First shot: the nearest rock dies immediately on collection.
+    tickWithoutPlayerBullets(scene, FRAME);
+    const afterFirstShot = scene.aliveCount;
+    expect(afterFirstShot).toBe(4);
+
+    // No second shot before the shared interval elapses…
+    tickWithoutPlayerBullets(scene, interval * 0.5);
+    expect(scene.aliveCount).toBe(afterFirstShot);
+
+    // …and the next due tick lands exactly on that interval.
+    tickWithoutPlayerBullets(scene, interval * 0.5 + FRAME);
+    expect(scene.aliveCount).toBeGreaterThan(afterFirstShot);
+  });
+
+  it('AC4 — retargets across the split chain and pays minerals through the shared layer', async () => {
+    const scene = await boot();
+    const registry = scene.getEffectsRegistry();
+    // A permanent grant keeps the laser firing past the field pickup's 10 s
+    // temporary window, so the whole 1 + 2 + 4 split chain is observed. The
+    // ownership path is the same shared level store / registry seam.
+    registry.applyCollect('mining_laser', true);
+    expect(registry.isMiningLaserActive()).toBe(true);
+
+    const mineralsBefore = scene.getMinerals().length;
+
+    // Opening shot: a large rock splits into two live children (retarget
+    // material) rather than vanishing without a trace.
+    tickWithoutPlayerBullets(scene, FRAME);
+    expect(scene.aliveCount).toBe(4);
+
+    // Ride the shared cadence until the field is cleared (21 destroys:
+    // 3 large → 6 medium → 12 small). Every shot retargets through the shared
+    // selector, so a destroyed target never costs a wasted shot.
+    for (let i = 0; i < 60 * 30 && scene.aliveCount > 0; i += 1) {
+      clearPlayerBullets(scene);
+      scene.tick(FRAME);
+    }
+    expect(scene.aliveCount).toBe(0);
+
+    // Only the small rocks pay minerals (one each) — the shared kill-drop rule.
+    expect(scene.getMinerals().length).toBeGreaterThanOrEqual(
+      mineralsBefore + 12,
+    );
+  });
+
+  it('AC5 — stays silent when the field holds no live asteroid', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playMiningLaserFireSound');
+
+    // Clear the field first (a direct destroy bypasses the kill seams, so no
+    // split children or mineral drops are produced).
+    for (const rock of liveAsteroids(scene)) rock.destroySelf();
+    scene.tick(FRAME);
+    expect(scene.aliveCount).toBe(0);
+
+    scene.getEffectsRegistry().applyCollect('mining_laser', true);
+    const mineralsBefore = scene.getMinerals().length;
+
+    // Several shared cadence intervals elapse with nothing to mine.
+    tickWithoutPlayerBullets(scene, 2);
+
+    expect(cue).not.toHaveBeenCalled();
+    expect(scene.aliveCount).toBe(0);
+    expect(scene.getMinerals().length).toBe(mineralsBefore);
   });
 });
