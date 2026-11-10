@@ -229,8 +229,12 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
 
 /** Structural contract an enemy bullet must satisfy. */
 export interface CombatEnemyBullet {
-  /** The bullet's view: a sprite of its shape's cached texture. */
-  readonly graphics: Phaser.GameObjects.Image;
+  /**
+   * The bullet's view: a sprite of its shape's cached texture. The Boss
+   * pulse-wave ring is a native-resolution `Graphics` stroked circle, so the
+   * contract accepts either (AH-0MW80W5ER005E884).
+   */
+  readonly graphics: Phaser.GameObjects.Image | Phaser.GameObjects.Graphics;
   vx: number;
   vy: number;
   /**

@@ -1563,9 +1563,24 @@ it is drawn changed (once, at bake time). Time-driven parts are baked at
 motion reads as a pulse/breathe/shimmer (the pellet's pulse ring, the heavy
 shell's breathing glow, the shard's glint) are animated with **image
 scale/alpha** from the bullet's own age, so no per-frame `drawBulletShape`
-redraw survives (AC2). The Boss pulse wave (a slowly expanding ring) became a
+redraw survives (AC2). The remaining boss-pattern `Graphics` redraws — bullet-free expanding effects that are not silhouettes — are covered on the flanks of this pass by the bullet/fx budget below. The Boss pulse wave (a slowly expanding ring) became a
 sprite of the cached `ring` texture grown by scale and faded by alpha.
 Gameplay, collision, RNG and `tick(dt)` determinism are untouched.
+
+> **Revision (AH-0MW80W5ER005E884).** The scaled sprite was itself the source
+> of a reported visual artefact: a 3 px stroke baked at radius 30 and
+> magnified up to ~37× on a 1920×1080 screen reads as a ~110 px blurry,
+> stair-stepped band at the edge of the wave's range. The wave is now the
+> **single documented exception** to the cached-texture policy: it is a
+> per-frame stroked circle on one `Phaser.GameObjects.Graphics`, redrawn at
+> the current radius with a **constant 3 px stroke** and never scaled, so it
+> stays crisp at every radius up to
+> off-screen, and it fades smoothly to zero at its range limit. This is still
+> **one cheap draw** (a single arc per frame — no per-bullet re-triangulation,
+> so the AH-0MW2DAY2L004QSKF budget holds), and it also fixes the lifecycle
+> leak where a superseded wave was left frozen on the display list: exactly
+> one live wave exists per boss, destroyed on supersede, on range exit and on
+> boss destroy.
 
 **What the profile says (profiled pair, 60 s, same host, ~load 14).** The
 bullet draw submission is gone; the *frame time* is not, because this backend

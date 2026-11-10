@@ -297,8 +297,12 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
 
 /** Contract a bullet must satisfy for the base scene to own its lifecycle. */
 export interface FormationSceneBullet {
-  /** The bullet's view — a cached-texture sprite the scene moves. */
-  readonly graphics: Phaser.GameObjects.Image;
+  /**
+   * The bullet's view — a cached-texture sprite the scene moves. The Boss
+   * pulse-wave ring is a native-resolution `Graphics` stroked circle, so the
+   * contract accepts either (AH-0MW80W5ER005E884).
+   */
+  readonly graphics: Phaser.GameObjects.Image | Phaser.GameObjects.Graphics;
   /** Horizontal speed (px/s). */
   vx: number;
   /** Vertical speed (px/s). */
