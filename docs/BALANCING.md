@@ -1083,14 +1083,22 @@ balance report.
   window and reported a capture. This is a **documented, deliberate
   deviation**, not a gameplay regression: no shipped gameplay code changed,
   and the drift is bisected to the arena's own fire-model fidelity commit
-  `6ecbab23` (AH-0MW5DVAME0062GQO). Campaign levels 1–2 still capture the full
-  window; level 3 usually does not. Modelling the remaining fire detail below
+  `6ecbab23` (AH-0MW5DVAME0062GQO). Modelling the remaining fire detail below
   (the Wave Laser's hitscan ray, homing arcs, …) would **raise the arena's
   DPS** further and push a slice deeper into the window, so it deepens this
-  effect rather than removing it; the gap that does explain it is the
-  **loadout** (a real deployment launches with the hangar-resolved loadout,
-  not the campaign-reset context the arena plays, AH-0MW9QA2YC009PSF5).
-  `src/ai/eval/ringTiming.test.ts` pins the measured boundary.
+  effect rather than removing it.
+
+  **The ring-timing harness now measures the deployment loadout**
+  (AH-0MW9QA2YC009PSF5): the hull's lives and speed, the fleet's equipped
+  weapons and the `extra-lives` modifiers, earned in the ring's plan order. On
+  that launch state — not the campaign-reset bare cannon — campaign levels 1–2
+  capture the full window on every seed and **level 3 captures on two of three
+  seeds**, still dying to enemy fire on the third. The boundary therefore moved
+  with the loadout, which is exactly the gap that explained the bare-cannon
+  drift; it did **not** shorten the ring budgets, because a stronger loadout
+  also levels faster (ring 1 50.9 → 54.3 min, ring 2 111.9 → 116.4 min).
+  `src/ai/eval/ringTiming.test.ts` pins both the measured boundary and the
+  loadout resolution.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 

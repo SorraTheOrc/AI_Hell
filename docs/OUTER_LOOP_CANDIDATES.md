@@ -884,6 +884,12 @@ replace storage behind the same injectable interface (§6.6).
   minutes) plus build/salvage time on the hangar and the cost of a few lost
   attempts. **Ring 2 is larger — 12 hexes** — so it lands at ≈60 minutes of
   deployments plus 10–40 minutes of builds and losses (**≈90–120 minutes** with the wrap-aware bot).
+  Measured with the ring-timing harness on the **deployment loadout** (a captured
+  hex's grant owned from the next deployment, ring 1's grants entering ring 2;
+  AH-0MW9QA2YC009PSF5) the ring-2 grind is **116.4 minutes** — 39 minutes of
+  measured deployments, 24 between sorties and 55 of modelled retries — so
+  ring 2 is still retry-dominated and has not yet reached the split stated
+  here.
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.

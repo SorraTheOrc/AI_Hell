@@ -3056,7 +3056,7 @@ by the `src/data/hex-ring-1.csv` and `src/data/hex-ring-2.csv` seeds (a parity
 test fails if the two drift).
 
 - **Ring 1** is **6 hexes** at base aggression `1`–`6`.
-- **Ring 2** is **12 hexes** at base aggression `3`–`8`, generated from the same
+- **Ring 2** is **12 hexes** at base aggression `2`–`8`, generated from the same
 definitions — so ring 2 is playable in this build (producer decision 2026-10-30,
 Q3 = a), and later rings need only authored data.
 - **Exactly one hex per ring is the weapon hex**, it grants the ring's new
@@ -3179,11 +3179,14 @@ Timing is measured, not guessed, with the headless eval arena
 (`src/ai/eval/arena.ts`) through the ring-timing harness
 (`src/ai/eval/ringTiming.ts`, `npm run ring-timing`). A deployment is modelled as
 the game plays it — the classic campaign slice from the hex's
-aggression-selected level, a ≈5-minute / 18 000-tick deployment window — plus
-explicitly documented allowances: **2 minutes between sorties** (hangar, salvage
-banking, map, defence report), a **loss charged one full deployment** (the
-player's replay), and, on the rush line only, the **70 % frontier attack chance
-× (deployment + visit)** for every hex left unheld.
+aggression-selected level, a ≈5-minute / 18 000-tick deployment window, launched
+with the **loadout the fleet owns at that point** (the starter kit entering ring
+1, each captured hex's grant owned from the next deployment, ring 1's six grants
+and the `hull-2` hull entering ring 2; AH-0MW9QA2YC009PSF5) — plus explicitly
+documented allowances: **2 minutes between sorties** (hangar, salvage banking,
+map, defence report), a **loss charged one full deployment** (the player's
+replay), and, on the rush line only, the **70 % frontier attack chance ×
+(deployment + visit)** for every hex left unheld.
 
 Measured baseline (seeds 1–3, competent bot; artifact
 `docs/dev/ring-timing-baseline.json`, regenerate with `npm run ring-timing --
@@ -3191,10 +3194,10 @@ Measured baseline (seeds 1–3, competent bot; artifact
 
 | Ring | Line | Total mean (min–max) | Losses | Budget |
 |---|---|---|---|---|
-| 1 (6 hexes) | grind | **50.9 min** (43.3–55.4) | 4.0 | 40–60 · **in-window** |
+| 1 (6 hexes) | grind | **54.3 min** (51.0–56.6) | 4.7 | 40–60 · **in-window** |
 | 1 (6 hexes) | rush | **32.0 min** (31.9–32.2) | 1.0 | ring not secured |
-| 2 (12 hexes) | grind | **111.9 min** (95.6–120.8) | 9.3 | 90–120 · **in-window** |
-| 2 (12 hexes) | rush | **62.4 min** (60.9–65.5) | 0.3 | ring not secured |
+| 2 (12 hexes) | grind | **116.4 min** (112.7–123.4) | 10.7 | 90–120 · **in-window** |
+| 2 (12 hexes) | rush | **62.7 min** (60.9–63.6) | 0.7 | ring not secured |
 
 The budget assertion states a **10 % tolerance** of each window's width —
 **±2 min** for ring 1 and **±3 min** for ring 2 — and both grind lines pass
@@ -3206,10 +3209,10 @@ and Q4); a human playtest is desirable but not a gate.
 Two lines are measured, and both are viable:
 
 - **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
-  secured: **50.9 min** for ring 1 and **111.9 min** for ring 2, banking salvage
+  secured: **54.3 min** for ring 1 and **116.4 min** for ring 2, banking salvage
   and ending with a held ring.
 - **Rush** — the weapon hex first, then straight into the next ring: **32.0 min**
-  and **62.4 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
+  and **62.7 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
 expected retakes and forfeiting the salvage of any failed attempt.
 
 **Neither line dominates**: the rush is faster but riskier and ends with an

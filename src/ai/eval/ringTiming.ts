@@ -40,6 +40,44 @@
  *   comes from the shipped frontier clock's attack chance
  *   (`DEFAULT_FRONTIER_TUNING.attackChancePercent`).
  *
+ * ## The starting loadout (AH-0MW9QA2YC009PSF5)
+ *
+ * A real deployment does not launch from the campaign's bare state: the hangar
+ * resolves a **loadout** first (`src/scenes/hangarWar/hangarDeployment.ts`) —
+ * the active hull's run stats (starting lives, movement speed), the weapons the
+ * fleet has selected and the permanent modifiers whose effect the deployment
+ * path models. The harness measures each ring's deployments with the loadout a
+ * player *owns at that point*, resolved from the shipped data
+ * ({@link HANGAR_CATALOGUE}, `resolveHexGrant`, {@link hexRingDefinitionsFor})
+ * rather than a hardcoded item list:
+ *
+ * - **Entering ring 1** — the starter kit: hull `hull-1` and no equipped
+ *   weapons. The starter `spread` is owned but **not selected**, so the run
+ *   starts with the bare cannon, exactly like a fresh fleet
+ *   (AH-0MVZJ6V1J001DA9D).
+ * - **Within a ring** — the line plays its hexes weakest-aggression first; a
+ *   **captured** hex's grant is owned from the next deployment (weapons to the
+ *   equipped set, hulls and upgrades through `resolveHexGrant`), so the later
+ *   deployments of the same ring launch with it. A **lost** deployment grants
+ *   nothing — the retry replays the same hex with the same loadout.
+ * - **Entering ring *n*** — the starter kit plus every grant of the previous
+ *   rings, earned in the same plan order (ring 2: the `ricochet`, `rapid` and
+ *   `wave_laser` weapons, the `hull-2` hull, `hardened_plating`, and the
+ *   effect-free `core-bank` modifier).
+ * - **Equip convention (deterministic)** — every owned weapon is equipped
+ *   (trimmed by the shipped `capDropIdsToSlotPool` six-slot cap), the
+ *   **strongest owned hull** is active (most starting lives, then speed), and
+ *   every owned `extra-lives` modifier is applied, capped at `MAX_LIVES`. A
+ *   grant the catalogue does not itemise (`hull-3`, `rapid`, `core-bank`) is
+ *   owned but contributes no run stats — the same "recorded but effect-free"
+ *   rule the shipped capture cycle uses.
+ *
+ * The loadout is an **explicit model input** ({@link
+ * RingTimingOptions.ownership}, default {@link ringEntryOwnership}) and reaches
+ * the arena through {@link ArenaStartingLoadout}, so the seam is stated rather
+ * than hidden. It changes the *starting* state only: the aggression model, the
+ * deployment window and every retry/exposure allowance are unchanged.
+ *
  * ## The two lines
  *
  * - **grind** — secure the ring before pushing: every hex, **weakest
@@ -92,10 +130,21 @@
  * @module src/ai/eval/ringTiming
  */
 
+import { DEFAULT_LIVES, MAX_LIVES } from '../../core/GameState';
 import { DEFAULT_FRONTIER_TUNING } from '../../core/hangarWar/hexDefence';
 import { hexDifficultyProfile } from '../../core/hangarWar/hexDifficulty';
 import { generateRing, type HexRingDefinition } from '../../core/hangarWar/hexRing';
+import { resolveHexGrant } from '../../core/hangarWar/captureCycle';
 import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
+import { findHangarEntry } from '../../core/hangarWar/hangarEconomy';
+import {
+  HANGAR_CATALOGUE,
+  STARTER_HULL_ID,
+  type HangarEntry,
+  type HullDefinition,
+} from '../../data/hangarCatalogue';
+import { capDropIdsToSlotPool } from '../../powerups/slots';
+import type { WeaponId } from '../../utils/weapons';
 import { buildArenaCampaign, campaignFromLevel, runArena } from './arena';
 import { loadBalanceConfig } from './balanceConfig';
 import { resolvePolicyFactory } from './policies';
@@ -182,6 +231,50 @@ export const RING_TIMING_TARGETS: Readonly<Record<number, RingTimingTarget>> =
  */
 export const RING_TIMING_TOLERANCE_PERCENT = 10;
 
+/** One weapon a deployment launches with. */
+export interface RingLoadoutWeapon {
+  /** The shipped weapon id (`src/utils/weapons.ts`). */
+  readonly id: WeaponId;
+  /**
+   * The permanent-grant count the run starts with: `1` fires the weapon at its
+   * base stats (one `Player.equipWeapon(id, true)`), each further grant raises
+   * its upgrade index by one.
+   */
+  readonly ownedLevel: number;
+}
+
+/**
+ * The fleet ownership the loadout model grows as hexes are captured.
+ *
+ * Plain data, in earned order: `hulls` / `weapons` / `modifiers` hold the ids
+ * the fleet owns at that point in the ring's plan. The starter `spread` is
+ * deliberately absent — it is owned but not selected (AH-0MVZJ6V1J001DA9D).
+ */
+export interface RingLoadoutOwnership {
+  /** Owned hull ids, in earned order (the starter hull first). */
+  readonly hulls: readonly string[];
+  /** Selected (equipped) shipped weapon ids, in earned order. */
+  readonly weapons: readonly string[];
+  /** Owned modifier ids (including effect-free upgrades), in earned order. */
+  readonly modifiers: readonly string[];
+}
+
+/** What one deployment launches with (the resolved loadout). */
+export interface RingDeploymentLoadout {
+  /** The active hull's id (the strongest owned, itemised hull). */
+  readonly hullId: string;
+  /** Lives the run starts with (hull + `extra-lives` modifiers, ≤ `MAX_LIVES`). */
+  readonly lives: number;
+  /** Movement-speed multiplier applied to the shared ship config. */
+  readonly speedMultiplier: number;
+  /** Equipped weapons in fire order after the always-active cannon. */
+  readonly weapons: readonly RingLoadoutWeapon[];
+  /** Owned modifiers (run effect only for `extra-lives`). */
+  readonly modifiers: readonly string[];
+  /** Every owned hull id, including grants the catalogue does not itemise. */
+  readonly ownedHulls: readonly string[];
+}
+
 /** One deployment the harness asks a runner to play. */
 export interface RingDeploymentRequest {
   /** Run seed (drives the arena scenario and the bot's input cadence). */
@@ -198,6 +291,8 @@ export interface RingDeploymentRequest {
   readonly dt: number;
   /** The resolved balance config the run consumes. */
   readonly balance: ArenaBalanceConfig;
+  /** The loadout the deployment launches with. */
+  readonly loadout: RingDeploymentLoadout;
 }
 
 /** What one deployment's arena run reported. */
@@ -252,6 +347,15 @@ export interface RingTimingOptions {
   readonly hexes?: readonly HexRingDefinition[];
   /** Injectable deployment runner (default {@link createArenaDeploymentRunner}). */
   readonly runDeployment?: RingDeploymentRunner;
+  /**
+   * The fleet ownership the line starts the ring with (default
+   * {@link ringEntryOwnership}: the starter kit plus every previous ring's
+   * grants). An explicit model input, so a caller can measure a different
+   * earned state without editing the authored data.
+   */
+  readonly ownership?: RingLoadoutOwnership;
+  /** The unlock tree to resolve grants/run stats against (default shipped). */
+  readonly catalogue?: readonly HangarEntry[];
 }
 
 /** One deployment as the line played it. */
@@ -274,6 +378,8 @@ export interface RingTimingDeployment {
   readonly retries: number;
   /** Play time this deployment contributes, minutes. */
   readonly minutes: number;
+  /** The loadout this deployment launched with. */
+  readonly loadout: RingDeploymentLoadout;
 }
 
 /** One seed's measurement of a ring for one strategy. */
@@ -381,6 +487,8 @@ export interface RingTimingReport {
   readonly summary: RingTimingSummary;
   /** The budget verdict for the mean total. */
   readonly budget: RingTimingBudgetVerdict;
+  /** The loadout the line entered the ring with (before earning any grant). */
+  readonly entryLoadout: RingDeploymentLoadout;
 }
 
 /** `value` when it is a finite positive number, else `fallback`. */
@@ -462,6 +570,178 @@ export function planRingDeployments(
   return { played, exposed: [] };
 }
 
+/**
+ * Appends `id` to `list` unless it is already owned (earned order, no dupes).
+ */
+function withOwnedId(list: readonly string[], id: string): string[] {
+  return list.includes(id) ? [...list] : [...list, id];
+}
+
+/**
+ * The fleet ownership a line enters `ringIndex` with: the starter kit plus
+ * every grant of the **previous** rings, earned in each ring's plan order
+ * (weakest aggression first — the grind's order, the one that actually secures
+ * the ring before pushing on).
+ *
+ * Ring 1 therefore starts bare (the starter hull, no equipped weapon: the
+ * starter `spread` is owned but never auto-equipped, AH-0MVZJ6V1J001DA9D), and
+ * ring 2 starts with ring 1's six grants. A ring the MVP has not authored
+ * contributes nothing.
+ *
+ * @param ringIndex — the ring the line is about to play.
+ * @param catalogue — the unlock tree to resolve grants against (default shipped).
+ * @returns the ownership, in earned order (never a shared mutable object).
+ */
+export function ringEntryOwnership(
+  ringIndex: number,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): RingLoadoutOwnership {
+  let ownership: RingLoadoutOwnership = {
+    hulls: [STARTER_HULL_ID],
+    weapons: [],
+    modifiers: [],
+  };
+  for (let ring = 1; ring < Math.max(1, Math.trunc(ringIndex)); ring += 1) {
+    const hexes = ringTimingHexes(ring);
+    for (const hex of planRingDeployments(hexes, 'grind').played) {
+      ownership = withCapturedGrant(ownership, hex.grants, catalogue);
+    }
+  }
+  return ownership;
+}
+
+/**
+ * The ownership after **capturing** a hex that grants `grantId`: the grant
+ * becomes owned for the deployments that follow (weapons join the equipped set,
+ * hulls and upgrades their own sets, all through the shipped
+ * `resolveHexGrant` — so `waveLaser` → `wave_laser`, `extra-life` →
+ * `hardened_plating`, and an id the catalogue does not itemise is still
+ * recorded, exactly as the capture cycle does).
+ *
+ * Total and idempotent: a blank/absent grant or a re-capture returns an
+ * equivalent ownership, never an error, and the input is never mutated. A
+ * **lost** deployment grants nothing, so the caller applies this only to a
+ * capture.
+ *
+ * @param ownership — the ownership the line has earned so far (read only).
+ * @param grantId — the captured hex's authored `grants` value.
+ * @param catalogue — the unlock tree to resolve the grant against.
+ * @returns the grown ownership.
+ */
+export function withCapturedGrant(
+  ownership: RingLoadoutOwnership,
+  grantId: string,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): RingLoadoutOwnership {
+  const grant = resolveHexGrant(grantId, catalogue);
+  if (grant === null) {
+    return {
+      hulls: [...ownership.hulls],
+      weapons: [...ownership.weapons],
+      modifiers: [...ownership.modifiers],
+    };
+  }
+  const next: RingLoadoutOwnership = {
+    hulls: [...ownership.hulls],
+    weapons: [...ownership.weapons],
+    modifiers: [...ownership.modifiers],
+  };
+  if (grant.kind === 'weapon') {
+    const weaponId = grant.weaponId ?? grant.entryId;
+    return { ...next, weapons: withOwnedId(next.weapons, weaponId) };
+  }
+  if (grant.kind === 'hull') {
+    return { ...next, hulls: withOwnedId(next.hulls, grant.entryId) };
+  }
+  return { ...next, modifiers: withOwnedId(next.modifiers, grant.entryId) };
+}
+
+/** The catalogue entry for `id` when it is an owned, itemised hull. */
+function ownedHullDefinition(
+  id: string,
+  catalogue: readonly HangarEntry[],
+): HullDefinition | null {
+  const entry = findHangarEntry(id, catalogue);
+  return entry !== null && entry.kind === 'hull' ? entry : null;
+}
+
+/**
+ * The active hull: the **strongest owned, itemised hull** — most starting
+ * lives first, then the faster hull, then catalogue order (deterministic).
+ *
+ * A hull grant the catalogue does not itemise yet (`hull-3`, from ring 2) is
+ * owned but supplies no run stats, exactly as `rapid` / `core-bank` are
+ * recorded as effect-free modifiers, so it cannot invent lives the deployment
+ * path would not grant.
+ */
+function strongestOwnedHull(
+  ownedHulls: readonly string[],
+  catalogue: readonly HangarEntry[],
+): HullDefinition | null {
+  let best: HullDefinition | null = null;
+  for (const id of ownedHulls) {
+    const hull = ownedHullDefinition(id, catalogue);
+    if (hull === null) continue;
+    if (best === null) {
+      best = hull;
+      continue;
+    }
+    const lives = hull.runStats.startingLives - best.runStats.startingLives;
+    const speed = hull.runStats.speedMultiplier - best.runStats.speedMultiplier;
+    if (lives > 0 || (lives === 0 && speed > 0)) best = hull;
+  }
+  return best;
+}
+
+/**
+ * Resolves the loadout a deployment launches with from the fleet's ownership —
+ * the same resolution the shipped deployment path performs
+ * (`src/scenes/hangarWar/hangarDeployment.ts`), so the harness and the game
+ * agree on what a life, a weapon and a hull actually grant:
+ *
+ * - **hull** — the strongest owned, itemised hull (see {@link
+ *   strongestOwnedHull}); the starter hull when nothing else is itemised.
+ * - **lives** — the hull's `startingLives` plus every owned `extra-lives`
+ *   modifier, capped at `MAX_LIVES` (the run's own cap).
+ * - **speed** — the active hull's `speedMultiplier`, later applied to the
+ *   shared ship config.
+ * - **weapons** — every owned, selected weapon, trimmed by the shipped
+ *   `capDropIdsToSlotPool` six-slot pool, each at one permanent grant (base
+ *   stats).
+ * - **modifiers** — every owned modifier id; only `extra-lives` has a modelled
+ *   run effect (it is already in `lives`).
+ *
+ * @param ownership — the ownership to resolve (read only).
+ * @param catalogue — the unlock tree to resolve against (default shipped).
+ * @returns the loadout, as plain data.
+ */
+export function resolveDeploymentLoadout(
+  ownership: RingLoadoutOwnership,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): RingDeploymentLoadout {
+  const hull = strongestOwnedHull(ownership.hulls, catalogue);
+  let lives = hull?.runStats.startingLives ?? DEFAULT_LIVES;
+  for (const id of ownership.modifiers) {
+    const entry = findHangarEntry(id, catalogue);
+    if (entry !== null && entry.kind === 'modifier' && entry.effect.kind === 'extra-lives') {
+      lives += entry.effect.lives;
+    }
+  }
+  const weapons: RingLoadoutWeapon[] = [];
+  for (const id of capDropIdsToSlotPool(ownership.weapons)) {
+    if (weapons.some((weapon) => weapon.id === id)) continue;
+    weapons.push({ id: id as WeaponId, ownedLevel: 1 });
+  }
+  return {
+    hullId: hull?.id ?? ownership.hulls[0] ?? STARTER_HULL_ID,
+    lives: Math.min(MAX_LIVES, Math.max(1, Math.trunc(lives))),
+    speedMultiplier: hull?.runStats.speedMultiplier ?? 1,
+    weapons,
+    modifiers: [...ownership.modifiers],
+    ownedHulls: [...ownership.hulls],
+  };
+}
+
 /** Minerals collected in one arena run (its earned salvage). */
 function mineralsCollected(records: readonly TelemetryRecord[]): number {
   let minerals = 0;
@@ -512,6 +792,17 @@ export function createArenaDeploymentRunner(options?: {
       // keeps the telemetry small and the harness fast.
       sampleEveryTicks: request.ticks,
       balance: request.balance,
+      // The launch loadout the model resolved (AH-0MW9QA2YC009PSF5): the hull's
+      // lives and speed plus the fleet's equipped weapons, so the run starts
+      // from the state a real deployment starts from.
+      startingLoadout: {
+        lives: request.loadout.lives,
+        speedMultiplier: request.loadout.speedMultiplier,
+        weapons: request.loadout.weapons.map((weapon) => ({
+          id: weapon.id,
+          ownedLevel: weapon.ownedLevel,
+        })),
+      },
       build: { appVersion: 'ring-timing', commit: 'ring-timing' },
     });
     return {
@@ -632,9 +923,17 @@ export function simulateRingTiming(
   const runDeployment =
     options.runDeployment ??
     createArenaDeploymentRunner({ policy: options.policy });
+  // The loadout the line enters the ring with, and the ownership it grows as
+  // its deployments capture hexes (AH-0MW9QA2YC009PSF5).
+  const catalogue = options.catalogue ?? HANGAR_CATALOGUE;
+  const entryOwnership =
+    options.ownership ?? ringEntryOwnership(ringIndex, catalogue);
+  const entryLoadout = resolveDeploymentLoadout(entryOwnership, catalogue);
 
   const runs: RingTimingRun[] = [];
   for (const seed of seeds) {
+    // Every seed is a fresh war: the ring is earned again from the entry state.
+    let ownership = entryOwnership;
     const deployments: RingTimingDeployment[] = [];
     let deploymentMinutes = 0;
     let retryTotal = 0;
@@ -646,6 +945,9 @@ export function simulateRingTiming(
     played.forEach((hex, sortieIndex) => {
       const aggression = hex.baseAggression + aggressionRisePerSortie * sortieIndex;
       const level = hexDifficultyProfile(aggression).level;
+      // Resolved once per deployment (never per tick): the loadout the player
+      // owns at this point in the ring's plan.
+      const loadout = resolveDeploymentLoadout(ownership, catalogue);
       const result = runDeployment({
         seed,
         hexId: hex.id,
@@ -654,6 +956,7 @@ export function simulateRingTiming(
         ticks,
         dt,
         balance,
+        loadout,
       });
       const measuredMinutes = result.seconds / 60;
       const retries = result.captured ? 0 : retriesPerLoss;
@@ -663,6 +966,9 @@ export function simulateRingTiming(
       if (result.captured) {
         captured += 1;
         salvageBanked += result.minerals;
+        // A capture earns the hex's grant for the deployments that follow it;
+        // a loss replays the same hex with the same loadout.
+        ownership = withCapturedGrant(ownership, hex.grants, catalogue);
       } else {
         losses += 1;
         salvageForfeited += result.minerals;
@@ -677,6 +983,7 @@ export function simulateRingTiming(
         hits: result.hits,
         retries,
         minutes,
+        loadout,
       });
     });
 
@@ -731,6 +1038,7 @@ export function simulateRingTiming(
       strategy,
       summary.totalMinutes.mean,
     ),
+    entryLoadout,
   };
 }
 

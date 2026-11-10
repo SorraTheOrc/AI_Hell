@@ -20,76 +20,146 @@
             "minerals": 18,
             "hits": 0,
             "retries": 0,
-            "minutes": 5
+            "minutes": 5,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 250.16666666666666,
+            "seconds": 251.71666666666667,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 4,
             "retries": 1,
-            "minutes": 9.169444444444444
+            "minutes": 9.195277777777779,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 250.16666666666666,
+            "seconds": 251.71666666666667,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 4,
             "retries": 1,
-            "minutes": 9.169444444444444
+            "minutes": 9.195277777777779,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 195.4,
+            "seconds": 209.03333333333333,
             "captured": false,
             "minerals": 17,
-            "hits": 3,
+            "hits": 4,
             "retries": 1,
-            "minutes": 8.256666666666668
+            "minutes": 8.483888888888888,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 69.6,
+            "seconds": 71.46666666666667,
             "captured": false,
             "minerals": 3,
-            "hits": 3,
+            "hits": 4,
             "retries": 1,
-            "minutes": 6.16
+            "minutes": 6.191111111111111,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 39.3,
+            "seconds": 89.25,
             "captured": false,
-            "minerals": 8,
-            "hits": 3,
+            "minerals": 14,
+            "hits": 4,
             "retries": 1,
-            "minutes": 5.655
+            "minutes": 6.4875,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           }
         ],
-        "deploymentMinutes": 18.410555555555558,
+        "deploymentMinutes": 19.55305555555556,
         "betweenSortieMinutes": 12,
         "retryMinutes": 25,
         "retakeMinutes": 0,
-        "totalMinutes": 55.41055555555556,
+        "totalMinutes": 56.55305555555556,
         "captured": 1,
         "losses": 5,
         "expectedRetakes": 0,
         "expectedLosses": 5,
         "exposedHexes": 0,
         "salvageBanked": 18,
-        "salvageForfeited": 64,
+        "salvageForfeited": 70,
         "ringSecured": true
       },
       {
@@ -104,7 +174,17 @@
             "minerals": 18,
             "hits": 0,
             "retries": 0,
-            "minutes": 5
+            "minutes": 5,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-1",
@@ -115,65 +195,129 @@
             "minerals": 18,
             "hits": 1,
             "retries": 0,
-            "minutes": 5
+            "minutes": 5,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 269.6,
+            "captured": false,
             "minerals": 18,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5
+            "hits": 5,
+            "retries": 1,
+            "minutes": 9.493333333333334,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 17,
-            "hits": 2,
-            "retries": 0,
-            "minutes": 5
+            "seconds": 194.86666666666667,
+            "captured": false,
+            "minerals": 14,
+            "hits": 5,
+            "retries": 1,
+            "minutes": 8.247777777777777,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 54.46666666666667,
+            "seconds": 57.53333333333333,
             "captured": false,
-            "minerals": 7,
-            "hits": 3,
+            "minerals": 4,
+            "hits": 5,
             "retries": 1,
-            "minutes": 5.907777777777778
+            "minutes": 5.958888888888889,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 21.316666666666666,
+            "seconds": 16.666666666666668,
             "captured": false,
-            "minerals": 4,
-            "hits": 3,
+            "minerals": 2,
+            "hits": 5,
             "retries": 1,
-            "minutes": 5.355277777777777
+            "minutes": 5.277777777777778,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           }
         ],
-        "deploymentMinutes": 21.263055555555557,
+        "deploymentMinutes": 18.97777777777778,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 10,
+        "retryMinutes": 20,
         "retakeMinutes": 0,
-        "totalMinutes": 43.26305555555555,
-        "captured": 4,
-        "losses": 2,
+        "totalMinutes": 50.97777777777778,
+        "captured": 2,
+        "losses": 4,
         "expectedRetakes": 0,
-        "expectedLosses": 2,
+        "expectedLosses": 4,
         "exposedHexes": 0,
-        "salvageBanked": 71,
-        "salvageForfeited": 11,
+        "salvageBanked": 36,
+        "salvageForfeited": 38,
         "ringSecured": true
       },
       {
@@ -188,115 +332,185 @@
             "minerals": 18,
             "hits": 0,
             "retries": 0,
-            "minutes": 5
+            "minutes": 5,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 266.1333333333333,
+            "seconds": 268.35,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 4,
             "retries": 1,
-            "minutes": 9.435555555555556
+            "minutes": 9.4725,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 266.1333333333333,
+            "seconds": 268.35,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 4,
             "retries": 1,
-            "minutes": 9.435555555555556
+            "minutes": 9.4725,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 120.08333333333333,
+            "seconds": 194.46666666666667,
             "captured": false,
-            "minerals": 8,
-            "hits": 3,
+            "minerals": 12,
+            "hits": 4,
             "retries": 1,
-            "minutes": 7.001388888888888
+            "minutes": 8.241111111111111,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 33.516666666666666,
+            "seconds": 35.516666666666666,
             "captured": false,
             "minerals": 2,
-            "hits": 3,
+            "hits": 4,
             "retries": 1,
-            "minutes": 5.558611111111111
+            "minutes": 5.591944444444445,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           },
           {
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 34.016666666666666,
+            "seconds": 35.56666666666666,
             "captured": false,
             "minerals": 4,
-            "hits": 3,
+            "hits": 4,
             "retries": 1,
-            "minutes": 5.566944444444444
+            "minutes": 5.592777777777778,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 4,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [
+                "hardened_plating"
+              ],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           }
         ],
-        "deploymentMinutes": 16.998055555555556,
+        "deploymentMinutes": 18.37083333333333,
         "betweenSortieMinutes": 12,
         "retryMinutes": 25,
         "retakeMinutes": 0,
-        "totalMinutes": 53.99805555555555,
+        "totalMinutes": 55.37083333333333,
         "captured": 1,
         "losses": 5,
         "expectedRetakes": 0,
         "expectedLosses": 5,
         "exposedHexes": 0,
         "salvageBanked": 18,
-        "salvageForfeited": 50,
+        "salvageForfeited": 54,
         "ringSecured": true
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 50.89055555555556,
-        "min": 43.26305555555555,
-        "max": 55.41055555555556
+        "mean": 54.300555555555555,
+        "min": 50.97777777777778,
+        "max": 56.55305555555556
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 18.890555555555554,
-        "min": 16.998055555555556,
-        "max": 21.263055555555557
+        "mean": 18.967222222222222,
+        "min": 18.37083333333333,
+        "max": 19.55305555555556
       },
       "losses": {
         "count": 3,
-        "mean": 4,
-        "min": 2,
+        "mean": 4.666666666666667,
+        "min": 4,
         "max": 5
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 4,
-        "min": 2,
+        "mean": 4.666666666666667,
+        "min": 4,
         "max": 5
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 35.666666666666664,
+        "mean": 24,
         "min": 18,
-        "max": 71
+        "max": 36
       },
       "captured": {
         "count": 3,
-        "mean": 2,
+        "mean": 1.3333333333333333,
         "min": 1,
-        "max": 4
+        "max": 2
       },
       "ringSecuredRuns": 3
     },
@@ -308,10 +522,20 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 2,
-      "measuredMinutes": 50.89055555555556,
+      "measuredMinutes": 54.300555555555555,
       "withinWindow": true,
       "withinTolerance": true,
       "verdict": "in-window"
+    },
+    "entryLoadout": {
+      "hullId": "hull-1",
+      "lives": 3,
+      "speedMultiplier": 1,
+      "weapons": [],
+      "modifiers": [],
+      "ownedHulls": [
+        "hull-1"
+      ]
     }
   },
   {
@@ -335,7 +559,17 @@
             "minerals": 8,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.655
+            "minutes": 5.655,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           }
         ],
         "deploymentMinutes": 0.6549999999999999,
@@ -364,7 +598,17 @@
             "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.355277777777777
+            "minutes": 5.355277777777777,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           }
         ],
         "deploymentMinutes": 0.35527777777777775,
@@ -393,7 +637,17 @@
             "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.566944444444444
+            "minutes": 5.566944444444444,
+            "loadout": {
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
+              "weapons": [],
+              "modifiers": [],
+              "ownedHulls": [
+                "hull-1"
+              ]
+            }
           }
         ],
         "deploymentMinutes": 0.5669444444444445,
@@ -462,6 +716,16 @@
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"
+    },
+    "entryLoadout": {
+      "hullId": "hull-1",
+      "lives": 3,
+      "speedMultiplier": 1,
+      "weapons": [],
+      "modifiers": [],
+      "ownedHulls": [
+        "hull-1"
+      ]
     }
   },
   {
@@ -480,147 +744,515 @@
             "hexId": "hex-r2-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 250.16666666666666,
-            "captured": false,
+            "seconds": 300,
+            "captured": true,
             "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 9.169444444444444
+            "hits": 0,
+            "retries": 0,
+            "minutes": 5,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-10",
             "aggression": 2,
             "level": 3,
-            "seconds": 250.16666666666666,
+            "seconds": 214.58333333333334,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.169444444444444
+            "minutes": 8.57638888888889,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-2",
             "aggression": 2,
             "level": 3,
-            "seconds": 250.16666666666666,
+            "seconds": 214.58333333333334,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.169444444444444
+            "minutes": 8.57638888888889,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 250.16666666666666,
+            "seconds": 214.58333333333334,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.169444444444444
+            "minutes": 8.57638888888889,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-6",
             "aggression": 2,
             "level": 3,
-            "seconds": 250.16666666666666,
+            "seconds": 214.58333333333334,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.169444444444444
+            "minutes": 8.57638888888889,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-7",
             "aggression": 2,
             "level": 3,
-            "seconds": 250.16666666666666,
+            "seconds": 214.58333333333334,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.169444444444444
+            "minutes": 8.57638888888889,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 97.5,
+            "seconds": 112.68333333333334,
             "captured": false,
-            "minerals": 17,
-            "hits": 3,
+            "minerals": 13,
+            "hits": 5,
             "retries": 1,
-            "minutes": 6.625
+            "minutes": 6.878055555555555,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 97.5,
+            "seconds": 112.68333333333334,
             "captured": false,
-            "minerals": 17,
-            "hits": 3,
+            "minerals": 13,
+            "hits": 5,
             "retries": 1,
-            "minutes": 6.625
+            "minutes": 6.878055555555555,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 97.5,
+            "seconds": 112.68333333333334,
             "captured": false,
-            "minerals": 17,
-            "hits": 3,
+            "minerals": 13,
+            "hits": 5,
             "retries": 1,
-            "minutes": 6.625
+            "minutes": 6.878055555555555,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 97.5,
+            "seconds": 112.68333333333334,
             "captured": false,
-            "minerals": 17,
-            "hits": 3,
+            "minerals": 13,
+            "hits": 5,
             "retries": 1,
-            "minutes": 6.625
+            "minutes": 6.878055555555555,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 39.3,
+            "seconds": 21.5,
             "captured": false,
-            "minerals": 8,
-            "hits": 3,
+            "minerals": 4,
+            "hits": 5,
             "retries": 1,
-            "minutes": 5.655
+            "minutes": 5.358333333333333,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 276.21666666666664,
+            "seconds": 206.54999999999998,
             "captured": false,
             "minerals": 14,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.60361111111111
+            "minutes": 8.442499999999999,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           }
         ],
-        "deploymentMinutes": 36.775277777777774,
+        "deploymentMinutes": 34.195,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 60,
+        "retryMinutes": 55,
         "retakeMinutes": 0,
-        "totalMinutes": 120.77527777777777,
-        "captured": 0,
-        "losses": 12,
+        "totalMinutes": 113.195,
+        "captured": 1,
+        "losses": 11,
         "expectedRetakes": 0,
-        "expectedLosses": 12,
+        "expectedLosses": 11,
         "exposedHexes": 0,
-        "salvageBanked": 0,
-        "salvageForfeited": 198,
+        "salvageBanked": 18,
+        "salvageForfeited": 160,
         "ringSecured": true
       },
       {
@@ -633,119 +1265,456 @@
             "seconds": 300,
             "captured": true,
             "minerals": 18,
-            "hits": 1,
+            "hits": 0,
             "retries": 0,
-            "minutes": 5
+            "minutes": 5,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-10",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 221.54999999999998,
+            "captured": false,
             "minerals": 18,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5
+            "hits": 5,
+            "retries": 1,
+            "minutes": 8.692499999999999,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-2",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 221.54999999999998,
+            "captured": false,
             "minerals": 18,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5
+            "hits": 5,
+            "retries": 1,
+            "minutes": 8.692499999999999,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 221.54999999999998,
+            "captured": false,
             "minerals": 18,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5
+            "hits": 5,
+            "retries": 1,
+            "minutes": 8.692499999999999,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-6",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 221.54999999999998,
+            "captured": false,
             "minerals": 18,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5
+            "hits": 5,
+            "retries": 1,
+            "minutes": 8.692499999999999,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-7",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 221.54999999999998,
+            "captured": false,
             "minerals": 18,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5
+            "hits": 5,
+            "retries": 1,
+            "minutes": 8.692499999999999,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 168.06666666666666,
+            "seconds": 149.3,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 7.801111111111111
+            "minutes": 7.488333333333333,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 168.06666666666666,
+            "seconds": 149.3,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 7.801111111111111
+            "minutes": 7.488333333333333,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 168.06666666666666,
+            "seconds": 149.3,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 7.801111111111111
+            "minutes": 7.488333333333333,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 168.06666666666666,
+            "seconds": 149.3,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 7.801111111111111
+            "minutes": 7.488333333333333,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 21.316666666666666,
+            "seconds": 16.65,
             "captured": false,
-            "minerals": 4,
-            "hits": 3,
+            "minerals": 2,
+            "hits": 5,
             "retries": 1,
-            "minutes": 5.355277777777777
+            "minutes": 5.2775,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-12",
@@ -753,24 +1722,55 @@
             "level": 9,
             "seconds": 300,
             "captured": true,
-            "minerals": 14,
+            "minerals": 13,
             "hits": 1,
             "retries": 0,
-            "minutes": 5
+            "minutes": 5,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "arc",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           }
         ],
-        "deploymentMinutes": 46.55972222222223,
+        "deploymentMinutes": 38.693333333333335,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 25,
+        "retryMinutes": 50,
         "retakeMinutes": 0,
-        "totalMinutes": 95.55972222222223,
-        "captured": 7,
-        "losses": 5,
+        "totalMinutes": 112.69333333333333,
+        "captured": 2,
+        "losses": 10,
         "expectedRetakes": 0,
-        "expectedLosses": 5,
+        "expectedLosses": 10,
         "exposedHexes": 0,
-        "salvageBanked": 122,
-        "salvageForfeited": 76,
+        "salvageBanked": 31,
+        "salvageForfeited": 164,
         "ringSecured": true
       },
       {
@@ -780,122 +1780,419 @@
             "hexId": "hex-r2-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 266.1333333333333,
+            "seconds": 215.54999999999998,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.435555555555556
+            "minutes": 8.5925,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-10",
             "aggression": 2,
             "level": 3,
-            "seconds": 266.1333333333333,
+            "seconds": 215.54999999999998,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.435555555555556
+            "minutes": 8.5925,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-2",
             "aggression": 2,
             "level": 3,
-            "seconds": 266.1333333333333,
+            "seconds": 215.54999999999998,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.435555555555556
+            "minutes": 8.5925,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 266.1333333333333,
+            "seconds": 215.54999999999998,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.435555555555556
+            "minutes": 8.5925,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-6",
             "aggression": 2,
             "level": 3,
-            "seconds": 266.1333333333333,
+            "seconds": 215.54999999999998,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.435555555555556
+            "minutes": 8.5925,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-7",
             "aggression": 2,
             "level": 3,
-            "seconds": 266.1333333333333,
+            "seconds": 215.54999999999998,
             "captured": false,
             "minerals": 18,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.435555555555556
+            "minutes": 8.5925,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 124.36666666666666,
+            "seconds": 236.6,
             "captured": false,
-            "minerals": 16,
-            "hits": 3,
+            "minerals": 18,
+            "hits": 5,
             "retries": 1,
-            "minutes": 7.072777777777778
+            "minutes": 8.943333333333333,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 124.36666666666666,
+            "seconds": 236.6,
             "captured": false,
-            "minerals": 16,
-            "hits": 3,
+            "minerals": 18,
+            "hits": 5,
             "retries": 1,
-            "minutes": 7.072777777777778
+            "minutes": 8.943333333333333,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 124.36666666666666,
+            "seconds": 236.6,
             "captured": false,
-            "minerals": 16,
-            "hits": 3,
+            "minerals": 18,
+            "hits": 5,
             "retries": 1,
-            "minutes": 7.072777777777778
+            "minutes": 8.943333333333333,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 124.36666666666666,
+            "seconds": 236.6,
             "captured": false,
-            "minerals": 16,
-            "hits": 3,
+            "minerals": 18,
+            "hits": 5,
             "retries": 1,
-            "minutes": 7.072777777777778
+            "minutes": 8.943333333333333,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 34.016666666666666,
+            "seconds": 125.51666666666667,
             "captured": false,
-            "minerals": 4,
-            "hits": 3,
+            "minerals": 16,
+            "hits": 5,
             "retries": 1,
-            "minutes": 5.566944444444444
+            "minutes": 7.091944444444445,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           },
           {
             "hexId": "hex-r2-12",
@@ -904,62 +2201,89 @@
             "seconds": 300,
             "captured": true,
             "minerals": 18,
-            "hits": 2,
+            "hits": 4,
             "retries": 0,
-            "minutes": 5
+            "minutes": 5,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           }
         ],
-        "deploymentMinutes": 40.47138888888889,
+        "deploymentMinutes": 44.420277777777784,
         "betweenSortieMinutes": 24,
         "retryMinutes": 55,
         "retakeMinutes": 0,
-        "totalMinutes": 119.4713888888889,
+        "totalMinutes": 123.42027777777778,
         "captured": 1,
         "losses": 11,
         "expectedRetakes": 0,
         "expectedLosses": 11,
         "exposedHexes": 0,
         "salvageBanked": 18,
-        "salvageForfeited": 176,
+        "salvageForfeited": 196,
         "ringSecured": true
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 111.93546296296297,
-        "min": 95.55972222222223,
-        "max": 120.77527777777777
+        "mean": 116.4362037037037,
+        "min": 112.69333333333333,
+        "max": 123.42027777777778
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 41.2687962962963,
-        "min": 36.775277777777774,
-        "max": 46.55972222222223
+        "mean": 39.102870370370375,
+        "min": 34.195,
+        "max": 44.420277777777784
       },
       "losses": {
         "count": 3,
-        "mean": 9.333333333333334,
-        "min": 5,
-        "max": 12
+        "mean": 10.666666666666666,
+        "min": 10,
+        "max": 11
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 9.333333333333334,
-        "min": 5,
-        "max": 12
+        "mean": 10.666666666666666,
+        "min": 10,
+        "max": 11
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 46.666666666666664,
-        "min": 0,
-        "max": 122
+        "mean": 22.333333333333332,
+        "min": 18,
+        "max": 31
       },
       "captured": {
         "count": 3,
-        "mean": 2.6666666666666665,
-        "min": 0,
-        "max": 7
+        "mean": 1.3333333333333333,
+        "min": 1,
+        "max": 2
       },
       "ringSecuredRuns": 3
     },
@@ -971,10 +2295,37 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 3,
-      "measuredMinutes": 111.93546296296297,
+      "measuredMinutes": 116.4362037037037,
       "withinWindow": true,
       "withinTolerance": true,
       "verdict": "in-window"
+    },
+    "entryLoadout": {
+      "hullId": "hull-2",
+      "lives": 5,
+      "speedMultiplier": 0.85,
+      "weapons": [
+        {
+          "id": "ricochet",
+          "ownedLevel": 1
+        },
+        {
+          "id": "rapid",
+          "ownedLevel": 1
+        },
+        {
+          "id": "wave_laser",
+          "ownedLevel": 1
+        }
+      ],
+      "modifiers": [
+        "hardened_plating",
+        "core-bank"
+      ],
+      "ownedHulls": [
+        "hull-1",
+        "hull-2"
+      ]
     }
   },
   {
@@ -993,19 +2344,46 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 276.21666666666664,
+            "seconds": 149.66666666666666,
             "captured": false,
             "minerals": 14,
-            "hits": 3,
+            "hits": 5,
             "retries": 1,
-            "minutes": 9.60361111111111
+            "minutes": 7.4944444444444445,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           }
         ],
-        "deploymentMinutes": 4.60361111111111,
+        "deploymentMinutes": 2.4944444444444445,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 65.5036111111111,
+        "totalMinutes": 63.39444444444443,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
@@ -1022,26 +2400,53 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 14,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5
+            "seconds": 164.51666666666665,
+            "captured": false,
+            "minerals": 13,
+            "hits": 5,
+            "retries": 1,
+            "minutes": 7.741944444444444,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           }
         ],
-        "deploymentMinutes": 5,
+        "deploymentMinutes": 2.741944444444444,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 0,
+        "retryMinutes": 5,
         "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 60.89999999999999,
-        "captured": 1,
-        "losses": 0,
+        "totalMinutes": 63.641944444444434,
+        "captured": 0,
+        "losses": 1,
         "expectedRetakes": 7.699999999999999,
-        "expectedLosses": 7.699999999999999,
+        "expectedLosses": 8.7,
         "exposedHexes": 11,
-        "salvageBanked": 14,
-        "salvageForfeited": 0,
+        "salvageBanked": 0,
+        "salvageForfeited": 13,
         "ringSecured": false
       },
       {
@@ -1054,9 +2459,36 @@
             "seconds": 300,
             "captured": true,
             "minerals": 18,
-            "hits": 2,
+            "hits": 4,
             "retries": 0,
-            "minutes": 5
+            "minutes": 5,
+            "loadout": {
+              "hullId": "hull-2",
+              "lives": 5,
+              "speedMultiplier": 0.85,
+              "weapons": [
+                {
+                  "id": "ricochet",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "rapid",
+                  "ownedLevel": 1
+                },
+                {
+                  "id": "wave_laser",
+                  "ownedLevel": 1
+                }
+              ],
+              "modifiers": [
+                "hardened_plating",
+                "core-bank"
+              ],
+              "ownedHulls": [
+                "hull-1",
+                "hull-2"
+              ]
+            }
           }
         ],
         "deploymentMinutes": 5,
@@ -1077,37 +2509,37 @@
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 62.434537037037025,
+        "mean": 62.64546296296296,
         "min": 60.89999999999999,
-        "max": 65.5036111111111
+        "max": 63.641944444444434
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 4.86787037037037,
-        "min": 4.60361111111111,
+        "mean": 3.41212962962963,
+        "min": 2.4944444444444445,
         "max": 5
       },
       "losses": {
         "count": 3,
-        "mean": 0.3333333333333333,
+        "mean": 0.6666666666666666,
         "min": 0,
         "max": 1
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 8.033333333333333,
+        "mean": 8.366666666666665,
         "min": 7.699999999999999,
         "max": 8.7
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 10.666666666666666,
+        "mean": 6,
         "min": 0,
         "max": 18
       },
       "captured": {
         "count": 3,
-        "mean": 0.6666666666666666,
+        "mean": 0.3333333333333333,
         "min": 0,
         "max": 1
       },
@@ -1121,10 +2553,37 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 3,
-      "measuredMinutes": 62.434537037037025,
+      "measuredMinutes": 62.64546296296296,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"
+    },
+    "entryLoadout": {
+      "hullId": "hull-2",
+      "lives": 5,
+      "speedMultiplier": 0.85,
+      "weapons": [
+        {
+          "id": "ricochet",
+          "ownedLevel": 1
+        },
+        {
+          "id": "rapid",
+          "ownedLevel": 1
+        },
+        {
+          "id": "wave_laser",
+          "ownedLevel": 1
+        }
+      ],
+      "modifiers": [
+        "hardened_plating",
+        "core-bank"
+      ],
+      "ownedHulls": [
+        "hull-1",
+        "hull-2"
+      ]
     }
   }
 ]

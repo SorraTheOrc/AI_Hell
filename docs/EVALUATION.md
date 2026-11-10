@@ -361,6 +361,38 @@ deployment window). The aggression → level mapping is the shipped
 `hexDifficultyProfile`; the campaign and difficulty come from the shipped
 builders and `difficulty-curves.csv`. Nothing in the measurement is invented.
 
+### What a deployment launches with
+
+A deployment does not start from the campaign's bare state: the hangar resolves
+a **loadout** first (`src/scenes/hangarWar/hangarDeployment.ts`). The harness
+models it (AH-0MW9QA2YC009PSF5) from the shipped data — `HANGAR_CATALOGUE`,
+`resolveHexGrant` and `src/data/hexRingDefinitions.ts` — never from a hardcoded
+item list:
+
+- **Entering ring 1** — hull `hull-1` and no equipped weapon. The starter
+  `spread` is owned but never auto-equipped, so the first deployment flies the
+  bare cannon (`AH-0MVZJ6V1J001DA9D`).
+- **Within a ring** — the plan's play order (weakest aggression first) is the
+  earning order: a **captured** hex's grant is owned from the next deployment
+  onwards, so later deployments of the same ring launch with it. A **lost**
+  deployment grants nothing — the retry replays the same hex with the same
+  loadout.
+- **Entering ring 2** — ring 1's six grants: the `ricochet`, `rapid` and
+  `wave_laser` weapons, the `hull-2` hull, `hardened_plating` and the
+  effect-free `core-bank` upgrade.
+- **Equip convention (deterministic)** — every owned weapon is equipped,
+  trimmed by the shared six-slot cap (`capDropIdsToSlotPool`); the strongest
+  owned hull is active (`hull-2`: 4 lives, 0.85 speed, scaled through the
+  shared `scaleShipConfigForHull` helper a shipped deployment uses); every owned
+  `extra-lives` modifier applies, capped at the run's 5 lives. A grant the
+  catalogue does not itemise yet (`hull-3`) is owned but contributes no run
+  stats — the same "recorded but effect-free" rule the capture cycle uses.
+
+The loadout changes the run's **starting** state only: the aggression model, the
+deployment window and every retry/exposure allowance below are unchanged, and
+the model is an explicit input (`RingTimingOptions.ownership`), so a caller can
+state a different earned state without editing authored data.
+
 ### What is modelled (and why)
 
 Around the measured deployments the harness models what the arena cannot see,
@@ -389,33 +421,41 @@ Committed evidence:
 
 | Ring | Line | Measured runs | Total (mean, min–max) | Losses | Expected losses | Budget |
 |---|---|---|---|---|---|---|
-| 1 (6 hexes) | grind | 18.9 min | **50.9 min** (43.3–55.4) | 4.0 | 4.0 | 40–60 min · **in-window** |
-| 1 (6 hexes) | rush | 0.5 min | **32.0 min** (31.9–32.2) | 1.0 | 3.5 | not applicable (ring not secured) |
-| 2 (12 hexes) | grind | 41.3 min | **111.9 min** (95.6–120.8) | 9.3 | 9.3 | 90–120 min · **in-window** |
-| 2 (12 hexes) | rush | 4.9 min | **62.4 min** (60.9–65.5) | 0.3 | 7.7 | not applicable (ring not secured) |
+| 1 (6 hexes) | grind | 19.0 min | **54.3 min** (51.0–56.6) | 4.7 | 4.7 | 40–60 min · **in-window** |
+| 1 (6 hexes) | rush | 0.5 min | **32.0 min** (31.9–32.2) | 1.0 | 4.5 | not applicable (ring not secured) |
+| 2 (12 hexes) | grind | 39.1 min | **116.4 min** (112.7–123.4) | 10.7 | 10.7 | 90–120 min · **in-window** |
+| 2 (12 hexes) | rush | 3.4 min | **62.7 min** (60.9–63.6) | 0.7 | 8.4 | not applicable (ring not secured) |
 
 Reading the baseline:
 
-- **The budgets land.** The one-ring MVP measures **50.9 min** inside 40–60, and
-ring 2 **111.9 min** inside 90–120; the budget assertion states a **10 %
+- **The budgets land.** The one-ring MVP measures **54.3 min** inside 40–60, and
+ring 2 **116.4 min** inside 90–120; the budget assertion states a **10 %
 tolerance** (±2 min for ring 1, ±3 min for ring 2).
-- **The playstyle trade is real.** The rush line is **faster** (32.0 vs 50.9 min
+- **The playstyle trade is real.** The rush line is **faster** (32.0 vs 54.3 min
 for ring 1) but **riskier** — it leaves five hexes exposed (≈3.5 expected
 retakes), forfeits the salvage of its failed attempts and does not secure the
 ring, while the grind secures it. Neither line dominates.
 - **Ring 2 still pays a large retry bill.** Its authored aggression spread
 (`2,2,5,2,5,2,2,5,6,2,5,8`) puts six hexes in the campaign level 3 band, so
-ring 2 now banks salvage (≈47 minerals) and captures **2.7 of 12** first
-attempts instead of none — but **60 of its 111.9 min (≈54 %) is still the
-modelled retry allowance**, against a design claim of ≈60 min of deployments
-plus 10–40 min of builds and losses. The reason is recorded in
-`docs/BALANCING.md` § *Fidelity boundary* and bisected in
-`AH-0MWAPWS1W007LGGY`: the arena's kill-driven campaign slice now reaches the
-first enemy-fire level *inside* the deployment window at level 3, so level 3
-is a near-window loss (~250 s on 2 of 3 seeds) rather than a capture. The
-window was recalibrated from 70–100 to 90–120 when the wrap-aware bot
-(AH-0MVMISF0Q00314LG) began surviving ~2–3 minutes per lost deployment instead
-of dying in under a minute; the retuned evidence lands inside it.
+ring 2 banks salvage (≈22 minerals) and captures **1.3 of 12** first attempts —
+but **55 of its 116.4 min (≈47 %) is still the modelled retry allowance**,
+against a design claim of ≈60 min of deployments plus 10–40 min of builds and
+losses.
+- **The loadout model did not shorten the ring.** Measuring with the loadout a
+  ring-2 player actually launches (5 lives, `hull-2`'s 0.85 speed, the
+  `ricochet` / `rapid` / `wave_laser` weapons) moved the totals **up**
+  (ring 1 50.9 → 54.3 min, ring 2 111.9 → 116.4 min) rather than down: the
+  extra lives survive longer, while the extra firepower raises the arena's
+  damage output, and the campaign slice levels **by kills**, so more first
+  attempts reach the first enemy-fire level inside the fixed window. That
+  DPS-coupled levelling is recorded in `docs/BALANCING.md` § *Fidelity boundary*
+  and bisected in `AH-0MWAPWS1W007LGGY`; with the bare cannon campaign levels 1–2
+  captured the full window and level 3 usually did not, and with the modelled
+  loadout level 3 captures on two of three seeds and still dies to enemy fire on
+  the third (`src/ai/eval/ringTiming.test.ts` pins the boundary). The window was
+  recalibrated from 70–100 to 90–120 when the wrap-aware bot
+  (AH-0MVMISF0Q00314LG) began surviving ~2–3 minutes per lost deployment instead
+  of dying in under a minute; the loadout-model evidence lands inside it.
 
 ### Confidence and fidelity boundary
 
@@ -435,6 +475,11 @@ of dying in under a minute; the retuned evidence lands inside it.
   the measurement, and the build/retry allowances are explicit model
   parameters, not observations. A recorded human playtest remains desirable and
   is not a gate for the recorded target.
+- **The launch loadout is a stated assumption, not data.** Which weapons a
+  player equips and which hull they fly is a choice; the harness states one
+  deterministic convention (earn in plan order, equip every owned weapon,
+  strongest owned hull) and pins it per ring, so a reader can see which
+  assumption a budget verdict rests on (AH-0MW9QA2YC009PSF5).
 - **Aggression growth.** Each ring is measured from its **authored base
   aggressions** — the numbers the map publishes and the design's budget
   arithmetic uses. The frontier's between-sortie rise is a separate risk

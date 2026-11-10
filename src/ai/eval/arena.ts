@@ -218,6 +218,7 @@ import {
 import { PLAYER_BULLET_RADIUS, PLAYER_BULLET_SPEED } from '../../core/constants';
 import { AsteroidsModel } from '../../utils/movementModel';
 import { wrapAxis, wrappedAxisDelta } from '../../utils/wrapGeometry';
+import { scaleShipConfigForHull } from '../../core/hangarWar/hullSpeed';
 import type {
   AsteroidsConfig,
   AsteroidsInput,
@@ -693,8 +694,19 @@ function buildLevelWavePlan(
   });
 }
 
-/** Builds a fresh world: the player starts centred, facing right. */
-function createWorld(width: number, height: number, hold: MineralHold): ArenaWorld {
+/**
+ * Builds a fresh world: the player starts centred, facing right.
+ *
+ * `startingLives` is the launch loadout's life count (a hull's run stat plus
+ * its `extra-lives` modifiers, AH-0MW9QA2YC009PSF5); omitted it keeps the
+ * arena's own {@link PLAYER_START_LIVES}.
+ */
+function createWorld(
+  width: number,
+  height: number,
+  hold: MineralHold,
+  startingLives: number = PLAYER_START_LIVES,
+): ArenaWorld {
   return {
     player: {
       x: width / 2,
@@ -704,7 +716,7 @@ function createWorld(width: number, height: number, hold: MineralHold): ArenaWor
       facing: 0,
       angularVelocity: 0,
     },
-    lives: PLAYER_START_LIVES,
+    lives: startingLives,
     invulnerableTicks: 0,
     minerals: [],
     drops: [],
@@ -965,7 +977,27 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const enemyByKey = enemiesByKey(balance.enemies);
   const archetypes = arenaArchetypes(balance.enemies);
   const hostileWaves = openingHostileWaves(balance.difficultyCurves);
-  const shipAsteroids = shipToAsteroidsConfig(balance.ship);
+  // The launch loadout (AH-0MW9QA2YC009PSF5): a hangar deployment does not
+  // start from the arena's bare defaults, so the hull's speed multiplier scales
+  // the ship config through the **same** helper a shipped deployment uses
+  // (`scaleShipConfigForHull`), and the resolved life count seeds the world.
+  const startingLoadout = config.startingLoadout;
+  const hullSpeedMultiplier =
+    typeof startingLoadout?.speedMultiplier === 'number' &&
+    Number.isFinite(startingLoadout.speedMultiplier)
+      ? startingLoadout.speedMultiplier
+      : 1;
+  const startingLives = Math.max(
+    1,
+    Math.trunc(
+      Number.isFinite(startingLoadout?.lives)
+        ? (startingLoadout?.lives as number)
+        : PLAYER_START_LIVES,
+    ),
+  );
+  const shipAsteroids = shipToAsteroidsConfig(
+    scaleShipConfigForHull(balance.ship, hullSpeedMultiplier),
+  );
 
   // Per-level campaign mode (AH-0MVLJFB1I0099X4Z): an explicit `level` swaps
   // the single-level spawn reservoir for the **real campaign waves** of that
@@ -1038,6 +1070,16 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   // so a hold-full grant advances the same run-scoped level stores the game
   // uses and later offers carry accurate ownership context (AC3).
   const holdChoice = new HeadlessChoicePlayer();
+  // The launch loadout's weapon ownership seeds the run's ownership context, so
+  // the same resolvers that fire in-run grants also fire what the fleet brought
+  // (`resolveWeaponLoadout`, below). One `ownedLevel` = that many permanent
+  // grants, exactly like `Player.equipWeapon(id, true)` called repeatedly.
+  for (const weapon of startingLoadout?.weapons ?? []) {
+    const grants = Math.max(1, Math.trunc(weapon.ownedLevel));
+    for (let grant = 0; grant < grants; grant += 1) {
+      holdChoice.equipWeapon(weapon.id, true);
+    }
+  }
   const effects = new EffectsRegistry(holdChoice.powerUpStore);
   effects.setRng(choiceRng);
   let mineralsCollected = 0;
@@ -1079,7 +1121,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const reset = (policy as { reset?: () => void }).reset;
   if (typeof reset === 'function') reset.call(policy);
 
-  const world = createWorld(width, height, hold);
+  const world = createWorld(width, height, hold, startingLives);
   const records: TelemetryRecord[] = [
     {
       kind: 'run_header',

@@ -34,6 +34,7 @@
 
 import { DEFAULT_LIVES, MAX_LIVES, MAX_LEVEL, MIN_LEVEL } from '../../core/GameState';
 import type { ShipConfig } from '../../core/configTypes';
+import { scaleShipConfigForHull } from '../../core/hangarWar/hullSpeed';
 import { parseHangarWarPayload } from '../../core/hangarWar/hangarWarStore';
 import {
   findHangarEntry,
@@ -355,6 +356,10 @@ export interface HangarWarDeploymentSeams {
  * every frame from the effects registry), so a slower hull stays slower with
  * and without a Speed Boost instead of having its hull stat overwritten.
  *
+ * The arithmetic itself is the shared {@link scaleShipConfigForHull} helper, so
+ * the headless ring-timing harness applies a hull exactly as a shipped
+ * deployment does (AH-0MW9QA2YC009PSF5).
+ *
  * @param config — the shipped/selected ship config (never mutated).
  * @param deployment — the deployment supplying the hull multiplier.
  * @returns a fresh config with thrust and speed caps scaled.
@@ -363,18 +368,7 @@ export function applyHullSpeedToShipConfig(
   config: ShipConfig,
   deployment: HangarWarDeployment,
 ): ShipConfig {
-  const multiplier = deployment.speedMultiplier;
-  if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier === 1) {
-    return { ...config };
-  }
-  return {
-    ...config,
-    thrustAcceleration: config.thrustAcceleration * multiplier,
-    maxSpeed: config.maxSpeed * multiplier,
-    asteroidsReverseThrustAcceleration:
-      config.asteroidsReverseThrustAcceleration * multiplier,
-    asteroidsReverseMaxSpeed: config.asteroidsReverseMaxSpeed * multiplier,
-  };
+  return scaleShipConfigForHull(config, deployment.speedMultiplier);
 }
 
 /**

@@ -20,6 +20,7 @@ import type { BotHumanInputTunables } from '../botHumanLike';
 import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
 import type { DropId } from '../../powerups/types';
 import type { LevelDefinition } from '../../waves/Formations';
+import type { WeaponId } from '../../utils/weapons';
 
 /** Telemetry schema version the arena emits (matches `src/telemetry/schema`). */
 export const EVAL_TELEMETRY_SCHEMA_VERSION = 1;
@@ -171,6 +172,42 @@ export interface ArenaHoldOptions {
 }
 
 /**
+ * The starting loadout a run launches with (AH-0MW9QA2YC009PSF5).
+ *
+ * A shipped hangar deployment does not launch from the campaign-default run
+ * state: it resolves a **loadout** first (`src/scenes/hangarWar/hangarDeployment.ts`)
+ * — the active hull's run stats (starting lives, movement speed), the starting
+ * weapons the fleet has selected, and the permanent modifiers whose effect the
+ * deployment path models. This seam exposes exactly those three inputs to the
+ * headless arena, so a harness can measure a run with the loadout a player
+ * brings instead of always measuring the bare cannon.
+ *
+ * Every field is optional; omitting the whole object keeps the arena's
+ * historic bare-cannon / three-lives / unscaled-ship behaviour byte-identical.
+ */
+export interface ArenaStartingLoadout {
+  /** Lives the run starts with (default the arena's own 3). */
+  readonly lives?: number;
+  /**
+   * Starting weapon ownership, in fire order after the always-active cannon.
+   * `ownedLevel` mirrors the game's permanent-grant count
+   * (`Player.equipWeapon(id, true)`): `1` fires the weapon at its base stats,
+   * each further grant raises its upgrade index by one.
+   */
+  readonly weapons?: ReadonlyArray<{
+    readonly id: WeaponId;
+    readonly ownedLevel: number;
+  }>;
+  /**
+   * Hull movement-speed multiplier applied to the resolved ship config before
+   * the run starts (default `1`). Consumed through the shared
+   * `scaleShipConfigForHull` helper, so a hull flies the same here as in a
+   * shipped deployment.
+   */
+  readonly speedMultiplier?: number;
+}
+
+/**
  * Config an evaluation harness can "play" a seeded arena run with
  * (AH-0MUY08XLD009K4W4). Every field is optional except the seed and the tick
  * budget, so a minimal consumer is `{ seed, ticks }`.
@@ -267,6 +304,13 @@ export interface ArenaConfig {
    * boot), so every arena path is config-driven (AH-0MV81YPBG0028WNM).
    */
   readonly balance?: ArenaBalanceConfig;
+  /**
+   * The starting loadout the run launches with — lives, weapon ownership and
+   * the hull's speed multiplier (AH-0MW9QA2YC009PSF5). Omitted → the historic
+   * arena default: three lives, the always-active cannon only, the shipped
+   * ship tuning unchanged.
+   */
+  readonly startingLoadout?: ArenaStartingLoadout;
   /** Hold tunables forwarded to each arena run (see {@link ArenaHoldOptions}). */
   readonly hold?: ArenaHoldOptions;
   /**

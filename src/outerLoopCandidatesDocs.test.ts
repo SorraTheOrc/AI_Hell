@@ -557,12 +557,12 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
   it('records the measured ring timings and their tolerance', () => {
     const spec = gddRingSpec();
     // Ring 1 grind mean and ring 2 grind mean, measured with the arena and
-    // requoted from the regenerated artifact (AH-0MWAPWS1W007LGGY).
-    expect(spec).toMatch(/50\.9/);
-    expect(spec).toMatch(/111\.9/);
+    // requoted from the regenerated artifact (AH-0MW9QA2YC009PSF5).
+    expect(spec).toMatch(/54\.3/);
+    expect(spec).toMatch(/116\.4/);
     // The rush line is faster: ring 1 and ring 2.
     expect(spec).toMatch(/32\.0/);
-    expect(spec).toMatch(/62\.4/);
+    expect(spec).toMatch(/62\.7/);
     // Budget windows and the stated tolerance.
     expect(spec).toMatch(/40\s*[–—-]\s*60/);
     expect(spec).toMatch(/90\s*[–—-]\s*120/);
