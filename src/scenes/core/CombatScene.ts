@@ -436,7 +436,9 @@ export abstract class CombatScene<
    * collisions in the game and in `GymBoss` (AH-0MUII3E5E006A93F, AC1).
    *
    * Boss bullets are appended to the scene's enemy-bullet list; pulse waves
-   * are managed by the Boss itself. A scene with no boss is a no-op.
+   * are managed by the Boss itself and advanced exactly once per frame inside
+   * `Boss.update` (never also here — AH-0MW9MN4ZO009GFKW). A scene with no
+   * boss is a no-op.
    */
   protected _advanceBoss(dt: number): void {
     const boss = this.getBoss();
