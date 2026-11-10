@@ -39,6 +39,7 @@ import {
   runRecordingWaitLoop,
 } from './record-session.mjs';
 import { parseTelemetryJsonl } from './inspect-telemetry.mjs';
+import { captureStartPlan, START_KEY_GAP_MS } from './capture-gameplay.mjs';
 
 /* ------------------------------------------------------------------ */
 /*  Fixture helpers                                                    */
@@ -780,5 +781,29 @@ describe('runRecordingWaitLoop onTick hook (AH-0MVWIDN5G006IZ58)', () => {
     });
 
     expect(reason).toBe('target_closed');
+  });
+});
+
+/**
+ * Bot-start plan pinning (AH-0MW9NN2EW001744H).
+ *
+ * record-session.mjs reuses captureStartPlan('demo') so --bot presses
+ * Tab → Tab → Enter with inter-key gaps, not Tab → Enter (which lands on
+ * Hangar War).  This test asserts the shared plan is exactly what the bot
+ * path will dispatch.
+ */
+describe('demo bot start plan', () => {
+  it('pins captureStartPlan("demo") to Tab, Tab, Enter with START_KEY_GAP_MS between keys', () => {
+    const plan = captureStartPlan('demo');
+
+    expect(plan).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
+  });
+
+  it('START_KEY_GAP_MS is positive so the plan introduces inter-key delays', () => {
+    expect(START_KEY_GAP_MS).toBeGreaterThan(0);
   });
 });

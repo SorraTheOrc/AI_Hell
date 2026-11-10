@@ -39,6 +39,7 @@ import { createServer } from 'vite';
 
 import {
   CaptureSetupError,
+  captureStartPlan,
   createReporter,
   installBotTuningConfig,
   installRunEndedListener,
@@ -46,6 +47,7 @@ import {
   readDevTelemetryBufferInChunks,
   readDevTelemetryChunk,
   readRunEndedSignal,
+  START_KEY_GAP_MS,
   TELEMETRY_READ_CHUNK_CHARS,
   uniquifyOutputPath,
 } from './capture-gameplay.mjs';
@@ -68,8 +70,7 @@ export const DEFAULT_RECORD_POLL_MS = 250;
  */
 export const DEFAULT_CHECKPOINT_MS = 15_000;
 
-/** Interval (ms) between the demo's Tab and Enter, matching the capture tool. */
-const START_KEY_GAP_MS = 250;
+
 
 /**
  * The single actionable line printed when an interrupted run captured nothing
@@ -753,9 +754,16 @@ async function main(argv) {
 
     if (options.bot) {
       reporter.step('Starting in-game demo (bot)…');
-      await page.keyboard.press('Tab');
-      await page.waitForTimeout(START_KEY_GAP_MS);
-      await page.keyboard.press('Enter');
+      // Reuse the shared start plan (AH-0MW9NN2EW001744H) so --bot records the
+      // demo, not the Hangar War screen.  Menu focus order is Play Game →
+      // Hangar War → Watch Demo → Settings, so two Tabs land on Watch Demo
+      // before Enter activates it.
+      for (const step of captureStartPlan('demo')) {
+        await page.keyboard.press(step.key);
+        if (step.delayAfterMs > 0) {
+          await page.waitForTimeout(step.delayAfterMs);
+        }
+      }
     } else {
       reporter.step('Starting Play Game (Enter)…');
       await page.keyboard.press('Enter');
