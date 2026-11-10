@@ -39,6 +39,7 @@ import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { advanceAndCull } from '../../entities/PlayerBullet';
 import {
   Boss,
+  BossBullet,
   BOSS_HIT_POINTS_PER_PHASE,
   BOSS_MOVE_AMPLITUDE_X,
   BOSS_MOVE_AMPLITUDE_Y,
@@ -2044,6 +2045,83 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
         (GymBoss.prototype as unknown as Record<string, unknown>)[method],
       ).toBe(core[method]);
     }
+  });
+
+  it('pulse wave expands at documented speed through _advanceBoss (AH-0MW9MN4ZO009GFKW)', async () => {
+    // Regression: before the fix, _advanceBoss called boss.advancePulseWave
+    // *after* boss.update() which already advanced the wave, causing a
+    // double-advance (~600 px/s instead of 300 px/s).  This test fires a
+    // pulse wave in PlayScene and GymBoss, then advances the shared tick
+    // for several frames and verifies the radius grows by exactly
+    // _pulseWaveSpeed * dt per frame (300 px/s).
+
+    // Deterministic static campaign.
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'pulse-wave-speed-play-host',
+    );
+    const gym = await bootScene([GymBoss], 'pulse-wave-speed-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as GymBoss;
+
+    seedSingleLevelCampaign(playScene);
+    reachPlayBoss(playScene);
+
+    const playBoss = playScene.getBoss()!;
+    const gymBoss = gymScene.getBoss()!;
+    const dt = 0.016; // ~60 fps frame time
+    const expectedDelta = 300 * dt; // 300 px/s × dt
+    const pulseWaveSpeed = (playBoss as unknown as {
+      _pulseWaveSpeed: number;
+    })._pulseWaveSpeed;
+    expect(pulseWaveSpeed).toBe(300);
+
+    // Fire a pulse volley in PlayScene.
+    (playBoss as unknown as { _simulateTelegraphElapsed: () => void })
+      ._simulateTelegraphElapsed();
+    (playBoss as unknown as {
+      tryFirePulseBullets: (now: number) => BossBullet[];
+    }).tryFirePulseBullets(playScene.time.now);
+
+    // Fire a pulse volley in GymBoss.
+    (gymBoss as unknown as { _simulateTelegraphElapsed: () => void })
+      ._simulateTelegraphElapsed();
+    (gymBoss as unknown as {
+      tryFirePulseBullets: (now: number) => BossBullet[];
+    }).tryFirePulseBullets(gymScene.time.now);
+
+    // Verify the wave was spawned.
+    expect(playBoss.getPulseWaveGraphics()).not.toBeNull();
+    expect(gymBoss.getPulseWaveGraphics()).not.toBeNull();
+
+    // Advance through _advanceBoss for 5 frames.
+    const playStartRadius =
+      (playBoss as unknown as { _pulseWaveRadius: number })._pulseWaveRadius;
+    const gymStartRadius =
+      (gymBoss as unknown as { _pulseWaveRadius: number })._pulseWaveRadius;
+
+    for (let i = 0; i < 5; i++) {
+      playScene.tick(dt);
+      gymScene.tick(dt);
+    }
+
+    // After 5 frames: delta should be 5 × pulseWaveSpeed × dt.
+    const playEndRadius =
+      (playBoss as unknown as { _pulseWaveRadius: number })._pulseWaveRadius;
+    const gymEndRadius =
+      (gymBoss as unknown as { _pulseWaveRadius: number })._pulseWaveRadius;
+
+    const playDelta = playEndRadius - playStartRadius;
+    const gymDelta = gymEndRadius - gymStartRadius;
+
+    // If the double-advance bug existed, each delta would be ~2× expected.
+    expect(playDelta).toBeCloseTo(expectedDelta * 5, 1);
+    expect(gymDelta).toBeCloseTo(expectedDelta * 5, 1);
   });
 });
 

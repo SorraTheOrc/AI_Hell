@@ -457,7 +457,6 @@ export abstract class CombatScene<
       }
     }
     this.setEnemyBullets(live);
-    boss.advancePulseWave(dt, GAME_WIDTH, GAME_HEIGHT);
 
     // Scene hook for boss-adjacent work (e.g. `GymBoss` minions).
     this.onBossAdvanced(dt);
