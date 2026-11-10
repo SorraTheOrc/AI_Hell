@@ -72,10 +72,17 @@
  *
  * The arena's campaign run is the best headless proxy for a deployment, not a
  * human playtest (intake assumption A1 / Q4). It models the run's survival but
- * not a human's piloting: the shipped competent bot survives the full
- * deployment window at campaign levels 1–3 (no enemy fire) and loses the run
- * early at level 4+, so a deployment's **captured/lost** verdict is that
- * signal, and the modelled retry allowance covers the player's persistence.
+ * not a human's piloting, and the slice **escalates by kills**, so how far a
+ * run climbs inside the fixed window depends on its damage output: deployments
+ * at campaign levels 1–2 survive the full window, while a level-3 slice now
+ * clears into the first enemy-fire level (4) inside the window and usually
+ * dies at ≈250 s. That boundary was bisected (AH-0MWAPWS1W007LGGY) to the
+ * arena's own fire-model fidelity commit (`6ecbab23`, AH-0MW5DVAME0062GQO —
+ * firing the run's permanent choice grants) and is a **documented, deliberate
+ * deviation**, not a gameplay regression; `docs/BALANCING.md` states it and
+ * `ringTiming.test.ts` pins it. A deployment's **captured/lost** verdict is
+ * that signal, and the modelled retry allowance covers the player's
+ * persistence.
  * The campaign segment is measured from each ring's **authored base
  * aggressions** (the numbers the map publishes); the frontier's between-sortie
  * rise is a separate risk mechanic (B3/B6), and {@link

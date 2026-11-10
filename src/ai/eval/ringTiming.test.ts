@@ -404,6 +404,49 @@ describe('ring timing: real arena evidence', () => {
   });
 });
 
+describe('ring timing: level-3 survival drift (AH-0MWAPWS1W007LGGY)', () => {
+  /**
+   * The drift is the arena's **own** fire-model fidelity work, bisected to
+   * `6ecbab23` (AH-0MW5DVAME0062GQO), not a gameplay regression: firing the
+   * run's permanent choice grants lifts the bot's damage output, and the
+   * campaign slice escalates by kills, so a run started at campaign level 3
+   * climbs into the first enemy-fire level (4) *inside* the fixed deployment
+   * window and dies there (≈250 s), where the pre-drift arena — a hardcoded
+   * cannon that never fired grants — stayed in level 3 for the whole window.
+   *
+   * The recorded, deliberate deviation (`docs/BALANCING.md`) is that campaign
+   * levels 1–2 still capture the full window while level 3 usually does not.
+   * Pinned here so a later balance change cannot silently move the boundary.
+   */
+  it('captures a level-2 deployment and loses a level-3 deployment to enemy fire', () => {
+    const runner = createArenaDeploymentRunner();
+    const balance = loadBalanceConfig();
+    const deploy = (hexId: string) => {
+      const definition = hexRingDefinitionsFor(1).find(
+        (entry) => entry.id === hexId,
+      )!;
+      return runner({
+        seed: 1,
+        hexId: definition.id,
+        aggression: definition.baseAggression,
+        level: hexDifficultyProfile(definition.baseAggression).level,
+        ticks: 18_000,
+        dt: 1 / 60,
+        balance,
+      });
+    };
+    // hex-r1-2 is aggression 1 → campaign level 2; hex-r1-1 is aggression 2 →
+    // campaign level 3 (the aggression → level mapping is the shipped one).
+    const level2 = deploy('hex-r1-2');
+    const level3 = deploy('hex-r1-1');
+    expect(level2.captured).toBe(true);
+    expect(level3.captured).toBe(false);
+    // The loss is enemy fire — the run reached the first enemy-fire level (4)
+    // inside the window, which is the mechanism the deviation records.
+    expect(level3.hits).toBeGreaterThan(0);
+  }, REAL_ARENA_TIMEOUT_MS);
+});
+
 describe('ring timing: committed baseline evidence', () => {
   const baselinePath = path.resolve(
     process.cwd(),

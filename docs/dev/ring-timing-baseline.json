@@ -26,70 +26,70 @@
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 250.16666666666666,
+            "captured": false,
             "minerals": 18,
-            "hits": 0,
-            "retries": 0,
-            "minutes": 5
+            "hits": 3,
+            "retries": 1,
+            "minutes": 9.169444444444444
           },
           {
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 250.16666666666666,
+            "captured": false,
             "minerals": 18,
-            "hits": 0,
-            "retries": 0,
-            "minutes": 5
+            "hits": 3,
+            "retries": 1,
+            "minutes": 9.169444444444444
           },
           {
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 235.96666666666667,
+            "seconds": 195.4,
             "captured": false,
-            "minerals": 18,
+            "minerals": 17,
             "hits": 3,
             "retries": 1,
-            "minutes": 8.932777777777778
+            "minutes": 8.256666666666668
           },
           {
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 47.78333333333333,
+            "seconds": 69.6,
             "captured": false,
-            "minerals": 5,
+            "minerals": 3,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.796388888888889
+            "minutes": 6.16
           },
           {
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 247.06666666666666,
+            "seconds": 39.3,
             "captured": false,
-            "minerals": 18,
+            "minerals": 8,
             "hits": 3,
             "retries": 1,
-            "minutes": 9.117777777777778
+            "minutes": 5.655
           }
         ],
-        "deploymentMinutes": 23.846944444444446,
+        "deploymentMinutes": 18.410555555555558,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 15,
+        "retryMinutes": 25,
         "retakeMinutes": 0,
-        "totalMinutes": 50.846944444444446,
-        "captured": 3,
-        "losses": 3,
+        "totalMinutes": 55.41055555555556,
+        "captured": 1,
+        "losses": 5,
         "expectedRetakes": 0,
-        "expectedLosses": 3,
+        "expectedLosses": 5,
         "exposedHexes": 0,
-        "salvageBanked": 54,
-        "salvageForfeited": 41,
+        "salvageBanked": 18,
+        "salvageForfeited": 64,
         "ringSecured": true
       },
       {
@@ -113,7 +113,7 @@
             "seconds": 300,
             "captured": true,
             "minerals": 18,
-            "hits": 0,
+            "hits": 1,
             "retries": 0,
             "minutes": 5
           },
@@ -124,7 +124,7 @@
             "seconds": 300,
             "captured": true,
             "minerals": 18,
-            "hits": 0,
+            "hits": 1,
             "retries": 0,
             "minutes": 5
           },
@@ -132,48 +132,48 @@
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 250.51666666666665,
-            "captured": false,
-            "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 9.175277777777778
+            "seconds": 300,
+            "captured": true,
+            "minerals": 17,
+            "hits": 2,
+            "retries": 0,
+            "minutes": 5
           },
           {
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 31.516666666666666,
+            "seconds": 54.46666666666667,
             "captured": false,
-            "minerals": 5,
+            "minerals": 7,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.525277777777777
+            "minutes": 5.907777777777778
           },
           {
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 191.8,
+            "seconds": 21.316666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 8.196666666666667
+            "minutes": 5.355277777777777
           }
         ],
-        "deploymentMinutes": 22.897222222222222,
+        "deploymentMinutes": 21.263055555555557,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 15,
+        "retryMinutes": 10,
         "retakeMinutes": 0,
-        "totalMinutes": 49.897222222222226,
-        "captured": 3,
-        "losses": 3,
+        "totalMinutes": 43.26305555555555,
+        "captured": 4,
+        "losses": 2,
         "expectedRetakes": 0,
-        "expectedLosses": 3,
+        "expectedLosses": 2,
         "exposedHexes": 0,
-        "salvageBanked": 54,
-        "salvageForfeited": 41,
+        "salvageBanked": 71,
+        "salvageForfeited": 11,
         "ringSecured": true
       },
       {
@@ -194,109 +194,109 @@
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 266.1333333333333,
+            "captured": false,
             "minerals": 18,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5
+            "hits": 3,
+            "retries": 1,
+            "minutes": 9.435555555555556
           },
           {
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
+            "seconds": 266.1333333333333,
+            "captured": false,
             "minerals": 18,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5
+            "hits": 3,
+            "retries": 1,
+            "minutes": 9.435555555555556
           },
           {
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 175.83333333333334,
+            "seconds": 120.08333333333333,
             "captured": false,
-            "minerals": 18,
+            "minerals": 8,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.930555555555555
+            "minutes": 7.001388888888888
           },
           {
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 77.93333333333334,
+            "seconds": 33.516666666666666,
             "captured": false,
-            "minerals": 4,
+            "minerals": 2,
             "hits": 3,
             "retries": 1,
-            "minutes": 6.298888888888889
+            "minutes": 5.558611111111111
           },
           {
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 34,
+            "seconds": 34.016666666666666,
             "captured": false,
             "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.566666666666666
+            "minutes": 5.566944444444444
           }
         ],
-        "deploymentMinutes": 19.796111111111113,
+        "deploymentMinutes": 16.998055555555556,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 15,
+        "retryMinutes": 25,
         "retakeMinutes": 0,
-        "totalMinutes": 46.79611111111112,
-        "captured": 3,
-        "losses": 3,
+        "totalMinutes": 53.99805555555555,
+        "captured": 1,
+        "losses": 5,
         "expectedRetakes": 0,
-        "expectedLosses": 3,
+        "expectedLosses": 5,
         "exposedHexes": 0,
-        "salvageBanked": 54,
-        "salvageForfeited": 26,
+        "salvageBanked": 18,
+        "salvageForfeited": 50,
         "ringSecured": true
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 49.180092592592594,
-        "min": 46.79611111111112,
-        "max": 50.846944444444446
+        "mean": 50.89055555555556,
+        "min": 43.26305555555555,
+        "max": 55.41055555555556
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 22.180092592592597,
-        "min": 19.796111111111113,
-        "max": 23.846944444444446
+        "mean": 18.890555555555554,
+        "min": 16.998055555555556,
+        "max": 21.263055555555557
       },
       "losses": {
         "count": 3,
-        "mean": 3,
-        "min": 3,
-        "max": 3
+        "mean": 4,
+        "min": 2,
+        "max": 5
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 3,
-        "min": 3,
-        "max": 3
+        "mean": 4,
+        "min": 2,
+        "max": 5
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 54,
-        "min": 54,
-        "max": 54
+        "mean": 35.666666666666664,
+        "min": 18,
+        "max": 71
       },
       "captured": {
         "count": 3,
-        "mean": 3,
-        "min": 3,
-        "max": 3
+        "mean": 2,
+        "min": 1,
+        "max": 4
       },
       "ringSecuredRuns": 3
     },
@@ -308,7 +308,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 2,
-      "measuredMinutes": 49.180092592592594,
+      "measuredMinutes": 50.89055555555556,
       "withinWindow": true,
       "withinTolerance": true,
       "verdict": "in-window"
@@ -330,26 +330,26 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 247.06666666666666,
+            "seconds": 39.3,
             "captured": false,
-            "minerals": 18,
+            "minerals": 8,
             "hits": 3,
             "retries": 1,
-            "minutes": 9.117777777777778
+            "minutes": 5.655
           }
         ],
-        "deploymentMinutes": 4.1177777777777775,
+        "deploymentMinutes": 0.6549999999999999,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 24.5,
-        "totalMinutes": 35.617777777777775,
+        "totalMinutes": 32.155,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 18,
+        "salvageForfeited": 8,
         "ringSecured": false
       },
       {
@@ -359,26 +359,26 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 191.8,
+            "seconds": 21.316666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 8.196666666666667
+            "minutes": 5.355277777777777
           }
         ],
-        "deploymentMinutes": 3.1966666666666668,
+        "deploymentMinutes": 0.35527777777777775,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 24.5,
-        "totalMinutes": 34.696666666666665,
+        "totalMinutes": 31.85527777777778,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 18,
+        "salvageForfeited": 4,
         "ringSecured": false
       },
       {
@@ -388,19 +388,19 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 34,
+            "seconds": 34.016666666666666,
             "captured": false,
             "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.566666666666666
+            "minutes": 5.566944444444444
           }
         ],
-        "deploymentMinutes": 0.5666666666666667,
+        "deploymentMinutes": 0.5669444444444445,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 24.5,
-        "totalMinutes": 32.06666666666666,
+        "totalMinutes": 32.066944444444445,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
@@ -414,15 +414,15 @@
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 34.127037037037034,
-        "min": 32.06666666666666,
-        "max": 35.617777777777775
+        "mean": 32.025740740740744,
+        "min": 31.85527777777778,
+        "max": 32.155
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 2.6270370370370366,
-        "min": 0.5666666666666667,
-        "max": 4.1177777777777775
+        "mean": 0.5257407407407407,
+        "min": 0.35527777777777775,
+        "max": 0.6549999999999999
       },
       "losses": {
         "count": 3,
@@ -458,7 +458,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 2,
-      "measuredMinutes": 34.127037037037034,
+      "measuredMinutes": 32.025740740740744,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"
@@ -477,489 +477,489 @@
         "seed": 1,
         "deployments": [
           {
-            "hexId": "hex-r2-2",
-            "aggression": 3,
-            "level": 4,
-            "seconds": 235.96666666666667,
-            "captured": false,
-            "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 8.932777777777778
-          },
-          {
-            "hexId": "hex-r2-4",
-            "aggression": 3,
-            "level": 4,
-            "seconds": 235.96666666666667,
-            "captured": false,
-            "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 8.932777777777778
-          },
-          {
             "hexId": "hex-r2-1",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 47.78333333333333,
+            "aggression": 2,
+            "level": 3,
+            "seconds": 250.16666666666666,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.796388888888889
+            "minutes": 9.169444444444444
           },
           {
             "hexId": "hex-r2-10",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 47.78333333333333,
+            "aggression": 2,
+            "level": 3,
+            "seconds": 250.16666666666666,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.796388888888889
+            "minutes": 9.169444444444444
+          },
+          {
+            "hexId": "hex-r2-2",
+            "aggression": 2,
+            "level": 3,
+            "seconds": 250.16666666666666,
+            "captured": false,
+            "minerals": 18,
+            "hits": 3,
+            "retries": 1,
+            "minutes": 9.169444444444444
+          },
+          {
+            "hexId": "hex-r2-4",
+            "aggression": 2,
+            "level": 3,
+            "seconds": 250.16666666666666,
+            "captured": false,
+            "minerals": 18,
+            "hits": 3,
+            "retries": 1,
+            "minutes": 9.169444444444444
           },
           {
             "hexId": "hex-r2-6",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 47.78333333333333,
+            "aggression": 2,
+            "level": 3,
+            "seconds": 250.16666666666666,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.796388888888889
+            "minutes": 9.169444444444444
           },
           {
             "hexId": "hex-r2-7",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 47.78333333333333,
+            "aggression": 2,
+            "level": 3,
+            "seconds": 250.16666666666666,
             "captured": false,
-            "minerals": 5,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.796388888888889
+            "minutes": 9.169444444444444
           },
           {
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 170.68333333333334,
+            "seconds": 97.5,
             "captured": false,
-            "minerals": 18,
+            "minerals": 17,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.844722222222222
+            "minutes": 6.625
           },
           {
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 170.68333333333334,
+            "seconds": 97.5,
             "captured": false,
-            "minerals": 18,
+            "minerals": 17,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.844722222222222
+            "minutes": 6.625
           },
           {
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 170.68333333333334,
+            "seconds": 97.5,
             "captured": false,
-            "minerals": 18,
+            "minerals": 17,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.844722222222222
+            "minutes": 6.625
           },
           {
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 170.68333333333334,
+            "seconds": 97.5,
             "captured": false,
-            "minerals": 18,
+            "minerals": 17,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.844722222222222
+            "minutes": 6.625
           },
           {
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 247.06666666666666,
+            "seconds": 39.3,
             "captured": false,
-            "minerals": 18,
+            "minerals": 8,
             "hits": 3,
             "retries": 1,
-            "minutes": 9.117777777777778
+            "minutes": 5.655
           },
           {
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 160.13333333333333,
+            "seconds": 276.21666666666664,
             "captured": false,
-            "minerals": 18,
+            "minerals": 14,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.668888888888889
+            "minutes": 9.60361111111111
           }
         ],
-        "deploymentMinutes": 29.21666666666667,
+        "deploymentMinutes": 36.775277777777774,
         "betweenSortieMinutes": 24,
         "retryMinutes": 60,
         "retakeMinutes": 0,
-        "totalMinutes": 113.21666666666667,
+        "totalMinutes": 120.77527777777777,
         "captured": 0,
         "losses": 12,
         "expectedRetakes": 0,
         "expectedLosses": 12,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 164,
+        "salvageForfeited": 198,
         "ringSecured": true
       },
       {
         "seed": 2,
         "deployments": [
           {
-            "hexId": "hex-r2-2",
-            "aggression": 3,
-            "level": 4,
-            "seconds": 250.51666666666665,
-            "captured": false,
-            "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 9.175277777777778
-          },
-          {
-            "hexId": "hex-r2-4",
-            "aggression": 3,
-            "level": 4,
-            "seconds": 250.51666666666665,
-            "captured": false,
-            "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 9.175277777777778
-          },
-          {
             "hexId": "hex-r2-1",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 31.516666666666666,
-            "captured": false,
-            "minerals": 5,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 5.525277777777777
+            "aggression": 2,
+            "level": 3,
+            "seconds": 300,
+            "captured": true,
+            "minerals": 18,
+            "hits": 1,
+            "retries": 0,
+            "minutes": 5
           },
           {
             "hexId": "hex-r2-10",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 31.516666666666666,
-            "captured": false,
-            "minerals": 5,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 5.525277777777777
+            "aggression": 2,
+            "level": 3,
+            "seconds": 300,
+            "captured": true,
+            "minerals": 18,
+            "hits": 1,
+            "retries": 0,
+            "minutes": 5
+          },
+          {
+            "hexId": "hex-r2-2",
+            "aggression": 2,
+            "level": 3,
+            "seconds": 300,
+            "captured": true,
+            "minerals": 18,
+            "hits": 1,
+            "retries": 0,
+            "minutes": 5
+          },
+          {
+            "hexId": "hex-r2-4",
+            "aggression": 2,
+            "level": 3,
+            "seconds": 300,
+            "captured": true,
+            "minerals": 18,
+            "hits": 1,
+            "retries": 0,
+            "minutes": 5
           },
           {
             "hexId": "hex-r2-6",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 31.516666666666666,
-            "captured": false,
-            "minerals": 5,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 5.525277777777777
+            "aggression": 2,
+            "level": 3,
+            "seconds": 300,
+            "captured": true,
+            "minerals": 18,
+            "hits": 1,
+            "retries": 0,
+            "minutes": 5
           },
           {
             "hexId": "hex-r2-7",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 31.516666666666666,
-            "captured": false,
-            "minerals": 5,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 5.525277777777777
+            "aggression": 2,
+            "level": 3,
+            "seconds": 300,
+            "captured": true,
+            "minerals": 18,
+            "hits": 1,
+            "retries": 0,
+            "minutes": 5
           },
           {
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 128.65,
+            "seconds": 168.06666666666666,
             "captured": false,
             "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.144166666666667
+            "minutes": 7.801111111111111
           },
           {
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 128.65,
+            "seconds": 168.06666666666666,
             "captured": false,
             "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.144166666666667
+            "minutes": 7.801111111111111
           },
           {
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 128.65,
+            "seconds": 168.06666666666666,
             "captured": false,
             "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.144166666666667
+            "minutes": 7.801111111111111
           },
           {
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 128.65,
+            "seconds": 168.06666666666666,
             "captured": false,
             "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.144166666666667
+            "minutes": 7.801111111111111
           },
           {
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 191.8,
+            "seconds": 21.316666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 8.196666666666667
+            "minutes": 5.355277777777777
           },
           {
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 60.483333333333334,
-            "captured": false,
-            "minerals": 10,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 6.008055555555556
+            "seconds": 300,
+            "captured": true,
+            "minerals": 14,
+            "hits": 1,
+            "retries": 0,
+            "minutes": 5
           }
         ],
-        "deploymentMinutes": 23.233055555555552,
+        "deploymentMinutes": 46.55972222222223,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 60,
+        "retryMinutes": 25,
         "retakeMinutes": 0,
-        "totalMinutes": 107.23305555555555,
-        "captured": 0,
-        "losses": 12,
+        "totalMinutes": 95.55972222222223,
+        "captured": 7,
+        "losses": 5,
         "expectedRetakes": 0,
-        "expectedLosses": 12,
+        "expectedLosses": 5,
         "exposedHexes": 0,
-        "salvageBanked": 0,
-        "salvageForfeited": 156,
+        "salvageBanked": 122,
+        "salvageForfeited": 76,
         "ringSecured": true
       },
       {
         "seed": 3,
         "deployments": [
           {
-            "hexId": "hex-r2-2",
-            "aggression": 3,
-            "level": 4,
-            "seconds": 175.83333333333334,
-            "captured": false,
-            "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 7.930555555555555
-          },
-          {
-            "hexId": "hex-r2-4",
-            "aggression": 3,
-            "level": 4,
-            "seconds": 175.83333333333334,
-            "captured": false,
-            "minerals": 18,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 7.930555555555555
-          },
-          {
             "hexId": "hex-r2-1",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 77.93333333333334,
+            "aggression": 2,
+            "level": 3,
+            "seconds": 266.1333333333333,
             "captured": false,
-            "minerals": 4,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 6.298888888888889
+            "minutes": 9.435555555555556
           },
           {
             "hexId": "hex-r2-10",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 77.93333333333334,
+            "aggression": 2,
+            "level": 3,
+            "seconds": 266.1333333333333,
             "captured": false,
-            "minerals": 4,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 6.298888888888889
+            "minutes": 9.435555555555556
+          },
+          {
+            "hexId": "hex-r2-2",
+            "aggression": 2,
+            "level": 3,
+            "seconds": 266.1333333333333,
+            "captured": false,
+            "minerals": 18,
+            "hits": 3,
+            "retries": 1,
+            "minutes": 9.435555555555556
+          },
+          {
+            "hexId": "hex-r2-4",
+            "aggression": 2,
+            "level": 3,
+            "seconds": 266.1333333333333,
+            "captured": false,
+            "minerals": 18,
+            "hits": 3,
+            "retries": 1,
+            "minutes": 9.435555555555556
           },
           {
             "hexId": "hex-r2-6",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 77.93333333333334,
+            "aggression": 2,
+            "level": 3,
+            "seconds": 266.1333333333333,
             "captured": false,
-            "minerals": 4,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 6.298888888888889
+            "minutes": 9.435555555555556
           },
           {
             "hexId": "hex-r2-7",
-            "aggression": 4,
-            "level": 5,
-            "seconds": 77.93333333333334,
+            "aggression": 2,
+            "level": 3,
+            "seconds": 266.1333333333333,
             "captured": false,
-            "minerals": 4,
+            "minerals": 18,
             "hits": 3,
             "retries": 1,
-            "minutes": 6.298888888888889
+            "minutes": 9.435555555555556
           },
           {
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 143.53333333333333,
+            "seconds": 124.36666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 16,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.392222222222222
+            "minutes": 7.072777777777778
           },
           {
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 143.53333333333333,
+            "seconds": 124.36666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 16,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.392222222222222
+            "minutes": 7.072777777777778
           },
           {
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 143.53333333333333,
+            "seconds": 124.36666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 16,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.392222222222222
+            "minutes": 7.072777777777778
           },
           {
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 143.53333333333333,
+            "seconds": 124.36666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 16,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.392222222222222
+            "minutes": 7.072777777777778
           },
           {
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 34,
+            "seconds": 34.016666666666666,
             "captured": false,
             "minerals": 4,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.566666666666666
+            "minutes": 5.566944444444444
           },
           {
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 77.83333333333333,
-            "captured": false,
-            "minerals": 9,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 6.2972222222222225
+            "seconds": 300,
+            "captured": true,
+            "minerals": 18,
+            "hits": 2,
+            "retries": 0,
+            "minutes": 5
           }
         ],
-        "deploymentMinutes": 22.489444444444448,
+        "deploymentMinutes": 40.47138888888889,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 60,
+        "retryMinutes": 55,
         "retakeMinutes": 0,
-        "totalMinutes": 106.48944444444444,
-        "captured": 0,
-        "losses": 12,
+        "totalMinutes": 119.4713888888889,
+        "captured": 1,
+        "losses": 11,
         "expectedRetakes": 0,
-        "expectedLosses": 12,
+        "expectedLosses": 11,
         "exposedHexes": 0,
-        "salvageBanked": 0,
-        "salvageForfeited": 137,
+        "salvageBanked": 18,
+        "salvageForfeited": 176,
         "ringSecured": true
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 108.97972222222222,
-        "min": 106.48944444444444,
-        "max": 113.21666666666667
+        "mean": 111.93546296296297,
+        "min": 95.55972222222223,
+        "max": 120.77527777777777
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 24.97972222222222,
-        "min": 22.489444444444448,
-        "max": 29.21666666666667
+        "mean": 41.2687962962963,
+        "min": 36.775277777777774,
+        "max": 46.55972222222223
       },
       "losses": {
         "count": 3,
-        "mean": 12,
-        "min": 12,
+        "mean": 9.333333333333334,
+        "min": 5,
         "max": 12
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 12,
-        "min": 12,
+        "mean": 9.333333333333334,
+        "min": 5,
         "max": 12
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 0,
+        "mean": 46.666666666666664,
         "min": 0,
-        "max": 0
+        "max": 122
       },
       "captured": {
         "count": 3,
-        "mean": 0,
+        "mean": 2.6666666666666665,
         "min": 0,
-        "max": 0
+        "max": 7
       },
       "ringSecuredRuns": 3
     },
@@ -971,7 +971,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 3,
-      "measuredMinutes": 108.97972222222222,
+      "measuredMinutes": 111.93546296296297,
       "withinWindow": true,
       "withinTolerance": true,
       "verdict": "in-window"
@@ -993,26 +993,26 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 160.13333333333333,
+            "seconds": 276.21666666666664,
             "captured": false,
-            "minerals": 18,
+            "minerals": 14,
             "hits": 3,
             "retries": 1,
-            "minutes": 7.668888888888889
+            "minutes": 9.60361111111111
           }
         ],
-        "deploymentMinutes": 2.6688888888888886,
+        "deploymentMinutes": 4.60361111111111,
         "betweenSortieMinutes": 2,
         "retryMinutes": 5,
         "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 63.56888888888888,
+        "totalMinutes": 65.5036111111111,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
         "expectedLosses": 8.7,
         "exposedHexes": 11,
         "salvageBanked": 0,
-        "salvageForfeited": 18,
+        "salvageForfeited": 14,
         "ringSecured": false
       },
       {
@@ -1022,26 +1022,26 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 60.483333333333334,
-            "captured": false,
-            "minerals": 10,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 6.008055555555556
+            "seconds": 300,
+            "captured": true,
+            "minerals": 14,
+            "hits": 1,
+            "retries": 0,
+            "minutes": 5
           }
         ],
-        "deploymentMinutes": 1.0080555555555555,
+        "deploymentMinutes": 5,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 5,
+        "retryMinutes": 0,
         "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 61.90805555555555,
-        "captured": 0,
-        "losses": 1,
+        "totalMinutes": 60.89999999999999,
+        "captured": 1,
+        "losses": 0,
         "expectedRetakes": 7.699999999999999,
-        "expectedLosses": 8.7,
+        "expectedLosses": 7.699999999999999,
         "exposedHexes": 11,
-        "salvageBanked": 0,
-        "salvageForfeited": 10,
+        "salvageBanked": 14,
+        "salvageForfeited": 0,
         "ringSecured": false
       },
       {
@@ -1051,65 +1051,65 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 77.83333333333333,
-            "captured": false,
-            "minerals": 9,
-            "hits": 3,
-            "retries": 1,
-            "minutes": 6.2972222222222225
+            "seconds": 300,
+            "captured": true,
+            "minerals": 18,
+            "hits": 2,
+            "retries": 0,
+            "minutes": 5
           }
         ],
-        "deploymentMinutes": 1.297222222222222,
+        "deploymentMinutes": 5,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 5,
+        "retryMinutes": 0,
         "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 62.197222222222216,
-        "captured": 0,
-        "losses": 1,
+        "totalMinutes": 60.89999999999999,
+        "captured": 1,
+        "losses": 0,
         "expectedRetakes": 7.699999999999999,
-        "expectedLosses": 8.7,
+        "expectedLosses": 7.699999999999999,
         "exposedHexes": 11,
-        "salvageBanked": 0,
-        "salvageForfeited": 9,
+        "salvageBanked": 18,
+        "salvageForfeited": 0,
         "ringSecured": false
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 62.55805555555555,
-        "min": 61.90805555555555,
-        "max": 63.56888888888888
+        "mean": 62.434537037037025,
+        "min": 60.89999999999999,
+        "max": 65.5036111111111
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 1.6580555555555554,
-        "min": 1.0080555555555555,
-        "max": 2.6688888888888886
+        "mean": 4.86787037037037,
+        "min": 4.60361111111111,
+        "max": 5
       },
       "losses": {
         "count": 3,
-        "mean": 1,
-        "min": 1,
+        "mean": 0.3333333333333333,
+        "min": 0,
         "max": 1
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 8.7,
-        "min": 8.7,
+        "mean": 8.033333333333333,
+        "min": 7.699999999999999,
         "max": 8.7
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 0,
+        "mean": 10.666666666666666,
         "min": 0,
-        "max": 0
+        "max": 18
       },
       "captured": {
         "count": 3,
-        "mean": 0,
+        "mean": 0.6666666666666666,
         "min": 0,
-        "max": 0
+        "max": 1
       },
       "ringSecuredRuns": 0
     },
@@ -1121,7 +1121,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 3,
-      "measuredMinutes": 62.55805555555555,
+      "measuredMinutes": 62.434537037037025,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"

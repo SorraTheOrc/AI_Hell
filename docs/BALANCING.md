@@ -1072,6 +1072,25 @@ balance report.
   batch. The one deliberate divergence is the beat clock: an integer tick
   interval derived from the same `fireRateMs` (`fireRateTicks`) replaces it,
   so a run stays a fixed-step, seeded simulation.
+- **DPS-coupled levelling inside the deployment window** (AH-0MWAPWS1W007LGGY)
+  — wave and level progression is **kill-driven**, so how far a run climbs
+  inside a fixed measurement window depends on its damage output. Firing the
+  choice grants above lifts the competent bot's DPS enough that a campaign
+  slice started at **level 3** clears into the first enemy-fire level (4)
+  *inside* the ring-timing harness's 300 s deployment window and dies there
+  (≈250 s), where the pre-`AH-0MW5DVAME0062GQO` arena — a hardcoded
+  6⅔-shots/s cannon that never fired grants — stayed in level 3 for the whole
+  window and reported a capture. This is a **documented, deliberate
+  deviation**, not a gameplay regression: no shipped gameplay code changed,
+  and the drift is bisected to the arena's own fire-model fidelity commit
+  `6ecbab23` (AH-0MW5DVAME0062GQO). Campaign levels 1–2 still capture the full
+  window; level 3 usually does not. Modelling the remaining fire detail below
+  (the Wave Laser's hitscan ray, homing arcs, …) would **raise the arena's
+  DPS** further and push a slice deeper into the window, so it deepens this
+  effect rather than removing it; the gap that does explain it is the
+  **loadout** (a real deployment launches with the hangar-resolved loadout,
+  not the campaign-reset context the arena plays, AH-0MW9QA2YC009PSF5).
+  `src/ai/eval/ringTiming.test.ts` pins the measured boundary.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 

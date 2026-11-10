@@ -3191,10 +3191,10 @@ Measured baseline (seeds 1–3, competent bot; artifact
 
 | Ring | Line | Total mean (min–max) | Losses | Budget |
 |---|---|---|---|---|
-| 1 (6 hexes) | grind | **49.2 min** (46.8–50.8) | 3.0 | 40–60 · **in-window** |
-| 1 (6 hexes) | rush | **34.1 min** (32.1–35.6) | 1.0 | ring not secured |
-| 2 (12 hexes) | grind | **109.0 min** (106.5–113.2) | 12.0 | 90–120 · **in-window** |
-| 2 (12 hexes) | rush | **62.6 min** (61.9–63.6) | 1.0 | ring not secured |
+| 1 (6 hexes) | grind | **50.9 min** (43.3–55.4) | 4.0 | 40–60 · **in-window** |
+| 1 (6 hexes) | rush | **32.0 min** (31.9–32.2) | 1.0 | ring not secured |
+| 2 (12 hexes) | grind | **111.9 min** (95.6–120.8) | 9.3 | 90–120 · **in-window** |
+| 2 (12 hexes) | rush | **62.4 min** (60.9–65.5) | 0.3 | ring not secured |
 
 The budget assertion states a **10 % tolerance** of each window's width —
 **±2 min** for ring 1 and **±3 min** for ring 2 — and both grind lines pass
@@ -3206,10 +3206,10 @@ and Q4); a human playtest is desirable but not a gate.
 Two lines are measured, and both are viable:
 
 - **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
-  secured: **49.2 min** for ring 1 and **109.0 min** for ring 2, banking salvage
+  secured: **50.9 min** for ring 1 and **111.9 min** for ring 2, banking salvage
   and ending with a held ring.
-- **Rush** — the weapon hex first, then straight into the next ring: **34.1 min**
-  and **62.6 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
+- **Rush** — the weapon hex first, then straight into the next ring: **32.0 min**
+  and **62.4 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
 expected retakes and forfeiting the salvage of any failed attempt.
 
 **Neither line dominates**: the rush is faster but riskier and ends with an

@@ -389,30 +389,33 @@ Committed evidence:
 
 | Ring | Line | Measured runs | Total (mean, min–max) | Losses | Expected losses | Budget |
 |---|---|---|---|---|---|---|
-| 1 (6 hexes) | grind | 22.2 min | **49.2 min** (46.8–50.8) | 3.0 | 3.0 | 40–60 min · **in-window** |
-| 1 (6 hexes) | rush | 2.6 min | **34.1 min** (32.1–35.6) | 1.0 | 4.5 | not applicable (ring not secured) |
-| 2 (12 hexes) | grind | 25.0 min | **109.0 min** (106.5–113.2) | 12.0 | 12.0 | 90–120 min · **in-window** |
-| 2 (12 hexes) | rush | 1.7 min | **62.6 min** (61.9–63.6) | 1.0 | 8.7 | not applicable (ring not secured) |
+| 1 (6 hexes) | grind | 18.9 min | **50.9 min** (43.3–55.4) | 4.0 | 4.0 | 40–60 min · **in-window** |
+| 1 (6 hexes) | rush | 0.5 min | **32.0 min** (31.9–32.2) | 1.0 | 3.5 | not applicable (ring not secured) |
+| 2 (12 hexes) | grind | 41.3 min | **111.9 min** (95.6–120.8) | 9.3 | 9.3 | 90–120 min · **in-window** |
+| 2 (12 hexes) | rush | 4.9 min | **62.4 min** (60.9–65.5) | 0.3 | 7.7 | not applicable (ring not secured) |
 
 Reading the baseline:
 
-- **The budgets land.** The one-ring MVP measures **49.2 min** inside 40–60, and
-ring 2 **109.0 min** inside 90–120; the budget assertion states a **10 %
+- **The budgets land.** The one-ring MVP measures **50.9 min** inside 40–60, and
+ring 2 **111.9 min** inside 90–120; the budget assertion states a **10 %
 tolerance** (±2 min for ring 1, ±3 min for ring 2).
-- **The playstyle trade is real.** The rush line is **faster** (34.1 vs 49.2 min
+- **The playstyle trade is real.** The rush line is **faster** (32.0 vs 50.9 min
 for ring 1) but **riskier** — it leaves five hexes exposed (≈3.5 expected
 retakes), forfeits the salvage of its failed attempts and does not secure the
 ring, while the grind secures it. Neither line dominates.
-- **Ring 2 is all-losses.** Its authored aggression floor (3 → campaign level 4)
-puts every hex in the enemy-fire band, where the competent bot loses the run
-even though it survives the full deployment window at levels 1–3. The ring-2
-total is therefore dominated by the modelled retry allowance (60 min), which
-is why the design's "10–40 minutes of builds and losses" estimate does not
-hold at ring 2's authored aggressions. It remains a documented follow-up
-tuning risk. The window was recalibrated from 70–100 to 90–120 when the
-wrap-aware bot (AH-0MVMISF0Q00314LG) began surviving ~2–3 minutes per lost
-deployment instead of dying in under a minute, raising the measured grind from
-≈91.6 to ≈109 minutes without changing the retry allowance.
+- **Ring 2 still pays a large retry bill.** Its authored aggression spread
+(`2,2,5,2,5,2,2,5,6,2,5,8`) puts six hexes in the campaign level 3 band, so
+ring 2 now banks salvage (≈47 minerals) and captures **2.7 of 12** first
+attempts instead of none — but **60 of its 111.9 min (≈54 %) is still the
+modelled retry allowance**, against a design claim of ≈60 min of deployments
+plus 10–40 min of builds and losses. The reason is recorded in
+`docs/BALANCING.md` § *Fidelity boundary* and bisected in
+`AH-0MWAPWS1W007LGGY`: the arena's kill-driven campaign slice now reaches the
+first enemy-fire level *inside* the deployment window at level 3, so level 3
+is a near-window loss (~250 s on 2 of 3 seeds) rather than a capture. The
+window was recalibrated from 70–100 to 90–120 when the wrap-aware bot
+(AH-0MVMISF0Q00314LG) began surviving ~2–3 minutes per lost deployment instead
+of dying in under a minute; the retuned evidence lands inside it.
 
 ### Confidence and fidelity boundary
 
