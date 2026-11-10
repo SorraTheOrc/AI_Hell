@@ -52,6 +52,7 @@ import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
 import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } from '../../vfx/aoeEffect';
+import { spawnMiningLaserBeam } from '../../vfx/miningLaserBeam';
 import { spawnOrbitalStrike } from '../../vfx/orbitalStrike';
 import { selectOrbitalStrikeTarget } from './strikeTargeting';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
@@ -160,8 +161,9 @@ export abstract class CombatScene<
   protected bulletImpactEffects: Phaser.GameObjects.Graphics[] = [];
 
   /**
-   * Live AOE effect graphics (nova ring; mortar burst / arc chain in F3/F4),
-   * tracked for observation and teardown on scene shutdown
+   * Live AOE/vfx effect graphics (nova ring; mortar burst / arc chain in
+   * F3/F4; the Orbital Strike bolt and the Mining Laser beam), tracked for
+   * observation and teardown on scene shutdown
    * (parent AH-0MUOOB3OR001V8CD).
    */
   protected aoeEffects: Phaser.GameObjects.Graphics[] = [];
@@ -826,15 +828,24 @@ export abstract class CombatScene<
    * or an AOE effect. The selection step never offers a non-asteroid body, so
    * this override only ever damages rock (parent AC).
    *
-   * **Beam VFX/cue deferred to F4 (AH-0MW9QMQ7B005WFH9).** The dedicated
-   * `spawnMiningLaserBeam` module does not exist yet — F4 depends on this item
-   * (F3) and is treated as part of the same reviewable slice, so this hook is
-   * damage-only for now. The F4 change wires the beam/cue call here; no
-   * placeholder or import guard is used (the review note records the deferral).
+   * The shot's feedback is spawned first, from the ship's **current** position
+   * to the target's **current** position: `vfx/miningLaserBeam.spawnMiningLaserBeam`
+   * draws the thin amber beam (wrapped-aware, so a rock across the seam is cut
+   * through the edge rather than across the screen) and plays the laser's
+   * cutting tick. The module owns both the look and the cue
+   * (AH-0MW9QMQ7B005WFH9), so `PlayScene` and every gym get identical feedback
+   * from this one shared path and no call site can forget the sound — the
+   * `spawnOrbitalStrike` precedent.
    *
    * @param target - The live asteroid the shot landed on.
    */
   protected override onMiningLaserFire(target: TEnemy): void {
+    const player = this.getPlayer();
+    if (player) {
+      spawnMiningLaserBeam(this, player, target, {
+        registry: this.aoeEffects,
+      });
+    }
     this.damageEnemyViaAoe(
       target,
       this.getEffectsRegistry().miningLaserDamage(),

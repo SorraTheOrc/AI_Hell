@@ -18,9 +18,10 @@
  * @module scenes/core/miningLaserFire.test
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
+import * as effectsModule from '../../audio/effects';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
@@ -189,6 +190,10 @@ class MiningFireScene extends CombatScene<
   /** Runs the full shared `_tickPlayer` step (proves the call-site wiring). */
   runTickPlayer(dt: number): void {
     this._tickPlayer(dt);
+  }
+  /** Live AOE/VFX graphics (the registry the shared shot's beam joins). */
+  beamRegistry(): readonly Phaser.GameObjects.Graphics[] {
+    return this.aoeEffects;
   }
 }
 
@@ -483,5 +488,52 @@ describe('Mining Laser step is driven from the shared _tickPlayer', () => {
 
     scene.runTickPlayer(1 / 60);
     expect(rock.hits).toBe(1);
+  });
+});
+
+describe('Mining Laser shot shows the shared beam and cue (AH-0MW9QMQ7B005WFH9)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<MiningFireScene> {
+    booted = await bootScene([MiningFireScene]);
+    return booted.scene as MiningFireScene;
+  }
+
+  it('spawns one beam and plays one cue per shot through the shared hook', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 480, y: 270 });
+    scene.effects.applyCollect('mining_laser', true);
+    scene.addAsteroid(player.x + 80, player.y, 1000);
+    const cueSpy = vi.spyOn(effectsModule, 'playMiningLaserFireSound');
+
+    // Nothing is drawn or played before a shot is due.
+    expect(scene.beamRegistry()).toHaveLength(0);
+    scene.runMiningFrames(1 / 60);
+
+    // The shot's feedback comes from the shared hook — the same code path
+    // PlayScene and every gym inherit — so the beam and cue cannot be forked.
+    expect(scene.beamRegistry()).toHaveLength(1);
+    expect(cueSpy).toHaveBeenCalledTimes(1);
+
+    cueSpy.mockRestore();
+  });
+
+  it('draws no beam and plays no cue when the laser has no asteroid to cut', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 480, y: 270 });
+    scene.effects.applyCollect('mining_laser', true);
+    const cueSpy = vi.spyOn(effectsModule, 'playMiningLaserFireSound');
+
+    scene.runMiningFrames(2);
+
+    expect(scene.beamRegistry()).toHaveLength(0);
+    expect(cueSpy).not.toHaveBeenCalled();
+
+    cueSpy.mockRestore();
   });
 });

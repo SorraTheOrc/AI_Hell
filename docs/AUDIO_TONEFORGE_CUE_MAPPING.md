@@ -122,6 +122,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playMortarImpactSound` | Sharp dry shell-impact crack — triangle 900→150 Hz + HP noise smack, ~0.12 s | Player Mortar shell lands / blast connects | shared AOE detonation seam in `CombatScene` (AH-0MV822C250051OVN) | new | `aihell-mortar-impact` |
 | `playMortarDetonationSound` | Heavy saw 180→40 Hz + LP noise wash | Mortar detonation | `CombatScene` | new | `aihell-mortar-detonation` |
 | `playOrbitalStrikeSound` | Orbital Strike power-up impact — falling triangle 1800→150 Hz + bandpass noise descent 3000→260 Hz (0→0.34 s) into a low saw thump 130→34 Hz + short HP crack (0.34→0.62 s), 0.62 s two-act fall-then-impact | Orbital Strike power-up (signature event) | Orbital Strike power-up strike path (wired by AH-0MVS2T0VQ00973W5) | new | `aihell-orbital-strike` |
+| `playMiningLaserFireSound` | Short amber "cutting" tick — saw chirp 1320→660 Hz + high-passed noise bite, ~0.07 s; runtime volume ×0.6 (`MINING_LASER_FIRE_VOLUME_SCALE`, AH-0MW9QMQ7B005WFH9) so a sustained rapid cadence never masks the enemy-fire telegraphs | Mining Laser shot (auto-fires at the nearest asteroid) | `vfx/miningLaserBeam` (the module owns its cue), reached from the shared fire hook `CombatScene.onMiningLaserFire` | new | `aihell-mining-laser-fire` |
 | `playArcFireSound` | Square 1400→500→1120 Hz + HP noise crackle | Player Arc fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-arc-fire` |
 | `playArcImpactSound` | Sharp electric crack — saw 2400→900→220 Hz + fast HP noise zipper, ~0.14 s | Player Arc bolt connects / chains | shared AOE chain seam in `CombatScene` (AH-0MV822CE7004MQ14) | new | `aihell-arc-impact` |
 | `playRailgunFireSound` | Heavy electromagnetic discharge — deep saw slam 220→90→55 Hz + fast square snap 1800→900 Hz + HP noise crack, ~0.2 s | Player Railgun fire (once per four beats) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`, incl. the hold-full metronome) | new | `aihell-railgun-fire` |
@@ -416,6 +417,7 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-mystery-ufo-reward` | `playMysteryUfoRewardSound` | Rising A-minor arpeggio A4 (0 s) → E5 (0.16 s) → A5 (0.32 s), triangle voices + 1760 Hz sine sparkle, ~0.9 s (AH-0MVSAJMLL00835T8) | 32288 |
 | `aihell-mystery-ufo-destroy` | `playMysteryUfoDestroySound` | Deep saw fall A3→A1 + low-passed noise blast + 110→55 Hz sine sub thump, ~0.55 s (AH-0MVSAJMLL00835T8) | 32289 |
 | `aihell-mineral-tinkle` | `playMineralTinkleSound` | Bright E7→A6 triangle chime + 3520 Hz sine shimmer + high-passed noise tick, ~0.2 s (AH-0MVSAJMLL00835T8) | 32290 |
+| `aihell-mining-laser-fire` | `playMiningLaserFireSound` | Short amber cutting tick — saw chirp 1320→660 Hz + high-passed (4.2 kHz) noise bite, ~0.07 s, peak 0.12 / RMS 0.032; played ×0.6 by `MINING_LASER_FIRE_VOLUME_SCALE` (AH-0MW9QMQ7B005WFH9) | 32291 |
 
 ### New recipes outside `effects.ts` (Boss.ts surface)
 

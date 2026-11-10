@@ -687,6 +687,14 @@
       ]
     },
     {
+      "cue": "playMiningLaserFireSound",
+      "recipe": "aihell-mining-laser-fire",
+      "delivery": "baked",
+      "seeds": [
+        32291
+      ]
+    },
+    {
       "cue": "updateThrusterSound",
       "recipe": "aihell-thruster-hum",
       "delivery": "runtime-shim",

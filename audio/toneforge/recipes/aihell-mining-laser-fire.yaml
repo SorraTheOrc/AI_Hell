@@ -1,0 +1,76 @@
+# AI Hell cue: aihell-mining-laser-fire — Mining Laser fire — a short amber
+# "cutting" tick: a saw chirp from 1320 → 660 Hz with a high-passed noise bite,
+# ~0.07 s. Deliberately short and mid-bright so a rapid cadence (up to one shot
+# per sixteenth note) never smears into the enemy-fire telegraphs, and
+# deliberately distinct from the player cannon's square 800 → 400 Hz tick so the
+# two weapons are told apart by ear (AH-0MW9QMQ7B005WFH9, parent Mining laser
+# AH-0MW81181P007BDRU).
+version: "0.1"
+meta:
+  name: aihell-mining-laser-fire
+  description: Mining Laser fire — short amber cutting tick, saw chirp 1320 to 660 Hz plus a high-pass noise bite, ~0.07 s.
+  category: AIHell
+  tags:
+    - weapon
+    - fire
+    - mining
+    - player
+  duration: 0.07
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 1320
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1320
+        - kind: exponentialRamp
+          time: 0.068
+          value: 660
+  e0:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.062
+      sustain: 0
+      release: 0.006
+  g0:
+    kind: gain
+    params:
+      gain: 0.1
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 4200
+      Q: 1
+  e1:
+    kind: envelope
+    params:
+      attack: 0.0005
+      decay: 0.035
+      sustain: 0
+      release: 0.004
+  g1:
+    kind: gain
+    params:
+      gain: 0.04
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out
