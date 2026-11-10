@@ -60,6 +60,7 @@ import {
   traceWrappedRay,
   type HitscanSegment,
 } from '../scenes/core/hitscanBeam';
+import { wrappedAxisDelta } from '../utils/wrapGeometry';
 
 /**
  * The beam's colour — an amber / copper "cutting" tone. Deliberately distinct
@@ -117,16 +118,6 @@ export interface MiningLaserBeamOptions {
   arenaHeight?: number;
 }
 
-/** Wraps one coordinate delta into `(-span/2, span/2]` — the short way round. */
-function wrappedDelta(from: number, to: number, span: number): number {
-  if (!(span > 0)) return to - from;
-  const half = span / 2;
-  let delta = (to - from) % span;
-  if (delta > half) delta -= span;
-  else if (delta < -half) delta += span;
-  return delta;
-}
-
 /**
  * The polyline the beam covers between `from` and `to` on the wrapped arena:
  * the **shortest** path along the torus, one segment per arena crossing.
@@ -150,8 +141,8 @@ export function miningLaserBeamSegments(
 ): HitscanSegment[] {
   const width = options.arenaWidth ?? GAME_WIDTH;
   const height = options.arenaHeight ?? GAME_HEIGHT;
-  const dx = wrappedDelta(from.x, to.x, width);
-  const dy = wrappedDelta(from.y, to.y, height);
+  const dx = wrappedAxisDelta(from.x, to.x, width);
+  const dy = wrappedAxisDelta(from.y, to.y, height);
 
   return traceWrappedRay({
     originX: from.x,
