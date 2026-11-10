@@ -264,15 +264,13 @@ export const DEFAULT_ORBITAL_STRIKE_WEIGHT = 2;
 /**
  * Default relative weight for the Mining Laser (AH-0MW9QMNYP006ZO6T).
  *
- * **Held at `0` during the catalogue/level phase.** The kind is catalogued and
- * offered by the reward surfaces (the hold-full choice and the mini-boss wheel
- * read the catalogue, not this table), but it is deliberately kept out of the
- * *field-drop rotation* until the fire step and surfaces phases ship (F3/F5), so
- * the seeded drop stream of an ordinary run is byte-for-byte unchanged. The
- * surfaces phase retunes this to the proposed rare weight `2` (Orbital Strike /
- * Smart Bomb rarity, AH-0MW9QMRC7007HVHQ).
+ * A rare field drop, matching the Orbital Strike and Smart Bomb rarity (`2`):
+ * the laser silently farms minerals, which is a strong passive economy, so it
+ * enters the field-drop rotation sparingly. Retuned from the `0` hold-out used
+ * while the fire step and surfaces phases shipped (AH-0MW9QMRC7007HVHQ); the
+ * balance value is data and changing it later is a one-line edit here.
  */
-export const DEFAULT_MINING_LASER_WEIGHT = 0;
+export const DEFAULT_MINING_LASER_WEIGHT = 2;
 
 /** Default relative weight for weapon drops (spread, dual, rapid, reset). */
 export const DEFAULT_WEAPON_WEIGHT = 2;
@@ -464,9 +462,9 @@ export function defaultPowerUpWeights(): PowerUpWeights {
       // offence, so it drops as rarely as the Smart Bomb (2).
       weights[id] = DEFAULT_ORBITAL_STRIKE_WEIGHT;
     } else if (id === 'mining_laser') {
-      // Held out of the field-drop rotation during the catalogue/level phase
-      // (weight 0); the surfaces phase retunes it to the proposed rare weight
-      // (AH-0MW9QMRC7007HVHQ). Zero keeps the seeded drop stream unchanged.
+      // A rare field drop (2), matching Orbital Strike / Smart Bomb rarity:
+      // passive mineral farming is strong, so it drops sparingly
+      // (AH-0MW9QMRC7007HVHQ).
       weights[id] = DEFAULT_MINING_LASER_WEIGHT;
     } else {
       weights[id] = DEFAULT_STANDARD_POWER_UP_WEIGHT;

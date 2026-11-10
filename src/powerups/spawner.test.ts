@@ -346,9 +346,9 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
 
     expect(DEFAULT_EXTRA_LIFE_WEIGHT).toBe(3);
     expect(weights.extra_life).toBe(3);
-    expect(total).toBe(58);
-    expect((weights.extra_life ?? 0) / total).toBeCloseTo(3 / 58, 12);
-    expect((weights.extra_life ?? 0) / total).toBeCloseTo(0.0517, 4);
+    expect(total).toBe(60);
+    expect((weights.extra_life ?? 0) / total).toBeCloseTo(3 / 60, 12);
+    expect((weights.extra_life ?? 0) / total).toBeCloseTo(0.05, 4);
   });
 
   it('draws Extra Life at the unchanged ≈ 5.2 % share over many seeded draws', () => {
@@ -359,7 +359,7 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
       if (spawner.next() === 'extra_life') extraLives += 1;
     }
 
-    expect(extraLives / draws).toBeCloseTo(3 / 58, 2);
+    expect(extraLives / draws).toBeCloseTo(3 / 60, 2);
   });
 
   it('leaves every other drop weight at its documented default', () => {
@@ -370,9 +370,9 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
     expect(weights.mystery_ufo).toBe(3);
     expect(weights.smart_bomb).toBe(2);
     expect(weights.strike).toBe(2);
-    // Catalogued but held out of the field-drop rotation until the surfaces
-    // phase (AH-0MW9QMRC7007HVHQ).
-    expect(weights.mining_laser).toBe(0);
+    // The Mining Laser joins the field-drop rotation at its rare weight 2
+    // (AH-0MW9QMRC7007HVHQ); the sibling rares are unchanged.
+    expect(weights.mining_laser).toBe(2);
     expect(weights.magnet).toBe(4);
     expect(weights.shield).toBe(4);
     expect(weights.mineral_scoop).toBe(4);

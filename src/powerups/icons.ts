@@ -40,9 +40,8 @@ export const ICON_COLORS: Record<PowerUpId, number> = {
   salvage: 0xffd700, // gold — mineral bounty at the wreck
   strike: 0xaa66ff, // light violet — descending lightning bolt
   // Mining Laser (AH-0MW9QMNYP006ZO6T): mint green reads as the mineral
-  // economy the beam feeds. The drawing arm is added by the surfaces phase
-  // (AH-0MW9QMRC7007HVHQ); this palette entry is required for the exhaustive
-  // `Record<PowerUpId, number>` so the kind cannot be colourless.
+  // economy the beam feeds. The sheets phase (AH-0MW9QMRC7007HVHQ) draws the
+  // comb/beam glyph in this colour below.
   mining_laser: 0x7cffb2,
 };
 
@@ -193,6 +192,9 @@ function _drawPowerUpIcon(
       break;
     case 'strike':
       drawStrike(graphics, x, y, size);
+      break;
+    case 'mining_laser':
+      drawMiningLaser(graphics, x, y, size);
       break;
   }
 }
@@ -646,6 +648,50 @@ function drawStrike(
   // A grounded impact dot where the bolt lands.
   g.fillStyle(ICON_COLORS.strike, 1);
   g.fillCircle(x, y + s * 0.62, s * 0.12);
+}
+
+/**
+ * Mining Laser — a narrow cutting beam striking a chunk of rock.
+ *
+ * Distinct from the Orbital Strike's zig-zag bolt: two straight converging
+ * emitter arms feed a single beam down onto a filled asteroid polygon, with a
+ * hot spark where the beam bites. Reads as "auto-fires at rocks" at a glance
+ * (the kind's whole rule) and shares the shared icon-draw path with every
+ * other drop (AH-0MW9QMRC7007HVHQ).
+ */
+function drawMiningLaser(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.lineStyle(2, ICON_COLORS.mining_laser, 1);
+  // Emitter collar across the top.
+  g.beginPath();
+  g.moveTo(x - s * 0.55, y - s);
+  g.lineTo(x + s * 0.55, y - s);
+  g.strokePath();
+  // Two converging beam arms focusing onto the rock below.
+  g.beginPath();
+  g.moveTo(x - s * 0.35, y - s * 0.9);
+  g.lineTo(x, y);
+  g.moveTo(x + s * 0.35, y - s * 0.9);
+  g.lineTo(x, y);
+  g.strokePath();
+  // The rock being cut: a small angular asteroid polygon.
+  g.fillStyle(ICON_COLORS.mining_laser, 0.85);
+  g.beginPath();
+  g.moveTo(x - s * 0.6, y + s * 0.55);
+  g.lineTo(x - s * 0.2, y + s * 0.25);
+  g.lineTo(x + s * 0.3, y + s * 0.35);
+  g.lineTo(x + s * 0.6, y + s * 0.7);
+  g.lineTo(x + s * 0.15, y + s);
+  g.lineTo(x - s * 0.45, y + s * 0.85);
+  g.closePath();
+  g.fillPath();
+  // The hot spark where the beam meets the rock.
+  g.fillStyle(0xffffff, 1);
+  g.fillCircle(x, y + s * 0.05, s * 0.14);
 }
 
 // ── Weapon power-up icons ──────────────────────────────────────────

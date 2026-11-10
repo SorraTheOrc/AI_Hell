@@ -324,22 +324,23 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
 
   it('keeps Extra Life at ≈ 0.47 % per kill at level 1 despite the halved roll', async () => {
     // AC2 of AH-0MW10ZVLH005IJRM: Extra Life's *share* of power-up draws is
-    // untouched (weight 3 of the 58-point shared pool), so its absolute
-    // per-kill chance simply halves with the roll: 0.09 × 3/58 ≈ 0.47 %.
+    // untouched (weight 3 of the 60-point shared pool once the Mining Laser's
+    // rare weight 2 joins, AH-0MW9QMRC7007HVHQ), so its absolute per-kill
+    // chance simply halves with the roll.
     const scaling = await levelScaling();
     const poolWeights = Object.values(DEFAULT_RULES.powerUpWeights);
     const poolTotal = poolWeights.reduce((sum, weight) => sum + weight, 0);
 
     expect(DEFAULT_EXTRA_LIFE_WEIGHT).toBe(3);
-    expect(poolTotal).toBe(58);
+    expect(poolTotal).toBe(60);
     expect(poolWeights).toHaveLength(POWER_UP_WEIGHT_IDS.length);
 
     const share = DEFAULT_EXTRA_LIFE_WEIGHT / poolTotal;
     const perKill = scaling.powerUpDropChance(1) * share;
-    expect(share).toBeCloseTo(3 / 58, 12);
-    // 0.09 × 3/58 ≈ 0.004655 — i.e. ≈ 0.47 % per kill, half the former 0.93 %.
-    expect(perKill).toBeCloseTo(0.09 * (3 / 58), 12);
-    expect(perKill).toBeCloseTo(0.004655, 6);
+    expect(share).toBeCloseTo(3 / 60, 12);
+    // 0.09 × 3/60 = 0.0045 — i.e. ≈ 0.45 % per kill, half the former 0.93 %.
+    expect(perKill).toBeCloseTo(0.09 * (3 / 60), 12);
+    expect(perKill).toBeCloseTo(0.0045, 6);
   });
 
   it('honours a tuned Extra Life base chance and never returns NaN', async () => {

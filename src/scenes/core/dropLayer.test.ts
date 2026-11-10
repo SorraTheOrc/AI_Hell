@@ -99,16 +99,16 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
     expect(spawner.next()).toBe('shield');
   });
 
-  it('gives P8 Extra Life a ≈ 3/58 share of power-up draws', () => {
+  it('gives P8 Extra Life a ≈ 3/60 share of power-up draws', () => {
     // Deterministic sweep RNG: sample evenly across [0, 1) so each id's count
     // is exactly proportional to its weight — no statistical noise and no seed
     // dependence. The sample count is a multiple of the combined pool weight
-    // (58 power-up + 22 weapon = 80), so every band boundary lands exactly.
+    // (60 power-up + 22 weapon = 82), so every band boundary lands exactly.
     const weightTotal = Object.values(DEFAULT_RULES.powerUpWeights).reduce(
       (a, b) => a + b,
       0,
     );
-    expect(weightTotal).toBe(58);
+    expect(weightTotal).toBe(60);
     const SAMPLE_COUNT = 80_000;
     let cursor = 0;
     const sweepRng = () => cursor++ / SAMPLE_COUNT;
@@ -127,15 +127,15 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
       if (id === 'extra_life') extraLives += 1;
     }
 
-    // Extra Life weight 3 of the 58 total power-up weight → exactly 3/58.
+    // Extra Life weight 3 of the 60 total power-up weight → exactly 3/60.
     const p8Share = extraLives / powerUps;
-    expect(p8Share).toBeCloseTo(3 / 58, 3);
+    expect(p8Share).toBeCloseTo(3 / 60, 3);
     // Tied to the shipped weight table (not a hard-coded expectation).
     expect(p8Share).toBeCloseTo(DEFAULT_RULES.powerUpWeights.extra_life / weightTotal, 3);
-    // Relative weight tripled (1 → 3): ≈ 1.3× the former 1/25 normalised share
-    // (the Mineral Scoop, Smart Bomb, Force Field, Mystery UFO and the five
-    // net-new power-ups widen the denominator from 27 to 58).
-    expect(p8Share / (1 / 25)).toBeCloseTo((3 / 58) / (1 / 25), 2);
+    // Relative weight tripled (1 → 3): the Mineral Scoop, Smart Bomb, Force
+    // Field, Mystery UFO, the five net-new power-ups and now the rare Mining
+    // Laser widen the denominator from 27 to 60 (AH-0MW9QMRC7007HVHQ).
+    expect(p8Share / (1 / 25)).toBeCloseTo((3 / 60) / (1 / 25), 2);
   });
 });
 
@@ -594,17 +594,22 @@ function buildDefaultWeightedSpawner(seed: number): WeightedRandomSpawner<DropId
 }
 
 /**
- * The pre-change draw sequence captured from the **unfiltered** spawner
+ * The seeded draw sequence captured from the **unfiltered** spawner
  * (`buildDefaultDropSpawner`, seed 12345): the regression baseline the gated
  * path must reproduce exactly while fewer than six slots are filled. Captured
  * before the gating change so a later retune of the gate cannot quietly shift
  * the below-cap distribution.
+ *
+ * Re-captured when the Mining Laser joined the field-drop rotation at its rare
+ * weight 2 (AH-0MW9QMRC7007HVHQ): a new weight-2 entry legitimately reshapes
+ * the seeded stream (it appears at index 3 and nudges a later band), so the
+ * baseline is the current shipped table, not the pre-weights snapshot.
  */
 const PRE_CHANGE_DRAW_SEQUENCE: DropId[] = [
   'shield',
   'shield',
   'thorns',
-  'strike',
+  'mining_laser',
   'rear_guard',
   'speed_boost',
   'chrono',
@@ -619,7 +624,7 @@ const PRE_CHANGE_DRAW_SEQUENCE: DropId[] = [
   'frenzy',
   'force_field',
   'shard_swarm',
-  'force_field',
+  'mystery_ufo',
   'railgun',
   'heavy_slug',
   'spread',

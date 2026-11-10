@@ -58,7 +58,7 @@ describe('game rules configuration module', () => {
       );
     });
 
-    it('gives standard IDs equal weight and holds the Mining Laser out of the drop rotation', () => {
+    it('gives standard IDs equal weight and the Mining Laser a rare field-drop weight', () => {
       const weights = DEFAULT_RULES.powerUpWeights;
       for (const id of POWER_UP_WEIGHT_IDS) {
         if (
@@ -90,13 +90,14 @@ describe('game rules configuration module', () => {
       expect(defaultPowerUpWeights().mystery_ufo).toBe(3);
       expect(weights.mystery_ufo).toBeLessThan(weights.shield);
       expect(weights.mystery_ufo).toBeGreaterThan(weights.smart_bomb);
-      // The Mining Laser is catalogued and rewardable but deliberately held
-      // out of the field-drop rotation (weight 0) until the surfaces phase
-      // sets its rare weight (AH-0MW9QMRC7007HVHQ). A zero weight contributes
-      // nothing to the seeded draw, so ordinary runs are unchanged.
-      expect(DEFAULT_MINING_LASER_WEIGHT).toBe(0);
-      expect(weights.mining_laser).toBe(0);
-      expect(defaultPowerUpWeights().mining_laser).toBe(0);
+      // The Mining Laser (AH-0MW9QMRC7007HVHQ) is a rare field drop: weight
+      // 2, matching the Orbital Strike and Smart Bomb rarity — a passive
+      // mineral economy should not flood the drop stream.
+      expect(DEFAULT_MINING_LASER_WEIGHT).toBe(2);
+      expect(weights.mining_laser).toBe(2);
+      expect(defaultPowerUpWeights().mining_laser).toBe(2);
+      expect(weights.mining_laser).toBe(weights.strike);
+      expect(weights.mining_laser).toBe(weights.smart_bomb);
       expect(weights.mining_laser).toBeLessThan(weights.shield);
       // The standard and weapon weights are untouched by the Extra Life change.
       expect(DEFAULT_STANDARD_POWER_UP_WEIGHT).toBe(4);
