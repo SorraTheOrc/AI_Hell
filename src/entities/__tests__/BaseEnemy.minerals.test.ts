@@ -3,17 +3,19 @@
  * (AH-0MUBVGI62004ED9Q, AH-0MULUOZQP009GRWX).
  *
  * Every non-asteroid enemy that overlaps a mineral absorbs it and tracks a
- * per-enemy mineral count; destroying that enemy re-drops the collected
- * count plus a random additive bonus (`mineralRedropBonusMin`/`Max`,
- * default 0.25–1.25), rounded to the nearest integer and scattered at the
- * explosion site. There is no upper cap, so a kill may return slightly
- * more than the enemy absorbed. Asteroids are excluded from collection.
+ * per-enemy mineral count; destroying that enemy re-drops twice
+ * `round(collected + random bonus)` (`mineralRedropBonusMin`/`Max`,
+ * default 0.25–1.25), scattered at the explosion site — the
+ * `MINERAL_DROP_MULTIPLIER` doubling from parent AH-0MWB9LCED004K67Y.
+ * There is no upper cap, so a kill may return more than the enemy absorbed.
+ * Asteroids are excluded from collection.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import { MINERAL_DROP_MULTIPLIER } from '../../core/constants';
 import { BaseEnemy, BaseEnemyConfig } from '../BaseEnemy';
 import { Asteroid } from '../Asteroid';
 import { Mineral } from '../Mineral';
@@ -82,7 +84,10 @@ describe('BaseEnemy mineral accounting', () => {
     // and the enemy's own later re-drop therefore resolves at the threshold.
     enemy.collectMineral(10);
     expect(enemy.mineralCount).toBe(10);
-    expect(enemy.mineralRedropCount(() => 0)).toBe(10);
+    // Doubled: 2 × round(10 + 0.25) = 20.
+    expect(enemy.mineralRedropCount(() => 0)).toBe(
+      MINERAL_DROP_MULTIPLIER * Math.round(10 + 0.25),
+    );
 
     enemy.collectMineral();
     expect(enemy.mineralCount).toBe(11);
@@ -91,25 +96,25 @@ describe('BaseEnemy mineral accounting', () => {
   it('mineralRedropCount at rng extremes when no minerals were collected', async () => {
     booted = await bootScene([HarnessScene]);
     const enemy = makeEnemy(booted.scene);
-    // rng() = 0 → round(0 + 0.25) = 0; rng() ≈ 1 → round(0 + 1.25) = 1.
+    // rng() = 0 → 2 × round(0 + 0.25) = 0; rng() ≈ 1 → 2 × round(0 + 1.25) = 2.
     // So an empty enemy drops nothing most of the time but may occasionally
-    // drop a single mineral.
+    // drop two minerals (never one — the bonus roll is doubled).
     expect(enemy.mineralRedropCount(() => 0)).toBe(0);
-    expect(enemy.mineralRedropCount(() => 0.999)).toBe(1);
+    expect(enemy.mineralRedropCount(() => 0.999)).toBe(2);
   });
 
-  it('re-drop returns round(collected + random(0.25, 1.25)) at the rng extremes', async () => {
+  it('re-drop returns 2 × round(collected + random(0.25, 1.25)) at the rng extremes', async () => {
     booted = await bootScene([HarnessScene]);
     for (const collected of [1, 2, 3, 5, 10]) {
       const enemy = makeEnemy(booted.scene);
       for (let i = 0; i < collected; i++) enemy.collectMineral();
 
-      // rng() = 0 → round(N + 0.25); rng() = 1 → round(N + 1.25).
+      // rng() = 0 → 2 × round(N + 0.25); rng() = 1 → 2 × round(N + 1.25).
       expect(enemy.mineralRedropCount(() => 0)).toBe(
-        Math.round(collected + 0.25),
+        MINERAL_DROP_MULTIPLIER * Math.round(collected + 0.25),
       );
       expect(enemy.mineralRedropCount(() => 1)).toBe(
-        Math.round(collected + 1.25),
+        MINERAL_DROP_MULTIPLIER * Math.round(collected + 1.25),
       );
     }
   });
@@ -127,8 +132,8 @@ describe('BaseEnemy mineral accounting', () => {
     const value = enemy.mineralRedropCount(rng);
 
     expect(draws).toBe(1);
-    // Bonus = 0.25 + 0.5 × (1.25 − 0.25) = 0.75 → round(4.75) = 5.
-    expect(value).toBe(5);
+    // Bonus = 0.25 + 0.5 × (1.25 − 0.25) = 0.75 → 2 × round(4.75) = 10.
+    expect(value).toBe(10);
   });
 
   it('has no upper cap — a kill may return more than the enemy absorbed', async () => {
@@ -139,13 +144,13 @@ describe('BaseEnemy mineral accounting', () => {
 
       const low = enemy.mineralRedropCount(() => 0);
       const high = enemy.mineralRedropCount(() => 1);
-      expect(low).toBe(Math.round(collected + 0.25));
-      expect(high).toBe(Math.round(collected + 1.25));
+      expect(low).toBe(MINERAL_DROP_MULTIPLIER * Math.round(collected + 0.25));
+      expect(high).toBe(MINERAL_DROP_MULTIPLIER * Math.round(collected + 1.25));
       expect(high).toBeGreaterThan(collected);
     }
   });
 
-  it('stays within [round(count + 0.25), round(count + 1.25)] over many draws', async () => {
+  it('stays within the doubled bonus bounds over many draws', async () => {
     booted = await bootScene([HarnessScene]);
     const enemy = makeEnemy(booted.scene);
     for (let i = 0; i < 100; i++) enemy.collectMineral(); // count = 100
@@ -153,8 +158,9 @@ describe('BaseEnemy mineral accounting', () => {
     const seen = new Set<number>();
     for (let i = 0; i < 1000; i++) {
       const n = enemy.mineralRedropCount();
-      expect(n).toBeGreaterThanOrEqual(100);
-      expect(n).toBeLessThanOrEqual(101);
+      // 2 × round(100 + 0.25) = 200 … 2 × round(100 + 1.25) = 202.
+      expect(n).toBeGreaterThanOrEqual(MINERAL_DROP_MULTIPLIER * 100);
+      expect(n).toBeLessThanOrEqual(MINERAL_DROP_MULTIPLIER * 101);
       seen.add(n);
     }
     // The bonus is randomised — 1000 draws should produce both endpoints.

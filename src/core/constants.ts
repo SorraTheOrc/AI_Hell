@@ -563,3 +563,20 @@ export const MINERAL_DEPTH = 2;
  * radius of the explosion site.
  */
 export const MINERAL_REDROP_SCATTER_RADIUS = 40;
+
+/**
+ * Multiplier applied to every standard mineral kill-drop (parent
+ * AH-0MWB9LCED004K67Y).
+ *
+ * Doubles the mineral yield from small asteroids and enemy re-drops so the
+ * field feels twice as rich and hold-full power-up choices arrive roughly
+ * twice as fast. Defined here as a single, auditable constant consumed by
+ * `resolveMineralKillDrops` (small-asteroid branch) and
+ * `BaseEnemy.mineralRedropCount`, so the game and every gym stay in parity
+ * (gym↔game parity, repo `AGENTS.md`).
+ *
+ * Deposit threshold/value (`MINERAL_DEPOSIT_THRESHOLD` / `MINERAL_DEPOSIT_VALUE`),
+ * the Salvage bounty scatter and the Mystery UFO spill are **not** doubled
+ * — they are out of scope for this change and intentionally unaffected.
+ */
+export const MINERAL_DROP_MULTIPLIER = 2;

@@ -19,6 +19,7 @@ import type { ChoiceContext, ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
+import { MINERAL_REDROP_SCATTER_RADIUS } from '../../core/constants';
 import { RULES_SCHEMA_VERSION, RULES_STORAGE_KEY } from '../../core/rules';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 
@@ -152,7 +153,7 @@ describe('GymMinerals', () => {
     expect(scene.getMinerals().length).toBeGreaterThan(80);
   });
 
-  it('a destroyed small asteroid drops exactly one mineral at its position (AC1)', async () => {
+  it('a destroyed small asteroid drops two minerals near its position (AC1)', async () => {
     booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
     // Complete the wormhole spawn animation so the asteroids are collidable.
@@ -179,7 +180,8 @@ describe('GymMinerals', () => {
     scene.tick(0.016);
     expect(scene.getMinerals()).toHaveLength(0);
 
-    // Small → exactly one mineral at the death position.
+    // Small → two minerals scattered at the death position (doubled by
+    // `MINERAL_DROP_MULTIPLIER`, parent AH-0MWB9LCED004K67Y).
     const small = liveAsteroids(scene).find(
       (a) => a.getSizeTier() === 'small',
     )!;
@@ -195,10 +197,15 @@ describe('GymMinerals', () => {
     scene.tick(0.016);
 
     const minerals = scene.getMinerals();
-    expect(minerals).toHaveLength(1);
-    // The drop is at the death site; the asteroid advances one tick before the
-    // collision resolves, so allow for that single-tick drift.
-    expect(Math.hypot(minerals[0].x - sx, minerals[0].y - sy)).toBeLessThanOrEqual(2);
+    expect(minerals).toHaveLength(2);
+    // The drops are scattered at the death site; the asteroid advances one
+    // tick before the collision resolves, so allow for that drift plus the
+    // shared scatter radius.
+    for (const mineral of minerals) {
+      expect(
+        Math.hypot(mineral.x - sx, mineral.y - sy),
+      ).toBeLessThanOrEqual(2 + MINERAL_REDROP_SCATTER_RADIUS);
+    }
   });
 
   it('AC4/AC5 — a small-asteroid kill spawns one extra_life drop alongside the cadence layer', async () => {
@@ -754,7 +761,7 @@ describe('GymMinerals — Mining Laser coverage (AH-0MW9QMSI7005UU9P)', () => {
     }
     expect(scene.aliveCount).toBe(0);
 
-    // Only the small rocks pay minerals (one each) — the shared kill-drop rule.
+    // Only the small rocks pay minerals (two each) — the shared kill-drop rule.
     expect(scene.getMinerals().length).toBeGreaterThanOrEqual(
       mineralsBefore + 12,
     );

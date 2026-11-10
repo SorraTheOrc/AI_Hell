@@ -2343,6 +2343,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const wm = scene.getWaveManager();
     const asteroid = findAsteroids(scene)[0];
 
+    // Keep the doubled mineral economy from opening the hold-full overlay mid
+    // walk: this test pins asteroid persistence, not the hold economy, and a
+    // pause here would stall the transition loop (parent AH-0MWB9LCED004K67Y).
+    scene.getGameState().mineralCapacity = 100000;
+
     // Clear Level 1 (the expanded campaign levels now span ten waves,
     // AH-0MVCYANT6003SG5C); the asteroid lives through every wave and the
     // level transition into Level 2.
@@ -9678,7 +9683,7 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
 
   // ── Unaffected paths (GREEN both on HEAD and after F2) ──────────
 
-  it('the mineral kill-drop rule is level-independent: a level-10 small-asteroid kill still leaves exactly one mineral', async () => {
+  it('the mineral kill-drop rule is level-independent: a level-10 small-asteroid kill still leaves two minerals', async () => {
     const scene = await bootDropScene(dropCampaign(10));
     // 0.5 is above the level-1 and level-10 per-kill chances: the power-up
     // pool is suppressed at every level, isolating the mineral rule from the
@@ -9688,13 +9693,14 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
 
     const dropsBefore = scene.getDrops().length;
     const mineralsBefore = scene.getMinerals().length;
-    // Kill away from the player (and the scout formation) so the mineral
-    // stays on the field for the count.
+    // Kill away from the player (and the scout formation) so the minerals
+    // stay on the field for the count.
     spawnAndDestroySmallAsteroid(scene, GAME_WIDTH * 0.15, GAME_HEIGHT * 0.62);
     // No power-up drop …
     expect(scene.getDrops().length).toBe(dropsBefore);
-    // … but the mineral kill-drop rule is untouched: exactly one mineral.
-    expect(scene.getMinerals().length).toBe(mineralsBefore + 1);
+    // … but the mineral kill-drop rule is untouched by the level: the
+    // `MINERAL_DROP_MULTIPLIER` doubling still applies (two minerals).
+    expect(scene.getMinerals().length).toBe(mineralsBefore + 2);
   });
 
   it('timed power-up effects still apply at an elevated level', async () => {
