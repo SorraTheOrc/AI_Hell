@@ -287,11 +287,11 @@ describe('attract bot hex pick (pure)', () => {
 
   it('stays adjacent to held territory instead of crossing the map', () => {
     // Only hex-r1-2 is held (ring 2 is the current ring); ring 2's hexes
-    // adjacent to it are the candidates, and a weaker non-adjacent ring-2 hex
-    // must not tempt the bot.
+    // adjacent to it are the candidates hex-r2-8, hex-r2-10 and hex-r2-11.
+    // A weaker non-adjacent ring-2 hex must not tempt the bot.
     const ring1 = createRingState(1, HEX_RING_DEFINITIONS);
     const held = ring1.hexes.find((hex) => hex.id === 'hex-r1-2')!;
-    const payload: HangarWarPayload = {
+    const base: HangarWarPayload = {
       ...ringPayload(2),
       ring: {
         ringIndex: 2,
@@ -309,13 +309,21 @@ describe('attract bot hex pick (pure)', () => {
         ],
       },
     };
+    // Lower a NON-adjacent ring-2 hex strictly below the adjacent pick so the
+    // test discriminates the adjacency gate from raw weakness: after the
+    // survivable-band tune (AH-0MW9VAKSD0054XJC) the six aggression-2 hexes
+    // tie, so this explicit 1 keeps hex-r2-1 plainly weaker than anything
+    // reachable from held territory.
+    const payload = withHex(base, 'hex-r2-1', { aggression: 1 });
     const pick = pickAttractHex(payload);
 
+    // hex-r2-10 is the weakest hex adjacent to held territory (aggression 2),
+    // so it is chosen even though hex-r2-1 (aggression 1) is strictly weaker
+    // but not adjacent — proving adjacency outranks raw weakness.
     expect(['hex-r2-8', 'hex-r2-10', 'hex-r2-11']).toContain(pick);
     expect(pick).toBe('hex-r2-10');
-    // hex-r2-2 (aggression 3) is weaker but not adjacent to held territory.
     expect(
-      buildHexMapModel(payload).hexes.find((hex) => hex.id === 'hex-r2-2')!
+      buildHexMapModel(payload).hexes.find((hex) => hex.id === 'hex-r2-1')!
         .aggression,
     ).toBeLessThan(
       buildHexMapModel(payload).hexes.find((hex) => hex.id === pick)!
@@ -337,7 +345,9 @@ describe('attract bot hex pick (pure)', () => {
   it('never stalls: falls back when nothing is adjacent, and returns null when secured', () => {
     // Ring 2 with no held hex: nothing touches held territory, so the weakest
     // hex anywhere is chosen rather than declining to move.
-    expect(pickAttractHex(ringPayload(2))).toBe('hex-r2-2');
+    // After ring-2's survivable band tune (AH-0MW9VAKSD0054XJC), the joint-
+    // weakest hexes are at aggression 2; hex-r2-1 wins the tie by sorted id.
+    expect(pickAttractHex(ringPayload(2))).toBe('hex-r2-1');
 
     const secured = clone(ringPayload(1));
     for (const hex of secured.ring.hexes) hex.held = true;

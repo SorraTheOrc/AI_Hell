@@ -127,7 +127,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['waveLaser']),
     grants: 'arc',
     weaponHex: false,
-    baseAggression: 4,
+    baseAggression: 2,
   }),
   Object.freeze({
     id: 'hex-r2-2',
@@ -139,7 +139,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['nova']),
     grants: 'broadside',
     weaponHex: false,
-    baseAggression: 3,
+    baseAggression: 2,
   }),
   Object.freeze({
     id: 'hex-r2-3',
@@ -163,7 +163,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['arc']),
     grants: 'rapid',
     weaponHex: false,
-    baseAggression: 3,
+    baseAggression: 2,
   }),
   Object.freeze({
     id: 'hex-r2-5',
@@ -187,7 +187,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['mortar']),
     grants: 'hull-2',
     weaponHex: false,
-    baseAggression: 4,
+    baseAggression: 2,
   }),
   Object.freeze({
     id: 'hex-r2-7',
@@ -199,7 +199,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['ricochet']),
     grants: 'extra-life',
     weaponHex: false,
-    baseAggression: 4,
+    baseAggression: 2,
   }),
   Object.freeze({
     id: 'hex-r2-8',
@@ -235,7 +235,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['waveLaser']),
     grants: 'firepower-up',
     weaponHex: false,
-    baseAggression: 4,
+    baseAggression: 2,
   }),
   Object.freeze({
     id: 'hex-r2-11',
