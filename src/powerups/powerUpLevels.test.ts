@@ -38,6 +38,7 @@ import {
   resolvePowerUpAtLevel,
   resolveTemporaryWindow,
   summarisePowerUpLevelChange,
+  isPowerUpAtDiscreteCap,
 } from './powerUpLevels';
 import { curveValue } from '../utils/curve';
 import { DEFAULT_BPM, beatPeriodMs } from '../utils/beat';
@@ -2811,3 +2812,68 @@ describe('Mining Laser level curve (AH-0MW9QMNYP006ZO6T)', () => {
     );
   });
 });
+
+describe('PowerUpLevelStore.remove — whole-kind clear (AH-0MW82M3LB007OQG6)', () => {
+  it('clears permanent, temporary, charge, timer and ownership state', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('force_field', true); // owned + one charge
+    store.collect('force_field'); // active temporary stack
+    store.consumeConsumableCharge('force_field'); // starts a recharge timer
+    expect(store.getTempStacks('force_field')).toBe(1);
+    expect(store.isConsumableOwned('force_field')).toBe(true);
+    expect(store.consumableRechargeRemaining('force_field')).toBeGreaterThan(0);
+
+    store.remove('force_field');
+
+    expect(store.getEffectiveLevel('force_field')).toBe(0);
+    expect(store.getPermanentLevel('force_field')).toBe(0);
+    expect(store.getTempStacks('force_field')).toBe(0);
+    expect(store.isConsumableOwned('force_field')).toBe(false);
+    expect(store.consumableCharges('force_field')).toBe(0);
+    expect(store.consumableRechargeRemaining('force_field')).toBe(0);
+  });
+
+  it('clears a non-consumable permanent level', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('bomb', true);
+    store.collect('bomb', true);
+    expect(store.getPermanentLevel('bomb')).toBe(2);
+
+    store.remove('bomb');
+
+    expect(store.getEffectiveLevel('bomb')).toBe(0);
+    expect(store.getPermanentLevel('bomb')).toBe(0);
+  });
+
+  it('clears a single-use readiness timer and is idempotent', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('teleport', true); // owned + ready
+    expect(store.consumeTeleport()).toBe(true); // spends it → recharging
+    expect(store.isTeleportRecharging()).toBe(true);
+
+    store.remove('teleport');
+
+    expect(store.isTeleportHeld()).toBe(false);
+    expect(store.isTeleportRecharging()).toBe(false);
+    expect(() => store.remove('teleport')).not.toThrow();
+  });
+});
+
+describe('isPowerUpAtDiscreteCap (AH-0MW82M3LB007OQG6 AC5)', () => {
+  it('reports false while a discrete axis is below its cap', () => {
+    expect(isPowerUpAtDiscreteCap('magnet', 0)).toBe(false);
+  });
+
+  it('reports true once every discrete axis reaches its cap', () => {
+    // Magnet has one discrete axis (magnetStacks 1 → 5); upgrade level 6
+    // rounds to the cap.
+    expect(isPowerUpAtDiscreteCap('magnet', 6)).toBe(true);
+    expect(isPowerUpAtDiscreteCap('magnet', 5)).toBe(false);
+  });
+
+  it('reports false for a power-up with no discrete axes (never disabled)', () => {
+    expect(POWER_UP_LEVEL_SPECS.chrono.every((spec) => !spec.discrete)).toBe(true);
+    expect(isPowerUpAtDiscreteCap('chrono', 1000)).toBe(false);
+  });
+});
+

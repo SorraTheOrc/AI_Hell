@@ -33,6 +33,10 @@ import {
 } from '../../powerups/powerUpLevels';
 import { grantPermanentPowerUp } from '../../powerups/choiceReward';
 import { getPowerUpById, type PowerUpId } from '../../powerups/types';
+import {
+  resolvePlayerSlotState,
+  slotCountedHeldIds,
+} from '../../powerups/slots';
 
 // Boots a fresh Phaser game per scene (slow under parallel load) — give the
 // file headroom, matching the weapon-leveling gym suite.
@@ -449,5 +453,273 @@ describe('GymPowerUpLeveling', () => {
     expect(
       document.querySelectorAll(`#${POWER_UP_READOUT_PANEL_ID}`).length,
     ).toBe(1);
+  });
+
+  // ── Manual assign (AH-0MW82M3LB007OQG6) ──────────────────────────
+
+  /** Six ordinary slot-counted, non-consumable power-ups. */
+  const COUNTED_KINDS: PowerUpId[] = [
+    'bomb',
+    'speed_boost',
+    'magnet',
+    'mineral_scoop',
+    'smart_bomb',
+    'frenzy',
+  ];
+
+  it('AC1 — every readout row renders one native Assign button', async () => {
+    const scene = await boot();
+    const panel = scene.getPanel()!;
+    for (const id of POWER_UP_LEVEL_IDS) {
+      const btn = panel.querySelector<HTMLButtonElement>(
+        `[data-powerup-assign="${id}"]`,
+      );
+      expect(btn, `${id} assign button`).not.toBeNull();
+      expect(btn!.tagName).toBe('BUTTON');
+      expect(btn!.type).toBe('button');
+      expect(btn!.textContent).toBe('Assign');
+    }
+  });
+
+  it('AC1 — one button click assigns exactly once (no double fire)', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    const btn = scene
+      .getPanel()!
+      .querySelector<HTMLButtonElement>('[data-powerup-assign="bomb"]')!;
+
+    btn.click();
+    expect(store.getPermanentLevel('bomb')).toBe(1);
+    btn.click();
+    expect(store.getPermanentLevel('bomb')).toBe(2);
+  });
+
+  it('AC2 — first Assign adds an unowned non-consumable at base level', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    const id: PowerUpId = 'bomb';
+    expect(player.getPowerUpLevel(id)).toBe(0);
+
+    scene.assignPowerUp(id);
+
+    // Base = permanent level 1 = resolver upgrade level 0.
+    expect(store.getPermanentLevel(id)).toBe(1);
+    expect(player.getPowerUpLevel(id)).toBe(1);
+    const row = scene.getReadout().rows.find((r) => r.powerUpId === id)!;
+    expect(row.upgradeLevel).toBe(0);
+    expect(row.stats).toEqual(resolvePowerUpAtLevel(id, 0));
+
+    // The row label reflects the new level immediately (same call).
+    expect(
+      scene
+        .getPanel()!
+        .querySelector(`[data-powerup-label="${id}"]`)!.textContent,
+    ).toContain('Lv 1');
+  });
+
+  it('AC2 — repeat Assign raises a non-consumable permanent level, never a temporary stack', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    scene.assignPowerUp('bomb');
+    scene.assignPowerUp('bomb');
+
+    expect(store.getPermanentLevel('bomb')).toBe(2);
+    expect(store.getTempStacks('bomb')).toBe(0);
+    expect(player.getPowerUpLevel('bomb')).toBe(2);
+  });
+
+  it('AC2 — a consumable Assign banks one clamped charge per click, never a level', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    const id: PowerUpId = 'force_field';
+
+    scene.assignPowerUp(id);
+    expect(store.isConsumableOwned(id)).toBe(true);
+    expect(store.getPermanentLevel(id)).toBe(0);
+    expect(store.consumableCharges(id)).toBe(1);
+
+    scene.assignPowerUp(id);
+    expect(store.getPermanentLevel(id)).toBe(0);
+    expect(store.consumableCharges(id)).toBe(2);
+  });
+
+  it('AC3 — a full loadout removes exactly one slot-counted kind before adding the new one', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    for (const id of COUNTED_KINDS) player.collectPowerUp(id, true);
+    expect(resolvePlayerSlotState(player).isFull).toBe(true);
+    expect(resolvePlayerSlotState(player).used).toBe(6);
+
+    scene.assignPowerUp('chrono');
+
+    const after = resolvePlayerSlotState(player);
+    // One kind out, the new kind in: still exactly six counted slots.
+    expect(after.used).toBe(6);
+    expect(after.heldIds.has('chrono')).toBe(true);
+    const removed = COUNTED_KINDS.filter((id) => !after.heldIds.has(id));
+    expect(removed).toHaveLength(1);
+    // Whole-kind clear: the removed kind leaves no residual state.
+    const victim = removed[0];
+    expect(store.getEffectiveLevel(victim)).toBe(0);
+    expect(store.getPermanentLevel(victim)).toBe(0);
+    expect(store.getTempStacks(victim)).toBe(0);
+  });
+
+  it('AC4 — the victim draw is seeded/deterministic and never an exempt kind', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    const exempt: PowerUpId[] = ['extra_life', 'mystery_ufo'];
+    const victims = new Set<PowerUpId>();
+
+    for (let i = 0; i < COUNTED_KINDS.length; i++) {
+      player.resetPowerUpLevels();
+      for (const id of COUNTED_KINDS) player.collectPowerUp(id, true);
+      for (const id of exempt) player.collectPowerUp(id, true);
+
+      // Pin the draw to index i of the sorted slot-counted held pool.
+      scene.setSceneRng(() => i / COUNTED_KINDS.length);
+      scene.assignPowerUp('chrono');
+
+      for (const id of exempt) {
+        // Exempt kinds stay held (Extra Life at its permanent level, Mystery
+        // UFO owned through its grant) — they are never in the victim pool.
+        expect(
+          resolvePlayerSlotState(player).heldIds.has(id),
+          `${id} never a victim`,
+        ).toBe(true);
+      }
+      const surviving = COUNTED_KINDS.filter(
+        (id) => store.getEffectiveLevel(id) > 0,
+      );
+      expect(surviving).toHaveLength(COUNTED_KINDS.length - 1);
+      const removed = COUNTED_KINDS.find(
+        (id) => store.getEffectiveLevel(id) === 0,
+      );
+      expect(removed).toBeDefined();
+      victims.add(removed!);
+    }
+
+    // Every index selected a different victim — the draw is real, not fixed.
+    expect(victims.size).toBe(COUNTED_KINDS.length);
+  });
+
+  it('AC4 — the same seed reproduces the same victim', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+
+    const drawWith = (seedValue: number): PowerUpId => {
+      player.resetPowerUpLevels();
+      for (const id of COUNTED_KINDS) player.collectPowerUp(id, true);
+      scene.setSceneRng(() => seedValue);
+      scene.assignPowerUp('chrono');
+      return COUNTED_KINDS.find((id) => store.getEffectiveLevel(id) === 0)!;
+    };
+
+    expect(drawWith(0.42)).toBe(drawWith(0.42));
+  });
+
+  it('AC6 — removal clears the victim’s temporary and consumable state', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    for (const id of ['bomb', 'speed_boost', 'magnet', 'mineral_scoop', 'frenzy'] as PowerUpId[]) {
+      player.collectPowerUp(id, true);
+    }
+    // Force Field is both permanently owned (with a banked charge) and holding
+    // an active temporary stack.
+    player.collectPowerUp('force_field', true);
+    player.collectPowerUp('force_field');
+    expect(store.getTempStacks('force_field')).toBe(1);
+    expect(store.consumableCharges('force_field')).toBe(1);
+    expect(resolvePlayerSlotState(player).isFull).toBe(true);
+
+    const pool = slotCountedHeldIds(resolvePlayerSlotState(player));
+    const index = pool.indexOf('force_field');
+    expect(index).toBeGreaterThanOrEqual(0);
+    scene.setSceneRng(() => index / pool.length);
+    scene.assignPowerUp('chrono');
+
+    expect(store.getEffectiveLevel('force_field')).toBe(0);
+    expect(store.getTempStacks('force_field')).toBe(0);
+    expect(store.getPermanentLevel('force_field')).toBe(0);
+    expect(store.consumableCharges('force_field')).toBe(0);
+    expect(store.isConsumableOwned('force_field')).toBe(false);
+    // The slot genuinely freed and the new kind took it.
+    const after = resolvePlayerSlotState(player);
+    expect(after.heldIds.has('force_field')).toBe(false);
+    expect(after.heldIds.has('chrono')).toBe(true);
+    expect(after.used).toBe(6);
+  });
+
+  it('AC5 — a non-consumable Assign disables once every discrete axis reaches its cap', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    const id: PowerUpId = 'magnet';
+
+    scene.assignPowerUp(id);
+    expect(scene.isAssignDisabled(id)).toBe(false);
+
+    // Magnet has one discrete axis (magnetStacks 1 → 5); upgrade level 6
+    // resolves it to the cap.
+    store.setPermanentLevel(id, 7);
+    expect(scene.isAssignDisabled(id)).toBe(true);
+
+    scene.refreshReadout();
+    const btn = scene
+      .getPanel()!
+      .querySelector<HTMLButtonElement>(`[data-powerup-assign="${id}"]`)!;
+    expect(btn.disabled).toBe(true);
+
+    // At cap the click is a no-op.
+    const before = store.getPermanentLevel(id);
+    scene.assignPowerUp(id);
+    expect(store.getPermanentLevel(id)).toBe(before);
+  });
+
+  it('AC5 — a consumable Assign disables when its charge pool is full', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    const id: PowerUpId = 'force_field';
+
+    expect(scene.isAssignDisabled(id)).toBe(false);
+    scene.assignPowerUp(id);
+    expect(scene.isAssignDisabled(id)).toBe(false);
+
+    store.grantConsumableCharge(id, 99); // fill to the level-derived cap
+    const cap = store.consumableChargeCap(id);
+    expect(store.consumableCharges(id)).toBe(cap);
+    expect(scene.isAssignDisabled(id)).toBe(true);
+
+    scene.assignPowerUp(id);
+    expect(store.consumableCharges(id)).toBe(cap);
+  });
+
+  it('AC5 — a single-use Assign disables while its ready activation is held', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    const id: PowerUpId = 'phase_shift';
+
+    expect(scene.isAssignDisabled(id)).toBe(false);
+    scene.assignPowerUp(id);
+    expect(store.hasPhaseShift()).toBe(true);
+    expect(scene.isAssignDisabled(id)).toBe(true);
+  });
+
+  it('AC5 — a power-up with no discrete variables is never disabled', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    // Chrono has only continuous axes, which asymptote and never reach cap.
+    player.getPowerUpLevelStore().setPermanentLevel('chrono', 100);
+    expect(scene.isAssignDisabled('chrono')).toBe(false);
   });
 });

@@ -1776,6 +1776,40 @@ export function resolveConsumableRechargeTime(
 }
 
 /**
+ * Whether **every discrete** curve variable of `id` has reached its catalogue
+ * `cap` at `upgradeLevel` — the manual-assign disable rule for the power-up
+ * levelling gym (AH-0MW82M3LB007OQG6 AC5, producer answer Q9 = C).
+ *
+ * Only whole-number (`discrete`) variables are considered. A **continuous**
+ * variable only asymptotes to its cap and never arrives (levels are unbounded
+ * above), so it can never be used to call a row finished. A power-up with
+ * **no** discrete variable therefore has nothing to check and reports `false`
+ * (never at cap); the producer explicitly chose this consequence, so the
+ * always-enabled row is intended, not a bug.
+ *
+ * A **descending** axis (e.g. `smartBombInterval` 30 s → 10 s) stores its floor
+ * in `cap`, so "at cap" is the clamp bound in the curve's direction of travel.
+ *
+ * Pure and store-free so the gym's disable rule and any future consumer read
+ * the same catalogue data the resolver uses — no second copy of the curve.
+ *
+ * @param id - The power-up kind.
+ * @param upgradeLevel - The resolver level (`getUpgradeLevel`, i.e. effective
+ *   level − 1).
+ */
+export function isPowerUpAtDiscreteCap(
+  id: PowerUpId,
+  upgradeLevel: number,
+): boolean {
+  const discrete = POWER_UP_LEVEL_SPECS[id].filter((spec) => spec.discrete);
+  if (discrete.length === 0) return false;
+  return discrete.every((spec) => {
+    const value = curveValue(spec, upgradeLevel);
+    return spec.cap >= spec.base ? value >= spec.cap : value <= spec.cap;
+  });
+}
+
+/**
  * The run-scoped power-up level model (AC2/AC3).
  *
  * Responsibilities:
@@ -2073,6 +2107,36 @@ export class PowerUpLevelStore {
       return;
     }
     this._permanentGrants.set(id, next);
+  }
+
+  /**
+   * Removes **every** trace of `id` from the run-scoped model — permanent
+   * grants, temporary stacks, pooled charges, in-flight recharge timers, the
+   * kind's ownership flag and a single-use readiness timer.
+   *
+   * This is a **setup/gym-layer** operation, not a gameplay reward: it exists
+   * so the power-up levelling gym can free one six-slot slot for a manually
+   * assigned kind (AH-0MW82M3LB007OQG6 AC3/AC11). The shipped `PlayScene`
+   * never calls it. Removing the **whole kind** is what lets
+   * {@link PowerUpSlotState} report the slot as genuinely free — a bare
+   * {@link setPermanentLevel}`(id, 0)` would leave `_owned` and any charges
+   * behind, so the kind would still occupy its slot.
+   *
+   * Idempotent, and validates the id like the rest of the store. Lives already
+   * granted by Extra Life are a separate resource and are deliberately left
+   * untouched: removing a kind discards its level/charge state, never the
+   * lives it already paid out.
+   *
+   * @param id - The power-up kind to clear.
+   */
+  remove(id: PowerUpId): void {
+    getPowerUpById(id); // validate id (throws for unknown power-ups)
+    this._permanentGrants.delete(id);
+    this._tempStacks.delete(id);
+    this._charges.delete(id);
+    this._rechargeTimers.delete(id);
+    this._owned.delete(id);
+    this._setSingleUseRecharge(id, 0);
   }
 
   /** Resolved stats for `id` at its current upgrade level. */
