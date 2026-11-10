@@ -826,7 +826,12 @@ export abstract class CombatScene<
    * {@link damageEnemyViaAoe}, so destruction audio, score/drop/wave accounting
    * and mineral drops run exactly once per shot — identical to a player bullet
    * or an AOE effect. The selection step never offers a non-asteroid body, so
-   * this override only ever damages rock (parent AC).
+   * this override only ever damages rock (parent AC). The shot is an
+   * **instant beam, never a travelling projectile**: the damage lands on the
+   * selected asteroid in the same call, so the shot cannot collide with — or
+   * ever damage — a non-asteroid enemy in flight. That is exactly why the
+   * laser resolves as a hitscan rather than through the shared player-bullet
+   * path (parent AC: it only ever fires at asteroids).
    *
    * The shot's feedback is spawned first, from the ship's **current** position
    * to the target's **current** position: `vfx/miningLaserBeam.spawnMiningLaserBeam`

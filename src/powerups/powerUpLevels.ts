@@ -97,7 +97,8 @@
  * - **Instant kinds** declare their own TTL as catalogue data
  *   (`PowerUpEntry.temporaryWindow` in `./types`), so retuning a window is a
  *   data edit with no code change: Bomb 10 s, Smart Bomb 10 s, Orbital Strike
- *   10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s, Mystery UFO 15 s,
+ *   10 s, Mining Laser 10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s,
+ *   Mystery UFO 15 s,
  *   and Shield 15 s / Thorn Field 8 s / Force Field 8 s — the three absorbed-hit
  *   kinds whose window axes were retired (AH-0MVVD8SXO004QLZW), so they are
  *   level-free like the other instant kinds.
@@ -1454,7 +1455,8 @@ function isPositiveFinite(value: number | undefined): value is number {
  *   Behaviour is unchanged and a levelled kind keeps its level-scaled window.
  * - **Instant kinds** (no timed effect of their own) return the per-entry
  *   `temporaryWindow` TTL from {@link POWER_UP_CATALOGUE}: Bomb 10 s, Smart
- *   Bomb 10 s, Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra
+ *   Bomb 10 s, Orbital Strike 10 s, Mining Laser 10 s, Phase Shift 15 s,
+ *   Teleport 15 s, Extra
  *   Life 10 s, Mystery UFO 15 s, and — since the absorbed-hit pickup model
  *   retired their window axes — Shield 15 s, Thorn Field 8 s and Force Field
  *   8 s (AH-0MVVD8SXO004QLZW).

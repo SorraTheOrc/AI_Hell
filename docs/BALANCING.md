@@ -505,6 +505,7 @@ families share the rule:
 | Bomb | 10 | Mirrors the established 10 s weapon window (`WEAPON_TIMEOUT_MS`). |
 | Smart Bomb | 10 | As Bomb — a one-shot screen pulse with the weapon-style window. |
 | Orbital Strike | 10 | As Bomb — a one-shot bolt with the weapon-style window. |
+| Mining Laser | 10 | As Bomb — the auto-firing beam's drop is a rare weight **2** field find, and its temporary level uses the weapon-style 10 s window; the permanent fire cadence is a separate level axis (0.75 s → 0.1875 s on the beat grid). |
 | Phase Shift | 15 | Defensive kind: the shield-style 15 s window. |
 | Teleport | 15 | Defensive kind: the shield-style 15 s window. |
 | Extra Life | 10 | Weapon-style 10 s window; the **life itself is kept** when the level reverts. |

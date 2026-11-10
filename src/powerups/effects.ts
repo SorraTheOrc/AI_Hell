@@ -705,8 +705,9 @@ export class EffectsRegistry {
    * **level window** sized by `resolveTemporaryWindow`
    * (AH-0MVUGI448000GNMJ; parent
    * AH-0MVSTKGC3003OMAC). The declared instant TTLs are catalogue data —
-   * Bomb / Smart Bomb / Orbital Strike **10 s**, Phase Shift / Teleport /
-   * Mystery UFO **15 s**, Extra Life **10 s**, Shield **15 s**, Thorn Field /
+   * Bomb / Smart Bomb / Orbital Strike / Mining Laser **10 s**, Phase Shift /
+   * Teleport / Mystery UFO **15 s**, Extra Life **10 s**, Shield **15 s**,
+   * Thorn Field /
    * Force Field **8 s** (the absorbed-hit kinds, AH-0MVVD8SXO004QLZW) — so no
    * kind is exempt from expiry and retuning one is a data edit. The one-shot
    * or consumable grant lands immediately; the window only makes the temporary
@@ -907,8 +908,9 @@ export class EffectsRegistry {
    * The window is sized by the shared `resolveTemporaryWindow` resolver at
    * the effective upgrade level the pickup lands at, so the TTL is
    * per-upgrade data rather than a global constant — catalogue data for the
-   * instant kinds (Bomb / Smart Bomb / Orbital Strike 10 s, Phase Shift /
-   * Teleport / Mystery UFO 15 s, Extra Life 10 s) and the level-resolved
+   * instant kinds (Bomb / Smart Bomb / Orbital Strike / Mining Laser 10 s,
+   * Phase Shift / Teleport / Mystery UFO 15 s, Extra Life 10 s) and the
+   * level-resolved
    * effect duration for the timed kinds. Re-collecting during an
    * open window refreshes it to the full TTL — one timer per kind, never
    * additive (AC5).

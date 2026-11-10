@@ -57,8 +57,9 @@
  * The temporary window (TTL) is a property of the item, never one global
  * constant: the timed kinds keep their level-resolved effect duration, and
  * every instant kind declares its own TTL as `temporaryWindow` below (Bomb /
- * Smart Bomb / Orbital Strike 10 s, Phase Shift / Teleport 15 s, Extra Life
- * 10 s, Mystery UFO 15 s, Shield 15 s / Thorn Field 8 s / Force Field 8 s). At
+ * Smart Bomb / Orbital Strike / Mining Laser 10 s, Phase Shift / Teleport
+ * 15 s, Extra Life 10 s, Mystery UFO 15 s, Shield 15 s / Thorn Field 8 s /
+ * Force Field 8 s). At
  * the TTL the temporary level reverts to the
  * permanent level (or the item becomes unowned); consumables already granted
  * (lives, charges, teleports) are never clawed back. The former
@@ -201,7 +202,8 @@ export interface PowerUpEntry {
    * `resolveTemporaryWindow` resolver in `./powerUpLevels` composes both cases
    * (a stray `temporaryWindow` can therefore never flatten a level-scaled
    * window). The declared instant-kind TTLs are Bomb 10 s, Smart Bomb 10 s,
-   * Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s,
+   * Orbital Strike 10 s, Mining Laser 10 s, Phase Shift 15 s, Teleport 15 s,
+   * Extra Life 10 s,
    * Mystery UFO 15 s, and — since the absorbed-hit pickup model retired their
    * window axes — Shield 15 s, Thorn Field 8 s, Force Field 8 s
    * (AH-0MVVD8SXO004QLZW).

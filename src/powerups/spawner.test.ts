@@ -322,8 +322,8 @@ describe('WeightedRandomSpawner: eligibility filter (six-slot drop gating)', () 
 //
 // AH-0MW3MLRHL000DKPM halves the per-kill drop **roll** and stops asteroids
 // handing out lives, but deliberately leaves every drop **weight** alone:
-// Extra Life already carries the rarer weight 3 of the 58-point shared pool
-// (≈ 5.17 % of power-up draws), so halving the roll must not double-halve it.
+// Extra Life already carries the rarer weight 3 of the 60-point shared pool
+// (≈ 5.0 % of power-up draws), so halving the roll must not double-halve it.
 // These are invariance tests: they are green on both sides of the supply-dial
 // change on purpose, because the weight table is the thing that must not move.
 
@@ -336,7 +336,7 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
     return spawner;
   }
 
-  it('keeps Extra Life at weight 3 of the 58-point default pool', () => {
+  it('keeps Extra Life at weight 3 of the 60-point default pool', () => {
     const spawner = shippedSpawner();
     const weights = spawner.getWeights();
     const total = POWER_UP_WEIGHT_IDS.reduce(
@@ -351,7 +351,7 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
     expect((weights.extra_life ?? 0) / total).toBeCloseTo(0.05, 4);
   });
 
-  it('draws Extra Life at the unchanged ≈ 5.2 % share over many seeded draws', () => {
+  it('draws Extra Life at the unchanged ≈ 5.0 % share over many seeded draws', () => {
     const spawner = shippedSpawner(23);
     const draws = 20_000;
     let extraLives = 0;

@@ -35,15 +35,17 @@ const EFFECTS_PATH = 'src/powerups/effects.ts';
 const PLAYER_PATH = 'src/entities/Player.ts';
 
 /**
- * The ten instant kinds (no timed effect of their own) whose TTL is declared
- * catalogue data. The map is the *expected* documentation content; the code
+ * The eleven instant kinds (no timed effect of their own) whose TTL is
+ * declared catalogue data. The map is the *expected* documentation content;
+ * the code
  * side is read from `POWER_UP_CATALOGUE` so a retune cannot silently leave the
  * docs behind.
  *
  * Shield / Thorn Field / Force Field joined the set when the absorbed-hit
  * pickup model retired their window axes (AH-0MVVD8SXO004QLZW) — they declare
  * the producer-approved flat TTLs (Shield 15 s, Thorn Field 8 s, Force Field
- * 8 s) like the other instant kinds.
+ * 8 s) like the other instant kinds. The Mining Laser (AH-0MW9QMNYP006ZO6T)
+ * joined with its own 10 s weapon-style window.
  */
 const INSTANT_KINDS: readonly PowerUpId[] = [
   'bomb',
@@ -56,6 +58,7 @@ const INSTANT_KINDS: readonly PowerUpId[] = [
   'shield',
   'thorns',
   'force_field',
+  'mining_laser',
 ];
 
 /** Phrases that must never describe a *live* rule for a field pickup. */
