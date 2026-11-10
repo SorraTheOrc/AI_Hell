@@ -133,6 +133,7 @@ import {
   collectOverlappingDrops,
   drawNextDrop,
   playDropPickupCue,
+  type AdaptiveExtraLifeWeight,
   type SlotGatedDropSpawner,
 } from './dropLayer';
 import {
@@ -1550,8 +1551,9 @@ export class CombatCoreScene<
   protected _drawNextDrop<T extends string>(
     spawner: SlotGatedDropSpawner<T>,
     state: PowerUpSlotState,
+    adaptive?: AdaptiveExtraLifeWeight,
   ): T {
-    return drawNextDrop(spawner, state);
+    return drawNextDrop(spawner, state, adaptive);
   }
 
   /**

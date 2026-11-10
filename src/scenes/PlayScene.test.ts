@@ -7971,6 +7971,51 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(wm.waveNumber).toBe(1);
   });
 
+  it('AC4 — every mini-boss defeat spawns exactly one Extra Life field pickup at the death position', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    // Spawn at the life cap: the guarantee is literal, so the drop still
+    // appears even though collecting it can never add a life.
+    scene.getGameState().lives = scene.getLivesCap();
+    const extraLifeDrops = () =>
+      scene.getDrops().filter((drop) => drop.dropId === 'extra_life');
+    const before = extraLifeDrops().length;
+
+    const miniBoss = scene.getMiniBoss()!;
+    const deathX = miniBoss.x;
+    const deathY = miniBoss.y;
+    // Land the lethal blow (the sweep is left in flight so the pre-completion
+    // state is observable); the guaranteed drop spawns on the defeat frame.
+    hitMiniBossUntilDead(scene);
+
+    const spawned = extraLifeDrops();
+    expect(spawned.length - before).toBe(1);
+    const drop = spawned[spawned.length - 1];
+    // At/near the death position — inside the shared separation-nudge radius.
+    expect(
+      Math.hypot(drop.x - deathX, drop.y - deathY),
+    ).toBeLessThanOrEqual(161);
+
+    finishMiniBossSweep(scene);
+    resolveOpenMiniBossReward(scene);
+  });
+
+  it('AC4 — the guaranteed Extra Life is in addition to the wheel reward', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    // Seed the player with an owned kind so the defeat offers the wheel (not
+    // the empty-owned fallback), then defeat through the full shared path.
+    scene.getPlayer()?.equipWeapon('spread', true);
+    killMiniBoss(scene);
+
+    // The reward was offered/applied …
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+    // … and a guaranteed Extra Life is still on the field alongside it.
+    expect(
+      scene.getDrops().filter((drop) => drop.dropId === 'extra_life').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
   it('AC3 — defeat fires exactly one reward hook and one checkpoint hook at the defeat moment', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
@@ -9101,26 +9146,36 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     const killTelemetry = vi.spyOn(RunTelemetry.prototype, 'enemyKilled');
     const scoreBefore = scene.getGameState().score;
     const mineralsBefore = scene.getMinerals().length;
-    const dropsBefore = scene.getDrops().length;
+    const extraLifeDrops = () =>
+      scene.getDrops().filter((drop) => drop.dropId === 'extra_life').length;
+    const nonExtraLifeDrops = () =>
+      scene.getDrops().filter((drop) => drop.dropId !== 'extra_life').length;
+    const extraLifeBefore = extraLifeDrops();
+    const nonExtraLifeBefore = nonExtraLifeDrops();
 
     hitMiniBossUntilDead(scene);
 
     // The swept escorts never route through the reward-bearing kill path
     // (`_onEnemyKilled`): no score, no drops, no kill telemetry — and the
-    // wave has not been accounted yet.
+    // wave has not been accounted yet. (The mini-boss's own defeat adds
+    // exactly one guaranteed Extra Life drop — AH-0MW8178ZR0090CNY AC4 — which
+    // is not a swept-enemy award.)
     expect(wm.level).toBe(1);
     expect(killTelemetry).not.toHaveBeenCalled();
     expect(scene.getGameState().score).toBe(scoreBefore);
+    expect(nonExtraLifeDrops()).toBe(nonExtraLifeBefore);
+    expect(extraLifeDrops() - extraLifeBefore).toBe(1);
 
     finishMiniBossSweep(scene);
 
     // The single post-sweep advance is the only wave accounting: the sweep
-    // itself awarded nothing.
+    // itself awarded nothing but the mini-boss's guaranteed Extra Life.
     expect(wm.level).toBe(2);
     expect(killTelemetry).not.toHaveBeenCalled();
     expect(scene.getGameState().score).toBe(scoreBefore);
     expect(scene.getMinerals()).toHaveLength(mineralsBefore);
-    expect(scene.getDrops()).toHaveLength(dropsBefore);
+    expect(nonExtraLifeDrops()).toBe(nonExtraLifeBefore);
+    expect(extraLifeDrops() - extraLifeBefore).toBe(1);
   });
 
   it('AC3/AC4 — demo mode auto-spins the wheel reward after the sweep delay (no stall)', async () => {

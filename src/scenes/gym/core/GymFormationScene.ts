@@ -94,6 +94,7 @@ import {
   WasdKeysLike,
 } from '../../../utils/input';
 import { loadRules } from '../../../core/rules';
+import { extraLifeAdaptiveMultiplier } from '../../../core/livesScaling';
 import {
   pickInRange,
   resolveSpawnRange,
@@ -1112,6 +1113,17 @@ export class GymFormationScene<
     const id = this._drawNextDrop(
       this.powerUpSpawner,
       this._resolveDropSlotState(),
+      {
+        // Life-adaptive Extra Life weight (AH-0MW8178ZR0090CNY). Formation
+        // gyms have no run lives; the shared live registry starts at 3, the
+        // same as the `runStartingLives` default, so the gym consumes the
+        // single shared curve at a deterministic 1× baseline (gym↔game
+        // parity, AH-0MUGZDTFX004RBD1).
+        baseWeight: loadRules().powerUpWeights.extra_life,
+        multiplier: extraLifeAdaptiveMultiplier(
+          this.getEffectsRegistry().lives(),
+        ),
+      },
     );
     const { x, y } = this.powerUpPlacement.place(
       this._powerUpPlacementContext(),
@@ -1133,6 +1145,22 @@ export class GymFormationScene<
     y: number,
   ): FormationSceneDrop | null {
     if (!this.powerUpsEnabled) return null;
+    return this._createDrop(id, x, y);
+  }
+
+  /**
+   * Spawns a **guaranteed** field drop regardless of whether the opt-in
+   * cadence power-up layer is enabled (AH-0MW8178ZR0090CNY AC4). Unlike the
+   * public {@link spawnPowerUpDrop}, this is not gated on `powerUpsEnabled`, so
+   * a guaranteed drop (the mini-boss Extra Life in `GymMiniBoss`) is honoured
+   * even in a gym that disables cadence drops. Uses the shared `_createDrop`
+   * primitive so the icon/lifecycle are identical to every other drop.
+   */
+  protected spawnGuaranteedDrop(
+    id: DropId,
+    x: number,
+    y: number,
+  ): FormationSceneDrop {
     return this._createDrop(id, x, y);
   }
 

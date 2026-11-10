@@ -175,6 +175,27 @@ export interface GameRules {
    * {@link phaseRechargeOverrideSeconds}.
    */
   teleportRechargeOverrideSeconds: number | null;
+  /**
+   * Exponential base of the life-adaptive Extra Life weight curve
+   * (default 2, AH-0MW8178ZR0090CNY). The Extra Life **weight** inside the
+   * shared per-kill drop pool is multiplied by
+   * `extraLifeAdaptiveBase ** max(0, runStartingLives - lives)`, so the shipped
+   * `2` gives `1× / 2× / 4×` at `3 / 2 / 1` lives and `1×` at or above the
+   * run's starting lives. Values are clamped to `[1, 10]` by {@link loadRules};
+   * a base below 1 would make Extra Life rarer on low lives, so it is rejected
+   * in favour of the default. Tuning data, not a player-facing setting.
+   */
+  extraLifeAdaptiveBase: number;
+  /**
+   * Lives a run starts with, used as the **baseline** for the life-adaptive
+   * Extra Life curve (default 3, AH-0MW8178ZR0090CNY). At or above this many
+   * lives the Extra Life weight is the unchanged baseline weight; below it the
+   * weight rises by {@link extraLifeAdaptiveBase} ** lives lost. A hangar
+   * deployment may override the actual starting lives (the scene passes its
+   * own value), so this is the default/arcade reference. Integer clamped to
+   * `[1, 20]` by {@link loadRules}.
+   */
+  runStartingLives: number;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -410,6 +431,21 @@ export const DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS: number | null = null;
 export const DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS: number | null = null;
 
 /**
+ * Default exponential base of the life-adaptive Extra Life weight curve (2,
+ * AH-0MW8178ZR0090CNY): `1× / 2× / 4×` at `3 / 2 / 1` lives. Deliberately
+ * gentle so the player feels lucky on their last life without ever noticing
+ * the manipulation. See `src/core/livesScaling.ts` for the pure curve.
+ */
+export const DEFAULT_EXTRA_LIFE_ADAPTIVE_BASE = 2;
+
+/**
+ * Default lives a run starts with, the baseline for the life-adaptive Extra
+ * Life curve (3, AH-0MW8178ZR0090CNY). Matches the arcade `GameState` start;
+ * a hangar deployment may override the actual run reference.
+ */
+export const DEFAULT_RUN_STARTING_LIVES = 3;
+
+/**
  * Builds a fresh default weight table: every standard ID carries
  * {@link DEFAULT_STANDARD_POWER_UP_WEIGHT}, Extra Life the rarer
  * {@link DEFAULT_EXTRA_LIFE_WEIGHT}.
@@ -472,6 +508,8 @@ export const DEFAULT_RULES: GameRules = {
   enemyCountCap: DEFAULT_ENEMY_COUNT_CAP,
   phaseRechargeOverrideSeconds: DEFAULT_PHASE_RECHARGE_OVERRIDE_SECONDS,
   teleportRechargeOverrideSeconds: DEFAULT_TELEPORT_RECHARGE_OVERRIDE_SECONDS,
+  extraLifeAdaptiveBase: DEFAULT_EXTRA_LIFE_ADAPTIVE_BASE,
+  runStartingLives: DEFAULT_RUN_STARTING_LIVES,
 };
 
 /** localStorage key under which the game-rules JSON is persisted. */
@@ -552,6 +590,8 @@ function cloneDefaultRules(): GameRules {
     phaseRechargeOverrideSeconds: DEFAULT_RULES.phaseRechargeOverrideSeconds,
     teleportRechargeOverrideSeconds:
       DEFAULT_RULES.teleportRechargeOverrideSeconds,
+    extraLifeAdaptiveBase: DEFAULT_RULES.extraLifeAdaptiveBase,
+    runStartingLives: DEFAULT_RULES.runStartingLives,
   };
 }
 
@@ -890,6 +930,23 @@ export function loadRules(): GameRules {
       ),
       teleportRechargeOverrideSeconds: coerceNullablePositiveNumber(
         parsed.teleportRechargeOverrideSeconds,
+      ),
+      // Life-adaptive Extra Life tunables (AH-0MW8178ZR0090CNY). Added without
+      // a schema bump: an older blob has neither key, so each resolves to its
+      // documented default and every pre-existing rule loads unchanged. Base
+      // is clamped to `[1, 10]` (below 1 would invert the curve); the starting
+      // reference is an integer clamped to `[1, 20]`.
+      extraLifeAdaptiveBase: coerceNumberInRange(
+        parsed.extraLifeAdaptiveBase,
+        DEFAULT_EXTRA_LIFE_ADAPTIVE_BASE,
+        1,
+        10,
+      ),
+      runStartingLives: coerceIntegerInRange(
+        parsed.runStartingLives,
+        DEFAULT_RUN_STARTING_LIVES,
+        1,
+        20,
       ),
     };
   } catch {

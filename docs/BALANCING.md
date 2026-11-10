@@ -246,6 +246,48 @@ campaign-level input**, so they keep their scene-specific flat
 `GymBotTuning`) adopt the curves; the reason is recorded in the `GymLevel`
 scene header and in the parent work item.
 
+### Life-adaptive Extra Life curve (AH-0MW8178ZR0090CNY)
+
+Extra Life's **weight** in the shared per-kill drop pool — not the overall
+per-kill drop chance — rises as the run loses lives, so a player down to their
+last life quietly gets a little more help. The rule lives once in the pure
+helper `src/core/livesScaling.ts`:
+
+```
+livesLost  = max(0, runStartingLives − lives)
+multiplier = extraLifeAdaptiveBase ** livesLost     (default base 2, start 3)
+```
+
+| Lives | Multiplier | Extra Life weight (base 3) |
+|---|---|---|
+| ≥ 3 | 1× (identity) | 3 |
+| 2 | 2× | 6 |
+| 1 | 4× | 12 |
+
+- **Subtle by construction.** The weighted pool normalises, so the resulting
+  *probability* uplift is slightly below the weight ratio (at 3 lives Extra Life
+  is ≈ 3.3 % of all drops, at 2 lives ≈ 6.4 %, at 1 life ≈ 12.1 %). At 2 lives
+  the increase is not noticeable; at 1 life it is a clear but still small
+  uplift — the "feels lucky, never noticed" target. The total per-kill drop
+  chance is unchanged: Extra Life simply becomes a larger share of the drops
+  that already occur.
+- **Composes after level scaling.** The multiplier scales only the Extra Life
+  weight, so it can never make the supply curve rise with campaign level; it
+  also composes with the (default-off) small-asteroid Extra Life roll.
+- **Tunable and persisted.** `GameRules.extraLifeAdaptiveBase` (base, clamped to
+  `[1, 10]`) and `GameRules.runStartingLives` (baseline reference, integer
+  clamped to `[1, 20]`) are persisted; a base below 1 is rejected because it
+  would invert the curve. A hangar deployment's starting lives override the
+  baseline reference; older rules blobs load unchanged (the new keys default).
+- **Shared, not duplicated.** `PlayScene` and every drop-bearing gym consume
+  the same curve through the shared `drawNextDrop` seam. Formation gyms have no
+  run lives, so they run the deterministic `3`-life `1×` baseline.
+- **Guaranteed mini-boss drop.** Separately, every mini-boss defeat now leaves
+  exactly one Extra Life **field pickup** at/near the death position, in
+  addition to the spin-the-wheel reward, even at the cap or with a full slot
+  pool (`src/scenes/core/miniBossDrops.ts`, shared by `PlayScene` and
+  `GymMiniBoss`). It is a field pickup, not a wheel wedge.
+
 ### The six loadout slots — the demand-side counterpart (parent AH-0MVLIJT3M005HPHF)
 
 The level-scaling curves above reduce the **supply** of power-ups as the

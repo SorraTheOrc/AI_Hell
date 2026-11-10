@@ -557,3 +557,70 @@ describe('GymMiniBoss — wheel reward parity (AH-0MVSF68QS006C8V0)', () => {
     }
   });
 });
+
+/**
+ * Guaranteed mini-boss Extra Life (AH-0MW8178ZR0090CNY AC4).
+ *
+ * The gym reaches a defeat through several controls (EXPLODE, DAMAGE, and a
+ * player bullet through the shared collision pass). Every path must leave
+ * **exactly one** `extra_life` field pickup, and never more than one per
+ * defeat.
+ */
+describe('GymMiniBoss — guaranteed Extra Life drop (AH-0MW8178ZR0090CNY)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootGym(): Promise<GymMiniBoss> {
+    booted = await bootScene([GymMiniBoss]);
+    return booted!.scene as GymMiniBoss;
+  }
+
+  const extraLifeDrops = (scene: GymMiniBoss) =>
+    scene.getPowerUpDrops().filter((drop) => drop.dropId === 'extra_life');
+
+  it('EXPLODE leaves exactly one extra_life field pickup, and a repeat EXPLODE adds none', async () => {
+    const scene = await bootGym();
+    const before = extraLifeDrops(scene).length;
+
+    scene.explodeRandom();
+    expect(extraLifeDrops(scene).length - before).toBe(1);
+
+    // The mini-boss is already defeated: EXPLODE is a no-op, so the once-only
+    // guard cannot produce a second guaranteed drop.
+    scene.explodeRandom();
+    expect(extraLifeDrops(scene).length - before).toBe(1);
+  });
+
+  it('a DAMAGE-button defeat also leaves exactly one extra_life field pickup', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationMiniBoss;
+    const before = extraLifeDrops(scene).length;
+
+    const hits = boss.getPhaseCount() * MINI_BOSS_GYM_HP_PER_PHASE;
+    for (let i = 0; i < hits && boss.alive; i++) scene.damageMiniBoss();
+
+    expect(boss.alive).toBe(false);
+    expect(extraLifeDrops(scene).length - before).toBe(1);
+  });
+
+  it('a bullet kill through the shared collision pass leaves exactly one extra_life field pickup', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationMiniBoss;
+    const before = extraLifeDrops(scene).length;
+
+    // Drive the shared collision pass: the boss takes a lethal volley through
+    // the same `takeDamage()` + `onEnemyDestroyed` seam a real bullet uses.
+    const hits = boss.getPhaseCount() * MINI_BOSS_GYM_HP_PER_PHASE;
+    for (let i = 0; i < hits * 2 && boss.alive; i++) {
+      scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+      scene.tick(0);
+    }
+
+    expect(boss.alive).toBe(false);
+    expect(extraLifeDrops(scene).length - before).toBe(1);
+  });
+});

@@ -829,8 +829,15 @@ reward overlay (§4.4.4) appears.
   per-burst lifespan and completion delay are all unchanged.
 - **Cosmetic only.** Swept enemies are removed from play visually and award
   **no score, no mineral/power-up/Extra-Life drops and no kill telemetry** —
-  they never route through the reward-bearing kill path. The mini-boss reward
-  (§4.4.4) remains the encounter's single reward.
+  they never route through the reward-bearing kill path. The **mini-boss defeat
+  itself**, however, always leaves **exactly one Extra Life field pickup** at
+  or near its death position (AH-0MW8178ZR0090CNY), **in addition to** the
+  spin-the-wheel reward (§4.4.4). The guarantee is independent of the run
+  state: it spawns at the **5-life cap** and with a **full six-slot pool**
+  (the existing collection gate and life cap then decide whether picking it up
+  helps), the normal drop separation nudge applies, and it stays a **field
+  pickup — never a wheel wedge**. The worst-case particle/sound budget and the
+  ordering rules below are unchanged by this single extra drop.
 - **Sound.** The display is never silent, and it is the level's biggest audio
   moment (AH-0MVVEI7FD004TR2M). The mini-boss's own body plays **one
   boss-scale death cue** (`playBossDestructionSound()`) on the defeat frame,
@@ -1196,6 +1203,29 @@ The player collects power-ups dropped by destroyed enemies through the shared we
 > flat cadence (documented divergence in `GymLevel` and
 > [`docs/BALANCING.md`](./BALANCING.md), which also carries the scaling table
 > and the before/after bot-batch evidence).
+
+> **Extra Life adapts to lost lives (AH-0MW8178ZR0090CNY).** Extra Life's
+> **weight** in the shared per-kill pool — never the overall per-kill drop
+> chance — is multiplied by a life-adaptive curve as the run loses lives:
+> `multiplier = extraLifeAdaptiveBase ** max(0, runStartingLives − lives)`,
+> resolved once in the pure helper `src/core/livesScaling.ts`. With the
+> shipped defaults (`extraLifeAdaptiveBase = 2`, `runStartingLives = 3`) the
+> weight is **1× at 3+ lives, 2× at 2 lives and 4× at 1 life**, so a full-life
+> run behaves byte-for-byte as before while a player down to their last life
+> quietly sees Extra Life a little more often. Because the weighted pool
+> normalises, the resulting *probability* uplift is slightly below the weight
+> ratio — a deliberate extra layer of subtlety (at 2 lives the increase is not
+> noticeable; at 1 life it is a clear but still small uplift: "feels lucky,
+> never noticed"). The multiplier composes **after** the level-scaling supply
+> dial (above), so it can never make the curve rise with campaign level, and it
+> also composes with the (default-off) small-asteroid Extra Life roll. The
+> tunables are persisted in `GameRules` (`extraLifeAdaptiveBase` clamped to
+> `[1, 10]`, `runStartingLives` clamped to `[1, 20]`) so the feel can be
+> retuned without code changes; a hangar deployment's starting lives override
+> the run's baseline reference. The same shared curve is consumed by
+> `PlayScene` and every drop-bearing gym (the formation gyms run it at the
+> deterministic `3`-life `1×` baseline because they have no run), so the rule
+> cannot drift (gym↔game parity, AH-0MUGZDTFX004RBD1).
 
 > **Planned classic-arcade arsenal (AH-0MV14SO0G0095IJ4):** A researched expansion of this catalogue is recorded in `docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md` — eight selected concepts (four weapons: R-Type wave laser, Centipede ricochet shot, Missile Command cluster/MIRV missile, Gradius Options orbiting satellites; four power-ups: Defender smart bomb, Gradius force field, Space Invaders mystery UFO, and the Pac-Man power pellet — since **removed**, see the research doc §5) plus the candidates considered but not selected. Each selected concept's entry specifies its catalogue seam, level-curve variables and the gym scene that will exercise it; the document is the design brief for the epic's per-concept child work items and is validated by `src/classicPowerUpWeaponResearchDocs.test.ts`.
 
@@ -1715,6 +1745,17 @@ launcher resolves the outcome and the overlay only animates it.
   empty-owned fallback inherits it through the shared choice builder, so a
   mini-boss reward can never offer Extra Life. It stays a working field pickup
   (§4.4).
+- **Every defeat also leaves one Extra Life field pickup
+  (AH-0MW8178ZR0090CNY).** In addition to the wheel (or the empty-owned
+  three-option fallback), a mini-boss defeat always spawns **exactly one**
+  `extra_life` **field pickup** at/near the death position — even at the
+  5-life cap and with a full six-slot pool, with the normal drop separation
+  nudge applied. This remains a **field pickup, not a wheel wedge**: it is an
+  unconditional survivability payout layered on top of the reward loop, and it
+  does not change the wheel's distribution, its exclusion of Extra Life, or the
+  sweep's cosmetic-only rule for swept escorts (§3.3.1). The rule lives once in
+  `src/scenes/core/miniBossDrops.ts` and is consumed by both `PlayScene` and
+  `GymMiniBoss`, so the guarantee cannot drift.
 - **Always pays out.** There is **no level-cap filter**: parity with the
   hold-full choice's `buildOwnedLevelUpOptions`, the run-scoped level stores
   are unbounded and only the derived stat saturates, so a spin always raises a

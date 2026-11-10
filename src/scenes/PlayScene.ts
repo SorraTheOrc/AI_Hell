@@ -64,6 +64,7 @@ import {
   powerUpDropChance,
   scaleCampaignLevelCounts,
 } from '../core/levelScaling';
+import { extraLifeAdaptiveMultiplier } from '../core/livesScaling';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import {
   DEFAULT_RULES,
@@ -348,6 +349,7 @@ import {
   rollAsteroidExtraLife,
   type AsteroidKillDropEntity,
 } from './core/asteroidKillDrops';
+import { spawnGuaranteedMiniBossExtraLife } from './core/miniBossDrops';
 import { splitAsteroid } from './core/asteroidSplit';
 import {
   applyMineralChoiceReward,
@@ -1021,6 +1023,13 @@ export class PlayScene extends CombatScene<
    * (level 1 is exactly that base).
    */
   private rules: GameRules = DEFAULT_RULES;
+  /**
+   * The lives this run started with — the baseline of the life-adaptive Extra
+   * Life curve (AH-0MW8178ZR0090CNY). Resolved in `create()` after any hangar
+   * deployment has applied its starting lives; a plain arcade run uses the
+   * `GameRules.runStartingLives` tunable (default 3).
+   */
+  private runStartingLives = DEFAULT_RULES.runStartingLives;
 
   /**
    * The resolved per-run seed (AH-0MUY08V6W001SJJN). Assigned once per run
@@ -1449,6 +1458,13 @@ export class PlayScene extends CombatScene<
         this.hangarWarDeployment,
       );
     }
+    // Life-adaptive Extra Life baseline (AH-0MW8178ZR0090CNY): the run's
+    // starting lives is the reference above which the Extra Life weight is the
+    // unchanged baseline. A hangar deployment overrides the arcade default via
+    // its hull result (now applied, above); a plain run uses the persisted
+    // `GameRules.runStartingLives` tunable.
+    this.runStartingLives =
+      this.hangarWarDeployment?.startingLives ?? rules.runStartingLives;
     // Hold capacity (first hold) and its growth multiplier come from the
     // game-rules config, so the game and every gym progress identically
     // (GDD §4.5, AH-0MUKC6IML0082ZR4).
@@ -3597,6 +3613,19 @@ export class PlayScene extends CombatScene<
     const result = miniBoss.takeDamage(hitX, hitY);
     if (!result.destroyed) return;
 
+    // AC4 (AH-0MW8178ZR0090CNY): every mini-boss defeat leaves **exactly one**
+    // Extra Life field pickup at/near the death position, in addition to the
+    // spin-the-wheel reward. It spawns regardless of the 5-life cap and a full
+    // slot pool; the existing six-slot collection gate and life cap still
+    // govern pickup. The normal drop separation nudge applies, and the shared
+    // helper keeps the guarantee identical in `GymMiniBoss`. Purely additive:
+    // the swept escorts stay cosmetic (§3.3.1).
+    spawnGuaranteedMiniBossExtraLife(
+      (id, x, y) => this.spawnPowerUpDrop(id, x, y),
+      deathX,
+      deathY,
+    );
+
     const context: MiniBossDefeatContext = {
       level: this.waveManager.level,
       waveNumber: this.waveManager.waveNumber,
@@ -5050,8 +5079,20 @@ export class PlayScene extends CombatScene<
     // One shared, eligibility-filtered draw through the six-slot gate (parent
     // AH-0MVLIJT3M005HPHF): below the cap it is byte-for-byte the weighted
     // draw; at/above it only owned kinds plus available-when-full entries.
+    // The Extra Life weight is scaled by the life-adaptive curve here
+    // (AH-0MW8178ZR0090CNY): at or above the run's starting lives the
+    // multiplier is 1, so a full-life run draws exactly as before, while a
+    // player on 2 lives doubles — and on 1 life quadruples — Extra Life's
+    // share of the pool. Total per-kill drop chance is unchanged.
     this.spawnPowerUpDrop(
-      this._drawNextDrop(this.dropSpawner, this._resolveDropSlotState()),
+      this._drawNextDrop(this.dropSpawner, this._resolveDropSlotState(), {
+        baseWeight: this.rules.powerUpWeights.extra_life,
+        multiplier: extraLifeAdaptiveMultiplier(
+          this.gameState.lives,
+          this.rules,
+          this.runStartingLives,
+        ),
+      }),
       x,
       y,
     );

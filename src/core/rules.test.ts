@@ -177,6 +177,9 @@ describe('game rules configuration module', () => {
         enemyCountCap: 120,
         phaseRechargeOverrideSeconds: 9.5,
         teleportRechargeOverrideSeconds: 33,
+        // Life-adaptive Extra Life tunables (AH-0MW8178ZR0090CNY).
+        extraLifeAdaptiveBase: 3,
+        runStartingLives: 4,
       };
       saveRules(custom);
 
@@ -204,6 +207,8 @@ describe('game rules configuration module', () => {
       expect(loaded.enemyCountCap).toBe(120);
       expect(loaded.phaseRechargeOverrideSeconds).toBe(9.5);
       expect(loaded.teleportRechargeOverrideSeconds).toBe(33);
+      expect(loaded.extraLifeAdaptiveBase).toBe(3);
+      expect(loaded.runStartingLives).toBe(4);
     });
 
     it('merges a partial weapon weight table over the weapon defaults', () => {
@@ -1086,6 +1091,86 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     expect(extraLifeDropChance(10, tuned)).toBeLessThan(
       extraLifeDropChance(1, tuned),
     );
+  });
+});
+
+// ── Life-adaptive Extra Life tunables (AH-0MW8178ZR0090CNY) ────────
+
+describe('life-adaptive Extra Life rules (AH-0MW8178ZR0090CNY)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('exposes the documented defaults (base 2, starting lives 3)', () => {
+    expect(DEFAULT_RULES.extraLifeAdaptiveBase).toBe(2);
+    expect(DEFAULT_RULES.runStartingLives).toBe(3);
+    const loaded = loadRules();
+    expect(loaded.extraLifeAdaptiveBase).toBe(2);
+    expect(loaded.runStartingLives).toBe(3);
+  });
+
+  it('loads an older rules blob unchanged and fills the new keys with defaults', () => {
+    // A v5 blob that predates these keys must keep every existing rule and
+    // simply gain the documented defaults (no schema bump, no reset).
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: 5,
+        powerUpSpawnInterval: 3,
+        powerUpDropChanceAtLevel1: 0.12,
+        asteroidExtraLifeDropChance: 0.2,
+      }),
+    );
+    const loaded = loadRules();
+    expect(loaded.powerUpSpawnInterval).toBe(3);
+    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.12);
+    expect(loaded.asteroidExtraLifeDropChance).toBe(0.2);
+    expect(loaded.extraLifeAdaptiveBase).toBe(2);
+    expect(loaded.runStartingLives).toBe(3);
+  });
+
+  it('clamps the exponential base into [1, 10]', () => {
+    for (const [stored, expected] of [
+      [0.5, 1],
+      [-4, 1],
+      [99, 10],
+      [1.5, 1.5],
+      ['huge', 2],
+      [null, 2],
+    ] as const) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ version: RULES_SCHEMA_VERSION, extraLifeAdaptiveBase: stored }),
+      );
+      expect(loadRules().extraLifeAdaptiveBase).toBe(expected);
+    }
+  });
+
+  it('clamps the run starting lives to an integer in [1, 20]', () => {
+    for (const [stored, expected] of [
+      [0, 1],
+      [-3, 1],
+      [99, 20],
+      [4, 4],
+      [3.7, 3],
+      ['four', 3],
+      [null, 3],
+    ] as const) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ version: RULES_SCHEMA_VERSION, runStartingLives: stored }),
+      );
+      expect(loadRules().runStartingLives).toBe(expected);
+    }
+  });
+
+  it('round-trips tuned values through saveRules', () => {
+    saveRules({ ...DEFAULT_RULES, extraLifeAdaptiveBase: 3, runStartingLives: 4 });
+    const loaded = loadRules();
+    expect(loaded.extraLifeAdaptiveBase).toBe(3);
+    expect(loaded.runStartingLives).toBe(4);
   });
 });
 

@@ -80,6 +80,77 @@ export interface SlotGatedDropSpawner<T extends string> extends PowerUpSpawner<T
   setEligibleIds?(ids: Iterable<T> | null): void;
   /** Cycle sources: the ids one full pass visits (for bounded skipping). */
   getOrder?(): T[];
+  /** Weighted sources: set one id's relative weight (the adaptive seam). */
+  setWeight?(id: T, weight: number): void;
+  /** Weighted sources: read one id's exact weight (canonical base capture). */
+  getWeight?(id: T): number;
+  /** Weighted sources: the tracked weight table (id-presence check). */
+  getWeights?(): Partial<Record<T, number>>;
+}
+
+/**
+ * The life-adaptive Extra Life weight for one draw (AH-0MW8178ZR0090CNY).
+ *
+ * `baseWeight` is the canonical Extra Life weight at full lives
+ * (`rules.powerUpWeights.extra_life`) and `multiplier` is the value from
+ * {@link extraLifeAdaptiveMultiplier}; the shared draw sets the weight to the
+ * product before sampling, then leaves that product in place so repeated
+ * draws are idempotent (never compounding off a previous draw's weight).
+ */
+export interface AdaptiveExtraLifeWeight {
+  /** Extra Life weight at full lives (rules `powerUpWeights.extra_life`). */
+  baseWeight: number;
+  /** Life-adaptive multiplier (1 at or above the run's starting lives). */
+  multiplier: number;
+}
+
+/**
+ * Sets the Extra Life weight on a weighted drop source to
+ * `baseWeight × multiplier` (AH-0MW8178ZR0090CNY). The single seam the game
+ * and every drop-bearing gym use to apply the life-adaptive curve, so the
+ * Extra Life weight can never diverge between them. A source without
+ * `setWeight`/`getWeights` (a deterministic round-robin gym source) or one that
+ * does not already track `extra_life` is left untouched — the adaptive weight
+ * only retunes an existing Extra Life entry, never adds one.
+ *
+ * @returns the weight applied, or `null` when the source has no adjustable
+ *   weights.
+ */
+export function applyAdaptiveExtraLifeWeight<T extends string>(
+  spawner: SlotGatedDropSpawner<T>,
+  adaptive: AdaptiveExtraLifeWeight,
+): number | null {
+  if (
+    typeof spawner.setWeight !== 'function' ||
+    typeof spawner.getWeights !== 'function'
+  ) {
+    return null;
+  }
+  // Only retune a source that already tracks Extra Life. A scripted/round-robin
+  // gym source (e.g. a single-id weapon-drop spawner) must be left exactly as
+  // authored — adding a new id here would change its draw pool.
+  const tracked = spawner.getWeights();
+  if (!tracked || !Object.prototype.hasOwnProperty.call(tracked, 'extra_life')) {
+    return null;
+  }
+  const base =
+    typeof adaptive.baseWeight === 'number' &&
+    Number.isFinite(adaptive.baseWeight) &&
+    adaptive.baseWeight >= 0
+      ? adaptive.baseWeight
+      : 0;
+  const multiplier =
+    typeof adaptive.multiplier === 'number' &&
+    Number.isFinite(adaptive.multiplier) &&
+    adaptive.multiplier >= 1
+      ? adaptive.multiplier
+      : 1;
+  const weight = base * multiplier;
+  // The spawner's generic `T` is always a drop id at this seam (power-up or
+  // weapon); the cast is a type-level widening only, exactly like the slot
+  // gate's `eligibleDropIds` cast below.
+  spawner.setWeight('extra_life' as unknown as T, weight);
+  return weight;
 }
 
 /**
@@ -163,7 +234,14 @@ export function buildDefaultDropSpawner(
 export function drawNextDrop<T extends string>(
   spawner: SlotGatedDropSpawner<T>,
   state: PowerUpSlotState,
+  adaptive?: AdaptiveExtraLifeWeight,
 ): T {
+  // Apply the life-adaptive Extra Life weight before sampling
+  // (AH-0MW8178ZR0090CNY). Idempotent: the weight is set from the canonical
+  // base every draw, so repeated draws never compound. Omitted context keeps
+  // the source's configured weights exactly as before.
+  if (adaptive) applyAdaptiveExtraLifeWeight(spawner, adaptive);
+
   if (!state.isFull) {
     // Below the cap: clear any filter left by an earlier full-pool draw and
     // return the source's own next draw unchanged (identical distribution).

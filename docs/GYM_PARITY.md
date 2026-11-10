@@ -648,6 +648,26 @@ Pinned by `src/scenes/core/blockedDropDiscard.test.ts` (the pure stepper) and
 `src/scenes/core/blockedDropDiscard.parity.test.ts` (every consumer boots the
 real scene and observes the same stick → throw → edge retirement).
 
+## Life-adaptive Extra Life weight and the guaranteed mini-boss drop
+
+Two Extra Life rules (AH-0MW8178ZR0090CNY) are shared core, not divergences:
+
+- **Life-adaptive weight.** The Extra Life **weight** in the per-kill pool is
+  multiplied by `extraLifeAdaptiveBase ** max(0, runStartingLives − lives)`
+  (`src/core/livesScaling.ts`), applied through the shared `drawNextDrop` seam
+  in `src/scenes/core/dropLayer.ts`. `PlayScene` runs the real run lives;
+  formation gyms have no run lives, so they consume the same curve at the
+  deterministic `3`-life `1×` baseline. No row above records a divergence.
+- **Guaranteed mini-boss drop.** Every mini-boss defeat spawns exactly one
+  `extra_life` field pickup at/near the death position, in addition to the
+  wheel reward, through `src/scenes/core/miniBossDrops.ts` — consumed by both
+  `PlayScene` (`_damageMiniBoss`) and `GymMiniBoss` (EXPLODE / DAMAGE / a
+  bullet kill). It is a field pickup, never a wheel wedge.
+
+Pinned by `src/core/livesScaling.test.ts`, `src/scenes/core/dropLayer.test.ts`
+(the seeded distribution curve), `src/scenes/PlayScene.test.ts` and
+`src/scenes/gym/GymMiniBoss.test.ts`.
+
 ## Maintenance contract
 
 - A row's **verdict** must be exactly one of `parity`,

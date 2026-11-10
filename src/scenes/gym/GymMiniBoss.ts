@@ -69,6 +69,7 @@ import {
   type MiniBossDeathSweepHandle,
   type MiniBossSweepTarget,
 } from '../core/miniBossDeathSweep';
+import { spawnGuaranteedMiniBossExtraLife } from '../core/miniBossDrops';
 import {
   EnemyFormationConfig,
   GymFormationScene,
@@ -214,6 +215,15 @@ export class GymMiniBoss extends GymFormationScene<
   /** Targets captured for the current/last defeat sweep (test seam). */
   private defeatSweepTargets: readonly MiniBossSweepTarget[] = [];
 
+  /**
+   * Whether this gym lifetime has already spawned its guaranteed mini-boss
+   * Extra Life (AH-0MW8178ZR0090CNY AC4). The gym can reach a defeat through
+   * several controls (DAMAGE, EXPLODE, and a player bullet through the shared
+   * collision pass), so the flag guarantees **exactly one** drop per defeat
+   * regardless of which path lands the lethal blow.
+   */
+  private miniBossExtraLifeSpawned = false;
+
   /** The wedges of the open (or most recent) gym wheel reward. */
   private rewardWedges: MiniBossWheelWedge[] = [];
   /** The deterministic outcome of the open (or most recent) gym wheel reward. */
@@ -234,6 +244,7 @@ export class GymMiniBoss extends GymFormationScene<
     this.rewardOutcome = null;
     this.rewardOpen = false;
     this.rewardAppliedCount = 0;
+    this.miniBossExtraLifeSpawned = false;
 
     // DAMAGE button beside EXPLODE (mirrors GymBoss's layout).
     const explodeButton = this.explodeButton;
@@ -287,7 +298,16 @@ export class GymMiniBoss extends GymFormationScene<
     const boss = this.formationMiniBoss;
     if (!boss.alive) return;
 
+    // Capture the position the guaranteed drop spawns at before the hit can
+    // move the body (AH-0MW8178ZR0090CNY AC4).
+    const deathX = boss.x;
+    const deathY = boss.y;
     const result = boss.takeDamage();
+    if (result.destroyed) {
+      // A DAMAGE-button defeat is a real defeat: it leaves the guaranteed
+      // Extra Life, exactly like EXPLODE and a bullet kill.
+      this._spawnGuaranteedExtraLifeOnce(deathX, deathY);
+    }
     this._refreshStatus(
       result.destroyed
         ? 'MiniBoss destroyed!'
@@ -295,6 +315,37 @@ export class GymMiniBoss extends GymFormationScene<
           ? `PHASE ${result.phase}/${boss.getPhaseCount()}`
           : 'DAMAGED',
     );
+  }
+
+  /**
+   * Spawns the guaranteed mini-boss Extra Life at most once per gym lifetime
+   * (AH-0MW8178ZR0090CNY AC4). Independent of the life cap and the six-slot
+   * pool — the drop is always placed; the existing collection gate/cap decide
+   * whether picking it up helps.
+   */
+  private _spawnGuaranteedExtraLifeOnce(x: number, y: number): void {
+    if (this.miniBossExtraLifeSpawned) return;
+    this.miniBossExtraLifeSpawned = true;
+    spawnGuaranteedMiniBossExtraLife(
+      (id, dx, dy) => this.spawnGuaranteedDrop(id, dx, dy),
+      x,
+      y,
+    );
+  }
+
+  /**
+   * Shared destruction seam: a mini-boss killed by a player bullet through the
+   * collision pass also leaves the guaranteed Extra Life. Skips non-boss
+   * entities, and the once-only guard stops a second drop if another control
+   * observes the same defeat.
+   */
+  protected override onEnemyDestroyed(
+    entity: MiniBoss | EnemyEntity,
+  ): void {
+    super.onEnemyDestroyed(entity);
+    if (entity === this.formationMiniBoss) {
+      this._spawnGuaranteedExtraLifeOnce(entity.x, entity.y);
+    }
   }
 
   // ── Defeat sweep (shared with PlayScene, AC5) ───────────────────
@@ -364,6 +415,13 @@ export class GymMiniBoss extends GymFormationScene<
     boss.playDestructionAudio();
     boss.destroySelf();
     boss.destroy(true);
+
+    // AC4 (AH-0MW8178ZR0090CNY): a mini-boss defeat leaves exactly one Extra
+    // Life field pickup at the death position, in addition to the reward the
+    // REWARD control exercises. EXPLODE bypasses the shared kill seam, so the
+    // guarantee is spawned here too; the once-only guard keeps it to a single
+    // drop across the gym's defeat paths.
+    this._spawnGuaranteedExtraLifeOnce(deathX, deathY);
 
     this.defeatSweepTargets = targets;
     this.defeatSweep = spawnMiniBossDeathSweep(

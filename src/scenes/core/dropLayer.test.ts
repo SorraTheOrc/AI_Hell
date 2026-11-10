@@ -39,12 +39,15 @@ import {
 } from './blockedDropDiscard';
 import {
   advanceDropLifecycles,
+  applyAdaptiveExtraLifeWeight,
   applyDropMagnet,
   buildDefaultDropSpawner,
   collectOverlappingDrops,
   playDropPickupCue,
+  type AdaptiveExtraLifeWeight,
   type DropLifecycleDrop,
 } from './dropLayer';
+import { extraLifeAdaptiveMultiplier } from '../../core/livesScaling';
 
 /** A drop double with a real PowerUp lifecycle and spied Graphics. */
 function makeDrop(
@@ -559,7 +562,11 @@ interface GatedDropLayer {
    * draw is byte-for-byte the unfiltered weighted draw, at/above the cap only
    * owned kinds plus `availableWhenSlotsFull` entries may be returned.
    */
-  drawNextDrop(spawner: WeightedRandomSpawner<DropId>, state: PowerUpSlotState): DropId;
+  drawNextDrop(
+    spawner: WeightedRandomSpawner<DropId>,
+    state: PowerUpSlotState,
+    adaptive?: AdaptiveExtraLifeWeight,
+  ): DropId;
 }
 
 const gatedDropLayer = dropLayerModule as unknown as GatedDropLayer;
@@ -746,5 +753,185 @@ describe('dropLayer — drawNextDrop at six filled slots (AC2, spawn gating)', (
     expect(EXEMPT_WHEN_FULL as readonly DropId[]).toContain(first);
     // The all-zero-weight first-entry fallback would have returned 'shield'.
     expect(first).not.toBe('shield');
+  });
+});
+
+// ── Life-adaptive Extra Life weight (AH-0MW8178ZR0090CNY) ──────────
+//
+// The shared drop draw applies `baseWeight × multiplier` to the Extra Life
+// weight before sampling. The total per-kill drop chance is unchanged (only
+// the share of the drops that occur moves), so the resulting *probability*
+// uplift is slightly below the weight ratio — an intentional subtlety the
+// seeded distribution test asserts, not just the weight maths.
+
+describe('dropLayer — life-adaptive Extra Life weight (AH-0MW8178ZR0090CNY)', () => {
+  const freeState = () => resolveSlotState([], []);
+
+  it('sets the Extra Life weight to baseWeight × multiplier', () => {
+    const spawner = buildDefaultWeightedSpawner(1);
+    const applied = applyAdaptiveExtraLifeWeight(spawner, {
+      baseWeight: DEFAULT_RULES.powerUpWeights.extra_life,
+      multiplier: 4,
+    });
+
+    expect(applied).toBe(DEFAULT_RULES.powerUpWeights.extra_life * 4);
+    expect(spawner.getWeight('extra_life')).toBe(
+      DEFAULT_RULES.powerUpWeights.extra_life * 4,
+    );
+  });
+
+  it('leaves every other weight untouched', () => {
+    const spawner = buildDefaultWeightedSpawner(1);
+    const before = spawner.getWeights();
+    applyAdaptiveExtraLifeWeight(spawner, {
+      baseWeight: DEFAULT_RULES.powerUpWeights.extra_life,
+      multiplier: 2,
+    });
+    const after = spawner.getWeights();
+    for (const id of Object.keys(before) as DropId[]) {
+      if (id === 'extra_life') continue;
+      expect(after[id]).toBe(before[id]);
+    }
+  });
+
+  it('is idempotent across draws (never compounds off a previous weight)', () => {
+    const spawner = buildDefaultWeightedSpawner(1);
+    const adaptive = {
+      baseWeight: DEFAULT_RULES.powerUpWeights.extra_life,
+      multiplier: 2,
+    };
+    applyAdaptiveExtraLifeWeight(spawner, adaptive);
+    const once = spawner.getWeight('extra_life');
+    applyAdaptiveExtraLifeWeight(spawner, adaptive);
+    applyAdaptiveExtraLifeWeight(spawner, adaptive);
+    expect(spawner.getWeight('extra_life')).toBe(once);
+  });
+
+  it('returns null (no-op) for a source without adjustable weights', () => {
+    const cycling = {
+      next: () => 'extra_life' as DropId,
+    };
+    expect(
+      applyAdaptiveExtraLifeWeight(cycling, { baseWeight: 3, multiplier: 4 }),
+    ).toBeNull();
+  });
+
+  it('coerces an invalid multiplier to 1 and an invalid base to 0 (never NaN)', () => {
+    const spawner = buildDefaultWeightedSpawner(1);
+    expect(
+      applyAdaptiveExtraLifeWeight(spawner, {
+        baseWeight: Number.NaN,
+        multiplier: Number.NaN,
+      }),
+    ).toBe(0);
+    expect(spawner.getWeight('extra_life')).toBe(0);
+  });
+
+  it('drawNextDrop applies the weight before sampling (and at 1× is a no-op)', () => {
+    const atFullLives = buildDefaultWeightedSpawner(2);
+    const baseline = atFullLives.getWeight('extra_life');
+    gatedDropLayer.drawNextDrop(atFullLives, freeState(), {
+      baseWeight: DEFAULT_RULES.powerUpWeights.extra_life,
+      multiplier: 1,
+    });
+    expect(atFullLives.getWeight('extra_life')).toBe(baseline);
+
+    const lowLives = buildDefaultWeightedSpawner(2);
+    gatedDropLayer.drawNextDrop(lowLives, freeState(), {
+      baseWeight: DEFAULT_RULES.powerUpWeights.extra_life,
+      multiplier: 4,
+    });
+    expect(lowLives.getWeight('extra_life')).toBe(baseline * 4);
+  });
+
+  // AC3: a seeded simulation (N ≥ 10 000 representative kills per lives value,
+  // documented seed set) demonstrates the drop rate strictly rises as lives
+  // fall and follows the documented weight-multiplier curve within tolerance.
+  // Aggregating three independent seeds keeps the assertion independent of any
+  // single lucky seed.
+  const SIM_SEEDS = [12345, 67890, 24680] as const;
+  const DRAWS_PER_SEED = 10_000;
+
+  function observedExtraLifeRate(lives: number): number {
+    const multiplier = extraLifeAdaptiveMultiplier(lives);
+    let hits = 0;
+    let draws = 0;
+    for (const seed of SIM_SEEDS) {
+      const spawner = buildDefaultWeightedSpawner(seed);
+      const state = freeState();
+      for (let i = 0; i < DRAWS_PER_SEED; i++) {
+        const id = gatedDropLayer.drawNextDrop(spawner, state, {
+          baseWeight: DEFAULT_RULES.powerUpWeights.extra_life,
+          multiplier,
+        });
+        if (id === 'extra_life') hits += 1;
+        draws += 1;
+      }
+    }
+    return hits / draws;
+  }
+
+  /** The exact probability Extra Life should draw at a given weight multiplier. */
+  function expectedExtraLifeProbability(multiplier: number): number {
+    const spawner = buildDefaultWeightedSpawner(1);
+    const weights = spawner.getWeights();
+    let total = 0;
+    for (const id of Object.keys(weights) as DropId[]) {
+      total += weights[id] ?? 0;
+    }
+    const extraLifeWeight = DEFAULT_RULES.powerUpWeights.extra_life * multiplier;
+    total = total - DEFAULT_RULES.powerUpWeights.extra_life + extraLifeWeight;
+    return extraLifeWeight / total;
+  }
+
+  it('the Extra Life drop rate strictly rises as lives fall, across every seed', () => {
+    // Per-seed sample: the ordering must hold for each independent seed, not
+    // just the aggregate.
+    for (const seed of SIM_SEEDS) {
+      const rate = (lives: number) => {
+        const spawner = buildDefaultWeightedSpawner(seed);
+        const state = freeState();
+        let hits = 0;
+        for (let i = 0; i < DRAWS_PER_SEED; i++) {
+          const id = gatedDropLayer.drawNextDrop(spawner, state, {
+            baseWeight: DEFAULT_RULES.powerUpWeights.extra_life,
+            multiplier: extraLifeAdaptiveMultiplier(lives),
+          });
+          if (id === 'extra_life') hits += 1;
+        }
+        return hits / DRAWS_PER_SEED;
+      };
+      const full = rate(3);
+      const two = rate(2);
+      const one = rate(1);
+      expect(two).toBeGreaterThan(full);
+      expect(one).toBeGreaterThan(two);
+    }
+  });
+
+  it('the simulated rates follow the documented weight-multiplier curve within tolerance', () => {
+    const fullRate = observedExtraLifeRate(3);
+    const twoRate = observedExtraLifeRate(2);
+    const oneRate = observedExtraLifeRate(1);
+
+    // Absolute tolerance is comfortably above the sampling error at 30 000
+    // draws (~0.1 percentage point) yet far below the curve's own steps.
+    const TOLERANCE = 0.006;
+    expect(Math.abs(fullRate - expectedExtraLifeProbability(1))).toBeLessThan(TOLERANCE);
+    expect(Math.abs(twoRate - expectedExtraLifeProbability(2))).toBeLessThan(TOLERANCE);
+    expect(Math.abs(oneRate - expectedExtraLifeProbability(4))).toBeLessThan(TOLERANCE);
+  });
+
+  it('the probability uplift is slightly below the weight ratio (pool normalisation)', () => {
+    const fullRate = observedExtraLifeRate(3);
+    const twoRate = observedExtraLifeRate(2);
+    const oneRate = observedExtraLifeRate(1);
+
+    // Weight ratios are exactly 2× and 4×; because the pool normalises, the
+    // resulting probability ratios are strictly smaller (intentional subtlety).
+    expect(twoRate / fullRate).toBeGreaterThan(1);
+    expect(twoRate / fullRate).toBeLessThan(2);
+    expect(oneRate / fullRate).toBeGreaterThan(3);
+    expect(oneRate / fullRate).toBeLessThan(4);
   });
 });
