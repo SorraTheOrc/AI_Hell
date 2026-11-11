@@ -38,6 +38,13 @@
  * - **Defender rating.** One pure formula over a hull's hangar upgrades
  *   ({@link defenderRatingFromUpgrades}), so the ring resolver (B3) has no
  *   second source of truth for "how strong is the bot left in this hex".
+ * - **Player strength.** {@link resolvePlayerStrength} reuses the same
+ *   defender-rating formula over the **active** hull's hangar progression,
+ *   plus equipped defence modifiers and a documented per-weapon term, so the
+ *   frontier clock sizes the ring's aggression budget from the fleet the
+ *   player actually flies (producer decision Q1 = a in
+ *   AH-0MWB9V9Q3004HD2P). It is derived at tick time from the already-persisted
+ *   hangar, so no new saved field exists.
  *
  * @module src/core/hangarWar/hangarEconomy
  */

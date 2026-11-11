@@ -417,7 +417,7 @@ describe('runFrontierTick', () => {
     });
   });
 
-  it('records the risen aggression as the multiplier the attack faced', () => {
+  it("records the hex's aggression as the multiplier the attack faced", () => {
     const hexes = ringOne();
     hold(hexes, RING_ONE_IDS[0], 0);
     const payload = payloadWith(hexes);

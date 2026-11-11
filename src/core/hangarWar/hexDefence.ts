@@ -53,13 +53,23 @@
  *
  * One tick is the transition that runs between runs:
  *
- * 1. **Aggression rises** on every hex of the ring by the tick's recorded rise
- *    (data-driven bounds, clamped at the tuning's maximum).
+ * 1. **Aggression is redistributed inside a strength-derived budget.** The
+ *    tick resolves the player's strength from the payload's own hangar
+ *    ({@link resolvePlayerStrength} — no new persisted field), derives the
+ *    ring's budget ({@link ringAggressionBudget}) and the aggression the
+ *    current fleet is expected to clear ({@link beatableAggressionCeiling}),
+ *    then moves points between hexes with {@link redistributeAggression}. A
+ *    rise on one hex is paid for by a fall on another, every aggression stays
+ *    a whole number in `[0, maxAggression]`, and at least one hex remains at
+ *    or below the beatable ceiling. The mass is stable while the fleet is
+ *    stable and grows only as the fleet grows; the tuning knobs
+ *    (`gainPerStrengthPoint`, `redistributionCap`, `beatableCeilingSlack`)
+ *    live in {@link DEFAULT_FRONTIER_TUNING}.
  * 2. **Queued attacks are resolved first** — the payload's `pendingAttacks`
- *    ("resolved next sortie") are evaluated against the risen aggression and
- *    consumed. A queued attack whose hex is no longer held, or that has no
- *    answerable neighbour, is dropped rather than retried, so the queue can
- *    never deadlock.
+ *    ("resolved next sortie") are evaluated against the redistributed
+ *    aggression and consumed. A queued attack whose hex is no longer held, or
+ *    that has no answerable neighbour, is dropped rather than retried, so the
+ *    queue can never deadlock.
  * 3. **The frontier may open a new front** — only when nothing was queued and
  *    the seeded draw passes the tuning's attack chance, one held, attackable
  *    hex is attacked.

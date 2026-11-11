@@ -2775,7 +2775,7 @@ document's *Producer decision record*, and the build is scheduled by work item
 Candidate D's loop, in brief: the player is surrounded by AI on a hex grid,
 attacks a weak neighbouring hex, collects salvage, defeats its boss to gain a new
 kind of power-up or weapon in the hangar, and leaves a bot behind to defend the
-hex. Border aggression rises between runs and can retake hexes unless the player
+hex. Frontier aggression is sized from the fleet's strength, redistributed around the ring between runs, and can retake hexes unless the player
 defeats the attacking neighbour; the map grows in rings. Hex defence, mineral
 accrual and the aggression tick are **algorithmic resolutions over stored
 strength numbers**, not simulated battles. Two rules apply to every candidate and
@@ -3104,7 +3104,7 @@ write:
    hex, push on, and leave the rest of the ring unheld (and at risk). Securing
    every hex still opens the ring too, so the **grind** line is unchanged, and
    nothing is discarded either way — the hexes a rush skips stay in the war with
-   their held state, defending bots and rising aggression, so the frontier tick
+   their held state, defending bots and redistributed aggression, so the frontier tick
    keeps resolving their defence. There is **no hangar assault pass** and no
    hangar-falls lose state; the massed counter-attack and the campaign loss are
    deferred to **AH-0MVUVL2O2006W4QK**.
@@ -3137,8 +3137,14 @@ margin               = defenderRating − attackStrength
 
 One **between-sortie frontier tick** runs when a deployment ends:
 
-1. **Aggression rises 1–2 per tick on every hex**, clamped at a ceiling of **9**.
-2. **Queued attacks resolve first** against the risen aggression and are
+1. **Aggression is redistributed inside a budget sized from the player's
+   fleet.** The tick resolves the player's strength from the active loadout's
+   hangar progression, derives the ring's budget and the aggression the fleet is
+   expected to clear, then moves points between hexes: a rise on one hex is paid
+   for by a fall on another, every aggression stays a whole number in
+   `[0, 9]`, and at least one hex remains at or below the beatable ceiling. A
+   fleet that does not grow does not see the ring's aggression mass grow.
+2. **Queued attacks resolve first** against the redistributed aggression and are
    consumed; an attack whose hex is no longer held, or that has no answerable
    neighbour, is dropped rather than retried (the queue cannot deadlock).
 3. **The frontier may open a new front** only when nothing was queued and the
