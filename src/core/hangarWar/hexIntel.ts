@@ -66,6 +66,8 @@ import {
   HEX_RING_DEFINITIONS,
   findHexRingDefinition,
 } from '../../data/hexRingDefinitions';
+import { resolvePlayerStrength } from './hangarEconomy';
+import { beatableAggressionCeiling } from './hexDifficulty';
 
 /** Title rendered by the map screen (asserted by tests). */
 export const HEX_MAP_TITLE = 'HANGAR WAR — HEX MAP';
@@ -156,6 +158,12 @@ export interface HexMapModel {
   readonly ringLine: string;
   /** Hangar summary line (`HANGAR · hull-1 · 240 min · 3 cores`). */
   readonly hangarLine: string;
+  /** The player strength the frontier is sized from. */
+  readonly playerStrength: number;
+  /** The highest aggression still beatable with the current fleet. */
+  readonly beatableCeiling: number;
+  /** Frontier context line (`FRONTIER · STR 2 · BEAT ≤ 2 (3 IN REACH)`). */
+  readonly frontierLine: string;
   /** The hangar navigation row. */
   readonly hangarRow: HexMapActionRow;
   /** Every hex, in generated (clockwise) order, then any stored extras. */
@@ -432,6 +440,16 @@ export function buildHexMapModel(
   const secured = hexes.length > 0 && heldCount === hexes.length;
   const attractHexId = pickAttractHex(payload, definitions);
 
+  // Ring-level context (the shared resolvers, never a map-local rule): the
+  // player strength the frontier was sized from and the aggression the current
+  // fleet is expected to clear. The per-hex badges still render the stored
+  // (redistributed) aggression untouched.
+  const playerStrength = resolvePlayerStrength(payload.hangar);
+  const beatableCeiling = beatableAggressionCeiling(playerStrength);
+  const inReachCount = hexes.filter(
+    (hex) => hex.aggression <= beatableCeiling,
+  ).length;
+
   const focusOrder = [
     ...hexes.filter((hex) => hex.actionable).map((hex) => hex.key),
     HEX_MAP_HANGAR_ROW_KEY,
@@ -450,6 +468,9 @@ export function buildHexMapModel(
     hangarLine: `HANGAR · ${payload.hangar.activeHull} · ${toCount(
       payload.hangar.bankedMinerals,
     )} min · ${toCount(payload.hangar.bankedCores)} cores`,
+    playerStrength,
+    beatableCeiling,
+    frontierLine: `FRONTIER · STR ${playerStrength} · BEAT ≤ ${beatableCeiling} (${inReachCount} IN REACH)`,
     hangarRow: {
       key: HEX_MAP_HANGAR_ROW_KEY,
       label: HEX_MAP_HANGAR_LABEL,

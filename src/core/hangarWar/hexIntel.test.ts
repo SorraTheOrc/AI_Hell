@@ -30,6 +30,10 @@ import {
 } from '../../data/hexRingDefinitions';
 import { VALID_HANGAR_WAR_PAYLOAD } from './fixtures';
 import { createHangarWarRng } from './rng';
+import { runFrontierTick } from './hexDefence';
+import { aggressionScenario } from './__fixtures__/aggressionScenarios';
+import { resolvePlayerStrength } from './hangarEconomy';
+import { beatableAggressionCeiling } from './hexDifficulty';
 
 /** A payload whose ring is the generated state of `ringIndex`. */
 function ringPayload(ringIndex: 1 | 2): HangarWarPayload {
@@ -361,5 +365,43 @@ describe('attract bot hex pick (pure)', () => {
     const seed = createHangarWarRng(11).nextInt(1_000_000);
     const payload = { ...ringPayload(2), seed };
     expect(pickAttractHex(payload)).toBe(pickAttractHex(payload));
+  });
+});
+
+describe('buildHexMapModel — the redistributed frontier (AH-0MWBBUAUQ0038GFL)', () => {
+  it('renders each hex\'s stored (redistributed) aggression, not a re-derived value', () => {
+    const payload = aggressionScenario(1);
+    const tick = runFrontierTick(payload);
+    const model = buildHexMapModel(tick.payload);
+
+    for (const hex of model.hexes) {
+      const stored = tick.payload.ring.hexes.find(
+        (candidate) => candidate.id === hex.id,
+      );
+      expect(stored).toBeDefined();
+      expect(hex.aggression).toBe(stored?.aggression);
+      expect(hex.tileLabel).toBe(`AGG ${stored?.aggression}`);
+    }
+  });
+
+  it('surfaces the ring\'s player strength and beatable ceiling', () => {
+    const payload = aggressionScenario(2);
+    const model = buildHexMapModel(payload);
+
+    expect(model.playerStrength).toBe(resolvePlayerStrength(payload.hangar));
+    expect(model.beatableCeiling).toBe(
+      beatableAggressionCeiling(model.playerStrength),
+    );
+    expect(model.frontierLine).toContain(`STR ${model.playerStrength}`);
+    expect(model.frontierLine).toContain(`BEAT ≤ ${model.beatableCeiling}`);
+  });
+
+  it('shows at least one hex in reach after a tick', () => {
+    const tick = runFrontierTick(aggressionScenario(2));
+    const model = buildHexMapModel(tick.payload);
+    expect(
+      model.hexes.some((hex) => hex.aggression <= model.beatableCeiling),
+    ).toBe(true);
+    expect(model.frontierLine).toContain('IN REACH');
   });
 });

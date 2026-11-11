@@ -152,7 +152,7 @@ describe('DefenceReportScene', () => {
 
     expect(scene.sys.isActive()).toBe(true);
     findTextStartingWith(scene, DEFENCE_REPORT_TITLE);
-    findTextStartingWith(scene, 'TICK 4 · AGG 20 · 0 rose, 0 fell');
+    findTextStartingWith(scene, 'TICK 4 · AGG 20/20 · 0 rose, 0 fell');
     findTextStartingWith(scene, 'ATTACKED 1 · HELD 0 · FELL 1');
     findTextStartingWith(scene, DEFENCE_REPORT_HINT);
 

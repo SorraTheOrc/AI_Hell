@@ -19,10 +19,10 @@ import {
   retakeTargetHex,
   retakeTargetIsAnswerable,
 } from './defenceReport';
-import type {
-  FrontierTickRecord,
-  HexDefenceRecord,
-} from './hexDefence';
+import { runFrontierTick, type FrontierTickRecord, type HexDefenceRecord } from './hexDefence';
+import { aggressionScenario } from './__fixtures__/aggressionScenarios';
+import { resolvePlayerStrength } from './hangarEconomy';
+import { beatableAggressionCeiling } from './hexDifficulty';
 import type { HangarWarPayload, HexState } from './types';
 
 /** One hex of the synthetic two-hex ring. */
@@ -248,7 +248,7 @@ describe('buildDefenceReport — summary, quiet ticks and totals', () => {
         attack({ hexId: 'hex-frontier', outcome: 'fell', margin: -2 }),
       ]),
     );
-    expect(model.tickLine).toBe('TICK 4 · AGG 20 · 0 rose, 0 fell');
+    expect(model.tickLine).toBe('TICK 4 · AGG 20/20 · 0 rose, 0 fell');
     expect(model.summaryLine).toBe('ATTACKED 2 · HELD 1 · FELL 1');
     expect(model.attackedCount).toBe(2);
     expect(model.heldCount).toBe(1);
@@ -261,7 +261,7 @@ describe('buildDefenceReport — summary, quiet ticks and totals', () => {
     expect(model.quiet).toBe(true);
     expect(model.rows).toEqual([]);
     expect(model.summaryLine).toBe('QUIET — no hex was attacked this tick');
-    expect(model.tickLine).toBe('TICK 4 · AGG 20 · 0 rose, 0 fell');
+    expect(model.tickLine).toBe('TICK 4 · AGG 20/20 · 0 rose, 0 fell');
     // The continue action is always present, so the screen can never stall.
     expect(model.focusOrder).toEqual([DEFENCE_REPORT_CONTINUE_KEY]);
     expect(model.defaultFocusKey).toBe(DEFENCE_REPORT_CONTINUE_KEY);
@@ -322,6 +322,41 @@ describe('buildDefenceReport — pure', () => {
     const record = makeRecord([attack()]);
     expect(buildDefenceReport(payload, record)).toEqual(
       buildDefenceReport(payload, record),
+    );
+  });
+});
+
+
+describe('buildDefenceReport — the redistributed tick passthrough (AH-0MWBBUAUQ0038GFL)', () => {
+  it('copies the tick record\'s strength, budget, ceiling and deltas unchanged', () => {
+    const payload = aggressionScenario(1);
+    const tick = runFrontierTick(payload);
+    const model = buildDefenceReport(tick.payload, tick.record);
+
+    expect(model.playerStrength).toBe(tick.record.playerStrength);
+    expect(model.aggressionBudget).toBe(tick.record.aggressionBudget);
+    expect(model.beatableCeiling).toBe(tick.record.beatableCeiling);
+    expect(model.deltas).toEqual(tick.record.deltas);
+    expect(model.rose).toBe(tick.record.rose);
+    expect(model.fell).toBe(tick.record.fell);
+  });
+
+  it('states the ring\'s aggression against its budget and what moved', () => {
+    const payload = aggressionScenario(1);
+    const tick = runFrontierTick(payload);
+    const model = buildDefenceReport(tick.payload, tick.record);
+    expect(model.tickLine).toBe(
+      `TICK ${tick.record.tick} · AGG ${tick.record.aggressionBudget}/${tick.record.aggressionBudget} · ${tick.record.rose} rose, ${tick.record.fell} fell`,
+    );
+  });
+
+  it('uses the same resolvers the tick used (no second calculation)', () => {
+    const payload = aggressionScenario(2);
+    const tick = runFrontierTick(payload);
+    const model = buildDefenceReport(tick.payload, tick.record);
+    expect(model.playerStrength).toBe(resolvePlayerStrength(payload.hangar));
+    expect(model.beatableCeiling).toBe(
+      beatableAggressionCeiling(model.playerStrength),
     );
   });
 });

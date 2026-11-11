@@ -136,7 +136,7 @@ export interface DefenceReportModel {
   readonly rose: number;
   /** How many hexes fell in aggression this tick. */
   readonly fell: number;
-  /** Tick line (`TICK 4 · AGG 26 · 3 rose, 2 fell`). */
+  /** Tick line (`TICK 4 · AGG 26/26 · 3 rose, 2 fell`). */
   readonly tickLine: string;
   /** Outcome summary (`ATTACKED 2 · HELD 1 · FELL 1`, or the quiet line). */
   readonly summaryLine: string;
@@ -313,7 +313,7 @@ export function buildDefenceReport(
     deltas,
     rose,
     fell,
-    tickLine: `TICK ${tick} · AGG ${aggressionBudget} · ${rose} rose, ${fell} fell`,
+    tickLine: `TICK ${tick} · AGG ${aggressionBudget}/${aggressionBudget} · ${rose} rose, ${fell} fell`,
     summaryLine: quiet
       ? 'QUIET — no hex was attacked this tick'
       : `ATTACKED ${rows.length} · HELD ${heldCount} · FELL ${fellCount}`,
