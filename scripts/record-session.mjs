@@ -685,6 +685,101 @@ export async function finaliseRecording({
   };
 }
 
+/**
+ * Runs the recorder's startup sequence through an injected step map and
+ * rescues a failure at any step with the existing lost/salvaged line
+ * (AH-0MWB6OFP50004VYE, AH-0MWB6OG5T007BYXP).
+ *
+ * The recorder's setup used to live inline in {@link main}, so a browser close
+ * during a setup step escaped as a raw Playwright `Target … has been closed`
+ * message with no actionable output. The setup is now a seam that takes its
+ * step functions by injection: {@link main} supplies the real ones, and a
+ * hermetic test supplies fakes that reject at exactly one step.
+ *
+ * Steps, in order (the step map's public contract):
+ *
+ * 1. `listenServer()` → `{ server, url }` — create and listen on Vite.
+ * 2. `launchBrowser()` → browser — load Chromium and launch it.
+ * 3. `newPage(browser)` → page — open the game page.
+ * 4. `addRunEndedInitScript(page)` — install the run-ended listener.
+ * 5. `addBotConfigInitScript?(page)` — optional `--bot-config` seed; absent
+ *    when no config was supplied.
+ * 6. `goto(page, url)` — navigate to the game.
+ * 7. `waitForSelector(page)` — wait for `#game-container canvas`.
+ * 8. `pressStartKeys(page)` — press Enter, or the bot start plan.
+ *
+ * On a throw the failure is classified with {@link isTargetClosedError} and
+ * finalised through {@link finaliseRecording} with `reason: 'target_closed'`
+ * and the captured byte count (0 during setup), so exactly one actionable
+ * stdout line is printed and the exit code is non-zero. A non-target-closed
+ * failure (a genuine Vite/selector bug) additionally writes its own message
+ * to `stderr` *after* the actionable line, so the rescue never hides the
+ * cause; a target-closed failure gets no raw-message diagnostic.
+ *
+ * @param {{
+ *   steps: object,
+ *   outputPath: string,
+ *   partialPath?: string,
+ *   capturedBytes?: number,
+ *   log?: (line: string) => void,
+ *   stderr?: (line: string) => void,
+ *   finalise?: typeof finaliseRecording,
+ * }} params
+ * @returns {Promise<{
+ *   exitCode: number,
+ *   rescued: boolean,
+ *   server?: unknown,
+ *   browser?: unknown,
+ *   page?: unknown,
+ *   targetClosed?: boolean,
+ *   error?: unknown,
+ * }>}
+ */
+export async function runRecordingSetup({
+  steps,
+  outputPath,
+  partialPath = partialPathForJsonl(outputPath),
+  capturedBytes = 0,
+  log = () => {},
+  stderr = () => {},
+  finalise = finaliseRecording,
+} = {}) {
+  try {
+    const { server, url } = await steps.listenServer();
+    const browser = await steps.launchBrowser();
+    const page = await steps.newPage(browser);
+    await steps.addRunEndedInitScript(page);
+    if (typeof steps.addBotConfigInitScript === 'function') {
+      await steps.addBotConfigInitScript(page);
+    }
+    await steps.goto(page, url);
+    await steps.waitForSelector(page);
+    await steps.pressStartKeys(page);
+    return { exitCode: 0, rescued: false, server, browser, page };
+  } catch (error) {
+    const targetClosed = isTargetClosedError(error);
+    const result = await finalise({
+      reason: 'target_closed',
+      outputPath,
+      partialPath,
+      capturedBytes,
+      // The target-closed path never reads, writes or removes anything, so the
+      // lost/salvaged decision is made from `capturedBytes` alone.
+      readJsonl: () => Promise.resolve(''),
+      writeRecording: () => {},
+      removeFile: () => {},
+      log,
+    });
+    // The actionable line is printed by the finaliser first; a genuine setup
+    // failure is then surfaced as a secondary diagnostic so it stays
+    // debuggable. A target-closed failure is expected and gets no raw message.
+    if (!targetClosed) {
+      stderr(`Recording setup failed: ${firstLine(error)}`);
+    }
+    return { exitCode: result.exitCode, rescued: true, targetClosed, error };
+  }
+}
+
 /** CLI entry point. */
 async function main(argv) {
   const options = parseRecordArgs(argv);

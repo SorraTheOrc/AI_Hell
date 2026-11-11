@@ -36,8 +36,10 @@ import {
   LOST_RECORDING_MESSAGE,
   partialPathForJsonl,
   resolvePartialRecordingPath,
+  runRecordingSetup,
   runRecordingWaitLoop,
 } from './record-session.mjs';
+import type { RecordingSetupSteps } from './record-session.mjs';
 import { parseTelemetryJsonl } from './inspect-telemetry.mjs';
 import { captureStartPlan, START_KEY_GAP_MS } from './capture-gameplay.mjs';
 
@@ -805,5 +807,232 @@ describe('demo bot start plan', () => {
 
   it('START_KEY_GAP_MS is positive so the plan introduces inter-key delays', () => {
     expect(START_KEY_GAP_MS).toBeGreaterThan(0);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Startup-window rescue seam (AH-0MWB6OFP50004VYE)                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The setup steps the recorder performs before the wait loop, in order.
+ *
+ * The sibling implementation item (AH-0MWB6OG5T007BYXP) extracts these into
+ * `runRecordingSetup`'s injected step map; a hermetic test can fail exactly
+ * one of them with a target-closed error without a Vite server, a real
+ * browser or network access, and assert the startup rescue.
+ */
+type SetupStepName =
+  | 'listenServer'
+  | 'launchBrowser'
+  | 'newPage'
+  | 'addRunEndedInitScript'
+  | 'addBotConfigInitScript'
+  | 'goto'
+  | 'waitForSelector'
+  | 'pressStartKeys';
+
+const SETUP_STEPS: SetupStepName[] = [
+  'listenServer',
+  'launchBrowser',
+  'newPage',
+  'addRunEndedInitScript',
+  'addBotConfigInitScript',
+  'goto',
+  'waitForSelector',
+  'pressStartKeys',
+];
+
+const TARGET_CLOSED_MESSAGE = 'Target page, context or browser has been closed';
+
+function targetClosedError(message = TARGET_CLOSED_MESSAGE): Error {
+  return new Error(message);
+}
+
+/**
+ * Builds a full fake step map. When `failing` names a step, that step rejects
+ * with `error`; every other step resolves. `calls` records the invocation
+ * order (no Playwright import, no Vite import).
+ */
+function fakeSetupSteps(
+  failing: SetupStepName | null,
+  error: Error = targetClosedError(),
+  includeBotConfig = true,
+) {
+  const calls: SetupStepName[] = [];
+  const fail = (name: SetupStepName) => name === failing;
+  const record = (name: SetupStepName) => {
+    calls.push(name);
+  };
+  const server = { id: 'server' };
+  const browser = { id: 'browser' };
+  const page = { id: 'page' };
+
+  const steps: RecordingSetupSteps = {
+    listenServer: () => {
+      record('listenServer');
+      return fail('listenServer')
+        ? Promise.reject(error)
+        : Promise.resolve({ server, url: 'http://127.0.0.1:5173/' });
+    },
+    launchBrowser: () => {
+      record('launchBrowser');
+      return fail('launchBrowser') ? Promise.reject(error) : Promise.resolve(browser);
+    },
+    newPage: () => {
+      record('newPage');
+      return fail('newPage') ? Promise.reject(error) : Promise.resolve(page);
+    },
+    addRunEndedInitScript: () => {
+      record('addRunEndedInitScript');
+      return fail('addRunEndedInitScript') ? Promise.reject(error) : Promise.resolve();
+    },
+    goto: () => {
+      record('goto');
+      return fail('goto') ? Promise.reject(error) : Promise.resolve();
+    },
+    waitForSelector: () => {
+      record('waitForSelector');
+      return fail('waitForSelector') ? Promise.reject(error) : Promise.resolve();
+    },
+    pressStartKeys: () => {
+      record('pressStartKeys');
+      return fail('pressStartKeys') ? Promise.reject(error) : Promise.resolve();
+    },
+    ...(includeBotConfig
+      ? {
+          addBotConfigInitScript: () => {
+            record('addBotConfigInitScript');
+            return fail('addBotConfigInitScript')
+              ? Promise.reject(error)
+              : Promise.resolve();
+          },
+        }
+      : {}),
+  };
+
+  return { steps, calls, server, browser, page };
+}
+
+describe('runRecordingSetup — startup crash rescue (AH-0MWB6OFP50004VYE)', () => {
+  function collectors() {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const journal: Array<{ stream: 'stdout' | 'stderr'; line: string }> = [];
+    return {
+      stdout,
+      stderr,
+      journal,
+      log: (line: string) => {
+        stdout.push(line);
+        journal.push({ stream: 'stdout', line });
+      },
+      stderrSink: (line: string) => {
+        stderr.push(line);
+        journal.push({ stream: 'stderr', line });
+      },
+    };
+  }
+
+  it.each(SETUP_STEPS)(
+    'rescues a target-closed failure at %s with exactly one lost line and exit 1 (AC1/AC4)',
+    async (failing) => {
+      const dir = tempDir();
+      const outputPath = join(dir, `session-${failing}.jsonl`);
+      const sink = collectors();
+      const { steps } = fakeSetupSteps(failing);
+
+      const result = await runRecordingSetup({
+        steps,
+        outputPath,
+        partialPath: partialPathForJsonl(outputPath),
+        log: sink.log,
+        stderr: sink.stderrSink,
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.rescued).toBe(true);
+      expect(result.targetClosed).toBe(true);
+      // Exactly one actionable stdout line, naming the path not written.
+      expect(sink.stdout).toEqual([formatLostRecordingLine(outputPath)]);
+      expect(sink.stdout).toHaveLength(1);
+      // A startup rescue captured nothing, so no recording is written.
+      expect(existsSync(outputPath)).toBe(false);
+    },
+  );
+
+  it('keeps a raw target-closed message off stdout and never as the only output (AC2)', async () => {
+    const dir = tempDir();
+    const outputPath = join(dir, 'session-raw.jsonl');
+    const sink = collectors();
+    const { steps } = fakeSetupSteps('goto');
+
+    await runRecordingSetup({
+      steps,
+      outputPath,
+      log: sink.log,
+      stderr: sink.stderrSink,
+    });
+
+    // The actionable line is the output the operator can act on.
+    expect(sink.stdout).toEqual([formatLostRecordingLine(outputPath)]);
+    expect(sink.stdout.join('\n')).not.toContain(TARGET_CLOSED_MESSAGE);
+    // Whatever the implementation does with stderr, the raw message is never
+    // the whole diagnostic: the lost line is always present.
+    expect([...sink.stdout, ...sink.stderr].join('\n')).toContain(
+      formatLostRecordingLine(outputPath),
+    );
+  });
+
+  it('prints the lost line first, then the specific setup failure as a secondary diagnostic (AC3)', async () => {
+    const dir = tempDir();
+    const outputPath = join(dir, 'session-vite.jsonl');
+    const sink = collectors();
+    const viteFailure = new Error('Vite dev server failed to listen on port 5173');
+    const { steps } = fakeSetupSteps('listenServer', viteFailure);
+
+    await runRecordingSetup({
+      steps,
+      outputPath,
+      log: sink.log,
+      stderr: sink.stderrSink,
+    });
+
+    // A genuine Vite/selector bug stays debuggable: the actionable line is
+    // printed first, the specific failure second.
+    expect(sink.stdout).toEqual([formatLostRecordingLine(outputPath)]);
+    expect(sink.stderr.join('\n')).toContain(viteFailure.message);
+    expect(sink.journal[0]).toEqual({
+      stream: 'stdout',
+      line: formatLostRecordingLine(outputPath),
+    });
+    expect(sink.journal.filter((entry) => entry.stream === 'stderr')).toHaveLength(1);
+  });
+
+  it('runs every setup step in order and returns the handles when none fails', async () => {
+    const dir = tempDir();
+    const outputPath = join(dir, 'session-ok.jsonl');
+    const { steps, calls, server, browser, page } = fakeSetupSteps(null);
+
+    const result = await runRecordingSetup({ steps, outputPath });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.rescued).toBe(false);
+    expect(result.server).toBe(server);
+    expect(result.browser).toBe(browser);
+    expect(result.page).toBe(page);
+    expect(calls).toEqual(SETUP_STEPS);
+  });
+
+  it('skips the optional bot-config init script when it is not supplied', async () => {
+    const dir = tempDir();
+    const outputPath = join(dir, 'session-no-bot.jsonl');
+    const { steps, calls } = fakeSetupSteps(null, targetClosedError(), false);
+
+    const result = await runRecordingSetup({ steps, outputPath });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.rescued).toBe(false);
+    expect(calls).not.toContain('addBotConfigInitScript');
   });
 });

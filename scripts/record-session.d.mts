@@ -148,3 +148,46 @@ export interface CreateRecordingCheckpointOptions {
 export function createRecordingCheckpoint(
   options?: CreateRecordingCheckpointOptions,
 ): RecordingCheckpoint;
+
+/** The recorder setup steps, in order (AH-0MWB6OFP50004VYE / AH-0MWB6OG5T007BYXP). */
+export interface RecordingSetupSteps {
+  listenServer: () => Promise<{ server: unknown; url: string }>;
+  launchBrowser: () => Promise<unknown>;
+  newPage: (browser: unknown) => Promise<unknown>;
+  addRunEndedInitScript: (page: unknown) => Promise<void>;
+  /** Optional bot-tuning seed; absent when no `--bot-config` was supplied. */
+  addBotConfigInitScript?: (page: unknown) => Promise<void>;
+  goto: (page: unknown, url: string) => Promise<void>;
+  waitForSelector: (page: unknown) => Promise<void>;
+  pressStartKeys: (page: unknown) => Promise<void>;
+}
+
+export interface RunRecordingSetupOptions {
+  steps: RecordingSetupSteps;
+  outputPath: string;
+  partialPath?: string;
+  /** Bytes a checkpoint had already captured; 0 during setup. */
+  capturedBytes?: number;
+  log?: (line: string) => void;
+  /** Secondary diagnostic sink; never receives the actionable line. */
+  stderr?: (line: string) => void;
+  finalise?: typeof finaliseRecording;
+}
+
+export interface RunRecordingSetupResult {
+  exitCode: number;
+  rescued: boolean;
+  server?: unknown;
+  browser?: unknown;
+  page?: unknown;
+  targetClosed?: boolean;
+  error?: unknown;
+}
+
+/**
+ * Runs the recorder's startup sequence through an injected step map and rescues
+ * a failure at any step with the existing lost/salvaged line.
+ */
+export function runRecordingSetup(
+  options: RunRecordingSetupOptions,
+): Promise<RunRecordingSetupResult>;
