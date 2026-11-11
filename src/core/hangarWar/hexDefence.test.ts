@@ -33,12 +33,15 @@ import {
   createFrontierClock,
   frontierClockFor,
   authoredRingBaseMass,
+  redistributeAggression,
   resolveDefence,
   ringAggressionBudget,
   runFrontierTick,
   type FrontierTuning,
 } from './hexDefence';
 import { createRingState } from './hexRing';
+import { aggressionMapOf, aggressionScenario, everyHexMax } from './__fixtures__/aggressionScenarios';
+import { checkRingAggression, ringAggressionTotal } from './aggressionInvariants';
 import { MINIMUM_PLAYER_STRENGTH } from './hangarEconomy';
 import type { HangarWarPayload, HexState, PendingAttack } from './types';
 
@@ -667,6 +670,171 @@ describe('ringAggressionBudget — the strength → ring budget mapping', () => 
     for (const ring of [ring1, ring2]) {
       expect(ringAggressionBudget(Number.NaN, ring)).toBe(authoredRingBaseMass(ring));
       expect(ringAggressionBudget(-10, ring)).toBe(authoredRingBaseMass(ring));
+    }
+  });
+});
+
+describe('redistributeAggression — the conserving ring mover', () => {
+  const MAX = DEFAULT_FRONTIER_TUNING.maxAggression;
+  const CEILING = 2;
+
+  /** Turns an aggression map into the mover's input shape. */
+  function toHexes(map: ReadonlyMap<string, number>): { id: string; aggression: number }[] {
+    return [...map].map(([id, aggression]) => ({ id, aggression }));
+  }
+
+  function totalOf(map: ReadonlyMap<string, number>): number {
+    let total = 0;
+    for (const value of map.values()) total += value;
+    return total;
+  }
+
+  it.each([1, 2, 3] as const)(
+    'conserves the ring total across 20 ticks at ring size %i×6',
+    (ringIndex) => {
+      const scenario = aggressionScenario(ringIndex);
+      let current = aggressionMapOf(scenario);
+      const budget = ringAggressionTotal(current);
+      for (let tick = 0; tick < 20; tick += 1) {
+        const before = totalOf(current);
+        const result = redistributeAggression({
+          hexes: toHexes(current),
+          budget,
+          beatableCeiling: CEILING,
+          seed: 42,
+          tick,
+        });
+        expect(totalOf(result.aggressions)).toBe(before);
+        const rose = result.deltas.some((delta) => delta.delta > 0);
+        const fell = result.deltas.some((delta) => delta.delta < 0);
+        if (rose) expect(fell).toBe(true);
+        current = result.aggressions;
+      }
+    },
+  );
+
+  it('moves the total by exactly the budget change', () => {
+    const start = aggressionMapOf(aggressionScenario(2));
+    const startTotal = ringAggressionTotal(start);
+    const grown = redistributeAggression({
+      hexes: toHexes(start),
+      budget: startTotal + 3,
+      beatableCeiling: CEILING,
+      seed: 7,
+      tick: 1,
+    });
+    expect(totalOf(grown.aggressions)).toBe(startTotal + 3);
+
+    const shrunk = redistributeAggression({
+      hexes: toHexes(start),
+      budget: startTotal - 3,
+      beatableCeiling: CEILING,
+      seed: 7,
+      tick: 1,
+    });
+    expect(totalOf(shrunk.aggressions)).toBe(startTotal - 3);
+  });
+
+  it('keeps every aggression a whole number in [0, maxAggression]', () => {
+    const result = redistributeAggression({
+      hexes: toHexes(aggressionMapOf(aggressionScenario(2))),
+      budget: DEFAULT_FRONTIER_TUNING.maxAggression * 12,
+      beatableCeiling: CEILING,
+      seed: 9,
+      tick: 3,
+    });
+    for (const value of result.aggressions.values()) {
+      expect(Number.isInteger(value)).toBe(true);
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(MAX);
+    }
+  });
+
+  it('leaves a beatable hex even when every hex starts at the ceiling', () => {
+    const rules = everyHexMax(1);
+    const feasible = MAX * (rules.hexes.size - 1) + CEILING;
+    const result = redistributeAggression({
+      hexes: toHexes(rules.hexes),
+      budget: feasible,
+      beatableCeiling: CEILING,
+      seed: 11,
+      tick: 0,
+    });
+    expect([...result.aggressions.values()].some((value) => value <= CEILING)).toBe(
+      true,
+    );
+  });
+
+  it('clamps an impossible budget so a beatable hex remains', () => {
+    const rules = everyHexMax(1);
+    const result = redistributeAggression({
+      hexes: toHexes(rules.hexes),
+      budget: MAX * rules.hexes.size,
+      beatableCeiling: CEILING,
+      seed: 11,
+      tick: 0,
+    });
+    expect(result.budget).toBeLessThanOrEqual(MAX * (rules.hexes.size - 1) + CEILING);
+    expect([...result.aggressions.values()].some((value) => value <= CEILING)).toBe(
+      true,
+    );
+  });
+
+  it('is deterministic for the same seed and tick', () => {
+    const hexes = toHexes(aggressionMapOf(aggressionScenario(2)));
+    const a = redistributeAggression({ hexes, budget: 30, beatableCeiling: CEILING, seed: 5, tick: 4 });
+    const b = redistributeAggression({ hexes, budget: 30, beatableCeiling: CEILING, seed: 5, tick: 4 });
+    expect([...a.aggressions]).toEqual([...b.aggressions]);
+    expect(a.deltas).toEqual(b.deltas);
+  });
+
+  it('does not depend on the input order', () => {
+    const hexes = toHexes(aggressionMapOf(aggressionScenario(2)));
+    const forward = redistributeAggression({ hexes, budget: 30, beatableCeiling: CEILING, seed: 5, tick: 4 });
+    const reversed = redistributeAggression({ hexes: [...hexes].reverse(), budget: 30, beatableCeiling: CEILING, seed: 5, tick: 4 });
+    expect([...forward.aggressions].sort()).toEqual([...reversed.aggressions].sort());
+  });
+
+  it('never mutates the input hexes', () => {
+    const hexes = toHexes(aggressionMapOf(aggressionScenario(1)));
+    const snapshot = JSON.stringify(hexes);
+    redistributeAggression({ hexes, budget: 20, beatableCeiling: CEILING, seed: 1, tick: 1 });
+    expect(JSON.stringify(hexes)).toBe(snapshot);
+  });
+
+  it('passes the shared invariant checker', () => {
+    const result = redistributeAggression({
+      hexes: toHexes(aggressionMapOf(aggressionScenario(2))),
+      budget: DEFAULT_FRONTIER_TUNING.maxAggression * 6,
+      beatableCeiling: CEILING,
+      seed: 3,
+      tick: 2,
+    });
+    expect(
+      checkRingAggression({
+        hexes: result.aggressions,
+        budget: result.budget,
+        beatableCeiling: CEILING,
+        maxAggression: MAX,
+      }),
+    ).toHaveLength(0);
+  });
+
+  it('records a delta for every hex that moved', () => {
+    const result = redistributeAggression({
+      hexes: [
+        { id: 'a', aggression: 0 },
+        { id: 'b', aggression: 6 },
+        { id: 'c', aggression: 0 },
+      ],
+      budget: 6,
+      beatableCeiling: CEILING,
+      seed: 2,
+      tick: 0,
+    });
+    expect(result.deltas.length).toBeGreaterThan(0);
+    for (const delta of result.deltas) {
+      expect(delta.to - delta.from).toBe(delta.delta);
     }
   });
 });

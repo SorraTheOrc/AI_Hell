@@ -474,6 +474,218 @@ export function ringAggressionBudget(
   return Math.max(0, Math.min(absoluteCap, capacityWithBeatable, raw));
 }
 
+/** One hex's aggression before a redistribution. */
+export interface AggressionHex {
+  /** Stable hex id. */
+  readonly id: string;
+  /** The hex's current aggression. */
+  readonly aggression: number;
+}
+
+/** One hex's change in a redistribution (so a report can render what moved). */
+export interface AggressionDelta {
+  /** The hex that changed. */
+  readonly hexId: string;
+  /** Aggression before the tick. */
+  readonly from: number;
+  /** Aggression after the tick. */
+  readonly to: number;
+  /** `to − from` (negative when the hex fell). */
+  readonly delta: number;
+}
+
+/** The input to {@link redistributeAggression}. */
+export interface RedistributeAggressionInput {
+  /** The ring's hexes and their current aggressions. */
+  readonly hexes: readonly AggressionHex[];
+  /** The strength-derived aggression budget the ring should carry. */
+  readonly budget: number;
+  /** The highest aggression still regarded as beatable. */
+  readonly beatableCeiling: number;
+  /** Deterministic seed for the mover's ordering. */
+  readonly seed: number;
+  /** Frontier tick index (part of the seeded stream). */
+  readonly tick: number;
+  /** Balance knobs (defaults to the shipped tuning). */
+  readonly tuning?: FrontierTuning;
+}
+
+/** The result of a redistribution. */
+export interface RedistributedAggression {
+  /** Aggression by hex id after the tick. */
+  readonly aggressions: ReadonlyMap<string, number>;
+  /** Every hex whose aggression changed. */
+  readonly deltas: readonly AggressionDelta[];
+  /** The budget actually applied (clamped so a beatable hex is always feasible). */
+  readonly budget: number;
+}
+
+/**
+ * Moves a ring's aggression around inside its budget — the conserving frontier
+ * clock's one mechanic.
+ *
+ * - **At budget** points are **moved**, never created: up to the tuning's
+ *   `redistributionCap` points travel from the most aggressive hex to the least
+ *   aggressive, so a rise on one hex always costs another hex of the same ring.
+ * - **Below budget** the shortfall is added to the least aggressive hexes;
+ *   **above budget** the excess is removed from the most aggressive hexes.
+ *   Neither ever crosses `[0, maxAggression]`.
+ * - **Beatable guarantee** afterwards: while no hex is at or below the beatable
+ *   ceiling, the mover keeps trading points from the lowest hex to a hex with
+ *   room, so the runtime result always leaves a deployment the current fleet
+ *   can clear. (The applied budget is clamped to a capacity that makes this
+ *   feasible — with `n` hexes at most `maxAggression × (n − 1) + ceiling`.)
+ *
+ * The input is never mutated; every choice is derived from the existing seeded
+ * stream (`tickSeed` mixed with each hex id), so reordering the input yields the
+ * same per-id result and a replay is identical.
+ *
+ * @param input — the ring, budget, ceiling and tick to redistribute.
+ * @returns the next aggressions, the per-hex deltas and the applied budget.
+ */
+export function redistributeAggression(
+  input: RedistributeAggressionInput,
+): RedistributedAggression {
+  const rules = normaliseTuning(input.tuning ?? DEFAULT_FRONTIER_TUNING);
+  const max = rules.maxAggression;
+  const cap = rules.redistributionCap ?? 0;
+
+  const byId = new Map<string, number>();
+  for (const hex of input.hexes) {
+    if (byId.has(hex.id)) continue;
+    byId.set(hex.id, Math.min(max, Math.max(0, toCount(hex.aggression))));
+  }
+  const ids = [...byId.keys()].sort();
+  const count = ids.length;
+  const initial = new Map(byId);
+  if (count === 0) {
+    return { aggressions: new Map(), deltas: [], budget: 0 };
+  }
+
+  const ceiling =
+    typeof input.beatableCeiling === 'number' &&
+    Number.isFinite(input.beatableCeiling)
+      ? Math.max(0, Math.trunc(input.beatableCeiling))
+      : 0;
+  const effectiveCeiling = Math.min(max, ceiling);
+
+  // Order-free, seeded tie-breaking: each hex's own stream decides its place.
+  const stream = tickSeed(normaliseSeed(input.seed), input.tick);
+  const priority = new Map<string, number>();
+  for (const id of ids) priority.set(id, hexSeed(stream, id));
+  const seededCompare = (a: string, b: string): number => {
+    const pa = priority.get(a) as number;
+    const pb = priority.get(b) as number;
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  };
+
+  const values = new Map(byId);
+  const sum = (): number => {
+    let total = 0;
+    for (const id of ids) total += values.get(id) as number;
+    return total;
+  };
+
+  /** The most (dir `1`) or least (dir `-1`) aggressive candidate. */
+  const extreme = (candidates: readonly string[], dir: 1 | -1): string | null => {
+    let best: string | null = null;
+    for (const id of candidates) {
+      if (best === null) {
+        best = id;
+        continue;
+      }
+      const value = values.get(id) as number;
+      const bestValue = values.get(best) as number;
+      if (dir > 0 ? value > bestValue : value < bestValue) best = id;
+      else if (value === bestValue && seededCompare(id, best) < 0) best = id;
+    }
+    return best;
+  };
+
+  const applyMove = (from: string, to: string): void => {
+    values.set(from, (values.get(from) as number) - 1);
+    values.set(to, (values.get(to) as number) + 1);
+  };
+
+  const hasBeatable = (): boolean => {
+    for (const id of ids) {
+      if ((values.get(id) as number) <= effectiveCeiling) return true;
+    }
+    return false;
+  };
+
+  const absoluteCap = max * count;
+  // Leave room for one beatable hex so the guarantee is always satisfiable.
+  const feasibleCap = max * (count - 1) + effectiveCeiling;
+  const target = Math.max(
+    0,
+    Math.min(absoluteCap, feasibleCap, toCount(input.budget)),
+  );
+
+  let total = sum();
+  if (total < target) {
+    let need = target - total;
+    while (need > 0) {
+      const recipients = ids.filter((id) => (values.get(id) as number) < max);
+      if (recipients.length === 0) break;
+      const recipient = extreme(recipients, -1) as string;
+      values.set(recipient, (values.get(recipient) as number) + 1);
+      need -= 1;
+      total += 1;
+    }
+  } else if (total > target) {
+    let excess = total - target;
+    while (excess > 0) {
+      const sources = ids.filter((id) => (values.get(id) as number) > 0);
+      if (sources.length === 0) break;
+      const source = extreme(sources, 1) as string;
+      values.set(source, (values.get(source) as number) - 1);
+      excess -= 1;
+      total -= 1;
+    }
+  } else {
+    // At budget: trade points from the most aggressive hex to the least.
+    for (let moved = 0; moved < cap; moved += 1) {
+      const sources = ids.filter((id) => (values.get(id) as number) > 0);
+      const sinks = ids.filter((id) => (values.get(id) as number) < max);
+      if (sources.length === 0 || sinks.length === 0) break;
+      const source = extreme(sources, 1) as string;
+      const sinkCandidates = sinks.filter((id) => id !== source);
+      if (sinkCandidates.length === 0) break;
+      const sink = extreme(sinkCandidates, -1) as string;
+      if ((values.get(source) as number) - (values.get(sink) as number) <= 1) break;
+      applyMove(source, sink);
+    }
+  }
+
+  // Beatable invariant: keep trading until at least one hex qualifies.
+  let guard = 0;
+  while (!hasBeatable() && guard < absoluteCap + count) {
+    guard += 1;
+    const sources = ids.filter((id) => (values.get(id) as number) > 0);
+    if (sources.length === 0) break;
+    const source = extreme(sources, -1) as string;
+    const sinkCandidates = ids.filter(
+      (id) => id !== source && (values.get(id) as number) < max,
+    );
+    if (sinkCandidates.length === 0) break;
+    const sink = extreme(sinkCandidates, 1) as string;
+    applyMove(source, sink);
+  }
+
+  const deltas: AggressionDelta[] = [];
+  const aggressions = new Map<string, number>();
+  for (const id of ids) {
+    const from = initial.get(id) as number;
+    const to = values.get(id) as number;
+    aggressions.set(id, to);
+    if (from !== to) deltas.push({ hexId: id, from, to, delta: to - from });
+  }
+
+  return { aggressions, deltas, budget: target };
+}
+
 /**
  * The unheld neighbouring hex an attack on `hex` would be launched from.
  *
