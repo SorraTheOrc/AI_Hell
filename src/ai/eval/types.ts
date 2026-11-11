@@ -184,9 +184,15 @@ export interface ArenaHoldOptions {
  *
  * Every field is optional; omitting the whole object keeps the arena's
  * historic bare-cannon / three-lives / unscaled-ship behaviour byte-identical.
+ * Malformed values **degrade to that default rather than crashing a run**: a
+ * missing, non-finite or non-positive life count falls back to the arena's own
+ * 3, a valid one is capped at the run's `MAX_LIVES`, a non-finite or
+ * non-positive speed multiplier falls back to `1`, and a weapon id the
+ * catalogue does not itemise is ignored (the same rule the shipped
+ * `Player.equipWeapon` applies).
  */
 export interface ArenaStartingLoadout {
-  /** Lives the run starts with (default the arena's own 3). */
+  /** Lives the run starts with (default the arena's own 3, capped at `MAX_LIVES`). */
   readonly lives?: number;
   /**
    * Starting weapon ownership, in fire order after the always-active cannon.

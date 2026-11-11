@@ -19,7 +19,7 @@
 import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveHexCapture } from '../../core/hangarWar/captureCycle';
+import { resolveHexCapture, resolveHexGrant } from '../../core/hangarWar/captureCycle';
 import { createRingState } from '../../core/hangarWar/hexRing';
 import { hexDifficultyProfile } from '../../core/hangarWar/hexDifficulty';
 import { createDefaultPayload } from '../../core/hangarWar/hangarWarStore';
@@ -295,6 +295,60 @@ describe('ring timing: the deployment loadout model (AH-0MW9QA2YC009PSF5)', () =
     ]);
   });
 
+  it('derives the ring-2 entry ownership from the authored ring-1 grants', () => {
+    // The expectation is folded from the **authored** grants through the
+    // shipped `resolveHexGrant` alias rule, not restated as a literal list: if
+    // a ring-1 grant is re-authored (a weapon swapped, a hex added) this test
+    // fails instead of silently pinning stale data.
+    const expected = {
+      hulls: new Set(['hull-1']),
+      weapons: new Set<string>(),
+      modifiers: new Set<string>(),
+    };
+    for (const deployment of planRingDeployments(
+      hexRingDefinitionsFor(1),
+      'grind',
+    ).played) {
+      const grant = resolveHexGrant(deployment.grants);
+      if (grant === null) continue;
+      if (grant.kind === 'weapon') {
+        expected.weapons.add(grant.weaponId ?? grant.entryId);
+      } else if (grant.kind === 'hull') {
+        expected.hulls.add(grant.entryId);
+      } else {
+        expected.modifiers.add(grant.entryId);
+      }
+    }
+
+    const ownership = ringEntryOwnership(2);
+    expect([...ownership.hulls].sort()).toEqual([...expected.hulls].sort());
+    expect([...ownership.weapons].sort()).toEqual([...expected.weapons].sort());
+    expect([...ownership.modifiers].sort()).toEqual(
+      [...expected.modifiers].sort(),
+    );
+    // The authored data really does grant something, so the derivation above
+    // cannot pass vacuously if the grants were removed.
+    expect(expected.weapons.size).toBeGreaterThan(0);
+    expect(expected.hulls.size).toBeGreaterThan(1);
+  });
+
+  it('enters ring 2 on the rush line with the earned loadout and nothing more', () => {
+    const report = simulateRingTiming({
+      ringIndex: 2,
+      strategy: 'rush',
+      seeds: [1],
+      runDeployment: fakeRunner(),
+    });
+    const entry = resolveDeploymentLoadout(ringEntryOwnership(2));
+
+    expect(report.entryLoadout).toEqual(entry);
+    // The rush line plays the weapon hex and pushes on, so its single ring-2
+    // deployment launches with the ring-entry loadout — no within-ring growth.
+    const run = report.runs[0];
+    expect(run.deployments).toHaveLength(1);
+    expect(run.deployments[0].loadout).toEqual(entry);
+  });
+
   it('earns a captured hex grant for the deployments that follow it', () => {
     const entry = ringEntryOwnership(1);
     // hex-r1-1 grants `hull-2`; hex-r1-6 grants `waveLaser` → `wave_laser`.
@@ -398,6 +452,33 @@ describe('ring timing: the deployment loadout model (AH-0MW9QA2YC009PSF5)', () =
     const first = simulateRingTiming(options);
     const second = simulateRingTiming(options);
     expect(second).toEqual(first);
+  });
+
+  it('changes the report when the loadout model changes (negative control)', () => {
+    // The equality pin above is only meaningful if the loadout is live input:
+    // swapping the earned ownership must change the recorded report.
+    const options = {
+      ringIndex: 1,
+      strategy: 'grind' as const,
+      seeds: [1, 2],
+      runDeployment: fakeRunner(3),
+    };
+    const bare = simulateRingTiming(options);
+    const armed = simulateRingTiming({
+      ...options,
+      ownership: {
+        hulls: ['hull-1', 'hull-2'],
+        weapons: ['wave_laser'],
+        modifiers: ['hardened_plating'],
+      },
+    });
+
+    expect(armed).not.toEqual(bare);
+    // The difference is the stated launch loadout, not a stray measurement.
+    expect(armed.entryLoadout).not.toEqual(bare.entryLoadout);
+    expect(armed.runs[0].deployments[0].loadout).not.toEqual(
+      bare.runs[0].deployments[0].loadout,
+    );
   });
 });
 

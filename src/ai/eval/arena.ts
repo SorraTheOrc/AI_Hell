@@ -201,6 +201,7 @@ import { applyMineralChoiceReward, type MineralChoicePlayer } from '../../poweru
 import type { PowerUpId } from '../../powerups/types';
 import {
   createBulletsFromHeading,
+  WEAPON_CATALOGUE,
   type AoEDescriptor,
   type WeaponDefinition,
   type WeaponId,
@@ -695,6 +696,27 @@ function buildLevelWavePlan(
 }
 
 /**
+ * The life count a launch loadout's `lives` resolves to (AH-0MW9QA2YC009PSF5).
+ *
+ * A launch loadout is model/data input, not a value the arena can trust: a
+ * missing, non-finite or non-positive count falls back to the arena's shipped
+ * {@link PLAYER_START_LIVES}, and a valid count is truncated and capped at
+ * {@link MAX_LIVES} — the run's own cap — so a malformed or absurd loadout
+ * degrades to a playable run instead of crashing it or starting an uncapped
+ * one. Mirrors the hangar deployment model's `1..MAX_LIVES` clamp
+ * (`resolveDeploymentLoadout` in `src/ai/eval/ringTiming.ts`).
+ *
+ * @param lives — the loadout's requested life count, if any.
+ * @returns the life count the world starts with (always in `1..MAX_LIVES`).
+ */
+export function resolveStartingLives(lives: number | undefined): number {
+  if (typeof lives !== 'number' || !Number.isFinite(lives) || lives < 1) {
+    return PLAYER_START_LIVES;
+  }
+  return Math.min(MAX_LIVES, Math.trunc(lives));
+}
+
+/**
  * Builds a fresh world: the player starts centred, facing right.
  *
  * `startingLives` is the launch loadout's life count (a hull's run stat plus
@@ -844,6 +866,11 @@ export class HeadlessChoicePlayer implements MineralChoicePlayer {
   /** Permanent weapon grants raise the run-scoped level by one (AC3). */
   equipWeapon(weaponId: WeaponId, permanent = false): void {
     if (!permanent) return;
+    // An id the catalogue does not itemise is dropped, exactly like the shipped
+    // `Player.equipWeapon` (AH-0MW9QA2YC009PSF5): a launch loadout is model/data
+    // input, so a stale id must degrade to "not owned" rather than crash the
+    // run later in `resolveWeaponLoadout` (`getWeaponById` throws on it).
+    if (!WEAPON_CATALOGUE[weaponId]) return;
     this._weaponLevels.set(
       weaponId,
       (this._weaponLevels.get(weaponId) ?? 0) + 1,
@@ -987,14 +1014,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     Number.isFinite(startingLoadout.speedMultiplier)
       ? startingLoadout.speedMultiplier
       : 1;
-  const startingLives = Math.max(
-    1,
-    Math.trunc(
-      Number.isFinite(startingLoadout?.lives)
-        ? (startingLoadout?.lives as number)
-        : PLAYER_START_LIVES,
-    ),
-  );
+  const startingLives = resolveStartingLives(startingLoadout?.lives);
   const shipAsteroids = shipToAsteroidsConfig(
     scaleShipConfigForHull(balance.ship, hullSpeedMultiplier),
   );

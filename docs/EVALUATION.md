@@ -391,7 +391,12 @@ item list:
 The loadout changes the run's **starting** state only: the aggression model, the
 deployment window and every retry/exposure allowance below are unchanged, and
 the model is an explicit input (`RingTimingOptions.ownership`), so a caller can
-state a different earned state without editing authored data.
+state a different earned state without editing authored data. The seam it feeds
+(`ArenaConfig.startingLoadout`) is inert by default and defensive when
+malformed: an omitted loadout reproduces the shipped bare-cannon run
+byte-identically, and an invalid life count or speed multiplier falls back to
+the shipped defaults while an uncatalogued weapon id is ignored, so bad model
+data degrades a run rather than crashing the harness.
 
 ### What is modelled (and why)
 
