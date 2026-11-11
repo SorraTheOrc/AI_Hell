@@ -401,7 +401,8 @@ describe('ring timing: the deployment loadout model (AH-0MW9QA2YC009PSF5)', () =
   });
 });
 
-describe('ring timing: budget verdicts', () => {  it('accepts a measurement inside the window', () => {
+describe('ring timing: budget verdicts', () => {
+  it('accepts a measurement inside the window', () => {
     const verdict = evaluateRingTimingBudget(1, 'grind', 45);
     expect(verdict.applicable).toBe(true);
     expect(verdict.verdict).toBe('in-window');
@@ -432,6 +433,46 @@ describe('ring timing: budget verdicts', () => {  it('accepts a measurement insi
       'not-applicable',
     );
     expect(evaluateRingTimingBudget(3, 'grind', 20).target).toBeNull();
+  });
+});
+
+/**
+ * The design windows are an **authored input**, so they are pinned literally
+ * (AH-0MW9VARCU000XZIL, AC2). The measured-mean assertion in the real-arena
+ * suite compares a measurement against whatever the constant says, so on its
+ * own it would happily follow an accidental recalibration.
+ *
+ * Ring 2 stays at the committed **90–120** window: this item was asked to
+ * restore the design of record's 70–100, but the re-baselined, loadout-modelled
+ * ring-2 grind measures **116.4 min (112.7–123.4)** and no aggression band the
+ * ring rules allow closes the gap (maximal flattening to aggression 2 models
+ * 117.1 min). The pin therefore lands the item's own first acceptance
+ * criterion's recorded fallback — *the window is what the stable numbers
+ * support* — and `docs/EVALUATION.md` records that measurement as the evidence.
+ */
+describe('ring timing: the design windows are pinned literally', () => {
+  it('pins ring 1 at 40–60 and ring 2 at the committed 90–120', () => {
+    expect(RING_TIMING_TARGETS[1]).toEqual({
+      minMinutes: 40,
+      maxMinutes: 60,
+    });
+    expect(RING_TIMING_TARGETS[2]).toEqual({
+      minMinutes: 90,
+      maxMinutes: 120,
+    });
+  });
+
+  it('derives the stated ±3-minute tolerance from the ring-2 window width', () => {
+    // 10 % of a 30-minute window is 3 minutes: a measurement inside the window
+    // passes as measured, and one up to 3 minutes outside still passes.
+    const measured = evaluateRingTimingBudget(2, 'grind', 117);
+    expect(measured.tolerancePercent).toBe(RING_TIMING_TOLERANCE_PERCENT);
+    expect(measured.toleranceMinutes).toBeCloseTo(3, 5);
+    expect(measured.verdict).toBe('in-window');
+    expect(evaluateRingTimingBudget(2, 'grind', 88).verdict).toBe(
+      'within-tolerance',
+    );
+    expect(evaluateRingTimingBudget(2, 'grind', 86).verdict).toBe('missed');
   });
 });
 
@@ -718,6 +759,24 @@ describe('ring timing: committed baseline evidence', () => {
       );
       expect(rush.runs.every((run) => run.ringSecured)).toBe(false);
     }
+  });
+
+  it('the README quotes the committed ring-2 mean and window', () => {
+    // The README's Hangar War paragraph is the most-read statement of the ring
+    // budget; it drifted from the artifact once (it still quoted the
+    // pre-loadout 91.6 min and the superseded 70–100 window). Quote the
+    // artifact and the constant instead of repeating literals by hand.
+    const readme = fs.readFileSync(
+      path.resolve(process.cwd(), 'README.md'),
+      'utf8',
+    );
+    const ring2 = baseline.find(
+      (entry) => entry.ringIndex === 2 && entry.strategy === 'grind',
+    )!;
+    const meanMinutes = `${ring2.summary.totalMinutes.mean.toFixed(1)} min`;
+    expect(readme).toContain(meanMinutes);
+    expect(readme).toMatch(/90\s*[–—-]\s*120/);
+    expect(readme).not.toMatch(/70\s*[–—-]\s*100/);
   });
 });
 

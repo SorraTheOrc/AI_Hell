@@ -213,9 +213,11 @@ export interface RingTimingTarget {
  * Ring 2 was recalibrated from ≈70–100 to ≈90–120 after the wrap-aware bot
  * (AH-0MVMISF0Q00314LG): on the wrap-parity arena the competent bot survives
  * roughly 2–3 minutes per lost deployment instead of dying in under a minute,
- * so the measured grind rose from ≈91.6 to ≈109 minutes. The loss-dominated
- * ring-2 retry allowance is the same documented follow-up risk; only the
- * deployment duration (the bot's longer survival) changed.
+ * so the measured grind rose from ≈91.6 minutes to the committed **116.4
+ * minutes** (measured with the deployment loadout a ring-2 player actually
+ * launches, AH-0MW9QA2YC009PSF5). The loss-dominated ring-2 retry allowance is
+ * the same documented follow-up risk; only the deployment duration and the
+ * modelled loadout changed.
  */
 export const RING_TIMING_TARGETS: Readonly<Record<number, RingTimingTarget>> =
   Object.freeze({
