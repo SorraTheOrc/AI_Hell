@@ -167,8 +167,12 @@ const EQUIV_GYM_CONFIG: EnemyFormationConfig<EquivEnemy, EquivBullet> = {
   hintText: 'equiv',
   player: { x: 100, y: 100 },
   // Enable the gym's opt-in power-up layer so Teleport teleport is allowed
-  // (`canTeleport()` gates on `powerUpsEnabled`).
-  powerUps: {},
+  // (`canTeleport()` gates on `powerUpsEnabled`). The drop stream is **seeded**
+  // (AH-0MWC9XWZ80043KOD): the layer's spawner and placement default to
+  // `Math.random`, so an unseeded stream could grant an unrelated weapon
+  // between an equip and a later tick — that nondeterminism made the timed-
+  // weapon expiry test flaky rather than wrong in either scene.
+  powerUps: { rng: createSeededRng(7) },
   buildOffsets: (count) =>
     Array.from({ length: count }, (_, col) => ({ row: 0, col })),
   createEntity: (scene, x, y, offset) => {
