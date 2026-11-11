@@ -246,6 +246,37 @@ campaign-level input**, so they keep their scene-specific flat
 `GymBotTuning`) adopt the curves; the reason is recorded in the `GymLevel`
 scene header and in the parent work item.
 
+### Mineral kill-drop rate doubled (AH-0MWB9LCED004K67Y)
+
+Every standard kill now yields **twice** the minerals. A destroyed small
+asteroid leaves **two** gold minerals instead of one; a destroyed non-asteroid
+enemy re-drops **`2 × round(absorbed + bonus)`** — the same
+`mineralRedropBonusMin`/`Max` roll (defaults 0.25/1.25), doubled **after**
+rounding. The multiplier lives once as **`MINERAL_DROP_MULTIPLIER = 2`** in
+`src/core/constants.ts` and is applied in the shared kill seams
+(`resolveMineralKillDrops` in `src/scenes/core/mineralKillDrops.ts` and
+`BaseEnemy.mineralRedropCount`), feeding both the shared payout seam and the
+legacy `BaseEnemy.spawnMineralDrops` parity path. `PlayScene` and every
+formation gym consume the same seams, so game↔gym parity holds automatically.
+
+- **Deposit threshold/value stay 10/10.** The **doubled** count is what is
+  compared against `MINERAL_DEPOSIT_THRESHOLD`, so a wreck whose doubled payout
+  reaches 10 leaves one 10-value red deposit and the surplus is lost. The
+  doubling is therefore **effectively capped at 10** for wrecks that absorbed
+  roughly five or more minerals — an explicitly accepted trade-off. The
+  Salvage bounty (orange) and the Mystery UFO spill keep their current values
+  and are **not** doubled.
+- **Determinism — no extra RNG draws.** The extra mineral is placed without
+  consuming the shared RNG stream: an asteroid drops a deterministic symmetric
+  pair, and an enemy's second mineral is the **mirror** of each random drop
+  across the wreck (`scatterDoubledMineralDrops` in `src/entities/Mineral.ts`).
+  Seeded promo captures, model runs and the deterministic promotion scenarios
+  therefore keep their existing streams.
+- **Expected overshoot.** Doubling income roughly doubles
+  `mineralsCollected`, so the ~18-per-run target (≈ two hold-full resolutions)
+  is expected to overshoot. That is an intentional balance change flagged for
+  review after playtest.
+
 ### Life-adaptive Extra Life curve (AH-0MW8178ZR0090CNY)
 
 Extra Life's **weight** in the shared per-kill drop pool — not the overall
