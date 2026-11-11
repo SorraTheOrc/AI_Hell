@@ -534,8 +534,11 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
 
   it('states the shipped resolver and frontier-tick numbers', () => {
     const spec = gddRingSpec();
-    // Aggression rises 1–2 a tick to a ceiling of 9.
-    expect(spec).toMatch(/1\s*[–—-]\s*2/);
+    // Aggression is redistributed inside a strength-derived budget to a
+    // ceiling of 9, with at least one beatable hex left every tick.
+    expect(spec).toMatch(/redistributed/i);
+    expect(spec).toMatch(/budget/i);
+    expect(spec).toMatch(/beatable ceiling/i);
     expect(spec).toMatch(/\b9\b/);
     // +15 % per point of aggression, ±10 % seeded jitter, 70 % attack chance.
     expect(spec).toMatch(/15\s*%/);
