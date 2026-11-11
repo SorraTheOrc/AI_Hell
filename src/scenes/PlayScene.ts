@@ -3690,7 +3690,12 @@ export class PlayScene extends CombatScene<
           // The run can end while the sweep animates (a bullet already in
           // flight can finish the player): never finalise a stopped scene.
           if (!this.scene.isActive()) return;
-          this._finaliseMiniBossDefeat(context, sweptSpawns.length);
+          this._finaliseMiniBossDefeat(
+            context,
+            sweptSpawns.length,
+            deathX,
+            deathY,
+          );
         },
       },
     );
@@ -3706,7 +3711,21 @@ export class PlayScene extends CombatScene<
   private _finaliseMiniBossDefeat(
     context: MiniBossDefeatContext,
     sweptEscortCount: number,
+    deathX: number,
+    deathY: number,
   ): void {
+    // Hangar War hex deployment (AH-0MWCOW4IQ003XST5): the mini-boss is the
+    // encounter that takes the hex. Its defeat resolves the capture cycle and
+    // ends the run as a victory, and it deliberately skips the arcade wave
+    // accounting below — a deployment plays only its aggression-selected
+    // level, so the final boss is unreachable from the hex map. The in-run
+    // reward wheel is not opened either: the hex reward is presented after
+    // the defence report.
+    if (this.isHangarWarRun()) {
+      this._finaliseHangarWarMiniBossVictory(deathX, deathY);
+      return;
+    }
+
     // Reward loop (AH-0MVLISU03006WDOD AC1): a defeat opens exactly ONE
     // reward — the shared spin-the-wheel overlay (or the empty-owned
     // three-option fallback) — only now that every burst has finished
@@ -3738,6 +3757,31 @@ export class PlayScene extends CombatScene<
       event = this.waveManager.onEnemyDestroyed();
     }
     this._handleWaveEvent(event);
+  }
+
+  /**
+   * Ends a hex deployment on its mini-boss (AH-0MWCOW4IQ003XST5): resolves the
+   * hex capture through the shared {@link resolveHexCapture} cycle, then ends
+   * the run as a victory through the shipped victory path (auto-fire off,
+   * celebration at the mini-boss death position, delayed defence-report
+   * transition). Wave/level accounting is never advanced — the final boss can
+   * never be triggered from the hex map, including on the campaign's final
+   * level.
+   */
+  private _finaliseHangarWarMiniBossVictory(
+    deathX: number,
+    deathY: number,
+  ): void {
+    // The run is over: stop the ship's auto-fire from the next tick (the same
+    // per-run gate the final-boss victory uses).
+    this.runFinished = true;
+    // Resolve the hex capture through the existing cycle; this banks the run's
+    // salvage (already banked once at the checkpoint moment), marks the hex
+    // held + boss-defeated, grants its authored entry and leaves the defending
+    // hull behind.
+    this._resolveHangarWarCapture();
+    this._triggerVictoryCelebration(deathX, deathY);
+    this._finishRunWithPurpose(true);
   }
 
   /**

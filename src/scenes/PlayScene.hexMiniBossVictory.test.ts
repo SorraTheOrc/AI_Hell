@@ -16,15 +16,14 @@
  * steps, never an injected finalise event).
  *
  * **TEST-FIRST — the repo's red-before/green-after convention.** The three
- * deployment expectations that the current code does **not** satisfy (the
- * mini-boss capture, the victory run end and the one-level-per-deployment rule)
- * are wrapped in Vitest's `it.fails` (see `src/vfx/orbitalStrike.test.ts`), so
- * the suite is green on pre-change HEAD while pinning exactly how today's code
- * fails them. The mini-boss implementation item (AH-0MWCOW4IQ003XST5) **flips
- * every `it.fails` back to a plain `it`** once the behaviour lands; a leftover
- * `it.fails` then fails the suite, so this is a real target rather than a
- * permanent exemption. The two arcade cases are plain `it` and pass today: the
- * arcade run is untouched.
+ * deployment expectations were originally wrapped in Vitest's `it.fails` (see
+ * `src/vfx/orbitalStrike.test.ts`) so the suite was green on pre-change HEAD
+ * while pinning exactly how that code failed them. The mini-boss
+ * implementation item (AH-0MWCOW4IQ003XST5) **flipped every `it.fails` back to
+ * a plain `it`** once the behaviour landed, so a leftover `it.fails` would now
+ * fail the suite: this is a real target rather than a permanent exemption. The
+ * two arcade cases were plain `it` all along and pass today: the arcade run is
+ * untouched.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -261,7 +260,7 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
     );
   }
 
-  it.fails(
+  it(
     'captures the hex and banks the run salvage exactly once on the mini-boss defeat',
     async () => {
       const deployment = deploymentFor(3);
@@ -319,7 +318,7 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
     30_000,
   );
 
-  it.fails.each([
+  it.each([
     ['a non-final level (aggression 3 → level 4)', 3],
     ['the final level (aggression 9 → level 10)', FINAL_LEVEL_AGGRESSION],
   ])(
