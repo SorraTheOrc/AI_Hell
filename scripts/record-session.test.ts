@@ -1035,4 +1035,20 @@ describe('runRecordingSetup — startup crash rescue (AH-0MWB6OFP50004VYE)', () 
     expect(result.rescued).toBe(false);
     expect(calls).not.toContain('addBotConfigInitScript');
   });
+
+  it('returns the handles obtained before the failing step so a half-started session is closable (AH-0MWB6OG5T007BYXP)', async () => {
+    const dir = tempDir();
+    const outputPath = join(dir, 'session-half-started.jsonl');
+    const { steps, server, browser } = fakeSetupSteps('newPage');
+
+    const result = await runRecordingSetup({ steps, outputPath, log: () => {} });
+
+    // The dev server and browser were already running when `newPage` failed,
+    // so `main` must still receive them to close them in its `finally`.
+    expect(result.rescued).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.server).toBe(server);
+    expect(result.browser).toBe(browser);
+    expect(result.page).toBeUndefined();
+  });
 });

@@ -16,6 +16,15 @@
  * the browser instead of pressing Ctrl+C salvages everything up to the last
  * checkpoint instead of losing the session outright.
  *
+ * The interruption/rescue boundary covers the **whole** session, not only the
+ * wait loop (AH-0MWB6OG5T007BYXP): the start sequence runs through
+ * {@link runRecordingSetup}, and any target-closed failure before, during or
+ * just after it (the final telemetry read included) is classified by
+ * {@link isTargetClosedError} and finalised through {@link finaliseRecording}.
+ * A browser close during startup is therefore the "nothing captured" case —
+ * exactly one actionable line naming the file that was not written and the
+ * exit code is `1`, never a bare Playwright `Target … has been closed` string.
+ *
  * The recording is the framework's `run_header` + per-tick state/input +
  * discrete events, all schema-versioned (`docs/TELEMETRY.md`). No new
  * recording path is introduced here — the tool only drives the existing
@@ -716,6 +725,10 @@ export async function finaliseRecording({
  * to `stderr` *after* the actionable line, so the rescue never hides the
  * cause; a target-closed failure gets no raw-message diagnostic.
  *
+ * The handles obtained before the failing step are returned on the rescue
+ * path too, so {@link main} can still close a half-started dev server or
+ * browser in its `finally` block.
+ *
  * @param {{
  *   steps: object,
  *   outputPath: string,
@@ -744,10 +757,17 @@ export async function runRecordingSetup({
   stderr = () => {},
   finalise = finaliseRecording,
 } = {}) {
+  // Handles are tracked as they are obtained so the rescue path can return
+  // them for cleanup (`main`'s `finally` closes whatever was started).
+  let server;
+  let browser;
+  let page;
   try {
-    const { server, url } = await steps.listenServer();
-    const browser = await steps.launchBrowser();
-    const page = await steps.newPage(browser);
+    const listened = await steps.listenServer();
+    server = listened.server;
+    const url = listened.url;
+    browser = await steps.launchBrowser();
+    page = await steps.newPage(browser);
     await steps.addRunEndedInitScript(page);
     if (typeof steps.addBotConfigInitScript === 'function') {
       await steps.addBotConfigInitScript(page);
@@ -776,7 +796,15 @@ export async function runRecordingSetup({
     if (!targetClosed) {
       stderr(`Recording setup failed: ${firstLine(error)}`);
     }
-    return { exitCode: result.exitCode, rescued: true, targetClosed, error };
+    return {
+      exitCode: result.exitCode,
+      rescued: true,
+      targetClosed,
+      error,
+      server,
+      browser,
+      page,
+    };
   }
 }
 
@@ -804,65 +832,106 @@ async function main(argv) {
 
   let server;
   let browser;
+  let checkpoint = null;
+  let finalised = false;
   const stop = createStopController();
 
+  // One rescue boundary covers the whole recording session (AH-0MWB6OG5T007BYXP):
+  // path resolution, the start sequence (via `runRecordingSetup`), the wait
+  // loop and the final telemetry read. Any target-closed failure inside it is
+  // classified with `isTargetClosedError` and finalised through the same seam
+  // the wait loop uses, so the operator always gets the single actionable line
+  // instead of a raw Playwright `Target … has been closed` message. A
+  // non-target-closed failure keeps its own message as a secondary stderr
+  // diagnostic, printed *after* the actionable line.
   try {
-    reporter.step('Starting Vite dev server with telemetry enabled…');
-    server = await createServer({
-      root: REPO_ROOT,
-      logLevel: 'warn',
-      server: { port: options.port, strictPort: false, open: false },
+    const setup = await runRecordingSetup({
+      // Real step map: the same sequence the recorder ran inline before, in
+      // order (AH-0MWB6OFP50004VYE pins the injected contract in tests).
+      steps: {
+        listenServer: async () => {
+          reporter.step('Starting Vite dev server with telemetry enabled…');
+          const devServer = await createServer({
+            root: REPO_ROOT,
+            logLevel: 'warn',
+            server: { port: options.port, strictPort: false, open: false },
+          });
+          await devServer.listen();
+          const address = devServer.httpServer?.address();
+          const port = address && typeof address === 'object' ? address.port : options.port;
+          return { server: devServer, url: recordUrl(`http://127.0.0.1:${port}/`, options) };
+        },
+        launchBrowser: async () => {
+          reporter.step(`Launching ${options.headed ? 'headed' : 'headless'} Chromium…`);
+          const chromium = await loadChromium();
+          return chromium.launch({
+            headless: !options.headed,
+            args: [
+              '--no-sandbox',
+              '--enable-unsafe-swiftshader',
+              '--disable-background-timer-throttling',
+              '--disable-backgrounding-occluded-windows',
+              '--disable-renderer-backgrounding',
+            ],
+          });
+        },
+        newPage: async (launched) => {
+          const gamePage = await launched.newPage({ viewport: VIEWPORT });
+          gamePage.on('pageerror', (error) => reporter.step(`page error: ${error.message}`));
+          return gamePage;
+        },
+        addRunEndedInitScript: (gamePage) => gamePage.addInitScript(installRunEndedListener),
+        // Seed the exported bot-tuning state before the game boots so a `--bot`
+        // recording flies the saved tuning (AH-0MV6MFDYG001E6PL). Absent flag →
+        // the page's bundled baseline (the Git-tracked `src/data/bot-tuning.json`
+        // every build ships, AH-0MV9GZD2C005IIU3), so a fresh
+        // `npm run record -- --bot` records the tuned demo, not factory defaults.
+        ...(options.botConfig !== null && options.botConfig !== undefined
+          ? {
+              addBotConfigInitScript: (gamePage) =>
+                gamePage.addInitScript(
+                  installBotTuningConfig,
+                  loadBotTuningConfigFile(options.botConfig),
+                ),
+            }
+          : {}),
+        goto: async (gamePage, url) => {
+          reporter.step(`Loading ${url}…`);
+          await gamePage.goto(url, { waitUntil: 'load', timeout: 30_000 });
+        },
+        waitForSelector: (gamePage) =>
+          gamePage.waitForSelector('#game-container canvas', { timeout: 20_000 }),
+        pressStartKeys: async (gamePage) => {
+          if (options.bot) {
+            reporter.step('Starting in-game demo (bot)…');
+            // Reuse the shared start plan (AH-0MW9NN2EW001744H) so --bot records the
+            // demo, not the Hangar War screen.  Menu focus order is Play Game →
+            // Hangar War → Watch Demo → Settings, so two Tabs land on Watch Demo
+            // before Enter activates it.
+            for (const step of captureStartPlan('demo')) {
+              await gamePage.keyboard.press(step.key);
+              if (step.delayAfterMs > 0) {
+                await gamePage.waitForTimeout(step.delayAfterMs);
+              }
+            }
+          } else {
+            reporter.step('Starting Play Game (Enter)…');
+            await gamePage.keyboard.press('Enter');
+          }
+        },
+      },
+      outputPath: output,
+      partialPath,
+      log: (line) => process.stdout.write(`${line}\n`),
+      // Secondary diagnostic sink only — the actionable line goes to stdout.
+      stderr: (line) => reporter.step(line),
     });
-    await server.listen();
-    const address = server.httpServer?.address();
-    const port = address && typeof address === 'object' ? address.port : options.port;
-    const url = recordUrl(`http://127.0.0.1:${port}/`, options);
-
-    reporter.step(`Launching ${options.headed ? 'headed' : 'headless'} Chromium…`);
-    const chromium = await loadChromium();
-    browser = await chromium.launch({
-      headless: !options.headed,
-      args: [
-        '--no-sandbox',
-        '--enable-unsafe-swiftshader',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-      ],
-    });
-    const page = await browser.newPage({ viewport: VIEWPORT });
-    await page.addInitScript(installRunEndedListener);
-    // Seed the exported bot-tuning state before the game boots so a `--bot`
-    // recording flies the saved tuning (AH-0MV6MFDYG001E6PL). Resolved and
-    // validated now (fail-fast); absent flag → the page's bundled baseline
-    // (the Git-tracked `src/data/bot-tuning.json` every build ships,
-    // AH-0MV9GZD2C005IIU3), so a fresh `npm run record -- --bot` records the
-    // tuned demo, not factory defaults.
-    if (options.botConfig !== null && options.botConfig !== undefined) {
-      await page.addInitScript(installBotTuningConfig, loadBotTuningConfigFile(options.botConfig));
-    }
-    page.on('pageerror', (error) => reporter.step(`page error: ${error.message}`));
-
-    reporter.step(`Loading ${url}…`);
-    await page.goto(url, { waitUntil: 'load', timeout: 30_000 });
-    await page.waitForSelector('#game-container canvas', { timeout: 20_000 });
-
-    if (options.bot) {
-      reporter.step('Starting in-game demo (bot)…');
-      // Reuse the shared start plan (AH-0MW9NN2EW001744H) so --bot records the
-      // demo, not the Hangar War screen.  Menu focus order is Play Game →
-      // Hangar War → Watch Demo → Settings, so two Tabs land on Watch Demo
-      // before Enter activates it.
-      for (const step of captureStartPlan('demo')) {
-        await page.keyboard.press(step.key);
-        if (step.delayAfterMs > 0) {
-          await page.waitForTimeout(step.delayAfterMs);
-        }
-      }
-    } else {
-      reporter.step('Starting Play Game (Enter)…');
-      await page.keyboard.press('Enter');
-    }
+    server = setup.server;
+    browser = setup.browser;
+    // A startup rescue already printed the actionable line and finalised; the
+    // `finally` still closes whatever handle was obtained before the failure.
+    if (setup.rescued) return setup.exitCode;
+    const page = setup.page;
 
     if (options.auto) {
       reporter.step('Recording until the run ends…');
@@ -875,7 +944,7 @@ async function main(argv) {
     // Crash-safe checkpoint writer (AH-0MVWIDN5G006IZ58): each due tick reads
     // only the bytes the page buffer gained since the last read and appends the
     // complete records to the partial resolved above.
-    const checkpoint = createRecordingCheckpoint({
+    checkpoint = createRecordingCheckpoint({
       partialPath,
       readChunk: (offset, chunkChars) =>
         page.evaluate(readDevTelemetryChunk, { offset, chunkChars }),
@@ -944,6 +1013,10 @@ async function main(argv) {
     });
 
     if (result.exitCode !== 0) return result.exitCode;
+    // The boundary's contract ends once the recording is published and the
+    // partial removed; a later balance-stats failure is a distinct fault and
+    // must not be misreported as a lost recording.
+    finalised = true;
 
     const jsonl = result.jsonl ?? '';
     // Shared human balance statistics (AH-0MV7WVEWL005XEMN AC3): load the
@@ -970,6 +1043,29 @@ async function main(argv) {
       process.stdout.write(`Saved balance statistics: ${balancePath}\n`);
     }
     return 0;
+  } catch (error) {
+    // Widened rescue boundary (AH-0MWB6OG5T007BYXP): a target-closed failure
+    // that escaped the setup seam — a checkpoint tick, the wait loop's unwind
+    // or the final telemetry read — takes the same lost/salvaged path, so a
+    // raw Playwright message is never the only diagnostic.
+    if (finalised) throw error;
+    const targetClosed = isTargetClosedError(error);
+    const rescued = await finaliseRecording({
+      reason: 'target_closed',
+      outputPath: output,
+      partialPath,
+      capturedBytes: checkpoint ? checkpoint.bytesWritten : 0,
+      // The rescue never reads, writes or removes anything: the decision is
+      // made from the checkpoint byte count alone.
+      readJsonl: () => Promise.resolve(''),
+      writeRecording: () => {},
+      removeFile: () => {},
+      log: (line) => process.stdout.write(`${line}\n`),
+    });
+    if (!targetClosed) {
+      reporter.step(`Recording interrupted: ${firstLine(error)}`);
+    }
+    return rescued.exitCode;
   } finally {
     stop.dispose();
     if (browser) await browser.close().catch(() => {});

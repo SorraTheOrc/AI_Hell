@@ -73,9 +73,14 @@ lives **only** in the page's in-memory buffer (`window.__aiHellTelemetry`,
   a completed run), one actionable line names the partial path, and the exit
   code is `1`. A salvage is collision-safe: it never overwrites an existing
   recording or an earlier salvage.
-- **Nothing captured — the browser closes before the first checkpoint**, or the
-  page buffer is unreachable: one actionable line names the output path that was
-  **not** written and the Ctrl+C stop procedure, and the exit code is `1`.
+- **Nothing captured — the browser closes during startup, before the first
+  checkpoint**, or the page buffer is unreachable: one actionable line names the
+  output path that was **not** written and the Ctrl+C stop procedure, and the
+  exit code is `1`. A close during startup takes this path even though setup has
+  not finished: the recorder's rescue boundary covers the whole session (path
+  resolution, page setup, the wait loop and the final telemetry read,
+  AH-0MWB6OG5T007BYXP), so it prints the same lost line instead of a raw
+  Playwright `Target page, context or browser has been closed` message.
 
 `--checkpoint-ms 0` disables checkpointing, so an interrupted run is a *lost*
 run (the "nothing captured" line) rather than a salvaged one.

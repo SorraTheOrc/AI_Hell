@@ -738,9 +738,12 @@ default), `balance-stats.json` beside it, exit code `0`.
   un-checkpointed tail (at most one interval) lost, **no** `balance-stats.json`
   and exit code `1`. A salvage is collision-safe — it never overwrites an
   existing recording or an earlier salvage.
-- **Nothing checkpointed** (the browser closes before the first checkpoint, or
-  the buffer is unreachable): one actionable line names the output path that was
-  not written and the Ctrl+C procedure, and the exit code is `1`.
+- **Nothing checkpointed** (the browser closes during startup or before the
+  first checkpoint, or the buffer is unreachable): one actionable line names the
+  output path that was not written and the Ctrl+C procedure, and the exit code
+  is `1`. The recorder's rescue boundary covers the whole session — including
+  page setup — so a browser close during startup takes this path rather than
+  printing a raw Playwright target-closed message (AH-0MWB6OG5T007BYXP).
 
 `--auto` must be passed **after `--`** (`npm run record -- --auto`): a bare
 `npm run record --auto` is consumed by npm, so the recorder waits for Ctrl+C

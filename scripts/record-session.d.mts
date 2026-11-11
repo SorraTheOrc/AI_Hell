@@ -177,6 +177,7 @@ export interface RunRecordingSetupOptions {
 export interface RunRecordingSetupResult {
   exitCode: number;
   rescued: boolean;
+  /** Handles obtained so far; present on the rescue path too, for cleanup. */
   server?: unknown;
   browser?: unknown;
   page?: unknown;
