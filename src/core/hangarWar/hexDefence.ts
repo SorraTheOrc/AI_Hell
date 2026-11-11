@@ -112,7 +112,8 @@
 import { normaliseSeed } from '../rng';
 import { createHangarWarRng } from './rng';
 import { areNeighbours, type AxialCoordinate } from './hexRing';
-import { MINIMUM_PLAYER_STRENGTH } from './hangarEconomy';
+import { MINIMUM_PLAYER_STRENGTH, resolvePlayerStrength } from './hangarEconomy';
+import { beatableAggressionCeiling } from './hexDifficulty';
 import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
 import type { HangarWarPayload, HexRingState, HexState, PendingAttack } from './types';
 
@@ -253,8 +254,18 @@ export interface HexDefenceRecord extends DefenceResolution {
 export interface FrontierTickRecord {
   /** The clock tick index this record belongs to. */
   readonly tick: number;
-  /** Aggression rise applied to every hex this tick. */
-  readonly aggressionRise: number;
+  /** The player strength the tick distributed aggression within. */
+  readonly playerStrength: number;
+  /** The ring's aggression budget (the total it carries after the tick). */
+  readonly aggressionBudget: number;
+  /** The highest aggression regarded as beatable this tick. */
+  readonly beatableCeiling: number;
+  /** Per-hex aggression changes this tick (only the hexes that moved). */
+  readonly deltas: readonly AggressionDelta[];
+  /** How many hexes rose in aggression this tick. */
+  readonly rose: number;
+  /** How many hexes fell in aggression this tick. */
+  readonly fell: number;
   /** Every defence resolved this tick, weakest margin last (empty when quiet). */
   readonly attacks: readonly HexDefenceRecord[];
 }
@@ -271,10 +282,21 @@ export interface FrontierTickResult {
 
 /** Optional per-call overrides (both default to the shipped behaviour). */
 export interface FrontierTickOptions {
-  /** The clock to apply; defaults to `createFrontierClock(payload.seed)`. */
+  /** The clock to apply; defaults to `createFrontierClock(payload.seed)`.
+   */
   readonly clock?: FrontierClock;
   /** Balance knobs; defaults to {@link DEFAULT_FRONTIER_TUNING}. */
   readonly tuning?: FrontierTuning;
+  /**
+   * Explicit player strength for a harness or test; defaults to the payload's
+   * own hangar (`resolvePlayerStrength`), so no shipped call site passes it.
+   */
+  readonly playerStrength?: number;
+  /**
+   * Explicit beatable ceiling for a harness or test; defaults to the value the
+   * player strength resolves (`beatableAggressionCeiling`).
+   */
+  readonly beatableCeiling?: number;
 }
 
 /** Multiplier applied to the attack per point of aggression (percent). */
@@ -866,14 +888,40 @@ export function runFrontierTick(
   const next = clonePayload(payload);
   const tickRng = createHangarWarRng(tickSeed(clock.seed, clock.tick));
 
-  const riseSpan = tuning.aggressionRiseMax - tuning.aggressionRiseMin;
-  const aggressionRise = tuning.aggressionRiseMin + tickRng.nextInt(riseSpan + 1);
+  // The frontier is sized from the fleet that will actually deploy: strength
+  // comes from the already-persisted hangar, so no call site threads a new
+  // parameter and no new payload field is needed.
+  const playerStrength =
+    options.playerStrength ?? resolvePlayerStrength(next.hangar);
+  const beatableCeiling =
+    options.beatableCeiling ??
+    beatableAggressionCeiling(playerStrength, tuning.maxAggression);
+  const aggressionBudget = ringAggressionBudget(
+    playerStrength,
+    next.ring,
+    tuning,
+    beatableCeiling,
+  );
+
+  // Redistribute inside the budget rather than raising every hex toward the
+  // ceiling: a rise on one hex is paid for by a fall on another, and at least
+  // one hex always remains at or below the beatable ceiling.
+  const redistribution = redistributeAggression({
+    hexes: next.ring.hexes.map((hex) => ({
+      id: hex.id,
+      aggression: hex.aggression,
+    })),
+    budget: aggressionBudget,
+    beatableCeiling,
+    seed: clock.seed,
+    tick: clock.tick,
+    tuning,
+  });
   for (const hex of next.ring.hexes) {
-    hex.aggression = Math.min(
-      tuning.maxAggression,
-      toCount(hex.aggression) + aggressionRise,
-    );
+    hex.aggression = redistribution.aggressions.get(hex.id) ?? toCount(hex.aggression);
   }
+  const rose = redistribution.deltas.filter((delta) => delta.delta > 0).length;
+  const fell = redistribution.deltas.filter((delta) => delta.delta < 0).length;
 
   const attacks: HexDefenceRecord[] = [];
   const pending: readonly PendingAttack[] = next.pendingAttacks ?? [];
@@ -931,6 +979,15 @@ export function runFrontierTick(
   return {
     payload: next,
     clock: advanceClock(clock, 1),
-    record: { tick: clock.tick, aggressionRise, attacks },
+    record: {
+      tick: clock.tick,
+      playerStrength,
+      aggressionBudget,
+      beatableCeiling,
+      deltas: redistribution.deltas,
+      rose,
+      fell,
+      attacks,
+    },
   };
 }

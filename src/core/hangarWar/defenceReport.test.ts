@@ -104,7 +104,17 @@ function makeRecord(
   attacks: readonly HexDefenceRecord[],
   overrides: Partial<FrontierTickRecord> = {},
 ): FrontierTickRecord {
-  return { tick: 4, aggressionRise: 2, attacks, ...overrides };
+  return {
+    tick: 4,
+    playerStrength: 2,
+    aggressionBudget: 20,
+    beatableCeiling: 2,
+    deltas: [],
+    rose: 0,
+    fell: 0,
+    attacks,
+    ...overrides,
+  };
 }
 
 describe('buildDefenceReport — every number comes from the record', () => {
@@ -238,7 +248,7 @@ describe('buildDefenceReport — summary, quiet ticks and totals', () => {
         attack({ hexId: 'hex-frontier', outcome: 'fell', margin: -2 }),
       ]),
     );
-    expect(model.tickLine).toBe('TICK 4 · aggression +2');
+    expect(model.tickLine).toBe('TICK 4 · AGG 20 · 0 rose, 0 fell');
     expect(model.summaryLine).toBe('ATTACKED 2 · HELD 1 · FELL 1');
     expect(model.attackedCount).toBe(2);
     expect(model.heldCount).toBe(1);
@@ -251,7 +261,7 @@ describe('buildDefenceReport — summary, quiet ticks and totals', () => {
     expect(model.quiet).toBe(true);
     expect(model.rows).toEqual([]);
     expect(model.summaryLine).toBe('QUIET — no hex was attacked this tick');
-    expect(model.tickLine).toBe('TICK 4 · aggression +2');
+    expect(model.tickLine).toBe('TICK 4 · AGG 20 · 0 rose, 0 fell');
     // The continue action is always present, so the screen can never stall.
     expect(model.focusOrder).toEqual([DEFENCE_REPORT_CONTINUE_KEY]);
     expect(model.defaultFocusKey).toBe(DEFENCE_REPORT_CONTINUE_KEY);
@@ -260,12 +270,18 @@ describe('buildDefenceReport — summary, quiet ticks and totals', () => {
   it('is total for a malformed record', () => {
     const model = buildDefenceReport(makePayload(), {
       tick: Number.NaN,
-      aggressionRise: -3,
+      playerStrength: Number.NaN,
+      aggressionBudget: -3,
+      beatableCeiling: Number.NaN,
+      deltas: [],
+      rose: -1,
+      fell: Number.NaN,
       attacks: undefined as unknown as readonly HexDefenceRecord[],
     });
     expect(model.quiet).toBe(true);
     expect(model.tick).toBe(0);
-    expect(model.aggressionRise).toBe(0);
+    expect(model.playerStrength).toBe(0);
+    expect(model.aggressionBudget).toBe(0);
   });
 
   it('publishes the title, continue action and the no-battle line', () => {

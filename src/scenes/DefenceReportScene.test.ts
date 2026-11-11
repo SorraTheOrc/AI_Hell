@@ -75,7 +75,12 @@ function twoHexPayload(): HangarWarPayload {
 function fellRecord(): FrontierTickRecord {
   return {
     tick: 4,
-    aggressionRise: 2,
+    playerStrength: 2,
+    aggressionBudget: 20,
+    beatableCeiling: 2,
+    deltas: [],
+    rose: 0,
+    fell: 0,
     attacks: [
       {
         outcome: 'fell',
@@ -147,7 +152,7 @@ describe('DefenceReportScene', () => {
 
     expect(scene.sys.isActive()).toBe(true);
     findTextStartingWith(scene, DEFENCE_REPORT_TITLE);
-    findTextStartingWith(scene, 'TICK 4 · aggression +2');
+    findTextStartingWith(scene, 'TICK 4 · AGG 20 · 0 rose, 0 fell');
     findTextStartingWith(scene, 'ATTACKED 1 · HELD 0 · FELL 1');
     findTextStartingWith(scene, DEFENCE_REPORT_HINT);
 
@@ -212,7 +217,16 @@ describe('DefenceReportScene', () => {
   it('renders a quiet tick instead of an empty screen', async () => {
     const scene = await bootReport({
       payload: twoHexPayload(),
-      record: { tick: 7, aggressionRise: 1, attacks: [] },
+      record: {
+        tick: 7,
+        playerStrength: 2,
+        aggressionBudget: 20,
+        beatableCeiling: 2,
+        deltas: [],
+        rose: 0,
+        fell: 0,
+        attacks: [],
+      },
       storage: null,
     });
     findTextStartingWith(scene, 'QUIET — no hex was attacked this tick');

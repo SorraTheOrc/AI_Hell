@@ -101,7 +101,12 @@ export class DefenceReportScene extends Phaser.Scene {
   /** The tick record being reported. */
   private record: FrontierTickRecord = {
     tick: 0,
-    aggressionRise: 0,
+    playerStrength: 0,
+    aggressionBudget: 0,
+    beatableCeiling: 0,
+    deltas: [],
+    rose: 0,
+    fell: 0,
     attacks: [],
   };
 
@@ -149,7 +154,12 @@ export class DefenceReportScene extends Phaser.Scene {
     // clock position, so the screen always renders something legible.
     this.record = data?.record ?? {
       tick: this.payload.frontierTick ?? 0,
-      aggressionRise: 0,
+      playerStrength: 0,
+      aggressionBudget: 0,
+      beatableCeiling: 0,
+      deltas: [],
+      rose: 0,
+      fell: 0,
       attacks: [],
     };
   }

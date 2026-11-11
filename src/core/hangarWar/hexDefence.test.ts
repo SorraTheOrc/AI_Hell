@@ -40,7 +40,12 @@ import {
   type FrontierTuning,
 } from './hexDefence';
 import { createRingState } from './hexRing';
-import { aggressionMapOf, aggressionScenario, everyHexMax } from './__fixtures__/aggressionScenarios';
+import {
+  aggressionMapOf,
+  aggressionScenario,
+  everyHexMax,
+  runTickSequence,
+} from './__fixtures__/aggressionScenarios';
 import { checkRingAggression, ringAggressionTotal } from './aggressionInvariants';
 import { MINIMUM_PLAYER_STRENGTH } from './hangarEconomy';
 import type { HangarWarPayload, HexState, PendingAttack } from './types';
@@ -312,29 +317,27 @@ describe('attackingNeighbour', () => {
 });
 
 describe('runFrontierTick', () => {
-  it('raises every hex aggression by the recorded rise, clamped at the ceiling', () => {
-    const hexes = ringOne();
-    setAggression(hexes, RING_ONE_IDS[0], DEFAULT_FRONTIER_TUNING.maxAggression);
-    const payload = payloadWith(hexes);
+  it('redistributes within the strength budget instead of raising every hex', () => {
+    const payload = payloadWith(ringOne());
+    const total = (hexes: readonly HexState[]): number =>
+      hexes.reduce((sum, hex) => sum + hex.aggression, 0);
+    const beforeTotal = total(payload.ring.hexes);
 
     const { payload: next, record } = runFrontierTick(payload);
+    const afterTotal = total(next.ring.hexes);
 
-    expect(record.aggressionRise).toBeGreaterThanOrEqual(
-      DEFAULT_FRONTIER_TUNING.aggressionRiseMin,
-    );
-    expect(record.aggressionRise).toBeLessThanOrEqual(
-      DEFAULT_FRONTIER_TUNING.aggressionRiseMax,
-    );
     expect(record.attacks).toEqual([]);
-    for (const hex of next.ring.hexes) {
-      const before = hexOf(payload, hex.id).aggression;
-      expect(hex.aggression).toBe(
-        Math.min(
-          DEFAULT_FRONTIER_TUNING.maxAggression,
-          before + record.aggressionRise,
-        ),
-      );
-    }
+    expect(record.playerStrength).toBeGreaterThan(0);
+    expect(record.beatableCeiling).toBeGreaterThanOrEqual(0);
+    // The minimum fleet carries the authored base mass: no net growth.
+    expect(afterTotal).toBe(beforeTotal);
+    expect(afterTotal).toBe(record.aggressionBudget);
+    // A rise on any hex is paid for by a fall on another.
+    if (record.rose > 0) expect(record.fell).toBeGreaterThan(0);
+    // At least one deployment stays within reach.
+    expect(
+      next.ring.hexes.some((hex) => hex.aggression <= record.beatableCeiling),
+    ).toBe(true);
   });
 
   it('advances the injected clock by exactly one tick', () => {
@@ -570,8 +573,13 @@ describe('a secured ring (deferred hangar assault, Q2 = a)', () => {
     // No massed hangar assault: a tick of a completed ring resolves nothing.
     expect(record.attacks).toEqual([]);
     expect(Object.keys(record).sort()).toEqual([
-      'aggressionRise',
+      'aggressionBudget',
       'attacks',
+      'beatableCeiling',
+      'deltas',
+      'fell',
+      'playerStrength',
+      'rose',
       'tick',
     ]);
     expect(next.hangar).toEqual(hangarBefore);
@@ -836,5 +844,94 @@ describe('redistributeAggression — the conserving ring mover', () => {
     for (const delta of result.deltas) {
       expect(delta.to - delta.from).toBe(delta.delta);
     }
+  });
+});
+
+describe('runFrontierTick — strength-budgeted redistribution (AH-0MWBBUAAT00340FS)', () => {
+  const totalOf = (hexes: readonly HexState[]): number =>
+    hexes.reduce((sum, hex) => sum + hex.aggression, 0);
+
+  it.each([1, 2] as const)(
+    'does not grow the ring total over 24 ticks at ring size %i×6',
+    (ringIndex) => {
+      const payload = aggressionScenario(ringIndex);
+      const expectedTotal = totalOf(payload.ring.hexes);
+      const snapshots = runTickSequence(payload, 24);
+      for (const snapshot of snapshots) {
+        // The fleet did not grow, so the ring's aggression mass did not grow.
+        expect(totalOf(snapshot.payload.ring.hexes)).toBe(expectedTotal);
+        // No hex marches to the ceiling unchallenged: one stays within reach.
+        expect(
+          snapshot.payload.ring.hexes.some(
+            (hex) => hex.aggression <= snapshot.record.beatableCeiling,
+          ),
+        ).toBe(true);
+        expect(
+          snapshot.payload.ring.hexes.every(
+            (hex) => hex.aggression === DEFAULT_FRONTIER_TUNING.maxAggression,
+          ),
+        ).toBe(false);
+      }
+    },
+  );
+
+  it('raises the budget and total for a stronger fleet and lowers them when swapped back', () => {
+    const starter = aggressionScenario(1);
+    const upgradedHangar = {
+      ...starter.hangar,
+      unlockedHulls: [...starter.hangar.unlockedHulls, 'hull-2'],
+      activeHull: 'hull-2',
+    };
+    const upgraded = { ...starter, hangar: upgradedHangar };
+
+    const starterTick = runFrontierTick(starter);
+    const upgradedTick = runFrontierTick(upgraded);
+
+    expect(upgradedTick.record.playerStrength).toBeGreaterThan(
+      starterTick.record.playerStrength,
+    );
+    expect(upgradedTick.record.aggressionBudget).toBeGreaterThan(
+      starterTick.record.aggressionBudget,
+    );
+    expect(totalOf(upgradedTick.payload.ring.hexes)).toBeGreaterThan(
+      totalOf(starterTick.payload.ring.hexes),
+    );
+
+    // Swap the starter fleet back in: the budget returns to the authored mass.
+    const back = { ...upgradedTick.payload, hangar: starter.hangar };
+    const backTick = runFrontierTick(back);
+    expect(backTick.record.aggressionBudget).toBeLessThan(
+      upgradedTick.record.aggressionBudget,
+    );
+    expect(totalOf(backTick.payload.ring.hexes)).toBe(
+      backTick.record.aggressionBudget,
+    );
+  });
+
+  it('produces the same next distribution for the same payload, seed and tick', () => {
+    const payload = aggressionScenario(2);
+    const clock = createFrontierClock(payload.seed, 5);
+    const a = runFrontierTick(payload, { clock });
+    const b = runFrontierTick(payload, { clock });
+    expect(a.payload).toEqual(b.payload);
+    expect(a.record).toEqual(b.record);
+  });
+
+  it('never mutates the input payload', () => {
+    const payload = aggressionScenario(1);
+    const before = JSON.stringify(payload);
+    runFrontierTick(payload);
+    expect(JSON.stringify(payload)).toBe(before);
+  });
+
+  it('ticks a save written before the between-sortie clock landed', () => {
+    const payload = aggressionScenario(1);
+    const legacy = { ...payload };
+    delete (legacy as { frontierTick?: number }).frontierTick;
+
+    const result = runFrontierTick(legacy);
+    expect(result.record.tick).toBe(0);
+    expect(result.clock.tick).toBe(1);
+    expect(result.payload.frontierTick).toBe(1);
   });
 });
