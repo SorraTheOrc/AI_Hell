@@ -263,9 +263,12 @@ export function buy(
  * falls back to the first owned catalogue hull, and ultimately to the starter
  * hull, so a corrupt save can never deploy an unowned ship.
  */
-export function resolveActiveHull(hangar: HangarState): string {
+export function resolveActiveHull(
+  hangar: HangarState,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): string {
   const ownedHulls = hangar.unlockedHulls.filter(
-    (id) => findHangarEntry(id)?.kind === 'hull',
+    (id) => findHangarEntry(id, catalogue)?.kind === 'hull',
   );
   if (ownedHulls.includes(hangar.activeHull)) return hangar.activeHull;
   return ownedHulls[0] ?? STARTER_HULL_ID;
@@ -276,10 +279,11 @@ function ownedEntriesOf(
   hangar: HangarState,
   ids: readonly string[],
   kind: HangarEntry['kind'],
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
 ): string[] {
   const resolved: string[] = [];
   for (const id of ids) {
-    const entry = findHangarEntry(id);
+    const entry = findHangarEntry(id, catalogue);
     if (entry === null || entry.kind !== kind) continue;
     if (!ownsEntry(hangar, entry)) continue;
     if (!resolved.includes(id)) resolved.push(id);
@@ -295,14 +299,23 @@ function ownedEntriesOf(
  * deployment without a selection starts with only the ship's permanent cannon
  * (AH-0MVZJ6V1J001DA9D).
  */
-export function resolveActiveLoadout(hangar: HangarState): HangarLoadout {
+export function resolveActiveLoadout(
+  hangar: HangarState,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): HangarLoadout {
   return {
     startingWeapons: ownedEntriesOf(
       hangar,
       hangar.activeLoadout.startingWeapons,
       'weapon',
+      catalogue,
     ),
-    modifiers: ownedEntriesOf(hangar, hangar.activeLoadout.modifiers, 'modifier'),
+    modifiers: ownedEntriesOf(
+      hangar,
+      hangar.activeLoadout.modifiers,
+      'modifier',
+      catalogue,
+    ),
   };
 }
 
@@ -339,6 +352,70 @@ export function equipLoadout(
     modifiers: ownedEntriesOf(hangar, loadout.modifiers, 'modifier'),
   };
   return next;
+}
+
+/**
+ * The strength of the minimal fleet — the starter hull with no upgrades and no
+ * equipment. {@link resolvePlayerStrength} returns this for a fresh save.
+ *
+ * The value is the starter hull's base defence (`2`), pinned by a test so a
+ * catalogue change cannot silently rebase the frontier budget.
+ */
+export const MINIMUM_PLAYER_STRENGTH = 2;
+
+/**
+ * Defence contribution of one equipped starting weapon.
+ *
+ * The shipped weapon entries carry no defence rating, so this is `0` today;
+ * it is a single documented knob so a future weapon stat can feed the player
+ * strength without inventing a second vocabulary. Kept deliberately neutral so
+ * the metric is honest against the current catalogue.
+ */
+export const STARTING_WEAPON_STRENGTH_WEIGHT = 0;
+
+/**
+ * Resolves the player's current strength from the active loadout's hangar
+ * progression — the input the frontier aggression budget is sized from
+ * (producer decision Q1 = a).
+ *
+ * The metric reuses the defence resolver's vocabulary: the active hull's
+ * {@link defenderRatingFromUpgrades} rating, plus the rating of every equipped
+ * `defence` modifier, plus the documented per-weapon term. Only entries the
+ * fleet actually owns and the catalogue knows contribute, so a corrupt save
+ * can never inflate the frontier.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param catalogue — the unlock tree (injectable for tests); defaults to the
+ *   shipped catalogue.
+ * @returns a deterministic non-negative strength, at least
+ *   {@link MINIMUM_PLAYER_STRENGTH}.
+ */
+export function resolvePlayerStrength(
+  hangar: HangarState,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): number {
+  const hull = findHangarEntry(resolveActiveHull(hangar, catalogue), catalogue);
+  const hullRating =
+    hull !== null && hull.kind === 'hull'
+      ? defenderRatingFromUpgrades(hull.baseDefence, hull.upgrades)
+      : 0;
+
+  const loadout = resolveActiveLoadout(hangar, catalogue);
+  let modifierRating = 0;
+  for (const id of loadout.modifiers) {
+    const entry = findHangarEntry(id, catalogue);
+    if (entry !== null && entry.kind === 'modifier' && entry.effect.kind === 'defence') {
+      modifierRating += toCount(entry.effect.rating);
+    }
+  }
+
+  const weaponRating =
+    loadout.startingWeapons.length * toCount(STARTING_WEAPON_STRENGTH_WEIGHT);
+
+  return Math.max(
+    MINIMUM_PLAYER_STRENGTH,
+    hullRating + modifierRating + weaponRating,
+  );
 }
 
 /**

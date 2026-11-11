@@ -32,11 +32,14 @@ import {
   attackingNeighbour,
   createFrontierClock,
   frontierClockFor,
+  authoredRingBaseMass,
   resolveDefence,
+  ringAggressionBudget,
   runFrontierTick,
   type FrontierTuning,
 } from './hexDefence';
 import { createRingState } from './hexRing';
+import { MINIMUM_PLAYER_STRENGTH } from './hangarEconomy';
 import type { HangarWarPayload, HexState, PendingAttack } from './types';
 
 /** Ring 1's authored ids, in clockwise generation order. */
@@ -619,5 +622,51 @@ describe('frontier tick integration (AH-0MVUXCBBK004EJIP)', () => {
     const stored = JSON.parse(JSON.stringify(ticked.payload)) as HangarWarPayload;
     expect(stored.frontierTick).toBe(1);
     expect(frontierClockFor(stored)).toEqual(ticked.clock);
+  });
+});
+
+describe('ringAggressionBudget — the strength → ring budget mapping', () => {
+  const ring1 = createRingState(1, HEX_RING_DEFINITIONS);
+  const ring2 = createRingState(2, HEX_RING_DEFINITIONS);
+
+  it('equals the authored base mass at the minimum fleet', () => {
+    for (const ring of [ring1, ring2]) {
+      expect(ringAggressionBudget(MINIMUM_PLAYER_STRENGTH, ring)).toBe(
+        authoredRingBaseMass(ring),
+      );
+    }
+  });
+
+  it('is monotonic non-decreasing in strength', () => {
+    let previous = -1;
+    for (const strength of [2, 3, 5, 9, 20]) {
+      const budget = ringAggressionBudget(strength, ring1);
+      expect(budget).toBeGreaterThanOrEqual(previous);
+      previous = budget;
+    }
+  });
+
+  it('clamps at the ring capacity', () => {
+    const max = DEFAULT_FRONTIER_TUNING.maxAggression;
+    for (const ring of [ring1, ring2]) {
+      expect(ringAggressionBudget(1_000, ring)).toBe(max * ring.hexes.length);
+    }
+  });
+
+  it('leaves room for one beatable hex at the given ceiling', () => {
+    const max = DEFAULT_FRONTIER_TUNING.maxAggression;
+    for (const ring of [ring1, ring2]) {
+      const ceiling = 2;
+      expect(ringAggressionBudget(1_000, ring, undefined, ceiling)).toBeLessThanOrEqual(
+        max * (ring.hexes.length - 1) + ceiling,
+      );
+    }
+  });
+
+  it('is total on corrupt strength', () => {
+    for (const ring of [ring1, ring2]) {
+      expect(ringAggressionBudget(Number.NaN, ring)).toBe(authoredRingBaseMass(ring));
+      expect(ringAggressionBudget(-10, ring)).toBe(authoredRingBaseMass(ring));
+    }
   });
 });

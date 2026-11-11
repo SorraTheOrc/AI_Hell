@@ -112,7 +112,9 @@
 import { normaliseSeed } from '../rng';
 import { createHangarWarRng } from './rng';
 import { areNeighbours, type AxialCoordinate } from './hexRing';
-import type { HangarWarPayload, HexState, PendingAttack } from './types';
+import { MINIMUM_PLAYER_STRENGTH } from './hangarEconomy';
+import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
+import type { HangarWarPayload, HexRingState, HexState, PendingAttack } from './types';
 
 /** The two outcomes of an algorithmic defence. */
 export type DefenceOutcome = 'held' | 'fell';
@@ -177,6 +179,22 @@ export interface FrontierTuning {
   readonly baseAttackingForce: number;
   /** Force added per point of the attacking neighbour's aggression. */
   readonly forcePerOriginAggression: number;
+  /**
+   * Ring aggression mass added per point of player strength above the minimum
+   * fleet (the strength → budget knob). `0` makes the budget depend only on a
+   * ring's authored base mass.
+   */
+  readonly gainPerStrengthPoint?: number;
+  /**
+   * Most aggression points the clock may move between hexes in one tick when
+   * the ring is at its budget (a rise on one hex forces a fall on another).
+   */
+  readonly redistributionCap?: number;
+  /**
+   * Aggression beyond the strength-derived beatable ceiling that the budget
+   * reservation allows, so the mover always has room to leave one beatable hex.
+   */
+  readonly beatableCeilingSlack?: number;
 }
 
 /**
@@ -199,6 +217,9 @@ export const DEFAULT_FRONTIER_TUNING: FrontierTuning = Object.freeze({
   attackChancePercent: 70,
   baseAttackingForce: 2,
   forcePerOriginAggression: 1,
+  gainPerStrengthPoint: 1,
+  redistributionCap: 2,
+  beatableCeilingSlack: 0,
 });
 
 /**
@@ -288,6 +309,15 @@ function normaliseTuning(tuning: FrontierTuning): FrontierTuning {
     attackChancePercent: Math.min(100, toCount(tuning.attackChancePercent)),
     baseAttackingForce: toCount(tuning.baseAttackingForce),
     forcePerOriginAggression: toCount(tuning.forcePerOriginAggression),
+    gainPerStrengthPoint: toCount(
+      tuning.gainPerStrengthPoint ?? DEFAULT_FRONTIER_TUNING.gainPerStrengthPoint,
+    ),
+    redistributionCap: toCount(
+      tuning.redistributionCap ?? DEFAULT_FRONTIER_TUNING.redistributionCap,
+    ),
+    beatableCeilingSlack: toCount(
+      tuning.beatableCeilingSlack ?? DEFAULT_FRONTIER_TUNING.beatableCeilingSlack,
+    ),
   };
 }
 
@@ -361,6 +391,87 @@ export function advanceClock(clock: FrontierClock, ticks = 1): FrontierClock {
  */
 export function frontierClockFor(payload: HangarWarPayload): FrontierClock {
   return createFrontierClock(payload.seed, payload.frontierTick ?? 0);
+}
+
+/**
+ * The ring's authored base aggression mass.
+ *
+ * Rings with authored definitions use their authored `baseAggression` total —
+ * the starting shape the clock redistributes on top of. A ring whose hexes are
+ * generated without authored rows (a later ring before its data lands) falls
+ * back to its current total, which is that ring's authored starting shape at
+ * the first tick.
+ *
+ * @param ring — the ring to measure.
+ * @returns the authored (or current) base aggression mass.
+ */
+export function authoredRingBaseMass(ring: HexRingState): number {
+  const count = ring.hexes.length;
+  const definitions = hexRingDefinitionsFor(ring.ringIndex);
+  if (count > 0 && definitions.length === count) {
+    return definitions.reduce(
+      (sum, definition) => sum + toCount(definition.baseAggression),
+      0,
+    );
+  }
+  return ring.hexes.reduce(
+    (sum, hex) => sum + toCount(hex.aggression),
+    0,
+  );
+}
+
+/**
+ * The whole-ring aggression budget the player's strength supports.
+ *
+ * `authoredBaseMass + round(gainPerStrengthPoint × (strength − minimum))`,
+ * clamped to the ring's absolute capacity and to a capacity that always leaves
+ * room for one beatable hex (`maxAggression × (count − 1) + ceiling`). The
+ * minimum fleet therefore carries exactly the authored base mass, a stronger
+ * fleet carries more, and a fleet that does not grow never sees the mass grow.
+ *
+ * Total: a corrupt strength or ceiling collapses to the authored base mass /
+ * the maximum rather than throwing.
+ *
+ * @param strength — the resolved player strength.
+ * @param ring — the ring being budgeted.
+ * @param tuning — balance knobs (defaults to the shipped tuning).
+ * @param beatableCeiling — the ceiling the budget must leave room for
+ *   (defaults to `maxAggression`, i.e. no reservation).
+ * @returns the ring's aggression budget.
+ */
+export function ringAggressionBudget(
+  strength: number,
+  ring: HexRingState,
+  tuning: FrontierTuning = DEFAULT_FRONTIER_TUNING,
+  beatableCeiling: number = tuning.maxAggression,
+): number {
+  const rules = normaliseTuning(tuning);
+  const count = ring.hexes.length;
+  const baseMass = authoredRingBaseMass(ring);
+  const strengthPoints =
+    typeof strength === 'number' && Number.isFinite(strength)
+      ? Math.max(0, Math.floor(strength) - MINIMUM_PLAYER_STRENGTH)
+      : 0;
+  const gain = Math.round(
+    strengthPoints * (rules.gainPerStrengthPoint ?? 0),
+  );
+  const raw = baseMass + gain;
+
+  const ceiling =
+    typeof beatableCeiling === 'number' && Number.isFinite(beatableCeiling)
+      ? Math.max(0, Math.floor(beatableCeiling))
+      : rules.maxAggression;
+  const effectiveCeiling = Math.min(
+    rules.maxAggression,
+    ceiling + (rules.beatableCeilingSlack ?? 0),
+  );
+  const capacityWithBeatable =
+    count > 0
+      ? rules.maxAggression * (count - 1) + effectiveCeiling
+      : 0;
+  const absoluteCap = rules.maxAggression * count;
+
+  return Math.max(0, Math.min(absoluteCap, capacityWithBeatable, raw));
 }
 
 /**
