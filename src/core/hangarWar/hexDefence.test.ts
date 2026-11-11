@@ -935,3 +935,17 @@ describe('runFrontierTick — strength-budgeted redistribution (AH-0MWBBUAAT0034
     expect(result.payload.frontierTick).toBe(1);
   });
 });
+
+
+describe('shipped frontier tuning (AH-0MWBBUBZ90066H68)', () => {
+  it('pins the strength-budgeted knobs and their recorded rationale', () => {
+    // Rationale and measured evidence live in docs/OUTER_LOOP_CANDIDATES.md,
+    // "Frontier aggression clock — strengths, budget and conservation".
+    expect(DEFAULT_FRONTIER_TUNING).toMatchObject({
+      maxAggression: 9,
+      gainPerStrengthPoint: 1,
+      redistributionCap: 2,
+      beatableCeilingSlack: 0,
+    });
+  });
+});

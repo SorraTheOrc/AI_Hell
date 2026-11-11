@@ -188,6 +188,49 @@ claimed.
 | **Home world discovery + defence** | A zero-aggression region containing a planet that can **become home**; once found it must be defended | Medium |
 | **Onslaught clock** | The escalating "massive AI onslaught" that eventually tests every held region and the home world | Medium |
 
+#### Frontier aggression clock — strengths, budget and conservation
+
+The clock is **strength-budgeted and conserving** (AH-0MWB9V9Q3004HD2P):
+
+- **Strength from the fleet.** `resolvePlayerStrength(payload.hangar)` derives a
+  pure scalar from the active hull's hangar progression (base defence plus
+  upgrade levels, the same `defenderRatingFromUpgrades` vocabulary the defence
+  resolver uses). No new persisted field is needed: the payload already carries
+  the hangar, so a save written before this change ticks as tick 0.
+- **Ring budget.** `ringAggressionBudget(strength, ring, tuning, ceiling)` is
+  `authoredBaseMass + round(gainPerStrengthPoint × (strength − minimum))`,
+  clamped to the ring's capacity. The minimum fleet carries exactly the
+  authored base mass, so a fleet that does not grow never sees the ring's
+  aggression mass grow.
+- **Conserved redistribution.** `redistributeAggression` moves up to
+  `redistributionCap` points a tick from the most aggressive hex to the least,
+  so a rise on one hex always costs another hex of the same ring. Every
+  aggression stays a whole number in `[0, 9]`.
+- **Guaranteed beatable hex.** `beatableAggressionCeiling(strength)` inverts the
+  existing `hexAggressionLevel` mapping, and the mover keeps trading points
+  until at least one hex is at or below it. The budget is clamped to leave room
+  for that hex, so the invariant is a runtime guarantee, not a harness-only
+  observation.
+
+The knobs live in `DEFAULT_FRONTIER_TUNING` (`gainPerStrengthPoint: 1`,
+`redistributionCap: 2`, `beatableCeilingSlack: 0`) and are pinned by a test, so
+changing one requires touching this rationale in the same change.
+
+Measured with `node scripts/ring-aggression-sweep.mjs` (seed `0x5eed1234`,
+50 ticks, the shipped `runFrontierTick`):
+
+| Ring | Snapshot | Strength | Budget (= preserved total) | Min beatable hexes / tick |
+|------|----------|----------|----------------------------|---------------------------|
+| 1 (6 hexes) | minimal fleet | 2 | 18 | 1 |
+| 1 (6 hexes) | first upgrade step (armour 1) | 5 | 21 | 5 |
+| 1 (6 hexes) | ring-2 fleet (`hull-2`) | 14 | 30 | 6 |
+| 2 (12 hexes) | minimal fleet | 2 | 46 | 1 |
+| 2 (12 hexes) | first upgrade step (armour 1) | 5 | 49 | 10 |
+| 2 (12 hexes) | ring-2 fleet (`hull-2`) | 14 | 58 | 12 |
+
+The ring total is stable across every one of the 50 ticks at each snapshot, and
+at least one hex is beatable on every tick for all six runs.
+
 ### Reuse of existing systems
 
 - **Checkpoint store (`src/core/checkpointStore.ts`)** — extends the existing
@@ -801,7 +844,7 @@ hangar survives — that is what winning this hell looks like.
 | **Hangar (Candidate B)** | Salvage spend, unlock tree (hulls, starting weapons, modifiers), active loadout | Medium |
 | **Salvage banking (Candidate B)** | Convert run rewards to a persistent balance at checkpoint moments; unbanked is lost on death | Small–Medium |
 | **Hex ring map** | A hex grid whose first **ring** (6 hexes) surrounds the hangar; ring-by-ring growth for later expansions | Small–Medium — data + a map screen + a ring generator |
-| **Frontier aggression clock** | Each between-run tick raises border aggression and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small — a deterministic per-tick rule |
+| **Frontier aggression clock** | Each between-run tick **redistributes** the ring's aggression inside a budget sized from the player's fleet (a rise on one hex is paid for by a fall on another), guarantees at least one beatable hex, and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small–Medium — a deterministic per-tick rule over the pure strength/budget resolvers |
 | **Defending bot assignment** | Leave a hull plus a **bot** in a hex; its **defence rating** derives from the hull's hangar upgrades, not from a live battle | Small |
 | **Algorithmic defence resolution** | A taken hex falls or holds by comparing stored numbers (defender rating vs. attacking force × aggression) — **no simulated battle** | Small — a pure resolver |
 | **Hex deployment + boss** | Reuse the run, with the hex's aggression selecting the difficulty curve and the hex's boss at the end | Small |
@@ -974,7 +1017,8 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
   - **The frontier treadmill** — the AI retakes hexes faster than a casual
     player can hold them, so the map feels like a losing chore. Mitigation: a
     frontier tick the player can always answer (attack the neighbour), and
-    aggression that grows on a schedule the defence report makes legible.
+    aggression that is sized from the player's own fleet, redistributed around
+    the ring, and always leaves a beatable hex the defence report makes legible.
   - **Opaque defence** — a hex falls and the player cannot see why. Mitigation:
     show the numbers (defender rating vs. attacking force) in the report.
   - **Two progressions, twice the bookkeeping** — hangar plus ring becomes
