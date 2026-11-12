@@ -4,8 +4,11 @@
  *
  * A hex deployment is a **normal run at that hex's aggression** (design of
  * record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D, *The capture cycle*).
- * This module turns the persistent hangar payload into the launch data the
- * shipped `PlayScene` consumes:
+ * It plays **exactly one campaign level** — the level the hex's aggression
+ * selects — and ends on that level's wave-10 **mini-boss** (GDD §8.2), which
+ * resolves the capture; it is never a run to the campaign's final boss. This
+ * module turns the persistent hangar payload into the launch data the shipped
+ * `PlayScene` consumes:
  *
  * - the **hangar-resolved loadout** — the active hull's run stats (starting
  *   lives, speed), its starting weapons and its permanent modifiers;

@@ -3039,6 +3039,20 @@ aggression-selected campaign level, a war-derived seed and the hex itself, and
 nothing else. A hex deployment **writes no arcade checkpoint and clears none**
 (§8.1), and a malformed or absent payload degrades to the unchanged arcade run.
 
+**One level per deployment, ended by the mini-boss** (AH-0MWBW1B1Z0059CC2). A
+deployment plays **exactly the one campaign level its aggression selects** and
+ends on that level's **wave-10 mini-boss**; it never advances to the next level
+and never spawns the final boss, so taking a hex is a bounded sortie rather than
+the rest of the campaign. The mini-boss victory runs the capture cycle
+(below) and ends the run as a **victory**. On a win the player sees, in order,
+the mini-boss defeat → `DefenceReportScene` → the mini-boss **reward** overlay
+(the same shared `MiniBossWheelScene` the arcade uses) → `HexMapScene` with the
+newly held hex, so the reward can never appear before the report and the map is
+reached only once it resolves. A lost deployment keeps the report → map route
+with no reward. The arcade campaign is untouched: `▶ Play Game` still runs all
+ten levels, a non-final level's mini-boss still advances, and level 10's
+mini-boss still opens the final boss.
+
 #### The hangar and its economy
 
 The economy, unlock tree, salvage banking and `ai_hell_hangar_war` payload are
@@ -3088,20 +3102,22 @@ generated. A fresh war materialises its ring from the definitions; a stored
 One captured hex is one deployment, resolved in four steps in a single payload
 write:
 
-1. **Bank the salvage.** The run's cumulative salvage at the boss moment is
+1. **Bank the salvage.** The run's cumulative salvage at the mini-boss moment is
    banked through the shipped §8.1 rule (only the increase over this run's
    watermark), so a replay never double-counts and spending in-run never lowers
    the persistent balance.
 2. **Grant the hex's entry (Rule 2).** The authored grant is recorded on the hex
-   and added to the fleet's owned set **only after the boss is defeated**. The
-   boss **demonstrates** it first: the hex boss is the shipped `Boss` (four
-   phases) configured from the hex, and it **wields the granted weapon against
-   you** — the encounter opens with that weapon's own volley (its fan pattern,
-   bullet colour and bullet shape, resolved from the shared
+   and added to the fleet's owned set **only after the mini-boss is defeated**.
+   The encounter **demonstrates** it first: the deployment's wave-10
+   `MiniBoss` is configured from the hex profile, so it **wields the granted
+   weapon against you** — the encounter opens with that weapon's own volley (its
+   fan pattern, bullet colour and bullet shape, resolved from the shared
    `src/utils/weapons.ts` catalogue through `hexBossDemonstration`), with the
-   body colour as a secondary tell. Later phases keep the shipped patterns, so
-   a hex encounter still runs the shipped boss architecture and never forks the
-   entity.
+   body colour as a secondary tell; a non-weapon grant falls back to a
+   deterministic palette colour and demonstrates nothing. Later phases keep the
+   level's authored patterns, so the encounter still runs the shipped mini-boss
+   architecture and never forks the entity. The arcade mini-boss is unchanged
+   (design colour and hit pool, no demonstration).
 3. **Leave a defending bot.** The hex is marked held **only** with a defender
    flying a hull the fleet owns; no defender means no hold
    (`defender-required`). The defender's stored rating is the hangar economy's
@@ -3123,7 +3139,7 @@ write:
 A lost deployment is the mirror image: it forfeits **only** the salvage earned
 since the last bank and leaves the hangar and the ring untouched. Difficulty is
 still the shipped curve data: a hex's aggression selects campaign level
-`1 + aggression` (clamped to the campaign maximum), and perturbs the hex boss's
+`1 + aggression` (clamped to the campaign maximum), and perturbs the mini-boss's
 hit pool with the same bounded formula the campaign's mini-bosses use.
 
 #### The defence resolver and the frontier tick
@@ -3194,8 +3210,16 @@ tick's actual, jittered result.
 
 Timing is measured, not guessed, with the headless eval arena
 (`src/ai/eval/arena.ts`) through the ring-timing harness
-(`src/ai/eval/ringTiming.ts`, `npm run ring-timing`). A deployment is modelled as
-the game plays it — the classic campaign slice from the hex's
+(`src/ai/eval/ringTiming.ts`, `npm run ring-timing`). **The baseline below was
+measured against the previous campaign-slice deployment** (a run from the hex's
+aggression-selected level to the campaign's final boss); deployments are now one
+level ending on a mini-boss (AH-0MWBW1B1Z0059CC2), so these figures — and the
+per-deployment salvage/cores and mini-boss reward value — are **being
+re-measured** by the follow-ups **AH-0MWCOWSVN003X81A** (ring timing) and
+**AH-0MWCOWTOR00994NA** (salvage, cores and reward value). They are recorded
+here as the pre-change reference, not as a claim about the shipped one-level
+deployment. A deployment is modelled as the game played it then — the classic
+campaign slice from the hex's
 aggression-selected level, a ≈5-minute / 18 000-tick deployment window, launched
 with the **loadout the fleet owns at that point** (the starter kit entering ring
 1, each captured hex's grant owned from the next deployment, ring 1's six grants

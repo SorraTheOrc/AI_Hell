@@ -110,7 +110,7 @@ before it reads as a reward.
 | **Candidate A — Contested Regions / Home World** | Every new ship leaves home with **no upgrades** (A already rotates unupgraded ships onto the line) | A region's mini-boss demonstrates the region's signature weapon; the stationed-ship upgrade is earned by beating it |
 | **Candidate B — Salvage Fleet** | The hangar starts with **one basic hull and one starting weapon** (owned; the default loadout is empty); everything else is bought | A mini-boss's weapon appears in the hangar tree only after that mini-boss has been defeated wielding it |
 | **Candidate C — Signal Decode** | The codex starts **empty**, so the campaign starts plain and mutates as it is decoded | The boss's phases *are* the demonstration; each decoded rule unlocks the behaviour/weapon the player has just survived |
-| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, its starting weapon owned but **not equipped**, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | A hex boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
+| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, its starting weapon owned but **not equipped**, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | The hex's wave-10 mini-boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
 
 ---
 
@@ -753,7 +753,7 @@ shipping order this document recommends (B's shape first):
   its deployment/loadout selector. Playable specification: GDD §8.1.
 - **Phase B — the first hex ring, shipped:** the hex ring model and generator
   with authored ring 1 (6 hexes) and **ring 2 (12 hexes, playable)**, the hex
-  map with known-ahead intel, the capture cycle (hex boss, boss-granted
+  map with known-ahead intel, the capture cycle (hex mini-boss, mini-boss-granted
   discovery, defending bot, ring secured), the pure defence resolver and
   frontier aggression clock, the between-sortie defence report with
   attract-mode traversal, and the measured ring timing/playstyle validation.
@@ -798,8 +798,10 @@ hangar survives — that is what winning this hell looks like.
 - **Moment-to-moment (seconds):** unchanged — fly, dodge the formations,
   auto-fire, clear waves (GDD §2.3–2.6).
 - **Run (a deployment, minutes):** warp into **one hex** and clear it. A hex
-  deployment is a normal campaign slice (a level or a wave set) whose difficulty
-  comes from that hex's **frontier aggression**, ending on the hex's boss.
+  deployment is a normal campaign slice of **exactly one campaign level** whose
+  difficulty comes from that hex's **frontier aggression**, ending on that
+  level's **mini-boss** (GDD §8.2, AH-0MWBW1B1Z0059CC2); beating the mini-boss
+  wins and captures the hex.
 - **Meta (hours):** **two progressions running together**:
   1. **The war on the map (Candidate A's axis):** the ring of hexes around the
      hangar, which hexes are held, which hold a **defending bot**, and how
@@ -847,8 +849,8 @@ hangar survives — that is what winning this hell looks like.
 | **Frontier aggression clock** | Each between-run tick **redistributes** the ring's aggression inside a budget sized from the player's fleet (a rise on one hex is paid for by a fall on another), guarantees at least one beatable hex, and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small–Medium — a deterministic per-tick rule over the pure strength/budget resolvers |
 | **Defending bot assignment** | Leave a hull plus a **bot** in a hex; its **defence rating** derives from the hull's hangar upgrades, not from a live battle | Small |
 | **Algorithmic defence resolution** | A taken hex falls or holds by comparing stored numbers (defender rating vs. attacking force × aggression) — **no simulated battle** | Small — a pure resolver |
-| **Hex deployment + boss** | Reuse the run, with the hex's aggression selecting the difficulty curve and the hex's boss at the end | Small |
-| **Boss-granted weapon discovery** | A hex boss demonstrates a new weapon/power-up; defeating it adds the entry to the hangar tree | Small–Medium |
+| **Hex deployment + mini-boss** | Reuse the run for exactly one campaign level, with the hex's aggression selecting the difficulty curve and that level's wave-10 mini-boss at the end (mini-boss victory = capture) | Small |
+| **Mini-boss-granted weapon discovery** | The hex mini-boss demonstrates the hex's new weapon/power-up (body colour + its catalogue opening volley); defeating it adds the entry to the hangar tree | Small–Medium |
 
 ### Reuse of existing systems
 
@@ -863,9 +865,10 @@ hangar survives — that is what winning this hell looks like.
 - **Difficulty curves (`src/data/difficulty-curves.csv`)** — a hex's frontier
   aggression selects/perturbs the same curve, so hex difficulty needs no second
   scaling system.
-- **Mini-boss rewards (`MiniBoss`, §4.4.4)** — the hex boss's
+- **Mini-boss rewards (`MiniBoss`, §4.4.4)** — the hex mini-boss's
   spin-the-wheel upgrade reward is the discovery channel (Rule 2) as well as the
-  extraction point.
+  extraction point; on a winning deployment it is presented after the defence
+  report and before the map.
 - **Bot / attract mode** — the survival-first `decideBotIntent` heuristic
   supplies the **defender's rating** (it is never flown live in defence, so a
   defence cannot stall a demo), and it traverses the hangar/hex screens.
@@ -999,10 +1002,11 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
   the hangar and the ring persist. **Additional cost unique to D:** hexes can be
   *lost* between runs, so the campaign can move backwards — a deliberate,
   legible stake rather than an accident.
-- **Changes the "single final boss" pillar (GDD §3.1/§4.3).** Each hex ends on a
-  boss and the ring ends on the hangar assault, so the boss becomes a recurring
-  milestone rather than a single terminus. Cost: the Central AI needs a
-  campaign-role decision (recurring hex boss vs. the assault's spearhead), and
+- **Changes the "single final boss" pillar (GDD §3.1/§4.3).** Each hex ends on
+  its **wave-10 mini-boss** (one campaign level per deployment) and the ring ends
+  on the hangar assault, so the boss encounter becomes a recurring milestone
+  rather than a single terminus. Cost: the Central AI needs a
+  campaign-role decision (recurring mini-boss vs. the assault's spearhead), and
   "one clean boss" is no longer the shape of the game.
 - **Preserves "code-first, no backend"** — everything resolves locally and
   deterministically from seeded numbers.
@@ -1105,10 +1109,11 @@ wasted).
   shared loadout slots** plus the two slot-free kinds, **Extra Life** and
   **Mystery UFO**, so the opening deployment is the game players already know
   and the scarcity lives in what the hangar owns between deployments.
-- **Rule 2 — the boss wields it first.** A hex boss demonstrates the hex's new
-  weapon or power-up against the player; defeating it both **captures the hex**
-  and **adds the entry to the hangar**, where it is then bought with salvage.
-  Nothing enters the fleet without being survived first.
+- **Rule 2 — the boss wields it first.** The hex's wave-10 mini-boss demonstrates
+  the hex's new weapon or power-up against the player (body colour and an
+  opening volley from the shared weapon catalogue); defeating it both **captures
+  the hex** and **adds the entry to the hangar**, where it is then bought with
+  salvage. Nothing enters the fleet without being survived first.
 
 ---
 

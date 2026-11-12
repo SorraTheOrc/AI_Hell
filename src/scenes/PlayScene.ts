@@ -859,16 +859,18 @@ export class PlayScene extends CombatScene<
   private hangarWarState: HangarWarPayload | null = null;
 
   /**
-   * The hex boss variant this deployment's final encounter runs with
-   * (AH-0MVUXCAW0001VUM6), or `null` for the shipped arcade run. A **variant**
-   * on the shared boss path (colour/demonstrated-weapon/hit pool), never a
-   * separate boss implementation.
+   * The hex profile this deployment's encounters are configured from
+   * (AH-0MVUXCAW0001VUM6), or `null` for the shipped arcade run. Pure data
+   * mapped onto the shipped entities' config hooks — the wave-10 `MiniBoss`
+   * that ends a deployment (body colour + opening demonstrated volley + hit
+   * pool) and the final `Boss` seam (colour/demonstrated-weapon/hit pool) —
+   * never a separate encounter implementation.
    */
   private hexBossProfile: HexBossProfile | null = null;
 
   /**
    * The last capture-cycle resolution (win path or defensive refusal), kept as
-   * the scene's test/UI seam. `null` until a deployment's boss is defeated.
+   * the scene's test/UI seam. `null` until a deployment's mini-boss is defeated.
    */
   private lastCapture: HexCaptureResult | null = null;
 
@@ -2099,14 +2101,11 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Builds the config for the active level's mini-boss (extension point for
-   * the per-level mini-boss designs feature, epic AH-0MVCC8XSS007P01Z).
-   *
-   * Until those designs land this returns the **generic default** mini-boss
-   * — config-driven phases, patterns, HP and colour defaulted by
-   * {@link MiniBoss} — positioned like the final boss at the screen centre.
-   * An override supplies a per-level design without changing the share/defeat
-   * wiring.
+   * Builds the config for the active level's mini-boss (epic
+   * AH-0MVCC8XSS007P01Z). The per-level bespoke design supplies identity,
+   * patterns, minions and hit pool; a Hangar War deployment's profile is laid
+   * over it so the encounter ends the deployment wearing the hex's colours and
+   * demonstrating its grant (Rule 2).
    */
   protected miniBossConfigFor(level: number): MiniBossConfig {
     // The ten bespoke per-level designs are the single data source for the
@@ -3319,11 +3318,13 @@ export class PlayScene extends CombatScene<
    * normal encounter or a scripted teaser beat — previews the boss close to
    * death without changing the entity's total hit pool.
    *
-   * A hangar-war deployment spawns the **hex boss variant**
-   * (AH-0MVUXCAW0001VUM6): the same `Boss` entity and phase machinery, with the
-   * hex's identity colour (the demonstrated weapon's own colour), its
-   * aggression-perturbed hit pool and its authored boss identity. The arcade
-   * run passes no profile and is byte-for-byte unchanged.
+   * A hangar-war deployment's encounters are configured from the **hex
+   * profile** (AH-0MVUXCAW0001VUM6): the wave-10 `MiniBoss` that ends the
+   * deployment wears the granted weapon's colour, its aggression-perturbed hit
+   * pool and its demonstrated opening volley, and the shipped `Boss` below
+   * accepts the same profile (a deployment never reaches it — one level per
+   * deployment, ended by the mini-boss). The arcade run passes no profile and
+   * is byte-for-byte unchanged.
    */
   protected spawnBoss(
     options: {
@@ -4200,11 +4201,11 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Resolves a hangar-war deployment's boss victory into a captured hex
-   * (AH-0MVUXCAW0001VUM6): banks the run's salvage, marks the hex held +
-   * boss-defeated, grants its authored entry into the hangar (Rule 2) and
-   * leaves the deployment's chosen hull as the defending bot. Securing the last
-   * hex opens the next ring.
+   * Resolves a hangar-war deployment's mini-boss victory into a captured hex
+   * (AH-0MVUXCAW0001VUM6, re-pointed at the mini-boss by AH-0MWCOW4IQ003XST5):
+   * banks the run's salvage, marks the hex held + boss-defeated, grants its
+   * authored entry into the hangar (Rule 2) and leaves the deployment's chosen
+   * hull as the defending bot. Securing the last hex opens the next ring.
    *
    * The pure capture cycle owns every rule; this method only supplies the run's
    * inputs (the deployment hull + the run's salvage watermark) and persists the
@@ -4334,9 +4335,10 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * The hex boss variant this deployment's final encounter ran with (or `null`
-   * for the arcade run) — the capture-cycle test/UI seam
-   * (AH-0MVUXCAW0001VUM6). A detached copy.
+   * The hex profile this deployment's encounters were configured from (or
+   * `null` for the arcade run) — the capture-cycle test/UI seam
+   * (AH-0MVUXCAW0001VUM6). The wave-10 mini-boss that ends the deployment reads
+   * it through `miniBossConfigFor`. A detached copy.
    */
   getHexBossProfile(): HexBossProfile | null {
     return this.hexBossProfile === null
