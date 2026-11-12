@@ -252,7 +252,7 @@ and ~50.8 ticks/s a 64-record batch is about 1.26 s of play.
 #### Offline and retry behaviour
 
 - **A failed part never advances the watermark.** The unconfirmed records stay
-  in the (never-cleared) in-memory buffer, so the next part re-reads them from
+  in the (retention-bounded) in-memory buffer, so the next part re-reads them from
   the last confirmed offset.
 - **Mid-run failures back off, they do not retry-storm.** A failed part opens a
   short, exponentially backing-off window (base 250 ms, doubling, capped at
