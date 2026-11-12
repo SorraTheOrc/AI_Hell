@@ -8,8 +8,10 @@
  *   `final`), the loss bound, the offline/retry behaviour and the crashed-run
  *   partial.
  * - `docs/dev/gameplay-capture.md` — how streaming affects capture: the page
- *   buffer is never cleared mid-run, parts are staged off the `session-*.jsonl`
- *   glob and the upload cap still bounds the run-end final part.
+ *   buffer is retention-bounded (never cleared mid-run, but dropping the
+ *   oldest confirmed/skipped records first past the 16 MiB cap), parts are
+ *   staged off the `session-*.jsonl` glob and the upload cap still bounds the
+ *   run-end final part.
  * - `docs/dev/recording-and-replay.md` — the recorder-adjacent view: streaming
  *   during the run, one evaluation per completed run and the crashed-run
  *   partial's inspection/evaluation semantics.
@@ -97,7 +99,12 @@ describe('the streaming part protocol is documented', () => {
   it('gameplay-capture.md documents what streaming keeps for a capture', () => {
     expect(captureDoc).toContain('recordings/parts/<runKey>.jsonl');
     expect(captureDoc).toContain('window.__aiHellTelemetry');
-    expect(captureDoc).toMatch(/never cleared/);
+    // The simple "never cleared" contract is replaced by the bounded-retention
+    // contract (AH-0MWDGPZL8005QU13): below the cap byte-identical, past it
+    // the oldest confirmed/skipped records dropped first.
+    expect(captureDoc).toMatch(/retention cap/);
+    expect(captureDoc).toMatch(/VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES/);
+    expect(captureDoc).not.toMatch(/never cleared by streaming \(only/);
     expect(captureDoc).toMatch(/not auto-evaluated/);
     expect(captureDoc).toMatch(/session-\*\.jsonl/);
   });

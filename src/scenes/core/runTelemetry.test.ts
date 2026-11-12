@@ -16,6 +16,7 @@ import {
 } from './actionIntensity';
 import {
   TELEMETRY_SCHEMA_VERSION,
+  type RetainedWindow,
   type TelemetryJson,
   type TelemetryRecorder,
   type TelemetryRecorderStats,
@@ -81,6 +82,14 @@ class FakeRecorder implements TelemetryRecorder {
 
   readBuffer(): string | null {
     return this.buffer;
+  }
+
+  readWindow(): RetainedWindow | null {
+    return null;
+  }
+
+  dropConfirmed(): void {
+    // Nothing retained in the fake.
   }
 
   recordTick(state: unknown, input: unknown): void {
@@ -396,6 +405,15 @@ describe('RunTelemetry (AC3, AC6)', () => {
 
     expect(recorder.ticks).toHaveLength(0);
     expect(recorder.events).toHaveLength(0);
+  });
+
+  it('routes the windowed read/drain seam through to the recorder', () => {
+    const recorder = new FakeRecorder();
+    const telemetry = new RunTelemetry(recorder);
+
+    expect(telemetry.readWindow(0)).toBeNull();
+    expect(telemetry.readWindow(0, { maxBytes: 1024, maxRecords: 16 })).toBeNull();
+    expect(() => telemetry.dropConfirmed(4)).not.toThrow();
   });
 
   it('emits every discrete event with the concrete event version', () => {

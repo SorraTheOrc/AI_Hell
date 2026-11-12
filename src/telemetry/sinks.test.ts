@@ -34,6 +34,7 @@ function config(overrides: Partial<TelemetryConfig>): TelemetryConfig {
     batchSize: 4,
     devCollection: false,
     recording: true,
+    maxRetainedMessageBytes: 16 * 1024 * 1024,
     ...overrides,
   };
 }
@@ -261,17 +262,16 @@ describe('remote sink stub (AC2)', () => {
  * red half of the test-first gate for the F3 implementation child
  * AH-0MWDGPZL8005QU13).
  *
- * **TEST-FIRST.** These assertions pin the F3 drain seam — the memory line
- * writer gains a bounded-retention cap (drop-oldest **confirmed/skipped**
- * first), tracks a dropped-record base so absolute record-count offsets stay
- * correct, and reads back a bounded, in-order window from an absolute record
- * offset — written under Vitest's `it.fails(...)` so the build → test →
- * commit gate stays green while the seam is still missing. The implementation
- * slice (AH-0MWDGPZL8005QU13) flips each `.fails` back to `it` (a leftover
- * `.fails` fails the suite on "unexpected pass"); the assertions themselves
- * are unchanged by the flip.
+ * **TEST-FIRST → GREEN.** These assertions were authored under Vitest's
+ * `it.fails(...)` while the seam was missing; the implementation slice
+ * (AH-0MWDGPZL8005QU13) flipped each `.fails` back to `it` once the memory
+ * line writer gained its bounded-retention cap (drop-oldest
+ * **confirmed/skipped** first), a dropped-record base so absolute record-count
+ * offsets stay correct, and a read that returns a bounded, in-order window
+ * from an absolute record offset. The assertions themselves are unchanged by
+ * the flip.
  *
- * Contract pinned (implemented by F3, consumed unchanged here):
+ * Contract pinned:
  * - `createMemoryLineWriter({ maxRetainedBytes })` retains at most
  *   `maxRetainedBytes` bytes of NDJSON body. Once a `writeLine` pushes the
  *   retained body over the cap, the **oldest** retained records are evicted,
@@ -327,7 +327,7 @@ describe('memory line writer — bounded retention and windowed read/drain (AH-0
     return `${'x'.repeat(bytes - 4)}${String(index).padStart(4, '0')}`;
   }
 
-  it.fails(
+  it(
     'bounds the retained buffer by the cap, dropping the oldest unconfirmed as the final bound',
     () => {
       // Cap sized for exactly three ten-byte lines (3 × 10 + 3 newlines = 33).
@@ -355,7 +355,7 @@ describe('memory line writer — bounded retention and windowed read/drain (AH-0
     },
   );
 
-  it.fails(
+  it(
     'drops confirmed content first when the cap bites, keeping the unconfirmed tail in order',
     () => {
       const writer = makeRetainedWriter({ maxRetainedBytes: 33 });
@@ -382,7 +382,7 @@ describe('memory line writer — bounded retention and windowed read/drain (AH-0
     },
   );
 
-  it.fails(
+  it(
     'falls back to evicting the oldest unconfirmed only after confirmed content is exhausted',
     () => {
       const writer = makeRetainedWriter({ maxRetainedBytes: 33 });
@@ -401,7 +401,7 @@ describe('memory line writer — bounded retention and windowed read/drain (AH-0
     },
   );
 
-  it.fails('reads a bounded, in-order window from an absolute record offset', () => {
+  it('reads a bounded, in-order window from an absolute record offset', () => {
     const writer = makeRetainedWriter();
     for (let i = 0; i < 5; i += 1) writer.writeLine(line(i));
     writer.dropConfirmed(2); // below the cap → nothing is ever evicted
@@ -425,7 +425,7 @@ describe('memory line writer — bounded retention and windowed read/drain (AH-0
     expect(writer.readWindow(9)).toEqual({ lines: [], fromRecord: 5, nextRecord: 5 });
   });
 
-  it.fails('keeps a normal below-cap run byte-identical and tracked from absolute zero', () => {
+  it('keeps a normal below-cap run byte-identical and tracked from absolute zero', () => {
     const writer = makeRetainedWriter();
     const recorded = [
       JSON.stringify({ kind: 'event', tick: 1 }),
@@ -442,7 +442,7 @@ describe('memory line writer — bounded retention and windowed read/drain (AH-0
     expect(writer.totalRecords).toBe(3);
   });
 
-  it.fails('bounds an oversized run with the default cap when no cap is given', () => {
+  it('bounds an oversized run with the default cap when no cap is given', () => {
     const writer = makeRetainedWriter();
     const fill = 'y'.repeat(200);
     for (let i = 0; i < 120_000; i += 1) writer.writeLine(fill);
@@ -451,5 +451,39 @@ describe('memory line writer — bounded retention and windowed read/drain (AH-0
     expect(writer.read().length).toBeLessThanOrEqual(16 * 1024 * 1024);
     expect(writer.totalRecords).toBe(120_000);
     expect(writer.baseRecord).toBeGreaterThan(0);
+  });
+
+  it('exposes the drain seam through the JSONL sink for its retained writer', () => {
+    // One EVENT line is ~88 bytes, so a 100-byte cap retains exactly one.
+    const sink = new JsonlTelemetrySink(createMemoryLineWriter({ maxRetainedBytes: 100 }));
+
+    sink.write([EVENT, EVENT]); // two lines > 100 → the oldest is evicted
+    expect(sink.readWindow(0)).toMatchObject({ fromRecord: 1, nextRecord: 2 });
+    expect(sink.readWindow(0)!.lines).toHaveLength(1);
+
+    // Confirming the evicted prefix never re-reads it: the window clamps to
+    // the retained base, and the retained tail is still the whole retained run.
+    sink.dropConfirmed(1);
+    expect(sink.readWindow(0)!.fromRecord).toBe(1);
+    expect(sink.readWindow(1)!.lines).toEqual([sink.read()!.trimEnd()]);
+
+    // A writer that does not retain a window reports null/no-ops.
+    const plainSink = new JsonlTelemetrySink({ writeLine: vi.fn() });
+    expect(plainSink.readWindow(0)).toBeNull();
+    expect(() => plainSink.dropConfirmed(1)).not.toThrow();
+  });
+
+  it('wires the configured retention cap into the factory-created dev sink', () => {
+    const sink = createTelemetrySink(
+      config({ sink: 'jsonl', maxRetainedMessageBytes: 33 }),
+    ) as JsonlTelemetrySink;
+
+    sink.write([EVENT, EVENT, EVENT]); // 3 × ~22 bytes > 33 → bounded
+    expect(sink.read()!.length).toBeLessThanOrEqual(33);
+    expect(sink.readWindow(3)).toEqual({
+      lines: [],
+      fromRecord: 3,
+      nextRecord: 3,
+    });
   });
 });

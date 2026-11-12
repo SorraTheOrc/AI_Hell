@@ -186,9 +186,10 @@ the run, and run end sends one final part that completes it
 - **One part per flushed batch.** The dev JSONL sink exposes a post-flush
   observer (`onFlush` in [`src/telemetry/sinks.ts`](../src/telemetry/sinks.ts));
   the dev-only streamer sends each flushed batch as one part. The sink's buffer
-  is **never cleared mid-run** and is bounded by a retention cap (default
-  16 MiB) that drops the oldest confirmed/skipped content first — only the
-  upload watermark advances.
+  is **never cleared mid-run** and is bounded by a retention cap
+  (`VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES`, default 16 MiB) that drops the
+  oldest confirmed/skipped content first, oldest unconfirmed only as the final
+  bound — only the upload watermark advances below the cap.
 - **Run key.** Each run has a deterministic, run-scoped key,
   `<startedAt>-<runSeed>`, derived from the run header at `startRun()`, so one
   run's parts can never be merged into another run.

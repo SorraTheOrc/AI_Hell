@@ -29,7 +29,10 @@
  * @module src/telemetry/sinks
  */
 
-import { type TelemetryConfig } from './config';
+import {
+  DEFAULT_MAX_RETAINED_MESSAGE_BYTES,
+  type TelemetryConfig,
+} from './config';
 import { type TelemetryRecord } from './schema';
 import {
   createHttpTransport,
@@ -44,11 +47,21 @@ export interface TelemetrySink {
   write(records: readonly TelemetryRecord[]): void | Promise<void>;
   /** Flushes any buffered output, if the sink buffers. */
   flush?(): void | Promise<void>;
-  /**
-   * Reads the sink's buffered content as NDJSON, when the sink buffers in
-   * memory (the dev JSONL sink does; transport sinks return `null`).
-   */
+  /** Reads the sink's buffered content as NDJSON, when the sink buffers in
+   * memory (the dev JSONL sink does; transport sinks return `null`). */
   read?(): string | null;
+  /**
+   * Reads a bounded window of a retaining sink, from an absolute record
+   * offset (AH-0MWDGPZL8005QU13). `null` when the sink does not retain a
+   * windowed buffer (e.g. a transport sink or a test spy).
+   */
+  readWindow?(fromRecord: number, limits?: RetainedWindowLimits): RetainedWindow | null;
+  /**
+   * Marks records below `absoluteCount` as confirmed/finally-skipped, so a
+   * retaining sink drops them first once its retention cap bites
+   * (AH-0MWDGPZL8005QU13). No-op for sinks that do not retain a buffer.
+   */
+  dropConfirmed?(absoluteCount: number): void;
   /** Discards the sink's buffered content, when the sink buffers in memory. */
   reset?(): void;
   /** Releases the sink's resources. */
@@ -94,8 +107,61 @@ export interface TelemetryLineBuffer extends TelemetryLineWriter {
   reset(): void;
 }
 
+/** Window limits for a windowed read on a retained buffer. */
+export interface RetainedWindowLimits {
+  /** Ceiling on the window's NDJSON body, in UTF-8 bytes. */
+  readonly maxBytes: number;
+  /** Ceiling on the window's record count. */
+  readonly maxRecords: number;
+}
+
+/** One windowed read's result. */
+export interface RetainedWindow {
+  /** The window's record lines, in original order. */
+  readonly lines: readonly string[];
+  /** Absolute record offset of the first returned line. */
+  readonly fromRecord: number;
+  /** Absolute record offset one past the last returned line. */
+  readonly nextRecord: number;
+}
+
 /**
- * The dev JSONL sink's writer: an in-memory, run-scoped line buffer.
+ * The bounded-retention line buffer the dev JSONL sink writes to
+ * (AH-0MWDGPZL8005QU13).
+ *
+ * Extends the plain buffer with an absolute-offset windowed read/drain seam:
+ * `totalRecords`/`baseRecord` keep absolute record counts correct across
+ * evictions, `dropConfirmed` marks a confirmed/skipped prefix so retention
+ * drops it first, and {@link readWindow} reads only a bounded, in-order
+ * window from an absolute record offset — never the whole buffer.
+ */
+export interface RetainedLineBuffer extends TelemetryLineBuffer {
+  /** Absolute count of lines ever written (monotonic, never shrinks). */
+  readonly totalRecords: number;
+  /** Absolute record offset of the first retained line (evictions only). */
+  readonly baseRecord: number;
+  /** Marks records below `absoluteCount` as confirmed/finally-skipped. */
+  dropConfirmed(absoluteCount: number): void;
+  /** Reads a bounded, in-order window from an absolute record offset. */
+  readWindow(fromRecord: number, limits?: RetainedWindowLimits): RetainedWindow;
+}
+
+/** Construction options for {@link createMemoryLineWriter}. */
+export interface MemoryLineWriterOptions {
+  /**
+   * Retention cap on the buffer's NDJSON body, in UTF-8 bytes (default
+   * {@link DEFAULT_MAX_RETAINED_MESSAGE_BYTES}, 16 MiB). Once a write pushes
+   * the retained body over the cap the oldest retained records are evicted —
+   * already-confirmed (or finally-skipped) content preferred, oldest
+   * unconfirmed only as the final bound, so memory stays bounded even under a
+   * total dev-server outage (AH-0MWDGPZL8005QU13).
+   */
+  readonly maxRetainedBytes?: number;
+}
+
+/**
+ * The dev JSONL sink's writer: an in-memory, run-scoped line buffer with a
+ * bounded-retention cap (AH-0MWDGPZL8005QU13).
  *
  * Deliberately storage-free (AH-0MVIRYGD1000JVY3, AC1): the previous
  * `localStorage` writer grew without bound until the origin quota filled,
@@ -103,21 +169,112 @@ export interface TelemetryLineBuffer extends TelemetryLineWriter {
  * `QuotaExceededError`. The buffer is read straight from memory for the
  * streamed parts, the run-end final part and the dev CLI tooling, and reset
  * when a run starts.
+ *
+ * Retention is bounded by a configurable cap: below it (every normal demo
+ * run, measured 0.67–4 MiB against the 16 MiB default) the buffer is
+ * byte-identical to the pre-cap writer; once a write pushes the retained body
+ * over the cap the **oldest** retained records are evicted first, preferring
+ * records the caller has confirmed/finally-skipped (`dropConfirmed`) and
+ * touching the oldest unconfirmed only as the final bound. `baseRecord`/
+ * `totalRecords` track absolute record offsets across evictions, so a
+ * windowed read/drain can never break the confirmed-offset watermark
+ * semantics.
  */
-export function createMemoryLineWriter(): TelemetryLineBuffer & { readonly lines: string[] } {
+export function createMemoryLineWriter(
+  options: MemoryLineWriterOptions = {},
+): RetainedLineBuffer & { readonly lines: string[] } {
+  const cap = options.maxRetainedBytes ?? DEFAULT_MAX_RETAINED_MESSAGE_BYTES;
   const lines: string[] = [];
+  let baseRecord = 0;
+  let totalRecords = 0;
+  let confirmedCount = 0;
+  let retainedBytes = 0;
+
+  /** Bytes one retained line contributes to the NDJSON body (line + newline). */
+  const retainedLineBytes = (line: string): number => utf8ByteLength(line) + 1;
+
+  /** Evicts the oldest retained record, tracking the absolute base. */
+  const evictOldest = (): void => {
+    const dropped = lines.shift();
+    if (dropped !== undefined) {
+      baseRecord += 1;
+      retainedBytes -= retainedLineBytes(dropped);
+    }
+  };
+
   return {
     lines,
     writeLine(line: string): void {
       lines.push(line);
+      totalRecords += 1;
+      retainedBytes += retainedLineBytes(line);
+      // Bounded retention: while the retained body is over the cap, evict the
+      // oldest record. Confirmed/skipped records are exactly the oldest
+      // prefix of the retained window (the boundary only ever advances), so
+      // evicting the oldest record automatically prefers them; the oldest
+      // unconfirmed falls off only when no confirmed record remains — the
+      // final bound that keeps memory bounded under a total outage.
+      while (retainedBytes > cap) evictOldest();
     },
     read(): string {
       return linesToNdjson(lines);
     },
     reset(): void {
       lines.length = 0;
+      baseRecord = 0;
+      totalRecords = 0;
+      confirmedCount = 0;
+      retainedBytes = 0;
+    },
+    get baseRecord(): number {
+      return baseRecord;
+    },
+    get totalRecords(): number {
+      return totalRecords;
+    },
+    dropConfirmed(absoluteCount: number): void {
+      if (!Number.isFinite(absoluteCount)) return;
+      const count = Math.max(0, Math.trunc(absoluteCount));
+      if (count <= confirmedCount) return;
+      confirmedCount = count;
+      // The newly confirmed prefix is now the retention cap's preferred
+      // eviction candidate: drop the retained confirmed records first while
+      // the body is at/over the cap, then the oldest unconfirmed only if it
+      // is still over (the final bound). Below the cap nothing is evicted, so
+      // a normal run stays byte-identical regardless of confirmations.
+      while (retainedBytes >= cap && baseRecord < confirmedCount) evictOldest();
+      while (retainedBytes > cap) evictOldest();
+    },
+    readWindow(fromRecord: number, limits?: RetainedWindowLimits): RetainedWindow {
+      const requested = Number.isFinite(fromRecord) ? Math.trunc(fromRecord) : baseRecord;
+      // Clamp up to the retained base (evicted content is never re-read) and
+      // down to the absolute run end.
+      const start = Math.min(Math.max(requested, baseRecord), totalRecords);
+      if (start >= totalRecords) {
+        return { lines: [], fromRecord: totalRecords, nextRecord: totalRecords };
+      }
+      const maxRecords = limits?.maxRecords ?? Number.POSITIVE_INFINITY;
+      const maxBytes = limits?.maxBytes ?? Number.POSITIVE_INFINITY;
+      const out: string[] = [];
+      let bytes = 0;
+      for (let index = start - baseRecord; index < lines.length && out.length < maxRecords; index += 1) {
+        const line = lines[index] as string;
+        const added = retainedLineBytes(line);
+        // Whole records only, and never an empty window while records remain
+        // pending: a window is cut before a record that would push it over the
+        // byte budget, but at least one record is always returned.
+        if (out.length > 0 && bytes + added > maxBytes) break;
+        out.push(line);
+        bytes += added;
+      }
+      return { lines: out, fromRecord: start, nextRecord: start + out.length };
     },
   };
+}
+
+/** Size of a string in UTF-8 bytes (the unit the retention cap is expressed in). */
+function utf8ByteLength(text: string): number {
+  return typeof TextEncoder === 'function' ? new TextEncoder().encode(text).length : text.length;
 }
 
 /**
@@ -137,6 +294,15 @@ function isLineBuffer(writer: TelemetryLineWriter): writer is TelemetryLineBuffe
   return (
     typeof (writer as Partial<TelemetryLineBuffer>).read === 'function' &&
     typeof (writer as Partial<TelemetryLineBuffer>).reset === 'function'
+  );
+}
+
+/** True when a writer supports the bounded-retention windowed read/drain seam. */
+function isRetainedLineBuffer(writer: TelemetryLineWriter): writer is RetainedLineBuffer {
+  return (
+    isLineBuffer(writer) &&
+    typeof (writer as Partial<RetainedLineBuffer>).readWindow === 'function' &&
+    typeof (writer as Partial<RetainedLineBuffer>).dropConfirmed === 'function'
   );
 }
 
@@ -198,6 +364,25 @@ export class JsonlTelemetrySink implements TelemetrySink {
   /** Discards the buffered content, when the writer buffers. */
   reset(): void {
     if (isLineBuffer(this.writer)) this.writer.reset();
+  }
+
+  /**
+   * Reads a bounded, in-order window from an absolute record offset, when the
+   * injected writer retains one; `null` otherwise.
+   */
+  readWindow(fromRecord: number, limits?: RetainedWindowLimits): RetainedWindow | null {
+    return isRetainedLineBuffer(this.writer)
+      ? this.writer.readWindow(fromRecord, limits)
+      : null;
+  }
+
+  /**
+   * Marks records below `absoluteCount` as confirmed/finally-skipped, so the
+   * retention cap drops them first. No-op when the writer does not retain a
+   * windowed buffer.
+   */
+  dropConfirmed(absoluteCount: number): void {
+    if (isRetainedLineBuffer(this.writer)) this.writer.dropConfirmed(absoluteCount);
   }
 }
 
@@ -279,9 +464,11 @@ export function createTelemetrySink(
 
   switch (config.sink) {
     case 'jsonl':
-      return new JsonlTelemetrySink(deps.lineWriter ?? createMemoryLineWriter(), {
-        onFlush: deps.onFlush,
-      });
+      return new JsonlTelemetrySink(
+        deps.lineWriter ??
+          createMemoryLineWriter({ maxRetainedBytes: config.maxRetainedMessageBytes }),
+        { onFlush: deps.onFlush },
+      );
     case 'remote': {
       const transport =
         deps.transport ?? createHttpTransport(config.endpoint, deps.transportOptions);

@@ -133,11 +133,15 @@ recordings/parts/<runKey>.jsonl        (staged during the run)
 
 What this means for the recording flows in this document:
 
-- **The page buffer is never cleared mid-run.** Streaming advances an upload
-  watermark only; the sink keeps every record, so
-  `window.__aiHellTelemetry.read()` still returns the **full run** after run
-  end. `npm run record`, `npm run capture` and `npm run telemetry:inspect`
-  therefore behave exactly as before (AC3).
+- **The page buffer is retention-bounded, never cleared mid-run.** Streaming
+  advances an upload watermark only; the sink keeps every record below the
+  retention cap (`VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES`, default 16 MiB)
+  and past it drops the **oldest** already-confirmed (or finally-skipped)
+  records first, with the oldest unconfirmed dropped only as the final bound
+  (AH-0MWDGPZL8005QU13). Below the cap — every normal demo run — the buffer is
+  byte-identical to today's, so `window.__aiHellTelemetry.read()` still
+  returns the **full run** after run end. `npm run record`, `npm run capture`
+  and `npm run telemetry:inspect` therefore behave exactly as before (AC3).
 - **Parts stay off the `session-*.jsonl` glob.** A run in progress lives in
   `recordings/parts/<runKey>.jsonl`, so it can never be mistaken for a finished
   recording. The `session-*.jsonl` name is written once, on finalisation, and

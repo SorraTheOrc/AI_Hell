@@ -1363,10 +1363,16 @@ therefore allows roughly 3 MiB of telemetry per request — a normal demo run
 4.0 MiB run for one final part is skipped rather than shipped as one oversized
 message.
 
-**What a capture keeps.** The page buffer is never cleared by streaming (only
-the upload watermark advances), so `window.__aiHellTelemetry.read()` still
-returns the full run and the capture's own reads are unchanged. A part is
-staged at `recordings/parts/<runKey>.jsonl`, deliberately outside the
+**What a capture keeps.** The page's telemetry buffer is **retention-bounded**
+(AH-0MWDGPZL8005QU13): streaming never clears it mid-run, but once a session's
+buffer outgrows the retention cap (`VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES`,
+default 16 MiB) the **oldest** records the dev server already confirmed — or
+that were finally skipped as over-cap — are dropped first, oldest first, with
+the oldest unconfirmed dropping only as the final bound. Below the cap every
+normal run is retained byte-identically, so
+`window.__aiHellTelemetry.read()` still returns the full run and the capture's
+own reads are unchanged. A part is staged at
+`recordings/parts/<runKey>.jsonl`, deliberately outside the
 `session-*.jsonl` glob the CLI tooling matches, so a capture in progress is
 never mistaken for a finished recording; only the final part writes
 `recordings/session-<timestamp>.jsonl` and enqueues the one automatic

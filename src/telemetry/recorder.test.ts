@@ -50,6 +50,7 @@ function enabledConfig(overrides: Partial<TelemetryConfig> = {}): TelemetryConfi
     batchSize: 4,
     devCollection: false,
     recording: true,
+    maxRetainedMessageBytes: 16 * 1024 * 1024,
     ...overrides,
   };
 }
@@ -187,6 +188,48 @@ describe('telemetry recorder — run header and schema version (AC1/AC6)', () =>
     await recorder.flush();
 
     expect(recorder.readBuffer()).toBeNull();
+  });
+
+  it('exposes the windowed read/drain seam over a retaining sink', async () => {
+    const writer = createMemoryLineWriter({ maxRetainedBytes: 16 * 1024 });
+    const recorder = createTelemetryRecorder(enabledConfig({ batchSize: 2 }), {
+      lineWriter: writer,
+      now: () => 1,
+    });
+
+    recorder.startRun({ runSeed: 7 });
+    recorder.recordTick({ x: 1 }, { thrust: true });
+    recorder.recordEvent('enemy_killed', { archetype: 'scout' });
+    await recorder.flush();
+
+    // The whole retained run is windowed from absolute zero, byte-identical
+    // to readBuffer() (the dev CLI / `window.__aiHellTelemetry` contract).
+    const window = recorder.readWindow(0)!;
+    expect(window.fromRecord).toBe(0);
+    expect(window.nextRecord).toBe(3);
+    expect(`${window.lines.join('\n')}\n`).toBe(recorder.readBuffer());
+
+    // A records ceiling cuts the window without dropping anything.
+    const cut = recorder.readWindow(0, { maxBytes: 16 * 1024, maxRecords: 2 })!;
+    expect(cut.lines).toHaveLength(2);
+    expect(cut.nextRecord).toBe(2);
+
+    // Confirming records below the cap only marks them: the retained run
+    // stays byte-identical (eviction is the over-cap final bound, pinned by
+    // the sink seam tests), and the seam never throws.
+    recorder.dropConfirmed(2);
+    expect(recorder.readBuffer()).toBe(`${window.lines.join('\n')}\n`);
+  });
+
+  it('returns null windows from a sink that does not retain', async () => {
+    const recorder = createTelemetryRecorder(enabledConfig(), { sink: new CapturingSink() });
+    recorder.startRun({ runSeed: 1 });
+    recorder.recordTick({}, {});
+    await recorder.flush();
+
+    expect(recorder.readWindow(0)).toBeNull();
+    expect(recorder.readWindow(0, { maxBytes: 1024, maxRecords: 16 })).toBeNull();
+    expect(() => recorder.dropConfirmed(1)).not.toThrow();
   });
 });
 
