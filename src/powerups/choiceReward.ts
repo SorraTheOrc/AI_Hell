@@ -50,6 +50,18 @@ export interface MineralChoicePlayer {
 }
 
 /**
+ * The narrow registry surface a permanent weapon grant needs.
+ *
+ * Structurally satisfied by {@link EffectsRegistry}. Kept minimal so a
+ * Phaser-free applier — the hangar-war deployment applier
+ * (`src/scenes/hangarWar/hangarDeployment.ts`) — can consume the one
+ * permanent-grant seam without importing the concrete registry.
+ */
+export interface PermanentWeaponRegistry {
+  applyWeapon(weaponId: WeaponId, permanent?: boolean): boolean;
+}
+
+/**
  * Grants one **permanent weapon level** for the current run: the registry
  * fills its `_weapons` map (the HUD renders a weapon row per entry) and the
  * ship's run-scoped permanent level rises by one.
@@ -67,7 +79,7 @@ export interface MineralChoicePlayer {
  */
 export function grantPermanentWeapon(
   weaponId: WeaponId,
-  effectsRegistry: EffectsRegistry,
+  effectsRegistry: PermanentWeaponRegistry,
   player: MineralChoicePlayer | null,
 ): void {
   // Permanent equip both grants the weapon and raises its run-scoped level

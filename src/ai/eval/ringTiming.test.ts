@@ -19,7 +19,7 @@
 import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveHexCapture } from '../../core/hangarWar/captureCycle';
+import { resolveHexCapture, resolveHexGrant } from '../../core/hangarWar/captureCycle';
 import { createRingState } from '../../core/hangarWar/hexRing';
 import { hexDifficultyProfile } from '../../core/hangarWar/hexDifficulty';
 import { createDefaultPayload } from '../../core/hangarWar/hangarWarStore';
@@ -38,10 +38,15 @@ import {
   evaluateRingTimingBudget,
   formatRingTimingReport,
   planRingDeployments,
+  resolveDeploymentLoadout,
+  ringEntryOwnership,
   ringTimingHexes,
   simulateRingTiming,
+  withCapturedGrant,
+  type RingDeploymentLoadout,
   type RingDeploymentRequest,
   type RingDeploymentRunner,
+  type RingLoadoutOwnership,
 } from './ringTiming';
 
 /** A minimal authored hex for model tests (only the fields the model reads). */
@@ -250,6 +255,233 @@ describe('ring timing: the measured + modelled play time', () => {
   });
 });
 
+describe('ring timing: the deployment loadout model (AH-0MW9QA2YC009PSF5)', () => {
+  it('enters ring 1 with the starter kit and the bare cannon', () => {
+    const ownership = ringEntryOwnership(1);
+    // The fleet owns the starter hull and the starter `spread` weapon, but the
+    // starter weapon is **not selected** — an empty loadout means the bare
+    // cannon (AH-0MVZJ6V1J001DA9D).
+    expect(ownership.hulls).toEqual(['hull-1']);
+    expect(ownership.weapons).toEqual([]);
+    expect(ownership.modifiers).toEqual([]);
+
+    const loadout = resolveDeploymentLoadout(ownership);
+    expect(loadout.hullId).toBe('hull-1');
+    expect(loadout.lives).toBe(3);
+    expect(loadout.speedMultiplier).toBe(1);
+    expect(loadout.weapons).toEqual([]);
+  });
+
+  it('enters ring 2 with every ring-1 grant, the strongest hull and the extra life', () => {
+    const ownership = ringEntryOwnership(2);
+    expect(ownership.hulls).toEqual(['hull-1', 'hull-2']);
+    // Grants are earned in the line's plan order (weakest aggression first), and
+    // `ricochet`, `rapid` and `waveLaser` → `wave_laser` resolve to shipped
+    // weapons; `extra-life` → `hardened_plating` and `core-bank` are recorded as
+    // modifiers (the shipped `resolveHexGrant`).
+    expect(ownership.weapons).toEqual(['ricochet', 'rapid', 'wave_laser']);
+    expect(ownership.modifiers).toEqual(['hardened_plating', 'core-bank']);
+
+    const loadout = resolveDeploymentLoadout(ownership);
+    // `hull-2` is the strongest owned hull: 4 lives + the plating modifier,
+    // capped at the run's maximum life count.
+    expect(loadout.hullId).toBe('hull-2');
+    expect(loadout.lives).toBe(5);
+    expect(loadout.speedMultiplier).toBe(0.85);
+    expect(loadout.weapons).toEqual([
+      { id: 'ricochet', ownedLevel: 1 },
+      { id: 'rapid', ownedLevel: 1 },
+      { id: 'wave_laser', ownedLevel: 1 },
+    ]);
+  });
+
+  it('derives the ring-2 entry ownership from the authored ring-1 grants', () => {
+    // The expectation is folded from the **authored** grants through the
+    // shipped `resolveHexGrant` alias rule, not restated as a literal list: if
+    // a ring-1 grant is re-authored (a weapon swapped, a hex added) this test
+    // fails instead of silently pinning stale data.
+    const expected = {
+      hulls: new Set(['hull-1']),
+      weapons: new Set<string>(),
+      modifiers: new Set<string>(),
+    };
+    for (const deployment of planRingDeployments(
+      hexRingDefinitionsFor(1),
+      'grind',
+    ).played) {
+      const grant = resolveHexGrant(deployment.grants);
+      if (grant === null) continue;
+      if (grant.kind === 'weapon') {
+        expected.weapons.add(grant.weaponId ?? grant.entryId);
+      } else if (grant.kind === 'hull') {
+        expected.hulls.add(grant.entryId);
+      } else {
+        expected.modifiers.add(grant.entryId);
+      }
+    }
+
+    const ownership = ringEntryOwnership(2);
+    expect([...ownership.hulls].sort()).toEqual([...expected.hulls].sort());
+    expect([...ownership.weapons].sort()).toEqual([...expected.weapons].sort());
+    expect([...ownership.modifiers].sort()).toEqual(
+      [...expected.modifiers].sort(),
+    );
+    // The authored data really does grant something, so the derivation above
+    // cannot pass vacuously if the grants were removed.
+    expect(expected.weapons.size).toBeGreaterThan(0);
+    expect(expected.hulls.size).toBeGreaterThan(1);
+  });
+
+  it('enters ring 2 on the rush line with the earned loadout and nothing more', () => {
+    const report = simulateRingTiming({
+      ringIndex: 2,
+      strategy: 'rush',
+      seeds: [1],
+      runDeployment: fakeRunner(),
+    });
+    const entry = resolveDeploymentLoadout(ringEntryOwnership(2));
+
+    expect(report.entryLoadout).toEqual(entry);
+    // The rush line plays the weapon hex and pushes on, so its single ring-2
+    // deployment launches with the ring-entry loadout — no within-ring growth.
+    const run = report.runs[0];
+    expect(run.deployments).toHaveLength(1);
+    expect(run.deployments[0].loadout).toEqual(entry);
+  });
+
+  it('earns a captured hex grant for the deployments that follow it', () => {
+    const entry = ringEntryOwnership(1);
+    // hex-r1-1 grants `hull-2`; hex-r1-6 grants `waveLaser` → `wave_laser`.
+    const afterHull = withCapturedGrant(entry, 'hull-2');
+    expect(afterHull.hulls).toEqual(['hull-1', 'hull-2']);
+    expect(resolveDeploymentLoadout(afterHull).lives).toBe(4);
+
+    const afterWeapon = withCapturedGrant(entry, 'waveLaser');
+    expect(afterWeapon.weapons).toEqual(['wave_laser']);
+    expect(resolveDeploymentLoadout(afterWeapon).weapons).toEqual([
+      { id: 'wave_laser', ownedLevel: 1 },
+    ]);
+
+    // Idempotent and total: a re-capture or a blank grant changes nothing.
+    expect(withCapturedGrant(afterWeapon, 'waveLaser')).toEqual(afterWeapon);
+    expect(withCapturedGrant(entry, '')).toEqual(entry);
+    // The input ownership is never mutated.
+    expect(entry.weapons).toEqual([]);
+  });
+
+  it('applies the earned grants progressively, in the line’s play order', () => {
+    // A synthetic ring whose hexes grant a weapon, in aggression order.
+    const authored = ['ricochet', 'cluster', 'nova', 'arc', 'dual', 'broadside'].map(
+      (grants, index) => ({
+        ...hex(`hex-grant-${index}`, index),
+        grants,
+      }),
+    );
+    const seen: string[][] = [];
+    simulateRingTiming({
+      ringIndex: 9,
+      strategy: 'grind',
+      seeds: [1],
+      hexes: authored,
+      // The starter kit, stated explicitly (ring 9 has no authored data to
+      // derive an entry ownership from).
+      ownership: { hulls: ['hull-1'], weapons: [], modifiers: [] },
+      // The first (weakest) deployment is lost, so it grants nothing; every
+      // later one is captured and arms the deployments that follow it.
+      runDeployment: (request: RingDeploymentRequest) => {
+        seen.push(request.loadout.weapons.map((weapon) => weapon.id));
+        return {
+          seconds: 300,
+          captured: request.hexId !== 'hex-grant-0',
+          minerals: 0,
+          hits: 0,
+        };
+      },
+    });
+    expect(seen).toEqual([
+      [],
+      [],
+      ['cluster'],
+      ['cluster', 'nova'],
+      ['cluster', 'nova', 'arc'],
+      ['cluster', 'nova', 'arc', 'dual'],
+    ]);
+  });
+
+  it('trims the equipped weapons to the shared slot pool', () => {
+    const ownership: RingLoadoutOwnership = {
+      hulls: ['hull-1'],
+      weapons: [
+        'wave_laser',
+        'ricochet',
+        'nova',
+        'arc',
+        'dual',
+        'broadside',
+        'cluster',
+      ],
+      modifiers: [],
+    };
+    // The six-slot cap is the shipped one (`capDropIdsToSlotPool`).
+    expect(resolveDeploymentLoadout(ownership).weapons).toHaveLength(6);
+    expect(
+      resolveDeploymentLoadout(ownership).weapons.map((weapon) => weapon.id),
+    ).toEqual(['wave_laser', 'ricochet', 'nova', 'arc', 'dual', 'broadside']);
+  });
+
+  it('falls back to the strongest itemised hull when a grant is not in the catalogue', () => {
+    // Ring 2 grants `hull-3`, which the catalogue does not itemise yet: it is
+    // owned but contributes no run stats, exactly like `rapid` / `core-bank`.
+    const ownership: RingLoadoutOwnership = {
+      hulls: ['hull-1', 'hull-2', 'hull-3'],
+      weapons: [],
+      modifiers: [],
+    };
+    const loadout = resolveDeploymentLoadout(ownership);
+    expect(loadout.hullId).toBe('hull-2');
+    expect(loadout.ownedHulls).toEqual(['hull-1', 'hull-2', 'hull-3']);
+  });
+
+  it('is deterministic: the same model inputs produce an identical report', () => {
+    const options = {
+      ringIndex: 1,
+      strategy: 'grind' as const,
+      seeds: [1, 2],
+      runDeployment: fakeRunner(3),
+    };
+    const first = simulateRingTiming(options);
+    const second = simulateRingTiming(options);
+    expect(second).toEqual(first);
+  });
+
+  it('changes the report when the loadout model changes (negative control)', () => {
+    // The equality pin above is only meaningful if the loadout is live input:
+    // swapping the earned ownership must change the recorded report.
+    const options = {
+      ringIndex: 1,
+      strategy: 'grind' as const,
+      seeds: [1, 2],
+      runDeployment: fakeRunner(3),
+    };
+    const bare = simulateRingTiming(options);
+    const armed = simulateRingTiming({
+      ...options,
+      ownership: {
+        hulls: ['hull-1', 'hull-2'],
+        weapons: ['wave_laser'],
+        modifiers: ['hardened_plating'],
+      },
+    });
+
+    expect(armed).not.toEqual(bare);
+    // The difference is the stated launch loadout, not a stray measurement.
+    expect(armed.entryLoadout).not.toEqual(bare.entryLoadout);
+    expect(armed.runs[0].deployments[0].loadout).not.toEqual(
+      bare.runs[0].deployments[0].loadout,
+    );
+  });
+});
+
 describe('ring timing: budget verdicts', () => {
   it('accepts a measurement inside the window', () => {
     const verdict = evaluateRingTimingBudget(1, 'grind', 45);
@@ -282,6 +514,46 @@ describe('ring timing: budget verdicts', () => {
       'not-applicable',
     );
     expect(evaluateRingTimingBudget(3, 'grind', 20).target).toBeNull();
+  });
+});
+
+/**
+ * The design windows are an **authored input**, so they are pinned literally
+ * (AH-0MW9VARCU000XZIL, AC2). The measured-mean assertion in the real-arena
+ * suite compares a measurement against whatever the constant says, so on its
+ * own it would happily follow an accidental recalibration.
+ *
+ * Ring 2 stays at the committed **90–120** window: this item was asked to
+ * restore the design of record's 70–100, but the re-baselined, loadout-modelled
+ * ring-2 grind measures **116.4 min (112.7–123.4)** and no aggression band the
+ * ring rules allow closes the gap (maximal flattening to aggression 2 models
+ * 117.1 min). The pin therefore lands the item's own first acceptance
+ * criterion's recorded fallback — *the window is what the stable numbers
+ * support* — and `docs/EVALUATION.md` records that measurement as the evidence.
+ */
+describe('ring timing: the design windows are pinned literally', () => {
+  it('pins ring 1 at 40–60 and ring 2 at the committed 90–120', () => {
+    expect(RING_TIMING_TARGETS[1]).toEqual({
+      minMinutes: 40,
+      maxMinutes: 60,
+    });
+    expect(RING_TIMING_TARGETS[2]).toEqual({
+      minMinutes: 90,
+      maxMinutes: 120,
+    });
+  });
+
+  it('derives the stated ±3-minute tolerance from the ring-2 window width', () => {
+    // 10 % of a 30-minute window is 3 minutes: a measurement inside the window
+    // passes as measured, and one up to 3 minutes outside still passes.
+    const measured = evaluateRingTimingBudget(2, 'grind', 117);
+    expect(measured.tolerancePercent).toBe(RING_TIMING_TOLERANCE_PERCENT);
+    expect(measured.toleranceMinutes).toBeCloseTo(3, 5);
+    expect(measured.verdict).toBe('in-window');
+    expect(evaluateRingTimingBudget(2, 'grind', 88).verdict).toBe(
+      'within-tolerance',
+    );
+    expect(evaluateRingTimingBudget(2, 'grind', 86).verdict).toBe('missed');
   });
 });
 
@@ -396,12 +668,126 @@ describe('ring timing: real arena evidence', () => {
       ticks: 600,
       dt: 1 / 60,
       balance: loadBalanceConfig(),
+      loadout: resolveDeploymentLoadout(ringEntryOwnership(1)),
     });
     expect(result.seconds).toBeGreaterThan(0);
     expect(result.seconds).toBeLessThanOrEqual(10);
     expect(typeof result.captured).toBe('boolean');
     expect(result.minerals).toBeGreaterThanOrEqual(0);
   });
+});
+
+describe('ring timing: the arena starting-loadout seam is live (AH-0MW9QA2YC009PSF5)', () => {
+  /**
+   * The seam is proven by measurement, not by inspecting config: the same seed
+   * and the same hex played twice, once with the launch loadout the model
+   * resolved and once without it, must not measure the same run.
+   *
+   * Note the **direction** is not asserted for the weapon seam. Equipping the
+   * Wave Laser does not make this arena's bot stronger: the arena fires it as a
+   * 1-damage non-piercing travelling bullet (the unmodelled hitscan ray,
+   * `docs/BALANCING.md` § *Fidelity boundary*), and a stronger loadout also
+   * raises the kill-driven campaign escalation. What the test pins is that the
+   * seam is **consumed** — the run changes.
+   */
+  /**
+   * Plays one campaign level-4 deployment (the level whose slice reaches enemy
+   * fire and ends in a death) at seed 1, with an explicit launch loadout.
+   */
+  const deploy = (
+    loadout: RingDeploymentLoadout,
+    level = 4,
+    seed = 1,
+  ) =>
+    createArenaDeploymentRunner()({
+      seed,
+      hexId: 'hex-r1-1',
+      aggression: 2,
+      level,
+      ticks: 18_000,
+      dt: 1 / 60,
+      balance: loadBalanceConfig(),
+      loadout,
+    });
+
+  it('consumes the launched life count: a run that dies spends exactly its lives', () => {
+    const hulled = resolveDeploymentLoadout(ringEntryOwnership(2));
+    const bareHulled = { ...hulled, lives: 1 };
+    const oneLife = deploy(bareHulled);
+    const fiveLives = deploy(hulled);
+    // Both runs die at level 4, and each spends exactly the lives it launched
+    // with — one `player_hit` per life — so the seam really sets the run's
+    // lives rather than being ignored.
+    expect(oneLife.captured).toBe(false);
+    expect(oneLife.hits).toBe(1);
+    expect(fiveLives.captured).toBe(false);
+    expect(fiveLives.hits).toBe(hulled.lives);
+    // More lives also means more run time before the hull is spent.
+    expect(fiveLives.seconds).toBeGreaterThan(oneLife.seconds);
+  }, REAL_ARENA_TIMEOUT_MS);
+
+  it('consumes the launched weapons and hull speed', () => {
+    const starter = resolveDeploymentLoadout(ringEntryOwnership(1));
+    const armed = resolveDeploymentLoadout(ringEntryOwnership(2));
+    expect(armed.weapons.length).toBeGreaterThan(0);
+    // The same seed no longer produces the same run once the fleet's weapons
+    // are equipped, nor once the hull's slower speed multiplier applies.
+    expect(deploy(armed)).not.toEqual(deploy(starter));
+    expect(deploy({ ...armed, speedMultiplier: 0.5 })).not.toEqual(
+      deploy({ ...armed, speedMultiplier: 1 }),
+    );
+  }, REAL_ARENA_TIMEOUT_MS);
+});
+
+describe('ring timing: the level-3 boundary under the deployment loadout', () => {
+  /**
+   * The bare-cannon boundary was bisected (AH-0MWAPWS1W007LGGY) to the arena's
+   * own fire-model fidelity commit `6ecbab23` (AH-0MW5DVAME0062GQO): firing the
+   * run's permanent choice grants lifts the bot's damage output, and the
+   * kill-driven campaign slice escalates by kills, so a run started at campaign
+   * level 3 climbed into the first enemy-fire level (4) *inside* the fixed
+   * deployment window and died at ≈250 s — which is why ring 2 measured every
+   * hex as a first-attempt loss.
+   *
+   * Measuring the **deployment loadout** instead of the bare cannon
+   * (AH-0MW9QA2YC009PSF5) restores most of that survival: campaign level 2
+   * captures the full window on every seed, and level 3 captures on two of
+   * three seeds and still dies to enemy fire on the third. This pin records the
+   * boundary the budgets are now measured at, so a later fire-model or balance
+   * change cannot move it silently.
+   */
+  it('captures level 2 on every seed and level 3 on two of three seeds', () => {
+    const runner = createArenaDeploymentRunner();
+    const balance = loadBalanceConfig();
+    const loadout = resolveDeploymentLoadout(ringEntryOwnership(2));
+    const deploy = (hexId: string, seed: number) => {
+      const definition = hexRingDefinitionsFor(1).find(
+        (entry) => entry.id === hexId,
+      )!;
+      return runner({
+        seed,
+        hexId: definition.id,
+        aggression: definition.baseAggression,
+        level: hexDifficultyProfile(definition.baseAggression).level,
+        ticks: 18_000,
+        dt: 1 / 60,
+        balance,
+        loadout,
+      });
+    };
+    // hex-r1-2 is aggression 1 → campaign level 2; hex-r1-1 is aggression 2 →
+    // campaign level 3 (the aggression → level mapping is the shipped one).
+    for (const seed of [1, 2, 3]) {
+      expect(deploy('hex-r1-2', seed).captured).toBe(true);
+    }
+    expect(deploy('hex-r1-1', 1).captured).toBe(true);
+    expect(deploy('hex-r1-1', 2).captured).toBe(true);
+    const thirdSeed = deploy('hex-r1-1', 3);
+    expect(thirdSeed.captured).toBe(false);
+    // The loss is enemy fire — the run reached the first enemy-fire level (4)
+    // inside the window, which is the mechanism the boundary records.
+    expect(thirdSeed.hits).toBeGreaterThan(0);
+  }, REAL_ARENA_TIMEOUT_MS);
 });
 
 describe('ring timing: committed baseline evidence', () => {
@@ -454,6 +840,24 @@ describe('ring timing: committed baseline evidence', () => {
       );
       expect(rush.runs.every((run) => run.ringSecured)).toBe(false);
     }
+  });
+
+  it('the README quotes the committed ring-2 mean and window', () => {
+    // The README's Hangar War paragraph is the most-read statement of the ring
+    // budget; it drifted from the artifact once (it still quoted the
+    // pre-loadout 91.6 min and the superseded 70–100 window). Quote the
+    // artifact and the constant instead of repeating literals by hand.
+    const readme = fs.readFileSync(
+      path.resolve(process.cwd(), 'README.md'),
+      'utf8',
+    );
+    const ring2 = baseline.find(
+      (entry) => entry.ringIndex === 2 && entry.strategy === 'grind',
+    )!;
+    const meanMinutes = `${ring2.summary.totalMinutes.mean.toFixed(1)} min`;
+    expect(readme).toContain(meanMinutes);
+    expect(readme).toMatch(/90\s*[–—-]\s*120/);
+    expect(readme).not.toMatch(/70\s*[–—-]\s*100/);
   });
 });
 

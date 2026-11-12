@@ -4,9 +4,9 @@
  *
  * Asserts the *real* config partitions the suite exactly:
  *
- * - every `*.test.ts` under `src/`, `scripts/` and `vite/` is selected by
- *   exactly one project (no orphaned file silently skipped, no file run
- *   twice);
+ * - every `*.test.ts` under `src/`, `scripts/`, `vite/` and `tests/` is
+ *   selected by exactly one project (no orphaned file silently skipped, no
+ *   file run twice);
  * - each project's `include` list is exactly what `classifyTestFiles`
  *   computes, so the documented selection rule and the config cannot drift;
  * - the rule's semantics are pinned on representative files (a Phaser scene
@@ -19,12 +19,21 @@
  */
 
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { createSeededRng } from '@/core/rng';
+
 import pkg from '../../package.json';
 import config from '../../vitest.config';
-import { E2E_SUFFIX, allTestFiles, classifyTestFiles } from '../../vitest.projects';
+import {
+  E2E_SUFFIX,
+  allTestFiles,
+  classifyTestFiles,
+  isIntegrationTest,
+  resolveImport,
+} from '../../vitest.projects';
 
 const ROOT = process.cwd();
 
@@ -97,6 +106,58 @@ describe('unit/integration project membership (AH-0MVF6XV87001NSEJ)', () => {
     expect(classified.unit).toContain('src/utils/beat.test.ts');
     // This guard test needs no DOM/Phaser and must stay in the fast project.
     expect(classified.unit).toContain('src/test/projectMembership.test.ts');
+  });
+
+  it('resolves the @/ alias to a src/ file', () => {
+    expect(resolveImport(ROOT, 'tests/anything.test.ts', '@/utils/euclid')).toBe(
+      'src/utils/euclid.ts',
+    );
+    expect(resolveImport(ROOT, 'tests/anything.test.ts', '@/core/rng')).toBe('src/core/rng.ts');
+    expect(resolveImport(ROOT, 'tests/anything.test.ts', '@/nope/missing')).toBeNull();
+    // Relative imports keep working alongside the alias.
+    expect(resolveImport(ROOT, 'src/test/projectMembership.test.ts', '../../vitest.projects')).toBe(
+      'vitest.projects.ts',
+    );
+  });
+
+  it('follows @/ imports when walking the transitive graph (alias → Phaser = integration)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ah-alias-classifier-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'src/scenes'), { recursive: true });
+      fs.mkdirSync(path.join(dir, 'tests'), { recursive: true });
+      // Build the fixture source from concatenated parts so this guard's own
+      // source never contains a real `from '<specifier>'` clause: the
+      // classifier's `importSpecifiers` strips comments but not strings, and a
+      // literal Phaser import here would mis-classify the guard as integration.
+      const from = 'from';
+      const sceneSource = [
+        'import Phaser',
+        `${from} 'phaser';`,
+        'export const scene = Phaser.Scene;',
+      ].join('\n');
+      const testSource = [
+        'import { scene }',
+        `${from} '@/scenes/Aliased';`,
+        'export default scene;',
+      ].join('\n');
+      fs.writeFileSync(path.join(dir, 'src/scenes/Aliased.ts'), sceneSource);
+      fs.writeFileSync(path.join(dir, 'tests', '__alias_graph__.test.ts'), testSource);
+      expect(isIntegrationTest(dir, 'tests/__alias_graph__.test.ts')).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exposes the same @/ alias through the Vitest config (mirrors tsconfig and Vite)', () => {
+    const alias = (
+      config.resolve as unknown as { alias?: Record<string, string> } | undefined
+    )?.alias;
+    expect(path.normalize(alias?.['@'] ?? '')).toBe(path.normalize(path.join(ROOT, 'src')));
+  });
+
+  it('imports source through the @/ alias at runtime', () => {
+    expect(typeof createSeededRng).toBe('function');
+    expect(typeof createSeededRng(42)).toBe('function');
   });
 
   it('gives the unit project no DOM setup and the integration project the DOM setup', () => {

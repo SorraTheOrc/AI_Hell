@@ -175,3 +175,44 @@ describe('cueManifest — dedicated orbital-strike cue (AH-0MVS2SZBY004HJ2D)', (
     );
   });
 });
+
+// ── Dedicated Mining Laser fire cue (AH-0MW9QMQ7B005WFH9) ────────────
+//
+// The Mining Laser fires constantly while owned (up to one shot per sixteenth
+// note), so its tick must be its own baked cue: short, distinct from the player
+// cannon's square tick, and capped by the shared one-shot funnel. Pinned here
+// so the cue cannot land as an ad-hoc synthesis or a clone of cannon fire.
+
+describe('cueManifest — dedicated Mining Laser fire cue (AH-0MW9QMQ7B005WFH9)', () => {
+  it('maps playMiningLaserFireSound to a dedicated baked recipe and seed', () => {
+    const entry = getCueAsset('playMiningLaserFireSound');
+    expect(entry).toBeDefined();
+    expect(entry!.recipe).toBe('aihell-mining-laser-fire');
+    expect(entry!.delivery).toBe('baked');
+    // A fresh seed from the game-specific reservation block, so the cutting
+    // tick cannot alias an existing recipe's baked asset.
+    expect(entry!.seeds).toHaveLength(1);
+    const seed = entry!.seeds[0];
+    expect(seed).toBeGreaterThanOrEqual(32100);
+    expect(seed).toBeLessThanOrEqual(32299);
+    expect(cueAssetUrl('playMiningLaserFireSound')).toBe(
+      `audio/sfx/aihell-mining-laser-fire.${seed}.wav`,
+    );
+    // The preloader actually fetches the baked asset.
+    expect(allSfxAssetUrls()).toContain(
+      `audio/sfx/aihell-mining-laser-fire.${seed}.wav`,
+    );
+  });
+
+  it('never aliases the player cannon tick (a different sound for a different weapon)', () => {
+    const mining = getCueAsset('playMiningLaserFireSound');
+    const cannon = getCueAsset('playCannonFireSound');
+    expect(mining).toBeDefined();
+    expect(cannon).toBeDefined();
+    expect(mining!.recipe).not.toBe(cannon!.recipe);
+    expect(cannon!.seeds).not.toContain(mining!.seeds[0]);
+    expect(cueAssetUrl('playMiningLaserFireSound')).not.toBe(
+      cueAssetUrl('playCannonFireSound'),
+    );
+  });
+});

@@ -35,6 +35,7 @@ import {
   type MiniBossPattern,
 } from '../entities/MiniBoss';
 import type { FormationOffset } from '../utils/formations';
+import type { HexBossProfile } from '../core/hangarWar/hexBoss';
 
 /** Number of campaign levels that carry a bespoke mini-boss design. */
 export const MINI_BOSS_DESIGN_LEVELS = 10;
@@ -316,5 +317,58 @@ export function miniBossConfigForLevel(
     })),
     rng: options.rng,
     initialHp: options.initialHp,
+  };
+}
+
+/** Spawn options for a hex-profile mini-boss: the level-design options plus
+ * the deployment's hex profile. */
+export interface HexMiniBossSpawnOptions extends MiniBossSpawnOptions {
+  /** The hex profile (`buildHexBossProfile`) the deployment runs with. */
+  profile: HexBossProfile;
+}
+
+/**
+ * Builds the {@link MiniBossConfig} for a hex deployment's mini-boss.
+ *
+ * Rule 2 ("the boss wields it first") under a mini-boss ending: the encounter
+ * that ends a hex deployment wears the profile the hex map advertises and
+ * demonstrates the grant it awards. This is the **single shared mapping** from
+ * a {@link HexBossProfile} + the level's bespoke design onto a
+ * {@link MiniBossConfig} — the game (`PlayScene.miniBossConfigFor`) and every
+ * gym resolve identical values through it, and it stays pure (no Phaser, no
+ * storage) so a gym and the game cannot drift.
+ *
+ * It maps:
+ *
+ * - `color` / `desperationColor` ← the profile's body / final-phase colour
+ *   (the granted weapon's own colour, or the deterministic palette fallback);
+ * - `hpPerPhase` ← the caller's already power-scaled base pool perturbed by
+ *   the profile's `hpMultiplier`, exactly as the shipped hex boss applies it;
+ * - `demonstratedWeapon` ← the profile's catalogue-derived volley, absent for
+ *   a non-weapon grant so nothing is demonstrated;
+ * - every other field (identity, patterns, minions, position, RNG) stays the
+ *   level design's, so later phases keep the design's `MiniBossPattern`.
+ *
+ * @param level - 1-based campaign level (the deployment's selected level).
+ * @param options - Live position/formation/RNG plus the hex profile.
+ * @returns A validated-shape config ready for `new MiniBoss(scene, config)`.
+ */
+export function hexMiniBossConfigForLevel(
+  level: number,
+  options: HexMiniBossSpawnOptions,
+): MiniBossConfig {
+  const { profile, ...spawn } = options;
+  const base = miniBossConfigForLevel(level, spawn);
+  const baseHp = base.hpPerPhase ?? MINI_BOSS_DEFAULT_HP_PER_PHASE;
+  return {
+    ...base,
+    color: profile.bodyColor,
+    desperationColor: profile.desperationColor,
+    // The same bounded perturbation the shipped hex boss applies: the hex's
+    // aggression changes difficulty through the shipped formula only.
+    hpPerPhase: Math.max(1, Math.round(baseHp * profile.hpMultiplier)),
+    ...(profile.demonstration === null
+      ? {}
+      : { demonstratedWeapon: profile.demonstration }),
   };
 }

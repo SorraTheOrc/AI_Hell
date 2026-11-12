@@ -1412,7 +1412,7 @@ Source lines are the **TypeScript** declaration lines, resolved by function name
 | 7 | HUD / UI refresh, player auto-defence | `src/ui/HUD.ts:405` (`refresh`), `src/scenes/core/CombatScene.ts:243` (`_updateAutoDefence`) | 0.02–0.03 % **with no loadout rows**; 9.06 % of the window (~40 % of JS) once rows are present — see [Per-frame HUD rows](#per-frame-hud-rows-ah-0mvxv0ffj0066ec8) | Redraw the rows only when the rendered state changes (done); auto-defence measured too small to matter | AH-0MVXV0FFJ0066EC8 |
 | 8 | Minerals update/collect | `src/scenes/core/mineralLayer.ts:130` (`collectMinerals`), `src/scenes/gym/core/GymFormationScene.ts:1464` (`_updateMinerals`) | 0.01 % in the gym (minerals disabled); 0.06 % in the busier run | None needed | — |
 | 9 | **Demo-bot steering** (attract mode only) | `src/ai/framework/competent/steering.ts:327` (`evaluateDirection`), `src/ai/framework/hazardVelocity.ts:74` (`trackHazardVelocities`) | PlayScene demo run: 0.47 % [5.2 %] — the largest single game-code function there | Evaluate less often / reuse the world snapshot | AH-0MW2DC28M00161W6 (low) |
-| 10 | **Dev telemetry serialisation** (dev builds only) | `src/telemetry/redact.ts:93` (`sanitiseObject`), `src/ai/botSnapshot.ts:459` (`deepFreeze`) | PlayScene demo run: ≈ 0.7 % [≈ 7 % of JS] | Skip the serialise+redact of a payload that will be discarded for exceeding the upload cap | AH-0MW2DC20A007TAVY (low) |
+| 10 | **Dev telemetry serialisation** (dev builds only) | `src/telemetry/sinks.ts` (`linesToNdjson`, `write`), `src/telemetry/devStreamProtocol.ts` (`splitNdjsonLines`), `src/telemetry/redact.ts:93` (`sanitiseObject`), `src/ai/botSnapshot.ts:459` (`deepFreeze`) | PlayScene demo run: ≈ 0.7 % [≈ 7 % of JS] | **Done** — the dev streamer builds each part from a bounded window and defers it off the rAF task: the whole-buffer `splitNdjsonLines`+`linesToNdjson` serialisation 2.55 % → 0.46 % of JS (see [Dev telemetry off-frame and bounded windows](#dev-telemetry-off-frame-and-bounded-windows-ah-0mwdfajac005r3ni)) | AH-0MWDFAJAC005R3NI (high) |
 | 11 | **One `Graphics` object per enemy body**, re-walked, re-tessellated and re-batched every frame for a silhouette that never changes | `src/entities/BaseEnemy.ts` (`addSharedGraphics`), each archetype's `_drawBody()`, `src/entities/Phaser.ts` (ring + core) | **≈ 9.5 % of the 4× mobile window** (≈ 47 % of JS): `GraphicsWebGLRenderer` 3.6–3.9 %, `batch` 2.7–2.9 %, Graphics render-node `run` ×3 2.8–3.2 % | **Done** — every body silhouette is baked once into a cached texture and drawn as one sprite; Graphics-pipeline self time **9.5 % → 2.8 %** (see [Baked enemy body textures](#baked-enemy-body-textures-ah-0mw2iryah0055wcn)) | AH-0MW2IRYAH0055WCN (high) |
 
 What this ranking changed (parent AC6 — priorities from measurement, not
@@ -1543,6 +1543,65 @@ sensitivity table predicts for that band. The stress gym holds no power-ups, so
 it renders no HUD rows and the change is not expected to move its numbers; the
 run confirms it does not.
 
+### Dev telemetry off-frame and bounded windows (AH-0MWDFAJAC005R3NI)
+
+**`Recorded:`** commit `ebbcda40` · 2026-11-12 · headless Chromium 140
+(SwiftShader software WebGL) · CPU throttle 1× · AH-0MWDGQ1YD007V7DO
+(verification child of AH-0MWDFAJAC005R3NI).
+
+Ranked hotspot **#10** was the dev-only telemetry recorder paying the
+whole-buffer serialise+redact cost inside the frame loop. The fix
+(AH-0MWDGQ0PB000YZ9N / AH-0MWDGPZL8005QU13) builds each streaming part from a
+**bounded window** (a ~2 MiB byte budget plus a 4096-record ceiling) and
+**defers part build+send off the Phaser update/rAF task** through an injectable
+scheduler, so the whole unconfirmed backlog is never re-split and re-joined
+synchronously on the main thread. Redaction is untouched — the invariant that
+no unredacted payload reaches a sink is exactly the same, and its per-tick cost
+stays.
+
+The paired measurement below is the **PlayScene late-game demo** run from
+[PlayScene late game](#playscene-late-game-supplementary) —
+`--setup '{"demo":true,"seed":1,"startLevel":10}'`, 60 s, dev recorder and
+streaming upload enabled (the stock dev build) — profiled before (`1e1b26ba`)
+and after (`ebbcda40`) the fix. Share is of JS, with the window share appended:
+
+| Metric | Before (`1e1b26ba`) | After (`ebbcda40`) | Change |
+|---|---|---|---|
+| `splitNdjsonLines` (whole-buffer split) | 1.10 % / 0.070 % | **below the profile cut** | gone |
+| `linesToNdjson` (whole-buffer join) | 1.45 % / 0.090 % | **0.46 % / 0.010 %** | **−68 %** |
+| **Dev streaming serialisation (`splitNdjsonLines` + `linesToNdjson`)** | **2.55 % / 0.160 %** | **0.46 % / 0.010 %** | **−82 % of JS** |
+| Redaction (`sanitise` + `sanitiseObject` + `isSensitiveTelemetryKey`) | 3.14 % / 0.190 % | 2.88 % / 0.090 % | unchanged (invariant) |
+| All `src/telemetry/*` self time | 8.42 % / 0.520 % | 6.77 % / 0.210 % | −60 % of window |
+| main-thread JS (share of window) | 6.08 % | 3.15 % | — |
+
+The dev streaming serialisation — the cost the parent item targeted — is
+**materially lower**: the whole-buffer split is gone and the join is 68 %
+smaller, an 82 % drop in JS share. The remaining telemetry share is the
+per-tick redaction and record write, which the redaction invariant keeps on
+purpose.
+
+**Frame time (paired before/after, 60 s PlayScene late-game demo).** The fix
+does not regress the frame; it removes the frame-loop stalls the whole-buffer
+split/join produced:
+
+| Run | Host load | p50 (ms) | p95 (ms) | max (ms) | Effective FPS | Frames > 33 ms | Enemies peak/mean | Enemy bullets peak/mean |
+|---|---|---|---|---|---|---|---|---|
+| before (`1e1b26ba`) | 11.82 | 16.7 | 33.4 | 316.6 | 45.26 | 454 (16.7 %) | 1308 / 164.3 | 217 / 21.4 |
+| after (`ebbcda40`) | 5.97 | 16.7 | 16.8 | 199.9 | 53.52 | 104 (3.2 %) | 1270 / 754.4 | 216 / 124.3 |
+
+p95 falls from 33.4 ms to 16.8 ms and the > 33 ms long-frame share from
+16.7 % to 3.2 %, with a **higher** mean enemy count in the after run — the
+frame-loop stalls this item removes were the telemetry serialisation, not the
+enemy load. A companion dev demo run (`scripts/verify-dev-telemetry-raf.mjs`,
+boss run to victory, recorder + streaming on) asserts **zero
+`requestAnimationFrame` handler invocations ≥ 200 ms** — observed max 45.7 ms
+across 581 handlers, mean 1.2 ms, well below the bar.
+
+**Verdict.** The dev telemetry recorder no longer stalls the frame loop: the
+whole-buffer serialise cost is gone from the rAF task, the measured
+streaming-serialisation share is 82 % lower, and the late-game demo frame time
+improves with no regression. Redaction is unchanged.
+
 ### Cached bullet textures (AH-0MW2DAY2L004QSKF)
 
 **`Recorded:`** commit `ba4e5360` · 2026-11-04 · headless Chromium 140
@@ -1563,9 +1622,24 @@ it is drawn changed (once, at bake time). Time-driven parts are baked at
 motion reads as a pulse/breathe/shimmer (the pellet's pulse ring, the heavy
 shell's breathing glow, the shard's glint) are animated with **image
 scale/alpha** from the bullet's own age, so no per-frame `drawBulletShape`
-redraw survives (AC2). The Boss pulse wave (a slowly expanding ring) became a
+redraw survives (AC2). The remaining boss-pattern `Graphics` redraws — bullet-free expanding effects that are not silhouettes — are covered on the flanks of this pass by the bullet/fx budget below. The Boss pulse wave (a slowly expanding ring) became a
 sprite of the cached `ring` texture grown by scale and faded by alpha.
 Gameplay, collision, RNG and `tick(dt)` determinism are untouched.
+
+> **Revision (AH-0MW80W5ER005E884).** The scaled sprite was itself the source
+> of a reported visual artefact: a 3 px stroke baked at radius 30 and
+> magnified up to ~37× on a 1920×1080 screen reads as a ~110 px blurry,
+> stair-stepped band at the edge of the wave's range. The wave is now the
+> **single documented exception** to the cached-texture policy: it is a
+> per-frame stroked circle on one `Phaser.GameObjects.Graphics`, redrawn at
+> the current radius with a **constant 3 px stroke** and never scaled, so it
+> stays crisp at every radius up to
+> off-screen, and it fades smoothly to zero at its range limit. This is still
+> **one cheap draw** (a single arc per frame — no per-bullet re-triangulation,
+> so the AH-0MW2DAY2L004QSKF budget holds), and it also fixes the lifecycle
+> leak where a superseded wave was left frozen on the display list: exactly
+> one live wave exists per boss, destroyed on supersede, on range exit and on
+> boss destroy.
 
 **What the profile says (profiled pair, 60 s, same host, ~load 14).** The
 bullet draw submission is gone; the *frame time* is not, because this backend

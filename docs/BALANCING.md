@@ -246,6 +246,79 @@ campaign-level input**, so they keep their scene-specific flat
 `GymBotTuning`) adopt the curves; the reason is recorded in the `GymLevel`
 scene header and in the parent work item.
 
+### Mineral kill-drop rate doubled (AH-0MWB9LCED004K67Y)
+
+Every standard kill now yields **twice** the minerals. A destroyed small
+asteroid leaves **two** gold minerals instead of one; a destroyed non-asteroid
+enemy re-drops **`2 × round(absorbed + bonus)`** — the same
+`mineralRedropBonusMin`/`Max` roll (defaults 0.25/1.25), doubled **after**
+rounding. The multiplier lives once as **`MINERAL_DROP_MULTIPLIER = 2`** in
+`src/core/constants.ts` and is applied in the shared kill seams
+(`resolveMineralKillDrops` in `src/scenes/core/mineralKillDrops.ts` and
+`BaseEnemy.mineralRedropCount`), feeding both the shared payout seam and the
+legacy `BaseEnemy.spawnMineralDrops` parity path. `PlayScene` and every
+formation gym consume the same seams, so game↔gym parity holds automatically.
+
+- **Deposit threshold/value stay 10/10.** The **doubled** count is what is
+  compared against `MINERAL_DEPOSIT_THRESHOLD`, so a wreck whose doubled payout
+  reaches 10 leaves one 10-value red deposit and the surplus is lost. The
+  doubling is therefore **effectively capped at 10** for wrecks that absorbed
+  roughly five or more minerals — an explicitly accepted trade-off. The
+  Salvage bounty (orange) and the Mystery UFO spill keep their current values
+  and are **not** doubled.
+- **Determinism — no extra RNG draws.** The extra mineral is placed without
+  consuming the shared RNG stream: an asteroid drops a deterministic symmetric
+  pair, and an enemy's second mineral is the **mirror** of each random drop
+  across the wreck (`scatterDoubledMineralDrops` in `src/entities/Mineral.ts`).
+  Seeded promo captures, model runs and the deterministic promotion scenarios
+  therefore keep their existing streams.
+- **Expected overshoot.** Doubling income roughly doubles
+  `mineralsCollected`, so the ~18-per-run target (≈ two hold-full resolutions)
+  is expected to overshoot. That is an intentional balance change flagged for
+  review after playtest.
+
+### Life-adaptive Extra Life curve (AH-0MW8178ZR0090CNY)
+
+Extra Life's **weight** in the shared per-kill drop pool — not the overall
+per-kill drop chance — rises as the run loses lives, so a player down to their
+last life quietly gets a little more help. The rule lives once in the pure
+helper `src/core/livesScaling.ts`:
+
+```
+livesLost  = max(0, runStartingLives − lives)
+multiplier = extraLifeAdaptiveBase ** livesLost     (default base 2, start 3)
+```
+
+| Lives | Multiplier | Extra Life weight (base 3) |
+|---|---|---|
+| ≥ 3 | 1× (identity) | 3 |
+| 2 | 2× | 6 |
+| 1 | 4× | 12 |
+
+- **Subtle by construction.** The weighted pool normalises, so the resulting
+  *probability* uplift is slightly below the weight ratio (at 3 lives Extra Life
+  is ≈ 3.3 % of all drops, at 2 lives ≈ 6.4 %, at 1 life ≈ 12.1 %). At 2 lives
+  the increase is not noticeable; at 1 life it is a clear but still small
+  uplift — the "feels lucky, never noticed" target. The total per-kill drop
+  chance is unchanged: Extra Life simply becomes a larger share of the drops
+  that already occur.
+- **Composes after level scaling.** The multiplier scales only the Extra Life
+  weight, so it can never make the supply curve rise with campaign level; it
+  also composes with the (default-off) small-asteroid Extra Life roll.
+- **Tunable and persisted.** `GameRules.extraLifeAdaptiveBase` (base, clamped to
+  `[1, 10]`) and `GameRules.runStartingLives` (baseline reference, integer
+  clamped to `[1, 20]`) are persisted; a base below 1 is rejected because it
+  would invert the curve. A hangar deployment's starting lives override the
+  baseline reference; older rules blobs load unchanged (the new keys default).
+- **Shared, not duplicated.** `PlayScene` and every drop-bearing gym consume
+  the same curve through the shared `drawNextDrop` seam. Formation gyms have no
+  run lives, so they run the deterministic `3`-life `1×` baseline.
+- **Guaranteed mini-boss drop.** Separately, every mini-boss defeat now leaves
+  exactly one Extra Life **field pickup** at/near the death position, in
+  addition to the spin-the-wheel reward, even at the cap or with a full slot
+  pool (`src/scenes/core/miniBossDrops.ts`, shared by `PlayScene` and
+  `GymMiniBoss`). It is a field pickup, not a wheel wedge.
+
 ### The six loadout slots — the demand-side counterpart (parent AH-0MVLIJT3M005HPHF)
 
 The level-scaling curves above reduce the **supply** of power-ups as the
@@ -383,8 +456,10 @@ cap shapes what a run can become.
   rows are not slots, a report is classified from a recording, not a row count:
   capture the run (a stock `npm run dev` auto-records to
   `recordings/session-<timestamp>.jsonl`; or `npm run record -- --auto`, stopping
-  the recorder with Ctrl+C in its own terminal — closing the browser loses the
-  buffer, recorder defect **AH-0MVVH57LL00038WQ**), replay it against
+  the recorder with Ctrl+C in its own terminal — closing the browser window does
+  not save a complete recording, it keeps only the `<output>.partial.jsonl`
+  checkpoint written every `--checkpoint-ms`, so the run tail is lost (recorder
+  defect **AH-0MVVH57LL00038WQ**)), replay it against
   `resolveSlotState(...)` (permanent kinds from the tick vector, temporary
   holdings from the `pickup` events plus each kind's TTL) and classify every row
   as slot-counted or not. A counted kind above six is a real gate bug on a named
@@ -461,6 +536,7 @@ families share the rule:
 | Bomb | 10 | Mirrors the established 10 s weapon window (`WEAPON_TIMEOUT_MS`). |
 | Smart Bomb | 10 | As Bomb — a one-shot screen pulse with the weapon-style window. |
 | Orbital Strike | 10 | As Bomb — a one-shot bolt with the weapon-style window. |
+| Mining Laser | 10 | As Bomb — the auto-firing beam's drop is a rare weight **2** field find, and its temporary level uses the weapon-style 10 s window; the permanent fire cadence is a separate level axis (0.75 s → 0.1875 s on the beat grid). |
 | Phase Shift | 15 | Defensive kind: the shield-style 15 s window. |
 | Teleport | 15 | Defensive kind: the shield-style 15 s window. |
 | Extra Life | 10 | Weapon-style 10 s window; the **life itself is kept** when the level reverts. |
@@ -1027,6 +1103,33 @@ balance report.
   batch. The one deliberate divergence is the beat clock: an integer tick
   interval derived from the same `fireRateMs` (`fireRateTicks`) replaces it,
   so a run stays a fixed-step, seeded simulation.
+- **DPS-coupled levelling inside the deployment window** (AH-0MWAPWS1W007LGGY)
+  — wave and level progression is **kill-driven**, so how far a run climbs
+  inside a fixed measurement window depends on its damage output. Firing the
+  choice grants above lifts the competent bot's DPS enough that a campaign
+  slice started at **level 3** clears into the first enemy-fire level (4)
+  *inside* the ring-timing harness's 300 s deployment window and dies there
+  (≈250 s), where the pre-`AH-0MW5DVAME0062GQO` arena — a hardcoded
+  6⅔-shots/s cannon that never fired grants — stayed in level 3 for the whole
+  window and reported a capture. This is a **documented, deliberate
+  deviation**, not a gameplay regression: no shipped gameplay code changed,
+  and the drift is bisected to the arena's own fire-model fidelity commit
+  `6ecbab23` (AH-0MW5DVAME0062GQO). Modelling the remaining fire detail below
+  (the Wave Laser's hitscan ray, homing arcs, …) would **raise the arena's
+  DPS** further and push a slice deeper into the window, so it deepens this
+  effect rather than removing it.
+
+  **The ring-timing harness now measures the deployment loadout**
+  (AH-0MW9QA2YC009PSF5): the hull's lives and speed, the fleet's equipped
+  weapons and the `extra-lives` modifiers, earned in the ring's plan order. On
+  that launch state — not the campaign-reset bare cannon — campaign levels 1–2
+  capture the full window on every seed and **level 3 captures on two of three
+  seeds**, still dying to enemy fire on the third. The boundary therefore moved
+  with the loadout, which is exactly the gap that explained the bare-cannon
+  drift; it did **not** shorten the ring budgets, because a stronger loadout
+  also levels faster (ring 1 50.9 → 54.3 min, ring 2 111.9 → 116.4 min).
+  `src/ai/eval/ringTiming.test.ts` pins both the measured boundary and the
+  loadout resolution.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 

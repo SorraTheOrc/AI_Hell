@@ -3,6 +3,9 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client"],
 
@@ -19,5 +22,5 @@
     "useDefineForClassFields": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "vite", "scripts", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "vite", "scripts", "tests", "vite.config.ts", "vitest.config.ts"]
 }

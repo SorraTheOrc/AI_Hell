@@ -39,7 +39,7 @@ vi.mock('../../core/configStore', async (importOriginal) => {
     ),
   };
 });
-import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE, GAME_WIDTH, GAME_HEIGHT, MINERAL_SIZE } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
 import { GymFodderEnemies, GYM_FODDER_ENEMIES_DEFAULT_KEY, GYM_FODDER_ENEMIES_BOSS_KEY, GYM_FODDER_ENEMIES_CENTIPEDE_KEY, GYM_FODDER_ENEMIES_CENTIPEDE_LABEL, ENEMY_DIFFICULTY_ID, ENEMY_SELECT_ID, ENEMY_TOGGLE_PLAYER_ID, ENEMY_CONFIG_BODY_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymFodderEnemies';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
@@ -1864,7 +1864,7 @@ describe('GymFodderEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
     ).toBe(1);
   });
 
-  it('a destroyed small asteroid drops one mineral at its position (AC1)', async () => {
+  it('a destroyed small asteroid drops two minerals at its position (AC1)', async () => {
     const scene = await bootAsteroidGym();
     scene.finishSpawnAnimations();
     scene.tick(0.001);
@@ -1906,10 +1906,16 @@ describe('GymFodderEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
     scene.tick(0.016);
 
     const minerals = scene.getMinerals();
-    expect(minerals).toHaveLength(1);
-    // The drop is at the death site; the asteroid advances one tick before the
-    // collision resolves, so allow for that single-tick drift.
-    expect(Math.hypot(minerals[0].x - sx, minerals[0].y - sy)).toBeLessThanOrEqual(2);
+    // Doubled by `MINERAL_DROP_MULTIPLIER` (parent AH-0MWB9LCED004K67Y).
+    expect(minerals).toHaveLength(2);
+    // The drops sit at the death site; the asteroid advances one tick before
+    // the collision resolves, so allow for that single-tick drift (the pair is
+    // offset symmetrically by only MINERAL_SIZE from the wreck).
+    for (const mineral of minerals) {
+      expect(
+        Math.hypot(mineral.x - sx, mineral.y - sy),
+      ).toBeLessThanOrEqual(2 + MINERAL_SIZE);
+    }
   });
 
   it('asteroids never fire in the gym even when SHOOT is toggled on', async () => {

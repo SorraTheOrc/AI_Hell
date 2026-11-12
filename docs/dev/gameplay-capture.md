@@ -772,6 +772,15 @@ A Hangar War **screen has no run-end signal**, so `--hangar` is a
 than waiting for `aihell:run-ended`, and `--tail` / `--max-duration` do not
 apply.
 
+**The `⟲ RESTART WAR` row is never selected by capture tooling.** It sits in a
+third bottom-row slot beneath `▶ DEPLOY` and `⌗ HEX MAP`, but the attract
+traversal's decision function (`decideHangarAction`) gains no restart branch, so
+the bot that drives `--hangar` never focuses or activates it. The reset is a
+two-step confirm driven only by a real player (arm, then confirm inside the 5 s
+window); under `demo` the row is rendered non-actionable and the scene performs
+no store write. A capture that wants to show a fresh war should start from a
+fresh profile rather than drive the control (AH-0MW8F7NH1002PQE3).
+
 **The menu entry is enabled for the capture.** The Hangar War control sits
 behind the `hangarWar` feature flag (AH-0MVZ0VGGQ0032KDP), which ships ON by
 default now that the flow works (AH-0MVZ4S9ZU004GXUM). `--hangar` still seeds
@@ -1354,10 +1363,16 @@ therefore allows roughly 3 MiB of telemetry per request — a normal demo run
 4.0 MiB run for one final part is skipped rather than shipped as one oversized
 message.
 
-**What a capture keeps.** The page buffer is never cleared by streaming (only
-the upload watermark advances), so `window.__aiHellTelemetry.read()` still
-returns the full run and the capture's own reads are unchanged. A part is
-staged at `recordings/parts/<runKey>.jsonl`, deliberately outside the
+**What a capture keeps.** The page's telemetry buffer is **retention-bounded**
+(AH-0MWDGPZL8005QU13): streaming never clears it mid-run, but once a session's
+buffer outgrows the retention cap (`VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES`,
+default 16 MiB) the **oldest** records the dev server already confirmed — or
+that were finally skipped as over-cap — are dropped first, oldest first, with
+the oldest unconfirmed dropping only as the final bound. Below the cap every
+normal run is retained byte-identically, so
+`window.__aiHellTelemetry.read()` still returns the full run and the capture's
+own reads are unchanged. A part is staged at
+`recordings/parts/<runKey>.jsonl`, deliberately outside the
 `session-*.jsonl` glob the CLI tooling matches, so a capture in progress is
 never mistaken for a finished recording; only the final part writes
 `recordings/session-<timestamp>.jsonl` and enqueues the one automatic

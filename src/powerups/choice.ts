@@ -45,7 +45,7 @@ import { isWithinSlotPool, resolveSlotState } from './slots';
 
 /**
  * Every drop the hold-full choice can offer: the **whole** drop catalogue —
- * all sixteen power-ups plus every collectable weapon drop — minus the two
+ * all seventeen power-ups plus every collectable weapon drop — minus the two
  * deliberate, documented exclusions:
  *
  * - the `reset` utility drop, which removes weapons rather than granting one;

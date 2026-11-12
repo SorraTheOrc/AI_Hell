@@ -32,6 +32,8 @@ import {
   type TelemetryRecord,
 } from './schema';
 import {
+  type RetainedWindow,
+  type RetainedWindowLimits,
   type TelemetrySink,
   type TelemetrySinkDeps,
   createTelemetrySink,
@@ -91,6 +93,18 @@ export interface TelemetryRecorder {
    * in-memory buffer), or `null` when this recorder buffers nothing.
    */
   readBuffer(): string | null;
+  /**
+   * Reads a bounded, in-order window of the dev sink's retained buffer from
+   * an absolute record offset (AH-0MWDGPZL8005QU13), or `null` when this
+   * recorder does not retain a windowed buffer.
+   */
+  readWindow(fromRecord: number, limits?: RetainedWindowLimits): RetainedWindow | null;
+  /**
+   * Marks records below `absoluteCount` as confirmed/finally-skipped, so the
+   * dev sink's retention cap drops them first (AH-0MWDGPZL8005QU13). No-op
+   * when this recorder retains nothing.
+   */
+  dropConfirmed(absoluteCount: number): void;
   /** Flushes and closes the sink; further records are ignored. */
   close(): Promise<void>;
   /** A snapshot of the recorder's counters. */
@@ -129,6 +143,14 @@ export class NoopTelemetryRecorder implements TelemetryRecorder {
 
   readBuffer(): string | null {
     return null;
+  }
+
+  readWindow(): RetainedWindow | null {
+    return null;
+  }
+
+  dropConfirmed(): void {
+    // Disabled: nothing is retained.
   }
 
   async close(): Promise<void> {
@@ -286,6 +308,24 @@ export class BufferedTelemetryRecorder implements TelemetryRecorder {
    */
   readBuffer(): string | null {
     return this.sink.read?.() ?? null;
+  }
+
+  /**
+   * Reads a bounded window of the dev sink's retained buffer from an absolute
+   * record offset (AH-0MWDGPZL8005QU13). `null` when the sink retains no
+   * windowed buffer (e.g. a transport sink or a test spy).
+   */
+  readWindow(fromRecord: number, limits?: RetainedWindowLimits): RetainedWindow | null {
+    return this.sink.readWindow?.(fromRecord, limits) ?? null;
+  }
+
+  /**
+   * Marks records below `absoluteCount` as confirmed/finally-skipped, so the
+   * dev sink's retention cap drops them first (AH-0MWDGPZL8005QU13). No-op
+   * for a sink that retains nothing.
+   */
+  dropConfirmed(absoluteCount: number): void {
+    this.sink.dropConfirmed?.(absoluteCount);
   }
 
   /** Adds a record to the ring buffer, auto-flushing at the batch size. */

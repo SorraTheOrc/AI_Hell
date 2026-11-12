@@ -44,6 +44,9 @@ const REMAINING_POWER_UP_IDS = [
   'thorns',
   'salvage',
   'strike',
+  // The Mining Laser (AH-0MW9QMNYP006ZO6T) is likewise a shipped kind that a
+  // future removal must not sweep away.
+  'mining_laser',
 ] as const;
 
 describe('Power Pellet removal — cannot be spawned or offered (AH-0MV5CB6KO0079N08)', () => {

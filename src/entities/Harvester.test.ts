@@ -255,12 +255,13 @@ describe('Harvester entity', () => {
     const h = makeHarvester(scene, 100, 100);
     for (let i = 0; i < 4; i++) h.collectMineral();
 
-    // Deterministic bounds (mirrors BaseEnemy.mineralRedropCount):
-    // round(4 + 0.25) = 4 at rng 0 and round(4 + 1.25) = 5 at rng 1.
+    // Deterministic bounds (mirrors BaseEnemy.mineralRedropCount, doubled by
+    // `MINERAL_DROP_MULTIPLIER`): 2 × round(4 + 0.25) = 8 at rng 0 and
+    // 2 × round(4 + 1.25) = 10 at rng 1.
     const low = h.mineralRedropCount(() => 0);
     const high = h.mineralRedropCount(() => 1);
-    expect(low).toBe(4);
-    expect(high).toBe(5);
+    expect(low).toBe(8);
+    expect(high).toBe(10);
     expect(high).toBeGreaterThanOrEqual(low);
   });
 

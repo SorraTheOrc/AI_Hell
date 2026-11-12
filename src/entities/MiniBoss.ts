@@ -34,7 +34,7 @@
 
 import Phaser from 'phaser';
 
-import { Boss, type BossBullet } from './Boss';
+import { Boss, type BossBullet, type BossDemonstratedWeapon } from './Boss';
 import { createEnemyFromConfig, type EnemyEntity } from './enemyFactory';
 import { fireForEnemy } from './enemyFire';
 import { loadEnemyConfig } from '../core/enemyConfig';
@@ -110,6 +110,18 @@ export interface MiniBossConfig {
   phases?: MiniBossPhaseConfig[];
   /** Optional per-phase minion waves (omitted → no minions). */
   minions?: MiniBossMinionWaveConfig[];
+  /**
+   * Optional demonstrated weapon (Rule 2 — "the boss wields it first").
+   *
+   * When set, the mini-boss **opens** the encounter by firing this weapon's
+   * volley (its fan offsets, bullet colour and shape) instead of the first
+   * design pattern; every later phase keeps the design's
+   * {@link MiniBossPattern}. Absent (the shipped arcade mini-boss) →
+   * byte-for-byte unchanged behaviour. Forwarded to the shared
+   * {@link Boss} demonstrated-volley seam, so there is no second firing
+   * implementation.
+   */
+  demonstratedWeapon?: BossDemonstratedWeapon;
   /** Chance (0–1) a volley fires when eligible (defaults to 1.0). */
   shotProbability?: number;
   /** Injectable random source for fire rolls and minion placement. */
@@ -132,6 +144,7 @@ export interface ResolvedMiniBossConfig {
   hpPerPhase: number;
   phases: MiniBossPhaseConfig[];
   minions: MiniBossMinionWaveConfig[];
+  demonstratedWeapon?: BossDemonstratedWeapon;
   shotProbability?: number;
   rng?: () => number;
   initialHp?: number;
@@ -229,6 +242,7 @@ export function resolveMiniBossConfig(
       ...wave,
       groups: wave.groups.map((group) => ({ ...group })),
     })),
+    demonstratedWeapon: config.demonstratedWeapon,
     shotProbability: config.shotProbability,
     rng: config.rng,
     initialHp: config.initialHp,
@@ -287,6 +301,7 @@ export class MiniBoss extends Boss {
       hitPointsPerPhase: resolved.hpPerPhase,
       bodyColor: resolved.color,
       desperationColor: resolved.desperationColor,
+      demonstratedWeapon: resolved.demonstratedWeapon,
     });
     this.resolvedConfig = resolved;
     // Phase 1 summons its minion wave immediately, mirroring the shipped
@@ -294,8 +309,22 @@ export class MiniBoss extends Boss {
     this._spawnMinionsForPhase(1);
   }
 
-  /** The config-driven pattern for the current phase (shared Boss patterns). */
+  /**
+   * Fires the current phase's volley. Mirrors {@link Boss.firePhase}'s Rule 2
+   * demonstration rule: a configured {@link MiniBossConfig.demonstratedWeapon}
+   * replaces the **opening** phase's volley only (the encounter wields the
+   * weapon it grants before the player owns it); every later phase keeps the
+   * design's {@link MiniBossPattern}. The demonstrated volley itself is the
+   * shared {@link Boss.tryFireDemonstratedBullets} path — no second firing
+   * implementation and no new pattern value.
+   */
   protected override firePhase(now: number): BossBullet[] {
+    if (
+      this.resolvedConfig.demonstratedWeapon !== undefined &&
+      this.getPhaseNumber() === 1
+    ) {
+      return this.tryFireDemonstratedBullets(now);
+    }
     const phase = this.resolvedConfig.phases[this.getPhaseNumber() - 1];
     switch (phase?.pattern) {
       case 'spiral':

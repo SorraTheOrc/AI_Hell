@@ -16,6 +16,17 @@
  * fully destroyed small asteroid rolls the configurable chance and a winning
  * roll leaves one Extra Life on the field (AH-0MV6M2M9P0078N4S).
  *
+ * **Mining Laser observation (AH-0MW9QMSI7005UU9P, parent
+ * AH-0MW81181P007BDRU).** The gym opts into the existing shared power-up drop
+ * layer with a **mining-laser-only** deterministic spawner, so this is the
+ * scene where the shipped Mining Laser is watched end-to-end: collecting the
+ * drop makes the shared `CombatCoreScene._updateMiningLaser` step cut the
+ * nearest asteroid, retarget across the split chain and pay minerals through
+ * the shared mineral layer. No fire, target or cadence code lives here — every
+ * shot is the shared step resolving through the shared
+ * `CombatScene.onMiningLaserFire` damage/beam seam, so the gym cannot drift
+ * from `PlayScene` (AGENTS.md § Gym↔game parity).
+ *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention.
  *
  * @module src/scenes/gym/GymMinerals
@@ -27,6 +38,8 @@ import { PLAYER_SPAWN } from '../../core/constants';
 import { Asteroid } from '../../entities/Asteroid';
 import type { EnemyEntity } from '../../entities/enemyFactory';
 import type { FormationOffset } from '../../utils/formations';
+import type { DropId } from '../../powerups/types';
+import { RoundRobinSpawner } from '../../powerups/spawner';
 import { splitAsteroid } from '../core/asteroidSplit';
 import {
   GymFormationScene,
@@ -37,7 +50,7 @@ import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 
 /** Hint line shown at the bottom of the gym. */
 export const GYM_MINERALS_HINT =
-  'Minerals gym — asteroids only, 100 mineral drops (collect to fill the hold)';
+  'Minerals gym — asteroids only; collect the Mining Laser drop to cut rock, 100 minerals (collect to fill the hold)';
 
 /** Number of large asteroids seeded onto the field. */
 export const GYM_MINERALS_ASTEROID_COUNT = 3;
@@ -60,6 +73,14 @@ function asteroidFormationConfig(): EnemyFormationConfig<EnemyEntity, FormationS
     statusLabel: 'asteroids',
     hintText: GYM_MINERALS_HINT,
     player: { ...PLAYER_SPAWN },
+    // Opt into the existing shared drop layer with a mining-laser-only
+    // deterministic spawner (AH-0MW9QMSI7005UU9P): the gym demonstrates the
+    // shipped Mining Laser and nothing else. The drop lifecycle, collection
+    // and the shared fire step are the game's own code — only the drop *ID
+    // source* is gym-specific, the documented formation-gym divergence.
+    powerUps: {
+      spawner: new RoundRobinSpawner<DropId>(['mining_laser']),
+    },
     // Same wave-timeout behaviour as the shipped game (operator decision):
     // this is an asteroids-only field, so on expiry every asteroid survives
     // silently and the formation refreshes through the shared 3 s

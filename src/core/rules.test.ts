@@ -18,6 +18,7 @@ import {
   DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
   DEFAULT_MINERAL_REDROP_BONUS_MAX,
   DEFAULT_MINERAL_REDROP_BONUS_MIN,
+  DEFAULT_MINING_LASER_WEIGHT,
   DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1,
   DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
   DEFAULT_POWER_UP_SPAWN_INTERVAL,
@@ -57,12 +58,12 @@ describe('game rules configuration module', () => {
       );
     });
 
-    it('gives standard IDs equal weight and makes Extra Life, the Smart Bomb, the Mystery UFO and the Orbital Strike rarer', () => {
+    it('gives standard IDs equal weight and the Mining Laser a rare field-drop weight', () => {
       const weights = DEFAULT_RULES.powerUpWeights;
       for (const id of POWER_UP_WEIGHT_IDS) {
         if (
           id === 'extra_life' || id === 'smart_bomb' || id === 'mystery_ufo'
-          || id === 'strike'
+          || id === 'strike' || id === 'mining_laser'
         ) continue;
         expect(weights[id]).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
       }
@@ -89,6 +90,15 @@ describe('game rules configuration module', () => {
       expect(defaultPowerUpWeights().mystery_ufo).toBe(3);
       expect(weights.mystery_ufo).toBeLessThan(weights.shield);
       expect(weights.mystery_ufo).toBeGreaterThan(weights.smart_bomb);
+      // The Mining Laser (AH-0MW9QMRC7007HVHQ) is a rare field drop: weight
+      // 2, matching the Orbital Strike and Smart Bomb rarity — a passive
+      // mineral economy should not flood the drop stream.
+      expect(DEFAULT_MINING_LASER_WEIGHT).toBe(2);
+      expect(weights.mining_laser).toBe(2);
+      expect(defaultPowerUpWeights().mining_laser).toBe(2);
+      expect(weights.mining_laser).toBe(weights.strike);
+      expect(weights.mining_laser).toBe(weights.smart_bomb);
+      expect(weights.mining_laser).toBeLessThan(weights.shield);
       // The standard and weapon weights are untouched by the Extra Life change.
       expect(DEFAULT_STANDARD_POWER_UP_WEIGHT).toBe(4);
       expect(DEFAULT_WEAPON_WEIGHT).toBe(2);
@@ -133,7 +143,7 @@ describe('game rules configuration module', () => {
           rear_guard: 2,
           shard_swarm: 1,
         },
-        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, smart_bomb: 2, force_field: 4, mystery_ufo: 3, frenzy: 4, chrono: 4, thorns: 4, salvage: 4, strike: 2 },
+        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, smart_bomb: 2, force_field: 4, mystery_ufo: 3, frenzy: 4, chrono: 4, thorns: 4, salvage: 4, strike: 2, mining_laser: 0 },
         weaponWeights: {
           spread: 3,
           dual: 4,
@@ -168,6 +178,9 @@ describe('game rules configuration module', () => {
         enemyCountCap: 120,
         phaseRechargeOverrideSeconds: 9.5,
         teleportRechargeOverrideSeconds: 33,
+        // Life-adaptive Extra Life tunables (AH-0MW8178ZR0090CNY).
+        extraLifeAdaptiveBase: 3,
+        runStartingLives: 4,
       };
       saveRules(custom);
 
@@ -195,6 +208,8 @@ describe('game rules configuration module', () => {
       expect(loaded.enemyCountCap).toBe(120);
       expect(loaded.phaseRechargeOverrideSeconds).toBe(9.5);
       expect(loaded.teleportRechargeOverrideSeconds).toBe(33);
+      expect(loaded.extraLifeAdaptiveBase).toBe(3);
+      expect(loaded.runStartingLives).toBe(4);
     });
 
     it('merges a partial weapon weight table over the weapon defaults', () => {
@@ -1077,6 +1092,86 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     expect(extraLifeDropChance(10, tuned)).toBeLessThan(
       extraLifeDropChance(1, tuned),
     );
+  });
+});
+
+// ── Life-adaptive Extra Life tunables (AH-0MW8178ZR0090CNY) ────────
+
+describe('life-adaptive Extra Life rules (AH-0MW8178ZR0090CNY)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('exposes the documented defaults (base 2, starting lives 3)', () => {
+    expect(DEFAULT_RULES.extraLifeAdaptiveBase).toBe(2);
+    expect(DEFAULT_RULES.runStartingLives).toBe(3);
+    const loaded = loadRules();
+    expect(loaded.extraLifeAdaptiveBase).toBe(2);
+    expect(loaded.runStartingLives).toBe(3);
+  });
+
+  it('loads an older rules blob unchanged and fills the new keys with defaults', () => {
+    // A v5 blob that predates these keys must keep every existing rule and
+    // simply gain the documented defaults (no schema bump, no reset).
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: 5,
+        powerUpSpawnInterval: 3,
+        powerUpDropChanceAtLevel1: 0.12,
+        asteroidExtraLifeDropChance: 0.2,
+      }),
+    );
+    const loaded = loadRules();
+    expect(loaded.powerUpSpawnInterval).toBe(3);
+    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.12);
+    expect(loaded.asteroidExtraLifeDropChance).toBe(0.2);
+    expect(loaded.extraLifeAdaptiveBase).toBe(2);
+    expect(loaded.runStartingLives).toBe(3);
+  });
+
+  it('clamps the exponential base into [1, 10]', () => {
+    for (const [stored, expected] of [
+      [0.5, 1],
+      [-4, 1],
+      [99, 10],
+      [1.5, 1.5],
+      ['huge', 2],
+      [null, 2],
+    ] as const) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ version: RULES_SCHEMA_VERSION, extraLifeAdaptiveBase: stored }),
+      );
+      expect(loadRules().extraLifeAdaptiveBase).toBe(expected);
+    }
+  });
+
+  it('clamps the run starting lives to an integer in [1, 20]', () => {
+    for (const [stored, expected] of [
+      [0, 1],
+      [-3, 1],
+      [99, 20],
+      [4, 4],
+      [3.7, 3],
+      ['four', 3],
+      [null, 3],
+    ] as const) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ version: RULES_SCHEMA_VERSION, runStartingLives: stored }),
+      );
+      expect(loadRules().runStartingLives).toBe(expected);
+    }
+  });
+
+  it('round-trips tuned values through saveRules', () => {
+    saveRules({ ...DEFAULT_RULES, extraLifeAdaptiveBase: 3, runStartingLives: 4 });
+    const loaded = loadRules();
+    expect(loaded.extraLifeAdaptiveBase).toBe(3);
+    expect(loaded.runStartingLives).toBe(4);
   });
 });
 

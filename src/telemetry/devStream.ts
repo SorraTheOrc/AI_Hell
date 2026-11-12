@@ -15,12 +15,13 @@
  *   folds to `false` in a production build (so the whole module is
  *   dead-code-eliminated).
  * - **The buffer is the source of truth and is never cleared.** A part is
- *   built by reading the run's in-memory buffer through the injected
- *   `readBuffer` seam and taking only the records beyond the confirmed
- *   offset ({@link nextPartRange}). The `onFlush` delta is the **trigger**
- *   (one part per flush, in flush order), while the buffer read keeps the
- *   streamer correct even when it finishes loading after the first batches
- *   have already been flushed.
+ *   built by reading the run's in-memory buffer beyond the confirmed offset
+ *   through the injected windowed-read seam (`readWindow`, absolute record
+ *   offsets) — falling back to `readBuffer` + {@link nextPartRange} when it
+ *   is absent — and taking only a **bounded window** of the unconfirmed tail.
+ *   The `onFlush` delta is the **trigger** (one part per flush, in flush
+ *   order), while the buffer read keeps the streamer correct even when it
+ *   finishes loading after the first batches have already been flushed.
  * - **Serialised part chain.** Parts are chained one at a time, so records
  *   can never interleave out of order, and a slow server cannot build a
  *   request storm.
@@ -41,13 +42,20 @@
  *   dev server is therefore retried at most once per window instead of being
  *   hammered, and no background timer outlives the trigger it belongs to.
  * - **Offline degradation.** After a failure the records simply stay pending
- *   in the (never-cleared) buffer; run end's final part carries the whole
- *   unconfirmed tail as one request (retried a bounded number of times with
- *   backoff), which is today's single run-end upload.
- * - **Bounded bodies.** Each part carries at most one batch; the run-end final
- *   part still respects the 8 MiB CDP-message cap
- *   ({@link checkDevUploadSize}) with today's actionable skip line when the
- *   backlog after an outage is over it.
+ *   in the (retention-bounded) buffer; run end drains the unconfirmed tail in
+ *   chained bounded windows and ends with one `final: true` part (retried a
+ *   bounded number of times with backoff).
+ * - **Bounded windows.** Each part carries at most one bounded window — a
+ *   ~2 MiB byte budget plus a 4096-record ceiling
+ *   ({@link DEV_PART_WINDOW_MAX_BYTES} / {@link DEV_PART_WINDOW_MAX_RECORDS}) —
+ *   so `linesToNdjson` never joins an oversized backlog; a part still respects
+ *   the 8 MiB CDP-message cap ({@link checkDevUploadSize}) with today's
+ *   actionable skip line.
+ * - **Off-frame deferral.** Part build + send runs through the injectable
+ *   `defer` scheduler seam, so telemetry serialisation never runs inside the
+ *   Phaser update/rAF task; a part-build failure (including an oversized-window
+ *   guard) routes through the existing backoff window, so a failed/skipped
+ *   upload is reported once per part/run, not once per frame-loop trigger.
  * - **Fire-and-forget.** Every failure is caught and reported through the
  *   optional `onError` seam; the runner never rejects and run end is never
  *   blocked or crashed by a streaming failure.
@@ -74,13 +82,18 @@ import {
   deriveRunKey,
   nextPartRange,
   splitNdjsonLines,
+  type PartRange,
 } from './devStreamProtocol';
 import {
   isDevTelemetryUploadEnabled,
   type DevModeEnv,
   type DevTelemetrySetting,
 } from './devMode';
-import { linesToNdjson } from './sinks';
+import {
+  linesToNdjson,
+  type RetainedWindow,
+  type RetainedWindowLimits,
+} from './sinks';
 
 /**
  * Total delivery attempts for a **run-end** part: the first send plus its
@@ -97,6 +110,16 @@ export const DEFAULT_PART_RETRY_BASE_MS = 250;
 /** Ceiling for one retry delay, in milliseconds. */
 export const DEFAULT_PART_RETRY_MAX_MS = 2_000;
 
+/**
+ * Byte budget for one part window's NDJSON body (~2 MiB, mirroring the
+ * CDP-safe chunk size and well under the 8 MiB upload cap), so
+ * `linesToNdjson` never joins an oversized window (AH-0MWDGQ0PB000YZ9N).
+ */
+export const DEV_PART_WINDOW_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Record ceiling for one part window (AH-0MWDGQ0PB000YZ9N). */
+export const DEV_PART_WINDOW_MAX_RECORDS = 4096;
+
 /** Resolves after `ms`; the injectable timer seam (tests never wait). */
 export type DevPartSleep = (ms: number) => Promise<void>;
 
@@ -105,6 +128,19 @@ const defaultSleep: DevPartSleep = (ms) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+
+/**
+ * The injectable off-frame scheduler seam (AH-0MWDGQ0PB000YZ9N): part build
+ * and send is handed to `defer` instead of running inline in the caller's
+ * rAF/update task. The browser injects `queueMicrotask`/`setTimeout(0)`/
+ * `requestIdleCallback`; hermetic tests inject a synchronous or capturing
+ * implementation (the default below runs synchronously so a streamer without
+ * an injected scheduler stays deterministic).
+ */
+export type DevPartDefer = (task: () => void) => void;
+
+/** Default defer: run synchronously (hermetic tests, no scheduler injected). */
+const defaultDefer: DevPartDefer = (task) => task();
 
 /** Construction options for {@link createDevTelemetryStreamer}. */
 export interface DevTelemetryStreamerOptions {
@@ -117,6 +153,30 @@ export interface DevTelemetryStreamerOptions {
    * buffer). The buffer is never cleared by this module.
    */
   readonly readBuffer: () => string | null;
+  /**
+   * Reads a bounded, in-order window of the retained buffer from an absolute
+   * record offset (the F3 windowed read/drain seam, AH-0MWDGPZL8005QU13).
+   * When provided it replaces whole-buffer reads, so a large backlog is never
+   * re-joined in one piece; when absent the streamer falls back to
+   * {@link readBuffer} + {@link nextPartRange} windowing (hermetic tests).
+   */
+  readonly readWindow?: (
+    fromRecord: number,
+    limits?: RetainedWindowLimits,
+  ) => RetainedWindow | null;
+  /**
+   * Marks records below `absoluteCount` as confirmed/finally-skipped so the
+   * dev sink's retention cap drops them first (AH-0MWDGPZL8005QU13). Called
+   * when the server confirms a part (or a window is finally skipped over-cap).
+   */
+  readonly dropConfirmed?: (absoluteCount: number) => void;
+  /**
+   * Schedules part build + send off the caller's task
+   * (AH-0MWDGQ0PB000YZ9N); defaults to a synchronous scheduler. The browser
+   * wiring injects a real off-frame scheduler so telemetry serialisation never
+   * runs inside the Phaser update/rAF task.
+   */
+  readonly defer?: DevPartDefer;
   /**
    * Reads the persisted share-telemetry setting. A reader rather than a value,
    * so a setting changed during the run is honoured at the next part (and at
@@ -243,6 +303,12 @@ export function createDevTelemetryStreamer(
   );
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
+  const defer = options.defer ?? defaultDefer;
+  const dropConfirmed = options.dropConfirmed;
+  const windowLimits: RetainedWindowLimits = {
+    maxBytes: DEV_PART_WINDOW_MAX_BYTES,
+    maxRecords: DEV_PART_WINDOW_MAX_RECORDS,
+  };
 
   /** Exponential, capped delay before retry number `attempt` (1-based). */
   const retryDelay = (attempt: number): number =>
@@ -265,10 +331,50 @@ export function createDevTelemetryStreamer(
   const gateOpen = (): boolean =>
     isDevTelemetryUploadEnabled(env, options.getSetting?.());
 
-  /** The run's buffered records beyond the confirmed offset. */
-  const pendingRange = () => {
+  /** One pending part window plus whether more unconfirmed records follow. */
+  interface PendingWindow extends PartRange {
+    /** `true` when the window was cut short and more records remain pending. */
+    readonly hasMore: boolean;
+  }
+
+  /**
+   * The run's unconfirmed records, bounded to one window.
+   *
+   * Prefers the F3 windowed read seam (`readWindow`, absolute record offsets,
+   * no whole-buffer re-join) when provided; otherwise falls back to reading
+   * the whole buffer and splitting it through {@link nextPartRange} with the
+   * same window limits (hermetic tests, non-retaining sinks).
+   */
+  const pendingRange = (): PendingWindow => {
+    const readWindow = options.readWindow;
+    if (readWindow) {
+      const window = readWindow(confirmedCount, windowLimits);
+      if (window) {
+        // Whether the window was truncated by the limits: peek one record past
+        // its end (a retained-buffer read never re-joins the whole backlog).
+        const peek = readWindow(window.nextRecord, {
+          maxBytes: Number.POSITIVE_INFINITY,
+          maxRecords: 1,
+        });
+        return {
+          offset: window.fromRecord,
+          lines: window.lines,
+          confirmedCount: window.nextRecord,
+          empty: window.lines.length === 0,
+          hasMore: peek !== null && peek.lines.length > 0,
+        };
+      }
+    }
     const buffered = options.readBuffer() ?? '';
-    return nextPartRange(confirmedCount, splitNdjsonLines(buffered));
+    const lines = splitNdjsonLines(buffered);
+    const range = nextPartRange(confirmedCount, lines, windowLimits);
+    return {
+      offset: range.offset,
+      lines: range.lines,
+      confirmedCount: range.confirmedCount,
+      empty: range.empty,
+      hasMore: range.confirmedCount < lines.length,
+    };
   };
 
   /** Shares of the protocol response the streamer needs. */
@@ -324,7 +430,10 @@ export function createDevTelemetryStreamer(
     const body = linesToNdjson(range.lines);
     const over = checkDevUploadSize(body, maxMessageBytes);
     if (over) {
-      // Retrying cannot shrink the body, so an over-cap part is final.
+      // Retrying cannot shrink the body, so an over-cap part is final. The
+      // window's records are finally skipped: mark them so the retention cap
+      // drops them first instead of re-reading them on every later trigger.
+      dropConfirmed?.(range.confirmedCount);
       onSkip(over);
       return { kind: 'done' };
     }
@@ -357,6 +466,7 @@ export function createDevTelemetryStreamer(
         // and re-send from there immediately — a recoverable re-sync is not
         // an outage, so it does not pay a backoff delay.
         confirmedCount = serverCount;
+        dropConfirmed?.(serverCount);
         return {
           kind: 'retry',
           error: new Error(
@@ -375,53 +485,96 @@ export function createDevTelemetryStreamer(
     }
     sentParts += 1;
     confirmedCount = readConfirmedCount(payload) ?? range.confirmedCount;
+    dropConfirmed?.(confirmedCount);
     if (final) finalised = true;
     return { kind: 'done' };
   };
 
   /**
-   * Sends one part.
+   * Sends one part (one bounded window).
    *
-   * - **Mid-run** (`push`) this is a single attempt. A failure reports once and
-   *   opens a backoff window, so the next flush is coalesced into it and the
-   *   retry happens as soon as the window elapses — no timer, no retry storm.
-   * - **Run end** (`finalise`) it retries a bounded number of times with a
-   *   light exponential backoff, because no further flush will ever come.
+   * - **Mid-run** (`push`, `retryBudget: false`) this is a single attempt per
+   *   trigger. A failure reports once and opens a backoff window, so the next
+   *   flush is coalesced into it and the retry happens as soon as the window
+   *   elapses — no timer, no retry storm.
+   * - **Run end** (`finalise`, `retryBudget: true`) it retries a bounded
+   *   number of times with a light exponential backoff, because no further
+   *   flush will ever come.
    * - A **gap** is a recoverable re-sync, not an outage: it adopts the server's
-   *   count and re-sends immediately.
+   *   count and re-sends immediately (bounded by the same attempt budget).
+   * - A **part-build failure** (e.g. the oversized-window guard refusing to
+   *   serialise an insane backlog) routes through {@link recordFailure}, so it
+   *   is reported once per backoff window, not once per frame-loop trigger.
    *
    * Never throws: the watermark is left where it was on failure, so every
-   * record stays pending for the next trigger or run end.
+   * record stays pending for the next trigger or run end. Returns `true` only
+   * when the part was delivered (or was empty / over-cap and reported once).
    */
-  const sendPart = async (final: boolean): Promise<void> => {
-    if (final && finalised) return;
-    if (!gateOpen()) return;
+  const sendPart = async (
+    final: boolean,
+    retryBudget: boolean,
+  ): Promise<boolean> => {
+    if (final && finalised) return true;
+    if (!gateOpen()) return false;
     // Mid-run triggers inside the backoff window are coalesced: the backlog
     // rides the next flush once the window has elapsed. Run end always tries.
-    if (!final && now() < nextAttemptAt) return;
+    if (!final && !retryBudget && now() < nextAttemptAt) return false;
 
     for (let attempt = 1; ; attempt += 1) {
-      const outcome = await attemptPart(final);
+      let outcome: Awaited<ReturnType<typeof attemptPart>>;
+      try {
+        outcome = await attemptPart(final);
+      } catch (error) {
+        // Part build failed (e.g. the oversized-window guard): coalesce it
+        // into the backoff window and report once per window.
+        recordFailure(error);
+        return false;
+      }
       if (outcome.kind === 'done') {
         recordSuccess();
-        return;
+        return true;
       }
       if (!outcome.backoff) {
         // Gap re-sync: bounded by the same attempt budget in both phases.
         if (attempt >= maxAttempts) {
           recordFailure(outcome.error);
-          return;
+          return false;
         }
         continue;
       }
       // An unreachable/rejecting server: mid-run one attempt per trigger, run
       // end the full bounded budget with backoff between attempts.
-      if (!final || attempt >= maxAttempts) {
+      if (!retryBudget || attempt >= maxAttempts) {
         recordFailure(outcome.error);
-        return;
+        return false;
       }
       await sleep(retryDelay(attempt));
     }
+  };
+
+  /**
+   * Run-end delivery: drain the backlog in chained non-final bounded windows,
+   * then send the single `final: true` part (AH-0MWDGQ0PB000YZ9N).
+   *
+   * A backlog that already fits in one window is sent straight as the final
+   * part (the pre-windowing run-end shape); a larger backlog is split across
+   * non-final windows first, so the final part carries at most one window.
+   */
+  const drainThenFinalise = async (): Promise<void> => {
+    if (finalised) return;
+    while (true) {
+      const range = pendingRange();
+      // Nothing pending: the final part below is a finalisation-only marker.
+      if (range.empty) break;
+      // The whole tail fits in one window: send it as the final part directly.
+      if (!range.hasMore) break;
+      const before = confirmedCount;
+      if (!(await sendPart(false, true))) return;
+      // A window that did not advance the watermark (an over-cap skip, which
+      // posts nothing) can never drain: stop rather than loop forever.
+      if (confirmedCount === before) return;
+    }
+    await sendPart(true, true);
   };
 
   /** Appends a task to the serialised part chain (never rejects). */
@@ -432,6 +585,36 @@ export function createDevTelemetryStreamer(
     chain = run;
     return run;
   };
+
+  // Off-frame deferral bookkeeping: `push`/`finalise` hand their part work to
+  // the injected `defer` scheduler synchronously, while `whenIdle()` awaits
+  // every outstanding unit of deferred work before it resolves.
+  let outstanding = 0;
+  let whenSettled: Promise<void> = Promise.resolve();
+  let releaseSettled: (() => void) | null = null;
+
+  /** Marks one deferred unit of part work as outstanding. */
+  const beginDeferred = (): void => {
+    outstanding += 1;
+    if (outstanding === 1) {
+      whenSettled = new Promise<void>((resolve) => {
+        releaseSettled = resolve;
+      });
+    }
+  };
+
+  /** Settles one deferred unit; releases `whenIdle()` once the last settles. */
+  const endDeferred = (): void => {
+    outstanding -= 1;
+    if (outstanding === 0 && releaseSettled) {
+      const release = releaseSettled;
+      releaseSettled = null;
+      release();
+    }
+  };
+
+  /** Resolves once every deferred trigger and queued part has settled. */
+  const whenIdle = (): Promise<void> => whenSettled.then(() => chain);
 
   return {
     runKey,
@@ -446,14 +629,31 @@ export function createDevTelemetryStreamer(
     },
     push(deltaNdjson: string): void {
       if (deltaNdjson.trim().length === 0) return;
-      void enqueue(() => sendPart(false));
+      beginDeferred();
+      defer(() => {
+        void enqueue(async () => {
+          await sendPart(false, false);
+        }).then(endDeferred);
+      });
     },
     async finalise(): Promise<boolean> {
-      await enqueue(() => sendPart(true));
+      // Wait for outstanding mid-run triggers so the drain reads the settled
+      // watermark, then drain + finalise off the caller's task.
+      await whenIdle();
+      beginDeferred();
+      await new Promise<void>((resolve) => {
+        defer(() => {
+          void enqueue(drainThenFinalise).then(() => {
+            endDeferred();
+            resolve();
+          });
+        });
+      });
+      await whenIdle();
       return finalised;
     },
     whenIdle(): Promise<void> {
-      return chain;
+      return whenIdle();
     },
   };
 }

@@ -100,6 +100,9 @@ const OBSERVABLE: Record<PowerUpId, (registry: EffectsRegistry) => number> = {
   thorns: (r) => r.thornsRemaining(),
   salvage: (r) => r.salvageBonusMinerals(),
   strike: (r) => r.strikeDamage(),
+  // Mining Laser (AH-0MW9QMNYP006ZO6T): the shared effect-path accessor the
+  // game and every gym consume, so parity holds for the new kind too.
+  mining_laser: (r) => r.miningLaserDamage(),
 };
 
 /**

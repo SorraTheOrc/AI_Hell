@@ -330,9 +330,10 @@ interface TimedEffectState {
   tempWindow?: boolean;
   /**
    * True when this entry times a **temporary level window only** — an
-   * instant kind (`bomb`, `smart_bomb`, `strike`, `phase_shift`,
-   * `teleport`, `extra_life`, `mystery_ufo`) whose gameplay effect is a
-   * one-shot/consumable rather than a timed effect (AH-0MVUGI448000GNMJ).
+   * instant kind (`bomb`, `smart_bomb`, `strike`, `mining_laser`,
+   * `phase_shift`, `teleport`, `extra_life`, `mystery_ufo`) whose gameplay
+   * effect is a one-shot/consumable rather than a timed effect
+   * (AH-0MVUGI448000GNMJ).
    *
    * A level window must not surface as an active effect (`isActive`,
    * `activeEffects`, `remaining`): it only makes the store's temporary
@@ -485,6 +486,20 @@ export class EffectsRegistry {
    * bolt is latched.
    */
   private _strikeLatchedDamage: number | null = null;
+
+  // ── Mining Laser cadence state (AH-0MW9QMNYP006ZO6T) ───────────────
+  /**
+   * Seconds until the next Mining Laser shot is due.
+   *
+   * The Mining Laser has **no** latch and no permanent flag: whether it is
+   * active is derived from the shared level store's effective level (a
+   * permanent grant or a live temporary window), so there is no second
+   * source of truth to drift. This clock is only the cadence timer the shared
+   * combat core advances through {@link updateMiningLaser}. A pickup (or
+   * refresh) sets it to `0` so the first shot is due immediately; at the
+   * temporary window's expiry it resets and fire stops.
+   */
+  private _miningLaserCadenceTimer = 0;
 
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
@@ -684,13 +699,15 @@ export class EffectsRegistry {
    *
    * **Every field pickup also gets a temporary level window.** For the timed
    * kinds above the window *is* the effect window (its level-resolved
-   * duration); the ten instant kinds (`bomb`, `smart_bomb`, `strike`,
-   * `shield`, `force_field`, `thorns`, `phase_shift`, `teleport`,
-   * `extra_life`, `mystery_ufo`) open a separate per-upgrade **level window**
-   * sized by `resolveTemporaryWindow` (AH-0MVUGI448000GNMJ; parent
+   * duration); the eleven instant kinds (`bomb`, `smart_bomb`, `strike`,
+   * `mining_laser`, `shield`, `force_field`, `thorns`, `phase_shift`,
+   * `teleport`, `extra_life`, `mystery_ufo`) open a separate per-upgrade
+   * **level window** sized by `resolveTemporaryWindow`
+   * (AH-0MVUGI448000GNMJ; parent
    * AH-0MVSTKGC3003OMAC). The declared instant TTLs are catalogue data —
-   * Bomb / Smart Bomb / Orbital Strike **10 s**, Phase Shift / Teleport /
-   * Mystery UFO **15 s**, Extra Life **10 s**, Shield **15 s**, Thorn Field /
+   * Bomb / Smart Bomb / Orbital Strike / Mining Laser **10 s**, Phase Shift /
+   * Teleport / Mystery UFO **15 s**, Extra Life **10 s**, Shield **15 s**,
+   * Thorn Field /
    * Force Field **8 s** (the absorbed-hit kinds, AH-0MVVD8SXO004QLZW) — so no
    * kind is exempt from expiry and retuning one is a data edit. The one-shot
    * or consumable grant lands immediately; the window only makes the temporary
@@ -854,6 +871,17 @@ export class EffectsRegistry {
           this._openInstantWindow(id);
         }
         break;
+      case 'mining_laser':
+        // mining_laser: a field pickup starts rapid fire for its temporary
+        // window; a hold-full grant keeps it firing for the rest of the run.
+        // Both make the first shot due immediately. A field pickup also opens
+        // its per-upgrade level window, so the temporary level (and any
+        // cadence it bought) reverts at the TTL; a hold-full grant opens no
+        // window. There is deliberately **no latch**: a cadence tick with no
+        // asteroid is simply skipped by the shared core, so nothing is banked.
+        this._miningLaserCadenceTimer = 0;
+        if (!permanent) this._openInstantWindow(id);
+        break;
       case 'phase_shift':
       case 'teleport':
       case 'extra_life':
@@ -880,8 +908,9 @@ export class EffectsRegistry {
    * The window is sized by the shared `resolveTemporaryWindow` resolver at
    * the effective upgrade level the pickup lands at, so the TTL is
    * per-upgrade data rather than a global constant — catalogue data for the
-   * instant kinds (Bomb / Smart Bomb / Orbital Strike 10 s, Phase Shift /
-   * Teleport / Mystery UFO 15 s, Extra Life 10 s) and the level-resolved
+   * instant kinds (Bomb / Smart Bomb / Orbital Strike / Mining Laser 10 s,
+   * Phase Shift / Teleport / Mystery UFO 15 s, Extra Life 10 s) and the
+   * level-resolved
    * effect duration for the timed kinds. Re-collecting during an
    * open window refreshes it to the full TTL — one timer per kind, never
    * additive (AC5).
@@ -1610,6 +1639,96 @@ export class EffectsRegistry {
     };
   }
 
+  // ── Mining Laser auto-fire (AH-0MW9QMNYP006ZO6T) ────────────────────
+
+  /**
+   * Whether the Mining Laser is currently active — permanently owned **or**
+   * inside a live field-pickup temporary window.
+   *
+   * The whole state is the shared level store's effective level (a permanent
+   * grant plus any temporary stacks), so there is no parallel "on" flag to
+   * drift: the field window's expiry clears the temporary stacks through the
+   * existing `_expireTimedEffect` path and this accessor goes false with it.
+   */
+  isMiningLaserActive(): boolean {
+    return this._levelStore.getEffectiveLevel('mining_laser') > 0;
+  }
+
+  /**
+   * The level-resolved interval (seconds) between Mining Laser shots.
+   *
+   * A whole sixteenth-note step of the shared 80 BPM lattice: **4 steps = one
+   * beat = 750 ms** on the first grant, one step (187.5 ms) sooner per level,
+   * floored at **1 step = 187.5 ms**. Returns
+   * {@link Number.POSITIVE_INFINITY} when no finite interval resolves (an
+   * unknown/unstable store), so consumers can treat it as "never due" rather
+   * than firing every frame. The seconds themselves live in
+   * `POWER_UP_LEVEL_SPECS.mining_laser`; the step constants in
+   * `src/core/constants.ts` state the same cadence in lattice steps.
+   */
+  miningLaserInterval(): number {
+    const interval =
+      this._levelStore.stats('mining_laser').miningLaserInterval;
+    return interval !== undefined && Number.isFinite(interval) && interval > 0
+      ? interval
+      : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * The level-resolved damage each Mining Laser shot deals to an asteroid
+   * (whole hits, minimum 1). Resolved live, so a pickup or level-up mid-window
+   * strengthens the next shot.
+   */
+  miningLaserDamage(): number {
+    return Math.max(
+      1,
+      Math.floor(
+        this._levelStore.stats('mining_laser').miningLaserDamage ?? 1,
+      ),
+    );
+  }
+
+  /**
+   * Advances the Mining Laser cadence by `dt` seconds and reports whether a
+   * shot is due this frame.
+   *
+   * - A field pickup starts rapid fire for its temporary window; a hold-full
+   *   grant fires immediately and keeps firing for the rest of the run. Both
+   *   set the first shot due at collection time.
+   * - Re-collecting refreshes the window **and** the level, so the cadence
+   *   shortens with the new level while the window restarts.
+   * - At the temporary window's expiry (when no permanent grant remains) the
+   *   store's level reverts to unowned and this returns `false` — fire stops.
+   * - Unlike the Orbital Strike there is **no latch and no banked shot**: a
+   *   due tick is reported once and the timer resets, so a beat with no
+   *   asteroid is simply skipped by the shared core (silence, not retention).
+   *   The clock is not advanced while inactive, so a re-collect starts clean.
+   *
+   * The registry owns the decision; the shared combat core selects the nearest
+   * live asteroid, resolves the damage through the shared kill seam and draws
+   * the beam (it alone knows the ship and the asteroid field), so the game and
+   * every gym run identical code.
+   *
+   * @param dt - Frame delta in seconds.
+   * @returns True when a shot is due this frame.
+   */
+  updateMiningLaser(dt: number): boolean {
+    if (!this.isMiningLaserActive()) {
+      // No permanent grant and no live window: fire is silent and the clock
+      // is parked so a re-collect always starts with an immediate shot.
+      this._miningLaserCadenceTimer = 0;
+      return false;
+    }
+    const interval = this.miningLaserInterval();
+    if (!Number.isFinite(interval) || interval <= 0) return false;
+    this._miningLaserCadenceTimer -= dt;
+    if (this._miningLaserCadenceTimer > 0) return false;
+    // Reset to the (possibly newly levelled) interval — one shot per cadence
+    // tick, never a banked volley across a long gap.
+    this._miningLaserCadenceTimer = interval;
+    return true;
+  }
+
   /**
    * Activates Phase Shift (upgrade-level duration for Teleport arrivals) —
    * e.g. on Teleport teleport arrival. Refreshes if already active — never
@@ -2245,6 +2364,7 @@ export class EffectsRegistry {
     // (AH-0MVS2T2DJ0069C0Y).
     this._strikeLatched = false;
     this._strikeLatchedDamage = null;
+    this._miningLaserCadenceTimer = 0;
     this._levelStore.reset();
   }
 }

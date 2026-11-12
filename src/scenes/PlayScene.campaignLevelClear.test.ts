@@ -11,12 +11,15 @@
  * These tests walk that path through the real `PlayScene`/`WaveManager` code —
  * the shipped (sequenced) campaign, a human-paced clear where the wave
  * time-limit carries survivors over, and a hangar-war deployment opened at
- * level 2 — and assert the observable outcome the player expects: the run keeps
- * ticking and advances to level 3. The regression they pin is a **wedged**
- * level clear (no exception, nothing left to shoot, no level advance): a
- * hold-full mineral choice collected while the mini-boss death sweep animates
- * used to pause the scene and freeze the sweep — the only route that finalises
- * the encounter — so the run died silently at exactly the moment the producer
+ * level 2. The arcade cases assert the observable outcome the player expects:
+ * the run keeps ticking and advances to level 3. A deployment now **ends on
+ * its wave-10 mini-boss** as a victory (AH-0MWCOW4IQ003XST5): it resolves the
+ * hex capture and never advances to level 3, so the same walk pins the
+ * deployment victory instead. The regression they pin is a **wedged** level
+ * clear (no exception, nothing left to shoot, no level advance): a hold-full
+ * mineral choice collected while the mini-boss death sweep animates used to
+ * pause the scene and freeze the sweep — the only route that finalises the
+ * encounter — so the run died silently at exactly the moment the producer
  * cleared level 2.
  */
 
@@ -38,7 +41,8 @@ import { GameOverScene } from './GameOverScene';
 import { buildHangarDeployment } from './hangarWar/hangarDeployment';
 import { MenuScene } from './MenuScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
-import { PlayScene } from './PlayScene';
+import { DEFENCE_REPORT_SCENE_KEY, DefenceReportScene } from './DefenceReportScene';
+import { PlayScene, VICTORY_TRANSITION_HOLD_MS } from './PlayScene';
 
 // A full level walk boots a Phaser game and clears ten waves; the Vitest
 // default 5 s timeout is far too tight under parallel load.
@@ -195,6 +199,7 @@ async function bootRun(data: {
     MineralChoiceScene,
     GameOverScene,
     MenuScene,
+    DefenceReportScene,
   ]);
   const scene = booted.scene as PlayScene;
   scene.setAsteroidSpawnerEnabled(false);
@@ -349,7 +354,7 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(gameState.isHoldFull()).toBe(false);
   });
 
-  it('advances a hangar-war deployment that starts at level 2', async () => {
+  it('ends a hangar-war deployment on its level-2 mini-boss as a victory', async () => {
     // hex-r1-2 is the ring's lowest-aggression hex (1 → campaign level 2), so
     // a deployment to it starts the run on the level under test.
     const deployment = buildHangarDeployment(deploymentPayload(), {
@@ -359,14 +364,32 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(deployment.startLevel).toBe(LEVEL_UNDER_TEST);
 
     const scene = await boot({ hangarWar: deployment });
+    const wm = scene.getWaveManager();
     expect(scene.isHangarWarRun()).toBe(true);
-    expect(scene.getWaveManager().level).toBe(LEVEL_UNDER_TEST);
+    expect(wm.level).toBe(LEVEL_UNDER_TEST);
+    expect(scene.getLastCapture()).toBeNull();
 
-    clearLevelTwo(scene);
+    // Walk level 2 to its wave-10 mini-boss, then defeat it through the real
+    // path. A deployment ends on that encounter (AH-0MWCOW4IQ003XST5): the
+    // defeat resolves the hex capture and ends the run as a victory, and it
+    // never advances to level 3 (the hex map can never reach the final boss).
+    scene.getGameState().lives = 99;
+    advanceToLevelTwoMiniBoss(scene);
+    killAllEnemies(scene);
 
-    expect(scene.sys.isActive()).toBe(true);
-    finishTransition(scene);
-    expect(scene.getWaveManager().level).toBe(3);
+    expect(wm.level).toBe(LEVEL_UNDER_TEST);
+    expect(wm.waveNumber).toBe(wm.waveCount);
+    expect(wm.bossTriggered).toBe(false);
+    expect(scene.getLastCapture()?.ok).toBe(true);
+
+    // The run ends in the between-sortie defence report as a victory (the
+    // run-end hold is a real Clock timer, so step the game past it).
+    await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
+    expect(scene.game.scene.isActive(DEFENCE_REPORT_SCENE_KEY)).toBe(true);
+    const report = scene.game.scene.getScene(
+      DEFENCE_REPORT_SCENE_KEY,
+    ) as DefenceReportScene;
+    expect((report as unknown as { won: boolean | null }).won).toBe(true);
     // A deployment keeps its own session: the classic checkpoint is untouched.
     expect(localStorage.getItem('ai_hell_checkpoint')).toBeNull();
   });

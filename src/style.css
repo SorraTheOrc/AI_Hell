@@ -277,3 +277,36 @@ body {
   font-family: monospace;
   font-size: 11px;
 }
+
+/* Gym-only manual Assign button (AH-0MW82M3LB007OQG6): one per power-up
+ * row, sitting inside the collapsible body (never the header). The disabled
+ * state is the visual cap signal — a clicked disabled button is a no-op. */
+#gym-powerup-level-readout .gym-powerup-assign {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 2px 10px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #07110d;
+  background: #88ffcc;
+  border: 1px solid #88ffcc;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+#gym-powerup-level-readout .gym-powerup-assign:hover:not(:disabled) {
+  background: #b6ffe0;
+  border-color: #b6ffe0;
+}
+
+#gym-powerup-level-readout .gym-powerup-assign:focus-visible {
+  outline: 2px solid #88ffcc;
+  outline-offset: 1px;
+}
+
+#gym-powerup-level-readout .gym-powerup-assign:disabled {
+  color: #566;
+  background: #1b1f22;
+  border-color: #2a2a2a;
+  cursor: not-allowed;
+}

@@ -1,3 +1,5 @@
+import * as path from 'node:path';
+
 import { defineConfig } from 'vite';
 
 import { configCsvPlugin } from './vite/plugins/configCsvPlugin';
@@ -5,9 +7,18 @@ import { botTuningPlugin } from './vite/plugins/botTuningPlugin';
 import { telemetryUploadPlugin } from './vite/plugins/telemetryUploadPlugin';
 import { DEV_WATCH_IGNORE_PATTERNS } from './vite/watchIgnore';
 
+const repoRoot = __dirname;
+
 export default defineConfig({
   // Relative base so the built bundle works from any static host.
   base: './',
+  // `@/` → `src/` (mirrored in tsconfig.json and vitest.config.ts) so app and
+  // test code can import without deep relative paths (AH-0MVHWG20L002EOR1).
+  resolve: {
+    alias: {
+      '@': path.join(repoRoot, 'src'),
+    },
+  },
   build: {
     target: 'es2022',
     outDir: 'dist',

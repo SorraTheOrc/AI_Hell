@@ -25,7 +25,9 @@ import {
   BOSS_MOVE_AMPLITUDE_Y,
   BOSS_MOVE_PERIOD_MS,
   BOSS_PHASE_COUNT,
+  BOSS_PULSE_WAVE_STROKE_WIDTH,
   Boss,
+  PULSE_WAVE_NAME,
   playBossSpawnSound,
 } from './Boss';
 
@@ -1175,15 +1177,21 @@ describe('Boss — pulse pattern projectile identity (AH-0MV822FHN005PK37)', () 
     // 1 pulse wave + 3 aimed shots (phase 1).
     expect(bullets.length).toBeGreaterThanOrEqual(4);
 
-    // Bullets (the pulse wave and the aimed shots) are cached-texture images
-    // (AH-0MW2DAY2L004QSKF), so the only new Graphics is the one pale launch
-    // pop at the Boss's body (one pop per volley, not per shot).
+    // Bullets (the aimed shots) are cached-texture images
+    // (AH-0MW2DAY2L004QSKF) and the pulse wave is the single native-resolution
+    // stroked-ring Graphics (AH-0MW80W5ER005E884); the other new Graphics is
+    // the one pale launch pop at the Boss's body (one pop per volley, not per
+    // shot).
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    // pulse wave (1) + aimed shots (3) + muzzle pop (1)
-    expect(graphicsAfter).toBe(graphicsBefore + 1);
+    // pulse wave ring (1) + muzzle pop (1); aimed shots are cached images.
+    expect(graphicsAfter).toBe(graphicsBefore + 2);
+    // Exactly one live pulse-wave ring carries the shared display-list name.
+    expect(
+      scene.children.list.filter((c) => c.name === PULSE_WAVE_NAME),
+    ).toHaveLength(1);
 
     // Exactly one bullet is the expanding pulse wave.
     const waves = bullets.filter((b) => b.isPulseWave);
@@ -1244,14 +1252,19 @@ describe('Boss — desperation burst projectile identity (AH-0MV822FTS00156F5)',
     // 5 spread + 8 spiral + 1 aimed + 1 pulse wave.
     expect(bullets.length).toBeGreaterThanOrEqual(15);
 
-    // Bullets (tracer shots and the pulse wave) are cached-texture images
-    // (AH-0MW2DAY2L004QSKF), so the only new Graphics is the one hot-gold
-    // launch pop at the Boss's body (one pop per volley, not per layer).
+    // Tracer shots are cached-texture images (AH-0MW2DAY2L004QSKF) and the
+    // pulse wave is the single native-resolution stroked-ring Graphics
+    // (AH-0MW80W5ER005E884); the other new Graphics is the one hot-gold launch
+    // pop at the Boss's body (one pop per volley, not per layer).
     const graphicsAfter = scene.children.list.filter(
       (c): c is Phaser.GameObjects.Graphics =>
         c instanceof Phaser.GameObjects.Graphics,
     ).length;
-    expect(graphicsAfter).toBe(graphicsBefore + 1);
+    // pulse wave ring (1) + muzzle pop (1).
+    expect(graphicsAfter).toBe(graphicsBefore + 2);
+    expect(
+      scene.children.list.filter((c) => c.name === PULSE_WAVE_NAME),
+    ).toHaveLength(1);
 
     // Exactly one bullet is the expanding pulse wave; the rest are tracers.
     const waves = bullets.filter((b) => b.isPulseWave);
@@ -1379,5 +1392,249 @@ describe('Boss — demonstrated weapon volley (AH-0MVXSGXF4000GDRQ)', () => {
     boss.startTelegraph(1_000_000);
 
     expect(boss.update(1_000_000, 0, 960, 540)).toEqual([]);
+  });
+});
+
+// ── Pulse-wave lifecycle + crisp ring render (AH-0MW80W5ER005E884) ──
+//
+// Two artefacts reported in play: a superseded wave was orphaned on the
+// display list (frozen yellow ring at the edge of the wave's range), and the
+// ring was a 3 px stroke baked at radius 30 then magnified up to ~37× (a soft,
+// stair-stepped band at large radii). These tests pin both fixes:
+//
+//  - lifecycle: exactly one live wave per boss; the wave is removed from the
+//    display list when it leaves range and when the boss is destroyed;
+//  - render: the wave is drawn at native resolution (never scaled) with a
+//    constant stroke width, so it stays crisp at every radius, and it fades
+//    smoothly to zero at the range limit.
+
+/** Phaser Graphics opcodes used by the pulse-wave ring (see Phaser Commands.js). */
+const GfxCmd = {
+  ARC: 0,
+  LINE_STYLE: 6,
+  BEGIN_PATH: 1,
+  STROKE_PATH: 9,
+  FILL_RECT: 3,
+  LINE_TO: 4,
+  MOVE_TO: 5,
+  FILL_STYLE: 7,
+  FILL_PATH: 8,
+  CLOSE_PATH: 2,
+  SAVE: 14,
+  RESTORE: 15,
+  TRANSLATE: 16,
+  SCALE: 17,
+  ROTATE: 18,
+} as const;
+
+interface ParsedRing {
+  lineWidths: number[];
+  radii: number[];
+}
+
+/** Extracts LINE_STYLE widths and ARC radii from a Graphics command buffer. */
+function parseRing(buf: number[]): ParsedRing {
+  const lineWidths: number[] = [];
+  const radii: number[] = [];
+  let i = 0;
+  while (i < buf.length) {
+    const op = buf[i];
+    switch (op) {
+      case GfxCmd.ARC:
+        // ARC, x, y, radius, startAngle, endAngle, anticlockwise, overshoot
+        radii.push(buf[i + 3]);
+        i += 8;
+        break;
+      case GfxCmd.LINE_STYLE:
+        // LINE_STYLE, width, color, alpha
+        lineWidths.push(buf[i + 1]);
+        i += 4;
+        break;
+      case GfxCmd.FILL_RECT:
+        i += 5;
+        break;
+      case GfxCmd.LINE_TO:
+      case GfxCmd.MOVE_TO:
+        i += 3;
+        break;
+      case GfxCmd.FILL_STYLE:
+        i += 3;
+        break;
+      case GfxCmd.SAVE:
+      case GfxCmd.RESTORE:
+      case GfxCmd.BEGIN_PATH:
+      case GfxCmd.CLOSE_PATH:
+      case GfxCmd.FILL_PATH:
+      case GfxCmd.STROKE_PATH:
+        i += 1;
+        break;
+      case GfxCmd.SCALE:
+        i += 3;
+        break;
+      case GfxCmd.TRANSLATE:
+        i += 3;
+        break;
+      case GfxCmd.ROTATE:
+        i += 2;
+        break;
+      default:
+        i += 1;
+        break;
+    }
+  }
+  return { lineWidths, radii };
+}
+
+describe('Boss — pulse-wave lifecycle and crisp ring render (AH-0MW80W5ER005E884)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(): Boss {
+    return new Boss(booted!.scene, {
+      x: 480,
+      y: 270,
+      formationOffset: { row: 0, col: 0 },
+      shotProbability: 1,
+      rng: () => 0,
+    });
+  }
+
+  /** Counts live pulse-wave rings currently on the scene display list. */
+  function waveCount(): number {
+    return booted!.scene.children.list.filter(
+      (child) => child.name === PULSE_WAVE_NAME,
+    ).length;
+  }
+
+  /** Fires one Pulse volley (wave + aimed shots) at time `now`. */
+  function firePulse(boss: Boss, now: number): void {
+    boss._simulateTelegraphElapsed();
+    boss.tryFirePulseBullets(now);
+  }
+
+  /** Advances the wave until it leaves range; returns the number of steps. */
+  function advanceUntilExit(boss: Boss): number {
+    for (let step = 1; step <= 500; step++) {
+      if (boss.advancePulseWave(0.01, 960, 540)) return step;
+    }
+    return -1;
+  }
+
+  it('supersede — a second volley inside one wave lifetime destroys the earlier wave (exactly one live wave)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    // First volley: spawns wave #1.
+    firePulse(boss, 1_000_000);
+    expect(waveCount()).toBe(1);
+
+    // Second volley one attack interval later — still well inside the wave's
+    // ~1.8 s lifetime, so wave #1 is genuinely in flight when #2 spawns.
+    firePulse(boss, 1_000_000 + BOSS_ATTACK_INTERVAL);
+    expect(waveCount()).toBe(1);
+    // The boss's single wave slot tracks the surviving ring.
+    expect(boss.getPulseWaveGraphics()).not.toBeNull();
+    expect(boss.getPulseWaveGraphics()!.name).toBe(PULSE_WAVE_NAME);
+  });
+
+  it('range exit — the wave leaves the display list once it passes its range limit', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    firePulse(boss, 1_000_000);
+
+    const wave = boss.getPulseWaveGraphics();
+    expect(wave).not.toBeNull();
+
+    const steps = advanceUntilExit(boss);
+    expect(steps).toBeGreaterThan(0);
+
+    expect(boss.getPulseWaveGraphics()).toBeNull();
+    expect(wave!.active).toBe(false);
+    expect(waveCount()).toBe(0);
+  });
+
+  it('boss destroy — destroying the boss removes any live wave from the display list', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    firePulse(boss, 1_000_000);
+
+    const wave = boss.getPulseWaveGraphics();
+    expect(wave).not.toBeNull();
+    expect(waveCount()).toBe(1);
+
+    boss.destroy();
+
+    expect(wave!.active).toBe(false);
+    expect(waveCount()).toBe(0);
+  });
+
+  it('render — the ring is drawn at native resolution with a constant stroke at every radius', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    firePulse(boss, 1_000_000);
+
+    const wave = boss.getPulseWaveGraphics();
+    expect(wave).not.toBeNull();
+
+    const seenRadii = new Set<number>();
+    for (let step = 1; step <= 300; step++) {
+      if (boss.advancePulseWave(0.01, 960, 540)) break;
+      const live = boss.getPulseWaveGraphics();
+      expect(live).not.toBeNull();
+
+      // Native resolution: the ring is never magnified by a sprite scale.
+      expect(live!.scaleX).toBe(1);
+      expect(live!.scaleY).toBe(1);
+
+      // Constant stroke: every LINE_STYLE in the redrawn ring stays 3 px,
+      // independent of the radius.
+      const { lineWidths, radii } = parseRing(
+        live!.commandBuffer as unknown as number[],
+      );
+      expect(lineWidths.length).toBeGreaterThan(0);
+      for (const width of lineWidths) {
+        expect(width).toBe(BOSS_PULSE_WAVE_STROKE_WIDTH);
+      }
+      expect(radii.length).toBeGreaterThan(0);
+      seenRadii.add(Math.round(radii[0]));
+    }
+
+    // The assertion covers a genuinely expanding ring, not one radius.
+    expect(seenRadii.size).toBeGreaterThan(5);
+  });
+
+  it('render — the wave fades smoothly to zero at the range limit instead of popping', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    firePulse(boss, 1_000_000);
+
+    const maxRadius = Math.sqrt(480 ** 2 + 270 ** 2);
+    let previous = Number.POSITIVE_INFINITY;
+    for (let step = 1; step <= 500; step++) {
+      const exited = boss.advancePulseWave(0.01, 960, 540);
+      const live = boss.getPulseWaveGraphics();
+      if (exited || !live) break;
+      // Alpha never increases while the ring expands.
+      expect(live.alpha).toBeLessThanOrEqual(previous + 1e-6);
+      previous = live.alpha;
+    }
+
+    // Just before the range limit the ring has faded to (almost) nothing.
+    expect(previous).toBeLessThan(0.05);
+    expect(previous).toBeGreaterThanOrEqual(0);
+    // Wave speed and expansion are untouched by the render fix.
+    const bossForSpeed = makeBoss();
+    firePulse(bossForSpeed, 1_000_000);
+    const startRadius = bossForSpeed.getPulseWaveRadius();
+    bossForSpeed.advancePulseWave(0.1, 960, 540);
+    // 300 px/s expansion, documented and unchanged (double-advance fix is a
+    // separate work item, so exactly one advance here grows by 30 px).
+    expect(bossForSpeed.getPulseWaveRadius() - startRadius).toBeCloseTo(30);
+    expect(startRadius).toBeLessThan(maxRadius);
   });
 });

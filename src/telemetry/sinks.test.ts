@@ -16,6 +16,7 @@ import {
   createMemoryLineWriter,
   createTelemetrySink,
   linesToNdjson,
+  type TelemetryLineBuffer,
   type TelemetryTransport,
 } from './sinks';
 import { TELEMETRY_SCHEMA_VERSION, type TelemetryRecord } from './schema';
@@ -33,6 +34,7 @@ function config(overrides: Partial<TelemetryConfig>): TelemetryConfig {
     batchSize: 4,
     devCollection: false,
     recording: true,
+    maxRetainedMessageBytes: 16 * 1024 * 1024,
     ...overrides,
   };
 }
@@ -252,5 +254,238 @@ describe('remote sink stub (AC2)', () => {
     expect(sink).toBeInstanceOf(RemoteTelemetrySink);
     await sink.write([HEADER]);
     expect((sink as RemoteTelemetrySink).droppedBatches).toBe(1);
+  });
+});
+
+/**
+ * Bounded-retention + windowed read/drain seam (AH-0MWDGPYDW006MTTM — the
+ * red half of the test-first gate for the F3 implementation child
+ * AH-0MWDGPZL8005QU13).
+ *
+ * **TEST-FIRST → GREEN.** These assertions were authored under Vitest's
+ * `it.fails(...)` while the seam was missing; the implementation slice
+ * (AH-0MWDGPZL8005QU13) flipped each `.fails` back to `it` once the memory
+ * line writer gained its bounded-retention cap (drop-oldest
+ * **confirmed/skipped** first), a dropped-record base so absolute record-count
+ * offsets stay correct, and a read that returns a bounded, in-order window
+ * from an absolute record offset. The assertions themselves are unchanged by
+ * the flip.
+ *
+ * Contract pinned:
+ * - `createMemoryLineWriter({ maxRetainedBytes })` retains at most
+ *   `maxRetainedBytes` bytes of NDJSON body. Once a `writeLine` pushes the
+ *   retained body over the cap, the **oldest** retained records are evicted,
+ *   preferring records the caller has confirmed/finally-skipped
+ *   (`dropConfirmed`) and touching the oldest unconfirmed only as the final
+ *   bound that keeps memory bounded under a total dev-server outage.
+ * - `baseRecord` is the absolute record offset of the first retained line and
+ *   `totalRecords` the absolute count ever written, so a drain never breaks
+ *   the streaming protocol's absolute-offset watermark semantics.
+ * - `readWindow(fromRecord, limits?)` returns the retained records at/after an
+ *   absolute offset, in original order, cut to `limits` (or the whole retained
+ *   tail without them); a `fromRecord` below the retained base never re-reads
+ *   evicted content.
+ * - `read()` keeps returning the whole **retained** run (the dev CLI /
+ *   `window.__aiHellTelemetry` contract): a normal below-cap run is
+ *   byte-identical to today.
+ */
+describe('memory line writer — bounded retention and windowed read/drain (AH-0MWDGPYDW006MTTM)', () => {
+  /** Window limits for {@link RetainedLineBuffer.readWindow} (F3 seam). */
+  interface RetainedWindowLimits {
+    readonly maxBytes: number;
+    readonly maxRecords: number;
+  }
+
+  /** One windowed read's result (F3 seam). */
+  interface RetainedWindow {
+    readonly lines: readonly string[];
+    /** Absolute record offset of the first returned line. */
+    readonly fromRecord: number;
+    /** Absolute record offset one past the last returned line. */
+    readonly nextRecord: number;
+  }
+
+  /** The F3 drain-seam surface added to the memory line writer. */
+  interface RetainedLineBuffer extends TelemetryLineBuffer {
+    /** Absolute count of lines ever written (monotonic, never shrinks). */
+    readonly totalRecords: number;
+    /** Absolute record offset of the first retained line (evictions only). */
+    readonly baseRecord: number;
+    /** Marks records below `absoluteCount` as confirmed/finally-skipped. */
+    dropConfirmed(absoluteCount: number): void;
+    /** Reads a bounded, in-order window from an absolute record offset. */
+    readWindow(fromRecord: number, limits?: RetainedWindowLimits): RetainedWindow;
+  }
+
+  /** The F3 seam: `createMemoryLineWriter` gains an optional retention cap. */
+  const makeRetainedWriter = createMemoryLineWriter as unknown as (
+    options?: { readonly maxRetainedBytes?: number },
+  ) => RetainedLineBuffer;
+
+  /** An ASCII NDJSON line of exactly `bytes` characters, unique per index. */
+  function line(index: number, bytes = 10): string {
+    return `${'x'.repeat(bytes - 4)}${String(index).padStart(4, '0')}`;
+  }
+
+  it(
+    'bounds the retained buffer by the cap, dropping the oldest unconfirmed as the final bound',
+    () => {
+      // Cap sized for exactly three ten-byte lines (3 × 10 + 3 newlines = 33).
+      const writer = makeRetainedWriter({ maxRetainedBytes: 33 });
+      for (let i = 0; i < 10; i += 1) writer.writeLine(line(i));
+
+      // Even with nothing confirmed (a total dev-server outage: every upload
+      // failed and nothing was skipped either), memory stays bounded — the
+      // oldest unconfirmed records fall off as the final bound.
+      expect(writer.read().length).toBeLessThanOrEqual(33);
+      expect(writer.read().trimEnd().split('\n')).toEqual([
+        line(7),
+        line(8),
+        line(9),
+      ]);
+      expect(writer.baseRecord).toBe(7);
+      expect(writer.totalRecords).toBe(10);
+      // Absolute offsets stay correct: a windowed read past the end returns
+      // nothing and reports the absolute end of the run.
+      expect(writer.readWindow(10)).toEqual({
+        lines: [],
+        fromRecord: 10,
+        nextRecord: 10,
+      });
+    },
+  );
+
+  it(
+    'drops confirmed content first when the cap bites, keeping the unconfirmed tail in order',
+    () => {
+      const writer = makeRetainedWriter({ maxRetainedBytes: 33 });
+      for (let i = 0; i < 6; i += 1) writer.writeLine(line(i));
+      writer.dropConfirmed(4); // records 0..3 are confirmed/finally-skipped
+
+      // 60 bytes > 33 → the confirmed prefix [0..3] is evicted first; the
+      // unconfirmed tail {4,5} is untouched and stays in order.
+      expect(writer.baseRecord).toBe(4);
+      expect(writer.read().trimEnd().split('\n')).toEqual([line(4), line(5)]);
+      expect(writer.totalRecords).toBe(6);
+
+      // The windowed read from the confirmed offset returns exactly the
+      // unconfirmed, in-order records with correct absolute offsets.
+      expect(writer.readWindow(4)).toEqual({
+        lines: [line(4), line(5)],
+        fromRecord: 4,
+        nextRecord: 6,
+      });
+      // Reading from below the retained base clamps up — evicted content is
+      // never re-read.
+      expect(writer.readWindow(0).fromRecord).toBe(4);
+      expect(writer.readWindow(0).lines).toEqual([line(4), line(5)]);
+    },
+  );
+
+  it(
+    'falls back to evicting the oldest unconfirmed only after confirmed content is exhausted',
+    () => {
+      const writer = makeRetainedWriter({ maxRetainedBytes: 33 });
+      for (let i = 0; i < 6; i += 1) writer.writeLine(line(i));
+      writer.dropConfirmed(1); // only record 0 is confirmed/skipped
+
+      // 60 > 33. Evict {0} (confirmed) → 50 still > 33 → the final bound
+      // evicts the oldest unconfirmed {1,2} → {3,4,5} = 33 bytes.
+      expect(writer.baseRecord).toBe(3);
+      expect(writer.read().trimEnd().split('\n')).toEqual([
+        line(3),
+        line(4),
+        line(5),
+      ]);
+      expect(writer.totalRecords).toBe(6);
+    },
+  );
+
+  it('reads a bounded, in-order window from an absolute record offset', () => {
+    const writer = makeRetainedWriter();
+    for (let i = 0; i < 5; i += 1) writer.writeLine(line(i));
+    writer.dropConfirmed(2); // below the cap → nothing is ever evicted
+
+    expect(writer.totalRecords).toBe(5);
+    expect(writer.baseRecord).toBe(0);
+
+    // From the confirmed offset: only the unconfirmed records, in order.
+    expect(writer.readWindow(2)).toEqual({
+      lines: [line(2), line(3), line(4)],
+      fromRecord: 2,
+      nextRecord: 5,
+    });
+    // A records-ceiling cuts the window without dropping anything.
+    expect(writer.readWindow(2, { maxBytes: 1000, maxRecords: 2 })).toEqual({
+      lines: [line(2), line(3)],
+      fromRecord: 2,
+      nextRecord: 4,
+    });
+    // Beyond the end: an empty window clamped to the absolute end.
+    expect(writer.readWindow(9)).toEqual({ lines: [], fromRecord: 5, nextRecord: 5 });
+  });
+
+  it('keeps a normal below-cap run byte-identical and tracked from absolute zero', () => {
+    const writer = makeRetainedWriter();
+    const recorded = [
+      JSON.stringify({ kind: 'event', tick: 1 }),
+      JSON.stringify({ kind: 'event', tick: 2 }),
+      JSON.stringify({ kind: 'event', tick: 3 }),
+    ];
+    for (const recordLine of recorded) writer.writeLine(recordLine);
+
+    // The whole retained run reads back exactly as written — a normal demo
+    // run sits orders of magnitude under the default cap, so the dev CLI /
+    // `window.__aiHellTelemetry` accessor contracts are byte-identical.
+    expect(writer.read()).toBe(`${recorded.join('\n')}\n`);
+    expect(writer.baseRecord).toBe(0);
+    expect(writer.totalRecords).toBe(3);
+  });
+
+  it('bounds an oversized run with the default cap when no cap is given', () => {
+    const writer = makeRetainedWriter();
+    const fill = 'y'.repeat(200);
+    for (let i = 0; i < 120_000; i += 1) writer.writeLine(fill);
+
+    // The default 16 MiB retention cap keeps a multi-hour session bounded.
+    expect(writer.read().length).toBeLessThanOrEqual(16 * 1024 * 1024);
+    expect(writer.totalRecords).toBe(120_000);
+    expect(writer.baseRecord).toBeGreaterThan(0);
+    // Heavy by design: it writes ~24 MiB across 120k lines and evicts via an
+    // O(n) `shift`, so the default 5 s test timeout is too tight under load.
+  }, 20_000);
+
+  it('exposes the drain seam through the JSONL sink for its retained writer', () => {
+    // One EVENT line is ~88 bytes, so a 100-byte cap retains exactly one.
+    const sink = new JsonlTelemetrySink(createMemoryLineWriter({ maxRetainedBytes: 100 }));
+
+    sink.write([EVENT, EVENT]); // two lines > 100 → the oldest is evicted
+    expect(sink.readWindow(0)).toMatchObject({ fromRecord: 1, nextRecord: 2 });
+    expect(sink.readWindow(0)!.lines).toHaveLength(1);
+
+    // Confirming the evicted prefix never re-reads it: the window clamps to
+    // the retained base, and the retained tail is still the whole retained run.
+    sink.dropConfirmed(1);
+    expect(sink.readWindow(0)!.fromRecord).toBe(1);
+    expect(sink.readWindow(1)!.lines).toEqual([sink.read()!.trimEnd()]);
+
+    // A writer that does not retain a window reports null/no-ops.
+    const plainSink = new JsonlTelemetrySink({ writeLine: vi.fn() });
+    expect(plainSink.readWindow(0)).toBeNull();
+    expect(() => plainSink.dropConfirmed(1)).not.toThrow();
+  });
+
+  it('wires the configured retention cap into the factory-created dev sink', () => {
+    const sink = createTelemetrySink(
+      config({ sink: 'jsonl', maxRetainedMessageBytes: 33 }),
+    ) as JsonlTelemetrySink;
+
+    sink.write([EVENT, EVENT, EVENT]); // 3 × ~22 bytes > 33 → bounded
+    expect(sink.read()!.length).toBeLessThanOrEqual(33);
+    expect(sink.readWindow(3)).toEqual({
+      lines: [],
+      fromRecord: 3,
+      nextRecord: 3,
+    });
   });
 });

@@ -15,8 +15,11 @@ import { describe, expect, it } from 'vitest';
 
 import { parseDifficultyCurves } from '../csv';
 import { LEVEL_SCALING_MAX_LEVEL, enemyCountMultiplier } from '../levelScaling';
+import { MIN_LEVEL } from '../GameState';
 import {
   HEX_AGGRESSION_BASELINE,
+  MAX_HEX_AGGRESSION,
+  beatableAggressionCeiling,
   hexAggressionLevel,
   hexBossHpMultiplier,
   hexDifficultyProfile,
@@ -158,5 +161,43 @@ describe('hexDifficultyProfile', () => {
     expect(profile.aggression).toBe(0);
     expect(profile.level).toBe(1);
     expect(profile.bossHpMultiplier).toBe(1);
+  });
+});
+
+describe('beatableAggressionCeiling — the shared definition of beatable', () => {
+  it('is neutral at the minimum fleet (strength 2 → aggression 2)', () => {
+    expect(beatableAggressionCeiling(2)).toBe(2);
+  });
+
+  it('is monotonic non-decreasing in strength', () => {
+    let previous = -1;
+    for (const strength of [0, 1, 2, 3, 5, 8, 12, 40]) {
+      const ceiling = beatableAggressionCeiling(strength);
+      expect(ceiling).toBeGreaterThanOrEqual(previous);
+      previous = ceiling;
+    }
+  });
+
+  it('never falls below zero and never exceeds the aggression ceiling', () => {
+    for (const strength of [-5, 0, 2, 9, 100]) {
+      const ceiling = beatableAggressionCeiling(strength);
+      expect(ceiling).toBeGreaterThanOrEqual(0);
+      expect(ceiling).toBeLessThanOrEqual(MAX_HEX_AGGRESSION);
+    }
+  });
+
+  it('round-trips through hexAggressionLevel at several strengths', () => {
+    for (const strength of [2, 3, 5, 9, 20]) {
+      const ceiling = beatableAggressionCeiling(strength);
+      expect(hexAggressionLevel(ceiling)).toBe(
+        Math.min(LEVEL_SCALING_MAX_LEVEL, MIN_LEVEL + strength),
+      );
+    }
+  });
+
+  it('treats unusable strength as zero', () => {
+    expect(beatableAggressionCeiling(Number.NaN)).toBe(0);
+    expect(beatableAggressionCeiling(Number.POSITIVE_INFINITY)).toBe(0);
+    expect(beatableAggressionCeiling(-5)).toBe(0);
   });
 });

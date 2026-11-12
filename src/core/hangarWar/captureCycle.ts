@@ -10,8 +10,9 @@
  *
  * ## What one captured hex changes
  *
- * A deployment that ends on its hex boss resolves the capture in four steps,
- * all in one payload write:
+ * A deployment that ends on its level's **mini-boss** (GDD §8.2: one campaign
+ * level per deployment) resolves the capture in four steps, all in one payload
+ * write:
  *
  * 1. **Bank the salvage.** The run's cumulative salvage at the boss moment is
  *    banked through the shipped {@link bankSalvage} rule (the same

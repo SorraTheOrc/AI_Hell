@@ -64,6 +64,7 @@ import {
   powerUpDropChance,
   scaleCampaignLevelCounts,
 } from '../core/levelScaling';
+import { extraLifeAdaptiveMultiplier } from '../core/livesScaling';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import {
   DEFAULT_RULES,
@@ -157,6 +158,7 @@ import {
   orderedOwnedKinds,
   type MiniBossWheelOutcome,
   type MiniBossWheelWedge,
+  type MiniBossWinReward,
 } from '../powerups/miniBossWheel';
 import {
   MINI_BOSS_WHEEL_SCENE_KEY,
@@ -326,7 +328,7 @@ import {
 import { LaneTraffic } from '../entities/LaneTraffic';
 import { Boss, BossPhase, BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { MiniBoss, type MiniBossConfig } from '../entities/MiniBoss';
-import { miniBossConfigForLevel, miniBossDesignForLevel } from '../waves/miniBossDesigns';
+import { miniBossConfigForLevel, miniBossDesignForLevel, hexMiniBossConfigForLevel } from '../waves/miniBossDesigns';
 import {
   playerPowerScore,
   scaledEncounterHp,
@@ -348,6 +350,7 @@ import {
   rollAsteroidExtraLife,
   type AsteroidKillDropEntity,
 } from './core/asteroidKillDrops';
+import { spawnGuaranteedMiniBossExtraLife } from './core/miniBossDrops';
 import { splitAsteroid } from './core/asteroidSplit';
 import {
   applyMineralChoiceReward,
@@ -856,16 +859,18 @@ export class PlayScene extends CombatScene<
   private hangarWarState: HangarWarPayload | null = null;
 
   /**
-   * The hex boss variant this deployment's final encounter runs with
-   * (AH-0MVUXCAW0001VUM6), or `null` for the shipped arcade run. A **variant**
-   * on the shared boss path (colour/demonstrated-weapon/hit pool), never a
-   * separate boss implementation.
+   * The hex profile this deployment's encounters are configured from
+   * (AH-0MVUXCAW0001VUM6), or `null` for the shipped arcade run. Pure data
+   * mapped onto the shipped entities' config hooks — the wave-10 `MiniBoss`
+   * that ends a deployment (body colour + opening demonstrated volley + hit
+   * pool) and the final `Boss` seam (colour/demonstrated-weapon/hit pool) —
+   * never a separate encounter implementation.
    */
   private hexBossProfile: HexBossProfile | null = null;
 
   /**
    * The last capture-cycle resolution (win path or defensive refusal), kept as
-   * the scene's test/UI seam. `null` until a deployment's boss is defeated.
+   * the scene's test/UI seam. `null` until a deployment's mini-boss is defeated.
    */
   private lastCapture: HexCaptureResult | null = null;
 
@@ -901,6 +906,28 @@ export class PlayScene extends CombatScene<
    * (parent AH-0MVLISU03006WDOD AC3/AC6).
    */
   private miniBossWheelOutcome: MiniBossWheelOutcome | null = null;
+
+  /**
+   * The mini-boss reward resolved by a **winning hex deployment**, carried to
+   * `DefenceReportScene` so it can be revealed after the defence report
+   * (parent AH-0MWBW1B1Z0059CC2, producer Q2 = b). `null` for the arcade run
+   * and for a lost deployment. The wheel outcome is applied to the (still
+   * live) run-scoped player at resolution; the carried copy is the reveal.
+   */
+  private pendingWinReward: MiniBossWinReward | null = null;
+
+  /**
+   * The between-sortie frontier tick resolved on a **winning hex deployment**,
+   * carried to `_finishRun` so it is not resolved twice.
+   *
+   * The tick is resolved **before** the capture at the mini-boss defeat, so a
+   * hex the sortie just won can never be attacked (and flipped) by that same
+   * tick before the player reaches the map — the newly held hex is what the
+   * defence report and the map present. The tick's record is still the report's
+   * payload; `null` for the arcade run and for a lost deployment (which
+   * resolves its tick in `_finishRun` as before).
+   */
+  private pendingBetweenSortieTick: FrontierTickResult | null = null;
 
   /**
    * Live handle for the in-flight mini-boss death sweep (parent
@@ -1021,6 +1048,13 @@ export class PlayScene extends CombatScene<
    * (level 1 is exactly that base).
    */
   private rules: GameRules = DEFAULT_RULES;
+  /**
+   * The lives this run started with — the baseline of the life-adaptive Extra
+   * Life curve (AH-0MW8178ZR0090CNY). Resolved in `create()` after any hangar
+   * deployment has applied its starting lives; a plain arcade run uses the
+   * `GameRules.runStartingLives` tunable (default 3).
+   */
+  private runStartingLives = DEFAULT_RULES.runStartingLives;
 
   /**
    * The resolved per-run seed (AH-0MUY08V6W001SJJN). Assigned once per run
@@ -1445,10 +1479,21 @@ export class PlayScene extends CombatScene<
             this.gameState.lives = lives;
             this.effectsRegistry.setLives(lives);
           },
+          // Grants route through the shared permanent-grant seam so the HUD
+          // upgrade list and the effect state show what the run deployed with
+          // (AH-0MWCFKHWD002RKX9).
+          getEffectsRegistry: () => this.effectsRegistry,
         },
         this.hangarWarDeployment,
       );
     }
+    // Life-adaptive Extra Life baseline (AH-0MW8178ZR0090CNY): the run's
+    // starting lives is the reference above which the Extra Life weight is the
+    // unchanged baseline. A hangar deployment overrides the arcade default via
+    // its hull result (now applied, above); a plain run uses the persisted
+    // `GameRules.runStartingLives` tunable.
+    this.runStartingLives =
+      this.hangarWarDeployment?.startingLives ?? rules.runStartingLives;
     // Hold capacity (first hold) and its growth multiplier come from the
     // game-rules config, so the game and every gym progress identically
     // (GDD §4.5, AH-0MUKC6IML0082ZR4).
@@ -1631,6 +1676,8 @@ export class PlayScene extends CombatScene<
     this.miniBossRewardOptions = [];
     this.miniBossWheelWedges = [];
     this.miniBossWheelOutcome = null;
+    this.pendingWinReward = null;
+    this.pendingBetweenSortieTick = null;
     this.miniBossSweepHandle = null;
     this.miniBossSweepTargets = [];
     this.salvageBank = null;
@@ -2054,14 +2101,11 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Builds the config for the active level's mini-boss (extension point for
-   * the per-level mini-boss designs feature, epic AH-0MVCC8XSS007P01Z).
-   *
-   * Until those designs land this returns the **generic default** mini-boss
-   * — config-driven phases, patterns, HP and colour defaulted by
-   * {@link MiniBoss} — positioned like the final boss at the screen centre.
-   * An override supplies a per-level design without changing the share/defeat
-   * wiring.
+   * Builds the config for the active level's mini-boss (epic
+   * AH-0MVCC8XSS007P01Z). The per-level bespoke design supplies identity,
+   * patterns, minions and hit pool; a Hangar War deployment's profile is laid
+   * over it so the encounter ends the deployment wearing the hex's colours and
+   * demonstrating its grant (Rule 2).
    */
   protected miniBossConfigFor(level: number): MiniBossConfig {
     // The ten bespoke per-level designs are the single data source for the
@@ -2069,13 +2113,22 @@ export class PlayScene extends CombatScene<
     // The hit pool scales with the player's total permanent upgrade levels
     // (AH-0MVH87A3L004VOLD) so an upgraded ship faces a tougher encounter.
     const design = miniBossDesignForLevel(level);
-    return miniBossConfigForLevel(level, {
+    const spawn = {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2 - 80,
       formationOffset: { row: 0, col: 0 },
       rng: this.rng,
       hpPerPhase: scaledEncounterHp(design.hpPerPhase, this.getPlayerPowerScore()),
-    });
+    };
+    // A Hangar War deployment's mini-boss wears the hex profile the map
+    // advertises and demonstrates the grant (Rule 2) through the same pure
+    // mapping the gyms consume; the arcade run passes no profile and is
+    // byte-for-byte unchanged (AH-0MWCOW5IO001KJ8D).
+    const hexBoss = this.hexBossProfile;
+    if (hexBoss !== null) {
+      return hexMiniBossConfigForLevel(level, { ...spawn, profile: hexBoss });
+    }
+    return miniBossConfigForLevel(level, spawn);
   }
 
   /**
@@ -3265,11 +3318,13 @@ export class PlayScene extends CombatScene<
    * normal encounter or a scripted teaser beat — previews the boss close to
    * death without changing the entity's total hit pool.
    *
-   * A hangar-war deployment spawns the **hex boss variant**
-   * (AH-0MVUXCAW0001VUM6): the same `Boss` entity and phase machinery, with the
-   * hex's identity colour (the demonstrated weapon's own colour), its
-   * aggression-perturbed hit pool and its authored boss identity. The arcade
-   * run passes no profile and is byte-for-byte unchanged.
+   * A hangar-war deployment's encounters are configured from the **hex
+   * profile** (AH-0MVUXCAW0001VUM6): the wave-10 `MiniBoss` that ends the
+   * deployment wears the granted weapon's colour, its aggression-perturbed hit
+   * pool and its demonstrated opening volley, and the shipped `Boss` below
+   * accepts the same profile (a deployment never reaches it — one level per
+   * deployment, ended by the mini-boss). The arcade run passes no profile and
+   * is byte-for-byte unchanged.
    */
   protected spawnBoss(
     options: {
@@ -3597,6 +3652,19 @@ export class PlayScene extends CombatScene<
     const result = miniBoss.takeDamage(hitX, hitY);
     if (!result.destroyed) return;
 
+    // AC4 (AH-0MW8178ZR0090CNY): every mini-boss defeat leaves **exactly one**
+    // Extra Life field pickup at/near the death position, in addition to the
+    // spin-the-wheel reward. It spawns regardless of the 5-life cap and a full
+    // slot pool; the existing six-slot collection gate and life cap still
+    // govern pickup. The normal drop separation nudge applies, and the shared
+    // helper keeps the guarantee identical in `GymMiniBoss`. Purely additive:
+    // the swept escorts stay cosmetic (§3.3.1).
+    spawnGuaranteedMiniBossExtraLife(
+      (id, x, y) => this.spawnPowerUpDrop(id, x, y),
+      deathX,
+      deathY,
+    );
+
     const context: MiniBossDefeatContext = {
       level: this.waveManager.level,
       waveNumber: this.waveManager.waveNumber,
@@ -3661,7 +3729,12 @@ export class PlayScene extends CombatScene<
           // The run can end while the sweep animates (a bullet already in
           // flight can finish the player): never finalise a stopped scene.
           if (!this.scene.isActive()) return;
-          this._finaliseMiniBossDefeat(context, sweptSpawns.length);
+          this._finaliseMiniBossDefeat(
+            context,
+            sweptSpawns.length,
+            deathX,
+            deathY,
+          );
         },
       },
     );
@@ -3677,7 +3750,21 @@ export class PlayScene extends CombatScene<
   private _finaliseMiniBossDefeat(
     context: MiniBossDefeatContext,
     sweptEscortCount: number,
+    deathX: number,
+    deathY: number,
   ): void {
+    // Hangar War hex deployment (AH-0MWCOW4IQ003XST5): the mini-boss is the
+    // encounter that takes the hex. Its defeat resolves the capture cycle and
+    // ends the run as a victory, and it deliberately skips the arcade wave
+    // accounting below — a deployment plays only its aggression-selected
+    // level, so the final boss is unreachable from the hex map. The in-run
+    // reward wheel is not opened either: the hex reward is presented after
+    // the defence report.
+    if (this.isHangarWarRun()) {
+      this._finaliseHangarWarMiniBossVictory(deathX, deathY);
+      return;
+    }
+
     // Reward loop (AH-0MVLISU03006WDOD AC1): a defeat opens exactly ONE
     // reward — the shared spin-the-wheel overlay (or the empty-owned
     // three-option fallback) — only now that every burst has finished
@@ -3709,6 +3796,87 @@ export class PlayScene extends CombatScene<
       event = this.waveManager.onEnemyDestroyed();
     }
     this._handleWaveEvent(event);
+  }
+
+  /**
+   * Ends a hex deployment on its mini-boss (AH-0MWCOW4IQ003XST5): resolves the
+   * hex capture through the shared {@link resolveHexCapture} cycle, then ends
+   * the run as a victory through the shipped victory path (auto-fire off,
+   * celebration at the mini-boss death position, delayed defence-report
+   * transition). Wave/level accounting is never advanced — the final boss can
+   * never be triggered from the hex map, including on the campaign's final
+   * level.
+   */
+  private _finaliseHangarWarMiniBossVictory(
+    deathX: number,
+    deathY: number,
+  ): void {
+    // The run is over: stop the ship's auto-fire from the next tick (the same
+    // per-run gate the final-boss victory uses).
+    this.runFinished = true;
+    // Resolve the between-sortie frontier tick **before** the capture, so the
+    // hex this sortie just won is not a candidate for that same tick's attack
+    // (the player would otherwise lose it before seeing the report/map).
+    // `_finishRun` reuses this result instead of resolving a second tick.
+    this.pendingBetweenSortieTick = this._resolveBetweenSortieTick();
+    // Resolve the hex capture through the existing cycle; this banks the run's
+    // salvage (already banked once at the checkpoint moment), marks the hex
+    // held + boss-defeated, grants its authored entry and leaves the defending
+    // hull behind.
+    this._resolveHangarWarCapture();
+    // Resolve the mini-boss reward now (while the run-scoped player still
+    // exists) and carry it to the defence report, which reveals it after the
+    // report (producer Q2 = b). The in-run overlay never launches here.
+    this._resolveHangarWarWinReward();
+    this._triggerVictoryCelebration(deathX, deathY);
+    this._finishRunWithPurpose(true);
+  }
+
+  /**
+   * Resolves a **winning hex deployment's** mini-boss reward at the defeat
+   * frame (parent AH-0MWBW1B1Z0059CC2, AC5 / producer Q2 = b).
+   *
+   * The wheel draw is the same pure resolution the in-run overlay uses
+   * ({@link drawWheelOutcome} / {@link buildWheelWedges}), and the resolved
+   * outcome is applied to the (still live) run-scoped player through the same
+   * {@link applyWheelOutcome} seam the arcade reward uses — no new economy rule
+   * and no second application path. A presentation copy is stored for
+   * `DefenceReportScene`; the overlay itself is launched there, after the
+   * report, so the reward cannot run concurrently with the run-end transition.
+   *
+   * The empty-owned fallback keeps its existing three-option choice (a
+   * mini-boss always pays out, AC4), carried in the same payload so the report
+   * presents it instead of spinning a dud wheel.
+   */
+  private _resolveHangarWarWinReward(): void {
+    if (this.pendingWinReward !== null) return;
+
+    const ownedKinds = orderedOwnedKinds(
+      resolvePlayerSlotState(this.player).ownedIds,
+    );
+
+    if (ownedKinds.length === 0) {
+      // Empty-owned fallback (AC4): carry the three-option hold-full-style
+      // choice. Its run-scoped value is the parent's deferred economy question
+      // (AH-0MWCOWTOR00994NA); this change only preserves the existing
+      // reward surface and its ordering.
+      this.pendingWinReward = {
+        kind: 'choice',
+        options: this._holdFullStyleRewardOptions(),
+      };
+      return;
+    }
+
+    const slotIndex = Math.min(
+      MINI_BOSS_WHEEL_SLOT_COUNT - 1,
+      Math.max(0, Math.floor(this.rng() * MINI_BOSS_WHEEL_SLOT_COUNT)),
+    );
+    const outcome = drawWheelOutcome(slotIndex, ownedKinds);
+    const wedges = buildWheelWedges(ownedKinds);
+    // The run is ending, so apply the resolved reward to it now through the
+    // shared seam — the only point at which the run-scoped player exists.
+    applyWheelOutcome(outcome, this.effectsRegistry, this.player);
+    this.pendingWinReward = { kind: 'wheel', wedges, outcome };
   }
 
   /**
@@ -4033,11 +4201,11 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Resolves a hangar-war deployment's boss victory into a captured hex
-   * (AH-0MVUXCAW0001VUM6): banks the run's salvage, marks the hex held +
-   * boss-defeated, grants its authored entry into the hangar (Rule 2) and
-   * leaves the deployment's chosen hull as the defending bot. Securing the last
-   * hex opens the next ring.
+   * Resolves a hangar-war deployment's mini-boss victory into a captured hex
+   * (AH-0MVUXCAW0001VUM6, re-pointed at the mini-boss by AH-0MWCOW4IQ003XST5):
+   * banks the run's salvage, marks the hex held + boss-defeated, grants its
+   * authored entry into the hangar (Rule 2) and leaves the deployment's chosen
+   * hull as the defending bot. Securing the last hex opens the next ring.
    *
    * The pure capture cycle owns every rule; this method only supplies the run's
    * inputs (the deployment hull + the run's salvage watermark) and persists the
@@ -4167,9 +4335,10 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * The hex boss variant this deployment's final encounter ran with (or `null`
-   * for the arcade run) — the capture-cycle test/UI seam
-   * (AH-0MVUXCAW0001VUM6). A detached copy.
+   * The hex profile this deployment's encounters were configured from (or
+   * `null` for the arcade run) — the capture-cycle test/UI seam
+   * (AH-0MVUXCAW0001VUM6). The wave-10 mini-boss that ends the deployment reads
+   * it through `miniBossConfigFor`. A detached copy.
    */
   getHexBossProfile(): HexBossProfile | null {
     return this.hexBossProfile === null
@@ -5050,8 +5219,20 @@ export class PlayScene extends CombatScene<
     // One shared, eligibility-filtered draw through the six-slot gate (parent
     // AH-0MVLIJT3M005HPHF): below the cap it is byte-for-byte the weighted
     // draw; at/above it only owned kinds plus available-when-full entries.
+    // The Extra Life weight is scaled by the life-adaptive curve here
+    // (AH-0MW8178ZR0090CNY): at or above the run's starting lives the
+    // multiplier is 1, so a full-life run draws exactly as before, while a
+    // player on 2 lives doubles — and on 1 life quadruples — Extra Life's
+    // share of the pool. Total per-kill drop chance is unchanged.
     this.spawnPowerUpDrop(
-      this._drawNextDrop(this.dropSpawner, this._resolveDropSlotState()),
+      this._drawNextDrop(this.dropSpawner, this._resolveDropSlotState(), {
+        baseWeight: this.rules.powerUpWeights.extra_life,
+        multiplier: extraLifeAdaptiveMultiplier(
+          this.gameState.lives,
+          this.rules,
+          this.runStartingLives,
+        ),
+      }),
       x,
       y,
     );
@@ -5400,19 +5581,29 @@ export class PlayScene extends CombatScene<
       // (AH-0MVUXCBBK004EJIP): run the frontier tick — one tick of risen
       // aggression and a purely algorithmic attack — and hand its record to the
       // report, which renders the numbers that produced every hold and fall.
-      // There is no defence battle to fly or watch, so this transition can never
-      // stall the demo.
-      const tick = this._resolveBetweenSortieTick();
+      // A winning deployment already resolved it before the capture (see
+      // `_finaliseHangarWarMiniBossVictory`); a loss resolves it here. Either
+      // way the report/map payload is this run's final war state.
+      const pendingTick = this.pendingBetweenSortieTick;
+      this.pendingBetweenSortieTick = null;
+      const tick = pendingTick ?? this._resolveBetweenSortieTick();
       const wasDemo = this.demoMode;
       if (wasDemo) {
         this.demoMode = false;
         this._disableDemoTakeOver();
       }
+      // A winning deployment carries its resolved mini-boss reward to the
+      // report, which reveals it after the report and before the map
+      // (parent AH-0MWBW1B1Z0059CC2, producer Q2 = b). A lost deployment
+      // carries nothing, so its route stays report → map.
+      const reward = won ? this.pendingWinReward : null;
+      this.pendingWinReward = null;
       this.scene.start(DEFENCE_REPORT_SCENE_KEY, {
-        payload: tick?.payload ?? this._hangarWarPayload(),
+        payload: this._hangarWarPayload(),
         record: tick?.record,
         won,
         score: this.gameState.score,
+        reward,
         demo: wasDemo,
         demoDwellMs: this.demoDwellMs,
       });
@@ -6370,8 +6561,15 @@ export class PlayScene extends CombatScene<
       this.devTelemetryStreamer = create({
         runSeed: identity.runSeed,
         startedAt: identity.startedAt,
-        // The buffer is canonical and never cleared by the streamer.
+        // The buffer is canonical and never cleared by the streamer. The
+        // windowed-read/drain seam (F3) keeps a large backlog from ever being
+        // re-joined whole: the streamer reads only the unconfirmed window.
         readBuffer: () => runTelemetry.readBuffer(),
+        readWindow: (fromRecord, limits) => runTelemetry.readWindow(fromRecord, limits),
+        dropConfirmed: (absoluteCount) => runTelemetry.dropConfirmed(absoluteCount),
+        // Part build + send runs off the frame task so telemetry serialisation
+        // never holds the Phaser update/rAF step (AH-0MWDGQ0PB000YZ9N).
+        defer: deferOffFrame,
         // Read at send time, so the setting behaves exactly as it does for the
         // whole-file run-end upload.
         getSetting: () => loadSettings(),
@@ -6546,6 +6744,24 @@ export class PlayScene extends CombatScene<
       this.laneTrafficSpawnedThisWave = 0;
     }
   }
+}
+
+/**
+ * Schedules part build + send off the frame task
+ * (AH-0MWDGQ0PB000YZ9N). A microtask defers the work until after the
+ * current Phaser update/rAF task returns (so the update step is never held),
+ * and it is flushed by the test bridge (`drainMicrotasks`); a zero-delay
+ * macrotask is only a fallback for environments without `queueMicrotask`.
+ */
+function deferOffFrame(task: () => void): void {
+  const enqueueMicrotask = (globalThis as {
+    queueMicrotask?: (cb: () => void) => unknown;
+  }).queueMicrotask;
+  if (typeof enqueueMicrotask === 'function') {
+    enqueueMicrotask(task);
+    return;
+  }
+  setTimeout(task, 0);
 }
 
 /**

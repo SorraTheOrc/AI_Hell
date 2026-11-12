@@ -37,9 +37,12 @@ import {
   equipHull,
   equipLoadout,
   findHangarEntry,
+  MINIMUM_PLAYER_STRENGTH,
+  STARTING_WEAPON_STRENGTH_WEIGHT,
   purchaseWeight,
   resolveActiveHull,
   resolveActiveLoadout,
+  resolvePlayerStrength,
   buy,
 } from './hangarEconomy';
 import {
@@ -480,5 +483,133 @@ describe('defender rating — one pure formula from the hull upgrades', () => {
     );
     // An unknown hull cannot defend a hex.
     expect(deriveDefenderRating('not_a_hull')).toBe(0);
+  });
+});
+
+describe('resolvePlayerStrength — the player-strength vocabulary', () => {
+  /** A synthetic hull entry for catalogue-injected strength tests. */
+  function testHull(
+    id: string,
+    upgrades: HullUpgrades,
+    baseDefence = 2,
+  ): HangarEntry {
+    return {
+      id,
+      kind: 'hull',
+      name: id,
+      description: 'Test hull.',
+      price: { minerals: 0, cores: 0 },
+      minRing: 1,
+      starter: false,
+      baseDefence,
+      upgrades,
+      runStats: { startingLives: 3, speedMultiplier: 1 },
+    };
+  }
+
+  /** A synthetic defence modifier for catalogue-injected strength tests. */
+  function testDefenceModifier(id: string, rating: number): HangarEntry {
+    return {
+      id,
+      kind: 'modifier',
+      name: id,
+      description: 'Test defence modifier.',
+      price: { minerals: 0, cores: 0 },
+      minRing: 1,
+      starter: false,
+      effect: { kind: 'defence', rating },
+    };
+  }
+
+  it('is neutral on the minimal fleet', () => {
+    expect(resolvePlayerStrength(hangarWith())).toBe(MINIMUM_PLAYER_STRENGTH);
+    expect(MINIMUM_PLAYER_STRENGTH).toBe(2);
+  });
+
+  it('is monotonic in the hull upgrade levels', () => {
+    const low = testHull('test-hull-low', { armour: 0, firepower: 0, systems: 0 });
+    const high = testHull('test-hull-high', { armour: 2, firepower: 1, systems: 1 });
+    const catalogue = [low, high];
+    const base = hangarWith({
+      unlockedHulls: ['test-hull-low', 'test-hull-high'],
+      activeHull: 'test-hull-low',
+    });
+    const lowStrength = resolvePlayerStrength(base, catalogue);
+    const highStrength = resolvePlayerStrength(
+      { ...base, activeHull: 'test-hull-high' },
+      catalogue,
+    );
+    expect(lowStrength).toBeLessThan(highStrength);
+  });
+
+  it('raises strength when a stronger owned hull is equipped', () => {
+    const base = hangarWith({
+      unlockedHulls: [DEFAULT_HULL_ID, 'hull-2'],
+      activeHull: DEFAULT_HULL_ID,
+    });
+    const stronger = resolvePlayerStrength({ ...base, activeHull: 'hull-2' });
+    expect(stronger).toBeGreaterThan(resolvePlayerStrength(base));
+  });
+
+  it('adds exactly a defence modifier rating', () => {
+    const hull = testHull('test-hull', { armour: 0, firepower: 0, systems: 0 });
+    const modifier = testDefenceModifier('test-defence', 3);
+    const catalogue = [hull, modifier];
+    const plain = hangarWith({ unlockedHulls: ['test-hull'], activeHull: 'test-hull' });
+    const equipped = hangarWith({
+      unlockedHulls: ['test-hull'],
+      activeHull: 'test-hull',
+      ownedModifiers: ['test-defence'],
+      activeLoadout: { startingWeapons: [], modifiers: ['test-defence'] },
+    });
+    expect(resolvePlayerStrength(equipped, catalogue)).toBe(
+      resolvePlayerStrength(plain, catalogue) + 3,
+    );
+  });
+
+  it('ignores an equipped modifier the fleet does not own', () => {
+    const hull = testHull('test-hull', { armour: 0, firepower: 0, systems: 0 });
+    const modifier = testDefenceModifier('test-defence', 5);
+    const catalogue = [hull, modifier];
+    const unowned = hangarWith({
+      unlockedHulls: ['test-hull'],
+      activeHull: 'test-hull',
+      ownedModifiers: [],
+      activeLoadout: { startingWeapons: [], modifiers: ['test-defence'] },
+    });
+    expect(resolvePlayerStrength(unowned, catalogue)).toBe(
+      resolvePlayerStrength(hangarWith({ unlockedHulls: ['test-hull'], activeHull: 'test-hull' }), catalogue),
+    );
+  });
+
+  it('is unchanged by owned-but-unequipped entries', () => {
+    const plain = hangarWith();
+    const withSpare = hangarWith({
+      unlockedHulls: [DEFAULT_HULL_ID, 'hull-2'],
+      activeHull: DEFAULT_HULL_ID,
+      ownedModifiers: ['hardened_plating'],
+      activeLoadout: { startingWeapons: [], modifiers: [] },
+    });
+    expect(resolvePlayerStrength(withSpare)).toBe(resolvePlayerStrength(plain));
+  });
+
+  it('treats unknown ids as contributing nothing', () => {
+    const plain = hangarWith();
+    const corrupt = hangarWith({
+      unlockedHulls: [DEFAULT_HULL_ID, 'not-a-hull'],
+      activeHull: DEFAULT_HULL_ID,
+      ownedModifiers: ['not-a-modifier'],
+      activeLoadout: { startingWeapons: ['not-a-weapon'], modifiers: ['not-a-modifier'] },
+    });
+    expect(resolvePlayerStrength(corrupt)).toBe(resolvePlayerStrength(plain));
+  });
+
+  it('keeps the equipped-weapon term neutral against the shipped catalogue', () => {
+    expect(STARTING_WEAPON_STRENGTH_WEIGHT).toBe(0);
+    const plain = hangarWith();
+    const armed = hangarWith({
+      activeLoadout: { startingWeapons: [DEFAULT_STARTING_WEAPON_ID], modifiers: [] },
+    });
+    expect(resolvePlayerStrength(armed)).toBe(resolvePlayerStrength(plain));
   });
 });

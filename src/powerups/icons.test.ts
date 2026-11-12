@@ -282,6 +282,7 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
       'smart_bomb',
       'force_field',
       'mystery_ufo',
+      'mining_laser',
     ] as const) {
       const icon = scene.add.graphics();
       drawPowerUpIcon(icon, type, 0, 0, 32);
@@ -318,7 +319,7 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
   });
 });
 
-describe('AOE weapon icons (F5 AC4)', () => {
+describe('Mining Laser drop icon (AH-0MW9QMRC7007HVHQ)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -331,6 +332,48 @@ describe('AOE weapon icons (F5 AC4)', () => {
     return booted!.scene as Phaser.Scene;
   }
 
+  it('draws a distinctive cutting-beam + rock glyph, not empty and not a bolt', async () => {
+    const scene = await bootBare();
+    const mining = scene.add.graphics();
+    drawPowerUpIcon(mining, 'mining_laser', 0, 0, 32);
+    const miningCommands = mining.commandBuffer.length;
+
+    // The glyph is code-drawn: it emits real geometry through the shared icon
+    // path (never a colourless / blank icon).
+    expect(miningCommands).toBeGreaterThan(0);
+    // It includes a filled rock polygon and a hot spark — at least two fills.
+    const fills = mining.commandBuffer.filter((v) => v === Cmd.FILL_STYLE).length;
+    expect(fills).toBeGreaterThanOrEqual(2);
+
+    // Visually distinct from the sibling auto-targeting Orbital Strike icon:
+    // the two kinds must not share an identical command buffer.
+    const strike = scene.add.graphics();
+    drawPowerUpIcon(strike, 'strike', 0, 0, 32);
+    expect(mining.commandBuffer).not.toEqual(strike.commandBuffer);
+  });
+
+  it('uses its palette colour from ICON_COLORS (mint, mineral economy)', async () => {
+    const scene = await bootBare();
+    const mining = scene.add.graphics();
+    drawPowerUpIcon(mining, 'mining_laser', 0, 0, 32);
+    expect(ICON_COLORS.mining_laser).toBe(0x7cffb2);
+    // The first line-style command carries the icon colour.
+    expect(mining.commandBuffer).toContain(ICON_COLORS.mining_laser);
+  });
+});
+
+describe('AOE weapon icons (F5 AC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootBare(): Promise<Phaser.Scene> {
+    booted = await bootScene([BareScene]);
+    return booted!.scene as Phaser.Scene;
+  }
   /** Count ARC draw commands in a graphics command buffer. */
   function countArcCommands(buf: number[]): number {
     let count = 0;

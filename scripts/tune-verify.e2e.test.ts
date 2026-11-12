@@ -9,8 +9,10 @@
  * success path AND on a forced mid-run failure path — parent AC1/AC3/AC4.
  *
  * The spawned child is the same CLI the docs document, so this test doubles
- * as the executable form of the `docs/BALANCING.md` worked example (with a
- * reduced sweep for speed).
+ * as the executable form of the `docs/BALANCING.md` worked example (at the
+ * skirmish default of 1800 ticks — the smallest window in which the competent
+ * bot reliably kills the boss, so the `boss.health` edit is actually
+ * exercised).
  *
  * This file is a **gated `e2e` test** (`.e2e.test.ts`, see `vitest.projects.ts`
  * / AH-0MVFSNO0G00035AP): it is deliberately excluded from the parallel
@@ -45,19 +47,26 @@ const ORIGINAL_CSV = readFileSync(CSV, 'utf8');
 const TUNE_ARGS = [
   '--tune',
   // `--skirmish` is required, not a preference: since the campaign became the
-  // batch default (AH-0MVD1RK2V009J5D2) a 400-tick run never reaches a boss,
-  // so `enemiesKilledByArchetype.boss` is 0 in both sweeps and the comparison
-  // has nothing to move (AH-0MVWN4CG1000ZNEG). The legacy seeded skirmish
-  // reservoir still spawns the boss archetype, which is what this reduced
-  // sweep needs to exercise the edited `boss.health` within seconds.
+  // batch default (AH-0MVD1RK2V009J5D2) a campaign run treats the final boss as
+  // the end of the run rather than a simulated entity, so
+  // `enemiesKilledByArchetype.boss` is 0 in both sweeps and the comparison has
+  // nothing to move (AH-0MVWN4CG1000ZNEG). The legacy seeded skirmish reservoir
+  // spawns the boss archetype as an ordinary killable hostile.
   '--skirmish',
   '--set',
   'enemy-configs.csv',
   'boss.health=6',
   '--games',
   '4',
+  // 1800 ticks — the skirmish default — is required, not a speed preference:
+  // the arena now fires from the run's real weapon loadout (AH-0MW5DV9I6001D4HN,
+  // AH-0MW5DVAME0062GQO), so the competent bot needs the full skirmish window to
+  // close on and kill the boss. A 400-tick sweep (AH-0MVWN4CG1000ZNEG) stopped
+  // reaching a boss kill after that change, leaving `movedMetrics` empty
+  // (AH-0MWB0YW2Q001WIQS). At 1800 ticks the boss is killed in most seeds at
+  // health 1 and in none at health 6, so the edit moves the metric reliably.
   '--ticks',
-  '400',
+  '1800',
 ];
 
 /** Runs the CLI and returns { status, stdout, stderr }. */

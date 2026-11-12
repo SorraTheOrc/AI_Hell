@@ -45,6 +45,48 @@ import {
 export const HEX_AGGRESSION_BASELINE = 0;
 
 /**
+ * The greatest aggression a hex may carry (the frontier clock's ceiling).
+ *
+ * Kept here as the shared constant so the beatable-ceiling resolver can bound
+ * itself without importing the tuning module (which would be a cycle).
+ */
+export const MAX_HEX_AGGRESSION = 9;
+
+/**
+ * The highest aggression a fleet of the given strength is expected to clear.
+ *
+ * "Beatable" is defined through the **existing** level mapping: the strength is
+ * converted to a campaign level ({@link hexAggressionLevel}'s inverse), and that
+ * level is inverted back to an aggression. The starter fleet (strength `2`)
+ * therefore clears aggression `2` (level `3`), and every extra point of
+ * strength raises the ceiling by one aggression, so the definition is shared by
+ * the resolver, the report and the intel rather than re-derived anywhere.
+ *
+ * Total: a negative, fractional or non-finite strength resolves to `0`, and the
+ * result never falls below `0` or exceeds `maxAggression`.
+ *
+ * @param strength — the resolved player strength (see `resolvePlayerStrength`).
+ * @param maxAggression — the greatest aggression a hex may carry (default
+ *   {@link MAX_HEX_AGGRESSION}).
+ * @returns the greatest still-beatable aggression.
+ */
+export function beatableAggressionCeiling(
+  strength: number,
+  maxAggression: number = MAX_HEX_AGGRESSION,
+): number {
+  const points =
+    typeof strength === 'number' && Number.isFinite(strength)
+      ? Math.max(0, Math.floor(strength))
+      : 0;
+  const level = clampLevel(MIN_LEVEL + points, LEVEL_SCALING_MAX_LEVEL);
+  const cap =
+    typeof maxAggression === 'number' && Number.isFinite(maxAggression)
+      ? Math.max(0, Math.floor(maxAggression))
+      : MAX_HEX_AGGRESSION;
+  return Math.min(cap, Math.max(0, level - MIN_LEVEL));
+}
+
+/**
  * Reference hit pool {@link hexBossHpMultiplier} scales, chosen so the
  * multiplier is exactly `scaledEncounterHp(base, aggression) / base` for any
  * authored pool. The value is arbitrary and cancels out.

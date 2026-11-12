@@ -28,6 +28,13 @@
  *   gym-seeded outcome, so the reward can be exercised end-to-end through the
  *   same distribution/resolver/reward-application modules the game uses
  *   (parent AH-0MVLISU03006WDOD, parity child AH-0MVSF68QS006C8V0).
+ * - **HEX: OFF/ON** — toggles the deployed (hex-profile) encounter. ON boots
+ *   the same mini-boss through the shared `hexMiniBossConfigForLevel` mapping
+ *   the game uses for a Hangar War deployment (`PlayScene.miniBossConfigFor`),
+ *   with the sample authored hex `hex-r1-6` (the Wave Laser hex): the body
+ *   wears the granted weapon's own red and phase 1 opens with that weapon's
+ *   catalogue volley (Rule 2 — the encounter demonstrates the reward). OFF
+ *   (the default) is the arcade per-level design path.
  * - **← INDEX** — returns to the gym index.
  */
 
@@ -35,14 +42,22 @@ import Phaser from 'phaser';
 
 import {
   MiniBoss,
+  type MiniBossConfig,
   type MiniBossPhaseConfig,
   type MiniBossMinionWaveConfig,
 } from '../../entities/MiniBoss';
 import {
   MINI_BOSS_DESIGN_LEVELS,
+  hexMiniBossConfigForLevel,
   miniBossConfigForLevel,
   miniBossDesignForLevel,
+  type MiniBossSpawnOptions,
 } from '../../waves/miniBossDesigns';
+import {
+  buildHexBossProfile,
+  type HexBossProfile,
+} from '../../core/hangarWar/hexBoss';
+import { findHexRingDefinition } from '../../data/hexRingDefinitions';
 import type { BossBullet } from '../../entities/Boss';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import type { EnemyEntity } from '../../entities/enemyFactory';
@@ -69,6 +84,7 @@ import {
   type MiniBossDeathSweepHandle,
   type MiniBossSweepTarget,
 } from '../core/miniBossDeathSweep';
+import { spawnGuaranteedMiniBossExtraLife } from '../core/miniBossDrops';
 import {
   EnemyFormationConfig,
   GymFormationScene,
@@ -110,6 +126,73 @@ export const MINI_BOSS_GYM_SWEEP_SEED = 0x5eed_1b05;
  * slot index from the shared seeded-RNG seam the game uses.
  */
 export const MINI_BOSS_GYM_REWARD_SEED = 0x5eed_beef;
+
+/**
+ * The authored hex the gym's HEX mode demonstrates (Rule 2 under a mini-boss
+ * ending). `hex-r1-6` is ring 1's weapon hex: it grants the Wave Laser at its
+ * authored aggression, so the encounter wears that weapon's own colour and
+ * opens with its catalogue volley — the same profile a shipped deployment
+ * builds from the authored ring data, never a gym-only hex literal.
+ */
+export const MINI_BOSS_GYM_HEX_ID = 'hex-r1-6';
+
+const GYM_HEX_DEFINITION = findHexRingDefinition(MINI_BOSS_GYM_HEX_ID);
+
+/** The sample hex's aggression (the authored value, or 0 if it were missing). */
+export const MINI_BOSS_GYM_HEX_AGGRESSION =
+  GYM_HEX_DEFINITION?.baseAggression ?? 0;
+
+/**
+ * The hex profile the gym's HEX mode demonstrates, built through the **same**
+ * pure `buildHexBossProfile` the game calls for a deployment. The authored
+ * ring definition supplies the grant/identity; the authored aggression drives
+ * the shipped difficulty mapping.
+ */
+export const MINI_BOSS_GYM_HEX_PROFILE: HexBossProfile = buildHexBossProfile(
+  { id: MINI_BOSS_GYM_HEX_ID, aggression: MINI_BOSS_GYM_HEX_AGGRESSION },
+  GYM_HEX_DEFINITION,
+);
+
+/**
+ * Whether the gym boots the deployed (hex-profile) encounter instead of the
+ * arcade per-level design. **Off by default**: the arcade design path is the
+ * gym's canonical row, and the HEX control opts into the deployment variant.
+ */
+let hexProfileEnabled = false;
+
+/** Selects whether the gym boots the hex-profile (deployed) encounter. */
+export function selectGymMiniBossHexProfile(enabled: boolean): boolean {
+  hexProfileEnabled = enabled === true;
+  return hexProfileEnabled;
+}
+
+/** Whether the gym will boot the hex-profile encounter next. */
+export function isGymMiniBossHexProfileEnabled(): boolean {
+  return hexProfileEnabled;
+}
+
+/**
+ * Builds the config the gym hands to `new MiniBoss(...)`: the single dispatch
+ * shared by the entity factory and the parity tests.
+ *
+ * With HEX mode on it delegates to {@link hexMiniBossConfigForLevel} — the
+ * exact pure mapping `PlayScene.miniBossConfigFor()` runs for a Hangar War
+ * deployment — so the body colour, hit-pool perturbation and demonstrated
+ * opening volley cannot drift between the gym and the game. With it off it
+ * returns the untouched arcade design ({@link miniBossConfigForLevel}).
+ */
+export function gymMiniBossConfigFor(
+  level: number,
+  options: MiniBossSpawnOptions,
+): MiniBossConfig {
+  if (hexProfileEnabled) {
+    return hexMiniBossConfigForLevel(level, {
+      ...options,
+      profile: MINI_BOSS_GYM_HEX_PROFILE,
+    });
+  }
+  return miniBossConfigForLevel(level, options);
+}
 
 // Level-1 design constants, surfaced for the gym's tests and the index row.
 // They mirror the bespoke catalogue rather than a separate demo config, so a
@@ -176,13 +259,14 @@ const MINI_BOSS_CONFIG: EnemyFormationConfig<MiniBoss | EnemyEntity, BossBullet>
     formationOffset: FormationOffset,
     setup?: SceneSetupState | null,
   ): MiniBoss =>
-    // The same config helper the game uses, so the gym exercises the real
-    // per-level design (phases, colour, minions, archetype name). The gym
+    // The same config helpers the game uses, so the gym exercises the real
+    // per-level design (phases, colour, minions, archetype name) — or, with
+    // HEX mode on, the shared hex-profile mapping a deployment runs. The gym
     // alone overrides the hit pool so a tester can step through every phase
     // quickly on the DAMAGE button.
     new MiniBoss(
       scene,
-      miniBossConfigForLevel(selectedDesignLevel, {
+      gymMiniBossConfigFor(selectedDesignLevel, {
         x,
         y,
         formationOffset,
@@ -214,6 +298,15 @@ export class GymMiniBoss extends GymFormationScene<
   /** Targets captured for the current/last defeat sweep (test seam). */
   private defeatSweepTargets: readonly MiniBossSweepTarget[] = [];
 
+  /**
+   * Whether this gym lifetime has already spawned its guaranteed mini-boss
+   * Extra Life (AH-0MW8178ZR0090CNY AC4). The gym can reach a defeat through
+   * several controls (DAMAGE, EXPLODE, and a player bullet through the shared
+   * collision pass), so the flag guarantees **exactly one** drop per defeat
+   * regardless of which path lands the lethal blow.
+   */
+  private miniBossExtraLifeSpawned = false;
+
   /** The wedges of the open (or most recent) gym wheel reward. */
   private rewardWedges: MiniBossWheelWedge[] = [];
   /** The deterministic outcome of the open (or most recent) gym wheel reward. */
@@ -234,6 +327,7 @@ export class GymMiniBoss extends GymFormationScene<
     this.rewardOutcome = null;
     this.rewardOpen = false;
     this.rewardAppliedCount = 0;
+    this.miniBossExtraLifeSpawned = false;
 
     // DAMAGE button beside EXPLODE (mirrors GymBoss's layout).
     const explodeButton = this.explodeButton;
@@ -261,6 +355,20 @@ export class GymMiniBoss extends GymFormationScene<
     this._addButton(explodeButton.x - 360, explodeButton.y, 'REWARD', LABEL_STYLE)
       .on('pointerdown', () => this.openMiniBossReward());
 
+    // HEX toggles the deployed (hex-profile) encounter: ON is the same shared
+    // `hexMiniBossConfigForLevel` mapping `PlayScene` runs for a Hangar War
+    // deployment, so the granted weapon's colour and its opening volley are
+    // watchable here; OFF keeps the arcade per-level design (the default).
+    this._addButton(
+      explodeButton.x - 480,
+      explodeButton.y,
+      hexProfileEnabled ? 'HEX: ON' : 'HEX: OFF',
+      LABEL_STYLE,
+    ).on('pointerdown', () => {
+      selectGymMiniBossHexProfile(!hexProfileEnabled);
+      this.scene.restart();
+    });
+
     this._refreshStatus();
   }
 
@@ -287,7 +395,16 @@ export class GymMiniBoss extends GymFormationScene<
     const boss = this.formationMiniBoss;
     if (!boss.alive) return;
 
+    // Capture the position the guaranteed drop spawns at before the hit can
+    // move the body (AH-0MW8178ZR0090CNY AC4).
+    const deathX = boss.x;
+    const deathY = boss.y;
     const result = boss.takeDamage();
+    if (result.destroyed) {
+      // A DAMAGE-button defeat is a real defeat: it leaves the guaranteed
+      // Extra Life, exactly like EXPLODE and a bullet kill.
+      this._spawnGuaranteedExtraLifeOnce(deathX, deathY);
+    }
     this._refreshStatus(
       result.destroyed
         ? 'MiniBoss destroyed!'
@@ -295,6 +412,37 @@ export class GymMiniBoss extends GymFormationScene<
           ? `PHASE ${result.phase}/${boss.getPhaseCount()}`
           : 'DAMAGED',
     );
+  }
+
+  /**
+   * Spawns the guaranteed mini-boss Extra Life at most once per gym lifetime
+   * (AH-0MW8178ZR0090CNY AC4). Independent of the life cap and the six-slot
+   * pool — the drop is always placed; the existing collection gate/cap decide
+   * whether picking it up helps.
+   */
+  private _spawnGuaranteedExtraLifeOnce(x: number, y: number): void {
+    if (this.miniBossExtraLifeSpawned) return;
+    this.miniBossExtraLifeSpawned = true;
+    spawnGuaranteedMiniBossExtraLife(
+      (id, dx, dy) => this.spawnGuaranteedDrop(id, dx, dy),
+      x,
+      y,
+    );
+  }
+
+  /**
+   * Shared destruction seam: a mini-boss killed by a player bullet through the
+   * collision pass also leaves the guaranteed Extra Life. Skips non-boss
+   * entities, and the once-only guard stops a second drop if another control
+   * observes the same defeat.
+   */
+  protected override onEnemyDestroyed(
+    entity: MiniBoss | EnemyEntity,
+  ): void {
+    super.onEnemyDestroyed(entity);
+    if (entity === this.formationMiniBoss) {
+      this._spawnGuaranteedExtraLifeOnce(entity.x, entity.y);
+    }
   }
 
   // ── Defeat sweep (shared with PlayScene, AC5) ───────────────────
@@ -364,6 +512,13 @@ export class GymMiniBoss extends GymFormationScene<
     boss.playDestructionAudio();
     boss.destroySelf();
     boss.destroy(true);
+
+    // AC4 (AH-0MW8178ZR0090CNY): a mini-boss defeat leaves exactly one Extra
+    // Life field pickup at the death position, in addition to the reward the
+    // REWARD control exercises. EXPLODE bypasses the shared kill seam, so the
+    // guarantee is spawned here too; the once-only guard keeps it to a single
+    // drop across the gym's defeat paths.
+    this._spawnGuaranteedExtraLifeOnce(deathX, deathY);
 
     this.defeatSweepTargets = targets;
     this.defeatSweep = spawnMiniBossDeathSweep(

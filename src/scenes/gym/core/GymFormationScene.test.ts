@@ -12,6 +12,7 @@ import {
   MINERAL_DEPOSIT_COLOR,
   MINERAL_DEPOSIT_THRESHOLD,
   MINERAL_DEPOSIT_VALUE,
+  MINERAL_DROP_MULTIPLIER,
   MINERAL_REDROP_SCATTER_RADIUS,
   MINERAL_SALVAGE_COLOR,
   POWER_UP_DROP_SIZE,
@@ -2753,10 +2754,11 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     clearField(scene);
     expect(scene.getMinerals()).toHaveLength(0);
 
-    // Below `MINERAL_DEPOSIT_THRESHOLD` so the ordinary scatter applies.
-    for (let i = 0; i < 5; i += 1) enemy.collectMineral();
+    // Below `MINERAL_DEPOSIT_THRESHOLD` after doubling so the ordinary
+    // scatter applies: 2 absorbed → 2 × round(2 + bonus) = 4 or 6.
+    for (let i = 0; i < 2; i += 1) enemy.collectMineral();
     const collected = enemy.mineralCount;
-    expect(collected).toBe(5);
+    expect(collected).toBe(2);
 
     // Inject a deterministic RNG for the re-drop, then destroy the enemy
     // through the EXPLODE path (which bypasses `onEnemyDestroyed`).
@@ -2785,7 +2787,13 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     // let the lone enemy absorb a seeded mineral before `clearField`).
     (enemy as unknown as { _mineralCount: number })._mineralCount = 0;
 
-    for (let i = 0; i < MINERAL_DEPOSIT_THRESHOLD; i += 1) enemy.collectMineral();
+    // Five absorbed → 2 × round(5 + 0.25) = 10 = the threshold.
+    for (
+      let i = 0;
+      i < MINERAL_DEPOSIT_THRESHOLD / MINERAL_DROP_MULTIPLIER;
+      i += 1
+    )
+      enemy.collectMineral();
     expect(enemy.mineralRedropCount(() => 0)).toBe(MINERAL_DEPOSIT_THRESHOLD);
 
     // rng() = 0 keeps the resolved count at exactly the threshold.
@@ -2817,8 +2825,15 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     expect(bonus).toBeGreaterThan(0);
 
     // The base tally only reaches the threshold with the bounty's help.
-    for (let i = 0; i < MINERAL_DEPOSIT_THRESHOLD - bonus; i += 1)
-      enemy.collectMineral();
+    // Doubling means fewer absorbed minerals are needed: pick the smallest
+    // count whose doubled re-drop plus the bonus reaches the threshold.
+    const absorbed = Math.max(
+      0,
+      Math.ceil(
+        (MINERAL_DEPOSIT_THRESHOLD - bonus) / MINERAL_DROP_MULTIPLIER,
+      ),
+    );
+    for (let i = 0; i < absorbed; i += 1) enemy.collectMineral();
     scene.setSceneRng(() => 0);
 
     scene.explodeRandom();
@@ -2849,10 +2864,9 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
 
     scene.explodeRandom();
 
-    // rng() = 0 → round(0.25) = 0 (no drop); rng() = 0.999 → round(1.249) = 1.
-    // With the default Math.random the outcome varies.
+    // Doubled: 2 × round(0 + bonus) is 0 or 2 — never one mineral.
     const minerals = scene.getMinerals();
-    expect(minerals.length).toBeLessThanOrEqual(1);
+    expect([0, 2]).toContain(minerals.length);
   });
 
   it('Salvage bonus drops render orange while ordinary drops stay gold (AH-0MVJ72I8O0009T09)', async () => {

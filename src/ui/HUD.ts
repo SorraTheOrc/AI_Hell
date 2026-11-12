@@ -1175,6 +1175,12 @@ export class HUD extends Phaser.GameObjects.Container {
         // Orbital Strike: a permanent bolt is a run-scoped active effect; a
         // field pickup is a one-shot and leaves no row (mirrors Smart Bomb).
         return reg.isStrikePermanent();
+      case 'mining_laser':
+        // Mining Laser (AH-0MW9QMRC7007HVHQ): show the row whenever the laser
+        // is cutting — a live field-pickup window (countdown value) or the
+        // permanent hold-full grant (∞ value). Silent/no-op states leave no
+        // row, mirroring the strike/smart-bomb permanent kinds.
+        return reg.isMiningLaserActive();
       default:
         return false;
     }

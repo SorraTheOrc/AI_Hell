@@ -919,6 +919,59 @@ describe('HUD Orbital Strike next-bolt countdown (AH-0MVS2T40T006QL7H)', () => {
   });
 });
 
+describe('HUD Mining Laser row (AH-0MW9QMRC7007HVHQ)', () => {
+  it('shows no row while the laser is unowned — it is silent', async () => {
+    const reg = new EffectsRegistry();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    expect(hud.getRows().some((r) => r.id === 'mining_laser')).toBe(false);
+    destroy(game);
+  });
+
+  it('shows a countdown row while a field pickup is live, then hides it at expiry', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('mining_laser'); // field pickup → temporary window
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'mining_laser')!;
+    expect(row).toBeDefined();
+    expect(row.label).toContain('Mining Laser');
+    expect(row.temporary).toBe(true);
+    expect(row.value).not.toBe(PERMANENT_VALUE);
+    expect(reg.powerUpTemporaryRemaining('mining_laser')).toBeGreaterThan(0);
+
+    // Expire the temporary window: the row drops off the HUD.
+    reg.tick((reg.powerUpTemporaryRemaining('mining_laser') ?? 0) + 0.1);
+    hud.refresh();
+    expect(hud.getRows().some((r) => r.id === 'mining_laser')).toBe(false);
+    expect(reg.isMiningLaserActive()).toBe(false);
+
+    destroy(game);
+  });
+
+  it('shows a permanent ∞ row for the hold-full reward (run-long cadence)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('mining_laser', true); // hold-full (permanent) reward
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'mining_laser')!;
+    expect(row).toBeDefined();
+    expect(row.value).toBe(PERMANENT_VALUE);
+    expect(row.temporary).toBe(false);
+    // A rapid fire carries no per-shot countdown arc (the row stays ∞): the
+    // cadence lives in the shared registry clock, not the HUD label.
+    expect(row.recharge).toBeUndefined();
+    expect(reg.isMiningLaserActive()).toBe(true);
+
+    destroy(game);
+  });
+});
+
 describe('HUD AC3: lives counter (P8)', () => {
   it('displays the lives state, starting at 3', async () => {
     const reg = new EffectsRegistry();

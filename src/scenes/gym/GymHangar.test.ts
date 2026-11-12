@@ -99,10 +99,21 @@ describe('GymHangar', () => {
       ...shipped.modifierOptions.map((option) => option.key),
       shipped.deployRow.key,
       shipped.mapRow.key,
+      shipped.restartRow.key,
     ]);
     // Read-only: no row is actionable, so none is interactive either.
     expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
     expect(scene.getRows().every((row) => row.text.input === null)).toBe(true);
+  });
+
+  it('renders the ⟲ RESTART WAR row non-actionable (same model, no handlers)', async () => {
+    const scene = await bootHangar({ payload: VALID_HANGAR_WAR_PAYLOAD });
+    const restart = scene.getRows().find((row) => row.key === 'restart');
+    expect(restart, 'restart row not rendered').toBeDefined();
+    // The gym renders the same idle row the game does, read-only.
+    expect(restart!.label).toBe('⟲ RESTART WAR — start a fresh war');
+    expect(restart!.actionable).toBe(false);
+    expect(restart!.text.input).toBeNull();
   });
 
   it('renders the injected payload read-only (no purchase logic, no mutation)', async () => {

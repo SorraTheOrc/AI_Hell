@@ -91,6 +91,27 @@ const UNHELD_HEX: HexState = {
 const reuse = createReusableBoot();
 afterAll(() => reuse.dispose());
 
+function sixHexPayload(
+  hangarOverrides: Partial<HangarWarPayload['hangar']> = {},
+): HangarWarPayload {
+  const hexes: HexState[] = RING_1_HEX_FIXTURES.map((fixture) => ({
+    id: fixture.id,
+    q: fixture.q,
+    r: fixture.r,
+    held: false,
+    aggression: fixture.baseAggression,
+    defender: null,
+    bossDefeated: false,
+    grantedWeapon: null,
+  }));
+  const template = oneHexPayload(hexes[0]);
+  return {
+    ...template,
+    ring: { ringIndex: 1, hexes },
+    hangar: { ...template.hangar, ...hangarOverrides },
+  };
+}
+
 describe('GymHexWar', () => {
   let booted: BootedGame | null = null;
 
@@ -390,4 +411,56 @@ describe('GymHexWar', () => {
     expect(entries.map((entry) => entry.key)).toEqual([GYM_HEX_WAR_SCENE_KEY]);
     expect(entries.map((entry) => entry.label)).toEqual(['HexWar']);
   });
+
+  it('reports the same strength, budget, ceiling and deltas as a direct resolver call', async () => {
+    const payload = sixHexPayload();
+    const scene = await bootHexWar({ payload });
+    scene.showDefenceReport();
+    await advanceGame(booted!.game, 80);
+
+    const model = scene.getDefenceReport();
+    const tick = runFrontierTick(payload, { clock: frontierClockFor(payload) });
+
+    expect(model.playerStrength).toBe(tick.record.playerStrength);
+    expect(model.aggressionBudget).toBe(tick.record.aggressionBudget);
+    expect(model.beatableCeiling).toBe(tick.record.beatableCeiling);
+    expect(model.deltas).toEqual(tick.record.deltas);
+    expect(model.rose).toBe(tick.record.rose);
+    expect(model.fell).toBe(tick.record.fell);
+  });
+
+  it('reports a strictly higher budget and ring total for an upgraded fleet', async () => {
+    const starter = sixHexPayload();
+    const starterScene = await bootHexWar({ payload: starter });
+    starterScene.showDefenceReport();
+    await advanceGame(booted!.game, 80);
+    const starterModel = starterScene.getDefenceReport();
+
+    const upgraded = sixHexPayload({
+      unlockedHulls: ['hull-1', 'hull-2'],
+      activeHull: 'hull-2',
+    });
+    const upgradedScene = await bootHexWar({ payload: upgraded });
+    upgradedScene.showDefenceReport();
+    await advanceGame(booted!.game, 80);
+    const upgradedModel = upgradedScene.getDefenceReport();
+
+    expect(upgradedModel.playerStrength).toBeGreaterThan(
+      starterModel.playerStrength,
+    );
+    expect(upgradedModel.aggressionBudget).toBeGreaterThan(
+      starterModel.aggressionBudget,
+    );
+
+    // The budget the gym reports is the ring total the shipped tick produced.
+    const upgradedTick = runFrontierTick(upgraded, {
+      clock: frontierClockFor(upgraded),
+    });
+    const total = upgradedTick.payload.ring.hexes.reduce(
+      (sum, hex) => sum + hex.aggression,
+      0,
+    );
+    expect(total).toBe(upgradedModel.aggressionBudget);
+  });
+
 });

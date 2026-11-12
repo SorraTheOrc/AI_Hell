@@ -46,6 +46,7 @@ import {
   HeadlessChoicePlayer,
   advanceBulletPosition,
   hostileAimVelocity,
+  resolveStartingLives,
   resolveWeaponLoadout,
   runArena,
 } from './arena';
@@ -77,6 +78,7 @@ import {
   EVAL_TELEMETRY_SCHEMA_VERSION,
   type ArenaConfig,
   type ArenaRunResult,
+  type ArenaStartingLoadout,
   type TelemetryEventRecord,
   type TelemetryTickRecord,
 } from './types';
@@ -84,6 +86,7 @@ import { GHOST_ENEMY_KEYS } from '../../waves/GhostSpawner';
 import { GRUNT_ENEMY_KEY } from '../../waves/HordeSpawner';
 import { CENTIPEDE_ENEMY_KEY } from '../../waves/CentipedeSpawner';
 import { LANE_TRAFFIC_ENEMY_KEY } from '../../waves/LaneTrafficSpawner';
+import { DEFAULT_LIVES, MAX_LIVES } from '../../core/GameState';
 
 const SMALL_SPAWNS = { minerals: 2, powerUps: 1, enemies: 1, asteroids: 1 };
 
@@ -1372,5 +1375,110 @@ describe('owned-weapon fire loadout (AH-0MW5DVAME0062GQO)', () => {
     expect(levelled.definition.aoe?.radius).toBeCloseTo(
       AOE_RADII.nova * levelled.stats.aoeRadius,
     );
+  });
+});
+
+// ── Arena starting-loadout seam (AH-0MW9QA2YC009PSF5) ───────────────────────
+
+/**
+ * The seam the ring-timing harness launches a deployment through
+ * (`ArenaConfig.startingLoadout`): the hull's lives and speed multiplier plus
+ * the fleet's owned weapons.
+ *
+ * Every committed arena baseline plays through this path, so the seam must be
+ * **inert by default** and **defensive when malformed** — an omitted loadout
+ * must reproduce the shipped run exactly, and bad input must degrade to the
+ * shipped default instead of crashing the run or starting an uncapped one.
+ * These tests pin that contract; the loadout *model* (which hull and weapons a
+ * ring entry owns) is pinned separately in `ringTiming.test.ts`.
+ */
+describe('arena starting-loadout seam (AH-0MW9QA2YC009PSF5)', () => {
+  /** The explicit spelling of the shipped default the seam must fall back to. */
+  const SHIPPED_DEFAULT: ArenaStartingLoadout = {
+    lives: DEFAULT_LIVES,
+    speedMultiplier: 1,
+    weapons: [],
+  };
+
+  /** Plays one fixed small scenario with the given launch loadout. */
+  const launch = (startingLoadout?: ArenaStartingLoadout): ArenaRunResult =>
+    runArena(createLegacyBotPolicy(), {
+      seed: 0x5eed,
+      ticks: 240,
+      spawns: SMALL_SPAWNS,
+      startingLoadout,
+    });
+
+  /** The whole record stream, as the byte-stability assertions compare it. */
+  const stream = (result: ArenaRunResult): string =>
+    stableStringify(result.records);
+
+  it('keeps the shipped run byte-identical when the loadout is omitted', () => {
+    const omitted = launch();
+    const explicitDefaults = launch(SHIPPED_DEFAULT);
+
+    expect(stream(explicitDefaults)).toBe(stream(omitted));
+    expect(explicitDefaults.ticksSimulated).toBe(omitted.ticksSimulated);
+  });
+
+  it('degrades a malformed life count instead of crashing the run', () => {
+    const omitted = launch();
+
+    for (const lives of [Number.NaN, Number.POSITIVE_INFINITY, -2, 0]) {
+      const malformed = launch({ ...SHIPPED_DEFAULT, lives });
+      expect(
+        stream(malformed),
+        `lives=${String(lives)} should still play a normal run`,
+      ).toBe(stream(omitted));
+    }
+  });
+
+  it('resolves a launch life count into the run’s 1..MAX_LIVES range', () => {
+    // The world's life count is only observable once a run loses a life, so the
+    // defensive range is pinned on the resolver the arena seeds the world with.
+    expect(resolveStartingLives(undefined)).toBe(DEFAULT_LIVES);
+    expect(resolveStartingLives(Number.NaN)).toBe(DEFAULT_LIVES);
+    expect(resolveStartingLives(Number.POSITIVE_INFINITY)).toBe(DEFAULT_LIVES);
+    expect(resolveStartingLives(-2)).toBe(DEFAULT_LIVES);
+    expect(resolveStartingLives(0)).toBe(DEFAULT_LIVES);
+    expect(resolveStartingLives(2.7)).toBe(2);
+    expect(resolveStartingLives(MAX_LIVES + 40)).toBe(MAX_LIVES);
+  });
+
+  it('degrades a non-positive or non-finite hull speed multiplier', () => {
+    const omitted = launch();
+
+    for (const speedMultiplier of [Number.NaN, 0, -1]) {
+      const malformed = launch({ ...SHIPPED_DEFAULT, speedMultiplier });
+      expect(
+        stream(malformed),
+        `speedMultiplier=${String(speedMultiplier)} should fall back to the shipped tuning`,
+      ).toBe(stream(omitted));
+    }
+  });
+
+  it('ignores a weapon id the catalogue does not itemise', () => {
+    const omitted = launch();
+    const unknown = {
+      id: 'not_a_catalogued_weapon',
+      ownedLevel: 1,
+    } as unknown as NonNullable<ArenaStartingLoadout['weapons']>[number];
+
+    // The shipped `Player.equipWeapon` drops an unknown id, so the seeding must
+    // too: recording it here would later throw in `resolveWeaponLoadout`.
+    expect(stream(launch({ ...SHIPPED_DEFAULT, weapons: [unknown] }))).toBe(
+      stream(omitted),
+    );
+  });
+
+  it('arms the run from tick 0 when the loadout owns a catalogued weapon', () => {
+    // Positive control: the inertia tests above must not be vacuous — a real
+    // launch weapon measurably changes the run, so the seam is consumed.
+    const armed = launch({
+      ...SHIPPED_DEFAULT,
+      weapons: [{ id: 'spread', ownedLevel: 1 }],
+    });
+
+    expect(stream(armed)).not.toBe(stream(launch()));
   });
 });

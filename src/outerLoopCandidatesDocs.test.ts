@@ -534,8 +534,11 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
 
   it('states the shipped resolver and frontier-tick numbers', () => {
     const spec = gddRingSpec();
-    // Aggression rises 1–2 a tick to a ceiling of 9.
-    expect(spec).toMatch(/1\s*[–—-]\s*2/);
+    // Aggression is redistributed inside a strength-derived budget to a
+    // ceiling of 9, with at least one beatable hex left every tick.
+    expect(spec).toMatch(/redistributed/i);
+    expect(spec).toMatch(/budget/i);
+    expect(spec).toMatch(/beatable ceiling/i);
     expect(spec).toMatch(/\b9\b/);
     // +15 % per point of aggression, ±10 % seeded jitter, 70 % attack chance.
     expect(spec).toMatch(/15\s*%/);
@@ -556,12 +559,13 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
 
   it('records the measured ring timings and their tolerance', () => {
     const spec = gddRingSpec();
-    // Ring 1 grind mean and ring 2 grind mean, measured with the arena.
-    expect(spec).toMatch(/49\.2/);
-    expect(spec).toMatch(/109\.0/);
+    // Ring 1 grind mean and ring 2 grind mean, measured with the arena and
+    // requoted from the regenerated artifact (AH-0MW9QA2YC009PSF5).
+    expect(spec).toMatch(/54\.3/);
+    expect(spec).toMatch(/116\.4/);
     // The rush line is faster: ring 1 and ring 2.
-    expect(spec).toMatch(/34\.1/);
-    expect(spec).toMatch(/62\.6/);
+    expect(spec).toMatch(/32\.0/);
+    expect(spec).toMatch(/62\.7/);
     // Budget windows and the stated tolerance.
     expect(spec).toMatch(/40\s*[–—-]\s*60/);
     expect(spec).toMatch(/90\s*[–—-]\s*120/);

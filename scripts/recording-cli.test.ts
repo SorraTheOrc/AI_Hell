@@ -20,6 +20,8 @@ import { parseAnalyseArgs, selectRun as selectAnalyseRun } from './analyse-recor
 import { parseReplayArgs, selectRun as selectReplayRun } from './replay-recording.mjs';
 import {
   buildHumanBalanceStatsArtifact,
+  DEFAULT_CHECKPOINT_MS,
+  formatRecordHelp,
   parseRecordArgs,
   recordUrl,
   resolveBalanceStatsOutputPath,
@@ -109,6 +111,19 @@ describe('record-session CLI', () => {
     expect(parseRecordArgs(['--bot', '--bot-config', 'bot-tuning.json']).botConfig).toBe(
       'bot-tuning.json',
     );
+  });
+
+  it('builds the same help text the CLI prints, naming the stop procedure', () => {
+    const help = formatRecordHelp();
+    expect(help).toContain('Usage: node scripts/record-session.mjs');
+    expect(help).toContain('--checkpoint-ms');
+    expect(help).not.toContain('Unknown argument');
+  });
+
+  it('parses --checkpoint-ms, defaulting to 15 s and treating 0 as disabled', () => {
+    expect(parseRecordArgs([]).checkpointMs).toBe(DEFAULT_CHECKPOINT_MS);
+    expect(parseRecordArgs(['--checkpoint-ms', '5000']).checkpointMs).toBe(5_000);
+    expect(parseRecordArgs(['--checkpoint-ms', '0']).checkpointMs).toBe(0);
   });
 
   it('appends the dev seed to the game URL', () => {
@@ -203,6 +218,38 @@ describe('CLI entry points (AH-0MV2RY8XT007I91E)', () => {
       15_000,
     );
   }
+
+  it(
+    'documents the crash-safe checkpoint flag in --help',
+    () => {
+      const result = runCli('record-session.mjs', ['--help']);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('--checkpoint-ms');
+    },
+    15_000,
+  );
+
+  /**
+   * AH-0MVWIDOI70015EO0 AC1: the stop procedure must be stated where the
+   * mistake is made — in the tool's own usage text, not only in the docs.
+   */
+  it(
+    'states the stop procedure, the partial-capture path and the --auto separator in --help',
+    () => {
+      const result = runCli('record-session.mjs', ['--help']);
+      expect(result.status).toBe(0);
+      const help = result.stdout;
+      // Ctrl+C finishes and saves.
+      expect(help).toMatch(/Ctrl\+C in (?:this|the) terminal[^\n]*save/i);
+      // Closing the browser does not save a completed recording.
+      expect(help).toMatch(/closing the browser[^\n]*(?:does not|never)[^\n]*save/i);
+      expect(help).toMatch(/partial/i);
+      expect(help).toContain('.partial.jsonl');
+      // The working --auto form needs the npm `--` separator.
+      expect(help).toContain('npm run record -- --auto');
+    },
+    15_000,
+  );
 
   it('analyse reads a piped recording rather than its own source', () => {
     // Before the fix, argv[0] became options.file, so stdin was ignored and

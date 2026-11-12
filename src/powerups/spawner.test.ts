@@ -144,7 +144,7 @@ describe('WeightedRandomSpawner: runtime weight mutation', () => {
     s.setWeight('magnet', 0.2);
 
     const N = 10_000;
-    const counts: Record<PowerUpId, number> = { shield: 0, bomb: 0, speed_boost: 0, phase_shift: 0, teleport: 0, extra_life: 0, magnet: 0, mineral_scoop: 0, smart_bomb: 0, force_field: 0, mystery_ufo: 0, frenzy: 0, chrono: 0, thorns: 0, salvage: 0, strike: 0 };
+    const counts: Record<PowerUpId, number> = { shield: 0, bomb: 0, speed_boost: 0, phase_shift: 0, teleport: 0, extra_life: 0, magnet: 0, mineral_scoop: 0, smart_bomb: 0, force_field: 0, mystery_ufo: 0, frenzy: 0, chrono: 0, thorns: 0, salvage: 0, strike: 0, mining_laser: 0 };
     for (let i = 0; i < N; i++) {
       counts[s.next()] += 1;
     }
@@ -322,8 +322,8 @@ describe('WeightedRandomSpawner: eligibility filter (six-slot drop gating)', () 
 //
 // AH-0MW3MLRHL000DKPM halves the per-kill drop **roll** and stops asteroids
 // handing out lives, but deliberately leaves every drop **weight** alone:
-// Extra Life already carries the rarer weight 3 of the 58-point shared pool
-// (≈ 5.17 % of power-up draws), so halving the roll must not double-halve it.
+// Extra Life already carries the rarer weight 3 of the 60-point shared pool
+// (≈ 5.0 % of power-up draws), so halving the roll must not double-halve it.
 // These are invariance tests: they are green on both sides of the supply-dial
 // change on purpose, because the weight table is the thing that must not move.
 
@@ -336,7 +336,7 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
     return spawner;
   }
 
-  it('keeps Extra Life at weight 3 of the 58-point default pool', () => {
+  it('keeps Extra Life at weight 3 of the 60-point default pool', () => {
     const spawner = shippedSpawner();
     const weights = spawner.getWeights();
     const total = POWER_UP_WEIGHT_IDS.reduce(
@@ -346,12 +346,12 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
 
     expect(DEFAULT_EXTRA_LIFE_WEIGHT).toBe(3);
     expect(weights.extra_life).toBe(3);
-    expect(total).toBe(58);
-    expect((weights.extra_life ?? 0) / total).toBeCloseTo(3 / 58, 12);
-    expect((weights.extra_life ?? 0) / total).toBeCloseTo(0.0517, 4);
+    expect(total).toBe(60);
+    expect((weights.extra_life ?? 0) / total).toBeCloseTo(3 / 60, 12);
+    expect((weights.extra_life ?? 0) / total).toBeCloseTo(0.05, 4);
   });
 
-  it('draws Extra Life at the unchanged ≈ 5.2 % share over many seeded draws', () => {
+  it('draws Extra Life at the unchanged ≈ 5.0 % share over many seeded draws', () => {
     const spawner = shippedSpawner(23);
     const draws = 20_000;
     let extraLives = 0;
@@ -359,7 +359,7 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
       if (spawner.next() === 'extra_life') extraLives += 1;
     }
 
-    expect(extraLives / draws).toBeCloseTo(3 / 58, 2);
+    expect(extraLives / draws).toBeCloseTo(3 / 60, 2);
   });
 
   it('leaves every other drop weight at its documented default', () => {
@@ -370,6 +370,9 @@ describe("Extra Life's share of the shared pool is unchanged (AH-0MW3MLRHL000DKP
     expect(weights.mystery_ufo).toBe(3);
     expect(weights.smart_bomb).toBe(2);
     expect(weights.strike).toBe(2);
+    // The Mining Laser joins the field-drop rotation at its rare weight 2
+    // (AH-0MW9QMRC7007HVHQ); the sibling rares are unchanged.
+    expect(weights.mining_laser).toBe(2);
     expect(weights.magnet).toBe(4);
     expect(weights.shield).toBe(4);
     expect(weights.mineral_scoop).toBe(4);

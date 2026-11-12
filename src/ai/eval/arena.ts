@@ -201,6 +201,7 @@ import { applyMineralChoiceReward, type MineralChoicePlayer } from '../../poweru
 import type { PowerUpId } from '../../powerups/types';
 import {
   createBulletsFromHeading,
+  WEAPON_CATALOGUE,
   type AoEDescriptor,
   type WeaponDefinition,
   type WeaponId,
@@ -218,6 +219,7 @@ import {
 import { PLAYER_BULLET_RADIUS, PLAYER_BULLET_SPEED } from '../../core/constants';
 import { AsteroidsModel } from '../../utils/movementModel';
 import { wrapAxis, wrappedAxisDelta } from '../../utils/wrapGeometry';
+import { scaleShipConfigForHull } from '../../core/hangarWar/hullSpeed';
 import type {
   AsteroidsConfig,
   AsteroidsInput,
@@ -693,8 +695,40 @@ function buildLevelWavePlan(
   });
 }
 
-/** Builds a fresh world: the player starts centred, facing right. */
-function createWorld(width: number, height: number, hold: MineralHold): ArenaWorld {
+/**
+ * The life count a launch loadout's `lives` resolves to (AH-0MW9QA2YC009PSF5).
+ *
+ * A launch loadout is model/data input, not a value the arena can trust: a
+ * missing, non-finite or non-positive count falls back to the arena's shipped
+ * {@link PLAYER_START_LIVES}, and a valid count is truncated and capped at
+ * {@link MAX_LIVES} — the run's own cap — so a malformed or absurd loadout
+ * degrades to a playable run instead of crashing it or starting an uncapped
+ * one. Mirrors the hangar deployment model's `1..MAX_LIVES` clamp
+ * (`resolveDeploymentLoadout` in `src/ai/eval/ringTiming.ts`).
+ *
+ * @param lives — the loadout's requested life count, if any.
+ * @returns the life count the world starts with (always in `1..MAX_LIVES`).
+ */
+export function resolveStartingLives(lives: number | undefined): number {
+  if (typeof lives !== 'number' || !Number.isFinite(lives) || lives < 1) {
+    return PLAYER_START_LIVES;
+  }
+  return Math.min(MAX_LIVES, Math.trunc(lives));
+}
+
+/**
+ * Builds a fresh world: the player starts centred, facing right.
+ *
+ * `startingLives` is the launch loadout's life count (a hull's run stat plus
+ * its `extra-lives` modifiers, AH-0MW9QA2YC009PSF5); omitted it keeps the
+ * arena's own {@link PLAYER_START_LIVES}.
+ */
+function createWorld(
+  width: number,
+  height: number,
+  hold: MineralHold,
+  startingLives: number = PLAYER_START_LIVES,
+): ArenaWorld {
   return {
     player: {
       x: width / 2,
@@ -704,7 +738,7 @@ function createWorld(width: number, height: number, hold: MineralHold): ArenaWor
       facing: 0,
       angularVelocity: 0,
     },
-    lives: PLAYER_START_LIVES,
+    lives: startingLives,
     invulnerableTicks: 0,
     minerals: [],
     drops: [],
@@ -832,6 +866,11 @@ export class HeadlessChoicePlayer implements MineralChoicePlayer {
   /** Permanent weapon grants raise the run-scoped level by one (AC3). */
   equipWeapon(weaponId: WeaponId, permanent = false): void {
     if (!permanent) return;
+    // An id the catalogue does not itemise is dropped, exactly like the shipped
+    // `Player.equipWeapon` (AH-0MW9QA2YC009PSF5): a launch loadout is model/data
+    // input, so a stale id must degrade to "not owned" rather than crash the
+    // run later in `resolveWeaponLoadout` (`getWeaponById` throws on it).
+    if (!WEAPON_CATALOGUE[weaponId]) return;
     this._weaponLevels.set(
       weaponId,
       (this._weaponLevels.get(weaponId) ?? 0) + 1,
@@ -965,7 +1004,20 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const enemyByKey = enemiesByKey(balance.enemies);
   const archetypes = arenaArchetypes(balance.enemies);
   const hostileWaves = openingHostileWaves(balance.difficultyCurves);
-  const shipAsteroids = shipToAsteroidsConfig(balance.ship);
+  // The launch loadout (AH-0MW9QA2YC009PSF5): a hangar deployment does not
+  // start from the arena's bare defaults, so the hull's speed multiplier scales
+  // the ship config through the **same** helper a shipped deployment uses
+  // (`scaleShipConfigForHull`), and the resolved life count seeds the world.
+  const startingLoadout = config.startingLoadout;
+  const hullSpeedMultiplier =
+    typeof startingLoadout?.speedMultiplier === 'number' &&
+    Number.isFinite(startingLoadout.speedMultiplier)
+      ? startingLoadout.speedMultiplier
+      : 1;
+  const startingLives = resolveStartingLives(startingLoadout?.lives);
+  const shipAsteroids = shipToAsteroidsConfig(
+    scaleShipConfigForHull(balance.ship, hullSpeedMultiplier),
+  );
 
   // Per-level campaign mode (AH-0MVLJFB1I0099X4Z): an explicit `level` swaps
   // the single-level spawn reservoir for the **real campaign waves** of that
@@ -1038,6 +1090,16 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   // so a hold-full grant advances the same run-scoped level stores the game
   // uses and later offers carry accurate ownership context (AC3).
   const holdChoice = new HeadlessChoicePlayer();
+  // The launch loadout's weapon ownership seeds the run's ownership context, so
+  // the same resolvers that fire in-run grants also fire what the fleet brought
+  // (`resolveWeaponLoadout`, below). One `ownedLevel` = that many permanent
+  // grants, exactly like `Player.equipWeapon(id, true)` called repeatedly.
+  for (const weapon of startingLoadout?.weapons ?? []) {
+    const grants = Math.max(1, Math.trunc(weapon.ownedLevel));
+    for (let grant = 0; grant < grants; grant += 1) {
+      holdChoice.equipWeapon(weapon.id, true);
+    }
+  }
   const effects = new EffectsRegistry(holdChoice.powerUpStore);
   effects.setRng(choiceRng);
   let mineralsCollected = 0;
@@ -1079,7 +1141,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const reset = (policy as { reset?: () => void }).reset;
   if (typeof reset === 'function') reset.call(policy);
 
-  const world = createWorld(width, height, hold);
+  const world = createWorld(width, height, hold, startingLives);
   const records: TelemetryRecord[] = [
     {
       kind: 'run_header',

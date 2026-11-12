@@ -1,25 +1,36 @@
 /**
- * The hex boss — the deployment's boss variant on the **shared** boss path
+ * The hex profile — the encounter that wins a hex, configured from the hex
  * (AH-0MVUXCAW0001VUM6, part of **Build Candidate D — Hangar War**).
  *
- * Design of record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D — a run is
- * "a normal campaign slice … ending on the hex's boss", and Rule 2 says "a hex
- * boss demonstrates the hex's new weapon or power-up against the player".
+ * Design of record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D — a deployment
+ * is "a normal campaign slice … ending on the hex's **mini-boss**" (GDD §8.2),
+ * and Rule 2 says "the boss wields it first — a hex boss demonstrates the hex's
+ * new weapon or power-up against the player".
  *
- * ## A variant, never a copy
+ * ## One profile, the shipped entities
  *
- * The hex boss is the shipped `Boss` (the run's final encounter) configured
- * from the hex, not a second boss implementation: every value this module
- * produces maps onto an existing, default-preserving `BossConfig` hook
- * (`bodyColor`, `desperationColor`, `hitPointsPerPhase`, `phaseCount`,
- * `demonstratedWeapon`). Rule 2 — "the boss wields it first" — is honoured by
- * {@link HexBossProfile.demonstration}: the boss **opens the encounter by
- * firing the granted weapon's volley**, with that weapon's fan offsets, bullet
- * colour and bullet shape resolved from the **shared** catalogue
- * ({@link hexBossDemonstration} reads `src/utils/weapons.ts`), while the body
- * keeps wearing the weapon's colour as a secondary tell. Later phases keep the
- * shipped patterns, and the grant itself is still resolved by the capture cycle
- * — the shipped configuration seam is used rather than forking the entity.
+ * The profile is pure data mapped onto existing, default-preserving config
+ * hooks (`bodyColor`, `desperationColor`, `hitPointsPerPhase`, `phaseCount`,
+ * `demonstratedWeapon`); it never adds a second boss implementation. Both
+ * shared entities consume it:
+ *
+ * - the **wave-10 `MiniBoss`** is the encounter that ends a deployment —
+ *   `hexMiniBossConfigForLevel` (`src/waves/miniBossDesigns.ts`) maps this
+ *   profile onto the mini-boss config, so the encounter wears the granted
+ *   weapon's colour and opens with its catalogue volley;
+ * - the shipped final `Boss` still accepts the same profile (the arcade path's
+ *   configuration seam, `PlayScene.spawnBoss`), which no deployment reaches
+ *   any more: a hex deployment plays exactly one level and ends on that
+ *   level's mini-boss.
+ *
+ * Rule 2 is honoured by {@link HexBossProfile.demonstration}: the encounter
+ * **opens by firing the granted weapon's volley**, with that weapon's fan
+ * offsets, bullet colour and bullet shape resolved from the **shared**
+ * catalogue ({@link hexBossDemonstration} reads `src/utils/weapons.ts`), while
+ * the body keeps wearing the weapon's colour as a secondary tell. Later phases
+ * keep the shipped patterns, and the grant itself is still resolved by the
+ * capture cycle — the shipped configuration seam is used rather than forking
+ * either entity.
  *
  * ## What the hex contributes
  *
@@ -253,7 +264,9 @@ export function hexBossBodyColor(
 }
 
 /**
- * Builds the hex boss profile the deployment's boss encounter runs with.
+ * Builds the hex profile the deployment's encounter runs with (the wave-10
+ * mini-boss in the game, the same mapping in `GymMiniBoss`; the shipped
+ * `Boss` configuration seam is retained).
  *
  * @param hex — the target hex (id + aggression at deployment time).
  * @param definition — the authored hex definition, or `null`/`undefined` when

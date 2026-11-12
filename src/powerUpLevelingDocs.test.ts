@@ -387,4 +387,14 @@ describe('power-up leveling is documented (AH-0MUU2QJE2007JNR6 AC8)', () => {
     expect(description).not.toMatch(/charge pool/i);
     expect(POWER_UP_CATALOGUE.phase_shift.singleUse).toBe(true);
   });
+
+  it('the GDD, README and GYM_PARITY document the gym-only Assign control (AH-0MW82M3LB007OQG6 AC7)', () => {
+    // The manual per-row control is a gym-only affordance whose rationale
+    // lives in the parity matrix; each shipped doc surface must name it so a
+    // reader can find the control and why it is not in the game.
+    expect(readme).toContain('per-row **Assign** button');
+    expect(gdd).toContain('gym-only per-row Assign button');
+    const gymParity = fs.readFileSync(GYM_PARITY_PATH, 'utf8');
+    expect(gymParity).toContain('Gym-only manual Assign control');
+  });
 });

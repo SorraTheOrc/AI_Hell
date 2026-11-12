@@ -26,6 +26,13 @@
  *   the gym can never drift from the game (AGENTS.md gym↔game parity,
  *   `docs/GYM_PARITY.md`).
  *
+ * The screen's two navigation/state rows — `⌗ HEX MAP` and the destructive
+ * `⟲ RESTART WAR` reset — are built here too. The restart row is a two-step
+ * confirm: {@link buildHangarRestartRow} renders the idle/armed label, the pure
+ * {@link advanceRestartConfirm} state machine decides arm/confirm/disarm, and
+ * {@link restartHangarWar} returns the fresh starting-position payload
+ * (preserving `bestScore`) that the scene persists (AH-0MW8F7NH1002PQE3).
+ *
  * Everything in {@link buildHangarScreenModel} and the payload updaters is
  * pure and total, so the tree, the disabled states and the attract-bot answer
  * are table-testable without booting a scene.
@@ -53,6 +60,7 @@ import {
   resolveActiveHull,
   resolveActiveLoadout,
 } from '../../core/hangarWar/hangarEconomy';
+import { createDefaultPayload } from '../../core/hangarWar/hangarWarStore';
 import type {
   HangarLoadout,
   HangarWarPayload,
@@ -73,6 +81,35 @@ export const HANGAR_SCREEN_HINT =
 
 /** A hangar row's state — the economy's verdict, presented. */
 export type HangarUnlockState = 'owned' | 'gated' | 'unaffordable' | 'buyable';
+
+/**
+ * The `⟲ RESTART WAR` confirmation row: the player-facing restart control.
+ *
+ * Built by {@link buildHangarRestartRow} and presented as the last row on the
+ * hangar screen — the second bottom-row slot, beneath DEPLOY and the HEX MAP
+ * (AH-0MW8F7NH1002PQE3). The armed/idle label lives in this interface; the
+ * scene owns the arming state and timer.
+ */
+export interface HangarRestartRow {
+  /** Row key (`restart`). */
+  key: 'restart';
+  /** Full row text as rendered (`⟲ RESTART WAR` or `⚠ PRESS AGAIN TO CONFIRM`). */
+  label: string;
+  /** True only when the row can be activated (handler provided and idle or armed). */
+  actionable: boolean;
+}
+
+/** Row key of the hangar's restart row. */
+export const RESTART_ROW_KEY = 'restart';
+
+/**
+ * Two-step confirm timeout in milliseconds.
+ *
+ * After the first activation the row shows `⚠ PRESS AGAIN TO CONFIRM` and
+ * auto-reverts to idle after this duration, so a stray Enter can never reset
+ * the war (AH-0MW8F7NH1002PQE3).
+ */
+export const RESTART_CONFIRM_TIMEOUT_MS = 5000;
 
 /** One row of the unlock tree. */
 export interface HangarUnlockRow {
@@ -201,6 +238,27 @@ export function buildHangarMapRow(): HangarMapRow {
   };
 }
 
+/**
+ * Builds the `⟲ RESTART WAR` reset row (pure).
+ *
+ * The row is always actionable: resetting is a navigation/state action, not
+ * an economy one, so it never depends on salvage, ring progress or ownership.
+ * The label flips to the confirm prompt once the scene arms the row. The
+ * caller (`HangarScene`) owns the arming state and its timer.
+ *
+ * @param armed — whether the row is currently in its confirm step.
+ * @returns the restart row.
+ */
+export function buildHangarRestartRow(armed = false): HangarRestartRow {
+  return {
+    key: RESTART_ROW_KEY,
+    label: armed
+      ? '⚠ PRESS AGAIN TO CONFIRM'
+      : '⟲ RESTART WAR — start a fresh war',
+    actionable: true,
+  };
+}
+
 /** The complete rendered state of the hangar screen (pure data). */
 export interface HangarScreenModel {
   /** Screen title. */
@@ -221,6 +279,8 @@ export interface HangarScreenModel {
   deployRow: HangarDeployRow;
   /** The `⌗ HEX MAP` navigation row (one click to what the player holds). */
   mapRow: HangarMapRow;
+  /** The `⟲ RESTART WAR` reset row (two-step confirm, `bestScore` kept). */
+  restartRow: HangarRestartRow;
   /**
    * Keys of the rows that can be activated, in reading order — exactly the
    * rows registered with the shared `FocusManager` (disabled rows are never
@@ -461,6 +521,7 @@ export function formatSalvageLine(payload: HangarWarPayload): string {
 export function buildHangarScreenModel(
   payload: HangarWarPayload,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  options: HangarScreenModelOptions = {},
 ): HangarScreenModel {
   const unlockRows = buildHangarUnlockRows(payload, catalogue);
   const hullOptions = buildHangarHullOptions(payload, catalogue);
@@ -468,6 +529,7 @@ export function buildHangarScreenModel(
   const modifierOptions = buildHangarModifierOptions(payload, catalogue);
   const deployRow = buildHangarDeployRow(payload, catalogue);
   const mapRow = buildHangarMapRow();
+  const restartRow = buildHangarRestartRow(options.restartArmed === true);
   const focusOrder = [
     ...unlockRows.filter((row) => row.actionable),
     ...hullOptions.filter((row) => row.actionable),
@@ -477,6 +539,9 @@ export function buildHangarScreenModel(
     // The navigation row follows the primary action, mirroring `HexMapScene`'s
     // convention of placing its own navigation row last in the focus order.
     mapRow,
+    // The restart row is the last row on screen — a destructive action sits
+    // last so a stray Enter never reaches it by accident.
+    restartRow,
   ].map((row) => row.key);
   return {
     title: HANGAR_SCREEN_TITLE,
@@ -488,6 +553,7 @@ export function buildHangarScreenModel(
     modifierOptions,
     deployRow,
     mapRow,
+    restartRow,
     focusOrder,
   };
 }
@@ -626,10 +692,113 @@ export function toggleHangarModifier(
   };
 }
 
+/**
+ * Resets the war to its documented starting position (pure).
+ *
+ * Returns a **fresh** payload with the hangar back to its starting kit (the
+ * basic hull and the starter weapon owned but **not equipped**, no modifiers,
+ * zero salvage and an empty loadout), the ring back to `ringIndex` 1 with no
+ * hexes, `pendingAttacks` empty and `frontierTick` 0. Two things are carried
+ * across the reset:
+ *
+ * - **`bestScore` is preserved** — the all-time hangar-war record survives the
+ *   reset (operator decision Q2 = b), so a restart never erases the best score.
+ * - **A fresh random seed** — the caller supplies one (production uses the
+ *   shared `randomSeed()`; tests inject a fixed seed), so a restart starts a
+ *   genuinely new war (operator decision Q3 = a).
+ *
+ * The input payload is never mutated (it is a pure updater beside
+ * {@link purchaseHangarEntry}/{@link equipHangarHull}/{@link toggleHangarWeapon}/
+ * {@link toggleHangarModifier}); the caller persists the result through
+ * `hangarWarStore`. The payload schema is unchanged: a reset refills the
+ * existing v1 shape, so there is no version bump and no migration
+ * (AH-0MW8F7NH1002PQE3).
+ *
+ * @param payload — the payload to reset (never mutated).
+ * @param seed — the fresh war's seed (normalised by `createDefaultPayload`).
+ * @returns a fresh payload in the starting position with `bestScore` kept.
+ */
+export function restartHangarWar(
+  payload: HangarWarPayload,
+  seed: number,
+): HangarWarPayload {
+  const fresh = createDefaultPayload(seed);
+  return {
+    ...fresh,
+    bestScore: toCount(payload.bestScore),
+  };
+}
+
+/**
+ * The events the two-step restart confirm reacts to.
+ *
+ * The scene owns the armed bit and its timer; this union is the pure input the
+ * transition function consumes, so the confirm semantics are table-testable
+ * without a scene (AH-0MW8F7NH1002PQE3).
+ */
+export type HangarRestartEvent =
+  | { readonly kind: 'activate' }
+  | { readonly kind: 'timeout' }
+  | { readonly kind: 'focus'; readonly key: string | null }
+  | { readonly kind: 'leave' };
+
+/** The outcome of one {@link advanceRestartConfirm} transition. */
+export interface HangarRestartTransition {
+  /** The armed state after the event. */
+  readonly armed: boolean;
+  /** True only when this event commits the reset (the second activation). */
+  readonly reset: boolean;
+}
+
+/**
+ * The pure two-step confirm state machine for the restart row
+ * (AH-0MW8F7NH1002PQE3).
+ *
+ * Starting from `armed`:
+ *
+ * - **`activate`** — idle → arms (no reset); armed → **commits the reset** and
+ *   disarms. This is why a stray Enter only ever arms; a second deliberate
+ *   activation is required to wipe the war.
+ * - **`timeout`** — always disarms (the confirm window expired).
+ * - **`focus`** — moving focus away from the restart row disarms; focusing the
+ *   restart row itself leaves the state untouched.
+ * - **`leave`** — leaving the screen always disarms.
+ *
+ * @param armed — whether the row is currently armed.
+ * @param event — the event to apply.
+ * @returns the next armed bit and whether this event commits the reset.
+ */
+export function advanceRestartConfirm(
+  armed: boolean,
+  event: HangarRestartEvent,
+): HangarRestartTransition {
+  switch (event.kind) {
+    case 'activate':
+      return armed
+        ? { armed: false, reset: true }
+        : { armed: true, reset: false };
+    case 'timeout':
+      return { armed: false, reset: false };
+    case 'focus':
+      // Only focus moving to another row disarms; focus staying on (or moving
+      // to) the restart row keeps the confirm step intact.
+      return { armed: event.key === RESTART_ROW_KEY ? armed : false, reset: false };
+    case 'leave':
+      return { armed: false, reset: false };
+  }
+}
+
 /** Optional rendering knobs for {@link renderHangarScreen}. */
 export interface HangarScreenRenderOptions {
   /** Bottom hint line (defaults to {@link HANGAR_SCREEN_HINT}). */
   readonly hint?: string;
+  /**
+   * Invoked after every focus change with the newly focused row key (or `null`
+   * when no row is focusable). The shipped scene uses it to disarm the restart
+   * row whenever focus leaves it, so the two-step confirm cannot survive a
+   * focus move (AH-0MW8F7NH1002PQE3).
+   */
+  readonly onFocusChange?: (key: string | null) => void;
 }
 
 /** The actions a rendered hangar screen invokes. */
@@ -646,6 +815,17 @@ export interface HangarScreenHandlers {
   onDeploy(hexId: string | null): void;
   /** Open the hex map (the `⌗ HEX MAP` row). */
   onOpenMap(): void;
+  /** Reset the war to its starting position (the `⟲ RESTART WAR` row). */
+  onRestart(): void;
+}
+
+/** Optional model-building knobs for {@link buildHangarScreenModel}. */
+export interface HangarScreenModelOptions {
+  /**
+   * Whether the restart row is armed (the second step of the two-step confirm).
+   * Defaults to `false` (idle).
+   */
+  readonly restartArmed?: boolean;
 }
 
 /** One rendered row, exposed for tests and screen queries. */
@@ -691,6 +871,19 @@ const RING_Y = 90;
 const SECTION_Y = 118;
 const ROW_START_Y = 144;
 const ROW_STEP = 21;
+
+/**
+ * Y positions of the three bottom rows (bottom of the screen, above the
+ * hint line). Exported so a layout assertion can pin the spacing and so no
+ * row silently collides when a fourth bottom row is ever added.
+ *
+ * Reading order on screen is restart → map → deploy, each 22 px apart, with
+ * the primary deployment action closest to the hint line
+ * (AH-0MW8F7NH1002PQE3).
+ */
+export const HANGAR_DEPLOY_ROW_Y = GAME_HEIGHT - 52;
+export const HANGAR_MAP_ROW_Y = GAME_HEIGHT - 74;
+export const HANGAR_RESTART_ROW_Y = GAME_HEIGHT - 96;
 
 /** Scene-level objects created by the renderer (destroyed together). */
 interface RenderedRows {
@@ -875,7 +1068,7 @@ export function renderHangarScreen(
   // ── Deploy (bottom, the screen's primary action) ─────────────
   addRow(
     LEFT_X,
-    GAME_HEIGHT - 52,
+    HANGAR_DEPLOY_ROW_Y,
     model.deployRow.key,
     model.deployRow.label,
     model.deployRow.actionable,
@@ -887,11 +1080,21 @@ export function renderHangarScreen(
   // ── Hex map (navigation, directly above the primary action) ──
   addRow(
     LEFT_X,
-    GAME_HEIGHT - 74,
+    HANGAR_MAP_ROW_Y,
     model.mapRow.key,
     model.mapRow.label,
     model.mapRow.actionable,
     handlers?.onOpenMap ? () => handlers.onOpenMap!() : undefined,
+  );
+
+  // ── Restart war (destructive, the top bottom-row slot) ──────
+  addRow(
+    LEFT_X,
+    HANGAR_RESTART_ROW_Y,
+    model.restartRow.key,
+    model.restartRow.label,
+    model.restartRow.actionable,
+    handlers?.onRestart ? () => handlers.onRestart!() : undefined,
   );
 
   objects.push(
@@ -904,14 +1107,18 @@ export function renderHangarScreen(
       .setOrigin(0.5, 1),
   );
 
-  focusManager.attachKeyboard(scene);
-
   const focusedKey = (): string | null => {
     const index = focusManager.getFocusedIndex();
     if (index < 0) return null;
     const focusable = rendered.rows.filter((row) => row.actionable);
     return focusable[index]?.key ?? null;
   };
+
+  focusManager.attachKeyboard(scene);
+  if (options?.onFocusChange) {
+    const onFocusChange = options.onFocusChange;
+    focusManager.setFocusChangeListener(() => onFocusChange(focusedKey()));
+  }
 
   return {
     model,

@@ -53,13 +53,23 @@
  *
  * One tick is the transition that runs between runs:
  *
- * 1. **Aggression rises** on every hex of the ring by the tick's recorded rise
- *    (data-driven bounds, clamped at the tuning's maximum).
+ * 1. **Aggression is redistributed inside a strength-derived budget.** The
+ *    tick resolves the player's strength from the payload's own hangar
+ *    ({@link resolvePlayerStrength} — no new persisted field), derives the
+ *    ring's budget ({@link ringAggressionBudget}) and the aggression the
+ *    current fleet is expected to clear ({@link beatableAggressionCeiling}),
+ *    then moves points between hexes with {@link redistributeAggression}. A
+ *    rise on one hex is paid for by a fall on another, every aggression stays
+ *    a whole number in `[0, maxAggression]`, and at least one hex remains at
+ *    or below the beatable ceiling. The mass is stable while the fleet is
+ *    stable and grows only as the fleet grows; the tuning knobs
+ *    (`gainPerStrengthPoint`, `redistributionCap`, `beatableCeilingSlack`)
+ *    live in {@link DEFAULT_FRONTIER_TUNING}.
  * 2. **Queued attacks are resolved first** — the payload's `pendingAttacks`
- *    ("resolved next sortie") are evaluated against the risen aggression and
- *    consumed. A queued attack whose hex is no longer held, or that has no
- *    answerable neighbour, is dropped rather than retried, so the queue can
- *    never deadlock.
+ *    ("resolved next sortie") are evaluated against the redistributed
+ *    aggression and consumed. A queued attack whose hex is no longer held, or
+ *    that has no answerable neighbour, is dropped rather than retried, so the
+ *    queue can never deadlock.
  * 3. **The frontier may open a new front** — only when nothing was queued and
  *    the seeded draw passes the tuning's attack chance, one held, attackable
  *    hex is attacked.
@@ -112,7 +122,10 @@
 import { normaliseSeed } from '../rng';
 import { createHangarWarRng } from './rng';
 import { areNeighbours, type AxialCoordinate } from './hexRing';
-import type { HangarWarPayload, HexState, PendingAttack } from './types';
+import { MINIMUM_PLAYER_STRENGTH, resolvePlayerStrength } from './hangarEconomy';
+import { beatableAggressionCeiling } from './hexDifficulty';
+import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
+import type { HangarWarPayload, HexRingState, HexState, PendingAttack } from './types';
 
 /** The two outcomes of an algorithmic defence. */
 export type DefenceOutcome = 'held' | 'fell';
@@ -177,6 +190,22 @@ export interface FrontierTuning {
   readonly baseAttackingForce: number;
   /** Force added per point of the attacking neighbour's aggression. */
   readonly forcePerOriginAggression: number;
+  /**
+   * Ring aggression mass added per point of player strength above the minimum
+   * fleet (the strength → budget knob). `0` makes the budget depend only on a
+   * ring's authored base mass.
+   */
+  readonly gainPerStrengthPoint?: number;
+  /**
+   * Most aggression points the clock may move between hexes in one tick when
+   * the ring is at its budget (a rise on one hex forces a fall on another).
+   */
+  readonly redistributionCap?: number;
+  /**
+   * Aggression beyond the strength-derived beatable ceiling that the budget
+   * reservation allows, so the mover always has room to leave one beatable hex.
+   */
+  readonly beatableCeilingSlack?: number;
 }
 
 /**
@@ -199,6 +228,9 @@ export const DEFAULT_FRONTIER_TUNING: FrontierTuning = Object.freeze({
   attackChancePercent: 70,
   baseAttackingForce: 2,
   forcePerOriginAggression: 1,
+  gainPerStrengthPoint: 1,
+  redistributionCap: 2,
+  beatableCeilingSlack: 0,
 });
 
 /**
@@ -232,8 +264,18 @@ export interface HexDefenceRecord extends DefenceResolution {
 export interface FrontierTickRecord {
   /** The clock tick index this record belongs to. */
   readonly tick: number;
-  /** Aggression rise applied to every hex this tick. */
-  readonly aggressionRise: number;
+  /** The player strength the tick distributed aggression within. */
+  readonly playerStrength: number;
+  /** The ring's aggression budget (the total it carries after the tick). */
+  readonly aggressionBudget: number;
+  /** The highest aggression regarded as beatable this tick. */
+  readonly beatableCeiling: number;
+  /** Per-hex aggression changes this tick (only the hexes that moved). */
+  readonly deltas: readonly AggressionDelta[];
+  /** How many hexes rose in aggression this tick. */
+  readonly rose: number;
+  /** How many hexes fell in aggression this tick. */
+  readonly fell: number;
   /** Every defence resolved this tick, weakest margin last (empty when quiet). */
   readonly attacks: readonly HexDefenceRecord[];
 }
@@ -250,10 +292,21 @@ export interface FrontierTickResult {
 
 /** Optional per-call overrides (both default to the shipped behaviour). */
 export interface FrontierTickOptions {
-  /** The clock to apply; defaults to `createFrontierClock(payload.seed)`. */
+  /** The clock to apply; defaults to `createFrontierClock(payload.seed)`.
+   */
   readonly clock?: FrontierClock;
   /** Balance knobs; defaults to {@link DEFAULT_FRONTIER_TUNING}. */
   readonly tuning?: FrontierTuning;
+  /**
+   * Explicit player strength for a harness or test; defaults to the payload's
+   * own hangar (`resolvePlayerStrength`), so no shipped call site passes it.
+   */
+  readonly playerStrength?: number;
+  /**
+   * Explicit beatable ceiling for a harness or test; defaults to the value the
+   * player strength resolves (`beatableAggressionCeiling`).
+   */
+  readonly beatableCeiling?: number;
 }
 
 /** Multiplier applied to the attack per point of aggression (percent). */
@@ -288,6 +341,15 @@ function normaliseTuning(tuning: FrontierTuning): FrontierTuning {
     attackChancePercent: Math.min(100, toCount(tuning.attackChancePercent)),
     baseAttackingForce: toCount(tuning.baseAttackingForce),
     forcePerOriginAggression: toCount(tuning.forcePerOriginAggression),
+    gainPerStrengthPoint: toCount(
+      tuning.gainPerStrengthPoint ?? DEFAULT_FRONTIER_TUNING.gainPerStrengthPoint,
+    ),
+    redistributionCap: toCount(
+      tuning.redistributionCap ?? DEFAULT_FRONTIER_TUNING.redistributionCap,
+    ),
+    beatableCeilingSlack: toCount(
+      tuning.beatableCeilingSlack ?? DEFAULT_FRONTIER_TUNING.beatableCeilingSlack,
+    ),
   };
 }
 
@@ -361,6 +423,299 @@ export function advanceClock(clock: FrontierClock, ticks = 1): FrontierClock {
  */
 export function frontierClockFor(payload: HangarWarPayload): FrontierClock {
   return createFrontierClock(payload.seed, payload.frontierTick ?? 0);
+}
+
+/**
+ * The ring's authored base aggression mass.
+ *
+ * Rings with authored definitions use their authored `baseAggression` total —
+ * the starting shape the clock redistributes on top of. A ring whose hexes are
+ * generated without authored rows (a later ring before its data lands) falls
+ * back to its current total, which is that ring's authored starting shape at
+ * the first tick.
+ *
+ * @param ring — the ring to measure.
+ * @returns the authored (or current) base aggression mass.
+ */
+export function authoredRingBaseMass(ring: HexRingState): number {
+  const count = ring.hexes.length;
+  const definitions = hexRingDefinitionsFor(ring.ringIndex);
+  if (count > 0 && definitions.length === count) {
+    return definitions.reduce(
+      (sum, definition) => sum + toCount(definition.baseAggression),
+      0,
+    );
+  }
+  return ring.hexes.reduce(
+    (sum, hex) => sum + toCount(hex.aggression),
+    0,
+  );
+}
+
+/**
+ * The whole-ring aggression budget the player's strength supports.
+ *
+ * `authoredBaseMass + round(gainPerStrengthPoint × (strength − minimum))`,
+ * clamped to the ring's absolute capacity and to a capacity that always leaves
+ * room for one beatable hex (`maxAggression × (count − 1) + ceiling`). The
+ * minimum fleet therefore carries exactly the authored base mass, a stronger
+ * fleet carries more, and a fleet that does not grow never sees the mass grow.
+ *
+ * Total: a corrupt strength or ceiling collapses to the authored base mass /
+ * the maximum rather than throwing.
+ *
+ * @param strength — the resolved player strength.
+ * @param ring — the ring being budgeted.
+ * @param tuning — balance knobs (defaults to the shipped tuning).
+ * @param beatableCeiling — the ceiling the budget must leave room for
+ *   (defaults to `maxAggression`, i.e. no reservation).
+ * @returns the ring's aggression budget.
+ */
+export function ringAggressionBudget(
+  strength: number,
+  ring: HexRingState,
+  tuning: FrontierTuning = DEFAULT_FRONTIER_TUNING,
+  beatableCeiling: number = tuning.maxAggression,
+): number {
+  const rules = normaliseTuning(tuning);
+  const count = ring.hexes.length;
+  const baseMass = authoredRingBaseMass(ring);
+  const strengthPoints =
+    typeof strength === 'number' && Number.isFinite(strength)
+      ? Math.max(0, Math.floor(strength) - MINIMUM_PLAYER_STRENGTH)
+      : 0;
+  const gain = Math.round(
+    strengthPoints * (rules.gainPerStrengthPoint ?? 0),
+  );
+  const raw = baseMass + gain;
+
+  const ceiling =
+    typeof beatableCeiling === 'number' && Number.isFinite(beatableCeiling)
+      ? Math.max(0, Math.floor(beatableCeiling))
+      : rules.maxAggression;
+  const effectiveCeiling = Math.min(
+    rules.maxAggression,
+    ceiling + (rules.beatableCeilingSlack ?? 0),
+  );
+  const capacityWithBeatable =
+    count > 0
+      ? rules.maxAggression * (count - 1) + effectiveCeiling
+      : 0;
+  const absoluteCap = rules.maxAggression * count;
+
+  return Math.max(0, Math.min(absoluteCap, capacityWithBeatable, raw));
+}
+
+/** One hex's aggression before a redistribution. */
+export interface AggressionHex {
+  /** Stable hex id. */
+  readonly id: string;
+  /** The hex's current aggression. */
+  readonly aggression: number;
+}
+
+/** One hex's change in a redistribution (so a report can render what moved). */
+export interface AggressionDelta {
+  /** The hex that changed. */
+  readonly hexId: string;
+  /** Aggression before the tick. */
+  readonly from: number;
+  /** Aggression after the tick. */
+  readonly to: number;
+  /** `to − from` (negative when the hex fell). */
+  readonly delta: number;
+}
+
+/** The input to {@link redistributeAggression}. */
+export interface RedistributeAggressionInput {
+  /** The ring's hexes and their current aggressions. */
+  readonly hexes: readonly AggressionHex[];
+  /** The strength-derived aggression budget the ring should carry. */
+  readonly budget: number;
+  /** The highest aggression still regarded as beatable. */
+  readonly beatableCeiling: number;
+  /** Deterministic seed for the mover's ordering. */
+  readonly seed: number;
+  /** Frontier tick index (part of the seeded stream). */
+  readonly tick: number;
+  /** Balance knobs (defaults to the shipped tuning). */
+  readonly tuning?: FrontierTuning;
+}
+
+/** The result of a redistribution. */
+export interface RedistributedAggression {
+  /** Aggression by hex id after the tick. */
+  readonly aggressions: ReadonlyMap<string, number>;
+  /** Every hex whose aggression changed. */
+  readonly deltas: readonly AggressionDelta[];
+  /** The budget actually applied (clamped so a beatable hex is always feasible). */
+  readonly budget: number;
+}
+
+/**
+ * Moves a ring's aggression around inside its budget — the conserving frontier
+ * clock's one mechanic.
+ *
+ * - **At budget** points are **moved**, never created: up to the tuning's
+ *   `redistributionCap` points travel from the most aggressive hex to the least
+ *   aggressive, so a rise on one hex always costs another hex of the same ring.
+ * - **Below budget** the shortfall is added to the least aggressive hexes;
+ *   **above budget** the excess is removed from the most aggressive hexes.
+ *   Neither ever crosses `[0, maxAggression]`.
+ * - **Beatable guarantee** afterwards: while no hex is at or below the beatable
+ *   ceiling, the mover keeps trading points from the lowest hex to a hex with
+ *   room, so the runtime result always leaves a deployment the current fleet
+ *   can clear. (The applied budget is clamped to a capacity that makes this
+ *   feasible — with `n` hexes at most `maxAggression × (n − 1) + ceiling`.)
+ *
+ * The input is never mutated; every choice is derived from the existing seeded
+ * stream (`tickSeed` mixed with each hex id), so reordering the input yields the
+ * same per-id result and a replay is identical.
+ *
+ * @param input — the ring, budget, ceiling and tick to redistribute.
+ * @returns the next aggressions, the per-hex deltas and the applied budget.
+ */
+export function redistributeAggression(
+  input: RedistributeAggressionInput,
+): RedistributedAggression {
+  const rules = normaliseTuning(input.tuning ?? DEFAULT_FRONTIER_TUNING);
+  const max = rules.maxAggression;
+  const cap = rules.redistributionCap ?? 0;
+
+  const byId = new Map<string, number>();
+  for (const hex of input.hexes) {
+    if (byId.has(hex.id)) continue;
+    byId.set(hex.id, Math.min(max, Math.max(0, toCount(hex.aggression))));
+  }
+  const ids = [...byId.keys()].sort();
+  const count = ids.length;
+  const initial = new Map(byId);
+  if (count === 0) {
+    return { aggressions: new Map(), deltas: [], budget: 0 };
+  }
+
+  const ceiling =
+    typeof input.beatableCeiling === 'number' &&
+    Number.isFinite(input.beatableCeiling)
+      ? Math.max(0, Math.trunc(input.beatableCeiling))
+      : 0;
+  const effectiveCeiling = Math.min(max, ceiling);
+
+  // Order-free, seeded tie-breaking: each hex's own stream decides its place.
+  const stream = tickSeed(normaliseSeed(input.seed), input.tick);
+  const priority = new Map<string, number>();
+  for (const id of ids) priority.set(id, hexSeed(stream, id));
+  const seededCompare = (a: string, b: string): number => {
+    const pa = priority.get(a) as number;
+    const pb = priority.get(b) as number;
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  };
+
+  const values = new Map(byId);
+  const sum = (): number => {
+    let total = 0;
+    for (const id of ids) total += values.get(id) as number;
+    return total;
+  };
+
+  /** The most (dir `1`) or least (dir `-1`) aggressive candidate. */
+  const extreme = (candidates: readonly string[], dir: 1 | -1): string | null => {
+    let best: string | null = null;
+    for (const id of candidates) {
+      if (best === null) {
+        best = id;
+        continue;
+      }
+      const value = values.get(id) as number;
+      const bestValue = values.get(best) as number;
+      if (dir > 0 ? value > bestValue : value < bestValue) best = id;
+      else if (value === bestValue && seededCompare(id, best) < 0) best = id;
+    }
+    return best;
+  };
+
+  const applyMove = (from: string, to: string): void => {
+    values.set(from, (values.get(from) as number) - 1);
+    values.set(to, (values.get(to) as number) + 1);
+  };
+
+  const hasBeatable = (): boolean => {
+    for (const id of ids) {
+      if ((values.get(id) as number) <= effectiveCeiling) return true;
+    }
+    return false;
+  };
+
+  const absoluteCap = max * count;
+  // Leave room for one beatable hex so the guarantee is always satisfiable.
+  const feasibleCap = max * (count - 1) + effectiveCeiling;
+  const target = Math.max(
+    0,
+    Math.min(absoluteCap, feasibleCap, toCount(input.budget)),
+  );
+
+  let total = sum();
+  if (total < target) {
+    let need = target - total;
+    while (need > 0) {
+      const recipients = ids.filter((id) => (values.get(id) as number) < max);
+      if (recipients.length === 0) break;
+      const recipient = extreme(recipients, -1) as string;
+      values.set(recipient, (values.get(recipient) as number) + 1);
+      need -= 1;
+      total += 1;
+    }
+  } else if (total > target) {
+    let excess = total - target;
+    while (excess > 0) {
+      const sources = ids.filter((id) => (values.get(id) as number) > 0);
+      if (sources.length === 0) break;
+      const source = extreme(sources, 1) as string;
+      values.set(source, (values.get(source) as number) - 1);
+      excess -= 1;
+      total -= 1;
+    }
+  } else {
+    // At budget: trade points from the most aggressive hex to the least.
+    for (let moved = 0; moved < cap; moved += 1) {
+      const sources = ids.filter((id) => (values.get(id) as number) > 0);
+      const sinks = ids.filter((id) => (values.get(id) as number) < max);
+      if (sources.length === 0 || sinks.length === 0) break;
+      const source = extreme(sources, 1) as string;
+      const sinkCandidates = sinks.filter((id) => id !== source);
+      if (sinkCandidates.length === 0) break;
+      const sink = extreme(sinkCandidates, -1) as string;
+      if ((values.get(source) as number) - (values.get(sink) as number) <= 1) break;
+      applyMove(source, sink);
+    }
+  }
+
+  // Beatable invariant: keep trading until at least one hex qualifies.
+  let guard = 0;
+  while (!hasBeatable() && guard < absoluteCap + count) {
+    guard += 1;
+    const sources = ids.filter((id) => (values.get(id) as number) > 0);
+    if (sources.length === 0) break;
+    const source = extreme(sources, -1) as string;
+    const sinkCandidates = ids.filter(
+      (id) => id !== source && (values.get(id) as number) < max,
+    );
+    if (sinkCandidates.length === 0) break;
+    const sink = extreme(sinkCandidates, 1) as string;
+    applyMove(source, sink);
+  }
+
+  const deltas: AggressionDelta[] = [];
+  const aggressions = new Map<string, number>();
+  for (const id of ids) {
+    const from = initial.get(id) as number;
+    const to = values.get(id) as number;
+    aggressions.set(id, to);
+    if (from !== to) deltas.push({ hexId: id, from, to, delta: to - from });
+  }
+
+  return { aggressions, deltas, budget: target };
 }
 
 /**
@@ -543,14 +898,40 @@ export function runFrontierTick(
   const next = clonePayload(payload);
   const tickRng = createHangarWarRng(tickSeed(clock.seed, clock.tick));
 
-  const riseSpan = tuning.aggressionRiseMax - tuning.aggressionRiseMin;
-  const aggressionRise = tuning.aggressionRiseMin + tickRng.nextInt(riseSpan + 1);
+  // The frontier is sized from the fleet that will actually deploy: strength
+  // comes from the already-persisted hangar, so no call site threads a new
+  // parameter and no new payload field is needed.
+  const playerStrength =
+    options.playerStrength ?? resolvePlayerStrength(next.hangar);
+  const beatableCeiling =
+    options.beatableCeiling ??
+    beatableAggressionCeiling(playerStrength, tuning.maxAggression);
+  const aggressionBudget = ringAggressionBudget(
+    playerStrength,
+    next.ring,
+    tuning,
+    beatableCeiling,
+  );
+
+  // Redistribute inside the budget rather than raising every hex toward the
+  // ceiling: a rise on one hex is paid for by a fall on another, and at least
+  // one hex always remains at or below the beatable ceiling.
+  const redistribution = redistributeAggression({
+    hexes: next.ring.hexes.map((hex) => ({
+      id: hex.id,
+      aggression: hex.aggression,
+    })),
+    budget: aggressionBudget,
+    beatableCeiling,
+    seed: clock.seed,
+    tick: clock.tick,
+    tuning,
+  });
   for (const hex of next.ring.hexes) {
-    hex.aggression = Math.min(
-      tuning.maxAggression,
-      toCount(hex.aggression) + aggressionRise,
-    );
+    hex.aggression = redistribution.aggressions.get(hex.id) ?? toCount(hex.aggression);
   }
+  const rose = redistribution.deltas.filter((delta) => delta.delta > 0).length;
+  const fell = redistribution.deltas.filter((delta) => delta.delta < 0).length;
 
   const attacks: HexDefenceRecord[] = [];
   const pending: readonly PendingAttack[] = next.pendingAttacks ?? [];
@@ -608,6 +989,15 @@ export function runFrontierTick(
   return {
     payload: next,
     clock: advanceClock(clock, 1),
-    record: { tick: clock.tick, aggressionRise, attacks },
+    record: {
+      tick: clock.tick,
+      playerStrength,
+      aggressionBudget,
+      beatableCeiling,
+      deltas: redistribution.deltas,
+      rose,
+      fell,
+      attacks,
+    },
   };
 }
