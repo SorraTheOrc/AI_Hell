@@ -27,6 +27,7 @@ import {
   nextPartRange,
   parsePartRequest,
   splitNdjsonLines,
+  type PartRange,
 } from './devStreamProtocol';
 import { linesToNdjson } from './sinks';
 
@@ -446,5 +447,175 @@ describe('parsePartRequest — marker discrimination (AC4)', () => {
     expect(parsed.kind).toBe('invalid');
     if (parsed.kind !== 'invalid') throw new Error('expected an invalid part request');
     expect(parsed.errors.join('\n')).toContain('final flag');
+  });
+});
+
+/**
+ * Bounded-window seam (AH-0MWDGPYDW006MTTM — the red half of the test-first
+ * gate for the F2 implementation child AH-0MWDGQ0PB000YZ9N).
+ *
+ * **TEST-FIRST.** These assertions pin the F2 window-splitting seam — the
+ * pending-range reader splits an unconfirmed backlog into bounded windows (a
+ * byte budget plus a record ceiling) so `linesToNdjson`'s `Array.join` is
+ * never handed an oversized window — and are written under Vitest's
+ * `it.fails(...)` (the repo's red-before/green-after convention, cf.
+ * `src/powerups/powerUpIdNaming.test.ts`) so the build → test → commit gate
+ * stays green while the seam is still missing. The implementation slice
+ * (AH-0MWDGQ0PB000YZ9N) flips each `.fails` back to `it` once bounded-window
+ * splitting lands; a leftover `.fails` fails the suite (an "unexpected
+ * pass"), so the flip is deliberate and the assertions themselves are not
+ * changed by it.
+ *
+ * Contract pinned (implemented by F2, consumed unchanged here):
+ * - `nextPartRange(confirmedRecordCount, bufferedLines, limits?)` returns the
+ *   **largest prefix** of the pending records whose `linesToNdjson` body is
+ *   `≤ limits.maxBytes` **and** whose length is `≤ limits.maxRecords`; the
+ *   `offset`/`confirmedCount`/`empty` fields keep today's semantics.
+ * - Without `limits` the contract is unchanged (the whole pending range), so
+ *   the happy-path tests above stay green untouched.
+ * - Every window is therefore bounded by construction: a multi-hundred-MiB
+ *   backlog can never produce `RangeError: Invalid string length`, because
+ *   the largest string ever joined is `≤ maxBytes` (well under V8's limit).
+ */
+describe('nextPartRange — bounded windows for a large backlog (AH-0MWDGPYDW006MTTM)', () => {
+  /** Byte budget + record ceiling for one part's window (the F2 seam). */
+  interface PartWindowLimits {
+    /** Max `linesToNdjson` body length for one window, in bytes. */
+    readonly maxBytes: number;
+    /** Max records in one window. */
+    readonly maxRecords: number;
+  }
+
+  /** The F2 seam: `nextPartRange` gains an optional window limit. */
+  const boundedNextPartRange = nextPartRange as (
+    confirmedRecordCount: number,
+    bufferedLines: readonly string[],
+    limits?: PartWindowLimits,
+  ) => PartRange;
+
+  /** One window's body budget: ~2 MiB, mirroring `TELEMETRY_READ_CHUNK_CHARS`. */
+  const WINDOW_BYTES = 2 * 1024 * 1024;
+  /** One window's record ceiling. */
+  const WINDOW_RECORDS = 4096;
+
+  /** A pending range of `count` NDJSON lines of exactly `bytes` ASCII chars. */
+  function backlog(count: number, bytes: number): string[] {
+    const lines: string[] = [];
+    for (let i = 0; i < count; i += 1) {
+      // The protocol treats lines opaquely (it never parses JSON), so a
+      // padded ASCII line of the requested size is all the seam sees.
+      lines.push('x'.repeat(bytes - 4) + String(i).padStart(4, '0'));
+    }
+    return lines;
+  }
+
+  it.fails(
+    'splits an over-budget backlog into bounded windows that tile it exactly',
+    () => {
+      // ≈ 2.1 MiB of pending NDJSON: without the seam one window would
+      // re-join all of it; with the seam the first window is already bounded.
+      const lines = backlog(3_000, 700);
+      const delivered: string[] = [];
+      let offset = 0;
+      while (true) {
+        const window = boundedNextPartRange(offset, lines, {
+          maxBytes: WINDOW_BYTES,
+          maxRecords: WINDOW_RECORDS,
+        });
+        // The window claims exactly the records it carries (offset semantics
+        // unchanged from today), and the joined body is never oversized —
+        // `Array.join` is never handed a multi-MiB window.
+        expect(window.offset).toBe(offset);
+        expect(linesToNdjson(window.lines).length).toBeLessThanOrEqual(WINDOW_BYTES);
+        expect(window.lines.length).toBeLessThanOrEqual(WINDOW_RECORDS);
+        if (window.empty) break;
+        delivered.push(...window.lines);
+        offset = window.confirmedCount;
+        expect(offset).toBeLessThanOrEqual(lines.length);
+      }
+      // Windows tile the pending range exactly: no gap, no repeat, no loss.
+      expect(delivered).toEqual(lines);
+    },
+  );
+
+  it.fails(
+    'keeps a multi-hundred-MiB backlog joinable per window, far under V8’s string limit',
+    () => {
+      // ≈ 302 MiB of pending NDJSON, deliberately never materialised as one
+      // string (the very join the streamer must stop performing).
+      const lines = backlog(384_000, 824);
+      let offset = 0;
+      const bodies: string[] = [];
+      let deliveredBytes = 0;
+      while (true) {
+        const window = boundedNextPartRange(offset, lines, {
+          maxBytes: WINDOW_BYTES,
+          maxRecords: WINDOW_RECORDS,
+        });
+        const body = linesToNdjson(window.lines);
+        // Every individual join is ≤ the ~2 MiB budget — orders of magnitude
+        // under the guard that keeps `RangeError: Invalid string length`
+        // unreachable (V8 refuses strings near 512 MiB).
+        expect(body.length).toBeLessThanOrEqual(WINDOW_BYTES);
+        expect(body.length).toBeLessThan(64 * 1024 * 1024);
+        if (window.empty) break;
+        bodies.push(body);
+        deliveredBytes += body.length;
+        offset = window.confirmedCount;
+      }
+      // The ~300 MiB backlog was delivered as many small joins, never one:
+      // nothing skipped across windows, nothing duplicated.
+      expect(bodies.length).toBeGreaterThan(100);
+      expect(deliveredBytes).toBe(
+        lines.reduce((sum, line) => sum + line.length, 0) + lines.length,
+      );
+    },
+  );
+
+  it.fails('cuts a window at the record ceiling even when the bytes are slack', () => {
+    // 200 KB total — far under the byte budget; only the ceiling binds.
+    const lines = backlog(10_000, 20);
+    const window = boundedNextPartRange(0, lines, {
+      maxBytes: WINDOW_BYTES,
+      maxRecords: 512,
+    });
+    expect(window.lines.length).toBeGreaterThan(0);
+    expect(window.lines.length).toBeLessThanOrEqual(512);
+    expect(window.confirmedCount).toBe(window.lines.length);
+  });
+
+  it.fails('splits byte-heavy lines on the byte budget before the record ceiling', () => {
+    // 5 × 600 KiB ≈ 3 MiB — the ~2 MiB byte budget binds first.
+    const lines = backlog(5, 600 * 1024);
+    const window = boundedNextPartRange(0, lines, {
+      maxBytes: WINDOW_BYTES,
+      maxRecords: WINDOW_RECORDS,
+    });
+    expect(window.lines.length).toBeGreaterThan(1);
+    expect(window.lines.length).toBeLessThan(5);
+    expect(linesToNdjson(window.lines).length).toBeLessThanOrEqual(WINDOW_BYTES);
+  });
+
+  // Boundary shields: already satisfied by today's code, so they are plain
+  // `it` — they guard the seam's edges once the implementation lands.
+
+  it('leaves the exhausted-backlog range empty when window limits are given', () => {
+    const lines = backlog(5, 100);
+    expect(
+      boundedNextPartRange(5, lines, {
+        maxBytes: WINDOW_BYTES,
+        maxRecords: WINDOW_RECORDS,
+      }),
+    ).toMatchObject({ offset: 5, lines: [], empty: true, confirmedCount: 5 });
+  });
+
+  it('still treats an unusable watermark as zero with window limits', () => {
+    const lines = backlog(2, 100);
+    expect(
+      boundedNextPartRange(Number.NaN, lines, {
+        maxBytes: WINDOW_BYTES,
+        maxRecords: WINDOW_RECORDS,
+      }),
+    ).toMatchObject({ offset: 0, lines, empty: false });
   });
 });

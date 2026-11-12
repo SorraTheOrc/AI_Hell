@@ -59,6 +59,7 @@ VITE_TELEMETRY_ENABLED=true VITE_TELEMETRY_CONSENT=true npm run build
 | `VITE_TELEMETRY_BUFFER_CAPACITY` | Ring-buffer capacity, in records | `512` |
 | `VITE_TELEMETRY_BATCH_SIZE` | Buffer size that triggers a flush | `64` |
 | `VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES` | Cap on the CDP message any dev telemetry upload (a streamed part or the run-end final part) may produce (UTF-8 bytes; positive integer, clamped to 16 MiB) | `8388608` (8 MiB) |
+| `VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES` | Retention cap for the dev JSONL sink's in-memory buffer: below it a run is retained byte-identically; above it the oldest **confirmed/skipped** records are dropped first (UTF-8 bytes; positive integer) | `16777216` (16 MiB) |
 | `VITE_APP_VERSION` / `VITE_GIT_COMMIT` | Build metadata written to the run header | `0.0.0-dev` / `unknown` |
 
 The consent gate works as follows (see
@@ -123,9 +124,14 @@ recording under `recordings/session-<timestamp>.jsonl` and runs the existing
 human evaluation on it automatically. A run that never reaches its final part
 (a page reload, a renderer crash) leaves only its staged part file, described
 under *Crashed runs* below — so an interrupted session loses at most the
-batches the server had not confirmed yet. The buffer is **left intact**
-throughout (and after the run, until the next run starts) and exposed to the
-Node tooling through the dev-gated `window.__aiHellTelemetry` accessor, so
+batches the server had not confirmed yet. The buffer is **left intact** below its bounded-retention
+cap (default 16 MiB, `VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES`): content the
+dev server has already confirmed (or that was finally skipped as over-cap) is
+dropped first, oldest first, and the oldest unconfirmed records only as the
+final bound, so memory stays bounded even when a session outgrows the cap
+(AH-0MWDGPZL8005QU13). Below the cap — every normal demo run — the buffer is
+byte-identical to today's and remains exposed to the Node tooling through the
+dev-gated `window.__aiHellTelemetry` accessor, so
 `npm run record`, `npm run capture` and `npm run verify-dev-telemetry` read
 exactly the run the page just recorded.
 
@@ -144,8 +150,10 @@ knowing:
 
 - `startRun()` resets the buffer, so each uploaded recording contains **only
   that run's** records (no cross-run duplication in `recordings/session-*.jsonl`).
-- A single run of any length is captured in full — there is no quota-based
-truncation, and nothing accumulates across runs.
+- A single run is captured in full below the retention cap (default 16 MiB),
+  byte-identical to a pre-cap run; a multi-hour session stays bounded by
+  dropping the oldest confirmed/skipped content first (see the streaming
+  section below), and nothing accumulates across runs.
 
 ### The setting (on by default)
 
@@ -178,7 +186,9 @@ the run, and run end sends one final part that completes it
 - **One part per flushed batch.** The dev JSONL sink exposes a post-flush
   observer (`onFlush` in [`src/telemetry/sinks.ts`](../src/telemetry/sinks.ts));
   the dev-only streamer sends each flushed batch as one part. The sink's buffer
-  is **never cleared mid-run** — only the upload watermark advances.
+  is **never cleared mid-run** and is bounded by a retention cap (default
+  16 MiB) that drops the oldest confirmed/skipped content first — only the
+  upload watermark advances.
 - **Run key.** Each run has a deterministic, run-scoped key,
   `<startedAt>-<runSeed>`, derived from the run header at `startRun()`, so one
   run's parts can never be merged into another run.
@@ -290,11 +300,11 @@ buffers into one string, and V8 caps a string at 512 MiB
 dying mid-recording. The server's own bound (`DEFAULT_MAX_UPLOAD_BYTES`,
 16 MiB, `413` — see *Server-side receipt and storage* below) cannot prevent
 this: the overflow happens when the request is sent, before any response
-exists. Turns of practical scale: with streaming, each mid-run part is a single
-batch and cannot approach the cap; a run whose whole 4.0 MiB telemetry body is
-buffered for one run-end final part (e.g. after an outage) is skipped (its
-4.0 MiB body would need a 9.7 MiB message) while a normal demo run's 0.67 MiB
-body still finalises (~1.7 MiB message).
+exists. Turns of practical scale: with streaming, each part is a single
+bounded window (at most ~2 MiB of body) that cannot approach the cap, and the
+run-end tail is drained in the same bounded windows, so a normal demo run's
+0.67 MiB body still finalises (~1.7 MiB message) while a multi-hour backlog
+streams in slices instead of one giant joined string.
 
 ### Server-side receipt and storage
 
