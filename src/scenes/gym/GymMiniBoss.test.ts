@@ -9,7 +9,7 @@
  *  - config-summoned minions join the shared collision pass.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import Phaser from 'phaser';
@@ -27,6 +27,9 @@ import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import {
   GymMiniBoss,
   MINI_BOSS_GYM_COLOR,
+  MINI_BOSS_GYM_HEX_AGGRESSION,
+  MINI_BOSS_GYM_HEX_ID,
+  MINI_BOSS_GYM_HEX_PROFILE,
   MINI_BOSS_GYM_HP_PER_PHASE,
   MINI_BOSS_GYM_LEVEL,
   MINI_BOSS_GYM_NAME,
@@ -34,13 +37,20 @@ import {
   MINI_BOSS_GYM_REWARD_SEED,
   MINI_BOSS_FORMATION_START_X,
   MINI_BOSS_FORMATION_START_Y,
+  gymMiniBossConfigFor,
+  isGymMiniBossHexProfileEnabled,
   selectGymMiniBossDesign,
+  selectGymMiniBossHexProfile,
 } from './GymMiniBoss';
 import {
   MINI_BOSS_DESIGN_LEVELS,
   MINI_BOSS_DESIGNS,
+  hexMiniBossConfigForLevel,
+  miniBossConfigForLevel,
   miniBossDesignForLevel,
 } from '../../waves/miniBossDesigns';
+import { BULLET_COLORS } from '../../utils/weapons';
+import { findHexRingDefinition } from '../../data/hexRingDefinitions';
 
 import { readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
@@ -622,5 +632,144 @@ describe('GymMiniBoss — guaranteed Extra Life drop (AH-0MW8178ZR0090CNY)', () 
 
     expect(boss.alive).toBe(false);
     expect(extraLifeDrops(scene).length - before).toBe(1);
+  });
+});
+
+// ── Hex-profile (deployed) parity (AH-0MWCOW71U002ZF2O) ─────────────────────
+
+/**
+ * Gym↔game parity for the mini-boss/hex-profile wiring
+ * (AGENTS.md, `docs/GYM_PARITY.md`).
+ *
+ * A Hangar War deployment ends on its level's mini-boss, and Rule 2 says that
+ * encounter wears the hex profile the map advertises: the granted weapon's
+ * colour and its catalogue opening volley. The game resolves that through the
+ * pure `hexMiniBossConfigForLevel` mapping (`PlayScene.miniBossConfigFor`).
+ *
+ * The gym's HEX mode must consume the **same** pure mapping with an authored
+ * sample hex, so the colour and the demonstrated volley cannot drift between a
+ * gym and the shipped run. The arcade per-level design path stays the default.
+ */
+describe('GymMiniBoss — hex-profile (deployed) parity (AH-0MWCOW71U002ZF2O)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    // The arcade design path is the default; every case opts in explicitly.
+    selectGymMiniBossHexProfile(false);
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    selectGymMiniBossHexProfile(false);
+  });
+
+  /** Boots the gym (rebuilding the entity from the current module state). */
+  async function bootGym(): Promise<GymMiniBoss> {
+    booted = await bootScene([GymMiniBoss]);
+    return booted!.scene as GymMiniBoss;
+  }
+
+  /** The spawn options the gym uses for its single centred encounter. */
+  const spawnOptions = () => ({
+    x: MINI_BOSS_FORMATION_START_X,
+    y: MINI_BOSS_FORMATION_START_Y,
+    formationOffset: { row: 0, col: 0 },
+    hpPerPhase: MINI_BOSS_GYM_HP_PER_PHASE,
+  });
+
+  /** The shared mapping's output for the gym's sample hex, at `level`. */
+  const sharedHexConfig = (level: number) =>
+    hexMiniBossConfigForLevel(level, {
+      ...spawnOptions(),
+      profile: MINI_BOSS_GYM_HEX_PROFILE,
+    });
+
+  it('AC — the sample hex is authored data that demonstrates a weapon', () => {
+    const definition = findHexRingDefinition(MINI_BOSS_GYM_HEX_ID);
+    expect(definition).toBeDefined();
+    // The sample's aggression is the authored hex's own value, so the shipped
+    // difficulty mapping (level + hit-pool multiplier) is exercised for real.
+    expect(MINI_BOSS_GYM_HEX_AGGRESSION).toBe(definition!.baseAggression);
+    expect(MINI_BOSS_GYM_HEX_PROFILE.grant?.weaponId).not.toBeNull();
+    expect(MINI_BOSS_GYM_HEX_PROFILE.demonstration).not.toBeNull();
+  });
+
+  it('AC — HEX mode resolves the encounter through the shared pure mapping', () => {
+    selectGymMiniBossHexProfile(true);
+
+    // The gym's dispatch is the same pure mapping `PlayScene` runs for a
+    // deployment — field for field, including the body colour, the perturbed
+    // hit pool and the demonstrated volley.
+    expect(gymMiniBossConfigFor(MINI_BOSS_GYM_LEVEL, spawnOptions())).toEqual(
+      sharedHexConfig(MINI_BOSS_GYM_LEVEL),
+    );
+  });
+
+  it('AC — the live hex-mode mini-boss wears the granted weapon’s colour and demonstrates it', async () => {
+    selectGymMiniBossHexProfile(true);
+    const scene = await bootGym();
+    const shared = sharedHexConfig(MINI_BOSS_GYM_LEVEL);
+    const boss = scene.formationMiniBoss;
+
+    // The entity the gym actually spawned carries the shared output.
+    expect(boss.resolvedConfig.color).toBe(shared.color);
+    expect(boss.resolvedConfig.desperationColor).toBe(shared.desperationColor);
+    expect(boss.resolvedConfig.hpPerPhase).toBe(shared.hpPerPhase);
+    expect(boss.resolvedConfig.demonstratedWeapon).toEqual(
+      shared.demonstratedWeapon,
+    );
+    expect(boss.resolvedConfig.phases).toEqual(shared.phases);
+    // The granted weapon's own colour, not the level design's.
+    expect(shared.color).toBe(BULLET_COLORS.wave_laser);
+    expect(shared.color).not.toBe(MINI_BOSS_GYM_COLOR);
+
+    // Rule 2 is observable: phase 1 opens with the granted weapon's catalogue
+    // fan (one bullet per offset), in that weapon's colour.
+    const demonstration = MINI_BOSS_GYM_HEX_PROFILE.demonstration!;
+    boss.shootEnabled = true;
+    boss._simulateTelegraphElapsed();
+    scene.time.now = 2_000_000;
+    scene.tick(1 / 60);
+
+    const volley = scene.getLiveEnemyBullets();
+    expect(volley).toHaveLength(demonstration.offsets.length);
+    for (const bullet of volley) {
+      expect(bullet.color).toBe(demonstration.color);
+    }
+  });
+
+  it('AC — the arcade design path stays the default (byte-for-byte unchanged)', async () => {
+    expect(isGymMiniBossHexProfileEnabled()).toBe(false);
+    const scene = await bootGym();
+    const boss = scene.formationMiniBoss;
+
+    const designConfig = miniBossConfigForLevel(
+      MINI_BOSS_GYM_LEVEL,
+      spawnOptions(),
+    );
+    expect(boss.getColor()).toBe(MINI_BOSS_GYM_COLOR);
+    expect(boss.resolvedConfig.color).toBe(designConfig.color);
+    expect(boss.resolvedConfig.hpPerPhase).toBe(designConfig.hpPerPhase);
+    // No demonstration: the shipped arcade mini-boss.
+    expect(boss.resolvedConfig.demonstratedWeapon ?? null).toBeNull();
+    expect(gymMiniBossConfigFor(MINI_BOSS_GYM_LEVEL, spawnOptions())).toEqual(
+      designConfig,
+    );
+  });
+
+  it('AC — the HEX control toggles the deployed encounter', async () => {
+    const scene = await bootGym();
+    const hexButton = findButton(scene, 'HEX: OFF');
+
+    hexButton.emit('pointerdown');
+    await advanceGame(booted!.game, 200);
+
+    expect(isGymMiniBossHexProfileEnabled()).toBe(true);
+    const restarted = booted!.game.scene.getScene('GymMiniBoss') as GymMiniBoss;
+    expect(findButton(restarted, 'HEX: ON')).toBeDefined();
+    expect(restarted.formationMiniBoss.resolvedConfig.color).toBe(
+      MINI_BOSS_GYM_HEX_PROFILE.bodyColor,
+    );
   });
 });
