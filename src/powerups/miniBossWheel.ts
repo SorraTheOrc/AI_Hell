@@ -143,6 +143,29 @@ export interface MiniBossWheelOutcome {
   readonly gains: readonly MiniBossWheelGain[];
 }
 
+/**
+ * A mini-boss reward resolved by the run and carried to the screen that
+ * presents it: the **win-path** reward shown by `DefenceReportScene` after a
+ * hex deployment's victory report (parent AH-0MWBW1B1Z0059CC2, producer
+ * Q2 = b).
+ *
+ * The `wheel` variant carries the same wedge list and 100-slot outcome the
+ * in-run overlay consumes, so **one** `MiniBossWheelScene` implementation
+ * serves both the arcade in-run reward and the deployment win-path reveal. The
+ * `choice` variant is the empty-owned three-option fallback the run resolves
+ * instead of spinning a dud wheel (parent AH-0MVLISU03006WDOD AC4).
+ */
+export type MiniBossWinReward =
+  | {
+      readonly kind: 'wheel';
+      readonly wedges: readonly MiniBossWheelWedge[];
+      readonly outcome: MiniBossWheelOutcome;
+    }
+  | {
+      readonly kind: 'choice';
+      readonly options: readonly ChoiceOption[];
+    };
+
 /** Stable catalogue orders used to sort the owned kinds deterministically. */
 const WEAPON_ORDER: ReadonlyMap<string, number> = new Map(
   WEAPON_DROP_IDS.map((id, index) => [id, index]),

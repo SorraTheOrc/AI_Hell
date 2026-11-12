@@ -29,10 +29,11 @@
  * the shared `src/test/hangarWarWinHarness.ts` driver (compact campaign → real
  * mini-boss defeat → real death sweep), never by an injected finalise event.
  *
- * **TEST-FIRST — red-before/green-after.** The `it.fails` case below fails on
- * pre-change HEAD (`continueToMap()` goes straight to the map, so the reward
- * never appears). The implementation item (AH-0MWCOW6KA008OJOL) flips it to a
- * plain `it`, so a leftover `it.fails` fails the suite.
+ * **TEST-FIRST — red-before/green-after.** The reward-ordering case below was
+ * written as an `it.fails` red witness on pre-change HEAD (`continueToMap()`
+ * went straight to the map, so the reward never appeared). The implementation
+ * item (AH-0MWCOW6KA008OJOL) flipped it to a plain `it`, so a leftover
+ * `it.fails` would now fail the suite.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -250,7 +251,7 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
     return sceneOf<DefenceReportScene>(DEFENCE_REPORT_SCENE_KEY);
   }
 
-  it.fails(
+  it(
     'presents the mini-boss reward between the defence report and the map',
     async () => {
       const { hexId } = await walkToWonDeployment();

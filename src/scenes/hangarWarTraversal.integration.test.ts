@@ -222,7 +222,7 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
     ).toBe(2);
   });
 
-  it.fails(
+  it(
     'presents and auto-resolves the mini-boss reward on a winning demo deployment',
     async () => {
       const menu = await bootMenu();

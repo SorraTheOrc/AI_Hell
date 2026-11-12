@@ -158,6 +158,7 @@ import {
   orderedOwnedKinds,
   type MiniBossWheelOutcome,
   type MiniBossWheelWedge,
+  type MiniBossWinReward,
 } from '../powerups/miniBossWheel';
 import {
   MINI_BOSS_WHEEL_SCENE_KEY,
@@ -903,6 +904,28 @@ export class PlayScene extends CombatScene<
    * (parent AH-0MVLISU03006WDOD AC3/AC6).
    */
   private miniBossWheelOutcome: MiniBossWheelOutcome | null = null;
+
+  /**
+   * The mini-boss reward resolved by a **winning hex deployment**, carried to
+   * `DefenceReportScene` so it can be revealed after the defence report
+   * (parent AH-0MWBW1B1Z0059CC2, producer Q2 = b). `null` for the arcade run
+   * and for a lost deployment. The wheel outcome is applied to the (still
+   * live) run-scoped player at resolution; the carried copy is the reveal.
+   */
+  private pendingWinReward: MiniBossWinReward | null = null;
+
+  /**
+   * The between-sortie frontier tick resolved on a **winning hex deployment**,
+   * carried to `_finishRun` so it is not resolved twice.
+   *
+   * The tick is resolved **before** the capture at the mini-boss defeat, so a
+   * hex the sortie just won can never be attacked (and flipped) by that same
+   * tick before the player reaches the map — the newly held hex is what the
+   * defence report and the map present. The tick's record is still the report's
+   * payload; `null` for the arcade run and for a lost deployment (which
+   * resolves its tick in `_finishRun` as before).
+   */
+  private pendingBetweenSortieTick: FrontierTickResult | null = null;
 
   /**
    * Live handle for the in-flight mini-boss death sweep (parent
@@ -1651,6 +1674,8 @@ export class PlayScene extends CombatScene<
     this.miniBossRewardOptions = [];
     this.miniBossWheelWedges = [];
     this.miniBossWheelOutcome = null;
+    this.pendingWinReward = null;
+    this.pendingBetweenSortieTick = null;
     this.miniBossSweepHandle = null;
     this.miniBossSweepTargets = [];
     this.salvageBank = null;
@@ -3788,13 +3813,69 @@ export class PlayScene extends CombatScene<
     // The run is over: stop the ship's auto-fire from the next tick (the same
     // per-run gate the final-boss victory uses).
     this.runFinished = true;
+    // Resolve the between-sortie frontier tick **before** the capture, so the
+    // hex this sortie just won is not a candidate for that same tick's attack
+    // (the player would otherwise lose it before seeing the report/map).
+    // `_finishRun` reuses this result instead of resolving a second tick.
+    this.pendingBetweenSortieTick = this._resolveBetweenSortieTick();
     // Resolve the hex capture through the existing cycle; this banks the run's
     // salvage (already banked once at the checkpoint moment), marks the hex
     // held + boss-defeated, grants its authored entry and leaves the defending
     // hull behind.
     this._resolveHangarWarCapture();
+    // Resolve the mini-boss reward now (while the run-scoped player still
+    // exists) and carry it to the defence report, which reveals it after the
+    // report (producer Q2 = b). The in-run overlay never launches here.
+    this._resolveHangarWarWinReward();
     this._triggerVictoryCelebration(deathX, deathY);
     this._finishRunWithPurpose(true);
+  }
+
+  /**
+   * Resolves a **winning hex deployment's** mini-boss reward at the defeat
+   * frame (parent AH-0MWBW1B1Z0059CC2, AC5 / producer Q2 = b).
+   *
+   * The wheel draw is the same pure resolution the in-run overlay uses
+   * ({@link drawWheelOutcome} / {@link buildWheelWedges}), and the resolved
+   * outcome is applied to the (still live) run-scoped player through the same
+   * {@link applyWheelOutcome} seam the arcade reward uses — no new economy rule
+   * and no second application path. A presentation copy is stored for
+   * `DefenceReportScene`; the overlay itself is launched there, after the
+   * report, so the reward cannot run concurrently with the run-end transition.
+   *
+   * The empty-owned fallback keeps its existing three-option choice (a
+   * mini-boss always pays out, AC4), carried in the same payload so the report
+   * presents it instead of spinning a dud wheel.
+   */
+  private _resolveHangarWarWinReward(): void {
+    if (this.pendingWinReward !== null) return;
+
+    const ownedKinds = orderedOwnedKinds(
+      resolvePlayerSlotState(this.player).ownedIds,
+    );
+
+    if (ownedKinds.length === 0) {
+      // Empty-owned fallback (AC4): carry the three-option hold-full-style
+      // choice. Its run-scoped value is the parent's deferred economy question
+      // (AH-0MWCOWTOR00994NA); this change only preserves the existing
+      // reward surface and its ordering.
+      this.pendingWinReward = {
+        kind: 'choice',
+        options: this._holdFullStyleRewardOptions(),
+      };
+      return;
+    }
+
+    const slotIndex = Math.min(
+      MINI_BOSS_WHEEL_SLOT_COUNT - 1,
+      Math.max(0, Math.floor(this.rng() * MINI_BOSS_WHEEL_SLOT_COUNT)),
+    );
+    const outcome = drawWheelOutcome(slotIndex, ownedKinds);
+    const wedges = buildWheelWedges(ownedKinds);
+    // The run is ending, so apply the resolved reward to it now through the
+    // shared seam — the only point at which the run-scoped player exists.
+    applyWheelOutcome(outcome, this.effectsRegistry, this.player);
+    this.pendingWinReward = { kind: 'wheel', wedges, outcome };
   }
 
   /**
@@ -5498,19 +5579,29 @@ export class PlayScene extends CombatScene<
       // (AH-0MVUXCBBK004EJIP): run the frontier tick — one tick of risen
       // aggression and a purely algorithmic attack — and hand its record to the
       // report, which renders the numbers that produced every hold and fall.
-      // There is no defence battle to fly or watch, so this transition can never
-      // stall the demo.
-      const tick = this._resolveBetweenSortieTick();
+      // A winning deployment already resolved it before the capture (see
+      // `_finaliseHangarWarMiniBossVictory`); a loss resolves it here. Either
+      // way the report/map payload is this run's final war state.
+      const pendingTick = this.pendingBetweenSortieTick;
+      this.pendingBetweenSortieTick = null;
+      const tick = pendingTick ?? this._resolveBetweenSortieTick();
       const wasDemo = this.demoMode;
       if (wasDemo) {
         this.demoMode = false;
         this._disableDemoTakeOver();
       }
+      // A winning deployment carries its resolved mini-boss reward to the
+      // report, which reveals it after the report and before the map
+      // (parent AH-0MWBW1B1Z0059CC2, producer Q2 = b). A lost deployment
+      // carries nothing, so its route stays report → map.
+      const reward = won ? this.pendingWinReward : null;
+      this.pendingWinReward = null;
       this.scene.start(DEFENCE_REPORT_SCENE_KEY, {
-        payload: tick?.payload ?? this._hangarWarPayload(),
+        payload: this._hangarWarPayload(),
         record: tick?.record,
         won,
         score: this.gameState.score,
+        reward,
         demo: wasDemo,
         demoDwellMs: this.demoDwellMs,
       });

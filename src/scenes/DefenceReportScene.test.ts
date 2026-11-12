@@ -15,6 +15,7 @@ import Phaser from 'phaser';
 import {
   advanceGame,
   createReusableBoot,
+  stepGameUntil,
   type BootedGame,
 } from '../test/gameHarness';
 import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
@@ -36,6 +37,17 @@ import { DEFENCE_REPORT_SCENE_KEY, DefenceReportScene } from './DefenceReportSce
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene } from './PlayScene';
 import { DEFENCE_REPORT_HINT } from './hangarWar/defenceReport';
+import { buildLevelUpOption } from '../powerups/choice';
+import {
+  buildWheelWedges,
+  drawWheelOutcome,
+  type MiniBossWinReward,
+} from '../powerups/miniBossWheel';
+import {
+  MINI_BOSS_WHEEL_SCENE_KEY,
+  MiniBossWheelScene,
+} from './MiniBossWheelScene';
+import { MineralChoiceScene } from './MineralChoiceScene';
 
 /** A two-hex payload: one held hex and the unheld neighbour attacking it. */
 function twoHexPayload(): HangarWarPayload {
@@ -134,7 +146,13 @@ describe('DefenceReportScene', () => {
 
   /** Boots the scene and re-starts it with `data` (Phaser launch data). */
   async function bootReport(data?: object): Promise<DefenceReportScene> {
-    booted = await reuse.boot([DefenceReportScene, HexMapScene, PlayScene]);
+    booted = await reuse.boot([
+      DefenceReportScene,
+      HexMapScene,
+      PlayScene,
+      MiniBossWheelScene,
+      MineralChoiceScene,
+    ]);
     booted.game.scene.start(DEFENCE_REPORT_SCENE_KEY, data);
     await advanceGame(booted.game, 200);
     return booted.game.scene.getScene(
@@ -212,6 +230,113 @@ describe('DefenceReportScene', () => {
     ]);
     // The report never starts a battle: no run scene is left running.
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
+  /** A resolved wheel reward for `spread` (slot 0 = the bonus outcome). */
+  function spreadWheelReward(): MiniBossWinReward {
+    return {
+      kind: 'wheel',
+      wedges: buildWheelWedges(['spread']),
+      outcome: drawWheelOutcome(0, ['spread']),
+    };
+  }
+
+  it('presents the carried mini-boss wheel before the map and continues after it', async () => {
+    const reward = spreadWheelReward();
+    const scene = await bootReport({
+      payload: twoHexPayload(),
+      record: fellRecord(),
+      storage: null,
+      reward,
+    });
+    expect(scene.getReward()).toEqual(reward);
+
+    scene.continueToMap();
+    await advanceGame(booted!.game, 100);
+
+    // The shared overlay is on screen and the map has not been reached.
+    expect(booted!.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(false);
+    const wheel = booted!.game.scene.getScene(
+      MINI_BOSS_WHEEL_SCENE_KEY,
+    ) as MiniBossWheelScene;
+    expect(wheel.getOutcome()).toEqual(reward.kind === 'wheel' ? reward.outcome : null);
+    expect(wheel.getWedgeLabels()).toContain('Spread Shot');
+    expect(scene.getReward()).toBeNull();
+
+    // Resolving the shared overlay is what reaches the map.
+    expect(wheel.spin()).toBe(true);
+    await advanceGame(booted!.game, 3000);
+    expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+  });
+
+  it('auto-resolves the carried reward in demo mode without stalling', async () => {
+    await bootReport({
+      payload: twoHexPayload(),
+      record: fellRecord(),
+      storage: null,
+      reward: spreadWheelReward(),
+      demo: true,
+      demoDwellMs: 400,
+    });
+
+    // Past the report dwell: the reward is presented and auto-spins itself.
+    await advanceGame(booted!.game, 500);
+    expect(booted!.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(true);
+
+    stepGameUntil(
+      booted!.game,
+      'the map returns after the auto-resolved reward',
+      () => booted!.game.scene.isActive(HEX_MAP_SCENE_KEY),
+      600,
+    );
+  });
+
+  it('presents the empty-owned choice fallback before the map', async () => {
+    const option = buildLevelUpOption('spread', 1);
+    expect(option).toBeDefined();
+    const scene = await bootReport({
+      payload: twoHexPayload(),
+      record: fellRecord(),
+      storage: null,
+      reward: { kind: 'choice', options: [option!] },
+    });
+
+    scene.continueToMap();
+    await advanceGame(booted!.game, 100);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(true);
+    expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(false);
+
+    const choice = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+    expect(choice.select(0)).not.toBeNull();
+    // The choice overlay completes its beat-locked countdown, then continues.
+    stepGameUntil(
+      booted!.game,
+      'the map returns after the choice reward',
+      () => booted!.game.scene.isActive(HEX_MAP_SCENE_KEY),
+      600,
+    );
+  });
+
+  it('goes straight to the map when the overlay is not registered', async () => {
+    booted = await reuse.boot([DefenceReportScene, HexMapScene, PlayScene]);
+    booted.game.scene.start(DEFENCE_REPORT_SCENE_KEY, {
+      payload: twoHexPayload(),
+      record: fellRecord(),
+      storage: null,
+      reward: spreadWheelReward(),
+    });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(
+      DEFENCE_REPORT_SCENE_KEY,
+    ) as DefenceReportScene;
+
+    // A headless boot without the overlay must not stall: the map is reached.
+    scene.continueToMap();
+    await advanceGame(booted.game, 100);
+    expect(booted.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
   });
 
   it('renders a quiet tick instead of an empty screen', async () => {
