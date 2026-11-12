@@ -1454,6 +1454,10 @@ export class PlayScene extends CombatScene<
             this.gameState.lives = lives;
             this.effectsRegistry.setLives(lives);
           },
+          // Grants route through the shared permanent-grant seam so the HUD
+          // upgrade list and the effect state show what the run deployed with
+          // (AH-0MWCFKHWD002RKX9).
+          getEffectsRegistry: () => this.effectsRegistry,
         },
         this.hangarWarDeployment,
       );

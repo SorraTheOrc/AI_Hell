@@ -302,11 +302,41 @@ describe('applyHangarWarDeployment (AH-0MVUXC2DD003HN0I)', () => {
     const deployment = buildHangarDeployment(fieldedPayload());
     const setStartingLives = vi.fn();
     const equipWeapon = vi.fn();
+    const applyWeapon = vi.fn();
+    applyHangarWarDeployment(
+      {
+        getPlayer: () => ({ equipWeapon }),
+        setStartingLives,
+        getEffectsRegistry: () => ({ applyWeapon }),
+      },
+      deployment,
+    );
+    expect(setStartingLives).toHaveBeenCalledWith(5);
+    // Each capped starting weapon is granted to the registry **and** to the
+    // player through the one shared permanent-grant seam, so the HUD renders
+    // the same state the player holds (AH-0MWCFKHWD002RKX9).
+    expect(applyWeapon.mock.calls).toEqual([
+      ['spread', true],
+      ['wave_laser', true],
+    ]);
+    expect(equipWeapon.mock.calls).toEqual([
+      ['spread', true],
+      ['wave_laser', true],
+    ]);
+  });
+
+  it('keeps today\'s player-only grant when no registry seam is supplied', () => {
+    // Pure callers and older launch data pass no registry: the deployments
+    // must stay total and equivalent to the pre-fix behaviour.
+    const deployment = buildHangarDeployment(fieldedPayload());
+    const setStartingLives = vi.fn();
+    const equipWeapon = vi.fn();
+
     applyHangarWarDeployment(
       { getPlayer: () => ({ equipWeapon }), setStartingLives },
       deployment,
     );
-    expect(setStartingLives).toHaveBeenCalledWith(5);
+
     expect(equipWeapon.mock.calls).toEqual([
       ['spread', true],
       ['wave_laser', true],
@@ -317,14 +347,20 @@ describe('applyHangarWarDeployment (AH-0MVUXC2DD003HN0I)', () => {
     const deployment = buildHangarDeployment(createDefaultPayload(7));
     const setStartingLives = vi.fn();
     const equipWeapon = vi.fn();
+    const applyWeapon = vi.fn();
 
     applyHangarWarDeployment(
-      { getPlayer: () => ({ equipWeapon }), setStartingLives },
+      {
+        getPlayer: () => ({ equipWeapon }),
+        setStartingLives,
+        getEffectsRegistry: () => ({ applyWeapon }),
+      },
       deployment,
     );
 
     expect(deployment.startingWeapons).toEqual([]);
     expect(equipWeapon).not.toHaveBeenCalled();
+    expect(applyWeapon).not.toHaveBeenCalled();
     // The hull's run stats still apply: only the extra weapons are gone.
     expect(setStartingLives).toHaveBeenCalledWith(3);
   });
@@ -357,21 +393,33 @@ describe('applyHangarWarDeployment (AH-0MVUXC2DD003HN0I)', () => {
     };
     const setStartingLives = vi.fn();
     const equipWeapon = vi.fn();
+    const applyWeapon = vi.fn();
 
     applyHangarWarDeployment(
-      { getPlayer: () => ({ equipWeapon }), setStartingLives },
+      {
+        getPlayer: () => ({ equipWeapon }),
+        setStartingLives,
+        getEffectsRegistry: () => ({ applyWeapon }),
+      },
       deployment,
     );
 
-    expect(equipWeapon.mock.calls.map(([id]) => id)).toEqual([
+    const cappedIds = [
       'spread',
       'dual',
       'rapid',
       'wave_laser',
       'ricochet',
       'cluster',
-    ]);
+    ];
+    // The cap is applied once, before granting, and both seams receive
+    // exactly the admitted kinds in the same order.
+    expect(equipWeapon.mock.calls.map(([id]) => id)).toEqual(cappedIds);
+    expect(applyWeapon.mock.calls.map(([id]) => id)).toEqual(cappedIds);
     expect(equipWeapon.mock.calls.every(([, permanent]) => permanent === true)).toBe(
+      true,
+    );
+    expect(applyWeapon.mock.calls.every(([, permanent]) => permanent === true)).toBe(
       true,
     );
   });

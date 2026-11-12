@@ -44,6 +44,7 @@ import {
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
 import { hexAggressionLevel } from '../../core/hangarWar/hexDifficulty';
 import { capDropIdsToSlotPool } from '../../powerups/slots';
+import { grantPermanentWeapon } from '../../powerups/choiceReward';
 import { normaliseSeed } from '../../core/rng';
 import {
   HANGAR_CATALOGUE,
@@ -340,12 +341,35 @@ export interface HangarWarDeploymentPlayer {
   equipWeapon(id: WeaponId, permanent?: boolean): void;
 }
 
+/**
+ * The narrow effect-registry surface a deployment grants weapons through
+ * (kept structural, so this module stays Phaser-free).
+ *
+ * Structurally satisfied by the scene's `EffectsRegistry`: registering the
+ * grant is what makes the HUD render a weapon row, exactly as a hold-full
+ * permanent reward does (AH-0MVSHI07B003BZIP).
+ */
+export interface HangarWarDeploymentRegistry {
+  /** Registers (`permanent`) a weapon in the run's effect state. */
+  applyWeapon(id: WeaponId, permanent?: boolean): boolean;
+}
+
 /** The seams a deployment is applied through (no scene internals leak out). */
 export interface HangarWarDeploymentSeams {
   /** The run's player, or `null` when it has not spawned yet. */
   getPlayer(): HangarWarDeploymentPlayer | null;
   /** Sets the run's starting lives (the hull + modifier result). */
   setStartingLives?(lives: number): void;
+  /**
+   * The run's effect registry, or `null` when it has none.
+   *
+   * Optional: a pure caller (one that renders no HUD, e.g. the headless
+   * harness) keeps today's player-only behaviour. When supplied, every
+   * starting weapon is granted through the shared `grantPermanentWeapon`
+   * seam, so the registry and the player can never drift apart and the HUD
+   * upgrade list shows what the run actually deployed with.
+   */
+  getEffectsRegistry?(): HangarWarDeploymentRegistry | null;
 }
 
 /**
@@ -373,19 +397,25 @@ export function applyHullSpeedToShipConfig(
 
 /**
  * Applies a deployment to play state through existing shared seams: the
- * hull's starting lives and its starting weapons (the same
- * `Player.equipWeapon` seam the capture setup and live play use, so no loadout
- * logic is duplicated). The hull's speed scales the ship config at spawn
- * ({@link applyHullSpeedToShipConfig}). Total: a scene without a player still
- * applies the lives.
+ * hull's starting lives and its starting weapons. When the scene supplies an
+ * effect registry, every starting weapon is granted through the **one shared
+ * permanent-grant seam** (`grantPermanentWeapon`), the same helper the
+ * hold-full reward and the checkpoint-resume replay use, so the HUD upgrade
+ * list, the player's run-scoped levels and the effect state can never drift
+ * apart (AH-0MWCFKHWD002RKX9, precedent AH-0MVSHI07B003BZIP). Without a
+ * registry seam the grant stays player-only (today's behaviour for pure
+ * callers), so no caller breaks. The hull's speed scales the ship config at
+ * spawn ({@link applyHullSpeedToShipConfig}). Total: a scene without a player
+ * still applies the lives.
  *
  * **The six-slot cap holds here too (AH-0MVVF0POV001JNKX).** A hangar loadout
  * may contain more owned weapons than the run can hold, so the list is trimmed
- * through the shared `capDropIdsToSlotPool` predicate before equipping: a
+ * through the shared `capDropIdsToSlotPool` predicate before granting: a
  * deployment can never start a run above `POWER_UP_SLOT_CAP` distinct counted
  * kinds, however many weapons the fleet owns (parent AH-0MVLIJT3M005HPHF).
  *
- * @param seams — the scene's player and lives seams.
+ * @param seams — the scene's player, lives and (optional) effect-registry
+ *   seams.
  * @param deployment — the deployment to apply.
  */
 export function applyHangarWarDeployment(
@@ -394,8 +424,19 @@ export function applyHangarWarDeployment(
 ): void {
   seams.setStartingLives?.(deployment.startingLives);
   const player = seams.getPlayer();
+  // Lives apply first, and a scene with no player still applies them; the
+  // weapon grants follow only once the player exists.
   if (!player) return;
+  const registry = seams.getEffectsRegistry?.() ?? null;
   for (const weaponId of capDropIdsToSlotPool(deployment.startingWeapons)) {
-    player.equipWeapon(weaponId, true);
+    if (registry) {
+      // One permanent-grant seam: the registry supplies the HUD row and the
+      // player raises the run-scoped level (AH-0MWCFKHWD002RKX9).
+      grantPermanentWeapon(weaponId, registry, player);
+    } else {
+      // No registry seam (pure caller / older launch data): today's
+      // player-only grant, so the function stays total.
+      player.equipWeapon(weaponId, true);
+    }
   }
 }

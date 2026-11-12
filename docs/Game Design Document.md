@@ -1433,7 +1433,15 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   spend capacity, and a repeated kind does not open a second slot. A deployment
   therefore starts a normal `PlayScene` run within the same six-slot model as
   the arcade run — the pre-grant applier can never exceed the cap
-  (AH-0MVVF0POV001JNKX).
+  (AH-0MVVF0POV001JNKX). Each admitted kind is granted through the **one shared
+  permanent-grant seam** (`grantPermanentWeapon`,
+  [`src/powerups/choiceReward.ts`](../src/powerups/choiceReward.ts)) rather than
+  a player-only equip, so the deployment registers the weapon in the run's
+  effect state as well as on the player: the HUD upgrade list renders a row for
+  it, exactly as a hold-full reward does, and the list can never disagree with
+  the `Loadout n/6` budget (AH-0MWCFKHWD002RKX9, precedent
+  AH-0MVSHI07B003BZIP). A pure caller that supplies no registry seam keeps the
+  player-only grant.
 - **Every permanent-grant surface is gated, including the mini-boss reward.**
   The mini-boss reward (§4.4.4) is the **spin-the-wheel** upgrade reward: its
   wedges and its payout are built from `resolvePlayerSlotState(player).ownedIds`,
@@ -2842,7 +2850,10 @@ before, and **`Continue — Level N` still resumes the arcade run checkpoint**.
 aggression-selected campaign level (aggression `0` is the shipped opening
 level) and a deterministic seed derived from the war seed. The two modes share
 the run code (`PlayScene` + `src/scenes/core/`) and differ **only** in that
-launch data.
+launch data. The deployment's starting weapons are permanent grants through
+the shared `grantPermanentWeapon` seam, so the HUD upgrade list shows the
+deployed loadout and its `Loadout n/6` count agrees with the visible rows
+(AH-0MWCFKHWD002RKX9).
 
 **Feature flag (AH-0MVZ0VGGQ0032KDP, resolved by AH-0MVZ4S9ZU004GXUM).** The
 Hangar War's player-visible entry surfaces — this menu control and the
