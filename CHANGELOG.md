@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.1.21 (2026-11-12)
+> **Release focus:** This release focuses on rebalancing difficulty and progression so the game is fairer and more rewarding, with a smoother difficulty curve in Ring 2, hex maps that scale to your fleet, and mini-bosses that let you win hexes without grinding. It also adds quality-of-life improvements like a Mining Laser power-up, more frequent extra lives and mineral drops, and fixes for recording, telemetry stutter, and test reliability.
+### Features
+- Restart your Hangar War from scratch in the hangar, keeping your best score. (AH-0MW8F7NH1002PQE3)
+- Extra Lives drop more often when you're low on lives, and mini-bosses always leave one. (AH-0MW8178ZR0090CNY)
+- New Mining Laser power-up auto-fires at nearby asteroids so you can farm minerals without stopping your attack. (AH-0MW81181P007BDRU)
+- Destroyed asteroids and enemies now drop twice as many minerals, so your hold fills faster. (AH-0MWB9LCED004K67Y)
+- The hex map now scales to your fleet and always leaves a hex you can beat. (AH-0MWB9V9Q3004HD2P)
+- Ring 2 is now a real difficulty curve you can beat, not twelve guaranteed losses. (AH-0MVWWGN92008P366)
+- Difficulty testing now uses the gear players actually have, so balance rulings reflect real gameplay. (AH-0MW9QA2YC009PSF5)
+- Win a hex by defeating its mini-boss—no more grinding the whole campaign for one hex. (AH-0MWBW1B1Z0059CC2)
+- Easily test and tune any power-up's levels directly from the gym with a single click. (AH-0MW82M3LB007OQG6)
+### Bug Fixes
+- Balance-tuning checks are reliable again, helping keep enemy tuning accurate. (AH-0MWB0YW2Q001WIQS)
+- Bot-recorded ghost replays now actually capture your demo run instead of silently recording nothing. (AH-0MW9NN2EW001744H)
+- Fixes a build error so new updates can ship without delays. (AH-0MWBAFTPK0081IAH)
+- Balance testing now measures the real wave laser, so ring difficulty is judged fairly again. (AH-0MWAPWS1W007LGGY)
+- Late-game and mini-boss gameplay no longer stutters from telemetry overhead. (AH-0MWDFAJAC005R3NI)
+- Tests are now more reliable, so random failures won't block unrelated updates. (AH-0MVX2DKC8001RRM4)
+- Mini-boss pulse waves now look crisp and vanish cleanly, with no lingering yellow rings. (AH-0MW80W5ER005E884)
+- If your browser closes while a recording is starting, you now get a clear message about what wasn't saved. (AH-0MW9NN8MY0031M37)
+- Boss pulse waves now expand at the intended speed, giving you time to read and dodge them. (AH-0MW9MN4ZO009GFKW)
+- Your starting weapons now appear in the HUD upgrade list after deploying into a hex. (AH-0MWCFKHWD002RKX9)
+- Closing the browser mid-recording now saves a partial session instead of losing it all. (AH-0MVVH57LL00038WQ)
+### Other
+- Pushes to dev and main now always run the full test suite before going through. (AH-0MVQJHS2R002BGAR)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.20 (2026-11-09)
 > **Release focus:** This release focuses on performance and balance tuning, letting hundreds of asteroids fill the screen smoothly while reducing power-up drops and replacing free lives with upgrade rewards. It also overhauls gym navigation and adds dedicated testing for Phase Shift and Teleport, alongside various audio, visual, and reliability improvements.
 ### Features
