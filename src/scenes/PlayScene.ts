@@ -6748,16 +6748,17 @@ export class PlayScene extends CombatScene<
 
 /**
  * Schedules part build + send off the frame task
- * (AH-0MWDGQ0PB000YZ9N). `requestIdleCallback` is preferred when available
- * (it fires between frames); otherwise a zero-delay macrotask yields to the
- * event loop so the current Phaser update/rAF task can finish first.
+ * (AH-0MWDGQ0PB000YZ9N). A microtask defers the work until after the
+ * current Phaser update/rAF task returns (so the update step is never held),
+ * and it is flushed by the test bridge (`drainMicrotasks`); a zero-delay
+ * macrotask is only a fallback for environments without `queueMicrotask`.
  */
 function deferOffFrame(task: () => void): void {
-  const idle = (globalThis as {
-    requestIdleCallback?: (cb: () => void) => unknown;
-  }).requestIdleCallback;
-  if (typeof idle === 'function') {
-    idle(task);
+  const enqueueMicrotask = (globalThis as {
+    queueMicrotask?: (cb: () => void) => unknown;
+  }).queueMicrotask;
+  if (typeof enqueueMicrotask === 'function') {
+    enqueueMicrotask(task);
     return;
   }
   setTimeout(task, 0);
