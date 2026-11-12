@@ -170,7 +170,13 @@ const AUTHORED_SCENARIOS = [
     preset: 'cordon-breaker',
     promoLevel: 'promo-capture-cordon',
     categories: ['enemies'],
-    seed: 1010,
+    // Seed re-rolled from 1010 when the Mining Laser entered the field-drop
+    // rotation at its rare weight 2 (AH-0MW9QMRC7007HVHQ): the new drop-stream
+    // draw shifted this scenario's deterministic bot run below the ≥45 s
+    // sustained-action target (12.8 s, wave-1 defeat). The same authored waves
+    // are re-rolled onto a seed that survives the shifted economy — the
+    // showcase (a hard enemy silhouette) is unchanged.
+    seed: 1004,
   },
   {
     name: 'promo-boss-prelude',
@@ -188,7 +194,12 @@ const AUTHORED_SCENARIOS = [
     preset: 'gauntlet-runner',
     promoLevel: 'promo-final-gauntlet',
     categories: ['weapons', 'pickups', 'enemies', 'boss'],
-    seed: 1012,
+    // Seed re-rolled from 1012 when the Mining Laser entered the field-drop
+    // rotation at its rare weight 2 (AH-0MW9QMRC7007HVHQ): the shifted
+    // drop-stream draw cost this busiest scenario its opening (11.5 s, wave-1
+    // defeat) against the ≥45 s target. Same authored waves, re-rolled onto a
+    // surviving seed — the showcase (widest coverage) is unchanged.
+    seed: 1028,
   },
   {
     name: 'boss',

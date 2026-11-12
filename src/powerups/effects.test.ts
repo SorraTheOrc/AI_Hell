@@ -22,7 +22,7 @@ import {
 } from './powerUpLevels';
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
 import { grantPermanentPowerUp } from './choiceReward';
-import { beatPeriodMs } from '../utils/beat';
+import { DEFAULT_BPM, beatPeriodMs } from '../utils/beat';
 import { resolveCountdownSweep } from '../ui/hudCountdown';
 import { createSeededRng } from '../core/rng';
 import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
@@ -3295,5 +3295,166 @@ describe('weapon window fraction derivation (AC4)', () => {
     expect(weapon.permanent).toBe(true);
     // No temporary window means no ring on the HUD's `∞` row.
     expect(weapon.tempWindow).toBeFalsy();
+  });
+});
+
+// ── Mining Laser cadence state (AH-0MW9QMNYP006ZO6T) ─────────────────
+//
+// The registry owns only the cadence clock and the level-resolved data; the
+// shared combat core (F3) selects the nearest live asteroid and resolves the
+// shot. These tests pin the registry half: active/unowned, interval/damage
+// resolution, frame-rate independence, field-window expiry, permanent
+// ownership, refresh on re-collect and the no-banking rule.
+
+describe('Mining Laser cadence state (AH-0MW9QMNYP006ZO6T)', () => {
+  /** One sixteenth-note step of the shared 80 BPM lattice (187.5 ms). */
+  const stepSeconds = beatPeriodMs(DEFAULT_BPM) / 1000 / 4;
+
+  it('is inactive until collected and resolves the catalogue cadence/damage', () => {
+    const { registry } = createEffectRegistry();
+    expect(registry.isMiningLaserActive()).toBe(false);
+    expect(registry.updateMiningLaser(1)).toBe(false);
+    // The level-resolved defaults are still readable (base cadence, 1 hit).
+    expect(registry.miningLaserInterval()).toBeCloseTo(4 * stepSeconds, 12);
+    expect(registry.miningLaserInterval()).toBeCloseTo(0.75, 12);
+    expect(registry.miningLaserDamage()).toBe(1);
+  });
+
+  it('reports an unresolved cadence as POSITIVE_INFINITY (never a fire-every-frame value)', () => {
+    const store = new PowerUpLevelStore();
+    const originalStats = store.stats;
+    // Simulate an unstable/unknown store: the resolved stats carry no interval.
+    store.stats = (() => ({})) as unknown as typeof store.stats;
+    try {
+      const registry = new EffectsRegistry(store);
+      expect(registry.miningLaserInterval()).toBe(Number.POSITIVE_INFINITY);
+    } finally {
+      store.stats = originalStats;
+    }
+  });
+
+  it('a field pickup starts rapid fire for its temporary window', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('mining_laser');
+
+    expect(registry.isMiningLaserActive()).toBe(true);
+    expect(registry.miningLaserInterval()).toBeCloseTo(4 * stepSeconds, 12);
+
+    // The first shot is due immediately, then one per resolved interval.
+    expect(registry.updateMiningLaser(1 / 60)).toBe(true);
+    expect(registry.updateMiningLaser(1 / 60)).toBe(false);
+    expect(registry.updateMiningLaser(0.75)).toBe(true);
+  });
+
+  it('is frame-rate independent: the same elapsed time yields the same shots', () => {
+    function countShots(step: number, total: number): number {
+      const { registry } = createEffectRegistry();
+      registry.applyCollect('mining_laser');
+      let shots = 0;
+      let elapsed = 0;
+      while (elapsed + step <= total + 1e-9) {
+        if (registry.updateMiningLaser(step)) shots += 1;
+        elapsed += step;
+      }
+      return shots;
+    }
+
+    // 7.5 s at level 0 (0.75 s cadence) is ten intervals after the immediate
+    // opening shot. Small and large frames must agree within one boundary
+    // frame — the cadence is driven by elapsed time, never by frame count.
+    const small = countShots(1 / 120, 7.5);
+    const large = countShots(1 / 30, 7.5);
+    expect(Math.abs(small - large)).toBeLessThanOrEqual(1);
+    expect(small).toBeGreaterThanOrEqual(10);
+    expect(small).toBeLessThanOrEqual(12);
+  });
+
+  it('field-window expiry stops fire', () => {
+    const { registry, store } = createEffectRegistry();
+    registry.applyCollect('mining_laser');
+    expect(registry.updateMiningLaser(1 / 60)).toBe(true);
+
+    // Advance the shared window clock past the 10 s per-upgrade TTL.
+    registry.tick(10.1);
+
+    expect(store.getEffectiveLevel('mining_laser')).toBe(0);
+    expect(registry.isMiningLaserActive()).toBe(false);
+    // A long gap after expiry fires nothing.
+    expect(registry.updateMiningLaser(100)).toBe(false);
+    expect(registry.updateMiningLaser(1 / 60)).toBe(false);
+  });
+
+  it('permanent ownership keeps firing for the rest of the run', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('mining_laser', true);
+
+    // A hold-full grant fires immediately.
+    expect(registry.updateMiningLaser(1 / 60)).toBe(true);
+    const interval = registry.miningLaserInterval();
+
+    // Sixty seconds of play: the permanent kind never expires and keeps its
+    // level-resolved cadence.
+    for (let elapsed = 0; elapsed < 60; elapsed += interval) {
+      registry.tick(interval);
+      expect(registry.isMiningLaserActive()).toBe(true);
+      expect(registry.updateMiningLaser(interval)).toBe(true);
+    }
+  });
+
+  it('re-collecting refreshes the window and the level', () => {
+    const { registry, store } = createEffectRegistry();
+    registry.applyCollect('mining_laser');
+    const baseInterval = registry.miningLaserInterval();
+    expect(store.getEffectiveLevel('mining_laser')).toBe(1);
+
+    // Advance most of the way through the window.
+    registry.tick(9);
+    expect(registry.isMiningLaserActive()).toBe(true);
+
+    // Re-collect: the window refreshes to its full TTL and the level rises,
+    // so the cadence shortens (4 → 3 steps at upgrade level 1).
+    registry.applyCollect('mining_laser');
+    expect(store.getEffectiveLevel('mining_laser')).toBe(2);
+    expect(registry.miningLaserInterval()).toBeLessThan(baseInterval);
+    expect(registry.miningLaserInterval()).toBeCloseTo(3 * stepSeconds, 12);
+
+    // Past the ORIGINAL window but inside the refreshed one.
+    registry.tick(2);
+    expect(registry.isMiningLaserActive()).toBe(true);
+
+    // Past the refreshed window it stops.
+    registry.tick(9);
+    expect(store.getEffectiveLevel('mining_laser')).toBe(0);
+    expect(registry.isMiningLaserActive()).toBe(false);
+  });
+
+  it('does not bank shots across a long gap (silent beats are skipped)', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('mining_laser', true);
+
+    expect(registry.updateMiningLaser(1 / 60)).toBe(true);
+    // A ten-second gap resolves exactly one due shot — never a volley.
+    expect(registry.updateMiningLaser(10)).toBe(true);
+    expect(registry.updateMiningLaser(1 / 60)).toBe(false);
+  });
+
+  it('resolves the level-resolved damage (whole hits, minimum 1)', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('mining_laser'); // level 0 → 1 hit
+    expect(registry.miningLaserDamage()).toBe(1);
+    registry.applyCollect('mining_laser'); // upgrade level 1 → 1 hit
+    expect(registry.miningLaserDamage()).toBe(1);
+    registry.applyCollect('mining_laser'); // upgrade level 2 → 2 hits
+    expect(registry.miningLaserDamage()).toBe(2);
+    registry.applyCollect('mining_laser'); // upgrade level 3 → capped at 2
+    expect(registry.miningLaserDamage()).toBe(2);
+  });
+
+  it('resets to inactive on run reset', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('mining_laser', true);
+    registry.reset();
+    expect(registry.isMiningLaserActive()).toBe(false);
+    expect(registry.updateMiningLaser(1)).toBe(false);
   });
 });

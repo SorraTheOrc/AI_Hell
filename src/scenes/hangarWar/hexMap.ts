@@ -293,7 +293,14 @@ export function renderHexMap(
     }),
   );
   objects.push(
-    scene.add.text(24, 82, model.hangarLine, {
+    scene.add.text(24, 82, model.frontierLine, {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: TEXT_COLOR,
+    }),
+  );
+  objects.push(
+    scene.add.text(24, 102, model.hangarLine, {
       fontFamily: 'monospace',
       fontSize: '12px',
       color: TEXT_COLOR,

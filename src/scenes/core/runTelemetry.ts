@@ -56,6 +56,8 @@ import {
 import type { ControlInput } from '../../utils/movementModel';
 import {
   NoopTelemetryRecorder,
+  type RetainedWindow,
+  type RetainedWindowLimits,
   type TelemetryBuildInfo,
   type TelemetryJson,
   type TelemetryRecorder,
@@ -516,6 +518,25 @@ export class RunTelemetry {
    */
   readBuffer(): string | null {
     return this.recorder.readBuffer();
+  }
+
+  /**
+   * Reads a bounded window of the dev sink's retained buffer from an absolute
+   * record offset (AH-0MWDGPZL8005QU13), or `null` when the recorder retains
+   * no windowed buffer. The streaming uploader uses this instead of reading
+   * and re-joining the whole buffer, so an over-cap backlog never reaches a
+   * whole-buffer `linesToNdjson` join.
+   */
+  readWindow(fromRecord: number, limits?: RetainedWindowLimits): RetainedWindow | null {
+    return this.recorder.readWindow(fromRecord, limits);
+  }
+
+  /**
+   * Marks records below `absoluteCount` as confirmed/finally-skipped, so the
+   * dev sink's retention cap drops them first (AH-0MWDGPZL8005QU13).
+   */
+  dropConfirmed(absoluteCount: number): void {
+    this.recorder.dropConfirmed(absoluteCount);
   }
 
   /**

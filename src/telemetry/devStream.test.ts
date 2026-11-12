@@ -768,3 +768,153 @@ describe('dev stream — dev-only containment (AC5)', () => {
     expect(server.calls).toEqual([]);
   });
 });
+
+/**
+ * Off-frame deferral and report-once seams (AH-0MWDGPYDW006MTTM — the red
+ * half of the test-first gate for the F2 implementation child
+ * AH-0MWDGQ0PB000YZ9N).
+ *
+ * **TEST-FIRST → GREEN.** These assertions pin two F2 seams — an injectable
+ * `defer` scheduler that moves part build+send off the caller's rAF/update
+ * task, and routing part-build failures (including the oversized-window
+ * guard) through the existing backoff window so a failed part is reported
+ * once per window, never once per frame-loop trigger. They were authored red
+ * under Vitest's `it.fails(...)` (the repo's red-before/green-after
+ * convention); the implementation slice (AH-0MWDGQ0PB000YZ9N) flipped each
+ * `.fails` back to `it`, and the assertions themselves are unchanged by it.
+ */
+describe('dev stream — off-frame deferral and report-once (AH-0MWDGPYDW006MTTM)', () => {
+  /**
+   * A streamer whose part work is scheduled via the injected `defer` seam
+   * (the F2 option).
+   */
+  function deferredStreamer(
+    buffer: FakeBuffer,
+    fetchImpl: DevUploadFetch,
+    defer: (fn: () => void) => void,
+  ) {
+    return createDevTelemetryStreamer({
+      startedAt: 1_700_000_000_000,
+      runSeed: 7,
+      readBuffer: () => buffer.read(),
+      getSetting: () => ({ shareTelemetryDev: true }),
+      env: { DEV: true },
+      fetchImpl,
+      maxMessageBytes: 1024 * 1024,
+      sleep: async () => {},
+      // The F2 seam: part build+send is scheduled here instead of running
+      // inline in the caller's (rAF/update) task.
+      defer,
+    } as Parameters<typeof createDevTelemetryStreamer>[0]);
+  }
+
+  it(
+    'schedules part build and send through the injectable defer seam, never synchronously in push()',
+    async () => {
+      const buffer = new FakeBuffer();
+      const server = createServer();
+      const scheduled: Array<() => void> = [];
+      const stream = deferredStreamer(buffer, server.fetchImpl, (fn) =>
+        scheduled.push(fn),
+      );
+
+      buffer.append(1, 2, 3);
+      stream.push(buffer.read());
+
+      // push() returned without building or sending anything — the
+      // rAF/update task is never held by telemetry serialisation.
+      expect(server.calls).toEqual([]);
+      // The work was handed to the scheduler instead of running inline.
+      expect(scheduled).toHaveLength(1);
+
+      scheduled.shift()!();
+      await stream.whenIdle();
+
+      expect(server.calls).toHaveLength(1);
+      expect(countLines(server.calls[0]!.body)).toBe(3);
+    },
+  );
+
+  it('lets push() return before a microtask-style deferral runs the part work', async () => {
+    const buffer = new FakeBuffer();
+    const server = createServer();
+    const order: string[] = [];
+    const stream = deferredStreamer(buffer, server.fetchImpl, (fn) => {
+      order.push('defer-scheduled');
+      queueMicrotask(fn);
+    });
+
+    buffer.append(1);
+    stream.push(buffer.read());
+
+    // A setTimeout(0)-class scheduler must not run part work before push()
+    // returns: the update step finishes first, then the part work runs.
+    expect(order).toEqual(['defer-scheduled']);
+    expect(server.calls).toEqual([]);
+
+    await stream.whenIdle();
+    expect(server.calls).toHaveLength(1);
+  });
+
+  it(
+    'reports a part-build failure once per backoff window, not once per frame-loop trigger',
+    async () => {
+      const buffer = new FakeBuffer();
+      buffer.append(1, 2, 3);
+      const onError = vi.fn();
+      const clock = fakeClock();
+      const server = createServer();
+      const stream = streamer(buffer, server.fetchImpl, {
+        onError,
+        now: clock.now,
+        // The part build dies (e.g. an oversized/insane backlog that the
+        // oversized-window guard refuses to serialise).
+        readBuffer: () => {
+          throw new Error('backlog too large to serialise');
+        },
+      });
+
+      stream.push(buffer.read()); // frame-loop trigger 1
+      await stream.whenIdle();
+      stream.push(buffer.read()); // trigger 2, inside the backoff window
+      await stream.whenIdle();
+      stream.push(buffer.read()); // trigger 3, inside the backoff window
+      await stream.whenIdle();
+
+      // The failure coalesces into the backoff window opened by the first
+      // trigger: one report for the run, never one per frame-loop trigger.
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(stream.confirmedCount).toBe(0);
+    },
+  );
+
+  it(
+    'drains a backlog larger than the message cap in bounded parts instead of skipping it',
+    async () => {
+      const buffer = new FakeBuffer();
+      const N = 20_000;
+      const lines = buffer.lines as unknown as string[];
+      lines.push(...Array.from({ length: N }, (_, index) => record(index) + 'p'.repeat(400)));
+      const onSkip = vi.fn();
+      const server = createServer();
+      // ~9 MB of body at the windowed seam must never be joined whole: with
+      // the 8 MiB cap the current code skips it once and posts nothing.
+      const stream = streamer(buffer, server.fetchImpl, {
+        onSkip,
+        maxMessageBytes: 8 * 1024 * 1024,
+      });
+
+      stream.push(buffer.read());
+      await stream.whenIdle();
+      await stream.finalise();
+
+      // The whole backlog lands in bounded parts (each window well under the
+      // message cap) and the run finalises exactly once — nothing is skipped
+      // and nothing is joined whole.
+      expect(stream.confirmedCount).toBe(N);
+      expect(onSkip).not.toHaveBeenCalled();
+      expect(server.calls.filter((call) => call.final)).toHaveLength(1);
+      expect(server.calls.length).toBeGreaterThan(2);
+    },
+  );
+});

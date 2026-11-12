@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_MAX_RETAINED_MESSAGE_BYTES,
   DEFAULT_TELEMETRY_BATCH_SIZE,
   DEFAULT_TELEMETRY_BUFFER_CAPACITY,
   applyUserConsent,
@@ -27,6 +28,7 @@ describe('telemetry config — enable/consent policy', () => {
     expect(config.sampleRate).toBe(1);
     expect(config.bufferCapacity).toBe(DEFAULT_TELEMETRY_BUFFER_CAPACITY);
     expect(config.batchSize).toBe(DEFAULT_TELEMETRY_BATCH_SIZE);
+    expect(config.maxRetainedMessageBytes).toBe(DEFAULT_MAX_RETAINED_MESSAGE_BYTES);
   });
 
   it('records in a dev build once explicitly enabled (no consent needed)', () => {
@@ -89,6 +91,22 @@ describe('telemetry config — enable/consent policy', () => {
 
     expect(config.bufferCapacity).toBe(8);
     expect(config.batchSize).toBe(8);
+  });
+
+  it('resolves the dev sink retention cap, defaulting and validating like the other caps', () => {
+    const exceeded = resolveTelemetryConfig({
+      VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES: '0',
+    });
+    expect(exceeded.maxRetainedMessageBytes).toBe(DEFAULT_MAX_RETAINED_MESSAGE_BYTES);
+    const configured = resolveTelemetryConfig({
+      VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES: '262144',
+    });
+    expect(configured.maxRetainedMessageBytes).toBe(262144);
+    const junk = resolveTelemetryConfig({
+      VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES: 'nonsense',
+    });
+    expect(junk.maxRetainedMessageBytes).toBe(DEFAULT_MAX_RETAINED_MESSAGE_BYTES);
+    expect(junk.maxRetainedMessageBytes).toBe(16 * 1024 * 1024);
   });
 
   it('exposes the production flag and the remote endpoint (AC2)', () => {

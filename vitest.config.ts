@@ -1,6 +1,16 @@
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { defineConfig } from 'vitest/config';
 
 import { classifyTestFiles, TEST_INCLUDE_GLOBS } from './vitest.projects';
+
+/**
+ * Repo root, resolved from this config file so the `@/` alias is correct both
+ * when Vitest loads the config and when the membership guard test imports it
+ * as a module (AH-0MVHWG20L002EOR1).
+ */
+const repoRoot = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Two Vitest projects (parent AH-0MVF3BESP005ZDAV, child
@@ -52,6 +62,17 @@ import { classifyTestFiles, TEST_INCLUDE_GLOBS } from './vitest.projects';
  * `npm run test:coverage`, so the per-file line thresholds still cover the
  * combined `unit` + `integration` run.
  *
+ * ## Top-level `tests/` module resolution (AH-0MVHWG20L002EOR1)
+ *
+ * The suite is migrating from co-located `src/**`, `scripts/**` and
+ * `vite/**` tests to the sibling repos' top-level `tests/**` tree. The `@/`
+ * alias (mapped to `src/` here, in `vite.config.ts` and in `tsconfig.json`)
+ * lets moved tests import source without deep relative paths, and the
+ * classifier follows the same alias (`resolveImport`) so the unit/integration
+ * split is unaffected by the move. Until the migration completes,
+ * `TEST_ROOTS` scans both the legacy roots and `tests/`, so no test is lost
+ * or doubled mid-flight.
+ *
  * ## Suite-write regression guard (AH-0MVS9TY0N0034LZT)
  *
  * Both the `unit` and `integration` projects register
@@ -65,6 +86,13 @@ import { classifyTestFiles, TEST_INCLUDE_GLOBS } from './vitest.projects';
 const { unit, integration, e2e } = classifyTestFiles();
 
 export default defineConfig({
+  // `@/` → `src/` (mirrored in tsconfig.json and vite.config.ts). Moved
+  // tests use it instead of deep `../../src/...` paths.
+  resolve: {
+    alias: {
+      '@': path.join(repoRoot, 'src'),
+    },
+  },
   test: {
     coverage: {
       provider: 'v8',
@@ -94,6 +122,9 @@ export default defineConfig({
     },
     projects: [
       {
+        // Inherit the root `resolve.alias` (`@/` → `src/`) and any root
+        // plugins; like the sibling scaffold's `{ extends: true, ... }`.
+        extends: true,
         test: {
           name: 'unit',
           environment: 'node',
@@ -102,6 +133,7 @@ export default defineConfig({
         },
       },
       {
+        extends: true,
         test: {
           name: 'e2e',
           // Real ffmpeg/ffprobe subprocesses; no DOM or Phaser needed.
@@ -110,6 +142,7 @@ export default defineConfig({
         },
       },
       {
+        extends: true,
         test: {
           name: 'integration',
           environment: 'happy-dom',

@@ -42,6 +42,7 @@
 
 import { areNeighbours, type AxialCoordinate } from './hexRing';
 import type {
+  AggressionDelta,
   DefenceOutcome,
   FrontierTickRecord,
   HexDefenceRecord,
@@ -123,9 +124,19 @@ export interface DefenceReportModel {
   readonly title: string;
   /** The clock tick this report belongs to. */
   readonly tick: number;
-  /** Aggression rise the tick applied to every hex. */
-  readonly aggressionRise: number;
-  /** Tick line (`TICK 4 · aggression +2`). */
+  /** The player strength the tick distributed within (from the record). */
+  readonly playerStrength: number;
+  /** The ring's aggression budget the tick carried (from the record). */
+  readonly aggressionBudget: number;
+  /** The highest aggression regarded as beatable this tick (from the record). */
+  readonly beatableCeiling: number;
+  /** Per-hex aggression changes the tick applied (from the record). */
+  readonly deltas: readonly AggressionDelta[];
+  /** How many hexes rose in aggression this tick. */
+  readonly rose: number;
+  /** How many hexes fell in aggression this tick. */
+  readonly fell: number;
+  /** Tick line (`TICK 4 · AGG 26/26 · 3 rose, 2 fell`). */
   readonly tickLine: string;
   /** Outcome summary (`ATTACKED 2 · HELD 1 · FELL 1`, or the quiet line). */
   readonly summaryLine: string;
@@ -286,13 +297,23 @@ export function buildDefenceReport(
   const fellCount = rows.filter((row) => row.outcome === 'fell').length;
   const quiet = rows.length === 0;
   const tick = toCount(record?.tick);
-  const aggressionRise = toCount(record?.aggressionRise);
+  const playerStrength = toCount(record?.playerStrength);
+  const aggressionBudget = toCount(record?.aggressionBudget);
+  const beatableCeiling = toCount(record?.beatableCeiling);
+  const deltas = record?.deltas ?? [];
+  const rose = toCount(record?.rose);
+  const fell = toCount(record?.fell);
 
   return {
     title: options.title ?? DEFENCE_REPORT_TITLE,
     tick,
-    aggressionRise,
-    tickLine: `TICK ${tick} · aggression +${aggressionRise}`,
+    playerStrength,
+    aggressionBudget,
+    beatableCeiling,
+    deltas,
+    rose,
+    fell,
+    tickLine: `TICK ${tick} · AGG ${aggressionBudget}/${aggressionBudget} · ${rose} rose, ${fell} fell`,
     summaryLine: quiet
       ? 'QUIET — no hex was attacked this tick'
       : `ATTACKED ${rows.length} · HELD ${heldCount} · FELL ${fellCount}`,

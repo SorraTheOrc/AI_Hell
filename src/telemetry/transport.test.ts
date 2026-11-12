@@ -258,6 +258,7 @@ describe('recorder → remote transport integration (AC2/AC6)', () => {
       batchSize: 4,
       devCollection: false,
       recording: true,
+      maxRetainedMessageBytes: 16 * 1024 * 1024,
     };
     const recorder = createTelemetryRecorder(config, {
       transportOptions: {
@@ -293,6 +294,7 @@ describe('recorder → remote transport integration (AC2/AC6)', () => {
       batchSize: 4,
       devCollection: false,
       recording: false,
+      maxRetainedMessageBytes: 16 * 1024 * 1024,
     };
     const recorder = createTelemetryRecorder(disabled, {
       transportOptions: { fetchImpl: fetchImpl as unknown as TelemetryFetch },

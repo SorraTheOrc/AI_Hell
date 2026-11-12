@@ -461,6 +461,11 @@ export class WaveManager {
     }
 
     // Level wiped — advance to the next level, or trigger the boss.
+    //
+    // A Hangar War deployment never reaches this advance: its scene ends the
+    // run as a victory on the level's wave-10 mini-boss (GDD §8.2 — one
+    // campaign level per deployment), so the final boss is unreachable from
+    // the hex map. The shipped arcade run below is unchanged.
     if (!this.isFinalLevel) {
       this._levelIndex += 1;
       this._waveIndex = 0;

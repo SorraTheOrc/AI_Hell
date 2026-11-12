@@ -16,6 +16,12 @@
  * fire, Nova, Mortar, the Smart Bomb pulse) may still hit asteroids, which is
  * the Orbital Strike precedent (AH-0MVU3341U001B40T).
  *
+ * The **Mining Laser** (AH-0MW9QMMOT0014IU0) is the deliberate, documented
+ * inverse: an auto-targeting weapon that may only ever select the inert
+ * `asteroid` hazard and never an enemy. Its predicate,
+ * {@link isMinedWorldHazard}, sits beside this rule so the two cannot drift
+ * apart, and `targetEligibility.test.ts` pins them as exact inverses.
+ *
  * @module utils/targetEligibility
  */
 
@@ -27,6 +33,24 @@
  * archetypes such as `'scout'` and `'lane-traffic'` remain valid targets.
  */
 export const INERT_WORLD_HAZARD_ARCHETYPES: readonly string[] = [
+  'asteroid',
+];
+
+/**
+ * Archetypes the **Mining Laser** may target: exactly the inverse of
+ * {@link INERT_WORLD_HAZARD_ARCHETYPES}.
+ *
+ * The Mining Laser (AH-0MW9QMMOT0014IU0, parent **Mining laser**
+ * AH-0MW81181P007BDRU) is the documented inverse of the auto-targeting
+ * asteroid-skip rule: it is a mineral-farming weapon that fires only at the
+ * inert `asteroid` world hazard and never at a live enemy. The two lists are
+ * exact inverses today, and `targetEligibility.test.ts` pins that — so a change
+ * to either rule is a deliberate review decision rather than silent drift.
+ *
+ * Deliberately a separate literal list, not an alias: widening the auto-target
+ * exclusions must never silently widen what the Mining Laser shoots at.
+ */
+export const MINED_WORLD_HAZARD_ARCHETYPES: readonly string[] = [
   'asteroid',
 ];
 
@@ -59,6 +83,27 @@ export function isInertWorldHazard(archetype?: string): boolean {
   return (
     archetype !== undefined &&
     INERT_WORLD_HAZARD_ARCHETYPES.includes(archetype)
+  );
+}
+
+/**
+ * Whether an archetype names an inert world hazard that the **Mining Laser**
+ * may target — the documented inverse of {@link isInertWorldHazard}.
+ *
+ * Identification is by archetype **string**, never `instanceof`, so a gym
+ * entity and a game entity with the same archetype are treated identically.
+ * An absent archetype is never a mined hazard (an untyped body is not an
+ * asteroid). Pure and scene-agnostic; the nearest-target selection that uses it
+ * lives in `scenes/core/miningLaserTargeting`.
+ *
+ * @param archetype - Archetype key to test.
+ * @returns True when the archetype is listed in
+ *   {@link MINED_WORLD_HAZARD_ARCHETYPES}.
+ */
+export function isMinedWorldHazard(archetype?: string): boolean {
+  return (
+    archetype !== undefined &&
+    MINED_WORLD_HAZARD_ARCHETYPES.includes(archetype)
   );
 }
 

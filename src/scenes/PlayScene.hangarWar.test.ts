@@ -15,6 +15,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import Phaser from 'phaser';
 
 import { loadShipConfig } from '../core/config';
 import {
@@ -33,6 +34,14 @@ import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
 import type { HangarWarPayload } from '../core/hangarWar/types';
 import { RULES_STORAGE_KEY } from '../core/rules';
 import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
+import { grantPermanentWeapon } from '../powerups/choiceReward';
+import {
+  resolvePlayerSlotState,
+  slotCountedHeldIds,
+} from '../powerups/slots';
+import { POWER_UP_SLOT_CAP } from '../core/constants';
+import type { WeaponId } from '../utils/weapons';
+import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
@@ -138,6 +147,39 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     return scene;
   }
 
+  /** Text of every HUD text object, in render order. */
+  function hudTexts(scene: PlayScene): string[] {
+    return (scene.getHUD()!.list as Phaser.GameObjects.GameObject[])
+      .filter((child): child is Phaser.GameObjects.Text =>
+        child instanceof Phaser.GameObjects.Text,
+      )
+      .map((child) => child.text);
+  }
+
+  /**
+   * The HUD's rendered weapon rows as `{ id, label, value }`.
+   *
+   * `HUD.getRows()` carries power-up entries only; a weapon row's label and
+   * value live in the render plan (`_weaponRowPlan`) and appear as adjacent
+   * name/value text children, so they are read back from the rendered list.
+   */
+  function weaponRowModels(
+    scene: PlayScene,
+  ): Array<{ id: string; label: string; value: string }> {
+    const texts = hudTexts(scene);
+    const rows: Array<{ id: string; label: string; value: string }> = [];
+    for (let i = 0; i < texts.length; i += 1) {
+      const label = texts[i];
+      if (!label.startsWith('Weapon: ')) continue;
+      rows.push({
+        id: label.slice('Weapon: '.length).split(' ')[0],
+        label,
+        value: texts[i + 1] ?? '',
+      });
+    }
+    return rows;
+  }
+
   it('launches the hangar-resolved loadout and the aggression-selected difficulty', async () => {
     const scene = await bootPlay({ hangarWar: DEPLOYMENT });
 
@@ -160,6 +202,116 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     // The hull's 0.85× speed multiplier is applied to the shared ship config.
     const moved = scene.getPlayer()!.getThrusterConfig();
     expect(moved.maxSpeed / loadShipConfig().maxSpeed).toBeCloseTo(0.85, 5);
+  });
+
+  it('AC1 — a deployment loadout renders HUD upgrade rows that agree with the slot budget', async () => {
+    const scene = await bootPlay({ hangarWar: DEPLOYMENT });
+    const hud = scene.getHUD()!;
+    const deploymentWeapons = [...DEPLOYMENT.startingWeapons];
+
+    // One slot-counted `loadout` row per capped starting weapon, each rendered
+    // with its permanent (`∞`) value exactly as a hold-full reward does.
+    const loadoutRows = hud
+      .getLoadoutRows()
+      .filter((row) => row.group === 'loadout');
+    expect(loadoutRows.map((row) => row.id)).toEqual(deploymentWeapons);
+    expect(loadoutRows.every((row) => row.slotCounted)).toBe(true);
+    expect(weaponRowModels(scene)).toEqual(
+      deploymentWeapons.map((id) => ({
+        id,
+        label: `Weapon: ${id} Lvl 1`,
+        value: '∞',
+      })),
+    );
+
+    // The HUD list and the slot model agree: every slot-counted row is held by
+    // the player and every counted held weapon has a row, so the budget equals
+    // the number of visible slot-counted rows.
+    const state = resolvePlayerSlotState(scene.getPlayer());
+    const countedIds = slotCountedHeldIds(state);
+    expect(loadoutRows.map((row) => row.id).sort()).toEqual(
+      [...countedIds].sort(),
+    );
+    expect(hud.getSlotBudget()).toEqual({
+      used: loadoutRows.length,
+      cap: POWER_UP_SLOT_CAP,
+    });
+  });
+
+  it('AC3 — a deployment renders the same upgrade rows as a plain permanent grant', async () => {
+    // The reference run is a fresh arcade run granted the identical permanent
+    // weapons through the one shared `grantPermanentWeapon` seam — the parity
+    // pattern of AH-0MVSHI07B003BZIP AC1.
+    const deployed = await bootPlay({ hangarWar: DEPLOYMENT });
+    const deployedRows = weaponRowModels(deployed);
+
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+
+    const plain = await bootPlay();
+    for (const id of DEPLOYMENT.startingWeapons) {
+      grantPermanentWeapon(id, plain.getEffectsRegistry(), plain.getPlayer());
+    }
+    plain.getHUD()!.refresh();
+
+    expect(weaponRowModels(plain)).toEqual(deployedRows);
+  });
+
+  it('AC4 — a fresh run and an empty deployment render no weapon rows and Loadout 0/6', async () => {
+    const arcade = await bootPlay();
+    expect(weaponRowModels(arcade)).toEqual([]);
+    expect(arcade.getHUD()!.getLoadoutRows()).toEqual([]);
+    expect(arcade.getHUD()!.getSlotBudget()).toEqual({
+      used: 0,
+      cap: POWER_UP_SLOT_CAP,
+    });
+
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+
+    const emptyDeployment = buildHangarDeployment(createDefaultPayload(7), {
+      seed: 1,
+    });
+    const deployment = await bootPlay({ hangarWar: emptyDeployment });
+    expect(weaponRowModels(deployment)).toEqual([]);
+    expect(deployment.getHUD()!.getSlotBudget()).toEqual({
+      used: 0,
+      cap: POWER_UP_SLOT_CAP,
+    });
+  });
+
+  it('AC4 — the six-slot cap still trims an over-equipped deployment in the HUD', async () => {
+    // A hangar can own more weapons than a run holds: the applier trims to the
+    // shared pool before granting, and the HUD must show exactly the admitted
+    // kinds (the pre-cap behaviour, AH-0MVVF0POV001JNKX).
+    const overEquipped: HangarWarDeployment = {
+      ...DEPLOYMENT,
+      startingWeapons: [
+        'spread',
+        'dual',
+        'rapid',
+        'wave_laser',
+        'ricochet',
+        'cluster',
+        'options',
+      ] as WeaponId[],
+    };
+    const scene = await bootPlay({ hangarWar: overEquipped });
+    const cappedIds = [
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ];
+    expect(weaponRowModels(scene).map((row) => row.id)).toEqual(cappedIds);
+    expect(scene.getHUD()!.getSlotBudget()).toEqual({
+      used: POWER_UP_SLOT_CAP,
+      cap: POWER_UP_SLOT_CAP,
+    });
   });
 
   it('writes no arcade checkpoint at a checkpoint moment (Continue is never offered for it)', async () => {

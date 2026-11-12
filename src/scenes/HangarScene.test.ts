@@ -15,13 +15,16 @@
  *   input path.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import {
   HANGAR_WAR_STORAGE_KEY,
+  createDefaultPayload,
   parseHangarWarPayload,
+  DEFAULT_HULL_ID,
+  DEFAULT_STARTING_WEAPON_ID,
 } from '../core/hangarWar/hangarWarStore';
 import type {
   HangarWarPayload,
@@ -35,13 +38,21 @@ import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene } from './PlayScene';
 import {
   HANGAR_SCREEN_TITLE,
+  HANGAR_DEPLOY_ROW_Y,
+  HANGAR_MAP_ROW_Y,
+  HANGAR_RESTART_ROW_Y,
+  RESTART_CONFIRM_TIMEOUT_MS,
+  RESTART_ROW_KEY,
+  advanceRestartConfirm,
   buildHangarModifierOptions,
+  buildHangarRestartRow,
   buildHangarScreenModel,
   buildHangarUnlockRows,
   equipHangarHull,
   formatRingLine,
   hangarAttractDecision,
   purchaseHangarEntry,
+  restartHangarWar,
   toggleHangarModifier,
   toggleHangarWeapon,
 } from './hangarWar/hangarScreen';
@@ -228,6 +239,7 @@ describe('hangar screen model (pure)', () => {
       'weapon:spread',
       'deploy',
       'map',
+      'restart',
     ]);
   });
 
@@ -239,15 +251,17 @@ describe('hangar screen model (pure)', () => {
       actionable: true,
     });
     // Navigation follows the primary action, mirroring the map's own row order.
-    expect(model.focusOrder.at(-2)).toBe('deploy');
-    expect(model.focusOrder.at(-1)).toBe('map');
+    expect(model.focusOrder.at(-2)).toBe('map');
+    expect(model.focusOrder.at(-3)).toBe('deploy');
+    // The destructive restart row is last, beneath the navigation row.
+    expect(model.focusOrder.at(-1)).toBe('restart');
   });
 
-  it('has only the deployment and the map in the focus order when nothing can be activated', () => {
+  it('has only the deployment, the map and the restart row in the focus order when nothing can be activated', () => {
     const model = buildHangarScreenModel(UNARMED_PAYLOAD);
     // A fleet can always deploy, even with nothing affordable, and the map is
-    // always reachable.
-    expect(model.focusOrder).toEqual(['deploy', 'map']);
+    // always reachable. The restart row is always actionable too.
+    expect(model.focusOrder).toEqual(['deploy', 'map', 'restart']);
     expect(model.deployRow.actionable).toBe(true);
     expect(model.unlockRows.every((row) => !row.actionable)).toBe(true);
     expect(model.modifierOptions).toEqual([]);
@@ -290,6 +304,7 @@ describe('hangar screen model (pure)', () => {
       'modifier:hardened_plating',
       'deploy',
       'map',
+      'restart',
     ]);
     // An unknown modifier id in the owned set is not presented as an option.
     expect(
@@ -406,6 +421,151 @@ describe('pure hangar payload updaters', () => {
   });
 });
 
+describe('restartHangarWar (pure)', () => {
+  it('returns the documented starting position with a fresh seed and preserved bestScore', () => {
+    const before = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    const reset = restartHangarWar(before, 987654321);
+
+    // A genuinely new war: the supplied seed is the new war's seed.
+    expect(reset.seed).toBe(987654321);
+    // bestScore survives the reset (operator decision Q2 = b).
+    expect(before.bestScore).toBe(18200);
+    expect(reset.bestScore).toBe(18200);
+
+    // The hangar is back to its starting kit: basic hull, starter weapon
+    // owned but NOT equipped, no modifiers, zero salvage, empty loadout.
+    expect(reset.hangar).toEqual({
+      bankedMinerals: 0,
+      bankedCores: 0,
+      unlockedHulls: [DEFAULT_HULL_ID],
+      unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
+      ownedModifiers: [],
+      activeHull: DEFAULT_HULL_ID,
+      activeLoadout: { startingWeapons: [], modifiers: [] },
+    });
+
+    // The ring is back to ring 1 with no hexes, no queued attacks and the
+    // frontier clock at 0.
+    expect(reset.ring).toEqual({ ringIndex: 1, hexes: [] });
+    expect(reset.pendingAttacks).toEqual([]);
+    expect(reset.frontierTick).toBe(0);
+    expect(reset.version).toBe(1);
+  });
+
+  it('matches createDefaultPayload(seed) apart from the preserved bestScore', () => {
+    const reset = restartHangarWar(BROKE_PAYLOAD, 42);
+    const fresh = createDefaultPayload(42);
+    expect(reset).toEqual({ ...fresh, bestScore: BROKE_PAYLOAD.bestScore });
+  });
+
+  it('normalises an out-of-range seed like every seeded stream', () => {
+    const reset = restartHangarWar(VALID_HANGAR_WAR_PAYLOAD, -1);
+    // normaliseSeed(-1) === 0xffffffff
+    expect(reset.seed).toBe(createDefaultPayload(-1).seed);
+  });
+
+  it('never mutates its input payload', () => {
+    const before = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    const snapshot = JSON.parse(JSON.stringify(before)) as HangarWarPayload;
+    restartHangarWar(before, 7);
+    expect(before).toEqual(snapshot);
+    // The input's ring/attacks arrays are still the originals.
+    expect(before.ring.hexes.length).toBe(2);
+    expect(before.pendingAttacks.length).toBe(1);
+    expect(before.hangar.bankedMinerals).toBe(240);
+  });
+});
+
+describe('advanceRestartConfirm (pure two-step confirm)', () => {
+  it('arms on the first activation without resetting', () => {
+    expect(advanceRestartConfirm(false, { kind: 'activate' })).toEqual({
+      armed: true,
+      reset: false,
+    });
+  });
+
+  it('commits the reset on a second activation inside the window', () => {
+    // arm → confirm
+    const armed = advanceRestartConfirm(false, { kind: 'activate' });
+    const confirmed = advanceRestartConfirm(armed.armed, { kind: 'activate' });
+    expect(confirmed).toEqual({ armed: false, reset: true });
+  });
+
+  it('disarms when the confirm window times out', () => {
+    expect(advanceRestartConfirm(true, { kind: 'timeout' })).toEqual({
+      armed: false,
+      reset: false,
+    });
+  });
+
+  it('disarms when focus moves to any other row', () => {
+    expect(
+      advanceRestartConfirm(true, { kind: 'focus', key: 'deploy' }),
+    ).toEqual({ armed: false, reset: false });
+    expect(
+      advanceRestartConfirm(true, { kind: 'focus', key: null }),
+    ).toEqual({ armed: false, reset: false });
+  });
+
+  it('keeps the armed state when focus stays on the restart row', () => {
+    expect(
+      advanceRestartConfirm(true, { kind: 'focus', key: RESTART_ROW_KEY }),
+    ).toEqual({ armed: true, reset: false });
+    // Focusing the restart row while idle leaves it idle.
+    expect(
+      advanceRestartConfirm(false, { kind: 'focus', key: RESTART_ROW_KEY }),
+    ).toEqual({ armed: false, reset: false });
+  });
+
+  it('disarms when leaving the screen', () => {
+    expect(advanceRestartConfirm(true, { kind: 'leave' })).toEqual({
+      armed: false,
+      reset: false,
+    });
+  });
+});
+
+describe('restart row (pure model)', () => {
+  it('builds an idle row that is always actionable', () => {
+    expect(buildHangarRestartRow()).toEqual({
+      key: RESTART_ROW_KEY,
+      label: '⟲ RESTART WAR — start a fresh war',
+      actionable: true,
+    });
+  });
+
+  it('builds the confirm prompt when armed', () => {
+    expect(buildHangarRestartRow(true)).toEqual({
+      key: RESTART_ROW_KEY,
+      label: '⚠ PRESS AGAIN TO CONFIRM',
+      actionable: true,
+    });
+  });
+
+  it('places the row in its own bottom-row slot beneath DEPLOY and HEX MAP', () => {
+    // The existing rows do not move; the restart row gets a new slot above
+    // them on the 540 px screen.
+    expect(HANGAR_DEPLOY_ROW_Y).toBe(540 - 52);
+    expect(HANGAR_MAP_ROW_Y).toBe(540 - 74);
+    expect(HANGAR_RESTART_ROW_Y).toBe(540 - 96);
+    expect(HANGAR_RESTART_ROW_Y).toBeLessThan(HANGAR_MAP_ROW_Y);
+    expect(HANGAR_MAP_ROW_Y).toBeLessThan(HANGAR_DEPLOY_ROW_Y);
+  });
+
+  it('is the last focus-order entry and renders its armed label through the model', () => {
+    const idle = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
+    expect(idle.restartRow.label).toBe('⟲ RESTART WAR — start a fresh war');
+    expect(idle.focusOrder.at(-1)).toBe(RESTART_ROW_KEY);
+
+    const armed = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD, undefined, {
+      restartArmed: true,
+    });
+    expect(armed.restartRow.label).toBe('⚠ PRESS AGAIN TO CONFIRM');
+    // Arming changes nothing else in the model.
+    expect({ ...armed, restartRow: idle.restartRow }).toEqual(idle);
+  });
+});
+
 describe('HangarScene', () => {
   let booted: BootedGame | null = null;
 
@@ -472,6 +632,7 @@ describe('HangarScene', () => {
       'weapon:spread',
       'deploy',
       'map',
+      'restart',
     ]);
     // Rendering is read-only: nothing is written to storage until a change.
     expect(storage.entries.size).toBe(0);
@@ -616,11 +777,13 @@ describe('HangarScene', () => {
     const storage = memoryStorage(UNARMED_PAYLOAD);
     const scene = await bootHangar({ storage });
 
-    // Only the deployment and the map are focusable; no purchase/equip row
-    // can be reached.
+    // Only the deployment, the map and the restart row are focusable; no
+    // purchase/equip row can be reached.
     expect(scene.getFocusedKey()).toBe('deploy');
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedKey()).toBe('map');
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedKey()).toBe('restart');
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedKey()).toBe('deploy');
 
@@ -712,5 +875,226 @@ describe('HangarScene', () => {
     await advanceGame(booted.game, 350);
 
     expect(booted.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+  });
+
+  // ── Restart row (AH-0MW8F7NH1002PQE3) ─────────────────────────
+
+  it('renders the ⟲ RESTART WAR row idle, actionable and last', async () => {
+    const scene = await bootHangar({
+      payload: VALID_HANGAR_WAR_PAYLOAD,
+      storage: null,
+    });
+
+    expect(rowFor(scene, RESTART_ROW_KEY).label).toBe(
+      '⟲ RESTART WAR — start a fresh war',
+    );
+    expect(rowFor(scene, RESTART_ROW_KEY).actionable).toBe(true);
+    expect(rowFor(scene, RESTART_ROW_KEY).text.input).not.toBeNull();
+    // It is the last rendered row, beneath DEPLOY and HEX MAP.
+    expect(scene.getRows().at(-1)!.key).toBe(RESTART_ROW_KEY);
+    expect(scene.getModel().focusOrder.at(-1)).toBe(RESTART_ROW_KEY);
+    expect(scene.isRestartArmed()).toBe(false);
+  });
+
+  it('arms on the first pointer click and changes nothing else', async () => {
+    const storage = memoryStorage(VALID_HANGAR_WAR_PAYLOAD);
+    const scene = await bootHangar({ storage });
+    const armedSnapshot = clonePayload(scene.getPayload());
+
+    rowFor(scene, RESTART_ROW_KEY).text.emit('pointerdown');
+
+    // Armed: the prompt is shown and the war is untouched (nothing written).
+    expect(scene.isRestartArmed()).toBe(true);
+    expect(rowFor(scene, RESTART_ROW_KEY).label).toBe(
+      '⚠ PRESS AGAIN TO CONFIRM',
+    );
+    expect(scene.getPayload()).toEqual(armedSnapshot);
+    expect(parseHangarWarPayload(
+      JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
+    )).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+  });
+
+  it('resets the war on a second pointer click and preserves bestScore', async () => {
+    const storage = memoryStorage(VALID_HANGAR_WAR_PAYLOAD);
+    const scene = await bootHangar({ storage });
+
+    rowFor(scene, RESTART_ROW_KEY).text.emit('pointerdown'); // arm
+    expect(scene.isRestartArmed()).toBe(true);
+
+    // Pin the fresh-war seed without breaking Phaser's own UUID generation
+    // (which also draws from Math.random): only the first draw — the
+    // `randomSeed()` call inside the confirm — is fixed, every later draw (the
+    // rebuild's text texture keys) falls through to the real generator.
+    const originalRandom = Math.random;
+    let calls = 0;
+    const randomSpy = vi.spyOn(Math, 'random').mockImplementation(() => {
+      calls += 1;
+      return calls === 1 ? 0.5 : originalRandom.call(Math);
+    });
+    try {
+      rowFor(scene, RESTART_ROW_KEY).text.emit('pointerdown'); // confirm
+
+      const reset = scene.getPayload();
+      // Starting kit: basic hull, starter weapon owned but not equipped.
+      expect(reset.hangar).toEqual({
+        bankedMinerals: 0,
+        bankedCores: 0,
+        unlockedHulls: [DEFAULT_HULL_ID],
+        unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
+        ownedModifiers: [],
+        activeHull: DEFAULT_HULL_ID,
+        activeLoadout: { startingWeapons: [], modifiers: [] },
+      });
+      // Ring, attacks and the frontier clock are back to the start.
+      expect(reset.ring).toEqual({ ringIndex: 1, hexes: [] });
+      expect(reset.pendingAttacks).toEqual([]);
+      expect(reset.frontierTick).toBe(0);
+      // A genuinely new war (fresh random seed) that keeps the best score.
+      expect(reset.seed).toBe(Math.floor(0.5 * 0x100000000) >>> 0);
+      expect(reset.seed).not.toBe(VALID_HANGAR_WAR_PAYLOAD.seed);
+      expect(reset.bestScore).toBe(18200);
+
+      // The reset is persisted immediately through the store.
+      const stored = parseHangarWarPayload(
+        JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
+      );
+      expect(stored).toEqual(reset);
+      // The row is back to idle after the reset.
+      expect(scene.isRestartArmed()).toBe(false);
+      expect(rowFor(scene, RESTART_ROW_KEY).label).toBe(
+        '⟲ RESTART WAR — start a fresh war',
+      );
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it('resets on the keyboard Enter path (arm then confirm)', async () => {
+    const storage = memoryStorage(VALID_HANGAR_WAR_PAYLOAD);
+    const scene = await bootHangar({ storage });
+
+    expect(scene.focusRow(RESTART_ROW_KEY)).toBe(true);
+    pressKey(scene, { key: 'Enter' }); // arm
+    expect(scene.isRestartArmed()).toBe(true);
+    expect(scene.getPayload()).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+
+    pressKey(scene, { key: 'Enter' }); // confirm
+    expect(scene.isRestartArmed()).toBe(false);
+    expect(scene.getPayload().hangar.bankedMinerals).toBe(0);
+    expect(scene.getPayload().bestScore).toBe(18200);
+    expect(parseHangarWarPayload(
+      JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
+    )!.hangar.bankedMinerals).toBe(0);
+  });
+
+  it('resets on the keyboard Space path too', async () => {
+    const scene = await bootHangar({
+      payload: VALID_HANGAR_WAR_PAYLOAD,
+      storage: null,
+    });
+
+    expect(scene.focusRow(RESTART_ROW_KEY)).toBe(true);
+    pressKey(scene, { key: ' ' }); // arm
+    expect(scene.isRestartArmed()).toBe(true);
+    pressKey(scene, { key: ' ' }); // confirm
+    expect(scene.getPayload().hangar.bankedMinerals).toBe(0);
+    expect(scene.getPayload().ring.hexes).toEqual([]);
+  });
+
+  it('disarms after the confirm window times out', async () => {
+    const scene = await bootHangar({
+      payload: VALID_HANGAR_WAR_PAYLOAD,
+      storage: null,
+    });
+
+    rowFor(scene, RESTART_ROW_KEY).text.emit('pointerdown'); // arm
+    expect(scene.isRestartArmed()).toBe(true);
+
+    await advanceGame(booted!.game, RESTART_CONFIRM_TIMEOUT_MS + 200);
+
+    // The confirm expired: idle again and nothing was reset.
+    expect(scene.isRestartArmed()).toBe(false);
+    expect(rowFor(scene, RESTART_ROW_KEY).label).toBe(
+      '⟲ RESTART WAR — start a fresh war',
+    );
+    expect(scene.getPayload()).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+  });
+
+  it('disarms when focus moves to another row', async () => {
+    const scene = await bootHangar({
+      payload: VALID_HANGAR_WAR_PAYLOAD,
+      storage: null,
+    });
+
+    rowFor(scene, RESTART_ROW_KEY).text.emit('pointerdown'); // arm
+    expect(scene.isRestartArmed()).toBe(true);
+
+    // Focus moves away from the armed row (Tab or an explicit focus move).
+    expect(scene.focusRow('deploy')).toBe(true);
+
+    expect(scene.isRestartArmed()).toBe(false);
+    expect(scene.getFocusedKey()).toBe('deploy');
+    expect(rowFor(scene, RESTART_ROW_KEY).label).toBe(
+      '⟲ RESTART WAR — start a fresh war',
+    );
+    // A stray Enter on the row it moved to cannot reset the war.
+    pressKey(scene, { key: 'Enter' });
+    expect(scene.getPayload()).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+  });
+
+  it('leaves the checkpoint, leaderboard and settings keys untouched', async () => {
+    const otherKeys: Record<string, string> = {
+      ai_hell_checkpoint: JSON.stringify({ level: 5, score: 999 }),
+      ai_hell_leaderboard: JSON.stringify([{ initials: 'AAA', score: 900 }]),
+      ai_hell_settings: JSON.stringify({ volume: 0.4 }),
+    };
+    const entries = new Map<string, string>(Object.entries(otherKeys));
+    entries.set(HANGAR_WAR_STORAGE_KEY, JSON.stringify(VALID_HANGAR_WAR_PAYLOAD));
+    const storage: MemoryStorage = {
+      entries,
+      getItem: (key) => entries.get(key) ?? null,
+      setItem: (key, value) => {
+        entries.set(key, value);
+      },
+      removeItem: (key) => {
+        entries.delete(key);
+      },
+    };
+    const scene = await bootHangar({ storage });
+
+    rowFor(scene, RESTART_ROW_KEY).text.emit('pointerdown'); // arm
+    rowFor(scene, RESTART_ROW_KEY).text.emit('pointerdown'); // confirm
+
+    // Only the hangar-war key changed; the three other keys are byte-identical.
+    for (const [key, value] of Object.entries(otherKeys)) {
+      expect(entries.get(key)).toBe(value);
+    }
+    expect(scene.getPayload().ring.hexes).toEqual([]);
+  });
+
+  it('does not act under the attract demo (no reset, no write, non-actionable row)', async () => {
+    const storage = memoryStorage(VALID_HANGAR_WAR_PAYLOAD);
+    booted = await bootScene([HangarScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: VALID_HANGAR_WAR_PAYLOAD,
+      storage,
+      demo: true,
+      demoDwellMs: 1_000_000,
+    });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+
+    // The row is rendered but not wired: the bot can never select it.
+    const restartRow = rowFor(scene, RESTART_ROW_KEY);
+    expect(restartRow.label).toBe('⟲ RESTART WAR — start a fresh war');
+    expect(restartRow.actionable).toBe(false);
+    expect(restartRow.text.input).toBeNull();
+    expect(scene.isRestartArmed()).toBe(false);
+
+    // Nothing was written and the war is untouched.
+    expect(scene.getPayload()).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+    expect(parseHangarWarPayload(
+      JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
+    )).toEqual(VALID_HANGAR_WAR_PAYLOAD);
   });
 });

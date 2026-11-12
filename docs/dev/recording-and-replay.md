@@ -49,11 +49,45 @@ npm run record -- --auto --output recordings/human.jsonl
 | `--auto` | Stop as soon as the run ends (no Ctrl+C needed) | wait for Ctrl+C |
 | `--max-duration MS` | Safety cap on recording length | 30 min |
 | `--poll MS` | Run-end poll interval | 250 ms |
+| `--checkpoint-ms MS` | Interval between crash-safe appends of new telemetry to `<output>.partial.jsonl` (a browser close keeps everything up to the last checkpoint); `0` disables checkpointing (AH-0MVWIDN5G006IZ58) | 15 s |
 | `--json` | Print the summary as JSON | text |
 
-On Ctrl+C the tool still exports whatever the sink has already flushed (the
-recorder flushes every `batchSize` records and on scene shutdown), so an
-interrupted run yields a partial but valid recording.
+### Stopping a recording (Ctrl+C saves; a browser close salvages a partial)
+
+The stop procedure decides whether the recording survives, because the run
+lives **only** in the page's in-memory buffer (`window.__aiHellTelemetry`,
+[../TELEMETRY.md](../TELEMETRY.md)) and the recorder reads it from the page:
+
+- **Clean stop — Ctrl+C in this terminal**, the run ending under `--auto`, or
+  the `--max-duration` safety cap: the whole run is written to `<output>`
+  (`recordings/session-<seed-><timestamp>.jsonl` by default), `balance-stats.json`
+  is written beside it, any leftover partial is removed, and the exit code is
+  `0`.
+- **Interrupted — the browser window is closed** or the page crashes: this does
+  **not** save a completed recording. The run's buffer goes away with the page,
+  so the recorder keeps only what the crash-safe checkpoint had already
+  appended to `<output>.partial.jsonl` (a complete newline-terminated NDJSON
+  file, readable with `npm run analyse` / `npm run replay`, never a half-written
+  record). The un-checkpointed tail — at most one `--checkpoint-ms` interval —
+  is lost, no `balance-stats.json` is written for an interrupted run (it is not
+  a completed run), one actionable line names the partial path, and the exit
+  code is `1`. A salvage is collision-safe: it never overwrites an existing
+  recording or an earlier salvage.
+- **Nothing captured — the browser closes during startup, before the first
+  checkpoint**, or the page buffer is unreachable: one actionable line names the
+  output path that was **not** written and the Ctrl+C stop procedure, and the
+  exit code is `1`. A close during startup takes this path even though setup has
+  not finished: the recorder's rescue boundary covers the whole session (path
+  resolution, page setup, the wait loop and the final telemetry read,
+  AH-0MWB6OG5T007BYXP), so it prints the same lost line instead of a raw
+  Playwright `Target page, context or browser has been closed` message.
+
+`--checkpoint-ms 0` disables checkpointing, so an interrupted run is a *lost*
+run (the "nothing captured" line) rather than a salvaged one.
+
+> **`--auto` needs npm's `--` separator.** `npm run record -- --auto` forwards
+> the flag; a bare `npm run record --auto` is consumed by npm, so the recorder
+> starts a normal wait-for-Ctrl+C session that never stops at run end.
 
 > **Prerequisites:** `npm install` then `npm run capture:install` (Playwright
 > Chromium), the same as the capture tooling.
@@ -99,11 +133,15 @@ recordings/parts/<runKey>.jsonl        (staged during the run)
 
 What this means for the recording flows in this document:
 
-- **The page buffer is never cleared mid-run.** Streaming advances an upload
-  watermark only; the sink keeps every record, so
-  `window.__aiHellTelemetry.read()` still returns the **full run** after run
-  end. `npm run record`, `npm run capture` and `npm run telemetry:inspect`
-  therefore behave exactly as before (AC3).
+- **The page buffer is retention-bounded, never cleared mid-run.** Streaming
+  advances an upload watermark only; the sink keeps every record below the
+  retention cap (`VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES`, default 16 MiB)
+  and past it drops the **oldest** already-confirmed (or finally-skipped)
+  records first, with the oldest unconfirmed dropped only as the final bound
+  (AH-0MWDGPZL8005QU13). Below the cap — every normal demo run — the buffer is
+  byte-identical to today's, so `window.__aiHellTelemetry.read()` still
+  returns the **full run** after run end. `npm run record`, `npm run capture`
+  and `npm run telemetry:inspect` therefore behave exactly as before (AC3).
 - **Parts stay off the `session-*.jsonl` glob.** A run in progress lives in
   `recordings/parts/<runKey>.jsonl`, so it can never be mistaken for a finished
   recording. The `session-*.jsonl` name is written once, on finalisation, and

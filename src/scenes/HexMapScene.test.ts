@@ -166,13 +166,15 @@ describe('HexMapScene', () => {
       expect(row.text.input).not.toBeNull();
     }
 
-    // Default focus is the attract bot's weakest adjacent hex (hex-r2-2, the
-    // equal-weakest wins on sorted id); any ring-2 hex can be focused.
-    expect(model.attractHexId).toBe('hex-r2-2');
-    expect(scene.getFocusedKey()).toBe('hex:hex-r2-2');
+    // Default focus is the attract bot's weakest hex (hex-r2-1, the
+    // equal-weakest tie at aggression 2 wins on sorted id after the
+    // survivable-band tune (AH-0MW9VAKSD0054XJC)); any ring-2 hex can be focused.
+    expect(model.attractHexId).toBe('hex-r2-1');
+    expect(scene.getFocusedKey()).toBe('hex:hex-r2-1');
     expect(scene.focusRow('hex:hex-r2-12')).toBe(true);
     expect(scene.getFocusedKey()).toBe('hex:hex-r2-12');
     // The detail panel follows focus to the newly focused hex.
+    // The ring-2 weapon hex is the strict maximum at aggression 8.
     const weaponHex = model.hexes.find((hex) => hex.id === 'hex-r2-12')!;
     expect(scene.getPanelKey()).toBe('hex:hex-r2-12');
     expect(scene.getPanelText()).toContain(weaponHex.boss!);

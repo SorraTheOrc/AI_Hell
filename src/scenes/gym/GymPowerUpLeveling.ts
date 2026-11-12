@@ -26,6 +26,16 @@
  *   readout lists **every** levelled power-up with its current run-scoped
  *   level plus the resolver-derived values of all its catalogue variables,
  *   updating live as the level rises.
+ * - **Manual assign (gym-only):** each readout row carries an **Assign**
+ *   button so a maintainer can add or level up any power-up directly, without
+ *   flying around collecting drops (AH-0MW82M3LB007OQG6). It routes through
+ *   the **same** shared `grantPermanentPowerUp` seam as a hold-full reward
+ *   (permanent level for a non-consumable, one clamped charge for a
+ *   consumable), and when the six-slot loadout is full it first removes one
+ *   random slot-counted power-up (seeded `sceneRng()`) so the new kind can
+ *   take the slot. It is a gym-only control: the shipped `PlayScene` gains
+ *   none, and every level/charge/ownership read still comes from
+ *   `PowerUpLevelStore`.
  *
  * Everything runs through the **shared** level model and combat core: the
  * gym reads levels and stats only from `PowerUpLevelStore` /
@@ -72,9 +82,18 @@ import { RoundRobinSpawner } from '../../powerups/spawner';
 import {
   POWER_UP_LEVEL_IDS,
   POWER_UP_LEVEL_SPECS,
+  isConsumablePowerUpId,
+  isPowerUpAtDiscreteCap,
   resolvePowerUpAtLevel,
   type PowerUpLevelStats,
 } from '../../powerups/powerUpLevels';
+import { grantPermanentPowerUp } from '../../powerups/choiceReward';
+import {
+  resolvePlayerSlotState,
+  slotCountedHeldIds,
+  SLOTS_FULL_EXEMPT_IDS,
+  type PowerUpSlotState,
+} from '../../powerups/slots';
 import { Mineral } from '../../entities/Mineral';
 import { HUD } from '../../ui/HUD';
 import { combatHudOptions } from '../core/hudWiring';
@@ -109,6 +128,18 @@ export const POWER_UP_ROW_CLASS = 'gym-powerup-level-row';
 
 /** Class applied to the resolver-stats line of one readout row. */
 export const POWER_UP_STATS_CLASS = 'gym-powerup-level-stats';
+
+/**
+ * Class applied to the per-row **Assign** button (a gym-only manual control,
+ * AH-0MW82M3LB007OQG6). Each button carries `data-powerup-assign="<id>"` so a
+ * test or scripted capture can address it without a DOM walk.
+ */
+export const POWER_UP_ASSIGN_CLASS = 'gym-powerup-assign';
+
+/** Membership set of the levelled power-up ids (the removable kinds). */
+const POWER_UP_LEVEL_ID_SET: ReadonlySet<string> = new Set<string>(
+  POWER_UP_LEVEL_IDS,
+);
 
 /** Hint line shown at the bottom of the gym. */
 export const GYM_POWER_UP_LEVELING_HINT =
@@ -603,7 +634,17 @@ export class GymPowerUpLeveling extends CombatScene<
       stats.dataset.powerupStats = id;
       stats.textContent = '';
 
-      row.append(label, stats);
+      // Gym-only manual control (AH-0MW82M3LB007OQG6): a native button in the
+      // row body (never the collapsible header, so a click cannot also toggle
+      // the panel). One click runs `assignPowerUp` exactly once.
+      const assign = document.createElement('button');
+      assign.type = 'button';
+      assign.className = POWER_UP_ASSIGN_CLASS;
+      assign.dataset.powerupAssign = id;
+      assign.textContent = 'Assign';
+      assign.addEventListener('click', () => this.assignPowerUp(id));
+
+      row.append(label, stats, assign);
       panel.appendChild(row);
     }
 
@@ -657,11 +698,116 @@ export class GymPowerUpLeveling extends CombatScene<
       const stats = panel.querySelector<HTMLElement>(
         `[data-powerup-stats="${row.powerUpId}"]`,
       );
+      const assign = panel.querySelector<HTMLButtonElement>(
+        `[data-powerup-assign="${row.powerUpId}"]`,
+      );
       if (label) {
         label.textContent = `${getPowerUpById(row.powerUpId).name} — Lv ${row.level}`;
       }
       if (stats) stats.textContent = formatLevelStats(row.stats);
+      if (assign) assign.disabled = this.isAssignDisabled(row.powerUpId);
     }
+  }
+
+  // ── Manual assign (gym-only control) ────────────────────────────
+
+  /**
+   * Whether the **Assign** control for `id` is at its cap and therefore a
+   * no-op (AH-0MW82M3LB007OQG6 AC5). Two independent rules:
+   *
+   * - **Non-consumable** — every **discrete** curve variable has reached its
+   *   catalogue cap ({@link isPowerUpAtDiscreteCap}); continuous variables
+   *   only asymptote, so a power-up with none is never disabled (Q9 = C).
+   * - **Consumable** — its level-derived charge pool is full, or a single-use
+   *   kind already holds its ready activation (Q10 = A). A consumable never
+   *   levels from a grant, so the curve cap is irrelevant here.
+   *
+   * Public so a test (and a scripted capture) can read the live disable state
+   * without inspecting the button's DOM property.
+   */
+  isAssignDisabled(id: PowerUpId): boolean {
+    const player = this.player;
+    if (!player) return false;
+    const store = player.getPowerUpLevelStore();
+    if (isConsumablePowerUpId(id)) {
+      // A single-use kind has one readiness flag, not a pool: it is "full"
+      // exactly while its ready activation is held.
+      if (store.hasSingleUse(id)) return true;
+      const cap = store.consumableChargeCap(id);
+      return cap > 0 && store.consumableCharges(id) >= cap;
+    }
+    return isPowerUpAtDiscreteCap(id, store.getUpgradeLevel(id));
+  }
+
+  /**
+   * Manually assigns power-up `id` to the ship — the gym-only control
+   * (AH-0MW82M3LB007OQG6). It writes only through the shared seams:
+   *
+   * - **unowned** → one {@link grantPermanentPowerUp} adds the kind at base
+   *   level (a consumable becomes owned and banks one clamped charge);
+   * - **owned** → the same seam adds one permanent level (non-consumable) or
+   *   one clamped charge (consumable), matching the hold-full rule — never a
+   *   divergent copy;
+   * - **unowned and the six-slot loadout full** → one random slot-counted
+   *   power-up is removed first (`PowerUpLevelStore.remove`) so the new kind
+   *   can take the slot. An exempt kind (Extra Life / Mystery UFO) never
+   *   consumes a slot, so it triggers no removal.
+   *
+   * A no-op when the control is at its cap ({@link isAssignDisabled}). Public
+   * so a test and a scripted capture can drive the exact code the button
+   * calls; the readout is refreshed in the same call so `getReadout()` and
+   * every row are current immediately after it.
+   */
+  assignPowerUp(id: PowerUpId): void {
+    const player = this.player;
+    if (!player || this.isAssignDisabled(id)) return;
+    const store = player.getPowerUpLevelStore();
+    const owned =
+      store.getEffectiveLevel(id) > 0 || store.isConsumableOwned(id);
+    if (!owned) {
+      const slotState = resolvePlayerSlotState(player);
+      // Only a slot-counted kind needs a slot; an exempt kind added at the
+      // full cap must not evict a held power-up.
+      const needsSlot = !SLOTS_FULL_EXEMPT_IDS.includes(id);
+      if (slotState.isFull && needsSlot) {
+        this._removeRandomSlotCountedPowerUp(slotState);
+      }
+    }
+    // The one shared grant seam: permanent level for a non-consumable, one
+    // clamped charge (never a level) for a consumable.
+    grantPermanentPowerUp(id, this.effectsRegistry);
+    this.refreshReadout();
+  }
+
+  /**
+   * Removes one random held power-up kind so a manual assign can free a slot.
+   *
+   * The victim is drawn **only** from {@link slotCountedHeldIds} — the
+   * slot-exempt Extra Life / Mystery UFO never appear there — and further
+   * restricted to actual power-up kinds, because the whole-kind clear seam is
+   * `PowerUpLevelStore.remove` / `Player.removePowerUp` (a weapon drop has its
+   * own store and is not removable here). The draw uses the gym's seeded
+   * `sceneRng()`, so a seeded capture reproduces the same victim
+   * (AH-0MW82M3LB007OQG6 AC4).
+   */
+  private _removeRandomSlotCountedPowerUp(state: PowerUpSlotState): void {
+    const player = this.player;
+    if (!player) return;
+    const victims = slotCountedHeldIds(state).filter((id) =>
+      POWER_UP_LEVEL_ID_SET.has(id),
+    );
+    if (victims.length === 0) return;
+    const index = Math.floor(this.sceneRng() * victims.length);
+    player.removePowerUp(victims[index] as PowerUpId);
+  }
+
+  /**
+   * Test seam: overrides the content RNG the random-victim draw uses, so a
+   * test can pin the victim (AH-0MW82M3LB007OQG6 AC4/AC6). Production scenes
+   * never call it — `sceneRng` is seeded from the capture `setup`.
+   */
+  setSceneRng(rng: () => number): void {
+    this.sceneRng = rng;
   }
 
   // ── Run-restart reset (deterministic public seam) ────────────────

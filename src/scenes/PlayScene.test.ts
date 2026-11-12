@@ -2343,6 +2343,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const wm = scene.getWaveManager();
     const asteroid = findAsteroids(scene)[0];
 
+    // Keep the doubled mineral economy from opening the hold-full overlay mid
+    // walk: this test pins asteroid persistence, not the hold economy, and a
+    // pause here would stall the transition loop (parent AH-0MWB9LCED004K67Y).
+    scene.getGameState().mineralCapacity = 100000;
+
     // Clear Level 1 (the expanded campaign levels now span ten waves,
     // AH-0MVCYANT6003SG5C); the asteroid lives through every wave and the
     // level transition into Level 2.
@@ -7971,6 +7976,51 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(wm.waveNumber).toBe(1);
   });
 
+  it('AC4 — every mini-boss defeat spawns exactly one Extra Life field pickup at the death position', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    // Spawn at the life cap: the guarantee is literal, so the drop still
+    // appears even though collecting it can never add a life.
+    scene.getGameState().lives = scene.getLivesCap();
+    const extraLifeDrops = () =>
+      scene.getDrops().filter((drop) => drop.dropId === 'extra_life');
+    const before = extraLifeDrops().length;
+
+    const miniBoss = scene.getMiniBoss()!;
+    const deathX = miniBoss.x;
+    const deathY = miniBoss.y;
+    // Land the lethal blow (the sweep is left in flight so the pre-completion
+    // state is observable); the guaranteed drop spawns on the defeat frame.
+    hitMiniBossUntilDead(scene);
+
+    const spawned = extraLifeDrops();
+    expect(spawned.length - before).toBe(1);
+    const drop = spawned[spawned.length - 1];
+    // At/near the death position — inside the shared separation-nudge radius.
+    expect(
+      Math.hypot(drop.x - deathX, drop.y - deathY),
+    ).toBeLessThanOrEqual(161);
+
+    finishMiniBossSweep(scene);
+    resolveOpenMiniBossReward(scene);
+  });
+
+  it('AC4 — the guaranteed Extra Life is in addition to the wheel reward', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    // Seed the player with an owned kind so the defeat offers the wheel (not
+    // the empty-owned fallback), then defeat through the full shared path.
+    scene.getPlayer()?.equipWeapon('spread', true);
+    killMiniBoss(scene);
+
+    // The reward was offered/applied …
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+    // … and a guaranteed Extra Life is still on the field alongside it.
+    expect(
+      scene.getDrops().filter((drop) => drop.dropId === 'extra_life').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
   it('AC3 — defeat fires exactly one reward hook and one checkpoint hook at the defeat moment', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
@@ -9101,26 +9151,36 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     const killTelemetry = vi.spyOn(RunTelemetry.prototype, 'enemyKilled');
     const scoreBefore = scene.getGameState().score;
     const mineralsBefore = scene.getMinerals().length;
-    const dropsBefore = scene.getDrops().length;
+    const extraLifeDrops = () =>
+      scene.getDrops().filter((drop) => drop.dropId === 'extra_life').length;
+    const nonExtraLifeDrops = () =>
+      scene.getDrops().filter((drop) => drop.dropId !== 'extra_life').length;
+    const extraLifeBefore = extraLifeDrops();
+    const nonExtraLifeBefore = nonExtraLifeDrops();
 
     hitMiniBossUntilDead(scene);
 
     // The swept escorts never route through the reward-bearing kill path
     // (`_onEnemyKilled`): no score, no drops, no kill telemetry — and the
-    // wave has not been accounted yet.
+    // wave has not been accounted yet. (The mini-boss's own defeat adds
+    // exactly one guaranteed Extra Life drop — AH-0MW8178ZR0090CNY AC4 — which
+    // is not a swept-enemy award.)
     expect(wm.level).toBe(1);
     expect(killTelemetry).not.toHaveBeenCalled();
     expect(scene.getGameState().score).toBe(scoreBefore);
+    expect(nonExtraLifeDrops()).toBe(nonExtraLifeBefore);
+    expect(extraLifeDrops() - extraLifeBefore).toBe(1);
 
     finishMiniBossSweep(scene);
 
     // The single post-sweep advance is the only wave accounting: the sweep
-    // itself awarded nothing.
+    // itself awarded nothing but the mini-boss's guaranteed Extra Life.
     expect(wm.level).toBe(2);
     expect(killTelemetry).not.toHaveBeenCalled();
     expect(scene.getGameState().score).toBe(scoreBefore);
     expect(scene.getMinerals()).toHaveLength(mineralsBefore);
-    expect(scene.getDrops()).toHaveLength(dropsBefore);
+    expect(nonExtraLifeDrops()).toBe(nonExtraLifeBefore);
+    expect(extraLifeDrops() - extraLifeBefore).toBe(1);
   });
 
   it('AC3/AC4 — demo mode auto-spins the wheel reward after the sweep delay (no stall)', async () => {
@@ -9623,7 +9683,7 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
 
   // ── Unaffected paths (GREEN both on HEAD and after F2) ──────────
 
-  it('the mineral kill-drop rule is level-independent: a level-10 small-asteroid kill still leaves exactly one mineral', async () => {
+  it('the mineral kill-drop rule is level-independent: a level-10 small-asteroid kill still leaves two minerals', async () => {
     const scene = await bootDropScene(dropCampaign(10));
     // 0.5 is above the level-1 and level-10 per-kill chances: the power-up
     // pool is suppressed at every level, isolating the mineral rule from the
@@ -9633,13 +9693,14 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
 
     const dropsBefore = scene.getDrops().length;
     const mineralsBefore = scene.getMinerals().length;
-    // Kill away from the player (and the scout formation) so the mineral
-    // stays on the field for the count.
+    // Kill away from the player (and the scout formation) so the minerals
+    // stay on the field for the count.
     spawnAndDestroySmallAsteroid(scene, GAME_WIDTH * 0.15, GAME_HEIGHT * 0.62);
     // No power-up drop …
     expect(scene.getDrops().length).toBe(dropsBefore);
-    // … but the mineral kill-drop rule is untouched: exactly one mineral.
-    expect(scene.getMinerals().length).toBe(mineralsBefore + 1);
+    // … but the mineral kill-drop rule is untouched by the level: the
+    // `MINERAL_DROP_MULTIPLIER` doubling still applies (two minerals).
+    expect(scene.getMinerals().length).toBe(mineralsBefore + 2);
   });
 
   it('timed power-up effects still apply at an elevated level', async () => {

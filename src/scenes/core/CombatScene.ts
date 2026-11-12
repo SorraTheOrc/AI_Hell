@@ -52,6 +52,7 @@ import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
 import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } from '../../vfx/aoeEffect';
+import { spawnMiningLaserBeam } from '../../vfx/miningLaserBeam';
 import { spawnOrbitalStrike } from '../../vfx/orbitalStrike';
 import { selectOrbitalStrikeTarget } from './strikeTargeting';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
@@ -160,8 +161,9 @@ export abstract class CombatScene<
   protected bulletImpactEffects: Phaser.GameObjects.Graphics[] = [];
 
   /**
-   * Live AOE effect graphics (nova ring; mortar burst / arc chain in F3/F4),
-   * tracked for observation and teardown on scene shutdown
+   * Live AOE/vfx effect graphics (nova ring; mortar burst / arc chain in
+   * F3/F4; the Orbital Strike bolt and the Mining Laser beam), tracked for
+   * observation and teardown on scene shutdown
    * (parent AH-0MUOOB3OR001V8CD).
    */
   protected aoeEffects: Phaser.GameObjects.Graphics[] = [];
@@ -434,7 +436,9 @@ export abstract class CombatScene<
    * collisions in the game and in `GymBoss` (AH-0MUII3E5E006A93F, AC1).
    *
    * Boss bullets are appended to the scene's enemy-bullet list; pulse waves
-   * are managed by the Boss itself. A scene with no boss is a no-op.
+   * are managed by the Boss itself and advanced exactly once per frame inside
+   * `Boss.update` (never also here — AH-0MW9MN4ZO009GFKW). A scene with no
+   * boss is a no-op.
    */
   protected _advanceBoss(dt: number): void {
     const boss = this.getBoss();
@@ -455,7 +459,6 @@ export abstract class CombatScene<
       }
     }
     this.setEnemyBullets(live);
-    boss.advancePulseWave(dt, GAME_WIDTH, GAME_HEIGHT);
 
     // Scene hook for boss-adjacent work (e.g. `GymBoss` minions).
     this.onBossAdvanced(dt);
@@ -812,6 +815,47 @@ export abstract class CombatScene<
     });
     this.damageEnemyViaAoe(target, damage);
     return true;
+  }
+
+  /**
+   * Resolves one Mining Laser shot (AH-0MW9QMP2P0032BWW, parent **Mining
+   * laser** AH-0MW81181P007BDRU) at the asteroid the shared
+   * {@link CombatCoreScene._updateMiningLaser} step selected with
+   * {@link selectMiningLaserTarget} over {@link getEnemyEntities}.
+   *
+   * The level-resolved damage is applied through the shared kill seam
+   * {@link damageEnemyViaAoe}, so destruction audio, score/drop/wave accounting
+   * and mineral drops run exactly once per shot — identical to a player bullet
+   * or an AOE effect. The selection step never offers a non-asteroid body, so
+   * this override only ever damages rock (parent AC). The shot is an
+   * **instant beam, never a travelling projectile**: the damage lands on the
+   * selected asteroid in the same call, so the shot cannot collide with — or
+   * ever damage — a non-asteroid enemy in flight. That is exactly why the
+   * laser resolves as a hitscan rather than through the shared player-bullet
+   * path (parent AC: it only ever fires at asteroids).
+   *
+   * The shot's feedback is spawned first, from the ship's **current** position
+   * to the target's **current** position: `vfx/miningLaserBeam.spawnMiningLaserBeam`
+   * draws the thin amber beam (wrapped-aware, so a rock across the seam is cut
+   * through the edge rather than across the screen) and plays the laser's
+   * cutting tick. The module owns both the look and the cue
+   * (AH-0MW9QMQ7B005WFH9), so `PlayScene` and every gym get identical feedback
+   * from this one shared path and no call site can forget the sound — the
+   * `spawnOrbitalStrike` precedent.
+   *
+   * @param target - The live asteroid the shot landed on.
+   */
+  protected override onMiningLaserFire(target: TEnemy): void {
+    const player = this.getPlayer();
+    if (player) {
+      spawnMiningLaserBeam(this, player, target, {
+        registry: this.aoeEffects,
+      });
+    }
+    this.damageEnemyViaAoe(
+      target,
+      this.getEffectsRegistry().miningLaserDamage(),
+    );
   }
 
   /**

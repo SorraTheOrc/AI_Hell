@@ -34,7 +34,6 @@
 import Phaser from 'phaser';
 
 import { createBullet } from './bulletUtils';
-import { ensureBulletTexture } from '../utils/bulletTextures';
 import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
 import type { EnemyBulletVisual } from '../utils/bulletVisuals';
 import type { BulletShape } from '../utils/weapons';
@@ -74,6 +73,16 @@ export const BOSS_RADIUS = 50;
 export const BOSS_CORE_RADIUS = 16;
 /** Core glow radius in px. */
 export const BOSS_CORE_GLOW_RADIUS = 30;
+/**
+ * Constant stroke width of the expanding pulse-wave ring (px).
+ *
+ * The ring is redrawn at native resolution every frame with this fixed width
+ * (AH-0MW80W5ER005E884); it is never scaled, so the stroke cannot blur or
+ * stair-step as the radius grows.
+ */
+export const BOSS_PULSE_WAVE_STROKE_WIDTH = 3;
+/** Display-list name stamped on the live pulse-wave ring (test observability). */
+export const PULSE_WAVE_NAME = 'boss-pulse-wave';
 /** Hot yellow colour for per-hit boss impact VFX. */
 export const BOSS_IMPACT_COLOR = 0xffee44;
 
@@ -288,8 +297,12 @@ export interface BossDemonstratedWeapon {
 // ── Bullet types ────────────────────────────────────────────────────
 
 export interface BossBullet {
-  /** The bullet's view: a sprite of its shape's cached texture. */
-  readonly graphics: Phaser.GameObjects.Image;
+  /**
+   * The bullet's view: a sprite of its shape's cached texture. The pulse-wave
+   * ring is the one exception — it is a native-resolution `Graphics` stroked
+   * circle (AH-0MW80W5ER005E884), never a scaled sprite.
+   */
+  readonly graphics: Phaser.GameObjects.Image | Phaser.GameObjects.Graphics;
   readonly color: number;
   vx: number;
   vy: number;
@@ -369,10 +382,14 @@ export class Boss extends Phaser.GameObjects.Container {
   private _anchorY: number;
   private _moveElapsedMs = 0;
 
-  // Pulse wave state
-  private _pulseWaveGraphics: Phaser.GameObjects.Image | null = null;
+  // Pulse wave state (AH-0MW80W5ER005E884). Exactly one live wave per boss:
+  // a single `Graphics` stroked circle redrawn at native resolution, with the
+  // ring stroke held at a constant width so it stays crisp at every radius.
+  private _pulseWaveGraphics: Phaser.GameObjects.Graphics | null = null;
   private _pulseWaveRadius = 0;
   private _pulseWaveSpeed = 300;
+  /** Peak opacity the ring fades down from toward zero at the range limit. */
+  private _pulseWaveAlpha = 0.4;
 
   // Core pulsing animation
   private _corePulsePhase = 0;
@@ -880,7 +897,7 @@ export class Boss extends Phaser.GameObjects.Container {
     const aimAngle = Math.atan2(dy, dx);
     bullets.push(this._createBullet(aimAngle, speed, visual));
 
-    // Pulse wave (the cached ring sprite — see `_spawnPulseWave`).
+    // Pulse wave (native-resolution stroked ring — see `_spawnPulseWave`).
     bullets.push(this._spawnPulseWave(0.5));
 
     // Play the Boss fire sound once per volley.
@@ -891,28 +908,39 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Spawns the Boss's expanding pulse wave as a sprite of the cached `ring`
-   * texture (AH-0MW2DAY2L004QSKF). The wave grows by sprite scale and fades
-   * by sprite alpha in {@link advancePulseWave}, so it costs one batched draw
-   * instead of a re-triangulated Graphics redraw every frame. Defined once and
-   * used by every pattern that emits a wave, so the game and the gyms run the
-   * same code (AGENTS.md gym↔game parity).
+   * Spawns the Boss's expanding pulse wave as a native-resolution stroked
+   * circle (AH-0MW80W5ER005E884). The ring is redrawn each frame at the
+   * current radius with a **constant** 3 px stroke, so it stays crisp at every
+   * radius instead of magnifying a small baked ring into a blurry, stair-
+   * stepped band. The wave is a single `Graphics` object, so it remains one
+   * cheap draw (AH-0MW2DAY2L004QSKF's budget is preserved).
    *
-   * @param alpha - Starting sprite alpha for the wave.
+   * Exactly one wave exists per boss: any wave still in flight is destroyed
+   * before the new one is created, so a superseded volley can never leave an
+   * orphaned ring frozen on screen. Defined once and used by every pattern
+   * that emits a wave, so the game and the gyms run the same code
+   * (AGENTS.md gym↔game parity).
+   *
+   * @param alpha - Peak opacity the wave fades down from toward its limit.
    */
   private _spawnPulseWave(alpha: number): BossBullet {
-    const pulseTexture = ensureBulletTexture(this.scene as Phaser.Scene, {
-      shape: 'ring',
-      color: BOSS_CORE_COLOR,
-      radius: BOSS_CORE_GLOW_RADIUS,
-      thickness: 3,
-    });
-    const pulse = (this.scene as Phaser.Scene).add
-      .image(this.x, this.y, pulseTexture.key)
-      .setDepth(2)
-      .setAlpha(alpha);
+    // Enforce the single-wave invariant before allocating the replacement.
+    if (this._pulseWaveGraphics) {
+      this._pulseWaveGraphics.destroy();
+      this._pulseWaveGraphics = null;
+    }
+
+    const pulse = (this.scene as Phaser.Scene).add.graphics();
+    pulse.setDepth(2);
+    pulse.setPosition(this.x, this.y);
+    // Stable name so the display list can be asserted in regression tests.
+    pulse.setName(PULSE_WAVE_NAME);
+
     this._pulseWaveRadius = BOSS_CORE_GLOW_RADIUS;
+    this._pulseWaveAlpha = alpha;
     this._pulseWaveGraphics = pulse;
+    this._drawPulseWave();
+
     return {
       graphics: pulse,
       color: BOSS_CORE_COLOR,
@@ -926,27 +954,48 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
   /**
+   * Redraws the live pulse-wave ring at its current radius.
+   *
+   * Native resolution only: the stroke width is the constant
+   * {@link BOSS_PULSE_WAVE_STROKE_WIDTH}px at every radius and the object is
+   * never scaled, so an off-screen ring is as thin and crisp as a fresh one.
+   */
+  private _drawPulseWave(): void {
+    const pulse = this._pulseWaveGraphics;
+    if (!pulse) return;
+    pulse.clear();
+    pulse.lineStyle(BOSS_PULSE_WAVE_STROKE_WIDTH, BOSS_CORE_COLOR, 1);
+    pulse.strokeCircle(0, 0, this._pulseWaveRadius);
+  }
+
+  /**
    * Advances a pulse wave outward (called from update).
    * Returns true if the wave has left the screen.
+   *
+   * The wave fades smoothly to zero at the range limit (never popping out)
+   * and is destroyed the instant it passes it, so nothing is left on the
+   * display list.
    */
   advancePulseWave(dt: number, sceneWidth: number, sceneHeight: number): boolean {
-    if (!this._pulseWaveGraphics) return false;
+    const pulse = this._pulseWaveGraphics;
+    if (!pulse) return false;
 
     this._pulseWaveRadius += this._pulseWaveSpeed * dt;
     const maxRadius = Math.sqrt(
       (sceneWidth / 2) ** 2 + (sceneHeight / 2) ** 2,
     );
     if (this._pulseWaveRadius > maxRadius) {
-      this._pulseWaveGraphics.destroy();
+      pulse.destroy();
       this._pulseWaveGraphics = null;
       return true;
     }
 
-    // Grow and fade the cached ring texture with sprite scale/alpha — no
-    // per-frame redraw of the wave geometry (AH-0MW2DAY2L004QSKF).
-    const pulse = this._pulseWaveGraphics;
-    pulse.setScale(this._pulseWaveRadius / BOSS_CORE_GLOW_RADIUS);
-    pulse.setAlpha(Math.max(0, 1 - this._pulseWaveRadius / maxRadius) * 0.4);
+    // Redraw the ring at native resolution (constant stroke) and fade toward
+    // zero as it approaches its range limit.
+    this._drawPulseWave();
+    pulse.setAlpha(
+      Math.max(0, 1 - this._pulseWaveRadius / maxRadius) * this._pulseWaveAlpha,
+    );
 
     return false;
   }
@@ -1128,6 +1177,19 @@ export class Boss extends Phaser.GameObjects.Container {
    */
   getHpFraction(): number {
     return this._alive ? this._currentHp / this._totalHp : 0;
+  }
+
+  /**
+   * The live pulse-wave ring, or `null` when no wave is in flight
+   * (AH-0MW80W5ER005E884). Exposed for lifecycle/render regression tests.
+   */
+  getPulseWaveGraphics(): Phaser.GameObjects.Graphics | null {
+    return this._pulseWaveGraphics;
+  }
+
+  /** Current pulse-wave radius in px (0 when no wave is in flight). */
+  getPulseWaveRadius(): number {
+    return this._pulseWaveGraphics ? this._pulseWaveRadius : 0;
   }
 
   /**

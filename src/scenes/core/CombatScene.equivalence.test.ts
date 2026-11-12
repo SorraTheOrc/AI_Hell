@@ -39,6 +39,7 @@ import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { advanceAndCull } from '../../entities/PlayerBullet';
 import {
   Boss,
+  BossBullet,
   BOSS_HIT_POINTS_PER_PHASE,
   BOSS_MOVE_AMPLITUDE_X,
   BOSS_MOVE_AMPLITUDE_Y,
@@ -166,8 +167,12 @@ const EQUIV_GYM_CONFIG: EnemyFormationConfig<EquivEnemy, EquivBullet> = {
   hintText: 'equiv',
   player: { x: 100, y: 100 },
   // Enable the gym's opt-in power-up layer so Teleport teleport is allowed
-  // (`canTeleport()` gates on `powerUpsEnabled`).
-  powerUps: {},
+  // (`canTeleport()` gates on `powerUpsEnabled`). The drop stream is **seeded**
+  // (AH-0MWC9XWZ80043KOD): the layer's spawner and placement default to
+  // `Math.random`, so an unseeded stream could grant an unrelated weapon
+  // between an equip and a later tick — that nondeterminism made the timed-
+  // weapon expiry test flaky rather than wrong in either scene.
+  powerUps: { rng: createSeededRng(7) },
   buildOffsets: (count) =>
     Array.from({ length: count }, (_, col) => ({ row: 0, col })),
   createEntity: (scene, x, y, offset) => {
@@ -2045,6 +2050,88 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
       ).toBe(core[method]);
     }
   });
+
+  it('pulse wave expands at documented speed through _advanceBoss (AH-0MW9MN4ZO009GFKW)', async () => {
+    // Regression: before the fix, _advanceBoss called boss.advancePulseWave
+    // *after* boss.update() which already advanced the wave, causing a
+    // double-advance (~600 px/s instead of 300 px/s).  This test fires a
+    // pulse wave in PlayScene and GymBoss, then advances the shared tick
+    // for several frames and verifies the radius grows by exactly
+    // _pulseWaveSpeed * dt per frame (300 px/s).
+
+    // Deterministic static campaign.
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'pulse-wave-speed-play-host',
+    );
+    const gym = await bootScene([GymBoss], 'pulse-wave-speed-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as GymBoss;
+
+    seedSingleLevelCampaign(playScene);
+    reachPlayBoss(playScene);
+
+    const playBoss = playScene.getBoss()!;
+    // `CombatScene.getBoss()` is protected and `GymBoss` overrides it as
+    // protected, so the gym is read through the same structural seam the rest
+    // of this test uses for the boss's private members (AH-0MWBAFTPK0081IAH).
+    const gymBoss = (
+      gymScene as unknown as { getBoss: () => typeof playBoss }
+    ).getBoss()!;
+    const dt = 0.016; // ~60 fps frame time
+    const expectedDelta = 300 * dt; // 300 px/s × dt
+    const pulseWaveSpeed = (playBoss as unknown as {
+      _pulseWaveSpeed: number;
+    })._pulseWaveSpeed;
+    expect(pulseWaveSpeed).toBe(300);
+
+    // Fire a pulse volley in PlayScene.
+    (playBoss as unknown as { _simulateTelegraphElapsed: () => void })
+      ._simulateTelegraphElapsed();
+    (playBoss as unknown as {
+      tryFirePulseBullets: (now: number) => BossBullet[];
+    }).tryFirePulseBullets(playScene.time.now);
+
+    // Fire a pulse volley in GymBoss.
+    (gymBoss as unknown as { _simulateTelegraphElapsed: () => void })
+      ._simulateTelegraphElapsed();
+    (gymBoss as unknown as {
+      tryFirePulseBullets: (now: number) => BossBullet[];
+    }).tryFirePulseBullets(gymScene.time.now);
+
+    // Verify the wave was spawned.
+    expect(playBoss.getPulseWaveGraphics()).not.toBeNull();
+    expect(gymBoss.getPulseWaveGraphics()).not.toBeNull();
+
+    // Advance through _advanceBoss for 5 frames.
+    const playStartRadius =
+      (playBoss as unknown as { _pulseWaveRadius: number })._pulseWaveRadius;
+    const gymStartRadius =
+      (gymBoss as unknown as { _pulseWaveRadius: number })._pulseWaveRadius;
+
+    for (let i = 0; i < 5; i++) {
+      playScene.tick(dt);
+      gymScene.tick(dt);
+    }
+
+    // After 5 frames: delta should be 5 × pulseWaveSpeed × dt.
+    const playEndRadius =
+      (playBoss as unknown as { _pulseWaveRadius: number })._pulseWaveRadius;
+    const gymEndRadius =
+      (gymBoss as unknown as { _pulseWaveRadius: number })._pulseWaveRadius;
+
+    const playDelta = playEndRadius - playStartRadius;
+    const gymDelta = gymEndRadius - gymStartRadius;
+
+    // If the double-advance bug existed, each delta would be ~2× expected.
+    expect(playDelta).toBeCloseTo(expectedDelta * 5, 1);
+    expect(gymDelta).toBeCloseTo(expectedDelta * 5, 1);
+  });
 });
 
 // ── Boss encounter game↔gym parity (AH-0MUZMTU3Y001Y8XZ) ────────────
@@ -2698,6 +2785,14 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['planLaneTrafficWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
   ['planStrikeWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
   ['releaseDueSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  // Mining Laser target rule (AH-0MW9QMSI7005UU9P, parent
+  // AH-0MW81181P007BDRU): the asteroid-only predicate and the nearest-rock
+  // selector are defined once in this pure module and consumed by the shared
+  // combat core, so `PlayScene` and every gym inherit them. Registering them
+  // means a scene that re-introduces a copy of the target rule fails the
+  // repo-wide duplicate-body guard (gym↔game parity, AGENTS.md).
+  ['isMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
+  ['selectMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
 ];
 
 /**
@@ -2731,6 +2826,13 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['_updateAutoDefence', 'src/scenes/core/CombatScene.ts'],
   ['triggerTeleport', 'src/scenes/core/CombatScene.ts'],
   ['_advanceBoss', 'src/scenes/core/CombatScene.ts'],
+  // Mining Laser shared fire step (AH-0MW9QMSI7005UU9P, parent
+  // AH-0MW81181P007BDRU): cadence detection + the asteroid-only target rule
+  // live once in the shared core, so `PlayScene` and every gym fire the power
+  // up through identical code. The `onMiningLaserFire` application hook is
+  // deliberately excluded — an overridable seam a scene may override but must
+  // not duplicate. A gym that re-introduces a fire step fails this guard.
+  ['_updateMiningLaser', 'src/scenes/core/CombatCoreScene.ts'],
   ['getAdditionalTeleportBodies', 'src/scenes/core/CombatScene.ts'],
   // F8 (Harvester, AH-0MUI820PM0038HS2): the shared multi-hit kill
   // finalisation (destruction audio + `onEnemyDestroyed`) is defined once in

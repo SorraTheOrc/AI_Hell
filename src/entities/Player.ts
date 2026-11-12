@@ -1136,6 +1136,21 @@ export class Player extends Phaser.GameObjects.Graphics {
     return this._powerUpLevelStore.collect(id, permanent);
   }
 
+  /**
+   * Removes **every** run-scoped trace of power-up `id` — its permanent and
+   * temporary level, pooled consumable charges, in-flight recharge timers and
+   * ownership flag.
+   *
+   * A setup/gym-layer operation: the power-up levelling gym uses it to drop one
+   * six-slot kind so a manually assigned control can take the slot
+   * (AH-0MW82M3LB007OQG6 AC3). It delegates straight to the single
+   * {@link PowerUpLevelStore} so no scene re-implements the clear and the
+   * six-slot accounting sees the slot genuinely free.
+   */
+  removePowerUp(id: PowerUpId): void {
+    this._powerUpLevelStore.remove(id);
+  }
+
   /** The run-scoped collection level of `id` (0 when never collected). */
   getPowerUpLevel(id: PowerUpId): number {
     return this._powerUpLevelStore.getLevel(id);

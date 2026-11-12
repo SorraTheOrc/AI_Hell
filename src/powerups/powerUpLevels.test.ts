@@ -38,6 +38,7 @@ import {
   resolvePowerUpAtLevel,
   resolveTemporaryWindow,
   summarisePowerUpLevelChange,
+  isPowerUpAtDiscreteCap,
 } from './powerUpLevels';
 import { curveValue } from '../utils/curve';
 import { DEFAULT_BPM, beatPeriodMs } from '../utils/beat';
@@ -45,6 +46,9 @@ import {
   SHIP_SIZE,
   STRIKE_INTERVAL_BEATS_BASE,
   STRIKE_INTERVAL_BEATS_FLOOR,
+  MINING_LASER_INTERVAL_STEPS_BASE,
+  MINING_LASER_INTERVAL_STEPS_FLOOR,
+  MINING_LASER_INTERVAL_STEPS_PER_LEVEL,
 } from '../core/constants';
 
 const idsInCatalogue = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
@@ -2718,3 +2722,158 @@ describe('PowerUpLevelStore.setRechargeTimeOverride', () => {
     expect(store.rechargeTimeOverride('teleport')).toBeNull();
   });
 });
+
+// ── Mining Laser level curve (AH-0MW9QMNYP006ZO6T) ──────────────────
+
+describe('Mining Laser level curve (AH-0MW9QMNYP006ZO6T)', () => {
+  // One sixteenth-note step of the shared 80 BPM lattice: 750 ms / 4.
+  const stepSeconds = beatPeriodMs(DEFAULT_BPM) / 1000 / 4;
+
+  it('declares the two named cadence/power axes with rationale', () => {
+    const specs = Object.fromEntries(
+      POWER_UP_LEVEL_SPECS.mining_laser.map((s) => [s.variable, s]),
+    ) as Record<string, (typeof POWER_UP_LEVEL_SPECS.mining_laser)[number]>;
+
+    expect(Object.keys(specs).sort()).toEqual(
+      ['miningLaserDamage', 'miningLaserInterval'].sort(),
+    );
+
+    // Cadence: whole 16th-note steps, descending, level-free rounding off.
+    const interval = specs.miningLaserInterval;
+    expect(interval.curve).toBe('linear-clamped');
+    expect(interval.discrete).toBe(false);
+    expect(interval.unit).toBe('s');
+    expect(interval.base).toBeCloseTo(MINING_LASER_INTERVAL_STEPS_BASE * stepSeconds, 12);
+    expect(interval.cap).toBeCloseTo(MINING_LASER_INTERVAL_STEPS_FLOOR * stepSeconds, 12);
+    expect(interval.k).toBeCloseTo(-MINING_LASER_INTERVAL_STEPS_PER_LEVEL * stepSeconds, 12);
+    expect(interval.rationale.length).toBeGreaterThan(0);
+
+    // Damage: whole hits on the shared exponential curve.
+    const damage = specs.miningLaserDamage;
+    expect(damage.curve).toBe('exponential-saturation');
+    expect(damage.discrete).toBe(true);
+    expect(damage.base).toBe(1);
+    expect(damage.cap).toBe(2);
+    // Every asteroid tier is 1 HP today — the rationale must say so.
+    expect(damage.rationale).toMatch(/1 HP/);
+  });
+
+  it('resolves the cadence in whole 16th-note steps: 4 → 1 steps', () => {
+    const intervalAt = (level: number) =>
+      resolvePowerUpAtLevel('mining_laser', level).miningLaserInterval!;
+
+    // First grant: one beat (4 steps = 750 ms).
+    expect(intervalAt(0)).toBeCloseTo(4 * stepSeconds, 12);
+    expect(intervalAt(0)).toBeCloseTo(0.75, 12);
+    // One step (187.5 ms) sooner per level, floored at one step.
+    expect(intervalAt(1)).toBeCloseTo(3 * stepSeconds, 12);
+    expect(intervalAt(2)).toBeCloseTo(2 * stepSeconds, 12);
+    expect(intervalAt(3)).toBeCloseTo(1 * stepSeconds, 12);
+    expect(intervalAt(50)).toBeCloseTo(1 * stepSeconds, 12);
+
+    // Every level is on a whole number of 16th-note steps, monotonic and
+    // clamped: the cadence can never step off the shared lattice.
+    let previous = Infinity;
+    for (let level = 0; level <= 20; level++) {
+      const interval = intervalAt(level);
+      const steps = interval / stepSeconds;
+      expect(Math.abs(steps - Math.round(steps))).toBeLessThan(1e-9);
+      expect(interval).toBeLessThanOrEqual(previous);
+      expect(interval).toBeGreaterThanOrEqual(stepSeconds - 1e-12);
+      previous = interval;
+    }
+  });
+
+  it('resolves whole-hit damage from 1 toward a 2-hit cap', () => {
+    const damageAt = (level: number) =>
+      resolvePowerUpAtLevel('mining_laser', level).miningLaserDamage!;
+
+    expect(damageAt(0)).toBe(1);
+    expect(damageAt(1)).toBe(1);
+    expect(damageAt(2)).toBe(2);
+    expect(damageAt(50)).toBe(2);
+    // Whole hits only.
+    for (let level = 0; level <= 20; level++) {
+      expect(Number.isInteger(damageAt(level))).toBe(true);
+      expect(damageAt(level)).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('describes the cadence change in the hold-full summary', () => {
+    // A shorter interval is an improvement, so the summary reports it.
+    const summary = summarisePowerUpLevelChange('mining_laser', 0, 1);
+    expect(summary).toContain('Laser interval');
+    // The damage axis only changes at the second upgrade.
+    expect(summarisePowerUpLevelChange('mining_laser', 0, 1)).not.toContain(
+      'Laser damage',
+    );
+    expect(summarisePowerUpLevelChange('mining_laser', 1, 2)).toContain(
+      'Laser damage',
+    );
+  });
+});
+
+describe('PowerUpLevelStore.remove — whole-kind clear (AH-0MW82M3LB007OQG6)', () => {
+  it('clears permanent, temporary, charge, timer and ownership state', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('force_field', true); // owned + one charge
+    store.collect('force_field'); // active temporary stack
+    store.consumeConsumableCharge('force_field'); // starts a recharge timer
+    expect(store.getTempStacks('force_field')).toBe(1);
+    expect(store.isConsumableOwned('force_field')).toBe(true);
+    expect(store.consumableRechargeRemaining('force_field')).toBeGreaterThan(0);
+
+    store.remove('force_field');
+
+    expect(store.getEffectiveLevel('force_field')).toBe(0);
+    expect(store.getPermanentLevel('force_field')).toBe(0);
+    expect(store.getTempStacks('force_field')).toBe(0);
+    expect(store.isConsumableOwned('force_field')).toBe(false);
+    expect(store.consumableCharges('force_field')).toBe(0);
+    expect(store.consumableRechargeRemaining('force_field')).toBe(0);
+  });
+
+  it('clears a non-consumable permanent level', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('bomb', true);
+    store.collect('bomb', true);
+    expect(store.getPermanentLevel('bomb')).toBe(2);
+
+    store.remove('bomb');
+
+    expect(store.getEffectiveLevel('bomb')).toBe(0);
+    expect(store.getPermanentLevel('bomb')).toBe(0);
+  });
+
+  it('clears a single-use readiness timer and is idempotent', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('teleport', true); // owned + ready
+    expect(store.consumeTeleport()).toBe(true); // spends it → recharging
+    expect(store.isTeleportRecharging()).toBe(true);
+
+    store.remove('teleport');
+
+    expect(store.isTeleportHeld()).toBe(false);
+    expect(store.isTeleportRecharging()).toBe(false);
+    expect(() => store.remove('teleport')).not.toThrow();
+  });
+});
+
+describe('isPowerUpAtDiscreteCap (AH-0MW82M3LB007OQG6 AC5)', () => {
+  it('reports false while a discrete axis is below its cap', () => {
+    expect(isPowerUpAtDiscreteCap('magnet', 0)).toBe(false);
+  });
+
+  it('reports true once every discrete axis reaches its cap', () => {
+    // Magnet has one discrete axis (magnetStacks 1 → 5); upgrade level 6
+    // rounds to the cap.
+    expect(isPowerUpAtDiscreteCap('magnet', 6)).toBe(true);
+    expect(isPowerUpAtDiscreteCap('magnet', 5)).toBe(false);
+  });
+
+  it('reports false for a power-up with no discrete axes (never disabled)', () => {
+    expect(POWER_UP_LEVEL_SPECS.chrono.every((spec) => !spec.discrete)).toBe(true);
+    expect(isPowerUpAtDiscreteCap('chrono', 1000)).toBe(false);
+  });
+});
+

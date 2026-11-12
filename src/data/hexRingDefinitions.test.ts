@@ -23,6 +23,7 @@ import {
   validateRingDefinitions,
   type HexRingDefinition,
 } from '../core/hangarWar/hexRing';
+import { hexAggressionLevel } from '../core/hangarWar/hexDifficulty';
 import {
   HEX_RING_DEFINITIONS,
   findHexRingDefinition,
@@ -130,6 +131,56 @@ describe('authored ring definitions', () => {
     const ringTwo = hexRingDefinitionsFor(2).map((hex) => hex.baseAggression);
     expect(Math.min(...ringTwo)).toBeGreaterThan(Math.min(...ringOne));
     expect(Math.max(...ringTwo)).toBeGreaterThan(Math.max(...ringOne));
+  });
+
+  it('pins ring 2\'s survivable aggression band: floor at 2, gradient retained', () => {
+    const ringTwo = hexRingDefinitionsFor(2);
+    const aggressions = ringTwo.map((hex) => hex.baseAggression);
+
+    // Floor is aggression 2 — the survivable band that the competent bot
+    // survived at full 300 s on ring 1; campaign level ≤ 3.
+    expect(Math.min(...aggressions)).toBe(2);
+
+    // The six retuned hexes sit at the floor; each resolves to a no-fire
+    // campaign level (≤ 3) — the survivable band.
+    const survivable = ringTwo.filter((hex) => hex.baseAggression <= 2);
+    expect(survivable.map((hex) => hex.id).sort()).toEqual([
+      'hex-r2-1',
+      'hex-r2-10',
+      'hex-r2-2',
+      'hex-r2-4',
+      'hex-r2-6',
+      'hex-r2-7',
+    ]);
+    for (const hex of survivable) {
+      expect(
+        hexAggressionLevel(hex.baseAggression),
+        `${hex.id} aggression ${hex.baseAggression} → campaign level`,
+      ).toBeLessThanOrEqual(3);
+    }
+
+    // The hard tail keeps a real threat gradient above the survivable band:
+    // a hex at 5, one at 6 and the weapon hex at 8, each a losing level.
+    expect(aggressions).toContain(5);
+    expect(aggressions).toContain(6);
+    for (const hex of ringTwo.filter((hex) => hex.baseAggression > 2)) {
+      expect(
+        hexAggressionLevel(hex.baseAggression),
+        `${hex.id} aggression ${hex.baseAggression} stays above the survivable band`,
+      ).toBeGreaterThan(3);
+    }
+
+    // Weapon hex is the strict maximum.
+    const weaponHex = ringTwo.find((hex) => hex.weaponHex)!;
+    expect(weaponHex.id).toBe('hex-r2-12');
+    expect(weaponHex.baseAggression).toBe(8);
+    expect(weaponHex.baseAggression).toBe(Math.max(...aggressions));
+    for (const hex of ringTwo.filter((h) => h.id !== 'hex-r2-12')) {
+      expect(
+        hex.baseAggression,
+        `${hex.id} is easier than the weapon hex`,
+      ).toBeLessThan(weaponHex.baseAggression);
+    }
   });
 
   it('looks a definition up by id, and reports an unknown id as undefined', () => {

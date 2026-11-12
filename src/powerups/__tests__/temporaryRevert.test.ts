@@ -129,6 +129,7 @@ const KIND_WINDOWS: Record<PowerUpId, KindWindow> = {
       resolvePowerUpAtLevel('salvage', level).salvageDuration!,
   },
   strike: { timed: false, seconds: () => 10 },
+  mining_laser: { timed: false, seconds: () => 10 },
 };
 
 /** A tick that is unambiguously past a window opened at `windowUpgradeLevel`. */

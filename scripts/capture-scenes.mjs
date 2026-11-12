@@ -352,6 +352,7 @@ export const SCENE_SETUP_POWER_UP_IDS = Object.freeze([
   'thorns',
   'salvage',
   'strike',
+  'mining_laser',
 ]);
 
 /**

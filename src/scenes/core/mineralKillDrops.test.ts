@@ -2,11 +2,11 @@
  * Shared mineral kill-drop rule tests (parent AH-0MUHMT5JC004WRSB, AC3/AC5).
  *
  * Pins the single shared rule consumed by `PlayScene` and
- * `GymFormationScene`: a small asteroid drops exactly one mineral at its
- * death site, large/medium asteroids drop none (their split children drop),
- * and a non-asteroid enemy re-drops its collected minerals plus a random
- * additive bonus (default 0.25–1.25), rounded to the nearest integer and
- * scattered near the death site.
+ * `GymFormationScene`: a small asteroid drops two minerals scattered at its
+ * death site (`MINERAL_DROP_MULTIPLIER`, parent AH-0MWB9LCED004K67Y),
+ * large/medium asteroids drop none (their split children drop), and a
+ * non-asteroid enemy re-drops twice `round(collected + random bonus)`
+ * (default bonus 0.25–1.25), scattered near the death site.
  *
  * Also pins the Salvage bounty seam (`scatterSalvageMineralDrops`,
  * AH-0MVJ72I8O0009T09): the same scatter maths and RNG draw order, but the
@@ -24,8 +24,8 @@ import { Mineral } from '../../entities/Mineral';
 import {
   MINERAL_COLOR,
   MINERAL_DEPOSIT_COLOR,
-  MINERAL_DEPOSIT_THRESHOLD,
   MINERAL_DEPOSIT_VALUE,
+  MINERAL_DROP_MULTIPLIER,
   MINERAL_REDROP_SCATTER_RADIUS,
   MINERAL_SALVAGE_COLOR,
 } from '../../core/constants';
@@ -81,17 +81,23 @@ describe('resolveMineralKillDrops — asteroid rule', () => {
     booted = null;
   });
 
-  it('a small asteroid drops exactly one mineral at its death position', async () => {
+  it('a small asteroid drops two minerals scattered at its death site', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const asteroid = makeAsteroid(scene, 321, 234, 'small');
 
     const drops = resolveMineralKillDrops(scene, asteroid, () => 0.5);
 
-    expect(drops).toHaveLength(1);
-    expect(drops[0]).toBeInstanceOf(Mineral);
-    expect(drops[0].x).toBe(321);
-    expect(drops[0].y).toBe(234);
+    expect(drops).toHaveLength(MINERAL_DROP_MULTIPLIER);
+    expect(drops).toHaveLength(2);
+    for (const drop of drops) {
+      expect(drop).toBeInstanceOf(Mineral);
+      // The doubled drops are scattered within the shared re-drop radius
+      // rather than both sitting exactly on the wreck (visible doubling).
+      expect(
+        Math.hypot(drop.x - 321, drop.y - 234),
+      ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
+    }
   });
 
   it('medium and large asteroids do not drop directly', async () => {
@@ -113,14 +119,15 @@ describe('resolveMineralKillDrops — non-asteroid re-drop rule', () => {
     booted = null;
   });
 
-  it('re-drops the collected count plus an additive bonus at the death site', async () => {
+  it('re-drops twice the collected count plus an additive bonus at the death site', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
-    // Below `MINERAL_DEPOSIT_THRESHOLD` so the ordinary scatter applies.
+    // Three absorbed minerals stay below the deposit threshold even after
+    // doubling (round(3 + 0.25) × 2 = 6), so the ordinary scatter applies.
     const enemy = makeEnemy(scene, 500, 250);
-    for (let i = 0; i < 6; i += 1) enemy.collectMineral();
+    for (let i = 0; i < 3; i += 1) enemy.collectMineral();
 
-    // Low extreme: rng() === 0 → round(6 + 0.25) = 6, scatter radius 0.
+    // Low extreme: rng() === 0 → 2 × round(3 + 0.25) = 6, scatter radius 0.
     const low = resolveMineralKillDrops(scene, enemy, () => 0);
     expect(low).toHaveLength(6);
     for (const drop of low) {
@@ -128,31 +135,35 @@ describe('resolveMineralKillDrops — non-asteroid re-drop rule', () => {
       expect(drop.y).toBe(250);
     }
 
-    // High extreme: rng() === 0.999 → round(6 + 0.25 + 0.999) = 7.
+    // High extreme: rng() === 0.999 → 2 × round(3 + 0.25 + 0.999) = 8.
     const high = resolveMineralKillDrops(scene, enemy, () => 0.999);
-    expect(high).toHaveLength(7);
+    expect(high).toHaveLength(8);
   });
 
-  it('an enemy that absorbed nothing may occasionally drop one mineral', async () => {
+  it('an enemy that absorbed nothing may drop zero or two minerals, never one', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 100, 100);
 
-    // rng() = 0 → round(0.25) = 0 (no drop); rng() = 0.999 → round(1.249) = 1.
+    // rng() = 0 → 2 × round(0.25) = 0 (no drop);
+    // rng() = 0.999 → 2 × round(1.249) = 2 (the bonus roll is doubled).
     expect(resolveMineralKillDrops(scene, enemy, () => 0)).toEqual([]);
-    const drop = resolveMineralKillDrops(scene, enemy, () => 0.999);
-    expect(drop).toHaveLength(1);
-    // The drop is scattered within the configured radius.
-    expect(
-      Math.hypot(drop[0].x - 100, drop[0].y - 100),
-    ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
+    const drops = resolveMineralKillDrops(scene, enemy, () => 0.999);
+    expect(drops).toHaveLength(2);
+    // Every drop is scattered within the configured radius.
+    for (const drop of drops) {
+      expect(
+        Math.hypot(drop.x - 100, drop.y - 100),
+      ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
+    }
   });
 
   it('scatters every drop within the configured re-drop radius', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 300, 300);
-    for (let i = 0; i < 6; i += 1) enemy.collectMineral();
+    // Below the deposit threshold after doubling.
+    for (let i = 0; i < 3; i += 1) enemy.collectMineral();
 
     const drops = resolveMineralKillDrops(scene, enemy, createSeededRng(42));
     expect(drops.length).toBeGreaterThan(0);
@@ -167,7 +178,7 @@ describe('resolveMineralKillDrops — non-asteroid re-drop rule', () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 300, 300);
-    for (let i = 0; i < 6; i += 1) enemy.collectMineral();
+    for (let i = 0; i < 3; i += 1) enemy.collectMineral();
 
     const first = resolveMineralKillDrops(scene, enemy, createSeededRng(7));
     const second = resolveMineralKillDrops(scene, enemy, createSeededRng(7));
@@ -194,28 +205,29 @@ describe('resolveMineralKillDrops — red mineral deposits (AH-0MVJ79739008396I)
     booted = null;
   });
 
-  it('a resolved count of 9 keeps the ordinary gold scatter', async () => {
+  it('a doubled resolved count of 8 keeps the ordinary gold scatter', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 320, 240);
-    for (let i = 0; i < 9; i += 1) enemy.collectMineral();
+    for (let i = 0; i < 4; i += 1) enemy.collectMineral();
 
-    // rng() = 0 → round(9 + 0.25) = 9, below the threshold.
+    // rng() = 0 → 2 × round(4 + 0.25) = 8, below the threshold.
     const drops = resolveMineralKillDrops(scene, enemy, () => 0);
 
-    expect(drops).toHaveLength(9);
+    expect(drops).toHaveLength(8);
     expect(drops.every((d) => d.color === MINERAL_COLOR)).toBe(true);
     expect(drops.every((d) => d.value === 1)).toBe(true);
   });
 
-  it('a resolved count of exactly the threshold leaves one red deposit and no gold minerals', async () => {
+  it('a doubled resolved count of exactly the threshold leaves one red deposit and no gold minerals', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 320, 240);
-    for (let i = 0; i < MINERAL_DEPOSIT_THRESHOLD; i += 1)
+    // Five absorbed → 2 × round(5 + 0.25) = 10 ⇒ exactly the threshold.
+    for (let i = 0; i < 5; i += 1)
       enemy.collectMineral();
 
-    // rng() = 0 → round(10 + 0.25) = 10 ⇒ the deposit fires.
+    // rng() = 0 → 2 × round(5 + 0.25) = 10 ⇒ the deposit fires.
     const drops = resolveMineralKillDrops(scene, enemy, () => 0);
 
     expect(drops).toHaveLength(1);
@@ -232,7 +244,7 @@ describe('resolveMineralKillDrops — red mineral deposits (AH-0MVJ79739008396I)
     const enemy = makeEnemy(scene, 410, 290);
     for (let i = 0; i < 17; i += 1) enemy.collectMineral();
 
-    // rng() = 0 → round(17 + 0.25) = 17 ⇒ one deposit, seven minerals lost.
+    // rng() = 0 → 2 × round(17 + 0.25) = 34 ⇒ one deposit, surplus lost.
     const drops = resolveMineralKillDrops(scene, enemy, () => 0);
 
     expect(drops).toHaveLength(1);
@@ -257,13 +269,14 @@ describe('resolveMineralKillDrops — red mineral deposits (AH-0MVJ79739008396I)
     expect(drops[0].y).toBe(384);
   });
 
-  it('the threshold is compared against the post-bonus resolved count', async () => {
+  it('the threshold is compared against the doubled post-bonus resolved count', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 200, 200);
-    // Nine absorbed minerals: rng() = 0.999 adds the full bonus →
-    // round(9 + 1.249) = 10 ⇒ the bonus alone pushes the wreck to a deposit.
-    for (let i = 0; i < 9; i += 1) enemy.collectMineral();
+    // Four absorbed minerals: rng() = 0.999 adds the full bonus →
+    // 2 × round(4 + 1.249) = 10 ⇒ the bonus plus doubling pushes the wreck
+    // to a deposit even though the raw count is only four.
+    for (let i = 0; i < 4; i += 1) enemy.collectMineral();
 
     const drops = resolveMineralKillDrops(scene, enemy, () => 0.999);
 
@@ -278,6 +291,7 @@ describe('resolveMineralKillDrops — red mineral deposits (AH-0MVJ79739008396I)
     enemy.collectMineral(MINERAL_DEPOSIT_VALUE);
 
     expect(enemy.mineralCount).toBe(MINERAL_DEPOSIT_VALUE);
+    // 2 × round(10 + 0.25) = 20 ⇒ one deposit.
     const drops = resolveMineralKillDrops(scene, enemy, () => 0);
 
     expect(drops).toHaveLength(1);
@@ -285,7 +299,7 @@ describe('resolveMineralKillDrops — red mineral deposits (AH-0MVJ79739008396I)
     expect(drops[0].value).toBe(MINERAL_DEPOSIT_VALUE);
   });
 
-  it('an asteroid drop is unchanged: one gold mineral worth one', async () => {
+  it('an asteroid drop doubles to two gold minerals, each worth one', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
 
@@ -295,9 +309,9 @@ describe('resolveMineralKillDrops — red mineral deposits (AH-0MVJ79739008396I)
       () => 0,
     );
 
-    expect(drops).toHaveLength(1);
-    expect(drops[0].color).toBe(MINERAL_COLOR);
-    expect(drops[0].value).toBe(1);
+    expect(drops).toHaveLength(MINERAL_DROP_MULTIPLIER);
+    expect(drops.every((d) => d.color === MINERAL_COLOR)).toBe(true);
+    expect(drops.every((d) => d.value === 1)).toBe(true);
   });
 });
 
@@ -315,11 +329,11 @@ describe('resolveMineralKillPayout — Salvage folds into the deposit threshold 
     const enemy = makeEnemy(scene, 300, 200);
     for (let i = 0; i < 2; i += 1) enemy.collectMineral();
 
-    // rng() = 0 → round(2 + 0.25) = 2 gold, plus a 3-mineral bounty ⇒ 5 total.
+    // rng() = 0 → 2 × round(2 + 0.25) = 4 gold, plus a 3-mineral bounty ⇒ 7 total.
     const drops = resolveMineralKillPayout(scene, enemy, 3, () => 0);
 
-    expect(drops).toHaveLength(5);
-    expect(drops.filter((d) => d.color === MINERAL_COLOR)).toHaveLength(2);
+    expect(drops).toHaveLength(7);
+    expect(drops.filter((d) => d.color === MINERAL_COLOR)).toHaveLength(4);
     expect(drops.filter((d) => d.color === MINERAL_SALVAGE_COLOR)).toHaveLength(
       3,
     );
@@ -331,10 +345,11 @@ describe('resolveMineralKillPayout — Salvage folds into the deposit threshold 
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 300, 200);
-    // 7 absorbed + 3 bounty = 10 ⇒ the deposit fires on the bounty's back.
-    for (let i = 0; i < 7; i += 1) enemy.collectMineral();
+    // 2 absorbed → 2 × round(2.25) = 4, plus a 6-mineral bounty = 10 ⇒ the
+    // deposit fires on the bounty's back (doubling shrinks the count needed).
+    for (let i = 0; i < 2; i += 1) enemy.collectMineral();
 
-    const drops = resolveMineralKillPayout(scene, enemy, 3, () => 0);
+    const drops = resolveMineralKillPayout(scene, enemy, 6, () => 0);
 
     expect(drops).toHaveLength(1);
     expect(drops[0].color).toBe(MINERAL_DEPOSIT_COLOR);
@@ -369,9 +384,9 @@ describe('resolveMineralKillPayout — Salvage folds into the deposit threshold 
       () => 0,
     );
 
-    expect(drops).toHaveLength(1);
-    expect(drops[0].color).toBe(MINERAL_COLOR);
-    expect(drops[0].value).toBe(1);
+    expect(drops).toHaveLength(MINERAL_DROP_MULTIPLIER);
+    expect(drops.every((d) => d.color === MINERAL_COLOR)).toBe(true);
+    expect(drops.every((d) => d.value === 1)).toBe(true);
   });
 });
 
@@ -462,11 +477,11 @@ describe('scatterSalvageMineralDrops — orange Salvage bounty seam (AH-0MVJ72I8
       makeAsteroid(scene, 120, 90, 'small'),
       () => 0.5,
     );
-    expect(asteroidDrops).toHaveLength(1);
-    expect(asteroidDrops[0].color).toBe(MINERAL_COLOR);
+    expect(asteroidDrops).toHaveLength(MINERAL_DROP_MULTIPLIER);
+    expect(asteroidDrops.every((m) => m.color === MINERAL_COLOR)).toBe(true);
 
     const enemy = makeEnemy(scene, 500, 250);
-    for (let i = 0; i < 6; i += 1) enemy.collectMineral();
+    for (let i = 0; i < 3; i += 1) enemy.collectMineral();
     const redrops = resolveMineralKillDrops(scene, enemy, createSeededRng(3));
     expect(redrops.length).toBeGreaterThan(0);
     expect(redrops.every((m) => m.color === MINERAL_COLOR)).toBe(true);
@@ -485,9 +500,10 @@ describe('resolveMineralKillDrops — scatter parity with BaseEnemy.spawnMineral
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 450, 220);
-    // Below the deposit threshold: `spawnMineralDrops` is the legacy plain
-    // scatter, so parity is only defined for the ordinary (non-deposit) path.
-    for (let i = 0; i < 6; i += 1) enemy.collectMineral();
+    // Below the deposit threshold after doubling: `spawnMineralDrops` is the
+    // legacy plain scatter, so parity is only defined for the ordinary
+    // (non-deposit) path.
+    for (let i = 0; i < 3; i += 1) enemy.collectMineral();
 
     const viaRule = resolveMineralKillDrops(scene, enemy, createSeededRng(99));
     const viaEnemy = enemy.spawnMineralDrops(450, 220, createSeededRng(99));

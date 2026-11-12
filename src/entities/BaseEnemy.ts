@@ -17,7 +17,10 @@
 
 import Phaser from 'phaser';
 
-import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
+import {
+  HIT_RADIUS_BUFFER_PX,
+  MINERAL_DROP_MULTIPLIER,
+} from '../core/constants';
 import { loadRules } from '../core/rules';
 import { playEnemyForceFieldBreakSound } from '../audio/effects';
 import {
@@ -37,7 +40,7 @@ import {
   bakeEnemyBodyTexture,
   enemyBodyExtent,
 } from '../utils/enemyBodyTextures';
-import { Mineral, scatterMineralDrops } from './Mineral';
+import { Mineral, scatterDoubledMineralDrops } from './Mineral';
 
 /**
  * A body rendered from a **pre-baked shared frame** (a texture atlas).
@@ -666,10 +669,11 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    * Number of minerals to re-drop when this enemy is destroyed — the
    * collected count plus a random additive bonus drawn from
    * [`mineralRedropBonusMin`, `mineralRedropBonusMax`] (defaults
-   * 0.25–1.25), rounded to the nearest integer. The result may exceed the
-   * collected count (there is no upper cap); an enemy that collected
-   * nothing still draws the bonus and may occasionally drop a single mineral
-   * (when `round(bonus) === 1`).
+   * 0.25–1.25), rounded to the nearest integer and multiplied by
+   * `MINERAL_DROP_MULTIPLIER` (parent AH-0MWB9LCED004K67Y). The result may
+   * exceed the collected count (there is no upper cap); an enemy that
+   * collected nothing still draws the bonus and may occasionally drop
+   * minerals (when `round(bonus) × 2` is 2).
    *
    * @param rng — random-number generator (defaults to `Math.random`);
    *   injected by tests for deterministic bounds checking. Exactly one
@@ -680,7 +684,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     const bonus =
       rules.mineralRedropBonusMin +
       rng() * (rules.mineralRedropBonusMax - rules.mineralRedropBonusMin);
-    return Math.round(this._mineralCount + bonus);
+    return MINERAL_DROP_MULTIPLIER * Math.round(this._mineralCount + bonus);
   }
 
   /**
@@ -688,6 +692,11 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    * lands within {@link MINERAL_REDROP_SCATTER_RADIUS} px of `(x, y)`. Returns
    * the spawned minerals, or an empty array when nothing is to be re-dropped
    * (or the enemy is no longer attached to a scene).
+   *
+   * The doubled count (see {@link mineralRedropCount}) is laid out by the
+   * shared `scatterDoubledMineralDrops` helper, which mirrors each drop across
+   * the wreck so the doubling is visible without consuming extra RNG draws —
+   * keeping this legacy path in exact parity with the shared kill-drop rule.
    *
    * @param x — explosion-site x position
    * @param y — explosion-site y position
@@ -703,7 +712,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     if (!scene) return [];
     // Shared scatter maths (single definition in Mineral.ts, also used by the
     // shared kill-drop rule) keeps the RNG draw order unchanged.
-    return scatterMineralDrops(scene, x, y, count, rng);
+    return scatterDoubledMineralDrops(scene, x, y, count, rng);
   }
 
   /** Whether the enemy is allowed to fire. */

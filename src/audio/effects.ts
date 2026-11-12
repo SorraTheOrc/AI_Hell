@@ -953,6 +953,48 @@ export function playOrbitalStrikeSound(): void {
   playCue('playOrbitalStrikeSound');
 }
 
+/**
+ * Linear gain applied to the **Mining Laser** fire cue
+ * (AH-0MW9QMQ7B005WFH9, parent **Mining laser** AH-0MW81181P007BDRU).
+ *
+ * The laser is the game's most rapid fire cue — up to one shot per sixteenth
+ * note of the shared beat grid (0.1875 s at the floor level) — so its tick is
+ * trimmed to 60% of the baked asset's level. The asset itself is already the
+ * quietest fire cue in the palette (peak 0.12, RMS 0.032 against the cannon's
+ * 0.15 / 0.084), which keeps a sustained mining run under the player-weapon
+ * mix instead of turning into a buzz that masks the enemy-fire telegraphs.
+ * One named tunable, like the other family trims
+ * (`ENEMY_WEAPON_FIRE_VOLUME_SCALE`, `EXPLOSION_VOLUME_SCALE`), so retuning is
+ * a one-line change that needs no new bake.
+ */
+export const MINING_LASER_FIRE_VOLUME_SCALE = 0.6;
+
+/**
+ * Short amber "cutting" tick — the **Mining Laser** fires at an asteroid
+ * (AH-0MW9QMQ7B005WFH9, parent **Mining laser** AH-0MW81181P007BDRU).
+ *
+ * A dedicated ToneForge recipe (`aihell-mining-laser-fire`, seed 32291) rather
+ * than a reused cue: the laser fires constantly while it is owned, so it must
+ * (a) stay distinct by ear from the player cannon's square 800 → 400 Hz tick
+ * and the wave laser's long beam, and (b) stay short and mid-bright so a rapid
+ * cadence never smears into the enemy-fire telegraphs. The recipe is a 0.07 s
+ * saw chirp 1320 → 660 Hz with a high-passed noise bite — a cutting tick, not
+ * a weapon boom.
+ *
+ * Played by `vfx/miningLaserBeam.ts` (not by the call site), so every consumer
+ * of the shared firing seam gets the sound exactly once per shot and no scene
+ * can forget it — the `vfx/orbitalStrike.ts` and `vfx/thornsAbsorb.ts`
+ * precedent. It routes through the shared one-shot cue funnel like every other
+ * cue, so the global volume/mute, the per-cue voice limiter and the single
+ * shared `AudioContext` apply, and the sound rate can never outrun the shot
+ * cadence.
+ */
+export function playMiningLaserFireSound(): void {
+  playCue('playMiningLaserFireSound', {
+    volume: MINING_LASER_FIRE_VOLUME_SCALE,
+  });
+}
+
 /** Bright electric zap — Arc fire. */
 export function playArcFireSound(): void {
   playCue('playArcFireSound');

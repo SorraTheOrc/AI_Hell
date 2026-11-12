@@ -97,7 +97,8 @@
  * - **Instant kinds** declare their own TTL as catalogue data
  *   (`PowerUpEntry.temporaryWindow` in `./types`), so retuning a window is a
  *   data edit with no code change: Bomb 10 s, Smart Bomb 10 s, Orbital Strike
- *   10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s, Mystery UFO 15 s,
+ *   10 s, Mining Laser 10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s,
+ *   Mystery UFO 15 s,
  *   and Shield 15 s / Thorn Field 8 s / Force Field 8 s — the three absorbed-hit
  *   kinds whose window axes were retired (AH-0MVVD8SXO004QLZW), so they are
  *   level-free like the other instant kinds.
@@ -179,9 +180,12 @@ import {
   STRIKE_INTERVAL_BEATS_BASE,
   STRIKE_INTERVAL_BEATS_FLOOR,
   STRIKE_INTERVAL_BEATS_PER_LEVEL,
+  MINING_LASER_INTERVAL_STEPS_BASE,
+  MINING_LASER_INTERVAL_STEPS_FLOOR,
+  MINING_LASER_INTERVAL_STEPS_PER_LEVEL,
   WEAPON_TIMEOUT_MS,
 } from '../core/constants';
-import { DEFAULT_BPM, beatPeriodMs } from '../utils/beat';
+import { DEFAULT_BPM, SIXTEENTH_NOTE_SUBDIVISIONS, beatPeriodMs } from '../utils/beat';
 // The **one** countdown-fraction seam (pure, dependency-free leaf module). The
 // store does not duplicate the ratio arithmetic: `consumableRechargeProgress`
 // hands its captured `{ remaining, duration }` pair to this shared helper, so
@@ -195,6 +199,14 @@ import { resolveCountdownFraction } from '../ui/hudCountdown';
  * the beat module so the grid stays the single source of truth.
  */
 const STRIKE_BEAT_SECONDS = beatPeriodMs(DEFAULT_BPM) / 1000;
+
+/**
+ * One sixteenth-note step of the shared 80 BPM lattice in seconds (0.1875 s).
+ * Derived from the beat module so the lattice stays the single source of
+ * truth; one beat is {@link SIXTEENTH_NOTE_SUBDIVISIONS} steps (750 ms / 4).
+ */
+const MINING_LASER_STEP_SECONDS =
+  STRIKE_BEAT_SECONDS / SIXTEENTH_NOTE_SUBDIVISIONS;
 
 // ── Level variables ─────────────────────────────────────────────────
 
@@ -284,7 +296,14 @@ export type PowerUpLevelVariable =
   /** Orbital Strike — seconds between bolts (descends in whole 80 BPM beats; the strikes/s axis is its inverse). */
   | 'strikeInterval'
   /** Orbital Strike — hit points the bolt deals. */
-  | 'strikeDamage';
+  | 'strikeDamage'
+  /**
+   * Mining Laser — seconds between beams (descends in whole sixteenth-note
+   * steps of the shared 80 BPM lattice: 0.75 s → 0.1875 s).
+   */
+  | 'miningLaserInterval'
+  /** Mining Laser — hit points each beam deals. */
+  | 'miningLaserDamage';
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'shieldAbsorptions',
@@ -321,6 +340,8 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'salvageDuration',
   'strikeInterval',
   'strikeDamage',
+  'miningLaserInterval',
+  'miningLaserDamage',
 ];
 
 /**
@@ -1090,6 +1111,61 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'out-and-out deleting multi-hit enemies (mirrors Smart Bomb damage).',
     },
   ],
+
+  // Mining Laser — periodic auto-targeting beam at the nearest asteroid
+  // (AH-0MW9QMNYP006ZO6T). The cadence is the whole sixteenth-note step of
+  // the shared 80 BPM lattice (187.5 ms), so a levelled laser fires faster in
+  // musically exact increments; damage is a whole-hit axis for catalogue
+  // consistency (every asteroid tier is 1 HP today).
+  mining_laser: [
+    {
+      variable: 'miningLaserInterval',
+      powerUpId: 'mining_laser',
+      label: 'Laser interval',
+      unit: 's',
+      description: 'Seconds between laser shots at the nearest asteroid.',
+      curve: 'linear-clamped',
+      // Descending interval expressed in whole sixteenth-note steps of the
+      // shared 80 BPM lattice (one beat = 4 steps = 750 ms, so a step is
+      // 187.5 ms): 4 steps (750 ms, one beat) on the first grant, one step
+      // sooner per level, floored at 1 step (187.5 ms). Fractional seconds are
+      // required to stay on the lattice, so this axis is NOT discrete. The
+      // derived shots/second inverse stays monotonic non-decreasing.
+      base: MINING_LASER_INTERVAL_STEPS_BASE * MINING_LASER_STEP_SECONDS,
+      cap: MINING_LASER_INTERVAL_STEPS_FLOOR * MINING_LASER_STEP_SECONDS,
+      k: -MINING_LASER_INTERVAL_STEPS_PER_LEVEL * MINING_LASER_STEP_SECONDS,
+      discrete: false,
+      rationale:
+        'A mining laser is a rapid-fire tool, so its cadence starts at one ' +
+        'beat (4 sixteenth-note steps = 750 ms) and sheds one step per level ' +
+        'to a 1-step floor (187.5 ms). Expressing it in steps of the shared ' +
+        '80 BPM lattice means every shot lands on the same pulse the rest of ' +
+        'the game\'s cues are quantised to (mirroring the Orbital Strike\'s ' +
+        'beat cadence), so rapid fire reads as part of the mix rather than a ' +
+        'free-running timer. The floor caps the rate before it becomes a ' +
+        'continuous beam; the interval descends monotonically and clamps at ' +
+        'the 1-step floor.', 
+    },
+    {
+      variable: 'miningLaserDamage',
+      powerUpId: 'mining_laser',
+      label: 'Laser damage',
+      unit: '',
+      description: 'Hit points each laser shot deals to an asteroid.',
+      curve: 'exponential-saturation',
+      base: 1,
+      cap: 2,
+      k: 0.5,
+      discrete: true,
+      rationale:
+        'Every asteroid tier is 1 HP today, so the damage axis is inert in ' +
+        'live play and exists for catalogue consistency with every other ' +
+        'levelled kind (and for future armoured rocks). One hit from the ' +
+        'first pickup kills a rock; k=0.5 grants the second hit at the second ' +
+        'upgrade, and the cap of 2 keeps the laser a mining tool rather than ' +
+        'an offence power-up.',
+    },
+  ],
 };
 
 /**
@@ -1113,6 +1189,7 @@ export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
   'thorns',
   'salvage',
   'strike',
+  'mining_laser',
 ];
 
 
@@ -1255,6 +1332,13 @@ export interface PowerUpLevelStats {
    * (mirrors the Smart Bomb frequency).
    */
   strikeFrequency?: number;
+  /**
+   * Mining Laser — seconds between shots (descending in whole sixteenth-note
+   * steps of the shared 80 BPM lattice: 0.75 s → 0.1875 s).
+   */
+  miningLaserInterval?: number;
+  /** Mining Laser — hit points each shot deals (whole hits, minimum 1). */
+  miningLaserDamage?: number;
 }
 
 // ── Resolver ────────────────────────────────────────────────────────
@@ -1371,7 +1455,8 @@ function isPositiveFinite(value: number | undefined): value is number {
  *   Behaviour is unchanged and a levelled kind keeps its level-scaled window.
  * - **Instant kinds** (no timed effect of their own) return the per-entry
  *   `temporaryWindow` TTL from {@link POWER_UP_CATALOGUE}: Bomb 10 s, Smart
- *   Bomb 10 s, Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra
+ *   Bomb 10 s, Orbital Strike 10 s, Mining Laser 10 s, Phase Shift 15 s,
+ *   Teleport 15 s, Extra
  *   Life 10 s, Mystery UFO 15 s, and — since the absorbed-hit pickup model
  *   retired their window axes — Shield 15 s, Thorn Field 8 s and Force Field
  *   8 s (AH-0MVVD8SXO004QLZW).
@@ -1691,6 +1776,40 @@ export function resolveConsumableRechargeTime(
 }
 
 /**
+ * Whether **every discrete** curve variable of `id` has reached its catalogue
+ * `cap` at `upgradeLevel` — the manual-assign disable rule for the power-up
+ * levelling gym (AH-0MW82M3LB007OQG6 AC5, producer answer Q9 = C).
+ *
+ * Only whole-number (`discrete`) variables are considered. A **continuous**
+ * variable only asymptotes to its cap and never arrives (levels are unbounded
+ * above), so it can never be used to call a row finished. A power-up with
+ * **no** discrete variable therefore has nothing to check and reports `false`
+ * (never at cap); the producer explicitly chose this consequence, so the
+ * always-enabled row is intended, not a bug.
+ *
+ * A **descending** axis (e.g. `smartBombInterval` 30 s → 10 s) stores its floor
+ * in `cap`, so "at cap" is the clamp bound in the curve's direction of travel.
+ *
+ * Pure and store-free so the gym's disable rule and any future consumer read
+ * the same catalogue data the resolver uses — no second copy of the curve.
+ *
+ * @param id - The power-up kind.
+ * @param upgradeLevel - The resolver level (`getUpgradeLevel`, i.e. effective
+ *   level − 1).
+ */
+export function isPowerUpAtDiscreteCap(
+  id: PowerUpId,
+  upgradeLevel: number,
+): boolean {
+  const discrete = POWER_UP_LEVEL_SPECS[id].filter((spec) => spec.discrete);
+  if (discrete.length === 0) return false;
+  return discrete.every((spec) => {
+    const value = curveValue(spec, upgradeLevel);
+    return spec.cap >= spec.base ? value >= spec.cap : value <= spec.cap;
+  });
+}
+
+/**
  * The run-scoped power-up level model (AC2/AC3).
  *
  * Responsibilities:
@@ -1988,6 +2107,36 @@ export class PowerUpLevelStore {
       return;
     }
     this._permanentGrants.set(id, next);
+  }
+
+  /**
+   * Removes **every** trace of `id` from the run-scoped model — permanent
+   * grants, temporary stacks, pooled charges, in-flight recharge timers, the
+   * kind's ownership flag and a single-use readiness timer.
+   *
+   * This is a **setup/gym-layer** operation, not a gameplay reward: it exists
+   * so the power-up levelling gym can free one six-slot slot for a manually
+   * assigned kind (AH-0MW82M3LB007OQG6 AC3/AC11). The shipped `PlayScene`
+   * never calls it. Removing the **whole kind** is what lets
+   * {@link PowerUpSlotState} report the slot as genuinely free — a bare
+   * {@link setPermanentLevel}`(id, 0)` would leave `_owned` and any charges
+   * behind, so the kind would still occupy its slot.
+   *
+   * Idempotent, and validates the id like the rest of the store. Lives already
+   * granted by Extra Life are a separate resource and are deliberately left
+   * untouched: removing a kind discards its level/charge state, never the
+   * lives it already paid out.
+   *
+   * @param id - The power-up kind to clear.
+   */
+  remove(id: PowerUpId): void {
+    getPowerUpById(id); // validate id (throws for unknown power-ups)
+    this._permanentGrants.delete(id);
+    this._tempStacks.delete(id);
+    this._charges.delete(id);
+    this._rechargeTimers.delete(id);
+    this._owned.delete(id);
+    this._setSingleUseRecharge(id, 0);
   }
 
   /** Resolved stats for `id` at its current upgrade level. */

@@ -113,6 +113,10 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     { id: 'thorns', value: 1.1 },
     { id: 'salvage', value: 0.8 },
     { id: 'strike', value: 1.15 },
+    // The Mining Laser (AH-0MW9QMNYP006ZO6T) is a passive mineral-farming
+    // tool: worth routing for, but it never damages threats, so it ranks just
+    // below the offence power-ups.
+    { id: 'mining_laser', value: 1.05 },
     // Weapon drops (P1/P2) are all similarly useful; `reset` merely removes a
     // weapon, so it is the least desirable.
     { id: 'spread', value: 1 },

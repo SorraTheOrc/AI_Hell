@@ -37,6 +37,7 @@ import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { loadEnemyConfig } from '../../core/enemyConfig';
+import { COMBAT_POWER_UP_IDS, getPowerUpById } from '../../powerups/types';
 
 /**
  * One Phaser game shell per file, rebooted into a fresh scene instance per
@@ -922,6 +923,9 @@ describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'chrono',
       'thorns',
       'strike',
+      // Mining Laser (AH-0MW9QMSI7005UU9P): the asteroid-free combat gym is
+      // where its silence rule is observable.
+      'mining_laser',
     ]);
   });
 
@@ -1382,5 +1386,78 @@ describe('GymPowerUpsCombat — D4 parity: shared factory + spawn presentation',
     // In place: the threat did not transit away from its formation position.
     expect(scouts[0].x).toBeGreaterThan(0);
     expect(scouts[0].y).toBeGreaterThan(0);
+  });
+});
+
+
+// ── Mining Laser on the enemy-only field (AH-0MW9QMSI7005UU9P) ─────────
+//
+// The combat gym fields **scouts only**. Adding the Mining Laser to its
+// round-robin proves the rule in play: the kind is owned and firing is due, yet
+// no shot is ever emitted and no scout is ever damaged — the shared
+// `selectMiningLaserTarget` finds no asteroid and the shared step returns
+// before calling the fire hook. All of it is the shipped code; the gym adds
+// only the kind to its cycle.
+
+describe('GymPowerUpsCombat — Mining Laser (AH-0MW9QMSI7005UU9P)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted = null;
+  });
+
+  it('AC2 — cycles the Mining Laser in the round-robin order', () => {
+    // The gym aliases `COMBAT_ORDER` to this exported cycle, so the kind is in
+    // the drop pool (and therefore in its help listing) by construction.
+    expect(COMBAT_POWER_UP_IDS).toContain('mining_laser');
+  });
+
+  it('AC2 — the help overlay lists the Mining Laser from catalogue data', async () => {
+    booted = await reuse.boot([GymPowerUpsCombat, HelpScene]);
+    const scene = booted.scene as GymPowerUpsCombat;
+    scene.getHelpHandle()!.openHelp();
+    await advanceGame(booted.game, 150);
+
+    const help = booted.game.scene.getScene('HelpScene') as HelpScene;
+    const entry = help.getEntries().find((e) => e.id === 'mining_laser');
+    expect(entry).toBeDefined();
+    // Name/description come from the shared catalogue, never a gym copy.
+    expect(entry!.name).toBe(getPowerUpById('mining_laser').name);
+    expect(entry!.description).toBe(getPowerUpById('mining_laser').description);
+  });
+
+  it('AC2/AC3 — holds the laser silently: no shots and no scout damage', async () => {
+    booted = await reuse.boot([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+    // Fully-formed, hittable threats (the shared spawn-protection seam).
+    scene.finishSpawnAnimations();
+
+    const cue = vi.spyOn(effectsModule, 'playMiningLaserFireSound');
+    const scoutsBefore = scene
+      .getScouts()
+      .filter((scout) => scout.alive)
+      .map((scout) => scout.health);
+
+    // Own the Mining Laser through the shared drop → collect path.
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    scene.spawnDrop('mining_laser', 480, 270);
+    scene.advanceDrops(0.5); // grow past the shared 3 % collection gate
+    scene.tick(1 / 60); // hull overlap → shared collect path
+    expect(scene.getEffectsRegistry().isMiningLaserActive()).toBe(true);
+
+    // Several shared cadence intervals elapse on the asteroid-free field.
+    for (let i = 0; i < 60 * 4; i += 1) scene.tick(1 / 60);
+
+    // No beam/cue was ever emitted…
+    expect(cue).not.toHaveBeenCalled();
+    // …and no scout lost a single hit point.
+    expect(
+      scene
+        .getScouts()
+        .filter((scout) => scout.alive)
+        .map((scout) => scout.health),
+    ).toEqual(scoutsBefore);
   });
 });

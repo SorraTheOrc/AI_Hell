@@ -989,8 +989,8 @@ the first three enemy gym scenes duplicated:
   (see §7.2).
 
   **Hold-full rewards in the mineral gym (**AH-0MUHMXWGC0058BO4**).**
-  `GymMinerals` has no field power-up drops, so its rewards come from the
-  hold-full choice overlay. Because the choice can grant Teleport, the shared
+  `GymMinerals` drops only the Mining Laser (AH-0MW9QMSI7005UU9P), so its
+  Shield/Phase Shift/Teleport rewards come from the hold-full choice overlay. Because the choice can grant Teleport, the shared
   automatic-defence feed (`_updateAutoDefence()`) runs every tick —
   independent of `powerUpsEnabled` — so the ready Teleport warp is spent
   automatically when the ship is in danger; `canTeleport()` accepts a ready warp in addition to the opt-in drop layer. The effects registry ticks (and the
@@ -3170,6 +3170,20 @@ colour so the shared impact pass tints the flash when a shot connects or is
 intercepted. The remaining boss pattern (desperation) gets its own identity
 under its own child item. Visuals/feel only: firing logic, wave speed, aim
 count, fan spread and the telegraph cadence are unchanged.
+
+**Pulse wave lifecycle and crisp ring (AH-0MW80W5ER005E884):** the screen-wide
+expanding wave is drawn by the shared `Boss` entity as a single
+native-resolution `Graphics` stroked circle at a **constant 3 px line width**,
+redrawn each frame at the current radius and **never scaled** — so it stays
+thin and crisp from the core to off-screen instead of magnifying a small baked
+ring into a blurry, stair-stepped band. It fades smoothly to zero at its range
+limit. Exactly **one live wave exists per boss**: a new volley destroys any
+wave still in flight, the wave is destroyed the instant it passes its range
+limit, and `Boss.destroy()` removes a live wave — so no orphaned ring is ever
+left frozen on the display list. The render path is shared by the game
+(`PlayScene`) and every gym that runs the shared boss tick, so parity holds by
+construction. Visuals/lifecycle only: wave speed, collision damage, fire
+cadence and the aimed shots are unchanged.
 
 **Boss desperation (boss-desperation pattern, AH-0MV822FTS00156F5):** every
 bullet of the combined desperation volley (spread + spiral + aimed) renders

@@ -380,6 +380,30 @@ describe('Weapon fire output in the fidelity boundary is documented (AH-0MW5DVEP
   });
 });
 
+describe('Arena fire-model drift is documented (AH-0MWAPWS1W007LGGY)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('records the bisected drift commit and the kill-driven levelling mechanism', () => {
+    // The drift is the arena's own fire-model fidelity change (bisected to
+    // 6ecbab23, AH-0MW5DVAME0062GQO), so the boundary must name both the
+    // finding's work item and the commit it was bisected to.
+    expect(doc).toContain('AH-0MWAPWS1W007LGGY');
+    expect(doc).toContain('AH-0MW5DVAME0062GQO');
+    expect(doc).toMatch(/kill-driven/i);
+    // The measured consequence for the ring-timing evidence.
+    expect(doc).toMatch(/level 3/i);
+    expect(doc).toMatch(/deliberate\s+deviation/i);
+  });
+
+  it('states that modelling more fire detail deepens the effect rather than removing it', () => {
+    // Records why the "model the Wave Laser's hitscan ray" fix option was
+    // rejected: it raises the arena's DPS, so the slice climbs further inside
+    // the window.
+    expect(doc).toMatch(/hitscan ray/i);
+    expect(doc).toMatch(/raise\s+the arena's\s+DPS/i);
+  });
+});
+
 describe('Weapon-trim measured before/after gate is documented (AH-0MVWAVM03002FLLL)', () => {
   const doc = fs.readFileSync(DOC_PATH, 'utf8');
   const start = doc.indexOf(

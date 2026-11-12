@@ -7,14 +7,18 @@
  * — so gym asteroids silently dropped nothing. Both the game and the gyms now
  * consume this single implementation, so they can no longer drift apart.
  *
- * Rule (GDD §4.4.1 / §4.5):
- * - small asteroid → exactly one mineral at the death site;
- * - large/medium asteroid → none (their small split children drop);
- * - non-asteroid enemy → its collected minerals plus a random additive bonus
- *   in [`mineralRedropBonusMin`, `mineralRedropBonusMax`] (defaults
- *   0.25–1.25), rounded to the nearest integer and scattered at the death
- *   site (there is no upper cap; an enemy that collected nothing still
- *   draws the bonus and may occasionally drop a single mineral);
+ * Rule (GDD §4.4.1 / §4.5, parent AH-0MWB9LCED004K67Y):
+ * - small asteroid → two gold minerals, a deterministic symmetric pair about
+ *   the death site (`MINERAL_DROP_MULTIPLIER` × 1); no RNG draws, so seeded
+ *   streams are unchanged;
+ * - large/medium asteroid → none (their split children drop);
+ * - non-asteroid enemy → twice `round(collected + random additive bonus)`,
+ *   where the bonus is in [`mineralRedropBonusMin`, `mineralRedropBonusMax`]
+ *   (defaults 0.25–1.25). The doubled count is laid out by
+ *   {@link scatterDoubledMineralDrops}, which mirrors each random drop across
+ *   the wreck so the extra mineral consumes **no** additional RNG draws (an
+ *   enemy that collected nothing still draws the bonus roll and may drop 0 or
+ *   2 minerals, never 1);
  * - anything else → none.
  *
  * **Red deposits (AH-0MVJ79739008396I).** When the resolved re-drop count
@@ -42,9 +46,11 @@ import {
   MINERAL_DEPOSIT_COLOR,
   MINERAL_DEPOSIT_THRESHOLD,
   MINERAL_DEPOSIT_VALUE,
+  MINERAL_DROP_MULTIPLIER,
   MINERAL_SALVAGE_COLOR,
+  MINERAL_SIZE,
 } from '../../core/constants';
-import { Mineral, scatterMineralDrops } from '../../entities/Mineral';
+import { Mineral, scatterDoubledMineralDrops, scatterMineralDrops } from '../../entities/Mineral';
 
 export { scatterMineralDrops };
 
@@ -79,12 +85,24 @@ export function resolveMineralKillDrops(
   entity: MineralKillDropEntity,
   rng: () => number = Math.random,
 ): Mineral[] {
-  // Asteroids: only the small tier leaves a mineral — large/medium rocks
-  // split into smaller children, and those children drop when destroyed.
+  // Asteroids: only the small tier leaves minerals — large/medium rocks
+  // split into smaller children, and those children drop when destroyed. The
+  // doubled small-rock yield is placed **deterministically** as a symmetric
+  // pair about the death site (no RNG draws), preserving the kill-path RNG
+  // stream for seeded captures/tests.
   if (typeof entity.getSizeTier === 'function') {
-    return entity.getSizeTier() === 'small'
-      ? [new Mineral(scene, { x: entity.x, y: entity.y })]
-      : [];
+    if (entity.getSizeTier() !== 'small') return [];
+    const half = MINERAL_DROP_MULTIPLIER / 2;
+    return [
+      new Mineral(scene, {
+        x: entity.x - MINERAL_SIZE * half,
+        y: entity.y,
+      }),
+      new Mineral(scene, {
+        x: entity.x + MINERAL_SIZE * half,
+        y: entity.y,
+      }),
+    ].slice(0, MINERAL_DROP_MULTIPLIER);
   }
 
   // Non-asteroid enemy: re-drop its collected minerals plus a random
@@ -109,7 +127,7 @@ export function resolveMineralKillDrops(
  * (AH-0MVJ79739008396I). Resolves everything a destroyed `entity` leaves
  * behind:
  *
- * - a small asteroid → one gold mineral (large/medium → nothing);
+ * - a small asteroid → two gold minerals (large/medium → nothing);
  * - a non-asteroid enemy whose resolved re-drop count **plus** the Salvage
  *   bonus reaches {@link MINERAL_DEPOSIT_THRESHOLD} → exactly one red
  *   {@link MINERAL_DEPOSIT_COLOR} deposit worth
@@ -213,7 +231,7 @@ function spawnKillPayout(
     return [createMineralDeposit(scene, x, y)];
   }
 
-  const drops = scatterMineralDrops(scene, x, y, redropCount, rng);
+  const drops = scatterDoubledMineralDrops(scene, x, y, redropCount, rng);
   if (salvageBonus > 0) {
     drops.push(...scatterSalvageMineralDrops(scene, x, y, salvageBonus, rng));
   }

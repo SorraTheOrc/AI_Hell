@@ -32,6 +32,7 @@ import Phaser from 'phaser';
 import {
   MINERAL_COLOR,
   MINERAL_DEPTH,
+  MINERAL_DROP_MULTIPLIER,
   MINERAL_REDROP_SCATTER_RADIUS,
   MINERAL_SIZE,
 } from '../core/constants';
@@ -214,4 +215,52 @@ export function scatterMineralDrops(
     );
   }
   return drops;
+}
+
+/**
+ * Spawns `totalCount` mineral collectables using the shared scatter maths while
+ * consuming the **same number of RNG draws** as an un-doubled scatter of
+ * `totalCount / MINERAL_DROP_MULTIPLIER` drops (parent AH-0MWB9LCED004K67Y).
+ *
+ * The doubling is achieved by mirroring every randomly-placed drop across the
+ * wreck centre: a twin at `(2x − drop.x, 2y − drop.y)` is within
+ * {@link MINERAL_REDROP_SCATTER_RADIUS} whenever the original is, so the
+ * doubled yield stays inside the same scatter area and reads as two dots.
+ *
+ * Consuming no *extra* draws is deliberate: seeded promo captures and
+ * deterministic tests depend on the kill-path RNG stream, so doubling the
+ * count must not shift it. (The hold-full reward delay still draws from the
+ * same stream, so the economy change itself is the only intended difference.)
+ *
+ * @param scene — scene that owns the new mineral display objects
+ * @param x — scatter-centre x position
+ * @param y — scatter-centre y position
+ * @param totalCount — total minerals to spawn (doubled yield; returns none
+ *   when ≤ 0)
+ * @param rng — random-number generator (defaults to `Math.random`)
+ * @param color — body fill colour (defaults to gold, {@link MINERAL_COLOR})
+ */
+export function scatterDoubledMineralDrops(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  totalCount: number,
+  rng: () => number = Math.random,
+  color: number = MINERAL_COLOR,
+): Mineral[] {
+  if (totalCount <= 0) return [];
+
+  const baseCount = Math.ceil(totalCount / MINERAL_DROP_MULTIPLIER);
+  const drops = scatterMineralDrops(scene, x, y, baseCount, rng, color);
+  // Mirror each drop across the wreck so the doubled count is visible without
+  // consuming any additional RNG draws (seeded determinism).
+  const twins = drops.map(
+    (drop) =>
+      new Mineral(scene, {
+        x: 2 * x - drop.x,
+        y: 2 * y - drop.y,
+        color,
+      }),
+  );
+  return [...drops, ...twins].slice(0, totalCount);
 }

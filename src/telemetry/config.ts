@@ -41,6 +41,13 @@ export interface TelemetryEnv {
   readonly VITE_TELEMETRY_BUFFER_CAPACITY?: string;
   /** Records per flushed batch (default {@link DEFAULT_TELEMETRY_BATCH_SIZE}). */
   readonly VITE_TELEMETRY_BATCH_SIZE?: string;
+  /**
+   * Retention cap for the dev JSONL sink's in-memory buffer, in UTF-8 bytes
+   * (default {@link DEFAULT_MAX_RETAINED_MESSAGE_BYTES}). The dev sink drops
+   * the oldest confirmed/skipped records first once the retained body exceeds
+   * it, so a session's backlog stays bounded (AH-0MWDGPZL8005QU13).
+   */
+  readonly VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES?: string;
   /** Build metadata for the run header. */
   readonly VITE_APP_VERSION?: string;
   readonly VITE_GIT_COMMIT?: string;
@@ -65,6 +72,12 @@ export interface TelemetryConfig {
   /** Records per flushed batch. */
   readonly batchSize: number;
   /**
+   * Retention cap on the dev JSONL sink's in-memory buffer, in UTF-8 bytes:
+   * below it a run is retained byte-identically; above it the oldest
+   * confirmed/skipped records are dropped first (AH-0MWDGPZL8005QU13).
+   */
+  readonly maxRetainedMessageBytes: number;
+  /**
    * Whether dev-mode collection is enabled (caller applies the dev gate before
    * passing the flag; this module does not re-derive it).
    */
@@ -83,6 +96,16 @@ export const DEFAULT_TELEMETRY_BUFFER_CAPACITY = 512;
 
 /** Default records per batch flush. */
 export const DEFAULT_TELEMETRY_BATCH_SIZE = 64;
+
+/**
+ * Default retention cap on the dev JSONL sink's in-memory buffer (16 MiB).
+ *
+ * Orders of magnitude above a normal demo run (measured 0.67–4 MiB), so a
+ * normal run is retained byte-identically; past it the buffer drops the
+ * oldest confirmed/skipped records first so a multi-hour session stays
+ * bounded (AH-0MWDGPZL8005QU13).
+ */
+export const DEFAULT_MAX_RETAINED_MESSAGE_BYTES = 16 * 1024 * 1024;
 
 /** Default sampling rate: record every tick. */
 export const DEFAULT_TELEMETRY_SAMPLE_RATE = 1;
@@ -124,6 +147,10 @@ export function resolveTelemetryConfig(
     parsePositiveInt(env.VITE_TELEMETRY_BATCH_SIZE, DEFAULT_TELEMETRY_BATCH_SIZE),
     bufferCapacity,
   );
+  const maxRetainedMessageBytes = parsePositiveInt(
+    env.VITE_TELEMETRY_MAX_RETAINED_MESSAGE_BYTES,
+    DEFAULT_MAX_RETAINED_MESSAGE_BYTES,
+  );
 
   const isProduction = env.PROD === true;
   const devCollection = options.devCollectionEnabled === true;
@@ -144,6 +171,7 @@ export function resolveTelemetryConfig(
     sampleRate,
     bufferCapacity,
     batchSize,
+    maxRetainedMessageBytes,
     recording,
   };
 }

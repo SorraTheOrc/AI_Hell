@@ -36,11 +36,19 @@ import { pickAttractHex } from '../core/hangarWar/hexIntel';
 import type { HangarWarPayload } from '../core/hangarWar/types';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import { HANGAR_WAR_TRAVERSAL_DWELL_MS } from '../ai/hangarWarTraversal';
+import {
+  injectMiniBossCampaign,
+  winLiveDeployment,
+} from '../test/hangarWarWinHarness';
 import { MenuScene } from './MenuScene';
 import { HexMapScene } from './HexMapScene';
 import { HangarScene } from './HangarScene';
 import { PlayScene } from './PlayScene';
 import { DefenceReportScene } from './DefenceReportScene';
+import {
+  MINI_BOSS_WHEEL_SCENE_KEY,
+  MiniBossWheelScene,
+} from './MiniBossWheelScene';
 import { GameOverScene } from './GameOverScene';
 import { LeaderboardScene } from './LeaderboardScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
@@ -113,6 +121,7 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
       GameOverScene,
       LeaderboardScene,
       MineralChoiceScene,
+      MiniBossWheelScene,
     ]);
     return booted.scene as MenuScene;
   }
@@ -212,6 +221,45 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
       sceneOf<DefenceReportScene>('DefenceReportScene').getPayload().frontierTick,
     ).toBe(2);
   });
+
+  it(
+    'presents and auto-resolves the mini-boss reward on a winning demo deployment',
+    async () => {
+      const menu = await bootMenu();
+      menu.startHangarWarDemo(DWELL_MS);
+      until('the map is shown', () => active('HexMapScene'));
+
+      // Shorten the demo deployment: the compact mini-boss campaign is injected
+      // before the run starts (the injected campaign survives `create()`).
+      injectMiniBossCampaign(sceneOf<PlayScene>('PlayScene'));
+      until('the deployment starts', () => active('PlayScene'));
+
+      // Win through the shipped mini-boss path (real defeat, real sweep).
+      winLiveDeployment(sceneOf<PlayScene>('PlayScene'));
+      stepGameUntil(
+        booted!.game,
+        'the defence report is shown',
+        () => active('DefenceReportScene'),
+        600,
+      );
+
+      // The traversal must never stall on the reward: the demo auto-spins it and
+      // the map still arrives — but the reward **is** presented, so a winning
+      // demo deployment shows the same report → reward → map order a player
+      // sees.
+      let rewardSeen = false;
+      stepGameUntil(
+        booted!.game,
+        'the map returns',
+        () => {
+          if (active(MINI_BOSS_WHEEL_SCENE_KEY)) rewardSeen = true;
+          return active('HexMapScene');
+        },
+        900,
+      );
+      expect(rewardSeen).toBe(true);
+    },
+  );
 
   it('never simulates a defence battle anywhere in the traversal', async () => {
     const menu = await bootMenu();

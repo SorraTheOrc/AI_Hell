@@ -364,7 +364,7 @@ describe('PlayScene mineral wiring', () => {
     expect(enemy.mineralCount).toBeGreaterThanOrEqual(1);
   });
 
-  it('a destroyed small asteroid drops a mineral; a large one does not', async () => {
+  it('a destroyed small asteroid drops two minerals; a large one does not', async () => {
     const scene = await bootPlay();
 
     const large = scene.spawnAsteroidAt(120, 120, 'large');
@@ -375,7 +375,8 @@ describe('PlayScene mineral wiring', () => {
     const small = scene.spawnAsteroidAt(700, 120, 'small');
     scene.spawnPlayerBullet(small.x, small.y, 0, 0);
     scene.tick(0.016);
-    expect(scene.getMinerals()).toHaveLength(1);
+    // Doubled by `MINERAL_DROP_MULTIPLIER` (parent AH-0MWB9LCED004K67Y).
+    expect(scene.getMinerals()).toHaveLength(2);
   });
 
   // ── Between-waves mineral collection (AH-0MUX96GJF006CAZP) ──────
