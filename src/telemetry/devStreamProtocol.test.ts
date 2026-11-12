@@ -454,17 +454,14 @@ describe('parsePartRequest — marker discrimination (AC4)', () => {
  * Bounded-window seam (AH-0MWDGPYDW006MTTM — the red half of the test-first
  * gate for the F2 implementation child AH-0MWDGQ0PB000YZ9N).
  *
- * **TEST-FIRST.** These assertions pin the F2 window-splitting seam — the
- * pending-range reader splits an unconfirmed backlog into bounded windows (a
- * byte budget plus a record ceiling) so `linesToNdjson`'s `Array.join` is
- * never handed an oversized window — and are written under Vitest's
+ * **TEST-FIRST → GREEN.** These assertions pin the F2 window-splitting seam —
+ * the pending-range reader splits an unconfirmed backlog into bounded windows
+ * (a byte budget plus a record ceiling) so `linesToNdjson`'s `Array.join` is
+ * never handed an oversized window. They were authored red under Vitest's
  * `it.fails(...)` (the repo's red-before/green-after convention, cf.
- * `src/powerups/powerUpIdNaming.test.ts`) so the build → test → commit gate
- * stays green while the seam is still missing. The implementation slice
- * (AH-0MWDGQ0PB000YZ9N) flips each `.fails` back to `it` once bounded-window
- * splitting lands; a leftover `.fails` fails the suite (an "unexpected
- * pass"), so the flip is deliberate and the assertions themselves are not
- * changed by it.
+ * `src/powerups/powerUpIdNaming.test.ts`); the implementation slice
+ * (AH-0MWDGQ0PB000YZ9N) flipped each `.fails` back to `it` once bounded-window
+ * splitting landed, and the assertions themselves are unchanged by it.
  *
  * Contract pinned (implemented by F2, consumed unchanged here):
  * - `nextPartRange(confirmedRecordCount, bufferedLines, limits?)` returns the
@@ -509,7 +506,7 @@ describe('nextPartRange — bounded windows for a large backlog (AH-0MWDGPYDW006
     return lines;
   }
 
-  it.fails(
+  it(
     'splits an over-budget backlog into bounded windows that tile it exactly',
     () => {
       // ≈ 2.1 MiB of pending NDJSON: without the seam one window would
@@ -538,7 +535,7 @@ describe('nextPartRange — bounded windows for a large backlog (AH-0MWDGPYDW006
     },
   );
 
-  it.fails(
+  it(
     'keeps a multi-hundred-MiB backlog joinable per window, far under V8’s string limit',
     () => {
       // ≈ 302 MiB of pending NDJSON, deliberately never materialised as one
@@ -570,9 +567,13 @@ describe('nextPartRange — bounded windows for a large backlog (AH-0MWDGPYDW006
         lines.reduce((sum, line) => sum + line.length, 0) + lines.length,
       );
     },
+    // Heavy by design: it materialises a ~302 MiB backlog as 384k lines and
+    // tiles it into ~150 bounded windows, so the default 5 s test timeout is
+    // too tight for a legitimately long contract test.
+    15_000,
   );
 
-  it.fails('cuts a window at the record ceiling even when the bytes are slack', () => {
+  it('cuts a window at the record ceiling even when the bytes are slack', () => {
     // 200 KB total — far under the byte budget; only the ceiling binds.
     const lines = backlog(10_000, 20);
     const window = boundedNextPartRange(0, lines, {
@@ -584,7 +585,7 @@ describe('nextPartRange — bounded windows for a large backlog (AH-0MWDGPYDW006
     expect(window.confirmedCount).toBe(window.lines.length);
   });
 
-  it.fails('splits byte-heavy lines on the byte budget before the record ceiling', () => {
+  it('splits byte-heavy lines on the byte budget before the record ceiling', () => {
     // 5 × 600 KiB ≈ 3 MiB — the ~2 MiB byte budget binds first.
     const lines = backlog(5, 600 * 1024);
     const window = boundedNextPartRange(0, lines, {

@@ -774,20 +774,19 @@ describe('dev stream — dev-only containment (AC5)', () => {
  * half of the test-first gate for the F2 implementation child
  * AH-0MWDGQ0PB000YZ9N).
  *
- * **TEST-FIRST.** These assertions pin two F2 seams — an injectable `defer`
- * scheduler that moves part build+send off the caller's rAF/update task, and
- * routing part-build failures (including the oversized-window guard) through
- * the existing backoff window so a failed part is reported once per window,
- * never once per frame-loop trigger — written under Vitest's `it.fails(...)`
- * (the repo's red-before/green-after convention). The implementation slice
- * (AH-0MWDGQ0PB000YZ9N) flips each `.fails` back to `it`; a leftover
- * `.fails` fails the suite ("unexpected pass"), so the flip is deliberate and
- * the assertions themselves are not changed by it.
+ * **TEST-FIRST → GREEN.** These assertions pin two F2 seams — an injectable
+ * `defer` scheduler that moves part build+send off the caller's rAF/update
+ * task, and routing part-build failures (including the oversized-window
+ * guard) through the existing backoff window so a failed part is reported
+ * once per window, never once per frame-loop trigger. They were authored red
+ * under Vitest's `it.fails(...)` (the repo's red-before/green-after
+ * convention); the implementation slice (AH-0MWDGQ0PB000YZ9N) flipped each
+ * `.fails` back to `it`, and the assertions themselves are unchanged by it.
  */
 describe('dev stream — off-frame deferral and report-once (AH-0MWDGPYDW006MTTM)', () => {
   /**
    * A streamer whose part work is scheduled via the injected `defer` seam
-   * (the F2 option, currently still absent from the options type).
+   * (the F2 option).
    */
   function deferredStreamer(
     buffer: FakeBuffer,
@@ -809,7 +808,7 @@ describe('dev stream — off-frame deferral and report-once (AH-0MWDGPYDW006MTTM
     } as Parameters<typeof createDevTelemetryStreamer>[0]);
   }
 
-  it.fails(
+  it(
     'schedules part build and send through the injectable defer seam, never synchronously in push()',
     async () => {
       const buffer = new FakeBuffer();
@@ -836,7 +835,7 @@ describe('dev stream — off-frame deferral and report-once (AH-0MWDGPYDW006MTTM
     },
   );
 
-  it.fails('lets push() return before a microtask-style deferral runs the part work', async () => {
+  it('lets push() return before a microtask-style deferral runs the part work', async () => {
     const buffer = new FakeBuffer();
     const server = createServer();
     const order: string[] = [];
@@ -857,7 +856,7 @@ describe('dev stream — off-frame deferral and report-once (AH-0MWDGPYDW006MTTM
     expect(server.calls).toHaveLength(1);
   });
 
-  it.fails(
+  it(
     'reports a part-build failure once per backoff window, not once per frame-loop trigger',
     async () => {
       const buffer = new FakeBuffer();
@@ -889,7 +888,7 @@ describe('dev stream — off-frame deferral and report-once (AH-0MWDGPYDW006MTTM
     },
   );
 
-  it.fails(
+  it(
     'drains a backlog larger than the message cap in bounded parts instead of skipping it',
     async () => {
       const buffer = new FakeBuffer();

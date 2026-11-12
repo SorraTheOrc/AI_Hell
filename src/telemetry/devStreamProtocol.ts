@@ -132,6 +132,21 @@ export interface PartRange {
   readonly empty: boolean;
 }
 
+/**
+ * Window limits for {@link nextPartRange}: the largest prefix of the pending
+ * records whose `linesToNdjson` body stays within a byte budget and a record
+ * ceiling (AH-0MWDGQ0PB000YZ9N).
+ *
+ * The byte budget is measured on the same unit as the CDP upload cap (UTF-8
+ * bytes) so a window is always well under the message cap the part must fit.
+ */
+export interface PartWindowLimits {
+  /** Ceiling on the window's NDJSON body, in UTF-8 bytes. */
+  readonly maxBytes: number;
+  /** Ceiling on the window's record count. */
+  readonly maxRecords: number;
+}
+
 /** Result of the server-side append rule. */
 export type ApplyPartResult =
   | {
@@ -217,28 +232,100 @@ function normaliseLines(lines: readonly string[]): string[] {
 }
 
 /**
- * The part a client should send next: the records beyond its confirmed count.
+ * True when `line` is blank (empty or whitespace-only).
+ *
+ * Deliberately cheap: it bails on the first non-whitespace character, which
+ * is the first character of every real record line (JSON object lines start
+ * with `{`), so the windowed path skips separators without paying a full
+ * `trim()` on every buffered line.
+ */
+function isBlankLine(line: string): boolean {
+  for (let index = 0; index < line.length; index += 1) {
+    const code = line.charCodeAt(index);
+    if (
+      code !== 0x09 && // \t
+      code !== 0x0a && // \n
+      code !== 0x0b && // \v
+      code !== 0x0c && // \f
+      code !== 0x0d && // \r
+      code !== 0x20 && // space
+      code !== 0x85 && // NEL
+      code !== 0xa0 // NBSP
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The part a client should send next: the records beyond its confirmed count,
+ * optionally bounded to one window (AH-0MWDGQ0PB000YZ9N).
  *
  * Never includes a record the server already confirmed and never skips a
  * buffered record, so consecutive parts tile the buffer exactly. The caller
  * owns the `final` flag; an empty range at the end of a run is exactly what a
  * finalisation-only part needs.
  *
+ * With `limits` the returned range is the **largest prefix** of the pending
+ * records whose `linesToNdjson` body is `≤ limits.maxBytes` **and** whose
+ * length is `≤ limits.maxRecords`; the `offset`/`confirmedCount`/`empty`
+ * fields keep today's semantics. Without `limits` the whole pending range is
+ * returned unchanged. A window is therefore bounded by construction: a
+ * multi-hundred-MiB backlog can never be handed to `linesToNdjson`'s
+ * `Array.join` in one piece (and a single oversized line is still returned,
+ * so a window is never empty while records remain pending).
+ *
  * @param confirmedRecordCount - Records already confirmed by the server.
  * @param bufferedLines - The run's buffered record lines (the sink buffer,
  *   split with {@link splitNdjsonLines} or read line by line).
+ * @param limits - Optional byte budget + record ceiling for one window.
  */
 export function nextPartRange(
   confirmedRecordCount: number,
   bufferedLines: readonly string[],
+  limits?: PartWindowLimits,
 ): PartRange {
-  const records = normaliseLines(bufferedLines);
   // An unusable watermark restarts from the beginning: re-sending is safe
   // because the server dedupes the already-stored prefix.
   const offset = Number.isFinite(confirmedRecordCount)
     ? Math.max(0, Math.trunc(confirmedRecordCount))
     : 0;
-  const lines = offset >= records.length ? [] : records.slice(offset);
+  if (!limits) {
+    const records = normaliseLines(bufferedLines);
+    const lines = offset >= records.length ? [] : records.slice(offset);
+    return {
+      offset,
+      lines,
+      confirmedCount: offset + lines.length,
+      empty: lines.length === 0,
+    };
+  }
+  // Windowed path: walk the raw lines once, skipping blank separators with a
+  // cheap check and trimming only the (few) lines that land in the window.
+  // Re-trimming the whole buffer per call would make a multi-hundred-MiB
+  // backlog un-windowable in practice (AH-0MWDGQ0PB000YZ9N).
+  const lines: string[] = [];
+  let bodyBytes = 0;
+  let recordIndex = 0;
+  for (const raw of bufferedLines) {
+    if (isBlankLine(raw)) continue;
+    if (recordIndex < offset) {
+      recordIndex += 1;
+      continue;
+    }
+    if (lines.length >= limits.maxRecords) break;
+    const line = raw.trim();
+    // One line contributes its own bytes plus the separator/trailing newline
+    // `linesToNdjson` emits — the exact body length of the joined window.
+    const added = utf8ByteLength(line) + 1;
+    // Whole records only, but at least one record is always returned: a
+    // window is cut before a record that would push it over the byte budget.
+    if (lines.length > 0 && bodyBytes + added > limits.maxBytes) break;
+    lines.push(line);
+    bodyBytes += added;
+    recordIndex += 1;
+  }
   return {
     offset,
     lines,
@@ -434,4 +521,12 @@ function parseRecordCount(raw: string | undefined): number | undefined {
   if (!/^\d+$/.test(value)) return undefined;
   const count = Number(value);
   return Number.isSafeInteger(count) ? count : undefined;
+}
+
+/** Shared `TextEncoder` for the window byte budget (avoids one per line). */
+const textEncoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
+
+/** Size of a string in UTF-8 bytes (the unit the window byte budget uses). */
+function utf8ByteLength(text: string): number {
+  return textEncoder ? textEncoder.encode(text).length : text.length;
 }

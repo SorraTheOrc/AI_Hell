@@ -6561,8 +6561,15 @@ export class PlayScene extends CombatScene<
       this.devTelemetryStreamer = create({
         runSeed: identity.runSeed,
         startedAt: identity.startedAt,
-        // The buffer is canonical and never cleared by the streamer.
+        // The buffer is canonical and never cleared by the streamer. The
+        // windowed-read/drain seam (F3) keeps a large backlog from ever being
+        // re-joined whole: the streamer reads only the unconfirmed window.
         readBuffer: () => runTelemetry.readBuffer(),
+        readWindow: (fromRecord, limits) => runTelemetry.readWindow(fromRecord, limits),
+        dropConfirmed: (absoluteCount) => runTelemetry.dropConfirmed(absoluteCount),
+        // Part build + send runs off the frame task so telemetry serialisation
+        // never holds the Phaser update/rAF step (AH-0MWDGQ0PB000YZ9N).
+        defer: deferOffFrame,
         // Read at send time, so the setting behaves exactly as it does for the
         // whole-file run-end upload.
         getSetting: () => loadSettings(),
@@ -6737,6 +6744,23 @@ export class PlayScene extends CombatScene<
       this.laneTrafficSpawnedThisWave = 0;
     }
   }
+}
+
+/**
+ * Schedules part build + send off the frame task
+ * (AH-0MWDGQ0PB000YZ9N). `requestIdleCallback` is preferred when available
+ * (it fires between frames); otherwise a zero-delay macrotask yields to the
+ * event loop so the current Phaser update/rAF task can finish first.
+ */
+function deferOffFrame(task: () => void): void {
+  const idle = (globalThis as {
+    requestIdleCallback?: (cb: () => void) => unknown;
+  }).requestIdleCallback;
+  if (typeof idle === 'function') {
+    idle(task);
+    return;
+  }
+  setTimeout(task, 0);
 }
 
 /**
