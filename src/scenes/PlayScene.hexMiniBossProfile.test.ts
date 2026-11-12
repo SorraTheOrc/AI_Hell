@@ -22,10 +22,10 @@
  * An arcade run (`▶ Play Game`) has no hex profile, so its config must stay
  * byte-identical to the design's — asserted here every run.
  *
- * **TEST-FIRST — red-before/green-after.** The `it.fails` cases fail on
- * pre-change HEAD (the config is the bare design: design colour, design hit
- * pool, no demonstration). The implementation item flips them to plain `it`,
- * so a leftover `it.fails` fails the suite.
+ * **TEST-FIRST — red-before/green-after.** These cases were authored red
+ * against pre-change HEAD (the config was the bare design: design colour,
+ * design hit pool, no demonstration) and turned green by the implementation
+ * item (AH-0MWCOW5IO001KJ8D), which flipped them to plain `it`.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -141,7 +141,7 @@ describe('PlayScene — hex mini-boss wears the hex profile (AH-0MWCOW50P002TWGP
 
   // ── AC1: the granted weapon's colour ────────────────────────────
 
-  it.fails(
+  it(
     'AC1 — a deployment’s mini-boss wears the granted weapon’s colour',
     async () => {
       const { scene, level, profile } = await bootDeployment(WEAPON_HEX);
@@ -158,7 +158,7 @@ describe('PlayScene — hex mini-boss wears the hex profile (AH-0MWCOW50P002TWGP
 
   // ── AC1: the opening volley is the granted weapon's ────────────
 
-  it.fails(
+  it(
     'AC1 — a deployment’s mini-boss opens with the granted weapon’s volley',
     async () => {
       const { scene, level, profile } = await bootDeployment(WEAPON_HEX);
@@ -172,7 +172,7 @@ describe('PlayScene — hex mini-boss wears the hex profile (AH-0MWCOW50P002TWGP
 
   // ── AC2: the profile perturbs the hit pool ─────────────────────
 
-  it.fails(
+  it(
     'AC2 — the hit pool is perturbed by the hex profile’s multiplier',
     async () => {
       const { scene, level, profile } = await bootDeployment(WEAPON_HEX);
@@ -190,7 +190,7 @@ describe('PlayScene — hex mini-boss wears the hex profile (AH-0MWCOW50P002TWGP
 
   // ── AC2: a non-weapon grant demonstrates nothing ───────────────
 
-  it.fails(
+  it(
     'AC2 — a non-weapon grant falls back to the deterministic palette',
     async () => {
       const { scene, level, profile } = await bootDeployment(SUPPORT_HEX);

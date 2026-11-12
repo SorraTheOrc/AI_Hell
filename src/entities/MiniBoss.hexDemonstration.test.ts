@@ -17,12 +17,12 @@
  *  - a config without a demonstration is byte-identical to today's behaviour
  *    (the shipped arcade mini-boss), so the campaign is untouched.
  *
- * **TEST-FIRST — the repo's red-before/green-after convention.** The `it.fails`
- * cases below fail on pre-change HEAD because `MiniBoss` currently ignores a
- * forwarded demonstration and always dispatches its design pattern. The
- * implementation item (AH-0MWCOW5IO001KJ8D) flips each `it.fails` back to a
- * plain `it` once the behaviour lands, so a leftover `it.fails` fails the
- * suite: this is a real target rather than a permanent exemption.
+ * **TEST-FIRST — the repo's red-before/green-after convention.** These cases
+ * were authored red against pre-change HEAD (`MiniBoss` ignored a forwarded
+ * demonstration and always dispatched its design pattern) and turned green by
+ * the implementation item (AH-0MWCOW5IO001KJ8D), which flipped each `it.fails`
+ * back to a plain `it`. They now pin the shipped behaviour as a real target
+ * rather than a permanent exemption.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -122,7 +122,7 @@ describe('MiniBoss — demonstrated hex weapon volley (AH-0MWCOW50P002TWGP)', ()
 
   // ── AC1: the opening volley is the demonstration's fan ──────────
 
-  it.fails(
+  it(
     'AC1 — the opening phase fires the demonstrated weapon’s volley',
     async () => {
       booted = await bootScene([HarnessScene]);
@@ -151,7 +151,7 @@ describe('MiniBoss — demonstrated hex weapon volley (AH-0MWCOW50P002TWGP)', ()
     },
   );
 
-  it.fails(
+  it(
     'AC1 — the volley fans around the boss’s downward heading using the catalogue offsets',
     async () => {
       booted = await bootScene([HarnessScene]);
@@ -179,7 +179,7 @@ describe('MiniBoss — demonstrated hex weapon volley (AH-0MWCOW50P002TWGP)', ()
 
   // ── AC3: only the opening phase is the demonstration ────────────
 
-  it.fails(
+  it(
     'AC3 — the demonstration replaces only the opening phase',
     async () => {
       booted = await bootScene([HarnessScene]);

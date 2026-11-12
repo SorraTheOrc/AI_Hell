@@ -327,7 +327,7 @@ import {
 import { LaneTraffic } from '../entities/LaneTraffic';
 import { Boss, BossPhase, BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { MiniBoss, type MiniBossConfig } from '../entities/MiniBoss';
-import { miniBossConfigForLevel, miniBossDesignForLevel } from '../waves/miniBossDesigns';
+import { miniBossConfigForLevel, miniBossDesignForLevel, hexMiniBossConfigForLevel } from '../waves/miniBossDesigns';
 import {
   playerPowerScore,
   scaledEncounterHp,
@@ -2085,13 +2085,22 @@ export class PlayScene extends CombatScene<
     // The hit pool scales with the player's total permanent upgrade levels
     // (AH-0MVH87A3L004VOLD) so an upgraded ship faces a tougher encounter.
     const design = miniBossDesignForLevel(level);
-    return miniBossConfigForLevel(level, {
+    const spawn = {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2 - 80,
       formationOffset: { row: 0, col: 0 },
       rng: this.rng,
       hpPerPhase: scaledEncounterHp(design.hpPerPhase, this.getPlayerPowerScore()),
-    });
+    };
+    // A Hangar War deployment's mini-boss wears the hex profile the map
+    // advertises and demonstrates the grant (Rule 2) through the same pure
+    // mapping the gyms consume; the arcade run passes no profile and is
+    // byte-for-byte unchanged (AH-0MWCOW5IO001KJ8D).
+    const hexBoss = this.hexBossProfile;
+    if (hexBoss !== null) {
+      return hexMiniBossConfigForLevel(level, { ...spawn, profile: hexBoss });
+    }
+    return miniBossConfigForLevel(level, spawn);
   }
 
   /**
