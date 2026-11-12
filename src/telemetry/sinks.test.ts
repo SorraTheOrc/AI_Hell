@@ -451,7 +451,9 @@ describe('memory line writer — bounded retention and windowed read/drain (AH-0
     expect(writer.read().length).toBeLessThanOrEqual(16 * 1024 * 1024);
     expect(writer.totalRecords).toBe(120_000);
     expect(writer.baseRecord).toBeGreaterThan(0);
-  });
+    // Heavy by design: it writes ~24 MiB across 120k lines and evicts via an
+    // O(n) `shift`, so the default 5 s test timeout is too tight under load.
+  }, 20_000);
 
   it('exposes the drain seam through the JSONL sink for its retained writer', () => {
     // One EVENT line is ~88 bytes, so a 100-byte cap retains exactly one.
