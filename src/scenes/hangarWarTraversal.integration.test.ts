@@ -17,15 +17,11 @@
  * - the demo never writes the player's war (the seeded payload is unchanged in
  *   `localStorage`).
  *
- * **TEST-FIRST — red-before/green-after.** The between-sortie hop used to be a
- * `defenceReport` screen (`menu → map → deployment → defenceReport → map`).
- * Every route assertion below pins the post-change surface — a deployment ends
- * straight on the map — and is authored under Vitest's `it.fails` (the repo's
- * red-before/green-after convention, see `src/core/levelScaling.test.ts`) so
- * the suite stays green on pre-change HEAD, where `PlayScene` still starts the
- * (now unregistered) report and the traversal stalls at the run end. The
- * wiring item (AH-0MWEXIWBO004GHN6) flips each `it.fails` back to `it`; a
- * leftover `it.fails` then fails the suite.
+ * The between-sortie hop used to be a separate report screen
+ * (`menu → map → deployment → report → map`). Every route assertion below pins
+ * the post-change surface — a deployment ends straight on the map — so a
+ * regression that reintroduces a report hop (or stalls the traversal at the run
+ * end) fails here.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -149,7 +145,7 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
   const until = (label: string, predicate: () => boolean): void =>
     stepGameUntil(booted!.game, label, predicate, STEP_FRAMES);
 
-  it.fails(
+  it(
     'drives menu → map → deployment → map → hangar without a report screen',
     async () => {
       const menu = await bootMenu();
@@ -169,9 +165,6 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
       const deployment = play.getHangarWarDeployment()!;
       expect(deployment.hexId).toBe(pickAttractHex(seeded));
       // Nothing has simulated a defence: this is the normal bot-flown run.
-      // (The retired report screen is not even registered in this boot list,
-      // so the active-check is null-tolerant.)
-      expect(active('DefenceReportScene')).toBeFalsy();
 
       // ── deployment → map (the between-sortie report is rolled in) ─
       killPlayer(play);
@@ -219,7 +212,7 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
     },
   );
 
-  it.fails(
+  it(
     'presents and auto-resolves the mini-boss reward over the paused map on a winning demo deployment',
     async () => {
       const menu = await bootMenu();
@@ -256,7 +249,7 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
     },
   );
 
-  it.fails(
+  it(
     'never simulates a defence battle or shows a report anywhere in the traversal',
     async () => {
       const menu = await bootMenu();
@@ -270,7 +263,6 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
       // has to reach all three screens inside the budget, and the between-sortie
       // hop must be a map landing (no second battle, no report screen).
       const seen = new Set<string>();
-      const ended = new WeakSet<PlayScene>();
       let landings = 0;
       let awaitingLanding = false;
       const sampleMs = Math.max(1, Math.floor(DWELL_MS / 4));
@@ -279,10 +271,12 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
       for (let step = 0; step < 400 && landings < 2; step += 1) {
         await advanceGame(booted!.game, sampleMs);
         if (active('PlayScene')) {
-          const play = sceneOf<PlayScene>('PlayScene');
-          if (!ended.has(play)) {
-            ended.add(play);
-            killPlayer(play);
+          // Kill each deployment once. The `PlayScene` instance is reused
+          // across `scene.start`s, so a per-instance marker would only ever
+          // end the first sortie; `awaitingLanding` resets on each map landing
+          // and therefore ends every subsequent deployment too.
+          if (!awaitingLanding) {
+            killPlayer(sceneOf<PlayScene>('PlayScene'));
             awaitingLanding = true;
           }
         } else if (awaitingLanding && active('HexMapScene')) {
@@ -295,8 +289,6 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
           .filter((scene) => scene.sys.isActive())
           .map((scene) => scene.sys.settings.key);
         for (const key of activeKeys) {
-          // The retired report screen must never appear.
-          expect(key).not.toBe('DefenceReportScene');
           seen.add(key);
         }
       }
@@ -316,7 +308,7 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
     },
   );
 
-  it.fails(
+  it(
     'leaves the player’s stored war untouched (a demo is not progress)',
     async () => {
       const menu = await bootMenu();

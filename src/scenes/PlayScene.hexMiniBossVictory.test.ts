@@ -318,10 +318,9 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
     30_000,
   );
 
-  // TEST-FIRST (AH-0MWEXHODJ0067PSJ): a won deployment lands on the hex map
-  // (paused under its reward), not the retired report scene; the wiring item
-  // (AH-0MWEXIWBO004GHN6) flips `it.fails` back to `it`.
-  it.fails.each([
+  // A won deployment lands on the hex map (paused under its reward); the
+  // separate report scene is gone (AH-0MWEXHODJ0067PSJ).
+  it.each([
     ['a non-final level (aggression 3 → level 4)', 3],
     ['the final level (aggression 9 → level 10)', FINAL_LEVEL_AGGRESSION],
   ])(
@@ -355,9 +354,8 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(loadCheckpoint()).toBeNull();
 
       // The defeat ends the run as a **victory** on the hex map (the run-end
-      // hold is a real Clock timer, so the game is stepped past it). TEST-FIRST
-      // (AH-0MWEXHODJ0067PSJ): the deployment lands on the map, not the retired
-      // report scene; the wiring item (AH-0MWEXIWBO004GHN6) flips `it.fails`.
+      // hold is a real Clock timer, so the game is stepped past it); the
+      // separate report scene is gone (AH-0MWEXHODJ0067PSJ).
       await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
       const map = scene.game.scene.getScene(
         HEX_MAP_SCENE_KEY,

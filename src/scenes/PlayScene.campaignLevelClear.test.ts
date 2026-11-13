@@ -355,10 +355,9 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(gameState.isHoldFull()).toBe(false);
   });
 
-  // TEST-FIRST (AH-0MWEXHODJ0067PSJ): the deployment ends on the hex map, not
-  // the retired report screen. The walk assertions stay live inside the witness;
-  // the wiring item (AH-0MWEXIWBO004GHN6) flips this `it.fails` back to `it`.
-  it.fails(
+  // The deployment ends on the hex map; the retired report screen is gone
+  // (AH-0MWEXHODJ0067PSJ).
+  it(
     'ends a hangar-war deployment on its level-2 mini-boss as a victory',
     async () => {
       // hex-r1-2 is the ring's lowest-aggression hex (1 → campaign level 2), so
@@ -391,8 +390,7 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
 
     // The run ends on the **hex map** as a victory (the between-sortie report
     // screen is gone, AH-0MWEXHODJ0067PSJ; the run-end hold is a real Clock
-    // timer, so step the game past it). TEST-FIRST: red until the wiring item
-    // (AH-0MWEXIWBO004GHN6) routes the deployment end to the map.
+    // timer, so step the game past it).
     await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
     const map = scene.game.scene.getScene(
       HEX_MAP_SCENE_KEY,

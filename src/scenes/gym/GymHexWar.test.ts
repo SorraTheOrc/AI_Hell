@@ -513,7 +513,7 @@ describe('GymHexWar', () => {
     findTextStartingWith(scene, GYM_HEX_WAR_REPORT_HINT);
 
     // The report is the shipped model over the shipped tick's record — the same
-    // code path the game's DefenceReportScene renders.
+    // code path the game's map report model renders.
     const tick = runFrontierTick(payload, { clock: frontierClockFor(payload) });
     const model = scene.getDefenceReport();
     expect(model.rows.map((row) => row.hexId)).toEqual(

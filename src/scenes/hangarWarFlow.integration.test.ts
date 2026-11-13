@@ -4,10 +4,9 @@
  *
  * Every other Hangar War suite boots an explicit scene-class list
  * (`bootScene([...])`), so none of them exercises `buildGameConfig().scene` —
- * which is exactly how an unregistered `DefenceReportScene` stayed hidden: a
- * `scene.start()` for a scene that is not in the shipped array is a silent
- * no-op at runtime, and a hand-picked boot list always contains the scene the
- * test wants.
+ * which is exactly how an unregistered scene stayed hidden: a `scene.start()`
+ * for a scene that is not in the shipped array is a silent no-op at runtime,
+ * and a hand-picked boot list always contains the scene the test wants.
  *
  * This suite therefore boots the real `buildGameConfig().scene` array and walks
  * the player path the feature ships with, with the feature flag ON (its shipped
@@ -21,23 +20,12 @@
  *
  * ## Deployment ends on the hex map (AH-0MWEXHODJ0067PSJ)
  *
- * The separate between-sortie `DefenceReportScene` is being rolled into the
- * hex map (parent AH-0MWDC3L9I008INDP): a deployment now ends **directly on
- * the hex map**, carrying the deployment's payload, the resolved tick record
- * and the run result line (VICTORY/DEFEAT · score). The winning route is
- * mini-boss defeat → **paused hex map** → the mini-boss reward over it → map
- * interaction resumes — replacing the old report → reward → map ordering
+ * The separate between-sortie report screen is rolled into the hex map (parent
+ * AH-0MWDC3L9I008INDP): a deployment ends **directly on the hex map**,
+ * carrying the deployment's payload, the resolved tick record and the run
+ * result line (VICTORY/DEFEAT · score). The winning route is mini-boss defeat →
+ * **paused hex map** → the mini-boss reward over it → map interaction resumes
  * (AH-0MWCOW61X002LL10, moved onto the map).
- *
- * **TEST-FIRST — red-before/green-after.** Every assertion below that pins the
- * no-report-hop landing is authored under Vitest's `it.fails` (the repo's
- * red-before/green-after convention, see `src/core/levelScaling.test.ts`), so
- * the suite stays green on pre-change HEAD, where a deployment still lands on
- * `DefenceReportScene`. The wiring item (AH-0MWEXIWBO004GHN6) flips each
- * `it.fails` back to `it` once `PlayScene._finishRun` starts `HexMapScene`
- * directly; the scene item (AH-0MWEXIOZZ009UX14) supplies the map's
- * record/run-line/reward surface the assertions read through the guarded
- * seams below. A leftover `it.fails` then fails the suite.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -178,7 +166,7 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
     return booted.scene as MenuScene;
   }
 
-  it.fails(
+  it(
     'walks menu → hangar → map → deployment → map with the flag ON (no report hop)',
     async () => {
       const menu = await bootShippedConfig();
@@ -265,7 +253,7 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
     return { play, hexId };
   }
 
-  it.fails(
+  it(
     'presents the mini-boss reward over the paused hex map, then map interaction resumes',
     async () => {
       const { hexId } = await walkToWonDeployment();
@@ -320,15 +308,19 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
         true,
       );
 
-      // Map interaction resumes: a hex row deploys the next sortie.
-      const hexRow = map.getRows().find((row) => row.key.startsWith('hex:'));
+      // Map interaction resumes: a still-unheld hex row deploys the next
+      // sortie. The just-captured hex is held and therefore non-actionable, so
+      // pick an actionable row rather than simply the first one.
+      const hexRow = map
+        .getRows()
+        .find((row) => row.key.startsWith('hex:') && row.actionable);
       expect(hexRow, 'the resumed map has deployable hex rows').toBeDefined();
       hexRow!.text.emit('pointerdown');
       until('a next deployment starts', () => active('PlayScene'));
     },
   );
 
-  it.fails(
+  it(
     'keeps the deployment → map route with no reward on a lost deployment',
     async () => {
       const menu = await bootShippedConfig();

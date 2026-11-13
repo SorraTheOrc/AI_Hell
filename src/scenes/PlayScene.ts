@@ -25,10 +25,10 @@
  * the kill-chance spawn *source* (AH-0MUII3CXX0023H24, gap 4).
  *
  * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`. A **hangar-war
- * deployment** (AH-0MVUXCBBK004EJIP) ends in `DefenceReportScene` instead:
- * the run's between-sortie frontier tick is resolved and its record is the
- * report's content, so the player sees the numbers behind every hold and fall
- * before returning to the map. The arcade run is unchanged.
+ * deployment** (AH-0MVUXCBBK004EJIP) ends on `HexMapScene` instead: the run's
+ * between-sortie frontier tick is resolved and its record is carried to the
+ * map (attack arrows and attack panel), so the player sees the numbers behind
+ * every hold and fall on the map. The arcade run is unchanged.
  *
  * **Hangar-war deployments (AH-0MVUXC2DD003HN0I).** `init()` also accepts a
  * `hangarWar` launch payload from the hangar screen. A deployment runs this
@@ -194,7 +194,7 @@ import {
   type FrontierTickResult,
 } from '../core/hangarWar/hexDefence';
 import type { HangarWarPayload } from '../core/hangarWar/types';
-import { DEFENCE_REPORT_SCENE_KEY } from './DefenceReportScene';
+import { HEX_MAP_SCENE_KEY } from './HexMapScene';
 import {
   HEX_RING_DEFINITIONS,
   findHexRingDefinition,
@@ -920,7 +920,7 @@ export class PlayScene extends CombatScene<
 
   /**
    * The mini-boss reward resolved by a **winning hex deployment**, carried to
-   * `DefenceReportScene` so it can be revealed after the defence report
+   * `HexMapScene` so it can be revealed over the paused map
    * (parent AH-0MWBW1B1Z0059CC2, producer Q2 = b). `null` for the arcade run
    * and for a lost deployment. The wheel outcome is applied to the (still
    * live) run-scoped player at resolution; the carried copy is the reveal.
@@ -934,8 +934,8 @@ export class PlayScene extends CombatScene<
    * The tick is resolved **before** the capture at the mini-boss defeat, so a
    * hex the sortie just won can never be attacked (and flipped) by that same
    * tick before the player reaches the map — the newly held hex is what the
-   * defence report and the map present. The tick's record is still the report's
-   * payload; `null` for the arcade run and for a lost deployment (which
+   * map presents. The tick's record is still the map's carried record;
+   * `null` for the arcade run and for a lost deployment (which
    * resolves its tick in `_finishRun` as before).
    */
   private pendingBetweenSortieTick: FrontierTickResult | null = null;
@@ -3797,8 +3797,8 @@ export class PlayScene extends CombatScene<
     // ends the run as a victory, and it deliberately skips the arcade wave
     // accounting below — a deployment plays only its aggression-selected
     // level, so the final boss is unreachable from the hex map. The in-run
-    // reward wheel is not opened either: the hex reward is presented after
-    // the defence report.
+    // reward wheel is not opened either: the hex reward is presented over the
+    // paused map.
     if (this.isHangarWarRun()) {
       this._finaliseHangarWarMiniBossVictory(deathX, deathY);
       return;
@@ -3841,7 +3841,7 @@ export class PlayScene extends CombatScene<
    * Ends a hex deployment on its mini-boss (AH-0MWCOW4IQ003XST5): resolves the
    * hex capture through the shared {@link resolveHexCapture} cycle, then ends
    * the run as a victory through the shipped victory path (auto-fire off,
-   * celebration at the mini-boss death position, delayed defence-report
+   * celebration at the mini-boss death position, delayed map
    * transition). Wave/level accounting is never advanced — the final boss can
    * never be triggered from the hex map, including on the campaign's final
    * level.
@@ -3855,7 +3855,7 @@ export class PlayScene extends CombatScene<
     this.runFinished = true;
     // Resolve the between-sortie frontier tick **before** the capture, so the
     // hex this sortie just won is not a candidate for that same tick's attack
-    // (the player would otherwise lose it before seeing the report/map).
+    // (the player would otherwise lose it before it is shown on the map).
     // `_finishRun` reuses this result instead of resolving a second tick.
     this.pendingBetweenSortieTick = this._resolveBetweenSortieTick();
     // Resolve the hex capture through the existing cycle; this banks the run's
@@ -3864,8 +3864,8 @@ export class PlayScene extends CombatScene<
     // hull behind.
     this._resolveHangarWarCapture();
     // Resolve the mini-boss reward now (while the run-scoped player still
-    // exists) and carry it to the defence report, which reveals it after the
-    // report (producer Q2 = b). The in-run overlay never launches here.
+    // exists) and carry it to the map, which reveals it over the paused
+    // map (producer Q2 = b). The in-run overlay never launches here.
     this._resolveHangarWarWinReward();
     this._triggerVictoryCelebration(deathX, deathY);
     this._finishRunWithPurpose(true);
@@ -3880,11 +3880,11 @@ export class PlayScene extends CombatScene<
    * outcome is applied to the (still live) run-scoped player through the same
    * {@link applyWheelOutcome} seam the arcade reward uses — no new economy rule
    * and no second application path. A presentation copy is stored for
-   * `DefenceReportScene`; the overlay itself is launched there, after the
-   * report, so the reward cannot run concurrently with the run-end transition.
+   * `HexMapScene`; the overlay itself is launched there, over the paused map,
+   * so the reward cannot run concurrently with the run-end transition.
    *
    * The empty-owned fallback keeps its existing three-option choice (a
-   * mini-boss always pays out, AC4), carried in the same payload so the report
+   * mini-boss always pays out, AC4), carried in the same payload so the map
    * presents it instead of spinning a dud wheel.
    */
   private _resolveHangarWarWinReward(): void {
@@ -4322,7 +4322,7 @@ export class PlayScene extends CombatScene<
    *
    * This is the "between runs" moment the design names: one tick raises border
    * aggression and lets the AI attack a held hex, resolved purely from stored
-   * numbers. The tick's record is what the defence report renders, and the
+   * numbers. The tick's record is what the map's defence panel renders, and the
    * advanced payload is persisted (outside demo mode) so the next run starts
    * from the risen frontier. The arcade run is a no-op.
    *
@@ -5616,13 +5616,13 @@ export class PlayScene extends CombatScene<
     // the scene transitions below happen regardless of its outcome.
     void this.flushAndUploadDevTelemetry();
     if (this.hangarWarDeployment) {
-      // A hex deployment ends in the **between-sortie defence report**
-      // (AH-0MVUXCBBK004EJIP): run the frontier tick — one tick of risen
-      // aggression and a purely algorithmic attack — and hand its record to the
-      // report, which renders the numbers that produced every hold and fall.
+      // A hex deployment ends on the **hex map** (AH-0MWDC3L9I008INDP): run the
+      // frontier tick — one tick of risen aggression and a purely algorithmic
+      // attack — and hand its record to the map, which renders the numbers that
+      // produced every hold and fall.
       // A winning deployment already resolved it before the capture (see
       // `_finaliseHangarWarMiniBossVictory`); a loss resolves it here. Either
-      // way the report/map payload is this run's final war state.
+      // way the map payload is this run's final war state.
       const pendingTick = this.pendingBetweenSortieTick;
       this.pendingBetweenSortieTick = null;
       const tick = pendingTick ?? this._resolveBetweenSortieTick();
@@ -5631,13 +5631,13 @@ export class PlayScene extends CombatScene<
         this.demoMode = false;
         this._disableDemoTakeOver();
       }
-      // A winning deployment carries its resolved mini-boss reward to the
-      // report, which reveals it after the report and before the map
+      // A winning deployment carries its resolved mini-boss reward to the map,
+      // which reveals it over the paused map before interaction resumes
       // (parent AH-0MWBW1B1Z0059CC2, producer Q2 = b). A lost deployment
-      // carries nothing, so its route stays report → map.
+      // carries nothing, so its route stays deployment → map.
       const reward = won ? this.pendingWinReward : null;
       this.pendingWinReward = null;
-      this.scene.start(DEFENCE_REPORT_SCENE_KEY, {
+      this.scene.start(HEX_MAP_SCENE_KEY, {
         payload: this._hangarWarPayload(),
         record: tick?.record,
         won,

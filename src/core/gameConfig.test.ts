@@ -3,9 +3,9 @@
  *
  * Phaser only resolves `scene.start('<Key>')` for scenes listed in
  * `buildGameConfig().scene`; an unregistered scene target silently does
- * nothing at runtime. `DefenceReportScene` was exactly that case: `PlayScene`
- * starts it after a Hangar War deployment ends, but it was missing from the
- * boot list, so the between-sortie report never appeared and the Hangar War
+ * nothing at runtime. The old between-sortie report scene was exactly that
+ * case: `PlayScene` started it after a Hangar War deployment ended, but it was
+ * missing from the boot list, so the report never appeared and the Hangar War
  * loop died after the first deployment.
  *
  * **Why the rest of the suite did not catch it.** The traversal and
@@ -15,21 +15,16 @@
  * is invisible to them. This suite asserts the shipped array itself:
  *
  * 1. every scene key a shipped screen starts resolves from
- *    `buildGameConfig().scene` (the transition guard that would have failed for
- *    `DefenceReportScene`), and
+ *    `buildGameConfig().scene` (the transition guard that would have caught
+ *    that missing registration), and
  * 2. every registered scene's *actual* Phaser key equals its class name, so the
  *    key-based transitions above cannot silently miss a renamed scene.
  *
- * ## The between-sortie report screen is being removed (AH-0MWEXHODJ0067PSJ)
+ * ## The between-sortie report screen is gone (AH-0MWEXHODJ0067PSJ)
  *
- * The separate `DefenceReportScene` is rolled into the hex map (parent
- * AH-0MWDC3L9I008INDP): the shipped array no longer registers it and the
- * transition guard no longer lists its key. That assertion is authored under
- * Vitest's `it.fails` (the repo's red-before/green-after convention, see
- * `src/core/levelScaling.test.ts`) so this suite stays green on pre-change
- * HEAD, where the report is still registered; the wiring item
- * (AH-0MWEXIWBO004GHN6) flips it back to `it` once the config stops
- * registering it. A leftover `it.fails` then fails the suite.
+ * The separate report scene is rolled into the hex map (parent
+ * AH-0MWDC3L9I008INDP): a deployment lands on the map, so no shipped screen
+ * starts a report and the shipped array does not register one.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -46,7 +41,7 @@ import { HEX_MAP_SCENE_KEY, HexMapScene } from '../scenes/HexMapScene';
  * below keeps it honest (a key that no longer matches a registered scene's own
  * key fails), and the end-to-end Hangar War flow suite
  * (`src/scenes/hangarWarFlow.integration.test.ts`) exercises the real
- * transitions through the shipped config. `DEFENCE_REPORT_SCENE_KEY` is
+ * transitions through the shipped config. The retired report key is
  * deliberately absent: the between-sortie report is rolled into the hex map,
  * so no shipped screen starts it any more.
  */
@@ -65,14 +60,6 @@ const TRANSITION_TARGETS = [
   'LeaderboardScene',
   'GymIndex',
 ] as const;
-
-/**
- * The key of the retired between-sortie report screen. Kept as a local
- * literal so this suite compiles both before and after the scene module is
- * deleted (the implementing item removes the red witness, not the assertion
- * set); the value matches the removed scene's class name, so it cannot drift.
- */
-const RETIRED_REPORT_SCENE_KEY = 'DefenceReportScene';
 
 /** The shipped scene array, as Phaser receives it. */
 function shippedScenes(): (typeof Phaser.Scene)[] {
@@ -104,8 +91,8 @@ describe('shipped scene registration', () => {
     const keys = new Set(registeredKeys());
 
     // A `scene.start('<Key>')` whose key is missing from the shipped array is a
-    // silent no-op at runtime: this is the assertion that failed for the
-    // unregistered `DefenceReportScene` (AH-0MVZ4S9ZU004GXUM AC2).
+    // silent no-op at runtime: this is the assertion that caused the missing
+    // registration to be caught (AH-0MVZ4S9ZU004GXUM AC2).
     for (const target of TRANSITION_TARGETS) {
       expect(
         keys.has(target),
@@ -114,24 +101,6 @@ describe('shipped scene registration', () => {
       ).toBe(true);
     }
   });
-
-  it.fails(
-    'no longer registers the retired between-sortie report screen',
-    () => {
-      // TEST-FIRST witness: on pre-change HEAD the report is still in the
-      // shipped array and its key is still a transition target; the wiring
-      // item (AH-0MWEXIWBO004GHN6) removes both and flips this to `it`.
-      const keys = new Set(registeredKeys());
-      expect(keys.has(RETIRED_REPORT_SCENE_KEY)).toBe(false);
-      expect(
-        (TRANSITION_TARGETS as readonly string[]).includes(
-          RETIRED_REPORT_SCENE_KEY,
-        ),
-      ).toBe(false);
-      // A removed screen can never be a silent-no-op `scene.start()` target.
-      expect(keys).not.toContain('DefenceReportScene');
-    },
-  );
 
   it('registers every scene under its own class name', () => {
     for (const sceneClass of shippedScenes()) {

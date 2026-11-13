@@ -33,12 +33,11 @@
  * ## The report view (AH-0MVUXCBBK004EJIP)
  *
  * `{ view: 'report' }` (or the `showDefenceReport()` control surface) renders
- * the **shipped defence report** — `buildDefenceReport` +
- * `renderDefenceReport`, the same pair `DefenceReportScene` renders — from a
- * record produced by the **shipped** frontier tick (`runFrontierTick` at the
- * payload's own clock), read-only. The gym therefore demonstrates the report
- * screen's exact numbers without a browser boot and without simulating a
- * battle.
+ * the **shipped defence report model** — `buildDefenceReport` +
+ * `renderDefenceReport` — from a record produced by the **shipped** frontier
+ * tick (`runFrontierTick` at the payload's own clock), read-only. The gym
+ * therefore demonstrates the report's exact numbers without a browser boot and
+ * without simulating a battle.
  *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention and
  * watchable by the capture tooling (`WATCHABLE_GYM_SCENE_KEYS`).
@@ -342,8 +341,8 @@ export class GymHexWar extends Phaser.Scene {
    * The record is produced by the **shipped** frontier tick
    * (`runFrontierTick` at the payload's own clock), and the screen is the
    * game's own model/renderer pair (`buildDefenceReport` +
-   * `renderDefenceReport`) with **no handlers**, so the gym shows exactly what
-   * `DefenceReportScene` shows and owns no report rule. Nothing is resolved by
+   * `renderDefenceReport`) with **no handlers**, so the gym shows the shipped
+   * report model exactly and owns no report rule. Nothing is resolved by
    * a battle: the record is arithmetic over the payload's stored numbers.
    */
   private renderReport(): void {

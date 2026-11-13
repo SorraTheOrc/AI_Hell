@@ -5,9 +5,9 @@
  * Design of record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D § *Gym
  * testability and the bot* — "**Attract mode:** the bot traverses or skips
  * every new screen — on the map it auto-picks the **weakest** adjacent hex, in
- * the hangar it auto-buys the cheapest useful unlock (seeded), and it
- * auto-advances the defence report. Because defence is **resolved
- * algorithmically**, there is no live defence battle for the demo to stall in —
+ * the hangar it auto-buys the cheapest useful unlock (seeded). Because defence
+ * is **resolved algorithmically**, there is no live defence battle for the demo
+ * to stall in —
  * the defending bot never needs to be flown."
  *
  * ## Pure decisions, no scene, no timer
@@ -29,7 +29,6 @@
  * | `menu` | open the map (the surface's hub) |
  * | `map` | deploy at the **weakest adjacent unheld hex**, or open the hangar when the ring is secured |
  * | `deployment` | none — the run drives itself to its end (the bot flies it) |
- * | `defenceReport` | continue to the map |
  * | `hangar` | buy the **cheapest useful unlock** (seeded tie-break), or deploy the active loadout |
  *
  * The map's choice is `pickAttractHex` (`src/core/hangarWar/hexIntel.ts`) — the
@@ -50,10 +49,10 @@
  * ## No defence battle, by construction
  *
  * Nothing in this module can start a battle: the defence is resolved by the
- * frontier tick (`src/core/hangarWar/hexDefence.ts`) before the report renders,
- * and the report's only action is `continueToMap`. A traversal therefore walks
- * `menu → map → deployment → defenceReport → map → hangar` with no screen that
- * could wait on a flown defender.
+ * frontier tick (`src/core/hangarWar/hexDefence.ts`) and a finished deployment
+ * lands directly on the map. A traversal therefore walks
+ * `menu → map → deployment → map → hangar` with no screen that could wait on a
+ * flown defender.
  *
  * @module src/ai/hangarWarTraversal
  */
@@ -95,7 +94,6 @@ export type HangarWarTraversalScreen =
   | 'menu'
   | 'map'
   | 'deployment'
-  | 'defenceReport'
   | 'hangar';
 
 /** What the bot does on the current screen. */
@@ -106,7 +104,7 @@ export type HangarWarTraversalAction =
   | { readonly kind: 'deploy'; readonly hexId: string | null }
   /** Open the hangar (the map is secured, so there is no hex left to attack). */
   | { readonly kind: 'openHangar' }
-  /** Leave the defence report for the map. */
+  /** A finished deployment's safe next step: (re)enter the map. */
   | { readonly kind: 'continueToMap' }
   /** Buy the cheapest useful unlock (`entryId`). */
   | { readonly kind: 'buy'; readonly entryId: string }
@@ -231,18 +229,6 @@ export function decideMapAction(
 }
 
 /**
- * The bot's move on the **defence report**: continue to the map.
- *
- * The report is a pure view of a resolved tick, so there is nothing to fight
- * and nothing to wait for — the bot always advances.
- *
- * @returns the action to apply.
- */
-export function decideReportAction(): HangarWarTraversalAction {
-  return { kind: 'continueToMap' };
-}
-
-/**
  * The bot's move in the **hangar**: buy the cheapest useful unlock, else deploy.
  *
  * Shopping is finite (the catalogue is), so repeated application reaches the
@@ -271,7 +257,7 @@ export function decideHangarAction(
  *
  * A `deployment` is driven by the run itself, so it has no bot decision; it
  * reports `continueToMap` only as a safe, non-stalling fallback for a caller
- * that asks anyway (the report is where a finished deployment leads). An
+ * that asks anyway (the map is where a finished deployment lands). An
  * unknown screen behaves like the menu, so a mis-wired screen can never freeze
  * the demo.
  *
@@ -290,8 +276,6 @@ export function decideTraversalAction(
       return decideMenuAction();
     case 'map':
       return decideMapAction(payload, options);
-    case 'defenceReport':
-      return decideReportAction();
     case 'hangar':
       return decideHangarAction(payload, options);
     case 'deployment':

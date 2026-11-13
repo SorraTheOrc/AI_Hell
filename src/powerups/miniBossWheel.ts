@@ -145,8 +145,8 @@ export interface MiniBossWheelOutcome {
 
 /**
  * A mini-boss reward resolved by the run and carried to the screen that
- * presents it: the **win-path** reward shown by `DefenceReportScene` after a
- * hex deployment's victory report (parent AH-0MWBW1B1Z0059CC2, producer
+ * presents it: the **win-path** reward shown by `HexMapScene` over the paused
+ * map after a hex deployment's victory (parent AH-0MWBW1B1Z0059CC2, producer
  * Q2 = b).
  *
  * The `wheel` variant carries the same wedge list and 100-slot outcome the

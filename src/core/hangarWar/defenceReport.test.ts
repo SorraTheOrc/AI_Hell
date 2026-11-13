@@ -32,10 +32,6 @@ import {
   type HangarAssaultResolution,
   type HexDefenceRecord,
 } from './hexDefence';
-import {
-  decideReportAction,
-  decideTraversalAction,
-} from '../../ai/hangarWarTraversal';
 import { aggressionScenario } from './__fixtures__/aggressionScenarios';
 import { resolvePlayerStrength } from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
@@ -526,11 +522,6 @@ describe('buildDefenceReport — the hangar assault record (AH-0MWEZZ9EB00604U0)
     expect(model.defaultFocusKey).toBe(DEFENCE_REPORT_CONTINUE_KEY);
     expect(model.continueLabel).toBe(DEFENCE_REPORT_CONTINUE_LABEL);
 
-    // The bot's decision is still to continue, whatever the assault outcome.
-    expect(decideReportAction()).toEqual({ kind: 'continueToMap' });
-    expect(
-      decideTraversalAction('defenceReport', makePayload()),
-    ).toEqual({ kind: 'continueToMap' });
     const fellModel = buildDefenceReport(makePayload(), makeRecord([]), {
       assault: fellAssault(),
     });

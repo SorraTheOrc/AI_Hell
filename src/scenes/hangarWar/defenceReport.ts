@@ -1,7 +1,6 @@
 /**
- * Defence-report renderer — the one report screen used by the game's
- * `DefenceReportScene` and by `GymHexWar` (AH-0MVUXCBBK004EJIP, part of
- * **Build Candidate D — Hangar War**).
+ * Defence-report renderer — the shared report renderer used by `GymHexWar`
+ * (AH-0MVUXCBBK004EJIP, part of **Build Candidate D — Hangar War**).
  *
  * The report's content is the pure read model built by
  * `src/core/hangarWar/defenceReport.ts`: the tick's aggression rise, the
@@ -10,10 +9,10 @@
  * that model and wires its single action (continue) to the shared
  * `FocusManager`; it contains no rule, no resolver call and no state.
  *
- * **One screen code path.** The shipped `DefenceReportScene` renders this with
- * a handler (continue → the map) and `GymHexWar` renders the **same** model and
- * renderer with no handlers, so the gym shows exactly what the game shows and
- * can never drift from it (AGENTS.md gym↔game parity, `docs/GYM_PARITY.md`).
+ * **One renderer code path.** `GymHexWar` renders the shipped model with this
+ * renderer and **no handlers**, so the gym's report view stays the same drawing
+ * code the game's between-sortie report used and can never drift from it
+ * (AGENTS.md gym↔game parity, `docs/GYM_PARITY.md`).
  *
  * @module src/scenes/hangarWar/defenceReport
  */

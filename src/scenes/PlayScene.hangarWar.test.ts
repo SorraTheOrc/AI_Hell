@@ -447,9 +447,9 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     ).toBe(true);
   });
 
-  // TEST-FIRST (AH-0MWEXHODJ0067PSJ): the run ends on the hex map, not the
-  // retired report screen; the wiring item (AH-0MWEXIWBO004GHN6) flips it to `it`.
-  it.fails(
+  // The run ends on the hex map; the retired report screen is gone
+  // (AH-0MWEXHODJ0067PSJ).
+  it(
     'AC — a deployment run ends on its wave-5 mini-boss and the capture cycle resolves (AH-0MWDCBVQ700579WS)',
     async () => {
       // The capture cycle resolves against the stored war, like a shipped run.
@@ -486,8 +486,7 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(hex.defender).not.toBeNull();
 
     // The run ends as a **victory on the hex map** (the between-sortie report
-    // screen is gone, AH-0MWEXHODJ0067PSJ). TEST-FIRST: red until the wiring
-    // item (AH-0MWEXIWBO004GHN6) routes the deployment end to the map.
+    // screen is gone, AH-0MWEXHODJ0067PSJ).
     await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
     const map = scene.game.scene.getScene(
       HEX_MAP_SCENE_KEY,

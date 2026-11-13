@@ -8,15 +8,11 @@
  * useful unlock (seeded tie-break) in the hangar — plus the dispatch that ties
  * the screens together.
  *
- * **The between-sortie `defenceReport` screen decision is gone
- * (AH-0MWEXHODJ0067PSJ, TEST-FIRST).** The separate report screen is rolled
- * into the hex map (parent AH-0MWDC3L9I008INDP): a deployment now ends
- * directly on the map, so the traversal has no report hop to decide. The
- * removed decision is pinned as an `it.fails` red witness (the repo's
- * red-before/green-after convention, see `src/core/levelScaling.test.ts`);
- * the wiring item (AH-0MWEXIWBO004GHN6) removes `decideReportAction` from the
- * source and flips the witness to `it`. A leftover `it.fails` then fails the
- * suite.
+ * **The between-sortie report screen decision is gone
+ * (AH-0MWEXHODJ0067PSJ).** The separate report screen is rolled into the hex
+ * map (parent AH-0MWDC3L9I008INDP): a deployment ends directly on the map, so
+ * the traversal has no report hop to decide. The test below pins the absence
+ * of the removed decision so it cannot creep back.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -241,10 +237,10 @@ describe('decideHangarAction — cheapest useful unlock, seeded', () => {
 });
 
 describe('the between-sortie report decision is removed (AH-0MWEXHODJ0067PSJ)', () => {
-  it.fails('no longer exposes a report decision (the map owns the landing)', async () => {
-    // TEST-FIRST witness: pre-change `decideTraversalAction('defenceReport')`
-    // returns `continueToMap` and the module still exports `decideReportAction`;
-    // the wiring item (AH-0MWEXIWBO004GHN6) removes both and flips this to `it`.
+  it('no longer exposes a report decision (the map owns the landing)', async () => {
+    // The removed decision stays removed: the module exports no
+    // `decideReportAction`, and a `defenceReport` screen falls through to the
+    // menu fallback rather than a report-specific hop.
     const mod = (await import('./hangarWarTraversal')) as Record<string, unknown>;
     expect('decideReportAction' in mod).toBe(false);
     // A leftover `defenceReport` screen behaves like the menu fallback, never
