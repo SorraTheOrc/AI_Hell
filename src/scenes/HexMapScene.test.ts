@@ -87,7 +87,12 @@ import {
 import { buildDefenceReport } from '../core/hangarWar/defenceReport';
 import type {
   FrontierTickRecord,
+  HangarAssaultResolution,
   HexDefenceRecord,
+} from '../core/hangarWar/hexDefence';
+import {
+  DEFAULT_FRONTIER_TUNING,
+  resolveHangarAssault,
 } from '../core/hangarWar/hexDefence';
 import type {
   HangarWarPayload,
@@ -1137,6 +1142,102 @@ describe('HexMapScene', () => {
     stepGameUntil(
       booted!.game,
       'the demo traverses past the reward and the map',
+      () => booted!.game.scene.isActive('PlayScene'),
+      900,
+    );
+  });
+
+  // ── The hangar assault announcement (AH-0MWEZZA4E0081NJ5) ───────
+
+  /** A jitter-free assault resolution, so the banner's arithmetic is exact. */
+  function assaultResolution(
+    defenderSum: number,
+    attackerBase: number,
+  ): HangarAssaultResolution {
+    return resolveHangarAssault(
+      { defenderSum, attackerBase, aggression: 0, seed: 1 },
+      { ...DEFAULT_FRONTIER_TUNING, jitterPercent: 0 },
+    );
+  }
+
+  it('announces a repelled hangar assault on the map', async () => {
+    const scene = await bootMap({
+      payload: attackPayload(),
+      record: attackRecord(),
+      won: true,
+      score: 900,
+      assault: assaultResolution(12, 5),
+      storage: null,
+    });
+
+    expect(scene.getAssault()!.outcome).toBe('repelled');
+    expect(scene.isAssaultVisible()).toBe(true);
+    expect(scene.getAssaultText()).toContain('RING WON');
+    expect(scene.getAssaultText()).toContain('defender sum 12');
+    expect(scene.getAssaultText()).toContain('margin +');
+    findTextStartingWith(scene, 'HANGAR ASSAULT');
+    findTextStartingWith(scene, 'RING WON');
+    // The tick's own report is still there: the assault is an added section.
+    expect(scene.getArrows()).toHaveLength(2);
+  });
+
+  it('announces the hangar-falls campaign reset on the map', async () => {
+    const scene = await bootMap({
+      payload: ringPayload(1),
+      won: true,
+      score: 900,
+      assault: assaultResolution(3, 5),
+      storage: null,
+    });
+
+    const text = scene.getAssaultText();
+    expect(scene.getModel().campaignReset).toBe(true);
+    expect(text).toContain('HANGAR FALLS');
+    expect(text).toContain('FULL CAMPAIGN RESET');
+    expect(text).not.toContain('RING WON');
+    findTextStartingWith(scene, 'HANGAR FALLS');
+  });
+
+  it('shows no assault banner on a plain landing or on a later re-entry', async () => {
+    const payload = ringPayload(1);
+    const scene = await bootMap({
+      payload,
+      assault: assaultResolution(12, 5),
+      storage: null,
+    });
+    expect(scene.isAssaultVisible()).toBe(true);
+
+    // The assault is transient launch data: a later menu/hangar landing carries
+    // none, so nothing persists.
+    booted!.game.scene.start(HEX_MAP_SCENE_KEY, { payload, storage: null });
+    await advanceGame(booted!.game, 200);
+    const reentered = booted!.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene;
+
+    expect(reentered.getAssault()).toBeNull();
+    expect(reentered.isAssaultVisible()).toBe(false);
+    expect(reentered.getAssaultText()).toBe('');
+    expect(screenText(reentered)).not.toContain('RING WON');
+    expect(screenText(reentered)).not.toContain('HANGAR ASSAULT');
+  });
+
+  it('never stalls the attract traversal on a hangar-falls announcement', async () => {
+    await bootMap({
+      payload: ringPayload(1),
+      won: true,
+      score: 900,
+      assault: assaultResolution(3, 5),
+      demo: true,
+      demoDwellMs: 300,
+      storage: null,
+    });
+
+    // The banner adds no action, so the demo's one total map step (deploy at
+    // the attract hex) still fires: the traversal cannot stall on it.
+    stepGameUntil(
+      booted!.game,
+      'the demo traverses past the hangar-falls announcement',
       () => booted!.game.scene.isActive('PlayScene'),
       900,
     );

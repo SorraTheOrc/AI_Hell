@@ -18,7 +18,13 @@ import {
   createDefaultPayload,
   DEFAULT_HULL_ID,
 } from './hangarWarStore';
-import { buildDefenceReport } from './defenceReport';
+import {
+  ASSAULT_HANGAR_FALLS_CONSEQUENCE,
+  ASSAULT_HANGAR_FALLS_HEADLINE,
+  ASSAULT_REPELLED_CONSEQUENCE,
+  ASSAULT_REPELLED_HEADLINE,
+  buildDefenceReport,
+} from './defenceReport';
 import { createRingState, generateRing } from './hexRing';
 import {
   HELD_TILE_MARKER,
@@ -41,8 +47,12 @@ import {
 import { VALID_HANGAR_WAR_PAYLOAD } from './fixtures';
 import { createHangarWarRng } from './rng';
 import {
+  DEFAULT_FRONTIER_TUNING,
+  resolveHangarAssault,
   runFrontierTick,
   type FrontierTickRecord,
+  type FrontierTuning,
+  type HangarAssaultResolution,
   type HexDefenceRecord,
 } from './hexDefence';
 import { aggressionScenario } from './__fixtures__/aggressionScenarios';
@@ -890,6 +900,119 @@ describe('hex map model — per-attack details keyed by hex id', () => {
     expect(detail.outcome).toBe('held');
     expect(detail.label).toContain('atk 11 × AGG 9 (210%');
     expect(detail.label).toContain('= 31 vs bot 40');
+  });
+});
+
+describe('hex map model — the hangar assault surface (AH-0MWEZZA4E0081NJ5)', () => {
+  /** Jitter disabled, so the assault arithmetic is exact. */
+  const NO_JITTER: FrontierTuning = {
+    ...DEFAULT_FRONTIER_TUNING,
+    jitterPercent: 0,
+  };
+
+  /** A jitter-free assault resolution from stored numbers only. */
+  function assault(
+    defenderSum: number,
+    attackerBase: number,
+  ): HangarAssaultResolution {
+    return resolveHangarAssault(
+      { defenderSum, attackerBase, aggression: 0, seed: 1 },
+      NO_JITTER,
+    );
+  }
+
+  it('carries no assault on an ordinary landing', () => {
+    const model = buildHexMapModel(ringPayload(1));
+
+    expect(model.assault).toBeNull();
+    expect(model.assaultLine).toBeNull();
+    expect(model.ringWon).toBe(false);
+    expect(model.campaignReset).toBe(false);
+  });
+
+  it('copies every assault figure verbatim from the resolver record', () => {
+    const resolution = assault(12, 5);
+    const model = buildHexMapModel(ringPayload(1), { assault: resolution });
+
+    expect(model.assault).not.toBeNull();
+    expect(model.assault!.outcome).toBe(resolution.outcome);
+    expect(model.assault!.defenderSum).toBe(resolution.defenderSum);
+    expect(model.assault!.attackerBase).toBe(resolution.attackerBase);
+    expect(model.assault!.aggression).toBe(resolution.aggression);
+    expect(model.assault!.aggressionMultiplierPercent).toBe(
+      resolution.aggressionMultiplierPercent,
+    );
+    expect(model.assault!.jitterPercent).toBe(resolution.jitterPercent);
+    expect(model.assault!.attackStrength).toBe(resolution.attackStrength);
+    expect(model.assault!.margin).toBe(resolution.margin);
+    // The rendered line is the report model's own section label.
+    expect(model.assaultLine).toBe(model.assault!.label);
+    expect(model.assaultLine).not.toBe('');
+  });
+
+  it('announces the ring won on a repel', () => {
+    const model = buildHexMapModel(ringPayload(1), { assault: assault(12, 5) });
+
+    expect(model.ringWon).toBe(true);
+    expect(model.campaignReset).toBe(false);
+    expect(model.assault!.ringWon).toBe(true);
+    expect(model.assaultLine).toContain(ASSAULT_REPELLED_HEADLINE);
+    expect(model.assaultLine).toContain(ASSAULT_REPELLED_CONSEQUENCE);
+    expect(model.assaultLine).toContain('defender sum 12');
+    expect(model.assaultLine).toContain('massed 5');
+    expect(model.assaultLine).not.toContain('HANGAR FALLS');
+    expect(model.assaultLine).not.toContain('FULL CAMPAIGN RESET');
+  });
+
+  it('announces the hangar-falls full campaign reset on a fall', () => {
+    const model = buildHexMapModel(ringPayload(1), { assault: assault(3, 5) });
+
+    expect(model.ringWon).toBe(false);
+    expect(model.campaignReset).toBe(true);
+    expect(model.assault!.campaignReset).toBe(true);
+    expect(model.assaultLine).toContain(ASSAULT_HANGAR_FALLS_HEADLINE);
+    expect(model.assaultLine).toContain(ASSAULT_HANGAR_FALLS_CONSEQUENCE);
+    expect(model.assaultLine).toContain('FULL CAMPAIGN RESET');
+    expect(model.assaultLine).not.toContain('RING WON');
+  });
+
+  it('renders the assault beside a quiet tick and a noisy tick alike', () => {
+    const quiet = buildHexMapModel(ringPayload(1), {
+      assault: assault(12, 5),
+    });
+    expect(quiet.arrows).toEqual([]);
+    expect(quiet.attackDetails.size).toBe(0);
+    expect(quiet.assaultLine).not.toBeNull();
+
+    const noisy = buildHexMapModel(attackPayload(), {
+      record: recordWith([recordAttack()]),
+      assault: assault(12, 5),
+    });
+    expect(noisy.arrows).toHaveLength(1);
+    expect(noisy.attackDetails.size).toBeGreaterThan(0);
+    expect(noisy.assaultLine).not.toBeNull();
+  });
+
+  it('never mutates the resolution and is deterministic', () => {
+    const resolution = assault(12, 5);
+    const before = { ...resolution };
+
+    const first = buildHexMapModel(ringPayload(1), { assault: resolution });
+    const second = buildHexMapModel(ringPayload(1), { assault: resolution });
+
+    expect(resolution).toEqual(before);
+    expect(first.assault).toEqual(second.assault);
+    expect(first.assaultLine).toBe(second.assaultLine);
+  });
+
+  it('never stalls the attract traversal on an assault landing', () => {
+    // The announcement adds no action: the map still offers exactly the same
+    // next step (the attract hex, or the hangar once the ring is secured).
+    const model = buildHexMapModel(ringPayload(1), { assault: assault(3, 5) });
+
+    expect(model.attractHexId).not.toBeNull();
+    expect(model.defaultFocusKey).toBe(`hex:${model.attractHexId}`);
+    expect(model.focusOrder).toContain(HEX_MAP_HANGAR_ROW_KEY);
   });
 });
 

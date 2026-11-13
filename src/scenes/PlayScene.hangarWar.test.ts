@@ -515,6 +515,16 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
       scene.game.scene.isActive(HEX_MAP_SCENE_KEY) ||
         scene.game.scene.isPaused(HEX_MAP_SCENE_KEY),
     ).toBe(true);
+    // The map announces the ring win from the capture's **own** assault record
+    // (AH-0MWEZZA4E0081NJ5) — no assault figure is re-derived on the map.
+    const landedAssault = map!.getAssault();
+    expect(landedAssault).not.toBeNull();
+    expect(landedAssault).toEqual(capture!.assault);
+    expect(map!.isAssaultVisible()).toBe(true);
+    expect(map!.getAssaultText()).toContain('RING WON');
+    // The landing's run line and the tick's own report are unchanged.
+    expect(map!.getRunLine()).toContain('RUN: VICTORY');
+    expect(map!.getRecord()).not.toBeNull();
     expect(wm.waveNumber).toBe(5);
     expect(scene.getAliveCount()).toBe(0);
   }, 30_000);

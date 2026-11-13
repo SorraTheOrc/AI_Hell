@@ -5637,12 +5637,19 @@ export class PlayScene extends CombatScene<
       // carries nothing, so its route stays deployment → map.
       const reward = won ? this.pendingWinReward : null;
       this.pendingWinReward = null;
+      // The ring-end hangar assault the capture resolved
+      // (AH-0MWEZZA4E0081NJ5): the map announces the ring win or the
+      // hangar-falls campaign reset from the resolver's own record, so no
+      // assault figure is re-derived on the map. `null` for a mid-ring capture
+      // or the rush line (no assault fired).
+      const assault = this.lastCapture?.assault ?? null;
       this.scene.start(HEX_MAP_SCENE_KEY, {
         payload: this._hangarWarPayload(),
         record: tick?.record,
         won,
         score: this.gameState.score,
         reward,
+        assault,
         demo: wasDemo,
         demoDwellMs: this.demoDwellMs,
       });

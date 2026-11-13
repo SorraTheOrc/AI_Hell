@@ -37,6 +37,17 @@
  * All three are **transient launch data**: nothing is persisted, so a later
  * menu/hangar re-entry renders no arrows, no run line and no reward.
  *
+ * ## The hangar assault announcement (`AH-0MWEZZA4E0081NJ5`)
+ *
+ * A landing may also carry the **resolved ring-end hangar assault** the
+ * deployment's capture ran (`assault`). The map's model copies the report
+ * model's own section into `assault` / `assaultLine` / `ringWon` /
+ * `campaignReset`, and the shared renderer draws it as a read-only banner: a
+ * repel announces the ring won (and the next ring opening), a fall announces
+ * the hangar-falls **full campaign reset**. Because the banner adds no action,
+ * the attract traversal keeps its one total next step (deploy, or the hangar
+ * once secured) and cannot stall on it.
+ *
  * @module src/scenes/HexMapScene
  */
 
@@ -53,7 +64,10 @@ import type {
   HangarWarStorage,
 } from '../core/hangarWar/types';
 import type { HexRingDefinition } from '../core/hangarWar/hexRing';
-import type { FrontierTickRecord } from '../core/hangarWar/hexDefence';
+import type {
+  FrontierTickRecord,
+  HangarAssaultResolution,
+} from '../core/hangarWar/hexDefence';
 import {
   buildHexMapModel,
   type HexMapModel,
@@ -114,6 +128,13 @@ export interface HexMapSceneData {
   /** The finished deployment's final score (renders with the run line). */
   score?: number;
   /**
+   * The resolved ring-end hangar assault the deployment's capture ran
+   * (`AH-0MWEZZA4E0081NJ5`), or omitted/`null` when it ran none. Transient
+   * launch data: the map announces the ring win or the hangar-falls campaign
+   * reset from this record and never persists it.
+   */
+  assault?: HangarAssaultResolution | null;
+  /**
    * The mini-boss reward a winning deployment resolved and carried here
    * (parent AH-0MWBW1B1Z0059CC2). Presented over the **paused** map through the
    * shipped overlay and consumed exactly once; `null`/omitted on a loss, so the
@@ -157,6 +178,12 @@ export class HexMapScene extends Phaser.Scene {
   private score = 0;
 
   /**
+   * The resolved hangar assault this landing followed, or `null` when the
+   * deployment's capture ran none. Transient launch data, never persisted.
+   */
+  private assault: HangarAssaultResolution | null = null;
+
+  /**
    * The resolved mini-boss reward carried by this landing, or `null` when there
    * is none (a loss, a plain entry, or once it has been presented). Consumed
    * exactly once.
@@ -185,6 +212,7 @@ export class HexMapScene extends Phaser.Scene {
     this.record = data?.record;
     this.won = data?.won ?? null;
     this.score = data?.score ?? 0;
+    this.assault = data?.assault ?? null;
     this.reward = data?.reward ?? null;
     this.demo = data?.demo === true;
     this.demoDwellMs = data?.demoDwellMs;
@@ -244,6 +272,7 @@ export class HexMapScene extends Phaser.Scene {
     const model = buildHexMapModel(this.payload, {
       definitions: this.definitions,
       record: this.record,
+      assault: this.assault,
     });
     this.view = renderHexMap(this, model, {
       onDeploy: (hexId) => this.deploy(hexId),
@@ -420,6 +449,7 @@ export class HexMapScene extends Phaser.Scene {
       buildHexMapModel(this.payload, {
         definitions: this.definitions,
         record: this.record,
+        assault: this.assault,
       })
     );
   }
@@ -432,6 +462,31 @@ export class HexMapScene extends Phaser.Scene {
     return this.record === undefined
       ? null
       : (JSON.parse(JSON.stringify(this.record)) as FrontierTickRecord);
+  }
+
+  /**
+   * The resolved hangar assault this landing carried (a detached copy), or
+   * `null` when the deployment's capture ran none. Never persisted.
+   */
+  getAssault(): HangarAssaultResolution | null {
+    return this.assault === null
+      ? null
+      : (JSON.parse(
+          JSON.stringify(this.assault),
+        ) as HangarAssaultResolution);
+  }
+
+  /**
+   * The rendered hangar-assault announcement (`RING WON …` / `HANGAR FALLS …`
+   * plus its arithmetic and consequence), or `''` when none was carried.
+   */
+  getAssaultText(): string {
+    return this.view?.getAssaultText() ?? '';
+  }
+
+  /** Whether the hangar-assault announcement is on screen. */
+  isAssaultVisible(): boolean {
+    return this.view?.isAssaultVisible() ?? false;
   }
 
   /**

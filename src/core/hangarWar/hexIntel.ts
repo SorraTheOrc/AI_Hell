@@ -80,6 +80,18 @@
  * one (or with a quiet/malformed one) publishes no arrows and no details
  * rather than throwing.
  *
+ * ## The hangar assault (`AH-0MWEZZA4E0081NJ5`)
+ *
+ * The launch data may also carry the **resolved hangar assault** the
+ * deployment's capture ran when the ring's final hex fell
+ * (`resolveRingAssault` → `resolveHangarAssault`). The model copies the report
+ * model's own section into `assault` / `assaultLine` / `ringWon` /
+ * `campaignReset`, so the map renders the ring-won line or the hangar-falls
+ * campaign-reset announcement verbatim — it never recomputes a defender sum, a
+ * massed force or a margin. An assault landing with no attacks publishes the
+ * quiet tick line alongside the assault section, so the announcement is never
+ * an empty screen.
+ *
  * @module src/core/hangarWar/hexIntel
  */
 
@@ -107,8 +119,12 @@ import {
 } from '../../data/hexRingDefinitions';
 import { resolvePlayerStrength } from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
-import { buildDefenceReport, type DefenceReportRow } from './defenceReport';
-import type { FrontierTickRecord } from './hexDefence';
+import {
+  buildDefenceReport,
+  type AssaultReportSection,
+  type DefenceReportRow,
+} from './defenceReport';
+import type { FrontierTickRecord, HangarAssaultResolution } from './hexDefence';
 
 /** Title rendered by the map screen (asserted by tests). */
 export const HEX_MAP_TITLE = 'HANGAR WAR — HEX MAP';
@@ -284,6 +300,22 @@ export interface HexMapModel {
    * a hex is both, the attacked entry wins. Empty without a record.
    */
   readonly attackDetails: ReadonlyMap<string, DefenceReportRow>;
+  /**
+   * The resolved hangar assault this landing follows
+   * (`AH-0MWEZZA4E0081NJ5`), copied straight from the report model's own
+   * section — the map never re-derives an assault figure. `null` on an
+   * ordinary landing (no assault was resolved).
+   */
+  readonly assault: AssaultReportSection | null;
+  /**
+   * The assault section's rendered text (headline, arithmetic, consequence),
+   * or `null` when no assault was carried.
+   */
+  readonly assaultLine: string | null;
+  /** True only when an assault was repelled (the ring is won by defence). */
+  readonly ringWon: boolean;
+  /** True only when the assault broke the hangar (the campaign was reset). */
+  readonly campaignReset: boolean;
 }
 
 /**
@@ -355,35 +387,67 @@ export interface BuildHexMapOptions {
    * when the map is entered without one (a transient overlay, never stored).
    */
   readonly record?: FrontierTickRecord;
-}
-
-/** The attack overlay a tick record contributes to the map model. */
-interface HexMapAttackOverlay {
-  readonly arrows: readonly HexMapAttackArrow[];
-  readonly attackDetails: ReadonlyMap<string, DefenceReportRow>;
+  /**
+   * The hangar assault the deployment's capture resolved
+   * (`AH-0MWEZZA4E0081NJ5`), or omitted/`null` when this landing follows no
+   * assault. Rendered verbatim by the report model, never re-derived.
+   */
+  readonly assault?: HangarAssaultResolution | null;
 }
 
 /**
- * Builds the map's attack overlay from the transient tick record.
+ * The tick record an assault-only landing is rendered against: nothing was
+ * attacked, so every attack figure is empty and the report model publishes the
+ * quiet "no hex was attacked" line alongside the assault section.
+ */
+const QUIET_TICK_RECORD: FrontierTickRecord = Object.freeze({
+  tick: 0,
+  playerStrength: 0,
+  aggressionBudget: 0,
+  beatableCeiling: 0,
+  deltas: [],
+  rose: 0,
+  fell: 0,
+  attacks: [],
+});
+
+/** The report overlay a tick record and an assault contribute to the map. */
+interface HexMapAttackOverlay {
+  readonly arrows: readonly HexMapAttackArrow[];
+  readonly attackDetails: ReadonlyMap<string, DefenceReportRow>;
+  readonly assault: AssaultReportSection | null;
+  readonly assaultLine: string | null;
+  readonly ringWon: boolean;
+  readonly campaignReset: boolean;
+}
+
+/**
+ * Builds the map's report overlay from the transient tick record and the
+ * resolved hangar assault.
  *
  * The arrows are copied from the record's own `attackerOrigin` coordinates and
- * the details are the report model's own rows (index-aligned with
- * `record.attacks`), so no number is re-resolved here. Total: a missing,
- * empty or malformed record yields no arrows and no details.
+ * everything else — the attack rows and the assault section — comes from the
+ * report model (`buildDefenceReport`), so no number is re-resolved here. Total:
+ * a missing, empty or malformed record yields no arrows and no details, while
+ * an assault still renders against the quiet record.
  *
  * @param payload — the war's stored payload (never mutated).
  * @param record — the between-sortie tick record, when one was carried.
- * @returns the arrows and the per-hex details.
+ * @param assault — the resolved hangar assault, when the capture ran one.
+ * @returns the arrows, the per-hex details and the assault section.
  */
 function buildAttackOverlay(
   payload: HangarWarPayload,
   record: FrontierTickRecord | undefined,
+  assault: HangarAssaultResolution | null,
 ): HexMapAttackOverlay {
+  // One report model call is the single source of every published number: the
+  // attack rows and the assault section cannot drift from the report the
+  // standalone renderer draws (AGENTS.md gym↔game parity).
+  const report = buildDefenceReport(payload, record ?? QUIET_TICK_RECORD, {
+    assault,
+  });
   const attacks = Array.isArray(record?.attacks) ? record.attacks : [];
-  if (!record || attacks.length === 0) {
-    return { arrows: [], attackDetails: new Map() };
-  }
-
   const arrows = attacks.map((attack): HexMapAttackArrow => ({
     key: `arrow:${attack.hexId}`,
     hexId: attack.hexId,
@@ -394,18 +458,24 @@ function buildAttackOverlay(
     },
   }));
 
-  const rows = buildDefenceReport(payload, record).rows;
   const attackDetails = new Map<string, DefenceReportRow>();
   // Attacked endpoints first, so the attacked entry wins when a hex is both
   // endpoints of an attack (a self-referential record).
-  rows.forEach((row) => attackDetails.set(row.hexId, row));
-  rows.forEach((row) => {
+  report.rows.forEach((row) => attackDetails.set(row.hexId, row));
+  report.rows.forEach((row) => {
     if (!attackDetails.has(row.attackerOriginId)) {
       attackDetails.set(row.attackerOriginId, row);
     }
   });
 
-  return { arrows, attackDetails };
+  return {
+    arrows,
+    attackDetails,
+    assault: report.assault,
+    assaultLine: report.assaultLine,
+    ringWon: report.ringWon,
+    campaignReset: report.campaignReset,
+  };
 }
 
 /** `value` as a non-negative integer; anything unusable collapses to `0`. */
@@ -632,8 +702,9 @@ export function pickAttractHex(
  * definitions.
  *
  * @param payload — the war's stored payload (never mutated).
- * @param options — definitions/title overrides and the transient tick record
- *   whose attacks become arrows and per-attack details.
+ * @param options — definitions/title overrides, the transient tick record
+ *   whose attacks become arrows and per-attack details, and the resolved
+ *   hangar assault the report announces.
  * @returns the complete map model (hexes, ring/hangar lines, focus order).
  */
 export function buildHexMapModel(
@@ -682,7 +753,8 @@ export function buildHexMapModel(
     HEX_MAP_HANGAR_ROW_KEY,
   ];
   const gridColumns = buildGridColumns(hexes, HEX_MAP_HANGAR_ROW_KEY);
-  const { arrows, attackDetails } = buildAttackOverlay(payload, options.record);
+  const { arrows, attackDetails, assault, assaultLine, ringWon, campaignReset } =
+    buildAttackOverlay(payload, options.record, options.assault ?? null);
   const defaultFocusKey =
     attractHexId !== null
       ? `${HEX_MAP_HEX_ROW_PREFIX}${attractHexId}`
@@ -714,5 +786,9 @@ export function buildHexMapModel(
     gridColumns,
     arrows,
     attackDetails,
+    assault,
+    assaultLine,
+    ringWon,
+    campaignReset,
   };
 }

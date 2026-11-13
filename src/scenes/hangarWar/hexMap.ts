@@ -67,6 +67,18 @@
  * Both are driven by the shipped model (`arrows` / `attackDetails`), never by
  * a scene-local rule, and both disappear when the transient record does.
  *
+ * ## The hangar assault announcement (`AH-0MWEZZA4E0081NJ5`)
+ *
+ * When the model carries a resolved ring-end hangar assault (`model.assault`),
+ * the renderer draws its section in the left-hand column under the attack
+ * panel: the outcome headline (`RING WON …` / `HANGAR FALLS …`), the arithmetic
+ * that produced it and the consequence (the next ring opens / the full campaign
+ * reset). The text is the report model's own `assaultLine`, copied verbatim,
+ * so the map can never publish a second, drifting set of assault numbers — and
+ * because it is a read-only banner over the same map, the attract traversal
+ * keeps its one total next action (deploy, or the hangar once secured) and
+ * cannot stall on it.
+ *
  * @module src/scenes/hangarWar/hexMap
  */
 
@@ -110,6 +122,9 @@ const HANGAR_LINE = 0x00ffff;
 const TEXT_COLOR = '#a8e8ff';
 const HEADING_COLOR = '#00ffff';
 const MUTED_COLOR = '#557788';
+/** Outcome colours for the hangar-assault banner (ring won / hangar fell). */
+const WON_COLOR = '#00ff88';
+const FALLS_COLOR = '#ff6666';
 
 /**
  * CVD-safe tile text colours (producer Q2 = b): blue for a held hex, orange
@@ -143,6 +158,17 @@ const ATTACK_PANEL_X = 24;
 const ATTACK_PANEL_Y = 118;
 const ATTACK_PANEL_WIDTH = 270;
 const ATTACK_PANEL_HEADING = 'ATTACK — FOCUSED HEX';
+
+/**
+ * Left-hand hangar-assault banner (`AH-0MWEZZA4E0081NJ5`).
+ *
+ * Sits below the attack panel and above the `◀ HANGAR` row, in the same clear
+ * left band: the report model's own `assaultLine` word-wraps inside it rather
+ * than overdrawing a tile.
+ */
+const ASSAULT_BANNER_Y = 300;
+const ASSAULT_BANNER_WIDTH = 270;
+const ASSAULT_BANNER_HEADING = 'HANGAR ASSAULT';
 
 /** Attack-arrow styling (drawn between the tile fills and the tile labels). */
 const ARROW_COLOR = 0xffb347;
@@ -235,6 +261,13 @@ export interface HexMapView {
   getLeftPanelText(): string;
   /** Whether the left-hand attack panel is showing. */
   isLeftPanelVisible(): boolean;
+  /**
+   * The hangar-assault banner's current text (the report model's own
+   * `assaultLine`), or `''` when the map carries no assault.
+   */
+  getAssaultText(): string;
+  /** Whether the hangar-assault banner is showing. */
+  isAssaultVisible(): boolean;
   /** Moves focus to `key` when it is focusable (deterministic test seam). */
   focusRow(key: string): boolean;
   /** Activates the focused row (what Enter/Space does). */
@@ -744,6 +777,35 @@ export function renderHexMap(
     attackPanelBody.setVisible(detail !== undefined);
   };
 
+  // ── The hangar-assault announcement (AH-0MWEZZA4E0081NJ5) ───────
+  // The report model's own section, copied verbatim: a repel announces the
+  // ring won, a fall announces the full campaign reset. Read-only, so the
+  // attract traversal keeps its one total next action and never stalls here.
+  const assaultLine = model.assaultLine;
+  let assaultBody: Phaser.GameObjects.Text | null = null;
+  if (assaultLine !== null) {
+    objects.push(
+      scene.add.text(ATTACK_PANEL_X, ASSAULT_BANNER_Y, ASSAULT_BANNER_HEADING, {
+        fontFamily: 'monospace',
+        fontSize: '10px',
+        color: HEADING_COLOR,
+      }),
+    );
+    assaultBody = scene.add.text(
+      ATTACK_PANEL_X,
+      ASSAULT_BANNER_Y + 16,
+      assaultLine,
+      {
+        fontFamily: 'monospace',
+        fontSize: '11px',
+        color: model.campaignReset ? FALLS_COLOR : WON_COLOR,
+        lineSpacing: 2,
+        wordWrap: { width: ASSAULT_BANNER_WIDTH },
+      },
+    );
+    objects.push(assaultBody);
+  }
+
   const updatePanel = (): void => {
     paintTiles();
     const hex = hexByKey(displayedHexKey());
@@ -781,6 +843,12 @@ export function renderHexMap(
     },
     isLeftPanelVisible(): boolean {
       return attackPanelKey !== null && attackPanelBody.visible;
+    },
+    getAssaultText(): string {
+      return assaultBody?.text ?? '';
+    },
+    isAssaultVisible(): boolean {
+      return assaultBody !== null && assaultBody.visible;
     },
     destroy(): void {
       focusManager.shutdown();
