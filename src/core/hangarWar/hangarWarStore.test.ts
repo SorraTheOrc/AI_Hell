@@ -13,6 +13,10 @@
  * 3. **Migration** — a hangar-only (pre-ring) save loads as "hangar at its
  *    last valid state, empty ring", stamped with the current version, and a
  *    partial ring is never discarded.
+ * 4. **Special-mission state** — the ring-2 special mission's captured
+ *    `hull-3` grant round-trips without loss, a legacy save written before it
+ *    landed migrates by field presence (no version bump) and a structurally
+ *    broken save is still rejected whole (AH-0MWF0CRGE000T6HJ).
  *
  * The corrupt/hangar-only/partial-ring samples come from the shared fixtures
  * (`./fixtures`), so the store is tested against exactly the payload contract
@@ -739,5 +743,226 @@ describe('hangar-war store migration (hangar-only save)', () => {
 
     expect(loadHangarWarPayload(storage)).toEqual(migrated);
     expect(loadHangarWarPayload(storage)?.hangar).toEqual(HANGAR_ONLY_PAYLOAD.hangar);
+  });
+});
+
+/**
+ * A ring-2 payload whose special mission has been captured.
+ *
+ * Post-MVP Hangar War (`AH-0MVWZYIWX0008C55`, Q1 = a/Q2 = a): `hex-r2-3`
+ * (*the-void-marshall*) is the authored special-mission hex and its reward is
+ * the extra-hit-points Juggernaut Hull (`hull-3`). The deployment is an
+ * ordinary one-level capture, so the saved evidence is exactly what
+ * `resolveHexCapture` writes: the hex's `grantedWeapon` and the hangar's
+ * `unlockedHulls`. The authored `isSpecialMission` marker itself is ring data
+ * (`src/data/hexRingDefinitions.ts`), never saved per hex.
+ */
+function capturedSpecialMissionPayload(): HangarWarPayload {
+  return {
+    version: HANGAR_WAR_VERSION,
+    seed: 424242,
+    hangar: {
+      bankedMinerals: 310,
+      bankedCores: 4,
+      unlockedHulls: ['hull-1', 'hull-3'],
+      unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
+      ownedModifiers: [],
+      activeHull: 'hull-3',
+      activeLoadout: { startingWeapons: [], modifiers: [] },
+    },
+    ring: {
+      ringIndex: 2,
+      hexes: [
+        {
+          id: 'hex-r2-3',
+          q: -2,
+          r: 2,
+          held: true,
+          aggression: 5,
+          defender: { hullId: 'hull-3', defenceRating: 9, bankedMinerals: 40 },
+          bossDefeated: true,
+          grantedWeapon: 'hull-3',
+        },
+        {
+          id: 'hex-r2-4',
+          q: -1,
+          r: -1,
+          held: false,
+          aggression: 2,
+          defender: null,
+          bossDefeated: false,
+          grantedWeapon: null,
+        },
+      ],
+    },
+    pendingAttacks: [],
+    bestScore: 51_000,
+  };
+}
+
+/** The payload above as the loose record a stored/legacy save is. */
+function specialMissionRecord(): Record<string, unknown> {
+  return JSON.parse(serialisePayload(capturedSpecialMissionPayload())) as Record<
+    string,
+    unknown
+  >;
+}
+
+describe('hangar-war store special-mission persistence (AH-0MWF0CRGE000T6HJ)', () => {
+  it('round-trips the captured special-mission hex and its granted hull without loss', () => {
+    const storage = createInMemoryHangarWarStorage();
+    const saved = capturedSpecialMissionPayload();
+
+    expect(saveHangarWarPayload(saved, storage)).toBe(true);
+    const loaded = loadHangarWarPayload(storage);
+
+    // Nothing is dropped or defaulted on the way through the one payload.
+    expect(loaded).toEqual(saved);
+    // TC3: the hex keeps its identity and axial coordinates.
+    expect(loaded?.ring).toMatchObject({ ringIndex: 2 });
+    expect(loaded?.ring.hexes[0]).toMatchObject({
+      id: 'hex-r2-3',
+      q: -2,
+      r: 2,
+    });
+    // TC1: the special grant is recorded on the hex ...
+    expect(loaded?.ring.hexes[0].grantedWeapon).toBe('hull-3');
+    // ... and the granted hull is owned in the persistent hangar.
+    expect(loaded?.hangar.unlockedHulls).toEqual(['hull-1', 'hull-3']);
+    // Additive special-mission content needs no schema version bump.
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+    expect(HANGAR_WAR_VERSION).toBe(1);
+  });
+
+  it('survives a second write-back unchanged (the round-trip is idempotent)', () => {
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(capturedSpecialMissionPayload(), storage);
+
+    const first = loadHangarWarPayload(storage) as HangarWarPayload;
+    expect(saveHangarWarPayload(first, storage)).toBe(true);
+    const second = loadHangarWarPayload(storage);
+
+    expect(second).toEqual(first);
+    expect(serialisePayload(second)).toBe(serialisePayload(first));
+  });
+
+  it('loads a legacy save written before the special mission landed (field presence)', () => {
+    // A save from before the feature: the hex at the special mission's
+    // coordinates was an ordinary, uncaptured hex, and no new field existed —
+    // not even the frontier tick. It must load cleanly, with the hangar and
+    // the ring untouched, the absent optional fields left absent (safe
+    // defaults), and the version still 1.
+    const legacy = specialMissionRecord();
+    delete legacy.frontierTick;
+    const legacyHexes = hexRecords(legacy);
+    legacyHexes[0] = {
+      id: 'hex-r2-3',
+      q: -2,
+      r: 2,
+      held: false,
+      aggression: 5,
+      defender: null,
+      bossDefeated: false,
+      grantedWeapon: null,
+    };
+    legacy.hangar = {
+      bankedMinerals: 120,
+      bankedCores: 2,
+      unlockedHulls: ['hull-1', 'hull-2'],
+      unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
+      ownedModifiers: [],
+      activeHull: 'hull-2',
+      activeLoadout: { startingWeapons: [], modifiers: [] },
+    };
+
+    const loaded = parseHangarWarPayload(legacy);
+
+    // No crash, no reset: the hangar and the ring survive as written.
+    expect(loaded).not.toBeNull();
+    expect(loaded?.hangar).toMatchObject({
+      bankedMinerals: 120,
+      bankedCores: 2,
+      activeHull: 'hull-2',
+    });
+    expect(loaded?.hangar.unlockedHulls).toEqual(['hull-1', 'hull-2']);
+    // The hex reads as an ordinary, not-yet-captured hex: the safe defaults
+    // for *not offered / not completed* are absence, not invented data.
+    expect(loaded?.ring.hexes[0]).toMatchObject({
+      id: 'hex-r2-3',
+      q: -2,
+      r: 2,
+      held: false,
+      bossDefeated: false,
+      grantedWeapon: null,
+    });
+    // An additive field that was never written stays absent (field presence,
+    // exactly like `frontierTick`), and the schema version is unchanged.
+    expect('frontierTick' in (loaded as object)).toBe(false);
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+  });
+
+  it('keeps per-hex special-mission identity out of the saved payload', () => {
+    // The special-mission marker is authored ring data, so the saved hex has
+    // only the shipped fields. If a per-hex special-mission field is ever
+    // added it must be optional and follow the `frontierTick` pattern
+    // (absence reads as *not offered / not completed*), never a version bump.
+    const loaded = parseHangarWarPayload(
+      JSON.parse(
+        serialisePayload({
+          ...capturedSpecialMissionPayload(),
+          ring: {
+            ringIndex: 2,
+            hexes: [{ id: 'hex-r2-3', q: -2, r: 2 }],
+          },
+        }),
+      ),
+    );
+
+    expect(loaded).not.toBeNull();
+    expect(Object.keys(loaded?.ring.hexes[0] ?? {}).sort()).toEqual([
+      'aggression',
+      'bossDefeated',
+      'defender',
+      'grantedWeapon',
+      'held',
+      'id',
+      'q',
+      'r',
+    ]);
+  });
+
+  it('drops a structurally broken hex but never wipes the granted hull', () => {
+    // A malformed hex is salvaged away; the hangar that owns the special hull
+    // is untouched, so a corrupt ring can never lose the reward.
+    const record = specialMissionRecord();
+    delete hexRecords(record)[0].q;
+
+    const loaded = parseHangarWarPayload(record);
+
+    expect(loaded).not.toBeNull();
+    expect(loaded?.ring.hexes.map((hexState) => hexState.id)).toEqual(['hex-r2-4']);
+    expect(loaded?.hangar.unlockedHulls).toContain('hull-3');
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+  });
+
+  it('still rejects a structurally broken special-mission save whole (unchanged)', () => {
+    // The existing parse contract is unchanged by the special mission: an
+    // unidentifiable payload loads as `null`, never throws, and is never
+    // rewritten, so the build that wrote it can still read it.
+    const broken = serialisePayload({
+      ...capturedSpecialMissionPayload(),
+      version: HANGAR_WAR_VERSION + 1,
+    });
+    const storage = storageWithRaw(broken);
+
+    expect(() => loadHangarWarPayload(storage)).not.toThrow();
+    expect(loadHangarWarPayload(storage)).toBeNull();
+    expect(storage.getItem(HANGAR_WAR_STORAGE_KEY)).toBe(broken);
+
+    const noHangar = parseHangarWarPayload({
+      ...capturedSpecialMissionPayload(),
+      hangar: undefined,
+    });
+    expect(noHangar).toBeNull();
   });
 });
