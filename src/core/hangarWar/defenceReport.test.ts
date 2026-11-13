@@ -11,6 +11,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ASSAULT_HANGAR_FALLS_CONSEQUENCE,
+  ASSAULT_HANGAR_FALLS_HEADLINE,
+  ASSAULT_REPELLED_CONSEQUENCE,
+  ASSAULT_REPELLED_HEADLINE,
   DEFENCE_REPORT_CONTINUE_KEY,
   DEFENCE_REPORT_CONTINUE_LABEL,
   DEFENCE_REPORT_NO_BATTLE_LINE,
@@ -19,7 +23,19 @@ import {
   retakeTargetHex,
   retakeTargetIsAnswerable,
 } from './defenceReport';
-import { runFrontierTick, type FrontierTickRecord, type HexDefenceRecord } from './hexDefence';
+import {
+  DEFAULT_FRONTIER_TUNING,
+  resolveHangarAssault,
+  runFrontierTick,
+  type FrontierTickRecord,
+  type FrontierTuning,
+  type HangarAssaultResolution,
+  type HexDefenceRecord,
+} from './hexDefence';
+import {
+  decideReportAction,
+  decideTraversalAction,
+} from '../../ai/hangarWarTraversal';
 import { aggressionScenario } from './__fixtures__/aggressionScenarios';
 import { resolvePlayerStrength } from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
@@ -358,5 +374,209 @@ describe('buildDefenceReport — the redistributed tick passthrough (AH-0MWBBUAU
     expect(model.beatableCeiling).toBe(
       beatableAggressionCeiling(model.playerStrength),
     );
+  });
+});
+
+describe('buildDefenceReport — the hangar assault record (AH-0MWEZZ9EB00604U0)', () => {
+  /** The resolver's tuning with jitter disabled, so the arithmetic is exact. */
+  const NO_JITTER: FrontierTuning = {
+    ...DEFAULT_FRONTIER_TUNING,
+    jitterPercent: 0,
+  };
+
+  /** A repelled, jitter-free assault (12 held defence against a massed 5). */
+  function repelledAssault(): HangarAssaultResolution {
+    return resolveHangarAssault(
+      { defenderSum: 12, attackerBase: 5, aggression: 0, seed: 1 },
+      NO_JITTER,
+    );
+  }
+
+  /** A failed, jitter-free assault (3 held defence against a massed 5). */
+  function fellAssault(): HangarAssaultResolution {
+    return resolveHangarAssault(
+      { defenderSum: 3, attackerBase: 5, aggression: 0, seed: 1 },
+      NO_JITTER,
+    );
+  }
+
+  it('carries every assault figure verbatim from the resolver record', () => {
+    const resolution = resolveHangarAssault(
+      { defenderSum: 9, attackerBase: 4, aggression: 3, seed: 7 },
+    );
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+    const section = model.assault;
+    expect(section).not.toBeNull();
+    expect(section!.outcome).toBe(resolution.outcome);
+    expect(section!.defenderSum).toBe(resolution.defenderSum);
+    expect(section!.attackerBase).toBe(resolution.attackerBase);
+    expect(section!.aggression).toBe(resolution.aggression);
+    expect(section!.aggressionMultiplierPercent).toBe(
+      resolution.aggressionMultiplierPercent,
+    );
+    expect(section!.jitterPercent).toBe(resolution.jitterPercent);
+    expect(section!.attackStrength).toBe(resolution.attackStrength);
+    expect(section!.margin).toBe(resolution.margin);
+    expect(model.assaultLine).toBe(section!.label);
+  });
+
+  it('renders the held-ring defender sum against the massed force, with no re-derivation', () => {
+    const resolution = repelledAssault();
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+    const { numbersLine } = model.assault!;
+
+    expect(numbersLine).toContain(`defender sum ${resolution.defenderSum}`);
+    expect(numbersLine).toContain(`massed ${resolution.attackerBase}`);
+    expect(numbersLine).toContain(`AGG ${resolution.aggression}`);
+    expect(numbersLine).toContain('100%');
+    expect(numbersLine).toContain('no jitter');
+    expect(numbersLine).toContain(`= ${resolution.attackStrength}`);
+    expect(numbersLine).toContain(`margin +${resolution.margin}`);
+    expect(numbersLine).toContain('REPELLED');
+  });
+
+  it('renders a repelled assault as the legible ring-won line', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: repelledAssault(),
+    });
+
+    expect(model.ringWon).toBe(true);
+    expect(model.campaignReset).toBe(false);
+    expect(model.assault!.ringWon).toBe(true);
+    expect(model.assault!.campaignReset).toBe(false);
+    expect(model.assault!.headline).toBe(ASSAULT_REPELLED_HEADLINE);
+    expect(model.assaultLine).toContain('RING WON');
+    expect(model.assaultLine).toContain('repelled');
+    expect(model.assaultLine).toContain(ASSAULT_REPELLED_CONSEQUENCE);
+    expect(model.assaultLine).not.toContain('FULL CAMPAIGN RESET');
+  });
+
+  it('renders a failed assault as the hangar-falls full campaign reset announcement', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: fellAssault(),
+    });
+
+    expect(model.ringWon).toBe(false);
+    expect(model.campaignReset).toBe(true);
+    expect(model.assault!.ringWon).toBe(false);
+    expect(model.assault!.campaignReset).toBe(true);
+    expect(model.assault!.headline).toBe(ASSAULT_HANGAR_FALLS_HEADLINE);
+    expect(model.assaultLine).toContain('HANGAR FALLS');
+    expect(model.assaultLine).toContain('FULL CAMPAIGN RESET');
+    expect(model.assaultLine).toContain('wiped');
+    expect(model.assaultLine).toContain(ASSAULT_HANGAR_FALLS_CONSEQUENCE);
+    expect(model.assaultLine).not.toContain('RING WON');
+  });
+
+  it('renders an exact tie as a repel (margin 0 holds the line)', () => {
+    const resolution = resolveHangarAssault(
+      { defenderSum: 5, attackerBase: 5, aggression: 0, seed: 1 },
+      NO_JITTER,
+    );
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+
+    expect(resolution.outcome).toBe('repelled');
+    expect(model.assault!.outcome).toBe('repelled');
+    expect(model.assault!.margin).toBe(0);
+    expect(model.assault!.numbersLine).toContain('margin 0');
+    expect(model.ringWon).toBe(true);
+    expect(model.campaignReset).toBe(false);
+  });
+
+  it('leaves a quiet / no-assault report unchanged', () => {
+    const baseline = buildDefenceReport(makePayload(), makeRecord([]));
+    const explicitNull = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: null,
+    });
+
+    expect(explicitNull).toEqual(baseline);
+    expect(baseline.assault).toBeNull();
+    expect(baseline.assaultLine).toBeNull();
+    expect(baseline.ringWon).toBe(false);
+    expect(baseline.campaignReset).toBe(false);
+    expect(baseline.quiet).toBe(true);
+    expect(baseline.summaryLine).toBe('QUIET — no hex was attacked this tick');
+  });
+
+  it('still reports the tick\'s own rows alongside the assault section', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([attack()]), {
+      assault: repelledAssault(),
+    });
+
+    expect(model.rows).toHaveLength(1);
+    expect(model.attackedCount).toBe(1);
+    expect(model.fellCount).toBe(1);
+    expect(model.summaryLine).toBe('ATTACKED 1 · HELD 0 · FELL 1');
+    expect(model.assault).not.toBeNull();
+  });
+
+  it('never stalls the attract bot on an assault report', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: repelledAssault(),
+    });
+
+    // The report keeps exactly one action, focused by default.
+    expect(model.focusOrder).toEqual([DEFENCE_REPORT_CONTINUE_KEY]);
+    expect(model.defaultFocusKey).toBe(DEFENCE_REPORT_CONTINUE_KEY);
+    expect(model.continueLabel).toBe(DEFENCE_REPORT_CONTINUE_LABEL);
+
+    // The bot's decision is still to continue, whatever the assault outcome.
+    expect(decideReportAction()).toEqual({ kind: 'continueToMap' });
+    expect(
+      decideTraversalAction('defenceReport', makePayload()),
+    ).toEqual({ kind: 'continueToMap' });
+    const fellModel = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: fellAssault(),
+    });
+    expect(fellModel.focusOrder).toEqual([DEFENCE_REPORT_CONTINUE_KEY]);
+  });
+
+  it('never mutates the resolution and is deterministic', () => {
+    const resolution = repelledAssault();
+    const before = { ...resolution };
+
+    const first = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+    const second = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+
+    expect(resolution).toEqual(before);
+    expect(first).toEqual(second);
+  });
+
+  it('is total on a corrupt assault record', () => {
+    const corrupt = {
+      outcome: 'fell',
+      defenderSum: Number.NaN,
+      attackerBase: -4,
+      aggression: Number.POSITIVE_INFINITY,
+      aggressionMultiplierPercent: Number.NaN,
+      jitterPercent: Number.NaN,
+      attackStrength: -2,
+      margin: 1.9,
+    } as unknown as HangarAssaultResolution;
+
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: corrupt,
+    });
+    const section = model.assault!;
+
+    expect(section.defenderSum).toBe(0);
+    expect(section.attackerBase).toBe(0);
+    expect(section.aggression).toBe(0);
+    expect(section.aggressionMultiplierPercent).toBe(0);
+    expect(section.jitterPercent).toBe(0);
+    expect(section.attackStrength).toBe(0);
+    expect(section.margin).toBe(1);
+    expect(section.outcome).toBe('fell');
+    expect(model.campaignReset).toBe(true);
   });
 });

@@ -37,14 +37,27 @@
  * — the model publishes `quiet: true` and an explicit "no hex was attacked"
  * line rather than an empty screen the demo could stall on.
  *
+ * ## The hangar assault
+ *
+ * When a ring's final hex is captured the frontier presses the hangar with a
+ * massed assault (`resolveHangarAssault` in `./hexDefence`, AH-0MWEZZ5AQ000W3M8).
+ * That resolver's record is handed to {@link buildDefenceReport} as
+ * {@link BuildDefenceReportOptions.assault} and rendered here **verbatim** —
+ * the report still derives no figure of its own. A repel publishes the ring-won
+ * line; a fall publishes the full-campaign-reset announcement. With no assault
+ * record the report is byte-for-byte the ordinary between-sortie report
+ * (including the quiet `QUIET — no hex was attacked this tick` line).
+ *
  * @module src/core/hangarWar/defenceReport
  */
 
 import { areNeighbours, type AxialCoordinate } from './hexRing';
 import type {
   AggressionDelta,
+  AssaultOutcome,
   DefenceOutcome,
   FrontierTickRecord,
+  HangarAssaultResolution,
   HexDefenceRecord,
 } from './hexDefence';
 import type { HangarWarPayload, HexState } from './types';
@@ -61,6 +74,22 @@ export const DEFENCE_REPORT_CONTINUE_LABEL = '▶ CONTINUE TO THE MAP';
 /** The line stating that nothing was simulated (the design's no-battle rule). */
 export const DEFENCE_REPORT_NO_BATTLE_LINE =
   'Resolved from stored numbers — no battle was simulated.';
+
+/** Headline when the massed hangar assault was repelled (the ring is won). */
+export const ASSAULT_REPELLED_HEADLINE =
+  'RING WON — the massed hangar assault was repelled';
+
+/** Consequence line of a repelled assault (the ring won, the next one opens). */
+export const ASSAULT_REPELLED_CONSEQUENCE =
+  'The ring is won — the next ring opens.';
+
+/** Headline when the massed assault broke the hangar (the campaign is lost). */
+export const ASSAULT_HANGAR_FALLS_HEADLINE =
+  'HANGAR FALLS — the massed assault broke the hangar';
+
+/** Consequence line of a failed assault: the full campaign reset. */
+export const ASSAULT_HANGAR_FALLS_CONSEQUENCE =
+  'FULL CAMPAIGN RESET — the hangar and its ring are wiped together.';
 
 /**
  * What it would take to retake a hex that fell (or to hold one that stood).
@@ -118,6 +147,45 @@ export interface DefenceReportRow {
   readonly label: string;
 }
 
+/**
+ * The rendered hangar-assault section of a report.
+ *
+ * Every number is copied from the resolver's `HangarAssaultResolution`; the
+ * report never recomputes the strength or the margin (it is a view, not a
+ * rule). The lines are the legible consequence: a repel announces the ring won,
+ * a fall announces the full campaign reset.
+ */
+export interface AssaultReportSection {
+  /** `repelled` (ring won) or `fell` (the hangar falls). */
+  readonly outcome: AssaultOutcome;
+  /** The held ring's summed stored defender ratings (from the record). */
+  readonly defenderSum: number;
+  /** The base massed force derived from the ring's stored numbers. */
+  readonly attackerBase: number;
+  /** The ring aggression that scaled the assault (from the record). */
+  readonly aggression: number;
+  /** Aggression multiplier applied, in percent (`100` = neutral). */
+  readonly aggressionMultiplierPercent: number;
+  /** Bounded seeded jitter applied, in percent (`0` = none). */
+  readonly jitterPercent: number;
+  /** The force actually faced, after aggression and jitter. */
+  readonly attackStrength: number;
+  /** `defenderSum − attackStrength` (negative exactly when the hangar fell). */
+  readonly margin: number;
+  /** `true` when the assault was repelled (the ring is won). */
+  readonly ringWon: boolean;
+  /** `true` when the hangar fell (the campaign resets). */
+  readonly campaignReset: boolean;
+  /** One-line outcome headline (`RING WON …` or `HANGAR FALLS …`). */
+  readonly headline: string;
+  /** The arithmetic that produced the outcome (every number). */
+  readonly numbersLine: string;
+  /** What the outcome means for the campaign (ring won / full reset). */
+  readonly consequenceLine: string;
+  /** The section's rendered text (headline, arithmetic, consequence). */
+  readonly label: string;
+}
+
 /** The complete rendered state of the defence report (pure data). */
 export interface DefenceReportModel {
   /** Screen title. */
@@ -150,6 +218,17 @@ export interface DefenceReportModel {
   readonly heldCount: number;
   /** How many of them fell. */
   readonly fellCount: number;
+  /**
+   * The resolved hangar assault this report follows, or `null` for an ordinary
+   * between-sortie report (the quiet/no-assault case is unchanged).
+   */
+  readonly assault: AssaultReportSection | null;
+  /** The assault section's rendered text, or `null` when there was none. */
+  readonly assaultLine: string | null;
+  /** `true` only when an assault was repelled (the ring is won by defence). */
+  readonly ringWon: boolean;
+  /** `true` only when the hangar fell (the campaign resets). */
+  readonly campaignReset: boolean;
   /** The "nothing was simulated" line (the design's no-battle rule). */
   readonly noBattleLine: string;
   /** The continue action's row key. */
@@ -168,6 +247,12 @@ export interface BuildDefenceReportOptions {
   readonly title?: string;
   /** Continue-label override (tests/captures). */
   readonly continueLabel?: string;
+  /**
+   * The resolved hangar assault this report follows (the capture gate's
+   * `resolveHangarAssault` record). Omitted or `null` → the ordinary
+   * between-sortie report, unchanged.
+   */
+  readonly assault?: HangarAssaultResolution | null;
 }
 
 /** `value` as a non-negative integer; anything unusable collapses to `0`. */
@@ -175,6 +260,72 @@ function toCount(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
   const integer = Math.trunc(value);
   return integer < 0 ? 0 : integer;
+}
+
+/** `value` as a finite number; anything unusable collapses to `0`. */
+function toSignedCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.trunc(value)
+    : 0;
+}
+
+/** `margin` with an explicit `+` when positive (the report's sign convention). */
+function signed(value: number): string {
+  return value > 0 ? `+${value}` : `${value}`;
+}
+
+/** The rendered jitter (`no jitter`, or `jitter +6%` / `jitter -4%`). */
+function jitterLabel(percent: number): string {
+  return percent === 0
+    ? 'no jitter'
+    : `jitter ${percent > 0 ? '+' : ''}${percent}%`;
+}
+
+/**
+ * Builds the report's assault section from the resolver's record, copying every
+ * figure verbatim (normalised only the way {@link toCount} is total — a corrupt
+ * save can never throw inside a report).
+ */
+function buildAssaultSection(
+  assault: HangarAssaultResolution,
+): AssaultReportSection {
+  const outcome: AssaultOutcome =
+    assault?.outcome === 'fell' ? 'fell' : 'repelled';
+  const defenderSum = toCount(assault?.defenderSum);
+  const attackerBase = toCount(assault?.attackerBase);
+  const aggression = toCount(assault?.aggression);
+  const aggressionMultiplierPercent = toCount(assault?.aggressionMultiplierPercent);
+  const jitterPercent = toSignedCount(assault?.jitterPercent);
+  const attackStrength = toCount(assault?.attackStrength);
+  const margin = toSignedCount(assault?.margin);
+  const ringWon = outcome === 'repelled';
+  const campaignReset = outcome === 'fell';
+  const headline = ringWon
+    ? ASSAULT_REPELLED_HEADLINE
+    : ASSAULT_HANGAR_FALLS_HEADLINE;
+  const consequenceLine = ringWon
+    ? ASSAULT_REPELLED_CONSEQUENCE
+    : ASSAULT_HANGAR_FALLS_CONSEQUENCE;
+  const numbersLine =
+    `defender sum ${defenderSum} vs massed ${attackerBase} × AGG ${aggression} `
+    + `(${aggressionMultiplierPercent}%, ${jitterLabel(jitterPercent)}) `
+    + `= ${attackStrength} · margin ${signed(margin)} · ${outcome.toUpperCase()}`;
+  return {
+    outcome,
+    defenderSum,
+    attackerBase,
+    aggression,
+    aggressionMultiplierPercent,
+    jitterPercent,
+    attackStrength,
+    margin,
+    ringWon,
+    campaignReset,
+    headline,
+    numbersLine,
+    consequenceLine,
+    label: [headline, numbersLine, consequenceLine].join('\n'),
+  };
 }
 
 /** The payload's hex with `id`, or `undefined`. */
@@ -303,6 +454,7 @@ export function buildDefenceReport(
   const deltas = record?.deltas ?? [];
   const rose = toCount(record?.rose);
   const fell = toCount(record?.fell);
+  const assault = options.assault ? buildAssaultSection(options.assault) : null;
 
   return {
     title: options.title ?? DEFENCE_REPORT_TITLE,
@@ -322,6 +474,10 @@ export function buildDefenceReport(
     attackedCount: rows.length,
     heldCount,
     fellCount,
+    assault,
+    assaultLine: assault?.label ?? null,
+    ringWon: assault?.ringWon ?? false,
+    campaignReset: assault?.campaignReset ?? false,
     noBattleLine: DEFENCE_REPORT_NO_BATTLE_LINE,
     continueKey: DEFENCE_REPORT_CONTINUE_KEY,
     continueLabel: options.continueLabel ?? DEFENCE_REPORT_CONTINUE_LABEL,
