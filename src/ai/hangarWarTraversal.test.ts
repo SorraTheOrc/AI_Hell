@@ -25,7 +25,7 @@ import {
   decideTraversalAction,
   type HangarWarTraversalAction,
 } from './hangarWarTraversal';
-import { pickAttractHex } from '../core/hangarWar/hexIntel';
+import { buildHexMapModel, pickAttractHex } from '../core/hangarWar/hexIntel';
 import { createRingState } from '../core/hangarWar/hexRing';
 import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
 import type { HangarWarPayload, HexState } from '../core/hangarWar/types';
@@ -41,6 +41,45 @@ function ringOnePayload(
   return {
     ...createDefaultPayload(123456789),
     ring: { ringIndex: 1, hexes },
+  };
+}
+
+/** Ring 2's authored hexes as a payload ring, unheld. */
+function ringTwoPayload(): HangarWarPayload {
+  const ring = createRingState(2, HEX_RING_DEFINITIONS);
+  return {
+    ...createDefaultPayload(123456789),
+    ring: { ringIndex: 2, hexes: ring.hexes },
+  };
+}
+
+/**
+ * A showcase ring-2 payload with exactly one held ring-1 hex, so only the
+ * ring-2 hexes adjacent to it are revealed; every other ring-2 hex is hidden.
+ * The reveal rule is the pure model's, never re-implemented here.
+ */
+function revealPayload(heldRing1Id: string): HangarWarPayload {
+  const ring1 = createRingState(1, HEX_RING_DEFINITIONS);
+  const held = ring1.hexes.find((hex) => hex.id === heldRing1Id);
+  if (!held) throw new Error(`no ring-1 hex ${heldRing1Id}`);
+  const ring2 = ringTwoPayload();
+  return {
+    ...ring2,
+    ring: {
+      ringIndex: 2,
+      hexes: [
+        {
+          ...held,
+          held: true,
+          defender: {
+            hullId: 'hull-1',
+            defenceRating: 9,
+            bankedMinerals: 0,
+          },
+        },
+        ...ring2.ring.hexes,
+      ],
+    },
   };
 }
 
@@ -121,6 +160,51 @@ describe('decideMapAction — the weakest adjacent hex', () => {
 
     const action = decideMapAction(payload);
     expect(action).toEqual({ kind: 'deploy', hexId: neighbour });
+  });
+
+  it('never targets a hidden hex even when it is the weakest (AC4)', () => {
+    // Hold ring-1 hex-r1-2 (1,-1): its ring-2 neighbours hex-r2-8/10/11 are
+    // revealed while every other ring-2 hex stays hidden. Make a hidden hex
+    // the globally weakest and confirm the bot still cannot target it.
+    const payload = revealPayload('hex-r1-2');
+    const hidden = payload.ring.hexes.find((hex) => hex.id === 'hex-r2-1')!;
+    hidden.aggression = 1;
+
+    const model = buildHexMapModel(payload);
+    const displayed = model.hexes.filter((hex) => hex.displayed && !hex.held);
+    // A real choice exists, so the assertion cannot pass vacuously.
+    expect(displayed.length).toBeGreaterThan(0);
+
+    const action = decideMapAction(payload);
+    expect(action.kind).toBe('deploy');
+    if (action.kind !== 'deploy') return;
+
+    // The bot's target is a displayed, unheld hex from the model's own
+    // `displayed` set — never a hidden one.
+    expect(action.hexId).not.toBeNull();
+    expect(displayed.map((hex) => hex.id)).toContain(action.hexId);
+    const picked = model.hexes.find((hex) => hex.id === action.hexId)!;
+    expect(picked.displayed).toBe(true);
+    expect(picked.held).toBe(false);
+
+    // The hidden hex is strictly weaker yet never chosen.
+    const hiddenIntel = model.hexes.find((hex) => hex.id === 'hex-r2-1')!;
+    expect(hiddenIntel.displayed).toBe(false);
+    expect(hiddenIntel.aggression).toBe(1);
+    expect(action.hexId).not.toBe('hex-r2-1');
+    expect(pickAttractHex(payload)).toBe(action.hexId);
+  });
+
+  it('never deploys at a hidden ring-2 hex when nothing is revealed (no off-map fallback)', () => {
+    const payload = ringTwoPayload();
+    const model = buildHexMapModel(payload);
+    // Nothing is held, so no ring-2 hex shares an edge with the hangar: the
+    // whole ring is hidden and there is no legal target.
+    expect(model.hexes.every((hex) => !hex.displayed)).toBe(true);
+    expect(pickAttractHex(payload)).toBeNull();
+
+    // The only advance is the hangar — never a deploy at a hidden hex.
+    expect(decideMapAction(payload)).toEqual({ kind: 'openHangar' });
   });
 
   it('skips to the hangar when the ring is secured', () => {
