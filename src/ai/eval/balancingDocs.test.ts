@@ -224,6 +224,28 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     }
   });
 
+  it('documents the concurrency rule for concurrent --tune runs (AH-0MW25VH540078FDK)', () => {
+    expect(doc).toContain('AH-0MW25VH540078FDK');
+    expect(doc).toMatch(/Concurrent `--tune` runs/);
+    // The lock file itself, its exclusivity and its bounded wait.
+    expect(doc).toContain('.tune-lock');
+    expect(doc).toMatch(/O_EXCL/);
+    expect(doc).toContain('EVAL_TUNE_LOCK_TIMEOUT_MS');
+    expect(doc).toContain('30 s');
+    // The refusal diagnostic names the holding pid and exits 2.
+    expect(doc).toContain('tune lock busy');
+    expect(doc).toMatch(/holding pid|held by pid/);
+    // Crash recovery keeps priority, and the lock is released on every exit.
+    expect(doc).toMatch(/before the startup journal reconcile/);
+    expect(doc).toMatch(/SIGKILL/);
+    // A dead holder's lock is stale and stolen automatically; pid reuse is the
+    // documented limitation.
+    expect(doc).toMatch(/stale lock/);
+    expect(doc).toMatch(/pid reuse/i);
+    // Git-ignored, so a crashed run leaves no worktree change.
+    expect(doc).toContain('src/data/*.tune-lock');
+  });
+
   it('is cross-linked from the README and EVALUATION.md flags', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
     const evaluation = fs.readFileSync(EVALUATION_PATH, 'utf8');

@@ -49,6 +49,11 @@ perf-output/
 # after the restore, so a hard-killed run never shows up as a worktree change.
 src/data/*.tune-journal
 
+# Run lock for concurrent `--tune` runs on the same balance CSV
+# (AH-0MW25VH540078FDK): held for the whole run and released on every
+# non-SIGKILL exit, so a crashed run never shows up as a worktree change.
+src/data/*.tune-lock
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

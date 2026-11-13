@@ -26,6 +26,7 @@
 
 import {
   closeSync,
+  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -40,10 +41,15 @@ import { basename as pathBasename, dirname as pathDirname, resolve as resolvePat
 import { fileURLToPath } from 'node:url';
 
 import {
+  TuneLockTimeoutError,
+  acquireTuneLock,
   clearJournal,
   journalPathFor,
   readJournal,
   reconcileJournal,
+  releaseTuneLock,
+  resolveTuneLockTimeoutMs,
+  tryAcquireTuneLock,
   writeJournal,
 } from './csvEditJournal.mjs';
 
@@ -241,12 +247,14 @@ Options:
 Exit codes:
   0                    Success.
   1                    Unexpected runtime error.
-  2                    Usage error, or the fail-fast input validation failed.
-                       The validation runs before the SSR core boots and before
-                       any sweep, so an invalid path fails in well under a
-                       second (AH-0MVSE18XX006ZG5I). Diagnostics:
+  2                    Usage error, the fail-fast input validation failed, or
+                       another --tune run holds the CSV. The validation runs
+                       before the SSR core boots and before any sweep, so an
+                       invalid path fails in well under a second
+                       (AH-0MVSE18XX006ZG5I). Diagnostics:
                          output directory not writable: <dir> (<ERRNO>)
                          tune CSV not readable: <path> (<ERRNO>)
+                         tune lock busy: <lock> is held by pid <pid>
                        A pseudo-filesystem (procfs/sysfs/…) is refused before it
                        is touched, because a mkdir there blocks for ever:
                        output directory not writable: <dir> (unsupported
@@ -258,6 +266,13 @@ Crash safety:
   the balance CSV edited: the next --tune invocation restores it first and
   prints a warning. Manual repair: jq -r .originalBase64 <csv>.tune-journal |
   base64 -d > <csv> (see docs/BALANCING.md).
+
+Concurrency:
+  --tune holds an exclusive <csv>.tune-lock for the whole run, so two runs on
+  the same CSV cannot interleave their edits or steal each other's journal. A
+  second run waits up to 30 s (EVAL_TUNE_LOCK_TIMEOUT_MS overrides it) and then
+  exits 2 with 'tune lock busy: ... held by pid <pid>'. A lock left behind by
+  a killed run is stale (its pid is dead) and is taken over automatically.
 `;
 
 /** Resolves the seeds list from parsed options. */export function resolveSeeds(options) {
@@ -654,6 +669,11 @@ export function clearOwnJournal(csvPath) {
  * the versioned comparison + readable txt) and restores the CSV on success
  * **and** failure (or keeps it with `--keep-edit`).
  *
+ * The caller is expected to hold the CSV's run lock
+ * ({@link acquireTuneLock}) — {@link runTuneCommand} does — because the journal
+ * path is process-global: without it a concurrent run could reconcile this
+ * run's live journal or interleave its own edit (AH-0MW25VH540078FDK).
+ *
  * @param {ReturnType<typeof parseEvaluateArgs>} options
  * @param {{out: {write(s: string): void}, err: {write(s: string): void}}} io
  */
@@ -778,6 +798,118 @@ export async function executeTune(options, io) {
   }
 }
 
+/**
+ * The fail-fast input probes for a `--tune` run: the `--out` write probe and
+ * the CSV read probe (AH-0MVSE18XX006ZG5I). Both run before the SSR core boots
+ * or any sweep starts.
+ *
+ * @param {ReturnType<typeof parseEvaluateArgs>} options
+ * @param {string} csvPath
+ * @param {{out: {write(s: string): void}, err: {write(s: string): void}}} io
+ * @returns {2 | null} The exit code to return, or `null` when both probes pass.
+ */
+function probeTuneInputs(options, csvPath, io) {
+  const outputProbe = ensureWritableOutputDir(options.outputDir);
+  if (!outputProbe.ok) {
+    io.err.write(`${outputProbe.reason}\n`);
+    return 2;
+  }
+  const csvProbe = ensureReadableTuneCsv(csvPath);
+  if (!csvProbe.ok) {
+    io.err.write(`${csvProbe.reason}\n`);
+    return 2;
+  }
+  return null;
+}
+
+/**
+ * The `--tune` entry point: flag validation, the run lock, crash recovery, the
+ * fail-fast probes and the tune loop itself.
+ *
+ * The order is deliberate (AH-0MW25VH540078FDK):
+ *
+ * 1. the exclusive run lock is taken **before** `reconcileJournal`, so a second
+ *    run on the same CSV can neither consume the first run's live journal nor
+ *    interleave an edit with it;
+ * 2. a **contended** run still keeps its fail-fast budget by running the
+ *    (read-only) probes before it queues — except when a journal is waiting, in
+ *    which case crash recovery keeps priority (a stale journal is repaired
+ *    before anything is validated) and the run queues first;
+ * 3. the lock is released in a `finally`, so every non-`SIGKILL` exit unlocks
+ *    the CSV for the next run.
+ *
+ * @param {ReturnType<typeof parseEvaluateArgs>} options
+ * @param {{out: {write(s: string): void}, err: {write(s: string): void}}} io
+ * @returns {Promise<number>} The process exit code.
+ */
+export async function runTuneCommand(options, io) {
+  if (!options.tuneFile || !options.tuneAssignment) {
+    io.err.write('--tune requires --set <file> <assignment> (e.g. --set enemy-configs.csv boss.health=6)\n');
+    return 2;
+  }
+
+  if (!Number.isFinite(options.watchdog) || options.watchdog < 0) {
+    io.err.write('--watchdog expects a non-negative number of seconds (default 0 = off)\n');
+    return 2;
+  }
+
+  const csvPath = resolveTuneCsvPath(options);
+  let lock = tryAcquireTuneLock(csvPath);
+  let probed = false;
+  if (!lock) {
+    // Contended. Probe before queueing so the documented fail-fast budget
+    // survives a busy CSV — unless a journal is waiting, because a stale
+    // journal must be reconciled before any validation, and that needs the
+    // lock (`--tune` crashed mid-edit recovery, AH-0MVSE1A7O002PXAO).
+    if (!existsSync(journalPathFor(csvPath))) {
+      const probeCode = probeTuneInputs(options, csvPath, io);
+      if (probeCode !== null) return probeCode;
+      probed = true;
+    }
+    try {
+      lock = await acquireTuneLock(csvPath, { timeoutMs: resolveTuneLockTimeoutMs() });
+    } catch (error) {
+      if (error instanceof TuneLockTimeoutError) {
+        io.err.write(`${error.message}\n`);
+        return 2;
+      }
+      throw error;
+    }
+  }
+
+  try {
+    // Reconcile a journal left by a hard-killed run **before** anything else
+    // (AH-0MVSE1A7O002PXAO): a SIGKILL runs no `finally`, so the CSV can still
+    // carry the previous run's edit. Restoring it here means the normal
+    // recovery needs no manual step. Holding the run lock makes it impossible
+    // for this restore to steal a *live* run's journal (AH-0MW25VH540078FDK).
+    try {
+      const reconciled = reconcileJournal(csvPath);
+      if (reconciled.action === 'restored') {
+        io.err.write(
+          `warning: restored ${csvPath} from a stale tune journal `
+            + `(${journalPathFor(csvPath)}) — a previous --tune run was killed before it could restore\n`,
+        );
+      }
+    } catch (error) {
+      io.err.write(
+        `tune journal not reconcilable: ${journalPathFor(csvPath)} (${describeFsError(error)}) — `
+          + 'repair manually: jq -r .originalBase64 <journal> | base64 -d > <csv> (see docs/BALANCING.md)\n',
+      );
+      return 2;
+    }
+
+    if (!probed) {
+      const probeCode = probeTuneInputs(options, csvPath, io);
+      if (probeCode !== null) return probeCode;
+    }
+
+    return await executeTune(options, io);
+  } finally {
+    releaseTuneLock(lock);
+  }
+}
+
 /** CLI entry point; returns the process exit code. */
 export async function main(argv, io = { out: process.stdout, err: process.stderr }) {
   const options = parseEvaluateArgs(argv);
@@ -787,40 +919,11 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
   }
 
   if (options.tune) {
-    if (!options.tuneFile || !options.tuneAssignment) {
-      io.err.write('--tune requires --set <file> <assignment> (e.g. --set enemy-configs.csv boss.health=6)\n');
-      return 2;
-    }
-
-    if (!Number.isFinite(options.watchdog) || options.watchdog < 0) {
-      io.err.write('--watchdog expects a non-negative number of seconds (default 0 = off)\n');
-      return 2;
-    }
-
-    // Reconcile a journal left by a hard-killed run **before** anything else
-    // (AH-0MVSE1A7O002PXAO): a SIGKILL runs no `finally`, so the CSV can still
-    // carry the previous run's edit. Restoring it here means the normal
-    // recovery needs no manual step.
-    const tuneCsvPath = resolveTuneCsvPath(options);
-    try {
-      const reconciled = reconcileJournal(tuneCsvPath);
-      if (reconciled.action === 'restored') {
-        io.err.write(
-          `warning: restored ${tuneCsvPath} from a stale tune journal `
-            + `(${journalPathFor(tuneCsvPath)}) — a previous --tune run was killed before it could restore\n`,
-        );
-      }
-    } catch (error) {
-      io.err.write(
-        `tune journal not reconcilable: ${journalPathFor(tuneCsvPath)} (${describeFsError(error)}) — `
-          + 'repair manually: jq -r .originalBase64 <journal> | base64 -d > <csv> (see docs/BALANCING.md)\n',
-      );
-      return 2;
-    }
+    return await runTuneCommand(options, io);
   }
 
   // Fail-fast input validation (AH-0MVSE18XX006ZG5I, parent
-  // AH-0MVIKLOOJ0058Z9B): both probes run **before** `loadCore()` boots Vite
+  // AH-0MVIKLOOJ0058Z9B): the probe runs **before** `loadCore()` boots Vite
   // SSR and before any baseline/candidate sweep, so an invalid path exits 2 in
   // well under a second instead of after a full sweep (measured pre-fix:
   // 4.31 s at 10 games x 2000 ticks, 11.82 s at 40 games x 2000 ticks).
@@ -828,14 +931,6 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
   if (!outputProbe.ok) {
     io.err.write(`${outputProbe.reason}\n`);
     return 2;
-  }
-  if (options.tune) {
-    const csvProbe = ensureReadableTuneCsv(resolveTuneCsvPath(options));
-    if (!csvProbe.ok) {
-      io.err.write(`${csvProbe.reason}\n`);
-      return 2;
-    }
-    return await executeTune(options, io);
   }
 
   const humanRecordingText = options.humanFile ? readFileSync(options.humanFile, 'utf8') : null;

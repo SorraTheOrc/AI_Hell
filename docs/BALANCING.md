@@ -1048,6 +1048,50 @@ removed by the fail-fast validation above rather than by the watchdog.
   pre-run state on success **and** failure paths, unless `--keep-edit` is
   given — the working tree stays clean.
 
+### Concurrent `--tune` runs on the same CSV (AH-0MW25VH540078FDK)
+
+The journal and the CSV are **process-global**, not per-run: the journal path is
+`src/data/<file>.tune-journal` for every run. Two designers (or a designer and a
+scripted sweep) tuning the same CSV at once therefore used to interfere — the
+second run's startup reconcile consumed the first run's *live* journal,
+restoring the CSV underneath it, and the two runs' edits interleaved.
+
+`--tune` now takes an **exclusive run lock**, `<csv>.tune-lock`, created with
+`O_EXCL` and held for the whole run:
+
+- The lock is acquired **before the startup journal reconcile**, so a second run
+  can neither reconcile a live journal nor interleave an edit with the first.
+  Crash recovery keeps its priority: reconcile still runs before validation.
+- A second run **waits** for the lock, bounded at **30 s**. If the holder is
+  still running when the bound expires, the run exits with code **`2`** and
+  names the holder:
+
+  ```text
+  tune lock busy: src/data/enemy-configs.csv.tune-lock is held by pid 41234
+  — waited 30000 ms. Another --tune run is editing src/data/enemy-configs.csv;
+  re-run once it finishes, or delete the lock file if no --tune run is active
+  ```
+
+  The bound is overridable with `EVAL_TUNE_LOCK_TIMEOUT_MS` (milliseconds), so
+  the CLI gains no extra flag. A contended run still runs its read-only
+  fail-fast probes before it queues, so an invalid `--out` or a missing CSV
+  keeps failing in well under a second; the exception is a run with a journal
+  waiting, which reconciles first.
+- The lock is released in a `finally`, so **every** non-`SIGKILL` exit unlocks:
+  success, restore failure, watchdog exit `124`, and each fail-fast `2`.
+- A `SIGKILL`ed run leaves a **stale lock** behind. Its payload records the
+  holder `pid`, and a lock whose pid is dead is debris: the next run steals it
+  instead of waiting, mirroring the journal's crash recovery. A lock that stays
+  unreadable for longer than the wait bound is debris too and is stolen, so a
+  corrupt file cannot wedge the CSV for ever.
+- **Known limitation — pid reuse:** liveness is a signal-0 probe
+  (`kill(pid, 0)`), so a recycled pid can make a stale lock look live. The
+  symptom is a bounded wait followed by the `tune lock busy` diagnostic naming
+  an unrelated process; no CSV is ever edited in that case. Delete the lock file
+  after checking that no `--tune` run is active.
+- The lock path is git-ignored (`src/data/*.tune-lock`), so a crashed or
+  contended run never shows up as a worktree change.
+
 ### Reading the comparison — worked example
 
 Tuning `boss.health` from `1` to `6` (the same edit as the
@@ -1210,7 +1254,10 @@ pixel-accurate, full-stack verification use the browser capture path
   restore-from-journal, `--keep-edit` clear, the unreadable-journal refusal, a
   real `SIGKILL`ed editing child whose CSV is restored byte-identically, the
   reconcile-before-validate behaviour of the next `--tune` run, and the
-  `.gitignore` guard (AH-0MVSE1A7O002PXAO).
+  `.gitignore` guard (AH-0MVSE1A7O002PXAO); plus the exclusive run lock — the
+  bounded wait and its `pid` diagnostic, the stale-holder steal, the
+  pid-matched release, a live holder child against a real second run, and the
+  exit-`2` refusal (AH-0MW25VH540078FDK).
 - `scripts/evaluate-tune-progress.test.ts` — the per-run progress lines on
   stderr (stdout parity), the opt-in `--watchdog` exit `124` with a restored
   CSV, and the rejected budgets (AH-0MVSE1OPF008G1SB).

@@ -157,6 +157,18 @@ export function executeTune(
   options: ParsedEvaluateArgs,
   io?: { out: { write(text: string): void }; err: { write(text: string): void } },
 ): Promise<number>;
+
+/**
+ * The `--tune` entry point: flag validation, the exclusive run lock, crash
+ * recovery, the fail-fast probes and the tune loop (AH-0MW25VH540078FDK).
+ *
+ * Exit codes: `0` success, `2` usage / validation failure / a CSV another run
+ * is editing (`tune lock busy: … held by pid …`), `124` watchdog expiry.
+ */
+export function runTuneCommand(
+  options: ParsedEvaluateArgs,
+  io?: { out: { write(text: string): void }; err: { write(text: string): void } },
+): Promise<number>;
 export function main(
   argv: string[],
   io?: { out: { write(text: string): void }; err: { write(text: string): void } },
