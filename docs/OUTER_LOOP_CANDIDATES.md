@@ -759,16 +759,23 @@ shipping order this document recommends (B's shape first):
   map, attract-mode traversal, and the measured ring timing/playstyle
   validation.
   Playable specification: GDD §8.2.
+- **The ring-end win/lose gate, shipped (AH-0MVUVL2O2006W4QK):** the *States*
+  section's design of record is now the shipped behaviour — securing the ring's
+  final hex resolves the AI's **massed hangar assault** from the ring's stored
+  numbers, a **repel wins the ring** and opens the next one, and a **fall resets
+  the whole campaign**. The map's rolled-in report announces both outcomes;
+  the rush line (capstone held, ring not fully held) still opens the next ring
+  with no assault. Specification: GDD §8.2.
 - **Gym coverage:** `GymHangar` and `GymHexWar` render the same model/renderer
   pairs the game does, with current rows in
   [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
 
-**Deliberately deferred (with its work item).** The *States* section below is
-the design of record; the shipped MVP narrows it by producer decision
-(2026-10-30, Q2 = a) — the ring is **secured when every hex of the current ring
-is held**, and there is no hangar assault pass and no hangar-falls lose state.
-The massed counter-attack on the hangar and the campaign loss are tracked by
-**AH-0MVUVL2O2006W4QK**.
+**Ring-end semantics — shipped, not deferred.** The *States* section below is
+the design of record and the shipped build now follows it (AH-0MVUVL2O2006W4QK):
+the ring is **secured when every hex of the current ring is held**, that final
+hex capture triggers the **massed hangar assault** resolved from stored numbers,
+and a failed assault is the **hangar-falls lose state** — a full campaign reset
+of the hangar and the ring together.
 
 **Post-MVP mitigation backlog (design captured, scheduled separately).** Each
 of these adds a choice rather than a chore, and each is out of scope for the
@@ -826,12 +833,21 @@ hangar survives — that is what winning this hell looks like.
 ### States
 
 - **Win (per ring):** every hex of the current ring is held and the AI's massed
-  counter-attack on the hangar is repelled — the hangar is safe and the ring is
+  counter-attack on the hangar — resolved algorithmically from the ring's stored
+  numbers when the final hex is captured — is **repelled**. A repel (including a
+  tie, because a tie holds the line) means the hangar is safe and the ring is
   yours. The next ring then opens, so a "win" is the campaign's milestone, not
-  its end.
-- **Lose:** the **hangar falls** — the last hex is taken and the hangar's own
-  defence fails. Losing a **run** never does this: the run's unbanked salvage is
-  forfeit, the hangar and the ring survive (Candidate B's rule, preserved).
+  its end. The **rush** line (the ring's capstone held while hexes remain
+  unheld) opens the next ring with no assault, because the ring was never
+  secured.
+- **Lose:** the **hangar falls** — the ring's final hex is taken and the massed
+  assault **beats** the hangar's stored defence. The consequence is a **full
+  campaign reset**: the hangar (hulls, weapons, modifiers, banked salvage and
+  cores) and the ring hexes are wiped together and a fresh deterministic
+  campaign seed is issued, preserving only the best score. Losing a **run** or
+  a **hex battle** never does this: the run's unbanked salvage is forfeit, a hex
+  the frontier retakes is lost, but the hangar and the rest of the ring survive
+  (Candidate B's rule, preserved).
 - **Partial progress:** a bad run still banks salvage from the checkpoints it
   reached, still **lowers that hex's aggression** (you killed defenders), and
   still leaves a bot defending what is already held.
@@ -850,6 +866,7 @@ hangar survives — that is what winning this hell looks like.
 | **Frontier aggression clock** | Each between-run tick **redistributes** the ring's aggression inside a budget sized from the player's fleet (a rise on one hex is paid for by a fall on another), guarantees at least one beatable hex, and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small–Medium — a deterministic per-tick rule over the pure strength/budget resolvers |
 | **Defending bot assignment** | Leave a hull plus a **bot** in a hex; its **defence rating** derives from the hull's hangar upgrades, not from a live battle | Small |
 | **Algorithmic defence resolution** | A taken hex falls or holds by comparing stored numbers (defender rating vs. attacking force × aggression) — **no simulated battle** | Small — a pure resolver |
+| **Ring-end hangar assault** | Capturing a ring's final hex resolves the AI's massed counter-attack from stored numbers (held-ring defender sum vs. the ring's aggression mass scaled by the same multiplier and jitter); a repel wins the ring, a fall resets the campaign — **no simulated battle** | Small — a second pure resolver over the same stored numbers |
 | **Hex deployment + mini-boss** | Reuse the run for exactly one campaign level, with the hex's aggression selecting the difficulty curve and that level's wave-5 mini-boss at the end (mini-boss victory = capture) | Small |
 | **Mini-boss-granted weapon discovery** | The hex mini-boss demonstrates the hex's new weapon/power-up (body colour + its catalogue opening volley); defeating it adds the entry to the hangar tree | Small–Medium |
 
@@ -1109,6 +1126,13 @@ deployment, not by volume. If "take a hex, leave a bot, buy a hull, retake what
 the AI stole" already feels like a war worth fighting, more rings can follow; if
 it does not, B alone stands (the slice is a strict superset of B's, so nothing is
 wasted).
+
+The shipped slice also carries the **ring-end win/lose gate** (AH-0MVUVL2O2006W4QK):
+securing the ring's final hex resolves the AI's massed hangar assault from the
+ring's stored numbers, a repel wins the ring and opens the next one, and a fall
+is the **hangar-falls lose state** — a full campaign reset of both progression
+axes. The rush line (capstone held before the ring is secured) is unchanged and
+triggers no assault.
 
 ### Progression rules
 

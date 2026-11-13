@@ -47,8 +47,8 @@
  *
  * ## The hangar assault ({@link resolveHangarAssault})
  *
- * The ring-end counterpart, delivered for `AH-0MVUVL2O2006W4QK`: when the
- * ring's final hex is captured, the deferred massed counter-attack on the
+ * The ring-end counterpart, shipped for `AH-0MVUVL2O2006W4QK`: when the
+ * ring's final hex is captured, the massed counter-attack on the
  * hangar is resolved from the same stored numbers (`HangarAssaultInput`
  * mirrors `DefenceInput`): the defender side is the held-ring defender sum
  * ({@link heldRingDefenderSum}), the attacker side is the base massed force
@@ -102,8 +102,8 @@
  *   construction, and the tick itself performs **no hangar assault pass**.
  *   The massed counter-attack is instead resolved separately by
  *   {@link resolveHangarAssault} when the ring's final hex is captured (the
- *   deferred wiring, `AH-0MVUVL2O2006W4QK`); this module owns the arithmetic,
- *   not the trigger.
+ *   shipped capture-cycle gate, `AH-0MVUVL2O2006W4QK`); this module owns the
+ *   arithmetic, not the trigger.
  * - The attacking force comes from the **origin's** aggression, and the
  *   **target's** aggression multiplies it, so both ends of the border matter.
  * - Ties between equally aggressive neighbours, and the choice of which held

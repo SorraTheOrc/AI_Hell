@@ -37,8 +37,8 @@
  *   loop must support are documented, and the build-out work item is
  *   cross-referenced from the decision record and the GDD.
  * - Build status (AH-0MVUXCC5J0028OGQ): Candidate D records that it is
- *   **implemented and shipped** (not design-only), names the deferred ring-win
- *   item and the post-MVP backlog items with their work-item ids, and GDD §8.2
+ *   **implemented and shipped** (not design-only), names the shipped ring-win
+ *   gate and the post-MVP backlog items with their work-item ids, and GDD §8.2
  *   carries the playable ring specification — ring model and growth, the
  *   capture cycle, the resolver and frontier-tick numbers, the defence report,
  *   the measured ring timings and the supported playstyles.
@@ -413,11 +413,17 @@ describe('Candidate D records its build status (AH-0MVUXCC5J0028OGQ)', () => {
     expect(body).not.toMatch(/design only, not scheduled/i);
   });
 
-  it('records the deferred ring-win item with its work-item id', () => {
+  it('records the shipped ring-end win/lose gate with its work-item id', () => {
     const body = candidateDBody();
     expect(body).toContain('AH-0MVUVL2O2006W4QK');
     expect(body).toMatch(/massed/i);
     expect(body).toMatch(/hangar[- ]falls/i);
+    // AH-0MWEZZE5U0028G86 AC2: the States section records the chosen
+    // win/lose semantics — a hangar fall is a full campaign reset — instead of
+    // the MVP's "no assault / no lose state" deferral note.
+    expect(body).toMatch(/full campaign reset/i);
+    expect(body).not.toMatch(/no hangar assault pass/i);
+    expect(body).not.toMatch(/campaign loss are tracked by/i);
   });
 
   it('records the post-MVP backlog items with their work-item ids', () => {

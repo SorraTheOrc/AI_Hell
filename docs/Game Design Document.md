@@ -2973,8 +2973,8 @@ ring, B1–B8 of AH-0MVU3VNJI00066YE): the hex-grid map, ring generation (ring 2
 at 12 hexes), the capture cycle and boss-granted discovery, the algorithmic
 defence resolver and frontier tick, the defence report, ring timing/playstyle
 validation, and the ring specification document. The ring's massed
-counter-attack on the hangar and the hangar-falls lose state are deferred
-further (AH-0MVUVL2O2006W4QK). **Phase B is now shipped** — the hex map, ring
+counter-attack on the hangar and the hangar-falls lose state shipped later with
+the ring-end gate (§8.2, AH-0MVUVL2O2006W4QK). **Phase B is now shipped** — the hex map, ring
 generation, capture cycle, defence resolver, frontier tick, defence report, ring
 timing validation and the ring specification are all live and specified in
 §8.2.
@@ -2988,8 +2988,8 @@ specification, not design intent — every rule below is exercised by the pure
 modules under `src/core/hangarWar/`, by the scene suites beside each screen, and
 by the two gym scenes named in § *Gym coverage and parity*. The build was
 tracked by **AH-0MVU3VNJI00066YE** (phase B items B1–B8) and documented by
-**AH-0MVUXCC5J0028OGQ**; the deferred ring-win rules are tracked by
-**AH-0MVUVL2O2006W4QK**.
+**AH-0MVUXCC5J0028OGQ**; the ring-win rules — the massed hangar assault and
+the hangar-falls lose state — shipped under **AH-0MVUVL2O2006W4QK**.
 
 #### Entry surface and the ring screens
 
@@ -3146,15 +3146,67 @@ write:
    every hex still opens the ring too, so the **grind** line is unchanged, and
    nothing is discarded either way — the hexes a rush skips stay in the war with
    their held state, defending bots and redistributed aggression, so the frontier tick
-   keeps resolving their defence. There is **no hangar assault pass** and no
-   hangar-falls lose state; the massed counter-attack and the campaign loss are
-   deferred to **AH-0MVUVL2O2006W4QK**.
+   keeps resolving their defence. Securing the ring's **final hex** triggers the
+   ring-end hangar assault described next (a repel wins the ring and opens the
+   next one; a fall resets the campaign); the **rush** line opens the next ring
+   with **no assault at all**, exactly as it always has.
 
 A lost deployment is the mirror image: it forfeits **only** the salvage earned
 since the last bank and leaves the hangar and the ring untouched. Difficulty is
 still the shipped curve data: a hex's aggression selects campaign level
 `1 + aggression` (clamped to the campaign maximum), and perturbs the mini-boss's
 hit pool with the same bounded formula the campaign's mini-bosses use.
+
+#### The ring-end hangar assault and the hangar-falls lose state
+
+Securing a ring is a **defensive milestone**, not a checkbox: capturing the
+ring's final hex resolves the AI's **massed counter-attack on the hangar**
+before anything else touches the ring (AH-0MVUVL2O2006W4QK). The rush line is
+unchanged — a capstone held while hexes remain unheld opens the next ring with
+**no assault**, because the ring was never secured (the assault fires only on
+the final-hex capture). The whole resolution is arithmetic over the ring's
+stored numbers (`resolveRingAssault` → `resolveHangarAssault`), exactly like a
+hex defence — **no battle is simulated**:
+
+```
+defenderSum          = Σ held ring hexes' defending-bot ratings
+attackerBase         = Σ ring hexes' stored aggression
+aggression           = round(attackerBase / ring hex count)
+aggressionMultiplier = 100 + 15 × aggression          (%)
+jitter               = ±10 % (seeded)
+attackStrength       = round(attackerBase × multiplier × (100 + jitter) / 10000)
+defended             = defenderSum ≥ attackStrength
+margin               = defenderSum − attackStrength
+```
+
+- **The defender side is what the player earned**: the sum of the held hexes'
+  stored defending-bot ratings — the same ratings the frontier tick compares,
+  so a stronger fleet and better bots are what hold the hangar. Only the
+  **current ring** counts; hexes a rush left behind are that ring's cost, not
+  this ring's defence.
+- **The attacker side is the frontier's own stored pressure**: the ring's
+  aggression **sum** is the massed base force, scaled by the ring's **average**
+  hex aggression through the same `+15 %` per point multiplier the hex resolver
+  uses, with the same **±10 %** seeded jitter. Averaging keeps the multiplier in
+  the `0–9` range a single hex sees, so neither a large ring nor one hot hex is
+  counted twice.
+- **A repel wins the ring.** `margin ≥ 0` — including a **tie**, because a tie
+  holds the line — means the hangar stood, the ring is **won**, and the next
+  ring opens exactly as it does today (ring 2 is playable).
+- **A fall is the campaign loss.** `margin < 0` means the **hangar falls**: the
+  **full campaign reset** wipes both progression axes together — the hangar
+  (hulls, weapons, modifiers, banked salvage and cores) and the ring hexes —
+  and issues a fresh deterministic campaign seed, preserving only the best
+  score. This is the same reset shape the hangar's `⟲ RESTART WAR` row builds.
+- **Only this assault can reset the campaign.** Losing a **deployment** forfeits
+  only the salvage earned since the run's last bank and leaves the hangar and
+  the ring untouched (§8.1); a **hex falling in the frontier tick** is retaken
+  by the AI but never resets the hangar. The ring-end assault is the one and
+  only lose state.
+- **Deterministic and replayable.** The assault seed is derived from the war's
+  stored seed and the ring index, so a replay of the same campaign reproduces
+  the same repel — and a replay of the same loss reproduces the same reset
+  campaign.
 
 #### The defence resolver and the frontier tick
 
@@ -3222,6 +3274,17 @@ map renders it on its one integrated view without re-deriving a single figure:
 - A **quiet tick** (a secured ring) draws no arrows and shows an explicit "no
   hex was attacked" line in the panel rather than an empty map beat, so the
   attract demo can never stall on it.
+
+When the ring's **final hex is captured** the map's rolled-in report carries the
+ring-end assault as a section of its own, copied **verbatim** from the
+resolver's record: the held-ring defender sum, the massed base force, the ring
+aggression and its multiplier, the seeded jitter, the assault strength, the
+margin and the outcome — then either `RING WON — the massed hangar assault was
+repelled` (the next ring opens) or `HANGAR FALLS — the massed assault broke the
+hangar` followed by `FULL CAMPAIGN RESET — the hangar and its ring are wiped
+together.` The banner sits on the same map view, so the player sees the
+consequence before the reset map. With no assault record the rolled-in report
+is unchanged.
 
 The map states it plainly: *"Resolved from stored numbers — no battle was
 simulated."* The map's attack preview is the same resolver run **jitter-free**,
@@ -3405,7 +3468,10 @@ and its gym (AGENTS.md gym↔game parity):
   built from the **shipped** frontier tick's record (`runFrontierTick`, with the
   panel rows copied from `buildDefenceReport`) — and exposes the
   `take hex → leave bot → tick` control surface through the documented
-  deterministic harness double.
+  deterministic harness double. It also drives the **ring-end hangar assault**
+  (`resolveRingAssault`) over its payload and renders the game's own `RING WON` /
+  `HANGAR FALLS` banner, so the win/lose gate is exercised by the same
+  model/renderer pair the game uses.
 
 Both are in the capture registry (watchable, `docs/dev/gameplay-capture.md`) and
 carry current rows in the parity matrix [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
