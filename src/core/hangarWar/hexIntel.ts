@@ -92,6 +92,18 @@
  * quiet tick line alongside the assault section, so the announcement is never
  * an empty screen.
  *
+ * ## The rotating special mission (`AH-0MWF0CWB7002MG2F`)
+ *
+ * A special-mission hex publishes its **reward** before the player commits a
+ * life (AH-0MVWZYIWX0008C55 AC4): `specialMission` carries the hull the hex
+ * pays, its extra hit points and the authored description, and `tileLabel`
+ * gains a short `SPECIAL` tag so the tile stays legible while the detail panel
+ * carries the full offer. The ring rotates which special mission it presents
+ * between sorties (Q3 = b), so the model publishes `offeredNow` per hex and the
+ * current offer once on the model (`specialOffer`) — both resolved through the
+ * shared `specialMission` seam, so the map can never advertise a hex or a hull
+ * the capture would not pay.
+ *
  * @module src/core/hangarWar/hexIntel
  */
 
@@ -125,6 +137,12 @@ import {
   type DefenceReportRow,
 } from './defenceReport';
 import type { FrontierTickRecord, HangarAssaultResolution } from './hexDefence';
+import {
+  specialMissionOfferFor,
+  specialMissionRewardFor,
+  type SpecialMissionOffer,
+  type SpecialMissionReward,
+} from './specialMission';
 
 /** Title rendered by the map screen (asserted by tests). */
 export const HEX_MAP_TITLE = 'HANGAR WAR — HEX MAP';
@@ -147,6 +165,17 @@ export const HELD_TILE_MARKER = '\u25CF';
 /** Ownership marker on an unheld tile's label (readable without colour). */
 export const UNHELD_TILE_MARKER = '\u25CB';
 
+/**
+ * Short tag a special-mission tile carries (`AH-0MWF0CWB7002MG2F`).
+ *
+ * Deliberately short: the tile must stay legible at 960×540, so the offer's
+ * hull/description live in the detail panel (`label`), never on the tile.
+ */
+export const SPECIAL_MISSION_TILE_TAG = '\u2605 SPECIAL';
+
+/** Heading of the special-mission section inside the detail panel. */
+export const SPECIAL_MISSION_PANEL_HEADING = 'SPECIAL MISSION';
+
 /** A queued attack against a hex, as the map publishes it. */
 export interface HexPendingAttackIntel {
   /** Summed force of every attack queued against this hex. */
@@ -156,6 +185,33 @@ export interface HexPendingAttackIntel {
    * is not held by a defender (there is nothing to resolve yet).
    */
   readonly resolution: DefenceResolution | null;
+}
+
+/**
+ * The special-mission offer a hex publishes, as the map shows it.
+ *
+ * A read-model copy of `./specialMission`'s reward: the map never derives the
+ * reward itself, so what it advertises is exactly what the capture grants.
+ */
+export interface HexSpecialMissionIntel {
+  /** Catalogue id of the hull the mission pays. */
+  readonly hullId: string;
+  /** Display name of that hull. */
+  readonly hullName: string;
+  /** The hull's own description (the reward's framing text). */
+  readonly description: string;
+  /** Lives the granted hull deploys with. */
+  readonly startingLives: number;
+  /** The granted hull's base defence rating. */
+  readonly baseDefence: number;
+  /** Extra starting lives over the starter hull (the "extra hit points"). */
+  readonly bonusStartingLives: number;
+  /**
+   * True when this hex is the mission the rotation is offering **now**; false
+   * for a special hex that the rotation has moved past (it stays readable, it
+   * is simply not this sortie's offer).
+   */
+  readonly offeredNow: boolean;
 }
 
 /** One hex, with all the known-ahead intel the map publishes. */
@@ -184,6 +240,13 @@ export interface HexIntel {
   readonly grants: string | null;
   /** True for the single hex that grants the ring's new weapon. */
   readonly weaponHex: boolean;
+  /** True when the hex is authored as a special mission (`isSpecialMission`). */
+  readonly isSpecialMission: boolean;
+  /**
+   * The special mission's known-ahead offer (reward + framing), or `null` for
+   * an ordinary hex.
+   */
+  readonly specialMission: HexSpecialMissionIntel | null;
   /** Whether the hex's boss has already been beaten. */
   readonly bossDefeated: boolean;
   /** The weapon already granted by this hex, or `null`. */
@@ -312,6 +375,13 @@ export interface HexMapModel {
    * or `null` when no assault was carried.
    */
   readonly assaultLine: string | null;
+  /**
+   * The special mission the rotation is offering on this sortie
+   * (`AH-0MWF0CWB7002MG2F`), or `null` when the ring offers none (no special
+   * hex authored, or every one already captured). Resolved through the shared
+   * `specialMission` seam, so the map and the capture can never disagree.
+   */
+  readonly specialOffer: SpecialMissionOffer | null;
   /** True only when an assault was repelled (the ring is won by defence). */
   readonly ringWon: boolean;
   /** True only when the assault broke the hangar (the campaign was reset). */
@@ -555,12 +625,63 @@ function previewDefence(
   );
 }
 
+/**
+ * The special-mission offer a hex publishes, or `null` for an ordinary hex.
+ *
+ * Pure copy of the shared reward derivation (`./specialMission`), so the map
+ * advertises exactly the hull the capture pays — never a second derivation.
+ *
+ * @param definition — the hex's authored definition (or `undefined`).
+ * @param offeredNow — true when the rotation is offering this hex now.
+ * @returns the offer intel, or `null` when the hex is not a special mission.
+ */
+function specialMissionIntelFor(
+  definition: HexRingDefinition | undefined,
+  offeredNow: boolean,
+): HexSpecialMissionIntel | null {
+  const reward: SpecialMissionReward | null = specialMissionRewardFor(definition);
+  if (reward === null) return null;
+  return {
+    hullId: reward.hullId,
+    hullName: reward.hull.name,
+    description: reward.hull.description,
+    startingLives: reward.startingLives,
+    baseDefence: reward.baseDefence,
+    bonusStartingLives: reward.bonusStartingLives,
+    offeredNow,
+  };
+}
+
+/**
+ * The on-tile text: coordinates, the aggression badge, the ownership
+ * discriminator and — for a special mission — the short `SPECIAL` tag.
+ *
+ * The tag is the whole special-mission signal a tile carries: everything else
+ * (the hull, its extra hit points, the framing) lives in the detail panel, so
+ * the tile stays legible at 960×540.
+ */
+function tileLabel(
+  state: HexState,
+  aggression: number,
+  held: boolean,
+  specialMission: HexSpecialMissionIntel | null,
+): string {
+  const base = `(${state.q},${state.r}) AGG ${aggression} ${
+    held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
+  }`;
+  if (specialMission === null) return base;
+  return `${base}\n${SPECIAL_MISSION_TILE_TAG}${
+    specialMission.offeredNow ? ' NOW' : ''
+  }`;
+}
+
 /** The tile text: id, state/aggression/attack, boss, strengths, weaknesses, grant. */
 function hexLabel(
   state: HexState,
   definition: HexRingDefinition | undefined,
   pending: HexPendingAttackIntel | null,
   defender: HexDefender | null,
+  specialMission: HexSpecialMissionIntel | null = null,
 ): string {
   const lines: string[] = [
     state.id,
@@ -596,6 +717,16 @@ function hexLabel(
     );
   }
 
+  if (specialMission !== null) {
+    lines.push(
+      `${SPECIAL_MISSION_PANEL_HEADING} — ${
+        specialMission.offeredNow ? 'OFFERED THIS SORTIE' : 'NOT OFFERED NOW'
+      }`,
+      `REWARD: ${specialMission.hullName} (+${specialMission.bonusStartingLives} LIVES · DEF ${specialMission.baseDefence})`,
+      specialMission.description,
+    );
+  }
+
   return lines.join('\n');
 }
 
@@ -616,8 +747,10 @@ export function buildHexIntel(
   definition: HexRingDefinition | undefined,
   pendingForce = 0,
   displayed = true,
+  offeredNow = false,
 ): HexIntel {
   const held = state.held === true;
+  const specialMission = specialMissionIntelFor(definition, offeredNow);
   const aggression = toCount(state.aggression);
   const defender = held && state.defender ? { ...state.defender } : null;
   const force = toCount(pendingForce);
@@ -644,6 +777,8 @@ export function buildHexIntel(
     weaknesses: definition ? [...definition.weaknesses] : [],
     grants: definition?.grants ?? null,
     weaponHex: definition?.weaponHex === true,
+    isSpecialMission: specialMission !== null,
+    specialMission,
     bossDefeated: state.bossDefeated === true,
     grantedWeapon: state.grantedWeapon ?? null,
     defender,
@@ -651,10 +786,8 @@ export function buildHexIntel(
     displayed,
     selectable: displayed,
     actionable: displayed && !held,
-    tileLabel: `(${state.q},${state.r}) AGG ${aggression} ${
-      held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
-    }`,
-    label: hexLabel(state, definition, pending, defender),
+    tileLabel: tileLabel(state, aggression, held, specialMission),
+    label: hexLabel(state, definition, pending, defender, specialMission),
   };
 }
 
@@ -720,12 +853,17 @@ export function buildHexMapModel(
   const states = displayHexStates(payload, definitions);
   const heldStates = states.filter((state) => state.held === true);
 
+  // The rotation's answer for this sortie (AH-0MWF0CWB7002MG2F): resolved
+  // once, from stored numbers, through the shared special-mission seam, so no
+  // hex can be advertised as "offered now" behind the model's back.
+  const specialOffer = specialMissionOfferFor(payload, definitions);
   const hexes = states.map((state) =>
     buildHexIntel(
       state,
       definitionById.get(state.id) ?? findHexRingDefinition(state.id),
       forces.get(state.id) ?? 0,
       isHexDisplayed(state, heldStates),
+      specialOffer?.hexId === state.id,
     ),
   );
 
@@ -788,6 +926,7 @@ export function buildHexMapModel(
     attackDetails,
     assault,
     assaultLine,
+    specialOffer,
     ringWon,
     campaignReset,
   };

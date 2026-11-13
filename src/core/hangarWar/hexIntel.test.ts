@@ -28,6 +28,8 @@ import {
 import { createRingState, generateRing } from './hexRing';
 import {
   HELD_TILE_MARKER,
+  SPECIAL_MISSION_PANEL_HEADING,
+  SPECIAL_MISSION_TILE_TAG,
   HEX_MAP_HANGAR_LABEL,
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
@@ -1024,5 +1026,137 @@ describe('hex map model — the pure attack model stays Phaser-free', () => {
         /from\s+['"]phaser['"]/,
       );
     }
+  });
+});
+
+/**
+ * The published special-mission intel (`AH-0MWF0CWB7002MG2F`, post-MVP Hangar
+ * War AH-0MVWZYIWX0008C55 AC4).
+ *
+ * A special mission is only a choice if the player sees its reward *before*
+ * committing a life, so the map publishes the hull, its extra hit points and
+ * the authored framing in the detail panel while the tile stays a legible
+ * short label. The ring rotates its offer between sorties, so the model also
+ * marks which special hex is offered **now** — through the shared
+ * `specialMission` seam, so the map can never advertise a reward the capture
+ * would not pay.
+ */
+describe('hex map model — special-mission intel (AH-0MWF0CWB7002MG2F)', () => {
+  /** The authored special mission (ring 2's `the-void-marshall`). */
+  const SPECIAL_HEX_ID = 'hex-r2-3';
+
+  it('publishes the reward and framing for the special-mission hex', () => {
+    const model = buildHexMapModel(ringPayload(2));
+    const intel = model.hexes.find((hex) => hex.id === SPECIAL_HEX_ID);
+
+    expect(intel).toBeDefined();
+    expect(intel?.isSpecialMission).toBe(true);
+    expect(intel?.specialMission).not.toBeNull();
+    expect(intel?.specialMission?.hullId).toBe('hull-3');
+    expect(intel?.specialMission?.hullName).toBe('Juggernaut Hull');
+    expect(intel?.specialMission?.bonusStartingLives).toBeGreaterThan(0);
+    expect(intel?.specialMission?.description.length).toBeGreaterThan(0);
+    // The reward the map advertises is the reward the capture pays (one
+    // derivation, pinned by the capture-cycle suite).
+    expect(intel?.specialMission?.hullId).toBe(intel?.grants);
+  });
+
+  it('keeps the tile label short and puts the reward in the detail panel', () => {
+    const model = buildHexMapModel(ringPayload(2));
+    const intel = model.hexes.find((hex) => hex.id === SPECIAL_HEX_ID)!;
+
+    // Legible short label: coordinates, aggression, ownership, the tag.
+    expect(intel.tileLabel).toContain('AGG');
+    expect(intel.tileLabel).toContain(SPECIAL_MISSION_TILE_TAG);
+    expect(intel.tileLabel.split('\n')).toHaveLength(2);
+    // No wall of text on the tile itself.
+    expect(intel.tileLabel).not.toContain('Juggernaut');
+
+    // The full offer lives in the detail panel.
+    expect(intel.label).toContain(SPECIAL_MISSION_PANEL_HEADING);
+    expect(intel.label).toContain('Juggernaut Hull');
+    expect(intel.label).toContain('OFFERED THIS SORTIE');
+    expect(intel.label).toContain('+2 LIVES');
+  });
+
+  it('publishes no special-mission intel for an ordinary hex', () => {
+    const model = buildHexMapModel(ringPayload(2));
+    const ordinary = model.hexes.find((hex) => hex.id === 'hex-r2-1');
+
+    expect(ordinary?.isSpecialMission).toBe(false);
+    expect(ordinary?.specialMission).toBeNull();
+    expect(ordinary?.tileLabel).not.toContain(SPECIAL_MISSION_TILE_TAG);
+  });
+
+  it('publishes exactly one offered mission, resolved from the rotation', () => {
+    const payload = ringPayload(2);
+    const model = buildHexMapModel(payload);
+
+    expect(model.specialOffer).not.toBeNull();
+    expect(model.specialOffer?.hexId).toBe(SPECIAL_HEX_ID);
+    expect(model.specialOffer?.sortie).toBe(0);
+    const offered = model.hexes.filter((hex) => hex.specialMission?.offeredNow);
+    expect(offered.map((hex) => hex.id)).toEqual([SPECIAL_HEX_ID]);
+  });
+
+  it('moves the offered marker with the between-sortie sortie counter', () => {
+    // Two authored special missions make the rotation observable; the shipped
+    // rings author one, so the harness ring is the only way to see the marker
+    // move between sorties.
+    const definitions = HEX_RING_DEFINITIONS.filter(
+      (definition) => definition.ringIndex === 1,
+    ).map((definition, index) => ({
+      ...definition,
+      isSpecialMission: index < 2,
+      grants: index === 0 ? 'hull-2' : index === 1 ? 'hull-3' : definition.grants,
+    }));
+    const payload: HangarWarPayload = {
+      ...createDefaultPayload(21),
+      ring: createRingState(1, definitions),
+    };
+
+    const seen = new Set<string | null>();
+    for (let sortie = 0; sortie < 6; sortie += 1) {
+      const model = buildHexMapModel(
+        { ...payload, frontierTick: sortie },
+        { definitions },
+      );
+      const offered = model.hexes.filter((hex) => hex.specialMission?.offeredNow);
+      expect(offered).toHaveLength(1);
+      expect(model.specialOffer?.hexId).toBe(offered[0].id);
+      seen.add(model.specialOffer?.hexId ?? null);
+    }
+
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it('keeps publishing a captured mission’s reward but offers nothing', () => {
+    const captured = withHex(ringPayload(2), SPECIAL_HEX_ID, {
+      held: true,
+      bossDefeated: true,
+      grantedWeapon: 'hull-3',
+      defender: {
+        hullId: DEFAULT_HULL_ID,
+        defenceRating: 9,
+        bankedMinerals: 0,
+      },
+    });
+    const model = buildHexMapModel(captured);
+    const intel = model.hexes.find((hex) => hex.id === SPECIAL_HEX_ID)!;
+
+    // Nothing left to offer on the ring ...
+    expect(model.specialOffer).toBeNull();
+    expect(model.hexes.some((hex) => hex.specialMission?.offeredNow)).toBe(false);
+    // ... but the hex still reads as the special mission it was.
+    expect(intel.specialMission?.hullId).toBe('hull-3');
+    expect(intel.specialMission?.offeredNow).toBe(false);
+    expect(intel.label).toContain('NOT OFFERED NOW');
+  });
+
+  it('offers nothing on a ring that authors no special mission', () => {
+    const model = buildHexMapModel(ringPayload(1));
+
+    expect(model.specialOffer).toBeNull();
+    expect(model.hexes.every((hex) => hex.specialMission === null)).toBe(true);
   });
 });

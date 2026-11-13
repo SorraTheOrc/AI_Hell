@@ -134,6 +134,16 @@ const FALLS_COLOR = '#ff6666';
 const HELD_TEXT_COLOR = '#4da6ff';
 const UNHELD_TEXT_COLOR = '#ffa64d';
 
+/**
+ * Tile text colour of the special mission the rotation offers this sortie
+ * (`AH-0MWF0CWB7002MG2F`).
+ *
+ * Gold is decoration only: the `★ SPECIAL` tag the intel model puts in
+ * `tileLabel` is the non-colour signal, so the offer stays legible for a
+ * colour-blind player — the same rule the ownership marker follows.
+ */
+const SPECIAL_OFFER_TEXT_COLOR = '#ffe066';
+
 /** Focus highlight on a tile: a white stroke, never an ownership-colour swap. */
 const TILE_FOCUS_STROKE = '#ffffff';
 const TILE_FOCUS_STROKE_WIDTH = 2;
@@ -473,11 +483,18 @@ function renderHexTile(
   );
   objects.push(graphics);
 
+  // The offered special mission is highlighted from the intel model's own
+  // answer (`offeredNow`) — never from a scene-side rotation rule.
+  const textColor = intel.specialMission?.offeredNow
+    ? SPECIAL_OFFER_TEXT_COLOR
+    : intel.held
+      ? HELD_TEXT_COLOR
+      : UNHELD_TEXT_COLOR;
   const text = scene.add
     .text(x, y, intel.tileLabel, {
       fontFamily: 'monospace',
       fontSize: TILE_FONT_SIZE,
-      color: intel.held ? HELD_TEXT_COLOR : UNHELD_TEXT_COLOR,
+      color: textColor,
       align: 'center',
     })
     .setOrigin(0.5, 0.5)
