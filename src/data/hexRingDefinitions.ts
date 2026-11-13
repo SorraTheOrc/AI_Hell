@@ -18,11 +18,15 @@
  *   is `hex-r2-12` (`nova`). The other hexes grant upgrades/strength.
  * - **Every grant is distinct within its ring**, so each hex is a real
  *   strategic choice rather than a duplicate reward.
- * - **Every row states `isSpecialMission`.** It is `false` for every authored
- *   hex today (the special-mission content lands with AH-0MWF0CTQB001XFE1);
- *   the marker is validated loudly by `validateRingDefinitions`, and a `true`
- *   row must grant a hull catalogue entry. The CSV seeds carry the same
- *   column, so the parity test keeps the marker from drifting.
+ * - **Every row states `isSpecialMission`.** It is `false` for ordinary hexes
+ *   and `true` for a **special-mission hex**, of which ring 2 authors exactly
+ *   one: `hex-r2-3` (`the-void-marshall`), whose grant is the extra-hit-points
+ *   `hull-3` (AH-0MWF0CTQB001XFE1, post-MVP Hangar War). The deployment of a
+ *   special hex is the **ordinary one-level capture** — the "special" part is
+ *   the hull it pays, never a second run shape — and the marker is validated
+ *   loudly by `validateRingDefinitions` (a `true` row must grant a hull
+ *   catalogue entry). The CSV seeds carry the same column, so the parity test
+ *   keeps the marker from drifting.
  * - **Ring 2 is the harder frontier**: its hardest hex outranks ring 1's, and
  *   its aggression floor is above the opening ring's.
  * - **Authorship order is pinned** by the harness fixtures
@@ -164,7 +168,10 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['rapid']),
     grants: 'hull-3',
     weaponHex: false,
-    isSpecialMission: false,
+    // The authored special mission (AH-0MWF0CTQB001XFE1): an ordinary
+    // one-level capture that pays the extra-hit-points Juggernaut Hull
+    // (`hull-3`) instead of a currency drop. Known ahead in the map intel.
+    isSpecialMission: true,
     baseAggression: 5,
   }),
   Object.freeze({

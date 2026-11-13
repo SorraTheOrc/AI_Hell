@@ -6,10 +6,12 @@
 #
 # Columns (identical to hex-ring-1.csv; list fields are `|`-separated):
 #   id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression
+# Ring 2 authors the ring's one special mission: `hex-r2-3` carries
+# `isSpecialMission=true` and grants the extra-hit-points `hull-3`.
 id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression
 hex-r2-1,-2,0,2,the-siege-leviathan,mortar,waveLaser,arc,false,false,2
 hex-r2-2,-2,1,2,cinder-praetor,arc,nova,broadside,false,false,2
-hex-r2-3,-2,2,2,the-void-marshall,nova,rapid,hull-3,false,false,5
+hex-r2-3,-2,2,2,the-void-marshall,nova,rapid,hull-3,false,true,5
 hex-r2-4,-1,-1,2,ghost-colonel,rapid,arc,rapid,false,false,2
 hex-r2-5,-1,2,2,the-furnace-king,ricochet,spread,dual,false,false,5
 hex-r2-6,0,-2,2,cobalt-siege,dual,mortar,hull-2,false,false,2

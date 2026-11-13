@@ -30,6 +30,7 @@ import {
   type HexRingDefinition,
 } from '../core/hangarWar/hexRing';
 import { hexAggressionLevel } from '../core/hangarWar/hexDifficulty';
+import { findHangarEntry } from '../core/hangarWar/hangarEconomy';
 import {
   HEX_RING_DEFINITIONS,
   findHexRingDefinition,
@@ -322,6 +323,70 @@ describe('generating the authored rings', () => {
     expect(() => generateRing(3, HEX_RING_DEFINITIONS)).toThrow(
       HexRingDefinitionError,
     );
+  });
+});
+
+/** Every authored hex flagged as a special mission, across both rings. */
+function authoredSpecialMissionHexes(): HexRingDefinition[] {
+  return HEX_RING_DEFINITIONS.filter(
+    (hex) => hex.isSpecialMission === true,
+  );
+}
+
+describe('authored special-mission content', () => {
+  it('authors exactly one special-mission hex, and it is ring 2\'s hull-3 hex', () => {
+    // One authored special mission is the contract (AH-0MWF0CTQB001XFE1 AC3);
+    // pinning it by id keeps the authored content visible in the diff and
+    // stops a later row quietly claiming the marker too.
+    expect(authoredSpecialMissionHexes().map((hex) => hex.id)).toEqual([
+      'hex-r2-3',
+    ]);
+    const special = authoredSpecialMissionHexes()[0];
+    expect(special.ringIndex).toBe(2);
+    expect(special.grants).toBe('hull-3');
+  });
+
+  it('pays the extra-hit-points hull, a real catalogue reward', () => {
+    const special = authoredSpecialMissionHexes()[0];
+    const reward = findHangarEntry(special.grants);
+    const bulwark = findHangarEntry('hull-2');
+
+    expect(reward?.kind).toBe('hull');
+    expect(bulwark?.kind).toBe('hull');
+    if (reward?.kind !== 'hull' || bulwark?.kind !== 'hull') return;
+    // "Extra hit points" (Q2 = a): more lives than the buyable Bulwark Hull.
+    expect(reward.runStats.startingLives).toBeGreaterThan(
+      bulwark.runStats.startingLives,
+    );
+  });
+
+  it('validates loudly and survives generation with the marker intact', () => {
+    for (const ringIndex of [1, 2]) {
+      expect(validateRingDefinitions(ringIndex, HEX_RING_DEFINITIONS)).toEqual({
+        ok: true,
+        issues: [],
+      });
+    }
+    const generated = generateRing(2, HEX_RING_DEFINITIONS).hexes;
+    expect(
+      generated.find((hex) => hex.id === 'hex-r2-3')?.isSpecialMission,
+    ).toBe(true);
+    expect(
+      generated.filter((hex) => hex.isSpecialMission === true),
+    ).toHaveLength(1);
+  });
+
+  it('mirrors the marker in the ring-2 CSV seed', () => {
+    const fromSeed = definitionsFromCsv('hex-ring-2.csv').filter(
+      (hex) => hex.isSpecialMission === true,
+    );
+    expect(fromSeed.map((hex) => hex.id)).toEqual(['hex-r2-3']);
+    expect(fromSeed[0].grants).toBe('hull-3');
+    expect(
+      definitionsFromCsv('hex-ring-1.csv').some(
+        (hex) => hex.isSpecialMission === true,
+      ),
+    ).toBe(false);
   });
 });
 
