@@ -7,10 +7,12 @@
  * hex definitions, and the deployment reuses the shipped hangar deployment
  * path. This suite pins:
  *
- * - the map renders the hangar at the centre, a readable `AGG n` label on
- *   every tile and the full intel of the focused hex in the detail panel
- *   before the player commits;
- * - ring 2's twelve generated hexes render and are selectable;
+ * - the map renders the hangar at the centre, a readable tile label on every
+ *   tile and the full intel of the focused hex in the detail panel before the
+ *   player commits;
+ * - the reveal is adjacency-only: ring 1 renders with zero held hexes and
+ *   ring 2 appears progressively as its neighbours are held (hidden hexes are
+ *   neither focusable nor deployable);
  * - focusing/activating a hex launches the shipped `PlayScene` at that hex;
  * - the hangar is one click away;
  * - an injected payload is never mutated, and a fresh war renders the
@@ -34,6 +36,7 @@ import { createRingState } from '../core/hangarWar/hexRing';
 import {
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
+  UNHELD_TILE_MARKER,
   buildHexMapModel,
   pickAttractHex,
 } from '../core/hangarWar/hexIntel';
@@ -107,9 +110,11 @@ describe('HexMapScene', () => {
 
     for (const intel of model.hexes) {
       const row = scene.getRows().find((entry) => entry.key === intel.key)!;
-      // The tile carries only the short aggression label at a readable size;
-      // held/unheld stays encoded by the tile colour.
-      expect(row.label).toBe(`AGG ${intel.aggression}`);
+      // The tile carries coordinates + aggression + the ownership marker at a
+      // readable size; ownership is also readable without colour.
+      expect(row.label).toBe(
+        `(${intel.q},${intel.r}) AGG ${intel.aggression} ${UNHELD_TILE_MARKER}`,
+      );
       // The rendered text object carries exactly that label.
       expect(row.text.text).toBe(row.label);
       expect(scene.children.list).toContain(row.text);
@@ -133,13 +138,13 @@ describe('HexMapScene', () => {
     const easiest = scene
       .getRows()
       .find((row) => row.key === 'hex:hex-r1-2')!;
-    expect(easiest.label).toBe('AGG 1');
+    expect(easiest.label).toBe(`(1,-1) AGG 1 ${UNHELD_TILE_MARKER}`);
     expect(panel).toContain('shroud-merchant');
     expect(panel).toContain('W:waveLaser');
     expect(panel).toContain('→extra-life');
   });
 
-  it('renders ring 2\u2019s twelve generated hexes and makes them selectable', async () => {
+  it('hides ring 2 with zero held hexes (adjacency-only reveal)', async () => {
     const payload = ringPayload(2);
     const scene = await bootMap({ payload, storage: null });
     const model = scene.getModel();
@@ -147,38 +152,61 @@ describe('HexMapScene', () => {
       .getRows()
       .filter((row) => row.key.startsWith('hex:') && row.actionable);
 
+    // The full stored ring is still published (reveal is progressive, not
+    // removal)…
     expect(model.hexes).toHaveLength(12);
     expect(model.hexes.map((hex) => hex.id)).toEqual(
       payload.ring.hexes.map((hex) => hex.id),
     );
-    // Twelve hex rows plus the hangar row.
-    expect(deployable).toHaveLength(12);
-    expect(model.focusOrder).toEqual([
-      ...model.hexes.map((hex) => hex.key),
-      HEX_MAP_HANGAR_ROW_KEY,
-    ]);
+    // …but with no held ring-1 hex, no ring-2 hex shares an edge with the
+    // hangar, so nothing is displayed, focusable or deployable.
+    expect(model.hexes.every((hex) => !hex.displayed)).toBe(true);
+    expect(deployable).toHaveLength(0);
+    expect(model.focusOrder).toEqual([HEX_MAP_HANGAR_ROW_KEY]);
+    expect(model.attractHexId).toBeNull();
+    expect(scene.getFocusedKey()).toBe(HEX_MAP_HANGAR_ROW_KEY);
+    // A hidden hex is unreachable by focus, click or the attract bot.
+    expect(scene.focusRow('hex:hex-r2-12')).toBe(false);
+  });
 
-    for (const intel of model.hexes) {
-      const row = scene
-        .getRows()
-        .find((entry) => entry.key === `hex:${intel.id}`)!;
-      expect(row.actionable).toBe(true);
-      expect(row.text.input).not.toBeNull();
-    }
+  it('reveals ring 2 progressively once a ring-1 neighbour is held', async () => {
+    // Hold ring-1 hex-r1-2 (1,-1); its ring-2 neighbours hex-r2-8,
+    // hex-r2-10 and hex-r2-11 become displayed and deployable while the
+    // other nine ring-2 hexes stay hidden (ring-2 content is not removed).
+    const ring1 = createRingState(1, HEX_RING_DEFINITIONS);
+    const held = ring1.hexes.find((hex) => hex.id === 'hex-r1-2')!;
+    const payload: HangarWarPayload = {
+      ...ringPayload(2),
+      ring: {
+        ringIndex: 2,
+        hexes: [
+          {
+            ...held,
+            held: true,
+            defender: {
+              hullId: 'hull-1',
+              defenceRating: 7,
+              bankedMinerals: 0,
+            },
+          },
+          ...ringPayload(2).ring.hexes,
+        ],
+      },
+    };
+    const scene = await bootMap({ payload, storage: null });
+    const model = scene.getModel();
+    const deployable = scene
+      .getRows()
+      .filter((row) => row.key.startsWith('hex:') && row.actionable);
 
-    // Default focus is the attract bot's weakest hex (hex-r2-1, the
-    // equal-weakest tie at aggression 2 wins on sorted id after the
-    // survivable-band tune (AH-0MW9VAKSD0054XJC)); any ring-2 hex can be focused.
-    expect(model.attractHexId).toBe('hex-r2-1');
-    expect(scene.getFocusedKey()).toBe('hex:hex-r2-1');
-    expect(scene.focusRow('hex:hex-r2-12')).toBe(true);
-    expect(scene.getFocusedKey()).toBe('hex:hex-r2-12');
-    // The detail panel follows focus to the newly focused hex.
-    // The ring-2 weapon hex is the strict maximum at aggression 8.
-    const weaponHex = model.hexes.find((hex) => hex.id === 'hex-r2-12')!;
-    expect(scene.getPanelKey()).toBe('hex:hex-r2-12');
-    expect(scene.getPanelText()).toContain(weaponHex.boss!);
-    expect(scene.getPanelText()).toContain(`AGG ${weaponHex.aggression}`);
+    expect(new Set(deployable.map((row) => row.key))).toEqual(
+      new Set(['hex:hex-r2-8', 'hex:hex-r2-10', 'hex:hex-r2-11']),
+    );
+    expect(model.hexes).toHaveLength(13);
+    expect(model.ringLine).toBe('RING 2 — 1/13 HEXES HELD');
+    expect(scene.focusRow('hex:hex-r2-10')).toBe(true);
+    // A hidden ring-2 hex is not focusable even though it is still stored.
+    expect(scene.focusRow('hex:hex-r2-1')).toBe(false);
   });
 
   it('deploys at the focused hex through the shipped PlayScene path', async () => {
@@ -241,9 +269,15 @@ describe('HexMapScene', () => {
 
     expect(rows.filter((row) => row.key.startsWith('hex:')).every((row) => !row.actionable)).toBe(true);
     expect(scene.getModel().ringLine).toContain('SECURED');
-    expect(scene.getModel().focusOrder).toEqual([HEX_MAP_HANGAR_ROW_KEY]);
+    // Held hexes are still selectable: focus order covers every displayed hex
+    // (held included) plus the hangar row (contract AC2); the renderer's
+    // held-hex focusability lands with the renderer item.
+    expect(scene.getModel().focusOrder).toEqual([
+      ...scene.getModel().hexes.map((hex) => hex.key),
+      HEX_MAP_HANGAR_ROW_KEY,
+    ]);
     expect(scene.getFocusedKey()).toBe(HEX_MAP_HANGAR_ROW_KEY);
-    // A held hex cannot be focused (nothing to deploy at).
+    // A held hex cannot be deployed at.
     expect(scene.focusRow('hex:hex-r1-1')).toBe(false);
     // The hangar focus is not a hex, so the panel falls back to the model's
     // first hex rather than going blank.

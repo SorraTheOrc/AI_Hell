@@ -33,6 +33,26 @@
  * - A stored hex with no authored definition still renders its persisted state
  *   (boss/grant shown as unknown); intel is never fabricated for it.
  *
+ * ## Reveal and selection (AH-0MWDBI33V003QQ3U)
+ *
+ * - **Adjacency-only reveal.** A hex is `displayed` only when it shares an edge
+ *   with the hangar `(0,0)` or with a held hex (`isHexDisplayed`). The hangar
+ *   anchors the reveal, so ring 1 always renders and later rings appear
+ *   progressively as their near neighbours are held. Hidden hexes are never
+ *   drawn, focused, deployed at or attract-targeted.
+ * - **Selectable vs actionable.** Every displayed hex is `selectable`
+ *   (focusable — a held hex can be inspected), while only an unheld displayed
+ *   hex is `actionable` (deployable).
+ * - **Tile label.** `tileLabel` carries the axial coordinates `(q,r)`, the
+ *   `AGG n` badge **and** an ownership discriminator glyph (filled = held,
+ *   hollow = unheld) so ownership is readable without colour; the full `label`
+ *   block is unchanged.
+ * - **Full-ring progress.** `ringLine` counts the whole stored/generated ring
+ *   (hidden hexes included), so hiding hexes never loses progress.
+ * - **Grid columns.** `gridColumns` exposes the spatial arrow-navigation data
+ *   over displayed hexes with the `◀ HANGAR` row folded in as a bottom row — a
+ *   pure read model the renderer wires without a per-scene rule.
+ *
  * ## Attack preview
  *
  * A held hex with a queued attack publishes the resolver's **jitter-free**
@@ -81,6 +101,15 @@ export const HEX_MAP_HANGAR_LABEL = '◀ HANGAR — buy hulls, weapons, modifier
 /** Prefix of a hex row key (`hex:<id>`). */
 export const HEX_MAP_HEX_ROW_PREFIX = 'hex:';
 
+/** The hangar's axial coordinate — the reveal's primary anchor. */
+export const HANGAR_AXIAL: AxialCoordinate = { q: 0, r: 0 };
+
+/** Ownership marker on a held tile's label (readable without colour). */
+export const HELD_TILE_MARKER = '\u25CF';
+
+/** Ownership marker on an unheld tile's label (readable without colour). */
+export const UNHELD_TILE_MARKER = '\u25CB';
+
 /** A queued attack against a hex, as the map publishes it. */
 export interface HexPendingAttackIntel {
   /** Summed force of every attack queued against this hex. */
@@ -127,12 +156,28 @@ export interface HexIntel {
   /** The queued attack against the hex, or `null` when none. */
   readonly pendingAttack: HexPendingAttackIntel | null;
   /**
-   * True when the hex can be selected for deployment. An unheld hex can be
-   * attacked; a held hex is already the player's, so the map presents it but
-   * does not deploy at it.
+   * True when the hex is revealed by the map's adjacency rule — it shares an
+   * edge with the hangar `(0,0)` or with a hex the player holds. Hidden hexes
+   * are never drawn, focused, deployed at or attract-targeted.
+   */
+  readonly displayed: boolean;
+  /**
+   * True when the hex can be selected/focused on the map. Every displayed hex
+   * is selectable — a held hex is selectable too, so its full intel can be
+   * inspected — but only an unheld hex is deployable.
+   */
+  readonly selectable: boolean;
+  /**
+   * True when the hex can be deployed at: a displayed hex the player does not
+   * hold. A held hex is selectable but never actionable (activating it
+   * performs no deployment).
    */
   readonly actionable: boolean;
-  /** The short tile label (`AGG n`), rendered on the hex at a readable size. */
+  /**
+   * The short tile label — axial coordinates `(q,r)`, the `AGG n` badge and an
+   * ownership marker (filled = held, hollow = unheld) so ownership is readable
+   * without colour — rendered on the hex at a readable size.
+   */
   readonly tileLabel: string;
   /** The full intel block the detail panel renders (every line, newline separated). */
   readonly label: string;
@@ -181,6 +226,71 @@ export interface HexMapModel {
   readonly defaultFocusKey: string | null;
   /** The attract bot's weakest-adjacent unheld hex, or `null` when secured. */
   readonly attractHexId: string | null;
+  /**
+   * Spatial grid columns for arrow navigation, left to right by screen x; each
+   * column lists its displayed-hex row keys top to bottom by screen y, with
+   * the `◀ HANGAR` row folded in as the bottom row of every column, so arrows
+   * reach it from anywhere. Row keys only — a pure read model, no scene rule.
+   */
+  readonly gridColumns: ReadonlyArray<ReadonlyArray<string>>;
+}
+
+/**
+ * Whether a hex is revealed by the map's adjacency rule: it shares an edge
+ * with the hangar `(0,0)` or with a hex the player holds. The hangar anchors
+ * the reveal, so ring 1 always renders and later rings appear progressively
+ * as their near neighbours are held.
+ *
+ * Pure geometry over the stored ring — never a scene rule.
+ *
+ * @param coordinate — the hex's axial coordinates.
+ * @param heldHexes — every hex the player currently holds.
+ * @returns true when the hex is revealed.
+ */
+export function isHexDisplayed(
+  coordinate: AxialCoordinate,
+  heldHexes: readonly AxialCoordinate[],
+): boolean {
+  if (areNeighbours(HANGAR_AXIAL, coordinate)) return true;
+  return heldHexes.some((held) => areNeighbours(held, coordinate));
+}
+
+/**
+ * Builds the spatial grid columns over the displayed hexes, folding the
+ * hangar row in as the bottom row of every column.
+ *
+ * Columns are ordered left to right by the hexes' screen-x band (`2q + r` for
+ * the pointy-top layout) and rows within a column top to bottom by `r`; the
+ * hangar key is appended as the final row of each column so arrow-down wraps
+ * to it from any column. A map with nothing displayed still exposes the
+ * hangar as a single-column grid, so arrows never strand.
+ *
+ * @param hexes — the model's intel for the full ring (displayed flags set).
+ * @param hangarKey — the hangar row's key.
+ * @returns the grid columns (row keys).
+ */
+export function buildGridColumns(
+  hexes: readonly HexIntel[],
+  hangarKey: string,
+): ReadonlyArray<ReadonlyArray<string>> {
+  const displayed = hexes.filter((hex) => hex.displayed);
+  if (displayed.length === 0) return [[hangarKey]];
+
+  const byBand = new Map<number, HexIntel[]>();
+  for (const hex of displayed) {
+    const band = 2 * hex.q + hex.r;
+    const column = byBand.get(band) ?? [];
+    column.push(hex);
+    byBand.set(band, column);
+  }
+  return [...byBand.keys()]
+    .sort((a, b) => a - b)
+    .map((band) => [
+      ...(byBand.get(band) ?? [])
+        .sort((a, b) => a.r - b.r)
+        .map((hex) => hex.key),
+      hangarKey,
+    ]);
 }
 
 /** Options for {@link buildHexMapModel}. */
@@ -328,6 +438,7 @@ export function buildHexIntel(
   state: HexState,
   definition: HexRingDefinition | undefined,
   pendingForce = 0,
+  displayed = true,
 ): HexIntel {
   const held = state.held === true;
   const aggression = toCount(state.aggression);
@@ -360,45 +471,46 @@ export function buildHexIntel(
     grantedWeapon: state.grantedWeapon ?? null,
     defender,
     pendingAttack: pending,
-    actionable: !held,
-    tileLabel: `AGG ${aggression}`,
+    displayed,
+    selectable: displayed,
+    actionable: displayed && !held,
+    tileLabel: `(${state.q},${state.r}) AGG ${aggression} ${
+      held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
+    }`,
     label: hexLabel(state, definition, pending, defender),
   };
 }
 
 /**
- * The attract bot's ring choice: the **weakest adjacent unheld hex**.
+ * The attract bot's ring choice: the **weakest displayed unheld hex**.
  *
- * "Adjacent" means sharing an edge with the hangar (`0,0`) or with a hex the
- * player already holds, so the bot expands from territory it owns instead of
- * teleporting across the map. Ties are settled by aggression and then by
- * sorted id, so a reordered payload replays identically.
+ * "Displayed" is the map's reveal rule ({@link isHexDisplayed}) — the hex
+ * shares an edge with the hangar (`0,0`) or with a hex the player holds — so
+ * the bot expands from territory it owns instead of teleporting across or
+ * behind the reveal. Ties are settled by aggression and then by sorted id, so
+ * a reordered payload replays identically.
  *
- * Total and never stalling: when no unheld hex touches held territory (e.g.
- * ring 2 before ring 1 is held) the weakest unheld hex anywhere is chosen, and
- * when every hex is held `null` is returned (the ring is secured — there is
- * nothing left to attack).
+ * Total and never off-map: when no displayed unheld hex exists — the ring is
+ * secured, or a later ring has not yet been revealed by a held neighbour —
+ * `null` is returned. There is **no** fallback to a hidden hex: a hex the map
+ * does not show can never be deployed at.
  *
  * @param payload — the war's stored payload.
  * @param definitions — authored ring definitions (defaults to the shipped table).
- * @returns the hex id to attack, or `null` when the ring is fully held.
+ * @returns the hex id to attack, or `null` when no displayed hex remains.
  */
 export function pickAttractHex(
   payload: HangarWarPayload,
   definitions: readonly HexRingDefinition[] = HEX_RING_DEFINITIONS,
 ): string | null {
   const hexes = displayHexStates(payload, definitions);
-  const unheld = hexes.filter((hex) => hex.held !== true);
-  if (unheld.length === 0) return null;
+  if (hexes.every((hex) => hex.held === true)) return null;
 
-  const anchors: readonly AxialCoordinate[] = [
-    { q: 0, r: 0 },
-    ...hexes.filter((hex) => hex.held === true),
-  ];
-  const adjacent = unheld.filter((hex) =>
-    anchors.some((anchor) => areNeighbours(anchor, hex)),
+  const held = hexes.filter((hex) => hex.held === true);
+  const candidates = hexes.filter(
+    (hex) => hex.held !== true && isHexDisplayed(hex, held),
   );
-  const candidates = adjacent.length > 0 ? adjacent : unheld;
+  if (candidates.length === 0) return null;
 
   const [weakest] = [...candidates].sort(
     (a, b) =>
@@ -427,15 +539,20 @@ export function buildHexMapModel(
   );
   const forces = pendingForces(payload.pendingAttacks);
   const states = displayHexStates(payload, definitions);
+  const heldStates = states.filter((state) => state.held === true);
 
   const hexes = states.map((state) =>
     buildHexIntel(
       state,
       definitionById.get(state.id) ?? findHexRingDefinition(state.id),
       forces.get(state.id) ?? 0,
+      isHexDisplayed(state, heldStates),
     ),
   );
 
+  const displayedHexes = hexes.filter((hex) => hex.displayed);
+  // Ring progress is computed over the full stored/generated ring (hidden
+  // hexes included), so hiding hexes never loses progress (AC4).
   const heldCount = hexes.filter((hex) => hex.held).length;
   const secured = hexes.length > 0 && heldCount === hexes.length;
   const attractHexId = pickAttractHex(payload, definitions);
@@ -450,10 +567,13 @@ export function buildHexMapModel(
     (hex) => hex.aggression <= beatableCeiling,
   ).length;
 
+  // Focus covers every selectable (displayed) hex plus the hangar row;
+  // grid columns give the renderer spatial arrows without a per-scene rule.
   const focusOrder = [
-    ...hexes.filter((hex) => hex.actionable).map((hex) => hex.key),
+    ...displayedHexes.map((hex) => hex.key),
     HEX_MAP_HANGAR_ROW_KEY,
   ];
+  const gridColumns = buildGridColumns(hexes, HEX_MAP_HANGAR_ROW_KEY);
   const defaultFocusKey =
     attractHexId !== null
       ? `${HEX_MAP_HEX_ROW_PREFIX}${attractHexId}`
@@ -482,5 +602,6 @@ export function buildHexMapModel(
     focusOrder,
     defaultFocusKey,
     attractHexId,
+    gridColumns,
   };
 }

@@ -34,6 +34,10 @@ import {
 } from '../../core/hangarWar/hexDefence';
 import { DEFENCE_REPORT_TITLE } from '../../core/hangarWar/defenceReport';
 import {
+  HELD_TILE_MARKER,
+  UNHELD_TILE_MARKER,
+} from '../../core/hangarWar/hexIntel';
+import {
   GymHexWar,
   GYM_HEX_WAR_DEFAULT_SEED,
   GYM_HEX_WAR_HINT,
@@ -272,13 +276,17 @@ describe('GymHexWar', () => {
     expect(model!.hexes.map((hex) => hex.id)).toEqual(
       RING_1_HEX_FIXTURES.map((entry) => entry.id),
     );
-    // Every tile carries only the short aggression label at a readable size;
-    // the full intel block lives on the detail panel (AC1/AC2).
+    // Every tile carries coordinates + aggression + the ownership marker at a
+    // readable size; the full intel block lives on the detail panel (AC1/AC2).
     for (const intel of model!.hexes) {
       const row = scene.getMapRows().find((entry) => entry.key === `hex:${intel.id}`);
       expect(row, `no map tile for ${intel.id}`).toBeDefined();
       expect(row!.label).toBe(intel.tileLabel);
-      expect(row!.label).toBe(`AGG ${intel.aggression}`);
+      expect(row!.label).toBe(
+        `(${intel.q},${intel.r}) AGG ${intel.aggression} ${
+          intel.held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
+        }`,
+      );
     }
     // The gym's render is read-only by construction.
     expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);

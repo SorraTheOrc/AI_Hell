@@ -1,11 +1,13 @@
 /**
- * Hex-map intel view-model tests (AH-0MVUXCAG90086LH2).
+ * Hex-map intel view-model tests — reveal + selection model contract
+ * (AH-0MWEWYORN000KTXF, part of **Build Candidate D — Hangar War**).
  *
  * The map is a **pure view** over the stored hangar-war payload, the authored
- * ring definitions and the resolver's numbers, so this suite pins the
- * known-ahead intel (boss, strengths, weaknesses, grant, aggression, pending
- * attack) per hex, the generated ring-2 render, the focus order and the
- * attract bot's weakest-adjacent pick — all without booting a scene.
+ * ring definitions and the resolver's numbers. This suite pins the Hangar Map
+ * UX model contract (AH-0MWDBI33V003QQ3U): adjacency-only reveal, the
+ * selectable/actionable split, coordinate + ownership-discriminator tile
+ * labels, full-ring progress, a reveal-constrained attract pick and spatial
+ * grid columns — all without booting a scene.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -16,11 +18,14 @@ import {
 } from './hangarWarStore';
 import { createRingState, generateRing } from './hexRing';
 import {
+  HELD_TILE_MARKER,
   HEX_MAP_HANGAR_LABEL,
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
+  UNHELD_TILE_MARKER,
   buildHexIntel,
   buildHexMapModel,
+  isHexDisplayed,
   pickAttractHex,
 } from './hexIntel';
 import type { HangarWarPayload, HexState, PendingAttack } from './types';
@@ -61,33 +66,203 @@ function withHex(
   return next;
 }
 
-describe('hex map model (pure)', () => {
-  it('publishes the full known-ahead intel for every ring-1 hex', () => {
+/**
+ * A payload whose stored ring is ring 2 plus one held ring-1 hex — the state
+ * a player reaches by holding a ring-1 hex first. Only the ring-2 hexes
+ * sharing an edge with the held hex are revealed.
+ */
+function revealPayload(heldRing1Id: string): HangarWarPayload {
+  const ring1 = createRingState(1, HEX_RING_DEFINITIONS);
+  const held = ring1.hexes.find((hex) => hex.id === heldRing1Id);
+  if (!held) throw new Error(`no ring-1 hex ${heldRing1Id}`);
+  return {
+    ...ringPayload(2),
+    ring: {
+      ringIndex: 2,
+      hexes: [
+        {
+          ...held,
+          held: true,
+          defender: {
+            hullId: DEFAULT_HULL_ID,
+            defenceRating: 9,
+            bankedMinerals: 0,
+          },
+        },
+        ...ringPayload(2).ring.hexes,
+      ],
+    },
+  };
+}
+
+/** A copy of `payload` with every hex held (the secured ring). */
+function secured(payload: HangarWarPayload): HangarWarPayload {
+  const next = clone(payload);
+  for (const hex of next.ring.hexes) {
+    hex.held = true;
+    hex.defender = {
+      hullId: DEFAULT_HULL_ID,
+      defenceRating: 9,
+      bankedMinerals: 0,
+    };
+  }
+  return next;
+}
+
+describe('hex map model — adjacency-only reveal (AC1)', () => {
+  it('renders every ring-1 hex with zero held (the hangar anchors the reveal)', () => {
     const model = buildHexMapModel(ringPayload(1));
-    const ring = generateRing(1, HEX_RING_DEFINITIONS);
 
     expect(model.title).toBe(HEX_MAP_TITLE);
-    expect(model.ringIndex).toBe(1);
     expect(model.hexes).toHaveLength(6);
     expect(model.hexes.map((hex) => hex.id)).toEqual(
-      ring.hexes.map((hex) => hex.id),
+      generateRing(1, HEX_RING_DEFINITIONS).hexes.map((hex) => hex.id),
     );
+    // Ring 1 surrounds the hangar, so every hex shares an edge with (0,0) —
+    // the reveal is anchored even with nothing held.
+    expect(model.hexes.every((hex) => hex.displayed)).toBe(true);
+    expect(model.hexes.every((hex) => hex.selectable)).toBe(true);
+    expect(model.hexes.every((hex) => hex.actionable)).toBe(true);
+    expect(model.secured).toBe(false);
+  });
+
+  it('hides every ring-2 hex with zero held (nothing shares an edge with (0,0))', () => {
+    const model = buildHexMapModel(ringPayload(2));
+
+    // The full stored ring is still published (reveal is progressive, not
+    // removal — epic AC6)…
+    expect(model.hexes).toHaveLength(12);
+    // …but nothing is displayed, focusable or deployable until a ring-1
+    // neighbour is held.
+    expect(model.hexes.every((hex) => !hex.displayed)).toBe(true);
+    expect(model.hexes.every((hex) => !hex.selectable)).toBe(true);
+    expect(model.hexes.every((hex) => !hex.actionable)).toBe(true);
+    expect(model.focusOrder).toEqual([HEX_MAP_HANGAR_ROW_KEY]);
+    expect(model.defaultFocusKey).toBe(HEX_MAP_HANGAR_ROW_KEY);
+    expect(model.attractHexId).toBeNull();
+  });
+
+  it('reveals ring-2 hexes progressively as their ring-1 neighbours are held', () => {
+    // hex-r1-2 at (1,-1) neighbours ring-2 hexes hex-r2-8 (1,-2),
+    // hex-r2-10 (2,-2) and hex-r2-11 (2,-1).
+    const model = buildHexMapModel(revealPayload('hex-r1-2'));
+    const displayed = model.hexes.filter((hex) => hex.displayed);
+
+    expect(displayed.map((hex) => hex.id).sort()).toEqual(
+      ['hex-r1-2', 'hex-r2-8', 'hex-r2-10', 'hex-r2-11'].sort(),
+    );
+    // The other nine ring-2 hexes stay hidden — and stay in the stored ring
+    // (ring-2 content is not removed, only hidden by the reveal).
+    const hidden = model.hexes.filter((hex) => !hex.displayed);
+    expect(hidden).toHaveLength(9);
+    expect(hidden.map((hex) => hex.id)).toContain('hex-r2-1');
+    expect(hidden.map((hex) => hex.id)).toContain('hex-r2-12');
+    // The hidden ring-2 weapon hex keeps its authored identity — reveal is
+    // progressive, not removal of ring-2 content (epic AC6).
+    expect(model.hexes.find((hex) => hex.id === 'hex-r2-12')?.weaponHex).toBe(
+      true,
+    );
+
+    // Revealed ring-2 hexes carry the full authored intel — nothing is
+    // fabricated for a revealed tile.
+    const r2 = displayed.find((hex) => hex.id === 'hex-r2-10')!;
+    const definition = findHexRingDefinition('hex-r2-10')!;
+    expect(r2.held).toBe(false);
+    expect(r2.boss).toBe(definition.boss);
+    expect(r2.grants).toBe(definition.grants);
+    expect(r2.ringIndex).toBe(2);
+  });
+
+  it('anchor rule: a hex is displayed exactly when it shares an edge with the hangar or with a held hex', () => {
+    // Ring 1 is always displayed (hangar-adjacent)…
+    expect(isHexDisplayed({ q: 1, r: 0 }, [])).toBe(true);
+    expect(isHexDisplayed({ q: 0, r: 1 }, [])).toBe(true);
+    // …a hidden ring-2 hex is not…
+    expect(isHexDisplayed({ q: -2, r: 0 }, [])).toBe(false);
+    expect(isHexDisplayed({ q: 2, r: 0 }, [])).toBe(false);
+    // …it becomes displayed when a neighbour is held…
+    expect(isHexDisplayed({ q: 2, r: -1 }, [{ q: 1, r: -1 }])).toBe(true);
+    expect(isHexDisplayed({ q: -2, r: 0 }, [{ q: 1, r: -1 }])).toBe(false);
+    // …and a held hex anchors its neighbours regardless of ring.
+    expect(isHexDisplayed({ q: 1, r: 1 }, [{ q: 2, r: 0 }])).toBe(true);
+  });
+});
+
+describe('hex map model — selection split (AC2)', () => {
+  it('selectable is true for every displayed hex; actionable only for unheld displayed hexes', () => {
+    const payload = withHex(ringPayload(1), 'hex-r1-2', {
+      held: true,
+      defender: { hullId: DEFAULT_HULL_ID, defenceRating: 9, bankedMinerals: 0 },
+    });
+    const model = buildHexMapModel(payload);
+
+    // The held hex is selectable (its intel can be inspected) but never
+    // actionable (activating it must not deploy).
+    const held = model.hexes.find((hex) => hex.id === 'hex-r1-2')!;
+    expect(held.displayed).toBe(true);
+    expect(held.selectable).toBe(true);
+    expect(held.actionable).toBe(false);
+
+    // Every other displayed hex is selectable and actionable.
+    for (const hex of model.hexes.filter((candidate) => candidate.id !== 'hex-r1-2')) {
+      expect(hex.displayed).toBe(true);
+      expect(hex.selectable).toBe(true);
+      expect(hex.actionable).toBe(true);
+    }
+
+    // focusOrder covers every selectable displayed hex (held included) plus
+    // the hangar row — held hexes are focusable, they just do not deploy.
+    expect(model.focusOrder).toEqual([
+      ...model.hexes.map((hex) => hex.key),
+      HEX_MAP_HANGAR_ROW_KEY,
+    ]);
+    // The hangar navigation row stays always-actionable and one click away.
+    expect(model.hangarRow).toMatchObject({
+      key: HEX_MAP_HANGAR_ROW_KEY,
+      label: HEX_MAP_HANGAR_LABEL,
+      actionable: true,
+    });
+  });
+
+  it('hidden hexes are neither selectable nor actionable and never enter focus order', () => {
+    const model = buildHexMapModel(ringPayload(2));
+
+    expect(model.hexes.every((hex) => !hex.selectable && !hex.actionable)).toBe(
+      true,
+    );
+    expect(
+      model.focusOrder.some((key) => key.startsWith('hex:')),
+    ).toBe(false);
+  });
+});
+
+describe('hex map model — tile label (AC3)', () => {
+  it('tileLabel shows (q,r), AGG n and a non-colour ownership discriminator', () => {
+    const model = buildHexMapModel(ringPayload(1));
+
+    for (const intel of model.hexes) {
+      expect(intel.tileLabel).toBe(
+        `(${intel.q},${intel.r}) AGG ${intel.aggression} ${UNHELD_TILE_MARKER}`,
+      );
+      expect(intel.tileLabel).toContain(`(${intel.q},${intel.r})`);
+      expect(intel.tileLabel).toContain(`AGG ${intel.aggression}`);
+      expect(intel.tileLabel).toContain(UNHELD_TILE_MARKER);
+    }
+
+    // A held tile is distinguishable without colour: the filled marker
+    // replaces the hollow one.
+    const held = buildHexMapModel(
+      withHex(ringPayload(1), 'hex-r1-2', { held: true }),
+    ).hexes.find((hex) => hex.id === 'hex-r1-2')!;
+    expect(held.tileLabel).toBe(`(1,-1) AGG 1 ${HELD_TILE_MARKER}`);
+    expect(held.tileLabel).not.toContain(UNHELD_TILE_MARKER);
+  });
+
+  it('the full intel label block is unchanged', () => {
+    const model = buildHexMapModel(ringPayload(1));
 
     for (const intel of model.hexes) {
       const definition = findHexRingDefinition(intel.id)!;
-      expect(intel.boss).toBe(definition.boss);
-      expect(intel.strengths).toEqual([...definition.strengths]);
-      expect(intel.weaknesses).toEqual([...definition.weaknesses]);
-      expect(intel.grants).toBe(definition.grants);
-      expect(intel.aggression).toBe(definition.baseAggression);
-      expect(intel.held).toBe(false);
-      expect(intel.actionable).toBe(true);
-      // The short tile label is the readable aggression badge (`AGG n`).
-      expect(intel.tileLabel).toBe(`AGG ${definition.baseAggression}`);
-
-      // The full intel block (the detail panel's text) publishes boss,
-      // strengths, weaknesses, grant and the aggression *before* the player
-      // commits to a deployment.
       expect(intel.label).toContain(intel.id);
       expect(intel.label).toContain('UNHELD');
       expect(intel.label).toContain(`AGG ${definition.baseAggression}`);
@@ -96,13 +271,9 @@ describe('hex map model (pure)', () => {
       expect(intel.label).toContain(`W:${definition.weaknesses.join(',')}`);
       expect(intel.label).toContain(`→${definition.grants}`);
     }
-
-    expect(model.ringLine).toBe('RING 1 — 0/6 HEXES HELD');
-    expect(model.hangarLine).toContain('HANGAR');
-    expect(model.secured).toBe(false);
   });
 
-  it('joins held state, the defending bot and summed pending attacks', () => {
+  it('joins held state, the defending bot and summed pending attacks (label unchanged)', () => {
     const payload = withHex(ringPayload(1), 'hex-r1-2', {
       held: true,
       bossDefeated: true,
@@ -120,6 +291,8 @@ describe('hex map model (pure)', () => {
     const other = model.hexes.find((hex) => hex.id === 'hex-r1-1')!;
 
     expect(held.held).toBe(true);
+    expect(held.displayed).toBe(true);
+    expect(held.selectable).toBe(true);
     expect(held.actionable).toBe(false);
     expect(held.bossDefeated).toBe(true);
     expect(held.grantedWeapon).toBe('waveLaser');
@@ -136,9 +309,10 @@ describe('hex map model (pure)', () => {
       defenderRating: 2,
       margin: -8,
     });
-    // The tile badge is the aggression alone; the full block is panel text.
-    expect(held.tileLabel).toBe('AGG 1');
-    expect(other.tileLabel).toBe('AGG 2');
+    // The tile badge is the coordinates + aggression + ownership marker; the
+    // full block is panel text.
+    expect(held.tileLabel).toBe(`(1,-1) AGG 1 ${HELD_TILE_MARKER}`);
+    expect(other.tileLabel).toBe(`(1,0) AGG 2 ${UNHELD_TILE_MARKER}`);
     expect(held.label).toContain('HELD · AGG 1 · !9');
     expect(held.label).toContain('bot hull-1 (2)');
     expect(held.label).toContain('atk 10 vs 2 · FALLS');
@@ -152,31 +326,153 @@ describe('hex map model (pure)', () => {
     expect(model.heldCount).toBe(1);
     expect(model.ringLine).toContain('1/6');
   });
+});
 
-  it('renders ring 2 from its 12 generated hex definitions, all selectable', () => {
-    const model = buildHexMapModel(ringPayload(2));
-    const ring = generateRing(2, HEX_RING_DEFINITIONS);
-    const weaponHex = model.hexes.filter((hex) => hex.weaponHex);
+describe('hex map model — ring progress over the full ring (AC4)', () => {
+  it('counts the full stored ring — progress is not lost when the reveal hides hexes', () => {
+    // Ring-2 stored ring (12) plus the held ring-1 anchor (1): ringLine and
+    // heldCount cover all 13, even though nine ring-2 hexes are hidden.
+    const model = buildHexMapModel(revealPayload('hex-r1-2'));
 
-    expect(model.ringIndex).toBe(2);
-    expect(model.hexes).toHaveLength(12);
-    expect(model.hexes.map((hex) => hex.id)).toEqual(
-      ring.hexes.map((hex) => hex.id),
-    );
-    expect(model.hexes.every((hex) => hex.actionable)).toBe(true);
-    expect(model.focusOrder).toEqual([
-      ...ring.hexes.map((hex) => `hex:${hex.id}`),
-      HEX_MAP_HANGAR_ROW_KEY,
-    ]);
-    // Exactly one hex grants the ring's new weapon, and it is the hardest.
-    expect(weaponHex).toHaveLength(1);
-    expect(weaponHex[0].id).toBe('hex-r2-12');
-    expect(weaponHex[0].aggression).toBe(
-      Math.max(...model.hexes.map((hex) => hex.aggression)),
-    );
-    expect(model.ringLine).toBe('RING 2 — 0/12 HEXES HELD');
+    expect(model.hexes).toHaveLength(13);
+    expect(model.heldCount).toBe(1);
+    expect(model.ringLine).toBe('RING 2 — 1/13 HEXES HELD');
   });
 
+  it('reports SECURED only when every stored hex is held', () => {
+    const model = buildHexMapModel(secured(ringPayload(1)));
+
+    expect(model.secured).toBe(true);
+    expect(model.ringLine).toBe('RING 1 — 6/6 HEXES HELD · SECURED');
+    expect(model.attractHexId).toBeNull();
+  });
+
+  it('a fresh war\u2019s generated ring is the progress baseline', () => {
+    const fresh = buildHexMapModel({
+      ...createDefaultPayload(3),
+      ring: { ringIndex: 2, hexes: [] },
+    });
+    expect(fresh.hexes).toHaveLength(12);
+    expect(fresh.ringLine).toBe('RING 2 — 0/12 HEXES HELD');
+  });
+});
+
+describe('hex map model — attract constraint (AC5)', () => {
+  it('picks the weakest displayed unheld hex of the opening ring', () => {
+    const payload = ringPayload(1);
+    const weakest = [...buildHexMapModel(payload).hexes].sort(
+      (a, b) => a.aggression - b.aggression || (a.id < b.id ? -1 : 1),
+    )[0];
+
+    expect(pickAttractHex(payload)).toBe(weakest.id);
+    expect(buildHexMapModel(payload).attractHexId).toBe(weakest.id);
+    // Ring 1's authored easiest hex, not merely the first clockwise one.
+    expect(weakest.id).toBe('hex-r1-2');
+  });
+
+  it('never falls back to a hidden hex (ring 2 unrevealed returns null)', () => {
+    // Ring 2 with no held ring-1 hex: every ring-2 hex is hidden, so there is
+    // no displayed target — the old "weakest unheld anywhere" fallback is gone.
+    expect(pickAttractHex(ringPayload(2))).toBeNull();
+    expect(buildHexMapModel(ringPayload(2)).attractHexId).toBeNull();
+  });
+
+  it('stays displayed and adjacent to held territory instead of crossing the map', () => {
+    // Only ring-1 hex-r1-2 is held, revealing ring-2 hexes hex-r2-8,
+    // hex-r2-10 and hex-r2-11. A weaker hidden hex (hex-r2-1) must not tempt
+    // the bot, and the pick must always be a displayed hex.
+    const payload = withHex(revealPayload('hex-r1-2'), 'hex-r2-1', {
+      aggression: 1,
+    });
+    const model = buildHexMapModel(payload);
+    const pick = pickAttractHex(payload);
+
+    expect(['hex-r2-8', 'hex-r2-10', 'hex-r2-11']).toContain(pick);
+    expect(pick).toBe('hex-r2-10');
+    const picked = model.hexes.find((hex) => hex.id === pick)!;
+    expect(picked.displayed).toBe(true);
+    expect(picked.held).toBe(false);
+    // The hidden hex-r2-1 is strictly weaker yet never chosen.
+    expect(
+      model.hexes.find((hex) => hex.id === 'hex-r2-1')!.aggression,
+    ).toBeLessThan(picked.aggression);
+    expect(model.hexes.find((hex) => hex.id === 'hex-r2-1')!.displayed).toBe(
+      false,
+    );
+  });
+
+  it('returns null only when the ring is secured', () => {
+    expect(pickAttractHex(secured(ringPayload(1)))).toBeNull();
+  });
+
+  it('breaks equal-aggression ties by sorted id (replay determinism)', () => {
+    const withTie = clone(ringPayload(1));
+    for (const hex of withTie.ring.hexes) hex.aggression = 4;
+
+    expect(pickAttractHex(withTie)).toBe('hex-r1-1');
+    // Reordering the stored hexes does not change the choice.
+    withTie.ring.hexes.reverse();
+    expect(pickAttractHex(withTie)).toBe('hex-r1-1');
+  });
+
+  it('is deterministic for a seeded payload across repeated builds', () => {
+    const seed = createHangarWarRng(11).nextInt(1_000_000);
+    const payload = { ...revealPayload('hex-r1-2'), seed };
+    expect(pickAttractHex(payload)).toBe(pickAttractHex(payload));
+  });
+});
+
+describe('hex map model — grid columns (AC6)', () => {
+  it('orders displayed hexes into spatial columns with the hangar folded in', () => {
+    const model = buildHexMapModel(ringPayload(1));
+
+    // Ring 1's screen layout (pointy-top axialToPixel: x ∝ q + r/2, y ∝ r):
+    //   left→right columns by x: r1-4 | r1-3, r1-5 | r1-2, r1-6 | r1-1
+    //   top→bottom rows within a column by r; the hangar is the bottom row.
+    expect(model.gridColumns).toEqual([
+      ['hex:hex-r1-4', HEX_MAP_HANGAR_ROW_KEY],
+      ['hex:hex-r1-3', 'hex:hex-r1-5', HEX_MAP_HANGAR_ROW_KEY],
+      ['hex:hex-r1-2', 'hex:hex-r1-6', HEX_MAP_HANGAR_ROW_KEY],
+      ['hex:hex-r1-1', HEX_MAP_HANGAR_ROW_KEY],
+    ]);
+
+    // Every displayed hex key appears exactly once; the hangar row is the
+    // folded-in bottom row of every column (arrows reach it from anywhere).
+    const displayedKeys = model.hexes
+      .filter((hex) => hex.displayed)
+      .map((hex) => hex.key);
+    const columnKeys = model.gridColumns.flat();
+    for (const key of displayedKeys) {
+      expect(columnKeys.filter((entry) => entry === key)).toHaveLength(1);
+    }
+    for (const column of model.gridColumns) {
+      expect(column.at(-1)).toBe(HEX_MAP_HANGAR_ROW_KEY);
+    }
+  });
+
+  it('only revealed hexes enter the columns; hidden hexes never do', () => {
+    const model = buildHexMapModel(revealPayload('hex-r1-2'));
+    const columnKeys = model.gridColumns.flat();
+    const displayedKeys = model.hexes
+      .filter((hex) => hex.displayed)
+      .map((hex) => hex.key);
+
+    // The hangar row is folded into every column (the bottom row), so the
+    // keys present across the grid are the displayed hex keys plus hangar.
+    expect(new Set(columnKeys)).toEqual(
+      new Set([...displayedKeys, HEX_MAP_HANGAR_ROW_KEY]),
+    );
+    expect(columnKeys).not.toContain('hex:hex-r2-1');
+    expect(columnKeys).not.toContain('hex:hex-r2-12');
+  });
+
+  it('keeps the hangar arrow-reachable on an unrevealed map', () => {
+    const model = buildHexMapModel(ringPayload(2));
+    expect(model.gridColumns).toEqual([[HEX_MAP_HANGAR_ROW_KEY]]);
+  });
+});
+
+describe('hex map model — generated ring, partial ring and unknown definitions', () => {
   it('generates a fresh war\u2019s empty ring for display but never pads a partial ring', () => {
     const fresh = {
       ...createDefaultPayload(3),
@@ -185,15 +481,25 @@ describe('hex map model (pure)', () => {
     const generated = buildHexMapModel(fresh);
     expect(generated.hexes).toHaveLength(12);
     expect(generated.hexes.every((hex) => !hex.held)).toBe(true);
+    // A fresh ring-2 war is like a stored ring-2 ring: nothing is displayed
+    // until a ring-1 neighbour is held (the hangar anchors ring 1 only).
+    expect(generated.hexes.every((hex) => !hex.displayed)).toBe(true);
+    // A fresh ring-1 war, by contrast, is anchored: its generated ring is
+    // all hangar-adjacent, so every hex is displayed immediately.
+    const freshRing1 = buildHexMapModel({ ...createDefaultPayload(0) });
+    expect(freshRing1.hexes).toHaveLength(6);
+    expect(freshRing1.hexes.every((hex) => hex.displayed)).toBe(true);
     expect(generated.hexes.map((hex) => hex.aggression)).toEqual(
       generateRing(2, HEX_RING_DEFINITIONS).hexes.map(
         (hex) => hex.baseAggression,
       ),
     );
 
-    // A stored partial ring is rendered exactly as stored (never padded).
+    // A stored partial ring is rendered exactly as stored (never padded); its
+    // ring-1 hexes are all hangar-adjacent, so all are displayed.
     const partial = buildHexMapModel(VALID_HANGAR_WAR_PAYLOAD);
     expect(partial.hexes.map((hex) => hex.id)).toEqual(['hex-1', 'hex-2']);
+    expect(partial.hexes.every((hex) => hex.displayed)).toBe(true);
     expect(partial.hexes[0].held).toBe(true);
     expect(partial.hexes[1].held).toBe(false);
   });
@@ -203,52 +509,20 @@ describe('hex map model (pure)', () => {
     const [held, unheld] = model.hexes;
 
     expect(held.id).toBe('hex-1');
+    expect(held.displayed).toBe(true);
     expect(held.boss).toBeNull();
     expect(held.strengths).toEqual([]);
     expect(held.grants).toBeNull();
     expect(held.label).toContain('boss unknown');
     expect(held.label).toContain('→waveLaser');
+    expect(held.selectable).toBe(true);
     expect(held.actionable).toBe(false);
 
     expect(unheld.id).toBe('hex-2');
     expect(unheld.aggression).toBe(3);
+    expect(unheld.selectable).toBe(true);
     expect(unheld.actionable).toBe(true);
     expect(unheld.pendingAttack).toBeNull();
-  });
-
-  it('focuses only deployable hexes, defaulting to the attract pick', () => {
-    const payload = withHex(ringPayload(1), 'hex-r1-2', {
-      held: true,
-      defender: { hullId: DEFAULT_HULL_ID, defenceRating: 9, bankedMinerals: 0 },
-    });
-    const model = buildHexMapModel(payload);
-
-    expect(model.focusOrder).not.toContain('hex:hex-r1-2');
-    expect(model.focusOrder).toContain('hex:hex-r1-1');
-    expect(model.focusOrder.at(-1)).toBe(HEX_MAP_HANGAR_ROW_KEY);
-    expect(model.attractHexId).not.toBe('hex-r1-2');
-    expect(model.defaultFocusKey).toBe(`hex:${model.attractHexId}`);
-
-    const secured = clone(ringPayload(1));
-    for (const hex of secured.ring.hexes) {
-      hex.held = true;
-      hex.defender = {
-        hullId: DEFAULT_HULL_ID,
-        defenceRating: 9,
-        bankedMinerals: 0,
-      };
-    }
-    const securedModel = buildHexMapModel(secured);
-    expect(securedModel.secured).toBe(true);
-    expect(securedModel.attractHexId).toBeNull();
-    expect(securedModel.focusOrder).toEqual([HEX_MAP_HANGAR_ROW_KEY]);
-    expect(securedModel.defaultFocusKey).toBe(HEX_MAP_HANGAR_ROW_KEY);
-    expect(securedModel.ringLine).toContain('SECURED');
-    expect(securedModel.hangarRow).toMatchObject({
-      key: HEX_MAP_HANGAR_ROW_KEY,
-      label: HEX_MAP_HANGAR_LABEL,
-      actionable: true,
-    });
   });
 
   it('builds one hex\u2019s intel in isolation (total over malformed input)', () => {
@@ -270,101 +544,12 @@ describe('hex map model (pure)', () => {
 
     expect(intel.aggression).toBe(0);
     expect(intel.pendingAttack).toBeNull();
-    expect(intel.tileLabel).toBe('AGG 0');
+    expect(intel.displayed).toBe(true);
+    expect(intel.selectable).toBe(true);
+    expect(intel.actionable).toBe(false);
+    expect(intel.tileLabel).toBe(`(1,0) AGG 0 ${HELD_TILE_MARKER}`);
     expect(intel.label).toContain('HELD · AGG 0');
     expect(intel.label).toContain(definition.boss);
-  });
-});
-
-describe('attract bot hex pick (pure)', () => {
-  it('picks the weakest unheld hex of the opening ring', () => {
-    const model = buildHexMapModel(ringPayload(1));
-    const weakest = [...model.hexes].sort(
-      (a, b) => a.aggression - b.aggression || (a.id < b.id ? -1 : 1),
-    )[0];
-
-    expect(pickAttractHex(ringPayload(1))).toBe(weakest.id);
-    expect(model.attractHexId).toBe(weakest.id);
-    // Ring 1's authored easiest hex, not merely the first clockwise one.
-    expect(weakest.id).toBe('hex-r1-2');
-  });
-
-  it('stays adjacent to held territory instead of crossing the map', () => {
-    // Only hex-r1-2 is held (ring 2 is the current ring); ring 2's hexes
-    // adjacent to it are the candidates hex-r2-8, hex-r2-10 and hex-r2-11.
-    // A weaker non-adjacent ring-2 hex must not tempt the bot.
-    const ring1 = createRingState(1, HEX_RING_DEFINITIONS);
-    const held = ring1.hexes.find((hex) => hex.id === 'hex-r1-2')!;
-    const base: HangarWarPayload = {
-      ...ringPayload(2),
-      ring: {
-        ringIndex: 2,
-        hexes: [
-          {
-            ...held,
-            held: true,
-            defender: {
-              hullId: DEFAULT_HULL_ID,
-              defenceRating: 9,
-              bankedMinerals: 0,
-            },
-          },
-          ...ringPayload(2).ring.hexes,
-        ],
-      },
-    };
-    // Lower a NON-adjacent ring-2 hex strictly below the adjacent pick so the
-    // test discriminates the adjacency gate from raw weakness: after the
-    // survivable-band tune (AH-0MW9VAKSD0054XJC) the six aggression-2 hexes
-    // tie, so this explicit 1 keeps hex-r2-1 plainly weaker than anything
-    // reachable from held territory.
-    const payload = withHex(base, 'hex-r2-1', { aggression: 1 });
-    const pick = pickAttractHex(payload);
-
-    // hex-r2-10 is the weakest hex adjacent to held territory (aggression 2),
-    // so it is chosen even though hex-r2-1 (aggression 1) is strictly weaker
-    // but not adjacent — proving adjacency outranks raw weakness.
-    expect(['hex-r2-8', 'hex-r2-10', 'hex-r2-11']).toContain(pick);
-    expect(pick).toBe('hex-r2-10');
-    expect(
-      buildHexMapModel(payload).hexes.find((hex) => hex.id === 'hex-r2-1')!
-        .aggression,
-    ).toBeLessThan(
-      buildHexMapModel(payload).hexes.find((hex) => hex.id === pick)!
-        .aggression,
-    );
-  });
-
-  it('breaks equal-aggression ties by sorted id (replay determinism)', () => {
-    const payload = ringPayload(1);
-    const withTie = clone(payload);
-    for (const hex of withTie.ring.hexes) hex.aggression = 4;
-
-    expect(pickAttractHex(withTie)).toBe('hex-r1-1');
-    // Reordering the stored hexes does not change the choice.
-    withTie.ring.hexes.reverse();
-    expect(pickAttractHex(withTie)).toBe('hex-r1-1');
-  });
-
-  it('never stalls: falls back when nothing is adjacent, and returns null when secured', () => {
-    // Ring 2 with no held hex: nothing touches held territory, so the weakest
-    // hex anywhere is chosen rather than declining to move.
-    // After ring-2's survivable band tune (AH-0MW9VAKSD0054XJC), the joint-
-    // weakest hexes are at aggression 2; hex-r2-1 wins the tie by sorted id.
-    expect(pickAttractHex(ringPayload(2))).toBe('hex-r2-1');
-
-    const secured = clone(ringPayload(1));
-    for (const hex of secured.ring.hexes) hex.held = true;
-    expect(pickAttractHex(secured)).toBeNull();
-    // A fresh war has no stored ring, so the generated opening ring gives the
-    // bot a target instead of stalling on an empty map.
-    expect(pickAttractHex(createDefaultPayload(0))).toBe('hex-r1-2');
-  });
-
-  it('is deterministic for a seeded payload across repeated builds', () => {
-    const seed = createHangarWarRng(11).nextInt(1_000_000);
-    const payload = { ...ringPayload(2), seed };
-    expect(pickAttractHex(payload)).toBe(pickAttractHex(payload));
   });
 });
 
@@ -380,7 +565,11 @@ describe('buildHexMapModel — the redistributed frontier (AH-0MWBBUAUQ0038GFL)'
       );
       expect(stored).toBeDefined();
       expect(hex.aggression).toBe(stored?.aggression);
-      expect(hex.tileLabel).toBe(`AGG ${stored?.aggression}`);
+      expect(hex.tileLabel).toBe(
+        `(${hex.q},${hex.r}) AGG ${stored?.aggression} ${
+          hex.held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
+        }`,
+      );
     }
   });
 
