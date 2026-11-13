@@ -57,4 +57,9 @@ pnpm-debug.log*
 # herdr downtime marker
 .herdr-downtime-disabled
 
+# Editor/merge backup files — prevent stray artefacts like the
+# src/vfx/wormholeSpawn.ts.orig left by AH-0MVD2N333004VDA9/4b407b66
+# from being committed again.
+*.orig
+
 ### End of Worklog Specific Ignores
