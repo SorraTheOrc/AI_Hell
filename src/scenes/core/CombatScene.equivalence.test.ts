@@ -2793,6 +2793,18 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   // repo-wide duplicate-body guard (gym↔game parity, AGENTS.md).
   ['isMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
   ['selectMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
+  // Hangar War hex map (AH-0MWEWYT79001D3A1, parent AH-0MWDBI33V003QQ3U): the
+  // reveal rule, the spatial grid columns and the map renderer live once and
+  // are consumed by `HexMapScene` and `GymHexWar`, so a scene (or gym) that
+  // re-introduces a reveal/drawing body fails the repo-wide duplicate-body
+  // guard (gym↔game parity, AGENTS.md).
+  ['isHexDisplayed', 'src/core/hangarWar/hexIntel.ts'],
+  ['buildGridColumns', 'src/core/hangarWar/hexIntel.ts'],
+  ['buildHexMapModel', 'src/core/hangarWar/hexIntel.ts'],
+  ['renderHexMap', 'src/scenes/hangarWar/hexMap.ts'],
+  ['axialToPixel', 'src/scenes/hangarWar/hexMap.ts'],
+  ['hexCorners', 'src/scenes/hangarWar/hexMap.ts'],
+  ['drawHexagon', 'src/scenes/hangarWar/hexMap.ts'],
 ];
 
 /**
@@ -2873,6 +2885,36 @@ describe('epic parity guard — every shared helper is defined exactly once (AC1
         definesMethod(source, method),
       );
       expect(definers, method).toEqual([expected]);
+    }
+  });
+});
+
+describe('hangar-war hex map parity guard (AH-0MWEWYT79001D3A1)', () => {
+  it('both hangar-war scenes draw the map through the one shared renderer', () => {
+    for (const file of [
+      'src/scenes/HexMapScene.ts',
+      'src/scenes/gym/GymHexWar.ts',
+    ]) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      // Both consume the shared module …
+      expect(source, `${file} imports the shared renderer`).toMatch(
+        /from '\.{1,2}\/hangarWar\/hexMap'/,
+      );
+      expect(source, `${file} calls renderHexMap`).toMatch(/renderHexMap\(/);
+      // … and neither re-implements the map geometry or the drawing body.
+      for (const helper of ['renderHexMap', 'axialToPixel', 'hexCorners', 'drawHexagon']) {
+        expect(
+          definesFunction(source, helper),
+          `${file} must not define ${helper}`,
+        ).toBe(false);
+      }
+      // The reveal/grid rules come from the pure model, never the scene body.
+      for (const helper of ['isHexDisplayed', 'buildGridColumns', 'buildHexMapModel']) {
+        expect(
+          definesFunction(source, helper),
+          `${file} must not define ${helper}`,
+        ).toBe(false);
+      }
     }
   });
 });

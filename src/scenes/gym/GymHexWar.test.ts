@@ -15,6 +15,18 @@
  * - the control surface takes a hex, leaves a bot and runs deterministic
  *   frontier ticks that hold or fall by the harness rule;
  * - the index discovers it as "HexWar".
+ *
+ * ## Hangar Map UX renderer contract (AH-0MWEWYT79001D3A1)
+ *
+ * **TEST-FIRST.** The gym renders the game's map through the one shared
+ * renderer, so it inherits the Hangar Map UX contract (parent
+ * AH-0MWDBI33V003QQ3U): only `displayed` hexes are drawn (a hidden hex gets no
+ * tile), and tile text uses the CVD-safe pair (blue-dominant held /
+ * orange-dominant unheld) plus the non-colour ownership marker. New assertions
+ * are authored under Vitest's `it.fails` (the repo's red-before/green-after
+ * convention — see `src/core/levelScaling.test.ts`) so this suite stays green
+ * on pre-change HEAD; the renderer item (AH-0MWEWYUAS002P7P9) flips them back
+ * to `it`, and a leftover `it.fails` then fails loudly.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -27,7 +39,7 @@ import {
 } from '../../test/gameHarness';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
-import { RING_1_HEX_FIXTURES } from '../../core/hangarWar/__fixtures__/ringFixtures';
+import { RING_1_HEX_FIXTURES, RING_2_HEX_FIXTURES } from '../../core/hangarWar/__fixtures__/ringFixtures';
 import {
   frontierClockFor,
   runFrontierTick,
@@ -35,6 +47,7 @@ import {
 import { DEFENCE_REPORT_TITLE } from '../../core/hangarWar/defenceReport';
 import {
   HELD_TILE_MARKER,
+  HEX_MAP_HANGAR_ROW_KEY,
   UNHELD_TILE_MARKER,
   type HexMapModel,
 } from '../../core/hangarWar/hexIntel';
@@ -142,6 +155,40 @@ function sixHexPayload(
     ...template,
     ring: { ringIndex: 1, hexes },
     hangar: { ...template.hangar, ...hangarOverrides },
+  };
+}
+
+/** Every ring-2 fixture as an unheld payload hex (nothing is revealed yet). */
+function ringTwoPayload(): HangarWarPayload {
+  const hexes: HexState[] = RING_2_HEX_FIXTURES.map((fixture) => ({
+    id: fixture.id,
+    q: fixture.q,
+    r: fixture.r,
+    held: false,
+    aggression: fixture.baseAggression,
+    defender: null,
+    bossDefeated: false,
+    grantedWeapon: null,
+  }));
+  const template = oneHexPayload(hexes[0]);
+  return { ...template, ring: { ringIndex: 2, hexes } };
+}
+
+/** The RGB channels of a rendered text colour (`#rrggbb`). */
+function colourOf(text: Phaser.GameObjects.Text): {
+  r: number;
+  g: number;
+  b: number;
+} {
+  const css = text.style.color;
+  if (typeof css !== 'string') {
+    throw new Error('tile text colour is not a CSS colour string');
+  }
+  const packed = Phaser.Display.Color.HexStringToColor(css).color;
+  return {
+    r: (packed >> 16) & 0xff,
+    g: (packed >> 8) & 0xff,
+    b: packed & 0xff,
   };
 }
 
@@ -364,6 +411,59 @@ describe('GymHexWar', () => {
     expect(scene.getMapPanelText()).toContain(hex!.id);
     expect(scene.getMapPanelText()).toContain(`AGG ${hex!.aggression}`);
   });
+
+  // ── Hangar Map UX renderer contract (AH-0MWEWYT79001D3A1) ──────────
+
+  it.fails(
+    'renders only the revealed hexes (a hidden hex gets no tile)',
+    async () => {
+      const scene = await bootHexWar({ payload: ringTwoPayload() });
+      const model = scene.getMapModel()!;
+
+      // The full ring-2 fixture ring is fed to the model…
+      expect(model.hexes).toHaveLength(RING_2_HEX_FIXTURES.length);
+      // …but with nothing held no ring-2 hex is adjacent to the hangar, so the
+      // gym draws the hangar row alone — same reveal rule as the game.
+      expect(model.hexes.every((hex) => !hex.displayed)).toBe(true);
+      expect(scene.getMapRows().map((row) => row.key)).toEqual([
+        HEX_MAP_HANGAR_ROW_KEY,
+      ]);
+    },
+  );
+
+  it.fails(
+    'renders the shared CVD-safe ownership encoding (blue held / orange unheld)',
+    async () => {
+      const payload = sixHexPayload();
+      const heldId = RING_1_HEX_FIXTURES[1].id;
+      const held = payload.ring.hexes.find((hex) => hex.id === heldId)!;
+      held.held = true;
+      held.defender = { hullId: 'hull-1', defenceRating: 7, bankedMinerals: 0 };
+      const scene = await bootHexWar({ payload });
+      const rows = scene.getMapRows();
+      const heldRow = rows.find((row) => row.key === `hex:${heldId}`)!;
+      const unheldRow = rows.find(
+        (row) => row.key === `hex:${RING_1_HEX_FIXTURES[2].id}`,
+      )!;
+
+      // The non-colour discriminator distinguishes ownership on its own.
+      expect(heldRow.label).toContain(HELD_TILE_MARKER);
+      expect(heldRow.label).not.toContain(UNHELD_TILE_MARKER);
+      expect(unheldRow.label).toContain(UNHELD_TILE_MARKER);
+
+      // The CVD-safe pair: held text is blue-dominant, unheld orange-dominant.
+      const heldColour = colourOf(heldRow.text);
+      const unheldColour = colourOf(unheldRow.text);
+      expect(heldColour.b).toBeGreaterThan(heldColour.r);
+      expect(heldColour.b).toBeGreaterThan(heldColour.g);
+      expect(unheldColour.r).toBeGreaterThan(unheldColour.b);
+      expect(unheldColour.r).toBeGreaterThanOrEqual(unheldColour.g);
+      expect(heldRow.text.style.color).not.toBe(unheldRow.text.style.color);
+
+      // The gym is still read-only by construction.
+      expect(rows.every((row) => !row.actionable)).toBe(true);
+    },
+  );
 
   it('renders the shipped defence report from the shipped resolver record', async () => {
     // A held hex with an unheld neighbour: a real attack is possible, so the

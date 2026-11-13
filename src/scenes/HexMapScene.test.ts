@@ -17,6 +17,45 @@
  * - the hangar is one click away;
  * - an injected payload is never mutated, and a fresh war renders the
  *   generated ring.
+ *
+ * ## Hangar Map UX renderer + navigation contract
+ * (AH-0MWEWYT79001D3A1, parent AH-0MWDBI33V003QQ3U)
+ *
+ * **TEST-FIRST.** This item replaces the shipped renderer expectations with
+ * the Hangar Map UX contract **before** the renderer (AH-0MWEWYUAS002P7P9) and
+ * navigation (AH-0MWEWYVD7008PPQT) items land. New/re-written assertions are
+ * authored under Vitest's `it.fails` (the repo's red-before/green-after
+ * convention — see `src/core/levelScaling.test.ts`) so this suite stays green
+ * on pre-change HEAD while pinning the post-change contract; those
+ * implementation items flip them back to `it`, and a leftover `it.fails` then
+ * fails loudly.
+ *
+ * ## Pinned contract (the implementation items must match exactly)
+ *
+ * - **Reveal-filtered drawing.** Only `displayed` hexes are drawn: a hidden
+ *   hex gets no tile, no click zone and no focusable row. A payload whose
+ *   ring-2 hexes share no edge with the hangar or a held hex renders the
+ *   hangar row alone; holding a ring-1 hex reveals exactly its ring-2
+ *   neighbours (progressive reveal — ring-2 content is never removed).
+ * - **CVD-safe ownership encoding.** Tile text is blue-dominant for a held hex
+ *   and orange-dominant for an unheld hex, and every tile label carries the
+ *   non-colour ownership marker (`●` held / `○` unheld) so ownership is
+ *   readable without colour. The legend spells out the coordinates and the
+ *   CVD-safe pair. The focus highlight must not clobber the ownership colour
+ *   (highlight with a stroke, not a colour swap), so the encoding holds whether
+ *   or not a tile is focused.
+ * - **Coordinates.** Every rendered row's label is
+ *   `(q,r) AGG n <marker>`, rendered at the readable tile size.
+ * - **Owned-hex selection.** Every displayed hex is selectable (focusable), a
+ *   held hex included: focusing it shows its full intel in the detail panel
+ *   and activating it performs **no** deployment. An unheld displayed hex
+ *   still deploys through the shipped `PlayScene` path.
+ * - **Grid navigation.** Arrow keys move focus spatially through the model's
+ *   `gridColumns` (left/right across columns with wrapping, up/down within a
+ *   column with wrapping) and reach the `◀ HANGAR` row from every column,
+ *   because the hangar is folded in as each column's bottom row. Tab/Shift+Tab
+ *   keep their linear reading-order cycling, and the attract bot never targets
+ *   a hidden hex.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -35,6 +74,7 @@ import {
 } from '../core/hangarWar/hangarWarStore';
 import { createRingState } from '../core/hangarWar/hexRing';
 import {
+  HELD_TILE_MARKER,
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
   UNHELD_TILE_MARKER,
@@ -91,6 +131,55 @@ function findTextStartingWith(
 
 const reuse = createReusableBoot();
 afterAll(() => reuse.dispose());
+
+/** A ring-1 payload with `hexId` held (and defended by a bot). */
+function heldPayload(hexId: string): HangarWarPayload {
+  const payload = ringPayload(1);
+  const hex = payload.ring.hexes.find((entry) => entry.id === hexId);
+  if (!hex) throw new Error(`no ring-1 hex ${hexId}`);
+  hex.held = true;
+  hex.defender = { hullId: 'hull-1', defenceRating: 7, bankedMinerals: 0 };
+  return payload;
+}
+
+/** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+function press(scene: Phaser.Scene, key: string, shiftKey = false): void {
+  scene.input.keyboard!.emit('keydown', {
+    key,
+    shiftKey,
+    repeat: false,
+    preventDefault: () => {},
+  } as KeyboardEvent);
+}
+
+/** The RGB channels of a rendered text colour (`#rrggbb`). */
+function colourOf(text: Phaser.GameObjects.Text): {
+  r: number;
+  g: number;
+  b: number;
+} {
+  const css = text.style.color;
+  if (typeof css !== 'string') {
+    throw new Error('tile text colour is not a CSS colour string');
+  }
+  const packed = Phaser.Display.Color.HexStringToColor(css).color;
+  return {
+    r: (packed >> 16) & 0xff,
+    g: (packed >> 8) & 0xff,
+    b: packed & 0xff,
+  };
+}
+
+/** Every on-screen text joined together (legend/hint/tile assertions). */
+function screenText(scene: Phaser.Scene): string {
+  return scene.children.list
+    .filter(
+      (child): child is Phaser.GameObjects.Text =>
+        child instanceof Phaser.GameObjects.Text,
+    )
+    .map((child) => child.text)
+    .join('\n');
+}
 
 /**
  * Attack arrows and the left-hand attack-details panel
@@ -319,70 +408,91 @@ describe('HexMapScene', () => {
     expect(panel).toContain('→extra-life');
   });
 
-  it('hides ring 2 with zero held hexes (adjacency-only reveal)', async () => {
-    const payload = ringPayload(2);
-    const scene = await bootMap({ payload, storage: null });
-    const model = scene.getModel();
-    const deployable = scene
-      .getRows()
-      .filter((row) => row.key.startsWith('hex:') && row.actionable);
+  it.fails(
+    'renders no tile for a hidden hex (the reveal is adjacency-only)',
+    async () => {
+      const payload = ringPayload(2);
+      const scene = await bootMap({ payload, storage: null });
+      const model = scene.getModel();
 
-    // The full stored ring is still published (reveal is progressive, not
-    // removal)…
-    expect(model.hexes).toHaveLength(12);
-    expect(model.hexes.map((hex) => hex.id)).toEqual(
-      payload.ring.hexes.map((hex) => hex.id),
-    );
-    // …but with no held ring-1 hex, no ring-2 hex shares an edge with the
-    // hangar, so nothing is displayed, focusable or deployable.
-    expect(model.hexes.every((hex) => !hex.displayed)).toBe(true);
-    expect(deployable).toHaveLength(0);
-    expect(model.focusOrder).toEqual([HEX_MAP_HANGAR_ROW_KEY]);
-    expect(model.attractHexId).toBeNull();
-    expect(scene.getFocusedKey()).toBe(HEX_MAP_HANGAR_ROW_KEY);
-    // A hidden hex is unreachable by focus, click or the attract bot.
-    expect(scene.focusRow('hex:hex-r2-12')).toBe(false);
-  });
+      // The full stored ring is still published (reveal is progressive, not
+      // removal — epic AC6)…
+      expect(model.hexes).toHaveLength(12);
+      expect(model.hexes.map((hex) => hex.id)).toEqual(
+        payload.ring.hexes.map((hex) => hex.id),
+      );
+      // …but with no held ring-1 hex, no ring-2 hex shares an edge with the
+      // hangar, so no hex tile is drawn: only the hangar row remains.
+      expect(model.hexes.every((hex) => !hex.displayed)).toBe(true);
+      expect(scene.getRows().map((row) => row.key)).toEqual([
+        HEX_MAP_HANGAR_ROW_KEY,
+      ]);
+      const rendered = screenText(scene);
+      for (const hex of model.hexes) {
+        expect(rendered).not.toContain(`(${hex.q},${hex.r}) AGG`);
+      }
 
-  it('reveals ring 2 progressively once a ring-1 neighbour is held', async () => {
-    // Hold ring-1 hex-r1-2 (1,-1); its ring-2 neighbours hex-r2-8,
-    // hex-r2-10 and hex-r2-11 become displayed and deployable while the
-    // other nine ring-2 hexes stay hidden (ring-2 content is not removed).
-    const ring1 = createRingState(1, HEX_RING_DEFINITIONS);
-    const held = ring1.hexes.find((hex) => hex.id === 'hex-r1-2')!;
-    const payload: HangarWarPayload = {
-      ...ringPayload(2),
-      ring: {
-        ringIndex: 2,
-        hexes: [
-          {
-            ...held,
-            held: true,
-            defender: {
-              hullId: 'hull-1',
-              defenceRating: 7,
-              bankedMinerals: 0,
+      // A hidden hex is unreachable by focus and by the attract bot.
+      expect(scene.focusRow('hex:hex-r2-12')).toBe(false);
+      expect(scene.getFocusedKey()).toBe(HEX_MAP_HANGAR_ROW_KEY);
+      expect(model.attractHexId).toBeNull();
+    },
+  );
+
+  it.fails(
+    'reveals ring-2 neighbours progressively once a ring-1 neighbour is held',
+    async () => {
+      // Hold ring-1 hex-r1-2 (1,-1); its ring-2 neighbours hex-r2-8,
+      // hex-r2-10 and hex-r2-11 become displayed and deployable while the
+      // other nine ring-2 hexes stay hidden (ring-2 content is not removed).
+      const ring1 = createRingState(1, HEX_RING_DEFINITIONS);
+      const held = ring1.hexes.find((hex) => hex.id === 'hex-r1-2')!;
+      const payload: HangarWarPayload = {
+        ...ringPayload(2),
+        ring: {
+          ringIndex: 2,
+          hexes: [
+            {
+              ...held,
+              held: true,
+              defender: {
+                hullId: 'hull-1',
+                defenceRating: 7,
+                bankedMinerals: 0,
+              },
             },
-          },
-          ...ringPayload(2).ring.hexes,
-        ],
-      },
-    };
-    const scene = await bootMap({ payload, storage: null });
-    const model = scene.getModel();
-    const deployable = scene
-      .getRows()
-      .filter((row) => row.key.startsWith('hex:') && row.actionable);
+            ...ringPayload(2).ring.hexes,
+          ],
+        },
+      };
+      const scene = await bootMap({ payload, storage: null });
+      const model = scene.getModel();
+      const hexRows = scene
+        .getRows()
+        .filter((row) => row.key.startsWith('hex:'));
 
-    expect(new Set(deployable.map((row) => row.key))).toEqual(
-      new Set(['hex:hex-r2-8', 'hex:hex-r2-10', 'hex:hex-r2-11']),
-    );
-    expect(model.hexes).toHaveLength(13);
-    expect(model.ringLine).toBe('RING 2 — 1/13 HEXES HELD');
-    expect(scene.focusRow('hex:hex-r2-10')).toBe(true);
-    // A hidden ring-2 hex is not focusable even though it is still stored.
-    expect(scene.focusRow('hex:hex-r2-1')).toBe(false);
-  });
+      // Exactly the held ring-1 hex and its revealed ring-2 neighbours are
+      // drawn; a hidden ring-2 hex has no tile and no focusable row.
+      expect(new Set(hexRows.map((row) => row.key))).toEqual(
+        new Set([
+          'hex:hex-r1-2',
+          'hex:hex-r2-8',
+          'hex:hex-r2-10',
+          'hex:hex-r2-11',
+        ]),
+      );
+      expect(model.hexes).toHaveLength(13);
+      expect(model.ringLine).toBe('RING 2 — 1/13 HEXES HELD');
+      const hidden = model.hexes.filter((hex) => !hex.displayed);
+      expect(hidden).toHaveLength(9);
+      expect(hidden.map((hex) => hex.id)).toContain('hex-r2-12');
+
+      // Owned-hex selection: the held ring-1 hex is selectable (focusable).
+      expect(scene.focusRow('hex:hex-r1-2')).toBe(true);
+      // A hidden ring-2 hex is not focusable even though it is still stored.
+      expect(scene.focusRow('hex:hex-r2-1')).toBe(false);
+    },
+  );
 
   it('deploys at the focused hex through the shipped PlayScene path', async () => {
     const payload = ringPayload(1);
@@ -429,36 +539,46 @@ describe('HexMapScene', () => {
     expect(hangar.getPayload()).toEqual(payload);
   });
 
-  it('shows no deployable hex once the ring is secured', async () => {
-    const payload = ringPayload(1);
-    for (const hex of payload.ring.hexes) {
-      hex.held = true;
-      hex.defender = {
-        hullId: 'hull-1',
-        defenceRating: 9,
-        bankedMinerals: 0,
-      };
-    }
-    const scene = await bootMap({ payload, storage: null });
-    const rows = scene.getRows();
+  it.fails(
+    'keeps owned hexes selectable but never deployable once the ring is secured',
+    async () => {
+      const payload = ringPayload(1);
+      for (const hex of payload.ring.hexes) {
+        hex.held = true;
+        hex.defender = {
+          hullId: 'hull-1',
+          defenceRating: 9,
+          bankedMinerals: 0,
+        };
+      }
+      const scene = await bootMap({ payload, storage: null });
+      const rows = scene.getRows();
 
-    expect(rows.filter((row) => row.key.startsWith('hex:')).every((row) => !row.actionable)).toBe(true);
-    expect(scene.getModel().ringLine).toContain('SECURED');
-    // Held hexes are still selectable: focus order covers every displayed hex
-    // (held included) plus the hangar row (contract AC2); the renderer's
-    // held-hex focusability lands with the renderer item.
-    expect(scene.getModel().focusOrder).toEqual([
-      ...scene.getModel().hexes.map((hex) => hex.key),
-      HEX_MAP_HANGAR_ROW_KEY,
-    ]);
-    expect(scene.getFocusedKey()).toBe(HEX_MAP_HANGAR_ROW_KEY);
-    // A held hex cannot be deployed at.
-    expect(scene.focusRow('hex:hex-r1-1')).toBe(false);
-    // The hangar focus is not a hex, so the panel falls back to the model's
-    // first hex rather than going blank.
-    expect(scene.getPanelKey()).toBe(scene.getModel().hexes[0].key);
-    expect(scene.getPanelText()).toContain(scene.getModel().hexes[0].id);
-  });
+      expect(scene.getModel().ringLine).toContain('SECURED');
+      // A secured ring has nothing to deploy at…
+      expect(
+        rows
+          .filter((row) => row.key.startsWith('hex:'))
+          .every((row) => !row.actionable),
+      ).toBe(true);
+
+      // …yet owned-hex selection still works: a held hex is focusable and the
+      // detail panel shows its full intel (contract AC5).
+      expect(scene.focusRow('hex:hex-r1-1')).toBe(true);
+      expect(scene.getFocusedKey()).toBe('hex:hex-r1-1');
+      expect(scene.getPanelKey()).toBe('hex:hex-r1-1');
+      const panel = scene.getPanelText();
+      expect(panel).toContain('hex-r1-1');
+      expect(panel).toContain('HELD');
+      expect(panel).toContain('the-dawnbreaker');
+
+      // Activating an owned hex performs no deployment: the map stays up.
+      scene.activateFocused();
+      await advanceGame(booted!.game, 350);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+      expect(scene.sys.isActive()).toBe(true);
+    },
+  );
 
   it('renders the generated ring for a fresh war and loads an injected store', async () => {
     const fresh = await bootMap({ payload: createDefaultPayload(0), storage: null });
@@ -495,6 +615,143 @@ describe('HexMapScene', () => {
     );
     scene.getPayload().ring.hexes[0].held = true;
     expect(scene.getPayload().ring.hexes[0].held).toBe(false);
+  });
+
+  // ── Hangar Map UX: CVD-safe encoding, owned-hex selection, grid arrows ──
+  // (AH-0MWEWYT79001D3A1 — see the pinned contract in this file's header.)
+
+  it.fails(
+    'encodes ownership with the CVD-safe pair plus a non-colour discriminator',
+    async () => {
+      const scene = await bootMap({
+        payload: heldPayload('hex-r1-2'),
+        storage: null,
+      });
+      const rows = scene.getRows();
+      const heldRow = rows.find((row) => row.key === 'hex:hex-r1-2')!;
+      const unheldRow = rows.find((row) => row.key === 'hex:hex-r1-3')!;
+
+      // Non-colour discriminator: filled marker = held, hollow = unheld, and
+      // the rendered text carries exactly the row label.
+      expect(heldRow.label).toMatch(/^\(1,-1\) AGG \d+ ●$/);
+      expect(heldRow.label).toContain(HELD_TILE_MARKER);
+      expect(heldRow.label).not.toContain(UNHELD_TILE_MARKER);
+      expect(unheldRow.label).toContain(UNHELD_TILE_MARKER);
+      expect(heldRow.text.text).toBe(heldRow.label);
+      expect(unheldRow.text.text).toBe(unheldRow.label);
+
+      // CVD-safe pair (producer Q2 = b): held text is blue-dominant and unheld
+      // text orange-dominant — ownership never relies on red/green.
+      const held = colourOf(heldRow.text);
+      const unheld = colourOf(unheldRow.text);
+      expect(held.b).toBeGreaterThan(held.r);
+      expect(held.b).toBeGreaterThan(held.g);
+      expect(unheld.r).toBeGreaterThan(unheld.b);
+      expect(unheld.r).toBeGreaterThanOrEqual(unheld.g);
+      expect(heldRow.text.style.color).not.toBe(unheldRow.text.style.color);
+
+      // The legend spells out the coordinates and the CVD-safe encoding, so a
+      // player can read the map without relying on colour.
+      const legend = screenText(scene);
+      expect(legend).toContain('(q,r)');
+      expect(legend.toLowerCase()).toContain('blue');
+      expect(legend.toLowerCase()).toContain('orange');
+    },
+  );
+
+  it.fails(
+    "shows a held hex's full intel when focused and never deploys from it",
+    async () => {
+      const scene = await bootMap({
+        payload: heldPayload('hex-r1-2'),
+        storage: null,
+      });
+
+      // Owned-hex selection: focusing the held hex shows its full intel.
+      expect(scene.focusRow('hex:hex-r1-2')).toBe(true);
+      expect(scene.getFocusedKey()).toBe('hex:hex-r1-2');
+      expect(scene.getPanelKey()).toBe('hex:hex-r1-2');
+      const panel = scene.getPanelText();
+      expect(panel).toContain('hex-r1-2');
+      expect(panel).toContain('HELD');
+      expect(panel).toContain('shroud-merchant');
+      expect(panel).toContain('W:waveLaser');
+      expect(panel).toContain('→extra-life');
+      expect(panel).toContain('bot hull-1');
+
+      // Activating an owned hex performs no deployment: the map stays up.
+      scene.activateFocused();
+      await advanceGame(booted!.game, 350);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+      expect(scene.sys.isActive()).toBe(true);
+
+      // An unheld displayed hex still deploys through the shipped path.
+      expect(scene.focusRow('hex:hex-r1-3')).toBe(true);
+      scene.activateFocused();
+      await advanceGame(booted!.game, 350);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+      const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+      expect(play.getHangarWarDeployment()!.hexId).toBe('hex-r1-3');
+    },
+  );
+
+  it.fails(
+    'moves focus spatially with the arrow keys and reaches the hangar row',
+    async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+      const model = scene.getModel();
+
+      // Ring 1's spatial columns (pointy-top layout, the hangar folded in as
+      // the bottom row of every column) come from the pure model.
+      expect(model.gridColumns).toEqual([
+        ['hex:hex-r1-4', HEX_MAP_HANGAR_ROW_KEY],
+        ['hex:hex-r1-3', 'hex:hex-r1-5', HEX_MAP_HANGAR_ROW_KEY],
+        ['hex:hex-r1-2', 'hex:hex-r1-6', HEX_MAP_HANGAR_ROW_KEY],
+        ['hex:hex-r1-1', HEX_MAP_HANGAR_ROW_KEY],
+      ]);
+
+      // ArrowLeft/ArrowRight move across columns, not through reading order.
+      expect(scene.focusRow('hex:hex-r1-3')).toBe(true);
+      press(scene, 'ArrowRight');
+      expect(scene.getFocusedKey()).toBe('hex:hex-r1-2');
+      press(scene, 'ArrowLeft');
+      expect(scene.getFocusedKey()).toBe('hex:hex-r1-3');
+
+      // ArrowDown/ArrowUp move within the current column (wrapping).
+      press(scene, 'ArrowDown');
+      expect(scene.getFocusedKey()).toBe('hex:hex-r1-5');
+      press(scene, 'ArrowDown');
+      expect(scene.getFocusedKey()).toBe(HEX_MAP_HANGAR_ROW_KEY);
+      press(scene, 'ArrowUp');
+      expect(scene.getFocusedKey()).toBe('hex:hex-r1-5');
+
+      // Horizontal navigation wraps at the outer columns (clamping the row).
+      expect(scene.focusRow('hex:hex-r1-1')).toBe(true); // last column
+      press(scene, 'ArrowRight');
+      expect(scene.getFocusedKey()).toBe('hex:hex-r1-4'); // first column
+
+      // The hangar row is arrow-reachable from every column: it is the bottom
+      // row, so ArrowUp from a column's top row wraps onto it.
+      for (const column of model.gridColumns) {
+        expect(scene.focusRow(column[0])).toBe(true);
+        press(scene, 'ArrowUp');
+        expect(scene.getFocusedKey()).toBe(HEX_MAP_HANGAR_ROW_KEY);
+      }
+    },
+  );
+
+  it('keeps Tab and Shift+Tab on the linear reading order', async () => {
+    const scene = await bootMap({ payload: ringPayload(1), storage: null });
+    const order = scene.getRows().map((row) => row.key);
+
+    expect(scene.focusRow(order[0])).toBe(true);
+    press(scene, 'Tab');
+    expect(scene.getFocusedKey()).toBe(order[1]);
+    press(scene, 'Tab', true);
+    expect(scene.getFocusedKey()).toBe(order[0]);
+    // Shift+Tab from the first row wraps to the last (the hangar row).
+    press(scene, 'Tab', true);
+    expect(scene.getFocusedKey()).toBe(order.at(-1));
   });
 
   // ── Attack arrows and the left-hand attack panel (AH-0MWEXI5460080WEI) ──
