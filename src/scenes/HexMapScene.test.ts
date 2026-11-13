@@ -307,6 +307,9 @@ function recordAttack(
   return {
     outcome: 'fell',
     defenderRating: 2,
+    effectiveDefenderRating: 2,
+    skillBonusTotal: 0,
+    appliedSkills: [],
     attackingForce: 4,
     aggression: 3,
     aggressionMultiplierPercent: 145,
@@ -316,6 +319,7 @@ function recordAttack(
     hexId: 'hex-held',
     attackerOriginId: 'hex-frontier',
     attackerOrigin: { q: 0, r: 1 },
+    attackerType: null,
     source: 'frontier',
     ...overrides,
   };
@@ -851,6 +855,49 @@ describe('HexMapScene', () => {
       // The right-hand intel panel stays the focused hex's own intel.
       expect(scene.getPanelKey()).toBe('hex:hex-frontier');
       expect(scene.getPanelText()).toContain('hex-frontier');
+    },
+  );
+
+  it(
+    'shows a defending bot\'s skill line in the rolled-in attack panel (AH-0MVWZYJ740037EZ1)',
+    async () => {
+      const payload = attackPayload();
+      const record = attackRecord({
+        attacks: [
+          recordAttack({
+            outcome: 'held',
+            defenderRating: 2,
+            effectiveDefenderRating: 7,
+            skillBonusTotal: 5,
+            appliedSkills: [
+              {
+                id: 'maw-warded',
+                name: 'Maw-warded',
+                bossType: 'maw-of-ashes',
+                bonus: 5,
+              },
+            ],
+            attackerType: 'maw-of-ashes',
+            margin: 1,
+          }),
+        ],
+      });
+      const scene = (await bootMap({
+        payload,
+        record,
+        storage: null,
+      })) as AttackAwareScene;
+
+      expect(scene.focusRow('hex:hex-held')).toBe(true);
+      expect(scene.isLeftPanelVisible?.()).toBe(true);
+      const text = scene.getLeftPanelText?.() ?? '';
+
+      // The rolled-in report is the row label, so the skill line — the numbers
+      // that decided the hold — reach the screen, not just the model.
+      expect(text).toContain('skill Maw-warded +5 vs maw-of-ashes');
+      expect(text).toContain('bot 7');
+      expect(text).toContain('vs bot 2');
+      expect(text).toBe(buildDefenceReport(payload, record).rows[0].label);
     },
   );
 

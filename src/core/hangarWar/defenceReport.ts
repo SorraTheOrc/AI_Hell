@@ -33,6 +33,17 @@
  * (`margin === 0` is a hold), the required defender rating is the record's
  * `attackStrength` — not one more than it.
  *
+ * ## Defending-bot skills
+ *
+ * A defending bot may carry special skills (AH-0MVWZYJ740037EZ1): flat rating
+ * bonuses against one boss identity. The resolver applies them and publishes the
+ * stored `defenderRating`, the `effectiveDefenderRating`, the summed
+ * `skillBonusTotal` and the `appliedSkills`; this model copies all four into
+ * every affected row and renders one extra `skill <names> +<bonus> vs <boss>
+ * → bot <effective>` line, so a hold that *depended* on a matching skill is
+ * distinguishable from an unmodified hold. A row with no skill applied carries
+ * `skillLine: null` and is byte-for-byte what it was before skills existed.
+ *
  * ## A quiet tick
  *
  * A secured ring (every hex held) has no unheld neighbour to attack from, so a
@@ -63,7 +74,7 @@ import type {
   HangarAssaultResolution,
   HexDefenceRecord,
 } from './hexDefence';
-import type { HangarWarPayload, HexState } from './types';
+import type { DefenceSkill, HangarWarPayload, HexState } from './types';
 
 /** Title rendered with the map's rolled-in report (asserted by tests). */
 export const DEFENCE_REPORT_TITLE = 'DEFENCE REPORT';
@@ -136,9 +147,35 @@ export interface DefenceReportRow {
   readonly jitterPercent: number;
   /** The defending bot's stored rating (from the record). */
   readonly defenderRating: number;
+  /**
+   * The **effective** rating the comparison used
+   * (`defenderRating + skillBonusTotal`, from the record).
+   *
+   * Published beside {@link defenderRating} so a hold that *depended* on a
+   * matching skill is distinguishable from an unmodified hold
+   * (AH-0MVWZYJ740037EZ1 AC2).
+   */
+  readonly effectiveDefenderRating: number;
+  /** Summed flat bonus of the defender's matching skills (`0` = none applied). */
+  readonly skillBonusTotal: number;
+  /** The skills the resolver actually applied (matching, usable ones only). */
+  readonly appliedSkills: readonly DefenceSkill[];
+  /**
+   * The attacker's type — the attacking neighbour's authored boss identity — or
+   * `null` for an untyped attack (which resolves unmodified).
+   */
+  readonly attackerType: string | null;
+  /**
+   * The rendered skill line (`skill Maw-warded +5 vs maw-of-ashes → bot 7`), or
+   * `null` when no skill applied — an unmodified row stays byte-identical.
+   */
+  readonly skillLine: string | null;
   /** The force actually faced, after aggression and jitter. */
   readonly attackStrength: number;
-  /** `defenderRating − attackStrength` (negative exactly when the hex fell). */
+  /**
+   * `effectiveDefenderRating − attackStrength` (negative exactly when the hex
+   * fell).
+   */
   readonly margin: number;
   /** Whether the attack was queued (`pending`) or opened by the tick. */
   readonly source: 'pending' | 'frontier';
@@ -374,6 +411,31 @@ function buildRetakePlan(
   };
 }
 
+/**
+ * The rendered skill line for a defence that a trained bot's bonus decided.
+ *
+ * Names the skills applied, their summed bonus and the attacker type they match,
+ * and the effective rating they produced — so the player can read *why* a bot the
+ * stored numbers alone would have lost a hex actually held it.
+ *
+ * @param appliedSkills — the skills the resolver applied (in stored order).
+ * @param bonus — their summed flat bonus.
+ * @param attackerType — the attacking boss identity they matched.
+ * @param effectiveRating — the rating the comparison actually used.
+ * @returns the rendered line, or `null` when no skill applied.
+ */
+function skillLine(
+  appliedSkills: readonly DefenceSkill[],
+  bonus: number,
+  attackerType: string | null,
+  effectiveRating: number,
+): string | null {
+  if (appliedSkills.length === 0 || bonus <= 0) return null;
+  const names = appliedSkills.map((skill) => skill.name).join(' + ');
+  const versus = attackerType === null ? '' : ` vs ${attackerType}`;
+  return `skill ${names} +${bonus}${versus} → bot ${effectiveRating}`;
+}
+
 /** The rendered text of one attacked hex (every number the tick used). */
 function rowLabel(
   record: HexDefenceRecord,
@@ -387,11 +449,18 @@ function rowLabel(
     record.jitterPercent === 0
       ? 'no jitter'
       : `jitter ${record.jitterPercent > 0 ? '+' : ''}${record.jitterPercent}%`;
+  const skills = skillLine(
+    record.appliedSkills,
+    record.skillBonusTotal,
+    record.attackerType,
+    record.effectiveDefenderRating,
+  );
   return [
     `${record.hexId} — ${outcome}${state}`,
     `atk ${record.attackingForce} × AGG ${record.aggression} `
       + `(${record.aggressionMultiplierPercent}%, ${jitter}) `
       + `= ${record.attackStrength} vs bot ${record.defenderRating}`,
+    ...(skills === null ? [] : [skills]),
     `margin ${record.margin > 0 ? '+' : ''}${record.margin} · ${source} attack`,
     `retake: ${retake.note}`,
   ].join('\n');
@@ -421,6 +490,20 @@ export function buildDefenceReport(
     const hex = findHex(payload, attack.hexId);
     const held = hex?.held === true;
     const retake = buildRetakePlan(payload, attack);
+    const defenderRating = toCount(attack.defenderRating);
+    const appliedSkills = Array.isArray(attack.appliedSkills)
+      ? [...attack.appliedSkills]
+      : [];
+    const skillBonusTotal = toCount(attack.skillBonusTotal);
+    const effectiveDefenderRating =
+      typeof attack.effectiveDefenderRating === 'number' &&
+      Number.isFinite(attack.effectiveDefenderRating)
+        ? toCount(attack.effectiveDefenderRating)
+        : defenderRating + skillBonusTotal;
+    const attackerType =
+      typeof attack.attackerType === 'string' && attack.attackerType !== ''
+        ? attack.attackerType
+        : null;
     return {
       key: `defence:${attack.hexId}`,
       hexId: attack.hexId,
@@ -434,7 +517,17 @@ export function buildDefenceReport(
         && Number.isFinite(attack.jitterPercent)
           ? attack.jitterPercent
           : 0,
-      defenderRating: toCount(attack.defenderRating),
+      defenderRating,
+      effectiveDefenderRating,
+      skillBonusTotal,
+      appliedSkills,
+      attackerType,
+      skillLine: skillLine(
+        appliedSkills,
+        skillBonusTotal,
+        attackerType,
+        effectiveDefenderRating,
+      ),
       attackStrength: toCount(attack.attackStrength),
       margin:
         typeof attack.margin === 'number' && Number.isFinite(attack.margin)

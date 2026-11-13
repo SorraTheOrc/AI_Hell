@@ -716,6 +716,84 @@ describe('hangar-war store frontier clock field (AH-0MVUXCBBK004EJIP)', () => {
   });
 });
 
+describe('hangar-war store — defending-bot skills are additive (AH-0MVWZYJ740037EZ1)', () => {
+  /** The valid fixture with hex-1's defender carrying `skills`. */
+  function withDefenderSkills(
+    skills: unknown,
+  ): Record<string, unknown> {
+    const payload = validRecord();
+    const [first] = hexRecords(payload);
+    recordOf(first.defender).skills = skills;
+    return payload;
+  }
+
+  it('round-trips a defender’s skills through the store', () => {
+    const skills = [
+      { id: 'bulwark-line-breaker', name: 'Line-breaker', bossType: 'the-dawnbreaker', bonus: 4 },
+      { id: 'maw-warded', name: 'Maw-warded', bossType: 'maw-of-ashes', bonus: 5 },
+    ];
+    const storage = storageWithRaw(
+      serialisePayload(withDefenderSkills(skills) as unknown as HangarWarPayload),
+    );
+
+    const loaded = loadHangarWarPayload(storage);
+
+    expect(loaded?.ring.hexes[0].defender?.skills).toEqual(skills);
+    // The stored rating is untouched by the skill data.
+    expect(loaded?.ring.hexes[0].defender?.defenceRating).toBe(7);
+
+    saveHangarWarPayload(loaded!, storage);
+    expect(
+      loadHangarWarPayload(storage)?.ring.hexes[0].defender?.skills,
+    ).toEqual(skills);
+  });
+
+  it('omits the field for a save written before skills existed (field presence)', () => {
+    // No version bump: an old save loads exactly as it was written, and absence
+    // reads as "no skills" in the resolver.
+    const loaded = parseHangarWarPayload(validRecord());
+
+    expect(loaded).not.toBeNull();
+    expect('skills' in loaded!.ring.hexes[0].defender!).toBe(false);
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+  });
+
+  it('salvages an unusable skill list instead of rejecting the save', () => {
+    const payload = parseHangarWarPayload(
+      withDefenderSkills([
+        'not-a-skill',
+        null,
+        { id: '', name: 'Blank', bossType: 'maw-of-ashes', bonus: 4 },
+        { id: 'no-boss', name: 'No boss', bonus: 4 },
+        { id: 'ok', name: 'Usable', bossType: 'maw-of-ashes', bonus: 3 },
+      ]),
+    );
+
+    expect(payload).not.toBeNull();
+    // Only the entry with a usable id and boss type survives; the hex and the
+    // rest of the payload are kept (a valid hangar is never wiped).
+    expect(payload?.ring.hexes[0].defender?.skills).toEqual([
+      { id: 'ok', name: 'Usable', bossType: 'maw-of-ashes', bonus: 3 },
+    ]);
+    expect(payload?.hangar.bankedMinerals).toBe(240);
+  });
+
+  it('omits the field when every stored skill is unusable', () => {
+    const payload = parseHangarWarPayload(withDefenderSkills(['junk', 7]));
+
+    expect(payload).not.toBeNull();
+    expect('skills' in payload!.ring.hexes[0].defender!).toBe(false);
+  });
+
+  it('is total on a non-list skill field', () => {
+    for (const value of ['many', 42, {}, null]) {
+      const payload = parseHangarWarPayload(withDefenderSkills(value));
+      expect(payload).not.toBeNull();
+      expect('skills' in payload!.ring.hexes[0].defender!).toBe(false);
+    }
+  });
+});
+
 describe('hangar-war store migration (hangar-only save)', () => {
   it('loads the hangar intact with an empty ring', () => {
     const loaded = loadRaw(serialisePayload(HANGAR_ONLY_PAYLOAD));

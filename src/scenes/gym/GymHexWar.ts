@@ -74,6 +74,19 @@
  *   counter, so a gym run replays the same sequence as the game for the same
  *   save.
  *
+ * ## The skill data surface (AH-0MVWZYJ740037EZ1)
+ *
+ * The control surface accepts a defending bot's **special skills**
+ * (`leaveBot(hexId, hullId, rating, skills)`), the same stored data the capture
+ * cycle attaches from the hull flown and the equipped modifiers. The harness
+ * stores them on the payload and then resolves and renders them with the
+ * **shipped** code paths — `runFrontierTick` (which derives the attacker type
+ * from the attacking neighbour's authored boss and applies the matching
+ * bonus), `resolveDefence` and `buildDefenceReport` — so the numbers the gym
+ * shows for a trained bot are the numbers the game shows. The map view
+ * publishes each defender's skills through the shared intel model, and the
+ * summary lines name them.
+ *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention and
  * watchable by the capture tooling (`WATCHABLE_GYM_SCENE_KEYS`).
  *
@@ -110,7 +123,12 @@ import {
   type DefenceReportModel,
 } from '../../core/hangarWar/defenceReport';
 import { resolveRingAssault } from '../../core/hangarWar/captureCycle';
-import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
+import type {
+  DefenceSkill,
+  HangarWarPayload,
+  HexDefender,
+  HexState,
+} from '../../core/hangarWar/types';
 import {
   bankedSalvageFromHangar,
   runSalvageFromRun,
@@ -256,17 +274,33 @@ export function takeHexOnPayload(
  * The caller supplies the already-resolved defender rating (the hangar-upgrade
  * derivation is A4's `defenderRatingFromUpgrades`), so the harness never
  * duplicates that rule. An unheld or unknown hex is a no-op.
+ *
+ * `skills` are the bot's special skills (AH-0MVWZYJ740037EZ1) — the same stored
+ * data the capture cycle's `leaveDefender` gets from the hull flown and the
+ * equipped modifiers. They are persisted verbatim (a copy, never the caller's
+ * array) and the field is **omitted** when there are none, so a bot with no
+ * skills persists exactly as it did before skills existed. Everything the gym
+ * then *resolves* with them is the shipped `runFrontierTick` /
+ * `resolveDefence` / `buildDefenceReport` code, so the harness runs the same
+ * arithmetic the game does (AGENTS.md gym↔game parity).
  */
 export function leaveBotOnPayload(
   payload: HangarWarPayload,
   hexId: string,
   hullId: string,
   defenceRating: number,
+  skills: readonly DefenceSkill[] = [],
 ): HangarWarPayload {
   const next = clonePayload(payload);
   const hex = findHex(next, hexId);
   if (hex?.held) {
-    hex.defender = { hullId, defenceRating, bankedMinerals: 0 };
+    const defender: HexDefender = {
+      hullId,
+      defenceRating,
+      bankedMinerals: 0,
+    };
+    if (skills.length > 0) defender.skills = skills.map((skill) => ({ ...skill }));
+    hex.defender = defender;
   }
   return next;
 }
@@ -314,6 +348,9 @@ export function hexWarSummaryLines(
     }
     if (hex.held && hex.defender) {
       parts.push(`bot ${hex.defender.hullId} (${hex.defender.defenceRating})`);
+      for (const skill of hex.defender.skills ?? []) {
+        parts.push(`skill ${skill.name} +${skill.bonus} vs ${skill.bossType}`);
+      }
     }
     lines.push(parts.join(' · '));
   }
@@ -575,12 +612,18 @@ export class GymHexWar extends Phaser.Scene {
   }
 
   /** Leaves a bot defending `hexId` (control surface: leave bot). */
-  leaveBot(hexId: string, hullId: string, defenceRating: number): void {
+  leaveBot(
+    hexId: string,
+    hullId: string,
+    defenceRating: number,
+    skills: readonly DefenceSkill[] = [],
+  ): void {
     this.payload = leaveBotOnPayload(
       this.payload,
       hexId,
       hullId,
       defenceRating,
+      skills,
     );
     this.renderMap();
   }

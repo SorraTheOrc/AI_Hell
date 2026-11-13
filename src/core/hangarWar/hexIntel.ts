@@ -120,6 +120,7 @@ import {
   type DefenceResolution,
 } from './hexDefence';
 import type {
+  DefenceSkill,
   HangarWarPayload,
   HexDefender,
   HexState,
@@ -253,6 +254,15 @@ export interface HexIntel {
   readonly grantedWeapon: string | null;
   /** The bot defending the hex, or `null` when unheld/undefended. */
   readonly defender: HexDefender | null;
+  /**
+   * The defending bot's special skills (empty when it has none)
+   * (AH-0MVWZYJ740037EZ1).
+   *
+   * Part of the known-ahead intel: a bot's training is another thing the player
+   * chooses when deciding **what to leave where**, so the map publishes it
+   * beside the boss the hex's neighbour will press with.
+   */
+  readonly skills: readonly DefenceSkill[];
   /** The queued attack against the hex, or `null` when none. */
   readonly pendingAttack: HexPendingAttackIntel | null;
   /**
@@ -608,6 +618,12 @@ function pendingForces(
  *
  * `jitterPercent: 0` makes the resolver a plain comparison, so the published
  * numbers are exactly reproducible; the tick still applies its bounded jitter.
+ *
+ * The preview publishes **no skill bonus**: a queued attack
+ * (`PendingAttack`) carries a force but no origin, so it has no attacker type
+ * for a skill to match. The tick names the origin when it resolves and applies
+ * the matching skill then — the preview is deliberately the bonus-free baseline
+ * the player plans against (AH-0MVWZYJ740037EZ1).
  */
 function previewDefence(
   defender: HexDefender,
@@ -708,6 +724,9 @@ function hexLabel(
 
   if (defender) {
     lines.push(`bot ${defender.hullId} (${defender.defenceRating})`);
+    for (const skill of defender.skills ?? []) {
+      lines.push(`skill ${skill.name} +${skill.bonus} vs ${skill.bossType}`);
+    }
   }
   if (pending?.resolution) {
     lines.push(
@@ -782,6 +801,7 @@ export function buildHexIntel(
     bossDefeated: state.bossDefeated === true,
     grantedWeapon: state.grantedWeapon ?? null,
     defender,
+    skills: defender ? [...(defender.skills ?? [])] : [],
     pendingAttack: pending,
     displayed,
     selectable: displayed,

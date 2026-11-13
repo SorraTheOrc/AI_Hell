@@ -34,6 +34,7 @@ import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
 import { buildHangarDeployment } from '../../scenes/hangarWar/hangarDeployment';
 import {
   campaignResetSeed,
+  defenderSkillsFor,
   grantDemonstrationColor,
   hangarAssaultSeed,
   isRingSecured,
@@ -45,6 +46,7 @@ import {
   resolveHexGrant,
   withGrantedEntry,
 } from './captureCycle';
+import { HANGAR_CATALOGUE } from '../../data/hangarCatalogue';
 
 /** A fresh war with ring `ringIndex` materialised from the authored data. */
 function ringPayload(ringIndex = 1): HangarWarPayload {
@@ -151,6 +153,95 @@ describe('leaveDefender', () => {
     expect(leaveDefender(payload.hangar, 'not-a-hull')).toBeNull();
     expect(leaveDefender(payload.hangar, null)).toBeNull();
     expect(leaveDefender(payload.hangar, 'hull-1')).not.toBeNull();
+  });
+});
+
+describe('leaveDefender — special skills (AH-0MVWZYJ740037EZ1)', () => {
+  it('omits the skill field entirely when the bot has no skills (additive data)', () => {
+    const payload = ringPayload();
+
+    const defender = leaveDefender(payload.hangar, 'hull-1');
+
+    expect(defender).not.toBeNull();
+    // Field presence stays exact: an old-shaped defender is never widened.
+    expect('skills' in defender!).toBe(false);
+  });
+
+  it('attaches the hull flown’s authored skill', () => {
+    const payload = ringPayload();
+    payload.hangar.unlockedHulls.push('hull-2');
+
+    const defender = leaveDefender(payload.hangar, 'hull-2');
+
+    // The other half of the composition: what the hull itself is trained against.
+    expect(defender?.skills).toBeDefined();
+    expect(defender!.skills).toHaveLength(1);
+    expect(defender!.skills![0]).toMatchObject({
+      bossType: 'the-dawnbreaker',
+      bonus: 4,
+    });
+    // The stored rating is unchanged — a skill is applied by the resolver, not
+    // baked into the number the player sees.
+    expect(defender!.defenceRating).toBe(deriveDefenderRating('hull-2'));
+  });
+
+  it('adds a purchased modifier’s skill beside the hull’s (both may coexist)', () => {
+    const payload = ringPayload();
+    payload.hangar.unlockedHulls.push('hull-2');
+    payload.hangar.ownedModifiers.push('anti_maw_plating');
+    payload.hangar.activeLoadout = {
+      startingWeapons: [],
+      modifiers: ['anti_maw_plating'],
+    };
+
+    const defender = leaveDefender(payload.hangar, 'hull-2');
+
+    expect(defender!.skills!.map((skill) => skill.bossType).sort()).toEqual([
+      'maw-of-ashes',
+      'the-dawnbreaker',
+    ]);
+  });
+
+  it('grants no modifier skill unless the modifier is on the active loadout', () => {
+    const payload = ringPayload();
+    // Owned but not equipped: owning a modifier never silently changes what the
+    // fleet deploys with, so it cannot change what a bot is trained against.
+    payload.hangar.ownedModifiers.push('anti_maw_plating');
+
+    const defender = leaveDefender(payload.hangar, 'hull-1');
+
+    expect('skills' in defender!).toBe(false);
+  });
+
+  it('collapses a skill granted twice to one entry (no double-stacking)', () => {
+    const payload = ringPayload();
+    payload.hangar.unlockedHulls.push('hull-2');
+    payload.hangar.ownedModifiers.push('anti_maw_plating');
+    payload.hangar.activeLoadout = {
+      startingWeapons: [],
+      modifiers: ['anti_maw_plating'],
+    };
+
+    const catalogue = [...HANGAR_CATALOGUE];
+    const bulwark = catalogue.find((item) => item.id === 'hull-2');
+    const plating = catalogue.find((item) => item.id === 'anti_maw_plating');
+    if (bulwark?.kind !== 'hull' || plating?.kind !== 'modifier') {
+      throw new Error('shipped catalogue shape changed');
+    }
+    expect(plating.effect.kind).toBe('defence-skill');
+    // A hull and a modifier authoring the same training id would otherwise add
+    // the bonus twice.
+    const shared = { id: 'shared-training', name: 'Shared', bossType: 'x', bonus: 2 };
+    catalogue[catalogue.indexOf(bulwark)] = { ...bulwark, skill: shared };
+    catalogue[catalogue.indexOf(plating)] = {
+      ...plating,
+      effect: { kind: 'defence-skill', skill: shared },
+    };
+
+    const skills = defenderSkillsFor(payload.hangar, 'hull-2', catalogue);
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0].id).toBe('shared-training');
   });
 });
 

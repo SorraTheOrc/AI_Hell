@@ -294,6 +294,85 @@ describe('hex map model — tile label (AC3)', () => {
     }
   });
 
+  it("shows the defending bot's special skills in the hex intel (AH-0MVWZYJ740037EZ1)", () => {
+    const payload = withHex(ringPayload(1), 'hex-r1-2', {
+      held: true,
+      bossDefeated: true,
+      defender: {
+        hullId: 'hull-2',
+        defenceRating: 14,
+        bankedMinerals: 0,
+        skills: [
+          {
+            id: 'bulwark-line-breaker',
+            name: 'Line-breaker',
+            bossType: 'the-dawnbreaker',
+            bonus: 4,
+          },
+        ],
+      },
+    });
+
+    const model = buildHexMapModel(payload);
+    const held = model.hexes.find((hex) => hex.id === 'hex-r1-2')!;
+
+    // The skill is part of the known-ahead intel: what the bot left behind is
+    // trained against, so the player can plan `leave the Bulwark here`.
+    expect(held.skills).toEqual([
+      {
+        id: 'bulwark-line-breaker',
+        name: 'Line-breaker',
+        bossType: 'the-dawnbreaker',
+        bonus: 4,
+      },
+    ]);
+    expect(held.label).toContain('skill Line-breaker +4 vs the-dawnbreaker');
+  });
+
+  it('publishes no skills for a bot that has none (and no skill line)', () => {
+    const payload = withHex(ringPayload(1), 'hex-r1-2', {
+      held: true,
+      bossDefeated: true,
+      defender: { hullId: DEFAULT_HULL_ID, defenceRating: 2, bankedMinerals: 0 },
+    });
+
+    const held = buildHexMapModel(payload).hexes.find(
+      (hex) => hex.id === 'hex-r1-2',
+    )!;
+
+    expect(held.skills).toEqual([]);
+    expect(held.label).not.toContain('skill ');
+  });
+
+  it('previews a queued attack without a skill bonus (the origin is not known yet)', () => {
+    // A queued attack has no named origin, so it has no attacker type and no
+    // skill can match: the preview stays the jitter-free, bonus-free baseline.
+    const payload = withHex(ringPayload(1), 'hex-r1-2', {
+      held: true,
+      bossDefeated: true,
+      defender: {
+        hullId: 'hull-1',
+        defenceRating: 2,
+        bankedMinerals: 0,
+        skills: [
+          { id: 'maw-warded', name: 'Maw-warded', bossType: 'maw-of-ashes', bonus: 99 },
+        ],
+      },
+    });
+    payload.pendingAttacks = [{ hexId: 'hex-r1-2', force: 4 }];
+
+    const held = buildHexMapModel(payload).hexes.find(
+      (hex) => hex.id === 'hex-r1-2',
+    )!;
+
+    expect(held.pendingAttack?.resolution).toMatchObject({
+      defenderRating: 2,
+      effectiveDefenderRating: 2,
+      skillBonusTotal: 0,
+      outcome: 'fell',
+    });
+  });
+
   it('joins held state, the defending bot and summed pending attacks (label unchanged)', () => {
     const payload = withHex(ringPayload(1), 'hex-r1-2', {
       held: true,
@@ -716,6 +795,9 @@ function recordAttack(
   return {
     outcome: 'fell',
     defenderRating: 2,
+    effectiveDefenderRating: 2,
+    skillBonusTotal: 0,
+    appliedSkills: [],
     attackingForce: 4,
     aggression: 3,
     aggressionMultiplierPercent: 145,
@@ -725,6 +807,7 @@ function recordAttack(
     hexId: 'hex-held',
     attackerOriginId: 'hex-frontier',
     attackerOrigin: { q: 0, r: 1 },
+    attackerType: null,
     source: 'frontier',
     ...overrides,
   };

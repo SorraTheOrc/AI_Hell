@@ -153,6 +153,7 @@ describe('hangar screen model (pure)', () => {
       'ricochet',
       'cluster',
       'hardened_plating',
+      'anti_maw_plating',
     ]);
     const starter = rows.find((row) => row.id === 'spread')!;
     expect(starter.state).toBe('owned');
@@ -236,6 +237,7 @@ describe('hangar screen model (pure)', () => {
       'buy:ricochet',
       'buy:cluster',
       'buy:hardened_plating',
+      'buy:anti_maw_plating',
       'hull:hull-2',
       'weapon:spread',
       'deploy',
@@ -629,6 +631,7 @@ describe('HangarScene', () => {
       'buy:ricochet',
       'buy:cluster',
       'buy:hardened_plating',
+      'buy:anti_maw_plating',
       'hull:hull-1',
       'hull:hull-2',
       'weapon:spread',

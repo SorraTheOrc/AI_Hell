@@ -784,7 +784,9 @@ shipped build:
 - **Special missions** with special rewards — e.g. a new hull type with extra
   hit points or extra upgrade bays: **AH-0MVWZYIWX0008C55**.
 - **Upgraded defending bots** with special skills that are more effective
-  against certain enemy or boss types: **AH-0MVWZYJ740037EZ1**.
+  against certain enemy or boss types: **AH-0MVWZYJ740037EZ1** — **implemented**
+  as flat defence skills keyed by the attacker's authored boss identity (see
+  *Known-ahead intel and anti-checklist mitigations → Defending-bot skills*).
 - **Hex variety** — per-hex personalities, contracts and ring landmarks:
   **AH-0MVWZYQN8007SXIG**.
 
@@ -1089,8 +1091,9 @@ can form before spending a life — and the one-weapon hex becomes a real decisi
 rather than a surprise.
 
 Going **beyond** strategic weapon grants is **out of scope for the MVP**. The
-ideas below are recorded so the loop has room to grow; they are **design only**
-and none is scheduled:
+ideas below are recorded so the loop has room to grow; one mitigation
+(**defending-bot skills**, AH-0MVWZYJ740037EZ1) has since been **implemented** as
+a post-MVP addition, the rest remain **design only**:
 
 - **Special missions.** Optional objective runs (escort a salvage convoy, hold a
   hex for N frontier ticks, kill a boss without losing a life) that pay a
@@ -1100,7 +1103,13 @@ and none is scheduled:
 - **Upgraded bots with special skills.** Defending bots that are **more effective
   against certain enemy or boss types** — an anti-swarm bot, an anti-armour bot,
   a bot that repairs a neighbour's defence rating — so what the player leaves
-  behind is a composition decision, not a number.
+  behind is a composition decision, not a number. **Partly implemented
+  (AH-0MVWZYJ740037EZ1):** the *matching-boss* half ships as **flat defence
+  skills** keyed by the attacking neighbour's authored boss identity, granted by
+  the hull flown and/or a purchased modifier (see *Defending-bot skills* below).
+  The cross-hex "repairs a neighbour's defence rating" idea remains **design
+  only** — deliberately deferred, because it would break the resolver's per-hex
+  purity.
 - **Hex personalities.** Per-hex environmental or enemy twists (a nebula that
   slows projectiles, a boss that summons reinforcements) so no two captures play
   the same.
@@ -1112,6 +1121,39 @@ and none is scheduled:
 Every idea above is judged by the same test as the loop itself: does it give the
 player a **choice** — what to take, what to leave, what to risk — rather than one
 more box to tick?
+
+### Defending-bot skills (post-MVP, implemented — AH-0MVWZYJ740037EZ1)
+
+The first mitigation was **built**, not just recorded, because it is the one that
+turns the defender from a number into a decision. It is **design of record** in
+GDD §8.2 (*Defending-bot skills*) and in the resolver's module docs
+(`src/core/hangarWar/hexDefence.ts`); the essential rules:
+
+- **A skill is a flat rating bonus against one boss type.** `DefenceSkill` is
+  `{ id, name, bossType, bonus }`, stored data on the defender
+  (`HexDefender.skills`), never a rule the resolver consults a table for.
+- **The type is already authored.** `bossType` is the attacking neighbour hex's
+  authored `boss` (`src/data/hexRingDefinitions.ts`) — the same identity the
+  map's known-ahead intel shows — so no new enemy taxonomy exists, and an attack
+  from an origin with no authored definition resolves **unmodified**.
+- **A non-matching attack is byte-for-byte the old behaviour.** The bonus is
+  added to the effective rating *before* `effectiveRating ≥ attackStrength`; a
+  tie still holds. The resolver publishes the stored rating and the effective one
+  side by side, so the defence report shows the skill, its bonus and the numbers
+  it decided.
+- **Two skill sources may coexist on one defender**: the hull flown
+  (`HullDefinition.skill`) and/or a purchased modifier (a `ModifierEffect` of
+  kind `defence-skill`).
+- **Determinism is untouched.** Skills are numbers in the rating arithmetic and
+  never draw from the seeded jitter stream, so the same payload/seed/tick replays
+  every hold and fall.
+- **Deferred, recorded not built:** the cross-hex "repairs a neighbour's defence
+  rating" skill. It would make one hex's resolution depend on another's, which is
+  exactly the per-hex purity the algorithmic resolver is built on.
+
+The parity surface is unchanged: `GymHexWar` leaves a bot **with** its skills and
+resolves/renders through the shipped `runFrontierTick` / `resolveDefence` /
+`buildDefenceReport` code, so the gym shows the numbers the game shows.
 
 ### Minimal first slice
 

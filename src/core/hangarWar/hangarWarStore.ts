@@ -47,11 +47,19 @@
  * `null` case above; bump it only for an incompatible shape change and add the
  * old → new mapping here.
  *
+ * Two fields migrate by presence **without** a version bump because they are
+ * purely additive: `frontierTick` on the payload (absent reads as tick `0`) and
+ * `skills` on a defending bot (absent reads as "no skills", so the resolver
+ * applies no bonus) — AH-0MVUXCBBK004EJIP and AH-0MVWZYJ740037EZ1 respectively.
+ * Both are omitted on write when they carry nothing, so a save round-trips
+ * byte-for-byte rather than gaining empty fields.
+ *
  * @module src/core/hangarWar/hangarWarStore
  */
 
 import { normaliseSeed } from '../rng';
 import type {
+  DefenceSkill,
   HangarLoadout,
   HangarState,
   HangarWarPayload,
@@ -186,16 +194,64 @@ function parseHangar(raw: unknown): HangarState | null {
   };
 }
 
+/**
+ * Parses one defending-bot skill, or `null` when it is not usable.
+ *
+ * A skill needs a stable `id` and a `bossType` to match against (without either
+ * it can never apply), so those two are the admission test. The `name` falls
+ * back to the id and the `bonus` is normalised to a non-negative integer, so a
+ * corrupt value degrades to a legible skill rather than discarding it — the
+ * same salvage-not-drop policy the rest of the parser follows.
+ */
+function parseDefenceSkill(raw: unknown): DefenceSkill | null {
+  if (!isRecord(raw)) return null;
+  const id = toId(raw.id);
+  const bossType = toId(raw.bossType);
+  if (id === null || bossType === null) return null;
+  const name = toId(raw.name);
+  return {
+    id,
+    name: name ?? id,
+    bossType,
+    bonus: toNonNegativeInteger(raw.bonus),
+  };
+}
+
+/**
+ * Parses a defender's skill list. Duplicates collapse to the first mention by
+ * id (a hull and a modifier granting the same training must not double-stack),
+ * and unusable entries are dropped rather than failing the defender.
+ */
+function parseDefenceSkills(raw: unknown): DefenceSkill[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const skills: DefenceSkill[] = [];
+  for (const entry of raw) {
+    const skill = parseDefenceSkill(entry);
+    if (skill === null || seen.has(skill.id)) continue;
+    seen.add(skill.id);
+    skills.push(skill);
+  }
+  return skills;
+}
+
 /** Parses a defending bot; an unusable one becomes `null` (undefended). */
 function parseDefender(raw: unknown): HexDefender | null {
   if (!isRecord(raw)) return null;
   const hullId = toId(raw.hullId);
   if (hullId === null) return null;
-  return {
+  const defender: HexDefender = {
     hullId,
     defenceRating: toNonNegativeInteger(raw.defenceRating),
     bankedMinerals: toNonNegativeInteger(raw.bankedMinerals),
   };
+  // The skills are an **additive** field (AH-0MVWZYJ740037EZ1): a save written
+  // before defending-bot skills landed has none, so the field is omitted here
+  // (rather than defaulted to `[]`) and absence reads as "no skills". That keeps
+  // field-presence migration exact and needs no schema version bump.
+  const skills = parseDefenceSkills(raw.skills);
+  if (skills.length > 0) defender.skills = skills;
+  return defender;
 }
 
 /**

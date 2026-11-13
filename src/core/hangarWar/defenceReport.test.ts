@@ -97,6 +97,9 @@ function attack(
   return {
     outcome: 'fell',
     defenderRating: 2,
+    effectiveDefenderRating: 2,
+    skillBonusTotal: 0,
+    appliedSkills: [],
     attackingForce: 4,
     aggression: 3,
     aggressionMultiplierPercent: 145,
@@ -106,6 +109,7 @@ function attack(
     hexId: 'hex-held',
     attackerOriginId: 'hex-frontier',
     attackerOrigin: { q: 0, r: 1 },
+    attackerType: null,
     source: 'frontier',
     ...overrides,
   };
@@ -202,6 +206,90 @@ describe('buildDefenceReport — every number comes from the record', () => {
     const lost = buildDefenceReport(lostPayload, makeRecord([attack()]));
     expect(lost.rows[0].held).toBe(false);
     expect(lost.rows[0].label).toContain('· LOST');
+  });
+});
+
+describe('buildDefenceReport — defending-bot skills (AH-0MVWZYJ740037EZ1)', () => {
+  /** The stored skill both grants on the held hex are trained against. */
+  const mawSkill = {
+    id: 'maw-warded',
+    name: 'Maw-warded',
+    bossType: 'maw-of-ashes',
+    bonus: 5,
+  };
+
+  /** A record whose hold only the skill achieved (effective ≥ attack, stored < attack). */
+  function skilledHold(): HexDefenceRecord {
+    return attack({
+      outcome: 'held',
+      defenderRating: 2,
+      effectiveDefenderRating: 7,
+      skillBonusTotal: 5,
+      appliedSkills: [mawSkill],
+      attackingForce: 4,
+      attackStrength: 6,
+      margin: 1,
+      attackerType: 'maw-of-ashes',
+    });
+  }
+
+  it('publishes the applied skill, its bonus and the effective rating used', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([skilledHold()]));
+    const row = model.rows[0];
+
+    expect(row.skillBonusTotal).toBe(5);
+    expect(row.effectiveDefenderRating).toBe(7);
+    expect(row.appliedSkills).toEqual([mawSkill]);
+    expect(row.attackerType).toBe('maw-of-ashes');
+    // The stored rating is still published unchanged beside the effective one.
+    expect(row.defenderRating).toBe(2);
+  });
+
+  it('renders the skill and the effective rating into the row label', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([skilledHold()]));
+    const label = model.rows[0].label;
+
+    // The numbers that decided the hold: whose skill, how much, against what.
+    expect(label).toContain('skill Maw-warded +5 vs maw-of-ashes');
+    expect(label).toContain('bot 7');
+    expect(label).toContain('margin +1');
+    // The stored bot rating is still legible (a hold that *needed* the bonus).
+    expect(label).toContain('vs bot 2');
+  });
+
+  it('adds no skill line to an unmodified row (a plain hold stays byte-identical)', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([attack()]));
+    const row = model.rows[0];
+
+    expect(row.skillBonusTotal).toBe(0);
+    expect(row.appliedSkills).toEqual([]);
+    expect(row.skillLine).toBeNull();
+    expect(row.label).not.toContain('skill ');
+  });
+
+  it('names every applied skill when a hull and a modifier grant both', () => {
+    const hullSkill = {
+      id: 'bulwark-line-breaker',
+      name: 'Line-breaker',
+      bossType: 'the-dawnbreaker',
+      bonus: 4,
+    };
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([
+        attack({
+          outcome: 'held',
+          effectiveDefenderRating: 11,
+          skillBonusTotal: 9,
+          appliedSkills: [hullSkill, mawSkill],
+          attackerType: 'the-dawnbreaker',
+          margin: 5,
+        }),
+      ]),
+    );
+
+    expect(model.rows[0].skillBonusTotal).toBe(9);
+    expect(model.rows[0].label).toContain('skill Line-breaker + Maw-warded +9');
   });
 });
 

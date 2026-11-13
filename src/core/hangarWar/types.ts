@@ -56,6 +56,32 @@ export interface HangarState {
   activeLoadout: HangarLoadout;
 }
 
+/**
+ * A defending bot's special skill: a flat rating bonus against **one boss
+ * type** (AH-0MVWZYJ740037EZ1).
+ *
+ * Design of record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D — *Known-ahead
+ * intel and anti-checklist mitigations*, "upgraded bots with special skills …
+ * more effective against certain enemy or boss types, so what the player
+ * leaves behind is a composition decision, not a number".
+ *
+ * A skill is **stored data**, never a rule: it is persisted on the defending
+ * bot (`HexDefender.skills`) and enters the pure resolver as one more number
+ * (a flat bonus) keyed by an attacker type. `bossType` is the authored boss
+ * identity of the attacking neighbour hex
+ * (`src/data/hexRingDefinitions.ts`), so no new enemy taxonomy is authored.
+ */
+export interface DefenceSkill {
+  /** Stable skill id (also the dedupe key when hull and modifier agree). */
+  id: string;
+  /** Display name shown in the report and the map intel. */
+  name: string;
+  /** The boss identity this skill is trained against. */
+  bossType: string;
+  /** Flat rating bonus added to the defender when the boss type matches. */
+  bonus: number;
+}
+
 /** The bot left defending a held hex (derived rating, never a live battle). */
 export interface HexDefender {
   /** Hull the defending bot flies. */
@@ -64,6 +90,17 @@ export interface HexDefender {
   defenceRating: number;
   /** Salvage banked at the hex. */
   bankedMinerals: number;
+  /**
+   * The bot's special skills, granted by the hull flown and/or a purchased
+   * modifier (AH-0MVWZYJ740037EZ1).
+   *
+   * **Additive and optional on purpose:** a save written before defending-bot
+   * skills landed has no such field, and absence reads as "no skills" (the
+   * resolver applies no bonus), so the store migrates it by field presence
+   * without a schema version bump — the same pattern as
+   * `HangarWarPayload.frontierTick`.
+   */
+  skills?: readonly DefenceSkill[];
 }
 
 /** One hex of the ring, with its known-ahead intel and current state. */

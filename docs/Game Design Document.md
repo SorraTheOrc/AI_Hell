@@ -2900,13 +2900,14 @@ The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 | Entry | Kind | Price (minerals / cores) | Effect |
 |---|---|---|---|
 | `hull-1` Scrap Hull | hull | 0 / 0 (starter) | 3 lives, speed ×1.0, defence 2 |
-| `hull-2` Bulwark Hull | hull | 220 / 3 | 4 lives, speed ×0.85, defence 14 |
+| `hull-2` Bulwark Hull | hull | 220 / 3 | 4 lives, speed ×0.85, defence 14, defending-bot skill *Line-breaker* (+4 vs `the-dawnbreaker`) |
 | `hull-3` Juggernaut Hull | hull | 320 / 4 (`minRing: 2`) | 5 lives, speed ×0.8, defence 15 — the ring-2 special-mission reward (`hex-r2-3` grants it through `resolveHexGrant`), priced above the Bulwark for a fleet that never takes that hex (AH-0MWF0CUS3009M5SY) |
 | `spread` Spread Cannon | weapon | 0 / 0 (starter) | `spread` starting weapon (owned by default, **not equipped**) |
 | `wave_laser` Wave Laser | weapon | 120 / 1 | `wave_laser` starting weapon |
 | `ricochet` Ricochet | weapon | 90 / 2 | `ricochet` starting weapon |
 | `cluster` Cluster Missile | weapon | 160 / 1 | `cluster` starting weapon |
 | `hardened_plating` Hardened Plating | modifier | 80 / 1 | +1 starting life per deployment |
+| `anti_maw_plating` Anti-Maw Plating | modifier | 110 / 2 | defending-bot skill *Maw-warded* (+5 vs `maw-of-ashes`) |
 
 Every phase-A entry is available at ring 1 (`minRing: 1`); ring gating is the
 field phase B's ring content uses. A purchase needs **both** currencies at
@@ -2923,6 +2924,15 @@ unlock" rule (`purchaseWeight`,
 catalogue order as the deterministic tie-break) also lives here, and the
 defender-rating formula (`baseDefence + 3×armour + 2×firepower + 2×systems`)
 is defined once so phase B's defence resolver has no second source of truth.
+
+**Defending-bot skills are the tree's second rewarded axis**
+(AH-0MVWZYJ740037EZ1): `hull-2` authors a skill and `anti_maw_plating` is a
+**modifier that grants one** (`ModifierEffect` kind `defence-skill`). They are
+different choices rather than duplicates — one keeps the pilot alive, the other
+keeps a hex — and a hull-granted skill and a modifier-granted skill may sit on
+the same defending bot, where their bonuses **add**. Only modifiers on the
+**active loadout** contribute, so owning one never silently changes what the
+fleet's bots are trained against.
 
 #### Salvage banking at the existing checkpoint moments
 
@@ -3215,8 +3225,10 @@ The defence is **arithmetic over stored numbers**, never a simulated battle:
 ```
 aggressionMultiplier = 100 + 15 × aggression              (%)
 attackStrength       = round(force × multiplier × (100 + jitter) / 10000)
-held                 = defenderRating ≥ attackStrength
-margin               = defenderRating − attackStrength
+skillBonus           = Σ bonus of the bot's skills matching the attacker's boss type
+effectiveRating      = defenderRating + skillBonus
+held                 = effectiveRating ≥ attackStrength
+margin               = effectiveRating − attackStrength
 ```
 
 - **Aggression is a multiplier and never weakens an attack** (`0` is neutral,
@@ -3225,7 +3237,7 @@ margin               = defenderRating − attackStrength
   both ends of the border matter.
 - **Seeded jitter is bounded at ±10 %**, drawn from a per-`(seed, tick, hex id)`
   stream, so a replay reproduces every hold and fall bit-for-bit.
-- **A tie holds the line**: `defenderRating === attackStrength` is a hold with
+- **A tie holds the line**: `effectiveRating === attackStrength` is a hold with
   `margin: 0`; the player only loses a hex the AI *beats* on the numbers.
 
 One **between-sortie frontier tick** runs when a deployment ends:
@@ -3253,6 +3265,37 @@ the clock is **injected** (`seed` + `tick`, persisted as the payload's additive
 `frontierTick`), and ties between equally aggressive neighbours are settled by
 sorted id, so a reordered payload replays identically.
 
+#### Defending-bot skills
+
+A defending bot may be **more effective against one boss type** than its stored
+rating suggests (AH-0MVWZYJ740037EZ1) — the post-MVP mitigation for "the ring is
+a checklist", recorded in
+[`docs/OUTER_LOOP_CANDIDATES.md`](./OUTER_LOOP_CANDIDATES.md) under
+*Known-ahead intel and anti-checklist mitigations*.
+
+- **What a skill is.** Stored data on the bot: `{ id, name, bossType, bonus }`,
+  persisted as `HexDefender.skills` (additive and optional — a save written
+  before skills loads as "no skills", with no schema version bump).
+- **What the type is.** The **authored boss identity of the attacking neighbour
+  hex** — the same identity the hex map's known-ahead intel already shows — so no
+  new enemy taxonomy is authored. An attack from a hex with no authored
+  definition has no type and therefore no bonus; it resolves unmodified.
+- **What it does.** A matching skill adds its **flat bonus** to the effective
+  rating, before the `effectiveRating ≥ attackStrength` comparison. A
+  non-matching skill contributes nothing, so an attack against any other boss
+  resolves exactly as it did before skills existed, and a tie still holds.
+- **Where it comes from.** Two sources, which may coexist on one defender: the
+  **hull flown** (`HullDefinition.skill`) and/or a **purchased hangar modifier**
+  whose effect is a `defence-skill`. First slate: the Bulwark hull's
+  *Line-breaker* (+4 vs `the-dawnbreaker`) and the *Anti-Maw Plating* modifier's
+  *Maw-warded* (+5 vs `maw-of-ashes`).
+- **Determinism.** Skills are numbers in the rating arithmetic only; they never
+  draw from the seeded jitter stream, so a replay of the same payload/seed/tick
+  reproduces every hold and fall bit-for-bit.
+- **Scope.** The skills are strictly **per-hex**: a skill never strengthens a
+  neighbour's resolution, which is why the design doc's cross-hex "repairs a
+  neighbour's defence rating" idea stays deferred.
+
 #### The defence report
 
 The between-sortie defence report is **rolled into the hex map** — there is no
@@ -3271,6 +3314,11 @@ map renders it on its one integrated view without re-deriving a single figure:
   unheld neighbour the attack came from (the hex to strike) and the defender
   rating needed to hold against the same attack — the record's
   `attackStrength`, because a tie holds.
+- **Any skill that decided it**: when a defending bot's matching skill was
+  applied the row states the skill, its bonus, the boss type it matched and the
+  **effective** rating the comparison actually used, beside the bot's stored
+  rating — so a hold that *depended* on the bonus is distinguishable from an
+  unmodified hold.
 - A **quiet tick** (a secured ring) draws no arrows and shows an explicit "no
   hex was attacked" line in the panel rather than an empty map beat, so the
   attract demo can never stall on it.
@@ -3390,6 +3438,13 @@ every rings-1–2 entry:
 | Ricochet `ricochet` (90 / 2) | 23 | **10** | 15 |
 | Cluster Missile `cluster` (160 / 1) | 40 | **18** | 27 |
 | Hardened Plating `hardened_plating` (80 / 1) | 20 | **9** | 14 |
+| Anti-Maw Plating `anti_maw_plating` (110 / 2) — added by AH-0MVWZYJ740037EZ1 | — | **13**† | 20† |
+
+† The entry post-dates the original measurement, so it is **derived** from the
+rows above rather than re-measured: `hardened_plating`'s 9 (ring-1) and 14
+(ring-2) deployments for 80 minerals give ≈8.9 and ≈5.7 minerals per deployment,
+so 110 minerals needs ≈13 and ≈20. The core bound (2 cores at 0.5/1.0 per
+deployment) is never the binding one.
 
 (deployments to afford each entry from that line's measured per-deployment
 income — a purchase needs both currencies at once, so the pace is the slower

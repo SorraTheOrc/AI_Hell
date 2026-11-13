@@ -29,6 +29,7 @@
  * @module src/data/hangarCatalogue
  */
 
+import type { DefenceSkill } from '../core/hangarWar/types';
 import type { WeaponId } from '../utils/weapons';
 
 /** What kind of thing an unlock is (and which owned set it joins). */
@@ -85,6 +86,16 @@ export interface HullDefinition extends HangarEntryBase {
   readonly upgrades: HullUpgrades;
   /** Run-facing stats applied when the hull is deployed. */
   readonly runStats: HullRunStats;
+  /**
+   * The special skill this hull's defending bots carry, if any
+   * (AH-0MVWZYJ740037EZ1).
+   *
+   * A hull is one of the two **skill sources**: the capture cycle reads it when
+   * it builds the defending bot ({@link HexDefender.skills}), and the resolver
+   * applies it as a flat rating bonus against the boss type it names. Pure data
+   * — the resolver never consults the catalogue.
+   */
+  readonly skill?: DefenceSkill;
 }
 
 /** A starting weapon: a pointer at a shipped weapon id, never a copy. */
@@ -97,7 +108,14 @@ export interface StartingWeaponDefinition extends HangarEntryBase {
 /** What a permanent hangar modifier does to a deployment. */
 export type ModifierEffect =
   | { readonly kind: 'extra-lives'; readonly lives: number }
-  | { readonly kind: 'defence'; readonly rating: number };
+  | { readonly kind: 'defence'; readonly rating: number }
+  /**
+   * Grants the defending bots a special skill — a flat rating bonus against one
+   * boss type (AH-0MVWZYJ740037EZ1). The second **skill source** beside
+   * {@link HullDefinition.skill}: a hull-granted skill and a modifier-granted
+   * skill may coexist on one defender, and their bonuses add.
+   */
+  | { readonly kind: 'defence-skill'; readonly skill: DefenceSkill };
 
 /** A permanent modifier bought in the hangar and applied to every deployment. */
 export interface ModifierDefinition extends HangarEntryBase {
@@ -128,6 +146,12 @@ export const STARTER_WEAPON_ID = 'spread';
  * as the ring-2 special-mission reward (granted free through `resolveHexGrant`)
  * and, for a fleet that never takes that hex, as a ring-2 purchase priced above
  * the Bulwark Hull (AH-0MWF0CUS3009M5SY).
+ *
+ * The tree now carries **two** buyable modifiers (AH-0MVWZYJ740037EZ1):
+ * `hardened_plating` (the extra-life kit) and `anti_maw_plating` (a
+ * **defending-bot skill** modifier — the second skill source beside the Bulwark
+ * hull's own skill). The two are different rewarded choices rather than
+ * duplicates: one keeps the pilot alive, the other keeps a hex.
  */
 export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
   {
@@ -155,6 +179,14 @@ export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
     baseDefence: 4,
     upgrades: { armour: 2, firepower: 1, systems: 1 },
     runStats: { startingLives: 4, speedMultiplier: 0.85 },
+    // The first hull-granted skill: a bot left in a hex that the Dawnbreaker
+    // presses holds better than its stored rating alone would suggest.
+    skill: {
+      id: 'bulwark-line-breaker',
+      name: 'Line-breaker',
+      bossType: 'the-dawnbreaker',
+      bonus: 4,
+    },
   },
   {
     // The special-mission reward (AH-0MWF0CUS3009M5SY, parent
@@ -233,5 +265,24 @@ export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
     minRing: 1,
     starter: false,
     effect: { kind: 'extra-lives', lives: 1 },
+  },
+  {
+    id: 'anti_maw_plating',
+    kind: 'modifier',
+    name: 'Anti-Maw Plating',
+    description:
+      'Plating cut to shrug off the Maw of Ashes: a bot carrying it holds a hex that boss presses far better than its rating suggests.',
+    price: { minerals: 110, cores: 2 },
+    minRing: 1,
+    starter: false,
+    effect: {
+      kind: 'defence-skill',
+      skill: {
+        id: 'maw-warded',
+        name: 'Maw-warded',
+        bossType: 'maw-of-ashes',
+        bonus: 5,
+      },
+    },
   },
 ];

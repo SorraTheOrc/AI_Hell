@@ -32,7 +32,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
+import {
+  HEX_RING_DEFINITIONS,
+  findHexRingDefinition,
+} from '../../data/hexRingDefinitions';
 import {
   DEFAULT_FRONTIER_TUNING,
   advanceClock,
@@ -58,7 +61,12 @@ import {
 } from './__fixtures__/aggressionScenarios';
 import { checkRingAggression, ringAggressionTotal } from './aggressionInvariants';
 import { MINIMUM_PLAYER_STRENGTH } from './hangarEconomy';
-import type { HangarWarPayload, HexState, PendingAttack } from './types';
+import type {
+  DefenceSkill,
+  HangarWarPayload,
+  HexState,
+  PendingAttack,
+} from './types';
 
 /** Ring 1's authored ids, in clockwise generation order. */
 const RING_ONE_IDS = createRingState(1, HEX_RING_DEFINITIONS).hexes.map(
@@ -261,6 +269,188 @@ describe('resolveDefence', () => {
 
     expect(first).toEqual(second);
     expect(input).toEqual(before);
+  });
+});
+
+/**
+ * A first-slate style defending skill: a flat bonus against one boss identity.
+ *
+ * Skills are **stored data** (`HexDefender.skills`), so the tests author them
+ * inline rather than reading the catalogue — the resolver must never depend on
+ * which hull or modifier happens to grant one.
+ */
+function skill(
+  bossType: string,
+  bonus: number,
+  id = `vs-${bossType}`,
+): DefenceSkill {
+  return { id, name: `Trained against ${bossType}`, bossType, bonus };
+}
+
+describe('resolveDefence — defending-bot skills (AH-0MVWZYJ740037EZ1)', () => {
+  it('adds a matching skill’s bonus to the effective rating (a bonus that saves the hex)', () => {
+    // Baseline: rating 3 against a force of 5 falls by 2.
+    const plain = resolveDefence(
+      { defenderRating: 3, attackingForce: 5, aggression: 0, seed: 1 },
+      NO_JITTER,
+    );
+    expect(plain.outcome).toBe('fell');
+    expect(plain.attackStrength).toBe(5);
+    expect(plain.margin).toBe(-2);
+
+    // The same bot, trained against the attacking boss, holds on the tie rule.
+    const skilled = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 1,
+        attackerType: 'maw-of-ashes',
+        skills: [skill('maw-of-ashes', 2)],
+      },
+      NO_JITTER,
+    );
+
+    expect(skilled.outcome).toBe('held');
+    expect(skilled.attackStrength).toBe(5);
+    expect(skilled.skillBonusTotal).toBe(2);
+    expect(skilled.effectiveDefenderRating).toBe(5);
+    expect(skilled.margin).toBe(0);
+    // The stored rating is published unchanged beside the effective one.
+    expect(skilled.defenderRating).toBe(3);
+  });
+
+  it('falls short when the bonus does not cover the deficit (the boundary is exact)', () => {
+    const oneShort = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 1,
+        attackerType: 'maw-of-ashes',
+        skills: [skill('maw-of-ashes', 1)],
+      },
+      NO_JITTER,
+    );
+
+    expect(oneShort.effectiveDefenderRating).toBe(4);
+    expect(oneShort.margin).toBe(-1);
+    expect(oneShort.outcome).toBe('fell');
+  });
+
+  it('leaves a non-matching attack resolved exactly as before', () => {
+    const plain = resolveDefence(
+      { defenderRating: 3, attackingForce: 5, aggression: 2, seed: 31 },
+      NO_JITTER,
+    );
+    const mismatched = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 2,
+        seed: 31,
+        attackerType: 'iron-crusher',
+        skills: [skill('maw-of-ashes', 9)],
+      },
+      NO_JITTER,
+    );
+
+    expect(mismatched).toEqual({
+      ...plain,
+      skillBonusTotal: 0,
+      effectiveDefenderRating: plain.defenderRating,
+      appliedSkills: [],
+    });
+  });
+
+  it('resolves an untyped attack unmodified, even when the bot carries skills', () => {
+    // A hex with no authored definition has no boss identity, so there is
+    // nothing for a skill to match: documented total behaviour, never a throw.
+    const untyped = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 5,
+        skills: [skill('maw-of-ashes', 9), skill('the-dawnbreaker', 9)],
+      },
+      NO_JITTER,
+    );
+
+    expect(untyped.skillBonusTotal).toBe(0);
+    expect(untyped.appliedSkills).toEqual([]);
+    expect(untyped.effectiveDefenderRating).toBe(3);
+    expect(untyped.margin).toBe(-2);
+    expect(untyped.outcome).toBe('fell');
+  });
+
+  it('sums every matching skill and reports only the ones applied', () => {
+    const hullSkill = skill('maw-of-ashes', 2, 'bulwark-line-breaker');
+    const modifierSkill = skill('maw-of-ashes', 3, 'maw-warded');
+    const unused = skill('the-dawnbreaker', 9);
+
+    const resolution = resolveDefence(
+      {
+        defenderRating: 1,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 2,
+        attackerType: 'maw-of-ashes',
+        skills: [hullSkill, unused, modifierSkill],
+      },
+      NO_JITTER,
+    );
+
+    // Both grants coexist on one defender: the bonuses add.
+    expect(resolution.skillBonusTotal).toBe(5);
+    expect(resolution.appliedSkills).toEqual([hullSkill, modifierSkill]);
+    expect(resolution.effectiveDefenderRating).toBe(6);
+    expect(resolution.outcome).toBe('held');
+    expect(resolution.margin).toBe(1);
+  });
+
+  it('does not consume the seeded jitter stream (skills touch only the rating)', () => {
+    const base = {
+      defenderRating: 10,
+      attackingForce: 10,
+      aggression: 1,
+      seed: 424242,
+    };
+    const plain = resolveDefence(base);
+    const skilled = resolveDefence({
+      ...base,
+      attackerType: 'maw-of-ashes',
+      skills: [skill('maw-of-ashes', 4)],
+    });
+
+    // The draw is identical, so a replay reproduces every hold and fall.
+    expect(skilled.jitterPercent).toBe(plain.jitterPercent);
+    expect(skilled.attackStrength).toBe(plain.attackStrength);
+    expect(skilled.margin).toBe(plain.margin + 4);
+  });
+
+  it('is total on corrupt skills: unusable entries contribute nothing', () => {
+    const resolution = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 1,
+        attackerType: 'maw-of-ashes',
+        skills: [
+          null as unknown as DefenceSkill,
+          { id: 'bad', name: 'Bad', bossType: 'maw-of-ashes', bonus: -6 },
+          { id: 'nan', name: 'NaN', bossType: 'maw-of-ashes', bonus: Number.NaN },
+          { id: 'frac', name: 'Frac', bossType: 'maw-of-ashes', bonus: 1.9 },
+        ],
+      },
+      NO_JITTER,
+    );
+
+    // Negative/NaN collapse to 0, a fractional bonus truncates to 1.
+    expect(resolution.skillBonusTotal).toBe(1);
+    expect(resolution.appliedSkills).toHaveLength(1);
+    expect(resolution.appliedSkills[0].id).toBe('frac');
   });
 });
 
@@ -860,6 +1050,128 @@ describe('runFrontierTick', () => {
     });
 
     expect(aDifferentSeedDiffers).toBe(true);
+  });
+});
+
+/**
+ * Marks `id` held with a defending bot carrying `skills`.
+ *
+ * The bot's stored `defenceRating` is deliberately *not* inflated by the
+ * skills: a skill is a separate stored list the resolver applies, which is what
+ * lets the report show the stored and effective ratings side by side.
+ */
+function holdWithSkills(
+  hexes: HexState[],
+  id: string,
+  defenceRating: number,
+  skills: readonly DefenceSkill[],
+): void {
+  const hex = hexes.find((candidate) => candidate.id === id);
+  if (!hex) throw new Error(`no hex ${id}`);
+  hex.held = true;
+  hex.bossDefeated = true;
+  hex.defender = {
+    hullId: 'hull-1',
+    defenceRating,
+    bankedMinerals: 0,
+    skills: [...skills],
+  };
+}
+
+describe('runFrontierTick — defending-bot skills (AH-0MVWZYJ740037EZ1)', () => {
+  it("derives the attacker type from the origin hex's authored boss", () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 0);
+
+    const { record } = runFrontierTick(payloadWith(hexes), {
+      tuning: QUIET_RISE,
+    });
+
+    const [attack] = record.attacks;
+    expect(attack.attackerType).toBe(
+      findHexRingDefinition(attack.attackerOriginId)?.boss ?? null,
+    );
+    // The authored origin always names a real boss in the shipped rings.
+    expect(attack.attackerType).not.toBeNull();
+  });
+
+  it('threads the defender’s skills through so a trained bot keeps a hex a plain one loses', () => {
+    // Both payloads hold the same hex with the same stored rating; only the
+    // skills differ, so the difference in the outcome is the skill's effect.
+    const plainHexes = ringOne();
+    hold(plainHexes, RING_ONE_IDS[0], 0);
+    const plainTick = runFrontierTick(payloadWith(plainHexes), {
+      tuning: QUIET_RISE,
+    });
+    const plainAttack = plainTick.record.attacks[0];
+    const boss = plainAttack.attackerType as string;
+    expect(plainAttack.outcome).toBe('fell');
+
+    // A skill good enough to cover the whole deficit holds the line.
+    const skilledHexes = ringOne();
+    holdWithSkills(
+      skilledHexes,
+      RING_ONE_IDS[0],
+      0,
+      [skill(boss, plainAttack.attackStrength)],
+    );
+    const skilledTick = runFrontierTick(payloadWith(skilledHexes), {
+      tuning: QUIET_RISE,
+    });
+    const skilledAttack = skilledTick.record.attacks[0];
+
+    expect(skilledAttack.attackerType).toBe(boss);
+    expect(skilledAttack.skillBonusTotal).toBe(plainAttack.attackStrength);
+    expect(skilledAttack.appliedSkills).toHaveLength(1);
+    expect(skilledAttack.defenderRating).toBe(0);
+    expect(skilledAttack.effectiveDefenderRating).toBe(plainAttack.attackStrength);
+    expect(skilledAttack.attackStrength).toBe(plainAttack.attackStrength);
+    expect(skilledAttack.outcome).toBe('held');
+    expect(skilledAttack.margin).toBe(0);
+    // The hex is still held afterwards, with its stored rating untouched.
+    expect(hexOf(skilledTick.payload, RING_ONE_IDS[0]).held).toBe(true);
+    expect(
+      hexOf(skilledTick.payload, RING_ONE_IDS[0]).defender?.defenceRating,
+    ).toBe(0);
+  });
+
+  it('leaves a bot with no skills resolving exactly as it did before', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 4);
+
+    const [attack] = runFrontierTick(payloadWith(hexes), {
+      tuning: QUIET_RISE,
+    }).record.attacks;
+
+    expect(attack.skillBonusTotal).toBe(0);
+    expect(attack.appliedSkills).toEqual([]);
+    expect(attack.effectiveDefenderRating).toBe(attack.defenderRating);
+    expect(attack.margin).toBe(attack.defenderRating - attack.attackStrength);
+  });
+
+  it('replays identically with skills on the payload (the jitter stream is unchanged)', () => {
+    const build = (): HangarWarPayload => {
+      const hexes = ringOne();
+      holdWithSkills(hexes, RING_ONE_IDS[0], 2, [skill('maw-of-ashes', 3)]);
+      holdWithSkills(hexes, RING_ONE_IDS[2], 2, [skill('maw-of-ashes', 3)]);
+      return payloadWith(hexes, { seed: 987654 });
+    };
+
+    // The same payload + seed reproduces the same record and next payload.
+    const first = runFrontierTick(build(), { tuning: SEEDED_JITTER });
+    const second = runFrontierTick(build(), { tuning: SEEDED_JITTER });
+
+    expect(second.record).toEqual(first.record);
+    expect(second.payload).toEqual(first.payload);
+    // And the skills never touched the draw itself.
+    for (const attack of first.record.attacks) {
+      expect(attack.jitterPercent).toBeGreaterThanOrEqual(
+        -DEFAULT_FRONTIER_TUNING.jitterPercent,
+      );
+      expect(attack.jitterPercent).toBeLessThanOrEqual(
+        DEFAULT_FRONTIER_TUNING.jitterPercent,
+      );
+    }
   });
 });
 

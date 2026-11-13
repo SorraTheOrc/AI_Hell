@@ -24,8 +24,10 @@
  * aggressionMultiplier = 100 + aggressionPercentPerPoint × aggression   (%)
  * jitter               = ±jitterPercent                                 (%)
  * attackStrength       = round(attackingForce × multiplier × (100 + jitter) / 10000)
- * held                 = defenderRating ≥ attackStrength
- * margin               = defenderRating − attackStrength
+ * skillBonus           = Σ bonus of the defender's skills matching the attacker type
+ * effectiveRating      = defenderRating + skillBonus
+ * held                 = effectiveRating ≥ attackStrength
+ * margin               = effectiveRating − attackStrength
  * ```
  *
  * - **Aggression is a multiplier, aggression `0` is neutral.** A hex's stored
@@ -39,8 +41,21 @@
  *   override) makes the resolver a plain comparison, which is what the table
  *   tests pin.
  * - **A tie holds the line.** Matching the attack is a defence, so
- *   `defenderRating === attackStrength` is a hold with `margin: 0` — the
+ *   `effectiveRating === attackStrength` is a hold with `margin: 0` — the
  *   player only loses a hex the AI *beats* on the stored numbers.
+ * - **Defending-bot skills are flat rating bonuses keyed by attacker type**
+ *   (AH-0MVWZYJ740037EZ1). The attacker's type is the **authored boss identity
+ *   of the attacking neighbour hex**, which the map's known-ahead intel already
+ *   shows, so no new enemy taxonomy exists. A skill trained against that boss
+ *   adds its stored `bonus` to the effective rating *before* the comparison; a
+ *   non-matching skill contributes nothing, so an attack against any other boss
+ *   is resolved exactly as it was before skills existed, and an **untyped**
+ *   attack (an origin hex with no authored definition) resolves unmodified.
+ *   Skills are stored numbers only — they never consume the seeded jitter
+ *   stream, so a replay of the same payload/seed/tick reproduces every hold and
+ *   fall. The resolution publishes the stored rating, the effective rating, the
+ *   summed bonus and the applied skills, so the report can show both and a hold
+ *   that *depended* on a skill is distinguishable from an unmodified one.
  * - **Everything is total.** Negative, fractional and non-finite inputs
  *   collapse to `0` (or are truncated), so a corrupt payload can never throw
  *   inside a resolution pass.
@@ -140,8 +155,17 @@ import { createHangarWarRng } from './rng';
 import { areNeighbours, type AxialCoordinate } from './hexRing';
 import { MINIMUM_PLAYER_STRENGTH, resolvePlayerStrength } from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
-import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
-import type { HangarWarPayload, HexRingState, HexState, PendingAttack } from './types';
+import {
+  findHexRingDefinition,
+  hexRingDefinitionsFor,
+} from '../../data/hexRingDefinitions';
+import type {
+  DefenceSkill,
+  HangarWarPayload,
+  HexRingState,
+  HexState,
+  PendingAttack,
+} from './types';
 
 /** The two outcomes of an algorithmic defence. */
 export type DefenceOutcome = 'held' | 'fell';
@@ -161,6 +185,24 @@ export interface DefenceInput {
   readonly aggression: number;
   /** Deterministic seed for the bounded jitter draw. */
   readonly seed: number;
+  /**
+   * The attacker's type — the authored **boss identity of the attacking
+   * neighbour hex** — or `null`/omitted when the origin has no authored boss
+   * (AH-0MVWZYJ740037EZ1).
+   *
+   * A defence is always launched from an unheld neighbouring hex of the same
+   * ring, and that hex's boss is the identity the defending bot's skills are
+   * trained against. An untyped attack (a partial save, a hex with no authored
+   * definition) resolves **unmodified** — documented, total behaviour.
+   */
+  readonly attackerType?: string | null;
+  /**
+   * The defending bot's stored special skills. A skill whose `bossType`
+   * matches {@link attackerType} adds its flat `bonus` to the effective rating;
+   * a non-matching skill contributes nothing, so a non-matching attack is
+   * resolved exactly as it was before skills existed.
+   */
+  readonly skills?: readonly DefenceSkill[];
 }
 
 /**
@@ -174,6 +216,19 @@ export interface DefenceResolution {
   readonly outcome: DefenceOutcome;
   /** The defender rating used (normalised non-negative integer). */
   readonly defenderRating: number;
+  /**
+   * The **effective** defender rating the comparison used
+   * (`defenderRating + skillBonusTotal`).
+   *
+   * Published beside the stored {@link defenderRating} so the defence report can
+   * show both: a hold that depended on a matching skill is distinguishable from
+   * an unmodified one (AH-0MVWZYJ740037EZ1 AC2).
+   */
+  readonly effectiveDefenderRating: number;
+  /** Summed flat bonus of every skill whose boss type matched (0 = none). */
+  readonly skillBonusTotal: number;
+  /** The skills actually applied (matching, usable ones only). */
+  readonly appliedSkills: readonly DefenceSkill[];
   /** The attacking force used, before aggression and jitter. */
   readonly attackingForce: number;
   /** The aggression used (normalised non-negative integer). */
@@ -184,7 +239,11 @@ export interface DefenceResolution {
   readonly jitterPercent: number;
   /** The force actually faced, after aggression and jitter. */
   readonly attackStrength: number;
-  /** `defenderRating − attackStrength` (negative exactly when the hex fell). */
+  /**
+   * `effectiveDefenderRating − attackStrength` (negative exactly when the hex
+   * fell). A hold that needed a skill therefore shows a margin the stored
+   * rating alone would not have reached.
+   */
   readonly margin: number;
 }
 
@@ -272,6 +331,12 @@ export interface HexDefenceRecord extends DefenceResolution {
   readonly attackerOriginId: string;
   /** Axial coordinate of that neighbour (the hex the player can strike back at). */
   readonly attackerOrigin: AxialCoordinate;
+  /**
+   * The attacker's type as resolved for this attack: the attacking neighbour
+   * hex's authored `boss`, or `null` when that origin has no authored
+   * definition (an untyped attack, which resolves unmodified).
+   */
+  readonly attackerType: string | null;
   /** Whether the attack was queued in the payload or opened by this tick. */
   readonly source: 'pending' | 'frontier';
 }
@@ -767,13 +832,63 @@ export function attackingNeighbour(
 }
 
 /**
+ * The matching skills a defence applies, and their summed flat bonus.
+ *
+ * A skill applies only when the attack has a type and the skill's `bossType`
+ * equals it — so an untyped attack (no authored boss on the origin hex) gets no
+ * bonus, and a non-matching attack is resolved exactly as before skills
+ * existed. Total: a non-object entry, a blank/absent `bossType` or an unusable
+ * `bonus` contributes nothing rather than throwing, and a negative bonus can
+ * never weaken the defender.
+ *
+ * @param attackerType — the attack's type (the origin hex's authored boss).
+ * @param skills — the defending bot's stored skills (may be absent).
+ * @returns the applied skills (in stored order) and their summed bonus.
+ */
+function applicableSkills(
+  attackerType: string | null | undefined,
+  skills: readonly DefenceSkill[] | undefined,
+): { applied: DefenceSkill[]; bonus: number } {
+  const applied: DefenceSkill[] = [];
+  let bonus = 0;
+  if (typeof attackerType !== 'string' || attackerType === '') {
+    return { applied, bonus };
+  }
+  if (!Array.isArray(skills)) return { applied, bonus };
+
+  for (const skill of skills) {
+    if (typeof skill !== 'object' || skill === null) continue;
+    if (skill.bossType !== attackerType) continue;
+    // A skill with no positive bonus applies nothing, so it is not reported as
+    // having decided a hold it left untouched.
+    const value = toCount(skill.bonus);
+    if (value <= 0) continue;
+    // A shallow copy, so a resolution is a detached snapshot of the stored
+    // data: a caller that later mutates its skills array cannot rewrite a record
+    // the report is rendering.
+    applied.push({ ...skill, bonus: value });
+    bonus += value;
+  }
+  return { applied, bonus };
+}
+
+/**
  * Resolves one defence from stored numbers — the algorithmic replacement for a
  * simulated battle.
  *
  * Deterministic for a given `{ defenderRating, attackingForce, aggression,
  * seed }`: the only randomness is the bounded seeded jitter, drawn from the
  * shared seeded stream. The input is never mutated and nothing outside the four
- * numbers is consulted, which is what "no simulated battle" means here.
+ * numbers (plus the optional attacker type and the defender's stored skills) is
+ * consulted, which is what "no simulated battle" means here.
+ *
+ * A defending bot's **special skills** enter as stored numbers only
+ * (AH-0MVWZYJ740037EZ1): a skill trained against the attacking boss identity
+ * adds its flat bonus to the effective rating *before* the
+ * `effectiveRating ≥ attackStrength` comparison, and the resolution publishes
+ * the stored rating, the effective rating, the summed bonus and the skills
+ * applied — so the report can show the numbers that actually decided the hold.
+ * Skills never touch the jitter draw, so a replay is unchanged.
  *
  * @param input — the stored numbers the defence is decided from.
  * @param tuning — balance knobs (defaults to {@link DEFAULT_FRONTIER_TUNING}).
@@ -787,6 +902,11 @@ export function resolveDefence(
   const defenderRating = toCount(input.defenderRating);
   const attackingForce = toCount(input.attackingForce);
   const aggression = toCount(input.aggression);
+  const { applied, bonus: skillBonusTotal } = applicableSkills(
+    input.attackerType,
+    input.skills,
+  );
+  const effectiveDefenderRating = defenderRating + skillBonusTotal;
 
   const aggressionMultiplierPercent =
     AGGRESSION_MULTIPLIER_BASE_PERCENT +
@@ -804,11 +924,14 @@ export function resolveDefence(
       (AGGRESSION_MULTIPLIER_BASE_PERCENT + jitterPercent)) /
       (AGGRESSION_MULTIPLIER_BASE_PERCENT * AGGRESSION_MULTIPLIER_BASE_PERCENT),
   );
-  const margin = defenderRating - attackStrength;
+  const margin = effectiveDefenderRating - attackStrength;
 
   return {
     outcome: margin >= 0 ? 'held' : 'fell',
     defenderRating,
+    effectiveDefenderRating,
+    skillBonusTotal,
+    appliedSkills: applied,
     attackingForce,
     aggression,
     aggressionMultiplierPercent,
@@ -1006,12 +1129,20 @@ function resolveAttack(
   const origin = attackingNeighbour(hex, payload.ring.hexes);
   if (origin === null) return null;
 
+  // The attacker's type is the **authored boss identity of the origin hex** —
+  // the same identity the map's known-ahead intel already shows, so no new
+  // enemy taxonomy is authored (AH-0MVWZYJ740037EZ1). A hex with no authored
+  // definition has no identity, and the attack resolves unmodified.
+  const attackerType = findHexRingDefinition(origin.id)?.boss ?? null;
+
   const resolution = resolveDefence(
     {
       defenderRating: hex.defender?.defenceRating ?? 0,
       attackingForce: force,
       aggression: hex.aggression,
       seed: hexSeed(tickSeed(clock.seed, clock.tick), hex.id),
+      attackerType,
+      skills: hex.defender?.skills ?? [],
     },
     tuning,
   );
@@ -1021,6 +1152,7 @@ function resolveAttack(
     hexId: hex.id,
     attackerOriginId: origin.id,
     attackerOrigin: { q: origin.q, r: origin.r },
+    attackerType,
     source,
   };
 }

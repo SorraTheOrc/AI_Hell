@@ -333,6 +333,135 @@ describe('GymHexWar', () => {
     expect(scene.getPayload()).toEqual(before);
   });
 
+  it('leaves a bot with its special skills and persists them (AH-0MVWZYJ740037EZ1)', async () => {
+    const scene = await bootHexWar({ payload: oneHexPayload({ ...UNHELD_HEX }) });
+    scene.takeHex('target');
+
+    scene.leaveBot('target', 'hull-2', 14, [
+      { id: 'bulwark-line-breaker', name: 'Line-breaker', bossType: 'the-dawnbreaker', bonus: 4 },
+    ]);
+
+    expect(scene.getPayload().ring.hexes[0].defender).toEqual({
+      hullId: 'hull-2',
+      defenceRating: 14,
+      bankedMinerals: 0,
+      skills: [
+        { id: 'bulwark-line-breaker', name: 'Line-breaker', bossType: 'the-dawnbreaker', bonus: 4 },
+      ],
+    });
+  });
+
+  it('omits the skill field for a bot with no skills (additive data)', async () => {
+    const scene = await bootHexWar({ payload: oneHexPayload({ ...UNHELD_HEX }) });
+    scene.takeHex('target');
+
+    scene.leaveBot('target', 'hull-1', 2);
+
+    expect('skills' in scene.getPayload().ring.hexes[0].defender!).toBe(false);
+  });
+
+  it('shows a left bot’s skill in the shared map intel and summary lines', async () => {
+    const scene = await bootHexWar({ payload: oneHexPayload({ ...UNHELD_HEX }) });
+    scene.takeHex('target');
+    scene.leaveBot('target', 'hull-2', 14, [
+      { id: 'maw-warded', name: 'Maw-warded', bossType: 'maw-of-ashes', bonus: 5 },
+    ]);
+
+    const hex = scene.getMapModel()!.hexes.find((row) => row.id === 'target')!;
+    expect(hex.skills).toEqual([
+      { id: 'maw-warded', name: 'Maw-warded', bossType: 'maw-of-ashes', bonus: 5 },
+    ]);
+    expect(hex.label).toContain('skill Maw-warded +5 vs maw-of-ashes');
+    expect(
+      scene.getSummaryLines().some((line) => line.includes('skill Maw-warded +5')),
+    ).toBe(true);
+  });
+
+  it('resolves a trained bot through the shipped resolver (the skill decides the hold)', async () => {
+    // Two **authored** hexes, so the attacker type resolves from ring data: the
+    // target `hex-r1-1` (1,0) is pressed from its only unheld neighbour
+    // `hex-r1-6` (0,1) — the maw-of-ashes hex — so a bot trained against that
+    // boss gets the bonus and an untrained one does not.
+    const target = RING_1_HEX_FIXTURES.find((hex) => hex.id === 'hex-r1-1')!;
+    const origin = RING_1_HEX_FIXTURES.find((hex) => hex.id === 'hex-r1-6')!;
+    const payload = (): HangarWarPayload => ({
+      ...oneHexPayload({
+        id: target.id,
+        q: target.q,
+        r: target.r,
+        held: true,
+        aggression: 0,
+        defender: null,
+        bossDefeated: true,
+        grantedWeapon: null,
+      }),
+      ring: {
+        ringIndex: 1,
+        hexes: [
+          {
+            id: target.id,
+            q: target.q,
+            r: target.r,
+            held: true,
+            aggression: 0,
+            defender: null,
+            bossDefeated: true,
+            grantedWeapon: null,
+          },
+          {
+            id: origin.id,
+            q: origin.q,
+            r: origin.r,
+            held: false,
+            aggression: origin.baseAggression,
+            defender: null,
+            bossDefeated: false,
+            grantedWeapon: null,
+          },
+        ],
+      },
+    });
+
+    // Boot (and read) the untrained run first: the reusable boot hands back the
+    // same scene instance per boot, so each run's report is captured at once.
+    const plain = await bootHexWar({ payload: payload() });
+    plain.leaveBot(target.id, 'hull-1', 0);
+    const plainReport = plain.getDefenceReport();
+
+    const trained = await bootHexWar({ payload: payload() });
+    trained.leaveBot(target.id, 'hull-1', 0, [
+      { id: 'maw-warded', name: 'Maw-warded', bossType: 'maw-of-ashes', bonus: 99 },
+    ]);
+    const trainedReport = trained.getDefenceReport();
+
+    expect(plainReport.rows).toHaveLength(1);
+    expect(trainedReport.rows).toHaveLength(1);
+    const plainRow = plainReport.rows[0];
+    const trainedRow = trainedReport.rows[0];
+
+    // Same attack, same jitter, same stored rating — only the skill differs.
+    expect(trainedRow.attackerType).toBe('maw-of-ashes');
+    expect(trainedRow.attackStrength).toBe(plainRow.attackStrength);
+    expect(trainedRow.defenderRating).toBe(0);
+    expect(plainRow.skillBonusTotal).toBe(0);
+    expect(plainRow.outcome).toBe('fell');
+    expect(trainedRow.skillBonusTotal).toBe(99);
+    expect(trainedRow.effectiveDefenderRating).toBe(99);
+    expect(trainedRow.outcome).toBe('held');
+    expect(trainedRow.label).toContain('skill Maw-warded +99 vs maw-of-ashes');
+
+    // The report is the shipped tick's own record over the same payload.
+    const direct = runFrontierTick(trained.getPayload(), {
+      clock: frontierClockFor(trained.getPayload()),
+    });
+    expect(trainedRow.skillBonusTotal).toBe(
+      direct.record.attacks[0].skillBonusTotal,
+    );
+    expect(trainedRow.effectiveDefenderRating).toBe(
+      direct.record.attacks[0].effectiveDefenderRating,
+    );
+  });
+
   it('runs deterministic frontier ticks that raise aggression and advance the clock', async () => {
     const payload = oneHexPayload({ ...UNHELD_HEX });
     const first = await bootHexWar({ payload });

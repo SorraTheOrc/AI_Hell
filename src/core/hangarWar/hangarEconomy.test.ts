@@ -55,6 +55,7 @@ import {
   type HullUpgrades,
   type StartingWeaponDefinition,
 } from '../../data/hangarCatalogue';
+import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
 
 /** The minimal fleet every hangar starts from, with optional overrides. */
 function hangarWith(overrides: Partial<HangarState> = {}): HangarState {
@@ -83,7 +84,7 @@ function gatedWeapon(minRing: number): StartingWeaponDefinition {
 }
 
 describe('hangar catalogue — the unlock tree is data of record', () => {
-  it('offers two extra hulls, three starting weapons and one modifier', () => {
+  it('offers two extra hulls, three starting weapons and two modifiers', () => {
     const buyable = HANGAR_CATALOGUE.filter((item) => !item.starter);
 
     // Two non-starter hulls since AH-0MWF0CUS3009M5SY: the ring-1 Bulwark and
@@ -92,7 +93,51 @@ describe('hangar catalogue — the unlock tree is data of record', () => {
     // MVP tree; the special reward is the deliberate post-MVP addition.
     expect(buyable.filter((item) => item.kind === 'hull')).toHaveLength(2);
     expect(buyable.filter((item) => item.kind === 'weapon')).toHaveLength(3);
-    expect(buyable.filter((item) => item.kind === 'modifier')).toHaveLength(1);
+    // Two modifiers since AH-0MVWZYJ740037EZ1: the extra-life kit and the
+    // defending-bot skill modifier (a different rewarded choice, not a copy).
+    expect(buyable.filter((item) => item.kind === 'modifier')).toHaveLength(2);
+  });
+
+  it('authors the defending-bot skill sources as pure data (AH-0MVWZYJ740037EZ1)', () => {
+    // Source (a): a hull-granted skill.
+    const bulwark = HANGAR_CATALOGUE.find((item) => item.id === 'hull-2');
+    expect(bulwark?.kind).toBe('hull');
+    const hullSkill = bulwark?.kind === 'hull' ? bulwark.skill : undefined;
+    expect(hullSkill).toBeDefined();
+    expect(hullSkill!.bossType.length).toBeGreaterThan(0);
+    expect(hullSkill!.bonus).toBeGreaterThan(0);
+
+    // Source (b): a modifier-granted skill.
+    const plating = HANGAR_CATALOGUE.find((item) => item.id === 'anti_maw_plating');
+    expect(plating?.kind).toBe('modifier');
+    expect(plating?.kind === 'modifier' ? plating.effect.kind : null).toBe(
+      'defence-skill',
+    );
+    const modifierSkill =
+      plating?.kind === 'modifier' && plating.effect.kind === 'defence-skill'
+        ? plating.effect.skill
+        : undefined;
+    expect(modifierSkill).toBeDefined();
+    expect(modifierSkill!.bonus).toBeGreaterThan(0);
+
+    // Both are trained against a boss that is actually authored on a hex, so a
+    // skill can never be dead data.
+    const authoredBosses = new Set<string>(
+      HEX_RING_DEFINITIONS.map((hex) => hex.boss as string),
+    );
+    expect(authoredBosses.has(hullSkill!.bossType)).toBe(true);
+    expect(authoredBosses.has(modifierSkill!.bossType)).toBe(true);
+
+    // Unique skill ids, so a hull and a modifier granting the same training
+    // would collapse to one entry rather than silently double-stacking.
+    const skillIds = HANGAR_CATALOGUE.flatMap((item) => {
+      if (item.kind === 'hull') return item.skill ? [item.skill.id] : [];
+      if (item.kind === 'modifier' && item.effect.kind === 'defence-skill') {
+        return [item.effect.skill.id];
+      }
+      return [];
+    });
+    expect(new Set(skillIds).size).toBe(skillIds.length);
   });
 
   it('starts the fleet with one basic hull and one starting weapon', () => {

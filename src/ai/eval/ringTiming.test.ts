@@ -1180,6 +1180,8 @@ describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
     'ricochet',
     'cluster',
     'hardened_plating',
+    // The defending-bot skill modifier (AH-0MVWZYJ740037EZ1).
+    'anti_maw_plating',
   ];
 
   it('derives deployments-to-afford from both currency bounds', () => {

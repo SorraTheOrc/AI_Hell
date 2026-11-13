@@ -295,7 +295,7 @@ describe('decideHangarAction — cheapest useful unlock, seeded', () => {
         ...payload.hangar,
         unlockedHulls: ['hull-1', 'hull-2'],
         unlockedWeapons: ['spread', 'wave_laser', 'ricochet', 'cluster'],
-        ownedModifiers: ['hardened_plating'],
+        ownedModifiers: ['hardened_plating', 'anti_maw_plating'],
       },
     };
     expect(cheapestSeededUnlock(owned)).toBeNull();

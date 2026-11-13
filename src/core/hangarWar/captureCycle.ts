@@ -27,7 +27,9 @@
  * 3. **Leave a defending bot.** The hex is marked held **only** with a
  *    {@link HexDefender} whose rating is derived from the chosen hull's hangar
  *    upgrades ({@link deriveDefenderRating}, from the hangar economy's single
- *    formula). No defender ⇒ no hold (`defender-required`), so a hex can never
+ *    formula) and whose **special skills** ({@link defenderSkillsFor},
+ *    AH-0MVWZYJ740037EZ1) come from the hull flown and/or the equipped hangar
+ *    modifiers. No defender ⇒ no hold (`defender-required`), so a hex can never
  *    be "held" with nothing flying it.
  * 4. **Secure the ring — and defend the hangar.** When every hex of the
  *    current ring is held the ring is secured and the AI's **massed hangar
@@ -59,6 +61,7 @@ import {
   findHangarEntry,
   ownsEntry,
   deriveDefenderRating,
+  resolveActiveLoadout,
 } from './hangarEconomy';
 import { createRingState, ringDepth, type HexRingDefinition } from './hexRing';
 import {
@@ -84,6 +87,7 @@ import {
   type SalvageAmounts,
 } from './salvageBanking';
 import type {
+  DefenceSkill,
   HangarState,
   HangarWarPayload,
   HexDefender,
@@ -265,6 +269,57 @@ export function withGrantedEntry(
 }
 
 /**
+ * The special skills a defending bot carries: the hull's own skill plus every
+ * skill its equipped modifiers grant (AH-0MVWZYJ740037EZ1).
+ *
+ * The two **skill sources** the producer named (intake Q3 = A + B) may coexist on
+ * one defender, so this is a union rather than a choice:
+ *
+ * - **the hull flown** — `HullDefinition.skill`;
+ * - **a purchased modifier** — any modifier on the hangar's **active loadout**
+ *   whose effect is `{ kind: 'defence-skill' }`.
+ *
+ * Only entries the fleet owns and the catalogue knows contribute (the modifiers
+ * come from `resolveActiveLoadout`, which already filters both), and duplicates
+ * collapse to the first mention by id so a hull and a modifier granting the same
+ * training never double-stack.
+ *
+ * Total: an unknown hull, a malformed effect or a blank skill id contributes
+ * nothing rather than throwing.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param hullId — the hull the defending bot flies.
+ * @param catalogue — the unlock tree (injectable for tests).
+ * @returns the defender's skills, in hull-then-modifier order.
+ */
+export function defenderSkillsFor(
+  hangar: HangarState,
+  hullId: string,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): DefenceSkill[] {
+  const skills: DefenceSkill[] = [];
+  const seen = new Set<string>();
+  const add = (skill: DefenceSkill | undefined): void => {
+    if (!skill || typeof skill !== 'object') return;
+    const id = toId(skill.id);
+    if (id === null || seen.has(id)) return;
+    seen.add(id);
+    skills.push({ ...skill, id });
+  };
+
+  const hull = findHangarEntry(hullId, catalogue);
+  if (hull !== null && hull.kind === 'hull') add(hull.skill);
+
+  for (const id of resolveActiveLoadout(hangar, catalogue).modifiers) {
+    const entry = findHangarEntry(id, catalogue);
+    if (entry === null || entry.kind !== 'modifier') continue;
+    if (entry.effect.kind === 'defence-skill') add(entry.effect.skill);
+  }
+
+  return skills;
+}
+
+/**
  * Builds the defending bot left in a captured hex, or `null` when none can be.
  *
  * A bot flies a hull the fleet owns (the starter hull is owned by definition
@@ -272,26 +327,37 @@ export function withGrantedEntry(
  * hull's hangar upgrades through the economy's single
  * {@link deriveDefenderRating} formula — never from a live battle.
  *
+ * The bot's **special skills** ({@link defenderSkillsFor}) are attached as
+ * stored data: the hull's own skill plus any its equipped modifiers grant, so
+ * what the player leaves behind is a composition choice rather than a number
+ * (AH-0MVWZYJ740037EZ1). The skill field is omitted entirely when the bot has
+ * none, so a defender with no skills persists byte-for-byte as before.
+ *
  * @param hangar — the persistent hangar (read only).
  * @param hullId — the hull the player chose to leave behind.
  * @param bankedMinerals — salvage banked at the hex by this capture.
+ * @param catalogue — the unlock tree (injectable for tests).
  * @returns the defender record, or `null` when the hull is unknown/unowned.
  */
 export function leaveDefender(
   hangar: HangarState,
   hullId: unknown,
   bankedMinerals = 0,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
 ): HexDefender | null {
   const id = toId(hullId);
   if (id === null) return null;
-  const entry = findHangarEntry(id);
+  const entry = findHangarEntry(id, catalogue);
   if (entry === null || entry.kind !== 'hull') return null;
   if (!ownsEntry(hangar, entry)) return null;
-  return {
+  const defender: HexDefender = {
     hullId: id,
     defenceRating: deriveDefenderRating(id),
     bankedMinerals: toCount(bankedMinerals),
   };
+  const skills = defenderSkillsFor(hangar, id, catalogue);
+  if (skills.length > 0) defender.skills = skills;
+  return defender;
 }
 
 /**
