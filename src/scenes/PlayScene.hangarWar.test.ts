@@ -453,11 +453,27 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     'AC — a deployment run ends on its wave-5 mini-boss and the capture cycle resolves (AH-0MWDCBVQ700579WS)',
     async () => {
       // The capture cycle resolves against the stored war, like a shipped run.
-      saveHangarWarPayload(fieldedPayload());
-      const scene = await bootPlay({ hangarWar: DEPLOYMENT });
+      // `hex-1` is the ring's final unheld hex; its neighbour is already held
+      // with a strong stored defender so the ring-end hangar assault
+      // (AH-0MWEZZ9TE001577J) is repelled by the stored numbers and the
+      // capture still lands — the lose path is pinned in `captureCycle.test.ts`.
+      const payload = fieldedPayload();
+      payload.ring.hexes.unshift({
+        id: 'hex-0',
+        q: 1,
+        r: -1,
+        held: true,
+        aggression: 3,
+        defender: { hullId: 'hull-2', defenceRating: 60, bankedMinerals: 0 },
+        bossDefeated: true,
+        grantedWeapon: null,
+      });
+      const deployment = buildHangarDeployment(payload, { seed: 24680 });
+      saveHangarWarPayload(payload);
+      const scene = await bootPlay({ hangarWar: deployment });
     const wm = scene.getWaveManager();
     const level = wm.level;
-    expect(level).toBe(DEPLOYMENT.startLevel);
+    expect(level).toBe(deployment.startLevel);
     expect(wm.waveCount).toBe(5);
 
     // Clear the level's four regular waves and defeat the wave-5 mini-boss
@@ -478,6 +494,9 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(capture).not.toBeNull();
     expect(capture!.ok).toBe(true);
     expect(capture!.reason).toBeNull();
+    // Securing the ring ran the assault gate, and the stored defence holds.
+    expect(capture!.assault?.outcome).toBe('repelled');
+    expect(capture!.campaignReset).toBe(false);
     const stored = loadHangarWarPayload();
     expect(stored).not.toBeNull();
     const hex = stored!.ring.hexes.find((state) => state.id === 'hex-1')!;
