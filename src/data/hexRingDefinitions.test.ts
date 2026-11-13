@@ -6,6 +6,12 @@
  * table byte-for-value, the design rules hold (one hardest weapon hex per
  * ring, distinct grants, ring membership), and the generator turns the data
  * into 6/12 hexes — with a ring-3 case proving a new ring needs only data.
+ *
+ * The ring **validator**'s special-mission rules (post-MVP Hangar War,
+ * AH-0MWEYVRUX008SLJ8) are pinned here too: a special-mission hex must grant a
+ * hull catalogue entry, and the `isSpecialMission` marker must keep travelling
+ * through the CSV seed parity harness (a marker absent from the seeds would let
+ * authored data drift from the table that the game reads).
  */
 
 import { readFileSync } from 'node:fs';
@@ -37,7 +43,12 @@ function readCsv(name: string): string {
 
 /** Parses a hex-ring CSV seed into typed definitions. */
 function definitionsFromCsv(name: string): HexRingDefinition[] {
-  return parseCsvRows(readCsv(name)).map((row) => ({
+  return definitionsFromCsvText(readCsv(name));
+}
+
+/** Parses hex-ring CSV text into typed definitions (the seed's column order). */
+function definitionsFromCsvText(csv: string): HexRingDefinition[] {
+  return parseCsvRows(csv).map((row) => ({
     id: row.id,
     q: Number(row.q),
     r: Number(row.r),
@@ -47,8 +58,59 @@ function definitionsFromCsv(name: string): HexRingDefinition[] {
     weaknesses: (row.weaknesses ?? '').split('|').filter((id) => id !== ''),
     grants: row.grants,
     weaponHex: row.weaponHex === 'true',
+    isSpecialMission: row.isSpecialMission === 'true',
     baseAggression: Number(row.baseAggression),
   }));
+}
+
+/**
+ * Serialises definitions into the seed's on-disk shape, column order included.
+ *
+ * Used to prove the parity harness carries the `isSpecialMission` column: the
+ * same parse the committed seeds go through must round-trip a flagged row.
+ */
+function definitionsToCsv(rows: readonly HexRingDefinition[]): string {
+  const header =
+    'id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression';
+  const lines = rows.map((row) =>
+    [
+      row.id,
+      String(row.q),
+      String(row.r),
+      String(row.ringIndex),
+      row.boss,
+      row.strengths.join('|'),
+      row.weaknesses.join('|'),
+      row.grants,
+      String(row.weaponHex),
+      String(row.isSpecialMission === true),
+      String(row.baseAggression),
+    ].join(','),
+  );
+  return [header, ...lines].join('\n') + '\n';
+}
+
+/** Ring 1's authored definitions, as plain (non-frozen) copies. */
+function authoredRingOne(): HexRingDefinition[] {
+  return hexRingDefinitionsFor(1).map((hex) => ({ ...hex }));
+}
+
+/** `hex-r1-1` grants `hull-2`, a hull catalogue entry, so it can be special. */
+const SPECIAL_MISSION_HEX_ID = 'hex-r1-1';
+
+/**
+ * Ring 1's authored definitions with `SPECIAL_MISSION_HEX_ID` promoted to a
+ * special-mission hex (and `patch` applied to it), so each case changes exactly
+ * one thing about an otherwise valid ring.
+ */
+function ringOneWithSpecialMission(
+  patch: Partial<HexRingDefinition> = {},
+): HexRingDefinition[] {
+  return authoredRingOne().map((hex) =>
+    hex.id === SPECIAL_MISSION_HEX_ID
+      ? { ...hex, isSpecialMission: true, ...patch }
+      : hex,
+  );
 }
 
 describe('hex-ring CSV seeds', () => {
@@ -260,5 +322,137 @@ describe('generating the authored rings', () => {
     expect(() => generateRing(3, HEX_RING_DEFINITIONS)).toThrow(
       HexRingDefinitionError,
     );
+  });
+});
+
+describe('CSV seeds carry the isSpecialMission column', () => {
+  it.each([1, 2])('ring %i seed documents and uses the column', (ring) => {
+    expect(readCsv(`hex-ring-${ring}.csv`)).toContain('isSpecialMission');
+  });
+
+  it('round-trips a seed whose rows carry the marker', () => {
+    const flagged = ringOneWithSpecialMission();
+    expect(definitionsFromCsvText(definitionsToCsv(flagged))).toEqual(flagged);
+  });
+
+  it('detects drift in the marker, so the parity test is not decorative', () => {
+    const flagged = ringOneWithSpecialMission();
+    // Same rows, opposite marker: the parity harness must see the difference.
+    expect(definitionsFromCsvText(definitionsToCsv(authoredRingOne()))).not.toEqual(
+      flagged,
+    );
+  });
+});
+
+describe('special-mission hex validation', () => {
+  it('accepts a well-formed special-mission hex that grants a hull', () => {
+    const definitions = ringOneWithSpecialMission();
+
+    expect(validateRingDefinitions(1, definitions)).toEqual({
+      ok: true,
+      issues: [],
+    });
+    expect(() => generateRing(1, definitions)).not.toThrow();
+    // The marker survives generation: the map/intel can read it back.
+    expect(
+      generateRing(1, definitions).hexes.find(
+        (hex) => hex.id === SPECIAL_MISSION_HEX_ID,
+      )?.isSpecialMission,
+    ).toBe(true);
+  });
+
+  it('rejects a special-mission hex with an empty grant', () => {
+    const definitions = ringOneWithSpecialMission({ grants: '' });
+    const result = validateRingDefinitions(1, definitions);
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((issue) => issue.kind)).toContain(
+      'invalid-definition',
+    );
+    expect(result.issues.some((issue) => issue.message.includes('grant'))).toBe(
+      true,
+    );
+    expect(() => generateRing(1, definitions)).toThrow(HexRingDefinitionError);
+  });
+
+  it('rejects a special-mission hex with no grant field at all', () => {
+    const definitions = ringOneWithSpecialMission().map((hex) => {
+      if (hex.id !== SPECIAL_MISSION_HEX_ID) return hex;
+      const withoutGrant: Record<string, unknown> = { ...hex };
+      delete withoutGrant.grants;
+      return withoutGrant as unknown as HexRingDefinition;
+    });
+    const result = validateRingDefinitions(1, definitions);
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((issue) => issue.kind)).toContain(
+      'invalid-definition',
+    );
+    expect(() => generateRing(1, definitions)).toThrow(HexRingDefinitionError);
+  });
+
+  it('rejects a special-mission grant that is not a hull catalogue entry', () => {
+    // `spread` is a catalogue weapon, `hardened_plating` a modifier, and the
+    // last id is not in the catalogue at all — none can be a special reward.
+    for (const grants of ['spread', 'hardened_plating', 'hull-does-not-exist']) {
+      const definitions = ringOneWithSpecialMission({ grants });
+      const result = validateRingDefinitions(1, definitions);
+
+      expect(result.ok, grants).toBe(false);
+      expect(result.issues.map((issue) => issue.kind), grants).toContain(
+        'special-mission-grant-not-hull',
+      );
+      const issue = result.issues.find(
+        (candidate) => candidate.kind === 'special-mission-grant-not-hull',
+      );
+      expect(issue?.hexId, grants).toBe(SPECIAL_MISSION_HEX_ID);
+      expect(issue?.message, grants).toContain(grants);
+      expect(() => generateRing(1, definitions), grants).toThrow(
+        HexRingDefinitionError,
+      );
+    }
+  });
+
+  it('accepts any catalogue hull as the special reward, not just the newest', () => {
+    // The rule is "a hull catalogue entry", so the starter hull qualifies too.
+    expect(
+      validateRingDefinitions(1, ringOneWithSpecialMission({ grants: 'hull-1' })),
+    ).toEqual({ ok: true, issues: [] });
+  });
+
+  it('rejects a non-boolean isSpecialMission marker', () => {
+    const definitions = authoredRingOne().map((hex) =>
+      hex.id === SPECIAL_MISSION_HEX_ID
+        ? { ...hex, isSpecialMission: 'yes' as unknown as boolean }
+        : hex,
+    );
+    const result = validateRingDefinitions(1, definitions);
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((issue) => issue.kind)).toContain(
+      'invalid-definition',
+    );
+  });
+
+  it('leaves ordinary hexes validating exactly as before', () => {
+    // Absent and explicit `false` are the same thing: no marker, no hull rule —
+    // `extra-life`/`waveLaser`-style non-hull grants stay legal on ordinary
+    // hexes, so the shipped rings keep validating.
+    expect(validateRingDefinitions(1, authoredRingOne())).toEqual({
+      ok: true,
+      issues: [],
+    });
+    const explicitFalse = authoredRingOne().map((hex) => ({
+      ...hex,
+      isSpecialMission: false,
+    }));
+    expect(validateRingDefinitions(1, explicitFalse)).toEqual({
+      ok: true,
+      issues: [],
+    });
+    expect(validateRingDefinitions(2, HEX_RING_DEFINITIONS)).toEqual({
+      ok: true,
+      issues: [],
+    });
   });
 });

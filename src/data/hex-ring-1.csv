@@ -13,11 +13,13 @@
 #   grants          — weapon or upgrade id granted once the boss is beaten.
 #   weaponHex       — true for the single hex granting the ring's new weapon;
 #                     that hex must be the ring's highest baseAggression.
+#   isSpecialMission — true for a special-mission hex (its grant must be a hull);
+#                     absent/false for an ordinary hex.
 #   baseAggression  — frontier aggression before any tick.
-id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,baseAggression
-hex-r1-1,1,0,1,the-dawnbreaker,cannon|dual,nova|arc,hull-2,false,2
-hex-r1-2,1,-1,1,shroud-merchant,spread,waveLaser,extra-life,false,1
-hex-r1-3,0,-1,1,iron-crusher,rapid,mortar,rapid,false,3
-hex-r1-4,-1,0,1,ember-reaver,cannon,ricochet,ricochet,false,2
-hex-r1-5,-1,1,1,the-hollow-judge,nova,waveLaser,core-bank,false,4
-hex-r1-6,0,1,1,maw-of-ashes,mortar|arc,spread|dual,waveLaser,true,6
+id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression
+hex-r1-1,1,0,1,the-dawnbreaker,cannon|dual,nova|arc,hull-2,false,false,2
+hex-r1-2,1,-1,1,shroud-merchant,spread,waveLaser,extra-life,false,false,1
+hex-r1-3,0,-1,1,iron-crusher,rapid,mortar,rapid,false,false,3
+hex-r1-4,-1,0,1,ember-reaver,cannon,ricochet,ricochet,false,false,2
+hex-r1-5,-1,1,1,the-hollow-judge,nova,waveLaser,core-bank,false,false,4
+hex-r1-6,0,1,1,maw-of-ashes,mortar|arc,spread|dual,waveLaser,true,false,6

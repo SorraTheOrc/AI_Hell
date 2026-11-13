@@ -28,6 +28,9 @@
  * coordinate on the wrong ring, a duplicate coordinate or id, zero/two weapon
  * hexes, or a weapon hex that is not strictly the ring's hardest), and {@link
  * generateRing} throws {@link HexRingDefinitionError} carrying those issues.
+ * A hex flagged `isSpecialMission` must also grant a hull catalogue entry — a
+ * special mission's reward is a hull with extra hit points, never a weapon,
+ * modifier or unknown id (AH-0MWEYVRUX008SLJ8).
  * `src/data/hexRingDefinitions.test.ts` validates the bundled rings, so an
  * authoring mistake fails the suite rather than the game.
  *
@@ -38,6 +41,7 @@
  * @module src/core/hangarWar/hexRing
  */
 
+import { findHangarEntry } from './hangarEconomy';
 import type { HexRingState, HexState } from './types';
 
 /** A point in axial hex coordinates, relative to the hangar at `(0, 0)`. */
@@ -73,6 +77,18 @@ export interface HexRingDefinition extends AxialCoordinate {
   readonly weaponHex: boolean;
   /** Frontier aggression the hex is defended at before any tick. */
   readonly baseAggression: number;
+  /**
+   * True for a **special-mission hex** (post-MVP Hangar War,
+   * AH-0MVWZYIWX0008C55, Q1 = a): the deployment is an ordinary one-level
+   * capture and the "special" part is the reward it grants.
+   *
+   * Optional so the field is backward compatible: absent means an ordinary
+   * hex (`false`). When it **is** `true`, {@link validateRingDefinitions}
+   * requires `grants` to name a hull catalogue entry — a special mission's
+   * reward is a hull with extra hit points (Q2 = a), never a weapon, modifier
+   * or unknown id.
+   */
+  readonly isSpecialMission?: boolean;
 }
 
 /** A generated ring: its index, size and hexes in clockwise geometry order. */
@@ -94,7 +110,8 @@ export type RingValidationIssueKind =
   | 'duplicate-id'
   | 'missing-hex'
   | 'weapon-hex-count'
-  | 'weapon-hex-not-hardest';
+  | 'weapon-hex-not-hardest'
+  | 'special-mission-grant-not-hull';
 
 /** One problem found in a ring's authored definitions. */
 export interface RingValidationIssue {
@@ -308,10 +325,31 @@ function definitionShapeIssues(
   if (typeof candidate.weaponHex !== 'boolean') {
     report('has no weaponHex flag');
   }
+  if (
+    candidate.isSpecialMission !== undefined &&
+    typeof candidate.isSpecialMission !== 'boolean'
+  ) {
+    report('has a non-boolean isSpecialMission flag');
+  }
   if (!isInteger(candidate.baseAggression) || candidate.baseAggression < 0) {
     report('has no non-negative integer baseAggression');
   }
   return issues;
+}
+
+/**
+ * Whether an authored grant id names a hull in the hangar catalogue of record.
+ *
+ * A special mission pays a **hull with extra hit points** (Q2 = a), so its
+ * authored grant must be a hull catalogue id: a weapon, a modifier or an
+ * unknown id can never be delivered through the special-mission path, and
+ * silently shipping one would be a reward the player cannot receive.
+ *
+ * @param grantId — the authored `grants` id of a special-mission hex.
+ * @returns true when the id is a hull catalogue entry.
+ */
+function isHullGrant(grantId: string): boolean {
+  return findHangarEntry(grantId)?.kind === 'hull';
 }
 
 /**
@@ -325,7 +363,10 @@ function definitionShapeIssues(
  * - every definition's coordinates sit on that ring (`ringDepth === ringIndex`),
  * - coordinates and ids are unique, and every `6 × n` coordinate is covered,
  * - exactly one hex is the weapon hex, and it is **strictly** the ring's
- *   hardest (highest `baseAggression`), per the design of record.
+ *   hardest (highest `baseAggression`), per the design of record,
+ * - every **special-mission** hex grants a hull catalogue entry, so a malformed
+ *   special mission is rejected loudly rather than repaired
+ *   (`special-mission-grant-not-hull`).
  *
  * @param ringIndex — the ring to validate (1 = the first ring).
  * @param definitions — the authored definitions (all rings, or just this one).
@@ -360,6 +401,18 @@ export function validateRingDefinitions(
     }
     if (definition.ringIndex !== ringIndex) continue;
     included.push(definition);
+
+    // A special mission's reward must be a hull catalogue entry: the hex is an
+    // ordinary one-level capture (Q1 = a), so the only thing that can make it
+    // special is the reward it pays.
+    if (definition.isSpecialMission === true && !isHullGrant(definition.grants)) {
+      issues.push({
+        kind: 'special-mission-grant-not-hull',
+        hexId: definition.id,
+        coordinate: { q: definition.q, r: definition.r },
+        message: `special-mission hex ${definition.id} grants ${definition.grants}, which is not a hull catalogue entry`,
+      });
+    }
 
     const depth = ringDepth(definition.q, definition.r);
     if (depth !== ringIndex) {

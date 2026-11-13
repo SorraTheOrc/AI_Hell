@@ -18,6 +18,11 @@
  *   is `hex-r2-12` (`nova`). The other hexes grant upgrades/strength.
  * - **Every grant is distinct within its ring**, so each hex is a real
  *   strategic choice rather than a duplicate reward.
+ * - **Every row states `isSpecialMission`.** It is `false` for every authored
+ *   hex today (the special-mission content lands with AH-0MWF0CTQB001XFE1);
+ *   the marker is validated loudly by `validateRingDefinitions`, and a `true`
+ *   row must grant a hull catalogue entry. The CSV seeds carry the same
+ *   column, so the parity test keeps the marker from drifting.
  * - **Ring 2 is the harder frontier**: its hardest hex outranks ring 1's, and
  *   its aggression floor is above the opening ring's.
  * - **Authorship order is pinned** by the harness fixtures
@@ -53,6 +58,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['nova', 'arc']),
     grants: 'hull-2',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 2,
   }),
   Object.freeze({
@@ -65,6 +71,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['waveLaser']),
     grants: 'extra-life',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 1,
   }),
   Object.freeze({
@@ -77,6 +84,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['mortar']),
     grants: 'rapid',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 3,
   }),
   Object.freeze({
@@ -89,6 +97,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['ricochet']),
     grants: 'ricochet',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 2,
   }),
   Object.freeze({
@@ -101,6 +110,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['waveLaser']),
     grants: 'core-bank',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 4,
   }),
   Object.freeze({
@@ -113,6 +123,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['spread', 'dual']),
     grants: 'waveLaser',
     weaponHex: true,
+    isSpecialMission: false,
     baseAggression: 6,
   }),
 
@@ -127,6 +138,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['waveLaser']),
     grants: 'arc',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 2,
   }),
   Object.freeze({
@@ -139,6 +151,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['nova']),
     grants: 'broadside',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 2,
   }),
   Object.freeze({
@@ -151,6 +164,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['rapid']),
     grants: 'hull-3',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 5,
   }),
   Object.freeze({
@@ -163,6 +177,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['arc']),
     grants: 'rapid',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 2,
   }),
   Object.freeze({
@@ -175,6 +190,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['spread']),
     grants: 'dual',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 5,
   }),
   Object.freeze({
@@ -187,6 +203,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['mortar']),
     grants: 'hull-2',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 2,
   }),
   Object.freeze({
@@ -199,6 +216,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['ricochet']),
     grants: 'extra-life',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 2,
   }),
   Object.freeze({
@@ -211,6 +229,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['dual']),
     grants: 'armour-plating',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 5,
   }),
   Object.freeze({
@@ -223,6 +242,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['cannon']),
     grants: 'systems-upgrade',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 6,
   }),
   Object.freeze({
@@ -235,6 +255,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['waveLaser']),
     grants: 'firepower-up',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 2,
   }),
   Object.freeze({
@@ -247,6 +268,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['mortar']),
     grants: 'ricochet',
     weaponHex: false,
+    isSpecialMission: false,
     baseAggression: 5,
   }),
   Object.freeze({
@@ -259,6 +281,7 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaknesses: Object.freeze(['spread', 'dual']),
     grants: 'nova',
     weaponHex: true,
+    isSpecialMission: false,
     baseAggression: 8,
   }),
 ] satisfies readonly HexRingDefinition[]);
