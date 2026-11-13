@@ -414,7 +414,7 @@ describe('GymHexWar', () => {
 
   // ── Hangar Map UX renderer contract (AH-0MWEWYT79001D3A1) ──────────
 
-  it.fails(
+  it(
     'renders only the revealed hexes (a hidden hex gets no tile)',
     async () => {
       const scene = await bootHexWar({ payload: ringTwoPayload() });
@@ -431,7 +431,7 @@ describe('GymHexWar', () => {
     },
   );
 
-  it.fails(
+  it(
     'renders the shared CVD-safe ownership encoding (blue held / orange unheld)',
     async () => {
       const payload = sixHexPayload();

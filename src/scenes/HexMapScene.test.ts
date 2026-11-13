@@ -408,7 +408,7 @@ describe('HexMapScene', () => {
     expect(panel).toContain('→extra-life');
   });
 
-  it.fails(
+  it(
     'renders no tile for a hidden hex (the reveal is adjacency-only)',
     async () => {
       const payload = ringPayload(2);
@@ -439,7 +439,7 @@ describe('HexMapScene', () => {
     },
   );
 
-  it.fails(
+  it(
     'reveals ring-2 neighbours progressively once a ring-1 neighbour is held',
     async () => {
       // Hold ring-1 hex-r1-2 (1,-1); its ring-2 neighbours hex-r2-8,
@@ -539,7 +539,7 @@ describe('HexMapScene', () => {
     expect(hangar.getPayload()).toEqual(payload);
   });
 
-  it.fails(
+  it(
     'keeps owned hexes selectable but never deployable once the ring is secured',
     async () => {
       const payload = ringPayload(1);
@@ -620,7 +620,7 @@ describe('HexMapScene', () => {
   // ── Hangar Map UX: CVD-safe encoding, owned-hex selection, grid arrows ──
   // (AH-0MWEWYT79001D3A1 — see the pinned contract in this file's header.)
 
-  it.fails(
+  it(
     'encodes ownership with the CVD-safe pair plus a non-colour discriminator',
     async () => {
       const scene = await bootMap({
@@ -659,7 +659,7 @@ describe('HexMapScene', () => {
     },
   );
 
-  it.fails(
+  it(
     "shows a held hex's full intel when focused and never deploys from it",
     async () => {
       const scene = await bootMap({

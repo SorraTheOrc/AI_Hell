@@ -16,10 +16,25 @@
  * the gym shows exactly what the game shows and can never drift from it
  * (AGENTS.md gym↔game parity, `docs/GYM_PARITY.md`).
  *
+ * ## Reveal, CVD-safe ownership and owned-hex selection
+ * (renderer item AH-0MWEWYUAS002P7P9, parent AH-0MWDBI33V003QQ3U)
+ *
+ * - **Reveal filter.** Only the model's `displayed` hexes are drawn; a hidden
+ *   hex gets no tile, no click zone and no focusable row. The rule lives in the
+ *   pure model (`isHexDisplayed`), never here.
+ * - **CVD-safe tile text.** A tile's text is blue when the hex is held and
+ *   orange when it is unheld (the colour-vision-deficiency-safe pair), and the
+ *   label also carries a non-colour ownership marker (filled = held, hollow =
+ *   unheld) so ownership is readable without colour. Focusing a tile highlights
+ *   it with a stroke, never a colour swap, so the encoding survives focus.
+ * - **Selectable vs deployable.** Every displayed hex is focusable, so a held
+ *   hex can be inspected in the detail panel; activating a held hex performs no
+ *   deployment. Only an unheld displayed hex deploys.
+ *
  * Layout is a pointy-top axial grid: ring 2's twelve hexes fit around the
- * hangar without overlapping. Each tile carries only its aggression (`AGG n`)
- * as a short, readable label (held/unheld stays encoded by tile colour), and
- * the focused hex's full known-ahead intel renders in the right-hand detail
+ * hangar without overlapping. Each tile carries its axial coordinates `(q,r)`,
+ * its aggression (`AGG n`) and the ownership marker at the readable tile size,
+ * and the focused hex's full known-ahead intel renders in the right-hand detail
  * panel — so nothing has to be squinted at to be read (AH-0MW3VG6WJ004HRI9).
  *
  * ## Rolled-in defence report (`AH-0MWDC3L9I008INDP`)
@@ -49,15 +64,18 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import {
   HEX_MAP_HANGAR_ROW_KEY,
-  HEX_MAP_HEX_ROW_PREFIX,
   type HexIntel,
   type HexMapModel,
 } from '../../core/hangarWar/hexIntel';
 import { FocusManager } from '../../utils/focusManager';
 
-/** Bottom hint line (the shared keyboard controls). */
+/**
+ * Bottom hint line (the shared keyboard controls): arrows move spatially,
+ * Tab/Shift+Tab cycle linearly, and Enter/Space activates (deploy on an unheld
+ * hex, inspect on a held one).
+ */
 export const HEX_MAP_HINT =
-  'tab/arrows move · enter/space deploys at the focused hex · ESC menu';
+  'arrows move spatially · tab cycles linearly · enter/space deploys or inspects · ESC menu';
 
 /** Tile edge length in pixels (ring 2 fits around the centre at this size). */
 const HEX_SIZE = 50;
@@ -81,6 +99,18 @@ const HANGAR_LINE = 0x00ffff;
 const TEXT_COLOR = '#a8e8ff';
 const HEADING_COLOR = '#00ffff';
 const MUTED_COLOR = '#557788';
+
+/**
+ * CVD-safe tile text colours (producer Q2 = b): blue for a held hex, orange
+ * for an unheld one. Paired with the non-colour ownership marker in
+ * `tileLabel`, ownership stays readable without relying on colour.
+ */
+const HELD_TEXT_COLOR = '#4da6ff';
+const UNHELD_TEXT_COLOR = '#ffa64d';
+
+/** Focus highlight on a tile: a white stroke, never an ownership-colour swap. */
+const TILE_FOCUS_STROKE = '#ffffff';
+const TILE_FOCUS_STROKE_WIDTH = 2;
 
 /** On-tile font size: the aggression badge must be readable at 960×540. */
 const TILE_FONT_SIZE = '14px';
@@ -364,10 +394,10 @@ function renderLegend(
   const x = GAME_WIDTH - 260;
   const lines = [
     'READ THE MAP',
-    'green tile — held',
-    'red tile — unheld',
-    'AGG n — tile aggression',
-    'tab/arrows — focus a hex',
+    'blue ● — held · orange ○ — unheld',
+    '(q,r) — coordinates · AGG n — aggression',
+    'arrows — spatial · tab — linear',
+    'enter/space — inspect or deploy',
     'detail panel — full intel',
   ];
   lines.forEach((line, index) => {
@@ -403,7 +433,7 @@ function renderHexTile(
     .text(x, y, intel.tileLabel, {
       fontFamily: 'monospace',
       fontSize: TILE_FONT_SIZE,
-      color: TEXT_COLOR,
+      color: intel.held ? HELD_TEXT_COLOR : UNHELD_TEXT_COLOR,
       align: 'center',
     })
     .setOrigin(0.5, 0.5)
@@ -413,16 +443,16 @@ function renderHexTile(
 }
 
 /**
- * Renders the hex map model and wires its deployable rows to the shared
+ * Renders the hex map model and wires its displayed rows to the shared
  * `FocusManager`.
  *
- * An unheld hex is deployable — activating it (Enter/Space on focus, or a
- * pointer click on its tile) invokes `onDeploy`; held hexes are drawn with
- * their full intel but are not focusable, because the player already owns
- * them. The `◀ HANGAR` row is always actionable and invokes `onOpenHangar`.
- * A render with no handlers (the read-only `GymHexWar` parity scene) shows the
- * same map but reports every row as non-actionable, so nothing can be
- * activated there.
+ * Only the model's `displayed` hexes are drawn. Every displayed hex is
+ * selectable (focusable) — activating an unheld hex (Enter/Space on focus, or a
+ * pointer click on its tile) invokes `onDeploy`, while activating a held hex
+ * performs no deployment because the player already owns it. The `◀ HANGAR`
+ * row is always actionable and invokes `onOpenHangar`. A render with no handlers
+ * (the read-only `GymHexWar` parity scene) shows the same map and reports every
+ * row as non-actionable, so nothing can be deployed or opened there.
  *
  * @param scene — the scene that owns the rendered objects.
  * @param model — the model to render (from `buildHexMapModel`).
@@ -492,32 +522,92 @@ export function renderHexMap(
   // `renderAttackArrows` / `renderHexTile`), so they never hide a tile's text.
   const arrows = renderAttackArrows(scene, objects, model);
 
-  for (const intel of model.hexes) {
+  // Reveal filter (AC1): only displayed hexes get a tile, a click zone or a
+  // focusable row. The rule itself is the pure model's (`displayed`).
+  const displayedHexes = model.hexes.filter((hex) => hex.displayed);
+  const displayedHexByKey = new Map(
+    displayedHexes.map((hex) => [hex.key, hex] as const),
+  );
+  const tileTextByKey = new Map<string, Phaser.GameObjects.Text>();
+  const focusableRows: HexMapRow[] = [];
+
+  const focusedKey = (): string | null => {
+    const index = focusManager.getFocusedIndex();
+    if (index < 0) return null;
+    return focusableRows[index]?.key ?? null;
+  };
+
+  const focusRow = (key: string): boolean => {
+    const index = focusableRows.findIndex((row) => row.key === key);
+    if (index < 0) return false;
+    focusManager.setFocusedIndex(index);
+    return true;
+  };
+
+  /**
+   * Repaints every tile with its CVD-safe ownership colour and puts the focus
+   * highlight in the stroke (never the colour), so focusing a tile cannot
+   * clobber the blue/orange ownership encoding (AC2).
+   */
+  const paintTiles = (): void => {
+    const focused = focusedKey();
+    for (const [key, text] of tileTextByKey) {
+      const intel = displayedHexByKey.get(key);
+      const isFocused = key === focused;
+      text.setStyle({
+        color: intel?.held ? HELD_TEXT_COLOR : UNHELD_TEXT_COLOR,
+        stroke: isFocused ? TILE_FOCUS_STROKE : '',
+        strokeThickness: isFocused ? TILE_FOCUS_STROKE_WIDTH : 0,
+      });
+    }
+  };
+
+  for (const intel of displayedHexes) {
     const text = renderHexTile(scene, objects, intel);
+    tileTextByKey.set(intel.key, text);
     const deployable = intel.actionable && handlers?.onDeploy !== undefined;
-    rows.push({
+    const row: HexMapRow = {
       key: intel.key,
       label: intel.tileLabel,
       actionable: deployable,
       text,
-    });
+    };
+    rows.push(row);
+    focusableRows.push(row);
 
-    if (!deployable || !handlers?.onDeploy) continue;
-    const deploy = (): void => handlers.onDeploy!(intel.id);
-    text.on('pointerover', () => text.setStyle({ color: '#ffffff' }));
-    text.on('pointerout', () => text.setStyle({ color: TEXT_COLOR }));
-    text.on('pointerdown', deploy);
-    text.setInteractive({ useHandCursor: true });
+    // Every displayed hex is selectable. Activation deploys only at an unheld
+    // hex; on a held hex (or a read-only render) it is a no-op, so an owned hex
+    // can be inspected without risk of re-deploying (AC3).
+    const activate = (): void => {
+      if (deployable) handlers!.onDeploy!(intel.id);
+    };
 
-    // The whole tile is clickable, not just the label glyphs.
-    const { x, y } = axialToPixel(intel.q, intel.r);
-    const zone = scene.add
-      .zone(x, y, HEX_SIZE * Math.sqrt(3), HEX_SIZE * 2)
-      .setInteractive({ useHandCursor: true });
-    zone.on('pointerdown', deploy);
-    objects.push(zone);
+    if (handlers) {
+      // Clicking a tile selects it; an unheld tile still deploys (unchanged).
+      const selectOrDeploy = (): void => {
+        if (deployable) handlers.onDeploy!(intel.id);
+        else focusRow(intel.key);
+      };
+      text.on('pointerover', () =>
+        text.setStyle({
+          stroke: TILE_FOCUS_STROKE,
+          strokeThickness: TILE_FOCUS_STROKE_WIDTH,
+        }),
+      );
+      text.on('pointerout', () => paintTiles());
+      text.on('pointerdown', selectOrDeploy);
+      text.setInteractive({ useHandCursor: true });
 
-    focusManager.register(text, deploy);
+      // The whole tile is clickable, not just the label glyphs.
+      const { x, y } = axialToPixel(intel.q, intel.r);
+      const zone = scene.add
+        .zone(x, y, HEX_SIZE * Math.sqrt(3), HEX_SIZE * 2)
+        .setInteractive({ useHandCursor: true });
+      zone.on('pointerdown', selectOrDeploy);
+      objects.push(zone);
+    }
+
+    focusManager.register(text, activate);
   }
 
   const hangarText = scene.add.text(24, 468, model.hangarRow.label, {
@@ -533,6 +623,7 @@ export function renderHexMap(
     text: hangarText,
   };
   rows.push(hangarRow);
+  focusableRows.push(hangarRow);
   if (handlers?.onOpenHangar) {
     const open = (): void => handlers.onOpenHangar!();
     hangarText.on('pointerover', () =>
@@ -543,8 +634,8 @@ export function renderHexMap(
     );
     hangarText.on('pointerdown', open);
     hangarText.setInteractive({ useHandCursor: true });
-    focusManager.register(hangarText, open);
   }
+  focusManager.register(hangarText, () => handlers?.onOpenHangar?.());
 
   objects.push(
     scene.add
@@ -557,22 +648,6 @@ export function renderHexMap(
   );
 
   focusManager.attachKeyboard(scene);
-
-  const focusable = (): HexMapRow[] => rows.filter((row) => row.actionable);
-
-  const focusedKey = (): string | null => {
-    const index = focusManager.getFocusedIndex();
-    if (index < 0) return null;
-    return focusable()[index]?.key ?? null;
-  };
-
-  const focusRow = (key: string): boolean => {
-    const list = focusable();
-    const index = list.findIndex((row) => row.key === key);
-    if (index < 0) return false;
-    focusManager.setFocusedIndex(index);
-    return true;
-  };
 
   // ── Detail panel: the focused hex's full known-ahead intel ────
   const panelHeading = scene.add.text(PANEL_X, PANEL_Y, PANEL_HEADING, {
@@ -591,25 +666,22 @@ export function renderHexMap(
 
   let panelKey: string | null = null;
   const hexByKey = (key: string | null): HexIntel | undefined =>
-    key === null ? undefined : model.hexes.find((hex) => hex.key === key);
+    key === null ? undefined : displayedHexByKey.get(key);
 
-  /** The hex both panels describe: the focused hex, or the read-only default. */
+  /** The displayed hex both panels describe: the focused hex, or the default. */
   const displayedHexKey = (): string | null => {
     const focused = focusedKey();
-    const isHexKey = (key: string | null): key is string =>
-      key !== null && key.startsWith(HEX_MAP_HEX_ROW_PREFIX);
-
-    if (isHexKey(focused)) return focused;
+    if (focused !== null && displayedHexByKey.has(focused)) return focused;
     if (
       model.defaultFocusKey !== null &&
-      model.defaultFocusKey.startsWith(HEX_MAP_HEX_ROW_PREFIX)
+      displayedHexByKey.has(model.defaultFocusKey)
     ) {
-      // Read-only render: nothing is focusable, so default to the model's
-      // default/first hex (AC3) and the panels still show detail.
+      // Read-only render: nothing is focused, so default to the model's
+      // default hex (AC3) and the panels still show detail.
       return model.defaultFocusKey;
     }
-    // A non-hex focus (e.g. the hangar row) → the map's first hex.
-    return model.hexes[0]?.key ?? null;
+    // A non-hex focus (e.g. the hangar row) → the map's first displayed hex.
+    return displayedHexes[0]?.key ?? null;
   };
 
   // ── Left panel: the rolled-in defence report ────────────────────
@@ -647,6 +719,7 @@ export function renderHexMap(
   };
 
   const updatePanel = (): void => {
+    paintTiles();
     const hex = hexByKey(displayedHexKey());
     panelKey = hex?.key ?? null;
     panelBody.setText(hex ? hex.label : '');
