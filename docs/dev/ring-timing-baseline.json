@@ -15,12 +15,12 @@
             "hexId": "hex-r1-2",
             "aggression": 1,
             "level": 2,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 18,
-            "hits": 0,
-            "retries": 0,
-            "minutes": 5,
+            "seconds": 14.366666666666667,
+            "captured": false,
+            "minerals": 3,
+            "hits": 3,
+            "retries": 1,
+            "minutes": 0.4788888888888889,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -36,20 +36,18 @@
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 251.71666666666667,
+            "seconds": 23.03333333333333,
             "captured": false,
-            "minerals": 18,
-            "hits": 4,
+            "minerals": 6,
+            "hits": 3,
             "retries": 1,
-            "minutes": 9.195277777777779,
+            "minutes": 0.7677777777777777,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
@@ -59,20 +57,18 @@
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 251.71666666666667,
+            "seconds": 23.03333333333333,
             "captured": false,
-            "minerals": 18,
-            "hits": 4,
+            "minerals": 6,
+            "hits": 3,
             "retries": 1,
-            "minutes": 9.195277777777779,
+            "minutes": 0.7677777777777777,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
@@ -82,20 +78,18 @@
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 209.03333333333333,
+            "seconds": 12.75,
             "captured": false,
-            "minerals": 17,
-            "hits": 4,
+            "minerals": 1,
+            "hits": 3,
             "retries": 1,
-            "minutes": 8.483888888888888,
+            "minutes": 0.425,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
@@ -105,20 +99,18 @@
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 71.46666666666667,
+            "seconds": 20.666666666666668,
             "captured": false,
-            "minerals": 3,
-            "hits": 4,
+            "minerals": 4,
+            "hits": 3,
             "retries": 1,
-            "minutes": 6.191111111111111,
+            "minutes": 0.6888888888888889,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
@@ -128,38 +120,37 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 89.25,
+            "seconds": 17.866666666666667,
             "captured": false,
-            "minerals": 14,
-            "hits": 4,
+            "minerals": 5,
+            "hits": 3,
             "retries": 1,
-            "minutes": 6.4875,
+            "minutes": 0.5955555555555556,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
             }
           }
         ],
-        "deploymentMinutes": 19.55305555555556,
+        "deploymentMinutes": 1.8619444444444442,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 25,
+        "retryMinutes": 1.8619444444444442,
         "retakeMinutes": 0,
-        "totalMinutes": 56.55305555555556,
-        "captured": 1,
-        "losses": 5,
+        "totalMinutes": 15.723888888888887,
+        "captured": 0,
+        "losses": 6,
         "expectedRetakes": 0,
-        "expectedLosses": 5,
+        "expectedLosses": 6,
         "exposedHexes": 0,
-        "salvageBanked": 18,
-        "salvageForfeited": 70,
+        "salvageBanked": 0,
+        "salvageForfeited": 25,
+        "salvageCores": 0,
         "ringSecured": true
       },
       {
@@ -169,12 +160,12 @@
             "hexId": "hex-r1-2",
             "aggression": 1,
             "level": 2,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 18,
-            "hits": 0,
-            "retries": 0,
-            "minutes": 5,
+            "seconds": 18.3,
+            "captured": false,
+            "minerals": 0,
+            "hits": 3,
+            "retries": 1,
+            "minutes": 0.61,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -190,20 +181,18 @@
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 18,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5,
+            "seconds": 29.633333333333333,
+            "captured": false,
+            "minerals": 1,
+            "hits": 3,
+            "retries": 1,
+            "minutes": 0.9877777777777778,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
@@ -213,23 +202,20 @@
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 269.6,
+            "seconds": 29.633333333333333,
             "captured": false,
-            "minerals": 18,
-            "hits": 5,
+            "minerals": 1,
+            "hits": 3,
             "retries": 1,
-            "minutes": 9.493333333333334,
+            "minutes": 0.9877777777777778,
             "loadout": {
-              "hullId": "hull-2",
-              "lives": 5,
-              "speedMultiplier": 0.85,
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
-                "hull-1",
-                "hull-2"
+                "hull-1"
               ]
             }
           },
@@ -237,23 +223,20 @@
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 194.86666666666667,
+            "seconds": 27.4,
             "captured": false,
-            "minerals": 14,
-            "hits": 5,
+            "minerals": 0,
+            "hits": 3,
             "retries": 1,
-            "minutes": 8.247777777777777,
+            "minutes": 0.9133333333333333,
             "loadout": {
-              "hullId": "hull-2",
-              "lives": 5,
-              "speedMultiplier": 0.85,
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
-                "hull-1",
-                "hull-2"
+                "hull-1"
               ]
             }
           },
@@ -261,23 +244,20 @@
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 57.53333333333333,
+            "seconds": 25.983333333333334,
             "captured": false,
-            "minerals": 4,
-            "hits": 5,
+            "minerals": 2,
+            "hits": 3,
             "retries": 1,
-            "minutes": 5.958888888888889,
+            "minutes": 0.8661111111111112,
             "loadout": {
-              "hullId": "hull-2",
-              "lives": 5,
-              "speedMultiplier": 0.85,
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
-                "hull-1",
-                "hull-2"
+                "hull-1"
               ]
             }
           },
@@ -285,39 +265,37 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 16.666666666666668,
+            "seconds": 8.2,
             "captured": false,
-            "minerals": 2,
-            "hits": 5,
+            "minerals": 0,
+            "hits": 3,
             "retries": 1,
-            "minutes": 5.277777777777778,
+            "minutes": 0.2733333333333333,
             "loadout": {
-              "hullId": "hull-2",
-              "lives": 5,
-              "speedMultiplier": 0.85,
+              "hullId": "hull-1",
+              "lives": 3,
+              "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
-                "hull-1",
-                "hull-2"
+                "hull-1"
               ]
             }
           }
         ],
-        "deploymentMinutes": 18.97777777777778,
+        "deploymentMinutes": 2.319166666666667,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 20,
+        "retryMinutes": 2.319166666666667,
         "retakeMinutes": 0,
-        "totalMinutes": 50.97777777777778,
-        "captured": 2,
-        "losses": 4,
+        "totalMinutes": 16.638333333333335,
+        "captured": 0,
+        "losses": 6,
         "expectedRetakes": 0,
-        "expectedLosses": 4,
+        "expectedLosses": 6,
         "exposedHexes": 0,
-        "salvageBanked": 36,
-        "salvageForfeited": 38,
+        "salvageBanked": 0,
+        "salvageForfeited": 4,
+        "salvageCores": 0,
         "ringSecured": true
       },
       {
@@ -327,12 +305,12 @@
             "hexId": "hex-r1-2",
             "aggression": 1,
             "level": 2,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 18,
-            "hits": 0,
-            "retries": 0,
-            "minutes": 5,
+            "seconds": 35.6,
+            "captured": false,
+            "minerals": 5,
+            "hits": 3,
+            "retries": 1,
+            "minutes": 1.1866666666666668,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -348,20 +326,18 @@
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 268.35,
+            "seconds": 23.55,
             "captured": false,
-            "minerals": 18,
-            "hits": 4,
+            "minerals": 2,
+            "hits": 3,
             "retries": 1,
-            "minutes": 9.4725,
+            "minutes": 0.785,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
@@ -371,20 +347,18 @@
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 268.35,
+            "seconds": 23.55,
             "captured": false,
-            "minerals": 18,
-            "hits": 4,
+            "minerals": 2,
+            "hits": 3,
             "retries": 1,
-            "minutes": 9.4725,
+            "minutes": 0.785,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
@@ -394,20 +368,18 @@
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 194.46666666666667,
+            "seconds": 29.3,
             "captured": false,
-            "minerals": 12,
-            "hits": 4,
+            "minerals": 2,
+            "hits": 3,
             "retries": 1,
-            "minutes": 8.241111111111111,
+            "minutes": 0.9766666666666667,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
@@ -417,20 +389,18 @@
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 35.516666666666666,
+            "seconds": 25.5,
             "captured": false,
-            "minerals": 2,
-            "hits": 4,
+            "minerals": 4,
+            "hits": 3,
             "retries": 1,
-            "minutes": 5.591944444444445,
+            "minutes": 0.85,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
@@ -440,77 +410,82 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 35.56666666666666,
+            "seconds": 9.933333333333334,
             "captured": false,
-            "minerals": 4,
-            "hits": 4,
+            "minerals": 1,
+            "hits": 3,
             "retries": 1,
-            "minutes": 5.592777777777778,
+            "minutes": 0.33111111111111113,
             "loadout": {
               "hullId": "hull-1",
-              "lives": 4,
+              "lives": 3,
               "speedMultiplier": 1,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
                 "hull-1"
               ]
             }
           }
         ],
-        "deploymentMinutes": 18.37083333333333,
+        "deploymentMinutes": 2.457222222222222,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 25,
+        "retryMinutes": 2.457222222222222,
         "retakeMinutes": 0,
-        "totalMinutes": 55.37083333333333,
-        "captured": 1,
-        "losses": 5,
+        "totalMinutes": 16.914444444444445,
+        "captured": 0,
+        "losses": 6,
         "expectedRetakes": 0,
-        "expectedLosses": 5,
+        "expectedLosses": 6,
         "exposedHexes": 0,
-        "salvageBanked": 18,
-        "salvageForfeited": 54,
+        "salvageBanked": 0,
+        "salvageForfeited": 16,
+        "salvageCores": 0,
         "ringSecured": true
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 54.300555555555555,
-        "min": 50.97777777777778,
-        "max": 56.55305555555556
+        "mean": 16.425555555555558,
+        "min": 15.723888888888887,
+        "max": 16.914444444444445
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 18.967222222222222,
-        "min": 18.37083333333333,
-        "max": 19.55305555555556
+        "mean": 2.2127777777777777,
+        "min": 1.8619444444444442,
+        "max": 2.457222222222222
       },
       "losses": {
         "count": 3,
-        "mean": 4.666666666666667,
-        "min": 4,
-        "max": 5
+        "mean": 6,
+        "min": 6,
+        "max": 6
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 4.666666666666667,
-        "min": 4,
-        "max": 5
+        "mean": 6,
+        "min": 6,
+        "max": 6
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 24,
-        "min": 18,
-        "max": 36
+        "mean": 0,
+        "min": 0,
+        "max": 0
+      },
+      "salvageCores": {
+        "count": 3,
+        "mean": 0,
+        "min": 0,
+        "max": 0
       },
       "captured": {
         "count": 3,
-        "mean": 1.3333333333333333,
-        "min": 1,
-        "max": 2
+        "mean": 0,
+        "min": 0,
+        "max": 0
       },
       "ringSecuredRuns": 3
     },
@@ -522,10 +497,10 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 2,
-      "measuredMinutes": 54.300555555555555,
-      "withinWindow": true,
-      "withinTolerance": true,
-      "verdict": "in-window"
+      "measuredMinutes": 16.425555555555558,
+      "withinWindow": false,
+      "withinTolerance": false,
+      "verdict": "missed"
     },
     "entryLoadout": {
       "hullId": "hull-1",
@@ -554,12 +529,12 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 39.3,
+            "seconds": 17.866666666666667,
             "captured": false,
-            "minerals": 8,
+            "minerals": 5,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.655,
+            "minutes": 0.5955555555555556,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -572,18 +547,19 @@
             }
           }
         ],
-        "deploymentMinutes": 0.6549999999999999,
+        "deploymentMinutes": 0.2977777777777778,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 5,
-        "retakeMinutes": 24.5,
-        "totalMinutes": 32.155,
+        "retryMinutes": 0.2977777777777778,
+        "retakeMinutes": 8.042222222222222,
+        "totalMinutes": 10.637777777777778,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 8,
+        "salvageForfeited": 5,
+        "salvageCores": 0,
         "ringSecured": false
       },
       {
@@ -593,12 +569,12 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 21.316666666666666,
+            "seconds": 8.2,
             "captured": false,
-            "minerals": 4,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.355277777777777,
+            "minutes": 0.2733333333333333,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -611,18 +587,19 @@
             }
           }
         ],
-        "deploymentMinutes": 0.35527777777777775,
+        "deploymentMinutes": 0.13666666666666666,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 5,
-        "retakeMinutes": 24.5,
-        "totalMinutes": 31.85527777777778,
+        "retryMinutes": 0.13666666666666666,
+        "retakeMinutes": 7.4783333333333335,
+        "totalMinutes": 9.751666666666667,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 4,
+        "salvageForfeited": 0,
+        "salvageCores": 0,
         "ringSecured": false
       },
       {
@@ -632,12 +609,12 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 34.016666666666666,
+            "seconds": 9.933333333333334,
             "captured": false,
-            "minerals": 4,
+            "minerals": 1,
             "hits": 3,
             "retries": 1,
-            "minutes": 5.566944444444444,
+            "minutes": 0.33111111111111113,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -650,33 +627,34 @@
             }
           }
         ],
-        "deploymentMinutes": 0.5669444444444445,
+        "deploymentMinutes": 0.16555555555555557,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 5,
-        "retakeMinutes": 24.5,
-        "totalMinutes": 32.066944444444445,
+        "retryMinutes": 0.16555555555555557,
+        "retakeMinutes": 7.579444444444444,
+        "totalMinutes": 9.910555555555556,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 4,
+        "salvageForfeited": 1,
+        "salvageCores": 0,
         "ringSecured": false
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 32.025740740740744,
-        "min": 31.85527777777778,
-        "max": 32.155
+        "mean": 10.1,
+        "min": 9.751666666666667,
+        "max": 10.637777777777778
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 0.5257407407407407,
-        "min": 0.35527777777777775,
-        "max": 0.6549999999999999
+        "mean": 0.20000000000000004,
+        "min": 0.13666666666666666,
+        "max": 0.2977777777777778
       },
       "losses": {
         "count": 3,
@@ -691,6 +669,12 @@
         "max": 4.5
       },
       "salvageBanked": {
+        "count": 3,
+        "mean": 0,
+        "min": 0,
+        "max": 0
+      },
+      "salvageCores": {
         "count": 3,
         "mean": 0,
         "min": 0,
@@ -712,7 +696,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 2,
-      "measuredMinutes": 32.025740740740744,
+      "measuredMinutes": 10.1,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"
@@ -744,12 +728,12 @@
             "hexId": "hex-r2-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 18,
-            "hits": 0,
-            "retries": 0,
-            "minutes": 5,
+            "seconds": 104.13333333333333,
+            "captured": false,
+            "minerals": 15,
+            "hits": 5,
+            "retries": 1,
+            "minutes": 3.471111111111111,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -782,12 +766,12 @@
             "hexId": "hex-r2-10",
             "aggression": 2,
             "level": 3,
-            "seconds": 214.58333333333334,
+            "seconds": 104.13333333333333,
             "captured": false,
-            "minerals": 18,
+            "minerals": 15,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.57638888888889,
+            "minutes": 3.471111111111111,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -803,10 +787,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -824,12 +804,12 @@
             "hexId": "hex-r2-2",
             "aggression": 2,
             "level": 3,
-            "seconds": 214.58333333333334,
+            "seconds": 104.13333333333333,
             "captured": false,
-            "minerals": 18,
+            "minerals": 15,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.57638888888889,
+            "minutes": 3.471111111111111,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -845,10 +825,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -866,12 +842,12 @@
             "hexId": "hex-r2-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 214.58333333333334,
+            "seconds": 104.13333333333333,
             "captured": false,
-            "minerals": 18,
+            "minerals": 15,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.57638888888889,
+            "minutes": 3.471111111111111,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -887,10 +863,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -908,12 +880,12 @@
             "hexId": "hex-r2-6",
             "aggression": 2,
             "level": 3,
-            "seconds": 214.58333333333334,
+            "seconds": 104.13333333333333,
             "captured": false,
-            "minerals": 18,
+            "minerals": 15,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.57638888888889,
+            "minutes": 3.471111111111111,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -929,10 +901,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -950,12 +918,12 @@
             "hexId": "hex-r2-7",
             "aggression": 2,
             "level": 3,
-            "seconds": 214.58333333333334,
+            "seconds": 104.13333333333333,
             "captured": false,
-            "minerals": 18,
+            "minerals": 15,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.57638888888889,
+            "minutes": 3.471111111111111,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -971,10 +939,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -992,12 +956,12 @@
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 112.68333333333334,
+            "seconds": 92.51666666666667,
             "captured": false,
-            "minerals": 13,
+            "minerals": 17,
             "hits": 5,
             "retries": 1,
-            "minutes": 6.878055555555555,
+            "minutes": 3.0838888888888887,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1013,10 +977,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1034,12 +994,12 @@
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 112.68333333333334,
+            "seconds": 92.51666666666667,
             "captured": false,
-            "minerals": 13,
+            "minerals": 17,
             "hits": 5,
             "retries": 1,
-            "minutes": 6.878055555555555,
+            "minutes": 3.0838888888888887,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1055,10 +1015,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1076,12 +1032,12 @@
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 112.68333333333334,
+            "seconds": 92.51666666666667,
             "captured": false,
-            "minerals": 13,
+            "minerals": 17,
             "hits": 5,
             "retries": 1,
-            "minutes": 6.878055555555555,
+            "minutes": 3.0838888888888887,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1097,10 +1053,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1118,12 +1070,12 @@
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 112.68333333333334,
+            "seconds": 92.51666666666667,
             "captured": false,
-            "minerals": 13,
+            "minerals": 17,
             "hits": 5,
             "retries": 1,
-            "minutes": 6.878055555555555,
+            "minutes": 3.0838888888888887,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1139,10 +1091,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1160,12 +1108,12 @@
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 21.5,
+            "seconds": 14.799999999999999,
             "captured": false,
-            "minerals": 4,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 5.358333333333333,
+            "minutes": 0.4933333333333333,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1181,10 +1129,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1202,12 +1146,12 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 206.54999999999998,
+            "seconds": 22.766666666666666,
             "captured": false,
-            "minerals": 14,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.442499999999999,
+            "minutes": 0.7588888888888888,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1224,10 +1168,6 @@
                 {
                   "id": "wave_laser",
                   "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
-                  "ownedLevel": 1
                 }
               ],
               "modifiers": [
@@ -1241,18 +1181,19 @@
             }
           }
         ],
-        "deploymentMinutes": 34.195,
+        "deploymentMinutes": 17.20722222222222,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 55,
+        "retryMinutes": 17.20722222222222,
         "retakeMinutes": 0,
-        "totalMinutes": 113.195,
-        "captured": 1,
-        "losses": 11,
+        "totalMinutes": 58.41444444444444,
+        "captured": 0,
+        "losses": 12,
         "expectedRetakes": 0,
-        "expectedLosses": 11,
+        "expectedLosses": 12,
         "exposedHexes": 0,
-        "salvageBanked": 18,
+        "salvageBanked": 0,
         "salvageForfeited": 160,
+        "salvageCores": 0,
         "ringSecured": true
       },
       {
@@ -1262,12 +1203,12 @@
             "hexId": "hex-r2-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 18,
-            "hits": 0,
-            "retries": 0,
-            "minutes": 5,
+            "seconds": 55.699999999999996,
+            "captured": false,
+            "minerals": 0,
+            "hits": 5,
+            "retries": 1,
+            "minutes": 1.8566666666666665,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1300,12 +1241,12 @@
             "hexId": "hex-r2-10",
             "aggression": 2,
             "level": 3,
-            "seconds": 221.54999999999998,
+            "seconds": 55.699999999999996,
             "captured": false,
-            "minerals": 18,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.692499999999999,
+            "minutes": 1.8566666666666665,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1321,10 +1262,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1342,12 +1279,12 @@
             "hexId": "hex-r2-2",
             "aggression": 2,
             "level": 3,
-            "seconds": 221.54999999999998,
+            "seconds": 55.699999999999996,
             "captured": false,
-            "minerals": 18,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.692499999999999,
+            "minutes": 1.8566666666666665,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1363,10 +1300,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1384,12 +1317,12 @@
             "hexId": "hex-r2-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 221.54999999999998,
+            "seconds": 55.699999999999996,
             "captured": false,
-            "minerals": 18,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.692499999999999,
+            "minutes": 1.8566666666666665,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1405,10 +1338,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1426,12 +1355,12 @@
             "hexId": "hex-r2-6",
             "aggression": 2,
             "level": 3,
-            "seconds": 221.54999999999998,
+            "seconds": 55.699999999999996,
             "captured": false,
-            "minerals": 18,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.692499999999999,
+            "minutes": 1.8566666666666665,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1447,10 +1376,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1468,12 +1393,12 @@
             "hexId": "hex-r2-7",
             "aggression": 2,
             "level": 3,
-            "seconds": 221.54999999999998,
+            "seconds": 55.699999999999996,
             "captured": false,
-            "minerals": 18,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.692499999999999,
+            "minutes": 1.8566666666666665,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1489,10 +1414,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1510,12 +1431,12 @@
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 149.3,
+            "seconds": 35.65,
             "captured": false,
-            "minerals": 18,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 7.488333333333333,
+            "minutes": 1.1883333333333332,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1531,10 +1452,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1552,12 +1469,12 @@
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 149.3,
+            "seconds": 35.65,
             "captured": false,
-            "minerals": 18,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 7.488333333333333,
+            "minutes": 1.1883333333333332,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1573,10 +1490,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1594,12 +1507,12 @@
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 149.3,
+            "seconds": 35.65,
             "captured": false,
-            "minerals": 18,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 7.488333333333333,
+            "minutes": 1.1883333333333332,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1615,10 +1528,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1636,12 +1545,12 @@
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 149.3,
+            "seconds": 35.65,
             "captured": false,
-            "minerals": 18,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 7.488333333333333,
+            "minutes": 1.1883333333333332,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1657,10 +1566,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1678,12 +1583,12 @@
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 16.65,
+            "seconds": 88.86666666666666,
             "captured": false,
-            "minerals": 2,
+            "minerals": 3,
             "hits": 5,
             "retries": 1,
-            "minutes": 5.2775,
+            "minutes": 2.962222222222222,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1699,10 +1604,6 @@
                 },
                 {
                   "id": "wave_laser",
-                  "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
                   "ownedLevel": 1
                 }
               ],
@@ -1720,12 +1621,12 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 13,
-            "hits": 1,
-            "retries": 0,
-            "minutes": 5,
+            "seconds": 18.4,
+            "captured": false,
+            "minerals": 1,
+            "hits": 5,
+            "retries": 1,
+            "minutes": 0.6133333333333333,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1742,10 +1643,6 @@
                 {
                   "id": "wave_laser",
                   "ownedLevel": 1
-                },
-                {
-                  "id": "arc",
-                  "ownedLevel": 1
                 }
               ],
               "modifiers": [
@@ -1759,18 +1656,19 @@
             }
           }
         ],
-        "deploymentMinutes": 38.693333333333335,
+        "deploymentMinutes": 9.734444444444442,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 50,
+        "retryMinutes": 9.734444444444442,
         "retakeMinutes": 0,
-        "totalMinutes": 112.69333333333333,
-        "captured": 2,
-        "losses": 10,
+        "totalMinutes": 43.468888888888884,
+        "captured": 0,
+        "losses": 12,
         "expectedRetakes": 0,
-        "expectedLosses": 10,
+        "expectedLosses": 12,
         "exposedHexes": 0,
-        "salvageBanked": 31,
-        "salvageForfeited": 164,
+        "salvageBanked": 0,
+        "salvageForfeited": 8,
+        "salvageCores": 0,
         "ringSecured": true
       },
       {
@@ -1780,12 +1678,12 @@
             "hexId": "hex-r2-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 215.54999999999998,
+            "seconds": 52.516666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 9,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.5925,
+            "minutes": 1.7505555555555554,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1818,12 +1716,12 @@
             "hexId": "hex-r2-10",
             "aggression": 2,
             "level": 3,
-            "seconds": 215.54999999999998,
+            "seconds": 52.516666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 9,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.5925,
+            "minutes": 1.7505555555555554,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1856,12 +1754,12 @@
             "hexId": "hex-r2-2",
             "aggression": 2,
             "level": 3,
-            "seconds": 215.54999999999998,
+            "seconds": 52.516666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 9,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.5925,
+            "minutes": 1.7505555555555554,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1894,12 +1792,12 @@
             "hexId": "hex-r2-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 215.54999999999998,
+            "seconds": 52.516666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 9,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.5925,
+            "minutes": 1.7505555555555554,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1932,12 +1830,12 @@
             "hexId": "hex-r2-6",
             "aggression": 2,
             "level": 3,
-            "seconds": 215.54999999999998,
+            "seconds": 52.516666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 9,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.5925,
+            "minutes": 1.7505555555555554,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -1970,12 +1868,12 @@
             "hexId": "hex-r2-7",
             "aggression": 2,
             "level": 3,
-            "seconds": 215.54999999999998,
+            "seconds": 52.516666666666666,
             "captured": false,
-            "minerals": 18,
+            "minerals": 9,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.5925,
+            "minutes": 1.7505555555555554,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2008,12 +1906,12 @@
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 236.6,
+            "seconds": 34.5,
             "captured": false,
-            "minerals": 18,
+            "minerals": 7,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.943333333333333,
+            "minutes": 1.15,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2046,12 +1944,12 @@
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 236.6,
+            "seconds": 34.5,
             "captured": false,
-            "minerals": 18,
+            "minerals": 7,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.943333333333333,
+            "minutes": 1.15,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2084,12 +1982,12 @@
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 236.6,
+            "seconds": 34.5,
             "captured": false,
-            "minerals": 18,
+            "minerals": 7,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.943333333333333,
+            "minutes": 1.15,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2122,12 +2020,12 @@
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 236.6,
+            "seconds": 34.5,
             "captured": false,
-            "minerals": 18,
+            "minerals": 7,
             "hits": 5,
             "retries": 1,
-            "minutes": 8.943333333333333,
+            "minutes": 1.15,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2160,12 +2058,12 @@
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 125.51666666666667,
+            "seconds": 49.6,
             "captured": false,
-            "minerals": 16,
+            "minerals": 3,
             "hits": 5,
             "retries": 1,
-            "minutes": 7.091944444444445,
+            "minutes": 1.6533333333333333,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2198,12 +2096,12 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 18,
-            "hits": 4,
-            "retries": 0,
-            "minutes": 5,
+            "seconds": 49.5,
+            "captured": false,
+            "minerals": 1,
+            "hits": 5,
+            "retries": 1,
+            "minutes": 1.65,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2233,57 +2131,64 @@
             }
           }
         ],
-        "deploymentMinutes": 44.420277777777784,
+        "deploymentMinutes": 9.203333333333333,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 55,
+        "retryMinutes": 9.203333333333333,
         "retakeMinutes": 0,
-        "totalMinutes": 123.42027777777778,
-        "captured": 1,
-        "losses": 11,
+        "totalMinutes": 42.406666666666666,
+        "captured": 0,
+        "losses": 12,
         "expectedRetakes": 0,
-        "expectedLosses": 11,
+        "expectedLosses": 12,
         "exposedHexes": 0,
-        "salvageBanked": 18,
-        "salvageForfeited": 196,
+        "salvageBanked": 0,
+        "salvageForfeited": 86,
+        "salvageCores": 0,
         "ringSecured": true
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 116.4362037037037,
-        "min": 112.69333333333333,
-        "max": 123.42027777777778
+        "mean": 48.096666666666664,
+        "min": 42.406666666666666,
+        "max": 58.41444444444444
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 39.102870370370375,
-        "min": 34.195,
-        "max": 44.420277777777784
+        "mean": 12.048333333333332,
+        "min": 9.203333333333333,
+        "max": 17.20722222222222
       },
       "losses": {
         "count": 3,
-        "mean": 10.666666666666666,
-        "min": 10,
-        "max": 11
+        "mean": 12,
+        "min": 12,
+        "max": 12
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 10.666666666666666,
-        "min": 10,
-        "max": 11
+        "mean": 12,
+        "min": 12,
+        "max": 12
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 22.333333333333332,
-        "min": 18,
-        "max": 31
+        "mean": 0,
+        "min": 0,
+        "max": 0
+      },
+      "salvageCores": {
+        "count": 3,
+        "mean": 0,
+        "min": 0,
+        "max": 0
       },
       "captured": {
         "count": 3,
-        "mean": 1.3333333333333333,
-        "min": 1,
-        "max": 2
+        "mean": 0,
+        "min": 0,
+        "max": 0
       },
       "ringSecuredRuns": 3
     },
@@ -2295,10 +2200,10 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 3,
-      "measuredMinutes": 116.4362037037037,
-      "withinWindow": true,
-      "withinTolerance": true,
-      "verdict": "in-window"
+      "measuredMinutes": 48.096666666666664,
+      "withinWindow": false,
+      "withinTolerance": false,
+      "verdict": "missed"
     },
     "entryLoadout": {
       "hullId": "hull-2",
@@ -2344,12 +2249,12 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 149.66666666666666,
+            "seconds": 22.766666666666666,
             "captured": false,
-            "minerals": 14,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 7.4944444444444445,
+            "minutes": 0.7588888888888888,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2379,18 +2284,19 @@
             }
           }
         ],
-        "deploymentMinutes": 2.4944444444444445,
+        "deploymentMinutes": 0.3794444444444444,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 5,
-        "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 63.39444444444443,
+        "retryMinutes": 0.3794444444444444,
+        "retakeMinutes": 18.32172222222222,
+        "totalMinutes": 21.08061111111111,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
         "expectedLosses": 8.7,
         "exposedHexes": 11,
         "salvageBanked": 0,
-        "salvageForfeited": 14,
+        "salvageForfeited": 1,
+        "salvageCores": 0,
         "ringSecured": false
       },
       {
@@ -2400,12 +2306,12 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 164.51666666666665,
+            "seconds": 18.4,
             "captured": false,
-            "minerals": 13,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 7.741944444444444,
+            "minutes": 0.6133333333333333,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2435,18 +2341,19 @@
             }
           }
         ],
-        "deploymentMinutes": 2.741944444444444,
+        "deploymentMinutes": 0.30666666666666664,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 5,
-        "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 63.641944444444434,
+        "retryMinutes": 0.30666666666666664,
+        "retakeMinutes": 17.761333333333333,
+        "totalMinutes": 20.374666666666666,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
         "expectedLosses": 8.7,
         "exposedHexes": 11,
         "salvageBanked": 0,
-        "salvageForfeited": 13,
+        "salvageForfeited": 1,
+        "salvageCores": 0,
         "ringSecured": false
       },
       {
@@ -2456,12 +2363,12 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 300,
-            "captured": true,
-            "minerals": 18,
-            "hits": 4,
-            "retries": 0,
-            "minutes": 5,
+            "seconds": 49.5,
+            "captured": false,
+            "minerals": 1,
+            "hits": 5,
+            "retries": 1,
+            "minutes": 1.65,
             "loadout": {
               "hullId": "hull-2",
               "lives": 5,
@@ -2491,57 +2398,64 @@
             }
           }
         ],
-        "deploymentMinutes": 5,
+        "deploymentMinutes": 0.825,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 0,
-        "retakeMinutes": 53.89999999999999,
-        "totalMinutes": 60.89999999999999,
-        "captured": 1,
-        "losses": 0,
+        "retryMinutes": 0.825,
+        "retakeMinutes": 21.752499999999998,
+        "totalMinutes": 25.402499999999996,
+        "captured": 0,
+        "losses": 1,
         "expectedRetakes": 7.699999999999999,
-        "expectedLosses": 7.699999999999999,
+        "expectedLosses": 8.7,
         "exposedHexes": 11,
-        "salvageBanked": 18,
-        "salvageForfeited": 0,
+        "salvageBanked": 0,
+        "salvageForfeited": 1,
+        "salvageCores": 0,
         "ringSecured": false
       }
     ],
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 62.64546296296296,
-        "min": 60.89999999999999,
-        "max": 63.641944444444434
+        "mean": 22.285925925925927,
+        "min": 20.374666666666666,
+        "max": 25.402499999999996
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 3.41212962962963,
-        "min": 2.4944444444444445,
-        "max": 5
+        "mean": 0.5037037037037037,
+        "min": 0.30666666666666664,
+        "max": 0.825
       },
       "losses": {
         "count": 3,
-        "mean": 0.6666666666666666,
-        "min": 0,
+        "mean": 1,
+        "min": 1,
         "max": 1
       },
       "expectedLosses": {
         "count": 3,
-        "mean": 8.366666666666665,
-        "min": 7.699999999999999,
+        "mean": 8.7,
+        "min": 8.7,
         "max": 8.7
       },
       "salvageBanked": {
         "count": 3,
-        "mean": 6,
+        "mean": 0,
         "min": 0,
-        "max": 18
+        "max": 0
+      },
+      "salvageCores": {
+        "count": 3,
+        "mean": 0,
+        "min": 0,
+        "max": 0
       },
       "captured": {
         "count": 3,
-        "mean": 0.3333333333333333,
+        "mean": 0,
         "min": 0,
-        "max": 1
+        "max": 0
       },
       "ringSecuredRuns": 0
     },
@@ -2553,7 +2467,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 3,
-      "measuredMinutes": 62.64546296296296,
+      "measuredMinutes": 22.285925925925927,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"

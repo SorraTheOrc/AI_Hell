@@ -425,10 +425,12 @@ are exposed and the ring is not secured.
 
 ### Measured baseline
 
-> **Numbers below are the committed campaign-slice artifact.** The one-level
-> model (AH-0MWCQ4FWN009J9DM) re-measures the rings; the baseline file is
-> regenerated and the docs requoted by the parent's follow-up items
-> (AH-0MWCQ4GTE005YG02 / AH-0MWCQ4IS6001X7W3).
+> **The table below is the superseded campaign-slice measurement.** The
+> artifact has since been regenerated on the shipped one-level deployment
+> (AH-0MWCQ4GTE005YG02): ring 1 grind measures **16.4 min** and ring 2 grind
+> **48.1 min**, both `missed` against the authored windows. This section's
+> table and reading are requoted from the regenerated artifact by
+> AH-0MWCQ4IS6001X7W3, after the budget re-rulings land in AH-0MWCQ4HTC004U73V.
 
 Committed evidence:
 [`docs/dev/ring-timing-baseline.json`](./dev/ring-timing-baseline.json)

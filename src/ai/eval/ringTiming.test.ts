@@ -887,7 +887,12 @@ describe('ring timing: committed baseline evidence', () => {
         strategy: string;
         runs: Array<{ ringSecured: boolean }>;
         summary: { totalMinutes: { mean: number } };
-        budget: { verdict: string; measuredMinutes: number; withinTolerance: boolean };
+        budget: {
+          verdict: string;
+          measuredMinutes: number;
+          withinTolerance: boolean;
+          withinWindow: boolean;
+        };
       }>)
     : [];
 
@@ -898,13 +903,19 @@ describe('ring timing: committed baseline evidence', () => {
     ).toEqual(['1-grind', '1-rush', '2-grind', '2-rush']);
   });
 
-  it('both ring budgets are recorded in-window and internally consistent', () => {
+  it('both ring grind budgets are recorded as missed and internally consistent', () => {
+    // The artifact was regenerated on the shipped one-level deployment
+    // (AH-0MWCQ4GTE005YG02): every sortie is lost to enemy fire, so both grind
+    // totals fall decisively below their authored windows. The budget re-ruling
+    // is a separate item (AH-0MWCQ4HTC004U73V); this pins what the committed
+    // evidence says so a re-measurement cannot drift silently.
     for (const ringIndex of [1, 2]) {
       const report = baseline.find(
         (entry) => entry.ringIndex === ringIndex && entry.strategy === 'grind',
       )!;
-      expect(report.budget.verdict).toBe('in-window');
-      expect(report.budget.withinTolerance).toBe(true);
+      expect(report.budget.verdict).toBe('missed');
+      expect(report.budget.withinTolerance).toBe(false);
+      expect(report.budget.withinWindow).toBe(false);
       expect(report.budget.measuredMinutes).toBeCloseTo(
         report.summary.totalMinutes.mean,
         6,
