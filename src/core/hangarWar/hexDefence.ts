@@ -50,13 +50,15 @@
  * The ring-end counterpart, delivered for `AH-0MVUVL2O2006W4QK`: when the
  * ring's final hex is captured, the deferred massed counter-attack on the
  * hangar is resolved from the same stored numbers (`HangarAssaultInput`
- * mirrors `DefenceInput`): the defender side is the held-ring defender sum,
- * the attacker side is the base massed force derived from the ring's stored
- * aggression ({@link massedAssaultBase}) scaled by the **same**
- * `aggressionPercentPerPoint` multiplier and bounded seeded jitter — a tie
+ * mirrors `DefenceInput`): the defender side is the held-ring defender sum
+ * ({@link heldRingDefenderSum}), the attacker side is the base massed force
+ * derived from the ring's stored aggression ({@link massedAssaultBase}) scaled
+ * by the **same** `aggressionPercentPerPoint` multiplier and bounded seeded
+ * jitter — a tie
  * holds the line and the hangar falls only when the assault beats the stored
- * defence. The capture-cycle gate (not this module) triggers it and applies
- * its consequence (ring won / hangar-falls reset).
+ * defence. Both ring-side numbers have a derivation here, so no caller
+ * re-derives one. The capture-cycle gate (not this module) triggers the
+ * assault and applies its consequence (ring won / hangar-falls reset).
  *
  * Every result carries the whole calculation ({@link DefenceResolution}), not
  * just the outcome: the defence report (B6) renders exactly these numbers, which
@@ -889,6 +891,33 @@ export interface HangarAssaultResolution {
  */
 export function massedAssaultBase(ring: HexRingState): number {
   return ring.hexes.reduce((sum, hex) => sum + toCount(hex.aggression), 0);
+}
+
+/**
+ * The defender side of a hangar assault: the held ring's stored defence.
+ *
+ * The other half of the assault's stored numbers — the sum of the **held**
+ * hexes' defending-bot ratings, exactly as the frontier tick compares a hex's
+ * own rating against an attack. Only `held` hexes contribute, so a stale
+ * defender left on an unheld hex (a corrupt payload) never strengthens the
+ * hangar, and nothing but the stored ratings is consulted.
+ *
+ * The capture-cycle gate pairs it with {@link massedAssaultBase} to build a
+ * {@link HangarAssaultInput}, so neither the game nor the `GymHexWar` gym ever
+ * re-derives the figure (the gym↔game parity rule).
+ *
+ * Total: a negative or non-finite rating contributes `0` and a fractional one
+ * is truncated, as {@link toCount} leaves it — so a corrupt payload can never
+ * throw inside an assault pass.
+ *
+ * @param ring — the ring being defended (fully held when the assault fires).
+ * @returns the sum of the held hexes' stored defender ratings.
+ */
+export function heldRingDefenderSum(ring: HexRingState): number {
+  return ring.hexes.reduce(
+    (sum, hex) => (hex.held ? sum + toCount(hex.defender?.defenceRating) : sum),
+    0,
+  );
 }
 
 /**

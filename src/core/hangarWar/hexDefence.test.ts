@@ -17,6 +17,9 @@
  *   stored defender sum vs the massed force, the massed-force derivation from
  *   the ring's stored aggressions, the shared seeded jitter stream, replay
  *   determinism and totality on corrupt inputs;
+ * - the two ring-side derivations the capture-cycle gate feeds the resolver
+ *   (AH-0MWEZZ5AQ000W3M8): the massed-force base and the held-ring defender
+ *   sum, both from stored numbers only, so no caller re-derives a figure;
  * - the deferred-scope guarantee (producer decision Q2 = a): a secured ring has
  *   no neighbour to be attacked from, so a tick reports **no** attacks and there
  *   is no hangar-defence pass.
@@ -37,6 +40,7 @@ import {
   createFrontierClock,
   frontierClockFor,
   authoredRingBaseMass,
+  heldRingDefenderSum,
   massedAssaultBase,
   redistributeAggression,
   resolveDefence,
@@ -464,6 +468,93 @@ describe('massedAssaultBase — the massed-force derivation from stored ring num
     expect(risen.attackStrength).toBe(26);
     expect(risen.outcome).toBe('fell');
     expect(risen.margin).toBe(12 - 26);
+  });
+});
+
+describe('heldRingDefenderSum — the defender-side derivation from stored ring numbers', () => {
+  it('sums the held hexes\' stored defender ratings (AH-0MWEZZ5AQ000W3M8 AC3)', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 6);
+    hold(hexes, RING_ONE_IDS[1], 9);
+    hold(hexes, RING_ONE_IDS[2], 2);
+
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(17);
+  });
+
+  it('ignores unheld hexes even when they still carry a stale defender', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 5);
+    // A corrupt/stale payload: an unheld hex that still has a defender object.
+    const unheld = hexes.find((hex) => hex.id === RING_ONE_IDS[1]);
+    if (!unheld) throw new Error('no hex');
+    unheld.held = false;
+    unheld.defender = { hullId: 'hull-1', defenceRating: 40, bankedMinerals: 0 };
+
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(5);
+  });
+
+  it('is 0 for an unheld ring and for hexes with no defender', () => {
+    const hexes = ringOne();
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(0);
+
+    for (const id of RING_ONE_IDS) {
+      const hex = hexes.find((candidate) => candidate.id === id);
+      if (!hex) throw new Error(`no hex ${id}`);
+      hex.held = true;
+      hex.defender = null;
+    }
+
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(0);
+  });
+
+  it('derives from stored defender ratings alone — stored aggression never matters', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id) => hold(hexes, id, 3));
+    const quiet = heldRingDefenderSum({ ringIndex: 1, hexes });
+
+    RING_ONE_IDS.forEach((id, index) => setAggression(hexes, id, index + 5));
+
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(quiet);
+    expect(quiet).toBe(18);
+  });
+
+  it('is total on corrupt defender ratings: negative, fractional and non-finite collapse to 0', () => {
+    const hexes = ringOne();
+    const corrupt = [Number.NaN, -4, 2.9, Number.POSITIVE_INFINITY];
+    RING_ONE_IDS.forEach((id, index) => {
+      const hex = hexes.find((candidate) => candidate.id === id);
+      if (!hex) throw new Error(`no hex ${id}`);
+      hex.held = true;
+      hex.defender = {
+        hullId: 'hull-1',
+        defenceRating: corrupt[index % corrupt.length] as number,
+        bankedMinerals: 0,
+      };
+    });
+
+    // Only the fractional 2.9 survives, truncated to 2 — never a throw.
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(2);
+  });
+
+  it('feeds the resolver end-to-end from one ring: the ring defends against its own quiet frontier', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id) => hold(hexes, id, 2));
+    RING_ONE_IDS.forEach((id) => setAggression(hexes, id, 0));
+    const ring = { ringIndex: 1, hexes };
+
+    const resolution = resolveHangarAssault(
+      {
+        defenderSum: heldRingDefenderSum(ring),
+        attackerBase: massedAssaultBase(ring),
+        aggression: 0,
+        seed: 11,
+      },
+      NO_JITTER,
+    );
+
+    expect(resolution.defenderSum).toBe(12);
+    expect(resolution.attackerBase).toBe(0);
+    expect(resolution.outcome).toBe('repelled');
   });
 });
 
