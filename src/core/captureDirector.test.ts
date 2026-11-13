@@ -266,10 +266,10 @@ describe('Hangar War screens in the director (AH-0MVWMUQUC003WXF5)', () => {
     ]);
 
     const error = expectSceneError(
-      () => startScene(fakeGame(manager), 'DefenceReportScene'),
+      () => startScene(fakeGame(manager), 'HexMapScene'),
       ERROR.unknownTarget,
     );
-    expect(error.message).toContain('DefenceReportScene');
+    expect(error.message).toContain('HexMapScene');
     expect(added).toEqual([]);
     expect(started).toEqual([]);
     expect(stopped).toEqual([]);

@@ -49,8 +49,8 @@ import {
   type BootedGame,
 } from '../test/gameHarness';
 import type { LevelDefinition } from '../waves/Formations';
-import { DEFENCE_REPORT_SCENE_KEY, DefenceReportScene } from './DefenceReportScene';
 import { GameOverScene } from './GameOverScene';
+import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { MenuScene } from './MenuScene';
 import { PlayScene, VICTORY_TRANSITION_HOLD_MS } from './PlayScene';
 import {
@@ -159,7 +159,7 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
   async function bootPlay(hangarWar: HangarWarDeployment | null): Promise<PlayScene> {
     booted = await bootScene([
       PlayScene,
-      DefenceReportScene,
+      HexMapScene,
       GameOverScene,
       MenuScene,
     ]);
@@ -318,7 +318,10 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
     30_000,
   );
 
-  it.each([
+  // TEST-FIRST (AH-0MWEXHODJ0067PSJ): a won deployment lands on the hex map
+  // (paused under its reward), not the retired report scene; the wiring item
+  // (AH-0MWEXIWBO004GHN6) flips `it.fails` back to `it`.
+  it.fails.each([
     ['a non-final level (aggression 3 → level 4)', 3],
     ['the final level (aggression 9 → level 10)', FINAL_LEVEL_AGGRESSION],
   ])(
@@ -351,14 +354,20 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       // A deployment never writes the arcade checkpoint.
       expect(loadCheckpoint()).toBeNull();
 
-      // The defeat ends the run as a **victory** in the defence report (the
-      // run-end hold is a real Clock timer, so the game is stepped past it).
+      // The defeat ends the run as a **victory** on the hex map (the run-end
+      // hold is a real Clock timer, so the game is stepped past it). TEST-FIRST
+      // (AH-0MWEXHODJ0067PSJ): the deployment lands on the map, not the retired
+      // report scene; the wiring item (AH-0MWEXIWBO004GHN6) flips `it.fails`.
       await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
-      expect(scene.game.scene.isActive(DEFENCE_REPORT_SCENE_KEY)).toBe(true);
-      const report = scene.game.scene.getScene(
-        DEFENCE_REPORT_SCENE_KEY,
-      ) as DefenceReportScene;
-      expect((report as unknown as { won: boolean | null }).won).toBe(true);
+      const map = scene.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as HexMapScene | null;
+      expect(map, 'the deployment must land on the hex map').not.toBeNull();
+      // The map is up — running, or paused under the won reward overlay.
+      expect(
+        scene.game.scene.isActive(HEX_MAP_SCENE_KEY) ||
+          scene.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+      ).toBe(true);
       // No next-level wave spawned behind the ended run.
       expect(wm.level).toBe(level);
       expect(scene.getAliveCount()).toBe(0);
@@ -417,8 +426,8 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
         scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
       }
       expect(scene.getBoss()).toBeInstanceOf(Boss);
-      // An arcade run never routes through the deployment's defence report.
-      expect(scene.game.scene.isActive(DEFENCE_REPORT_SCENE_KEY)).toBe(false);
+      // An arcade run never routes through the deployment's hex map landing.
+      expect(scene.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(false);
     },
     30_000,
   );

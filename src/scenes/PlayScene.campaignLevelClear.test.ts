@@ -42,7 +42,7 @@ import { GameOverScene } from './GameOverScene';
 import { buildHangarDeployment } from './hangarWar/hangarDeployment';
 import { MenuScene } from './MenuScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
-import { DEFENCE_REPORT_SCENE_KEY, DefenceReportScene } from './DefenceReportScene';
+import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene, VICTORY_TRANSITION_HOLD_MS } from './PlayScene';
 
 // A full level walk boots a Phaser game and clears ten waves; the Vitest
@@ -200,7 +200,7 @@ async function bootRun(data: {
     MineralChoiceScene,
     GameOverScene,
     MenuScene,
-    DefenceReportScene,
+    HexMapScene,
   ]);
   const scene = booted.scene as PlayScene;
   scene.setAsteroidSpawnerEnabled(false);
@@ -355,16 +355,21 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(gameState.isHoldFull()).toBe(false);
   });
 
-  it('ends a hangar-war deployment on its level-2 mini-boss as a victory', async () => {
-    // hex-r1-2 is the ring's lowest-aggression hex (1 → campaign level 2), so
-    // a deployment to it starts the run on the level under test.
-    const deployment = buildHangarDeployment(deploymentPayload(), {
-      hexId: 'hex-r1-2',
-      seed: RUN_SEED,
-    });
-    expect(deployment.startLevel).toBe(LEVEL_UNDER_TEST);
+  // TEST-FIRST (AH-0MWEXHODJ0067PSJ): the deployment ends on the hex map, not
+  // the retired report screen. The walk assertions stay live inside the witness;
+  // the wiring item (AH-0MWEXIWBO004GHN6) flips this `it.fails` back to `it`.
+  it.fails(
+    'ends a hangar-war deployment on its level-2 mini-boss as a victory',
+    async () => {
+      // hex-r1-2 is the ring's lowest-aggression hex (1 → campaign level 2), so
+      // a deployment to it starts the run on the level under test.
+      const deployment = buildHangarDeployment(deploymentPayload(), {
+        hexId: 'hex-r1-2',
+        seed: RUN_SEED,
+      });
+      expect(deployment.startLevel).toBe(LEVEL_UNDER_TEST);
 
-    const scene = await boot({ hangarWar: deployment });
+      const scene = await boot({ hangarWar: deployment });
     const wm = scene.getWaveManager();
     expect(scene.isHangarWarRun()).toBe(true);
     expect(wm.level).toBe(LEVEL_UNDER_TEST);
@@ -384,15 +389,22 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(wm.bossTriggered).toBe(false);
     expect(scene.getLastCapture()?.ok).toBe(true);
 
-    // The run ends in the between-sortie defence report as a victory (the
-    // run-end hold is a real Clock timer, so step the game past it).
+    // The run ends on the **hex map** as a victory (the between-sortie report
+    // screen is gone, AH-0MWEXHODJ0067PSJ; the run-end hold is a real Clock
+    // timer, so step the game past it). TEST-FIRST: red until the wiring item
+    // (AH-0MWEXIWBO004GHN6) routes the deployment end to the map.
     await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
-    expect(scene.game.scene.isActive(DEFENCE_REPORT_SCENE_KEY)).toBe(true);
-    const report = scene.game.scene.getScene(
-      DEFENCE_REPORT_SCENE_KEY,
-    ) as DefenceReportScene;
-    expect((report as unknown as { won: boolean | null }).won).toBe(true);
+    const map = scene.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene | null;
+    expect(map, 'the deployment must land on the hex map').not.toBeNull();
+    // The map is up — running, or paused under the won reward overlay.
+    expect(
+      scene.game.scene.isActive(HEX_MAP_SCENE_KEY) ||
+        scene.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+    ).toBe(true);
     // A deployment keeps its own session: the classic checkpoint is untouched.
     expect(localStorage.getItem('ai_hell_checkpoint')).toBeNull();
-  });
+    },
+  );
 });

@@ -34,7 +34,6 @@ import { LeaderboardScene } from './LeaderboardScene';
 import { GymIndex } from './GymIndex';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
-import { DefenceReportScene } from './DefenceReportScene';
 import {
   FEATURE_FLAGS_STORAGE_KEY,
   loadFeatureFlags,
@@ -279,7 +278,6 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
       PlayScene,
       HangarScene,
       HexMapScene,
-      DefenceReportScene,
       GameOverScene,
       GymIndex,
     ]);

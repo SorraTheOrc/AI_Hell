@@ -3,18 +3,29 @@
  *
  * Epic AC10 / this item's AC2–AC3: **attract mode never stalls.** This suite
  * drives the whole new surface with the bot — menu → map → (weakest hex)
- * deployment → defence report → map → hangar — and asserts that:
+ * deployment → map → hangar — and asserts that:
  *
  * - every screen advances within a bounded time (the traversal dwell) with no
  *   player input;
  * - the map deploys at the weakest adjacent hex and the hangar buys the cheapest
  *   useful unlock before it deploys;
- * - the defence report renders the **frontier tick's** record, so the numbers
- *   behind every hold/fall are on screen;
- * - **no defence battle is ever simulated** — the report is reached without a
- *   second run scene, and its model states the no-battle rule;
+ * - the between-sortie tick record is carried onto the hex map, so the numbers
+ *   behind every hold/fall arrive on the map (the separate report screen is
+ *   gone, AH-0MWEXHODJ0067PSJ);
+ * - **no defence battle is ever simulated** — after a deployment ends the map
+ *   is the next screen (no second run scene, no report);
  * - the demo never writes the player's war (the seeded payload is unchanged in
  *   `localStorage`).
+ *
+ * **TEST-FIRST — red-before/green-after.** The between-sortie hop used to be a
+ * `defenceReport` screen (`menu → map → deployment → defenceReport → map`).
+ * Every route assertion below pins the post-change surface — a deployment ends
+ * straight on the map — and is authored under Vitest's `it.fails` (the repo's
+ * red-before/green-after convention, see `src/core/levelScaling.test.ts`) so
+ * the suite stays green on pre-change HEAD, where `PlayScene` still starts the
+ * (now unregistered) report and the traversal stalls at the run end. The
+ * wiring item (AH-0MWEXIWBO004GHN6) flips each `it.fails` back to `it`; a
+ * leftover `it.fails` then fails the suite.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -44,7 +55,6 @@ import { MenuScene } from './MenuScene';
 import { HexMapScene } from './HexMapScene';
 import { HangarScene } from './HangarScene';
 import { PlayScene } from './PlayScene';
-import { DefenceReportScene } from './DefenceReportScene';
 import {
   MINI_BOSS_WHEEL_SCENE_KEY,
   MiniBossWheelScene,
@@ -117,7 +127,6 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
       HexMapScene,
       HangarScene,
       PlayScene,
-      DefenceReportScene,
       GameOverScene,
       LeaderboardScene,
       MineralChoiceScene,
@@ -140,90 +149,78 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
   const until = (label: string, predicate: () => boolean): void =>
     stepGameUntil(booted!.game, label, predicate, STEP_FRAMES);
 
-  it('drives menu → map → deployment → defence report → map → hangar without stalling', async () => {
-    const menu = await bootMenu();
-    expect(menu.sys.isActive()).toBe(true);
+  it.fails(
+    'drives menu → map → deployment → map → hangar without a report screen',
+    async () => {
+      const menu = await bootMenu();
+      expect(menu.sys.isActive()).toBe(true);
 
-    // ── menu → map ────────────────────────────────────────────────
-    menu.startHangarWarDemo(DWELL_MS);
-    until('the map is shown', () => active('HexMapScene'));
-    expect(sceneOf<HexMapScene>('HexMapScene').isDemo()).toBe(true);
+      // ── menu → map ────────────────────────────────────────────────
+      menu.startHangarWarDemo(DWELL_MS);
+      until('the map is shown', () => active('HexMapScene'));
+      expect(sceneOf<HexMapScene>('HexMapScene').isDemo()).toBe(true);
 
-    // ── map → deployment (the weakest adjacent hex) ───────────────
-    until('the deployment starts', () => active('PlayScene'));
-    expect(active('PlayScene')).toBe(true);
-    const play = sceneOf<PlayScene>('PlayScene');
-    expect(play.isDemoMode()).toBe(true);
-    expect(play.isHangarWarRun()).toBe(true);
-    const deployment = play.getHangarWarDeployment()!;
-    expect(deployment.hexId).toBe(pickAttractHex(seeded));
-    // Nothing has simulated a defence: this is the normal bot-flown run.
-    expect(active('DefenceReportScene')).toBe(false);
+      // ── map → deployment (the weakest adjacent hex) ───────────────
+      until('the deployment starts', () => active('PlayScene'));
+      expect(active('PlayScene')).toBe(true);
+      const play = sceneOf<PlayScene>('PlayScene');
+      expect(play.isDemoMode()).toBe(true);
+      expect(play.isHangarWarRun()).toBe(true);
+      const deployment = play.getHangarWarDeployment()!;
+      expect(deployment.hexId).toBe(pickAttractHex(seeded));
+      // Nothing has simulated a defence: this is the normal bot-flown run.
+      // (The retired report screen is not even registered in this boot list,
+      // so the active-check is null-tolerant.)
+      expect(active('DefenceReportScene')).toBeFalsy();
 
-    // ── deployment → defence report ───────────────────────────────
-    killPlayer(play);
-    until('the defence report is shown', () => active('DefenceReportScene'));
-    // The run scene is gone: the report is reached without a second battle.
-    expect(active('PlayScene')).toBe(false);
+      // ── deployment → map (the between-sortie report is rolled in) ─
+      killPlayer(play);
+      until('the map is shown after the run', () => active('HexMapScene'));
+      // The run scene is gone: the map is reached without a second battle or
+      // a report hop between sorties.
+      expect(active('PlayScene')).toBe(false);
+      const map = sceneOf<HexMapScene>('HexMapScene');
+      // The map carries the ticked war forward: tick 0 was applied and the
+      // payload now sits at tick 1.
+      expect(map.getPayload().frontierTick).toBe(1);
 
-    const report = sceneOf<DefenceReportScene>('DefenceReportScene');
-    expect(report.isDemo()).toBe(true);
-    // The report renders the frontier tick that just ran: tick 0 was applied and
-    // the payload now sits at tick 1.
-    const record = report.getRecord();
-    expect(record.tick).toBe(0);
-    expect(report.getPayload().frontierTick).toBe(1);
-    expect(report.getModel().tick).toBe(record.tick);
-    expect(report.getModel().attackedCount).toBe(record.attacks.length);
-    // The no-battle rule is stated on screen, not merely implied.
-    expect(report.getModel().noBattleLine).toContain('no battle was simulated');
-    // Every attack row carries the resolver's own numbers.
-    for (const row of report.getModel().rows) {
-      const resolved = record.attacks.find((attack) => attack.hexId === row.hexId)!;
-      expect(row.attackingForce).toBe(resolved.attackingForce);
-      expect(row.aggression).toBe(resolved.aggression);
-      expect(row.defenderRating).toBe(resolved.defenderRating);
-      expect(row.margin).toBe(resolved.margin);
-      expect(row.retake.originHexId).toBe(resolved.attackerOriginId);
-    }
+      // ── map → hangar (the bot shops after a run) ─────────────────
+      until('the hangar is shown', () => active('HangarScene'));
+      const hangar = sceneOf<HangarScene>('HangarScene');
+      expect(hangar.isDemo()).toBe(true);
 
-    // ── defence report → map (auto-continued) ─────────────────────
-    until('the map returns', () => active('HexMapScene'));
-    const map = sceneOf<HexMapScene>('HexMapScene');
-    // The map carries the ticked war forward.
-    expect(map.getPayload().frontierTick).toBe(1);
+      // ── hangar: buy the cheapest useful unlock, then deploy ───────
+      until('the hangar buys the cheapest useful unlock', () =>
+        sceneOf<HangarScene>('HangarScene')
+          .getPayload()
+          .hangar.ownedModifiers.includes('hardened_plating'),
+      );
+      expect(active('HangarScene')).toBe(true);
+      const afterBuy = sceneOf<HangarScene>('HangarScene').getPayload();
+      expect(afterBuy.hangar.bankedMinerals).toBe(20);
 
-    // ── map → hangar (the bot shops after a report) ───────────────
-    until('the hangar is shown', () => active('HangarScene'));
-    const hangar = sceneOf<HangarScene>('HangarScene');
-    expect(hangar.isDemo()).toBe(true);
+      until('the hangar deploys', () => active('PlayScene'));
+      expect(sceneOf<PlayScene>('PlayScene').isHangarWarRun()).toBe(true);
 
-    // ── hangar: buy the cheapest useful unlock, then deploy ───────
-    until('the hangar buys the cheapest useful unlock', () =>
-      sceneOf<HangarScene>('HangarScene')
-        .getPayload()
-        .hangar.ownedModifiers.includes('hardened_plating'),
-    );
-    expect(active('HangarScene')).toBe(true);
-    const afterBuy = sceneOf<HangarScene>('HangarScene').getPayload();
-    expect(afterBuy.hangar.bankedMinerals).toBe(20);
+      // ── and the loop keeps going: the next landing is tick 2 ──────
+      killPlayer(sceneOf<PlayScene>('PlayScene'));
+      stepGameUntil(
+        booted!.game,
+        'the map is shown for the second run',
+        () => {
+          const staged = sceneOf<HexMapScene>('HexMapScene').getPayload();
+          return active('HexMapScene') && (staged.frontierTick ?? 0) >= 2;
+        },
+        600,
+      );
+      expect(
+        sceneOf<HexMapScene>('HexMapScene').getPayload().frontierTick,
+      ).toBe(2);
+    },
+  );
 
-    until('the hangar deploys', () => active('PlayScene'));
-    expect(sceneOf<PlayScene>('PlayScene').isHangarWarRun()).toBe(true);
-
-    // ── and the loop keeps going: the next report is tick 2 ───────
-    killPlayer(sceneOf<PlayScene>('PlayScene'));
-    until(
-      'the second defence report is shown',
-      () => active('DefenceReportScene'),
-    );
-    expect(
-      sceneOf<DefenceReportScene>('DefenceReportScene').getPayload().frontierTick,
-    ).toBe(2);
-  });
-
-  it(
-    'presents and auto-resolves the mini-boss reward on a winning demo deployment',
+  it.fails(
+    'presents and auto-resolves the mini-boss reward over the paused map on a winning demo deployment',
     async () => {
       const menu = await bootMenu();
       menu.startHangarWarDemo(DWELL_MS);
@@ -236,96 +233,105 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
 
       // Win through the shipped mini-boss path (real defeat, real sweep).
       winLiveDeployment(sceneOf<PlayScene>('PlayScene'));
-      stepGameUntil(
-        booted!.game,
-        'the defence report is shown',
-        () => active('DefenceReportScene'),
-        600,
-      );
 
-      // The traversal must never stall on the reward: the demo auto-spins it and
-      // the map still arrives — but the reward **is** presented, so a winning
-      // demo deployment shows the same report → reward → map order a player
-      // sees.
-      let rewardSeen = false;
+      // The traversal must never stall on the reward: the demo auto-spins it
+      // and the map still arrives — but the reward **is** presented over the
+      // **paused** map, so a winning demo deployment shows the same
+      // map-paused → reward → map-resumed order a player sees.
+      let rewardOverPausedMap = false;
       stepGameUntil(
         booted!.game,
-        'the map returns',
+        'the map returns after the auto-resolved reward',
         () => {
-          if (active(MINI_BOSS_WHEEL_SCENE_KEY)) rewardSeen = true;
+          if (active(MINI_BOSS_WHEEL_SCENE_KEY)) {
+            rewardOverPausedMap =
+              rewardOverPausedMap ||
+              booted!.game.scene.isPaused('HexMapScene');
+          }
           return active('HexMapScene');
         },
         900,
       );
-      expect(rewardSeen).toBe(true);
+      expect(rewardOverPausedMap).toBe(true);
     },
   );
 
-  it('never simulates a defence battle anywhere in the traversal', async () => {
-    const menu = await bootMenu();
-    menu.startHangarWarDemo(DWELL_MS);
+  it.fails(
+    'never simulates a defence battle or shows a report anywhere in the traversal',
+    async () => {
+      const menu = await bootMenu();
+      menu.startHangarWarDemo(DWELL_MS);
 
-    // Sample the surface in slices shorter than the dwell so a screen that is
-    // up for one dwell cannot be stepped over between two observations, and
-    // record every active scene. Each deployment is ended by the player's death
-    // — the demo bot flies the run, so the test ends it deterministically
-    // instead of waiting for the bot to die. The loop is bounded: the traversal
-    // has to reach all four screens inside the budget, and the report must never
-    // be preceded by a defence/battle scene.
-    const seen = new Set<string>();
-    const ended = new WeakSet<PlayScene>();
-    const sampleMs = Math.max(1, Math.floor(DWELL_MS / 4));
-    for (let step = 0; step < 400 && seen.size < 4; step += 1) {
-      await advanceGame(booted!.game, sampleMs);
-      if (active('PlayScene')) {
-        const play = sceneOf<PlayScene>('PlayScene');
-        if (!ended.has(play)) {
-          ended.add(play);
-          killPlayer(play);
+      // Sample the surface in slices shorter than the dwell so a screen that is
+      // up for one dwell cannot be stepped over between two observations, and
+      // record every active scene. Each deployment is ended by the player's
+      // death — the demo bot flies the run, so the test ends it deterministically
+      // instead of waiting for the bot to die. The loop is bounded: the traversal
+      // has to reach all three screens inside the budget, and the between-sortie
+      // hop must be a map landing (no second battle, no report screen).
+      const seen = new Set<string>();
+      const ended = new WeakSet<PlayScene>();
+      let landings = 0;
+      let awaitingLanding = false;
+      const sampleMs = Math.max(1, Math.floor(DWELL_MS / 4));
+      // The loop runs until two between-sortie landings on the map (the
+      // traversal must complete a full sortie cycle), bounded so a stall throws.
+      for (let step = 0; step < 400 && landings < 2; step += 1) {
+        await advanceGame(booted!.game, sampleMs);
+        if (active('PlayScene')) {
+          const play = sceneOf<PlayScene>('PlayScene');
+          if (!ended.has(play)) {
+            ended.add(play);
+            killPlayer(play);
+            awaitingLanding = true;
+          }
+        } else if (awaitingLanding && active('HexMapScene')) {
+          // A landed map after a deployment: the run scene is gone, so no
+          // defence battle is running behind the map.
+          awaitingLanding = false;
+          landings += 1;
+        }
+        const activeKeys = booted!.game.scene.scenes
+          .filter((scene) => scene.sys.isActive())
+          .map((scene) => scene.sys.settings.key);
+        for (const key of activeKeys) {
+          // The retired report screen must never appear.
+          expect(key).not.toBe('DefenceReportScene');
+          seen.add(key);
         }
       }
-      const activeKeys = booted!.game.scene.scenes
-        .filter((scene) => scene.sys.isActive())
-        .map((scene) => scene.sys.settings.key);
-      for (const key of activeKeys) seen.add(key);
-      if (active('DefenceReportScene')) {
-        // The only scene that could hold a defence battle is the run scene.
-        expect(active('PlayScene')).toBe(false);
-        const report = sceneOf<DefenceReportScene>('DefenceReportScene');
-        // The report is arithmetic: it renders a record, it does not fly a bot.
-        expect(report.getModel().noBattleLine).toContain(
-          'no battle was simulated',
-        );
-      }
-    }
 
-    // Every screen the design names was demonstrated by the bot.
-    expect(seen).toContain('HexMapScene');
-    expect(seen).toContain('PlayScene');
-    expect(seen).toContain('DefenceReportScene');
-    expect(seen).toContain('HangarScene');
-    // No unexpected scene was ever started.
-    expect(
-      [...seen].sort(),
-    ).toEqual(
-      ['DefenceReportScene', 'HangarScene', 'HexMapScene', 'PlayScene'].sort(),
-    );
-  });
+      // Every screen the design names was demonstrated by the bot.
+      expect(seen).toContain('HexMapScene');
+      expect(seen).toContain('PlayScene');
+      expect(seen).toContain('HangarScene');
+      // No unexpected scene was ever started (the report is gone).
+      expect(
+        [...seen].sort(),
+      ).toEqual(
+        ['HangarScene', 'HexMapScene', 'PlayScene'].sort(),
+      );
+      // The loop completed between-sortie landings on the map.
+      expect(landings).toBeGreaterThanOrEqual(2);
+    },
+  );
 
-  it('leaves the player’s stored war untouched (a demo is not progress)', async () => {
-    const menu = await bootMenu();
-    menu.startHangarWarDemo(DWELL_MS);
+  it.fails(
+    'leaves the player’s stored war untouched (a demo is not progress)',
+    async () => {
+      const menu = await bootMenu();
+      menu.startHangarWarDemo(DWELL_MS);
 
-    // Drive a full cycle: deploy, finish the run, and let the report tick.
-    until('the deployment starts', () => active('PlayScene'));
-    killPlayer(sceneOf<PlayScene>('PlayScene'));
-    until('the defence report is shown', () => active('DefenceReportScene'));
-    until('the map returns', () => active('HexMapScene'));
+      // Drive a full cycle: deploy, finish the run, and let the map tick.
+      until('the deployment starts', () => active('PlayScene'));
+      killPlayer(sceneOf<PlayScene>('PlayScene'));
+      until('the map is shown after the run', () => active('HexMapScene'));
 
-    // The seeded save is byte-identical: no capture, tick, purchase or ring
-    // change from the demo reached the versioned store.
-    expect(loadHangarWarPayload()).toEqual(seeded);
-  });
+      // The seeded save is byte-identical: no capture, tick, purchase or ring
+      // change from the demo reached the versioned store.
+      expect(loadHangarWarPayload()).toEqual(seeded);
+    },
+  );
 
   it('exposes the shared traversal dwell (one source of truth for the pacing)', () => {
     // The scenes and this test read the same constant, so a pacing change is a

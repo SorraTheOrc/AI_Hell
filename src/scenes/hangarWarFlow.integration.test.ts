@@ -1,10 +1,10 @@
 /**
  * Hangar War end-to-end flow through the **shipped** game config
- * (AH-0MVZ4S9ZU004GXUM AC1/AC2).
+ * (AH-0MVZ4S9ZU004GXUM).
  *
  * Every other Hangar War suite boots an explicit scene-class list
  * (`bootScene([...])`), so none of them exercises `buildGameConfig().scene` —
- * which is exactly how the unregistered `DefenceReportScene` stayed hidden: a
+ * which is exactly how an unregistered `DefenceReportScene` stayed hidden: a
  * `scene.start()` for a scene that is not in the shipped array is a silent
  * no-op at runtime, and a hand-picked boot list always contains the scene the
  * test wants.
@@ -13,27 +13,31 @@
  * the player path the feature ships with, with the feature flag ON (its shipped
  * default):
  *
- *   menu entry → hangar → hex map → deployment → defence report → hex map
+ *   menu entry → hangar → hex map → deployment → hex map
  *
  * Every transition is a real `scene.start()` through the shipped config, so a
  * scene that is not registered — or a screen that cannot reach the next one —
  * fails here rather than in a player's session.
  *
- * ## The winning route (AH-0MWCOW61X002LL10)
+ * ## Deployment ends on the hex map (AH-0MWEXHODJ0067PSJ)
  *
- * A deployment is won by defeating its level's mini-boss, so the winning route
- * is: mini-boss defeat → `DefenceReportScene` (a victory) → the mini-boss
- * **reward** → `HexMapScene` with the newly held hex. The reward is never
- * presented before the report, and the map is reached only after the reward
- * resolves. The win is driven end-to-end through the shipped victory path by
- * the shared `src/test/hangarWarWinHarness.ts` driver (compact campaign → real
- * mini-boss defeat → real death sweep), never by an injected finalise event.
+ * The separate between-sortie `DefenceReportScene` is being rolled into the
+ * hex map (parent AH-0MWDC3L9I008INDP): a deployment now ends **directly on
+ * the hex map**, carrying the deployment's payload, the resolved tick record
+ * and the run result line (VICTORY/DEFEAT · score). The winning route is
+ * mini-boss defeat → **paused hex map** → the mini-boss reward over it → map
+ * interaction resumes — replacing the old report → reward → map ordering
+ * (AH-0MWCOW61X002LL10, moved onto the map).
  *
- * **TEST-FIRST — red-before/green-after.** The reward-ordering case below was
- * written as an `it.fails` red witness on pre-change HEAD (`continueToMap()`
- * went straight to the map, so the reward never appeared). The implementation
- * item (AH-0MWCOW6KA008OJOL) flipped it to a plain `it`, so a leftover
- * `it.fails` would now fail the suite.
+ * **TEST-FIRST — red-before/green-after.** Every assertion below that pins the
+ * no-report-hop landing is authored under Vitest's `it.fails` (the repo's
+ * red-before/green-after convention, see `src/core/levelScaling.test.ts`), so
+ * the suite stays green on pre-change HEAD, where a deployment still lands on
+ * `DefenceReportScene`. The wiring item (AH-0MWEXIWBO004GHN6) flips each
+ * `it.fails` back to `it` once `PlayScene._finishRun` starts `HexMapScene`
+ * directly; the scene item (AH-0MWEXIOZZ009UX14) supplies the map's
+ * record/run-line/reward surface the assertions read through the guarded
+ * seams below. A leftover `it.fails` then fails the suite.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -64,16 +68,17 @@ import { HANGAR_WAR_LABEL, MenuScene } from './MenuScene';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import {
-  DEFENCE_REPORT_SCENE_KEY,
-  DefenceReportScene,
-} from './DefenceReportScene';
-import {
   MINI_BOSS_WHEEL_SCENE_KEY,
   MiniBossWheelScene,
 } from './MiniBossWheelScene';
 import { PlayScene } from './PlayScene';
 
-/** Frame budget for one screen change (~3 s of simulated time at 60 fps). */
+/**
+ * Frame budget for one screen change (~3 s of simulated time at 60 fps).
+ * A screen change lands a few frames after the run-end hold fires (Phaser
+ * applies a queued scene start on the next frame), so the budget is generous
+ * and still a hard, failing bound.
+ */
 const STEP_FRAMES = 180;
 
 /** A fresh war with an unheld ring 1 and no salvage. */
@@ -115,6 +120,27 @@ function hangarWarControl(menu: MenuScene): Phaser.GameObjects.Text {
   return control!;
 }
 
+/**
+ * The map's transient run result line, read through the seam the scene item
+ * (AH-0MWEXIOZZ009UX14) adds: `RUN: VICTORY|DEFEAT · score N`, one landing.
+ *
+ * Guarded so the suite compiles and the red witnesses fail cleanly while the
+ * map still has no run-line surface (pre-change HEAD); the flip asserts it.
+ */
+function runLineOf(map: HexMapScene): string | null {
+  const seam = map as unknown as { getRunLine?(): string | null };
+  return typeof seam.getRunLine === 'function' ? seam.getRunLine() : null;
+}
+
+/**
+ * The between-sortie tick record the map carries, through the same guarded
+ * seam. `null` while the surface does not exist yet (red witness).
+ */
+function recordOf(map: HexMapScene): unknown {
+  const seam = map as unknown as { getRecord?(): unknown };
+  return typeof seam.getRecord === 'function' ? seam.getRecord() : null;
+}
+
 describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => {
   let booted: BootedGame | null = null;
 
@@ -152,54 +178,53 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
     return booted.scene as MenuScene;
   }
 
-  it('walks menu → hangar → map → deployment → defence report → map with the flag ON', async () => {
-    const menu = await bootShippedConfig();
-    expect(menu.sys.isActive()).toBe(true);
-    expect(menu.isHangarWarEnabled()).toBe(true);
+  it.fails(
+    'walks menu → hangar → map → deployment → map with the flag ON (no report hop)',
+    async () => {
+      const menu = await bootShippedConfig();
+      expect(menu.sys.isActive()).toBe(true);
+      expect(menu.isHangarWarEnabled()).toBe(true);
 
-    // ── menu entry → hangar ───────────────────────────────────────
-    hangarWarControl(menu).emit('pointerdown');
-    until('the hangar is shown', () => active(HANGAR_SCENE_KEY));
-    const hangar = sceneOf<HangarScene>(HANGAR_SCENE_KEY);
-    expect(hangar.isDemo()).toBe(false);
+      // ── menu entry → hangar ───────────────────────────────────────
+      hangarWarControl(menu).emit('pointerdown');
+      until('the hangar is shown', () => active(HANGAR_SCENE_KEY));
+      const hangar = sceneOf<HangarScene>(HANGAR_SCENE_KEY);
+      expect(hangar.isDemo()).toBe(false);
 
-    // ── hangar → hex map (the one click the design promises) ──────
-    const mapRow = hangar.getRows().find((row) => row.key === 'map');
-    expect(mapRow, 'the hangar has no HEX MAP row').toBeDefined();
-    mapRow!.text.emit('pointerdown');
-    until('the hex map is shown', () => active(HEX_MAP_SCENE_KEY));
-    const map = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
-    // The map carries the same war the hangar was showing, ring materialised.
-    expect(map.getPayload().ring.hexes.length).toBeGreaterThan(0);
+      // ── hangar → hex map (the one click the design promises) ──────
+      const mapRow = hangar.getRows().find((row) => row.key === 'map');
+      expect(mapRow, 'the hangar has no HEX MAP row').toBeDefined();
+      mapRow!.text.emit('pointerdown');
+      until('the hex map is shown', () => active(HEX_MAP_SCENE_KEY));
+      const map = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
+      // The map carries the same war the hangar was showing, ring materialised.
+      expect(map.getPayload().ring.hexes.length).toBeGreaterThan(0);
 
-    // ── hex map → deployment ─────────────────────────────────────
-    const hexRow = map.getRows().find((row) => row.key.startsWith('hex:'));
-    expect(hexRow, 'the map has no deployable hex row').toBeDefined();
-    hexRow!.text.emit('pointerdown');
-    until('the deployment starts', () => active('PlayScene'));
-    const play = sceneOf<PlayScene>('PlayScene');
-    expect(play.isHangarWarRun()).toBe(true);
-    expect(play.getHangarWarDeployment()!.hexId).toBe(
-      hexRow!.key.slice('hex:'.length),
-    );
+      // ── hex map → deployment ─────────────────────────────────────
+      const hexRow = map.getRows().find((row) => row.key.startsWith('hex:'));
+      expect(hexRow, 'the map has no deployable hex row').toBeDefined();
+      hexRow!.text.emit('pointerdown');
+      until('the deployment starts', () => active('PlayScene'));
+      const play = sceneOf<PlayScene>('PlayScene');
+      expect(play.isHangarWarRun()).toBe(true);
+      expect(play.getHangarWarDeployment()!.hexId).toBe(
+        hexRow!.key.slice('hex:'.length),
+      );
 
-    // ── deployment → defence report ──────────────────────────────
-    killPlayer(play);
-    until(
-      'the defence report is shown',
-      () => active(DEFENCE_REPORT_SCENE_KEY),
-    );
-    const report = sceneOf<DefenceReportScene>(DEFENCE_REPORT_SCENE_KEY);
-    expect(report.isDemo()).toBe(false);
-    expect(report.getRecord()).toBeDefined();
-
-    // ── defence report → hex map ─────────────────────────────────
-    report.continueToMap();
-    until('the map returns', () => active(HEX_MAP_SCENE_KEY));
-    expect(
-      sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY).getPayload().frontierTick,
-    ).toBe(1);
-  });
+      // ── deployment → hex map (the report hop is gone) ─────────────
+      killPlayer(play);
+      until('the hex map is shown directly', () => active(HEX_MAP_SCENE_KEY));
+      const landed = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
+      // The deployment's payload, tick record and run line arrive with it.
+      expect(landed.getPayload().frontierTick).toBe(1);
+      expect(recordOf(landed)).toBeDefined();
+      expect(runLineOf(landed)).toMatch(/^RUN: DEFEAT · score \d+$/);
+      // The landed map is a live, interactive surface again.
+      expect(landed.getRows().some((row) => row.key.startsWith('hex:'))).toBe(
+        true,
+      );
+    },
+  );
 
   /**
    * Walks the shipped config to a live deployment, injects the compact
@@ -240,49 +265,48 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
     return { play, hexId };
   }
 
-  /** Steps until the victory defence report is up (the 5 s victory hold). */
-  function toDefenceReport(): DefenceReportScene {
-    stepGameUntil(
-      booted!.game,
-      'the defence report is shown',
-      () => active(DEFENCE_REPORT_SCENE_KEY),
-      600,
-    );
-    return sceneOf<DefenceReportScene>(DEFENCE_REPORT_SCENE_KEY);
-  }
-
-  it(
-    'presents the mini-boss reward between the defence report and the map',
+  it.fails(
+    'presents the mini-boss reward over the paused hex map, then map interaction resumes',
     async () => {
       const { hexId } = await walkToWonDeployment();
-      const report = toDefenceReport();
 
-      // The victory report is the first post-run screen; the reward waits.
-      expect(active(DEFENCE_REPORT_SCENE_KEY)).toBe(true);
-      expect(active(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(false);
-
-      report.continueToMap();
-
-      // ... then the shared reward overlay, and only then the map.
+      // The run lands on the **paused** hex map and the reward presents over
+      // it — the report hop (report → reward → map) is gone entirely. Sample
+      // the hold: the reward must never present while the run is still live.
+      let rewardWhileRunLive = false;
       stepGameUntil(
         booted!.game,
-        'the mini-boss reward is shown',
-        () => active(MINI_BOSS_WHEEL_SCENE_KEY),
-        240,
+        'the reward presents over the paused hex map',
+        () => {
+          if (active(MINI_BOSS_WHEEL_SCENE_KEY) && active('PlayScene')) {
+            rewardWhileRunLive = true;
+          }
+          return (
+            active(MINI_BOSS_WHEEL_SCENE_KEY) &&
+            booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)
+          );
+        },
+        600,
       );
+      expect(rewardWhileRunLive).toBe(false);
+      // A paused map is not *active*: the reward overlay is the running scene.
       expect(active(HEX_MAP_SCENE_KEY)).toBe(false);
 
       // The player spins the shared overlay (the attract bot auto-spins it).
       sceneOf<MiniBossWheelScene>(MINI_BOSS_WHEEL_SCENE_KEY).spin();
       stepGameUntil(
         booted!.game,
-        'the map returns',
-        () => active(HEX_MAP_SCENE_KEY),
+        'the map resumes interaction',
+        () =>
+          active(HEX_MAP_SCENE_KEY) &&
+          !booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY),
         600,
       );
 
-      // The newly held hex is what the map renders.
+      // The map carries the win: record, run line and the newly held hex.
       const map = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
+      expect(recordOf(map)).toBeDefined();
+      expect(runLineOf(map)).toMatch(/^RUN: VICTORY · score \d+$/);
       const hex = map
         .getPayload()
         .ring.hexes.find((state) => state.id === hexId);
@@ -295,57 +319,52 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
       expect(map.getRows().some((row) => row.key === `hex:${hexId}`)).toBe(
         true,
       );
+
+      // Map interaction resumes: a hex row deploys the next sortie.
+      const hexRow = map.getRows().find((row) => row.key.startsWith('hex:'));
+      expect(hexRow, 'the resumed map has deployable hex rows').toBeDefined();
+      hexRow!.text.emit('pointerdown');
+      until('a next deployment starts', () => active('PlayScene'));
     },
   );
 
-  it('never shows the mini-boss reward before the defence report', async () => {
-    await walkToWonDeployment();
+  it.fails(
+    'keeps the deployment → map route with no reward on a lost deployment',
+    async () => {
+      const menu = await bootShippedConfig();
 
-    // Sample every frame of the victory hold: the reward must never appear
-    // before the report does.
-    let rewardBeforeReport = false;
-    stepGameUntil(
-      booted!.game,
-      'the defence report is shown',
-      () => {
-        if (active(MINI_BOSS_WHEEL_SCENE_KEY)) rewardBeforeReport = true;
-        return active(DEFENCE_REPORT_SCENE_KEY);
-      },
-      600,
-    );
-    expect(rewardBeforeReport).toBe(false);
+      hangarWarControl(menu).emit('pointerdown');
+      until('the hangar is shown', () => active(HANGAR_SCENE_KEY));
+      sceneOf<HangarScene>(HANGAR_SCENE_KEY)
+        .getRows()
+        .find((row) => row.key === 'map')!
+        .text.emit('pointerdown');
+      until('the hex map is shown', () => active(HEX_MAP_SCENE_KEY));
 
-    const report = sceneOf<DefenceReportScene>(DEFENCE_REPORT_SCENE_KEY);
-    // A winning deployment's report is a victory report.
-    expect((report as unknown as { won: boolean | null }).won).toBe(true);
-  });
+      const hexRow = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY)
+        .getRows()
+        .find((row) => row.key.startsWith('hex:'));
+      hexRow!.text.emit('pointerdown');
+      until('the deployment starts', () => active('PlayScene'));
 
-  it('keeps the report → map route with no reward on a lost deployment', async () => {
-    const menu = await bootShippedConfig();
-
-    hangarWarControl(menu).emit('pointerdown');
-    until('the hangar is shown', () => active(HANGAR_SCENE_KEY));
-    sceneOf<HangarScene>(HANGAR_SCENE_KEY)
-      .getRows()
-      .find((row) => row.key === 'map')!
-      .text.emit('pointerdown');
-    until('the hex map is shown', () => active(HEX_MAP_SCENE_KEY));
-
-    const hexRow = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY)
-      .getRows()
-      .find((row) => row.key.startsWith('hex:'));
-    hexRow!.text.emit('pointerdown');
-    until('the deployment starts', () => active('PlayScene'));
-
-    killPlayer(sceneOf<PlayScene>('PlayScene'));
-    const report = toDefenceReport();
-    expect((report as unknown as { won: boolean | null }).won).toBe(false);
-
-    report.continueToMap();
-    until('the map returns', () => active(HEX_MAP_SCENE_KEY));
-    // A lost deployment never presents the mini-boss reward.
-    expect(active(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(false);
-  });
+      // A lost deployment lands on the map directly; the reward never shows.
+      killPlayer(sceneOf<PlayScene>('PlayScene'));
+      let rewardSeen = false;
+      stepGameUntil(
+        booted!.game,
+        'the map is shown after the lost deployment',
+        () => {
+          if (active(MINI_BOSS_WHEEL_SCENE_KEY)) rewardSeen = true;
+          return active(HEX_MAP_SCENE_KEY);
+        },
+        600,
+      );
+      expect(rewardSeen).toBe(false);
+      const map = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
+      expect(recordOf(map)).toBeDefined();
+      expect(runLineOf(map)).toMatch(/^RUN: DEFEAT · score \d+$/);
+    },
+  );
 
   it('reaches the map from the hangar without deploying (ring intel first)', async () => {
     const menu = await bootShippedConfig();

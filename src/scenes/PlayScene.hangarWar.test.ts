@@ -49,7 +49,7 @@ import {
   PlayScene,
   VICTORY_TRANSITION_HOLD_MS,
 } from './PlayScene';
-import { DEFENCE_REPORT_SCENE_KEY, DefenceReportScene } from './DefenceReportScene';
+import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import {
   buildHangarDeployment,
   type HangarWarDeployment,
@@ -144,7 +144,7 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     resume?: boolean;
     hangarWar?: HangarWarDeployment | null;
   }): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene, DefenceReportScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene, HexMapScene]);
     const scene = booted.scene as PlayScene;
     scene.setAsteroidSpawnerEnabled(false);
     if (data) {
@@ -447,10 +447,14 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     ).toBe(true);
   });
 
-  it('AC — a deployment run ends on its wave-5 mini-boss and the capture cycle resolves (AH-0MWDCBVQ700579WS)', async () => {
-    // The capture cycle resolves against the stored war, like a shipped run.
-    saveHangarWarPayload(fieldedPayload());
-    const scene = await bootPlay({ hangarWar: DEPLOYMENT });
+  // TEST-FIRST (AH-0MWEXHODJ0067PSJ): the run ends on the hex map, not the
+  // retired report screen; the wiring item (AH-0MWEXIWBO004GHN6) flips it to `it`.
+  it.fails(
+    'AC — a deployment run ends on its wave-5 mini-boss and the capture cycle resolves (AH-0MWDCBVQ700579WS)',
+    async () => {
+      // The capture cycle resolves against the stored war, like a shipped run.
+      saveHangarWarPayload(fieldedPayload());
+      const scene = await bootPlay({ hangarWar: DEPLOYMENT });
     const wm = scene.getWaveManager();
     const level = wm.level;
     expect(level).toBe(DEPLOYMENT.startLevel);
@@ -481,10 +485,18 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(hex.bossDefeated).toBe(true);
     expect(hex.defender).not.toBeNull();
 
-    // The report → reward → map ordering is unchanged: the run ends as a
-    // victory in the between-sortie defence report.
+    // The run ends as a **victory on the hex map** (the between-sortie report
+    // screen is gone, AH-0MWEXHODJ0067PSJ). TEST-FIRST: red until the wiring
+    // item (AH-0MWEXIWBO004GHN6) routes the deployment end to the map.
     await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
-    expect(scene.game.scene.isActive(DEFENCE_REPORT_SCENE_KEY)).toBe(true);
+    const map = scene.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene | null;
+    expect(map, 'the deployment must land on the hex map').not.toBeNull();
+    expect(
+      scene.game.scene.isActive(HEX_MAP_SCENE_KEY) ||
+        scene.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+    ).toBe(true);
     expect(wm.waveNumber).toBe(5);
     expect(scene.getAliveCount()).toBe(0);
   }, 30_000);

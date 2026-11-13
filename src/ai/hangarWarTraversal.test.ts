@@ -3,10 +3,20 @@
  *
  * The traversal is the epic's "attract mode never stalls" guarantee (AC10) made
  * testable: every decision is pure, total and always names an action, so no
- * Hangar War screen can leave the demo waiting. These tests pin the three rules
- * the design names — the weakest adjacent hex on the map, the cheapest useful
- * unlock (seeded tie-break) in the hangar, and an immediate continue on the
- * defence report — plus the dispatch that ties the screens together.
+ * Hangar War screen can leave the demo waiting. These tests pin the two rules
+ * the design names — the weakest adjacent hex on the map and the cheapest
+ * useful unlock (seeded tie-break) in the hangar — plus the dispatch that ties
+ * the screens together.
+ *
+ * **The between-sortie `defenceReport` screen decision is gone
+ * (AH-0MWEXHODJ0067PSJ, TEST-FIRST).** The separate report screen is rolled
+ * into the hex map (parent AH-0MWDC3L9I008INDP): a deployment now ends
+ * directly on the map, so the traversal has no report hop to decide. The
+ * removed decision is pinned as an `it.fails` red witness (the repo's
+ * red-before/green-after convention, see `src/core/levelScaling.test.ts`);
+ * the wiring item (AH-0MWEXIWBO004GHN6) removes `decideReportAction` from the
+ * source and flips the witness to `it`. A leftover `it.fails` then fails the
+ * suite.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -16,7 +26,6 @@ import {
   decideHangarAction,
   decideMapAction,
   decideMenuAction,
-  decideReportAction,
   decideTraversalAction,
   type HangarWarTraversalAction,
 } from './hangarWarTraversal';
@@ -231,9 +240,21 @@ describe('decideHangarAction — cheapest useful unlock, seeded', () => {
   });
 });
 
-describe('decideReportAction — auto-advance, never a battle', () => {
-  it('continues to the map', () => {
-    expect(decideReportAction()).toEqual({ kind: 'continueToMap' });
+describe('the between-sortie report decision is removed (AH-0MWEXHODJ0067PSJ)', () => {
+  it.fails('no longer exposes a report decision (the map owns the landing)', async () => {
+    // TEST-FIRST witness: pre-change `decideTraversalAction('defenceReport')`
+    // returns `continueToMap` and the module still exports `decideReportAction`;
+    // the wiring item (AH-0MWEXIWBO004GHN6) removes both and flips this to `it`.
+    const mod = (await import('./hangarWarTraversal')) as Record<string, unknown>;
+    expect('decideReportAction' in mod).toBe(false);
+    // A leftover `defenceReport` screen behaves like the menu fallback, never
+    // a report-specific hop.
+    expect(
+      decideTraversalAction(
+        'defenceReport' as unknown as 'menu',
+        ringOnePayload(),
+      ),
+    ).toEqual({ kind: 'openMap' });
   });
 });
 
@@ -248,7 +269,7 @@ describe('decideTraversalAction — one dispatch, no stalling', () => {
     'deployFromHangar',
   ];
 
-  it.each(['menu', 'map', 'deployment', 'defenceReport', 'hangar'] as const)(
+  it.each(['menu', 'map', 'deployment', 'hangar'] as const)(
     'always names an actionable step on the %s screen',
     (screen) => {
       const action = decideTraversalAction(screen, payload);
@@ -257,7 +278,7 @@ describe('decideTraversalAction — one dispatch, no stalling', () => {
   );
 
   it('never returns a wait/idle outcome (the never-stalls contract)', () => {
-    const screens = ['menu', 'map', 'deployment', 'defenceReport', 'hangar'] as const;
+    const screens = ['menu', 'map', 'deployment', 'hangar'] as const;
     for (const screen of screens) {
       const action = decideTraversalAction(screen, payload);
       expect(Object.keys(action)).not.toContain('wait');
