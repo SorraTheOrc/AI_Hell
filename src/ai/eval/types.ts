@@ -261,6 +261,19 @@ export interface ArenaConfig {
    */
   readonly scaleLevels?: boolean;
   /**
+   * Explicit wave set for **per-level campaign mode** (the deployment seam,
+   * AH-0MWCQ4FWN009J9DM). When supplied together with {@link ArenaConfig.level},
+   * the arena builds its wave plan from this definition's waves instead of the
+   * authored `Formations.LEVELS` level, while `level` still selects the level
+   * for scaling, the per-kill drop rule and the emitted `level_cleared`
+   * payload. A hex deployment uses it to play the shipped **five-wave sortie**
+   * — `truncateCampaignForDeployment`'s level truncation — so the harness
+   * plays exactly the wave set the game plays, with no second level-completion
+   * rule in the arena. Absent → the authored level's own wave set. Ignored
+   * unless `level` is set.
+   */
+  readonly levelDefinition?: LevelDefinition;
+  /**
    * Enemy force-field toggle (epic AH-0MVJ8W4GE007OMNT AC5, default
    * `true`). `false` resolves every hostile's force field at level 1 — for
    * the shipped curve that is **0 hits for every archetype** (neutral

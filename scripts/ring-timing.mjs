@@ -134,7 +134,7 @@ function printHelp() {
       '  --seeds <count>       Use seeds 1..count.',
       '  --json                Print the JSON report instead of text.',
       '  --out <file>          Write the JSON report to <file>.',
-      '  --one-level           Measure the shipped five-wave sortie (income view) instead of the campaign slice.',
+      '  --one-level           Measure the income view of the five-wave sortie (full-campaign mode, honouring the wave shootEnabled gate).',
       '  --income-out <file>   Write the per-deployment income + unlock-pace JSON (requires --one-level).',
       '  -h, --help            Show this help.',
       '',

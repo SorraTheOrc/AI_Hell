@@ -40,7 +40,6 @@ import { resolvePolicyFactory } from './policies';
 import type { TelemetryEventRecord } from './types';
 import {
   DEFAULT_BETWEEN_SORTIE_MINUTES,
-  DEFAULT_RETRY_MINUTES,
   DEFAULT_RING_TIMING_DT,
   RING_DEPLOYMENT_TICKS,
   RING_TIMING_TARGETS,
@@ -201,13 +200,15 @@ describe('ring timing: the measured + modelled play time', () => {
       runDeployment: fakeRunner(3),
     });
     const run = report.runs[0];
-    // Aggressions 3, 4 and 6 are lost: 3 losses × 1 retry × 5 min.
+    // Aggressions 3, 4 and 6 are lost: 3 losses × 1 retry, each replaying the
+    // SAME deployment at its measured 0.5 min (never the retired flat window).
     expect(run.losses).toBe(3);
-    expect(run.retryMinutes).toBe(3 * DEFAULT_RETRY_MINUTES);
+    expect(run.retryMinutes).toBe(3 * (30 / 60));
     expect(run.salvageForfeited).toBe(3 * 5);
     expect(run.salvageBanked).toBe(3 * 18);
-    // 3 safe runs × 5 min + 3 lost runs × 0.5 min + 15 min retries + 12 min.
-    expect(run.totalMinutes).toBeCloseTo(3 * 5 + 3 * 0.5 + 15 + 12, 5);
+    // 3 safe runs × 5 min + 3 lost runs × 0.5 min + 3 measured retries ×
+    // 0.5 min + 6 × 2 min between sorties.
+    expect(run.totalMinutes).toBeCloseTo(3 * 5 + 3 * 0.5 + 3 * 0.5 + 12, 5);
     expect(run.ringSecured).toBe(true);
   });
 
@@ -221,13 +222,15 @@ describe('ring timing: the measured + modelled play time', () => {
       retakeChancePercent: 50,
     });
     const run = report.runs[0];
-    // The weapon hex (aggression 6) is lost: 0.5 min + one 5-minute retry.
+    // The weapon hex (aggression 6) is lost: 0.5 min measured, replayed once
+    // at its own measured 0.5 min.
     expect(run.deployments).toHaveLength(1);
     expect(run.exposedHexes).toBe(5);
     expect(run.expectedRetakes).toBe(2.5);
-    // 2.5 expected retakes × (5 min deployment + 2 min visit).
-    expect(run.retakeMinutes).toBeCloseTo(2.5 * 7, 5);
-    expect(run.totalMinutes).toBeCloseTo(0.5 + 5 + 2 + 2.5 * 7, 5);
+    // 2.5 expected retakes × (the line's measured mean 0.5-min deployment +
+    // the 2-minute visit) — never the retired 5-minute window.
+    expect(run.retakeMinutes).toBeCloseTo(2.5 * (0.5 + 2), 5);
+    expect(run.totalMinutes).toBeCloseTo(0.5 + 0.5 + 2 + 2.5 * (0.5 + 2), 5);
     expect(run.ringSecured).toBe(false);
   });
 
@@ -600,39 +603,47 @@ describe('ring timing: real arena evidence', () => {
     expect(first.summary.deploymentMinutes.mean).toBeGreaterThan(0);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the one-ring MVP grind lands inside the 40–60-minute budget', () => {
+  it('the one-level MVP grind measures ~16 min and misses the 40–60 window (AH-0MWCOWSVN003X81A)', () => {
+    // One hex, one level, five-wave sortie: measured twice as fast as the
+    // retired campaign-slice model and every sortie is lost to enemy fire, so
+    // the committed 40–60-minute window no longer holds. The parent records
+    // the budget re-rule as its own item (AH-0MWCQ4HTC004U73V) — this pins
+    // the measured reality so a fire-model or balance change cannot move it
+    // silently in the meantime.
     const report = simulateRingTiming({
       ringIndex: 1,
       strategy: 'grind',
       seeds: [1, 2, 3],
     });
     expect(report.runs[0].deployments).toHaveLength(6);
-    expect(report.budget.verdict).toBe('in-window');
-    expect(report.budget.withinTolerance).toBe(true);
-    expect(report.budget.measuredMinutes).toBeGreaterThanOrEqual(
+    // The grind plays every hex, so the ring is secured even though every
+    // sortie is a first-attempt loss (losses are retried, not abandoned).
+    expect(report.summary.ringSecuredRuns).toBe(3);
+    expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.withinTolerance).toBe(false);
+    // Decisively below the window (measured mean ≈ 16.4 min on seeds 1–3).
+    expect(report.budget.measuredMinutes).toBeLessThan(
       RING_TIMING_TARGETS[1].minMinutes,
     );
-    expect(report.budget.measuredMinutes).toBeLessThanOrEqual(
-      RING_TIMING_TARGETS[1].maxMinutes,
-    );
-    expect(report.summary.ringSecuredRuns).toBe(3);
+    expect(report.budget.measuredMinutes).toBeGreaterThan(5);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the 12-hex ring 2 grind lands inside the 90–120-minute budget', () => {
+  it('the 12-hex one-level ring 2 grind measures ~48 min and misses the 90–120 window (AH-0MWCOWSVN003X81A)', () => {
+    // The same one-level model, twelve hexes: measured ≈ 48 min mean (seeds
+    // 1–3), every sortie lost to enemy fire. The 90–120-minute window no
+    // longer holds; the parent's budget-verdict item re-rules it.
     const report = simulateRingTiming({
       ringIndex: 2,
       strategy: 'grind',
       seeds: [1, 2, 3],
     });
     expect(report.runs[0].deployments).toHaveLength(12);
-    expect(report.budget.verdict).toBe('in-window');
-    expect(report.budget.withinTolerance).toBe(true);
-    expect(report.budget.measuredMinutes).toBeGreaterThanOrEqual(
+    expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.withinTolerance).toBe(false);
+    expect(report.budget.measuredMinutes).toBeLessThan(
       RING_TIMING_TARGETS[2].minMinutes,
     );
-    expect(report.budget.measuredMinutes).toBeLessThanOrEqual(
-      RING_TIMING_TARGETS[2].maxMinutes,
-    );
+    expect(report.budget.measuredMinutes).toBeGreaterThan(5);
   }, REAL_ARENA_TIMEOUT_MS);
 
   it('the rush line is faster but riskier than the grind, and neither dominates', () => {
@@ -660,18 +671,20 @@ describe('ring timing: real arena evidence', () => {
     expect(grind.runs[0].expectedRetakes).toBe(0);
     expect(rush.runs[0].ringSecured).toBe(false);
     expect(grind.runs[0].ringSecured).toBe(true);
-    // ...and it forfeits the salvage of the runs it does not finish.
-    expect(rush.summary.salvageBanked.mean).toBeLessThan(
-      grind.summary.salvageBanked.mean,
-    );
+    // On the one-level model every sortie on this seed is a first-attempt
+    // loss (the per-level arena's documented fire-on fidelity), so neither
+    // line banks salvage — the risk discriminator is exposure + the
+    // re-capture charge, not banked salvage.
+    expect(rush.runs[0].salvageBanked).toBe(0);
+    expect(grind.runs[0].salvageBanked).toBe(0);
     // Neither line dominates: the rush is faster but leaves the ring open, the
-    // grind secures and banks it for more minutes.
+    // grind spends more minutes and ends with the ring secured.
     expect(grind.summary.totalMinutes.mean).toBeGreaterThan(
       rush.summary.totalMinutes.mean,
     );
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the default runner plays the real campaign slice for the hex level', () => {
+  it('the default runner plays the one-level deployment for the hex level', () => {
     const runner = createArenaDeploymentRunner();
     const campaignHex = hexRingDefinitionsFor(1).find(
       (entry) => entry.id === 'hex-r1-2',
@@ -755,24 +768,22 @@ describe('ring timing: the arena starting-loadout seam is live (AH-0MW9QA2YC009P
   }, REAL_ARENA_TIMEOUT_MS);
 });
 
-describe('ring timing: the level-3 boundary under the deployment loadout', () => {
+describe('ring timing: the one-level survival boundary under the deployment loadout', () => {
   /**
-   * The bare-cannon boundary was bisected (AH-0MWAPWS1W007LGGY) to the arena's
-   * own fire-model fidelity commit `6ecbab23` (AH-0MW5DVAME0062GQO): firing the
-   * run's permanent choice grants lifts the bot's damage output, and the
-   * kill-driven campaign slice escalates by kills, so a run started at campaign
-   * level 3 climbed into the first enemy-fire level (4) *inside* the fixed
-   * deployment window and died at ≈250 s — which is why ring 2 measured every
-   * hex as a first-attempt loss.
+   * The one-level model plays the arena's **per-level mode**, whose documented
+   * fidelity boundary ignores the wave `shootEnabled` gate — every enemy
+   * fires, at every level. With the shipped competent bot and the deployment
+   * loadout, a one-level five-wave sortie therefore **dies to enemy fire
+   * before the wave-5 clear on every seed**, at every level a ring-1 hex
+   * selects (levels 2–3 for hex-r1-2 / hex-r1-1; the higher levels die even
+   * sooner). The old campaign-slice boundary (a level-3 slice escalated into
+   * the first enemy-fire level 4 by kills) is gone with the slice itself.
    *
-   * Measuring the **deployment loadout** instead of the bare cannon
-   * (AH-0MW9QA2YC009PSF5) restores most of that survival: campaign level 2
-   * captures the full window on every seed, and level 3 captures on two of
-   * three seeds and still dies to enemy fire on the third. This pin records the
-   * boundary the budgets are now measured at, so a later fire-model or balance
-   * change cannot move it silently.
+   * This pin records the boundary the one-level budgets are now measured at,
+   * so a later fire-model or balance change cannot move it silently: a
+   * captured one-level sortie, or a surviving seed, would be the change.
    */
-  it('captures level 2 on every seed and level 3 on two of three seeds', () => {
+  it('a one-level sortie at levels 2–3 dies to enemy fire on every seed', () => {
     const runner = createArenaDeploymentRunner();
     const balance = loadBalanceConfig();
     const loadout = resolveDeploymentLoadout(ringEntryOwnership(2));
@@ -791,18 +802,17 @@ describe('ring timing: the level-3 boundary under the deployment loadout', () =>
         loadout,
       });
     };
-    // hex-r1-2 is aggression 1 → campaign level 2; hex-r1-1 is aggression 2 →
-    // campaign level 3 (the aggression → level mapping is the shipped one).
+    // hex-r1-2 is aggression 1 → level 2; hex-r1-1 is aggression 2 → level 3
+    // (the aggression → level mapping is the shipped one). The sortie never
+    // clears: every seed dies to a `player_hit` after spending its lives.
     for (const seed of [1, 2, 3]) {
-      expect(deploy('hex-r1-2', seed).captured).toBe(true);
+      const atLevel2 = deploy('hex-r1-2', seed);
+      expect(atLevel2.captured).toBe(false);
+      expect(atLevel2.hits).toBeGreaterThan(0);
+      const atLevel3 = deploy('hex-r1-1', seed);
+      expect(atLevel3.captured).toBe(false);
+      expect(atLevel3.hits).toBeGreaterThan(0);
     }
-    expect(deploy('hex-r1-1', 1).captured).toBe(true);
-    expect(deploy('hex-r1-1', 2).captured).toBe(true);
-    const thirdSeed = deploy('hex-r1-1', 3);
-    expect(thirdSeed.captured).toBe(false);
-    // The loss is enemy fire — the run reached the first enemy-fire level (4)
-    // inside the window, which is the mechanism the boundary records.
-    expect(thirdSeed.hits).toBeGreaterThan(0);
   }, REAL_ARENA_TIMEOUT_MS);
 });
 
@@ -838,11 +848,13 @@ describe('ring timing: the one-level income runner (AH-0MWCOWTOR00994NA)', () =>
     expect(result.minerals).toBeGreaterThanOrEqual(0);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('measures a faster-paced income than the campaign-slice runner the item replaces', () => {
-    // The one-level sortie is short enough for the competent bot to wipe, so
-    // the measured capture rate (and therefore cores + banked minerals per
-    // deployment) climbs well above the campaign-slice figure — the income
-    // drop the baseline feared is refuted by the measurement (recorded on
+  it('measures a faster-paced income than the fire-on per-level runner', () => {
+    // The one-level sortie played through the arena's **full-campaign** mode
+    // honours the wave `shootEnabled` gate (levels 1–3 do not fire), so the
+    // competent bot wipes it and the measured capture rate (and therefore
+    // cores + banked minerals per deployment) sits well above the default
+    // per-level runner's fire-on result — the income drop the baseline
+    // feared is refuted by the measurement (recorded on
     // AH-0MWCOWTOR00994NA).
     const sortie = simulateRingTiming({
       ringIndex: 1,
@@ -1262,7 +1274,7 @@ describe('ring timing: the one-level deployment model', () => {
         : { seconds: clearSeconds, captured: true, minerals: 18, hits: 0 };
   }
 
-  it.fails(
+  it(
     'a per-level deployment measures its level_cleared tick — one tick exactly, never the run length or won',
     () => {
       const dt = DEFAULT_RING_TIMING_DT;
@@ -1363,15 +1375,15 @@ describe('ring timing: the one-level deployment model', () => {
         loadout: armedLoadout,
       });
       // A cleared sortie is captured, and its duration is the clear tick × dt:
-      // the deployment ends at the clear, not at the 300 s run window. Today
-      // the runner plays the whole campaign slice (300 s / a mid-window
-      // death), so this pair of assertions is the red witness for the seam.
+      // the deployment ends at the clear, not at the 300 s run window. (This
+      // pair was the red witness while the runner still played the campaign
+      // slice; the one-level runner turns it green, AH-0MWCQ4FWN009J9DM.)
       expect(result.captured).toBe(true);
       expect(result.seconds).toBeLessThan(ticks * dt);
     },
   );
 
-  it.fails(
+  it(
     'a cleared sortie is captured; a death before it is a loss charged its own measured length',
     () => {
       const report = simulateRingTiming({
@@ -1409,7 +1421,7 @@ describe('ring timing: the one-level deployment model', () => {
     },
   );
 
-  it.fails(
+  it(
     'a lost deployment’s retry is its own measured length × retriesPerLoss — never the flat 5-minute window',
     () => {
       const report = simulateRingTiming({
@@ -1431,7 +1443,7 @@ describe('ring timing: the one-level deployment model', () => {
     },
   );
 
-  it.fails(
+  it(
     'the between-sortie allowance stays a flat, documented 2 minutes, and the total uses the measured retry',
     () => {
       const report = simulateRingTiming({
@@ -1454,7 +1466,7 @@ describe('ring timing: the one-level deployment model', () => {
     },
   );
 
-  it.fails(
+  it(
     'a rush re-capture charges the line’s measured mean deployment plus the 2-minute visit (Q4 = a)',
     () => {
       const report = simulateRingTiming({
@@ -1484,7 +1496,7 @@ describe('ring timing: the one-level deployment model', () => {
     },
   );
 
-  it.fails(
+  it(
     'is deterministic: the same seeds and options reproduce the measured seconds, retries and re-capture',
     () => {
       const options = {

@@ -11,16 +11,22 @@
  *
  * ## What is measured, what is modelled
  *
- * A deployment is "a normal run at that hex's aggression"
- * (`src/scenes/hangarWar/hangarDeployment.ts`): the classic campaign started at
- * the hex's aggression-selected level and played to its end
- * (`PlayScene.beginGame(startLevel)`). This harness reproduces exactly that in
- * the headless arena — {@link runArena} in full-campaign mode over the campaign
- * **slice** from the hex's level — and sums each run's measured duration
- * (`ticksSimulated × dt`, the arena's per-run duration). Nothing in the
- * measurement is invented: the aggression → level mapping is the shipped
- * `hexDifficultyProfile`, the campaign is the shipped
- * {@link buildArenaCampaign}, and the difficulty comes from the shipped
+ * A deployment is "one hex, one level": the mini-boss ending
+ * (AH-0MWBW1B1Z0059CC2) turns a deployment into exactly **one campaign
+ * level**, played as the shipped **five-wave sortie** — the level's first
+ * four regular waves plus its wave-5 mini-boss composition, truncated with
+ * the same pure helper the game uses (`truncateCampaignForDeployment` /
+ * `DEPLOYMENT_WAVE_COUNT` in `src/scenes/hangarWar/hangarDeployment.ts`,
+ * never a hard-coded 5 or 10). This harness reproduces exactly that in the
+ * headless arena — {@link runArena} in **per-level mode** at the hex's
+ * aggression-selected level, playing the deployment's wave set from the
+ * truncation seam {@link ArenaConfig.levelDefinition} — and measures each
+ * deployment's **duration from the arena's `level_cleared` event tick**
+ * (`level_cleared.tick × dt`): the deployment ends the moment the sortie
+ * clears, never at the tick-loop's end. Nothing in the measurement is
+ * invented: the aggression → level mapping is the shipped
+ * `hexDifficultyProfile`, the wave set is the shipped level data through the
+ * game's own truncation, and the difficulty comes from the shipped
  * `difficulty-curves.csv`.
  *
  * **The income view (AH-0MWCOWTOR00994NA) plays the shipped sortie.** The game
@@ -33,11 +39,12 @@
  * A captured sortie banks exactly **one core** plus the minerals held at its
  * mini-boss checkpoint (`src/core/hangarWar/captureCycle.ts` /
  * `src/core/hangarWar/salvageBanking.ts`), which the reporter derives as
- * {@link derivePerDeploymentIncome} and {@link deriveUnlockPace}. The
- * campaign-slice runner ({@link createArenaDeploymentRunner}) stays the
- * shipped default for the duration model; re-pointing it is the
- * ring-timing chain's item (AH-0MWCOWSVN003X81A), and the two chains share
- * the income numbers rather than forking a second harness.
+ * {@link derivePerDeploymentIncome} and {@link deriveUnlockPace}. The duration
+ * runner ({@link createArenaDeploymentRunner}) now plays the same one-level
+ * deployment — this item's change (AH-0MWCOWSVN003X81A chain) re-pointed it
+ * from the campaign slice to the per-level sortie — so both runners measure
+ * one hex, one level, and the two chains share the income numbers rather than
+ * forking a second harness.
  *
  * Around the measured deployments the harness models the parts of a real
  * session the arena cannot see, and states every one of them as an explicit
@@ -45,16 +52,18 @@
  *
  * - **Between-sortie time** ({@link DEFAULT_BETWEEN_SORTIE_MINUTES}) — hangar
  *   shopping, salvage banking, the map and the defence report between runs.
- * - **Retries** ({@link DEFAULT_RETRIES_PER_LOSS}) — a run that ends before its
- *   deployment budget (the player died) is a **loss**; the model charges one
- *   modelled retry per loss, because a real player replays rather than giving
- *   up. The retry costs a full deployment ({@link DEFAULT_RETRY_MINUTES}).
+ * - **Retries** ({@link DEFAULT_RETRIES_PER_LOSS}) — a deployment that ends
+ *   before its level cleared (the player died) is a **loss**; the model
+ *   charges one modelled retry per loss, because a real player replays rather
+ *   than giving up. The retry **replays the same deployment**, so it costs
+ *   that deployment's own **measured length** (`measuredMinutes ×
+ *   retriesPerLoss`) — never a flat window.
  * - **Exposure** ({@link DEFAULT_RETAKE_CHANCE_PERCENT}) — the **rush** line
  *   pushes into the next ring with the current one only partly held, so every
  *   unheld hex is exposed to the frontier. Each exposed hex costs its expected
- *   re-capture work (`chance × (deployment + between-sortie)`); the chance
- *   comes from the shipped frontier clock's attack chance
- *   (`DEFAULT_FRONTIER_TUNING.attackChancePercent`).
+ *   re-capture work (`chance × (the line's measured mean deployment +
+ *   between-sortie)`); the chance comes from the shipped frontier clock's
+ *   attack chance (`DEFAULT_FRONTIER_TUNING.attackChancePercent`).
  *
  * ## The starting loadout (AH-0MW9QA2YC009PSF5)
  *
@@ -124,29 +133,29 @@
  *
  * ## Fidelity boundary
  *
- * The arena's campaign run is the best headless proxy for a deployment, not a
- * human playtest (intake assumption A1 / Q4). It models the run's survival but
- * not a human's piloting, and the slice **escalates by kills**, so how far a
- * run climbs inside the fixed window depends on its damage output: deployments
- * at campaign levels 1–2 survive the full window, while a level-3 slice now
- * clears into the first enemy-fire level (4) inside the window and usually
- * dies at ≈250 s. That boundary was bisected (AH-0MWAPWS1W007LGGY) to the
- * arena's own fire-model fidelity commit (`6ecbab23`, AH-0MW5DVAME0062GQO —
- * firing the run's permanent choice grants) and is a **documented, deliberate
- * deviation**, not a gameplay regression; `docs/BALANCING.md` states it and
- * `ringTiming.test.ts` pins it. A deployment's **captured/lost** verdict is
- * that signal, and the modelled retry allowance covers the player's
- * persistence.
+ * The arena's per-level run is the best headless proxy for a deployment, not
+ * a human playtest (intake assumption A1 / Q4). It models the run's survival
+ * (the five-wave sortie's kills, the enemy fire and the player's deaths)
+ * but not a human's piloting, and it models the **one level only**: the
+ * deployment ends on the wave-5 composition clear (`level_cleared`), and the
+ * mini-boss encounter's own duration — the boss fight itself, still missing
+ * from the arena's campaign simulation — is **not** modelled (the fidelity
+ * gap the parent records). The per-level arena also ignores the wave
+ * `shootEnabled` gate (its documented fidelity boundary), so even a level 1–3
+ * sortie faces enemy fire in the headless run. A deployment's
+ * **captured/lost** verdict is the `level_cleared` signal, and the modelled
+ * retry allowance covers the player's persistence.
  *
- * The **one-level income runner** adds one boundary of its own
- * (AH-0MWCOWTOR00994NA): a sortie the bot can neither wipe (no
- * `level_cleared`/boss trigger) nor die within the 300 s deployment window is
- * recorded as a **loss** — the same tick-cap safety bound the pre-change
- * harness used, not a new rule. `captured` for that runner means the sortie's
- * mini-boss was wiped (the arena's `won` in full-campaign mode), so exactly
- * one core is banked per capture; a window-survival "capture" is exact only
- * for the one-level runner, and the campaign-slice runner's core view is the
- * same field read as a model approximation.
+ * The **one-level income runner** (AH-0MWCOWTOR00994NA) plays the same sortie
+ * through the arena's **full-campaign** mode (one truncated level as the
+ * campaign), which honours the wave `shootEnabled` gate and so models the
+ * level 1–3 no-fire opening. It adds one boundary of its own: a sortie the bot
+ * can neither wipe (no `level_cleared`/boss trigger) nor die within the 300 s
+ * deployment window is recorded as a **loss** — the same tick-cap safety
+ * bound, not a new rule. `captured` for that runner means the sortie's
+ * mini-boss was wiped (the arena's `won` in full-campaign mode), so exactly one
+ * core is banked per capture. Both runners play the game's own truncated wave
+ * set and share the income fields.
  * The campaign segment is measured from each ring's **authored base
  * aggressions** (the numbers the map publishes); the frontier's between-sortie
  * rise is a separate risk mechanic (B3/B6), and {@link
@@ -176,7 +185,7 @@ import {
 import { capDropIdsToSlotPool } from '../../powerups/slots';
 import type { WeaponId } from '../../utils/weapons';
 import { truncateCampaignForDeployment } from '../../scenes/hangarWar/hangarDeployment';
-import type { LevelDefinition } from '../../waves/Formations';
+import { getLevelDefinition, type LevelDefinition } from '../../waves/Formations';
 import { buildArenaCampaign, campaignFromLevel, runArena } from './arena';
 import { loadBalanceConfig } from './balanceConfig';
 import { resolvePolicyFactory } from './policies';
@@ -197,8 +206,10 @@ export const RING_TIMING_STRATEGIES = Object.freeze([
 export type RingTimingStrategy = (typeof RING_TIMING_STRATEGIES)[number];
 
 /**
- * Ticks in one deployment's run window — the design's ≈5-minute arcade run
- * (`DEFAULT_BATCH_TICKS` = 18 000 ticks = 300 s at 60 fps).
+ * A deployment run's tick cap — the arena's safety bound. The run ends
+ * earlier on the sortie's clear or the player's death; the cap only bounds a
+ * stalled run. Retired as a *price*: a retry and a re-capture now cost the
+ * measured deployment (see the module doc), never this window.
  */
 export const RING_DEPLOYMENT_TICKS = DEFAULT_BATCH_TICKS;
 
@@ -213,13 +224,6 @@ export const DEFAULT_BETWEEN_SORTIE_MINUTES = 2;
 
 /** Modelled retries charged for one lost deployment (the player replays). */
 export const DEFAULT_RETRIES_PER_LOSS = 1;
-
-/**
- * Minutes one modelled retry costs: a full deployment window (the run the
- * player replays after losing the first one).
- */
-export const DEFAULT_RETRY_MINUTES =
-  (RING_DEPLOYMENT_TICKS * DEFAULT_RING_TIMING_DT) / 60;
 
 /**
  * Chance (percent) that an exposed (unheld) hex is retaken by the frontier
@@ -331,9 +335,17 @@ export interface RingDeploymentRequest {
 
 /** What one deployment's arena run reported. */
 export interface RingDeploymentResult {
-  /** Measured run duration, seconds (`ticksSimulated × dt`). */
+  /**
+   * Measured deployment length, seconds: the `level_cleared` event's tick ×
+   * `dt` when the sortie cleared, else the death's tick × `dt` (the run's
+   * final tick when it stalled). Never the tick loop's `ticksSimulated`.
+   */
   readonly seconds: number;
-  /** Whether the run survived its deployment window (or won outright). */
+  /**
+   * Whether the level's five-wave sortie cleared: `level_cleared` was
+   * observed. A death before the clear, or a lingering asteroid shadow-hazard
+   * after it, never changes the verdict.
+   */
   readonly captured: boolean;
   /** Minerals collected during the run (the salvage it earned). */
   readonly minerals: number;
@@ -362,8 +374,6 @@ export interface RingTimingOptions {
   readonly betweenSortieMinutes?: number;
   /** Modelled retries per lost deployment (default 1). */
   readonly retriesPerLoss?: number;
-  /** Minutes one modelled retry costs (default a full deployment). */
-  readonly retryMinutes?: number;
   /** Chance an exposed hex is retaken, percent (default the frontier's 70). */
   readonly retakeChancePercent?: number;
   /**
@@ -400,12 +410,13 @@ export interface RingTimingDeployment {
   readonly aggression: number;
   /** The campaign level the aggression selected. */
   readonly level: number;
-  /** Measured arena duration, seconds. */
+  /** Measured arena duration, seconds (the `level_cleared` tick × `dt`). */
   readonly seconds: number;
   /**
-   * Whether the hex was taken. The campaign-slice runner counts a run that
-   * survived its deployment window (or won outright); the one-level income
-   * runner counts exactly the sortie's mini-boss being wiped (`won`).
+   * Whether the hex was taken. The one-level deployment runners count the
+   * sortie's five-wave composition clearing: `level_cleared` for
+   * {@link createArenaDeploymentRunner} (per-level mode), the arena's `won`
+   * for {@link createOneLevelArenaDeploymentRunner} (full-campaign mode).
    */
   readonly captured: boolean;
   /** Minerals the run collected (banked only when captured). */
@@ -414,7 +425,10 @@ export interface RingTimingDeployment {
   readonly hits: number;
   /** Modelled retries charged for this deployment (`0` when captured). */
   readonly retries: number;
-  /** Play time this deployment contributes, minutes. */
+  /**
+   * Play time this deployment contributes, minutes: the measured length plus
+   * `retries ×` the same measured length (a retry replays the deployment).
+   */
   readonly minutes: number;
   /** The loadout this deployment launched with. */
   readonly loadout: RingDeploymentLoadout;
@@ -430,15 +444,15 @@ export interface RingTimingRun {
   readonly deploymentMinutes: number;
   /** Modelled between-sortie time, minutes. */
   readonly betweenSortieMinutes: number;
-  /** Modelled retry time for lost deployments, minutes. */
+  /** Modelled retry time for lost deployments, minutes (the measured replay). */
   readonly retryMinutes: number;
   /** Modelled expected re-capture work for exposed hexes, minutes. */
   readonly retakeMinutes: number;
   /** Total modelled play time, minutes. */
   readonly totalMinutes: number;
-  /** Deployments whose run survived its window. */
+  /** Deployments whose five-wave sortie cleared. */
   readonly captured: number;
-  /** Deployments whose run ended before its window (the line's losses). */
+  /** Deployments whose run ended before the clear (the line's losses). */
   readonly losses: number;
   /** Expected retakes of exposed hexes (a modelled count). */
   readonly expectedRetakes: number;
@@ -460,9 +474,9 @@ export interface RingTimingRun {
   /**
    * Cores banked by captured deployments — one core per defeated mini-boss
    * checkpoint. A captured **one-level** deployment defeated exactly its one
-   * mini-boss, so `salvageCores` equals `captured` precisely for the income
-   * view; the campaign-slice runner reads the same field as a model
-   * approximation (its `captured` includes window survival).
+   * mini-boss, so `salvageCores` equals `captured` for both one-level runners
+   * ({@link createArenaDeploymentRunner}'s `level_cleared` and
+   * {@link createOneLevelArenaDeploymentRunner}'s `won`).
    */
   readonly salvageCores: number;
   /** Whether the line captured every hex of the ring. */
@@ -809,12 +823,59 @@ function playerHits(records: readonly TelemetryRecord[]): number {
 }
 
 /**
+ * The tick the arena first observed `level_cleared`, or `null` when the run
+ * ended before the sortie cleared (a death or the tick cap).
+ */
+function levelClearedTick(records: readonly TelemetryRecord[]): number | null {
+  for (const record of records) {
+    if (record.kind === 'event' && record.event === 'level_cleared') {
+      return record.tick;
+    }
+  }
+  return null;
+}
+
+/**
+ * The deployment's measured length, seconds: the `level_cleared` event's tick
+ * × `dt` when the sortie cleared; else the `player_death` event's tick × `dt`
+ * when the player died before the clear; else the run's final tick (the
+ * `run_end` record) × `dt` when the run stalled at the tick cap. Read from the
+ * emitted events — never from `ticksSimulated` or `won`, which describe the
+ * tick loop rather than the level (AH-0MWCQ4FWN009J9DM). A lingering asteroid
+ * or hazard after the clear changes neither which event wins nor the length.
+ */
+function deploymentSeconds(records: readonly TelemetryRecord[], dt: number): number {
+  for (const record of records) {
+    if (record.kind === 'event' && record.event === 'level_cleared') {
+      return record.tick * dt;
+    }
+  }
+  for (const record of records) {
+    if (record.kind === 'event' && record.event === 'player_death') {
+      return record.tick * dt;
+    }
+  }
+  for (const record of records) {
+    if (record.kind === 'event' && record.event === 'run_end') {
+      return record.tick * dt;
+    }
+  }
+  return 0;
+}
+
+/**
  * The default deployment runner: the **real** headless arena playing the
- * classic campaign slice from the hex's aggression-selected level.
+ * shipped **one-level deployment** — the hex's aggression-selected level as
+ * the **five-wave sortie** (its first four regular waves plus the wave-5
+ * mini-boss composition, `truncateCampaignForDeployment`), in the arena's
+ * per-level mode. The deployment's duration is the arena's `level_cleared`
+ * event tick × `dt` — never the tick loop's length and never `won` — and a
+ * cleared sortie is `captured`; a death before the clear is a loss measured
+ * at the death's tick.
  *
- * Campaigns are built once per seed and cached for the lifetime of the runner,
- * so a ring's deployments share the shipped build rather than rebuilding it per
- * hex.
+ * Each level's truncated sortie is resolved once and cached for the lifetime
+ * of the runner, so a ring's deployments share the shipped truncation rather
+ * than rebuilding it per hex.
  *
  * @param options.policy — bot policy (default the shipped `competent` brain).
  * @returns a runner that plays one deployment and reports its measured run.
@@ -823,19 +884,28 @@ export function createArenaDeploymentRunner(options?: {
   readonly policy?: PolicyFactory;
 }): RingDeploymentRunner {
   const policy = options?.policy ?? resolvePolicyFactory('competent');
-  const campaigns = new Map<number, ReturnType<typeof buildArenaCampaign>>();
+  const sorties = new Map<number, LevelDefinition>();
   return (request) => {
-    let campaign = campaigns.get(request.seed);
-    if (campaign === undefined) {
-      campaign = buildArenaCampaign(request.seed, request.balance);
-      campaigns.set(request.seed, campaign);
+    let sortie = sorties.get(request.level);
+    if (sortie === undefined) {
+      // The shipped five-wave sortie, truncated with the SAME pure helper the
+      // game's deployment path uses (never a hard-coded 5 or 10): the level's
+      // first four regular waves plus its fifth as the mini-boss wave.
+      sortie = truncateCampaignForDeployment([
+        getLevelDefinition(request.level)!,
+      ])[0];
+      sorties.set(request.level, sortie);
     }
     const result = runArena(policy.create(), {
       seed: request.seed,
       ticks: request.ticks,
       dt: request.dt,
-      campaign: true,
-      campaignLevels: campaignFromLevel(campaign, request.level),
+      // Per-level mode at the hex's aggression-selected level...
+      level: request.level,
+      // ...playing the deployment's truncated wave set, so `level_cleared`
+      // fires on the tick the fifth wave's composition clears (the deployment
+      // seam, AH-0MWCQ4FWN009J9DM).
+      levelDefinition: sortie,
       // Only the duration and the events matter, so one state sample per run
       // keeps the telemetry small and the harness fast.
       sampleEveryTicks: request.ticks,
@@ -854,10 +924,11 @@ export function createArenaDeploymentRunner(options?: {
       build: { appVersion: 'ring-timing', commit: 'ring-timing' },
     });
     return {
-      seconds: result.ticksSimulated * request.dt,
-      // A run that reaches its window is a normal deployment; a run the
-      // campaign finished outright is captured too. An early end is a loss.
-      captured: result.won || result.ticksSimulated >= request.ticks,
+      seconds: deploymentSeconds(result.records, request.dt),
+      // A cleared sortie is captured; a death before the clear — or a stall at
+      // the tick cap — is a loss. A lingering asteroid/hazard after the clear
+      // changes neither the verdict nor the measured length.
+      captured: levelClearedTick(result.records) !== null,
       minerals: mineralsCollected(result.records),
       hits: playerHits(result.records),
     };
@@ -1043,14 +1114,12 @@ export function simulateRingTiming(
     options.retriesPerLoss,
     DEFAULT_RETRIES_PER_LOSS,
   );
-  const retryMinutes = nonNegativeOr(options.retryMinutes, DEFAULT_RETRY_MINUTES);
   const retakeChance =
     percentOr(options.retakeChancePercent, DEFAULT_RETAKE_CHANCE_PERCENT) / 100;
   const aggressionRisePerSortie = nonNegativeOr(
     options.aggressionRisePerSortie,
     0,
   );
-  const budgetMinutes = (ticks * dt) / 60;
   const balance = options.balance ?? loadBalanceConfig();
   const hexes = options.hexes ?? ringTimingHexes(ringIndex);
   const { played, exposed } = planRingDeployments(hexes, strategy);
@@ -1095,9 +1164,11 @@ export function simulateRingTiming(
       });
       const measuredMinutes = result.seconds / 60;
       const retries = result.captured ? 0 : retriesPerLoss;
-      const minutes = measuredMinutes + retries * retryMinutes;
+      // A retry replays the SAME deployment, so it costs that deployment's own
+      // measured length × `retriesPerLoss` — never the retired flat window.
+      const minutes = measuredMinutes + retries * measuredMinutes;
       deploymentMinutes += measuredMinutes;
-      retryTotal += retries * retryMinutes;
+      retryTotal += retries * measuredMinutes;
       if (result.captured) {
         captured += 1;
         salvageBanked += result.minerals;
@@ -1127,9 +1198,13 @@ export function simulateRingTiming(
 
     const betweenSortieTotal = played.length * betweenSortieMinutes;
     const expectedRetakes = exposed.length * retakeChance;
-    // A re-capture is a full deployment plus the visit that follows it.
+    // A re-capture is the line's measured mean deployment (one sortie, at the
+    // length the line actually measures) plus the visit that follows it
+    // (producer ruling Q4 = a) — never the retired 18 000-tick window.
+    const meanDeploymentMinutes =
+      played.length > 0 ? deploymentMinutes / played.length : 0;
     const retakeMinutes =
-      expectedRetakes * (budgetMinutes + betweenSortieMinutes);
+      expectedRetakes * (meanDeploymentMinutes + betweenSortieMinutes);
     // The grind line plays every hex of the ring, so it secures it (a lost
     // first attempt is retried, which is why the ring is still secured). The
     // rush line pushes past the ring, so it never secures it.

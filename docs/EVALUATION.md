@@ -352,14 +352,19 @@ npm run ring-timing -- --ring 2 --strategy grind --seed 7
 
 ### What is measured
 
-A hex deployment is "a normal run at that hex's aggression": the classic
-campaign started at the hex's aggression-selected level and played to its end
-(`PlayScene.beginGame(startLevel)`). The harness reproduces exactly that —
-`runArena` in full-campaign mode over the campaign **slice** from that level —
-and sums each run's measured duration (`ticksSimulated × dt`, a ≈5-minute
-deployment window). The aggression → level mapping is the shipped
-`hexDifficultyProfile`; the campaign and difficulty come from the shipped
-builders and `difficulty-curves.csv`. Nothing in the measurement is invented.
+A hex deployment is "one hex, one level": the mini-boss ending
+(AH-0MWBW1B1Z0059CC2) turns a deployment into exactly **one campaign level** —
+played as the shipped **five-wave sortie** (the level's first four regular waves
+plus its wave-5 mini-boss composition, truncated with the same pure helper the
+game uses, `truncateCampaignForDeployment`). The harness reproduces exactly
+that — `runArena` in **per-level mode** at the hex's aggression-selected level,
+playing the deployment's wave set through the truncation seam
+(`ArenaConfig.levelDefinition`) — and measures each deployment's duration from
+the arena's **`level_cleared` event tick** (`level_cleared.tick × dt`): the
+deployment ends the moment the sortie clears, never at the tick loop's end.
+The aggression → level mapping is the shipped `hexDifficultyProfile`; the wave
+set and difficulty come from the shipped level data through the game's own
+truncation and `difficulty-curves.csv`. Nothing in the measurement is invented.
 
 ### What a deployment launches with
 
@@ -406,8 +411,8 @@ with every allowance an explicit, documented default:
 | Allowance | Default | Why |
 |---|---|---|
 | Between-sortie time | 2 min | Hangar shopping, salvage banking, the map and the defence report between runs. |
-| Retry per lost deployment | 1 × 5 min | A run that ends before its window (the player died) is a **loss**; a real player replays it, so one full deployment is charged. |
-| Exposed-hex re-capture | frontier attack chance (70 %) | The **rush** line pushes into the next ring with the current one partly held, so each unheld hex costs its expected re-capture work. The chance is the shipped frontier clock's `attackChancePercent`. |
+| Retry per lost deployment | the lost sortie's own measured length (× `retriesPerLoss`) | A deployment that ends before its level cleared (the player died) is a **loss**; a real player replays it, so the retry replays the same deployment at its measured length — never the retired flat 5-minute window. |
+| Exposed-hex re-capture | frontier attack chance (70 %) | The **rush** line pushes into the next ring with the current one partly held, so each unheld hex costs its expected re-capture work — the line's **measured mean deployment** plus the 2-minute visit (producer ruling Q4 = a). The chance is the shipped frontier clock's `attackChancePercent`. |
 
 ### The two playstyle lines
 
@@ -419,6 +424,11 @@ rest of this ring unheld. Faster (one deployment here), but the unheld hexes
 are exposed and the ring is not secured.
 
 ### Measured baseline
+
+> **Numbers below are the committed campaign-slice artifact.** The one-level
+> model (AH-0MWCQ4FWN009J9DM) re-measures the rings; the baseline file is
+> regenerated and the docs requoted by the parent's follow-up items
+> (AH-0MWCQ4GTE005YG02 / AH-0MWCQ4IS6001X7W3).
 
 Committed evidence:
 [`docs/dev/ring-timing-baseline.json`](./dev/ring-timing-baseline.json)
@@ -446,7 +456,7 @@ ring 2 banks salvage (≈22 minerals) and captures **1.3 of 12** first attempts 
 but **55 of its 116.4 min (≈47 %) is still the modelled retry allowance**,
 against a design claim of ≈60 min of deployments plus 10–40 min of builds and
 losses.
-- **The loadout model did not shorten the ring.** Measuring with the loadout a
+- **The loadout model does not shorten the ring.** Measuring with the loadout a
   ring-2 player actually launches (5 lives, `hull-2`'s 0.85 speed, the
   `ricochet` / `rapid` / `wave_laser` weapons) moved the totals **up**
   (ring 1 50.9 → 54.3 min, ring 2 111.9 → 116.4 min) rather than down: the

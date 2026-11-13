@@ -56,6 +56,11 @@ import {
 } from '../../utils/weaponLevels';
 import { AOE_RADII } from '../../utils/weapons';
 import { loadBalanceConfig } from './balanceConfig';
+import {
+  DEPLOYMENT_WAVE_COUNT,
+  truncateCampaignForDeployment,
+} from '../../scenes/hangarWar/hangarDeployment';
+import { resolvePolicyFactory } from './policies';
 import { runBatch } from './engine';
 import { extractBalanceStats } from './metrics';
 import { stableStringify } from './report';
@@ -464,6 +469,63 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     const second = runArena(createLegacyBotPolicy(), perLevel(5));
     expect(stableStringify(second.records)).toBe(stableStringify(first.records));
     expect(second.ticksSimulated).toBe(first.ticksSimulated);
+  });
+
+  // GREEN since AH-0MWCQ4FWN009J9DM (the deployment seam).
+  it('plays an explicit levelDefinition as the per-level wave set (the deployment seam)', () => {
+    // A hex deployment plays the shipped five-wave sortie: the level's first
+    // four regular waves plus the wave-5 mini-boss composition, truncated by
+    // the SAME pure helper the game uses. The arena consumes that wave set
+    // through `levelDefinition` while `level` still selects the level; without
+    // the seam it plays the authored (10-wave) level unchanged.
+    const noFire = {
+      ...loadBalanceConfig(),
+      enemies: loadBalanceConfig().enemies.map((enemy) => ({
+        ...enemy,
+        shotProbability: 0,
+      })),
+    };
+    const sortie = truncateCampaignForDeployment([getLevelDefinition(1)!])[0];
+    expect(sortie.waves).toHaveLength(DEPLOYMENT_WAVE_COUNT);
+    const base = {
+      seed: 11,
+      ticks: 18_000,
+      dt: 1 / 60,
+      level: 1,
+      balance: noFire,
+      // No asteroid shadow-hazard: the sortie's clear is deterministic.
+      spawns: { asteroids: 0 },
+      sampleEveryTicks: 18_000,
+    };
+    const run = (levelDefinition?: LevelDefinition): ArenaRunResult =>
+      runArena(resolvePolicyFactory('competent').create(), levelDefinition
+        ? { ...base, levelDefinition }
+        : base);
+    const count = (result: ArenaRunResult, event: string): number =>
+      result.records.filter(
+        (record): record is TelemetryEventRecord =>
+          record.kind === 'event' && record.event === event,
+      ).length;
+    const clearedTick = (result: ArenaRunResult): number | undefined =>
+      result.records.find(
+        (record): record is TelemetryEventRecord =>
+          record.kind === 'event' && record.event === 'level_cleared',
+      )?.tick;
+
+    const deployed = run(sortie);
+    const authored = run();
+    // The supplied wave set is the one played: exactly the five-wave sortie...
+    expect(count(deployed, 'wave_start')).toBe(DEPLOYMENT_WAVE_COUNT);
+    // ...while the default (no seam) still plays the authored level, which has
+    // more than the deployment's five waves.
+    expect(count(authored, 'wave_start')).toBeGreaterThan(
+      DEPLOYMENT_WAVE_COUNT,
+    );
+    // `level_cleared` fires on the supplied set's final wave — the truncated
+    // sortie clears strictly before the authored level does.
+    expect(clearedTick(deployed)).toBeDefined();
+    expect(clearedTick(authored)).toBeDefined();
+    expect(clearedTick(deployed)!).toBeLessThan(clearedTick(authored)!);
   });
 
   it('is the identity transform at level 1 (scaling on/off run identically)', () => {

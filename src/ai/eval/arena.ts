@@ -666,6 +666,13 @@ function waveSpawnerExtras(wave: WaveDefinition | null): string[] {
  * (`ghosts` / `horde` / `centipede` / `laneTraffic`), one seeded position
  * per hostile, in wave order — the same wave skeleton the game plays.
  * Returns an empty plan for a level with no definition.
+ *
+ * `definition` is the deployment seam (AH-0MWCQ4FWN009J9DM): a caller that
+ * plays a **hex deployment** passes the truncated five-wave sortie (the
+ * level's first four regular waves plus the wave-5 mini-boss composition,
+ * `truncateCampaignForDeployment`), so the arena plays exactly the wave set
+ * the game plays while `level` still drives scaling, drops and the
+ * `level_cleared` payload. Absent → the authored level.
  */
 function buildLevelWavePlan(
   level: number,
@@ -673,8 +680,8 @@ function buildLevelWavePlan(
   seed: number,
   width: number,
   height: number,
+  definition: LevelDefinition | null = getLevelDefinition(level),
 ): LevelWavePlan {
-  const definition = getLevelDefinition(level);
   if (!definition) return [];
   const rng = createSeededRng(seed);
   const pushGroup = (members: HostileSpec[], archetype: string, count: number): void => {
@@ -1042,7 +1049,18 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   // real per-kill drop rule; only the seeded skirmish keeps its reservoir.
   const realSupplyMode = perLevelEnabled || campaignEnabled;
   const wavePlan = perLevelEnabled
-    ? buildLevelWavePlan(campaignLevel, scaleLevels, config.seed, width, height)
+    ? buildLevelWavePlan(
+        campaignLevel,
+        scaleLevels,
+        config.seed,
+        width,
+        height,
+        // The deployment seam (AH-0MWCQ4FWN009J9DM): a hex deployment passes
+        // its truncated five-wave sortie so the arena plays the shipped wave
+        // set; absent (undefined) → the authored level (unchanged historical
+        // behaviour). Note the default parameter: only `undefined` falls back.
+        config.levelDefinition,
+      )
     : [];
   // The shared WaveManager owns the full-campaign state machine. The
   // campaign is the exact build the game plays: `buildSequencedLevels` from
