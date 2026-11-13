@@ -53,7 +53,7 @@ export const WATCHABLE_GYM_SCENE_KEYS: readonly string[];
 
 /**
  * The shipped **Hangar War** screens (Build Candidate D) that capture can
- * record: the defence report, the hangar screen and the hex ring map. They are
+ * record: the hangar screen and the hex ring map. They are
  * boot-registered shipped scenes, not gyms, and every launch field has a
  * shipped default (`{ demo: false }` renders the static screen), so each is
  * capturable standalone without a setup.
@@ -240,7 +240,7 @@ export interface SceneSetup {
   seed?: number;
   /**
    * Attract/demo traversal flag for a Hangar War screen
-   * (`HangarScene`/`HexMapScene`/`DefenceReportScene`): `true` auto-advances
+   * (`HangarScene`/`HexMapScene`): `true` auto-advances
    * the scene (buy, then deploy/continue) after the dwell, `false` leaves the
    * static player-facing screen on display. Absent ⇒ the scene default
    * (`false`).
