@@ -15,6 +15,12 @@ import { describe, expect, it } from 'vitest';
 
 import { deriveDefenderRating } from './hangarEconomy';
 import { createDefaultPayload } from './hangarWarStore';
+import {
+  HANGAR_WAR_VERSION,
+  loadHangarWarPayload,
+  saveHangarWarPayload,
+} from './hangarWarStore';
+import { createInMemoryHangarWarStorage } from './storage';
 import { createRingState } from './hexRing';
 import {
   DEFAULT_FRONTIER_TUNING,
@@ -25,6 +31,7 @@ import {
 import { createBankedSalvage, runSalvageFromRun } from './salvageBanking';
 import type { HangarWarPayload, HexState } from './types';
 import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
+import { buildHangarDeployment } from '../../scenes/hangarWar/hangarDeployment';
 import {
   campaignResetSeed,
   grantDemonstrationColor,
@@ -836,5 +843,123 @@ describe('the capture-cycle assault gate', () => {
       expect(tick.payload.seed).toBe(4242);
       expect(tick.payload.bestScore).toBe(18200);
     });
+  });
+});
+
+/**
+ * The special-mission capture path (AH-0MWF0CX0H004OJ2Y, post-MVP Hangar War
+ * AH-0MVWZYIWX0008C55 Q1 = a / Q2 = a).
+ *
+ * A special mission is **not** a second run implementation: it is an ordinary
+ * one-level capture whose authored grant is a hull with extra hit points. These
+ * tests pin that the shipped capture path pays it, that nothing about the
+ * ordinary hex path changes, and that the reward is real (it changes the next
+ * deployment) and persistent (it survives the store round trip).
+ */
+describe('resolveHexCapture — the special-mission path', () => {
+  /** A held-free ring-2 war, where the authored special mission lives. */
+  function ring2Payload(): HangarWarPayload {
+    return ringPayload(2);
+  }
+
+  it('grants the extra-hit-points hull when the special mission is captured', () => {
+    const payload = ring2Payload();
+    expect(payload.hangar.unlockedHulls).not.toContain('hull-3');
+
+    const result = resolveHexCapture(payload, {
+      hexId: 'hex-r2-3',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(30, 1),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(true);
+    // The reward lands in the same owned set an ordinary hull grant uses.
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-3');
+    expect(hex(result.payload, 'hex-r2-3').held).toBe(true);
+    expect(hex(result.payload, 'hex-r2-3').grantedWeapon).toBe('hull-3');
+    // ... and the capture reports the reward a caller can announce.
+    expect(result.specialReward).not.toBeNull();
+    expect(result.specialReward?.hexId).toBe('hex-r2-3');
+    expect(result.specialReward?.hullId).toBe('hull-3');
+    expect(result.specialReward?.bonusStartingLives).toBeGreaterThan(0);
+  });
+
+  it('pays an ordinary hex its own grant and reports no special reward', () => {
+    const result = resolveHexCapture(ringPayload(), {
+      hexId: 'hex-r1-1',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.grant?.entryId).toBe('hull-2');
+    expect(result.specialReward).toBeNull();
+    expect(result.payload.hangar.unlockedHulls).not.toContain('hull-3');
+  });
+
+  it('grants nothing when the capture is refused for a missing defender', () => {
+    const result = resolveHexCapture(ring2Payload(), {
+      hexId: 'hex-r2-3',
+      defenderHullId: null,
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('defender-required');
+    expect(result.grant).toBeNull();
+    expect(result.specialReward).toBeNull();
+    expect(result.payload.hangar.unlockedHulls).not.toContain('hull-3');
+  });
+
+  it('persists the granted hull through the versioned store without loss', () => {
+    const result = resolveHexCapture(ring2Payload(), {
+      hexId: 'hex-r2-3',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(result.payload, storage);
+
+    const loaded = loadHangarWarPayload(storage);
+
+    expect(loaded).not.toBeNull();
+    // No new storage key and no version bump: the reward is ordinary owned-set
+    // content (field-presence migration covers any additive state).
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+    expect(loaded?.hangar.unlockedHulls).toContain('hull-3');
+    const restored = hex(loaded!, 'hex-r2-3');
+    expect([restored.id, restored.q, restored.r]).toEqual(['hex-r2-3', -2, 2]);
+    expect(restored.held).toBe(true);
+    expect(restored.grantedWeapon).toBe('hull-3');
+  });
+
+  it('has a real effect when the granted hull is deployed', () => {
+    const result = resolveHexCapture(ring2Payload(), {
+      hexId: 'hex-r2-3',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    const withReward = buildHangarDeployment({
+      ...result.payload,
+      hangar: { ...result.payload.hangar, activeHull: 'hull-3' },
+    });
+    const withStarter = buildHangarDeployment({
+      ...result.payload,
+      hangar: { ...result.payload.hangar, activeHull: 'hull-1' },
+    });
+
+    expect(withReward.hullId).toBe('hull-3');
+    expect(withReward.startingLives).toBeGreaterThan(withStarter.startingLives);
+    expect(withReward.startingLives - withStarter.startingLives).toBe(
+      result.specialReward?.bonusStartingLives,
+    );
+    // The reward trades manoeuvrability for hit points; it is not a free win.
+    expect(withReward.speedMultiplier).toBeLessThan(withStarter.speedMultiplier);
   });
 });

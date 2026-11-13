@@ -62,6 +62,10 @@ import {
 } from './hangarEconomy';
 import { createRingState, ringDepth, type HexRingDefinition } from './hexRing';
 import {
+  specialMissionRewardFor,
+  type SpecialMissionReward,
+} from './specialMission';
+import {
   DEFAULT_FRONTIER_TUNING,
   heldRingDefenderSum,
   massedAssaultBase,
@@ -628,6 +632,13 @@ export interface HexCaptureResult {
   readonly defender: HexDefender | null;
   /** The hex's weapon/upgrade entry granted into the hangar, or `null`. */
   readonly grant: HexGrant | null;
+  /**
+   * The special-mission reward this capture paid (a hull with extra hit
+   * points), or `null` when the hex is an ordinary one
+   * (AH-0MWF0CX0H004OJ2Y). Carried so a caller can announce the special
+   * reward without re-deriving it from authored data.
+   */
+  readonly specialReward: SpecialMissionReward | null;
   /** True when the capture secured the current ring. */
   readonly ringSecured: boolean;
   /** True when securing the ring opened the next ring. */
@@ -696,6 +707,7 @@ export function resolveHexCapture(
       bankedDelta,
       defender: null,
       grant: null,
+      specialReward: null,
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
@@ -718,6 +730,7 @@ export function resolveHexCapture(
       bankedDelta,
       defender: null,
       grant: null,
+      specialReward: null,
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
@@ -728,6 +741,9 @@ export function resolveHexCapture(
 
   const definition = definitions.find((entry) => entry.id === hex.id);
   const grant = resolveHexGrant(definition?.grants);
+  // A special mission pays its hull through the same grant path as any other
+  // hex; the reward record only makes that payment legible to the caller.
+  const specialReward = specialMissionRewardFor(definition);
   if (grant !== null) {
     next.hangar = withGrantedEntry(next.hangar, grant);
     hex.grantedWeapon = grant.grantId;
@@ -754,6 +770,7 @@ export function resolveHexCapture(
       bankedDelta,
       defender,
       grant,
+      specialReward,
       ringSecured: false,
       ringAdvanced: false,
       ringIndex: toCount(reset.ring.ringIndex),
@@ -777,6 +794,7 @@ export function resolveHexCapture(
     bankedDelta,
     defender,
     grant,
+    specialReward,
     ringSecured,
     ringAdvanced: advanced.opened,
     ringIndex: advanced.ringIndex,
