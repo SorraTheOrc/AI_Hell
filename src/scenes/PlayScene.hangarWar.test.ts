@@ -29,6 +29,7 @@ import {
 import {
   HANGAR_WAR_STORAGE_KEY,
   loadHangarWarPayload,
+  saveHangarWarPayload,
 } from '../core/hangarWar/hangarWarStore';
 import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
 import type { HangarWarPayload } from '../core/hangarWar/types';
@@ -44,11 +45,17 @@ import type { WeaponId } from '../utils/weapons';
 import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
-import { PlayScene } from './PlayScene';
+import {
+  PlayScene,
+  VICTORY_TRANSITION_HOLD_MS,
+} from './PlayScene';
+import { DEFENCE_REPORT_SCENE_KEY, DefenceReportScene } from './DefenceReportScene';
 import {
   buildHangarDeployment,
   type HangarWarDeployment,
 } from './hangarWar/hangarDeployment';
+import { winLiveDeployment } from '../test/hangarWarWinHarness';
+import { LEVELS } from '../waves/Formations';
 
 /** A minimal but complete arcade checkpoint (the pre-existing save). */
 const ARCADE_CHECKPOINT: Checkpoint = {
@@ -137,7 +144,7 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     resume?: boolean;
     hangarWar?: HangarWarDeployment | null;
   }): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene, DefenceReportScene]);
     const scene = booted.scene as PlayScene;
     scene.setAsteroidSpawnerEnabled(false);
     if (data) {
@@ -419,4 +426,66 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(loadHangarWarPayload()).not.toBeNull();
     expect(loadHangarWarPayload()!.hangar.activeHull).toBe('hull-2');
   });
+
+  it('AC — a deployment truncates the resolved campaign to five waves, wave 5 as the mini-boss (AH-0MWDCBVQ700579WS)', async () => {
+    const scene = await bootPlay({ hangarWar: DEPLOYMENT });
+    const wm = scene.getWaveManager();
+    expect(scene.isHangarWarRun()).toBe(true);
+    // Aggression 3 selects campaign level 4; that level now plays five waves.
+    expect(DEPLOYMENT.startLevel).toBe(4);
+    expect(wm.level).toBe(4);
+    expect(wm.waveNumber).toBe(1);
+    expect(wm.waveCount).toBe(5);
+    // The whole resolved campaign is truncated, not just the start level.
+    expect(wm.levelCount).toBe(LEVELS.length);
+    // The arcade campaign stays byte-for-byte: ten waves, wave 10 mini-boss.
+    expect(LEVELS[0].waves).toHaveLength(10);
+    expect(
+      LEVELS[0].waves.every((wave, index) =>
+        (wave.miniBoss === true) === (index === 9),
+      ),
+    ).toBe(true);
+  });
+
+  it('AC — a deployment run ends on its wave-5 mini-boss and the capture cycle resolves (AH-0MWDCBVQ700579WS)', async () => {
+    // The capture cycle resolves against the stored war, like a shipped run.
+    saveHangarWarPayload(fieldedPayload());
+    const scene = await bootPlay({ hangarWar: DEPLOYMENT });
+    const wm = scene.getWaveManager();
+    const level = wm.level;
+    expect(level).toBe(DEPLOYMENT.startLevel);
+    expect(wm.waveCount).toBe(5);
+
+    // Clear the level's four regular waves and defeat the wave-5 mini-boss
+    // through the shipped defeat path (the shared win harness).
+    winLiveDeployment(scene);
+
+    // The run ended on the level's 5th wave — the mini-boss encounter — with
+    // no wave/level advance and no final-boss trigger.
+    expect(wm.waveNumber).toBe(5);
+    expect(wm.waveCount).toBe(5);
+    expect(wm.level).toBe(level);
+    expect(wm.bossTriggered).toBe(false);
+    expect(scene.getMiniBoss()).toBeNull();
+
+    // The capture cycle resolved exactly as before (salvage banked, hex held,
+    // defender left behind) — only the sortie length changed.
+    const capture = scene.getLastCapture();
+    expect(capture).not.toBeNull();
+    expect(capture!.ok).toBe(true);
+    expect(capture!.reason).toBeNull();
+    const stored = loadHangarWarPayload();
+    expect(stored).not.toBeNull();
+    const hex = stored!.ring.hexes.find((state) => state.id === 'hex-1')!;
+    expect(hex.held).toBe(true);
+    expect(hex.bossDefeated).toBe(true);
+    expect(hex.defender).not.toBeNull();
+
+    // The report → reward → map ordering is unchanged: the run ends as a
+    // victory in the between-sortie defence report.
+    await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
+    expect(scene.game.scene.isActive(DEFENCE_REPORT_SCENE_KEY)).toBe(true);
+    expect(wm.waveNumber).toBe(5);
+    expect(scene.getAliveCount()).toBe(0);
+  }, 30_000);
 });

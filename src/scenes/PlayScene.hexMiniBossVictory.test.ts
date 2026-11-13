@@ -4,7 +4,7 @@
  * Q3 = a).
  *
  * Red-first suite for the parent's behavioural claims: a deployment ends on
- * its level's wave-10 **mini-boss** (which resolves the capture cycle and ends
+ * its level's wave-5 **mini-boss** (which resolves the capture cycle and ends
  * the run as a victory), plays only its aggression-selected level (no
  * wave/level advance, so the final boss is unreachable from the hex map), and
  * leaves the shipped arcade run byte-identical.
@@ -333,7 +333,8 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
 
       ownAWeapon(scene);
       enterMiniBossWave(scene);
-      // The level's flagged wave-10 mini-boss wave is current.
+      // The level's flag-driven mini-boss wave is current (wave 5 of a
+      // deployment sortie, AH-0MWDCBVQ700579WS).
       expect(wm.waveNumber).toBe(wm.waveCount);
 
       defeatMiniBoss(scene);

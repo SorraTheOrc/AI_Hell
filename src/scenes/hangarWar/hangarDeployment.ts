@@ -5,7 +5,7 @@
  * A hex deployment is a **normal run at that hex's aggression** (design of
  * record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D, *The capture cycle*).
  * It plays **exactly one campaign level** — the level the hex's aggression
- * selects — and ends on that level's wave-10 **mini-boss** (GDD §8.2), which
+ * selects — and ends on that level's wave-5 **mini-boss** (GDD §8.2), which
  * resolves the capture; it is never a run to the campaign's final boss. This
  * module turns the persistent hangar payload into the launch data the shipped
  * `PlayScene` consumes:
@@ -24,6 +24,16 @@
  * (gym↔game parity, `AGENTS.md`), and the arcade run keeps sending no
  * outer-loop payload at all.
  *
+ * ## The five-wave sortie (AH-0MWDCBVQ700579WS)
+ *
+ * A hex deployment does **not** play a level's full ten-wave campaign slice:
+ * it plays the aggression-selected level's **first five waves** — four regular
+ * waves, then the level's mini-boss on wave 5 — so taking a hex is a bounded
+ * fight that still ends on the boss beat and grants the reward. The shipped
+ * 10-wave arcade campaign (and its wave-10 mini-bosses) is untouched:
+ * {@link truncateCampaignForDeployment} is a pure transform the scene applies
+ * to the **resolved** campaign only when a deployment is active.
+ *
  * ## Checkpoint isolation
  *
  * The payload is tagged (`kind: 'hangar-war'`), never *checkpoint* data: a hex
@@ -39,6 +49,7 @@ import { DEFAULT_LIVES, MAX_LIVES, MAX_LEVEL, MIN_LEVEL } from '../../core/GameS
 import type { ShipConfig } from '../../core/configTypes';
 import { scaleShipConfigForHull } from '../../core/hangarWar/hullSpeed';
 import { parseHangarWarPayload } from '../../core/hangarWar/hangarWarStore';
+import type { LevelDefinition } from '../../waves/Formations';
 import {
   findHangarEntry,
   resolveActiveHull,
@@ -66,6 +77,49 @@ export const HANGAR_WAR_DEPLOYMENT_KIND = 'hangar-war';
  * maps to campaign level 1, i.e. the shipped opening difficulty.
  */
 export const DEFAULT_DEPLOYMENT_AGGRESSION = 0;
+
+/**
+ * The number of waves a hex deployment plays per level (AH-0MWDCBVQ700579WS):
+ * the level's first four regular waves, then the mini-boss on wave 5. A hex
+ * sortie is a bounded five-wave fight that still ends on the boss beat and
+ * grants the reward; the shipped 10-wave arcade campaign is unchanged.
+ */
+export const DEPLOYMENT_WAVE_COUNT = 5;
+
+/**
+ * Truncates a resolved campaign to the deployment's five-wave sortie: each
+ * level keeps its first {@link DEPLOYMENT_WAVE_COUNT} waves and its final kept
+ * wave becomes the level's mini-boss wave (`miniBoss: true`); a level with
+ * fewer than five waves flags its last wave instead. Waves 1–4 keep their
+ * authored content and never carry the `miniBoss` flag, so every level has
+ * exactly one mini-boss encounter, deterministically.
+ *
+ * Pure and total: takes any resolved `LevelDefinition[]` (the static `LEVELS`
+ * campaign or the sequenced `buildSequencedLevels` campaign alike), never
+ * mutates the input, and changes battle **length only** — no group count,
+ * shoot flag or difficulty value is touched. The arcade run never calls this
+ * (there is no deployment), so its 10-wave mini-boss campaign is byte-for-byte
+ * unchanged.
+ *
+ * @param campaign — the resolved campaign (never mutated).
+ * @returns a fresh campaign truncated for a hex deployment.
+ */
+export function truncateCampaignForDeployment(
+  campaign: readonly LevelDefinition[],
+): LevelDefinition[] {
+  return campaign.map((level) => {
+    const waves = level.waves.slice(0, DEPLOYMENT_WAVE_COUNT);
+    const miniBossIndex = waves.length - 1;
+    return {
+      ...level,
+      waves: waves.map((wave, index) =>
+        index === miniBossIndex
+          ? { ...wave, miniBoss: true }
+          : { ...wave, miniBoss: false },
+      ),
+    };
+  });
+}
 
 /**
  * One hangar-war deployment, ready to hand to `PlayScene` as launch data.

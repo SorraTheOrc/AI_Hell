@@ -14,7 +14,7 @@
  * `demonstratedWeapon`); it never adds a second boss implementation. Both
  * shared entities consume it:
  *
- * - the **wave-10 `MiniBoss`** is the encounter that ends a deployment —
+ * - the **wave-5 `MiniBoss`** is the encounter that ends a deployment —
  *   `hexMiniBossConfigForLevel` (`src/waves/miniBossDesigns.ts`) maps this
  *   profile onto the mini-boss config, so the encounter wears the granted
  *   weapon's colour and opens with its catalogue volley;
@@ -264,7 +264,7 @@ export function hexBossBodyColor(
 }
 
 /**
- * Builds the hex profile the deployment's encounter runs with (the wave-10
+ * Builds the hex profile the deployment's encounter runs with (the wave-5
  * mini-boss in the game, the same mapping in `GymMiniBoss`; the shipped
  * `Boss` configuration seam is retained).
  *

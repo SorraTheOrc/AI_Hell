@@ -110,7 +110,7 @@ before it reads as a reward.
 | **Candidate A — Contested Regions / Home World** | Every new ship leaves home with **no upgrades** (A already rotates unupgraded ships onto the line) | A region's mini-boss demonstrates the region's signature weapon; the stationed-ship upgrade is earned by beating it |
 | **Candidate B — Salvage Fleet** | The hangar starts with **one basic hull and one starting weapon** (owned; the default loadout is empty); everything else is bought | A mini-boss's weapon appears in the hangar tree only after that mini-boss has been defeated wielding it |
 | **Candidate C — Signal Decode** | The codex starts **empty**, so the campaign starts plain and mutates as it is decoded | The boss's phases *are* the demonstration; each decoded rule unlocks the behaviour/weapon the player has just survived |
-| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, its starting weapon owned but **not equipped**, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | The hex's wave-10 mini-boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
+| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, its starting weapon owned but **not equipped**, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | The hex's wave-5 mini-boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
 
 ---
 
@@ -849,7 +849,7 @@ hangar survives — that is what winning this hell looks like.
 | **Frontier aggression clock** | Each between-run tick **redistributes** the ring's aggression inside a budget sized from the player's fleet (a rise on one hex is paid for by a fall on another), guarantees at least one beatable hex, and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small–Medium — a deterministic per-tick rule over the pure strength/budget resolvers |
 | **Defending bot assignment** | Leave a hull plus a **bot** in a hex; its **defence rating** derives from the hull's hangar upgrades, not from a live battle | Small |
 | **Algorithmic defence resolution** | A taken hex falls or holds by comparing stored numbers (defender rating vs. attacking force × aggression) — **no simulated battle** | Small — a pure resolver |
-| **Hex deployment + mini-boss** | Reuse the run for exactly one campaign level, with the hex's aggression selecting the difficulty curve and that level's wave-10 mini-boss at the end (mini-boss victory = capture) | Small |
+| **Hex deployment + mini-boss** | Reuse the run for exactly one campaign level, with the hex's aggression selecting the difficulty curve and that level's wave-5 mini-boss at the end (mini-boss victory = capture) | Small |
 | **Mini-boss-granted weapon discovery** | The hex mini-boss demonstrates the hex's new weapon/power-up (body colour + its catalogue opening volley); defeating it adds the entry to the hangar tree | Small–Medium |
 
 ### Reuse of existing systems
@@ -1003,7 +1003,8 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
   *lost* between runs, so the campaign can move backwards — a deliberate,
   legible stake rather than an accident.
 - **Changes the "single final boss" pillar (GDD §3.1/§4.3).** Each hex ends on
-  its **wave-10 mini-boss** (one campaign level per deployment) and the ring ends
+  its **wave-5 mini-boss** (one campaign level per deployment, played as a
+  five-wave sortie) and the ring ends
   on the hangar assault, so the boss encounter becomes a recurring milestone
   rather than a single terminus. Cost: the Central AI needs a
   campaign-role decision (recurring mini-boss vs. the assault's spearhead), and
@@ -1109,7 +1110,7 @@ wasted).
   shared loadout slots** plus the two slot-free kinds, **Extra Life** and
   **Mystery UFO**, so the opening deployment is the game players already know
   and the scarcity lives in what the hangar owns between deployments.
-- **Rule 2 — the boss wields it first.** The hex's wave-10 mini-boss demonstrates
+- **Rule 2 — the boss wields it first.** The hex's wave-5 mini-boss demonstrates
   the hex's new weapon or power-up against the player (body colour and an
   opening volley from the shared weapon catalogue); defeating it both **captures
   the hex** and **adds the entry to the hangar**, where it is then bought with

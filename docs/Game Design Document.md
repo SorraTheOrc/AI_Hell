@@ -3040,8 +3040,11 @@ nothing else. A hex deployment **writes no arcade checkpoint and clears none**
 (§8.1), and a malformed or absent payload degrades to the unchanged arcade run.
 
 **One level per deployment, ended by the mini-boss** (AH-0MWBW1B1Z0059CC2). A
-deployment plays **exactly the one campaign level its aggression selects** and
-ends on that level's **wave-10 mini-boss**; it never advances to the next level
+**One level per deployment, ended by the mini-boss** (AH-0MWBW1B1Z0059CC2). A
+deployment plays **exactly the one campaign level its aggression selects**, as
+a **five-wave sortie** (AH-0MWDCBVQ700579WS): the level's first four regular
+waves, then that level's mini-boss on wave 5. It ends on that wave-5 mini-boss;
+it never advances to the next level
 and never spawns the final boss, so taking a hex is a bounded sortie rather than
 the rest of the campaign. The mini-boss victory runs the capture cycle
 (below) and ends the run as a **victory**. On a win the player sees, in order,
@@ -3108,7 +3111,7 @@ write:
    the persistent balance.
 2. **Grant the hex's entry (Rule 2).** The authored grant is recorded on the hex
    and added to the fleet's owned set **only after the mini-boss is defeated**.
-   The encounter **demonstrates** it first: the deployment's wave-10
+   The encounter **demonstrates** it first: the deployment's wave-5
    `MiniBoss` is configured from the hex profile, so it **wields the granted
    weapon against you** — the encounter opens with that weapon's own volley (its
    fan pattern, bullet colour and bullet shape, resolved from the shared

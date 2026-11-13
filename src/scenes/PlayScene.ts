@@ -208,6 +208,7 @@ import {
   applyHangarWarDeployment,
   applyHullSpeedToShipConfig,
   readHangarWarDeployment,
+  truncateCampaignForDeployment,
   type HangarWarDeployment,
 } from './hangarWar/hangarDeployment';
 import { PowerUp } from '../powerups/PowerUp';
@@ -735,6 +736,15 @@ export class PlayScene extends CombatScene<
    */
   private promoCampaignApplied = false;
 
+  /**
+   * Whether this scene instance's `WaveManager` campaign was injected by a
+   * hangar-war deployment on a previous run (AH-0MWDCBVQ700579WS). The scene
+   * instance is reused across restarts, so a following **arcade** run must
+   * clear the truncated deployment campaign before it resolves the shipped
+   * 10-wave campaign.
+   */
+  private deploymentCampaignApplied = false;
+
   /** Session state (lives, score, level). */
   private gameState: GameState;
   /** Wave/level progression state machine. */
@@ -814,10 +824,11 @@ export class PlayScene extends CombatScene<
   private runFinished = false;
 
   /**
-   * The active level's wave-10 mini-boss entity (epic AH-0MVCC8XSS007P01Z),
-   * spawned when the {@link WaveManager} opens the level's mini-boss wave and
-   * held until it is defeated — the level only completes on its defeat.
-   * Null outside the mini-boss encounter.
+   * The active level's mini-boss entity (epic AH-0MVCC8XSS007P01Z),
+   * spawned when the {@link WaveManager} opens the level's flag-driven
+   * mini-boss wave (wave 10 of the shipped arcade levels; wave 5 of a
+   * hangar-war deployment) and held until it is defeated — the level only
+   * completes on its defeat. Null outside the mini-boss encounter.
    */
   private miniBoss: MiniBoss | null = null;
 
@@ -861,7 +872,7 @@ export class PlayScene extends CombatScene<
   /**
    * The hex profile this deployment's encounters are configured from
    * (AH-0MVUXCAW0001VUM6), or `null` for the shipped arcade run. Pure data
-   * mapped onto the shipped entities' config hooks — the wave-10 `MiniBoss`
+   * mapped onto the shipped entities' config hooks — the wave-5 `MiniBoss`
    * that ends a deployment (body colour + opening demonstrated volley + hit
    * pool) and the final `Boss` seam (colour/demonstrated-weapon/hit pool) —
    * never a separate encounter implementation.
@@ -1509,6 +1520,15 @@ export class PlayScene extends CombatScene<
       this.waveManager.setLevels(LEVELS, { injected: false });
       this.promoCampaignApplied = false;
     }
+    // Same ownership hand-back for a hangar-war deployment campaign
+    // (AH-0MWDCBVQ700579WS): a deployment injects its truncated five-wave
+    // campaign through the caller-owned seam, so a following arcade run in
+    // this (reused) scene instance must re-resolve the shipped full campaign
+    // rather than replay the short sortie.
+    if (!this.hangarWarDeployment && this.deploymentCampaignApplied) {
+      this.waveManager.setLevels(LEVELS, { injected: false });
+      this.deploymentCampaignApplied = false;
+    }
     // Promo scenario campaign (AH-0MVSDM8SE0081WU7): a promo run plays the
     // scenario's hand-authored promo level as the whole campaign, injected
     // through the same `setLevels` seam callers use. Applied before the
@@ -1531,12 +1551,29 @@ export class PlayScene extends CombatScene<
     // run seed (AH-0MUJSUQD8003FSUT) is threaded in so `dynamic` waves
     // regenerate per run while staying reproducible for a given seed.
     if (!this.waveManager.hasInjectedLevels) {
-      this.waveManager.setLevels(
-        resolveCampaignLevels(rules, () =>
-          buildSequencedLevels(undefined, undefined, { seed: this.runSeed }),
-        ),
-        { injected: false },
+      const campaign = resolveCampaignLevels(rules, () =>
+        buildSequencedLevels(undefined, undefined, { seed: this.runSeed }),
       );
+      // Hangar War deployment (AH-0MWDCBVQ700579WS): a hex sortie plays the
+      // aggression-selected level's **first five waves** — four regular waves
+      // then the level's mini-boss on wave 5 — so taking a hex is a bounded
+      // fight that still ends on the boss beat (GDD §8.2). The truncation is
+      // a pure transform of the resolved campaign (static `LEVELS` or the
+      // sequenced campaign alike, never the authored data) and is injected
+      // through the caller-owned seam exactly like the promo campaign:
+      // `injected: true` records that this scene applied it, so a following
+      // arcade run re-resolves the full 10-wave campaign (the ownership reset
+      // above) instead of replaying the short sortie. The arcade branch below
+      // is byte-for-byte unchanged.
+      if (this.hangarWarDeployment) {
+        this.waveManager.setLevels(
+          truncateCampaignForDeployment(campaign),
+          { injected: true },
+        );
+        this.deploymentCampaignApplied = true;
+      } else {
+        this.waveManager.setLevels(campaign, { injected: false });
+      }
     }
     // Checkpoint resume (AH-0MVCRBTNF000DK51): start at the saved level and
     // restore the run stats/permanent progress before the first wave spawns.
@@ -2071,8 +2108,10 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Spawns the level's mini-boss when the active wave is the flagged
-   * wave-10 mini-boss encounter (epic AH-0MVCC8XSS007P01Z, AC1). Called from
+   * Spawns the level's mini-boss when the active wave is the level's flagged
+   * mini-boss wave (epic AH-0MVCC8XSS007P01Z, AC1; wave 10 of the shipped
+   * arcade levels, wave 5 of a hangar-war deployment AH-0MWDCBVQ700579WS).
+   * Called from
    * {@link spawnWave} — i.e. once per wave/level transition — so the entity
    * appears as the mini-boss wave begins. Idempotent: an already-live entity
    * is never re-spawned.
@@ -3319,7 +3358,7 @@ export class PlayScene extends CombatScene<
    * death without changing the entity's total hit pool.
    *
    * A hangar-war deployment's encounters are configured from the **hex
-   * profile** (AH-0MVUXCAW0001VUM6): the wave-10 `MiniBoss` that ends the
+   * profile** (AH-0MVUXCAW0001VUM6): the wave-5 `MiniBoss` that ends the
    * deployment wears the granted weapon's colour, its aggression-perturbed hit
    * pool and its demonstrated opening volley, and the shipped `Boss` below
    * accepts the same profile (a deployment never reaches it — one level per
@@ -4337,7 +4376,7 @@ export class PlayScene extends CombatScene<
   /**
    * The hex profile this deployment's encounters were configured from (or
    * `null` for the arcade run) — the capture-cycle test/UI seam
-   * (AH-0MVUXCAW0001VUM6). The wave-10 mini-boss that ends the deployment reads
+   * (AH-0MVUXCAW0001VUM6). The wave-5 mini-boss that ends the deployment reads
    * it through `miniBossConfigFor`. A detached copy.
    */
   getHexBossProfile(): HexBossProfile | null {

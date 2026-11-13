@@ -13,9 +13,10 @@
  * time-limit carries survivors over, and a hangar-war deployment opened at
  * level 2. The arcade cases assert the observable outcome the player expects:
  * the run keeps ticking and advances to level 3. A deployment now **ends on
- * its wave-10 mini-boss** as a victory (AH-0MWCOW4IQ003XST5): it resolves the
- * hex capture and never advances to level 3, so the same walk pins the
- * deployment victory instead. The regression they pin is a **wedged** level
+ * its wave-5 mini-boss** as a victory (AH-0MWCOW4IQ003XST5; the sortie is a
+ * five-wave slice, AH-0MWDCBVQ700579WS): it resolves the hex capture and never
+ * advances to level 3, so the same walk pins the deployment victory instead.
+ * The regression they pin is a **wedged** level
  * clear (no exception, nothing left to shoot, no level advance): a hold-full
  * mineral choice collected while the mini-boss death sweep animates used to
  * pause the scene and freeze the sweep — the only route that finalises the
@@ -154,7 +155,7 @@ function advanceToLevelTwoMiniBoss(scene: PlayScene): void {
   }
   expect(wm.level).toBe(LEVEL_UNDER_TEST);
   expect(wm.waveNumber).toBe(wm.waveCount);
-  expect(wm.miniBossTriggered, "level 2's wave 10 is the mini-boss").toBe(
+  expect(wm.miniBossTriggered, "level 2's flagged mini-boss wave").toBe(
     true,
   );
   expect(scene.getMiniBoss(), 'the mini-boss entity must be live').not.toBeNull();
@@ -369,10 +370,11 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(wm.level).toBe(LEVEL_UNDER_TEST);
     expect(scene.getLastCapture()).toBeNull();
 
-    // Walk level 2 to its wave-10 mini-boss, then defeat it through the real
-    // path. A deployment ends on that encounter (AH-0MWCOW4IQ003XST5): the
-    // defeat resolves the hex capture and ends the run as a victory, and it
-    // never advances to level 3 (the hex map can never reach the final boss).
+    // Walk level 2 to its wave-5 mini-boss, then defeat it through the real
+    // path. A deployment ends on that encounter (AH-0MWCOW4IQ003XST5) after
+    // its five-wave sortie (AH-0MWDCBVQ700579WS): the defeat resolves the hex
+    // capture and ends the run as a victory, and it never advances to level 3
+    // (the hex map can never reach the final boss).
     scene.getGameState().lives = 99;
     advanceToLevelTwoMiniBoss(scene);
     killAllEnemies(scene);

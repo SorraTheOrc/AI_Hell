@@ -273,10 +273,12 @@ export class WaveManager {
   }
 
   /**
-   * Whether the current level's wave-10 mini-boss has been reached (its
-   * wave is current — or, once defeated, has been current this level).
-   * Per-level encounter state, distinct from the run-level final boss
-   * (`bossTriggered`). Always `false` before the mini-boss wave is current.
+   * Whether the current level's mini-boss has been reached (its flag-driven
+   * wave — wave 10 of the shipped arcade levels, wave 5 of a hangar-war
+   * deployment, AH-0MWDCBVQ700579WS — is current; or, once defeated, has been
+   * current this level). Per-level encounter state, distinct from the
+   * run-level final boss (`bossTriggered`). Always `false` before the
+   * mini-boss wave is current.
    */
   get miniBossTriggered(): boolean {
     return this._miniBossTriggered;
@@ -463,9 +465,10 @@ export class WaveManager {
     // Level wiped — advance to the next level, or trigger the boss.
     //
     // A Hangar War deployment never reaches this advance: its scene ends the
-    // run as a victory on the level's wave-10 mini-boss (GDD §8.2 — one
-    // campaign level per deployment), so the final boss is unreachable from
-    // the hex map. The shipped arcade run below is unchanged.
+    // run as a victory on the level's wave-5 mini-boss (GDD §8.2 — one
+    // campaign level per deployment, played as a five-wave sortie by
+    // AH-0MWDCBVQ700579WS), so the final boss is unreachable from the hex
+    // map. The shipped arcade run below is unchanged.
     if (!this.isFinalLevel) {
       this._levelIndex += 1;
       this._waveIndex = 0;

@@ -2,7 +2,7 @@
  * PlayScene — the deployment's mini-boss wears the hex profile (Rule 2)
  * (AH-0MWCOW50P002TWGP, parent AH-0MWBW1B1Z0059CC2; producer Q3 = a).
  *
- * A Hangar War deployment now ends on its level's wave-10 **mini-boss**, so
+ * A Hangar War deployment now ends on its level's wave-5 **mini-boss**, so
  * Rule 2 ("the boss wields it first") has to hold for that encounter rather
  * than the shipped final boss. The hex profile (`buildHexBossProfile`) already
  * publishes what the encounter must wear — the granted weapon's colour, the
