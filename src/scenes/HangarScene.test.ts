@@ -147,6 +147,7 @@ describe('hangar screen model (pure)', () => {
     expect(rows.map((row) => row.id)).toEqual([
       'hull-1',
       'hull-2',
+      'hull-3',
       'spread',
       'wave_laser',
       'ricochet',
@@ -622,6 +623,7 @@ describe('HangarScene', () => {
     expect(scene.getRows().map((row) => row.key)).toEqual([
       'buy:hull-1',
       'buy:hull-2',
+      'buy:hull-3',
       'buy:spread',
       'buy:wave_laser',
       'buy:ricochet',

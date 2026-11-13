@@ -448,17 +448,33 @@ describe('ring timing: the deployment loadout model (AH-0MW9QA2YC009PSF5)', () =
     ).toEqual(['wave_laser', 'ricochet', 'nova', 'arc', 'dual', 'broadside']);
   });
 
-  it('falls back to the strongest itemised hull when a grant is not in the catalogue', () => {
-    // Ring 2 grants `hull-3`, which the catalogue does not itemise yet: it is
-    // owned but contributes no run stats, exactly like `rapid` / `core-bank`.
+  it('picks the strongest itemised hull, including the ring-2 reward hull', () => {
+    // `hull-3` is the ring-2 extra-hit-points hull (AH-0MWF0CUS3009M5SY): once
+    // captured it is owned and itemised, so it flies instead of the Bulwark
+    // (5 lives vs 4) and the slower hull speed is the trade-off.
     const ownership: RingLoadoutOwnership = {
       hulls: ['hull-1', 'hull-2', 'hull-3'],
       weapons: [],
       modifiers: [],
     };
     const loadout = resolveDeploymentLoadout(ownership);
-    expect(loadout.hullId).toBe('hull-2');
+    expect(loadout.hullId).toBe('hull-3');
+    expect(loadout.lives).toBe(5);
+    expect(loadout.speedMultiplier).toBe(0.8);
     expect(loadout.ownedHulls).toEqual(['hull-1', 'hull-2', 'hull-3']);
+  });
+
+  it('falls back to the strongest itemised hull when a grant is not in the catalogue', () => {
+    // A hull grant the catalogue does not itemise (`hull-9`) is owned but
+    // contributes no run stats, exactly like `rapid` / `core-bank`.
+    const ownership: RingLoadoutOwnership = {
+      hulls: ['hull-1', 'hull-2', 'hull-9'],
+      weapons: [],
+      modifiers: [],
+    };
+    const loadout = resolveDeploymentLoadout(ownership);
+    expect(loadout.hullId).toBe('hull-2');
+    expect(loadout.ownedHulls).toEqual(['hull-1', 'hull-2', 'hull-9']);
   });
 
   it('is deterministic: the same model inputs produce an identical report', () => {
@@ -1156,8 +1172,15 @@ describe('ring timing: per-deployment income (AH-0MWCOWTOR00994NA)', () => {
  * sum or a mineral-only rate.
  */
 describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
-  /** The five buyable rings-1-2 catalogue entries (all minRing 1). */
-  const BUYABLE = ['hull-2', 'wave_laser', 'ricochet', 'cluster', 'hardened_plating'];
+  /** The buyable rings-1-2 catalogue entries, in catalogue order. */
+  const BUYABLE = [
+    'hull-2',
+    'hull-3',
+    'wave_laser',
+    'ricochet',
+    'cluster',
+    'hardened_plating',
+  ];
 
   it('derives deployments-to-afford from both currency bounds', () => {
     const income: PerDeploymentIncome = {
@@ -1179,6 +1202,13 @@ describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
     expect(byId.get('hull-2')!.mineralBoundDeployments).toBe(25);
     expect(byId.get('hull-2')!.coreBoundDeployments).toBe(6);
     expect(byId.get('hull-2')!.price).toEqual({ minerals: 220, cores: 3 });
+    // hull-3 (320 minerals / 4 cores): 320/9 → 36 deployments; the cores are
+    // still the cheaper bound (4/0.5 = 8), so minerals decide. The ring-2
+    // special-reward hull is the tree's most expensive unlock.
+    expect(byId.get('hull-3')!.deploymentsToAfford).toBe(36);
+    expect(byId.get('hull-3')!.mineralBoundDeployments).toBe(36);
+    expect(byId.get('hull-3')!.coreBoundDeployments).toBe(8);
+    expect(byId.get('hull-3')!.price).toEqual({ minerals: 320, cores: 4 });
     // ricochet (90 minerals / 2 cores): 90/9 = 10 ≶ 2/0.5 = 4 → minerals.
     expect(byId.get('ricochet')!.deploymentsToAfford).toBe(10);
     // hardened_plating (80/1): 80/9 → 9 deployments.

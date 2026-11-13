@@ -2901,6 +2901,7 @@ The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 |---|---|---|---|
 | `hull-1` Scrap Hull | hull | 0 / 0 (starter) | 3 lives, speed ×1.0, defence 2 |
 | `hull-2` Bulwark Hull | hull | 220 / 3 | 4 lives, speed ×0.85, defence 14 |
+| `hull-3` Juggernaut Hull | hull | 320 / 4 (`minRing: 2`) | 5 lives, speed ×0.8, defence 15 — the ring-2 special-mission reward (`hex-r2-3` grants it through `resolveHexGrant`), priced above the Bulwark for a fleet that never takes that hex (AH-0MWF0CUS3009M5SY) |
 | `spread` Spread Cannon | weapon | 0 / 0 (starter) | `spread` starting weapon (owned by default, **not equipped**) |
 | `wave_laser` Wave Laser | weapon | 120 / 1 | `wave_laser` starting weapon |
 | `ricochet` Ricochet | weapon | 90 / 2 | `ricochet` starting weapon |
@@ -3125,7 +3126,7 @@ write:
    flying a hull the fleet owns; no defender means no hold
    (`defender-required`). The defender's stored rating is the hangar economy's
    single formula — `baseDefence + 3 × armour + 2 × firepower + 2 × systems`
-   (Scrap Hull `2`, Bulwark Hull `14`) — never a flown battle.
+   (Scrap Hull `2`, Bulwark Hull `14`, Juggernaut Hull `15`) — never a flown battle.
 4. **Secure the ring — or rush past it.** **Ring secured** means every hex of
    the current ring is held (producer decision 2026-10-30, Q2 = a). The next
    ring opens on the ring's **capstone**: its one `weaponHex` — the hardest hex,
@@ -3298,6 +3299,7 @@ every rings-1–2 entry:
 | Entry (price) | Before (ring-1 grind) | After (ring-1 grind) | After (ring-2 grind) |
 |---|---|---|---|
 | Bulwark Hull `hull-2` (220 minerals / 3 cores) | 55 deployments | **25** | 37 |
+| Juggernaut Hull `hull-3` (320 / 4) | — | **36** | 54 |
 | Wave Laser `wave_laser` (120 / 1) | 30 | **14** | 20 |
 | Ricochet `ricochet` (90 / 2) | 23 | **10** | 15 |
 | Cluster Missile `cluster` (160 / 1) | 40 | **18** | 27 |

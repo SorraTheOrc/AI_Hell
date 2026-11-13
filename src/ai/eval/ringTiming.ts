@@ -84,7 +84,10 @@
  *   **captured** hex's grant is owned from the next deployment (weapons to the
  *   equipped set, hulls and upgrades through `resolveHexGrant`), so the later
  *   deployments of the same ring launch with it. A **lost** deployment grants
- *   nothing — the retry replays the same hex with the same loadout.
+ *   nothing — the retry replays the same hex with the same loadout. Ring 2's
+ *   `hex-r2-3` grants the extra-hit-points hull `hull-3`, so the sorties after
+ *   it fly 5 lives at 0.8 speed instead of the Bulwark's 4 at 0.85
+ *   (AH-0MWF0CUS3009M5SY).
  * - **Entering ring *n*** — the starter kit plus every grant of the previous
  *   rings, earned in the same plan order (ring 2: the `ricochet`, `rapid` and
  *   `wave_laser` weapons, the `hull-2` hull, `hardened_plating`, and the
@@ -93,7 +96,7 @@
  *   (trimmed by the shipped `capDropIdsToSlotPool` six-slot cap), the
  *   **strongest owned hull** is active (most starting lives, then speed), and
  *   every owned `extra-lives` modifier is applied, capped at `MAX_LIVES`. A
- *   grant the catalogue does not itemise (`hull-3`, `rapid`, `core-bank`) is
+ *   grant the catalogue does not itemise (`hull-9`, `rapid`, `core-bank`) is
  *   owned but contributes no run stats — the same "recorded but effect-free"
  *   rule the shipped capture cycle uses.
  *
@@ -731,10 +734,10 @@ function ownedHullDefinition(
  * The active hull: the **strongest owned, itemised hull** — most starting
  * lives first, then the faster hull, then catalogue order (deterministic).
  *
- * A hull grant the catalogue does not itemise yet (`hull-3`, from ring 2) is
- * owned but supplies no run stats, exactly as `rapid` / `core-bank` are
- * recorded as effect-free modifiers, so it cannot invent lives the deployment
- * path would not grant.
+ * A hull grant the catalogue does not itemise (a future `hull-9`) is owned but
+ * supplies no run stats, exactly as `rapid` / `core-bank` are recorded as
+ * effect-free modifiers, so it cannot invent lives the deployment path would
+ * not grant.
  */
 function strongestOwnedHull(
   ownedHulls: readonly string[],

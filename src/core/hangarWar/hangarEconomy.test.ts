@@ -7,7 +7,9 @@
  * systems required* / *States* and `Build Candidate D — Hangar War` AC1):
  *
  * - the catalogue offers **exactly** one extra hull, three unlockable starting
- *   weapons and one permanent modifier, plus the minimal starting kit;
+ *   weapons and one permanent modifier, plus the minimal starting kit; the
+ *   post-MVP special-reward hull (`hull-3`, AH-0MWF0CUS3009M5SY) is the one
+ *   deliberate addition on top of that MVP contents pin;
  * - `canBuy` / `buy` are pure, total and never mutate their inputs;
  * - a save's active hull and loadout resolve **only** from unlocked entries;
  * - the attract bot's `cheapestUsefulUnlock` is deterministic;
@@ -81,10 +83,14 @@ function gatedWeapon(minRing: number): StartingWeaponDefinition {
 }
 
 describe('hangar catalogue — the unlock tree is data of record', () => {
-  it('offers exactly one extra hull, three starting weapons and one modifier', () => {
+  it('offers two extra hulls, three starting weapons and one modifier', () => {
     const buyable = HANGAR_CATALOGUE.filter((item) => !item.starter);
 
-    expect(buyable.filter((item) => item.kind === 'hull')).toHaveLength(1);
+    // Two non-starter hulls since AH-0MWF0CUS3009M5SY: the ring-1 Bulwark and
+    // the ring-2 extra-hit-points hull the special mission grants (`hull-3`).
+    // The epic's "one extra hull" pin (AH-0MVU3VNJI00066YE) still describes the
+    // MVP tree; the special reward is the deliberate post-MVP addition.
+    expect(buyable.filter((item) => item.kind === 'hull')).toHaveLength(2);
     expect(buyable.filter((item) => item.kind === 'weapon')).toHaveLength(3);
     expect(buyable.filter((item) => item.kind === 'modifier')).toHaveLength(1);
   });

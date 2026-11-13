@@ -387,11 +387,13 @@ item list:
   effect-free `core-bank` upgrade.
 - **Equip convention (deterministic)** — every owned weapon is equipped,
   trimmed by the shared six-slot cap (`capDropIdsToSlotPool`); the strongest
-  owned hull is active (`hull-2`: 4 lives, 0.85 speed, scaled through the
-  shared `scaleShipConfigForHull` helper a shipped deployment uses); every owned
-  `extra-lives` modifier applies, capped at the run's 5 lives. A grant the
-  catalogue does not itemise yet (`hull-3`) is owned but contributes no run
-  stats — the same "recorded but effect-free" rule the capture cycle uses.
+  owned hull is active (entering ring 2 that is `hull-2`: 4 lives, 0.85 speed;
+  once ring 2's `hex-r2-3` is captured it is `hull-3`: 5 lives, 0.8 speed,
+  AH-0MWF0CUS3009M5SY, scaled through the shared `scaleShipConfigForHull` helper
+  a shipped deployment uses); every owned `extra-lives` modifier applies,
+  capped at the run's 5 lives. A grant the catalogue does not itemise (a future
+  `hull-9`) is owned but contributes no run stats — the same "recorded but
+  effect-free" rule the capture cycle uses.
 
 The loadout changes the run's **starting** state only: the aggression model, the
 deployment window and every retry/exposure allowance below are unchanged, and

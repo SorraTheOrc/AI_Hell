@@ -7,7 +7,11 @@
  * save model*; the epic (`AH-0MVU3VNJI00066YE`, AC1) fixes the contents: **one
  * extra hull, three unlockable starting weapons and one permanent modifier**,
  * on top of the minimal starting kit (one basic hull and its starting weapon,
- * owned but not equipped by default — AH-0MVZJ6V1J001DA9D).
+ * owned but not equipped by default — AH-0MVZJ6V1J001DA9D). The post-MVP
+ * special-reward hull (`hull-3`, AH-0MWF0CUS3009M5SY) is the one deliberate
+ * addition: **extra hit points**, expressed with today's {@link HullDefinition}
+ * / {@link HullRunStats} fields and granted by the ring-2 special mission
+ * through `resolveHexGrant` rather than dropped as currency.
  *
  * The tree is declarative on purpose. The pure rules that read it
  * (`src/core/hangarWar/hangarEconomy.ts`) own every decision — cost, gating,
@@ -117,10 +121,13 @@ export const STARTER_WEAPON_ID = 'spread';
 /**
  * The hangar's unlock tree.
  *
- * Five buyable entries (one hull, three starting weapons, one modifier) plus
+ * Six buyable entries (two hulls, three starting weapons, one modifier) plus
  * the two starter entries that make up the minimal fleet. Costs are ordered so
  * the cheapest useful unlock is a real choice early on (a life is cheaper than
- * a new weapon) and the extra hull is the long-term goal.
+ * a new weapon) and the **extra hit points hull** is the long-term goal — first
+ * as the ring-2 special-mission reward (granted free through `resolveHexGrant`)
+ * and, for a fleet that never takes that hex, as a ring-2 purchase priced above
+ * the Bulwark Hull (AH-0MWF0CUS3009M5SY).
  */
 export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
   {
@@ -148,6 +155,29 @@ export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
     baseDefence: 4,
     upgrades: { armour: 2, firepower: 1, systems: 1 },
     runStats: { startingLives: 4, speedMultiplier: 0.85 },
+  },
+  {
+    // The special-mission reward (AH-0MWF0CUS3009M5SY, parent
+    // AH-0MWVZYIWX0008C55 Q2 = a): **strictly more hit points** than the
+    // Bulwark, paid for with a heavier, slower hull. One extra starting life
+    // (5) is the run's own `MAX_LIVES` cap, so the reward cannot stack past
+    // what a deployment can hold; the higher `baseDefence` lifts the fleet's
+    // player strength by ONE point, i.e. at most one aggression point of
+    // ring-2 budget above the documented Bulwark fleet's 58 (see
+    // `src/data/hangarCatalogue.test.ts`). `minRing: 2` and a price above the
+    // Bulwark keep it from undercutting the shipped unlock tree; the ring-2
+    // hex `hex-r2-3` grants it outright through `resolveHexGrant`.
+    id: 'hull-3',
+    kind: 'hull',
+    name: 'Juggernaut Hull',
+    description:
+      'A siege hull with a doubled cockpit and a bank of spare drives: one more life than the Bulwark, and it turns like a loaded ore barge.',
+    price: { minerals: 320, cores: 4 },
+    minRing: 2,
+    starter: false,
+    baseDefence: 5,
+    upgrades: { armour: 2, firepower: 1, systems: 1 },
+    runStats: { startingLives: 5, speedMultiplier: 0.8 },
   },
   {
     id: STARTER_WEAPON_ID,
