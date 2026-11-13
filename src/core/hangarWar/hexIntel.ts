@@ -108,9 +108,11 @@
  */
 
 import {
+  FORTRESS_CAPTURE_PASSES,
   createRingState,
   ringDepth,
   type AxialCoordinate,
+  type HexLandmarkId,
   type HexRingDefinition,
 } from './hexRing';
 import { areNeighbours } from './hexRing';
@@ -165,6 +167,18 @@ export const HELD_TILE_MARKER = '\u25CF';
 
 /** Ownership marker on an unheld tile's label (readable without colour). */
 export const UNHELD_TILE_MARKER = '\u25CB';
+
+/**
+ * Tile tag marking a `fortress` landmark (AH-0MWEW5I1F006CLCH): two capture
+ * passes before the hex is held. Legible without colour.
+ */
+export const FORTRESS_TILE_TAG = '\u26A1 FORTRESS';
+
+/**
+ * Tile tag marking a `cache` landmark (AH-0MWEW5I1F006CLCH): pays bonus salvage
+ * instead of granting. Legible without colour.
+ */
+export const CACHE_TILE_TAG = '\u25A3 CACHE';
 
 /**
  * Tile tag marking a hex that carries an authored **contract**
@@ -267,6 +281,20 @@ export interface HexIntel {  /** Row key (`hex:<id>`), unique within the map. */
   readonly weaknesses: readonly string[];
   /** Weapon/upgrade the hex grants once its boss is beaten, or `null`. */
   readonly grants: string | null;
+  /**
+   * The hex's authored **landmark** (post-MVP Hangar War, AH-0MWEW5I1F006CLCH,
+   * Q3 = a): `fortress` (two capture passes), `cache` (pays out instead of
+   * granting), or `null` for an ordinary hex. Published before commitment.
+   */
+  readonly landmark: HexLandmarkId | null;
+  /**
+   * Fortress progress in published form: the passes recorded so far and the
+   * passes the landmark needs (`passes` is `0`/`required` for a non-fortress).
+   */
+  readonly landmarkProgress: {
+    readonly passes: number;
+    readonly required: number;
+  } | null;
   /**
    * The hex's authored **contract** (post-MVP Hangar War, AH-0MWEW58WD003NFXS,
    * Q2 = a): the objective and bonus the player can read **before** committing
@@ -638,6 +666,28 @@ function contractIntelFor(
 }
 
 /**
+ * The authored landmark's published progress, or `null` for an ordinary hex.
+ *
+ * A `fortress` publishes the passes it has recorded against the number it
+ * needs (two, `FORTRESS_CAPTURE_PASSES`); a `cache` needs none, so both numbers
+ * are `0`. A malformed stored count collapses to `0` — a hex can never publish
+ * more progress than it has.
+ *
+ * @param definition — the authored definition, or `undefined` when unknown.
+ * @param state — the stored hex (carries the fortress progress).
+ * @returns the published progress, or `null` for an ordinary hex.
+ */
+function landmarkProgressFor(
+  definition: HexRingDefinition | undefined,
+  state: HexState,
+): { readonly passes: number; readonly required: number } | null {
+  if (definition?.landmark === undefined) return null;
+  if (definition.landmark !== 'fortress') return { passes: 0, required: 0 };
+  const passes = Math.min(FORTRESS_CAPTURE_PASSES, toCount(state.capturePasses));
+  return { passes, required: FORTRESS_CAPTURE_PASSES };
+}
+
+/**
  * The hexes the map draws: exactly the stored ring when it has any hexes,
  * otherwise the ring generated from definitions for the payload's ring index
  * (a fresh war's not-yet-generated ring). Never pads a partial stored ring.
@@ -740,6 +790,7 @@ function tileLabel(
   held: boolean,
   specialMission: HexSpecialMissionIntel | null,
   contract: HexContractIntel | null = null,
+  landmark: HexLandmarkId | null = null,
 ): string {
   const base = `(${state.q},${state.r}) AGG ${aggression} ${
     held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
@@ -751,7 +802,28 @@ function tileLabel(
     );
   }
   if (contract !== null) tags.push(CONTRACT_TILE_TAG);
+  if (landmark === 'fortress') tags.push(FORTRESS_TILE_TAG);
+  if (landmark === 'cache') tags.push(CACHE_TILE_TAG);
   return tags.length === 0 ? base : `${base}\n${tags.join('\n')}`;
+}
+
+/**
+ * The detail-panel line for an authored landmark (AH-0MWEW5I1F006CLCH).
+ *
+ * @param landmark — the authored landmark id.
+ * @param progress — the fortress progress, or `null`.
+ * @returns the published line.
+ */
+function landmarkLine(
+  landmark: HexLandmarkId,
+  progress: { readonly passes: number; readonly required: number } | null,
+): string {
+  if (landmark === 'fortress') {
+    const passes = progress?.passes ?? 0;
+    const required = progress?.required ?? FORTRESS_CAPTURE_PASSES;
+    return `LANDMARK: FORTRESS \u2014 PASS ${passes}/${required} (two captures to hold)`;
+  }
+  return 'LANDMARK: CACHE \u2014 pays bonus salvage instead of granting';
 }
 
 /** The tile text: id, state/aggression/attack, boss, strengths, weaknesses, grant. */
@@ -762,6 +834,8 @@ function hexLabel(
   defender: HexDefender | null,
   specialMission: HexSpecialMissionIntel | null = null,
   contract: HexContractIntel | null = null,
+  landmark: HexLandmarkId | null = null,
+  landmarkProgress: { readonly passes: number; readonly required: number } | null = null,
 ): string {
   const lines: string[] = [
     state.id,
@@ -808,6 +882,10 @@ function hexLabel(
       `REWARD: ${specialMission.hullName} (+${specialMission.bonusStartingLives} LIVES · DEF ${specialMission.baseDefence})`,
       specialMission.description,
     );
+  }
+
+  if (landmark !== null) {
+    lines.push(landmarkLine(landmark, landmarkProgress));
   }
 
   if (contract !== null) {
@@ -870,6 +948,8 @@ export function buildHexIntel(
     strengths: definition ? [...definition.strengths] : [],
     weaknesses: definition ? [...definition.weaknesses] : [],
     grants: definition?.grants ?? null,
+    landmark: definition?.landmark ?? null,
+    landmarkProgress: landmarkProgressFor(definition, state),
     contract: contractIntelFor(definition, state),
     weaponHex: definition?.weaponHex === true,
     isSpecialMission: specialMission !== null,
@@ -882,8 +962,24 @@ export function buildHexIntel(
     displayed,
     selectable: displayed,
     actionable: displayed && !held,
-    tileLabel: tileLabel(state, aggression, held, specialMission, contract),
-    label: hexLabel(state, definition, pending, defender, specialMission, contract),
+    tileLabel: tileLabel(
+      state,
+      aggression,
+      held,
+      specialMission,
+      contract,
+      definition?.landmark ?? null,
+    ),
+    label: hexLabel(
+      state,
+      definition,
+      pending,
+      defender,
+      specialMission,
+      contract,
+      definition?.landmark ?? null,
+      landmarkProgressFor(definition, state),
+    ),
   };
 }
 

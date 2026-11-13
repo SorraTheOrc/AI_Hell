@@ -348,6 +348,13 @@ export function hexWarSummaryLines(
       // The authored contract is part of the known-ahead intel, and its
       // fulfilment marker is the stored replay guard (AH-0MWEW58WD003NFXS), so
       // the harness reads both off data rather than duplicating a rule.
+      // The authored landmark is known-ahead intel too (AH-0MWEW5I1F006CLCH):
+      // a fortress publishes its passes, a cache publishes that it pays out.
+      if (fixture.landmark === 'fortress') {
+        parts.push(`landmark: fortress ${hex.capturePasses ?? 0}/2 passes`);
+      } else if (fixture.landmark === 'cache') {
+        parts.push('landmark: cache (pays out, no grant)');
+      }
       if (fixture.contract !== undefined) {
         parts.push(
           `contract: ${fixture.contract.objective}`,

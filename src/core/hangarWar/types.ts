@@ -132,6 +132,18 @@ export interface HexState {
    * replay can never double-count it.
    */
   contractFulfilled?: boolean;
+  /**
+   * Fortress progress: the capture passes recorded against this hex so far
+   * (post-MVP Hangar War, AH-0MWEW5I1F006CLCH, producer answer Q3 = a).
+   *
+   * A `fortress` landmark needs **two** capture passes before the hex is held;
+   * an ordinary hex needs one and never carries the field. Additive and
+   * optional on purpose: a save written before landmarks landed has no such
+   * field, and absence reads as `0` passes, so the store migrates it by **field
+   * presence** without a schema-version bump. Ring geometry and the `6 × n`
+   * generator are untouched by it.
+   */
+  capturePasses?: number;
 }
 
 /** The current hex ring around the hangar. */

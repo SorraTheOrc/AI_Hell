@@ -284,6 +284,13 @@ function parseHex(raw: unknown): HexState | null {
     // contracts landed has no marker, and a malformed one is dropped rather
     // than guessed — never `false`, so an absent field stays absent.
     ...(raw.contractFulfilled === true ? { contractFulfilled: true } : {}),
+    // Fortress progress (AH-0MWEW5I1F006CLCH): only a usable positive count is
+    // kept, so a pre-landmark save keeps the field absent and a malformed value
+    // is dropped rather than guessed (field-presence migration).
+    ...(toInteger(raw.capturePasses) !== null &&
+    toInteger(raw.capturePasses)! > 0
+      ? { capturePasses: toInteger(raw.capturePasses)! }
+      : {}),
   };
 }
 

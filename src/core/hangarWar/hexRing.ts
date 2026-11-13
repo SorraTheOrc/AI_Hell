@@ -121,6 +121,14 @@ export interface HexContractDefinition {
  */
 export const HEX_LANDMARK_IDS = Object.freeze(['fortress', 'cache'] as const);
 
+/**
+ * Capture passes a `fortress` landmark needs before the hex is held
+ * (`AH-0MWEW5I1F006CLCH`, Q3 = a): the first pass records progress, the
+ * second secures the hex. Stated once, here, with the landmark vocabulary so
+ * the intel, the resolver and the gym cannot disagree.
+ */
+export const FORTRESS_CAPTURE_PASSES = 2;
+
 /** One authored ring landmark id (see {@link HEX_LANDMARK_IDS}). */
 export type HexLandmarkId = (typeof HEX_LANDMARK_IDS)[number];
 

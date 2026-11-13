@@ -32,16 +32,14 @@ import {
 import type { HexIntel } from './hexIntel';
 
 /**
- * The variety fields still to land on `HexIntel` (AC2). `contract` is shipped
- * (AH-0MWEW58WD003NFXS); `personality` and `landmark` land with their own axis
- * items, so they are declared optional here — a red contract, not a broken
- * build.
+ * The one variety field still to land on `HexIntel` (AC2): `contract` ships
+ * with AH-0MWEW58WD003NFXS and `landmark` with AH-0MWEW5I1F006CLCH;
+ * `personality` lands with its own axis item, so it is declared optional here —
+ * a red contract, not a broken build.
  */
 interface VarietyIntel extends HexIntel {
   /** The hex's authored personality, or `null`/absent when it has none. */
   readonly personality?: string | null;
-  /** The hex's authored landmark, or `null`/absent when it is none. */
-  readonly landmark?: string | null;
 }
 
 /** The authored variety sample ring 3, as the map model sees it. */
@@ -105,14 +103,14 @@ describe('hex variety intel — contract (AC2, Q2 = a)', () => {
 });
 
 describe('hex variety intel — landmarks (AC2, Q3 = a)', () => {
-  it.fails('publishes a fortress landmark before commitment', () => {
+  it('publishes a fortress landmark before commitment', () => {
     expect(varietyIntel(FORTRESS_HEX_ID).landmark).toBe('fortress');
     expect(varietyIntel(FORTRESS_HEX_ID).label.toLowerCase()).toContain(
       'fortress',
     );
   });
 
-  it.fails('publishes a cache landmark before commitment', () => {
+  it('publishes a cache landmark before commitment', () => {
     expect(varietyIntel(CACHE_HEX_ID).landmark).toBe('cache');
     expect(varietyIntel(CACHE_HEX_ID).label.toLowerCase()).toContain('cache');
   });

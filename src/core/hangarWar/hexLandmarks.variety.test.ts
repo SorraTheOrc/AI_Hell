@@ -12,10 +12,9 @@
  * the authored variety sample ring, so the game and every gym resolve the same
  * code (AGENTS.md gym↔game parity).
  *
- * ## Test-first contract
- *
- * The `it.fails` cases pin behaviour that lands with the landmark axis item
- * (AH-0MWEW5I1F006CLCH) and flip to `it` as part of its acceptance criteria.
+ * These cases were written as `it.fails` red contracts by
+ * AH-0MWEW4RVP002LIP4 and flipped to `it` when the landmark axis landed
+ * (AH-0MWEW5I1F006CLCH) — they are the axis's acceptance gate.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -80,13 +79,13 @@ const CACHE_HEX_ID = 'hex-r3-4';
 const ORDINARY_HEX_ID = 'hex-r3-2';
 
 describe('hex variety landmarks — fortress (AC4, Q3 = a)', () => {
-  it.fails('does not hold a fortress hex after one capture pass', () => {
+  it('does not hold a fortress hex after one capture pass', () => {
     const first = resolveHexCapture(varietyPayload(), captureAt(FORTRESS_HEX_ID));
     expect(hexState(first.payload, FORTRESS_HEX_ID).held).toBe(false);
     expect(hexState(first.payload, FORTRESS_HEX_ID).capturePasses).toBe(1);
   });
 
-  it.fails('holds a fortress hex after the second capture pass', () => {
+  it('holds a fortress hex after the second capture pass', () => {
     const first = resolveHexCapture(varietyPayload(), captureAt(FORTRESS_HEX_ID));
     const second = resolveHexCapture(first.payload, captureAt(FORTRESS_HEX_ID));
 
@@ -104,7 +103,7 @@ describe('hex variety landmarks — fortress (AC4, Q3 = a)', () => {
 });
 
 describe('hex variety landmarks — cache (AC4, Q3 = a)', () => {
-  it.fails('pays the cache bonus instead of granting', () => {
+  it('pays the cache bonus instead of granting', () => {
     const payload = varietyPayload();
     const result = resolveHexCapture(payload, captureAt(CACHE_HEX_ID));
 
@@ -120,7 +119,7 @@ describe('hex variety landmarks — cache (AC4, Q3 = a)', () => {
     );
   });
 
-  it.fails('adds nothing to the fleet when a cache pays out', () => {
+  it('adds nothing to the fleet when a cache pays out', () => {
     const payload = varietyPayload();
     const result = resolveHexCapture(payload, captureAt(CACHE_HEX_ID));
 

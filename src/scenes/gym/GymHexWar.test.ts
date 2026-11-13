@@ -1136,7 +1136,7 @@ describe('GymHexWar — the special mission (AH-0MWF0CSSI007P414)', () => {
   });
 });
 
-describe('GymHexWar — hex contracts (AH-0MWEW58WD003NFXS)', () => {
+describe('GymHexWar — hex variety surfaces (AH-0MWEW58WD003NFXS, AH-0MWEW5I1F006CLCH)', () => {
   let booted: BootedGame | null = null;
 
   async function bootHexWar(data?: object): Promise<GymHexWar> {
@@ -1188,5 +1188,42 @@ describe('GymHexWar — hex contracts (AH-0MWEW58WD003NFXS)', () => {
     expect(line).toBeDefined();
     expect(line).toContain('contract: ');
     expect(line).toContain('contract OPEN');
+  });
+
+  it('publishes a fortress landmark, its pass progress and its summary line', async () => {
+    const scene = await bootHexWar({
+      payload: varietyPayload(),
+      definitions: VARIETY_RING_DEFINITIONS,
+    });
+
+    const intel = scene.getMapModel()!.hexes.find((hex) => hex.id === 'hex-r3-3');
+    expect(intel, 'the fortress hex is published').toBeDefined();
+    expect(intel!.landmark).toBe('fortress');
+    expect(intel!.landmarkProgress).toEqual({ passes: 0, required: 2 });
+    expect(intel!.label).toContain('FORTRESS');
+    expect(intel!.tileLabel).toContain('FORTRESS');
+
+    const line = scene
+      .getSummaryLines()
+      .find((entry) => entry.includes('hex-r3-3'));
+    expect(line).toContain('landmark: fortress 0/2 passes');
+  });
+
+  it('publishes a cache landmark and its no-grant payout', async () => {
+    const scene = await bootHexWar({
+      payload: varietyPayload(),
+      definitions: VARIETY_RING_DEFINITIONS,
+    });
+
+    const intel = scene.getMapModel()!.hexes.find((hex) => hex.id === 'hex-r3-4');
+    expect(intel, 'the cache hex is published').toBeDefined();
+    expect(intel!.landmark).toBe('cache');
+    expect(intel!.label.toLowerCase()).toContain('cache');
+    expect(intel!.tileLabel).toContain('CACHE');
+
+    const line = scene
+      .getSummaryLines()
+      .find((entry) => entry.includes('hex-r3-4'));
+    expect(line).toContain('landmark: cache');
   });
 });

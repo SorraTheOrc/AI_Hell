@@ -255,7 +255,11 @@ export function hexBossBodyColor(
   definition: HexRingDefinition | null | undefined,
   hexId: string,
 ): number {
-  const grant = resolveHexGrant(definition?.grants);
+  const grant = resolveHexGrant(
+    definition?.grants,
+    undefined,
+    definition?.landmark,
+  );
   if (grant !== null && grant.weaponId !== null) {
     return BULLET_COLORS[grant.weaponId];
   }
@@ -282,7 +286,11 @@ export function buildHexBossProfile(
 ): HexBossProfile {
   const hexId = typeof hex?.id === 'string' && hex.id.trim() !== '' ? hex.id : 'hex-unknown';
   const difficulty = hexDifficultyProfile(toCount(hex?.aggression), maxLevel);
-  const grant = resolveHexGrant(definition?.grants);
+  const grant = resolveHexGrant(
+    definition?.grants,
+    undefined,
+    definition?.landmark,
+  );
   const demonstratedColor =
     grant !== null && grant.weaponId !== null
       ? BULLET_COLORS[grant.weaponId]

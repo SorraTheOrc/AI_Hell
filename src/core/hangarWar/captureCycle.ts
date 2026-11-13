@@ -63,7 +63,15 @@ import {
   deriveDefenderRating,
   resolveActiveLoadout,
 } from './hangarEconomy';
-import { createRingState, ringDepth, type HexRingDefinition } from './hexRing';
+import {
+  FORTRESS_CAPTURE_PASSES,
+  createRingState,
+  ringDepth,
+  type HexLandmarkId,
+  type HexRingDefinition,
+} from './hexRing';
+
+export { FORTRESS_CAPTURE_PASSES } from './hexRing';
 import {
   specialMissionRewardFor,
   type SpecialMissionReward,
@@ -198,12 +206,20 @@ function isShippedWeapon(id: string): id is WeaponId {
  *
  * @param grantId — the authored `grants` value (or anything at all).
  * @param catalogue — the hangar tree to resolve against (defaults to shipped).
+ * @param landmark — the hex's authored landmark; a `cache` always resolves to
+ *   `null` (it pays out instead of granting, AH-0MWEW5I1F006CLCH).
  * @returns the resolved grant, or `null` when the hex has no grant.
  */
 export function resolveHexGrant(
   grantId: unknown,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  landmark: HexLandmarkId | null | undefined = null,
 ): HexGrant | null {
+  // A `cache` landmark pays out instead of granting (producer answer Q3 = a),
+  // so it resolves to the **no-grant** payout however its authored `grants`
+  // reads. The one-weapon-hex rule is unaffected: a cache can never *be* the
+  // weapon hex (validated in `validateRingDefinitions`).
+  if (landmark === 'cache') return null;
   const id = toId(grantId);
   if (id === null) return null;
 
@@ -654,8 +670,25 @@ export function resetCampaign(payload: HangarWarPayload): HangarWarPayload {
   return { ...fresh, bestScore: toCount(payload.bestScore) };
 }
 
-/** Why a boss victory did not capture its hex. */
-export type CaptureRefusal = 'unknown-hex' | 'defender-required';
+/**
+ * Why a boss victory did not capture its hex.
+ *
+ * `fortress-incomplete` is a *progress* refusal rather than a failure: the
+ * pass was recorded and the salvage banked, but a fortress hex needs two
+ * passes before it is held (AH-0MWEW5I1F006CLCH, Q3 = a).
+ */
+export type CaptureRefusal =
+  | 'unknown-hex'
+  | 'defender-required'
+  | 'fortress-incomplete';
+
+/**
+ * The minerals a `cache` landmark pays out on capture, **instead of** granting
+ * the hex's authored weapon/upgrade (AH-0MWEW5I1F006CLCH, Q3 = a). A single
+ * explicit constant keeps the payout one authored balance decision rather than
+ * a rule spread through the resolver.
+ */
+export const CACHE_SALVAGE_BONUS = 140;
 
 /**
  * Everything a boss victory resolves the capture from.
@@ -711,6 +744,12 @@ export interface HexCaptureResult {
    * its bonus was already banked — a replay adds nothing.
    */
   readonly contractBonus: SalvageAmounts | null;
+  /**
+   * The cache payout this capture banked (AH-0MWEW5I1F006CLCH, Q3 = a), or
+   * `null` when the hex is not a cache or it was already held (a replay adds
+   * nothing).
+   */
+  readonly cachePayout: SalvageAmounts | null;
   /** True when the capture secured the current ring. */
   readonly ringSecured: boolean;
   /** True when securing the ring opened the next ring. */
@@ -726,6 +765,43 @@ export interface HexCaptureResult {
   readonly assault: HangarAssaultResolution | null;
   /** True when the assault broke the hangar and the whole campaign was reset. */
   readonly campaignReset: boolean;
+}
+
+/**
+ * Pays a `cache` landmark's bonus on capture, **instead of** granting
+ * (AH-0MWEW5I1F006CLCH, producer answer Q3 = a).
+ *
+ * The payout goes through the shipped {@link bankSalvage} rule with a
+ * cache-scoped run watermark, and it is only paid when the hex was **not**
+ * already held: a replay of an already-captured cache adds nothing, so the
+ * payout can never be double-counted. Nothing enters the fleet — a cache grants
+ * no weapon, hull or modifier.
+ *
+ * @param payload — the detached payload being resolved (its hangar is credited).
+ * @param hex — the captured hex.
+ * @param definition — the authored definition, or `undefined` when unknown.
+ * @param alreadyHeld — true when the hex was held before this resolution.
+ * @returns the salvage paid by this call, or `null` when none was paid.
+ */
+function payCacheLandmark(
+  payload: HangarWarPayload,
+  hex: HexState,
+  definition: HexRingDefinition | undefined,
+  alreadyHeld: boolean,
+): SalvageAmounts | null {
+  if (definition?.landmark !== 'cache') return null;
+  if (alreadyHeld) return null;
+  if (CACHE_SALVAGE_BONUS <= 0) return null;
+
+  const banked = bankSalvage(bankedSalvageFromHangar(payload.hangar), {
+    runId: `hex-cache:${hex.id}`,
+    checkpointId: hex.id,
+    minerals: CACHE_SALVAGE_BONUS,
+    cores: 0,
+  });
+  payload.hangar.bankedMinerals = banked.minerals;
+  payload.hangar.bankedCores = banked.cores;
+  return { minerals: CACHE_SALVAGE_BONUS, cores: 0 };
 }
 
 /**
@@ -827,6 +903,7 @@ export function resolveHexCapture(
       grant: null,
       specialReward: null,
       contractBonus: null,
+      cachePayout: null,
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
@@ -851,6 +928,7 @@ export function resolveHexCapture(
       grant: null,
       specialReward: null,
       contractBonus: null,
+      cachePayout: null,
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
@@ -860,7 +938,40 @@ export function resolveHexCapture(
   }
 
   const definition = definitions.find((entry) => entry.id === hex.id);
-  const grant = resolveHexGrant(definition?.grants);
+  const wasHeld = hex.held === true;
+
+  // A fortress hex needs two capture passes (Q3 = a): the pass is recorded and
+  // the salvage already banked, but the hex is not held until the second pass.
+  if (definition?.landmark === 'fortress' && !wasHeld) {
+    const passes = Math.min(
+      FORTRESS_CAPTURE_PASSES,
+      toCount(hex.capturePasses) + 1,
+    );
+    hex.capturePasses = passes;
+    if (passes < FORTRESS_CAPTURE_PASSES) {
+      return {
+        ok: false,
+        reason: 'fortress-incomplete',
+        payload: next,
+        banked: settled,
+        bankedDelta,
+        defender: null,
+        grant: null,
+        specialReward: null,
+        contractBonus: null,
+        cachePayout: null,
+        ringSecured: isRingSecured(next.ring),
+        ringAdvanced: false,
+        ringIndex: toCount(next.ring.ringIndex),
+        assault: null,
+        campaignReset: false,
+      };
+    }
+  }
+
+  // A cache pays out instead of granting, so it resolves to the no-grant
+  // payout however its authored `grants` reads (Q3 = a).
+  const grant = resolveHexGrant(definition?.grants, undefined, definition?.landmark);
   // A special mission pays its hull through the same grant path as any other
   // hex; the reward record only makes that payment legible to the caller.
   const specialReward = specialMissionRewardFor(definition);
@@ -876,6 +987,10 @@ export function resolveHexCapture(
   // banking rule, guarded by the hex's stored fulfilment marker so a replay
   // can never double-count it.
   const contractBonus = fulfilContract(next, hex, definition);
+
+  // A cache landmark pays its bonus instead of granting (Q3 = a); a replay of an
+  // already-held cache pays nothing.
+  const cachePayout = payCacheLandmark(next, hex, definition, wasHeld);
 
   const ringSecured = isRingSecured(next.ring);
   // The ring's final hex is captured: resolve the AI's massed hangar assault
@@ -897,6 +1012,7 @@ export function resolveHexCapture(
       grant,
       specialReward,
       contractBonus,
+      cachePayout,
       ringSecured: false,
       ringAdvanced: false,
       ringIndex: toCount(reset.ring.ringIndex),
@@ -922,6 +1038,7 @@ export function resolveHexCapture(
     grant,
     specialReward,
     contractBonus,
+    cachePayout,
     ringSecured,
     ringAdvanced: advanced.opened,
     ringIndex: advanced.ringIndex,

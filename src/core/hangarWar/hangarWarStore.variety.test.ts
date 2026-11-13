@@ -87,7 +87,7 @@ describe('hex variety persistence — one payload, field-presence migration', ()
     expect(parsed.version).toBe(HANGAR_WAR_FIXTURE_VERSION);
   });
 
-  it.fails('round-trips a fortress hex’s capture progress', () => {
+  it('round-trips a fortress hex’s capture progress', () => {
     const payload = varietyPayload();
     const fortress = payload.ring.hexes.find((hex) => hex.id === 'hex-r3-3')!;
     (fortress as VarietyHexState & { capturePasses?: number }).capturePasses = 1;
