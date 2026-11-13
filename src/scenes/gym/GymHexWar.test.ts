@@ -41,9 +41,14 @@ import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
 import { RING_1_HEX_FIXTURES, RING_2_HEX_FIXTURES } from '../../core/hangarWar/__fixtures__/ringFixtures';
 import {
+  DEFAULT_FRONTIER_TUNING,
   frontierClockFor,
+  resolveHangarAssault,
   runFrontierTick,
+  type HangarAssaultResolution,
 } from '../../core/hangarWar/hexDefence';
+import { resolveRingAssault } from '../../core/hangarWar/captureCycle';
+import { decideMapAction } from '../../ai/hangarWarTraversal';
 import { DEFENCE_REPORT_TITLE } from '../../core/hangarWar/defenceReport';
 import {
   HELD_TILE_MARKER,
@@ -171,6 +176,29 @@ function ringTwoPayload(): HangarWarPayload {
   }));
   const template = oneHexPayload(hexes[0]);
   return { ...template, ring: { ringIndex: 2, hexes } };
+}
+
+/**
+ * A fully held ring-1 payload — the ring-end state the hangar assault fires
+ * on. Every hex carries a defending bot of `defenceRating` and
+ * `aggression`, so the shared `resolveRingAssault` gate sees a complete ring.
+ */
+function heldRingPayload(
+  defenceRating: number,
+  aggression: number,
+): HangarWarPayload {
+  const hexes: HexState[] = RING_1_HEX_FIXTURES.map((fixture) => ({
+    id: fixture.id,
+    q: fixture.q,
+    r: fixture.r,
+    held: true,
+    aggression,
+    defender: { hullId: 'hull-1', defenceRating, bankedMinerals: 0 },
+    bossDefeated: true,
+    grantedWeapon: fixture.grants,
+  }));
+  const template = oneHexPayload(hexes[0]);
+  return { ...template, ring: { ringIndex: 1, hexes } };
 }
 
 /** The RGB channels of a rendered text colour (`#rrggbb`). */
@@ -747,6 +775,97 @@ describe('GymHexWar', () => {
       0,
     );
     expect(total).toBe(upgradedModel.aggressionBudget);
+  });
+
+  // ── The ring-end hangar assault (AH-0MWEZZDJC009FEU7) ─────────────
+
+  it('resolves the ring-end hangar assault through the shipped capture-cycle gate', async () => {
+    // A fully held ring whose defenders outclass the frontier's massed force.
+    const payload = heldRingPayload(40, 1);
+    const scene = await bootHexWar({ payload });
+
+    // An ordinary ring landing carries no assault banner.
+    expect(scene.getAssault()).toBeNull();
+    expect(scene.isAssaultVisible()).toBe(false);
+    expect(scene.getAssaultText()).toBe('');
+
+    const resolved = scene.resolveAssault();
+
+    // The gym's record is the shared gate's record — no gym-local arithmetic.
+    expect(resolved).toEqual(resolveRingAssault(scene.getPayload()));
+    expect(scene.getAssault()).toEqual(resolveRingAssault(scene.getPayload()));
+    // A strongly defended ring repels the massed frontier.
+    expect(resolved.outcome).toBe('repelled');
+
+    // The banner is the renderer's own assault section, from the record.
+    expect(scene.isAssaultVisible()).toBe(true);
+    expect(scene.getAssaultText()).toContain('RING WON');
+    expect(scene.getAssaultText()).toContain(
+      `defender sum ${resolved.defenderSum}`,
+    );
+    expect(scene.getMapModel()!.assaultLine).toBe(scene.getAssaultText());
+    expect(scene.getMapModel()!.ringWon).toBe(true);
+    expect(scene.getMapModel()!.campaignReset).toBe(false);
+
+    // The report model carries the same assault section (the shared pair).
+    const report = scene.getDefenceReport();
+    expect(report.assault).not.toBeNull();
+    expect(report.assault!.outcome).toBe('repelled');
+    expect(report.assault!.defenderSum).toBe(resolved.defenderSum);
+    expect(report.assault!.attackStrength).toBe(resolved.attackStrength);
+    expect(report.assault!.margin).toBe(resolved.margin);
+    expect(report.ringWon).toBe(true);
+    expect(report.campaignReset).toBe(false);
+  });
+
+  it('announces the hangar-falls campaign reset when the massed assault beats the ring', async () => {
+    // Undefended, hot ring: the frontier's massed force breaks the hangar.
+    const payload = heldRingPayload(0, 20);
+    const scene = await bootHexWar({ payload });
+
+    const resolved = scene.resolveAssault();
+    expect(resolved.outcome).toBe('fell');
+    expect(resolved.margin).toBeLessThan(0);
+
+    expect(scene.isAssaultVisible()).toBe(true);
+    expect(scene.getAssaultText()).toContain('HANGAR FALLS');
+    expect(scene.getAssaultText()).toContain('FULL CAMPAIGN RESET');
+    expect(scene.getAssaultText()).not.toContain('RING WON');
+    expect(scene.getMapModel()!.campaignReset).toBe(true);
+    expect(scene.getMapModel()!.ringWon).toBe(false);
+    expect(scene.getDefenceReport().campaignReset).toBe(true);
+  });
+
+  it('renders an injected assault the game launch data carries', async () => {
+    // Mirror `HexMapScene`'s transient launch data: a resolved record injected
+    // by the caller (a capture or a test) renders verbatim, never re-derived.
+    const payload = heldRingPayload(40, 1);
+    const assault: HangarAssaultResolution = resolveHangarAssault(
+      { defenderSum: 12, attackerBase: 5, aggression: 0, seed: 1 },
+      { ...DEFAULT_FRONTIER_TUNING, jitterPercent: 0 },
+    );
+    const scene = await bootHexWar({ payload, assault });
+
+    expect(scene.getAssault()).toEqual(assault);
+    // A detached copy: the caller's record is never mutated.
+    expect(scene.getAssault()).not.toBe(assault);
+    expect(scene.isAssaultVisible()).toBe(true);
+    expect(scene.getAssaultText()).toContain('RING WON');
+    expect(scene.getMapModel()!.assaultLine).toBe(scene.getAssaultText());
+  });
+
+  it('adds no action to the read-only map and never stalls the capture traversal', async () => {
+    const payload = heldRingPayload(0, 20);
+    const scene = await bootHexWar({ payload });
+    scene.resolveAssault();
+
+    // The banner is part of the handler-less map: every row stays
+    // non-actionable, so nothing new can block a traversal.
+    expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);
+    // The shared pure map decision still yields a total next step (the same
+    // rule the game's attract traversal runs), so the banner cannot stall it.
+    const action = decideMapAction(scene.getPayload());
+    expect(['deploy', 'openHangar']).toContain(action.kind);
   });
 
 });

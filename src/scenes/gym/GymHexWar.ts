@@ -43,6 +43,18 @@
  * separate `report` view**: the game has no report screen any more, so the gym
  * has no seam for one.
  *
+ * ## The ring-end hangar assault (AH-0MWEZZDJC009FEU7)
+ *
+ * The ring-end **hangar assault** the game resolves when a ring's final hex is
+ * captured (`resolveRingAssault` → `resolveHangarAssault`, the capture-cycle
+ * gate) is exercised here through the **same** shared resolver/report pair: a
+ * launch-data `assault` (mirroring `HexMapScene`'s own transient launch data)
+ * or the `resolveAssault()` control surface carries the resolver's record into
+ * `buildHexMapModel` → `renderHexMap`, so the gym renders the game's
+ * `RING WON` / `HANGAR FALLS` banner from the resolver's own numbers — never a
+ * gym-local re-derivation. The banner adds no action, so the read-only gym (and
+ * the attract/capture traversal of it) cannot stall on it.
+ *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention and
  * watchable by the capture tooling (`WATCHABLE_GYM_SCENE_KEYS`).
  *
@@ -72,11 +84,13 @@ import {
   frontierClockFor,
   runFrontierTick,
   type FrontierTickRecord,
+  type HangarAssaultResolution,
 } from '../../core/hangarWar/hexDefence';
 import {
   buildDefenceReport,
   type DefenceReportModel,
 } from '../../core/hangarWar/defenceReport';
+import { resolveRingAssault } from '../../core/hangarWar/captureCycle';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
 import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
 import {
@@ -122,6 +136,14 @@ export interface GymHexWarData extends SceneSetupState {
   payload?: HangarWarPayload;
   /** Fixture ring the sample payload is built from (defaults to ring 1). */
   ringIndex?: RingIndex;
+  /**
+   * The resolved ring-end hangar assault to announce, mirroring the game's
+   * `HexMapScene` launch data (`AH-0MWEZZA4E0081NJ5`). Omitted or `null` → an
+   * ordinary ring landing with no assault banner. A capture or test may inject
+   * the shared resolver's record directly; the `resolveAssault()` control
+   * surface drives the same resolver over this payload.
+   */
+  assault?: HangarAssaultResolution | null;
 }
 
 /** One applied frontier tick, as reported by the control surface. */
@@ -137,6 +159,15 @@ export interface GymTickResult {
 /** Detached copy, so rendering/control-surface work never mutates caller data. */
 function clonePayload(payload: HangarWarPayload): HangarWarPayload {
   return JSON.parse(JSON.stringify(payload)) as HangarWarPayload;
+}
+
+/** Detached copy of a resolved assault, or `null` when none was carried. */
+function cloneAssault(
+  assault: HangarAssaultResolution | null,
+): HangarAssaultResolution | null {
+  return assault === null
+    ? null
+    : (JSON.parse(JSON.stringify(assault)) as HangarAssaultResolution);
 }
 
 /** The hex in `payload` with `hexId`, or `undefined`. */
@@ -259,6 +290,13 @@ export class GymHexWar extends Phaser.Scene {
    */
   private record: FrontierTickRecord | null = null;
 
+  /**
+   * The resolved ring-end hangar assault the current view announces (the
+   * shared resolver's record), or `null` for an ordinary ring landing. Never
+   * persisted: exactly the game's transient map launch data.
+   */
+  private assault: HangarAssaultResolution | null = null;
+
   constructor() {
     super({ key: GYM_HEX_WAR_SCENE_KEY });
   }
@@ -277,6 +315,7 @@ export class GymHexWar extends Phaser.Scene {
       ? clonePayload(data.payload)
       : createSampleHexWarPayload(seed ?? GYM_HEX_WAR_DEFAULT_SEED, ringIndex);
     this.clock = createFakeFrontierClock(this.payload.seed);
+    this.assault = cloneAssault(data?.assault ?? null);
   }
 
   create(): void {
@@ -319,6 +358,10 @@ export class GymHexWar extends Phaser.Scene {
    * including the rolled-in report: the shipped tick's record over the current
    * payload feeds `buildHexMapModel`, which gives the renderer its attack
    * arrows and left-hand attack panel. The gym owns no arrow or panel rule.
+   *
+   * A carried ring-end hangar assault is passed through the **same** model
+   * builder (`assault`), so the renderer's `HANGAR ASSAULT` banner is the
+   * game's own assault section — the gym never re-derives an assault figure.
    */
   private renderMap(): void {
     this.view?.destroy();
@@ -327,6 +370,7 @@ export class GymHexWar extends Phaser.Scene {
     const model = buildHexMapModel(this.payload, {
       definitions: hexRingDefinitionsFor(this.payload.ring.ringIndex),
       record,
+      assault: this.assault,
     });
     this.view = renderHexMap(this, model);
   }
@@ -378,7 +422,29 @@ export class GymHexWar extends Phaser.Scene {
     return buildDefenceReport(
       this.payload,
       this.record ?? this.shippedTickRecord(),
+      { assault: this.assault },
     );
+  }
+
+  /**
+   * The resolved ring-end hangar assault the current view announces (a
+   * detached copy), or `null` for an ordinary ring landing. Never persisted.
+   */
+  getAssault(): HangarAssaultResolution | null {
+    return cloneAssault(this.assault);
+  }
+
+  /**
+   * The rendered hangar-assault announcement (`RING WON …` / `HANGAR FALLS …`
+   * plus its arithmetic and consequence), or `''` when none is carried.
+   */
+  getAssaultText(): string {
+    return this.view?.getAssaultText() ?? '';
+  }
+
+  /** Whether the hangar-assault announcement is on screen. */
+  isAssaultVisible(): boolean {
+    return this.view?.isAssaultVisible() ?? false;
   }
 
   /**
@@ -456,6 +522,26 @@ export class GymHexWar extends Phaser.Scene {
       defenceRating,
     );
     this.renderMap();
+  }
+
+  /**
+   * Resolves the ring-end hangar assault over the current payload and carries
+   * it into the integrated view (control surface: resolve the assault).
+   *
+   * This drives the **shipped** capture-cycle gate (`resolveRingAssault` →
+   * `resolveHangarAssault`) over the same payload the game's final-hex capture
+   * runs it over, so the defender sum, massed force, aggression multiplier,
+   * jitter, strength, margin and outcome are the game's own numbers — never a
+   * gym-local re-derivation. The map re-renders with the record, so its
+   * `HANGAR ASSAULT` banner (and the report model's `assault` section) is the
+   * shared pair the game renders.
+   *
+   * @returns the resolved assault (also available via {@link getAssault}).
+   */
+  resolveAssault(): HangarAssaultResolution {
+    this.assault = resolveRingAssault(this.payload);
+    this.renderMap();
+    return cloneAssault(this.assault)!;
   }
 
   /**
