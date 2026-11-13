@@ -25,6 +25,7 @@ import Phaser from 'phaser';
 import {
   advanceGame,
   createReusableBoot,
+  stepGameUntil,
   type BootedGame,
 } from '../test/gameHarness';
 import {
@@ -51,9 +52,20 @@ import type {
   HangarWarStorage,
 } from '../core/hangarWar/types';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
+import { buildLevelUpOption } from '../powerups/choice';
+import {
+  buildWheelWedges,
+  drawWheelOutcome,
+  type MiniBossWinReward,
+} from '../powerups/miniBossWheel';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { HEX_MAP_HINT } from './hangarWar/hexMap';
+import { MineralChoiceScene } from './MineralChoiceScene';
+import {
+  MINI_BOSS_WHEEL_SCENE_KEY,
+  MiniBossWheelScene,
+} from './MiniBossWheelScene';
 import { PlayScene } from './PlayScene';
 
 /** A payload whose ring is the generated state of `ringIndex`. */
@@ -643,4 +655,223 @@ describe('HexMapScene', () => {
       expect(reentered.getLeftPanelText?.() ?? '').toBe('');
     },
   );
+
+  // ── Run line, record and reward over the paused map ─────────────
+  // (AH-0MWEXIOZZ009UX14, parent AH-0MWDC3L9I008INDP)
+
+  /** A resolved wheel reward for `spread` (slot 0 = the bonus outcome). */
+  function spreadWheelReward(): MiniBossWinReward {
+    return {
+      kind: 'wheel',
+      wedges: buildWheelWedges(['spread']),
+      outcome: drawWheelOutcome(0, ['spread']),
+    };
+  }
+
+  /** Boots the map with the shipped reward overlays registered. */
+  async function bootMapWithOverlays(data?: object): Promise<HexMapScene> {
+    booted = await reuse.boot([
+      HexMapScene,
+      PlayScene,
+      HangarScene,
+      MiniBossWheelScene,
+      MineralChoiceScene,
+    ]);
+    booted.game.scene.start(HEX_MAP_SCENE_KEY, data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
+  }
+
+  it('renders the run result line carried from the deployment', async () => {
+    const won = await bootMap({
+      payload: ringPayload(1),
+      record: attackRecord(),
+      won: true,
+      score: 1200,
+      storage: null,
+    });
+    expect(won.getRunLine()).toBe('RUN: VICTORY · score 1200');
+    findTextStartingWith(won, 'RUN: VICTORY · score 1200');
+
+    const lost = await bootMap({
+      payload: ringPayload(1),
+      record: attackRecord(),
+      won: false,
+      score: 42,
+      storage: null,
+    });
+    expect(lost.getRunLine()).toBe('RUN: DEFEAT · score 42');
+    findTextStartingWith(lost, 'RUN: DEFEAT · score 42');
+  });
+
+  it('shows no run line and carries no record on a plain landing', async () => {
+    const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+    expect(scene.getRunLine()).toBeNull();
+    expect(scene.getRecord()).toBeNull();
+    expect(
+      scene.children.list.some(
+        (child) =>
+          child instanceof Phaser.GameObjects.Text &&
+          child.text.startsWith('RUN:'),
+      ),
+    ).toBe(false);
+  });
+
+  it('exposes the carried tick record but never persists it', async () => {
+    const payload = ringPayload(1);
+    const record = attackRecord();
+    const scene = await bootMap({ payload, record, storage: null });
+
+    expect(scene.getRecord()).toEqual(record);
+    // A detached copy: callers cannot mutate what the map rendered.
+    const copy = scene.getRecord() as unknown as { attacks: unknown[] };
+    copy.attacks.push({});
+    expect(scene.getRecord()).toEqual(record);
+
+    // Re-entering the map later (menu/hangar) carries no record.
+    booted!.game.scene.start(HEX_MAP_SCENE_KEY, { payload, storage: null });
+    await advanceGame(booted!.game, 200);
+    const reentered = booted!.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene;
+    expect(reentered.getRecord()).toBeNull();
+    expect(reentered.getRunLine()).toBeNull();
+  });
+
+  it('presents the carried wheel reward over the paused map, then map interaction resumes', async () => {
+    const reward = spreadWheelReward();
+    const payload = ringPayload(1);
+    const scene = await bootMapWithOverlays({
+      payload,
+      record: attackRecord(),
+      won: true,
+      score: 1200,
+      reward,
+      storage: null,
+    });
+
+    // The map is paused under the shipped overlay and the reward is consumed.
+    expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(false);
+    expect(booted!.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(true);
+    expect(scene.getReward()).toBeNull();
+
+    const wheel = booted!.game.scene.getScene(
+      MINI_BOSS_WHEEL_SCENE_KEY,
+    ) as MiniBossWheelScene;
+    expect(wheel.getOutcome()).toEqual(
+      reward.kind === 'wheel' ? reward.outcome : null,
+    );
+    expect(wheel.spin()).toBe(true);
+    await advanceGame(booted!.game, 3000);
+
+    // The map resumes normal interaction: it is live and deploys again.
+    expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+    expect(scene.getRunLine()).toBe('RUN: VICTORY · score 1200');
+    const row = scene.getRows().find((entry) => entry.key.startsWith('hex:'));
+    expect(row, 'the resumed map has deployable hex rows').toBeDefined();
+    row!.text.emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+  });
+
+  it('presents the empty-owned choice fallback over the paused map', async () => {
+    const option = buildLevelUpOption('spread', 1);
+    expect(option).toBeDefined();
+    await bootMapWithOverlays({
+      payload: ringPayload(1),
+      record: attackRecord(),
+      won: true,
+      score: 700,
+      reward: { kind: 'choice', options: [option!] },
+      storage: null,
+    });
+
+    expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(true);
+
+    const choice = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+    expect(choice.select(0)).not.toBeNull();
+    stepGameUntil(
+      booted!.game,
+      'the map resumes after the choice reward',
+      () =>
+        booted!.game.scene.isActive(HEX_MAP_SCENE_KEY) &&
+        !booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+      600,
+    );
+  });
+
+  it('consumes the reward exactly once', async () => {
+    const scene = await bootMapWithOverlays({
+      payload: ringPayload(1),
+      record: attackRecord(),
+      won: true,
+      score: 500,
+      reward: spreadWheelReward(),
+      storage: null,
+    });
+
+    // A second presentation path cannot re-present the consumed reward.
+    expect(scene.presentReward()).toBe(false);
+    expect(scene.getReward()).toBeNull();
+    const wheel = booted!.game.scene.getScene(
+      MINI_BOSS_WHEEL_SCENE_KEY,
+    ) as MiniBossWheelScene;
+    wheel.spin();
+    await advanceGame(booted!.game, 3000);
+
+    expect(scene.presentReward()).toBe(false);
+    expect(booted!.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(false);
+    expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+  });
+
+  it('goes straight to the map when the reward overlay is not registered', async () => {
+    booted = await reuse.boot([HexMapScene, PlayScene, HangarScene]);
+    booted.game.scene.start(HEX_MAP_SCENE_KEY, {
+      payload: ringPayload(1),
+      record: attackRecord(),
+      won: true,
+      score: 500,
+      reward: spreadWheelReward(),
+      storage: null,
+    });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
+
+    // A headless boot without the overlay must not stall on it.
+    expect(booted.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+    expect(booted.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+    expect(scene.getReward()).toBeNull();
+    expect(
+      scene.getRows().some((row) => row.key.startsWith('hex:')),
+    ).toBe(true);
+  });
+
+  it('auto-resolves the carried reward in demo mode without stalling', async () => {
+    await bootMapWithOverlays({
+      payload: ringPayload(1),
+      record: attackRecord(),
+      won: true,
+      score: 500,
+      reward: spreadWheelReward(),
+      demo: true,
+      demoDwellMs: 400,
+      storage: null,
+    });
+
+    // The overlay auto-spins itself past the dwell, then the map resumes and
+    // the traversal continues (the demo never stalls on the reward or map).
+    stepGameUntil(
+      booted!.game,
+      'the demo traverses past the reward and the map',
+      () => booted!.game.scene.isActive('PlayScene'),
+      900,
+    );
+  });
 });

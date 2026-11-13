@@ -124,6 +124,13 @@ const CORNER_ANGLES = [30, 90, 150, 210, 270, 330].map(
 export interface HexMapRenderOptions {
   /** Bottom hint line (defaults to {@link HEX_MAP_HINT}). */
   readonly hint?: string;
+  /**
+   * The finished deployment's result line (`RUN: VICTORY · score 1200`), or
+   * `null`/absent when the map was entered without one (a plain menu/hangar
+   * landing). Transient launch data like the tick record
+   * (AH-0MWEXIOZZ009UX14).
+   */
+  readonly runLine?: string | null;
 }
 
 /** The actions a rendered map invokes. */
@@ -442,6 +449,20 @@ export function renderHexMap(
       })
       .setOrigin(0.5, 0),
   );
+  // The between-sortie run result line, centred under the title so it never
+  // collides with the left-hand header rows or the attack panel band.
+  const runLine = options?.runLine ?? null;
+  if (runLine) {
+    objects.push(
+      scene.add
+        .text(GAME_WIDTH / 2, 46, runLine, {
+          fontFamily: 'monospace',
+          fontSize: '13px',
+          color: TEXT_COLOR,
+        })
+        .setOrigin(0.5, 0),
+    );
+  }
   objects.push(
     scene.add.text(24, 62, model.ringLine, {
       fontFamily: 'monospace',
