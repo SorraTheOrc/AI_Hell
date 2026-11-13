@@ -17,6 +17,7 @@ import {
 import { scaledEncounterHp } from '../core/difficultyScaling';
 import { deriveDefenderRating } from '../core/hangarWar/hangarEconomy';
 import { createRingState } from '../core/hangarWar/hexRing';
+import { campaignResetSeed } from '../core/hangarWar/captureCycle';
 import {
   createDefaultPayload,
   loadHangarWarPayload,
@@ -44,6 +45,25 @@ function ringPayload(): HangarWarPayload {
     ...createDefaultPayload(4242),
     ring: createRingState(1, HEX_RING_DEFINITIONS),
   };
+}
+
+/**
+ * Holds every ring-1 hex but `lastHexId`, each at the stored rating `rating`.
+ *
+ * Ring 1's authored ids are `hex-r1-1` … `hex-r1-6`, so holding all but the
+ * last leaves exactly one capture between the run and a secured ring.
+ */
+function holdRingBut(
+  payload: HangarWarPayload,
+  lastHexId: string,
+  rating: number,
+): void {
+  for (const state of payload.ring.hexes) {
+    if (state.id === lastHexId) continue;
+    state.held = true;
+    state.bossDefeated = true;
+    state.defender = { hullId: 'hull-1', defenceRating: rating, bankedMinerals: 0 };
+  }
 }
 
 /** Private scene seams the capture wiring is asserted through. */
@@ -171,6 +191,92 @@ describe('PlayScene — capture cycle wiring (AH-0MVUXCAW0001VUM6)', () => {
     // A partial ring is not yet secured.
     expect(capture!.ringSecured).toBe(false);
     expect(capture!.ringAdvanced).toBe(false);
+  });
+
+  it('wins the ring through the assault gate and persists the opened next ring (AC7)', async () => {
+    const payload = ringPayload();
+    payload.hangar.bankedMinerals = 40;
+    // Strong stored defenders on the held hexes: the ring-end assault is
+    // repelled, so the same seam that resolves it opens ring 2 and persists it.
+    holdRingBut(payload, 'hex-r1-6', 60);
+    saveHangarWarPayload(payload);
+    const deployment = buildHangarDeployment(payload, { hexId: 'hex-r1-6' });
+    const scene = await bootPlay(deployment);
+    scene.getGameState().minerals = 15;
+
+    scene.startDevBossScenario(1);
+    window.__aiHellScenario?.resume();
+    hitBossOnce(scene);
+
+    const capture = scene.getLastCapture();
+    expect(capture).not.toBeNull();
+    expect(capture!.ok).toBe(true);
+    // The deployed scene resolves the ring-end assault from the shared core …
+    expect(capture!.assault?.outcome).toBe('repelled');
+    // … and a repel wins the ring: the next ring opens, the campaign survives.
+    expect(capture!.campaignReset).toBe(false);
+    expect(capture!.ringSecured).toBe(true);
+    expect(capture!.ringAdvanced).toBe(true);
+    expect(capture!.ringIndex).toBe(2);
+
+    const stored = loadHangarWarPayload();
+    expect(stored).not.toBeNull();
+    expect(stored!.ring.ringIndex).toBe(2);
+    // Ring 1 is carried, fully held; ring 2's twelve generated hexes are not.
+    const ringOne = stored!.ring.hexes.filter((state) => state.id.startsWith('hex-r1-'));
+    const ringTwo = stored!.ring.hexes.filter((state) => state.id.startsWith('hex-r2-'));
+    expect(ringOne).toHaveLength(6);
+    expect(ringOne.every((state) => state.held)).toBe(true);
+    expect(ringTwo).toHaveLength(12);
+    expect(ringTwo.every((state) => !state.held)).toBe(true);
+    // A win is not a reset: the seed, the score and the banked salvage survive
+    // (the capture's salvage was banked before the assault was resolved).
+    expect(stored!.seed).toBe(payload.seed);
+    expect(stored!.bestScore).toBe(payload.bestScore);
+    expect(stored!.hangar.bankedMinerals).toBe(40 + 15);
+  });
+
+  it('applies and persists the hangar-falls campaign reset through the shared core (AC7)', async () => {
+    const payload = ringPayload();
+    payload.hangar.bankedMinerals = 900;
+    payload.hangar.bankedCores = 12;
+    payload.hangar.unlockedHulls.push('hull-2');
+    payload.hangar.unlockedWeapons.push('wave_laser');
+    payload.hangar.ownedModifiers.push('hardened_plating');
+    // A resolved (held) pending attack: the between-sortie tick runs before the
+    // capture, and a zero-force probe holds the line, so the tick cannot open a
+    // new front and topple a hex before the ring is secured.
+    payload.pendingAttacks = [{ hexId: 'hex-r1-1', force: 0 }];
+    payload.bestScore = 18200;
+    payload.frontierTick = 4;
+    // Zero-rated defenders cannot match the ring's massed assault.
+    holdRingBut(payload, 'hex-r1-6', 0);
+    saveHangarWarPayload(payload);
+    const deployment = buildHangarDeployment(payload, { hexId: 'hex-r1-6' });
+    const scene = await bootPlay(deployment);
+
+    scene.startDevBossScenario(1);
+    window.__aiHellScenario?.resume();
+    hitBossOnce(scene);
+
+    const capture = scene.getLastCapture();
+    expect(capture).not.toBeNull();
+    expect(capture!.ok).toBe(true);
+    expect(capture!.assault?.outcome).toBe('fell');
+    expect(capture!.campaignReset).toBe(true);
+    // The ring was lost, not advanced.
+    expect(capture!.ringSecured).toBe(false);
+    expect(capture!.ringAdvanced).toBe(false);
+
+    // The scene persists the reset — not the pre-assault captured hex.
+    const stored = loadHangarWarPayload();
+    expect(stored).not.toBeNull();
+    expect(stored).toEqual({
+      ...createDefaultPayload(campaignResetSeed(payload)),
+      bestScore: 18200,
+    });
+    expect(stored!.seed).toBe(campaignResetSeed(payload));
+    expect(stored!.seed).not.toBe(payload.seed);
   });
 
   it('leaves the arcade run’s victory free of capture state', async () => {
