@@ -377,14 +377,20 @@ describe('docs/GYM_PARITY.md carries current Hangar War rows (AH-0MVUXCC5J0028OG
     expect(rowVerdict(cells)).toBe('intentional divergence');
   });
 
-  it('points GymHexWar at the shipped map, frontier tick and report code', () => {
+  it('points GymHexWar at the shipped map, frontier tick and rolled-in report', () => {
     const cells = rowCells('GymHexWar');
     expect(cells.length).toBeGreaterThan(7);
     expect(cells[3]).toContain('buildHexMapModel');
+    expect(cells[3]).toContain('renderHexMap');
     expect(cells[3]).toContain('runFrontierTick');
     expect(cells[3]).toContain('buildDefenceReport');
+    // The report is rolled into the map: arrows plus the left-hand attack
+    // panel, no standalone report screen (AH-0MWEXJ21W003M7RR).
+    expect(cells[3]).toContain('attack arrow');
+    expect(cells[3]).toContain('left-hand attack panel');
+    expect(cells[3]).not.toContain('renderDefenceReport');
     expect(cells[7]).toContain('HexMapScene');
-    expect(cells[7]).toContain('DefenceReportScene');
+    expect(cells[7]).not.toContain('DefenceReportScene');
     expect(rowVerdict(cells)).toBe('intentional divergence');
   });
 });

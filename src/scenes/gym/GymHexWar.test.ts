@@ -55,7 +55,6 @@ import {
   GymHexWar,
   GYM_HEX_WAR_DEFAULT_SEED,
   GYM_HEX_WAR_HINT,
-  GYM_HEX_WAR_REPORT_HINT,
   GYM_HEX_WAR_SCENE_KEY,
   GYM_HEX_WAR_TITLE,
   type GymTickResult,
@@ -112,23 +111,23 @@ afterAll(() => reuse.dispose());
 /**
  * Integrated map view — attack arrows (AH-0MWEXI5460080WEI).
  *
- * **TEST-FIRST.** The rolled-in report means the gym's map view renders the
- * same shared `renderHexMap` arrows as the game when it is given the same tick
- * record (AGENTS.md gym↔game parity; parent AH-0MWDC3L9I008INDP). The
- * assertion is authored under Vitest's `it.fails` (the repo's
- * red-before/green-after convention, see `src/core/levelScaling.test.ts`) so
- * this suite stays green on pre-change HEAD; the gym parity item
- * (AH-0MWEXJ21W003M7RR) flips it back to `it`, and a leftover `it.fails` then
- * fails loudly.
+ * The rolled-in report means the gym's map view renders the same shared
+ * `renderHexMap` arrows as the game when it is given the same tick record
+ * (AGENTS.md gym↔game parity; parent AH-0MWDC3L9I008INDP). The gym parity item
+ * (AH-0MWEXJ21W003M7RR) removed the gym's separate `report` view, so the map
+ * view is the only surface and every assertion below runs against it.
  *
  * ## Pinned contract
  *
  * The gym's map model (`getMapModel()`) carries the attack arrows derived from
- * the same shipped tick record its report view renders
+ * the shipped tick record the integrated view is built from
  * (`runFrontierTick(this.payload, { clock: frontierClockFor(this.payload) })`):
  * one arrow per `record.attacks[]` entry, in the record's order, with the
  * record's attacker-origin coordinates — so the gym and the game draw the same
- * arrows from the same record, never a divergent copy.
+ * arrows from the same record, never a divergent copy. Every displayed hex is
+ * focusable even in a handler-less render, so `focusMapRow(key)` (the
+ * renderer's own `focusRow`) lets the gym read the same left-hand attack panel
+ * the game shows for its focused hex.
  */
 
 /**
@@ -465,9 +464,10 @@ describe('GymHexWar', () => {
     },
   );
 
-  it('renders the shipped defence report from the shipped resolver record', async () => {
+  it('renders the rolled-in report on its integrated map view', async () => {
     // A held hex with an unheld neighbour: a real attack is possible, so the
-    // report exercises the resolver rather than only the quiet path.
+    // integrated view exercises the shipped resolver rather than only the quiet
+    // path.
     const ring = RING_1_HEX_FIXTURES;
     const held = ring[0];
     const neighbour = ring[1];
@@ -505,15 +505,9 @@ describe('GymHexWar', () => {
       },
     };
     const scene = await bootHexWar({ payload });
-    scene.showDefenceReport();
-    await advanceGame(booted!.game, 100);
 
-    expect(scene.getView()).toBe('report');
-    findTextStartingWith(scene, DEFENCE_REPORT_TITLE);
-    findTextStartingWith(scene, GYM_HEX_WAR_REPORT_HINT);
-
-    // The report is the shipped model over the shipped tick's record — the same
-    // code path the game's map report model renders.
+    // The report model the game derives is what the gym's map view is built
+    // from - there is no separate report screen to switch to.
     const tick = runFrontierTick(payload, { clock: frontierClockFor(payload) });
     const model = scene.getDefenceReport();
     expect(model.rows.map((row) => row.hexId)).toEqual(
@@ -530,81 +524,177 @@ describe('GymHexWar', () => {
       expect(row.margin).toBe(resolved.margin);
       expect(row.outcome).toBe(resolved.outcome);
     }
-    // Read-only by construction: the gym has no handlers, so nothing activates.
-    expect(scene.getReportRows().length).toBeGreaterThan(0);
-    expect(scene.getReportRows().every((row) => !row.actionable)).toBe(true);
-    expect(scene.getDefenceReport().noBattleLine).toContain('no battle was simulated');
+    expect(model.noBattleLine).toContain('no battle was simulated');
 
-    // The control surface switches back to the shared map view.
-    scene.showMap();
-    expect(scene.getView()).toBe('map');
-    expect(scene.getMapModel()).not.toBeNull();
+    // The rolled-in report renders on the map itself, not as its own screen.
+    expect(
+      scene.children.list.some(
+        (child) =>
+          child instanceof Phaser.GameObjects.Text &&
+          child.text.includes(DEFENCE_REPORT_TITLE),
+      ),
+    ).toBe(false);
+    // Read-only by construction: the gym has no handlers, so nothing activates.
+    expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);
+
+    // The record the gym's map view carries is the shipped tick's own record.
+    expect(scene.getTickRecord()).toEqual(tick.record);
+    // One drawn arrow per recorded attack, from the attacker-origin tile to the
+    // attacked tile (both positioned by the map's own axial layout).
+    const arrows = scene.getMapArrows();
+    expect(
+      arrows.map((arrow) => [arrow.hexId, arrow.attackerOriginId]),
+    ).toEqual(
+      tick.record.attacks.map((attack) => [
+        attack.hexId,
+        attack.attackerOriginId,
+      ]),
+    );
+    const rows = scene.getMapRows();
+    for (const arrow of arrows) {
+      const target = rows.find((row) => row.key === `hex:${arrow.hexId}`)!;
+      expect(arrow.to).toEqual({ x: target.text.x, y: target.text.y });
+      const origin = rows.find(
+        (row) => row.key === `hex:${arrow.attackerOriginId}`,
+      )!;
+      expect(arrow.from).toEqual({ x: origin.text.x, y: origin.text.y });
+    }
+
+    // The left-hand attack panel shows the report model's own row for the
+    // attacked hex and for its attacker origin (either endpoint resolves it).
+    const [attack] = tick.record.attacks;
+    const detail = scene.getMapModel()!.attackDetails.get(attack.hexId)!;
+    expect(scene.focusMapRow(`hex:${attack.hexId}`)).toBe(true);
+    expect(scene.isLeftPanelVisible()).toBe(true);
+    expect(scene.getLeftPanelText()).toBe(detail.label);
+    expect(scene.focusMapRow(`hex:${attack.attackerOriginId}`)).toBe(true);
+    expect(scene.isLeftPanelVisible()).toBe(true);
+    expect(scene.getLeftPanelText()).toBe(detail.label);
+    // An unknown key is refused, so a mis-targeted inspection cannot blank the
+    // panels.
+    expect(scene.focusMapRow('hex:no-such-hex')).toBe(false);
+    expect(scene.getLeftPanelText()).toBe(detail.label);
   });
 
-  it.fails(
-    'renders the tick record\'s attack arrows on its integrated map view',
-    async () => {
-      // The same held-hex / unheld-neighbour payload the report test uses: the
-      // shipped tick resolves at least one attack, so the arrows are real.
-      const ring = RING_1_HEX_FIXTURES;
-      const held = ring[0];
-      const neighbour = ring[1];
-      const payload: HangarWarPayload = {
-        ...oneHexPayload({
+  it('shows no arrows and no attack panel when the shipped tick attacks nothing', async () => {
+    const scene = await bootHexWar({ payload: oneHexPayload({ ...UNHELD_HEX }) });
+
+    expect(scene.getDefenceReport().rows).toEqual([]);
+    expect(scene.getMapArrows()).toEqual([]);
+    // The gym can inspect any rendered hex, but a record with no attacks has
+    // no arrow endpoint, so the renderer's own rolled-in report rule hides the
+    // panel (no gym-local copy).
+    expect(scene.focusMapRow('hex:target')).toBe(true);
+    expect(scene.isLeftPanelVisible()).toBe(false);
+    expect(scene.getLeftPanelText()).toBe('');
+  });
+
+  it('refreshes the integrated view from the shipped tick after a harness tick', async () => {
+    const ring = RING_1_HEX_FIXTURES;
+    const payload: HangarWarPayload = {
+      ...oneHexPayload({
+        ...UNHELD_HEX,
+        id: ring[0].id,
+        q: ring[0].q,
+        r: ring[0].r,
+        held: true,
+        aggression: 0,
+        defender: { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 },
+      }),
+      ring: {
+        ringIndex: 1,
+        hexes: ring.slice(0, 3).map((fixture, index) => ({
           ...UNHELD_HEX,
-          id: held.id,
-          q: held.q,
-          r: held.r,
-          held: true,
-          aggression: 0,
-          defender: { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 },
-        }),
-        ring: {
-          ringIndex: 1,
-          hexes: [
-            {
-              ...UNHELD_HEX,
-              id: held.id,
-              q: held.q,
-              r: held.r,
-              held: true,
-              aggression: 0,
-              defender: { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 },
-            },
-            {
-              ...UNHELD_HEX,
-              id: neighbour.id,
-              q: neighbour.q,
-              r: neighbour.r,
-              held: false,
-              aggression: 3,
-            },
-          ],
-        },
-      };
+          id: fixture.id,
+          q: fixture.q,
+          r: fixture.r,
+          held: index === 0,
+          aggression: fixture.baseAggression,
+          defender:
+            index === 0
+              ? { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 }
+              : null,
+        })),
+      },
+    };
+    const scene = await bootHexWar({ payload });
+    scene.tick(2);
 
-      const scene = await bootHexWar({ payload });
-      const report = scene.getDefenceReport();
-      const model = scene.getMapModel() as AttackAwareMapModel | null;
+    // The map re-renders from the shipped resolver over the payload the harness
+    // left behind, so a watcher sees the arrows and panel for the record the
+    // game would now carry.
+    const current = scene.getPayload();
+    const direct = runFrontierTick(current, {
+      clock: frontierClockFor(current),
+    });
+    expect(scene.getTickRecord()).toEqual(direct.record);
+    expect(scene.getMapModel()!.arrows.map((arrow) => arrow.hexId)).toEqual(
+      direct.record.attacks.map((attack) => attack.hexId),
+    );
+  });
 
-      // The record the gym already renders in its report view resolved attacks…
-      expect(report.rows.length).toBeGreaterThan(0);
-      // …and the integrated map view draws exactly those arrows from it.
-      expect(
-        model?.arrows?.map((arrow) => [
-          arrow.hexId,
-          arrow.attackerOriginId,
-          arrow.attackerOrigin,
-        ]),
-      ).toEqual(
-        report.rows.map((row) => [
-          row.hexId,
-          row.attackerOriginId,
-          row.retake.origin,
-        ]),
-      );
-    },
-  );
+  it('renders the tick record\'s attack arrows on its integrated map view', async () => {
+    // The same held-hex / unheld-neighbour payload the rolled-in report test
+    // uses: the shipped tick resolves at least one attack, so the arrows are
+    // real.
+    const ring = RING_1_HEX_FIXTURES;
+    const held = ring[0];
+    const neighbour = ring[1];
+    const payload: HangarWarPayload = {
+      ...oneHexPayload({
+        ...UNHELD_HEX,
+        id: held.id,
+        q: held.q,
+        r: held.r,
+        held: true,
+        aggression: 0,
+        defender: { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 },
+      }),
+      ring: {
+        ringIndex: 1,
+        hexes: [
+          {
+            ...UNHELD_HEX,
+            id: held.id,
+            q: held.q,
+            r: held.r,
+            held: true,
+            aggression: 0,
+            defender: { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 },
+          },
+          {
+            ...UNHELD_HEX,
+            id: neighbour.id,
+            q: neighbour.q,
+            r: neighbour.r,
+            held: false,
+            aggression: 3,
+          },
+        ],
+      },
+    };
+
+    const scene = await bootHexWar({ payload });
+    const report = scene.getDefenceReport();
+    const model = scene.getMapModel() as AttackAwareMapModel | null;
+
+    // The shipped tick resolved attacks…
+    expect(report.rows.length).toBeGreaterThan(0);
+    // …and the integrated map view draws exactly those arrows from it.
+    expect(
+      model?.arrows?.map((arrow) => [
+        arrow.hexId,
+        arrow.attackerOriginId,
+        arrow.attackerOrigin,
+      ]),
+    ).toEqual(
+      report.rows.map((row) => [
+        row.hexId,
+        row.attackerOriginId,
+        row.retake.origin,
+      ]),
+    );
+  });
 
   it('is discovered by the gym index as "HexWar"', () => {
     const entries = discoverGymScenes({
@@ -617,8 +707,6 @@ describe('GymHexWar', () => {
   it('reports the same strength, budget, ceiling and deltas as a direct resolver call', async () => {
     const payload = sixHexPayload();
     const scene = await bootHexWar({ payload });
-    scene.showDefenceReport();
-    await advanceGame(booted!.game, 80);
 
     const model = scene.getDefenceReport();
     const tick = runFrontierTick(payload, { clock: frontierClockFor(payload) });
@@ -634,8 +722,6 @@ describe('GymHexWar', () => {
   it('reports a strictly higher budget and ring total for an upgraded fleet', async () => {
     const starter = sixHexPayload();
     const starterScene = await bootHexWar({ payload: starter });
-    starterScene.showDefenceReport();
-    await advanceGame(booted!.game, 80);
     const starterModel = starterScene.getDefenceReport();
 
     const upgraded = sixHexPayload({
@@ -643,8 +729,6 @@ describe('GymHexWar', () => {
       activeHull: 'hull-2',
     });
     const upgradedScene = await bootHexWar({ payload: upgraded });
-    upgradedScene.showDefenceReport();
-    await advanceGame(booted!.game, 80);
     const upgradedModel = upgradedScene.getDefenceReport();
 
     expect(upgradedModel.playerStrength).toBeGreaterThan(

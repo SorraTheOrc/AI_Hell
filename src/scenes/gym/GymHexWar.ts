@@ -30,14 +30,18 @@
  * so `applySceneSetup` is a documented no-op, and the setup's `seed` drives the
  * sample payload (a supplied `payload` wins).
  *
- * ## The report view (AH-0MVUXCBBK004EJIP)
+ * ## The integrated map view (AH-0MWEXJ21W003M7RR)
  *
- * `{ view: 'report' }` (or the `showDefenceReport()` control surface) renders
- * the **shipped defence report model** — `buildDefenceReport` +
- * `renderDefenceReport` — from a record produced by the **shipped** frontier
- * tick (`runFrontierTick` at the payload's own clock), read-only. The gym
- * therefore demonstrates the report's exact numbers without a browser boot and
- * without simulating a battle.
+ * The between-sortie defence report is rolled into the map (parent
+ * AH-0MWDC3L9I008INDP), so this gym renders the **integrated** map view: the
+ * same `buildHexMapModel` + `renderHexMap` pair the game's `HexMapScene`
+ * renders, carrying a record produced by the **shipped** frontier tick
+ * (`runFrontierTick` at the payload's own clock) — the same record the game
+ * carries after a deployment. The map therefore draws the shipped attack
+ * arrows and shows the left-hand attack panel for the inspected hex, read-only
+ * and without a resolver, arrow or panel rule of its own. There is **no
+ * separate `report` view**: the game has no report screen any more, so the gym
+ * has no seam for one.
  *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention and
  * watchable by the capture tooling (`WATCHABLE_GYM_SCENE_KEYS`).
@@ -67,6 +71,7 @@ import {
 import {
   frontierClockFor,
   runFrontierTick,
+  type FrontierTickRecord,
 } from '../../core/hangarWar/hexDefence';
 import {
   buildDefenceReport,
@@ -85,14 +90,10 @@ import {
 } from '../core/sceneSetup';
 import {
   renderHexMap,
+  type HexMapArrow,
   type HexMapRow,
   type HexMapView,
 } from '../hangarWar/hexMap';
-import {
-  renderDefenceReport,
-  type DefenceReportRow,
-  type DefenceReportView,
-} from '../hangarWar/defenceReport';
 
 /** Scene key (== class name, per the gym discovery convention). */
 export const GYM_HEX_WAR_SCENE_KEY = 'GymHexWar';
@@ -100,23 +101,14 @@ export const GYM_HEX_WAR_SCENE_KEY = 'GymHexWar';
 /** Title rendered at the bottom of the gym (asserted by tests). */
 export const GYM_HEX_WAR_TITLE = 'HEX WAR — RING HARNESS';
 
-/** Bottom hint line, stating what the harness is and how it is driven. */
-export const GYM_HEX_WAR_HINT =
-  'Hex war gym — injected ring payload; take hex → leave bot → tick (harness stand-in, shipped resolver is B3)';
-
 /**
- * Bottom hint line shown while the **defence report** view is up
- * (AH-0MVUXCBBK004EJIP).
+ * Bottom hint line, stating what the harness is and how it is driven.
  *
- * The report view renders the shipped report model/renderer against a record
- * produced by the shipped frontier tick, so the gym shows the game's report
- * screen exactly.
+ * The map is the integrated view (attack arrows + left attack panel from the
+ * shipped tick's record), so the hint names both halves the harness shows.
  */
-export const GYM_HEX_WAR_REPORT_HINT =
-  'Defence report view — shipped resolver record over the injected payload (no battle simulated)';
-
-/** The two screens the harness can show (the game has one scene each). */
-export type GymHexWarView = 'map' | 'report';
+export const GYM_HEX_WAR_HINT =
+  'Hex war gym — injected ring payload; take hex → leave bot → tick (arrows + attack panel from the shipped tick record)';
 
 /**
  * Seed used for the sample payload when neither a payload nor a capture setup
@@ -130,8 +122,6 @@ export interface GymHexWarData extends SceneSetupState {
   payload?: HangarWarPayload;
   /** Fixture ring the sample payload is built from (defaults to ring 1). */
   ringIndex?: RingIndex;
-  /** Which screen to show (defaults to the map; the game has one scene each). */
-  view?: GymHexWarView;
 }
 
 /** One applied frontier tick, as reported by the control surface. */
@@ -262,11 +252,12 @@ export class GymHexWar extends Phaser.Scene {
   /** The shared map render (rebuilt when the control surface changes it). */
   private view: HexMapView | null = null;
 
-  /** The shipped defence-report render (the report view). */
-  private reportView: DefenceReportView | null = null;
-
-  /** Which screen the harness shows. */
-  private shownView: GymHexWarView = 'map';
+  /**
+   * The shipped between-sortie record the current map view draws (the same
+   * record the game carries after a deployment), or `null` before the first
+   * render.
+   */
+  private record: FrontierTickRecord | null = null;
 
   constructor() {
     super({ key: GYM_HEX_WAR_SCENE_KEY });
@@ -286,7 +277,6 @@ export class GymHexWar extends Phaser.Scene {
       ? clonePayload(data.payload)
       : createSampleHexWarPayload(seed ?? GYM_HEX_WAR_DEFAULT_SEED, ringIndex);
     this.clock = createFakeFrontierClock(this.payload.seed);
-    this.shownView = data?.view === 'report' ? 'report' : 'map';
   }
 
   create(): void {
@@ -298,7 +288,7 @@ export class GymHexWar extends Phaser.Scene {
     addBackToIndexButton(this);
     addBackToMenuOnEsc(this);
 
-    this.renderView();
+    this.renderMap();
 
     this.add
       .text(40, GAME_HEIGHT - 48, GYM_HEX_WAR_HINT, {
@@ -320,52 +310,36 @@ export class GymHexWar extends Phaser.Scene {
   // ── Rendering ─────────────────────────────────────────────────────
 
   /**
-   * Rebuilds the shared hex-map view after a control-surface action.
+   * Rebuilds the shared integrated hex-map view after a control-surface
+   * action.
    *
    * The map is rendered with **no handlers**, so every row is reported
    * non-actionable and the gym stays read-only by construction — the same
-   * model and renderer the game's `HexMapScene` uses (gym↔game parity).
+   * model and renderer the game's `HexMapScene` uses (gym↔game parity),
+   * including the rolled-in report: the shipped tick's record over the current
+   * payload feeds `buildHexMapModel`, which gives the renderer its attack
+   * arrows and left-hand attack panel. The gym owns no arrow or panel rule.
    */
   private renderMap(): void {
     this.view?.destroy();
+    const record = this.shippedTickRecord();
+    this.record = record;
     const model = buildHexMapModel(this.payload, {
       definitions: hexRingDefinitionsFor(this.payload.ring.ringIndex),
+      record,
     });
     this.view = renderHexMap(this, model);
   }
 
   /**
-   * Renders the **shipped defence report** over the current payload
-   * (AH-0MVUXCBBK004EJIP).
-   *
-   * The record is produced by the **shipped** frontier tick
-   * (`runFrontierTick` at the payload's own clock), and the screen is the
-   * game's own model/renderer pair (`buildDefenceReport` +
-   * `renderDefenceReport`) with **no handlers**, so the gym shows the shipped
-   * report model exactly and owns no report rule. Nothing is resolved by
-   * a battle: the record is arithmetic over the payload's stored numbers.
+   * The between-sortie record the map view carries: the **shipped** frontier
+   * tick's record over the current payload (the same `runFrontierTick` the game
+   * runs after a deployment), never a gym-local re-derivation.
    */
-  private renderReport(): void {
-    this.reportView?.destroy();
-    this.reportView = renderDefenceReport(
-      this,
-      this.getDefenceReport(),
-      undefined,
-      { hint: GYM_HEX_WAR_REPORT_HINT },
-    );
-  }
-
-  /** Renders whichever screen the harness is showing. */
-  private renderView(): void {
-    if (this.shownView === 'report') {
-      this.view?.destroy();
-      this.view = null;
-      this.renderReport();
-      return;
-    }
-    this.reportView?.destroy();
-    this.reportView = null;
-    this.renderMap();
+  private shippedTickRecord(): FrontierTickRecord {
+    return runFrontierTick(this.payload, {
+      clock: frontierClockFor(this.payload),
+    }).record;
   }
 
   // ── Control surface ───────────────────────────────────────────────
@@ -385,42 +359,66 @@ export class GymHexWar extends Phaser.Scene {
     return this.clock;
   }
 
-  /** The rendered map model (the shared intel view). */
+  /** The rendered map model (the shared intel view, arrows included). */
   getMapModel(): HexMapModel | null {
     return this.view?.model ?? null;
   }
 
-  /** Which screen the harness currently shows. */
-  getView(): GymHexWarView {
-    return this.shownView;
+  /** Every drawn attack arrow (one per carried-attack entry), or none. */
+  getMapArrows(): readonly HexMapArrow[] {
+    return this.view?.arrows ?? [];
   }
 
   /**
-   * The defence report the harness renders: the **shipped** frontier tick's
-   * record over this payload, built by the shipped report model.
+   * The defence report model the integrated view is built from: the **shipped**
+   * frontier tick's record over this payload, read through the shipped report
+   * model. The model's `attackDetails` rows are what the left panel renders.
    */
   getDefenceReport(): DefenceReportModel {
-    const tick = runFrontierTick(this.payload, {
-      clock: frontierClockFor(this.payload),
-    });
-    return buildDefenceReport(tick.payload, tick.record);
+    return buildDefenceReport(
+      this.payload,
+      this.record ?? this.shippedTickRecord(),
+    );
   }
 
-  /** Every rendered report row (empty while the map view is shown). */
-  getReportRows(): readonly DefenceReportRow[] {
-    return this.reportView?.rows ?? [];
+  /**
+   * The between-sortie tick record the current map view carries (a detached
+   * copy), or `null` before the first render. Never persisted.
+   */
+  getTickRecord(): FrontierTickRecord | null {
+    return this.record === null
+      ? null
+      : (JSON.parse(JSON.stringify(this.record)) as FrontierTickRecord);
   }
 
-  /** Switches to the shipped defence-report screen (control surface). */
-  showDefenceReport(): void {
-    this.shownView = 'report';
-    this.renderView();
+  /**
+   * Moves the map's focus to `key` (control surface: inspect a hex's panels).
+   * Every displayed hex is focusable even in a handler-less render, so this is
+   * the renderer's own `focusRow` seam — the same one the game uses — and the
+   * gym still owns no panel rule.
+   *
+   * @returns whether the focus moved.
+   */
+  focusMapRow(key: string): boolean {
+    return this.view?.focusRow(key) ?? false;
   }
 
-  /** Switches back to the hex-map screen (control surface). */
-  showMap(): void {
-    this.shownView = 'map';
-    this.renderView();
+  /** The focused row key, or `null` when nothing is focusable. */
+  getMapFocusKey(): string | null {
+    return this.view?.getFocusedKey() ?? null;
+  }
+
+  /**
+   * The left-hand attack panel's text (the inspected attack's row), or `''`
+   * when the inspected hex is in no attack.
+   */
+  getLeftPanelText(): string {
+    return this.view?.getLeftPanelText() ?? '';
+  }
+
+  /** Whether the left-hand attack panel is showing. */
+  isLeftPanelVisible(): boolean {
+    return this.view?.isLeftPanelVisible() ?? false;
   }
 
   /** Every rendered map row (read-only: none is actionable in the gym). */
@@ -446,7 +444,7 @@ export class GymHexWar extends Phaser.Scene {
   /** Takes `hexId` into the player's hands (control surface: take hex). */
   takeHex(hexId: string): void {
     this.payload = takeHexOnPayload(this.payload, hexId);
-    this.renderView();
+    this.renderMap();
   }
 
   /** Leaves a bot defending `hexId` (control surface: leave bot). */
@@ -457,13 +455,15 @@ export class GymHexWar extends Phaser.Scene {
       hullId,
       defenceRating,
     );
-    this.renderView();
+    this.renderMap();
   }
 
   /**
    * Runs `ticks` deterministic frontier ticks (control surface: tick → holds or
    * falls). The transition is the pure harness stand-in, so the scene owns no
-   * resolver logic.
+   * resolver logic. The map re-renders after the ticks, so the integrated view
+   * shows the shipped record for the resulting payload — exactly what the game
+   * would carry for it.
    *
    * @returns one result per applied tick, in order.
    */
@@ -487,7 +487,7 @@ export class GymHexWar extends Phaser.Scene {
       });
     }
 
-    this.renderView();
+    this.renderMap();
     return results;
   }
 }

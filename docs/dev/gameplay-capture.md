@@ -2125,13 +2125,18 @@ so a capture shows exactly what a player sees:
   cannot be triggered from the gym.
 - **`GymHexWar`** — the hex ring. It renders the shipped hex map
   (`buildHexMapModel` + `renderHexMap`) — the hangar at the centre, the ring
-  around it and every hex's known-ahead intel — and, with `{ "view":
-  "report" }` (or the `showDefenceReport()` control surface), the shipped
-  **defence report** (`buildDefenceReport` + `renderDefenceReport`) built from
-the **shipped** frontier tick's record (`runFrontierTick`). Its control surface
-drives `take hex → leave bot → tick` through the documented deterministic
-harness double (`src/core/hangarWar/fakeFrontierClock.ts`), so a capture can
-show a hold, a fall and the report without simulating a battle.
+  around it and every hex's known-ahead intel — **with the between-sortie
+  report rolled in**: the shipped **attack arrows** (one per attack in the
+  record the **shipped** frontier tick, `runFrontierTick`, produces over the
+  payload) and the left-hand attack panel for the inspected hex's arrow
+  endpoint — that attack's `buildDefenceReport` row, copied verbatim (no
+  recomputation). There is no separate report view: `focusMapRow(key)` selects
+  which hex the read-only panels describe, so a capture can show the arrows and
+  the numbers behind any attack. Its control surface drives `take hex → leave
+  bot → tick` through the documented deterministic harness double
+  (`src/core/hangarWar/fakeFrontierClock.ts`) and re-renders the integrated view
+  from the shipped record for the resulting payload, so a capture can show a
+  hold, a fall, and the arrows/panel without simulating a battle.
 
 Both scenes consume the shared capture `setup` seam as a documented no-op (they
 have no player) and use `setup.seed` for their deterministic sample payload; a
