@@ -61,6 +61,25 @@
  * player plans against, not a promise — the defence report (B6) publishes the
  * tick's actual record.
  *
+ * ## Rolled-in defence report (`AH-0MWDC3L9I008INDP`)
+ *
+ * When the map is entered straight from a deployment, the launch data carries
+ * the between-sortie `FrontierTickRecord`. The model then publishes, on top of
+ * the hexes:
+ *
+ * - `arrows` — one {@link HexMapAttackArrow} per `record.attacks[]` entry, in
+ *   the record's order, carrying the attacker-origin axial coordinates the
+ *   record itself stores (`attackerOrigin`, never re-derived);
+ * - `attackDetails` — the report model's own {@link DefenceReportRow} keyed by
+ *   the attacked hex id **and** by the attacker-origin hex id, so either arrow
+ *   endpoint resolves the same attack's numbers. The rows come straight from
+ *   {@link buildDefenceReport}, so the map can never publish a second,
+ *   drifting set of numbers (AGENTS.md gym↔game parity).
+ *
+ * The record is transient launch data, never persisted: a map entered without
+ * one (or with a quiet/malformed one) publishes no arrows and no details
+ * rather than throwing.
+ *
  * @module src/core/hangarWar/hexIntel
  */
 
@@ -88,6 +107,8 @@ import {
 } from '../../data/hexRingDefinitions';
 import { resolvePlayerStrength } from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
+import { buildDefenceReport, type DefenceReportRow } from './defenceReport';
+import type { FrontierTickRecord } from './hexDefence';
 
 /** Title rendered by the map screen (asserted by tests). */
 export const HEX_MAP_TITLE = 'HANGAR WAR — HEX MAP';
@@ -183,6 +204,24 @@ export interface HexIntel {
   readonly label: string;
 }
 
+/**
+ * One attack arrow over the transient tick record: the attacker-origin hex to
+ * the attacked hex, with the origin's axial coordinates copied from the record.
+ *
+ * A pure descriptor — the renderer turns it into pixels through the existing
+ * `axialToPixel` layout, so the arrow rule lives once (`AH-0MWEXI5460080WEI`).
+ */
+export interface HexMapAttackArrow {
+  /** Arrow key (`arrow:<hexId>`), unique within the map. */
+  readonly key: string;
+  /** The attacked hex (the arrow's head). */
+  readonly hexId: string;
+  /** The unheld neighbour the attack came from (the arrow's tail). */
+  readonly attackerOriginId: string;
+  /** That neighbour's axial coordinate, copied from the record. */
+  readonly attackerOrigin: AxialCoordinate;
+}
+
 /** One focusable row of the map (the hangar action). */
 export interface HexMapActionRow {
   /** Row key (`hangar`). */
@@ -233,6 +272,18 @@ export interface HexMapModel {
    * reach it from anywhere. Row keys only — a pure read model, no scene rule.
    */
   readonly gridColumns: ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * One arrow per attack in the carried between-sortie tick record, in the
+   * record's order; empty for a map entered without a record (transient
+   * launch data, never persisted) or a quiet tick.
+   */
+  readonly arrows: readonly HexMapAttackArrow[];
+  /**
+   * The report model's row for every resolved attack, keyed by the attacked
+   * hex id **and** by the attacker-origin hex id (both arrow endpoints). When
+   * a hex is both, the attacked entry wins. Empty without a record.
+   */
+  readonly attackDetails: ReadonlyMap<string, DefenceReportRow>;
 }
 
 /**
@@ -299,6 +350,62 @@ export interface BuildHexMapOptions {
   readonly definitions?: readonly HexRingDefinition[];
   /** Screen title override (tests/captures). */
   readonly title?: string;
+  /**
+   * The between-sortie tick record carried from the deployment, or omitted
+   * when the map is entered without one (a transient overlay, never stored).
+   */
+  readonly record?: FrontierTickRecord;
+}
+
+/** The attack overlay a tick record contributes to the map model. */
+interface HexMapAttackOverlay {
+  readonly arrows: readonly HexMapAttackArrow[];
+  readonly attackDetails: ReadonlyMap<string, DefenceReportRow>;
+}
+
+/**
+ * Builds the map's attack overlay from the transient tick record.
+ *
+ * The arrows are copied from the record's own `attackerOrigin` coordinates and
+ * the details are the report model's own rows (index-aligned with
+ * `record.attacks`), so no number is re-resolved here. Total: a missing,
+ * empty or malformed record yields no arrows and no details.
+ *
+ * @param payload — the war's stored payload (never mutated).
+ * @param record — the between-sortie tick record, when one was carried.
+ * @returns the arrows and the per-hex details.
+ */
+function buildAttackOverlay(
+  payload: HangarWarPayload,
+  record: FrontierTickRecord | undefined,
+): HexMapAttackOverlay {
+  const attacks = Array.isArray(record?.attacks) ? record.attacks : [];
+  if (!record || attacks.length === 0) {
+    return { arrows: [], attackDetails: new Map() };
+  }
+
+  const arrows = attacks.map((attack): HexMapAttackArrow => ({
+    key: `arrow:${attack.hexId}`,
+    hexId: attack.hexId,
+    attackerOriginId: attack.attackerOriginId,
+    attackerOrigin: {
+      q: attack.attackerOrigin.q,
+      r: attack.attackerOrigin.r,
+    },
+  }));
+
+  const rows = buildDefenceReport(payload, record).rows;
+  const attackDetails = new Map<string, DefenceReportRow>();
+  // Attacked endpoints first, so the attacked entry wins when a hex is both
+  // endpoints of an attack (a self-referential record).
+  rows.forEach((row) => attackDetails.set(row.hexId, row));
+  rows.forEach((row) => {
+    if (!attackDetails.has(row.attackerOriginId)) {
+      attackDetails.set(row.attackerOriginId, row);
+    }
+  });
+
+  return { arrows, attackDetails };
 }
 
 /** `value` as a non-negative integer; anything unusable collapses to `0`. */
@@ -525,7 +632,8 @@ export function pickAttractHex(
  * definitions.
  *
  * @param payload — the war's stored payload (never mutated).
- * @param options — definitions override and title.
+ * @param options — definitions/title overrides and the transient tick record
+ *   whose attacks become arrows and per-attack details.
  * @returns the complete map model (hexes, ring/hangar lines, focus order).
  */
 export function buildHexMapModel(
@@ -574,6 +682,7 @@ export function buildHexMapModel(
     HEX_MAP_HANGAR_ROW_KEY,
   ];
   const gridColumns = buildGridColumns(hexes, HEX_MAP_HANGAR_ROW_KEY);
+  const { arrows, attackDetails } = buildAttackOverlay(payload, options.record);
   const defaultFocusKey =
     attractHexId !== null
       ? `${HEX_MAP_HEX_ROW_PREFIX}${attractHexId}`
@@ -603,5 +712,7 @@ export function buildHexMapModel(
     defaultFocusKey,
     attractHexId,
     gridColumns,
+    arrows,
+    attackDetails,
   };
 }

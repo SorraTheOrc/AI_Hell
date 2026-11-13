@@ -18,8 +18,8 @@ import {
   createDefaultPayload,
   DEFAULT_HULL_ID,
 } from './hangarWarStore';
-import { buildDefenceReport, type DefenceReportRow } from './defenceReport';
-import { createRingState, generateRing, type AxialCoordinate } from './hexRing';
+import { buildDefenceReport } from './defenceReport';
+import { createRingState, generateRing } from './hexRing';
 import {
   HELD_TILE_MARKER,
   HEX_MAP_HANGAR_LABEL,
@@ -608,15 +608,13 @@ describe('buildHexMapModel — the redistributed frontier (AH-0MWBBUAUQ0038GFL)'
  * Attack arrows and per-attack details over the transient tick record
  * (AH-0MWEXI5460080WEI, parent AH-0MWDC3L9I008INDP).
  *
- * **TEST-FIRST.** The report is rolled into the hex map: the map must publish
- * one arrow per `record.attacks[]` entry (the record's attacker-origin axial
- * coordinates → the attacked hex) plus the per-attack details keyed by **both**
- * arrow endpoints, copied verbatim from the record via `buildDefenceReport`.
- * The assertions are authored under Vitest's `it.fails` (the repo's
- * red-before/green-after convention, see `src/core/levelScaling.test.ts`) so
- * this suite stays green on pre-change HEAD while pinning the exact
- * post-change contract; the model item (AH-0MWEXIAEQ004IT0R) flips them back
- * to `it` once the model lands, and a leftover `it.fails` then fails loudly.
+ * The report is rolled into the hex map: the map publishes one arrow per
+ * `record.attacks[]` entry (the record's attacker-origin axial coordinates →
+ * the attacked hex) plus the per-attack details keyed by **both** arrow
+ * endpoints, copied verbatim from the record via `buildDefenceReport`. Written
+ * as `it.fails` red witnesses by AH-0MWEXI5460080WEI; the model item
+ * (AH-0MWEXIAEQ004IT0R) landed the contract and flipped them back to `it`, so
+ * a regression fails loudly here.
  *
  * ## Pinned contract (the model item must match exactly)
  *
@@ -634,19 +632,12 @@ describe('buildHexMapModel — the redistributed frontier (AH-0MWBBUAUQ0038GFL)'
  *   malformed record — a quiet tick, never a throw.
  */
 
-/** The arrow descriptor the map model publishes for one resolved attack. */
-interface HexMapAttackArrow {
-  readonly key: string;
-  readonly hexId: string;
-  readonly attackerOriginId: string;
-  readonly attackerOrigin: AxialCoordinate;
-}
-
-/** The model with the attack fields this test-first item pins. */
-interface AttackAwareHexMapModel extends HexMapModel {
-  readonly arrows?: readonly HexMapAttackArrow[];
-  readonly attackDetails?: ReadonlyMap<string, DefenceReportRow>;
-}
+/**
+ * The model with the attack fields this test-first item pins. The contract now
+ * lives on the shipped `HexMapModel` (AH-0MWEXIAEQ004IT0R), so this is an alias
+ * — the pinned fields must stay required, not optional.
+ */
+type AttackAwareHexMapModel = HexMapModel;
 
 /** The build options with the record this test-first item pins. */
 type AttackAwareOptions = BuildHexMapOptions & {
@@ -744,7 +735,7 @@ function recordWith(
 }
 
 describe('hex map model — attack arrows from the tick record', () => {
-  it.fails(
+  it(
     'publishes one arrow per resolved attack, from the record\'s origin to its target',
     () => {
       const model = buildAttackModel(
@@ -763,7 +754,7 @@ describe('hex map model — attack arrows from the tick record', () => {
     },
   );
 
-  it.fails(
+  it(
     'publishes every attack in the record\'s order (one source, no per-scene rule)',
     () => {
       const attacks = [
@@ -789,21 +780,21 @@ describe('hex map model — attack arrows from the tick record', () => {
     },
   );
 
-  it.fails('is total: a missing record publishes no arrows and no details', () => {
+  it('is total: a missing record publishes no arrows and no details', () => {
     const model = buildAttackModel(attackPayload());
 
     expect(model.arrows).toEqual([]);
     expect(model.attackDetails?.size).toBe(0);
   });
 
-  it.fails('is total: a quiet tick publishes no arrows and no details', () => {
+  it('is total: a quiet tick publishes no arrows and no details', () => {
     const model = buildAttackModel(attackPayload(), recordWith([]));
 
     expect(model.arrows).toEqual([]);
     expect(model.attackDetails?.size).toBe(0);
   });
 
-  it.fails('is total: a malformed record publishes no arrows and no details', () => {
+  it('is total: a malformed record publishes no arrows and no details', () => {
     const malformed = {
       ...recordWith([]),
       attacks: undefined as unknown as readonly HexDefenceRecord[],
@@ -816,7 +807,7 @@ describe('hex map model — attack arrows from the tick record', () => {
 });
 
 describe('hex map model — per-attack details keyed by hex id', () => {
-  it.fails(
+  it(
     'keys the same attack under the attacked hex id and the attacker-origin id',
     () => {
       const payload = attackPayload();
@@ -835,7 +826,7 @@ describe('hex map model — per-attack details keyed by hex id', () => {
     },
   );
 
-  it.fails('copies every resolved number verbatim (no re-derivation)', () => {
+  it('copies every resolved number verbatim (no re-derivation)', () => {
     const payload = attackPayload();
     const record = recordWith([recordAttack()]);
     const model = buildAttackModel(payload, record);
@@ -870,7 +861,7 @@ describe('hex map model — per-attack details keyed by hex id', () => {
     expect(detail.label).toContain('retake: strike hex-frontier');
   });
 
-  it.fails('never re-resolves the attack from the payload\'s stored numbers', () => {
+  it('never re-resolves the attack from the payload\'s stored numbers', () => {
     // A record whose numbers deliberately disagree with the payload (the
     // payload's hex has aggression 3 and no defender): the details must show
     // the record's numbers, not a fresh preview.

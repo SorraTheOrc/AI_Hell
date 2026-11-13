@@ -118,14 +118,11 @@ afterAll(() => reuse.dispose());
  * arrows from the same record, never a divergent copy.
  */
 
-/** The gym map model with the attack fields this test-first item pins. */
-interface AttackAwareMapModel extends HexMapModel {
-  readonly arrows?: readonly {
-    readonly hexId: string;
-    readonly attackerOriginId: string;
-    readonly attackerOrigin: { readonly q: number; readonly r: number };
-  }[];
-}
+/**
+ * The gym map model with the attack fields this test-first item pins. They now
+ * live on the shipped `HexMapModel` (AH-0MWEXIAEQ004IT0R), so this is an alias.
+ */
+type AttackAwareMapModel = HexMapModel;
 
 function sixHexPayload(
   hangarOverrides: Partial<HangarWarPayload['hangar']> = {},

@@ -130,13 +130,11 @@ interface AttackAwareScene extends HexMapScene {
   isLeftPanelVisible?(): boolean;
 }
 
-/** The model with the attack fields this test-first item pins. */
-interface AttackAwareModel extends HexMapModel {
-  readonly arrows?: readonly {
-    readonly hexId: string;
-    readonly attackerOriginId: string;
-  }[];
-}
+/**
+ * The model with the attack fields this test-first item pins. They now live on
+ * the shipped `HexMapModel` (AH-0MWEXIAEQ004IT0R), so this is an alias.
+ */
+type AttackAwareModel = HexMapModel;
 
 /**
  * A five-hex payload: two attacked hexes (both lost) with their unheld
