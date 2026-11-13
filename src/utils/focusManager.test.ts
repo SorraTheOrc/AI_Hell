@@ -592,8 +592,30 @@ describe('FocusManager — grid navigation (AH-0MV1BKZ0J00946EX)', () => {
     expect(fm.getFocusedIndex()).toBe(1);
   });
 
-  it('grid navigation is consumed (preventDefault) and ignores repeat', () => {
+  it('AC6 — a row folded into every column resolves to the current column', () => {
+    // The hex map folds its `◀ HANGAR` row (index 3) into every column as the
+    // bottom row so arrows reach it from anywhere. Without column memory the
+    // duplicated control would always resolve to the leftmost column.
+    const folded = [
+      [0, 3],
+      [1, 2, 3],
+    ];
     fm = makeGrid(4);
+    const scene = makeScene();
+    fm.attachKeyboard(scene, { navigation: 'grid', columns: folded });
+
+    fm.setFocusedIndex(2); // col 1, row 1
+    press(scene, { key: 'ArrowDown' });
+    expect(fm.getFocusedIndex()).toBe(3); // col 1's folded bottom row
+    press(scene, { key: 'ArrowUp' });
+    expect(fm.getFocusedIndex()).toBe(2); // stays in col 1, not col 0
+    press(scene, { key: 'ArrowUp' });
+    expect(fm.getFocusedIndex()).toBe(1);
+    press(scene, { key: 'ArrowUp' }); // wraps to the column's own folded row
+    expect(fm.getFocusedIndex()).toBe(3);
+  });
+
+  it('grid navigation is consumed (preventDefault) and ignores repeat', () => {    fm = makeGrid(4);
     const scene = makeScene();
     fm.attachKeyboard(scene, { navigation: 'grid', columns });
 

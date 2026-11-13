@@ -31,6 +31,17 @@
  *   hex can be inspected in the detail panel; activating a held hex performs no
  *   deployment. Only an unheld displayed hex deploys.
  *
+ * ## Spatial arrow navigation (navigation item AH-0MWEWYVD7008PPQT)
+ *
+ * The renderer opts the shared `FocusManager` into its **grid** navigation mode
+ * (shipped by AH-0MV1BKZ0J00946EX) with the columns the pure model already
+ * publishes (`model.gridColumns`): ArrowLeft/ArrowRight move across columns
+ * (wrapping, clamping into shorter columns) and ArrowUp/ArrowDown move within
+ * the current column (wrapping). The model folds the `◀ HANGAR` row in as every
+ * column's bottom row, so arrows reach it from anywhere on the map. Tab and
+ * Shift+Tab keep their linear reading-order cycling — this module supplies no
+ * navigation rule of its own, only the row-key → control-index mapping.
+ *
  * Layout is a pointy-top axial grid: ring 2's twelve hexes fit around the
  * hangar without overlapping. Each tile carries its axial coordinates `(q,r)`,
  * its aggression (`AGG n`) and the ownership marker at the readable tile size,
@@ -647,7 +658,22 @@ export function renderHexMap(
       .setOrigin(0.5, 1),
   );
 
-  focusManager.attachKeyboard(scene);
+  // Grid navigation (AH-0MWEWYVD7008PPQT): the pure model owns the spatial
+  // columns; the renderer only maps their row keys onto the registered control
+  // indices. The `◀ HANGAR` row is folded into every column by the model, so
+  // the arrows reach it too. Tab/Shift+Tab stay linear in grid mode.
+  const indexByKey = new Map(
+    focusableRows.map((row, index) => [row.key, index] as const),
+  );
+  const gridColumns = model.gridColumns.map((column) =>
+    column
+      .map((key) => indexByKey.get(key))
+      .filter((index): index is number => index !== undefined),
+  );
+  focusManager.attachKeyboard(scene, {
+    navigation: 'grid',
+    columns: gridColumns,
+  });
 
   // ── Detail panel: the focused hex's full known-ahead intel ────
   const panelHeading = scene.add.text(PANEL_X, PANEL_Y, PANEL_HEADING, {

@@ -36,6 +36,11 @@
  *     bottom, and never change column.
  *   - **Tab / Shift+Tab** keep their linear reading-order cycling.
  *   - **Enter / Space** activation is unchanged.
+ *   - **Shared rows.** A control listed in **more than one** column (the hex
+ *     map folds its `◀ HANGAR` row into every column so arrows always reach
+ *     it) resolves to the column the player last navigated in, so a vertical
+ *     move from that row stays in the same column instead of jumping to the
+ *     leftmost one (AH-0MWEWYVD7008PPQT).
  * The default remains the linear model above, so every other consumer
  * (`MenuScene`, `GameOverScene`, `PauseScene`, `HelpScene`,
  * `LeaderboardScene`, `TelemetryConsentScene` and the Hangar War screens) is
@@ -120,6 +125,13 @@ export class FocusManager {
 
   /** Ordered grid columns of control indices (empty in linear mode). */
   private _columns: number[][] = [];
+
+  /**
+   * Column the grid focus last belonged to, used to disambiguate a control
+   * listed in several columns (a row folded into every column). `null` until a
+   * focus move resolves one; the first matching column is used then.
+   */
+  private _gridColumn: number | null = null;
 
   /** Optional listener invoked after every focus change (the hex-map detail panel). */
   private _focusListener: (() => void) | null = null;
@@ -255,6 +267,7 @@ export class FocusManager {
     this._focusedIndex =
       ((index % this.controls.length) + this.controls.length) %
       this.controls.length;
+    this._rememberGridColumn(this._focusedIndex);
     this._repaintFocus();
   }
 
@@ -317,6 +330,7 @@ export class FocusManager {
   ): void {
     this._navigation = options.navigation ?? 'linear';
     this._columns = (options.columns ?? []).map((column) => [...column]);
+    this._gridColumn = null;
     this._scene = scene;
     this._keyHandler = (event: KeyboardEvent) => {
       this.handleKey(event);
@@ -355,6 +369,7 @@ export class FocusManager {
     this._scene = null;
     this._navigation = 'linear';
     this._columns = [];
+    this._gridColumn = null;
 
     this.controls = [];
     this._focusedIndex = -1;
@@ -417,15 +432,37 @@ export class FocusManager {
   /**
    * Locates the focused control inside the grid.
    *
+   * A control can be listed in several columns (a row folded into every column,
+   * such as the hex map's `◀ HANGAR` row). It resolves to the column the player
+   * last navigated in, falling back to the leftmost column that lists it.
+   *
    * @returns the column and row indices, or `null` when the focused control is
    *   not part of any configured column.
    */
   private _findGridPosition(index: number): { col: number; row: number } | null {
+    let first: { col: number; row: number } | null = null;
     for (let col = 0; col < this._columns.length; col++) {
       const row = this._columns[col].indexOf(index);
-      if (row >= 0) return { col, row };
+      if (row < 0) continue;
+      if (col === this._gridColumn) return { col, row };
+      first ??= { col, row };
     }
-    return null;
+    return first;
+  }
+
+  /**
+   * Remembers the column a newly focused control belongs to.
+   *
+   * A control in exactly one column pins the current column; a control listed in
+   * several columns (a folded-in row) keeps the remembered column so navigation
+   * stays where the player is, and a control outside the grid leaves it alone.
+   */
+  private _rememberGridColumn(index: number): void {
+    if (!this._isGridActive()) return;
+    const position = this._findGridPosition(index);
+    if (position === null) return;
+    const shared = this._columns.filter((rows) => rows.includes(index)).length;
+    if (shared === 1) this._gridColumn = position.col;
   }
 
   /**
@@ -445,6 +482,7 @@ export class FocusManager {
       if (targetRows.length === 0) continue;
       const targetRow = Math.min(position.row, targetRows.length - 1);
       this.setFocusedIndex(targetRows[targetRow]);
+      this._gridColumn = targetCol;
       return true;
     }
     return false;
@@ -463,6 +501,7 @@ export class FocusManager {
     const targetRow =
       ((position.row + delta) % rows.length + rows.length) % rows.length;
     this.setFocusedIndex(rows[targetRow]);
+    this._gridColumn = position.col;
     return true;
   }
 

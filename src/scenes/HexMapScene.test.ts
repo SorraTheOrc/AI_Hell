@@ -28,7 +28,9 @@
  * convention — see `src/core/levelScaling.test.ts`) so this suite stays green
  * on pre-change HEAD while pinning the post-change contract; those
  * implementation items flip them back to `it`, and a leftover `it.fails` then
- * fails loudly.
+ * fails loudly. The renderer item (AH-0MWEWYUAS002P7P9) flipped the
+ * reveal/selection assertions; the navigation item (AH-0MWEWYVD7008PPQT) flipped
+ * the grid-arrow assertion when it wired `FocusManager` grid mode.
  *
  * ## Pinned contract (the implementation items must match exactly)
  *
@@ -695,7 +697,7 @@ describe('HexMapScene', () => {
     },
   );
 
-  it.fails(
+  it(
     'moves focus spatially with the arrow keys and reaches the hangar row',
     async () => {
       const scene = await bootMap({ payload: ringPayload(1), storage: null });
@@ -737,6 +739,14 @@ describe('HexMapScene', () => {
         press(scene, 'ArrowUp');
         expect(scene.getFocusedKey()).toBe(HEX_MAP_HANGAR_ROW_KEY);
       }
+
+      // The bottom hint line describes both navigation models (AC5): arrows
+      // move spatially and Tab keeps its linear cycling.
+      const hint = HEX_MAP_HINT.toLowerCase();
+      expect(hint).toContain('spatial');
+      expect(hint).toContain('tab');
+      expect(hint).toContain('linear');
+      expect(findTextStartingWith(scene, HEX_MAP_HINT)).toBeDefined();
     },
   );
 
