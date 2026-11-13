@@ -28,10 +28,20 @@ import {
   HEX_RING_DEFINITIONS as HEZ_RING_ONE_ALL,
   hexRingDefinitionsFor,
 } from '../../data/hexRingDefinitions';
+import {
+  DEPLOYMENT_WAVE_COUNT,
+  truncateCampaignForDeployment,
+} from '../../scenes/hangarWar/hangarDeployment';
+import { getLevelDefinition } from '../../waves/Formations';
+import { runArena } from './arena';
 import { loadBalanceConfig } from './balanceConfig';
+import { resolvePolicyFactory } from './policies';
+import type { TelemetryEventRecord } from './types';
 import {
   DEFAULT_BETWEEN_SORTIE_MINUTES,
   DEFAULT_RETRY_MINUTES,
+  DEFAULT_RING_TIMING_DT,
+  RING_DEPLOYMENT_TICKS,
   RING_TIMING_TARGETS,
   RING_TIMING_TOLERANCE_PERCENT,
   createArenaDeploymentRunner,
@@ -877,4 +887,300 @@ describe('ring timing: report rendering', () => {
     expect(text).toContain('40–60 min');
     expect(text).toContain('in-window');
   });
+});
+
+/**
+ * ## The one-level deployment model (parent: AH-0MWCOWSVN003X81A)
+ *
+ * A deployment is **one hex, one level**, played as the shipped **five-wave
+ * sortie** — the level's first four regular waves plus the wave-5 mini-boss
+ * composition, truncated with the same pure helper the game uses
+ * (`truncateCampaignForDeployment` / `DEPLOYMENT_WAVE_COUNT` in
+ * `src/scenes/hangarWar/hangarDeployment.ts`) — through the arena's per-level
+ * mode. The arena emits `level_cleared` when the fifth wave's composition
+ * clears (the mini-boss encounter itself is not simulated — the fidelity gap
+ * stated on the parent), and the deployment's length is that event's tick ×
+ * `dt`. Neither `ticksSimulated` nor `won` describes a deployment: the run
+ * keeps simulating past the clear and `won` is false while the asteroid
+ * shadow-hazard lingers.
+ *
+ * **Red-before/green-after (AH-0MWCQ4EZD006YWHV).** These cases pin the model
+ * against the current campaign-slice harness: every case fails on the
+ * pre-change harness at the intended assertion (the red witnesses are recorded
+ * on the work item) and is wrapped in Vitest's `it.fails` — the repo's
+ * red-before/green-after convention — so the suite stays green on pre-change
+ * HEAD. The implementation item (AH-0MWCQ4FWN009J9DM) **flips every
+ * `it.fails` back to a plain `it`** and implements the model; a leftover
+ * `it.fails` then fails the suite, so this is a real target rather than a
+ * permanent exemption.
+ */
+describe('ring timing: the one-level deployment model', () => {
+  /**
+   * A runner whose reports model the one-level deployment: a captured sortie
+   * clears at `clearSeconds`, a death before it ends at `deathSeconds`.
+   * Aggressions at or above `loseFrom` die before the clear (default: never).
+   */
+  function oneLevelRunner(options: {
+    readonly clearSeconds?: number;
+    readonly deathSeconds?: number;
+    readonly loseFrom?: number;
+  }): RingDeploymentRunner {
+    const clearSeconds = options.clearSeconds ?? 45;
+    const deathSeconds = options.deathSeconds ?? 12;
+    const loseFrom = options.loseFrom ?? Number.POSITIVE_INFINITY;
+    return (request) =>
+      request.aggression >= loseFrom
+        ? { seconds: deathSeconds, captured: false, minerals: 3, hits: 1 }
+        : { seconds: clearSeconds, captured: true, minerals: 18, hits: 0 };
+  }
+
+  it.fails(
+    'a per-level deployment measures its level_cleared tick — one tick exactly, never the run length or won',
+    () => {
+      const dt = DEFAULT_RING_TIMING_DT;
+      const ticks = RING_DEPLOYMENT_TICKS;
+      const seed = 11;
+      const level = 1;
+
+      // The sortie this measures is the shipped five-wave one: the level's
+      // first four regular waves plus the wave-5 mini-boss composition,
+      // truncated by the SAME pure helper the game uses — never a hard-coded
+      // 5 or 10 (AH-0MWCQ4EZD006YWHV coordination note).
+      const sortie = truncateCampaignForDeployment([getLevelDefinition(level)!])[0];
+      expect(sortie.waves).toHaveLength(DEPLOYMENT_WAVE_COUNT);
+      expect(sortie.waves[DEPLOYMENT_WAVE_COUNT - 1].miniBoss).toBe(true);
+      expect(
+        sortie.waves
+          .slice(0, DEPLOYMENT_WAVE_COUNT - 1)
+          .some((wave) => wave.miniBoss),
+      ).toBe(false);
+
+      // A deterministic no-fire balance: the per-level arena ignores the
+      // wave `shootEnabled` gate (its documented fidelity boundary) and every
+      // enemy fires, so the competent bot cannot survive one level long enough
+      // to clear it. Zeroing `shotProbability` pins the seam the runner reads
+      // (`level_cleared` with its tick) for a fixed seed instead of leaving it
+      // hostage to the bot's survival. The armed ring-2 entry loadout (five
+      // lives, three weapons) is what a measured deployment actually launches
+      // with (AH-0MW9QA2YC009PSF5). Measured: seed 11 clears level 1 at tick
+      // 12 334 inside the 18 000-tick window.
+      const noFireBalance = {
+        ...loadBalanceConfig(),
+        enemies: loadBalanceConfig().enemies.map((enemy) => ({
+          ...enemy,
+          shotProbability: 0,
+        })),
+      };
+      const armedLoadout = resolveDeploymentLoadout(ringEntryOwnership(2));
+
+      // Read the seam the runner must consume: a per-level run emits
+      // `level_cleared` on the same tick it detects the final wave's clear.
+      // (The asteroid shadow-hazard is off here so the sortie clears
+      // deterministically — nothing lingers, so `won` is true at the end; the
+      // model's *other* guard shape — `won` false while an asteroid lingers —
+      // is the real runner's everyday outcome and is why the duration must
+      // never come from `won`.)
+      const arena = runArena(resolvePolicyFactory('competent').create(), {
+        seed,
+        ticks,
+        dt,
+        level,
+        balance: noFireBalance,
+        spawns: { asteroids: 0 },
+        sampleEveryTicks: ticks,
+        startingLoadout: {
+          lives: armedLoadout.lives,
+          speedMultiplier: armedLoadout.speedMultiplier,
+          weapons: armedLoadout.weapons,
+        },
+      });
+      const cleared = arena.records.find(
+        (record): record is TelemetryEventRecord =>
+          record.kind === 'event' && record.event === 'level_cleared',
+      );
+      expect(cleared).toBeDefined();
+      const finalWaveCleared = arena.records
+        .filter(
+          (record): record is TelemetryEventRecord =>
+            record.kind === 'event' && record.event === 'wave_cleared',
+        )
+        .at(-1);
+      const lastKill = arena.records
+        .filter(
+          (record): record is TelemetryEventRecord =>
+            record.kind === 'event' && record.event === 'enemy_killed',
+        )
+        .at(-1);
+      expect(finalWaveCleared).toBeDefined();
+      expect(lastKill).toBeDefined();
+      // The one-tick emission convention, pinned literally: the level-clear is
+      // emitted on the tick the final wave-clear is detected — exactly one
+      // tick after the final wave's last member fell — so a later refactor
+      // cannot silently shift every deployment's measured length.
+      expect(cleared!.tick).toBe(finalWaveCleared!.tick);
+      expect(cleared!.tick).toBe(lastKill!.tick + 1);
+      // The run keeps simulating past the clear to `config.ticks`, so the run
+      // length (here 300 s) is not the deployment's length.
+      expect(arena.ticksSimulated).toBeGreaterThan(cleared!.tick);
+      expect(arena.ticksSimulated).toBe(ticks);
+
+      const result = createArenaDeploymentRunner()({
+        seed,
+        hexId: 'hex-r1-2',
+        aggression: 0,
+        level,
+        ticks,
+        dt,
+        balance: noFireBalance,
+        loadout: armedLoadout,
+      });
+      // A cleared sortie is captured, and its duration is the clear tick × dt:
+      // the deployment ends at the clear, not at the 300 s run window. Today
+      // the runner plays the whole campaign slice (300 s / a mid-window
+      // death), so this pair of assertions is the red witness for the seam.
+      expect(result.captured).toBe(true);
+      expect(result.seconds).toBeLessThan(ticks * dt);
+    },
+  );
+
+  it.fails(
+    'a cleared sortie is captured; a death before it is a loss charged its own measured length',
+    () => {
+      const report = simulateRingTiming({
+        ringIndex: 1,
+        strategy: 'grind',
+        seeds: [1],
+        hexes: modelRing(),
+        runDeployment: oneLevelRunner({ clearSeconds: 45, deathSeconds: 12, loseFrom: 3 }),
+      });
+      const run = report.runs[0];
+      const capturedByHex = new Map<string, boolean>([
+        ['hex-1', true],
+        ['hex-2', true],
+        ['hex-3', false],
+        ['hex-4', true],
+        ['hex-5', false],
+        ['hex-6', false],
+      ]);
+      for (const deployment of run.deployments) {
+        const captured = capturedByHex.get(deployment.hexId)!;
+        expect(deployment.captured).toBe(captured);
+        expect(deployment.retries).toBe(captured ? 0 : 1);
+        if (captured) {
+          // A captured sortie costs exactly its measured clear length.
+          expect(deployment.minutes).toBeCloseTo(deployment.seconds / 60, 5);
+        } else {
+          // A loss costs the death's measured length, replayed once at that
+          // same length — never the flat 5-minute retry window.
+          expect(deployment.seconds).toBe(12);
+          expect(deployment.minutes).toBeCloseTo(2 * (deployment.seconds / 60), 5);
+        }
+      }
+      expect(run.captured).toBe(3);
+      expect(run.losses).toBe(3);
+    },
+  );
+
+  it.fails(
+    'a lost deployment’s retry is its own measured length × retriesPerLoss — never the flat 5-minute window',
+    () => {
+      const report = simulateRingTiming({
+        ringIndex: 1,
+        strategy: 'grind',
+        seeds: [1],
+        hexes: modelRing(),
+        retriesPerLoss: 2,
+        runDeployment: oneLevelRunner({ clearSeconds: 45, deathSeconds: 12, loseFrom: 0 }),
+      });
+      const run = report.runs[0];
+      expect(run.losses).toBe(6);
+      // Each loss replays its own measured 12 s, twice: 6 × 2 × 0.2 min.
+      expect(run.retryMinutes).toBeCloseTo(6 * 2 * (12 / 60), 5);
+      // The retired flat 5-minute window (RING_DEPLOYMENT_TICKS × dt / 60) is
+      // no longer the retry price.
+      const retiredFlatMinutes = (RING_DEPLOYMENT_TICKS * DEFAULT_RING_TIMING_DT) / 60;
+      expect(run.retryMinutes).not.toBeCloseTo(6 * 2 * retiredFlatMinutes, 5);
+    },
+  );
+
+  it.fails(
+    'the between-sortie allowance stays a flat, documented 2 minutes, and the total uses the measured retry',
+    () => {
+      const report = simulateRingTiming({
+        ringIndex: 1,
+        strategy: 'grind',
+        seeds: [1],
+        hexes: modelRing(),
+        runDeployment: oneLevelRunner({ clearSeconds: 45, deathSeconds: 12, loseFrom: 3 }),
+      });
+      const run = report.runs[0];
+      // The flat 2-minute visit is shipped data, pinned literally.
+      expect(DEFAULT_BETWEEN_SORTIE_MINUTES).toBe(2);
+      expect(run.betweenSortieMinutes).toBe(6 * DEFAULT_BETWEEN_SORTIE_MINUTES);
+      // 3 clears × 0.75 min + 3 losses × (0.2 measured + 0.2 retried) + 12 min
+      // of between-sortie visits.
+      expect(run.totalMinutes).toBeCloseTo(
+        3 * 0.75 + 3 * (0.2 + 0.2) + 6 * DEFAULT_BETWEEN_SORTIE_MINUTES,
+        5,
+      );
+    },
+  );
+
+  it.fails(
+    'a rush re-capture charges the line’s measured mean deployment plus the 2-minute visit (Q4 = a)',
+    () => {
+      const report = simulateRingTiming({
+        ringIndex: 1,
+        strategy: 'rush',
+        seeds: [1],
+        hexes: modelRing(),
+        runDeployment: oneLevelRunner({ clearSeconds: 45 }),
+        retakeChancePercent: 70,
+      });
+      const run = report.runs[0];
+      expect(run.deployments).toHaveLength(1);
+      expect(run.exposedHexes).toBe(5);
+      expect(run.expectedRetakes).toBeCloseTo(5 * 0.7, 5);
+      // The line's measured mean deployment (here its single 45 s sortie)
+      // plus the unchanged 2-minute visit — not the retired 18 000-tick window.
+      const meanDeployment = run.deployments[0].seconds / 60;
+      expect(run.retakeMinutes).toBeCloseTo(
+        run.expectedRetakes * (meanDeployment + DEFAULT_BETWEEN_SORTIE_MINUTES),
+        5,
+      );
+      const retiredWindowMinutes = (RING_DEPLOYMENT_TICKS * DEFAULT_RING_TIMING_DT) / 60;
+      expect(run.retakeMinutes).not.toBeCloseTo(
+        run.expectedRetakes * (retiredWindowMinutes + DEFAULT_BETWEEN_SORTIE_MINUTES),
+        5,
+      );
+    },
+  );
+
+  it.fails(
+    'is deterministic: the same seeds and options reproduce the measured seconds, retries and re-capture',
+    () => {
+      const options = {
+        ringIndex: 1,
+        strategy: 'rush' as const,
+        seeds: [1, 2],
+        retriesPerLoss: 2,
+        retakeChancePercent: 70,
+        runDeployment: oneLevelRunner({ clearSeconds: 45, deathSeconds: 12, loseFrom: 3 }),
+      };
+      const first = simulateRingTiming(options);
+      const second = simulateRingTiming(options);
+      expect(second).toEqual(first);
+      expect(second.runs[0]).toEqual(first.runs[0]);
+      // The reported numbers are the new model's, not the campaign slice's:
+      for (const run of first.runs) {
+        // The one rush sortie is lost at its measured 12 s, replayed twice.
+        expect(run.retryMinutes).toBeCloseTo(2 * (12 / 60), 5);
+        // Re-capture: 5 exposed hexes × 70 % × (the measured 0.2 min + visit).
+        expect(run.retakeMinutes).toBeCloseTo(
+          5 * 0.7 * ((12 / 60) + DEFAULT_BETWEEN_SORTIE_MINUTES),
+          5,
+        );
+      }
+    },
+  );
 });
