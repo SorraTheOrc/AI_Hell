@@ -35,6 +35,7 @@ import { RULES_STORAGE_KEY } from '../core/rules';
 import { deriveDefenderRating } from '../core/hangarWar/hangarEconomy';
 import { createRingState } from '../core/hangarWar/hexRing';
 import {
+  HANGAR_WAR_STORAGE_KEY,
   createDefaultPayload,
   loadHangarWarPayload,
   saveHangarWarPayload,
@@ -48,10 +49,16 @@ import {
   stepGameUntil,
   type BootedGame,
 } from '../test/gameHarness';
+import { winBonusMinerals } from '../test/hangarWinBonusContract';
 import type { LevelDefinition } from '../waves/Formations';
 import { GameOverScene } from './GameOverScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { MenuScene } from './MenuScene';
+import { MineralChoiceScene } from './MineralChoiceScene';
+import {
+  MINI_BOSS_WHEEL_SCENE_KEY,
+  MiniBossWheelScene,
+} from './MiniBossWheelScene';
 import { PlayScene, VICTORY_TRANSITION_HOLD_MS } from './PlayScene';
 import {
   buildHangarDeployment,
@@ -60,6 +67,9 @@ import {
 
 /** The hex every deployment targets (authored aggression 3 → level 4). */
 const TARGET_HEX = 'hex-r1-3';
+
+/** The shared hold-full/mini-boss choice overlay (`HexMapScene`'s own key). */
+const MINERAL_CHOICE_SCENE_KEY = 'MineralChoiceScene';
 
 /** Aggression that selects the final campaign level (`aggression + 1`). */
 const FINAL_LEVEL_AGGRESSION = MAX_LEVEL - 1;
@@ -155,13 +165,26 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
     localStorage.clear();
   });
 
-  /** Boots `PlayScene` with the compact campaign and an optional deployment. */
-  async function bootPlay(hangarWar: HangarWarDeployment | null): Promise<PlayScene> {
+  /**
+   * Boots `PlayScene` with the compact campaign and an optional deployment.
+   *
+   * `withRewardOverlays` registers the two shipped reward overlays
+   * (`MiniBossWheelScene`, `MineralChoiceScene`), which the win-path reward
+   * tests need: with them registered, a carried reward **pauses the map under
+   * an overlay**, so "the map is live" proves nothing was presented.
+   */
+  async function bootPlay(
+    hangarWar: HangarWarDeployment | null,
+    withRewardOverlays = false,
+  ): Promise<PlayScene> {
     booted = await bootScene([
       PlayScene,
       HexMapScene,
       GameOverScene,
       MenuScene,
+      ...(withRewardOverlays
+        ? [MiniBossWheelScene, MineralChoiceScene]
+        : []),
     ]);
     const scene = booted.scene as PlayScene;
     scene.setAsteroidSpawnerEnabled(false);
@@ -426,6 +449,179 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(scene.getBoss()).toBeInstanceOf(Boss);
       // An arcade run never routes through the deployment's hex map landing.
       expect(scene.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(false);
+    },
+    30_000,
+  );
+
+  // ── Win-path reward suppression + fixed mineral bonus ────────────────
+  //
+  // Parent AH-0MWEVNBMM000QFO2, producer Q1 = c / Q2 = a / Q3 = b (recorded
+  // 2026-11-13): a winning hex deployment presents **no** reward overlay —
+  // neither the wheel nor the empty-owned three-option fallback — and banks a
+  // fixed mineral bonus into the hangar war instead.
+  //
+  // **TEST-FIRST (test-first child AH-0MWF2PA5H008XCXW).** The suppression and
+  // bonus cases are authored red under Vitest's `it.fails` (the repo's
+  // red-before/green-after convention — see `src/vfx/orbitalStrike.test.ts`),
+  // because the wheel is still shown on pre-change HEAD. The implementation
+  // items **flip each `it.fails` back to a plain `it`** — PlayScene wiring
+  // AH-0MWF2Q0O0008NGKL, pure seam AH-0MWF2PYIE001XZOV. A leftover `it.fails`
+  // then fails the suite, so the flip is a real target. The arcade and lost-
+  // deployment cases below are plain `it` and pass today: those surfaces do
+  // not move (parent AC3).
+
+  /**
+   * Waits until the deployment has landed on the hex map.
+   *
+   * A carried reward pauses the map instead of leaving it active, so the wait
+   * accepts either state: the reward assertions (not a timeout) are what the
+   * red witness reports.
+   */
+  async function landOnMap(scene: PlayScene): Promise<HexMapScene> {
+    const manager = scene.game.scene;
+    stepGameUntil(
+      scene.game,
+      'the deployment lands on the hex map',
+      () =>
+        manager.isActive(HEX_MAP_SCENE_KEY) ||
+        manager.isPaused(HEX_MAP_SCENE_KEY),
+      600,
+    );
+    const map = manager.getScene(HEX_MAP_SCENE_KEY) as HexMapScene | null;
+    expect(map, 'the deployment must land on the hex map').not.toBeNull();
+    return map!;
+  }
+
+  /**
+   * Every presentable reward surface the win path must leave untouched: no
+   * reward payload, no launched overlay and a live (never paused) map.
+   */
+  function expectNoWinRewardOverlay(map: HexMapScene): void {
+    const manager = map.game.scene;
+    expect(map.getReward()).toBeNull();
+    expect(manager.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(false);
+    expect(manager.isActive(MINERAL_CHOICE_SCENE_KEY)).toBe(false);
+    expect(manager.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+    expect(manager.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+  }
+
+  it.fails(
+    'presents no mini-boss wheel on a winning hangar deployment (Q1 = c)',
+    async () => {
+      const scene = await bootPlay(deploymentFor(3), true);
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+      const map = await landOnMap(scene);
+
+      expectNoWinRewardOverlay(map);
+    },
+    30_000,
+  );
+
+  it.fails(
+    'presents no empty-owned fallback choice on a winning hangar deployment',
+    async () => {
+      // Nothing owned: pre-change HEAD carries the three-option fallback here,
+      // which grants run-scoped value to a finished run (Q1 = c, 2026-11-13).
+      const scene = await bootPlay(deploymentFor(3), true);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+      const map = await landOnMap(scene);
+
+      expectNoWinRewardOverlay(map);
+    },
+    30_000,
+  );
+
+  it.fails(
+    'banks the fixed win bonus as minerals only, once, through the one payload write (Q2 = a)',
+    async () => {
+      const bonus = winBonusMinerals();
+      const scene = await bootPlay(deploymentFor(3), true);
+      // 25 minerals earned during the run, banked at the mini-boss checkpoint
+      // moment and resolved once by the capture cycle.
+      scene.getGameState().minerals = 25;
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+
+      const capture = scene.getLastCapture();
+      expect(capture).not.toBeNull();
+      expect(capture!.ok).toBe(true);
+
+      // The bonus is banked exactly once, in minerals only: the capture's own
+      // core is banked by the capture cycle and is never topped up by the win
+      // bonus (a bonus core would double-count).
+      expect(scene.getBankedSalvage()).toEqual({
+        minerals: 25 + bonus,
+        cores: 1,
+      });
+
+      // Persisted through the shipped `ai_hell_hangar_war` payload — the same
+      // single write the capture cycle already makes, never a forked store.
+      const stored = loadHangarWarPayload();
+      expect(stored).not.toBeNull();
+      expect(stored!.hangar.bankedMinerals).toBe(25 + bonus);
+      expect(stored!.hangar.bankedCores).toBe(1);
+      expect(
+        Object.keys(localStorage).filter((key) => key.includes('hangar')),
+      ).toEqual([HANGAR_WAR_STORAGE_KEY]);
+    },
+    30_000,
+  );
+
+  it(
+    'keeps the arcade mini-boss defeat presenting the wheel (unchanged surface)',
+    async () => {
+      const scene = await bootPlay(null, true);
+      jumpToLevel(scene, 2);
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+
+      // The arcade reward is untouched: the shared wheel overlay is open and
+      // its outcome has not been applied behind the player's back.
+      expect(scene.isMiniBossRewardOpen()).toBe(true);
+      // The launched overlay runs on the next game step (the scene manager
+      // boots it then), so step until it is the running overlay.
+      stepGameUntil(
+        scene.game,
+        'the arcade wheel overlay is running',
+        () => scene.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY),
+        120,
+      );
+      expect(scene.getMiniBossWheelWedges().length).toBeGreaterThan(0);
+      expect(scene.getMiniBossWheelOutcome()).not.toBeNull();
+    },
+    30_000,
+  );
+
+  it(
+    'banks no bonus and presents no wheel on a lost hangar deployment',
+    async () => {
+      const scene = await bootPlay(deploymentFor(3), true);
+      // Salvage earned in a lost run is forfeit; the hangar balance survives.
+      scene.getGameState().minerals = 25;
+      scene.getGameState().lives = 1;
+      (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+      const map = await landOnMap(scene);
+
+      expectNoWinRewardOverlay(map);
+      expect(scene.getLastCapture()).toBeNull();
+      // A loss pays no win bonus: nothing is banked, nothing is written.
+      expect(scene.getBankedSalvage()).toEqual({ minerals: 0, cores: 0 });
+      expect(loadHangarWarPayload()!.hangar.bankedMinerals).toBe(0);
+      expect(loadHangarWarPayload()!.hangar.bankedCores).toBe(0);
     },
     30_000,
   );

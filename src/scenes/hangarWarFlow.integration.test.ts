@@ -24,8 +24,10 @@
  * AH-0MWDC3L9I008INDP): a deployment ends **directly on the hex map**,
  * carrying the deployment's payload, the resolved tick record and the run
  * result line (VICTORY/DEFEAT · score). The winning route is mini-boss defeat →
- * **paused hex map** → the mini-boss reward over it → map interaction resumes
- * (AH-0MWCOW61X002LL10, moved onto the map).
+ * **live hex map** (AH-0MWEVNBMM000QFO2: the win path presents no reward
+ * overlay — the fixed mineral win bonus is banked into the war and announced by
+ * the rolled-in report instead, producer Q1 = c / Q2 = a / Q3 = b) → map
+ * interaction resumes (AH-0MWCOW61X002LL10, moved onto the map).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -52,13 +54,11 @@ import {
   injectMiniBossCampaign,
   winLiveDeployment,
 } from '../test/hangarWarWinHarness';
+import { winBonusMinerals } from '../test/hangarWinBonusContract';
 import { HANGAR_WAR_LABEL, MenuScene } from './MenuScene';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
-import {
-  MINI_BOSS_WHEEL_SCENE_KEY,
-  MiniBossWheelScene,
-} from './MiniBossWheelScene';
+import { MINI_BOSS_WHEEL_SCENE_KEY } from './MiniBossWheelScene';
 import { PlayScene } from './PlayScene';
 
 /**
@@ -68,6 +68,9 @@ import { PlayScene } from './PlayScene';
  * and still a hard, failing bound.
  */
 const STEP_FRAMES = 180;
+
+/** The shared hold-full/mini-boss choice overlay (`HexMapScene`'s own key). */
+const MINERAL_CHOICE_SCENE_KEY = 'MineralChoiceScene';
 
 /** A fresh war with an unheld ring 1 and no salvage. */
 function seededWar(): HangarWarPayload {
@@ -253,46 +256,69 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
     return { play, hexId };
   }
 
-  it(
-    'presents the mini-boss reward over the paused hex map, then map interaction resumes',
+  /**
+   * The landing map's banked win-bonus announcement, through the seam the
+   * rolled-in defence report adds (`getWinBonusLine()`; the standalone
+   * `DefenceReportScene` was retired into `HexMapScene`, AH-0MWEXHODJ0067PSJ).
+   *
+   * Guarded so the suite compiles and the red witness fails cleanly while the
+   * map still has no bonus line (pre-change HEAD); the flip asserts it.
+   */
+  function winBonusLineOf(map: HexMapScene): string | null {
+    const seam = map as unknown as { getWinBonusLine?(): string | null };
+    return typeof seam.getWinBonusLine === 'function'
+      ? seam.getWinBonusLine()
+      : null;
+  }
+
+  /**
+   * The win path banks a fixed mineral bonus instead of a run-scoped reward
+   * (parent AH-0MWEVNBMM000QFO2, producer Q1 = c / Q2 = a / Q3 = b, recorded
+   * 2026-11-13; test-first child AH-0MWF2PA5H008XCXW).
+   *
+   * **TEST-FIRST.** Authored red under Vitest's `it.fails` (the repo's
+   * red-before/green-after convention — see `src/vfx/orbitalStrike.test.ts`):
+   * pre-change HEAD lands on the map **paused under the wheel**, so the
+   * "no reward overlay" assertion fails. The implementation items
+   * (AH-0MWF2Q0O0008NGKL PlayScene wiring, AH-0MWF2Q2JC008MAJE map/report
+   * announcement, AH-0MWF2PYIE001XZOV pure seam) **flip this `it.fails` back to
+   * a plain `it`**; a leftover `it.fails` then fails the suite.
+   */
+  it.fails(
+    'suppresses the win-path reward overlay and announces the banked bonus instead',
     async () => {
       const { hexId } = await walkToWonDeployment();
 
-      // The run lands on the **paused** hex map and the reward presents over
-      // it — the report hop (report → reward → map) is gone entirely. Sample
-      // the hold: the reward must never present while the run is still live.
-      let rewardWhileRunLive = false;
+      // Sample the whole run-end transition: the winning path must never launch
+      // a reward overlay — neither the shared wheel nor the empty-owned
+      // three-option fallback — and must not pause the map under one. The step
+      // stops as soon as the map is up in **either** state, so a carried reward
+      // fails the assertions below rather than a timeout.
+      let rewardSeen = false;
       stepGameUntil(
         booted!.game,
-        'the reward presents over the paused hex map',
+        'the win lands on the hex map',
         () => {
-          if (active(MINI_BOSS_WHEEL_SCENE_KEY) && active('PlayScene')) {
-            rewardWhileRunLive = true;
+          if (
+            active(MINI_BOSS_WHEEL_SCENE_KEY) ||
+            active(MINERAL_CHOICE_SCENE_KEY)
+          ) {
+            rewardSeen = true;
           }
           return (
-            active(MINI_BOSS_WHEEL_SCENE_KEY) &&
+            active(HEX_MAP_SCENE_KEY) ||
             booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)
           );
         },
         600,
       );
-      expect(rewardWhileRunLive).toBe(false);
-      // A paused map is not *active*: the reward overlay is the running scene.
-      expect(active(HEX_MAP_SCENE_KEY)).toBe(false);
+      expect(rewardSeen).toBe(false);
 
-      // The player spins the shared overlay (the attract bot auto-spins it).
-      sceneOf<MiniBossWheelScene>(MINI_BOSS_WHEEL_SCENE_KEY).spin();
-      stepGameUntil(
-        booted!.game,
-        'the map resumes interaction',
-        () =>
-          active(HEX_MAP_SCENE_KEY) &&
-          !booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY),
-        600,
-      );
-
-      // The map carries the win: record, run line and the newly held hex.
+      // The map carries the win: record, run line and the newly held hex, with
+      // no reward payload left to present.
       const map = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
+      expect(map.getReward()).toBeNull();
+      expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
       expect(recordOf(map)).toBeDefined();
       expect(runLineOf(map)).toMatch(/^RUN: VICTORY · score \d+$/);
       const hex = map
@@ -308,9 +334,19 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
         true,
       );
 
-      // Map interaction resumes: a still-unheld hex row deploys the next
-      // sortie. The just-captured hex is held and therefore non-actionable, so
-      // pick an actionable row rather than simply the first one.
+      // The post-win moment pays into the persistent war instead: the map
+      // announces the banked bonus (Q3 = b) and the bonus is in the stored
+      // payload, not a modal the player has to dismiss.
+      expect(winBonusMinerals()).toBeGreaterThan(0);
+      expect(winBonusLineOf(map)).toMatch(
+        /win bonus banked:\s*\+\d+ minerals/i,
+      );
+      expect(map.getPayload().hangar.bankedMinerals).toBeGreaterThanOrEqual(
+        winBonusMinerals(),
+      );
+
+      // Map interaction resumes immediately: a still-unheld hex row deploys the
+      // next sortie (the just-captured hex is held, so pick an actionable row).
       const hexRow = map
         .getRows()
         .find((row) => row.key.startsWith('hex:') && row.actionable);

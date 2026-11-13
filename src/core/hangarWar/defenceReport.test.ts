@@ -33,6 +33,10 @@ import {
   type HexDefenceRecord,
 } from './hexDefence';
 import { aggressionScenario } from './__fixtures__/aggressionScenarios';
+import {
+  winBonusLine,
+  winBonusReportOptions,
+} from '../../test/hangarWinBonusContract';
 import { resolvePlayerStrength } from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
 import type { HangarWarPayload, HexState } from './types';
@@ -657,5 +661,57 @@ describe('buildDefenceReport — the hangar assault record (AH-0MWEZZ9EB00604U0)
     expect(section.margin).toBe(1);
     expect(section.outcome).toBe('fell');
     expect(model.campaignReset).toBe(true);
+  });
+});
+
+/**
+ * The banked win bonus on a winning landing (parent AH-0MWEVNBMM000QFO2,
+ * producer Q3 = b, recorded 2026-11-13; test-first child AH-0MWF2PA5H008XCXW).
+ *
+ * A winning hangar deployment no longer presents a run-scoped reward overlay:
+ * it banks a fixed mineral bonus instead and the report **announces** it before
+ * the map becomes interactive, so the win reads as real progress. The report is
+ * pure, so the announcement is one more line on the model
+ * (`winBonusLine`) built from one more input (`winBonusMinerals`).
+ *
+ * **TEST-FIRST.** The announcement case is authored red under Vitest's
+ * `it.fails` (the repo's red-before/green-after convention — see
+ * `src/vfx/orbitalStrike.test.ts`); AH-0MWF2Q2JC008MAJE lands the field and
+ * **flips it back to a plain `it`**. A leftover `it.fails` fails the suite. The
+ * no-bonus cases are plain `it` and pass today: an ordinary report and a lost
+ * deployment's report carry no bonus line.
+ */
+describe('buildDefenceReport — the banked win bonus (AH-0MWF2PA5H008XCXW)', () => {
+  it.fails('announces the banked bonus as minerals before the map', () => {
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([]),
+      winBonusReportOptions(40),
+    );
+
+    expect(winBonusLine(model)).toMatch(/win bonus banked:\s*\+40 minerals/i);
+  });
+
+  it('carries no bonus line on an ordinary between-sortie report', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([]));
+
+    expect(winBonusLine(model)).toBeNull();
+  });
+
+  it('carries no bonus line for a zero or negative bonus', () => {
+    expect(
+      winBonusLine(
+        buildDefenceReport(makePayload(), makeRecord([]), winBonusReportOptions(0)),
+      ),
+    ).toBeNull();
+    expect(
+      winBonusLine(
+        buildDefenceReport(
+          makePayload(),
+          makeRecord([]),
+          winBonusReportOptions(-5),
+        ),
+      ),
+    ).toBeNull();
   });
 });
