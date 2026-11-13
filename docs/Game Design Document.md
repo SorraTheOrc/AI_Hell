@@ -2999,7 +2999,9 @@ modules under `src/core/hangarWar/`, by the scene suites beside each screen, and
 by the two gym scenes named in § *Gym coverage and parity*. The build was
 tracked by **AH-0MVU3VNJI00066YE** (phase B items B1–B8) and documented by
 **AH-0MVUXCC5J0028OGQ**; the ring-win rules — the massed hangar assault and
-the hangar-falls lose state — shipped under **AH-0MVUVL2O2006W4QK**.
+the hangar-falls lose state — shipped under **AH-0MVUVL2O2006W4QK**. The first
+**post-MVP** addition, the ring's **special mission with a special reward**
+(§ *Special missions*), shipped under **AH-0MVWZYIWX0008C55**.
 
 #### Entry surface and the ring screens
 
@@ -3166,6 +3168,49 @@ since the last bank and leaves the hangar and the ring untouched. Difficulty is
 still the shipped curve data: a hex's aggression selects campaign level
 `1 + aggression` (clamped to the campaign maximum), and perturbs the mini-boss's
 hit pool with the same bounded formula the campaign's mini-bosses use.
+
+#### Special missions (post-MVP)
+
+The ring's first post-MVP content (AH-0MVWZYIWX0008C55) answers its biggest
+design risk — *six identical hexes are six chores* — with content, not more
+volume: a **special-mission hex** whose one-level capture pays a **hull with
+extra hit points** instead of another currency drop. It delivers the design
+intent of §8's *Post-MVP mitigation backlog*, and it adds no second run
+implementation.
+
+- **Authored, not scripted (producer answer Q1 = a).** The special mission is
+  **authored ring data**: `isSpecialMission` on `HexRingDefinition`
+  (`src/data/hexRingDefinitions.ts`, mirrored in the `hex-ring-*.csv` seeds).
+  Ring 2 authors exactly one — `hex-r2-3`, *the-void-marshall*. Its deployment
+  is the ordinary one-level capture above (deploy → beat the wave-5 mini-boss →
+  bank → grant → leave a bot); the *special* part is only the reward. The ring
+  validator rejects a special mission whose grant is not a hull catalogue entry
+  (`HexRingDefinitionError`), so malformed authored data fails loudly rather
+  than silently becoming an ordinary hex.
+- **The reward is a real ship (producer answer Q2 = a).** The granted hull is
+  `hull-3` **Juggernaut Hull** (§8.1's catalogue): **5 starting lives** (two more
+  than the Scrap Hull, one more than the Bulwark), defence `15`, speed ×0.8 — a
+  slower, tougher ship, priced above the Bulwark for a fleet that never takes
+  the hex. It lands in `unlockedHulls` through the **existing**
+  `resolveHexGrant`/`resolveHexCapture` path and persists under the one
+  `ai_hell_hangar_war` payload (field-presence migration; no new storage key).
+  Upgrade bays remain out of scope (AH-0MWEUSVJ1007EXJY).
+- **The offer rotates (producer answer Q3 = b).** Which special mission the ring
+  presents changes **between sorties**: `specialMissionOfferFor` draws from a
+  per-sortie stream of the shared seeded RNG (`resolveSpecialOffer` in
+  `src/core/hangarWar/rng.ts`, mixed from the payload `seed` and the sortie
+  counter the between-sortie tick already advances), over the ring's uncaptured
+  special hexes. The sequence is **deterministic for the seed** and replayable —
+  never ad-hoc randomness in a scene — and a captured offer is never re-offered.
+- **Known ahead.** The map publishes the offer **before** the player commits a
+  life: the tile carries a short `★ SPECIAL` tag and the detail panel shows the
+  offered reward (hull name, its description, `+2 LIVES`, defence) and whether
+  it is offered *now*. The panel is built from the same reward derivation the
+  capture pays (`src/core/hangarWar/specialMission.ts`), so the map can never
+  advertise a hull the capture would not grant.
+
+Both halves are exercised by the gyms (§ *Gym coverage and parity*): the reward
+flow, the owned-set landing and the rotation run the shipped code there too.
 
 #### The ring-end hangar assault and the hangar-falls lose state
 
@@ -3515,7 +3560,9 @@ and its gym (AGENTS.md gym↔game parity):
 - **`GymHangar`** — renders the shipped hangar screen
   (`buildHangarScreenModel` + `renderHangarScreen`) against an injected payload:
   banked salvage, ring progress, the unlock tree and the deployment selector,
-  with no handlers, so it is read-only by construction.
+  with no handlers, so it is read-only by construction. Fed the payload a
+  special-mission capture wrote, it shows the `Juggernaut Hull` as an owned
+  unlock — the reward as the player sees it in the hangar.
 - **`GymHexWar`** — renders the shipped hex map (`buildHexMapModel` +
   `renderHexMap`) — read-only, so the tile aggression badges and the detail
   panel defaulting to the model's first hex are what the game shows — including
@@ -3526,7 +3573,11 @@ and its gym (AGENTS.md gym↔game parity):
   deterministic harness double. It also drives the **ring-end hangar assault**
   (`resolveRingAssault`) over its payload and renders the game's own `RING WON` /
   `HANGAR FALLS` banner, so the win/lose gate is exercised by the same
-  model/renderer pair the game uses.
+  model/renderer pair the game uses. It also exercises the **special mission**:
+  the map's own `★ SPECIAL` tile tag, offered-now marker and reward block in the
+  detail panel, a capture through the shipped `resolveHexCapture` (granting
+  `hull-3` into the owned set) and the between-sortie rotation
+  (`specialMissionOfferFor`), all through the game's own code.
 
 Both are in the capture registry (watchable, `docs/dev/gameplay-capture.md`) and
 carry current rows in the parity matrix [`docs/GYM_PARITY.md`](./GYM_PARITY.md).

@@ -1065,9 +1065,12 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
     publishes its boss, that boss's **strengths and weaknesses**, its aggression
     and the **exact weapon or upgrade it grants**, so the ring is a set of
     **strategic choices** made before a life is spent; the single weapon hex is
-    the hardest in the ring, so one capture is materially different. Post-MVP
-    content (special missions, upgraded bots with special skills) is recorded in
-    *Known-ahead intel and anti-checklist mitigations*.
+    the hardest in the ring, so one capture is materially different. The first
+    post-MVP answer — a **special mission paying a special reward** — is now
+    **shipped** (AH-0MVWZYIWX0008C55, recorded below); the remaining post-MVP
+    content (upgraded bots with special skills and the other ideas) is still
+    design only and recorded in *Known-ahead intel and anti-checklist
+    mitigations*.
   - **One playstyle dominating** — if rushing is always right, grinding is
     busywork; if grinding is always right, the aggressive line is a trap. The
     ring timing budget exists to keep both lines alive, and the choice of when to
@@ -1095,11 +1098,18 @@ ideas below are recorded so the loop has room to grow; one mitigation
 (**defending-bot skills**, AH-0MVWZYJ740037EZ1) has since been **implemented** as
 a post-MVP addition, the rest remain **design only**:
 
-- **Special missions.** Optional objective runs (escort a salvage convoy, hold a
-  hex for N frontier ticks, kill a boss without losing a life) that pay a
-  **special reward** instead of salvage — for example a **new hull type with
-  extra hit points or extra upgrade bays**, a one-run modifier, or an extra
-  defending bot.
+- **Special missions — SHIPPED (AH-0MVWZYIWX0008C55).** A special-mission hex
+  authored in the ring (`isSpecialMission` on `HexRingDefinition`, ring 2's
+  `hex-r2-3`) whose ordinary one-level capture pays a **special reward** instead
+  of salvage: the `hull-3` **Juggernaut Hull** with **extra hit points**
+  (`5` starting lives, defence `15`) granted through `resolveHexGrant` into the
+  hangar's owned set. The offer **rotates between sorties** through the shared
+  seeded RNG (`specialMissionOfferFor`, deterministic for the payload seed) and
+  is **known ahead**: the map's detail panel publishes the reward — hull,
+  description, extra lives — before the player commits a life, with a short
+  `★ SPECIAL` tag on the tile. Upgrade-bay rewards remain out of scope
+  (AH-0MWEUSVJ1007EXJY). Gym coverage: `GymHexWar` + `GymHangar`
+  (`docs/GYM_PARITY.md`), specification in GDD §8.2 § *Special missions*.
 - **Upgraded bots with special skills.** Defending bots that are **more effective
   against certain enemy or boss types** — an anti-swarm bot, an anti-armour bot,
   a bot that repairs a neighbour's defence rating — so what the player leaves
