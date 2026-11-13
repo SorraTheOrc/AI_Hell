@@ -39,7 +39,13 @@ import {
   UNHELD_TILE_MARKER,
   buildHexMapModel,
   pickAttractHex,
+  type HexMapModel,
 } from '../core/hangarWar/hexIntel';
+import { buildDefenceReport } from '../core/hangarWar/defenceReport';
+import type {
+  FrontierTickRecord,
+  HexDefenceRecord,
+} from '../core/hangarWar/hexDefence';
 import type {
   HangarWarPayload,
   HangarWarStorage,
@@ -73,6 +79,175 @@ function findTextStartingWith(
 
 const reuse = createReusableBoot();
 afterAll(() => reuse.dispose());
+
+/**
+ * Attack arrows and the left-hand attack-details panel
+ * (AH-0MWEXI5460080WEI, parent AH-0MWDC3L9I008INDP).
+ *
+ * **TEST-FIRST.** The rolled-in report means the map draws one arrow per attack
+ * in the carried between-sortie tick record and a LEFT-hand panel showing that
+ * attack's numbers whenever the focused hex is either arrow endpoint. The
+ * assertions are authored under Vitest's `it.fails` (the repo's
+ * red-before/green-after convention, see `src/core/levelScaling.test.ts`) so
+ * this suite stays green on pre-change HEAD while pinning the post-change
+ * contract; the model/renderer/scene items (AH-0MWEXIAEQ004IT0R,
+ * AH-0MWEXIHHK007H32A, AH-0MWEXIOZZ009UX14) flip them back to `it`, and a
+ * leftover `it.fails` then fails loudly.
+ *
+ * ## Pinned contract (the implementation items must match exactly)
+ *
+ * - `HexMapSceneData` gains `record?: FrontierTickRecord`; the model accepts
+ *   it as `buildHexMapModel(payload, { record })` and publishes `arrows` plus
+ *   `attackDetails` (see `src/core/hangarWar/hexIntel.test.ts`).
+ * - `HexMapScene` gains `getArrows()` (the drawn arrows with their axial pixel
+ *   endpoints), `getLeftPanelText()` and `isLeftPanelVisible()` test seams
+ *   which pass the renderer's view straight through.
+ * - The shared `renderHexMap` view gains `arrows: readonly HexMapArrow[]`
+ *   (`{ key, hexId, attackerOriginId, from: {x,y}, to: {x,y} }`) and the left
+ *   panel seams `getLeftPanelText()` / `isLeftPanelVisible()`. Arrows run from
+ *   the attacker-origin hex's `axialToPixel` position to the attacked hex's.
+ * - The left panel is keyed off the shared `FocusManager` like the right
+ *   panel: it shows an attack's details for the attacked hex **and** for its
+ *   attacker-origin hex, and hides for any hex involved in no attack. The
+ *   right-hand intel panel is untouched.
+ * - The record is transient launch data: re-entering the map without one
+ *   draws no arrows and keeps the left panel hidden.
+ */
+
+/** The arrow descriptor the renderer publishes for one drawn attack arrow. */
+interface RenderedArrow {
+  readonly key: string;
+  readonly hexId: string;
+  readonly attackerOriginId: string;
+  readonly from: { readonly x: number; readonly y: number };
+  readonly to: { readonly x: number; readonly y: number };
+}
+
+/** The scene seams this test-first item pins. */
+interface AttackAwareScene extends HexMapScene {
+  getArrows?(): readonly RenderedArrow[];
+  getLeftPanelText?(): string;
+  isLeftPanelVisible?(): boolean;
+}
+
+/** The model with the attack fields this test-first item pins. */
+interface AttackAwareModel extends HexMapModel {
+  readonly arrows?: readonly {
+    readonly hexId: string;
+    readonly attackerOriginId: string;
+  }[];
+}
+
+/**
+ * A five-hex payload: two attacked hexes (both lost) with their unheld
+ * attacker-origin neighbours, plus one hex involved in no attack.
+ */
+function attackPayload(): HangarWarPayload {
+  const template = createDefaultPayload(424242);
+  return {
+    ...template,
+    ring: {
+      ringIndex: 1,
+      hexes: [
+        {
+          id: 'hex-held',
+          q: 1,
+          r: 0,
+          held: false,
+          aggression: 3,
+          defender: null,
+          bossDefeated: true,
+          grantedWeapon: null,
+        },
+        {
+          id: 'hex-frontier',
+          q: 0,
+          r: 1,
+          held: false,
+          aggression: 3,
+          defender: null,
+          bossDefeated: false,
+          grantedWeapon: null,
+        },
+        {
+          id: 'hex-held-2',
+          q: -1,
+          r: 0,
+          held: false,
+          aggression: 2,
+          defender: null,
+          bossDefeated: false,
+          grantedWeapon: null,
+        },
+        {
+          id: 'hex-frontier-2',
+          q: 0,
+          r: -1,
+          held: false,
+          aggression: 2,
+          defender: null,
+          bossDefeated: false,
+          grantedWeapon: null,
+        },
+        {
+          id: 'hex-idle',
+          q: 1,
+          r: -1,
+          held: false,
+          aggression: 1,
+          defender: null,
+          bossDefeated: false,
+          grantedWeapon: null,
+        },
+      ],
+    },
+  };
+}
+
+/** One resolved attack, as the frontier tick's record carries it. */
+function recordAttack(
+  overrides: Partial<HexDefenceRecord> = {},
+): HexDefenceRecord {
+  return {
+    outcome: 'fell',
+    defenderRating: 2,
+    attackingForce: 4,
+    aggression: 3,
+    aggressionMultiplierPercent: 145,
+    jitterPercent: 6,
+    attackStrength: 6,
+    margin: -4,
+    hexId: 'hex-held',
+    attackerOriginId: 'hex-frontier',
+    attackerOrigin: { q: 0, r: 1 },
+    source: 'frontier',
+    ...overrides,
+  };
+}
+
+/** The tick record carried onto the map: two resolved attacks. */
+function attackRecord(
+  overrides: Partial<FrontierTickRecord> = {},
+): FrontierTickRecord {
+  return {
+    tick: 7,
+    playerStrength: 2,
+    aggressionBudget: 20,
+    beatableCeiling: 2,
+    deltas: [],
+    rose: 0,
+    fell: 0,
+    attacks: [
+      recordAttack(),
+      recordAttack({
+        hexId: 'hex-held-2',
+        attackerOriginId: 'hex-frontier-2',
+        attackerOrigin: { q: 0, r: -1 },
+      }),
+    ],
+    ...overrides,
+  };
+}
 
 describe('HexMapScene', () => {
   let booted: BootedGame | null = null;
@@ -321,4 +496,163 @@ describe('HexMapScene', () => {
     scene.getPayload().ring.hexes[0].held = true;
     expect(scene.getPayload().ring.hexes[0].held).toBe(false);
   });
+
+  // ── Attack arrows and the left-hand attack panel (AH-0MWEXI5460080WEI) ──
+
+  it.fails(
+    'draws one arrow per attack from the origin hex to the attacked hex',
+    async () => {
+      const payload = attackPayload();
+      const scene = (await bootMap({
+        payload,
+        record: attackRecord(),
+        storage: null,
+      })) as AttackAwareScene;
+      const arrows = scene.getArrows?.();
+
+      // One arrow per `record.attacks[]` entry, in the record's order.
+      expect(arrows).toHaveLength(2);
+      expect(
+        arrows!.map((arrow) => [arrow.hexId, arrow.attackerOriginId]),
+      ).toEqual([
+        ['hex-held', 'hex-frontier'],
+        ['hex-held-2', 'hex-frontier-2'],
+      ]);
+
+      // Each arrow runs from the attacker-origin hex's axial pixel to the
+      // attacked hex's — the tiles render at exactly `axialToPixel(q, r)`, so
+      // the arrow endpoints are compared against them (the existing layout).
+      const tilePixels = (
+        hexId: string,
+      ): { readonly x: number; readonly y: number } => {
+        const row = scene.getRows().find((entry) => entry.key === `hex:${hexId}`);
+        expect(row, `no rendered tile for ${hexId}`).toBeDefined();
+        return { x: row!.text.x, y: row!.text.y };
+      };
+      for (const arrow of arrows!) {
+        expect({ x: arrow.from.x, y: arrow.from.y }).toEqual(
+          tilePixels(arrow.attackerOriginId),
+        );
+        expect({ x: arrow.to.x, y: arrow.to.y }).toEqual(
+          tilePixels(arrow.hexId),
+        );
+      }
+
+      // The fed pure model is the arrow source — never a scene-local rule.
+      expect(
+        (scene.getModel() as AttackAwareModel).arrows?.map(
+          (arrow) => arrow.attackerOriginId,
+        ),
+      ).toEqual(['hex-frontier', 'hex-frontier-2']);
+    },
+  );
+
+  it.fails(
+    'shows the attack\'s details on the LEFT panel for both arrow endpoints',
+    async () => {
+      const payload = attackPayload();
+      const record = attackRecord();
+      const scene = (await bootMap({
+        payload,
+        record,
+        storage: null,
+      })) as AttackAwareScene;
+      const row = buildDefenceReport(payload, record).rows[0];
+
+      // The attacked hex: the panel shows the tick's own numbers.
+      expect(scene.focusRow('hex:hex-held')).toBe(true);
+      expect(scene.isLeftPanelVisible?.()).toBe(true);
+      const attackedText = scene.getLeftPanelText?.() ?? '';
+      expect(attackedText).toContain(row.label);
+      expect(attackedText).toContain('hex-held — FELL');
+      expect(attackedText).toContain('atk 4 × AGG 3');
+      expect(attackedText).toContain('= 6 vs bot 2');
+      expect(attackedText).toContain('margin -4');
+      expect(attackedText).toContain('retake: strike hex-frontier');
+
+      // The attacker-origin hex: the SAME attack's details (one attack, two
+      // endpoints), not a second, re-derived view.
+      expect(scene.focusRow('hex:hex-frontier')).toBe(true);
+      expect(scene.isLeftPanelVisible?.()).toBe(true);
+      expect(scene.getLeftPanelText?.() ?? '').toBe(attackedText);
+
+      // The right-hand intel panel stays the focused hex's own intel.
+      expect(scene.getPanelKey()).toBe('hex:hex-frontier');
+      expect(scene.getPanelText()).toContain('hex-frontier');
+    },
+  );
+
+  it.fails(
+    'hides the left panel for an uninvolved hex and leaves the right panel unchanged',
+    async () => {
+      const payload = attackPayload();
+      const withRecord = (await bootMap({
+        payload,
+        record: attackRecord(),
+        storage: null,
+      })) as AttackAwareScene;
+
+      expect(withRecord.focusRow('hex:hex-idle')).toBe(true);
+      expect(withRecord.isLeftPanelVisible?.()).toBe(false);
+      expect(withRecord.getLeftPanelText?.() ?? '').toBe('');
+
+      const rightWith = withRecord.getPanelText();
+      expect(withRecord.getPanelKey()).toBe('hex:hex-idle');
+      expect(rightWith).toContain('hex-idle');
+      expect(rightWith).toContain('AGG 1');
+
+      // The right-hand intel panel is not a function of the record: entering
+      // the map without one shows exactly the same intel for the same hex.
+      const withoutRecord = (await bootMap({
+        payload,
+        storage: null,
+      })) as AttackAwareScene;
+      expect(withoutRecord.focusRow('hex:hex-idle')).toBe(true);
+      expect(withoutRecord.getPanelKey()).toBe('hex:hex-idle');
+      expect(withoutRecord.getPanelText()).toBe(rightWith);
+      expect(withoutRecord.isLeftPanelVisible?.()).toBe(false);
+    },
+  );
+
+  it.fails('draws no arrows and no left panel for a quiet tick', async () => {
+    const scene = (await bootMap({
+      payload: attackPayload(),
+      record: attackRecord({ attacks: [] }),
+      storage: null,
+    })) as AttackAwareScene;
+
+    expect(scene.getArrows?.()).toEqual([]);
+    expect(scene.focusRow('hex:hex-held')).toBe(true);
+    expect(scene.isLeftPanelVisible?.()).toBe(false);
+    expect(scene.getLeftPanelText?.() ?? '').toBe('');
+  });
+
+  it.fails(
+    're-entering the map without a record draws no arrows and keeps the left panel hidden',
+    async () => {
+      const payload = attackPayload();
+      const scene = (await bootMap({
+        payload,
+        record: attackRecord(),
+        storage: null,
+      })) as AttackAwareScene;
+      expect(scene.getArrows?.()).toHaveLength(2);
+      expect(scene.focusRow('hex:hex-held')).toBe(true);
+      expect(scene.isLeftPanelVisible?.()).toBe(true);
+
+      // The arrows are transient launch data: re-entering the map later (from
+      // the menu/hangar) carries no record, so nothing persists.
+      booted!.game.scene.start(HEX_MAP_SCENE_KEY, { payload, storage: null });
+      await advanceGame(booted!.game, 200);
+      const reentered = booted!.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as AttackAwareScene;
+
+      expect(reentered.getArrows?.()).toEqual([]);
+      expect((reentered.getModel() as AttackAwareModel).arrows).toEqual([]);
+      expect(reentered.focusRow('hex:hex-held')).toBe(true);
+      expect(reentered.isLeftPanelVisible?.()).toBe(false);
+      expect(reentered.getLeftPanelText?.() ?? '').toBe('');
+    },
+  );
 });

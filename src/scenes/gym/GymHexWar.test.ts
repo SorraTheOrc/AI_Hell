@@ -36,6 +36,7 @@ import { DEFENCE_REPORT_TITLE } from '../../core/hangarWar/defenceReport';
 import {
   HELD_TILE_MARKER,
   UNHELD_TILE_MARKER,
+  type HexMapModel,
 } from '../../core/hangarWar/hexIntel';
 import {
   GymHexWar,
@@ -94,6 +95,37 @@ const UNHELD_HEX: HexState = {
 
 const reuse = createReusableBoot();
 afterAll(() => reuse.dispose());
+
+/**
+ * Integrated map view — attack arrows (AH-0MWEXI5460080WEI).
+ *
+ * **TEST-FIRST.** The rolled-in report means the gym's map view renders the
+ * same shared `renderHexMap` arrows as the game when it is given the same tick
+ * record (AGENTS.md gym↔game parity; parent AH-0MWDC3L9I008INDP). The
+ * assertion is authored under Vitest's `it.fails` (the repo's
+ * red-before/green-after convention, see `src/core/levelScaling.test.ts`) so
+ * this suite stays green on pre-change HEAD; the gym parity item
+ * (AH-0MWEXJ21W003M7RR) flips it back to `it`, and a leftover `it.fails` then
+ * fails loudly.
+ *
+ * ## Pinned contract
+ *
+ * The gym's map model (`getMapModel()`) carries the attack arrows derived from
+ * the same shipped tick record its report view renders
+ * (`runFrontierTick(this.payload, { clock: frontierClockFor(this.payload) })`):
+ * one arrow per `record.attacks[]` entry, in the record's order, with the
+ * record's attacker-origin coordinates — so the gym and the game draw the same
+ * arrows from the same record, never a divergent copy.
+ */
+
+/** The gym map model with the attack fields this test-first item pins. */
+interface AttackAwareMapModel extends HexMapModel {
+  readonly arrows?: readonly {
+    readonly hexId: string;
+    readonly attackerOriginId: string;
+    readonly attackerOrigin: { readonly q: number; readonly r: number };
+  }[];
+}
 
 function sixHexPayload(
   hangarOverrides: Partial<HangarWarPayload['hangar']> = {},
@@ -411,6 +443,71 @@ describe('GymHexWar', () => {
     expect(scene.getView()).toBe('map');
     expect(scene.getMapModel()).not.toBeNull();
   });
+
+  it.fails(
+    'renders the tick record\'s attack arrows on its integrated map view',
+    async () => {
+      // The same held-hex / unheld-neighbour payload the report test uses: the
+      // shipped tick resolves at least one attack, so the arrows are real.
+      const ring = RING_1_HEX_FIXTURES;
+      const held = ring[0];
+      const neighbour = ring[1];
+      const payload: HangarWarPayload = {
+        ...oneHexPayload({
+          ...UNHELD_HEX,
+          id: held.id,
+          q: held.q,
+          r: held.r,
+          held: true,
+          aggression: 0,
+          defender: { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 },
+        }),
+        ring: {
+          ringIndex: 1,
+          hexes: [
+            {
+              ...UNHELD_HEX,
+              id: held.id,
+              q: held.q,
+              r: held.r,
+              held: true,
+              aggression: 0,
+              defender: { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 },
+            },
+            {
+              ...UNHELD_HEX,
+              id: neighbour.id,
+              q: neighbour.q,
+              r: neighbour.r,
+              held: false,
+              aggression: 3,
+            },
+          ],
+        },
+      };
+
+      const scene = await bootHexWar({ payload });
+      const report = scene.getDefenceReport();
+      const model = scene.getMapModel() as AttackAwareMapModel | null;
+
+      // The record the gym already renders in its report view resolved attacks…
+      expect(report.rows.length).toBeGreaterThan(0);
+      // …and the integrated map view draws exactly those arrows from it.
+      expect(
+        model?.arrows?.map((arrow) => [
+          arrow.hexId,
+          arrow.attackerOriginId,
+          arrow.attackerOrigin,
+        ]),
+      ).toEqual(
+        report.rows.map((row) => [
+          row.hexId,
+          row.attackerOriginId,
+          row.retake.origin,
+        ]),
+      );
+    },
+  );
 
   it('is discovered by the gym index as "HexWar"', () => {
     const entries = discoverGymScenes({

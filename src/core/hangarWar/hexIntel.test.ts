@@ -10,13 +10,16 @@
  * grid columns — all without booting a scene.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   createDefaultPayload,
   DEFAULT_HULL_ID,
 } from './hangarWarStore';
-import { createRingState, generateRing } from './hexRing';
+import { buildDefenceReport, type DefenceReportRow } from './defenceReport';
+import { createRingState, generateRing, type AxialCoordinate } from './hexRing';
 import {
   HELD_TILE_MARKER,
   HEX_MAP_HANGAR_LABEL,
@@ -27,6 +30,8 @@ import {
   buildHexMapModel,
   isHexDisplayed,
   pickAttractHex,
+  type BuildHexMapOptions,
+  type HexMapModel,
 } from './hexIntel';
 import type { HangarWarPayload, HexState, PendingAttack } from './types';
 import {
@@ -35,7 +40,11 @@ import {
 } from '../../data/hexRingDefinitions';
 import { VALID_HANGAR_WAR_PAYLOAD } from './fixtures';
 import { createHangarWarRng } from './rng';
-import { runFrontierTick } from './hexDefence';
+import {
+  runFrontierTick,
+  type FrontierTickRecord,
+  type HexDefenceRecord,
+} from './hexDefence';
 import { aggressionScenario } from './__fixtures__/aggressionScenarios';
 import { resolvePlayerStrength } from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
@@ -592,5 +601,314 @@ describe('buildHexMapModel — the redistributed frontier (AH-0MWBBUAUQ0038GFL)'
       model.hexes.some((hex) => hex.aggression <= model.beatableCeiling),
     ).toBe(true);
     expect(model.frontierLine).toContain('IN REACH');
+  });
+});
+
+/**
+ * Attack arrows and per-attack details over the transient tick record
+ * (AH-0MWEXI5460080WEI, parent AH-0MWDC3L9I008INDP).
+ *
+ * **TEST-FIRST.** The report is rolled into the hex map: the map must publish
+ * one arrow per `record.attacks[]` entry (the record's attacker-origin axial
+ * coordinates → the attacked hex) plus the per-attack details keyed by **both**
+ * arrow endpoints, copied verbatim from the record via `buildDefenceReport`.
+ * The assertions are authored under Vitest's `it.fails` (the repo's
+ * red-before/green-after convention, see `src/core/levelScaling.test.ts`) so
+ * this suite stays green on pre-change HEAD while pinning the exact
+ * post-change contract; the model item (AH-0MWEXIAEQ004IT0R) flips them back
+ * to `it` once the model lands, and a leftover `it.fails` then fails loudly.
+ *
+ * ## Pinned contract (the model item must match exactly)
+ *
+ * - `BuildHexMapOptions` gains `record?: FrontierTickRecord`.
+ * - `HexMapModel` gains
+ *   - `arrows: readonly HexMapAttackArrow[]` — one entry per
+ *     `record.attacks[]` entry, in the record's order, with
+ *     `{ key: 'arrow:<hexId>', hexId, attackerOriginId, attackerOrigin }`
+ *     (`attackerOrigin` copied from the record's own axial coordinates);
+ *   - `attackDetails: ReadonlyMap<string, DefenceReportRow>` — the report
+ *     model's row keyed by the attacked hex id **and** by the
+ *     attacker-origin hex id, so either arrow endpoint resolves the same
+ *     attack's numbers. When a hex is both endpoints, the attacked entry wins.
+ * - Both are empty (`arrows: []`, an empty map) for a missing, empty or
+ *   malformed record — a quiet tick, never a throw.
+ */
+
+/** The arrow descriptor the map model publishes for one resolved attack. */
+interface HexMapAttackArrow {
+  readonly key: string;
+  readonly hexId: string;
+  readonly attackerOriginId: string;
+  readonly attackerOrigin: AxialCoordinate;
+}
+
+/** The model with the attack fields this test-first item pins. */
+interface AttackAwareHexMapModel extends HexMapModel {
+  readonly arrows?: readonly HexMapAttackArrow[];
+  readonly attackDetails?: ReadonlyMap<string, DefenceReportRow>;
+}
+
+/** The build options with the record this test-first item pins. */
+type AttackAwareOptions = BuildHexMapOptions & {
+  readonly record?: FrontierTickRecord;
+};
+
+/** Builds the map model with a record, through a seam that type-checks here. */
+function buildAttackModel(
+  payload: HangarWarPayload,
+  record?: FrontierTickRecord,
+): AttackAwareHexMapModel {
+  const options = {
+    definitions: HEX_RING_DEFINITIONS,
+    ...(record === undefined ? {} : { record }),
+  } as AttackAwareOptions;
+  return buildHexMapModel(payload, options) as AttackAwareHexMapModel;
+}
+
+/**
+ * A two-hex payload: `hex-held` is the player's and `hex-frontier` is the
+ * unheld neighbour the tick attacked from (the answerability pair).
+ */
+function attackPayload(): HangarWarPayload {
+  const template = createDefaultPayload(424242);
+  return {
+    ...template,
+    hangar: {
+      ...template.hangar,
+      bankedMinerals: 120,
+      bankedCores: 1,
+    },
+    ring: {
+      ringIndex: 1,
+      hexes: [
+        {
+          id: 'hex-held',
+          q: 1,
+          r: 0,
+          held: false,
+          aggression: 3,
+          defender: null,
+          bossDefeated: true,
+          grantedWeapon: null,
+        },
+        {
+          id: 'hex-frontier',
+          q: 0,
+          r: 1,
+          held: false,
+          aggression: 3,
+          defender: null,
+          bossDefeated: false,
+          grantedWeapon: null,
+        },
+      ],
+    },
+  };
+}
+
+/** One resolved attack, as the frontier tick's record carries it. */
+function recordAttack(
+  overrides: Partial<HexDefenceRecord> = {},
+): HexDefenceRecord {
+  return {
+    outcome: 'fell',
+    defenderRating: 2,
+    attackingForce: 4,
+    aggression: 3,
+    aggressionMultiplierPercent: 145,
+    jitterPercent: 6,
+    attackStrength: 6,
+    margin: -4,
+    hexId: 'hex-held',
+    attackerOriginId: 'hex-frontier',
+    attackerOrigin: { q: 0, r: 1 },
+    source: 'frontier',
+    ...overrides,
+  };
+}
+
+/** A tick record over the given attacks. */
+function recordWith(
+  attacks: readonly HexDefenceRecord[],
+): FrontierTickRecord {
+  return {
+    tick: 7,
+    playerStrength: 2,
+    aggressionBudget: 20,
+    beatableCeiling: 2,
+    deltas: [],
+    rose: 0,
+    fell: 0,
+    attacks,
+  };
+}
+
+describe('hex map model — attack arrows from the tick record', () => {
+  it.fails(
+    'publishes one arrow per resolved attack, from the record\'s origin to its target',
+    () => {
+      const model = buildAttackModel(
+        attackPayload(),
+        recordWith([recordAttack()]),
+      );
+
+      expect(model.arrows).toHaveLength(1);
+      expect(model.arrows![0]).toEqual({
+        key: 'arrow:hex-held',
+        hexId: 'hex-held',
+        attackerOriginId: 'hex-frontier',
+        // Copied from the record's own axial coordinates, never re-derived.
+        attackerOrigin: { q: 0, r: 1 },
+      });
+    },
+  );
+
+  it.fails(
+    'publishes every attack in the record\'s order (one source, no per-scene rule)',
+    () => {
+      const attacks = [
+        recordAttack(),
+        recordAttack({
+          hexId: 'hex-held-2',
+          attackerOriginId: 'hex-frontier-2',
+          attackerOrigin: { q: 0, r: -1 },
+        }),
+      ];
+      const model = buildAttackModel(attackPayload(), recordWith(attacks));
+
+      expect(
+        model.arrows?.map((arrow) => [
+          arrow.hexId,
+          arrow.attackerOriginId,
+          arrow.attackerOrigin,
+        ]),
+      ).toEqual([
+        ['hex-held', 'hex-frontier', { q: 0, r: 1 }],
+        ['hex-held-2', 'hex-frontier-2', { q: 0, r: -1 }],
+      ]);
+    },
+  );
+
+  it.fails('is total: a missing record publishes no arrows and no details', () => {
+    const model = buildAttackModel(attackPayload());
+
+    expect(model.arrows).toEqual([]);
+    expect(model.attackDetails?.size).toBe(0);
+  });
+
+  it.fails('is total: a quiet tick publishes no arrows and no details', () => {
+    const model = buildAttackModel(attackPayload(), recordWith([]));
+
+    expect(model.arrows).toEqual([]);
+    expect(model.attackDetails?.size).toBe(0);
+  });
+
+  it.fails('is total: a malformed record publishes no arrows and no details', () => {
+    const malformed = {
+      ...recordWith([]),
+      attacks: undefined as unknown as readonly HexDefenceRecord[],
+    };
+    const model = buildAttackModel(attackPayload(), malformed);
+
+    expect(model.arrows).toEqual([]);
+    expect(model.attackDetails?.size).toBe(0);
+  });
+});
+
+describe('hex map model — per-attack details keyed by hex id', () => {
+  it.fails(
+    'keys the same attack under the attacked hex id and the attacker-origin id',
+    () => {
+      const payload = attackPayload();
+      const record = recordWith([recordAttack()]);
+      const model = buildAttackModel(payload, record);
+      const reportRow = buildDefenceReport(payload, record).rows[0];
+      const details = model.attackDetails;
+
+      expect(details).toBeDefined();
+      // The attacked endpoint carries the report model's own row…
+      expect(details!.get('hex-held')).toEqual(reportRow);
+      // …and the attacker-origin endpoint resolves the same attack's details.
+      expect(details!.get('hex-frontier')).toEqual(reportRow);
+      // A hex involved in no attack has no details.
+      expect(details!.has('hex-not-attacked')).toBe(false);
+    },
+  );
+
+  it.fails('copies every resolved number verbatim (no re-derivation)', () => {
+    const payload = attackPayload();
+    const record = recordWith([recordAttack()]);
+    const model = buildAttackModel(payload, record);
+    const source = record.attacks[0];
+    const reportRow = buildDefenceReport(payload, record).rows[0];
+    const detail = model.attackDetails!.get('hex-held')!;
+
+    expect(detail).toMatchObject({
+      hexId: source.hexId,
+      attackerOriginId: source.attackerOriginId,
+      outcome: source.outcome,
+      attackingForce: source.attackingForce,
+      aggression: source.aggression,
+      aggressionMultiplierPercent: source.aggressionMultiplierPercent,
+      jitterPercent: source.jitterPercent,
+      defenderRating: source.defenderRating,
+      attackStrength: source.attackStrength,
+      margin: source.margin,
+      source: source.source,
+    });
+    // The retake plan and the rendered label are the report model's, so the
+    // map can never publish a second, drifting set of numbers.
+    expect(detail.retake).toEqual(reportRow.retake);
+    expect(detail.label).toBe(reportRow.label);
+    expect(detail.label).toContain(
+      `atk ${source.attackingForce} × AGG ${source.aggression}`,
+    );
+    expect(detail.label).toContain(
+      `= ${source.attackStrength} vs bot ${source.defenderRating}`,
+    );
+    expect(detail.label).toContain('margin -4');
+    expect(detail.label).toContain('retake: strike hex-frontier');
+  });
+
+  it.fails('never re-resolves the attack from the payload\'s stored numbers', () => {
+    // A record whose numbers deliberately disagree with the payload (the
+    // payload's hex has aggression 3 and no defender): the details must show
+    // the record's numbers, not a fresh preview.
+    const payload = attackPayload();
+    const record = recordWith([
+      recordAttack({
+        attackingForce: 11,
+        aggression: 9,
+        aggressionMultiplierPercent: 210,
+        defenderRating: 40,
+        attackStrength: 31,
+        margin: 9,
+        outcome: 'held',
+      }),
+    ]);
+    const detail = buildAttackModel(payload, record).attackDetails!.get(
+      'hex-held',
+    )!;
+
+    expect(detail.attackingForce).toBe(11);
+    expect(detail.aggression).toBe(9);
+    expect(detail.aggressionMultiplierPercent).toBe(210);
+    expect(detail.defenderRating).toBe(40);
+    expect(detail.attackStrength).toBe(31);
+    expect(detail.margin).toBe(9);
+    expect(detail.outcome).toBe('held');
+    expect(detail.label).toContain('atk 11 × AGG 9 (210%');
+    expect(detail.label).toContain('= 31 vs bot 40');
+  });
+});
+
+describe('hex map model — the pure attack model stays Phaser-free', () => {
+  it('imports no Phaser in the pure hangar-war model modules', () => {
+    for (const file of ['hexIntel.ts', 'defenceReport.ts']) {
+      const source = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+      expect(source, `${file} must not import Phaser`).not.toMatch(
+        /from\s+['"]phaser['"]/,
+      );
+    }
   });
 });
