@@ -2867,8 +2867,8 @@ the shipped game runs the Hangar War and a stored `false` is the kill switch.
 Only flipping it from a UI is dev-gated: a dev build renders a pointer-only
 `🛠 Hangar War (dev): ON/OFF` toggle in the menu footer, which does not exist in
 a production build and is not part of the keyboard focus cycle. Scenes stay
-registered (`HangarScene`, `HexMapScene`, `DefenceReportScene`), so the dev gyms
-and the capture pipeline keep reaching them.
+registered (`HangarScene`, `HexMapScene`), so the dev gyms and the capture
+pipeline keep reaching them.
 
 Mode separation is enforced at the persistence boundary: a deployment **writes
 no arcade checkpoint and clears none**, so `Continue` can only ever belong to
@@ -3000,7 +3000,8 @@ checkpoint**; neither mode shares session, checkpoint or leaderboard state with
 the war. The war is reached from the menu's **`🛠 Hangar War`** entry (behind
 the feature flag described in §8.1, which ships ON; when the flag is off the
 entry is absent and the idle attract runs the arcade demo only) and runs
-through three screens:
+through two screens, with the between-sortie defence report rolled into the
+second:
 
 - **`HangarScene`** (§8.1) — banked salvage, the unlock tree and the
 deployment/loadout selector. Its `▶ DEPLOY` row starts a run with the
@@ -3027,12 +3028,19 @@ with every hex's **known-ahead intel**: held/unheld and aggression on the tile
 the focused hex** (tab/arrows move focus; read-only renders default to the
 model's first hex) — the boss that holds it, what that boss is **strong and
 weak against**, the weapon or upgrade the hex grants, the defending hull and
-any queued attack (AH-0MW3VG6WJ004HRI9). Activating an
+any queued attack (AH-0MW3VG6WJ004HRI9). It is also the **post-deployment
+surface**: a finished sortie hands over its frontier-tick record and the map
+draws the between-sortie report on the same view — one attack arrow per attack
+on the ring, plus a left-hand attack panel with that attack's numbers (there is
+no separate report screen). Activating an
 **unheld** hex deploys at it; the `◀ HANGAR` row is one click from what the
 player owns (the design's "map and hangar one click apart"); ESC returns to the
 menu.
-- **`DefenceReportScene`** — the between-sortie report described below. Its one
-action, `▶ CONTINUE TO THE MAP`, returns to the map with the same war payload.
+
+The **between-sortie defence report** is not a screen of its own: it is drawn on
+the map (attack arrows on the ring plus a left-hand attack panel) from the tick
+record a deployment hands over — see
+§ *[The defence report](#the-defence-report)* below.
 
 A deployment is still the **shipped run** (`PlayScene` + `src/scenes/core/`):
 the map's deployment payload adds the hangar-resolved loadout, the target hex's
@@ -3049,11 +3057,13 @@ it never advances to the next level
 and never spawns the final boss, so taking a hex is a bounded sortie rather than
 the rest of the campaign. The mini-boss victory runs the capture cycle
 (below) and ends the run as a **victory**. On a win the player sees, in order,
-the mini-boss defeat → `DefenceReportScene` → the mini-boss **reward** overlay
-(the same shared `MiniBossWheelScene` the arcade uses) → `HexMapScene` with the
-newly held hex, so the reward can never appear before the report and the map is
-reached only once it resolves. A lost deployment keeps the report → map route
-with no reward. The arcade campaign is untouched: `▶ Play Game` still runs all
+the mini-boss defeat → the mini-boss **reward** overlay (the same shared
+`MiniBossWheelScene` the arcade uses) → `HexMapScene`, which carries the
+between-sortie report on the map itself: the newly held hex, the tick's attack
+arrows and the left-hand attack panel are all one surface, so the reward can
+never appear after the report and there is no separate screen to click
+through. A lost deployment lands on the same map with the report and no reward.
+The arcade campaign is untouched: `▶ Play Game` still runs all
 ten levels, a non-final level's mini-boss still advances, and level 10's
 mini-boss still opens the final boss.
 
@@ -3193,22 +3203,35 @@ sorted id, so a reordered payload replays identically.
 
 #### The defence report
 
-Every tick produces a structured record, and `DefenceReportScene` renders it
-without re-deriving a single figure:
+The between-sortie defence report is **rolled into the hex map** — there is no
+standalone report scene. Every tick produces a structured record; a deployment
+that ends hands that record to `HexMapScene` as transient launch data, and the
+map renders it on its one integrated view without re-deriving a single figure:
 
-- **Which hexes were attacked**, whether each **held or fell**, and the numbers
-  that decided it — defender rating, attacking force, aggression multiplier,
-  jitter, attack strength and margin.
-- **What it would take to retake it**: the unheld neighbour the attack came from
-  (the hex to strike) and the defender rating needed to hold against the same
-  attack — the record's `attackStrength`, because a tie holds.
-- A **quiet tick** (a secured ring) publishes an explicit "no hex was attacked"
-  line rather than an empty screen, so the attract demo can never stall on it.
+- **Attack arrows on the ring**: one arrow per attack in the record, drawn
+  between the origin hex and the hex it struck, so the shape of the tick reads
+  at a glance.
+- **A left-hand attack panel** for the inspected arrow endpoint. It names which
+  hexes were attacked, whether each **held or fell**, and the numbers that
+  decided it — defender rating, attacking force, aggression multiplier, jitter,
+  attack strength and margin (the record's `buildDefenceReport` row, copied
+  verbatim). It also states **what it would take to retake a lost hex**: the
+  unheld neighbour the attack came from (the hex to strike) and the defender
+  rating needed to hold against the same attack — the record's
+  `attackStrength`, because a tie holds.
+- A **quiet tick** (a secured ring) draws no arrows and shows an explicit "no
+  hex was attacked" line in the panel rather than an empty map beat, so the
+  attract demo can never stall on it.
 
-The screen states it plainly: *"Resolved from stored numbers — no battle was
+The map states it plainly: *"Resolved from stored numbers — no battle was
 simulated."* The map's attack preview is the same resolver run **jitter-free**,
-so the player plans against a legible baseline while the report publishes the
-tick's actual, jittered result.
+so the player plans against a legible baseline while the rolled-in report
+publishes the tick's actual, jittered result. The record is transient launch
+data, never persisted — leaving the map and returning drops the arrows, exactly
+as the old screen's payload was dropped on continue. The capture and gym
+surfaces follow the same design: `HexMapScene` is a `capture:scenes` target and
+`GymHexWar` renders the arrows and panel through the shared `buildHexMapModel` /
+`renderHexMap` pair (`docs/GYM_PARITY.md`).
 
 #### Measured ring timings
 
@@ -3377,20 +3400,22 @@ and its gym (AGENTS.md gym↔game parity):
   with no handlers, so it is read-only by construction.
 - **`GymHexWar`** — renders the shipped hex map (`buildHexMapModel` +
   `renderHexMap`) — read-only, so the tile aggression badges and the detail
-  panel defaulting to the model's first hex are what the game shows — and the
-  shipped **defence report** (`buildDefenceReport` +
-  `renderDefenceReport`) from the **shipped** frontier tick's record
-  (`runFrontierTick`), and exposes the `take hex → leave bot → tick` control
-  surface through the documented deterministic harness double.
+  panel defaulting to the model's first hex are what the game shows — including
+  the **rolled-in report**: the attack arrows and the left-hand attack panel
+  built from the **shipped** frontier tick's record (`runFrontierTick`, with the
+  panel rows copied from `buildDefenceReport`) — and exposes the
+  `take hex → leave bot → tick` control surface through the documented
+  deterministic harness double.
 
 Both are in the capture registry (watchable, `docs/dev/gameplay-capture.md`) and
 carry current rows in the parity matrix [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
 The attract bot traverses the whole surface — `menu → map → deployment →
-defenceReport → map → hangar` — from pure decisions in
+map (with the rolled-in report) → hangar` — from pure decisions in
 `src/ai/hangarWarTraversal.ts`: it picks the **weakest adjacent unheld hex** on
-the map, buys the **cheapest useful unlock** (seeded tie-break) in the hangar and
-auto-continues the report. Every decision is total — there is no `wait` action
-and no live defence battle to stall in.
+the map, buys the **cheapest useful unlock** (seeded tie-break) in the hangar
+and lands on the map after every sortie, where the report is read in place.
+Every decision is total — there is no `wait` action and no live defence battle
+to stall in.
 
 ---
 

@@ -734,8 +734,10 @@ rule and the duplicate-body guard are untouched.
 ## Hangar War screens (`--hangar` and capture targets)
 
 Build Candidate D added the **Hangar War** outer loop: a hangar screen
-(`HangarScene`), a hex ring map (`HexMapScene`) and a between-sortie defence
-report (`DefenceReportScene`). `npm run capture` can record them two ways
+(`HangarScene`) and a hex ring map (`HexMapScene`), which also carries the
+between-sortie defence report (attack arrows on the ring plus a left-hand
+attack panel — there is no separate report screen). `npm run capture` can
+record them two ways
 (AH-0MVWMUQUC003WXF5):
 
 1. **`--hangar`** navigates the main menu with the same trusted input a player
@@ -744,8 +746,8 @@ report (`DefenceReportScene`). `npm run capture` can record them two ways
    hangar screen for a short hold and hands the bot over to the **shipped
    Hangar War attract traversal**, so the clip continues to the hex map and the
    deployment instead of resting on the hangar's loadout selector.
-2. **`capture:scenes`** can target `HangarScene`, `HexMapScene` and
-   `DefenceReportScene` directly in a multi-scene config, switching to them
+2. **`capture:scenes`** can target `HangarScene` and
+   `HexMapScene` directly in a multi-scene config, switching to them
    in-page through the dev-gated director (see
    [Multi-scene capture](#multi-scene-capture-capturescenes)).
 
@@ -760,9 +762,10 @@ npm run capture -- --hangar --duration 30000 --output clips/hangar.webm
 The `--duration` window contains **the hangar screen** (the first 2.5 s, or
 half the window when that is shorter) followed by the **traversal**: the hex
 map, the weakest-adjacent-hex deployment the map's bot picks, and — once that
-deployment ends — the between-sortie defence report. Nothing about which hex
-to take, what to buy or when to continue is decided by the capture: it only
-starts the traversal hub in demo mode, exactly like
+deployment ends — the same map again, now carrying the between-sortie report
+arrows and attack panel. Nothing about which hex to take, what to buy or when
+to continue is decided by the capture: it only starts the traversal hub in
+demo mode, exactly like
 `MenuScene.startHangarWarDemo()` (the screens apply
 `src/ai/hangarWarTraversal.ts` themselves). Lengthen `--duration` to see
 further into the loop.
@@ -810,8 +813,9 @@ the duration cap (AH-0MVWMUQUC003WXF5).
 
 A `--hangar` clip mixes screens and gameplay, so it is judged on **render**
 evidence. The shared probe demands motion and a non-silent audio track, which
-a player-facing UI screen (the hangar, the map, the defence report) never has
-— judging it by the gameplay rule alone would reject a legitimate screen beat.
+a player-facing UI screen (the hangar, the map with its rolled-in report) never
+has — judging it by the gameplay rule alone would reject a legitimate screen
+beat.
 The clip is therefore accepted on decodable frames, a non-black frame, colour
 variety and the effective-FPS floor (so a blank, stalled or menu-resting clip
 is still rejected), while motion is recorded as a note (`static screen: no
@@ -819,13 +823,13 @@ motion required`) and the silent audio track is not required. Gameplay paths
 (`npm run capture`, the gyms, `capture:scenes`) keep the strict motion +
 audio verdict unchanged.
 
-**Capture targets and launch data.** The three screens are registered in
+**Capture targets and launch data.** The two screens are registered in
 `HANGAR_WAR_SCENE_KEYS` (`scripts/capture-scenes.mjs`) and are
 **boot-registered** in `src/core/gameConfig.ts`, so the in-page director
 starts them without the dev-gym page-discovery check (they are shipped
-scenes, not gyms). `DefenceReportScene` is also boot-registered because
-`PlayScene` starts it after a hex deployment ends; without the registration
-that transition silently did nothing.
+scenes, not gyms). A finished deployment now lands on `HexMapScene` with its
+tick record, which is why the map — not a report screen — is the capture
+target after a sortie.
 
 Each screen accepts an optional `setup` carrying only its own launch data:
 
@@ -837,7 +841,7 @@ Each screen accepts an optional `setup` carrying only its own launch data:
 Gym-only fields (`player`, `powerUps`, `seed`, `level`, …) are rejected on
 these targets with `setup-not-supported`, because the screens cannot consume
 them. `examples/scenes.json` ships one `{ "demo": false }` entry for each of
-the three screens as a copy-paste starting point.
+the two screens as a copy-paste starting point.
 
 ## Full-run capture (default)
 
@@ -1664,8 +1668,8 @@ setup is validated before boot and forwarded to the scene as its launch data.
 | `count` | positive integer | `GymPerformance` | `100` (the historical stress load) | enemy count for the measured load; the sweep driver sets it per step (50, 100, 150, …) |
 | `enemyMix` | `{ archetype, count }[]` | `GymPerformance` | the historical late-game round-robin roster | per-archetype shares of `count`, in spawn order; the scene assigns each grid slot from this roster deterministically |
 | `autoFire` | boolean | `GymPerformance` | `false` | whether the shared player auto-fire path runs; the sweep turns it on so the measured load keeps firing (a capture of the shipped 100-enemy stress load leaves it off so the load cannot decay) |
-| `demo` | boolean | `HangarScene`, `HexMapScene`, `DefenceReportScene` | `false` | attract traversal: `true` auto-advances the screen after the dwell (buy, then deploy/continue), `false` records the static, player-facing screen |
-| `demoDwellMs` | positive integer | `HangarScene`, `HexMapScene`, `DefenceReportScene` | the shared traversal dwell | how long the attract traversal pauses on the screen before acting |
+| `demo` | boolean | `HangarScene`, `HexMapScene` | `false` | attract traversal: `true` auto-advances the screen after the dwell (buy, then deploy/continue), `false` records the static, player-facing screen |
+| `demoDwellMs` | positive integer | `HangarScene`, `HexMapScene` | the shared traversal dwell | how long the attract traversal pauses on the screen before acting |
 | `seed` | uint32 | all setup-capable gyms | `0` | determinism seed for content RNGs |
 
 `level` is a `LevelDefinition`-shaped object: `{ level, name, waves[] }` where
@@ -1908,7 +1912,7 @@ Two example configs ship, each with a single purpose:
 | File | Purpose | Targets |
 |---|---|---|
 | `examples/teaserVideoScript.json` | the **teaser/showcase video** — the real game, played by the bot, no debug chrome | `PlayScene` only |
-| `examples/scenes.json` | the **gym-family showcase plus the Hangar War screens** — one entry per gym, as a copy-paste guide to each scenario's setup, and one static entry per Hangar War screen | dev gyms + `HangarScene`/`HexMapScene`/`DefenceReportScene` |
+| `examples/scenes.json` | the **gym-family showcase plus the Hangar War screens** — one entry per gym, as a copy-paste guide to each scenario's setup, and one static entry per Hangar War screen | dev gyms + `HangarScene`/`HexMapScene` |
 
 Record the teaser with:
 
@@ -1958,7 +1962,7 @@ Two config files ship with the repo, each with one purpose:
   read-only `GymHangar` payload view and the read-only `GymHexWar` ring
   harness), each carrying a copy-paste `setup`, plus a static
   `{ "demo": false }` entry for each shipped Hangar War screen
-  (`HangarScene`, `HexMapScene`, `DefenceReportScene`, AH-0MVWMUQUC003WXF5).
+  (`HangarScene`, `HexMapScene`, AH-0MVWMUQUC003WXF5).
 
 The teaser arc, in order:
 
@@ -2072,7 +2076,7 @@ examples/scenes.json`; `--json` reports each scene's timings and seeds
 
 `target` may be any **capturable scene key**: the dev gym scenes discovered
 under `src/scenes/gym/` (`Gym<Name>`) plus the shipped Hangar War screens
-(`HangarScene`, `HexMapScene`, `DefenceReportScene`). The two registries in
+(`HangarScene`, `HexMapScene`). The two registries in
 `scripts/capture-scenes.mjs` are the single source of truth shared by the
 CLI's pre-boot validation and the page-side director's `start(key)` guard:
 `WATCHABLE_GYM_SCENE_KEYS` + `PARAMETERISED_GYM_SCENE_KEYS` partition the

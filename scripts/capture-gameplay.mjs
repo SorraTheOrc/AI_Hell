@@ -843,8 +843,9 @@ export function buildHangarTraversalRequest(dwellMs) {
  * The capture only starts the traversal's **hub** scene in demo mode — the same
  * thing `MenuScene.startHangarWarDemo()` does. The screens then apply their own
  * pure traversal decisions (`src/ai/hangarWarTraversal.ts`), so the bot leaves
- * the hangar loadout selector, deploys at the weakest adjacent hex and
- * auto-advances the defence report without any capture-side rule.
+ * the hangar loadout selector, deploys at the weakest adjacent hex and lands
+ * back on the map, where the rolled-in defence report is read in place (there
+ * is no report screen to auto-advance), without any capture-side rule.
  *
  * The start is proved before the clip is accepted: Phaser queues a scene start
  * and applies it on a later frame, so the helper waits (bounded) for the
@@ -2689,7 +2690,8 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
     }
 
     // `--hangar` clips are judged as **screens plus traversal**, not as pure
-    // gameplay: the hangar, hex map and defence report neither move nor emit
+    // gameplay: the hangar and hex map (the latter carrying the rolled-in
+    // defence report as arrows plus an attack panel) neither move nor emit
     // their own audio, so the gameplay probe's motion and non-silent-audio
     // requirements do not apply (AH-0MVWMUQUC003WXF5). The screen activation
     // and the traversal start were already asserted before recording, and the

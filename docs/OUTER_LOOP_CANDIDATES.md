@@ -755,8 +755,9 @@ shipping order this document recommends (B's shape first):
   with authored ring 1 (6 hexes) and **ring 2 (12 hexes, playable)**, the hex
   map with known-ahead intel, the capture cycle (hex mini-boss, mini-boss-granted
   discovery, defending bot, ring secured), the pure defence resolver and
-  frontier aggression clock, the between-sortie defence report with
-  attract-mode traversal, and the measured ring timing/playstyle validation.
+  frontier aggression clock, the between-sortie defence report rolled into the
+  map, attract-mode traversal, and the measured ring timing/playstyle
+  validation.
   Playable specification: GDD §8.2.
 - **Gym coverage:** `GymHangar` and `GymHexWar` render the same model/renderer
   pairs the game does, with current rows in
@@ -867,8 +868,9 @@ hangar survives — that is what winning this hell looks like.
   scaling system.
 - **Mini-boss rewards (`MiniBoss`, §4.4.4)** — the hex mini-boss's
   spin-the-wheel upgrade reward is the discovery channel (Rule 2) as well as the
-  extraction point; on a winning deployment it is presented after the defence
-  report and before the map.
+  extraction point; on a winning deployment it is presented over the paused map
+  (the map itself carries the between-sortie report), so no separate report
+  screen stands between the win and the reward.
 - **Bot / attract mode** — the survival-first `decideBotIntent` heuristic
   supplies the **defender's rating** (it is never flown live in defence, so a
   defence cannot stall a demo), and it traverses the hangar/hex screens.
@@ -976,8 +978,11 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
 - The **hangar screen** (Candidate B's unlock tree) reachable from the map, so
   "what I own" and "what I hold" sit one click apart.
 - A **deployment / hull-and-loadout selector** on the way into a hex.
-- A **between-sortie defence report**: which hexes were attacked, which held,
-  which fell, and what it would take to retake them.
+- A **between-sortie defence report, rolled into the hex ring map** (no
+  separate screen): the map draws one **attack arrow per attack** on the ring
+  and a **left-hand attack panel** with that attack's numbers — which hexes
+  were attacked, which held, which fell, and what it would take to retake them
+  — from the frontier-tick record the finished deployment hands over.
 - In-run play reuses `PlayScene` and every existing in-run screen unchanged.
 
 ### Gym testability and the bot
@@ -990,8 +995,10 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
   player weapon/boss paths, so it must run the **same code** in a gym
   (`GymFodderEnemies` / `GymBoss`) and in the game (AGENTS.md gym↔game parity).
 - **Attract mode:** the bot traverses or skips every new screen — on the map it
-  auto-picks the **weakest** adjacent hex, in the hangar it auto-buys the
-  cheapest useful unlock (seeded), and it auto-advances the defence report.
+  auto-picks the **weakest** adjacent hex and, after a sortie, lands back on the
+  map where the rolled-in report (arrows plus the left-hand attack panel) is
+  read in place; in the hangar it auto-buys the cheapest useful unlock (seeded).
+  There is no report step to auto-advance because there is no report screen.
   Because defence is **resolved algorithmically**, there is no live defence
   battle for the demo to stall in — the defending bot never needs to be flown.
 
@@ -1023,9 +1030,11 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
     player can hold them, so the map feels like a losing chore. Mitigation: a
     frontier tick the player can always answer (attack the neighbour), and
     aggression that is sized from the player's own fleet, redistributed around
-    the ring, and always leaves a beatable hex the defence report makes legible.
+    the ring, and always leaves a beatable hex the rolled-in report makes
+    legible.
   - **Opaque defence** — a hex falls and the player cannot see why. Mitigation:
-    show the numbers (defender rating vs. attacking force) in the report.
+    show the numbers (defender rating vs. attacking force) in the map's attack
+    panel, where the tick's arrows already point at the attack.
   - **Two progressions, twice the bookkeeping** — hangar plus ring becomes
     admin. Mitigation: one screen holds both, and the hangar is one click from
     the map.
@@ -1243,9 +1252,10 @@ the measured ring timings). The documentation of record was published by
 
 The Hangar War ships enabled. The entry surfaces were briefly gated behind a
 default-OFF feature flag (AH-0MVZ0VGGQ0032KDP) while the loop was broken; the
-defect — `DefenceReportScene` was started by `PlayScene` but never registered in
-the shipped scene array, and the hangar had no route to the hex map — is fixed
-and the flow is verified end to end through `buildGameConfig().scene`
+defect — a between-sortie report screen `PlayScene` started but which was never
+registered in the shipped scene array, and no hangar route to the hex map (the
+report is now rolled into the map, so that transition is gone) — is fixed and
+the flow is verified end to end through `buildGameConfig().scene`
 (`src/scenes/hangarWarFlow.integration.test.ts`). The persisted flag
 `ai_hell_feature_flags.hangarWar` is kept as a **kill switch**: it now defaults
 to ON and `resolveHangarWarEnabled()` honours the stored value in every build,

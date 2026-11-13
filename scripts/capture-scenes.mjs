@@ -536,7 +536,7 @@ export const SCENE_SETUP_INCAPABLE_TARGETS = Object.freeze([]);
  * gym setup fields apply — supplying one is rejected rather than silently
  * dropped. Both fields are optional: the scenes' own defaults render the
  * static, player-facing screen (`demo: false`), which is what a capture of the
- * hangar/map/report wants.
+ * hangar or the map (with its rolled-in report) wants.
  */
 export const HANGAR_WAR_SCENE_SETUP_FIELDS = Object.freeze([
   'demo',

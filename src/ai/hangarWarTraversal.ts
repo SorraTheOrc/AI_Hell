@@ -201,11 +201,11 @@ export function decideMenuAction(): HangarWarTraversalAction {
  * Two rules, both pure:
  *
  * 1. **Shopping cadence.** After an odd number of frontier ticks (i.e. on the
- *    map visit that follows every other defence report) the bot opens the
- *    hangar before deploying, so a full attract cycle demonstrates the hangar
- *    as well as the deployment. The cadence is keyed on the war's own
- *    `frontierTick` so it survives the report → map scene re-entry without any
- *    hidden demo state.
+ *    map visit that follows every other between-sortie defence report) the bot
+ *    opens the hangar before deploying, so a full attract cycle demonstrates
+ *    the hangar as well as the deployment. The cadence is keyed on the war's
+ *    own `frontierTick` so it survives the post-sortie map re-entry (the map
+ *    carries the report) without any hidden demo state.
  * 2. **Weakest adjacent hex.** Otherwise it attacks `pickAttractHex` — the same
  *    rule the map's default focus uses. A secured ring has no hex left to
  *    attack, so the bot opens the hangar instead; either way the screen

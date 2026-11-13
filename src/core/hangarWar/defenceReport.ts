@@ -3,10 +3,13 @@
  * (AH-0MVUXCBBK004EJIP, part of **Build Candidate D — Hangar War**).
  *
  * Design of record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D § UI / scene
- * surface ("A **between-sortie defence report**: which hexes were attacked,
- * which held, which fell, and what it would take to retake them") and the
- * failure mode it mitigates — *opaque defence*: "a hex falls and the player
- * cannot see why … show the numbers (defender rating vs. attacking force)".
+ * surface ("A **between-sortie defence report, rolled into the hex ring map**
+ * (no separate screen): the map draws one **attack arrow per attack** on the
+ * ring and a **left-hand attack panel** with that attack's numbers — which
+ * hexes were attacked, which held, which fell, and what it would take to
+ * retake them") and the failure mode it mitigates — *opaque defence*: "a hex
+ * falls and the player cannot see why … show the numbers (defender rating vs.
+ * attacking force)".
  *
  * ## A pure view, never a rule
  *
@@ -16,9 +19,9 @@
  * a row is copied from the record, and the payload is consulted for two facts
  * the record does not carry: whether the hex is still held after the tick, and
  * the attacking neighbour's aggression (what the player can strike back at).
- * Nothing is resolved, re-derived, mutated or persisted here — the report
- * screen, the gym and the attract traversal all read the same model, so no
- * gameplay rule can live in (or drift between) the scenes
+ * Nothing is resolved, re-derived, mutated or persisted here — the map's
+ * rolled-in report, the gym and the attract traversal all read the same model,
+ * so no gameplay rule can live in (or drift between) the scenes
  * (AGENTS.md gym↔game parity).
  *
  * ## What "what it would take to retake it" means
@@ -62,13 +65,13 @@ import type {
 } from './hexDefence';
 import type { HangarWarPayload, HexState } from './types';
 
-/** Title rendered by the report screen (asserted by tests). */
+/** Title rendered with the map's rolled-in report (asserted by tests). */
 export const DEFENCE_REPORT_TITLE = 'DEFENCE REPORT';
 
-/** Row key of the "continue" action (the screen's one action). */
+/** Row key of the continue action (retained on the model; the map needs none). */
 export const DEFENCE_REPORT_CONTINUE_KEY = 'continue';
 
-/** Label of the continue action (the way back to the map). */
+/** Label of the continue action (retained on the model; the map needs no control). */
 export const DEFENCE_REPORT_CONTINUE_LABEL = '▶ CONTINUE TO THE MAP';
 
 /** The line stating that nothing was simulated (the design's no-battle rule). */
