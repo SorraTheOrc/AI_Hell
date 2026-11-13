@@ -87,12 +87,12 @@ afterAll(() => reuse.dispose());
  * **TEST-FIRST.** The rolled-in report means the map draws one arrow per attack
  * in the carried between-sortie tick record and a LEFT-hand panel showing that
  * attack's numbers whenever the focused hex is either arrow endpoint. The
- * assertions are authored under Vitest's `it.fails` (the repo's
+ * assertions were authored under Vitest's `it.fails` (the repo's
  * red-before/green-after convention, see `src/core/levelScaling.test.ts`) so
- * this suite stays green on pre-change HEAD while pinning the post-change
- * contract; the model/renderer/scene items (AH-0MWEXIAEQ004IT0R,
- * AH-0MWEXIHHK007H32A, AH-0MWEXIOZZ009UX14) flip them back to `it`, and a
- * leftover `it.fails` then fails loudly.
+ * this suite stayed green on pre-change HEAD while pinning the post-change
+ * contract; the renderer item (AH-0MWEXIHHK007H32A) drew the arrows and the
+ * left panel and flipped them back to `it`. A leftover `it.fails` here would
+ * fail loudly now that the change has landed.
  *
  * ## Pinned contract (the implementation items must match exactly)
  *
@@ -114,21 +114,11 @@ afterAll(() => reuse.dispose());
  *   draws no arrows and keeps the left panel hidden.
  */
 
-/** The arrow descriptor the renderer publishes for one drawn attack arrow. */
-interface RenderedArrow {
-  readonly key: string;
-  readonly hexId: string;
-  readonly attackerOriginId: string;
-  readonly from: { readonly x: number; readonly y: number };
-  readonly to: { readonly x: number; readonly y: number };
-}
-
-/** The scene seams this test-first item pins. */
-interface AttackAwareScene extends HexMapScene {
-  getArrows?(): readonly RenderedArrow[];
-  getLeftPanelText?(): string;
-  isLeftPanelVisible?(): boolean;
-}
+/**
+ * The scene seams this item pins. They now live on the shipped `HexMapScene`
+ * (AH-0MWEXIHHK007H32A), so this is an alias — the seams must stay.
+ */
+type AttackAwareScene = HexMapScene;
 
 /**
  * The model with the attack fields this test-first item pins. They now live on
@@ -497,7 +487,7 @@ describe('HexMapScene', () => {
 
   // ── Attack arrows and the left-hand attack panel (AH-0MWEXI5460080WEI) ──
 
-  it.fails(
+  it(
     'draws one arrow per attack from the origin hex to the attacked hex',
     async () => {
       const payload = attackPayload();
@@ -545,7 +535,7 @@ describe('HexMapScene', () => {
     },
   );
 
-  it.fails(
+  it(
     'shows the attack\'s details on the LEFT panel for both arrow endpoints',
     async () => {
       const payload = attackPayload();
@@ -580,7 +570,7 @@ describe('HexMapScene', () => {
     },
   );
 
-  it.fails(
+  it(
     'hides the left panel for an uninvolved hex and leaves the right panel unchanged',
     async () => {
       const payload = attackPayload();
@@ -612,7 +602,7 @@ describe('HexMapScene', () => {
     },
   );
 
-  it.fails('draws no arrows and no left panel for a quiet tick', async () => {
+  it('draws no arrows and no left panel for a quiet tick', async () => {
     const scene = (await bootMap({
       payload: attackPayload(),
       record: attackRecord({ attacks: [] }),
@@ -625,7 +615,7 @@ describe('HexMapScene', () => {
     expect(scene.getLeftPanelText?.() ?? '').toBe('');
   });
 
-  it.fails(
+  it(
     're-entering the map without a record draws no arrows and keeps the left panel hidden',
     async () => {
       const payload = attackPayload();

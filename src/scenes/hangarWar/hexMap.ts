@@ -22,6 +22,25 @@
  * the focused hex's full known-ahead intel renders in the right-hand detail
  * panel — so nothing has to be squinted at to be read (AH-0MW3VG6WJ004HRI9).
  *
+ * ## Rolled-in defence report (`AH-0MWDC3L9I008INDP`)
+ *
+ * When the map carries a between-sortie tick record, this renderer also draws
+ * the report the record describes:
+ *
+ * - **Attack arrows** — one per `model.arrows` entry, from the attacker-origin
+ *   hex to the attacked hex, both positioned with the map's own
+ *   {@link axialToPixel} layout (the record only supplies the origin's axial
+ *   coordinates; the target's come from its rendered tile, so the renderer
+ *   never invents geometry for a hex the map does not show).
+ * - **Left-hand attack panel** — the report model's own row for the focused
+ *   hex whenever it is **either** arrow endpoint (the attacked hex *or* its
+ *   attacker-origin hex), and hidden otherwise. It copies the row's text
+ *   verbatim, so the map can never publish a second, drifting set of numbers
+ *   (AGENTS.md gym↔game parity).
+ *
+ * Both are driven by the shipped model (`arrows` / `attackDetails`), never by
+ * a scene-local rule, and both disappear when the transient record does.
+ *
  * @module src/scenes/hangarWar/hexMap
  */
 
@@ -71,6 +90,31 @@ const PANEL_X = GAME_WIDTH - 260;
 const PANEL_Y = 200;
 const PANEL_HEADING = 'SELECTED HEX — FULL INTEL';
 
+/**
+ * Left-hand attack panel (the rolled-in defence report).
+ *
+ * Sits in the left band under the ring/frontier/hangar header rows and above
+ * the `◀ HANGAR` row, at a width that stays clear of the ring-2 tiles at
+ * 960×540 (long numbers word-wrap inside the band rather than overdrawing a
+ * tile), and hidden entirely when the focused hex is in no attack.
+ */
+const ATTACK_PANEL_X = 24;
+const ATTACK_PANEL_Y = 118;
+const ATTACK_PANEL_WIDTH = 270;
+const ATTACK_PANEL_HEADING = 'ATTACK — FOCUSED HEX';
+
+/** Attack-arrow styling (drawn between the tile fills and the tile labels). */
+const ARROW_COLOR = 0xffb347;
+const ARROW_WIDTH = 3;
+const ARROW_HEAD = 12;
+
+/**
+ * Display depths: the arrow line sits above the tile fills but below the tile
+ * labels, so an arrow never hides the `AGG n` text it points between.
+ */
+const ARROW_DEPTH = 0.5;
+const TILE_LABEL_DEPTH = 1;
+
 /** NS = north/south; pointy-top corner angle offset from the x axis. */
 const CORNER_ANGLES = [30, 90, 150, 210, 270, 330].map(
   (degrees) => (degrees * Math.PI) / 180,
@@ -102,18 +146,47 @@ export interface HexMapRow {
   text: Phaser.GameObjects.Text;
 }
 
+/**
+ * One drawn attack arrow: the attacker-origin tile centre to the attacked tile
+ * centre, both resolved with the map's own {@link axialToPixel} layout.
+ *
+ * The endpoints are the **semantic** arrow endpoints (the two tiles' centres)
+ * — the drawn line is inset from both so it does not bury the tile labels.
+ */
+export interface HexMapArrow {
+  /** Arrow key (`arrow:<hexId>`, from the model). */
+  readonly key: string;
+  /** The attacked hex (the arrow's head). */
+  readonly hexId: string;
+  /** The unheld neighbour the attack came from (the arrow's tail). */
+  readonly attackerOriginId: string;
+  /** The attacker-origin tile's pixel centre. */
+  readonly from: { readonly x: number; readonly y: number };
+  /** The attacked tile's pixel centre. */
+  readonly to: { readonly x: number; readonly y: number };
+}
+
 /** The handle returned by {@link renderHexMap}. */
 export interface HexMapView {
   /** The model rendered. */
   readonly model: HexMapModel;
   /** Every rendered row (deployable hexes clockwise, then the hangar). */
   readonly rows: readonly HexMapRow[];
+  /** Every attack arrow drawn (one per rendered `model.arrows` entry). */
+  readonly arrows: readonly HexMapArrow[];
   /** The focused row key, or `null` when nothing is focusable. */
   getFocusedKey(): string | null;
   /** The hex the detail panel currently shows, or `null` when the map has no hexes. */
   getPanelKey(): string | null;
   /** The detail panel's current text (the full known-ahead intel). */
   getPanelText(): string;
+  /**
+   * The left-hand attack panel's current text (the focused attack's row), or
+   * `''` when the focused hex is in no attack.
+   */
+  getLeftPanelText(): string;
+  /** Whether the left-hand attack panel is showing. */
+  isLeftPanelVisible(): boolean;
   /** Moves focus to `key` when it is focusable (deterministic test seam). */
   focusRow(key: string): boolean;
   /** Activates the focused row (what Enter/Space does). */
@@ -162,6 +235,89 @@ function drawHexagon(
   graphics.closePath();
   graphics.fillPath();
   graphics.strokePath();
+}
+
+/**
+ * Draws one attack arrow from `from` to `to` into `graphics`.
+ *
+ * The line is inset from both tile centres (a short chord between adjacent
+ * hexes) and finished with a two-stroke head, so the arrow reads as a
+ * direction without overdrawing the tiles' labels.
+ */
+function drawAttackArrow(
+  graphics: Phaser.GameObjects.Graphics,
+  from: { readonly x: number; readonly y: number },
+  to: { readonly x: number; readonly y: number },
+): void {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return;
+
+  const ux = dx / length;
+  const uy = dy / length;
+  // Adjacent hexes share an edge, so inset just enough to leave the centres
+  // (and their labels) clear while keeping a visible chord.
+  const inset = Math.min(26, length / 3);
+  const tail = { x: from.x + ux * inset, y: from.y + uy * inset };
+  const tip = { x: to.x - ux * inset, y: to.y - uy * inset };
+
+  graphics.lineStyle(ARROW_WIDTH, ARROW_COLOR, 1);
+  graphics.beginPath();
+  graphics.moveTo(tail.x, tail.y);
+  graphics.lineTo(tip.x, tip.y);
+  graphics.strokePath();
+
+  const wing = ARROW_HEAD * 0.6;
+  graphics.beginPath();
+  graphics.moveTo(tip.x, tip.y);
+  graphics.lineTo(
+    tip.x - ux * ARROW_HEAD + uy * wing,
+    tip.y - uy * ARROW_HEAD - ux * wing,
+  );
+  graphics.moveTo(tip.x, tip.y);
+  graphics.lineTo(
+    tip.x - ux * ARROW_HEAD - uy * wing,
+    tip.y - uy * ARROW_HEAD + ux * wing,
+  );
+  graphics.strokePath();
+}
+
+/**
+ * Draws one arrow per `model.arrows` entry and returns the drawn descriptors.
+ *
+ * The attacker-origin pixel comes from the record's axial coordinates; the
+ * target's from its rendered tile. A record naming a hex the map does not
+ * render has no geometry to draw from, so that entry is skipped rather than
+ * guessed at.
+ */
+function renderAttackArrows(
+  scene: Phaser.Scene,
+  objects: Phaser.GameObjects.GameObject[],
+  model: HexMapModel,
+): HexMapArrow[] {
+  if (model.arrows.length === 0) return [];
+
+  const tileById = new Map(model.hexes.map((hex) => [hex.id, hex] as const));
+  const graphics = scene.add.graphics().setDepth(ARROW_DEPTH);
+  objects.push(graphics);
+
+  const arrows: HexMapArrow[] = [];
+  for (const arrow of model.arrows) {
+    const target = tileById.get(arrow.hexId);
+    if (!target) continue;
+    const from = axialToPixel(arrow.attackerOrigin.q, arrow.attackerOrigin.r);
+    const to = axialToPixel(target.q, target.r);
+    drawAttackArrow(graphics, from, to);
+    arrows.push({
+      key: arrow.key,
+      hexId: arrow.hexId,
+      attackerOriginId: arrow.attackerOriginId,
+      from,
+      to,
+    });
+  }
+  return arrows;
 }
 
 /** Renders the hangar at the centre of the map. */
@@ -243,7 +399,8 @@ function renderHexTile(
       color: TEXT_COLOR,
       align: 'center',
     })
-    .setOrigin(0.5, 0.5);
+    .setOrigin(0.5, 0.5)
+    .setDepth(TILE_LABEL_DEPTH);
   objects.push(text);
   return text;
 }
@@ -309,6 +466,10 @@ export function renderHexMap(
 
   renderHangarMarker(scene, objects, model);
   renderLegend(scene, objects);
+
+  // Arrows sit above the tile fills but below the tile labels (depths set in
+  // `renderAttackArrows` / `renderHexTile`), so they never hide a tile's text.
+  const arrows = renderAttackArrows(scene, objects, model);
 
   for (const intel of model.hexes) {
     const text = renderHexTile(scene, objects, intel);
@@ -411,32 +572,67 @@ export function renderHexMap(
   const hexByKey = (key: string | null): HexIntel | undefined =>
     key === null ? undefined : model.hexes.find((hex) => hex.key === key);
 
-  const updatePanel = (): void => {
+  /** The hex both panels describe: the focused hex, or the read-only default. */
+  const displayedHexKey = (): string | null => {
     const focused = focusedKey();
     const isHexKey = (key: string | null): key is string =>
       key !== null && key.startsWith(HEX_MAP_HEX_ROW_PREFIX);
 
-    let key: string | null;
-    if (isHexKey(focused)) {
-      key = focused;
-    } else if (
+    if (isHexKey(focused)) return focused;
+    if (
       model.defaultFocusKey !== null &&
       model.defaultFocusKey.startsWith(HEX_MAP_HEX_ROW_PREFIX)
     ) {
       // Read-only render: nothing is focusable, so default to the model's
-      // default/first hex (AC3) and the panel still shows detail.
-      key = model.defaultFocusKey;
-    } else {
-      // A non-hex focus (e.g. the hangar row) → the map's first hex.
-      key = model.hexes[0]?.key ?? null;
+      // default/first hex (AC3) and the panels still show detail.
+      return model.defaultFocusKey;
     }
+    // A non-hex focus (e.g. the hangar row) → the map's first hex.
+    return model.hexes[0]?.key ?? null;
+  };
 
-    const hex = hexByKey(key);
+  // ── Left panel: the rolled-in defence report ────────────────────
+  // One attack, two endpoints: `attackDetails` is keyed by the attacked hex
+  // id AND its attacker-origin id, so either focus resolves the same row.
+  const attackPanelHeading = scene.add.text(
+    ATTACK_PANEL_X,
+    ATTACK_PANEL_Y,
+    ATTACK_PANEL_HEADING,
+    { fontFamily: 'monospace', fontSize: '10px', color: HEADING_COLOR },
+  );
+  objects.push(attackPanelHeading);
+  const attackPanelBody = scene.add.text(
+    ATTACK_PANEL_X,
+    ATTACK_PANEL_Y + 16,
+    '',
+    {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: TEXT_COLOR,
+      lineSpacing: 4,
+      wordWrap: { width: ATTACK_PANEL_WIDTH },
+    },
+  );
+  objects.push(attackPanelBody);
+
+  let attackPanelKey: string | null = null;
+  const updateAttackPanel = (): void => {
+    const hex = hexByKey(displayedHexKey());
+    const detail = hex ? model.attackDetails.get(hex.id) : undefined;
+    attackPanelKey = detail ? hex!.id : null;
+    attackPanelBody.setText(detail?.label ?? '');
+    attackPanelHeading.setVisible(detail !== undefined);
+    attackPanelBody.setVisible(detail !== undefined);
+  };
+
+  const updatePanel = (): void => {
+    const hex = hexByKey(displayedHexKey());
     panelKey = hex?.key ?? null;
     panelBody.setText(hex ? hex.label : '');
     panelHeading.setText(
       hex ? `SELECTED HEX — ${hex.id.toUpperCase()}` : PANEL_HEADING,
     );
+    updateAttackPanel();
   };
 
   focusManager.setFocusChangeListener(updatePanel);
@@ -446,6 +642,7 @@ export function renderHexMap(
   return {
     model,
     rows,
+    arrows,
     getFocusedKey(): string | null {
       return focusedKey();
     },
@@ -459,11 +656,18 @@ export function renderHexMap(
     getPanelText(): string {
       return panelBody.text;
     },
+    getLeftPanelText(): string {
+      return attackPanelBody.text;
+    },
+    isLeftPanelVisible(): boolean {
+      return attackPanelKey !== null && attackPanelBody.visible;
+    },
     destroy(): void {
       focusManager.shutdown();
       for (const object of objects) object.destroy();
       objects.length = 0;
       rows.length = 0;
+      arrows.length = 0;
     },
   };
 }

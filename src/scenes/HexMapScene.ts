@@ -41,6 +41,7 @@ import type {
   HangarWarStorage,
 } from '../core/hangarWar/types';
 import type { HexRingDefinition } from '../core/hangarWar/hexRing';
+import type { FrontierTickRecord } from '../core/hangarWar/hexDefence';
 import {
   buildHexMapModel,
   type HexMapModel,
@@ -58,6 +59,7 @@ import {
 } from './hangarWar/hangarDeployment';
 import {
   renderHexMap,
+  type HexMapArrow,
   type HexMapRow,
   type HexMapView,
 } from './hangarWar/hexMap';
@@ -79,6 +81,13 @@ export interface HexMapSceneData {
   storage?: HangarWarStorage | null;
   /** Authored ring definitions to render (defaults to the shipped table). */
   definitions?: readonly HexRingDefinition[];
+  /**
+   * The between-sortie tick record carried from a deployment
+   * (AH-0MWDC3L9I008INDP). Transient launch data: it feeds the map's attack
+   * arrows and left-hand attack panel for this landing only and is never
+   * persisted, so a later re-entry without it draws neither.
+   */
+  record?: FrontierTickRecord;
   /**
    * Bot-driven attract traversal (AH-0MVUXCBBK004EJIP): the pure
    * `decideMapAction` picks the weakest adjacent hex and deploys, so the demo
@@ -102,6 +111,13 @@ export class HexMapScene extends Phaser.Scene {
   /** Authored ring definitions in use (shipped table unless injected). */
   private definitions: readonly HexRingDefinition[] = HEX_RING_DEFINITIONS;
 
+  /**
+   * The transient between-sortie tick record carried by this landing, or
+   * `undefined` when the map was entered without one (a later menu/hangar
+   * entry). Never persisted.
+   */
+  private record?: FrontierTickRecord;
+
   /** The rendered map (rebuilt after every change). */
   private view: HexMapView | null = null;
 
@@ -121,6 +137,7 @@ export class HexMapScene extends Phaser.Scene {
   init(data?: HexMapSceneData | null): void {
     this.storage = data?.storage;
     this.definitions = data?.definitions ?? HEX_RING_DEFINITIONS;
+    this.record = data?.record;
     this.demo = data?.demo === true;
     this.demoDwellMs = data?.demoDwellMs;
     const injected = data?.payload;
@@ -171,6 +188,7 @@ export class HexMapScene extends Phaser.Scene {
     this.view = null;
     const model = buildHexMapModel(this.payload, {
       definitions: this.definitions,
+      record: this.record,
     });
     this.view = renderHexMap(this, model, {
       onDeploy: (hexId) => this.deploy(hexId),
@@ -256,13 +274,34 @@ export class HexMapScene extends Phaser.Scene {
   getModel(): HexMapModel {
     return (
       this.view?.model ??
-      buildHexMapModel(this.payload, { definitions: this.definitions })
+      buildHexMapModel(this.payload, {
+        definitions: this.definitions,
+        record: this.record,
+      })
     );
   }
 
   /** Every rendered row, in reading order. */
   getRows(): readonly HexMapRow[] {
     return this.view?.rows ?? [];
+  }
+
+  /** Every drawn attack arrow (one per carried-attack entry), or none. */
+  getArrows(): readonly HexMapArrow[] {
+    return this.view?.arrows ?? [];
+  }
+
+  /**
+   * The left-hand attack panel's text (the focused attack's row), or `''`
+   * when the focused hex is in no attack.
+   */
+  getLeftPanelText(): string {
+    return this.view?.getLeftPanelText() ?? '';
+  }
+
+  /** Whether the left-hand attack panel is showing. */
+  isLeftPanelVisible(): boolean {
+    return this.view?.isLeftPanelVisible() ?? false;
   }
 
   /** The focused row key, or `null` when no row is focusable. */
