@@ -29,10 +29,17 @@
  *    upgrades ({@link deriveDefenderRating}, from the hangar economy's single
  *    formula). No defender ⇒ no hold (`defender-required`), so a hex can never
  *    be "held" with nothing flying it.
- * 4. **Secure the ring.** When every hex of the current ring is held the ring
- *    is secured and the next ring opens (generated from its authored
- *    definitions — ring 2 is playable), with **no hangar assault pass**
- *    (producer decision 2026-10-30, Q2 = a).
+ * 4. **Secure the ring — and defend the hangar.** When every hex of the
+ *    current ring is held the ring is secured and the AI's **massed hangar
+ *    assault** is resolved from the ring's stored numbers
+ *    ({@link resolveRingAssault} → `resolveHangarAssault`). A **repelled**
+ *    assault wins the ring and opens the next one (generated from its authored
+ *    definitions — ring 2 is playable); a **failed** assault is the
+ *    hangar-falls lose state, and the whole campaign is reset
+ *    ({@link resetCampaign}: hangar and ring wiped together, a fresh seed
+ *    issued, `bestScore` preserved). The **rush** line (the ring's capstone
+ *    held while hexes remain unheld) still opens the next ring with no
+ *    assault at all (`AH-0MVUVL2O2006W4QK`, `AH-0MWEZZ9TE001577J`).
  *
  * A lost deployment is the mirror image: {@link resolveDeploymentDefeat}
  * forfeits only the salvage earned since the last bank and returns the payload
@@ -54,6 +61,16 @@ import {
   deriveDefenderRating,
 } from './hangarEconomy';
 import { createRingState, ringDepth, type HexRingDefinition } from './hexRing';
+import {
+  DEFAULT_FRONTIER_TUNING,
+  heldRingDefenderSum,
+  massedAssaultBase,
+  resolveHangarAssault,
+  type FrontierTuning,
+  type HangarAssaultResolution,
+} from './hexDefence';
+import { createDefaultPayload } from './hangarWarStore';
+import { normaliseSeed } from '../rng';
 import {
   bankSalvage,
   bankedSalvageFromHangar,
@@ -337,8 +354,10 @@ export function ringCapstone(
  * every hex of the ring also opens it. A ring that authors no capstone falls
  * back to the all-held rule.
  *
- * Producer decision Q2 = a is unchanged: **ring secured** still means every
- * hex of the ring held (`AH-0MVUVL2O2006W4QK` keeps the deferred assault).
+ * **Ring secured** still means every hex of the ring held. Since
+ * `AH-0MWEZZ9TE001577J` a secured ring's capture triggers the hangar assault
+ * first (`resolveHexCapture`), so this predicate is the *openable* test the
+ * gate consults — not the win/loss decision itself.
  *
  * @param ring — the ring state to inspect.
  * @param definitions — authored ring definitions (may be empty).
@@ -396,11 +415,12 @@ export interface RingAdvanceResult {
 /**
  * Opens the next ring when the current one is fully held.
  *
- * "Ring secured = every hex of the current ring held" (producer decision
- * 2026-10-30, Q2 = a): there is no massed hangar assault pass and no extra
- * condition — the last captured hex opens the next ring immediately. The new
- * ring is generated from its authored definitions (ring 2's twelve hexes), so
- * it is playable at once.
+ * Ring security (every hex of the current ring held) or the held capstone
+ * (the rush line) opens the next ring. The ring-end hangar assault is a
+ * **separate gate** in `resolveHexCapture` that runs first — this function
+ * only advances a ring that is already won or rushed past. The new ring is
+ * generated from its authored definitions (ring 2's twelve hexes), so it is
+ * playable at once.
  *
  * A ring whose successor is not authored (e.g. ring 3 before its data lands)
  * stays secured and is not advanced into a ring of zero hexes.
@@ -441,6 +461,129 @@ export function openNextRing(
   }
 }
 
+// ── The ring-end hangar assault gate (AH-0MWEZZ9TE001577J) ──────────
+
+/** Stream mixer that gives a ring's assault its own seeded draws. */
+const HANGAR_ASSAULT_STREAM_MIX = 0x9e37_79b1;
+
+/** Seed step that guarantees a reset campaign starts on a different seed. */
+const CAMPAIGN_RESET_SEED_STEP = 0x9e37_79b9;
+
+/**
+ * The seed the ring-end hangar assault resolves from.
+ *
+ * Derived from the war's stored seed and the ring index — a pure function of
+ * the payload, so a replay of the same campaign reproduces the same assault
+ * bit-for-bit (and a replay of a *lost* assault reproduces the same reset).
+ * Never wall-clock or live battle state.
+ *
+ * @param payload — the war payload (read only).
+ * @returns the normalised 32-bit assault seed.
+ */
+export function hangarAssaultSeed(payload: HangarWarPayload): number {
+  const ringIndex = toCount(payload.ring.ringIndex);
+  return normaliseSeed(
+    payload.seed ^ Math.imul(ringIndex + 1, HANGAR_ASSAULT_STREAM_MIX),
+  );
+}
+
+/**
+ * The ring's frontier aggression that scales the massed assault.
+ *
+ * `resolveHangarAssault` takes **one** aggression figure as its multiplier
+ * driver, exactly as the hex resolver takes the attacked hex's aggression.
+ * The hangar is assaulted by the whole ring, so its driver is the ring's
+ * **average stored hex aggression** — the sum the frontier presses with
+ * ({@link massedAssaultBase}), normalised per hex. Averaging (rather than
+ * summing, or taking the single worst hex) keeps the multiplier in the same
+ * `0…maxAggression` range the hex resolver sees, so neither a large ring nor
+ * one hot hex can compound the pressure twice. Ties round up.
+ *
+ * Total: an empty ring, or corrupt aggressions (each collapses to `0`), is
+ * `0` — never a throw.
+ *
+ * @param ring — the ring being assaulted (the current ring only).
+ * @returns the rounded average stored aggression.
+ */
+export function ringAssaultAggression(ring: HexRingState): number {
+  const hexes = currentRingHexes(ring);
+  if (hexes.length === 0) return 0;
+  const sum = massedAssaultBase({ ringIndex: ring.ringIndex, hexes });
+  return Math.round(sum / hexes.length);
+}
+
+/**
+ * Resolves the hangar assault the ring's final-hex capture triggers.
+ *
+ * A thin gate over the shared-core resolver, so the game, the gym and the
+ * tests never re-derive an assault figure (gym↔game parity):
+ *
+ * - defender side — {@link heldRingDefenderSum}: the sum of the held hexes'
+ *   stored bot ratings;
+ * - attacker side — {@link massedAssaultBase}: the ring's stored aggression
+ *   sum, scaled by {@link ringAssaultAggression} through the hex resolver's
+ *   own `aggressionPercentPerPoint` rule and bounded seeded jitter;
+ * - seed — {@link hangarAssaultSeed}.
+ *
+ * Only the **current ring** is consulted: hexes carried from a ring the player
+ * rushed past are that ring's cost, not this ring's defence.
+ *
+ * @param payload — the war payload (read only).
+ * @param tuning — balance knobs (defaults to the shipped frontier tuning).
+ * @returns the outcome and every number behind it.
+ */
+export function resolveRingAssault(
+  payload: HangarWarPayload,
+  tuning: FrontierTuning = DEFAULT_FRONTIER_TUNING,
+): HangarAssaultResolution {
+  const ring: HexRingState = {
+    ringIndex: payload.ring.ringIndex,
+    hexes: currentRingHexes(payload.ring),
+  };
+  return resolveHangarAssault(
+    {
+      defenderSum: heldRingDefenderSum(ring),
+      attackerBase: massedAssaultBase(ring),
+      aggression: ringAssaultAggression(ring),
+      seed: hangarAssaultSeed(payload),
+    },
+    tuning,
+  );
+}
+
+/**
+ * The seed a reset campaign starts on.
+ *
+ * A deterministic step from the fallen campaign's seed: "a fresh seed is
+ * issued" without consulting a clock or `Math.random()`, so a replay of the
+ * same loss produces the same fresh campaign, and the new campaign can never
+ * silently reuse the old seed (the step is non-zero modulo 2³²).
+ *
+ * @param payload — the fallen campaign (read only).
+ * @returns the fresh campaign's normalised seed.
+ */
+export function campaignResetSeed(payload: HangarWarPayload): number {
+  return normaliseSeed(toCount(payload.seed) + CAMPAIGN_RESET_SEED_STEP);
+}
+
+/**
+ * Resets the whole campaign — the hangar-falls lose state.
+ *
+ * Producer decision Q1 = B: losing the hangar wipes **both** progression axes
+ * together, never partially. The reset reuses the shipped fresh-save
+ * constructor ({@link createDefaultPayload}: empty hangar, empty ring, no
+ * queued attacks, `frontierTick` 0) with {@link campaignResetSeed} as its seed
+ * and the restart convention's `bestScore` preservation — the same shape the
+ * hangar's `⟲ RESTART WAR` row builds, so there is one reset rule.
+ *
+ * @param payload — the fallen campaign (never mutated).
+ * @returns a fresh campaign payload holding only the preserved best score.
+ */
+export function resetCampaign(payload: HangarWarPayload): HangarWarPayload {
+  const fresh = createDefaultPayload(campaignResetSeed(payload));
+  return { ...fresh, bestScore: toCount(payload.bestScore) };
+}
+
 /** Why a boss victory did not capture its hex. */
 export type CaptureRefusal = 'unknown-hex' | 'defender-required';
 
@@ -465,6 +608,8 @@ export interface HexCaptureInput {
   readonly definitions?: readonly HexRingDefinition[];
   /** The caller's bank watermark (defaults to the stored balance). */
   readonly banked?: BankedSalvage;
+  /** Assault balance knobs (a harness/test may zero the jitter). */
+  readonly tuning?: FrontierTuning;
 }
 
 /** A resolved capture: the next payload and every number behind it. */
@@ -489,6 +634,15 @@ export interface HexCaptureResult {
   readonly ringAdvanced: boolean;
   /** The ring index the payload holds after the resolution. */
   readonly ringIndex: number;
+  /**
+   * The hangar assault the ring's final-hex capture triggered, or `null` when
+   * the capture did not secure the ring (a mid-ring capture, the rush line, a
+   * refusal). Carries every number, so the defence report renders it without
+   * re-derivation.
+   */
+  readonly assault: HangarAssaultResolution | null;
+  /** True when the assault broke the hangar and the whole campaign was reset. */
+  readonly campaignReset: boolean;
 }
 
 /**
@@ -500,6 +654,15 @@ export interface HexCaptureResult {
  * granted + defended **only** when a valid defender hull was chosen; otherwise
  * the resolution reports `defender-required` and leaves the hex unheld and
  * un-granted.
+ *
+ * Securing the ring's **final hex** then runs the ring-end assault gate
+ * (`AH-0MWEZZ9TE001577J`): the massed hangar assault is resolved from the
+ * ring's stored numbers ({@link resolveRingAssault}). A **repelled** assault
+ * opens the next ring (as the rush line always has); a **failed** assault is
+ * the hangar-falls lose state and returns a freshly reset campaign
+ * ({@link resetCampaign}) with `campaignReset: true` and an empty bank
+ * watermark. The rush line — the capstone held while hexes remain unheld —
+ * opens the next ring with no assault.
  *
  * @param payload — the persistent war payload (never mutated).
  * @param input — target hex, chosen hull, salvage and ring definitions.
@@ -536,6 +699,8 @@ export function resolveHexCapture(
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
+      assault: null,
+      campaignReset: false,
     };
   }
 
@@ -556,6 +721,8 @@ export function resolveHexCapture(
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
+      assault: null,
+      campaignReset: false,
     };
   }
 
@@ -570,8 +737,34 @@ export function resolveHexCapture(
   hex.defender = defender;
 
   const ringSecured = isRingSecured(next.ring);
-  // The ring opens on its capstone (the rush line) or on full security; a
-  // ring that is not openable keeps the payload's current ring unchanged.
+  // The ring's final hex is captured: resolve the AI's massed hangar assault
+  // from the ring's stored numbers before anything else touches the ring.
+  const assault = ringSecured ? resolveRingAssault(next, input.tuning) : null;
+
+  if (assault !== null && assault.outcome === 'fell') {
+    // The hangar falls: both progression axes are wiped together and a fresh
+    // campaign seed is issued — the run's banked salvage fell with the hangar,
+    // so the caller's watermark restarts empty.
+    const reset = resetCampaign(next);
+    return {
+      ok: true,
+      reason: null,
+      payload: reset,
+      banked: bankedSalvageFromHangar(reset.hangar),
+      bankedDelta,
+      defender,
+      grant,
+      ringSecured: false,
+      ringAdvanced: false,
+      ringIndex: toCount(reset.ring.ringIndex),
+      assault,
+      campaignReset: true,
+    };
+  }
+
+  // A repelled assault (the ring is won) or the rush line (capstone held,
+  // ring still unheld) opens the next ring; a ring that is not openable keeps
+  // the payload's current ring unchanged.
   const advanced = isRingOpenable(next.ring, definitions)
     ? openNextRing(next, definitions)
     : { payload: next, opened: false, ringIndex: toCount(next.ring.ringIndex) };
@@ -587,6 +780,8 @@ export function resolveHexCapture(
     ringSecured,
     ringAdvanced: advanced.opened,
     ringIndex: advanced.ringIndex,
+    assault,
+    campaignReset: false,
   };
 }
 

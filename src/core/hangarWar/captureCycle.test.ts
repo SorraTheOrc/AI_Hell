@@ -16,11 +16,19 @@ import { describe, expect, it } from 'vitest';
 import { deriveDefenderRating } from './hangarEconomy';
 import { createDefaultPayload } from './hangarWarStore';
 import { createRingState } from './hexRing';
-import { runSalvageFromRun } from './salvageBanking';
+import {
+  DEFAULT_FRONTIER_TUNING,
+  createFrontierClock,
+  resolveHangarAssault,
+  runFrontierTick,
+} from './hexDefence';
+import { createBankedSalvage, runSalvageFromRun } from './salvageBanking';
 import type { HangarWarPayload, HexState } from './types';
 import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
 import {
+  campaignResetSeed,
   grantDemonstrationColor,
+  hangarAssaultSeed,
   isRingSecured,
   leaveDefender,
   materialiseRing,
@@ -271,9 +279,15 @@ describe('resolveHexCapture — the win path', () => {
 });
 
 describe('ring securing', () => {
-  it('secures the ring on its last hex and opens ring 2 without an assault pass', () => {
+  it('secures the ring on its last hex, repels the assault and opens ring 2', () => {
     const payload = ringPayload();
+    // Strong stored defenders so the ring's massed assault is repelled — the
+    // win path now runs through the gate (AH-0MWEZZ9TE001577J).
     holdAllBut(payload, 'hex-r1-6');
+    for (const state of payload.ring.hexes) {
+      if (state.id === 'hex-r1-6' || !state.defender) continue;
+      state.defender = { ...state.defender, defenceRating: 20 };
+    }
 
     const result = resolveHexCapture(payload, {
       hexId: 'hex-r1-6',
@@ -283,7 +297,9 @@ describe('ring securing', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(result.assault?.outcome).toBe('repelled');
     expect(result.ringSecured).toBe(true);
+    expect(result.campaignReset).toBe(false);
     expect(result.ringAdvanced).toBe(true);
     expect(result.ringIndex).toBe(2);
 
@@ -301,7 +317,7 @@ describe('ring securing', () => {
     );
     expect(ringOne).toHaveLength(6);
     expect(ringOne.every((state) => state.held)).toBe(true);
-    // No hangar assault pass is queued (Q2 = a).
+    // The repelled assault resolves, it does not queue an attack.
     expect(result.payload.pendingAttacks).toEqual([]);
   });
 
@@ -395,6 +411,11 @@ describe('ring securing', () => {
   it('does not advance to a ring that has no authored definitions', () => {
     const payload = ringPayload();
     holdAllBut(payload, 'hex-r1-6');
+    // Strong stored defenders so the ring-end assault is repelled and the
+    // test still isolates the unauthored-successor rule.
+    for (const state of payload.ring.hexes) {
+      if (state.defender) state.defender = { ...state.defender, defenceRating: 20 };
+    }
 
     const result = resolveHexCapture(payload, {
       hexId: 'hex-r1-6',
@@ -404,6 +425,7 @@ describe('ring securing', () => {
       definitions: HEX_RING_DEFINITIONS.filter((entry) => entry.ringIndex === 1),
     });
 
+    expect(result.assault?.outcome).toBe('repelled');
     expect(result.ringSecured).toBe(true);
     expect(result.ringAdvanced).toBe(false);
     expect(result.payload.ring.ringIndex).toBe(1);
@@ -489,5 +511,330 @@ describe('withGrantedEntry and the demonstration colour', () => {
     expect(grantDemonstrationColor(resolveHexGrant('rapid'))).not.toBeNull();
     expect(grantDemonstrationColor(resolveHexGrant('hull-2'))).toBeNull();
     expect(grantDemonstrationColor(null)).toBeNull();
+  });
+});
+
+// ── The ring-end hangar assault gate (AH-0MWEZZ9TE001577J) ──────────
+//
+// Test-first slice for `AH-0MVUVL2O2006W4QK` AC2: the capture cycle now
+// resolves the AI's massed hangar assault from the ring's stored numbers when
+// its final hex is captured. A repel wins the ring and opens the next one; a
+// fall is the hangar-falls lose state and resets the whole campaign. The rush
+// line and a hex falling in a normal frontier tick stay reset-free.
+
+describe('the capture-cycle assault gate', () => {
+  // The shipped ±10 % jitter is real (and separately pinned in
+  // `hexDefence.test.ts`), so these tests zero it to pin the gate's arithmetic
+  // exactly; determinism with the shipped jitter is asserted separately.
+  const NO_JITTER = { ...DEFAULT_FRONTIER_TUNING, jitterPercent: 0 };
+
+  /** Holds every hex but the last, each defended at `rating`. */
+  function holdAllButWithRating(
+    payload: HangarWarPayload,
+    lastHexId: string,
+    rating: number,
+  ): void {
+    for (const state of payload.ring.hexes) {
+      if (state.id === lastHexId) continue;
+      state.held = true;
+      state.bossDefeated = true;
+      state.defender = { hullId: 'hull-1', defenceRating: rating, bankedMinerals: 0 };
+    }
+  }
+
+  /** Captures ring 1's final hex (`hex-r1-6`) — the assault-gate seam. */
+  function finalCapture(payload: HangarWarPayload, tuning = NO_JITTER) {
+    return resolveHexCapture(payload, {
+      hexId: 'hex-r1-6',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(5, 1),
+      definitions: HEX_RING_DEFINITIONS,
+      tuning,
+    });
+  }
+
+  /** A stocked campaign, so a reset's breadth is observable. */
+  function stockedPayload(): HangarWarPayload {
+    const payload = ringPayload();
+    payload.hangar.bankedMinerals = 900;
+    payload.hangar.bankedCores = 12;
+    payload.hangar.unlockedHulls.push('hull-2');
+    payload.hangar.unlockedWeapons.push('wave_laser');
+    payload.hangar.ownedModifiers.push('hardened_plating');
+    payload.pendingAttacks = [{ hexId: 'hex-r1-1', force: 3 }];
+    payload.bestScore = 18200;
+    payload.frontierTick = 4;
+    return payload;
+  }
+
+  // Ring 1's authored stored aggression: 2 + 1 + 3 + 2 + 4 + 6 = 18 (mean 3).
+  const RING_ONE_AGGRESSION_SUM = 18;
+
+  describe('AC1 — the final-hex capture triggers the assault', () => {
+    it('resolves the massed assault from the ring’s stored numbers', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+
+      const result = finalCapture(payload);
+      const assault = result.assault;
+
+      expect(assault).not.toBeNull();
+      // Defender side: five stored 10-rated bots plus the fresh hull-1 (2)
+      // defending the hex just captured.
+      expect(assault!.defenderSum).toBe(5 * 10 + deriveDefenderRating('hull-1'));
+      // Attacker side: the ring's stored aggression sum, its average as the
+      // multiplier's driver, exactly the hex resolver's 15 %/point rule.
+      expect(assault!.attackerBase).toBe(RING_ONE_AGGRESSION_SUM);
+      expect(assault!.aggression).toBe(3);
+      expect(assault!.aggressionMultiplierPercent).toBe(145);
+      // round(18 × 145 × 100 / 10000) = round(26.1) = 26.
+      expect(assault!.attackStrength).toBe(26);
+      expect(assault!.margin).toBe(52 - 26);
+      expect(assault!.outcome).toBe('repelled');
+    });
+
+    it('is the shared resolver’s deterministic decision on the same seeded stream', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+      const before = JSON.parse(JSON.stringify(payload)) as HangarWarPayload;
+
+      const first = finalCapture(payload);
+      const replay = finalCapture(JSON.parse(JSON.stringify(before)));
+
+      // A replay of the same stored numbers reproduces the assault exactly.
+      expect(first.assault).toEqual(replay.assault);
+      expect(first.assault).toEqual(
+        resolveHangarAssault(
+          {
+            defenderSum: 52,
+            attackerBase: RING_ONE_AGGRESSION_SUM,
+            aggression: 3,
+            seed: hangarAssaultSeed(payload),
+          },
+          NO_JITTER,
+        ),
+      );
+      // ... and the caller's payload is never mutated.
+      expect(payload).toEqual(before);
+    });
+
+    it('returns the assault record even with the shipped jitter, reproducibly', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+
+      const shipped = finalCapture(payload, DEFAULT_FRONTIER_TUNING);
+      const replay = finalCapture(payload, DEFAULT_FRONTIER_TUNING);
+
+      expect(shipped.assault).toEqual(replay.assault);
+      expect(shipped.assault!.jitterPercent).toBeGreaterThanOrEqual(-10);
+      expect(shipped.assault!.jitterPercent).toBeLessThanOrEqual(10);
+    });
+
+    it('does not trigger an assault while hexes of the ring remain unheld', () => {
+      const payload = ringPayload();
+
+      const result = resolveHexCapture(payload, {
+        hexId: 'hex-r1-2',
+        defenderHullId: 'hull-1',
+        salvage: victorySalvage(5, 1),
+        definitions: HEX_RING_DEFINITIONS,
+        tuning: NO_JITTER,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.ringSecured).toBe(false);
+      expect(result.assault).toBeNull();
+      expect(result.campaignReset).toBe(false);
+    });
+
+    it('never fires on a refused capture (no defender ⇒ no held hex)', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+
+      const result = resolveHexCapture(payload, {
+        hexId: 'hex-r1-6',
+        defenderHullId: 'hull-9',
+        salvage: victorySalvage(),
+        definitions: HEX_RING_DEFINITIONS,
+        tuning: NO_JITTER,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('defender-required');
+      expect(result.assault).toBeNull();
+      expect(result.campaignReset).toBe(false);
+    });
+  });
+
+  describe('AC2 — a repelled assault wins the ring and opens the next one', () => {
+    it('marks the ring won and opens the next ring exactly as openNextRing does', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+
+      const result = finalCapture(payload);
+
+      expect(result.ok).toBe(true);
+      expect(result.assault?.outcome).toBe('repelled');
+      expect(result.ringSecured).toBe(true);
+      expect(result.campaignReset).toBe(false);
+      expect(result.ringAdvanced).toBe(true);
+      expect(result.ringIndex).toBe(2);
+      // The opened ring is ring 2's twelve generated, unheld hexes, carried
+      // alongside ring 1's six held hexes (nothing is discarded).
+      expect(result.payload.ring.ringIndex).toBe(2);
+      const ringTwo = result.payload.ring.hexes.filter((state) =>
+        state.id.startsWith('hex-r2-'),
+      );
+      expect(ringTwo).toHaveLength(12);
+      expect(ringTwo.every((state) => !state.held)).toBe(true);
+      const ringOne = result.payload.ring.hexes.filter((state) =>
+        state.id.startsWith('hex-r1-'),
+      );
+      expect(ringOne.every((state) => state.held)).toBe(true);
+      // A win is not a reset: the campaign's seed, hangar and score survive.
+      expect(result.payload.seed).toBe(payload.seed);
+      expect(result.payload.bestScore).toBe(payload.bestScore);
+      expect(result.payload.hangar.bankedMinerals).toBe(5);
+      expect(result.payload.hangar.bankedCores).toBe(1);
+      expect(result.payload.pendingAttacks).toEqual([]);
+    });
+
+    it('holds the line on an exact tie: margin 0 repels, the hangar survives', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 0);
+      // One hex carries the frontier's pressure: base 2, average 0 (rounded),
+      // so the strength is 2 — exactly the fresh defender's rating.
+      for (const state of payload.ring.hexes) state.aggression = 0;
+      hex(payload, 'hex-r1-2').aggression = 2;
+
+      const result = finalCapture(payload);
+
+      expect(result.assault).toMatchObject({
+        defenderSum: deriveDefenderRating('hull-1'),
+        attackerBase: 2,
+        aggression: 0,
+        attackStrength: deriveDefenderRating('hull-1'),
+        margin: 0,
+        outcome: 'repelled',
+      });
+      expect(result.campaignReset).toBe(false);
+      expect(result.ringAdvanced).toBe(true);
+    });
+  });
+
+  describe('AC3 — a failed assault resets the whole campaign', () => {
+    it('wipes the hangar and the ring together, issues a fresh seed and keeps bestScore', () => {
+      const payload = stockedPayload();
+      // Zero-rated defenders cannot match the ring's 18-point massed base.
+      holdAllButWithRating(payload, 'hex-r1-6', 0);
+
+      const result = finalCapture(payload);
+
+      expect(result.ok).toBe(true);
+      expect(result.assault?.outcome).toBe('fell');
+      expect(result.assault!.margin).toBeLessThan(0);
+      expect(result.campaignReset).toBe(true);
+      // The ring was lost, not advanced.
+      expect(result.ringSecured).toBe(false);
+      expect(result.ringAdvanced).toBe(false);
+      expect(result.ringIndex).toBe(1);
+
+      // The hangar is wiped: banked salvage/cores, unlocks and modifiers ...
+      expect(result.payload.hangar.bankedMinerals).toBe(0);
+      expect(result.payload.hangar.bankedCores).toBe(0);
+      expect(result.payload.hangar.unlockedHulls).toEqual(['hull-1']);
+      expect(result.payload.hangar.unlockedWeapons).toEqual(['spread']);
+      expect(result.payload.hangar.ownedModifiers).toEqual([]);
+      // ... the ring, its defenders/aggression and the queued attacks with it ...
+      expect(result.payload.ring.hexes).toEqual([]);
+      expect(result.payload.ring.ringIndex).toBe(1);
+      expect(result.payload.pendingAttacks).toEqual([]);
+      expect(result.payload.frontierTick ?? 0).toBe(0);
+      // ... a fresh campaign seed is issued (deterministically, so a replay
+      // reproduces the reset) ...
+      expect(result.payload.seed).toBe(campaignResetSeed(payload));
+      expect(result.payload.seed).not.toBe(payload.seed);
+      // ... and the restart convention's bestScore survives the reset.
+      expect(result.payload.bestScore).toBe(18200);
+      // The fresh bank watermark matches the wiped hangar.
+      expect(result.banked).toEqual(createBankedSalvage());
+
+      // The whole payload is the fresh starting position plus bestScore,
+      // matching the shipped `restartHangarWar` convention field for field.
+      expect(result.payload).toEqual({
+        ...createDefaultPayload(campaignResetSeed(payload)),
+        bestScore: 18200,
+      });
+    });
+
+    it('reproduces the reset bit-for-bit on a replay of the same fall', () => {
+      const payload = stockedPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 0);
+      const before = JSON.parse(JSON.stringify(payload)) as HangarWarPayload;
+
+      const first = finalCapture(payload);
+      const replay = finalCapture(JSON.parse(JSON.stringify(before)));
+
+      expect(first.campaignReset).toBe(true);
+      expect(replay.payload).toEqual(first.payload);
+      expect(payload).toEqual(before);
+    });
+  });
+
+  describe('AC4 — the rush line is unchanged', () => {
+    it('opens the next ring from the capstone with no assault and no reset', () => {
+      const payload = ringPayload();
+
+      const result = resolveHexCapture(payload, {
+        hexId: 'hex-r1-6',
+        defenderHullId: 'hull-1',
+        salvage: victorySalvage(5, 1),
+        definitions: HEX_RING_DEFINITIONS,
+        tuning: NO_JITTER,
+      });
+
+      expect(result.ok).toBe(true);
+      // Not secured — five hexes are still unheld — so no assault fires.
+      expect(result.ringSecured).toBe(false);
+      expect(result.assault).toBeNull();
+      expect(result.campaignReset).toBe(false);
+      // The rush still opens ring 2 exactly as before.
+      expect(result.ringAdvanced).toBe(true);
+      expect(result.ringIndex).toBe(2);
+      expect(result.payload.seed).toBe(payload.seed);
+    });
+  });
+
+  describe('AC5 — a hex falling in a normal frontier tick never resets the hangar', () => {
+    it('keeps the hangar, ring, seed and bestScore when a held hex is retaken', () => {
+      const payload = stockedPayload();
+      const held = hex(payload, 'hex-r1-1');
+      held.held = true;
+      held.defender = {
+        hullId: 'hull-1',
+        defenceRating: deriveDefenderRating('hull-1'),
+        bankedMinerals: 0,
+      };
+      payload.seed = 4242;
+      payload.pendingAttacks = [{ hexId: 'hex-r1-1', force: 500 }];
+      const hangarBefore = JSON.parse(JSON.stringify(payload.hangar));
+
+      const tick = runFrontierTick(payload, {
+        clock: createFrontierClock(payload.seed, 0),
+        tuning: NO_JITTER,
+      });
+
+      // The queued attack really did take the hex ...
+      expect(
+        tick.record.attacks.find((record) => record.hexId === 'hex-r1-1')?.outcome,
+      ).toBe('fell');
+      expect(hex(tick.payload, 'hex-r1-1').held).toBe(false);
+      expect(hex(tick.payload, 'hex-r1-1').defender).toBeNull();
+      // ... and losing a hex battle is emphatically not a campaign reset.
+      expect(tick.payload.hangar).toEqual(hangarBefore);
+      expect(tick.payload.ring.hexes).toHaveLength(6);
+      expect(tick.payload.seed).toBe(4242);
+      expect(tick.payload.bestScore).toBe(18200);
+    });
   });
 });
