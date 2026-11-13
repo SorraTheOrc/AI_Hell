@@ -39,7 +39,11 @@ import {
 } from '../../test/gameHarness';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
-import { RING_1_HEX_FIXTURES, RING_2_HEX_FIXTURES } from '../../core/hangarWar/__fixtures__/ringFixtures';
+import {
+  RING_1_HEX_FIXTURES,
+  RING_2_HEX_FIXTURES,
+  VARIETY_RING_DEFINITIONS,
+} from '../../core/hangarWar/__fixtures__/ringFixtures';
 import {
   loadHangarWarPayload,
   saveHangarWarPayload,
@@ -1129,5 +1133,60 @@ describe('GymHexWar — the special mission (AH-0MWF0CSSI007P414)', () => {
     const loaded = loadHangarWarPayload(storage);
 
     expect(loaded?.hangar.unlockedHulls).toContain('hull-3');
+  });
+});
+
+describe('GymHexWar — hex contracts (AH-0MWEW58WD003NFXS)', () => {
+  let booted: BootedGame | null = null;
+
+  async function bootHexWar(data?: object): Promise<GymHexWar> {
+    booted = await reuse.boot([GymHexWar]);
+    booted.game.scene.start(GYM_HEX_WAR_SCENE_KEY, data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene(GYM_HEX_WAR_SCENE_KEY) as GymHexWar;
+  }
+
+  /** An unheld ring-3 payload built from the authored variety sample. */
+  function varietyPayload(): HangarWarPayload {
+    const hexes: HexState[] = VARIETY_RING_DEFINITIONS.map((definition) => ({
+      id: definition.id,
+      q: definition.q,
+      r: definition.r,
+      held: false,
+      aggression: definition.baseAggression,
+      defender: null,
+      bossDefeated: false,
+      grantedWeapon: null,
+    }));
+    const template = oneHexPayload(hexes[0]);
+    return { ...template, ring: { ringIndex: 3, hexes } };
+  }
+
+  afterAll(async () => {
+    await booted?.game.destroy(true);
+    booted = null;
+  });
+
+  it('publishes a contracted hex objective, bonus and status through the map model', async () => {
+    const scene = await bootHexWar({
+      payload: varietyPayload(),
+      definitions: VARIETY_RING_DEFINITIONS,
+    });
+
+    const intel = scene.getMapModel()!.hexes.find((hex) => hex.id === 'hex-r3-6');
+    expect(intel, 'the contracted hex is published').toBeDefined();
+    expect(intel!.contract).not.toBeNull();
+    expect(intel!.contract!.objective).not.toBe('');
+    expect(intel!.contract!.bonusSalvage).toBe(150);
+    expect(intel!.contract!.bonusCores).toBe(1);
+    expect(intel!.contract!.status).toBe('open');
+    expect(intel!.label).toContain(intel!.contract!.objective);
+
+    // The harness summary surfaces the same authored contract (no second rule).
+    const lines = scene.getSummaryLines();
+    const line = lines.find((entry) => entry.includes('hex-r3-6'));
+    expect(line).toBeDefined();
+    expect(line).toContain('contract: ');
+    expect(line).toContain('contract OPEN');
   });
 });

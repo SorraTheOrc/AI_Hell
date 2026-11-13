@@ -121,6 +121,17 @@ export interface HexState {
   bossDefeated: boolean;
   /** The weapon/upgrade this hex grants once its boss is beaten. */
   grantedWeapon: string | null;
+  /**
+   * True once an authored **contract** on this hex has been fulfilled
+   * (post-MVP Hangar War, AH-0MWEW58WD003NFXS, producer answer Q2 = a).
+   *
+   * Additive and optional on purpose: a save written before contracts landed
+   * has no such field, and absence reads as "not fulfilled", so the store
+   * migrates it by **field presence** without a schema-version bump. It is also
+   * the replay guard: the bonus is banked only while this is not `true`, so a
+   * replay can never double-count it.
+   */
+  contractFulfilled?: boolean;
 }
 
 /** The current hex ring around the hangar. */

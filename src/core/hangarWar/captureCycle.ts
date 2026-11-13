@@ -705,6 +705,12 @@ export interface HexCaptureResult {
    * reward without re-deriving it from authored data.
    */
   readonly specialReward: SpecialMissionReward | null;
+  /**
+   * The contract bonus this capture banked (post-MVP Hangar War,
+   * AH-0MWEW58WD003NFXS, Q2 = a), or `null` when the hex authors no contract or
+   * its bonus was already banked — a replay adds nothing.
+   */
+  readonly contractBonus: SalvageAmounts | null;
   /** True when the capture secured the current ring. */
   readonly ringSecured: boolean;
   /** True when securing the ring opened the next ring. */
@@ -720,6 +726,52 @@ export interface HexCaptureResult {
   readonly assault: HangarAssaultResolution | null;
   /** True when the assault broke the hangar and the whole campaign was reset. */
   readonly campaignReset: boolean;
+}
+
+/**
+ * Fulfils a hex's authored **contract** on capture: banks its bonus through the
+ * shipped banking rule and records the fulfilment marker.
+ *
+ * Producer answer Q2 = a (2026-11-13): the reward is bonus salvage/cores in the
+ * shipped currencies, banked like any other salvage, with **no deadline clock**.
+ * The stored `contractFulfilled` marker is the replay guard — a replayed battle,
+ * or a second capture of the same hex, adds nothing — and the banking itself
+ * goes through {@link bankSalvage} with a contract-scoped run watermark, so the
+ * whole bonus is added exactly once instead of hand-rolled.
+ *
+ * Mutates `payload.hangar` and `hex` in place (the caller owns a detached
+ * payload).
+ *
+ * @param payload — the detached payload being resolved (its hangar is credited).
+ * @param hex — the captured hex (receives the fulfilment marker).
+ * @param definition — the authored definition, or `undefined` when unknown.
+ * @returns the bonus banked by this call, or `null` when none was banked.
+ */
+function fulfilContract(
+  payload: HangarWarPayload,
+  hex: HexState,
+  definition: HexRingDefinition | undefined,
+): SalvageAmounts | null {
+  const contract = definition?.contract;
+  if (contract === undefined) return null;
+  if (hex.contractFulfilled === true) return null;
+
+  const bonus: SalvageAmounts = {
+    minerals: toCount(contract.bonusSalvage),
+    cores: toCount(contract.bonusCores),
+  };
+  if (bonus.minerals === 0 && bonus.cores === 0) return null;
+
+  const banked = bankSalvage(bankedSalvageFromHangar(payload.hangar), {
+    runId: `hex-contract:${hex.id}`,
+    checkpointId: hex.id,
+    minerals: bonus.minerals,
+    cores: bonus.cores,
+  });
+  payload.hangar.bankedMinerals = banked.minerals;
+  payload.hangar.bankedCores = banked.cores;
+  hex.contractFulfilled = true;
+  return bonus;
 }
 
 /**
@@ -774,6 +826,7 @@ export function resolveHexCapture(
       defender: null,
       grant: null,
       specialReward: null,
+      contractBonus: null,
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
@@ -797,6 +850,7 @@ export function resolveHexCapture(
       defender: null,
       grant: null,
       specialReward: null,
+      contractBonus: null,
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
@@ -818,6 +872,11 @@ export function resolveHexCapture(
   hex.bossDefeated = true;
   hex.defender = defender;
 
+  // The contract bonus is banked with the capture (Q2 = a) through the shipped
+  // banking rule, guarded by the hex's stored fulfilment marker so a replay
+  // can never double-count it.
+  const contractBonus = fulfilContract(next, hex, definition);
+
   const ringSecured = isRingSecured(next.ring);
   // The ring's final hex is captured: resolve the AI's massed hangar assault
   // from the ring's stored numbers before anything else touches the ring.
@@ -837,6 +896,7 @@ export function resolveHexCapture(
       defender,
       grant,
       specialReward,
+      contractBonus,
       ringSecured: false,
       ringAdvanced: false,
       ringIndex: toCount(reset.ring.ringIndex),
@@ -861,6 +921,7 @@ export function resolveHexCapture(
     defender,
     grant,
     specialReward,
+    contractBonus,
     ringSecured,
     ringAdvanced: advanced.opened,
     ringIndex: advanced.ringIndex,

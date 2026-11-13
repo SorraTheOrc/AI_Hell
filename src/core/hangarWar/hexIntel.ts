@@ -167,6 +167,15 @@ export const HELD_TILE_MARKER = '\u25CF';
 export const UNHELD_TILE_MARKER = '\u25CB';
 
 /**
+ * Tile tag marking a hex that carries an authored **contract**
+ * (AH-0MWEW58WD003NFXS). Legible without colour, like the ownership markers.
+ */
+export const CONTRACT_TILE_TAG = '\u2726 CONTRACT';
+
+/** Detail-panel heading for the contract block. */
+export const CONTRACT_PANEL_HEADING = 'CONTRACT';
+
+/**
  * Short tag a special-mission tile carries (`AH-0MWF0CWB7002MG2F`).
  *
  * Deliberately short: the tile must stay legible at 960×540, so the offer's
@@ -176,6 +185,26 @@ export const SPECIAL_MISSION_TILE_TAG = '\u2605 SPECIAL';
 
 /** Heading of the special-mission section inside the detail panel. */
 export const SPECIAL_MISSION_PANEL_HEADING = 'SPECIAL MISSION';
+
+/**
+ * One hex's authored **contract**, as the known-ahead intel publishes it
+ * (AH-0MWEW58WD003NFXS, producer answer Q2 = a).
+ *
+ * Pure data: the objective is the authored id-free text the detail panel shows,
+ * the bonuses are the shipment-currencies payout banked on capture, and the
+ * status is `fulfilled` only once the capture cycle has paid the bonus (the
+ * replay guard).
+ */
+export interface HexContractIntel {
+  /** The authored objective, published before the player commits. */
+  readonly objective: string;
+  /** Bonus minerals banked on capture. */
+  readonly bonusSalvage: number;
+  /** Bonus cores banked on capture. */
+  readonly bonusCores: number;
+  /** `open` until the capture cycle pays the bonus, then `fulfilled`. */
+  readonly status: 'open' | 'fulfilled';
+}
 
 /** A queued attack against a hex, as the map publishes it. */
 export interface HexPendingAttackIntel {
@@ -216,8 +245,7 @@ export interface HexSpecialMissionIntel {
 }
 
 /** One hex, with all the known-ahead intel the map publishes. */
-export interface HexIntel {
-  /** Row key (`hex:<id>`), unique within the map. */
+export interface HexIntel {  /** Row key (`hex:<id>`), unique within the map. */
   readonly key: string;
   /** Stable hex id. */
   readonly id: string;
@@ -239,6 +267,12 @@ export interface HexIntel {
   readonly weaknesses: readonly string[];
   /** Weapon/upgrade the hex grants once its boss is beaten, or `null`. */
   readonly grants: string | null;
+  /**
+   * The hex's authored **contract** (post-MVP Hangar War, AH-0MWEW58WD003NFXS,
+   * Q2 = a): the objective and bonus the player can read **before** committing
+   * a life, plus its fulfilment status. `null` for an ordinary hex.
+   */
+  readonly contract: HexContractIntel | null;
   /** True for the single hex that grants the ring's new weapon. */
   readonly weaponHex: boolean;
   /** True when the hex is authored as a special mission (`isSpecialMission`). */
@@ -580,6 +614,30 @@ function cloneHex(hex: HexState): HexState {
 }
 
 /**
+ * The authored contract as intel, or `null` when the hex authors none.
+ *
+ * Total: a malformed bonus collapses to `0` through {@link toCount}, and the
+ * status is `fulfilled` only when the stored payload says so.
+ *
+ * @param definition — the authored definition, or `undefined` when unknown.
+ * @param state — the stored hex (carries the fulfilment marker).
+ * @returns the published contract, or `null` for an ordinary hex.
+ */
+function contractIntelFor(
+  definition: HexRingDefinition | undefined,
+  state: HexState,
+): HexContractIntel | null {
+  const contract = definition?.contract;
+  if (contract === undefined) return null;
+  return {
+    objective: contract.objective,
+    bonusSalvage: toCount(contract.bonusSalvage),
+    bonusCores: toCount(contract.bonusCores),
+    status: state.contractFulfilled === true ? 'fulfilled' : 'open',
+  };
+}
+
+/**
  * The hexes the map draws: exactly the stored ring when it has any hexes,
  * otherwise the ring generated from definitions for the payload's ring index
  * (a fresh war's not-yet-generated ring). Never pads a partial stored ring.
@@ -681,14 +739,19 @@ function tileLabel(
   aggression: number,
   held: boolean,
   specialMission: HexSpecialMissionIntel | null,
+  contract: HexContractIntel | null = null,
 ): string {
   const base = `(${state.q},${state.r}) AGG ${aggression} ${
     held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
   }`;
-  if (specialMission === null) return base;
-  return `${base}\n${SPECIAL_MISSION_TILE_TAG}${
-    specialMission.offeredNow ? ' NOW' : ''
-  }`;
+  const tags: string[] = [];
+  if (specialMission !== null) {
+    tags.push(
+      `${SPECIAL_MISSION_TILE_TAG}${specialMission.offeredNow ? ' NOW' : ''}`,
+    );
+  }
+  if (contract !== null) tags.push(CONTRACT_TILE_TAG);
+  return tags.length === 0 ? base : `${base}\n${tags.join('\n')}`;
 }
 
 /** The tile text: id, state/aggression/attack, boss, strengths, weaknesses, grant. */
@@ -698,6 +761,7 @@ function hexLabel(
   pending: HexPendingAttackIntel | null,
   defender: HexDefender | null,
   specialMission: HexSpecialMissionIntel | null = null,
+  contract: HexContractIntel | null = null,
 ): string {
   const lines: string[] = [
     state.id,
@@ -746,6 +810,16 @@ function hexLabel(
     );
   }
 
+  if (contract !== null) {
+    lines.push(
+      `${CONTRACT_PANEL_HEADING}: ${contract.objective}`,
+      `BONUS: +${contract.bonusSalvage} MIN · +${contract.bonusCores} ${
+        contract.bonusCores === 1 ? 'CORE' : 'CORES'
+      }`,
+      `CONTRACT ${contract.status === 'fulfilled' ? 'FULFILLED' : 'OPEN'}`,
+    );
+  }
+
   return lines.join('\n');
 }
 
@@ -770,6 +844,7 @@ export function buildHexIntel(
 ): HexIntel {
   const held = state.held === true;
   const specialMission = specialMissionIntelFor(definition, offeredNow);
+  const contract = contractIntelFor(definition, state);
   const aggression = toCount(state.aggression);
   const defender = held && state.defender ? { ...state.defender } : null;
   const force = toCount(pendingForce);
@@ -795,6 +870,7 @@ export function buildHexIntel(
     strengths: definition ? [...definition.strengths] : [],
     weaknesses: definition ? [...definition.weaknesses] : [],
     grants: definition?.grants ?? null,
+    contract: contractIntelFor(definition, state),
     weaponHex: definition?.weaponHex === true,
     isSpecialMission: specialMission !== null,
     specialMission,
@@ -806,8 +882,8 @@ export function buildHexIntel(
     displayed,
     selectable: displayed,
     actionable: displayed && !held,
-    tileLabel: tileLabel(state, aggression, held, specialMission),
-    label: hexLabel(state, definition, pending, defender, specialMission),
+    tileLabel: tileLabel(state, aggression, held, specialMission, contract),
+    label: hexLabel(state, definition, pending, defender, specialMission, contract),
   };
 }
 

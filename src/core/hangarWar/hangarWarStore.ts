@@ -280,6 +280,10 @@ function parseHex(raw: unknown): HexState | null {
     defender: held ? parseDefender(raw.defender) : null,
     bossDefeated: raw.bossDefeated === true,
     grantedWeapon: toId(raw.grantedWeapon),
+    // Field-presence migration (AH-0MWEW58WD003NFXS): a save written before
+    // contracts landed has no marker, and a malformed one is dropped rather
+    // than guessed — never `false`, so an absent field stays absent.
+    ...(raw.contractFulfilled === true ? { contractFulfilled: true } : {}),
   };
 }
 

@@ -12,10 +12,9 @@
  * the authored variety sample ring, so the game and every gym resolve the same
  * code (AGENTS.md gym↔game parity).
  *
- * ## Test-first contract
- *
- * The `it.fails` cases pin behaviour that lands with the contract axis item
- * (AH-0MWEW58WD003NFXS) and flip to `it` as part of its acceptance criteria.
+ * These cases were written as `it.fails` red contracts by
+ * AH-0MWEW4RVP002LIP4 and flipped to `it` when the contract axis landed
+ * (AH-0MWEW58WD003NFXS) — they are the axis's acceptance gate.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -80,7 +79,7 @@ const CONTRACT_HEX_ID = 'hex-r3-6';
 const ORDINARY_HEX_ID = 'hex-r3-2';
 
 describe('hex variety contracts — capture cycle (AC4, Q2 = a)', () => {
-  it.fails('banks the contract bonus through the existing banking rule', () => {
+  it('banks the contract bonus through the existing banking rule', () => {
     const payload = varietyPayload();
     const result = resolveHexCapture(payload, captureAt(CONTRACT_HEX_ID));
 
@@ -93,7 +92,7 @@ describe('hex variety contracts — capture cycle (AC4, Q2 = a)', () => {
     );
   });
 
-  it.fails('records the contract as fulfilled on the captured hex', () => {
+  it('records the contract as fulfilled on the captured hex', () => {
     const result = resolveHexCapture(
       varietyPayload(),
       captureAt(CONTRACT_HEX_ID),
@@ -103,7 +102,7 @@ describe('hex variety contracts — capture cycle (AC4, Q2 = a)', () => {
     );
   });
 
-  it.fails('never double-counts a replayed contract capture', () => {
+  it('never double-counts a replayed contract capture', () => {
     const payload = varietyPayload();
     const once = resolveHexCapture(payload, captureAt(CONTRACT_HEX_ID));
     const twice = resolveHexCapture(once.payload, captureAt(CONTRACT_HEX_ID));
@@ -116,6 +115,26 @@ describe('hex variety contracts — capture cycle (AC4, Q2 = a)', () => {
     // ...and the first capture did pay it.
     expect(once.payload.hangar.bankedMinerals).toBe(
       payload.hangar.bankedMinerals + 150,
+    );
+  });
+
+  it('pays nothing when the capture is refused (no defender hull)', () => {
+    const payload = varietyPayload();
+    const refused = resolveHexCapture(payload, {
+      ...captureAt(CONTRACT_HEX_ID),
+      defenderHullId: null,
+    });
+
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toBe('defender-required');
+    expect(refused.contractBonus).toBeNull();
+    // The contract is not fulfilled by a mere boss victory: the hex must be
+    // captured (the design's Q2 = a "fulfilled by capturing the hex").
+    expect(hexState(refused.payload, CONTRACT_HEX_ID).contractFulfilled).toBe(
+      undefined,
+    );
+    expect(refused.payload.hangar.bankedMinerals).toBe(
+      payload.hangar.bankedMinerals,
     );
   });
 

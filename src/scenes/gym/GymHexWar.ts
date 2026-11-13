@@ -345,6 +345,16 @@ export function hexWarSummaryLines(
         `weak: ${fixture.weaknesses.join(', ')}`,
         `grant: ${fixture.grants}`,
       );
+      // The authored contract is part of the known-ahead intel, and its
+      // fulfilment marker is the stored replay guard (AH-0MWEW58WD003NFXS), so
+      // the harness reads both off data rather than duplicating a rule.
+      if (fixture.contract !== undefined) {
+        parts.push(
+          `contract: ${fixture.contract.objective}`,
+          `bonus: ${fixture.contract.bonusSalvage} min / ${fixture.contract.bonusCores} cores`,
+          hex.contractFulfilled === true ? 'contract FULFILLED' : 'contract OPEN',
+        );
+      }
     }
     if (hex.held && hex.defender) {
       parts.push(`bot ${hex.defender.hullId} (${hex.defender.defenceRating})`);

@@ -95,7 +95,7 @@ describe('hex variety persistence — one payload, field-presence migration', ()
     expect(hexState(roundTrip(payload), 'hex-r3-3').capturePasses).toBe(1);
   });
 
-  it.fails('round-trips a fulfilled contract marker', () => {
+  it('round-trips a fulfilled contract marker', () => {
     const payload = varietyPayload();
     const contracted = payload.ring.hexes.find((hex) => hex.id === 'hex-r3-6')!;
     (contracted as VarietyHexState & { contractFulfilled?: boolean })

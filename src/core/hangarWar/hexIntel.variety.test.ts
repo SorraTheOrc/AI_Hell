@@ -31,17 +31,15 @@ import {
 } from './__fixtures__/ringFixtures';
 import type { HexIntel } from './hexIntel';
 
-/** The variety fields the axis items add to `HexIntel` (AC2). */
+/**
+ * The variety fields still to land on `HexIntel` (AC2). `contract` is shipped
+ * (AH-0MWEW58WD003NFXS); `personality` and `landmark` land with their own axis
+ * items, so they are declared optional here — a red contract, not a broken
+ * build.
+ */
 interface VarietyIntel extends HexIntel {
   /** The hex's authored personality, or `null`/absent when it has none. */
   readonly personality?: string | null;
-  /** The hex's authored contract and its fulfilment status. */
-  readonly contract?: {
-    readonly objective: string;
-    readonly bonusSalvage: number;
-    readonly bonusCores: number;
-    readonly status?: string;
-  } | null;
   /** The hex's authored landmark, or `null`/absent when it is none. */
   readonly landmark?: string | null;
 }
@@ -88,7 +86,7 @@ describe('hex variety intel — personality (AC2, Q1 = b)', () => {
 });
 
 describe('hex variety intel — contract (AC2, Q2 = a)', () => {
-  it.fails('publishes the objective and the bonus before commitment', () => {
+  it('publishes the objective and the bonus before commitment', () => {
     const contract = varietyIntel(CONTRACT_HEX_ID).contract;
     expect(contract).not.toBeNull();
     expect(contract!.objective).not.toBe('');
@@ -97,7 +95,7 @@ describe('hex variety intel — contract (AC2, Q2 = a)', () => {
     expect(varietyIntel(CONTRACT_HEX_ID).label).toContain(contract!.objective);
   });
 
-  it.fails('publishes the contract status (open before the capture)', () => {
+  it('publishes the contract status (open before the capture)', () => {
     expect(varietyIntel(CONTRACT_HEX_ID).contract!.status).toBe('open');
   });
 
