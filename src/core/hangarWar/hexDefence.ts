@@ -45,6 +45,19 @@
  *   collapse to `0` (or are truncated), so a corrupt payload can never throw
  *   inside a resolution pass.
  *
+ * ## The hangar assault ({@link resolveHangarAssault})
+ *
+ * The ring-end counterpart, delivered for `AH-0MVUVL2O2006W4QK`: when the
+ * ring's final hex is captured, the deferred massed counter-attack on the
+ * hangar is resolved from the same stored numbers (`HangarAssaultInput`
+ * mirrors `DefenceInput`): the defender side is the held-ring defender sum,
+ * the attacker side is the base massed force derived from the ring's stored
+ * aggression ({@link massedAssaultBase}) scaled by the **same**
+ * `aggressionPercentPerPoint` multiplier and bounded seeded jitter — a tie
+ * holds the line and the hangar falls only when the assault beats the stored
+ * defence. The capture-cycle gate (not this module) triggers it and applies
+ * its consequence (ring won / hangar-falls reset).
+ *
  * Every result carries the whole calculation ({@link DefenceResolution}), not
  * just the outcome: the defence report (B6) renders exactly these numbers, which
  * is the design's mitigation for *opaque defence*.
@@ -84,10 +97,11 @@
  * - A held hex with **no** unheld neighbour is not attacked this tick. Once
  *   every hex of the ring is held there is no neighbour left to strike from, so
  *   a secured ring draws no attacks — the ring's win state is quiet by
- *   construction, and there is **no hangar assault pass** (producer decision
- *   2026-10-30, Q2 = a; the massed assault is deferred to
- *   `AH-0MVUVL2O2006W4QK`). A means to press the ring from its outer edge would
- *   be added with that deferred item.
+ *   construction, and the tick itself performs **no hangar assault pass**.
+ *   The massed counter-attack is instead resolved separately by
+ *   {@link resolveHangarAssault} when the ring's final hex is captured (the
+ *   deferred wiring, `AH-0MVUVL2O2006W4QK`); this module owns the arithmetic,
+ *   not the trigger.
  * - The attacking force comes from the **origin's** aggression, and the
  *   **target's** aggression multiplies it, so both ends of the border matter.
  * - Ties between equally aggressive neighbours, and the choice of which held
@@ -794,6 +808,138 @@ export function resolveDefence(
     outcome: margin >= 0 ? 'held' : 'fell',
     defenderRating,
     attackingForce,
+    aggression,
+    aggressionMultiplierPercent,
+    jitterPercent,
+    attackStrength,
+    margin,
+  };
+}
+
+/** The two outcomes of an algorithmic hangar assault. */
+export type AssaultOutcome = 'repelled' | 'fell';
+
+/**
+ * The stored numbers a hangar assault is decided from — nothing else is
+ * consulted.
+ *
+ * Mirrors {@link DefenceInput}: the defender side is the **sum of the held
+ * ring hexes' defender ratings**, the attacker side is the **base massed
+ * force** derived from the ring's stored numbers ({@link massedAssaultBase}),
+ * and the ring's frontier aggression scales it exactly as a hex's aggression
+ * scales a defence attack. The resolver never sees a payload, a scene or a
+ * battle — only the four numbers the design names, so the same replay rule
+ * that pins a hex defence pins the assault.
+ */
+export interface HangarAssaultInput {
+  /** Sum of the held ring hexes' defending bot ratings (stored numbers only). */
+  readonly defenderSum: number;
+  /** The base massed force, derived from the ring's stored numbers. */
+  readonly attackerBase: number;
+  /** The ring's frontier aggression (the assault multiplier's driver). */
+  readonly aggression: number;
+  /** Deterministic seed for the bounded jitter draw. */
+  readonly seed: number;
+}
+
+/**
+ * A completed hangar assault: the outcome **and** every number behind it.
+ *
+ * Mirrors {@link DefenceResolution} — this is the record the defence report
+ * renders when the ring's final hex is captured, so it never has to re-derive
+ * a figure the resolver already computed (the reporting slice reads these
+ * fields as-is).
+ */
+export interface HangarAssaultResolution {
+  /** `repelled` when the hangar matched or beat the assault, else `fell`. */
+  readonly outcome: AssaultOutcome;
+  /** The held-ring defender sum used (normalised non-negative integer). */
+  readonly defenderSum: number;
+  /** The base massed force used, before aggression and jitter. */
+  readonly attackerBase: number;
+  /** The ring aggression used (normalised non-negative integer). */
+  readonly aggression: number;
+  /** The aggression multiplier applied, in percent (`100` = neutral). */
+  readonly aggressionMultiplierPercent: number;
+  /** The bounded seeded jitter applied, in percent (`0` = none). */
+  readonly jitterPercent: number;
+  /** The force actually faced, after aggression and jitter. */
+  readonly attackStrength: number;
+  /** `defenderSum − attackStrength` (negative exactly when the hangar fell). */
+  readonly margin: number;
+}
+
+/**
+ * The base massed force the frontier presses the hangar with.
+ *
+ * Derived from the ring's **stored numbers only**: the sum of its hexes'
+ * current frontier aggression (the producer Q2 answer A "sum of ring hex
+ * aggression" option). The whole frontier is the mass that presses the
+ * hangar, so a risen ring presses harder than a quiet one and no player
+ * strength is consulted — the defender already brings the fleet; the assault
+ * is the frontier's own stored pressure. The capture-cycle gate feeds this
+ * base, the held-ring defender sum, a ring aggression figure and the war seed
+ * into {@link resolveHangarAssault}.
+ *
+ * Total: a hex with a negative, fractional or non-finite aggression collapses
+ * to `0`, so a corrupt payload can never throw inside an assault pass.
+ *
+ * @param ring — the fully held ring being assaulted.
+ * @returns the frontier's base massed force.
+ */
+export function massedAssaultBase(ring: HexRingState): number {
+  return ring.hexes.reduce((sum, hex) => sum + toCount(hex.aggression), 0);
+}
+
+/**
+ * Resolves the hangar assault from stored numbers — the ring-end counterpart
+ * to {@link resolveDefence}.
+ *
+ * The arithmetic is **exactly** the hex resolver's: the base massed force is
+ * scaled by the ring's aggression (`100 + aggressionPercentPerPoint ×
+ * aggression` percent), jittered by the same bounded seeded draw, and compared
+ * against the held-ring defender sum. **A tie holds the line** (`margin: 0`
+ * repels) and the hangar falls only when the assault *beats* the stored
+ * defence. Deterministic for a given `{ defenderSum, attackerBase, aggression,
+ * seed }` — the only randomness is the seeded jitter, drawn from the same
+ * stream as `resolveDefence`; the input is never mutated and nothing outside
+ * the four numbers is consulted ("no simulated battle" here too).
+ *
+ * @param input — the stored numbers the assault is decided from.
+ * @param tuning — balance knobs (defaults to {@link DEFAULT_FRONTIER_TUNING}).
+ * @returns the outcome and every number behind it.
+ */
+export function resolveHangarAssault(
+  input: HangarAssaultInput,
+  tuning: FrontierTuning = DEFAULT_FRONTIER_TUNING,
+): HangarAssaultResolution {
+  const rules = normaliseTuning(tuning);
+  const defenderSum = toCount(input.defenderSum);
+  const attackerBase = toCount(input.attackerBase);
+  const aggression = toCount(input.aggression);
+
+  const aggressionMultiplierPercent =
+    AGGRESSION_MULTIPLIER_BASE_PERCENT +
+    rules.aggressionPercentPerPoint * aggression;
+
+  const jitterPercent =
+    rules.jitterPercent === 0
+      ? 0
+      : createHangarWarRng(input.seed).nextInt(2 * rules.jitterPercent + 1) -
+        rules.jitterPercent;
+
+  const attackStrength = Math.round(
+    (attackerBase *
+      aggressionMultiplierPercent *
+      (AGGRESSION_MULTIPLIER_BASE_PERCENT + jitterPercent)) /
+      (AGGRESSION_MULTIPLIER_BASE_PERCENT * AGGRESSION_MULTIPLIER_BASE_PERCENT),
+  );
+  const margin = defenderSum - attackStrength;
+
+  return {
+    outcome: margin >= 0 ? 'repelled' : 'fell',
+    defenderSum,
+    attackerBase,
     aggression,
     aggressionMultiplierPercent,
     jitterPercent,

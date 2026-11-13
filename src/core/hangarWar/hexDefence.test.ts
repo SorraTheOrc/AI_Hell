@@ -13,6 +13,10 @@
  *   attacker origin and its queued (`pendingAttacks`) resolutions;
  * - replay determinism — the same payload, seed and clock reproduce every hold
  *   and fall;
+ * - the hangar assault resolver (AH-0MWEZZ4U70069RC6): repel/fall/tie from the
+ *   stored defender sum vs the massed force, the massed-force derivation from
+ *   the ring's stored aggressions, the shared seeded jitter stream, replay
+ *   determinism and totality on corrupt inputs;
  * - the deferred-scope guarantee (producer decision Q2 = a): a secured ring has
  *   no neighbour to be attacked from, so a tick reports **no** attacks and there
  *   is no hangar-defence pass.
@@ -33,8 +37,10 @@ import {
   createFrontierClock,
   frontierClockFor,
   authoredRingBaseMass,
+  massedAssaultBase,
   redistributeAggression,
   resolveDefence,
+  resolveHangarAssault,
   ringAggressionBudget,
   runFrontierTick,
   type FrontierTuning,
@@ -251,6 +257,213 @@ describe('resolveDefence', () => {
 
     expect(first).toEqual(second);
     expect(input).toEqual(before);
+  });
+});
+
+describe('resolveHangarAssault', () => {
+  it.each([
+    {
+      name: 'the held ring ahead repels the massed assault',
+      defenderSum: 12,
+      attackerBase: 5,
+      aggression: 0,
+      outcome: 'repelled' as const,
+      attackStrength: 5,
+      margin: 7,
+    },
+    {
+      name: 'a heavier massed force breaks the hangar',
+      defenderSum: 3,
+      attackerBase: 5,
+      aggression: 0,
+      outcome: 'fell' as const,
+      attackStrength: 5,
+      margin: -2,
+    },
+    {
+      name: 'an exact tie holds the line (margin 0 repels)',
+      defenderSum: 5,
+      attackerBase: 5,
+      aggression: 0,
+      outcome: 'repelled' as const,
+      attackStrength: 5,
+      margin: 0,
+    },
+  ])('$name', ({ defenderSum, attackerBase, aggression, outcome, attackStrength, margin }) => {
+    const resolution = resolveHangarAssault(
+      { defenderSum, attackerBase, aggression, seed: 1 },
+      NO_JITTER,
+    );
+
+    expect(resolution.outcome).toBe(outcome);
+    expect(resolution.attackStrength).toBe(attackStrength);
+    expect(resolution.margin).toBe(margin);
+    expect(resolution.aggressionMultiplierPercent).toBe(100);
+    expect(resolution.jitterPercent).toBe(0);
+  });
+
+  it('scales the massed force by the ring aggression, and never weakens it', () => {
+    const strengths = [0, 1, 2, 3, 4, 6].map((aggression) => {
+      const resolution = resolveHangarAssault(
+        { defenderSum: 0, attackerBase: 4, aggression, seed: 1 },
+        NO_JITTER,
+      );
+      expect(resolution.aggressionMultiplierPercent).toBe(100 + 15 * aggression);
+      return resolution.attackStrength;
+    });
+
+    // The exact hex-resolver figures: a risen ring presses harder.
+    expect(strengths).toEqual([4, 5, 5, 6, 6, 8]);
+  });
+
+  it('turns a repel into a fall as the ring aggression rises (outmatched)', () => {
+    const atRest = resolveHangarAssault(
+      { defenderSum: 5, attackerBase: 4, aggression: 0, seed: 7 },
+      NO_JITTER,
+    );
+    const risen = resolveHangarAssault(
+      { defenderSum: 5, attackerBase: 4, aggression: 3, seed: 7 },
+      NO_JITTER,
+    );
+
+    expect(atRest.outcome).toBe('repelled');
+    expect(atRest.margin).toBe(1);
+    expect(risen.outcome).toBe('fell');
+    expect(risen.margin).toBe(-1);
+    expect(risen.attackStrength).toBeGreaterThan(atRest.attackStrength);
+  });
+
+  it('uses the same bounded seeded jitter stream as the hex resolver', () => {
+    const input = {
+      defenderSum: 10,
+      attackerBase: 8,
+      aggression: 2,
+      seed: 1234,
+    };
+    const defence = resolveDefence(
+      { defenderRating: input.defenderSum, attackingForce: input.attackerBase, aggression: 2, seed: 1234 },
+    );
+    const assault = resolveHangarAssault(input);
+
+    // The same seed, the same draw: the assault reuses the hex resolver's
+    // bounded (±10 %) jitter stream bit-for-bit.
+    expect(assault.jitterPercent).toBe(defence.jitterPercent);
+    expect(assault.attackStrength).toBe(defence.attackStrength);
+  });
+
+  it('draws jitter within its documented ±10 % bounds, deterministically per seed', () => {
+    const bounds = DEFAULT_FRONTIER_TUNING.jitterPercent;
+    const jitters = new Set<number>();
+
+    for (let seed = 0; seed < 200; seed += 1) {
+      const input = { defenderSum: 10, attackerBase: 10, aggression: 0, seed };
+      const resolution = resolveHangarAssault(input);
+
+      expect(resolution.jitterPercent).toBeGreaterThanOrEqual(-bounds);
+      expect(resolution.jitterPercent).toBeLessThanOrEqual(bounds);
+      // ±10 % of an unscaled massed force of 10 can only reach 9…11.
+      expect(resolution.attackStrength).toBeGreaterThanOrEqual(9);
+      expect(resolution.attackStrength).toBeLessThanOrEqual(11);
+      // Same seed, same numbers, same resolution (a replay is exact).
+      expect(resolveHangarAssault(input)).toEqual(resolution);
+      jitters.add(resolution.jitterPercent);
+    }
+
+    // The draw is jitter, not a constant: different seeds must differ.
+    expect(jitters.size).toBeGreaterThan(1);
+  });
+
+  it('is a pure function of the four stored numbers (no battle state)', () => {
+    const input = { defenderSum: 7, attackerBase: 6, aggression: 2, seed: 99 };
+    const before = { ...input };
+
+    const first = resolveHangarAssault(input);
+    const second = resolveHangarAssault({ ...input });
+
+    expect(first).toEqual(second);
+    expect(input).toEqual(before);
+  });
+
+  it('is total on corrupt numbers: negative, fractional and non-finite collapse to 0, never throwing', () => {
+    const corrupt = [
+      { defenderSum: Number.NaN, attackerBase: 8, aggression: 1, seed: 5 },
+      { defenderSum: -3, attackerBase: 8, aggression: 1, seed: 5 },
+      { defenderSum: 2.9, attackerBase: 8, aggression: 1, seed: 5 },
+      { defenderSum: 8, attackerBase: Number.POSITIVE_INFINITY, aggression: 1, seed: 5 },
+      { defenderSum: 8, attackerBase: -6, aggression: -2, seed: 5 },
+      { defenderSum: 8, attackerBase: 2, aggression: Number.NaN, seed: Number.NaN },
+    ];
+    for (const input of corrupt) {
+      const resolution = resolveHangarAssault(input);
+      // Every figure collapses to a whole, non-negative number — never a throw.
+      expect(resolution.defenderSum).toBeGreaterThanOrEqual(0);
+      expect(resolution.attackerBase).toBeGreaterThanOrEqual(0);
+      expect(resolution.aggression).toBeGreaterThanOrEqual(0);
+      expect(Number.isFinite(resolution.attackStrength)).toBe(true);
+      expect(['repelled', 'fell']).toContain(resolution.outcome);
+      expect(resolution.margin).toBe(resolution.defenderSum - resolution.attackStrength);
+    }
+  });
+});
+
+describe('massedAssaultBase — the massed-force derivation from stored ring numbers', () => {
+  it('sums the ring hexes\' stored aggressions (Q2 answer A: sum of ring hex aggression)', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id, index) => setAggression(hexes, id, index + 1));
+
+    expect(massedAssaultBase({ ringIndex: 1, hexes })).toBe(1 + 2 + 3 + 4 + 5 + 6);
+  });
+
+  it('derives from stored aggression alone — hold state and defender ratings never matter', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id) => setAggression(hexes, id, 2));
+    const unheldBase = massedAssaultBase({ ringIndex: 1, hexes });
+
+    hold(hexes, RING_ONE_IDS[0], 50);
+    hold(hexes, RING_ONE_IDS[1], 9);
+
+    expect(massedAssaultBase({ ringIndex: 1, hexes })).toBe(unheldBase);
+  });
+
+  it('is total on corrupt hex aggressions (each collapses to 0)', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id, index) =>
+      setAggression(hexes, id, index % 2 === 0 ? Number.NaN : -1),
+    );
+
+    expect(massedAssaultBase({ ringIndex: 1, hexes })).toBe(0);
+  });
+
+  it('feeds a derived base into the resolver: the ring repels a quiet frontier and falls to a risen one', () => {
+    // Every hex held and defended by the basic hull (rating 2) — 6 hexes.
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id) => hold(hexes, id, 2));
+    const ring = { ringIndex: 1, hexes };
+    const defenderSum = hexes.reduce(
+      (sum, hex) => sum + (hex.defender?.defenceRating ?? 0),
+      0,
+    );
+    RING_ONE_IDS.forEach((id) => setAggression(hexes, id, 0));
+
+    const quiet = resolveHangarAssault(
+      { defenderSum, attackerBase: massedAssaultBase(ring), aggression: 0, seed: 42 },
+      NO_JITTER,
+    );
+    expect(quiet.outcome).toBe('repelled');
+    expect(quiet.attackerBase).toBe(0);
+    expect(quiet.margin).toBe(defenderSum);
+
+    RING_ONE_IDS.forEach((id) => setAggression(hexes, id, 3));
+    const risen = resolveHangarAssault(
+      { defenderSum, attackerBase: massedAssaultBase(ring), aggression: 3, seed: 42 },
+      NO_JITTER,
+    );
+    expect(risen.attackerBase).toBe(18);
+    expect(risen.aggressionMultiplierPercent).toBe(145);
+    // round(18 × 145 × 100 / 10000) = round(26.1) = 26 > 12 held ratings.
+    expect(risen.attackStrength).toBe(26);
+    expect(risen.outcome).toBe('fell');
+    expect(risen.margin).toBe(12 - 26);
   });
 });
 
