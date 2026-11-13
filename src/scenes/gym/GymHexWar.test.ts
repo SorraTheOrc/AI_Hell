@@ -41,6 +41,12 @@ import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
 import { RING_1_HEX_FIXTURES, RING_2_HEX_FIXTURES } from '../../core/hangarWar/__fixtures__/ringFixtures';
 import {
+  loadHangarWarPayload,
+  saveHangarWarPayload,
+} from '../../core/hangarWar/hangarWarStore';
+import { createInMemoryHangarWarStorage } from '../../core/hangarWar/storage';
+import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
+import {
   DEFAULT_FRONTIER_TUNING,
   frontierClockFor,
   resolveHangarAssault,
@@ -868,4 +874,131 @@ describe('GymHexWar', () => {
     expect(['deploy', 'openHangar']).toContain(action.kind);
   });
 
+});
+
+/**
+ * The special mission in the gym (`AH-0MWF0CSSI007P414`, post-MVP Hangar War
+ * AH-0MVWZYIWX0008C55 AC5).
+ *
+ * Gym↔game parity means the special mission cannot be exercised by a gym-local
+ * copy: the gym renders the shipped map model (so the reward is visible in the
+ * detail panel *before* the player commits) and resolves the capture through
+ * the shipped capture cycle (so the reward lands in the hangar's owned sets
+ * exactly as it does in the game). The rotation is the shared seeded resolver,
+ * so a gym run replays the sequence the game would for the same save.
+ */
+describe('GymHexWar — the special mission (AH-0MWF0CSSI007P414)', () => {
+  let booted: BootedGame | null = null;
+
+  async function bootHexWar(data?: object): Promise<GymHexWar> {
+    booted = await reuse.boot([GymHexWar]);
+    booted.game.scene.start(GYM_HEX_WAR_SCENE_KEY, data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene(GYM_HEX_WAR_SCENE_KEY) as GymHexWar;
+  }
+
+  /** The ring-2 fixture payload at a fixed seed (the special mission lives here). */
+  function specialRingTwoPayload(seed = 0x5eed_3c4b): HangarWarPayload {
+    return { ...ringTwoPayload(), seed };
+  }
+
+  it('publishes the authored ring-2 special mission and its reward', async () => {
+    const scene = await bootHexWar({ payload: specialRingTwoPayload() });
+
+    const model = scene.getMapModel()!;
+    expect(model.specialOffer?.hexId).toBe('hex-r2-3');
+    expect(scene.getSpecialOffer()?.reward.hull.name).toBe('Juggernaut Hull');
+    expect(scene.getSpecialOffer()?.reward.bonusStartingLives).toBeGreaterThan(0);
+    // The reward is known ahead: the hex is not held and nothing was captured.
+    expect(scene.getPayload().hangar.unlockedHulls).not.toContain('hull-3');
+  });
+
+  it('shows the reward in the detail panel before any capture', async () => {
+    // Ring 1 is always revealed, so its tiles are focusable; marking its first
+    // hex special (granting the same hull) exercises the shipped panel.
+    const definitions = HEX_RING_DEFINITIONS.filter(
+      (definition) => definition.ringIndex === 1,
+    ).map((definition, index) =>
+      index === 0
+        ? { ...definition, grants: 'hull-3', isSpecialMission: true }
+        : definition,
+    );
+    const scene = await bootHexWar({
+      payload: sixHexPayload(),
+      definitions,
+    });
+    const specialHexId = definitions[0].id;
+
+    expect(scene.getSpecialOffer()?.hexId).toBe(specialHexId);
+    // Focusing the special hex shows its full offer in the shipped panel.
+    expect(scene.focusMapRow(`hex:${specialHexId}`)).toBe(true);
+    const panel = scene.getMapPanelText();
+    expect(panel).toContain('SPECIAL MISSION');
+    expect(panel).toContain('Juggernaut Hull');
+    expect(panel).toContain('OFFERED THIS SORTIE');
+  });
+
+  it('grants the extra-hit-points hull when the special mission is captured', async () => {
+    const scene = await bootHexWar({ payload: specialRingTwoPayload() });
+
+    const result = scene.captureHex('hex-r2-3', 'hull-1');
+
+    expect(result.ok).toBe(true);
+    expect(result.specialReward?.hullId).toBe('hull-3');
+    // The ship lands in the hangar the gym renders (same owned set as the game).
+    expect(scene.getPayload().hangar.unlockedHulls).toContain('hull-3');
+    expect(scene.getLastCapture()?.specialReward?.hullId).toBe('hull-3');
+    // ... and the map stops offering it, because it is now captured.
+    expect(scene.getSpecialOffer()).toBeNull();
+    expect(scene.getMapModel()!.specialOffer).toBeNull();
+  });
+
+  it('rotates the offer deterministically as the gym ticks', async () => {
+    // Two authored special missions: the shipped rings author one, and a
+    // rotation over a single candidate is unobservable.
+    const definitions = HEX_RING_DEFINITIONS.filter(
+      (definition) => definition.ringIndex === 1,
+    ).map((definition, index) => ({
+      ...definition,
+      isSpecialMission: index < 2,
+      grants: index === 0 ? 'hull-2' : index === 1 ? 'hull-3' : definition.grants,
+    }));
+
+    const sequence = async (seed: number): Promise<(string | null)[]> => {
+      const scene = await bootHexWar({
+        payload: { ...sixHexPayload(), seed },
+        definitions,
+      });
+      const offers = [scene.getSpecialOffer()?.hexId ?? null];
+      for (let i = 0; i < 4; i += 1) {
+        scene.tick(1);
+        offers.push(scene.getSpecialOffer()?.hexId ?? null);
+      }
+      return offers;
+    };
+
+    const first = await sequence(4242);
+    const replay = await sequence(4242);
+
+    // Same gym seed → the same rotation, tick for tick.
+    expect(replay).toEqual(first);
+    // ... and the offer really does move between sorties.
+    expect(new Set(first).size).toBeGreaterThan(1);
+    // Every offered hex is an authored special mission.
+    const specialIds: string[] = definitions
+      .filter((definition) => definition.isSpecialMission)
+      .map((definition) => definition.id);
+    expect(first.every((id) => id === null || specialIds.includes(id))).toBe(true);
+  });
+
+  it('persists the granted hull through the store for the hangar gym', async () => {
+    const scene = await bootHexWar({ payload: specialRingTwoPayload() });
+    scene.captureHex('hex-r2-3', 'hull-1');
+
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(scene.getPayload(), storage);
+    const loaded = loadHangarWarPayload(storage);
+
+    expect(loaded?.hangar.unlockedHulls).toContain('hull-3');
+  });
 });

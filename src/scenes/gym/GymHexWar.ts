@@ -55,6 +55,25 @@
  * gym-local re-derivation. The banner adds no action, so the read-only gym (and
  * the attract/capture traversal of it) cannot stall on it.
  *
+
+ * ## The special mission (`AH-0MWF0CSSI007P414`)
+ *
+ * The post-MVP ring authors a **special-mission hex** whose one-level capture
+ * pays a hull with extra hit points (AH-0MVWZYIWX0008C55). This gym exercises
+ * that end to end with the shipped code and no divergent copy:
+ *
+ * - the map's own model publishes the offer (`getSpecialOffer`,
+ *   `buildHexMapModel(...).specialOffer`), so the focused hex's **detail panel
+ *   shows the reward before any capture** — the same known-ahead surface the
+ *   game's map renders;
+ * - {@link GymHexWar.captureHex} delegates to the shipped `resolveHexCapture`,
+ *   so completing the special mission grants the hull into `unlockedHulls` and
+ *   reports the reward exactly as the game's boss-victory path does;
+ * - the rotation between sorties is the shared seeded resolver
+ *   (`specialMissionOfferFor`), read from the payload's own seed and sortie
+ *   counter, so a gym run replays the same sequence as the game for the same
+ *   save.
+ *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention and
  * watchable by the capture tooling (`WATCHABLE_GYM_SCENE_KEYS`).
  *
@@ -92,6 +111,20 @@ import {
 } from '../../core/hangarWar/defenceReport';
 import { resolveRingAssault } from '../../core/hangarWar/captureCycle';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
+import {
+  bankedSalvageFromHangar,
+  runSalvageFromRun,
+  type RunSalvage,
+} from '../../core/hangarWar/salvageBanking';
+import {
+  resolveHexCapture,
+  type HexCaptureResult,
+} from '../../core/hangarWar/captureCycle';
+import {
+  specialMissionOfferFor,
+  type SpecialMissionOffer,
+} from '../../core/hangarWar/specialMission';
+import type { HexRingDefinition } from '../../core/hangarWar/hexRing';
 import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
 import {
   addBackToIndexButton,
@@ -130,6 +163,20 @@ export const GYM_HEX_WAR_HINT =
  */
 export const GYM_HEX_WAR_DEFAULT_SEED = 0x5eed_3c4b;
 
+/**
+ * The salvage a gym capture banks when the caller supplies none.
+ *
+ * A gym run has no live run economy, so the control surface resolves a capture
+ * with **zero** earned salvage: the hangar/ring transition under test is the
+ * reward, never an invented balance.
+ */
+const GYM_CAPTURE_SALVAGE: RunSalvage = runSalvageFromRun({
+  runId: 'gym-hex-war',
+  checkpointId: 'boss-victory',
+  minerals: 0,
+  cores: 0,
+});
+
 /** Launch data accepted by {@link GymHexWar}. */
 export interface GymHexWarData extends SceneSetupState {
   /** Payload to render and drive (read-only: the scene works on a copy). */
@@ -144,6 +191,13 @@ export interface GymHexWarData extends SceneSetupState {
    * surface drives the same resolver over this payload.
    */
   assault?: HangarAssaultResolution | null;
+  /**
+   * Authored ring definitions to drive (defaults to the shipped table for the
+   * payload's ring). A harness may inject more than one special-mission hex,
+   * which is the only way to observe a rotation the shipped rings author as a
+   * single mission.
+   */
+  definitions?: readonly HexRingDefinition[];
 }
 
 /** One applied frontier tick, as reported by the control surface. */
@@ -282,6 +336,10 @@ export class GymHexWar extends Phaser.Scene {
   private setup: SceneSetupState | null = null;
   /** The shared map render (rebuilt when the control surface changes it). */
   private view: HexMapView | null = null;
+  /** Authored ring definitions driven (shipped table, or a harness override). */
+  private definitions: readonly HexRingDefinition[] = hexRingDefinitionsFor(1);
+  /** The last capture the control surface resolved, or `null` before one. */
+  private lastCapture: HexCaptureResult | null = null;
 
   /**
    * The shipped between-sortie record the current map view draws (the same
@@ -316,6 +374,9 @@ export class GymHexWar extends Phaser.Scene {
       : createSampleHexWarPayload(seed ?? GYM_HEX_WAR_DEFAULT_SEED, ringIndex);
     this.clock = createFakeFrontierClock(this.payload.seed);
     this.assault = cloneAssault(data?.assault ?? null);
+    this.definitions =
+      data?.definitions ?? hexRingDefinitionsFor(this.payload.ring.ringIndex);
+    this.lastCapture = null;
   }
 
   create(): void {
@@ -368,7 +429,7 @@ export class GymHexWar extends Phaser.Scene {
     const record = this.shippedTickRecord();
     this.record = record;
     const model = buildHexMapModel(this.payload, {
-      definitions: hexRingDefinitionsFor(this.payload.ring.ringIndex),
+      definitions: this.definitions,
       record,
       assault: this.assault,
     });
@@ -545,6 +606,59 @@ export class GymHexWar extends Phaser.Scene {
   }
 
   /**
+   * Completes a hex's deployment (control surface: capture the hex).
+   *
+   * Delegates to the **shipped** capture cycle (`resolveHexCapture`), so the
+   * gym resolves a win exactly as the game's boss-victory path does: banked
+   * salvage, the authored grant into the hangar's owned sets (the special
+   * mission's hull included), the left defending bot and the ring transition.
+   * The scene owns no capture rule.
+   *
+   * @param hexId — the hex whose boss was beaten.
+   * @param hullId — the hull left defending it (`null` = no defender → refusal).
+   * @param salvage — the run's earned salvage (defaults to zero in the gym).
+   * @returns the shipped capture result (the scene also drives its payload).
+   */
+  captureHex(
+    hexId: string,
+    hullId: string | null,
+    salvage: RunSalvage = GYM_CAPTURE_SALVAGE,
+  ): HexCaptureResult {
+    const result = resolveHexCapture(this.payload, {
+      hexId,
+      defenderHullId: hullId,
+      salvage,
+      definitions: this.definitions,
+      banked: bankedSalvageFromHangar(this.payload.hangar),
+    });
+    // The game writes the next payload even when a hex could not be held (a
+    // victory always extracts its salvage), so the gym mirrors it exactly.
+    this.payload = result.payload;
+    this.lastCapture = result;
+    this.renderMap();
+    return result;
+  }
+
+  /** The last capture resolved by {@link captureHex}, or `null` before one. */
+  getLastCapture(): HexCaptureResult | null {
+    return this.lastCapture;
+  }
+
+  /** The ring definitions the gym drives (shipped, or a harness override). */
+  getDefinitions(): readonly HexRingDefinition[] {
+    return [...this.definitions];
+  }
+
+  /**
+   * The special mission the rotation offers this sortie, or `null` when the
+   * ring offers none — the shared resolver's answer for this payload's own
+   * seed and sortie counter, so the gym and the game cannot disagree.
+   */
+  getSpecialOffer(): SpecialMissionOffer | null {
+    return specialMissionOfferFor(this.payload, this.definitions);
+  }
+
+  /**
    * Runs `ticks` deterministic frontier ticks (control surface: tick → holds or
    * falls). The transition is the pure harness stand-in, so the scene owns no
    * resolver logic. The map re-renders after the ticks, so the integrated view
@@ -560,6 +674,12 @@ export class GymHexWar extends Phaser.Scene {
     for (let i = 0; i < step; i += 1) {
       const applied = applyFakeFrontierTick(this.payload, this.clock);
       this.payload = applied.payload;
+      // The shipped between-sortie tick advances the payload's own sortie
+      // counter (`frontierTick`); the harness double carries no payload
+      // bookkeeping, so the gym applies the same one-per-tick increment. A
+      // ticked gym therefore rotates its special-mission offer exactly as a
+      // ticked war does (AH-0MWF0CSSI007P414).
+      this.payload.frontierTick = (this.payload.frontierTick ?? 0) + 1;
       this.clock = applied.clock;
 
       const attackedHexId = applied.event.attack?.hexId ?? null;
