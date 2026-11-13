@@ -23,6 +23,22 @@
  * {@link buildArenaCampaign}, and the difficulty comes from the shipped
  * `difficulty-curves.csv`.
  *
+ * **The income view (AH-0MWCOWTOR00994NA) plays the shipped sortie.** The game
+ * now ships a hex deployment as the aggression-selected level's **five-wave
+ * sortie** (four regular waves plus the wave-5 mini-boss,
+ * `truncateCampaignForDeployment` / `DEPLOYMENT_WAVE_COUNT`,
+ * AH-0MWDCBVQ700579WS), so per-deployment income is measured with
+ * {@link createOneLevelArenaDeploymentRunner} — the same flow through
+ * {@link runArena}, with the single truncated level as the arena's campaign.
+ * A captured sortie banks exactly **one core** plus the minerals held at its
+ * mini-boss checkpoint (`src/core/hangarWar/captureCycle.ts` /
+ * `src/core/hangarWar/salvageBanking.ts`), which the reporter derives as
+ * {@link derivePerDeploymentIncome} and {@link deriveUnlockPace}. The
+ * campaign-slice runner ({@link createArenaDeploymentRunner}) stays the
+ * shipped default for the duration model; re-pointing it is the
+ * ring-timing chain's item (AH-0MWCOWSVN003X81A), and the two chains share
+ * the income numbers rather than forking a second harness.
+ *
  * Around the measured deployments the harness models the parts of a real
  * session the arena cannot see, and states every one of them as an explicit
  * default:
@@ -121,6 +137,16 @@
  * `ringTiming.test.ts` pins it. A deployment's **captured/lost** verdict is
  * that signal, and the modelled retry allowance covers the player's
  * persistence.
+ *
+ * The **one-level income runner** adds one boundary of its own
+ * (AH-0MWCOWTOR00994NA): a sortie the bot can neither wipe (no
+ * `level_cleared`/boss trigger) nor die within the 300 s deployment window is
+ * recorded as a **loss** — the same tick-cap safety bound the pre-change
+ * harness used, not a new rule. `captured` for that runner means the sortie's
+ * mini-boss was wiped (the arena's `won` in full-campaign mode), so exactly
+ * one core is banked per capture; a window-survival "capture" is exact only
+ * for the one-level runner, and the campaign-slice runner's core view is the
+ * same field read as a model approximation.
  * The campaign segment is measured from each ring's **authored base
  * aggressions** (the numbers the map publishes); the frontier's between-sortie
  * rise is a separate risk mechanic (B3/B6), and {@link
@@ -136,15 +162,21 @@ import { hexDifficultyProfile } from '../../core/hangarWar/hexDifficulty';
 import { generateRing, type HexRingDefinition } from '../../core/hangarWar/hexRing';
 import { resolveHexGrant } from '../../core/hangarWar/captureCycle';
 import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
-import { findHangarEntry } from '../../core/hangarWar/hangarEconomy';
+import {
+  CORE_MINERAL_EQUIVALENT,
+  findHangarEntry,
+} from '../../core/hangarWar/hangarEconomy';
 import {
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
   type HangarEntry,
+  type HangarPrice,
   type HullDefinition,
 } from '../../data/hangarCatalogue';
 import { capDropIdsToSlotPool } from '../../powerups/slots';
 import type { WeaponId } from '../../utils/weapons';
+import { truncateCampaignForDeployment } from '../../scenes/hangarWar/hangarDeployment';
+import type { LevelDefinition } from '../../waves/Formations';
 import { buildArenaCampaign, campaignFromLevel, runArena } from './arena';
 import { loadBalanceConfig } from './balanceConfig';
 import { resolvePolicyFactory } from './policies';
@@ -370,7 +402,11 @@ export interface RingTimingDeployment {
   readonly level: number;
   /** Measured arena duration, seconds. */
   readonly seconds: number;
-  /** Whether the run survived its deployment window (the hex was taken). */
+  /**
+   * Whether the hex was taken. The campaign-slice runner counts a run that
+   * survived its deployment window (or won outright); the one-level income
+   * runner counts exactly the sortie's mini-boss being wiped (`won`).
+   */
   readonly captured: boolean;
   /** Minerals the run collected (banked only when captured). */
   readonly minerals: number;
@@ -421,6 +457,14 @@ export interface RingTimingRun {
   readonly salvageBanked: number;
   /** Minerals forfeited by lost deployments. */
   readonly salvageForfeited: number;
+  /**
+   * Cores banked by captured deployments — one core per defeated mini-boss
+   * checkpoint. A captured **one-level** deployment defeated exactly its one
+   * mini-boss, so `salvageCores` equals `captured` precisely for the income
+   * view; the campaign-slice runner reads the same field as a model
+   * approximation (its `captured` includes window survival).
+   */
+  readonly salvageCores: number;
   /** Whether the line captured every hex of the ring. */
   readonly ringSecured: boolean;
 }
@@ -469,6 +513,8 @@ export interface RingTimingSummary {
   readonly expectedLosses: RingTimingStats;
   /** Banked salvage (minerals). */
   readonly salvageBanked: RingTimingStats;
+  /** Banked mini-boss cores (one per captured deployment). */
+  readonly salvageCores: RingTimingStats;
   /** Captured deployments. */
   readonly captured: RingTimingStats;
   /** Seeds whose line secured the ring. */
@@ -819,6 +865,92 @@ export function createArenaDeploymentRunner(options?: {
 }
 
 /**
+ * The **one-level income runner** — plays the shipped five-wave sortie
+ * (AH-0MWCOWTOR00994NA).
+ *
+ * The shipped hex deployment (AH-0MWDCBVQ700579WS) is the aggression-selected
+ * level's **first five waves** — four regular waves plus the wave-5 mini-boss
+ * (`truncateCampaignForDeployment` / {@link DEPLOYMENT_WAVE_COUNT}) — so this
+ * runner plays exactly that: the same campaign the game truncates
+ * ({@link buildArenaCampaign} through {@link campaignFromLevel}), truncated
+ * with the game's own pure helper, and one level handed to {@link runArena}
+ * in full-campaign mode via {@link ArenaConfig.campaignLevels}. Nothing in
+ * `arena.ts` changes and {@link createArenaDeploymentRunner} (the campaign
+ * slice) stays the shipped default — the ring-timing chain owns re-pointing
+ * it (AH-0MWCOWSVN003X81A), and the chains share these income numbers.
+ *
+ * A sortie **captured** means its mini-boss was wiped: with a single level
+ * as the campaign, the shared `WaveManager` fires `level_cleared` and the
+ * boss trigger ends the run (`won`), so `captured === result.won` and the
+ * banked minerals are exactly what the ship held at that checkpoint. A
+ * sortie the bot neither wipes nor dies within the deployment window (the
+ * tick-cap safety bound) counts as a loss — the same bound the pre-change
+ * harness used.
+ *
+ * @param options.policy — bot policy (default the shipped `competent` brain).
+ * @returns a runner that plays the five-wave sortie and reports its measured run.
+ */
+export function createOneLevelArenaDeploymentRunner(options?: {
+  readonly policy?: PolicyFactory;
+}): RingDeploymentRunner {
+  const policy = options?.policy ?? resolvePolicyFactory('competent');
+  // Campaigns are built once per seed and cached for the lifetime of the
+  // runner (the same caching the slice runner uses); the sortie is truncated
+  // **per request** from the request's level — a seed plays different sortie
+  // levels across a ring (e.g. ring 2: levels 3–9), so the sortie can never
+  // be cached by seed alone.
+  const campaigns = new Map<number, readonly LevelDefinition[]>();
+  return (request) => {
+    let campaign = campaigns.get(request.seed);
+    if (campaign === undefined) {
+      campaign = buildArenaCampaign(request.seed, request.balance);
+      campaigns.set(request.seed, campaign);
+    }
+    // The shipped sortie: the aggression-selected level's first five waves
+    // (four regular + the wave-5 mini-boss), truncated with the game's own
+    // pure helper (AH-0MWDCBVQ700579WS).
+    const slice = truncateCampaignForDeployment(
+      campaignFromLevel(campaign, request.level),
+    );
+    const sortie = slice[0] ?? null;
+    // An empty campaign (impossible for the shipped data) reports a loss.
+    if (sortie === null) {
+      return { seconds: 0, captured: false, minerals: 0, hits: 0 };
+    }
+    const result = runArena(policy.create(), {
+      seed: request.seed,
+      ticks: request.ticks,
+      dt: request.dt,
+      campaign: true,
+      campaignLevels: [sortie],
+      // Only the duration and the events matter, so one state sample per run
+      // keeps the telemetry small and the harness fast.
+      sampleEveryTicks: request.ticks,
+      balance: request.balance,
+      // The launch loadout the model resolved (AH-0MW9QA2YC009PSF5).
+      startingLoadout: {
+        lives: request.loadout.lives,
+        speedMultiplier: request.loadout.speedMultiplier,
+        weapons: request.loadout.weapons.map((weapon) => ({
+          id: weapon.id,
+          ownedLevel: weapon.ownedLevel,
+        })),
+      },
+      build: { appVersion: 'ring-timing', commit: 'ring-timing' },
+    });
+    return {
+      seconds: result.ticksSimulated * request.dt,
+      // The sortie is captured only when its mini-boss is wiped (the arena's
+      // `won` after the final wave's clear triggers the boss). A window
+      // survival without the clear is a loss, exactly as the game reads it.
+      captured: result.won,
+      minerals: mineralsCollected(result.records),
+      hits: playerHits(result.records),
+    };
+  };
+}
+
+/**
  * Judges a measured total against the ring's design window and the stated
  * tolerance ({@link RING_TIMING_TOLERANCE_PERCENT}).
  *
@@ -943,6 +1075,7 @@ export function simulateRingTiming(
     let losses = 0;
     let salvageBanked = 0;
     let salvageForfeited = 0;
+    let salvageCores = 0;
 
     played.forEach((hex, sortieIndex) => {
       const aggression = hex.baseAggression + aggressionRisePerSortie * sortieIndex;
@@ -968,6 +1101,9 @@ export function simulateRingTiming(
       if (result.captured) {
         captured += 1;
         salvageBanked += result.minerals;
+        // One core per defeated mini-boss: a captured one-level deployment
+        // defeated exactly its one mini-boss (AH-0MWCOWTOR00994NA).
+        salvageCores += 1;
         // A capture earns the hex's grant for the deployments that follow it;
         // a loss replays the same hex with the same loadout.
         ownership = withCapturedGrant(ownership, hex.grants, catalogue);
@@ -1015,6 +1151,7 @@ export function simulateRingTiming(
       exposedHexes: exposed.length,
       salvageBanked,
       salvageForfeited,
+      salvageCores,
       ringSecured,
     });
   }
@@ -1025,6 +1162,7 @@ export function simulateRingTiming(
     losses: stats(runs.map((run) => run.losses)),
     expectedLosses: stats(runs.map((run) => run.expectedLosses)),
     salvageBanked: stats(runs.map((run) => run.salvageBanked)),
+    salvageCores: stats(runs.map((run) => run.salvageCores)),
     captured: stats(runs.map((run) => run.captured)),
     ringSecuredRuns: runs.filter((run) => run.ringSecured).length,
   };
@@ -1078,6 +1216,177 @@ export function formatRingTimingReport(report: RingTimingReport): string {
   } else {
     lines.push(
       `  budget             ${budget.target.minMinutes}–${budget.target.maxMinutes} min ±${oneDecimal(budget.toleranceMinutes)} (${budget.tolerancePercent}%) · ${budget.verdict}`,
+    );
+  }
+  lines.push(`  banked cores       ${oneDecimal(summary.salvageCores.mean)} cores`);
+  return lines.join('\n');
+}
+
+/**
+ * Per-deployment income for one measured ring+line
+ * (AH-0MWCOWTOR00994NA, the re-baselined economy view).
+ *
+ * A captured deployment banks exactly **one core** plus the minerals held at
+ * its mini-boss checkpoint, and a loss banks nothing — so per-deployment
+ * income is the arithmetical mean over every deployment the line played
+ * (losses count as zero), and the checkpoint figure is the mean over captured
+ * deployments only.
+ */
+export interface PerDeploymentIncome {
+  /** Deployments the line played (across the aggregated seeds). */
+  readonly deployments: number;
+  /** Deployments whose sortie was captured (mini-boss defeated). */
+  readonly captured: number;
+  /** Captured / deployments. */
+  readonly captureRate: number;
+  /** Mean minerals banked per deployment (losses bank 0). */
+  readonly mineralsPerDeployment: number;
+  /** Mean cores banked per deployment (losses bank 0). */
+  readonly coresPerDeployment: number;
+  /** Mean minerals held at the mini-boss checkpoint (captured only). */
+  readonly mineralsPerCapturedDeployment: number;
+  /** Exactly one core per captured deployment. */
+  readonly coresPerCapturedDeployment: number;
+  /**
+   * Per-deployment income in mineral-equivalent terms (each core weights
+   * {@link CORE_MINERAL_EQUIVALENT} minerals). A comparison aid only — the
+   * unlock tree spends **both** currencies, never this blend.
+   */
+  readonly mineralEquivalentPerDeployment: number;
+}
+
+/**
+ * Derives the per-deployment income of a measured report from the salvage
+ * the deployments actually banked (never hand-edited numbers).
+ *
+ * @param report — one measured ring+line report.
+ * @returns the income view (all-zero when nothing was captured).
+ */
+export function derivePerDeploymentIncome(
+  report: RingTimingReport,
+): PerDeploymentIncome {
+  let deployments = 0;
+  let captured = 0;
+  let minerals = 0;
+  let cores = 0;
+  for (const run of report.runs) {
+    deployments += run.deployments.length;
+    captured += run.captured;
+    minerals += run.salvageBanked;
+    cores += run.salvageCores;
+  }
+  const captureRate = deployments > 0 ? captured / deployments : 0;
+  return {
+    deployments,
+    captured,
+    captureRate,
+    mineralsPerDeployment: deployments > 0 ? minerals / deployments : 0,
+    coresPerDeployment: deployments > 0 ? cores / deployments : 0,
+    mineralsPerCapturedDeployment: captured > 0 ? minerals / captured : 0,
+    coresPerCapturedDeployment: captured > 0 ? cores / captured : 1,
+    mineralEquivalentPerDeployment:
+      (deployments > 0 ? minerals / deployments : 0) +
+      (deployments > 0 ? cores / deployments : 0) * CORE_MINERAL_EQUIVALENT,
+  };
+}
+
+/**
+ * The unlock pace for one catalogue entry: deployments needed to afford it
+ * from the measured per-deployment income.
+ *
+ * A purchase needs **both** currencies at once (`canBuy`/`buy` in
+ * `hangarEconomy.ts`), so the pace is the slower of the two currency bounds —
+ * never their sum and never a mineral-only rate. `Infinity` when the line
+ * banks none of a currency.
+ */
+export interface UnlockPaceEntry {
+  /** The catalogue entry id. */
+  readonly id: string;
+  /** Display name (for the report's readability). */
+  readonly name: string;
+  /** The entry kind (`hull` / `weapon` / `modifier`). */
+  readonly kind: HangarEntry['kind'];
+  /** The two-currency price. */
+  readonly price: HangarPrice;
+  /** Lowest ring at which the entry may be bought. */
+  readonly minRing: number;
+  /** Deployments the mineral share of the price takes. */
+  readonly mineralBoundDeployments: number;
+  /** Deployments the core share of the price takes. */
+  readonly coreBoundDeployments: number;
+  /** The slower currency bound — the deployments to afford the entry. */
+  readonly deploymentsToAfford: number;
+}
+
+/**
+ * Derives the unlock pace for every buyable rings-1–2 catalogue entry
+ * (AH-0MWCOWTOR00994NA, AC2) from the measured per-deployment income.
+ *
+ * Starter entries (free, owned by definition) are not priced, so they are
+ * excluded. `deploymentsToAfford` is rounded **up**: a player needs whole
+ * deployments, and the first one that clears a currency's remaining balance
+ * banks the surplus for the next entry.
+ *
+ * @param income — the measured per-deployment income of the line used.
+ * @param catalogue — the unlock tree (default shipped).
+ * @returns one entry per buyable catalogue entry, in catalogue order.
+ */
+export function deriveUnlockPace(
+  income: PerDeploymentIncome,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): UnlockPaceEntry[] {
+  const pace: UnlockPaceEntry[] = [];
+  for (const entry of catalogue) {
+    if (entry.starter) continue;
+    const price = entry.price;
+    const mineralBound =
+      income.mineralsPerDeployment > 0
+        ? Math.ceil(price.minerals / income.mineralsPerDeployment)
+        : Number.POSITIVE_INFINITY;
+    const coreBound =
+      income.coresPerDeployment > 0
+        ? Math.ceil(price.cores / income.coresPerDeployment)
+        : Number.POSITIVE_INFINITY;
+    pace.push({
+      id: entry.id,
+      name: entry.name,
+      kind: entry.kind,
+      price,
+      minRing: entry.minRing,
+      mineralBoundDeployments: mineralBound,
+      coreBoundDeployments: coreBound,
+      deploymentsToAfford: Math.max(mineralBound, coreBound),
+    });
+  }
+  return pace;
+}
+
+/**
+ * Renders the per-deployment income + unlock-pace view of a report — the
+ * operator-facing text of the one-level income measurement (the CLI prints
+ * this; `--json` prints the underlying report).
+ *
+ * @param report — the measured report (typically from the one-level runner).
+ * @returns the income + unlock-pace text, one line per metric.
+ */
+export function formatIncomeReport(report: RingTimingReport): string {
+  const income = derivePerDeploymentIncome(report);
+  const pace = deriveUnlockPace(income);
+  const lines = [
+    `Ring ${report.ringIndex} · ${report.strategy} · per-deployment income (seeds ${report.seeds.join(', ')})`,
+    `  deployments        ${income.deployments} (${income.captured} captured, ${oneDecimal(income.captureRate * 100)}%)`,
+    `  minerals banked    ${oneDecimal(income.mineralsPerDeployment)} per deployment (${oneDecimal(income.mineralsPerCapturedDeployment)} at the mini-boss checkpoint per captured)`,
+    `  cores banked       ${oneDecimal(income.coresPerDeployment)} per deployment (${oneDecimal(income.coresPerCapturedDeployment)} per captured)`,
+    `  mineral-eq income  ${oneDecimal(income.mineralEquivalentPerDeployment)} per deployment (1 core = ${CORE_MINERAL_EQUIVALENT} minerals, comparison only)`,
+    '  unlock pace',
+  ];
+  for (const entry of pace) {
+    const deployments =
+      Number.isFinite(entry.deploymentsToAfford)
+        ? `${entry.deploymentsToAfford} deployments`
+        : 'never (line banks no salvage)';
+    lines.push(
+      `    ${entry.id.padEnd(18)} ${entry.price.minerals}/${entry.price.cores} → ${deployments}`,
     );
   }
   return lines.join('\n');

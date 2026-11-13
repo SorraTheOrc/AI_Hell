@@ -16,6 +16,10 @@
  * # machine-readable evidence for the docs item (B8)
  * npm run ring-timing -- --json --out docs/dev/ring-timing-baseline.json
  *
+ * # measure the shipped five-wave sortie's per-deployment income + unlock pace
+ * # (AH-0MWCOWTOR00994NA) and write the reproducible income artifact
+ * npm run ring-timing -- --one-level --income-out docs/dev/one-level-income-baseline.json
+ *
  * # one ring, one line
  * npm run ring-timing -- --ring 2 --strategy grind --seed 7
  * ```
@@ -47,6 +51,8 @@ export function parseRingTimingArgs(argv = process.argv.slice(2)) {
     seeds: [...DEFAULT_SEEDS],
     json: false,
     out: null,
+    oneLevel: false,
+    incomeOut: null,
     help: false,
   };
   const rings = [];
@@ -86,6 +92,12 @@ export function parseRingTimingArgs(argv = process.argv.slice(2)) {
         seeds.push(...Array.from({ length: count }, (_, index) => index + 1));
         break;
       }
+      case '--one-level':
+        options.oneLevel = true;
+        break;
+      case '--income-out':
+        options.incomeOut = next();
+        break;
       case '--json':
         options.json = true;
         break;
@@ -122,9 +134,11 @@ function printHelp() {
       '  --seeds <count>       Use seeds 1..count.',
       '  --json                Print the JSON report instead of text.',
       '  --out <file>          Write the JSON report to <file>.',
+      '  --one-level           Measure the shipped five-wave sortie (income view) instead of the campaign slice.',
+      '  --income-out <file>   Write the per-deployment income + unlock-pace JSON (requires --one-level).',
       '  -h, --help            Show this help.',
       '',
-      'Exit codes: 0 measured, 2 usage error, 1 an applicable budget was missed.',
+      'Exit codes: 0 measured, 2 usage error, 1 an applicable budget was missed (never in --one-level mode).',
     ].join('\n'),
   );
 }
@@ -159,6 +173,10 @@ async function main(argv = process.argv.slice(2)) {
 
   const { server, core } = await loadCore();
   try {
+    if (options.incomeOut !== null && !options.oneLevel) {
+      console.error('ring-timing: --income-out requires --one-level (it writes the one-level income view)');
+      return 2;
+    }
     const reports = [];
     for (const ringIndex of options.rings) {
       for (const strategy of options.strategies) {
@@ -167,6 +185,9 @@ async function main(argv = process.argv.slice(2)) {
             ringIndex,
             strategy,
             seeds: options.seeds,
+            ...(options.oneLevel
+              ? { runDeployment: core.createOneLevelArenaDeploymentRunner() }
+              : {}),
           }),
         );
       }
@@ -174,6 +195,10 @@ async function main(argv = process.argv.slice(2)) {
 
     if (options.json) {
       console.log(JSON.stringify(reports, null, 2));
+    } else if (options.oneLevel) {
+      console.log(
+        reports.map((report) => core.formatIncomeReport(report)).join('\n\n'),
+      );
     } else {
       console.log(
         reports.map((report) => core.formatRingTimingReport(report)).join('\n\n'),
@@ -183,8 +208,27 @@ async function main(argv = process.argv.slice(2)) {
       writeFileSync(resolvePath(REPO_ROOT, options.out), `${JSON.stringify(reports, null, 2)}\n`);
       if (!options.json) console.log(`\nWrote ${options.out}`);
     }
+    if (options.incomeOut) {
+      const income = reports.map((report) => ({
+        ringIndex: report.ringIndex,
+        strategy: report.strategy,
+        seeds: report.seeds,
+        income: core.derivePerDeploymentIncome(report),
+        unlockPace: core.deriveUnlockPace(core.derivePerDeploymentIncome(report)),
+      }));
+      writeFileSync(
+        resolvePath(REPO_ROOT, options.incomeOut),
+        `${JSON.stringify(income, null, 2)}\n`,
+      );
+      if (!options.json) console.log(`\nWrote ${options.incomeOut}`);
+    }
 
-    const missed = reports.filter((report) => report.budget.verdict === 'missed');
+    // The budget gate is the ring-timing chain's duration verdict; the
+    // one-level income measurement does not judge it (AH-0MWCOWTOR00994NA
+    // defers duration verdicts to AH-0MWCOWSVN003X81A).
+    const missed = options.oneLevel
+      ? []
+      : reports.filter((report) => report.budget.verdict === 'missed');
     if (missed.length > 0) {
       console.error(
         `ring-timing: budget missed for ${missed

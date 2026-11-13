@@ -28,6 +28,7 @@ import {
   HEX_RING_DEFINITIONS as HEZ_RING_ONE_ALL,
   hexRingDefinitionsFor,
 } from '../../data/hexRingDefinitions';
+import { CORE_MINERAL_EQUIVALENT } from '../../core/hangarWar/hangarEconomy';
 import {
   DEPLOYMENT_WAVE_COUNT,
   truncateCampaignForDeployment,
@@ -45,7 +46,11 @@ import {
   RING_TIMING_TARGETS,
   RING_TIMING_TOLERANCE_PERCENT,
   createArenaDeploymentRunner,
+  createOneLevelArenaDeploymentRunner,
+  derivePerDeploymentIncome,
+  deriveUnlockPace,
   evaluateRingTimingBudget,
+  formatIncomeReport,
   formatRingTimingReport,
   planRingDeployments,
   resolveDeploymentLoadout,
@@ -53,6 +58,7 @@ import {
   ringTimingHexes,
   simulateRingTiming,
   withCapturedGrant,
+  type PerDeploymentIncome,
   type RingDeploymentLoadout,
   type RingDeploymentRequest,
   type RingDeploymentRunner,
@@ -800,6 +806,64 @@ describe('ring timing: the level-3 boundary under the deployment loadout', () =>
   }, REAL_ARENA_TIMEOUT_MS);
 });
 
+describe('ring timing: the one-level income runner (AH-0MWCOWTOR00994NA)', () => {
+  /** A level-2 (aggression 1) sortie request, the ring-1 opener. */
+  const sortieRequest = (seed: number, balance: ReturnType<typeof loadBalanceConfig>) => ({
+    seed,
+    hexId: 'hex-r1-2',
+    aggression: 1,
+    level: hexDifficultyProfile(1).level,
+    ticks: 18_000,
+    dt: 1 / 60,
+    balance,
+    loadout: resolveDeploymentLoadout(ringEntryOwnership(1)),
+  });
+
+  it('is deterministic: the same sortie request measures an identical run', () => {
+    const runner = createOneLevelArenaDeploymentRunner();
+    const balance = loadBalanceConfig();
+    const first = runner(sortieRequest(7, balance));
+    const second = runner(sortieRequest(7, balance));
+    expect(second).toEqual(first);
+    // The measurement is the real arena, not a constant.
+    expect(first.seconds).toBeGreaterThan(0);
+  }, REAL_ARENA_TIMEOUT_MS);
+
+  it('captures a sortie only when its mini-boss is wiped (the arena won)', () => {
+    // Seed 7 on the ring-1 opener wipes its five-wave sortie and banks the
+    // minerals it held at that checkpoint — a captured one-level deployment
+    // is exactly what the mini-boss victory captures in the game.
+    const result = createOneLevelArenaDeploymentRunner()(sortieRequest(7, loadBalanceConfig()));
+    expect(result.captured).toBe(true);
+    expect(result.minerals).toBeGreaterThanOrEqual(0);
+  }, REAL_ARENA_TIMEOUT_MS);
+
+  it('measures a faster-paced income than the campaign-slice runner the item replaces', () => {
+    // The one-level sortie is short enough for the competent bot to wipe, so
+    // the measured capture rate (and therefore cores + banked minerals per
+    // deployment) climbs well above the campaign-slice figure — the income
+    // drop the baseline feared is refuted by the measurement (recorded on
+    // AH-0MWCOWTOR00994NA).
+    const sortie = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'grind',
+      seeds: [1],
+      runDeployment: createOneLevelArenaDeploymentRunner(),
+    });
+    const slice = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'grind',
+      seeds: [1],
+    });
+    expect(sortie.summary.captured.mean).toBeGreaterThan(slice.summary.captured.mean);
+    expect(sortie.summary.salvageCores.mean).toBeGreaterThan(
+      slice.summary.salvageCores.mean,
+    );
+    // Every captured sortie banks exactly one core (one mini-boss).
+    expect(sortie.runs[0].salvageCores).toBe(sortie.runs[0].captured);
+  }, REAL_ARENA_TIMEOUT_MS);
+});
+
 describe('ring timing: committed baseline evidence', () => {
   const baselinePath = path.resolve(
     process.cwd(),
@@ -871,6 +935,97 @@ describe('ring timing: committed baseline evidence', () => {
   });
 });
 
+/**
+ * The committed one-level income artifact (AH-0MWCOWTOR00994NA): the
+ * re-baselined per-deployment income and unlock pace for the shipped
+ * five-wave sortie, generated deterministically by
+ * `npm run ring-timing -- --one-level --income-out docs/dev/one-level-income-baseline.json`.
+ * The numbers are quoted in GDD §8.2 and pinned here so a change to the
+ * harness model (e.g. the ring-timing chain's runner re-pointing) forces a
+ * reviewed re-measurement instead of moving the docs silently.
+ */
+describe('one-level income baseline evidence (AH-0MWCOWTOR00994NA)', () => {
+  const incomePath = path.resolve(
+    process.cwd(),
+    'docs/dev/one-level-income-baseline.json',
+  );
+  const income = fs.existsSync(incomePath)
+    ? (JSON.parse(fs.readFileSync(incomePath, 'utf8')) as Array<{
+        ringIndex: number;
+        strategy: string;
+        income: PerDeploymentIncome;
+        unlockPace: Array<{ id: string; deploymentsToAfford: number }>;
+      }>)
+    : [];
+  const line = (ringIndex: number, strategy: string) =>
+    income.find(
+      (entry) =>
+        entry.ringIndex === ringIndex && entry.strategy === strategy,
+    )!;
+
+  it('records one measurement per ring and line', () => {
+    expect(
+      income.map((entry) => `${entry.ringIndex}-${entry.strategy}`),
+    ).toEqual(['1-grind', '1-rush', '2-grind', '2-rush']);
+  });
+
+  it('is internally consistent (capture rate, cores and the checkpoint hold)', () => {
+    for (const entry of income) {
+      const i = entry.income;
+      expect(i.captureRate).toBeCloseTo(i.captured / i.deployments, 6);
+      expect(i.coresPerCapturedDeployment).toBe(1);
+      expect(i.mineralEquivalentPerDeployment).toBeCloseTo(
+        i.mineralsPerDeployment + i.coresPerDeployment * CORE_MINERAL_EQUIVALENT,
+        6,
+      );
+      if (i.captured > 0) {
+        expect(i.mineralsPerCapturedDeployment).toBeCloseTo(
+          (i.mineralsPerDeployment * i.deployments) / i.captured,
+          6,
+        );
+      }
+    }
+  });
+
+  it('records the re-baselined outcome: income rose vs the campaign slice', () => {
+    // The item's working assumption — that the shorter sortie drops
+    // per-deployment income — is **refuted** by the measurement: the
+    // competent bot wipes the five-wave sortie far more often than it
+    // cleared the slice, so capture rate (and therefore cores + banked
+    // minerals per deployment) climbs well above the campaign-slice
+    // figures (ring-1 grind 0.222 → 0.5, ring-2 grind 0.111 → 0.333).
+    const r1g = line(1, 'grind').income;
+    const r2g = line(2, 'grind').income;
+    expect(r1g.captureRate).toBeGreaterThan(0.22);
+    expect(r1g.mineralsPerDeployment).toBeGreaterThan(4);
+    expect(r2g.captureRate).toBeGreaterThan(0.11);
+    expect(r2g.mineralsPerDeployment).toBeGreaterThan(1.86);
+    // Every captured one-level sortie held the same ~18-mineral checkpoint
+    // the arena's mineral supply grants a surviving run.
+    expect(r1g.mineralsPerCapturedDeployment).toBe(18);
+    // The rush line (one weapon hex per ring) banks nothing: its sorties are
+    // the ring's hardest and the bot loses them — recorded, not assumed.
+    expect(line(1, 'rush').income.captured).toBe(0);
+    expect(line(2, 'rush').income.captured).toBe(0);
+  });
+
+  it('records a shorter unlock pace for every rings-1-2 entry', () => {
+    const pace = new Map(
+      line(1, 'grind').unlockPace.map((entry) => [
+        entry.id,
+        entry.deploymentsToAfford,
+      ]),
+    );
+    // Campaign-slice before: hull-2 55 / wave_laser 30 / ricochet 23 /
+    // cluster 40 / hardened_plating 20 ring-1-grind deployments.
+    expect(pace.get('hull-2')).toBe(25);
+    expect(pace.get('wave_laser')).toBe(14);
+    expect(pace.get('ricochet')).toBe(10);
+    expect(pace.get('cluster')).toBe(18);
+    expect(pace.get('hardened_plating')).toBe(9);
+  });
+});
+
 describe('ring timing: report rendering', () => {
   it('renders the totals, the measured runs and the budget verdict', () => {
     const report = simulateRingTiming({
@@ -886,6 +1041,179 @@ describe('ring timing: report rendering', () => {
     expect(text).toContain('42.0 min');
     expect(text).toContain('40–60 min');
     expect(text).toContain('in-window');
+  });
+
+  it('reports the banked cores alongside the banked salvage', () => {
+    const report = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'grind',
+      seeds: [1],
+      hexes: modelRing(),
+      runDeployment: fakeRunner(3),
+    });
+    // Six deployments, three captured (aggressions 1, 2, 2): one core each.
+    expect(report.runs[0].salvageCores).toBe(3);
+    expect(report.runs[0].salvageBanked).toBe(3 * 18);
+    expect(report.summary.salvageCores.mean).toBe(3);
+    expect(formatRingTimingReport(report)).toContain('3.0 cores');
+  });
+});
+
+/**
+ * The per-deployment income view (AH-0MWCOWTOR00994NA): a captured
+ * deployment banks exactly **one core** plus the minerals it held at the
+ * mini-boss checkpoint, and a loss banks nothing — so per-deployment income
+ * is the arithmetical mean over every deployment a line plays (losses count
+ * as 0), and the checkpoint figure is the mean over captured deployments
+ * only.
+ */
+describe('ring timing: per-deployment income (AH-0MWCOWTOR00994NA)', () => {
+  it('derives the per-deployment income from a measured report', () => {
+    const report = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'grind',
+      seeds: [1],
+      hexes: modelRing(),
+      runDeployment: fakeRunner(3),
+    });
+    // Aggressions 1, 2, 2 captured (18 minerals each) and 3, 4, 6 lost: the
+    // fake runner's safe runs collect 18 minerals, its lost runs 5 (forfeit).
+    const income = derivePerDeploymentIncome(report);
+    expect(income.deployments).toBe(6);
+    expect(income.captured).toBe(3);
+    expect(income.captureRate).toBeCloseTo(0.5, 6);
+    expect(income.mineralsPerDeployment).toBeCloseTo(3 * 18 / 6, 6);
+    expect(income.mineralsPerCapturedDeployment).toBe(18);
+    expect(income.coresPerDeployment).toBeCloseTo(0.5, 6);
+    expect(income.coresPerCapturedDeployment).toBe(1);
+    // The comparison aid: each core is worth CORE_MINERAL_EQUIVALENT minerals.
+    expect(income.mineralEquivalentPerDeployment).toBeCloseTo(
+      income.mineralsPerDeployment + income.coresPerDeployment * CORE_MINERAL_EQUIVALENT,
+      6,
+    );
+  });
+
+  it('reports an all-loss line as zero income', () => {
+    const report = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'rush',
+      seeds: [1],
+      hexes: modelRing(),
+      runDeployment: fakeRunner(1),
+    });
+    const income = derivePerDeploymentIncome(report);
+    expect(income.captured).toBe(0);
+    expect(income.mineralsPerDeployment).toBe(0);
+    expect(income.coresPerDeployment).toBe(0);
+    expect(income.captureRate).toBe(0);
+  });
+
+  it('aggregates across seeds before deriving the income', () => {
+    const report = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'grind',
+      seeds: [1, 2, 3],
+      hexes: modelRing(),
+      runDeployment: fakeRunner(3),
+    });
+    const income = derivePerDeploymentIncome(report);
+    // Every seed behaves identically under the fake runner.
+    expect(income.deployments).toBe(18);
+    expect(income.captured).toBe(9);
+    expect(income.mineralsPerDeployment).toBeCloseTo(9, 6);
+    expect(income.coresPerDeployment).toBeCloseTo(0.5, 6);
+  });
+});
+
+/**
+ * The unlock pace (AH-0MWCOWTOR00994NA, AC2): deployments needed to afford
+ * each rings-1-2 catalogue entry from the measured per-deployment income.
+ * A purchase needs **both** currencies at once (canBuy/buy), so the pace is
+ * the slower of the two currency bounds — minerals and cores — never their
+ * sum or a mineral-only rate.
+ */
+describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
+  /** The five buyable rings-1-2 catalogue entries (all minRing 1). */
+  const BUYABLE = ['hull-2', 'wave_laser', 'ricochet', 'cluster', 'hardened_plating'];
+
+  it('derives deployments-to-afford from both currency bounds', () => {
+    const income: PerDeploymentIncome = {
+      deployments: 6,
+      captured: 3,
+      captureRate: 0.5,
+      mineralsPerDeployment: 9,
+      coresPerDeployment: 0.5,
+      mineralsPerCapturedDeployment: 18,
+      coresPerCapturedDeployment: 1,
+      mineralEquivalentPerDeployment: 9 + 0.5 * CORE_MINERAL_EQUIVALENT,
+    };
+    const pace = deriveUnlockPace(income);
+    expect(pace.map((entry) => entry.id)).toEqual(BUYABLE);
+    const byId = new Map(pace.map((entry) => [entry.id, entry]));
+    // hull-2 (220 minerals / 3 cores): 220/9 → 25 deployments; cores are the
+    // cheaper bound (3/0.5 = 6), so the mineral bound decides.
+    expect(byId.get('hull-2')!.deploymentsToAfford).toBe(25);
+    expect(byId.get('hull-2')!.mineralBoundDeployments).toBe(25);
+    expect(byId.get('hull-2')!.coreBoundDeployments).toBe(6);
+    expect(byId.get('hull-2')!.price).toEqual({ minerals: 220, cores: 3 });
+    // ricochet (90 minerals / 2 cores): 90/9 = 10 ≶ 2/0.5 = 4 → minerals.
+    expect(byId.get('ricochet')!.deploymentsToAfford).toBe(10);
+    // hardened_plating (80/1): 80/9 → 9 deployments.
+    expect(byId.get('hardened_plating')!.deploymentsToAfford).toBe(9);
+    // wave_laser (120/1): 120/9 → 14.
+    expect(byId.get('wave_laser')!.deploymentsToAfford).toBe(14);
+    // cluster (160/1): 160/9 → 18.
+    expect(byId.get('cluster')!.deploymentsToAfford).toBe(18);
+  });
+
+  it('reports an infinite pace for a line that banks nothing', () => {
+    const zero: PerDeploymentIncome = {
+      deployments: 6,
+      captured: 0,
+      captureRate: 0,
+      mineralsPerDeployment: 0,
+      coresPerDeployment: 0,
+      mineralsPerCapturedDeployment: 0,
+      coresPerCapturedDeployment: 0,
+      mineralEquivalentPerDeployment: 0,
+    };
+    const pace = deriveUnlockPace(zero);
+    expect(pace.every((entry) => entry.deploymentsToAfford === Number.POSITIVE_INFINITY)).toBe(
+      true,
+    );
+  });
+
+  it('derives the pace from a measured report rather than hand-edited numbers', () => {
+    const report = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'grind',
+      seeds: [1],
+      hexes: modelRing(),
+      runDeployment: fakeRunner(3),
+    });
+    const pace = deriveUnlockPace(derivePerDeploymentIncome(report));
+    // Same income (9 minerals / 0.5 cores per deployment) as the pinned case.
+    expect(pace.find((entry) => entry.id === 'hull-2')!.deploymentsToAfford).toBe(25);
+  });
+});
+
+describe('ring timing: income report rendering (AH-0MWCOWTOR00994NA)', () => {
+  it('renders the checkpoint income and the unlock pace table', () => {
+    const report = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'grind',
+      seeds: [1],
+      hexes: modelRing(),
+      runDeployment: fakeRunner(3),
+    });
+    const text = formatIncomeReport(report);
+    expect(text).toContain('Ring 1 · grind');
+    expect(text).toContain('6 (3 captured, 50.0%)');
+    expect(text).toContain('18.0 at the mini-boss checkpoint per captured');
+    expect(text).toContain('1.0 per captured');
+    expect(text).toContain('unlock pace');
+    expect(text).toContain('hull-2');
+    expect(text).toContain('25 deployments');
   });
 });
 

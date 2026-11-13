@@ -1,0 +1,346 @@
+[
+  {
+    "ringIndex": 1,
+    "strategy": "grind",
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "income": {
+      "deployments": 18,
+      "captured": 9,
+      "captureRate": 0.5,
+      "mineralsPerDeployment": 9,
+      "coresPerDeployment": 0.5,
+      "mineralsPerCapturedDeployment": 18,
+      "coresPerCapturedDeployment": 1,
+      "mineralEquivalentPerDeployment": 59
+    },
+    "unlockPace": [
+      {
+        "id": "hull-2",
+        "name": "Bulwark Hull",
+        "kind": "hull",
+        "price": {
+          "minerals": 220,
+          "cores": 3
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 25,
+        "coreBoundDeployments": 6,
+        "deploymentsToAfford": 25
+      },
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "kind": "weapon",
+        "price": {
+          "minerals": 120,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 14,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 14
+      },
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "kind": "weapon",
+        "price": {
+          "minerals": 90,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 10,
+        "coreBoundDeployments": 4,
+        "deploymentsToAfford": 10
+      },
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "kind": "weapon",
+        "price": {
+          "minerals": 160,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 18,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 18
+      },
+      {
+        "id": "hardened_plating",
+        "name": "Hardened Plating",
+        "kind": "modifier",
+        "price": {
+          "minerals": 80,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 9,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 9
+      }
+    ]
+  },
+  {
+    "ringIndex": 1,
+    "strategy": "rush",
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "income": {
+      "deployments": 3,
+      "captured": 0,
+      "captureRate": 0,
+      "mineralsPerDeployment": 0,
+      "coresPerDeployment": 0,
+      "mineralsPerCapturedDeployment": 0,
+      "coresPerCapturedDeployment": 1,
+      "mineralEquivalentPerDeployment": 0
+    },
+    "unlockPace": [
+      {
+        "id": "hull-2",
+        "name": "Bulwark Hull",
+        "kind": "hull",
+        "price": {
+          "minerals": 220,
+          "cores": 3
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "kind": "weapon",
+        "price": {
+          "minerals": 120,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "kind": "weapon",
+        "price": {
+          "minerals": 90,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "kind": "weapon",
+        "price": {
+          "minerals": 160,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "hardened_plating",
+        "name": "Hardened Plating",
+        "kind": "modifier",
+        "price": {
+          "minerals": 80,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      }
+    ]
+  },
+  {
+    "ringIndex": 2,
+    "strategy": "grind",
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "income": {
+      "deployments": 36,
+      "captured": 12,
+      "captureRate": 0.3333333333333333,
+      "mineralsPerDeployment": 6,
+      "coresPerDeployment": 0.3333333333333333,
+      "mineralsPerCapturedDeployment": 18,
+      "coresPerCapturedDeployment": 1,
+      "mineralEquivalentPerDeployment": 39.33333333333333
+    },
+    "unlockPace": [
+      {
+        "id": "hull-2",
+        "name": "Bulwark Hull",
+        "kind": "hull",
+        "price": {
+          "minerals": 220,
+          "cores": 3
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 37,
+        "coreBoundDeployments": 9,
+        "deploymentsToAfford": 37
+      },
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "kind": "weapon",
+        "price": {
+          "minerals": 120,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 20,
+        "coreBoundDeployments": 3,
+        "deploymentsToAfford": 20
+      },
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "kind": "weapon",
+        "price": {
+          "minerals": 90,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 15,
+        "coreBoundDeployments": 6,
+        "deploymentsToAfford": 15
+      },
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "kind": "weapon",
+        "price": {
+          "minerals": 160,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 27,
+        "coreBoundDeployments": 3,
+        "deploymentsToAfford": 27
+      },
+      {
+        "id": "hardened_plating",
+        "name": "Hardened Plating",
+        "kind": "modifier",
+        "price": {
+          "minerals": 80,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 14,
+        "coreBoundDeployments": 3,
+        "deploymentsToAfford": 14
+      }
+    ]
+  },
+  {
+    "ringIndex": 2,
+    "strategy": "rush",
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "income": {
+      "deployments": 3,
+      "captured": 0,
+      "captureRate": 0,
+      "mineralsPerDeployment": 0,
+      "coresPerDeployment": 0,
+      "mineralsPerCapturedDeployment": 0,
+      "coresPerCapturedDeployment": 1,
+      "mineralEquivalentPerDeployment": 0
+    },
+    "unlockPace": [
+      {
+        "id": "hull-2",
+        "name": "Bulwark Hull",
+        "kind": "hull",
+        "price": {
+          "minerals": 220,
+          "cores": 3
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "kind": "weapon",
+        "price": {
+          "minerals": 120,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "kind": "weapon",
+        "price": {
+          "minerals": 90,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "kind": "weapon",
+        "price": {
+          "minerals": 160,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "hardened_plating",
+        "name": "Hardened Plating",
+        "kind": "modifier",
+        "price": {
+          "minerals": 80,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      }
+    ]
+  }
+]

@@ -3216,12 +3216,14 @@ Timing is measured, not guessed, with the headless eval arena
 (`src/ai/eval/ringTiming.ts`, `npm run ring-timing`). **The baseline below was
 measured against the previous campaign-slice deployment** (a run from the hex's
 aggression-selected level to the campaign's final boss); deployments are now one
-level ending on a mini-boss (AH-0MWBW1B1Z0059CC2), so these figures — and the
-per-deployment salvage/cores and mini-boss reward value — are **being
-re-measured** by the follow-ups **AH-0MWCOWSVN003X81A** (ring timing) and
-**AH-0MWCOWTOR00994NA** (salvage, cores and reward value). They are recorded
-here as the pre-change reference, not as a claim about the shipped one-level
-deployment. A deployment is modelled as the game played it then — the classic
+level ending on a mini-boss (AH-0MWBW1B1Z0059CC2), so these **timing** figures
+are **being re-measured** by the follow-up **AH-0MWCOWSVN003X81A** (ring
+timing). The **per-deployment salvage/cores and the mini-boss reward value** are
+**re-baselined for the shipped one-level sortie below**
+(*[Measured per-deployment income](#measured-per-deployment-income-one-level-sortie)*,
+AH-0MWCOWTOR00994NA). The campaign-slice figures are recorded here as the
+pre-change reference, not as a claim about the shipped one-level deployment.
+A deployment is modelled as the game played it then — the classic
 campaign slice from the hex's
 aggression-selected level, a ≈5-minute / 18 000-tick deployment window, launched
 with the **loadout the fleet owns at that point** (the starter kit entering ring
@@ -3247,6 +3249,84 @@ The budget assertion states a **10 % tolerance** of each window's width —
 **±2 min** for ring 1 and **±3 min** for ring 2 — and both grind lines pass
 `in-window`. The headless arena is the recorded evidence (intake assumption A1
 and Q4); a human playtest is desirable but not a gate.
+
+#### Measured per-deployment income (one-level sortie)
+
+A hex deployment is now the aggression-selected level's **five-wave sortie** —
+four regular waves plus the mini-boss on wave 5
+(`truncateCampaignForDeployment` / `DEPLOYMENT_WAVE_COUNT`, AH-0MWDCBVQ700579WS)
+— and a captured deployment banks exactly **one core** plus the minerals held
+when its mini-boss is wiped (`captureCycle` + `salvageBanking`). The
+per-deployment **income and unlock pace are measured**, not guessed, with the
+same headless arena through the ring-timing harness's one-level runner
+(`createOneLevelArenaDeploymentRunner`, AH-0MWCOWTOR00994NA; regenerate with
+`npm run ring-timing -- --one-level --income-out
+docs/dev/one-level-income-baseline.json` — the committed artifact is
+`docs/dev/one-level-income-baseline.json`, seeds 1–3, competent bot).
+
+The campaign-slice "before" is the committed ring-timing artifact's banked
+salvage (24.0 minerals mean per ring-1-grind run of 6 deployments → 4.0 per
+deployment; 22.3 over ring-2's 12 → 1.86 per deployment; 18.0 minerals per
+captured deployment) and the GDD §8.1 banking rule; before-cores are a **model
+estimate** (the campaign-slice harness counted no checkpoint cores) of one core
+per captured deployment — ~0.22 per deployment (ring 1, 1.33 of 6 captured)
+and ~0.11 (ring 2, 1.33 of 12). The after-figures below are **measured**.
+
+| Ring · line | Captures | Deposit per deployment (minerals / cores) | At the mini-boss checkpoint (per captured) | Mineral-eq per deployment |
+|---|---|---|---|---|
+| 1 grind (before) | 1.33 of 6 (22.2 %) | 4.0 / 0.22* | 18.0 / 1* | 26.2 |
+| 1 grind (after) | 9 of 18 (50.0 %) | **9.0 / 0.5** | **18.0 / 1.0** | **59.0** |
+| 1 rush (before) | 0 of 1 | 0 / 0 | — | 0 |
+| 1 rush (after) | 0 of 3 | 0 / 0 | — | 0 |
+| 2 grind (before) | 1.33 of 12 (11.1 %) | 1.86 / 0.11* | 16.75 / 1* | 13.0 |
+| 2 grind (after) | 12 of 36 (33.3 %) | **6.0 / 0.33** | **18.0 / 1.0** | **39.3** |
+| 2 rush (before) | 0.33 of 1 | 6.0 / 0.33* | 18.0 / 1* | 39.3 |
+| 2 rush (after) | 0 of 3 | 0 / 0 | — | 0 |
+
+\* model estimate (campaign-slice harness counted no checkpoint cores). Mineral-eq
+weights each core at `CORE_MINERAL_EQUIVALENT` = 100 minerals for comparison
+only — the unlock tree spends **both** currencies.
+
+The **verdict**: per-deployment income rose, it did not drop. The shorter
+sortie is easy enough for the competent bot to wipe, so capture rate (and with
+it the cores + banked minerals that flow per deployment) climbs well above the
+campaign-slice figure (ring-1 grind 22.2 % → 50.0 %; ring-2 grind 11.1 % →
+33.3 %); the minerals held at a captured sortie's checkpoint stay at the
+arena's ~18-mineral per-run supply. The unlock pace therefore **shortens** for
+every rings-1–2 entry:
+
+| Entry (price) | Before (ring-1 grind) | After (ring-1 grind) | After (ring-2 grind) |
+|---|---|---|---|
+| Bulwark Hull `hull-2` (220 minerals / 3 cores) | 55 deployments | **25** | 37 |
+| Wave Laser `wave_laser` (120 / 1) | 30 | **14** | 20 |
+| Ricochet `ricochet` (90 / 2) | 23 | **10** | 15 |
+| Cluster Missile `cluster` (160 / 1) | 40 | **18** | 27 |
+| Hardened Plating `hardened_plating` (80 / 1) | 20 | **9** | 14 |
+
+(deployments to afford each entry from that line's measured per-deployment
+income — a purchase needs both currencies at once, so the pace is the slower
+currency bound; the rush line banks nothing on either ring and never funds the
+tree.)
+
+**The post-win reward ruling (producer, recorded 2026-11-13):** the mini-boss
+wheel is **suppressed on the winning deployment path** and the player banks a
+**fixed post-win bonus** into the hangar war instead; the arcade campaign and
+lost deployments keep the wheel as shipped. The bonus **amount** is baselined
+from this measured per-deployment income (the decision and the numbers live on
+AH-0MWCOWTOR00994NA) and lands as a named constant in the linked economy-rule
+item **AH-0MWEVNBMM000QFO2** (banking seam: AH-0MWF2PYIE001XZOV). No price,
+banking or ring change is implied by the measurement — the unlock tree reads
+faster, not harder; any rebalance nevertheless stays its own linked item.
+
+**Fidelity and reproducibility.** The numbers are the competent bot's headless
+arena runs — the same evidence standard as the timing baseline (a human
+playtest remains desirable but is not a gate). A sortie the bot neither wipes
+nor dies within the 300 s deployment window is recorded as a loss (the
+pre-change harness's tick-cap safety bound, read strictly for the one-level
+case); the seeded bot shows real variance (ring-2 grind measured 6 captures on
+seeds 1 and 3 and zero on seed 2 — the aggregate stands). Deterministic:
+the same command re-measures the same artifact, and the numbers are never
+hand-edited.
 
 #### Supported playstyles
 

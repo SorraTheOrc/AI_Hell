@@ -575,6 +575,45 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
     expect(spec).toContain('docs/dev/ring-timing-baseline.json');
   });
 
+  it('records the re-baselined one-level income, requoted from the artifact (AH-0MWCOWTOR00994NA)', () => {
+    const spec = gddRingSpec();
+    const income = JSON.parse(
+      fs.readFileSync(
+        path.resolve(process.cwd(), 'docs/dev/one-level-income-baseline.json'),
+        'utf8',
+      ),
+    ) as Array<{
+      ringIndex: number;
+      strategy: string;
+      income: {
+        mineralsPerDeployment: number;
+        coresPerDeployment: number;
+        mineralsPerCapturedDeployment: number;
+      };
+      unlockPace: Array<{ id: string; deploymentsToAfford: number }>;
+    }>;
+    const r1g = income.find((entry) => entry.ringIndex === 1 && entry.strategy === 'grind')!;
+    const r2g = income.find((entry) => entry.ringIndex === 2 && entry.strategy === 'grind')!;
+    // After income per deployment and the captured-deployment checkpoint hold.
+    expect(spec).toContain(`${r1g.income.mineralsPerDeployment.toFixed(1)} / ${r1g.income.coresPerDeployment.toFixed(1)}`);
+    expect(spec).toContain(`${r2g.income.mineralsPerDeployment.toFixed(1)} / ${r2g.income.coresPerDeployment.toFixed(1)}`);
+    expect(spec).toContain(`${r1g.income.mineralsPerCapturedDeployment.toFixed(1)} / 1.0`);
+    // The unlock pace requotes the artifact's derived numbers.
+    for (const entry of r1g.unlockPace) {
+      expect(spec).toMatch(
+        new RegExp(`${entry.id}[^\n]*\\*\\*${entry.deploymentsToAfford}\\*\\*`),
+      );
+    }
+    // Capture rate is stated as a percentage (50.0 % / 33.3 %).
+    expect(spec).toMatch(/50\.0\s*%/);
+    expect(spec).toMatch(/33\.3\s*%/);
+    // The reproducible artifact and the producer's reward-value ruling.
+    expect(spec).toContain('docs/dev/one-level-income-baseline.json');
+    expect(spec).toContain('AH-0MWEVNBMM000QFO2');
+    expect(spec).toMatch(/suppressed on the winning deployment path/i);
+    expect(spec).toMatch(new RegExp(`before[^\\n]*ring-1 grind`, 'i'));
+  });
+
   it('records the supported playstyles and that neither dominates', () => {
     const spec = gddRingSpec();
     expect(spec).toMatch(/rush/i);
