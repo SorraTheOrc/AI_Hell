@@ -32,19 +32,35 @@
  * payload (`./types`, `HexState`) is the subset written to storage; the gym
  * joins a payload hex to its fixture by id for the boss/weakness intel.
  *
+ * ## The ring-3 variety sample (AH-0MWEW4ANW009GGX7)
+ *
+ * {@link VARIETY_RING_DEFINITIONS} is an authored **sample** ring 3 carrying
+ * the three post-MVP variety axes (`AH-0MVWZYQN8007SXIG`: personalities,
+ * contracts and ring landmarks) so the axis items and their tests share one
+ * authored example instead of each inventing its own. It is fixture data, not
+ * shipped content: the shipped table (`src/data/hexRingDefinitions.ts`) still
+ * authors rings 1 and 2 only, and ring 3 here is generated from the same
+ * `6 × n` geometry the generator uses.
+ *
  * @module src/core/hangarWar/__fixtures__/ringFixtures
  */
 
 import {
   HEX_RING_DEFINITIONS,
 } from '../../../data/hexRingDefinitions';
-import type { HexRingDefinition } from '../hexRing';
+import {
+  ringCoordinates,
+  type HexContractDefinition,
+  type HexLandmarkId,
+  type HexPersonalityId,
+  type HexRingDefinition,
+} from '../hexRing';
 import { HANGAR_WAR_FIXTURE_VERSION } from '../fixtures';
 import { createHangarWarRng } from '../rng';
 import type { HangarWarPayload, HexState } from '../types';
 
-/** A playable ring index (the MVP defines rings 1 and 2; later rings append). */
-export type RingIndex = 1 | 2;
+/** A ring index with authored fixtures (later rings append here). */
+export type RingIndex = 1 | 2 | 3;
 
 /**
  * One hex's ring definition fixture.
@@ -74,6 +90,12 @@ export interface RingHexFixture {
   readonly weaponHex: boolean;
   /** Frontier aggression the hex is defended at before any tick. */
   readonly baseAggression: number;
+  /** Authored personality (variety axis, AH-0MWEW4ANW009GGX7), when authored. */
+  readonly personality?: HexPersonalityId;
+  /** Authored optional contract (variety axis), when the hex carries one. */
+  readonly contract?: HexContractDefinition;
+  /** Authored landmark set-piece (variety axis), when the hex is one. */
+  readonly landmark?: HexLandmarkId;
 }
 
 /**
@@ -84,14 +106,14 @@ export interface RingHexFixture {
  */
 export { ringDepth } from '../hexRing';
 
-/** The largest ring index the MVP authors fixtures for. */
-type AuthoredRingIndex = 1 | 2;
+/** The largest ring index the fixtures author (rings 1, 2 and the variety sample). */
+type AuthoredRingIndex = RingIndex;
 
 /** Narrows a definition's ring index to an authored ring (throws otherwise). */
 function authoredRingIndex(ringIndex: number): AuthoredRingIndex {
-  if (ringIndex !== 1 && ringIndex !== 2) {
+  if (ringIndex !== 1 && ringIndex !== 2 && ringIndex !== 3) {
     throw new Error(
-      `ringFixtures only supports authored rings 1 and 2, got ${ringIndex}`,
+      `ringFixtures only supports authored rings 1–3, got ${ringIndex}`,
     );
   }
   return ringIndex;
@@ -110,21 +132,115 @@ function toFixture(definition: HexRingDefinition): RingHexFixture {
     grants: definition.grants,
     weaponHex: definition.weaponHex,
     baseAggression: definition.baseAggression,
+    ...(definition.personality === undefined
+      ? {}
+      : { personality: definition.personality }),
+    ...(definition.contract === undefined
+      ? {}
+      : { contract: definition.contract }),
+    ...(definition.landmark === undefined
+      ? {}
+      : { landmark: definition.landmark }),
   });
 }
 
 /**
- * The fixtures for one authored ring, derived from the single authored source
- * (`src/data/hexRingDefinitions.ts`) so the harness sample and the ring the
- * game generates are the same content. Authoring order is preserved.
+ * The authored definitions one ring's fixtures are derived from: the shipped
+ * table for rings 1 and 2, the variety sample for ring 3.
  */
-function fixturesFor(ringIndex: AuthoredRingIndex): readonly RingHexFixture[] {
-  return Object.freeze(
-    HEX_RING_DEFINITIONS.filter(
-      (definition) => definition.ringIndex === ringIndex,
-    ).map(toFixture),
+function definitionsFor(
+  ringIndex: AuthoredRingIndex,
+): readonly HexRingDefinition[] {
+  if (ringIndex === 3) return VARIETY_RING_DEFINITIONS;
+  return HEX_RING_DEFINITIONS.filter(
+    (definition) => definition.ringIndex === ringIndex,
   );
 }
+
+/**
+ * The fixtures for one authored ring, derived from the single authored source
+ * (`src/data/hexRingDefinitions.ts` for rings 1–2,
+ * {@link VARIETY_RING_DEFINITIONS} for ring 3) so the harness sample and the
+ * ring the game generates are the same content. Authoring order is preserved.
+ */
+function fixturesFor(ringIndex: AuthoredRingIndex): readonly RingHexFixture[] {
+  return Object.freeze(definitionsFor(ringIndex).map(toFixture));
+}
+
+/**
+ * The variety sample's authored personalities, keyed by geometry index.
+ *
+ * Both bounded shared mechanics (`nebula`, `summoner`) are present, so a gym or
+ * a combat-code test can exercise each without authoring its own ring.
+ */
+const VARIETY_PERSONALITY_BY_INDEX: Readonly<
+  Record<number, HexPersonalityId>
+> = Object.freeze({
+  0: 'nebula',
+  4: 'summoner',
+  8: 'sentinel',
+  12: 'berserker',
+  15: 'tempest',
+});
+
+/** The variety sample's optional contracts, keyed by geometry index. */
+const VARIETY_CONTRACT_BY_INDEX: Readonly<
+  Record<number, HexContractDefinition>
+> = Object.freeze({
+  5: Object.freeze({
+    objective: 'Break the siege line, then hold the hex',
+    bonusSalvage: 150,
+    bonusCores: 1,
+  }),
+  10: Object.freeze({
+    objective: 'Clear the raider picket before the boss falls',
+    bonusSalvage: 0,
+    bonusCores: 2,
+  }),
+});
+
+/** The variety sample's one-off landmarks, keyed by geometry index. */
+const VARIETY_LANDMARK_BY_INDEX: Readonly<Record<number, HexLandmarkId>> =
+  Object.freeze({
+    2: 'fortress',
+    3: 'cache',
+  });
+
+/**
+ * The authored **variety sample** ring 3 (AH-0MWEW4ANW009GGX7): 18 hexes from
+ * the same `6 × n` geometry every ring uses, carrying the three post-MVP
+ * variety axes so the axis items and their tests share one authored example.
+ *
+ * Content: five personalities (including both bounded shared mechanics,
+ * `nebula` and `summoner`), two optional contracts, one `fortress` landmark and
+ * one `cache` landmark. The cache is deliberately **not** the weapon hex — a
+ * cache pays out instead of granting — and the weapon hex (the last geometry
+ * slot) stays strictly the hardest at `12` against the others' `7–10`.
+ */
+export const VARIETY_RING_DEFINITIONS: readonly HexRingDefinition[] =
+  Object.freeze(
+    ringCoordinates(3).map((coordinate, index) => {
+      const weaponHex = index === ringCoordinates(3).length - 1;
+      const personality = VARIETY_PERSONALITY_BY_INDEX[index];
+      const contract = VARIETY_CONTRACT_BY_INDEX[index];
+      const landmark = VARIETY_LANDMARK_BY_INDEX[index];
+      return Object.freeze({
+        id: `hex-r3-${index + 1}`,
+        q: coordinate.q,
+        r: coordinate.r,
+        ringIndex: 3,
+        boss: `ring-3-boss-${index + 1}`,
+        strengths: Object.freeze(['cannon']),
+        weaknesses: Object.freeze(['nova']),
+        grants: weaponHex ? 'ring-3-weapon' : `ring-3-grant-${index + 1}`,
+        weaponHex,
+        baseAggression: weaponHex ? 12 : 7 + (index % 4),
+        ...(personality === undefined ? {} : { personality }),
+        ...(contract === undefined ? {} : { contract }),
+        ...(landmark === undefined ? {} : { landmark }),
+      } satisfies HexRingDefinition);
+    }),
+  );
 
 /**
  * Ring 1 — the six hexes surrounding the hangar, in the authored order (one
@@ -139,17 +255,29 @@ export const RING_1_HEX_FIXTURES: readonly RingHexFixture[] = fixturesFor(1);
  */
 export const RING_2_HEX_FIXTURES: readonly RingHexFixture[] = fixturesFor(2);
 
+/**
+ * Ring 3 — the eighteen-hex **variety sample** (AH-0MWEW4ANW009GGX7), carrying
+ * authored personalities, contracts and landmarks. Fixture content, not
+ * shipped data: the shipped table still authors rings 1 and 2 only.
+ */
+export const RING_3_HEX_FIXTURES: readonly RingHexFixture[] = fixturesFor(3);
+
 /** Fixtures keyed by ring index, so a caller never hard-codes the table. */
 const RING_FIXTURES_BY_RING: Readonly<
   Record<RingIndex, readonly RingHexFixture[]>
 > = Object.freeze({
   1: RING_1_HEX_FIXTURES,
   2: RING_2_HEX_FIXTURES,
+  3: RING_3_HEX_FIXTURES,
 });
 
 /** Fixture lookup by hex id, built once. */
 const FIXTURE_BY_ID: ReadonlyMap<string, RingHexFixture> = new Map(
-  [...RING_1_HEX_FIXTURES, ...RING_2_HEX_FIXTURES].map((hex) => [hex.id, hex]),
+  [
+    ...RING_1_HEX_FIXTURES,
+    ...RING_2_HEX_FIXTURES,
+    ...RING_3_HEX_FIXTURES,
+  ].map((hex) => [hex.id, hex]),
 );
 
 /**

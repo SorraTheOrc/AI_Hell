@@ -16,10 +16,19 @@
 #   isSpecialMission — true for a special-mission hex (its grant must be a hull);
 #                     absent/false for an ordinary hex.
 #   baseAggression  — frontier aggression before any tick.
-id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression
-hex-r1-1,1,0,1,the-dawnbreaker,cannon|dual,nova|arc,hull-2,false,false,2
-hex-r1-2,1,-1,1,shroud-merchant,spread,waveLaser,extra-life,false,false,1
-hex-r1-3,0,-1,1,iron-crusher,rapid,mortar,rapid,false,false,3
-hex-r1-4,-1,0,1,ember-reaver,cannon,ricochet,ricochet,false,false,2
-hex-r1-5,-1,1,1,the-hollow-judge,nova,waveLaser,core-bank,false,false,4
-hex-r1-6,0,1,1,maw-of-ashes,mortar|arc,spread|dual,waveLaser,true,false,6
+#   personality    — optional authored personality id (see HEX_PERSONALITY_IDS in
+#                     src/core/hangarWar/hexRing.ts); empty for an ordinary hex.
+#   contractObjective / contractBonusSalvage / contractBonusCores
+#                  — optional contract: the objective published as known-ahead
+#                    intel and the bonus salvage/cores banked on capture; leave
+#                    all three empty when the hex carries no contract.
+#   landmark       — optional `fortress` (two capture passes) or `cache` (pays
+#                     bonus salvage instead of granting); empty for an ordinary
+#                     hex. A ring holds at most one of each.
+id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression,personality,contractObjective,contractBonusSalvage,contractBonusCores,landmark
+hex-r1-1,1,0,1,the-dawnbreaker,cannon|dual,nova|arc,hull-2,false,false,2,,,,,
+hex-r1-2,1,-1,1,shroud-merchant,spread,waveLaser,extra-life,false,false,1,,,,,
+hex-r1-3,0,-1,1,iron-crusher,rapid,mortar,rapid,false,false,3,,,,,
+hex-r1-4,-1,0,1,ember-reaver,cannon,ricochet,ricochet,false,false,2,,,,,
+hex-r1-5,-1,1,1,the-hollow-judge,nova,waveLaser,core-bank,false,false,4,,,,,
+hex-r1-6,0,1,1,maw-of-ashes,mortar|arc,spread|dual,waveLaser,true,false,6,,,,,

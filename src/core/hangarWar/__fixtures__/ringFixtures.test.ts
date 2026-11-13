@@ -21,12 +21,19 @@ import { describe, expect, it } from 'vitest';
 import {
   RING_1_HEX_FIXTURES,
   RING_2_HEX_FIXTURES,
+  RING_3_HEX_FIXTURES,
+  VARIETY_RING_DEFINITIONS,
   createSampleHexWarPayload,
   findRingHexFixture,
   ringDepth,
   ringFixtures,
   type RingHexFixture,
 } from './ringFixtures';
+import {
+  HEX_LANDMARK_IDS,
+  HEX_PERSONALITY_MECHANICS,
+  validateRingDefinitions,
+} from '../hexRing';
 
 /** The six axial offsets of ring 1, in fixture order (design of record). */
 const RING_ONE_COORDINATES: ReadonlyArray<readonly [number, number]> = [
@@ -88,12 +95,66 @@ describe('ring hex fixtures', () => {
     expect(ringFixtures(2)).toBe(RING_2_HEX_FIXTURES);
   });
 
-  it('has no ring-3 fixture yet (later rings are appended by B2)', () => {
-    expect(ringFixtures(3)).toEqual([]);
+  it('ships the eighteen-hex ring-3 variety sample (6 × n hexes)', () => {
+    expect(RING_3_HEX_FIXTURES).toHaveLength(18);
+    expect(ringFixtures(3)).toBe(RING_3_HEX_FIXTURES);
+    // The variety sample is authored data the ring validator accepts: no axis
+    // may be introduced by relaxing the ring rules.
+    expect(validateRingDefinitions(3, VARIETY_RING_DEFINITIONS)).toEqual({
+      ok: true,
+      issues: [],
+    });
+  });
+
+  it('publishes all three variety axes on the ring-3 sample', () => {
+    const personalities = RING_3_HEX_FIXTURES.filter(
+      (hex) => hex.personality !== undefined,
+    );
+    expect(personalities.length).toBeGreaterThan(0);
+    // Both bounded shared mechanics are present, so each can be exercised
+    // through the same shared combat code the game runs.
+    const authoredPersonalities = new Set(
+      personalities.map((hex) => hex.personality),
+    );
+    for (const mechanic of HEX_PERSONALITY_MECHANICS) {
+      expect(authoredPersonalities.has(mechanic), `${mechanic} sample hex`).toBe(
+        true,
+      );
+    }
+
+    const contracts = RING_3_HEX_FIXTURES.filter(
+      (hex) => hex.contract !== undefined,
+    );
+    expect(contracts.length).toBeGreaterThan(0);
+    for (const hex of contracts) {
+      expect(hex.contract!.objective).not.toBe('');
+      expect(hex.contract!.bonusSalvage).toBeGreaterThanOrEqual(0);
+      expect(hex.contract!.bonusCores).toBeGreaterThanOrEqual(0);
+      expect(
+        hex.contract!.bonusSalvage + hex.contract!.bonusCores,
+        `${hex.id} contract pays something`,
+      ).toBeGreaterThan(0);
+    }
+
+    // One of each set-piece (a ring holds at most one fortress and one cache).
+    for (const landmark of HEX_LANDMARK_IDS) {
+      const landmarkHexes = RING_3_HEX_FIXTURES.filter(
+        (hex) => hex.landmark === landmark,
+      );
+      expect(landmarkHexes, `${landmark} sample hexes`).toHaveLength(1);
+    }
+    const cacheHex = RING_3_HEX_FIXTURES.find((hex) => hex.landmark === 'cache')!;
+    expect(cacheHex.weaponHex, 'a cache never grants the ring weapon').toBe(
+      false,
+    );
   });
 
   it('declares each hex on the ring its coordinates belong to', () => {
-    for (const hex of [...RING_1_HEX_FIXTURES, ...RING_2_HEX_FIXTURES]) {
+    for (const hex of [
+      ...RING_1_HEX_FIXTURES,
+      ...RING_2_HEX_FIXTURES,
+      ...RING_3_HEX_FIXTURES,
+    ]) {
       expect(ringDepth(hex.q, hex.r), `${hex.id} ring membership`).toBe(
         hex.ringIndex,
       );
@@ -109,8 +170,12 @@ describe('ring hex fixtures', () => {
     );
   });
 
-  it('uses unique ids and unique axial coordinates across both rings', () => {
-    const all = [...RING_1_HEX_FIXTURES, ...RING_2_HEX_FIXTURES];
+  it('uses unique ids and unique axial coordinates across every ring', () => {
+    const all = [
+      ...RING_1_HEX_FIXTURES,
+      ...RING_2_HEX_FIXTURES,
+      ...RING_3_HEX_FIXTURES,
+    ];
     const ids = all.map((hex) => hex.id);
     expect(new Set(ids).size).toBe(ids.length);
     const coordinates = all.map((hex) => `${hex.q},${hex.r}`);
@@ -131,7 +196,11 @@ describe('ring hex fixtures', () => {
   });
 
   it('declares exactly one weapon hex per ring, and it is the hardest hex', () => {
-    for (const hexes of [RING_1_HEX_FIXTURES, RING_2_HEX_FIXTURES]) {
+    for (const hexes of [
+      RING_1_HEX_FIXTURES,
+      RING_2_HEX_FIXTURES,
+      RING_3_HEX_FIXTURES,
+    ]) {
       const ringWeapon = weaponHex(hexes);
       expect(ringWeapon, 'a ring weapon hex').toBeDefined();
       const ringWeaponCount = hexes.filter((hex) => hex.weaponHex).length;
@@ -150,7 +219,11 @@ describe('ring hex fixtures', () => {
   });
 
   it('grants every ring a distinct reward (the weapon hex grants the new weapon)', () => {
-    for (const hexes of [RING_1_HEX_FIXTURES, RING_2_HEX_FIXTURES]) {
+    for (const hexes of [
+      RING_1_HEX_FIXTURES,
+      RING_2_HEX_FIXTURES,
+      RING_3_HEX_FIXTURES,
+    ]) {
       const grants = hexes.map((hex) => hex.grants);
       expect(new Set(grants).size, 'distinct grants per ring').toBe(
         hexes.length,
@@ -159,7 +232,11 @@ describe('ring hex fixtures', () => {
   });
 
   it('looks fixtures up by id, and reports an unknown id as undefined', () => {
-    for (const hex of [...RING_1_HEX_FIXTURES, ...RING_2_HEX_FIXTURES]) {
+    for (const hex of [
+      ...RING_1_HEX_FIXTURES,
+      ...RING_2_HEX_FIXTURES,
+      ...RING_3_HEX_FIXTURES,
+    ]) {
       expect(findRingHexFixture(hex.id)).toBe(hex);
     }
     expect(findRingHexFixture('hex-does-not-exist')).toBeUndefined();
@@ -229,6 +306,17 @@ describe('createSampleHexWarPayload', () => {
     const payload = createSampleHexWarPayload(3, 2);
     expect(payload.ring.hexes.map((hex) => hex.id)).toEqual(
       RING_2_HEX_FIXTURES.map((hex) => hex.id),
+    );
+  });
+
+  it('samples the ring-3 variety ring deterministically', () => {
+    const first = createSampleHexWarPayload(0xbeef, 3);
+    const again = createSampleHexWarPayload(0xbeef, 3);
+    expect(again).toEqual(first);
+    expect(first.ring.ringIndex).toBe(3);
+    expect(first.ring.hexes).toHaveLength(RING_3_HEX_FIXTURES.length);
+    expect(first.ring.hexes.map((hex) => hex.id)).toEqual(
+      RING_3_HEX_FIXTURES.map((hex) => hex.id),
     );
   });
 });

@@ -27,6 +27,13 @@
  *   loudly by `validateRingDefinitions` (a `true` row must grant a hull
  *   catalogue entry). The CSV seeds carry the same column, so the parity test
  *   keeps the marker from drifting.
+ * - **Hex variety is optional authored data** (post-MVP,
+ *   AH-0MVWZYQN8007SXIG foundation AH-0MWEW4ANW009GGX7): a row may carry a
+ *   `personality`, an optional `contract` and a `landmark` (`fortress`/`cache`).
+ *   No authored row states one yet — the vocabulary and its loud validation
+ *   land before the axes' content does — and every field is optional, so rings
+ *   1 and 2 stay valid and older saves stay field-presence migratable. The CSV
+ *   seeds carry the matching columns so the parity test covers them too.
  * - **Ring 2 is the harder frontier**: its hardest hex outranks ring 1's, and
  *   its aggression floor is above the opening ring's.
  * - **Authorship order is pinned** by the harness fixtures

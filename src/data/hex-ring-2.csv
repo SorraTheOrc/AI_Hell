@@ -5,19 +5,23 @@
 # `src/data/hexRingDefinitions.test.ts` fails if the two drift.
 #
 # Columns (identical to hex-ring-1.csv; list fields are `|`-separated):
+#   followed by the optional hex-variety fields (AH-0MWEW4ANW009GGX7):
+#   personality,contractObjective,contractBonusSalvage,contractBonusCores,landmark
+#   Empty means an ordinary hex; see hex-ring-1.csv for the full
+#   documentation of each column.
 #   id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression
 # Ring 2 authors the ring's one special mission: `hex-r2-3` carries
 # `isSpecialMission=true` and grants the extra-hit-points `hull-3`.
-id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression
-hex-r2-1,-2,0,2,the-siege-leviathan,mortar,waveLaser,arc,false,false,2
-hex-r2-2,-2,1,2,cinder-praetor,arc,nova,broadside,false,false,2
-hex-r2-3,-2,2,2,the-void-marshall,nova,rapid,hull-3,false,true,5
-hex-r2-4,-1,-1,2,ghost-colonel,rapid,arc,rapid,false,false,2
-hex-r2-5,-1,2,2,the-furnace-king,ricochet,spread,dual,false,false,5
-hex-r2-6,0,-2,2,cobalt-siege,dual,mortar,hull-2,false,false,2
-hex-r2-7,0,2,2,the-static-prophet,spread,ricochet,extra-life,false,false,2
-hex-r2-8,1,-2,2,the-bone-sibyl,cannon,dual,armour-plating,false,false,5
-hex-r2-9,1,1,2,the-rusted-harbinger,waveLaser,cannon,systems-upgrade,false,false,6
-hex-r2-10,2,-2,2,pit-warden,mortar,waveLaser,firepower-up,false,false,2
-hex-r2-11,2,-1,2,the-ashen-judge,rapid,mortar,ricochet,false,false,5
-hex-r2-12,2,0,2,the-worldbreaker,nova|arc,spread|dual,nova,true,false,8
+id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression,personality,contractObjective,contractBonusSalvage,contractBonusCores,landmark
+hex-r2-1,-2,0,2,the-siege-leviathan,mortar,waveLaser,arc,false,false,2,,,,,
+hex-r2-2,-2,1,2,cinder-praetor,arc,nova,broadside,false,false,2,,,,,
+hex-r2-3,-2,2,2,the-void-marshall,nova,rapid,hull-3,false,true,5,,,,,
+hex-r2-4,-1,-1,2,ghost-colonel,rapid,arc,rapid,false,false,2,,,,,
+hex-r2-5,-1,2,2,the-furnace-king,ricochet,spread,dual,false,false,5,,,,,
+hex-r2-6,0,-2,2,cobalt-siege,dual,mortar,hull-2,false,false,2,,,,,
+hex-r2-7,0,2,2,the-static-prophet,spread,ricochet,extra-life,false,false,2,,,,,
+hex-r2-8,1,-2,2,the-bone-sibyl,cannon,dual,armour-plating,false,false,5,,,,,
+hex-r2-9,1,1,2,the-rusted-harbinger,waveLaser,cannon,systems-upgrade,false,false,6,,,,,
+hex-r2-10,2,-2,2,pit-warden,mortar,waveLaser,firepower-up,false,false,2,,,,,
+hex-r2-11,2,-1,2,the-ashen-judge,rapid,mortar,ricochet,false,false,5,,,,,
+hex-r2-12,2,0,2,the-worldbreaker,nova|arc,spread|dual,nova,true,false,8,,,,,

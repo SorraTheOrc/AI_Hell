@@ -27,6 +27,9 @@ import {
   ringDepth,
   ringSize,
   validateRingDefinitions,
+  type HexContractDefinition,
+  type HexLandmarkId,
+  type HexPersonalityId,
   type HexRingDefinition,
 } from '../core/hangarWar/hexRing';
 import { hexAggressionLevel } from '../core/hangarWar/hexDifficulty';
@@ -49,30 +52,51 @@ function definitionsFromCsv(name: string): HexRingDefinition[] {
 
 /** Parses hex-ring CSV text into typed definitions (the seed's column order). */
 function definitionsFromCsvText(csv: string): HexRingDefinition[] {
-  return parseCsvRows(csv).map((row) => ({
-    id: row.id,
-    q: Number(row.q),
-    r: Number(row.r),
-    ringIndex: Number(row.ringIndex),
-    boss: row.boss,
-    strengths: (row.strengths ?? '').split('|').filter((id) => id !== ''),
-    weaknesses: (row.weaknesses ?? '').split('|').filter((id) => id !== ''),
-    grants: row.grants,
-    weaponHex: row.weaponHex === 'true',
-    isSpecialMission: row.isSpecialMission === 'true',
-    baseAggression: Number(row.baseAggression),
-  }));
+  return parseCsvRows(csv).map((row) => {
+    const personality = (row.personality ?? '').trim();
+    const landmark = (row.landmark ?? '').trim();
+    const objective = (row.contractObjective ?? '').trim();
+    // A contract is one authored unit: the objective cell decides whether the
+    // row carries one at all, and the two bonus cells are its payout.
+    const contract: HexContractDefinition | undefined =
+      objective === ''
+        ? undefined
+        : {
+            objective,
+            bonusSalvage: Number(row.contractBonusSalvage ?? 0),
+            bonusCores: Number(row.contractBonusCores ?? 0),
+          };
+    return {
+      id: row.id,
+      q: Number(row.q),
+      r: Number(row.r),
+      ringIndex: Number(row.ringIndex),
+      boss: row.boss,
+      strengths: (row.strengths ?? '').split('|').filter((id) => id !== ''),
+      weaknesses: (row.weaknesses ?? '').split('|').filter((id) => id !== ''),
+      grants: row.grants,
+      weaponHex: row.weaponHex === 'true',
+      isSpecialMission: row.isSpecialMission === 'true',
+      baseAggression: Number(row.baseAggression),
+      ...(personality === ''
+        ? {}
+        : { personality: personality as HexPersonalityId }),
+      ...(contract === undefined ? {} : { contract }),
+      ...(landmark === '' ? {} : { landmark: landmark as HexLandmarkId }),
+    };
+  });
 }
 
 /**
  * Serialises definitions into the seed's on-disk shape, column order included.
  *
- * Used to prove the parity harness carries the `isSpecialMission` column: the
- * same parse the committed seeds go through must round-trip a flagged row.
+ * Used to prove the parity harness carries the `isSpecialMission` column and the
+ * optional hex-variety columns: the same parse the committed seeds go through
+ * must round-trip a flagged/special/variety row.
  */
 function definitionsToCsv(rows: readonly HexRingDefinition[]): string {
   const header =
-    'id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression';
+    'id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression,personality,contractObjective,contractBonusSalvage,contractBonusCores,landmark';
   const lines = rows.map((row) =>
     [
       row.id,
@@ -86,9 +110,19 @@ function definitionsToCsv(rows: readonly HexRingDefinition[]): string {
       String(row.weaponHex),
       String(row.isSpecialMission === true),
       String(row.baseAggression),
+      row.personality ?? '',
+      row.contract === undefined ? '' : quoteCsv(row.contract.objective),
+      row.contract === undefined ? '' : String(row.contract.bonusSalvage),
+      row.contract === undefined ? '' : String(row.contract.bonusCores),
+      row.landmark ?? '',
     ].join(','),
   );
   return [header, ...lines].join('\n') + '\n';
+}
+
+/** RFC 4180 quoting, so an authored objective may contain commas or quotes. */
+function quoteCsv(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 /** Ring 1's authored definitions, as plain (non-frozen) copies. */
@@ -119,6 +153,11 @@ describe('hex-ring CSV seeds', () => {
     const csv = readCsv(`hex-ring-${ring}.csv`);
     expect(csv).toMatch(/^# /);
     expect(csv).toContain('id,q,r,ringIndex,boss');
+    // The optional hex-variety columns are documented in both seeds and mirror
+    // the typed vocabulary (AH-0MWEW4ANW009GGX7).
+    expect(csv).toContain(
+      'personality,contractObjective,contractBonusSalvage,contractBonusCores,landmark',
+    );
     expect(csv).toMatch(/\n$/);
   });
 
@@ -406,6 +445,39 @@ describe('CSV seeds carry the isSpecialMission column', () => {
     expect(definitionsFromCsvText(definitionsToCsv(authoredRingOne()))).not.toEqual(
       flagged,
     );
+  });
+});
+
+describe('CSV seeds carry the optional hex-variety columns', () => {
+  it('round-trips personality, contract and landmark through the seed parse', () => {
+    const withVariety = authoredRingOne().map((hex, index) => {
+      if (index === 0) return { ...hex, personality: 'nebula' as const };
+      if (index === 1) {
+        return {
+          ...hex,
+          contract: {
+            objective: 'Break the siege line, then hold the hex',
+            bonusSalvage: 120,
+            bonusCores: 1,
+          },
+        };
+      }
+      if (index === 2) return { ...hex, landmark: 'fortress' as const };
+      if (index === 3) return { ...hex, landmark: 'cache' as const };
+      return hex;
+    });
+    expect(definitionsFromCsvText(definitionsToCsv(withVariety))).toEqual(
+      withVariety,
+    );
+  });
+
+  it('detects drift in the variety columns', () => {
+    const withPersonality = authoredRingOne().map((hex, index) =>
+      index === 0 ? { ...hex, personality: 'summoner' as const } : hex,
+    );
+    expect(
+      definitionsFromCsvText(definitionsToCsv(authoredRingOne())),
+    ).not.toEqual(withPersonality);
   });
 });
 
