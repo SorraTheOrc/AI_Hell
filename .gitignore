@@ -34,6 +34,10 @@ recordings/
 # by `npm run evaluate`, never committed.
 eval-output/
 
+# Experience-validation output (AH-0MW0U7YVO001DDST) — generated locally by
+# `npm run validate-experience`, never committed.
+experience-out/
+
 # Performance measurement artifacts (AH-0MVXV0E8000937U5) — raw CDP CPU
 # profiles and per-run harness JSON are generated locally by
 # `npm run perf:measure`, never committed. The published baseline numbers live
