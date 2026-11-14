@@ -56,6 +56,40 @@ const DOC_PATH = path.resolve(
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const README_PATH = path.resolve(process.cwd(), 'README.md');
 
+/** The committed ring-timing baseline artifact — the guard's source of truth. */
+const RING_TIMING_BASELINE_PATH = path.resolve(
+  process.cwd(),
+  'docs/dev/ring-timing-baseline.json',
+);
+
+/**
+ * The measured ring-timing mean the GDD §8.2 prose must quote for a ring and
+ * line: `summary.totalMinutes.mean.toFixed(1)` from the committed artifact
+ * (AH-0MW0KSCU20096B02). Deriving at test runtime keeps the guard consistent
+ * with the artifact — recalibrating the artifact updates the guard without
+ * manual edits, and a GDD quote that drifts from the measurement fails.
+ */
+const ringTimingMean = (ringIndex: number, strategy: string): string => {
+  const artifact = JSON.parse(
+    fs.readFileSync(RING_TIMING_BASELINE_PATH, 'utf8'),
+  ) as Array<{
+    ringIndex: number;
+    strategy: string;
+    summary: { totalMinutes: { mean: number } };
+  }>;
+  const entry = artifact.find(
+    (candidate) =>
+      candidate.ringIndex === ringIndex && candidate.strategy === strategy,
+  );
+  if (!entry) {
+    throw new Error(
+      `ring-timing baseline artifact ${RING_TIMING_BASELINE_PATH} has no ` +
+        `${ringIndex}-${strategy} entry`,
+    );
+  }
+  return entry.summary.totalMinutes.mean.toFixed(1);
+};
+
 /**
  * The work item created to build the chosen loop (AC16).
  *
@@ -563,23 +597,35 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
     expect(spec).toMatch(/stored numbers/i);
   });
 
-  it('records the measured ring timings and their tolerance, requoted from the one-level artifact', () => {
+  it('records the measured ring timings and their tolerance, derived from the one-level artifact', () => {
     const spec = gddRingSpec();
+    // The four means are derived from the committed artifact's
+    // summary.totalMinutes.mean.toFixed(1) at test runtime, so a recalibration
+    // updates the guard without manual edits — the measured figures cannot
+    // drift from the baseline (AC1/AC2, AH-0MW0KSCU20096B02).
+    const ring1Grind = ringTimingMean(1, 'grind');
+    const ring2Grind = ringTimingMean(2, 'grind');
+    const ring1Rush = ringTimingMean(1, 'rush');
+    const ring2Rush = ringTimingMean(2, 'rush');
     // Ring 1 grind mean and ring 2 grind mean, measured with the arena and
     // requoted from the regenerated one-level artifact (AH-0MWCOWSVN003X81A).
-    expect(spec).toMatch(/16\.4/);
-    expect(spec).toMatch(/48\.1/);
+    expect(spec).toMatch(new RegExp(escapeRegExp(ring1Grind)));
+    expect(spec).toMatch(new RegExp(escapeRegExp(ring2Grind)));
     // The rush line is faster: ring 1 and ring 2.
-    expect(spec).toMatch(/10\.1/);
-    expect(spec).toMatch(/22\.3/);
+    expect(spec).toMatch(new RegExp(escapeRegExp(ring1Rush)));
+    expect(spec).toMatch(new RegExp(escapeRegExp(ring2Rush)));
     // Budget windows and the stated tolerance stay authored.
     expect(spec).toMatch(/40\s*[–—-]\s*60/);
     expect(spec).toMatch(/90\s*[–—-]\s*120/);
     expect(spec).toMatch(/±\s*2\s*min/i);
     expect(spec).toMatch(/±\s*3\s*min/i);
     // Both grind budgets are missed, with their linked rebalancing items.
-    expect(spec).toMatch(/16\.4[^\n]*\bmissed\b/i);
-    expect(spec).toMatch(/48\.1[^\n]*\bmissed\b/i);
+    expect(spec).toMatch(
+      new RegExp(`${escapeRegExp(ring1Grind)}[^\\n]*\\bmissed\\b`, 'i'),
+    );
+    expect(spec).toMatch(
+      new RegExp(`${escapeRegExp(ring2Grind)}[^\\n]*\\bmissed\\b`, 'i'),
+    );
     expect(spec).toContain('AH-0MWFDQ9EY004NO4X');
     expect(spec).toContain('AH-0MWFDQCFV007BZE5');
     // The measurement is reproducible from the committed artifact.
