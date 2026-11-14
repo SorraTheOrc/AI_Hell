@@ -1733,6 +1733,17 @@ assets). The overlay pauses play exactly like the hold-full choice, is
 `MineralChoiceScene.onSelect`) and never computes probabilities itself: the
 launcher resolves the outcome and the overlay only animates it.
 
+> **Scope — arcade and gyms only.** This is the reward of a **`▶ Play Game`**
+> mini-boss defeat (and the gym demonstration of it). A **winning hangar
+> deployment** does **not** open this overlay, and does not open the empty-owned
+> three-option fallback either: the wheel's upgrades are **run-scoped** and
+> that run has already finished. The win banks a fixed **mineral** bonus into
+> the persistent war instead and the landing map announces it
+> (parent AH-0MWEVNBMM000QFO2; producer decisions Q1 = (c), Q2 = (a),
+> Q3 = (b), recorded 2026-11-13 on AH-0MWCOWTOR00994NA — see §8.2
+> *One level per deployment, ended by the mini-boss*). The overlay itself is
+> unchanged: gym↔game parity for the shared wheel surface stays intact.
+
 - **Player-initiated spin.** A click or any key starts the spin; nothing is
   awarded before it. The wheel starts fast and eases out over ≈2.2 s
   (`MINI_BOSS_WHEEL_SPIN_DURATION_MS`), travelling three base turns plus the
@@ -3061,7 +3072,6 @@ nothing else. A hex deployment **writes no arcade checkpoint and clears none**
 (§8.1), and a malformed or absent payload degrades to the unchanged arcade run.
 
 **One level per deployment, ended by the mini-boss** (AH-0MWBW1B1Z0059CC2). A
-**One level per deployment, ended by the mini-boss** (AH-0MWBW1B1Z0059CC2). A
 deployment plays **exactly the one campaign level its aggression selects**, as
 a **five-wave sortie** (AH-0MWDCBVQ700579WS): the level's first four regular
 waves, then that level's mini-boss on wave 5. It ends on that wave-5 mini-boss;
@@ -3069,15 +3079,36 @@ it never advances to the next level
 and never spawns the final boss, so taking a hex is a bounded sortie rather than
 the rest of the campaign. The mini-boss victory runs the capture cycle
 (below) and ends the run as a **victory**. On a win the player sees, in order,
-the mini-boss defeat → the mini-boss **reward** overlay (the same shared
-`MiniBossWheelScene` the arcade uses) → `HexMapScene`, which carries the
-between-sortie report on the map itself: the newly held hex, the tick's attack
-arrows and the left-hand attack panel are all one surface, so the reward can
-never appear after the report and there is no separate screen to click
-through. A lost deployment lands on the same map with the report and no reward.
-The arcade campaign is untouched: `▶ Play Game` still runs all
-ten levels, a non-final level's mini-boss still advances, and level 10's
-mini-boss still opens the final boss.
+the mini-boss defeat → **`HexMapScene`**, which announces the **banked win
+bonus** and carries the between-sortie report on the map itself: the newly held
+hex, the tick's attack arrows and the left-hand attack panel are all one
+surface, and there is no separate screen to click through.
+
+**No reward overlay on the win path** (parent **AH-0MWEVNBMM000QFO2**; producer
+decisions **Q1 = (c)**, **Q2 = (a)**, **Q3 = (b)**, recorded 2026-11-13 on
+**AH-0MWCOWTOR00994NA**). A winning hangar deployment presents **neither** the
+shared mini-boss wheel (`MiniBossWheelScene`) **nor** the empty-owned
+three-option fallback: both grant **run-scoped** value, and the run has already
+finished, so the upgrades could never take effect. The win instead banks a
+**fixed mineral bonus** into the persistent war — minerals only, never a bonus
+core, because a capture already banks its one core through the capture cycle —
+and the map **announces** it (`WIN BONUS BANKED: +N MINERALS`) before
+interaction resumes, so the post-win moment reads as real progress rather than a
+reward that vanishes with the run. The amount is the named constant
+`WIN_BONUS_MINERALS` (`src/core/hangarWar/hangarEconomy.ts`), **provisionally**
+one banked core's mineral worth until AH-0MWCOWTOR00994NA's measured
+per-deployment income lands and re-baselines it (a value change on balance,
+rather than recording that baseline, is its own linked item). The bonus banks
+through the pure `bankWinBonus` seam
+(`src/core/hangarWar/salvageBanking.ts`), applied on top of the capture-banked
+balance and persisted in the **same** `ai_hell_hangar_war` payload write, so it
+can never double-count the capture's core or disturb the capture cycle's
+per-run watermark. A lost deployment lands on the same map with the report and
+no reward, and no bonus. The arcade campaign is **untouched**: `▶ Play Game`
+still runs all
+ten levels, a non-final level's mini-boss still advances, level 10's
+mini-boss still opens the final boss, and **every arcade mini-boss defeat still
+presents the wheel**.
 
 #### The hangar and its economy
 
@@ -3546,15 +3577,22 @@ income — a purchase needs both currencies at once, so the pace is the slower
 currency bound; the rush line banks nothing on either ring and never funds the
 tree.)
 
-**The post-win reward ruling (producer, recorded 2026-11-13):** the mini-boss
-wheel is **suppressed on the winning deployment path** and the player banks a
-**fixed post-win bonus** into the hangar war instead; the arcade campaign and
-lost deployments keep the wheel as shipped. The bonus **amount** is baselined
-from this measured per-deployment income (the decision and the numbers live on
-AH-0MWCOWTOR00994NA) and lands as a named constant in the linked economy-rule
-item **AH-0MWEVNBMM000QFO2** (banking seam: AH-0MWF2PYIE001XZOV). No price,
-banking or ring change is implied by the measurement — the unlock tree reads
-faster, not harder; any rebalance nevertheless stays its own linked item.
+**The post-win reward ruling (producer, recorded 2026-11-13) — shipped:** the
+mini-boss wheel is **suppressed on the winning deployment path** and the
+player banks a **fixed post-win bonus** into the hangar war instead; the arcade
+campaign and lost deployments keep the wheel as shipped. Shipped by
+**AH-0MWEVNBMM000QFO2** (banking seam AH-0MWF2PYIE001XZOV, win-path wiring
+AH-0MWF2Q0O0008NGKL, announcement AH-0MWF2Q2JC008MAJE): the bonus is
+**minerals only** (`Q2 = (a)`) and is **announced on the landing map**
+(`Q3 = (b)`) rather than silently banked. The bonus **amount** is baselined from
+this measured per-deployment income (the decision and the numbers live on
+AH-0MWCOWTOR00994NA) and lands as the named constant `WIN_BONUS_MINERALS`; until
+that measurement lands the constant is **provisional** (one banked core's
+mineral worth — `CORE_MINERAL_EQUIVALENT` — deliberately not a freshly invented
+balance number), and re-baselining it from the measurement is a one-line change
+because every test reads the constant. No price, banking or ring change is
+implied by the measurement — the unlock tree reads faster, not harder; any
+rebalance nevertheless stays its own linked item.
 
 **Fidelity and reproducibility.** The numbers are the competent bot's headless
 arena runs — the same evidence standard as the timing baseline (a human

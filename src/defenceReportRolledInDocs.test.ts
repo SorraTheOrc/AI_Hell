@@ -91,8 +91,13 @@ describe('the between-sortie report is documented as rolled into the map (AH-0MW
   it('GDD lists two Hangar War screens and lands the report on the map', () => {
     expect(GDD).toMatch(/runs\nthrough two screens/);
     expect(GDD).not.toMatch(/`DefenceReportScene`/);
-    // A winning deployment's order is reward overlay → map, not → report → map.
-    expect(GDD).toMatch(/mini-boss \*\*reward\*\* overlay[\s\S]{0,220}?`HexMapScene`/);
+    // A winning deployment's order is defeat → map (with the report and the
+    // banked-bonus announcement on it), and **no** reward overlay
+    // (AH-0MWEVNBMM000QFO2, producer Q1 = c / Q3 = b, recorded 2026-11-13).
+    expect(GDD).toMatch(/mini-boss defeat → \*\*`HexMapScene`\*\*/);
+    expect(GDD).toMatch(/No reward overlay on the win path/);
+    expect(GDD).toMatch(/WIN BONUS BANKED: \+N MINERALS/);
+    expect(GDD).not.toMatch(/mini-boss \*\*reward\*\* overlay[\s\S]{0,220}?`HexMapScene`/);
   });
 
   it('OUTER_LOOP Candidate D describes the report rolled into the ring map', () => {
