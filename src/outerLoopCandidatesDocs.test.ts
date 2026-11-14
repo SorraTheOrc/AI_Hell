@@ -563,20 +563,25 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
     expect(spec).toMatch(/stored numbers/i);
   });
 
-  it('records the measured ring timings and their tolerance', () => {
+  it('records the measured ring timings and their tolerance, requoted from the one-level artifact', () => {
     const spec = gddRingSpec();
     // Ring 1 grind mean and ring 2 grind mean, measured with the arena and
-    // requoted from the regenerated artifact (AH-0MW9QA2YC009PSF5).
-    expect(spec).toMatch(/54\.3/);
-    expect(spec).toMatch(/116\.4/);
+    // requoted from the regenerated one-level artifact (AH-0MWCOWSVN003X81A).
+    expect(spec).toMatch(/16\.4/);
+    expect(spec).toMatch(/48\.1/);
     // The rush line is faster: ring 1 and ring 2.
-    expect(spec).toMatch(/32\.0/);
-    expect(spec).toMatch(/62\.7/);
-    // Budget windows and the stated tolerance.
+    expect(spec).toMatch(/10\.1/);
+    expect(spec).toMatch(/22\.3/);
+    // Budget windows and the stated tolerance stay authored.
     expect(spec).toMatch(/40\s*[–—-]\s*60/);
     expect(spec).toMatch(/90\s*[–—-]\s*120/);
     expect(spec).toMatch(/±\s*2\s*min/i);
     expect(spec).toMatch(/±\s*3\s*min/i);
+    // Both grind budgets are missed, with their linked rebalancing items.
+    expect(spec).toMatch(/16\.4[^\n]*\bmissed\b/i);
+    expect(spec).toMatch(/48\.1[^\n]*\bmissed\b/i);
+    expect(spec).toContain('AH-0MWFDQ9EY004NO4X');
+    expect(spec).toContain('AH-0MWFDQCFV007BZE5');
     // The measurement is reproducible from the committed artifact.
     expect(spec).toContain('docs/dev/ring-timing-baseline.json');
   });

@@ -427,12 +427,15 @@ are exposed and the ring is not secured.
 
 ### Measured baseline
 
-> **The table below is the superseded campaign-slice measurement.** The
-> artifact has since been regenerated on the shipped one-level deployment
-> (AH-0MWCQ4GTE005YG02): ring 1 grind measures **16.4 min** and ring 2 grind
-> **48.1 min**, both `missed` against the authored windows. This section's
-> table and reading are requoted from the regenerated artifact by
-> AH-0MWCQ4IS6001X7W3, after the budget re-rulings land in AH-0MWCQ4HTC004U73V.
+> **The table below is requoted from the regenerated artifact** on the shipped
+> one-level five-wave sortie (AH-0MWCQ4GTE005YG02, AH-0MWCQ4IS6001X7W3): a
+> deployment is the aggression-selected level played as the shipped sortie —
+> first four regular waves then the wave-5 mini-boss composition, truncated by
+> `truncateCampaignForDeployment` (`DEPLOYMENT_WAVE_COUNT = 5`), measured at the
+> wave-5 composition clear; the mini-boss encounter's own duration is not
+> simulated (documented fidelity gap). Both grind budgets now read `missed`
+> against the authored windows and are re-ruled by the linked rebalancing items
+> AH-0MWFDQ9EY004NO4X (ring 1) and AH-0MWFDQCFV007BZE5 (ring 2).
 
 Committed evidence:
 [`docs/dev/ring-timing-baseline.json`](./dev/ring-timing-baseline.json)
@@ -440,41 +443,32 @@ Committed evidence:
 
 | Ring | Line | Measured runs | Total (mean, min–max) | Losses | Expected losses | Budget |
 |---|---|---|---|---|---|---|
-| 1 (6 hexes) | grind | 19.0 min | **54.3 min** (51.0–56.6) | 4.7 | 4.7 | 40–60 min · **in-window** |
-| 1 (6 hexes) | rush | 0.5 min | **32.0 min** (31.9–32.2) | 1.0 | 4.5 | not applicable (ring not secured) |
-| 2 (12 hexes) | grind | 39.1 min | **116.4 min** (112.7–123.4) | 10.7 | 10.7 | 90–120 min · **in-window** |
-| 2 (12 hexes) | rush | 3.4 min | **62.7 min** (60.9–63.6) | 0.7 | 8.4 | not applicable (ring not secured) |
+| 1 (6 hexes) | grind | 2.2 min | **16.4 min** (15.7–16.9) | 6.0 | 6.0 | 40–60 min · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | rush | 0.2 min | **10.1 min** (9.8–10.6) | 1.0 | 4.5 | not applicable (ring not secured) |
+| 2 (12 hexes) | grind | 12.0 min | **48.1 min** (42.4–58.4) | 12.0 | 12.0 | 90–120 min · **missed** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | rush | 0.5 min | **22.3 min** (20.4–25.4) | 1.0 | 8.7 | not applicable (ring not secured) |
 
 Reading the baseline:
 
-- **The budgets land.** The one-ring MVP measures **54.3 min** inside 40–60, and
-ring 2 **116.4 min** inside 90–120; the budget assertion states a **10 %
-tolerance** (±2 min for ring 1, ±3 min for ring 2).
-- **The playstyle trade is real.** The rush line is **faster** (32.0 vs 54.3 min
-for ring 1) but **riskier** — it leaves five hexes exposed (≈3.5 expected
-retakes), forfeits the salvage of its failed attempts and does not secure the
-ring, while the grind secures it. Neither line dominates.
-- **Ring 2 still pays a large retry bill.** Its authored aggression spread
-(`2,2,5,2,5,2,2,5,6,2,5,8`) puts six hexes in the campaign level 3 band, so
-ring 2 banks salvage (≈22 minerals) and captures **1.3 of 12** first attempts —
-but **55 of its 116.4 min (≈47 %) is still the modelled retry allowance**,
-against a design claim of ≈60 min of deployments plus 10–40 min of builds and
-losses.
-- **The loadout model does not shorten the ring.** Measuring with the loadout a
-  ring-2 player actually launches (5 lives, `hull-2`'s 0.85 speed, the
-  `ricochet` / `rapid` / `wave_laser` weapons) moved the totals **up**
-  (ring 1 50.9 → 54.3 min, ring 2 111.9 → 116.4 min) rather than down: the
-  extra lives survive longer, while the extra firepower raises the arena's
-  damage output, and the campaign slice levels **by kills**, so more first
-  attempts reach the first enemy-fire level inside the fixed window. That
-  DPS-coupled levelling is recorded in `docs/BALANCING.md` § *Fidelity boundary*
-  and bisected in `AH-0MWAPWS1W007LGGY`; with the bare cannon campaign levels 1–2
-  captured the full window and level 3 usually did not, and with the modelled
-  loadout level 3 captures on two of three seeds and still dies to enemy fire on
-  the third (`src/ai/eval/ringTiming.test.ts` pins the boundary). The window was
-  recalibrated from 70–100 to 90–120 when the wrap-aware bot
-  (AH-0MVMISF0Q00314LG) began surviving ~2–3 minutes per lost deployment instead
-  of dying in under a minute; the loadout-model evidence lands inside it.
+- **The budgets miss.** The one-level sortie is quick enough that the competent
+bot dies to enemy fire before the wave-5 clear on every deployment, so ring 1
+grind measures **16.4 min** (against the 40–60 window) and ring 2 **48.1 min**
+(against 90–120); the budget assertion states a **10 % tolerance** (±2 min for
+ring 1, ±3 min for ring 2), and neither total reaches even the tolerance floor.
+Each missed budget is recorded with its measured figure and re-ruled by its own
+linked rebalancing item — **AH-0MWFDQ9EY004NO4X** (ring 1) and
+**AH-0MWFDQCFV007BZE5** (ring 2) — never re-worded as passing.
+- **The playstyle trade is real.** The rush line is **faster** (10.1 vs 16.4 min
+for ring 1; 22.3 vs 48.1 min for ring 2) but **riskier** — it leaves five (ring
+1) / eleven (ring 2) hexes exposed (≈3.5 / 7.7 expected retakes), forfeits the
+salvage of its failed attempts and does not secure the ring, while the grind
+secures it. Neither line dominates.
+- **The retry allowance is large because every sortie is a loss.** With no
+first-attempt captures, the loss-charged retry replays each deployment at its
+own measured length, so a ring's total is mostly deployment time plus the
+between-sortie visits plus the replayed set. The rush line adds the exposed-hex
+re-capture bill (measured mean deployment + the 2-minute visit) at the shipped
+70 % frontier attack chance.
 
 ### Confidence and fidelity boundary
 

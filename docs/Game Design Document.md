@@ -3474,26 +3474,23 @@ surfaces follow the same design: `HexMapScene` is a `capture:scenes` target and
 
 Timing is measured, not guessed, with the headless eval arena
 (`src/ai/eval/arena.ts`) through the ring-timing harness
-(`src/ai/eval/ringTiming.ts`, `npm run ring-timing`). **The baseline below was
-measured against the previous campaign-slice deployment** (a run from the hex's
-aggression-selected level to the campaign's final boss); deployments are now one
-level ending on a mini-boss (AH-0MWBW1B1Z0059CC2), so these **timing** figures
-are **being re-measured** by the follow-up **AH-0MWCOWSVN003X81A** (ring
-timing). The **per-deployment salvage/cores and the mini-boss reward value** are
-**re-baselined for the shipped one-level sortie below**
-(*[Measured per-deployment income](#measured-per-deployment-income-one-level-sortie)*,
-AH-0MWCOWTOR00994NA). The campaign-slice figures are recorded here as the
-pre-change reference, not as a claim about the shipped one-level deployment.
-A deployment is modelled as the game played it then — the classic
-campaign slice from the hex's
-aggression-selected level, a ≈5-minute / 18 000-tick deployment window, launched
-with the **loadout the fleet owns at that point** (the starter kit entering ring
-1, each captured hex's grant owned from the next deployment, ring 1's six grants
-and the `hull-2` hull entering ring 2; AH-0MW9QA2YC009PSF5) — plus explicitly
-documented allowances: **2 minutes between sorties** (hangar, salvage banking,
-map, defence report), a **loss charged one full deployment** (the player's
-replay), and, on the rush line only, the **70 % frontier attack chance ×
-(deployment + visit)** for every hex left unheld.
+(`src/ai/eval/ringTiming.ts`, `npm run ring-timing`). **A deployment is the
+hex's aggression-selected level played as the shipped five-wave sortie** — its
+first four regular waves then the wave-5 mini-boss composition, truncated by
+`truncateCampaignForDeployment` (`src/scenes/hangarWar/hangarDeployment.ts`,
+`DEPLOYMENT_WAVE_COUNT = 5`) — played through to the wave-5 composition clear
+and measured at that clear (AH-0MWBW1B1Z0059CC2, AH-0MWDCBVQ700579WS). The
+mini-boss encounter's own duration is not simulated by the arena (the
+documented fidelity gap). The sortie launches with the **loadout the fleet
+owns at that point** (the starter kit entering ring 1, each captured hex's
+grant owned from the next deployment, ring 1's six grants and the `hull-2`
+hull entering ring 2; AH-0MW9QA2YC009PSF5), plus explicitly documented
+allowances: **2 minutes between sorties** (hangar, salvage banking, map,
+defence report), a **loss charged the replayed deployment's measured length**
+(a lost sortie is replayed at its own measured duration, never a fixed retry
+window), and, on the rush line only, a **re-capture charged the measured mean
+deployment + the 2-minute visit** at the shipped **70 % frontier attack
+chance** for every hex left unheld.
 
 Measured baseline (seeds 1–3, competent bot; artifact
 `docs/dev/ring-timing-baseline.json`, regenerate with `npm run ring-timing --
@@ -3501,15 +3498,21 @@ Measured baseline (seeds 1–3, competent bot; artifact
 
 | Ring | Line | Total mean (min–max) | Losses | Budget |
 |---|---|---|---|---|
-| 1 (6 hexes) | grind | **54.3 min** (51.0–56.6) | 4.7 | 40–60 · **in-window** |
-| 1 (6 hexes) | rush | **32.0 min** (31.9–32.2) | 1.0 | ring not secured |
-| 2 (12 hexes) | grind | **116.4 min** (112.7–123.4) | 10.7 | 90–120 · **in-window** |
-| 2 (12 hexes) | rush | **62.7 min** (60.9–63.6) | 0.7 | ring not secured |
+| 1 (6 hexes) | grind | **16.4 min** (15.7–16.9) | 6.0 | 40–60 · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | rush | **10.1 min** (9.8–10.6) | 1.0 | ring not secured |
+| 2 (12 hexes) | grind | **48.1 min** (42.4–58.4) | 12.0 | 90–120 · **missed** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | rush | **22.3 min** (20.4–25.4) | 1.0 | ring not secured |
 
 The budget assertion states a **10 % tolerance** of each window's width —
-**±2 min** for ring 1 and **±3 min** for ring 2 — and both grind lines pass
-`in-window`. The headless arena is the recorded evidence (intake assumption A1
-and Q4); a human playtest is desirable but not a gate.
+**±2 min** for ring 1 and **±3 min** for ring 2 — and the authored windows are
+**not** re-worded. With the one-level sortie the competent bot loses every
+sortie to enemy fire before the wave-5 clear, so **both grind budgets are
+`missed`**: ring 1 measures **16.4 min** against its 40–60 window and ring 2
+**48.1 min** against 90–120, each recorded here with its measured figure and
+re-ruled by its linked rebalancing item (**AH-0MWFDQ9EY004NO4X** ring 1,
+**AH-0MWFDQCFV007BZE5** ring 2) rather than silently re-worded. The headless
+arena is the recorded evidence (intake assumption A1 and Q4); a human playtest
+is desirable but not a gate.
 
 #### Measured per-deployment income (one-level sortie)
 
@@ -3609,10 +3612,10 @@ hand-edited.
 Two lines are measured, and both are viable:
 
 - **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
-  secured: **54.3 min** for ring 1 and **116.4 min** for ring 2, banking salvage
+  secured: **16.4 min** for ring 1 and **48.1 min** for ring 2, banking salvage
   and ending with a held ring.
-- **Rush** — the weapon hex first, then straight into the next ring: **32.0 min**
-  and **62.7 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
+- **Rush** — the weapon hex first, then straight into the next ring: **10.1 min**
+  and **22.3 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
 expected retakes and forfeiting the salvage of any failed attempt.
 
 **Neither line dominates**: the rush is faster but riskier and ends with an
@@ -3620,9 +3623,12 @@ unsecured, exposed ring, while the grind costs more minutes but secures the ring
 and banks the salvage. Both lines are playable in the shipped capture cycle —
 the captured weapon hex is the ring's capstone, so holding it opens the next
 ring (`isRingOpenable`) while the skipped hexes are carried with their own
-aggression and defenders for the frontier tick. No tuning was required to land
-the budgets; the authored ring data and the shipped frontier tuning already
-produce both windows.
+aggression and defenders for the frontier tick. The re-measured grind totals
+read **`missed`** against the authored windows (ring 1 **16.4 min** vs 40–60,
+ring 2 **48.1 min** vs 90–120) — each is recorded with its new measurement and
+re-ruled by its own linked rebalancing item (**AH-0MWFDQ9EY004NO4X** ring 1,
+**AH-0MWFDQCFV007BZE5** ring 2) rather than re-worded; the windows themselves
+stay authored.
 
 #### Persistence: one key for hangar and ring
 

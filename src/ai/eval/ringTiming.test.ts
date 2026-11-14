@@ -565,13 +565,13 @@ describe('ring timing: budget verdicts', () => {
  * suite compares a measurement against whatever the constant says, so on its
  * own it would happily follow an accidental recalibration.
  *
- * Ring 2 stays at the committed **90–120** window: this item was asked to
- * restore the design of record's 70–100, but the re-baselined, loadout-modelled
- * ring-2 grind measures **116.4 min (112.7–123.4)** and no aggression band the
- * ring rules allow closes the gap (maximal flattening to aggression 2 models
- * 117.1 min). The pin therefore lands the item's own first acceptance
- * criterion's recorded fallback — *the window is what the stable numbers
- * support* — and `docs/EVALUATION.md` records that measurement as the evidence.
+ * Both rings stay at the committed windows — ring 1 **40–60**, ring 2 **90–120**
+ * — even though the regenerated one-level sortie misses both (ring 1 grind
+ * 16.4 min, ring 2 grind 48.1 min): a window change is a producer ruling, not
+ * a re-word of the measurement, so the pins stay authored and each missed
+ * budget is re-ruled by its linked rebalancing item (AH-0MWFDQ9EY004NO4X ring
+ * 1, AH-0MWFDQCFV007BZE5 ring 2). `docs/EVALUATION.md` records the
+ * regenerated measurements as the evidence.
  */
 describe('ring timing: the design windows are pinned literally', () => {
   it('pins ring 1 at 40–60 and ring 2 at the committed 90–120', () => {
