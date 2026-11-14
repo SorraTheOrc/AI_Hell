@@ -25,6 +25,7 @@ import {
   resolveSceneSetupState,
   resolveSetupSeed,
   type SceneSetupPlayer,
+  type SceneSetupSeams,
 } from './sceneSetup';
 
 /** A fake player recording every loadout call. */
@@ -51,6 +52,21 @@ function fakePlayer(): {
     }),
   };
   return { player, equipped, collected, levels };
+}
+
+/** A fake permanent-weapon registry recording every apply call. */
+function fakeRegistry(): {
+  registry: { applyWeapon(id: string, permanent?: boolean): boolean };
+  applied: Array<{ id: string; permanent: boolean }>;
+} {
+  const applied: Array<{ id: string; permanent: boolean }> = [];
+  const registry = {
+    applyWeapon: (id: string, permanent = false) => {
+      applied.push({ id, permanent });
+      return true;
+    },
+  };
+  return { registry, applied };
 }
 
 describe('applySceneSetup (AH-0MVNW8VNN004FFK1)', () => {
@@ -355,5 +371,136 @@ describe('resolveSceneSetupState — the capture setup never reaches normal play
     expect(resolveSceneSetupState(null, { devEnabled: true })).toBeNull();
     expect(resolveSceneSetupState('setup', { devEnabled: true })).toBeNull();
     expect(resolveSceneSetupState(42, { devEnabled: true })).toBeNull();
+  });
+});
+
+// ── Effects registry seam (AH-0MWCP6JHT008EKCY) ──
+//
+// When a caller supplies `getEffectsRegistry` on the seam, permanent weapon
+// grants (`weapons` + `weaponLevels`) must reach **both** the registry (so the
+// HUD upgrade list renders them) and the player (so the ship fires). This is
+// the shared permanent-grant seam first established for hangar-war deployment
+// (AH-0MWCFKHWD002RKX9) and checkpoint-resume replay (AH-0MVSHI07B003BZIP).
+
+describe('applySceneSetup — effects registry seam (AH-0MWCP6JHT008EKCY)', () => {
+  it('grants a setup permanent weapon to both Player and EffectsRegistry', () => {
+    const { player, equipped } = fakePlayer();
+    const { registry, applied } = fakeRegistry();
+    const seams: SceneSetupSeams = {
+      getPlayer: () => player,
+      getEffectsRegistry: () => registry,
+    };
+
+    applySceneSetup(seams, { player: { weapons: ['spread'] }, powerUps: {} });
+
+    // Player received the permanent grant.
+    expect(equipped).toEqual([{ id: 'spread', permanent: true }]);
+    // Registry also received the grant — HUD row is created.
+    expect(applied).toEqual([{ id: 'spread', permanent: true }]);
+  });
+
+  it('grants a setup permanent weapon level to both Player and EffectsRegistry', () => {
+    const { player, equipped } = fakePlayer();
+    const { registry, applied } = fakeRegistry();
+    const seams: SceneSetupSeams = {
+      getPlayer: () => player,
+      getEffectsRegistry: () => registry,
+    };
+
+    applySceneSetup(
+      seams,
+      { player: { weapons: [], weaponLevels: { rapid: 3 } }, powerUps: {} },
+    );
+
+    // Player received 3 permanent grants (one per level).
+    expect(equipped).toEqual([
+      { id: 'rapid', permanent: true },
+      { id: 'rapid', permanent: true },
+      { id: 'rapid', permanent: true },
+    ]);
+    // Registry also received 3 grants.
+    expect(applied).toEqual([
+      { id: 'rapid', permanent: true },
+      { id: 'rapid', permanent: true },
+      { id: 'rapid', permanent: true },
+    ]);
+  });
+
+  it('falls back to player-only when no registry seam is supplied', () => {
+    const { player, equipped } = fakePlayer();
+    const { applied } = fakeRegistry();
+    const seams: SceneSetupSeams = {
+      getPlayer: () => player,
+      // No getEffectsRegistry — older caller without a registry.
+    };
+
+    applySceneSetup(seams, { player: { weapons: ['dual'] }, powerUps: {} });
+
+    expect(equipped).toEqual([{ id: 'dual', permanent: true }]);
+    // The fake registry was never queried.
+    expect(applied).toEqual([]);
+  });
+
+  it('falls back to player-only when the registry seam returns null', () => {
+    const { player, equipped } = fakePlayer();
+    const { applied } = fakeRegistry();
+    const seams: SceneSetupSeams = {
+      getPlayer: () => player,
+      getEffectsRegistry: () => null,
+    };
+
+    applySceneSetup(seams, { player: { weapons: ['wave_laser'] }, powerUps: {} });
+
+    expect(equipped).toEqual([{ id: 'wave_laser', permanent: true }]);
+    expect(applied).toEqual([]);
+  });
+
+  it('timed weapons do NOT reach the registry (stay non-permanent player-only)', () => {
+    const { player, equipped } = fakePlayer();
+    const { registry, applied } = fakeRegistry();
+    const seams: SceneSetupSeams = {
+      getPlayer: () => player,
+      getEffectsRegistry: () => registry,
+    };
+
+    applySceneSetup(
+      seams,
+      { player: { timedWeapons: ['rapid'] }, powerUps: {} },
+    );
+
+    // Timed weapons go to player only (non-permanent).
+    expect(equipped).toEqual([{ id: 'rapid', permanent: false }]);
+    // Timed weapons are never registered as permanent effects.
+    expect(applied).toEqual([]);
+  });
+
+  it('a combined weapons + weaponLevels setup reaches both surfaces', () => {
+    const { player, equipped } = fakePlayer();
+    const { registry, applied } = fakeRegistry();
+    const seams: SceneSetupSeams = {
+      getPlayer: () => player,
+      getEffectsRegistry: () => registry,
+    };
+
+    applySceneSetup(
+      seams,
+      {
+        player: { weapons: ['spread'], weaponLevels: { spread: 2 } },
+        powerUps: {},
+      },
+    );
+
+    // 1 (weapons) + 2 (weaponLevels) = 3 permanent grants to player.
+    expect(equipped).toEqual([
+      { id: 'spread', permanent: true },
+      { id: 'spread', permanent: true },
+      { id: 'spread', permanent: true },
+    ]);
+    // Same 3 grants reach the registry for the HUD row.
+    expect(applied).toEqual([
+      { id: 'spread', permanent: true },
+      { id: 'spread', permanent: true },
+      { id: 'spread', permanent: true },
+    ]);
   });
 });

@@ -64,6 +64,13 @@ const SETUP: SceneSetupState = {
 interface SetupAwareScene extends Phaser.Scene {
   getPlayer(): Player | null;
   getContentRng(): () => number;
+  /**
+   * Optional effect-registry accessor: gyms that expose their registry
+   * publicly let the test assert a setup-granted permanent weapon reached
+   * the HUD data source (`activeWeapons`), not just the player ship
+   * (AH-0MWCP6JHT008EKCY AC3).
+   */
+  getEffectsRegistry?(): { activeWeapons(): Array<{ weaponId: string }> };
 }
 
 /** A world position, optionally wrapped in the leveling gyms' mineral record. */
@@ -189,6 +196,13 @@ describe.each(GYM_CASES)(
       expect(
         player!.getPowerUpLevelStore().getEffectiveLevel('shield'),
       ).toBe(2);
+      // The setup-granted permanent weapon also reaches the effect registry
+      // (the HUD upgrade list's data source), not just the player ship
+      // (AH-0MWCP6JHT008EKCY AC3).
+      const registry = scene.getEffectsRegistry?.();
+      expect(
+        registry?.activeWeapons().filter((w) => w.weaponId === 'rapid'),
+      ).toHaveLength(1);
     });
 
     it('seeds the scene content RNG from the setup', async () => {
@@ -269,6 +283,14 @@ describe('GymCurveSequencer — setup adoption (AH-0MVRMHYJR000Y9H8)', () => {
     expect(player).not.toBeNull();
     expect(player!.getActiveWeapons()).toEqual(['cannon', 'rapid']);
     expect(player!.getPowerUpLevelStore().getEffectiveLevel('shield')).toBe(2);
+    // The setup-granted permanent weapon also reaches the effect registry so
+    // the launched level's HUD lists it (AH-0MWCP6JHT008EKCY AC3).
+    expect(
+      level
+        .getEffectsRegistry()
+        .activeWeapons()
+        .filter((w) => w.weaponId === 'rapid'),
+    ).toHaveLength(1);
   });
 
   it('forwards the resolved seed so the launched level is reproducible', async () => {

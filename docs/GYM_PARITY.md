@@ -189,7 +189,13 @@ policy — `CombatCoreScene._adoptCaptureSetup` calls the single
 `applySceneSetup` applier (`src/scenes/core/sceneSetup.ts`) and re-seeds the
 scene's content RNG from `resolveSetupSeed`. The setup→state mapping is never
 copied into a gym, and an absent setup is a no-op (the applier is intentionally
-total), so setup-less gym behaviour is unchanged.
+total), so setup-less gym behaviour is unchanged. When the scene supplies an
+effect-registry seam (`getEffectsRegistry`), permanent weapon grants
+(`weapons` + `weaponLevels`) flow through the **one shared permanent-grant
+seam** (`grantPermanentWeapon`), so the HUD upgrade list shows every permanent
+weapon a capture starts with and can never disagree with the `Loadout n/6`
+budget (AH-0MWCP6JHT008EKCY, precedent AH-0MWCFKHWD002RKX9). Timed weapons
+stay player-only: they are countdown-based, not permanent effects.
 
 - **Formation family** — `GymFormationScene` and its subclasses (`GymBoss`,
   `GymCentipede`, `GymFodderEnemies`, `GymMinerals`, `GymMiniBoss`) consume

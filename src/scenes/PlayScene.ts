@@ -1416,7 +1416,13 @@ export class PlayScene extends CombatScene<
     // through the ONE shared applier, so the shipped game and every gym map a
     // setup to play state identically (no divergent copy).
     if (this.sceneSetup) {
-      applySceneSetup({ getPlayer: () => this.player }, this.sceneSetup);
+      applySceneSetup(
+        {
+          getPlayer: () => this.player,
+          getEffectsRegistry: () => this.effectsRegistry,
+        },
+        this.sceneSetup,
+      );
     }
     // The demo drives whichever control scheme the ship is configured with
     // (the shipped default is `asteroids`); the human-like governor resolves

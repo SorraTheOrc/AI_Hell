@@ -1,12 +1,14 @@
 /**
  * Shared scene-setup applier (AH-0MVNW8VNN004FFK1).
  *
- * Turns a validated, normalised capture `setup` into **play state** using only
- * existing shared seams — the player loadout (`Player.equipWeapon`) and the
- * power-up level store (`PowerUpLevelStore.collect`). Gyms call this from
- * `init`/`create` so the configured state is live **before** the first captured
- * frame (i.e. during the `playMs` warm-up), and so no per-scene copy of the
- * setup→state mapping can drift.
+ * Turns a validated, normalised capture `setup` into **play state** using
+ * existing shared seams — the player loadout and the effect registry.
+ * Permanent weapon grants (`weapons` + `weaponLevels`) flow through the shared
+ * permanent-grant seam (`grantPermanentWeapon`) so both the registry (which the
+ * HUD renders from) and the player (which fires the ship) are updated
+ * atomically. Gyms call this from `init`/`create` so the configured state is
+ * live **before** the first captured frame (i.e. during the `playMs` warm-up),
+ * and so no per-scene copy of the setup→state mapping can drift.
  *
  * Deliberate non-goals (recorded on the work item):
  *
@@ -44,6 +46,8 @@
  */
 
 import type { PowerUpId } from '../../powerups/types';
+import type { PermanentWeaponRegistry } from '../../powerups/choiceReward';
+import { grantPermanentWeapon } from '../../powerups/choiceReward';
 import type { WeaponId } from '../../utils/weapons';
 
 /**
@@ -90,12 +94,27 @@ export interface SceneSetupPlayer {
 }
 
 /**
- * The diagnostic grid a scene exposes to a setup. Only a player accessor is
- * needed; level/enemy hand-off is scene-specific and applied by each gym.
+ * The diagnostic grid a scene exposes to a setup.
+ *
+ * When the caller supplies `getEffectsRegistry`, permanent weapon grants flow
+ * through the shared `grantPermanentWeapon` seam so the HUD upgrade list
+ * (which renders from registry state) and the player ship are updated
+ * atomically (AH-0MWCP6JHT008EKCY). Callers without a registry seam (older
+ * launch data or pure callers with no HUD) keep the pre-change behaviour.
  */
 export interface SceneSetupSeams {
   /** The scene's player, or `null` when it has no player component. */
   getPlayer(): SceneSetupPlayer | null;
+  /**
+   * The scene's effect registry, or `null` when it has none.
+   *
+   * Optional: when supplied, permanent weapon grants (`weapons` +
+   * `weaponLevels`) route through the shared `grantPermanentWeapon` seam, so
+   * the HUD upgrade list shows what the run actually has (AH-0MWCP6JHT008EKCY).
+   * When absent, permanent weapons still equip on the player (unchanged
+   * behaviour for callers without a registry).
+   */
+  getEffectsRegistry?(): PermanentWeaponRegistry | null;
 }
 
 /** The loadout/power-up half of a normalised capture setup. */
@@ -237,21 +256,26 @@ export function resolveMineralReward(
 /**
  * Applies the loadout/power-up half of `setup` to the scene's player.
  *
- * - `setup.player.weapons` → `equipWeapon(id, true)` (permanent for the run).
+ * - `setup.player.weapons` → `grantPermanentWeapon(id, registry, player)`
+ *   (permanent for the run, through the shared grant seam when a registry is
+ *   present). Falls back to `player.equipWeapon(id, true)` when no registry
+ *   seam is supplied.
  * - `setup.player.timedWeapons` → `equipWeapon(id, false)` (starts the shared
- *   timed-weapon countdown).
- * - `setup.player.weaponLevels[id] = n` → **n** `equipWeapon(id, true)` calls,
- *   after the `weapons` grants, so the weapon reaches level `1 + n` when it is
- *   also listed in `weapons` (level N == N permanent grants; the same
- *   increment `Player.equipWeapon` applies on every pickup). Non-positive or
- *   non-integer levels are ignored, mirroring `powerUps`.
+ *   timed-weapon countdown — never registered, as timed weapons are not
+ *   permanent effects).
+ * - `setup.player.weaponLevels[id] = n` → **n** `grantPermanentWeapon` calls
+ *   (or `equipWeapon` when no registry), after the `weapons` grants, so the
+ *   weapon reaches level `1 + n` when it is also listed in `weapons` (level N
+ *   == N permanent grants; the same increment `Player.equipWeapon` applies on
+ *   every pickup). Non-positive or non-integer levels are ignored, mirroring
+ *   `powerUps`.
  * - `setup.powerUps[id] = n` → `collect(id, true)` **n** times, so the
  *   power-up reaches the configured permanent level.
  *
  * No-ops for an absent setup or a scene with no player, so a scene started
  * without a setup keeps its pre-change state.
  *
- * @param seams — the scene's player accessor.
+ * @param seams — the scene's player and (optional) effect-registry accessor.
  * @param setup — a normalised setup (or `null`/`undefined`).
  */
 export function applySceneSetup(
@@ -262,8 +286,18 @@ export function applySceneSetup(
   const player = seams.getPlayer();
   if (!player) return;
 
+  const registry = seams.getEffectsRegistry?.() ?? null;
+
   for (const id of setup.player?.weapons ?? []) {
-    player.equipWeapon(id as WeaponId, true);
+    if (registry) {
+      // Permanent grant through the shared seam: registry supplies the HUD
+      // row and the player raises the run-scoped level (AH-0MWCP6JHT008EKCY).
+      grantPermanentWeapon(id as WeaponId, registry, player);
+    } else {
+      // No registry seam (older caller / pure scene without HUD): today's
+      // player-only behaviour.
+      player.equipWeapon(id as WeaponId, true);
+    }
   }
   for (const id of setup.player?.timedWeapons ?? []) {
     player.equipWeapon(id as WeaponId, false);
@@ -281,7 +315,11 @@ export function applySceneSetup(
   for (const [id, level] of Object.entries(setup.player?.weaponLevels ?? {})) {
     if (!Number.isInteger(level) || level <= 0) continue;
     for (let i = 0; i < level; i += 1) {
-      player.equipWeapon(id as WeaponId, true);
+      if (registry) {
+        grantPermanentWeapon(id as WeaponId, registry, player);
+      } else {
+        player.equipWeapon(id as WeaponId, true);
+      }
     }
   }
 

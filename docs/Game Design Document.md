@@ -1403,16 +1403,18 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   kind can never be taken. Below the cap the gate is inert.
 - **Capture/scripted setups intentionally diverge (AH-0MVVJS34M00551ES).** The
   capture/gym `setup` payload ([`src/scenes/core/sceneSetup.ts`](../src/scenes/core/sceneSetup.ts))
-  pre-grants `weapons` / `weaponLevels` / `powerUps` straight through
-  `Player.equipWeapon` / `PowerUpLevelStore.collect`, and it may name **more
-  than six counted kinds** — the 29 Oct recordings start at tick 0 with seven
-  permanently-granted kinds and zero pickups. That is a **deliberate**
-  divergence, not a bypass in play: the scripted video and gym beats exist to
-  show a full late-game ship, and gating the applier would change those shots.
-  It is contained instead of gated — a setup is applied **only** through
-  `resolveSceneSetupState` behind the run-progress dev gate
-  (`import.meta.env.DEV`, which folds to `false` in a shipped build), so normal
-  play can never inherit a capture loadout.
+  pre-grants `weapons` / `weaponLevels` through the shared permanent-grant seam
+  (`grantPermanentWeapon` — which updates both the effect registry for HUD rows
+  and the player ship), `timedWeapons` through `Player.equipWeapon(id, false)`
+  (non-permanent, countdown-based), and `powerUps` through
+  `PowerUpLevelStore.collect`. It may name **more than six counted kinds** —
+  the 29 Oct recordings start at tick 0 with seven permanently-granted kinds
+  and zero pickups. That is a **deliberate** divergence, not a bypass in play:
+  the scripted video and gym beats exist to show a full late-game ship, and
+  gating the applier would change those shots. It is contained instead of gated
+  — a setup is applied **only** through `resolveSceneSetupState` behind the
+  run-progress dev gate (`import.meta.env.DEV`, which folds to `false` in a
+  shipped build), so normal play can never inherit a capture loadout.
 - **A checkpoint never persists a seventh kind.** The checkpoint save seam
   (`saveCheckpoint` → `capCheckpointLoadout`,
   [`src/core/checkpointStore.ts`](../src/core/checkpointStore.ts)) bounds the
