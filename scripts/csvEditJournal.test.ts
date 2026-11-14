@@ -223,6 +223,18 @@ describe('csvEditJournal — SIGKILL recovery (parent AC3)', () => {
 });
 
 describe('--tune reconciles a stale journal before validating (parent AC1/AC4)', () => {
+  /**
+   * The stale-journal reconstitution cases run against a **temp copy** of the
+   * CSV, never the tracked `src/data/enemy-configs.csv`: the journal path is
+   * process-global, so seeding one on the real file races the other suites
+   * that spawn the real `--tune` CLI in the same parallel run
+   * (`scripts/evaluate-tune-progress.test.ts`, `scripts/evaluate-failfast.test.ts`)
+   * — a concurrent run's startup reconcile can consume the seeded journal
+   * before this test's own `evaluate.main()` runs, dropping the `restored …`
+   * warning it asserts. Same convention as the SIGKILL case above
+   * (AH-0MWGQZF250087P2I). `--set` takes the absolute temp path, which
+   * `resolveTuneCsvPath` (a `path.resolve` join) returns as-is.
+   */
   it('restores the CSV, warns on stderr, and still fails fast on a bad --out', async () => {
     const evaluate = (await import('./evaluate.mjs')) as unknown as {
       main(
@@ -230,20 +242,21 @@ describe('--tune reconciles a stale journal before validating (parent AC1/AC4)',
         io: { out: { write(text: string): void }; err: { write(text: string): void } },
       ): Promise<number>;
     };
-    const originalCsv = readFileSync(REAL_CSV);
-    const journalPath = journalPathFor(REAL_CSV);
+    const { dir, csvPath } = makeTempCsv();
+    const originalCsv = readFileSync(csvPath);
+    const journalPath = journalPathFor(csvPath);
     const err: string[] = [];
     try {
-      // Seed a stale journal (holding the *real* bytes, so reconciliation is a
-      // no-op for the tracked file) exactly as a hard-killed run would.
-      writeJournal(REAL_CSV, originalCsv);
+      // Seed a stale journal (holding the temp copy's bytes, so reconciliation
+      // is a no-op for it) exactly as a hard-killed run would.
+      writeJournal(csvPath, originalCsv);
       expect(existsSync(journalPath)).toBe(true);
 
       const code = await evaluate.main(
         [
           '--tune',
           '--set',
-          'enemy-configs.csv',
+          csvPath,
           'boss.health=7',
           '--games',
           '2',
@@ -260,11 +273,12 @@ describe('--tune reconciles a stale journal before validating (parent AC1/AC4)',
       expect(err.join('')).toMatch(/restored .*enemy-configs\.csv from a stale tune journal/);
       expect(err.join('')).toMatch(/output directory not writable/);
       expect(existsSync(journalPath)).toBe(false);
-      expect(readFileSync(REAL_CSV)).toEqual(originalCsv);
+      expect(readFileSync(csvPath)).toEqual(originalCsv);
     } finally {
-      clearJournal(REAL_CSV);
-      // Belt-and-braces: the tracked CSV is byte-identical to the pre-test state.
-      expect(readFileSync(REAL_CSV)).toEqual(originalCsv);
+      clearJournal(csvPath);
+      // Belt-and-braces: the temp CSV is byte-identical to the pre-test state.
+      expect(readFileSync(csvPath)).toEqual(originalCsv);
+      rmSync(dir, { recursive: true, force: true });
     }
   }, 30_000);
 
@@ -275,21 +289,23 @@ describe('--tune reconciles a stale journal before validating (parent AC1/AC4)',
         io: { out: { write(text: string): void }; err: { write(text: string): void } },
       ): Promise<number>;
     };
-    const originalCsv = readFileSync(REAL_CSV);
-    const journalPath = journalPathFor(REAL_CSV);
+    const { dir, csvPath } = makeTempCsv();
+    const originalCsv = readFileSync(csvPath);
+    const journalPath = journalPathFor(csvPath);
     const err: string[] = [];
     try {
       writeFileSync(journalPath, 'not json at all');
       const code = await evaluate.main(
-        ['--tune', '--set', 'enemy-configs.csv', 'boss.health=7', '--games', '2', '--out', tmpdir()],
+        ['--tune', '--set', csvPath, 'boss.health=7', '--games', '2', '--out', tmpdir()],
         { out: { write: () => {} }, err: { write: (text: string) => err.push(text) } },
       );
       expect(code).toBe(2);
       expect(err.join('')).toMatch(/tune journal not reconcilable/);
       expect(err.join('')).toMatch(/docs\/BALANCING\.md/);
     } finally {
-      clearJournal(REAL_CSV);
-      expect(readFileSync(REAL_CSV)).toEqual(originalCsv);
+      clearJournal(csvPath);
+      expect(readFileSync(csvPath)).toEqual(originalCsv);
+      rmSync(dir, { recursive: true, force: true });
     }
   }, 30_000);
 });
