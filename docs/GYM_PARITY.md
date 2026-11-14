@@ -20,7 +20,7 @@ Governing rule: [`AGENTS.md` § Game Architecture Conventions](../AGENTS.md#game
 | Hangar War rows refreshed by | AH-0MVUXCC5J0028OGQ (the Hangar War ring specification, GDD §8.2): the `GymHangar` and `GymHexWar` rows were re-checked against the shipped hangar screen, hex map and defence report, so the enabled-objects and reason cells name the same model/renderer pairs the game runs |
 | Map UX refresh by | AH-0MWDBI33V003QQ3U (Hangar Map UX): the `GymHexWar` row was re-checked against the revealed map — adjacency-only reveal, `(q,r)` + `AGG n` + ownership-discriminator tile labels, CVD-safe blue/orange text, owned-hex selection and spatial grid arrows — so it records the same pure model (`src/core/hangarWar/hexIntel.ts`) and shared renderer (`src/scenes/hangarWar/hexMap.ts`) the game's `HexMapScene` runs |
 | Scope | every production scene under `src/scenes/gym/` (21) plus the generic base `src/scenes/gym/core/GymFormationScene.ts` |
-| Automated guard | [`src/scenes/core/gymParityDocs.test.ts`](../src/scenes/core/gymParityDocs.test.ts) fails if a gym scene has no row here, or if a row loses its verdict or evidence |
+| Automated guard | [`src/scenes/core/gymParityDocs.test.ts`](../src/scenes/core/gymParityDocs.test.ts) fails if a gym scene has no row here, if a row loses its verdict or evidence, or if this file contains a Git merge-conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`) |
 
 ## How to re-audit
 
@@ -44,8 +44,10 @@ The next sweep is cheap because most of the matrix is guarded mechanically.
 - **Matrix coverage and classification** —
   [`src/scenes/core/gymParityDocs.test.ts`](../src/scenes/core/gymParityDocs.test.ts)
   scans `src/scenes/gym/Gym*.ts`, requires one row here per scene, requires the
-  generic `GymFormationScene` row, rejects an unknown verdict, and requires
-  every row's reason cell to carry a file/section reference.
+  generic `GymFormationScene` row, rejects an unknown verdict, requires every
+  row's reason cell to carry a file/section reference, and fails if this file
+  contains a Git merge-conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`),
+  reporting the offending line numbers.
 - **Cross-scene parity suites** —
   [`src/scenes/gym/spawnParity.test.ts`](../src/scenes/gym/spawnParity.test.ts)
   (level-launch orbital transit `:354`, fire cadence `:496`, march block `:557`,
@@ -720,6 +722,9 @@ Pinned by `src/core/livesScaling.test.ts`, `src/scenes/core/dropLayer.test.ts`
   the guard enforces a reference.
 - A new production `Gym*.ts` scene under `src/scenes/gym/` without a row fails
   `src/scenes/core/gymParityDocs.test.ts`, so this matrix cannot rot.
+- A Git merge-conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`) committed to
+  this file fails `src/scenes/core/gymParityDocs.test.ts`, so a bad merge is
+  caught by the suite instead of by a reader.
 - Fixes never adapt `PlayScene` to a gym. A divergence is closed by making the
   gym consume shared code (and registering any new seam in the duplicate-body
   guard).
