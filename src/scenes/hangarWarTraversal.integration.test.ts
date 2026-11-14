@@ -131,6 +131,9 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
     return booted.scene as MenuScene;
   }
 
+/** The shared hold-full/mini-boss choice overlay (`HexMapScene`'s own key). */
+const MINERAL_CHOICE_SCENE_KEY = 'MineralChoiceScene';
+
   const active = (key: string): boolean => booted!.game.scene.isActive(key);
   const sceneOf = <T>(key: string): T =>
     booted!.game.scene.getScene(key) as T;
@@ -213,7 +216,7 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
   );
 
   it(
-    'presents and auto-resolves the mini-boss reward over the paused map on a winning demo deployment',
+    'lands a winning demo deployment on a live map with no reward overlay',
     async () => {
       const menu = await bootMenu();
       menu.startHangarWarDemo(DWELL_MS);
@@ -227,25 +230,30 @@ describe('Hangar War attract traversal (AH-0MVUXCBBK004EJIP)', () => {
       // Win through the shipped mini-boss path (real defeat, real sweep).
       winLiveDeployment(sceneOf<PlayScene>('PlayScene'));
 
-      // The traversal must never stall on the reward: the demo auto-spins it
-      // and the map still arrives — but the reward **is** presented over the
-      // **paused** map, so a winning demo deployment shows the same
-      // map-paused → reward → map-resumed order a player sees.
-      let rewardOverPausedMap = false;
+      // The traversal must never stall, and a winning deployment presents **no**
+      // reward overlay: the win banks a fixed mineral bonus instead (parent
+      // AH-0MWEVNBMM000QFO2, producer Q1 = c / Q2 = a / Q3 = b, recorded
+      // 2026-11-13). The demo therefore lands on a **live** map — no
+      // paused-map-under-the-wheel beat, which is what the old wheel-on-win
+      // ordering showed.
+      let rewardSeen = false;
       stepGameUntil(
         booted!.game,
-        'the map returns after the auto-resolved reward',
+        'the winning demo deployment lands on the live map',
         () => {
-          if (active(MINI_BOSS_WHEEL_SCENE_KEY)) {
-            rewardOverPausedMap =
-              rewardOverPausedMap ||
-              booted!.game.scene.isPaused('HexMapScene');
+          if (
+            active(MINI_BOSS_WHEEL_SCENE_KEY) ||
+            active(MINERAL_CHOICE_SCENE_KEY)
+          ) {
+            rewardSeen = true;
           }
           return active('HexMapScene');
         },
         900,
       );
-      expect(rewardOverPausedMap).toBe(true);
+      expect(rewardSeen).toBe(false);
+      expect(booted!.game.scene.isActive('HexMapScene')).toBe(true);
+      expect(booted!.game.scene.isPaused('HexMapScene')).toBe(false);
     },
   );
 

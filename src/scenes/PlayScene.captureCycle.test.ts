@@ -30,6 +30,7 @@ import {
   findHexRingDefinition,
   HEX_RING_DEFINITIONS,
 } from '../data/hexRingDefinitions';
+import { winBonusMinerals } from '../test/hangarWinBonusContract';
 import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
@@ -174,8 +175,9 @@ describe('PlayScene — capture cycle wiring (AH-0MVUXCAW0001VUM6)', () => {
 
     const stored = loadHangarWarPayload();
     expect(stored).not.toBeNull();
-    // Salvage banked at the boss moment.
-    expect(stored!.hangar.bankedMinerals).toBe(25);
+    // Salvage banked at the boss moment, plus the fixed post-win bonus the win
+    // resolution banks on top (parent AH-0MWEVNBMM000QFO2 AC2 — minerals only).
+    expect(stored!.hangar.bankedMinerals).toBe(25 + winBonusMinerals());
     // The hex is captured and its authored entry entered the fleet (Rule 2).
     const hex = stored!.ring.hexes.find((state) => state.id === 'hex-r1-3')!;
     expect(hex.held).toBe(true);
@@ -233,7 +235,7 @@ describe('PlayScene — capture cycle wiring (AH-0MVUXCAW0001VUM6)', () => {
     // (the capture's salvage was banked before the assault was resolved).
     expect(stored!.seed).toBe(payload.seed);
     expect(stored!.bestScore).toBe(payload.bestScore);
-    expect(stored!.hangar.bankedMinerals).toBe(40 + 15);
+    expect(stored!.hangar.bankedMinerals).toBe(40 + 15 + winBonusMinerals());
   });
 
   it('applies and persists the hangar-falls campaign reset through the shared core (AC7)', async () => {
@@ -268,12 +270,17 @@ describe('PlayScene — capture cycle wiring (AH-0MVUXCAW0001VUM6)', () => {
     expect(capture!.ringSecured).toBe(false);
     expect(capture!.ringAdvanced).toBe(false);
 
-    // The scene persists the reset — not the pre-assault captured hex.
+    // The scene persists the reset — not the pre-assault captured hex. The
+    // reset wipes the war's banked balance, and the fixed post-win bonus of
+    // this winning sortie is then banked on top of the fresh war
+    // (AH-0MWEVNBMM000QFO2 AC2: the win resolution banks the bonus).
     const stored = loadHangarWarPayload();
     expect(stored).not.toBeNull();
+    const reset = createDefaultPayload(campaignResetSeed(payload));
     expect(stored).toEqual({
-      ...createDefaultPayload(campaignResetSeed(payload)),
+      ...reset,
       bestScore: 18200,
+      hangar: { ...reset.hangar, bankedMinerals: winBonusMinerals() },
     });
     expect(stored!.seed).toBe(campaignResetSeed(payload));
     expect(stored!.seed).not.toBe(payload.seed);
