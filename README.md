@@ -600,6 +600,27 @@ post-boot assertions flaky under load.
   budget if the condition is never met. This replaces `await`-ing a
   `setTimeout` that can be missed under full-suite parallel load
   (AH-0MUYALJ9S0002XXZ).
+- **Resolve an open hold-full mineral choice; a paused scene ignores time.**
+  `openMineralChoice()` calls `setPaused(true)`, and a paused `PlayScene`
+  makes both `scene.tick(dt)` and `game.step` no-ops: the scene clock —
+  including a pending `this.time.delayedCall`, e.g. the
+  `VICTORY_TRANSITION_HOLD_MS` victory hold — freezes until the choice is
+  resolved. A deterministic walker whose auto-fire fills the hold mid-walk
+  (the SceneNavigation AC4 boss-kill loop did exactly this) silently burns
+  its whole step budget. Steppers must therefore resolve an open choice
+  through the shared resolver `resolveMineralChoiceIfOpen(scene)` /
+  `resolveOpenHoldFullChoice(game)` (`src/test/gameHarness.ts`, consolidated
+  by AH-0MWFLOWI6007WVZI): `stepGameUntil` and the navigation suite's
+  `stepUntil` accept `{ resolveHoldFullChoice: true }` to do this between
+  steps, and a walk that expects the run to keep advancing opts in (the AC4
+  kill/victory wait, AH-0MWFLOUVH006GAPT). The shipped game also no longer
+  opens a hold-full choice once the run has **finished** —
+  `_requestHoldFullChoice` / `_flushPendingHoldFullChoice` no-op when
+  `runFinished` is set (AH-0MWFLOYBY001POST) — so a won run's victory
+  celebration leads straight to `GameOverScene`. When a walk still stalls,
+  the exhaustion error from `stepUntil`/`stepGameUntil` names the blocking
+  state (`paused`, `isMineralChoiceOpen()`, run-finished, boss HP, transition
+  timer): read it instead of widening the step budget (AH-0MWFJUQCV005SEJ4).
 - **Never wait on wall-clock time — advance simulated time instead.**
   `await new Promise((r) => setTimeout(r, 350))` lets an unpredictable number
   of animation frames drain, which is exactly what made suites flake under

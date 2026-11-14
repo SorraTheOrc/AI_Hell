@@ -399,6 +399,30 @@ config child exits in ~1.1 s, so the budget costs nothing in the normal case.
 Do not reduce the per-test timeout to "make it fast", and keep the child
 bound (30 s) small enough that a genuine hang still fails.
 
+## Flake lineage — SceneNavigation AC4 boss-victory transition
+
+`src/scenes/SceneNavigation.test.ts` › *Scene navigation — Menu → Play →
+GameOver → Menu › AC4 — a boss victory also returns to the menu from
+GameOverScene* has flaked **four times** through **three distinct
+mechanisms**. Each earlier fix was local to one walker, so the next
+occurrence regressed on a path the previous patch did not cover. Triage a
+fifth occurrence against this list before re-diagnosing from scratch:
+
+| # | Item | Mechanism | Fix |
+|---|------|-----------|-----|
+| 1 | AH-0MUR0FNCW001SCNE | RNG-sequenced waves + real-time waits made the walk load/timing dependent | deterministic static campaign (`sequencedWavesEnabled: false`) |
+| 2 | AH-0MUINWNPI000G6MU | file timeout (5 s default) breached under full-suite parallel load | `vi.setConfig({ testTimeout: 120000 })` |
+| 3 | AH-0MV6OEPQG009YKMS | hold-full choice paused the scene **mid-walk** — boss never reached | `reachBoss` + `resolveMineralChoiceIfOpen` in the walker |
+| 4 | AH-0MWFJUQCV005SEJ4 (children AH-0MWFLOUVH006GAPT, AH-0MWFLOWI6007WVZI, AH-0MWFLOYBY001POST) | hold-full choice paused the scene **inside the boss-kill / victory-hold window** — win transition never fired (`active=[PlayScene]`) | one shared resolver (`resolveMineralChoiceIfOpen` / `resolveOpenHoldFullChoice`, `src/test/gameHarness.ts`) + `resolveHoldFullChoice` option on `stepGameUntil`/`stepUntil`; exhaustion errors name the blocking state; `PlayScene` never opens a hold-full choice once `runFinished` |
+
+**Rule: a paused-scene stall is diagnosed from the blocking state, not by
+raising a timeout.** The exhaustion error from `stepUntil`/`stepGameUntil`
+already reports `paused`, `isMineralChoiceOpen()`, run-finished, boss HP/phase
+and the transition timer (AH-0MWFLOUVH006GAPT) — read it first. Widen a step
+budget only for a *computational* walk that genuinely runs more work per tick
+(occurrence 2); never for a stall, because a paused scene ignores time
+entirely and a bigger budget just spins longer.
+
 ## Recording format
 
 One table row per measured run, in a work-item comment on the epic
