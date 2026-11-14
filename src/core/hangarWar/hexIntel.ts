@@ -474,6 +474,14 @@ export interface HexMapModel {
    */
   readonly assaultLine: string | null;
   /**
+   * The banked win-bonus announcement (`WIN BONUS BANKED: +N MINERALS`) this
+   * landing carries, copied straight from the report model; `null` on every
+   * landing that banked no bonus. This is the win path's whole reward
+   * presentation (AH-0MWEVNBMM000QFO2, producer Q3 = (b), recorded
+   * 2026-11-13).
+   */
+  readonly winBonusLine: string | null;
+  /**
    * The special mission the rotation is offering on this sortie
    * (`AH-0MWF0CWB7002MG2F`), or `null` when the ring offers none (no special
    * hex authored, or every one already captured). Resolved through the shared
@@ -561,6 +569,14 @@ export interface BuildHexMapOptions {
    * assault. Rendered verbatim by the report model, never re-derived.
    */
   readonly assault?: HangarAssaultResolution | null;
+  /**
+   * The fixed mineral win bonus this landing banked, or omitted/`0` when it
+   * banked none (parent AH-0MWEVNBMM000QFO2, producer Q3 = (b), recorded
+   * 2026-11-13). Rendered verbatim by the report model's `winBonusLine`, so the
+   * map announces the banked bonus instead of a reward overlay the win path no
+   * longer presents.
+   */
+  readonly winBonusMinerals?: number;
 }
 
 /**
@@ -587,6 +603,7 @@ interface HexMapAttackOverlay {
   readonly assaultLine: string | null;
   readonly ringWon: boolean;
   readonly campaignReset: boolean;
+  readonly winBonusLine: string | null;
 }
 
 /**
@@ -608,12 +625,14 @@ function buildAttackOverlay(
   payload: HangarWarPayload,
   record: FrontierTickRecord | undefined,
   assault: HangarAssaultResolution | null,
+  winBonusMinerals: number,
 ): HexMapAttackOverlay {
   // One report model call is the single source of every published number: the
   // attack rows and the assault section cannot drift from the report the
   // standalone renderer draws (AGENTS.md gym↔game parity).
   const report = buildDefenceReport(payload, record ?? QUIET_TICK_RECORD, {
     assault,
+    winBonusMinerals,
   });
   const attacks = Array.isArray(record?.attacks) ? record.attacks : [];
   const arrows = attacks.map((attack): HexMapAttackArrow => ({
@@ -643,6 +662,7 @@ function buildAttackOverlay(
     assaultLine: report.assaultLine,
     ringWon: report.ringWon,
     campaignReset: report.campaignReset,
+    winBonusLine: report.winBonusLine,
   };
 }
 
@@ -1125,8 +1145,20 @@ export function buildHexMapModel(
     HEX_MAP_HANGAR_ROW_KEY,
   ];
   const gridColumns = buildGridColumns(hexes, HEX_MAP_HANGAR_ROW_KEY);
-  const { arrows, attackDetails, assault, assaultLine, ringWon, campaignReset } =
-    buildAttackOverlay(payload, options.record, options.assault ?? null);
+  const {
+    arrows,
+    attackDetails,
+    assault,
+    assaultLine,
+    ringWon,
+    campaignReset,
+    winBonusLine,
+  } = buildAttackOverlay(
+    payload,
+    options.record,
+    options.assault ?? null,
+    options.winBonusMinerals ?? 0,
+  );
   const defaultFocusKey =
     attractHexId !== null
       ? `${HEX_MAP_HEX_ROW_PREFIX}${attractHexId}`
@@ -1160,6 +1192,7 @@ export function buildHexMapModel(
     attackDetails,
     assault,
     assaultLine,
+    winBonusLine,
     specialOffer,
     ringWon,
     campaignReset,

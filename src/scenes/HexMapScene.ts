@@ -135,6 +135,14 @@ export interface HexMapSceneData {
    */
   assault?: HangarAssaultResolution | null;
   /**
+   * The fixed mineral **win bonus** this landing banked, or omitted/`0` when it
+   * banked none (parent AH-0MWEVNBMM000QFO2, producer Q3 = (b), recorded
+   * 2026-11-13). It is the win path's whole reward presentation now: the map
+   * announces the banked bonus instead of presenting the run-scoped wheel the
+   * winning path no longer carries.
+   */
+  winBonusMinerals?: number;
+  /**
    * The mini-boss reward a winning deployment resolved and carried here
    * (parent AH-0MWBW1B1Z0059CC2). Presented over the **paused** map through the
    * shipped overlay and consumed exactly once; `null`/omitted on a loss, so the
@@ -182,6 +190,8 @@ export class HexMapScene extends Phaser.Scene {
    * deployment's capture ran none. Transient launch data, never persisted.
    */
   private assault: HangarAssaultResolution | null = null;
+  /** The banked win bonus announced on this landing (0 = none). */
+  private winBonusMinerals = 0;
 
   /**
    * The resolved mini-boss reward carried by this landing, or `null` when there
@@ -213,6 +223,7 @@ export class HexMapScene extends Phaser.Scene {
     this.won = data?.won ?? null;
     this.score = data?.score ?? 0;
     this.assault = data?.assault ?? null;
+    this.winBonusMinerals = data?.winBonusMinerals ?? 0;
     this.reward = data?.reward ?? null;
     this.demo = data?.demo === true;
     this.demoDwellMs = data?.demoDwellMs;
@@ -273,6 +284,7 @@ export class HexMapScene extends Phaser.Scene {
       definitions: this.definitions,
       record: this.record,
       assault: this.assault,
+      winBonusMinerals: this.winBonusMinerals,
     });
     this.view = renderHexMap(this, model, {
       onDeploy: (hexId) => this.deploy(hexId),
@@ -450,6 +462,7 @@ export class HexMapScene extends Phaser.Scene {
         definitions: this.definitions,
         record: this.record,
         assault: this.assault,
+        winBonusMinerals: this.winBonusMinerals,
       })
     );
   }
@@ -503,6 +516,26 @@ export class HexMapScene extends Phaser.Scene {
    */
   getReward(): MiniBossWinReward | null {
     return this.reward;
+  }
+
+  /**
+   * The banked win-bonus announcement this landing shows
+   * (`WIN BONUS BANKED: +N MINERALS`), or `null` when it banked none.
+   *
+   * The winning hangar deployment's whole reward presentation: the wheel and
+   * the empty-owned fallback choice are suppressed on that path and the bonus
+   * is banked into the persistent war instead (parent AH-0MWEVNBMM000QFO2,
+   * producer Q1 = (c) / Q2 = (a) / Q3 = (b), recorded 2026-11-13).
+   */
+  getWinBonusLine(): string | null {
+    return (
+      buildHexMapModel(this.payload, {
+        definitions: this.definitions,
+        record: this.record,
+        assault: this.assault,
+        winBonusMinerals: this.winBonusMinerals,
+      }).winBonusLine
+    );
   }
 
   /** Every rendered row, in reading order. */

@@ -271,6 +271,12 @@ export interface DefenceReportModel {
   readonly campaignReset: boolean;
   /** The "nothing was simulated" line (the design's no-battle rule). */
   readonly noBattleLine: string;
+  /**
+   * The banked win-bonus announcement (`WIN BONUS BANKED: +N MINERALS`), or
+   * `null` when this landing banked no bonus. Announced, never silently banked
+   * (producer Q3 = (b)), so a win reads as real progress on the map.
+   */
+  readonly winBonusLine: string | null;
   /** The continue action's row key. */
   readonly continueKey: string;
   /** The continue action's rendered label. */
@@ -293,6 +299,17 @@ export interface BuildDefenceReportOptions {
    * between-sortie report, unchanged.
    */
   readonly assault?: HangarAssaultResolution | null;
+  /**
+   * The fixed mineral **win bonus** this landing banked, when it followed a
+   * winning hangar deployment (parent AH-0MWEVNBMM000QFO2, producer Q3 = (b),
+   * recorded 2026-11-13). Omitted, `0` or negative → no bonus line, which is
+   * the ordinary between-sortie report and every lost deployment.
+   *
+   * The announcement is the *only* presentation of the win reward now: the
+   * run-scoped mini-boss wheel is suppressed on the win path (Q1 = (c)) and the
+   * bonus is banked into the persistent war instead (Q2 = (a), minerals only).
+   */
+  readonly winBonusMinerals?: number;
 }
 
 /** `value` as a non-negative integer; anything unusable collapses to `0`. */
@@ -486,6 +503,14 @@ export function buildDefenceReport(
   options: BuildDefenceReportOptions = {},
 ): DefenceReportModel {
   const attacks = Array.isArray(record?.attacks) ? record.attacks : [];
+  // The banked win bonus (producer Q3 = (b)): announced on the report model
+  // itself so every renderer shows the same line and no surface re-derives it.
+  // A non-positive amount carries no line — the ordinary report and every lost
+  // deployment.
+  const winBonus = toCount(options.winBonusMinerals ?? 0);
+  const winBonusLine =
+    winBonus > 0 ? `WIN BONUS BANKED: +${winBonus} MINERALS` : null;
+
   const rows: DefenceReportRow[] = attacks.map((attack) => {
     const hex = findHex(payload, attack.hexId);
     const held = hex?.held === true;
@@ -575,6 +600,7 @@ export function buildDefenceReport(
     ringWon: assault?.ringWon ?? false,
     campaignReset: assault?.campaignReset ?? false,
     noBattleLine: DEFENCE_REPORT_NO_BATTLE_LINE,
+    winBonusLine,
     continueKey: DEFENCE_REPORT_CONTINUE_KEY,
     continueLabel: options.continueLabel ?? DEFENCE_REPORT_CONTINUE_LABEL,
     focusOrder: [DEFENCE_REPORT_CONTINUE_KEY],

@@ -674,15 +674,14 @@ describe('buildDefenceReport — the hangar assault record (AH-0MWEZZ9EB00604U0)
  * pure, so the announcement is one more line on the model
  * (`winBonusLine`) built from one more input (`winBonusMinerals`).
  *
- * **TEST-FIRST.** The announcement case is authored red under Vitest's
- * `it.fails` (the repo's red-before/green-after convention — see
- * `src/vfx/orbitalStrike.test.ts`); AH-0MWF2Q2JC008MAJE lands the field and
- * **flips it back to a plain `it`**. A leftover `it.fails` fails the suite. The
- * no-bonus cases are plain `it` and pass today: an ordinary report and a lost
- * deployment's report carry no bonus line.
+ * **LANDED.** The announcement case was authored red under Vitest's `it.fails`
+ * by the test-first child and flipped to a plain `it` when
+ * AH-0MWF2Q2JC008MAJE landed the `winBonusLine` field. The no-bonus cases were
+ * plain `it` throughout: an ordinary report and a lost deployment's report
+ * carry no bonus line.
  */
 describe('buildDefenceReport — the banked win bonus (AH-0MWF2PA5H008XCXW)', () => {
-  it.fails('announces the banked bonus as minerals before the map', () => {
+  it('announces the banked bonus as minerals before the map', () => {
     const model = buildDefenceReport(
       makePayload(),
       makeRecord([]),

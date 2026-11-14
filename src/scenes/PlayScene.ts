@@ -171,6 +171,7 @@ import {
   saveCheckpoint,
   type Checkpoint,
 } from '../core/checkpointStore';
+import { WIN_BONUS_MINERALS } from '../core/hangarWar/hangarEconomy';
 import {
   bankSalvage,
   bankWinBonus,
@@ -5602,10 +5603,16 @@ export class PlayScene extends CombatScene<
         this.demoMode = false;
         this._disableDemoTakeOver();
       }
-      // A winning deployment carries its resolved mini-boss reward to the map,
-      // which reveals it over the paused map before interaction resumes
-      // (parent AH-0MWBW1B1Z0059CC2, producer Q2 = b). A lost deployment
-      // carries nothing, so its route stays deployment → map.
+      // A winning hangar deployment presents **no** reward overlay: the wheel
+      // and the empty-owned fallback are suppressed on the win path and the
+      // fixed mineral bonus is banked instead (parent AH-0MWEVNBMM000QFO2,
+      // producer Q1 = (c) / Q2 = (a) / Q3 = (b), recorded 2026-11-13), so no
+      // payload is carried and nothing pauses the map. The map announces the
+      // banked bonus before interaction resumes.
+      //
+      // The arcade campaign is unchanged: its in-run reward is resolved and
+      // applied at the defeat frame exactly as shipped, and `pendingWinReward`
+      // is only ever set on that path.
       const reward = won ? this.pendingWinReward : null;
       this.pendingWinReward = null;
       // The ring-end hangar assault the capture resolved
@@ -5621,6 +5628,7 @@ export class PlayScene extends CombatScene<
         score: this.gameState.score,
         reward,
         assault,
+        winBonusMinerals: won ? WIN_BONUS_MINERALS : 0,
         demo: wasDemo,
         demoDwellMs: this.demoDwellMs,
       });

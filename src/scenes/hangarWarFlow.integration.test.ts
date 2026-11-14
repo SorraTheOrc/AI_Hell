@@ -284,7 +284,7 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
    * announcement, AH-0MWF2PYIE001XZOV pure seam) **flip this `it.fails` back to
    * a plain `it`**; a leftover `it.fails` then fails the suite.
    */
-  it.fails(
+  it(
     'suppresses the win-path reward overlay and announces the banked bonus instead',
     async () => {
       const { hexId } = await walkToWonDeployment();
