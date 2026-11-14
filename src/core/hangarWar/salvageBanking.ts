@@ -36,6 +36,7 @@
  */
 
 import type { HangarState } from './types';
+import { WIN_BONUS_MINERALS } from './hangarEconomy';
 
 /** A pair of salvage amounts: minerals and mini-boss cores. */
 export interface SalvageAmounts {
@@ -180,6 +181,44 @@ export function bankSalvage(
     // the player spends minerals, so later earnings bank again).
     bankedThisRun: { minerals: run.minerals, cores: run.cores },
     lastCheckpointId: run.checkpointId,
+  };
+}
+
+/**
+ * Banks the fixed **win-path bonus** into the persistent balance.
+ *
+ * The win path's reward is no longer a run-scoped wheel: a winning hex
+ * deployment banks this fixed mineral bonus instead (parent
+ * AH-0MWEVNBMM000QFO2, producer Q1 = (c) / Q2 = (a) / Q3 = (b), recorded
+ * 2026-11-13). It is the sibling of {@link bankSalvage}: the same persistent
+ * balance, the same normalisation, but **no** run snapshot and **no** watermark
+ * movement, because the bonus is neither cumulative nor re-derivable from a
+ * run's salvage.
+ *
+ * Deliberately watermark-free: `runId` / `bankedThisRun` / `lastCheckpointId`
+ * belong to the capture cycle's checkpoint arithmetic, and a bonus that nudged
+ * them could make a later checkpoint bank wrongly (or re-bank). The replay
+ * guard is therefore the single call site — the win resolution runs exactly
+ * once per landed deployment — not a stored marker. A lost deployment banks
+ * nothing.
+ *
+ * **Minerals only** (Q2 = (a)): a captured deployment has already banked its
+ * one core through `resolveHexCapture`, so a bonus core would double-count.
+ *
+ * @param banked — the persistent balance (plus the run watermark, which is
+ *   carried through untouched).
+ * @returns the updated balance with
+ *   `minerals + WIN_BONUS_MINERALS`, the same `cores` and the same watermark;
+ *   the input is never mutated.
+ */
+export function bankWinBonus(banked: BankedSalvage): BankedSalvage {
+  const bank = normaliseBank(banked);
+  return {
+    minerals: bank.minerals + WIN_BONUS_MINERALS,
+    cores: bank.cores,
+    runId: bank.runId,
+    bankedThisRun: bank.bankedThisRun,
+    lastCheckpointId: bank.lastCheckpointId,
   };
 }
 

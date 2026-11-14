@@ -243,12 +243,12 @@ describe('salvageBanking — pure checkpoint banking', () => {
    * Q2 = a, Q3 = b; recorded 2026-11-13) — test-first child
    * AH-0MWF2PA5H008XCXW, implementation child AH-0MWF2PYIE001XZOV.
    *
-   * **TEST-FIRST.** Every case below is authored red under Vitest's `it.fails`
-   * (the repo's red-before/green-after convention — see
-   * `src/vfx/orbitalStrike.test.ts`), because it calls a seam the
-   * implementation has not landed yet. The implementation item **flips every
-   * `it.fails` back to a plain `it`**; a leftover `it.fails` then fails the
-   * suite, so the flip is a real target rather than a permanent exemption.
+   * **LANDED.** These cases were authored red under Vitest's `it.fails` by the
+   * test-first child (the repo's red-before/green-after convention — see
+   * `src/vfx/orbitalStrike.test.ts`) and flipped to plain `it` by
+   * AH-0MWF2PYIE001XZOV when `bankWinBonus` / `WIN_BONUS_MINERALS` landed. They
+   * now pin the seam directly: a regression fails them instead of quietly
+   * satisfying an expected failure.
    *
    * Pinned contract (see `src/test/hangarWinBonusContract.ts`): the bonus is
    * **minerals only** (a capture already banks its one core), it is added
@@ -259,7 +259,7 @@ describe('salvageBanking — pure checkpoint banking', () => {
    * AH-0MWCOWTOR00994NA's measured per-deployment income when that lands.
    */
   describe('win-path bonus banking (AH-0MWF2PA5H008XCXW)', () => {
-    it.fails(
+    it(
       'banks exactly the fixed bonus as minerals and never grants a bonus core',
       () => {
         const captured = bankSalvage(
@@ -275,7 +275,7 @@ describe('salvageBanking — pure checkpoint banking', () => {
       },
     );
 
-    it.fails(
+    it(
       'leaves the per-run watermark untouched so capture banking is unaffected',
       () => {
         const captured = bankSalvage(
@@ -291,7 +291,7 @@ describe('salvageBanking — pure checkpoint banking', () => {
       },
     );
 
-    it.fails(
+    it(
       'adds the bonus exactly once, alongside both capture banks of one run',
       () => {
         // The shipped sequence: a mid-run checkpoint bank, then the boss-victory
@@ -313,7 +313,7 @@ describe('salvageBanking — pure checkpoint banking', () => {
       },
     );
 
-    it.fails('never mutates the balance it is given', () => {
+    it('never mutates the balance it is given', () => {
       const captured = bankSalvage(
         createBankedSalvage(3, 1),
         runSalvageFromRun(snapshot('run-a', 'boss-victory', 7, 2)),
@@ -325,7 +325,7 @@ describe('salvageBanking — pure checkpoint banking', () => {
       expect(captured).toEqual(before);
     });
 
-    it.fails(
+    it(
       'normalises a corrupt stored balance instead of banking garbage',
       () => {
         const corrupt = {
@@ -343,7 +343,7 @@ describe('salvageBanking — pure checkpoint banking', () => {
       },
     );
 
-    it.fails(
+    it(
       'persists the bonused balance through the one hangar-war payload write',
       () => {
         const storage = createInMemoryHangarWarStorage();

@@ -69,6 +69,35 @@ import type { HangarLoadout, HangarState } from './types';
 export const CORE_MINERAL_EQUIVALENT = 100;
 
 /**
+ * The fixed **win-path bonus**, in minerals
+ * (parent AH-0MWEVNBMM000QFO2, producer Q1 = (c) / Q2 = (a) recorded
+ * 2026-11-13).
+ *
+ * A winning hex deployment no longer presents the mini-boss wheel: its
+ * run-scoped permanent upgrades were spent on an already-finished run. The win
+ * instead banks this fixed bonus into the persistent hangar war, and the
+ * rolled-in defence report announces it before the map (`Q3 = (b)`).
+ *
+ * **Minerals only.** A capture already banks its one core through the capture
+ * cycle, so granting a bonus core here would double-count cores.
+ *
+ * **PROVISIONAL VALUE.** The recorded decision (`Q1 = (b)`) is that the amount
+ * is *baselined from the measured per-deployment income* of
+ * AH-0MWCOWTOR00994NA (Re-baseline salvage, cores and the mini-boss reward
+ * value per hex deployment) once that measurement lands. Until it lands this
+ * constant is provisionally one banked core's mineral worth
+ * (`CORE_MINERAL_EQUIVALENT`), the repo's only existing mineral-scale
+ * reference — deliberately **not** a freshly invented balance number. When
+ * AH-0MWCOWTOR00994NA lands, this value is re-derived from its measured income
+ * and this note is replaced by the measurement it cites; every test reads the
+ * constant rather than a literal, so the re-baseline is a one-line change.
+ *
+ * A change to this value's *balance* (as opposed to recording the measured
+ * baseline) is a further linked item, never folded into the win-path change.
+ */
+export const WIN_BONUS_MINERALS = CORE_MINERAL_EQUIVALENT;
+
+/**
  * Defender-rating weight of one level of each hull upgrade.
  *
  * Armour is worth the most because a defender is never flown: the hex holds on
