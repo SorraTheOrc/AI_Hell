@@ -310,6 +310,114 @@ async function yieldMacrotask(): Promise<void> {
 }
 
 /**
+ * Structural view of the scene hooks that explain a stalled deterministic
+ * step (AH-0MWFLOUVH006GAPT). Every member is optional: only a scene that
+ * exposes the `PlayScene` pause/mineral accessors is described, so the helper
+ * works for any booted scene set without importing `PlayScene` (no cycle).
+ */
+export interface BlockingStateProbe {
+  /** Freeze flag — a paused `PlayScene.tick()` returns immediately. */
+  isPaused?: () => boolean;
+  /** Whether the hold-full choice overlay owns the scene. */
+  isMineralChoiceOpen?: () => boolean;
+  /** Whether the boss is already dead (run outcome decided). */
+  isRunFinished?: () => boolean;
+  /** The active boss (mini-boss or final boss), or null. */
+  getBoss?: () => {
+    alive?: boolean;
+    getHpFraction?: () => number;
+    getTotalHp?: () => number;
+    getPhaseNumber?: () => number;
+    getPhaseCount?: () => number;
+  } | null;
+  /** Whether a wave/level transition pause is running. */
+  isTransitioning?: () => boolean;
+  /** Seconds left on the transition pause. */
+  getTransitionRemaining?: () => number;
+}
+
+/**
+ * Formats the blocking state of one scene, or `null` when the scene exposes no
+ * blocking probe.
+ *
+ * Reports the state a deterministic walk can freeze in: the hold-full choice
+ * pause (the AC4 stall mechanism), the run-finished flag, the boss hit
+ * pool/phase and the level-transition timer. A paused scene is described even
+ * when it is paused at the SceneManager level (`active=false`), because that
+ * is exactly when `getScenes(true)` no longer lists it — and when its Phaser
+ * `Clock` (and therefore the victory `delayedCall`) stops.
+ *
+ * Exported for focused unit tests of the message format; production callers
+ * use {@link describeBlockingState}.
+ *
+ * @param scene — A booted scene (structurally probed; see
+ *   {@link BlockingStateProbe}).
+ */
+export function describePlaySceneBlockingState(
+  scene: Phaser.Scene,
+): string | null {
+  const probe = scene as unknown as BlockingStateProbe;
+  if (typeof probe.isPaused !== 'function') return null;
+  if (typeof probe.isMineralChoiceOpen !== 'function') return null;
+
+  const parts: string[] = [`paused=${probe.isPaused()}`];
+  parts.push(`mineralChoiceOpen=${probe.isMineralChoiceOpen()}`);
+  if (typeof probe.isRunFinished === 'function') {
+    parts.push(`runFinished=${probe.isRunFinished()}`);
+  }
+  const boss = probe.getBoss?.() ?? null;
+  if (boss) {
+    const total = boss.getTotalHp?.() ?? 0;
+    const fraction = boss.getHpFraction?.() ?? 0;
+    const remaining = boss.alive === false ? 0 : Math.round(total * fraction);
+    const phase = boss.getPhaseNumber?.() ?? 0;
+    const phases = boss.getPhaseCount?.() ?? 0;
+    parts.push(
+      `bossAlive=${boss.alive === true}`,
+      `bossHp=${remaining}/${total}`,
+      `bossPhase=${phase}/${phases}`,
+    );
+  } else {
+    parts.push('boss=none');
+  }
+  if (typeof probe.isTransitioning === 'function') {
+    parts.push(`transitioning=${probe.isTransitioning()}`);
+  }
+  if (typeof probe.getTransitionRemaining === 'function') {
+    parts.push(
+      `transitionRemaining=${probe.getTransitionRemaining().toFixed(2)}s`,
+    );
+  }
+  parts.push(`active=${scene.sys.isActive()}`);
+  return `${scene.scene.key}{${parts.join(', ')}}`;
+}
+
+/**
+ * Describes a stepped game for a failure message: the active scene set plus
+ * the blocking state of every scene that exposes one (see
+ * {@link describePlaySceneBlockingState}).
+ *
+ * A paused `PlayScene` ignores `tick()`, and when the hold-full overlay pauses
+ * it at the SceneManager level its `Clock` stops too — so every victory/wave
+ * `delayedCall` freezes. Naming that state is what separates a real stall from
+ * a too-small step budget (AH-0MWFLOUVH006GAPT).
+ *
+ * @param game — The booted game a stepping helper just exhausted.
+ */
+export function describeBlockingState(game: Phaser.Game): string {
+  const activeNames = game.scene.getScenes(true).map((s) => s.scene.key);
+  // Inspect every scene, not just the active ones: a scene paused at the
+  // SceneManager level drops out of `getScenes(true)` and is exactly the state
+  // that needs naming.
+  const blocking = game.scene
+    .getScenes(false)
+    .map((scene) => describePlaySceneBlockingState(scene))
+    .filter((detail): detail is string => detail !== null);
+  const active = `active=[${activeNames.join(', ')}]`;
+  return blocking.length > 0 ? `${active}; ${blocking.join('; ')}` : active;
+}
+
+/**
  * Stops Phaser's live `requestAnimationFrame` loop and advances the stopped
  * game's clock with fixed-delta `game.step` calls until `predicate` holds,
  * throwing a descriptive error if it never does.
@@ -344,7 +452,8 @@ export function stepGameUntil(
   }
   throw new Error(
     `stepGameUntil(${label}): condition not met after ${maxSteps} steps ` +
-      `(~${((maxSteps * DETERMINISTIC_STEP_MS) / 1000).toFixed(1)}s simulated)`,
+      `(~${((maxSteps * DETERMINISTIC_STEP_MS) / 1000).toFixed(1)}s simulated); ` +
+      describeBlockingState(game),
   );
 }
 

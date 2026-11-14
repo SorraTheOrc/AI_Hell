@@ -5879,6 +5879,23 @@ export class PlayScene extends CombatScene<
     return this.transitionTimer > 0;
   }
 
+  /**
+   * Whether the run's outcome is already decided: the Central AI boss is dead
+   * and the run is in its `VICTORY_TRANSITION_HOLD_MS` hold before
+   * `GameOverScene`. Set on the lethal blow in {@link _damageBoss}, cleared on
+   * scene create/restart — the same per-run flag that suppresses player fire
+   * ({@link playerFireSuppressed}).
+   *
+   * Read by the deterministic stepping diagnostics so a finished-run stall is
+   * named in a `stepUntil`/`stepGameUntil` failure instead of looking like a
+   * too-small step budget (AH-0MWFLOUVH006GAPT), and by the hold-full guard
+   * that must not open a void reward on an already-won run
+   * (AH-0MWFLOYBY001POST).
+   */
+  isRunFinished(): boolean {
+    return this.runFinished;
+  }
+
   // ── Demo / attract mode (AH-0MUX495VG0014MIY) ───────────────────
 
   /**
