@@ -35,6 +35,7 @@ import { registerBackgroundTextures } from '../test/backgroundFixtures';
 import {
   advanceGame,
   bootScene,
+  resolveMineralChoiceIfOpen,
   stepGameUntil,
   type BootedGame,
 } from '../test/gameHarness';
@@ -54,13 +55,6 @@ const LEVEL_UNDER_TEST = 2;
 
 /** Deterministic run seed so `dynamic` waves and drops replay identically. */
 const RUN_SEED = 20261102;
-
-/** Resolves an open hold-full/mini-boss choice, as a player does. */
-function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
-  if (!scene.isMineralChoiceOpen()) return false;
-  scene.selectMineralChoice(0);
-  return true;
-}
 
 /** Fast-forwards the wave's wormhole spawn so every enemy is collidable. */
 function finishSpawnSequence(scene: PlayScene): void {

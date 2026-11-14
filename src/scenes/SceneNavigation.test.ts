@@ -18,7 +18,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, describeBlockingState, stepGameUntil } from '../test/gameHarness';
+import {
+  bootScene,
+  describeBlockingState,
+  resolveMineralChoiceIfOpen,
+  resolveOpenHoldFullChoice,
+  stepGameUntil,
+  type StepGameUntilOptions,
+} from '../test/gameHarness';
 import { RULES_STORAGE_KEY } from '../core/rules';
 import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
@@ -76,15 +83,23 @@ async function bootAllGames(): Promise<Phaser.Game> {
  * (paused / hold-full overlay / run-finished / boss pool / transition timer)
  * so a genuine logic regression cannot masquerade as a silent timeout, and a
  * stalled walk names the state that froze it (AH-0MWFLOUVH006GAPT).
+ *
+ * A hold-full choice pauses the scene (and a paused `tick()` is a no-op), so
+ * a walk that expects the run to keep advancing opts into resolving it
+ * between steps via `options.resolveHoldFullChoice` — the same option
+ * `stepGameUntil` exposes (AH-0MWFLOWI6007WVZI). It defaults to off so a
+ * suite asserting the paused/overlay state keeps its behaviour.
  */
 function stepUntil(
   game: Phaser.Game,
   label: string,
   predicate: () => boolean,
   maxSteps = 600,
+  options: StepGameUntilOptions = {},
 ): void {
   for (let i = 0; i < maxSteps; i++) {
     if (predicate()) return;
+    if (options.resolveHoldFullChoice) resolveOpenHoldFullChoice(game);
     simTime += STEP_MS;
     game.step(simTime, STEP_MS);
   }
@@ -206,25 +221,6 @@ function finishTransition(scene: PlayScene): void {
 }
 
 /**
- * Resolves an open hold-full power-up choice, if any.
- *
- * Long deterministic boss walks tick the auto-fire through many waves; the
- * resulting mineral drops eventually fill the hold and `PlayScene` pauses for
- * the hold-full choice overlay (`openMineralChoice()` → `setPaused(true)`).
- * A paused scene ignores `tick()` entirely, so a walk would stall in its
- * iteration guard. Selecting the first option resumes play, exactly as a
- * player would (AH-0MV5L6BVN005DP4I).
- *
- * @returns `true` when a choice was open and has been resolved so the caller
- *   can retry the step.
- */
-function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
-  if (!scene.isMineralChoiceOpen()) return false;
-  scene.selectMineralChoice(0);
-  return true;
-}
-
-/**
  * A one-level campaign for the navigation boss walk (AH-0MVCYANT6003SG5C).
  * With a single level `isFinalLevel` is true immediately, so clearing it
  * triggers the final boss without walking the whole ten-level campaign.
@@ -305,6 +301,10 @@ function killBoss(play: PlayScene): void {
   const boss = play.getBoss();
   if (!boss) throw new Error('killBoss: no active boss encounter');
   for (let guard = 0; guard < 400 && boss.alive; guard++) {
+    // A hold-full choice pauses `PlayScene`, which makes `tick()` a no-op —
+    // resolve it before the next hit or the kill loop stalls with the boss
+    // still standing (AH-0MWFLOWI6007WVZI; the AC4 stall's direct cause).
+    if (resolveMineralChoiceIfOpen(play)) continue;
     play.spawnPlayerBullet(boss.x, boss.y, 0, 0);
     play.tick(0.016);
   }
@@ -458,8 +458,14 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     const boss = play.getBoss()!;
     expect(boss).not.toBeNull();
     killBoss(play);
-    stepUntil(game, 'GameOverScene active', () =>
-      game!.scene.isActive('GameOverScene'),
+    // Resolve any hold-full pause that fills again during the victory hold
+    // (a paused Clock freezes the GameOver transition), then wait it out.
+    stepUntil(
+      game,
+      'GameOverScene active',
+      () => game!.scene.isActive('GameOverScene'),
+      600,
+      { resolveHoldFullChoice: true },
     );
     expect(game!.scene.isActive('GameOverScene')).toBe(true);
 
@@ -470,23 +476,20 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
   });
 
   /**
-   * **Red-before/green-after (AH-0MWFLOUVH006GAPT).** Forces the hold full in
-   * the same window as the boss's lethal blow — the exact shape of the AC4
-   * flake. `openMineralChoice()` pauses the scene (`setPaused(true)`, plus
-   * `scene.pause()` when the overlay scene is registered), and a paused
-   * `PlayScene.tick()` returns immediately, so neither the remaining kill-loop
-   * hits nor the 5 s victory `delayedCall` advance. The test asserts the run
-   * still reaches `GameOverScene` with `getWon() === true`.
-   *
-   * Authored under Vitest's `it.fails` — the repo's red-before/green-after
-   * convention — because the deterministic-stepping fix that resolves the open
-   * choice lands separately (AH-0MWFLOWI6007WVZI): that item flips this back
-   * to a plain `it`, and a leftover `it.fails` then fails the suite, so this is
-   * a real target rather than a permanent exemption. The red witness (the
-   * stalled `stepUntil` diagnostic naming `paused=true,
-   * mineralChoiceOpen=true`) is recorded on the work item.
+   * **Green-after (AH-0MWFLOUVH006GAPT → AH-0MWFLOWI6007WVZI).** Forces the
+   * hold full in the same window as the boss's lethal blow — the exact shape
+   * of the AC4 flake. `openMineralChoice()` pauses the scene
+   * (`setPaused(true)`, plus `scene.pause()` when the overlay scene is
+   * registered), and a paused `PlayScene.tick()` returns immediately, so
+   * neither the remaining kill-loop hits nor the 5 s victory `delayedCall`
+   * advance without the deterministic-stepping fix. `killBoss` now resolves
+   * the open choice between ticks and the victory wait opts into
+   * `resolveHoldFullChoice`, so the run still reaches `GameOverScene` with
+   * `getWon() === true`. Grown out of the red-before witness authored as
+   * `it.fails` (the stalled `stepUntil` diagnostic naming `paused=true,
+   * mineralChoiceOpen=true`) on the previous item.
    */
-  it.fails(
+  it(
     'AC4 regression — the hold-full pause in the boss-kill window still reaches the victory screen (AH-0MWFLOUVH006GAPT)',
     async () => {
       game = await bootAllGames();
@@ -529,8 +532,14 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
       expect(play.isPaused(), 'the open choice pauses the scene').toBe(true);
 
       killBoss(play);
-      stepUntil(game, 'GameOverScene active', () =>
-        game!.scene.isActive('GameOverScene'),
+      // The hard-won hold-full edge is resolved between ticks, and the victory
+      // wait re-resolves should the hold fill again mid-hold.
+      stepUntil(
+        game,
+        'GameOverScene active',
+        () => game!.scene.isActive('GameOverScene'),
+        600,
+        { resolveHoldFullChoice: true },
       );
       expect(game!.scene.isActive('GameOverScene')).toBe(true);
 

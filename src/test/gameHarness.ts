@@ -418,6 +418,89 @@ export function describeBlockingState(game: Phaser.Game): string {
 }
 
 /**
+ * Structural view of the hold-full pause seam a deterministic walk has to
+ * resolve (AH-0MWFLOWI6007WVZI). Both members are optional so the resolver is
+ * a safe no-op for a scene that does not host a hold-full choice — the
+ * stepping helpers probe **every** scene on the game.
+ */
+export interface HoldFullChoiceProbe {
+  /** Whether the hold-full mineral choice overlay owns (and has paused) the scene. */
+  isMineralChoiceOpen?: () => boolean;
+  /** Applies one offered option permanently and resumes the scene. */
+  selectMineralChoice?: (index: number) => unknown;
+}
+
+/**
+ * Resolves an open hold-full power-up choice, if any — the **single** shared
+ * implementation every deterministic walk in the test tree uses
+ * (AH-0MWFLOWI6007WVZI; it replaces the per-suite copies that had drifted).
+ *
+ * ## Why this guard exists
+ *
+ * Long deterministic walks tick the auto-fire through many waves; the
+ * resulting mineral drops eventually fill the hold and `PlayScene` pauses for
+ * the hold-full choice overlay (`openMineralChoice()` → `setPaused(true)`, and
+ * a SceneManager-level pause when `MineralChoiceScene` is registered). A
+ * paused scene's `tick()` returns immediately, so every remaining walk tick —
+ * **and** any `this.time.delayedCall` transition waiting on the (stopped)
+ * `Clock` — becomes a no-op and the walk burns its whole budget in an
+ * otherwise silent stall (AH-0MV5L6BVN005DP4I, AH-0MUFLOUVH006GAPT's AC4
+ * victory flake). Selecting the first offered option resumes play, exactly as
+ * a player would.
+ *
+ * Only a **hold-full** choice is resolved: `isMineralChoiceOpen()` reports the
+ * hold-full flag alone, never the mini-boss reward overlay (which reuses the
+ * selection callback but is not a hold-full drop).
+ *
+ * @param scene — The scene to probe (structurally; see
+ *   {@link HoldFullChoiceProbe}). Any scene without the seam is a no-op.
+ * @returns `true` when a choice was open and has been resolved, so the caller
+ *   can retry the step.
+ */
+export function resolveMineralChoiceIfOpen(
+  scene: HoldFullChoiceProbe,
+): boolean {
+  if (typeof scene.isMineralChoiceOpen !== 'function') return false;
+  if (typeof scene.selectMineralChoice !== 'function') return false;
+  if (!scene.isMineralChoiceOpen()) return false;
+  scene.selectMineralChoice(0);
+  return true;
+}
+
+/**
+ * Resolves an open hold-full choice on whichever scene of `game` hosts one.
+ *
+ * Shared by the stepping helpers so `stepGameUntil`'s `resolveHoldFullChoice`
+ * option and the navigation suite's local `stepUntil` walk the scene set the
+ * same way (AH-0MWFLOWI6007WVZI).
+ *
+ * @param game — A booted game whose scenes to probe.
+ * @returns `true` when a choice was open and has been resolved.
+ */
+export function resolveOpenHoldFullChoice(game: Phaser.Game): boolean {
+  for (const scene of game.scene.getScenes(false)) {
+    if (resolveMineralChoiceIfOpen(scene as HoldFullChoiceProbe)) return true;
+  }
+  return false;
+}
+
+/**
+ * Options for {@link stepGameUntil}.
+ */
+export interface StepGameUntilOptions {
+  /**
+   * Resolve an open hold-full mineral choice between steps so a paused scene
+   * cannot silently stall the walk (AH-0MWFLOWI6007WVZI).
+   *
+   * **Default `false`** — deliberately, so a suite that *asserts* the paused
+   * or hold-full-overlay state keeps today's behaviour and stays green. Opt in
+   * only when the walk expects the run to keep advancing (e.g. a boss-kill /
+   * victory wait after a mineral fill).
+   */
+  resolveHoldFullChoice?: boolean;
+}
+
+/**
  * Stops Phaser's live `requestAnimationFrame` loop and advances the stopped
  * game's clock with fixed-delta `game.step` calls until `predicate` holds,
  * throwing a descriptive error if it never does.
@@ -433,12 +516,17 @@ export function describeBlockingState(game: Phaser.Game): string {
  * @param label — Condition name used in the failure message.
  * @param predicate — Condition to reach; polled before each step.
  * @param maxSteps — Step budget before failing loudly (default 600 ≈ 10 s).
+ * @param options — Optional stepping behaviour; see
+ *   {@link StepGameUntilOptions}. A hold-full choice is **not** resolved
+ *   unless `resolveHoldFullChoice` is set, so paused-state suites are
+ *   unaffected.
  */
 export function stepGameUntil(
   game: Phaser.Game,
   label: string,
   predicate: () => boolean,
   maxSteps = 600,
+  options: StepGameUntilOptions = {},
 ): void {
   game.loop.stop();
   // Anchor to the real clock (same rationale as `bootDeterministic`): timers
@@ -447,6 +535,9 @@ export function stepGameUntil(
   let time = window.performance.now();
   for (let i = 0; i < maxSteps; i += 1) {
     if (predicate()) return;
+    // A paused scene ignores `step`, so an open hold-full choice would burn
+    // the whole budget; resolve it first when the walk opts in.
+    if (options.resolveHoldFullChoice) resolveOpenHoldFullChoice(game);
     time += DETERMINISTIC_STEP_MS;
     game.step(time, DETERMINISTIC_STEP_MS);
   }

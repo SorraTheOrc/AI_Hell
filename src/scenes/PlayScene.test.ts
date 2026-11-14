@@ -49,7 +49,13 @@ import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
-import { advanceGame, bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
+import {
+  advanceGame,
+  bootScene,
+  resolveMineralChoiceIfOpen,
+  stepGameUntil,
+  type BootedGame,
+} from '../test/gameHarness';
 import { getSpawnState, type SpawnAnimatable } from '../vfx/wormholeSpawn';
 import { Asteroid } from '../entities/Asteroid';
 import { PHASER_ORBITAL_RADIUS, PhaserEntity } from '../entities/Phaser';
@@ -432,25 +438,6 @@ function expectTransitionStarted(scene: PlayScene, maxTicks = 8): void {
         `level=${wm.level} wave=${wm.waveNumber}`,
     );
   }
-}
-
-/**
- * Resolves an open hold-full power-up choice, if any.
- *
- * Long deterministic boss walks tick the auto-fire through many waves; the
- * resulting mineral drops eventually fill the hold and `PlayScene` pauses for
- * the hold-full choice overlay (`openMineralChoice()` → `setPaused(true)`).
- * A paused scene ignores `tick()` entirely, so a walk would stall in its
- * iteration guard. Selecting the first option resumes play, exactly as a
- * player would (AH-0MV5L6BVN005DP4I).
- *
- * @returns `true` when a choice was open and has been resolved so the caller
- *   can retry the step.
- */
-function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
-  if (!scene.isMineralChoiceOpen()) return false;
-  scene.selectMineralChoice(0);
-  return true;
 }
 
 /**
