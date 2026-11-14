@@ -173,6 +173,7 @@ import {
 } from '../core/checkpointStore';
 import {
   bankSalvage,
+  bankWinBonus,
   bankedSalvageFromHangar,
   runSalvageFromRun,
   type BankedSalvage,
@@ -3863,59 +3864,8 @@ export class PlayScene extends CombatScene<
     // held + boss-defeated, grants its authored entry and leaves the defending
     // hull behind.
     this._resolveHangarWarCapture();
-    // Resolve the mini-boss reward now (while the run-scoped player still
-    // exists) and carry it to the map, which reveals it over the paused
-    // map (producer Q2 = b). The in-run overlay never launches here.
-    this._resolveHangarWarWinReward();
     this._triggerVictoryCelebration(deathX, deathY);
     this._finishRunWithPurpose(true);
-  }
-
-  /**
-   * Resolves a **winning hex deployment's** mini-boss reward at the defeat
-   * frame (parent AH-0MWBW1B1Z0059CC2, AC5 / producer Q2 = b).
-   *
-   * The wheel draw is the same pure resolution the in-run overlay uses
-   * ({@link drawWheelOutcome} / {@link buildWheelWedges}), and the resolved
-   * outcome is applied to the (still live) run-scoped player through the same
-   * {@link applyWheelOutcome} seam the arcade reward uses — no new economy rule
-   * and no second application path. A presentation copy is stored for
-   * `HexMapScene`; the overlay itself is launched there, over the paused map,
-   * so the reward cannot run concurrently with the run-end transition.
-   *
-   * The empty-owned fallback keeps its existing three-option choice (a
-   * mini-boss always pays out, AC4), carried in the same payload so the map
-   * presents it instead of spinning a dud wheel.
-   */
-  private _resolveHangarWarWinReward(): void {
-    if (this.pendingWinReward !== null) return;
-
-    const ownedKinds = orderedOwnedKinds(
-      resolvePlayerSlotState(this.player).ownedIds,
-    );
-
-    if (ownedKinds.length === 0) {
-      // Empty-owned fallback (AC4): carry the three-option hold-full-style
-      // choice. Its run-scoped value is the parent's deferred economy question
-      // (AH-0MWCOWTOR00994NA); this change only preserves the existing
-      // reward surface and its ordering.
-      this.pendingWinReward = {
-        kind: 'choice',
-        options: this._holdFullStyleRewardOptions(),
-      };
-      return;
-    }
-
-    const slotIndex = Math.min(
-      MINI_BOSS_WHEEL_SLOT_COUNT - 1,
-      Math.max(0, Math.floor(this.rng() * MINI_BOSS_WHEEL_SLOT_COUNT)),
-    );
-    const outcome = drawWheelOutcome(slotIndex, ownedKinds);
-    const wedges = buildWheelWedges(ownedKinds);
-    // The run is ending, so apply the resolved reward to it now through the
-    // shared seam — the only point at which the run-scoped player exists.
-    applyWheelOutcome(outcome, this.effectsRegistry, this.player);
-    this.pendingWinReward = { kind: 'wheel', wedges, outcome };
   }
 
   /**
@@ -4242,13 +4192,27 @@ export class PlayScene extends CombatScene<
   /**
    * Resolves a hangar-war deployment's mini-boss victory into a captured hex
    * (AH-0MVUXCAW0001VUM6, re-pointed at the mini-boss by AH-0MWCOW4IQ003XST5):
-   * banks the run's salvage, marks the hex held + boss-defeated, grants its
-   * authored entry into the hangar (Rule 2) and leaves the deployment's chosen
-   * hull as the defending bot. Securing the last hex opens the next ring.
+   * banks the run's salvage, banks the fixed win bonus, marks the hex held +
+   * boss-defeated, grants its authored entry into the hangar (Rule 2) and
+   * leaves the deployment's chosen hull as the defending bot. Securing the
+   * last hex opens the next ring.
+   *
+   * **No reward overlay on this path** (parent AH-0MWEVNBMM000QFO2, producer
+   * Q1 = (c) / Q2 = (a) / Q3 = (b), recorded 2026-11-13). The mini-boss wheel
+   * and the empty-owned three-option fallback are both gone from a winning
+   * deployment: their upgrades are run-scoped and the run has already
+   * finished, so they could never take effect. The win instead banks the
+   * fixed mineral bonus ({@link bankWinBonus}) into the persistent war, and
+   * the rolled-in defence report announces it before the map becomes
+   * interactive. The arcade campaign and lost deployments keep their shipped
+   * reward surfaces — this method no-ops without a deployment.
    *
    * The pure capture cycle owns every rule; this method only supplies the run's
    * inputs (the deployment hull + the run's salvage watermark) and persists the
-   * next payload through the versioned store. The arcade run is a no-op.
+   * next payload through the versioned store. The bonus is applied to the
+   * balance the capture cycle returned and lands in that **same**
+   * `ai_hell_hangar_war` payload write, so it can never be double-counted and
+   * never disturbs the capture cycle's per-run watermark.
    */
   private _resolveHangarWarCapture(): void {
     const deployment = this.hangarWarDeployment;
@@ -4262,10 +4226,17 @@ export class PlayScene extends CombatScene<
       banked: this.salvageBank ?? bankedSalvageFromHangar(payload.hangar),
     });
     this.lastCapture = result;
-    this.salvageBank = result.banked;
+    // The fixed post-win bonus (minerals only, watermarks untouched). Applied
+    // on top of the capture-banked balance so a capture's one core is never
+    // topped up, and persisted in the same payload write below.
+    const banked = bankWinBonus(result.banked);
+    this.salvageBank = banked;
+    const captured = result.payload;
+    captured.hangar.bankedMinerals = banked.minerals;
+    captured.hangar.bankedCores = banked.cores;
     // A victorious deployment always extracts its salvage, so the payload is
     // written even when the hex itself could not be held (defender refused).
-    this._saveHangarWarPayload(result.payload);
+    this._saveHangarWarPayload(captured);
   }
 
   /**

@@ -319,8 +319,14 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(stored).not.toBeNull();
       // Salvage banked exactly once: the checkpoint moment and the capture
       // cycle resolve to one watermark/balance (a replay cannot double-count,
-      // which would double the persisted 25 minerals and 1 core).
-      expect(stored!.hangar.bankedMinerals).toBe(25);
+      // which would double the banked 25 minerals and 1 core).
+      //
+      // The persistent balance additionally carries the fixed post-win bonus
+      // (parent AH-0MWEVNBMM000QFO2, AC2: minerals only, banked once by the win
+      // resolution), so it is the captured amount **plus** that bonus — while
+      // the capture cycle's own result stays exactly the run's salvage, which
+      // is what proves the bonus is applied on top and never re-derived.
+      expect(stored!.hangar.bankedMinerals).toBe(25 + winBonusMinerals());
       expect(stored!.hangar.bankedCores).toBe(1);
       expect(capture!.banked.minerals).toBe(25);
       expect(capture!.banked.cores).toBe(1);
@@ -460,15 +466,11 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
   // neither the wheel nor the empty-owned three-option fallback — and banks a
   // fixed mineral bonus into the hangar war instead.
   //
-  // **TEST-FIRST (test-first child AH-0MWF2PA5H008XCXW).** The suppression and
-  // bonus cases are authored red under Vitest's `it.fails` (the repo's
-  // red-before/green-after convention — see `src/vfx/orbitalStrike.test.ts`),
-  // because the wheel is still shown on pre-change HEAD. The implementation
-  // items **flip each `it.fails` back to a plain `it`** — PlayScene wiring
-  // AH-0MWF2Q0O0008NGKL, pure seam AH-0MWF2PYIE001XZOV. A leftover `it.fails`
-  // then fails the suite, so the flip is a real target. The arcade and lost-
-  // deployment cases below are plain `it` and pass today: those surfaces do
-  // not move (parent AC3).
+  // **LANDED.** These cases were authored red under Vitest's `it.fails` by the
+  // test-first child (AH-0MWF2PA5H008XCXW) and flipped to plain `it` by the
+  // PlayScene wiring (AH-0MWF2Q0O0008NGKL) once the win path stopped resolving
+  // and carrying the reward. The arcade and lost-deployment cases were plain
+  // `it` throughout: those surfaces did not move (parent AC3).
 
   /**
    * Waits until the deployment has landed on the hex map.
@@ -505,7 +507,7 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
     expect(manager.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
   }
 
-  it.fails(
+  it(
     'presents no mini-boss wheel on a winning hangar deployment (Q1 = c)',
     async () => {
       const scene = await bootPlay(deploymentFor(3), true);
@@ -521,7 +523,7 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
     30_000,
   );
 
-  it.fails(
+  it(
     'presents no empty-owned fallback choice on a winning hangar deployment',
     async () => {
       // Nothing owned: pre-change HEAD carries the three-option fallback here,
@@ -538,7 +540,7 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
     30_000,
   );
 
-  it.fails(
+  it(
     'banks the fixed win bonus as minerals only, once, through the one payload write (Q2 = a)',
     async () => {
       const bonus = winBonusMinerals();
