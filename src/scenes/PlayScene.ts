@@ -6319,6 +6319,16 @@ export class PlayScene extends CombatScene<
    * PlayScene._flushPendingHoldFullChoice} opens it on the first free tick.
    */
   private _requestHoldFullChoice(): void {
+    // A won run has nothing left to spend a run-scoped reward on, so a
+    // mineral that fills the hold after the boss died (lingering drops, phase
+    // minions, asteroids) must never open a void choice: the victory
+    // celebration leads straight to the score screen, and the choice's pause
+    // would freeze the `VICTORY_TRANSITION_HOLD_MS` → `GameOverScene`
+    // transition (AH-0MWFLOYBY001POST · AC1). The mineral is still credited —
+    // only the reward surface is suppressed — and nothing is queued in place
+    // of the choice. Gyms have no run-finished state, so this is a game-only
+    // guard (parity check recorded on AH-0MWFLOYBY001POST).
+    if (this.runFinished) return;
     if (!this.gameState.isHoldFull()) return;
     if (this.mineralChoiceOpen) return;
     // The encounter owns the scene until its sweep completes and its reward
@@ -6337,6 +6347,15 @@ export class PlayScene extends CombatScene<
    */
   private _flushPendingHoldFullChoice(): void {
     if (!this.holdFullChoicePending) return;
+    // A hold-full request deferred before the run finished (a mineral
+    // collected during the final encounter's sweep/reward window) is
+    // **dropped** once the run is won: flushing it into the pausing overlay
+    // on the victory hold would gate the `GameOverScene` transition on an
+    // upgrade no run is left to use (AH-0MWFLOYBY001POST · AC2).
+    if (this.runFinished) {
+      this.holdFullChoicePending = false;
+      return;
+    }
     if (this.isMiniBossSweepActive() || this.miniBossRewardOpen) return;
     if (this.mineralChoiceOpen || this.paused) return;
     this.holdFullChoicePending = false;

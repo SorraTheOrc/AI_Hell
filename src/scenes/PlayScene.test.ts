@@ -2688,6 +2688,48 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
 
+  it('AC1 — a hold-filling mineral collected on a won run opens no choice (AH-0MWFLOYBY001POST)', async () => {
+    // The reported void-reward shape: a mineral collected after the boss dies
+    // (lingering drops, phase minions, asteroids) fills the hold on an
+    // already-finished run. `_requestHoldFullChoice` used to open the pausing
+    // choice overlay, which froze the victory hold and gated the GameOverScene
+    // transition on an upgrade no run is left to use
+    // (AH-0MWFLOYBY001POST · AC1/AC2).
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    for (let phase = 0; phase < 4; phase++) {
+      damageBossPhase(scene, boss);
+    }
+    expect(boss.alive).toBe(false);
+    expect(scene.isRunFinished()).toBe(true);
+
+    // A mineral collected after the boss died fills the hold.
+    const gameState = scene.getGameState();
+    gameState.mineralCapacity = 1;
+    gameState.minerals = 0;
+    const player = scene.getPlayer()!;
+    scene.spawnMineralAt(player.x, player.y);
+    scene.tick(0);
+
+    // The mineral is still credited to the hold…
+    expect(gameState.minerals).toBeGreaterThan(0);
+    expect(gameState.isHoldFull()).toBe(true);
+    // …but no choice opens and the celebration is never paused.
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(scene.isPaused()).toBe(false);
+
+    // The victory hold → GameOverScene transition is never gated by a choice
+    // (resolveHoldFullChoice is deliberately NOT set, so a regression that
+    // opens the overlay stalls the walk and fails loudly).
+    stepGameUntil(
+      booted!.game,
+      'victory hold → GameOverScene (hold-full choice suppressed)',
+      () => booted!.game.scene.isActive('GameOverScene'),
+    );
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
   it('AC5 — a player bullet hit registers a per-hit impact VFX at the hit point', async () => {
     const cue = vi.spyOn(effectsModule, 'playBossHitSound');
     const scene = await bootPlayAtBoss();

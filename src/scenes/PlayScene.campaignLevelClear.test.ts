@@ -349,6 +349,73 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(gameState.isHoldFull()).toBe(false);
   });
 
+  it('drops a hold-full request deferred before a won run — no void choice on the victory hold (AH-0MWFLOYBY001POST AC2)', async () => {
+    // The deferred-path shape of the finished-run bug: a mineral fills the
+    // hold while the mini-boss death sweep animates, so the request is queued
+    // (`holdFullChoicePending`) instead of pausing the cascade. On a hangar
+    // deployment that mini-boss IS the run's boss: the sweep's completion
+    // resolves the capture and ends the run as a victory immediately, so the
+    // deferred request is still queued when `runFinished` becomes true — and
+    // it must then be **dropped**, never flushed into a pausing overlay that
+    // would freeze the victory hold and gate the hex-map transition
+    // (AH-0MWFLOYBY001POST · AC2).
+    const deployment = buildHangarDeployment(deploymentPayload(), {
+      hexId: 'hex-r1-2',
+      seed: RUN_SEED,
+    });
+    expect(deployment.startLevel).toBe(LEVEL_UNDER_TEST);
+
+    const scene = await boot({ hangarWar: deployment });
+    scene.getGameState().lives = 99;
+    advanceToLevelTwoMiniBoss(scene);
+
+    // Clear the escorts, then land the lethal blow so the sweep animates.
+    killSpawnedEnemies(scene);
+    hitMiniBossUntilDead(scene);
+    expect(scene.isMiniBossSweepActive()).toBe(true);
+
+    // The hold fills during the cascade (a mineral dropped by the fight): the
+    // choice is deferred, exactly as the arcade mid-cascade test pins.
+    const gameState = scene.getGameState();
+    gameState.mineralCapacity = 1;
+    gameState.minerals = 0;
+    const player = scene.getPlayer()!;
+    scene.spawnMineralAt(player.x, player.y);
+    scene.tick(0);
+    expect(gameState.isHoldFull()).toBe(true);
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(scene.isPaused()).toBe(false);
+    const pendingSeam = scene as unknown as { holdFullChoicePending: boolean };
+    expect(pendingSeam.holdFullChoicePending).toBe(true);
+
+    // The sweep's completion finalises the deployment as a **victory** (the
+    // mini-boss is the run's boss here — no wheel, no level advance, no final
+    // boss), with the deferred request still queued.
+    finishMiniBossSweep(scene);
+    expect(scene.isRunFinished()).toBe(true);
+
+    // The first free tick after the run finished must DROP the deferred
+    // request — never flush it into a pausing choice on the victory hold.
+    // (Before the guard the flush inside `finishMiniBossSweep`'s stepping has
+    // already opened the overlay, so the open-state assertions below are the
+    // discriminators.)
+    scene.tick(0.016);
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(scene.isPaused()).toBe(false);
+    expect(pendingSeam.holdFullChoicePending).toBe(false);
+
+    // The victory hold → hex-map transition completes ungated.
+    await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
+    const map = scene.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene | null;
+    expect(map, 'the deployment must land on the hex map').not.toBeNull();
+    expect(
+      scene.game.scene.isActive(HEX_MAP_SCENE_KEY) ||
+        scene.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+    ).toBe(true);
+  });
+
   // The deployment ends on the hex map; the retired report screen is gone
   // (AH-0MWEXHODJ0067PSJ).
   it(
