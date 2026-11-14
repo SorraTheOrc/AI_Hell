@@ -9,8 +9,15 @@
  *   cheaply.
  * - **Arena tests** run the real harness against the real headless arena —
  *   the design's evidence (intake assumption A1): the same seed twice produces
- *   the same summed duration, the two ring budgets land inside their windows,
- *   and the rush line is measurably faster but riskier than the grind.
+ *   the same summed duration, the two ring grind budgets **miss** their authored
+ *   windows on the shipped one-level deployment (AH-0MWCQ4HTC004U73V), and the
+ *   rush line is measurably faster but riskier than the grind.
+ *
+ * The ring-1 / ring-2 grind verdicts are pinned **literally** against the
+ * committed artifact (`docs/dev/ring-timing-baseline.json`), so a future
+ * re-measurement cannot move the authored budgets' standing silently: the
+ * two missed budgets are tracked as separate rebalancing items
+ * (AH-0MWFDQ9EY004NO4X ring 1, AH-0MWFDQCFV007BZE5 ring 2).
  *
  * Every assertion is about observable report values, never about how the
  * module is written.
@@ -606,6 +613,54 @@ describe('ring timing: the design windows are pinned literally', () => {
  */
 const REAL_ARENA_TIMEOUT_MS = 300_000;
 
+/** One ring/line report as committed in `docs/dev/ring-timing-baseline.json`. */
+type CommittedBaselineReport = {
+  ringIndex: number;
+  strategy: string;
+  runs: Array<{
+    ringSecured: boolean;
+    totalMinutes: number;
+    deploymentMinutes: number;
+    betweenSortieMinutes: number;
+    retryMinutes: number;
+    retakeMinutes: number;
+    captured: number;
+    losses: number;
+  }>;
+  summary: {
+    totalMinutes: { mean: number; min: number; max: number };
+  };
+  budget: {
+    verdict: string;
+    measuredMinutes: number;
+    toleranceMinutes: number;
+    target: { minMinutes: number; maxMinutes: number } | null;
+    withinTolerance: boolean;
+    withinWindow: boolean;
+  };
+};
+
+function readCommittedBaseline(): CommittedBaselineReport[] {
+  const baselinePath = path.resolve(
+    process.cwd(),
+    'docs/dev/ring-timing-baseline.json',
+  );
+  return fs.existsSync(baselinePath)
+    ? (JSON.parse(
+        fs.readFileSync(baselinePath, 'utf8'),
+      ) as CommittedBaselineReport[])
+    : [];
+}
+
+/** The committed grind report for a ring — the line the authored budget judges. */
+function committedGrindReport(ringIndex: number): CommittedBaselineReport {
+  const report = readCommittedBaseline().find(
+    (entry) => entry.ringIndex === ringIndex && entry.strategy === 'grind',
+  );
+  if (!report) throw new Error(`no committed grind report for ring ${ringIndex}`);
+  return report;
+}
+
 describe('ring timing: real arena evidence', () => {
   it('is deterministic: the same seed measures the same summed duration', () => {
     const options = { ringIndex: 1, strategy: 'grind' as const, seeds: [7] };
@@ -622,22 +677,30 @@ describe('ring timing: real arena evidence', () => {
   it('the one-level MVP grind measures ~16 min and misses the 40–60 window (AH-0MWCOWSVN003X81A)', () => {
     // One hex, one level, five-wave sortie: measured twice as fast as the
     // retired campaign-slice model and every sortie is lost to enemy fire, so
-    // the committed 40–60-minute window no longer holds. The parent records
-    // the budget re-rule as its own item (AH-0MWCQ4HTC004U73V) — this pins
-    // the measured reality so a fire-model or balance change cannot move it
-    // silently in the meantime.
+    // the committed 40–60-minute window no longer holds. The verdict is pinned
+    // against the committed artifact (AH-0MWCQ4HTC004U73V) and tracked as the
+    // rebalancing item AH-0MWFDQ9EY004NO4X, so a fire-model or balance change
+    // cannot move it silently in the meantime.
     const report = simulateRingTiming({
       ringIndex: 1,
       strategy: 'grind',
       seeds: [1, 2, 3],
     });
+    const committed = committedGrindReport(1);
     expect(report.runs[0].deployments).toHaveLength(6);
     // The grind plays every hex, so the ring is secured even though every
     // sortie is a first-attempt loss (losses are retried, not abandoned).
     expect(report.summary.ringSecuredRuns).toBe(3);
     expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.verdict).toBe(committed.budget.verdict);
     expect(report.budget.withinTolerance).toBe(false);
-    // Decisively below the window (measured mean ≈ 16.4 min on seeds 1–3).
+    // The real arena still measures the regenerated artifact's numbers: 16.4 min
+    // mean on seeds 1–3, decisively below the authored 40-minute floor.
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(16.4256, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(
+      committed.summary.totalMinutes.mean,
+      6,
+    );
     expect(report.budget.measuredMinutes).toBeLessThan(
       RING_TIMING_TARGETS[1].minMinutes,
     );
@@ -646,16 +709,24 @@ describe('ring timing: real arena evidence', () => {
 
   it('the 12-hex one-level ring 2 grind measures ~48 min and misses the 90–120 window (AH-0MWCOWSVN003X81A)', () => {
     // The same one-level model, twelve hexes: measured ≈ 48 min mean (seeds
-    // 1–3), every sortie lost to enemy fire. The 90–120-minute window no
-    // longer holds; the parent's budget-verdict item re-rules it.
+    // 1–3), every sortie lost to enemy fire. The 90–120-minute window no longer
+    // holds; the verdict is pinned against the committed artifact and tracked
+    // as the rebalancing item AH-0MWFDQCFV007BZE5.
     const report = simulateRingTiming({
       ringIndex: 2,
       strategy: 'grind',
       seeds: [1, 2, 3],
     });
+    const committed = committedGrindReport(2);
     expect(report.runs[0].deployments).toHaveLength(12);
     expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.verdict).toBe(committed.budget.verdict);
     expect(report.budget.withinTolerance).toBe(false);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(48.0967, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(
+      committed.summary.totalMinutes.mean,
+      6,
+    );
     expect(report.budget.measuredMinutes).toBeLessThan(
       RING_TIMING_TARGETS[2].minMinutes,
     );
@@ -893,24 +964,7 @@ describe('ring timing: the one-level income runner (AH-0MWCOWTOR00994NA)', () =>
 });
 
 describe('ring timing: committed baseline evidence', () => {
-  const baselinePath = path.resolve(
-    process.cwd(),
-    'docs/dev/ring-timing-baseline.json',
-  );
-  const baseline = fs.existsSync(baselinePath)
-    ? (JSON.parse(fs.readFileSync(baselinePath, 'utf8')) as Array<{
-        ringIndex: number;
-        strategy: string;
-        runs: Array<{ ringSecured: boolean }>;
-        summary: { totalMinutes: { mean: number } };
-        budget: {
-          verdict: string;
-          measuredMinutes: number;
-          withinTolerance: boolean;
-          withinWindow: boolean;
-        };
-      }>)
-    : [];
+  const baseline = readCommittedBaseline();
 
   it('records one measurement per ring and line', () => {
     expect(baseline).toHaveLength(4);
@@ -919,26 +973,91 @@ describe('ring timing: committed baseline evidence', () => {
     ).toEqual(['1-grind', '1-rush', '2-grind', '2-rush']);
   });
 
-  it('both ring grind budgets are recorded as missed and internally consistent', () => {
-    // The artifact was regenerated on the shipped one-level deployment
-    // (AH-0MWCQ4GTE005YG02): every sortie is lost to enemy fire, so both grind
-    // totals fall decisively below their authored windows. The budget re-ruling
-    // is a separate item (AH-0MWCQ4HTC004U73V); this pins what the committed
-    // evidence says so a re-measurement cannot drift silently.
-    for (const ringIndex of [1, 2]) {
-      const report = baseline.find(
-        (entry) => entry.ringIndex === ringIndex && entry.strategy === 'grind',
-      )!;
-      expect(report.budget.verdict).toBe('missed');
-      expect(report.budget.withinTolerance).toBe(false);
-      expect(report.budget.withinWindow).toBe(false);
-      expect(report.budget.measuredMinutes).toBeCloseTo(
-        report.summary.totalMinutes.mean,
-        6,
-      );
-      expect(report.runs.every((run) => run.ringSecured)).toBe(true);
+  /**
+   * The two grind verdicts are pinned **explicitly and per ring**
+   * (AH-0MWCQ4HTC004U73V): the measured mean, its min–max, the authored window,
+   * the tolerance and the delta to the window floor, plus the loss/retry/
+   * re-capture split that produces the total. A re-measurement that moves any of
+   * them fails here instead of drifting past the authored budgets, and each
+   * missed budget is tracked as its own rebalancing item.
+   */
+  it('ring 1 grind: 16.4 min (15.7–16.9) misses the authored 40–60 min window', () => {
+    // Tracked for a producer ruling by AH-0MWFDQ9EY004NO4X.
+    const report = committedGrindReport(1);
+    expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.withinWindow).toBe(false);
+    expect(report.budget.withinTolerance).toBe(false);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(16.4256, 4);
+    expect(report.summary.totalMinutes.min).toBeCloseTo(15.7239, 4);
+    expect(report.summary.totalMinutes.max).toBeCloseTo(16.9144, 4);
+    // The authored window and tolerance are unchanged — judged, not re-authored.
+    expect(report.budget.target).toEqual(RING_TIMING_TARGETS[1]);
+    expect(report.budget.toleranceMinutes).toBeCloseTo(2, 6);
+    // Δ to the window floor: 16.4256 − 40 = −23.5744 min (and −21.5744 min
+    // below the 38-minute tolerance floor).
+    expect(
+      report.summary.totalMinutes.mean - RING_TIMING_TARGETS[1].minMinutes,
+    ).toBeCloseTo(-23.5744, 4);
+    // Re-judged through the shipped budget rule, the artifact's measurement is
+    // still `missed`: the verdict is not merely a stored string.
+    expect(
+      evaluateRingTimingBudget(1, 'grind', report.summary.totalMinutes.mean)
+        .verdict,
+    ).toBe('missed');
+    // The split produces the total: measured replay, 2-minute visits, no
+    // re-capture on the grind line.
+    for (const run of report.runs) {
+      expect(
+        run.deploymentMinutes +
+          run.betweenSortieMinutes +
+          run.retryMinutes +
+          run.retakeMinutes,
+      ).toBeCloseTo(run.totalMinutes, 9);
+      expect(run.retryMinutes).toBeCloseTo(run.deploymentMinutes, 9);
+      expect(run.retakeMinutes).toBe(0);
+      expect(run.betweenSortieMinutes).toBeCloseTo(12, 9);
+      expect(run.captured).toBe(0);
+      expect(run.losses).toBe(6);
+      expect(run.ringSecured).toBe(true);
     }
   });
+
+  it('ring 2 grind: 48.1 min (42.4–58.4) misses the authored 90–120 min window', () => {
+    // Tracked for a producer ruling by AH-0MWFDQCFV007BZE5.
+    const report = committedGrindReport(2);
+    expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.withinWindow).toBe(false);
+    expect(report.budget.withinTolerance).toBe(false);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(48.0967, 4);
+    expect(report.summary.totalMinutes.min).toBeCloseTo(42.4067, 4);
+    expect(report.summary.totalMinutes.max).toBeCloseTo(58.4144, 4);
+    expect(report.budget.target).toEqual(RING_TIMING_TARGETS[2]);
+    expect(report.budget.toleranceMinutes).toBeCloseTo(3, 6);
+    // Δ to the window floor: 48.0967 − 90 = −41.9033 min (and −38.9033 min
+    // below the 87-minute tolerance floor).
+    expect(
+      report.summary.totalMinutes.mean - RING_TIMING_TARGETS[2].minMinutes,
+    ).toBeCloseTo(-41.9033, 4);
+    expect(
+      evaluateRingTimingBudget(2, 'grind', report.summary.totalMinutes.mean)
+        .verdict,
+    ).toBe('missed');
+    for (const run of report.runs) {
+      expect(
+        run.deploymentMinutes +
+          run.betweenSortieMinutes +
+          run.retryMinutes +
+          run.retakeMinutes,
+      ).toBeCloseTo(run.totalMinutes, 9);
+      expect(run.retryMinutes).toBeCloseTo(run.deploymentMinutes, 9);
+      expect(run.retakeMinutes).toBe(0);
+      expect(run.betweenSortieMinutes).toBeCloseTo(24, 9);
+      expect(run.captured).toBe(0);
+      expect(run.losses).toBe(12);
+      expect(run.ringSecured).toBe(true);
+    }
+  });
+
 
   it('records the rush line as faster and not ring-securing on both rings', () => {
     for (const ringIndex of [1, 2]) {

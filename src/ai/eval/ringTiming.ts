@@ -134,6 +134,14 @@
  * target is the **grind** line, because that is the line that actually secures
  * the ring; a rush segment is reported `not-applicable` for the budget.
  *
+ * The shipped one-level deployment measures **both grind lines as `missed`**
+ * (ring 1 16.4 min against 40–60, ring 2 48.1 min against 90–120, seeds 1–3 in
+ * `docs/dev/ring-timing-baseline.json`). The windows are an authored input and
+ * are **not re-worded here**: each missed budget is recorded with its measured
+ * figure and delta in the committed artifact and this module's tests, and the
+ * ruling is tracked by two linked rebalancing items — ring 1
+ * AH-0MWFDQ9EY004NO4X, ring 2 AH-0MWFDQCFV007BZE5.
+ *
  * ## Fidelity boundary
  *
  * The arena's per-level run is the best headless proxy for a deployment, not
@@ -257,6 +265,14 @@ export interface RingTimingTarget {
  * launches, AH-0MW9QA2YC009PSF5). The loss-dominated ring-2 retry allowance is
  * the same documented follow-up risk; only the deployment duration and the
  * modelled loadout changed.
+ *
+ * Those figures were **superseded** by the shipped one-level five-wave sortie
+ * (AH-0MWCOWSVN003X81A): the regenerated artifact measures ring 1 at **16.4
+ * minutes** and ring 2 at **48.1 minutes**, so **both grind budgets are
+ * `missed`**. The windows are left exactly as authored — a window change is a
+ * producer ruling, tracked by the linked rebalancing items
+ * **AH-0MWFDQ9EY004NO4X** (ring 1) and **AH-0MWFDQCFV007BZE5** (ring 2), not a
+ * silent re-word here.
  */
 export const RING_TIMING_TARGETS: Readonly<Record<number, RingTimingTarget>> =
   Object.freeze({
