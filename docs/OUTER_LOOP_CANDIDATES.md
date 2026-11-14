@@ -788,7 +788,15 @@ shipped build:
   as flat defence skills keyed by the attacker's authored boss identity (see
   *Known-ahead intel and anti-checklist mitigations → Defending-bot skills*).
 - **Hex variety** — per-hex personalities, contracts and ring landmarks:
-  **AH-0MVWZYQN8007SXIG**.
+  **AH-0MVWZYQN8007SXIG** — **implemented** (GDD §8.2 *Hex variety*): authored
+  `personality` (config-tunes plus the bounded set of two shared combat
+  mechanics — a projectile-slowing `nebula` and a reinforcement-summoning
+  `summoner`), optional `contract` (bonus banked through the existing banking
+  rule, no deadline clock) and one-off ring `landmark`s (`fortress` = two
+  captures, `cache` = pays out instead of granting) on ordinary hexes, all
+  published in the known-ahead intel and validated loudly. Each axis passes the
+  anti-checklist test — it adds a **choice** (which fight, which optional
+  objective, which set-piece to take next) rather than one more box to tick.
 
 ### Fantasy / pitch
 

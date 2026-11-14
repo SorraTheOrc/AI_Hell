@@ -36,6 +36,10 @@ import {
 } from '../entities/MiniBoss';
 import type { FormationOffset } from '../utils/formations';
 import type { HexBossProfile } from '../core/hangarWar/hexBoss';
+import {
+  summonerReinforcesInPhase,
+  summonerReinforcementCount,
+} from '../scenes/core/hexPersonalityMechanics';
 
 /** Number of campaign levels that carry a bespoke mini-boss design. */
 export const MINI_BOSS_DESIGN_LEVELS = 10;
@@ -370,5 +374,56 @@ export function hexMiniBossConfigForLevel(
     ...(profile.demonstration === null
       ? {}
       : { demonstratedWeapon: profile.demonstration }),
+    // The personality's shared mechanics (AH-0MWEW50B10089D4W, Q1 = b): a
+    // `summoner` adds a bounded reinforcement wave for every phase through the
+    // shipped `minions` seam, so the game and every gym summon through the same
+    // code (AGENTS.md gym↔game parity).
+    ...(profile.personality === 'summoner'
+      ? { minions: withSummonerReinforcements(base, profile.personality) }
+      : {}),
   };
+}
+
+/**
+ * Adds the `summoner` reinforcement wave to every phase of a mini-boss config.
+ *
+ * The design's own minion waves are preserved; one bounded reinforcement wave
+ * is appended per phase, placed on the alternate side of the arena so it reads
+ * as an arrival rather than as the design's opening escort. The decision (which
+ * phases, how many bodies) comes from the shared combat core
+ * (`summonerReinforcesInPhase`, `summonerReinforcementCount`), so no scene
+ * re-implements the mechanic.
+ *
+ * @param base — the level design's config (its own minions are kept).
+ * @param personality — the deployment's authored personality.
+ * @returns the config's minion waves with the reinforcements appended.
+ */
+function withSummonerReinforcements(
+  base: MiniBossConfig,
+  personality: HexBossProfile['personality'],
+): MiniBossMinionWaveConfig[] {
+  const waves: MiniBossMinionWaveConfig[] = (base.minions ?? []).map((wave) => ({
+    ...wave,
+    groups: wave.groups.map((group) => ({ ...group })),
+  }));
+  const phaseCount = Math.max(1, base.phases?.length ?? 1);
+  for (let phase = 1; phase <= phaseCount; phase += 1) {
+    if (!summonerReinforcesInPhase(personality, phase)) continue;
+    const existing = waves.find((wave) => wave.phase === phase);
+    const reinforcement: MiniBossMinionWaveConfig['groups'][number] = {
+      enemyKey: 'scout',
+      formation: 'v',
+      count: summonerReinforcementCount(personality),
+      spacingX: 34,
+      spacingY: 26,
+      startX: phase % 2 === 1 ? GAME_WIDTH * 0.82 : GAME_WIDTH * 0.18,
+      startY: GAME_HEIGHT * 0.2,
+    };
+    if (existing === undefined) {
+      waves.push({ phase, shootEnabled: true, groups: [reinforcement] });
+    } else {
+      existing.groups.push(reinforcement);
+    }
+  }
+  return waves;
 }

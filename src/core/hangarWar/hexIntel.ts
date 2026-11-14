@@ -113,8 +113,13 @@ import {
   ringDepth,
   type AxialCoordinate,
   type HexLandmarkId,
+  type HexPersonalityId,
   type HexRingDefinition,
 } from './hexRing';
+import {
+  hexPersonalityMechanicsFor,
+  type HexPersonalityMechanic,
+} from '../../scenes/core/hexPersonalityMechanics';
 import { areNeighbours } from './hexRing';
 import {
   DEFAULT_FRONTIER_TUNING,
@@ -179,6 +184,15 @@ export const FORTRESS_TILE_TAG = '\u26A1 FORTRESS';
  * instead of granting. Legible without colour.
  */
 export const CACHE_TILE_TAG = '\u25A3 CACHE';
+
+/** Tile tag marking a `nebula` personality (its volley drifts slowly). */
+export const NEBULA_TILE_TAG = '\u2601 NEBULA';
+
+/** Tile tag marking a `summoner` personality (it summons reinforcements). */
+export const SUMMONER_TILE_TAG = '\u21BB SUMMONER';
+
+/** Detail-panel heading for the personality block. */
+export const PERSONALITY_PANEL_HEADING = 'PERSONALITY';
 
 /**
  * Tile tag marking a hex that carries an authored **contract**
@@ -281,6 +295,18 @@ export interface HexIntel {  /** Row key (`hex:<id>`), unique within the map. */
   readonly weaknesses: readonly string[];
   /** Weapon/upgrade the hex grants once its boss is beaten, or `null`. */
   readonly grants: string | null;
+  /**
+   * The hex's authored **personality** (post-MVP Hangar War,
+   * AH-0MWEW50B10089D4W, Q1 = b): how the hex's boss/deployment fights, or
+   * `null` for an ordinary hex. Published before commitment.
+   */
+  readonly personality: HexPersonalityId | null;
+  /**
+   * The **bounded** shared combat mechanics the personality carries (empty for
+   * a config-tune hex) — the descriptors the shared combat core publishes, so
+   * intel and gameplay can never disagree about what a personality does.
+   */
+  readonly personalityMechanics: readonly HexPersonalityMechanic[];
   /**
    * The hex's authored **landmark** (post-MVP Hangar War, AH-0MWEW5I1F006CLCH,
    * Q3 = a): `fortress` (two capture passes), `cache` (pays out instead of
@@ -791,6 +817,7 @@ function tileLabel(
   specialMission: HexSpecialMissionIntel | null,
   contract: HexContractIntel | null = null,
   landmark: HexLandmarkId | null = null,
+  personality: HexPersonalityId | null = null,
 ): string {
   const base = `(${state.q},${state.r}) AGG ${aggression} ${
     held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
@@ -802,6 +829,8 @@ function tileLabel(
     );
   }
   if (contract !== null) tags.push(CONTRACT_TILE_TAG);
+  if (personality === 'nebula') tags.push(NEBULA_TILE_TAG);
+  if (personality === 'summoner') tags.push(SUMMONER_TILE_TAG);
   if (landmark === 'fortress') tags.push(FORTRESS_TILE_TAG);
   if (landmark === 'cache') tags.push(CACHE_TILE_TAG);
   return tags.length === 0 ? base : `${base}\n${tags.join('\n')}`;
@@ -836,6 +865,7 @@ function hexLabel(
   contract: HexContractIntel | null = null,
   landmark: HexLandmarkId | null = null,
   landmarkProgress: { readonly passes: number; readonly required: number } | null = null,
+  personality: HexPersonalityId | null = null,
 ): string {
   const lines: string[] = [
     state.id,
@@ -881,6 +911,14 @@ function hexLabel(
       }`,
       `REWARD: ${specialMission.hullName} (+${specialMission.bonusStartingLives} LIVES · DEF ${specialMission.baseDefence})`,
       specialMission.description,
+    );
+  }
+
+  if (personality !== null) {
+    const mechanics = hexPersonalityMechanicsFor(personality);
+    lines.push(
+      `${PERSONALITY_PANEL_HEADING}: ${personality}`,
+      ...mechanics.map((mechanic) => `MECHANIC: ${mechanic.summary}`),
     );
   }
 
@@ -948,6 +986,8 @@ export function buildHexIntel(
     strengths: definition ? [...definition.strengths] : [],
     weaknesses: definition ? [...definition.weaknesses] : [],
     grants: definition?.grants ?? null,
+    personality: definition?.personality ?? null,
+    personalityMechanics: hexPersonalityMechanicsFor(definition?.personality),
     landmark: definition?.landmark ?? null,
     landmarkProgress: landmarkProgressFor(definition, state),
     contract: contractIntelFor(definition, state),
@@ -969,6 +1009,7 @@ export function buildHexIntel(
       specialMission,
       contract,
       definition?.landmark ?? null,
+      definition?.personality ?? null,
     ),
     label: hexLabel(
       state,
@@ -979,6 +1020,7 @@ export function buildHexIntel(
       contract,
       definition?.landmark ?? null,
       landmarkProgressFor(definition, state),
+      definition?.personality ?? null,
     ),
   };
 }

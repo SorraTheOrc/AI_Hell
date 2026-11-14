@@ -57,7 +57,8 @@ import {
   type HexDifficultyProfile,
 } from './hexDifficulty';
 import { resolveHexGrant, type HexGrant } from './captureCycle';
-import type { HexRingDefinition } from './hexRing';
+import { hexPersonalityMechanicsFor, nebulaVolleySpeedScale, type HexPersonalityMechanic } from '../../scenes/core/hexPersonalityMechanics';
+import type { HexPersonalityId, HexRingDefinition } from './hexRing';
 import { MAX_LEVEL } from '../GameState';
 import {
   BULLET_COLORS,
@@ -124,6 +125,18 @@ export interface HexBossProfile {
   readonly demonstration: HexBossDemonstration | null;
   /** Phase count for the shipped boss path (`HEX_BOSS_PHASE_COUNT`). */
   readonly phaseCount: number;
+  /**
+   * The hex's authored personality (AH-0MWEW50B10089D4W, Q1 = b), or `null` for
+   * an ordinary hex. Published in the known-ahead intel and consumed by the
+   * shared mapping, never re-derived by a scene.
+   */
+  readonly personality: HexPersonalityId | null;
+  /**
+   * The **bounded** shared combat mechanics the personality carries (empty for
+   * a config-tune hex). Descriptors come from the shared combat core
+   * (`src/scenes/core/hexPersonalityMechanics`), so the cap lives in one place.
+   */
+  readonly mechanics: readonly HexPersonalityMechanic[];
   /** The shipped difficulty profile behind the encounter (single source). */
   readonly difficulty: HexDifficultyProfile;
 }
@@ -194,11 +207,14 @@ const DEMONSTRATION_SIZE_RANGE = Object.freeze({ min: 0.5, max: 2 });
  * Resolves the volley a hex boss wields for the weapon it grants.
  *
  * @param grant — the hex's resolved grant (from {@link resolveHexGrant}).
+ * @param personality — the hex's authored personality (tunes the volley
+ *   cadence, and the `nebula` mechanic slows it through the shared core).
  * @returns the demonstration descriptor, or `null` when the hex grants a
  *   non-weapon entry (an upgrade/strength hex) or no entry at all.
  */
 export function hexBossDemonstration(
   grant: HexGrant | null,
+  personality: HexPersonalityId | null | undefined = null,
 ): HexBossDemonstration | null {
   const weaponId = grant?.weaponId ?? null;
   if (weaponId === null) return null;
@@ -221,7 +237,16 @@ export function hexBossDemonstration(
     weaponName: weapon.name,
     color: weapon.bulletColor,
     offsets: [...weapon.offsets],
-    speed: Math.round(BULLET_SPEED / size),
+    // The personality's volley cadence, then the nebula mechanic's drag: both
+    // numbers come from the shared core/tune table, never from a scene.
+    speed: Math.max(
+      1,
+      Math.round(
+        (BULLET_SPEED / size) *
+          personalityTune(personality).volleyScale *
+          nebulaVolleySpeedScale(personality),
+      ),
+    ),
     shape: weapon.bulletShape,
     ...(weapon.bulletShapeLength === undefined
       ? {}
@@ -237,6 +262,59 @@ function toPositive(value: unknown, fallback: number): number {
     return fallback;
   }
   return value;
+}
+
+/**
+ * The shipped **config-tunes** an authored personality applies
+ * (AH-0MWEW50B10089D4W, Q1 = b).
+ *
+ * Each tune moves the encounter only through seams that already exist —
+ * `hpMultiplier` (the boss hit pool), `aggressionDelta` (which selects the
+ * shipped campaign level) and `volleyScale` (the demonstrated volley's cadence
+ * and speed) — so no personality adds a second boss or deployment
+ * implementation. The mechanics that need real code live in the shared combat
+ * core (`nebula`, `summoner`); these tunes are the data half of the same axis.
+ *
+ * Bounds: the hit pool stays inside the shipped `[1, 2]` formula bound because
+ * the tune multiplies the already-bounded `hexDifficultyProfile` value and the
+ * result is clamped again here; aggression never moves more than one step.
+ */
+interface HexPersonalityTune {
+  /** Multiplier applied to the shipped hit-pool multiplier. */
+  readonly hpScale: number;
+  /** Aggression perturbation (whole steps, `[-1, 1]`). */
+  readonly aggressionDelta: number;
+  /** Volley cadence/speed scale applied to the demonstrated volley. */
+  readonly volleyScale: number;
+}
+
+/** The authored tunes, one per config-tune personality (distinct by design). */
+const PERSONALITY_TUNES: Readonly<Record<string, HexPersonalityTune>> =
+  Object.freeze({
+    // A stubborn defender: more hit points and a deliberate, slower cadence.
+    sentinel: Object.freeze({ hpScale: 1.25, aggressionDelta: 0, volleyScale: 0.85 }),
+    // A reckless attacker: one aggression step harder, a lighter pool.
+    berserker: Object.freeze({ hpScale: 0.9, aggressionDelta: 1, volleyScale: 1 }),
+    // A showman: an unchanged fight opened by a faster, denser volley.
+    tempest: Object.freeze({ hpScale: 1, aggressionDelta: 0, volleyScale: 1.35 }),
+    // A drifting nebula: the volley crawls (the mechanic's shared number).
+    nebula: Object.freeze({ hpScale: 1, aggressionDelta: 0, volleyScale: 1 }),
+    // A summoner: a slightly lighter pool in exchange for reinforcements.
+    summoner: Object.freeze({ hpScale: 0.85, aggressionDelta: 0, volleyScale: 1 }),
+  });
+
+/** The tuning for `personality`, or the identity tune for anything unknown. */
+function personalityTune(
+  personality: HexPersonalityId | null | undefined,
+): HexPersonalityTune {
+  const tune =
+    typeof personality === 'string' ? PERSONALITY_TUNES[personality] : undefined;
+  return tune ?? { hpScale: 1, aggressionDelta: 0, volleyScale: 1 };
+}
+
+/** Clamps a value into `[min, max]` (the shipped bounds are already clamped). */
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 /**
@@ -285,7 +363,24 @@ export function buildHexBossProfile(
   maxLevel: number = MAX_LEVEL,
 ): HexBossProfile {
   const hexId = typeof hex?.id === 'string' && hex.id.trim() !== '' ? hex.id : 'hex-unknown';
-  const difficulty = hexDifficultyProfile(toCount(hex?.aggression), maxLevel);
+  const personality = definition?.personality ?? null;
+  const tune = personalityTune(personality);
+  const baseDifficulty = hexDifficultyProfile(toCount(hex?.aggression), maxLevel);
+  // The personality tunes the shipped difficulty profile: aggression moves at
+  // most one step (re-selecting the shipped level through the same mapping),
+  // the hit pool is perturbed and re-clamped inside the shipped `[1, 2]` bound.
+  const tunedDifficulty = hexDifficultyProfile(
+    Math.max(0, baseDifficulty.aggression + tune.aggressionDelta),
+    maxLevel,
+  );
+  const difficulty: HexDifficultyProfile = {
+    ...tunedDifficulty,
+    bossHpMultiplier: clamp(
+      tunedDifficulty.bossHpMultiplier * tune.hpScale,
+      1,
+      2,
+    ),
+  };
   const grant = resolveHexGrant(
     definition?.grants,
     undefined,
@@ -307,8 +402,10 @@ export function buildHexBossProfile(
     desperationColor: lighten(bodyColor, 0.45),
     grant,
     demonstratedColor,
-    demonstration: hexBossDemonstration(grant),
+    demonstration: hexBossDemonstration(grant, personality),
     phaseCount: HEX_BOSS_PHASE_COUNT,
+    personality,
+    mechanics: hexPersonalityMechanicsFor(personality),
     difficulty,
   };
 }

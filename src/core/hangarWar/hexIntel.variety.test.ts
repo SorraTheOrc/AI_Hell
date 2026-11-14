@@ -8,18 +8,10 @@
  * (`./hexIntel`), so variety is visible *before* a life is committed and can
  * never drift between the game and a gym.
  *
- * ## Test-first contract
- *
- * These assertions are `it.fails` until each axis publishes its field. Each
- * axis item flips its own cases to `it` as part of its acceptance criteria:
- *
- * - personality — AH-0MWEW50B10089D4W
- * - contract — AH-0MWEW58WD003NFXS
- * - landmarks — AH-0MWEW5I1F006CLCH
- *
- * The intel shape is read through a local `VarietyIntel` view rather than the
- * shipped `HexIntel` interface, so this file typechecks while the fields are
- * still missing — a red contract, not a broken build.
+ * These cases were written as `it.fails` red contracts by
+ * AH-0MWEW4RVP002LIP4; all three axes have since landed (personality
+ * AH-0MWEW50B10089D4W, contract AH-0MWEW58WD003NFXS, landmarks
+ * AH-0MWEW5I1F006CLCH) and every case is a real acceptance assertion.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -32,15 +24,11 @@ import {
 import type { HexIntel } from './hexIntel';
 
 /**
- * The one variety field still to land on `HexIntel` (AC2): `contract` ships
- * with AH-0MWEW58WD003NFXS and `landmark` with AH-0MWEW5I1F006CLCH;
- * `personality` lands with its own axis item, so it is declared optional here —
- * a red contract, not a broken build.
+ * All three variety axes are now shipped on `HexIntel` (`personality` with
+ * AH-0MWEW50B10089D4W, `contract` with AH-0MWEW58WD003NFXS, `landmark` with
+ * AH-0MWEW5I1F006CLCH), so the intel view is the shipped interface itself.
  */
-interface VarietyIntel extends HexIntel {
-  /** The hex's authored personality, or `null`/absent when it has none. */
-  readonly personality?: string | null;
-}
+type VarietyIntel = HexIntel;
 
 /** The authored variety sample ring 3, as the map model sees it. */
 function varietyMap(): ReturnType<typeof buildHexMapModel> {
@@ -65,12 +53,12 @@ const CACHE_HEX_ID = 'hex-r3-4';
 const CONTRACT_HEX_ID = 'hex-r3-6';
 
 describe('hex variety intel — personality (AC2, Q1 = b)', () => {
-  it.fails('publishes a hex personality in the detail panel block', () => {
+  it('publishes a hex personality in the detail panel block', () => {
     expect(varietyIntel(NEBULA_HEX_ID).personality).toBe('nebula');
     expect(varietyIntel(NEBULA_HEX_ID).label).toContain('nebula');
   });
 
-  it.fails('publishes a reinforcement-summoning personality', () => {
+  it('publishes a reinforcement-summoning personality', () => {
     expect(varietyIntel(SUMMONER_HEX_ID).personality).toBe('summoner');
   });
 

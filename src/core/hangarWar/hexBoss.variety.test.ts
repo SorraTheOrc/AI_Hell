@@ -14,10 +14,9 @@
  * - a personality is **balance-neutral** to the shipped campaign: an
  *   unauthored hex keeps exactly today's profile.
  *
- * ## Test-first contract
- *
- * The `it.fails` cases pin behaviour that lands with the personality axis item
- * (AH-0MWEW50B10089D4W) and flip to `it` as part of its acceptance criteria.
+ * These cases were written as `it.fails` red contracts by
+ * AH-0MWEW4RVP002LIP4 and flipped to `it` when the personality axis landed
+ * (AH-0MWEW50B10089D4W) — they are the axis's acceptance gate.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -31,8 +30,11 @@ import {
 } from './hexRing';
 import { VARIETY_RING_DEFINITIONS } from './__fixtures__/ringFixtures';
 
-/** The sample hex every personality case is applied to (aggression 9). */
-const SAMPLE_HEX = { id: 'hex-r3-7', aggression: 9 } as const;
+/**
+ * The sample hex every personality case is applied to: the sample ring's weapon
+ * hex, so the demonstrated volley (and therefore every cadence tune) exists.
+ */
+const SAMPLE_HEX = { id: 'hex-r3-18', aggression: 9 } as const;
 
 /** The sample hex's authored definition. */
 function sampleDefinition(): HexRingDefinition {
@@ -66,14 +68,14 @@ function tuningSignature(profile: HexBossProfile): string {
 }
 
 describe('hex variety personality — config-tunes (AC1/AC4, Q1 = b)', () => {
-  it.fails('gives every authored personality a distinct config-tune', () => {
+  it('gives every authored personality a distinct config-tune', () => {
     const signatures = HEX_PERSONALITY_IDS.map((personality) =>
       tuningSignature(buildHexBossProfile(SAMPLE_HEX, withPersonality(personality))),
     );
     expect(new Set(signatures).size).toBe(HEX_PERSONALITY_IDS.length);
   });
 
-  it.fails('tunes the encounter through the shipped seams only', () => {
+  it('tunes the encounter through the shipped seams only', () => {
     const baseline = buildHexBossProfile(SAMPLE_HEX, withPersonality(undefined));
     const tuned = HEX_PERSONALITY_IDS.map((personality) =>
       buildHexBossProfile(SAMPLE_HEX, withPersonality(personality)),
@@ -117,7 +119,7 @@ describe('hex variety personality — bounded shared mechanics (AC1, Q1 = b)', (
     expect([...HEX_PERSONALITY_MECHANICS]).toEqual(['nebula', 'summoner']);
   });
 
-  it.fails('implements the nebula projectile-slowing mechanic once in the shared combat core', async () => {
+  it('implements the nebula projectile-slowing mechanic once in the shared combat core', async () => {
     // Dynamic specifier so this red contract typechecks before the module
     // lands: it rejects until the shared core exports the mechanic.
     const specifier = '../../scenes/core/hexPersonalityMechanics';
@@ -127,7 +129,7 @@ describe('hex variety personality — bounded shared mechanics (AC1, Q1 = b)', (
     expect(sharedCore.NEBULA_PROJECTILE_DRAG).toBeGreaterThan(1);
   });
 
-  it.fails('implements the reinforcement-summoning mechanic once in the shared combat core', async () => {
+  it('implements the reinforcement-summoning mechanic once in the shared combat core', async () => {
     const specifier = '../../scenes/core/hexPersonalityMechanics';
     const sharedCore = (await import(specifier)) as {
       SUMMONER_REINFORCEMENTS?: number;
@@ -135,7 +137,7 @@ describe('hex variety personality — bounded shared mechanics (AC1, Q1 = b)', (
     expect(sharedCore.SUMMONER_REINFORCEMENTS).toBeGreaterThan(0);
   });
 
-  it.fails('publishes the bounded mechanic set the combat gyms drive', async () => {
+  it('publishes the bounded mechanic set the combat gyms drive', async () => {
     // One module path, one set: the game and every combat gym read the same
     // descriptor list, so a mechanic can never be a divergent copy.
     const specifier = '../../scenes/core/hexPersonalityMechanics';

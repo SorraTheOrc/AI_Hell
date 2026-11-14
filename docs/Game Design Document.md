@@ -3212,6 +3212,56 @@ implementation.
 Both halves are exercised by the gyms (§ *Gym coverage and parity*): the reward
 flow, the owned-set landing and the rotation run the shipped code there too.
 
+#### Hex variety: personalities, contracts and ring landmarks (post-MVP)
+
+The ring's second post-MVP content pass (AH-0MVWZYQN8007SXIG) attacks the same
+risk — *six identical hexes are six chores* — with **three authored variety
+axes**, so ring *n* is a set of choices rather than the same six fights at a
+higher aggression. Every axis is optional authored data on
+`HexRingDefinition` (`src/data/hexRingDefinitions.ts`, mirrored in the
+`hex-ring-*.csv` seeds), consumed by the shipped pure ring, resolver and
+deployment modules; adding a ring is still a data change, the `6 × n`
+generator and ring geometry are untouched, and every axis is published in the
+known-ahead intel **before** the player commits a life.
+
+- **Personalities (producer answer Q1 = b).** A hex's `personality` changes how
+  its boss/deployment fights, in two ways: **config-tunes** through the shipped
+  profile seams (`src/core/hangarWar/hexBoss.ts` — hit pool, one aggression
+  step, volley cadence; `sentinel`, `berserker`, `tempest`) and a **bounded set
+  of two shared combat mechanics** (`src/scenes/core/hexPersonalityMechanics.ts`
+  — a projectile-slowing `nebula` and a reinforcement-summoning `summoner`,
+  exactly the design's reference examples), implemented **once** in the shared
+  combat core so the game and every gym run identical code. A reinforcement
+  wave per phase goes through the shipped `MiniBossConfig.minions` seam; a
+  nebula slows the demonstrated volley by the shared drag factor. Both are
+  balance-neutral to the arcade campaign, which authors no personalities.
+- **Contracts (producer answer Q2 = a).** A hex may carry an optional
+  `contract` — an objective and a bonus in the shipped currencies, visible
+  before commitment and fulfilled by capturing the hex. The bonus is banked
+  through the **existing** banking rule (`bankSalvage`) and recorded by the
+  hex's persisted `contractFulfilled` marker, so a replay cannot double-count
+  it. There is deliberately **no deadline clock**: contracts never couple to
+  the between-sortie frontier tick, and special rewards stay with the
+  special-missions content above.
+- **Ring landmarks (producer answer Q3 = a).** A ring may author one-off
+  set-pieces on ordinary hexes: a `fortress` (`FORTRESS_CAPTURE_PASSES = 2` —
+  the first capture pass records progress and the hex is held only after the
+  second) and a `cache` (pays `CACHE_SALVAGE_BONUS` instead of granting, so the
+  fleet's owned sets never change). A cache can never be the ring's weapon hex
+  — the validator rejects it — and the landmark's progress persists under the
+  one `ai_hell_hangar_war` payload.
+- **Loud validation (AC3).** `validateRingDefinitions` rejects unknown
+  personality or landmark ids, malformed contracts (no objective, or a bonus
+  that pays nothing), a cache on the weapon hex, and a second set-piece of the
+  same kind on one ring — mirroring `HexRingDefinitionError`.
+- **One payload, field presence.** `contractFulfilled` and `capturePasses` are
+  optional fields parsed by presence, so a save written before the axes landed
+  loads safely with no version bump and no second storage key.
+
+The axes are exercised by the gyms (§ *Gym coverage and parity*): `GymHexWar`
+publishes the personality/contract/landmark intel and `GymMiniBoss`'s HEX mode
+applies the two mechanics through the same shared mapping the game runs.
+
 #### The ring-end hangar assault and the hangar-falls lose state
 
 Securing a ring is a **defensive milestone**, not a checkbox: capturing the

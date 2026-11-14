@@ -215,7 +215,9 @@ const VARIETY_LANDMARK_BY_INDEX: Readonly<Record<number, HexLandmarkId>> =
  * `nebula` and `summoner`), two optional contracts, one `fortress` landmark and
  * one `cache` landmark. The cache is deliberately **not** the weapon hex — a
  * cache pays out instead of granting — and the weapon hex (the last geometry
- * slot) stays strictly the hardest at `12` against the others' `7–10`.
+ * slot) grants the shipped `nova` weapon and stays strictly the hardest at
+ * `12` against the others' `7–10`, so the Rule-2 demonstration tune is
+ * exercised by the fixture.
  */
 export const VARIETY_RING_DEFINITIONS: readonly HexRingDefinition[] =
   Object.freeze(
@@ -232,7 +234,7 @@ export const VARIETY_RING_DEFINITIONS: readonly HexRingDefinition[] =
         boss: `ring-3-boss-${index + 1}`,
         strengths: Object.freeze(['cannon']),
         weaknesses: Object.freeze(['nova']),
-        grants: weaponHex ? 'ring-3-weapon' : `ring-3-grant-${index + 1}`,
+        grants: weaponHex ? 'nova' : `ring-3-grant-${index + 1}`,
         weaponHex,
         baseAggression: weaponHex ? 12 : 7 + (index % 4),
         ...(personality === undefined ? {} : { personality }),
