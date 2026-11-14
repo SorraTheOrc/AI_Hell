@@ -70,7 +70,8 @@ disabled** (`autoFireEnabled()` is `false`), so player bullets cannot shoot the
 refreshed at 4 Hz (never per frame) so the overlay stays off the measured hot
 path. The authoritative counts for reports come from the same shared
 `CombatScene.getPerformanceCounts()` seam the probe samples; the stress gym
-adds its (empty) mineral count so the report shape matches `PlayScene`.
+adds its mineral count (not seeded, but can accumulate enemy drops during play)
+so the report shape matches `PlayScene`.
 
 ```bash
 npm run perf:measure -- --scene GymPerformance --seconds 60 --warmup 3

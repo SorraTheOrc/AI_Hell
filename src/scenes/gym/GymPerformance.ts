@@ -596,7 +596,8 @@ export class GymPerformance extends GymFormationScene<
 
   /**
    * Live entity counts the performance probe samples, matching `PlayScene`'s
-   * report shape. `minerals` is 0 because this gym deliberately seeds none.
+   * report shape. Minerals are not seeded (`minerals: false` in the gym
+   * config), but enemy kill-drops can accumulate live minerals during play.
    */
   override getPerformanceCounts(): PerformanceCounts {
     return { ...super.getPerformanceCounts(), minerals: this.getMinerals().length };
