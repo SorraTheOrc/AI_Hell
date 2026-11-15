@@ -13,7 +13,11 @@
  * - The snapshot is a **deep-frozen** plain object (AC4): neither the
  *   snapshot nor its nested arrays/entries can be mutated after
  *   construction, so the decision layer cannot accidentally write back into
- *   live game state.
+ *   live game state. The freeze is optional (AH-0MW2DC20A007TAVY): the dev
+ *   telemetry recorder builds a snapshot purely to copy it into the telemetry
+ *   state vector and never keeps it, so it passes `freeze: false` and skips a
+ *   second full traversal of a graph that can hold thousands of entries —
+ *   the returned tree is identically shaped and reads the same game state.
  * - The builder depends on a minimal **structural** scene interface
  *   (`BotSnapshotScene`) rather than `PlayScene` itself. `PlayScene`
  *   satisfies it via its existing getters, and tests can pass lightweight
@@ -319,14 +323,31 @@ export interface BotSnapshotScene {
 
 // ── Builder ──────────────────────────────────────────────────────────
 
+/** Selection of behaviours for {@link buildBotSnapshot}. */
+export interface BuildBotSnapshotOptions {
+  /**
+   * Deep-freezes the snapshot (default `true`, AC4). Set `false` when the
+   * caller consumes the tree immediately and never mutates it — the dev
+   * telemetry recorder copies the snapshot into a telemetry state vector and
+   * discards it, so freezing was a second full traversal of a graph that can
+   * hold thousands of entries per recorded frame (AH-0MW2DC20A007TAVY).
+   */
+  readonly freeze?: boolean;
+}
+
 /**
  * Builds a deep-frozen {@link BotSnapshot} from the scene's existing
  * read-only getters (AC2). The source scene is never mutated: every nested
  * array and entry in the result is a fresh plain object.
  *
- * @param scene — a `PlayScene` (or a structural stub in tests).
+ * @param scene - A `PlayScene` (or a structural stub in tests).
+ * @param options - Optional behaviours (e.g. `freeze: false`).
  */
-export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
+export function buildBotSnapshot(
+  scene: BotSnapshotScene,
+  options: BuildBotSnapshotOptions = {},
+): BotSnapshot {
+  const freeze = options.freeze !== false;
   const playerSource = scene.getPlayer();
   const bossSource = scene.getBoss();
 
@@ -351,7 +372,7 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
       }
     : null;
 
-  return deepFreeze({
+  const snapshot = {
     player,
     enemies: scene.getEnemies().map((enemy) => ({
       id: stableEnemyId(enemy),
@@ -397,7 +418,9 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
     lives: scene.getLives(),
     livesCap: scene.getLivesCap(),
     reverseEnabled: playerSource?.isReverseEnabled?.() ?? false,
-  });
+  };
+
+  return freeze ? deepFreeze(snapshot) : (snapshot as BotSnapshot);
 }
 
 /**

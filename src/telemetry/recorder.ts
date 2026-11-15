@@ -94,6 +94,12 @@ export interface TelemetryRecorder {
    */
   readBuffer(): string | null;
   /**
+   * The buffered content's size in UTF-8 bytes, measured without building it
+   * (AH-0MW2DC20A007TAVY, AC1); `null` when this recorder does not retain a
+   * byte-metered buffer.
+   */
+  readByteLength(): number | null;
+  /**
    * Reads a bounded, in-order window of the dev sink's retained buffer from
    * an absolute record offset (AH-0MWDGPZL8005QU13), or `null` when this
    * recorder does not retain a windowed buffer.
@@ -142,6 +148,10 @@ export class NoopTelemetryRecorder implements TelemetryRecorder {
   }
 
   readBuffer(): string | null {
+    return null;
+  }
+
+  readByteLength(): number | null {
     return null;
   }
 
@@ -308,6 +318,18 @@ export class BufferedTelemetryRecorder implements TelemetryRecorder {
    */
   readBuffer(): string | null {
     return this.sink.read?.() ?? null;
+  }
+
+  /**
+   * The dev sink's buffered size in UTF-8 bytes (AH-0MW2DC20A007TAVY, AC1).
+   *
+   * The sink metered every line for its retention cap, so this answers in O(1)
+   * — the run-end whole-file upload checks it against the CDP message cap
+   * *before* joining a buffer it would have to discard anyway, and `null` when
+   * the sink buffers nothing.
+   */
+  readByteLength(): number | null {
+    return this.sink.readByteLength?.() ?? null;
   }
 
   /**

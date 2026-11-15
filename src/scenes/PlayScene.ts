@@ -5703,6 +5703,11 @@ export class PlayScene extends CombatScene<
         // The body is read straight out of the in-memory buffer; telemetry
         // never touches localStorage (AC1).
         readSink: () => this.runTelemetry.readBuffer(),
+        // The buffer's byte count is metered by the sink's retention cap, so an
+        // over-cap run is refused from it and the whole-buffer join+encode is
+        // never paid for a payload that would be discarded
+        // (AH-0MW2DC20A007TAVY, AC1).
+        readSinkBytes: () => this.runTelemetry.readByteLength(),
         onError: reportDevTelemetryFailure,
       });
     } catch (error) {
@@ -6664,8 +6669,12 @@ export class PlayScene extends CombatScene<
   private _recordTelemetryTick(): void {
     if (!this.runTelemetry.enabled) return;
     const player = this.player;
+    // `freeze: false`: the state builder copies every field it carries and the
+    // snapshot is dropped immediately, so deep-freezing it was a second full
+    // traversal of a graph that can hold thousands of entries per recorded
+    // frame (AH-0MW2DC20A007TAVY). The bot-AI snapshot above stays frozen.
     this.runTelemetry.recordTick(
-      buildRunTelemetryState(buildBotSnapshot(this), this._telemetryExtras()),
+      buildRunTelemetryState(buildBotSnapshot(this, { freeze: false }), this._telemetryExtras()),
       serialiseTelemetryInput(player?.getInput() ?? null),
     );
   }

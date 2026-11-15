@@ -55,6 +55,7 @@ import {
   type DevModeEnv,
   type DevTelemetrySetting,
 } from './devMode';
+import { utf8ByteLength } from './utf8';
 
 /**
  * Same-origin endpoint the dev server exposes for game-side uploads
@@ -169,6 +170,15 @@ export interface DevTelemetryUploadOptions {
    * there is no storage default any more (AC1).
    */
   readonly readSink: () => string | null;
+  /**
+   * Reads the buffered content's size in UTF-8 bytes **without building it**
+   * (AH-0MW2DC20A007TAVY, AC1). The dev sink metered every line for its
+   * retention cap, so this is O(1) where the recorder is buffered. When the
+   * size alone already exceeds the cap the upload is refused up front and
+   * `readSink` is never called — a doomed payload is not serialised just to
+   * be discarded. `null`/absent when no byte count is available.
+   */
+  readonly readSinkBytes?: () => number | null;
   /** `fetch` implementation; defaults to `globalThis.fetch`. */
   readonly fetchImpl?: DevUploadFetch;
   /** Upload endpoint; defaults to {@link DEV_TELEMETRY_UPLOAD_ENDPOINT}. */
@@ -211,12 +221,28 @@ export async function uploadDevTelemetry(
   if (!isDevTelemetryUploadEnabled(env, setting)) return false;
 
   try {
-    const body = readSink();
-    if (body === null || body.trim().length === 0) return false;
-
     const maxMessageBytes =
       options.maxMessageBytes ??
       resolveDevUploadMaxMessageBytes(env.VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES);
+
+    // Size first, serialise only what can be sent (AH-0MW2DC20A007TAVY, AC1):
+    // a run whose buffered NDJSON already exceeds the cap can never be
+    // delivered by this whole-file path, so joining the entire buffer into a
+    // body string and measuring it was pure waste (a long demo run measured
+    // 15.8 MiB serialised and then discarded). The byte count is metered by
+    // the sink's retention cap, so this check is O(1).
+    const knownBytes = options.readSinkBytes?.() ?? null;
+    if (knownBytes !== null) {
+      const alreadyOver = checkDevUploadSizeFromBytes(knownBytes, maxMessageBytes);
+      if (alreadyOver) {
+        (onSkip ?? reportDevUploadSkip)(alreadyOver);
+        return false;
+      }
+    }
+
+    const body = readSink();
+    if (body === null || body.trim().length === 0) return false;
+
     const over = checkDevUploadSize(body, maxMessageBytes);
     if (over) {
       (onSkip ?? reportDevUploadSkip)(over);
@@ -294,6 +320,31 @@ export function checkDevUploadSize(
 }
 
 /**
+ * The pre-serialise half of the size guard (AH-0MW2DC20A007TAVY, AC1):
+ * refuses a payload from a known byte count alone, before any body string
+ * exists.
+ *
+ * Escaping only ever grows a payload, so if the raw byte count already
+ * exceeds the budget every escape must too — the verdict is a sound lower
+ * bound. A count at or under the budget is `null` ("may still fit"): the
+ * escaped message can still overflow, so the caller must then measure the
+ * real body with {@link checkDevUploadSize}. Never contradicts the
+ * full-body guard: whatever this refuses, `checkDevUploadSize` refuses too.
+ *
+ * @param bytes - UTF-8 size of the raw payload (e.g. the sink's metered
+ *   `readByteLength()`); must never be negative.
+ * @param maxMessageBytes - The cap, in bytes of CDP message.
+ */
+export function checkDevUploadSizeFromBytes(
+  bytes: number,
+  maxMessageBytes: number,
+): DevUploadSkip | null {
+  return bytes > maxMessageBytes
+    ? { bytes, messageBytes: bytes, maxMessageBytes }
+    : null;
+}
+
+/**
  * Resolves the applied CDP message cap for a caller: an explicit override,
  * else the environment's configured value, else the default — always clamped
  * to {@link MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING}.
@@ -309,11 +360,6 @@ export function resolveDevUploadLimit(
     return Math.min(override, MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING);
   }
   return resolveDevUploadMaxMessageBytes(env.VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES);
-}
-
-/** Size of a string in UTF-8 bytes (the unit the cap is expressed in). */
-function utf8ByteLength(text: string): number {
-  return typeof TextEncoder === 'function' ? new TextEncoder().encode(text).length : text.length;
 }
 
 /** One actionable line for a skipped upload (the default `onSkip`). */

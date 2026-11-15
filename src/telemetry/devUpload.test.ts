@@ -30,6 +30,7 @@ import {
   DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES,
   MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING,
   checkDevUploadSize,
+  checkDevUploadSizeFromBytes,
   devUploadMessageBytes,
   reportDevUploadSkip,
   resolveDevUploadLimit,
@@ -427,6 +428,73 @@ describe('uploadDevTelemetry — run-end upload size cap (AH-0MVNVGP55002G0KH)',
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(onSkip).toHaveBeenCalledWith({ bytes: 30, messageBytes: 30, maxMessageBytes: 20 });
   });
+
+  /**
+   * Refusing a doomed upload **before** it is serialised
+   * (AH-0MW2DC20A007TAVY, AC1).
+   *
+   * A run whose buffered telemetry already exceeds the cap can never be
+   * delivered by the whole-file path, so joining the whole buffer into one
+   * string and UTF-8-encoding it was pure waste (a long demo run measured
+   * 15.8 MiB prepared and then discarded). The sink knows the byte count it
+   * already metered for retention, so the guard runs on that number and the
+   * buffer is never read at all.
+   */
+  it('refuses an over-cap run from its byte count without reading the buffer', async () => {
+    const fetchImpl = fetchSpy();
+    const onSkip = vi.fn();
+    // The reader would be expensive (a whole-buffer join); it must not run.
+    const readSink = vi.fn(() => 'x'.repeat(64));
+
+    await expect(
+      uploadDevTelemetry({
+        ...uploading(fetchImpl),
+        readSink,
+        readSinkBytes: () => 64,
+        maxMessageBytes: 32,
+        onSkip,
+      }),
+    ).resolves.toBe(false);
+
+    expect(readSink).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(onSkip).toHaveBeenCalledWith({ bytes: 64, messageBytes: 64, maxMessageBytes: 32 });
+  });
+
+  it('still measures the body when the byte count fits (escaping can overflow)', async () => {
+    const fetchImpl = fetchSpy();
+    const onSkip = vi.fn();
+    const readSink = vi.fn(() => '"quoted"'.repeat(5));
+
+    await uploadDevTelemetry({
+      ...uploading(fetchImpl),
+      readSink,
+      // 40 raw bytes fit a 64-byte budget, but the escaped CDP message does not.
+      readSinkBytes: () => 40,
+      maxMessageBytes: 64,
+      onSkip,
+    });
+
+    expect(readSink).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(onSkip).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the buffer when no byte count is available', async () => {
+    const fetchImpl = fetchSpy();
+    const readSink = vi.fn(() => SINK_CONTENT);
+
+    await expect(
+      uploadDevTelemetry({
+        ...uploading(fetchImpl),
+        readSink,
+        readSinkBytes: () => null,
+      }),
+    ).resolves.toBe(true);
+
+    expect(readSink).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('shared upload-size seams (AH-0MW6NI6BW003RJWH)', () => {
@@ -437,6 +505,30 @@ describe('shared upload-size seams (AH-0MW6NI6BW003RJWH)', () => {
     expect(over).not.toBeNull();
     expect(over!.bytes).toBeGreaterThan(32);
     expect(over!.maxMessageBytes).toBe(32);
+  });
+
+  it('checkDevUploadSizeFromBytes refuses a body already over the cap, without a body', () => {
+    // The size-guard seam the pre-serialise refusal runs on
+    // (AH-0MW2DC20A007TAVY, AC1): a lower bound from a byte count only.
+    expect(checkDevUploadSizeFromBytes(64, 8 * 1024 * 1024)).toBeNull();
+    expect(checkDevUploadSizeFromBytes(8 * 1024 * 1024, 8 * 1024 * 1024)).toBeNull();
+
+    expect(checkDevUploadSizeFromBytes(8 * 1024 * 1024 + 1, 8 * 1024 * 1024)).toEqual({
+      bytes: 8 * 1024 * 1024 + 1,
+      messageBytes: 8 * 1024 * 1024 + 1,
+      maxMessageBytes: 8 * 1024 * 1024,
+    });
+  });
+
+  it('agrees with checkDevUploadSize whenever the raw body alone is over the cap', () => {
+    const body = 'x'.repeat(100);
+    // Never contradicts the full measurement: whatever the byte-count guard
+    // refuses, the body guard refuses too (it is the same lower bound).
+    for (const cap of [99, 100, 101, 4096]) {
+      const fromBody = checkDevUploadSize(body, cap);
+      const fromBytes = checkDevUploadSizeFromBytes(body.length, cap);
+      if (fromBytes !== null) expect(fromBody).toEqual(fromBytes);
+    }
   });
 
   it('resolveDevUploadLimit honours an override, clamps it, and falls back to the env cap', () => {

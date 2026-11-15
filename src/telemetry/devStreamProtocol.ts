@@ -47,6 +47,8 @@
  * @module src/telemetry/devStreamProtocol
  */
 
+import { utf8ByteLength } from './utf8';
+
 /** Header carrying the explicit part marker (value `1`). */
 export const PART_MARKER_HEADER = 'x-telemetry-part';
 
@@ -523,10 +525,3 @@ function parseRecordCount(raw: string | undefined): number | undefined {
   return Number.isSafeInteger(count) ? count : undefined;
 }
 
-/** Shared `TextEncoder` for the window byte budget (avoids one per line). */
-const textEncoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
-
-/** Size of a string in UTF-8 bytes (the unit the window byte budget uses). */
-function utf8ByteLength(text: string): number {
-  return textEncoder ? textEncoder.encode(text).length : text.length;
-}

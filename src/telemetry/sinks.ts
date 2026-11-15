@@ -38,6 +38,7 @@ import {
   createHttpTransport,
   type HttpTelemetryTransportOptions,
 } from './transport';
+import { utf8ByteLength } from './utf8';
 
 /** One destination for telemetry records. */
 export interface TelemetrySink {
@@ -47,9 +48,17 @@ export interface TelemetrySink {
   write(records: readonly TelemetryRecord[]): void | Promise<void>;
   /** Flushes any buffered output, if the sink buffers. */
   flush?(): void | Promise<void>;
-  /** Reads the sink's buffered content as NDJSON, when the sink buffers in
+  /**
+   * Reads the sink's buffered content as NDJSON, when the sink buffers in
    * memory (the dev JSONL sink does; transport sinks return `null`). */
   read?(): string | null;
+  /**
+   * Reads the buffered content's size in UTF-8 bytes without building the
+   * content (AH-0MW2DC20A007TAVY). The dev sink metered every line for its
+   * retention cap, so this is O(1) there; `null` when the sink does not
+   * retain a byte-metered buffer (e.g. a transport sink or a test spy).
+   */
+  readByteLength?(): number | null;
   /**
    * Reads a bounded window of a retaining sink, from an absolute record
    * offset (AH-0MWDGPZL8005QU13). `null` when the sink does not retain a
@@ -144,6 +153,11 @@ export interface RetainedLineBuffer extends TelemetryLineBuffer {
   dropConfirmed(absoluteCount: number): void;
   /** Reads a bounded, in-order window from an absolute record offset. */
   readWindow(fromRecord: number, limits?: RetainedWindowLimits): RetainedWindow;
+  /**
+   * The retained NDJSON body's size in UTF-8 bytes, as already metered for
+   * the retention cap (AH-0MW2DC20A007TAVY). O(1): never joins or encodes.
+   */
+  readByteLength(): number;
 }
 
 /** Construction options for {@link createMemoryLineWriter}. */
@@ -185,29 +199,36 @@ export function createMemoryLineWriter(
 ): RetainedLineBuffer & { readonly lines: string[] } {
   const cap = options.maxRetainedBytes ?? DEFAULT_MAX_RETAINED_MESSAGE_BYTES;
   const lines: string[] = [];
+  // The UTF-8 size of each retained line, in parallel with `lines`: the
+  // retention cap metered this at append time, so eviction and windowing
+  // never re-encode a line (AH-0MW2DC20A007TAVY).
+  const lineBytes: number[] = [];
   let baseRecord = 0;
   let totalRecords = 0;
   let confirmedCount = 0;
   let retainedBytes = 0;
 
-  /** Bytes one retained line contributes to the NDJSON body (line + newline). */
+  /** Bytes the line at a retained index contributes (line + newline). */
   const retainedLineBytes = (line: string): number => utf8ByteLength(line) + 1;
 
   /** Evicts the oldest retained record, tracking the absolute base. */
   const evictOldest = (): void => {
-    const dropped = lines.shift();
-    if (dropped !== undefined) {
+    lines.shift();
+    const droppedBytes = lineBytes.shift();
+    if (droppedBytes !== undefined) {
       baseRecord += 1;
-      retainedBytes -= retainedLineBytes(dropped);
+      retainedBytes -= droppedBytes;
     }
   };
 
   return {
     lines,
     writeLine(line: string): void {
+      const bytes = retainedLineBytes(line);
       lines.push(line);
+      lineBytes.push(bytes);
       totalRecords += 1;
-      retainedBytes += retainedLineBytes(line);
+      retainedBytes += bytes;
       // Bounded retention: while the retained body is over the cap, evict the
       // oldest record. Confirmed/skipped records are exactly the oldest
       // prefix of the retained window (the boundary only ever advances), so
@@ -219,8 +240,12 @@ export function createMemoryLineWriter(
     read(): string {
       return linesToNdjson(lines);
     },
+    readByteLength(): number {
+      return retainedBytes;
+    },
     reset(): void {
       lines.length = 0;
+      lineBytes.length = 0;
       baseRecord = 0;
       totalRecords = 0;
       confirmedCount = 0;
@@ -259,7 +284,8 @@ export function createMemoryLineWriter(
       let bytes = 0;
       for (let index = start - baseRecord; index < lines.length && out.length < maxRecords; index += 1) {
         const line = lines[index] as string;
-        const added = retainedLineBytes(line);
+        // Cached size: the retention meter already encoded this line.
+        const added = (lineBytes[index] as number) ?? retainedLineBytes(line);
         // Whole records only, and never an empty window while records remain
         // pending: a window is cut before a record that would push it over the
         // byte budget, but at least one record is always returned.
@@ -273,10 +299,6 @@ export function createMemoryLineWriter(
 }
 
 /** Size of a string in UTF-8 bytes (the unit the retention cap is expressed in). */
-function utf8ByteLength(text: string): number {
-  return typeof TextEncoder === 'function' ? new TextEncoder().encode(text).length : text.length;
-}
-
 /**
  * NDJSON text for already-serialised record lines (`''` when there are none).
  *
@@ -359,6 +381,16 @@ export class JsonlTelemetrySink implements TelemetrySink {
    */
   read(): string | null {
     return isLineBuffer(this.writer) ? this.writer.read() : null;
+  }
+
+  /**
+   * The buffered NDJSON content's size in UTF-8 bytes, measured without
+   * building it (AH-0MW2DC20A007TAVY), or `null` when the writer neither
+   * retains nor byte-meters a buffer. The retained writer metered every line
+   * for its retention cap, so this is O(1).
+   */
+  readByteLength(): number | null {
+    return isRetainedLineBuffer(this.writer) ? this.writer.readByteLength() : null;
   }
 
   /** Discards the buffered content, when the writer buffers. */
