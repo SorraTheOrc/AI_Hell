@@ -29,8 +29,14 @@
  *    upgrades ({@link deriveDefenderRating}, from the hangar economy's single
  *    formula) and whose **special skills** ({@link defenderSkillsFor},
  *    AH-0MVWZYJ740037EZ1) come from the hull flown and/or the equipped hangar
- *    modifiers. No defender ⇒ no hold (`defender-required`), so a hex can never
- *    be "held" with nothing flying it.
+ *    modifiers. Since the run-upgrade snapshot landed (parent
+ *    AH-0MWH42DWQ004SAOJ), the bot also keeps the run's **permanent
+ *    upgrades** — the victory-moment weapon levels, power-up levels and owned
+ *    consumable charges carried in `HexCaptureInput.snapshot` — stored as
+ *    {@link HexDefender.upgradeSnapshot} and folded into the rating through
+ *    the one snapshot-aware derivation (`defenderRatingFromSnapshot`). No
+ *    defender ⇒ no hold (`defender-required`), so a hex can never be "held"
+ *    with nothing flying it.
  * 4. **Secure the ring — and defend the hangar.** When every hex of the
  *    current ring is held the ring is secured and the AI's **massed hangar
  *    assault** is resolved from the ring's stored numbers
@@ -61,6 +67,8 @@ import {
   findHangarEntry,
   ownsEntry,
   deriveDefenderRating,
+  defenderRatingFromSnapshot,
+  snapshotDefenderUpgrades,
   resolveActiveLoadout,
 } from './hangarEconomy';
 import {
@@ -96,6 +104,7 @@ import {
 } from './salvageBanking';
 import type {
   DefenceSkill,
+  DefenderUpgradeSnapshot,
   HangarState,
   HangarWarPayload,
   HexDefender,
@@ -343,6 +352,17 @@ export function defenderSkillsFor(
  * hull's hangar upgrades through the economy's single
  * {@link deriveDefenderRating} formula — never from a live battle.
  *
+ * When the run's permanent-upgrade snapshot is supplied (parent
+ * AH-0MWH42DWQ004SAOJ), the bot **keeps the upgrades the ship had at the
+ * victory moment**: the stored rating becomes the hull rating **plus** the
+ * snapshot's weighted contribution (`defenderRatingFromSnapshot` — hull
+ * rating + 3×armour + 2×firepower + 2×systems, the exact one economy
+ * expression), and the normalised snapshot is persisted on the defender so
+ * the map/report can show what the bot is made of. A snapshot that
+ * normalises to nothing (an upgrade-free run, or a corrupt input collapsing
+ * to zero rows) is omitted entirely, so a defender captured with no upgrades
+ * persists byte-for-byte as before.
+ *
  * The bot's **special skills** ({@link defenderSkillsFor}) are attached as
  * stored data: the hull's own skill plus any its equipped modifiers grant, so
  * what the player leaves behind is a composition choice rather than a number
@@ -353,6 +373,9 @@ export function defenderSkillsFor(
  * @param hullId — the hull the player chose to leave behind.
  * @param bankedMinerals — salvage banked at the hex by this capture.
  * @param catalogue — the unlock tree (injectable for tests).
+ * @param snapshot — the run's permanent-upgrade snapshot at the victory
+ *   moment (raw rows; normalised for storage here). Optional: absent means
+ *   "no upgrades" and the defender is exactly today's.
  * @returns the defender record, or `null` when the hull is unknown/unowned.
  */
 export function leaveDefender(
@@ -360,19 +383,40 @@ export function leaveDefender(
   hullId: unknown,
   bankedMinerals = 0,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  snapshot?: DefenderUpgradeSnapshot,
 ): HexDefender | null {
   const id = toId(hullId);
   if (id === null) return null;
   const entry = findHangarEntry(id, catalogue);
   if (entry === null || entry.kind !== 'hull') return null;
   if (!ownsEntry(hangar, entry)) return null;
+  // The snapshot's contribution is read through the economy's single
+  // snapshot-aware derivation, never a second formula (parent
+  // AH-0MWH42DWQ004SAOJ). Normalising first keeps the stored rows clean and
+  // makes an upgrade-free/corrupt snapshot collapse to the bare hull rating.
+  const upgradeSnapshot = snapshot
+    ? snapshotDefenderUpgrades(snapshot)
+    : undefined;
+  const hullRating = deriveDefenderRating(id);
   const defender: HexDefender = {
     hullId: id,
-    defenceRating: deriveDefenderRating(id),
+    defenceRating: upgradeSnapshot
+      ? defenderRatingFromSnapshot(hullRating, upgradeSnapshot)
+      : hullRating,
     bankedMinerals: toCount(bankedMinerals),
   };
   const skills = defenderSkillsFor(hangar, id, catalogue);
   if (skills.length > 0) defender.skills = skills;
+  // An upgrade-free snapshot normalises to empty lists; the field is then
+  // omitted (field-presence migration), exactly like `skills` above.
+  if (
+    upgradeSnapshot &&
+    (upgradeSnapshot.weaponLevels.length > 0 ||
+      upgradeSnapshot.powerUpLevels.length > 0 ||
+      upgradeSnapshot.consumablePools.length > 0)
+  ) {
+    defender.upgradeSnapshot = upgradeSnapshot;
+  }
   return defender;
 }
 
@@ -707,6 +751,16 @@ export interface HexCaptureInput {
   readonly defenderHullId: string | null;
   /** The run's cumulative salvage at the boss-victory moment. */
   readonly salvage: RunSalvage;
+  /**
+   * The run's permanent-upgrade snapshot at the victory moment — the raw
+   * rows `Player.getWeaponLevels()`, `Player.getPowerUpLevels()` and
+   * `PowerUpLevelStore.snapshotConsumablePools()` produce. `leaveDefender`
+   * normalises it for storage and derives the stored rating through the one
+   * snapshot-aware economy derivation (parent AH-0MWH42DWQ004SAOJ). Absent
+   * (or a snapshot that normalises to nothing) means "no upgrades": the
+   * defender is exactly today's, and the field is omitted.
+   */
+  readonly snapshot?: DefenderUpgradeSnapshot;
   /** Authored ring definitions (for the grant and for opening the next ring). */
   readonly definitions?: readonly HexRingDefinition[];
   /** The caller's bank watermark (defaults to the stored balance). */
@@ -916,6 +970,8 @@ export function resolveHexCapture(
     next.hangar,
     input.defenderHullId,
     bankedDelta.minerals,
+    undefined,
+    input.snapshot,
   );
   if (defender === null) {
     return {
