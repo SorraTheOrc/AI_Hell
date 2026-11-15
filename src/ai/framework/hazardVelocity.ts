@@ -78,7 +78,14 @@ export function trackHazardVelocities(
   world?: { readonly width: number; readonly height: number },
 ): ReadonlyMap<string, BotWorldPoint> {
   const tick = memory.ticks;
-  const seen = new Set<string>();
+  // Reuse the tracker's Set/Map across ticks instead of allocating fresh ones
+  // every decision tick (AH-0MWGUN4P2003003P). Created lazily, reset with the
+  // brain.
+  const scratch =
+    memory.hazardTracking ??
+    (memory.hazardTracking = { seen: new Set<string>(), view: new Map() });
+  const seen = scratch.seen;
+  seen.clear();
 
   const record = (key: string, x: number, y: number): void => {
     seen.add(key);
@@ -109,7 +116,13 @@ export function trackHazardVelocities(
         vy *= scale;
       }
     }
-    memory.hazardVelocities[key] = { tick, x, y, vx, vy };
+    // Mutate the existing estimate in place: a steady-state tick allocates no
+    // per-hazard object (AH-0MWGUN4P2003003P). Values are identical.
+    previous.tick = tick;
+    previous.x = x;
+    previous.y = y;
+    previous.vx = vx;
+    previous.vy = vy;
   };
 
   for (const enemy of snapshot.enemies) {
@@ -128,9 +141,22 @@ export function trackHazardVelocities(
     }
   }
 
-  const velocities = new Map<string, BotWorldPoint>();
-  for (const [key, estimate] of Object.entries(memory.hazardVelocities)) {
-    velocities.set(key, { x: estimate.vx, y: estimate.vy });
+  // Refill the reused view from the (in-place-updated) estimates. Entries for
+  // hazards that were pruned are removed; surviving entries are mutated in
+  // place so no per-tick Map or `{x,y}` object is allocated.
+  const view = scratch.view;
+  for (const key of view.keys()) {
+    if (!(key in memory.hazardVelocities)) view.delete(key);
   }
-  return velocities;
+  for (const key of Object.keys(memory.hazardVelocities)) {
+    const estimate = memory.hazardVelocities[key];
+    const point = view.get(key);
+    if (point) {
+      point.x = estimate.vx;
+      point.y = estimate.vy;
+    } else {
+      view.set(key, { x: estimate.vx, y: estimate.vy });
+    }
+  }
+  return view;
 }
