@@ -298,25 +298,69 @@ export function devUploadMessageBytes(body: string): number {
 }
 
 /**
+ * Worst-case growth of escaping an **already-JSON-encoded** line
+ * (AH-0MW2DC20A007TAVY).
+ *
+ * Every character of a line produced by `JSON.stringify` is either printable
+ * ASCII (unchanged by escaping) or one of the two characters escaping doubles
+ * (`"` → `\"`, `\` → `\\`); a control character can never appear raw,
+ * because `JSON.stringify` emitted it as a `\uXXXX` escape (those are plain
+ * ASCII by then). So escaping such a body at most doubles it — a sound upper
+ * bound on the escaped message's size.
+ */
+export const DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION = 2;
+
+/**
  * Measures an upload body against the CDP message cap.
  *
  * Shared by the whole-file run-end upload and the streaming part sender so
  * both apply exactly the same bound: a body whose escaped CDP message would
  * exceed the cap is never posted. Returns `null` when the body fits.
  *
+ * Two cheap passes run before the exact (and expensive) escaping:
+ *
+ * 1. Escaping only ever grows a payload, so a raw body larger than the whole
+ *    budget is already over it — `bytes` is then a sound lower bound.
+ * 2. When the caller vouches that the body is JSON text, the escaped size is
+ *    bounded by {@link DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION}× the raw size. If
+ *    even that bound fits, the body provably fits and `JSON.stringify` never
+ *    runs. This is the streaming part sender's steady state: a ~2 MiB window
+ *    against an 8 MiB cap, once per flush.
+ *
  * @param body - The upload body.
  * @param maxMessageBytes - The cap, in bytes of CDP message.
+ * @param options - `jsonText: true` when the body is JSON-serialised lines
+ *   (NDJSON), which licenses the bound in step 2.
  */
 export function checkDevUploadSize(
   body: string,
   maxMessageBytes: number,
+  options: DevUploadSizeOptions = {},
 ): DevUploadSkip | null {
   const bytes = utf8ByteLength(body);
-  // Cheap first pass: escaping only ever grows the payload, so a raw body
-  // larger than the whole budget is already over it (and never needs the
-  // escaping allocation) — `bytes` is then a lower bound on the message.
-  const messageBytes = bytes > maxMessageBytes ? bytes : devUploadMessageBytes(body);
+  if (bytes > maxMessageBytes) {
+    return { bytes, messageBytes: bytes, maxMessageBytes };
+  }
+  if (
+    options.jsonText === true &&
+    bytes * DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION +
+      DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES <=
+      maxMessageBytes
+  ) {
+    return null;
+  }
+  const messageBytes = devUploadMessageBytes(body);
   return messageBytes > maxMessageBytes ? { bytes, messageBytes, maxMessageBytes } : null;
+}
+
+/** Options for {@link checkDevUploadSize}. */
+export interface DevUploadSizeOptions {
+  /**
+   * `true` when every line of `body` was produced by `JSON.stringify`, so
+   * escaping it can at most double it
+   * ({@link DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION}).
+   */
+  readonly jsonText?: boolean;
 }
 
 /**

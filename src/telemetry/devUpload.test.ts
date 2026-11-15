@@ -28,6 +28,7 @@ import {
   DEV_TELEMETRY_UPLOAD_CONTENT_TYPE,
   DEV_TELEMETRY_UPLOAD_ENDPOINT,
   DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES,
+  DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION,
   MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING,
   checkDevUploadSize,
   checkDevUploadSizeFromBytes,
@@ -528,6 +529,51 @@ describe('shared upload-size seams (AH-0MW6NI6BW003RJWH)', () => {
       const fromBody = checkDevUploadSize(body, cap);
       const fromBytes = checkDevUploadSizeFromBytes(body.length, cap);
       if (fromBytes !== null) expect(fromBody).toEqual(fromBytes);
+    }
+  });
+
+  it('bounds the escaped message of JSON text without escaping it', () => {
+    // Escaping JSON text at most doubles it, so a body whose doubled size plus
+    // the envelope fits the cap provably fits — `JSON.stringify` is skipped
+    // (AH-0MW2DC20A007TAVY: the streaming part sender's steady state).
+    const body = '{"kind":"tick","tick":1}\n';
+    const doubled = body.length * DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION;
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      expect(
+        checkDevUploadSize(body, DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES + doubled, {
+          jsonText: true,
+        }),
+      ).toBeNull();
+      expect(stringify).not.toHaveBeenCalled();
+
+      // One byte below the provable bound and it falls back to measuring.
+      checkDevUploadSize(body, DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES + doubled - 1, {
+        jsonText: true,
+      });
+      expect(stringify).toHaveBeenCalled();
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it('never claims a fit the exact measurement contradicts (JSON-text bound)', () => {
+    // The bound must never license something the exact measurement refuses:
+    // the two paths can only disagree in the safe direction (the bound making
+    // no claim, so the exact measurement decides).
+    const bodies = ['{"a":1}\n', '{"quote":"a\\"b"}\n', 'plain words\n'];
+    for (const body of bodies) {
+      for (const cap of [64, 128, 4096, 8 * 1024 * 1024]) {
+        const bounded = checkDevUploadSize(body, cap, { jsonText: true });
+        const exact = checkDevUploadSize(body, cap);
+        if (bounded === null) expect(exact).toBeNull();
+        expect(bounded).toEqual(exact);
+      }
+      // And the bound really does hold for escaped JSON text.
+      expect(devUploadMessageBytes(body)).toBeLessThanOrEqual(
+        body.length * DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION +
+          DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES,
+      );
     }
   });
 

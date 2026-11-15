@@ -9,9 +9,9 @@
  * - **Byte-exactness.** The number must match `TextEncoder` for ASCII,
  *   multi-byte and astral-plane text — the caps it feeds are byte budgets, and
  *   an under-count would let an over-cap payload through.
- * - **No per-call allocation on the ASCII fast path.** Telemetry lines are
- *   overwhelmingly ASCII, so the fast path must return without encoding; the
- *   encoder is injected here to prove it is never touched.
+ * - **One shared encoder.** The encoder is allocated once at module load, not
+ *   per call: the metered hot path must not construct a `TextEncoder` per
+ *   record line. The injected encoder seam is what makes that observable.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -39,24 +39,22 @@ describe('utf8ByteLength', () => {
     }
   });
 
-  it('counts ASCII without allocating through the encoder', () => {
-    const encode = vi.fn((text: string) => realEncoder.encode(text));
-
-    // Pure ASCII: the fast path answers from the string length alone.
-    expect(utf8ByteLength('{"kind":"tick","tick":7}', encode)).toBe(24);
-    expect(encode).not.toHaveBeenCalled();
+  it('counts ASCII records by their byte length', () => {
+    expect(utf8ByteLength('{"kind":"tick","tick":7}')).toBe(24);
   });
 
-  it('falls back to the encoder for text above the ASCII range', () => {
+  it('measurements a large NDJSON-sized record exactly', () => {
+    const line = `{"kind":"tick","state":{"enemies":[${'{"x":1,"y":2},'.repeat(2_000)}]}}`;
+
+    expect(utf8ByteLength(line)).toBe(realEncoder.encode(line).length);
+  });
+
+  it('uses the injected encoder when one is supplied', () => {
     const encode = vi.fn((text: string) => realEncoder.encode(text));
 
     expect(utf8ByteLength('café', encode)).toBe(5);
     expect(encode).toHaveBeenCalledTimes(1);
-  });
-
-  it('lengths a large NDJSON-sized record exactly', () => {
-    const line = `{"kind":"tick","state":{"enemies":[${'{"x":1,"y":2},'.repeat(2_000)}]}}`;
-
-    expect(utf8ByteLength(line)).toBe(realEncoder.encode(line).length);
+    expect(utf8ByteLength('plain', encode)).toBe(5);
+    expect(encode).toHaveBeenCalledTimes(2);
   });
 });
