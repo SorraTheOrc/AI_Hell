@@ -518,16 +518,17 @@ describe('GymHexWar', () => {
     expect(model!.hexes.map((hex) => hex.id)).toEqual(
       RING_1_HEX_FIXTURES.map((entry) => entry.id),
     );
-    // Every tile carries coordinates + aggression + the ownership marker at a
-    // readable size; the full intel block lives on the detail panel (AC1/AC2).
+    // Every tile carries the aggression badge + ownership marker with the
+    // coordinates on a separate line below; the full intel block lives on the
+    // detail panel (AC1/AC2).
     for (const intel of model!.hexes) {
       const row = scene.getMapRows().find((entry) => entry.key === `hex:${intel.id}`);
       expect(row, `no map tile for ${intel.id}`).toBeDefined();
       expect(row!.label).toBe(intel.tileLabel);
       expect(row!.label).toBe(
-        `(${intel.q},${intel.r}) AGG ${intel.aggression} ${
+        `AGG ${intel.aggression} ${
           intel.held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
-        }`,
+        }\n(${intel.q},${intel.r})`,
       );
     }
     // The gym's render is read-only by construction.

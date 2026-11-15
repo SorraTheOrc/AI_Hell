@@ -43,10 +43,12 @@
  * navigation rule of its own, only the row-key → control-index mapping.
  *
  * Layout is a pointy-top axial grid: ring 2's twelve hexes fit around the
- * hangar without overlapping. Each tile carries its axial coordinates `(q,r)`,
- * its aggression (`AGG n`) and the ownership marker at the readable tile size,
- * and the focused hex's full known-ahead intel renders in the right-hand detail
- * panel — so nothing has to be squinted at to be read (AH-0MW3VG6WJ004HRI9).
+ * hangar without overlapping. Each tile leads with its aggression badge
+ * (`AGG n`) and ownership marker at the readable tile size, with the axial
+ * coordinates `(q,r)` on a separate line below them, drawn smaller (producer
+ * review AH-0MWDBI33V003QQ3U, 2026-11-15) — guidance, not clutter; the focused
+ * hex's full known-ahead intel renders in the right-hand detail panel — so
+ * nothing has to be squinted at to be read (AH-0MW3VG6WJ004HRI9).
  *
  * ## Rolled-in defence report (`AH-0MWDC3L9I008INDP`)
  *
@@ -148,8 +150,24 @@ const SPECIAL_OFFER_TEXT_COLOR = '#ffe066';
 const TILE_FOCUS_STROKE = '#ffffff';
 const TILE_FOCUS_STROKE_WIDTH = 2;
 
-/** On-tile font size: the aggression badge must be readable at 960×540. */
+/**
+ * On-tile font size for the first label line: the aggression badge must be
+ * readable at 960×540.
+ */
 const TILE_FONT_SIZE = '14px';
+
+/**
+ * Smaller on-tile font size for the axial-coordinates line below the
+ * aggression badge (producer review AH-0MWDBI33V003QQ3U, 2026-11-15):
+ * coordinates are glanceable secondary information, never header text.
+ */
+const COORD_FONT_SIZE = '10px';
+
+/**
+ * Vertical offset from a tile's centre to the coordinates/tag line below the
+ * aggression badge (headline half-height + body half-height + a small gap).
+ */
+const TILE_BODY_OFFSET_Y = 15;
 
 /** Right-hand detail panel: the focused hex's full intel. */
 const PANEL_X = GAME_WIDTH - 260;
@@ -465,12 +483,33 @@ function renderLegend(
   });
 }
 
-/** Draws and labels one hex tile; returns the tile's text object. */
+/** The two rendered halves of one hex tile's label. */
+interface TileLabelTexts {
+  /**
+   * The headline — `AGG n` + ownership marker — at the readable tile size,
+   * centred on the tile (also the row's focus/activation control).
+   */
+  readonly head: Phaser.GameObjects.Text;
+  /**
+   * The lower lines — axial coordinates and any tags — below the headline in
+   * the smaller {@link COORD_FONT_SIZE}, or `null` when the label is a single
+   * line.
+   */
+  readonly body: Phaser.GameObjects.Text | null;
+}
+
+/**
+ * Draws and labels one hex tile.
+ *
+ * The label is split so the aggression badge (line 1) renders at the readable
+ * tile size while the axial coordinates (line 2) render smaller on their own
+ * line below — the producer-reviewed layout (AH-0MWDBI33V003QQ3U, 2026-11-15).
+ */
 function renderHexTile(
   scene: Phaser.Scene,
   objects: Phaser.GameObjects.GameObject[],
   intel: HexIntel,
-): Phaser.GameObjects.Text {
+): TileLabelTexts {
   const { x, y } = axialToPixel(intel.q, intel.r);
   const graphics = scene.add.graphics();
   drawHexagon(
@@ -490,8 +529,9 @@ function renderHexTile(
     : intel.held
       ? HELD_TEXT_COLOR
       : UNHELD_TEXT_COLOR;
-  const text = scene.add
-    .text(x, y, intel.tileLabel, {
+  const lines = intel.tileLabel.split('\n');
+  const head = scene.add
+    .text(x, y, lines[0], {
       fontFamily: 'monospace',
       fontSize: TILE_FONT_SIZE,
       color: textColor,
@@ -499,8 +539,22 @@ function renderHexTile(
     })
     .setOrigin(0.5, 0.5)
     .setDepth(TILE_LABEL_DEPTH);
-  objects.push(text);
-  return text;
+  objects.push(head);
+
+  let body: Phaser.GameObjects.Text | null = null;
+  if (lines.length > 1) {
+    body = scene.add
+      .text(x, y + TILE_BODY_OFFSET_Y, lines.slice(1).join('\n'), {
+        fontFamily: 'monospace',
+        fontSize: COORD_FONT_SIZE,
+        color: textColor,
+        align: 'center',
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(TILE_LABEL_DEPTH);
+    objects.push(body);
+  }
+  return { head, body };
 }
 
 /**
@@ -589,7 +643,7 @@ export function renderHexMap(
   const displayedHexByKey = new Map(
     displayedHexes.map((hex) => [hex.key, hex] as const),
   );
-  const tileTextByKey = new Map<string, Phaser.GameObjects.Text>();
+  const tileTextByKey = new Map<string, TileLabelTexts>();
   const focusableRows: HexMapRow[] = [];
 
   const focusedKey = (): string | null => {
@@ -612,20 +666,26 @@ export function renderHexMap(
    */
   const paintTiles = (): void => {
     const focused = focusedKey();
-    for (const [key, text] of tileTextByKey) {
+    for (const [key, texts] of tileTextByKey) {
       const intel = displayedHexByKey.get(key);
       const isFocused = key === focused;
-      text.setStyle({
-        color: intel?.held ? HELD_TEXT_COLOR : UNHELD_TEXT_COLOR,
+      const colour = intel?.held ? HELD_TEXT_COLOR : UNHELD_TEXT_COLOR;
+      texts.head.setStyle({
+        color: colour,
         stroke: isFocused ? TILE_FOCUS_STROKE : '',
         strokeThickness: isFocused ? TILE_FOCUS_STROKE_WIDTH : 0,
       });
+      // The coordinates/tag line carries the same CVD-safe colour as the
+      // badge (ownership never relies on colour alone) but no focus stroke —
+      // the headline carries the focus highlight.
+      if (texts.body !== null) texts.body.setStyle({ color: colour });
     }
   };
 
   for (const intel of displayedHexes) {
-    const text = renderHexTile(scene, objects, intel);
-    tileTextByKey.set(intel.key, text);
+    const texts = renderHexTile(scene, objects, intel);
+    const text = texts.head;
+    tileTextByKey.set(intel.key, texts);
     const deployable = intel.actionable && handlers?.onDeploy !== undefined;
     const row: HexMapRow = {
       key: intel.key,
@@ -643,21 +703,34 @@ export function renderHexMap(
       if (deployable) handlers!.onDeploy!(intel.id);
     };
 
+    // Hovering either label half shows the headline's focus stroke; clicking
+    // anywhere on the tile selects or deploys.
+    const hoverOn = (): void => {
+      text.setStyle({
+        stroke: TILE_FOCUS_STROKE,
+        strokeThickness: TILE_FOCUS_STROKE_WIDTH,
+      });
+    };
+    const hoverOff = (): void => paintTiles();
+
     if (handlers) {
       // Clicking a tile selects it; an unheld tile still deploys (unchanged).
       const selectOrDeploy = (): void => {
         if (deployable) handlers.onDeploy!(intel.id);
         else focusRow(intel.key);
       };
-      text.on('pointerover', () =>
-        text.setStyle({
-          stroke: TILE_FOCUS_STROKE,
-          strokeThickness: TILE_FOCUS_STROKE_WIDTH,
-        }),
-      );
-      text.on('pointerout', () => paintTiles());
+      text.on('pointerover', hoverOn);
+      text.on('pointerout', hoverOff);
       text.on('pointerdown', selectOrDeploy);
       text.setInteractive({ useHandCursor: true });
+      if (texts.body !== null) {
+        // The coordinates line is not focusable itself, but the whole label
+        // responds to the pointer like the headline does.
+        texts.body.on('pointerover', hoverOn);
+        texts.body.on('pointerout', hoverOff);
+        texts.body.on('pointerdown', selectOrDeploy);
+        texts.body.setInteractive({ useHandCursor: true });
+      }
 
       // The whole tile is clickable, not just the label glyphs.
       const { x, y } = axialToPixel(intel.q, intel.r);

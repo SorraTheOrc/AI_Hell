@@ -43,9 +43,11 @@
  * - **Selectable vs actionable.** Every displayed hex is `selectable`
  *   (focusable — a held hex can be inspected), while only an unheld displayed
  *   hex is `actionable` (deployable).
- * - **Tile label.** `tileLabel` carries the axial coordinates `(q,r)`, the
- *   `AGG n` badge **and** an ownership discriminator glyph (filled = held,
- *   hollow = unheld) so ownership is readable without colour; the full `label`
+ * - **Tile label.** `tileLabel` leads with the `AGG n` badge and an ownership
+ *   discriminator glyph (filled = held, hollow = unheld) so ownership is
+ *   readable without colour, and puts the axial coordinates `(q,r)` on a
+ *   separate line below the badge — the renderer draws that line smaller
+ *   (producer review AH-0MWDBI33V003QQ3U, 2026-11-15); the full `label`
  *   block is unchanged.
  * - **Full-ring progress.** `ringLine` counts the whole stored/generated ring
  *   (hidden hexes included), so hiding hexes never loses progress.
@@ -372,9 +374,10 @@ export interface HexIntel {  /** Row key (`hex:<id>`), unique within the map. */
    */
   readonly actionable: boolean;
   /**
-   * The short tile label — axial coordinates `(q,r)`, the `AGG n` badge and an
-   * ownership marker (filled = held, hollow = unheld) so ownership is readable
-   * without colour — rendered on the hex at a readable size.
+   * The short tile label — the `AGG n` badge and an ownership marker (filled =
+   * held, hollow = unheld) so ownership is readable without colour, with the
+   * axial coordinates `(q,r)` on a separate line below the badge (rendered
+   * smaller by the map renderer — producer review AH-0MWDBI33V003QQ3U).
    */
   readonly tileLabel: string;
   /** The full intel block the detail panel renders (every line, newline separated). */
@@ -823,8 +826,13 @@ function specialMissionIntelFor(
 }
 
 /**
- * The on-tile text: coordinates, the aggression badge, the ownership
- * discriminator and — for a special mission — the short `SPECIAL` tag.
+ * The on-tile text: the aggression badge and ownership discriminator lead,
+ * the axial coordinates follow on their own line below them, and — for a
+ * special mission — the short `SPECIAL` tag sits on its own final line.
+ *
+ * The renderer draws the first line at the readable tile size and the
+ * coordinate line smaller underneath (producer review AH-0MWDBI33V003QQ3U),
+ * so a player reads aggression first and glances at the coordinates below.
  *
  * The tag is the whole special-mission signal a tile carries: everything else
  * (the hull, its extra hit points, the framing) lives in the detail panel, so
@@ -839,9 +847,9 @@ function tileLabel(
   landmark: HexLandmarkId | null = null,
   personality: HexPersonalityId | null = null,
 ): string {
-  const base = `(${state.q},${state.r}) AGG ${aggression} ${
+  const base = `AGG ${aggression} ${
     held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
-  }`;
+  }\n(${state.q},${state.r})`;
   const tags: string[] = [];
   if (specialMission !== null) {
     tags.push(

@@ -258,16 +258,20 @@ describe('hex map model — selection split (AC2)', () => {
 });
 
 describe('hex map model — tile label (AC3)', () => {
-  it('tileLabel shows (q,r), AGG n and a non-colour ownership discriminator', () => {
+  it('tileLabel puts AGG n + the ownership marker first, coordinates below', () => {
     const model = buildHexMapModel(ringPayload(1));
 
     for (const intel of model.hexes) {
+      // The aggression badge + ownership marker lead the tile label; the axial
+      // coordinates sit on their own second line, so the renderer can draw
+      // them smaller below the badge (producer review AH-0MWDBI33V003QQ3U).
       expect(intel.tileLabel).toBe(
-        `(${intel.q},${intel.r}) AGG ${intel.aggression} ${UNHELD_TILE_MARKER}`,
+        `AGG ${intel.aggression} ${UNHELD_TILE_MARKER}\n(${intel.q},${intel.r})`,
       );
       expect(intel.tileLabel).toContain(`(${intel.q},${intel.r})`);
       expect(intel.tileLabel).toContain(`AGG ${intel.aggression}`);
       expect(intel.tileLabel).toContain(UNHELD_TILE_MARKER);
+      expect(intel.tileLabel.split('\n')).toHaveLength(2);
     }
 
     // A held tile is distinguishable without colour: the filled marker
@@ -275,7 +279,7 @@ describe('hex map model — tile label (AC3)', () => {
     const held = buildHexMapModel(
       withHex(ringPayload(1), 'hex-r1-2', { held: true }),
     ).hexes.find((hex) => hex.id === 'hex-r1-2')!;
-    expect(held.tileLabel).toBe(`(1,-1) AGG 1 ${HELD_TILE_MARKER}`);
+    expect(held.tileLabel).toBe(`AGG 1 ${HELD_TILE_MARKER}\n(1,-1)`);
     expect(held.tileLabel).not.toContain(UNHELD_TILE_MARKER);
   });
 
@@ -409,10 +413,10 @@ describe('hex map model — tile label (AC3)', () => {
       defenderRating: 2,
       margin: -8,
     });
-    // The tile badge is the coordinates + aggression + ownership marker; the
-    // full block is panel text.
-    expect(held.tileLabel).toBe(`(1,-1) AGG 1 ${HELD_TILE_MARKER}`);
-    expect(other.tileLabel).toBe(`(1,0) AGG 2 ${UNHELD_TILE_MARKER}`);
+    // The tile badge is the aggression + ownership marker with the coordinates
+    // below; the full block is panel text.
+    expect(held.tileLabel).toBe(`AGG 1 ${HELD_TILE_MARKER}\n(1,-1)`);
+    expect(other.tileLabel).toBe(`AGG 2 ${UNHELD_TILE_MARKER}\n(1,0)`);
     expect(held.label).toContain('HELD · AGG 1 · !9');
     expect(held.label).toContain('bot hull-1 (2)');
     expect(held.label).toContain('atk 10 vs 2 · FALLS');
@@ -647,7 +651,7 @@ describe('hex map model — generated ring, partial ring and unknown definitions
     expect(intel.displayed).toBe(true);
     expect(intel.selectable).toBe(true);
     expect(intel.actionable).toBe(false);
-    expect(intel.tileLabel).toBe(`(1,0) AGG 0 ${HELD_TILE_MARKER}`);
+    expect(intel.tileLabel).toBe(`AGG 0 ${HELD_TILE_MARKER}\n(1,0)`);
     expect(intel.label).toContain('HELD · AGG 0');
     expect(intel.label).toContain(definition.boss);
   });
@@ -666,9 +670,9 @@ describe('buildHexMapModel — the redistributed frontier (AH-0MWBBUAUQ0038GFL)'
       expect(stored).toBeDefined();
       expect(hex.aggression).toBe(stored?.aggression);
       expect(hex.tileLabel).toBe(
-        `(${hex.q},${hex.r}) AGG ${stored?.aggression} ${
+        `AGG ${stored?.aggression} ${
           hex.held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
-        }`,
+        }\n(${hex.q},${hex.r})`,
       );
     }
   });
@@ -1148,10 +1152,14 @@ describe('hex map model — special-mission intel (AH-0MWF0CWB7002MG2F)', () => 
     const model = buildHexMapModel(ringPayload(2));
     const intel = model.hexes.find((hex) => hex.id === SPECIAL_HEX_ID)!;
 
-    // Legible short label: coordinates, aggression, ownership, the tag.
+    // Legible short label: aggression, coordinates below it, ownership, the
+    // tag — each on its own line.
     expect(intel.tileLabel).toContain('AGG');
     expect(intel.tileLabel).toContain(SPECIAL_MISSION_TILE_TAG);
-    expect(intel.tileLabel.split('\n')).toHaveLength(2);
+    const lines = intel.tileLabel.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toMatch(/^AGG \d+ [●○]$/);
+    expect(lines[1]).toMatch(/^\(-?\d+,-?\d+\)$/);
     // No wall of text on the tile itself.
     expect(intel.tileLabel).not.toContain('Juggernaut');
 

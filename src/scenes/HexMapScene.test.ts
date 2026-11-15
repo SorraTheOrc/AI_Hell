@@ -46,8 +46,10 @@
  *   CVD-safe pair. The focus highlight must not clobber the ownership colour
  *   (highlight with a stroke, not a colour swap), so the encoding holds whether
  *   or not a tile is focused.
- * - **Coordinates.** Every rendered row's label is
- *   `(q,r) AGG n <marker>`, rendered at the readable tile size.
+ * - **Coordinates.** Every rendered row's label is `AGG n <marker>` with the
+ *   axial coordinates `(q,r)` on a separate line **below** the aggression
+ *   badge, in a smaller font than the badge (they are secondary, glanceable
+ *   information — producer review AH-0MWDBI33V003QQ3U, 2026-11-15).
  * - **Owned-hex selection.** Every displayed hex is selectable (focusable), a
  *   held hex included: focusing it shows its full intel in the detail panel
  *   and activating it performs **no** deployment. An unheld displayed hex
@@ -385,13 +387,14 @@ describe('HexMapScene', () => {
 
     for (const intel of model.hexes) {
       const row = scene.getRows().find((entry) => entry.key === intel.key)!;
-      // The tile carries coordinates + aggression + the ownership marker at a
-      // readable size; ownership is also readable without colour.
+      // The tile carries aggression + ownership marker first, coordinates on
+      // their own second line; ownership is also readable without colour.
       expect(row.label).toBe(
-        `(${intel.q},${intel.r}) AGG ${intel.aggression} ${UNHELD_TILE_MARKER}`,
+        `AGG ${intel.aggression} ${UNHELD_TILE_MARKER}\n(${intel.q},${intel.r})`,
       );
-      // The rendered text object carries exactly that label.
-      expect(row.text.text).toBe(row.label);
+      // The rendered text object is the label's first line (the aggression
+      // badge); the coordinates render as the smaller line below it.
+      expect(row.text.text).toBe(row.label.split('\n')[0]);
       expect(scene.children.list).toContain(row.text);
     }
 
@@ -413,7 +416,7 @@ describe('HexMapScene', () => {
     const easiest = scene
       .getRows()
       .find((row) => row.key === 'hex:hex-r1-2')!;
-    expect(easiest.label).toBe(`(1,-1) AGG 1 ${UNHELD_TILE_MARKER}`);
+    expect(easiest.label).toBe(`AGG 1 ${UNHELD_TILE_MARKER}\n(1,-1)`);
     expect(panel).toContain('shroud-merchant');
     expect(panel).toContain('W:waveLaser');
     expect(panel).toContain('→extra-life');
@@ -440,7 +443,9 @@ describe('HexMapScene', () => {
       ]);
       const rendered = screenText(scene);
       for (const hex of model.hexes) {
-        expect(rendered).not.toContain(`(${hex.q},${hex.r}) AGG`);
+        // No stored hex renders a tile, so its axial coordinates never appear
+        // (the legend's generic `(q,r)` line is not a specific pair).
+        expect(rendered).not.toContain(`(${hex.q},${hex.r})`);
       }
 
       // A hidden hex is unreachable by focus and by the attract bot.
@@ -642,14 +647,16 @@ describe('HexMapScene', () => {
       const heldRow = rows.find((row) => row.key === 'hex:hex-r1-2')!;
       const unheldRow = rows.find((row) => row.key === 'hex:hex-r1-3')!;
 
-      // Non-colour discriminator: filled marker = held, hollow = unheld, and
-      // the rendered text carries exactly the row label.
-      expect(heldRow.label).toMatch(/^\(1,-1\) AGG \d+ ●$/);
+      // Non-colour discriminator: filled marker = held, hollow = unheld. The
+      // aggression badge + marker lead the label; coordinates sit below.
+      expect(heldRow.label).toMatch(/^AGG \d+ ●\n\(1,-1\)$/);
       expect(heldRow.label).toContain(HELD_TILE_MARKER);
       expect(heldRow.label).not.toContain(UNHELD_TILE_MARKER);
       expect(unheldRow.label).toContain(UNHELD_TILE_MARKER);
-      expect(heldRow.text.text).toBe(heldRow.label);
-      expect(unheldRow.text.text).toBe(unheldRow.label);
+      // The rendered text object is the aggression badge line; the coordinates
+      // are the smaller second line (pinned by the layout test below).
+      expect(heldRow.text.text).toBe(heldRow.label.split('\n')[0]);
+      expect(unheldRow.text.text).toBe(unheldRow.label.split('\n')[0]);
 
       // CVD-safe pair (producer Q2 = b): held text is blue-dominant and unheld
       // text orange-dominant — ownership never relies on red/green.
@@ -667,6 +674,43 @@ describe('HexMapScene', () => {
       expect(legend).toContain('(q,r)');
       expect(legend.toLowerCase()).toContain('blue');
       expect(legend.toLowerCase()).toContain('orange');
+    },
+  );
+
+  it(
+    'renders coordinates below the aggression badge at a smaller size',
+    async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+      const row = scene
+        .getRows()
+        .find((entry) => entry.key === 'hex:hex-r1-2')!;
+
+      // The aggression badge + ownership marker lead the tile label (the
+      // readable tile size)…
+      expect(row.label).toBe(`AGG 1 ${UNHELD_TILE_MARKER}\n(1,-1)`);
+      expect(row.text.text).toBe(`AGG 1 ${UNHELD_TILE_MARKER}`);
+      expect(row.text.style.fontSize).toBe('14px');
+
+      // …and the axial coordinates render below it on their own line in a
+      // smaller font (producer review AH-0MWDBI33V003QQ3U, 2026-11-15).
+      const coords = scene.children.list.find(
+        (child): child is Phaser.GameObjects.Text =>
+          child instanceof Phaser.GameObjects.Text &&
+          child.text === '(1,-1)' &&
+          child !== row.text,
+      );
+      expect(
+        coords,
+        'no coordinates text below the aggression badge',
+      ).toBeDefined();
+      expect(coords!.style.fontSize).toBe('10px');
+      expect(coords!.y).toBeGreaterThan(row.text.y);
+
+      // The coordinates keep the same CVD-safe ownership colour as the badge —
+      // unheld is the orange pair (r > b), never red/green.
+      expect(colourOf(coords!)).toEqual(colourOf(row.text));
+      const body = colourOf(coords!);
+      expect(body.r).toBeGreaterThan(body.b);
     },
   );
 
