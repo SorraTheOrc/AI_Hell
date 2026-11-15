@@ -1473,7 +1473,7 @@ Source lines are the **TypeScript** declaration lines, resolved by function name
 | 7 | HUD / UI refresh, player auto-defence | `src/ui/HUD.ts:405` (`refresh`), `src/scenes/core/CombatScene.ts:243` (`_updateAutoDefence`) | 0.02–0.03 % **with no loadout rows**; 9.06 % of the window (~40 % of JS) once rows are present — see [Per-frame HUD rows](#per-frame-hud-rows-ah-0mvxv0ffj0066ec8) | Redraw the rows only when the rendered state changes (done); auto-defence measured too small to matter | AH-0MVXV0FFJ0066EC8 |
 | 8 | Minerals update/collect | `src/scenes/core/mineralLayer.ts:130` (`collectMinerals`), `src/scenes/gym/core/GymFormationScene.ts:1464` (`_updateMinerals`) | 0.01 % in the gym (minerals disabled); 0.06 % in the busier run | None needed | — |
 | 9 | **Demo-bot steering** (attract mode only) | `src/ai/framework/competent/steering.ts:327` (`evaluateDirection`), `src/ai/framework/hazardVelocity.ts:74` (`trackHazardVelocities`) | PlayScene demo run: was 0.47 % [5.2 %] — the largest single game-code function there | **Done** — direction-independent geometry computed once per tick instead of once per fan bearing (17×); `evaluateDirection` JS share halved, combined window share 0.11–0.16 % at matched load ≤ 0.33 % (see [Demo-bot steering](#demo-bot-steering-ah-0mw2dc28m00161w6)) | AH-0MW2DC28M00161W6 (low) |
-| 10 | **Dev telemetry serialisation** (dev builds only) | `src/telemetry/sinks.ts` (`linesToNdjson`, `write`), `src/telemetry/devStreamProtocol.ts` (`splitNdjsonLines`), `src/telemetry/redact.ts:93` (`sanitiseObject`), `src/ai/botSnapshot.ts:459` (`deepFreeze`) | PlayScene demo run: ≈ 0.7 % [≈ 7 % of JS] | **Done** — the dev streamer builds each part from a bounded window and defers it off the rAF task: the whole-buffer `splitNdjsonLines`+`linesToNdjson` serialisation 2.55 % → 0.46 % of JS (see [Dev telemetry off-frame and bounded windows](#dev-telemetry-off-frame-and-bounded-windows-ah-0mwdfajac005r3ni)) | AH-0MWDFAJAC005R3NI (high) |
+| 10 | **Dev telemetry serialisation** (dev builds only) | `src/telemetry/sinks.ts` (`linesToNdjson`, `write`), `src/telemetry/devStreamProtocol.ts` (`splitNdjsonLines`), `src/telemetry/redact.ts:93` (`sanitiseObject`), `src/ai/botSnapshot.ts:459` (`deepFreeze`), `src/telemetry/devUpload.ts` (`devUploadMessageBytes`) | PlayScene demo run: ≈ 0.7 % [≈ 7 % of JS] | **Done** — bounded per-part windows, deferred off the rAF task, memoised redaction, no telemetry-only snapshot freeze, and a size guard that refuses an over-cap run before serialising it: the recorder bucket is 10.0 % → 6.5 % of JS / 0.52 % → 0.32 % of the window (see [Dev telemetry off-frame and bounded windows](#dev-telemetry-off-frame-and-bounded-windows-ah-0mwdfajac005r3ni) and [Dev telemetry recorder cost](#dev-telemetry-recorder-cost-ah-0mw2dc20a007tavy)) | AH-0MWDFAJAC005R3NI (high), AH-0MW2DC20A007TAVY (low) |
 | 11 | **One `Graphics` object per enemy body**, re-walked, re-tessellated and re-batched every frame for a silhouette that never changes | `src/entities/BaseEnemy.ts` (`addSharedGraphics`), each archetype's `_drawBody()`, `src/entities/Phaser.ts` (ring + core) | **≈ 9.5 % of the 4× mobile window** (≈ 47 % of JS): `GraphicsWebGLRenderer` 3.6–3.9 %, `batch` 2.7–2.9 %, Graphics render-node `run` ×3 2.8–3.2 % | **Done** — every body silhouette is baked once into a cached texture and drawn as one sprite; Graphics-pipeline self time **9.5 % → 2.8 %** (see [Baked enemy body textures](#baked-enemy-body-textures-ah-0mw2iryah0055wcn)) | AH-0MW2IRYAH0055WCN (high) |
 
 What this ranking changed (parent AC6 — priorities from measurement, not
@@ -1662,6 +1662,75 @@ across 581 handlers, mean 1.2 ms, well below the bar.
 whole-buffer serialise cost is gone from the rAF task, the measured
 streaming-serialisation share is 82 % lower, and the late-game demo frame time
 improves with no regression. Redaction is unchanged.
+
+### Dev telemetry recorder cost (AH-0MW2DC20A007TAVY)
+
+**`Recorded:`** commit `ecd6607e` · 2026-11-15 · headless Chromium 140
+(SwiftShader software WebGL) · CPU throttle 1× · AH-0MW2DC20A007TAVY.
+
+The dev-only telemetry recorder runs on the frame path, so every traversal it
+adds to a tick shows up in a demo profile. Three costs were removed and one
+wasteful refusal path was moved ahead of the serialisation it was discarding:
+
+- **The size guard runs before the serialisation.** The whole-file run-end
+  upload refused an over-cap run only *after* joining and UTF-8 encoding it (a
+  long run measured 15.8 MiB serialised and thrown away). The dev sink already
+  byte-meters every line for its retention cap, so `readByteLength()` answers in
+  O(1) and
+  `checkDevUploadSizeFromBytes(bytes, cap)` (`src/telemetry/devUpload.ts`)
+  refuses the upload from that number — the buffer is never read.
+- **Escaping is bounded, not performed, for JSON text.** The streaming part
+  sender escaped every ~2 MiB window with `JSON.stringify` purely to measure
+  it. Escaping `JSON.stringify` output can at most double it (a control
+  character never appears raw in it), so
+  `checkDevUploadSize(body, cap, { jsonText: true })` proves a ~2 MiB window
+  fits an 8 MiB cap without escaping it —
+  `DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION`, and it is a *sound* bound, not an
+  estimate: anything the bound does not clear is still measured exactly.
+- **Redaction is memoised, not weakened.** Every payload still passes through
+  `sanitiseTelemetryValue` at the recorder boundary (the invariant and its
+  tests are unchanged); the per-key verdict and the email scan are cached behind
+  bounded caches, because a recorded tick repeats the same schema keys
+  thousands of times.
+- **The telemetry snapshot is no longer frozen.** `buildRunTelemetryState`
+  copies every field it carries and the snapshot is discarded immediately, so
+  `buildBotSnapshot(scene, { freeze: false })` skips a second full traversal of
+  a graph the demo run drives to ~1300 enemies. The bot-AI snapshot stays frozen.
+- **Record lines are metered once**, by one shared `utf8ByteLength`
+  (`src/telemetry/utf8.ts`) holding a single `TextEncoder`; it used to be
+  constructed per record line, and re-encoded on eviction and windowed reads.
+
+A hand-written ASCII fast path for `utf8ByteLength` was tried and **rejected on
+measurement**: scanning every code unit in JS cost 58 ms of a 60 s window
+against 7.6 ms for the native encoder.
+
+The paired measurement is the **PlayScene late-game demo** run from
+[PlayScene late game](#playscene-late-game-supplementary) —
+`--setup '{"demo":true,"seed":1,"startLevel":10}'`, 60 s, dev recorder and
+streaming upload enabled (the stock dev build), profiled before
+(`ddb59ee4` — this item's base) and after (`ecd6607e`), **three interleaved
+pairs** to average out host load (before 9.1–12.1, after 10.4–12.3; the run's
+enemy peak was 1224–1536 in both arms, so the load delivered was comparable).
+
+| Metric (median of 3 runs) | Before | After | Change |
+|---|---|---|---|
+| `sanitise` + `sanitiseObject` (redaction) | 3.60 % / 115.4 ms | **2.47 % / 74.4 ms** | **− 36 %** |
+| `deepFreeze` (telemetry snapshot + bot snapshot) | 1.82 % / 60.1 ms | **1.08 % / 32.9 ms** | **− 45 %** |
+| `devUploadMessageBytes` (per-part escaping) | 1.31 % / 43.3 ms | **below the profile cut** | gone |
+| `write` (`sinks.ts`, per-record serialise + retention meter) | 0.83 % / 26.9 ms | 0.69 % / 20.5 ms | − 24 % |
+| **All `src/telemetry/*` + `botSnapshot` self time** | **10.04 % / 0.520 % of window / 316.6 ms** | **6.54 % / 0.320 % of window / 198.4 ms** | **− 35 % of JS / − 38 % of window** |
+| main-thread JS (median share of window) | 5.39 % | 5.11 % | — |
+| Effective FPS (median) | 52.3 | 52.3 | unchanged |
+
+The recorder bucket is **38 % smaller** and no frame-time metric regressed
+(p50 16.7 ms, p95 16.8–33.3 ms in both arms — the p95 spread is host load, not
+this change). The remaining share is the per-tick record build, redaction
+traversal and `JSON.stringify`, all of which the schema and the redaction
+invariant keep on purpose.
+
+**Verdict.** A profile of a demo run now measures the game, not the recorder's
+discarded work: the telemetry bucket is 0.52 % → 0.32 % of the window, and an
+over-cap run is refused before it is serialised.
 
 ### Cached bullet textures (AH-0MW2DAY2L004QSKF)
 
