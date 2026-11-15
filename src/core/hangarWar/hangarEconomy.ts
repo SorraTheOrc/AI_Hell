@@ -64,7 +64,7 @@ import {
   type HangarPrice,
   type HullUpgrades,
 } from '../../data/hangarCatalogue';
-import type { HangarLoadout, HangarState } from './types';
+import type { HangarLoadout, HangarState, DefenderUpgradeSnapshot } from './types';
 // Type-only imports: erased at compile time, so the module stays pure — no
 // runtime dependency on the weapon/power-up catalogues or their scene-bound
 // consumers (the upgrade tables below only need the id unions).
@@ -149,33 +149,16 @@ export interface UpgradeStatTotals {
 }
 
 /**
- * The run's permanent-upgrade snapshot at the boss-victory moment — the raw
- * rows `Player.getWeaponLevels()`, `Player.getPowerUpLevels()` and
- * `PowerUpLevelStore.snapshotConsumablePools()` produce.
+ * The run's permanent-upgrade snapshot the capture chain stores.
  *
- * The rows are the **raw** run state (levels/charges), never pre-computed
- * buckets: bucket arithmetic stays in {@link defenderStatBuckets}, so a
- * stored number can never disagree with the formula. The consumable-pool
- * rows are structurally compatible with `ConsumablePoolSnapshot` (the extra
- * recharge fields are ignored here).
+ * The shape is a persisted-payload **contract** (a `HexDefender` field), so
+ * it lives in `./types`; this module re-exports it for its consumers and
+ * enforces its meaning: rows are the raw run state, {@link snapshotDefenderUpgrades}
+ * is the one cleaner stored rows pass through, and bucket arithmetic stays in
+ * {@link defenderStatBuckets} — a stored number can never disagree with the
+ * formula.
  */
-export interface DefenderUpgradeSnapshot {
-  /** Permanent weapon levels (any shipped weapon → firepower). */
-  readonly weaponLevels: ReadonlyArray<{
-    readonly id: WeaponId;
-    readonly level: number;
-  }>;
-  /** Permanent power-up levels (defensive kinds → armour, others → systems). */
-  readonly powerUpLevels: ReadonlyArray<{
-    readonly id: PowerUpId;
-    readonly level: number;
-  }>;
-  /** Owned consumable charges (defensive charges → armour, others → systems). */
-  readonly consumablePools: ReadonlyArray<{
-    readonly id: PowerUpId;
-    readonly charges: number;
-  }>;
-}
+export type { DefenderUpgradeSnapshot };
 
 /**
  * The upgrade → stat-bucket mapping table — the **only** place a kind's

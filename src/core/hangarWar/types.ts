@@ -16,6 +16,9 @@
  * @module src/core/hangarWar/types
  */
 
+import type { PowerUpId } from '../../powerups/types';
+import type { WeaponId } from '../../utils/weapons';
+
 /**
  * Minimal key/value storage the hangar-war payload reads and writes through.
  *
@@ -82,6 +85,38 @@ export interface DefenceSkill {
   bonus: number;
 }
 
+/**
+ * The run's permanent-upgrade snapshot at the boss-victory moment — the raw
+ * rows `Player.getWeaponLevels()`, `Player.getPowerUpLevels()` and
+ * `PowerUpLevelStore.snapshotConsumablePools()` produce
+ * (parent AH-0MWH42DWQ004SAOJ).
+ *
+ * The rows are the **raw** run state (levels/charges), never pre-computed
+ * buckets: bucket arithmetic stays in the one reducer (defenderStatBuckets
+ * in `./hangarEconomy`), and the normaliser `snapshotDefenderUpgrades` in the
+ * same module cleans the rows for storage, so a stored number can never
+ * disagree with the formula. The consumable-pool rows are structurally
+ * compatible with `ConsumablePoolSnapshot` (the extra recharge fields are
+ * ignored here).
+ */
+export interface DefenderUpgradeSnapshot {
+  /** Permanent weapon levels (any shipped weapon → firepower). */
+  readonly weaponLevels: ReadonlyArray<{
+    readonly id: WeaponId;
+    readonly level: number;
+  }>;
+  /** Permanent power-up levels (defensive kinds → armour, others → systems). */
+  readonly powerUpLevels: ReadonlyArray<{
+    readonly id: PowerUpId;
+    readonly level: number;
+  }>;
+  /** Owned consumable charges (defensive charges → armour, others → systems). */
+  readonly consumablePools: ReadonlyArray<{
+    readonly id: PowerUpId;
+    readonly charges: number;
+  }>;
+}
+
 /** The bot left defending a held hex (derived rating, never a live battle). */
 export interface HexDefender {
   /** Hull the defending bot flies. */
@@ -101,6 +136,19 @@ export interface HexDefender {
    * `HangarWarPayload.frontierTick`.
    */
   skills?: readonly DefenceSkill[];
+  /**
+   * The run's permanent-upgrade snapshot the bot was left with when its hex
+   * was captured — raw weapon levels, permanent power-up levels and owned
+   * consumable charges (parent AH-0MWH42DWQ004SAOJ).
+   *
+   * **Additive and optional on purpose:** a save written before the
+   * capture-cycle snapshot landed has no such field, and absence reads as
+   * "no upgrades" (the resolver adds nothing), so the store migrates it by
+   * field presence without a schema version bump — the same pattern as
+   * `skills`. The rows are the raw run state; the economy normaliser
+   * `snapshotDefenderUpgrades` cleans them for storage.
+   */
+  upgradeSnapshot?: DefenderUpgradeSnapshot;
 }
 
 /** One hex of the ring, with its known-ahead intel and current state. */

@@ -1133,4 +1133,99 @@ describe('hangar-war store — defender upgrade snapshot is additive (AH-0MWHF6X
       expect('upgradeSnapshot' in payload!.ring.hexes[0].defender!).toBe(false);
     }
   });
+
+  /** The hex-1 defender of a loaded payload as a plain record. */
+  function loadedDefender(payload: HangarWarPayload): Record<string, unknown> {
+    return payload.ring.hexes[0].defender! as unknown as Record<string, unknown>;
+  }
+
+  it('drops unknown ids, normalises unusable counts and collapses duplicates (AC defensive parse)', () => {
+    // One corrupt-at-the-edges snapshot: unknown ids, negative and fractional
+    // counts, duplicate rows, unusable entries and rows missing a count or id
+    // all in one list per bucket. The stored snapshot must come back clean —
+    // unknowns dropped, negative/fractional counts normalised (negative → 0 →
+    // removed, `1.9` → `1`), duplicates collapsed (last value wins, first-seen
+    // order) — exactly the `snapshotDefenderUpgrades` contract.
+    const raw = serialisePayload(
+      withUpgradeSnapshot({
+        weaponLevels: [
+          { id: 'cannon', level: 2 },
+          { id: 'not_a_weapon', level: 3 },
+          { id: 'spread', level: -4 },
+          { id: 'railgun', level: 1.9 },
+          { id: 'cannon', level: 5 },
+          'junk',
+          null,
+          { id: 'cannon' },
+          { level: 3 },
+        ],
+        powerUpLevels: [
+          { id: 'shield', level: 2 },
+          { id: 'bogus_kind', level: 4 },
+          { id: 'phase_shift', level: -1 },
+        ],
+        consumablePools: [
+          { id: 'mystery_ufo', charges: 0 },
+          { id: 'force_field', charges: 2 },
+        ],
+      }) as unknown as HangarWarPayload,
+    );
+
+    const loaded = loadRaw(raw) as HangarWarPayload;
+
+    expect(loadedDefender(loaded).upgradeSnapshot).toEqual({
+      weaponLevels: [
+        { id: 'cannon', level: 5 },
+        { id: 'railgun', level: 1 },
+      ],
+      powerUpLevels: [{ id: 'shield', level: 2 }],
+      consumablePools: [{ id: 'force_field', charges: 2 }],
+    });
+    // The defender and the rest of the payload survive untouched.
+    expect(loadedDefender(loaded).defenceRating).toBe(7);
+    expect(loaded.hangar.bankedMinerals).toBe(240);
+  });
+
+  it('collapses non-finite stored counts that JSON cannot carry (AC non-finite)', () => {
+    // NaN/±Infinity cannot survive JSON, but a caller can hand the parser an
+    // in-memory payload carrying them (exactly as the seed/money tests do);
+    // each non-finite count normalises to 0 and its row is removed, so the
+    // whole snapshot disappears and the field is omitted.
+    const parsed = parseHangarWarPayload(
+      withUpgradeSnapshot({
+        weaponLevels: [{ id: 'cannon', level: Number.POSITIVE_INFINITY }],
+        powerUpLevels: [{ id: 'shield', level: Number.NaN }],
+        consumablePools: [
+          { id: 'force_field', charges: Number.NEGATIVE_INFINITY },
+        ],
+      }),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect('upgradeSnapshot' in parsed!.ring.hexes[0].defender!).toBe(false);
+    expect(parsed?.hangar.bankedMinerals).toBe(240);
+  });
+
+  it('round-trips a pre-change defender (no upgrades) through a save/load cycle unchanged', () => {
+    // The pre-change fixture carries a defender with no new field at all
+    // (not even `skills`). Through save → load → save the payload must come
+    // back exactly as written — no `upgradeSnapshot` appears out of nowhere,
+    // the write is byte-stable across cycles and the fixture still reads
+    // back identically.
+    const storage = createInMemoryHangarWarStorage();
+
+    saveHangarWarPayload(VALID_HANGAR_WAR_PAYLOAD, storage);
+    const firstBytes = storage.getItem(HANGAR_WAR_STORAGE_KEY) as string;
+
+    const loaded = loadHangarWarPayload(storage);
+    expect(loadedDefender(loaded as HangarWarPayload)).not.toHaveProperty('upgradeSnapshot');
+    expect(loadedDefender(loaded as HangarWarPayload)).not.toHaveProperty('skills');
+
+    saveHangarWarPayload(loaded as HangarWarPayload, storage);
+    const secondBytes = storage.getItem(HANGAR_WAR_STORAGE_KEY) as string;
+
+    expect(JSON.parse(firstBytes)).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+    expect(secondBytes).toBe(firstBytes);
+    expect(loadHangarWarPayload(storage)).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+  });
 });
