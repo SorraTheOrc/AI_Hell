@@ -20,6 +20,9 @@
  * silently grow or shrink: the epic fixes its contents.
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -28,6 +31,7 @@ import {
   DEFAULT_RING_INDEX,
   createDefaultPayload,
 } from './hangarWarStore';
+import * as hangarEconomyModule from './hangarEconomy';
 import type { HangarState } from './types';
 import {
   CORE_MINERAL_EQUIVALENT,
@@ -56,6 +60,9 @@ import {
   type StartingWeaponDefinition,
 } from '../../data/hangarCatalogue';
 import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
+import { POWER_UP_CATALOGUE, type PowerUpId } from '../../powerups/types';
+import { WEAPON_CATALOGUE, type WeaponId } from '../../utils/weapons';
+import { collectProductionSourceFiles } from '../../test/duplicateBodyGuard';
 
 /** The minimal fleet every hangar starts from, with optional overrides. */
 function hangarWith(overrides: Partial<HangarState> = {}): HangarState {
@@ -662,5 +669,308 @@ describe('resolvePlayerStrength — the player-strength vocabulary', () => {
       activeLoadout: { startingWeapons: [DEFAULT_STARTING_WEAPON_ID], modifiers: [] },
     });
     expect(resolvePlayerStrength(armed)).toBe(resolvePlayerStrength(plain));
+  });
+});
+
+// ── Defender upgrade snapshot — red-first guard tests (AH-0MWHF6X9N0082BRO) ──
+//
+// The parent's test-first slice: these specs pin the upgrade → stat-bucket
+// conversion contract BEFORE the implementation lands. The parent map:
+//
+// - every permanent weapon level → **firepower** (any weapon);
+// - permanent level of a **defensive** power-up kind (Shield, Force Field,
+//   Thorn Field, Bomb, Smart Bomb, Phase Shift) → **armour**;
+// - permanent level of **every other** power-up kind (incl. `extra_life`) →
+//   **systems**;
+// - each held **defensive** consumable charge (Shield, Force Field, Thorn
+//   Field) → **armour**; each held **other** consumable charge (Mystery UFO) →
+//   **systems**;
+// - then `defenceRating = hullRating + 3×armour + 2×firepower + 2×systems`
+//   reusing `DEFENDER_UPGRADE_WEIGHTS`, so the formula keeps one weight source.
+//
+// The contract names below are the ones C2 (AH-0MWHF6YCP009A3NB) must export:
+//
+// - `UPGRADE_STAT_BUCKETS` — one frozen `Readonly<Record<string, 'armour' |
+//   'firepower' | 'systems'>>` classifying EVERY shipped `WeaponId` and
+//   `PowerUpId` (the table is the only place a kind's bucket is authored);
+// - `defenderStatBuckets(snapshot, table = UPGRADE_STAT_BUCKETS)` — the pure
+//   reducer turning a run snapshot into `{ armour, firepower, systems }` with 1
+//   point per level/charge; unknown ids ignored, unusable values collapse to 0
+//   without throwing. The injectable `table` is the negative-coverage seam;
+// - `defenderRatingFromSnapshot(hullRating, snapshot)` — the snapshot-aware
+//   derivation delegating to the existing formula with summed buckets.
+//
+// The exports are read through the module namespace so the rest of this file
+// stays compilable while they are absent: the red is the assertion failure,
+// not a module-loader collapse. Each assertion goes green once C2 lands and
+// stays green as the guard against a silent regression.
+
+/** A hull stat bucket — the three sides of the defender rating. */
+type UpgradeStatBucket = 'armour' | 'firepower' | 'systems';
+
+/** The reducer's output: one point-weighted total per stat bucket. */
+interface UpgradeStatTotals {
+  armour: number;
+  firepower: number;
+  systems: number;
+}
+
+/**
+ * The run's permanent-upgrade snapshot at the boss-victory moment — the
+ * additive optional payload C3/C4 persist on the `HexDefender` and thread
+ * through `HexCaptureInput`. The rows match `Player.getWeaponLevels()`,
+ * `Player.getPowerUpLevels()` and `PowerUpLevelStore.snapshotConsumablePools()`.
+ */
+interface DefenderUpgradeSnapshot {
+  /** Permanent weapon levels (any shipped weapon → firepower). */
+  weaponLevels: ReadonlyArray<{ id: WeaponId; level: number }>;
+  /** Permanent power-up levels (defensive kinds → armour, others → systems). */
+  powerUpLevels: ReadonlyArray<{ id: PowerUpId; level: number }>;
+  /** Owned consumable charges (defensive charges → armour, others → systems). */
+  consumablePools: ReadonlyArray<{ id: PowerUpId; charges: number }>;
+}
+
+/** C2's pending exports, read structure-first so these specs run red, not crash. */
+const pendingUpgradeContract = hangarEconomyModule as unknown as {
+  UPGRADE_STAT_BUCKETS?: Readonly<Record<string, UpgradeStatBucket>>;
+  defenderStatBuckets?: (
+    snapshot: DefenderUpgradeSnapshot,
+    table?: Readonly<Record<string, UpgradeStatBucket>>,
+  ) => UpgradeStatTotals;
+  defenderRatingFromSnapshot?: (
+    hullRating: number,
+    snapshot: DefenderUpgradeSnapshot,
+  ) => number;
+};
+
+/** The six defensive power-up kinds the parent's mapping routes to armour. */
+const DEFENSIVE_POWER_UP_KINDS: ReadonlySet<string> = new Set([
+  'shield',
+  'force_field',
+  'thorns',
+  'bomb',
+  'smart_bomb',
+  'phase_shift',
+]);
+
+/** A snapshot built from compact level/charge rows. */
+function snapshotOf(
+  weaponLevels: ReadonlyArray<[WeaponId, number]>,
+  powerUpLevels: ReadonlyArray<[PowerUpId, number]> = [],
+  consumablePools: ReadonlyArray<[PowerUpId, number]> = [],
+): DefenderUpgradeSnapshot {
+  return {
+    weaponLevels: weaponLevels.map(([id, level]) => ({ id, level })),
+    powerUpLevels: powerUpLevels.map(([id, level]) => ({ id, level })),
+    consumablePools: consumablePools.map(([id, charges]) => ({ id, charges })),
+  };
+}
+
+describe('defender upgrade snapshot — stat buckets and derivation (AH-0MWHF6X9N0082BRO, red-first guard)', () => {
+  it('classifies every shipped weapon id into the firepower bucket (AC1 catalogue coverage)', () => {
+    const table = pendingUpgradeContract.UPGRADE_STAT_BUCKETS;
+    // Red until C2 exports the table: `undefined` fails the defined check.
+    expect(table).toBeDefined();
+    const ids = Object.keys(WEAPON_CATALOGUE);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      // A weapon level is a firepower contribution, whatever the weapon — the
+      // parent's "every permanent weapon level → firepower" rule.
+      expect(table![id], `weapon ${id}`).toBe('firepower');
+    }
+  });
+
+  it('classifies every power-up kind — defensive kinds to armour, the rest to systems (AC1)', () => {
+    const table = pendingUpgradeContract.UPGRADE_STAT_BUCKETS;
+    expect(table).toBeDefined();
+    const ids = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      const bucket = table![id];
+      expect(bucket, `power-up ${id}`).toBeDefined();
+      expect(['armour', 'firepower', 'systems'] as const).toContain(
+        bucket as UpgradeStatBucket,
+      );
+      if (DEFENSIVE_POWER_UP_KINDS.has(id)) {
+        expect(bucket, `defensive kind ${id}`).toBe('armour');
+      } else {
+        expect(bucket, `other kind ${id}`).toBe('systems');
+      }
+    }
+    // extra_life is the one id the parent's six-kind defensive list omits; the
+    // total "every other power-up kind → systems" rule classifies it as
+    // systems (recorded in the parent plan changelog, 2026-11-15).
+    expect(table!['extra_life']).toBe('systems');
+  });
+
+  it('proves the coverage assertion fails for an unclassified id (injected partial table, AC1)', () => {
+    const table = pendingUpgradeContract.UPGRADE_STAT_BUCKETS;
+    expect(table).toBeDefined();
+    // A deliberately partial table: only the cannon is classified, so a reduce
+    // over it must NOT classify any other shipped id — the same assertion the
+    // coverage tests above run over the real table, here shown failing. The
+    // injectable table is the negative-coverage seam C2 must keep.
+    const partial: Readonly<Record<string, UpgradeStatBucket>> = Object.freeze({
+      cannon: 'firepower',
+    });
+    const buckets = pendingUpgradeContract.defenderStatBuckets?.(
+      snapshotOf([['spread', 3]]),
+      partial,
+    );
+    expect(buckets).toBeDefined();
+    // spread is a shipped weapon the partial table does not classify: its 3
+    // levels must not leak into the totals (the full table would give 3
+    // firepower, so the coverage assertion would fail against `partial`).
+    expect(buckets!.firepower).toBe(0);
+  });
+
+  it('reduces levels and charges with one point each into the pinned buckets (AC2 bucket arithmetic)', () => {
+    const snapshot = snapshotOf(
+      [
+        ['cannon', 2],
+        ['spread', 3],
+      ], // weapons → firepower
+      [
+        ['shield', 2],
+        ['force_field', 1],
+        ['thorns', 1],
+        ['bomb', 1],
+        ['smart_bomb', 1],
+        ['phase_shift', 1], // defensive kinds → armour
+        ['mystery_ufo', 1],
+        ['extra_life', 1], // other kinds → systems
+      ],
+      [
+        ['shield', 2],
+        ['force_field', 1],
+        ['thorns', 1], // defensive charges → armour
+        ['mystery_ufo', 3], // other charge → systems
+      ],
+    );
+    const buckets = pendingUpgradeContract.defenderStatBuckets?.(snapshot);
+    expect(buckets).toBeDefined();
+    expect(buckets).toEqual({
+      // defensive levels (2+1+1+1+1+1) + defensive charges (2+1+1).
+      armour: 11,
+      // weapon levels (2+3).
+      firepower: 5,
+      // other-kind levels (mystery_ufo 1 + extra_life 1) + other charge (3).
+      systems: 5,
+    });
+  });
+
+  it('collapses corrupt levels/charges to 0-safe counts without throwing (AC3)', () => {
+    const corrupt: DefenderUpgradeSnapshot = {
+      weaponLevels: [
+        { id: 'cannon', level: -3 },
+        { id: 'spread', level: Number.NaN },
+        { id: 'rapid', level: Number.POSITIVE_INFINITY },
+        { id: 'dual', level: Number.NEGATIVE_INFINITY },
+        { id: 'cluster', level: 'seven' as unknown as number },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: -2 },
+        { id: 'bomb', level: 2.4 },
+        { id: 'mystery_ufo', level: undefined as unknown as number },
+      ],
+      consumablePools: [
+        { id: 'shield', charges: -1 },
+        { id: 'force_field', charges: Number.NaN },
+        { id: 'mystery_ufo', charges: 2.2 },
+      ],
+    };
+
+    expect(() =>
+      pendingUpgradeContract.defenderStatBuckets?.(corrupt),
+    ).not.toThrow();
+    const buckets = pendingUpgradeContract.defenderStatBuckets?.(corrupt);
+    expect(buckets).toBeDefined();
+    // 0-safe: no row can contribute a negative amount.
+    expect(buckets!.armour).toBeGreaterThanOrEqual(0);
+    expect(buckets!.firepower).toBeGreaterThanOrEqual(0);
+    expect(buckets!.systems).toBeGreaterThanOrEqual(0);
+    // NaN/Infinity/non-numeric/missing all collapse to 0 — only the usable
+    // rows contribute, truncated to whole counts (bomb 2.4 → 2 armour, no
+    // Mystery UFO charge counted: 2.2 → 2 systems).
+    expect(buckets).toEqual({ armour: 2, firepower: 0, systems: 2 });
+  });
+
+  it('reuses DEFENDER_UPGRADE_WEIGHTS — one weight source for the rating (AC4)', () => {
+    const snapshot = snapshotOf([['cannon', 3]], [
+      ['shield', 2],
+      ['extra_life', 1],
+    ]);
+    const hullRating = 4;
+    const rating = pendingUpgradeContract.defenderRatingFromSnapshot?.(
+      hullRating,
+      snapshot,
+    );
+    expect(rating).toBeDefined();
+    const buckets = pendingUpgradeContract.defenderStatBuckets?.(snapshot)!;
+    // The contribution is exactly 3×armour + 2×firepower + 2×systems, read
+    // from the shipped weights rather than restated literals, so a weight
+    // change retunes every rating in one place.
+    expect(rating).toBe(
+      hullRating +
+        DEFENDER_UPGRADE_WEIGHTS.armour * buckets.armour +
+        DEFENDER_UPGRADE_WEIGHTS.firepower * buckets.firepower +
+        DEFENDER_UPGRADE_WEIGHTS.systems * buckets.systems,
+    );
+  });
+
+  it('leaves the rating at the bare hull rating for an empty snapshot (no-upgrades case)', () => {
+    expect(pendingUpgradeContract.defenderRatingFromSnapshot?.(6, snapshotOf([]))).toBe(
+      6,
+    );
+  });
+
+  it('exports the conversion contract from hangarEconomy (C2 exports, not restated)', () => {
+    const home = path.join(process.cwd(), 'src/core/hangarWar/hangarEconomy.ts');
+    const source = fs.readFileSync(home, 'utf8');
+    // The table and both helpers are exported once, from the pure module — the
+    // tests import them (through the namespace here) rather than restating the
+    // mapping, exactly as the parent requires.
+    expect(source).toMatch(/export (?:const|type) UPGRADE_STAT_BUCKETS/);
+    expect(source).toMatch(/export function defenderStatBuckets\(/);
+    expect(source).toMatch(/export function defenderRatingFromSnapshot\(/);
+  });
+
+  it('routes every snapshot consumer through the one exported conversion (AC5 no-divergent-copy)', () => {
+    // Consistent with the repo duplicate-body guard: any production file that
+    // carries the snapshot feature must reference the shared conversion
+    // helpers — a file that spells the derivation itself (or re-authors the
+    // table) is a divergent copy. Red once the feature lands without the
+    // shared seam; green once C3–C7 thread the helpers. PlayScene only
+    // *supplies* the raw rows (it never derives a bucket), so its `snapshot`
+    // usage is covered by the capture/store specs instead.
+    const home = path.join(process.cwd(), 'src/core/hangarWar/hangarEconomy.ts');
+    const derivation =
+      /UPGRADE_STAT_BUCKETS|defenderStatBuckets|defenderRatingFromSnapshot|snapshotDefenderUpgrades/;
+    const feature = /upgradeSnapshot|DefenderUpgradeSnapshot/;
+    const consumers = collectProductionSourceFiles(
+      path.join(process.cwd(), 'src'),
+    )
+      .filter((file) => file !== home)
+      .filter((file) => feature.test(fs.readFileSync(file, 'utf8')));
+    for (const file of consumers) {
+      const source = fs.readFileSync(file, 'utf8');
+      expect(source, path.relative(process.cwd(), file)).toMatch(derivation);
+    }
+  });
+
+  it('keeps the rating arithmetic single-homed in hangarEconomy (AC5 duplicate-body guard)', () => {
+    const home = path.join(process.cwd(), 'src/core/hangarWar/hangarEconomy.ts');
+    const economized = fs.readFileSync(home, 'utf8');
+    // The shipped weights are consumed (and only authored) in the one module;
+    // any other production file spelling `DEFENDER_UPGRADE_WEIGHTS.<bucket>`
+    // is a second derivation of the rating formula.
+    const weightedUse = /DEFENDER_UPGRADE_WEIGHTS\.(?:armour|firepower|systems)/;
+    expect(economized).toMatch(weightedUse);
+    const elsewhere = collectProductionSourceFiles(
+      path.join(process.cwd(), 'src'),
+    )
+      .filter((file) => file !== home)
+      .filter((file) => weightedUse.test(fs.readFileSync(file, 'utf8')));
+    expect(elsewhere.map((file) => path.relative(process.cwd(), file))).toEqual([]);
   });
 });

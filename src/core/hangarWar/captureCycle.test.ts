@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { deriveDefenderRating } from './hangarEconomy';
+import * as hangarEconomyModule from './hangarEconomy';
 import { createDefaultPayload } from './hangarWarStore';
 import {
   HANGAR_WAR_VERSION,
@@ -29,8 +30,10 @@ import {
   runFrontierTick,
 } from './hexDefence';
 import { createBankedSalvage, runSalvageFromRun } from './salvageBanking';
-import type { HangarWarPayload, HexState } from './types';
+import type { HangarWarPayload, HexDefender, HexState } from './types';
 import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
+import type { PowerUpId } from '../../powerups/types';
+import type { WeaponId } from '../../utils/weapons';
 import { buildHangarDeployment } from '../../scenes/hangarWar/hangarDeployment';
 import {
   campaignResetSeed,
@@ -1052,5 +1055,185 @@ describe('resolveHexCapture — the special-mission path', () => {
     );
     // The reward trades manoeuvrability for hit points; it is not a free win.
     expect(withReward.speedMultiplier).toBeLessThan(withStarter.speedMultiplier);
+  });
+});
+
+// ── Run upgrade snapshot — red-first guard tests (AH-0MWHF6X9N0082BRO) ─────
+//
+// The parent (AH-0MWH42DWQ004SAOJ) changes the capture cycle so the bot left
+// behind keeps the run's permanent upgrades: `resolveHexCapture` accepts the
+// run's permanent-upgrade snapshot and `leaveDefender` persists it on the
+// `HexDefender` as an **additive optional field** (the same back-compat pattern
+// as `skills`), with the rating extended through the one exported derivation.
+//
+// These specs are part of the test-first slice: they are red until C2–C4 land
+// (the exports are read through the module namespace so the rest of this file
+// stays compilable), and green once the capture path threads the snapshot.
+// The pinned contract, for C3 (AH-0MWHF6ZHW0058SMX) and C4
+// (AH-0MWHF70OD0070F04):
+//
+// - `HexDefender.upgradeSnapshot?: DefenderUpgradeSnapshot` — additive optional,
+//   omitted when empty (a no-upgrade capture produces exactly today's payload);
+// - `HexCaptureInput.snapshot?: DefenderUpgradeSnapshot` — the whole snapshot
+//   read once at victory (the permanent accessors);
+// - `leaveDefender(hangar, hullId, bankedMinerals?, catalogue?, snapshot?)` —
+//   records the field and derives the rating through the one
+//   `defenderRatingFromSnapshot` helper, never a second formula.
+
+/**
+ * The run's permanent-upgrade snapshot (C1 red-first contract) — rows match
+ * `Player.getWeaponLevels()`, `Player.getPowerUpLevels()` and
+ * `PowerUpLevelStore.snapshotConsumablePools()`.
+ */
+interface DefenderUpgradeSnapshot {
+  weaponLevels: ReadonlyArray<{ id: WeaponId; level: number }>;
+  powerUpLevels: ReadonlyArray<{ id: PowerUpId; level: number }>;
+  consumablePools: ReadonlyArray<{ id: PowerUpId; charges: number }>;
+}
+
+/** A defender carrying the pending additive snapshot field. */
+type CapturedDefender = HexDefender & { upgradeSnapshot?: DefenderUpgradeSnapshot };
+
+/** The C2 derivation, read structure-first so these specs run red, not crash. */
+const pendingDerivation = hangarEconomyModule as unknown as {
+  defenderRatingFromSnapshot?: (
+    hullRating: number,
+    snapshot: DefenderUpgradeSnapshot,
+  ) => number;
+};
+
+/** The signed capture input (C4 threads the snapshot through this field). */
+type SignedCaptureInput = Parameters<typeof resolveHexCapture>[1] & {
+  snapshot?: DefenderUpgradeSnapshot;
+};
+
+/** The pinned extended `leaveDefender` signature (C4 adds the 5th argument). */
+const leaveDefenderWithSnapshot = leaveDefender as (
+  hangar: HangarWarPayload['hangar'],
+  hullId: unknown,
+  bankedMinerals?: number,
+  catalogue?: readonly import('../../data/hangarCatalogue').HangarEntry[],
+  snapshot?: DefenderUpgradeSnapshot,
+) => HexDefender | null;
+
+describe('leaveDefender / resolveHexCapture — run upgrade snapshot (AH-0MWHF6X9N0082BRO, red-first guard)', () => {
+  /** A defensive snapshot whose buckets are exactly 4 armour / 3 firepower / 2 systems. */
+  function upgradedSnapshot(): DefenderUpgradeSnapshot {
+    return {
+      weaponLevels: [
+        { id: 'cannon', level: 2 },
+        { id: 'spread', level: 1 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 2 },
+        { id: 'bomb', level: 1 },
+        { id: 'force_field', level: 1 }, // defensive kinds → armour (4 total)
+        { id: 'extra_life', level: 1 }, // the unlisted kind → systems
+      ],
+      consumablePools: [{ id: 'mystery_ufo', charges: 1 }], // other charge → systems
+    };
+  }
+
+  it('records the snapshot on the defender and rates it through the one derivation', () => {
+    const payload = ringPayload();
+    const snapshot = upgradedSnapshot();
+    // Red until C2/C4 land the snapshot-aware derivation; the rating must then
+    // come from exactly that one helper, never a second formula.
+    const expected = pendingDerivation.defenderRatingFromSnapshot?.(
+      deriveDefenderRating('hull-1'),
+      snapshot,
+    );
+    expect(expected).toBeDefined();
+
+    const defender = leaveDefenderWithSnapshot(
+      payload.hangar,
+      'hull-1',
+      12,
+      undefined,
+      snapshot,
+    ) as unknown as CapturedDefender;
+
+    expect(defender.upgradeSnapshot).toEqual(snapshot);
+    // The rating is the bare hull rating plus the snapshot's contribution,
+    // resolved through the economy's single derivation (4 armour / 3 firepower
+    // / 2 systems → +22 with the shipped weights).
+    expect(defender.defenceRating).toBe(expected);
+    expect(defender.defenceRating).toBeGreaterThan(
+      deriveDefenderRating('hull-1'),
+    );
+    // The existing additive fields are untouched by the new one.
+    expect(defender.hullId).toBe('hull-1');
+    expect(defender.bankedMinerals).toBe(12);
+  });
+
+  it('omits the field and keeps today′s defender when no snapshot is supplied (no-upgrades equality)', () => {
+    const payload = ringPayload();
+    const defender = leaveDefenderWithSnapshot(
+      payload.hangar,
+      'hull-1',
+      12,
+    ) as unknown as CapturedDefender;
+
+    // Byte-for-byte today's defender: no upgradeSnapshot key at all.
+    expect('upgradeSnapshot' in defender).toBe(false);
+    expect(defender.defenceRating).toBe(deriveDefenderRating('hull-1'));
+    expect(defender).toEqual({
+      hullId: 'hull-1',
+      defenceRating: deriveDefenderRating('hull-1'),
+      bankedMinerals: 12,
+    });
+  });
+
+  it('persists the snapshot on the stored defender through resolveHexCapture', () => {
+    const payload = ringPayload();
+    const snapshot = upgradedSnapshot();
+    const expected = pendingDerivation.defenderRatingFromSnapshot?.(
+      deriveDefenderRating('hull-1'),
+      snapshot,
+    );
+    expect(expected).toBeDefined();
+
+    const input: SignedCaptureInput = {
+      hexId: 'hex-r1-4',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(30, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      snapshot,
+    };
+    const result = resolveHexCapture(payload, input);
+
+    expect(result.ok).toBe(true);
+    const stored = hex(result.payload, 'hex-r1-4').defender as unknown as CapturedDefender;
+    expect(stored.upgradeSnapshot).toEqual(snapshot);
+    expect(stored.defenceRating).toBe(expected);
+  });
+
+  it('collapses a corrupt snapshot without throwing and never lowers the rating', () => {
+    const payload = ringPayload();
+    const corrupt: DefenderUpgradeSnapshot = {
+      weaponLevels: [
+        { id: 'cannon', level: Number.NEGATIVE_INFINITY },
+        { id: 'spread', level: -2 },
+        { id: 'rapid', level: 'high' as unknown as number },
+      ],
+      powerUpLevels: [{ id: 'shield', level: Number.NaN }],
+      consumablePools: [{ id: 'mystery_ufo', charges: -1 }],
+    };
+    const input: SignedCaptureInput = {
+      hexId: 'hex-r1-2',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(15, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      snapshot: corrupt,
+    };
+
+    expect(() => resolveHexCapture(payload, input)).not.toThrow();
+    const result = resolveHexCapture(payload, input);
+    expect(result.ok).toBe(true);
+    const stored = hex(result.payload, 'hex-r1-2').defender as unknown as CapturedDefender;
+    // 0-safe buckets can never make the stored bot weaker than the bare hull.
+    expect(stored.defenceRating).toBeGreaterThanOrEqual(
+      deriveDefenderRating('hull-1'),
+    );
   });
 });

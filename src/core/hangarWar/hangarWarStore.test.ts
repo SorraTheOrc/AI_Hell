@@ -1044,3 +1044,93 @@ describe('hangar-war store special-mission persistence (AH-0MWF0CRGE000T6HJ)', (
     expect(noHangar).toBeNull();
   });
 });
+
+// ── Defender upgrade snapshot — red-first guard tests (AH-0MWHF6X9N0082BRO) ─
+//
+// C3 (AH-0MWHF6ZHW0058SMX) persists the run's permanent-upgrade snapshot on
+// the `HexDefender` as an **additive optional field** (`upgradeSnapshot`),
+// parsed defensively and omitted when empty — the exact `skills` pattern
+// (AH-0MVWZYJ740037EZ1). These specs are part of the test-first slice: the
+// round-trip below is red until C3 preserves the field; the presence/salvage
+// pins go green once C3 lands and stay green as the no-schema-bump guard.
+//
+describe('hangar-war store — defender upgrade snapshot is additive (AH-0MWHF6X9N0082BRO, red-first guard)', () => {
+  /** A valid snapshot round-tripping exactly as the run recorded it. */
+  const upgradeSnapshot = {
+    weaponLevels: [
+      { id: 'cannon', level: 2 },
+      { id: 'spread', level: 3 },
+    ],
+    powerUpLevels: [
+      { id: 'shield', level: 1 },
+      { id: 'extra_life', level: 1 },
+    ],
+    consumablePools: [{ id: 'mystery_ufo', charges: 1 }],
+  };
+
+  interface StoredDefender {
+    upgradeSnapshot?: unknown;
+    defenceRating?: number;
+  }
+
+  /** The hex-1 defender of a loaded payload, structurally accessed. */
+  function storedDefender(payload: HangarWarPayload | null): StoredDefender {
+    return payload!.ring.hexes[0].defender! as unknown as StoredDefender;
+  }
+
+  /** The valid fixture with the hex-1 defender carrying `upgradeSnapshot`. */
+  function withUpgradeSnapshot(value: unknown): Record<string, unknown> {
+    const payload = validRecord();
+    const [first] = hexRecords(payload);
+    recordOf(first.defender).upgradeSnapshot = value;
+    return payload;
+  }
+
+  it('round-trips a defender′s upgrade snapshot through the store (RED until C3)', () => {
+    const raw = serialisePayload(
+      withUpgradeSnapshot(upgradeSnapshot) as unknown as HangarWarPayload,
+    );
+    const storage = storageWithRaw(raw);
+
+    const loaded = loadHangarWarPayload(storage);
+    expect(loaded).not.toBeNull();
+    // Red until C3's defensive parse preserves the additive field; today the
+    // parser drops the unknown field and the assertion fails.
+    expect(storedDefender(loaded).upgradeSnapshot).toEqual(upgradeSnapshot);
+    // The stored rating is untouched by the snapshot data.
+    expect(storedDefender(loaded).defenceRating).toBe(7);
+
+    saveHangarWarPayload(loaded!, storage);
+    expect(storedDefender(loadHangarWarPayload(storage)).upgradeSnapshot).toEqual(
+      upgradeSnapshot,
+    );
+  });
+
+  it('omits the field for a save written before the snapshot existed (field presence)', () => {
+    // No version bump: an old save loads exactly as it was written, and
+    // absence reads as "no upgrades" in the resolver.
+    const loaded = parseHangarWarPayload(validRecord());
+
+    expect(loaded).not.toBeNull();
+    expect('upgradeSnapshot' in loaded!.ring.hexes[0].defender!).toBe(false);
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+  });
+
+  it('salvages an unusable upgrade snapshot instead of rejecting the save', () => {
+    const payload = parseHangarWarPayload(withUpgradeSnapshot(['junk', 7]));
+
+    expect(payload).not.toBeNull();
+    // A structurally unusable snapshot is dropped; the hex, its defender and
+    // the rest of the payload survive (a valid hangar is never wiped).
+    expect('upgradeSnapshot' in payload!.ring.hexes[0].defender!).toBe(false);
+    expect(payload?.hangar.bankedMinerals).toBe(240);
+  });
+
+  it('is total on a non-object upgrade-snapshot field', () => {
+    for (const value of ['many', 42, {}, null]) {
+      const payload = parseHangarWarPayload(withUpgradeSnapshot(value));
+      expect(payload).not.toBeNull();
+      expect('upgradeSnapshot' in payload!.ring.hexes[0].defender!).toBe(false);
+    }
+  });
+});
