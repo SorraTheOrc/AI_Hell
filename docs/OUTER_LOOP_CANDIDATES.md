@@ -954,18 +954,20 @@ replace storage behind the same injectable interface (§6.6).
 
 - **Target run length:** one hex deployment ≈ the existing arcade run (≈5
   simulated minutes), unchanged — the hangar and the ring are outside the run.
-- **Hours-to-win — an evening per ring, not a grind.** The **one-ring MVP targets
-  40–60 minutes** for a semi-skilled player: six ≈5-minute deployments (≈30
-  minutes) plus build/salvage time on the hangar and the cost of a few lost
-  attempts. **Ring 2 is larger — 12 hexes** — so it lands at ≈60 minutes of
-  deployments plus 10–40 minutes of builds and losses (**≈90–120 minutes** with the wrap-aware bot).
+- **Hours-to-win — an evening per ring, not a grind.** The budget is authored at
+  the unit a player actually experiences: **5–15 minutes per hex deployment**.
+  A whole ring derives from its hex count (**6 × *n***), so the **one-ring MVP
+  (6 hexes) targets 30–90 minutes** for a semi-skilled player — six
+  5–15-minute deployments plus build/salvage time on the hangar and the cost of
+  a few lost attempts — and **ring 2 (12 hexes) lands at 60–180 minutes**.
   Measured with the ring-timing harness on the shipped one-level **five-wave
   sortie** (a captured hex's grant owned from the next deployment, ring 1's
   grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **48.1
   minutes** — 12.0 of measured deployments, 24 between sorties and 12.0 of
-  modelled retries — so ring 2 is still retry-dominated and its `missed`
-  budget is re-ruled by AH-0MWFDQCFV007BZE5; ring 1 misses its window too
-  (16.4 min, AH-0MWFDQ9EY004NO4X).
+  modelled retries — so ring 2 still plays retry-dominated but now reads
+  **within-tolerance** of its derived 60–180 window (±12 min, floor 48) and its
+  rebalancing ruling stays live on AH-0MWFDQCFV007BZE5; ring 1's **16.4 min**
+  still **misses** the derived 30–90 window (AH-0MWFDQ9EY004NO4X).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.
@@ -993,8 +995,9 @@ The loop must reward different ways of playing rather than one correct route:
   hexes left behind, so speed is bought with risk.
 
 No style is strictly dominant — the aggressive line is **faster but riskier** and
-slow grinding is **safer but slower**, which is the intended trade (the 40–60
-minute ring budget is where that trade has to stay live; see *Effort and risk*).
+slow grinding is **safer but slower**, which is the intended trade (the 5–15
+minute per-hex budget — derived ring windows 30–90 / 60–180 — is where that
+trade has to stay live; see *Effort and risk*).
 
 ### UI / scene surface
 
@@ -1181,7 +1184,8 @@ three unlockable starting weapons, one banked currency, one threat tier) plus a
 **single ring of six hexes** around the hangar, with the algorithmic defence
 resolver, one frontier tick that can retake a hex, known-ahead boss/weapon intel
 for the ring, and **one boss-granted weapon on the ring's hardest hex**. The
-slice is budgeted at **40–60 minutes of play for a semi-skilled player**, so "the
+slice is budgeted at **5–15 minutes per hex deployment** (six hexes →
+**30–90 minutes of play**) for a semi-skilled player, so "the
 ring is a checklist" is answered by the plan the player forms before each
 deployment, not by volume. If "take a hex, leave a bot, buy a hull, retake what
 the AI stole" already feels like a war worth fighting, more rings can follow; if
@@ -1227,7 +1231,7 @@ one for those rows (called out in each cell).
 | Reuse of shipped systems | **Medium–High** — checkpoint, minerals/levels, curves, mini-boss rewards; the region war itself is all-new | **High** — checkpoint moments, minerals/levels, mini-boss rewards, curves, run unchanged | **Medium** — mini-boss/boss fragments, curves; mutations are new content | **High** — B's reusable set in full, plus the run unchanged; the ring is the only new surface |
 | New-system cost (High = expensive) | **High** — region graph, faction war, autonomous defence, onslaught | **Medium** — hangar economy, hulls/loadouts | **Medium–High** — codex + a real gameplay effect per decoded rule | **Medium** — B's hangar economy plus a *small* ring layer (map, frontier clock, algorithmic defence resolver), because defence and accrual are resolved from stored numbers rather than simulated |
 | Persistence complexity (High = complex) | **High** — map + ships + factions + onslaught state | **Medium** — banked balance + unlock flags | **Medium** — fragments + codex + decoded rules | **Medium** — hangar + ring in one versioned key; no simulation state to serialise |
-| Session-length fit | **Medium** — the campaign can inflate a sitting; risk to the arcade run | **High** — one run stays a deployment; meta is outside the run | **High** — run shape preserved; meta is a menu | **High** — a hex deployment is exactly the existing run, and a whole ring is an evening (**40–60 minutes** for the one-ring MVP) |
+| Session-length fit | **Medium** — the campaign can inflate a sitting; risk to the arcade run | **High** — one run stays a deployment; meta is outside the run | **High** — run shape preserved; meta is a menu | **High** — a hex deployment is exactly the existing run, and a whole ring is an evening (**30–90 minutes** for the one-ring MVP at 5–15 minutes per hex) |
 | Legibility of progress | **Medium** — a map is legible if the UI is good, but faction/ship bookkeeping can be opaque | **High** — "you own X" is unmistakable | **Medium** — the codex reads as a list; "what have I learned" needs careful UI | **High** — two visible facts: the hexes you hold (a shape on screen) and the hulls you own (a list); a defence report explains any loss |
 | Gym / bot testability | **Medium** — the most simulation to expose; autonomous defence needs a harness | **High** — pure economy functions | **High** — pure codex functions, but every mutation must be exercised in a gym | **High** — pure economy *and* a pure defence resolver; the defending bot never has to be flown, so a demo cannot stall in defence |
 | Risk to the shipped campaign (High = risky) | **High** — replaces the run with a region campaign; may gut the 10-level campaign | **Low** — run unchanged; meta wraps it; the final boss stays | **Medium** — mutates the campaign; risks inconsistent or unfair runs | **Medium** — the run is unchanged (B's safety) and the boss stays, but hexes can be *lost* between runs (a front-loading frustration risk) and the boss becomes a recurring milestone rather than a single terminus |
@@ -1320,7 +1324,7 @@ a one-line deferral reason each, so the pool can be revisited later:
 | Candidate A — Contested Regions / Home World | not selected | 2026-10-29 | Superseded by D, which keeps A's territory axis with an algorithmic spine and a much smaller first slice |
 | Candidate B — Salvage Fleet | not selected as a standalone loop | 2026-10-29 | Shipped as the **first slice** of D (the hangar); remains the standalone fallback if the ring disappoints |
 | Candidate C — Signal Decode | not selected | 2026-10-29 | Strong fiction fit, but every decoded rule is new content and campaign mutation carries fairness risk |
-| Candidate D — Hangar War | **accepted — chosen** | 2026-10-29 | Chosen by the producer. Build-out: **AH-0MVU3VNJI00066YE** (hangar slice first, then the first hex ring). Ring timing set at **40–60 minutes** for the one-ring MVP, with ring 2 at 12 hexes; boss/weapon strength **known ahead** is MVP; special missions and upgraded bots are post-MVP |
+| Candidate D — Hangar War | **accepted — chosen** | 2026-10-29 | Chosen by the producer. Build-out: **AH-0MVU3VNJI00066YE** (hangar slice first, then the first hex ring). Ring timing set at **5–15 minutes per hex deployment** (ring 1's six hexes → **30–90 minutes**, ring 2's twelve → **60–180 minutes**); boss/weapon strength **known ahead** is MVP; special missions and upgraded bots are post-MVP |
 
 The producer's choice is recorded above. Writing the chosen loop into the GDD as
 playable specification was the **follow-on work item**

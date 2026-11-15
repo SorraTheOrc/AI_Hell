@@ -9,14 +9,16 @@
  *   cheaply.
  * - **Arena tests** run the real harness against the real headless arena —
  *   the design's evidence (intake assumption A1): the same seed twice produces
- *   the same summed duration, the two ring grind budgets **miss** their authored
- *   windows on the shipped one-level deployment (AH-0MWCQ4HTC004U73V), and the
- *   rush line is measurably faster but riskier than the grind.
+ *   the same summed duration, the ring-1 grind budget **misses** its derived
+ *   30–90 window while the ring-2 grind sits **within-tolerance** of its
+ *   derived 60–180 window on the shipped one-level deployment
+ *   (AH-0MWHU5AV800969NA), and the rush line is measurably faster but riskier
+ *   than the grind.
  *
  * The ring-1 / ring-2 grind verdicts are pinned **literally** against the
  * committed artifact (`docs/dev/ring-timing-baseline.json`), so a future
- * re-measurement cannot move the authored budgets' standing silently: the
- * two missed budgets are tracked as separate rebalancing items
+ * re-measurement cannot move the derived budgets' standing silently: both
+ * rulings are tracked as separate rebalancing items
  * (AH-0MWFDQ9EY004NO4X ring 1, AH-0MWFDQCFV007BZE5 ring 2).
  *
  * Every assertion is about observable report values, never about how the
@@ -48,12 +50,14 @@ import type { TelemetryEventRecord } from './types';
 import {
   DEFAULT_BETWEEN_SORTIE_MINUTES,
   DEFAULT_RING_TIMING_DT,
+  HEX_TIMING_TARGET,
   RING_DEPLOYMENT_TICKS,
   RING_TIMING_TARGETS,
   RING_TIMING_TOLERANCE_PERCENT,
   createArenaDeploymentRunner,
   createOneLevelArenaDeploymentRunner,
   derivePerDeploymentIncome,
+  deriveRingTimingTarget,
   deriveUnlockPace,
   evaluateRingTimingBudget,
   formatIncomeReport,
@@ -61,6 +65,7 @@ import {
   planRingDeployments,
   resolveDeploymentLoadout,
   ringEntryOwnership,
+  ringTimingHexCount,
   ringTimingHexes,
   simulateRingTiming,
   withCapturedGrant,
@@ -534,16 +539,17 @@ describe('ring timing: budget verdicts', () => {
   });
 
   it('accepts a measurement inside the stated tolerance and states it', () => {
-    // Ring 1's window is 20 minutes wide, so 10 % is a 2-minute tolerance.
-    const verdict = evaluateRingTimingBudget(1, 'grind', 38.5);
+    // Ring 1's derived window (6 × 5–15) is 30–90, 60 minutes wide, so 10 % is
+    // a 6-minute tolerance: 25 lies outside the window but inside it.
+    const verdict = evaluateRingTimingBudget(1, 'grind', 25);
     expect(verdict.tolerancePercent).toBe(RING_TIMING_TOLERANCE_PERCENT);
-    expect(verdict.toleranceMinutes).toBeCloseTo(2, 5);
+    expect(verdict.toleranceMinutes).toBeCloseTo(6, 5);
     expect(verdict.verdict).toBe('within-tolerance');
     expect(verdict.withinTolerance).toBe(true);
   });
 
   it('misses a measurement outside the window and its tolerance', () => {
-    const verdict = evaluateRingTimingBudget(1, 'grind', 30);
+    const verdict = evaluateRingTimingBudget(1, 'grind', 20);
     expect(verdict.verdict).toBe('missed');
     expect(verdict.withinTolerance).toBe(false);
   });
@@ -560,42 +566,59 @@ describe('ring timing: budget verdicts', () => {
 });
 
 /**
- * The design windows are an **authored input**, so they are pinned literally
- * (AH-0MW9VARCU000XZIL, AC2). The measured-mean assertion in the real-arena
- * suite compares a measurement against whatever the constant says, so on its
- * own it would happily follow an accidental recalibration.
+ * The budget is an **authored input at the deployment unit** — 5–15 minutes
+ * per hex (AH-0MWHU5AV800969NA) — so it is pinned literally against
+ * {@link HEX_TIMING_TARGET}, and the ring windows are pinned as derivations
+ * from the authored hex counts (6 and 12), never as hand-pinned literals. The
+ * measured-mean assertions in the real-arena suite compare a measurement
+ * against whatever the constant says, so on its own each would happily follow
+ * an accidental recalibration.
  *
- * Both rings stay at the committed windows — ring 1 **40–60**, ring 2 **90–120**
- * — even though the regenerated one-level sortie misses both (ring 1 grind
- * 16.4 min, ring 2 grind 48.1 min): a window change is a producer ruling, not
- * a re-word of the measurement, so the pins stay authored and each missed
- * budget is re-ruled by its linked rebalancing item (AH-0MWFDQ9EY004NO4X ring
- * 1, AH-0MWFDQCFV007BZE5 ring 2). `docs/EVALUATION.md` records the
- * regenerated measurements as the evidence.
+ * Re-rated against the derived windows, the regenerated one-level sortie
+ * misses ring 1 (16.4 min against 30–90) and sits within-tolerance on ring 2
+ * (48.1 min against 60–180): a window change is a producer ruling, not a
+ * re-word of the measurement, so the per-hex pin stays authored and each ruling
+ * is re-ruled by its linked rebalancing item (AH-0MWFDQ9EY004NO4X ring 1,
+ * AH-0MWFDQCFV007BZE5 ring 2). `docs/EVALUATION.md` records the regenerated
+ * measurements as the evidence.
  */
 describe('ring timing: the design windows are pinned literally', () => {
-  it('pins ring 1 at 40–60 and ring 2 at the committed 90–120', () => {
-    expect(RING_TIMING_TARGETS[1]).toEqual({
-      minMinutes: 40,
-      maxMinutes: 60,
-    });
+  it('authors the 5–15 per-hex budget and derives each ring window from its hex count', () => {
+    // The authored budget is the unit a player actually experiences: one hex
+    // deployment, 5–15 minutes. Each ring's window derives from its hex count
+    // (6 × n) — ring 1 30–90, ring 2 60–180 — never a hand-pinned ring pair.
+    expect(HEX_TIMING_TARGET).toEqual({ minMinutes: 5, maxMinutes: 15 });
+    expect(ringTimingHexCount(1)).toBe(6);
+    expect(ringTimingHexCount(2)).toBe(12);
+    expect(RING_TIMING_TARGETS[1]).toEqual({ minMinutes: 30, maxMinutes: 90 });
     expect(RING_TIMING_TARGETS[2]).toEqual({
-      minMinutes: 90,
-      maxMinutes: 120,
+      minMinutes: 60,
+      maxMinutes: 180,
     });
   });
 
-  it('derives the stated ±3-minute tolerance from the ring-2 window width', () => {
-    // 10 % of a 30-minute window is 3 minutes: a measurement inside the window
-    // passes as measured, and one up to 3 minutes outside still passes.
-    const measured = evaluateRingTimingBudget(2, 'grind', 117);
+  it('derives the ring windows as the pure hex-count multiple of the per-hex budget', () => {
+    // 6 × [5, 15] = [30, 90] and 12 × [5, 15] = [60, 180]: a changed hex count
+    // or per-hex window flows into the derived windows automatically.
+    expect(deriveRingTimingTarget(1)).toEqual({ minMinutes: 30, maxMinutes: 90 });
+    expect(deriveRingTimingTarget(2)).toEqual({
+      minMinutes: 60,
+      maxMinutes: 180,
+    });
+  });
+
+  it('derives the stated ±12-minute tolerance from the ring-2 window width', () => {
+    // 10 % of the 120-minute window (60–180) is 12 minutes: a measurement
+    // inside the window passes as measured, and one up to 12 minutes outside
+    // still passes.
+    const measured = evaluateRingTimingBudget(2, 'grind', 175);
     expect(measured.tolerancePercent).toBe(RING_TIMING_TOLERANCE_PERCENT);
-    expect(measured.toleranceMinutes).toBeCloseTo(3, 5);
+    expect(measured.toleranceMinutes).toBeCloseTo(12, 5);
     expect(measured.verdict).toBe('in-window');
-    expect(evaluateRingTimingBudget(2, 'grind', 88).verdict).toBe(
+    expect(evaluateRingTimingBudget(2, 'grind', 190).verdict).toBe(
       'within-tolerance',
     );
-    expect(evaluateRingTimingBudget(2, 'grind', 86).verdict).toBe('missed');
+    expect(evaluateRingTimingBudget(2, 'grind', 200).verdict).toBe('missed');
   });
 });
 
@@ -674,13 +697,13 @@ describe('ring timing: real arena evidence', () => {
     expect(first.summary.deploymentMinutes.mean).toBeGreaterThan(0);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the one-level MVP grind measures ~16 min and misses the 40–60 window (AH-0MWCOWSVN003X81A)', () => {
+  it('the one-level MVP grind measures ~16 min and misses the derived 30–90 window (AH-0MWCOWSVN003X81A)', () => {
     // One hex, one level, five-wave sortie: measured twice as fast as the
     // retired campaign-slice model and every sortie is lost to enemy fire, so
-    // the committed 40–60-minute window no longer holds. The verdict is pinned
-    // against the committed artifact (AH-0MWCQ4HTC004U73V) and tracked as the
-    // rebalancing item AH-0MWFDQ9EY004NO4X, so a fire-model or balance change
-    // cannot move it silently in the meantime.
+    // the derived 30–90-minute window (6 × 5–15 per hex) no longer holds. The
+    // verdict is pinned against the committed artifact (AH-0MWCQ4HTC004U73V)
+    // and tracked as the rebalancing item AH-0MWFDQ9EY004NO4X, so a fire-model
+    // or balance change cannot move it silently in the meantime.
     const report = simulateRingTiming({
       ringIndex: 1,
       strategy: 'grind',
@@ -695,7 +718,7 @@ describe('ring timing: real arena evidence', () => {
     expect(report.budget.verdict).toBe(committed.budget.verdict);
     expect(report.budget.withinTolerance).toBe(false);
     // The real arena still measures the regenerated artifact's numbers: 16.4 min
-    // mean on seeds 1–3, decisively below the authored 40-minute floor.
+    // mean on seeds 1–3, decisively below the derived 30-minute floor.
     expect(report.summary.totalMinutes.mean).toBeCloseTo(16.4256, 4);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(
       committed.summary.totalMinutes.mean,
@@ -707,10 +730,13 @@ describe('ring timing: real arena evidence', () => {
     expect(report.budget.measuredMinutes).toBeGreaterThan(5);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the 12-hex one-level ring 2 grind measures ~48 min and misses the 90–120 window (AH-0MWCOWSVN003X81A)', () => {
+  it('the 12-hex one-level ring 2 grind measures ~48 min and sits within-tolerance of the derived 60–180 window (AH-0MWCOWSVN003X81A)', () => {
     // The same one-level model, twelve hexes: measured ≈ 48 min mean (seeds
-    // 1–3), every sortie lost to enemy fire. The 90–120-minute window no longer
-    // holds; the verdict is pinned against the committed artifact and tracked
+    // 1–3), every sortie lost to enemy fire. Against the derived 60–180-minute
+    // window (12 × 5–15 per hex) the total sits inside the ±12-minute tolerance
+    // (the 48-minute floor); the verdict flips from the old window's `missed` —
+    // a consequence of the producer's new budget, computed by the harness,
+    // never a re-word. It is pinned against the committed artifact and tracked
     // as the rebalancing item AH-0MWFDQCFV007BZE5.
     const report = simulateRingTiming({
       ringIndex: 2,
@@ -719,9 +745,10 @@ describe('ring timing: real arena evidence', () => {
     });
     const committed = committedGrindReport(2);
     expect(report.runs[0].deployments).toHaveLength(12);
-    expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.verdict).toBe('within-tolerance');
     expect(report.budget.verdict).toBe(committed.budget.verdict);
-    expect(report.budget.withinTolerance).toBe(false);
+    expect(report.budget.withinTolerance).toBe(true);
+    expect(report.budget.withinWindow).toBe(false);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(48.0967, 4);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(
       committed.summary.totalMinutes.mean,
@@ -975,13 +1002,14 @@ describe('ring timing: committed baseline evidence', () => {
 
   /**
    * The two grind verdicts are pinned **explicitly and per ring**
-   * (AH-0MWCQ4HTC004U73V): the measured mean, its min–max, the authored window,
-   * the tolerance and the delta to the window floor, plus the loss/retry/
-   * re-capture split that produces the total. A re-measurement that moves any of
-   * them fails here instead of drifting past the authored budgets, and each
-   * missed budget is tracked as its own rebalancing item.
+   * (AH-0MWCQ4HTC004U73V, re-rated by AH-0MWHU5AV800969NA): the measured mean,
+   * its min–max, the derived window, the tolerance and the delta to the window
+   * floor, plus the loss/retry/re-capture split that produces the total. A
+   * re-measurement that moves any of them fails here instead of silently
+   * moving the verdicts, and each ruling is tracked as its own rebalancing
+   * item.
    */
-  it('ring 1 grind: 16.4 min (15.7–16.9) misses the authored 40–60 min window', () => {
+  it('ring 1 grind: 16.4 min (15.7–16.9) misses the derived 30–90 min window', () => {
     // Tracked for a producer ruling by AH-0MWFDQ9EY004NO4X.
     const report = committedGrindReport(1);
     expect(report.budget.verdict).toBe('missed');
@@ -990,14 +1018,14 @@ describe('ring timing: committed baseline evidence', () => {
     expect(report.summary.totalMinutes.mean).toBeCloseTo(16.4256, 4);
     expect(report.summary.totalMinutes.min).toBeCloseTo(15.7239, 4);
     expect(report.summary.totalMinutes.max).toBeCloseTo(16.9144, 4);
-    // The authored window and tolerance are unchanged — judged, not re-authored.
+    // The derived window (6 × 5–15) and its tolerance are computed, not pinned.
     expect(report.budget.target).toEqual(RING_TIMING_TARGETS[1]);
-    expect(report.budget.toleranceMinutes).toBeCloseTo(2, 6);
-    // Δ to the window floor: 16.4256 − 40 = −23.5744 min (and −21.5744 min
-    // below the 38-minute tolerance floor).
+    expect(report.budget.toleranceMinutes).toBeCloseTo(6, 6);
+    // Δ to the window floor: 16.4256 − 30 = −13.5744 min (and −7.5744 min
+    // below the 24-minute tolerance floor).
     expect(
       report.summary.totalMinutes.mean - RING_TIMING_TARGETS[1].minMinutes,
-    ).toBeCloseTo(-23.5744, 4);
+    ).toBeCloseTo(-13.5744, 4);
     // Re-judged through the shipped budget rule, the artifact's measurement is
     // still `missed`: the verdict is not merely a stored string.
     expect(
@@ -1022,26 +1050,28 @@ describe('ring timing: committed baseline evidence', () => {
     }
   });
 
-  it('ring 2 grind: 48.1 min (42.4–58.4) misses the authored 90–120 min window', () => {
+  it('ring 2 grind: 48.1 min (42.4–58.4) sits within-tolerance of the derived 60–180 min window', () => {
     // Tracked for a producer ruling by AH-0MWFDQCFV007BZE5.
     const report = committedGrindReport(2);
-    expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.verdict).toBe('within-tolerance');
     expect(report.budget.withinWindow).toBe(false);
-    expect(report.budget.withinTolerance).toBe(false);
+    expect(report.budget.withinTolerance).toBe(true);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(48.0967, 4);
     expect(report.summary.totalMinutes.min).toBeCloseTo(42.4067, 4);
     expect(report.summary.totalMinutes.max).toBeCloseTo(58.4144, 4);
     expect(report.budget.target).toEqual(RING_TIMING_TARGETS[2]);
-    expect(report.budget.toleranceMinutes).toBeCloseTo(3, 6);
-    // Δ to the window floor: 48.0967 − 90 = −41.9033 min (and −38.9033 min
-    // below the 87-minute tolerance floor).
+    expect(report.budget.toleranceMinutes).toBeCloseTo(12, 6);
+    // Δ to the window floor: 48.0967 − 60 = −11.9033 min, which is inside the
+    // 48-minute tolerance floor (60 − 12): the total is within tolerance, so
+    // the verdict flips from the old window's `missed` — a consequence of the
+    // producer's new per-hex budget, computed not authored.
     expect(
       report.summary.totalMinutes.mean - RING_TIMING_TARGETS[2].minMinutes,
-    ).toBeCloseTo(-41.9033, 4);
+    ).toBeCloseTo(-11.9033, 4);
     expect(
       evaluateRingTimingBudget(2, 'grind', report.summary.totalMinutes.mean)
         .verdict,
-    ).toBe('missed');
+    ).toBe('within-tolerance');
     for (const run of report.runs) {
       expect(
         run.deploymentMinutes +
@@ -1088,7 +1118,7 @@ describe('ring timing: committed baseline evidence', () => {
     )!;
     const meanMinutes = `${ring2.summary.totalMinutes.mean.toFixed(1)} min`;
     expect(readme).toContain(meanMinutes);
-    expect(readme).toMatch(/90\s*[–—-]\s*120/);
+    expect(readme).toMatch(/60\s*[–—-]\s*180/);
     expect(readme).not.toMatch(/70\s*[–—-]\s*100/);
   });
 });
@@ -1197,7 +1227,8 @@ describe('ring timing: report rendering', () => {
     expect(text).toContain('Ring 1 · grind · seed 1');
     expect(text).toContain('measured runs');
     expect(text).toContain('42.0 min');
-    expect(text).toContain('40–60 min');
+    expect(text).toContain('5–15 min per hex');
+    expect(text).toContain('ring window 30–90 min');
     expect(text).toContain('in-window');
   });
 

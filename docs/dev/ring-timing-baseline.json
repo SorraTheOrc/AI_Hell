@@ -492,11 +492,11 @@
     "budget": {
       "applicable": true,
       "target": {
-        "minMinutes": 40,
-        "maxMinutes": 60
+        "minMinutes": 30,
+        "maxMinutes": 90
       },
       "tolerancePercent": 10,
-      "toleranceMinutes": 2,
+      "toleranceMinutes": 6,
       "measuredMinutes": 16.425555555555558,
       "withinWindow": false,
       "withinTolerance": false,
@@ -691,11 +691,11 @@
     "budget": {
       "applicable": false,
       "target": {
-        "minMinutes": 40,
-        "maxMinutes": 60
+        "minMinutes": 30,
+        "maxMinutes": 90
       },
       "tolerancePercent": 10,
-      "toleranceMinutes": 2,
+      "toleranceMinutes": 6,
       "measuredMinutes": 10.1,
       "withinWindow": false,
       "withinTolerance": false,
@@ -2195,15 +2195,15 @@
     "budget": {
       "applicable": true,
       "target": {
-        "minMinutes": 90,
-        "maxMinutes": 120
+        "minMinutes": 60,
+        "maxMinutes": 180
       },
       "tolerancePercent": 10,
-      "toleranceMinutes": 3,
+      "toleranceMinutes": 12,
       "measuredMinutes": 48.096666666666664,
       "withinWindow": false,
-      "withinTolerance": false,
-      "verdict": "missed"
+      "withinTolerance": true,
+      "verdict": "within-tolerance"
     },
     "entryLoadout": {
       "hullId": "hull-2",
@@ -2462,11 +2462,11 @@
     "budget": {
       "applicable": false,
       "target": {
-        "minMinutes": 90,
-        "maxMinutes": 120
+        "minMinutes": 60,
+        "maxMinutes": 180
       },
       "tolerancePercent": 10,
-      "toleranceMinutes": 3,
+      "toleranceMinutes": 12,
       "measuredMinutes": 22.285925925925927,
       "withinWindow": false,
       "withinTolerance": false,

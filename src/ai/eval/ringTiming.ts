@@ -4,10 +4,11 @@
  * (AH-0MVUXCBQY001ESWT, part of **Build Candidate D — Hangar War**).
  *
  * Design of record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D —
- * § *Session shape* ("the **one-ring MVP targets 40–60 minutes** … **Ring 2 is
- * larger — 12 hexes** — so it lands at … **≈90–120 minutes**") and
- * § *Playstyles supported* ("the aggressive line is **faster but riskier** and
- * slow grinding is **safer but slower**").
+ * § *Session shape* ("**5–15 minutes per hex deployment**", with each ring's
+ * window derived from its hex count — ring 1's six hexes → 30–90 minutes,
+ * ring 2's twelve → 60–180 minutes) and § *Playstyles supported* ("the
+ * aggressive line is **faster but riskier** and slow grinding is **safer but
+ * slower**").
  *
  * ## What is measured, what is modelled
  *
@@ -127,20 +128,22 @@
  *
  * ## Budgets
  *
- * {@link RING_TIMING_TARGETS} holds the design's windows (ring 1: 40–60 min,
- * ring 2: 90–120 min) and {@link RING_TIMING_TOLERANCE_PERCENT} the stated
+ * The authored budget is **5–15 minutes per hex deployment**
+ * ({@link HEX_TIMING_TARGET}); each ring's window derives from its hex count
+ * ({@link RING_TIMING_TARGETS}: ring 1's six hexes → 30–90 min, ring 2's
+ * twelve → 60–180 min) and {@link RING_TIMING_TOLERANCE_PERCENT} is the stated
  * tolerance: a measurement within `tolerancePercent` of the window's width
  * outside it still passes ({@link RingTimingBudgetVerdict}). The comparison
  * target is the **grind** line, because that is the line that actually secures
  * the ring; a rush segment is reported `not-applicable` for the budget.
  *
- * The shipped one-level deployment measures **both grind lines as `missed`**
- * (ring 1 16.4 min against 40–60, ring 2 48.1 min against 90–120, seeds 1–3 in
- * `docs/dev/ring-timing-baseline.json`). The windows are an authored input and
- * are **not re-worded here**: each missed budget is recorded with its measured
- * figure and delta in the committed artifact and this module's tests, and the
- * ruling is tracked by two linked rebalancing items — ring 1
- * AH-0MWFDQ9EY004NO4X, ring 2 AH-0MWFDQCFV007BZE5.
+ * Re-rated against the derived windows (AH-0MWHU5AV800969NA), the shipped
+ * one-level deployment measures ring 1 grind as **`missed`** (16.4 min against
+ * 30–90) and ring 2 grind as **`within-tolerance`** (48.1 min against 60–180,
+ * at the ±12-minute floor — seeds 1–3 in `docs/dev/ring-timing-baseline.json`).
+ * The measured figures are recorded, never re-worded; the ruling is tracked by
+ * two linked rebalancing items — ring 1 AH-0MWFDQ9EY004NO4X, ring 2
+ * AH-0MWFDQCFV007BZE5.
  *
  * ## Fidelity boundary
  *
@@ -244,7 +247,7 @@ export const DEFAULT_RETRIES_PER_LOSS = 1;
 export const DEFAULT_RETAKE_CHANCE_PERCENT =
   DEFAULT_FRONTIER_TUNING.attackChancePercent;
 
-/** The design's play-time windows for a ring, in minutes. */
+/** The design's play-time window, in minutes. */
 export interface RingTimingTarget {
   /** Fastest acceptable play time (minutes). */
   readonly minMinutes: number;
@@ -253,38 +256,78 @@ export interface RingTimingTarget {
 }
 
 /**
- * The design's ring budgets (`docs/OUTER_LOOP_CANDIDATES.md` § Session shape):
- * the one-ring MVP is an evening's play at 40–60 minutes, and ring 2 (12 hexes)
- * lands at ≈90–120 minutes.
+ * The design's **per-hex deployment budget** — the unit a player actually
+ * experiences (AH-0MWHU5AV800969NA): one hex deployment is one level played as
+ * the shipped five-wave sortie, authored as a 5–15-minute commitment. Each
+ * ring's window derives from its hex count ({@link ringTimingHexCount} × this
+ * window), so ring 1 (6 hexes) is 30–90 minutes and ring 2 (12 hexes) is
+ * 60–180 minutes — an evening's play per ring, stated once at the deployment
+ * unit instead of as hand-maintained per-ring windows.
+ */
+export const HEX_TIMING_TARGET: Readonly<RingTimingTarget> = Object.freeze({
+  minMinutes: 5,
+  maxMinutes: 15,
+});
+
+/**
+ * The authored hex count of `ringIndex` (see {@link ringTimingHexes}); it
+ * drives the derived ring windows — 6 and 12 for rings 1 and 2. If a ring's
+ * hex count ever changes, the derived windows follow automatically; they are
+ * never pinned as literals.
+ */
+export function ringTimingHexCount(ringIndex: number): number {
+  return ringTimingHexes(ringIndex).length;
+}
+
+/**
+ * The derived play-time window for `ringIndex`: the authored per-hex budget
+ * multiplied by the ring's hex count (6 × [5, 15] = [30, 90] for ring 1,
+ * 12 × [5, 15] = [60, 180] for ring 2). An unauthored ring (no hexes) derives
+ * a zero-width window, so it is never verified against a fabricated budget.
+ */
+export function deriveRingTimingTarget(
+  ringIndex: number,
+  perHex: Readonly<RingTimingTarget> = HEX_TIMING_TARGET,
+): RingTimingTarget {
+  const hexCount = ringTimingHexCount(ringIndex);
+  return Object.freeze(
+    hexCount === 0
+      ? { minMinutes: 0, maxMinutes: 0 }
+      : {
+          minMinutes: hexCount * perHex.minMinutes,
+          maxMinutes: hexCount * perHex.maxMinutes,
+        },
+  );
+}
+
+/**
+ * The design's derived ring budgets (`docs/OUTER_LOOP_CANDIDATES.md`
+ * § Session shape): each ring's window is the authored per-hex budget
+ * ({@link HEX_TIMING_TARGET}) multiplied by the ring's authored hex count
+ * ({@link ringTimingHexCount}) — ring 1's six hexes derive 30–90 minutes and
+ * ring 2's twelve derive 60–180 minutes, so a ring stays an evening's play
+ * and the per-hex target is authored once.
  *
- * Ring 2 was recalibrated from ≈70–100 to ≈90–120 after the wrap-aware bot
- * (AH-0MVMISF0Q00314LG): on the wrap-parity arena the competent bot survives
- * roughly 2–3 minutes per lost deployment instead of dying in under a minute,
- * so the measured grind rose from ≈91.6 minutes to the committed **116.4
- * minutes** (measured with the deployment loadout a ring-2 player actually
- * launches, AH-0MW9QA2YC009PSF5). The loss-dominated ring-2 retry allowance is
- * the same documented follow-up risk; only the deployment duration and the
- * modelled loadout changed.
- *
- * Those figures were **superseded** by the shipped one-level five-wave sortie
- * (AH-0MWCOWSVN003X81A): the regenerated artifact measures ring 1 at **16.4
- * minutes** and ring 2 at **48.1 minutes**, so **both grind budgets are
- * `missed`**. The windows are left exactly as authored — a window change is a
- * producer ruling, tracked by the linked rebalancing items
- * **AH-0MWFDQ9EY004NO4X** (ring 1) and **AH-0MWFDQCFV007BZE5** (ring 2), not a
- * silent re-word here.
+ * Re-rated against these derived windows (AH-0MWHU5AV800969NA), the shipped
+ * one-level sortie measures ring 1 grind at **16.4 minutes** (`missed`) and
+ * ring 2 grind at **48.1 minutes** (`within-tolerance` of 60–180: the ±12-min
+ * tolerance floor is 48). The measured figures were **superseded** by the
+ * shipped one-level five-wave sortie (AH-0MWCOWSVN003X81A); the windows are
+ * never re-worded to match a measurement — each ruling is tracked by the
+ * linked rebalancing items **AH-0MWFDQ9EY004NO4X** (ring 1) and
+ * **AH-0MWFDQCFV007BZE5** (ring 2), not silently changed here.
  */
 export const RING_TIMING_TARGETS: Readonly<Record<number, RingTimingTarget>> =
   Object.freeze({
-    1: Object.freeze({ minMinutes: 40, maxMinutes: 60 }),
-    2: Object.freeze({ minMinutes: 90, maxMinutes: 120 }),
+    1: deriveRingTimingTarget(1),
+    2: deriveRingTimingTarget(2),
   });
 
 /**
  * The **stated tolerance** the budget assertion allows: a measurement within
  * this percentage of the window's width outside the window still passes. For
- * ring 1 (20-minute window) that is ±2 minutes; for ring 2 (30-minute window)
- * ±3 minutes.
+ * ring 1 (60-minute window) that is ±6 minutes; for ring 2 (120-minute
+ * window) ±12 minutes.
  */
 export const RING_TIMING_TOLERANCE_PERCENT = 10;
 
@@ -1309,7 +1352,7 @@ export function formatRingTimingReport(report: RingTimingReport): string {
     lines.push('  budget             no authored target for this ring');
   } else {
     lines.push(
-      `  budget             ${budget.target.minMinutes}–${budget.target.maxMinutes} min ±${oneDecimal(budget.toleranceMinutes)} (${budget.tolerancePercent}%) · ${budget.verdict}`,
+      `  budget             ${HEX_TIMING_TARGET.minMinutes}–${HEX_TIMING_TARGET.maxMinutes} min per hex · ring window ${budget.target.minMinutes}–${budget.target.maxMinutes} min ±${oneDecimal(budget.toleranceMinutes)} (${budget.tolerancePercent}%) · ${budget.verdict}`,
     );
   }
   lines.push(`  banked cores       ${oneDecimal(summary.salvageCores.mean)} cores`);

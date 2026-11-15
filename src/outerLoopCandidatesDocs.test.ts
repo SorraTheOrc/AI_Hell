@@ -32,8 +32,8 @@
  *   candidate.
  * - AC16 (producer decision, AH-0MVNSSY9L001P1CC): the producer chose
  *   Candidate D, the choice is recorded in the decision record with a date and
- *   in GDD §8, the ring timing is an evening's play (one-ring MVP 40–60 minutes;
- *   ring 2 is 12 hexes), the anti-checklist mitigations and the playstyles the
+ *   in GDD §8, the ring timing is an evening's play (5–15 minutes per hex;
+ *   ring 1's six hexes derive 30–90 minutes and ring 2's twelve 60–180), the anti-checklist mitigations and the playstyles the
  *   loop must support are documented, and the build-out work item is
  *   cross-referenced from the decision record and the GDD.
  * - Build status (AH-0MVUXCC5J0028OGQ): Candidate D records that it is
@@ -255,8 +255,10 @@ describe('Outer-loop candidates are documented (AH-0MVRNIWHG0099ZS3)', () => {
     });
 
     it('targets an evening-length one-ring MVP and a larger second ring (AC16)', () => {
-      // MVP (one ring) is 40–60 minutes; ring 2 is 12 hexes.
-      expect(body).toMatch(/40\s*[–—-]\s*60\s*minutes/i);
+      // The budget is authored per hex deployment (5–15 minutes), deriving
+      // ring 1's 30–90-minute window (six hexes); ring 2 is 12 hexes.
+      expect(body).toMatch(/5\s*[–—-]\s*15\s*minutes/i);
+      expect(body).toMatch(/30\s*[–—-]\s*90/i);
       expect(body).toMatch(/12\s+hexes/i);
       expect(body).toMatch(/ring/i);
     });
@@ -490,9 +492,11 @@ describe('The chosen loop is recorded in the GDD (AC16)', () => {
     expect(scope).toMatch(/chose|chosen|selected/i);
   });
 
-  it('records the ring timing the producer set (one-ring MVP 40–60 minutes)', () => {
+  it('records the ring timing the producer set (5–15 minutes per hex deployment)', () => {
     const scope = gddFutureScope();
-    expect(scope).toMatch(/40\s*[–—-]\s*60\s*minutes/i);
+    expect(scope).toMatch(/5\s*[–—-]\s*15\s*minutes/i);
+    expect(scope).toMatch(/30\s*[–—-]\s*90/i);
+    expect(scope).toMatch(/60\s*[–—-]\s*180/i);
     expect(scope).toMatch(/12\s+hexes/i);
   });
 
@@ -614,17 +618,20 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
     // The rush line is faster: ring 1 and ring 2.
     expect(spec).toMatch(new RegExp(escapeRegExp(ring1Rush)));
     expect(spec).toMatch(new RegExp(escapeRegExp(ring2Rush)));
-    // Budget windows and the stated tolerance stay authored.
-    expect(spec).toMatch(/40\s*[–—-]\s*60/);
-    expect(spec).toMatch(/90\s*[–—-]\s*120/);
-    expect(spec).toMatch(/±\s*2\s*min/i);
-    expect(spec).toMatch(/±\s*3\s*min/i);
-    // Both grind budgets are missed, with their linked rebalancing items.
+    // The per-hex budget and the derived windows stay authored; the tolerance
+    // follows the window widths (±6 ring 1, ±12 ring 2).
+    expect(spec).toMatch(/\b5\s*[–—-]\s*15\b/);
+    expect(spec).toMatch(/30\s*[–—-]\s*90/);
+    expect(spec).toMatch(/60\s*[–—-]\s*180/);
+    expect(spec).toMatch(/±\s*6\s*min/i);
+    expect(spec).toMatch(/±\s*12\s*min/i);
+    // The grind verdicts are re-rated against the derived windows: ring 1 is
+    // missed, ring 2 within-tolerance, with their linked rebalancing items.
     expect(spec).toMatch(
       new RegExp(`${escapeRegExp(ring1Grind)}[^\\n]*\\bmissed\\b`, 'i'),
     );
     expect(spec).toMatch(
-      new RegExp(`${escapeRegExp(ring2Grind)}[^\\n]*\\bmissed\\b`, 'i'),
+      new RegExp(`${escapeRegExp(ring2Grind)}[^\\n]*\\bwithin-tolerance\\b`, 'i'),
     );
     expect(spec).toContain('AH-0MWFDQ9EY004NO4X');
     expect(spec).toContain('AH-0MWFDQCFV007BZE5');

@@ -2805,11 +2805,12 @@ carry into the build: a **reduced fleet** (power is discovered through play) and
 
 Design decisions agreed with the decision, carried by the build item:
 
-- **Ring timing is an evening's play, not a grind.** The **one-ring MVP is
-targeted at 40–60 minutes** for a semi-skilled player — six ≈5-minute
-deployments (≈30 minutes) plus builds, salvage and a few losses. **Ring 2 is
-larger at 12 hexes** (≈60 minutes of deployments plus 10–40 minutes of builds and
-losses, so ≈90–120 minutes), and ring *n* holds 6*n* hexes, so later rings take
+- **Ring timing is an evening's play, not a grind.** The budget is authored at
+the unit a player actually experiences — **5–15 minutes per hex deployment** —
+and each ring's window derives from its hex count: the **one-ring MVP (6
+hexes) is targeted at 30–90 minutes** for a semi-skilled player (six
+5–15-minute deployments plus builds, salvage and a few losses), **ring 2 (12
+hexes) at 60–180 minutes**, and ring *n* holds 6*n* hexes, so later rings take
 progressively longer. The campaign is therefore extendable rather than finite.
 - **Boss and weapon strength are known ahead.** Before committing, the player sees
 each hex's boss, its strengths and weaknesses, its aggression and exactly which
@@ -3500,19 +3501,24 @@ Measured baseline (seeds 1–3, competent bot; artifact
 
 | Ring | Line | Total mean (min–max) | Losses | Budget |
 |---|---|---|---|---|
-| 1 (6 hexes) | grind | **16.4 min** (15.7–16.9) | 6.0 | 40–60 · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | grind | **16.4 min** (15.7–16.9) | 6.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
 | 1 (6 hexes) | rush | **10.1 min** (9.8–10.6) | 1.0 | ring not secured |
-| 2 (12 hexes) | grind | **48.1 min** (42.4–58.4) | 12.0 | 90–120 · **missed** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | grind | **48.1 min** (42.4–58.4) | 12.0 | 60–180 · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
 | 2 (12 hexes) | rush | **22.3 min** (20.4–25.4) | 1.0 | ring not secured |
 
-The budget assertion states a **10 % tolerance** of each window's width —
-**±2 min** for ring 1 and **±3 min** for ring 2 — and the authored windows are
-**not** re-worded. With the one-level sortie the competent bot loses every
-sortie to enemy fire before the wave-5 clear, so **both grind budgets are
-`missed`**: ring 1 measures **16.4 min** against its 40–60 window and ring 2
-**48.1 min** against 90–120, each recorded here with its measured figure and
-re-ruled by its linked rebalancing item (**AH-0MWFDQ9EY004NO4X** ring 1,
-**AH-0MWFDQCFV007BZE5** ring 2) rather than silently re-worded. The headless
+The per-hex budget **5–15 minutes per deployment** (AH-0MWHU5AV800969NA)
+derives each ring's window from its hex count — ring 1, six hexes → **30–90 min**;
+ring 2, twelve → **60–180 min** — and the budget assertion states a **10 %
+tolerance** of each window's width: **±6 min** for ring 1 (30–90) and **±12 min**
+for ring 2 (60–180). The measured figures are **not** re-worded. With the
+one-level sortie the competent bot loses every sortie to enemy fire before the
+wave-5 clear: ring 1 grind **16.4 min** against its derived 30–90 window reads
+**`missed`**, while ring 2 grind **48.1 min** against 60–180 reads
+**`within-tolerance`** (48.1 ≥ the 48-minute tolerance floor) — a verdict
+change that is a consequence of the producer's new per-hex budget, computed by
+the harness, never a re-word of the old window. Each ruling is recorded with
+its measured figure and re-ruled by its linked rebalancing item
+(**AH-0MWFDQ9EY004NO4X** ring 1, **AH-0MWFDQCFV007BZE5** ring 2). The headless
 arena is the recorded evidence (intake assumption A1 and Q4); a human playtest
 is desirable but not a gate.
 
@@ -3626,11 +3632,12 @@ and banks the salvage. Both lines are playable in the shipped capture cycle —
 the captured weapon hex is the ring's capstone, so holding it opens the next
 ring (`isRingOpenable`) while the skipped hexes are carried with their own
 aggression and defenders for the frontier tick. The re-measured grind totals
-read **`missed`** against the authored windows (ring 1 **16.4 min** vs 40–60,
-ring 2 **48.1 min** vs 90–120) — each is recorded with its new measurement and
-re-ruled by its own linked rebalancing item (**AH-0MWFDQ9EY004NO4X** ring 1,
-**AH-0MWFDQCFV007BZE5** ring 2) rather than re-worded; the windows themselves
-stay authored.
+are re-rated against the per-hex budget's derived windows: ring 1 **16.4 min**
+vs 30–90 reads **`missed`**, ring 2 **48.1 min** vs 60–180 reads
+**`within-tolerance`** — each is recorded with its new measurement and re-ruled
+by its own linked rebalancing item (**AH-0MWFDQ9EY004NO4X** ring 1,
+**AH-0MWFDQCFV007BZE5** ring 2) rather than re-worded; the per-hex budget
+itself stays authored.
 
 #### Persistence: one key for hangar and ring
 
