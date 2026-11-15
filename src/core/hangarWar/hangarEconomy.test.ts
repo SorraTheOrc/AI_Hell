@@ -52,12 +52,14 @@ import {
   resolvePlayerStrength,
   snapshotDefenderUpgrades,
   buy,
+  type HangarPurchaseContext,
 } from './hangarEconomy';
 import {
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
   STARTER_WEAPON_ID,
   type HangarEntry,
+  type HangarPrice,
   type HullUpgrades,
   type StartingWeaponDefinition,
 } from '../../data/hangarCatalogue';
@@ -1074,5 +1076,551 @@ describe('snapshotDefenderUpgrades — clean rows for storage', () => {
     expect(defenderStatBuckets(snapshotDefenderUpgrades(raw))).toEqual(
       defenderStatBuckets(raw),
     );
+  });
+});
+
+// ── Economy upgrade rule — red-first contract tests (AH-0MWI5A6ZH00947X9) ──
+//
+// The parent epic's test-first slice: these specs pin the pure
+// `costToUpgrade` / `buyUpgrade` contract BEFORE the implementation lands (the
+// sibling red-first pattern of AH-0MWHF6X9N0082BRO). The implementation
+// feature (AH-0MWI5AAVO009UROY, "Pure upgrade economy rule") must satisfy
+// exactly the contract below, so the tests read the pending exports through
+// the module namespace and the red is an assertion failure, not a
+// module-loader collapse.
+//
+// ## The contract these tests pin
+//
+// The rule extends the existing economy beside `canBuy`/`buy`, sharing the
+// two-currency `HangarPrice` and `HangarPurchaseContext` conventions, and is
+// pure and total — it never mutates its inputs and returns a **fresh** hangar
+// (and a fresh level snapshot) on success *and* refusal.
+//
+// ```ts
+// export const MAX_PERMANENT_LEVEL: number;                    // the ONE shared ceiling
+// export function costToUpgrade(
+//   hangar: HangarState,
+//   id: string,
+//   levels: PermanentUpgradeLevels,                            // current permanent levels
+//   context: HangarPurchaseContext,
+// ): UpgradeCheck;                                             // { ok, reason, price, shortfall }
+// export function buyUpgrade(
+//   hangar: HangarState,
+//   id: string,
+//   levels: PermanentUpgradeLevels,
+//   context: HangarPurchaseContext,
+// ): UpgradeResult;                                            // { ok, reason, spent, hangar, levels }
+// ```
+//
+// `PermanentUpgradeLevels` uses the run path's own row vocabulary
+// (`Player.getWeaponLevels()` / `getPowerUpLevels()`): weapon rows and
+// power-up rows of `{ id, level }`. The levels are an **input** — the pure
+// economy never reads the run-path stores (type-only imports, same as the
+// `DefenderUpgradeSnapshot` seam).
+//
+// - **Ownership.** A weapon is owned when it is in `hangar.unlockedWeapons`
+//   (the hangar's owned set); a power-up is owned when it carries a
+//   `powerUps` row (the only place the hangar records a power-up level).
+// - **Refusal vocabulary** (each refused with a distinct reason, C2 AC2 and
+//   the parent AC1):
+//   - `unknown` — the id is neither a shipped weapon nor a power-up id;
+//   - `non-upgradeable` — a kind that carries **no permanent level to raise**
+//     (producer Q2 = (a): level-bearing permanent kinds only): the consumable
+//     kinds (Shield, Phase Shift, Teleport, Force Field, Mystery UFO, Thorn
+//     Field) and the field-pickup-only kind (Extra Life) — including the
+//     run path's temporary/timed-only stacks, which are never persisted as
+//     upgradeable levels (C3 AC5);
+//   - `unowned` — a level-bearing kind the fleet does not own;
+//   - `capped` — the kind's level is already at `MAX_PERMANENT_LEVEL`;
+//   - `unaffordable` — the deterministic next-level price exceeds the banked
+//     salvage (exact shortfall reported, nothing spent).
+//   Precedence: `unknown` → `non-upgradeable` → `unowned` → `capped` →
+//   `unaffordable` (the most fundamental reason first, like `canBuy`).
+// - **Price.** A deterministic two-currency price for the next level of an
+//   owned level-bearing kind, strictly rising per level toward the shared
+//   `MAX_PERMANENT_LEVEL` ceiling (parent AC1: "rising per level toward the
+//   shared max-permanent-level ceiling"). The ceiling is ONE authored number
+//   read by the run-path offer and the hangar economy (producer Q1 = (a)) —
+//   no parallel copy exists; these tests read the constant, never a literal.
+// - **Buy.** `buyUpgrade` spends the reported price and raises the kind's
+//   permanent level by **exactly one** (C2 AC4), returning a fresh hangar and
+//   a fresh level snapshot.
+// - **Attract booth.** `cheapestUsefulUnlock`/`decideHangarAction` stay
+//   byte-identical (C2 AC5): upgrades are player-action only, so the attract
+//   bot still buys the cheapest useful unlock and no upgrade vocabulary leaks
+//   into its decision.
+//
+// The sibling's guard tests (parameterised by the ceiling, refusing
+// hard-coded levels) go green once C2 exports the contract and stay green as
+// the regression guard.
+
+/** The refusal reasons the upgrade rule reports (each distinct, see above). */
+type UpgradeRefusal = 'unknown' | 'non-upgradeable' | 'unowned' | 'capped' | 'unaffordable';
+
+/** The fleet's current permanent levels — run-path row vocabulary, an input. */
+interface PermanentUpgradeLevels {
+  /** Permanent weapon levels (`Player.getWeaponLevels()` rows). */
+  readonly weapons: ReadonlyArray<{ readonly id: WeaponId; readonly level: number }>;
+  /** Permanent power-up levels (`Player.getPowerUpLevels()` rows). */
+  readonly powerUps: ReadonlyArray<{ readonly id: PowerUpId; readonly level: number }>;
+}
+
+/** The pure upgrade check: the deterministic price of the next level. */
+interface UpgradeCheck {
+  /** Whether the fleet can buy the next level right now. */
+  readonly ok: boolean;
+  /** The first blocking reason (`null` when `ok`). */
+  readonly reason: UpgradeRefusal | null;
+  /** The deterministic two-currency price of the next level. */
+  readonly price: HangarPrice;
+  /** What the fleet is missing when `reason` is `'unaffordable'`. */
+  readonly shortfall: HangarPrice;
+}
+
+/** The pure upgrade result: the raised level on a fresh hangar, or the refusal. */
+interface UpgradeResult {
+  /** Whether the upgrade happened. */
+  readonly ok: boolean;
+  /** The first blocking reason (`null` when `ok`). */
+  readonly reason: UpgradeRefusal | null;
+  /** What was spent (zero on refusal). */
+  readonly spent: HangarPrice;
+  /** The hangar after the upgrade (a fresh object; the input is untouched). */
+  readonly hangar: HangarState;
+  /** The level snapshot after the upgrade (a fresh object; the input is untouched). */
+  readonly levels: PermanentUpgradeLevels;
+}
+
+/** C2's pending exports, read structure-first so these specs run red, not crash. */
+const pendingUpgradeRuleContract = hangarEconomyModule as unknown as {
+  MAX_PERMANENT_LEVEL?: number;
+  costToUpgrade?: (
+    hangar: HangarState,
+    id: string,
+    levels: PermanentUpgradeLevels,
+    context: HangarPurchaseContext,
+  ) => UpgradeCheck;
+  buyUpgrade?: (
+    hangar: HangarState,
+    id: string,
+    levels: PermanentUpgradeLevels,
+    context: HangarPurchaseContext,
+  ) => UpgradeResult;
+};
+
+/**
+ * The level-bearing permanent power-up kinds (producer Q2 = (a)): every
+ * catalogue kind that is neither a consumable nor field-pickup-only — exactly
+ * bomb, speed_boost, magnet, mineral_scoop, smart_bomb, frenzy, chrono,
+ * salvage, strike and mining_laser today.
+ */
+const UPGRADEABLE_POWER_UPS: PowerUpId[] = Object.values(POWER_UP_CATALOGUE)
+  .filter((entry) => entry.consumable !== true && entry.fieldPickupOnly !== true)
+  .map((entry) => entry.id);
+
+/** The non-upgradeable kinds: every consumable plus the field-pickup-only kind. */
+const NON_UPGRADEABLE_POWER_UPS: PowerUpId[] = Object.values(POWER_UP_CATALOGUE)
+  .filter((entry) => entry.consumable === true || entry.fieldPickupOnly === true)
+  .map((entry) => entry.id);
+
+/** A level snapshot built from compact weapon/power-up level rows. */
+function levelsOf(
+  weapons: ReadonlyArray<[WeaponId, number]> = [],
+  powerUps: ReadonlyArray<[PowerUpId, number]> = [],
+): PermanentUpgradeLevels {
+  return {
+    weapons: weapons.map(([id, level]) => ({ id, level })),
+    powerUps: powerUps.map(([id, level]) => ({ id, level })),
+  };
+}
+
+/** A detached copy of a level snapshot, for the non-mutation assertions. */
+function cloneLevels(levels: PermanentUpgradeLevels): PermanentUpgradeLevels {
+  return {
+    weapons: levels.weapons.map((row) => ({ ...row })),
+    powerUps: levels.powerUps.map((row) => ({ ...row })),
+  };
+}
+
+/** The source text of `cheapestUsefulUnlock` from the pure economy module. */
+function cheapestUsefulUnlockSource(): string {
+  const home = path.join(process.cwd(), 'src/core/hangarWar/hangarEconomy.ts');
+  const source = fs.readFileSync(home, 'utf8');
+  const signature = 'export function cheapestUsefulUnlock(';
+  const start = source.indexOf(signature);
+  if (start === -1) throw new Error('missing cheapestUsefulUnlock in hangarEconomy.ts');
+  const open = source.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  throw new Error('unterminated cheapestUsefulUnlock in hangarEconomy.ts');
+}
+
+describe('economy upgrade rule — costToUpgrade and buyUpgrade (AH-0MWI5A6ZH00947X9, red-first)', () => {
+  const RICH = { bankedMinerals: 1_000_000, bankedCores: 10_000 };
+  const context: HangarPurchaseContext = { ringIndex: 1 };
+
+  it('exports the upgrade contract from the pure economy (AC4 red: absent today)', () => {
+    // Red first: none of the three exports exist on dev yet, so the module
+    // namespace reads `undefined` and every definedness assertion fails until
+    // the implementation feature lands.
+    const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL;
+    expect(ceiling).toBeDefined();
+    expect(pendingUpgradeRuleContract.costToUpgrade).toBeDefined();
+    expect(pendingUpgradeRuleContract.buyUpgrade).toBeDefined();
+  });
+
+  it('authorises the ceiling as one shared, positive integer of at least 2 levels (Q1 = (a))', () => {
+    const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL;
+    expect(ceiling).toBeDefined();
+    // A ceiling of one would make "buy to upgrade" impossible — the feature
+    // is the ability to raise an owned kind *at all*, so at least one
+    // purchasable step must exist. The exact value is C2's balance choice.
+    expect(ceiling!).toBeGreaterThanOrEqual(2);
+    expect(Number.isInteger(ceiling)).toBe(true);
+  });
+
+  it('reports a deterministic two-currency price for an owned level-bearing weapon (AC1)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    const hangar = hangarWith({ ...RICH });
+    const levels = levelsOf([['spread', 2]]);
+
+    const check = costToUpgrade!(hangar, 'spread', levels, context);
+
+    // Deterministic: the same state always prices the same next level.
+    expect(costToUpgrade!(hangar, 'spread', levels, context)).toEqual(check);
+    expect(check.ok).toBe(true);
+    expect(check.reason).toBeNull();
+    expect(check.shortfall).toEqual({ minerals: 0, cores: 0 });
+    // A two-currency price in the existing conventions: non-negative integers.
+    expect(Number.isInteger(check.price.minerals)).toBe(true);
+    expect(Number.isInteger(check.price.cores)).toBe(true);
+    expect(check.price.minerals).toBeGreaterThanOrEqual(0);
+    expect(check.price.cores).toBeGreaterThanOrEqual(0);
+    expect(purchaseWeight(check.price)).toBeGreaterThan(0);
+  });
+
+  it('reports a deterministic price for an owned level-bearing power-up too (AC1)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    // bomb is a level-bearing permanent kind (Q2 = (a)); a powerUps row is its
+    // ownership evidence.
+    const check = costToUpgrade!(hangarWith({ ...RICH }), 'bomb', levelsOf([], [['bomb', 2]]), context);
+
+    expect(check.ok).toBe(true);
+    expect(check.reason).toBeNull();
+    expect(purchaseWeight(check.price)).toBeGreaterThan(0);
+  });
+
+  it('prices each further level strictly higher, toward the shared ceiling (AC1)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL!;
+    const hangar = hangarWith({ ...RICH });
+
+    const prices: HangarPrice[] = [];
+    for (let level = 0; level < ceiling; level += 1) {
+      const check = costToUpgrade!(hangar, 'spread', levelsOf([['spread', level]]), context);
+      expect(check.ok, `level ${level}`).toBe(true);
+      prices.push(check.price);
+    }
+
+    // "Rising per level toward the shared max-permanent-level ceiling": every
+    // step from level 0 to the ceiling's last purchasable level costs more in
+    // salvage weight than the one before it.
+    for (let level = 1; level < prices.length; level += 1) {
+      expect(
+        purchaseWeight(prices[level]),
+        `price for level ${level}`,
+      ).toBeGreaterThan(purchaseWeight(prices[level - 1]));
+    }
+  });
+
+  it('buys the final level at the ceiling minus one up to the cap (AC2 capped boundary, AC4)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+    const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL!;
+    const hangar = hangarWith({ ...RICH });
+    const atCapMinusOne = levelsOf([['spread', ceiling - 1]]);
+
+    const check = costToUpgrade!(hangar, 'spread', atCapMinusOne, context);
+    expect(check.ok).toBe(true);
+
+    const result = buyUpgrade!(hangar, 'spread', atCapMinusOne, context);
+    expect(result.ok).toBe(true);
+    expect(result.levels.weapons).toEqual([{ id: 'spread', level: ceiling }]);
+    expect(result.spent).toEqual(check.price);
+  });
+
+  it('refuses with the distinct capped reason at the shared ceiling (AC2)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+    const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL!;
+    const atMax = levelsOf([['spread', ceiling]]);
+
+    // Even with unlimited salvage the ceiling refuses: the reason is the level
+    // cap, never money — and it is a distinct reason from unaffordable.
+    const check = costToUpgrade!(hangarWith({ ...RICH }), 'spread', atMax, context);
+    expect(check).toMatchObject({ ok: false, reason: 'capped' });
+    expect(check.reason).not.toBe('unaffordable');
+
+    const result = buyUpgrade!(hangarWith({ ...RICH }), 'spread', atMax, context);
+    expect(result).toMatchObject({ ok: false, reason: 'capped', spent: { minerals: 0, cores: 0 } });
+  });
+
+  it('reports capped before unaffordable when both apply (precedence)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL!;
+    const broke = hangarWith({ bankedMinerals: 0, bankedCores: 0 });
+
+    const check = costToUpgrade!(broke, 'spread', levelsOf([['spread', ceiling]]), context);
+
+    // The most fundamental reason wins, mirroring canBuy's precedence: a kind
+    // already at the ceiling cannot be offered a price even when the fleet
+    // could not pay one anyway.
+    expect(check).toMatchObject({ ok: false, reason: 'capped' });
+  });
+
+  it('raises an owned level by exactly one and spends the reported price (AC4)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+    const hangar = hangarWith({ bankedMinerals: 1_000, bankedCores: 10 });
+    const levels = levelsOf([['spread', 2]], [['bomb', 1]]);
+
+    const check = costToUpgrade!(hangar, 'spread', levels, context);
+    expect(check.ok).toBe(true);
+
+    const result = buyUpgrade!(hangar, 'spread', levels, context);
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeNull();
+    // One level: 2 → 3, and the untouched power-up row is unchanged.
+    expect(result.levels.weapons).toEqual([{ id: 'spread', level: 3 }]);
+    expect(result.levels.powerUps).toEqual([{ id: 'bomb', level: 1 }]);
+    // The spent price is exactly what costToUpgrade reported.
+    expect(result.spent).toEqual(check.price);
+    // Both currencies are deducted from the fresh hangar; ownership is unchanged.
+    expect(result.hangar.bankedMinerals).toBe(hangar.bankedMinerals - check.price.minerals);
+    expect(result.hangar.bankedCores).toBe(hangar.bankedCores - check.price.cores);
+    expect(result.hangar.unlockedWeapons).toEqual(hangar.unlockedWeapons);
+    expect(result.hangar.activeLoadout).toEqual(hangar.activeLoadout);
+  });
+
+  it('refuses an unaffordable upgrade, reporting the exact shortfall and spending nothing (AC2)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+
+    const broke = hangarWith({ bankedMinerals: 0, bankedCores: 0 });
+    const partly = hangarWith({ bankedMinerals: 10, bankedCores: 0 });
+    const levels = levelsOf([['spread', 1]]);
+
+    // Total shortfall: the fleet holds nothing, so the shortfall is the price.
+    const brokeCheck = costToUpgrade!(broke, 'spread', levels, context);
+    expect(brokeCheck).toMatchObject({ ok: false, reason: 'unaffordable' });
+    expect(brokeCheck.shortfall).toEqual(brokeCheck.price);
+    const brokeResult = buyUpgrade!(broke, 'spread', levels, context);
+    expect(brokeResult).toMatchObject({ ok: false, reason: 'unaffordable', spent: { minerals: 0, cores: 0 } });
+    expect(brokeResult.hangar.bankedMinerals).toBe(0);
+    expect(brokeResult.hangar.bankedCores).toBe(0);
+
+    // Partial shortfall: only the missing amount is reported per currency.
+    const partlyCheck = costToUpgrade!(partly, 'spread', levels, context);
+    expect(partlyCheck).toMatchObject({ ok: false, reason: 'unaffordable' });
+    expect(partlyCheck.shortfall).toEqual({
+      minerals: Math.max(0, partlyCheck.price.minerals - 10),
+      cores: partlyCheck.price.cores,
+    });
+  });
+
+  it('refuses an id that is neither a shipped weapon nor a power-up as unknown (AC2)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+
+    const check = costToUpgrade!(hangarWith({ ...RICH }), 'not_a_real_kind', levelsOf(), context);
+    expect(check).toMatchObject({ ok: false, reason: 'unknown' });
+
+    const result = buyUpgrade!(hangarWith({ ...RICH }), 'not_a_real_kind', levelsOf(), context);
+    expect(result).toMatchObject({ ok: false, reason: 'unknown', spent: { minerals: 0, cores: 0 } });
+  });
+
+  it('refuses a known level-bearing kind the fleet does not own as unowned (AC2)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+    // ricochet is a shipped weapon the default hangar does not own; bomb has
+    // no powerUps row (no permanent level held), so it is not owned either.
+    const hangar = hangarWith({ bankedMinerals: 500, bankedCores: 5 });
+
+    expect(costToUpgrade!(hangar, 'ricochet', levelsOf(), context)).toMatchObject({
+      ok: false,
+      reason: 'unowned',
+    });
+    expect(costToUpgrade!(hangar, 'bomb', levelsOf(), context)).toMatchObject({
+      ok: false,
+      reason: 'unowned',
+    });
+    const result = buyUpgrade!(hangar, 'ricochet', levelsOf(), context);
+    expect(result).toMatchObject({ ok: false, reason: 'unowned', spent: { minerals: 0, cores: 0 } });
+  });
+
+  it('refuses consumable and field-pickup-only kinds as non-upgradeable, even when owned (AC2, Q2 = (a))', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+
+    // shield is a consumable (charge pool, no permanent level) and extra_life
+    // is field-pickup-only; even owned with a level row and unlimited salvage,
+    // the refusal is about the kind — there is no level to raise — and it is
+    // distinct from 'unowned' and from 'capped'.
+    for (const id of ['shield', 'extra_life'] as const) {
+      const levels = levelsOf([], [[id, 3]]);
+      const check = costToUpgrade!(hangarWith({ ...RICH }), id, levels, context);
+      expect(check, id).toMatchObject({ ok: false, reason: 'non-upgradeable' });
+      expect(check.reason, id).not.toBe('unowned');
+      expect(check.reason, id).not.toBe('capped');
+
+      const result = buyUpgrade!(hangarWith({ ...RICH }), id, levels, context);
+      expect(result, id).toMatchObject({
+        ok: false,
+        reason: 'non-upgradeable',
+        spent: { minerals: 0, cores: 0 },
+      });
+    }
+  });
+
+  it('offers a price for every shipped weapon and every level-bearing power-up (AC1 coverage)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    // Every shipped weapon is level-bearing: owning it (in the hangar set)
+    // makes the next level purchasable, whatever the weapon id.
+    const allWeapons = hangarWith({
+      ...RICH,
+      unlockedWeapons: [...(Object.keys(WEAPON_CATALOGUE) as WeaponId[])],
+    });
+    for (const id of Object.keys(WEAPON_CATALOGUE) as WeaponId[]) {
+      const check = costToUpgrade!(allWeapons, id, levelsOf([[id, 0]]), context);
+      expect(check.ok, `weapon ${id}`).toBe(true);
+    }
+
+    // Every level-bearing permanent power-up (Q2 = (a)) is purchasable when
+    // owned via a level row; a newly added catalogue kind must opt in or the
+    // coverage assertion fails.
+    expect(UPGRADEABLE_POWER_UPS.length).toBeGreaterThan(0);
+    for (const id of UPGRADEABLE_POWER_UPS) {
+      const check = costToUpgrade!(hangarWith({ ...RICH }), id, levelsOf([], [[id, 0]]), context);
+      expect(check.ok, `power-up ${id}`).toBe(true);
+    }
+  });
+
+  it('refuses every consumable and field-pickup-only power-up as non-upgradeable (Q2 coverage)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+
+    expect(NON_UPGRADEABLE_POWER_UPS.length).toBeGreaterThan(0);
+    for (const id of NON_UPGRADEABLE_POWER_UPS) {
+      const levels = levelsOf([], [[id, 1]]);
+      const check = costToUpgrade!(hangarWith({ ...RICH }), id, levels, context);
+      expect(check.reason, id).toBe('non-upgradeable');
+
+      const result = buyUpgrade!(hangarWith({ ...RICH }), id, levels, context);
+      expect(result.ok, id).toBe(false);
+      expect(result.spent, id).toEqual({ minerals: 0, cores: 0 });
+    }
+  });
+
+  it('never mutates the input hangar or level snapshot on a successful upgrade (AC3)', () => {
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(buyUpgrade).toBeDefined();
+    const hangar = hangarWith({ bankedMinerals: 1_000, bankedCores: 10 });
+    const levels = levelsOf([['spread', 2]], [['bomb', 1]]);
+    const mineralsBefore = hangar.bankedMinerals;
+    const coresBefore = hangar.bankedCores;
+    const weaponsBefore = [...hangar.unlockedWeapons];
+    const levelsBefore = cloneLevels(levels);
+
+    const result = buyUpgrade!(hangar, 'spread', levels, context);
+
+    expect(result.ok).toBe(true);
+    // The inputs are byte-identical after the purchase.
+    expect(hangar.bankedMinerals).toBe(mineralsBefore);
+    expect(hangar.bankedCores).toBe(coresBefore);
+    expect(hangar.unlockedWeapons).toEqual(weaponsBefore);
+    expect(levels).toEqual(levelsBefore);
+  });
+
+  it('returns a fresh hangar and a fresh level snapshot (AC3)', () => {
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(buyUpgrade).toBeDefined();
+    const hangar = hangarWith({ bankedMinerals: 1_000, bankedCores: 10 });
+    const levels = levelsOf([['spread', 2]]);
+
+    const result = buyUpgrade!(hangar, 'spread', levels, context);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar).not.toBe(hangar);
+    expect(result.hangar.unlockedWeapons).not.toBe(hangar.unlockedWeapons);
+    expect(result.levels).not.toBe(levels);
+    expect(result.levels.weapons).not.toBe(levels.weapons);
+  });
+
+  it('never mutates inputs on a refused upgrade either, and returns fresh objects (AC3)', () => {
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(buyUpgrade).toBeDefined();
+    const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL!;
+    const hangar = hangarWith({ bankedMinerals: 0, bankedCores: 0 });
+    const levels = levelsOf([['spread', ceiling]]);
+    const mineralsBefore = hangar.bankedMinerals;
+    const levelsBefore = cloneLevels(levels);
+
+    const result = buyUpgrade!(hangar, 'spread', levels, context);
+
+    expect(result.reason).toBe('capped');
+    expect(hangar.bankedMinerals).toBe(mineralsBefore);
+    expect(levels).toEqual(levelsBefore);
+    // Even a refusal returns a fresh hangar and a fresh level snapshot.
+    expect(result.hangar).not.toBe(hangar);
+    expect(result.levels).not.toBe(levels);
+  });
+
+  it('exports the upgrade contract from hangarEconomy, single-homed (AC1, no parallel copy)', () => {
+    const home = path.join(process.cwd(), 'src/core/hangarWar/hangarEconomy.ts');
+    const source = fs.readFileSync(home, 'utf8');
+    // The ceiling constant and both helpers are authored — and exported — once,
+    // from the pure module (the same single-homing the sibling guards pin for
+    // the snapshot conversion). Red until C2 lands the feature here.
+    expect(source).toMatch(/export (?:const|function) MAX_PERMANENT_LEVEL/);
+    expect(source).toMatch(/export function costToUpgrade\(/);
+    expect(source).toMatch(/export function buyUpgrade\(/);
+  });
+
+  it('keeps the attract-booth decision byte-identical (C2 AC5: upgrades are player-action only)', () => {
+    // The upgrade rule is a separate branch beside canBuy/buy: it must not
+    // leak into the attract decision, so the cheapestUsefulUnlock body never
+    // references the upgrade vocabulary — the booth still buys the cheapest
+    // useful unlock (its behaviour is pinned by the cheapestUsefulUnlock
+    // describe block above).
+    const body = cheapestUsefulUnlockSource();
+    expect(body).not.toMatch(/costToUpgrade|buyUpgrade|MAX_PERMANENT_LEVEL/);
   });
 });
