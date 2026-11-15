@@ -827,6 +827,66 @@ spawner is unbounded. It is recorded to show the shipped scene under real
 late-game pressure, and it is the run whose profile exposes the demo-bot and
 dev-telemetry hotspots.
 
+#### Demo-bot steering (AH-0MW2DC28M00161W6)
+
+**`Recorded:`** commit `8a071a63` (game code; this documentation change touches
+no game code) · 2026-11-14 · headless Chromium 140 (SwiftShader software WebGL)
+· CPU throttle 1× · AH-0MW2DC28M00161W6.
+
+The demo (attract-mode) bot's steering was the **largest single game-code
+function** in this run ([Ranked hotspots](#ranked-hotspots) #9): every decision
+samples a 17-bearing fan, and each `evaluateDirection` re-derived the
+**direction-independent** geometry — each hazard's and each in-flight shot's
+wrapped delta from the player and its distance — once per bearing, i.e. 17×
+more often than the value changes. The fix (AH-0MWGUN4P2003003P) computes that
+geometry **once per decision tick** (`buildSteeringDerived`) and threads it
+through the whole fan, and slims `trackHazardVelocities` so it reuses its
+Map/Set and mutates estimates in place instead of allocating every tick. It
+changed no arithmetic (bit-identical `DirectionSafety`, pinned by
+`src/ai/framework/competent/steeringParity.test.ts`) and no observable flight
+behaviour (seeded closed-loop determinism, pinned by
+`src/ai/botSteeringLateGameDeterminism.test.ts`).
+
+The identical harness command as the before-baseline (seed `1`, `--seconds 60
+--warmup 3`, throttle 1×):
+
+```bash
+node scripts/measure-performance.mjs --scene PlayScene \
+  --setup '{"demo":true,"seed":1,"startLevel":10}' --seconds 60 --warmup 3 \
+  --profile <out>.cpuprofile --json
+```
+
+Share is of the measured window, with the share of JS in brackets. The live
+demo's enemy count varies run to run (its `dt` comes from the real frame clock,
+so two runs are not bit-comparable — that is what the closed-loop determinism
+vehicle above is for), so the rows are read as a range and the **JS share** —
+load-robust because the JS composition does not move with host load — carries
+the honest comparison:
+
+| Run | Host load | Mean enemies | `evaluateDirection` | `trackHazardVelocities` | Combined |
+|---|---|---|---|---|---|
+| before 1 | 13.03 | 664 | 0.19 % [4.21 %] · 115.0 ms | 0.08 % [1.70 %] · 46.5 ms | **0.27 %** |
+| before 2 | 14.62 | 576 | 0.18 % [3.89 %] · 108.1 ms | 0.05 % [1.16 %] · 32.3 ms | **0.23 %** |
+| after 1 | 11.42 | 790 | 0.10 % [2.05 %] · 61.0 ms | 0.06 % [1.17 %] · 34.8 ms | **0.16 %** |
+| after 2 | 9.27 | 611 | 0.08 % [1.93 %] · 47.0 ms | 0.04 % [0.96 %] · 23.2 ms | **0.12 %** |
+| after 3 | 9.05 | 651 | 0.07 % [1.86 %] · 42.7 ms | 0.04 % [1.07 %] · 24.5 ms | **0.11 %** |
+
+**Verdict.** At matched load (after-2/3 vs before-1/2) the combined bot cost
+fell **~50–58 %** in absolute ms (`evaluateDirection` alone **~55–63 %**), and
+the combined **window** share is **0.11–0.16 %** — far below the ≥ 50 %-lower
+bar against the recorded 0.66 % and comfortably under the ≤ 0.33 % target.
+`evaluateDirection`'s **JS share halved** (mean 4.05 % → 1.95 %), which is the
+load-robust honest-metric signal: the same function does less work, it is not
+re-attributed. The precomputed-geometry builder (`buildSteeringDerived`) does
+not appear in the profile at all — the saved 17× redundant `wrappedAxisDelta`/
+`Math.hypot` work simply disappears — and the per-bearing closest-approach
+solve remains (as `closestApproachFromDelta`, the pre-change `closestApproach`
+renamed) because it is genuinely per-bearing, not redundant.
+
+> Two further after runs taken while the host was heavily loaded (load 24.1 and
+> 28.2) recorded combined window shares of 0.33 % and 0.27 % — every run, at
+> every load measured, is at or below the ≤ 0.33 % bar.
+
 ### Where the frame time goes
 
 CPU profiles of the runs above (share of the measured window, %):
@@ -1412,7 +1472,7 @@ Source lines are the **TypeScript** declaration lines, resolved by function name
 | 6 | GC / allocation pressure | V8 `(garbage collector)` | 0.40 % [2.7 %] | **Done** — the per-frame transient arrays are gone; the paired GC bucket is unchanged (see [Per-frame allocations](#per-frame-allocations-ah-0mvxv0f0y004nent)) | AH-0MVXV0F0Y004NENT (low) |
 | 7 | HUD / UI refresh, player auto-defence | `src/ui/HUD.ts:405` (`refresh`), `src/scenes/core/CombatScene.ts:243` (`_updateAutoDefence`) | 0.02–0.03 % **with no loadout rows**; 9.06 % of the window (~40 % of JS) once rows are present — see [Per-frame HUD rows](#per-frame-hud-rows-ah-0mvxv0ffj0066ec8) | Redraw the rows only when the rendered state changes (done); auto-defence measured too small to matter | AH-0MVXV0FFJ0066EC8 |
 | 8 | Minerals update/collect | `src/scenes/core/mineralLayer.ts:130` (`collectMinerals`), `src/scenes/gym/core/GymFormationScene.ts:1464` (`_updateMinerals`) | 0.01 % in the gym (minerals disabled); 0.06 % in the busier run | None needed | — |
-| 9 | **Demo-bot steering** (attract mode only) | `src/ai/framework/competent/steering.ts:327` (`evaluateDirection`), `src/ai/framework/hazardVelocity.ts:74` (`trackHazardVelocities`) | PlayScene demo run: 0.47 % [5.2 %] — the largest single game-code function there | Evaluate less often / reuse the world snapshot | AH-0MW2DC28M00161W6 (low) |
+| 9 | **Demo-bot steering** (attract mode only) | `src/ai/framework/competent/steering.ts:327` (`evaluateDirection`), `src/ai/framework/hazardVelocity.ts:74` (`trackHazardVelocities`) | PlayScene demo run: was 0.47 % [5.2 %] — the largest single game-code function there | **Done** — direction-independent geometry computed once per tick instead of once per fan bearing (17×); `evaluateDirection` JS share halved, combined window share 0.11–0.16 % at matched load ≤ 0.33 % (see [Demo-bot steering](#demo-bot-steering-ah-0mw2dc28m00161w6)) | AH-0MW2DC28M00161W6 (low) |
 | 10 | **Dev telemetry serialisation** (dev builds only) | `src/telemetry/sinks.ts` (`linesToNdjson`, `write`), `src/telemetry/devStreamProtocol.ts` (`splitNdjsonLines`), `src/telemetry/redact.ts:93` (`sanitiseObject`), `src/ai/botSnapshot.ts:459` (`deepFreeze`) | PlayScene demo run: ≈ 0.7 % [≈ 7 % of JS] | **Done** — the dev streamer builds each part from a bounded window and defers it off the rAF task: the whole-buffer `splitNdjsonLines`+`linesToNdjson` serialisation 2.55 % → 0.46 % of JS (see [Dev telemetry off-frame and bounded windows](#dev-telemetry-off-frame-and-bounded-windows-ah-0mwdfajac005r3ni)) | AH-0MWDFAJAC005R3NI (high) |
 | 11 | **One `Graphics` object per enemy body**, re-walked, re-tessellated and re-batched every frame for a silhouette that never changes | `src/entities/BaseEnemy.ts` (`addSharedGraphics`), each archetype's `_drawBody()`, `src/entities/Phaser.ts` (ring + core) | **≈ 9.5 % of the 4× mobile window** (≈ 47 % of JS): `GraphicsWebGLRenderer` 3.6–3.9 %, `batch` 2.7–2.9 %, Graphics render-node `run` ×3 2.8–3.2 % | **Done** — every body silhouette is baked once into a cached texture and drawn as one sprite; Graphics-pipeline self time **9.5 % → 2.8 %** (see [Baked enemy body textures](#baked-enemy-body-textures-ah-0mw2iryah0055wcn)) | AH-0MW2IRYAH0055WCN (high) |
 
