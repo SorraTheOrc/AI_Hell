@@ -1226,4 +1226,65 @@ describe('GymHexWar — hex variety surfaces (AH-0MWEW58WD003NFXS, AH-0MWEW5I1F0
       .find((entry) => entry.includes('hex-r3-4'));
     expect(line).toContain('landmark: cache');
   });
+
+  // ── Capture resolutions through the shipped capture cycle (parity) ──
+  it('banks a contracted hex’s bonus through the shipped capture cycle', async () => {
+    const scene = await bootHexWar({
+      payload: varietyPayload(),
+      definitions: VARIETY_RING_DEFINITIONS,
+    });
+    const before = scene.getPayload().hangar.bankedMinerals;
+
+    const result = scene.captureHex('hex-r3-6', 'hull-1');
+
+    expect(result.ok).toBe(true);
+    expect(result.contractBonus).toEqual({ minerals: 150, cores: 1 });
+    expect(scene.getPayload().hangar.bankedMinerals).toBe(before + 150);
+  });
+
+  it('holds a fortress hex only on the second capture pass', async () => {
+    const scene = await bootHexWar({
+      payload: varietyPayload(),
+      definitions: VARIETY_RING_DEFINITIONS,
+    });
+
+    const first = scene.captureHex('hex-r3-3', 'hull-1');
+    expect(first.ok).toBe(false);
+    expect(first.reason).toBe('fortress-incomplete');
+    const afterFirst = scene
+      .getPayload()
+      .ring.hexes.find((hex) => hex.id === 'hex-r3-3')!;
+    expect(afterFirst.held).toBe(false);
+    expect(afterFirst.capturePasses).toBe(1);
+
+    const second = scene.captureHex('hex-r3-3', 'hull-1');
+    expect(second.ok).toBe(true);
+    expect(
+      scene.getPayload().ring.hexes.find((hex) => hex.id === 'hex-r3-3')!.held,
+    ).toBe(true);
+  });
+
+  it('pays a cache payout instead of granting, leaving the fleet unchanged', async () => {
+    const scene = await bootHexWar({
+      payload: varietyPayload(),
+      definitions: VARIETY_RING_DEFINITIONS,
+    });
+    const before = scene.getPayload();
+    const fleetBefore = {
+      hulls: [...before.hangar.unlockedHulls],
+      weapons: [...before.hangar.unlockedWeapons],
+      modifiers: [...before.hangar.ownedModifiers],
+    };
+
+    const result = scene.captureHex('hex-r3-4', 'hull-1');
+
+    expect(result.ok).toBe(true);
+    expect(result.grant).toBeNull();
+    expect(result.cachePayout).toEqual({ minerals: 140, cores: 0 });
+    const after = scene.getPayload();
+    expect(after.hangar.unlockedHulls).toEqual(fleetBefore.hulls);
+    expect(after.hangar.unlockedWeapons).toEqual(fleetBefore.weapons);
+    expect(after.hangar.ownedModifiers).toEqual(fleetBefore.modifiers);
+    expect(after.hangar.bankedMinerals).toBe(before.hangar.bankedMinerals + 140);
+  });
 });
