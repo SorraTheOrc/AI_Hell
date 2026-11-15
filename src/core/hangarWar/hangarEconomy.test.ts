@@ -38,6 +38,7 @@ import {
   DEFENDER_UPGRADE_WEIGHTS,
   cheapestUsefulUnlock,
   canBuy,
+  defenderStatBuckets,
   deriveDefenderRating,
   defenderRatingFromUpgrades,
   equipHull,
@@ -49,6 +50,7 @@ import {
   resolveActiveHull,
   resolveActiveLoadout,
   resolvePlayerStrength,
+  snapshotDefenderUpgrades,
   buy,
 } from './hangarEconomy';
 import {
@@ -972,5 +974,105 @@ describe('defender upgrade snapshot — stat buckets and derivation (AH-0MWHF6X9
       .filter((file) => file !== home)
       .filter((file) => weightedUse.test(fs.readFileSync(file, 'utf8')));
     expect(elsewhere.map((file) => path.relative(process.cwd(), file))).toEqual([]);
+  });
+});
+
+// ── snapshotDefenderUpgrades — the stored snapshot is clean ──────────────
+//
+// The metrics above pin the table, the reducer and the derivation; these
+// specs pin the normaliser the capture chain stores (parent
+// AH-0MWH42DWQ004SAOJ C3/C4): unknown ids dropped, counts collapsed to `0`
+// (and zero rows removed, so an upgrade-free run normalises to empty lists
+// and the field is omitted), duplicates collapsed last-wins.
+
+describe('snapshotDefenderUpgrades — clean rows for storage', () => {
+  it('drops unknown ids and collapses unusable counts, removing zero rows', () => {
+    const clean = snapshotDefenderUpgrades({
+      weaponLevels: [
+        { id: 'cannon', level: 2 },
+        { id: 'not_a_weapon' as WeaponId, level: 3 },
+        { id: 'spread', level: -1 },
+        { id: 'railgun', level: 1.9 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 2 },
+        { id: 'bogus_kind' as PowerUpId, level: 4 },
+      ],
+      consumablePools: [
+        { id: 'mystery_ufo', charges: Number.NaN },
+        { id: 'force_field', charges: 2 },
+      ],
+    });
+
+    expect(clean).toEqual({
+      // unknown weapon dropped; spread -1 → 0 → removed; railgun 1.9 → 1.
+      weaponLevels: [
+        { id: 'cannon', level: 2 },
+        { id: 'railgun', level: 1 },
+      ],
+      // unknown kind dropped; shield survives.
+      powerUpLevels: [{ id: 'shield', level: 2 }],
+      // mystery_ufo NaN → 0 → removed.
+      consumablePools: [{ id: 'force_field', charges: 2 }],
+    });
+  });
+
+  it('collapses duplicate ids to their last value, keeping first-seen order', () => {
+    const clean = snapshotDefenderUpgrades({
+      weaponLevels: [
+        { id: 'cannon', level: 1 },
+        { id: 'spread', level: 2 },
+        { id: 'cannon', level: 5 },
+      ],
+      powerUpLevels: [],
+      consumablePools: [],
+    });
+
+    expect(clean.weaponLevels).toEqual([
+      { id: 'cannon', level: 5 },
+      { id: 'spread', level: 2 },
+    ]);
+  });
+
+  it('normalises an upgrade-free run to all-empty lists (field omitted)', () => {
+    const clean = snapshotDefenderUpgrades({
+      weaponLevels: [{ id: 'cannon', level: 0 }],
+      powerUpLevels: [{ id: 'phase_shift', level: 0 }],
+      consumablePools: [{ id: 'phase_shift', charges: 0 }],
+    });
+
+    expect(clean).toEqual({
+      weaponLevels: [],
+      powerUpLevels: [],
+      consumablePools: [],
+    });
+  });
+
+  it('keeps the normalised snapshot reducer-equivalent to the raw one', () => {
+    const raw: hangarEconomyModule.DefenderUpgradeSnapshot = {
+      // Unique classified rows plus one unknown and one negative row: the
+      // normaliser only drops/cleans those, so a unique-row snapshot must
+      // derive exactly the buckets the raw snapshot derives.
+      weaponLevels: [
+        { id: 'cannon', level: 2 },
+        { id: 'spread', level: -1 },
+        { id: 'railgun', level: 1.9 },
+        { id: 'unknown_weapon' as WeaponId, level: 9 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 1 },
+        { id: 'extra_life', level: 1 },
+      ],
+      consumablePools: [
+        { id: 'shield', charges: 2 },
+        { id: 'mystery_ufo', charges: 1 },
+      ],
+    };
+
+    // The stored (normalised) snapshot and the raw victory snapshot derive
+    // the same buckets, so persisting the clean rows never changes the rating.
+    expect(defenderStatBuckets(snapshotDefenderUpgrades(raw))).toEqual(
+      defenderStatBuckets(raw),
+    );
   });
 });

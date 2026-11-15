@@ -37,7 +37,15 @@
  *   when nothing is buyable, so the bot moves on instead of stalling.
  * - **Defender rating.** One pure formula over a hull's hangar upgrades
  *   ({@link defenderRatingFromUpgrades}), so the ring resolver (B3) has no
- *   second source of truth for "how strong is the bot left in this hex".
+ *   second source of truth for "how strong is the bot left in this hex". A
+ *   run's permanent-upgrade snapshot feeds the same formula through
+ *   {@link defenderStatBuckets} + {@link defenderRatingFromSnapshot} (parent
+ *   AH-0MWH42DWQ004SAOJ), so a left-behind bot keeps what the run earned
+ *   under the hull's own vocabulary.
+ * - **Upgrade buckets.** {@link UPGRADE_STAT_BUCKETS} is the one documented
+ *   table that classifies every `WeaponId` and `PowerUpId` into a hull stat
+ *   bucket (firepower/armour/systems); a kind's bucket is authored there and
+ *   nowhere else.
  * - **Player strength.** {@link resolvePlayerStrength} reuses the same
  *   defender-rating formula over the **active** hull's hangar progression,
  *   plus equipped defence modifiers and a documented per-weapon term, so the
@@ -57,6 +65,11 @@ import {
   type HullUpgrades,
 } from '../../data/hangarCatalogue';
 import type { HangarLoadout, HangarState } from './types';
+// Type-only imports: erased at compile time, so the module stays pure — no
+// runtime dependency on the weapon/power-up catalogues or their scene-bound
+// consumers (the upgrade tables below only need the id unions).
+import type { PowerUpId } from '../../powerups/types';
+import type { WeaponId } from '../../utils/weapons';
 
 /**
  * Minerals one banked mini-boss core is worth when comparing two prices.
@@ -109,6 +122,253 @@ export const DEFENDER_UPGRADE_WEIGHTS: Readonly<HullUpgrades> = Object.freeze({
   firepower: 2,
   systems: 2,
 });
+
+// ── Upgrade → stat-bucket mapping (parent AH-0MWH42DWQ004SAOJ) ────────────
+//
+// The pure-core conversion behind "the bot keeps what the run earned": one
+// documented table classifies every shipped id into a hull stat bucket, a
+// reducer turns a victory snapshot into `{ armour, firepower, systems }`, and
+// the snapshot-aware derivation adds the weighted total to the hull rating.
+// Bucket arithmetic and the table live here and nowhere else, so retuning
+// defence strength never needs a code search or a save migration.
+
+/**
+ * A permanent-upgrade contribution bucket — the three sides of the defender
+ * rating a run's snapshot can feed.
+ */
+export type UpgradeStatBucket = 'armour' | 'firepower' | 'systems';
+
+/** The reducer's output: one point-weighted total per stat bucket. */
+export interface UpgradeStatTotals {
+  /** Total armour contribution (defensive levels and charges). */
+  armour: number;
+  /** Total firepower contribution (permanent weapon levels). */
+  firepower: number;
+  /** Total systems contribution (utility levels and charges). */
+  systems: number;
+}
+
+/**
+ * The run's permanent-upgrade snapshot at the boss-victory moment — the raw
+ * rows `Player.getWeaponLevels()`, `Player.getPowerUpLevels()` and
+ * `PowerUpLevelStore.snapshotConsumablePools()` produce.
+ *
+ * The rows are the **raw** run state (levels/charges), never pre-computed
+ * buckets: bucket arithmetic stays in {@link defenderStatBuckets}, so a
+ * stored number can never disagree with the formula. The consumable-pool
+ * rows are structurally compatible with `ConsumablePoolSnapshot` (the extra
+ * recharge fields are ignored here).
+ */
+export interface DefenderUpgradeSnapshot {
+  /** Permanent weapon levels (any shipped weapon → firepower). */
+  readonly weaponLevels: ReadonlyArray<{
+    readonly id: WeaponId;
+    readonly level: number;
+  }>;
+  /** Permanent power-up levels (defensive kinds → armour, others → systems). */
+  readonly powerUpLevels: ReadonlyArray<{
+    readonly id: PowerUpId;
+    readonly level: number;
+  }>;
+  /** Owned consumable charges (defensive charges → armour, others → systems). */
+  readonly consumablePools: ReadonlyArray<{
+    readonly id: PowerUpId;
+    readonly charges: number;
+  }>;
+}
+
+/**
+ * The upgrade → stat-bucket mapping table — the **only** place a kind's
+ * bucket is authored (parent AH-0MWH42DWQ004SAOJ).
+ *
+ * One frozen row per shipped id: every `WeaponId` and every `PowerUpId`. A
+ * test fails if a catalogue id is ever added without a row, and the reducer
+ * treats an unclassified id as contributing nothing, so a new kind can never
+ * silently feed the rating.
+ *
+ * The buckets (design of record, parent AH-0MWH42DWQ004SAOJ):
+ *
+ * - every permanent **weapon** level → `'firepower'` — the hex shoots back
+ *   with the guns the run collected;
+ * - a permanent level of a **defensive** power-up kind (Shield, Force Field,
+ *   Thorn Field, Bomb, Smart Bomb, Phase Shift) → `'armour'` — the hex holds
+ *   on stored durability and return fire;
+ * - a permanent level of **every other** power-up kind (including
+ *   `extra_life`) → `'systems'` — support and utility feed the hex
+ *   indirectly.
+ *
+ * The same table classifies **consumable charges** (Shield / Force Field /
+ * Thorn Field charges → armour, Mystery UFO charges → systems), so a charge
+ * pool never needs its own second table.
+ */
+export const UPGRADE_STAT_BUCKETS: Readonly<Record<string, UpgradeStatBucket>> =
+  Object.freeze({
+    // ── Weapons — every permanent weapon level feeds firepower ──
+    // The defender never flies; its offence is the return fire of the guns
+    // the run collected, whatever their pattern.
+    cannon: 'firepower',
+    spread: 'firepower',
+    dual: 'firepower',
+    rapid: 'firepower',
+    wave_laser: 'firepower',
+    ricochet: 'firepower',
+    cluster: 'firepower',
+    options: 'firepower',
+    nova: 'firepower',
+    mortar: 'firepower',
+    arc: 'firepower',
+    rear_guard: 'firepower',
+    broadside: 'firepower',
+    railgun: 'firepower',
+    shard_swarm: 'firepower',
+    heavy_slug: 'firepower',
+    // ── Defensive power-up kinds — the hex holds on durability ──
+    // Shield / Force Field / Thorn Field are stored defence; Bomb and Smart
+    // Bomb clear what threatens a held hex; Phase Shift dodges the danger
+    // feed. All read as survivability, so the rating buys armour.
+    shield: 'armour',
+    force_field: 'armour',
+    thorns: 'armour',
+    bomb: 'armour',
+    smart_bomb: 'armour',
+    phase_shift: 'armour',
+    // ── Every other power-up kind — support feeds systems ──
+    // Speed, economy, utility and damage buffs never decide a held hex's
+    // fate directly; they feed its support layer (systems).
+    speed_boost: 'systems',
+    teleport: 'systems',
+    extra_life: 'systems',
+    magnet: 'systems',
+    mineral_scoop: 'systems',
+    mystery_ufo: 'systems',
+    frenzy: 'systems',
+    chrono: 'systems',
+    salvage: 'systems',
+    strike: 'systems',
+    mining_laser: 'systems',
+  });
+
+/**
+ * The (id-carrying) row shape the snapshot's three lists share, and the
+ * bound {@link snapshotDefenderUpgrades} hands to its dedupe helper.
+ */
+type UpgradeCountRow = { readonly id: string };
+
+/**
+ * Collapses a row list to clean rows: unknown ids dropped, counts normalised
+ * to non-negative integers, zero-contribution rows removed and duplicate ids
+ * collapsed to their **last** value, keeping first-seen order.
+ *
+ * A row that normalises to `0` (level/charge ≤ 0 or unusable) is dropped as
+ * well, so an upgrade-free run normalises to empty lists and the persisted
+ * snapshot field can be omitted whenever the normalised snapshot is empty.
+ *
+ * @param rows — the raw rows (possibly corrupt).
+ * @param table — the id → bucket mapping; an id the table does not classify
+ *   is unknown and dropped.
+ * @param countOf — the count (level/charges) of a row.
+ * @param withCount — rebuilds a row from an id and its clean count.
+ */
+function normaliseUpgradeRows<T extends UpgradeCountRow>(
+  rows: ReadonlyArray<T>,
+  table: Readonly<Record<string, UpgradeStatBucket>>,
+  countOf: (row: T) => number,
+  withCount: (id: string, count: number) => T,
+): T[] {
+  const seen = new Map<string, number>();
+  const order: string[] = [];
+  for (const row of rows) {
+    if (table[row.id] === undefined) continue;
+    const count = toCount(countOf(row));
+    if (count <= 0) continue;
+    if (!seen.has(row.id)) order.push(row.id);
+    seen.set(row.id, count);
+  }
+  return order.map((id) => withCount(id, seen.get(id) ?? 0));
+}
+
+/**
+ * Reduces a run's permanent-upgrade snapshot into one point total per stat
+ * bucket (parent AH-0MWH42DWQ004SAOJ).
+ *
+ * `1` point per weapon level, power-up level or consumable charge, routed by
+ * {@link UPGRADE_STAT_BUCKETS}. Unknown ids are ignored (an unclassified row
+ * contributes nothing — the injectable `table` is the negative-coverage test
+ * seam), and unusable counts collapse to `0` through the same {@link toCount}
+ * normalisation as the purchase rules, so a corrupt save can never produce a
+ * negative or fractional contribution.
+ *
+ * @param snapshot — the victory-moment permanent upgrades (raw rows).
+ * @param table — the id → bucket mapping (injectable for tests); defaults to
+ *   the shipped {@link UPGRADE_STAT_BUCKETS}.
+ * @returns one non-negative total per bucket.
+ */
+export function defenderStatBuckets(
+  snapshot: DefenderUpgradeSnapshot,
+  table: Readonly<Record<string, UpgradeStatBucket>> = UPGRADE_STAT_BUCKETS,
+): UpgradeStatTotals {
+  const totals: UpgradeStatTotals = { armour: 0, firepower: 0, systems: 0 };
+
+  for (const { id, level } of snapshot.weaponLevels) {
+    const bucket = table[id];
+    if (bucket !== undefined) totals[bucket] += toCount(level);
+  }
+  for (const { id, level } of snapshot.powerUpLevels) {
+    const bucket = table[id];
+    if (bucket !== undefined) totals[bucket] += toCount(level);
+  }
+  for (const { id, charges } of snapshot.consumablePools) {
+    const bucket = table[id];
+    if (bucket !== undefined) totals[bucket] += toCount(charges);
+  }
+
+  return totals;
+}
+
+/**
+ * Normalises a raw victory snapshot for storage: unknown ids dropped, unusable
+ * counts collapsed to `0`, zero-contribution rows removed and duplicate id
+ * rows collapsed to their last value.
+ *
+ * The persisted snapshot is normalised **before** it is stored (parent
+ * AH-0MWH42DWQ004SAOJ, C3/C4), so the hex defender carries clean rows and the
+ * reducer never sees a duplicate id. Only rows with a positive normalised
+ * count survive, so an upgrade-free run normalises to all-empty lists and the
+ * stored field is omitted whenever this normalised snapshot is empty. Bucket
+ * arithmetic stays in {@link defenderStatBuckets} — this normaliser only
+ * guarantees shape and validity, never derives a rating.
+ *
+ * @param snapshot — the raw rows the run produced (possibly corrupt).
+ * @param table — the id → bucket mapping; unknown ids are dropped against it
+ *   (injectable for tests); defaults to {@link UPGRADE_STAT_BUCKETS}.
+ * @returns a clean snapshot with only classified ids, positive integer counts
+ *   and unique rows (first-seen order, last value wins).
+ */
+export function snapshotDefenderUpgrades(
+  snapshot: DefenderUpgradeSnapshot,
+  table: Readonly<Record<string, UpgradeStatBucket>> = UPGRADE_STAT_BUCKETS,
+): DefenderUpgradeSnapshot {
+  return {
+    weaponLevels: normaliseUpgradeRows(
+      snapshot.weaponLevels,
+      table,
+      (row) => row.level,
+      (id, count) => ({ id: id as WeaponId, level: count }),
+    ),
+    powerUpLevels: normaliseUpgradeRows(
+      snapshot.powerUpLevels,
+      table,
+      (row) => row.level,
+      (id, count) => ({ id: id as PowerUpId, level: count }),
+    ),
+    consumablePools: normaliseUpgradeRows(
+      snapshot.consumablePools,
+      table,
+      (row) => row.charges,
+      (id, count) => ({ id: id as PowerUpId, charges: count }),
+    ),
+  };
+}
 
 /** The context a purchase is evaluated in (only the ring gate today). */
 export interface HangarPurchaseContext {
@@ -509,6 +769,30 @@ export function defenderRatingFromUpgrades(
     toCount(upgrades.firepower) * DEFENDER_UPGRADE_WEIGHTS.firepower +
     toCount(upgrades.systems) * DEFENDER_UPGRADE_WEIGHTS.systems
   );
+}
+
+/**
+ * The defender rating of a hull **plus** its run's permanent-upgrade
+ * contribution (parent AH-0MWH42DWQ004SAOJ).
+ *
+ * Delegates to {@link defenderRatingFromUpgrades} with the snapshot's summed
+ * {@link defenderStatBuckets} as the upgrade levels, so there is exactly one
+ * arithmetic expression and one weight source: `hullRating + 3×armour +
+ * 2×firepower + 2×systems`, with the weights read from
+ * {@link DEFENDER_UPGRADE_WEIGHTS} rather than restated. The total is 0-safe:
+ * the reducer already collapses unusable counts, so an empty snapshot returns
+ * the bare `hullRating`.
+ *
+ * @param hullRating — the defender's base rating from the hull's catalogue
+ *   upgrades (`defenderRatingFromUpgrades` / `deriveDefenderRating`).
+ * @param snapshot — the victory-moment permanent-upgrade rows.
+ * @returns the combined defender rating.
+ */
+export function defenderRatingFromSnapshot(
+  hullRating: number,
+  snapshot: DefenderUpgradeSnapshot,
+): number {
+  return defenderRatingFromUpgrades(hullRating, defenderStatBuckets(snapshot));
 }
 
 /**
