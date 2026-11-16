@@ -11,6 +11,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ASSAULT_HANGAR_FALLS_CONSEQUENCE,
+  ASSAULT_HANGAR_FALLS_HEADLINE,
+  ASSAULT_REPELLED_CONSEQUENCE,
+  ASSAULT_REPELLED_HEADLINE,
   DEFENCE_REPORT_CONTINUE_KEY,
   DEFENCE_REPORT_CONTINUE_LABEL,
   DEFENCE_REPORT_NO_BATTLE_LINE,
@@ -19,8 +23,20 @@ import {
   retakeTargetHex,
   retakeTargetIsAnswerable,
 } from './defenceReport';
-import { runFrontierTick, type FrontierTickRecord, type HexDefenceRecord } from './hexDefence';
+import {
+  DEFAULT_FRONTIER_TUNING,
+  resolveHangarAssault,
+  runFrontierTick,
+  type FrontierTickRecord,
+  type FrontierTuning,
+  type HangarAssaultResolution,
+  type HexDefenceRecord,
+} from './hexDefence';
 import { aggressionScenario } from './__fixtures__/aggressionScenarios';
+import {
+  winBonusLine,
+  winBonusReportOptions,
+} from '../../test/hangarWinBonusContract';
 import { resolvePlayerStrength } from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
 import type { HangarWarPayload, HexState } from './types';
@@ -85,6 +101,9 @@ function attack(
   return {
     outcome: 'fell',
     defenderRating: 2,
+    effectiveDefenderRating: 2,
+    skillBonusTotal: 0,
+    appliedSkills: [],
     attackingForce: 4,
     aggression: 3,
     aggressionMultiplierPercent: 145,
@@ -94,6 +113,7 @@ function attack(
     hexId: 'hex-held',
     attackerOriginId: 'hex-frontier',
     attackerOrigin: { q: 0, r: 1 },
+    attackerType: null,
     source: 'frontier',
     ...overrides,
   };
@@ -190,6 +210,170 @@ describe('buildDefenceReport — every number comes from the record', () => {
     const lost = buildDefenceReport(lostPayload, makeRecord([attack()]));
     expect(lost.rows[0].held).toBe(false);
     expect(lost.rows[0].label).toContain('· LOST');
+  });
+});
+
+describe('buildDefenceReport — defending-bot skills (AH-0MVWZYJ740037EZ1)', () => {
+  /** The stored skill both grants on the held hex are trained against. */
+  const mawSkill = {
+    id: 'maw-warded',
+    name: 'Maw-warded',
+    bossType: 'maw-of-ashes',
+    bonus: 5,
+  };
+
+  /** A record whose hold only the skill achieved (effective ≥ attack, stored < attack). */
+  function skilledHold(): HexDefenceRecord {
+    return attack({
+      outcome: 'held',
+      defenderRating: 2,
+      effectiveDefenderRating: 7,
+      skillBonusTotal: 5,
+      appliedSkills: [mawSkill],
+      attackingForce: 4,
+      attackStrength: 6,
+      margin: 1,
+      attackerType: 'maw-of-ashes',
+    });
+  }
+
+  it('publishes the applied skill, its bonus and the effective rating used', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([skilledHold()]));
+    const row = model.rows[0];
+
+    expect(row.skillBonusTotal).toBe(5);
+    expect(row.effectiveDefenderRating).toBe(7);
+    expect(row.appliedSkills).toEqual([mawSkill]);
+    expect(row.attackerType).toBe('maw-of-ashes');
+    // The stored rating is still published unchanged beside the effective one.
+    expect(row.defenderRating).toBe(2);
+  });
+
+  it('renders the skill and the effective rating into the row label', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([skilledHold()]));
+    const label = model.rows[0].label;
+
+    // The numbers that decided the hold: whose skill, how much, against what.
+    expect(label).toContain('skill Maw-warded +5 vs maw-of-ashes');
+    expect(label).toContain('bot 7');
+    expect(label).toContain('margin +1');
+    // The stored bot rating is still legible (a hold that *needed* the bonus).
+    expect(label).toContain('vs bot 2');
+  });
+
+  it('adds no skill line to an unmodified row (a plain hold stays byte-identical)', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([attack()]));
+    const row = model.rows[0];
+
+    expect(row.skillBonusTotal).toBe(0);
+    expect(row.appliedSkills).toEqual([]);
+    expect(row.skillLine).toBeNull();
+    expect(row.label).not.toContain('skill ');
+  });
+
+  // ── Run-upgrade breakdown (AH-0MWH42DWQ004SAOJ, C6) ────────────────
+  //
+  // The bot that defended the hex keeps the run's permanent upgrades, and the
+  // report publishes them on the row: armour/firepower/systems, the upgrade
+  // rating contribution and the (already shown) defender rating. The numbers
+  // come from the one reducer, never a scene-local copy.
+
+  it('publishes the defender upgrade breakdown on an upgraded row', () => {
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([
+        attack({
+          defenderRating: 12,
+          effectiveDefenderRating: 12,
+          outcome: 'held',
+          margin: 6,
+          attackStrength: 6,
+          source: 'pending',
+          upgradeSnapshot: {
+            weaponLevels: [{ id: 'spread', level: 1 }],
+            powerUpLevels: [{ id: 'shield', level: 1 }],
+            consumablePools: [{ id: 'shield', charges: 2 }],
+          },
+        }),
+      ]),
+    );
+
+    const row = model.rows[0];
+    // The raw snapshot is published, and the derived numbers are the reducer's.
+    expect(row.upgradeSnapshot).toEqual({
+      weaponLevels: [{ id: 'spread', level: 1 }],
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+      consumablePools: [{ id: 'shield', charges: 2 }],
+    });
+    expect(row.upgradeBreakdown).toEqual({
+      armour: 3, // shield level 1 + 2 charges
+      firepower: 1, // spread level 1
+      systems: 0,
+      ratingContribution: 11, // 3*3 + 2*1 + 2*0
+    });
+    // The rendered line names the buckets and the contribution; the row's
+    // existing `vs bot 12` carries the total.
+    expect(row.label).toContain('upgrade armour 3 · firepower 1 · systems 0 (+11)');
+    expect(row.label).toContain('vs bot 12');
+  });
+
+  it('stays byte-identical for a row without a stored upgrade snapshot', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([attack()]));
+    const row = model.rows[0];
+
+    expect(row.upgradeSnapshot).toBeNull();
+    expect(row.upgradeBreakdown).toBeNull();
+    expect(row.label).not.toContain('upgrade armour');
+  });
+
+  it('renders a corrupt stored snapshot as a zero breakdown without throwing', () => {
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([
+        attack({
+          upgradeSnapshot: {
+            weaponLevels: [{ id: 'spread', level: Number.NEGATIVE_INFINITY }],
+            powerUpLevels: [{ id: 'shield', level: 'seven' as unknown as number }],
+            consumablePools: [{ id: 'shield', charges: Number.NaN }],
+          },
+        }),
+      ]),
+    );
+
+    const row = model.rows[0];
+    expect(row.upgradeSnapshot).not.toBeNull();
+    expect(row.upgradeBreakdown).toEqual({
+      armour: 0,
+      firepower: 0,
+      systems: 0,
+      ratingContribution: 0,
+    });
+    expect(row.label).toContain('upgrade armour 0 · firepower 0 · systems 0 (+0)');
+  });
+
+  it('names every applied skill when a hull and a modifier grant both', () => {
+    const hullSkill = {
+      id: 'bulwark-line-breaker',
+      name: 'Line-breaker',
+      bossType: 'the-dawnbreaker',
+      bonus: 4,
+    };
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([
+        attack({
+          outcome: 'held',
+          effectiveDefenderRating: 11,
+          skillBonusTotal: 9,
+          appliedSkills: [hullSkill, mawSkill],
+          attackerType: 'the-dawnbreaker',
+          margin: 5,
+        }),
+      ]),
+    );
+
+    expect(model.rows[0].skillBonusTotal).toBe(9);
+    expect(model.rows[0].label).toContain('skill Line-breaker + Maw-warded +9');
   });
 });
 
@@ -358,5 +542,255 @@ describe('buildDefenceReport — the redistributed tick passthrough (AH-0MWBBUAU
     expect(model.beatableCeiling).toBe(
       beatableAggressionCeiling(model.playerStrength),
     );
+  });
+});
+
+describe('buildDefenceReport — the hangar assault record (AH-0MWEZZ9EB00604U0)', () => {
+  /** The resolver's tuning with jitter disabled, so the arithmetic is exact. */
+  const NO_JITTER: FrontierTuning = {
+    ...DEFAULT_FRONTIER_TUNING,
+    jitterPercent: 0,
+  };
+
+  /** A repelled, jitter-free assault (12 held defence against a massed 5). */
+  function repelledAssault(): HangarAssaultResolution {
+    return resolveHangarAssault(
+      { defenderSum: 12, attackerBase: 5, aggression: 0, seed: 1 },
+      NO_JITTER,
+    );
+  }
+
+  /** A failed, jitter-free assault (3 held defence against a massed 5). */
+  function fellAssault(): HangarAssaultResolution {
+    return resolveHangarAssault(
+      { defenderSum: 3, attackerBase: 5, aggression: 0, seed: 1 },
+      NO_JITTER,
+    );
+  }
+
+  it('carries every assault figure verbatim from the resolver record', () => {
+    const resolution = resolveHangarAssault(
+      { defenderSum: 9, attackerBase: 4, aggression: 3, seed: 7 },
+    );
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+    const section = model.assault;
+    expect(section).not.toBeNull();
+    expect(section!.outcome).toBe(resolution.outcome);
+    expect(section!.defenderSum).toBe(resolution.defenderSum);
+    expect(section!.attackerBase).toBe(resolution.attackerBase);
+    expect(section!.aggression).toBe(resolution.aggression);
+    expect(section!.aggressionMultiplierPercent).toBe(
+      resolution.aggressionMultiplierPercent,
+    );
+    expect(section!.jitterPercent).toBe(resolution.jitterPercent);
+    expect(section!.attackStrength).toBe(resolution.attackStrength);
+    expect(section!.margin).toBe(resolution.margin);
+    expect(model.assaultLine).toBe(section!.label);
+  });
+
+  it('renders the held-ring defender sum against the massed force, with no re-derivation', () => {
+    const resolution = repelledAssault();
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+    const { numbersLine } = model.assault!;
+
+    expect(numbersLine).toContain(`defender sum ${resolution.defenderSum}`);
+    expect(numbersLine).toContain(`massed ${resolution.attackerBase}`);
+    expect(numbersLine).toContain(`AGG ${resolution.aggression}`);
+    expect(numbersLine).toContain('100%');
+    expect(numbersLine).toContain('no jitter');
+    expect(numbersLine).toContain(`= ${resolution.attackStrength}`);
+    expect(numbersLine).toContain(`margin +${resolution.margin}`);
+    expect(numbersLine).toContain('REPELLED');
+  });
+
+  it('renders a repelled assault as the legible ring-won line', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: repelledAssault(),
+    });
+
+    expect(model.ringWon).toBe(true);
+    expect(model.campaignReset).toBe(false);
+    expect(model.assault!.ringWon).toBe(true);
+    expect(model.assault!.campaignReset).toBe(false);
+    expect(model.assault!.headline).toBe(ASSAULT_REPELLED_HEADLINE);
+    expect(model.assaultLine).toContain('RING WON');
+    expect(model.assaultLine).toContain('repelled');
+    expect(model.assaultLine).toContain(ASSAULT_REPELLED_CONSEQUENCE);
+    expect(model.assaultLine).not.toContain('FULL CAMPAIGN RESET');
+  });
+
+  it('renders a failed assault as the hangar-falls full campaign reset announcement', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: fellAssault(),
+    });
+
+    expect(model.ringWon).toBe(false);
+    expect(model.campaignReset).toBe(true);
+    expect(model.assault!.ringWon).toBe(false);
+    expect(model.assault!.campaignReset).toBe(true);
+    expect(model.assault!.headline).toBe(ASSAULT_HANGAR_FALLS_HEADLINE);
+    expect(model.assaultLine).toContain('HANGAR FALLS');
+    expect(model.assaultLine).toContain('FULL CAMPAIGN RESET');
+    expect(model.assaultLine).toContain('wiped');
+    expect(model.assaultLine).toContain(ASSAULT_HANGAR_FALLS_CONSEQUENCE);
+    expect(model.assaultLine).not.toContain('RING WON');
+  });
+
+  it('renders an exact tie as a repel (margin 0 holds the line)', () => {
+    const resolution = resolveHangarAssault(
+      { defenderSum: 5, attackerBase: 5, aggression: 0, seed: 1 },
+      NO_JITTER,
+    );
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+
+    expect(resolution.outcome).toBe('repelled');
+    expect(model.assault!.outcome).toBe('repelled');
+    expect(model.assault!.margin).toBe(0);
+    expect(model.assault!.numbersLine).toContain('margin 0');
+    expect(model.ringWon).toBe(true);
+    expect(model.campaignReset).toBe(false);
+  });
+
+  it('leaves a quiet / no-assault report unchanged', () => {
+    const baseline = buildDefenceReport(makePayload(), makeRecord([]));
+    const explicitNull = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: null,
+    });
+
+    expect(explicitNull).toEqual(baseline);
+    expect(baseline.assault).toBeNull();
+    expect(baseline.assaultLine).toBeNull();
+    expect(baseline.ringWon).toBe(false);
+    expect(baseline.campaignReset).toBe(false);
+    expect(baseline.quiet).toBe(true);
+    expect(baseline.summaryLine).toBe('QUIET — no hex was attacked this tick');
+  });
+
+  it('still reports the tick\'s own rows alongside the assault section', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([attack()]), {
+      assault: repelledAssault(),
+    });
+
+    expect(model.rows).toHaveLength(1);
+    expect(model.attackedCount).toBe(1);
+    expect(model.fellCount).toBe(1);
+    expect(model.summaryLine).toBe('ATTACKED 1 · HELD 0 · FELL 1');
+    expect(model.assault).not.toBeNull();
+  });
+
+  it('never stalls the attract bot on an assault report', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: repelledAssault(),
+    });
+
+    // The report keeps exactly one action, focused by default.
+    expect(model.focusOrder).toEqual([DEFENCE_REPORT_CONTINUE_KEY]);
+    expect(model.defaultFocusKey).toBe(DEFENCE_REPORT_CONTINUE_KEY);
+    expect(model.continueLabel).toBe(DEFENCE_REPORT_CONTINUE_LABEL);
+
+    const fellModel = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: fellAssault(),
+    });
+    expect(fellModel.focusOrder).toEqual([DEFENCE_REPORT_CONTINUE_KEY]);
+  });
+
+  it('never mutates the resolution and is deterministic', () => {
+    const resolution = repelledAssault();
+    const before = { ...resolution };
+
+    const first = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+    const second = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: resolution,
+    });
+
+    expect(resolution).toEqual(before);
+    expect(first).toEqual(second);
+  });
+
+  it('is total on a corrupt assault record', () => {
+    const corrupt = {
+      outcome: 'fell',
+      defenderSum: Number.NaN,
+      attackerBase: -4,
+      aggression: Number.POSITIVE_INFINITY,
+      aggressionMultiplierPercent: Number.NaN,
+      jitterPercent: Number.NaN,
+      attackStrength: -2,
+      margin: 1.9,
+    } as unknown as HangarAssaultResolution;
+
+    const model = buildDefenceReport(makePayload(), makeRecord([]), {
+      assault: corrupt,
+    });
+    const section = model.assault!;
+
+    expect(section.defenderSum).toBe(0);
+    expect(section.attackerBase).toBe(0);
+    expect(section.aggression).toBe(0);
+    expect(section.aggressionMultiplierPercent).toBe(0);
+    expect(section.jitterPercent).toBe(0);
+    expect(section.attackStrength).toBe(0);
+    expect(section.margin).toBe(1);
+    expect(section.outcome).toBe('fell');
+    expect(model.campaignReset).toBe(true);
+  });
+});
+
+/**
+ * The banked win bonus on a winning landing (parent AH-0MWEVNBMM000QFO2,
+ * producer Q3 = b, recorded 2026-11-13; test-first child AH-0MWF2PA5H008XCXW).
+ *
+ * A winning hangar deployment no longer presents a run-scoped reward overlay:
+ * it banks a fixed mineral bonus instead and the report **announces** it before
+ * the map becomes interactive, so the win reads as real progress. The report is
+ * pure, so the announcement is one more line on the model
+ * (`winBonusLine`) built from one more input (`winBonusMinerals`).
+ *
+ * **LANDED.** The announcement case was authored red under Vitest's `it.fails`
+ * by the test-first child and flipped to a plain `it` when
+ * AH-0MWF2Q2JC008MAJE landed the `winBonusLine` field. The no-bonus cases were
+ * plain `it` throughout: an ordinary report and a lost deployment's report
+ * carry no bonus line.
+ */
+describe('buildDefenceReport — the banked win bonus (AH-0MWF2PA5H008XCXW)', () => {
+  it('announces the banked bonus as minerals before the map', () => {
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([]),
+      winBonusReportOptions(40),
+    );
+
+    expect(winBonusLine(model)).toMatch(/win bonus banked:\s*\+40 minerals/i);
+  });
+
+  it('carries no bonus line on an ordinary between-sortie report', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([]));
+
+    expect(winBonusLine(model)).toBeNull();
+  });
+
+  it('carries no bonus line for a zero or negative bonus', () => {
+    expect(
+      winBonusLine(
+        buildDefenceReport(makePayload(), makeRecord([]), winBonusReportOptions(0)),
+      ),
+    ).toBeNull();
+    expect(
+      winBonusLine(
+        buildDefenceReport(
+          makePayload(),
+          makeRecord([]),
+          winBonusReportOptions(-5),
+        ),
+      ),
+    ).toBeNull();
   });
 });

@@ -14,15 +14,21 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AXIAL_DIRECTIONS,
+  HEX_LANDMARK_IDS,
+  HEX_PERSONALITY_IDS,
+  HEX_PERSONALITY_MECHANICS,
   HexRingDefinitionError,
   areNeighbours,
   createRingState,
   generateRing,
   hexNeighbours,
+  isHexLandmarkId,
+  isHexPersonalityId,
   ringCoordinates,
   ringDepth,
   ringSize,
   validateRingDefinitions,
+  type HexContractDefinition,
   type HexRingDefinition,
 } from './hexRing';
 
@@ -324,6 +330,158 @@ describe('validateRingDefinitions', () => {
     expect(ok).toBe(false);
     const invalid = issues.filter((issue) => issue.kind === 'invalid-definition');
     expect(invalid.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('hex variety vocabulary (AH-0MVWZYQN8007SXIG)', () => {
+  /** A valid ring-1 contract: an objective and a positive salvage bonus. */
+  const SAMPLE_CONTRACT: HexContractDefinition = Object.freeze({
+    objective: 'Break the siege line and take the hex',
+    bonusSalvage: 120,
+    bonusCores: 1,
+  });
+
+  /** Issue kinds reported for `definitions`, so a test reads one list. */
+  function issueKinds(
+    definitions: readonly HexRingDefinition[],
+  ): readonly string[] {
+    return validateRingDefinitions(1, definitions).issues.map(
+      (issue) => issue.kind,
+    );
+  }
+
+  it('publishes the bounded personality vocabulary, with exactly the two mechanics', () => {
+    expect([...HEX_PERSONALITY_IDS]).toEqual([
+      'sentinel',
+      'berserker',
+      'tempest',
+      'nebula',
+      'summoner',
+    ]);
+    // Q1 = b caps the shared combat mechanics at the design's two reference
+    // examples, so the shared core can never grow an unbounded mechanic set.
+    expect([...HEX_PERSONALITY_MECHANICS]).toEqual(['nebula', 'summoner']);
+    for (const mechanic of HEX_PERSONALITY_MECHANICS) {
+      expect(isHexPersonalityId(mechanic)).toBe(true);
+    }
+    expect([...HEX_LANDMARK_IDS]).toEqual(['fortress', 'cache']);
+  });
+
+  it('accepts every authored personality id on an otherwise valid ring', () => {
+    for (const personality of HEX_PERSONALITY_IDS) {
+      const definitions = withDefinition(definitionsFor(1), 0, { personality });
+      expect(
+        validateRingDefinitions(1, definitions),
+        `${personality} is an authored personality`,
+      ).toEqual({ ok: true, issues: [] });
+    }
+  });
+
+  it('accepts an optional contract and one of each landmark on a ring', () => {
+    const withVariety = [
+      { personality: 'nebula' as const, contract: SAMPLE_CONTRACT },
+      { contract: SAMPLE_CONTRACT },
+      { landmark: 'fortress' as const },
+      { landmark: 'cache' as const },
+    ];
+    let definitions = definitionsFor(1);
+    withVariety.forEach((override, index) => {
+      definitions = withDefinition(definitions, index, override);
+    });
+    expect(validateRingDefinitions(1, definitions)).toEqual({
+      ok: true,
+      issues: [],
+    });
+  });
+
+  it('rejects an unknown personality id loudly', () => {
+    const definitions = withDefinition(definitionsFor(1), 0, {
+      personality: 'sneaky' as never,
+    });
+    const issues = validateRingDefinitions(1, definitions).issues;
+    const unknown = issues.find(
+      (issue) => issue.kind === 'unknown-personality',
+    );
+    expect(unknown).toBeDefined();
+    expect(unknown!.hexId).toBe(definitions[0].id);
+    expect(unknown!.message).toContain('sneaky');
+  });
+
+  it('rejects a malformed contract instead of repairing it', () => {
+    const malformed: unknown[] = [
+      'not a contract',
+      { bonusSalvage: 10, bonusCores: 1 },
+      { objective: '   ', bonusSalvage: 10, bonusCores: 1 },
+      { objective: 'no reward', bonusSalvage: 0, bonusCores: 0 },
+      { objective: 'negative', bonusSalvage: -5, bonusCores: 1 },
+      { objective: 'fractional', bonusSalvage: 1.5, bonusCores: 1 },
+      { objective: 'bad cores', bonusSalvage: 10, bonusCores: '1' },
+    ];
+    for (const contract of malformed) {
+      const definitions = withDefinition(definitionsFor(1), 0, {
+        contract: contract as HexContractDefinition,
+      });
+      expect(
+        issueKinds(definitions),
+        `contract ${JSON.stringify(contract)} is rejected`,
+      ).toContain('invalid-contract');
+    }
+  });
+
+  it('rejects an unknown landmark id', () => {
+    const definitions = withDefinition(definitionsFor(1), 0, {
+      landmark: 'tower' as never,
+    });
+    const issue = validateRingDefinitions(1, definitions).issues.find(
+      (candidate) => candidate.kind === 'invalid-landmark',
+    );
+    expect(issue).toBeDefined();
+    expect(issue!.hexId).toBe(definitions[0].id);
+  });
+
+  it('rejects a cache landmark on the ring weapon hex', () => {
+    const definitions = definitionsFor(1);
+    const weaponIndex = definitions.findIndex((hex) => hex.weaponHex);
+    const cacheWeaponHex = withDefinition(definitions, weaponIndex, {
+      landmark: 'cache',
+    });
+    const issue = validateRingDefinitions(1, cacheWeaponHex).issues.find(
+      (candidate) => candidate.kind === 'landmark-weapon-hex',
+    );
+    expect(issue).toBeDefined();
+    expect(issue!.hexId).toBe(definitions[weaponIndex].id);
+  });
+
+  it('rejects a second landmark of the same kind on one ring', () => {
+    let definitions = withDefinition(definitionsFor(1), 0, {
+      landmark: 'fortress',
+    });
+    definitions = withDefinition(definitions, 1, { landmark: 'fortress' });
+    const issue = validateRingDefinitions(1, definitions).issues.find(
+      (candidate) => candidate.kind === 'duplicate-landmark',
+    );
+    expect(issue).toBeDefined();
+    expect(issue!.hexId).toBe(definitions[1].id);
+    expect(issue!.message).toContain(definitions[0].id);
+  });
+
+  it('keeps a variety-free ring valid (rings 1 and 2 stay backward compatible)', () => {
+    for (const ringIndex of [1, 2]) {
+      const definitions = definitionsFor(ringIndex);
+      expect(validateRingDefinitions(ringIndex, definitions)).toEqual({
+        ok: true,
+        issues: [],
+      });
+    }
+  });
+
+  it('recognises authored ids through its guards', () => {
+    expect(isHexPersonalityId('nebula')).toBe(true);
+    expect(isHexPersonalityId('Nebula')).toBe(false);
+    expect(isHexPersonalityId(undefined)).toBe(false);
+    expect(isHexLandmarkId('fortress')).toBe(true);
+    expect(isHexLandmarkId('cache')).toBe(true);
+    expect(isHexLandmarkId('tower')).toBe(false);
   });
 });
 

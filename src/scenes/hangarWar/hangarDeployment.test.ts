@@ -15,6 +15,7 @@ import { VALID_HANGAR_WAR_PAYLOAD } from '../../core/hangarWar/fixtures';
 import type { HangarWarPayload } from '../../core/hangarWar/types';
 import { createDefaultPayload } from '../../core/hangarWar/hangarWarStore';
 import {
+  DEPLOYMENT_WAVE_COUNT,
   HANGAR_WAR_DEPLOYMENT_KIND,
   applyHangarWarDeployment,
   applyHullSpeedToShipConfig,
@@ -22,8 +23,11 @@ import {
   deploymentLevelForAggression,
   readHangarWarDeployment,
   selectDeploymentHex,
+  truncateCampaignForDeployment,
 } from './hangarDeployment';
 import { loadShipConfig } from '../../core/config';
+import { LEVELS, type LevelDefinition, type WaveDefinition } from '../../waves/Formations';
+import { buildSequencedLevels } from '../../waves/sequencedLevels';
 
 /** Deep, detached copy of a fixture payload. */
 function clone(payload: HangarWarPayload): HangarWarPayload {
@@ -450,5 +454,119 @@ describe('applyHangarWarDeployment (AH-0MVUXC2DD003HN0I)', () => {
     const scaled = applyHullSpeedToShipConfig(base, deployment);
     expect(scaled).toEqual(base);
     expect(scaled).not.toBe(base);
+  });
+});
+
+describe('truncateCampaignForDeployment (AH-0MWDCBVQ700579WS)', () => {
+  /** A `DEPLOYMENT_WAVE_COUNT`-wide level with ten authored waves. */
+  function authoredLevel(): LevelDefinition {
+    return {
+      level: 1,
+      name: 'Authored',
+      waves: Array.from({ length: 10 }, (_, index) => {
+        const wave: WaveDefinition = {
+          groups: [{
+            enemyKey: 'scout',
+            formation: 'v',
+            count: index + 1,
+            spacingX: 30,
+            spacingY: 26,
+            startX: 100,
+            startY: 100,
+          }],
+          shootEnabled: index >= 3,
+        };
+        // The shipped authored shape: the mini-boss flag lives on wave 10.
+        if (index === 9) wave.miniBoss = true;
+        return wave;
+      }),
+    };
+  }
+
+  /** True when `wave` carries the mini-boss flag. */
+  const isMiniBoss = (wave: WaveDefinition): boolean => wave.miniBoss === true;
+
+  it('keeps the first five waves and makes wave 5 the mini-boss wave', () => {
+    const [level] = truncateCampaignForDeployment([authoredLevel()]);
+    expect(level.waves).toHaveLength(DEPLOYMENT_WAVE_COUNT);
+    // Waves 1–4 keep their authored content and carry no mini-boss flag.
+    level.waves.slice(0, DEPLOYMENT_WAVE_COUNT - 1).forEach((wave, index) => {
+      expect(wave.groups).toEqual([{
+        enemyKey: 'scout',
+        formation: 'v',
+        count: index + 1,
+        spacingX: 30,
+        spacingY: 26,
+        startX: 100,
+        startY: 100,
+      }]);
+      expect(wave.shootEnabled).toBe(index >= 3);
+      expect(isMiniBoss(wave)).toBe(false);
+    });
+    // Wave 5 is the level's single mini-boss encounter.
+    expect(isMiniBoss(level.waves[DEPLOYMENT_WAVE_COUNT - 1])).toBe(true);
+    expect(level.waves.filter(isMiniBoss)).toHaveLength(1);
+  });
+
+  it('flags the last wave when a level has fewer than five waves', () => {
+    const short: LevelDefinition = {
+      level: 2,
+      name: 'Short',
+      waves: [
+        { groups: [{ enemyKey: 'scout', formation: 'v', count: 2, spacingX: 30, spacingY: 26, startX: 100, startY: 100 }], shootEnabled: false },
+        { groups: [{ enemyKey: 'tank', formation: 'rect', count: 1, spacingX: 52, spacingY: 46, startX: 100, startY: 100 }], shootEnabled: false },
+        { groups: [{ enemyKey: 'scout', formation: 'v', count: 3, spacingX: 30, spacingY: 26, startX: 100, startY: 100 }], shootEnabled: false },
+      ],
+    };
+    const [level] = truncateCampaignForDeployment([short]);
+    expect(level.waves).toHaveLength(3);
+    expect(level.waves.filter(isMiniBoss)).toHaveLength(1);
+    expect(isMiniBoss(level.waves[2])).toBe(true);
+    expect(isMiniBoss(level.waves[0])).toBe(false);
+    expect(isMiniBoss(level.waves[1])).toBe(false);
+  });
+
+  it('truncates every level of the static LEVELS campaign', () => {
+    const campaign = truncateCampaignForDeployment(LEVELS);
+    expect(campaign).toHaveLength(LEVELS.length);
+    for (const level of campaign) {
+      expect(level.waves).toHaveLength(DEPLOYMENT_WAVE_COUNT);
+      expect(level.waves.filter(isMiniBoss)).toHaveLength(1);
+      expect(isMiniBoss(level.waves[DEPLOYMENT_WAVE_COUNT - 1])).toBe(true);
+    }
+  });
+
+  it('truncates every level of the sequenced campaign', () => {
+    const sequenced = buildSequencedLevels();
+    expect(sequenced.length).toBeGreaterThan(0);
+    const campaign = truncateCampaignForDeployment(sequenced);
+    expect(campaign).toHaveLength(sequenced.length);
+    for (const level of campaign) {
+      expect(level.waves).toHaveLength(DEPLOYMENT_WAVE_COUNT);
+      expect(level.waves.filter(isMiniBoss)).toHaveLength(1);
+      expect(isMiniBoss(level.waves[DEPLOYMENT_WAVE_COUNT - 1])).toBe(true);
+    }
+  });
+
+  it('is a pure transform: the authored campaign is never mutated', () => {
+    const snapshot = JSON.stringify(LEVELS);
+    truncateCampaignForDeployment(LEVELS);
+    expect(JSON.stringify(LEVELS)).toBe(snapshot);
+    // The arcade campaign keeps its ten waves and its wave-10 mini-boss.
+    expect(LEVELS[0].waves).toHaveLength(10);
+    expect(LEVELS[0].waves.every((wave, index) =>
+      isMiniBoss(wave) === (index === 9),
+    )).toBe(true);
+  });
+
+  it("never changes difficulty: kept waves' groups and shoot flags match the source", () => {
+    const source = authoredLevel();
+    const [level] = truncateCampaignForDeployment([source]);
+    source.waves.slice(0, DEPLOYMENT_WAVE_COUNT).forEach((wave, index) => {
+      expect(level.waves[index].groups).toEqual(wave.groups);
+      expect(level.waves[index].shootEnabled).toBe(wave.shootEnabled);
+    });
+    // Fresh objects: mutating the output cannot touch the authored data.
+    expect(level.waves[0]).not.toBe(source.waves[0]);
   });
 });

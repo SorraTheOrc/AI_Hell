@@ -82,9 +82,18 @@ import {
 } from '../../core/csv';
 import {
   WEAPON_EUCLIDEAN_LADDERS,
+  WEAPON_EUCLIDEAN_LADDER_SPECS,
   euclideanOnsetIntervalMs,
   isStraightEuclidean,
+  overrideWeaponLevelRungs,
+  type WeaponLadderRung,
 } from '../../utils/weaponLevels';
+import {
+  buildWeaponLevelsWriteBody,
+  isWeaponLevelsWritable,
+  saveWeaponLevels,
+  validateWeaponLevelRungs,
+} from '../../core/weaponLevelsStore';
 import {
   getLiveWeaponDefinition,
   getPersistedWeaponDefinition,
@@ -119,6 +128,16 @@ export const WEAPON_TUNING_SUMMARY_ID = 'gym-weapon-tuning-summary';
 export const WEAPON_TUNING_READONLY_ID = 'gym-weapon-tuning-readonly';
 /** DOM id of the rhythm panel body. */
 export const WEAPON_TUNING_RHYTHM_ID = 'gym-weapon-tuning-rhythm';
+/** DOM id of the editable rhythm rung controls container. */
+export const WEAPON_TUNING_RHYTHM_EDITORS_ID =
+  'gym-weapon-tuning-rhythm-editors';
+/** DOM id of the rhythm-draft diagnostic line. */
+export const WEAPON_TUNING_RHYTHM_STATUS_ID =
+  'gym-weapon-tuning-rhythm-status';
+/** Data attribute (value = rung index) marking an editable rhythm row. */
+export const WEAPON_TUNING_RHYTHM_ROW_ATTR = 'data-weapon-rhythm-row';
+/** Data attribute (value = k|n|rotation) identifying a rhythm control. */
+export const WEAPON_TUNING_RHYTHM_FIELD_ATTR = 'data-weapon-rhythm-field';
 /** DOM id of the read-only legacy-nominal subdivison line. */
 export const WEAPON_TUNING_NOMINAL_ID = 'gym-weapon-tuning-nominal';
 /** DOM id of the rhythm preview-level slider. */
@@ -147,11 +166,13 @@ export const WEAPON_TUNING_HINT =
 
 /**
  * Cadence note shown in the rhythm panel. Stated verbatim in the UI and
- * pinned by the scene tests so the read-only contract cannot silently drift.
+ * pinned by the scene tests so the write/read-only contract cannot silently
+ * drift (AH-0MW0WLZ9600693R9).
  */
 export const WEAPON_RHYTHM_READ_ONLY_NOTE =
-  'Rhythm is authored in src/data/weapon-levels.json — hand-edit it and restart. ' +
-  'This panel has no cadence write path and offers no fire-rate control.';
+  'Rhythm rungs (k/n/rotation) are editable here; Save writes ' +
+  'src/data/weapon-levels.json and reloads the live cadence (dev only). ' +
+  'Production builds are read-only.';
 
 /** Editable field keys, in panel order. */
 export type WeaponTuningFieldKey =
@@ -381,6 +402,21 @@ export function describeWeaponRhythm(weaponId: WeaponId): WeaponRhythmRow[] {
         : null,
     };
   });
+}
+
+/**
+ * The selected weapon's **authored** rhythm rungs (the editable data), from
+ * the live `WEAPON_EUCLIDEAN_LADDER_SPECS` the scheduler resolves. Unlike
+ * {@link describeWeaponRhythm} this keeps every authored rung (including any
+ * above the fire-rate curve's asymptote) because it is the list a designer
+ * edits and Saves, not the resolved display ladder. Pure.
+ */
+export function describeEditableWeaponRhythm(
+  weaponId: WeaponId,
+): WeaponLadderRung[] {
+  return WEAPON_EUCLIDEAN_LADDER_SPECS[weaponId].map(
+    ({ k, n, rotation }) => ({ k, n, rotation }),
+  );
 }
 
 /** Highest previewable weapon level for `weaponId` (its last rung's min level). */
@@ -669,6 +705,9 @@ export class GymWeaponTuning extends CombatScene<
   private draft: WeaponDefinition = getPersistedWeaponDefinition('cannon');
   /** The rung being auditioned (weapon upgrade level). */
   private previewLevel = 0;
+  /** Unsaved rhythm rung list for the selected weapon (the Save payload). */
+  private rhythmDraft: WeaponLadderRung[] =
+    describeEditableWeaponRhythm('cannon');
   /** Fires observed from the shared scheduler (test/UX seam). */
   private firedWeapons: WeaponId[] = [];
 
@@ -726,6 +765,7 @@ export class GymWeaponTuning extends CombatScene<
     this._buildPanel();
     this._applyPanelValues(this.draft);
     this._refreshRhythmPanel();
+    this._renderRhythmEditors();
     this._applyPreviewLoadout();
     this._updateSummary();
 
@@ -744,6 +784,7 @@ export class GymWeaponTuning extends CombatScene<
     this.firedWeapons = [];
     this.selectedWeapon = 'cannon';
     this.previewLevel = 0;
+    this.rhythmDraft = describeEditableWeaponRhythm('cannon');
   }
 
   /** Destroys the scene-owned objects on shutdown. */
@@ -853,12 +894,23 @@ export class GymWeaponTuning extends CombatScene<
     return describeWeaponRhythm(this.selectedWeapon);
   }
 
+  /** The editable rhythm draft (the rungs Save would persist). */
+  getRhythmDraft(): WeaponLadderRung[] {
+    return this.rhythmDraft.map((rung) => ({ ...rung }));
+  }
+
+  /** The exact PUT body Save would send for the current rhythm draft. */
+  getRhythmPayloadJson(): string {
+    return buildWeaponLevelsWriteBody(this.selectedWeapon, this.rhythmDraft);
+  }
+
   /** Selects a weapon for tuning (test seam; also drives the panel). */
   selectWeapon(weaponId: WeaponId, previewLevel = 0): void {
     this._selectWeapon(weaponId, previewLevel);
     if (this.panel) {
       this._applyPanelValues(this.draft);
       this._refreshRhythmPanel();
+      this._renderRhythmEditors();
     }
     this._applyPreviewLoadout();
     this._updateSummary();
@@ -882,6 +934,9 @@ export class GymWeaponTuning extends CombatScene<
     this.selectedWeapon = weaponId;
     this.draft = getPersistedWeaponDefinition(weaponId);
     this.previewLevel = this._clampPreviewLevel(previewLevel);
+    // Seed the editable rhythm draft from the weapon's authored ladder
+    // (the JSON-backed rungs), so the panel edits the same data Save writes.
+    this.rhythmDraft = describeEditableWeaponRhythm(weaponId);
   }
 
   /** Clamps a preview level to the weapon's authored ladder. */
@@ -946,8 +1001,8 @@ export class GymWeaponTuning extends CombatScene<
       const notice = document.createElement('p');
       notice.id = WEAPON_TUNING_READONLY_ID;
       notice.textContent =
-        'Read-only build — weapon writes are disabled. Values load from the ' +
-        'bundled src/data/weapons.csv.';
+        'Read-only build — weapon and rhythm writes are disabled. Values load ' +
+        'from the bundled src/data/weapons.csv and src/data/weapon-levels.json.';
       panel.appendChild(notice);
     }
 
@@ -1048,13 +1103,13 @@ export class GymWeaponTuning extends CombatScene<
     return row;
   }
 
-  /** The read-only rhythm ladder section. */
+  /** The editable rhythm ladder section. */
   private _rhythmSection(): HTMLElement {
     const section = document.createElement('div');
     section.className = 'gym-panel-row';
 
     const heading = document.createElement('p');
-    heading.textContent = 'Rhythm (read-only)';
+    heading.textContent = 'Rhythm';
     section.appendChild(heading);
 
     const note = document.createElement('p');
@@ -1079,6 +1134,16 @@ export class GymWeaponTuning extends CombatScene<
     });
     levelRow.append(levelLabel, level);
     section.appendChild(levelRow);
+
+    // One editable k/n/rotation control set per authored rung.
+    const editors = document.createElement('div');
+    editors.id = WEAPON_TUNING_RHYTHM_EDITORS_ID;
+    section.appendChild(editors);
+
+    const rhythmStatus = document.createElement('p');
+    rhythmStatus.id = WEAPON_TUNING_RHYTHM_STATUS_ID;
+    rhythmStatus.setAttribute('aria-live', 'polite');
+    section.appendChild(rhythmStatus);
 
     const rhythm = document.createElement('pre');
     rhythm.id = WEAPON_TUNING_RHYTHM_ID;
@@ -1208,7 +1273,7 @@ export class GymWeaponTuning extends CombatScene<
     summary.textContent = parts.join(' · ');
   }
 
-  /** Rewrites the read-only rhythm ladder and its legacy-nominal line. */
+  /** Rewrites the rhythm ladder summary and its legacy-nominal line. */
   private _refreshRhythmPanel(): void {
     if (!this.panel) return;
     const rows = describeWeaponRhythm(this.selectedWeapon);
@@ -1251,6 +1316,101 @@ export class GymWeaponTuning extends CombatScene<
     }
   }
 
+  // ── Editable rhythm controls ────────────────────────────────────
+
+  /** Rebuilds the editable per-rung controls from the current draft. */
+  private _renderRhythmEditors(): void {
+    if (!this.panel) return;
+    const host = this.panel.querySelector<HTMLElement>(
+      `#${WEAPON_TUNING_RHYTHM_EDITORS_ID}`,
+    );
+    if (!host) return;
+    host.replaceChildren();
+    const writable = isWeaponLevelsWritable();
+
+    this.rhythmDraft.forEach((rung, index) => {
+      const row = document.createElement('div');
+      row.className = 'gym-panel-row';
+      row.setAttribute(WEAPON_TUNING_RHYTHM_ROW_ATTR, String(index));
+
+      const label = document.createElement('span');
+      label.className = 'gym-panel-label';
+      label.textContent = `rung ${index}`;
+      row.appendChild(label);
+
+      (['k', 'n', 'rotation'] as const).forEach((field) => {
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = field === 'rotation' ? '0' : '1';
+        input.step = '1';
+        input.value = String(rung[field]);
+        input.setAttribute(WEAPON_TUNING_RHYTHM_FIELD_ATTR, field);
+        input.setAttribute('aria-label', `Rung ${index} ${field}`);
+        input.disabled = !writable;
+        if (writable) {
+          input.addEventListener('input', () => this._onRhythmInput());
+        }
+        attachTooltip(
+          input,
+          field === 'k'
+            ? 'Onsets per tile (1 <= k <= n).'
+            : field === 'n'
+              ? 'Steps per tile (n > 0).'
+              : 'Phase shift in steps (0 <= rotation < n).',
+        );
+        row.appendChild(input);
+      });
+      host.appendChild(row);
+    });
+  }
+
+  /** Reads the editable controls into a full rung list. */
+  private _readRhythmEditors(): WeaponLadderRung[] {
+    const host = this.panel?.querySelector<HTMLElement>(
+      `#${WEAPON_TUNING_RHYTHM_EDITORS_ID}`,
+    );
+    const rows =
+      host?.querySelectorAll<HTMLElement>(`[${WEAPON_TUNING_RHYTHM_ROW_ATTR}]`) ??
+      [];
+    return [...rows].map((row) => {
+      const read = (field: string): number => {
+        const input = row.querySelector<HTMLInputElement>(
+          `[${WEAPON_TUNING_RHYTHM_FIELD_ATTR}="${field}"]`,
+        );
+        return Number(input?.value ?? '0');
+      };
+      return { k: read('k'), n: read('n'), rotation: read('rotation') };
+    });
+  }
+
+  /**
+   * Any rung edit applies a validated, unsaved draft to the live preview so
+   * the next shot plays it. An invalid draft is reported and **not** applied,
+   * so the running rhythm is never silently re-timed (AC4).
+   */
+  private _onRhythmInput(): void {
+    this.rhythmDraft = this._readRhythmEditors();
+    const errors = validateWeaponLevelRungs(
+      this.selectedWeapon,
+      this.rhythmDraft,
+    );
+    if (errors.length > 0) {
+      this._setRhythmStatus(errors.join('; '));
+      return;
+    }
+    this._setRhythmStatus('');
+    overrideWeaponLevelRungs(this.selectedWeapon, this.rhythmDraft);
+    this._refreshRhythmPanel();
+  }
+
+  /** Updates the rhythm-draft diagnostic line. */
+  private _setRhythmStatus(message: string): void {
+    const status = this.panel?.querySelector<HTMLElement>(
+      `#${WEAPON_TUNING_RHYTHM_STATUS_ID}`,
+    );
+    if (status) status.textContent = message;
+  }
+
   /** Updates the panel's status readout. */
   private _setStatus(message: string): void {
     const status = this.panel?.querySelector<HTMLElement>(
@@ -1261,14 +1421,34 @@ export class GymWeaponTuning extends CombatScene<
 
   // ── Save flows ──────────────────────────────────────────────────
 
-  /** Persists the current draft (upsert) and re-seeds from the re-read row. */
+  /**
+   * Persists the current draft: the weapon row to `weapons.csv` **and** the
+   * selected weapon's Euclidean rhythm to `weapon-levels.json`, then re-seeds
+   * from the re-read data.
+   */
   private async _onSave(): Promise<void> {
-    if (!isWeaponCatalogueWritable()) {
+    if (!isWeaponCatalogueWritable() || !isWeaponLevelsWritable()) {
       this._setStatus(
-        'Read-only build — weapon writes are disabled (bundled CSV only).',
+        'Read-only build — weapon and rhythm writes are disabled (bundled data only).',
       );
       return;
     }
+
+    // Validate the rhythm draft first: an invalid edit is rejected before
+    // any file access, so the running rhythm is never silently re-timed.
+    const rhythmErrors = validateWeaponLevelRungs(
+      this.selectedWeapon,
+      this.rhythmDraft,
+    );
+    if (rhythmErrors.length > 0) {
+      this._setRhythmStatus(rhythmErrors.join('; '));
+      this._setStatus(
+        `Save failed — ${rhythmErrors.join('; ')}`,
+      );
+      return;
+    }
+    this._setRhythmStatus('');
+
     this._setStatus('Saving…');
     try {
       const result = await saveWeaponDefinition(this._readPanelValues());
@@ -1276,8 +1456,23 @@ export class GymWeaponTuning extends CombatScene<
         this._setStatus(`Save failed — ${result.reason ?? 'writes unavailable'}`);
         return;
       }
+
+      const rhythmResult = await saveWeaponLevels(
+        this.selectedWeapon,
+        this.rhythmDraft,
+      );
+      if (!rhythmResult.ok) {
+        this._setStatus(
+          `Save failed — ${rhythmResult.reason ?? 'rhythm writes unavailable'}`,
+        );
+        return;
+      }
+
       this.draft = getPersistedWeaponDefinition(this.selectedWeapon);
       this._applyPanelValues(this.draft);
+      // Re-seed the rhythm controls from the live (re-read) authored ladder.
+      this.rhythmDraft = describeEditableWeaponRhythm(this.selectedWeapon);
+      this._renderRhythmEditors();
       this._refreshRhythmPanel();
       this._updateSummary();
       const warnings =

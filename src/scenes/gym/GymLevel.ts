@@ -930,7 +930,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     // knows how a setup becomes play state (AH-0MVNW8VNN004FFK1). With no
     // setup it reproduces the historical spread+dual permanent start.
     applySceneSetup(
-      { getPlayer: () => this.player },
+      {
+        getPlayer: () => this.player,
+        getEffectsRegistry: () => this.getEffectsRegistry(),
+      },
       this.pendingSetup ?? {
         player: { weapons: DEFAULT_GYM_LEVEL_WEAPONS, timedWeapons: [] },
         powerUps: {},

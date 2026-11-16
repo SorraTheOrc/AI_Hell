@@ -29,6 +29,7 @@ import {
 import {
   HANGAR_WAR_STORAGE_KEY,
   loadHangarWarPayload,
+  saveHangarWarPayload,
 } from '../core/hangarWar/hangarWarStore';
 import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
 import type { HangarWarPayload } from '../core/hangarWar/types';
@@ -44,11 +45,17 @@ import type { WeaponId } from '../utils/weapons';
 import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
-import { PlayScene } from './PlayScene';
+import {
+  PlayScene,
+  VICTORY_TRANSITION_HOLD_MS,
+} from './PlayScene';
+import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import {
   buildHangarDeployment,
   type HangarWarDeployment,
 } from './hangarWar/hangarDeployment';
+import { winLiveDeployment } from '../test/hangarWarWinHarness';
+import { LEVELS } from '../waves/Formations';
 
 /** A minimal but complete arcade checkpoint (the pre-existing save). */
 const ARCADE_CHECKPOINT: Checkpoint = {
@@ -137,7 +144,7 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     resume?: boolean;
     hangarWar?: HangarWarDeployment | null;
   }): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene, HexMapScene]);
     const scene = booted.scene as PlayScene;
     scene.setAsteroidSpawnerEnabled(false);
     if (data) {
@@ -419,4 +426,106 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(loadHangarWarPayload()).not.toBeNull();
     expect(loadHangarWarPayload()!.hangar.activeHull).toBe('hull-2');
   });
+
+  it('AC — a deployment truncates the resolved campaign to five waves, wave 5 as the mini-boss (AH-0MWDCBVQ700579WS)', async () => {
+    const scene = await bootPlay({ hangarWar: DEPLOYMENT });
+    const wm = scene.getWaveManager();
+    expect(scene.isHangarWarRun()).toBe(true);
+    // Aggression 3 selects campaign level 4; that level now plays five waves.
+    expect(DEPLOYMENT.startLevel).toBe(4);
+    expect(wm.level).toBe(4);
+    expect(wm.waveNumber).toBe(1);
+    expect(wm.waveCount).toBe(5);
+    // The whole resolved campaign is truncated, not just the start level.
+    expect(wm.levelCount).toBe(LEVELS.length);
+    // The arcade campaign stays byte-for-byte: ten waves, wave 10 mini-boss.
+    expect(LEVELS[0].waves).toHaveLength(10);
+    expect(
+      LEVELS[0].waves.every((wave, index) =>
+        (wave.miniBoss === true) === (index === 9),
+      ),
+    ).toBe(true);
+  });
+
+  // The run ends on the hex map; the retired report screen is gone
+  // (AH-0MWEXHODJ0067PSJ).
+  it(
+    'AC — a deployment run ends on its wave-5 mini-boss and the capture cycle resolves (AH-0MWDCBVQ700579WS)',
+    async () => {
+      // The capture cycle resolves against the stored war, like a shipped run.
+      // `hex-1` is the ring's final unheld hex; its neighbour is already held
+      // with a strong stored defender so the ring-end hangar assault
+      // (AH-0MWEZZ9TE001577J) is repelled by the stored numbers and the
+      // capture still lands — the lose path is pinned in `captureCycle.test.ts`.
+      const payload = fieldedPayload();
+      payload.ring.hexes.unshift({
+        id: 'hex-0',
+        q: 1,
+        r: -1,
+        held: true,
+        aggression: 3,
+        defender: { hullId: 'hull-2', defenceRating: 60, bankedMinerals: 0 },
+        bossDefeated: true,
+        grantedWeapon: null,
+      });
+      const deployment = buildHangarDeployment(payload, { seed: 24680 });
+      saveHangarWarPayload(payload);
+      const scene = await bootPlay({ hangarWar: deployment });
+    const wm = scene.getWaveManager();
+    const level = wm.level;
+    expect(level).toBe(deployment.startLevel);
+    expect(wm.waveCount).toBe(5);
+
+    // Clear the level's four regular waves and defeat the wave-5 mini-boss
+    // through the shipped defeat path (the shared win harness).
+    winLiveDeployment(scene);
+
+    // The run ended on the level's 5th wave — the mini-boss encounter — with
+    // no wave/level advance and no final-boss trigger.
+    expect(wm.waveNumber).toBe(5);
+    expect(wm.waveCount).toBe(5);
+    expect(wm.level).toBe(level);
+    expect(wm.bossTriggered).toBe(false);
+    expect(scene.getMiniBoss()).toBeNull();
+
+    // The capture cycle resolved exactly as before (salvage banked, hex held,
+    // defender left behind) — only the sortie length changed.
+    const capture = scene.getLastCapture();
+    expect(capture).not.toBeNull();
+    expect(capture!.ok).toBe(true);
+    expect(capture!.reason).toBeNull();
+    // Securing the ring ran the assault gate, and the stored defence holds.
+    expect(capture!.assault?.outcome).toBe('repelled');
+    expect(capture!.campaignReset).toBe(false);
+    const stored = loadHangarWarPayload();
+    expect(stored).not.toBeNull();
+    const hex = stored!.ring.hexes.find((state) => state.id === 'hex-1')!;
+    expect(hex.held).toBe(true);
+    expect(hex.bossDefeated).toBe(true);
+    expect(hex.defender).not.toBeNull();
+
+    // The run ends as a **victory on the hex map** (the between-sortie report
+    // screen is gone, AH-0MWEXHODJ0067PSJ).
+    await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
+    const map = scene.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene | null;
+    expect(map, 'the deployment must land on the hex map').not.toBeNull();
+    expect(
+      scene.game.scene.isActive(HEX_MAP_SCENE_KEY) ||
+        scene.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+    ).toBe(true);
+    // The map announces the ring win from the capture's **own** assault record
+    // (AH-0MWEZZA4E0081NJ5) — no assault figure is re-derived on the map.
+    const landedAssault = map!.getAssault();
+    expect(landedAssault).not.toBeNull();
+    expect(landedAssault).toEqual(capture!.assault);
+    expect(map!.isAssaultVisible()).toBe(true);
+    expect(map!.getAssaultText()).toContain('RING WON');
+    // The landing's run line and the tick's own report are unchanged.
+    expect(map!.getRunLine()).toContain('RUN: VICTORY');
+    expect(map!.getRecord()).not.toBeNull();
+    expect(wm.waveNumber).toBe(5);
+    expect(scene.getAliveCount()).toBe(0);
+  }, 30_000);
 });

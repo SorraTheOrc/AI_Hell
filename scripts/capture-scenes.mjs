@@ -76,8 +76,8 @@ export const WATCHABLE_GYM_SCENE_KEYS = Object.freeze([
 
 /**
  * The shipped **Hangar War** screens (Build Candidate D) that multi-scene
- * capture and the `--hangar` menu path can record: the hangar screen, the hex
- * ring map and the between-sortie defence report.
+ * capture and the `--hangar` menu path can record: the hangar screen and the
+ * hex ring map.
  *
  * They are **not** gyms — they are boot-registered shipped scenes
  * (`src/core/gameConfig.ts`), so the in-page director starts them without the
@@ -85,12 +85,11 @@ export const WATCHABLE_GYM_SCENE_KEYS = Object.freeze([
  * field has a shipped default (`{ demo: false }` renders the static,
  * player-facing screen), so no setup is required.
  *
- * `capture-scenes.test.ts` pins this list against the three scene modules, so
+ * `capture-scenes.test.ts` pins this list against the shipped scene modules, so
  * adding or removing a Hangar War screen without updating the registry fails
  * the suite instead of silently diverging.
  */
 export const HANGAR_WAR_SCENE_KEYS = Object.freeze([
-  'DefenceReportScene',
   'HangarScene',
   'HexMapScene',
 ]);
@@ -537,7 +536,7 @@ export const SCENE_SETUP_INCAPABLE_TARGETS = Object.freeze([]);
  * gym setup fields apply — supplying one is rejected rather than silently
  * dropped. Both fields are optional: the scenes' own defaults render the
  * static, player-facing screen (`demo: false`), which is what a capture of the
- * hangar/map/report wants.
+ * hangar or the map (with its rolled-in report) wants.
  */
 export const HANGAR_WAR_SCENE_SETUP_FIELDS = Object.freeze([
   'demo',

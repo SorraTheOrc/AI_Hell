@@ -147,11 +147,13 @@ describe('hangar screen model (pure)', () => {
     expect(rows.map((row) => row.id)).toEqual([
       'hull-1',
       'hull-2',
+      'hull-3',
       'spread',
       'wave_laser',
       'ricochet',
       'cluster',
       'hardened_plating',
+      'anti_maw_plating',
     ]);
     const starter = rows.find((row) => row.id === 'spread')!;
     expect(starter.state).toBe('owned');
@@ -235,6 +237,7 @@ describe('hangar screen model (pure)', () => {
       'buy:ricochet',
       'buy:cluster',
       'buy:hardened_plating',
+      'buy:anti_maw_plating',
       'hull:hull-2',
       'weapon:spread',
       'deploy',
@@ -622,11 +625,13 @@ describe('HangarScene', () => {
     expect(scene.getRows().map((row) => row.key)).toEqual([
       'buy:hull-1',
       'buy:hull-2',
+      'buy:hull-3',
       'buy:spread',
       'buy:wave_laser',
       'buy:ricochet',
       'buy:cluster',
       'buy:hardened_plating',
+      'buy:anti_maw_plating',
       'hull:hull-1',
       'hull:hull-2',
       'weapon:spread',

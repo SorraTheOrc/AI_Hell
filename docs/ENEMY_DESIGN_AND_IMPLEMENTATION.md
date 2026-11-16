@@ -1623,8 +1623,10 @@ advances phases at the configured HP. It is surfaced as a dedicated
 (`MINI_BOSS_SCENE_KEY`).
 
 **Game wiring (AH-0MVCRBISU006NUN5).** `PlayScene` spawns the active level's
-mini-boss when the `WaveManager` opens the level's flagged wave-10 encounter
-(`miniBossTriggered`/`miniBossActive`, AH-0MVCRAV3B0069AIJ) and registers it as
+mini-boss when the `WaveManager` opens the level's flag-driven mini-boss wave
+(wave 10 of the shipped arcade levels; wave 5 of a hangar-war deployment,
+AH-0MWDCBVQ700579WS — `miniBossTriggered`/`miniBossActive`,
+AH-0MVCRAV3B0069AIJ) and registers it as
 a gating dynamic spawn, so the level completes only once the mini-boss **and**
 the wave's escorts are destroyed. It builds the entity through
 `miniBossConfigFor(level)` — the generic no-config-safe default until the

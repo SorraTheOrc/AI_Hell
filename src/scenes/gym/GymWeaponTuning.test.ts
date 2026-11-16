@@ -23,13 +23,18 @@ import {
   WEAPON_TUNING_PANEL_ID,
   WEAPON_TUNING_PREVIEW_LEVEL_ID,
   WEAPON_TUNING_READONLY_ID,
+  WEAPON_TUNING_RHYTHM_EDITORS_ID,
+  WEAPON_TUNING_RHYTHM_FIELD_ATTR,
   WEAPON_TUNING_RHYTHM_ID,
+  WEAPON_TUNING_RHYTHM_ROW_ATTR,
+  WEAPON_TUNING_RHYTHM_STATUS_ID,
   WEAPON_TUNING_ROW_ATTR,
   WEAPON_TUNING_SAVE_AS_ID,
   WEAPON_TUNING_SAVE_AS_INPUT_ID,
   WEAPON_TUNING_SAVE_ID,
   WEAPON_TUNING_SELECT_ID,
   WEAPON_TUNING_STATUS_ID,
+  describeEditableWeaponRhythm,
   describeWeaponRhythm,
   maxPreviewLevel,
 } from './GymWeaponTuning';
@@ -47,6 +52,7 @@ import {
   getPersistedWeaponDefinition,
   resetWeaponCatalogueStore,
 } from '../../core/weaponCatalogueStore';
+import { resetWeaponLevelsStore } from '../../core/weaponLevelsStore';
 
 describe('GymWeaponTuning — discovery', () => {
   it('is auto-discovered by the gym folder glob', () => {
@@ -427,5 +433,166 @@ describe('GymWeaponTuning — read-only build (AC4/AC8)', () => {
       (document.getElementById(WEAPON_TUNING_SAVE_AS_ID) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
+  });
+});
+
+describe('GymWeaponTuning — editable rhythm + Save (AH-0MW0WLZ9600693R9)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+    resetWeaponCatalogueStore();
+    resetWeaponLevelsStore();
+    document.body.innerHTML = '<div id="game-container"></div>';
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.unstubAllEnvs();
+    resetWeaponCatalogueStore();
+    resetWeaponLevelsStore();
+    document.getElementById(WEAPON_TUNING_PANEL_ID)?.remove();
+    document.body.innerHTML = '';
+  });
+
+  async function bootTuning(): Promise<GymWeaponTuning> {
+    booted = await bootScene([GymWeaponTuning]);
+    return booted.scene as GymWeaponTuning;
+  }
+
+  /** The editable input for one rung/field. */
+  function rhythmControl(row: Element, field: string): HTMLInputElement {
+    return row.querySelector<HTMLInputElement>(
+      `[${WEAPON_TUNING_RHYTHM_FIELD_ATTR}="${field}"]`,
+    )!;
+  }
+
+  function rhythmRows(): Element[] {
+    return [
+      ...document.querySelectorAll(
+        `#${WEAPON_TUNING_RHYTHM_EDITORS_ID} [${WEAPON_TUNING_RHYTHM_ROW_ATTR}]`,
+      ),
+    ];
+  }
+
+  it('renders one editable k/n/rotation control set per authored rung, seeded from the ladder', async () => {
+    const scene = await bootTuning();
+    scene.selectWeapon('heavy_slug');
+
+    const authored = describeEditableWeaponRhythm('heavy_slug');
+    const rows = rhythmRows();
+    expect(rows.length).toBe(authored.length);
+    expect(rows.length).toBeGreaterThan(0);
+
+    for (const [index, rung] of authored.entries()) {
+      expect(rhythmControl(rows[index], 'k').value).toBe(String(rung.k));
+      expect(rhythmControl(rows[index], 'n').value).toBe(String(rung.n));
+      expect(rhythmControl(rows[index], 'rotation').value).toBe(
+        String(rung.rotation),
+      );
+    }
+  });
+
+  it('builds the exact PUT payload and updates the live rhythm on Save without a restart', async () => {
+    const scene = await bootTuning();
+    scene.selectWeapon('cannon');
+
+    const row = rhythmRows()[0];
+    const kInput = rhythmControl(row, 'k');
+    kInput.value = '10'; // cannon rung 0: 9/16 -> 10/16 (non-decreasing)
+    kInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(scene.getRhythmDraft()[0]).toStrictEqual({
+      k: 10,
+      n: 16,
+      rotation: 0,
+    });
+    const payload = JSON.parse(scene.getRhythmPayloadJson()) as {
+      weaponId: string;
+      rungs: unknown[];
+    };
+    expect(payload.weaponId).toBe('cannon');
+    expect(payload.rungs).toStrictEqual(scene.getRhythmDraft());
+
+    (document.getElementById(WEAPON_TUNING_SAVE_ID) as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(
+        document.getElementById(WEAPON_TUNING_STATUS_ID)!.textContent,
+      ).toContain('Saved cannon'),
+    );
+
+    // The live ladder the scheduler reads now plays the saved rung.
+    expect(resolveWeaponPattern('cannon', 0)).toStrictEqual({
+      k: 10,
+      n: 16,
+      rotation: 0,
+      stepMs: resolveWeaponPattern('cannon', 0).stepMs,
+    });
+  });
+
+  it('shows a diagnostic naming weapon/rung/field for an invalid edit and does not re-time the rhythm', async () => {
+    const scene = await bootTuning();
+    scene.selectWeapon('cannon');
+    const before = resolveWeaponPattern('cannon', 0);
+
+    const kInput = rhythmControl(rhythmRows()[0], 'k');
+    kInput.value = '20'; // k > n
+    kInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const rhythmStatus = document.getElementById(
+      WEAPON_TUNING_RHYTHM_STATUS_ID,
+    )!;
+    expect(rhythmStatus.textContent).toContain('cannon[0]');
+    expect(rhythmStatus.textContent).toContain('must not exceed n');
+    // The running rhythm is not silently re-timed.
+    expect(resolveWeaponPattern('cannon', 0)).toEqual(before);
+
+    // Save is refused with the same diagnostic and leaves the ladder alone.
+    (document.getElementById(WEAPON_TUNING_SAVE_ID) as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(
+        document.getElementById(WEAPON_TUNING_STATUS_ID)!.textContent,
+      ).toContain('Save failed'),
+    );
+    expect(resolveWeaponPattern('cannon', 0)).toEqual(before);
+  });
+
+  it('keeps the preview-rung slider and audition working alongside the editors', async () => {
+    const scene = await bootTuning();
+    scene.selectWeapon('heavy_slug');
+
+    const max = maxPreviewLevel('heavy_slug');
+    const slider = document.getElementById(
+      WEAPON_TUNING_PREVIEW_LEVEL_ID,
+    ) as HTMLInputElement;
+    expect(slider.max).toBe(String(max));
+    slider.value = String(max);
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.getPreviewLevel()).toBe(max);
+
+    for (let frame = 0; frame < 180; frame += 1) scene.tick(1 / 60);
+    expect(scene.getFiredWeapons()).toContain('heavy_slug');
+  });
+
+  it('disables the rhythm controls and Save with a visible read-only message', async () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('MODE', 'production');
+    booted = await bootScene([GymWeaponTuning]);
+
+    const rows = rhythmRows();
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      for (const field of ['k', 'n', 'rotation']) {
+        expect(rhythmControl(row, field).disabled).toBe(true);
+      }
+    }
+    expect(
+      (document.getElementById(WEAPON_TUNING_SAVE_ID) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    const notice = document.getElementById(WEAPON_TUNING_READONLY_ID);
+    expect(notice).not.toBeNull();
+    expect(notice!.textContent!.toLowerCase()).toContain('rhythm');
   });
 });

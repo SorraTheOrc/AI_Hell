@@ -489,3 +489,59 @@ describe('memory line writer — bounded retention and windowed read/drain (AH-0
     });
   });
 });
+
+/**
+ * Byte-length metering without re-serialising (AH-0MW2DC20A007TAVY).
+ *
+ * The dev recorder already knows every record's UTF-8 size when it appends it
+ * (the retention cap is metered in bytes). {@link readByteLength} exposes that
+ * running total, so an upload can be refused against the CDP-message cap
+ * **before** the whole buffer is joined into one string and encoded — which is
+ * exactly the work an over-cap run used to pay for before discarding the
+ * payload.
+ */
+describe('memory line writer — byte length without re-serialising (AH-0MW2DC20A007TAVY)', () => {
+  const bytes = (text: string): number => new TextEncoder().encode(text).length;
+
+  it('reports the UTF-8 size of the NDJSON it would return', () => {
+    const writer = createMemoryLineWriter();
+    expect(writer.readByteLength()).toBe(0);
+
+    writer.writeLine('{"kind":"run_header"}');
+    writer.writeLine('{"kind":"tick","tick":1}');
+
+    // Exactly the body `read()` returns, including the separating newlines.
+    expect(writer.readByteLength()).toBe(bytes(writer.read()));
+  });
+
+  it('counts multi-byte content by its encoded size, not its length', () => {
+    const writer = createMemoryLineWriter();
+    writer.writeLine('{"archetype":"café"}');
+
+    expect(writer.readByteLength()).toBe(bytes(writer.read()));
+    // One byte longer than the string itself (é encodes as two bytes), plus the
+    // trailing newline.
+    expect(writer.readByteLength()).toBe(writer.read().length + 1);
+  });
+
+  it('tracks evictions, confirmations and resets', () => {
+    // Each ten-byte line plus its newline is 11 bytes: a 22-byte cap keeps two.
+    const writer = createMemoryLineWriter({ maxRetainedBytes: 22 });
+    for (let index = 0; index < 5; index += 1) writer.writeLine(`line-${index}.`);
+
+    expect(writer.readByteLength()).toBe(bytes(writer.read()));
+
+    writer.reset();
+    expect(writer.readByteLength()).toBe(0);
+    expect(writer.read()).toBe('');
+  });
+
+  it('is exposed through the JSONL sink, and is null for a non-buffering writer', () => {
+    const sink = new JsonlTelemetrySink(createMemoryLineWriter());
+    sink.write([EVENT]);
+    expect(sink.readByteLength()).toBe(bytes(sink.read()!));
+
+    const plainSink = new JsonlTelemetrySink({ writeLine: vi.fn() });
+    expect(plainSink.readByteLength()).toBeNull();
+  });
+});

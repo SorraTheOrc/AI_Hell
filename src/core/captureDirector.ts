@@ -16,7 +16,7 @@
  * through the Phaser scene manager — no navigation, no reload, so the recorder
  * keeps going. That covers the discovered gyms (dev-only scenes registered
  * lazily by `GymIndex` on demand) **and** the shipped Hangar War screens
- * (`HangarScene`, `HexMapScene`, `DefenceReportScene`), which are already in
+ * (`HangarScene`, `HexMapScene`), which are already in
  * the boot `gameConfig` scene list. A gym scene's class is registered with the
  * running game's scene manager before starting it, mirroring
  * `GymIndex.create()`.

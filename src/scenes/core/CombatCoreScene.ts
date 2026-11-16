@@ -333,7 +333,13 @@ export class CombatCoreScene<
     this.sceneRng = seed === null
       ? () => Math.random()
       : createSeededRng(seed);
-    applySceneSetup({ getPlayer: () => this.getPlayer() }, setup);
+    applySceneSetup(
+      {
+        getPlayer: () => this.getPlayer(),
+        getEffectsRegistry: () => this.getEffectsRegistry(),
+      },
+      setup,
+    );
   }
 
   /**

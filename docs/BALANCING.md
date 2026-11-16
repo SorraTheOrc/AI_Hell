@@ -1048,6 +1048,50 @@ removed by the fail-fast validation above rather than by the watchdog.
   pre-run state on success **and** failure paths, unless `--keep-edit` is
   given — the working tree stays clean.
 
+### Concurrent `--tune` runs on the same CSV (AH-0MW25VH540078FDK)
+
+The journal and the CSV are **process-global**, not per-run: the journal path is
+`src/data/<file>.tune-journal` for every run. Two designers (or a designer and a
+scripted sweep) tuning the same CSV at once therefore used to interfere — the
+second run's startup reconcile consumed the first run's *live* journal,
+restoring the CSV underneath it, and the two runs' edits interleaved.
+
+`--tune` now takes an **exclusive run lock**, `<csv>.tune-lock`, created with
+`O_EXCL` and held for the whole run:
+
+- The lock is acquired **before the startup journal reconcile**, so a second run
+  can neither reconcile a live journal nor interleave an edit with the first.
+  Crash recovery keeps its priority: reconcile still runs before validation.
+- A second run **waits** for the lock, bounded at **30 s**. If the holder is
+  still running when the bound expires, the run exits with code **`2`** and
+  names the holder:
+
+  ```text
+  tune lock busy: src/data/enemy-configs.csv.tune-lock is held by pid 41234
+  — waited 30000 ms. Another --tune run is editing src/data/enemy-configs.csv;
+  re-run once it finishes, or delete the lock file if no --tune run is active
+  ```
+
+  The bound is overridable with `EVAL_TUNE_LOCK_TIMEOUT_MS` (milliseconds), so
+  the CLI gains no extra flag. A contended run still runs its read-only
+  fail-fast probes before it queues, so an invalid `--out` or a missing CSV
+  keeps failing in well under a second; the exception is a run with a journal
+  waiting, which reconciles first.
+- The lock is released in a `finally`, so **every** non-`SIGKILL` exit unlocks:
+  success, restore failure, watchdog exit `124`, and each fail-fast `2`.
+- A `SIGKILL`ed run leaves a **stale lock** behind. Its payload records the
+  holder `pid`, and a lock whose pid is dead is debris: the next run steals it
+  instead of waiting, mirroring the journal's crash recovery. A lock that stays
+  unreadable for longer than the wait bound is debris too and is stolen, so a
+  corrupt file cannot wedge the CSV for ever.
+- **Known limitation — pid reuse:** liveness is a signal-0 probe
+  (`kill(pid, 0)`), so a recycled pid can make a stale lock look live. The
+  symptom is a bounded wait followed by the `tune lock busy` diagnostic naming
+  an unrelated process; no CSV is ever edited in that case. Delete the lock file
+  after checking that no `--tune` run is active.
+- The lock path is git-ignored (`src/data/*.tune-lock`), so a crashed or
+  contended run never shows up as a worktree change.
+
 ### Reading the comparison — worked example
 
 Tuning `boss.health` from `1` to `6` (the same edit as the
@@ -1103,33 +1147,36 @@ balance report.
   batch. The one deliberate divergence is the beat clock: an integer tick
   interval derived from the same `fireRateMs` (`fireRateTicks`) replaces it,
   so a run stays a fixed-step, seeded simulation.
-- **DPS-coupled levelling inside the deployment window** (AH-0MWAPWS1W007LGGY)
-  — wave and level progression is **kill-driven**, so how far a run climbs
-  inside a fixed measurement window depends on its damage output. Firing the
-  choice grants above lifts the competent bot's DPS enough that a campaign
-  slice started at **level 3** clears into the first enemy-fire level (4)
-  *inside* the ring-timing harness's 300 s deployment window and dies there
-  (≈250 s), where the pre-`AH-0MW5DVAME0062GQO` arena — a hardcoded
-  6⅔-shots/s cannon that never fired grants — stayed in level 3 for the whole
-  window and reported a capture. This is a **documented, deliberate
+- **The one-level deployment dies to enemy fire** (AH-0MWCQ4FWN009J9DM) —
+  the ring-timing harness now plays the shipped **one-level deployment** in
+  the arena's per-level mode: the hex's aggression-selected level as the
+  five-wave sortie (its first four regular waves plus the wave-5 mini-boss
+  composition), measured from the `level_cleared` event tick. The per-level
+  arena ignores the wave `shootEnabled` gate (its documented fidelity
+  boundary), so **every enemy fires at every level**: with the competent bot
+  and the deployment loadout a sortie dies to enemy fire before the wave-5
+  clear on every seed (≈1–3 min), at every level a ring hex selects. The old
+  campaign-slice boundary — the kill-driven escalation record bisected in
+  (AH-0MWAPWS1W007LGGY) to the arena's own fire-model fidelity commit
+  `6ecbab23` (AH-0MW5DVAME0062GQO), where a campaign slice started at
+  **level 3** climbed into the first enemy-fire level (4) inside the fixed
+  window — is gone with the slice itself; `src/ai/eval/ringTiming.test.ts`
+  pins the new survival boundary. This is a **documented, deliberate
   deviation**, not a gameplay regression: no shipped gameplay code changed,
-  and the drift is bisected to the arena's own fire-model fidelity commit
-  `6ecbab23` (AH-0MW5DVAME0062GQO). Modelling the remaining fire detail below
-  (the Wave Laser's hitscan ray, homing arcs, …) would **raise the arena's
-  DPS** further and push a slice deeper into the window, so it deepens this
-  effect rather than removing it.
+  and the drift is the per-level arena's established fire-on fidelity.
+  Modelling the remaining fire detail below (the Wave Laser's hitscan ray,
+  homing arcs, …) would **raise the arena's DPS** further and deepen the
+  survival gap rather than removing it.
 
-  **The ring-timing harness now measures the deployment loadout**
+  **The ring-timing harness measures the deployment loadout**
   (AH-0MW9QA2YC009PSF5): the hull's lives and speed, the fleet's equipped
-  weapons and the `extra-lives` modifiers, earned in the ring's plan order. On
-  that launch state — not the campaign-reset bare cannon — campaign levels 1–2
-  capture the full window on every seed and **level 3 captures on two of three
-  seeds**, still dying to enemy fire on the third. The boundary therefore moved
-  with the loadout, which is exactly the gap that explained the bare-cannon
-  drift; it did **not** shorten the ring budgets, because a stronger loadout
-  also levels faster (ring 1 50.9 → 54.3 min, ring 2 111.9 → 116.4 min).
-  `src/ai/eval/ringTiming.test.ts` pins both the measured boundary and the
-  loadout resolution.
+  weapons and the `extra-lives` modifiers, earned in the ring's plan order.
+  The loadout is carried through the one-level model unchanged — it sets the
+  run's starting state only, and the retry/re-capture allowances now cost the
+  measured sortie (the lost deployment's own length, and the line's measured
+  mean deployment plus the 2-minute visit) rather than a flat window. The
+  budgets measured under this model, and the budget verdicts that follow, are
+  recorded on the parent item (AH-0MWCOWSVN003X81A) for re-rule.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 
@@ -1207,7 +1254,10 @@ pixel-accurate, full-stack verification use the browser capture path
   restore-from-journal, `--keep-edit` clear, the unreadable-journal refusal, a
   real `SIGKILL`ed editing child whose CSV is restored byte-identically, the
   reconcile-before-validate behaviour of the next `--tune` run, and the
-  `.gitignore` guard (AH-0MVSE1A7O002PXAO).
+  `.gitignore` guard (AH-0MVSE1A7O002PXAO); plus the exclusive run lock — the
+  bounded wait and its `pid` diagnostic, the stale-holder steal, the
+  pid-matched release, a live holder child against a real second run, and the
+  exit-`2` refusal (AH-0MW25VH540078FDK).
 - `scripts/evaluate-tune-progress.test.ts` — the per-run progress lines on
   stderr (stdout parity), the opt-in `--watchdog` exit `124` with a restored
   CSV, and the rejected budgets (AH-0MVSE1OPF008G1SB).

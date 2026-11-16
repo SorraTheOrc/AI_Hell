@@ -68,10 +68,13 @@ export interface PermanentWeaponRegistry {
  *
  * This and {@link grantPermanentPowerUp} are the two halves of the single
  * permanent-grant seam. Both the hold-full/mini-boss reward path
- * ({@link applyMineralChoiceReward}) and the checkpoint-resume replay
- * (`PlayScene._restoreCheckpoint`) call them, so a resumed run ends up with
- * exactly the state live play would have (AH-0MVSHI07B003BZIP AC3) — the HUD
- * and the effect state can never drift apart again.
+ * ({@link applyMineralChoiceReward}), the checkpoint-resume replay
+ * (`PlayScene._restoreCheckpoint`), the hangar-war deployment applier
+ * (`applyHangarWarDeployment`, AH-0MWCFKHWD002RKX9) and the shared scene-setup
+ * applier (`applySceneSetup`, AH-0MWCP6JHT008EKCY) call it, so a resumed or
+ * scripted run ends up with exactly the state live play would have
+ * (AH-0MVSHI07B003BZIP AC3) — the HUD and the effect state can never drift
+ * apart again.
  *
  * @param weaponId — the weapon to equip permanently.
  * @param effectsRegistry — the scene's effect registry.

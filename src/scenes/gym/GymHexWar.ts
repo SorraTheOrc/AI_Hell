@@ -30,15 +30,62 @@
  * so `applySceneSetup` is a documented no-op, and the setup's `seed` drives the
  * sample payload (a supplied `payload` wins).
  *
- * ## The report view (AH-0MVUXCBBK004EJIP)
+ * ## The integrated map view (AH-0MWEXJ21W003M7RR)
  *
- * `{ view: 'report' }` (or the `showDefenceReport()` control surface) renders
- * the **shipped defence report** — `buildDefenceReport` +
- * `renderDefenceReport`, the same pair `DefenceReportScene` renders — from a
- * record produced by the **shipped** frontier tick (`runFrontierTick` at the
- * payload's own clock), read-only. The gym therefore demonstrates the report
- * screen's exact numbers without a browser boot and without simulating a
- * battle.
+ * The between-sortie defence report is rolled into the map (parent
+ * AH-0MWDC3L9I008INDP), so this gym renders the **integrated** map view: the
+ * same `buildHexMapModel` + `renderHexMap` pair the game's `HexMapScene`
+ * renders, carrying a record produced by the **shipped** frontier tick
+ * (`runFrontierTick` at the payload's own clock) — the same record the game
+ * carries after a deployment. The map therefore draws the shipped attack
+ * arrows and shows the left-hand attack panel for the inspected hex, read-only
+ * and without a resolver, arrow or panel rule of its own. There is **no
+ * separate `report` view**: the game has no report screen any more, so the gym
+ * has no seam for one.
+ *
+ * ## The ring-end hangar assault (AH-0MWEZZDJC009FEU7)
+ *
+ * The ring-end **hangar assault** the game resolves when a ring's final hex is
+ * captured (`resolveRingAssault` → `resolveHangarAssault`, the capture-cycle
+ * gate) is exercised here through the **same** shared resolver/report pair: a
+ * launch-data `assault` (mirroring `HexMapScene`'s own transient launch data)
+ * or the `resolveAssault()` control surface carries the resolver's record into
+ * `buildHexMapModel` → `renderHexMap`, so the gym renders the game's
+ * `RING WON` / `HANGAR FALLS` banner from the resolver's own numbers — never a
+ * gym-local re-derivation. The banner adds no action, so the read-only gym (and
+ * the attract/capture traversal of it) cannot stall on it.
+ *
+
+ * ## The special mission (`AH-0MWF0CSSI007P414`)
+ *
+ * The post-MVP ring authors a **special-mission hex** whose one-level capture
+ * pays a hull with extra hit points (AH-0MVWZYIWX0008C55). This gym exercises
+ * that end to end with the shipped code and no divergent copy:
+ *
+ * - the map's own model publishes the offer (`getSpecialOffer`,
+ *   `buildHexMapModel(...).specialOffer`), so the focused hex's **detail panel
+ *   shows the reward before any capture** — the same known-ahead surface the
+ *   game's map renders;
+ * - {@link GymHexWar.captureHex} delegates to the shipped `resolveHexCapture`,
+ *   so completing the special mission grants the hull into `unlockedHulls` and
+ *   reports the reward exactly as the game's boss-victory path does;
+ * - the rotation between sorties is the shared seeded resolver
+ *   (`specialMissionOfferFor`), read from the payload's own seed and sortie
+ *   counter, so a gym run replays the same sequence as the game for the same
+ *   save.
+ *
+ * ## The skill data surface (AH-0MVWZYJ740037EZ1)
+ *
+ * The control surface accepts a defending bot's **special skills**
+ * (`leaveBot(hexId, hullId, rating, skills)`), the same stored data the capture
+ * cycle attaches from the hull flown and the equipped modifiers. The harness
+ * stores them on the payload and then resolves and renders them with the
+ * **shipped** code paths — `runFrontierTick` (which derives the attacker type
+ * from the attacking neighbour's authored boss and applies the matching
+ * bonus), `resolveDefence` and `buildDefenceReport` — so the numbers the gym
+ * shows for a trained bot are the numbers the game shows. The map view
+ * publishes each defender's skills through the shared intel model, and the
+ * summary lines name them.
  *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention and
  * watchable by the capture tooling (`WATCHABLE_GYM_SCENE_KEYS`).
@@ -68,12 +115,36 @@ import {
 import {
   frontierClockFor,
   runFrontierTick,
+  type FrontierTickRecord,
+  type HangarAssaultResolution,
 } from '../../core/hangarWar/hexDefence';
 import {
   buildDefenceReport,
   type DefenceReportModel,
 } from '../../core/hangarWar/defenceReport';
-import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
+import { resolveRingAssault } from '../../core/hangarWar/captureCycle';
+import { defenderUpgradeBreakdown } from '../../core/hangarWar/hangarEconomy';
+import type {
+  DefenceSkill,
+  DefenderUpgradeSnapshot,
+  HangarWarPayload,
+  HexDefender,
+  HexState,
+} from '../../core/hangarWar/types';
+import {
+  bankedSalvageFromHangar,
+  runSalvageFromRun,
+  type RunSalvage,
+} from '../../core/hangarWar/salvageBanking';
+import {
+  resolveHexCapture,
+  type HexCaptureResult,
+} from '../../core/hangarWar/captureCycle';
+import {
+  specialMissionOfferFor,
+  type SpecialMissionOffer,
+} from '../../core/hangarWar/specialMission';
+import type { HexRingDefinition } from '../../core/hangarWar/hexRing';
 import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
 import {
   addBackToIndexButton,
@@ -86,14 +157,10 @@ import {
 } from '../core/sceneSetup';
 import {
   renderHexMap,
+  type HexMapArrow,
   type HexMapRow,
   type HexMapView,
 } from '../hangarWar/hexMap';
-import {
-  renderDefenceReport,
-  type DefenceReportRow,
-  type DefenceReportView,
-} from '../hangarWar/defenceReport';
 
 /** Scene key (== class name, per the gym discovery convention). */
 export const GYM_HEX_WAR_SCENE_KEY = 'GymHexWar';
@@ -101,23 +168,14 @@ export const GYM_HEX_WAR_SCENE_KEY = 'GymHexWar';
 /** Title rendered at the bottom of the gym (asserted by tests). */
 export const GYM_HEX_WAR_TITLE = 'HEX WAR — RING HARNESS';
 
-/** Bottom hint line, stating what the harness is and how it is driven. */
-export const GYM_HEX_WAR_HINT =
-  'Hex war gym — injected ring payload; take hex → leave bot → tick (harness stand-in, shipped resolver is B3)';
-
 /**
- * Bottom hint line shown while the **defence report** view is up
- * (AH-0MVUXCBBK004EJIP).
+ * Bottom hint line, stating what the harness is and how it is driven.
  *
- * The report view renders the shipped report model/renderer against a record
- * produced by the shipped frontier tick, so the gym shows the game's report
- * screen exactly.
+ * The map is the integrated view (attack arrows + left attack panel from the
+ * shipped tick's record), so the hint names both halves the harness shows.
  */
-export const GYM_HEX_WAR_REPORT_HINT =
-  'Defence report view — shipped resolver record over the injected payload (no battle simulated)';
-
-/** The two screens the harness can show (the game has one scene each). */
-export type GymHexWarView = 'map' | 'report';
+export const GYM_HEX_WAR_HINT =
+  'Hex war gym — injected ring payload; take hex → leave bot → tick (arrows + attack panel from the shipped tick record)';
 
 /**
  * Seed used for the sample payload when neither a payload nor a capture setup
@@ -125,14 +183,41 @@ export type GymHexWarView = 'map' | 'report';
  */
 export const GYM_HEX_WAR_DEFAULT_SEED = 0x5eed_3c4b;
 
+/**
+ * The salvage a gym capture banks when the caller supplies none.
+ *
+ * A gym run has no live run economy, so the control surface resolves a capture
+ * with **zero** earned salvage: the hangar/ring transition under test is the
+ * reward, never an invented balance.
+ */
+const GYM_CAPTURE_SALVAGE: RunSalvage = runSalvageFromRun({
+  runId: 'gym-hex-war',
+  checkpointId: 'boss-victory',
+  minerals: 0,
+  cores: 0,
+});
+
 /** Launch data accepted by {@link GymHexWar}. */
 export interface GymHexWarData extends SceneSetupState {
   /** Payload to render and drive (read-only: the scene works on a copy). */
   payload?: HangarWarPayload;
   /** Fixture ring the sample payload is built from (defaults to ring 1). */
   ringIndex?: RingIndex;
-  /** Which screen to show (defaults to the map; the game has one scene each). */
-  view?: GymHexWarView;
+  /**
+   * The resolved ring-end hangar assault to announce, mirroring the game's
+   * `HexMapScene` launch data (`AH-0MWEZZA4E0081NJ5`). Omitted or `null` → an
+   * ordinary ring landing with no assault banner. A capture or test may inject
+   * the shared resolver's record directly; the `resolveAssault()` control
+   * surface drives the same resolver over this payload.
+   */
+  assault?: HangarAssaultResolution | null;
+  /**
+   * Authored ring definitions to drive (defaults to the shipped table for the
+   * payload's ring). A harness may inject more than one special-mission hex,
+   * which is the only way to observe a rotation the shipped rings author as a
+   * single mission.
+   */
+  definitions?: readonly HexRingDefinition[];
 }
 
 /** One applied frontier tick, as reported by the control surface. */
@@ -148,6 +233,15 @@ export interface GymTickResult {
 /** Detached copy, so rendering/control-surface work never mutates caller data. */
 function clonePayload(payload: HangarWarPayload): HangarWarPayload {
   return JSON.parse(JSON.stringify(payload)) as HangarWarPayload;
+}
+
+/** Detached copy of a resolved assault, or `null` when none was carried. */
+function cloneAssault(
+  assault: HangarAssaultResolution | null,
+): HangarAssaultResolution | null {
+  return assault === null
+    ? null
+    : (JSON.parse(JSON.stringify(assault)) as HangarAssaultResolution);
 }
 
 /** The hex in `payload` with `hexId`, or `undefined`. */
@@ -182,17 +276,33 @@ export function takeHexOnPayload(
  * The caller supplies the already-resolved defender rating (the hangar-upgrade
  * derivation is A4's `defenderRatingFromUpgrades`), so the harness never
  * duplicates that rule. An unheld or unknown hex is a no-op.
+ *
+ * `skills` are the bot's special skills (AH-0MVWZYJ740037EZ1) — the same stored
+ * data the capture cycle's `leaveDefender` gets from the hull flown and the
+ * equipped modifiers. They are persisted verbatim (a copy, never the caller's
+ * array) and the field is **omitted** when there are none, so a bot with no
+ * skills persists exactly as it did before skills existed. Everything the gym
+ * then *resolves* with them is the shipped `runFrontierTick` /
+ * `resolveDefence` / `buildDefenceReport` code, so the harness runs the same
+ * arithmetic the game does (AGENTS.md gym↔game parity).
  */
 export function leaveBotOnPayload(
   payload: HangarWarPayload,
   hexId: string,
   hullId: string,
   defenceRating: number,
+  skills: readonly DefenceSkill[] = [],
 ): HangarWarPayload {
   const next = clonePayload(payload);
   const hex = findHex(next, hexId);
   if (hex?.held) {
-    hex.defender = { hullId, defenceRating, bankedMinerals: 0 };
+    const defender: HexDefender = {
+      hullId,
+      defenceRating,
+      bankedMinerals: 0,
+    };
+    if (skills.length > 0) defender.skills = skills.map((skill) => ({ ...skill }));
+    hex.defender = defender;
   }
   return next;
 }
@@ -237,9 +347,41 @@ export function hexWarSummaryLines(
         `weak: ${fixture.weaknesses.join(', ')}`,
         `grant: ${fixture.grants}`,
       );
+      // The authored contract is part of the known-ahead intel, and its
+      // fulfilment marker is the stored replay guard (AH-0MWEW58WD003NFXS), so
+      // the harness reads both off data rather than duplicating a rule.
+      // The authored landmark is known-ahead intel too (AH-0MWEW5I1F006CLCH):
+      // a fortress publishes its passes, a cache publishes that it pays out.
+      if (fixture.landmark === 'fortress') {
+        parts.push(`landmark: fortress ${hex.capturePasses ?? 0}/2 passes`);
+      } else if (fixture.landmark === 'cache') {
+        parts.push('landmark: cache (pays out, no grant)');
+      }
+      if (fixture.contract !== undefined) {
+        parts.push(
+          `contract: ${fixture.contract.objective}`,
+          `bonus: ${fixture.contract.bonusSalvage} min / ${fixture.contract.bonusCores} cores`,
+          hex.contractFulfilled === true ? 'contract FULFILLED' : 'contract OPEN',
+        );
+      }
     }
     if (hex.held && hex.defender) {
       parts.push(`bot ${hex.defender.hullId} (${hex.defender.defenceRating})`);
+      // The upgrade contribution is read through the same reducer the shared
+      // map model publishes (`defenderUpgradeBreakdown`, consumed by
+      // `buildHexMapModel`), so the summary shows exactly the stored
+      // armour/firepower/systems, upgrade contribution and total rating the
+      // game's map panel and report show — never a gym-local re-derivation
+      // (AH-0MWHF7488009RTBS).
+      const upgrade = defenderUpgradeBreakdown(hex.defender.upgradeSnapshot);
+      if (upgrade !== null) {
+        parts.push(
+          `upgrade armour ${upgrade.armour} · firepower ${upgrade.firepower} · systems ${upgrade.systems} (+${upgrade.ratingContribution})`,
+        );
+      }
+      for (const skill of hex.defender.skills ?? []) {
+        parts.push(`skill ${skill.name} +${skill.bonus} vs ${skill.bossType}`);
+      }
     }
     lines.push(parts.join(' · '));
   }
@@ -262,12 +404,24 @@ export class GymHexWar extends Phaser.Scene {
   private setup: SceneSetupState | null = null;
   /** The shared map render (rebuilt when the control surface changes it). */
   private view: HexMapView | null = null;
+  /** Authored ring definitions driven (shipped table, or a harness override). */
+  private definitions: readonly HexRingDefinition[] = hexRingDefinitionsFor(1);
+  /** The last capture the control surface resolved, or `null` before one. */
+  private lastCapture: HexCaptureResult | null = null;
 
-  /** The shipped defence-report render (the report view). */
-  private reportView: DefenceReportView | null = null;
+  /**
+   * The shipped between-sortie record the current map view draws (the same
+   * record the game carries after a deployment), or `null` before the first
+   * render.
+   */
+  private record: FrontierTickRecord | null = null;
 
-  /** Which screen the harness shows. */
-  private shownView: GymHexWarView = 'map';
+  /**
+   * The resolved ring-end hangar assault the current view announces (the
+   * shared resolver's record), or `null` for an ordinary ring landing. Never
+   * persisted: exactly the game's transient map launch data.
+   */
+  private assault: HangarAssaultResolution | null = null;
 
   constructor() {
     super({ key: GYM_HEX_WAR_SCENE_KEY });
@@ -287,7 +441,10 @@ export class GymHexWar extends Phaser.Scene {
       ? clonePayload(data.payload)
       : createSampleHexWarPayload(seed ?? GYM_HEX_WAR_DEFAULT_SEED, ringIndex);
     this.clock = createFakeFrontierClock(this.payload.seed);
-    this.shownView = data?.view === 'report' ? 'report' : 'map';
+    this.assault = cloneAssault(data?.assault ?? null);
+    this.definitions =
+      data?.definitions ?? hexRingDefinitionsFor(this.payload.ring.ringIndex);
+    this.lastCapture = null;
   }
 
   create(): void {
@@ -299,7 +456,7 @@ export class GymHexWar extends Phaser.Scene {
     addBackToIndexButton(this);
     addBackToMenuOnEsc(this);
 
-    this.renderView();
+    this.renderMap();
 
     this.add
       .text(40, GAME_HEIGHT - 48, GYM_HEX_WAR_HINT, {
@@ -321,52 +478,41 @@ export class GymHexWar extends Phaser.Scene {
   // ── Rendering ─────────────────────────────────────────────────────
 
   /**
-   * Rebuilds the shared hex-map view after a control-surface action.
+   * Rebuilds the shared integrated hex-map view after a control-surface
+   * action.
    *
    * The map is rendered with **no handlers**, so every row is reported
    * non-actionable and the gym stays read-only by construction — the same
-   * model and renderer the game's `HexMapScene` uses (gym↔game parity).
+   * model and renderer the game's `HexMapScene` uses (gym↔game parity),
+   * including the rolled-in report: the shipped tick's record over the current
+   * payload feeds `buildHexMapModel`, which gives the renderer its attack
+   * arrows and left-hand attack panel. The gym owns no arrow or panel rule.
+   *
+   * A carried ring-end hangar assault is passed through the **same** model
+   * builder (`assault`), so the renderer's `HANGAR ASSAULT` banner is the
+   * game's own assault section — the gym never re-derives an assault figure.
    */
   private renderMap(): void {
     this.view?.destroy();
+    const record = this.shippedTickRecord();
+    this.record = record;
     const model = buildHexMapModel(this.payload, {
-      definitions: hexRingDefinitionsFor(this.payload.ring.ringIndex),
+      definitions: this.definitions,
+      record,
+      assault: this.assault,
     });
     this.view = renderHexMap(this, model);
   }
 
   /**
-   * Renders the **shipped defence report** over the current payload
-   * (AH-0MVUXCBBK004EJIP).
-   *
-   * The record is produced by the **shipped** frontier tick
-   * (`runFrontierTick` at the payload's own clock), and the screen is the
-   * game's own model/renderer pair (`buildDefenceReport` +
-   * `renderDefenceReport`) with **no handlers**, so the gym shows exactly what
-   * `DefenceReportScene` shows and owns no report rule. Nothing is resolved by
-   * a battle: the record is arithmetic over the payload's stored numbers.
+   * The between-sortie record the map view carries: the **shipped** frontier
+   * tick's record over the current payload (the same `runFrontierTick` the game
+   * runs after a deployment), never a gym-local re-derivation.
    */
-  private renderReport(): void {
-    this.reportView?.destroy();
-    this.reportView = renderDefenceReport(
-      this,
-      this.getDefenceReport(),
-      undefined,
-      { hint: GYM_HEX_WAR_REPORT_HINT },
-    );
-  }
-
-  /** Renders whichever screen the harness is showing. */
-  private renderView(): void {
-    if (this.shownView === 'report') {
-      this.view?.destroy();
-      this.view = null;
-      this.renderReport();
-      return;
-    }
-    this.reportView?.destroy();
-    this.reportView = null;
-    this.renderMap();
+  private shippedTickRecord(): FrontierTickRecord {
+    return runFrontierTick(this.payload, {
+      clock: frontierClockFor(this.payload),
+    }).record;
   }
 
   // ── Control surface ───────────────────────────────────────────────
@@ -386,42 +532,88 @@ export class GymHexWar extends Phaser.Scene {
     return this.clock;
   }
 
-  /** The rendered map model (the shared intel view). */
+  /** The rendered map model (the shared intel view, arrows included). */
   getMapModel(): HexMapModel | null {
     return this.view?.model ?? null;
   }
 
-  /** Which screen the harness currently shows. */
-  getView(): GymHexWarView {
-    return this.shownView;
+  /** Every drawn attack arrow (one per carried-attack entry), or none. */
+  getMapArrows(): readonly HexMapArrow[] {
+    return this.view?.arrows ?? [];
   }
 
   /**
-   * The defence report the harness renders: the **shipped** frontier tick's
-   * record over this payload, built by the shipped report model.
+   * The defence report model the integrated view is built from: the **shipped**
+   * frontier tick's record over this payload, read through the shipped report
+   * model. The model's `attackDetails` rows are what the left panel renders.
    */
   getDefenceReport(): DefenceReportModel {
-    const tick = runFrontierTick(this.payload, {
-      clock: frontierClockFor(this.payload),
-    });
-    return buildDefenceReport(tick.payload, tick.record);
+    return buildDefenceReport(
+      this.payload,
+      this.record ?? this.shippedTickRecord(),
+      { assault: this.assault },
+    );
   }
 
-  /** Every rendered report row (empty while the map view is shown). */
-  getReportRows(): readonly DefenceReportRow[] {
-    return this.reportView?.rows ?? [];
+  /**
+   * The resolved ring-end hangar assault the current view announces (a
+   * detached copy), or `null` for an ordinary ring landing. Never persisted.
+   */
+  getAssault(): HangarAssaultResolution | null {
+    return cloneAssault(this.assault);
   }
 
-  /** Switches to the shipped defence-report screen (control surface). */
-  showDefenceReport(): void {
-    this.shownView = 'report';
-    this.renderView();
+  /**
+   * The rendered hangar-assault announcement (`RING WON …` / `HANGAR FALLS …`
+   * plus its arithmetic and consequence), or `''` when none is carried.
+   */
+  getAssaultText(): string {
+    return this.view?.getAssaultText() ?? '';
   }
 
-  /** Switches back to the hex-map screen (control surface). */
-  showMap(): void {
-    this.shownView = 'map';
-    this.renderView();
+  /** Whether the hangar-assault announcement is on screen. */
+  isAssaultVisible(): boolean {
+    return this.view?.isAssaultVisible() ?? false;
+  }
+
+  /**
+   * The between-sortie tick record the current map view carries (a detached
+   * copy), or `null` before the first render. Never persisted.
+   */
+  getTickRecord(): FrontierTickRecord | null {
+    return this.record === null
+      ? null
+      : (JSON.parse(JSON.stringify(this.record)) as FrontierTickRecord);
+  }
+
+  /**
+   * Moves the map's focus to `key` (control surface: inspect a hex's panels).
+   * Every displayed hex is focusable even in a handler-less render, so this is
+   * the renderer's own `focusRow` seam — the same one the game uses — and the
+   * gym still owns no panel rule.
+   *
+   * @returns whether the focus moved.
+   */
+  focusMapRow(key: string): boolean {
+    return this.view?.focusRow(key) ?? false;
+  }
+
+  /** The focused row key, or `null` when nothing is focusable. */
+  getMapFocusKey(): string | null {
+    return this.view?.getFocusedKey() ?? null;
+  }
+
+  /**
+   * The left-hand attack panel's text (the inspected attack's row), or `''`
+   * when the inspected hex is in no attack.
+   */
+  getLeftPanelText(): string {
+    return this.view?.getLeftPanelText() ?? '';
+  }
+
+  /** Whether the left-hand attack panel is showing. */
+  isLeftPanelVisible(): boolean {
+    return this.view?.isLeftPanelVisible() ?? false;
   }
 
   /** Every rendered map row (read-only: none is actionable in the gym). */
@@ -447,24 +639,114 @@ export class GymHexWar extends Phaser.Scene {
   /** Takes `hexId` into the player's hands (control surface: take hex). */
   takeHex(hexId: string): void {
     this.payload = takeHexOnPayload(this.payload, hexId);
-    this.renderView();
+    this.renderMap();
   }
 
   /** Leaves a bot defending `hexId` (control surface: leave bot). */
-  leaveBot(hexId: string, hullId: string, defenceRating: number): void {
+  leaveBot(
+    hexId: string,
+    hullId: string,
+    defenceRating: number,
+    skills: readonly DefenceSkill[] = [],
+  ): void {
     this.payload = leaveBotOnPayload(
       this.payload,
       hexId,
       hullId,
       defenceRating,
+      skills,
     );
-    this.renderView();
+    this.renderMap();
+  }
+
+  /**
+   * Resolves the ring-end hangar assault over the current payload and carries
+   * it into the integrated view (control surface: resolve the assault).
+   *
+   * This drives the **shipped** capture-cycle gate (`resolveRingAssault` →
+   * `resolveHangarAssault`) over the same payload the game's final-hex capture
+   * runs it over, so the defender sum, massed force, aggression multiplier,
+   * jitter, strength, margin and outcome are the game's own numbers — never a
+   * gym-local re-derivation. The map re-renders with the record, so its
+   * `HANGAR ASSAULT` banner (and the report model's `assault` section) is the
+   * shared pair the game renders.
+   *
+   * @returns the resolved assault (also available via {@link getAssault}).
+   */
+  resolveAssault(): HangarAssaultResolution {
+    this.assault = resolveRingAssault(this.payload);
+    this.renderMap();
+    return cloneAssault(this.assault)!;
+  }
+
+  /**
+   * Completes a hex's deployment (control surface: capture the hex).
+   *
+   * Delegates to the **shipped** capture cycle (`resolveHexCapture`), so the
+   * gym resolves a win exactly as the game's boss-victory path does: banked
+   * salvage, the authored grant into the hangar's owned sets (the special
+   * mission's hull included), the left defending bot and the ring transition.
+   * The scene owns no capture rule.
+   *
+   * @param hexId — the hex whose boss was beaten.
+   * @param hullId — the hull left defending it (`null` = no defender → refusal).
+   * @param salvage — the run's earned salvage (defaults to zero in the gym).
+   * @param snapshot — the run's permanent-upgrade snapshot at the victory
+   *   moment (the raw rows `Player.getWeaponLevels()`,
+   *   `Player.getPowerUpLevels()` and
+   *   `PowerUpLevelStore.snapshotConsumablePools()` produce) — the same input
+   *   the game's boss-victory path reads. Optional: absent means "no
+   *   upgrades" and the bot left is exactly today's
+   *   (AH-0MWHF7488009RTBS).
+   * @returns the shipped capture result (the scene also drives its payload).
+   */
+  captureHex(
+    hexId: string,
+    hullId: string | null,
+    salvage: RunSalvage = GYM_CAPTURE_SALVAGE,
+    snapshot?: DefenderUpgradeSnapshot,
+  ): HexCaptureResult {
+    const result = resolveHexCapture(this.payload, {
+      hexId,
+      defenderHullId: hullId,
+      salvage,
+      snapshot,
+      definitions: this.definitions,
+      banked: bankedSalvageFromHangar(this.payload.hangar),
+    });
+    // The game writes the next payload even when a hex could not be held (a
+    // victory always extracts its salvage), so the gym mirrors it exactly.
+    this.payload = result.payload;
+    this.lastCapture = result;
+    this.renderMap();
+    return result;
+  }
+
+  /** The last capture resolved by {@link captureHex}, or `null` before one. */
+  getLastCapture(): HexCaptureResult | null {
+    return this.lastCapture;
+  }
+
+  /** The ring definitions the gym drives (shipped, or a harness override). */
+  getDefinitions(): readonly HexRingDefinition[] {
+    return [...this.definitions];
+  }
+
+  /**
+   * The special mission the rotation offers this sortie, or `null` when the
+   * ring offers none — the shared resolver's answer for this payload's own
+   * seed and sortie counter, so the gym and the game cannot disagree.
+   */
+  getSpecialOffer(): SpecialMissionOffer | null {
+    return specialMissionOfferFor(this.payload, this.definitions);
   }
 
   /**
    * Runs `ticks` deterministic frontier ticks (control surface: tick → holds or
    * falls). The transition is the pure harness stand-in, so the scene owns no
-   * resolver logic.
+   * resolver logic. The map re-renders after the ticks, so the integrated view
+   * shows the shipped record for the resulting payload — exactly what the game
+   * would carry for it.
    *
    * @returns one result per applied tick, in order.
    */
@@ -475,6 +757,12 @@ export class GymHexWar extends Phaser.Scene {
     for (let i = 0; i < step; i += 1) {
       const applied = applyFakeFrontierTick(this.payload, this.clock);
       this.payload = applied.payload;
+      // The shipped between-sortie tick advances the payload's own sortie
+      // counter (`frontierTick`); the harness double carries no payload
+      // bookkeeping, so the gym applies the same one-per-tick increment. A
+      // ticked gym therefore rotates its special-mission offer exactly as a
+      // ticked war does (AH-0MWF0CSSI007P414).
+      this.payload.frontierTick = (this.payload.frontierTick ?? 0) + 1;
       this.clock = applied.clock;
 
       const attackedHexId = applied.event.attack?.hexId ?? null;
@@ -488,7 +776,7 @@ export class GymHexWar extends Phaser.Scene {
       });
     }
 
-    this.renderView();
+    this.renderMap();
     return results;
   }
 }

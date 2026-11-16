@@ -24,8 +24,10 @@
  * aggressionMultiplier = 100 + aggressionPercentPerPoint × aggression   (%)
  * jitter               = ±jitterPercent                                 (%)
  * attackStrength       = round(attackingForce × multiplier × (100 + jitter) / 10000)
- * held                 = defenderRating ≥ attackStrength
- * margin               = defenderRating − attackStrength
+ * skillBonus           = Σ bonus of the defender's skills matching the attacker type
+ * effectiveRating      = defenderRating + skillBonus
+ * held                 = effectiveRating ≥ attackStrength
+ * margin               = effectiveRating − attackStrength
  * ```
  *
  * - **Aggression is a multiplier, aggression `0` is neutral.** A hex's stored
@@ -39,11 +41,39 @@
  *   override) makes the resolver a plain comparison, which is what the table
  *   tests pin.
  * - **A tie holds the line.** Matching the attack is a defence, so
- *   `defenderRating === attackStrength` is a hold with `margin: 0` — the
+ *   `effectiveRating === attackStrength` is a hold with `margin: 0` — the
  *   player only loses a hex the AI *beats* on the stored numbers.
+ * - **Defending-bot skills are flat rating bonuses keyed by attacker type**
+ *   (AH-0MVWZYJ740037EZ1). The attacker's type is the **authored boss identity
+ *   of the attacking neighbour hex**, which the map's known-ahead intel already
+ *   shows, so no new enemy taxonomy exists. A skill trained against that boss
+ *   adds its stored `bonus` to the effective rating *before* the comparison; a
+ *   non-matching skill contributes nothing, so an attack against any other boss
+ *   is resolved exactly as it was before skills existed, and an **untyped**
+ *   attack (an origin hex with no authored definition) resolves unmodified.
+ *   Skills are stored numbers only — they never consume the seeded jitter
+ *   stream, so a replay of the same payload/seed/tick reproduces every hold and
+ *   fall. The resolution publishes the stored rating, the effective rating, the
+ *   summed bonus and the applied skills, so the report can show both and a hold
+ *   that *depended* on a skill is distinguishable from an unmodified one.
  * - **Everything is total.** Negative, fractional and non-finite inputs
  *   collapse to `0` (or are truncated), so a corrupt payload can never throw
  *   inside a resolution pass.
+ *
+ * ## The hangar assault ({@link resolveHangarAssault})
+ *
+ * The ring-end counterpart, shipped for `AH-0MVUVL2O2006W4QK`: when the
+ * ring's final hex is captured, the massed counter-attack on the
+ * hangar is resolved from the same stored numbers (`HangarAssaultInput`
+ * mirrors `DefenceInput`): the defender side is the held-ring defender sum
+ * ({@link heldRingDefenderSum}), the attacker side is the base massed force
+ * derived from the ring's stored aggression ({@link massedAssaultBase}) scaled
+ * by the **same** `aggressionPercentPerPoint` multiplier and bounded seeded
+ * jitter — a tie
+ * holds the line and the hangar falls only when the assault beats the stored
+ * defence. Both ring-side numbers have a derivation here, so no caller
+ * re-derives one. The capture-cycle gate (not this module) triggers the
+ * assault and applies its consequence (ring won / hangar-falls reset).
  *
  * Every result carries the whole calculation ({@link DefenceResolution}), not
  * just the outcome: the defence report (B6) renders exactly these numbers, which
@@ -84,10 +114,11 @@
  * - A held hex with **no** unheld neighbour is not attacked this tick. Once
  *   every hex of the ring is held there is no neighbour left to strike from, so
  *   a secured ring draws no attacks — the ring's win state is quiet by
- *   construction, and there is **no hangar assault pass** (producer decision
- *   2026-10-30, Q2 = a; the massed assault is deferred to
- *   `AH-0MVUVL2O2006W4QK`). A means to press the ring from its outer edge would
- *   be added with that deferred item.
+ *   construction, and the tick itself performs **no hangar assault pass**.
+ *   The massed counter-attack is instead resolved separately by
+ *   {@link resolveHangarAssault} when the ring's final hex is captured (the
+ *   shipped capture-cycle gate, `AH-0MVUVL2O2006W4QK`); this module owns the
+ *   arithmetic, not the trigger.
  * - The attacking force comes from the **origin's** aggression, and the
  *   **target's** aggression multiplies it, so both ends of the border matter.
  * - Ties between equally aggressive neighbours, and the choice of which held
@@ -124,8 +155,18 @@ import { createHangarWarRng } from './rng';
 import { areNeighbours, type AxialCoordinate } from './hexRing';
 import { MINIMUM_PLAYER_STRENGTH, resolvePlayerStrength } from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
-import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
-import type { HangarWarPayload, HexRingState, HexState, PendingAttack } from './types';
+import {
+  findHexRingDefinition,
+  hexRingDefinitionsFor,
+} from '../../data/hexRingDefinitions';
+import type {
+  DefenceSkill,
+  DefenderUpgradeSnapshot,
+  HangarWarPayload,
+  HexRingState,
+  HexState,
+  PendingAttack,
+} from './types';
 
 /** The two outcomes of an algorithmic defence. */
 export type DefenceOutcome = 'held' | 'fell';
@@ -137,7 +178,11 @@ export type DefenceOutcome = 'held' | 'fell';
  * scene or a bot, only the four numbers the design names.
  */
 export interface DefenceInput {
-  /** The defending bot's stored rating (from the hull's hangar upgrades). */
+  /**
+   * The defending bot's stored rating — the hull's hangar-upgrade rating plus
+   * the run's permanent-upgrade contribution at capture time
+   * (AH-0MWH42DWQ004SAOJ), never a live battle.
+   */
   readonly defenderRating: number;
   /** The AI's attacking force before the hex's aggression scales it. */
   readonly attackingForce: number;
@@ -145,6 +190,24 @@ export interface DefenceInput {
   readonly aggression: number;
   /** Deterministic seed for the bounded jitter draw. */
   readonly seed: number;
+  /**
+   * The attacker's type — the authored **boss identity of the attacking
+   * neighbour hex** — or `null`/omitted when the origin has no authored boss
+   * (AH-0MVWZYJ740037EZ1).
+   *
+   * A defence is always launched from an unheld neighbouring hex of the same
+   * ring, and that hex's boss is the identity the defending bot's skills are
+   * trained against. An untyped attack (a partial save, a hex with no authored
+   * definition) resolves **unmodified** — documented, total behaviour.
+   */
+  readonly attackerType?: string | null;
+  /**
+   * The defending bot's stored special skills. A skill whose `bossType`
+   * matches {@link attackerType} adds its flat `bonus` to the effective rating;
+   * a non-matching skill contributes nothing, so a non-matching attack is
+   * resolved exactly as it was before skills existed.
+   */
+  readonly skills?: readonly DefenceSkill[];
 }
 
 /**
@@ -158,6 +221,19 @@ export interface DefenceResolution {
   readonly outcome: DefenceOutcome;
   /** The defender rating used (normalised non-negative integer). */
   readonly defenderRating: number;
+  /**
+   * The **effective** defender rating the comparison used
+   * (`defenderRating + skillBonusTotal`).
+   *
+   * Published beside the stored {@link defenderRating} so the defence report can
+   * show both: a hold that depended on a matching skill is distinguishable from
+   * an unmodified one (AH-0MVWZYJ740037EZ1 AC2).
+   */
+  readonly effectiveDefenderRating: number;
+  /** Summed flat bonus of every skill whose boss type matched (0 = none). */
+  readonly skillBonusTotal: number;
+  /** The skills actually applied (matching, usable ones only). */
+  readonly appliedSkills: readonly DefenceSkill[];
   /** The attacking force used, before aggression and jitter. */
   readonly attackingForce: number;
   /** The aggression used (normalised non-negative integer). */
@@ -168,7 +244,11 @@ export interface DefenceResolution {
   readonly jitterPercent: number;
   /** The force actually faced, after aggression and jitter. */
   readonly attackStrength: number;
-  /** `defenderRating − attackStrength` (negative exactly when the hex fell). */
+  /**
+   * `effectiveDefenderRating − attackStrength` (negative exactly when the hex
+   * fell). A hold that needed a skill therefore shows a margin the stored
+   * rating alone would not have reached.
+   */
   readonly margin: number;
 }
 
@@ -256,6 +336,27 @@ export interface HexDefenceRecord extends DefenceResolution {
   readonly attackerOriginId: string;
   /** Axial coordinate of that neighbour (the hex the player can strike back at). */
   readonly attackerOrigin: AxialCoordinate;
+  /**
+   * The attacker's type as resolved for this attack: the attacking neighbour
+   * hex's authored `boss`, or `null` when that origin has no authored
+   * definition (an untyped attack, which resolves unmodified).
+   */
+  readonly attackerType: string | null;
+  /**
+   * The defender's stored run-upgrade snapshot at resolution time
+   * (parent AH-0MWH42DWQ004SAOJ, C6 AH-0MWH730I0011PY9).
+   *
+   * Carried additively so the between-sortie report can publish the bot's
+   * armour/firepower/systems breakdown even on a **fall**, where
+   * `applyDefence` clears the defender from the post-tick payload. Absent for
+   * an un-upgraded defender (the report then stays byte-identical to today).
+   *
+   * Only the **raw rows** ride the record — bucket arithmetic stays in the
+   * one reducer (`defenderStatBuckets` / `defenderUpgradeBreakdown` in
+   * `./hangarEconomy`), which the report model calls; the resolver never
+   * derives a bucket or a rating here (AC5 no-divergent-copy).
+   */
+  readonly upgradeSnapshot?: DefenderUpgradeSnapshot;
   /** Whether the attack was queued in the payload or opened by this tick. */
   readonly source: 'pending' | 'frontier';
 }
@@ -751,13 +852,63 @@ export function attackingNeighbour(
 }
 
 /**
+ * The matching skills a defence applies, and their summed flat bonus.
+ *
+ * A skill applies only when the attack has a type and the skill's `bossType`
+ * equals it — so an untyped attack (no authored boss on the origin hex) gets no
+ * bonus, and a non-matching attack is resolved exactly as before skills
+ * existed. Total: a non-object entry, a blank/absent `bossType` or an unusable
+ * `bonus` contributes nothing rather than throwing, and a negative bonus can
+ * never weaken the defender.
+ *
+ * @param attackerType — the attack's type (the origin hex's authored boss).
+ * @param skills — the defending bot's stored skills (may be absent).
+ * @returns the applied skills (in stored order) and their summed bonus.
+ */
+function applicableSkills(
+  attackerType: string | null | undefined,
+  skills: readonly DefenceSkill[] | undefined,
+): { applied: DefenceSkill[]; bonus: number } {
+  const applied: DefenceSkill[] = [];
+  let bonus = 0;
+  if (typeof attackerType !== 'string' || attackerType === '') {
+    return { applied, bonus };
+  }
+  if (!Array.isArray(skills)) return { applied, bonus };
+
+  for (const skill of skills) {
+    if (typeof skill !== 'object' || skill === null) continue;
+    if (skill.bossType !== attackerType) continue;
+    // A skill with no positive bonus applies nothing, so it is not reported as
+    // having decided a hold it left untouched.
+    const value = toCount(skill.bonus);
+    if (value <= 0) continue;
+    // A shallow copy, so a resolution is a detached snapshot of the stored
+    // data: a caller that later mutates its skills array cannot rewrite a record
+    // the report is rendering.
+    applied.push({ ...skill, bonus: value });
+    bonus += value;
+  }
+  return { applied, bonus };
+}
+
+/**
  * Resolves one defence from stored numbers — the algorithmic replacement for a
  * simulated battle.
  *
  * Deterministic for a given `{ defenderRating, attackingForce, aggression,
  * seed }`: the only randomness is the bounded seeded jitter, drawn from the
  * shared seeded stream. The input is never mutated and nothing outside the four
- * numbers is consulted, which is what "no simulated battle" means here.
+ * numbers (plus the optional attacker type and the defender's stored skills) is
+ * consulted, which is what "no simulated battle" means here.
+ *
+ * A defending bot's **special skills** enter as stored numbers only
+ * (AH-0MVWZYJ740037EZ1): a skill trained against the attacking boss identity
+ * adds its flat bonus to the effective rating *before* the
+ * `effectiveRating ≥ attackStrength` comparison, and the resolution publishes
+ * the stored rating, the effective rating, the summed bonus and the skills
+ * applied — so the report can show the numbers that actually decided the hold.
+ * Skills never touch the jitter draw, so a replay is unchanged.
  *
  * @param input — the stored numbers the defence is decided from.
  * @param tuning — balance knobs (defaults to {@link DEFAULT_FRONTIER_TUNING}).
@@ -771,6 +922,11 @@ export function resolveDefence(
   const defenderRating = toCount(input.defenderRating);
   const attackingForce = toCount(input.attackingForce);
   const aggression = toCount(input.aggression);
+  const { applied, bonus: skillBonusTotal } = applicableSkills(
+    input.attackerType,
+    input.skills,
+  );
+  const effectiveDefenderRating = defenderRating + skillBonusTotal;
 
   const aggressionMultiplierPercent =
     AGGRESSION_MULTIPLIER_BASE_PERCENT +
@@ -788,12 +944,174 @@ export function resolveDefence(
       (AGGRESSION_MULTIPLIER_BASE_PERCENT + jitterPercent)) /
       (AGGRESSION_MULTIPLIER_BASE_PERCENT * AGGRESSION_MULTIPLIER_BASE_PERCENT),
   );
-  const margin = defenderRating - attackStrength;
+  const margin = effectiveDefenderRating - attackStrength;
 
   return {
     outcome: margin >= 0 ? 'held' : 'fell',
     defenderRating,
+    effectiveDefenderRating,
+    skillBonusTotal,
+    appliedSkills: applied,
     attackingForce,
+    aggression,
+    aggressionMultiplierPercent,
+    jitterPercent,
+    attackStrength,
+    margin,
+  };
+}
+
+/** The two outcomes of an algorithmic hangar assault. */
+export type AssaultOutcome = 'repelled' | 'fell';
+
+/**
+ * The stored numbers a hangar assault is decided from — nothing else is
+ * consulted.
+ *
+ * Mirrors {@link DefenceInput}: the defender side is the **sum of the held
+ * ring hexes' defender ratings**, the attacker side is the **base massed
+ * force** derived from the ring's stored numbers ({@link massedAssaultBase}),
+ * and the ring's frontier aggression scales it exactly as a hex's aggression
+ * scales a defence attack. The resolver never sees a payload, a scene or a
+ * battle — only the four numbers the design names, so the same replay rule
+ * that pins a hex defence pins the assault.
+ */
+export interface HangarAssaultInput {
+  /** Sum of the held ring hexes' defending bot ratings (stored numbers only). */
+  readonly defenderSum: number;
+  /** The base massed force, derived from the ring's stored numbers. */
+  readonly attackerBase: number;
+  /** The ring's frontier aggression (the assault multiplier's driver). */
+  readonly aggression: number;
+  /** Deterministic seed for the bounded jitter draw. */
+  readonly seed: number;
+}
+
+/**
+ * A completed hangar assault: the outcome **and** every number behind it.
+ *
+ * Mirrors {@link DefenceResolution} — this is the record the defence report
+ * renders when the ring's final hex is captured, so it never has to re-derive
+ * a figure the resolver already computed (the reporting slice reads these
+ * fields as-is).
+ */
+export interface HangarAssaultResolution {
+  /** `repelled` when the hangar matched or beat the assault, else `fell`. */
+  readonly outcome: AssaultOutcome;
+  /** The held-ring defender sum used (normalised non-negative integer). */
+  readonly defenderSum: number;
+  /** The base massed force used, before aggression and jitter. */
+  readonly attackerBase: number;
+  /** The ring aggression used (normalised non-negative integer). */
+  readonly aggression: number;
+  /** The aggression multiplier applied, in percent (`100` = neutral). */
+  readonly aggressionMultiplierPercent: number;
+  /** The bounded seeded jitter applied, in percent (`0` = none). */
+  readonly jitterPercent: number;
+  /** The force actually faced, after aggression and jitter. */
+  readonly attackStrength: number;
+  /** `defenderSum − attackStrength` (negative exactly when the hangar fell). */
+  readonly margin: number;
+}
+
+/**
+ * The base massed force the frontier presses the hangar with.
+ *
+ * Derived from the ring's **stored numbers only**: the sum of its hexes'
+ * current frontier aggression (the producer Q2 answer A "sum of ring hex
+ * aggression" option). The whole frontier is the mass that presses the
+ * hangar, so a risen ring presses harder than a quiet one and no player
+ * strength is consulted — the defender already brings the fleet; the assault
+ * is the frontier's own stored pressure. The capture-cycle gate feeds this
+ * base, the held-ring defender sum, a ring aggression figure and the war seed
+ * into {@link resolveHangarAssault}.
+ *
+ * Total: a hex with a negative, fractional or non-finite aggression collapses
+ * to `0`, so a corrupt payload can never throw inside an assault pass.
+ *
+ * @param ring — the fully held ring being assaulted.
+ * @returns the frontier's base massed force.
+ */
+export function massedAssaultBase(ring: HexRingState): number {
+  return ring.hexes.reduce((sum, hex) => sum + toCount(hex.aggression), 0);
+}
+
+/**
+ * The defender side of a hangar assault: the held ring's stored defence.
+ *
+ * The other half of the assault's stored numbers — the sum of the **held**
+ * hexes' defending-bot ratings, exactly as the frontier tick compares a hex's
+ * own rating against an attack. Only `held` hexes contribute, so a stale
+ * defender left on an unheld hex (a corrupt payload) never strengthens the
+ * hangar, and nothing but the stored ratings is consulted.
+ *
+ * The capture-cycle gate pairs it with {@link massedAssaultBase} to build a
+ * {@link HangarAssaultInput}, so neither the game nor the `GymHexWar` gym ever
+ * re-derives the figure (the gym↔game parity rule).
+ *
+ * Total: a negative or non-finite rating contributes `0` and a fractional one
+ * is truncated, as {@link toCount} leaves it — so a corrupt payload can never
+ * throw inside an assault pass.
+ *
+ * @param ring — the ring being defended (fully held when the assault fires).
+ * @returns the sum of the held hexes' stored defender ratings.
+ */
+export function heldRingDefenderSum(ring: HexRingState): number {
+  return ring.hexes.reduce(
+    (sum, hex) => (hex.held ? sum + toCount(hex.defender?.defenceRating) : sum),
+    0,
+  );
+}
+
+/**
+ * Resolves the hangar assault from stored numbers — the ring-end counterpart
+ * to {@link resolveDefence}.
+ *
+ * The arithmetic is **exactly** the hex resolver's: the base massed force is
+ * scaled by the ring's aggression (`100 + aggressionPercentPerPoint ×
+ * aggression` percent), jittered by the same bounded seeded draw, and compared
+ * against the held-ring defender sum. **A tie holds the line** (`margin: 0`
+ * repels) and the hangar falls only when the assault *beats* the stored
+ * defence. Deterministic for a given `{ defenderSum, attackerBase, aggression,
+ * seed }` — the only randomness is the seeded jitter, drawn from the same
+ * stream as `resolveDefence`; the input is never mutated and nothing outside
+ * the four numbers is consulted ("no simulated battle" here too).
+ *
+ * @param input — the stored numbers the assault is decided from.
+ * @param tuning — balance knobs (defaults to {@link DEFAULT_FRONTIER_TUNING}).
+ * @returns the outcome and every number behind it.
+ */
+export function resolveHangarAssault(
+  input: HangarAssaultInput,
+  tuning: FrontierTuning = DEFAULT_FRONTIER_TUNING,
+): HangarAssaultResolution {
+  const rules = normaliseTuning(tuning);
+  const defenderSum = toCount(input.defenderSum);
+  const attackerBase = toCount(input.attackerBase);
+  const aggression = toCount(input.aggression);
+
+  const aggressionMultiplierPercent =
+    AGGRESSION_MULTIPLIER_BASE_PERCENT +
+    rules.aggressionPercentPerPoint * aggression;
+
+  const jitterPercent =
+    rules.jitterPercent === 0
+      ? 0
+      : createHangarWarRng(input.seed).nextInt(2 * rules.jitterPercent + 1) -
+        rules.jitterPercent;
+
+  const attackStrength = Math.round(
+    (attackerBase *
+      aggressionMultiplierPercent *
+      (AGGRESSION_MULTIPLIER_BASE_PERCENT + jitterPercent)) /
+      (AGGRESSION_MULTIPLIER_BASE_PERCENT * AGGRESSION_MULTIPLIER_BASE_PERCENT),
+  );
+  const margin = defenderSum - attackStrength;
+
+  return {
+    outcome: margin >= 0 ? 'repelled' : 'fell',
+    defenderSum,
+    attackerBase,
     aggression,
     aggressionMultiplierPercent,
     jitterPercent,
@@ -831,12 +1149,20 @@ function resolveAttack(
   const origin = attackingNeighbour(hex, payload.ring.hexes);
   if (origin === null) return null;
 
+  // The attacker's type is the **authored boss identity of the origin hex** —
+  // the same identity the map's known-ahead intel already shows, so no new
+  // enemy taxonomy is authored (AH-0MVWZYJ740037EZ1). A hex with no authored
+  // definition has no identity, and the attack resolves unmodified.
+  const attackerType = findHexRingDefinition(origin.id)?.boss ?? null;
+
   const resolution = resolveDefence(
     {
       defenderRating: hex.defender?.defenceRating ?? 0,
       attackingForce: force,
       aggression: hex.aggression,
       seed: hexSeed(tickSeed(clock.seed, clock.tick), hex.id),
+      attackerType,
+      skills: hex.defender?.skills ?? [],
     },
     tuning,
   );
@@ -846,6 +1172,13 @@ function resolveAttack(
     hexId: hex.id,
     attackerOriginId: origin.id,
     attackerOrigin: { q: origin.q, r: origin.r },
+    attackerType,
+    // The defender's upgrade snapshot rides the record so the defence report
+    // can render the bot's breakdown for a fall (C6), when the post-tick
+    // payload has already cleared the defender.
+    ...(hex.defender?.upgradeSnapshot !== undefined
+      ? { upgradeSnapshot: hex.defender.upgradeSnapshot }
+      : {}),
     source,
   };
 }

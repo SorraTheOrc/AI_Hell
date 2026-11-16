@@ -14,13 +14,32 @@
 import { describe, expect, it } from 'vitest';
 
 import { deriveDefenderRating } from './hangarEconomy';
+import * as hangarEconomyModule from './hangarEconomy';
 import { createDefaultPayload } from './hangarWarStore';
-import { createRingState } from './hexRing';
-import { runSalvageFromRun } from './salvageBanking';
-import type { HangarWarPayload, HexState } from './types';
-import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
 import {
+  HANGAR_WAR_VERSION,
+  loadHangarWarPayload,
+  saveHangarWarPayload,
+} from './hangarWarStore';
+import { createInMemoryHangarWarStorage } from './storage';
+import { createRingState } from './hexRing';
+import {
+  DEFAULT_FRONTIER_TUNING,
+  createFrontierClock,
+  resolveHangarAssault,
+  runFrontierTick,
+} from './hexDefence';
+import { createBankedSalvage, runSalvageFromRun } from './salvageBanking';
+import type { HangarWarPayload, HexDefender, HexState } from './types';
+import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
+import type { PowerUpId } from '../../powerups/types';
+import type { WeaponId } from '../../utils/weapons';
+import { buildHangarDeployment } from '../../scenes/hangarWar/hangarDeployment';
+import {
+  campaignResetSeed,
+  defenderSkillsFor,
   grantDemonstrationColor,
+  hangarAssaultSeed,
   isRingSecured,
   leaveDefender,
   materialiseRing,
@@ -30,6 +49,7 @@ import {
   resolveHexGrant,
   withGrantedEntry,
 } from './captureCycle';
+import { HANGAR_CATALOGUE } from '../../data/hangarCatalogue';
 
 /** A fresh war with ring `ringIndex` materialised from the authored data. */
 function ringPayload(ringIndex = 1): HangarWarPayload {
@@ -136,6 +156,95 @@ describe('leaveDefender', () => {
     expect(leaveDefender(payload.hangar, 'not-a-hull')).toBeNull();
     expect(leaveDefender(payload.hangar, null)).toBeNull();
     expect(leaveDefender(payload.hangar, 'hull-1')).not.toBeNull();
+  });
+});
+
+describe('leaveDefender — special skills (AH-0MVWZYJ740037EZ1)', () => {
+  it('omits the skill field entirely when the bot has no skills (additive data)', () => {
+    const payload = ringPayload();
+
+    const defender = leaveDefender(payload.hangar, 'hull-1');
+
+    expect(defender).not.toBeNull();
+    // Field presence stays exact: an old-shaped defender is never widened.
+    expect('skills' in defender!).toBe(false);
+  });
+
+  it('attaches the hull flown’s authored skill', () => {
+    const payload = ringPayload();
+    payload.hangar.unlockedHulls.push('hull-2');
+
+    const defender = leaveDefender(payload.hangar, 'hull-2');
+
+    // The other half of the composition: what the hull itself is trained against.
+    expect(defender?.skills).toBeDefined();
+    expect(defender!.skills).toHaveLength(1);
+    expect(defender!.skills![0]).toMatchObject({
+      bossType: 'the-dawnbreaker',
+      bonus: 4,
+    });
+    // The stored rating is unchanged — a skill is applied by the resolver, not
+    // baked into the number the player sees.
+    expect(defender!.defenceRating).toBe(deriveDefenderRating('hull-2'));
+  });
+
+  it('adds a purchased modifier’s skill beside the hull’s (both may coexist)', () => {
+    const payload = ringPayload();
+    payload.hangar.unlockedHulls.push('hull-2');
+    payload.hangar.ownedModifiers.push('anti_maw_plating');
+    payload.hangar.activeLoadout = {
+      startingWeapons: [],
+      modifiers: ['anti_maw_plating'],
+    };
+
+    const defender = leaveDefender(payload.hangar, 'hull-2');
+
+    expect(defender!.skills!.map((skill) => skill.bossType).sort()).toEqual([
+      'maw-of-ashes',
+      'the-dawnbreaker',
+    ]);
+  });
+
+  it('grants no modifier skill unless the modifier is on the active loadout', () => {
+    const payload = ringPayload();
+    // Owned but not equipped: owning a modifier never silently changes what the
+    // fleet deploys with, so it cannot change what a bot is trained against.
+    payload.hangar.ownedModifiers.push('anti_maw_plating');
+
+    const defender = leaveDefender(payload.hangar, 'hull-1');
+
+    expect('skills' in defender!).toBe(false);
+  });
+
+  it('collapses a skill granted twice to one entry (no double-stacking)', () => {
+    const payload = ringPayload();
+    payload.hangar.unlockedHulls.push('hull-2');
+    payload.hangar.ownedModifiers.push('anti_maw_plating');
+    payload.hangar.activeLoadout = {
+      startingWeapons: [],
+      modifiers: ['anti_maw_plating'],
+    };
+
+    const catalogue = [...HANGAR_CATALOGUE];
+    const bulwark = catalogue.find((item) => item.id === 'hull-2');
+    const plating = catalogue.find((item) => item.id === 'anti_maw_plating');
+    if (bulwark?.kind !== 'hull' || plating?.kind !== 'modifier') {
+      throw new Error('shipped catalogue shape changed');
+    }
+    expect(plating.effect.kind).toBe('defence-skill');
+    // A hull and a modifier authoring the same training id would otherwise add
+    // the bonus twice.
+    const shared = { id: 'shared-training', name: 'Shared', bossType: 'x', bonus: 2 };
+    catalogue[catalogue.indexOf(bulwark)] = { ...bulwark, skill: shared };
+    catalogue[catalogue.indexOf(plating)] = {
+      ...plating,
+      effect: { kind: 'defence-skill', skill: shared },
+    };
+
+    const skills = defenderSkillsFor(payload.hangar, 'hull-2', catalogue);
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0].id).toBe('shared-training');
   });
 });
 
@@ -271,9 +380,15 @@ describe('resolveHexCapture — the win path', () => {
 });
 
 describe('ring securing', () => {
-  it('secures the ring on its last hex and opens ring 2 without an assault pass', () => {
+  it('secures the ring on its last hex, repels the assault and opens ring 2', () => {
     const payload = ringPayload();
+    // Strong stored defenders so the ring's massed assault is repelled — the
+    // win path now runs through the gate (AH-0MWEZZ9TE001577J).
     holdAllBut(payload, 'hex-r1-6');
+    for (const state of payload.ring.hexes) {
+      if (state.id === 'hex-r1-6' || !state.defender) continue;
+      state.defender = { ...state.defender, defenceRating: 20 };
+    }
 
     const result = resolveHexCapture(payload, {
       hexId: 'hex-r1-6',
@@ -283,7 +398,9 @@ describe('ring securing', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(result.assault?.outcome).toBe('repelled');
     expect(result.ringSecured).toBe(true);
+    expect(result.campaignReset).toBe(false);
     expect(result.ringAdvanced).toBe(true);
     expect(result.ringIndex).toBe(2);
 
@@ -301,7 +418,7 @@ describe('ring securing', () => {
     );
     expect(ringOne).toHaveLength(6);
     expect(ringOne.every((state) => state.held)).toBe(true);
-    // No hangar assault pass is queued (Q2 = a).
+    // The repelled assault resolves, it does not queue an attack.
     expect(result.payload.pendingAttacks).toEqual([]);
   });
 
@@ -395,6 +512,11 @@ describe('ring securing', () => {
   it('does not advance to a ring that has no authored definitions', () => {
     const payload = ringPayload();
     holdAllBut(payload, 'hex-r1-6');
+    // Strong stored defenders so the ring-end assault is repelled and the
+    // test still isolates the unauthored-successor rule.
+    for (const state of payload.ring.hexes) {
+      if (state.defender) state.defender = { ...state.defender, defenceRating: 20 };
+    }
 
     const result = resolveHexCapture(payload, {
       hexId: 'hex-r1-6',
@@ -404,6 +526,7 @@ describe('ring securing', () => {
       definitions: HEX_RING_DEFINITIONS.filter((entry) => entry.ringIndex === 1),
     });
 
+    expect(result.assault?.outcome).toBe('repelled');
     expect(result.ringSecured).toBe(true);
     expect(result.ringAdvanced).toBe(false);
     expect(result.payload.ring.ringIndex).toBe(1);
@@ -489,5 +612,628 @@ describe('withGrantedEntry and the demonstration colour', () => {
     expect(grantDemonstrationColor(resolveHexGrant('rapid'))).not.toBeNull();
     expect(grantDemonstrationColor(resolveHexGrant('hull-2'))).toBeNull();
     expect(grantDemonstrationColor(null)).toBeNull();
+  });
+});
+
+// ── The ring-end hangar assault gate (AH-0MWEZZ9TE001577J) ──────────
+//
+// Test-first slice for `AH-0MVUVL2O2006W4QK` AC2: the capture cycle now
+// resolves the AI's massed hangar assault from the ring's stored numbers when
+// its final hex is captured. A repel wins the ring and opens the next one; a
+// fall is the hangar-falls lose state and resets the whole campaign. The rush
+// line and a hex falling in a normal frontier tick stay reset-free.
+
+describe('the capture-cycle assault gate', () => {
+  // The shipped ±10 % jitter is real (and separately pinned in
+  // `hexDefence.test.ts`), so these tests zero it to pin the gate's arithmetic
+  // exactly; determinism with the shipped jitter is asserted separately.
+  const NO_JITTER = { ...DEFAULT_FRONTIER_TUNING, jitterPercent: 0 };
+
+  /** Holds every hex but the last, each defended at `rating`. */
+  function holdAllButWithRating(
+    payload: HangarWarPayload,
+    lastHexId: string,
+    rating: number,
+  ): void {
+    for (const state of payload.ring.hexes) {
+      if (state.id === lastHexId) continue;
+      state.held = true;
+      state.bossDefeated = true;
+      state.defender = { hullId: 'hull-1', defenceRating: rating, bankedMinerals: 0 };
+    }
+  }
+
+  /** Captures ring 1's final hex (`hex-r1-6`) — the assault-gate seam. */
+  function finalCapture(payload: HangarWarPayload, tuning = NO_JITTER) {
+    return resolveHexCapture(payload, {
+      hexId: 'hex-r1-6',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(5, 1),
+      definitions: HEX_RING_DEFINITIONS,
+      tuning,
+    });
+  }
+
+  /** A stocked campaign, so a reset's breadth is observable. */
+  function stockedPayload(): HangarWarPayload {
+    const payload = ringPayload();
+    payload.hangar.bankedMinerals = 900;
+    payload.hangar.bankedCores = 12;
+    payload.hangar.unlockedHulls.push('hull-2');
+    payload.hangar.unlockedWeapons.push('wave_laser');
+    payload.hangar.ownedModifiers.push('hardened_plating');
+    payload.pendingAttacks = [{ hexId: 'hex-r1-1', force: 3 }];
+    payload.bestScore = 18200;
+    payload.frontierTick = 4;
+    return payload;
+  }
+
+  // Ring 1's authored stored aggression: 2 + 1 + 3 + 2 + 4 + 6 = 18 (mean 3).
+  const RING_ONE_AGGRESSION_SUM = 18;
+
+  describe('AC1 — the final-hex capture triggers the assault', () => {
+    it('resolves the massed assault from the ring’s stored numbers', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+
+      const result = finalCapture(payload);
+      const assault = result.assault;
+
+      expect(assault).not.toBeNull();
+      // Defender side: five stored 10-rated bots plus the fresh hull-1 (2)
+      // defending the hex just captured.
+      expect(assault!.defenderSum).toBe(5 * 10 + deriveDefenderRating('hull-1'));
+      // Attacker side: the ring's stored aggression sum, its average as the
+      // multiplier's driver, exactly the hex resolver's 15 %/point rule.
+      expect(assault!.attackerBase).toBe(RING_ONE_AGGRESSION_SUM);
+      expect(assault!.aggression).toBe(3);
+      expect(assault!.aggressionMultiplierPercent).toBe(145);
+      // round(18 × 145 × 100 / 10000) = round(26.1) = 26.
+      expect(assault!.attackStrength).toBe(26);
+      expect(assault!.margin).toBe(52 - 26);
+      expect(assault!.outcome).toBe('repelled');
+    });
+
+    it('is the shared resolver’s deterministic decision on the same seeded stream', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+      const before = JSON.parse(JSON.stringify(payload)) as HangarWarPayload;
+
+      const first = finalCapture(payload);
+      const replay = finalCapture(JSON.parse(JSON.stringify(before)));
+
+      // A replay of the same stored numbers reproduces the assault exactly.
+      expect(first.assault).toEqual(replay.assault);
+      expect(first.assault).toEqual(
+        resolveHangarAssault(
+          {
+            defenderSum: 52,
+            attackerBase: RING_ONE_AGGRESSION_SUM,
+            aggression: 3,
+            seed: hangarAssaultSeed(payload),
+          },
+          NO_JITTER,
+        ),
+      );
+      // ... and the caller's payload is never mutated.
+      expect(payload).toEqual(before);
+    });
+
+    it('returns the assault record even with the shipped jitter, reproducibly', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+
+      const shipped = finalCapture(payload, DEFAULT_FRONTIER_TUNING);
+      const replay = finalCapture(payload, DEFAULT_FRONTIER_TUNING);
+
+      expect(shipped.assault).toEqual(replay.assault);
+      expect(shipped.assault!.jitterPercent).toBeGreaterThanOrEqual(-10);
+      expect(shipped.assault!.jitterPercent).toBeLessThanOrEqual(10);
+    });
+
+    it('does not trigger an assault while hexes of the ring remain unheld', () => {
+      const payload = ringPayload();
+
+      const result = resolveHexCapture(payload, {
+        hexId: 'hex-r1-2',
+        defenderHullId: 'hull-1',
+        salvage: victorySalvage(5, 1),
+        definitions: HEX_RING_DEFINITIONS,
+        tuning: NO_JITTER,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.ringSecured).toBe(false);
+      expect(result.assault).toBeNull();
+      expect(result.campaignReset).toBe(false);
+    });
+
+    it('never fires on a refused capture (no defender ⇒ no held hex)', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+
+      const result = resolveHexCapture(payload, {
+        hexId: 'hex-r1-6',
+        defenderHullId: 'hull-9',
+        salvage: victorySalvage(),
+        definitions: HEX_RING_DEFINITIONS,
+        tuning: NO_JITTER,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('defender-required');
+      expect(result.assault).toBeNull();
+      expect(result.campaignReset).toBe(false);
+    });
+  });
+
+  describe('AC2 — a repelled assault wins the ring and opens the next one', () => {
+    it('marks the ring won and opens the next ring exactly as openNextRing does', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 10);
+
+      const result = finalCapture(payload);
+
+      expect(result.ok).toBe(true);
+      expect(result.assault?.outcome).toBe('repelled');
+      expect(result.ringSecured).toBe(true);
+      expect(result.campaignReset).toBe(false);
+      expect(result.ringAdvanced).toBe(true);
+      expect(result.ringIndex).toBe(2);
+      // The opened ring is ring 2's twelve generated, unheld hexes, carried
+      // alongside ring 1's six held hexes (nothing is discarded).
+      expect(result.payload.ring.ringIndex).toBe(2);
+      const ringTwo = result.payload.ring.hexes.filter((state) =>
+        state.id.startsWith('hex-r2-'),
+      );
+      expect(ringTwo).toHaveLength(12);
+      expect(ringTwo.every((state) => !state.held)).toBe(true);
+      const ringOne = result.payload.ring.hexes.filter((state) =>
+        state.id.startsWith('hex-r1-'),
+      );
+      expect(ringOne.every((state) => state.held)).toBe(true);
+      // A win is not a reset: the campaign's seed, hangar and score survive.
+      expect(result.payload.seed).toBe(payload.seed);
+      expect(result.payload.bestScore).toBe(payload.bestScore);
+      expect(result.payload.hangar.bankedMinerals).toBe(5);
+      expect(result.payload.hangar.bankedCores).toBe(1);
+      expect(result.payload.pendingAttacks).toEqual([]);
+    });
+
+    it('holds the line on an exact tie: margin 0 repels, the hangar survives', () => {
+      const payload = ringPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 0);
+      // One hex carries the frontier's pressure: base 2, average 0 (rounded),
+      // so the strength is 2 — exactly the fresh defender's rating.
+      for (const state of payload.ring.hexes) state.aggression = 0;
+      hex(payload, 'hex-r1-2').aggression = 2;
+
+      const result = finalCapture(payload);
+
+      expect(result.assault).toMatchObject({
+        defenderSum: deriveDefenderRating('hull-1'),
+        attackerBase: 2,
+        aggression: 0,
+        attackStrength: deriveDefenderRating('hull-1'),
+        margin: 0,
+        outcome: 'repelled',
+      });
+      expect(result.campaignReset).toBe(false);
+      expect(result.ringAdvanced).toBe(true);
+    });
+  });
+
+  describe('AC3 — a failed assault resets the whole campaign', () => {
+    it('wipes the hangar and the ring together, issues a fresh seed and keeps bestScore', () => {
+      const payload = stockedPayload();
+      // Zero-rated defenders cannot match the ring's 18-point massed base.
+      holdAllButWithRating(payload, 'hex-r1-6', 0);
+
+      const result = finalCapture(payload);
+
+      expect(result.ok).toBe(true);
+      expect(result.assault?.outcome).toBe('fell');
+      expect(result.assault!.margin).toBeLessThan(0);
+      expect(result.campaignReset).toBe(true);
+      // The ring was lost, not advanced.
+      expect(result.ringSecured).toBe(false);
+      expect(result.ringAdvanced).toBe(false);
+      expect(result.ringIndex).toBe(1);
+
+      // The hangar is wiped: banked salvage/cores, unlocks and modifiers ...
+      expect(result.payload.hangar.bankedMinerals).toBe(0);
+      expect(result.payload.hangar.bankedCores).toBe(0);
+      expect(result.payload.hangar.unlockedHulls).toEqual(['hull-1']);
+      expect(result.payload.hangar.unlockedWeapons).toEqual(['spread']);
+      expect(result.payload.hangar.ownedModifiers).toEqual([]);
+      // ... the ring, its defenders/aggression and the queued attacks with it ...
+      expect(result.payload.ring.hexes).toEqual([]);
+      expect(result.payload.ring.ringIndex).toBe(1);
+      expect(result.payload.pendingAttacks).toEqual([]);
+      expect(result.payload.frontierTick ?? 0).toBe(0);
+      // ... a fresh campaign seed is issued (deterministically, so a replay
+      // reproduces the reset) ...
+      expect(result.payload.seed).toBe(campaignResetSeed(payload));
+      expect(result.payload.seed).not.toBe(payload.seed);
+      // ... and the restart convention's bestScore survives the reset.
+      expect(result.payload.bestScore).toBe(18200);
+      // The fresh bank watermark matches the wiped hangar.
+      expect(result.banked).toEqual(createBankedSalvage());
+
+      // The whole payload is the fresh starting position plus bestScore,
+      // matching the shipped `restartHangarWar` convention field for field.
+      expect(result.payload).toEqual({
+        ...createDefaultPayload(campaignResetSeed(payload)),
+        bestScore: 18200,
+      });
+    });
+
+    it('reproduces the reset bit-for-bit on a replay of the same fall', () => {
+      const payload = stockedPayload();
+      holdAllButWithRating(payload, 'hex-r1-6', 0);
+      const before = JSON.parse(JSON.stringify(payload)) as HangarWarPayload;
+
+      const first = finalCapture(payload);
+      const replay = finalCapture(JSON.parse(JSON.stringify(before)));
+
+      expect(first.campaignReset).toBe(true);
+      expect(replay.payload).toEqual(first.payload);
+      expect(payload).toEqual(before);
+    });
+  });
+
+  describe('AC4 — the rush line is unchanged', () => {
+    it('opens the next ring from the capstone with no assault and no reset', () => {
+      const payload = ringPayload();
+
+      const result = resolveHexCapture(payload, {
+        hexId: 'hex-r1-6',
+        defenderHullId: 'hull-1',
+        salvage: victorySalvage(5, 1),
+        definitions: HEX_RING_DEFINITIONS,
+        tuning: NO_JITTER,
+      });
+
+      expect(result.ok).toBe(true);
+      // Not secured — five hexes are still unheld — so no assault fires.
+      expect(result.ringSecured).toBe(false);
+      expect(result.assault).toBeNull();
+      expect(result.campaignReset).toBe(false);
+      // The rush still opens ring 2 exactly as before.
+      expect(result.ringAdvanced).toBe(true);
+      expect(result.ringIndex).toBe(2);
+      expect(result.payload.seed).toBe(payload.seed);
+    });
+  });
+
+  describe('AC5 — a hex falling in a normal frontier tick never resets the hangar', () => {
+    it('keeps the hangar, ring, seed and bestScore when a held hex is retaken', () => {
+      const payload = stockedPayload();
+      const held = hex(payload, 'hex-r1-1');
+      held.held = true;
+      held.defender = {
+        hullId: 'hull-1',
+        defenceRating: deriveDefenderRating('hull-1'),
+        bankedMinerals: 0,
+      };
+      payload.seed = 4242;
+      payload.pendingAttacks = [{ hexId: 'hex-r1-1', force: 500 }];
+      const hangarBefore = JSON.parse(JSON.stringify(payload.hangar));
+
+      const tick = runFrontierTick(payload, {
+        clock: createFrontierClock(payload.seed, 0),
+        tuning: NO_JITTER,
+      });
+
+      // The queued attack really did take the hex ...
+      expect(
+        tick.record.attacks.find((record) => record.hexId === 'hex-r1-1')?.outcome,
+      ).toBe('fell');
+      expect(hex(tick.payload, 'hex-r1-1').held).toBe(false);
+      expect(hex(tick.payload, 'hex-r1-1').defender).toBeNull();
+      // ... and losing a hex battle is emphatically not a campaign reset.
+      expect(tick.payload.hangar).toEqual(hangarBefore);
+      expect(tick.payload.ring.hexes).toHaveLength(6);
+      expect(tick.payload.seed).toBe(4242);
+      expect(tick.payload.bestScore).toBe(18200);
+    });
+  });
+});
+
+/**
+ * The special-mission capture path (AH-0MWF0CX0H004OJ2Y, post-MVP Hangar War
+ * AH-0MVWZYIWX0008C55 Q1 = a / Q2 = a).
+ *
+ * A special mission is **not** a second run implementation: it is an ordinary
+ * one-level capture whose authored grant is a hull with extra hit points. These
+ * tests pin that the shipped capture path pays it, that nothing about the
+ * ordinary hex path changes, and that the reward is real (it changes the next
+ * deployment) and persistent (it survives the store round trip).
+ */
+describe('resolveHexCapture — the special-mission path', () => {
+  /** A held-free ring-2 war, where the authored special mission lives. */
+  function ring2Payload(): HangarWarPayload {
+    return ringPayload(2);
+  }
+
+  it('grants the extra-hit-points hull when the special mission is captured', () => {
+    const payload = ring2Payload();
+    expect(payload.hangar.unlockedHulls).not.toContain('hull-3');
+
+    const result = resolveHexCapture(payload, {
+      hexId: 'hex-r2-3',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(30, 1),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(true);
+    // The reward lands in the same owned set an ordinary hull grant uses.
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-3');
+    expect(hex(result.payload, 'hex-r2-3').held).toBe(true);
+    expect(hex(result.payload, 'hex-r2-3').grantedWeapon).toBe('hull-3');
+    // ... and the capture reports the reward a caller can announce.
+    expect(result.specialReward).not.toBeNull();
+    expect(result.specialReward?.hexId).toBe('hex-r2-3');
+    expect(result.specialReward?.hullId).toBe('hull-3');
+    expect(result.specialReward?.bonusStartingLives).toBeGreaterThan(0);
+  });
+
+  it('pays an ordinary hex its own grant and reports no special reward', () => {
+    const result = resolveHexCapture(ringPayload(), {
+      hexId: 'hex-r1-1',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.grant?.entryId).toBe('hull-2');
+    expect(result.specialReward).toBeNull();
+    expect(result.payload.hangar.unlockedHulls).not.toContain('hull-3');
+  });
+
+  it('grants nothing when the capture is refused for a missing defender', () => {
+    const result = resolveHexCapture(ring2Payload(), {
+      hexId: 'hex-r2-3',
+      defenderHullId: null,
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('defender-required');
+    expect(result.grant).toBeNull();
+    expect(result.specialReward).toBeNull();
+    expect(result.payload.hangar.unlockedHulls).not.toContain('hull-3');
+  });
+
+  it('persists the granted hull through the versioned store without loss', () => {
+    const result = resolveHexCapture(ring2Payload(), {
+      hexId: 'hex-r2-3',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(result.payload, storage);
+
+    const loaded = loadHangarWarPayload(storage);
+
+    expect(loaded).not.toBeNull();
+    // No new storage key and no version bump: the reward is ordinary owned-set
+    // content (field-presence migration covers any additive state).
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+    expect(loaded?.hangar.unlockedHulls).toContain('hull-3');
+    const restored = hex(loaded!, 'hex-r2-3');
+    expect([restored.id, restored.q, restored.r]).toEqual(['hex-r2-3', -2, 2]);
+    expect(restored.held).toBe(true);
+    expect(restored.grantedWeapon).toBe('hull-3');
+  });
+
+  it('has a real effect when the granted hull is deployed', () => {
+    const result = resolveHexCapture(ring2Payload(), {
+      hexId: 'hex-r2-3',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    const withReward = buildHangarDeployment({
+      ...result.payload,
+      hangar: { ...result.payload.hangar, activeHull: 'hull-3' },
+    });
+    const withStarter = buildHangarDeployment({
+      ...result.payload,
+      hangar: { ...result.payload.hangar, activeHull: 'hull-1' },
+    });
+
+    expect(withReward.hullId).toBe('hull-3');
+    expect(withReward.startingLives).toBeGreaterThan(withStarter.startingLives);
+    expect(withReward.startingLives - withStarter.startingLives).toBe(
+      result.specialReward?.bonusStartingLives,
+    );
+    // The reward trades manoeuvrability for hit points; it is not a free win.
+    expect(withReward.speedMultiplier).toBeLessThan(withStarter.speedMultiplier);
+  });
+});
+
+// ── Run upgrade snapshot — red-first guard tests (AH-0MWHF6X9N0082BRO) ─────
+//
+// The parent (AH-0MWH42DWQ004SAOJ) changes the capture cycle so the bot left
+// behind keeps the run's permanent upgrades: `resolveHexCapture` accepts the
+// run's permanent-upgrade snapshot and `leaveDefender` persists it on the
+// `HexDefender` as an **additive optional field** (the same back-compat pattern
+// as `skills`), with the rating extended through the one exported derivation.
+//
+// These specs are part of the test-first slice: they are red until C2–C4 land
+// (the exports are read through the module namespace so the rest of this file
+// stays compilable), and green once the capture path threads the snapshot.
+// The pinned contract, for C3 (AH-0MWHF6ZHW0058SMX) and C4
+// (AH-0MWHF70OD0070F04):
+//
+// - `HexDefender.upgradeSnapshot?: DefenderUpgradeSnapshot` — additive optional,
+//   omitted when empty (a no-upgrade capture produces exactly today's payload);
+// - `HexCaptureInput.snapshot?: DefenderUpgradeSnapshot` — the whole snapshot
+//   read once at victory (the permanent accessors);
+// - `leaveDefender(hangar, hullId, bankedMinerals?, catalogue?, snapshot?)` —
+//   records the field and derives the rating through the one
+//   `defenderRatingFromSnapshot` helper, never a second formula.
+
+/**
+ * The run's permanent-upgrade snapshot (C1 red-first contract) — rows match
+ * `Player.getWeaponLevels()`, `Player.getPowerUpLevels()` and
+ * `PowerUpLevelStore.snapshotConsumablePools()`.
+ */
+interface DefenderUpgradeSnapshot {
+  weaponLevels: ReadonlyArray<{ id: WeaponId; level: number }>;
+  powerUpLevels: ReadonlyArray<{ id: PowerUpId; level: number }>;
+  consumablePools: ReadonlyArray<{ id: PowerUpId; charges: number }>;
+}
+
+/** A defender carrying the pending additive snapshot field. */
+type CapturedDefender = HexDefender & { upgradeSnapshot?: DefenderUpgradeSnapshot };
+
+/** The C2 derivation, read structure-first so these specs run red, not crash. */
+const pendingDerivation = hangarEconomyModule as unknown as {
+  defenderRatingFromSnapshot?: (
+    hullRating: number,
+    snapshot: DefenderUpgradeSnapshot,
+  ) => number;
+};
+
+/** The signed capture input (C4 threads the snapshot through this field). */
+type SignedCaptureInput = Parameters<typeof resolveHexCapture>[1] & {
+  snapshot?: DefenderUpgradeSnapshot;
+};
+
+/** The pinned extended `leaveDefender` signature (C4 adds the 5th argument). */
+const leaveDefenderWithSnapshot = leaveDefender as (
+  hangar: HangarWarPayload['hangar'],
+  hullId: unknown,
+  bankedMinerals?: number,
+  catalogue?: readonly import('../../data/hangarCatalogue').HangarEntry[],
+  snapshot?: DefenderUpgradeSnapshot,
+) => HexDefender | null;
+
+describe('leaveDefender / resolveHexCapture — run upgrade snapshot (AH-0MWHF6X9N0082BRO, red-first guard)', () => {
+  /** A defensive snapshot whose buckets are exactly 4 armour / 3 firepower / 2 systems. */
+  function upgradedSnapshot(): DefenderUpgradeSnapshot {
+    return {
+      weaponLevels: [
+        { id: 'cannon', level: 2 },
+        { id: 'spread', level: 1 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 2 },
+        { id: 'bomb', level: 1 },
+        { id: 'force_field', level: 1 }, // defensive kinds → armour (4 total)
+        { id: 'extra_life', level: 1 }, // the unlisted kind → systems
+      ],
+      consumablePools: [{ id: 'mystery_ufo', charges: 1 }], // other charge → systems
+    };
+  }
+
+  it('records the snapshot on the defender and rates it through the one derivation', () => {
+    const payload = ringPayload();
+    const snapshot = upgradedSnapshot();
+    // Red until C2/C4 land the snapshot-aware derivation; the rating must then
+    // come from exactly that one helper, never a second formula.
+    const expected = pendingDerivation.defenderRatingFromSnapshot?.(
+      deriveDefenderRating('hull-1'),
+      snapshot,
+    );
+    expect(expected).toBeDefined();
+
+    const defender = leaveDefenderWithSnapshot(
+      payload.hangar,
+      'hull-1',
+      12,
+      undefined,
+      snapshot,
+    ) as unknown as CapturedDefender;
+
+    expect(defender.upgradeSnapshot).toEqual(snapshot);
+    // The rating is the bare hull rating plus the snapshot's contribution,
+    // resolved through the economy's single derivation (4 armour / 3 firepower
+    // / 2 systems → +22 with the shipped weights).
+    expect(defender.defenceRating).toBe(expected);
+    expect(defender.defenceRating).toBeGreaterThan(
+      deriveDefenderRating('hull-1'),
+    );
+    // The existing additive fields are untouched by the new one.
+    expect(defender.hullId).toBe('hull-1');
+    expect(defender.bankedMinerals).toBe(12);
+  });
+
+  it('omits the field and keeps today′s defender when no snapshot is supplied (no-upgrades equality)', () => {
+    const payload = ringPayload();
+    const defender = leaveDefenderWithSnapshot(
+      payload.hangar,
+      'hull-1',
+      12,
+    ) as unknown as CapturedDefender;
+
+    // Byte-for-byte today's defender: no upgradeSnapshot key at all.
+    expect('upgradeSnapshot' in defender).toBe(false);
+    expect(defender.defenceRating).toBe(deriveDefenderRating('hull-1'));
+    expect(defender).toEqual({
+      hullId: 'hull-1',
+      defenceRating: deriveDefenderRating('hull-1'),
+      bankedMinerals: 12,
+    });
+  });
+
+  it('persists the snapshot on the stored defender through resolveHexCapture', () => {
+    const payload = ringPayload();
+    const snapshot = upgradedSnapshot();
+    const expected = pendingDerivation.defenderRatingFromSnapshot?.(
+      deriveDefenderRating('hull-1'),
+      snapshot,
+    );
+    expect(expected).toBeDefined();
+
+    const input: SignedCaptureInput = {
+      hexId: 'hex-r1-4',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(30, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      snapshot,
+    };
+    const result = resolveHexCapture(payload, input);
+
+    expect(result.ok).toBe(true);
+    const stored = hex(result.payload, 'hex-r1-4').defender as unknown as CapturedDefender;
+    expect(stored.upgradeSnapshot).toEqual(snapshot);
+    expect(stored.defenceRating).toBe(expected);
+  });
+
+  it('collapses a corrupt snapshot without throwing and never lowers the rating', () => {
+    const payload = ringPayload();
+    const corrupt: DefenderUpgradeSnapshot = {
+      weaponLevels: [
+        { id: 'cannon', level: Number.NEGATIVE_INFINITY },
+        { id: 'spread', level: -2 },
+        { id: 'rapid', level: 'high' as unknown as number },
+      ],
+      powerUpLevels: [{ id: 'shield', level: Number.NaN }],
+      consumablePools: [{ id: 'mystery_ufo', charges: -1 }],
+    };
+    const input: SignedCaptureInput = {
+      hexId: 'hex-r1-2',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(15, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      snapshot: corrupt,
+    };
+
+    expect(() => resolveHexCapture(payload, input)).not.toThrow();
+    const result = resolveHexCapture(payload, input);
+    expect(result.ok).toBe(true);
+    const stored = hex(result.payload, 'hex-r1-2').defender as unknown as CapturedDefender;
+    // 0-safe buckets can never make the stored bot weaker than the bare hull.
+    expect(stored.defenceRating).toBeGreaterThanOrEqual(
+      deriveDefenderRating('hull-1'),
+    );
   });
 });

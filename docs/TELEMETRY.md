@@ -294,6 +294,26 @@ allowance is roughly 3 MiB of NDJSON. Raise or lower it with
 `VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES` (any value is clamped to the 16 MiB
 server bound, so a cap that could overflow the pipe is unreachable).
 
+**The cap is checked before the payload is serialised**
+(AH-0MW2DC20A007TAVY). Two cheap passes run ahead of the exact escaping:
+
+- *Byte-count refusal.* The run's buffer is byte-metered as it is written (the
+  retention cap needs the number anyway), so `readByteLength()` answers in
+  O(1). A whole-file run-end upload whose buffer already exceeds the cap is
+  refused from that number: the buffer is never joined into one string and
+  never UTF-8 encoded. Before this, a long demo run serialised 15.8 MiB and
+  then threw it away.
+- *JSON-text bound.* Escaping text that `JSON.stringify` produced can at most
+  double it (a control character never appears raw in its output — it was
+  already emitted as a `\uXXXX` escape), so a body whose doubled size plus
+  the envelope fits the cap **provably** fits and is never escaped
+  (`checkDevUploadSize(body, cap, { jsonText: true })`,
+  `DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION`). That is the streaming sender's
+  steady state: a ~2 MiB window against an 8 MiB cap, once per flush.
+
+Both passes are conservative — a body they do not clear is measured exactly,
+and nothing they clear can be over the cap.
+
 Why client-side, and why bounded at all (AH-0MVNVGP55002G0KH, diagnosed in
 AH-0MVNT25JI004OVKQ): Playwright's pipe transport concatenates its pending
 buffers into one string, and V8 caps a string at 512 MiB
@@ -556,6 +576,28 @@ Recording must never stall gameplay:
 
 Inspect `recorder.stats` for `recorded`, `dropped`, `skipped`,
 `flushedBatches`, `flushedRecords` and `failedBatches`.
+
+### What the recorder costs (AH-0MW2DC20A007TAVY)
+
+The recorder runs on the frame path in dev builds, so its per-tick work is
+measured and kept small (see
+[PERFORMANCE.md § Dev telemetry recorder cost](PERFORMANCE.md#dev-telemetry-recorder-cost-ah-0mw2dc20a007tavy)):
+
+- **Redaction is memoised, not weakened.** Every payload still passes through
+  `sanitiseTelemetryValue` at the recorder boundary. The per-key verdict and
+  the email scan are cached behind bounded caches (`REDACTION_CACHE_LIMIT`),
+  because a recorded tick repeats the same schema keys hundreds of times.
+- **The telemetry snapshot is not frozen.** `buildBotSnapshot(scene, { freeze:
+  false })` is used for the telemetry tick: the state builder copies every
+  field and the snapshot is dropped immediately, so the deep freeze was a
+  second full traversal of a graph that can hold thousands of entities per
+  frame. The bot-AI snapshot stays frozen (`Object.isFrozen` is asserted).
+- **Record lines are metered once.** The dev sink caches each line's UTF-8
+  size when it is appended, so retention eviction, windowed reads and
+  `readByteLength()` never re-encode a line.
+- **One shared UTF-8 metre.** `utf8ByteLength` (`src/telemetry/utf8.ts`) holds
+  a single `TextEncoder` for the whole module — it used to be constructed per
+  record line — and is shared by the sink, the uploader and the part sender.
 
 ## Game instrumentation (AH-0MUY08VVQ007HSSH)
 

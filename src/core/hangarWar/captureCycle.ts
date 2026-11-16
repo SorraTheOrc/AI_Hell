@@ -27,12 +27,27 @@
  * 3. **Leave a defending bot.** The hex is marked held **only** with a
  *    {@link HexDefender} whose rating is derived from the chosen hull's hangar
  *    upgrades ({@link deriveDefenderRating}, from the hangar economy's single
- *    formula). No defender ⇒ no hold (`defender-required`), so a hex can never
- *    be "held" with nothing flying it.
- * 4. **Secure the ring.** When every hex of the current ring is held the ring
- *    is secured and the next ring opens (generated from its authored
- *    definitions — ring 2 is playable), with **no hangar assault pass**
- *    (producer decision 2026-10-30, Q2 = a).
+ *    formula) and whose **special skills** ({@link defenderSkillsFor},
+ *    AH-0MVWZYJ740037EZ1) come from the hull flown and/or the equipped hangar
+ *    modifiers. Since the run-upgrade snapshot landed (parent
+ *    AH-0MWH42DWQ004SAOJ), the bot also keeps the run's **permanent
+ *    upgrades** — the victory-moment weapon levels, power-up levels and owned
+ *    consumable charges carried in `HexCaptureInput.snapshot` — stored as
+ *    {@link HexDefender.upgradeSnapshot} and folded into the rating through
+ *    the one snapshot-aware derivation (`defenderRatingFromSnapshot`). No
+ *    defender ⇒ no hold (`defender-required`), so a hex can never be "held"
+ *    with nothing flying it.
+ * 4. **Secure the ring — and defend the hangar.** When every hex of the
+ *    current ring is held the ring is secured and the AI's **massed hangar
+ *    assault** is resolved from the ring's stored numbers
+ *    ({@link resolveRingAssault} → `resolveHangarAssault`). A **repelled**
+ *    assault wins the ring and opens the next one (generated from its authored
+ *    definitions — ring 2 is playable); a **failed** assault is the
+ *    hangar-falls lose state, and the whole campaign is reset
+ *    ({@link resetCampaign}: hangar and ring wiped together, a fresh seed
+ *    issued, `bestScore` preserved). The **rush** line (the ring's capstone
+ *    held while hexes remain unheld) still opens the next ring with no
+ *    assault at all (`AH-0MVUVL2O2006W4QK`, `AH-0MWEZZ9TE001577J`).
  *
  * A lost deployment is the mirror image: {@link resolveDeploymentDefeat}
  * forfeits only the salvage earned since the last bank and returns the payload
@@ -52,8 +67,33 @@ import {
   findHangarEntry,
   ownsEntry,
   deriveDefenderRating,
+  defenderRatingFromSnapshot,
+  snapshotDefenderUpgrades,
+  resolveActiveLoadout,
 } from './hangarEconomy';
-import { createRingState, ringDepth, type HexRingDefinition } from './hexRing';
+import {
+  FORTRESS_CAPTURE_PASSES,
+  createRingState,
+  ringDepth,
+  type HexLandmarkId,
+  type HexRingDefinition,
+} from './hexRing';
+
+export { FORTRESS_CAPTURE_PASSES } from './hexRing';
+import {
+  specialMissionRewardFor,
+  type SpecialMissionReward,
+} from './specialMission';
+import {
+  DEFAULT_FRONTIER_TUNING,
+  heldRingDefenderSum,
+  massedAssaultBase,
+  resolveHangarAssault,
+  type FrontierTuning,
+  type HangarAssaultResolution,
+} from './hexDefence';
+import { createDefaultPayload } from './hangarWarStore';
+import { normaliseSeed } from '../rng';
 import {
   bankSalvage,
   bankedSalvageFromHangar,
@@ -63,6 +103,8 @@ import {
   type SalvageAmounts,
 } from './salvageBanking';
 import type {
+  DefenceSkill,
+  DefenderUpgradeSnapshot,
   HangarState,
   HangarWarPayload,
   HexDefender,
@@ -173,12 +215,20 @@ function isShippedWeapon(id: string): id is WeaponId {
  *
  * @param grantId — the authored `grants` value (or anything at all).
  * @param catalogue — the hangar tree to resolve against (defaults to shipped).
+ * @param landmark — the hex's authored landmark; a `cache` always resolves to
+ *   `null` (it pays out instead of granting, AH-0MWEW5I1F006CLCH).
  * @returns the resolved grant, or `null` when the hex has no grant.
  */
 export function resolveHexGrant(
   grantId: unknown,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  landmark: HexLandmarkId | null | undefined = null,
 ): HexGrant | null {
+  // A `cache` landmark pays out instead of granting (producer answer Q3 = a),
+  // so it resolves to the **no-grant** payout however its authored `grants`
+  // reads. The one-weapon-hex rule is unaffected: a cache can never *be* the
+  // weapon hex (validated in `validateRingDefinitions`).
+  if (landmark === 'cache') return null;
   const id = toId(grantId);
   if (id === null) return null;
 
@@ -244,6 +294,57 @@ export function withGrantedEntry(
 }
 
 /**
+ * The special skills a defending bot carries: the hull's own skill plus every
+ * skill its equipped modifiers grant (AH-0MVWZYJ740037EZ1).
+ *
+ * The two **skill sources** the producer named (intake Q3 = A + B) may coexist on
+ * one defender, so this is a union rather than a choice:
+ *
+ * - **the hull flown** — `HullDefinition.skill`;
+ * - **a purchased modifier** — any modifier on the hangar's **active loadout**
+ *   whose effect is `{ kind: 'defence-skill' }`.
+ *
+ * Only entries the fleet owns and the catalogue knows contribute (the modifiers
+ * come from `resolveActiveLoadout`, which already filters both), and duplicates
+ * collapse to the first mention by id so a hull and a modifier granting the same
+ * training never double-stack.
+ *
+ * Total: an unknown hull, a malformed effect or a blank skill id contributes
+ * nothing rather than throwing.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param hullId — the hull the defending bot flies.
+ * @param catalogue — the unlock tree (injectable for tests).
+ * @returns the defender's skills, in hull-then-modifier order.
+ */
+export function defenderSkillsFor(
+  hangar: HangarState,
+  hullId: string,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): DefenceSkill[] {
+  const skills: DefenceSkill[] = [];
+  const seen = new Set<string>();
+  const add = (skill: DefenceSkill | undefined): void => {
+    if (!skill || typeof skill !== 'object') return;
+    const id = toId(skill.id);
+    if (id === null || seen.has(id)) return;
+    seen.add(id);
+    skills.push({ ...skill, id });
+  };
+
+  const hull = findHangarEntry(hullId, catalogue);
+  if (hull !== null && hull.kind === 'hull') add(hull.skill);
+
+  for (const id of resolveActiveLoadout(hangar, catalogue).modifiers) {
+    const entry = findHangarEntry(id, catalogue);
+    if (entry === null || entry.kind !== 'modifier') continue;
+    if (entry.effect.kind === 'defence-skill') add(entry.effect.skill);
+  }
+
+  return skills;
+}
+
+/**
  * Builds the defending bot left in a captured hex, or `null` when none can be.
  *
  * A bot flies a hull the fleet owns (the starter hull is owned by definition
@@ -251,26 +352,72 @@ export function withGrantedEntry(
  * hull's hangar upgrades through the economy's single
  * {@link deriveDefenderRating} formula — never from a live battle.
  *
+ * When the run's permanent-upgrade snapshot is supplied (parent
+ * AH-0MWH42DWQ004SAOJ), the bot **keeps the upgrades the ship had at the
+ * victory moment**: the stored rating becomes the hull rating **plus** the
+ * snapshot's weighted contribution (`defenderRatingFromSnapshot` — hull
+ * rating + 3×armour + 2×firepower + 2×systems, the exact one economy
+ * expression), and the normalised snapshot is persisted on the defender so
+ * the map/report can show what the bot is made of. A snapshot that
+ * normalises to nothing (an upgrade-free run, or a corrupt input collapsing
+ * to zero rows) is omitted entirely, so a defender captured with no upgrades
+ * persists byte-for-byte as before.
+ *
+ * The bot's **special skills** ({@link defenderSkillsFor}) are attached as
+ * stored data: the hull's own skill plus any its equipped modifiers grant, so
+ * what the player leaves behind is a composition choice rather than a number
+ * (AH-0MVWZYJ740037EZ1). The skill field is omitted entirely when the bot has
+ * none, so a defender with no skills persists byte-for-byte as before.
+ *
  * @param hangar — the persistent hangar (read only).
  * @param hullId — the hull the player chose to leave behind.
  * @param bankedMinerals — salvage banked at the hex by this capture.
+ * @param catalogue — the unlock tree (injectable for tests).
+ * @param snapshot — the run's permanent-upgrade snapshot at the victory
+ *   moment (raw rows; normalised for storage here). Optional: absent means
+ *   "no upgrades" and the defender is exactly today's.
  * @returns the defender record, or `null` when the hull is unknown/unowned.
  */
 export function leaveDefender(
   hangar: HangarState,
   hullId: unknown,
   bankedMinerals = 0,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  snapshot?: DefenderUpgradeSnapshot,
 ): HexDefender | null {
   const id = toId(hullId);
   if (id === null) return null;
-  const entry = findHangarEntry(id);
+  const entry = findHangarEntry(id, catalogue);
   if (entry === null || entry.kind !== 'hull') return null;
   if (!ownsEntry(hangar, entry)) return null;
-  return {
+  // The snapshot's contribution is read through the economy's single
+  // snapshot-aware derivation, never a second formula (parent
+  // AH-0MWH42DWQ004SAOJ). Normalising first keeps the stored rows clean and
+  // makes an upgrade-free/corrupt snapshot collapse to the bare hull rating.
+  const upgradeSnapshot = snapshot
+    ? snapshotDefenderUpgrades(snapshot)
+    : undefined;
+  const hullRating = deriveDefenderRating(id);
+  const defender: HexDefender = {
     hullId: id,
-    defenceRating: deriveDefenderRating(id),
+    defenceRating: upgradeSnapshot
+      ? defenderRatingFromSnapshot(hullRating, upgradeSnapshot)
+      : hullRating,
     bankedMinerals: toCount(bankedMinerals),
   };
+  const skills = defenderSkillsFor(hangar, id, catalogue);
+  if (skills.length > 0) defender.skills = skills;
+  // An upgrade-free snapshot normalises to empty lists; the field is then
+  // omitted (field-presence migration), exactly like `skills` above.
+  if (
+    upgradeSnapshot &&
+    (upgradeSnapshot.weaponLevels.length > 0 ||
+      upgradeSnapshot.powerUpLevels.length > 0 ||
+      upgradeSnapshot.consumablePools.length > 0)
+  ) {
+    defender.upgradeSnapshot = upgradeSnapshot;
+  }
+  return defender;
 }
 
 /**
@@ -337,8 +484,10 @@ export function ringCapstone(
  * every hex of the ring also opens it. A ring that authors no capstone falls
  * back to the all-held rule.
  *
- * Producer decision Q2 = a is unchanged: **ring secured** still means every
- * hex of the ring held (`AH-0MVUVL2O2006W4QK` keeps the deferred assault).
+ * **Ring secured** still means every hex of the ring held. Since
+ * `AH-0MWEZZ9TE001577J` a secured ring's capture triggers the hangar assault
+ * first (`resolveHexCapture`), so this predicate is the *openable* test the
+ * gate consults — not the win/loss decision itself.
  *
  * @param ring — the ring state to inspect.
  * @param definitions — authored ring definitions (may be empty).
@@ -396,11 +545,12 @@ export interface RingAdvanceResult {
 /**
  * Opens the next ring when the current one is fully held.
  *
- * "Ring secured = every hex of the current ring held" (producer decision
- * 2026-10-30, Q2 = a): there is no massed hangar assault pass and no extra
- * condition — the last captured hex opens the next ring immediately. The new
- * ring is generated from its authored definitions (ring 2's twelve hexes), so
- * it is playable at once.
+ * Ring security (every hex of the current ring held) or the held capstone
+ * (the rush line) opens the next ring. The ring-end hangar assault is a
+ * **separate gate** in `resolveHexCapture` that runs first — this function
+ * only advances a ring that is already won or rushed past. The new ring is
+ * generated from its authored definitions (ring 2's twelve hexes), so it is
+ * playable at once.
  *
  * A ring whose successor is not authored (e.g. ring 3 before its data lands)
  * stays secured and is not advanced into a ring of zero hexes.
@@ -441,8 +591,148 @@ export function openNextRing(
   }
 }
 
-/** Why a boss victory did not capture its hex. */
-export type CaptureRefusal = 'unknown-hex' | 'defender-required';
+// ── The ring-end hangar assault gate (AH-0MWEZZ9TE001577J) ──────────
+
+/** Stream mixer that gives a ring's assault its own seeded draws. */
+const HANGAR_ASSAULT_STREAM_MIX = 0x9e37_79b1;
+
+/** Seed step that guarantees a reset campaign starts on a different seed. */
+const CAMPAIGN_RESET_SEED_STEP = 0x9e37_79b9;
+
+/**
+ * The seed the ring-end hangar assault resolves from.
+ *
+ * Derived from the war's stored seed and the ring index — a pure function of
+ * the payload, so a replay of the same campaign reproduces the same assault
+ * bit-for-bit (and a replay of a *lost* assault reproduces the same reset).
+ * Never wall-clock or live battle state.
+ *
+ * @param payload — the war payload (read only).
+ * @returns the normalised 32-bit assault seed.
+ */
+export function hangarAssaultSeed(payload: HangarWarPayload): number {
+  const ringIndex = toCount(payload.ring.ringIndex);
+  return normaliseSeed(
+    payload.seed ^ Math.imul(ringIndex + 1, HANGAR_ASSAULT_STREAM_MIX),
+  );
+}
+
+/**
+ * The ring's frontier aggression that scales the massed assault.
+ *
+ * `resolveHangarAssault` takes **one** aggression figure as its multiplier
+ * driver, exactly as the hex resolver takes the attacked hex's aggression.
+ * The hangar is assaulted by the whole ring, so its driver is the ring's
+ * **average stored hex aggression** — the sum the frontier presses with
+ * ({@link massedAssaultBase}), normalised per hex. Averaging (rather than
+ * summing, or taking the single worst hex) keeps the multiplier in the same
+ * `0…maxAggression` range the hex resolver sees, so neither a large ring nor
+ * one hot hex can compound the pressure twice. Ties round up.
+ *
+ * Total: an empty ring, or corrupt aggressions (each collapses to `0`), is
+ * `0` — never a throw.
+ *
+ * @param ring — the ring being assaulted (the current ring only).
+ * @returns the rounded average stored aggression.
+ */
+export function ringAssaultAggression(ring: HexRingState): number {
+  const hexes = currentRingHexes(ring);
+  if (hexes.length === 0) return 0;
+  const sum = massedAssaultBase({ ringIndex: ring.ringIndex, hexes });
+  return Math.round(sum / hexes.length);
+}
+
+/**
+ * Resolves the hangar assault the ring's final-hex capture triggers.
+ *
+ * A thin gate over the shared-core resolver, so the game, the gym and the
+ * tests never re-derive an assault figure (gym↔game parity):
+ *
+ * - defender side — {@link heldRingDefenderSum}: the sum of the held hexes'
+ *   stored bot ratings;
+ * - attacker side — {@link massedAssaultBase}: the ring's stored aggression
+ *   sum, scaled by {@link ringAssaultAggression} through the hex resolver's
+ *   own `aggressionPercentPerPoint` rule and bounded seeded jitter;
+ * - seed — {@link hangarAssaultSeed}.
+ *
+ * Only the **current ring** is consulted: hexes carried from a ring the player
+ * rushed past are that ring's cost, not this ring's defence.
+ *
+ * @param payload — the war payload (read only).
+ * @param tuning — balance knobs (defaults to the shipped frontier tuning).
+ * @returns the outcome and every number behind it.
+ */
+export function resolveRingAssault(
+  payload: HangarWarPayload,
+  tuning: FrontierTuning = DEFAULT_FRONTIER_TUNING,
+): HangarAssaultResolution {
+  const ring: HexRingState = {
+    ringIndex: payload.ring.ringIndex,
+    hexes: currentRingHexes(payload.ring),
+  };
+  return resolveHangarAssault(
+    {
+      defenderSum: heldRingDefenderSum(ring),
+      attackerBase: massedAssaultBase(ring),
+      aggression: ringAssaultAggression(ring),
+      seed: hangarAssaultSeed(payload),
+    },
+    tuning,
+  );
+}
+
+/**
+ * The seed a reset campaign starts on.
+ *
+ * A deterministic step from the fallen campaign's seed: "a fresh seed is
+ * issued" without consulting a clock or `Math.random()`, so a replay of the
+ * same loss produces the same fresh campaign, and the new campaign can never
+ * silently reuse the old seed (the step is non-zero modulo 2³²).
+ *
+ * @param payload — the fallen campaign (read only).
+ * @returns the fresh campaign's normalised seed.
+ */
+export function campaignResetSeed(payload: HangarWarPayload): number {
+  return normaliseSeed(toCount(payload.seed) + CAMPAIGN_RESET_SEED_STEP);
+}
+
+/**
+ * Resets the whole campaign — the hangar-falls lose state.
+ *
+ * Producer decision Q1 = B: losing the hangar wipes **both** progression axes
+ * together, never partially. The reset reuses the shipped fresh-save
+ * constructor ({@link createDefaultPayload}: empty hangar, empty ring, no
+ * queued attacks, `frontierTick` 0) with {@link campaignResetSeed} as its seed
+ * and the restart convention's `bestScore` preservation — the same shape the
+ * hangar's `⟲ RESTART WAR` row builds, so there is one reset rule.
+ *
+ * @param payload — the fallen campaign (never mutated).
+ * @returns a fresh campaign payload holding only the preserved best score.
+ */
+export function resetCampaign(payload: HangarWarPayload): HangarWarPayload {
+  const fresh = createDefaultPayload(campaignResetSeed(payload));
+  return { ...fresh, bestScore: toCount(payload.bestScore) };
+}
+
+/**
+ * Why a boss victory did not capture its hex.
+ *
+ * `fortress-incomplete` is a *progress* refusal rather than a failure: the
+ * pass was recorded and the salvage banked, but a fortress hex needs two
+ * passes before it is held (AH-0MWEW5I1F006CLCH, Q3 = a).
+ */
+export type CaptureRefusal =
+  | 'unknown-hex'
+  | 'defender-required'
+  | 'fortress-incomplete';
+
+/**
+ * The minerals a `cache` landmark pays out on capture, **instead of** granting
+ * the hex's authored weapon/upgrade (AH-0MWEW5I1F006CLCH, Q3 = a). A single
+ * explicit constant keeps the payout one authored balance decision rather than
+ * a rule spread through the resolver.
+ */
+export const CACHE_SALVAGE_BONUS = 140;
 
 /**
  * Everything a boss victory resolves the capture from.
@@ -461,10 +751,22 @@ export interface HexCaptureInput {
   readonly defenderHullId: string | null;
   /** The run's cumulative salvage at the boss-victory moment. */
   readonly salvage: RunSalvage;
+  /**
+   * The run's permanent-upgrade snapshot at the victory moment — the raw
+   * rows `Player.getWeaponLevels()`, `Player.getPowerUpLevels()` and
+   * `PowerUpLevelStore.snapshotConsumablePools()` produce. `leaveDefender`
+   * normalises it for storage and derives the stored rating through the one
+   * snapshot-aware economy derivation (parent AH-0MWH42DWQ004SAOJ). Absent
+   * (or a snapshot that normalises to nothing) means "no upgrades": the
+   * defender is exactly today's, and the field is omitted.
+   */
+  readonly snapshot?: DefenderUpgradeSnapshot;
   /** Authored ring definitions (for the grant and for opening the next ring). */
   readonly definitions?: readonly HexRingDefinition[];
   /** The caller's bank watermark (defaults to the stored balance). */
   readonly banked?: BankedSalvage;
+  /** Assault balance knobs (a harness/test may zero the jitter). */
+  readonly tuning?: FrontierTuning;
 }
 
 /** A resolved capture: the next payload and every number behind it. */
@@ -483,12 +785,123 @@ export interface HexCaptureResult {
   readonly defender: HexDefender | null;
   /** The hex's weapon/upgrade entry granted into the hangar, or `null`. */
   readonly grant: HexGrant | null;
+  /**
+   * The special-mission reward this capture paid (a hull with extra hit
+   * points), or `null` when the hex is an ordinary one
+   * (AH-0MWF0CX0H004OJ2Y). Carried so a caller can announce the special
+   * reward without re-deriving it from authored data.
+   */
+  readonly specialReward: SpecialMissionReward | null;
+  /**
+   * The contract bonus this capture banked (post-MVP Hangar War,
+   * AH-0MWEW58WD003NFXS, Q2 = a), or `null` when the hex authors no contract or
+   * its bonus was already banked — a replay adds nothing.
+   */
+  readonly contractBonus: SalvageAmounts | null;
+  /**
+   * The cache payout this capture banked (AH-0MWEW5I1F006CLCH, Q3 = a), or
+   * `null` when the hex is not a cache or it was already held (a replay adds
+   * nothing).
+   */
+  readonly cachePayout: SalvageAmounts | null;
   /** True when the capture secured the current ring. */
   readonly ringSecured: boolean;
   /** True when securing the ring opened the next ring. */
   readonly ringAdvanced: boolean;
   /** The ring index the payload holds after the resolution. */
   readonly ringIndex: number;
+  /**
+   * The hangar assault the ring's final-hex capture triggered, or `null` when
+   * the capture did not secure the ring (a mid-ring capture, the rush line, a
+   * refusal). Carries every number, so the defence report renders it without
+   * re-derivation.
+   */
+  readonly assault: HangarAssaultResolution | null;
+  /** True when the assault broke the hangar and the whole campaign was reset. */
+  readonly campaignReset: boolean;
+}
+
+/**
+ * Pays a `cache` landmark's bonus on capture, **instead of** granting
+ * (AH-0MWEW5I1F006CLCH, producer answer Q3 = a).
+ *
+ * The payout goes through the shipped {@link bankSalvage} rule with a
+ * cache-scoped run watermark, and it is only paid when the hex was **not**
+ * already held: a replay of an already-captured cache adds nothing, so the
+ * payout can never be double-counted. Nothing enters the fleet — a cache grants
+ * no weapon, hull or modifier.
+ *
+ * @param payload — the detached payload being resolved (its hangar is credited).
+ * @param hex — the captured hex.
+ * @param definition — the authored definition, or `undefined` when unknown.
+ * @param alreadyHeld — true when the hex was held before this resolution.
+ * @returns the salvage paid by this call, or `null` when none was paid.
+ */
+function payCacheLandmark(
+  payload: HangarWarPayload,
+  hex: HexState,
+  definition: HexRingDefinition | undefined,
+  alreadyHeld: boolean,
+): SalvageAmounts | null {
+  if (definition?.landmark !== 'cache') return null;
+  if (alreadyHeld) return null;
+  if (CACHE_SALVAGE_BONUS <= 0) return null;
+
+  const banked = bankSalvage(bankedSalvageFromHangar(payload.hangar), {
+    runId: `hex-cache:${hex.id}`,
+    checkpointId: hex.id,
+    minerals: CACHE_SALVAGE_BONUS,
+    cores: 0,
+  });
+  payload.hangar.bankedMinerals = banked.minerals;
+  payload.hangar.bankedCores = banked.cores;
+  return { minerals: CACHE_SALVAGE_BONUS, cores: 0 };
+}
+
+/**
+ * Fulfils a hex's authored **contract** on capture: banks its bonus through the
+ * shipped banking rule and records the fulfilment marker.
+ *
+ * Producer answer Q2 = a (2026-11-13): the reward is bonus salvage/cores in the
+ * shipped currencies, banked like any other salvage, with **no deadline clock**.
+ * The stored `contractFulfilled` marker is the replay guard — a replayed battle,
+ * or a second capture of the same hex, adds nothing — and the banking itself
+ * goes through {@link bankSalvage} with a contract-scoped run watermark, so the
+ * whole bonus is added exactly once instead of hand-rolled.
+ *
+ * Mutates `payload.hangar` and `hex` in place (the caller owns a detached
+ * payload).
+ *
+ * @param payload — the detached payload being resolved (its hangar is credited).
+ * @param hex — the captured hex (receives the fulfilment marker).
+ * @param definition — the authored definition, or `undefined` when unknown.
+ * @returns the bonus banked by this call, or `null` when none was banked.
+ */
+function fulfilContract(
+  payload: HangarWarPayload,
+  hex: HexState,
+  definition: HexRingDefinition | undefined,
+): SalvageAmounts | null {
+  const contract = definition?.contract;
+  if (contract === undefined) return null;
+  if (hex.contractFulfilled === true) return null;
+
+  const bonus: SalvageAmounts = {
+    minerals: toCount(contract.bonusSalvage),
+    cores: toCount(contract.bonusCores),
+  };
+  if (bonus.minerals === 0 && bonus.cores === 0) return null;
+
+  const banked = bankSalvage(bankedSalvageFromHangar(payload.hangar), {
+    runId: `hex-contract:${hex.id}`,
+    checkpointId: hex.id,
+    minerals: bonus.minerals,
+    cores: bonus.cores,
+  });
+  payload.hangar.bankedMinerals = banked.minerals;
+  payload.hangar.bankedCores = banked.cores;
+  hex.contractFulfilled = true;
+  return bonus;
 }
 
 /**
@@ -500,6 +913,15 @@ export interface HexCaptureResult {
  * granted + defended **only** when a valid defender hull was chosen; otherwise
  * the resolution reports `defender-required` and leaves the hex unheld and
  * un-granted.
+ *
+ * Securing the ring's **final hex** then runs the ring-end assault gate
+ * (`AH-0MWEZZ9TE001577J`): the massed hangar assault is resolved from the
+ * ring's stored numbers ({@link resolveRingAssault}). A **repelled** assault
+ * opens the next ring (as the rush line always has); a **failed** assault is
+ * the hangar-falls lose state and returns a freshly reset campaign
+ * ({@link resetCampaign}) with `campaignReset: true` and an empty bank
+ * watermark. The rush line — the capstone held while hexes remain unheld —
+ * opens the next ring with no assault.
  *
  * @param payload — the persistent war payload (never mutated).
  * @param input — target hex, chosen hull, salvage and ring definitions.
@@ -533,9 +955,14 @@ export function resolveHexCapture(
       bankedDelta,
       defender: null,
       grant: null,
+      specialReward: null,
+      contractBonus: null,
+      cachePayout: null,
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
+      assault: null,
+      campaignReset: false,
     };
   }
 
@@ -543,6 +970,8 @@ export function resolveHexCapture(
     next.hangar,
     input.defenderHullId,
     bankedDelta.minerals,
+    undefined,
+    input.snapshot,
   );
   if (defender === null) {
     return {
@@ -553,14 +982,55 @@ export function resolveHexCapture(
       bankedDelta,
       defender: null,
       grant: null,
+      specialReward: null,
+      contractBonus: null,
+      cachePayout: null,
       ringSecured: isRingSecured(next.ring),
       ringAdvanced: false,
       ringIndex: toCount(next.ring.ringIndex),
+      assault: null,
+      campaignReset: false,
     };
   }
 
   const definition = definitions.find((entry) => entry.id === hex.id);
-  const grant = resolveHexGrant(definition?.grants);
+  const wasHeld = hex.held === true;
+
+  // A fortress hex needs two capture passes (Q3 = a): the pass is recorded and
+  // the salvage already banked, but the hex is not held until the second pass.
+  if (definition?.landmark === 'fortress' && !wasHeld) {
+    const passes = Math.min(
+      FORTRESS_CAPTURE_PASSES,
+      toCount(hex.capturePasses) + 1,
+    );
+    hex.capturePasses = passes;
+    if (passes < FORTRESS_CAPTURE_PASSES) {
+      return {
+        ok: false,
+        reason: 'fortress-incomplete',
+        payload: next,
+        banked: settled,
+        bankedDelta,
+        defender: null,
+        grant: null,
+        specialReward: null,
+        contractBonus: null,
+        cachePayout: null,
+        ringSecured: isRingSecured(next.ring),
+        ringAdvanced: false,
+        ringIndex: toCount(next.ring.ringIndex),
+        assault: null,
+        campaignReset: false,
+      };
+    }
+  }
+
+  // A cache pays out instead of granting, so it resolves to the no-grant
+  // payout however its authored `grants` reads (Q3 = a).
+  const grant = resolveHexGrant(definition?.grants, undefined, definition?.landmark);
+  // A special mission pays its hull through the same grant path as any other
+  // hex; the reward record only makes that payment legible to the caller.
+  const specialReward = specialMissionRewardFor(definition);
   if (grant !== null) {
     next.hangar = withGrantedEntry(next.hangar, grant);
     hex.grantedWeapon = grant.grantId;
@@ -569,9 +1039,47 @@ export function resolveHexCapture(
   hex.bossDefeated = true;
   hex.defender = defender;
 
+  // The contract bonus is banked with the capture (Q2 = a) through the shipped
+  // banking rule, guarded by the hex's stored fulfilment marker so a replay
+  // can never double-count it.
+  const contractBonus = fulfilContract(next, hex, definition);
+
+  // A cache landmark pays its bonus instead of granting (Q3 = a); a replay of an
+  // already-held cache pays nothing.
+  const cachePayout = payCacheLandmark(next, hex, definition, wasHeld);
+
   const ringSecured = isRingSecured(next.ring);
-  // The ring opens on its capstone (the rush line) or on full security; a
-  // ring that is not openable keeps the payload's current ring unchanged.
+  // The ring's final hex is captured: resolve the AI's massed hangar assault
+  // from the ring's stored numbers before anything else touches the ring.
+  const assault = ringSecured ? resolveRingAssault(next, input.tuning) : null;
+
+  if (assault !== null && assault.outcome === 'fell') {
+    // The hangar falls: both progression axes are wiped together and a fresh
+    // campaign seed is issued — the run's banked salvage fell with the hangar,
+    // so the caller's watermark restarts empty.
+    const reset = resetCampaign(next);
+    return {
+      ok: true,
+      reason: null,
+      payload: reset,
+      banked: bankedSalvageFromHangar(reset.hangar),
+      bankedDelta,
+      defender,
+      grant,
+      specialReward,
+      contractBonus,
+      cachePayout,
+      ringSecured: false,
+      ringAdvanced: false,
+      ringIndex: toCount(reset.ring.ringIndex),
+      assault,
+      campaignReset: true,
+    };
+  }
+
+  // A repelled assault (the ring is won) or the rush line (capstone held,
+  // ring still unheld) opens the next ring; a ring that is not openable keeps
+  // the payload's current ring unchanged.
   const advanced = isRingOpenable(next.ring, definitions)
     ? openNextRing(next, definitions)
     : { payload: next, opened: false, ringIndex: toCount(next.ring.ringIndex) };
@@ -584,9 +1092,14 @@ export function resolveHexCapture(
     bankedDelta,
     defender,
     grant,
+    specialReward,
+    contractBonus,
+    cachePayout,
     ringSecured,
     ringAdvanced: advanced.opened,
     ringIndex: advanced.ringIndex,
+    assault,
+    campaignReset: false,
   };
 }
 

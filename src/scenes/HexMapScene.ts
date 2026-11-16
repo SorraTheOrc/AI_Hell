@@ -25,6 +25,29 @@
  * as launch data (`{ payload, storage, definitions }`) so tests and the capture
  * tooling boot a deterministic war without touching `localStorage`.
  *
+ * ## Deployment landing surface (`AH-0MWDC3L9I008INDP`)
+ *
+ * A finished deployment lands here (AH-0MWEXIOZZ009UX14), not on a separate
+ * report screen: the launch data carries the between-sortie tick record (the
+ * map's attack arrows and left-hand attack panel), the run result line
+ * (`RUN: VICTORY · score 1200`) and any resolved mini-boss reward. The reward is
+ * presented over the **paused** map through the shipped
+ * `MiniBossWheelScene`/`MineralChoiceScene` overlay — the same overlay the
+ * arcade run uses — and the map resumes normal interaction once it resolves.
+ * All three are **transient launch data**: nothing is persisted, so a later
+ * menu/hangar re-entry renders no arrows, no run line and no reward.
+ *
+ * ## The hangar assault announcement (`AH-0MWEZZA4E0081NJ5`)
+ *
+ * A landing may also carry the **resolved ring-end hangar assault** the
+ * deployment's capture ran (`assault`). The map's model copies the report
+ * model's own section into `assault` / `assaultLine` / `ringWon` /
+ * `campaignReset`, and the shared renderer draws it as a read-only banner: a
+ * repel announces the ring won (and the next ring opening), a fall announces
+ * the hangar-falls **full campaign reset**. Because the banner adds no action,
+ * the attract traversal keeps its one total next step (deploy, or the hangar
+ * once secured) and cannot stall on it.
+ *
  * @module src/scenes/HexMapScene
  */
 
@@ -41,6 +64,10 @@ import type {
   HangarWarStorage,
 } from '../core/hangarWar/types';
 import type { HexRingDefinition } from '../core/hangarWar/hexRing';
+import type {
+  FrontierTickRecord,
+  HangarAssaultResolution,
+} from '../core/hangarWar/hexDefence';
 import {
   buildHexMapModel,
   type HexMapModel,
@@ -50,20 +77,26 @@ import {
   decideMapAction,
   HANGAR_WAR_TRAVERSAL_DWELL_MS,
 } from '../ai/hangarWarTraversal';
+import type { MiniBossWinReward } from '../powerups/miniBossWheel';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 import { HANGAR_SCENE_KEY } from './HangarScene';
+import { MINI_BOSS_WHEEL_SCENE_KEY } from './MiniBossWheelScene';
 import {
   buildHangarDeployment,
   type HangarWarDeployment,
 } from './hangarWar/hangarDeployment';
 import {
   renderHexMap,
+  type HexMapArrow,
   type HexMapRow,
   type HexMapView,
 } from './hangarWar/hexMap';
 
 /** Scene key (matches the class name, per the scene convention). */
 export const HEX_MAP_SCENE_KEY = 'HexMapScene';
+
+/** Scene key of the shared hold-full/mini-boss choice overlay. */
+const MINERAL_CHOICE_SCENE_KEY = 'MineralChoiceScene';
 
 /** Launch data accepted by {@link HexMapScene}. */
 export interface HexMapSceneData {
@@ -79,6 +112,43 @@ export interface HexMapSceneData {
   storage?: HangarWarStorage | null;
   /** Authored ring definitions to render (defaults to the shipped table). */
   definitions?: readonly HexRingDefinition[];
+  /**
+   * The between-sortie tick record carried from a deployment
+   * (AH-0MWDC3L9I008INDP). Transient launch data: it feeds the map's attack
+   * arrows and left-hand attack panel for this landing only and is never
+   * persisted, so a later re-entry without it draws neither.
+   */
+  record?: FrontierTickRecord;
+  /**
+   * Whether the deployment that just ended was won. Renders the run result
+   * line (`RUN: VICTORY|DEFEAT · score N`) for this landing only. Omitted on a
+   * plain menu/hangar entry, which shows no run line.
+   */
+  won?: boolean | null;
+  /** The finished deployment's final score (renders with the run line). */
+  score?: number;
+  /**
+   * The resolved ring-end hangar assault the deployment's capture ran
+   * (`AH-0MWEZZA4E0081NJ5`), or omitted/`null` when it ran none. Transient
+   * launch data: the map announces the ring win or the hangar-falls campaign
+   * reset from this record and never persists it.
+   */
+  assault?: HangarAssaultResolution | null;
+  /**
+   * The fixed mineral **win bonus** this landing banked, or omitted/`0` when it
+   * banked none (parent AH-0MWEVNBMM000QFO2, producer Q3 = (b), recorded
+   * 2026-11-13). It is the win path's whole reward presentation now: the map
+   * announces the banked bonus instead of presenting the run-scoped wheel the
+   * winning path no longer carries.
+   */
+  winBonusMinerals?: number;
+  /**
+   * The mini-boss reward a winning deployment resolved and carried here
+   * (parent AH-0MWBW1B1Z0059CC2). Presented over the **paused** map through the
+   * shipped overlay and consumed exactly once; `null`/omitted on a loss, so the
+   * map is interactive immediately.
+   */
+  reward?: MiniBossWinReward | null;
   /**
    * Bot-driven attract traversal (AH-0MVUXCBBK004EJIP): the pure
    * `decideMapAction` picks the weakest adjacent hex and deploys, so the demo
@@ -102,6 +172,34 @@ export class HexMapScene extends Phaser.Scene {
   /** Authored ring definitions in use (shipped table unless injected). */
   private definitions: readonly HexRingDefinition[] = HEX_RING_DEFINITIONS;
 
+  /**
+   * The transient between-sortie tick record carried by this landing, or
+   * `undefined` when the map was entered without one (a later menu/hangar
+   * entry). Never persisted.
+   */
+  private record?: FrontierTickRecord;
+
+  /** The finished deployment's result, or `null` when not supplied. */
+  private won: boolean | null = null;
+
+  /** The finished deployment's score (renders with the run line). */
+  private score = 0;
+
+  /**
+   * The resolved hangar assault this landing followed, or `null` when the
+   * deployment's capture ran none. Transient launch data, never persisted.
+   */
+  private assault: HangarAssaultResolution | null = null;
+  /** The banked win bonus announced on this landing (0 = none). */
+  private winBonusMinerals = 0;
+
+  /**
+   * The resolved mini-boss reward carried by this landing, or `null` when there
+   * is none (a loss, a plain entry, or once it has been presented). Consumed
+   * exactly once.
+   */
+  private reward: MiniBossWinReward | null = null;
+
   /** The rendered map (rebuilt after every change). */
   private view: HexMapView | null = null;
 
@@ -121,6 +219,12 @@ export class HexMapScene extends Phaser.Scene {
   init(data?: HexMapSceneData | null): void {
     this.storage = data?.storage;
     this.definitions = data?.definitions ?? HEX_RING_DEFINITIONS;
+    this.record = data?.record;
+    this.won = data?.won ?? null;
+    this.score = data?.score ?? 0;
+    this.assault = data?.assault ?? null;
+    this.winBonusMinerals = data?.winBonusMinerals ?? 0;
+    this.reward = data?.reward ?? null;
     this.demo = data?.demo === true;
     this.demoDwellMs = data?.demoDwellMs;
     const injected = data?.payload;
@@ -141,6 +245,13 @@ export class HexMapScene extends Phaser.Scene {
   create(): void {
     this.build();
     addBackToMenuOnEsc(this);
+    // A carried mini-boss reward is presented over the paused map first; the
+    // demo dwell (which would deploy from the map) only starts once it is
+    // resolved, so the traversal cannot skip past the reward.
+    if (this.reward !== null) {
+      this.presentReward();
+      return;
+    }
     if (this.demo) this.scheduleDemoAdvance();
   }
 
@@ -171,11 +282,23 @@ export class HexMapScene extends Phaser.Scene {
     this.view = null;
     const model = buildHexMapModel(this.payload, {
       definitions: this.definitions,
+      record: this.record,
+      assault: this.assault,
+      winBonusMinerals: this.winBonusMinerals,
     });
     this.view = renderHexMap(this, model, {
       onDeploy: (hexId) => this.deploy(hexId),
       onOpenHangar: () => this.openHangar(),
-    });
+    }, { runLine: this.runLine() });
+  }
+
+  /**
+   * The finished deployment's result line, or `null` when this landing carried
+   * no result (a plain menu/hangar entry). Transient launch data.
+   */
+  private runLine(): string | null {
+    if (this.won === null) return null;
+    return `${this.won ? 'RUN: VICTORY' : 'RUN: DEFEAT'} · score ${this.score}`;
   }
 
   /**
@@ -214,6 +337,85 @@ export class HexMapScene extends Phaser.Scene {
       demo: this.demo,
       demoDwellMs: this.demoDwellMs,
     });
+  }
+
+  /**
+   * Presents the carried mini-boss reward over the paused map, or does nothing
+   * when none is pending (already presented, a loss, or a plain entry).
+   *
+   * The reward is the **shipped** overlay — `MiniBossWheelScene` for the wheel,
+   * or the shared three-option choice overlay for the empty-owned fallback —
+   * launched with the wedges/outcome the run resolved, so one overlay
+   * implementation serves both the arcade in-run reward and this win-path
+   * reveal (no second reward screen, no duplicated wheel logic). The map is
+   * paused while the modal overlay runs, exactly like the in-run reward, and
+   * resumes normal interaction once it resolves.
+   *
+   * The reward is consumed before the overlay launches, so a second
+   * presentation path cannot re-present it. A boot without the overlay
+   * registered (headless test, misconfig) must not stall on a surface it can
+   * never show: it is consumed and the map stays interactive.
+   *
+   * @returns whether a pending reward was consumed by this call.
+   */
+  presentReward(): boolean {
+    const reward = this.reward;
+    if (reward === null) return false;
+    // Consume the reward: it is presented exactly once.
+    this.reward = null;
+    this.demoTimer?.remove(false);
+    this.demoTimer = null;
+
+    const overlayKey =
+      reward.kind === 'wheel'
+        ? MINI_BOSS_WHEEL_SCENE_KEY
+        : MINERAL_CHOICE_SCENE_KEY;
+    if (!this.scene.manager.getScene(overlayKey)) {
+      // Nothing to present the reward with: keep the map live (and the demo
+      // traversal moving) rather than pausing on a screen that cannot exist.
+      if (this.demo) this.scheduleDemoAdvance();
+      return true;
+    }
+
+    // Demo/attract mode auto-resolves the overlay so the traversal cannot
+    // stall on it; normal play waits for the player.
+    const autoMs = this.demo
+      ? this.demoDwellMs ?? HANGAR_WAR_TRAVERSAL_DWELL_MS
+      : 0;
+
+    this.scene.pause();
+    if (reward.kind === 'wheel') {
+      this.scene.launch(MINI_BOSS_WHEEL_SCENE_KEY, {
+        origin: 'HexMapScene-miniBoss',
+        wedges: reward.wedges,
+        outcome: reward.outcome,
+        ...(autoMs > 0 ? { autoSpinMs: autoMs } : {}),
+        // Single overlay contract: the map resumes once the wheel lands. The
+        // outcome was already applied to the run at defeat.
+        onResult: () => this.afterReward(),
+      });
+      return true;
+    }
+
+    this.scene.launch(MINERAL_CHOICE_SCENE_KEY, {
+      origin: 'HexMapScene-miniBoss',
+      options: [...reward.options],
+      ...(autoMs > 0 ? { autoSelectMs: autoMs } : {}),
+      onSelect: () => this.afterReward(),
+    });
+    return true;
+  }
+
+  /**
+   * Resumes the map after its reward overlay resolved.
+   *
+   * The map is already the landing surface, so there is nowhere left to go: it
+   * simply becomes interactive again (and the demo traversal restarts its
+   * dwell, so the attract bot continues from the map).
+   */
+  private afterReward(): void {
+    this.scene.resume();
+    if (this.demo) this.scheduleDemoAdvance();
   }
 
   /**
@@ -256,13 +458,107 @@ export class HexMapScene extends Phaser.Scene {
   getModel(): HexMapModel {
     return (
       this.view?.model ??
-      buildHexMapModel(this.payload, { definitions: this.definitions })
+      buildHexMapModel(this.payload, {
+        definitions: this.definitions,
+        record: this.record,
+        assault: this.assault,
+        winBonusMinerals: this.winBonusMinerals,
+      })
+    );
+  }
+
+  /**
+   * The transient between-sortie tick record this landing carried (a detached
+   * copy), or `null` when the map was entered without one. Never persisted.
+   */
+  getRecord(): FrontierTickRecord | null {
+    return this.record === undefined
+      ? null
+      : (JSON.parse(JSON.stringify(this.record)) as FrontierTickRecord);
+  }
+
+  /**
+   * The resolved hangar assault this landing carried (a detached copy), or
+   * `null` when the deployment's capture ran none. Never persisted.
+   */
+  getAssault(): HangarAssaultResolution | null {
+    return this.assault === null
+      ? null
+      : (JSON.parse(
+          JSON.stringify(this.assault),
+        ) as HangarAssaultResolution);
+  }
+
+  /**
+   * The rendered hangar-assault announcement (`RING WON …` / `HANGAR FALLS …`
+   * plus its arithmetic and consequence), or `''` when none was carried.
+   */
+  getAssaultText(): string {
+    return this.view?.getAssaultText() ?? '';
+  }
+
+  /** Whether the hangar-assault announcement is on screen. */
+  isAssaultVisible(): boolean {
+    return this.view?.isAssaultVisible() ?? false;
+  }
+
+  /**
+   * The finished deployment's result line (`RUN: VICTORY|DEFEAT · score N`),
+   * or `null` when this landing carried no result. Never persisted.
+   */
+  getRunLine(): string | null {
+    return this.runLine();
+  }
+
+  /**
+   * The mini-boss reward still waiting to be presented, or `null` once it has
+   * been shown (or when none was carried). A test/inspection seam.
+   */
+  getReward(): MiniBossWinReward | null {
+    return this.reward;
+  }
+
+  /**
+   * The banked win-bonus announcement this landing shows
+   * (`WIN BONUS BANKED: +N MINERALS`), or `null` when it banked none.
+   *
+   * The winning hangar deployment's whole reward presentation: the wheel and
+   * the empty-owned fallback choice are suppressed on that path and the bonus
+   * is banked into the persistent war instead (parent AH-0MWEVNBMM000QFO2,
+   * producer Q1 = (c) / Q2 = (a) / Q3 = (b), recorded 2026-11-13).
+   */
+  getWinBonusLine(): string | null {
+    return (
+      buildHexMapModel(this.payload, {
+        definitions: this.definitions,
+        record: this.record,
+        assault: this.assault,
+        winBonusMinerals: this.winBonusMinerals,
+      }).winBonusLine
     );
   }
 
   /** Every rendered row, in reading order. */
   getRows(): readonly HexMapRow[] {
     return this.view?.rows ?? [];
+  }
+
+  /** Every drawn attack arrow (one per carried-attack entry), or none. */
+  getArrows(): readonly HexMapArrow[] {
+    return this.view?.arrows ?? [];
+  }
+
+  /**
+   * The left-hand attack panel's text (the focused attack's row), or `''`
+   * when the focused hex is in no attack.
+   */
+  getLeftPanelText(): string {
+    return this.view?.getLeftPanelText() ?? '';
+  }
+
+  /** Whether the left-hand attack panel is showing. */
+  isLeftPanelVisible(): boolean {
+    return this.view?.isLeftPanelVisible() ?? false;
   }
 
   /** The focused row key, or `null` when no row is focusable. */

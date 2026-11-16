@@ -256,9 +256,8 @@ describe('Hangar War scene registry (AH-0MVWMUQUC003WXF5)', () => {
         `${key} has no scene module`,
       ).toBe(true);
     }
-    // The three Hangar War screens Build Candidate D ships.
+    // The two Hangar War screens Build Candidate D ships.
     expect([...HANGAR_WAR_SCENE_KEYS]).toEqual([
-      'DefenceReportScene',
       'HangarScene',
       'HexMapScene',
     ]);
@@ -343,7 +342,7 @@ describe('Hangar War scene registry (AH-0MVWMUQUC003WXF5)', () => {
     expect(parseSceneSetup({ demo: true }, 'HangarScene').demo).toBe(true);
     expect(parseSceneSetup({ demo: false }, 'HexMapScene').demo).toBe(false);
     expect(
-      parseSceneSetup({ demoDwellMs: 250 }, 'DefenceReportScene').demoDwellMs,
+      parseSceneSetup({ demoDwellMs: 250 }, 'HexMapScene').demoDwellMs,
     ).toBe(250);
     for (const value of ['yes', 1, null, {}]) {
       expectConfigError(
@@ -372,20 +371,20 @@ describe('Hangar War scene registry (AH-0MVWMUQUC003WXF5)', () => {
       scenes: [
         { target: 'GymPlayer', playMs: 1000, captureMs: 2000 },
         { target: 'HangarScene', playMs: 1000, captureMs: 3000, setup: { demo: false } },
-        { target: 'DefenceReportScene', playMs: 1000, captureMs: 3000 },
+        { target: 'HexMapScene', playMs: 1000, captureMs: 3000 },
       ],
     });
     expect(parsed.map((scene) => scene.target)).toEqual([
       'GymPlayer',
       'HangarScene',
-      'DefenceReportScene',
+      'HexMapScene',
     ]);
     expect(parsed[1].setup).toEqual({ demo: false });
     expect(parsed[2].setup).toBeUndefined();
     expect(buildScenePlan(parsed).map((scene) => scene.target)).toEqual([
       'GymPlayer',
       'HangarScene',
-      'DefenceReportScene',
+      'HexMapScene',
     ]);
   });
 });

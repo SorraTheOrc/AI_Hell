@@ -292,6 +292,52 @@ describe('buildBotSnapshot — immutability (AC4)', () => {
       (snapshot as { aliveCount: number }).aliveCount = 99;
     }).toThrow();
   });
+
+  /**
+   * The telemetry-only unfrozen variant (AH-0MW2DC20A007TAVY).
+   *
+   * The dev recorder builds a snapshot purely to copy it into the telemetry
+   * state vector, which copies every field anyway — so freezing it was a
+   * second full traversal of a graph that can hold thousands of entries, paid
+   * once per recorded frame. `freeze: false` produces an identically shaped
+   * tree without it.
+   */
+  it('builds an identically shaped snapshot without freezing when asked (freeze: false)', () => {
+    // Stable entity objects: the bot-side `id` is allocated per source object,
+    // so two builds only compare equal when they see the same sources.
+    const enemy = { x: 5, y: 6, alive: true, archetype: 'tank' };
+    const enemyBullet = { graphics: { x: 7, y: 8 }, vx: 0, vy: 1 };
+    const playerBullet = { x: 9, y: 10, vx: 0, vy: -1 };
+    const drop = { x: 11, y: 12, dropId: 'speed_boost' };
+    const mineral = { x: 13, y: 14 };
+    const playerSource = {
+      x: 1,
+      y: 2,
+      getMovementState: () => ({ x: 1, y: 2, vx: 0, vy: 0 }),
+    };
+    const scene = makeScene({
+      getPlayer: () => playerSource,
+      getBoss: () => ({ x: 3, y: 4, alive: true }),
+      getBossPhase: () => 2,
+      getEnemies: () => [enemy],
+      getEnemyBullets: () => [enemyBullet],
+      getPlayerBullets: () => [playerBullet],
+      getDrops: () => [drop],
+      getMinerals: () => [mineral],
+    });
+
+    const unfrozen = buildBotSnapshot(scene, { freeze: false });
+
+    // Same content as the frozen build — only the mutability differs.
+    expect(unfrozen).toEqual(buildBotSnapshot(scene));
+    expect(Object.isFrozen(unfrozen)).toBe(false);
+    expect(Object.isFrozen(unfrozen.enemies)).toBe(false);
+    expect(Object.isFrozen(unfrozen.enemies[0])).toBe(false);
+    expect(Object.isFrozen(unfrozen.player)).toBe(false);
+    expect(Object.isFrozen(unfrozen.playerBullets[0])).toBe(false);
+    // It is a fresh tree, not a shared view of the scene's entities.
+    expect(unfrozen.enemies[0]).not.toBe(enemy);
+  });
 });
 
 /** Minimal scene that only hosts the entities built into it. */

@@ -39,6 +39,10 @@ import {
   GYM_HANGAR_DEFAULT_SEED,
 } from './GymHangar';
 import { buildHangarScreenModel } from '../hangarWar/hangarScreen';
+import { createRingState } from '../../core/hangarWar/hexRing';
+import { resolveHexCapture } from '../../core/hangarWar/captureCycle';
+import { bankedSalvageFromHangar, runSalvageFromRun } from '../../core/hangarWar/salvageBanking';
+import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
 
 /** Deep, detached copy of a payload (so mutation by the scene is detectable). */
 function clonePayload(payload: HangarWarPayload): HangarWarPayload {
@@ -181,5 +185,74 @@ describe('GymHangar', () => {
     });
     expect(entries.map((entry) => entry.key)).toEqual([GYM_HANGAR_SCENE_KEY]);
     expect(entries.map((entry) => entry.label)).toEqual(['Hangar']);
+  });
+});
+
+/**
+ * The special-mission reward in the hangar gym
+ * (`AH-0MWF0CXR4004C9CN`, post-MVP Hangar War AH-0MVWZYIWX0008C55 AC5).
+ *
+ * Completing the ring-2 special mission grants the extra-hit-points
+ * `Juggernaut Hull` into the hangar's owned set. The hangar gym renders the
+ * **shipped** screen model over whatever payload it is given, so fed the
+ * payload a capture wrote it shows the reward exactly as the player sees it —
+ * no gym-side grant logic, no second copy of the unlock tree.
+ */
+describe('GymHangar — the special-mission reward (AH-0MWF0CXR4004C9CN)', () => {
+  let booted: BootedGame | null = null;
+
+  async function bootHangar(data?: object): Promise<GymHangar> {
+    booted = await reuse.boot([GymHangar]);
+    booted.game.scene.start(GYM_HANGAR_SCENE_KEY, data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene(GYM_HANGAR_SCENE_KEY) as GymHangar;
+  }
+
+  /** The ring-2 war, with the special mission captured by the shipped cycle. */
+  function capturedSpecialMissionPayload(): HangarWarPayload {
+    const payload: HangarWarPayload = {
+      ...VALID_HANGAR_WAR_PAYLOAD,
+      ring: createRingState(2, HEX_RING_DEFINITIONS),
+    };
+    const result = resolveHexCapture(payload, {
+      hexId: 'hex-r2-3',
+      defenderHullId: 'hull-1',
+      salvage: runSalvageFromRun({
+        runId: 'gym-hangar',
+        checkpointId: 'boss-victory',
+        minerals: 0,
+        cores: 0,
+      }),
+      definitions: HEX_RING_DEFINITIONS,
+      banked: bankedSalvageFromHangar(payload.hangar),
+    });
+    expect(result.ok).toBe(true);
+    return result.payload;
+  }
+
+  it('shows the granted Juggernaut Hull as an owned unlock', async () => {
+    const captured = capturedSpecialMissionPayload();
+    expect(captured.hangar.unlockedHulls).toContain('hull-3');
+
+    const scene = await bootHangar({ payload: captured });
+    const row = scene.getModel().unlockRows.find((entry) => entry.id === 'hull-3');
+
+    expect(row, 'hull-3 unlock row not rendered').toBeDefined();
+    expect(row!.name).toBe('Juggernaut Hull');
+    // Owned, not buyable: the reward arrives through the capture, not the shop.
+    expect(row!.actionLabel).toBe('OWNED');
+    expect(row!.actionable).toBe(false);
+    // The reward is also a deployable hull option (it is a real ship).
+    expect(
+      scene.getModel().hullOptions.some((option) => option.id === 'hull-3'),
+    ).toBe(true);
+  });
+
+  it('renders the same reward row the game’s own screen model builds', async () => {
+    const captured = capturedSpecialMissionPayload();
+    const scene = await bootHangar({ payload: captured });
+
+    // Gym↔game parity: the gym renders the shipped model verbatim.
+    expect(scene.getModel()).toEqual(buildHangarScreenModel(captured));
   });
 });

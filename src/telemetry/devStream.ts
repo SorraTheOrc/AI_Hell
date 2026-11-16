@@ -428,7 +428,11 @@ export function createDevTelemetryStreamer(
     if (final && range.empty && confirmedCount === 0) return { kind: 'done' };
 
     const body = linesToNdjson(range.lines);
-    const over = checkDevUploadSize(body, maxMessageBytes);
+    // `jsonText`: every line is `JSON.stringify` output, so escaping can at
+    // most double the body — when even that bound fits the cap (the steady
+    // state for a bounded window against the 8 MiB default) the per-part
+    // escaping allocation is skipped entirely (AH-0MW2DC20A007TAVY).
+    const over = checkDevUploadSize(body, maxMessageBytes, { jsonText: true });
     if (over) {
       // Retrying cannot shrink the body, so an over-cap part is final. The
       // window's records are finally skipped: mark them so the retention cap

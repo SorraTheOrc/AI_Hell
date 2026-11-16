@@ -377,14 +377,20 @@ describe('docs/GYM_PARITY.md carries current Hangar War rows (AH-0MVUXCC5J0028OG
     expect(rowVerdict(cells)).toBe('intentional divergence');
   });
 
-  it('points GymHexWar at the shipped map, frontier tick and report code', () => {
+  it('points GymHexWar at the shipped map, frontier tick and rolled-in report', () => {
     const cells = rowCells('GymHexWar');
     expect(cells.length).toBeGreaterThan(7);
     expect(cells[3]).toContain('buildHexMapModel');
+    expect(cells[3]).toContain('renderHexMap');
     expect(cells[3]).toContain('runFrontierTick');
     expect(cells[3]).toContain('buildDefenceReport');
+    // The report is rolled into the map: arrows plus the left-hand attack
+    // panel, no standalone report screen (AH-0MWEXJ21W003M7RR).
+    expect(cells[3]).toContain('attack arrow');
+    expect(cells[3]).toContain('left-hand attack panel');
+    expect(cells[3]).not.toContain('renderDefenceReport');
     expect(cells[7]).toContain('HexMapScene');
-    expect(cells[7]).toContain('DefenceReportScene');
+    expect(cells[7]).not.toContain('DefenceReportScene');
     expect(rowVerdict(cells)).toBe('intentional divergence');
   });
 });
@@ -609,5 +615,98 @@ describe('docs/GYM_PARITY.md records the shared asteroid render path (AH-0MW508U
     for (const scene of ['PlayScene', 'GymFormationScene', 'GymAsteroidStress']) {
       expect(section).toContain(scene);
     }
+  });
+});
+
+// ── Committed merge-conflict markers guard (AH-0MWFKE1IX0097GHI) ──
+//
+// `docs/GYM_PARITY.md` once shipped with Git merge-conflict markers from a
+// bad merge on dev (`<<<<<<< HEAD` / `=======` / `>>>>>>> ef87a124`), which
+// split the `GymHangar`/`GymHexWar` rows and the defending-bot-skills and
+// special-mission prose. The matrix guards above check coverage and
+// classification but never file integrity, so a future bad merge could land
+// markers on dev again unnoticed. `findConflictMarkers` reports every
+// offending line (so the bad merge is actionable); a bare `=======` is also a
+// legal Markdown setext-heading underline, so it is reported only while a
+// `<<<<<<<` … `>>>>>>>` block is open (the document has neither today).
+
+/** Git conflict-marker openers/closers at the start of a line. */
+const CONFLICT_OPENER = /^<{7}(?:\s|$)/;
+const CONFLICT_CLOSER = /^>{7}(?:\s|$)/;
+/** A `=======` separator, valid only inside an open conflict block. */
+const CONFLICT_SEPARATOR = /^={7}\s*$/;
+
+/**
+ * Every Git merge-conflict marker in `source`, as `line N: <marker>` entries
+ * (1-based). A bare `=======` outside a `<<<<<<<` … `>>>>>>>` block is not a
+ * marker — it can be a Markdown setext heading underline.
+ */
+function findConflictMarkers(source: string): string[] {
+  const offenders: string[] = [];
+  let openBlocks = 0;
+  source.split('\n').forEach((line, index) => {
+    if (CONFLICT_OPENER.test(line)) {
+      openBlocks += 1;
+      offenders.push(`line ${index + 1}: ${line}`);
+    } else if (CONFLICT_CLOSER.test(line)) {
+      openBlocks = Math.max(0, openBlocks - 1);
+      offenders.push(`line ${index + 1}: ${line}`);
+    } else if (openBlocks > 0 && CONFLICT_SEPARATOR.test(line)) {
+      offenders.push(`line ${index + 1}: ${line}`);
+    }
+  });
+  return offenders;
+}
+
+describe('docs/GYM_PARITY.md is free of merge-conflict markers (AH-0MWFKE1IX0097GHI)', () => {
+  const matrix = fs.readFileSync(GYM_PARITY_MATRIX, 'utf8');
+
+  it('contains no Git merge-conflict markers (AC1)', () => {
+    expect(findConflictMarkers(matrix)).toEqual([]);
+  });
+
+  it('reports every marker form in an injected fixture (AC2 red-before)', () => {
+    const injected = [
+      'intro',
+      '<<<<<<< HEAD',
+      'ours',
+      '=======',
+      'theirs',
+      '>>>>>>> ef87a124',
+      'outro',
+    ].join('\n');
+    expect(findConflictMarkers(injected)).toEqual([
+      'line 2: <<<<<<< HEAD',
+      'line 4: =======',
+      'line 6: >>>>>>> ef87a124',
+    ]);
+  });
+
+  it('reports markers injected into an in-memory copy of the real document (AC2 red-before)', () => {
+    // Inject the bad-merge block where the matrix begins; the repository copy
+    // is never mutated.
+    const anchor = matrix.split('\n').indexOf('## Matrix') + 1;
+    const corrupted = matrix.replace(
+      '## Matrix',
+      ['<<<<<<< HEAD', '## Matrix', '=======', '## Matrix', '>>>>>>> ef87a124'].join(
+        '\n',
+      ),
+    );
+    expect(corrupted).not.toBe(matrix);
+    expect(findConflictMarkers(corrupted)).toEqual([
+      `line ${anchor}: <<<<<<< HEAD`,
+      `line ${anchor + 2}: =======`,
+      `line ${anchor + 4}: >>>>>>> ef87a124`,
+    ]);
+  });
+
+  it('does not flag a Markdown setext-heading underline as a marker (AC3 green)', () => {
+    expect(findConflictMarkers('A heading\n=======\n\nBody text.\n')).toEqual([]);
+  });
+
+  it('flags a separator only while a conflict block is open (AC3 green)', () => {
+    expect(findConflictMarkers('<<<<<<< HEAD\n=======\n>>>>>>> branch\n')).toEqual(
+      ['line 1: <<<<<<< HEAD', 'line 2: =======', 'line 3: >>>>>>> branch'],
+    );
   });
 });

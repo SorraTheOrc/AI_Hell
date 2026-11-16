@@ -37,6 +37,7 @@ import { registerBackgroundTextures } from '../test/backgroundFixtures';
 import {
   advanceGame,
   bootScene,
+  resolveMineralChoiceIfOpen,
   type BootedGame,
 } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
@@ -344,13 +345,6 @@ describe('PlayScene — level-change background warp', () => {
     scene.scene.restart();
     await advanceGame(booted.game, 200);
     return scene;
-  }
-
-  /** Resolves an open hold-full choice so a kill walk can never stall. */
-  function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
-    if (!scene.isMineralChoiceOpen()) return false;
-    scene.selectMineralChoice(0);
-    return true;
   }
 
   /** Fast-forwards the wave's wormhole spawn so every enemy is collidable. */
