@@ -30,10 +30,12 @@
  * - **Hex variety is optional authored data** (post-MVP,
  *   AH-0MVWZYQN8007SXIG foundation AH-0MWEW4ANW009GGX7): a row may carry a
  *   `personality`, an optional `contract` and a `landmark` (`fortress`/`cache`).
- *   No authored row states one yet — the vocabulary and its loud validation
- *   land before the axes' content does — and every field is optional, so rings
- *   1 and 2 stay valid and older saves stay field-presence migratable. The CSV
- *   seeds carry the matching columns so the parity test covers them too.
+ *   Ring 2 authors the first shipped examples (AH-0MWH4F375000X08G) —
+ *   `hex-r2-1` a `nebula` personality, `hex-r2-6` a contract and `hex-r2-7` a
+ *   `fortress` landmark — all at the ring's aggression-2 survivable floor;
+ *   ring 1 stays the plain tutorial ring. Every field is optional, so older
+ *   saves stay field-presence migratable. The CSV seeds carry the matching
+ *   columns so the parity test covers them too.
  * - **Ring 2 is the harder frontier**: its hardest hex outranks ring 1's, and
  *   its aggression floor is above the opening ring's.
  * - **Authorship order is pinned** by the harness fixtures
@@ -151,6 +153,11 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaponHex: false,
     isSpecialMission: false,
     baseAggression: 2,
+    // Shipped variety (AH-0MWH4F375000X08G): the siege leviathan's demonstrated
+    // volley drifts slowly through nebula gas. The hex grants `arc`, so the
+    // mechanic is genuinely felt through the shared drag factor (no new code
+    // path).
+    personality: 'nebula',
   }),
   Object.freeze({
     id: 'hex-r2-2',
@@ -219,6 +226,15 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaponHex: false,
     isSpecialMission: false,
     baseAggression: 2,
+    // Shipped variety (AH-0MWH4F375000X08G): an optional contract banked on
+    // capture through the existing `bankSalvage` rule (+100 salvage / +1 core,
+    // below the 140-salvage cache payout). The objective has no comma, so the
+    // CSV seed needs no quoting.
+    contract: Object.freeze({
+      objective: 'Break the siege line then hold the hex',
+      bonusSalvage: 100,
+      bonusCores: 1,
+    }),
   }),
   Object.freeze({
     id: 'hex-r2-7',
@@ -232,6 +248,9 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaponHex: false,
     isSpecialMission: false,
     baseAggression: 2,
+    // Shipped variety (AH-0MWH4F375000X08G): a fortress set-piece needing two
+    // capture passes; it keeps its `extra-life` grant (no reward removed).
+    landmark: 'fortress',
   }),
   Object.freeze({
     id: 'hex-r2-8',

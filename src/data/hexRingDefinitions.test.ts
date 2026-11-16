@@ -22,6 +22,8 @@ import { describe, expect, it } from 'vitest';
 import { parseCsvRows } from '../core/csv';
 import {
   HexRingDefinitionError,
+  FORTRESS_CAPTURE_PASSES,
+  createRingState,
   generateRing,
   ringCoordinates,
   ringDepth,
@@ -32,6 +34,9 @@ import {
   type HexPersonalityId,
   type HexRingDefinition,
 } from '../core/hangarWar/hexRing';
+import { buildHexMapModel } from '../core/hangarWar/hexIntel';
+import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
+import { NEBULA_PROJECTILE_DRAG } from '../scenes/core/hexPersonalityMechanics';
 import { hexAggressionLevel } from '../core/hangarWar/hexDifficulty';
 import { findHangarEntry } from '../core/hangarWar/hangarEconomy';
 import {
@@ -289,6 +294,102 @@ describe('authored ring definitions', () => {
     expect(findHexRingDefinition('hex-r1-6')?.boss).toBe('maw-of-ashes');
     expect(findHexRingDefinition('hex-r2-12')?.grants).toBe('nova');
     expect(findHexRingDefinition('hex-does-not-exist')).toBeUndefined();
+  });
+});
+
+describe('authored hex variety content (shipped rings)', () => {
+  it('authors exactly the three shipped variety hexes, and ring 1 stays plain', () => {
+    const authored = (HEX_RING_DEFINITIONS as readonly HexRingDefinition[]).filter(
+      (hex) =>
+        hex.personality !== undefined ||
+        hex.contract !== undefined ||
+        hex.landmark !== undefined,
+    );
+    expect(authored.map((hex) => hex.id)).toEqual([
+      'hex-r2-1',
+      'hex-r2-6',
+      'hex-r2-7',
+    ]);
+    for (const hex of hexRingDefinitionsFor(1)) {
+      expect(hex.personality, `${hex.id} personality`).toBeUndefined();
+      expect(hex.contract, `${hex.id} contract`).toBeUndefined();
+      expect(hex.landmark, `${hex.id} landmark`).toBeUndefined();
+    }
+  });
+
+  it('authors each axis on the producer-confirmed hex', () => {
+    expect(findHexRingDefinition('hex-r2-1')?.personality).toBe('nebula');
+    expect(findHexRingDefinition('hex-r2-6')?.contract).toEqual({
+      objective: 'Break the siege line then hold the hex',
+      bonusSalvage: 100,
+      bonusCores: 1,
+    });
+    expect(findHexRingDefinition('hex-r2-7')?.landmark).toBe('fortress');
+  });
+
+  it('mirrors the authored variety byte-for-value in the ring-2 CSV seed', () => {
+    expect(definitionsFromCsv('hex-ring-2.csv')).toEqual(
+      hexRingDefinitionsFor(2),
+    );
+  });
+
+  it('leaves the authored aggression band unchanged, variety hexes at the floor', () => {
+    expect(hexRingDefinitionsFor(2).map((hex) => hex.baseAggression)).toEqual([
+      2, 2, 5, 2, 5, 2, 2, 5, 6, 2, 5, 8,
+    ]);
+    for (const id of ['hex-r2-1', 'hex-r2-6', 'hex-r2-7']) {
+      const hex = findHexRingDefinition(id)!;
+      expect(hex.baseAggression, `${id} stays at the survivable floor`).toBe(2);
+      // `berserker` adds an aggression step, so it must never sit on a survivor.
+      expect(hex.personality, `${id} is no berserker`).not.toBe('berserker');
+    }
+    // The strict weapon/aggression maximum is untouched by variety authoring.
+    const weaponHex = hexRingDefinitionsFor(2).find((hex) => hex.weaponHex)!;
+    expect(weaponHex.id).toBe('hex-r2-12');
+    expect(weaponHex.baseAggression).toBe(8);
+  });
+
+  it('publishes the personality, contract and landmark in known-ahead intel before commitment', () => {
+    const payload = {
+      ...createDefaultPayload(4242),
+      ring: createRingState(2, HEX_RING_DEFINITIONS),
+    };
+    const model = buildHexMapModel(payload);
+    const byId = new Map(model.hexes.map((hex) => [hex.id, hex] as const));
+
+    // Personality: id + the shared projectile-drag mechanic.
+    const nebula = byId.get('hex-r2-1')!;
+    expect(nebula.held).toBe(false);
+    expect(nebula.personality).toBe('nebula');
+    expect(nebula.personalityMechanics).toHaveLength(1);
+    expect(nebula.personalityMechanics[0].kind).toBe('projectile-drag');
+    expect(nebula.personalityMechanics[0].magnitude).toBe(
+      NEBULA_PROJECTILE_DRAG,
+    );
+
+    // Contract: objective, bonus and the open status before capture.
+    const contract = byId.get('hex-r2-6')!.contract;
+    expect(contract).not.toBeNull();
+    expect(contract?.objective).toBe('Break the siege line then hold the hex');
+    expect(contract?.bonusSalvage).toBe(100);
+    expect(contract?.bonusCores).toBe(1);
+    expect(contract?.status).toBe('open');
+
+    // Landmark: the fortress type and its zero-of-two progress.
+    const fortress = byId.get('hex-r2-7')!;
+    expect(fortress.landmark).toBe('fortress');
+    expect(fortress.landmarkProgress).toEqual({
+      passes: 0,
+      required: FORTRESS_CAPTURE_PASSES,
+    });
+  });
+
+  it('places the nebula on a weapon-granting hex so the drag is genuinely felt', () => {
+    // `nebula` only tunes the boss's demonstrated volley, so it must sit on a
+    // hex that grants a weapon. `hex-r2-1` grants `arc`.
+    const nebulaHex = findHexRingDefinition('hex-r2-1')!;
+    expect(nebulaHex.personality).toBe('nebula');
+    expect(nebulaHex.grants).toBe('arc');
   });
 });
 

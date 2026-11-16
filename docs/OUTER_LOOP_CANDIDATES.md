@@ -797,6 +797,11 @@ shipped build:
   published in the known-ahead intel and validated loudly. Each axis passes the
   anti-checklist test — it adds a **choice** (which fight, which optional
   objective, which set-piece to take next) rather than one more box to tick.
+  **Shipped content:** ring 2 authors one hex per axis at its aggression-2
+  survivable floor — `hex-r2-1` (a `nebula` personality on the `arc`-granting
+  hex), `hex-r2-6` (a "Break the siege line then hold the hex" contract paying
+  +100 salvage / +1 core) and `hex-r2-7` (a `fortress` landmark keeping its
+  `extra-life` grant); ring 1 stays the plain tutorial ring.
 
 ### Fantasy / pitch
 

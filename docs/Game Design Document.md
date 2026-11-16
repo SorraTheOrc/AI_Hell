@@ -3321,6 +3321,24 @@ known-ahead intel **before** the player commits a life.
   optional fields parsed by presence, so a save written before the axes landed
   loads safely with no version bump and no second storage key.
 
+**The shipped variety (AH-0MWH4F375000X08G).** Ring 2 is the first ring to
+author the axes — one hex per axis, all at its aggression-2 survivable floor,
+with no `baseAggression`, grant, boss or weakness changed on any row:
+
+- **`hex-r2-1`** (*the-siege-leviathan*) authors the **`nebula` personality**.
+  It grants `arc`, so the boss's demonstrated volley genuinely drifts at the
+  shared drag factor (`NEBULA_PROJECTILE_DRAG = 1.65`, ≈ 61 % speed) with no
+  new code path.
+- **`hex-r2-6`** (*cobalt-siege*) authors a **contract** — *"Break the siege
+  line then hold the hex"* — paying **+100 salvage / +1 core** banked through
+  `bankSalvage` on capture (below the 140-salvage cache payout).
+- **`hex-r2-7`** (*the-static-prophet*) authors the **`fortress` landmark** —
+  two capture passes (`FORTRESS_CAPTURE_PASSES = 2`) while keeping its
+  `extra-life` grant.
+
+Ring 1 stays the plain tutorial ring (no variety authored). Each authored
+axis is published in the known-ahead intel before the player commits a life.
+
 The axes are exercised by the gyms (§ *Gym coverage and parity*): `GymHexWar`
 publishes the personality/contract/landmark intel and `GymMiniBoss`'s HEX mode
 applies the two mechanics through the same shared mapping the game runs.
