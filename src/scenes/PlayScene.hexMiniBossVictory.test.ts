@@ -32,7 +32,10 @@ import { LEVEL_TRANSITION_SECONDS, GAME_HEIGHT, GAME_WIDTH } from '../core/const
 import { MAX_LEVEL } from '../core/GameState';
 import { loadCheckpoint } from '../core/checkpointStore';
 import { RULES_STORAGE_KEY } from '../core/rules';
-import { deriveDefenderRating } from '../core/hangarWar/hangarEconomy';
+import {
+  defenderRatingFromSnapshot,
+  deriveDefenderRating,
+} from '../core/hangarWar/hangarEconomy';
 import { createRingState } from '../core/hangarWar/hexRing';
 import {
   HANGAR_WAR_STORAGE_KEY,
@@ -337,11 +340,22 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(hex.grantedWeapon).toBe('rapid');
       expect(stored!.hangar.unlockedWeapons).toContain('rapid');
       // The deployment hull is left behind as the defending bot, rated through
-      // the single hangar-economy formula.
+      // the single hangar-economy formula. The ship permanently owned the
+      // spread cannon at victory (ownAWeapon above), so the run's
+      // permanent-upgrade snapshot is carried onto the defender and its
+      // rating reflects the firepower contribution (parent
+      // AH-0MWH42DWQ004SAOJ).
+      const hullRating = deriveDefenderRating(deployment.hullId);
+      const snapshot = {
+        weaponLevels: [{ id: 'spread', level: 1 } as const],
+        powerUpLevels: [],
+        consumablePools: [],
+      };
       expect(hex.defender).toEqual({
         hullId: deployment.hullId,
-        defenceRating: deriveDefenderRating(deployment.hullId),
+        defenceRating: defenderRatingFromSnapshot(hullRating, snapshot),
         bankedMinerals: capture!.bankedDelta.minerals,
+        upgradeSnapshot: snapshot,
       });
     },
     30_000,
