@@ -2938,6 +2938,19 @@ unlock" rule (`purchaseWeight`,
 catalogue order as the deterministic tie-break) also lives here, and the
 defender-rating formula (`baseDefence + 3×armour + 2×firepower + 2×systems`)
 is defined once so phase B's defence resolver has no second source of truth.
+A captured run feeds the same formula (AH-0MWH42DWQ004SAOJ): the bot left
+defending a hex keeps the permanent upgrades the ship held at the mini-boss
+victory — weapon levels, power-up levels and owned consumable charges —
+converted through the one mapping table (`UPGRADE_STAT_BUCKETS` in
+`src/core/hangarWar/hangarEconomy.ts`) into armour/firepower/systems points
+(every permanent weapon level → **firepower**, a permanent level of a
+defensive power-up kind → **armour**, every other permanent power-up level →
+**systems**, a held defensive consumable charge → **armour** and any other
+held charge → **systems**), added to the hull at the shipped **armour 3 /
+firepower 2 / systems 2** weights. The stored rating is therefore
+**hull rating + 3 × armour + 2 × firepower + 2 × systems** — the hull's
+rating plus the contribution total, never a flown battle. A defender captured
+with no permanent upgrades stores no snapshot and rates exactly as before.
 
 **Defending-bot skills are the tree's second rewarded axis**
 (AH-0MVWZYJ740037EZ1): `hull-2` authors a skill and `anti_maw_plating` is a
@@ -3182,7 +3195,23 @@ write:
    flying a hull the fleet owns; no defender means no hold
    (`defender-required`). The defender's stored rating is the hangar economy's
    single formula — `baseDefence + 3 × armour + 2 × firepower + 2 × systems`
-   (Scrap Hull `2`, Bulwark Hull `14`, Juggernaut Hull `15`) — never a flown battle.
+   (Scrap Hull `2`, Bulwark Hull `14`, Juggernaut Hull `15`) — never a flown
+   battle. **The rating carries the run's permanent upgrades at capture time
+   (AH-0MWH42DWQ004SAOJ):** the stored total is the **hull rating plus the
+   contribution** of the victory-moment snapshot — every permanent weapon level
+   counts as **firepower**, a permanent level of a defensive power-up kind
+   (Shield, Force Field, Thorn Field, Bomb, Smart Bomb, Phase Shift) as
+   **armour**, every other permanent power-up level as **systems**, a held
+   defensive consumable charge (Shield, Force Field, Thorn Field) as **armour**
+   and a held other consumable charge (Mystery UFO) as **systems**, at the
+   shipped **armour 3 / firepower 2 / systems 2** weights (§8.1's one mapping
+   table) — so a bot left without upgrades stores no snapshot and rates exactly
+   as before. **Accepted balance consequence (producer decision Q3 = A):** the
+   frontier aggression budget is unchanged, so **defence simply gets easier** —
+   a late run's upgrade contribution can exceed the maximum possible attack
+   strength, making a well-defended hex effectively unretakeable. That is an
+   **accepted consequence**, not a bug; any future cap or rescale of the
+   contribution is a separate tuning item.
 4. **Secure the ring — or rush past it.** **Ring secured** means every hex of
    the current ring is held (producer decision 2026-10-30, Q2 = a). The next
    ring opens on the ring's **capstone**: its one `weaponHex` — the hardest hex,

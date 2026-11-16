@@ -13,8 +13,9 @@
  * - `canBuy` / `buy` are pure, total and never mutate their inputs;
  * - a save's active hull and loadout resolve **only** from unlocked entries;
  * - the attract bot's `cheapestUsefulUnlock` is deterministic;
- * - a defender's rating derives from the hull's hangar upgrades through one
- *   pure formula, so the ring resolver (B3) has no second source of truth.
+ * - a defender's rating derives from the hull's hangar upgrades plus the run's
+ *   permanent-upgrade contribution (AH-0MWH42DWQ004SAOJ) through one pure
+ *   formula, so the ring resolver (B3) has no second source of truth.
  *
  * The catalogue side is asserted as data (not prose) so the unlock tree cannot
  * silently grow or shrink: the epic fixes its contents.

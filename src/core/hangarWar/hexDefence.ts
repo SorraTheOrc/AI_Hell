@@ -178,7 +178,11 @@ export type DefenceOutcome = 'held' | 'fell';
  * scene or a bot, only the four numbers the design names.
  */
 export interface DefenceInput {
-  /** The defending bot's stored rating (from the hull's hangar upgrades). */
+  /**
+   * The defending bot's stored rating — the hull's hangar-upgrade rating plus
+   * the run's permanent-upgrade contribution at capture time
+   * (AH-0MWH42DWQ004SAOJ), never a live battle.
+   */
   readonly defenderRating: number;
   /** The AI's attacking force before the hex's aggression scales it. */
   readonly attackingForce: number;

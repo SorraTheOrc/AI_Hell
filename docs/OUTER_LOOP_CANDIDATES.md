@@ -874,11 +874,21 @@ hangar survives — that is what winning this hell looks like.
 | **Salvage banking (Candidate B)** | Convert run rewards to a persistent balance at checkpoint moments; unbanked is lost on death | Small–Medium |
 | **Hex ring map** | A hex grid whose first **ring** (6 hexes) surrounds the hangar; ring-by-ring growth for later expansions | Small–Medium — data + a map screen + a ring generator |
 | **Frontier aggression clock** | Each between-run tick **redistributes** the ring's aggression inside a budget sized from the player's fleet (a rise on one hex is paid for by a fall on another), guarantees at least one beatable hex, and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small–Medium — a deterministic per-tick rule over the pure strength/budget resolvers |
-| **Defending bot assignment** | Leave a hull plus a **bot** in a hex; its **defence rating** derives from the hull's hangar upgrades, not from a live battle | Small |
+| **Defending bot assignment** | Leave a hull plus a **bot** in a hex; its **defence rating** carries the run's permanent upgrades at capture time — the hull rating plus the snapshot's contribution under the one formula `3 × armour + 2 × firepower + 2 × systems` (shipped weights) — never from a live battle | Small |
 | **Algorithmic defence resolution** | A taken hex falls or holds by comparing stored numbers (defender rating vs. attacking force × aggression) — **no simulated battle** | Small — a pure resolver |
 | **Ring-end hangar assault** | Capturing a ring's final hex resolves the AI's massed counter-attack from stored numbers (held-ring defender sum vs. the ring's aggression mass scaled by the same multiplier and jitter); a repel wins the ring, a fall resets the campaign — **no simulated battle** | Small — a second pure resolver over the same stored numbers |
 | **Hex deployment + mini-boss** | Reuse the run for exactly one campaign level, with the hex's aggression selecting the difficulty curve and that level's wave-5 mini-boss at the end (mini-boss victory = capture) | Small |
 | **Mini-boss-granted weapon discovery** | The hex mini-boss demonstrates the hex's new weapon/power-up (body colour + its catalogue opening volley); defeating it adds the entry to the hangar tree | Small–Medium |
+
+> **Design of record — the rating carries the run's upgrades (AH-0MWH42DWQ004SAOJ).**
+> Intake assumption A4 stated that a defending bot's rating derives from the
+> hull's hangar upgrades **only**; shipped behaviour supersedes it — a captured
+> hex's defending bot keeps the run's permanent weapon levels, permanent
+> power-up levels and owned consumable charges from the victory moment,
+> converted through GDD §8.1's one mapping table into armour/firepower/systems
+> and added to the hull rating (`hull rating + 3 × armour + 2 × firepower +
+> 2 × systems`). The frontier aggression budget is **unchanged** (producer
+> decision Q3 = A), so defence simply gets easier — an **accepted consequence**, not a bug.
 
 ### Reuse of existing systems
 
@@ -932,7 +942,7 @@ without the hangar state it depends on:
         "aggression": 2,          // frontier pressure, rises between runs
         "defender": {             // or null when unheld
           "hullId": "hull-1",
-          "defenceRating": 7,     // derived from hangar upgrades, not a battle
+          "defenceRating": 7,     // hull rating + the run's permanent-upgrade contribution at capture, not a battle
           "bankedMinerals": 12
         },
         "bossDefeated": true,

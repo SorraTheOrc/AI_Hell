@@ -121,7 +121,11 @@ export interface DefenderUpgradeSnapshot {
 export interface HexDefender {
   /** Hull the defending bot flies. */
   hullId: string;
-  /** Defence strength resolved from the hull's hangar upgrades. */
+  /**
+   * Defence strength: the hull's rating from its hangar upgrades **plus** the
+   * run's permanent-upgrade contribution snapshot at capture time
+   * (AH-0MWH42DWQ004SAOJ); a defender with no snapshot rates at the hull.
+   */
   defenceRating: number;
   /** Salvage banked at the hex. */
   bankedMinerals: number;
