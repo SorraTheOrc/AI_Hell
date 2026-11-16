@@ -123,8 +123,10 @@ import {
   type DefenceReportModel,
 } from '../../core/hangarWar/defenceReport';
 import { resolveRingAssault } from '../../core/hangarWar/captureCycle';
+import { defenderUpgradeBreakdown } from '../../core/hangarWar/hangarEconomy';
 import type {
   DefenceSkill,
+  DefenderUpgradeSnapshot,
   HangarWarPayload,
   HexDefender,
   HexState,
@@ -365,6 +367,18 @@ export function hexWarSummaryLines(
     }
     if (hex.held && hex.defender) {
       parts.push(`bot ${hex.defender.hullId} (${hex.defender.defenceRating})`);
+      // The upgrade contribution is read through the same reducer the shared
+      // map model publishes (`defenderUpgradeBreakdown`, consumed by
+      // `buildHexMapModel`), so the summary shows exactly the stored
+      // armour/firepower/systems, upgrade contribution and total rating the
+      // game's map panel and report show — never a gym-local re-derivation
+      // (AH-0MWHF7488009RTBS).
+      const upgrade = defenderUpgradeBreakdown(hex.defender.upgradeSnapshot);
+      if (upgrade !== null) {
+        parts.push(
+          `upgrade armour ${upgrade.armour} · firepower ${upgrade.firepower} · systems ${upgrade.systems} (+${upgrade.ratingContribution})`,
+        );
+      }
       for (const skill of hex.defender.skills ?? []) {
         parts.push(`skill ${skill.name} +${skill.bonus} vs ${skill.bossType}`);
       }
@@ -677,17 +691,26 @@ export class GymHexWar extends Phaser.Scene {
    * @param hexId — the hex whose boss was beaten.
    * @param hullId — the hull left defending it (`null` = no defender → refusal).
    * @param salvage — the run's earned salvage (defaults to zero in the gym).
+   * @param snapshot — the run's permanent-upgrade snapshot at the victory
+   *   moment (the raw rows `Player.getWeaponLevels()`,
+   *   `Player.getPowerUpLevels()` and
+   *   `PowerUpLevelStore.snapshotConsumablePools()` produce) — the same input
+   *   the game's boss-victory path reads. Optional: absent means "no
+   *   upgrades" and the bot left is exactly today's
+   *   (AH-0MWHF7488009RTBS).
    * @returns the shipped capture result (the scene also drives its payload).
    */
   captureHex(
     hexId: string,
     hullId: string | null,
     salvage: RunSalvage = GYM_CAPTURE_SALVAGE,
+    snapshot?: DefenderUpgradeSnapshot,
   ): HexCaptureResult {
     const result = resolveHexCapture(this.payload, {
       hexId,
       defenderHullId: hullId,
       salvage,
+      snapshot,
       definitions: this.definitions,
       banked: bankedSalvageFromHangar(this.payload.hangar),
     });

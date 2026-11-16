@@ -38,7 +38,11 @@ import {
   type BootedGame,
 } from '../../test/gameHarness';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
-import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
+import type {
+  DefenderUpgradeSnapshot,
+  HangarWarPayload,
+  HexState,
+} from '../../core/hangarWar/types';
 import {
   RING_1_HEX_FIXTURES,
   RING_2_HEX_FIXTURES,
@@ -57,7 +61,15 @@ import {
   runFrontierTick,
   type HangarAssaultResolution,
 } from '../../core/hangarWar/hexDefence';
-import { resolveRingAssault } from '../../core/hangarWar/captureCycle';
+import { resolveHexCapture, resolveRingAssault } from '../../core/hangarWar/captureCycle';
+import {
+  defenderUpgradeBreakdown,
+  deriveDefenderRating,
+} from '../../core/hangarWar/hangarEconomy';
+import {
+  bankedSalvageFromHangar,
+  runSalvageFromRun,
+} from '../../core/hangarWar/salvageBanking';
 import { decideMapAction } from '../../ai/hangarWarTraversal';
 import { DEFENCE_REPORT_TITLE } from '../../core/hangarWar/defenceReport';
 import {
@@ -415,6 +427,91 @@ describe('GymHexWar', () => {
     // the game render the same `hex.label` through `renderHexMap`).
     expect(scene.focusMapRow('hex:target')).toBe(true);
     expect(scene.getMapPanelText()).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
+  });
+
+  it('captures with a run snapshot: the gym defender deep-equals the game’s (AH-0MWHF7488009RTBS)', async () => {
+    // The same stored shape the game's boss-victory path reads at the victory
+    // moment (the permanent accessors' rows — see PlayScene).
+    const snapshot: DefenderUpgradeSnapshot = {
+      weaponLevels: [{ id: 'spread', level: 1 }],
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+      consumablePools: [{ id: 'shield', charges: 1 }],
+    };
+    const salvage = runSalvageFromRun({
+      runId: 'gym-parity',
+      checkpointId: 'boss-victory',
+      minerals: 40,
+      cores: 1,
+    });
+    const payload = oneHexPayload({ ...UNHELD_HEX });
+    const scene = await bootHexWar({ payload });
+
+    // A gym capture through the scene's control surface…
+    const gym = scene.captureHex('target', 'hull-1', salvage, snapshot);
+    // …and a game capture through the same shared call PlayScene makes, with
+    // the identical hull, salvage and snapshot.
+    const game = resolveHexCapture(payload, {
+      hexId: 'target',
+      defenderHullId: 'hull-1',
+      salvage,
+      snapshot,
+      definitions: [],
+      banked: bankedSalvageFromHangar(payload.hangar),
+    });
+
+    expect(gym.ok).toBe(true);
+    expect(game.ok).toBe(true);
+    // Deep equality including the rating: the gym threads the snapshot into
+    // the shipped capture cycle and owns no second conversion.
+    expect(gym.defender).toEqual(game.defender);
+    expect(scene.getPayload().ring.hexes[0].defender).toEqual(game.defender);
+
+    // The stored bot carries the normalised snapshot, and the rating is the
+    // hull rating plus the snapshot contribution — the one shared formula.
+    const breakdown = defenderUpgradeBreakdown(snapshot)!;
+    expect(breakdown).toEqual({
+      armour: 2,
+      firepower: 1,
+      systems: 0,
+      ratingContribution: 8,
+    });
+    expect(gym.defender!.upgradeSnapshot).toEqual(snapshot);
+    expect(gym.defender!.defenceRating).toBe(
+      deriveDefenderRating('hull-1') + breakdown.ratingContribution,
+    );
+  });
+
+  it('shows the captured bot’s stored upgrade numbers in the summary and the shared map panel (AH-0MWHF7488009RTBS)', async () => {
+    const scene = await bootHexWar({ payload: oneHexPayload({ ...UNHELD_HEX }) });
+    const snapshot: DefenderUpgradeSnapshot = {
+      weaponLevels: [{ id: 'spread', level: 1 }],
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+      consumablePools: [{ id: 'shield', charges: 1 }],
+    };
+
+    scene.captureHex('target', 'hull-1', undefined, snapshot);
+
+    // The harness summary reads the same reducer the shared map model
+    // publishes, so the stored armour/firepower/systems, upgrade contribution
+    // and total rating are the game's own numbers.
+    const line = scene
+      .getSummaryLines()
+      .find((entry) => entry.includes('bot hull-1'));
+    expect(line).toBeDefined();
+    expect(line).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
+
+    // …and the shared map panel shows the same breakdown for the held hex.
+    const hex = scene.getMapModel()!.hexes.find((row) => row.id === 'target')!;
+    expect(hex.upgradeBreakdown).toEqual({
+      armour: 2,
+      firepower: 1,
+      systems: 0,
+      ratingContribution: 8,
+    });
+    expect(scene.focusMapRow('hex:target')).toBe(true);
+    expect(scene.getMapPanelText()).toContain(
+      'upgrade armour 2 · firepower 1 · systems 0 (+8)',
+    );
   });
 
   it('resolves a trained bot through the shipped resolver (the skill decides the hold)', async () => {
