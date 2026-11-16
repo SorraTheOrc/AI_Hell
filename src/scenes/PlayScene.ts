@@ -4215,8 +4215,9 @@ export class PlayScene extends CombatScene<
    * reward surfaces — this method no-ops without a deployment.
    *
    * The pure capture cycle owns every rule; this method only supplies the run's
-   * inputs (the deployment hull + the run's salvage watermark) and persists the
-   * next payload through the versioned store. The bonus is applied to the
+   * inputs (the deployment hull, the run's salvage watermark and — since
+   * AH-0MWHF71UG000LI6W — the run's permanent-upgrade snapshot) and persists
+   * the next payload through the versioned store. The bonus is applied to the
    * balance the capture cycle returned and lands in that **same**
    * `ai_hell_hangar_war` payload write, so it can never be double-counted and
    * never disturbs the capture cycle's per-run watermark.
@@ -4229,6 +4230,20 @@ export class PlayScene extends CombatScene<
       hexId: deployment.hexId,
       defenderHullId: deployment.hullId,
       salvage: this._salvageSnapshot('boss-victory'),
+      // The run's permanent-upgrade snapshot is read **once**, inside the
+      // same argument expression that feeds the capture write, so the stored
+      // rows cannot be sampled at a different moment from the hex capture
+      // (parent AH-0MWH42DWQ004SAOJ). Only the **permanent** accessors are
+      // read — a timed field pickup (`getTempWeaponIds` /
+      // `getTempPowerUpIds`) is never carried into the defending bot.
+      snapshot: this.player
+        ? {
+            weaponLevels: this.player.getWeaponLevels(),
+            powerUpLevels: this.player.getPowerUpLevels(),
+            consumablePools:
+              this.player.getPowerUpLevelStore().snapshotConsumablePools(),
+          }
+        : undefined,
       definitions: HEX_RING_DEFINITIONS,
       banked: this.salvageBank ?? bankedSalvageFromHangar(payload.hangar),
     });
