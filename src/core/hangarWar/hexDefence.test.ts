@@ -63,6 +63,7 @@ import { checkRingAggression, ringAggressionTotal } from './aggressionInvariants
 import { MINIMUM_PLAYER_STRENGTH } from './hangarEconomy';
 import type {
   DefenceSkill,
+  DefenderUpgradeSnapshot,
   HangarWarPayload,
   HexState,
   PendingAttack,
@@ -1078,6 +1079,32 @@ function holdWithSkills(
   };
 }
 
+/**
+ * Holds a hex with a defender carrying a run-upgrade snapshot
+ * (AH-0MWH42DWQ004SAOJ, C6).
+ */
+function holdWithUpgrades(
+  hexes: HexState[],
+  id: string,
+  defenceRating: number,
+  upgradeSnapshot?: DefenderUpgradeSnapshot,
+): void {
+  const hex = hexes.find((candidate) => candidate.id === id);
+  if (!hex) throw new Error(`no hex ${id}`);
+  hex.held = true;
+  hex.bossDefeated = true;
+  if (upgradeSnapshot !== undefined) {
+    hex.defender = {
+      hullId: 'hull-1',
+      defenceRating,
+      bankedMinerals: 0,
+      upgradeSnapshot,
+    };
+  } else {
+    hex.defender = { hullId: 'hull-1', defenceRating, bankedMinerals: 0 };
+  }
+}
+
 describe('runFrontierTick — defending-bot skills (AH-0MVWZYJ740037EZ1)', () => {
   it("derives the attacker type from the origin hex's authored boss", () => {
     const hexes = ringOne();
@@ -1147,6 +1174,40 @@ describe('runFrontierTick — defending-bot skills (AH-0MVWZYJ740037EZ1)', () =>
     expect(attack.appliedSkills).toEqual([]);
     expect(attack.effectiveDefenderRating).toBe(attack.defenderRating);
     expect(attack.margin).toBe(attack.defenderRating - attack.attackStrength);
+  });
+
+  it("carries the defender's run-upgrade snapshot on the record (C6, survives a fall)", () => {
+    const hexes = ringOne();
+    const snapshot: DefenderUpgradeSnapshot = {
+      weaponLevels: [{ id: 'spread', level: 2 }],
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+      consumablePools: [{ id: 'shield', charges: 1 }],
+    };
+    holdWithUpgrades(hexes, RING_ONE_IDS[0], 15, snapshot);
+
+    const { payload: next, record } = runFrontierTick(payloadWith(hexes), {
+      tuning: QUIET_RISE,
+    });
+    const [attack] = record.attacks;
+    expect(attack.upgradeSnapshot).toEqual(snapshot);
+    // The record keeps the snapshot even when the hex falls (the resolver
+    // reads it before `applyDefence` clears the defender post-tick), so the
+    // defence report can publish the breakdown of the bot that was there.
+    if (attack.outcome === 'fell') {
+      expect(hexOf(next, RING_ONE_IDS[0]).defender).toBeNull();
+      expect(attack.upgradeSnapshot).toEqual(snapshot);
+    }
+  });
+
+  it('omits the snapshot field on a record for an un-upgraded defender (byte-identical)', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 4);
+
+    const [attack] = runFrontierTick(payloadWith(hexes), {
+      tuning: QUIET_RISE,
+    }).record.attacks;
+
+    expect('upgradeSnapshot' in attack).toBe(false);
   });
 
   it('replays identically with skills on the payload (the jitter stream is unchanged)', () => {

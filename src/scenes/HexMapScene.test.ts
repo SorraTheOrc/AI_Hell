@@ -125,6 +125,27 @@ function ringPayload(ringIndex: 1 | 2): HangarWarPayload {
   };
 }
 
+/** A payload with one held hex whose defender carries run upgrades (C6). */
+function upgradedHeldPayload(): HangarWarPayload {
+  const payload = ringPayload(1);
+  const hex = payload.ring.hexes.find(
+    (candidate) => candidate.id === 'hex-r1-1',
+  )!;
+  hex.held = true;
+  hex.bossDefeated = true;
+  hex.defender = {
+    hullId: 'hull-2',
+    defenceRating: 14,
+    bankedMinerals: 0,
+    upgradeSnapshot: {
+      weaponLevels: [{ id: 'spread', level: 1 }],
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+      consumablePools: [{ id: 'shield', charges: 1 }],
+    },
+  };
+  return payload;
+}
+
 /** Finds an on-screen text whose content starts with `prefix`. */
 function findTextStartingWith(
   scene: Phaser.Scene,
@@ -595,6 +616,18 @@ describe('HexMapScene', () => {
       expect(scene.sys.isActive()).toBe(true);
     },
   );
+
+  it('shows a defender’s stored upgrade breakdown in the detail panel (C6)', async () => {
+    const scene = await bootMap({ payload: upgradedHeldPayload(), storage: null });
+
+    expect(scene.focusRow('hex:hex-r1-1')).toBe(true);
+    const panel = scene.getPanelText();
+    // Beside the existing hull line, the panel shows the derived
+    // armour/firepower/systems and the upgrade rating contribution — the same
+    // numbers the report and the gym render through the shared model.
+    expect(panel).toContain('bot hull-2 (14)');
+    expect(panel).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
+  });
 
   it('renders the generated ring for a fresh war and loads an injected store', async () => {
     const fresh = await bootMap({ payload: createDefaultPayload(0), storage: null });

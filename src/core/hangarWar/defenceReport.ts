@@ -74,7 +74,16 @@ import type {
   HangarAssaultResolution,
   HexDefenceRecord,
 } from './hexDefence';
-import type { DefenceSkill, HangarWarPayload, HexState } from './types';
+import type {
+  DefenceSkill,
+  DefenderUpgradeSnapshot,
+  HangarWarPayload,
+  HexState,
+} from './types';
+import {
+  defenderUpgradeBreakdown,
+  type DefenderUpgradeBreakdown,
+} from './hangarEconomy';
 
 /** Title rendered with the map's rolled-in report (asserted by tests). */
 export const DEFENCE_REPORT_TITLE = 'DEFENCE REPORT';
@@ -170,6 +179,18 @@ export interface DefenceReportRow {
    * `null` when no skill applied — an unmodified row stays byte-identical.
    */
   readonly skillLine: string | null;
+  /**
+   * The defender's stored run-upgrade snapshot this row resolved against
+   * (parent AH-0MWH42DWQ004SAOJ, C6 AH-0MWH730I0011PY9), or `null` when the
+   * bot carried none — the row then stays byte-identical to today.
+   */
+  readonly upgradeSnapshot: DefenderUpgradeSnapshot | null;
+  /**
+   * The derived armour/firepower/systems breakdown and its rating
+   * contribution, or `null` when no upgrades were stored. Computed once in the
+   * model layer through the single reducer, never recomputed by the renderer.
+   */
+  readonly upgradeBreakdown: DefenderUpgradeBreakdown | null;
   /** The force actually faced, after aggression and jitter. */
   readonly attackStrength: number;
   /**
@@ -458,6 +479,7 @@ function rowLabel(
   record: HexDefenceRecord,
   held: boolean,
   retake: DefenceRetakePlan,
+  upgrade: DefenderUpgradeBreakdown | null,
 ): string {
   const outcome = record.outcome === 'held' ? 'HELD' : 'FELL';
   const state = held ? '' : ' · LOST';
@@ -478,6 +500,13 @@ function rowLabel(
       + `(${record.aggressionMultiplierPercent}%, ${jitter}) `
       + `= ${record.attackStrength} vs bot ${record.defenderRating}`,
     ...(skills === null ? [] : [skills]),
+    ...(upgrade === null
+      ? []
+      : [
+          `upgrade armour ${upgrade.armour} · firepower ${
+            upgrade.firepower
+          } · systems ${upgrade.systems} (+${upgrade.ratingContribution})`,
+        ]),
     `margin ${record.margin > 0 ? '+' : ''}${record.margin} · ${source} attack`,
     `retake: ${retake.note}`,
   ].join('\n');
@@ -529,6 +558,7 @@ export function buildDefenceReport(
       typeof attack.attackerType === 'string' && attack.attackerType !== ''
         ? attack.attackerType
         : null;
+    const upgradeBreakdown = defenderUpgradeBreakdown(attack.upgradeSnapshot);
     return {
       key: `defence:${attack.hexId}`,
       hexId: attack.hexId,
@@ -553,6 +583,8 @@ export function buildDefenceReport(
         attackerType,
         effectiveDefenderRating,
       ),
+      upgradeSnapshot: attack.upgradeSnapshot ?? null,
+      upgradeBreakdown,
       attackStrength: toCount(attack.attackStrength),
       margin:
         typeof attack.margin === 'number' && Number.isFinite(attack.margin)
@@ -561,7 +593,7 @@ export function buildDefenceReport(
       source: attack.source === 'pending' ? 'pending' : 'frontier',
       attackerOriginId: attack.attackerOriginId,
       retake,
-      label: rowLabel(attack, held, retake),
+      label: rowLabel(attack, held, retake, upgradeBreakdown),
     };
   });
 

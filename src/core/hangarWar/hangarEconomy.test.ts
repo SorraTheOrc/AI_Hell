@@ -949,7 +949,7 @@ describe('defender upgrade snapshot — stat buckets and derivation (AH-0MWHF6X9
     // usage is covered by the capture/store specs instead.
     const home = path.join(process.cwd(), 'src/core/hangarWar/hangarEconomy.ts');
     const derivation =
-      /UPGRADE_STAT_BUCKETS|defenderStatBuckets|defenderRatingFromSnapshot|snapshotDefenderUpgrades/;
+      /UPGRADE_STAT_BUCKETS|defenderStatBuckets|defenderRatingFromSnapshot|snapshotDefenderUpgrades|defenderUpgradeBreakdown/;
     const feature = /upgradeSnapshot|DefenderUpgradeSnapshot/;
     const consumers = collectProductionSourceFiles(
       path.join(process.cwd(), 'src'),

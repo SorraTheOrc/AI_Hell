@@ -130,6 +130,7 @@ import {
 } from './hexDefence';
 import type {
   DefenceSkill,
+  DefenderUpgradeSnapshot,
   HangarWarPayload,
   HexDefender,
   HexState,
@@ -139,7 +140,11 @@ import {
   HEX_RING_DEFINITIONS,
   findHexRingDefinition,
 } from '../../data/hexRingDefinitions';
-import { resolvePlayerStrength } from './hangarEconomy';
+import {
+  resolvePlayerStrength,
+  defenderUpgradeBreakdown,
+  type DefenderUpgradeBreakdown,
+} from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
 import {
   buildDefenceReport,
@@ -353,6 +358,20 @@ export interface HexIntel {  /** Row key (`hex:<id>`), unique within the map. */
    * beside the boss the hex's neighbour will press with.
    */
   readonly skills: readonly DefenceSkill[];
+  /**
+   * The defender's stored run-upgrade snapshot (parent AH-0MWH42DWQ004SAOJ),
+   * or `null` when the bot carries none. Derived numbers are published once on
+   * {@link HexIntel.upgradeBreakdown}; the raw rows are exposed too so a
+   * caller can read exactly what was stored.
+   */
+  readonly upgradeSnapshot: DefenderUpgradeSnapshot | null;
+  /**
+   * The derived armour/firepower/systems breakdown and its rating
+   * contribution, or `null` when the defender stores no upgrades. Computed
+   * once in the model layer through the single reducer
+   * (`defenderUpgradeBreakdown`), never recomputed by the scenes.
+   */
+  readonly upgradeBreakdown: DefenderUpgradeBreakdown | null;
   /** The queued attack against the hex, or `null` when none. */
   readonly pendingAttack: HexPendingAttackIntel | null;
   /**
@@ -889,6 +908,7 @@ function hexLabel(
   definition: HexRingDefinition | undefined,
   pending: HexPendingAttackIntel | null,
   defender: HexDefender | null,
+  upgrade: DefenderUpgradeBreakdown | null,
   specialMission: HexSpecialMissionIntel | null = null,
   contract: HexContractIntel | null = null,
   landmark: HexLandmarkId | null = null,
@@ -920,6 +940,13 @@ function hexLabel(
 
   if (defender) {
     lines.push(`bot ${defender.hullId} (${defender.defenceRating})`);
+    if (upgrade !== null) {
+      lines.push(
+        `upgrade armour ${upgrade.armour} · firepower ${
+          upgrade.firepower
+        } · systems ${upgrade.systems} (+${upgrade.ratingContribution})`,
+      );
+    }
     for (const skill of defender.skills ?? []) {
       lines.push(`skill ${skill.name} +${skill.bonus} vs ${skill.bossType}`);
     }
@@ -991,6 +1018,7 @@ export function buildHexIntel(
   const contract = contractIntelFor(definition, state);
   const aggression = toCount(state.aggression);
   const defender = held && state.defender ? { ...state.defender } : null;
+  const upgrade = defenderUpgradeBreakdown(defender?.upgradeSnapshot);
   const force = toCount(pendingForce);
   const pending: HexPendingAttackIntel | null =
     force > 0
@@ -1026,6 +1054,8 @@ export function buildHexIntel(
     grantedWeapon: state.grantedWeapon ?? null,
     defender,
     skills: defender ? [...(defender.skills ?? [])] : [],
+    upgradeSnapshot: defender?.upgradeSnapshot ?? null,
+    upgradeBreakdown: upgrade,
     pendingAttack: pending,
     displayed,
     selectable: displayed,
@@ -1044,6 +1074,7 @@ export function buildHexIntel(
       definition,
       pending,
       defender,
+      upgrade,
       specialMission,
       contract,
       definition?.landmark ?? null,

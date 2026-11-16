@@ -381,6 +381,42 @@ describe('GymHexWar', () => {
     ).toBe(true);
   });
 
+  it('shows an upgraded left bot’s breakdown in the shared map panel (C6 parity)', async () => {
+    // Inject a held hex whose defender already carries the run's
+    // permanent-upgrade snapshot (the same stored shape the capture cycle
+    // writes — C7 owns the leave-bot control surface's snapshot input).
+    const payload = oneHexPayload({
+      ...UNHELD_HEX,
+      held: true,
+      bossDefeated: true,
+      defender: {
+        hullId: 'hull-1',
+        defenceRating: 14,
+        bankedMinerals: 0,
+        upgradeSnapshot: {
+          weaponLevels: [{ id: 'spread', level: 1 }],
+          powerUpLevels: [{ id: 'shield', level: 1 }],
+          consumablePools: [{ id: 'shield', charges: 1 }],
+        },
+      },
+    });
+    const scene = await bootHexWar({ payload });
+
+    // The shared map model publishes the breakdown next to the bot line…
+    const hex = scene.getMapModel()!.hexes.find((row) => row.id === 'target')!;
+    expect(hex.upgradeBreakdown).toEqual({
+      armour: 2,
+      firepower: 1,
+      systems: 0,
+      ratingContribution: 8,
+    });
+    expect(hex.label).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
+    // …and the shared renderer draws it into the detail panel (the gym and
+    // the game render the same `hex.label` through `renderHexMap`).
+    expect(scene.focusMapRow('hex:target')).toBe(true);
+    expect(scene.getMapPanelText()).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
+  });
+
   it('resolves a trained bot through the shipped resolver (the skill decides the hold)', async () => {
     // Two **authored** hexes, so the attacker type resolves from ring data: the
     // target `hex-r1-1` (1,0) is pressed from its only unheld neighbour

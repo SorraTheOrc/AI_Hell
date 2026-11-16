@@ -161,6 +161,7 @@ import {
 } from '../../data/hexRingDefinitions';
 import type {
   DefenceSkill,
+  DefenderUpgradeSnapshot,
   HangarWarPayload,
   HexRingState,
   HexState,
@@ -337,6 +338,21 @@ export interface HexDefenceRecord extends DefenceResolution {
    * definition (an untyped attack, which resolves unmodified).
    */
   readonly attackerType: string | null;
+  /**
+   * The defender's stored run-upgrade snapshot at resolution time
+   * (parent AH-0MWH42DWQ004SAOJ, C6 AH-0MWH730I0011PY9).
+   *
+   * Carried additively so the between-sortie report can publish the bot's
+   * armour/firepower/systems breakdown even on a **fall**, where
+   * `applyDefence` clears the defender from the post-tick payload. Absent for
+   * an un-upgraded defender (the report then stays byte-identical to today).
+   *
+   * Only the **raw rows** ride the record — bucket arithmetic stays in the
+   * one reducer (`defenderStatBuckets` / `defenderUpgradeBreakdown` in
+   * `./hangarEconomy`), which the report model calls; the resolver never
+   * derives a bucket or a rating here (AC5 no-divergent-copy).
+   */
+  readonly upgradeSnapshot?: DefenderUpgradeSnapshot;
   /** Whether the attack was queued in the payload or opened by this tick. */
   readonly source: 'pending' | 'frontier';
 }
@@ -1153,6 +1169,12 @@ function resolveAttack(
     attackerOriginId: origin.id,
     attackerOrigin: { q: origin.q, r: origin.r },
     attackerType,
+    // The defender's upgrade snapshot rides the record so the defence report
+    // can render the bot's breakdown for a fall (C6), when the post-tick
+    // payload has already cleared the defender.
+    ...(hex.defender?.upgradeSnapshot !== undefined
+      ? { upgradeSnapshot: hex.defender.upgradeSnapshot }
+      : {}),
     source,
   };
 }

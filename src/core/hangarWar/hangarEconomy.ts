@@ -1071,6 +1071,50 @@ export function defenderRatingFromSnapshot(
 }
 
 /**
+ * The map/report publishable breakdown of a defending bot's run upgrades
+ * (parent AH-0MWH42DWQ004SAOJ, C6 AH-0MWH730I0011PY9).
+ *
+ * One exported shape for both the held-hex detail panel and the
+ * between-sortie defence report, so the two surfaces can never show different
+ * numbers: the buckets are the C2 reducer's output and the contribution is the
+ * one rating formula evaluated at base 0 (`3×armour + 2×firepower +
+ * 2×systems`), with the weights read from {@link DEFENDER_UPGRADE_WEIGHTS}
+ * rather than restated. The individual totals are-normalised (corrupt rows
+ * collapse to `0`), so this never throws.
+ */
+export interface DefenderUpgradeBreakdown {
+  /** Derived armour contribution (defensive levels and charges). */
+  readonly armour: number;
+  /** Derived firepower contribution (permanent weapon levels). */
+  readonly firepower: number;
+  /** Derived systems contribution (utility levels and charges). */
+  readonly systems: number;
+  /** The upgrade-only rating contribution (`3×armour + 2×firepower + 2×systems`). */
+  readonly ratingContribution: number;
+}
+
+/**
+ * Reduces a victor-moment snapshot to the numbers both surfaces display, or
+ * `null` when there is no snapshot (an un-upgraded defender renders exactly
+ * today's lines, byte-identical).
+ *
+ * @param snapshot — the defender's stored upgrade snapshot, or `null`/absent.
+ * @returns the published breakdown, or `null` when no upgrades are stored.
+ */
+export function defenderUpgradeBreakdown(
+  snapshot: DefenderUpgradeSnapshot | null | undefined,
+): DefenderUpgradeBreakdown | null {
+  if (snapshot === null || snapshot === undefined) return null;
+  const buckets = defenderStatBuckets(snapshot);
+  return {
+    armour: buckets.armour,
+    firepower: buckets.firepower,
+    systems: buckets.systems,
+    ratingContribution: defenderRatingFromUpgrades(0, buckets),
+  };
+}
+
+/**
  * The defender rating of a hull from the catalogue (0 for an unknown hull).
  *
  * @param hullId — the hull the defending bot flies.

@@ -348,6 +348,97 @@ describe('hex map model — tile label (AC3)', () => {
     expect(held.label).not.toContain('skill ');
   });
 
+  // ── Run-upgrade breakdown (AH-0MWH42DWQ004SAOJ, C6) ────────────────
+  //
+  // A left bot keeps the permanent upgrades the ship had at the capture, and
+  // the detail panel publishes them: one line with the armour/firepower/systems
+  // buckets, the upgrade rating contribution and the (already shown) total
+  // rating. The numbers come from the one reducer, never a scene-local copy.
+
+  it("publishes the defender's stored snapshot and derived upgrade breakdown", () => {
+    const payload = withHex(ringPayload(1), 'hex-r1-2', {
+      held: true,
+      bossDefeated: true,
+      defender: {
+        hullId: 'hull-2',
+        defenceRating: 14,
+        bankedMinerals: 0,
+        upgradeSnapshot: {
+          weaponLevels: [{ id: 'spread', level: 1 }],
+          powerUpLevels: [{ id: 'shield', level: 1 }],
+          consumablePools: [{ id: 'shield', charges: 1 }],
+        },
+      },
+    });
+
+    const model = buildHexMapModel(payload);
+    const held = model.hexes.find((hex) => hex.id === 'hex-r1-2')!;
+
+    // The raw stored snapshot is published (for inspection), and the derived
+    // numbers are the single reducer's output.
+    expect(held.upgradeSnapshot).toEqual({
+      weaponLevels: [{ id: 'spread', level: 1 }],
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+      consumablePools: [{ id: 'shield', charges: 1 }],
+    });
+    expect(held.upgradeBreakdown).toEqual({
+      armour: 2, // shield level 1 + shield charge 1
+      firepower: 1, // spread level 1
+      systems: 0,
+      ratingContribution: 8, // 3*2 + 2*1 + 2*0
+    });
+    // The panel renders the breakdown beside the bot line: buckets, the
+    // upgrade contribution and the total rating already on the bot line.
+    expect(held.label).toContain('bot hull-2 (14)');
+    expect(held.label).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
+  });
+
+  it('publishes no upgrade breakdown line for a bot with none (byte-identical)', () => {
+    const payload = withHex(ringPayload(1), 'hex-r1-2', {
+      held: true,
+      bossDefeated: true,
+      defender: { hullId: DEFAULT_HULL_ID, defenceRating: 2, bankedMinerals: 0 },
+    });
+
+    const held = buildHexMapModel(payload).hexes.find(
+      (hex) => hex.id === 'hex-r1-2',
+    )!;
+
+    expect(held.upgradeSnapshot).toBeNull();
+    expect(held.upgradeBreakdown).toBeNull();
+    expect(held.label).not.toContain('upgrade armour');
+  });
+
+  it('renders a corrupt stored snapshot as a zero breakdown without throwing', () => {
+    const payload = withHex(ringPayload(1), 'hex-r1-2', {
+      held: true,
+      bossDefeated: true,
+      defender: {
+        hullId: DEFAULT_HULL_ID,
+        defenceRating: 2,
+        bankedMinerals: 0,
+        upgradeSnapshot: {
+          weaponLevels: [{ id: 'spread', level: -5 }],
+          powerUpLevels: [{ id: 'shield', level: Number.NaN }],
+          consumablePools: [{ id: 'mystery_ufo', charges: Number.POSITIVE_INFINITY }],
+        },
+      },
+    });
+
+    const held = buildHexMapModel(payload).hexes.find(
+      (hex) => hex.id === 'hex-r1-2',
+    )!;
+
+    expect(held.upgradeSnapshot).not.toBeNull();
+    expect(held.upgradeBreakdown).toEqual({
+      armour: 0,
+      firepower: 0,
+      systems: 0,
+      ratingContribution: 0,
+    });
+    expect(held.label).toContain('upgrade armour 0 · firepower 0 · systems 0 (+0)');
+  });
+
   it('previews a queued attack without a skill bonus (the origin is not known yet)', () => {
     // A queued attack has no named origin, so it has no attacker type and no
     // skill can match: the preview stays the jitter-free, bonus-free baseline.

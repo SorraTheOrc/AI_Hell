@@ -271,6 +271,86 @@ describe('buildDefenceReport — defending-bot skills (AH-0MVWZYJ740037EZ1)', ()
     expect(row.label).not.toContain('skill ');
   });
 
+  // ── Run-upgrade breakdown (AH-0MWH42DWQ004SAOJ, C6) ────────────────
+  //
+  // The bot that defended the hex keeps the run's permanent upgrades, and the
+  // report publishes them on the row: armour/firepower/systems, the upgrade
+  // rating contribution and the (already shown) defender rating. The numbers
+  // come from the one reducer, never a scene-local copy.
+
+  it('publishes the defender upgrade breakdown on an upgraded row', () => {
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([
+        attack({
+          defenderRating: 12,
+          effectiveDefenderRating: 12,
+          outcome: 'held',
+          margin: 6,
+          attackStrength: 6,
+          source: 'pending',
+          upgradeSnapshot: {
+            weaponLevels: [{ id: 'spread', level: 1 }],
+            powerUpLevels: [{ id: 'shield', level: 1 }],
+            consumablePools: [{ id: 'shield', charges: 2 }],
+          },
+        }),
+      ]),
+    );
+
+    const row = model.rows[0];
+    // The raw snapshot is published, and the derived numbers are the reducer's.
+    expect(row.upgradeSnapshot).toEqual({
+      weaponLevels: [{ id: 'spread', level: 1 }],
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+      consumablePools: [{ id: 'shield', charges: 2 }],
+    });
+    expect(row.upgradeBreakdown).toEqual({
+      armour: 3, // shield level 1 + 2 charges
+      firepower: 1, // spread level 1
+      systems: 0,
+      ratingContribution: 11, // 3*3 + 2*1 + 2*0
+    });
+    // The rendered line names the buckets and the contribution; the row's
+    // existing `vs bot 12` carries the total.
+    expect(row.label).toContain('upgrade armour 3 · firepower 1 · systems 0 (+11)');
+    expect(row.label).toContain('vs bot 12');
+  });
+
+  it('stays byte-identical for a row without a stored upgrade snapshot', () => {
+    const model = buildDefenceReport(makePayload(), makeRecord([attack()]));
+    const row = model.rows[0];
+
+    expect(row.upgradeSnapshot).toBeNull();
+    expect(row.upgradeBreakdown).toBeNull();
+    expect(row.label).not.toContain('upgrade armour');
+  });
+
+  it('renders a corrupt stored snapshot as a zero breakdown without throwing', () => {
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([
+        attack({
+          upgradeSnapshot: {
+            weaponLevels: [{ id: 'spread', level: Number.NEGATIVE_INFINITY }],
+            powerUpLevels: [{ id: 'shield', level: 'seven' as unknown as number }],
+            consumablePools: [{ id: 'shield', charges: Number.NaN }],
+          },
+        }),
+      ]),
+    );
+
+    const row = model.rows[0];
+    expect(row.upgradeSnapshot).not.toBeNull();
+    expect(row.upgradeBreakdown).toEqual({
+      armour: 0,
+      firepower: 0,
+      systems: 0,
+      ratingContribution: 0,
+    });
+    expect(row.label).toContain('upgrade armour 0 · firepower 0 · systems 0 (+0)');
+  });
+
   it('names every applied skill when a hull and a modifier grant both', () => {
     const hullSkill = {
       id: 'bulwark-line-breaker',
