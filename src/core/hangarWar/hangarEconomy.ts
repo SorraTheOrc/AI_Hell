@@ -35,6 +35,13 @@
  *   `purchaseWeight` among entries that are not owned, are ungated and are
  *   affordable, with catalogue order as the deterministic tie-break. `null`
  *   when nothing is buyable, so the bot moves on instead of stalling.
+ * - **Permanent upgrade.** {@link costToUpgrade} / {@link buyUpgrade} extend
+ *   the purchase branch for an **owned level-bearing** kind: a deterministic
+ *   next-level price that rises toward the shared {@link MAX_PERMANENT_LEVEL}
+ *   ceiling, spent to raise the permanent level by exactly one (fresh hangar
+ *   and level snapshot on success *and* refusal). Upgrades are player-action
+ *   only — the attract booth still buys the cheapest useful unlock (parent
+ *   AH-0MWHW4ALS0039JFU, pure rule AH-0MWI5AAVO009UROY).
  * - **Defender rating.** One pure formula over a hull's hangar upgrades
  *   ({@link defenderRatingFromUpgrades}), so the ring resolver (B3) has no
  *   second source of truth for "how strong is the bot left in this hex". A
@@ -65,11 +72,12 @@ import {
   type HullUpgrades,
 } from '../../data/hangarCatalogue';
 import type { HangarLoadout, HangarState, DefenderUpgradeSnapshot } from './types';
-// Type-only imports: erased at compile time, so the module stays pure — no
-// runtime dependency on the weapon/power-up catalogues or their scene-bound
-// consumers (the upgrade tables below only need the id unions).
-import type { PowerUpId } from '../../powerups/types';
-import type { WeaponId } from '../../utils/weapons';
+// Catalogue imports stay pure data (no Phaser, no storage): the two catalogues
+// are runtime-imported because the upgrade rule must classify a requested id
+// (unknown vs non-upgradeable) from the one authored catalogue — the previous
+// type-only seam held only while the tables below needed just the id unions.
+import { POWER_UP_CATALOGUE, type PowerUpId } from '../../powerups/types';
+import { WEAPON_CATALOGUE, type WeaponId } from '../../utils/weapons';
 
 /**
  * Minerals one banked mini-boss core is worth when comparing two prices.
@@ -533,6 +541,290 @@ export function buy(
   if (!owned.includes(entry.id)) owned.push(entry.id);
 
   return { ok: true, reason: null, spent: price, hangar: next };
+}
+
+// ── Permanent upgrade rule (parent AH-0MWHW4ALS0039JFU) ──────────────────
+//
+// Beside `canBuy`/`buy` (binary ownership), this branch spends the same two
+// currencies to raise the **permanent** level of an owned level-bearing weapon
+// or power-up by exactly one. It is pure and total like the purchase rules: it
+// never mutates its inputs, returns a fresh hangar and a fresh level snapshot
+// on success *and* refusal, and refuses each failure class with a distinct
+// reason (`unknown` → `non-upgradeable` → `unowned` → `capped` →
+// `unaffordable`, the most fundamental first, mirroring `canBuy`).
+
+/**
+ * The one shared maximum permanent level for every owned level-bearing kind —
+ * the ceiling `costToUpgrade`/`buyUpgrade` refuse at, and the number the
+ * run-path upgrade offer also reads (producer Q1 = (a): ONE authored number,
+ * no parallel copy, parent AH-0MWHW4ALS0039JFU).
+ *
+ * A kind at this level is `'capped'`: there is no further level to raise, so
+ * no price is offered even when the fleet could pay one. The value is a
+ * balance choice (at least one purchasable step must exist, so a ceiling of
+ * one would make buy-to-upgrade impossible): 5 matches the run path's own
+ * per-kind caps (magnet/mineral-scoop stacks, lives).
+ */
+export const MAX_PERMANENT_LEVEL = 5;
+
+/** Why an upgrade was refused, or `null` when it is allowed. */
+export type UpgradeRefusal =
+  | 'unknown'
+  | 'non-upgradeable'
+  | 'unowned'
+  | 'capped'
+  | 'unaffordable';
+
+/**
+ * The fleet's current permanent levels — the run path's own row vocabulary
+ * (`Player.getWeaponLevels()` / `Player.getPowerUpLevels()`), passed in as an
+ * input: the pure economy never reads the run-path stores (type-only seam,
+ * same as the `DefenderUpgradeSnapshot`).
+ */
+export interface PermanentUpgradeLevels {
+  /** Permanent weapon levels (rows of `{ id, level }`). */
+  readonly weapons: ReadonlyArray<{
+    readonly id: WeaponId;
+    readonly level: number;
+  }>;
+  /** Permanent power-up levels (rows of `{ id, level }`). */
+  readonly powerUps: ReadonlyArray<{
+    readonly id: PowerUpId;
+    readonly level: number;
+  }>;
+}
+
+/** The pure upgrade check: the deterministic price of the next level. */
+export interface UpgradeCheck {
+  /** Whether the fleet can buy the next level right now. */
+  readonly ok: boolean;
+  /** The first blocking reason (`null` when `ok`). */
+  readonly reason: UpgradeRefusal | null;
+  /** The deterministic two-currency price of the next level. */
+  readonly price: HangarPrice;
+  /** What the fleet is missing when `reason` is `'unaffordable'`. */
+  readonly shortfall: HangarPrice;
+}
+
+/** The pure upgrade result: the raised level on a fresh hangar, or the refusal. */
+export interface UpgradeResult {
+  /** Whether the upgrade happened. */
+  readonly ok: boolean;
+  /** The first blocking reason (`null` when `ok`). */
+  readonly reason: UpgradeRefusal | null;
+  /** What was spent (zero on refusal). */
+  readonly spent: HangarPrice;
+  /** The hangar after the upgrade (a fresh object; the input is untouched). */
+  readonly hangar: HangarState;
+  /** The level snapshot after the upgrade (a fresh object; the input is untouched). */
+  readonly levels: PermanentUpgradeLevels;
+}
+
+/**
+ * Balance knobs for the per-level price curve {@link upgradePrice}.
+ *
+ * The next level of an owned kind costs `UPGRADE_BASE_MINERALS` plus
+ * `UPGRADE_MINERALS_PER_LEVEL` per current level, gaining one mini-boss core
+ * every `UPGRADE_CORE_EVERY_LEVELS` levels — so the price is always paid in
+ * both currencies before the last step and its salvage weight strictly rises
+ * per level toward {@link MAX_PERMANENT_LEVEL}. Cores are the rarer currency
+ * ({@link CORE_MINERAL_EQUIVALENT}), so they only enter the curve late.
+ */
+const UPGRADE_BASE_MINERALS = 100;
+
+/** Mineral increase of each further level (the strictly-rising core of the curve). */
+const UPGRADE_MINERALS_PER_LEVEL = 50;
+
+/** Every N current levels adds one core to the next-level price. */
+const UPGRADE_CORE_EVERY_LEVELS = 2;
+
+/** The deterministic two-currency price of the next level above `currentLevel`. */
+function upgradePrice(currentLevel: number): HangarPrice {
+  const level = toCount(currentLevel);
+  return {
+    minerals: UPGRADE_BASE_MINERALS + level * UPGRADE_MINERALS_PER_LEVEL,
+    cores: Math.floor(level / UPGRADE_CORE_EVERY_LEVELS),
+  };
+}
+
+/** `'weapon'`, `'power-up'`, or `null` when `id` is neither shipped kind. */
+function upgradeKind(id: string): 'weapon' | 'power-up' | null {
+  if (Object.prototype.hasOwnProperty.call(WEAPON_CATALOGUE, id)) return 'weapon';
+  if (Object.prototype.hasOwnProperty.call(POWER_UP_CATALOGUE, id)) return 'power-up';
+  return null;
+}
+
+/**
+ * Whether a power-up kind carries **no permanent level to raise** (producer
+ * Q2 = (a): level-bearing permanent kinds only): a consumable (charge pool,
+ * never a persisted upgradeable level) or the field-pickup-only kind.
+ */
+function isNonUpgradeablePowerUp(id: string): boolean {
+  const entry = POWER_UP_CATALOGUE[id as PowerUpId];
+  return entry.consumable === true || entry.fieldPickupOnly === true;
+}
+
+/**
+ * Whether the fleet owns a level-bearing kind: a hangar owned-set row for a
+ * weapon, a `powerUps` levels row for a power-up (the only place the hangar
+ * records a power-up level).
+ */
+function ownsUpgradeableKind(
+  hangar: HangarState,
+  levels: PermanentUpgradeLevels,
+  kind: 'weapon' | 'power-up',
+  id: string,
+): boolean {
+  if (kind === 'weapon') return hangar.unlockedWeapons.includes(id);
+  return levels.powerUps.some((row) => row.id === id);
+}
+
+/** The current permanent level of a kind from its own row vocabulary (0 when absent/corrupt). */
+function currentPermanentLevel(
+  levels: PermanentUpgradeLevels,
+  kind: 'weapon' | 'power-up',
+  id: string,
+): number {
+  const rows = kind === 'weapon' ? levels.weapons : levels.powerUps;
+  const row = rows.find((candidate) => candidate.id === id);
+  return row === undefined ? 0 : toCount(row.level);
+}
+
+/** A detached copy of a level snapshot, so no rule can mutate its caller's rows. */
+function cloneLevels(levels: PermanentUpgradeLevels): PermanentUpgradeLevels {
+  return {
+    weapons: levels.weapons.map((row) => ({ ...row })),
+    powerUps: levels.powerUps.map((row) => ({ ...row })),
+  };
+}
+
+/** The snapshot with the kind's permanent level raised by exactly one. */
+function raisedLevels(
+  levels: PermanentUpgradeLevels,
+  kind: 'weapon' | 'power-up',
+  id: string,
+): PermanentUpgradeLevels {
+  if (kind === 'weapon') {
+    const rows = levels.weapons.map((row) =>
+      row.id === id ? { ...row, level: toCount(row.level) + 1 } : { ...row },
+    );
+    if (!levels.weapons.some((row) => row.id === id)) {
+      rows.push({ id: id as WeaponId, level: 1 });
+    }
+    return { ...levels, weapons: rows };
+  }
+  const rows = levels.powerUps.map((row) =>
+    row.id === id ? { ...row, level: toCount(row.level) + 1 } : { ...row },
+  );
+  if (!levels.powerUps.some((row) => row.id === id)) {
+    rows.push({ id: id as PowerUpId, level: 1 });
+  }
+  return { ...levels, powerUps: rows };
+}
+
+/**
+ * The deterministic price of the **next** permanent level of an owned
+ * level-bearing kind, and why the fleet cannot buy it when it cannot.
+ *
+ * The rule shares the purchase branch's two-currency `HangarPrice` and
+ * `HangarPurchaseContext` conventions but is a separate branch beside
+ * `canBuy`/`buy`: ownership is per kind (`unlockedWeapons` for a weapon, a
+ * `powerUps` levels row for a power-up) and the refusal vocabulary reflects
+ * the level model — `unknown` → `non-upgradeable` → `unowned` → `capped` →
+ * `unaffordable`. Ring gating already applied at purchase, so the ring
+ * context is carried for signature parity and future growth, never read here.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param id — the owned kind to upgrade (a shipped weapon or power-up id).
+ * @param levels — the fleet's current permanent levels (read only).
+ * @param context — the purchase context (parity with {@link canBuy}).
+ * @returns the check, including the exact shortfall when unaffordable.
+ */
+export function costToUpgrade(
+  hangar: HangarState,
+  id: string,
+  levels: PermanentUpgradeLevels,
+  _context: HangarPurchaseContext,
+): UpgradeCheck {
+  const kind = upgradeKind(id);
+  if (kind === null) {
+    return { ok: false, reason: 'unknown', price: ZERO_PRICE, shortfall: ZERO_PRICE };
+  }
+  if (kind === 'power-up' && isNonUpgradeablePowerUp(id)) {
+    return { ok: false, reason: 'non-upgradeable', price: ZERO_PRICE, shortfall: ZERO_PRICE };
+  }
+  if (!ownsUpgradeableKind(hangar, levels, kind, id)) {
+    return { ok: false, reason: 'unowned', price: ZERO_PRICE, shortfall: ZERO_PRICE };
+  }
+  const current = currentPermanentLevel(levels, kind, id);
+  if (current >= MAX_PERMANENT_LEVEL) {
+    return { ok: false, reason: 'capped', price: ZERO_PRICE, shortfall: ZERO_PRICE };
+  }
+  const price = upgradePrice(current);
+  const shortfall = shortfallFor(hangar, price);
+  if (shortfall.minerals > 0 || shortfall.cores > 0) {
+    return { ok: false, reason: 'unaffordable', price, shortfall };
+  }
+  return { ok: true, reason: null, price, shortfall: ZERO_PRICE };
+}
+
+/**
+ * Buys the next permanent level of an owned level-bearing kind, spending both
+ * currencies and raising the level by **exactly one**.
+ *
+ * Pure: the input hangar and level snapshot are never mutated — success and
+ * refusal both return a fresh hangar and a fresh level snapshot — and a
+ * refused upgrade spends nothing. The rule only raises a level; persisting
+ * and granting it onto a run stay the store/deploy path's job, so an upgrade
+ * can never silently change what the player deploys with.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param id — the owned kind to upgrade.
+ * @param levels — the fleet's current permanent levels (read only).
+ * @param context — the purchase context (parity with {@link buy}).
+ * @returns the upgrade result, including the raised level snapshot.
+ */
+export function buyUpgrade(
+  hangar: HangarState,
+  id: string,
+  levels: PermanentUpgradeLevels,
+  _context: HangarPurchaseContext,
+): UpgradeResult {
+  const check = costToUpgrade(hangar, id, levels, _context);
+  const nextHangar = cloneHangar(hangar);
+  const nextLevels = cloneLevels(levels);
+  if (!check.ok) {
+    return {
+      ok: false,
+      reason: check.reason,
+      spent: ZERO_PRICE,
+      hangar: nextHangar,
+      levels: nextLevels,
+    };
+  }
+
+  const price = normalisePrice(check.price);
+  nextHangar.bankedMinerals -= price.minerals;
+  nextHangar.bankedCores -= price.cores;
+
+  const kind = upgradeKind(id);
+  if (kind === null) {
+    // Unreachable: `costToUpgrade` only returns `ok` for a known kind.
+    return {
+      ok: false,
+      reason: 'unknown',
+      spent: ZERO_PRICE,
+      hangar: nextHangar,
+      levels: nextLevels,
+    };
+  }
+  return {
+    ok: true,
+    reason: null,
+    spent: price,
+    hangar: nextHangar,
+    levels: raisedLevels(nextLevels, kind, id),
+  };
 }
 
 /**
