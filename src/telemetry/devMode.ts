@@ -182,6 +182,11 @@ export type DevTelemetryUploader = (options: {
   readonly setting?: DevTelemetrySetting;
   /** Reads the current run's in-memory NDJSON buffer. */
   readonly readSink: () => string | null;
+  /**
+   * Reads the buffer's UTF-8 size without building it, so an over-cap run is
+   * refused before it is serialised (AH-0MW2DC20A007TAVY, AC1).
+   */
+  readonly readSinkBytes?: () => number | null;
   /** Failure reporter; never thrown to the caller. */
   readonly onError?: (error: unknown) => void;
 }) => Promise<boolean>;

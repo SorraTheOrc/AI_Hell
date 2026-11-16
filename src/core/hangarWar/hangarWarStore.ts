@@ -47,11 +47,24 @@
  * `null` case above; bump it only for an incompatible shape change and add the
  * old → new mapping here.
  *
+ * Two fields migrate by presence **without** a version bump because they are
+ * purely additive: `frontierTick` on the payload (absent reads as tick `0`) and
+ * `skills` on a defending bot (absent reads as "no skills", so the resolver
+ * applies no bonus) — AH-0MVUXCBBK004EJIP and AH-0MVWZYJ740037EZ1 respectively.
+ * The run's **upgrade snapshot** on a defending bot is the third such field
+ * (absent reads as "no upgrades", so the resolver adds nothing) —
+ * AH-0MWHF6ZHW0058SMX. All three are omitted on write when they carry
+ * nothing, so a save round-trips byte-for-byte rather than gaining empty
+ * fields.
+ *
  * @module src/core/hangarWar/hangarWarStore
  */
 
 import { normaliseSeed } from '../rng';
+import { snapshotDefenderUpgrades } from './hangarEconomy';
 import type {
+  DefenceSkill,
+  DefenderUpgradeSnapshot,
   HangarLoadout,
   HangarState,
   HangarWarPayload,
@@ -186,16 +199,147 @@ function parseHangar(raw: unknown): HangarState | null {
   };
 }
 
+/**
+ * Parses one defending-bot skill, or `null` when it is not usable.
+ *
+ * A skill needs a stable `id` and a `bossType` to match against (without either
+ * it can never apply), so those two are the admission test. The `name` falls
+ * back to the id and the `bonus` is normalised to a non-negative integer, so a
+ * corrupt value degrades to a legible skill rather than discarding it — the
+ * same salvage-not-drop policy the rest of the parser follows.
+ */
+function parseDefenceSkill(raw: unknown): DefenceSkill | null {
+  if (!isRecord(raw)) return null;
+  const id = toId(raw.id);
+  const bossType = toId(raw.bossType);
+  if (id === null || bossType === null) return null;
+  const name = toId(raw.name);
+  return {
+    id,
+    name: name ?? id,
+    bossType,
+    bonus: toNonNegativeInteger(raw.bonus),
+  };
+}
+
+/**
+ * Parses a defender's skill list. Duplicates collapse to the first mention by
+ * id (a hull and a modifier granting the same training must not double-stack),
+ * and unusable entries are dropped rather than failing the defender.
+ */
+function parseDefenceSkills(raw: unknown): DefenceSkill[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const skills: DefenceSkill[] = [];
+  for (const entry of raw) {
+    const skill = parseDefenceSkill(entry);
+    if (skill === null || seen.has(skill.id)) continue;
+    seen.add(skill.id);
+    skills.push(skill);
+  }
+  return skills;
+}
+
+/** One stored upgrade row: a usable id and the raw count value read from it. */
+interface StoredUpgradeRow {
+  readonly id: string;
+  /** The count's stored value (`level` for levels, `charges` for pools). */
+  readonly count: unknown;
+}
+
+/**
+ * Extracts structurally usable rows from one stored upgrade list.
+ *
+ * Non-list values, non-record entries and unusable ids are dropped — the same
+ * salvage-not-drop policy as every other list in this parser. Count semantics
+ * (negative/fractional/non-finite collapse, zero rows removed) and id
+ * classification are deliberately left to the economy normaliser the snapshot
+ * passes through, so this helper only guarantees the rows are shape-safe for
+ * it (a `null` entry must never reach `row.level`).
+ */
+function parseUpgradeRows(raw: unknown, countKey: 'level' | 'charges'): StoredUpgradeRow[] {
+  if (!Array.isArray(raw)) return [];
+  const rows: StoredUpgradeRow[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const id = toId(entry.id);
+    if (id === null) continue;
+    rows.push({ id, count: entry[countKey] });
+  }
+  return rows;
+}
+
+/** An empty snapshot: nothing to persist, so the field stays omitted. */
+const EMPTY_DEFENDER_UPGRADE_SNAPSHOT: DefenderUpgradeSnapshot = Object.freeze({
+  weaponLevels: [],
+  powerUpLevels: [],
+  consumablePools: [],
+});
+
+/**
+ * Parses the run's permanent-upgrade snapshot stored on a defender
+ * (AH-0MWHF6ZHW0058SMX) — the additive companion of `skills`.
+ *
+ * Structure is validated here (a non-object snapshot, or a list full of
+ * unusable rows, degrades to the empty snapshot rather than failing the
+ * defender); the economy normaliser `snapshotDefenderUpgrades` then owns
+ * count semantics, unknown-id classification and duplicate collapse, so the
+ * stored field can never disagree with the one reducer (parent
+ * AH-0MWH42DWQ004SAOJ). A normalised-empty snapshot is omitted by
+ * `parseDefender`, keeping field-presence migration exact.
+ */
+function parseDefenderUpgrades(raw: unknown): DefenderUpgradeSnapshot {
+  if (!isRecord(raw)) return EMPTY_DEFENDER_UPGRADE_SNAPSHOT;
+  // Stored rows are `unknown` at this boundary; after the structural
+  // extraction above the normaliser is the last authority on what survives.
+  return snapshotDefenderUpgrades({
+    weaponLevels: parseUpgradeRows(raw.weaponLevels, 'level').map((row) => ({
+      id: row.id,
+      level: row.count,
+    })),
+    powerUpLevels: parseUpgradeRows(raw.powerUpLevels, 'level').map((row) => ({
+      id: row.id,
+      level: row.count,
+    })),
+    consumablePools: parseUpgradeRows(raw.consumablePools, 'charges').map((row) => ({
+      id: row.id,
+      charges: row.count,
+    })),
+  } as unknown as DefenderUpgradeSnapshot);
+}
+
 /** Parses a defending bot; an unusable one becomes `null` (undefended). */
 function parseDefender(raw: unknown): HexDefender | null {
   if (!isRecord(raw)) return null;
   const hullId = toId(raw.hullId);
   if (hullId === null) return null;
-  return {
+  const defender: HexDefender = {
     hullId,
     defenceRating: toNonNegativeInteger(raw.defenceRating),
     bankedMinerals: toNonNegativeInteger(raw.bankedMinerals),
   };
+  // The skills are an **additive** field (AH-0MVWZYJ740037EZ1): a save written
+  // before defending-bot skills landed has none, so the field is omitted here
+  // (rather than defaulted to `[]`) and absence reads as "no skills". That keeps
+  // field-presence migration exact and needs no schema version bump.
+  const skills = parseDefenceSkills(raw.skills);
+  if (skills.length > 0) defender.skills = skills;
+  // The run's upgrade snapshot is the second **additive** defender field
+  // (AH-0MWHF6ZHW0058SMX): a save written before the capture cycle recorded
+  // run upgrades has none, so the field is omitted here (rather than defaulted
+  // to an empty snapshot) and absence reads as "no upgrades". The normaliser
+  // removes every zero/unknown row, so an upgrade-free defender normalises to
+  // the empty snapshot and the field is omitted — the same field-presence
+  // migration as `skills`, no schema version bump.
+  const upgrades = parseDefenderUpgrades(raw.upgradeSnapshot);
+  if (
+    upgrades.weaponLevels.length > 0 ||
+    upgrades.powerUpLevels.length > 0 ||
+    upgrades.consumablePools.length > 0
+  ) {
+    defender.upgradeSnapshot = upgrades;
+  }
+  return defender;
 }
 
 /**
@@ -224,6 +368,17 @@ function parseHex(raw: unknown): HexState | null {
     defender: held ? parseDefender(raw.defender) : null,
     bossDefeated: raw.bossDefeated === true,
     grantedWeapon: toId(raw.grantedWeapon),
+    // Field-presence migration (AH-0MWEW58WD003NFXS): a save written before
+    // contracts landed has no marker, and a malformed one is dropped rather
+    // than guessed — never `false`, so an absent field stays absent.
+    ...(raw.contractFulfilled === true ? { contractFulfilled: true } : {}),
+    // Fortress progress (AH-0MWEW5I1F006CLCH): only a usable positive count is
+    // kept, so a pre-landmark save keeps the field absent and a malformed value
+    // is dropped rather than guessed (field-presence migration).
+    ...(toInteger(raw.capturePasses) !== null &&
+    toInteger(raw.capturePasses)! > 0
+      ? { capturePasses: toInteger(raw.capturePasses)! }
+      : {}),
   };
 }
 

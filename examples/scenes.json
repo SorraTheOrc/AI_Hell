@@ -480,15 +480,6 @@
       "setup": {
         "demo": false
       }
-    },
-    {
-      "target": "DefenceReportScene",
-      "playMs": 1500,
-      "captureMs": 5000,
-      "label": "Hangar War \u2014 between-sortie defence report",
-      "setup": {
-        "demo": false
-      }
     }
   ]
 }

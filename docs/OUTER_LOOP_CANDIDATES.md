@@ -110,7 +110,7 @@ before it reads as a reward.
 | **Candidate A — Contested Regions / Home World** | Every new ship leaves home with **no upgrades** (A already rotates unupgraded ships onto the line) | A region's mini-boss demonstrates the region's signature weapon; the stationed-ship upgrade is earned by beating it |
 | **Candidate B — Salvage Fleet** | The hangar starts with **one basic hull and one starting weapon** (owned; the default loadout is empty); everything else is bought | A mini-boss's weapon appears in the hangar tree only after that mini-boss has been defeated wielding it |
 | **Candidate C — Signal Decode** | The codex starts **empty**, so the campaign starts plain and mutates as it is decoded | The boss's phases *are* the demonstration; each decoded rule unlocks the behaviour/weapon the player has just survived |
-| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, its starting weapon owned but **not equipped**, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | The hex's wave-10 mini-boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
+| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, its starting weapon owned but **not equipped**, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | The hex's wave-5 mini-boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
 
 ---
 
@@ -755,19 +755,27 @@ shipping order this document recommends (B's shape first):
   with authored ring 1 (6 hexes) and **ring 2 (12 hexes, playable)**, the hex
   map with known-ahead intel, the capture cycle (hex mini-boss, mini-boss-granted
   discovery, defending bot, ring secured), the pure defence resolver and
-  frontier aggression clock, the between-sortie defence report with
-  attract-mode traversal, and the measured ring timing/playstyle validation.
+  frontier aggression clock, the between-sortie defence report rolled into the
+  map, attract-mode traversal, and the measured ring timing/playstyle
+  validation.
   Playable specification: GDD §8.2.
+- **The ring-end win/lose gate, shipped (AH-0MVUVL2O2006W4QK):** the *States*
+  section's design of record is now the shipped behaviour — securing the ring's
+  final hex resolves the AI's **massed hangar assault** from the ring's stored
+  numbers, a **repel wins the ring** and opens the next one, and a **fall resets
+  the whole campaign**. The map's rolled-in report announces both outcomes;
+  the rush line (capstone held, ring not fully held) still opens the next ring
+  with no assault. Specification: GDD §8.2.
 - **Gym coverage:** `GymHangar` and `GymHexWar` render the same model/renderer
   pairs the game does, with current rows in
   [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
 
-**Deliberately deferred (with its work item).** The *States* section below is
-the design of record; the shipped MVP narrows it by producer decision
-(2026-10-30, Q2 = a) — the ring is **secured when every hex of the current ring
-is held**, and there is no hangar assault pass and no hangar-falls lose state.
-The massed counter-attack on the hangar and the campaign loss are tracked by
-**AH-0MVUVL2O2006W4QK**.
+**Ring-end semantics — shipped, not deferred.** The *States* section below is
+the design of record and the shipped build now follows it (AH-0MVUVL2O2006W4QK):
+the ring is **secured when every hex of the current ring is held**, that final
+hex capture triggers the **massed hangar assault** resolved from stored numbers,
+and a failed assault is the **hangar-falls lose state** — a full campaign reset
+of the hangar and the ring together.
 
 **Post-MVP mitigation backlog (design captured, scheduled separately).** Each
 of these adds a choice rather than a chore, and each is out of scope for the
@@ -776,9 +784,19 @@ shipped build:
 - **Special missions** with special rewards — e.g. a new hull type with extra
   hit points or extra upgrade bays: **AH-0MVWZYIWX0008C55**.
 - **Upgraded defending bots** with special skills that are more effective
-  against certain enemy or boss types: **AH-0MVWZYJ740037EZ1**.
+  against certain enemy or boss types: **AH-0MVWZYJ740037EZ1** — **implemented**
+  as flat defence skills keyed by the attacker's authored boss identity (see
+  *Known-ahead intel and anti-checklist mitigations → Defending-bot skills*).
 - **Hex variety** — per-hex personalities, contracts and ring landmarks:
-  **AH-0MVWZYQN8007SXIG**.
+  **AH-0MVWZYQN8007SXIG** — **implemented** (GDD §8.2 *Hex variety*): authored
+  `personality` (config-tunes plus the bounded set of two shared combat
+  mechanics — a projectile-slowing `nebula` and a reinforcement-summoning
+  `summoner`), optional `contract` (bonus banked through the existing banking
+  rule, no deadline clock) and one-off ring `landmark`s (`fortress` = two
+  captures, `cache` = pays out instead of granting) on ordinary hexes, all
+  published in the known-ahead intel and validated loudly. Each axis passes the
+  anti-checklist test — it adds a **choice** (which fight, which optional
+  objective, which set-piece to take next) rather than one more box to tick.
 
 ### Fantasy / pitch
 
@@ -825,12 +843,21 @@ hangar survives — that is what winning this hell looks like.
 ### States
 
 - **Win (per ring):** every hex of the current ring is held and the AI's massed
-  counter-attack on the hangar is repelled — the hangar is safe and the ring is
+  counter-attack on the hangar — resolved algorithmically from the ring's stored
+  numbers when the final hex is captured — is **repelled**. A repel (including a
+  tie, because a tie holds the line) means the hangar is safe and the ring is
   yours. The next ring then opens, so a "win" is the campaign's milestone, not
-  its end.
-- **Lose:** the **hangar falls** — the last hex is taken and the hangar's own
-  defence fails. Losing a **run** never does this: the run's unbanked salvage is
-  forfeit, the hangar and the ring survive (Candidate B's rule, preserved).
+  its end. The **rush** line (the ring's capstone held while hexes remain
+  unheld) opens the next ring with no assault, because the ring was never
+  secured.
+- **Lose:** the **hangar falls** — the ring's final hex is taken and the massed
+  assault **beats** the hangar's stored defence. The consequence is a **full
+  campaign reset**: the hangar (hulls, weapons, modifiers, banked salvage and
+  cores) and the ring hexes are wiped together and a fresh deterministic
+  campaign seed is issued, preserving only the best score. Losing a **run** or
+  a **hex battle** never does this: the run's unbanked salvage is forfeit, a hex
+  the frontier retakes is lost, but the hangar and the rest of the ring survive
+  (Candidate B's rule, preserved).
 - **Partial progress:** a bad run still banks salvage from the checkpoints it
   reached, still **lowers that hex's aggression** (you killed defenders), and
   still leaves a bot defending what is already held.
@@ -847,10 +874,21 @@ hangar survives — that is what winning this hell looks like.
 | **Salvage banking (Candidate B)** | Convert run rewards to a persistent balance at checkpoint moments; unbanked is lost on death | Small–Medium |
 | **Hex ring map** | A hex grid whose first **ring** (6 hexes) surrounds the hangar; ring-by-ring growth for later expansions | Small–Medium — data + a map screen + a ring generator |
 | **Frontier aggression clock** | Each between-run tick **redistributes** the ring's aggression inside a budget sized from the player's fleet (a rise on one hex is paid for by a fall on another), guarantees at least one beatable hex, and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small–Medium — a deterministic per-tick rule over the pure strength/budget resolvers |
-| **Defending bot assignment** | Leave a hull plus a **bot** in a hex; its **defence rating** derives from the hull's hangar upgrades, not from a live battle | Small |
+| **Defending bot assignment** | Leave a hull plus a **bot** in a hex; its **defence rating** carries the run's permanent upgrades at capture time — the hull rating plus the snapshot's contribution under the one formula `3 × armour + 2 × firepower + 2 × systems` (shipped weights) — never from a live battle | Small |
 | **Algorithmic defence resolution** | A taken hex falls or holds by comparing stored numbers (defender rating vs. attacking force × aggression) — **no simulated battle** | Small — a pure resolver |
-| **Hex deployment + mini-boss** | Reuse the run for exactly one campaign level, with the hex's aggression selecting the difficulty curve and that level's wave-10 mini-boss at the end (mini-boss victory = capture) | Small |
+| **Ring-end hangar assault** | Capturing a ring's final hex resolves the AI's massed counter-attack from stored numbers (held-ring defender sum vs. the ring's aggression mass scaled by the same multiplier and jitter); a repel wins the ring, a fall resets the campaign — **no simulated battle** | Small — a second pure resolver over the same stored numbers |
+| **Hex deployment + mini-boss** | Reuse the run for exactly one campaign level, with the hex's aggression selecting the difficulty curve and that level's wave-5 mini-boss at the end (mini-boss victory = capture) | Small |
 | **Mini-boss-granted weapon discovery** | The hex mini-boss demonstrates the hex's new weapon/power-up (body colour + its catalogue opening volley); defeating it adds the entry to the hangar tree | Small–Medium |
+
+> **Design of record — the rating carries the run's upgrades (AH-0MWH42DWQ004SAOJ).**
+> Intake assumption A4 stated that a defending bot's rating derives from the
+> hull's hangar upgrades **only**; shipped behaviour supersedes it — a captured
+> hex's defending bot keeps the run's permanent weapon levels, permanent
+> power-up levels and owned consumable charges from the victory moment,
+> converted through GDD §8.1's one mapping table into armour/firepower/systems
+> and added to the hull rating (`hull rating + 3 × armour + 2 × firepower +
+> 2 × systems`). The frontier aggression budget is **unchanged** (producer
+> decision Q3 = A), so defence simply gets easier — an **accepted consequence**, not a bug.
 
 ### Reuse of existing systems
 
@@ -867,8 +905,9 @@ hangar survives — that is what winning this hell looks like.
   scaling system.
 - **Mini-boss rewards (`MiniBoss`, §4.4.4)** — the hex mini-boss's
   spin-the-wheel upgrade reward is the discovery channel (Rule 2) as well as the
-  extraction point; on a winning deployment it is presented after the defence
-  report and before the map.
+  extraction point; on a winning deployment it is presented over the paused map
+  (the map itself carries the between-sortie report), so no separate report
+  screen stands between the win and the reward.
 - **Bot / attract mode** — the survival-first `decideBotIntent` heuristic
   supplies the **defender's rating** (it is never flown live in defence, so a
   defence cannot stall a demo), and it traverses the hangar/hex screens.
@@ -903,7 +942,7 @@ without the hangar state it depends on:
         "aggression": 2,          // frontier pressure, rises between runs
         "defender": {             // or null when unheld
           "hullId": "hull-1",
-          "defenceRating": 7,     // derived from hangar upgrades, not a battle
+          "defenceRating": 7,     // hull rating + the run's permanent-upgrade contribution at capture, not a battle
           "bankedMinerals": 12
         },
         "bossDefeated": true,
@@ -925,17 +964,20 @@ replace storage behind the same injectable interface (§6.6).
 
 - **Target run length:** one hex deployment ≈ the existing arcade run (≈5
   simulated minutes), unchanged — the hangar and the ring are outside the run.
-- **Hours-to-win — an evening per ring, not a grind.** The **one-ring MVP targets
-  40–60 minutes** for a semi-skilled player: six ≈5-minute deployments (≈30
-  minutes) plus build/salvage time on the hangar and the cost of a few lost
-  attempts. **Ring 2 is larger — 12 hexes** — so it lands at ≈60 minutes of
-  deployments plus 10–40 minutes of builds and losses (**≈90–120 minutes** with the wrap-aware bot).
-  Measured with the ring-timing harness on the **deployment loadout** (a captured
-  hex's grant owned from the next deployment, ring 1's grants entering ring 2;
-  AH-0MW9QA2YC009PSF5) the ring-2 grind is **116.4 minutes** — 39 minutes of
-  measured deployments, 24 between sorties and 55 of modelled retries — so
-  ring 2 is still retry-dominated and has not yet reached the split stated
-  here.
+- **Hours-to-win — an evening per ring, not a grind.** The budget is authored at
+  the unit a player actually experiences: **5–15 minutes per hex deployment**.
+  A whole ring derives from its hex count (**6 × *n***), so the **one-ring MVP
+  (6 hexes) targets 30–90 minutes** for a semi-skilled player — six
+  5–15-minute deployments plus build/salvage time on the hangar and the cost of
+  a few lost attempts — and **ring 2 (12 hexes) lands at 60–180 minutes**.
+  Measured with the ring-timing harness on the shipped one-level **five-wave
+  sortie** (a captured hex's grant owned from the next deployment, ring 1's
+  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **48.1
+  minutes** — 12.0 of measured deployments, 24 between sorties and 12.0 of
+  modelled retries — so ring 2 still plays retry-dominated but now reads
+  **within-tolerance** of its derived 60–180 window (±12 min, floor 48) and its
+  rebalancing ruling stays live on AH-0MWFDQCFV007BZE5; ring 1's **16.4 min**
+  still **misses** the derived 30–90 window (AH-0MWFDQ9EY004NO4X).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.
@@ -963,8 +1005,9 @@ The loop must reward different ways of playing rather than one correct route:
   hexes left behind, so speed is bought with risk.
 
 No style is strictly dominant — the aggressive line is **faster but riskier** and
-slow grinding is **safer but slower**, which is the intended trade (the 40–60
-minute ring budget is where that trade has to stay live; see *Effort and risk*).
+slow grinding is **safer but slower**, which is the intended trade (the 5–15
+minute per-hex budget — derived ring windows 30–90 / 60–180 — is where that
+trade has to stay live; see *Effort and risk*).
 
 ### UI / scene surface
 
@@ -976,8 +1019,11 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
 - The **hangar screen** (Candidate B's unlock tree) reachable from the map, so
   "what I own" and "what I hold" sit one click apart.
 - A **deployment / hull-and-loadout selector** on the way into a hex.
-- A **between-sortie defence report**: which hexes were attacked, which held,
-  which fell, and what it would take to retake them.
+- A **between-sortie defence report, rolled into the hex ring map** (no
+  separate screen): the map draws one **attack arrow per attack** on the ring
+  and a **left-hand attack panel** with that attack's numbers — which hexes
+  were attacked, which held, which fell, and what it would take to retake them
+  — from the frontier-tick record the finished deployment hands over.
 - In-run play reuses `PlayScene` and every existing in-run screen unchanged.
 
 ### Gym testability and the bot
@@ -990,8 +1036,10 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
   player weapon/boss paths, so it must run the **same code** in a gym
   (`GymFodderEnemies` / `GymBoss`) and in the game (AGENTS.md gym↔game parity).
 - **Attract mode:** the bot traverses or skips every new screen — on the map it
-  auto-picks the **weakest** adjacent hex, in the hangar it auto-buys the
-  cheapest useful unlock (seeded), and it auto-advances the defence report.
+  auto-picks the **weakest** adjacent hex and, after a sortie, lands back on the
+  map where the rolled-in report (arrows plus the left-hand attack panel) is
+  read in place; in the hangar it auto-buys the cheapest useful unlock (seeded).
+  There is no report step to auto-advance because there is no report screen.
   Because defence is **resolved algorithmically**, there is no live defence
   battle for the demo to stall in — the defending bot never needs to be flown.
 
@@ -1003,7 +1051,8 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
   *lost* between runs, so the campaign can move backwards — a deliberate,
   legible stake rather than an accident.
 - **Changes the "single final boss" pillar (GDD §3.1/§4.3).** Each hex ends on
-  its **wave-10 mini-boss** (one campaign level per deployment) and the ring ends
+  its **wave-5 mini-boss** (one campaign level per deployment, played as a
+  five-wave sortie) and the ring ends
   on the hangar assault, so the boss encounter becomes a recurring milestone
   rather than a single terminus. Cost: the Central AI needs a
   campaign-role decision (recurring mini-boss vs. the assault's spearhead), and
@@ -1022,9 +1071,11 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
     player can hold them, so the map feels like a losing chore. Mitigation: a
     frontier tick the player can always answer (attack the neighbour), and
     aggression that is sized from the player's own fleet, redistributed around
-    the ring, and always leaves a beatable hex the defence report makes legible.
+    the ring, and always leaves a beatable hex the rolled-in report makes
+    legible.
   - **Opaque defence** — a hex falls and the player cannot see why. Mitigation:
-    show the numbers (defender rating vs. attacking force) in the report.
+    show the numbers (defender rating vs. attacking force) in the map's attack
+    panel, where the tick's arrows already point at the attack.
   - **Two progressions, twice the bookkeeping** — hangar plus ring becomes
     admin. Mitigation: one screen holds both, and the hangar is one click from
     the map.
@@ -1036,9 +1087,12 @@ minute ring budget is where that trade has to stay live; see *Effort and risk*).
     publishes its boss, that boss's **strengths and weaknesses**, its aggression
     and the **exact weapon or upgrade it grants**, so the ring is a set of
     **strategic choices** made before a life is spent; the single weapon hex is
-    the hardest in the ring, so one capture is materially different. Post-MVP
-    content (special missions, upgraded bots with special skills) is recorded in
-    *Known-ahead intel and anti-checklist mitigations*.
+    the hardest in the ring, so one capture is materially different. The first
+    post-MVP answer — a **special mission paying a special reward** — is now
+    **shipped** (AH-0MVWZYIWX0008C55, recorded below); the remaining post-MVP
+    content (upgraded bots with special skills and the other ideas) is still
+    design only and recorded in *Known-ahead intel and anti-checklist
+    mitigations*.
   - **One playstyle dominating** — if rushing is always right, grinding is
     busywork; if grinding is always right, the aggressive line is a trap. The
     ring timing budget exists to keep both lines alive, and the choice of when to
@@ -1062,18 +1116,32 @@ can form before spending a life — and the one-weapon hex becomes a real decisi
 rather than a surprise.
 
 Going **beyond** strategic weapon grants is **out of scope for the MVP**. The
-ideas below are recorded so the loop has room to grow; they are **design only**
-and none is scheduled:
+ideas below are recorded so the loop has room to grow; one mitigation
+(**defending-bot skills**, AH-0MVWZYJ740037EZ1) has since been **implemented** as
+a post-MVP addition, the rest remain **design only**:
 
-- **Special missions.** Optional objective runs (escort a salvage convoy, hold a
-  hex for N frontier ticks, kill a boss without losing a life) that pay a
-  **special reward** instead of salvage — for example a **new hull type with
-  extra hit points or extra upgrade bays**, a one-run modifier, or an extra
-  defending bot.
+- **Special missions — SHIPPED (AH-0MVWZYIWX0008C55).** A special-mission hex
+  authored in the ring (`isSpecialMission` on `HexRingDefinition`, ring 2's
+  `hex-r2-3`) whose ordinary one-level capture pays a **special reward** instead
+  of salvage: the `hull-3` **Juggernaut Hull** with **extra hit points**
+  (`5` starting lives, defence `15`) granted through `resolveHexGrant` into the
+  hangar's owned set. The offer **rotates between sorties** through the shared
+  seeded RNG (`specialMissionOfferFor`, deterministic for the payload seed) and
+  is **known ahead**: the map's detail panel publishes the reward — hull,
+  description, extra lives — before the player commits a life, with a short
+  `★ SPECIAL` tag on the tile. Upgrade-bay rewards remain out of scope
+  (AH-0MWEUSVJ1007EXJY). Gym coverage: `GymHexWar` + `GymHangar`
+  (`docs/GYM_PARITY.md`), specification in GDD §8.2 § *Special missions*.
 - **Upgraded bots with special skills.** Defending bots that are **more effective
   against certain enemy or boss types** — an anti-swarm bot, an anti-armour bot,
   a bot that repairs a neighbour's defence rating — so what the player leaves
-  behind is a composition decision, not a number.
+  behind is a composition decision, not a number. **Partly implemented
+  (AH-0MVWZYJ740037EZ1):** the *matching-boss* half ships as **flat defence
+  skills** keyed by the attacking neighbour's authored boss identity, granted by
+  the hull flown and/or a purchased modifier (see *Defending-bot skills* below).
+  The cross-hex "repairs a neighbour's defence rating" idea remains **design
+  only** — deliberately deferred, because it would break the resolver's per-hex
+  purity.
 - **Hex personalities.** Per-hex environmental or enemy twists (a nebula that
   slows projectiles, a boss that summons reinforcements) so no two captures play
   the same.
@@ -1086,6 +1154,39 @@ Every idea above is judged by the same test as the loop itself: does it give the
 player a **choice** — what to take, what to leave, what to risk — rather than one
 more box to tick?
 
+### Defending-bot skills (post-MVP, implemented — AH-0MVWZYJ740037EZ1)
+
+The first mitigation was **built**, not just recorded, because it is the one that
+turns the defender from a number into a decision. It is **design of record** in
+GDD §8.2 (*Defending-bot skills*) and in the resolver's module docs
+(`src/core/hangarWar/hexDefence.ts`); the essential rules:
+
+- **A skill is a flat rating bonus against one boss type.** `DefenceSkill` is
+  `{ id, name, bossType, bonus }`, stored data on the defender
+  (`HexDefender.skills`), never a rule the resolver consults a table for.
+- **The type is already authored.** `bossType` is the attacking neighbour hex's
+  authored `boss` (`src/data/hexRingDefinitions.ts`) — the same identity the
+  map's known-ahead intel shows — so no new enemy taxonomy exists, and an attack
+  from an origin with no authored definition resolves **unmodified**.
+- **A non-matching attack is byte-for-byte the old behaviour.** The bonus is
+  added to the effective rating *before* `effectiveRating ≥ attackStrength`; a
+  tie still holds. The resolver publishes the stored rating and the effective one
+  side by side, so the defence report shows the skill, its bonus and the numbers
+  it decided.
+- **Two skill sources may coexist on one defender**: the hull flown
+  (`HullDefinition.skill`) and/or a purchased modifier (a `ModifierEffect` of
+  kind `defence-skill`).
+- **Determinism is untouched.** Skills are numbers in the rating arithmetic and
+  never draw from the seeded jitter stream, so the same payload/seed/tick replays
+  every hold and fall.
+- **Deferred, recorded not built:** the cross-hex "repairs a neighbour's defence
+  rating" skill. It would make one hex's resolution depend on another's, which is
+  exactly the per-hex purity the algorithmic resolver is built on.
+
+The parity surface is unchanged: `GymHexWar` leaves a bot **with** its skills and
+resolves/renders through the shipped `runFrontierTick` / `resolveDefence` /
+`buildDefenceReport` code, so the gym shows the numbers the game shows.
+
 ### Minimal first slice
 
 **Candidate B's MVP plus one ring of hexes**: the hangar from B (one extra hull,
@@ -1093,12 +1194,20 @@ three unlockable starting weapons, one banked currency, one threat tier) plus a
 **single ring of six hexes** around the hangar, with the algorithmic defence
 resolver, one frontier tick that can retake a hex, known-ahead boss/weapon intel
 for the ring, and **one boss-granted weapon on the ring's hardest hex**. The
-slice is budgeted at **40–60 minutes of play for a semi-skilled player**, so "the
+slice is budgeted at **5–15 minutes per hex deployment** (six hexes →
+**30–90 minutes of play**) for a semi-skilled player, so "the
 ring is a checklist" is answered by the plan the player forms before each
 deployment, not by volume. If "take a hex, leave a bot, buy a hull, retake what
 the AI stole" already feels like a war worth fighting, more rings can follow; if
 it does not, B alone stands (the slice is a strict superset of B's, so nothing is
 wasted).
+
+The shipped slice also carries the **ring-end win/lose gate** (AH-0MVUVL2O2006W4QK):
+securing the ring's final hex resolves the AI's massed hangar assault from the
+ring's stored numbers, a repel wins the ring and opens the next one, and a fall
+is the **hangar-falls lose state** — a full campaign reset of both progression
+axes. The rush line (capstone held before the ring is secured) is unchanged and
+triggers no assault.
 
 ### Progression rules
 
@@ -1109,7 +1218,7 @@ wasted).
   shared loadout slots** plus the two slot-free kinds, **Extra Life** and
   **Mystery UFO**, so the opening deployment is the game players already know
   and the scarcity lives in what the hangar owns between deployments.
-- **Rule 2 — the boss wields it first.** The hex's wave-10 mini-boss demonstrates
+- **Rule 2 — the boss wields it first.** The hex's wave-5 mini-boss demonstrates
   the hex's new weapon or power-up against the player (body colour and an
   opening volley from the shared weapon catalogue); defeating it both **captures
   the hex** and **adds the entry to the hangar**, where it is then bought with
@@ -1132,7 +1241,7 @@ one for those rows (called out in each cell).
 | Reuse of shipped systems | **Medium–High** — checkpoint, minerals/levels, curves, mini-boss rewards; the region war itself is all-new | **High** — checkpoint moments, minerals/levels, mini-boss rewards, curves, run unchanged | **Medium** — mini-boss/boss fragments, curves; mutations are new content | **High** — B's reusable set in full, plus the run unchanged; the ring is the only new surface |
 | New-system cost (High = expensive) | **High** — region graph, faction war, autonomous defence, onslaught | **Medium** — hangar economy, hulls/loadouts | **Medium–High** — codex + a real gameplay effect per decoded rule | **Medium** — B's hangar economy plus a *small* ring layer (map, frontier clock, algorithmic defence resolver), because defence and accrual are resolved from stored numbers rather than simulated |
 | Persistence complexity (High = complex) | **High** — map + ships + factions + onslaught state | **Medium** — banked balance + unlock flags | **Medium** — fragments + codex + decoded rules | **Medium** — hangar + ring in one versioned key; no simulation state to serialise |
-| Session-length fit | **Medium** — the campaign can inflate a sitting; risk to the arcade run | **High** — one run stays a deployment; meta is outside the run | **High** — run shape preserved; meta is a menu | **High** — a hex deployment is exactly the existing run, and a whole ring is an evening (**40–60 minutes** for the one-ring MVP) |
+| Session-length fit | **Medium** — the campaign can inflate a sitting; risk to the arcade run | **High** — one run stays a deployment; meta is outside the run | **High** — run shape preserved; meta is a menu | **High** — a hex deployment is exactly the existing run, and a whole ring is an evening (**30–90 minutes** for the one-ring MVP at 5–15 minutes per hex) |
 | Legibility of progress | **Medium** — a map is legible if the UI is good, but faction/ship bookkeeping can be opaque | **High** — "you own X" is unmistakable | **Medium** — the codex reads as a list; "what have I learned" needs careful UI | **High** — two visible facts: the hexes you hold (a shape on screen) and the hulls you own (a list); a defence report explains any loss |
 | Gym / bot testability | **Medium** — the most simulation to expose; autonomous defence needs a harness | **High** — pure economy functions | **High** — pure codex functions, but every mutation must be exercised in a gym | **High** — pure economy *and* a pure defence resolver; the defending bot never has to be flown, so a demo cannot stall in defence |
 | Risk to the shipped campaign (High = risky) | **High** — replaces the run with a region campaign; may gut the 10-level campaign | **Low** — run unchanged; meta wraps it; the final boss stays | **Medium** — mutates the campaign; risks inconsistent or unfair runs | **Medium** — the run is unchanged (B's safety) and the boss stays, but hexes can be *lost* between runs (a front-loading frustration risk) and the boss becomes a recurring milestone rather than a single terminus |
@@ -1225,7 +1334,7 @@ a one-line deferral reason each, so the pool can be revisited later:
 | Candidate A — Contested Regions / Home World | not selected | 2026-10-29 | Superseded by D, which keeps A's territory axis with an algorithmic spine and a much smaller first slice |
 | Candidate B — Salvage Fleet | not selected as a standalone loop | 2026-10-29 | Shipped as the **first slice** of D (the hangar); remains the standalone fallback if the ring disappoints |
 | Candidate C — Signal Decode | not selected | 2026-10-29 | Strong fiction fit, but every decoded rule is new content and campaign mutation carries fairness risk |
-| Candidate D — Hangar War | **accepted — chosen** | 2026-10-29 | Chosen by the producer. Build-out: **AH-0MVU3VNJI00066YE** (hangar slice first, then the first hex ring). Ring timing set at **40–60 minutes** for the one-ring MVP, with ring 2 at 12 hexes; boss/weapon strength **known ahead** is MVP; special missions and upgraded bots are post-MVP |
+| Candidate D — Hangar War | **accepted — chosen** | 2026-10-29 | Chosen by the producer. Build-out: **AH-0MVU3VNJI00066YE** (hangar slice first, then the first hex ring). Ring timing set at **5–15 minutes per hex deployment** (ring 1's six hexes → **30–90 minutes**, ring 2's twelve → **60–180 minutes**); boss/weapon strength **known ahead** is MVP; special missions and upgraded bots are post-MVP |
 
 The producer's choice is recorded above. Writing the chosen loop into the GDD as
 playable specification was the **follow-on work item**
@@ -1242,9 +1351,10 @@ the measured ring timings). The documentation of record was published by
 
 The Hangar War ships enabled. The entry surfaces were briefly gated behind a
 default-OFF feature flag (AH-0MVZ0VGGQ0032KDP) while the loop was broken; the
-defect — `DefenceReportScene` was started by `PlayScene` but never registered in
-the shipped scene array, and the hangar had no route to the hex map — is fixed
-and the flow is verified end to end through `buildGameConfig().scene`
+defect — a between-sortie report screen `PlayScene` started but which was never
+registered in the shipped scene array, and no hangar route to the hex map (the
+report is now rolled into the map, so that transition is gone) — is fixed and
+the flow is verified end to end through `buildGameConfig().scene`
 (`src/scenes/hangarWarFlow.integration.test.ts`). The persisted flag
 `ai_hell_feature_flags.hangarWar` is kept as a **kill switch**: it now defaults
 to ON and `resolveHangarWarEnabled()` honours the stored value in every build,

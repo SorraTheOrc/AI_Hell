@@ -778,7 +778,13 @@ export class GymFormationScene<
     // applier so every gym maps a setup to play state identically
     // (AH-0MVNW8VNN004FFK1). No setup ⇒ no change to historical behaviour.
     if (this.pendingSetup) {
-      applySceneSetup({ getPlayer: () => this.player }, this.pendingSetup);
+      applySceneSetup(
+        {
+          getPlayer: () => this.player,
+          getEffectsRegistry: () => this.getEffectsRegistry(),
+        },
+        this.pendingSetup,
+      );
     }
 
     // ── Spawn the formation ─────────────────────────────────────────

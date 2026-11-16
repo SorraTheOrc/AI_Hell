@@ -34,7 +34,6 @@ import { LeaderboardScene } from './LeaderboardScene';
 import { GymIndex } from './GymIndex';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
-import { DefenceReportScene } from './DefenceReportScene';
 import {
   FEATURE_FLAGS_STORAGE_KEY,
   loadFeatureFlags,
@@ -88,7 +87,7 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
 
   it('AC1 — renders a Play Game button and a Gym Scene Index (dev) button', async () => {
     const scene = await bootMenu();
-    const play = findText(scene, '▶  Play Game');
+    const play = findText(scene, '▶  Skirmish');
     const dev = findText(scene, '⚙  Gym Scene Index (dev)');
     // Both are interactive click targets.
     expect(play.input?.enabled).toBe(true);
@@ -105,7 +104,7 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
     const scene = await bootMenu();
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
 
-    findText(scene, '▶  Play Game').emit('pointerdown');
+    findText(scene, '▶  Skirmish').emit('pointerdown');
     await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
@@ -135,7 +134,7 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
       configurable: true,
     });
 
-    findText(scene, '▶  Play Game').emit('pointerdown');
+    findText(scene, '▶  Skirmish').emit('pointerdown');
     await advanceGame(booted!.game, 350);
 
     // Audio context initialised on the user gesture…
@@ -153,7 +152,7 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
       configurable: true,
     });
 
-    findText(scene, '▶  Play Game').emit('pointerdown');
+    findText(scene, '▶  Skirmish').emit('pointerdown');
     await advanceGame(booted!.game, 350);
 
     expect(resume).not.toHaveBeenCalled();
@@ -248,7 +247,7 @@ describe('MenuScene — Hangar War entry (AH-0MVUXC2DD003HN0I)', () => {
     const menu = booted!.game.scene.getScene('MenuScene') as MenuScene;
     expect(findText(menu, '⏵  Continue — Level 4')).toBeDefined();
 
-    findText(menu, '▶  Play Game').emit('pointerdown');
+    findText(menu, '▶  Skirmish').emit('pointerdown');
     await advanceGame(booted!.game, 350);
     expect(hasCheckpoint()).toBe(false);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
@@ -279,7 +278,6 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
       PlayScene,
       HangarScene,
       HexMapScene,
-      DefenceReportScene,
       GameOverScene,
       GymIndex,
     ]);
@@ -308,7 +306,7 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
   it('AC2 — with the flag OFF the focus cycle skips Hangar War and keeps the remaining order', async () => {
     setHangarWarEnabled(false);
     const scene = await bootMenu();
-    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+    expect(scene.getFocusedLabel()).toBe('▶  Skirmish');
 
     for (const expected of [
       '👁  Watch Demo',
@@ -316,7 +314,7 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
       '🏆  Leaderboard',
       'GitHub',
       '⚙  Gym Scene Index (dev)',
-      '▶  Play Game',
+      '▶  Skirmish',
     ]) {
       pressKey(scene, { key: 'Tab' });
       expect(scene.getFocusedLabel()).toBe(expected);
@@ -342,10 +340,10 @@ describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
 
     // Continue is still the default focus and Play Game / Watch Demo remain.
     expect(scene.getFocusedLabel()).toBe('⏵  Continue — Level 3');
-    expect(findText(scene, '▶  Play Game')).toBeDefined();
+    expect(findText(scene, '▶  Skirmish')).toBeDefined();
     expect(findText(scene, '👁  Watch Demo')).toBeDefined();
 
-    findText(scene, '▶  Play Game').emit('pointerdown');
+    findText(scene, '▶  Skirmish').emit('pointerdown');
     await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     // Play Game keeps its shipped New Game semantics.
@@ -572,15 +570,15 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 
   it('AC1 — Play Game is focused by default with a visible highlight', async () => {
     const scene = await bootMenu();
-    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
-    const play = findText(scene, '▶  Play Game');
+    expect(scene.getFocusedLabel()).toBe('▶  Skirmish');
+    const play = findText(scene, '▶  Skirmish');
     // Focus highlight applies a white stroke border.
     expect(play.style.stroke).toBeTruthy();
   });
 
   it('AC2/AC5 — Tab cycles focus: Play → Hangar War → Watch Demo → Settings → Leaderboard → GitHub → Gym Index → Play (wrap)', async () => {
     const scene = await bootMenu();
-    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+    expect(scene.getFocusedLabel()).toBe('▶  Skirmish');
 
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('🛠  Hangar War');
@@ -601,12 +599,12 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
 
     pressKey(scene, { key: 'Tab' });
-    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+    expect(scene.getFocusedLabel()).toBe('▶  Skirmish');
   });
 
   it('AC3 — ArrowDown cycles in the same order and wraps', async () => {
     const scene = await bootMenu();
-    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+    expect(scene.getFocusedLabel()).toBe('▶  Skirmish');
 
     pressKey(scene, { key: 'ArrowDown' });
     expect(scene.getFocusedLabel()).toBe('🛠  Hangar War');
@@ -627,7 +625,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
 
     pressKey(scene, { key: 'ArrowDown' });
-    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+    expect(scene.getFocusedLabel()).toBe('▶  Skirmish');
   });
 
   it('AC2 — Shift+Tab cycles focus backward with wrap', async () => {
@@ -653,7 +651,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
       configurable: true,
     });
 
-    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+    expect(scene.getFocusedLabel()).toBe('▶  Skirmish');
     pressKey(scene, { key: 'Enter' });
     await advanceGame(booted!.game, 350);
 
@@ -703,7 +701,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 
   it('AC7 — pointerdown still navigates (regression preserved)', async () => {
     const scene = await bootMenu();
-    findText(scene, '▶  Play Game').emit('pointerdown');
+    findText(scene, '▶  Skirmish').emit('pointerdown');
     await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
   });
@@ -810,7 +808,7 @@ describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect((booted!.game.scene.getScene('MenuScene') as MenuScene).getFocusedLabel()).toBe(
-      '▶  Play Game',
+      '▶  Skirmish',
     );
   });
 });
@@ -898,7 +896,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
     const scene = await bootMenu();
     scene.scheduleAttractTimer(60);
     // Leave the menu normally before the timer elapses.
-    findText(scene, '▶  Play Game').emit('pointerdown');
+    findText(scene, '▶  Skirmish').emit('pointerdown');
     await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
@@ -972,7 +970,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
     const scene = await bootMenu();
     const startSpy = vi.spyOn(scene.scene, 'start');
 
-    findText(scene, '▶  Play Game').emit('pointerdown');
+    findText(scene, '▶  Skirmish').emit('pointerdown');
 
     expect(startSpy).toHaveBeenCalledWith('PlayScene', { demo: false });
     startSpy.mockRestore();
@@ -1271,7 +1269,7 @@ describe('MenuScene — version label (AH-0MUZM9053008YXOZ)', () => {
     expect(focused.has(GAME_VERSION)).toBe(false);
     expect(focused.size).toBe(7);
     // Wraps back to the default control, preserving keyboard parity (GDD §2.1).
-    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+    expect(scene.getFocusedLabel()).toBe('▶  Skirmish');
   });
 });
 
@@ -1377,7 +1375,7 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
   it('AC4 — a New Game clears the checkpoint', async () => {
     seedCheckpoint(4);
     const scene = await bootMenu();
-    findText(scene, '▶  Play Game').emit('pointerdown');
+    findText(scene, '▶  Skirmish').emit('pointerdown');
     await advanceGame(booted!.game, 350);
 
     expect(hasCheckpoint()).toBe(false);
@@ -1396,7 +1394,7 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
     // matching the established behaviour for the default control.
     expect(continueButton.style.stroke).toBeTruthy();
     // The previously-default control is present but not focused.
-    expect(findText(scene, '▶  Play Game').style.strokeThickness).toBe(0);
+    expect(findText(scene, '▶  Skirmish').style.strokeThickness).toBe(0);
   });
 
   it('AC2 — Tab cycles the checkpoint menu in visual order and wraps', async () => {
@@ -1407,7 +1405,7 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
     // Visual order: Continue sits above Play Game, then the original cycle
     // (including the GitHub footer link), wrapping back to Continue.
     for (const expected of [
-      '▶  Play Game',
+      '▶  Skirmish',
       '🛠  Hangar War',
       '👁  Watch Demo',
       '⚙  Settings',
@@ -1428,7 +1426,7 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
 
     // ArrowDown walks the whole menu forward and wraps back to Continue.
     for (const expected of [
-      '▶  Play Game',
+      '▶  Skirmish',
       '🛠  Hangar War',
       '👁  Watch Demo',
       '⚙  Settings',

@@ -31,6 +31,10 @@ import {
   saveHangarWarPayload,
 } from './hangarWarStore';
 import { createInMemoryHangarWarStorage } from './storage';
+import {
+  bankWinBonus,
+  winBonusMinerals,
+} from '../../test/hangarWinBonusContract';
 
 /** A run snapshot at one checkpoint moment. */
 function snapshot(
@@ -232,6 +236,133 @@ describe('salvageBanking — pure checkpoint banking', () => {
     expect(bank).toEqual(bankBefore);
     expect(run).toEqual(runBefore);
     expect(source).toEqual(sourceBefore);
+  });
+
+  /**
+   * The fixed win-path bonus (parent AH-0MWEVNBMM000QFO2, producer Q1 = c,
+   * Q2 = a, Q3 = b; recorded 2026-11-13) — test-first child
+   * AH-0MWF2PA5H008XCXW, implementation child AH-0MWF2PYIE001XZOV.
+   *
+   * **LANDED.** These cases were authored red under Vitest's `it.fails` by the
+   * test-first child (the repo's red-before/green-after convention — see
+   * `src/vfx/orbitalStrike.test.ts`) and flipped to plain `it` by
+   * AH-0MWF2PYIE001XZOV when `bankWinBonus` / `WIN_BONUS_MINERALS` landed. They
+   * now pin the seam directly: a regression fails them instead of quietly
+   * satisfying an expected failure.
+   *
+   * Pinned contract (see `src/test/hangarWinBonusContract.ts`): the bonus is
+   * **minerals only** (a capture already banks its one core), it is added
+   * exactly once on top of the capture-banked balance, it never disturbs the
+   * per-run watermark the capture cycle owns, and it persists through the one
+   * `ai_hell_hangar_war` payload. The amount is read from the named constant
+   * (`WIN_BONUS_MINERALS`), never hardcoded here: its value is baselined from
+   * AH-0MWCOWTOR00994NA's measured per-deployment income when that lands.
+   */
+  describe('win-path bonus banking (AH-0MWF2PA5H008XCXW)', () => {
+    it(
+      'banks exactly the fixed bonus as minerals and never grants a bonus core',
+      () => {
+        const captured = bankSalvage(
+          createBankedSalvage(0, 0),
+          runSalvageFromRun(snapshot('run-a', 'boss-victory', 6, 2)),
+        );
+
+        const withBonus = bankWinBonus(captured);
+
+        // Minerals only (Q2 = a): the capture cycle already banked the core.
+        expect(withBonus.minerals).toBe(captured.minerals + winBonusMinerals());
+        expect(withBonus.cores).toBe(captured.cores);
+      },
+    );
+
+    it(
+      'leaves the per-run watermark untouched so capture banking is unaffected',
+      () => {
+        const captured = bankSalvage(
+          createBankedSalvage(4, 1),
+          runSalvageFromRun(snapshot('run-a', 'boss-victory', 9, 2)),
+        );
+
+        const withBonus = bankWinBonus(captured);
+
+        expect(withBonus.runId).toBe(captured.runId);
+        expect(withBonus.lastCheckpointId).toBe(captured.lastCheckpointId);
+        expect(withBonus.bankedThisRun).toEqual(captured.bankedThisRun);
+      },
+    );
+
+    it(
+      'adds the bonus exactly once, alongside both capture banks of one run',
+      () => {
+        // The shipped sequence: a mid-run checkpoint bank, then the boss-victory
+        // capture bank, then the win bonus. Two bonus additions would show up as
+        // a doubled delta, which is the double-count this test exists to stop.
+        const checkpoint = bankSalvage(
+          createBankedSalvage(0, 0),
+          runSalvageFromRun(snapshot('run-a', 'cp-1', 5, 1)),
+        );
+        const captured = bankSalvage(
+          checkpoint,
+          runSalvageFromRun(snapshot('run-a', 'boss-victory', 12, 2)),
+        );
+
+        const withBonus = bankWinBonus(captured);
+
+        expect(withBonus.minerals).toBe(12 + winBonusMinerals());
+        expect(withBonus.cores).toBe(2);
+      },
+    );
+
+    it('never mutates the balance it is given', () => {
+      const captured = bankSalvage(
+        createBankedSalvage(3, 1),
+        runSalvageFromRun(snapshot('run-a', 'boss-victory', 7, 2)),
+      );
+      const before = JSON.parse(JSON.stringify(captured));
+
+      bankWinBonus(captured);
+
+      expect(captured).toEqual(before);
+    });
+
+    it(
+      'normalises a corrupt stored balance instead of banking garbage',
+      () => {
+        const corrupt = {
+          minerals: -4,
+          cores: Number.NaN,
+          runId: 'run-a',
+          bankedThisRun: { minerals: 0, cores: 0 },
+          lastCheckpointId: null,
+        } as unknown as BankedSalvage;
+
+        const withBonus = bankWinBonus(corrupt);
+
+        expect(withBonus.minerals).toBe(winBonusMinerals());
+        expect(withBonus.cores).toBe(0);
+      },
+    );
+
+    it(
+      'persists the bonused balance through the one hangar-war payload write',
+      () => {
+        const storage = createInMemoryHangarWarStorage();
+        const payload = createDefaultPayload(1234);
+        const captured = bankSalvage(
+          bankedSalvageFromHangar(payload.hangar),
+          runSalvageFromRun(snapshot('run-a', 'boss-victory', 25, 1)),
+        );
+        const withBonus = bankWinBonus(captured);
+        payload.hangar.bankedMinerals = withBonus.minerals;
+        payload.hangar.bankedCores = withBonus.cores;
+        expect(saveHangarWarPayload(payload, storage)).toBe(true);
+
+        const loaded = loadHangarWarPayload(storage);
+        expect(loaded).not.toBeNull();
+        expect(loaded!.hangar.bankedMinerals).toBe(25 + winBonusMinerals());
+        expect(loaded!.hangar.bankedCores).toBe(1);
+      },
+    );
   });
 
   it('persists the banked balance through the versioned hangar-war store', () => {

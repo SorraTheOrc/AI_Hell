@@ -4,6 +4,7 @@ import { defineConfig } from 'vite';
 
 import { configCsvPlugin } from './vite/plugins/configCsvPlugin';
 import { botTuningPlugin } from './vite/plugins/botTuningPlugin';
+import { weaponLevelsPlugin } from './vite/plugins/weaponLevelsPlugin';
 import { telemetryUploadPlugin } from './vite/plugins/telemetryUploadPlugin';
 import { DEV_WATCH_IGNORE_PATTERNS } from './vite/watchIgnore';
 
@@ -46,6 +47,11 @@ export default defineConfig({
     // the store state to `src/data/bot-tuning.json`. No-op for production
     // builds (`apply: 'serve'`).
     botTuningPlugin(),
+    // Dev-only write-back for the authored weapon Euclidean ladders
+    // (AH-0MW0WLZ9600693R9): the weapon-tuning panel's rhythm Save PUTs a
+    // weapon's rung list to `src/data/weapon-levels.json`. No-op for
+    // production builds (`apply: 'serve'`).
+    weaponLevelsPlugin(),
     // Dev-only telemetry upload endpoint (AH-0MVBMRNAH001B8X4): the game
     // POSTs its local JSONL sink at run end and this stores the recording.
     // No-op for production builds (`apply: 'serve'`).

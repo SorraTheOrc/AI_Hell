@@ -60,7 +60,7 @@ async function bootAllGames(): Promise<Phaser.Game> {
 
 /** Starts PlayScene from the menu and returns the scene. */
 async function startPlay(game: Phaser.Game): Promise<PlayScene> {
-  clickText(game.scene.getScene('MenuScene'), '▶  Play Game');
+  clickText(game.scene.getScene('MenuScene'), '▶  Skirmish');
   await sleep(game, 350);
   const play = game.scene.getScene('PlayScene') as PlayScene;
   expect(play.sys.isActive()).toBe(true);

@@ -33,6 +33,28 @@
  * - A stored hex with no authored definition still renders its persisted state
  *   (boss/grant shown as unknown); intel is never fabricated for it.
  *
+ * ## Reveal and selection (AH-0MWDBI33V003QQ3U)
+ *
+ * - **Adjacency-only reveal.** A hex is `displayed` only when it shares an edge
+ *   with the hangar `(0,0)` or with a held hex (`isHexDisplayed`). The hangar
+ *   anchors the reveal, so ring 1 always renders and later rings appear
+ *   progressively as their near neighbours are held. Hidden hexes are never
+ *   drawn, focused, deployed at or attract-targeted.
+ * - **Selectable vs actionable.** Every displayed hex is `selectable`
+ *   (focusable — a held hex can be inspected), while only an unheld displayed
+ *   hex is `actionable` (deployable).
+ * - **Tile label.** `tileLabel` leads with the `AGG n` badge and an ownership
+ *   discriminator glyph (filled = held, hollow = unheld) so ownership is
+ *   readable without colour, and puts the axial coordinates `(q,r)` on a
+ *   separate line below the badge — the renderer draws that line smaller
+ *   (producer review AH-0MWDBI33V003QQ3U, 2026-11-15); the full `label`
+ *   block is unchanged.
+ * - **Full-ring progress.** `ringLine` counts the whole stored/generated ring
+ *   (hidden hexes included), so hiding hexes never loses progress.
+ * - **Grid columns.** `gridColumns` exposes the spatial arrow-navigation data
+ *   over displayed hexes with the `◀ HANGAR` row folded in as a bottom row — a
+ *   pure read model the renderer wires without a per-scene rule.
+ *
  * ## Attack preview
  *
  * A held hex with a queued attack publishes the resolver's **jitter-free**
@@ -41,15 +63,65 @@
  * player plans against, not a promise — the defence report (B6) publishes the
  * tick's actual record.
  *
+ * ## Rolled-in defence report (`AH-0MWDC3L9I008INDP`)
+ *
+ * When the map is entered straight from a deployment, the launch data carries
+ * the between-sortie `FrontierTickRecord`. The model then publishes, on top of
+ * the hexes:
+ *
+ * - `arrows` — one {@link HexMapAttackArrow} per `record.attacks[]` entry, in
+ *   the record's order, carrying the attacker-origin axial coordinates the
+ *   record itself stores (`attackerOrigin`, never re-derived);
+ * - `attackDetails` — the report model's own {@link DefenceReportRow} keyed by
+ *   the attacked hex id **and** by the attacker-origin hex id, so either arrow
+ *   endpoint resolves the same attack's numbers. The rows come straight from
+ *   {@link buildDefenceReport}, so the map can never publish a second,
+ *   drifting set of numbers (AGENTS.md gym↔game parity).
+ *
+ * The record is transient launch data, never persisted: a map entered without
+ * one (or with a quiet/malformed one) publishes no arrows and no details
+ * rather than throwing.
+ *
+ * ## The hangar assault (`AH-0MWEZZA4E0081NJ5`)
+ *
+ * The launch data may also carry the **resolved hangar assault** the
+ * deployment's capture ran when the ring's final hex fell
+ * (`resolveRingAssault` → `resolveHangarAssault`). The model copies the report
+ * model's own section into `assault` / `assaultLine` / `ringWon` /
+ * `campaignReset`, so the map renders the ring-won line or the hangar-falls
+ * campaign-reset announcement verbatim — it never recomputes a defender sum, a
+ * massed force or a margin. An assault landing with no attacks publishes the
+ * quiet tick line alongside the assault section, so the announcement is never
+ * an empty screen.
+ *
+ * ## The rotating special mission (`AH-0MWF0CWB7002MG2F`)
+ *
+ * A special-mission hex publishes its **reward** before the player commits a
+ * life (AH-0MVWZYIWX0008C55 AC4): `specialMission` carries the hull the hex
+ * pays, its extra hit points and the authored description, and `tileLabel`
+ * gains a short `SPECIAL` tag so the tile stays legible while the detail panel
+ * carries the full offer. The ring rotates which special mission it presents
+ * between sorties (Q3 = b), so the model publishes `offeredNow` per hex and the
+ * current offer once on the model (`specialOffer`) — both resolved through the
+ * shared `specialMission` seam, so the map can never advertise a hex or a hull
+ * the capture would not pay.
+ *
  * @module src/core/hangarWar/hexIntel
  */
 
 import {
+  FORTRESS_CAPTURE_PASSES,
   createRingState,
   ringDepth,
   type AxialCoordinate,
+  type HexLandmarkId,
+  type HexPersonalityId,
   type HexRingDefinition,
 } from './hexRing';
+import {
+  hexPersonalityMechanicsFor,
+  type HexPersonalityMechanic,
+} from '../../scenes/core/hexPersonalityMechanics';
 import { areNeighbours } from './hexRing';
 import {
   DEFAULT_FRONTIER_TUNING,
@@ -57,6 +129,8 @@ import {
   type DefenceResolution,
 } from './hexDefence';
 import type {
+  DefenceSkill,
+  DefenderUpgradeSnapshot,
   HangarWarPayload,
   HexDefender,
   HexState,
@@ -66,8 +140,24 @@ import {
   HEX_RING_DEFINITIONS,
   findHexRingDefinition,
 } from '../../data/hexRingDefinitions';
-import { resolvePlayerStrength } from './hangarEconomy';
+import {
+  resolvePlayerStrength,
+  defenderUpgradeBreakdown,
+  type DefenderUpgradeBreakdown,
+} from './hangarEconomy';
 import { beatableAggressionCeiling } from './hexDifficulty';
+import {
+  buildDefenceReport,
+  type AssaultReportSection,
+  type DefenceReportRow,
+} from './defenceReport';
+import type { FrontierTickRecord, HangarAssaultResolution } from './hexDefence';
+import {
+  specialMissionOfferFor,
+  specialMissionRewardFor,
+  type SpecialMissionOffer,
+  type SpecialMissionReward,
+} from './specialMission';
 
 /** Title rendered by the map screen (asserted by tests). */
 export const HEX_MAP_TITLE = 'HANGAR WAR — HEX MAP';
@@ -81,6 +171,76 @@ export const HEX_MAP_HANGAR_LABEL = '◀ HANGAR — buy hulls, weapons, modifier
 /** Prefix of a hex row key (`hex:<id>`). */
 export const HEX_MAP_HEX_ROW_PREFIX = 'hex:';
 
+/** The hangar's axial coordinate — the reveal's primary anchor. */
+export const HANGAR_AXIAL: AxialCoordinate = { q: 0, r: 0 };
+
+/** Ownership marker on a held tile's label (readable without colour). */
+export const HELD_TILE_MARKER = '\u25CF';
+
+/** Ownership marker on an unheld tile's label (readable without colour). */
+export const UNHELD_TILE_MARKER = '\u25CB';
+
+/**
+ * Tile tag marking a `fortress` landmark (AH-0MWEW5I1F006CLCH): two capture
+ * passes before the hex is held. Legible without colour.
+ */
+export const FORTRESS_TILE_TAG = '\u26A1 FORTRESS';
+
+/**
+ * Tile tag marking a `cache` landmark (AH-0MWEW5I1F006CLCH): pays bonus salvage
+ * instead of granting. Legible without colour.
+ */
+export const CACHE_TILE_TAG = '\u25A3 CACHE';
+
+/** Tile tag marking a `nebula` personality (its volley drifts slowly). */
+export const NEBULA_TILE_TAG = '\u2601 NEBULA';
+
+/** Tile tag marking a `summoner` personality (it summons reinforcements). */
+export const SUMMONER_TILE_TAG = '\u21BB SUMMONER';
+
+/** Detail-panel heading for the personality block. */
+export const PERSONALITY_PANEL_HEADING = 'PERSONALITY';
+
+/**
+ * Tile tag marking a hex that carries an authored **contract**
+ * (AH-0MWEW58WD003NFXS). Legible without colour, like the ownership markers.
+ */
+export const CONTRACT_TILE_TAG = '\u2726 CONTRACT';
+
+/** Detail-panel heading for the contract block. */
+export const CONTRACT_PANEL_HEADING = 'CONTRACT';
+
+/**
+ * Short tag a special-mission tile carries (`AH-0MWF0CWB7002MG2F`).
+ *
+ * Deliberately short: the tile must stay legible at 960×540, so the offer's
+ * hull/description live in the detail panel (`label`), never on the tile.
+ */
+export const SPECIAL_MISSION_TILE_TAG = '\u2605 SPECIAL';
+
+/** Heading of the special-mission section inside the detail panel. */
+export const SPECIAL_MISSION_PANEL_HEADING = 'SPECIAL MISSION';
+
+/**
+ * One hex's authored **contract**, as the known-ahead intel publishes it
+ * (AH-0MWEW58WD003NFXS, producer answer Q2 = a).
+ *
+ * Pure data: the objective is the authored id-free text the detail panel shows,
+ * the bonuses are the shipment-currencies payout banked on capture, and the
+ * status is `fulfilled` only once the capture cycle has paid the bonus (the
+ * replay guard).
+ */
+export interface HexContractIntel {
+  /** The authored objective, published before the player commits. */
+  readonly objective: string;
+  /** Bonus minerals banked on capture. */
+  readonly bonusSalvage: number;
+  /** Bonus cores banked on capture. */
+  readonly bonusCores: number;
+  /** `open` until the capture cycle pays the bonus, then `fulfilled`. */
+  readonly status: 'open' | 'fulfilled';
+}
+
 /** A queued attack against a hex, as the map publishes it. */
 export interface HexPendingAttackIntel {
   /** Summed force of every attack queued against this hex. */
@@ -92,9 +252,35 @@ export interface HexPendingAttackIntel {
   readonly resolution: DefenceResolution | null;
 }
 
+/**
+ * The special-mission offer a hex publishes, as the map shows it.
+ *
+ * A read-model copy of `./specialMission`'s reward: the map never derives the
+ * reward itself, so what it advertises is exactly what the capture grants.
+ */
+export interface HexSpecialMissionIntel {
+  /** Catalogue id of the hull the mission pays. */
+  readonly hullId: string;
+  /** Display name of that hull. */
+  readonly hullName: string;
+  /** The hull's own description (the reward's framing text). */
+  readonly description: string;
+  /** Lives the granted hull deploys with. */
+  readonly startingLives: number;
+  /** The granted hull's base defence rating. */
+  readonly baseDefence: number;
+  /** Extra starting lives over the starter hull (the "extra hit points"). */
+  readonly bonusStartingLives: number;
+  /**
+   * True when this hex is the mission the rotation is offering **now**; false
+   * for a special hex that the rotation has moved past (it stays readable, it
+   * is simply not this sortie's offer).
+   */
+  readonly offeredNow: boolean;
+}
+
 /** One hex, with all the known-ahead intel the map publishes. */
-export interface HexIntel {
-  /** Row key (`hex:<id>`), unique within the map. */
+export interface HexIntel {  /** Row key (`hex:<id>`), unique within the map. */
   readonly key: string;
   /** Stable hex id. */
   readonly id: string;
@@ -116,26 +302,123 @@ export interface HexIntel {
   readonly weaknesses: readonly string[];
   /** Weapon/upgrade the hex grants once its boss is beaten, or `null`. */
   readonly grants: string | null;
+  /**
+   * The hex's authored **personality** (post-MVP Hangar War,
+   * AH-0MWEW50B10089D4W, Q1 = b): how the hex's boss/deployment fights, or
+   * `null` for an ordinary hex. Published before commitment.
+   */
+  readonly personality: HexPersonalityId | null;
+  /**
+   * The **bounded** shared combat mechanics the personality carries (empty for
+   * a config-tune hex) — the descriptors the shared combat core publishes, so
+   * intel and gameplay can never disagree about what a personality does.
+   */
+  readonly personalityMechanics: readonly HexPersonalityMechanic[];
+  /**
+   * The hex's authored **landmark** (post-MVP Hangar War, AH-0MWEW5I1F006CLCH,
+   * Q3 = a): `fortress` (two capture passes), `cache` (pays out instead of
+   * granting), or `null` for an ordinary hex. Published before commitment.
+   */
+  readonly landmark: HexLandmarkId | null;
+  /**
+   * Fortress progress in published form: the passes recorded so far and the
+   * passes the landmark needs (`passes` is `0`/`required` for a non-fortress).
+   */
+  readonly landmarkProgress: {
+    readonly passes: number;
+    readonly required: number;
+  } | null;
+  /**
+   * The hex's authored **contract** (post-MVP Hangar War, AH-0MWEW58WD003NFXS,
+   * Q2 = a): the objective and bonus the player can read **before** committing
+   * a life, plus its fulfilment status. `null` for an ordinary hex.
+   */
+  readonly contract: HexContractIntel | null;
   /** True for the single hex that grants the ring's new weapon. */
   readonly weaponHex: boolean;
+  /** True when the hex is authored as a special mission (`isSpecialMission`). */
+  readonly isSpecialMission: boolean;
+  /**
+   * The special mission's known-ahead offer (reward + framing), or `null` for
+   * an ordinary hex.
+   */
+  readonly specialMission: HexSpecialMissionIntel | null;
   /** Whether the hex's boss has already been beaten. */
   readonly bossDefeated: boolean;
   /** The weapon already granted by this hex, or `null`. */
   readonly grantedWeapon: string | null;
   /** The bot defending the hex, or `null` when unheld/undefended. */
   readonly defender: HexDefender | null;
+  /**
+   * The defending bot's special skills (empty when it has none)
+   * (AH-0MVWZYJ740037EZ1).
+   *
+   * Part of the known-ahead intel: a bot's training is another thing the player
+   * chooses when deciding **what to leave where**, so the map publishes it
+   * beside the boss the hex's neighbour will press with.
+   */
+  readonly skills: readonly DefenceSkill[];
+  /**
+   * The defender's stored run-upgrade snapshot (parent AH-0MWH42DWQ004SAOJ),
+   * or `null` when the bot carries none. Derived numbers are published once on
+   * {@link HexIntel.upgradeBreakdown}; the raw rows are exposed too so a
+   * caller can read exactly what was stored.
+   */
+  readonly upgradeSnapshot: DefenderUpgradeSnapshot | null;
+  /**
+   * The derived armour/firepower/systems breakdown and its rating
+   * contribution, or `null` when the defender stores no upgrades. Computed
+   * once in the model layer through the single reducer
+   * (`defenderUpgradeBreakdown`), never recomputed by the scenes.
+   */
+  readonly upgradeBreakdown: DefenderUpgradeBreakdown | null;
   /** The queued attack against the hex, or `null` when none. */
   readonly pendingAttack: HexPendingAttackIntel | null;
   /**
-   * True when the hex can be selected for deployment. An unheld hex can be
-   * attacked; a held hex is already the player's, so the map presents it but
-   * does not deploy at it.
+   * True when the hex is revealed by the map's adjacency rule — it shares an
+   * edge with the hangar `(0,0)` or with a hex the player holds. Hidden hexes
+   * are never drawn, focused, deployed at or attract-targeted.
+   */
+  readonly displayed: boolean;
+  /**
+   * True when the hex can be selected/focused on the map. Every displayed hex
+   * is selectable — a held hex is selectable too, so its full intel can be
+   * inspected — but only an unheld hex is deployable.
+   */
+  readonly selectable: boolean;
+  /**
+   * True when the hex can be deployed at: a displayed hex the player does not
+   * hold. A held hex is selectable but never actionable (activating it
+   * performs no deployment).
    */
   readonly actionable: boolean;
-  /** The short tile label (`AGG n`), rendered on the hex at a readable size. */
+  /**
+   * The short tile label — the `AGG n` badge and an ownership marker (filled =
+   * held, hollow = unheld) so ownership is readable without colour, with the
+   * axial coordinates `(q,r)` on a separate line below the badge (rendered
+   * smaller by the map renderer — producer review AH-0MWDBI33V003QQ3U).
+   */
   readonly tileLabel: string;
   /** The full intel block the detail panel renders (every line, newline separated). */
   readonly label: string;
+}
+
+/**
+ * One attack arrow over the transient tick record: the attacker-origin hex to
+ * the attacked hex, with the origin's axial coordinates copied from the record.
+ *
+ * A pure descriptor — the renderer turns it into pixels through the existing
+ * `axialToPixel` layout, so the arrow rule lives once (`AH-0MWEXI5460080WEI`).
+ */
+export interface HexMapAttackArrow {
+  /** Arrow key (`arrow:<hexId>`), unique within the map. */
+  readonly key: string;
+  /** The attacked hex (the arrow's head). */
+  readonly hexId: string;
+  /** The unheld neighbour the attack came from (the arrow's tail). */
+  readonly attackerOriginId: string;
+  /** That neighbour's axial coordinate, copied from the record. */
+  readonly attackerOrigin: AxialCoordinate;
 }
 
 /** One focusable row of the map (the hangar action). */
@@ -181,6 +464,114 @@ export interface HexMapModel {
   readonly defaultFocusKey: string | null;
   /** The attract bot's weakest-adjacent unheld hex, or `null` when secured. */
   readonly attractHexId: string | null;
+  /**
+   * Spatial grid columns for arrow navigation, left to right by screen x; each
+   * column lists its displayed-hex row keys top to bottom by screen y, with
+   * the `◀ HANGAR` row folded in as the bottom row of every column, so arrows
+   * reach it from anywhere. Row keys only — a pure read model, no scene rule.
+   */
+  readonly gridColumns: ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * One arrow per attack in the carried between-sortie tick record, in the
+   * record's order; empty for a map entered without a record (transient
+   * launch data, never persisted) or a quiet tick.
+   */
+  readonly arrows: readonly HexMapAttackArrow[];
+  /**
+   * The report model's row for every resolved attack, keyed by the attacked
+   * hex id **and** by the attacker-origin hex id (both arrow endpoints). When
+   * a hex is both, the attacked entry wins. Empty without a record.
+   */
+  readonly attackDetails: ReadonlyMap<string, DefenceReportRow>;
+  /**
+   * The resolved hangar assault this landing follows
+   * (`AH-0MWEZZA4E0081NJ5`), copied straight from the report model's own
+   * section — the map never re-derives an assault figure. `null` on an
+   * ordinary landing (no assault was resolved).
+   */
+  readonly assault: AssaultReportSection | null;
+  /**
+   * The assault section's rendered text (headline, arithmetic, consequence),
+   * or `null` when no assault was carried.
+   */
+  readonly assaultLine: string | null;
+  /**
+   * The banked win-bonus announcement (`WIN BONUS BANKED: +N MINERALS`) this
+   * landing carries, copied straight from the report model; `null` on every
+   * landing that banked no bonus. This is the win path's whole reward
+   * presentation (AH-0MWEVNBMM000QFO2, producer Q3 = (b), recorded
+   * 2026-11-13).
+   */
+  readonly winBonusLine: string | null;
+  /**
+   * The special mission the rotation is offering on this sortie
+   * (`AH-0MWF0CWB7002MG2F`), or `null` when the ring offers none (no special
+   * hex authored, or every one already captured). Resolved through the shared
+   * `specialMission` seam, so the map and the capture can never disagree.
+   */
+  readonly specialOffer: SpecialMissionOffer | null;
+  /** True only when an assault was repelled (the ring is won by defence). */
+  readonly ringWon: boolean;
+  /** True only when the assault broke the hangar (the campaign was reset). */
+  readonly campaignReset: boolean;
+}
+
+/**
+ * Whether a hex is revealed by the map's adjacency rule: it shares an edge
+ * with the hangar `(0,0)` or with a hex the player holds. The hangar anchors
+ * the reveal, so ring 1 always renders and later rings appear progressively
+ * as their near neighbours are held.
+ *
+ * Pure geometry over the stored ring — never a scene rule.
+ *
+ * @param coordinate — the hex's axial coordinates.
+ * @param heldHexes — every hex the player currently holds.
+ * @returns true when the hex is revealed.
+ */
+export function isHexDisplayed(
+  coordinate: AxialCoordinate,
+  heldHexes: readonly AxialCoordinate[],
+): boolean {
+  if (areNeighbours(HANGAR_AXIAL, coordinate)) return true;
+  return heldHexes.some((held) => areNeighbours(held, coordinate));
+}
+
+/**
+ * Builds the spatial grid columns over the displayed hexes, folding the
+ * hangar row in as the bottom row of every column.
+ *
+ * Columns are ordered left to right by the hexes' screen-x band (`2q + r` for
+ * the pointy-top layout) and rows within a column top to bottom by `r`; the
+ * hangar key is appended as the final row of each column so arrow-down wraps
+ * to it from any column. A map with nothing displayed still exposes the
+ * hangar as a single-column grid, so arrows never strand.
+ *
+ * @param hexes — the model's intel for the full ring (displayed flags set).
+ * @param hangarKey — the hangar row's key.
+ * @returns the grid columns (row keys).
+ */
+export function buildGridColumns(
+  hexes: readonly HexIntel[],
+  hangarKey: string,
+): ReadonlyArray<ReadonlyArray<string>> {
+  const displayed = hexes.filter((hex) => hex.displayed);
+  if (displayed.length === 0) return [[hangarKey]];
+
+  const byBand = new Map<number, HexIntel[]>();
+  for (const hex of displayed) {
+    const band = 2 * hex.q + hex.r;
+    const column = byBand.get(band) ?? [];
+    column.push(hex);
+    byBand.set(band, column);
+  }
+  return [...byBand.keys()]
+    .sort((a, b) => a - b)
+    .map((band) => [
+      ...(byBand.get(band) ?? [])
+        .sort((a, b) => a.r - b.r)
+        .map((hex) => hex.key),
+      hangarKey,
+    ]);
 }
 
 /** Options for {@link buildHexMapModel}. */
@@ -189,6 +580,112 @@ export interface BuildHexMapOptions {
   readonly definitions?: readonly HexRingDefinition[];
   /** Screen title override (tests/captures). */
   readonly title?: string;
+  /**
+   * The between-sortie tick record carried from the deployment, or omitted
+   * when the map is entered without one (a transient overlay, never stored).
+   */
+  readonly record?: FrontierTickRecord;
+  /**
+   * The hangar assault the deployment's capture resolved
+   * (`AH-0MWEZZA4E0081NJ5`), or omitted/`null` when this landing follows no
+   * assault. Rendered verbatim by the report model, never re-derived.
+   */
+  readonly assault?: HangarAssaultResolution | null;
+  /**
+   * The fixed mineral win bonus this landing banked, or omitted/`0` when it
+   * banked none (parent AH-0MWEVNBMM000QFO2, producer Q3 = (b), recorded
+   * 2026-11-13). Rendered verbatim by the report model's `winBonusLine`, so the
+   * map announces the banked bonus instead of a reward overlay the win path no
+   * longer presents.
+   */
+  readonly winBonusMinerals?: number;
+}
+
+/**
+ * The tick record an assault-only landing is rendered against: nothing was
+ * attacked, so every attack figure is empty and the report model publishes the
+ * quiet "no hex was attacked" line alongside the assault section.
+ */
+const QUIET_TICK_RECORD: FrontierTickRecord = Object.freeze({
+  tick: 0,
+  playerStrength: 0,
+  aggressionBudget: 0,
+  beatableCeiling: 0,
+  deltas: [],
+  rose: 0,
+  fell: 0,
+  attacks: [],
+});
+
+/** The report overlay a tick record and an assault contribute to the map. */
+interface HexMapAttackOverlay {
+  readonly arrows: readonly HexMapAttackArrow[];
+  readonly attackDetails: ReadonlyMap<string, DefenceReportRow>;
+  readonly assault: AssaultReportSection | null;
+  readonly assaultLine: string | null;
+  readonly ringWon: boolean;
+  readonly campaignReset: boolean;
+  readonly winBonusLine: string | null;
+}
+
+/**
+ * Builds the map's report overlay from the transient tick record and the
+ * resolved hangar assault.
+ *
+ * The arrows are copied from the record's own `attackerOrigin` coordinates and
+ * everything else — the attack rows and the assault section — comes from the
+ * report model (`buildDefenceReport`), so no number is re-resolved here. Total:
+ * a missing, empty or malformed record yields no arrows and no details, while
+ * an assault still renders against the quiet record.
+ *
+ * @param payload — the war's stored payload (never mutated).
+ * @param record — the between-sortie tick record, when one was carried.
+ * @param assault — the resolved hangar assault, when the capture ran one.
+ * @returns the arrows, the per-hex details and the assault section.
+ */
+function buildAttackOverlay(
+  payload: HangarWarPayload,
+  record: FrontierTickRecord | undefined,
+  assault: HangarAssaultResolution | null,
+  winBonusMinerals: number,
+): HexMapAttackOverlay {
+  // One report model call is the single source of every published number: the
+  // attack rows and the assault section cannot drift from the report the
+  // standalone renderer draws (AGENTS.md gym↔game parity).
+  const report = buildDefenceReport(payload, record ?? QUIET_TICK_RECORD, {
+    assault,
+    winBonusMinerals,
+  });
+  const attacks = Array.isArray(record?.attacks) ? record.attacks : [];
+  const arrows = attacks.map((attack): HexMapAttackArrow => ({
+    key: `arrow:${attack.hexId}`,
+    hexId: attack.hexId,
+    attackerOriginId: attack.attackerOriginId,
+    attackerOrigin: {
+      q: attack.attackerOrigin.q,
+      r: attack.attackerOrigin.r,
+    },
+  }));
+
+  const attackDetails = new Map<string, DefenceReportRow>();
+  // Attacked endpoints first, so the attacked entry wins when a hex is both
+  // endpoints of an attack (a self-referential record).
+  report.rows.forEach((row) => attackDetails.set(row.hexId, row));
+  report.rows.forEach((row) => {
+    if (!attackDetails.has(row.attackerOriginId)) {
+      attackDetails.set(row.attackerOriginId, row);
+    }
+  });
+
+  return {
+    arrows,
+    attackDetails,
+    assault: report.assault,
+    assaultLine: report.assaultLine,
+    ringWon: report.ringWon,
+    campaignReset: report.campaignReset,
+    winBonusLine: report.winBonusLine,
+  };
 }
 
 /** `value` as a non-negative integer; anything unusable collapses to `0`. */
@@ -210,6 +707,52 @@ function cloneHex(hex: HexState): HexState {
     ...hex,
     defender: hex.defender ? { ...hex.defender } : null,
   };
+}
+
+/**
+ * The authored contract as intel, or `null` when the hex authors none.
+ *
+ * Total: a malformed bonus collapses to `0` through {@link toCount}, and the
+ * status is `fulfilled` only when the stored payload says so.
+ *
+ * @param definition — the authored definition, or `undefined` when unknown.
+ * @param state — the stored hex (carries the fulfilment marker).
+ * @returns the published contract, or `null` for an ordinary hex.
+ */
+function contractIntelFor(
+  definition: HexRingDefinition | undefined,
+  state: HexState,
+): HexContractIntel | null {
+  const contract = definition?.contract;
+  if (contract === undefined) return null;
+  return {
+    objective: contract.objective,
+    bonusSalvage: toCount(contract.bonusSalvage),
+    bonusCores: toCount(contract.bonusCores),
+    status: state.contractFulfilled === true ? 'fulfilled' : 'open',
+  };
+}
+
+/**
+ * The authored landmark's published progress, or `null` for an ordinary hex.
+ *
+ * A `fortress` publishes the passes it has recorded against the number it
+ * needs (two, `FORTRESS_CAPTURE_PASSES`); a `cache` needs none, so both numbers
+ * are `0`. A malformed stored count collapses to `0` — a hex can never publish
+ * more progress than it has.
+ *
+ * @param definition — the authored definition, or `undefined` when unknown.
+ * @param state — the stored hex (carries the fortress progress).
+ * @returns the published progress, or `null` for an ordinary hex.
+ */
+function landmarkProgressFor(
+  definition: HexRingDefinition | undefined,
+  state: HexState,
+): { readonly passes: number; readonly required: number } | null {
+  if (definition?.landmark === undefined) return null;
+  if (definition.landmark !== 'fortress') return { passes: 0, required: 0 };
+  const passes = Math.min(FORTRESS_CAPTURE_PASSES, toCount(state.capturePasses));
+  return { passes, required: FORTRESS_CAPTURE_PASSES };
 }
 
 /**
@@ -251,6 +794,12 @@ function pendingForces(
  *
  * `jitterPercent: 0` makes the resolver a plain comparison, so the published
  * numbers are exactly reproducible; the tick still applies its bounded jitter.
+ *
+ * The preview publishes **no skill bonus**: a queued attack
+ * (`PendingAttack`) carries a force but no origin, so it has no attacker type
+ * for a skill to match. The tick names the origin when it resolves and applies
+ * the matching skill then — the preview is deliberately the bonus-free baseline
+ * the player plans against (AH-0MVWZYJ740037EZ1).
  */
 function previewDefence(
   defender: HexDefender,
@@ -268,12 +817,103 @@ function previewDefence(
   );
 }
 
+/**
+ * The special-mission offer a hex publishes, or `null` for an ordinary hex.
+ *
+ * Pure copy of the shared reward derivation (`./specialMission`), so the map
+ * advertises exactly the hull the capture pays — never a second derivation.
+ *
+ * @param definition — the hex's authored definition (or `undefined`).
+ * @param offeredNow — true when the rotation is offering this hex now.
+ * @returns the offer intel, or `null` when the hex is not a special mission.
+ */
+function specialMissionIntelFor(
+  definition: HexRingDefinition | undefined,
+  offeredNow: boolean,
+): HexSpecialMissionIntel | null {
+  const reward: SpecialMissionReward | null = specialMissionRewardFor(definition);
+  if (reward === null) return null;
+  return {
+    hullId: reward.hullId,
+    hullName: reward.hull.name,
+    description: reward.hull.description,
+    startingLives: reward.startingLives,
+    baseDefence: reward.baseDefence,
+    bonusStartingLives: reward.bonusStartingLives,
+    offeredNow,
+  };
+}
+
+/**
+ * The on-tile text: the aggression badge and ownership discriminator lead,
+ * the axial coordinates follow on their own line below them, and — for a
+ * special mission — the short `SPECIAL` tag sits on its own final line.
+ *
+ * The renderer draws the first line at the readable tile size and the
+ * coordinate line smaller underneath (producer review AH-0MWDBI33V003QQ3U),
+ * so a player reads aggression first and glances at the coordinates below.
+ *
+ * The tag is the whole special-mission signal a tile carries: everything else
+ * (the hull, its extra hit points, the framing) lives in the detail panel, so
+ * the tile stays legible at 960×540.
+ */
+function tileLabel(
+  state: HexState,
+  aggression: number,
+  held: boolean,
+  specialMission: HexSpecialMissionIntel | null,
+  contract: HexContractIntel | null = null,
+  landmark: HexLandmarkId | null = null,
+  personality: HexPersonalityId | null = null,
+): string {
+  const base = `AGG ${aggression} ${
+    held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
+  }\n(${state.q},${state.r})`;
+  const tags: string[] = [];
+  if (specialMission !== null) {
+    tags.push(
+      `${SPECIAL_MISSION_TILE_TAG}${specialMission.offeredNow ? ' NOW' : ''}`,
+    );
+  }
+  if (contract !== null) tags.push(CONTRACT_TILE_TAG);
+  if (personality === 'nebula') tags.push(NEBULA_TILE_TAG);
+  if (personality === 'summoner') tags.push(SUMMONER_TILE_TAG);
+  if (landmark === 'fortress') tags.push(FORTRESS_TILE_TAG);
+  if (landmark === 'cache') tags.push(CACHE_TILE_TAG);
+  return tags.length === 0 ? base : `${base}\n${tags.join('\n')}`;
+}
+
+/**
+ * The detail-panel line for an authored landmark (AH-0MWEW5I1F006CLCH).
+ *
+ * @param landmark — the authored landmark id.
+ * @param progress — the fortress progress, or `null`.
+ * @returns the published line.
+ */
+function landmarkLine(
+  landmark: HexLandmarkId,
+  progress: { readonly passes: number; readonly required: number } | null,
+): string {
+  if (landmark === 'fortress') {
+    const passes = progress?.passes ?? 0;
+    const required = progress?.required ?? FORTRESS_CAPTURE_PASSES;
+    return `LANDMARK: FORTRESS \u2014 PASS ${passes}/${required} (two captures to hold)`;
+  }
+  return 'LANDMARK: CACHE \u2014 pays bonus salvage instead of granting';
+}
+
 /** The tile text: id, state/aggression/attack, boss, strengths, weaknesses, grant. */
 function hexLabel(
   state: HexState,
   definition: HexRingDefinition | undefined,
   pending: HexPendingAttackIntel | null,
   defender: HexDefender | null,
+  upgrade: DefenderUpgradeBreakdown | null,
+  specialMission: HexSpecialMissionIntel | null = null,
+  contract: HexContractIntel | null = null,
+  landmark: HexLandmarkId | null = null,
+  landmarkProgress: { readonly passes: number; readonly required: number } | null = null,
+  personality: HexPersonalityId | null = null,
 ): string {
   const lines: string[] = [
     state.id,
@@ -300,12 +940,54 @@ function hexLabel(
 
   if (defender) {
     lines.push(`bot ${defender.hullId} (${defender.defenceRating})`);
+    if (upgrade !== null) {
+      lines.push(
+        `upgrade armour ${upgrade.armour} · firepower ${
+          upgrade.firepower
+        } · systems ${upgrade.systems} (+${upgrade.ratingContribution})`,
+      );
+    }
+    for (const skill of defender.skills ?? []) {
+      lines.push(`skill ${skill.name} +${skill.bonus} vs ${skill.bossType}`);
+    }
   }
   if (pending?.resolution) {
     lines.push(
       `atk ${pending.resolution.attackStrength} vs ${
         pending.resolution.defenderRating
       } · ${pending.resolution.outcome === 'held' ? 'HOLDS' : 'FALLS'}`,
+    );
+  }
+
+  if (specialMission !== null) {
+    lines.push(
+      `${SPECIAL_MISSION_PANEL_HEADING} — ${
+        specialMission.offeredNow ? 'OFFERED THIS SORTIE' : 'NOT OFFERED NOW'
+      }`,
+      `REWARD: ${specialMission.hullName} (+${specialMission.bonusStartingLives} LIVES · DEF ${specialMission.baseDefence})`,
+      specialMission.description,
+    );
+  }
+
+  if (personality !== null) {
+    const mechanics = hexPersonalityMechanicsFor(personality);
+    lines.push(
+      `${PERSONALITY_PANEL_HEADING}: ${personality}`,
+      ...mechanics.map((mechanic) => `MECHANIC: ${mechanic.summary}`),
+    );
+  }
+
+  if (landmark !== null) {
+    lines.push(landmarkLine(landmark, landmarkProgress));
+  }
+
+  if (contract !== null) {
+    lines.push(
+      `${CONTRACT_PANEL_HEADING}: ${contract.objective}`,
+      `BONUS: +${contract.bonusSalvage} MIN · +${contract.bonusCores} ${
+        contract.bonusCores === 1 ? 'CORE' : 'CORES'
+      }`,
+      `CONTRACT ${contract.status === 'fulfilled' ? 'FULFILLED' : 'OPEN'}`,
     );
   }
 
@@ -328,10 +1010,15 @@ export function buildHexIntel(
   state: HexState,
   definition: HexRingDefinition | undefined,
   pendingForce = 0,
+  displayed = true,
+  offeredNow = false,
 ): HexIntel {
   const held = state.held === true;
+  const specialMission = specialMissionIntelFor(definition, offeredNow);
+  const contract = contractIntelFor(definition, state);
   const aggression = toCount(state.aggression);
   const defender = held && state.defender ? { ...state.defender } : null;
+  const upgrade = defenderUpgradeBreakdown(defender?.upgradeSnapshot);
   const force = toCount(pendingForce);
   const pending: HexPendingAttackIntel | null =
     force > 0
@@ -355,50 +1042,78 @@ export function buildHexIntel(
     strengths: definition ? [...definition.strengths] : [],
     weaknesses: definition ? [...definition.weaknesses] : [],
     grants: definition?.grants ?? null,
+    personality: definition?.personality ?? null,
+    personalityMechanics: hexPersonalityMechanicsFor(definition?.personality),
+    landmark: definition?.landmark ?? null,
+    landmarkProgress: landmarkProgressFor(definition, state),
+    contract: contractIntelFor(definition, state),
     weaponHex: definition?.weaponHex === true,
+    isSpecialMission: specialMission !== null,
+    specialMission,
     bossDefeated: state.bossDefeated === true,
     grantedWeapon: state.grantedWeapon ?? null,
     defender,
+    skills: defender ? [...(defender.skills ?? [])] : [],
+    upgradeSnapshot: defender?.upgradeSnapshot ?? null,
+    upgradeBreakdown: upgrade,
     pendingAttack: pending,
-    actionable: !held,
-    tileLabel: `AGG ${aggression}`,
-    label: hexLabel(state, definition, pending, defender),
+    displayed,
+    selectable: displayed,
+    actionable: displayed && !held,
+    tileLabel: tileLabel(
+      state,
+      aggression,
+      held,
+      specialMission,
+      contract,
+      definition?.landmark ?? null,
+      definition?.personality ?? null,
+    ),
+    label: hexLabel(
+      state,
+      definition,
+      pending,
+      defender,
+      upgrade,
+      specialMission,
+      contract,
+      definition?.landmark ?? null,
+      landmarkProgressFor(definition, state),
+      definition?.personality ?? null,
+    ),
   };
 }
 
 /**
- * The attract bot's ring choice: the **weakest adjacent unheld hex**.
+ * The attract bot's ring choice: the **weakest displayed unheld hex**.
  *
- * "Adjacent" means sharing an edge with the hangar (`0,0`) or with a hex the
- * player already holds, so the bot expands from territory it owns instead of
- * teleporting across the map. Ties are settled by aggression and then by
- * sorted id, so a reordered payload replays identically.
+ * "Displayed" is the map's reveal rule ({@link isHexDisplayed}) — the hex
+ * shares an edge with the hangar (`0,0`) or with a hex the player holds — so
+ * the bot expands from territory it owns instead of teleporting across or
+ * behind the reveal. Ties are settled by aggression and then by sorted id, so
+ * a reordered payload replays identically.
  *
- * Total and never stalling: when no unheld hex touches held territory (e.g.
- * ring 2 before ring 1 is held) the weakest unheld hex anywhere is chosen, and
- * when every hex is held `null` is returned (the ring is secured — there is
- * nothing left to attack).
+ * Total and never off-map: when no displayed unheld hex exists — the ring is
+ * secured, or a later ring has not yet been revealed by a held neighbour —
+ * `null` is returned. There is **no** fallback to a hidden hex: a hex the map
+ * does not show can never be deployed at.
  *
  * @param payload — the war's stored payload.
  * @param definitions — authored ring definitions (defaults to the shipped table).
- * @returns the hex id to attack, or `null` when the ring is fully held.
+ * @returns the hex id to attack, or `null` when no displayed hex remains.
  */
 export function pickAttractHex(
   payload: HangarWarPayload,
   definitions: readonly HexRingDefinition[] = HEX_RING_DEFINITIONS,
 ): string | null {
   const hexes = displayHexStates(payload, definitions);
-  const unheld = hexes.filter((hex) => hex.held !== true);
-  if (unheld.length === 0) return null;
+  if (hexes.every((hex) => hex.held === true)) return null;
 
-  const anchors: readonly AxialCoordinate[] = [
-    { q: 0, r: 0 },
-    ...hexes.filter((hex) => hex.held === true),
-  ];
-  const adjacent = unheld.filter((hex) =>
-    anchors.some((anchor) => areNeighbours(anchor, hex)),
+  const held = hexes.filter((hex) => hex.held === true);
+  const candidates = hexes.filter(
+    (hex) => hex.held !== true && isHexDisplayed(hex, held),
   );
-  const candidates = adjacent.length > 0 ? adjacent : unheld;
+  if (candidates.length === 0) return null;
 
   const [weakest] = [...candidates].sort(
     (a, b) =>
@@ -413,7 +1128,9 @@ export function pickAttractHex(
  * definitions.
  *
  * @param payload — the war's stored payload (never mutated).
- * @param options — definitions override and title.
+ * @param options — definitions/title overrides, the transient tick record
+ *   whose attacks become arrows and per-attack details, and the resolved
+ *   hangar assault the report announces.
  * @returns the complete map model (hexes, ring/hangar lines, focus order).
  */
 export function buildHexMapModel(
@@ -427,15 +1144,25 @@ export function buildHexMapModel(
   );
   const forces = pendingForces(payload.pendingAttacks);
   const states = displayHexStates(payload, definitions);
+  const heldStates = states.filter((state) => state.held === true);
 
+  // The rotation's answer for this sortie (AH-0MWF0CWB7002MG2F): resolved
+  // once, from stored numbers, through the shared special-mission seam, so no
+  // hex can be advertised as "offered now" behind the model's back.
+  const specialOffer = specialMissionOfferFor(payload, definitions);
   const hexes = states.map((state) =>
     buildHexIntel(
       state,
       definitionById.get(state.id) ?? findHexRingDefinition(state.id),
       forces.get(state.id) ?? 0,
+      isHexDisplayed(state, heldStates),
+      specialOffer?.hexId === state.id,
     ),
   );
 
+  const displayedHexes = hexes.filter((hex) => hex.displayed);
+  // Ring progress is computed over the full stored/generated ring (hidden
+  // hexes included), so hiding hexes never loses progress (AC4).
   const heldCount = hexes.filter((hex) => hex.held).length;
   const secured = hexes.length > 0 && heldCount === hexes.length;
   const attractHexId = pickAttractHex(payload, definitions);
@@ -450,10 +1177,27 @@ export function buildHexMapModel(
     (hex) => hex.aggression <= beatableCeiling,
   ).length;
 
+  // Focus covers every selectable (displayed) hex plus the hangar row;
+  // grid columns give the renderer spatial arrows without a per-scene rule.
   const focusOrder = [
-    ...hexes.filter((hex) => hex.actionable).map((hex) => hex.key),
+    ...displayedHexes.map((hex) => hex.key),
     HEX_MAP_HANGAR_ROW_KEY,
   ];
+  const gridColumns = buildGridColumns(hexes, HEX_MAP_HANGAR_ROW_KEY);
+  const {
+    arrows,
+    attackDetails,
+    assault,
+    assaultLine,
+    ringWon,
+    campaignReset,
+    winBonusLine,
+  } = buildAttackOverlay(
+    payload,
+    options.record,
+    options.assault ?? null,
+    options.winBonusMinerals ?? 0,
+  );
   const defaultFocusKey =
     attractHexId !== null
       ? `${HEX_MAP_HEX_ROW_PREFIX}${attractHexId}`
@@ -482,5 +1226,14 @@ export function buildHexMapModel(
     focusOrder,
     defaultFocusKey,
     attractHexId,
+    gridColumns,
+    arrows,
+    attackDetails,
+    assault,
+    assaultLine,
+    winBonusLine,
+    specialOffer,
+    ringWon,
+    campaignReset,
   };
 }

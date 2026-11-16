@@ -332,10 +332,12 @@ and `--skirmish` above for the opt-out.
 
 ## Ring timing harness
 
-The Hangar War's outer loop is budgeted as **an evening's play per ring**
-(`docs/OUTER_LOOP_CANDIDATES.md` § Session shape): the one-ring MVP targets
-**40–60 minutes** and ring 2 (12 hexes) **≈90–120 minutes**. Those numbers are
-**measured**, not guessed, by
+The Hangar War's outer loop is budgeted at the unit a player actually
+experiences — **5–15 minutes per hex deployment**
+(`docs/OUTER_LOOP_CANDIDATES.md` § Session shape) — with each ring's window
+derived from its hex count: the one-ring MVP (6 hexes) **30–90 minutes** and
+ring 2 (12 hexes) **60–180 minutes**. Those numbers are **measured**, not
+guessed, by
 [`src/ai/eval/ringTiming.ts`](../src/ai/eval/ringTiming.ts) — a thin driver over
 the same headless arena described above.
 
@@ -352,14 +354,19 @@ npm run ring-timing -- --ring 2 --strategy grind --seed 7
 
 ### What is measured
 
-A hex deployment is "a normal run at that hex's aggression": the classic
-campaign started at the hex's aggression-selected level and played to its end
-(`PlayScene.beginGame(startLevel)`). The harness reproduces exactly that —
-`runArena` in full-campaign mode over the campaign **slice** from that level —
-and sums each run's measured duration (`ticksSimulated × dt`, a ≈5-minute
-deployment window). The aggression → level mapping is the shipped
-`hexDifficultyProfile`; the campaign and difficulty come from the shipped
-builders and `difficulty-curves.csv`. Nothing in the measurement is invented.
+A hex deployment is "one hex, one level": the mini-boss ending
+(AH-0MWBW1B1Z0059CC2) turns a deployment into exactly **one campaign level** —
+played as the shipped **five-wave sortie** (the level's first four regular waves
+plus its wave-5 mini-boss composition, truncated with the same pure helper the
+game uses, `truncateCampaignForDeployment`). The harness reproduces exactly
+that — `runArena` in **per-level mode** at the hex's aggression-selected level,
+playing the deployment's wave set through the truncation seam
+(`ArenaConfig.levelDefinition`) — and measures each deployment's duration from
+the arena's **`level_cleared` event tick** (`level_cleared.tick × dt`): the
+deployment ends the moment the sortie clears, never at the tick loop's end.
+The aggression → level mapping is the shipped `hexDifficultyProfile`; the wave
+set and difficulty come from the shipped level data through the game's own
+truncation and `difficulty-curves.csv`. Nothing in the measurement is invented.
 
 ### What a deployment launches with
 
@@ -382,11 +389,13 @@ item list:
   effect-free `core-bank` upgrade.
 - **Equip convention (deterministic)** — every owned weapon is equipped,
   trimmed by the shared six-slot cap (`capDropIdsToSlotPool`); the strongest
-  owned hull is active (`hull-2`: 4 lives, 0.85 speed, scaled through the
-  shared `scaleShipConfigForHull` helper a shipped deployment uses); every owned
-  `extra-lives` modifier applies, capped at the run's 5 lives. A grant the
-  catalogue does not itemise yet (`hull-3`) is owned but contributes no run
-  stats — the same "recorded but effect-free" rule the capture cycle uses.
+  owned hull is active (entering ring 2 that is `hull-2`: 4 lives, 0.85 speed;
+  once ring 2's `hex-r2-3` is captured it is `hull-3`: 5 lives, 0.8 speed,
+  AH-0MWF0CUS3009M5SY, scaled through the shared `scaleShipConfigForHull` helper
+  a shipped deployment uses); every owned `extra-lives` modifier applies,
+  capped at the run's 5 lives. A grant the catalogue does not itemise (a future
+  `hull-9`) is owned but contributes no run stats — the same "recorded but
+  effect-free" rule the capture cycle uses.
 
 The loadout changes the run's **starting** state only: the aggression model, the
 deployment window and every retry/exposure allowance below are unchanged, and
@@ -406,8 +415,8 @@ with every allowance an explicit, documented default:
 | Allowance | Default | Why |
 |---|---|---|
 | Between-sortie time | 2 min | Hangar shopping, salvage banking, the map and the defence report between runs. |
-| Retry per lost deployment | 1 × 5 min | A run that ends before its window (the player died) is a **loss**; a real player replays it, so one full deployment is charged. |
-| Exposed-hex re-capture | frontier attack chance (70 %) | The **rush** line pushes into the next ring with the current one partly held, so each unheld hex costs its expected re-capture work. The chance is the shipped frontier clock's `attackChancePercent`. |
+| Retry per lost deployment | the lost sortie's own measured length (× `retriesPerLoss`) | A deployment that ends before its level cleared (the player died) is a **loss**; a real player replays it, so the retry replays the same deployment at its measured length — never the retired flat 5-minute window. |
+| Exposed-hex re-capture | frontier attack chance (70 %) | The **rush** line pushes into the next ring with the current one partly held, so each unheld hex costs its expected re-capture work — the line's **measured mean deployment** plus the 2-minute visit (producer ruling Q4 = a). The chance is the shipped frontier clock's `attackChancePercent`. |
 
 ### The two playstyle lines
 
@@ -420,47 +429,51 @@ are exposed and the ring is not secured.
 
 ### Measured baseline
 
+> **The table below is requoted from the regenerated artifact** on the shipped
+> one-level five-wave sortie (AH-0MWCQ4GTE005YG02, AH-0MWCQ4IS6001X7W3): a
+> deployment is the aggression-selected level played as the shipped sortie —
+> first four regular waves then the wave-5 mini-boss composition, truncated by
+> `truncateCampaignForDeployment` (`DEPLOYMENT_WAVE_COUNT = 5`), measured at the
+> wave-5 composition clear; the mini-boss encounter's own duration is not
+> simulated (documented fidelity gap). The grind verdicts are re-rated against
+> the re-authored per-hex budget: ring 1 reads `missed`, ring 2
+> `within-tolerance`, each re-ruled by the linked rebalancing items
+> AH-0MWFDQ9EY004NO4X (ring 1) and AH-0MWFDQCFV007BZE5 (ring 2).
+
 Committed evidence:
 [`docs/dev/ring-timing-baseline.json`](./dev/ring-timing-baseline.json)
 (seeds 1–3, competent bot, regeneration command above).
 
 | Ring | Line | Measured runs | Total (mean, min–max) | Losses | Expected losses | Budget |
 |---|---|---|---|---|---|---|
-| 1 (6 hexes) | grind | 19.0 min | **54.3 min** (51.0–56.6) | 4.7 | 4.7 | 40–60 min · **in-window** |
-| 1 (6 hexes) | rush | 0.5 min | **32.0 min** (31.9–32.2) | 1.0 | 4.5 | not applicable (ring not secured) |
-| 2 (12 hexes) | grind | 39.1 min | **116.4 min** (112.7–123.4) | 10.7 | 10.7 | 90–120 min · **in-window** |
-| 2 (12 hexes) | rush | 3.4 min | **62.7 min** (60.9–63.6) | 0.7 | 8.4 | not applicable (ring not secured) |
+| 1 (6 hexes) | grind | 2.2 min | **16.4 min** (15.7–16.9) | 6.0 | 6.0 | 30–90 min · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | rush | 0.2 min | **10.1 min** (9.8–10.6) | 1.0 | 4.5 | not applicable (ring not secured) |
+| 2 (12 hexes) | grind | 12.0 min | **48.1 min** (42.4–58.4) | 12.0 | 12.0 | 60–180 min · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | rush | 0.5 min | **22.3 min** (20.4–25.4) | 1.0 | 8.7 | not applicable (ring not secured) |
 
 Reading the baseline:
 
-- **The budgets land.** The one-ring MVP measures **54.3 min** inside 40–60, and
-ring 2 **116.4 min** inside 90–120; the budget assertion states a **10 %
-tolerance** (±2 min for ring 1, ±3 min for ring 2).
-- **The playstyle trade is real.** The rush line is **faster** (32.0 vs 54.3 min
-for ring 1) but **riskier** — it leaves five hexes exposed (≈3.5 expected
-retakes), forfeits the salvage of its failed attempts and does not secure the
-ring, while the grind secures it. Neither line dominates.
-- **Ring 2 still pays a large retry bill.** Its authored aggression spread
-(`2,2,5,2,5,2,2,5,6,2,5,8`) puts six hexes in the campaign level 3 band, so
-ring 2 banks salvage (≈22 minerals) and captures **1.3 of 12** first attempts —
-but **55 of its 116.4 min (≈47 %) is still the modelled retry allowance**,
-against a design claim of ≈60 min of deployments plus 10–40 min of builds and
-losses.
-- **The loadout model did not shorten the ring.** Measuring with the loadout a
-  ring-2 player actually launches (5 lives, `hull-2`'s 0.85 speed, the
-  `ricochet` / `rapid` / `wave_laser` weapons) moved the totals **up**
-  (ring 1 50.9 → 54.3 min, ring 2 111.9 → 116.4 min) rather than down: the
-  extra lives survive longer, while the extra firepower raises the arena's
-  damage output, and the campaign slice levels **by kills**, so more first
-  attempts reach the first enemy-fire level inside the fixed window. That
-  DPS-coupled levelling is recorded in `docs/BALANCING.md` § *Fidelity boundary*
-  and bisected in `AH-0MWAPWS1W007LGGY`; with the bare cannon campaign levels 1–2
-  captured the full window and level 3 usually did not, and with the modelled
-  loadout level 3 captures on two of three seeds and still dies to enemy fire on
-  the third (`src/ai/eval/ringTiming.test.ts` pins the boundary). The window was
-  recalibrated from 70–100 to 90–120 when the wrap-aware bot
-  (AH-0MVMISF0Q00314LG) began surviving ~2–3 minutes per lost deployment instead
-  of dying in under a minute; the loadout-model evidence lands inside it.
+- **The verdicts are re-rated against the per-hex budget.** The one-level
+sortie is quick enough that the competent bot dies to enemy fire before the
+wave-5 clear on every deployment: ring 1 grind measures **16.4 min** and still
+**misses** the derived 30–90 window, while ring 2 grind **48.1 min** sits
+**within-tolerance** of the derived 60–180 window (the ±12-minute tolerance
+floor is 48 min, and 48.1 ≥ 48). The budget assertion states a **10 %
+tolerance** of each window's width (±6 min for ring 1, ±12 min for ring 2).
+Each verdict is re-computed by the harness and re-ruled by its own linked
+rebalancing item — **AH-0MWFDQ9EY004NO4X** (ring 1) and
+**AH-0MWFDQCFV007BZE5** (ring 2) — never re-worded.
+- **The playstyle trade is real.** The rush line is **faster** (10.1 vs 16.4 min
+for ring 1; 22.3 vs 48.1 min for ring 2) but **riskier** — it leaves five (ring
+1) / eleven (ring 2) hexes exposed (≈3.5 / 7.7 expected retakes), forfeits the
+salvage of its failed attempts and does not secure the ring, while the grind
+secures it. Neither line dominates.
+- **The retry allowance is large because every sortie is a loss.** With no
+first-attempt captures, the loss-charged retry replays each deployment at its
+own measured length, so a ring's total is mostly deployment time plus the
+between-sortie visits plus the replayed set. The rush line adds the exposed-hex
+re-capture bill (measured mean deployment + the 2-minute visit) at the shipped
+70 % frontier attack chance.
 
 ### Confidence and fidelity boundary
 

@@ -32,13 +32,13 @@
  *   candidate.
  * - AC16 (producer decision, AH-0MVNSSY9L001P1CC): the producer chose
  *   Candidate D, the choice is recorded in the decision record with a date and
- *   in GDD §8, the ring timing is an evening's play (one-ring MVP 40–60 minutes;
- *   ring 2 is 12 hexes), the anti-checklist mitigations and the playstyles the
+ *   in GDD §8, the ring timing is an evening's play (5–15 minutes per hex;
+ *   ring 1's six hexes derive 30–90 minutes and ring 2's twelve 60–180), the anti-checklist mitigations and the playstyles the
  *   loop must support are documented, and the build-out work item is
  *   cross-referenced from the decision record and the GDD.
  * - Build status (AH-0MVUXCC5J0028OGQ): Candidate D records that it is
- *   **implemented and shipped** (not design-only), names the deferred ring-win
- *   item and the post-MVP backlog items with their work-item ids, and GDD §8.2
+ *   **implemented and shipped** (not design-only), names the shipped ring-win
+ *   gate and the post-MVP backlog items with their work-item ids, and GDD §8.2
  *   carries the playable ring specification — ring model and growth, the
  *   capture cycle, the resolver and frontier-tick numbers, the defence report,
  *   the measured ring timings and the supported playstyles.
@@ -55,6 +55,40 @@ const DOC_PATH = path.resolve(
 
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const README_PATH = path.resolve(process.cwd(), 'README.md');
+
+/** The committed ring-timing baseline artifact — the guard's source of truth. */
+const RING_TIMING_BASELINE_PATH = path.resolve(
+  process.cwd(),
+  'docs/dev/ring-timing-baseline.json',
+);
+
+/**
+ * The measured ring-timing mean the GDD §8.2 prose must quote for a ring and
+ * line: `summary.totalMinutes.mean.toFixed(1)` from the committed artifact
+ * (AH-0MW0KSCU20096B02). Deriving at test runtime keeps the guard consistent
+ * with the artifact — recalibrating the artifact updates the guard without
+ * manual edits, and a GDD quote that drifts from the measurement fails.
+ */
+const ringTimingMean = (ringIndex: number, strategy: string): string => {
+  const artifact = JSON.parse(
+    fs.readFileSync(RING_TIMING_BASELINE_PATH, 'utf8'),
+  ) as Array<{
+    ringIndex: number;
+    strategy: string;
+    summary: { totalMinutes: { mean: number } };
+  }>;
+  const entry = artifact.find(
+    (candidate) =>
+      candidate.ringIndex === ringIndex && candidate.strategy === strategy,
+  );
+  if (!entry) {
+    throw new Error(
+      `ring-timing baseline artifact ${RING_TIMING_BASELINE_PATH} has no ` +
+        `${ringIndex}-${strategy} entry`,
+    );
+  }
+  return entry.summary.totalMinutes.mean.toFixed(1);
+};
 
 /**
  * The work item created to build the chosen loop (AC16).
@@ -221,8 +255,10 @@ describe('Outer-loop candidates are documented (AH-0MVRNIWHG0099ZS3)', () => {
     });
 
     it('targets an evening-length one-ring MVP and a larger second ring (AC16)', () => {
-      // MVP (one ring) is 40–60 minutes; ring 2 is 12 hexes.
-      expect(body).toMatch(/40\s*[–—-]\s*60\s*minutes/i);
+      // The budget is authored per hex deployment (5–15 minutes), deriving
+      // ring 1's 30–90-minute window (six hexes); ring 2 is 12 hexes.
+      expect(body).toMatch(/5\s*[–—-]\s*15\s*minutes/i);
+      expect(body).toMatch(/30\s*[–—-]\s*90/i);
       expect(body).toMatch(/12\s+hexes/i);
       expect(body).toMatch(/ring/i);
     });
@@ -413,11 +449,17 @@ describe('Candidate D records its build status (AH-0MVUXCC5J0028OGQ)', () => {
     expect(body).not.toMatch(/design only, not scheduled/i);
   });
 
-  it('records the deferred ring-win item with its work-item id', () => {
+  it('records the shipped ring-end win/lose gate with its work-item id', () => {
     const body = candidateDBody();
     expect(body).toContain('AH-0MVUVL2O2006W4QK');
     expect(body).toMatch(/massed/i);
     expect(body).toMatch(/hangar[- ]falls/i);
+    // AH-0MWEZZE5U0028G86 AC2: the States section records the chosen
+    // win/lose semantics — a hangar fall is a full campaign reset — instead of
+    // the MVP's "no assault / no lose state" deferral note.
+    expect(body).toMatch(/full campaign reset/i);
+    expect(body).not.toMatch(/no hangar assault pass/i);
+    expect(body).not.toMatch(/campaign loss are tracked by/i);
   });
 
   it('records the post-MVP backlog items with their work-item ids', () => {
@@ -450,9 +492,11 @@ describe('The chosen loop is recorded in the GDD (AC16)', () => {
     expect(scope).toMatch(/chose|chosen|selected/i);
   });
 
-  it('records the ring timing the producer set (one-ring MVP 40–60 minutes)', () => {
+  it('records the ring timing the producer set (5–15 minutes per hex deployment)', () => {
     const scope = gddFutureScope();
-    expect(scope).toMatch(/40\s*[–—-]\s*60\s*minutes/i);
+    expect(scope).toMatch(/5\s*[–—-]\s*15\s*minutes/i);
+    expect(scope).toMatch(/30\s*[–—-]\s*90/i);
+    expect(scope).toMatch(/60\s*[–—-]\s*180/i);
     expect(scope).toMatch(/12\s+hexes/i);
   });
 
@@ -557,22 +601,81 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
     expect(spec).toMatch(/stored numbers/i);
   });
 
-  it('records the measured ring timings and their tolerance', () => {
+  it('records the measured ring timings and their tolerance, derived from the one-level artifact', () => {
     const spec = gddRingSpec();
+    // The four means are derived from the committed artifact's
+    // summary.totalMinutes.mean.toFixed(1) at test runtime, so a recalibration
+    // updates the guard without manual edits — the measured figures cannot
+    // drift from the baseline (AC1/AC2, AH-0MW0KSCU20096B02).
+    const ring1Grind = ringTimingMean(1, 'grind');
+    const ring2Grind = ringTimingMean(2, 'grind');
+    const ring1Rush = ringTimingMean(1, 'rush');
+    const ring2Rush = ringTimingMean(2, 'rush');
     // Ring 1 grind mean and ring 2 grind mean, measured with the arena and
-    // requoted from the regenerated artifact (AH-0MW9QA2YC009PSF5).
-    expect(spec).toMatch(/54\.3/);
-    expect(spec).toMatch(/116\.4/);
+    // requoted from the regenerated one-level artifact (AH-0MWCOWSVN003X81A).
+    expect(spec).toMatch(new RegExp(escapeRegExp(ring1Grind)));
+    expect(spec).toMatch(new RegExp(escapeRegExp(ring2Grind)));
     // The rush line is faster: ring 1 and ring 2.
-    expect(spec).toMatch(/32\.0/);
-    expect(spec).toMatch(/62\.7/);
-    // Budget windows and the stated tolerance.
-    expect(spec).toMatch(/40\s*[–—-]\s*60/);
-    expect(spec).toMatch(/90\s*[–—-]\s*120/);
-    expect(spec).toMatch(/±\s*2\s*min/i);
-    expect(spec).toMatch(/±\s*3\s*min/i);
+    expect(spec).toMatch(new RegExp(escapeRegExp(ring1Rush)));
+    expect(spec).toMatch(new RegExp(escapeRegExp(ring2Rush)));
+    // The per-hex budget and the derived windows stay authored; the tolerance
+    // follows the window widths (±6 ring 1, ±12 ring 2).
+    expect(spec).toMatch(/\b5\s*[–—-]\s*15\b/);
+    expect(spec).toMatch(/30\s*[–—-]\s*90/);
+    expect(spec).toMatch(/60\s*[–—-]\s*180/);
+    expect(spec).toMatch(/±\s*6\s*min/i);
+    expect(spec).toMatch(/±\s*12\s*min/i);
+    // The grind verdicts are re-rated against the derived windows: ring 1 is
+    // missed, ring 2 within-tolerance, with their linked rebalancing items.
+    expect(spec).toMatch(
+      new RegExp(`${escapeRegExp(ring1Grind)}[^\\n]*\\bmissed\\b`, 'i'),
+    );
+    expect(spec).toMatch(
+      new RegExp(`${escapeRegExp(ring2Grind)}[^\\n]*\\bwithin-tolerance\\b`, 'i'),
+    );
+    expect(spec).toContain('AH-0MWFDQ9EY004NO4X');
+    expect(spec).toContain('AH-0MWFDQCFV007BZE5');
     // The measurement is reproducible from the committed artifact.
     expect(spec).toContain('docs/dev/ring-timing-baseline.json');
+  });
+
+  it('records the re-baselined one-level income, requoted from the artifact (AH-0MWCOWTOR00994NA)', () => {
+    const spec = gddRingSpec();
+    const income = JSON.parse(
+      fs.readFileSync(
+        path.resolve(process.cwd(), 'docs/dev/one-level-income-baseline.json'),
+        'utf8',
+      ),
+    ) as Array<{
+      ringIndex: number;
+      strategy: string;
+      income: {
+        mineralsPerDeployment: number;
+        coresPerDeployment: number;
+        mineralsPerCapturedDeployment: number;
+      };
+      unlockPace: Array<{ id: string; deploymentsToAfford: number }>;
+    }>;
+    const r1g = income.find((entry) => entry.ringIndex === 1 && entry.strategy === 'grind')!;
+    const r2g = income.find((entry) => entry.ringIndex === 2 && entry.strategy === 'grind')!;
+    // After income per deployment and the captured-deployment checkpoint hold.
+    expect(spec).toContain(`${r1g.income.mineralsPerDeployment.toFixed(1)} / ${r1g.income.coresPerDeployment.toFixed(1)}`);
+    expect(spec).toContain(`${r2g.income.mineralsPerDeployment.toFixed(1)} / ${r2g.income.coresPerDeployment.toFixed(1)}`);
+    expect(spec).toContain(`${r1g.income.mineralsPerCapturedDeployment.toFixed(1)} / 1.0`);
+    // The unlock pace requotes the artifact's derived numbers.
+    for (const entry of r1g.unlockPace) {
+      expect(spec).toMatch(
+        new RegExp(`${entry.id}[^\n]*\\*\\*${entry.deploymentsToAfford}\\*\\*`),
+      );
+    }
+    // Capture rate is stated as a percentage (50.0 % / 33.3 %).
+    expect(spec).toMatch(/50\.0\s*%/);
+    expect(spec).toMatch(/33\.3\s*%/);
+    // The reproducible artifact and the producer's reward-value ruling.
+    expect(spec).toContain('docs/dev/one-level-income-baseline.json');
+    expect(spec).toContain('AH-0MWEVNBMM000QFO2');
+    expect(spec).toMatch(/suppressed on the winning deployment path/i);
+    expect(spec).toMatch(new RegExp(`before[^\\n]*ring-1 grind`, 'i'));
   });
 
   it('records the supported playstyles and that neither dominates', () => {

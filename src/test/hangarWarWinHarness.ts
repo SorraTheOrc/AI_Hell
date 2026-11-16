@@ -2,8 +2,9 @@
  * Test-only driver for a **winning** Hangar War hex deployment
  * (AH-0MWCOW61X002LL10, parent AH-0MWBW1B1Z0059CC2).
  *
- * A deployment's win condition is now its level's wave-10 mini-boss
- * (AH-0MWCOW4IQ003XST5), so a route/wiring test that needs a *victory* has to
+ * A deployment's win condition is now its level's wave-5 mini-boss
+ * (AH-0MWCOW4IQ003XST5; the sortie is truncated to five waves by
+ * AH-0MWDCBVQ700579WS), so a route/wiring test that needs a *victory* has to
  * reach and defeat that encounter. Doing so by hand would walk the shipped
  * campaign's nine preceding waves — far too slow for a deterministic suite —
  * so this module provides the same compact-campaign fixture the mini-boss
@@ -34,7 +35,7 @@ import { stepGameUntil } from './gameHarness';
 
 /**
  * A compact campaign with the **shipped shape**: {@link MAX_LEVEL} levels, each
- * ending on a flagged wave-10 mini-boss wave. Tiny formations keep the
+ * ending on a flagged mini-boss wave. Tiny formations keep the
  * deterministic walks fast while exercising the same shared wave/mini-boss code
  * paths as the shipped levels.
  */

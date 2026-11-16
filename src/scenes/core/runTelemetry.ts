@@ -521,6 +521,16 @@ export class RunTelemetry {
   }
 
   /**
+   * The current run's buffered size in UTF-8 bytes, measured without building
+   * the buffer (AH-0MW2DC20A007TAVY, AC1); `null` when nothing is
+   * byte-metered. The run-end whole-file upload refuses an over-cap run from
+   * this number, so a payload that would be discarded is never serialised.
+   */
+  readByteLength(): number | null {
+    return this.recorder.readByteLength();
+  }
+
+  /**
    * Reads a bounded window of the dev sink's retained buffer from an absolute
    * record offset (AH-0MWDGPZL8005QU13), or `null` when the recorder retains
    * no windowed buffer. The streaming uploader uses this instead of reading

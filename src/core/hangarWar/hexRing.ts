@@ -28,6 +28,9 @@
  * coordinate on the wrong ring, a duplicate coordinate or id, zero/two weapon
  * hexes, or a weapon hex that is not strictly the ring's hardest), and {@link
  * generateRing} throws {@link HexRingDefinitionError} carrying those issues.
+ * A hex flagged `isSpecialMission` must also grant a hull catalogue entry — a
+ * special mission's reward is a hull with extra hit points, never a weapon,
+ * modifier or unknown id (AH-0MWEYVRUX008SLJ8).
  * `src/data/hexRingDefinitions.test.ts` validates the bundled rings, so an
  * authoring mistake fails the suite rather than the game.
  *
@@ -38,6 +41,7 @@
  * @module src/core/hangarWar/hexRing
  */
 
+import { findHangarEntry } from './hangarEconomy';
 import type { HexRingState, HexState } from './types';
 
 /** A point in axial hex coordinates, relative to the hangar at `(0, 0)`. */
@@ -47,6 +51,86 @@ export interface AxialCoordinate {
   /** Axial coordinate `r`. */
   readonly r: number;
 }
+
+/**
+ * The authored **personality** vocabulary: how a hex's boss/deployment fights.
+ *
+ * Two kinds live in one list because both are authored the same way and
+ * published the same way (known-ahead intel):
+ *
+ * - **config-tunes** (`sentinel`, `berserker`, `tempest`) resolve through the
+ *   shipped boss-profile seams (`src/core/hangarWar/hexBoss.ts`) — hit pool,
+ *   aggression and volley cadence. No new combat code.
+ * - **shared mechanics** ({@link HEX_PERSONALITY_MECHANICS}) are the bounded,
+ *   data-driven combat mechanics the producer admitted under Q1 = b
+ *   (2026-11-13): a projectile-slowing **nebula** and a
+ *   reinforcement-summoning **summoner**. They are implemented **once** in the
+ *   shared combat core so the game and every gym run identical code
+ *   (AGENTS.md gym↔game parity).
+ */
+export const HEX_PERSONALITY_IDS = Object.freeze([
+  'sentinel',
+  'berserker',
+  'tempest',
+  'nebula',
+  'summoner',
+] as const);
+
+/** One authored personality id (see {@link HEX_PERSONALITY_IDS}). */
+export type HexPersonalityId = (typeof HEX_PERSONALITY_IDS)[number];
+
+/**
+ * The **bounded** set of personalities that carry a shared combat mechanic
+ * (producer answer Q1 = b, 2026-11-13).
+ *
+ * Exactly the design's two reference examples
+ * (`docs/OUTER_LOOP_CANDIDATES.md` Candidate D): a projectile-slowing nebula
+ * and a reinforcement-summoning boss. The list is deliberately short *and*
+ * exported, so a test can pin the cap and the shared combat core cannot grow an
+ * unbounded mechanic set.
+ */
+export const HEX_PERSONALITY_MECHANICS = Object.freeze([
+  'nebula',
+  'summoner',
+] as const satisfies readonly HexPersonalityId[]);
+
+/**
+ * An optional per-hex **contract** (producer answer Q2 = a, 2026-11-13): an
+ * objective the player can read before committing a life, fulfilled by
+ * capturing the hex, paying a bonus in the shipped currencies through the
+ * existing banking rule. There is deliberately no deadline field — contracts do
+ * not couple to the between-sortie frontier clock.
+ */
+export interface HexContractDefinition {
+  /** The objective as published in the known-ahead intel (never empty). */
+  readonly objective: string;
+  /** Bonus minerals banked on capture (non-negative integer). */
+  readonly bonusSalvage: number;
+  /** Bonus cores banked on capture (non-negative integer). */
+  readonly bonusCores: number;
+}
+
+/**
+ * The authored **ring landmark** vocabulary (producer answer Q3 = a,
+ * 2026-11-13): one-off set-pieces on ordinary hexes, with the ring geometry and
+ * the `6 × n` generator untouched.
+ *
+ * - `fortress` — needs two capture passes before the hex is held.
+ * - `cache` — pays bonus salvage instead of granting, and can never be the
+ *   ring's weapon hex.
+ */
+export const HEX_LANDMARK_IDS = Object.freeze(['fortress', 'cache'] as const);
+
+/**
+ * Capture passes a `fortress` landmark needs before the hex is held
+ * (`AH-0MWEW5I1F006CLCH`, Q3 = a): the first pass records progress, the
+ * second secures the hex. Stated once, here, with the landmark vocabulary so
+ * the intel, the resolver and the gym cannot disagree.
+ */
+export const FORTRESS_CAPTURE_PASSES = 2;
+
+/** One authored ring landmark id (see {@link HEX_LANDMARK_IDS}). */
+export type HexLandmarkId = (typeof HEX_LANDMARK_IDS)[number];
 
 /**
  * One hex's authored ring definition — everything the known-ahead intel
@@ -73,6 +157,36 @@ export interface HexRingDefinition extends AxialCoordinate {
   readonly weaponHex: boolean;
   /** Frontier aggression the hex is defended at before any tick. */
   readonly baseAggression: number;
+  /**
+   * True for a **special-mission hex** (post-MVP Hangar War,
+   * AH-0MVWZYIWX0008C55, Q1 = a): the deployment is an ordinary one-level
+   * capture and the "special" part is the reward it grants.
+   *
+   * Optional so the field is backward compatible: absent means an ordinary
+   * hex (`false`). When it **is** `true`, {@link validateRingDefinitions}
+   * requires `grants` to name a hull catalogue entry — a special mission's
+   * reward is a hull with extra hit points (Q2 = a), never a weapon, modifier
+   * or unknown id.
+   */
+  readonly isSpecialMission?: boolean;
+  /**
+   * Authored personality (AH-0MWEW4ANW009GGX7): how this hex's boss/deployment
+   * fights. Optional — absent means an ordinary, default-tuned hex, which is
+   * every hex authored before the variety vocabulary landed.
+   */
+  readonly personality?: HexPersonalityId;
+  /**
+   * Authored optional contract (AH-0MWEW4ANW009GGX7): an objective the player
+   * can read before committing, fulfilled by capturing the hex. Optional —
+   * absent means the hex carries no contract.
+   */
+  readonly contract?: HexContractDefinition;
+  /**
+   * Authored ring landmark (AH-0MWEW4ANW009GGX7): a `fortress` (two captures)
+   * or `cache` (pays out instead of granting) set-piece on an ordinary hex.
+   * Optional — absent means an ordinary hex.
+   */
+  readonly landmark?: HexLandmarkId;
 }
 
 /** A generated ring: its index, size and hexes in clockwise geometry order. */
@@ -94,7 +208,13 @@ export type RingValidationIssueKind =
   | 'duplicate-id'
   | 'missing-hex'
   | 'weapon-hex-count'
-  | 'weapon-hex-not-hardest';
+  | 'weapon-hex-not-hardest'
+  | 'special-mission-grant-not-hull'
+  | 'unknown-personality'
+  | 'invalid-contract'
+  | 'invalid-landmark'
+  | 'landmark-weapon-hex'
+  | 'duplicate-landmark';
 
 /** One problem found in a ring's authored definitions. */
 export interface RingValidationIssue {
@@ -308,8 +428,176 @@ function definitionShapeIssues(
   if (typeof candidate.weaponHex !== 'boolean') {
     report('has no weaponHex flag');
   }
+  if (
+    candidate.isSpecialMission !== undefined &&
+    typeof candidate.isSpecialMission !== 'boolean'
+  ) {
+    report('has a non-boolean isSpecialMission flag');
+  }
   if (!isInteger(candidate.baseAggression) || candidate.baseAggression < 0) {
     report('has no non-negative integer baseAggression');
+  }
+  return issues;
+}
+
+/**
+ * Whether an authored grant id names a hull in the hangar catalogue of record.
+ *
+ * A special mission pays a **hull with extra hit points** (Q2 = a), so its
+ * authored grant must be a hull catalogue id: a weapon, a modifier or an
+ * unknown id can never be delivered through the special-mission path, and
+ * silently shipping one would be a reward the player cannot receive.
+ *
+ * @param grantId — the authored `grants` id of a special-mission hex.
+ * @returns true when the id is a hull catalogue entry.
+ */
+function isHullGrant(grantId: string): boolean {
+  return findHangarEntry(grantId)?.kind === 'hull';
+}
+
+/**
+ * Whether `value` is an authored personality id (the variety vocabulary).
+ *
+ * @param value — anything (a definition field, parsed CSV cell, stored state).
+ * @returns true when it names an authored {@link HexPersonalityId}.
+ */
+export function isHexPersonalityId(value: unknown): value is HexPersonalityId {
+  return (
+    typeof value === 'string' &&
+    (HEX_PERSONALITY_IDS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Whether `value` is an authored ring landmark id.
+ *
+ * @param value — anything (a definition field, parsed CSV cell, stored state).
+ * @returns true when it names an authored {@link HexLandmarkId}.
+ */
+export function isHexLandmarkId(value: unknown): value is HexLandmarkId {
+  return (
+    typeof value === 'string' &&
+    (HEX_LANDMARK_IDS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * What is wrong with an authored contract, or `null` when it is well formed.
+ *
+ * A contract must carry a readable objective and pay something: a bonus of
+ * zero in both shipped currencies would be an objective with no reward, which
+ * is a chore rather than the choice the design asks for.
+ *
+ * @param contract — the authored contract (untrusted: any value).
+ * @returns a short explanation, or `null` when the contract is valid.
+ */
+function contractProblem(contract: unknown): string | null {
+  if (contract === undefined) return null;
+  if (typeof contract !== 'object' || contract === null) {
+    return 'is not an object';
+  }
+  const candidate = contract as Partial<HexContractDefinition>;
+  if (
+    typeof candidate.objective !== 'string' ||
+    candidate.objective.trim() === ''
+  ) {
+    return 'has no readable objective';
+  }
+  if (!isInteger(candidate.bonusSalvage) || candidate.bonusSalvage < 0) {
+    return 'has no non-negative integer bonusSalvage';
+  }
+  if (!isInteger(candidate.bonusCores) || candidate.bonusCores < 0) {
+    return 'has no non-negative integer bonusCores';
+  }
+  if (candidate.bonusSalvage === 0 && candidate.bonusCores === 0) {
+    return 'pays nothing (bonusSalvage and bonusCores are both 0)';
+  }
+  return null;
+}
+
+/**
+ * Variety problems with one authored definition (an instance's own fields).
+ *
+ * @param definition — the authored definition being validated.
+ * @returns the issues found in its `personality`/`contract`/`landmark` fields.
+ */
+function varietyIssues(definition: HexRingDefinition): RingValidationIssue[] {
+  const issues: RingValidationIssue[] = [];
+  const report = (kind: RingValidationIssueKind, detail: string): void => {
+    issues.push({
+      kind,
+      hexId: definition.id,
+      coordinate: { q: definition.q, r: definition.r },
+      message: `${definition.id} ${detail}`,
+    });
+  };
+
+  if (
+    definition.personality !== undefined &&
+    !isHexPersonalityId(definition.personality)
+  ) {
+    report(
+      'unknown-personality',
+      `declares unknown personality "${String(
+        definition.personality,
+      )}" (authored ids: ${HEX_PERSONALITY_IDS.join(', ')})`,
+    );
+  }
+
+  const problem = contractProblem(definition.contract);
+  if (problem !== null) {
+    report('invalid-contract', `has a malformed contract: ${problem}`);
+  }
+
+  if (
+    definition.landmark !== undefined &&
+    !isHexLandmarkId(definition.landmark)
+  ) {
+    report(
+      'invalid-landmark',
+      `declares unknown landmark "${String(
+        definition.landmark,
+      )}" (authored ids: ${HEX_LANDMARK_IDS.join(', ')})`,
+    );
+  }
+
+  // A cache pays bonus salvage *instead of* granting, so it can never be the
+  // one hex that grants the ring's new weapon (Q3 = a).
+  if (definition.landmark === 'cache' && definition.weaponHex === true) {
+    report(
+      'landmark-weapon-hex',
+      "is a cache landmark and the ring's weapon hex; a cache pays out instead of granting",
+    );
+  }
+
+  return issues;
+}
+
+/**
+ * Set-piece problems across a whole ring: a landmark is one-off, so a ring
+ * holds at most one fortress and at most one cache.
+ *
+ * @param hexes — the ring's authored definitions (this ring only).
+ * @returns the duplicate-landmark issues found.
+ */
+function landmarkIssues(
+  hexes: readonly HexRingDefinition[],
+): RingValidationIssue[] {
+  const issues: RingValidationIssue[] = [];
+  const firstOfKind = new Map<HexLandmarkId, HexRingDefinition>();
+  for (const hex of hexes) {
+    if (!isHexLandmarkId(hex.landmark)) continue;
+    const existing = firstOfKind.get(hex.landmark);
+    if (existing === undefined) {
+      firstOfKind.set(hex.landmark, hex);
+      continue;
+    }
+    issues.push({
+      kind: 'duplicate-landmark',
+      hexId: hex.id,
+      coordinate: { q: hex.q, r: hex.r },
+      message: `${hex.id} declares a second ${hex.landmark} landmark on the ring (${existing.id} already declares it); a ring holds at most one of each set-piece`,
+    });
   }
   return issues;
 }
@@ -325,7 +613,14 @@ function definitionShapeIssues(
  * - every definition's coordinates sit on that ring (`ringDepth === ringIndex`),
  * - coordinates and ids are unique, and every `6 × n` coordinate is covered,
  * - exactly one hex is the weapon hex, and it is **strictly** the ring's
- *   hardest (highest `baseAggression`), per the design of record.
+ *   hardest (highest `baseAggression`), per the design of record,
+ * - every **special-mission** hex grants a hull catalogue entry, so a malformed
+ *   special mission is rejected loudly rather than repaired
+ *   (`special-mission-grant-not-hull`),
+ * - every authored **variety** field is well formed (AH-0MWEW4ANW009GGX7): an
+ *   authored personality/landmark id, a contract that carries a readable
+ *   objective and pays something, no cache landmark on the weapon hex, and at
+ *   most one set-piece of each kind per ring.
  *
  * @param ringIndex — the ring to validate (1 = the first ring).
  * @param definitions — the authored definitions (all rings, or just this one).
@@ -360,6 +655,22 @@ export function validateRingDefinitions(
     }
     if (definition.ringIndex !== ringIndex) continue;
     included.push(definition);
+
+    // The variety vocabulary is validated for this ring's hexes only: an
+    // authored id outside the vocabulary is rejected, never repaired (AC3).
+    issues.push(...varietyIssues(definition));
+
+    // A special mission's reward must be a hull catalogue entry: the hex is an
+    // ordinary one-level capture (Q1 = a), so the only thing that can make it
+    // special is the reward it pays.
+    if (definition.isSpecialMission === true && !isHullGrant(definition.grants)) {
+      issues.push({
+        kind: 'special-mission-grant-not-hull',
+        hexId: definition.id,
+        coordinate: { q: definition.q, r: definition.r },
+        message: `special-mission hex ${definition.id} grants ${definition.grants}, which is not a hull catalogue entry`,
+      });
+    }
 
     const depth = ringDepth(definition.q, definition.r);
     if (depth !== ringIndex) {
@@ -428,6 +739,8 @@ export function validateRingDefinitions(
       });
     }
   }
+
+  issues.push(...landmarkIssues(included));
 
   return { ok: issues.length === 0, issues };
 }

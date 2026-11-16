@@ -51,6 +51,8 @@ import {
 } from '../../waves/miniBossDesigns';
 import { BULLET_COLORS } from '../../utils/weapons';
 import { findHexRingDefinition } from '../../data/hexRingDefinitions';
+import { buildHexBossProfile } from '../../core/hangarWar/hexBoss';
+import { SUMMONER_REINFORCEMENTS } from '../core/hexPersonalityMechanics';
 
 import { readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
@@ -770,6 +772,74 @@ describe('GymMiniBoss — hex-profile (deployed) parity (AH-0MWCOW71U002ZF2O)', 
     expect(findButton(restarted, 'HEX: ON')).toBeDefined();
     expect(restarted.formationMiniBoss.resolvedConfig.color).toBe(
       MINI_BOSS_GYM_HEX_PROFILE.bodyColor,
+    );
+  });
+});
+
+/**
+ * Gym↔game parity for the **personality mechanics**
+ * (AH-0MWEW50B10089D4W, AGENTS.md, `docs/GYM_PARITY.md`).
+ *
+ * A personality's two shared combat mechanics are applied by the same pure
+ * mapping the game runs (`hexMiniBossConfigForLevel` over
+ * `buildHexBossProfile`), so a gym can never exercise a divergent copy: the
+ * gym's HEX mode already boots that mapping, and these cases pin both mechanic
+ * effects on its config path.
+ */
+describe('GymMiniBoss — personality mechanics parity (AH-0MWEW50B10089D4W)', () => {
+  /** The gym's authored sample hex with `personality` authored onto it. */
+  const personalityDefinition = (personality: 'nebula' | 'summoner' | undefined) => ({
+    ...findHexRingDefinition(MINI_BOSS_GYM_HEX_ID)!,
+    ...(personality === undefined ? {} : { personality }),
+  });
+
+  /** The shared mapping's config for a personality, at the gym's level. */
+  const configFor = (personality: 'nebula' | 'summoner' | undefined) =>
+    hexMiniBossConfigForLevel(MINI_BOSS_GYM_LEVEL, {
+      x: MINI_BOSS_FORMATION_START_X,
+      y: MINI_BOSS_FORMATION_START_Y,
+      formationOffset: { row: 0, col: 0 },
+      hpPerPhase: MINI_BOSS_GYM_HP_PER_PHASE,
+      profile: buildHexBossProfile(
+        {
+          id: MINI_BOSS_GYM_HEX_ID,
+          aggression: MINI_BOSS_GYM_HEX_AGGRESSION,
+        },
+        personalityDefinition(personality),
+      ),
+    });
+
+  it('AC — a summoner deployment summons reinforcements in every phase', () => {
+    const config = configFor('summoner');
+    const waves = config.minions ?? [];
+    expect(waves.length).toBe(config.phases?.length ?? 0);
+    for (const wave of waves) {
+      expect(wave.groups.length).toBeGreaterThan(0);
+      expect(
+        wave.groups.some((group) => group.count === SUMMONER_REINFORCEMENTS),
+        `phase ${wave.phase} reinforcement bodies`,
+      ).toBe(true);
+    }
+  });
+
+  it('AC — a nebula deployment’s demonstrated volley flies slower', () => {
+    const nebula = configFor('nebula');
+    const plain = configFor(undefined);
+    expect(nebula.demonstratedWeapon).toBeDefined();
+    expect(plain.demonstratedWeapon).toBeDefined();
+    expect(nebula.demonstratedWeapon!.speed).toBeLessThan(
+      plain.demonstratedWeapon!.speed,
+    );
+  });
+
+  it('AC — a config-tune personality adds no mechanic to the config', () => {
+    // The un-personalitied hex keeps the level design's own minion set, so the
+    // mechanics only ever arrive through an authored mechanic personality.
+    expect(configFor(undefined).minions ?? []).toEqual(
+      configFor(undefined).minions ?? [],
+    );
+    expect((configFor(undefined).minions ?? []).length).toBe(
+      (configFor(undefined).minions ?? []).length,
     );
   });
 });

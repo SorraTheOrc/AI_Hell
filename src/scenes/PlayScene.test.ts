@@ -49,7 +49,13 @@ import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
-import { advanceGame, bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
+import {
+  advanceGame,
+  bootScene,
+  resolveMineralChoiceIfOpen,
+  stepGameUntil,
+  type BootedGame,
+} from '../test/gameHarness';
 import { getSpawnState, type SpawnAnimatable } from '../vfx/wormholeSpawn';
 import { Asteroid } from '../entities/Asteroid';
 import { PHASER_ORBITAL_RADIUS, PhaserEntity } from '../entities/Phaser';
@@ -432,25 +438,6 @@ function expectTransitionStarted(scene: PlayScene, maxTicks = 8): void {
         `level=${wm.level} wave=${wm.waveNumber}`,
     );
   }
-}
-
-/**
- * Resolves an open hold-full power-up choice, if any.
- *
- * Long deterministic boss walks tick the auto-fire through many waves; the
- * resulting mineral drops eventually fill the hold and `PlayScene` pauses for
- * the hold-full choice overlay (`openMineralChoice()` → `setPaused(true)`).
- * A paused scene ignores `tick()` entirely, so a walk would stall in its
- * iteration guard. Selecting the first option resumes play, exactly as a
- * player would (AH-0MV5L6BVN005DP4I).
- *
- * @returns `true` when a choice was open and has been resolved so the caller
- *   can retry the step.
- */
-function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
-  if (!scene.isMineralChoiceOpen()) return false;
-  scene.selectMineralChoice(0);
-  return true;
 }
 
 /**
@@ -2696,6 +2683,48 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     stepGameUntil(
       booted!.game,
       'victory hold → GameOverScene',
+      () => booted!.game.scene.isActive('GameOverScene'),
+    );
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
+  it('AC1 — a hold-filling mineral collected on a won run opens no choice (AH-0MWFLOYBY001POST)', async () => {
+    // The reported void-reward shape: a mineral collected after the boss dies
+    // (lingering drops, phase minions, asteroids) fills the hold on an
+    // already-finished run. `_requestHoldFullChoice` used to open the pausing
+    // choice overlay, which froze the victory hold and gated the GameOverScene
+    // transition on an upgrade no run is left to use
+    // (AH-0MWFLOYBY001POST · AC1/AC2).
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    for (let phase = 0; phase < 4; phase++) {
+      damageBossPhase(scene, boss);
+    }
+    expect(boss.alive).toBe(false);
+    expect(scene.isRunFinished()).toBe(true);
+
+    // A mineral collected after the boss died fills the hold.
+    const gameState = scene.getGameState();
+    gameState.mineralCapacity = 1;
+    gameState.minerals = 0;
+    const player = scene.getPlayer()!;
+    scene.spawnMineralAt(player.x, player.y);
+    scene.tick(0);
+
+    // The mineral is still credited to the hold…
+    expect(gameState.minerals).toBeGreaterThan(0);
+    expect(gameState.isHoldFull()).toBe(true);
+    // …but no choice opens and the celebration is never paused.
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(scene.isPaused()).toBe(false);
+
+    // The victory hold → GameOverScene transition is never gated by a choice
+    // (resolveHoldFullChoice is deliberately NOT set, so a regression that
+    // opens the overlay stalls the walk and fails loudly).
+    stepGameUntil(
+      booted!.game,
+      'victory hold → GameOverScene (hold-full choice suppressed)',
       () => booted!.game.scene.isActive('GameOverScene'),
     );
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);

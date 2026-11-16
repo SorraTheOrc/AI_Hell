@@ -78,6 +78,13 @@ import {
   type WeaponDefinition,
 } from './weapons';
 import { bundledWeaponLevelsJson } from '../core/bundledConfig';
+import {
+  DENSITY_EPSILON,
+  isPositiveWhole,
+  parseWeaponLevels,
+  type WeaponLadderRung,
+  type WeaponLadderParseResult,
+} from '../core/weaponLevelsSchema';
 import { resolveOptionsPodCount } from '../scenes/core/optionsEscort';
 import {
   DEFAULT_BPM,
@@ -549,18 +556,11 @@ export interface EuclideanPattern {
 /**
  * One authored rung of a weapon's Euclidean ladder **as stored in data**.
  *
- * Only the tempo-independent shape is authored: `stepMs` is deliberately
- * absent and injected at load time from {@link SIXTEENTH_NOTE_STEP_MS}, so a
- * data edit cannot desynchronise a rung from the shared 16th-note lattice.
+ * Re-exported from {@link ../core/weaponLevelsSchema} (the pure schema module)
+ * so the Vite config loader can validate writes without pulling this module's
+ * `?raw` bundle imports.
  */
-export interface WeaponLadderRung {
-  /** Onsets per tile (`1 <= k <= n`). */
-  readonly k: number;
-  /** Steps per tile (`n > 0`). */
-  readonly n: number;
-  /** Phase shift in steps (`0 <= rotation < n`). */
-  readonly rotation: number;
-}
+export type { WeaponLadderRung };
 
 /**
  * One rung of a weapon's Euclidean upgrade ladder: the rhythm, the level at
@@ -593,16 +593,8 @@ export const SIXTEENTH_NOTE_STEP_MS = beatSubdivisionMs(
 /** Steps in one 4-beat bar of the 16th-note lattice (`4 beats x 4 steps`). */
 const STEPS_PER_BAR = SIXTEENTH_NOTE_SUBDIVISIONS * 4;
 
-/** Difference below which two densities are treated as identical. */
-const DENSITY_EPSILON = 1e-9;
-
 /** Upper bound on the level scan used to derive ladder thresholds. */
 const LADDER_LEVEL_SEARCH_LIMIT = 500;
-
-/** True for a finite positive whole number. */
-function isPositiveWhole(value: number): boolean {
-  return Number.isFinite(value) && Number.isInteger(value) && value > 0;
-}
 
 /** Greatest common divisor, used to normalise a lattice pattern. */
 function greatestCommonDivisor(a: number, b: number): number {
@@ -896,136 +888,14 @@ export const CODE_WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
 /**
  * The result of parsing the bundled `src/data/weapon-levels.json` blob.
  *
- * A weapon whose entry is missing or malformed is omitted from `ladders` (the
- * caller uses the code ladder for that weapon only), and every finding is
- * recorded in `errors` in file order.
+ * Re-exported from {@link ../core/weaponLevelsSchema} (the pure schema module)
+ * so the Vite config loader can validate writes without pulling this module's
+ * `?raw` bundle imports.
  */
-export interface WeaponLadderParseResult {
-  /** Weapon ids whose ladder rungs came from the data file. */
-  ladders: Partial<Record<WeaponId, readonly WeaponLadderRung[]>>;
-  /** Human-readable diagnostics (empty for the committed file). */
-  errors: string[];
-}
+export type { WeaponLadderParseResult };
 
-/** Every shipped weapon id, for id validation and reporting order. */
-const SHIPPED_WEAPON_ID_SET: ReadonlySet<string> = new Set(WEAPON_IDS);
-
-/**
- * Parses the authored `src/data/weapon-levels.json` blob into per-weapon
- * ladder rungs. **Never throws.**
- *
- * Accepted shape: a JSON object keyed by weapon id, each value a non-empty
- * array of `{ k, n, rotation }` rungs. The three rung fields are validated
- * here — not only at ladder build time — so a data typo is reported against
- * the file a designer edited: `k`/`n` are positive whole numbers with
- * `k <= n`, `rotation` is a whole number with `0 <= rotation < n`, and the
- * rung densities (`k / n`) must not decrease along the ladder. Every rung
- * shares the runtime 16th-note step (see {@link SIXTEENTH_NOTE_STEP_MS}), so
- * `stepMs` is deliberately **not** authored.
- *
- * The density check is the one semantic invariant that would otherwise throw
- * from {@link buildWeaponPatternLadder} at module load: validating it here
- * keeps a well-formed but wrong data edit on the fallback path instead of
- * crashing the boot.
- */
-export function parseWeaponLevels(
-  raw: string | null | undefined,
-): WeaponLadderParseResult {
-  const errors: string[] = [];
-  const ladders: Partial<Record<WeaponId, readonly WeaponLadderRung[]>> = {};
-
-  if (raw === null || raw === undefined || raw.trim() === '') {
-    errors.push('src/data/weapon-levels.json: file is missing or empty');
-    return { ladders, errors };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    errors.push(`src/data/weapon-levels.json: invalid JSON (${reason})`);
-    return { ladders, errors };
-  }
-
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    errors.push(
-      'src/data/weapon-levels.json: expected an object keyed by weapon id',
-    );
-    return { ladders, errors };
-  }
-
-  const record = parsed as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
-    if (!SHIPPED_WEAPON_ID_SET.has(key)) {
-      errors.push(`${key}: unknown weapon id`);
-    }
-  }
-
-  for (const weaponId of WEAPON_IDS) {
-    const entry = record[weaponId];
-    if (entry === undefined) {
-      errors.push(`${weaponId}: missing ladder`);
-      continue;
-    }
-    if (!Array.isArray(entry) || entry.length === 0) {
-      errors.push(`${weaponId}: expected a non-empty array of rungs`);
-      continue;
-    }
-
-    const rungs: WeaponLadderRung[] = [];
-    let valid = true;
-    let previousDensity = Number.NEGATIVE_INFINITY;
-    entry.forEach((rung: unknown, index: number) => {
-      const where = `${weaponId}[${index}]`;
-      if (typeof rung !== 'object' || rung === null || Array.isArray(rung)) {
-        errors.push(`${where}: expected { k, n, rotation }`);
-        valid = false;
-        return;
-      }
-      const { k, n, rotation } = rung as Record<string, unknown>;
-      if (!isPositiveWhole(k as number) || !isPositiveWhole(n as number)) {
-        errors.push(`${where}: k and n must be positive whole numbers`);
-        valid = false;
-        return;
-      }
-      if ((k as number) > (n as number)) {
-        errors.push(`${where}: k (${String(k)}) must not exceed n (${String(n)})`);
-        valid = false;
-        return;
-      }
-      if (
-        !Number.isInteger(rotation) ||
-        (rotation as number) < 0 ||
-        (rotation as number) >= (n as number)
-      ) {
-        errors.push(
-          `${where}: rotation must be a whole number in [0, ${String(n)})`,
-        );
-        valid = false;
-        return;
-      }
-      const density = (k as number) / (n as number);
-      if (density + DENSITY_EPSILON < previousDensity) {
-        errors.push(
-          `${where}: density decreases (${String(k)}/${String(n)} < ${previousDensity.toFixed(4)})`,
-        );
-        valid = false;
-        return;
-      }
-      previousDensity = density;
-      rungs.push({
-        k: k as number,
-        n: n as number,
-        rotation: rotation as number,
-      });
-    });
-
-    if (valid) ladders[weaponId] = rungs;
-  }
-
-  return { ladders, errors };
-}
+/** The parser as well, re-exported for existing callers of this module. */
+export { parseWeaponLevels };
 
 /** What the module-load JSON parse resolved from data, and what fell back. */
 export interface WeaponLevelsLoadReport {
@@ -1037,25 +907,42 @@ export interface WeaponLevelsLoadReport {
   errors: readonly string[];
 }
 
-/** Parsed-at-module-load view of the bundled `weapon-levels.json`. */
-const WEAPON_LEVELS_JSON_DATA = parseWeaponLevels(bundledWeaponLevelsJson);
+/**
+ * The current authored JSON text. Seeded from the bundled file and replaced by
+ * the dev reload seam after a Save so the runtime ladders follow the file.
+ */
+let currentWeaponLevelsJson = bundledWeaponLevelsJson;
+
+/** Parsed view of the current `weapon-levels.json`. */
+let WEAPON_LEVELS_JSON_DATA = parseWeaponLevels(
+  currentWeaponLevelsJson,
+  WEAPON_IDS,
+);
+
+/** Builds the load report from a parse result (report order = `WEAPON_IDS`). */
+function buildWeaponLevelsLoadReport(
+  data: WeaponLadderParseResult,
+): WeaponLevelsLoadReport {
+  return {
+    resolvedFromJson: WEAPON_IDS.filter(
+      (weaponId) => data.ladders[weaponId] !== undefined,
+    ),
+    resolvedFromFallback: WEAPON_IDS.filter(
+      (weaponId) => data.ladders[weaponId] === undefined,
+    ),
+    errors: [...data.errors],
+  };
+}
 
 /**
- * The result of loading the data-driven ladders at module load.
+ * The result of loading the data-driven ladders.
  *
  * Exposed so the dev boot self-check can surface a typo that silently fell
  * back to code, and so tests can prove the JSON — not the TypeScript
- * literal — built the runtime ladders.
+ * literal — built the runtime ladders. Reassigned by the dev reload seam.
  */
-export const WEAPON_LEVELS_LOAD_REPORT: WeaponLevelsLoadReport = {
-  resolvedFromJson: WEAPON_IDS.filter(
-    (weaponId) => WEAPON_LEVELS_JSON_DATA.ladders[weaponId] !== undefined,
-  ),
-  resolvedFromFallback: WEAPON_IDS.filter(
-    (weaponId) => WEAPON_LEVELS_JSON_DATA.ladders[weaponId] === undefined,
-  ),
-  errors: [...WEAPON_LEVELS_JSON_DATA.errors],
-};
+export let WEAPON_LEVELS_LOAD_REPORT: WeaponLevelsLoadReport =
+  buildWeaponLevelsLoadReport(WEAPON_LEVELS_JSON_DATA);
 
 /**
  * Injects the shared 16th-note step into authored rungs, producing the full
@@ -1074,23 +961,28 @@ function injectLatticeStep(
  *
  * This is the **single authored source of the live fire cadence**; editing a
  * rung here (or in the JSON it loads) changes `resolveWeaponPattern` output
- * with no TypeScript edit. The `stepMs` of every rung is
- * {@link SIXTEENTH_NOTE_STEP_MS}.
+ * with no TypeScript edit. Reassigned in place by the dev reload seam.
  */
-export const WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
+function buildWeaponLevelsLadderSpecs(
+  data: WeaponLadderParseResult,
+): Record<WeaponId, readonly EuclideanPattern[]> {
+  return Object.fromEntries(
+    WEAPON_IDS.map((weaponId) => {
+      const dataRungs = data.ladders[weaponId];
+      return [
+        weaponId,
+        dataRungs === undefined
+          ? CODE_WEAPON_EUCLIDEAN_LADDER_SPECS[weaponId]
+          : injectLatticeStep(dataRungs),
+      ] as const;
+    }),
+  ) as Record<WeaponId, readonly EuclideanPattern[]>;
+}
+
+export let WEAPON_EUCLIDEAN_LADDER_SPECS: Record<
   WeaponId,
   readonly EuclideanPattern[]
-> = Object.fromEntries(
-  WEAPON_IDS.map((weaponId) => {
-    const dataRungs = WEAPON_LEVELS_JSON_DATA.ladders[weaponId];
-    return [
-      weaponId,
-      dataRungs === undefined
-        ? CODE_WEAPON_EUCLIDEAN_LADDER_SPECS[weaponId]
-        : injectLatticeStep(dataRungs),
-    ] as const;
-  }),
-) as Record<WeaponId, readonly EuclideanPattern[]>;
+> = buildWeaponLevelsLadderSpecs(WEAPON_LEVELS_JSON_DATA);
 
 /**
  * Formats the ladder-load self-check as one actionable message, or `null`
@@ -1236,23 +1128,88 @@ function buildWeaponPatternLadder(
 }
 
 /**
+ * Builds the resolved per-weapon Euclidean upgrade ladders from the current
+ * {@link WEAPON_EUCLIDEAN_LADDER_SPECS}.
+ */
+function buildWeaponLevelsLadders(): Readonly<
+  Record<WeaponId, readonly WeaponPatternLadderNode[]>
+> {
+  return Object.freeze(
+    Object.fromEntries(
+      (Object.keys(WEAPON_EUCLIDEAN_LADDER_SPECS) as WeaponId[]).map(
+        (weaponId) => [weaponId, buildWeaponPatternLadder(weaponId)] as const,
+      ),
+    ) as Record<WeaponId, readonly WeaponPatternLadderNode[]>,
+  );
+}
+
+/**
  * The resolved per-weapon Euclidean upgrade ladders: every catalogue weapon
  * maps to its rungs in increasing level order, each carrying the pattern, its
  * activation level and its effective densities.
  *
  * The values are documented in the machine-verifiable ledger in
  * [`docs/BALANCING.md`](../../docs/BALANCING.md) and pinned by
- * `src/utils/weaponLevels.test.ts`.
+ * `src/utils/weaponLevels.test.ts`. Reassigned in place by the dev reload
+ * seam so a designer's Save takes effect without a restart.
  */
-export const WEAPON_EUCLIDEAN_LADDERS: Readonly<
+export let WEAPON_EUCLIDEAN_LADDERS: Readonly<
   Record<WeaponId, readonly WeaponPatternLadderNode[]>
-> = Object.freeze(
-  Object.fromEntries(
-    (Object.keys(WEAPON_EUCLIDEAN_LADDER_SPECS) as WeaponId[]).map(
-      (weaponId) => [weaponId, buildWeaponPatternLadder(weaponId)] as const,
-    ),
-  ) as Record<WeaponId, readonly WeaponPatternLadderNode[]>,
-);
+> = buildWeaponLevelsLadders();
+
+// ── Dev reload seam (AH-0MW0WLZ9600693R9) ──────────────────────────
+
+/**
+ * Rebuilds every runtime ladder value from `raw` (the file text). Never
+ * throws: a malformed blob falls back per weapon exactly like module load.
+ * Reassigns the module-level live bindings, so existing importers observe the
+ * new ladders on their next read.
+ */
+function rebuildWeaponLevels(raw: string): WeaponLevelsLoadReport {
+  currentWeaponLevelsJson = raw;
+  WEAPON_LEVELS_JSON_DATA = parseWeaponLevels(raw, WEAPON_IDS);
+  WEAPON_LEVELS_LOAD_REPORT = buildWeaponLevelsLoadReport(
+    WEAPON_LEVELS_JSON_DATA,
+  );
+  WEAPON_EUCLIDEAN_LADDER_SPECS = buildWeaponLevelsLadderSpecs(
+    WEAPON_LEVELS_JSON_DATA,
+  );
+  WEAPON_EUCLIDEAN_LADDERS = buildWeaponLevelsLadders();
+  return WEAPON_LEVELS_LOAD_REPORT;
+}
+
+/**
+ * Dev re-read seam: replaces the runtime ladders with freshly read
+ * `weapon-levels.json` text. Called by `weaponLevelsStore` after a successful
+ * Save so the running scene plays the saved rhythm without a restart.
+ */
+export function reloadWeaponLevels(raw: string): WeaponLevelsLoadReport {
+  return rebuildWeaponLevels(raw);
+}
+
+/**
+ * Applies a per-weapon rung override to the current record and rebuilds the
+ * runtime ladders in memory (no I/O). Used by the store's test-mode commit and
+ * as the fallback when a dev re-read fails after a successful write.
+ */
+export function overrideWeaponLevelRungs(
+  weaponId: WeaponId,
+  rungs: readonly WeaponLadderRung[],
+): WeaponLevelsLoadReport {
+  let record: Record<string, unknown>;
+  try {
+    record = JSON.parse(currentWeaponLevelsJson) as Record<string, unknown>;
+  } catch {
+    record = {};
+  }
+  record[weaponId] = rungs.map(({ k, n, rotation }) => ({ k, n, rotation }));
+  return rebuildWeaponLevels(`${JSON.stringify(record, null, 2)}\n`);
+}
+
+/** Restores the runtime ladders to the bundled committed baseline. */
+export function resetWeaponLevelsToBundled(): WeaponLevelsLoadReport {
+  return rebuildWeaponLevels(bundledWeaponLevelsJson);
+}
 
 /**
  * Resolves the Euclidean rhythm a weapon plays at `level` — the epic's

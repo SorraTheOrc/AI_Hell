@@ -677,7 +677,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
 
     // 3. Normal Play Game via the pointer handler.
-    findText(booted!.scene, '▶  Play Game').emit('pointerdown');
+    findText(booted!.scene, '▶  Skirmish').emit('pointerdown');
     await wait(booted!.game, 150);
 
     const fresh = booted!.game.scene.getScene('PlayScene') as PlayScene;

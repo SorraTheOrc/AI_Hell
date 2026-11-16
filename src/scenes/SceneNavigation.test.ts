@@ -18,7 +18,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, stepGameUntil } from '../test/gameHarness';
+import {
+  bootScene,
+  describeBlockingState,
+  resolveMineralChoiceIfOpen,
+  resolveOpenHoldFullChoice,
+  stepGameUntil,
+  type StepGameUntilOptions,
+} from '../test/gameHarness';
 import { RULES_STORAGE_KEY } from '../core/rules';
 import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
@@ -72,24 +79,33 @@ async function bootAllGames(): Promise<Phaser.Game> {
 
 /**
  * Drives fixed-delta `game.step` calls until `predicate` holds. Fails
- * loudly with the active scene set if the budget is exhausted, so a
- * genuine logic regression cannot masquerade as a silent timeout.
+ * loudly with the active scene set **and** the blocking PlayScene state
+ * (paused / hold-full overlay / run-finished / boss pool / transition timer)
+ * so a genuine logic regression cannot masquerade as a silent timeout, and a
+ * stalled walk names the state that froze it (AH-0MWFLOUVH006GAPT).
+ *
+ * A hold-full choice pauses the scene (and a paused `tick()` is a no-op), so
+ * a walk that expects the run to keep advancing opts into resolving it
+ * between steps via `options.resolveHoldFullChoice` — the same option
+ * `stepGameUntil` exposes (AH-0MWFLOWI6007WVZI). It defaults to off so a
+ * suite asserting the paused/overlay state keeps its behaviour.
  */
 function stepUntil(
   game: Phaser.Game,
   label: string,
   predicate: () => boolean,
   maxSteps = 600,
+  options: StepGameUntilOptions = {},
 ): void {
   for (let i = 0; i < maxSteps; i++) {
     if (predicate()) return;
+    if (options.resolveHoldFullChoice) resolveOpenHoldFullChoice(game);
     simTime += STEP_MS;
     game.step(simTime, STEP_MS);
   }
-  const active = game.scene.getScenes(true).map((s) => s.scene.key);
   throw new Error(
     `stepUntil(${label}): condition not met after ${maxSteps} steps; ` +
-      `active=[${active.join(', ')}]`,
+      describeBlockingState(game),
   );
 }
 
@@ -205,25 +221,6 @@ function finishTransition(scene: PlayScene): void {
 }
 
 /**
- * Resolves an open hold-full power-up choice, if any.
- *
- * Long deterministic boss walks tick the auto-fire through many waves; the
- * resulting mineral drops eventually fill the hold and `PlayScene` pauses for
- * the hold-full choice overlay (`openMineralChoice()` → `setPaused(true)`).
- * A paused scene ignores `tick()` entirely, so a walk would stall in its
- * iteration guard. Selecting the first option resumes play, exactly as a
- * player would (AH-0MV5L6BVN005DP4I).
- *
- * @returns `true` when a choice was open and has been resolved so the caller
- *   can retry the step.
- */
-function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
-  if (!scene.isMineralChoiceOpen()) return false;
-  scene.selectMineralChoice(0);
-  return true;
-}
-
-/**
  * A one-level campaign for the navigation boss walk (AH-0MVCYANT6003SG5C).
  * With a single level `isFinalLevel` is true immediately, so clearing it
  * triggers the final boss without walking the whole ten-level campaign.
@@ -278,6 +275,41 @@ function reachBoss(scene: PlayScene): void {
   }
 }
 
+/**
+ * Hits remaining in the active encounter's (power-scaled) pool, derived from
+ * the live HP fraction so no test hard-codes the pool size
+ * (AH-0MVH87A3L004VOLD).
+ */
+function remainingBossHits(
+  boss: { alive: boolean; getHpFraction(): number; getTotalHp(): number },
+): number {
+  if (!boss.alive) return 0;
+  return Math.max(0, Math.round(boss.getTotalHp() * boss.getHpFraction()));
+}
+
+/**
+ * Lands hits on the active boss until its hit pool is spent (the final boss in
+ * the navigation walk).
+ *
+ * The kill loop is the walker the hold-full stall lives in
+ * (AH-0MWFLOUVH006GAPT): while a hold-full choice is open `PlayScene` is paused
+ * and `tick()` is a no-op, so no further hit lands. Shared by the AC4 victory
+ * test and the hold-full regression so both drive the same loop shape the
+ * deterministic-stepping fix hardens (AH-0MWFLOWI6007WVZI).
+ */
+function killBoss(play: PlayScene): void {
+  const boss = play.getBoss();
+  if (!boss) throw new Error('killBoss: no active boss encounter');
+  for (let guard = 0; guard < 400 && boss.alive; guard++) {
+    // A hold-full choice pauses `PlayScene`, which makes `tick()` a no-op —
+    // resolve it before the next hit or the kill loop stalls with the boss
+    // still standing (AH-0MWFLOWI6007WVZI; the AC4 stall's direct cause).
+    if (resolveMineralChoiceIfOpen(play)) continue;
+    play.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+    play.tick(0.016);
+  }
+}
+
 /** Kills the player in PlayScene, landing on GameOverScene. */
 function die(play: PlayScene, game: Phaser.Game): void {
   const gs = play.getGameState();
@@ -308,7 +340,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     expect(game!.scene.isActive('MenuScene')).toBe(true);
 
     // Menu → PlayScene (Level 1).
-    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+    navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
     expect(game!.scene.isActive('PlayScene')).toBe(true);
     expect(game!.scene.isActive('MenuScene')).toBe(false);
 
@@ -339,7 +371,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
   it('AC2 — PlayScene hands the final score to GameOverScene', async () => {
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
-    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+    navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
     // Complete the wormhole spawn animation so enemies are collidable.
@@ -365,7 +397,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     // Run the loop twice.
     for (let i = 0; i < 2; i++) {
       const menu = game.scene.getScene('MenuScene');
-      navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+      navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
 
       const play = game.scene.getScene('PlayScene') as PlayScene;
       play.finishSpawnAnimations();
@@ -390,7 +422,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     // Third session boots a clean PlayScene: exactly one wave of enemies,
     // no accumulated bullets/explosions, exactly one canvas.
     const menu = game.scene.getScene('MenuScene');
-    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+    navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
     // The wave's formation enemies are all present; the random asteroid
@@ -409,7 +441,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
   it('AC4 — a boss victory also returns to the menu from GameOverScene', async () => {
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
-    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+    navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
 
@@ -425,14 +457,15 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     reachBoss(play);
     const boss = play.getBoss()!;
     expect(boss).not.toBeNull();
-    // The encounter's effective total pool (power-scaled —
-    // AH-0MVH87A3L004VOLD).
-    for (let i = 0; i < boss.getTotalHp(); i++) {
-      play.spawnPlayerBullet(boss.x, boss.y, 0, 0);
-      play.tick(0.016);
-    }
-    stepUntil(game, 'GameOverScene active', () =>
-      game!.scene.isActive('GameOverScene'),
+    killBoss(play);
+    // Resolve any hold-full pause that fills again during the victory hold
+    // (a paused Clock freezes the GameOver transition), then wait it out.
+    stepUntil(
+      game,
+      'GameOverScene active',
+      () => game!.scene.isActive('GameOverScene'),
+      600,
+      { resolveHoldFullChoice: true },
     );
     expect(game!.scene.isActive('GameOverScene')).toBe(true);
 
@@ -441,6 +474,79 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     navigateTo(game, over, '←  Return to Menu', 'MenuScene');
     expect(game!.scene.isActive('MenuScene')).toBe(true);
   });
+
+  /**
+   * **Green-after (AH-0MWFLOUVH006GAPT → AH-0MWFLOWI6007WVZI).** Forces the
+   * hold full in the same window as the boss's lethal blow — the exact shape
+   * of the AC4 flake. `openMineralChoice()` pauses the scene
+   * (`setPaused(true)`, plus `scene.pause()` when the overlay scene is
+   * registered), and a paused `PlayScene.tick()` returns immediately, so
+   * neither the remaining kill-loop hits nor the 5 s victory `delayedCall`
+   * advance without the deterministic-stepping fix. `killBoss` now resolves
+   * the open choice between ticks and the victory wait opts into
+   * `resolveHoldFullChoice`, so the run still reaches `GameOverScene` with
+   * `getWon() === true`. Grown out of the red-before witness authored as
+   * `it.fails` (the stalled `stepUntil` diagnostic naming `paused=true,
+   * mineralChoiceOpen=true`) on the previous item.
+   */
+  it(
+    'AC4 regression — the hold-full pause in the boss-kill window still reaches the victory screen (AH-0MWFLOUVH006GAPT)',
+    async () => {
+      game = await bootAllGames();
+      const menu = game.scene.getScene('MenuScene');
+      navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
+
+      const play = game.scene.getScene('PlayScene') as PlayScene;
+      // Same single-level campaign as AC4 so the walk reaches the boss.
+      play.getWaveManager().setLevels([singleLevelForNavigation()]);
+      play.getWaveManager().beginGame();
+      play.spawnWave();
+      reachBoss(play);
+
+      const boss = play.getBoss()!;
+      const gs = play.getGameState();
+      // Park the hold far below capacity while the fight is walked, so the
+      // only hold-full edge is the one this test forces — never a mineral a
+      // random drop happened to deliver.
+      gs.mineralCapacity = 999;
+      gs.minerals = 0;
+
+      // Leave the encounter one hit from death: the next hit is the lethal
+      // blow, so the hold-full choice below opens in the same window.
+      for (let guard = 0; guard < 400 && remainingBossHits(boss) > 1; guard++) {
+        play.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+        play.tick(0.016);
+      }
+      expect(remainingBossHits(boss)).toBe(1);
+
+      // Fill the hold in that window: one more mineral, collected by the ship,
+      // opens the pausing hold-full choice.
+      gs.mineralCapacity = gs.minerals + 1;
+      const player = play.getPlayer()!;
+      play.spawnMineralAt(player.x, player.y);
+      play.tick(0);
+      expect(
+        play.isMineralChoiceOpen(),
+        'the hold-full choice must be open',
+      ).toBe(true);
+      expect(play.isPaused(), 'the open choice pauses the scene').toBe(true);
+
+      killBoss(play);
+      // The hard-won hold-full edge is resolved between ticks, and the victory
+      // wait re-resolves should the hold fill again mid-hold.
+      stepUntil(
+        game,
+        'GameOverScene active',
+        () => game!.scene.isActive('GameOverScene'),
+        600,
+        { resolveHoldFullChoice: true },
+      );
+      expect(game!.scene.isActive('GameOverScene')).toBe(true);
+
+      const over = game.scene.getScene('GameOverScene') as GameOverScene;
+      expect(over.getWon()).toBe(true);
+    },
+  );
 });
 describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () => {
   let game: Phaser.Game | null = null;

@@ -3,9 +3,9 @@
  *
  * Phaser only resolves `scene.start('<Key>')` for scenes listed in
  * `buildGameConfig().scene`; an unregistered scene target silently does
- * nothing at runtime. `DefenceReportScene` was exactly that case: `PlayScene`
- * starts it after a Hangar War deployment ends, but it was missing from the
- * boot list, so the between-sortie report never appeared and the Hangar War
+ * nothing at runtime. The old between-sortie report scene was exactly that
+ * case: `PlayScene` started it after a Hangar War deployment ended, but it was
+ * missing from the boot list, so the report never appeared and the Hangar War
  * loop died after the first deployment.
  *
  * **Why the rest of the suite did not catch it.** The traversal and
@@ -15,17 +15,22 @@
  * is invisible to them. This suite asserts the shipped array itself:
  *
  * 1. every scene key a shipped screen starts resolves from
- *    `buildGameConfig().scene` (the transition guard that would have failed for
- *    `DefenceReportScene`), and
+ *    `buildGameConfig().scene` (the transition guard that would have caught
+ *    that missing registration), and
  * 2. every registered scene's *actual* Phaser key equals its class name, so the
  *    key-based transitions above cannot silently miss a renamed scene.
+ *
+ * ## The between-sortie report screen is gone (AH-0MWEXHODJ0067PSJ)
+ *
+ * The separate report scene is rolled into the hex map (parent
+ * AH-0MWDC3L9I008INDP): a deployment lands on the map, so no shipped screen
+ * starts a report and the shipped array does not register one.
  */
 
 import { describe, expect, it } from 'vitest';
 import type Phaser from 'phaser';
 
 import { buildGameConfig } from './gameConfig';
-import { DEFENCE_REPORT_SCENE_KEY, DefenceReportScene } from '../scenes/DefenceReportScene';
 import { HANGAR_SCENE_KEY, HangarScene } from '../scenes/HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from '../scenes/HexMapScene';
 
@@ -36,14 +41,15 @@ import { HEX_MAP_SCENE_KEY, HexMapScene } from '../scenes/HexMapScene';
  * below keeps it honest (a key that no longer matches a registered scene's own
  * key fails), and the end-to-end Hangar War flow suite
  * (`src/scenes/hangarWarFlow.integration.test.ts`) exercises the real
- * transitions through the shipped config.
+ * transitions through the shipped config. The retired report key is
+ * deliberately absent: the between-sortie report is rolled into the hex map,
+ * so no shipped screen starts it any more.
  */
 const TRANSITION_TARGETS = [
   'MenuScene',
   'PlayScene',
   'HangarScene',
   'HexMapScene',
-  DEFENCE_REPORT_SCENE_KEY,
   'PauseScene',
   'HelpScene',
   'MineralChoiceScene',
@@ -74,21 +80,19 @@ describe('shipped scene registration', () => {
 
     expect(registered).toContain(HangarScene);
     expect(registered).toContain(HexMapScene);
-    expect(registered).toContain(DefenceReportScene);
 
     // The scene convention is key === class name; a mismatch would make the
     // registration useless (Phaser starts scenes by key).
     expect(HANGAR_SCENE_KEY).toBe(HangarScene.name);
     expect(HEX_MAP_SCENE_KEY).toBe(HexMapScene.name);
-    expect(DEFENCE_REPORT_SCENE_KEY).toBe(DefenceReportScene.name);
   });
 
   it('resolves every scene key the shipped screens start', () => {
     const keys = new Set(registeredKeys());
 
     // A `scene.start('<Key>')` whose key is missing from the shipped array is a
-    // silent no-op at runtime: this is the assertion that failed for the
-    // unregistered `DefenceReportScene` (AH-0MVZ4S9ZU004GXUM AC2).
+    // silent no-op at runtime: this is the assertion that caused the missing
+    // registration to be caught (AH-0MVZ4S9ZU004GXUM AC2).
     for (const target of TRANSITION_TARGETS) {
       expect(
         keys.has(target),

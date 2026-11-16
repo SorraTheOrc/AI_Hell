@@ -71,6 +71,7 @@ class FakeRecorder implements TelemetryRecorder {
   readonly events: Array<{ event: string; payload: unknown }> = [];
   flushCount = 0;
   buffer: string | null = null;
+  byteLength: number | null = null;
 
   constructor(enabled = true) {
     this.enabled = enabled;
@@ -82,6 +83,10 @@ class FakeRecorder implements TelemetryRecorder {
 
   readBuffer(): string | null {
     return this.buffer;
+  }
+
+  readByteLength(): number | null {
+    return this.byteLength;
   }
 
   readWindow(): RetainedWindow | null {

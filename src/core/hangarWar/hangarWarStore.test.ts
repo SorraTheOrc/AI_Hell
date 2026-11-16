@@ -13,6 +13,10 @@
  * 3. **Migration** — a hangar-only (pre-ring) save loads as "hangar at its
  *    last valid state, empty ring", stamped with the current version, and a
  *    partial ring is never discarded.
+ * 4. **Special-mission state** — the ring-2 special mission's captured
+ *    `hull-3` grant round-trips without loss, a legacy save written before it
+ *    landed migrates by field presence (no version bump) and a structurally
+ *    broken save is still rejected whole (AH-0MWF0CRGE000T6HJ).
  *
  * The corrupt/hangar-only/partial-ring samples come from the shared fixtures
  * (`./fixtures`), so the store is tested against exactly the payload contract
@@ -712,6 +716,84 @@ describe('hangar-war store frontier clock field (AH-0MVUXCBBK004EJIP)', () => {
   });
 });
 
+describe('hangar-war store — defending-bot skills are additive (AH-0MVWZYJ740037EZ1)', () => {
+  /** The valid fixture with hex-1's defender carrying `skills`. */
+  function withDefenderSkills(
+    skills: unknown,
+  ): Record<string, unknown> {
+    const payload = validRecord();
+    const [first] = hexRecords(payload);
+    recordOf(first.defender).skills = skills;
+    return payload;
+  }
+
+  it('round-trips a defender’s skills through the store', () => {
+    const skills = [
+      { id: 'bulwark-line-breaker', name: 'Line-breaker', bossType: 'the-dawnbreaker', bonus: 4 },
+      { id: 'maw-warded', name: 'Maw-warded', bossType: 'maw-of-ashes', bonus: 5 },
+    ];
+    const storage = storageWithRaw(
+      serialisePayload(withDefenderSkills(skills) as unknown as HangarWarPayload),
+    );
+
+    const loaded = loadHangarWarPayload(storage);
+
+    expect(loaded?.ring.hexes[0].defender?.skills).toEqual(skills);
+    // The stored rating is untouched by the skill data.
+    expect(loaded?.ring.hexes[0].defender?.defenceRating).toBe(7);
+
+    saveHangarWarPayload(loaded!, storage);
+    expect(
+      loadHangarWarPayload(storage)?.ring.hexes[0].defender?.skills,
+    ).toEqual(skills);
+  });
+
+  it('omits the field for a save written before skills existed (field presence)', () => {
+    // No version bump: an old save loads exactly as it was written, and absence
+    // reads as "no skills" in the resolver.
+    const loaded = parseHangarWarPayload(validRecord());
+
+    expect(loaded).not.toBeNull();
+    expect('skills' in loaded!.ring.hexes[0].defender!).toBe(false);
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+  });
+
+  it('salvages an unusable skill list instead of rejecting the save', () => {
+    const payload = parseHangarWarPayload(
+      withDefenderSkills([
+        'not-a-skill',
+        null,
+        { id: '', name: 'Blank', bossType: 'maw-of-ashes', bonus: 4 },
+        { id: 'no-boss', name: 'No boss', bonus: 4 },
+        { id: 'ok', name: 'Usable', bossType: 'maw-of-ashes', bonus: 3 },
+      ]),
+    );
+
+    expect(payload).not.toBeNull();
+    // Only the entry with a usable id and boss type survives; the hex and the
+    // rest of the payload are kept (a valid hangar is never wiped).
+    expect(payload?.ring.hexes[0].defender?.skills).toEqual([
+      { id: 'ok', name: 'Usable', bossType: 'maw-of-ashes', bonus: 3 },
+    ]);
+    expect(payload?.hangar.bankedMinerals).toBe(240);
+  });
+
+  it('omits the field when every stored skill is unusable', () => {
+    const payload = parseHangarWarPayload(withDefenderSkills(['junk', 7]));
+
+    expect(payload).not.toBeNull();
+    expect('skills' in payload!.ring.hexes[0].defender!).toBe(false);
+  });
+
+  it('is total on a non-list skill field', () => {
+    for (const value of ['many', 42, {}, null]) {
+      const payload = parseHangarWarPayload(withDefenderSkills(value));
+      expect(payload).not.toBeNull();
+      expect('skills' in payload!.ring.hexes[0].defender!).toBe(false);
+    }
+  });
+});
+
 describe('hangar-war store migration (hangar-only save)', () => {
   it('loads the hangar intact with an empty ring', () => {
     const loaded = loadRaw(serialisePayload(HANGAR_ONLY_PAYLOAD));
@@ -739,5 +821,411 @@ describe('hangar-war store migration (hangar-only save)', () => {
 
     expect(loadHangarWarPayload(storage)).toEqual(migrated);
     expect(loadHangarWarPayload(storage)?.hangar).toEqual(HANGAR_ONLY_PAYLOAD.hangar);
+  });
+});
+
+/**
+ * A ring-2 payload whose special mission has been captured.
+ *
+ * Post-MVP Hangar War (`AH-0MVWZYIWX0008C55`, Q1 = a/Q2 = a): `hex-r2-3`
+ * (*the-void-marshall*) is the authored special-mission hex and its reward is
+ * the extra-hit-points Juggernaut Hull (`hull-3`). The deployment is an
+ * ordinary one-level capture, so the saved evidence is exactly what
+ * `resolveHexCapture` writes: the hex's `grantedWeapon` and the hangar's
+ * `unlockedHulls`. The authored `isSpecialMission` marker itself is ring data
+ * (`src/data/hexRingDefinitions.ts`), never saved per hex.
+ */
+function capturedSpecialMissionPayload(): HangarWarPayload {
+  return {
+    version: HANGAR_WAR_VERSION,
+    seed: 424242,
+    hangar: {
+      bankedMinerals: 310,
+      bankedCores: 4,
+      unlockedHulls: ['hull-1', 'hull-3'],
+      unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
+      ownedModifiers: [],
+      activeHull: 'hull-3',
+      activeLoadout: { startingWeapons: [], modifiers: [] },
+    },
+    ring: {
+      ringIndex: 2,
+      hexes: [
+        {
+          id: 'hex-r2-3',
+          q: -2,
+          r: 2,
+          held: true,
+          aggression: 5,
+          defender: { hullId: 'hull-3', defenceRating: 9, bankedMinerals: 40 },
+          bossDefeated: true,
+          grantedWeapon: 'hull-3',
+        },
+        {
+          id: 'hex-r2-4',
+          q: -1,
+          r: -1,
+          held: false,
+          aggression: 2,
+          defender: null,
+          bossDefeated: false,
+          grantedWeapon: null,
+        },
+      ],
+    },
+    pendingAttacks: [],
+    bestScore: 51_000,
+  };
+}
+
+/** The payload above as the loose record a stored/legacy save is. */
+function specialMissionRecord(): Record<string, unknown> {
+  return JSON.parse(serialisePayload(capturedSpecialMissionPayload())) as Record<
+    string,
+    unknown
+  >;
+}
+
+describe('hangar-war store special-mission persistence (AH-0MWF0CRGE000T6HJ)', () => {
+  it('round-trips the captured special-mission hex and its granted hull without loss', () => {
+    const storage = createInMemoryHangarWarStorage();
+    const saved = capturedSpecialMissionPayload();
+
+    expect(saveHangarWarPayload(saved, storage)).toBe(true);
+    const loaded = loadHangarWarPayload(storage);
+
+    // Nothing is dropped or defaulted on the way through the one payload.
+    expect(loaded).toEqual(saved);
+    // TC3: the hex keeps its identity and axial coordinates.
+    expect(loaded?.ring).toMatchObject({ ringIndex: 2 });
+    expect(loaded?.ring.hexes[0]).toMatchObject({
+      id: 'hex-r2-3',
+      q: -2,
+      r: 2,
+    });
+    // TC1: the special grant is recorded on the hex ...
+    expect(loaded?.ring.hexes[0].grantedWeapon).toBe('hull-3');
+    // ... and the granted hull is owned in the persistent hangar.
+    expect(loaded?.hangar.unlockedHulls).toEqual(['hull-1', 'hull-3']);
+    // Additive special-mission content needs no schema version bump.
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+    expect(HANGAR_WAR_VERSION).toBe(1);
+  });
+
+  it('survives a second write-back unchanged (the round-trip is idempotent)', () => {
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(capturedSpecialMissionPayload(), storage);
+
+    const first = loadHangarWarPayload(storage) as HangarWarPayload;
+    expect(saveHangarWarPayload(first, storage)).toBe(true);
+    const second = loadHangarWarPayload(storage);
+
+    expect(second).toEqual(first);
+    expect(serialisePayload(second)).toBe(serialisePayload(first));
+  });
+
+  it('loads a legacy save written before the special mission landed (field presence)', () => {
+    // A save from before the feature: the hex at the special mission's
+    // coordinates was an ordinary, uncaptured hex, and no new field existed —
+    // not even the frontier tick. It must load cleanly, with the hangar and
+    // the ring untouched, the absent optional fields left absent (safe
+    // defaults), and the version still 1.
+    const legacy = specialMissionRecord();
+    delete legacy.frontierTick;
+    const legacyHexes = hexRecords(legacy);
+    legacyHexes[0] = {
+      id: 'hex-r2-3',
+      q: -2,
+      r: 2,
+      held: false,
+      aggression: 5,
+      defender: null,
+      bossDefeated: false,
+      grantedWeapon: null,
+    };
+    legacy.hangar = {
+      bankedMinerals: 120,
+      bankedCores: 2,
+      unlockedHulls: ['hull-1', 'hull-2'],
+      unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
+      ownedModifiers: [],
+      activeHull: 'hull-2',
+      activeLoadout: { startingWeapons: [], modifiers: [] },
+    };
+
+    const loaded = parseHangarWarPayload(legacy);
+
+    // No crash, no reset: the hangar and the ring survive as written.
+    expect(loaded).not.toBeNull();
+    expect(loaded?.hangar).toMatchObject({
+      bankedMinerals: 120,
+      bankedCores: 2,
+      activeHull: 'hull-2',
+    });
+    expect(loaded?.hangar.unlockedHulls).toEqual(['hull-1', 'hull-2']);
+    // The hex reads as an ordinary, not-yet-captured hex: the safe defaults
+    // for *not offered / not completed* are absence, not invented data.
+    expect(loaded?.ring.hexes[0]).toMatchObject({
+      id: 'hex-r2-3',
+      q: -2,
+      r: 2,
+      held: false,
+      bossDefeated: false,
+      grantedWeapon: null,
+    });
+    // An additive field that was never written stays absent (field presence,
+    // exactly like `frontierTick`), and the schema version is unchanged.
+    expect('frontierTick' in (loaded as object)).toBe(false);
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+  });
+
+  it('keeps per-hex special-mission identity out of the saved payload', () => {
+    // The special-mission marker is authored ring data, so the saved hex has
+    // only the shipped fields. If a per-hex special-mission field is ever
+    // added it must be optional and follow the `frontierTick` pattern
+    // (absence reads as *not offered / not completed*), never a version bump.
+    const loaded = parseHangarWarPayload(
+      JSON.parse(
+        serialisePayload({
+          ...capturedSpecialMissionPayload(),
+          ring: {
+            ringIndex: 2,
+            hexes: [{ id: 'hex-r2-3', q: -2, r: 2 }],
+          },
+        }),
+      ),
+    );
+
+    expect(loaded).not.toBeNull();
+    expect(Object.keys(loaded?.ring.hexes[0] ?? {}).sort()).toEqual([
+      'aggression',
+      'bossDefeated',
+      'defender',
+      'grantedWeapon',
+      'held',
+      'id',
+      'q',
+      'r',
+    ]);
+  });
+
+  it('drops a structurally broken hex but never wipes the granted hull', () => {
+    // A malformed hex is salvaged away; the hangar that owns the special hull
+    // is untouched, so a corrupt ring can never lose the reward.
+    const record = specialMissionRecord();
+    delete hexRecords(record)[0].q;
+
+    const loaded = parseHangarWarPayload(record);
+
+    expect(loaded).not.toBeNull();
+    expect(loaded?.ring.hexes.map((hexState) => hexState.id)).toEqual(['hex-r2-4']);
+    expect(loaded?.hangar.unlockedHulls).toContain('hull-3');
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+  });
+
+  it('still rejects a structurally broken special-mission save whole (unchanged)', () => {
+    // The existing parse contract is unchanged by the special mission: an
+    // unidentifiable payload loads as `null`, never throws, and is never
+    // rewritten, so the build that wrote it can still read it.
+    const broken = serialisePayload({
+      ...capturedSpecialMissionPayload(),
+      version: HANGAR_WAR_VERSION + 1,
+    });
+    const storage = storageWithRaw(broken);
+
+    expect(() => loadHangarWarPayload(storage)).not.toThrow();
+    expect(loadHangarWarPayload(storage)).toBeNull();
+    expect(storage.getItem(HANGAR_WAR_STORAGE_KEY)).toBe(broken);
+
+    const noHangar = parseHangarWarPayload({
+      ...capturedSpecialMissionPayload(),
+      hangar: undefined,
+    });
+    expect(noHangar).toBeNull();
+  });
+});
+
+// ── Defender upgrade snapshot — red-first guard tests (AH-0MWHF6X9N0082BRO) ─
+//
+// C3 (AH-0MWHF6ZHW0058SMX) persists the run's permanent-upgrade snapshot on
+// the `HexDefender` as an **additive optional field** (`upgradeSnapshot`),
+// parsed defensively and omitted when empty — the exact `skills` pattern
+// (AH-0MVWZYJ740037EZ1). These specs are part of the test-first slice: the
+// round-trip below is red until C3 preserves the field; the presence/salvage
+// pins go green once C3 lands and stay green as the no-schema-bump guard.
+//
+describe('hangar-war store — defender upgrade snapshot is additive (AH-0MWHF6X9N0082BRO, red-first guard)', () => {
+  /** A valid snapshot round-tripping exactly as the run recorded it. */
+  const upgradeSnapshot = {
+    weaponLevels: [
+      { id: 'cannon', level: 2 },
+      { id: 'spread', level: 3 },
+    ],
+    powerUpLevels: [
+      { id: 'shield', level: 1 },
+      { id: 'extra_life', level: 1 },
+    ],
+    consumablePools: [{ id: 'mystery_ufo', charges: 1 }],
+  };
+
+  interface StoredDefender {
+    upgradeSnapshot?: unknown;
+    defenceRating?: number;
+  }
+
+  /** The hex-1 defender of a loaded payload, structurally accessed. */
+  function storedDefender(payload: HangarWarPayload | null): StoredDefender {
+    return payload!.ring.hexes[0].defender! as unknown as StoredDefender;
+  }
+
+  /** The valid fixture with the hex-1 defender carrying `upgradeSnapshot`. */
+  function withUpgradeSnapshot(value: unknown): Record<string, unknown> {
+    const payload = validRecord();
+    const [first] = hexRecords(payload);
+    recordOf(first.defender).upgradeSnapshot = value;
+    return payload;
+  }
+
+  it('round-trips a defender′s upgrade snapshot through the store (RED until C3)', () => {
+    const raw = serialisePayload(
+      withUpgradeSnapshot(upgradeSnapshot) as unknown as HangarWarPayload,
+    );
+    const storage = storageWithRaw(raw);
+
+    const loaded = loadHangarWarPayload(storage);
+    expect(loaded).not.toBeNull();
+    // Red until C3's defensive parse preserves the additive field; today the
+    // parser drops the unknown field and the assertion fails.
+    expect(storedDefender(loaded).upgradeSnapshot).toEqual(upgradeSnapshot);
+    // The stored rating is untouched by the snapshot data.
+    expect(storedDefender(loaded).defenceRating).toBe(7);
+
+    saveHangarWarPayload(loaded!, storage);
+    expect(storedDefender(loadHangarWarPayload(storage)).upgradeSnapshot).toEqual(
+      upgradeSnapshot,
+    );
+  });
+
+  it('omits the field for a save written before the snapshot existed (field presence)', () => {
+    // No version bump: an old save loads exactly as it was written, and
+    // absence reads as "no upgrades" in the resolver.
+    const loaded = parseHangarWarPayload(validRecord());
+
+    expect(loaded).not.toBeNull();
+    expect('upgradeSnapshot' in loaded!.ring.hexes[0].defender!).toBe(false);
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+  });
+
+  it('salvages an unusable upgrade snapshot instead of rejecting the save', () => {
+    const payload = parseHangarWarPayload(withUpgradeSnapshot(['junk', 7]));
+
+    expect(payload).not.toBeNull();
+    // A structurally unusable snapshot is dropped; the hex, its defender and
+    // the rest of the payload survive (a valid hangar is never wiped).
+    expect('upgradeSnapshot' in payload!.ring.hexes[0].defender!).toBe(false);
+    expect(payload?.hangar.bankedMinerals).toBe(240);
+  });
+
+  it('is total on a non-object upgrade-snapshot field', () => {
+    for (const value of ['many', 42, {}, null]) {
+      const payload = parseHangarWarPayload(withUpgradeSnapshot(value));
+      expect(payload).not.toBeNull();
+      expect('upgradeSnapshot' in payload!.ring.hexes[0].defender!).toBe(false);
+    }
+  });
+
+  /** The hex-1 defender of a loaded payload as a plain record. */
+  function loadedDefender(payload: HangarWarPayload): Record<string, unknown> {
+    return payload.ring.hexes[0].defender! as unknown as Record<string, unknown>;
+  }
+
+  it('drops unknown ids, normalises unusable counts and collapses duplicates (AC defensive parse)', () => {
+    // One corrupt-at-the-edges snapshot: unknown ids, negative and fractional
+    // counts, duplicate rows, unusable entries and rows missing a count or id
+    // all in one list per bucket. The stored snapshot must come back clean —
+    // unknowns dropped, negative/fractional counts normalised (negative → 0 →
+    // removed, `1.9` → `1`), duplicates collapsed (last value wins, first-seen
+    // order) — exactly the `snapshotDefenderUpgrades` contract.
+    const raw = serialisePayload(
+      withUpgradeSnapshot({
+        weaponLevels: [
+          { id: 'cannon', level: 2 },
+          { id: 'not_a_weapon', level: 3 },
+          { id: 'spread', level: -4 },
+          { id: 'railgun', level: 1.9 },
+          { id: 'cannon', level: 5 },
+          'junk',
+          null,
+          { id: 'cannon' },
+          { level: 3 },
+        ],
+        powerUpLevels: [
+          { id: 'shield', level: 2 },
+          { id: 'bogus_kind', level: 4 },
+          { id: 'phase_shift', level: -1 },
+        ],
+        consumablePools: [
+          { id: 'mystery_ufo', charges: 0 },
+          { id: 'force_field', charges: 2 },
+        ],
+      }) as unknown as HangarWarPayload,
+    );
+
+    const loaded = loadRaw(raw) as HangarWarPayload;
+
+    expect(loadedDefender(loaded).upgradeSnapshot).toEqual({
+      weaponLevels: [
+        { id: 'cannon', level: 5 },
+        { id: 'railgun', level: 1 },
+      ],
+      powerUpLevels: [{ id: 'shield', level: 2 }],
+      consumablePools: [{ id: 'force_field', charges: 2 }],
+    });
+    // The defender and the rest of the payload survive untouched.
+    expect(loadedDefender(loaded).defenceRating).toBe(7);
+    expect(loaded.hangar.bankedMinerals).toBe(240);
+  });
+
+  it('collapses non-finite stored counts that JSON cannot carry (AC non-finite)', () => {
+    // NaN/±Infinity cannot survive JSON, but a caller can hand the parser an
+    // in-memory payload carrying them (exactly as the seed/money tests do);
+    // each non-finite count normalises to 0 and its row is removed, so the
+    // whole snapshot disappears and the field is omitted.
+    const parsed = parseHangarWarPayload(
+      withUpgradeSnapshot({
+        weaponLevels: [{ id: 'cannon', level: Number.POSITIVE_INFINITY }],
+        powerUpLevels: [{ id: 'shield', level: Number.NaN }],
+        consumablePools: [
+          { id: 'force_field', charges: Number.NEGATIVE_INFINITY },
+        ],
+      }),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect('upgradeSnapshot' in parsed!.ring.hexes[0].defender!).toBe(false);
+    expect(parsed?.hangar.bankedMinerals).toBe(240);
+  });
+
+  it('round-trips a pre-change defender (no upgrades) through a save/load cycle unchanged', () => {
+    // The pre-change fixture carries a defender with no new field at all
+    // (not even `skills`). Through save → load → save the payload must come
+    // back exactly as written — no `upgradeSnapshot` appears out of nowhere,
+    // the write is byte-stable across cycles and the fixture still reads
+    // back identically.
+    const storage = createInMemoryHangarWarStorage();
+
+    saveHangarWarPayload(VALID_HANGAR_WAR_PAYLOAD, storage);
+    const firstBytes = storage.getItem(HANGAR_WAR_STORAGE_KEY) as string;
+
+    const loaded = loadHangarWarPayload(storage);
+    expect(loadedDefender(loaded as HangarWarPayload)).not.toHaveProperty('upgradeSnapshot');
+    expect(loadedDefender(loaded as HangarWarPayload)).not.toHaveProperty('skills');
+
+    saveHangarWarPayload(loaded as HangarWarPayload, storage);
+    const secondBytes = storage.getItem(HANGAR_WAR_STORAGE_KEY) as string;
+
+    expect(JSON.parse(firstBytes)).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+    expect(secondBytes).toBe(firstBytes);
+    expect(loadHangarWarPayload(storage)).toEqual(VALID_HANGAR_WAR_PAYLOAD);
   });
 });

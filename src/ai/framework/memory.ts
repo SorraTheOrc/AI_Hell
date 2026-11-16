@@ -58,6 +58,27 @@ export interface BotMemory {
    * (`enemy:<id>` / `boss`); see `./hazardVelocity` (AH-0MVI4QDN90037DIN).
    */
   hazardVelocities: Record<string, HazardVelocityEstimate>;
+  /**
+   * Reused scratch buffers for the hazard-velocity tracker
+   * (AH-0MWGUN4P2003003P). The tracker previously allocated a fresh `Set` and
+   * `Map` (plus a `{x,y}` object per hazard) every decision tick; these are
+   * now cleared/refilled in place, so a steady-state tick performs no Map/Set/
+   * object allocation. Created lazily on the first track, cleared on reset.
+   */
+  hazardTracking?: HazardTrackingScratch;
+}
+
+/**
+ * Reusable scratch buffers for {@link trackHazardVelocities}
+ * (AH-0MWGUN4P2003003P). Holds the per-tick `seen` key set and the returned
+ * key→velocity view, both of which are reused across ticks instead of being
+ * reallocated.
+ */
+export interface HazardTrackingScratch {
+  /** Hazard keys recorded on the current tick (cleared each tick). */
+  readonly seen: Set<string>;
+  /** The key→velocity map returned to the world model (mutated in place). */
+  readonly view: Map<string, { x: number; y: number }>;
 }
 
 /** Creates a fresh, uncommitted memory. */
@@ -79,4 +100,7 @@ export function resetBotMemory(memory: BotMemory): void {
   memory.ticks = 0;
   memory.scratch = {};
   memory.hazardVelocities = {};
+  // Drop the reused tracker scratch so the next run starts cold; the first
+  // track after reset lazily reallocates it (AH-0MWGUN4P2003003P).
+  delete memory.hazardTracking;
 }

@@ -231,6 +231,26 @@ describe('telemetry recorder — run header and schema version (AC1/AC6)', () =>
     expect(recorder.readWindow(0, { maxBytes: 1024, maxRecords: 16 })).toBeNull();
     expect(() => recorder.dropConfirmed(1)).not.toThrow();
   });
+
+  it('reports the buffered byte count without re-serialising (AH-0MW2DC20A007TAVY)', async () => {
+    const recorder = createTelemetryRecorder(enabledConfig({ batchSize: 2 }), {
+      lineWriter: createMemoryLineWriter(),
+      now: () => 1,
+    });
+
+    recorder.startRun({ runSeed: 7 });
+    recorder.recordTick({ x: 1 }, { forward: true });
+    await recorder.flush();
+
+    const body = recorder.readBuffer()!;
+    expect(recorder.readByteLength()).toBe(new TextEncoder().encode(body).length);
+
+    // A non-buffering sink has no byte count to offer.
+    const transportRecorder = createTelemetryRecorder(enabledConfig(), {
+      sink: new CapturingSink(),
+    });
+    expect(transportRecorder.readByteLength()).toBeNull();
+  });
 });
 
 describe('telemetry recorder — JSONL round-trip (AC2/AC6)', () => {

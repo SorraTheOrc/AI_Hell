@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.1.22 (2026-11-16)
+> **Release focus:** This release focuses on deepening the hex-map campaign with reachable-hex navigation, shorter battles, attack visibility, and a final hangar defense to secure each ring. It also adds unique later-ring content, boss-specialized defending bots, and special missions, alongside live tuning tools and numerous stability and tooling fixes.
+### Features
+- The gym parity reference is now clean and protected from broken merges. (AH-0MWFKE1IX0097GHI)
+- The hex map now shows only reachable hexes, with coordinates, colourblind-safe ownership markers, and arrow-key navigation. (AH-0MWDBI33V003QQ3U)
+- Hex battles are now shorter: win in 5 waves, ending with the mini-boss. (AH-0MWDCBVQ700579WS)
+- Winning a hex now banks a fixed bonus instead of a useless post-win wheel. (AH-0MWCOWTOR00994NA)
+- See where the frontier attacked right on the hex map, with details on any focused attack. (AH-0MWDC3L9I008INDP)
+- Ring time estimates now reflect the actual one-hex sorties you fly, so pacing targets match real play. (AH-0MWCOWSVN003X81A)
+- The main menu button now reads "Skirmish" instead of "Play Game" to match the game's naming. (AH-0MWH5AGZM005570B)
+- Defending bots now keep your ship's permanent upgrades, so the run you flew guards the hex. (AH-0MWH42DWQ004SAOJ)
+- Ring-timing docs now stay in sync with measured values, fixing a stale 62.7 quote. (AH-0MW0KSCU20096B02)
+- Defending bots can now specialise against specific bosses, making what you leave in a hex a real choice. (AH-0MVWZYJ740037EZ1)
+- The attract-screen demo now stays smooth at late-game load, matching in-game performance. (AH-0MW2DC28M00161W6)
+- Designers can now tune weapon fire rhythms live in the panel and save without editing files. (AH-0MW0WLZ9600693R9)
+- Securing a ring now triggers a final hangar defense—repel it to win, or lose the campaign if it falls. (AH-0MVUVL2O2006W4QK)
+- Dev profiling runs now measure the game itself, not the recorder, for more accurate performance data. (AH-0MW2DC20A007TAVY)
+- Special missions now appear in the Hangar War ring, offering a tougher hull as a reward. (AH-0MVWZYIWX0008C55)
+- Later rings now feature unique hex personalities, bonus contracts, and landmark set-pieces, so each ring feels different instead of repetitive. (AH-0MVWZYQN8007SXIG)
+### Bug Fixes
+- Boss victories now reliably return you to the menu instead of occasionally stalling. (AH-0MWFJUQCV005SEJ4)
+- Failed child sessions no longer block progress by blaming unrelated file changes. (AH-0MWFHLDAS008YG0P)
+- Two designers can now tune the same balance file at once without corrupting each other's results. (AH-0MW25VH540078FDK)
+- Performance docs now correctly note that dropped minerals can appear during stress tests. (AH-0MW3K70HZ001POW9)
+- Starting weapons from capture setups now appear in the HUD upgrade list. (AH-0MWCP6JHT008EKCY)
+### Other
+- Removed a stray backup file so the game's source stays clean and builds reliably. (AH-0MVSCMUJX009VGRY)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.21 (2026-11-12)
 > **Release focus:** This release focuses on rebalancing difficulty and progression so the game is fairer and more rewarding, with a smoother difficulty curve in Ring 2, hex maps that scale to your fleet, and mini-bosses that let you win hexes without grinding. It also adds quality-of-life improvements like a Mining Laser power-up, more frequent extra lives and mineral drops, and fixes for recording, telemetry stutter, and test reliability.
 ### Features

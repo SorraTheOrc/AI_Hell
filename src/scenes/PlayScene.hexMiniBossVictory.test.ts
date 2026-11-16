@@ -4,7 +4,7 @@
  * Q3 = a).
  *
  * Red-first suite for the parent's behavioural claims: a deployment ends on
- * its level's wave-10 **mini-boss** (which resolves the capture cycle and ends
+ * its level's wave-5 **mini-boss** (which resolves the capture cycle and ends
  * the run as a victory), plays only its aggression-selected level (no
  * wave/level advance, so the final boss is unreachable from the hex map), and
  * leaves the shipped arcade run byte-identical.
@@ -32,9 +32,13 @@ import { LEVEL_TRANSITION_SECONDS, GAME_HEIGHT, GAME_WIDTH } from '../core/const
 import { MAX_LEVEL } from '../core/GameState';
 import { loadCheckpoint } from '../core/checkpointStore';
 import { RULES_STORAGE_KEY } from '../core/rules';
-import { deriveDefenderRating } from '../core/hangarWar/hangarEconomy';
+import {
+  defenderRatingFromSnapshot,
+  deriveDefenderRating,
+} from '../core/hangarWar/hangarEconomy';
 import { createRingState } from '../core/hangarWar/hexRing';
 import {
+  HANGAR_WAR_STORAGE_KEY,
   createDefaultPayload,
   loadHangarWarPayload,
   saveHangarWarPayload,
@@ -48,10 +52,16 @@ import {
   stepGameUntil,
   type BootedGame,
 } from '../test/gameHarness';
+import { winBonusMinerals } from '../test/hangarWinBonusContract';
 import type { LevelDefinition } from '../waves/Formations';
-import { DEFENCE_REPORT_SCENE_KEY, DefenceReportScene } from './DefenceReportScene';
 import { GameOverScene } from './GameOverScene';
+import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { MenuScene } from './MenuScene';
+import { MineralChoiceScene } from './MineralChoiceScene';
+import {
+  MINI_BOSS_WHEEL_SCENE_KEY,
+  MiniBossWheelScene,
+} from './MiniBossWheelScene';
 import { PlayScene, VICTORY_TRANSITION_HOLD_MS } from './PlayScene';
 import {
   buildHangarDeployment,
@@ -60,6 +70,9 @@ import {
 
 /** The hex every deployment targets (authored aggression 3 → level 4). */
 const TARGET_HEX = 'hex-r1-3';
+
+/** The shared hold-full/mini-boss choice overlay (`HexMapScene`'s own key). */
+const MINERAL_CHOICE_SCENE_KEY = 'MineralChoiceScene';
 
 /** Aggression that selects the final campaign level (`aggression + 1`). */
 const FINAL_LEVEL_AGGRESSION = MAX_LEVEL - 1;
@@ -155,13 +168,26 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
     localStorage.clear();
   });
 
-  /** Boots `PlayScene` with the compact campaign and an optional deployment. */
-  async function bootPlay(hangarWar: HangarWarDeployment | null): Promise<PlayScene> {
+  /**
+   * Boots `PlayScene` with the compact campaign and an optional deployment.
+   *
+   * `withRewardOverlays` registers the two shipped reward overlays
+   * (`MiniBossWheelScene`, `MineralChoiceScene`), which the win-path reward
+   * tests need: with them registered, a carried reward **pauses the map under
+   * an overlay**, so "the map is live" proves nothing was presented.
+   */
+  async function bootPlay(
+    hangarWar: HangarWarDeployment | null,
+    withRewardOverlays = false,
+  ): Promise<PlayScene> {
     booted = await bootScene([
       PlayScene,
-      DefenceReportScene,
+      HexMapScene,
       GameOverScene,
       MenuScene,
+      ...(withRewardOverlays
+        ? [MiniBossWheelScene, MineralChoiceScene]
+        : []),
     ]);
     const scene = booted.scene as PlayScene;
     scene.setAsteroidSpawnerEnabled(false);
@@ -296,8 +322,14 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(stored).not.toBeNull();
       // Salvage banked exactly once: the checkpoint moment and the capture
       // cycle resolve to one watermark/balance (a replay cannot double-count,
-      // which would double the persisted 25 minerals and 1 core).
-      expect(stored!.hangar.bankedMinerals).toBe(25);
+      // which would double the banked 25 minerals and 1 core).
+      //
+      // The persistent balance additionally carries the fixed post-win bonus
+      // (parent AH-0MWEVNBMM000QFO2, AC2: minerals only, banked once by the win
+      // resolution), so it is the captured amount **plus** that bonus — while
+      // the capture cycle's own result stays exactly the run's salvage, which
+      // is what proves the bonus is applied on top and never re-derived.
+      expect(stored!.hangar.bankedMinerals).toBe(25 + winBonusMinerals());
       expect(stored!.hangar.bankedCores).toBe(1);
       expect(capture!.banked.minerals).toBe(25);
       expect(capture!.banked.cores).toBe(1);
@@ -308,16 +340,29 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(hex.grantedWeapon).toBe('rapid');
       expect(stored!.hangar.unlockedWeapons).toContain('rapid');
       // The deployment hull is left behind as the defending bot, rated through
-      // the single hangar-economy formula.
+      // the single hangar-economy formula. The ship permanently owned the
+      // spread cannon at victory (ownAWeapon above), so the run's
+      // permanent-upgrade snapshot is carried onto the defender and its
+      // rating reflects the firepower contribution (parent
+      // AH-0MWH42DWQ004SAOJ).
+      const hullRating = deriveDefenderRating(deployment.hullId);
+      const snapshot = {
+        weaponLevels: [{ id: 'spread', level: 1 } as const],
+        powerUpLevels: [],
+        consumablePools: [],
+      };
       expect(hex.defender).toEqual({
         hullId: deployment.hullId,
-        defenceRating: deriveDefenderRating(deployment.hullId),
+        defenceRating: defenderRatingFromSnapshot(hullRating, snapshot),
         bankedMinerals: capture!.bankedDelta.minerals,
+        upgradeSnapshot: snapshot,
       });
     },
     30_000,
   );
 
+  // A won deployment lands on the hex map (paused under its reward); the
+  // separate report scene is gone (AH-0MWEXHODJ0067PSJ).
   it.each([
     ['a non-final level (aggression 3 → level 4)', 3],
     ['the final level (aggression 9 → level 10)', FINAL_LEVEL_AGGRESSION],
@@ -333,7 +378,8 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
 
       ownAWeapon(scene);
       enterMiniBossWave(scene);
-      // The level's flagged wave-10 mini-boss wave is current.
+      // The level's flag-driven mini-boss wave is current (wave 5 of a
+      // deployment sortie, AH-0MWDCBVQ700579WS).
       expect(wm.waveNumber).toBe(wm.waveCount);
 
       defeatMiniBoss(scene);
@@ -350,14 +396,19 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       // A deployment never writes the arcade checkpoint.
       expect(loadCheckpoint()).toBeNull();
 
-      // The defeat ends the run as a **victory** in the defence report (the
-      // run-end hold is a real Clock timer, so the game is stepped past it).
+      // The defeat ends the run as a **victory** on the hex map (the run-end
+      // hold is a real Clock timer, so the game is stepped past it); the
+      // separate report scene is gone (AH-0MWEXHODJ0067PSJ).
       await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
-      expect(scene.game.scene.isActive(DEFENCE_REPORT_SCENE_KEY)).toBe(true);
-      const report = scene.game.scene.getScene(
-        DEFENCE_REPORT_SCENE_KEY,
-      ) as DefenceReportScene;
-      expect((report as unknown as { won: boolean | null }).won).toBe(true);
+      const map = scene.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as HexMapScene | null;
+      expect(map, 'the deployment must land on the hex map').not.toBeNull();
+      // The map is up — running, or paused under the won reward overlay.
+      expect(
+        scene.game.scene.isActive(HEX_MAP_SCENE_KEY) ||
+          scene.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+      ).toBe(true);
       // No next-level wave spawned behind the ended run.
       expect(wm.level).toBe(level);
       expect(scene.getAliveCount()).toBe(0);
@@ -416,8 +467,177 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
         scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
       }
       expect(scene.getBoss()).toBeInstanceOf(Boss);
-      // An arcade run never routes through the deployment's defence report.
-      expect(scene.game.scene.isActive(DEFENCE_REPORT_SCENE_KEY)).toBe(false);
+      // An arcade run never routes through the deployment's hex map landing.
+      expect(scene.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(false);
+    },
+    30_000,
+  );
+
+  // ── Win-path reward suppression + fixed mineral bonus ────────────────
+  //
+  // Parent AH-0MWEVNBMM000QFO2, producer Q1 = c / Q2 = a / Q3 = b (recorded
+  // 2026-11-13): a winning hex deployment presents **no** reward overlay —
+  // neither the wheel nor the empty-owned three-option fallback — and banks a
+  // fixed mineral bonus into the hangar war instead.
+  //
+  // **LANDED.** These cases were authored red under Vitest's `it.fails` by the
+  // test-first child (AH-0MWF2PA5H008XCXW) and flipped to plain `it` by the
+  // PlayScene wiring (AH-0MWF2Q0O0008NGKL) once the win path stopped resolving
+  // and carrying the reward. The arcade and lost-deployment cases were plain
+  // `it` throughout: those surfaces did not move (parent AC3).
+
+  /**
+   * Waits until the deployment has landed on the hex map.
+   *
+   * A carried reward pauses the map instead of leaving it active, so the wait
+   * accepts either state: the reward assertions (not a timeout) are what the
+   * red witness reports.
+   */
+  async function landOnMap(scene: PlayScene): Promise<HexMapScene> {
+    const manager = scene.game.scene;
+    stepGameUntil(
+      scene.game,
+      'the deployment lands on the hex map',
+      () =>
+        manager.isActive(HEX_MAP_SCENE_KEY) ||
+        manager.isPaused(HEX_MAP_SCENE_KEY),
+      600,
+    );
+    const map = manager.getScene(HEX_MAP_SCENE_KEY) as HexMapScene | null;
+    expect(map, 'the deployment must land on the hex map').not.toBeNull();
+    return map!;
+  }
+
+  /**
+   * Every presentable reward surface the win path must leave untouched: no
+   * reward payload, no launched overlay and a live (never paused) map.
+   */
+  function expectNoWinRewardOverlay(map: HexMapScene): void {
+    const manager = map.game.scene;
+    expect(map.getReward()).toBeNull();
+    expect(manager.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(false);
+    expect(manager.isActive(MINERAL_CHOICE_SCENE_KEY)).toBe(false);
+    expect(manager.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+    expect(manager.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+  }
+
+  it(
+    'presents no mini-boss wheel on a winning hangar deployment (Q1 = c)',
+    async () => {
+      const scene = await bootPlay(deploymentFor(3), true);
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+      const map = await landOnMap(scene);
+
+      expectNoWinRewardOverlay(map);
+    },
+    30_000,
+  );
+
+  it(
+    'presents no empty-owned fallback choice on a winning hangar deployment',
+    async () => {
+      // Nothing owned: pre-change HEAD carries the three-option fallback here,
+      // which grants run-scoped value to a finished run (Q1 = c, 2026-11-13).
+      const scene = await bootPlay(deploymentFor(3), true);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+      const map = await landOnMap(scene);
+
+      expectNoWinRewardOverlay(map);
+    },
+    30_000,
+  );
+
+  it(
+    'banks the fixed win bonus as minerals only, once, through the one payload write (Q2 = a)',
+    async () => {
+      const bonus = winBonusMinerals();
+      const scene = await bootPlay(deploymentFor(3), true);
+      // 25 minerals earned during the run, banked at the mini-boss checkpoint
+      // moment and resolved once by the capture cycle.
+      scene.getGameState().minerals = 25;
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+
+      const capture = scene.getLastCapture();
+      expect(capture).not.toBeNull();
+      expect(capture!.ok).toBe(true);
+
+      // The bonus is banked exactly once, in minerals only: the capture's own
+      // core is banked by the capture cycle and is never topped up by the win
+      // bonus (a bonus core would double-count).
+      expect(scene.getBankedSalvage()).toEqual({
+        minerals: 25 + bonus,
+        cores: 1,
+      });
+
+      // Persisted through the shipped `ai_hell_hangar_war` payload — the same
+      // single write the capture cycle already makes, never a forked store.
+      const stored = loadHangarWarPayload();
+      expect(stored).not.toBeNull();
+      expect(stored!.hangar.bankedMinerals).toBe(25 + bonus);
+      expect(stored!.hangar.bankedCores).toBe(1);
+      expect(
+        Object.keys(localStorage).filter((key) => key.includes('hangar')),
+      ).toEqual([HANGAR_WAR_STORAGE_KEY]);
+    },
+    30_000,
+  );
+
+  it(
+    'keeps the arcade mini-boss defeat presenting the wheel (unchanged surface)',
+    async () => {
+      const scene = await bootPlay(null, true);
+      jumpToLevel(scene, 2);
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+
+      // The arcade reward is untouched: the shared wheel overlay is open and
+      // its outcome has not been applied behind the player's back.
+      expect(scene.isMiniBossRewardOpen()).toBe(true);
+      // The launched overlay runs on the next game step (the scene manager
+      // boots it then), so step until it is the running overlay.
+      stepGameUntil(
+        scene.game,
+        'the arcade wheel overlay is running',
+        () => scene.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY),
+        120,
+      );
+      expect(scene.getMiniBossWheelWedges().length).toBeGreaterThan(0);
+      expect(scene.getMiniBossWheelOutcome()).not.toBeNull();
+    },
+    30_000,
+  );
+
+  it(
+    'banks no bonus and presents no wheel on a lost hangar deployment',
+    async () => {
+      const scene = await bootPlay(deploymentFor(3), true);
+      // Salvage earned in a lost run is forfeit; the hangar balance survives.
+      scene.getGameState().minerals = 25;
+      scene.getGameState().lives = 1;
+      (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+      const map = await landOnMap(scene);
+
+      expectNoWinRewardOverlay(map);
+      expect(scene.getLastCapture()).toBeNull();
+      // A loss pays no win bonus: nothing is banked, nothing is written.
+      expect(scene.getBankedSalvage()).toEqual({ minerals: 0, cores: 0 });
+      expect(loadHangarWarPayload()!.hangar.bankedMinerals).toBe(0);
+      expect(loadHangarWarPayload()!.hangar.bankedCores).toBe(0);
     },
     30_000,
   );

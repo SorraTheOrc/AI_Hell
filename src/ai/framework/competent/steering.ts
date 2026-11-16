@@ -68,7 +68,12 @@
 
 import type { BotSteeringIntent } from '../../botDecision';
 import type { BotSnapshot } from '../../botSnapshot';
-import type { BotWorld, BotHazardPoint, BotWorldPoint } from '../worldModel';
+import type {
+  BotWorld,
+  BotHazardPoint,
+  BotWorldPoint,
+  IncomingFireThreat,
+} from '../worldModel';
 import type { CompetentBotTunables } from './tunables';
 import {
   resolveFrictionDeceleration,
@@ -207,6 +212,33 @@ export function interceptPoint(
  * instead of on a raw line that starts most of a playfield away
  * (AH-0MVT2W2D9002BOHO). Relative velocity is a rate, so it is not wrapped.
  */
+/**
+ * Closest-approach core given the **wrapped relative position** (`rx`/`ry`)
+ * and relative velocity (`rvx`/`rvy`). Split out so the steering fan can
+ * reuse the direction-independent relative position it precomputes once per
+ * tick (AH-0MWGUN4P2003003P), while a single call can still supply it inline.
+ * The arithmetic is byte-for-byte the pre-change solve.
+ */
+function closestApproachFromDelta(
+  rx: number,
+  ry: number,
+  rvx: number,
+  rvy: number,
+  horizon: number,
+): { t: number; distance: number } {
+  const denom = rvx * rvx + rvy * rvy;
+
+  let t = 0;
+  if (denom > EPS) {
+    t = -(rx * rvx + ry * rvy) / denom;
+    if (t < 0) t = 0;
+    if (t > horizon) t = horizon;
+  }
+  const cx = rx + rvx * t;
+  const cy = ry + rvy * t;
+  return { t, distance: Math.hypot(cx, cy) };
+}
+
 function closestApproach(
   px: number,
   py: number,
@@ -221,19 +253,7 @@ function closestApproach(
 ): { t: number; distance: number } {
   const rx = world ? wrappedAxisDelta(px, qx, world.width) : qx - px;
   const ry = world ? wrappedAxisDelta(py, qy, world.height) : qy - py;
-  const rvx = qvx - pvx;
-  const rvy = qvy - pvy;
-  const denom = rvx * rvx + rvy * rvy;
-
-  let t = 0;
-  if (denom > EPS) {
-    t = -(rx * rvx + ry * rvy) / denom;
-    if (t < 0) t = 0;
-    if (t > horizon) t = horizon;
-  }
-  const cx = rx + rvx * t;
-  const cy = ry + rvy * t;
-  return { t, distance: Math.hypot(cx, cy) };
+  return closestApproachFromDelta(rx, ry, qvx - pvx, qvy - pvy, horizon);
 }
 
 /**
@@ -323,6 +343,12 @@ function isHazardExempt(
  * @param t — the competent tunables.
  * @param exemptHazards — hazards exempt from the predictive test (the
  *   engagement target); they keep only the positional rule.
+ * @param derived — the per-tick direction-independent geometry built by
+ *   {@link buildSteeringDerived}. When supplied it must have been built with
+ *   the **same** `world` and `t`; the fan supplies it so the wrapped deltas and
+ *   distances are computed once per tick instead of once per bearing
+ *   (AH-0MWGUN4P2003003P). Omitting it recomputes the geometry inline, exactly
+ *   as before (bit-identical), so a single call behaves identically.
  */
 export function evaluateDirection(
   dirX: number,
@@ -330,6 +356,7 @@ export function evaluateDirection(
   world: BotWorld,
   t: CompetentBotTunables,
   exemptHazards?: readonly HazardExemption[],
+  derived?: SteeringDerived,
 ): DirectionSafety {
   const player = world.player;
   if (!player) return { safe: false, clearance: 0 };
@@ -344,10 +371,9 @@ export function evaluateDirection(
   let clearance = t.clearanceCap;
   let safe = true;
   // The torus the prediction runs on (the arena is a four-edge wrap).
-  const torus: WrapWorld = {
-    width: t.playfieldWidth,
-    height: t.playfieldHeight,
-  };
+  const torus: WrapWorld = derived
+    ? derived.torus
+    : { width: t.playfieldWidth, height: t.playfieldHeight };
 
   // Clearance term: distance travelled along the direction to the first edge.
   // On the wrap-around arena an edge is **not** a wall — the ship crosses it and
@@ -363,12 +389,24 @@ export function evaluateDirection(
   // Hazards (enemies, asteroids, boss): reactive keep-away plus, when the bot
   // has a velocity estimate and prediction is on, a closest-approach solve
   // against where the hazard will be (AH-0MVI4QDN90037DIN · AC2). Stationary
-  // or untracked hazards keep exactly the positional rule.
-  for (const hazard of world.hazards) {
-    const hdx = wrappedAxisDelta(px, hazard.x, torus.width);
-    const hdy = wrappedAxisDelta(py, hazard.y, torus.height);
-    const d = Math.hypot(hdx, hdy);
-    if (d < clearance) clearance = d;
+  // or untracked hazards keep exactly the positional rule. The wrapped delta
+  // and distance are direction-independent, so the fan precomputes them once
+  // (`derived`); a single call recomputes them inline (bit-identical).
+  const hazardEntries = derived
+    ? derived.hazards
+    : deriveHazards(player, world.hazards, torus);
+  // The positional clearance min over every hazard is direction-independent, so
+  // it is collapsed to one comparison when the fan supplies `derived`
+  // (`min` is exact regardless of order).
+  if (derived && derived.nearestHazardDistance < clearance) {
+    clearance = derived.nearestHazardDistance;
+  }
+  for (const entry of hazardEntries) {
+    const hazard = entry.hazard;
+    const hdx = entry.rx;
+    const hdy = entry.ry;
+    const d = entry.distance;
+    if (!derived && d < clearance) clearance = d;
     if (d < t.dangerMargin && hdx * dirX + hdy * dirY > 0) {
       safe = false;
     }
@@ -379,17 +417,12 @@ export function evaluateDirection(
       (hvx !== 0 || hvy !== 0) &&
       !isHazardExempt(hazard, exemptHazards)
     ) {
-      const ca = closestApproach(
-        px,
-        py,
-        pvx,
-        pvy,
-        hazard.x,
-        hazard.y,
-        hvx,
-        hvy,
+      const ca = closestApproachFromDelta(
+        hdx,
+        hdy,
+        hvx - pvx,
+        hvy - pvy,
         t.hazardPredictionHorizon,
-        torus,
       );
       if (ca.distance < clearance) clearance = ca.distance;
       if (ca.t > EPS && ca.distance < t.threatRadius) safe = false;
@@ -398,26 +431,29 @@ export function evaluateDirection(
 
   // Incoming fire (in-flight bullets and fire-tell shots): reject a bearing
   // predicted to cross a shot's path inside the horizon, or that drives
-  // toward a shot already inside the threat radius.
-  for (const shot of world.incomingFire) {
-    const sdx = wrappedAxisDelta(px, shot.source.x, torus.width);
-    const sdy = wrappedAxisDelta(py, shot.source.y, torus.height);
-    const d = Math.hypot(sdx, sdy);
-    if (d < clearance) clearance = d;
+  // toward a shot already inside the threat radius. The wrapped delta and
+  // distance are direction-independent and precomputed by the fan.
+  const shotEntries = derived
+    ? derived.shots
+    : deriveShots(player, world.incomingFire, torus);
+  if (derived && derived.nearestShotDistance < clearance) {
+    clearance = derived.nearestShotDistance;
+  }
+  for (const entry of shotEntries) {
+    const shot = entry.shot;
+    const sdx = entry.rx;
+    const sdy = entry.ry;
+    const d = entry.distance;
+    if (!derived && d < clearance) clearance = d;
     if (d < t.threatRadius && sdx * dirX + sdy * dirY > 0) {
       safe = false;
     }
-    const ca = closestApproach(
-      px,
-      py,
-      pvx,
-      pvy,
-      shot.source.x,
-      shot.source.y,
-      shot.velocity.x,
-      shot.velocity.y,
+    const ca = closestApproachFromDelta(
+      sdx,
+      sdy,
+      shot.velocity.x - pvx,
+      shot.velocity.y - pvy,
       t.firePredictionHorizon,
-      torus,
     );
     if (ca.distance < clearance) clearance = ca.distance;
     if (ca.t > EPS && ca.distance < t.threatRadius) safe = false;
@@ -429,10 +465,141 @@ export function evaluateDirection(
   };
 }
 
+/** One hazard with its **direction-independent** geometry from the player. */
+export interface DerivedHazard {
+  readonly hazard: BotHazardPoint;
+  /** Wrapped x delta from the player to the hazard (`wrappedAxisDelta`). */
+  readonly rx: number;
+  /** Wrapped y delta from the player to the hazard. */
+  readonly ry: number;
+  /** `Math.hypot(rx, ry)` — the positional distance. */
+  readonly distance: number;
+}
+
+/** One incoming shot with its direction-independent geometry from the player. */
+export interface DerivedShot {
+  readonly shot: IncomingFireThreat;
+  readonly rx: number;
+  readonly ry: number;
+  readonly distance: number;
+}
+
+/**
+ * Per-tick, direction-independent steering geometry
+ * (AH-0MWGUN4P2003003P).
+ *
+ * The 17-bearing steering fan re-derives, for every hazard and every shot,
+ * the wrapped delta from the player and its distance — geometry that is the
+ * **same for all 17 bearings**. Building it once per decision tick (instead of
+ * once per bearing) removes the 17x redundant `wrappedAxisDelta`/`Math.hypot`
+ * work without changing any arithmetic: every value is the exact same double
+ * the per-bearing loop used to compute.
+ */
+export interface SteeringDerived {
+  /** The player the geometry is relative to (or `null` for an empty world). */
+  readonly player: BotWorld['player'];
+  /** The torus the deltas were wrapped on. */
+  readonly torus: WrapWorld;
+  /** Every hazard, in world order, with its relative geometry. */
+  readonly hazards: readonly DerivedHazard[];
+  /** Every predicted incoming shot, in world order, with its geometry. */
+  readonly shots: readonly DerivedShot[];
+  /**
+   * `min` hazard distance for this tick (the collapsed positional clearance
+   * contribution). `Infinity` when there are no hazards.
+   */
+  readonly nearestHazardDistance: number;
+  /**
+   * `min` shot distance for this tick (the collapsed positional clearance
+   * contribution). `Infinity` when there is no incoming fire.
+   */
+  readonly nearestShotDistance: number;
+}
+
+/** Derives every hazard's wrapped relative position from `player`. */
+function deriveHazards(
+  player: BotWorldPoint,
+  hazards: readonly BotHazardPoint[],
+  torus: WrapWorld,
+): DerivedHazard[] {
+  const derived: DerivedHazard[] = [];
+  for (const hazard of hazards) {
+    const rx = wrappedAxisDelta(player.x, hazard.x, torus.width);
+    const ry = wrappedAxisDelta(player.y, hazard.y, torus.height);
+    derived.push({ hazard, rx, ry, distance: Math.hypot(rx, ry) });
+  }
+  return derived;
+}
+
+/** Derives every incoming shot's wrapped relative position from `player`. */
+function deriveShots(
+  player: BotWorldPoint,
+  shots: readonly IncomingFireThreat[],
+  torus: WrapWorld,
+): DerivedShot[] {
+  const derived: DerivedShot[] = [];
+  for (const shot of shots) {
+    const rx = wrappedAxisDelta(player.x, shot.source.x, torus.width);
+    const ry = wrappedAxisDelta(player.y, shot.source.y, torus.height);
+    derived.push({ shot, rx, ry, distance: Math.hypot(rx, ry) });
+  }
+  return derived;
+}
+
+/**
+ * Builds the per-tick {@link SteeringDerived} geometry for `world` under the
+ * same torus `t` that {@link evaluateDirection} evaluates on. Build it **once**
+ * per decision tick and thread it through the whole steering fan so the
+ * wrapped deltas and distances are computed once rather than 17 times
+ * (AH-0MWGUN4P2003003P).
+ */
+export function buildSteeringDerived(
+  world: BotWorld,
+  t: CompetentBotTunables,
+): SteeringDerived {
+  const torus: WrapWorld = {
+    width: t.playfieldWidth,
+    height: t.playfieldHeight,
+  };
+  const player = world.player;
+  if (!player) {
+    return {
+      player: null,
+      torus,
+      hazards: [],
+      shots: [],
+      nearestHazardDistance: Number.POSITIVE_INFINITY,
+      nearestShotDistance: Number.POSITIVE_INFINITY,
+    };
+  }
+  const hazards = deriveHazards(player, world.hazards, torus);
+  const shots = deriveShots(player, world.incomingFire, torus);
+  let nearestHazardDistance = Number.POSITIVE_INFINITY;
+  for (const entry of hazards) {
+    if (entry.distance < nearestHazardDistance) nearestHazardDistance = entry.distance;
+  }
+  let nearestShotDistance = Number.POSITIVE_INFINITY;
+  for (const entry of shots) {
+    if (entry.distance < nearestShotDistance) nearestShotDistance = entry.distance;
+  }
+  return {
+    player,
+    torus,
+    hazards,
+    shots,
+    nearestHazardDistance,
+    nearestShotDistance,
+  };
+}
+
 /**
  * Picks a bearing from the fan around `objective` that is safe and best
  * trades progress for clearance; falls back to the greatest-clearance
  * bearing when none is safe.
+ *
+ * The per-tick {@link SteeringDerived} geometry is built **once** here and
+ * threaded through every fan bearing, so the wrapped deltas/distances are not
+ * recomputed 17 times (AH-0MWGUN4P2003003P).
  *
  * @param objective — the desired bearing (a direction, not a point), or
  *   `null` for a pure clearance search.
@@ -456,10 +623,20 @@ export function chooseSteeringDirection(
   let bestLeastBad: { dir: BotWorldPoint; clearance: number; progress: number } | null =
     null;
 
+  // Direction-independent geometry is the same for every bearing: build it once.
+  const derived = buildSteeringDerived(world, t);
+
   for (const offsetDeg of t.fanDegrees) {
     const angle = baseAngle + (offsetDeg * Math.PI) / 180;
     const dir = { x: Math.cos(angle), y: Math.sin(angle) };
-    const evaluation = evaluateDirection(dir.x, dir.y, world, t, exemptHazards);
+    const evaluation = evaluateDirection(
+      dir.x,
+      dir.y,
+      world,
+      t,
+      exemptHazards,
+      derived,
+    );
     const progress = objectiveUnit
       ? dir.x * objectiveUnit.x + dir.y * objectiveUnit.y
       : 0;

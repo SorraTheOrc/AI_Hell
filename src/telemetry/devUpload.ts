@@ -55,6 +55,7 @@ import {
   type DevModeEnv,
   type DevTelemetrySetting,
 } from './devMode';
+import { utf8ByteLength } from './utf8';
 
 /**
  * Same-origin endpoint the dev server exposes for game-side uploads
@@ -169,6 +170,15 @@ export interface DevTelemetryUploadOptions {
    * there is no storage default any more (AC1).
    */
   readonly readSink: () => string | null;
+  /**
+   * Reads the buffered content's size in UTF-8 bytes **without building it**
+   * (AH-0MW2DC20A007TAVY, AC1). The dev sink metered every line for its
+   * retention cap, so this is O(1) where the recorder is buffered. When the
+   * size alone already exceeds the cap the upload is refused up front and
+   * `readSink` is never called — a doomed payload is not serialised just to
+   * be discarded. `null`/absent when no byte count is available.
+   */
+  readonly readSinkBytes?: () => number | null;
   /** `fetch` implementation; defaults to `globalThis.fetch`. */
   readonly fetchImpl?: DevUploadFetch;
   /** Upload endpoint; defaults to {@link DEV_TELEMETRY_UPLOAD_ENDPOINT}. */
@@ -211,12 +221,28 @@ export async function uploadDevTelemetry(
   if (!isDevTelemetryUploadEnabled(env, setting)) return false;
 
   try {
-    const body = readSink();
-    if (body === null || body.trim().length === 0) return false;
-
     const maxMessageBytes =
       options.maxMessageBytes ??
       resolveDevUploadMaxMessageBytes(env.VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES);
+
+    // Size first, serialise only what can be sent (AH-0MW2DC20A007TAVY, AC1):
+    // a run whose buffered NDJSON already exceeds the cap can never be
+    // delivered by this whole-file path, so joining the entire buffer into a
+    // body string and measuring it was pure waste (a long demo run measured
+    // 15.8 MiB serialised and then discarded). The byte count is metered by
+    // the sink's retention cap, so this check is O(1).
+    const knownBytes = options.readSinkBytes?.() ?? null;
+    if (knownBytes !== null) {
+      const alreadyOver = checkDevUploadSizeFromBytes(knownBytes, maxMessageBytes);
+      if (alreadyOver) {
+        (onSkip ?? reportDevUploadSkip)(alreadyOver);
+        return false;
+      }
+    }
+
+    const body = readSink();
+    if (body === null || body.trim().length === 0) return false;
+
     const over = checkDevUploadSize(body, maxMessageBytes);
     if (over) {
       (onSkip ?? reportDevUploadSkip)(over);
@@ -272,25 +298,94 @@ export function devUploadMessageBytes(body: string): number {
 }
 
 /**
+ * Worst-case growth of escaping an **already-JSON-encoded** line
+ * (AH-0MW2DC20A007TAVY).
+ *
+ * Every character of a line produced by `JSON.stringify` is either printable
+ * ASCII (unchanged by escaping) or one of the two characters escaping doubles
+ * (`"` → `\"`, `\` → `\\`); a control character can never appear raw,
+ * because `JSON.stringify` emitted it as a `\uXXXX` escape (those are plain
+ * ASCII by then). So escaping such a body at most doubles it — a sound upper
+ * bound on the escaped message's size.
+ */
+export const DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION = 2;
+
+/**
  * Measures an upload body against the CDP message cap.
  *
  * Shared by the whole-file run-end upload and the streaming part sender so
  * both apply exactly the same bound: a body whose escaped CDP message would
  * exceed the cap is never posted. Returns `null` when the body fits.
  *
+ * Two cheap passes run before the exact (and expensive) escaping:
+ *
+ * 1. Escaping only ever grows a payload, so a raw body larger than the whole
+ *    budget is already over it — `bytes` is then a sound lower bound.
+ * 2. When the caller vouches that the body is JSON text, the escaped size is
+ *    bounded by {@link DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION}× the raw size. If
+ *    even that bound fits, the body provably fits and `JSON.stringify` never
+ *    runs. This is the streaming part sender's steady state: a ~2 MiB window
+ *    against an 8 MiB cap, once per flush.
+ *
  * @param body - The upload body.
  * @param maxMessageBytes - The cap, in bytes of CDP message.
+ * @param options - `jsonText: true` when the body is JSON-serialised lines
+ *   (NDJSON), which licenses the bound in step 2.
  */
 export function checkDevUploadSize(
   body: string,
   maxMessageBytes: number,
+  options: DevUploadSizeOptions = {},
 ): DevUploadSkip | null {
   const bytes = utf8ByteLength(body);
-  // Cheap first pass: escaping only ever grows the payload, so a raw body
-  // larger than the whole budget is already over it (and never needs the
-  // escaping allocation) — `bytes` is then a lower bound on the message.
-  const messageBytes = bytes > maxMessageBytes ? bytes : devUploadMessageBytes(body);
+  if (bytes > maxMessageBytes) {
+    return { bytes, messageBytes: bytes, maxMessageBytes };
+  }
+  if (
+    options.jsonText === true &&
+    bytes * DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION +
+      DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES <=
+      maxMessageBytes
+  ) {
+    return null;
+  }
+  const messageBytes = devUploadMessageBytes(body);
   return messageBytes > maxMessageBytes ? { bytes, messageBytes, maxMessageBytes } : null;
+}
+
+/** Options for {@link checkDevUploadSize}. */
+export interface DevUploadSizeOptions {
+  /**
+   * `true` when every line of `body` was produced by `JSON.stringify`, so
+   * escaping it can at most double it
+   * ({@link DEV_UPLOAD_JSON_ESCAPE_MAX_EXPANSION}).
+   */
+  readonly jsonText?: boolean;
+}
+
+/**
+ * The pre-serialise half of the size guard (AH-0MW2DC20A007TAVY, AC1):
+ * refuses a payload from a known byte count alone, before any body string
+ * exists.
+ *
+ * Escaping only ever grows a payload, so if the raw byte count already
+ * exceeds the budget every escape must too — the verdict is a sound lower
+ * bound. A count at or under the budget is `null` ("may still fit"): the
+ * escaped message can still overflow, so the caller must then measure the
+ * real body with {@link checkDevUploadSize}. Never contradicts the
+ * full-body guard: whatever this refuses, `checkDevUploadSize` refuses too.
+ *
+ * @param bytes - UTF-8 size of the raw payload (e.g. the sink's metered
+ *   `readByteLength()`); must never be negative.
+ * @param maxMessageBytes - The cap, in bytes of CDP message.
+ */
+export function checkDevUploadSizeFromBytes(
+  bytes: number,
+  maxMessageBytes: number,
+): DevUploadSkip | null {
+  return bytes > maxMessageBytes
+    ? { bytes, messageBytes: bytes, maxMessageBytes }
+    : null;
 }
 
 /**
@@ -309,11 +404,6 @@ export function resolveDevUploadLimit(
     return Math.min(override, MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING);
   }
   return resolveDevUploadMaxMessageBytes(env.VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES);
-}
-
-/** Size of a string in UTF-8 bytes (the unit the cap is expressed in). */
-function utf8ByteLength(text: string): number {
-  return typeof TextEncoder === 'function' ? new TextEncoder().encode(text).length : text.length;
 }
 
 /** One actionable line for a skipped upload (the default `onSkip`). */

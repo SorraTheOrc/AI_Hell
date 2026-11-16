@@ -56,6 +56,7 @@ export { createCompetentBehaviours } from './behaviours';
 export {
   bearingTo,
   buildIntent,
+  buildSteeringDerived,
   chooseSteeringDirection,
   evaluateDirection,
   hazardThreatensPlayer,
@@ -64,9 +65,12 @@ export {
   mayThrust,
   normalise,
   planSteering,
+  type DerivedHazard,
+  type DerivedShot,
   type DirectionSafety,
   type HazardExemption,
   type SteerPlanOptions,
+  type SteeringDerived,
 } from './steering';
 
 /** Construction options for the competent bot. */

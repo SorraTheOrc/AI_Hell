@@ -34,6 +34,10 @@ recordings/
 # by `npm run evaluate`, never committed.
 eval-output/
 
+# Experience-validation output (AH-0MW0U7YVO001DDST) — generated locally by
+# `npm run validate-experience`, never committed.
+experience-out/
+
 # Performance measurement artifacts (AH-0MVXV0E8000937U5) — raw CDP CPU
 # profiles and per-run harness JSON are generated locally by
 # `npm run perf:measure`, never committed. The published baseline numbers live
@@ -44,6 +48,11 @@ perf-output/
 # written beside the balance CSV before the first edited byte and removed
 # after the restore, so a hard-killed run never shows up as a worktree change.
 src/data/*.tune-journal
+
+# Run lock for concurrent `--tune` runs on the same balance CSV
+# (AH-0MW25VH540078FDK): held for the whole run and released on every
+# non-SIGKILL exit, so a crashed run never shows up as a worktree change.
+src/data/*.tune-lock
 
 # Logs
 npm-debug.log*
@@ -56,5 +65,10 @@ pnpm-debug.log*
 
 # herdr downtime marker
 .herdr-downtime-disabled
+
+# Editor/merge backup files — prevent stray artefacts like the
+# src/vfx/wormholeSpawn.ts.orig left by AH-0MVD2N333004VDA9/4b407b66
+# from being committed again.
+*.orig
 
 ### End of Worklog Specific Ignores

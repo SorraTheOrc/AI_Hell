@@ -13,6 +13,13 @@
  *   attacker origin and its queued (`pendingAttacks`) resolutions;
  * - replay determinism — the same payload, seed and clock reproduce every hold
  *   and fall;
+ * - the hangar assault resolver (AH-0MWEZZ4U70069RC6): repel/fall/tie from the
+ *   stored defender sum vs the massed force, the massed-force derivation from
+ *   the ring's stored aggressions, the shared seeded jitter stream, replay
+ *   determinism and totality on corrupt inputs;
+ * - the two ring-side derivations the capture-cycle gate feeds the resolver
+ *   (AH-0MWEZZ5AQ000W3M8): the massed-force base and the held-ring defender
+ *   sum, both from stored numbers only, so no caller re-derives a figure;
  * - the deferred-scope guarantee (producer decision Q2 = a): a secured ring has
  *   no neighbour to be attacked from, so a tick reports **no** attacks and there
  *   is no hangar-defence pass.
@@ -25,7 +32,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
+import {
+  HEX_RING_DEFINITIONS,
+  findHexRingDefinition,
+} from '../../data/hexRingDefinitions';
 import {
   DEFAULT_FRONTIER_TUNING,
   advanceClock,
@@ -33,8 +43,11 @@ import {
   createFrontierClock,
   frontierClockFor,
   authoredRingBaseMass,
+  heldRingDefenderSum,
+  massedAssaultBase,
   redistributeAggression,
   resolveDefence,
+  resolveHangarAssault,
   ringAggressionBudget,
   runFrontierTick,
   type FrontierTuning,
@@ -48,7 +61,13 @@ import {
 } from './__fixtures__/aggressionScenarios';
 import { checkRingAggression, ringAggressionTotal } from './aggressionInvariants';
 import { MINIMUM_PLAYER_STRENGTH } from './hangarEconomy';
-import type { HangarWarPayload, HexState, PendingAttack } from './types';
+import type {
+  DefenceSkill,
+  DefenderUpgradeSnapshot,
+  HangarWarPayload,
+  HexState,
+  PendingAttack,
+} from './types';
 
 /** Ring 1's authored ids, in clockwise generation order. */
 const RING_ONE_IDS = createRingState(1, HEX_RING_DEFINITIONS).hexes.map(
@@ -251,6 +270,482 @@ describe('resolveDefence', () => {
 
     expect(first).toEqual(second);
     expect(input).toEqual(before);
+  });
+});
+
+/**
+ * A first-slate style defending skill: a flat bonus against one boss identity.
+ *
+ * Skills are **stored data** (`HexDefender.skills`), so the tests author them
+ * inline rather than reading the catalogue — the resolver must never depend on
+ * which hull or modifier happens to grant one.
+ */
+function skill(
+  bossType: string,
+  bonus: number,
+  id = `vs-${bossType}`,
+): DefenceSkill {
+  return { id, name: `Trained against ${bossType}`, bossType, bonus };
+}
+
+describe('resolveDefence — defending-bot skills (AH-0MVWZYJ740037EZ1)', () => {
+  it('adds a matching skill’s bonus to the effective rating (a bonus that saves the hex)', () => {
+    // Baseline: rating 3 against a force of 5 falls by 2.
+    const plain = resolveDefence(
+      { defenderRating: 3, attackingForce: 5, aggression: 0, seed: 1 },
+      NO_JITTER,
+    );
+    expect(plain.outcome).toBe('fell');
+    expect(plain.attackStrength).toBe(5);
+    expect(plain.margin).toBe(-2);
+
+    // The same bot, trained against the attacking boss, holds on the tie rule.
+    const skilled = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 1,
+        attackerType: 'maw-of-ashes',
+        skills: [skill('maw-of-ashes', 2)],
+      },
+      NO_JITTER,
+    );
+
+    expect(skilled.outcome).toBe('held');
+    expect(skilled.attackStrength).toBe(5);
+    expect(skilled.skillBonusTotal).toBe(2);
+    expect(skilled.effectiveDefenderRating).toBe(5);
+    expect(skilled.margin).toBe(0);
+    // The stored rating is published unchanged beside the effective one.
+    expect(skilled.defenderRating).toBe(3);
+  });
+
+  it('falls short when the bonus does not cover the deficit (the boundary is exact)', () => {
+    const oneShort = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 1,
+        attackerType: 'maw-of-ashes',
+        skills: [skill('maw-of-ashes', 1)],
+      },
+      NO_JITTER,
+    );
+
+    expect(oneShort.effectiveDefenderRating).toBe(4);
+    expect(oneShort.margin).toBe(-1);
+    expect(oneShort.outcome).toBe('fell');
+  });
+
+  it('leaves a non-matching attack resolved exactly as before', () => {
+    const plain = resolveDefence(
+      { defenderRating: 3, attackingForce: 5, aggression: 2, seed: 31 },
+      NO_JITTER,
+    );
+    const mismatched = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 2,
+        seed: 31,
+        attackerType: 'iron-crusher',
+        skills: [skill('maw-of-ashes', 9)],
+      },
+      NO_JITTER,
+    );
+
+    expect(mismatched).toEqual({
+      ...plain,
+      skillBonusTotal: 0,
+      effectiveDefenderRating: plain.defenderRating,
+      appliedSkills: [],
+    });
+  });
+
+  it('resolves an untyped attack unmodified, even when the bot carries skills', () => {
+    // A hex with no authored definition has no boss identity, so there is
+    // nothing for a skill to match: documented total behaviour, never a throw.
+    const untyped = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 5,
+        skills: [skill('maw-of-ashes', 9), skill('the-dawnbreaker', 9)],
+      },
+      NO_JITTER,
+    );
+
+    expect(untyped.skillBonusTotal).toBe(0);
+    expect(untyped.appliedSkills).toEqual([]);
+    expect(untyped.effectiveDefenderRating).toBe(3);
+    expect(untyped.margin).toBe(-2);
+    expect(untyped.outcome).toBe('fell');
+  });
+
+  it('sums every matching skill and reports only the ones applied', () => {
+    const hullSkill = skill('maw-of-ashes', 2, 'bulwark-line-breaker');
+    const modifierSkill = skill('maw-of-ashes', 3, 'maw-warded');
+    const unused = skill('the-dawnbreaker', 9);
+
+    const resolution = resolveDefence(
+      {
+        defenderRating: 1,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 2,
+        attackerType: 'maw-of-ashes',
+        skills: [hullSkill, unused, modifierSkill],
+      },
+      NO_JITTER,
+    );
+
+    // Both grants coexist on one defender: the bonuses add.
+    expect(resolution.skillBonusTotal).toBe(5);
+    expect(resolution.appliedSkills).toEqual([hullSkill, modifierSkill]);
+    expect(resolution.effectiveDefenderRating).toBe(6);
+    expect(resolution.outcome).toBe('held');
+    expect(resolution.margin).toBe(1);
+  });
+
+  it('does not consume the seeded jitter stream (skills touch only the rating)', () => {
+    const base = {
+      defenderRating: 10,
+      attackingForce: 10,
+      aggression: 1,
+      seed: 424242,
+    };
+    const plain = resolveDefence(base);
+    const skilled = resolveDefence({
+      ...base,
+      attackerType: 'maw-of-ashes',
+      skills: [skill('maw-of-ashes', 4)],
+    });
+
+    // The draw is identical, so a replay reproduces every hold and fall.
+    expect(skilled.jitterPercent).toBe(plain.jitterPercent);
+    expect(skilled.attackStrength).toBe(plain.attackStrength);
+    expect(skilled.margin).toBe(plain.margin + 4);
+  });
+
+  it('is total on corrupt skills: unusable entries contribute nothing', () => {
+    const resolution = resolveDefence(
+      {
+        defenderRating: 3,
+        attackingForce: 5,
+        aggression: 0,
+        seed: 1,
+        attackerType: 'maw-of-ashes',
+        skills: [
+          null as unknown as DefenceSkill,
+          { id: 'bad', name: 'Bad', bossType: 'maw-of-ashes', bonus: -6 },
+          { id: 'nan', name: 'NaN', bossType: 'maw-of-ashes', bonus: Number.NaN },
+          { id: 'frac', name: 'Frac', bossType: 'maw-of-ashes', bonus: 1.9 },
+        ],
+      },
+      NO_JITTER,
+    );
+
+    // Negative/NaN collapse to 0, a fractional bonus truncates to 1.
+    expect(resolution.skillBonusTotal).toBe(1);
+    expect(resolution.appliedSkills).toHaveLength(1);
+    expect(resolution.appliedSkills[0].id).toBe('frac');
+  });
+});
+
+describe('resolveHangarAssault', () => {
+  it.each([
+    {
+      name: 'the held ring ahead repels the massed assault',
+      defenderSum: 12,
+      attackerBase: 5,
+      aggression: 0,
+      outcome: 'repelled' as const,
+      attackStrength: 5,
+      margin: 7,
+    },
+    {
+      name: 'a heavier massed force breaks the hangar',
+      defenderSum: 3,
+      attackerBase: 5,
+      aggression: 0,
+      outcome: 'fell' as const,
+      attackStrength: 5,
+      margin: -2,
+    },
+    {
+      name: 'an exact tie holds the line (margin 0 repels)',
+      defenderSum: 5,
+      attackerBase: 5,
+      aggression: 0,
+      outcome: 'repelled' as const,
+      attackStrength: 5,
+      margin: 0,
+    },
+  ])('$name', ({ defenderSum, attackerBase, aggression, outcome, attackStrength, margin }) => {
+    const resolution = resolveHangarAssault(
+      { defenderSum, attackerBase, aggression, seed: 1 },
+      NO_JITTER,
+    );
+
+    expect(resolution.outcome).toBe(outcome);
+    expect(resolution.attackStrength).toBe(attackStrength);
+    expect(resolution.margin).toBe(margin);
+    expect(resolution.aggressionMultiplierPercent).toBe(100);
+    expect(resolution.jitterPercent).toBe(0);
+  });
+
+  it('scales the massed force by the ring aggression, and never weakens it', () => {
+    const strengths = [0, 1, 2, 3, 4, 6].map((aggression) => {
+      const resolution = resolveHangarAssault(
+        { defenderSum: 0, attackerBase: 4, aggression, seed: 1 },
+        NO_JITTER,
+      );
+      expect(resolution.aggressionMultiplierPercent).toBe(100 + 15 * aggression);
+      return resolution.attackStrength;
+    });
+
+    // The exact hex-resolver figures: a risen ring presses harder.
+    expect(strengths).toEqual([4, 5, 5, 6, 6, 8]);
+  });
+
+  it('turns a repel into a fall as the ring aggression rises (outmatched)', () => {
+    const atRest = resolveHangarAssault(
+      { defenderSum: 5, attackerBase: 4, aggression: 0, seed: 7 },
+      NO_JITTER,
+    );
+    const risen = resolveHangarAssault(
+      { defenderSum: 5, attackerBase: 4, aggression: 3, seed: 7 },
+      NO_JITTER,
+    );
+
+    expect(atRest.outcome).toBe('repelled');
+    expect(atRest.margin).toBe(1);
+    expect(risen.outcome).toBe('fell');
+    expect(risen.margin).toBe(-1);
+    expect(risen.attackStrength).toBeGreaterThan(atRest.attackStrength);
+  });
+
+  it('uses the same bounded seeded jitter stream as the hex resolver', () => {
+    const input = {
+      defenderSum: 10,
+      attackerBase: 8,
+      aggression: 2,
+      seed: 1234,
+    };
+    const defence = resolveDefence(
+      { defenderRating: input.defenderSum, attackingForce: input.attackerBase, aggression: 2, seed: 1234 },
+    );
+    const assault = resolveHangarAssault(input);
+
+    // The same seed, the same draw: the assault reuses the hex resolver's
+    // bounded (±10 %) jitter stream bit-for-bit.
+    expect(assault.jitterPercent).toBe(defence.jitterPercent);
+    expect(assault.attackStrength).toBe(defence.attackStrength);
+  });
+
+  it('draws jitter within its documented ±10 % bounds, deterministically per seed', () => {
+    const bounds = DEFAULT_FRONTIER_TUNING.jitterPercent;
+    const jitters = new Set<number>();
+
+    for (let seed = 0; seed < 200; seed += 1) {
+      const input = { defenderSum: 10, attackerBase: 10, aggression: 0, seed };
+      const resolution = resolveHangarAssault(input);
+
+      expect(resolution.jitterPercent).toBeGreaterThanOrEqual(-bounds);
+      expect(resolution.jitterPercent).toBeLessThanOrEqual(bounds);
+      // ±10 % of an unscaled massed force of 10 can only reach 9…11.
+      expect(resolution.attackStrength).toBeGreaterThanOrEqual(9);
+      expect(resolution.attackStrength).toBeLessThanOrEqual(11);
+      // Same seed, same numbers, same resolution (a replay is exact).
+      expect(resolveHangarAssault(input)).toEqual(resolution);
+      jitters.add(resolution.jitterPercent);
+    }
+
+    // The draw is jitter, not a constant: different seeds must differ.
+    expect(jitters.size).toBeGreaterThan(1);
+  });
+
+  it('is a pure function of the four stored numbers (no battle state)', () => {
+    const input = { defenderSum: 7, attackerBase: 6, aggression: 2, seed: 99 };
+    const before = { ...input };
+
+    const first = resolveHangarAssault(input);
+    const second = resolveHangarAssault({ ...input });
+
+    expect(first).toEqual(second);
+    expect(input).toEqual(before);
+  });
+
+  it('is total on corrupt numbers: negative, fractional and non-finite collapse to 0, never throwing', () => {
+    const corrupt = [
+      { defenderSum: Number.NaN, attackerBase: 8, aggression: 1, seed: 5 },
+      { defenderSum: -3, attackerBase: 8, aggression: 1, seed: 5 },
+      { defenderSum: 2.9, attackerBase: 8, aggression: 1, seed: 5 },
+      { defenderSum: 8, attackerBase: Number.POSITIVE_INFINITY, aggression: 1, seed: 5 },
+      { defenderSum: 8, attackerBase: -6, aggression: -2, seed: 5 },
+      { defenderSum: 8, attackerBase: 2, aggression: Number.NaN, seed: Number.NaN },
+    ];
+    for (const input of corrupt) {
+      const resolution = resolveHangarAssault(input);
+      // Every figure collapses to a whole, non-negative number — never a throw.
+      expect(resolution.defenderSum).toBeGreaterThanOrEqual(0);
+      expect(resolution.attackerBase).toBeGreaterThanOrEqual(0);
+      expect(resolution.aggression).toBeGreaterThanOrEqual(0);
+      expect(Number.isFinite(resolution.attackStrength)).toBe(true);
+      expect(['repelled', 'fell']).toContain(resolution.outcome);
+      expect(resolution.margin).toBe(resolution.defenderSum - resolution.attackStrength);
+    }
+  });
+});
+
+describe('massedAssaultBase — the massed-force derivation from stored ring numbers', () => {
+  it('sums the ring hexes\' stored aggressions (Q2 answer A: sum of ring hex aggression)', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id, index) => setAggression(hexes, id, index + 1));
+
+    expect(massedAssaultBase({ ringIndex: 1, hexes })).toBe(1 + 2 + 3 + 4 + 5 + 6);
+  });
+
+  it('derives from stored aggression alone — hold state and defender ratings never matter', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id) => setAggression(hexes, id, 2));
+    const unheldBase = massedAssaultBase({ ringIndex: 1, hexes });
+
+    hold(hexes, RING_ONE_IDS[0], 50);
+    hold(hexes, RING_ONE_IDS[1], 9);
+
+    expect(massedAssaultBase({ ringIndex: 1, hexes })).toBe(unheldBase);
+  });
+
+  it('is total on corrupt hex aggressions (each collapses to 0)', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id, index) =>
+      setAggression(hexes, id, index % 2 === 0 ? Number.NaN : -1),
+    );
+
+    expect(massedAssaultBase({ ringIndex: 1, hexes })).toBe(0);
+  });
+
+  it('feeds a derived base into the resolver: the ring repels a quiet frontier and falls to a risen one', () => {
+    // Every hex held and defended by the basic hull (rating 2) — 6 hexes.
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id) => hold(hexes, id, 2));
+    const ring = { ringIndex: 1, hexes };
+    const defenderSum = hexes.reduce(
+      (sum, hex) => sum + (hex.defender?.defenceRating ?? 0),
+      0,
+    );
+    RING_ONE_IDS.forEach((id) => setAggression(hexes, id, 0));
+
+    const quiet = resolveHangarAssault(
+      { defenderSum, attackerBase: massedAssaultBase(ring), aggression: 0, seed: 42 },
+      NO_JITTER,
+    );
+    expect(quiet.outcome).toBe('repelled');
+    expect(quiet.attackerBase).toBe(0);
+    expect(quiet.margin).toBe(defenderSum);
+
+    RING_ONE_IDS.forEach((id) => setAggression(hexes, id, 3));
+    const risen = resolveHangarAssault(
+      { defenderSum, attackerBase: massedAssaultBase(ring), aggression: 3, seed: 42 },
+      NO_JITTER,
+    );
+    expect(risen.attackerBase).toBe(18);
+    expect(risen.aggressionMultiplierPercent).toBe(145);
+    // round(18 × 145 × 100 / 10000) = round(26.1) = 26 > 12 held ratings.
+    expect(risen.attackStrength).toBe(26);
+    expect(risen.outcome).toBe('fell');
+    expect(risen.margin).toBe(12 - 26);
+  });
+});
+
+describe('heldRingDefenderSum — the defender-side derivation from stored ring numbers', () => {
+  it('sums the held hexes\' stored defender ratings (AH-0MWEZZ5AQ000W3M8 AC3)', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 6);
+    hold(hexes, RING_ONE_IDS[1], 9);
+    hold(hexes, RING_ONE_IDS[2], 2);
+
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(17);
+  });
+
+  it('ignores unheld hexes even when they still carry a stale defender', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 5);
+    // A corrupt/stale payload: an unheld hex that still has a defender object.
+    const unheld = hexes.find((hex) => hex.id === RING_ONE_IDS[1]);
+    if (!unheld) throw new Error('no hex');
+    unheld.held = false;
+    unheld.defender = { hullId: 'hull-1', defenceRating: 40, bankedMinerals: 0 };
+
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(5);
+  });
+
+  it('is 0 for an unheld ring and for hexes with no defender', () => {
+    const hexes = ringOne();
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(0);
+
+    for (const id of RING_ONE_IDS) {
+      const hex = hexes.find((candidate) => candidate.id === id);
+      if (!hex) throw new Error(`no hex ${id}`);
+      hex.held = true;
+      hex.defender = null;
+    }
+
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(0);
+  });
+
+  it('derives from stored defender ratings alone — stored aggression never matters', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id) => hold(hexes, id, 3));
+    const quiet = heldRingDefenderSum({ ringIndex: 1, hexes });
+
+    RING_ONE_IDS.forEach((id, index) => setAggression(hexes, id, index + 5));
+
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(quiet);
+    expect(quiet).toBe(18);
+  });
+
+  it('is total on corrupt defender ratings: negative, fractional and non-finite collapse to 0', () => {
+    const hexes = ringOne();
+    const corrupt = [Number.NaN, -4, 2.9, Number.POSITIVE_INFINITY];
+    RING_ONE_IDS.forEach((id, index) => {
+      const hex = hexes.find((candidate) => candidate.id === id);
+      if (!hex) throw new Error(`no hex ${id}`);
+      hex.held = true;
+      hex.defender = {
+        hullId: 'hull-1',
+        defenceRating: corrupt[index % corrupt.length] as number,
+        bankedMinerals: 0,
+      };
+    });
+
+    // Only the fractional 2.9 survives, truncated to 2 — never a throw.
+    expect(heldRingDefenderSum({ ringIndex: 1, hexes })).toBe(2);
+  });
+
+  it('feeds the resolver end-to-end from one ring: the ring defends against its own quiet frontier', () => {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id) => hold(hexes, id, 2));
+    RING_ONE_IDS.forEach((id) => setAggression(hexes, id, 0));
+    const ring = { ringIndex: 1, hexes };
+
+    const resolution = resolveHangarAssault(
+      {
+        defenderSum: heldRingDefenderSum(ring),
+        attackerBase: massedAssaultBase(ring),
+        aggression: 0,
+        seed: 11,
+      },
+      NO_JITTER,
+    );
+
+    expect(resolution.defenderSum).toBe(12);
+    expect(resolution.attackerBase).toBe(0);
+    expect(resolution.outcome).toBe('repelled');
   });
 });
 
@@ -556,6 +1051,188 @@ describe('runFrontierTick', () => {
     });
 
     expect(aDifferentSeedDiffers).toBe(true);
+  });
+});
+
+/**
+ * Marks `id` held with a defending bot carrying `skills`.
+ *
+ * The bot's stored `defenceRating` is deliberately *not* inflated by the
+ * skills: a skill is a separate stored list the resolver applies, which is what
+ * lets the report show the stored and effective ratings side by side.
+ */
+function holdWithSkills(
+  hexes: HexState[],
+  id: string,
+  defenceRating: number,
+  skills: readonly DefenceSkill[],
+): void {
+  const hex = hexes.find((candidate) => candidate.id === id);
+  if (!hex) throw new Error(`no hex ${id}`);
+  hex.held = true;
+  hex.bossDefeated = true;
+  hex.defender = {
+    hullId: 'hull-1',
+    defenceRating,
+    bankedMinerals: 0,
+    skills: [...skills],
+  };
+}
+
+/**
+ * Holds a hex with a defender carrying a run-upgrade snapshot
+ * (AH-0MWH42DWQ004SAOJ, C6).
+ */
+function holdWithUpgrades(
+  hexes: HexState[],
+  id: string,
+  defenceRating: number,
+  upgradeSnapshot?: DefenderUpgradeSnapshot,
+): void {
+  const hex = hexes.find((candidate) => candidate.id === id);
+  if (!hex) throw new Error(`no hex ${id}`);
+  hex.held = true;
+  hex.bossDefeated = true;
+  if (upgradeSnapshot !== undefined) {
+    hex.defender = {
+      hullId: 'hull-1',
+      defenceRating,
+      bankedMinerals: 0,
+      upgradeSnapshot,
+    };
+  } else {
+    hex.defender = { hullId: 'hull-1', defenceRating, bankedMinerals: 0 };
+  }
+}
+
+describe('runFrontierTick — defending-bot skills (AH-0MVWZYJ740037EZ1)', () => {
+  it("derives the attacker type from the origin hex's authored boss", () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 0);
+
+    const { record } = runFrontierTick(payloadWith(hexes), {
+      tuning: QUIET_RISE,
+    });
+
+    const [attack] = record.attacks;
+    expect(attack.attackerType).toBe(
+      findHexRingDefinition(attack.attackerOriginId)?.boss ?? null,
+    );
+    // The authored origin always names a real boss in the shipped rings.
+    expect(attack.attackerType).not.toBeNull();
+  });
+
+  it('threads the defender’s skills through so a trained bot keeps a hex a plain one loses', () => {
+    // Both payloads hold the same hex with the same stored rating; only the
+    // skills differ, so the difference in the outcome is the skill's effect.
+    const plainHexes = ringOne();
+    hold(plainHexes, RING_ONE_IDS[0], 0);
+    const plainTick = runFrontierTick(payloadWith(plainHexes), {
+      tuning: QUIET_RISE,
+    });
+    const plainAttack = plainTick.record.attacks[0];
+    const boss = plainAttack.attackerType as string;
+    expect(plainAttack.outcome).toBe('fell');
+
+    // A skill good enough to cover the whole deficit holds the line.
+    const skilledHexes = ringOne();
+    holdWithSkills(
+      skilledHexes,
+      RING_ONE_IDS[0],
+      0,
+      [skill(boss, plainAttack.attackStrength)],
+    );
+    const skilledTick = runFrontierTick(payloadWith(skilledHexes), {
+      tuning: QUIET_RISE,
+    });
+    const skilledAttack = skilledTick.record.attacks[0];
+
+    expect(skilledAttack.attackerType).toBe(boss);
+    expect(skilledAttack.skillBonusTotal).toBe(plainAttack.attackStrength);
+    expect(skilledAttack.appliedSkills).toHaveLength(1);
+    expect(skilledAttack.defenderRating).toBe(0);
+    expect(skilledAttack.effectiveDefenderRating).toBe(plainAttack.attackStrength);
+    expect(skilledAttack.attackStrength).toBe(plainAttack.attackStrength);
+    expect(skilledAttack.outcome).toBe('held');
+    expect(skilledAttack.margin).toBe(0);
+    // The hex is still held afterwards, with its stored rating untouched.
+    expect(hexOf(skilledTick.payload, RING_ONE_IDS[0]).held).toBe(true);
+    expect(
+      hexOf(skilledTick.payload, RING_ONE_IDS[0]).defender?.defenceRating,
+    ).toBe(0);
+  });
+
+  it('leaves a bot with no skills resolving exactly as it did before', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 4);
+
+    const [attack] = runFrontierTick(payloadWith(hexes), {
+      tuning: QUIET_RISE,
+    }).record.attacks;
+
+    expect(attack.skillBonusTotal).toBe(0);
+    expect(attack.appliedSkills).toEqual([]);
+    expect(attack.effectiveDefenderRating).toBe(attack.defenderRating);
+    expect(attack.margin).toBe(attack.defenderRating - attack.attackStrength);
+  });
+
+  it("carries the defender's run-upgrade snapshot on the record (C6, survives a fall)", () => {
+    const hexes = ringOne();
+    const snapshot: DefenderUpgradeSnapshot = {
+      weaponLevels: [{ id: 'spread', level: 2 }],
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+      consumablePools: [{ id: 'shield', charges: 1 }],
+    };
+    holdWithUpgrades(hexes, RING_ONE_IDS[0], 15, snapshot);
+
+    const { payload: next, record } = runFrontierTick(payloadWith(hexes), {
+      tuning: QUIET_RISE,
+    });
+    const [attack] = record.attacks;
+    expect(attack.upgradeSnapshot).toEqual(snapshot);
+    // The record keeps the snapshot even when the hex falls (the resolver
+    // reads it before `applyDefence` clears the defender post-tick), so the
+    // defence report can publish the breakdown of the bot that was there.
+    if (attack.outcome === 'fell') {
+      expect(hexOf(next, RING_ONE_IDS[0]).defender).toBeNull();
+      expect(attack.upgradeSnapshot).toEqual(snapshot);
+    }
+  });
+
+  it('omits the snapshot field on a record for an un-upgraded defender (byte-identical)', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 4);
+
+    const [attack] = runFrontierTick(payloadWith(hexes), {
+      tuning: QUIET_RISE,
+    }).record.attacks;
+
+    expect('upgradeSnapshot' in attack).toBe(false);
+  });
+
+  it('replays identically with skills on the payload (the jitter stream is unchanged)', () => {
+    const build = (): HangarWarPayload => {
+      const hexes = ringOne();
+      holdWithSkills(hexes, RING_ONE_IDS[0], 2, [skill('maw-of-ashes', 3)]);
+      holdWithSkills(hexes, RING_ONE_IDS[2], 2, [skill('maw-of-ashes', 3)]);
+      return payloadWith(hexes, { seed: 987654 });
+    };
+
+    // The same payload + seed reproduces the same record and next payload.
+    const first = runFrontierTick(build(), { tuning: SEEDED_JITTER });
+    const second = runFrontierTick(build(), { tuning: SEEDED_JITTER });
+
+    expect(second.record).toEqual(first.record);
+    expect(second.payload).toEqual(first.payload);
+    // And the skills never touched the draw itself.
+    for (const attack of first.record.attacks) {
+      expect(attack.jitterPercent).toBeGreaterThanOrEqual(
+        -DEFAULT_FRONTIER_TUNING.jitterPercent,
+      );
+      expect(attack.jitterPercent).toBeLessThanOrEqual(
+        DEFAULT_FRONTIER_TUNING.jitterPercent,
+      );
+    }
   });
 });
 

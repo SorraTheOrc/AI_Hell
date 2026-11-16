@@ -13,9 +13,10 @@
  * time-limit carries survivors over, and a hangar-war deployment opened at
  * level 2. The arcade cases assert the observable outcome the player expects:
  * the run keeps ticking and advances to level 3. A deployment now **ends on
- * its wave-10 mini-boss** as a victory (AH-0MWCOW4IQ003XST5): it resolves the
- * hex capture and never advances to level 3, so the same walk pins the
- * deployment victory instead. The regression they pin is a **wedged** level
+ * its wave-5 mini-boss** as a victory (AH-0MWCOW4IQ003XST5; the sortie is a
+ * five-wave slice, AH-0MWDCBVQ700579WS): it resolves the hex capture and never
+ * advances to level 3, so the same walk pins the deployment victory instead.
+ * The regression they pin is a **wedged** level
  * clear (no exception, nothing left to shoot, no level advance): a hold-full
  * mineral choice collected while the mini-boss death sweep animates used to
  * pause the scene and freeze the sweep — the only route that finalises the
@@ -34,6 +35,7 @@ import { registerBackgroundTextures } from '../test/backgroundFixtures';
 import {
   advanceGame,
   bootScene,
+  resolveMineralChoiceIfOpen,
   stepGameUntil,
   type BootedGame,
 } from '../test/gameHarness';
@@ -41,7 +43,7 @@ import { GameOverScene } from './GameOverScene';
 import { buildHangarDeployment } from './hangarWar/hangarDeployment';
 import { MenuScene } from './MenuScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
-import { DEFENCE_REPORT_SCENE_KEY, DefenceReportScene } from './DefenceReportScene';
+import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene, VICTORY_TRANSITION_HOLD_MS } from './PlayScene';
 
 // A full level walk boots a Phaser game and clears ten waves; the Vitest
@@ -53,13 +55,6 @@ const LEVEL_UNDER_TEST = 2;
 
 /** Deterministic run seed so `dynamic` waves and drops replay identically. */
 const RUN_SEED = 20261102;
-
-/** Resolves an open hold-full/mini-boss choice, as a player does. */
-function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
-  if (!scene.isMineralChoiceOpen()) return false;
-  scene.selectMineralChoice(0);
-  return true;
-}
 
 /** Fast-forwards the wave's wormhole spawn so every enemy is collidable. */
 function finishSpawnSequence(scene: PlayScene): void {
@@ -154,7 +149,7 @@ function advanceToLevelTwoMiniBoss(scene: PlayScene): void {
   }
   expect(wm.level).toBe(LEVEL_UNDER_TEST);
   expect(wm.waveNumber).toBe(wm.waveCount);
-  expect(wm.miniBossTriggered, "level 2's wave 10 is the mini-boss").toBe(
+  expect(wm.miniBossTriggered, "level 2's flagged mini-boss wave").toBe(
     true,
   );
   expect(scene.getMiniBoss(), 'the mini-boss entity must be live').not.toBeNull();
@@ -199,7 +194,7 @@ async function bootRun(data: {
     MineralChoiceScene,
     GameOverScene,
     MenuScene,
-    DefenceReportScene,
+    HexMapScene,
   ]);
   const scene = booted.scene as PlayScene;
   scene.setAsteroidSpawnerEnabled(false);
@@ -354,9 +349,16 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(gameState.isHoldFull()).toBe(false);
   });
 
-  it('ends a hangar-war deployment on its level-2 mini-boss as a victory', async () => {
-    // hex-r1-2 is the ring's lowest-aggression hex (1 → campaign level 2), so
-    // a deployment to it starts the run on the level under test.
+  it('drops a hold-full request deferred before a won run — no void choice on the victory hold (AH-0MWFLOYBY001POST AC2)', async () => {
+    // The deferred-path shape of the finished-run bug: a mineral fills the
+    // hold while the mini-boss death sweep animates, so the request is queued
+    // (`holdFullChoicePending`) instead of pausing the cascade. On a hangar
+    // deployment that mini-boss IS the run's boss: the sweep's completion
+    // resolves the capture and ends the run as a victory immediately, so the
+    // deferred request is still queued when `runFinished` becomes true — and
+    // it must then be **dropped**, never flushed into a pausing overlay that
+    // would freeze the victory hold and gate the hex-map transition
+    // (AH-0MWFLOYBY001POST · AC2).
     const deployment = buildHangarDeployment(deploymentPayload(), {
       hexId: 'hex-r1-2',
       seed: RUN_SEED,
@@ -364,15 +366,80 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(deployment.startLevel).toBe(LEVEL_UNDER_TEST);
 
     const scene = await boot({ hangarWar: deployment });
+    scene.getGameState().lives = 99;
+    advanceToLevelTwoMiniBoss(scene);
+
+    // Clear the escorts, then land the lethal blow so the sweep animates.
+    killSpawnedEnemies(scene);
+    hitMiniBossUntilDead(scene);
+    expect(scene.isMiniBossSweepActive()).toBe(true);
+
+    // The hold fills during the cascade (a mineral dropped by the fight): the
+    // choice is deferred, exactly as the arcade mid-cascade test pins.
+    const gameState = scene.getGameState();
+    gameState.mineralCapacity = 1;
+    gameState.minerals = 0;
+    const player = scene.getPlayer()!;
+    scene.spawnMineralAt(player.x, player.y);
+    scene.tick(0);
+    expect(gameState.isHoldFull()).toBe(true);
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(scene.isPaused()).toBe(false);
+    const pendingSeam = scene as unknown as { holdFullChoicePending: boolean };
+    expect(pendingSeam.holdFullChoicePending).toBe(true);
+
+    // The sweep's completion finalises the deployment as a **victory** (the
+    // mini-boss is the run's boss here — no wheel, no level advance, no final
+    // boss), with the deferred request still queued.
+    finishMiniBossSweep(scene);
+    expect(scene.isRunFinished()).toBe(true);
+
+    // The first free tick after the run finished must DROP the deferred
+    // request — never flush it into a pausing choice on the victory hold.
+    // (Before the guard the flush inside `finishMiniBossSweep`'s stepping has
+    // already opened the overlay, so the open-state assertions below are the
+    // discriminators.)
+    scene.tick(0.016);
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(scene.isPaused()).toBe(false);
+    expect(pendingSeam.holdFullChoicePending).toBe(false);
+
+    // The victory hold → hex-map transition completes ungated.
+    await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
+    const map = scene.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene | null;
+    expect(map, 'the deployment must land on the hex map').not.toBeNull();
+    expect(
+      scene.game.scene.isActive(HEX_MAP_SCENE_KEY) ||
+        scene.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+    ).toBe(true);
+  });
+
+  // The deployment ends on the hex map; the retired report screen is gone
+  // (AH-0MWEXHODJ0067PSJ).
+  it(
+    'ends a hangar-war deployment on its level-2 mini-boss as a victory',
+    async () => {
+      // hex-r1-2 is the ring's lowest-aggression hex (1 → campaign level 2), so
+      // a deployment to it starts the run on the level under test.
+      const deployment = buildHangarDeployment(deploymentPayload(), {
+        hexId: 'hex-r1-2',
+        seed: RUN_SEED,
+      });
+      expect(deployment.startLevel).toBe(LEVEL_UNDER_TEST);
+
+      const scene = await boot({ hangarWar: deployment });
     const wm = scene.getWaveManager();
     expect(scene.isHangarWarRun()).toBe(true);
     expect(wm.level).toBe(LEVEL_UNDER_TEST);
     expect(scene.getLastCapture()).toBeNull();
 
-    // Walk level 2 to its wave-10 mini-boss, then defeat it through the real
-    // path. A deployment ends on that encounter (AH-0MWCOW4IQ003XST5): the
-    // defeat resolves the hex capture and ends the run as a victory, and it
-    // never advances to level 3 (the hex map can never reach the final boss).
+    // Walk level 2 to its wave-5 mini-boss, then defeat it through the real
+    // path. A deployment ends on that encounter (AH-0MWCOW4IQ003XST5) after
+    // its five-wave sortie (AH-0MWDCBVQ700579WS): the defeat resolves the hex
+    // capture and ends the run as a victory, and it never advances to level 3
+    // (the hex map can never reach the final boss).
     scene.getGameState().lives = 99;
     advanceToLevelTwoMiniBoss(scene);
     killAllEnemies(scene);
@@ -382,15 +449,21 @@ describe('PlayScene — clearing campaign level 2 (AH-0MVZJ76BP000051B)', () => 
     expect(wm.bossTriggered).toBe(false);
     expect(scene.getLastCapture()?.ok).toBe(true);
 
-    // The run ends in the between-sortie defence report as a victory (the
-    // run-end hold is a real Clock timer, so step the game past it).
+    // The run ends on the **hex map** as a victory (the between-sortie report
+    // screen is gone, AH-0MWEXHODJ0067PSJ; the run-end hold is a real Clock
+    // timer, so step the game past it).
     await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
-    expect(scene.game.scene.isActive(DEFENCE_REPORT_SCENE_KEY)).toBe(true);
-    const report = scene.game.scene.getScene(
-      DEFENCE_REPORT_SCENE_KEY,
-    ) as DefenceReportScene;
-    expect((report as unknown as { won: boolean | null }).won).toBe(true);
+    const map = scene.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene | null;
+    expect(map, 'the deployment must land on the hex map').not.toBeNull();
+    // The map is up — running, or paused under the won reward overlay.
+    expect(
+      scene.game.scene.isActive(HEX_MAP_SCENE_KEY) ||
+        scene.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+    ).toBe(true);
     // A deployment keeps its own session: the classic checkpoint is untouched.
     expect(localStorage.getItem('ai_hell_checkpoint')).toBeNull();
-  });
+    },
+  );
 });
