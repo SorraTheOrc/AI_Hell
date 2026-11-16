@@ -340,7 +340,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     expect(game!.scene.isActive('MenuScene')).toBe(true);
 
     // Menu → PlayScene (Level 1).
-    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+    navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
     expect(game!.scene.isActive('PlayScene')).toBe(true);
     expect(game!.scene.isActive('MenuScene')).toBe(false);
 
@@ -371,7 +371,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
   it('AC2 — PlayScene hands the final score to GameOverScene', async () => {
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
-    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+    navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
     // Complete the wormhole spawn animation so enemies are collidable.
@@ -397,7 +397,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     // Run the loop twice.
     for (let i = 0; i < 2; i++) {
       const menu = game.scene.getScene('MenuScene');
-      navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+      navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
 
       const play = game.scene.getScene('PlayScene') as PlayScene;
       play.finishSpawnAnimations();
@@ -422,7 +422,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     // Third session boots a clean PlayScene: exactly one wave of enemies,
     // no accumulated bullets/explosions, exactly one canvas.
     const menu = game.scene.getScene('MenuScene');
-    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+    navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
     // The wave's formation enemies are all present; the random asteroid
@@ -441,7 +441,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
   it('AC4 — a boss victory also returns to the menu from GameOverScene', async () => {
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
-    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+    navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
 
@@ -494,7 +494,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     async () => {
       game = await bootAllGames();
       const menu = game.scene.getScene('MenuScene');
-      navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+      navigateTo(game, menu, '▶  Skirmish', 'PlayScene');
 
       const play = game.scene.getScene('PlayScene') as PlayScene;
       // Same single-level campaign as AC4 so the walk reaches the boss.

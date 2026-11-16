@@ -310,7 +310,7 @@ export class MenuScene extends Phaser.Scene {
     const playButton = this.add.text(
       GAME_WIDTH / 2,
       220,
-      '▶  Play Game',
+      '▶  Skirmish',
       {
         fontFamily: 'monospace',
         fontSize: '24px',
@@ -341,7 +341,7 @@ export class MenuScene extends Phaser.Scene {
       this.scene.start('PlayScene', { demo: false });
     });
 
-    this.controls.push({ label: '▶  Play Game', text: playButton });
+    this.controls.push({ label: '▶  Skirmish', text: playButton });
 
     // ── Hangar War button (outer-loop entry) ─────────────────────
     // Opens the hangar screen (AH-0MVUXC2DD003HN0I, producer decision

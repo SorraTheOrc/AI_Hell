@@ -447,7 +447,7 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
       menu.children.list.some(
         (child) =>
           child instanceof Phaser.GameObjects.Text &&
-          child.text === '▶  Play Game',
+          child.text === '▶  Skirmish',
       ),
     ).toBe(true);
   });
