@@ -33,6 +33,7 @@ import type {
 import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
 import type { HangarEntry } from '../data/hangarCatalogue';
 import { HANGAR_CATALOGUE } from '../data/hangarCatalogue';
+import { MAX_PERMANENT_LEVEL } from '../core/hangarWar/hangarEconomy';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene } from './PlayScene';
@@ -157,22 +158,30 @@ describe('hangar screen model (pure)', () => {
       'hardened_plating',
       'anti_maw_plating',
     ]);
-    const starter = rows.find((row) => row.id === 'spread')!;
-    expect(starter.state).toBe('owned');
-    expect(starter.priceLabel).toBe('FREE');
-    expect(starter.actionable).toBe(false);
-
     // Owned by the payload's unlocked hull (even though it is affordable).
     const ownedHull = rows.find((row) => row.id === 'hull-2')!;
     expect(ownedHull.state).toBe('owned');
-    expect(ownedHull.label).toContain('OWNED');
+    expect(ownedHull.actionLabel).toBe('OWNED');
+    // A hull carries no permanent level, so the row is byte-identical to the
+    // pre-buy-to-upgrade rendering (parent AH-0MWHW4ALS0039JFU AC3).
+    expect(ownedHull.label).toBe('Bulwark Hull — 220 min · 3 cores — OWNED');
+    expect(ownedHull.level).toBeNull();
+    expect(ownedHull.upgradePriceLabel).toBeNull();
 
-    // Affordable, not owned → the only actionable state, with its price.
+    // The owned starter weapon is **level-bearing**, so its row is an upgrade
+    // affordance rather than a dead `OWNED` (this item AH-0MWI5AK1E008HDHH).
+    const starter = rows.find((row) => row.id === 'spread')!;
+    expect(starter.state).toBe('upgradable');
+    expect(starter.priceLabel).toBe('FREE');
+    expect(starter.actionable).toBe(true);
+
+    // Affordable, not owned → the only purchasable state, with its price.
     const buyable = rows.find((row) => row.id === 'ricochet')!;
     expect(buyable.state).toBe('buyable');
     expect(buyable.actionable).toBe(true);
     expect(buyable.priceLabel).toBe('90 min · 2 cores');
     expect(buyable.label).toContain('BUY');
+    expect(buyable.level).toBeNull();
   });
 
   it('lists a grant-only reward hull only once the fleet owns it', () => {
@@ -254,6 +263,9 @@ describe('hangar screen model (pure)', () => {
     expect(model.weaponOptions[0].actionable).toBe(true);
 
     expect(model.focusOrder).toEqual([
+      // The owned starter weapon is an affordable upgrade, so it is the first
+      // actionable row (it sits fourth in catalogue order).
+      'buy:spread',
       'buy:wave_laser',
       'buy:ricochet',
       'buy:cluster',
@@ -670,10 +682,12 @@ describe('HangarScene', () => {
       storage: null,
     });
 
-    // Owned (starter) and unaffordable rows cannot be activated.
-    expect(rowFor(scene, 'buy:spread').text.input).toBeNull();
-    expect(scene.focusRow('buy:spread')).toBe(false);
-    expect(scene.getFocusedKey()).toBe('buy:wave_laser');
+    // Owned rows with no permanent level to raise (the starter hull) cannot be
+    // activated; the owned starter weapon is an upgrade row, so it can.
+    expect(rowFor(scene, 'buy:hull-1').text.input).toBeNull();
+    expect(scene.focusRow('buy:hull-1')).toBe(false);
+    expect(scene.focusRow('buy:spread')).toBe(true);
+    expect(scene.getFocusedKey()).toBe('buy:spread');
 
     // The focus cycle never reaches a disabled row.
     for (let i = 0; i < scene.getModel().focusOrder.length + 2; i += 1) {
@@ -698,14 +712,19 @@ describe('HangarScene', () => {
     expect(scene.getPayload().hangar.bankedCores).toBe(1);
     expect(scene.getPayload().hangar.unlockedWeapons).toContain('ricochet');
 
-    // The purchase is persisted through the versioned store and the rendered
-    // row now reports the entry as owned and disabled.
+    // The purchase is persisted through the versioned store, and the row is no
+    // longer a dead `OWNED`: the fleet owns the weapon, so it presents the
+    // priced next-level upgrade action instead (AH-0MWI5AK1E008HDHH).
     const stored = parseHangarWarPayload(
       JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
     );
     expect(stored?.hangar.bankedMinerals).toBe(150);
-    expect(rowFor(scene, 'buy:ricochet').label).toContain('OWNED');
-    expect(rowFor(scene, 'buy:ricochet').text.input).toBeNull();
+    const owned = scene
+      .getModel()
+      .unlockRows.find((row) => row.id === 'ricochet')!;
+    expect(owned.state).toBe('upgradable');
+    expect(owned.actionLabel).toBe('UPGRADE · 100 min');
+    expect(rowFor(scene, 'buy:ricochet').text.input).not.toBeNull();
   });
 
   it('buys an unlock on a pointer click (pointer path)', async () => {
@@ -1122,5 +1141,283 @@ describe('HangarScene', () => {
     expect(parseHangarWarPayload(
       JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
     )).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+  });
+});
+
+// ── Owned-row upgrade affordance (AH-0MWI5AK1E008HDHH) ────────────────────
+// Parent AH-0MWHW4ALS0039JFU AC3 (weapons scope): an owned **level-bearing**
+// row shows its current permanent level and a priced upgrade action, disabled
+// visibly when the fleet cannot pay or the kind is at the shared ceiling, while
+// every non-upgradeable row stays byte-identical. The rule itself is the pure
+// economy's (`costToUpgrade` / `buyUpgrade`); this screen only presents it and
+// the scene only persists it.
+describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+  });
+
+  /** Boots the scene with the given launch data and returns the live scene. */
+  async function bootHangar(
+    data?: Partial<{
+      payload: HangarWarPayload;
+      storage: HangarWarStorage | null;
+    }>,
+  ): Promise<HangarScene> {
+    booted = await bootScene([HangarScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+  }
+
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressKey(scene: HangarScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  /** A payload owning the starter weapon with `level` bought permanent levels. */
+  function upgradedPayload(level?: number): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    if (level !== undefined) {
+      payload.hangar.weaponLevels = [{ id: 'spread', level }];
+    }
+    return payload;
+  }
+
+  /** The one unlock row for a catalogue id. */
+  function rowFor(payload: HangarWarPayload, id: string) {
+    const row = buildHangarUnlockRows(payload).find((entry) => entry.id === id);
+    expect(row, `unlock row "${id}" not built`).toBeDefined();
+    return row!;
+  }
+
+  it('shows the level and the priced upgrade action on an owned weapon row (AC1)', () => {
+    const row = rowFor(upgradedPayload(), 'spread');
+
+    expect(row.state).toBe('upgradable');
+    // The run's own level vocabulary: a never-upgraded weapon is at base 1
+    // (the deployment grants `max(row.level, 1)`), never `LV 0`.
+    expect(row.level).toBe(1);
+    expect(row.maxLevel).toBe(MAX_PERMANENT_LEVEL);
+    expect(row.upgradePriceLabel).toBe('100 min');
+    expect(row.actionLabel).toBe('UPGRADE · 100 min');
+    expect(row.label).toBe('Spread Cannon — LV 1/5 — UPGRADE · 100 min');
+    expect(row.actionable).toBe(true);
+  });
+
+  it('prices the next level from the level the fleet has bought (rising curve)', () => {
+    // The one pure rule prices the step: 100 + 50 × level minerals, gaining a
+    // core every second level. A bought level 2 therefore prices level 3.
+    const row = rowFor(upgradedPayload(2), 'spread');
+    expect(row.level).toBe(2);
+    expect(row.upgradePriceLabel).toBe('200 min · 1 cores');
+    expect(row.actionLabel).toBe('UPGRADE · 200 min · 1 cores');
+    expect(row.label).toBe('Spread Cannon — LV 2/5 — UPGRADE · 200 min · 1 cores');
+    expect(row.actionable).toBe(true);
+  });
+
+  it('disables an unaffordable upgrade visibly, carrying the price and the shortfall (AC2)', () => {
+    // BROKE_PAYLOAD owns `spread` with no salvage at all.
+    const row = rowFor(BROKE_PAYLOAD, 'spread');
+    expect(row.state).toBe('upgrade-unaffordable');
+    expect(row.actionable).toBe(false);
+    expect(row.level).toBe(1);
+    expect(row.upgradePriceLabel).toBe('100 min');
+    expect(row.actionLabel).toBe('UPGRADE · 100 min — NEED 100 min');
+    expect(row.label).toBe(
+      'Spread Cannon — LV 1/5 — UPGRADE · 100 min — NEED 100 min',
+    );
+  });
+
+  it('reports a two-currency shortfall exactly as the purchase rows do', () => {
+    // Level 2 prices 200 min · 1 cores; the fleet holds 150 min and no cores.
+    const payload = clonePayload(BROKE_PAYLOAD);
+    payload.hangar.weaponLevels = [{ id: 'spread', level: 2 }];
+    payload.hangar.bankedMinerals = 150;
+
+    const row = rowFor(payload, 'spread');
+    expect(row.state).toBe('upgrade-unaffordable');
+    expect(row.actionLabel).toBe(
+      'UPGRADE · 200 min · 1 cores — NEED 50 min / 1 cores',
+    );
+    expect(row.actionable).toBe(false);
+  });
+
+  it('caps a weapon at the shared permanent-level ceiling (AC2)', () => {
+    const payload = upgradedPayload(MAX_PERMANENT_LEVEL);
+    // Funded: being able to pay must not reopen a capped kind.
+    payload.hangar.bankedMinerals = 10_000;
+    payload.hangar.bankedCores = 100;
+
+    const row = rowFor(payload, 'spread');
+    expect(row.state).toBe('capped');
+    expect(row.actionable).toBe(false);
+    expect(row.level).toBe(MAX_PERMANENT_LEVEL);
+    expect(row.maxLevel).toBe(MAX_PERMANENT_LEVEL);
+    // No further level has a price, so none is shown.
+    expect(row.upgradePriceLabel).toBeNull();
+    expect(row.actionLabel).toBe('MAX');
+    expect(row.label).toBe(
+      `Spread Cannon — LV ${MAX_PERMANENT_LEVEL}/${MAX_PERMANENT_LEVEL} — MAX`,
+    );
+  });
+
+  it('renders the non-upgradeable rows byte-identically to today (AC3)', () => {
+    // Owned hull (`hull-2`) and owned modifier: no permanent level to raise.
+    const ownedHull = rowFor(VALID_HANGAR_WAR_PAYLOAD, 'hull-2');
+    expect(ownedHull.state).toBe('owned');
+    expect(ownedHull.actionLabel).toBe('OWNED');
+    expect(ownedHull.label).toBe('Bulwark Hull — 220 min · 3 cores — OWNED');
+    expect(ownedHull.actionable).toBe(false);
+    expect(ownedHull.level).toBeNull();
+    expect(ownedHull.maxLevel).toBeNull();
+    expect(ownedHull.upgradePriceLabel).toBeNull();
+
+    const ownedModifier = rowFor(MODIFIER_PAYLOAD, 'hardened_plating');
+    expect(ownedModifier.state).toBe('owned');
+    expect(ownedModifier.label).toBe(
+      'Hardened Plating — 80 min · 1 cores — OWNED',
+    );
+    expect(ownedModifier.actionable).toBe(false);
+
+    // Not owned: the gated and unaffordable verdicts are untouched, so an
+    // unowned row can never be dressed up as an upgrade.
+    const gated = rowFor(BROKE_PAYLOAD, 'hull-3');
+    expect(gated.state).toBe('gated');
+    expect(gated.label).toBe('Juggernaut Hull — 320 min · 4 cores — RING 2');
+    expect(gated.level).toBeNull();
+    const unaffordable = rowFor(BROKE_PAYLOAD, 'ricochet');
+    expect(unaffordable.state).toBe('unaffordable');
+    expect(unaffordable.label).toBe(
+      'Ricochet — 90 min · 2 cores — NEED 90 min / 2 cores',
+    );
+    expect(unaffordable.level).toBeNull();
+  });
+
+  it('renders a power-up level row through the same generic affordance (AC5)', () => {
+    // The hangar catalogue has no power-up kind yet (power-up acquisition is
+    // deferred to AH-0MWKT12BT001106T), and the affordance is keyed on the
+    // **kind id** the economy classifies — never on the entry kind — so a
+    // seeded power-up level row renders exactly like a weapon's. This test
+    // creates no power-up acquisition surface: it only proves the genericity.
+    const bombEntry = {
+      id: 'bomb',
+      kind: 'weapon',
+      name: 'Bomb Rack',
+      description: 'A seeded power-up level row, rendered generically.',
+      price: { minerals: 50, cores: 0 },
+      minRing: 1,
+      starter: false,
+      // Never read by the affordance: the economy's own id tables classify the
+      // kind, and the seeded `powerUpLevels` row is what makes `bomb` owned.
+      weaponId: 'bomb',
+    } as unknown as HangarEntry;
+    const payload = upgradedPayload();
+    payload.hangar.unlockedWeapons = [...payload.hangar.unlockedWeapons, 'bomb'];
+    payload.hangar.powerUpLevels = [{ id: 'bomb', level: 2 }];
+
+    const row = buildHangarUnlockRows(payload, [
+      ...HANGAR_CATALOGUE,
+      bombEntry,
+    ]).find((entry) => entry.id === 'bomb')!;
+    expect(row.state).toBe('upgradable');
+    expect(row.level).toBe(2);
+    expect(row.actionLabel).toBe('UPGRADE · 200 min · 1 cores');
+    expect(row.actionable).toBe(true);
+  });
+
+  it('buys the next level from the row and persists it with the spend (AC2)', async () => {
+    const storage = memoryStorage(upgradedPayload());
+    const scene = await bootHangar({ storage });
+
+    expect(scene.getPayload().hangar.weaponLevels).toBeUndefined();
+    expect(scene.focusRow('buy:spread')).toBe(true);
+    pressKey(scene, { key: 'Enter' });
+
+    // The economy's price was spent and the level landed in the payload…
+    expect(scene.getPayload().hangar.bankedMinerals).toBe(140);
+    expect(scene.getPayload().hangar.bankedCores).toBe(3);
+    expect(scene.getPayload().hangar.weaponLevels).toEqual([
+      { id: 'spread', level: 1 },
+    ]);
+    // …and both halves were persisted in the one store write.
+    const stored = parseHangarWarPayload(
+      JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
+    );
+    expect(stored?.hangar.bankedMinerals).toBe(140);
+    expect(stored?.hangar.weaponLevels).toEqual([{ id: 'spread', level: 1 }]);
+
+    // The rebuilt row prices the next level from the level just bought: 150
+    // min, of which 140 are left, so it is visibly disabled with its shortfall.
+    const row = scene
+      .getModel()
+      .unlockRows.find((entry) => entry.id === 'spread')!;
+    expect(row.level).toBe(1);
+    expect(row.state).toBe('upgrade-unaffordable');
+    expect(row.actionLabel).toBe('UPGRADE · 150 min — NEED 10 min');
+    expect(scene.getRows().find((entry) => entry.key === 'buy:spread')!.actionable)
+      .toBe(false);
+  });
+
+  it('buys the next level on a pointer click too (the same row action)', async () => {
+    const scene = await bootHangar({
+      payload: upgradedPayload(),
+      storage: null,
+    });
+
+    const row = scene.getRows().find((entry) => entry.key === 'buy:spread')!;
+    expect(row.actionable).toBe(true);
+    row.text.emit('pointerdown');
+
+    expect(scene.getPayload().hangar.bankedMinerals).toBe(140);
+    expect(scene.getPayload().hangar.weaponLevels).toEqual([
+      { id: 'spread', level: 1 },
+    ]);
+  });
+
+  it('refuses an unaffordable or capped upgrade without spending or writing', async () => {
+    const broke = await bootHangar({ payload: BROKE_PAYLOAD, storage: null });
+    expect(broke.upgrade('spread')).toBe(false);
+    expect(broke.getPayload()).toEqual(BROKE_PAYLOAD);
+    // A disabled row is not focusable, so no input path can reach it.
+    expect(broke.focusRow('buy:spread')).toBe(false);
+
+    const capped = upgradedPayload(MAX_PERMANENT_LEVEL);
+    capped.hangar.bankedMinerals = 10_000;
+    capped.hangar.bankedCores = 100;
+    const scene = await bootHangar({ payload: capped, storage: null });
+    expect(scene.upgrade('spread')).toBe(false);
+    expect(scene.getPayload()).toEqual(capped);
+    expect(scene.focusRow('buy:spread')).toBe(false);
+  });
+
+  it('never upgrades under the attract demo (only the cheapest unlock is bought)', async () => {
+    const storage = memoryStorage(upgradedPayload());
+    booted = await bootScene([HangarScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: upgradedPayload(),
+      storage,
+      demo: true,
+      demoDwellMs: 1_000_000,
+    });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+
+    // The attract bot's decision function gains no upgrade branch
+    // (parent AC4): a funded, owned weapon is never upgraded by the demo, and
+    // the stored war is exactly the seeded one.
+    expect(scene.getPayload().hangar.weaponLevels).toBeUndefined();
+    expect(
+      parseHangarWarPayload(
+        JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
+      ),
+    ).toEqual(upgradedPayload());
   });
 });

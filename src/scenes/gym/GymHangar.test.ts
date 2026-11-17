@@ -110,6 +110,32 @@ describe('GymHangar', () => {
     expect(scene.getRows().every((row) => row.text.input === null)).toBe(true);
   });
 
+  it('renders the owned-row upgrade affordance through the same shared model (parent AC3, AC6)', async () => {
+    // A seeded permanent weapon level (the shape a hangar purchase writes
+    // through `buyHangarUpgrade`) renders through the shipped model builder and
+    // renderer — the gym owns no second upgrade path, and it stays read-only.
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.hangar.weaponLevels = [{ id: 'spread', level: 2 }];
+    const scene = await bootHangar({ payload });
+
+    const shipped = buildHangarScreenModel(payload);
+    expect(scene.getModel()).toEqual(shipped);
+    const row = scene
+      .getModel()
+      .unlockRows.find((entry) => entry.id === 'spread')!;
+    expect(row.state).toBe('upgradable');
+    expect(row.label).toBe('Spread Cannon — LV 2/5 — UPGRADE · 200 min · 1 cores');
+    // The model reports the row actionable, exactly as the game's does; the
+    // read-only render still activates nothing (no handlers), so a watcher can
+    // never buy or upgrade from the gym.
+    expect(row.actionable).toBe(true);
+    const rendered = scene.getRows().find((entry) => entry.key === 'buy:spread')!;
+    expect(rendered.label).toBe(row.label);
+    expect(rendered.actionable).toBe(false);
+    expect(rendered.text.input).toBeNull();
+    expect(scene.getPayload()).toEqual(payload);
+  });
+
   it('renders the ⟲ RESTART WAR row non-actionable (same model, no handlers)', async () => {
     const scene = await bootHangar({ payload: VALID_HANGAR_WAR_PAYLOAD });
     const restart = scene.getRows().find((row) => row.key === 'restart');

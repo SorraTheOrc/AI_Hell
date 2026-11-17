@@ -13,8 +13,9 @@
  * The scene renders {@link buildHangarScreenModel} through the shared
  * {@link renderHangarScreen} (the same renderer `GymHangar` uses read-only) and
  * applies every change with a pure updater from `./hangarScreen`
- * ({@link purchaseHangarEntry}, {@link equipHangarHull},
- * {@link toggleHangarWeapon}, {@link toggleHangarModifier}); it then persists
+ * ({@link purchaseHangarEntry}, {@link upgradeHangarKind},
+ * {@link equipHangarHull}, {@link toggleHangarWeapon},
+ * {@link toggleHangarModifier}); it then persists
  * the payload through `hangarWarStore.saveHangarWarPayload`. No purchase rule,
  * price or loadout decision lives in this file.
  *
@@ -76,6 +77,7 @@ import {
   restartHangarWar,
   toggleHangarModifier,
   toggleHangarWeapon,
+  upgradeHangarKind,
   RESTART_CONFIRM_TIMEOUT_MS,
   RESTART_ROW_KEY,
   type HangarScreenHandlers,
@@ -213,6 +215,7 @@ export class HangarScene extends Phaser.Scene {
     });
     const handlers: Partial<HangarScreenHandlers> = {
       onBuy: (entryId) => this.buy(entryId),
+      onUpgrade: (kindId) => this.upgrade(kindId),
       onEquipHull: (hullId) => this.equipHull(hullId),
       onToggleWeapon: (weaponId) => this.toggleWeapon(weaponId),
       onToggleModifier: (modifierId) => this.toggleModifier(modifierId),
@@ -252,6 +255,33 @@ export class HangarScene extends Phaser.Scene {
       this.persist();
     }
     this.rebuildKeepingFocus(`buy:${entryId}`);
+    return result.ok;
+  }
+
+  /**
+   * Buys the next permanent level of an owned weapon and persists the result
+   * (parent AH-0MWHW4ALS0039JFU AC3, this item AH-0MWI5AK1E008HDHH).
+   *
+   * The row's `UPGRADE` action: every rule (price, cap, affordability, the
+   * raised level) comes from the pure economy through
+   * `hangarWarStore.buyHangarUpgrade`, so the screen owns no purchase logic. A
+   * refused upgrade spends nothing and changes no level, and the raised level
+   * is persisted through the same `saveHangarWarPayload` call as the spend, so
+   * the two can never land separately.
+   *
+   * @param kindId — the owned weapon id to upgrade.
+   * @returns true when the level was bought and persisted.
+   */
+  upgrade(kindId: string): boolean {
+    this.disarmRestart();
+    const result = upgradeHangarKind(this.payload, kindId);
+    if (result.ok) {
+      this.payload = result.payload;
+      this.persist();
+    }
+    // The row key is stable (`buy:<id>`), so focus stays on the row the player
+    // just bought from instead of jumping to the top of the tree.
+    this.rebuildKeepingFocus(`buy:${kindId}`);
     return result.ok;
   }
 

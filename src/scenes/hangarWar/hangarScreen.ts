@@ -13,8 +13,21 @@
  *   module (`src/core/hangarWar/hangarEconomy.ts`) and the catalogue
  *   (`src/data/hangarCatalogue.ts`). This module only *presents* those
  *   decisions and applies them through the shared pure updaters
- *   ({@link purchaseHangarEntry}, {@link equipHangarHull},
- *   {@link toggleHangarWeapon}), which return a fresh payload.
+ *   ({@link purchaseHangarEntry}, {@link upgradeHangarKind},
+ *   {@link equipHangarHull}, {@link toggleHangarWeapon}), which return a fresh
+ *   payload.
+ * - **An owned level-bearing row is an upgrade row, not a dead `OWNED` one.**
+ *   A weapon the fleet owns shows its current permanent level and the priced
+ *   next-level action (`UPGRADE · 100 min`), visibly disabled with its price
+ *   and shortfall when the fleet cannot pay and `MAX` at the shared
+ *   `MAX_PERMANENT_LEVEL` ceiling. The price, cap and affordability verdicts
+ *   are the economy's own pure upgrade rule (`costToUpgrade`/`buyUpgrade`,
+ *   parent AH-0MWHW4ALS0039JFU — this item AH-0MWI5AK1E008HDHH); every
+ *   non-upgradeable row (a hull, a modifier, a consumable, a field-pickup-only
+ *   kind, and any row the fleet does not own) renders byte-identically to
+ *   before. The renderer stays kind-agnostic, so a power-up level row renders
+ *   the same affordance once one exists (power-up acquisition is deferred to
+ *   AH-0MWKT12BT001106T).
  * - **The deployment is a launch, not a loadout rule.** The ▶ DEPLOY row is
  *   built from the same pure deployment payload builder the game's scene
  *   hands to `PlayScene` (`./hangarDeployment`), so the hull, starting
@@ -49,19 +62,28 @@ import {
   isPurchasableEntry,
   type HangarEntry,
   type HangarEntryKind,
+  type HangarPrice,
 } from '../../data/hangarCatalogue';
 import {
   buy,
   canBuy,
   cheapestUsefulUnlock,
+  costToUpgrade,
+  currentUpgradeLevel,
   equipHull,
   equipLoadout,
   findHangarEntry,
+  hangarPermanentLevels,
+  MAX_PERMANENT_LEVEL,
   ownsEntry,
   resolveActiveHull,
   resolveActiveLoadout,
+  type UpgradeRefusal,
 } from '../../core/hangarWar/hangarEconomy';
-import { createDefaultPayload } from '../../core/hangarWar/hangarWarStore';
+import {
+  buyHangarUpgrade,
+  createDefaultPayload,
+} from '../../core/hangarWar/hangarWarStore';
 import type {
   HangarLoadout,
   HangarWarPayload,
@@ -80,8 +102,24 @@ export const HANGAR_SCREEN_TITLE = 'HANGAR WAR';
 export const HANGAR_SCREEN_HINT =
   'tab/arrows move · enter/space select · ESC returns to the menu';
 
-/** A hangar row's state — the economy's verdict, presented. */
-export type HangarUnlockState = 'owned' | 'gated' | 'unaffordable' | 'buyable';
+/**
+ * A hangar row's state — the economy's verdict, presented.
+ *
+ * The first four are the purchase branch's verdicts (`canBuy`), unchanged. The
+ * last three are the **owned-row upgrade affordance** (parent
+ * AH-0MWHW4ALS0039JFU AC3): an owned level-bearing kind shows its current
+ * permanent level and the price of the next one, and the same three-way
+ * disabled vocabulary the purchase rows use — buyable (`upgradable`),
+ * cannot-afford-it (`upgrade-unaffordable`) and no-further-level (`capped`).
+ */
+export type HangarUnlockState =
+  | 'owned'
+  | 'gated'
+  | 'unaffordable'
+  | 'buyable'
+  | 'upgradable'
+  | 'upgrade-unaffordable'
+  | 'capped';
 
 /**
  * The `⟲ RESTART WAR` confirmation row: the player-facing restart control.
@@ -126,12 +164,27 @@ export interface HangarUnlockRow {
   priceLabel: string;
   /** The economy's verdict for this entry right now. */
   state: HangarUnlockState;
-  /** Shown verb/state (`BUY`, `OWNED`, `RING 2`, `NEED 40 min`). */
+  /**
+   * Shown verb/state (`BUY`, `OWNED`, `RING 2`, `NEED 40 min`, `UPGRADE ·
+   * 100 min`, `MAX`).
+   */
   actionLabel: string;
   /** Full row text as rendered. */
   label: string;
-  /** True only when the row can be bought right now. */
+  /** True only when the row can be activated right now (buy **or** upgrade). */
   actionable: boolean;
+  /**
+   * The kind's current permanent level, for an owned level-bearing row (the
+   * upgrade affordance); `null` on every other row.
+   */
+  level: number | null;
+  /** The shared permanent-level ceiling on an upgrade row; `null` elsewhere. */
+  maxLevel: number | null;
+  /**
+   * The rendered price of the next permanent level (`100 min`), or `null` when
+   * there is no next level to price (a `capped` row, or no upgrade at all).
+   */
+  upgradePriceLabel: string | null;
 }
 
 /** One hull option in the deployment selector. */
@@ -325,12 +378,39 @@ function clonePayload(payload: HangarWarPayload): HangarWarPayload {
   };
 }
 
+/**
+ * A two-currency price as rendered (`100 min`, `150 min · 1 cores`).
+ *
+ * Single-homed so the purchase rows and the owned-row upgrade affordance
+ * spell a price the same way: only the currency pair is ever shown, never a
+ * currency the price does not spend.
+ */
+function formatHangarPrice(price: HangarPrice): string {
+  const minerals = toCount(price.minerals);
+  const cores = toCount(price.cores);
+  return cores > 0 ? `${minerals} min · ${cores} cores` : `${minerals} min`;
+}
+
 /** The price of an entry as rendered (`FREE` for the starting kit). */
 function formatPrice(entry: HangarEntry): string {
   if (entry.starter) return 'FREE';
-  const minerals = toCount(entry.price.minerals);
-  const cores = toCount(entry.price.cores);
-  return cores > 0 ? `${minerals} min · ${cores} cores` : `${minerals} min`;
+  return formatHangarPrice(entry.price);
+}
+
+/**
+ * What the fleet is missing, as rendered (`90 min / 2 cores`).
+ *
+ * The one spelling of a shortfall, shared by the purchase rows
+ * (`NEED 90 min / 2 cores`) and the upgrade rows (`UPGRADE · 150 min — NEED
+ * 150 min`), so a disabled row always reads the same way.
+ */
+function formatShortfall(shortfall: { minerals: number; cores: number }): string {
+  const minerals = toCount(shortfall.minerals);
+  const cores = toCount(shortfall.cores);
+  const parts: string[] = [];
+  if (minerals > 0) parts.push(`${minerals} min`);
+  if (cores > 0) parts.push(`${cores} cores`);
+  return parts.join(' / ');
 }
 
 /** The state verb/needed-salvage text for an unlock row. */
@@ -344,17 +424,85 @@ function actionLabelFor(
       return 'OWNED';
     case 'gated':
       return `RING ${toCount(entry.minRing)}`;
-    case 'unaffordable': {
-      const minerals = toCount(shortfall.minerals);
-      const cores = toCount(shortfall.cores);
-      const parts: string[] = [];
-      if (minerals > 0) parts.push(`${minerals} min`);
-      if (cores > 0) parts.push(`${cores} cores`);
-      return `NEED ${parts.join(' / ')}`;
-    }
+    case 'unaffordable':
+      return `NEED ${formatShortfall(shortfall)}`;
     case 'buyable':
       return 'BUY';
+    case 'upgradable':
+      return 'UPGRADE';
+    case 'upgrade-unaffordable':
+      return 'UPGRADE';
+    case 'capped':
+      return 'MAX';
   }
+}
+
+/**
+ * The owned-row upgrade affordance for one catalogue entry, or `null` when the
+ * entry has no permanent level to raise (so its row stays exactly as before).
+ *
+ * The purchase branch (`canBuy`) only ever says *owned* about a kind the fleet
+ * has, so this branch answers the next question: **is there a further level to
+ * sell?** It asks the one pure economy rule (`costToUpgrade`) — no price, cap
+ * or ownership decision is re-derived here — and returns `null` for the two
+ * refusal classes that mean "this kind is not upgradeable at all":
+ *
+ * - `unknown` — a hull or modifier id (no permanent level), and
+ * - `non-upgradeable` — a consumable or field-pickup-only power-up (producer
+ *   Q2 = (a): a charge pool or a pickup rule has no level to raise).
+ *
+ * Those rows keep today's `OWNED` rendering byte-for-byte (AC3), and so does an
+ * `unowned` refusal (unreachable from an *owned* purchase verdict, but a
+ * refusal the screen must never dress up as an upgrade).
+ *
+ * The level shown is the run's own permanent level: the economy's price basis
+ * is `0` for a kind with no bought row, which the deployment reads as the base
+ * level `1` (AH-0MWI5AG1X0007XZH), so the row never shows `LV 0` for a weapon
+ * the fleet flies. The renderer is kind-agnostic on purpose: a power-up level
+ * row already present in state renders through exactly this path (AC5), and
+ * only weapons are reachable in play today (power-up acquisition is deferred
+ * to AH-0MWKT12BT001106T).
+ */
+function buildUpgradeAffordance(
+  payload: HangarWarPayload,
+  entry: HangarEntry,
+): Partial<HangarUnlockRow> | null {
+  const levels = hangarPermanentLevels(payload.hangar);
+  const check = costToUpgrade(payload.hangar, entry.id, levels, {
+    ringIndex: payload.ring.ringIndex,
+  });
+  const refusal: UpgradeRefusal | null = check.reason;
+  if (
+    refusal === 'unknown'
+    || refusal === 'non-upgradeable'
+    || refusal === 'unowned'
+  ) {
+    return null;
+  }
+
+  const level = Math.max(1, currentUpgradeLevel(levels, entry.id));
+  const state: HangarUnlockState =
+    refusal === 'capped'
+      ? 'capped'
+      : refusal === null
+        ? 'upgradable'
+        : 'upgrade-unaffordable';
+  const priceLabel = state === 'capped' ? null : formatHangarPrice(check.price);
+  const actionLabel =
+    state === 'capped'
+      ? 'MAX'
+      : state === 'upgradable'
+        ? `UPGRADE · ${priceLabel}`
+        : `UPGRADE · ${priceLabel} — NEED ${formatShortfall(check.shortfall)}`;
+  return {
+    state,
+    actionable: state === 'upgradable',
+    level,
+    maxLevel: MAX_PERMANENT_LEVEL,
+    upgradePriceLabel: priceLabel,
+    actionLabel,
+    label: `${entry.name} — LV ${level}/${MAX_PERMANENT_LEVEL} — ${actionLabel}`,
+  };
 }
 
 /**
@@ -366,6 +514,13 @@ function actionLabelFor(
  * precedence. A **grant-only** entry (a special-mission reward, see
  * `isPurchasableEntry`) is not for sale, so it appears only once the fleet has
  * been granted it — where it reads as `OWNED` like any other reward.
+ *
+ * An **owned level-bearing kind** (every owned weapon today) is not a dead
+ * `OWNED` row: it shows its current permanent level and the priced upgrade
+ * action, decided by the pure {@link buildUpgradeAffordance} branch over the
+ * economy's `costToUpgrade`. Every non-upgradeable row — a consumable, a
+ * field-pickup-only kind, a hull, a modifier, and any row the fleet does not
+ * own (gated/unaffordable) — renders byte-identically to before.
  *
  * @param payload — the payload whose hangar and ring are shown.
  * @param catalogue — the tree to present (injectable for tests/fixtures).
@@ -385,17 +540,24 @@ export function buildHangarUnlockRows(
       const state: HangarUnlockState = check.ok
         ? 'buyable'
         : (check.reason ?? 'owned');
-      const actionLabel = actionLabelFor(entry, state, check.shortfall);
+      const upgrade =
+        state === 'owned' ? buildUpgradeAffordance(payload, entry) : null;
+      const actionLabel = upgrade?.actionLabel
+        ?? actionLabelFor(entry, state, check.shortfall);
       return {
         key: `buy:${entry.id}`,
         id: entry.id,
         kind: entry.kind,
         name: entry.name,
         priceLabel: formatPrice(entry),
-        state,
+        state: upgrade?.state ?? state,
         actionLabel,
-        label: `${entry.name} — ${formatPrice(entry)} — ${actionLabel}`,
-        actionable: state === 'buyable',
+        label: upgrade?.label
+          ?? `${entry.name} — ${formatPrice(entry)} — ${actionLabel}`,
+        actionable: upgrade !== null ? upgrade.actionable === true : state === 'buyable',
+        level: upgrade?.level ?? null,
+        maxLevel: upgrade?.maxLevel ?? null,
+        upgradePriceLabel: upgrade?.upgradePriceLabel ?? null,
       };
     });
 }
@@ -602,6 +764,18 @@ export interface HangarUpdateResult {
   readonly payload: HangarWarPayload;
 }
 
+/** The result of a pure upgrade update: a fresh payload, or a refusal. */
+export interface HangarUpgradeUpdateResult {
+  /** Whether the upgrade happened. */
+  readonly ok: boolean;
+  /** Why the upgrade was refused (`null` when it happened). */
+  readonly reason: UpgradeRefusal | null;
+  /** What was spent (the zero price on refusal). */
+  readonly spent: HangarPrice;
+  /** The payload after the upgrade (always fresh; the input is untouched). */
+  readonly payload: HangarWarPayload;
+}
+
 /**
  * Buys one catalogue entry and returns the updated payload (pure).
  *
@@ -626,8 +800,43 @@ export function purchaseHangarEntry(
 }
 
 /**
- * Equips an owned hull and returns the updated payload (pure).
+ * Buys the next permanent level of an owned level-bearing kind and returns the
+ * updated payload (pure).
  *
+ * Delegates every rule to the hangar-war store's `buyHangarUpgrade` (which
+ * feeds the **one** pure economy rule, `buyUpgrade`, the fleet's persisted
+ * levels and writes the raised snapshot back into the payload); this updater
+ * only carries the war's ring context, exactly as {@link purchaseHangarEntry}
+ * does for {@link buy}. The caller persists the result through
+ * `hangarWarStore.saveHangarWarPayload`, so the spent currency and the raised
+ * level can never land separately.
+ *
+ * A refusal (`unknown` / `non-upgradeable` / `unowned` / `capped` /
+ * `unaffordable`) spends nothing and raises no level, so a stale UI can never
+ * buy a level the economy did not authorise.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param kindId — the owned weapon/power-up id to upgrade.
+ * @returns the upgrade outcome and the payload to persist.
+ */
+export function upgradeHangarKind(
+  payload: HangarWarPayload,
+  kindId: string,
+): HangarUpgradeUpdateResult {
+  const outcome = buyHangarUpgrade(payload, kindId, {
+    ringIndex: payload.ring.ringIndex,
+  });
+  return {
+    ok: outcome.ok,
+    reason: outcome.reason,
+    spent: outcome.spent,
+    payload: outcome.payload,
+  };
+}
+
+/**
+ * Equips an owned hull and returns the updated payload (pure).
+ * *
  * An unowned/unknown hull leaves the payload unchanged (the economy refuses
  * it), so a corrupt UI selection can never deploy an unowned ship.
  */
@@ -813,6 +1022,8 @@ export interface HangarScreenRenderOptions {
 export interface HangarScreenHandlers {
   /** Buy an unlock (`BUY` rows only). */
   onBuy(entryId: string): void;
+  /** Buy the next permanent level of an owned kind (`UPGRADE` rows only). */
+  onUpgrade(kindId: string): void;
   /** Equip an owned hull. */
   onEquipHull(hullId: string): void;
   /** Toggle an owned starting weapon in the loadout. */
@@ -1016,13 +1227,26 @@ export function renderHangarScreen(
   // ── Unlock tree (left column) ──────────────────────────────────
   heading(scene, objects, LEFT_X, SECTION_Y, 'UNLOCKS');
   model.unlockRows.forEach((row, index) => {
+    // An owned level-bearing row is an **upgrade** row: it activates the
+    // next-level purchase, not the (already-owned) unlock. Every other
+    // actionable row stays on the purchase handler, so the two branches never
+    // cross over.
+    const isUpgradeRow =
+      row.state === 'upgradable' || row.state === 'upgrade-unaffordable';
+    const action = isUpgradeRow
+      ? handlers?.onUpgrade
+        ? () => handlers.onUpgrade!(row.id)
+        : undefined
+      : handlers?.onBuy
+        ? () => handlers.onBuy!(row.id)
+        : undefined;
     addRow(
       LEFT_X,
       ROW_START_Y + index * ROW_STEP,
       row.key,
       row.label,
       row.actionable,
-      handlers?.onBuy ? () => handlers.onBuy!(row.id) : undefined,
+      action,
     );
   });
 

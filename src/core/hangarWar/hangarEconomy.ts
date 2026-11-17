@@ -690,6 +690,30 @@ function currentPermanentLevel(
   return row === undefined ? 0 : toCount(row.level);
 }
 
+/**
+ * The fleet's current permanent level of a kind, in the price curve's own
+ * basis — the number {@link costToUpgrade} prices the next level from.
+ *
+ * `0` when the fleet has bought no level yet (or the id is unknown): the
+ * deployment reads that as the kind's **base level 1**, so the first bought
+ * row records the base and every further row raises the run's level. Exposed
+ * so a presentation surface (the hangar screen's owned row) can show the level
+ * the rule prices from without re-deriving it — there is no second copy of the
+ * lookup.
+ *
+ * @param levels — the fleet's permanent levels (read only).
+ * @param id — the kind to read (a shipped weapon or power-up id).
+ * @returns the current bought permanent level (`0` when none).
+ */
+export function currentUpgradeLevel(
+  levels: PermanentUpgradeLevels,
+  id: string,
+): number {
+  const kind = upgradeKind(id);
+  if (kind === null) return 0;
+  return currentPermanentLevel(levels, kind, id);
+}
+
 /** A detached copy of a level snapshot, so no rule can mutate its caller's rows. */
 function cloneLevels(levels: PermanentUpgradeLevels): PermanentUpgradeLevels {
   return {
