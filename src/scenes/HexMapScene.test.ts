@@ -428,9 +428,9 @@ describe('HexMapScene', () => {
     const panel = scene.getPanelText();
     expect(panel).toContain(panelHex.id);
     expect(panel).toContain(panelHex.boss!);
-    expect(panel).toContain(`W:${panelHex.weaknesses.join(',')}`);
-    expect(panel).toContain(`→${panelHex.grants}`);
-    expect(panel).toContain(`AGG ${panelHex.aggression}`);
+    expect(panel).toContain(`WEAKNESSES: ${panelHex.weaknesses.join(',')}`);
+    expect(panel).toContain(`GRANT: ${panelHex.grants}`);
+    expect(panel).toContain(`AGGRESSION: ${panelHex.aggression}`);
 
     // A concrete authored hex: ring 1's easiest (the default focus), its boss
     // and its grant all reachable through the panel.
@@ -439,8 +439,8 @@ describe('HexMapScene', () => {
       .find((row) => row.key === 'hex:hex-r1-2')!;
     expect(easiest.label).toBe(`AGG 1 ${UNHELD_TILE_MARKER}\n(1,-1)`);
     expect(panel).toContain('shroud-merchant');
-    expect(panel).toContain('W:waveLaser');
-    expect(panel).toContain('→extra-life');
+    expect(panel).toContain('WEAKNESSES: waveLaser');
+    expect(panel).toContain('GRANT: extra-life');
   });
 
   it(
@@ -625,7 +625,7 @@ describe('HexMapScene', () => {
     // Beside the existing hull line, the panel shows the derived
     // armour/firepower/systems and the upgrade rating contribution — the same
     // numbers the report and the gym render through the shared model.
-    expect(panel).toContain('bot hull-2 (14)');
+    expect(panel).toContain('DEFENDER: hull-2 (14)');
     expect(panel).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
   });
 
@@ -763,9 +763,9 @@ describe('HexMapScene', () => {
       expect(panel).toContain('hex-r1-2');
       expect(panel).toContain('HELD');
       expect(panel).toContain('shroud-merchant');
-      expect(panel).toContain('W:waveLaser');
-      expect(panel).toContain('→extra-life');
-      expect(panel).toContain('bot hull-1');
+      expect(panel).toContain('WEAKNESSES: waveLaser');
+      expect(panel).toContain('GRANT: extra-life');
+      expect(panel).toContain('DEFENDER: hull-1');
 
       // Activating an owned hex performs no deployment: the map stays up.
       scene.activateFocused();
@@ -995,7 +995,7 @@ describe('HexMapScene', () => {
       const rightWith = withRecord.getPanelText();
       expect(withRecord.getPanelKey()).toBe('hex:hex-idle');
       expect(rightWith).toContain('hex-idle');
-      expect(rightWith).toContain('AGG 1');
+      expect(rightWith).toContain('AGGRESSION: 1');
 
       // The right-hand intel panel is not a function of the record: entering
       // the map without one shows exactly the same intel for the same hex.

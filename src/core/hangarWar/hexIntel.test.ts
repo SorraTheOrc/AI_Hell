@@ -283,18 +283,25 @@ describe('hex map model — tile label (AC3)', () => {
     expect(held.tileLabel).not.toContain(UNHELD_TILE_MARKER);
   });
 
-  it('the full intel label block is unchanged', () => {
+  it('titles every line of the full intel label block (AH-0MWJ0XHWW009GTKK)', () => {
     const model = buildHexMapModel(ringPayload(1));
 
     for (const intel of model.hexes) {
       const definition = findHexRingDefinition(intel.id)!;
-      expect(intel.label).toContain(intel.id);
-      expect(intel.label).toContain('UNHELD');
-      expect(intel.label).toContain(`AGG ${definition.baseAggression}`);
-      expect(intel.label).toContain(definition.boss);
-      expect(intel.label).toContain(`S:${definition.strengths.join(',')}`);
-      expect(intel.label).toContain(`W:${definition.weaknesses.join(',')}`);
-      expect(intel.label).toContain(`→${definition.grants}`);
+      // Every overview line is explicitly titled, never a bare value or an
+      // abbreviation the player must decode.
+      expect(intel.label).toContain(`ID: ${intel.id}`);
+      expect(intel.label).toContain('STATE: UNHELD');
+      expect(intel.label).toContain(`AGGRESSION: ${definition.baseAggression}`);
+      expect(intel.label).toContain(`BOSS: ${definition.boss}`);
+      expect(intel.label).toContain(`STRENGTHS: ${definition.strengths.join(',')}`);
+      expect(intel.label).toContain(`WEAKNESSES: ${definition.weaknesses.join(',')}`);
+      expect(intel.label).toContain(`GRANT: ${definition.grants}`);
+
+      // The cryptic prefixes the titles replaced are gone.
+      expect(intel.label).not.toMatch(/^S:/m);
+      expect(intel.label).not.toMatch(/^W:/m);
+      expect(intel.label).not.toContain('\u2192');
     }
   });
 
@@ -330,7 +337,7 @@ describe('hex map model — tile label (AC3)', () => {
         bonus: 4,
       },
     ]);
-    expect(held.label).toContain('skill Line-breaker +4 vs the-dawnbreaker');
+    expect(held.label).toContain('SKILL: Line-breaker +4 vs the-dawnbreaker');
   });
 
   it('publishes no skills for a bot that has none (and no skill line)', () => {
@@ -345,7 +352,7 @@ describe('hex map model — tile label (AC3)', () => {
     )!;
 
     expect(held.skills).toEqual([]);
-    expect(held.label).not.toContain('skill ');
+    expect(held.label).not.toContain('SKILL:');
   });
 
   // ── Run-upgrade breakdown (AH-0MWH42DWQ004SAOJ, C6) ────────────────
@@ -389,7 +396,7 @@ describe('hex map model — tile label (AC3)', () => {
     });
     // The panel renders the breakdown beside the bot line: buckets, the
     // upgrade contribution and the total rating already on the bot line.
-    expect(held.label).toContain('bot hull-2 (14)');
+    expect(held.label).toContain('DEFENDER: hull-2 (14)');
     expect(held.label).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
   });
 
@@ -508,15 +515,17 @@ describe('hex map model — tile label (AC3)', () => {
     // below; the full block is panel text.
     expect(held.tileLabel).toBe(`AGG 1 ${HELD_TILE_MARKER}\n(1,-1)`);
     expect(other.tileLabel).toBe(`AGG 2 ${UNHELD_TILE_MARKER}\n(1,0)`);
-    expect(held.label).toContain('HELD · AGG 1 · !9');
-    expect(held.label).toContain('bot hull-1 (2)');
-    expect(held.label).toContain('atk 10 vs 2 · FALLS');
+    expect(held.label).toContain('STATE: HELD');
+    expect(held.label).toContain('AGGRESSION: 1 · !9');
+    expect(held.label).toContain('DEFENDER: hull-1 (2)');
+    expect(held.label).toContain('PENDING ATTACK: 10 vs 2 · FALLS');
 
     // A queued attack on an unheld (undefended) hex is shown as a force only:
     // there is nothing to resolve until a bot holds it.
     expect(other.pendingAttack?.force).toBe(9);
     expect(other.pendingAttack?.resolution).toBeNull();
-    expect(other.label).toContain('UNHELD · AGG 2 · !9');
+    expect(other.label).toContain('STATE: UNHELD');
+    expect(other.label).toContain('AGGRESSION: 2 · !9');
 
     expect(model.heldCount).toBe(1);
     expect(model.ringLine).toContain('1/6');
@@ -708,8 +717,8 @@ describe('hex map model — generated ring, partial ring and unknown definitions
     expect(held.boss).toBeNull();
     expect(held.strengths).toEqual([]);
     expect(held.grants).toBeNull();
-    expect(held.label).toContain('boss unknown');
-    expect(held.label).toContain('→waveLaser');
+    expect(held.label).toContain('BOSS: unknown');
+    expect(held.label).toContain('GRANT: waveLaser');
     expect(held.selectable).toBe(true);
     expect(held.actionable).toBe(false);
 
@@ -743,7 +752,8 @@ describe('hex map model — generated ring, partial ring and unknown definitions
     expect(intel.selectable).toBe(true);
     expect(intel.actionable).toBe(false);
     expect(intel.tileLabel).toBe(`AGG 0 ${HELD_TILE_MARKER}\n(1,0)`);
-    expect(intel.label).toContain('HELD · AGG 0');
+    expect(intel.label).toContain('STATE: HELD');
+    expect(intel.label).toContain('AGGRESSION: 0');
     expect(intel.label).toContain(definition.boss);
   });
 });

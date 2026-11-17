@@ -3067,8 +3067,14 @@ with every hex's **known-ahead intel**: held/unheld and aggression on the tile
 the focused hex** (tab/arrows move focus; read-only renders default to the
 model's first hex) — the boss that holds it, what that boss is **strong and
 weak against**, the weapon or upgrade the hex grants, the defending hull and
-any queued attack (AH-0MW3VG6WJ004HRI9). It is also the **post-deployment
-surface**: a finished sortie hands over its frontier-tick record and the map
+any queued attack (AH-0MW3VG6WJ004HRI9). Every line of that overview carries
+an explicit capitalised title (`ID:`, `STATE:`, `AGGRESSION:`, `BOSS:`,
+`STRENGTHS:`, `WEAKNESSES:`, `GRANT:`, `DEFENDER:`, `SKILL:`,
+`PENDING ATTACK:`) so the player never decodes an abbreviation, while the
+already-headed SPECIAL MISSION / REWARD / PERSONALITY / MECHANIC / LANDMARK /
+CONTRACT / BONUS sections keep their titles (AH-0MWJ0XHWW009GTKK). It is also
+the **post-deployment surface**: a finished sortie hands over its frontier-tick
+record and the map
 draws the between-sortie report on the same view — one attack arrow per attack
 on the ring, plus a left-hand attack panel with that attack's numbers (there is
 no separate report screen). Activating an

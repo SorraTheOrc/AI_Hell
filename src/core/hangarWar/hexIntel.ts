@@ -47,8 +47,15 @@
  *   discriminator glyph (filled = held, hollow = unheld) so ownership is
  *   readable without colour, and puts the axial coordinates `(q,r)` on a
  *   separate line below the badge — the renderer draws that line smaller
- *   (producer review AH-0MWDBI33V003QQ3U, 2026-11-15); the full `label`
- *   block is unchanged.
+ *   (producer review AH-0MWDBI33V003QQ3U, 2026-11-15).
+ * - **Titled detail panel.** The full `label` block (`hexLabel`) is the
+ *   right-hand detail panel's overview and labels **every** line with an
+ *   explicit capitalised title (`ID:`, `STATE:`, `AGGRESSION:`, `BOSS:`,
+ *   `STRENGTHS:`, `WEAKNESSES:`, `GRANT:`, `DEFENDER:`, `SKILL:`,
+ *   `PENDING ATTACK:`), so the player never has to decode an abbreviation
+ *   (AH-0MWJ0XHWW009GTKK). The already-headed variety sections (SPECIAL
+ *   MISSION, REWARD, PERSONALITY, MECHANIC, LANDMARK, CONTRACT, BONUS) keep
+ *   their titles. The tile label is untouched.
  * - **Full-ring progress.** `ringLine` counts the whole stored/generated ring
  *   (hidden hexes included), so hiding hexes never loses progress.
  * - **Grid columns.** `gridColumns` exposes the spatial arrow-navigation data
@@ -220,6 +227,26 @@ export const SPECIAL_MISSION_TILE_TAG = '\u2605 SPECIAL';
 
 /** Heading of the special-mission section inside the detail panel. */
 export const SPECIAL_MISSION_PANEL_HEADING = 'SPECIAL MISSION';
+
+/**
+ * Detail-panel line titles (AH-0MWJ0XHWW009GTKK).
+ *
+ * Every line of the selected hex's overview carries one of these titles so the
+ * panel is self-explanatory at a glance — the cryptic `S:`, `W:`, `→`, `bot`
+ * and `atk` prefixes are gone. The already-headed variety sections keep their
+ * own headings ({@link PERSONALITY_PANEL_HEADING},
+ * {@link CONTRACT_PANEL_HEADING}, {@link SPECIAL_MISSION_PANEL_HEADING}, …).
+ */
+export const HEX_ID_PANEL_TITLE = 'ID';
+export const HEX_STATE_PANEL_TITLE = 'STATE';
+export const HEX_AGGRESSION_PANEL_TITLE = 'AGGRESSION';
+export const HEX_BOSS_PANEL_TITLE = 'BOSS';
+export const HEX_STRENGTHS_PANEL_TITLE = 'STRENGTHS';
+export const HEX_WEAKNESSES_PANEL_TITLE = 'WEAKNESSES';
+export const HEX_GRANT_PANEL_TITLE = 'GRANT';
+export const HEX_DEFENDER_PANEL_TITLE = 'DEFENDER';
+export const HEX_SKILL_PANEL_TITLE = 'SKILL';
+export const HEX_PENDING_ATTACK_PANEL_TITLE = 'PENDING ATTACK';
 
 /**
  * One hex's authored **contract**, as the known-ahead intel publishes it
@@ -399,7 +426,11 @@ export interface HexIntel {  /** Row key (`hex:<id>`), unique within the map. */
    * smaller by the map renderer — producer review AH-0MWDBI33V003QQ3U).
    */
   readonly tileLabel: string;
-  /** The full intel block the detail panel renders (every line, newline separated). */
+  /**
+   * The full intel block the detail panel renders (every line, newline
+   * separated). Every line carries an explicit capitalised title so the
+   * overview is self-explanatory (AH-0MWJ0XHWW009GTKK).
+   */
   readonly label: string;
 }
 
@@ -902,7 +933,11 @@ function landmarkLine(
   return 'LANDMARK: CACHE \u2014 pays bonus salvage instead of granting';
 }
 
-/** The tile text: id, state/aggression/attack, boss, strengths, weaknesses, grant. */
+/**
+ * The detail-panel text: every line titled (id, state, aggression, boss,
+ * strengths, weaknesses, grant, defender, skills, pending attack), followed by
+ * the already-headed variety sections (AH-0MWJ0XHWW009GTKK).
+ */
 function hexLabel(
   state: HexState,
   definition: HexRingDefinition | undefined,
@@ -916,30 +951,33 @@ function hexLabel(
   personality: HexPersonalityId | null = null,
 ): string {
   const lines: string[] = [
-    state.id,
-    `${state.held ? 'HELD' : 'UNHELD'} · AGG ${toCount(state.aggression)}${
+    `${HEX_ID_PANEL_TITLE}: ${state.id}`,
+    `${HEX_STATE_PANEL_TITLE}: ${state.held ? 'HELD' : 'UNHELD'}`,
+    `${HEX_AGGRESSION_PANEL_TITLE}: ${toCount(state.aggression)}${
       pending ? ` · !${pending.force}` : ''
     }`,
   ];
 
   if (definition) {
     lines.push(
-      definition.boss,
-      `S:${definition.strengths.join(',')}`,
-      `W:${definition.weaknesses.join(',')}`,
-      `→${definition.grants}`,
+      `${HEX_BOSS_PANEL_TITLE}: ${definition.boss}`,
+      `${HEX_STRENGTHS_PANEL_TITLE}: ${definition.strengths.join(',')}`,
+      `${HEX_WEAKNESSES_PANEL_TITLE}: ${definition.weaknesses.join(',')}`,
+      `${HEX_GRANT_PANEL_TITLE}: ${definition.grants}`,
     );
   } else {
     lines.push(
-      'boss unknown',
-      'S:unknown',
-      'W:unknown',
-      `→${state.grantedWeapon ?? 'unknown'}`,
+      `${HEX_BOSS_PANEL_TITLE}: unknown`,
+      `${HEX_STRENGTHS_PANEL_TITLE}: unknown`,
+      `${HEX_WEAKNESSES_PANEL_TITLE}: unknown`,
+      `${HEX_GRANT_PANEL_TITLE}: ${state.grantedWeapon ?? 'unknown'}`,
     );
   }
 
   if (defender) {
-    lines.push(`bot ${defender.hullId} (${defender.defenceRating})`);
+    lines.push(
+      `${HEX_DEFENDER_PANEL_TITLE}: ${defender.hullId} (${defender.defenceRating})`,
+    );
     if (upgrade !== null) {
       lines.push(
         `upgrade armour ${upgrade.armour} · firepower ${
@@ -948,12 +986,14 @@ function hexLabel(
       );
     }
     for (const skill of defender.skills ?? []) {
-      lines.push(`skill ${skill.name} +${skill.bonus} vs ${skill.bossType}`);
+      lines.push(
+        `${HEX_SKILL_PANEL_TITLE}: ${skill.name} +${skill.bonus} vs ${skill.bossType}`,
+      );
     }
   }
   if (pending?.resolution) {
     lines.push(
-      `atk ${pending.resolution.attackStrength} vs ${
+      `${HEX_PENDING_ATTACK_PANEL_TITLE}: ${pending.resolution.attackStrength} vs ${
         pending.resolution.defenderRating
       } · ${pending.resolution.outcome === 'held' ? 'HOLDS' : 'FALLS'}`,
     );

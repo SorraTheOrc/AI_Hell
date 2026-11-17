@@ -387,7 +387,7 @@ describe('GymHexWar', () => {
     expect(hex.skills).toEqual([
       { id: 'maw-warded', name: 'Maw-warded', bossType: 'maw-of-ashes', bonus: 5 },
     ]);
-    expect(hex.label).toContain('skill Maw-warded +5 vs maw-of-ashes');
+    expect(hex.label).toContain('SKILL: Maw-warded +5 vs maw-of-ashes');
     expect(
       scene.getSummaryLines().some((line) => line.includes('skill Maw-warded +5')),
     ).toBe(true);
@@ -676,15 +676,15 @@ describe('GymHexWar', () => {
     )!;
     expect(panel).toContain(defaultHex.id);
     expect(panel).toContain(defaultHex.boss!);
-    expect(panel).toContain(`W:${defaultHex.weaknesses.join(',')}`);
-    expect(panel).toContain(`→${defaultHex.grants}`);
-    expect(panel).toContain(`AGG ${defaultHex.aggression}`);
+    expect(panel).toContain(`WEAKNESSES: ${defaultHex.weaknesses.join(',')}`);
+    expect(panel).toContain(`GRANT: ${defaultHex.grants}`);
+    expect(panel).toContain(`AGGRESSION: ${defaultHex.aggression}`);
     expect(
       scene.children.list.some(
         (child) =>
           child instanceof Phaser.GameObjects.Text &&
           child.text.includes(defaultHex.boss!) &&
-          child.text.includes(`→${defaultHex.grants}`),
+          child.text.includes(`GRANT: ${defaultHex.grants}`),
       ),
     ).toBe(true);
 
@@ -709,7 +709,7 @@ describe('GymHexWar', () => {
     );
     expect(hex).toBeDefined();
     expect(scene.getMapPanelText()).toContain(hex!.id);
-    expect(scene.getMapPanelText()).toContain(`AGG ${hex!.aggression}`);
+    expect(scene.getMapPanelText()).toContain(`AGGRESSION: ${hex!.aggression}`);
   });
 
   // ── Hangar Map UX renderer contract (AH-0MWEWYT79001D3A1) ──────────
