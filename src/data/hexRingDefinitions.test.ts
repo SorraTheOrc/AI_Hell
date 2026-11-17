@@ -19,6 +19,11 @@
  * (`hex-r1-5`), their publication in the known-ahead intel, and their
  * resolution through the shipped capture cycle (fortress two-pass, contract
  * banked once) with the state surviving the field-presence save migration.
+ *
+ * The **ring-1 special mission** (AH-0MWJ51KUS005WQK6) is pinned here too: the
+ * shipped rings each author exactly one special hex, ring 1's being
+ * `hex-r1-5` on its new grant-only `hull-4` reward, mirrored byte-for-value in
+ * the ring-1 CSV seed.
  */
 
 import { readFileSync } from 'node:fs';
@@ -353,12 +358,13 @@ describe('authored hex variety content (shipped rings)', () => {
   });
 
   it('authors ring 1\'s landmark and contract on the chosen hexes', () => {
-    // The fortress sits on the ring's last ordinary hex before the weapon hex;
-    // it keeps that hex's `core-bank` grant (a cache would have removed the
-    // ring's only core-bank). The contract sits on an aggression-2 hex so the
-    // bonus cannot reorder the ring's aggression-ordered recommended path.
+    // The fortress sits on the ring's special mission, the last hex before the
+    // weapon hex; converting that hex's grant to the ring-1 reward hull (from
+    // `core-bank`) keeps the set-piece intact. The contract sits on an
+    // aggression-2 hex so the bonus cannot reorder the ring's
+    // aggression-ordered recommended path.
     expect(findHexRingDefinition('hex-r1-5')?.landmark).toBe('fortress');
-    expect(findHexRingDefinition('hex-r1-5')?.grants).toBe('core-bank');
+    expect(findHexRingDefinition('hex-r1-5')?.grants).toBe('hull-4');
     expect(findHexRingDefinition('hex-r1-4')?.contract).toEqual({
       objective: 'Crack the ember nest and hold the hex',
       bonusSalvage: 60,
@@ -554,8 +560,14 @@ describe('authored ring-1 variety resolves through the shipped modules', () => {
       (hex) => hex.id === 'hex-r1-5',
     )!;
     expect(held.held).toBe(true);
-    // The fortress keeps its grant: the set-piece adds a pass, not a tax.
-    expect(held.grantedWeapon).toBe('core-bank');
+    // The fortress keeps its grant — now the ring-1 special reward hull. The
+    // set-piece adds a pass, not a tax: the hull is paid on the securing pass.
+    expect(held.grantedWeapon).toBe('hull-4');
+    expect(second.specialReward?.hullId).toBe('hull-4');
+    expect(second.payload.hangar.unlockedHulls).toContain('hull-4');
+    // The incomplete first pass pays nothing.
+    expect(first.specialReward).toBeNull();
+    expect(first.payload.hangar.unlockedHulls).not.toContain('hull-4');
   });
 
   it('banks the ring-1 contract bonus once and never on a replay', () => {
@@ -697,20 +709,46 @@ function authoredSpecialMissionHexes(): HexRingDefinition[] {
 }
 
 describe('authored special-mission content', () => {
-  it('authors exactly one special-mission hex, and it is ring 2\'s hull-3 hex', () => {
-    // One authored special mission is the contract (AH-0MWF0CTQB001XFE1 AC3);
-    // pinning it by id keeps the authored content visible in the diff and
-    // stops a later row quietly claiming the marker too.
+  it('authors exactly one special-mission hex per ring, pinned by id', () => {
+    // One special mission per ring is the contract (ring 2:
+    // AH-0MWF0CTQB001XFE1 AC3; ring 1: AH-0MWJ51KUS005WQK6 AC1). Pinning the
+    // ids keeps the authored content visible in the diff and stops a later row
+    // quietly claiming the marker too.
     expect(authoredSpecialMissionHexes().map((hex) => hex.id)).toEqual([
+      'hex-r1-5',
       'hex-r2-3',
     ]);
-    const special = authoredSpecialMissionHexes()[0];
-    expect(special.ringIndex).toBe(2);
-    expect(special.grants).toBe('hull-3');
+
+    const ringOne = authoredSpecialMissionHexes().find(
+      (hex) => hex.ringIndex === 1,
+    )!;
+    expect(ringOne.id).toBe('hex-r1-5');
+    expect(ringOne.grants).toBe('hull-4');
+
+    const ringTwo = authoredSpecialMissionHexes().find(
+      (hex) => hex.ringIndex === 2,
+    )!;
+    expect(ringTwo.id).toBe('hex-r2-3');
+    expect(ringTwo.grants).toBe('hull-3');
   });
 
-  it('pays the extra-hit-points hull, a real catalogue reward', () => {
-    const special = authoredSpecialMissionHexes()[0];
+  it('keeps ring 1 at six hexes with hex-r1-6 as its sole weapon hex', () => {
+    // The special is a conversion, never a seventh hex (AC1).
+    expect(hexRingDefinitionsFor(1)).toHaveLength(6);
+    expect(
+      hexRingDefinitionsFor(1)
+        .filter((hex) => hex.weaponHex)
+        .map((hex) => hex.id),
+    ).toEqual(['hex-r1-6']);
+    expect(
+      hexRingDefinitionsFor(1).filter((hex) => hex.isSpecialMission === true),
+    ).toHaveLength(1);
+  });
+
+  it('pays ring 2 the extra-hit-points hull, a real catalogue reward', () => {
+    const special = authoredSpecialMissionHexes().find(
+      (hex) => hex.ringIndex === 2,
+    )!;
     const reward = findHangarEntry(special.grants);
     const bulwark = findHangarEntry('hull-2');
 
@@ -723,6 +761,35 @@ describe('authored special-mission content', () => {
     );
   });
 
+  it('pays ring 1 the grant-only ring-1-tier hull (4 lives / DEF 3)', () => {
+    const special = authoredSpecialMissionHexes().find(
+      (hex) => hex.ringIndex === 1,
+    )!;
+    const reward = findHangarEntry(special.grants);
+    const scrap = findHangarEntry('hull-1');
+    const bulwark = findHangarEntry('hull-2');
+
+    expect(reward?.kind).toBe('hull');
+    expect(scrap?.kind).toBe('hull');
+    expect(bulwark?.kind).toBe('hull');
+    if (
+      reward?.kind !== 'hull' ||
+      scrap?.kind !== 'hull' ||
+      bulwark?.kind !== 'hull'
+    ) {
+      return;
+    }
+    // Q2 = a: 4 starting lives and baseDefence 3 — above the starter Scrap
+    // Hull (3 / DEF 2) and clearly below the Bulwark (4 / DEF 4).
+    expect(reward.runStats.startingLives).toBe(4);
+    expect(reward.baseDefence).toBe(3);
+    expect(reward.runStats.startingLives).toBeGreaterThan(
+      scrap.runStats.startingLives,
+    );
+    expect(reward.baseDefence).toBeGreaterThan(scrap.baseDefence);
+    expect(reward.baseDefence).toBeLessThan(bulwark.baseDefence);
+  });
+
   it('validates loudly and survives generation with the marker intact', () => {
     for (const ringIndex of [1, 2]) {
       expect(validateRingDefinitions(ringIndex, HEX_RING_DEFINITIONS)).toEqual({
@@ -730,26 +797,35 @@ describe('authored special-mission content', () => {
         issues: [],
       });
     }
-    const generated = generateRing(2, HEX_RING_DEFINITIONS).hexes;
+    const generatedOne = generateRing(1, HEX_RING_DEFINITIONS).hexes;
     expect(
-      generated.find((hex) => hex.id === 'hex-r2-3')?.isSpecialMission,
+      generatedOne.find((hex) => hex.id === 'hex-r1-5')?.isSpecialMission,
     ).toBe(true);
     expect(
-      generated.filter((hex) => hex.isSpecialMission === true),
+      generatedOne.filter((hex) => hex.isSpecialMission === true),
+    ).toHaveLength(1);
+
+    const generatedTwo = generateRing(2, HEX_RING_DEFINITIONS).hexes;
+    expect(
+      generatedTwo.find((hex) => hex.id === 'hex-r2-3')?.isSpecialMission,
+    ).toBe(true);
+    expect(
+      generatedTwo.filter((hex) => hex.isSpecialMission === true),
     ).toHaveLength(1);
   });
 
-  it('mirrors the marker in the ring-2 CSV seed', () => {
-    const fromSeed = definitionsFromCsv('hex-ring-2.csv').filter(
+  it('mirrors each ring\'s marker in its CSV seed', () => {
+    const ringTwo = definitionsFromCsv('hex-ring-2.csv').filter(
       (hex) => hex.isSpecialMission === true,
     );
-    expect(fromSeed.map((hex) => hex.id)).toEqual(['hex-r2-3']);
-    expect(fromSeed[0].grants).toBe('hull-3');
-    expect(
-      definitionsFromCsv('hex-ring-1.csv').some(
-        (hex) => hex.isSpecialMission === true,
-      ),
-    ).toBe(false);
+    expect(ringTwo.map((hex) => hex.id)).toEqual(['hex-r2-3']);
+    expect(ringTwo[0].grants).toBe('hull-3');
+
+    const ringOne = definitionsFromCsv('hex-ring-1.csv').filter(
+      (hex) => hex.isSpecialMission === true,
+    );
+    expect(ringOne.map((hex) => hex.id)).toEqual(['hex-r1-5']);
+    expect(ringOne[0].grants).toBe('hull-4');
   });
 });
 

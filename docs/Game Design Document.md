@@ -2931,6 +2931,7 @@ The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 | `hull-1` Scrap Hull | hull | 0 / 0 (starter) | 3 lives, speed ×1.0, defence 2 |
 | `hull-2` Bulwark Hull | hull | 220 / 3 | 4 lives, speed ×0.85, defence 14, defending-bot skill *Line-breaker* (+4 vs `the-dawnbreaker`) |
 | `hull-3` Juggernaut Hull | hull | 320 / 4 (`minRing: 2`) | 5 lives, speed ×0.8, defence 15 — the ring-2 special-mission reward (`hex-r2-3` grants it through `resolveHexGrant`), priced above the Bulwark for a fleet that never takes that hex (AH-0MWF0CUS3009M5SY) |
+| `hull-4` Vanguard Hull | hull | grant-only — never sold | 4 lives, speed ×0.9, defence 3 — the ring-1 special-mission reward (`hex-r1-5` grants it through `resolveHexGrant`): a survivability step over the Scrap Hull that stays clearly below the Bulwark, with no purchase path (AH-0MWJ51KUS005WQK6) |
 | `spread` Spread Cannon | weapon | 0 / 0 (starter) | `spread` starting weapon (owned by default, **not equipped**) |
 | `wave_laser` Wave Laser | weapon | 120 / 1 | `wave_laser` starting weapon |
 | `ricochet` Ricochet | weapon | 90 / 2 | `ricochet` starting weapon |
@@ -3160,8 +3161,9 @@ slice deferred:
   owned sets by one alias/catalogue mapping (`waveLaser` → `wave_laser`,
   `extra-life` → `hardened_plating`, shipped weapon ids, `hull-…` ids, and any
   other id as an upgrade). Ring 1 grants the Bulwark hull, the Wave Laser and
-  Ricochet starting weapons, the `rapid` strength entry, Extra Life and a
-  `core-bank` upgrade; ring 2 grants further hulls (`hull-2`, `hull-3`), weapons
+  Ricochet starting weapons, the `rapid` strength entry, Extra Life and —
+  through its special mission — the grant-only `hull-4`; ring 2 grants further
+  hulls (`hull-2`, `hull-3`), weapons
   (`arc`, `broadside`, `dual`, `nova`, `rapid`, `ricochet`), Extra Life and the
   `armour-plating` / `firepower-up` / `systems-upgrade` strength entries.
 
@@ -3216,7 +3218,8 @@ write:
    flying a hull the fleet owns; no defender means no hold
    (`defender-required`). The defender's stored rating is the hangar economy's
    single formula — `baseDefence + 3 × armour + 2 × firepower + 2 × systems`
-   (Scrap Hull `2`, Bulwark Hull `14`, Juggernaut Hull `15`) — never a flown
+   (Scrap Hull `2`, Vanguard Hull `3`, Bulwark Hull `14`, Juggernaut Hull `15`)
+   — never a flown
    battle. **The rating carries the run's permanent upgrades at capture time
    (AH-0MWH42DWQ004SAOJ):** the stored total is the **hull rating plus the
    contribution** of the victory-moment snapshot — every permanent weapon level
@@ -3265,12 +3268,13 @@ implementation.
 - **Authored, not scripted (producer answer Q1 = a).** The special mission is
   **authored ring data**: `isSpecialMission` on `HexRingDefinition`
   (`src/data/hexRingDefinitions.ts`, mirrored in the `hex-ring-*.csv` seeds).
-  Ring 2 authors exactly one — `hex-r2-3`, *the-void-marshall*. Its deployment
-  is the ordinary one-level capture above (deploy → beat the wave-5 mini-boss →
-  bank → grant → leave a bot); the *special* part is only the reward. The ring
-  validator rejects a special mission whose grant is not a hull catalogue entry
-  (`HexRingDefinitionError`), so malformed authored data fails loudly rather
-  than silently becoming an ordinary hex.
+  Each ring authors exactly one — ring 1's is `hex-r1-5`,
+  *the-hollow-judge*, and ring 2's is `hex-r2-3`, *the-void-marshall*. Its
+  deployment is the ordinary one-level capture above (deploy → beat the
+  wave-5 mini-boss → bank → grant → leave a bot); the *special* part is only
+  the reward. The ring validator rejects a special mission whose grant is not
+  a hull catalogue entry (`HexRingDefinitionError`), so malformed authored data
+  fails loudly rather than silently becoming an ordinary hex.
 - **The reward is a real ship (producer answer Q2 = a).** The granted hull is
   `hull-3` **Juggernaut Hull** (§8.1's catalogue): **5 starting lives** (two more
   than the Scrap Hull, one more than the Bulwark), defence `15`, speed ×0.8 — a
@@ -3279,6 +3283,22 @@ implementation.
   `resolveHexGrant`/`resolveHexCapture` path and persists under the one
   `ai_hell_hangar_war` payload (field-presence migration; no new storage key).
   Upgrade bays remain out of scope (AH-0MWEUSVJ1007EXJY).
+- **Ring 1's own special (AH-0MWJ51KUS005WQK6).** The opening ring now offers a
+  special mission from its first frontier: `hex-r1-5` (*the-hollow-judge*)
+  converts its `core-bank` grant to `hull-4` **Vanguard Hull** — **4 starting
+  lives**, `baseDefence` **3**, speed ×0.9. That is a real survivability step
+  over the starter Scrap Hull (3 lives / DEF 2) while staying clearly below the
+  Bulwark (4 lives / DEF 4), so the Bulwark keeps its value as both the free
+  `hex-r1-1` grant and the ring-1 purchase. The hull is **grant-only** (producer
+  answer Q3 = b): a catalogue entry so `isHullGrant` / `resolveHexGrant` accept
+  the authored grant, with a ring gate beyond every authored ring so `canBuy`
+  always reports `gated` — the special mission is its only source, and the
+  hangar lists it only once granted. Ring 1 stays exactly six hexes (the special
+  is a conversion, not a seventh hex) and `hex-r1-6` stays its sole weapon hex.
+  The hex keeps its `fortress` landmark, so securing it takes the shipped two
+  capture passes and the hull is paid on the securing pass. The rotation draws
+  only from the **current ring's** uncaptured specials, so the ring-1 offer
+  never leaks into ring 2.
 - **The offer rotates (producer answer Q3 = b).** Which special mission the ring
   presents changes **between sorties**: `specialMissionOfferFor` draws from a
   per-sortie stream of the shared seeded RNG (`resolveSpecialOffer` in
@@ -3288,8 +3308,8 @@ implementation.
   never ad-hoc randomness in a scene — and a captured offer is never re-offered.
 - **Known ahead.** The map publishes the offer **before** the player commits a
   life: the tile carries a short `★ SPECIAL` tag and the detail panel shows the
-  offered reward (hull name, its description, `+2 LIVES`, defence) and whether
-  it is offered *now*. The panel is built from the same reward derivation the
+  offered reward (hull name, its description, the extra lives, defence) and
+  whether it is offered *now*. The panel is built from the same reward derivation the
   capture pays (`src/core/hangarWar/specialMission.ts`), so the map can never
   advertise a hull the capture would not grant.
 
@@ -3361,20 +3381,21 @@ Ring 1 also authors the axes (AH-0MWJ4ZDXO007VDJS), so the opening ring
 demonstrates the variety rather than reading as six identical chores:
 
 - **`hex-r1-5`** (*the-hollow-judge*) authors the **`fortress` landmark** — two
-  capture passes while keeping its `core-bank` grant. A `cache` was
-deliberately not chosen: it pays out *instead of* granting, and would have
-  removed the ring's only `core-bank`. The hex is the ring's last ordinary hex
-  before the weapon hex, so the set-piece adds a choice at the tail of the ring
-  instead of slowing the opener.
+  capture passes. It is also the ring-1 **special mission** (AH-0MWJ51KUS005WQK6),
+  so its grant is the grant-only `hull-4` Vanguard Hull paid on the securing
+  pass (the `core-bank` upgrade it used to grant was the least disruptive one
+  to convert). The hex is the ring's last hex before the weapon hex, so the
+  set-piece adds a choice at the tail of the ring instead of slowing the opener.
 - **`hex-r1-4`** (*ember-reaver*) authors a **contract** — *"Crack the ember
   nest and hold the hex"* — paying **+60 salvage / +1 core** banked through
   `bankSalvage` on capture (below ring 2's +100/+1 and far below the
   140-salvage cache payout).
 
-No ring-1 row's `baseAggression`, grant, boss or weakness changed, so
-`hex-r1-6` remains the ring's hardest hex and the aggression-ordered
-recommended path is unaltered. Each authored axis is published in the
-known-ahead intel before the player commits a life.
+No ring-1 row's `baseAggression`, grant, boss or weakness changed by the
+variety pass, so `hex-r1-6` remains the ring's hardest hex and the
+aggression-ordered recommended path is unaltered. (The only later grant change
+is the special-mission conversion above.) Each authored axis is published in
+the known-ahead intel before the player commits a life.
 The axes are exercised by the gyms (§ *Gym coverage and parity*): `GymHexWar`
 publishes the personality/contract/landmark intel and `GymMiniBoss`'s HEX mode
 applies the two mechanics through the same shared mapping the game runs.
@@ -3586,8 +3607,8 @@ Measured baseline (seeds 1–3, competent bot; artifact
 |---|---|---|---|---|
 | 1 (6 hexes) | grind | **16.2 min** (14.7–18.1) | 6.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
 | 1 (6 hexes) | rush | **10.5 min** (9.9–11.0) | 1.0 | ring not secured |
-| 2 (12 hexes) | grind | **46.8 min** (34.1–54.5) | 12.0 | 60–180 · **missed** (AH-0MWFDQCFV007BZE5) |
-| 2 (12 hexes) | rush | **21.8 min** (20.1–23.9) | 1.0 | ring not secured |
+| 2 (12 hexes) | grind | **48.7 min** (42.0–55.0) | 12.0 | 60–180 · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | rush | **21.7 min** (19.9–23.0) | 1.0 | ring not secured |
 
 The per-hex budget **5–15 minutes per deployment** (AH-0MWHU5AV800969NA)
 derives each ring's window from its hex count — ring 1, six hexes → **30–90 min**;
@@ -3596,10 +3617,13 @@ tolerance** of each window's width: **±6 min** for ring 1 (30–90) and **±12 
 for ring 2 (60–180). The measured figures are **not** re-worded. With the
 one-level sortie the competent bot loses every sortie to enemy fire before the
 wave-5 clear: ring 1 grind **16.2 min** against its derived 30–90 window reads
-**`missed`**, and ring 2 grind **46.8 min** against 60–180 also reads
-**`missed`** (46.8 < the 48-minute tolerance floor) — verdicts computed by
-the harness from the producer's per-hex budget, never a re-word of the old
-window. Each ruling is recorded with
+**`missed`**, and ring 2 grind **48.7 min** against 60–180 reads
+**`within-tolerance`** (48.7 ≥ the 48-minute tolerance floor) — verdicts
+computed by the harness from the producer's per-hex budget, never a re-word of
+the old window. Ring 2's figure moved from 46.8 to 48.7 min when the ring-1
+special reward (`hull-4`, AH-0MWJ51KUS005WQK6) entered the ring-2 loadout as the
+fastest 4-life hull, flipping the verdict back to `within-tolerance`. Each
+ruling is recorded with
 its measured figure and re-ruled by its linked rebalancing item
 (**AH-0MWFDQ9EY004NO4X** ring 1, **AH-0MWFDQCFV007BZE5** ring 2). The headless
 arena is the recorded evidence (intake assumption A1 and Q4); a human playtest
@@ -3660,6 +3684,10 @@ every rings-1–2 entry:
 | Hardened Plating `hardened_plating` (80 / 1) | 20 | **9** | 14 |
 | Anti-Maw Plating `anti_maw_plating` (110 / 2) — added by AH-0MVWZYJ740037EZ1 | — | **13**† | 20† |
 
+The ring-1 reward `hull-4` Vanguard Hull is **grant-only** (no purchase path),
+so it has no unlock-pace row: the special mission pays it and the hangar never
+sells it (AH-0MWJ51KUS005WQK6).
+
 † The entry post-dates the original measurement, so it is **derived** from the
 rows above rather than re-measured: `hardened_plating`'s 9 (ring-1) and 14
 (ring-2) deployments for 80 minerals give ≈8.9 and ≈5.7 minerals per deployment,
@@ -3703,10 +3731,10 @@ hand-edited.
 Two lines are measured, and both are viable:
 
 - **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
-  secured: **16.2 min** for ring 1 and **46.8 min** for ring 2, banking salvage
+  secured: **16.2 min** for ring 1 and **48.7 min** for ring 2, banking salvage
   and ending with a held ring.
 - **Rush** — the weapon hex first, then straight into the next ring: **10.5 min**
-  and **21.8 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
+  and **21.7 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
 expected retakes and forfeiting the salvage of any failed attempt.
 
 **Neither line dominates**: the rush is faster but riskier and ends with an
@@ -3716,8 +3744,8 @@ the captured weapon hex is the ring's capstone, so holding it opens the next
 ring (`isRingOpenable`) while the skipped hexes are carried with their own
 aggression and defenders for the frontier tick. The re-measured grind totals
 are re-rated against the per-hex budget's derived windows: ring 1 **16.2 min**
-vs 30–90 reads **`missed`**, ring 2 **46.8 min** vs 60–180 also reads
-**`missed`** — each is recorded with its new measurement and re-ruled
+vs 30–90 reads **`missed`**, ring 2 **48.7 min** vs 60–180 reads
+**`within-tolerance`** — each is recorded with its new measurement and re-ruled
 by its own linked rebalancing item (**AH-0MWFDQ9EY004NO4X** ring 1,
 **AH-0MWFDQCFV007BZE5** ring 2) rather than re-worded; the per-hex budget
 itself stays authored.
@@ -3748,7 +3776,9 @@ and its gym (AGENTS.md gym↔game parity):
   banked salvage, ring progress, the unlock tree and the deployment selector,
   with no handlers, so it is read-only by construction. Fed the payload a
   special-mission capture wrote, it shows the `Juggernaut Hull` as an owned
-  unlock — the reward as the player sees it in the hangar.
+  unlock — the reward as the player sees it in the hangar. The ring-1 reward
+  (`hull-4` Vanguard Hull) is exercised the same way, and is absent from the
+  unlock tree until the special mission has granted it (it is never for sale).
 - **`GymHexWar`** — renders the shipped hex map (`buildHexMapModel` +
   `renderHexMap`) — read-only, so the tile aggression badges and the detail
   panel defaulting to the model's first hex are what the game shows — including
@@ -3762,7 +3792,8 @@ and its gym (AGENTS.md gym↔game parity):
   model/renderer pair the game uses. It also exercises the **special mission**:
   the map's own `★ SPECIAL` tile tag, offered-now marker and reward block in the
   detail panel, a capture through the shipped `resolveHexCapture` (granting
-  `hull-3` into the owned set) and the between-sortie rotation
+  `hull-3` into the owned set, and ring 1's `hull-4` through its fortressed
+  special) and the between-sortie rotation
   (`specialMissionOfferFor`), all through the game's own code.
 
 Both are in the capture registry (watchable, `docs/dev/gameplay-capture.md`) and

@@ -140,10 +140,12 @@ const MODIFIER_PAYLOAD: HangarWarPayload = {
 };
 
 describe('hangar screen model (pure)', () => {
-  it('presents every catalogue entry with its price and the economy state', () => {
+  it('presents every purchasable catalogue entry with its price and the economy state', () => {
     const rows = buildHangarUnlockRows(VALID_HANGAR_WAR_PAYLOAD);
 
-    // The whole tree is presented, starters included, in catalogue order.
+    // Every purchasable entry, starters included, in catalogue order. The
+    // grant-only ring-1 reward (`hull-4`) is not for sale, so it is absent
+    // until a special mission grants it (asserted below).
     expect(rows.map((row) => row.id)).toEqual([
       'hull-1',
       'hull-2',
@@ -171,6 +173,25 @@ describe('hangar screen model (pure)', () => {
     expect(buyable.actionable).toBe(true);
     expect(buyable.priceLabel).toBe('90 min · 2 cores');
     expect(buyable.label).toContain('BUY');
+  });
+
+  it('lists a grant-only reward hull only once the fleet owns it', () => {
+    // Not for sale: the ring-1 special reward (`hull-4`) never appears as a
+    // purchase row, so the player cannot buy it at any price.
+    const before = buildHangarUnlockRows(VALID_HANGAR_WAR_PAYLOAD);
+    expect(before.some((row) => row.id === 'hull-4')).toBe(false);
+
+    // Once the special mission has granted it, it reads as an owned unlock —
+    // exactly like the ring-2 reward (`hull-3`) does.
+    const granted = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    granted.hangar.unlockedHulls = [...granted.hangar.unlockedHulls, 'hull-4'];
+    const after = buildHangarUnlockRows(granted).find(
+      (row) => row.id === 'hull-4',
+    );
+    expect(after, 'hull-4 unlock row after the grant').toBeDefined();
+    expect(after!.state).toBe('owned');
+    expect(after!.actionLabel).toBe('OWNED');
+    expect(after!.actionable).toBe(false);
   });
 
   it('marks unaffordable entries with what the fleet is missing', () => {

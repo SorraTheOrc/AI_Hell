@@ -1056,6 +1056,61 @@ describe('resolveHexCapture — the special-mission path', () => {
     // The reward trades manoeuvrability for hit points; it is not a free win.
     expect(withReward.speedMultiplier).toBeLessThan(withStarter.speedMultiplier);
   });
+
+  it('pays the ring-1 special mission\'s grant-only hull (AH-0MWJ51KUS005WQK6)', () => {
+    // Ring 1's special is a fortress, so the shipped set-piece needs its two
+    // capture passes; the hull is paid on the securing pass through the same
+    // `resolveHexGrant` path as ring 2's.
+    const firstPass = resolveHexCapture(ringPayload(1), {
+      hexId: 'hex-r1-5',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(30, 1),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+    expect(firstPass.ok).toBe(false);
+    expect(firstPass.reason).toBe('fortress-incomplete');
+    expect(firstPass.specialReward).toBeNull();
+    expect(firstPass.payload.hangar.unlockedHulls).not.toContain('hull-4');
+
+    const result = resolveHexCapture(firstPass.payload, {
+      hexId: 'hex-r1-5',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(0, 0),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(true);
+    // The reward lands in the same owned set an ordinary hull grant uses.
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-4');
+    expect(hex(result.payload, 'hex-r1-5').held).toBe(true);
+    expect(hex(result.payload, 'hex-r1-5').grantedWeapon).toBe('hull-4');
+    expect(result.specialReward?.hexId).toBe('hex-r1-5');
+    expect(result.specialReward?.hullId).toBe('hull-4');
+    expect(result.specialReward?.startingLives).toBe(4);
+    expect(result.specialReward?.baseDefence).toBe(3);
+    expect(result.specialReward?.bonusStartingLives).toBe(1);
+
+    // It is a real ship: deploying it adds exactly the advertised extra life.
+    const withReward = buildHangarDeployment({
+      ...result.payload,
+      hangar: { ...result.payload.hangar, activeHull: 'hull-4' },
+    });
+    const withStarter = buildHangarDeployment({
+      ...result.payload,
+      hangar: { ...result.payload.hangar, activeHull: 'hull-1' },
+    });
+    expect(withReward.startingLives - withStarter.startingLives).toBe(
+      result.specialReward?.bonusStartingLives,
+    );
+
+    // No new storage key: the ring-1 reward persists under the same payload.
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(result.payload, storage);
+    const loaded = loadHangarWarPayload(storage);
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+    expect(loaded?.hangar.unlockedHulls).toContain('hull-4');
+    expect(hex(loaded!, 'hex-r1-5').grantedWeapon).toBe('hull-4');
+  });
 });
 
 // ── Run upgrade snapshot — red-first guard tests (AH-0MWHF6X9N0082BRO) ─────

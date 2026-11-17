@@ -152,9 +152,15 @@ intel (the `★ SPECIAL` tile tag, the offered-now marker and the hull/extra-hit
 points reward block in the detail panel) and resolves the capture with the
 shipped `resolveHexCapture`, so the `hull-3` grant and its owned-set landing are
 the game's code; `GymHangar` then renders the captured hull as an owned unlock.
-The rotation is the shared seeded resolver (`specialMissionOfferFor`) read from
-the payload's own seed and sortie counter, so a gym run replays the game's
-sequence for the same save — there is no gym-side rotation rule to diverge.
+**Ring 1's own special (AH-0MWJ51KUS005WQK6)** is exercised identically: the gym
+publishes `hex-r1-5`’s `hull-4` Vanguard Hull (4 lives, `+1 LIVES`, `DEF 3`),
+secures it through the shipped capture cycle (its `fortress` means two passes,
+with the hull paid on the securing pass), and `GymHangar` renders the granted
+hull as an owned unlock — while showing that the grant-only reward is absent
+from the unlock tree (never for sale) until it is granted. The rotation is the
+shared seeded resolver (`specialMissionOfferFor`) read from the payload's own
+seed and sortie counter, so a gym run replays the game's sequence for the same
+save — there is no gym-side rotation rule to diverge.
 
 **Map UX refresh (AH-0MWDBI33V003QQ3U).** The `GymHexWar` row now also records the
 revealed map: `buildHexMapModel` publishes per-hex `displayed` / `selectable` /

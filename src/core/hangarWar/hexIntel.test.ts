@@ -265,12 +265,14 @@ describe('hex map model — tile label (AC3)', () => {
       // The aggression badge + ownership marker lead the tile label; the axial
       // coordinates sit on their own second line, so the renderer can draw
       // them smaller below the badge (producer review AH-0MWDBI33V003QQ3U).
-      // Authored variety tags (CONTRACT / FORTRESS / NEBULA / SUMMONER) follow
-      // on their own lines and never displace the badge or the coordinates.
+      // Authored variety tags (SPECIAL / CONTRACT / FORTRESS / NEBULA /
+      // SUMMONER) follow on their own lines and never displace the badge or
+      // the coordinates.
       const [badge, coordinates, ...varietyTags] = intel.tileLabel.split('\n');
       expect(badge).toBe(`AGG ${intel.aggression} ${UNHELD_TILE_MARKER}`);
       expect(coordinates).toBe(`(${intel.q},${intel.r})`);
       const expectedTags =
+        (intel.specialMission !== null ? 1 : 0) +
         (intel.contract !== null ? 1 : 0) +
         (intel.landmark !== null ? 1 : 0) +
         (intel.personality === 'nebula' || intel.personality === 'summoner'
@@ -1355,10 +1357,45 @@ describe('hex map model — special-mission intel (AH-0MWF0CWB7002MG2F)', () => 
     expect(intel.label).toContain('NOT OFFERED NOW');
   });
 
-  it('offers nothing on a ring that authors no special mission', () => {
-    const model = buildHexMapModel(ringPayload(1));
+  it('offers nothing on a ring whose authored data has no special mission', () => {
+    const definitions = HEX_RING_DEFINITIONS.filter(
+      (definition) => definition.ringIndex === 1,
+    ).map((definition) => ({ ...definition, isSpecialMission: false }));
+    const payload: HangarWarPayload = {
+      ...createDefaultPayload(7),
+      ring: createRingState(1, definitions),
+    };
+    const model = buildHexMapModel(payload, { definitions });
 
     expect(model.specialOffer).toBeNull();
     expect(model.hexes.every((hex) => hex.specialMission === null)).toBe(true);
+  });
+
+  it('publishes ring 1\'s own special mission known-ahead (AH-0MWJ51KUS005WQK6)', () => {
+    // The ring-1 phase now publishes its own offer: same tile tag, same reward
+    // block, same `offeredNow` mechanics as ring 2's, from the shipped rotation.
+    const model = buildHexMapModel(ringPayload(1));
+    const intel = model.hexes.find((hex) => hex.id === 'hex-r1-5')!;
+
+    expect(intel.isSpecialMission).toBe(true);
+    expect(intel.tileLabel).toContain(SPECIAL_MISSION_TILE_TAG);
+    expect(intel.specialMission?.hullId).toBe('hull-4');
+    expect(intel.specialMission?.hullName).toBe('Vanguard Hull');
+    expect(intel.specialMission?.startingLives).toBe(4);
+    expect(intel.specialMission?.baseDefence).toBe(3);
+    expect(intel.specialMission?.bonusStartingLives).toBe(1);
+    expect(intel.specialMission?.offeredNow).toBe(true);
+    expect(intel.label).toContain(SPECIAL_MISSION_PANEL_HEADING);
+    expect(intel.label).toContain('Vanguard Hull');
+    expect(intel.label).toContain('+1 LIVES');
+    expect(intel.label).toContain('DEF 3');
+    expect(intel.label).toContain('OFFERED THIS SORTIE');
+    // Ring 2's special is not offered during the ring-1 phase.
+    expect(model.specialOffer?.hexId).toBe('hex-r1-5');
+    expect(
+      model.hexes
+        .filter((hex) => hex.specialMission?.offeredNow)
+        .map((hex) => hex.id),
+    ).toEqual(['hex-r1-5']);
   });
 });

@@ -802,10 +802,11 @@ shipped build:
   hex), `hex-r2-6` (a "Break the siege line then hold the hex" contract paying
   +100 salvage / +1 core) and `hex-r2-7` (a `fortress` landmark keeping its
   `extra-life` grant). Ring 1 also authors one landmark and one contract
-  (AH-0MWJ4ZDXO007VDJS): `hex-r1-5` a `fortress` keeping its `core-bank` grant
-  and `hex-r1-4` a "Crack the ember nest and hold the hex" contract paying
-  +60 salvage / +1 core, with the ring's aggression band and `hex-r1-6`'s
-  weapon-hex peak unchanged.
+  (AH-0MWJ4ZDXO007VDJS): `hex-r1-5` a `fortress` and `hex-r1-4` a "Crack the
+  ember nest and hold the hex" contract paying +60 salvage / +1 core, with the
+  ring's aggression band and `hex-r1-6`'s weapon-hex peak unchanged. The
+  fortress's grant became ring 1's special reward (`hull-4`, below), paid on its
+  securing pass.
 
 ### Fantasy / pitch
 
@@ -981,10 +982,12 @@ replace storage behind the same injectable interface (§6.6).
   a few lost attempts — and **ring 2 (12 hexes) lands at 60–180 minutes**.
   Measured with the ring-timing harness on the shipped one-level **five-wave
   sortie** (a captured hex's grant owned from the next deployment, ring 1's
-  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **46.8
-  minutes** — 17.4 of measured deployments, 12.0 between sorties and 17.4 of
-  modelled retries — so ring 2 plays retry-dominated and now also reads
-  **missed** against its derived 60–180 window (±12 min, floor 48) with its
+  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **48.7
+  minutes** — 12.4 of measured deployments, 24 between sorties and 12.4 of
+  modelled retries (it moved from 46.8 when the ring-1 special reward `hull-4`
+  entered the ring-2 loadout as the fastest 4-life hull,
+  AH-0MWJ51KUS005WQK6) — so ring 2 plays retry-dominated and reads
+  **within-tolerance** of its derived 60–180 window (±12 min, floor 48) with its
   rebalancing ruling live on AH-0MWFDQCFV007BZE5; ring 1's **16.2 min**
   still **misses** the derived 30–90 window (AH-0MWFDQ9EY004NO4X).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
@@ -1130,17 +1133,24 @@ ideas below are recorded so the loop has room to grow; one mitigation
 a post-MVP addition, the rest remain **design only**:
 
 - **Special missions — SHIPPED (AH-0MVWZYIWX0008C55).** A special-mission hex
-  authored in the ring (`isSpecialMission` on `HexRingDefinition`, ring 2's
-  `hex-r2-3`) whose ordinary one-level capture pays a **special reward** instead
-  of salvage: the `hull-3` **Juggernaut Hull** with **extra hit points**
-  (`5` starting lives, defence `15`) granted through `resolveHexGrant` into the
-  hangar's owned set. The offer **rotates between sorties** through the shared
-  seeded RNG (`specialMissionOfferFor`, deterministic for the payload seed) and
-  is **known ahead**: the map's detail panel publishes the reward — hull,
-  description, extra lives — before the player commits a life, with a short
-  `★ SPECIAL` tag on the tile. Upgrade-bay rewards remain out of scope
-  (AH-0MWEUSVJ1007EXJY). Gym coverage: `GymHexWar` + `GymHangar`
-  (`docs/GYM_PARITY.md`), specification in GDD §8.2 § *Special missions*.
+  authored in the ring (`isSpecialMission` on `HexRingDefinition`) whose
+  ordinary one-level capture pays a **special reward** instead of salvage.
+  Ring 2's is `hex-r2-3`: the `hull-3` **Juggernaut Hull** with **extra hit
+  points** (`5` starting lives, defence `15`) granted through
+  `resolveHexGrant` into the hangar's owned set. **Ring 1 has its own since
+  AH-0MWJ51KUS005WQK6:** `hex-r1-5` (`the-hollow-judge`, also the ring's
+  `fortress`) converts its `core-bank` grant to `hull-4` **Vanguard Hull** —
+  **4 starting lives**, `baseDefence` **3** — a survivability step over the
+  Scrap Hull that stays below the Bulwark. `hull-4` is **grant-only**: its ring
+  gate is beyond every authored ring, so `canBuy` always reports `gated` and the
+  special mission is its only source. The offer **rotates between sorties**
+  through the shared seeded RNG (`specialMissionOfferFor`, deterministic for the
+  payload seed) over the **current ring's** uncaptured specials, and is **known
+  ahead**: the map's detail panel publishes the reward — hull, description,
+  extra lives — before the player commits a life, with a short `★ SPECIAL` tag
+  on the tile. Upgrade-bay rewards remain out of scope (AH-0MWEUSVJ1007EXJY).
+  Gym coverage: `GymHexWar` + `GymHangar` (`docs/GYM_PARITY.md`), specification
+  in GDD §8.2 § *Special missions*.
 - **Upgraded bots with special skills.** Defending bots that are **more effective
   against certain enemy or boss types** — an anti-swarm bot, an anti-armour bot,
   a bot that repairs a neighbour's defence rating — so what the player leaves

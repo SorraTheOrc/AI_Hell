@@ -1,24 +1,24 @@
 /**
- * Hangar catalogue — the extra-hit-points hull (AH-0MWF0CUS3009M5SY).
+ * Hangar catalogue — the special-mission reward hulls
+ * (AH-0MWF0CUS3009M5SY, AH-0MWJ51KUS005WQK6).
  *
- * The post-MVP special-mission reward is a hull with **extra hit points**
- * (`hull-3`) expressed through the shipped `HullDefinition` / `HullRunStats`
- * model, granted through `resolveHexGrant` rather than bought as currency
- * (parent: AH-0MWVZYIWX0008C55, Q2 = a). These tests pin the data that makes
- * the reward real, and the budget that keeps it from trivialising ring 2:
+ * The post-MVP special-mission rewards are hulls with **extra hit points**
+ * expressed through the shipped `HullDefinition` / `HullRunStats` model and
+ * granted through `resolveHexGrant` rather than bought as currency (parent:
+ * AH-0MVWZYIWX0008C55, Q2 = a). These tests pin the data that makes each
+ * reward real, and the budgets that keep them from trivialising their ring:
  *
- * - **Real extra hit points** — strictly more starting lives than the Bulwark
- *   Hull, still inside the run's own `MAX_LIVES` cap.
- * - **Grantable** — `resolveHexGrant('hull-3')` resolves to the catalogue hull
- *   and `withGrantedEntry` lands it in `unlockedHulls` (the authored ring-2
- *   grant `hex-r2-3`).
- * - **Inside the ring-2 aggression-band budget** — the hull's player strength
- *   (what sizes the frontier's ring budget) may raise ring 2's authored mass
- *   by at most one aggression point over the documented Bulwark fleet budget
- *   (`docs/OUTER_LOOP_CANDIDATES.md`, ring 2: strength 14 → budget 58), so the
- *   reward buys survivability, not a cheaper ring.
- * - **Not outclassing the purchase economy** — it is a ring-2 purchase priced
- *   above the Bulwark Hull, so it cannot undercut the shipped unlock tree.
+ * - **`hull-3` (ring 2)** — strictly more starting lives than the Bulwark
+ *   Hull, still inside the run's own `MAX_LIVES` cap, and inside the ring-2
+ *   aggression-band budget.
+ * - **`hull-4` (ring 1)** — 4 starting lives and `baseDefence` 3: a real step
+ *   over the starter Scrap Hull that stays clearly below the Bulwark, inside
+ *   the ring-1 aggression band. It is **grant-only**: no reachable purchase
+ *   path, so the special mission is its only source.
+ * - **Grantable** — `resolveHexGrant` resolves each to the catalogue hull and
+ *   `withGrantedEntry` lands it in `unlockedHulls`.
+ * - **Not outclassing the purchase economy** — `hull-3` is a ring-2 purchase
+ *   priced above the Bulwark Hull; `hull-4` is never purchasable at all.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -28,6 +28,7 @@ import { resolveHexGrant, withGrantedEntry } from '../core/hangarWar/captureCycl
 import { createRingState } from '../core/hangarWar/hexRing';
 import { DEFAULT_FRONTIER_TUNING, ringAggressionBudget } from '../core/hangarWar/hexDefence';
 import {
+  canBuy,
   findHangarEntry,
   purchaseWeight,
   resolvePlayerStrength,
@@ -35,13 +36,20 @@ import {
 import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
 import { HEX_RING_DEFINITIONS } from './hexRingDefinitions';
 import {
+  GRANT_ONLY_MIN_RING,
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
   type HullDefinition,
 } from './hangarCatalogue';
 
-/** The extra-hit-points hull under test. */
+/** The extra-hit-points hull under test (ring 2's special reward). */
 const SPECIAL_HULL_ID = 'hull-3';
+
+/** The ring-1 grant-only special reward under test. */
+const RING_ONE_SPECIAL_HULL_ID = 'hull-4';
+
+/** The shipped starter hull the ring-1 reward is measured against. */
+const SCRAP_HULL_ID = 'hull-1';
 
 /** The shipped purchasable hull the budget and price are measured against. */
 const BULWARK_HULL_ID = 'hull-2';
@@ -64,7 +72,7 @@ function hangarFlying(hullId: string) {
   };
 }
 
-describe('hangar catalogue — the extra-hit-points hull', () => {
+describe('hangar catalogue — the ring-2 extra-hit-points hull', () => {
   it('itemises hull-3 as a hull with a name and a displayable description', () => {
     const hull = hullById(SPECIAL_HULL_ID);
 
@@ -140,6 +148,118 @@ describe('hangar catalogue — the extra-hit-points hull', () => {
     const granted = withGrantedEntry(hangar, grant!);
     expect(granted.unlockedHulls).toContain(SPECIAL_HULL_ID);
     // The grant path is idempotent, exactly as every other catalogue grant.
+    expect(withGrantedEntry(granted, grant!).unlockedHulls).toEqual(
+      granted.unlockedHulls,
+    );
+    // The caller's hangar is never mutated.
+    expect(hangar.unlockedHulls).toEqual([STARTER_HULL_ID]);
+  });
+});
+
+/**
+ * The ring-1 special reward (AH-0MWJ51KUS005WQK6, parent
+ * AH-0MVWZYIWX0008C55 Q2 = a / Q3 = b).
+ *
+ * Ring 1's special pays a **ring-1-tier** hull: a survivability step over the
+ * starter Scrap Hull that stays clearly below the Bulwark, so the Bulwark keeps
+ * its value as both the `hex-r1-1` free grant and the ring-1 purchase. It is
+ * **grant-only** — a catalogue entry so the grant resolves, but with no
+ * reachable purchase path — so the special mission is the only way to own it.
+ */
+describe('hangar catalogue — the ring-1 grant-only reward hull', () => {
+  it('itemises hull-4 as a named hull with a displayable description', () => {
+    const hull = hullById(RING_ONE_SPECIAL_HULL_ID);
+
+    expect(hull.id).toBe(RING_ONE_SPECIAL_HULL_ID);
+    expect(hull.kind).toBe('hull');
+    expect(hull.starter).toBe(false);
+    expect(hull.name.trim().length).toBeGreaterThan(0);
+    expect(hull.description.trim().length).toBeGreaterThan(20);
+  });
+
+  it('carries 4 starting lives and DEF 3: above the Scrap, below the Bulwark', () => {
+    const reward = hullById(RING_ONE_SPECIAL_HULL_ID);
+    const scrap = hullById(SCRAP_HULL_ID);
+    const bulwark = hullById(BULWARK_HULL_ID);
+
+    // AC3, fixed by the producer answer (Q2 = a).
+    expect(reward.runStats.startingLives).toBe(4);
+    expect(reward.baseDefence).toBe(3);
+
+    // A real survivability step over the starter kit ...
+    expect(reward.runStats.startingLives).toBeGreaterThan(
+      scrap.runStats.startingLives,
+    );
+    expect(reward.baseDefence).toBeGreaterThan(scrap.baseDefence);
+    // ... that can never undercut the Bulwark's free grant or purchase.
+    expect(reward.runStats.startingLives).toBeLessThanOrEqual(
+      bulwark.runStats.startingLives,
+    );
+    expect(reward.baseDefence).toBeLessThan(bulwark.baseDefence);
+    // A hull can never grant lives the run itself refuses to hold.
+    expect(reward.runStats.startingLives).toBeLessThanOrEqual(MAX_LIVES);
+  });
+
+  it('is grant-only: no reachable purchase path at any authored ring', () => {
+    const reward = hullById(RING_ONE_SPECIAL_HULL_ID);
+
+    // The sentinel gate is beyond every authored ring, so the entry is a
+    // resolution target, never a purchase.
+    expect(reward.minRing).toBe(GRANT_ONLY_MIN_RING);
+    expect(reward.minRing).toBeGreaterThan(2);
+
+    // Even a fleet with unlimited salvage cannot buy it, at any ring the game
+    // can actually reach.
+    const rich = {
+      ...createDefaultPayload(7).hangar,
+      bankedMinerals: 1_000_000,
+      bankedCores: 100_000,
+    };
+    for (const ringIndex of [1, 2]) {
+      const check = canBuy(rich, reward, { ringIndex });
+      expect(check.ok, `hull-4 buyable at ring ${ringIndex}`).toBe(false);
+      expect(check.reason).toBe('gated');
+    }
+  });
+
+  it('stays inside the ring-1 aggression-band budget', () => {
+    const ringOne = createRingState(1, HEX_RING_DEFINITIONS);
+    const scrapStrength = resolvePlayerStrength(hangarFlying(SCRAP_HULL_ID));
+    const rewardStrength = resolvePlayerStrength(
+      hangarFlying(RING_ONE_SPECIAL_HULL_ID),
+    );
+
+    // One more rating point than the fresh starter fleet (DEF 3 vs DEF 2) ...
+    expect(rewardStrength - scrapStrength).toBe(1);
+    // ... and therefore at most one point of ring-1 aggression mass
+    // (ring 1's authored mass is 18 for the minimum fleet).
+    expect(ringAggressionBudget(scrapStrength, ringOne, DEFAULT_FRONTIER_TUNING)).toBe(
+      18,
+    );
+    expect(
+      ringAggressionBudget(rewardStrength, ringOne, DEFAULT_FRONTIER_TUNING),
+    ).toBe(19);
+    // Modest beside the ring-2 Bulwark fleet budget (58).
+    expect(
+      ringAggressionBudget(rewardStrength, ringOne, DEFAULT_FRONTIER_TUNING),
+    ).toBeLessThan(58);
+  });
+
+  it('is granted through resolveHexGrant into the unlocked hulls', () => {
+    const grant = resolveHexGrant(RING_ONE_SPECIAL_HULL_ID);
+
+    expect(grant).not.toBeNull();
+    expect(grant).toMatchObject({
+      grantId: RING_ONE_SPECIAL_HULL_ID,
+      entryId: RING_ONE_SPECIAL_HULL_ID,
+      kind: 'hull',
+      weaponId: null,
+    });
+
+    const hangar = { ...createDefaultPayload(7).hangar };
+    const granted = withGrantedEntry(hangar, grant!);
+    expect(granted.unlockedHulls).toContain(RING_ONE_SPECIAL_HULL_ID);
+    // Idempotent, exactly as every other catalogue grant.
     expect(withGrantedEntry(granted, grant!).unlockedHulls).toEqual(
       granted.unlockedHulls,
     );

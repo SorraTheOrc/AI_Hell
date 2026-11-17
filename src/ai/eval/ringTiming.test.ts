@@ -305,20 +305,23 @@ describe('ring timing: the deployment loadout model (AH-0MW9QA2YC009PSF5)', () =
 
   it('enters ring 2 with every ring-1 grant, the strongest hull and the extra life', () => {
     const ownership = ringEntryOwnership(2);
-    expect(ownership.hulls).toEqual(['hull-1', 'hull-2']);
+    // `hull-4` (the ring-1 special reward, AH-0MWJ51KUS005WQK6) joins the
+    // owned set; `core-bank` is no longer granted (the special converted it).
+    expect(ownership.hulls).toEqual(['hull-1', 'hull-2', 'hull-4']);
     // Grants are earned in the line's plan order (weakest aggression first), and
     // `ricochet`, `rapid` and `waveLaser` → `wave_laser` resolve to shipped
-    // weapons; `extra-life` → `hardened_plating` and `core-bank` are recorded as
-    // modifiers (the shipped `resolveHexGrant`).
+    // weapons; `extra-life` → `hardened_plating` is recorded as a modifier (the
+    // shipped `resolveHexGrant`).
     expect(ownership.weapons).toEqual(['ricochet', 'rapid', 'wave_laser']);
-    expect(ownership.modifiers).toEqual(['hardened_plating', 'core-bank']);
+    expect(ownership.modifiers).toEqual(['hardened_plating']);
 
     const loadout = resolveDeploymentLoadout(ownership);
-    // `hull-2` is the strongest owned hull: 4 lives + the plating modifier,
-    // capped at the run's maximum life count.
-    expect(loadout.hullId).toBe('hull-2');
+    // `hull-4` and `hull-2` both carry 4 lives, so the faster hull wins: the
+    // special reward is the best *run* hull (defence only matters for a bot
+    // left behind), plus the plating modifier, capped at the run's maximum.
+    expect(loadout.hullId).toBe('hull-4');
     expect(loadout.lives).toBe(5);
-    expect(loadout.speedMultiplier).toBe(0.85);
+    expect(loadout.speedMultiplier).toBe(0.9);
     expect(loadout.weapons).toEqual([
       { id: 'ricochet', ownedLevel: 1 },
       { id: 'rapid', ownedLevel: 1 },
@@ -575,12 +578,15 @@ describe('ring timing: budget verdicts', () => {
  * an accidental recalibration.
  *
  * Re-rated against the derived windows, the regenerated one-level sortie
- * misses ring 1 (17.1 min against 30–90) and also misses ring 2
- * (46.8 min against 60–180): a window change is a producer ruling, not a
+ * misses ring 1 (16.2 min against 30–90) and sits within-tolerance on ring 2
+ * (48.7 min against 60–180): a window change is a producer ruling, not a
  * re-word of the measurement, so the per-hex pin stays authored and each ruling
  * is re-ruled by its linked rebalancing item (AH-0MWFDQ9EY004NO4X ring 1,
  * AH-0MWFDQCFV007BZE5 ring 2). `docs/EVALUATION.md` records the regenerated
- * measurements as the evidence.
+ * measurements as the evidence. Ring 2's figure moved from 46.8 to 48.7 min when
+ * the ring-1 special reward (`hull-4`, AH-0MWJ51KUS005WQK6) entered the ring-2
+ * loadout as the fastest 4-life hull, flipping the verdict back to
+ * `within-tolerance`.
  */
 describe('ring timing: the design windows are pinned literally', () => {
   it('authors the 5–15 per-hex budget and derives each ring window from its hex count', () => {
@@ -730,14 +736,14 @@ describe('ring timing: real arena evidence', () => {
     expect(report.budget.measuredMinutes).toBeGreaterThan(5);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the 12-hex one-level ring 2 grind measures ~47 min and misses the derived 60–180 window (AH-0MWCOWSVN003X81A)', () => {
-    // The same one-level model, twelve hexes: measured ≈ 51 min mean (seeds
+  it('the 12-hex one-level ring 2 grind measures ~49 min and sits within-tolerance of the derived 60–180 window (AH-0MWCOWSVN003X81A)', () => {
+    // The same one-level model, twelve hexes: measured ≈ 49 min mean (seeds
     // 1–3), every sortie lost to enemy fire. Against the derived 60–180-minute
     // window (12 × 5–15 per hex) the total sits inside the ±12-minute tolerance
-    // (the 51-minute floor); the verdict flips from the old window's `missed` —
-    // a consequence of the producer's new budget, computed by the harness,
-    // never a re-word. It is pinned against the committed artifact and tracked
-    // as the rebalancing item AH-0MWFDQCFV007BZE5.
+    // (the 48-minute floor), so the verdict is `within-tolerance`. It is pinned
+    // against the committed artifact and tracked as the rebalancing item
+    // AH-0MWFDQCFV007BZE5. The figure moved from 46.8 when the ring-1 special
+    // reward (`hull-4`) joined the ring-2 loadout.
     const report = simulateRingTiming({
       ringIndex: 2,
       strategy: 'grind',
@@ -745,11 +751,11 @@ describe('ring timing: real arena evidence', () => {
     });
     const committed = committedGrindReport(2);
     expect(report.runs[0].deployments).toHaveLength(12);
-    expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.verdict).toBe('within-tolerance');
     expect(report.budget.verdict).toBe(committed.budget.verdict);
-    expect(report.budget.withinTolerance).toBe(false);
+    expect(report.budget.withinTolerance).toBe(true);
     expect(report.budget.withinWindow).toBe(false);
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(46.7667, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(48.7006, 4);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(
       committed.summary.totalMinutes.mean,
       6,
@@ -1050,28 +1056,28 @@ describe('ring timing: committed baseline evidence', () => {
     }
   });
 
-  it('ring 2 grind: 46.8 min (34.1–54.5) misses the derived 60–180 min window', () => {
+  it('ring 2 grind: 48.7 min (42.0–55.0) sits within-tolerance of the derived 60–180 min window', () => {
     // Tracked for a producer ruling by AH-0MWFDQCFV007BZE5.
     const report = committedGrindReport(2);
-    expect(report.budget.verdict).toBe('missed');
+    expect(report.budget.verdict).toBe('within-tolerance');
     expect(report.budget.withinWindow).toBe(false);
-    expect(report.budget.withinTolerance).toBe(false);
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(46.7667, 4);
-    expect(report.summary.totalMinutes.min).toBeCloseTo(34.0967, 4);
-    expect(report.summary.totalMinutes.max).toBeCloseTo(54.5156, 4);
+    expect(report.budget.withinTolerance).toBe(true);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(48.7006, 4);
+    expect(report.summary.totalMinutes.min).toBeCloseTo(42.0456, 4);
+    expect(report.summary.totalMinutes.max).toBeCloseTo(55.0444, 4);
     expect(report.budget.target).toEqual(RING_TIMING_TARGETS[2]);
     expect(report.budget.toleranceMinutes).toBeCloseTo(12, 6);
-    // Δ to the window floor: 46.7667 − 60 = −13.2333 min, which is inside the
+    // Δ to the window floor: 48.7006 − 60 = −11.2994 min, which is inside the
     // 48-minute tolerance floor (60 − 12): the total is within tolerance, so
-    // the verdict flips from the old window's `missed` — a consequence of the
-    // producer's new per-hex budget, computed not authored.
+    // the verdict is `within-tolerance` rather than `missed` — a consequence of
+    // the producer's new per-hex budget, computed not authored.
     expect(
       report.summary.totalMinutes.mean - RING_TIMING_TARGETS[2].minMinutes,
-    ).toBeCloseTo(-13.2333, 4);
+    ).toBeCloseTo(-11.2994, 4);
     expect(
       evaluateRingTimingBudget(2, 'grind', report.summary.totalMinutes.mean)
         .verdict,
-    ).toBe('missed');
+    ).toBe('within-tolerance');
     for (const run of report.runs) {
       expect(
         run.deploymentMinutes +

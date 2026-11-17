@@ -26,14 +26,16 @@
 #                     bonus salvage instead of granting); empty for an ordinary
 #                     hex. A ring holds at most one of each.
 #
-# Ring 1 authors one landmark and one contract (AH-0MWJ4ZDXO007VDJS): the
-# fortress on `hex-r1-5` (last ordinary hex before the weapon hex) and the
-# +60-salvage/+1-core contract on `hex-r1-4`. No ring-1 hex authors a
-# personality, so the opening ring stays inside its aggression band.
+# Ring 1 authors one landmark and one contract (AH-0MWJ4ZDXO007VDJS), and the
+# landmark sits on the ring's special mission (AH-0MWJ51KUS005WQK6): the
+# fortress on `hex-r1-5` (last hex before the weapon hex) and the
+# +60-salvage/+1-core contract on `hex-r1-4`. The special's hull is paid on the
+# fortress's second capture pass. No ring-1 hex authors a personality, so the
+# opening ring stays inside its aggression band.
 id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression,personality,contractObjective,contractBonusSalvage,contractBonusCores,landmark
 hex-r1-1,1,0,1,the-dawnbreaker,cannon|dual,nova|arc,hull-2,false,false,2,,,,,
 hex-r1-2,1,-1,1,shroud-merchant,spread,waveLaser,extra-life,false,false,1,,,,,
 hex-r1-3,0,-1,1,iron-crusher,rapid,mortar,rapid,false,false,3,,,,,
 hex-r1-4,-1,0,1,ember-reaver,cannon,ricochet,ricochet,false,false,2,,Crack the ember nest and hold the hex,60,1,
-hex-r1-5,-1,1,1,the-hollow-judge,nova,waveLaser,core-bank,false,false,4,,,,,fortress
+hex-r1-5,-1,1,1,the-hollow-judge,nova,waveLaser,hull-4,false,true,4,,,,,fortress
 hex-r1-6,0,1,1,maw-of-ashes,mortar|arc,spread|dual,waveLaser,true,false,6,,,,,

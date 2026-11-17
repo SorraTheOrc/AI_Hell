@@ -19,14 +19,16 @@
  * - **Every grant is distinct within its ring**, so each hex is a real
  *   strategic choice rather than a duplicate reward.
  * - **Every row states `isSpecialMission`.** It is `false` for ordinary hexes
- *   and `true` for a **special-mission hex**, of which ring 2 authors exactly
- *   one: `hex-r2-3` (`the-void-marshall`), whose grant is the extra-hit-points
- *   `hull-3` (AH-0MWF0CTQB001XFE1, post-MVP Hangar War). The deployment of a
- *   special hex is the **ordinary one-level capture** — the "special" part is
- *   the hull it pays, never a second run shape — and the marker is validated
- *   loudly by `validateRingDefinitions` (a `true` row must grant a hull
- *   catalogue entry). The CSV seeds carry the same column, so the parity test
- *   keeps the marker from drifting.
+ *   and `true` for a **special-mission hex**, of which each ring authors
+ *   exactly one: ring 1's is `hex-r1-5` (`the-hollow-judge`), whose grant is
+ *   the ring-1-tier grant-only `hull-4` (AH-0MWJ51KUS005WQK6, post-MVP Hangar
+ *   War), and ring 2's is `hex-r2-3` (`the-void-marshall`), whose grant is the
+ *   extra-hit-points `hull-3` (AH-0MWF0CTQB001XFE1, post-MVP Hangar War). The
+ *   deployment of a special hex is the **ordinary one-level capture** — the
+ *   "special" part is the hull it pays, never a second run shape — and the
+ *   marker is validated loudly by `validateRingDefinitions` (a `true` row must
+ *   grant a hull catalogue entry). The CSV seeds carry the same column, so the
+ *   parity test keeps the marker from drifting.
  * - **Hex variety is optional authored data** (post-MVP,
  *   AH-0MVWZYQN8007SXIG foundation AH-0MWEW4ANW009GGX7): a row may carry a
  *   `personality`, an optional `contract` and a `landmark` (`fortress`/`cache`).
@@ -34,13 +36,14 @@
  *   `hex-r2-1` a `nebula` personality, `hex-r2-6` a contract and `hex-r2-7` a
  *   `fortress` landmark — all at the ring's aggression-2 survivable floor.
  *   Ring 1 authors one landmark and one contract (AH-0MWJ4ZDXO007VDJS): a
- *   `fortress` on `hex-r1-5` (the last ordinary hex before the weapon hex,
- *   keeping its `core-bank` grant) and a +60-salvage/+1-core contract on
- *   `hex-r1-4`, so the opening ring demonstrates both choices without
- *   touching its aggression band; ring 1 authors no personality, so the
- *   tutorial ring's bosses stay default-tuned. Every field is optional, so
- *   older saves stay field-presence migratable. The CSV seeds carry the
- *   matching columns so the parity test covers them too.
+ *   `fortress` on `hex-r1-5` (the last hex before the weapon hex) and a
+ *   +60-salvage/+1-core contract on `hex-r1-4`, so the opening ring
+ *   demonstrates both choices without touching its aggression band; ring 1
+ *   authors no personality, so the tutorial ring's bosses stay default-tuned.
+ *   The fortress sits on the ring-1 special mission, so securing that hex takes
+ *   the shipped two capture passes and the hull is paid on the second. Every
+ *   field is optional, so older saves stay field-presence migratable. The CSV
+ *   seeds carry the matching columns so the parity test covers them too.
  * - **Ring 2 is the harder frontier**: its hardest hex outranks ring 1's, and
  *   its aggression floor is above the opening ring's.
  * - **Authorship order is pinned** by the harness fixtures
@@ -135,14 +138,19 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     boss: 'the-hollow-judge',
     strengths: Object.freeze(['nova']),
     weaknesses: Object.freeze(['waveLaser']),
-    grants: 'core-bank',
+    grants: 'hull-4',
     weaponHex: false,
-    isSpecialMission: false,
+    // The ring-1 special mission (AH-0MWJ51KUS005WQK6): an ordinary capture
+    // that pays the ring-1-tier grant-only Vanguard Hull (`hull-4`) instead of
+    // the currency bank it used to grant. Known ahead in the map intel. The
+    // fortress set-piece stays, so securing the hex takes the shipped two
+    // capture passes and the hull is paid on the second.
+    isSpecialMission: true,
     baseAggression: 4,
     // Shipped variety (AH-0MWJ4ZDXO007VDJS): a fortress set-piece needing two
-    // capture passes. It is the ring's last ordinary hex before the weapon hex
-    // and keeps its `core-bank` grant (the ring's only one), so the set-piece
-    // adds a decision at the tail of the ring rather than slowing the opener.
+    // capture passes. It is the ring's last hex before the weapon hex, so the
+    // set-piece adds a decision at the tail of the ring rather than slowing
+    // the opener.
     landmark: 'fortress',
   }),
   Object.freeze({

@@ -137,6 +137,31 @@ export const STARTER_HULL_ID = 'hull-1';
 export const STARTER_WEAPON_ID = 'spread';
 
 /**
+ * Ring gate carried by every **grant-only** catalogue entry.
+ *
+ * A grant-only entry exists so `isHullGrant` / `resolveHexGrant` can accept a
+ * special-mission hex's authored grant, but it must never be sold. The gate is
+ * deliberately far beyond every authored ring, so `canBuy` reports `gated` at
+ * any reachable ring and there is no purchase path. It lives as a documented
+ * sentinel rather than a new model field (the catalogue model is unchanged).
+ */
+export const GRANT_ONLY_MIN_RING = 99;
+
+/**
+ * Whether a catalogue entry can ever be bought.
+ *
+ * `false` for a **grant-only** entry (see {@link GRANT_ONLY_MIN_RING}): such an
+ * entry is a special-mission reward target, so the hangar never lists it for
+ * sale and the unlock-pace report never measures it.
+ *
+ * @param entry — a catalogue entry.
+ * @returns true when the entry has a reachable purchase path.
+ */
+export function isPurchasableEntry(entry: HangarEntry): boolean {
+  return entry.minRing < GRANT_ONLY_MIN_RING;
+}
+
+/**
  * The hangar's unlock tree.
  *
  * Six buyable entries (two hulls, three starting weapons, one modifier) plus
@@ -146,6 +171,11 @@ export const STARTER_WEAPON_ID = 'spread';
  * as the ring-2 special-mission reward (granted free through `resolveHexGrant`)
  * and, for a fleet that never takes that hex, as a ring-2 purchase priced above
  * the Bulwark Hull (AH-0MWF0CUS3009M5SY).
+ *
+ * Ring 1's own special-mission reward (`hull-4`, AH-0MWJ51KUS005WQK6) is the
+ * tree's first **grant-only** hull: it is in the catalogue so the ring data
+ * validates and the grant resolves, but its gate is {@link GRANT_ONLY_MIN_RING}
+ * and it is never sold.
  *
  * The tree now carries **two** buyable modifiers (AH-0MVWZYJ740037EZ1):
  * `hardened_plating` (the extra-life kit) and `anti_maw_plating` (a
@@ -210,6 +240,31 @@ export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
     baseDefence: 5,
     upgrades: { armour: 2, firepower: 1, systems: 1 },
     runStats: { startingLives: 5, speedMultiplier: 0.8 },
+  },
+  {
+    // The ring-1 special-mission reward (AH-0MWJ51KUS005WQK6, parent
+    // AH-0MVWZYIWX0008C55 Q2 = a): one more starting life and one more point
+    // of base defence than the starter Scrap Hull, so ring 1's special is a
+    // real survivability step — while staying clearly below the Bulwark Hull
+    // (4 lives / DEF 4), which keeps its value as both the `hex-r1-1` free
+    // grant and the ring-1 purchase.
+    //
+    // **Deliberately grant-only (producer answer Q3 = b).** The entry exists
+    // so `isHullGrant` / `resolveHexGrant` accept `hex-r1-5`'s authored grant,
+    // but its ring gate is {@link GRANT_ONLY_MIN_RING} and its price is never
+    // charged: `canBuy` always reports `gated`, so there is no purchase path.
+    // The hangar lists it only once the special mission has granted it.
+    id: 'hull-4',
+    kind: 'hull',
+    name: 'Vanguard Hull',
+    description:
+      'A rescue-frame hull with a doubled cockpit and patched plating: one more life than the Scrap Hull and a little more armour, without the Bulwark’s weight.',
+    price: { minerals: 400, cores: 5 },
+    minRing: GRANT_ONLY_MIN_RING,
+    starter: false,
+    baseDefence: 3,
+    upgrades: { armour: 0, firepower: 0, systems: 0 },
+    runStats: { startingLives: 4, speedMultiplier: 0.9 },
   },
   {
     id: STARTER_WEAPON_ID,

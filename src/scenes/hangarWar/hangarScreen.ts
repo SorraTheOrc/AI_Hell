@@ -46,6 +46,7 @@ import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import {
   HANGAR_CATALOGUE,
   STARTER_WEAPON_ID,
+  isPurchasableEntry,
   type HangarEntry,
   type HangarEntryKind,
 } from '../../data/hangarCatalogue';
@@ -359,9 +360,12 @@ function actionLabelFor(
 /**
  * Builds the unlock-tree rows for a hangar at a given ring.
  *
- * Every catalogue entry is presented, including the starter kit, so the tree
- * reads as a tree ("what I own and what is next"); the economy decides each
- * row's state with `owned` → `gated` → `unaffordable` precedence.
+ * Every **purchasable** catalogue entry is presented, including the starter
+ * kit, so the tree reads as a tree ("what I own and what is next"); the
+ * economy decides each row's state with `owned` → `gated` → `unaffordable`
+ * precedence. A **grant-only** entry (a special-mission reward, see
+ * `isPurchasableEntry`) is not for sale, so it appears only once the fleet has
+ * been granted it — where it reads as `OWNED` like any other reward.
  *
  * @param payload — the payload whose hangar and ring are shown.
  * @param catalogue — the tree to present (injectable for tests/fixtures).
@@ -372,24 +376,28 @@ export function buildHangarUnlockRows(
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
 ): HangarUnlockRow[] {
   const context = { ringIndex: payload.ring.ringIndex };
-  return catalogue.map((entry) => {
-    const check = canBuy(payload.hangar, entry, context);
-    const state: HangarUnlockState = check.ok
-      ? 'buyable'
-      : (check.reason ?? 'owned');
-    const actionLabel = actionLabelFor(entry, state, check.shortfall);
-    return {
-      key: `buy:${entry.id}`,
-      id: entry.id,
-      kind: entry.kind,
-      name: entry.name,
-      priceLabel: formatPrice(entry),
-      state,
-      actionLabel,
-      label: `${entry.name} — ${formatPrice(entry)} — ${actionLabel}`,
-      actionable: state === 'buyable',
-    };
-  });
+  return catalogue
+    .filter(
+      (entry) => isPurchasableEntry(entry) || ownsEntry(payload.hangar, entry),
+    )
+    .map((entry) => {
+      const check = canBuy(payload.hangar, entry, context);
+      const state: HangarUnlockState = check.ok
+        ? 'buyable'
+        : (check.reason ?? 'owned');
+      const actionLabel = actionLabelFor(entry, state, check.shortfall);
+      return {
+        key: `buy:${entry.id}`,
+        id: entry.id,
+        kind: entry.kind,
+        name: entry.name,
+        priceLabel: formatPrice(entry),
+        state,
+        actionLabel,
+        label: `${entry.name} — ${formatPrice(entry)} — ${actionLabel}`,
+        actionable: state === 'buyable',
+      };
+    });
 }
 
 /** The hull options for the deployment selector (owned hulls only). */

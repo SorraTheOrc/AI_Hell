@@ -96,14 +96,15 @@ function gatedWeapon(minRing: number): StartingWeaponDefinition {
 }
 
 describe('hangar catalogue — the unlock tree is data of record', () => {
-  it('offers two extra hulls, three starting weapons and two modifiers', () => {
+  it('offers three extra hulls, three starting weapons and two modifiers', () => {
     const buyable = HANGAR_CATALOGUE.filter((item) => !item.starter);
 
-    // Two non-starter hulls since AH-0MWF0CUS3009M5SY: the ring-1 Bulwark and
-    // the ring-2 extra-hit-points hull the special mission grants (`hull-3`).
-    // The epic's "one extra hull" pin (AH-0MVU3VNJI00066YE) still describes the
-    // MVP tree; the special reward is the deliberate post-MVP addition.
-    expect(buyable.filter((item) => item.kind === 'hull')).toHaveLength(2);
+    // Three non-starter hulls: the ring-1 Bulwark, ring 2's extra-hit-points
+    // `hull-3` and ring 1's grant-only `hull-4` (AH-0MWJ51KUS005WQK6). The
+    // epic's "one extra hull" pin (AH-0MVU3VNJI00066YE) still describes the
+    // MVP tree; the special rewards are the deliberate post-MVP additions, and
+    // `hull-4` is never sold (it is a resolution target only).
+    expect(buyable.filter((item) => item.kind === 'hull')).toHaveLength(3);
     expect(buyable.filter((item) => item.kind === 'weapon')).toHaveLength(3);
     // Two modifiers since AH-0MVWZYJ740037EZ1: the extra-life kit and the
     // defending-bot skill modifier (a different rewarded choice, not a copy).

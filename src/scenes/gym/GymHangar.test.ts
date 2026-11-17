@@ -255,4 +255,55 @@ describe('GymHangar — the special-mission reward (AH-0MWF0CXR4004C9CN)', () =>
     // Gym↔game parity: the gym renders the shipped model verbatim.
     expect(scene.getModel()).toEqual(buildHangarScreenModel(captured));
   });
+
+  it('hides the ring-1 grant-only reward from the shop until it is granted', async () => {
+    // Before the ring-1 special mission is secured, `hull-4` is not for sale:
+    // no purchase row exists, so the hull can only arrive through the mission.
+    const scene = await bootHangar({ payload: VALID_HANGAR_WAR_PAYLOAD });
+    expect(
+      scene.getModel().unlockRows.some((entry) => entry.id === 'hull-4'),
+    ).toBe(false);
+    expect(
+      scene.getModel().hullOptions.some((option) => option.id === 'hull-4'),
+    ).toBe(false);
+  });
+
+  it('shows the granted Vanguard Hull as an owned unlock (AH-0MWJ51KUS005WQK6)', async () => {
+    // The ring-1 special sits on a fortress, so the shipped capture cycle
+    // needs its two passes; the hull lands in the owned set on the second.
+    const ringOne: HangarWarPayload = {
+      ...VALID_HANGAR_WAR_PAYLOAD,
+      ring: createRingState(1, HEX_RING_DEFINITIONS),
+    };
+    const capture = (payload: HangarWarPayload) =>
+      resolveHexCapture(payload, {
+        hexId: 'hex-r1-5',
+        defenderHullId: 'hull-1',
+        salvage: runSalvageFromRun({
+          runId: 'gym-hangar-r1',
+          checkpointId: 'boss-victory',
+          minerals: 0,
+          cores: 0,
+        }),
+        definitions: HEX_RING_DEFINITIONS,
+        banked: bankedSalvageFromHangar(payload.hangar),
+      });
+    const firstPass = capture(ringOne);
+    const secured = capture(firstPass.payload);
+    expect(secured.ok).toBe(true);
+    expect(secured.payload.hangar.unlockedHulls).toContain('hull-4');
+
+    const scene = await bootHangar({ payload: secured.payload });
+    const row = scene.getModel().unlockRows.find((entry) => entry.id === 'hull-4');
+
+    expect(row, 'hull-4 unlock row not rendered').toBeDefined();
+    expect(row!.name).toBe('Vanguard Hull');
+    // Owned, not buyable: it arrived through the special mission.
+    expect(row!.actionLabel).toBe('OWNED');
+    expect(row!.actionable).toBe(false);
+    // The reward is also a deployable hull option (it is a real ship).
+    expect(
+      scene.getModel().hullOptions.some((option) => option.id === 'hull-4'),
+    ).toBe(true);
+  });
 });
