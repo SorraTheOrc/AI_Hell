@@ -455,10 +455,11 @@ function actionLabelFor(
  * `unowned` refusal (unreachable from an *owned* purchase verdict, but a
  * refusal the screen must never dress up as an upgrade).
  *
- * The level shown is the run's own permanent level: the economy's price basis
- * is `0` for a kind with no bought row, which the deployment reads as the base
- * level `1` (AH-0MWI5AG1X0007XZH), so the row never shows `LV 0` for a weapon
- * the fleet flies. The renderer is kind-agnostic on purpose: a power-up level
+ * The level shown is the run's own permanent level: the economy reads a kind
+ * with no bought row as the base level `1` (AH-0MWI5AG1X0007XZH,
+ * off-by-one fix AH-0MWKV6F26008X1T3), so the row never shows `LV 0` for a
+ * weapon the fleet flies and advances on the first affordable purchase. The
+ * renderer is kind-agnostic on purpose: a power-up level
  * row already present in state renders through exactly this path (AC5), and
  * only weapons are reachable in play today (power-up acquisition is deferred
  * to AH-0MWKT12BT001106T).
@@ -480,7 +481,9 @@ function buildUpgradeAffordance(
     return null;
   }
 
-  const level = Math.max(1, currentUpgradeLevel(levels, entry.id));
+  // The economy's one pricing-basis reader floors the level at the base the
+  // run already flies, so the row shows the level the next step raises from.
+  const level = currentUpgradeLevel(levels, entry.id);
   const state: HangarUnlockState =
     refusal === 'capped'
       ? 'capped'

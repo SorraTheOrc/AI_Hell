@@ -1356,8 +1356,10 @@ describe('capture integration — upgraded permanent levels on the defender (AH-
     expect(baseCapture.ok).toBe(true);
     const baseDefender = hex(baseCapture.payload, 'hex-r1-2').defender!;
 
-    // Two purchases through the one economy rule the hangar screen uses: the
-    // fleet's persisted level becomes 2 (level 1 is the unupgraded base).
+    // Two purchases through the one economy rule the hangar screen uses: from
+    // the unupgraded base the fleet's persisted level becomes 3 (the first
+    // purchase raises base level 1 → 2, the second 2 → 3 — no inert step,
+    // AH-0MWKV6F26008X1T3).
     const first = buyHangarUpgrade(war, 'spread', {
       ringIndex: war.ring.ringIndex,
     });
@@ -1367,12 +1369,12 @@ describe('capture integration — upgraded permanent levels on the defender (AH-
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
     const upgraded = second.payload;
-    expect(upgraded.hangar.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
+    expect(upgraded.hangar.weaponLevels).toEqual([{ id: 'spread', level: 3 }]);
 
     // The launch data the hangar hands the run carries that higher level…
     const upgradedDeployment = buildHangarDeployment(upgraded);
     expect(upgradedDeployment.weaponLevels).toEqual([
-      { id: 'spread', level: 2 },
+      { id: 'spread', level: 3 },
     ]);
     const snapshot = victorySnapshot(upgradedDeployment);
 
@@ -1390,7 +1392,7 @@ describe('capture integration — upgraded permanent levels on the defender (AH-
     // The stored snapshot is the deployment's rows: the bought level survives.
     expect(defender.upgradeSnapshot).toEqual(snapshot);
     expect(defender.upgradeSnapshot!.weaponLevels).toEqual([
-      { id: 'spread', level: 2 },
+      { id: 'spread', level: 3 },
     ]);
     // The rating is the hull rating plus the bought level's contribution,
     // through the one snapshot-aware derivation (no second formula).

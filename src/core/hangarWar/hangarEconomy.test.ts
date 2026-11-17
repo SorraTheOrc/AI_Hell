@@ -1151,6 +1151,10 @@ describe('snapshotDefenderUpgrades — clean rows for storage', () => {
 // - **Buy.** `buyUpgrade` spends the reported price and raises the kind's
 //   permanent level by **exactly one** (C2 AC4), returning a fresh hangar and
 //   a fresh level snapshot.
+// - **Basis (off-by-one fix AH-0MWKV6F26008X1T3).** A kind's current level is
+//   `max(stored row, 1)` — the base level the run already flies — so the first
+//   purchase records `2` and is priced from the base. No priced step leaves a
+//   deployment unchanged.
 // - **Attract booth.** `cheapestUsefulUnlock`/`decideHangarAction` stay
 //   byte-identical (C2 AC5): upgrades are player-action only, so the attract
 //   bot still buys the cheapest useful unlock and no upgrade vocabulary leaks
@@ -1330,22 +1334,80 @@ describe('economy upgrade rule — costToUpgrade and buyUpgrade (AH-0MWI5A6ZH009
     const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL!;
     const hangar = hangarWith({ ...RICH });
 
+    // The ladder starts at the base level the run already flies: a kind with
+    // no bought row is priced from `1`, so the steps are `1 → 2 … 4 → 5`
+    // (AH-0MWKV6F26008X1T3).
     const prices: HangarPrice[] = [];
-    for (let level = 0; level < ceiling; level += 1) {
+    for (let level = 1; level < ceiling; level += 1) {
       const check = costToUpgrade!(hangar, 'spread', levelsOf([['spread', level]]), context);
       expect(check.ok, `level ${level}`).toBe(true);
       prices.push(check.price);
     }
 
     // "Rising per level toward the shared max-permanent-level ceiling": every
-    // step from level 0 to the ceiling's last purchasable level costs more in
+    // step from the base to the ceiling's last purchasable level costs more in
     // salvage weight than the one before it.
     for (let level = 1; level < prices.length; level += 1) {
       expect(
         purchaseWeight(prices[level]),
-        `price for level ${level}`,
+        `price for level ${level + 1}`,
       ).toBeGreaterThan(purchaseWeight(prices[level - 1]));
     }
+  });
+
+  it('prices the first purchase of an unupgraded kind from the base the run already flies (AC2)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    const hangar = hangarWith({ ...RICH });
+
+    // No bought row still deploys and captures at base level 1, so the first
+    // priced step must be *above* it — the curve's base step, never a free
+    // level that changes nothing in the run (AH-0MWKV6F26008X1T3).
+    const fromNothing = costToUpgrade!(hangar, 'spread', levelsOf(), context);
+    const fromBaseRow = costToUpgrade!(hangar, 'spread', levelsOf([['spread', 1]]), context);
+
+    expect(fromNothing.ok).toBe(true);
+    expect(fromBaseRow.ok).toBe(true);
+    // One basis: a legacy base row and no row at all price the same step.
+    expect(fromNothing.price).toEqual(fromBaseRow.price);
+    // The base step is priced strictly above zero — it is the first *effective*
+    // step, not a re-grant of the level the run already has.
+    expect(purchaseWeight(fromNothing.price)).toBeGreaterThan(0);
+  });
+
+  it('raises the level by exactly one from every unupgraded basis (AC1/AC2 ladder)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+    const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL!;
+    const hangar = hangarWith({ ...RICH });
+
+    // The first purchase records base + 1, so the deployment's grant (one per
+    // recorded level) rises by exactly one above the unupgraded base.
+    const first = buyUpgrade!(hangar, 'spread', levelsOf(), context);
+    expect(first.ok).toBe(true);
+    expect(first.levels.weapons).toEqual([{ id: 'spread', level: 2 }]);
+
+    // Every subsequent priced step raises the recorded level by exactly one,
+    // so no priced step can leave the deployed run unchanged (AC2).
+    let rowLevel = 2;
+    while (rowLevel < ceiling) {
+      const steps = levelsOf([['spread', rowLevel]]);
+      const check = costToUpgrade!(hangar, 'spread', steps, context);
+      expect(check.ok, `level ${rowLevel}`).toBe(true);
+      const bought = buyUpgrade!(hangar, 'spread', steps, context);
+      expect(bought.ok, `level ${rowLevel}`).toBe(true);
+      expect(bought.levels.weapons, `level ${rowLevel}`).toEqual([
+        { id: 'spread', level: rowLevel + 1 },
+      ]);
+      rowLevel += 1;
+    }
+
+    // At the ceiling there is no step left to price at all.
+    expect(
+      costToUpgrade!(hangar, 'spread', levelsOf([['spread', ceiling]]), context),
+    ).toMatchObject({ ok: false, reason: 'capped' });
   });
 
   it('buys the final level at the ceiling minus one up to the cap (AC2 capped boundary, AC4)', () => {

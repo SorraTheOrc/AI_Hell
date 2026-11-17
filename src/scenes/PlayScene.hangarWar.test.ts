@@ -540,7 +540,9 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
       const payload = fieldedPayload();
       payload.hangar.bankedMinerals = 5_000;
       payload.hangar.bankedCores = 20;
-      // Two bought wave_laser levels through the store's real purchase path…
+      // Two purchases through the store's real purchase path: the first step
+      // is the first effective one (base 1 → 2), the second 2 → 3
+      // (AH-0MWKV6F26008X1T3)…
       const first = buyHangarUpgrade(payload, 'wave_laser', { ringIndex: 1 });
       const second = buyHangarUpgrade(first.payload, 'wave_laser', {
         ringIndex: 1,
@@ -583,7 +585,7 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
       expect(player.getWeaponLevels()).toEqual(
         expect.arrayContaining([
           { id: 'spread', level: 1 },
-          { id: 'wave_laser', level: 2 },
+          { id: 'wave_laser', level: 3 },
         ]),
       );
       expect(
@@ -599,7 +601,7 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
       expect(capture!.ok).toBe(true);
       expect(capture!.defender).not.toBeNull();
       expect(capture!.defender!.upgradeSnapshot?.weaponLevels).toEqual(
-        expect.arrayContaining([{ id: 'wave_laser', level: 2 }]),
+        expect.arrayContaining([{ id: 'wave_laser', level: 3 }]),
       );
       expect(capture!.defender!.upgradeSnapshot?.powerUpLevels).toEqual(
         expect.arrayContaining([{ id: 'bomb', level: 2 }]),

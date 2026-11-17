@@ -1240,6 +1240,10 @@ describe('hangar-war store — defender upgrade snapshot is additive (AH-0MWHF6X
 // reads as "no upgrade" (every owned kind deploys at base level 1) and the
 // fields stay absent on write when empty — the store's field-presence migration,
 // no schema version bump.
+//
+// A written row is the **absolute** permanent level and always exceeds the
+// base: the first purchase records `2` (AH-0MWKV6F26008X1T3), so every stored
+// step is a level the deployed run actually flies.
 
 describe('hangar permanent levels through the store (AH-0MWI5AG1X0007XZH)', () => {
   /** A fresh, funded war whose fleet owns the starting weapon. */
@@ -1259,8 +1263,10 @@ describe('hangar permanent levels through the store (AH-0MWI5AG1X0007XZH)', () =
 
     expect(outcome.ok).toBe(true);
     expect(outcome.reason).toBeNull();
+    // The first purchase is the first *effective* step: base level 1 → 2, so
+    // the deployed run's level rises (AH-0MWKV6F26008X1T3).
     expect(outcome.payload.hangar.weaponLevels).toEqual([
-      { id: 'spread', level: 1 },
+      { id: 'spread', level: 2 },
     ]);
     // Nothing is persisted until the caller saves the returned payload.
     expect(loadHangarWarPayload(storage)!.hangar.weaponLevels).toBeUndefined();
@@ -1268,7 +1274,7 @@ describe('hangar permanent levels through the store (AH-0MWI5AG1X0007XZH)', () =
     saveHangarWarPayload(outcome.payload, storage);
     const reloaded = loadHangarWarPayload(storage)!;
     expect(hangarPermanentLevels(reloaded.hangar)).toEqual({
-      weapons: [{ id: 'spread', level: 1 }],
+      weapons: [{ id: 'spread', level: 2 }],
       powerUps: [],
     });
   });
@@ -1288,8 +1294,9 @@ describe('hangar permanent levels through the store (AH-0MWI5AG1X0007XZH)', () =
     });
 
     expect(second.ok).toBe(true);
+    // Two purchases from the unupgraded base: 1 → 2 → 3 (AH-0MWKV6F26008X1T3).
     expect(second.payload.hangar.weaponLevels).toEqual([
-      { id: 'spread', level: 2 },
+      { id: 'spread', level: 3 },
     ]);
     // The second level cost more than the first (the rising per-level curve),
     // and both were actually spent.

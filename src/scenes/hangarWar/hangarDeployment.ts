@@ -326,8 +326,12 @@ function resolveStartingWeapons(
  * The carried weapons with their hangar-bought permanent level.
  *
  * A weapon the hangar never upgraded carries level `1` (the base level of a
- * first collection), so a deployment always describes the exact permanent
- * weapon levels the run starts with (AH-0MWI5AG1X0007XZH AC3).
+ * first collection, the level the run starts at before any grant), so a
+ * deployment always describes the exact permanent weapon levels the run starts
+ * with (AH-0MWI5AG1X0007XZH AC3). A **bought** row is the absolute permanent
+ * level and always exceeds the base: the economy's first purchase records
+ * `2`, so the grant loop below raises the run's level by exactly one per
+ * purchase (AH-0MWKV6F26008X1T3).
  */
 function carriedWeaponLevels(
   startingWeapons: readonly WeaponId[],
@@ -349,7 +353,8 @@ function carriedWeaponLevels(
  *
  * The hangar's bought **permanent levels** (AH-0MWI5AG1X0007XZH) travel with
  * the loadout: `weaponLevels` names one row per carried weapon (base `1` when
- * the hangar never upgraded it) and `powerUpLevels` carries every persisted
+ * the hangar never upgraded it, the bought absolute level otherwise) and
+ * `powerUpLevels` carries every persisted
  * level-bearing power-up level, so {@link applyHangarWarDeployment} can grant
  * exactly the levels the player bought.
  *

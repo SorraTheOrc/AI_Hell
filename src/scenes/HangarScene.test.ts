@@ -723,7 +723,7 @@ describe('HangarScene', () => {
       .getModel()
       .unlockRows.find((row) => row.id === 'ricochet')!;
     expect(owned.state).toBe('upgradable');
-    expect(owned.actionLabel).toBe('UPGRADE · 100 min');
+    expect(owned.actionLabel).toBe('UPGRADE · 150 min');
     expect(rowFor(scene, 'buy:ricochet').text.input).not.toBeNull();
   });
 
@@ -1203,12 +1203,13 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
 
     expect(row.state).toBe('upgradable');
     // The run's own level vocabulary: a never-upgraded weapon is at base 1
-    // (the deployment grants `max(row.level, 1)`), never `LV 0`.
+    // (the deployment grants `max(row.level, 1)`), never `LV 0` — and the
+    // first priced step raises it *above* that base (AH-0MWKV6F26008X1T3).
     expect(row.level).toBe(1);
     expect(row.maxLevel).toBe(MAX_PERMANENT_LEVEL);
-    expect(row.upgradePriceLabel).toBe('100 min');
-    expect(row.actionLabel).toBe('UPGRADE · 100 min');
-    expect(row.label).toBe('Spread Cannon — LV 1/5 — UPGRADE · 100 min');
+    expect(row.upgradePriceLabel).toBe('150 min');
+    expect(row.actionLabel).toBe('UPGRADE · 150 min');
+    expect(row.label).toBe('Spread Cannon — LV 1/5 — UPGRADE · 150 min');
     expect(row.actionable).toBe(true);
   });
 
@@ -1229,10 +1230,10 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.state).toBe('upgrade-unaffordable');
     expect(row.actionable).toBe(false);
     expect(row.level).toBe(1);
-    expect(row.upgradePriceLabel).toBe('100 min');
-    expect(row.actionLabel).toBe('UPGRADE · 100 min — NEED 100 min');
+    expect(row.upgradePriceLabel).toBe('150 min');
+    expect(row.actionLabel).toBe('UPGRADE · 150 min — NEED 150 min');
     expect(row.label).toBe(
-      'Spread Cannon — LV 1/5 — UPGRADE · 100 min — NEED 100 min',
+      'Spread Cannon — LV 1/5 — UPGRADE · 150 min — NEED 150 min',
     );
   });
 
@@ -1333,7 +1334,7 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.actionable).toBe(true);
   });
 
-  it('buys the next level from the row and persists it with the spend (AC2)', async () => {
+  it('buys the next level from the row and persists it with the spend (AC2, AC3)', async () => {
     const storage = memoryStorage(upgradedPayload());
     const scene = await bootHangar({ storage });
 
@@ -1342,28 +1343,55 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     pressKey(scene, { key: 'Enter' });
 
     // The economy's price was spent and the level landed in the payload…
-    expect(scene.getPayload().hangar.bankedMinerals).toBe(140);
+    // (240 − 150: the first step is priced from the base level 1.)
+    expect(scene.getPayload().hangar.bankedMinerals).toBe(90);
     expect(scene.getPayload().hangar.bankedCores).toBe(3);
+    // The first purchase records base + 1 = 2, so the row's level advances
+    // (AH-0MWKV6F26008X1T3).
     expect(scene.getPayload().hangar.weaponLevels).toEqual([
-      { id: 'spread', level: 1 },
+      { id: 'spread', level: 2 },
     ]);
     // …and both halves were persisted in the one store write.
     const stored = parseHangarWarPayload(
       JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
     );
-    expect(stored?.hangar.bankedMinerals).toBe(140);
-    expect(stored?.hangar.weaponLevels).toEqual([{ id: 'spread', level: 1 }]);
+    expect(stored?.hangar.bankedMinerals).toBe(90);
+    expect(stored?.hangar.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
 
-    // The rebuilt row prices the next level from the level just bought: 150
-    // min, of which 140 are left, so it is visibly disabled with its shortfall.
+    // The rebuilt row prices the next level from the level just bought: 200
+    // min, of which 90 are left, so it is visibly disabled with its shortfall.
     const row = scene
       .getModel()
       .unlockRows.find((entry) => entry.id === 'spread')!;
-    expect(row.level).toBe(1);
+    expect(row.level).toBe(2);
     expect(row.state).toBe('upgrade-unaffordable');
-    expect(row.actionLabel).toBe('UPGRADE · 150 min — NEED 10 min');
+    expect(row.actionLabel).toBe('UPGRADE · 200 min · 1 cores — NEED 110 min');
     expect(scene.getRows().find((entry) => entry.key === 'buy:spread')!.actionable)
       .toBe(false);
+  });
+
+  it('advances the owned row level on every affordable purchase up to the ceiling (AC3)', async () => {
+    // A funded fleet so every step is affordable: the row's `LV n/5` must
+    // advance on each purchase instead of showing the same inert level
+    // (AH-0MWKV6F26008X1T3).
+    const payload = upgradedPayload();
+    payload.hangar.bankedMinerals = 10_000;
+    payload.hangar.bankedCores = 100;
+    const scene = await bootHangar({ payload, storage: null });
+
+    const row = () =>
+      scene.getModel().unlockRows.find((entry) => entry.id === 'spread')!;
+
+    // The unupgraded row displays the base the run flies.
+    expect(row().level).toBe(1);
+    for (let expected = 2; expected <= MAX_PERMANENT_LEVEL; expected += 1) {
+      expect(scene.upgrade('spread'), `purchase to ${expected}`).toBe(true);
+      expect(row().level, `level after purchase ${expected}`).toBe(expected);
+    }
+
+    // The ceiling ends the ladder: no further level is offered.
+    expect(row().state).toBe('capped');
+    expect(scene.upgrade('spread')).toBe(false);
   });
 
   it('buys the next level on a pointer click too (the same row action)', async () => {
@@ -1376,9 +1404,9 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.actionable).toBe(true);
     row.text.emit('pointerdown');
 
-    expect(scene.getPayload().hangar.bankedMinerals).toBe(140);
+    expect(scene.getPayload().hangar.bankedMinerals).toBe(90);
     expect(scene.getPayload().hangar.weaponLevels).toEqual([
-      { id: 'spread', level: 1 },
+      { id: 'spread', level: 2 },
     ]);
   });
 

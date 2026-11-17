@@ -590,9 +590,10 @@ describe('truncateCampaignForDeployment (AH-0MWDCBVQ700579WS)', () => {
 
 describe('hangar deployment permanent levels (AH-0MWI5AG1X0007XZH)', () => {
   /**
-   * The fielded fleet with **two bought wave_laser levels** (through the real
-   * purchase path) and two persisted power-up levels (the hangar's owned rows:
-   * a power-up's level row is its ownership record).
+   * The fielded fleet with **two purchases** on `wave_laser` (through the real
+   * purchase path, so its level is base 1 → 2 → 3) and two persisted power-up
+   * levels (the hangar's owned rows: a power-up's level row is its ownership
+   * record).
    */
   function upgradedPayload(): HangarWarPayload {
     const payload = fieldedPayload();
@@ -617,7 +618,7 @@ describe('hangar deployment permanent levels (AH-0MWI5AG1X0007XZH)', () => {
 
     expect(deployment.weaponLevels).toEqual([
       { id: 'spread', level: 1 },
-      { id: 'wave_laser', level: 2 },
+      { id: 'wave_laser', level: 3 },
     ]);
     expect(deployment.powerUpLevels).toEqual([
       { id: 'bomb', level: 2 },
@@ -654,9 +655,10 @@ describe('hangar deployment permanent levels (AH-0MWI5AG1X0007XZH)', () => {
     );
 
     // One permanent grant per level: the run-scoped permanent level rises
-    // exactly to the hangar's bought level.
+    // exactly to the hangar's bought level (spread base 1 + wave_laser 3).
     expect(applyWeapon.mock.calls).toEqual([
       ['spread', true],
+      ['wave_laser', true],
       ['wave_laser', true],
       ['wave_laser', true],
     ]);
@@ -683,6 +685,7 @@ describe('hangar deployment permanent levels (AH-0MWI5AG1X0007XZH)', () => {
 
     expect(equipWeapon.mock.calls).toEqual([
       ['spread', true],
+      ['wave_laser', true],
       ['wave_laser', true],
       ['wave_laser', true],
     ]);
@@ -734,7 +737,7 @@ describe('hangar deployment permanent levels (AH-0MWI5AG1X0007XZH)', () => {
 
     expect(replayed.weaponLevels).toEqual([
       { id: 'spread', level: 1 },
-      { id: 'wave_laser', level: 2 },
+      { id: 'wave_laser', level: 3 },
     ]);
     expect(replayed.powerUpLevels).toEqual([
       { id: 'bomb', level: 2 },

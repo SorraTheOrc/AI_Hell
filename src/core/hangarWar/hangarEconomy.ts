@@ -38,10 +38,13 @@
  * - **Permanent upgrade.** {@link costToUpgrade} / {@link buyUpgrade} extend
  *   the purchase branch for an **owned level-bearing** kind: a deterministic
  *   next-level price that rises toward the shared {@link MAX_PERMANENT_LEVEL}
- *   ceiling, spent to raise the permanent level by exactly one (fresh hangar
- *   and level snapshot on success *and* refusal). Upgrades are player-action
- *   only — the attract booth still buys the cheapest useful unlock (parent
- *   AH-0MWHW4ALS0039JFU, pure rule AH-0MWI5AAVO009UROY).
+ *   ceiling, spent to raise the permanent level by exactly one **above the
+ *   base the run already flies** (`{@link BASE_PERMANENT_LEVEL}`, so the first
+ *   purchase is `1 → 2` and never buys an inert step)
+ *   (fresh hangar and level snapshot on success *and* refusal). Upgrades are
+ *   player-action only — the attract booth still buys the cheapest useful
+ *   unlock (parent AH-0MWHW4ALS0039JFU, pure rule AH-0MWI5AAVO009UROY,
+ *   off-by-one fix AH-0MWKV6F26008X1T3).
  * - **Defender rating.** One pure formula over a hull's hangar upgrades
  *   ({@link defenderRatingFromUpgrades}), so the ring resolver (B3) has no
  *   second source of truth for "how strong is the bot left in this hex". A
@@ -564,8 +567,23 @@ export function buy(
  * balance choice (at least one purchasable step must exist, so a ceiling of
  * one would make buy-to-upgrade impossible): 5 matches the run path's own
  * per-kind caps (magnet/mineral-scoop stacks, lives).
+ *
+ * The ladder starts at {@link BASE_PERMANENT_LEVEL} (the run's own base level
+ * `1`), so every priced step raises the deployed level by exactly one and
+ * `MAX_PERMANENT_LEVEL - BASE_PERMANENT_LEVEL` purchases reach the cap
+ * (AH-0MWKV6F26008X1T3: before, the first purchase recorded the inert base).
  */
 export const MAX_PERMANENT_LEVEL = 5;
+
+/**
+ * The level every owned kind is at **before** any purchase — the run path's
+ * own base level of a first collection. A kind with no persisted row deploys
+ * and captures at this level, so the price curve and the row display both
+ * floor their basis here: a priced step must move the level *above* the base
+ * or the player would pay for a step that changes nothing in the run
+ * (AH-0MWKV6F26008X1T3).
+ */
+const BASE_PERMANENT_LEVEL = 1;
 
 /** Why an upgrade was refused, or `null` when it is allowed. */
 export type UpgradeRefusal =
@@ -627,8 +645,9 @@ export interface UpgradeResult {
  * `UPGRADE_MINERALS_PER_LEVEL` per current level, gaining one mini-boss core
  * every `UPGRADE_CORE_EVERY_LEVELS` levels — so the price is always paid in
  * both currencies before the last step and its salvage weight strictly rises
- * per level toward {@link MAX_PERMANENT_LEVEL}. Cores are the rarer currency
- * ({@link CORE_MINERAL_EQUIVALENT}), so they only enter the curve late.
+ * per level above the base toward {@link MAX_PERMANENT_LEVEL}. Cores are the
+ * rarer currency ({@link CORE_MINERAL_EQUIVALENT}), so they only enter the
+ * curve late.
  */
 const UPGRADE_BASE_MINERALS = 100;
 
@@ -638,7 +657,13 @@ const UPGRADE_MINERALS_PER_LEVEL = 50;
 /** Every N current levels adds one core to the next-level price. */
 const UPGRADE_CORE_EVERY_LEVELS = 2;
 
-/** The deterministic two-currency price of the next level above `currentLevel`. */
+/**
+ * The deterministic two-currency price of the next level above `currentLevel`.
+ *
+ * `currentLevel` is always the effective basis (base level or the bought row,
+ * whichever is higher), so the first purchase is priced from the base the run
+ * already flies (AH-0MWKV6F26008X1T3).
+ */
 function upgradePrice(currentLevel: number): HangarPrice {
   const level = toCount(currentLevel);
   return {
@@ -691,19 +716,35 @@ function currentPermanentLevel(
 }
 
 /**
+ * The pricing/raising basis of a stored level: the persisted row floored at
+ * {@link BASE_PERMANENT_LEVEL}, so a kind with no row (or a legacy `1` row
+ * written before this fix) is priced and raised from the base rather than
+ * from an inert level.
+ *
+ * One helper serves both the price rule ({@link costToUpgrade}) and the
+ * display reader ({@link currentUpgradeLevel}) — there is no second copy of
+ * the basis.
+ */
+function upgradeLevelBasis(storedLevel: number): number {
+  return Math.max(toCount(storedLevel), BASE_PERMANENT_LEVEL);
+}
+
+/**
  * The fleet's current permanent level of a kind, in the price curve's own
  * basis — the number {@link costToUpgrade} prices the next level from.
  *
- * `0` when the fleet has bought no level yet (or the id is unknown): the
- * deployment reads that as the kind's **base level 1**, so the first bought
- * row records the base and every further row raises the run's level. Exposed
- * so a presentation surface (the hangar screen's owned row) can show the level
- * the rule prices from without re-deriving it — there is no second copy of the
- * lookup.
+ * A kind the fleet has not bought a level for reads as the **base level
+ * {@link BASE_PERMANENT_LEVEL}** (the level the deployment already grants an
+ * unupgraded kind), never `0`: the first purchase therefore prices and
+ * records the first *effective* step (`1 → 2`), not an inert one
+ * (AH-0MWKV6F26008X1T3). Exposed so a presentation surface (the hangar
+ * screen's owned row) can show the level the rule prices from without
+ * re-deriving it — there is no second copy of the lookup.
  *
  * @param levels — the fleet's permanent levels (read only).
  * @param id — the kind to read (a shipped weapon or power-up id).
- * @returns the current bought permanent level (`0` when none).
+ * @returns the current permanent level in the pricing basis (`0` only when the
+ * id is neither shipped kind).
  */
 export function currentUpgradeLevel(
   levels: PermanentUpgradeLevels,
@@ -711,7 +752,7 @@ export function currentUpgradeLevel(
 ): number {
   const kind = upgradeKind(id);
   if (kind === null) return 0;
-  return currentPermanentLevel(levels, kind, id);
+  return upgradeLevelBasis(currentPermanentLevel(levels, kind, id));
 }
 
 /** A detached copy of a level snapshot, so no rule can mutate its caller's rows. */
@@ -722,7 +763,12 @@ function cloneLevels(levels: PermanentUpgradeLevels): PermanentUpgradeLevels {
   };
 }
 
-/** The snapshot with the kind's permanent level raised by exactly one. */
+/**
+ * The snapshot with the kind's permanent level raised by exactly one above the
+ * **effective** level (`max(stored, base)`), so the first purchase records the
+ * base plus one and every bought row is a level the run actually flies
+ * (AH-0MWKV6F26008X1T3).
+ */
 function raisedLevels(
   levels: PermanentUpgradeLevels,
   kind: 'weapon' | 'power-up',
@@ -730,18 +776,18 @@ function raisedLevels(
 ): PermanentUpgradeLevels {
   if (kind === 'weapon') {
     const rows = levels.weapons.map((row) =>
-      row.id === id ? { ...row, level: toCount(row.level) + 1 } : { ...row },
+      row.id === id ? { ...row, level: upgradeLevelBasis(row.level) + 1 } : { ...row },
     );
     if (!levels.weapons.some((row) => row.id === id)) {
-      rows.push({ id: id as WeaponId, level: 1 });
+      rows.push({ id: id as WeaponId, level: BASE_PERMANENT_LEVEL + 1 });
     }
     return { ...levels, weapons: rows };
   }
   const rows = levels.powerUps.map((row) =>
-    row.id === id ? { ...row, level: toCount(row.level) + 1 } : { ...row },
+    row.id === id ? { ...row, level: upgradeLevelBasis(row.level) + 1 } : { ...row },
   );
   if (!levels.powerUps.some((row) => row.id === id)) {
-    rows.push({ id: id as PowerUpId, level: 1 });
+    rows.push({ id: id as PowerUpId, level: BASE_PERMANENT_LEVEL + 1 });
   }
   return { ...levels, powerUps: rows };
 }
@@ -780,7 +826,9 @@ export function costToUpgrade(
   if (!ownsUpgradeableKind(hangar, levels, kind, id)) {
     return { ok: false, reason: 'unowned', price: ZERO_PRICE, shortfall: ZERO_PRICE };
   }
-  const current = currentPermanentLevel(levels, kind, id);
+  // The one pricing-basis reader the hangar screen also displays: a kind with
+  // no bought row is priced from the base the run already flies.
+  const current = currentUpgradeLevel(levels, id);
   if (current >= MAX_PERMANENT_LEVEL) {
     return { ok: false, reason: 'capped', price: ZERO_PRICE, shortfall: ZERO_PRICE };
   }

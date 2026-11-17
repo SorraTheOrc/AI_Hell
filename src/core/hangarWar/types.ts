@@ -47,7 +47,12 @@ export interface HangarWarStorage {
 export interface HangarWeaponLevelRow {
   /** The shipped weapon whose permanent level was bought. */
   readonly id: WeaponId;
-  /** The bought permanent level (`1`..`MAX_PERMANENT_LEVEL`). */
+  /**
+   * The bought permanent level, in the run path's absolute vocabulary:
+   * `2`..`MAX_PERMANENT_LEVEL` for a row this build wrote (the first purchase
+   * raises the base `1` → `2`). A legacy `1` row is still accepted, but it is
+   * the unupgraded base and grants nothing extra (AH-0MWKV6F26008X1T3).
+   */
   readonly level: number;
 }
 
@@ -55,7 +60,11 @@ export interface HangarWeaponLevelRow {
 export interface HangarPowerUpLevelRow {
   /** The shipped power-up whose permanent level was bought. */
   readonly id: PowerUpId;
-  /** The bought permanent level (`1`..`MAX_PERMANENT_LEVEL`). */
+  /**
+   * The bought permanent level, in the run path's absolute vocabulary:
+   * `2`..`MAX_PERMANENT_LEVEL` for a row this build wrote; `1` is the
+   * unupgraded base (accepted from an older save).
+   */
   readonly level: number;
 }
 
@@ -93,7 +102,9 @@ export interface HangarState {
    * presence without a schema version bump — the same pattern as
    * `HexDefender.skills` and `HangarWarPayload.frontierTick`. The rows are
    * omitted on write when they carry nothing, so a save round-trips
-   * byte-for-byte rather than gaining empty fields.
+   * byte-for-byte rather than gaining empty fields. A written row is always an
+   * **effective** level above the base (the first purchase records `2`,
+   * AH-0MWKV6F26008X1T3).
    */
   weaponLevels?: HangarWeaponLevelRow[];
   /**
