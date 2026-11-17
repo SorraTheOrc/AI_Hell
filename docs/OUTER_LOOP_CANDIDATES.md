@@ -844,7 +844,8 @@ hangar survives — that is what winning this hell looks like.
   hangar → **leave a bot** (flying a hull of yours) in the hex, where it attempts
   to **defend** it.
 - **What carries between runs — explicitly:** **both axes**. From B: **banked
-  salvage**, unlocked **hulls / starting weapons / modifiers** and the active
+  salvage**, unlocked **hulls / starting weapons / modifiers**, the **bought
+  permanent weapon levels** (the hangar's buy-to-upgrade path) and the active
   loadout. From A: the **ring state** — which hexes are held, which hull plus bot
   defends each, each hex's **frontier aggression**, and the **ring depth**. A run's
   temporary in-run loadout still dies with the ship (middle-loop semantics
@@ -880,7 +881,7 @@ hangar survives — that is what winning this hell looks like.
 
 | System | What it does | Rough size |
 |--------|--------------|-----------|
-| **Hangar (Candidate B)** | Salvage spend, unlock tree (hulls, starting weapons, modifiers), active loadout | Medium |
+| **Hangar (Candidate B)** | Salvage spend, unlock tree (hulls, starting weapons, modifiers), **buy-to-upgrade** of an owned level-bearing weapon, active loadout | Medium |
 | **Salvage banking (Candidate B)** | Convert run rewards to a persistent balance at checkpoint moments; unbanked is lost on death | Small–Medium |
 | **Hex ring map** | A hex grid whose first **ring** (6 hexes) surrounds the hangar; ring-by-ring growth for later expansions | Small–Medium — data + a map screen + a ring generator |
 | **Frontier aggression clock** | Each between-run tick **redistributes** the ring's aggression inside a budget sized from the player's fleet (a rise on one hex is paid for by a fall on another), guarantees at least one beatable hex, and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small–Medium — a deterministic per-tick rule over the pure strength/budget resolvers |
@@ -899,6 +900,25 @@ hangar survives — that is what winning this hell looks like.
 > and added to the hull rating (`hull rating + 3 × armour + 2 × firepower +
 > 2 × systems`). The frontier aggression budget is **unchanged** (producer
 > decision Q3 = A), so defence simply gets easier — an **accepted consequence**, not a bug.
+
+> **Design of record — the hangar is the permanent-upgrade source (AH-0MWHW4ALS0039JFU).**
+> An already-owned **level-bearing weapon** can be bought up one permanent level
+> at a time with banked minerals/cores (`costToUpgrade`/`buyUpgrade` in
+> `src/core/hangarWar/hangarEconomy.ts`; GDD §8.2 *Buying permanent levels*).
+> This is the fleet's **persistent** upgrade path and it is distinct from the
+> run's **in-run** pickup/hold-full path, whose permanent component dies with
+> the ship. Two producer decisions fix the rule: the ceiling is the **one
+> shared `MAX_PERMANENT_LEVEL`** (`5`; **Q1 = (a)**) read by both the hangar
+> economy and the run-path level-up offer, and **only level-bearing kinds**
+> are upgradeable (**Q2 = (a)**) — a consumable's charge pool and the
+> field-pickup-only kind carry no permanent level and are refused
+> `non-upgradeable`. A captured defender inherits the bought levels at
+> **capture time** through the shared capture path (AH-0MWH42DWQ004SAOJ), and
+> no capture-side change is needed. **Power-ups are deferred
+> (AH-0MWKT12BT001106T):** a hangar power-up's first permanent level row has no
+> shipped acquisition source yet, so power-up ownership/upgrade is tracked
+> there and **power-ups are not upgradeable in play today** — neither a
+> power-up ring grant nor a catalogue purchase is shipped.
 
 ### Reuse of existing systems
 

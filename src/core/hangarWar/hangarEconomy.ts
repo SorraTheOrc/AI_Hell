@@ -45,6 +45,12 @@
  *   player-action only — the attract booth still buys the cheapest useful
  *   unlock (parent AH-0MWHW4ALS0039JFU, pure rule AH-0MWI5AAVO009UROY,
  *   off-by-one fix AH-0MWKV6F26008X1T3).
+ * - **Upgrade sources.** A permanent level has **two** sources, never one:
+ *   the run's own hold-full rewards **and** the hangar's buy-to-upgrade
+ *   purchase, which a deployment grants through the shared permanent-grant
+ *   seam (weapons today; power-up purchases are deferred to
+ *   AH-0MWKT12BT001106T). No code path may describe permanent levels as
+ *   run-only.
  * - **Defender rating.** One pure formula over a hull's hangar upgrades
  *   ({@link defenderRatingFromUpgrades}), so the ring resolver (B3) has no
  *   second source of truth for "how strong is the bot left in this hex". A
@@ -572,6 +578,11 @@ export function buy(
  * `1`), so every priced step raises the deployed level by exactly one and
  * `MAX_PERMANENT_LEVEL - BASE_PERMANENT_LEVEL` purchases reach the cap
  * (AH-0MWKV6F26008X1T3: before, the first purchase recorded the inert base).
+ *
+ * The ceiling applies to **level-bearing kinds only** (producer Q2 = (a)): a
+ * consumable (a charge pool) and the field-pickup-only kind have no permanent
+ * level to raise, so {@link costToUpgrade} refuses them as `non-upgradeable`
+ * and no level row is ever stored for them.
  */
 export const MAX_PERMANENT_LEVEL = 5;
 

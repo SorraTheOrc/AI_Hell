@@ -3167,6 +3167,66 @@ slice deferred:
   (`arc`, `broadside`, `dual`, `nova`, `rapid`, `ricochet`), Extra Life and the
   `armour-plating` / `firepower-up` / `systems-upgrade` strength entries.
 
+#### Buying permanent levels (buy-to-upgrade)
+
+**The hangar is the intended source of permanent upgrades** (AH-0MWHW4ALS0039JFU,
+shipped for **weapons**): a level-bearing weapon the fleet already **owns** is
+an upgrade row, not a dead `OWNED` one. The row shows its current permanent
+level and the priced next-level action (`UPGRADE · 150 min`), rendered
+**disabled** with its price and shortfall (`UPGRADE · 150 min — NEED 40 min`)
+when the fleet cannot pay, and `MAX` once it reaches the shared ceiling. A
+purchase spends the hangar's two currencies and raises the permanent level by
+exactly one; the rules are pure (`costToUpgrade` / `buyUpgrade` in
+`src/core/hangarWar/hangarEconomy.ts`, beside `canBuy`/`buy`) and the scene owns
+no purchase logic. Buying a level is player-action only: the attract booth still
+buys the cheapest useful **unlock**, never an upgrade.
+
+**This is distinct from the run path.** A run also raises permanent levels —
+the hold-full reward and the shared permanent grant — but those are
+**run-scoped** and die with the ship. The hangar purchase is the **persistent**
+economy: it is paid for with banked minerals/cores between sorties, survives the
+run, and is carried into the next deployment.
+
+- **One shared ceiling (producer Q1 = (a), 2026-11-15).**
+  `MAX_PERMANENT_LEVEL` is the **one authored number** (5) read by both the
+  hangar economy's cap refusal and the run-path level-up offer, so there is no
+  parallel maximum. The ladder starts at the run's own base level `1`, so the
+  first purchase is `1 → 2` and `MAX_PERMANENT_LEVEL - 1` purchases reach the
+  cap; a kind at the ceiling is refused `capped` and its row shows `MAX`.
+- **Level-bearing kinds only (producer Q2 = (a), 2026-11-15).** Only kinds with
+  a permanent level to raise are upgradeable: **weapons** and the non-consumable
+  power-ups. A consumable (a charge pool — Shield, Thorn Field, Phase Shift,
+  Teleport, Force Field, Mystery UFO) and the field-pickup-only kind (Extra
+  Life) have no permanent level, so they are refused `non-upgradeable` and their
+  rows render exactly as before; charge purchases stay out of scope.
+- **Deterministic price.** The next level costs `100` minerals plus `50` per
+  current level, plus one core every two levels — both currencies at once, on
+  the shipped two-currency `HangarPrice`. Ring gating already applied at
+  purchase, so the upgrade branch does not re-gate.
+- **Persistence and the deploy grant.** Bought levels live in the same versioned
+  `ai_hell_hangar_war` payload (`hangar.weaponLevels` / `hangar.powerUpLevels`),
+  added by field presence so an older save reads as "no upgrade" and every kind
+  deploys at its base level. A deployment grants them through the **same shared
+  permanent-grant seam** the hold-full reward and checkpoint resume use, so
+  `Player.getWeaponLevels()` / `getPowerUpLevels()` read the bought levels and no
+  temporary/timed stack is ever opened.
+- **The captured defender inherits them.** Because the capture snapshot reads
+  those same accessors at the victory moment, a hex captured **after** an upgrade
+  stores the higher permanent levels: a defender left behind inherits the
+  hangar-bought weapon levels at capture time through the shared capture path
+  (AH-0MWH42DWQ004SAOJ, § *The capture cycle* step 3) with **no capture-side
+  change**.
+
+> **Power-up ownership and upgrade are deferred (AH-0MWKT12BT001106T).** The
+> renderer and the level model stay kind-agnostic, so a power-up level row would
+> show the same affordance and travel the same grant path — but a hangar
+> power-up's **first** permanent level row has no shipped acquisition source yet.
+> The shipped build therefore does **not** make power-ups upgradeable in play:
+> no power-up ownership set, ring grant or catalogue purchase is shipped, and the
+> deferral, its open producer questions and its own schedule live in
+> AH-0MWKT12BT001106T. Recording the capability without claiming it is live is
+> deliberate: the next item adds the source, not the pricing rule.
+
 #### The hex ring and ring growth
 
 Ring *n* holds **6 × n** hexes around the hangar at axial `(0, 0)`, and a hex's
@@ -3230,7 +3290,12 @@ write:
    and a held other consumable charge (Mystery UFO) as **systems**, at the
    shipped **armour 3 / firepower 2 / systems 2** weights (§8.1's one mapping
    table) — so a bot left without upgrades stores no snapshot and rates exactly
-   as before. **Accepted balance consequence (producer decision Q3 = A):** the
+   as before. **Hangar-bought weapon levels travel the same path:** a level
+   bought in the hangar (§ *Buying permanent levels*) is granted at deployment
+   through the shared permanent-grant seam, so the victory-moment snapshot
+   already reads it — a hex captured after an upgrade stores the higher level,
+   with no capture-side change.
+   **Accepted balance consequence (producer decision Q3 = A):** the
    frontier aggression budget is unchanged, so **defence simply gets easier** —
    a late run's upgrade contribution can exceed the maximum possible attack
    strength, making a well-defended hex effectively unretakeable. That is an

@@ -49,8 +49,10 @@
  *
  * Weapons are also **constantly upgradable** (parent AH-0MUPMPCB2009J54J):
  * each weapon carries a run-scoped **level** split into a **permanent**
- * component (hold-full rewards only) and a **temporary** component (field
- * pickups, tied to the weapon's 10 s timed window) — AH-0MUX802450085VZZ.
+ * component (hold-full rewards, plus the levels bought in the hangar and
+ * granted at deployment by the buy-to-upgrade path — GDD §8.2, parent
+ * AH-0MWHW4ALS0039JFU) and a **temporary** component (field pickups, tied to
+ * the weapon's 10 s timed window) — AH-0MUX802450085VZZ.
  * A field pickup's temporary level is cleared when the weapon times out;
  * `getWeaponLevel()` (HUD/def) reports the effective level while
  * `getWeaponLevels()` (the hold-full choice) reports permanent levels only.
