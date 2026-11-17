@@ -834,11 +834,14 @@ export abstract class CombatScene<
    * laser resolves as a hitscan rather than through the shared player-bullet
    * path (parent AC: it only ever fires at asteroids).
    *
-   * The shot's feedback is spawned first, from the ship's **current** position
-   * to the target's **current** position: `vfx/miningLaserBeam.spawnMiningLaserBeam`
-   * draws the thin amber beam (wrapped-aware, so a rock across the seam is cut
-   * through the edge rather than across the screen) and plays the laser's
-   * cutting tick. The module owns both the look and the cue
+   * The shot's feedback is spawned first, from the ship to the target's
+   * **fire-time** position: `vfx/miningLaserBeam.spawnMiningLaserBeam` draws the
+   * thin amber beam (wrapped-aware, so a rock across the seam is cut through the
+   * edge rather than across the screen) and plays the laser's cutting tick. The
+   * beam's source end **re-anchors each frame** to the ship's current position
+   * while its far end stays on the rock's fire-time position — the size of the
+   * shot is what got cut, so the beam does not follow a drifting asteroid
+   * (AH-0MWJ8JUEF006XBLB, AC6). The module owns both the look and the cue
    * (AH-0MW9QMQ7B005WFH9), so `PlayScene` and every gym get identical feedback
    * from this one shared path and no call site can forget the sound — the
    * `spawnOrbitalStrike` precedent.
@@ -848,9 +851,15 @@ export abstract class CombatScene<
   protected override onMiningLaserFire(target: TEnemy): void {
     const player = this.getPlayer();
     if (player) {
-      spawnMiningLaserBeam(this, player, target, {
-        registry: this.aoeEffects,
-      });
+      spawnMiningLaserBeam(
+        this,
+        // Source anchor: the ship's current position, read each frame.
+        () => this.getPlayer(),
+        // Destination: the rock's position at fire time, frozen inside the
+        // renderer so its later drift never drags the beam.
+        { x: target.x, y: target.y },
+        { registry: this.aoeEffects },
+      );
     }
     this.damageEnemyViaAoe(
       target,

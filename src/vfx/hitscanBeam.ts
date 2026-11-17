@@ -1,12 +1,15 @@
 /**
- * Wave-laser hitscan beam visual (AH-0MVREBUJ5004HDRQ, AC1/AC4).
+ * Wave-laser hitscan beam visual (AH-0MVREBUJ5004HDRQ, AC1/AC4; source
+ * anchoring AH-0MWJ8JUEF006XBLB).
  *
- * The beam is a **single red laser column** drawn along the polyline the
- * shared ray resolver produced (one segment per arena wrap) and held on screen
- * for {@link HITSCAN_BEAM_DURATION} seconds before it is removed. Because the
- * geometry comes from `scenes/core/hitscanBeam`, the beam the player sees is
- * exactly the ray that resolved its damage — the game and every gym draw the
- * same shape from the same shared seam.
+ * The beam is a **single red laser column** and it is **anchored to the ship**:
+ * its source end re-anchors every frame to the ship's current position while
+ * its far end stays frozen at the point the ray resolved at launch (the
+ * first-intercept point, or the full-extent endpoint). Because the geometry
+ * comes from `scenes/core/hitscanBeam` and the per-frame re-draw comes from the
+ * shared `vfx/anchoredBeam` seam, the beam the player sees is exactly the ray
+ * that resolved its damage — the game and every gym draw the same shape from
+ * the same shared seam, and a flying ship never leaves its beam behind.
  *
  * The effect is deliberately cheap and self-cleaning: a code-drawn Graphics
  * with a short fade, appended to an optional caller-owned registry (removed on
@@ -18,7 +21,15 @@
 
 import type Phaser from 'phaser';
 
-import type { HitscanSegment } from '../scenes/core/hitscanBeam';
+import {
+  rayEnd,
+  type HitscanSegment,
+} from '../scenes/core/hitscanBeam';
+import {
+  spawnAnchoredBeam,
+  type BeamPoint,
+  type BeamSource,
+} from './anchoredBeam';
 
 /** Seconds the beam stays visible after launch (AC4). */
 export const HITSCAN_BEAM_DURATION = 0.3;
@@ -47,12 +58,35 @@ export interface HitscanBeamOptions {
   width?: number;
   /** Visible duration (s). Defaults to {@link HITSCAN_BEAM_DURATION}. */
   duration?: number;
+  /**
+   * Live source anchor — the ship's current position, read each frame so the
+   * beam stays attached as the ship flies (AC1). Defaults to the resolved
+   * ray's origin, which reproduces the old static beam for callers that only
+   * want the drawn geometry.
+   */
+  source?: BeamSource;
+  /**
+   * Frozen far end. Defaults to the resolved ray's end point (the intercept
+   * point, or the full-extent endpoint) — the value the shared fire path
+   * passes explicitly (AC2).
+   */
+  destination?: BeamPoint;
+  /**
+   * Fallback source used until a live `source` provider yields its first
+   * point — the launch muzzle. Defaults to the ray's origin.
+   */
+  origin?: BeamPoint;
 }
 
 /**
  * Spawns the rendered beam along `segments`: a red column with a white-hot
- * core along the same polyline, faded out over `duration` and destroyed when
- * the fade completes.
+ * core along the same polyline, anchored to `options.source` (the ship) at one
+ * end and to the frozen `options.destination` (the resolved end point) at the
+ * other, faded out over `duration` and destroyed when the fade completes.
+ *
+ * The far end never moves for the beam's whole visible life, and nothing is
+ * re-resolved: this is a rendering seam only, so no damage is re-applied and
+ * no hit is recomputed (AC2).
  *
  * @returns The beam Graphics (destroyed when the fade completes).
  */
@@ -61,44 +95,25 @@ export function spawnHitscanBeam(
   segments: readonly HitscanSegment[],
   options: HitscanBeamOptions = {},
 ): Phaser.GameObjects.Graphics {
-  const color = options.color ?? HITSCAN_BEAM_COLOR;
-  const coreColor = options.coreColor ?? HITSCAN_BEAM_CORE_COLOR;
-  const width = options.width ?? HITSCAN_BEAM_WIDTH;
-  const duration = options.duration ?? HITSCAN_BEAM_DURATION;
-  const registry = options.registry;
+  const first = segments[0];
+  const rayOrigin: BeamPoint = first
+    ? { x: first.x1, y: first.y1 }
+    : { x: 0, y: 0 };
+  const origin = options.origin ?? rayOrigin;
 
-  const beam = scene.add.graphics();
-  // Outer red column, then the hot white core down the middle of the same
-  // polyline, so the beam reads as one bright laser rather than a thin line.
-  beam.lineStyle(width, color, 1);
-  for (const segment of segments) {
-    beam.beginPath();
-    beam.moveTo(segment.x1, segment.y1);
-    beam.lineTo(segment.x2, segment.y2);
-    beam.strokePath();
-  }
-  beam.lineStyle(Math.max(1, width * 0.35), coreColor, 0.95);
-  for (const segment of segments) {
-    beam.beginPath();
-    beam.moveTo(segment.x1, segment.y1);
-    beam.lineTo(segment.x2, segment.y2);
-    beam.strokePath();
-  }
-  registry?.push(beam);
-
-  scene.tweens.add({
-    targets: beam,
-    alpha: 0,
-    duration: duration * 1000,
-    ease: 'Quad.easeIn',
-    onComplete: () => {
-      if (registry) {
-        const index = registry.indexOf(beam);
-        if (index >= 0) registry.splice(index, 1);
-      }
-      beam.destroy();
-    },
+  return spawnAnchoredBeam(scene, {
+    source: options.source ?? origin,
+    // The launch muzzle keeps the beam drawn from where it resolved until a
+    // provider supplies the ship's first live position.
+    origin,
+    destination: options.destination ?? rayEnd(segments),
+    color: options.color ?? HITSCAN_BEAM_COLOR,
+    coreColor: options.coreColor ?? HITSCAN_BEAM_CORE_COLOR,
+    width: options.width ?? HITSCAN_BEAM_WIDTH,
+    coreWidthRatio: 0.35,
+    duration: options.duration ?? HITSCAN_BEAM_DURATION,
+    // The shipped fade was a Quad.easeIn to zero; keep that curve.
+    fade: (progress: number) => 1 - progress * progress,
+    registry: options.registry,
   });
-
-  return beam;
 }

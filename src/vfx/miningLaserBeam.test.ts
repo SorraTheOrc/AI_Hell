@@ -24,6 +24,14 @@ import Phaser from 'phaser';
 import * as effectsModule from '../audio/effects';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { bootScene, type BootedGame } from '../test/gameHarness';
+import {
+  countOps,
+  Cmd,
+  drawnDestination,
+  drawnSource,
+  outerSegments,
+  expectPoint,
+} from '../test/vfxProbe';
 import { HITSCAN_BEAM_COLOR } from './hitscanBeam';
 import { ORBITAL_STRIKE_COLOR } from './orbitalStrike';
 import {
@@ -41,33 +49,6 @@ class MiningBeamStubScene extends Phaser.Scene {
   }
 }
 
-const Cmd = {
-  BEGIN_PATH: 1,
-  CLOSE_PATH: 2,
-  LINE_TO: 4,
-  MOVE_TO: 5,
-  FILL_PATH: 8,
-  STROKE_PATH: 9,
-} as const;
-
-/** Parameter count following each opcode (0 for path terminators). */
-const CmdWidths: Record<number, number> = {
-  [Cmd.BEGIN_PATH]: 0,
-  [Cmd.CLOSE_PATH]: 0,
-  [Cmd.LINE_TO]: 2,
-  [Cmd.MOVE_TO]: 2,
-  [Cmd.FILL_PATH]: 0,
-  [Cmd.STROKE_PATH]: 0,
-};
-
-/** Counts occurrences of a command opcode in a Graphics command buffer. */
-function countOps(buf: number[], target: number): number {
-  let count = 0;
-  for (let i = 0; i < buf.length; i += 1 + (CmdWidths[buf[i]] ?? 0)) {
-    if (buf[i] === target) count += 1;
-  }
-  return count;
-}
 
 /** Advances the scene's `update` delta by `seconds` in fixed 60 fps steps. */
 function advance(scene: Phaser.Scene, seconds: number, dt = 1 / 60): void {
@@ -330,5 +311,83 @@ describe('miningLaserBeam — the module owns its cue', () => {
     expect(cueSpy).toHaveBeenCalledTimes(2);
 
     cueSpy.mockRestore();
+  });
+});
+
+// ── Source anchoring (AH-0MWJ8JUEF006XBLB, AC6) ──────────────────────
+
+
+describe('miningLaserBeam — anchored to the ship, frozen at the rock (AC6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([MiningBeamStubScene]);
+    return booted.scene;
+  }
+
+  it('re-anchors the source to the moving ship each frame (AC6)', async () => {
+    const scene = await boot();
+    const ship = { x: 100, y: 270 };
+
+    const beam = spawnMiningLaserBeam(scene, () => ship, { x: 340, y: 270 });
+
+    expectPoint(drawnSource(beam), { x: 100, y: 270 });
+
+    // The ship drifts on while the 0.12 s beam is alive.
+    ship.x = 160;
+    ship.y = 300;
+    advance(scene, 1 / 60);
+
+    expectPoint(drawnSource(beam), { x: 160, y: 300 });
+    expectPoint(drawnDestination(beam), { x: 340, y: 270 });
+  });
+
+  it('freezes the destination at fire time even when the rock object moves', async () => {
+    const scene = await boot();
+    const rock = { x: 340, y: 270 };
+
+    const beam = spawnMiningLaserBeam(scene, { x: 100, y: 270 }, rock);
+
+    // The asteroid keeps drifting after the shot resolved.
+    rock.x = 520;
+    rock.y = 400;
+    advance(scene, 1 / 60);
+
+    expectPoint(drawnDestination(beam), { x: 340, y: 270 });
+  });
+
+  it('holds the last resolved source when the ship disappears mid-beam (R3)', async () => {
+    const scene = await boot();
+    let ship: { x: number; y: number } | null = { x: 100, y: 270 };
+
+    const beam = spawnMiningLaserBeam(scene, () => ship, { x: 340, y: 270 });
+
+    ship = null;
+    advance(scene, 1 / 60);
+
+    expectPoint(drawnSource(beam), { x: 100, y: 270 });
+    expectPoint(drawnDestination(beam), { x: 340, y: 270 });
+    expect(beam.active).toBe(true);
+  });
+
+  it('redraws the wrapped path as the ship crosses a seam mid-beam (AC3)', async () => {
+    const scene = await boot();
+    const ship = { x: GAME_WIDTH - 60, y: 270 };
+
+    const beam = spawnMiningLaserBeam(scene, () => ship, { x: 20, y: 270 });
+    // Through the right seam: 900 → 960 then 0 → 20.
+    expect(outerSegments(beam)).toHaveLength(2);
+
+    ship.x = 100;
+    advance(scene, 1 / 60);
+
+    // Now the short way is straight across; the beam must be re-stitched.
+    expect(outerSegments(beam)).toHaveLength(1);
+    expectPoint(drawnDestination(beam), { x: 20, y: 270 });
   });
 });

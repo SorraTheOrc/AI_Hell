@@ -2793,6 +2793,14 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   // repo-wide duplicate-body guard (gym↔game parity, AGENTS.md).
   ['isMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
   ['selectMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
+  // Anchored beam VFX seam (AH-0MWJ8JUEF006XBLB): the per-frame source
+  // re-anchoring and the wrapped shortest-path geometry live once in
+  // `src/vfx/anchoredBeam.ts` and are consumed by both beam weapons (the Wave
+  // Laser and the Mining Laser), so the game and every gym render the identical
+  // ship-tracking beam. A beam module that re-introduces its own redraw or wrap
+  // maths fails the repo-wide duplicate-body guard (gym↔game parity, AGENTS.md).
+  ['spawnAnchoredBeam', 'src/vfx/anchoredBeam.ts'],
+  ['wrappedBeamSegments', 'src/vfx/anchoredBeam.ts'],
   // Hangar War hex map (AH-0MWEWYT79001D3A1, parent AH-0MWDBI33V003QQ3U): the
   // reveal rule, the spatial grid columns and the map renderer live once and
   // are consumed by `HexMapScene` and `GymHexWar`, so a scene (or gym) that

@@ -95,7 +95,9 @@ weapon level through the Homing curve (0.5 → ≈0.95). With nothing in its pat
 the ray runs its **short 240 px level-0 extent** (a quarter of the 960 px arena
 width), wrapping at the arena edges; the Range ladder lengthens it (≈528 px at
 the top). The beam is **visible for 0.3 s** with a wide red launch flash aligned
-to the beam and its own sci-fi laser fire cue, firing **1 shot every 2 beats**
+to the beam and its own sci-fi laser fire cue; its **source end re-anchors to
+the ship every frame** (shared `src/vfx/anchoredBeam.ts`,
+AH-0MWJ8JUEF006XBLB), firing **1 shot every 2 beats**
 (1500 ms at 80 BPM, AH-0MVWAVKS0005P9VN) so a beam never overlaps the next shot.
 It does not clear enemy bullets (that stays Nova/Arc/Bomb territory).
 

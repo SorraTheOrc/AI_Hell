@@ -1182,6 +1182,12 @@ export class CombatCoreScene<
    * the descriptor's visible duration and the hit is applied through
    * {@link CombatCoreScene.applyHitscanHit} (AC4/AC11).
    *
+   * The rendered beam is **anchored to the ship** (AH-0MWJ8JUEF006XBLB): its
+   * source end re-anchors each frame to the ship's current position while its
+   * far end stays frozen at `resolution.end`, so a flying ship never leaves its
+   * beam behind. The anchoring is purely visual — the ray above is resolved
+   * once, so no hit is recomputed and no damage is re-applied.
+   *
    * No `PlayerBullet` is created: the travelling-bullet flight/collision path
    * is untouched for every other weapon.
    *
@@ -1212,6 +1218,12 @@ export class CombatCoreScene<
       width: Math.max(2, HITSCAN_BEAM_WIDTH * (def.levelBulletSize ?? 1)),
       duration: descriptor.duration,
       registry: this.fireFxEffects,
+      // Source anchor: the ship's **current** position each frame (null once it
+      // is gone, so the beam holds its last resolved point). Destination: the
+      // launch-resolved end point, frozen for the beam's whole life.
+      source: () => this.getPlayer(),
+      origin: { x, y },
+      destination: resolution.end,
     });
     if (resolution.hit) {
       this.applyHitscanHit(

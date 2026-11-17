@@ -23,6 +23,11 @@ import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
+import {
+  drawnDestination,
+  drawnSource,
+  expectPoint,
+} from '../../test/vfxProbe';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { BaseEnemy, type BaseEnemyConfig } from '../../entities/BaseEnemy';
@@ -535,5 +540,30 @@ describe('Mining Laser shot shows the shared beam and cue (AH-0MW9QMQ7B005WFH9)'
     expect(cueSpy).not.toHaveBeenCalled();
 
     cueSpy.mockRestore();
+  });
+
+  it('anchors the beam source to the moving ship and freezes the rock at fire time (AC6)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 270 });
+    scene.effects.applyCollect('mining_laser', true);
+    const rock = scene.addAsteroid(340, 270, 1000);
+
+    scene.runMiningFrames(1 / 60);
+
+    expect(rock.hits).toBe(1);
+    const beam = scene.beamRegistry()[0] as Phaser.GameObjects.Graphics;
+    expectPoint(drawnSource(beam), { x: 100, y: 270 });
+    expectPoint(drawnDestination(beam), { x: 340, y: 270 });
+
+    // The ship drifts on and the rock drifts too, mid-beam: only the source
+    // end follows (the destination stays where the shot resolved it).
+    player.setPosition(160, 300);
+    rock.setPosition(520, 400);
+    scene.events.emit('update', 0, 16);
+
+    expectPoint(drawnSource(beam), { x: 160, y: 300 });
+    expectPoint(drawnDestination(beam), { x: 340, y: 270 });
+    // Tracking is visual only — the shot still lands exactly one hull hit.
+    expect(rock.hits).toBe(1);
   });
 });
