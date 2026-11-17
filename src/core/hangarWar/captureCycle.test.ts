@@ -13,9 +13,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { deriveDefenderRating } from './hangarEconomy';
+import { defenderRatingFromSnapshot, deriveDefenderRating } from './hangarEconomy';
 import * as hangarEconomyModule from './hangarEconomy';
-import { createDefaultPayload } from './hangarWarStore';
+import { buyHangarUpgrade, createDefaultPayload } from './hangarWarStore';
 import {
   HANGAR_WAR_VERSION,
   loadHangarWarPayload,
@@ -1290,5 +1290,146 @@ describe('leaveDefender / resolveHexCapture — run upgrade snapshot (AH-0MWHF6X
     expect(stored.defenceRating).toBeGreaterThanOrEqual(
       deriveDefenderRating('hull-1'),
     );
+  });
+});
+
+// ── Capture integration: upgraded levels on the defender ──────────────────
+// (AH-0MWI5AN6Y000NTR5, parent AH-0MWHW4ALS0039JFU AC4)
+//
+// The parent epic's other slices *sell* a permanent level (the pure economy
+// rule + the versioned store, `buyHangarUpgrade`) and *carry* it out on the
+// deployment (`buildHangarDeployment` → `applyHangarWarDeployment`, which
+// grants the levels the run's `getWeaponLevels()`/`getPowerUpLevels()` read).
+// This suite pins the join between them and the capture cycle: a hex taken
+// **after** the fleet bought upgrades leaves a defender whose
+// `upgradeSnapshot`/`defenceRating` reflect the higher permanent levels,
+// resolved through the one shared capture path the game and the gyms both run
+// (`resolveHexCapture` → `leaveDefender`).
+
+describe('capture integration — upgraded permanent levels on the defender (AH-0MWI5AN6Y000NTR5)', () => {
+  /** A ring-1 war whose fleet fields (and can afford to upgrade) its starting weapon. */
+  function fieldedWar(): HangarWarPayload {
+    const payload = ringPayload();
+    return {
+      ...payload,
+      hangar: {
+        ...payload.hangar,
+        bankedMinerals: 5_000,
+        bankedCores: 20,
+        activeLoadout: {
+          ...payload.hangar.activeLoadout,
+          // `spread` is the fresh save's unlocked starting weapon.
+          startingWeapons: ['spread'],
+        },
+      },
+    };
+  }
+
+  /**
+   * The victory snapshot a deployment's run reports: the rows
+   * `applyHangarWarDeployment` grants as permanent levels, so the accessors
+   * the capture reads return exactly these (no pickups in this sortie).
+   */
+  function victorySnapshot(
+    deployment: ReturnType<typeof buildHangarDeployment>,
+  ) {
+    return {
+      weaponLevels: deployment.weaponLevels,
+      powerUpLevels: deployment.powerUpLevels,
+      consumablePools: [],
+    };
+  }
+
+  it('leaves a defender carrying the levels a hangar purchase raised, through the shared capture path', () => {
+    const war = fieldedWar();
+
+    // The unupgraded fleet deploys its weapon at base level 1 (no bought rows).
+    const baseDeployment = buildHangarDeployment(war);
+    expect(baseDeployment.weaponLevels).toEqual([{ id: 'spread', level: 1 }]);
+    const baseCapture = resolveHexCapture(war, {
+      hexId: 'hex-r1-2',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(10, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      snapshot: victorySnapshot(baseDeployment),
+    });
+    expect(baseCapture.ok).toBe(true);
+    const baseDefender = hex(baseCapture.payload, 'hex-r1-2').defender!;
+
+    // Two purchases through the one economy rule the hangar screen uses: the
+    // fleet's persisted level becomes 2 (level 1 is the unupgraded base).
+    const first = buyHangarUpgrade(war, 'spread', {
+      ringIndex: war.ring.ringIndex,
+    });
+    const second = buyHangarUpgrade(first.payload, 'spread', {
+      ringIndex: war.ring.ringIndex,
+    });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    const upgraded = second.payload;
+    expect(upgraded.hangar.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
+
+    // The launch data the hangar hands the run carries that higher level…
+    const upgradedDeployment = buildHangarDeployment(upgraded);
+    expect(upgradedDeployment.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+    ]);
+    const snapshot = victorySnapshot(upgradedDeployment);
+
+    // …and the capture after the purchase resolves against it.
+    const captured = resolveHexCapture(upgraded, {
+      hexId: 'hex-r1-4',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(10, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      snapshot,
+    });
+    expect(captured.ok).toBe(true);
+
+    const defender = hex(captured.payload, 'hex-r1-4').defender!;
+    // The stored snapshot is the deployment's rows: the bought level survives.
+    expect(defender.upgradeSnapshot).toEqual(snapshot);
+    expect(defender.upgradeSnapshot!.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+    ]);
+    // The rating is the hull rating plus the bought level's contribution,
+    // through the one snapshot-aware derivation (no second formula).
+    expect(defender.defenceRating).toBe(
+      defenderRatingFromSnapshot(deriveDefenderRating('hull-1'), snapshot),
+    );
+    // The higher permanent level is strictly stronger than the same fleet's
+    // base-level deployment, and than the bare hull.
+    expect(defender.defenceRating).toBeGreaterThan(baseDefender.defenceRating);
+    expect(defender.defenceRating).toBeGreaterThan(
+      deriveDefenderRating('hull-1'),
+    );
+  });
+
+  it('keeps the no-upgrades baseline byte-for-byte today’s defender and rating', () => {
+    // A fresh fleet buys nothing and deploys no extra weapons, so its
+    // deployment carries no permanent-level rows at all.
+    const war = ringPayload();
+    const deployment = buildHangarDeployment(war);
+    expect(deployment.weaponLevels).toEqual([]);
+    expect(deployment.powerUpLevels).toEqual([]);
+
+    const captured = resolveHexCapture(war, {
+      hexId: 'hex-r1-2',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(10, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      // An empty snapshot normalises to nothing, exactly like the game's
+      // upgrade-free run (field-presence migration keeps today's payload).
+      snapshot: victorySnapshot(deployment),
+    });
+    expect(captured.ok).toBe(true);
+
+    const defender = hex(captured.payload, 'hex-r1-2').defender!;
+    expect('upgradeSnapshot' in defender).toBe(false);
+    expect(defender).toEqual({
+      hullId: 'hull-1',
+      defenceRating: deriveDefenderRating('hull-1'),
+      bankedMinerals: 10,
+    });
   });
 });
