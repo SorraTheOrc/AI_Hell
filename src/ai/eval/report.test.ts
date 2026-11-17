@@ -157,7 +157,7 @@ describe('buildBalanceReport (AH-0MV81YY2T0069W19: versioned, deterministic)', (
     // skirmish opt-out keeps the historic zero wave/level distributions.
     const campaign = runBatch({
       seeds: [1],
-      ticks: 1_800,
+      ticks: 6_000,
       sampleEveryTicks: 120,
       spawns: { asteroids: 0 },
     });

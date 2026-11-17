@@ -320,7 +320,10 @@ describe('campaign-by-default batch with a bounded tick budget (AH-0MVD1RK2V009J
   it('plays the full campaign by default and reports non-zero wave/level/upgrade statistics (AC1)', () => {
     const output = runBatch({
       seeds: [21, 22],
-      ticks: 1_800,
+      // 6 000 ticks gives the two-layer bot enough campaign time to fill a
+      // mineral hold and select an upgrade (it prioritises combat over
+      // lone-mineral collection, AH-0MWJ1680Z001QYV2).
+      ticks: 6_000,
       sampleEveryTicks: 120,
       spawns: { asteroids: 0 },
     });

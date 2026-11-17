@@ -64,6 +64,7 @@ function collectTargets(
       x: mineral.x,
       y: mineral.y,
       contentId: mineral.type,
+      ...(mineral.value !== undefined ? { value: mineral.value } : {}),
     }));
   }
   return world.drops.map((drop) => ({
@@ -92,10 +93,17 @@ function collectBehaviour(
         ? extraLifeTargets(view.world)
         : collectTargets(view.world, isMineral);
       const weight =
-        isMineral || isSecureLife
+        isSecureLife
           ? () => 1
-          : (target: ContentTarget) =>
-              content.resolveDrop(target.contentId).value;
+          : isMineral
+            ? // Value-aware mineral choice: a red deposit (value 10) is worth
+              // flying past a closer gold dot for (AC4).
+              (target: ContentTarget) =>
+                target.value !== undefined && Number.isFinite(target.value)
+                  ? target.value
+                  : 1
+            : (target: ContentTarget) =>
+                content.resolveDrop(target.contentId).value;
       const best = bestWeightedTarget(
         targets,
         player,

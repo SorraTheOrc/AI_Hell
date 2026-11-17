@@ -43,6 +43,20 @@
  * is below its life cap and a live Extra Life drop is on screen, so it never
  * competes at the cap (AH-0MV03GXZQ00801T4).
  *
+ * ## Two-layer objectives (AH-0MWJ1680Z001QYV2)
+ *
+ * The bands above decide the *ordering*; the two-layer model decides which
+ * goals are **primary** (sticky, standing: survival, secure-life, boss,
+ * engage-enemy, reposition — survival/secure-life/boss are **hard** primaries
+ * that block diversion) and which are **secondary** (opportunistic diversions:
+ * collect-mineral, collect-powerup, engage-asteroid). A secondary only
+ * interrupts the primary when its `diversionPayoff` clears the diversion
+ * threshold and the primary is not urgent, then hands control back to the
+ * suspended primary. A lone gold mineral or ordinary power-up therefore never
+ * disrupts the primary by presence alone. Mineral utility is value-aware
+ * (red over yellow) via `mineralValueWeight`, and the mineral diversion payoff
+ * is the value of the surrounding cluster (`mineralDiversionPayoff`).
+ *
  * The `engage-boss` band sits directly below `secure-life` and above every
  * collection band, and is only valid while a live boss is inside the enemy
  * seek range (AH-0MVBMESIE003YQ68 · AC2). Its target set is the boss **alone**,
@@ -109,6 +123,13 @@ export interface ContentTarget extends BotWorldPoint {
    */
   readonly vx?: number;
   readonly vy?: number;
+  /**
+   * A pickable mineral's value (`MINERAL_DEPOSIT_VALUE` for a red deposit, `1`
+   * for an ordinary gold dot). Carried so the mineral goal can weight and
+   * gate collection by value — red over gold (AH-0MWJ1680Z001QYV2 · AC4).
+   * Absent on non-mineral targets and on value-less sources (treated as `1`).
+   */
+  readonly value?: number;
 }
 
 /** Clamps a number into `[0, 1]`. */
@@ -271,6 +292,88 @@ export function asteroidTargets(world: BotWorld): ContentTarget[] {
 }
 
 /**
+ * A mineral's value (`1` when the source carries none), used both for the
+ * value-aware mineral weight and the cluster diversion payoff
+ * (AH-0MWJ1680Z001QYV2 · AC4).
+ */
+function mineralValue(target: ContentTarget): number {
+  return target.value !== undefined && Number.isFinite(target.value)
+    ? target.value
+    : 1;
+}
+
+/**
+ * The mineral goal's value-aware weight in `[0, 1]`: a red deposit (value
+ * `mineralDepositValue`) scores full weight while an ordinary gold dot is a
+ * tenth, so a red deposit outranks a gold dot at equal distance without ever
+ * leaving the mineral band's utility span (AC4).
+ */
+export function mineralValueWeight(
+  t: CompetentBotTunables,
+): (target: ContentTarget) => number {
+  return (target: ContentTarget) =>
+    clamp01(mineralValue(target) / t.mineralDepositValue);
+}
+
+/**
+ * Dynamic-prioritisation relaxation in `[0, 1]` (producer guidance,
+ * AH-0MWJ1680Z001QYV2): how much the bot should favour sweeping up a
+ * secondary when the threat is thinning and/or there is plenty of time before
+ * the wave limit. It uses the **larger** of two signals (either is enough):
+ *
+ * - **few enemies** — 1 at an empty screen, falling to 0 at
+ *   `diversionRelaxEnemyCount` live non-asteroid enemies; and
+ * - **plenty of time** — `1 - wavePressure` (a fresh timed wave leaves time to
+ *   sweep), scaled by `diversionOpportunityWeight`.
+ */
+export function diversionOpportunity(
+  view: BotGoalView,
+  t: CompetentBotTunables,
+): number {
+  const enemyCount = view.world.liveEnemies.length;
+  const presence =
+    t.diversionRelaxEnemyCount > 0
+      ? clamp01(enemyCount / t.diversionRelaxEnemyCount)
+      : 1;
+  const fewEnemy = clamp01(1 - presence);
+  // "Plenty of time before the next wave" only applies to a genuine timed
+  // wave: a continuous horde (no wave clock) gives no such licence and must
+  // keep focus fire, so it never over-collects under siege.
+  const plentyTime =
+    view.snapshot.wave?.active === true ? clamp01(1 - view.world.wavePressure) : 0;
+  return clamp01(Math.max(fewEnemy, plentyTime * t.diversionOpportunityWeight));
+}
+
+/**
+ * The mineral diversion payoff in `[0, 1]`: the summed value of the cluster
+ * around the nearest mineral, normalised by the deposit value. A red deposit
+ * alone (or ~10 clustered gold) reaches `1`; a lone gold dot is `0.1`, well
+ * below the diversion threshold so it never detours the bot
+ * (AH-0MWJ1680Z001QYV2 · AC3/AC4). The payoff is then relaxed toward `1` by
+ * {@link diversionOpportunity} so the bot sweeps up minerals once the screen
+ * clears or the wave has plenty of time left (dynamic prioritisation).
+ */
+export function mineralDiversionPayoff(
+  view: BotGoalView,
+  t: CompetentBotTunables,
+): number {
+  const player = view.world.player;
+  if (!player) return 0;
+  const wrap = botWrapWorld(t);
+  const nearest = nearestTarget(view.world.minerals, player, wrap);
+  if (!nearest) return 0;
+  let cluster = 0;
+  for (const mineral of view.world.minerals) {
+    if (wrappedDistance(nearest.point, mineral, wrap) <= t.mineralClusterRadius) {
+      cluster += mineralValue({ x: mineral.x, y: mineral.y, contentId: mineral.type, value: mineral.value });
+    }
+  }
+  const base = clamp01(cluster / t.mineralDepositValue);
+  const relax = diversionOpportunity(view, t);
+  return clamp01(base + (1 - base) * relax);
+}
+
+/**
  * The live Extra Life drops as content targets. The `secure-life` goal and
  * behaviour consume this set so an on-screen Extra Life can be prioritised
  * while the ship is below the life cap (AH-0MV03GXZQ00801T4 · AC2).
@@ -305,11 +408,21 @@ function weightedUtility(
   return best;
 }
 
+/** Extra layer metadata a goal may declare (AH-0MWJ1680Z001QYV2). */
+interface GoalExtras {
+  readonly layer?: 'primary' | 'secondary';
+  readonly hardPrimary?: boolean;
+  urgency?: (view: BotGoalView) => number;
+  diversionPayoff?: (view: BotGoalView) => number;
+}
+
 /** A `survive` goal: valid only while a shot urgently threatens the ship. */
 function surviveGoal(t: CompetentBotTunables): BotGoal {
   return {
     id: COMPETENT_GOAL_IDS.survive,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.evade,
+    layer: 'primary',
+    hardPrimary: true,
     utility: (view: BotGoalView) =>
       t.survivalBase + survivalUrgency(view.world, t) * t.survivalUrgencyPort,
     isValid: (view) => survivalUrgency(view.world, t) > 0,
@@ -328,6 +441,8 @@ function secureLifeGoal(t: CompetentBotTunables): BotGoal {
   return {
     id: COMPETENT_GOAL_IDS.secureLife,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.collect,
+    layer: 'primary',
+    hardPrimary: true,
     utility: (view: BotGoalView) =>
       weightedUtility(
         view,
@@ -365,6 +480,8 @@ function bossGoal(t: CompetentBotTunables): BotGoal {
   return {
     id: COMPETENT_GOAL_IDS.engageBoss,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.engage,
+    layer: 'primary',
+    hardPrimary: true,
     utility: (view: BotGoalView) =>
       weightedUtility(
         view,
@@ -391,10 +508,12 @@ function collectGoal(
   range: number,
   select: TargetSelector,
   weight: (target: ContentTarget) => number,
+  extras: GoalExtras = {},
 ): BotGoal {
   return {
     id,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.collect,
+    ...extras,
     utility: (view) =>
       weightedUtility(
         view,
@@ -419,10 +538,12 @@ function engageGoal(
   range: number,
   select: TargetSelector,
   weight: (target: ContentTarget) => number,
+  extras: GoalExtras = {},
 ): BotGoal {
   return {
     id,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.engage,
+    ...extras,
     utility: (view) =>
       weightedUtility(
         view,
@@ -439,10 +560,13 @@ function engageGoal(
   };
 }
 
-/** The reposition/idle fallback: always valid, always lowest scored. */function repositionGoal(t: CompetentBotTunables): BotGoal {
+/** The reposition/idle fallback: always valid, always lowest scored. */
+function repositionGoal(t: CompetentBotTunables): BotGoal {
   return {
     id: COMPETENT_GOAL_IDS.reposition,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.reposition,
+    layer: 'primary',
+    idle: true,
     utility: () => t.repositionBase,
   };
 }
@@ -465,6 +589,38 @@ export function createCompetentGoals(
   const dropValue = (target: ContentTarget): number =>
     content.resolveDrop(target.contentId).value;
 
+  // A power-up diversion payoff: only a drop clearly above the neutral value
+  // (a strong/rare drop) is worth interrupting the primary for. An ordinary
+  // power-up sits at or below the threshold (AC3). The Extra Life is a hard
+  // primary (secure-life) and is excluded here so a worthless at-cap pickup
+  // never diverts.
+  const powerUpPayoff = (view: BotGoalView): number => {
+    if (!view.world.player) return 0;
+    let best = 0;
+    for (const drop of view.world.drops) {
+      if (drop.type === SECURE_LIFE_DROP_ID) continue;
+      const value = content.resolveDrop(drop.type).value;
+      if (value > best) best = value;
+    }
+    const base = clamp01((best - 1) / 0.5);
+    const relax = diversionOpportunity(view, t);
+    return clamp01(base + (1 - base) * relax);
+  };
+
+  // An asteroid only diverts when it is close enough to threaten the ship —
+  // a collision-path asteroid, not every drifting rock (AC2).
+  const asteroidPayoff = (view: BotGoalView): number => {
+    const player = view.world.player;
+    if (!player) return 0;
+    const nearest = nearestTarget(
+      view.world.liveAsteroids,
+      player,
+      botWrapWorld(t),
+    );
+    if (!nearest) return 0;
+    return nearest.distance <= t.dangerMargin ? 1 : 0;
+  };
+
   return createGoalRegistry([
     surviveGoal(t),
     secureLifeGoal(t),
@@ -479,8 +635,13 @@ export function createCompetentGoals(
           x: mineral.x,
           y: mineral.y,
           contentId: mineral.type,
+          ...(mineral.value !== undefined ? { value: mineral.value } : {}),
         })),
-      () => 1,
+      mineralValueWeight(t),
+      {
+        layer: 'secondary',
+        diversionPayoff: (view) => mineralDiversionPayoff(view, t),
+      },
     ),
     collectGoal(
       COMPETENT_GOAL_IDS.collectPowerUp,
@@ -494,6 +655,10 @@ export function createCompetentGoals(
           contentId: drop.type,
         })),
       dropValue,
+      {
+        layer: 'secondary',
+        diversionPayoff: powerUpPayoff,
+      },
     ),
     engageGoal(
       COMPETENT_GOAL_IDS.engageEnemy,
@@ -502,6 +667,11 @@ export function createCompetentGoals(
       t.enemySeekRange,
       enemyTargets,
       enemyThreat,
+      {
+        // Wave pressure is the enemy band's own urgency: late in a timed wave
+        // the bot focuses fire instead of diverting (AC2/AC3).
+        urgency: (view) => view.world.wavePressure,
+      },
     ),
     engageGoal(
       COMPETENT_GOAL_IDS.engageAsteroid,
@@ -510,6 +680,10 @@ export function createCompetentGoals(
       t.asteroidSeekRange,
       asteroidTargets,
       enemyThreat,
+      {
+        layer: 'secondary',
+        diversionPayoff: asteroidPayoff,
+      },
     ),
     repositionGoal(t),
   ]);

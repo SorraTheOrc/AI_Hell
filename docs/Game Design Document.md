@@ -168,6 +168,21 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   5. **Idle** — nothing to do: hold station.
   All tunables live in one place (`BOT_DECISION_TUNABLES` in
   `src/ai/botDecision.ts`).
+
+  > **Live brain (AH-0MWJ1680Z001QYV2):** the shipping demo, the recording
+  > tools and every collection gym fly the framework's **competent brain**
+  > (`createCompetentBotBrain`), not the legacy ladders. It runs a **two-layer
+  > primary/secondary objective model**: the standing primary (survive →
+  > secure an offered Extra Life → focus the boss → hunt the wave → reposition)
+  > is **sticky** and changes only when achieved, invalidated, or a genuinely
+  > higher-value primary takes over. Collection is opportunistic: a mineral,
+  > power-up or collision-path asteroid is a **secondary** that may interrupt
+  > the primary only when its payoff clears a diversion threshold and the wave
+  > is not already at pressure. A **lone gold mineral or ordinary power-up
+  > never diverts** the bot, and a **red deposit** (value 10) outranks a gold
+  > dot — **red over yellow**. The willingness model above is the legacy
+  > ladder's equivalent, retained for the evaluation harness. See
+  > [docs/BOT_FRAMEWORK.md §9.1](BOT_FRAMEWORK.md#91-goals-and-priorities).
 - **Predictive braking (AC10):** the ship is Newtonian and has no brakes, so
   the bot models its own **stopping distance** (`v² / 2a`, where `a` is the
   ship's friction deceleration) and stops thrusting when continuing would
@@ -3569,10 +3584,10 @@ Measured baseline (seeds 1–3, competent bot; artifact
 
 | Ring | Line | Total mean (min–max) | Losses | Budget |
 |---|---|---|---|---|
-| 1 (6 hexes) | grind | **16.4 min** (15.7–16.9) | 6.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
-| 1 (6 hexes) | rush | **10.1 min** (9.8–10.6) | 1.0 | ring not secured |
-| 2 (12 hexes) | grind | **48.1 min** (42.4–58.4) | 12.0 | 60–180 · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
-| 2 (12 hexes) | rush | **22.3 min** (20.4–25.4) | 1.0 | ring not secured |
+| 1 (6 hexes) | grind | **16.2 min** (14.7–18.1) | 6.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | rush | **10.5 min** (9.9–11.0) | 1.0 | ring not secured |
+| 2 (12 hexes) | grind | **46.8 min** (34.1–54.5) | 12.0 | 60–180 · **missed** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | rush | **21.8 min** (20.1–23.9) | 1.0 | ring not secured |
 
 The per-hex budget **5–15 minutes per deployment** (AH-0MWHU5AV800969NA)
 derives each ring's window from its hex count — ring 1, six hexes → **30–90 min**;
@@ -3580,11 +3595,11 @@ ring 2, twelve → **60–180 min** — and the budget assertion states a **10 %
 tolerance** of each window's width: **±6 min** for ring 1 (30–90) and **±12 min**
 for ring 2 (60–180). The measured figures are **not** re-worded. With the
 one-level sortie the competent bot loses every sortie to enemy fire before the
-wave-5 clear: ring 1 grind **16.4 min** against its derived 30–90 window reads
-**`missed`**, while ring 2 grind **48.1 min** against 60–180 reads
-**`within-tolerance`** (48.1 ≥ the 48-minute tolerance floor) — a verdict
-change that is a consequence of the producer's new per-hex budget, computed by
-the harness, never a re-word of the old window. Each ruling is recorded with
+wave-5 clear: ring 1 grind **16.2 min** against its derived 30–90 window reads
+**`missed`**, and ring 2 grind **46.8 min** against 60–180 also reads
+**`missed`** (46.8 < the 48-minute tolerance floor) — verdicts computed by
+the harness from the producer's per-hex budget, never a re-word of the old
+window. Each ruling is recorded with
 its measured figure and re-ruled by its linked rebalancing item
 (**AH-0MWFDQ9EY004NO4X** ring 1, **AH-0MWFDQCFV007BZE5** ring 2). The headless
 arena is the recorded evidence (intake assumption A1 and Q4); a human playtest
@@ -3688,10 +3703,10 @@ hand-edited.
 Two lines are measured, and both are viable:
 
 - **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
-  secured: **16.4 min** for ring 1 and **48.1 min** for ring 2, banking salvage
+  secured: **16.2 min** for ring 1 and **46.8 min** for ring 2, banking salvage
   and ending with a held ring.
-- **Rush** — the weapon hex first, then straight into the next ring: **10.1 min**
-  and **22.3 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
+- **Rush** — the weapon hex first, then straight into the next ring: **10.5 min**
+  and **21.8 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
 expected retakes and forfeiting the salvage of any failed attempt.
 
 **Neither line dominates**: the rush is faster but riskier and ends with an
@@ -3700,9 +3715,9 @@ and banks the salvage. Both lines are playable in the shipped capture cycle —
 the captured weapon hex is the ring's capstone, so holding it opens the next
 ring (`isRingOpenable`) while the skipped hexes are carried with their own
 aggression and defenders for the frontier tick. The re-measured grind totals
-are re-rated against the per-hex budget's derived windows: ring 1 **16.4 min**
-vs 30–90 reads **`missed`**, ring 2 **48.1 min** vs 60–180 reads
-**`within-tolerance`** — each is recorded with its new measurement and re-ruled
+are re-rated against the per-hex budget's derived windows: ring 1 **16.2 min**
+vs 30–90 reads **`missed`**, ring 2 **46.8 min** vs 60–180 also reads
+**`missed`** — each is recorded with its new measurement and re-ruled
 by its own linked rebalancing item (**AH-0MWFDQ9EY004NO4X** ring 1,
 **AH-0MWFDQCFV007BZE5** ring 2) rather than re-worded; the per-hex budget
 itself stays authored.

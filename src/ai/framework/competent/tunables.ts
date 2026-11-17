@@ -64,6 +64,59 @@ export interface CompetentBotTunables {
   /** Extra enemy-band utility at full wave pressure (focus fire late). */
   enemyWavePressurePort: number;
 
+  // ── Two-layer objective model (AH-0MWJ1680Z001QYV2) ─────────────
+  /**
+   * Whether the competent brain runs the two-layer primary/secondary model.
+   * `false` restores the pre-change flat single-layer selection, which is the
+   * purposefulness baseline the metric compares against (AC5).
+   */
+  layeringEnabled: boolean;
+  /**
+   * Minimum soak (seconds) of a primary objective before a secondary may
+   * divert from it. Longer = stickier primary courses (AC1).
+   */
+  primaryMinHoldSeconds: number;
+  /**
+   * Minimum soak (seconds) of a secondary diversion before the bot swaps to a
+   * different secondary — rate-limits secondary churn (AC2).
+   */
+  secondaryMinHoldSeconds: number;
+  /**
+   * Diversion payoff (`[0, 1]`) a secondary must clear before it may preempt
+   * the primary. A lone gold mineral or ordinary power-up sits below it, so
+   * presence alone never displaces the primary (AC3).
+   */
+  diversionThreshold: number;
+  /**
+   * Highest primary urgency (`[0, 1]`) at which a diversion is still allowed;
+   * above it (late in a timed wave) the bot holds its course and finishes the
+   * wave (AC2/AC3 wave-pressure focus).
+   */
+  secondaryUrgencyCap: number;
+  /**
+   * Mineral value a single red **deposit** is worth (`MINERAL_DEPOSIT_VALUE`).
+   * Normalises the mineral goal's value-aware weight and the mineral cluster
+   * diversion payoff to `[0, 1]`, so a red deposit is the strongest mineral
+   * opportunity and the mineral band stays inside its utility span (AC4).
+   */
+  mineralDepositValue: number;
+  /** Radius (px) within which co-located minerals count as a cluster (AC3). */
+  mineralClusterRadius: number;
+  /**
+   * Dynamic prioritisation: at or above this many live non-asteroid enemies a
+   * secondary's payoff earns no relaxation. Below it the payoff is relaxed
+   * toward 1 as the screen clears, so the bot sweeps up minerals/power-ups
+   * once the threat thins out (producer guidance, AH-0MWJ1680Z001QYV2).
+   */
+  diversionRelaxEnemyCount: number;
+  /**
+   * Dynamic prioritisation: how much a wave with plenty of time left
+   * (low wave pressure) relaxes a secondary's payoff toward collecting, in
+   * `[0, 1]`. `0` disables the time signal; `1` makes a fresh wave fully
+   * opportunistic.
+   */
+  diversionOpportunityWeight: number;
+
   // ── Ranges (px) ─────────────────────────────────────────────────
   /** Radius within which a live Extra Life drop is pursued. */
   lifeSeekRange: number;
@@ -239,6 +292,16 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   repositionBase: 0.1,
   prioritySpan: 0.5,
   enemyWavePressurePort: 0.4,
+
+  layeringEnabled: true,
+  primaryMinHoldSeconds: 0.6,
+  secondaryMinHoldSeconds: 0.35,
+  diversionThreshold: 0.5,
+  secondaryUrgencyCap: 0.75,
+  mineralDepositValue: 10,
+  mineralClusterRadius: 120,
+  diversionRelaxEnemyCount: 3,
+  diversionOpportunityWeight: 0.7,
 
   lifeSeekRange: 600,
   mineralSeekRange: 600,

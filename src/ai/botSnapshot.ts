@@ -136,6 +136,12 @@ export interface BotMineral {
   readonly y: number;
   /** Mineral discriminator (currently always {@link BOT_MINERAL_TYPE}). */
   readonly type: string;
+  /**
+   * Minerals this collectable is worth (`MINERAL_DEPOSIT_VALUE` for a red
+   * deposit, `1` for an ordinary gold dot) when the source exposes it
+   * (AH-0MWJ1680Z001QYV2 · AC4). Absent on value-less sources, treated as `1`.
+   */
+  readonly value?: number;
 }
 
 /** The Central AI boss and its current phase. */
@@ -281,6 +287,13 @@ export interface BotDropSource {
 export interface BotMineralSource {
   readonly x: number;
   readonly y: number;
+  /**
+   * The mineral's value when the source exposes it (a `Mineral` carries
+   * `value`; lightweight gym minerals may not). Optional so the snapshot
+   * shape stays additive for value-less sources
+   * (AH-0MWJ1680Z001QYV2 · AC4).
+   */
+  readonly value?: number;
 }
 
 /** Minimal boss source. */
@@ -410,6 +423,11 @@ export function buildBotSnapshot(
       x: mineral.x,
       y: mineral.y,
       type: BOT_MINERAL_TYPE,
+      // Carry the value only when the source exposes it, so value-less gym
+      // minerals keep their original shape (AH-0MWJ1680Z001QYV2 · AC4).
+      ...(typeof mineral.value === 'number' && Number.isFinite(mineral.value)
+        ? { value: mineral.value }
+        : {}),
     })),
     boss,
     aliveCount: scene.getAliveCount(),

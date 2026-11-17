@@ -19,7 +19,8 @@ import type { BotPolicy } from '../botBrain';
 import { createLegacyBotPolicy } from '../legacyPolicy';
 import { createBotMemory } from '../memory';
 import { buildBotWorld } from '../worldModel';
-import { boss } from '../testFixtures';
+import { boss, enemy, makeSnapshot, mineral } from '../testFixtures';
+import { summariseCommitments } from '../../eval/purposefulness';
 import { COMPETENT_GOAL_IDS, createCompetentGoals, enemyTargets } from './goals';
 import { createCompetentBotBrain } from './index';
 import { COMPETENT_BOT_TUNABLES } from './tunables';
@@ -395,10 +396,10 @@ describe('survival hard constraint over a seeded run (AC4)', () => {
       scenario,
     );
     expect(result.collisions).toBe(0);
-    // It still made progress toward the objective rather than freezing.
-    expect(
-      Math.hypot(result.final.x - 480, result.final.y - 270),
-    ).toBeGreaterThan(20);
+    // It still made progress toward the objective rather than freezing: the
+    // mineral was reached (the bot then repositions to centre, so final
+    // displacement is no longer a proxy for progress).
+    expect(result.minerals).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -785,5 +786,75 @@ describe('wrap-aware end-to-end scenarios (AH-0MVMISF0Q00314LG)', () => {
     // The shot arrives from the left (across the seam), so fleeing rightward
     // increases the wrapped separation.
     expect(intent.dirX).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Purposefulness under a changing pickup field
+ * (AH-0MWJ1680Z001QYV2 · AC5, AC2, AC7).
+ *
+ * A deterministic scripted field toggles a lone gold mineral on and off in
+ * ~0.5 s stretches while one enemy holds the field. The flat single-layer
+ * selection chases every appearance (a high-band pick-up always wins), so it
+ * switches objective each time the field flips. The two-layer model ignores a
+ * lone gold mineral (its diversion payoff sits below the threshold) and holds
+ * the combat primary — measurably fewer switches for the same seeded input.
+ */
+describe('purposefulness under a changing pickup field (AH-0MWJ1680Z001QYV2)', () => {
+  const TICKS = 600; // 10 s at 60 Hz
+  const PAIR = { x: 480, y: 270, vx: 0, vy: 0 };
+  const STRETCH = 30; // ticks (~0.5 s) the mineral is present / absent
+
+  /** Runs the scripted field with layering on or off; returns the metric. */
+  const runScenario = (layeringEnabled: boolean) => {
+    const brain = createCompetentBotBrain({
+      tunables: { layeringEnabled },
+      fallback: null,
+    });
+    // A busy late-wave screen: many enemies and little time left, so the
+    // dynamic-prioritisation relaxation is near zero and the biome keeps its
+    // combat primary instead of chasing a lone gold dot.
+    const enemies = [
+      enemy(200, 90, 'scout'),
+      enemy(760, 110, 'scout'),
+      enemy(180, 430, 'scout'),
+      enemy(780, 450, 'scout'),
+      enemy(480, 60, 'diver'),
+      enemy(480, 500, 'tank'),
+    ];
+    const wave = { active: true, timeRemaining: 5, timeLimit: 100 };
+    const samples: { committedGoalId: string | null }[] = [];
+    for (let tick = 0; tick < TICKS; tick += 1) {
+      const present = Math.floor(tick / STRETCH) % 2 === 0;
+      const snapshot = makeSnapshot({
+        player: PAIR,
+        enemies,
+        wave,
+        minerals: present ? [mineral(660, 270)] : [],
+      });
+      brain.decide(snapshot, DT);
+      samples.push({ committedGoalId: brain.committedGoalId });
+    }
+    return summariseCommitments(samples, DT);
+  };
+
+  it('reduces the committed-goal switch rate versus the flat baseline (AC5)', () => {
+    const flat = runScenario(false);
+    const layered = runScenario(true);
+    expect(layered.goalSwitches).toBeLessThan(flat.goalSwitches);
+    expect(layered.goalSwitchRate).toBeLessThan(flat.goalSwitchRate);
+    // The layered primary is held for a long, legible stretch (well beyond the
+    // minimum committed duration) rather than churning.
+    expect(layered.maxHoldSeconds).toBeGreaterThanOrEqual(
+      COMPETENT_BOT_TUNABLES.primaryMinHoldSeconds,
+    );
+    // The flat baseline genuinely churns on this input (guards against a
+    // vacuous comparison where neither model switches).
+    expect(flat.goalSwitches).toBeGreaterThan(2);
+  });
+
+  it('is deterministic: the same seeded field yields the same measurement (AC7)', () => {
+    expect(runScenario(true)).toEqual(runScenario(true));
+    expect(runScenario(false)).toEqual(runScenario(false));
   });
 });

@@ -134,7 +134,7 @@ describe('extractBalanceStats', () => {
     // fields are now meaningful.
     const result = runArena(createCompetentBotBrain(), {
       seed: 21,
-      ticks: 1_800,
+      ticks: 6_000,
       campaign: true,
       spawns: { asteroids: 0 },
     });

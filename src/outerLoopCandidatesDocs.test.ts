@@ -626,12 +626,14 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
     expect(spec).toMatch(/±\s*6\s*min/i);
     expect(spec).toMatch(/±\s*12\s*min/i);
     // The grind verdicts are re-rated against the derived windows: ring 1 is
-    // missed, ring 2 within-tolerance, with their linked rebalancing items.
+    // missed, ring 2 also missed, with their linked rebalancing items.
     expect(spec).toMatch(
       new RegExp(`${escapeRegExp(ring1Grind)}[^\\n]*\\bmissed\\b`, 'i'),
     );
+    // Ring 2 now sits just below its ±12-minute tolerance floor (46.8 < 48),
+    // so its verdict re-rates to `missed` alongside ring 1.
     expect(spec).toMatch(
-      new RegExp(`${escapeRegExp(ring2Grind)}[^\\n]*\\bwithin-tolerance\\b`, 'i'),
+      new RegExp(`${escapeRegExp(ring2Grind)}[^\\n]*\\bmissed\\b`, 'i'),
     );
     expect(spec).toContain('AH-0MWFDQ9EY004NO4X');
     expect(spec).toContain('AH-0MWFDQCFV007BZE5');

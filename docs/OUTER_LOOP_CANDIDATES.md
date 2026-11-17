@@ -981,11 +981,11 @@ replace storage behind the same injectable interface (§6.6).
   a few lost attempts — and **ring 2 (12 hexes) lands at 60–180 minutes**.
   Measured with the ring-timing harness on the shipped one-level **five-wave
   sortie** (a captured hex's grant owned from the next deployment, ring 1's
-  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **48.1
-  minutes** — 12.0 of measured deployments, 24 between sorties and 12.0 of
-  modelled retries — so ring 2 still plays retry-dominated but now reads
-  **within-tolerance** of its derived 60–180 window (±12 min, floor 48) and its
-  rebalancing ruling stays live on AH-0MWFDQCFV007BZE5; ring 1's **16.4 min**
+  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **46.8
+  minutes** — 17.4 of measured deployments, 12.0 between sorties and 17.4 of
+  modelled retries — so ring 2 plays retry-dominated and now also reads
+  **missed** against its derived 60–180 window (±12 min, floor 48) with its
+  rebalancing ruling live on AH-0MWFDQCFV007BZE5; ring 1's **16.2 min**
   still **misses** the derived 30–90 window (AH-0MWFDQ9EY004NO4X).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the

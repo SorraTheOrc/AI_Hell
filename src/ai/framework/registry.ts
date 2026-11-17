@@ -21,6 +21,7 @@
 import type { BotSnapshot } from '../botSnapshot';
 import type { BotSteeringIntent } from '../botDecision';
 import type { BotMemory } from './memory';
+import type { GoalLayer } from './commitment';
 import type { BotWorld } from './worldModel';
 
 /** The per-tick view handed to goals (and to behaviours via their context). */
@@ -57,6 +58,34 @@ export interface BotGoal {
   isValid?(view: BotGoalView): boolean;
   /** Whether the goal is done (release). Default `false`. */
   isAchieved?(view: BotGoalView): boolean;
+  /**
+   * Objective layer (AH-0MWJ1680Z001QYV2 · AC1/AC3). Default `'primary'`.
+   * Only the two-layer selector reads it; the flat selector ignores it.
+   */
+  readonly layer?: GoalLayer;
+  /**
+   * Whether this is a **hard** primary (survival / secure-life / boss): it
+   * pre-empts any running secondary immediately and blocks diversion while
+   * it is valid (AC1).
+   */
+  readonly hardPrimary?: boolean;
+  /**
+   * The primary's own urgency in `[0, 1]` (0 = idle). A secondary may only
+   * divert while this stays at or below the diversion urgency cap (AC2).
+   */
+  urgency?(view: BotGoalView): number;
+  /**
+   * A secondary's diversion payoff in `[0, 1]`: how much it is worth
+   * interrupting the primary for, independent of its raw band utility. It
+   * must clear the diversion threshold to preempt the primary (AC3).
+   */
+  diversionPayoff?(view: BotGoalView): number;
+  /**
+   * Whether this primary is the **idle** fallback (reposition) — no real
+   * objective. When the primary is idle the diversion threshold does not gate
+   * a collection, so the bot still gathers pickups when the field is clear.
+   */
+  readonly idle?: boolean;
 }
 
 /** A behaviour: executes a committed goal and returns an intent (or `null`). */

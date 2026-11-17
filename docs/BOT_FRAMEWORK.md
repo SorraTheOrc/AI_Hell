@@ -323,6 +323,46 @@ dominates, so the bot never trades its life for a life
 (AH-0MV03GXZQ00801T4). The life count and cap come from the scene's run state
 via the read-only snapshot — the bot introduces no cap constant of its own.
 
+#### Two-layer primary/secondary objective model (AH-0MWJ1680Z001QYV2)
+
+The bands above are the **ordering**; on top of them the live competent brain
+runs a **two-layer** objective model that keeps the bot from oscillating:
+
+- **Primary** — a sticky, standing objective: survival, `secure-life`, `boss`,
+  `engage-enemy`, or `reposition`. It changes only when it is achieved,
+  invalidated, or a genuinely higher-value primary takes over. `survive`,
+  `secure-life` and `engage-boss` are **hard** primaries: they pre-empt
+  everything and block diversion while valid.
+- **Secondary** — an opportunistic diversion: `collect-mineral`,
+  `collect-powerup`, or `engage-asteroid`. A secondary may preempt the primary
+  **only** when its diversion payoff clears `diversionThreshold` and the
+  primary's urgency is at or below `secondaryUrgencyCap`. When it completes or
+  is abandoned the bot returns to the suspended primary.
+
+The payoff is deliberately **not** the raw band utility (a lone gold mineral
+still bands high), so **presence alone never pulls the bot off its course**:
+
+- a mineral's payoff is the value of the cluster around the nearest mineral,
+  normalised by `mineralDepositValue` — a red deposit (value 10) or ~10
+  clustered gold reaches the threshold, a lone gold dot does not;
+- a power-up's payoff normalises its content value above neutral, so a strong
+  drop (smart bomb, force field) diverts and an ordinary drop does not;
+- an asteroid diverts only when it is within `dangerMargin` (a collision-path
+  asteroid).
+
+Mineral utility is **value-aware** (`mineralValueWeight`): a red deposit is
+weighted fully and an ordinary gold dot a tenth, so a red deposit outranks a
+closer gold dot within the mineral band (**red over yellow**) without ever
+leaving the band's span. Engagement's **urgency** is the wave pressure, so late
+in a timed wave the bot stops diverting and focuses fire.
+
+All layering thresholds are `CompetentBotTunables` and surfaced in the
+bot-tuning gym: `layeringEnabled`, `primaryMinHoldSeconds`,
+`secondaryMinHoldSeconds`, `diversionThreshold`, `secondaryUrgencyCap`,
+`mineralDepositValue` and `mineralClusterRadius`. Disabling `layeringEnabled`
+restores the flat single-layer selection, which is the purposefulness
+**baseline** the AC5 metric compares against.
+
 ### 9.2 Behaviours
 
 - **`collect`** (mineral/power-up/secure-life): approach and scoop, braking
