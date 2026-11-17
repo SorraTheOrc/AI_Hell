@@ -410,9 +410,11 @@ describe('HexMapScene', () => {
       const row = scene.getRows().find((entry) => entry.key === intel.key)!;
       // The tile carries aggression + ownership marker first, coordinates on
       // their own second line; ownership is also readable without colour.
-      expect(row.label).toBe(
-        `AGG ${intel.aggression} ${UNHELD_TILE_MARKER}\n(${intel.q},${intel.r})`,
-      );
+      // Authored variety tags (`✦ CONTRACT`, `⚡ FORTRESS`) may follow below.
+      expect(row.label.split('\n').slice(0, 2)).toEqual([
+        `AGG ${intel.aggression} ${UNHELD_TILE_MARKER}`,
+        `(${intel.q},${intel.r})`,
+      ]);
       // The rendered text object is the label's first line (the aggression
       // badge); the coordinates render as the smaller line below it.
       expect(row.text.text).toBe(row.label.split('\n')[0]);

@@ -265,13 +265,20 @@ describe('hex map model — tile label (AC3)', () => {
       // The aggression badge + ownership marker lead the tile label; the axial
       // coordinates sit on their own second line, so the renderer can draw
       // them smaller below the badge (producer review AH-0MWDBI33V003QQ3U).
-      expect(intel.tileLabel).toBe(
-        `AGG ${intel.aggression} ${UNHELD_TILE_MARKER}\n(${intel.q},${intel.r})`,
-      );
-      expect(intel.tileLabel).toContain(`(${intel.q},${intel.r})`);
+      // Authored variety tags (CONTRACT / FORTRESS / NEBULA / SUMMONER) follow
+      // on their own lines and never displace the badge or the coordinates.
+      const [badge, coordinates, ...varietyTags] = intel.tileLabel.split('\n');
+      expect(badge).toBe(`AGG ${intel.aggression} ${UNHELD_TILE_MARKER}`);
+      expect(coordinates).toBe(`(${intel.q},${intel.r})`);
+      const expectedTags =
+        (intel.contract !== null ? 1 : 0) +
+        (intel.landmark !== null ? 1 : 0) +
+        (intel.personality === 'nebula' || intel.personality === 'summoner'
+          ? 1
+          : 0);
+      expect(varietyTags).toHaveLength(expectedTags);
       expect(intel.tileLabel).toContain(`AGG ${intel.aggression}`);
       expect(intel.tileLabel).toContain(UNHELD_TILE_MARKER);
-      expect(intel.tileLabel.split('\n')).toHaveLength(2);
     }
 
     // A held tile is distinguishable without colour: the filled marker
@@ -770,11 +777,14 @@ describe('buildHexMapModel — the redistributed frontier (AH-0MWBBUAUQ0038GFL)'
       );
       expect(stored).toBeDefined();
       expect(hex.aggression).toBe(stored?.aggression);
-      expect(hex.tileLabel).toBe(
+      // The aggression badge and coordinates are always the first two lines;
+      // authored variety tags (`✦ CONTRACT`, `⚡ FORTRESS`, …) follow below.
+      expect(hex.tileLabel.split('\n').slice(0, 2)).toEqual([
         `AGG ${stored?.aggression} ${
           hex.held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
-        }\n(${hex.q},${hex.r})`,
-      );
+        }`,
+        `(${hex.q},${hex.r})`,
+      ]);
     }
   });
 

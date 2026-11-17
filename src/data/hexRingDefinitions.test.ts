@@ -12,6 +12,13 @@
  * hull catalogue entry, and the `isSpecialMission` marker must keep travelling
  * through the CSV seed parity harness (a marker absent from the seeds would let
  * authored data drift from the table that the game reads).
+ *
+ * The shipped **hex variety** content is pinned here as well
+ * (AH-0MVWZYQN8007SXIG, AH-0MWJ4ZDXO007VDJS): ring 2's personality/contract/
+ * fortress sample, ring 1's authored contract (`hex-r1-4`) and fortress
+ * (`hex-r1-5`), their publication in the known-ahead intel, and their
+ * resolution through the shipped capture cycle (fortress two-pass, contract
+ * banked once) with the state surviving the field-presence save migration.
  */
 
 import { readFileSync } from 'node:fs';
@@ -34,8 +41,20 @@ import {
   type HexPersonalityId,
   type HexRingDefinition,
 } from '../core/hangarWar/hexRing';
-import { buildHexMapModel } from '../core/hangarWar/hexIntel';
-import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
+import {
+  CONTRACT_PANEL_HEADING,
+  CONTRACT_TILE_TAG,
+  FORTRESS_TILE_TAG,
+  buildHexMapModel,
+} from '../core/hangarWar/hexIntel';
+import {
+  createDefaultPayload,
+  loadHangarWarPayload,
+  saveHangarWarPayload,
+} from '../core/hangarWar/hangarWarStore';
+import { createInMemoryHangarWarStorage } from '../core/hangarWar/storage';
+import { resolveHexCapture } from '../core/hangarWar/captureCycle';
+import { runSalvageFromRun } from '../core/hangarWar/salvageBanking';
 import { NEBULA_PROJECTILE_DRAG } from '../scenes/core/hexPersonalityMechanics';
 import { hexAggressionLevel } from '../core/hangarWar/hexDifficulty';
 import { findHangarEntry } from '../core/hangarWar/hangarEconomy';
@@ -298,7 +317,7 @@ describe('authored ring definitions', () => {
 });
 
 describe('authored hex variety content (shipped rings)', () => {
-  it('authors exactly the three shipped variety hexes, and ring 1 stays plain', () => {
+  it('authors the shipped variety hexes: two on ring 1 and three on ring 2', () => {
     const authored = (HEX_RING_DEFINITIONS as readonly HexRingDefinition[]).filter(
       (hex) =>
         hex.personality !== undefined ||
@@ -306,15 +325,114 @@ describe('authored hex variety content (shipped rings)', () => {
         hex.landmark !== undefined,
     );
     expect(authored.map((hex) => hex.id)).toEqual([
+      'hex-r1-4',
+      'hex-r1-5',
       'hex-r2-1',
       'hex-r2-6',
       'hex-r2-7',
     ]);
+    // Ring 1 authors exactly one landmark and one contract (AH-0MWJ4ZDXO007VDJS)
+    // and no personality; every other ring-1 hex stays ordinary.
+    const varietyRingOne = authored.filter((hex) => hex.ringIndex === 1);
+    expect(
+      varietyRingOne.filter((hex) => hex.landmark !== undefined),
+    ).toHaveLength(1);
+    expect(
+      varietyRingOne.filter((hex) => hex.contract !== undefined),
+    ).toHaveLength(1);
     for (const hex of hexRingDefinitionsFor(1)) {
+      if (hex.id === 'hex-r1-4' || hex.id === 'hex-r1-5') continue;
       expect(hex.personality, `${hex.id} personality`).toBeUndefined();
       expect(hex.contract, `${hex.id} contract`).toBeUndefined();
       expect(hex.landmark, `${hex.id} landmark`).toBeUndefined();
     }
+    expect(
+      hexRingDefinitionsFor(1).every((hex) => hex.personality === undefined),
+      'ring 1 authors no personality',
+    ).toBe(true);
+  });
+
+  it('authors ring 1\'s landmark and contract on the chosen hexes', () => {
+    // The fortress sits on the ring's last ordinary hex before the weapon hex;
+    // it keeps that hex's `core-bank` grant (a cache would have removed the
+    // ring's only core-bank). The contract sits on an aggression-2 hex so the
+    // bonus cannot reorder the ring's aggression-ordered recommended path.
+    expect(findHexRingDefinition('hex-r1-5')?.landmark).toBe('fortress');
+    expect(findHexRingDefinition('hex-r1-5')?.grants).toBe('core-bank');
+    expect(findHexRingDefinition('hex-r1-4')?.contract).toEqual({
+      objective: 'Crack the ember nest and hold the hex',
+      bonusSalvage: 60,
+      bonusCores: 1,
+    });
+  });
+
+  it('leaves ring 1\'s aggression band and recommended order untouched', () => {
+    // No authored aggression changes: the weapon hex stays the ring's hardest
+    // and the authored variety hexes sit inside the existing band.
+    expect(hexRingDefinitionsFor(1).map((hex) => hex.baseAggression)).toEqual([
+      2, 1, 3, 2, 4, 6,
+    ]);
+    const ringOne = hexRingDefinitionsFor(1);
+    const weaponHex = ringOne.find((hex) => hex.weaponHex)!;
+    expect(weaponHex.id).toBe('hex-r1-6');
+    expect(weaponHex.baseAggression).toBe(
+      Math.max(...ringOne.map((h) => h.baseAggression)),
+    );
+    for (const hex of ringOne.filter((h) => h.id !== weaponHex.id)) {
+      expect(
+        hex.baseAggression,
+        `${hex.id} stays easier than the weapon hex`,
+      ).toBeLessThan(weaponHex.baseAggression);
+    }
+    // The ring-1 contract pays less than ring 2's (the tutorial ring is not
+    // the place to out-earn the harder frontier), and both bonuses stay well
+    // under the shipped cache payout (140 salvage).
+    const contract = findHexRingDefinition('hex-r1-4')!.contract!;
+    const ringTwoContract = findHexRingDefinition('hex-r2-6')!.contract!;
+    expect(contract.bonusSalvage).toBeLessThan(ringTwoContract.bonusSalvage);
+    expect(contract.bonusSalvage).toBeLessThan(140);
+  });
+
+  it('publishes ring 1\'s contract and fortress in known-ahead intel before commitment', () => {
+    const payload = {
+      ...createDefaultPayload(4242),
+      ring: createRingState(1, HEX_RING_DEFINITIONS),
+    };
+    const model = buildHexMapModel(payload);
+    const byId = new Map(model.hexes.map((hex) => [hex.id, hex] as const));
+
+    // Contract: objective, bonus and the open status before committing a life.
+    const contractHex = byId.get('hex-r1-4')!;
+    expect(contractHex.held).toBe(false);
+    expect(contractHex.contract).toEqual({
+      objective: 'Crack the ember nest and hold the hex',
+      bonusSalvage: 60,
+      bonusCores: 1,
+      status: 'open',
+    });
+    expect(contractHex.tileLabel).toContain(CONTRACT_TILE_TAG);
+    expect(contractHex.label).toContain(
+      `${CONTRACT_PANEL_HEADING}: Crack the ember nest and hold the hex`,
+    );
+    expect(contractHex.label).toContain('BONUS: +60 MIN \u00b7 +1 CORE');
+
+    // Landmark: the fortress type and its zero-of-two progress.
+    const fortressHex = byId.get('hex-r1-5')!;
+    expect(fortressHex.held).toBe(false);
+    expect(fortressHex.landmark).toBe('fortress');
+    expect(fortressHex.landmarkProgress).toEqual({
+      passes: 0,
+      required: FORTRESS_CAPTURE_PASSES,
+    });
+    expect(fortressHex.tileLabel).toContain(FORTRESS_TILE_TAG);
+    expect(fortressHex.label).toContain('LANDMARK: FORTRESS');
+
+    // An ordinary ring-1 hex publishes none of it.
+    const ordinary = byId.get('hex-r1-2')!;
+    expect(ordinary.contract).toBeNull();
+    expect(ordinary.landmark).toBeNull();
+    expect(ordinary.tileLabel).not.toContain(CONTRACT_TILE_TAG);
+    expect(ordinary.tileLabel).not.toContain(FORTRESS_TILE_TAG);
   });
 
   it('authors each axis on the producer-confirmed hex', () => {
@@ -390,6 +508,111 @@ describe('authored hex variety content (shipped rings)', () => {
     const nebulaHex = findHexRingDefinition('hex-r2-1')!;
     expect(nebulaHex.personality).toBe('nebula');
     expect(nebulaHex.grants).toBe('arc');
+  });
+});
+
+describe('authored ring-1 variety resolves through the shipped modules', () => {
+  /** A fresh war with ring 1 materialised from the authored data. */
+  function ringOnePayload() {
+    return {
+      ...createDefaultPayload(7),
+      ring: createRingState(1, HEX_RING_DEFINITIONS),
+    };
+  }
+
+  /** The run's salvage at the boss-victory moment. */
+  function victorySalvage(minerals = 30, cores = 0) {
+    return runSalvageFromRun({
+      runId: 'run-r1-variety',
+      checkpointId: 'boss-victory',
+      minerals,
+      cores,
+    });
+  }
+
+  it('holds the ring-1 fortress only on the second capture pass', () => {
+    const first = resolveHexCapture(ringOnePayload(), {
+      hexId: 'hex-r1-5',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+    expect(first.ok).toBe(false);
+    expect(first.reason).toBe('fortress-incomplete');
+    expect(
+      first.payload.ring.hexes.find((hex) => hex.id === 'hex-r1-5')!.held,
+    ).toBe(false);
+
+    const second = resolveHexCapture(first.payload, {
+      hexId: 'hex-r1-5',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(0, 0),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+    expect(second.ok).toBe(true);
+    const held = second.payload.ring.hexes.find(
+      (hex) => hex.id === 'hex-r1-5',
+    )!;
+    expect(held.held).toBe(true);
+    // The fortress keeps its grant: the set-piece adds a pass, not a tax.
+    expect(held.grantedWeapon).toBe('core-bank');
+  });
+
+  it('banks the ring-1 contract bonus once and never on a replay', () => {
+    const first = resolveHexCapture(ringOnePayload(), {
+      hexId: 'hex-r1-4',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+    expect(first.ok).toBe(true);
+    expect(first.contractBonus).toEqual({ minerals: 60, cores: 1 });
+    const captured = first.payload.ring.hexes.find(
+      (hex) => hex.id === 'hex-r1-4',
+    )!;
+    expect(captured.contractFulfilled).toBe(true);
+    expect(captured.grantedWeapon).toBe('ricochet');
+
+    // A replayed capture adds nothing: the stored fulfilment marker is the
+    // replay guard, so the bonus is banked exactly once.
+    const replay = resolveHexCapture(first.payload, {
+      hexId: 'hex-r1-4',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(0, 0),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+    expect(replay.contractBonus).toBeNull();
+    expect(replay.payload.hangar.bankedMinerals).toBe(
+      first.payload.hangar.bankedMinerals,
+    );
+    expect(replay.payload.hangar.bankedCores).toBe(
+      first.payload.hangar.bankedCores,
+    );
+  });
+
+  it('keeps ring-1 variety state through the field-presence save migration', () => {
+    const storage = createInMemoryHangarWarStorage();
+    const first = resolveHexCapture(ringOnePayload(), {
+      hexId: 'hex-r1-4',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+    const pass = resolveHexCapture(first.payload, {
+      hexId: 'hex-r1-5',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(0, 0),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    saveHangarWarPayload(pass.payload, storage);
+    const loaded = loadHangarWarPayload(storage)!;
+    expect(loaded).toEqual(pass.payload);
+    const contract = loaded.ring.hexes.find((hex) => hex.id === 'hex-r1-4')!;
+    expect(contract.contractFulfilled).toBe(true);
+    const fortress = loaded.ring.hexes.find((hex) => hex.id === 'hex-r1-5')!;
+    expect(fortress.capturePasses).toBe(1);
+    expect(fortress.held).toBe(false);
   });
 });
 

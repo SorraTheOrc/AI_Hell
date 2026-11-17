@@ -801,7 +801,11 @@ shipped build:
   survivable floor — `hex-r2-1` (a `nebula` personality on the `arc`-granting
   hex), `hex-r2-6` (a "Break the siege line then hold the hex" contract paying
   +100 salvage / +1 core) and `hex-r2-7` (a `fortress` landmark keeping its
-  `extra-life` grant); ring 1 stays the plain tutorial ring.
+  `extra-life` grant). Ring 1 also authors one landmark and one contract
+  (AH-0MWJ4ZDXO007VDJS): `hex-r1-5` a `fortress` keeping its `core-bank` grant
+  and `hex-r1-4` a "Crack the ember nest and hold the hex" contract paying
+  +60 salvage / +1 core, with the ring's aggression band and `hex-r1-6`'s
+  weapon-hex peak unchanged.
 
 ### Fantasy / pitch
 

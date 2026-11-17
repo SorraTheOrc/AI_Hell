@@ -658,11 +658,13 @@ describe('GymHexWar', () => {
       const row = scene.getMapRows().find((entry) => entry.key === `hex:${intel.id}`);
       expect(row, `no map tile for ${intel.id}`).toBeDefined();
       expect(row!.label).toBe(intel.tileLabel);
-      expect(row!.label).toBe(
+      // The badge + coordinates lead; authored variety tags may follow.
+      expect(row!.label.split('\n').slice(0, 2)).toEqual([
         `AGG ${intel.aggression} ${
           intel.held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
-        }\n(${intel.q},${intel.r})`,
-      );
+        }`,
+        `(${intel.q},${intel.r})`,
+      ]);
     }
     // The gym's render is read-only by construction.
     expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);

@@ -3342,9 +3342,24 @@ with no `baseAggression`, grant, boss or weakness changed on any row:
   two capture passes (`FORTRESS_CAPTURE_PASSES = 2`) while keeping its
   `extra-life` grant.
 
-Ring 1 stays the plain tutorial ring (no variety authored). Each authored
-axis is published in the known-ahead intel before the player commits a life.
+Ring 1 also authors the axes (AH-0MWJ4ZDXO007VDJS), so the opening ring
+demonstrates the variety rather than reading as six identical chores:
 
+- **`hex-r1-5`** (*the-hollow-judge*) authors the **`fortress` landmark** — two
+  capture passes while keeping its `core-bank` grant. A `cache` was
+deliberately not chosen: it pays out *instead of* granting, and would have
+  removed the ring's only `core-bank`. The hex is the ring's last ordinary hex
+  before the weapon hex, so the set-piece adds a choice at the tail of the ring
+  instead of slowing the opener.
+- **`hex-r1-4`** (*ember-reaver*) authors a **contract** — *"Crack the ember
+  nest and hold the hex"* — paying **+60 salvage / +1 core** banked through
+  `bankSalvage` on capture (below ring 2's +100/+1 and far below the
+  140-salvage cache payout).
+
+No ring-1 row's `baseAggression`, grant, boss or weakness changed, so
+`hex-r1-6` remains the ring's hardest hex and the aggression-ordered
+recommended path is unaltered. Each authored axis is published in the
+known-ahead intel before the player commits a life.
 The axes are exercised by the gyms (§ *Gym coverage and parity*): `GymHexWar`
 publishes the personality/contract/landmark intel and `GymMiniBoss`'s HEX mode
 applies the two mechanics through the same shared mapping the game runs.

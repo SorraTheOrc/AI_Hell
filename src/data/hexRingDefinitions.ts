@@ -32,10 +32,15 @@
  *   `personality`, an optional `contract` and a `landmark` (`fortress`/`cache`).
  *   Ring 2 authors the first shipped examples (AH-0MWH4F375000X08G) —
  *   `hex-r2-1` a `nebula` personality, `hex-r2-6` a contract and `hex-r2-7` a
- *   `fortress` landmark — all at the ring's aggression-2 survivable floor;
- *   ring 1 stays the plain tutorial ring. Every field is optional, so older
- *   saves stay field-presence migratable. The CSV seeds carry the matching
- *   columns so the parity test covers them too.
+ *   `fortress` landmark — all at the ring's aggression-2 survivable floor.
+ *   Ring 1 authors one landmark and one contract (AH-0MWJ4ZDXO007VDJS): a
+ *   `fortress` on `hex-r1-5` (the last ordinary hex before the weapon hex,
+ *   keeping its `core-bank` grant) and a +60-salvage/+1-core contract on
+ *   `hex-r1-4`, so the opening ring demonstrates both choices without
+ *   touching its aggression band; ring 1 authors no personality, so the
+ *   tutorial ring's bosses stay default-tuned. Every field is optional, so
+ *   older saves stay field-presence migratable. The CSV seeds carry the
+ *   matching columns so the parity test covers them too.
  * - **Ring 2 is the harder frontier**: its hardest hex outranks ring 1's, and
  *   its aggression floor is above the opening ring's.
  * - **Authorship order is pinned** by the harness fixtures
@@ -112,6 +117,15 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaponHex: false,
     isSpecialMission: false,
     baseAggression: 2,
+    // Shipped variety (AH-0MWJ4ZDXO007VDJS): an optional contract banked on
+    // capture through the existing `bankSalvage` rule (+60 salvage / +1 core —
+    // below ring 2's +100/+1 and far below the 140-salvage cache payout). The
+    // objective has no comma, so the CSV seed needs no quoting.
+    contract: Object.freeze({
+      objective: 'Crack the ember nest and hold the hex',
+      bonusSalvage: 60,
+      bonusCores: 1,
+    }),
   }),
   Object.freeze({
     id: 'hex-r1-5',
@@ -125,6 +139,11 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaponHex: false,
     isSpecialMission: false,
     baseAggression: 4,
+    // Shipped variety (AH-0MWJ4ZDXO007VDJS): a fortress set-piece needing two
+    // capture passes. It is the ring's last ordinary hex before the weapon hex
+    // and keeps its `core-bank` grant (the ring's only one), so the set-piece
+    // adds a decision at the tail of the ring rather than slowing the opener.
+    landmark: 'fortress',
   }),
   Object.freeze({
     id: 'hex-r1-6',
