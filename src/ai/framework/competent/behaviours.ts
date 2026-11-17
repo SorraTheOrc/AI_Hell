@@ -10,8 +10,12 @@
  *
  * - `collect` (mineral / power-up): approach and scoop the best target —
  *   nearest for minerals, highest value-per-distance for power-ups via the
- *   content registry — braking so the ship arrives rather than barrelling
- *   through.
+ *   content registry. Collection is **pass-through**
+ *   (AH-0MWJ1680Z001QYV2 audit rejection): pickups are collected on contact,
+ *   so the bot flies at them and accepts a small overshoot instead of
+ *   retro-braking onto them, and it lets go of a pickup it has just flown
+ *   past rather than turning back for it.  The retro-brake onto a pickup is
+ *   behind the `collectReverseBrake` tunable.
  * - `engage` (enemy / asteroid / boss): pick the best target (nearest,
  *   weighted by each archetype's registered threat), line it up inside its
  *   preferred engagement range, then hold the aim axis and coast so the
@@ -25,7 +29,10 @@
  * - `evade`: predictive path away from the threats (away from the weighted
  *   centroid of threatening shots), with the steering fan pathing around
  *   anything else in the way (AC2).
- * - `reposition`: drift back toward the playfield centre when idle.
+ * - `reposition`: drift back toward the playfield centre when idle, coasting
+ *   to a stop at the edge of the idle band (`repositionRadius`) rather than
+ *   thrusting to the exact centre and overshooting past it
+ *   (AH-0MWJ1680Z001QYV2 audit rejection).
  *
  * @module src/ai/framework/competent/behaviours
  */
@@ -48,6 +55,7 @@ import {
   enemyTargets,
   extraLifeTargets,
   nearestTarget,
+  withoutOvershot,
   type ContentTarget,
 } from './goals';
 import { hazardThreatensPlayer, idleIntent, interceptPoint, mayReverse, mayThrust, planSteering } from './steering';
@@ -58,20 +66,28 @@ import { botWrapWorld, wrappedAxisDelta, wrappedDelta } from '../wrapGeometry';
 function collectTargets(
   world: BotWorld,
   isMineral: boolean,
+  t: CompetentBotTunables,
 ): ContentTarget[] {
-  if (isMineral) {
-    return world.minerals.map((mineral) => ({
-      x: mineral.x,
-      y: mineral.y,
-      contentId: mineral.type,
-      ...(mineral.value !== undefined ? { value: mineral.value } : {}),
-    }));
-  }
-  return world.drops.map((drop) => ({
-    x: drop.x,
-    y: drop.y,
-    contentId: drop.type,
-  }));
+  const targets: ContentTarget[] = isMineral
+    ? world.minerals.map((mineral) => ({
+        x: mineral.x,
+        y: mineral.y,
+        contentId: mineral.type,
+        ...(mineral.value !== undefined ? { value: mineral.value } : {}),
+      }))
+    : world.drops.map((drop) => ({
+        x: drop.x,
+        y: drop.y,
+        contentId: drop.type,
+      }));
+  // Let go of a pickup the ship has just flown past instead of U-turning for
+  // it (AH-0MWJ1680Z001QYV2 audit rejection). The goal selectors apply the
+  // same filter, so the goal scored is the target flown at.
+  const player = world.player;
+  if (!player) return targets;
+  return [
+    ...withoutOvershot(targets, player, t.collectOvershootMargin, botWrapWorld(t)),
+  ];
 }
 
 /** Collects the best mineral (mineral goal) or power-up (power-up goal). */
@@ -91,7 +107,7 @@ function collectBehaviour(
       // (AH-0MV03GXZQ00801T4 · AC2).
       const targets = isSecureLife
         ? extraLifeTargets(view.world)
-        : collectTargets(view.world, isMineral);
+        : collectTargets(view.world, isMineral, t);
       const weight =
         isSecureLife
           ? () => 1
@@ -122,8 +138,13 @@ function collectBehaviour(
       );
       // Brake-assist (AC1): when forward thrust would overshoot, request
       // reverse to decelerate toward the pickup (gated on the ship's
-      // reverse enable flag and the brake tunable).
+      // reverse enable flag, the brake tunable and `collectReverseBrake`).
+      // Collection is pass-through by default (AH-0MWJ1680Z001QYV2 audit
+      // rejection): pickups are collected on contact, so the bot does not
+      // retro-brake onto one — it accepts the overshoot instead of
+      // micro-positioning with the thrusters.
       const reverse =
+        t.collectReverseBrake &&
         !thrust &&
         view.world.reverseEnabled &&
         mayReverse(view.snapshot, t, distance, t.collectArrivalRadius);
@@ -320,8 +341,17 @@ function repositionBehaviour(t: CompetentBotTunables): BotBehaviour {
       };
       const distance = Math.hypot(objective.x, objective.y);
       if (distance <= t.repositionRadius) return idleIntent();
+      // Coast to a stop at the **edge** of the idle band rather than thrusting
+      // to the exact centre (AH-0MWJ1680Z001QYV2 audit rejection): the forward
+      // model treats the band radius as the arrival radius, so the ship stops
+      // inside the band instead of overshooting the centre and drifting back.
       return planSteering(objective, view.world, t, {
-        thrust: true,
+        thrust: mayThrust(
+          view.snapshot,
+          t,
+          distance,
+          t.repositionRadius,
+        ),
         longTravel: distance >= t.longTravelDistance,
       });
     },

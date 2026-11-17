@@ -446,28 +446,27 @@ Committed evidence:
 
 | Ring | Line | Measured runs | Total (mean, min–max) | Losses | Expected losses | Budget |
 |---|---|---|---|---|---|---|
-| 1 (6 hexes) | grind | 2.1 min | **16.2 min** (14.7–18.1) | 6.0 | 6.0 | 30–90 min · **missed** (AH-0MWFDQ9EY004NO4X) |
-| 1 (6 hexes) | rush | 0.3 min | **10.5 min** (9.9–11.0) | 1.0 | 4.5 | not applicable (ring not secured) |
-| 2 (12 hexes) | grind | 12.4 min | **48.7 min** (42.0–55.0) | 12.0 | 12.0 | 60–180 min · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
-| 2 (12 hexes) | rush | 0.4 min | **21.7 min** (19.9–23.0) | 1.0 | 8.7 | not applicable (ring not secured) |
+| 1 (6 hexes) | grind | 2.1 min | **15.4 min** (13.9–17.3) | 6.0 | 6.0 | 30–90 min · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | rush | 0.1 min | **10.2 min** (9.4–10.9) | 1.0 | 4.5 | not applicable (ring not secured) |
+| 2 (12 hexes) | grind | 4.1 min | **57.0 min** (46.0–70.8) | 12.0 | 12.0 | 60–180 min · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | rush | 0.2 min | **21.5 min** (19.8–24.9) | 1.0 | 8.7 | not applicable (ring not secured) |
 
 Reading the baseline:
 
 - **The verdicts are re-rated against the per-hex budget.** The one-level
 sortie is quick enough that the competent bot dies to enemy fire before the
-wave-5 clear on every deployment: ring 1 grind measures **16.2 min** and still
-**misses** the derived 30–90 window, while ring 2 grind **48.7 min** sits
+wave-5 clear on every deployment: ring 1 grind measures **15.4 min** and
+**misses** the derived 30–90 window, while ring 2 grind **57.0 min** sits
 **within-tolerance** of the derived 60–180 window (the ±12-minute tolerance
-floor is 48 min, and 48.7 ≥ 48). Ring 2's figure moved from 46.8 to 48.7 when
-the ring-1 special reward (`hull-4`, AH-0MWJ51KUS005WQK6) entered the ring-2
-loadout as the fastest 4-life hull, flipping the verdict back to
-`within-tolerance`. The budget assertion states a **10 %
+floor is 48 min). Both figures were re-measured after the AH-0MWJ1680Z001QYV2
+audit follow-up (calmer flight, pass-through collection, a tighter aim hold).
+The budget assertion states a **10 %
 tolerance** of each window's width (±6 min for ring 1, ±12 min for ring 2).
 Each verdict is re-computed by the harness and re-ruled by its own linked
 rebalancing item — **AH-0MWFDQ9EY004NO4X** (ring 1) and
 **AH-0MWFDQCFV007BZE5** (ring 2) — never re-worded.
-- **The playstyle trade is real.** The rush line is **faster** (10.5 vs 16.2 min
-for ring 1; 21.7 vs 48.7 min for ring 2) but **riskier** — it leaves five (ring
+- **The playstyle trade is real.** The rush line is **faster** (10.2 vs 15.4 min
+for ring 1; 21.5 vs 57.0 min for ring 2) but **riskier** — it leaves five (ring
 1) / eleven (ring 2) hexes exposed (≈3.5 / 7.7 expected retakes), forfeits the
 salvage of its failed attempts and does not secure the ring, while the grind
 secures it. Neither line dominates.

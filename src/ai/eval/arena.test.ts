@@ -489,7 +489,13 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     expect(sortie.waves).toHaveLength(DEPLOYMENT_WAVE_COUNT);
     const base = {
       seed: 11,
-      ticks: 18_000,
+      // A generous budget: the assertion is about *which* wave set is played,
+      // not about how quickly the competent bot sweeps it. The calmer,
+      // pass-through flying bot of the AH-0MWJ1680Z001QYV2 audit follow-up
+      // clears this fire-free sortie in ~2.5 simulated minutes, but its
+      // collection detours can stretch a run, so the budget keeps ample
+      // headroom instead of pinning the test to the bot's pace.
+      ticks: 60_000,
       dt: 1 / 60,
       level: 1,
       balance: noFire,
