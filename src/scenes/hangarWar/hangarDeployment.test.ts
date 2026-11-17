@@ -11,9 +11,17 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { MAX_LIVES, MAX_LEVEL } from '../../core/GameState';
+import { POWER_UP_SLOT_CAP } from '../../core/constants';
 import { VALID_HANGAR_WAR_PAYLOAD } from '../../core/hangarWar/fixtures';
 import type { HangarWarPayload } from '../../core/hangarWar/types';
-import { createDefaultPayload } from '../../core/hangarWar/hangarWarStore';
+import { MAX_PERMANENT_LEVEL } from '../../core/hangarWar/hangarEconomy';
+import { createInMemoryHangarWarStorage } from '../../core/hangarWar/storage';
+import {
+  buyHangarUpgrade,
+  createDefaultPayload,
+  loadHangarWarPayload,
+  saveHangarWarPayload,
+} from '../../core/hangarWar/hangarWarStore';
 import {
   DEPLOYMENT_WAVE_COUNT,
   HANGAR_WAR_DEPLOYMENT_KIND,
@@ -568,5 +576,214 @@ describe('truncateCampaignForDeployment (AH-0MWDCBVQ700579WS)', () => {
     });
     // Fresh objects: mutating the output cannot touch the authored data.
     expect(level.waves[0]).not.toBe(source.waves[0]);
+  });
+});
+
+// ── Permanent levels through build/apply (AH-0MWI5AG1X0007XZH) ────────────
+//
+// A deployment carries the hangar's bought permanent levels as launch data and
+// grants them onto the run player through the **one** permanent-grant seam, so
+// `Player.getWeaponLevels()` / `getPowerUpLevels()` — the accessors the
+// victory-time capture snapshot reads — report the bought levels with no
+// capture-side change. Only permanent grants are made: no temporary/timed
+// stack is ever opened.
+
+describe('hangar deployment permanent levels (AH-0MWI5AG1X0007XZH)', () => {
+  /**
+   * The fielded fleet with **two bought wave_laser levels** (through the real
+   * purchase path) and two persisted power-up levels (the hangar's owned rows:
+   * a power-up's level row is its ownership record).
+   */
+  function upgradedPayload(): HangarWarPayload {
+    const payload = fieldedPayload();
+    payload.hangar.bankedMinerals = 5_000;
+    payload.hangar.bankedCores = 20;
+    const first = buyHangarUpgrade(payload, 'wave_laser', { ringIndex: 1 });
+    const second = buyHangarUpgrade(first.payload, 'wave_laser', { ringIndex: 1 });
+    return {
+      ...second.payload,
+      hangar: {
+        ...second.payload.hangar,
+        powerUpLevels: [
+          { id: 'bomb', level: 2 },
+          { id: 'magnet', level: 1 },
+        ],
+      },
+    };
+  }
+
+  it('carries the bought levels with the loadout (base level 1 for an unupgraded weapon)', () => {
+    const deployment = buildHangarDeployment(upgradedPayload());
+
+    expect(deployment.weaponLevels).toEqual([
+      { id: 'spread', level: 1 },
+      { id: 'wave_laser', level: 2 },
+    ]);
+    expect(deployment.powerUpLevels).toEqual([
+      { id: 'bomb', level: 2 },
+      { id: 'magnet', level: 1 },
+    ]);
+  });
+
+  it('does not carry a level for a weapon outside the loadout', () => {
+    const payload = upgradedPayload();
+    payload.hangar.weaponLevels!.push({ id: 'dual', level: 3 });
+
+    const deployment = buildHangarDeployment(payload);
+
+    // The run never carries `dual`, so its level has nothing to strengthen.
+    expect(deployment.weaponLevels.map((row) => row.id)).toEqual([
+      'spread',
+      'wave_laser',
+    ]);
+  });
+
+  it('grants every bought level through the shared permanent-grant seam (AC3)', () => {
+    const deployment = buildHangarDeployment(upgradedPayload());
+    const applyWeapon = vi.fn().mockReturnValue(true);
+    const applyCollect = vi.fn();
+    const equipWeapon = vi.fn();
+    const collectPowerUp = vi.fn();
+
+    applyHangarWarDeployment(
+      {
+        getPlayer: () => ({ equipWeapon, collectPowerUp }),
+        getEffectsRegistry: () => ({ applyWeapon, applyCollect }),
+      },
+      deployment,
+    );
+
+    // One permanent grant per level: the run-scoped permanent level rises
+    // exactly to the hangar's bought level.
+    expect(applyWeapon.mock.calls).toEqual([
+      ['spread', true],
+      ['wave_laser', true],
+      ['wave_laser', true],
+    ]);
+    expect(equipWeapon.mock.calls).toEqual(applyWeapon.mock.calls);
+    expect(applyCollect.mock.calls).toEqual([
+      ['bomb', true],
+      ['bomb', true],
+      ['magnet', true],
+    ]);
+    // The registry owns the level store, so the player fallback never doubles
+    // the grant.
+    expect(collectPowerUp).not.toHaveBeenCalled();
+  });
+
+  it('grants the player-only fallback without an effect registry', () => {
+    const deployment = buildHangarDeployment(upgradedPayload());
+    const equipWeapon = vi.fn();
+    const collectPowerUp = vi.fn();
+
+    applyHangarWarDeployment(
+      { getPlayer: () => ({ equipWeapon, collectPowerUp }) },
+      deployment,
+    );
+
+    expect(equipWeapon.mock.calls).toEqual([
+      ['spread', true],
+      ['wave_laser', true],
+      ['wave_laser', true],
+    ]);
+    expect(collectPowerUp.mock.calls).toEqual([
+      ['bomb', true],
+      ['bomb', true],
+      ['magnet', true],
+    ]);
+  });
+
+  it('counts power-up levels against the shared six-slot cap (parity)', () => {
+    const base = buildHangarDeployment(upgradedPayload());
+    const weapons = [
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ] as const;
+    const deployment = {
+      ...base,
+      startingWeapons: [...weapons],
+      weaponLevels: weapons.map((id) => ({ id, level: 1 })),
+      powerUpLevels: [{ id: 'bomb' as const, level: 2 }],
+    };
+    const applyWeapon = vi.fn().mockReturnValue(true);
+    const applyCollect = vi.fn();
+
+    applyHangarWarDeployment(
+      {
+        getPlayer: () => ({ equipWeapon: vi.fn() }),
+        getEffectsRegistry: () => ({ applyWeapon, applyCollect }),
+      },
+      deployment,
+    );
+
+    // The six weapons fill the pool, so the upgraded power-up is trimmed: the
+    // cap applies to the whole pre-grant list, not per kind.
+    expect(applyWeapon).toHaveBeenCalledTimes(POWER_UP_SLOT_CAP);
+    expect(applyCollect).not.toHaveBeenCalled();
+  });
+
+  it('replays the levels through a save/load round-trip (AC2)', () => {
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(upgradedPayload(), storage);
+
+    const replayed = buildHangarDeployment(loadHangarWarPayload(storage)!);
+
+    expect(replayed.weaponLevels).toEqual([
+      { id: 'spread', level: 1 },
+      { id: 'wave_laser', level: 2 },
+    ]);
+    expect(replayed.powerUpLevels).toEqual([
+      { id: 'bomb', level: 2 },
+      { id: 'magnet', level: 1 },
+    ]);
+  });
+
+  it('round-trips the levels through the defensive launch-data guard (AC3)', () => {
+    const deployment = buildHangarDeployment(upgradedPayload());
+
+    const read = readHangarWarDeployment(JSON.parse(JSON.stringify(deployment)));
+
+    expect(read).not.toBeNull();
+    expect(read!.weaponLevels).toEqual(deployment.weaponLevels);
+    expect(read!.powerUpLevels).toEqual(deployment.powerUpLevels);
+  });
+
+  it('normalises corrupt launch-data levels instead of rejecting the deployment (AC5)', () => {
+    const read = readHangarWarDeployment({
+      kind: HANGAR_WAR_DEPLOYMENT_KIND,
+      startLevel: 2,
+      weaponLevels: [
+        { id: 'spread', level: 99 },
+        { id: 'spread', level: 2 },
+        { id: 'shield', level: 2 },
+        null,
+        'junk',
+      ],
+      powerUpLevels: [
+        { id: 'bomb', level: 2 },
+        { id: 'extra_life', level: 2 },
+        { id: 'wave_laser', level: 2 },
+        { id: 'magnet', level: 0 },
+      ],
+    });
+
+    expect(read).not.toBeNull();
+    expect(read!.weaponLevels).toEqual([
+      { id: 'spread', level: MAX_PERMANENT_LEVEL },
+    ]);
+    expect(read!.powerUpLevels).toEqual([{ id: 'bomb', level: 2 }]);
+  });
+
+  it('carries no levels for a deployment built from a pre-upgrade save', () => {
+    const deployment = buildHangarDeployment(fieldedPayload());
+
+    // Every carried weapon is granted at its base level and no power-up level
+    // exists, so the run is exactly today's.
+    expect(deployment.weaponLevels.every((row) => row.level === 1)).toBe(true);
+    expect(deployment.powerUpLevels).toEqual([]);
   });
 });

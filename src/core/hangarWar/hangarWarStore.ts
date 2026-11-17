@@ -53,7 +53,10 @@
  * applies no bonus) — AH-0MVUXCBBK004EJIP and AH-0MVWZYJ740037EZ1 respectively.
  * The run's **upgrade snapshot** on a defending bot is the third such field
  * (absent reads as "no upgrades", so the resolver adds nothing) —
- * AH-0MWHF6ZHW0058SMX. All three are omitted on write when they carry
+ * AH-0MWHF6ZHW0058SMX. The hangar's bought **permanent levels**
+ * (`hangar.weaponLevels` / `hangar.powerUpLevels`) are the fourth
+ * (AH-0MWI5AG1X0007XZH): absence reads as "no upgrade", so every owned kind
+ * deploys at its base level `1`. All four are omitted on write when they carry
  * nothing, so a save round-trips byte-for-byte rather than gaining empty
  * fields.
  *
@@ -61,7 +64,15 @@
  */
 
 import { normaliseSeed } from '../rng';
-import { snapshotDefenderUpgrades } from './hangarEconomy';
+import {
+  buyUpgrade,
+  hangarPermanentLevels,
+  normalisePermanentLevels,
+  snapshotDefenderUpgrades,
+  withPermanentLevels,
+} from './hangarEconomy';
+import type { HangarPrice } from '../../data/hangarCatalogue';
+import type { HangarPurchaseContext, UpgradeRefusal } from './hangarEconomy';
 import type {
   DefenceSkill,
   DefenderUpgradeSnapshot,
@@ -188,7 +199,7 @@ function parseHangar(raw: unknown): HangarState | null {
       ? requestedHull
       : unlockedHulls[0];
 
-  return {
+  const hangar: HangarState = {
     bankedMinerals: toNonNegativeInteger(raw.bankedMinerals),
     bankedCores: toNonNegativeInteger(raw.bankedCores),
     unlockedHulls,
@@ -197,6 +208,31 @@ function parseHangar(raw: unknown): HangarState | null {
     activeHull,
     activeLoadout: parseLoadout(raw.activeLoadout),
   };
+
+  // The bought permanent levels (AH-0MWI5AG1X0007XZH) are the fourth additive
+  // field family: a save written before buy-to-upgrade existed has none, so the
+  // fields stay **absent** (never defaulted to `[]`) and absence reads as "no
+  // upgrade". The shared economy normaliser owns count semantics and the
+  // level-bearing-only rule, so the store can never persist a consumable or
+  // field-pickup-only row as an upgradeable level (AC5).
+  const levels = normalisePermanentLevels({
+    weapons: parseUpgradeRows(raw.weaponLevels, 'level').map((row) => ({
+      id: row.id,
+      level: row.count,
+    })),
+    powerUps: parseUpgradeRows(raw.powerUpLevels, 'level').map((row) => ({
+      id: row.id,
+      level: row.count,
+    })),
+  });
+  if (levels.weapons.length > 0) {
+    hangar.weaponLevels = levels.weapons.map((row) => ({ ...row }));
+  }
+  if (levels.powerUps.length > 0) {
+    hangar.powerUpLevels = levels.powerUps.map((row) => ({ ...row }));
+  }
+
+  return hangar;
 }
 
 /**
@@ -513,6 +549,73 @@ export function createDefaultPayload(seed: number = 0): HangarWarPayload {
     bestScore: 0,
     // A fresh war has not been ticked yet (AH-0MVUXCBBK004EJIP).
     frontierTick: 0,
+  };
+}
+
+/**
+ * The outcome of buying one permanent level through the versioned store's
+ * write path (AH-0MWI5AG1X0007XZH).
+ *
+ * Deliberately payload-shaped rather than hangar-shaped: the raised level and
+ * the spent currency land in **one** payload, so a screen persists the upgrade
+ * with the store's existing `saveHangarWarPayload` and can never save the
+ * levels without the purchase (or the reverse).
+ */
+export interface HangarUpgradeOutcome {
+  /** Whether the upgrade happened. */
+  readonly ok: boolean;
+  /** The first blocking reason (`null` when {@link ok}). */
+  readonly reason: UpgradeRefusal | null;
+  /** What was spent (the zero price on refusal). */
+  readonly spent: HangarPrice;
+  /**
+   * The war after the upgrade — a fresh object; the input payload is never
+   * mutated. On refusal the hangar is still a fresh, normalised copy carrying
+   * the same state, so a caller can always render {@link reason}.
+   */
+  readonly payload: HangarWarPayload;
+}
+
+/**
+ * Buys the next permanent level of an owned level-bearing weapon or power-up
+ * and returns the war carrying it (parent AH-0MWHW4ALS0039JFU AC2).
+ *
+ * The purchase rule itself stays the **one** pure economy rule
+ * (`buyUpgrade` in `./hangarEconomy`): this function only feeds it the fleet's
+ * persisted levels ({@link hangarPermanentLevels}) and writes the raised
+ * snapshot back through {@link withPermanentLevels}, so the hangar's saved
+ * state is exactly what the run path's `getWeaponLevels()`/`getPowerUpLevels()`
+ * read at deploy time. Buying never touches temporary/timed stacks — those are
+ * run-scoped field-pickup state and no hangar rule can reach them (AC2).
+ *
+ * Pure and total: the input payload is never mutated, a refusal spends nothing,
+ * and a refused/unknown id changes no level. Persisting the result is the
+ * caller's one `saveHangarWarPayload` call.
+ *
+ * @param payload — the persistent war payload (read only).
+ * @param id — the owned weapon/power-up id to upgrade.
+ * @param context — the purchase context (ring parity with `buy`).
+ * @returns the purchase outcome and the payload to persist.
+ */
+export function buyHangarUpgrade(
+  payload: HangarWarPayload,
+  id: string,
+  context: HangarPurchaseContext,
+): HangarUpgradeOutcome {
+  const result = buyUpgrade(
+    payload.hangar,
+    id,
+    hangarPermanentLevels(payload.hangar),
+    context,
+  );
+  return {
+    ok: result.ok,
+    reason: result.reason,
+    spent: result.spent,
+    payload: {
+      ...payload,
+      hangar: withPermanentLevels(result.hangar, result.levels),
+    },
   };
 }
 

@@ -828,6 +828,141 @@ export function buyUpgrade(
 }
 
 /**
+ * A level snapshot whose ids and levels may still be **raw** (unvalidated)
+ * input — the persisted/replay boundary (the store's parser and the
+ * deployment's launch-data reader) normalises through
+ * {@link normalisePermanentLevels} rather than trusting stored bytes.
+ *
+ * Typed {@link PermanentUpgradeLevels} is structurally assignable, so an
+ * already-clean snapshot passes straight through.
+ */
+export interface RawPermanentLevels {
+  /** Permanent weapon level rows (`{ id, level }`), possibly unvalidated. */
+  readonly weapons?: ReadonlyArray<{
+    readonly id: unknown;
+    readonly level: unknown;
+  }>;
+  /** Permanent power-up level rows (`{ id, level }`), possibly unvalidated. */
+  readonly powerUps?: ReadonlyArray<{
+    readonly id: unknown;
+    readonly level: unknown;
+  }>;
+}
+
+/** Whether `id` is a level-bearing **weapon** (every shipped weapon is). */
+function isUpgradeableWeaponId(id: string): boolean {
+  return upgradeKind(id) === 'weapon';
+}
+
+/**
+ * Whether `id` is a level-bearing **power-up**: a shipped power-up that is
+ * neither a consumable (a charge pool, never a level) nor the
+ * field-pickup-only kind (producer Q2 = (a), AC5).
+ */
+function isUpgradeablePowerUpId(id: string): boolean {
+  return upgradeKind(id) === 'power-up' && !isNonUpgradeablePowerUp(id);
+}
+
+/**
+ * The clean rows for one kind: usable, level-bearing ids only, each level
+ * clamped to `[1, MAX_PERMANENT_LEVEL]`, duplicates collapsed to the **highest**
+ * stored level (a corrupt duplicate never loses bought progress). Order is the
+ * first-seen order, so a save round-trips its row order unchanged.
+ */
+function normaliseLevelRows<TId extends string>(
+  rows: RawPermanentLevels['weapons'],
+  accepts: (id: string) => boolean,
+): Array<{ id: TId; level: number }> {
+  const levels = new Map<string, number>();
+  for (const row of rows ?? []) {
+    if (typeof row?.id !== 'string') continue;
+    const id = row.id.trim();
+    if (id === '' || !accepts(id)) continue;
+    const level = Math.min(toCount(row.level), MAX_PERMANENT_LEVEL);
+    if (level < 1) continue;
+    levels.set(id, Math.max(levels.get(id) ?? 0, level));
+  }
+  return [...levels].map(([id, level]) => ({ id: id as TId, level }));
+}
+
+/**
+ * The clean permanent-level snapshot of raw input: level-bearing kinds only,
+ * levels clamped to the shared {@link MAX_PERMANENT_LEVEL} ceiling, every
+ * unusable/consumable/field-pickup row dropped.
+ *
+ * This is the **one** normaliser both persistence boundaries use (the versioned
+ * store's parser and the deployment's launch-data reader), so a stored,
+ * injected or hand-built hangar can never expose a level the economy would
+ * refuse to raise (AC5: consumables and the field-pickup-only kind are never
+ * persisted as upgradeable levels).
+ *
+ * @param levels — raw (or already clean) weapon/power-up level rows.
+ * @returns fresh, typed rows; the input is never mutated.
+ */
+export function normalisePermanentLevels(
+  levels: RawPermanentLevels,
+): PermanentUpgradeLevels {
+  return {
+    weapons: normaliseLevelRows<WeaponId>(levels.weapons, isUpgradeableWeaponId),
+    powerUps: normaliseLevelRows<PowerUpId>(
+      levels.powerUps,
+      isUpgradeablePowerUpId,
+    ),
+  };
+}
+
+/**
+ * The fleet's persisted permanent levels, in the run path's own row vocabulary
+ * (parent AH-0MWHW4ALS0039JFU AC2).
+ *
+ * This is the bridge the upgrade rule, the deploy-time grant and the hangar
+ * screen share: they read the hangar's bought levels through it instead of
+ * reaching into the payload shape, and it normalises on read so a corrupt or
+ * hand-built hangar can never surface a non-upgradeable or out-of-range row.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @returns the clean permanent levels (empty snapshots when none were bought).
+ */
+export function hangarPermanentLevels(hangar: HangarState): PermanentUpgradeLevels {
+  return normalisePermanentLevels({
+    weapons: hangar.weaponLevels ?? [],
+    powerUps: hangar.powerUpLevels ?? [],
+  });
+}
+
+/**
+ * Writes a permanent-level snapshot into a fresh hangar (the persistence write
+ * path after {@link buyUpgrade}).
+ *
+ * The snapshot **replaces** the hangar's level state (it is the authority), so
+ * rows of kinds no longer present in it are dropped, non-upgradeable and
+ * out-of-range rows are filtered/clamped by {@link normalisePermanentLevels},
+ * and the level fields are **omitted when empty** — the field-presence rule the
+ * versioned store's migration relies on, so an upgrade-free hangar round-trips
+ * byte-for-byte.
+ *
+ * @param hangar — the hangar to write into (never mutated).
+ * @param levels — the level snapshot to persist.
+ * @returns a fresh hangar carrying `levels`.
+ */
+export function withPermanentLevels(
+  hangar: HangarState,
+  levels: RawPermanentLevels,
+): HangarState {
+  const next = cloneHangar(hangar);
+  const clean = normalisePermanentLevels(levels);
+  delete next.weaponLevels;
+  delete next.powerUpLevels;
+  if (clean.weapons.length > 0) {
+    next.weaponLevels = clean.weapons.map((row) => ({ ...row }));
+  }
+  if (clean.powerUps.length > 0) {
+    next.powerUpLevels = clean.powerUps.map((row) => ({ ...row }));
+  }
+  return next;
+}
+
+/**
  * The hull the fleet deploys with, resolved from what it owns.
  *
  * A saved `activeHull` that is no longer owned (or unknown to the catalogue)

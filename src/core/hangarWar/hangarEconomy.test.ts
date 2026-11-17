@@ -37,22 +37,26 @@ import type { HangarState } from './types';
 import {
   CORE_MINERAL_EQUIVALENT,
   DEFENDER_UPGRADE_WEIGHTS,
-  cheapestUsefulUnlock,
+  MAX_PERMANENT_LEVEL,
+  buy,
   canBuy,
+  cheapestUsefulUnlock,
+  defenderRatingFromUpgrades,
   defenderStatBuckets,
   deriveDefenderRating,
-  defenderRatingFromUpgrades,
   equipHull,
   equipLoadout,
   findHangarEntry,
+  hangarPermanentLevels,
   MINIMUM_PLAYER_STRENGTH,
-  STARTING_WEAPON_STRENGTH_WEIGHT,
+  normalisePermanentLevels,
   purchaseWeight,
   resolveActiveHull,
   resolveActiveLoadout,
   resolvePlayerStrength,
   snapshotDefenderUpgrades,
-  buy,
+  STARTING_WEAPON_STRENGTH_WEIGHT,
+  withPermanentLevels,
   type HangarPurchaseContext,
 } from './hangarEconomy';
 import {
@@ -1624,5 +1628,118 @@ describe('economy upgrade rule — costToUpgrade and buyUpgrade (AH-0MWI5A6ZH009
     // describe block above).
     const body = cheapestUsefulUnlockSource();
     expect(body).not.toMatch(/costToUpgrade|buyUpgrade|MAX_PERMANENT_LEVEL/);
+  });
+});
+
+// ── The hangar's persisted permanent levels (AH-0MWI5AG1X0007XZH) ─────────
+//
+// The hangar records the **bought** permanent levels beside the owned sets, in
+// the run path's own row vocabulary (`Player.getWeaponLevels()` /
+// `getPowerUpLevels()`). One normaliser (`normalisePermanentLevels`) is the
+// authority for every boundary — the versioned store's parser, the deployment's
+// launch-data reader and the purchase write path — so no scene can persist or
+// grant a level the economy would refuse to raise (parent AC2/AC5).
+
+describe('hangar permanent-level state (AH-0MWI5AG1X0007XZH)', () => {
+  it('reads no levels from a hangar written before buy-to-upgrade existed', () => {
+    expect(hangarPermanentLevels(hangarWith())).toEqual({
+      weapons: [],
+      powerUps: [],
+    });
+  });
+
+  it('reads the hangar rows in the run path′s row vocabulary', () => {
+    const hangar = hangarWith({
+      weaponLevels: [{ id: 'spread', level: 3 }],
+      powerUpLevels: [{ id: 'bomb', level: 2 }],
+    });
+
+    expect(hangarPermanentLevels(hangar)).toEqual({
+      weapons: [{ id: 'spread', level: 3 }],
+      powerUps: [{ id: 'bomb', level: 2 }],
+    });
+  });
+
+  it('writes a snapshot into a fresh hangar and omits the fields when empty', () => {
+    const hangar = hangarWith();
+    const upgraded = withPermanentLevels(
+      hangar,
+      levelsOf([['spread', 2]], [['bomb', 4]]),
+    );
+
+    expect(upgraded.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
+    expect(upgraded.powerUpLevels).toEqual([{ id: 'bomb', level: 4 }]);
+    // The input hangar is never mutated.
+    expect(hangar.weaponLevels).toBeUndefined();
+    expect(hangar.powerUpLevels).toBeUndefined();
+
+    // Replacing the state with an empty snapshot drops the fields entirely
+    // (the store's field-presence migration relies on this).
+    const cleared = withPermanentLevels(upgraded, { weapons: [], powerUps: [] });
+    expect('weaponLevels' in cleared).toBe(false);
+    expect('powerUpLevels' in cleared).toBe(false);
+  });
+
+  it('never persists a consumable or field-pickup-only kind as an upgradeable level (AC5)', () => {
+    const upgraded = withPermanentLevels(hangarWith(), {
+      weapons: [{ id: 'spread', level: 2 }],
+      powerUps: [
+        { id: 'shield', level: 3 },
+        { id: 'phase_shift', level: 2 },
+        { id: 'extra_life', level: 2 },
+        { id: 'magnet', level: 2 },
+      ],
+    });
+
+    // Only the level-bearing kinds survive: the consumables and the
+    // field-pickup-only kind carry no permanent level to raise.
+    expect(upgraded.powerUpLevels).toEqual([{ id: 'magnet', level: 2 }]);
+    expect(upgraded.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
+  });
+
+  it('clamps to the shared ceiling, collapses duplicates to the highest and drops junk', () => {
+    // The junk rows are deliberately outside the row contract — a corrupt save
+    // hands them over exactly like this.
+    type RawRows = Parameters<typeof normalisePermanentLevels>[0];
+    const levels = normalisePermanentLevels({
+      weapons: [
+        { id: 'spread', level: 99 },
+        { id: 'rapid', level: 2 },
+        { id: 'rapid', level: 4 },
+        { id: 'not-a-weapon', level: 2 },
+        { id: '', level: 2 },
+        { id: 'wave_laser' },
+        null,
+        7,
+      ] as unknown as RawRows['weapons'],
+      powerUps: [
+        { id: 'bomb', level: 0 },
+        { id: 'magnet', level: -3 },
+        { id: 'extra_life', level: 2 },
+      ],
+    });
+
+    expect(levels.weapons).toEqual([
+      { id: 'spread', level: MAX_PERMANENT_LEVEL },
+      { id: 'rapid', level: 4 },
+    ]);
+    expect(levels.powerUps).toEqual([]);
+  });
+
+  it('keeps weapon rows and power-up rows in their own buckets', () => {
+    const levels = normalisePermanentLevels({
+      weapons: [{ id: 'bomb', level: 2 }],
+      powerUps: [{ id: 'spread', level: 2 }],
+    });
+
+    expect(levels).toEqual({ weapons: [], powerUps: [] });
+  });
+
+  it('is pure: the snapshot rows it returns are fresh objects', () => {
+    const rows = [{ id: 'spread' as WeaponId, level: 2 }];
+    const levels = normalisePermanentLevels({ weapons: rows });
+
+    expect(levels.weapons[0]).not.toBe(rows[0]);
+    expect(rows[0]).toEqual({ id: 'spread', level: 2 });
   });
 });

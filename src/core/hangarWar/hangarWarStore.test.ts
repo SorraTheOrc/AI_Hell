@@ -39,6 +39,7 @@ import {
   DEFAULT_STARTING_WEAPON_ID,
   HANGAR_WAR_STORAGE_KEY,
   HANGAR_WAR_VERSION,
+  buyHangarUpgrade,
   clearHangarWarPayload,
   createDefaultPayload,
   hasHangarWarPayload,
@@ -46,6 +47,7 @@ import {
   parseHangarWarPayload,
   saveHangarWarPayload,
 } from './hangarWarStore';
+import { MAX_PERMANENT_LEVEL, hangarPermanentLevels } from './hangarEconomy';
 import { createInMemoryHangarWarStorage } from './storage';
 import type { HangarWarPayload, HangarWarStorage } from './types';
 
@@ -1227,5 +1229,170 @@ describe('hangar-war store — defender upgrade snapshot is additive (AH-0MWHF6X
     expect(JSON.parse(firstBytes)).toEqual(VALID_HANGAR_WAR_PAYLOAD);
     expect(secondBytes).toBe(firstBytes);
     expect(loadHangarWarPayload(storage)).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+  });
+});
+
+// ── Bought permanent levels (AH-0MWI5AG1X0007XZH) ────────────────────────
+//
+// The hangar's bought permanent levels live in the **same** versioned payload,
+// so a purchase and the currency it spent are one write. The fields are
+// additive: a save written before buy-to-upgrade existed has none, absence
+// reads as "no upgrade" (every owned kind deploys at base level 1) and the
+// fields stay absent on write when empty — the store's field-presence migration,
+// no schema version bump.
+
+describe('hangar permanent levels through the store (AH-0MWI5AG1X0007XZH)', () => {
+  /** A fresh, funded war whose fleet owns the starting weapon. */
+  function fundedPayload(): HangarWarPayload {
+    const payload = createDefaultPayload(11);
+    payload.hangar.bankedMinerals = 1000;
+    payload.hangar.bankedCores = 10;
+    return payload;
+  }
+
+  it('buys a level and round-trips it through the versioned store (AC1)', () => {
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(fundedPayload(), storage);
+    const loaded = loadHangarWarPayload(storage)!;
+
+    const outcome = buyHangarUpgrade(loaded, 'spread', { ringIndex: 1 });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.reason).toBeNull();
+    expect(outcome.payload.hangar.weaponLevels).toEqual([
+      { id: 'spread', level: 1 },
+    ]);
+    // Nothing is persisted until the caller saves the returned payload.
+    expect(loadHangarWarPayload(storage)!.hangar.weaponLevels).toBeUndefined();
+
+    saveHangarWarPayload(outcome.payload, storage);
+    const reloaded = loadHangarWarPayload(storage)!;
+    expect(hangarPermanentLevels(reloaded.hangar)).toEqual({
+      weapons: [{ id: 'spread', level: 1 }],
+      powerUps: [],
+    });
+  });
+
+  it('replays a reloaded save into the next level without losing progress (AC2)', () => {
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(fundedPayload(), storage);
+
+    // Two purchases across two save/load cycles — the "replay" of a persisted
+    // war: each one builds on the loaded level, never on a stale snapshot.
+    const first = buyHangarUpgrade(loadHangarWarPayload(storage)!, 'spread', {
+      ringIndex: 1,
+    });
+    saveHangarWarPayload(first.payload, storage);
+    const second = buyHangarUpgrade(loadHangarWarPayload(storage)!, 'spread', {
+      ringIndex: 1,
+    });
+
+    expect(second.ok).toBe(true);
+    expect(second.payload.hangar.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+    ]);
+    // The second level cost more than the first (the rising per-level curve),
+    // and both were actually spent.
+    expect(second.spent.minerals).toBeGreaterThan(first.spent.minerals);
+    expect(second.payload.hangar.bankedMinerals).toBe(
+      1000 - first.spent.minerals - second.spent.minerals,
+    );
+  });
+
+  it('omits the level fields for a save written before buy-to-upgrade existed (field presence)', () => {
+    const loaded = parseHangarWarPayload(validRecord());
+
+    expect(loaded).not.toBeNull();
+    expect('weaponLevels' in loaded!.hangar).toBe(false);
+    expect('powerUpLevels' in loaded!.hangar).toBe(false);
+    expect(loaded!.version).toBe(HANGAR_WAR_VERSION);
+
+    // An upgrade-free payload round-trips byte-for-byte: writing the parsed
+    // save back never gains the empty fields.
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(loaded!, storage);
+    expect('weaponLevels' in loadHangarWarPayload(storage)!.hangar).toBe(false);
+  });
+
+  it('salvages a corrupt level list instead of rejecting the save (defensive parse)', () => {
+    const payload = validRecord();
+    hangarRecord(payload).weaponLevels = [
+      { id: 'spread', level: 99 },
+      { id: 'spread', level: 2 },
+      { id: 'not-a-weapon', level: 2 },
+      { id: 'shield', level: 3 },
+      { level: 2 },
+      'junk',
+      null,
+    ];
+    hangarRecord(payload).powerUpLevels = [
+      { id: 'shield', level: 3 },
+      { id: 'extra_life', level: 2 },
+      { id: 'bomb', level: 0 },
+      { id: 'magnet', level: 2.9 },
+    ];
+
+    const loaded = parseHangarWarPayload(payload);
+
+    expect(loaded).not.toBeNull();
+    // Levels are clamped to the shared ceiling, duplicates collapse to the
+    // highest, junk rows are dropped and a power-up id in the weapon bucket
+    // (or a consumable anywhere) is never kept as an upgradeable level.
+    expect(loaded!.hangar.weaponLevels).toEqual([
+      { id: 'spread', level: MAX_PERMANENT_LEVEL },
+    ]);
+    expect(loaded!.hangar.powerUpLevels).toEqual([{ id: 'magnet', level: 2 }]);
+    // The rest of the hangar is salvaged untouched.
+    expect(loaded!.hangar.bankedMinerals).toBe(240);
+  });
+
+  it('never writes a consumable or field-pickup-only kind as an upgradeable level (AC5)', () => {
+    const payload = fundedPayload();
+    // A hand-edited save can name a consumable row; the purchase path behind
+    // the store's currency rules must still refuse it and drop the row.
+    payload.hangar.powerUpLevels = [{ id: 'shield', level: 2 }];
+
+    const outcome = buyHangarUpgrade(payload, 'shield', { ringIndex: 1 });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toBe('non-upgradeable');
+    expect(outcome.spent).toEqual({ minerals: 0, cores: 0 });
+    expect(outcome.payload.hangar.powerUpLevels).toBeUndefined();
+    expect(outcome.payload.hangar.bankedMinerals).toBe(1000);
+  });
+
+  it('refuses an unknown or unowned id without spending or writing a level', () => {
+    const payload = fundedPayload();
+    payload.hangar.unlockedWeapons = [];
+
+    const unknown = buyHangarUpgrade(payload, 'not-a-kind', { ringIndex: 1 });
+    const unowned = buyHangarUpgrade(payload, 'spread', { ringIndex: 1 });
+
+    expect(unknown.reason).toBe('unknown');
+    expect(unowned.reason).toBe('unowned');
+    expect(unowned.spent).toEqual({ minerals: 0, cores: 0 });
+    expect(unowned.payload.hangar.bankedMinerals).toBe(1000);
+    expect(unowned.payload.hangar.weaponLevels).toBeUndefined();
+  });
+
+  it('never mutates the payload it is given (purity)', () => {
+    const payload = fundedPayload();
+    payload.ring.hexes.push({
+      id: 'hex-1',
+      q: 1,
+      r: 0,
+      held: false,
+      aggression: 2,
+      defender: null,
+      bossDefeated: false,
+      grantedWeapon: null,
+    });
+    const before = JSON.stringify(payload);
+
+    const outcome = buyHangarUpgrade(payload, 'spread', { ringIndex: 1 });
+
+    expect(JSON.stringify(payload)).toBe(before);
+    expect(outcome.payload).not.toBe(payload);
+    expect(outcome.payload.hangar).not.toBe(payload.hangar);
   });
 });

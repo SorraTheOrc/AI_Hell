@@ -33,6 +33,32 @@ export interface HangarWarStorage {
   removeItem(key: string): void;
 }
 
+/**
+ * One purchased permanent level of a level-bearing weapon or power-up
+ * (parent AH-0MWHW4ALS0039JFU, AC2).
+ *
+ * The row vocabulary is the run path's own (`Player.getWeaponLevels()` /
+ * `getPowerUpLevels()`), so the hangar's persisted state and the run's
+ * permanent-level model can never drift apart. Only level-bearing permanent
+ * kinds appear here: a consumable (a charge pool) and the field-pickup-only
+ * kind have no permanent level to raise and are never stored as one
+ * (producer Q2 = (a), AC5).
+ */
+export interface HangarWeaponLevelRow {
+  /** The shipped weapon whose permanent level was bought. */
+  readonly id: WeaponId;
+  /** The bought permanent level (`1`..`MAX_PERMANENT_LEVEL`). */
+  readonly level: number;
+}
+
+/** One purchased permanent power-up level ({@link HangarWeaponLevelRow} twin). */
+export interface HangarPowerUpLevelRow {
+  /** The shipped power-up whose permanent level was bought. */
+  readonly id: PowerUpId;
+  /** The bought permanent level (`1`..`MAX_PERMANENT_LEVEL`). */
+  readonly level: number;
+}
+
 /** The starting loadout the fleet deploys with (resolved from unlocks). */
 export interface HangarLoadout {
   /** Starting weapon ids carried into a deployment. */
@@ -57,6 +83,29 @@ export interface HangarState {
   activeHull: string;
   /** The resolved loadout the active hull deploys with. */
   activeLoadout: HangarLoadout;
+  /**
+   * Purchased permanent **weapon** levels, the hangar's own copy of the run
+   * path's `Player.getWeaponLevels()` rows (parent AH-0MWHW4ALS0039JFU AC2).
+   *
+   * **Additive and optional on purpose:** a save written before buy-to-upgrade
+   * landed has no such field, and absence reads as "no upgrade" (every owned
+   * weapon deploys at its base level `1`), so the store migrates it by field
+   * presence without a schema version bump — the same pattern as
+   * `HexDefender.skills` and `HangarWarPayload.frontierTick`. The rows are
+   * omitted on write when they carry nothing, so a save round-trips
+   * byte-for-byte rather than gaining empty fields.
+   */
+  weaponLevels?: HangarWeaponLevelRow[];
+  /**
+   * Purchased permanent **power-up** levels, the `getPowerUpLevels()` twin of
+   * {@link weaponLevels}.
+   *
+   * Additive and optional on purpose, exactly like `weaponLevels`: absence
+   * means "no upgrade", the field is migrated by presence and it is omitted on
+   * write when empty. A power-up level row is also the hangar's record that the
+   * kind is owned (the economy (`costToUpgrade`) reads it as its ownership row).
+   */
+  powerUpLevels?: HangarPowerUpLevelRow[];
 }
 
 /**
