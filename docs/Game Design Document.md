@@ -1200,6 +1200,12 @@ on entry (AH-0MUJM746P000QAEO).
 
 ### 4.4 Power-Ups
 
+> **Proposed, not shipped (backlog §8.3):** **weapon evolutions** — pairings of
+> two active/owned weapon kinds fusing into a named evolved weapon (pattern and
+> coverage only, never damage per tick) — are proposed in §8.3 (Weapon
+> evolutions, AH-0MWL7OWPF003E4TP). The catalogue below stays normative until
+> that item lands.
+
 The player collects power-ups dropped by destroyed enemies through the shared weighted-random drop pool (§6.4). There are **17 distinct types** — including the three **area-of-effect weapons** (Nova, Mortar, Arc) documented in the table below; the shipped defaults encode rarity as **relative weights** — standard power-ups (Shield–Teleport, Magnet, Mineral Scoop, Force Field) at **4**, **Extra Life** and the **Mystery UFO** at **3**, the **Smart Bomb**, the **Orbital Strike** and the **Mining Laser** at **2**, and each weapon drop at **2** (the `~15–20 %` / `~5 %` per-enemy figures below are conceptual guidance, not a directly coded per-enemy chance). Extra Life therefore takes ≈ **5.0 % of power-up draws** (weight 3 of the 60 total power-up weight) — still rarer than standard drops, and only from the **field** (it is a field-pickup-only kind, §4.4.1):
 
 > **Per-kill drop chance scales with the campaign level (AH-0MVHT1M6O003PU7P),
@@ -1876,6 +1882,12 @@ parity tests.
 
 - **Score display**: Neon-styled numeric display in the top-right corner.
 
+> **Proposed, not shipped (backlog §8.3):** a **graze-based danger
+> multiplier** — near misses stepping a `×1 → ×5` multiplier on kill score — is
+> proposed in §8.3 (Graze and Danger Multiplier, AH-0MWL7ORK8007LXJI). The table
+> above stays normative until that item lands; the proposal is score-only and
+> must leave every other experience metric unchanged.
+
 > **Boss phase scoring (AH-0MUTV3J7T006MZ4K, scaled by AH-0MUWTS07L008KVP9):** The four `Destroy Boss Phase N` values above are **unchanged**. Because each phase now takes **50 hits** (`BOSS_HIT_POINTS_PER_PHASE`), a phase's points are awarded on the **depleting hit** — hits **50, 100, 150 and 200** — not on every hit. A partial-phase hit awards no score, summons no minions and does not advance the phase; it only reduces the visible health-bar fill. This keeps fully levelled weapons from trivialising the encounter: the Central AI still requires **200 player hits** regardless of weapon level.
 
 ### 4.6 Level Progression Mechanics
@@ -1897,6 +1909,12 @@ parity tests.
   so the opening calibration is unchanged. The scaling table, the documented
   formation-gym divergence and the same-seed before/after bot-batch evidence
   live in [`docs/BALANCING.md`](./BALANCING.md) (AH-0MVHT1M6O003PU7P).
+
+  > **Proposed, not shipped (backlog §8.3):** a third, *content* axis —
+  > **anomaly (elite) variants** of counted archetypes, each with one bounded
+  > extra behaviour and a guaranteed reward, level-1 exempt — is proposed in
+  > §8.3 (Anomaly (elite) enemies and wave twists, AH-0MWL7P1AO003LKXT). The two
+  > axes above stay normative until that item lands.
 - If the player runs out of lives (3 starting; up to 5 with Extra Life power-up), the game ends and the **final score** is submitted to the local leaderboard.
 - There is **no continue** mechanic. Game over is final.
 - Players may restart from Level 1 at any time after a game over.
@@ -3518,6 +3536,13 @@ margin               = defenderSum − attackStrength
 
 #### The defence resolver and the frontier tick
 
+> **Proposed, not shipped (backlog §8.3):** a **pre-emptive counter-push** —
+> publishing a queued attack before the player deploys, and defusing it by
+> winning a deployment at its origin — is proposed in §8.3 (Pre-emptive
+> counter-push, AH-0MWL7P5T50030229). It depends on the planned defence
+> reinforcement (AH-0MWH48IEG00929GQ) and fair-origin rule
+> (AH-0MWH3A87Z005LLOX). The resolver below stays normative until it lands.
+
 The defence is **arithmetic over stored numbers**, never a simulated battle:
 
 ```
@@ -3873,6 +3898,175 @@ to stall in.
 
 ---
 
+### 8.3 Proposed gameplay mechanics (backlog — recorded 2026-11-17)
+
+A gameplay-mechanics review on **2026-11-17** read this document, the outer-loop
+candidate catalogue ([`OUTER_LOOP_CANDIDATES.md`](./OUTER_LOOP_CANDIDATES.md))
+and every open work item, then ranked ten candidate mechanics by expected player
+enjoyment. This subsection records the **accepted six**. Two of them (matchup
+combat and the music system) were already planned; the other four are new work
+items created by the review. Each entry's authoritative, testable specification
+is its work item: this document's normative sections (§2–§4, §7) change only
+when an item lands, and a *proposed* pointer marks each place a landed item will
+rewrite. The **four rejected** candidates are recorded with their reasons in
+**§11**.
+
+Every entry below states the mechanic, the gap it closes, the reward it pays,
+its legibility requirement and the measurement that gates it. **None of it is
+shipped, and none of it is scheduled.**
+
+#### Graze and Danger Multiplier — ranked 10 (highest), High priority
+
+**Work item:** Graze and Danger Multiplier: reward near-miss dodging with score
+(AH-0MWL7ORK8007LXJI).
+
+- **Tier:** inner loop (seconds).
+- **Gap:** dodging is un-rewarded. §4.5 is a flat per-kill sum plus a per-level
+  time bonus, and no multiplier, combo or graze rule exists anywhere in the
+  build, so the most skilful thing a player does is unpaid.
+- **Mechanic:** a live enemy bullet or enemy body passing within
+  `playerHitRadius + GRAZE_BAND` (initial **12 px**) and **outside** the hit
+  radius records **one graze per object per pass** — with a 4 px hysteresis so a
+  bullet hovering at the band edge cannot farm score. Grazes step a five-tier
+  **danger multiplier** (`×1 → ×1.5 → ×2 → ×3 → ×5`) applied to kill score,
+  decaying one tier every **2 s** of inactivity and reset to `×1` by a player
+  hit.
+- **Legibility:** a spark arc at the grazed object, a rising pitch cue per tier,
+  a HUD `DANGER ×N` tacho that drains with the decay timer, and a shape/pulse
+  difference per tier so the signal is never carried by colour alone.
+- **Why it pleases:** it rewards the exact behaviour the game is about, turns
+  close flying from an accident into a deliberate choice, and gives the
+  leaderboard a gap that grinding cannot close.
+- **Gating measurement:** a same-seed bot batch must show survival, minerals,
+  upgrades and avoidable hits **unchanged** inside the
+  [`src/data/experience-targets.json`](../src/data/experience-targets.json)
+  bands — the mechanic is score-only and must move no other metric.
+
+#### Weapon evolutions — ranked 8, Medium priority
+
+**Work item:** Weapon evolutions: fuse two active weapon kinds into an evolved
+weapon (AH-0MWL7OWPF003E4TP).
+
+- **Tier:** middle loop (a run).
+- **Gap:** the weapon catalogue never interacts with itself, and a run takes
+  only about **two** upgrades (§2.7), so a build rarely reads as more than
+  "Cannon plus Spread".
+- **Mechanic:** pairings are **catalogue data** — `ricochet` + `arc` → **Chain
+  Ricochet**, `cluster` + `mortar` → **Cluster Barrage**, `spread` + `options` →
+  **Fan Escort**. Two tiers, both earned in play with no new economy and no new
+  slot: a **field evolution** fires the evolved pattern while both halves of a
+  pairing are active simultaneously, and a **permanent evolution** persists for
+  the run once both halves are permanently owned at level ≥ 2.
+- **Parity guard:** an evolution changes **pattern, coverage and behaviour
+  only** — never the number of damage instances per cadence tick — so the boss's
+  200-hit pool (§4.3) and the level-0 output budget (§4.4.2) keep their meaning.
+  Every evolved cadence stays on the shared 16th-note lattice and morphs only on
+  a bar downbeat. An evolved weapon resolves to its **base** id for hex matchup
+  purposes, so a fusion can never bypass a hex's authored strengths and
+  weaknesses.
+- **Legibility:** a fusion cue on collecting the second half, a HUD badge naming
+  the evolved weapon with its icon, and a matching downbeat cue on expiry — so
+  the pairings can be learned from play.
+- **Gating measurement:** the same-seed bot batch inside the experience-target
+  bands, plus a ring-timing re-measure.
+
+#### Anomaly (elite) enemies and wave twists — ranked 7, Medium priority
+
+**Work item:** Anomaly (elite) enemies and wave twists (AH-0MWL7P1AO003LKXT).
+
+- **Tier:** inner loop (a wave).
+- **Gap:** the campaign's 100 waves are built from one fixed archetype roster
+  with difficulty rising on two axes only — enemy count and a falling per-kill
+  drop chance (§4.6) — so after the classic-arcade debut novelty is carried by
+  density alone.
+- **Mechanic:** a wave may author **one elite** (or a seeded budget grants one on
+  about **15 %** of waves): a variant of a **counted** archetype with a distinct
+  aura, **1–3 bonus HP** and **one** bounded extra behaviour — `splitter`
+  (releases two ordinary children on death), `reinforced` (one extra force-field
+  hit through the shipped field rule) or `volatile` (a short radial burst on
+  death). Each behaviour reuses a shipped seam, and **level 1 never spawns an
+  elite**, so onboarding and the baseline are untouched.
+- **Reward:** an elite always drops from the shared pool and pays a level-scaled
+  guaranteed mineral bump, announced by a distinct death cue.
+- **Legibility:** the wave's opening cue names the elite and a tag tracks its hull
+  while it lives, so prioritising it is a decision the player can make.
+- **Gating measurement:** the same-seed bot batch inside the experience-target
+  bands, and a re-measured `docs/BALANCING.md` level-scaling table recorded on the
+  item before the shipped default rises above zero.
+
+#### Beat-locked soundtrack and intensity mix — ranked 6, already planned
+
+**Work items:** Implement the Music System from the Audio Design Chapter
+(AH-0MVKXT7O70061FXU); Music contract mapping and traceability guard
+(AH-0MVMH2OPY001X6M3).
+
+- **Tier:** presentation (every loop).
+- **Gap:** the game has no music, yet every weapon already fires on a **silent**
+  80 BPM shared lattice (§2.3). The rhythm exists; the player cannot hear it.
+- **Mechanic:** the music tempo **is** the run's `beatBpm` (default **80**, 187.5
+  ms per 16th-note step), so bars, phrases and transitions align to the same
+  lattice the weapons fire on. One continuous musical bed whose **stems gate on a
+  pure intensity parameter** — menu/attract, wave combat, boss, low-lives
+  tension, run end — with layer entry and exit on **bar boundaries only**, plus
+  the stinger and ducking rules the Audio Design Chapter defines. Music volume is
+  independent of the shipped SFX volume/mute settings, and every path degrades to
+  a safe no-op without an `AudioContext`.
+- **Why it pleases:** the cheapest large step in perceived production value and
+  tension, and it makes the existing on-grid fire cadence read as deliberate
+  mastery rather than a technical detail.
+- **Status:** recorded as an addendum on the two work items above (with addendum
+  acceptance criteria AC-M1–AC-M3 on the implement item and the contract rows on
+  the guard item). Those items remain the specification; §7.3 stays authoritative
+  for SFX.
+
+#### Matchup combat from hex intel — ranked 5, already planned
+
+**Work item:** Make hex strengths and weaknesses matter in combat
+(AH-0MWL5376H001WJFZ).
+
+- **Tier:** middle loop / outer loop (a deployment, a ring).
+- **Gap:** the authored `strengths` / `weaknesses` lines on the ring's hexes are
+  **inert display text** — no runtime rule reads them — so the strategist
+  affordance the design of record promises is unkept.
+- **Mechanic:** the authored lists become rules at the **single** player-damage
+  seam: a boss's `weaknesses` weapon lands **2 hit points per connected shot**, its
+  `strengths` weapon **1 per two shots** (resisted, never immune), neutral 1 —
+  with a deflect clang, spark shower and ricochet for resisted hits and a distinct
+  critical burst for effective ones.
+- **Legibility:** the boss's **opening cue** names the effective and resisted
+  weapons in the same demonstration vocabulary the hex grants already use, and the
+  hex detail panel keeps publishing the authored lists.
+- **Gating measurement:** both ring-timing lines re-measured with matchups live —
+  ring 1's measured 16.2 min against its 30–90 window
+  (AH-0MWFDQ9EY004NO4X) and ring 2's 48.7 min against 60–180
+  (AH-0MWFDQCFV007BZE5) — plus a same-seed bot batch, with the numbers recorded
+  on the item before it advances to `in_review`.
+
+#### Pre-emptive counter-push — ranked 2, Low priority
+
+**Work item:** Pre-emptive counter-push: defuse a pending frontier attack by
+deploying at its origin (AH-0MWL7P5T50030229).
+
+- **Tier:** outer loop (between sorties).
+- **Gap:** the frontier tick resolves **at** the player. `pendingAttacks` is
+  published only after it lands, so defence is read, never played. The
+  *reinforce* half (Strengthen a hexes defence, AH-0MWH48IEG00929GQ) and the
+  *fairness* half (Do not attack a hex from a hex the player is attacking,
+  AH-0MWH3A87Z005LLOX) are already planned; the **tempo choice** is not.
+- **Mechanic:** the map publishes a queued or imminent attack **before** the
+  player commits a deployment — origin, target, attacking force, defender rating
+  and margin — and a **winning** deployment at the origin **defuses** that queued
+  attack in the same payload write. A lost pre-emption costs the run and the
+  attack lands as normal, so striking first is a real risk.
+- **Invariants:** arithmetic only (no simulated battle), no new persisted field
+  (`HangarWarDeployment.hexId` plus the existing `pendingAttacks` are the inputs),
+  and the tick stays a pure function of `(payload, seed, tick, attackingHex)` so
+  a replay is identical.
+- **Gating measurement:** both ring-timing lines re-measured, because a cheaper
+  counter-play changes the measured line.
+
+---
+
 ## 9. Appendix: Clarifying Questions & Answers
 
 All clarifying questions and their answers from the intake process are captured in the parent work item (AH-0MT7O8KCY0059RA5). This GDD incorporates the following key decisions:
@@ -3904,6 +4098,89 @@ All clarifying questions and their answers from the intake process are captured 
 | **AC4** — MVP content (10 levels, 1 boss, 3 lives, 9+ power-ups, local leaderboard, no difficulty scaling) | ✅ | §3 |
 | **AC5** — Content catalogs (enemies, waves, boss, power-ups, scoring, progression) | ✅ | §4 |
 | **AC6** — Technical architecture (selected engine, module breakdown, data model, save design, risks) | ✅ | §6 |
+
+---
+
+## 11. Appendix: Gameplay mechanics considered but not implemented
+
+The 2026-11-17 gameplay-mechanics review proposed ten mechanics and ranked them
+by expected player enjoyment. Six were accepted and are recorded in **§8.3** (two
+of those were already planned). The **four below were rejected** and are
+deliberately not scheduled; they are recorded here so the reasoning is auditable
+and a future review can revisit them with its eyes open. Rejected does not mean
+bad — it means "not now, and here is what would change that".
+
+### Manual Overdrive: a player-triggered panic button (ranked 9)
+
+- **What it was:** one charge, armed by a pickup or hold-full grant, spent on an
+  in-run key to fire a ship-centred pulse that clears enemy bullets and damages
+  every enemy once — a *manual* counterpart to the automatic Bomb and Smart Bomb,
+  leaving Phase Shift and Teleport untouched.
+- **Why rejected:** the automatic defence model is a **deliberate cognitive-load
+  decision** (§2.3 records the automatic-teleport ruling, AH-0MUZE4AIP009HZWC),
+  and a manual pulse adds a sixth in-run input, a new armed-charge HUD state and
+  a key-binding decision on two already-remapped control schemes, for a gain the
+  automatic defences largely already deliver.
+- **What would revive it:** playtest evidence that players want a clutch action
+  they choose; or a run-grade/medal objective that specifically rewards an
+  unspent charge, which would give the charge a *strategic* rather than tactical
+  purpose.
+
+### Focus (precision) mode with a visible hit core (ranked 4)
+
+- **What it was:** a held key that halves thrust/turn and reveals the ship's true
+  collision footprint as a bright pip, giving a mastery dial on dense patterns —
+  with the enemy-bullet fade-out (Fade bullets out, AH-0MWJ9PMYF005N588) folded in
+  as the readability half.
+- **Why rejected:** it duplicates a mastery dial the two control schemes already
+  provide (the Asteroids turn ramp versus 4-directional movement), costs another
+  per-scheme binding, and the readability half is already separately scheduled as
+  the bullet fade.
+- **What would revive it:** evidence from human sessions that later-level patterns
+  are lost to hitbox misreads rather than to movement; the fade-out alone may be
+  enough.
+
+### Extraction banking: cash out mid-sortie (ranked 3)
+
+- **What it was:** at wave boundaries, choose **BANK NOW** (lock in the run's
+  unbanked minerals and cores) or **PUSH ON** (a rising carry multiplier on the
+  eventual bank, with death forfeiting the whole pot) — tension in place of the
+  single wave-5 mini-boss banking cliff (§8.2 capture cycle step 1).
+- **Why rejected:** it re-opens the salvage economy and both ring-timing budgets
+  while they are already under re-baseline (AH-0MWFDQ9EY004NO4X,
+  AH-0MWFDQCFV007BZE5), and it softens the arcade stakes the design of record
+  deliberately protects — a lost run is still meant to be final (§4.6).
+- **What would revive it:** the ring-timing re-baseline landing *and* evidence that
+  losses are concentrated in early-run deaths (where there is nothing to bank), so
+  the choice would add tension without trivialising the economy.
+
+### Run grade and medals (ranked 1)
+
+- **What it was:** an end-of-run letter grade (S–D) derived from an explicit
+  rubric — survival depth, graze average, lives lost, mini-bosses cleared — plus
+  three to five unlocking medals, all persisted beside the leaderboard score.
+- **Why rejected:** as a pure meta layer it adds **no new play**, and its most
+  interesting rubric input (graze average) does not exist until the Graze and
+  Danger Multiplier item lands. Building the grade first would mean inventing
+  telemetry that the review already schedules elsewhere.
+- **What would revive it:** Graze and Danger Multiplier (AH-0MWL7ORK8007LXJI)
+  landing — after which the grade is a cheap read of data the run already
+  produces.
+
+### Disposition of all ten proposals
+
+| Rank | Mechanic | Disposition | Destination |
+|-----:|----------|-------------|-------------|
+| 10 | Graze and Danger Multiplier | **accepted — High** | AH-0MWL7ORK8007LXJI |
+| 9 | Manual Overdrive (panic button) | rejected | this appendix |
+| 8 | Weapon evolutions | **accepted — Medium** | AH-0MWL7OWPF003E4TP |
+| 7 | Anomaly (elite) enemies | **accepted — Medium** | AH-0MWL7P1AO003LKXT |
+| 6 | Beat-locked soundtrack and intensity mix | already planned | AH-0MVKXT7O70061FXU, AH-0MVMH2OPY001X6M3 |
+| 5 | Matchup combat from hex intel | already planned | AH-0MWL5376H001WJFZ |
+| 4 | Focus mode and visible hit core | rejected | this appendix |
+| 3 | Extraction banking | rejected | this appendix |
+| 2 | Pre-emptive counter-push | **accepted — Low** | AH-0MWL7P5T50030229 |
+| 1 | Run grade and medals | rejected | this appendix |
 
 ---
 
