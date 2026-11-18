@@ -76,11 +76,17 @@
 import {
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
+  STARTER_WEAPON_ID,
   type HangarEntry,
   type HangarPrice,
   type HullUpgrades,
 } from '../../data/hangarCatalogue';
-import type { HangarLoadout, HangarState, DefenderUpgradeSnapshot } from './types';
+import type {
+  DeployedShip,
+  HangarLoadout,
+  HangarState,
+  DefenderUpgradeSnapshot,
+} from './types';
 // Catalogue imports stay pure data (no Phaser, no storage): the two catalogues
 // are runtime-imported because the upgrade rule must classify a requested id
 // (unknown vs non-upgradeable) from the one authored catalogue — the previous
@@ -1140,6 +1146,92 @@ export function equipLoadout(
     startingWeapons: ownedEntriesOf(hangar, loadout.startingWeapons, 'weapon'),
     modifiers: ownedEntriesOf(hangar, loadout.modifiers, 'modifier'),
   };
+  return next;
+}
+
+/**
+ * Spends the exact ship a deployment flew (parent AH-0MWL5PAP2001XYYF).
+ *
+ * A hex battle is a one-battle consumable sortie: on **win or loss** the flown
+ * hull, every starting weapon and every modifier on the active loadout — plus
+ * the consumed ids' bought permanent level rows — are removed. Everything the
+ * player did **not** fly survives, and the free starter kit (`hull-1` plus
+ * `spread`) is never removed, so a battle can never soft-lock the fleet
+ * (AH-0MVZJ6V1J001DA9D: an empty loadout is a legal deployment).
+ *
+ * The hangar is then reset to the starter kit — `activeHull` is the starter
+ * hull and `activeLoadout` is empty — so the next deployment uses only the
+ * ship's permanent cannon until the player re-purchases. Balances are
+ * deliberately untouched: spending the ship is not a salvage rule, so the
+ * caller's banking/win-bonus write stays the only thing that moves money.
+ *
+ * Pure and total: the input hangar is never mutated, unknown or already-stale
+ * ids are simply absent from the owned sets and therefore ignored, a repeated
+ * call on an already-consumed hangar returns the same hangar (idempotent), and
+ * a corrupt save can never make it throw.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param ship — the resolved hull + active loadout the deployment flew.
+ * @param _catalogue — the unlock tree (parity with the other economy rules;
+ *   consumption is role-based, so the shipped tree is not read here).
+ * @returns a fresh hangar with the flown ship spent and the starter kit active.
+ */
+export function consumeDeployedShip(
+  hangar: HangarState,
+  ship: DeployedShip,
+  _catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): HangarState {
+  const next = cloneHangar(hangar);
+
+  // The flown hull is spent unless it is the always-owned starter hull. The
+  // per-kind id sets keep a corrupt/unknown id from removing another kind's row.
+  const hullIds = new Set<string>();
+  const hullId = typeof ship?.hullId === 'string' ? ship.hullId.trim() : '';
+  if (hullId.length > 0 && hullId !== STARTER_HULL_ID) hullIds.add(hullId);
+
+  const weaponIds = new Set<string>();
+  for (const id of ship?.startingWeapons ?? []) {
+    if (typeof id !== 'string') continue;
+    const weaponId = id.trim();
+    // The starter weapon is the zero-cost floor of every fleet: it survives
+    // even when the player flew it.
+    if (weaponId.length > 0 && weaponId !== STARTER_WEAPON_ID) {
+      weaponIds.add(weaponId);
+    }
+  }
+
+  const modifierIds = new Set<string>();
+  for (const id of ship?.modifiers ?? []) {
+    if (typeof id !== 'string') continue;
+    const modifierId = id.trim();
+    if (modifierId.length > 0) modifierIds.add(modifierId);
+  }
+
+  next.unlockedHulls = next.unlockedHulls.filter((id) => !hullIds.has(id));
+  next.unlockedWeapons = next.unlockedWeapons.filter((id) => !weaponIds.has(id));
+  next.ownedModifiers = next.ownedModifiers.filter((id) => !modifierIds.has(id));
+
+  // Only the consumed ids lose their bought permanent levels. A row for any
+  // un-flown id — weapon or power-up — survives untouched.
+  const consumedIds = new Set<string>([
+    ...hullIds,
+    ...weaponIds,
+    ...modifierIds,
+  ]);
+  if (next.weaponLevels !== undefined) {
+    next.weaponLevels = next.weaponLevels.filter(
+      (row) => !consumedIds.has(row.id),
+    );
+  }
+  if (next.powerUpLevels !== undefined) {
+    next.powerUpLevels = next.powerUpLevels.filter(
+      (row) => !consumedIds.has(row.id),
+    );
+  }
+
+  // The next sortie starts from the free starter kit until the player refits.
+  next.activeHull = STARTER_HULL_ID;
+  next.activeLoadout = { startingWeapons: [], modifiers: [] };
   return next;
 }
 

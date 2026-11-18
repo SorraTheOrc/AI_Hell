@@ -33,12 +33,13 @@ import {
   createDefaultPayload,
 } from './hangarWarStore';
 import * as hangarEconomyModule from './hangarEconomy';
-import type { HangarState } from './types';
+import type { DeployedShip, HangarState } from './types';
 import {
   CORE_MINERAL_EQUIVALENT,
   DEFENDER_UPGRADE_WEIGHTS,
   MAX_PERMANENT_LEVEL,
   buy,
+  consumeDeployedShip,
   canBuy,
   cheapestUsefulUnlock,
   defenderRatingFromUpgrades,
@@ -1803,5 +1804,201 @@ describe('hangar permanent-level state (AH-0MWI5AG1X0007XZH)', () => {
 
     expect(levels.weapons[0]).not.toBe(rows[0]);
     expect(rows[0]).toEqual({ id: 'spread', level: 2 });
+  });
+});
+
+/**
+ * Spending the flown ship on battle completion (parent AH-0MWL5PAP2001XYYF).
+ *
+ * The reducer is the **one** rule that turns "a battle happened" into what the
+ * fleet keeps: only the deployed hull/starting weapons/modifiers and their
+ * bought permanent levels are spent; un-flown items and the free starter kit
+ * survive; the hangar resets to the starter kit with an empty loadout.
+ */
+describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MWL5PAP2001XYYF)', () => {
+  /** A fleet with a bought, fully-equipped ship plus un-flown spare parts. */
+  function stockedHangar(): HangarState {
+    return hangarWith({
+      bankedMinerals: 900,
+      bankedCores: 12,
+      unlockedHulls: ['hull-1', 'hull-2', 'hull-3'],
+      unlockedWeapons: ['spread', 'wave_laser', 'ricochet'],
+      ownedModifiers: ['hardened_plating', 'anti_maw_plating'],
+      activeHull: 'hull-2',
+      activeLoadout: {
+        startingWeapons: ['wave_laser', 'spread'],
+        modifiers: ['hardened_plating'],
+      },
+      weaponLevels: [
+        { id: 'wave_laser', level: 3 },
+        { id: 'spread', level: 2 },
+        { id: 'ricochet', level: 2 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 2 },
+        { id: 'magnet', level: 3 },
+      ],
+    });
+  }
+
+  /** The ship that flew in {@link stockedHangar}. */
+  const FLOWN_SHIP: DeployedShip = {
+    hullId: 'hull-2',
+    startingWeapons: ['wave_laser', 'spread'],
+    modifiers: ['hardened_plating'],
+  };
+
+  it('removes the flown hull, weapon and modifier, keeping un-flown and starter items', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+
+    expect(consumed.unlockedHulls).toEqual(['hull-1', 'hull-3']);
+    expect(consumed.unlockedWeapons).toEqual(['spread', 'ricochet']);
+    expect(consumed.ownedModifiers).toEqual(['anti_maw_plating']);
+  });
+
+  it('deletes only the consumed ids’ permanent level rows', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+
+    // The flown weapon's row is gone; the starter and un-flown weapon rows stay.
+    expect(consumed.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+      { id: 'ricochet', level: 2 },
+    ]);
+    // No un-flown power-up row is collateral damage.
+    expect(consumed.powerUpLevels).toEqual([
+      { id: 'shield', level: 2 },
+      { id: 'magnet', level: 3 },
+    ]);
+  });
+
+  it('prunes both level-row kinds for a consumed id', () => {
+    // A ship whose modifier id also has a power-up level row: the reducer is
+    // role-agnostic about level rows, so the consumed id loses **both** kinds.
+    const hangar = hangarWith({
+      unlockedHulls: ['hull-1', 'hull-2'],
+      ownedModifiers: ['shield'],
+      activeHull: 'hull-2',
+      activeLoadout: { startingWeapons: [], modifiers: ['shield'] },
+      weaponLevels: [
+        { id: 'spread', level: 2 },
+        { id: 'wave_laser', level: 3 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 2 },
+        { id: 'magnet', level: 3 },
+      ],
+    });
+
+    const consumed = consumeDeployedShip(hangar, {
+      hullId: 'hull-2',
+      startingWeapons: ['wave_laser'],
+      modifiers: ['shield'],
+    });
+
+    expect(consumed.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
+    expect(consumed.powerUpLevels).toEqual([{ id: 'magnet', level: 3 }]);
+  });
+
+  it('never removes the free starter kit, even when it was flown', () => {
+    const hangar = hangarWith({
+      unlockedHulls: ['hull-1', 'hull-2'],
+      unlockedWeapons: ['spread', 'wave_laser'],
+      activeHull: 'hull-1',
+      activeLoadout: {
+        startingWeapons: ['spread'],
+        modifiers: [],
+      },
+      weaponLevels: [
+        { id: 'spread', level: 2 },
+        { id: 'wave_laser', level: 2 },
+      ],
+    });
+
+    const consumed = consumeDeployedShip(hangar, {
+      hullId: 'hull-1',
+      startingWeapons: ['spread'],
+      modifiers: [],
+    });
+
+    expect(consumed.unlockedHulls).toEqual(['hull-1', 'hull-2']);
+    expect(consumed.unlockedWeapons).toEqual(['spread', 'wave_laser']);
+    expect(consumed.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+      { id: 'wave_laser', level: 2 },
+    ]);
+  });
+
+  it('resets to the starter hull with an empty (still deployable) loadout', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+
+    expect(consumed.activeHull).toBe(DEFAULT_HULL_ID);
+    expect(consumed.activeLoadout).toEqual({ startingWeapons: [], modifiers: [] });
+    // The exact inputs a deployment resolves from: starter hull, no equipment.
+    expect(resolveActiveHull(consumed)).toBe(DEFAULT_HULL_ID);
+    expect(resolveActiveLoadout(consumed)).toEqual({
+      startingWeapons: [],
+      modifiers: [],
+    });
+    expect(resolvePlayerStrength(consumed)).toBeGreaterThanOrEqual(
+      MINIMUM_PLAYER_STRENGTH,
+    );
+  });
+
+  it('leaves both banked balances untouched', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+
+    expect(consumed.bankedMinerals).toBe(900);
+    expect(consumed.bankedCores).toBe(12);
+  });
+
+  it('is idempotent and never mutates its caller’s hangar', () => {
+    const hangar = stockedHangar();
+    const before = JSON.parse(JSON.stringify(hangar)) as HangarState;
+
+    const once = consumeDeployedShip(hangar, FLOWN_SHIP);
+    const twice = consumeDeployedShip(once, FLOWN_SHIP);
+
+    expect(twice).toEqual(once);
+    expect(hangar).toEqual(before);
+  });
+
+  it('ignores unknown/stale ids and never throws on a corrupt save', () => {
+    const hangar = stockedHangar();
+
+    const consumed = consumeDeployedShip(hangar, {
+      hullId: 'hull-does-not-exist',
+      startingWeapons: ['weapon-does-not-exist', 'wave_laser'],
+      modifiers: ['modifier-does-not-exist'],
+    });
+
+    expect(consumed.unlockedWeapons).toContain('ricochet');
+    expect(consumed.unlockedWeapons).not.toContain('wave_laser');
+    // An unknown hull/modifier id matches nothing, so the owned sets keep
+    // every real hull (including the one the fleet did not fly).
+    expect(consumed.unlockedHulls).toEqual(['hull-1', 'hull-2', 'hull-3']);
+    expect(consumed.ownedModifiers).toEqual([
+      'hardened_plating',
+      'anti_maw_plating',
+    ]);
+  });
+
+  it('tolerates missing level-row fields entirely (no rows to prune)', () => {
+    const hangar = hangarWith({
+      unlockedHulls: ['hull-1', 'hull-2'],
+      unlockedWeapons: ['spread', 'wave_laser'],
+      activeHull: 'hull-2',
+      activeLoadout: { startingWeapons: ['wave_laser'], modifiers: [] },
+    });
+    delete hangar.weaponLevels;
+    delete hangar.powerUpLevels;
+
+    const consumed = consumeDeployedShip(hangar, {
+      hullId: 'hull-2',
+      startingWeapons: ['wave_laser'],
+      modifiers: [],
+    });
+
+    expect('weaponLevels' in consumed).toBe(false);
+    expect('powerUpLevels' in consumed).toBe(false);
   });
 });

@@ -76,6 +76,26 @@ export interface HangarLoadout {
   modifiers: string[];
 }
 
+/**
+ * The exact ship a deployment flew — the identity a battle's outcome spends
+ * (parent AH-0MWL5PAP2001XYYF).
+ *
+ * The hull plus the **resolved** active loadout is what a deployment launches
+ * with, so it is also what consumption removes on win or loss. It is a
+ * structural record (not a class) because it crosses the pure core/scene seam:
+ * `PlayScene`, the gym's `captureHex` and the capture cycle all pass the same
+ * shape. The free starter hull and starter weapon are always owned and are
+ * never removed, however they appear here.
+ */
+export interface DeployedShip {
+  /** The hull that flew (the hangar's resolved `activeHull`). */
+  readonly hullId: string;
+  /** The resolved starting weapons the ship deployed with. */
+  readonly startingWeapons: readonly string[];
+  /** The resolved permanent modifiers the ship deployed with. */
+  readonly modifiers: readonly string[];
+}
+
 /** The persistent hangar: banked salvage and everything the player owns. */
 export interface HangarState {
   /** Banked minerals (the primary salvage currency). */
