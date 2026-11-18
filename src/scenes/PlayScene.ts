@@ -176,6 +176,7 @@ import {
   bankSalvage,
   bankWinBonus,
   bankedSalvageFromHangar,
+  forfeitUnbankedSalvage,
   runSalvageFromRun,
   type BankedSalvage,
   type RunSalvage,
@@ -4229,6 +4230,13 @@ export class PlayScene extends CombatScene<
     const result = resolveHexCapture(payload, {
       hexId: deployment.hexId,
       defenderHullId: deployment.hullId,
+      // The ship this sortie flew — spent by the capture on a win
+      // (parent AH-0MWL5PAP2001XYYF).
+      ship: {
+        hullId: deployment.hullId,
+        startingWeapons: deployment.startingWeapons,
+        modifiers: deployment.modifiers,
+      },
       salvage: this._salvageSnapshot('boss-victory'),
       // The run's permanent-upgrade snapshot is read **once**, inside the
       // same argument expression that feeds the capture write, so the stored
@@ -4262,22 +4270,49 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Settles a lost run (AH-0MVUXC118004B4OX AC2): the run forfeits only the
-   * salvage it earned after its last bank, and the persistent balance (and the
-   * ring it lives beside) is left untouched. Recorded for the end-of-run
-   * summary; nothing is written.
+   * Settles a lost run (AH-0MVUXC118004B4OX AC2).
    *
-   * Delegates to the capture cycle's loss path
+   * A **hex deployment** loss forfeits only the salvage it earned after its
+   * last bank and spends the ship it flew (parent AH-0MWL5PAP2001XYYF): the
+   * consumed payload is persisted once through the demo-guarded
+   * {@link _saveHangarWarPayload}, so ownership and the forfeit land together.
+   * An **arcade** run never deployed a hangar ship, so it only forfeits its
+   * unbanked salvage and writes nothing, exactly as shipped.
+   *
+   * Delegates the deployment rules to the capture cycle's loss path
    * (AH-0MVUXCAW0001VUM6) so the win and loss rules live in one module.
    */
   private _forfeitUnbankedSalvage(): void {
     const payload = this._hangarWarPayload();
+    const bank = this.salvageBank ?? bankedSalvageFromHangar(payload.hangar);
+    const salvage = this._salvageSnapshot('run-end');
+    const deployment = this.hangarWarDeployment;
+    if (!deployment) {
+      // The arcade run never deployed a hangar ship: it forfeits its unbanked
+      // salvage and writes nothing, exactly as shipped. Spending a hangar ship
+      // here would charge the player for a run it never flew.
+      const outcome = forfeitUnbankedSalvage(bank, salvage);
+      this.salvageBank = outcome.banked;
+      this.forfeitedSalvage = outcome.forfeited;
+      return;
+    }
+
     const outcome = resolveDeploymentDefeat(payload, {
-      salvage: this._salvageSnapshot('run-end'),
-      banked: this.salvageBank ?? bankedSalvageFromHangar(payload.hangar),
+      salvage,
+      banked: bank,
+      // A lost deployment spends the same ship a win does
+      // (parent AH-0MWL5PAP2001XYYF).
+      ship: {
+        hullId: deployment.hullId,
+        startingWeapons: deployment.startingWeapons,
+        modifiers: deployment.modifiers,
+      },
     });
     this.salvageBank = outcome.banked;
     this.forfeitedSalvage = outcome.forfeited;
+    // The loss path now persists the consumed payload through the one
+    // demo-guarded write, so an attract run never overwrites the player's war.
+    this._saveHangarWarPayload(outcome.payload);
   }
 
   /**

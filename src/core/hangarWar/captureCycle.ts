@@ -49,10 +49,25 @@
  *    held while hexes remain unheld) still opens the next ring with no
  *    assault at all (`AH-0MVUVL2O2006W4QK`, `AH-0MWEZZ9TE001577J`).
  *
- * A lost deployment is the mirror image: {@link resolveDeploymentDefeat}
- * forfeits only the salvage earned since the last bank and returns the payload
- * untouched, because "losing a run never loses the hangar or the ring"
- * (Candidate B's rule, preserved).
+ * A lost deployment is the mirror image: {@link resolveDeploymentDefeat} forfeits
+ * only the salvage earned since the last bank and spends the ship that flew —
+ * a loss destroys it, a win leaves it behind as the hex's defender, but **both**
+ * outcomes consume it (parent AH-0MWL5PAP2001XYYF, producer Q2 = B). The hangar
+ * and the ring otherwise survive; every un-flown owned item and the free
+ * starter kit are kept, so a bad run costs the ship, never the collection.
+ *
+ * ## The flown ship is a one-battle consumable
+ *
+ * A completed deployment — win or loss — spends exactly the ship it flew: the
+ * deployed hull, every starting weapon and modifier on the active loadout, and
+ * those ids' bought permanent level rows (the pure
+ * `consumeDeployedShip` rule in `./hangarEconomy`). The hangar then resets to
+ * the free starter kit (`activeHull` = starter hull, empty loadout), so the
+ * next sortie deploys with only the ship's permanent cannon until the player
+ * re-purchases. The ring-end `campaignReset` (a failed hangar assault) still
+ * wins over consumption: it returns a freshly reset campaign. A refusal
+ * (`unknown-hex` / `defender-required`) is not a completed battle and spends
+ * nothing.
  *
  * Everything here is pure and injectable — no Phaser, no storage access, no
  * `localStorage` — so the cycle is equally exercisable from the gym/headless
@@ -66,9 +81,11 @@
 import {
   findHangarEntry,
   ownsEntry,
+  consumeDeployedShip,
   deriveDefenderRating,
   defenderRatingFromSnapshot,
   snapshotDefenderUpgrades,
+  resolveActiveHull,
   resolveActiveLoadout,
 } from './hangarEconomy';
 import {
@@ -105,6 +122,7 @@ import {
 import type {
   DefenceSkill,
   DefenderUpgradeSnapshot,
+  DeployedShip,
   HangarState,
   HangarWarPayload,
   HexDefender,
@@ -189,6 +207,43 @@ function cloneHangar(hangar: HangarState): HangarState {
       startingWeapons: [...hangar.activeLoadout.startingWeapons],
       modifiers: [...hangar.activeLoadout.modifiers],
     },
+  };
+}
+
+/**
+ * The exact ship a battle spends (parent AH-0MWL5PAP2001XYYF).
+ *
+ * A caller that launched a deployment knows the flown ship and passes it; a
+ * caller that did not (a gym harness, a scripted battle, an older seam) gets
+ * the hangar's **own resolved** active ship — the same hull and loadout a
+ * deployment would have launched with — so the consumption rule cannot be
+ * skipped by omitting the field. Non-string ids are dropped so a corrupt save
+ * can never make the reducer throw.
+ *
+ * @param hangar — the hangar being settled (read only).
+ * @param ship — the caller's flown ship, or `undefined` to resolve it.
+ * @returns the ship to spend.
+ */
+function resolvedDeployedShip(
+  hangar: HangarState,
+  ship: DeployedShip | undefined,
+): DeployedShip {
+  if (ship !== undefined) {
+    return {
+      hullId: toId(ship.hullId) ?? resolveActiveHull(hangar),
+      startingWeapons: (ship.startingWeapons ?? []).filter(
+        (id): id is string => toId(id) !== null,
+      ),
+      modifiers: (ship.modifiers ?? []).filter(
+        (id): id is string => toId(id) !== null,
+      ),
+    };
+  }
+  const loadout = resolveActiveLoadout(hangar);
+  return {
+    hullId: resolveActiveHull(hangar),
+    startingWeapons: loadout.startingWeapons,
+    modifiers: loadout.modifiers,
   };
 }
 
@@ -761,6 +816,16 @@ export interface HexCaptureInput {
    * defender is exactly today's, and the field is omitted.
    */
   readonly snapshot?: DefenderUpgradeSnapshot;
+  /**
+   * The exact ship this deployment flew (parent AH-0MWL5PAP2001XYYF).
+   *
+   * On a completed capture the hull, its equipped starting weapons and its
+   * modifiers are spent with their bought permanent levels. Omitted, the
+   * hangar's own resolved `activeHull` / `resolveActiveLoadout` is spent — the
+   * same ship a deployment would have launched with — so the rule cannot be
+   * skipped by a caller that does not pass the field.
+   */
+  readonly ship?: DeployedShip;
   /** Authored ring definitions (for the grant and for opening the next ring). */
   readonly definitions?: readonly HexRingDefinition[];
   /** The caller's bank watermark (defaults to the stored balance). */
@@ -993,6 +1058,17 @@ export function resolveHexCapture(
     };
   }
 
+  // The sortie spent its ship (parent AH-0MWL5PAP2001XYYF, Q2 = B): on a win
+  // the flown hull, its equipped starting weapons and modifiers — and their
+  // bought permanent levels — are removed, after the defender has been derived
+  // from the hull and after the salvage settled (so consumption can never move
+  // a balance). Applying it **before** the grant keeps a newly captured entry
+  // (a reward the player just earned) out of the consumed set.
+  next.hangar = consumeDeployedShip(
+    next.hangar,
+    resolvedDeployedShip(next.hangar, input.ship),
+  );
+
   const definition = definitions.find((entry) => entry.id === hex.id);
   const wasHeld = hex.held === true;
 
@@ -1109,11 +1185,29 @@ export interface DeploymentDefeatInput {
   readonly salvage: RunSalvage;
   /** The caller's bank watermark (defaults to the stored balance). */
   readonly banked?: BankedSalvage;
+  /**
+   * The exact ship this deployment flew (parent AH-0MWL5PAP2001XYYF).
+   *
+   * A loss spends the same ship a win does: the hull, its equipped starting
+   * weapons and its modifiers with their bought permanent levels. Omitted, the
+   * hangar's own resolved active ship is spent.
+   */
+  readonly ship?: DeployedShip;
 }
 
-/** A settled lost deployment: the unchanged war plus the forfeited salvage. */
+/**
+ * A settled lost deployment: the war with its flown ship spent, plus the
+ * forfeited salvage.
+ */
 export interface DeploymentDefeatResult {
-  /** A detached, unchanged payload — the hangar and ring survive the loss. */
+  /**
+   * A detached payload with the flown ship removed from the hangar.
+   *
+   * Only the ship the deployment flew is spent (parent AH-0MWL5PAP2001XYYF,
+   * Q4 = B): every un-flown owned item, the free starter kit, the ring and the
+   * banked balances survive the loss, and the hangar resets to the starter kit
+   * ready for the next deployment.
+   */
   readonly payload: HangarWarPayload;
   /** The bank watermark after the loss (unchanged in value). */
   readonly banked: BankedSalvage;
@@ -1124,14 +1218,19 @@ export interface DeploymentDefeatResult {
 /**
  * Settles a lost deployment (the capture cycle's loss path).
  *
- * "Losing a run never loses the hangar or the ring": the payload is returned
- * untouched and only the salvage earned since this run's last bank is
- * forfeited — the shipped {@link forfeitUnbankedSalvage} rule, reused rather
- * than re-implemented.
+ * The loss spends the ship the deployment flew (parent AH-0MWL5PAP2001XYYF,
+ * producer Q2 = B: a win leaves the hull as the hex's defender and a loss
+ * destroys it, but **both** spend it) — the flown hull, its equipped starting
+ * weapons and modifiers, and their bought permanent levels. Everything the
+ * player did not fly, the free starter kit, the ring and the banked balances
+ * survive; only the salvage earned since this run's last bank is forfeited
+ * through the shipped {@link forfeitUnbankedSalvage} rule. Consumption runs
+ * after the forfeit settled, so spending the ship can never move a balance.
  *
  * @param payload — the persistent war payload (never mutated).
- * @param input — the run's final salvage and the caller's bank watermark.
- * @returns the unchanged payload, the bank state and the forfeited amount.
+ * @param input — the run's final salvage, the bank watermark and the flown ship.
+ * @returns the payload with the flown ship spent, the bank state and the
+ *   forfeited amount.
  */
 export function resolveDeploymentDefeat(
   payload: HangarWarPayload,
@@ -1140,6 +1239,10 @@ export function resolveDeploymentDefeat(
   const next = clonePayload(payload);
   const startingBank = input.banked ?? bankedSalvageFromHangar(next.hangar);
   const outcome = forfeitUnbankedSalvage(startingBank, input.salvage);
+  next.hangar = consumeDeployedShip(
+    next.hangar,
+    resolvedDeployedShip(next.hangar, input.ship),
+  );
   return {
     payload: next,
     banked: outcome.banked,

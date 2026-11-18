@@ -547,7 +547,7 @@ describe('ring securing', () => {
 });
 
 describe('resolveDeploymentDefeat — the loss path', () => {
-  it('forfeits only the unbanked salvage and leaves the payload untouched', () => {
+  it('forfeits only the unbanked salvage for a starter-kit fleet', () => {
     const payload = ringPayload();
     hex(payload, 'hex-r1-1').held = true;
     const before = JSON.parse(JSON.stringify(payload)) as HangarWarPayload;
@@ -563,9 +563,116 @@ describe('resolveDeploymentDefeat — the loss path', () => {
 
     // The run earns 60/1 and has banked nothing yet, so all of it is forfeit.
     expect(result.forfeited).toEqual({ minerals: 60, cores: 1 });
-    // The hangar and the ring survive a lost run.
+    // A starter-kit fleet has no bought ship to spend, so the payload is
+    // unchanged (the ring and banked balances always survive a loss).
     expect(result.payload).toEqual(before);
     expect(result.banked.minerals).toBe(0);
+  });
+
+  it('spends a bought ship on a loss (hull, weapon, modifier and level rows)', () => {
+    const payload = boughtShipPayload();
+
+    const result = resolveDeploymentDefeat(payload, {
+      salvage: runSalvageFromRun({
+        runId: 'run-7',
+        checkpointId: 'run-end',
+        minerals: 60,
+        cores: 1,
+      }),
+    });
+
+    expect(result.payload.hangar.unlockedHulls).not.toContain('hull-2');
+    expect(result.payload.hangar.unlockedWeapons).not.toContain('wave_laser');
+    expect(result.payload.hangar.ownedModifiers).not.toContain(
+      'hardened_plating',
+    );
+    expect(result.payload.hangar.activeHull).toBe('hull-1');
+    expect(result.payload.hangar.weaponLevels).toEqual([
+      { id: 'ricochet', level: 2 },
+    ]);
+    // The un-flown spare parts and both balances survive.
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-3');
+    expect(result.payload.hangar.unlockedWeapons).toContain('ricochet');
+    expect(result.payload.hangar.ownedModifiers).toContain('anti_maw_plating');
+    expect(result.payload.hangar.bankedMinerals).toBe(500);
+    expect(result.payload.hangar.bankedCores).toBe(5);
+  });
+});
+
+/**
+ * A ring-1 war with a bought, fully-equipped ship (the ship a deployment
+ * flies) plus un-flown spare parts and bought permanent levels.
+ */
+function boughtShipPayload(): HangarWarPayload {
+  const payload = ringPayload();
+  payload.hangar.bankedMinerals = 500;
+  payload.hangar.bankedCores = 5;
+  payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3'];
+  payload.hangar.unlockedWeapons = ['spread', 'wave_laser', 'ricochet'];
+  payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+  payload.hangar.activeHull = 'hull-2';
+  payload.hangar.activeLoadout = {
+    startingWeapons: ['wave_laser', 'spread'],
+    modifiers: ['hardened_plating'],
+  };
+  payload.hangar.weaponLevels = [
+    { id: 'wave_laser', level: 3 },
+    { id: 'ricochet', level: 2 },
+  ];
+  payload.hangar.powerUpLevels = [{ id: 'shield', level: 2 }];
+  return payload;
+}
+
+describe('the capture spends exactly the flown ship (AH-0MWL5PAP2001XYYF)', () => {
+  it('uses an explicit ship input rather than the hangar’s active ship', () => {
+    const payload = boughtShipPayload();
+    payload.hangar.activeHull = 'hull-3';
+    payload.hangar.activeLoadout = {
+      startingWeapons: ['ricochet'],
+      modifiers: ['anti_maw_plating'],
+    };
+
+    const result = resolveHexCapture(payload, {
+      hexId: 'hex-r1-3',
+      defenderHullId: 'hull-2',
+      ship: {
+        hullId: 'hull-2',
+        startingWeapons: ['wave_laser'],
+        modifiers: ['hardened_plating'],
+      },
+      salvage: victorySalvage(0, 0),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(true);
+    // The ship the battle actually flew is spent …
+    expect(result.payload.hangar.unlockedHulls).not.toContain('hull-2');
+    expect(result.payload.hangar.unlockedWeapons).not.toContain('wave_laser');
+    expect(result.payload.hangar.ownedModifiers).not.toContain(
+      'hardened_plating',
+    );
+    // … not the (different) ship the hangar had active.
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-3');
+    expect(result.payload.hangar.unlockedWeapons).toContain('ricochet');
+    expect(result.payload.hangar.ownedModifiers).toContain('anti_maw_plating');
+  });
+
+  it('spends nothing on a refused capture (no defender is not a completed battle)', () => {
+    const payload = boughtShipPayload();
+
+    const result = resolveHexCapture(payload, {
+      hexId: 'hex-r1-3',
+      defenderHullId: null,
+      salvage: victorySalvage(0, 0),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('defender-required');
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-2');
+    expect(result.payload.hangar.unlockedWeapons).toContain('wave_laser');
+    expect(result.payload.hangar.ownedModifiers).toContain('hardened_plating');
+    expect(result.payload.hangar.activeHull).toBe('hull-2');
   });
 });
 

@@ -94,6 +94,31 @@ function seededWar(): HangarWarPayload {
   };
 }
 
+/**
+ * A fresh war whose fleet owns and flies a bought ship (hull-2 + wave_laser +
+ * hardened_plating) plus un-flown spare parts and bought permanent levels
+ * (parent AH-0MWL5PAP2001XYYF).
+ */
+function boughtWar(): HangarWarPayload {
+  const war = seededWar();
+  war.hangar.bankedMinerals = 500;
+  war.hangar.bankedCores = 5;
+  war.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3'];
+  war.hangar.unlockedWeapons = ['spread', 'wave_laser', 'ricochet'];
+  war.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+  war.hangar.activeHull = 'hull-2';
+  war.hangar.activeLoadout = {
+    startingWeapons: ['wave_laser', 'spread'],
+    modifiers: ['hardened_plating'],
+  };
+  war.hangar.weaponLevels = [
+    { id: 'wave_laser', level: 3 },
+    { id: 'ricochet', level: 2 },
+  ];
+  war.hangar.powerUpLevels = [{ id: 'shield', level: 2 }];
+  return war;
+}
+
 /** Ends the live run deterministically on its final life. */
 function killPlayer(scene: PlayScene): void {
   scene.getGameState().lives = 1;
@@ -214,6 +239,58 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
       expect(landed.getRows().some((row) => row.key.startsWith('hex:'))).toBe(
         true,
       );
+    },
+  );
+
+  it(
+    'spends the flown ship when a deployment is lost end to end',
+    async () => {
+      // Seed a bought ship over the beforeEach starter-only war.
+      saveHangarWarPayload(boughtWar());
+
+      const menu = await bootShippedConfig();
+      hangarWarControl(menu).emit('pointerdown');
+      until('the hangar is shown', () => active(HANGAR_SCENE_KEY));
+      sceneOf<HangarScene>(HANGAR_SCENE_KEY)
+        .getRows()
+        .find((row) => row.key === 'map')!
+        .text.emit('pointerdown');
+      until('the hex map is shown', () => active(HEX_MAP_SCENE_KEY));
+
+      const hexRow = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY)
+        .getRows()
+        .find((row) => row.key.startsWith('hex:'));
+      expect(hexRow, 'the map has no deployable hex row').toBeDefined();
+      hexRow!.text.emit('pointerdown');
+      until('the deployment starts', () => active('PlayScene'));
+
+      const play = sceneOf<PlayScene>('PlayScene');
+      expect(play.isHangarWarRun()).toBe(true);
+      // The deployment really flies the bought ship.
+      expect(play.getHangarWarDeployment()!.hullId).toBe('hull-2');
+
+      killPlayer(play);
+      until('the hex map is shown', () => active(HEX_MAP_SCENE_KEY));
+
+      // The loss persisted the consumed ship through the scene's demo-guarded
+      // write (parent AH-0MWL5PAP2001XYYF).
+      const stored = loadHangarWarPayload()!;
+      expect(stored.hangar.unlockedHulls).not.toContain('hull-2');
+      expect(stored.hangar.unlockedWeapons).not.toContain('wave_laser');
+      expect(stored.hangar.ownedModifiers).not.toContain('hardened_plating');
+      expect(stored.hangar.activeHull).toBe('hull-1');
+      expect(stored.hangar.activeLoadout).toEqual({
+        startingWeapons: [],
+        modifiers: [],
+      });
+      // Un-flown owned items, the starter kit and the balances survive.
+      expect(stored.hangar.unlockedHulls).toContain('hull-3');
+      expect(stored.hangar.unlockedWeapons).toContain('ricochet');
+      expect(stored.hangar.ownedModifiers).toContain('anti_maw_plating');
+      expect(stored.hangar.bankedMinerals).toBe(500);
+      expect(stored.hangar.bankedCores).toBe(5);
+      // Only the flown weapon's level row is gone.
+      expect(stored.hangar.weaponLevels).toEqual([{ id: 'ricochet', level: 2 }]);
     },
   );
 

@@ -6,16 +6,12 @@
  * ship), **Q4 = B** (only the deployed ship is consumed — every un-flown owned
  * item and the free starter kit survive).
  *
- * These tests are deliberately written against the **existing** public seams —
- * `resolveHexCapture` (win) and `resolveDeploymentDefeat` (loss) — so this file
- * type-checks while it is red (the repo type-checks `src`, and a test may not
- * import a not-yet-existing export). The intentionally-red assertions are
- * authored under Vitest's `it.fails` (the repo's red-before/green-after
- * convention): the suite stays green today because the flown ship is
- * preserved, and the battle-end consumption item **flips every `it.fails` back
- * to `it`** when the reducer lands — a leftover `it.fails` then fails, so the
- * flip cannot be forgotten. The plain `it` cases below are guards that must
- * stay green before and after the change.
+ * These tests are written against the public seams — `resolveHexCapture` (win)
+ * and `resolveDeploymentDefeat` (loss). They were authored red under Vitest's
+ * `it.fails` (the repo's red-before/green-after convention) by the test-first
+ * child AH-0MWL9E7PH001VPG5 and are now plain `it` cases: the battle-end
+ * consumption item landed the pure reducer behind both resolvers, so a
+ * regression that preserves the flown ship fails here.
  *
  * The `DeployedShip` the resolver consumes is the hangar's own resolved ship
  * (`resolveActiveHull` / `resolveActiveLoadout`), which is exactly what a
@@ -93,7 +89,7 @@ function rowIds(rows: ReadonlyArray<{ readonly id: string }> | undefined): strin
 
 describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)', () => {
   describe('a winning deployment (resolveHexCapture)', () => {
-    it.fails('spends the flown hull, its starting weapons and its modifiers', () => {
+    it('spends the flown hull, its starting weapons and its modifiers', () => {
       const payload = stockedWar();
 
       const result = resolveHexCapture(payload, {
@@ -137,7 +133,7 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
       expect(hangar.unlockedWeapons).toContain('rapid');
     });
 
-    it.fails('deletes only the consumed ids’ permanent level rows', () => {
+    it('deletes only the consumed ids’ permanent level rows', () => {
       const payload = stockedWar();
 
       const result = resolveHexCapture(payload, {
@@ -159,7 +155,7 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
       );
     });
 
-    it.fails('resets the active ship to the starter hull with an empty loadout', () => {
+    it('resets the active ship to the starter hull with an empty loadout', () => {
       const payload = stockedWar();
 
       const result = resolveHexCapture(payload, {
@@ -219,7 +215,7 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
   });
 
   describe('a losing deployment (resolveDeploymentDefeat)', () => {
-    it.fails('spends the same flown ship and resets to the starter kit', () => {
+    it('spends the same flown ship and resets to the starter kit', () => {
       const payload = stockedWar();
 
       const outcome = resolveDeploymentDefeat(payload, {
@@ -280,7 +276,7 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
   });
 
   describe('no soft-lock: a fresh deployment still builds', () => {
-    it.fails('deploys the starter hull with only its permanent cannon after a win', () => {
+    it('deploys the starter hull with only its permanent cannon after a win', () => {
       const payload = stockedWar();
       const consumed = resolveHexCapture(payload, {
         hexId: 'hex-r1-3',
@@ -297,7 +293,7 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
       expect(deployment.startingLives).toBeGreaterThan(0);
     });
 
-    it.fails('deploys the starter hull with only its permanent cannon after a loss', () => {
+    it('deploys the starter hull with only its permanent cannon after a loss', () => {
       const payload = stockedWar();
       const consumed = resolveDeploymentDefeat(payload, {
         salvage: zeroSalvage(),

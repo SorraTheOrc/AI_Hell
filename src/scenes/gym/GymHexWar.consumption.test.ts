@@ -9,13 +9,10 @@
  * the consumed one — and that it deep-equals the game's own pure resolver
  * result for the same payload and inputs.
  *
- * Red on today's tree: the shared resolver currently preserves the flown ship.
- * The consumption assertion is authored under Vitest's `it.fails` (the repo's
- * red-before/green-after convention), so this suite stays green now; the
- * battle-end consumption item flips it back to `it` when the reducer lands,
- * and a leftover `it.fails` then fails the suite. The deep-equal parity case
- * is a plain `it` guard: both sides share one resolver, so it must hold before
- * and after the change.
+ * The consumption assertion was authored red under Vitest's `it.fails` by the
+ * test-first child AH-0MWL9E7PH001VPG5 and is now a plain `it`: the battle-end
+ * consumption item landed the reducer behind the shared resolver. The deep-equal
+ * parity case is a guard that both sides keep sharing one resolver.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -113,7 +110,7 @@ describe('GymHexWar — the capture spends the flown ship (AH-0MWL5PAP2001XYYF)'
     return booted.game.scene.getScene(GYM_HEX_WAR_SCENE_KEY) as GymHexWar;
   }
 
-  it.fails('consumes the flown hull, its weapons and modifiers through the gym seam', async () => {
+  it('consumes the flown hull, its weapons and modifiers through the gym seam', async () => {
     const scene = await bootHexWar(equippedWar());
 
     const result = scene.captureHex('target', 'hull-2', zeroSalvage());
