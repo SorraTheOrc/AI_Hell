@@ -1740,5 +1740,89 @@ describe('HexMapScene', () => {
         expect(holdersOf(row.text.getBounds())).toEqual(['map']);
       }
     });
+
+    it('drops last-sortie from the registry on a later entry without news', async () => {
+      // The transient news is launch data only: a later menu/hangar landing
+      // carries none, so the section and its registry entry are both absent.
+      const payload = ringPayload(1);
+      const scene = await bootMap({
+        payload,
+        won: true,
+        score: 500,
+        winBonusMinerals: 100,
+        storage: null,
+      });
+      expect(scene.getSections().map((section) => section.key)).toContain(
+        'last-sortie',
+      );
+
+      booted!.game.scene.start(HEX_MAP_SCENE_KEY, { payload, storage: null });
+      await advanceGame(booted!.game, 200);
+      const reentered = booted!.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as HexMapScene;
+
+      expect(reentered.getSections().map((section) => section.key)).toEqual([
+        'war-status',
+        'map',
+        'selected-hex',
+        'controls',
+      ]);
+      expect(screenText(reentered)).not.toContain(LAST_SORTIE_HEADING);
+      expect(screenText(reentered)).not.toContain('RUN:');
+      expect(screenText(reentered)).not.toContain('WIN BONUS');
+    });
+
+    it('draws every registry heading inside its own section', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+
+      // Registry ↔ drawing: the published heading for a section is the
+      // heading actually rendered inside that section's rect.
+      for (const section of scene.getSections()) {
+        const heading = findTextStartingWith(scene, section.heading);
+        expect(insideSection(heading, section.key)).toBe(true);
+      }
+    });
+
+    it('never lets another section’s text overdraw the ring', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+      const mapRect = HEX_MAP_SECTION_RECTS.map;
+
+      /** Whether the bounds intersect the map section at all. */
+      const touchesMap = (bounds: {
+        x: number;
+        y: number;
+        right: number;
+        bottom: number;
+      }): boolean =>
+        bounds.x < mapRect.x + mapRect.width &&
+        mapRect.x < bounds.right &&
+        bounds.y < mapRect.y + mapRect.height &&
+        mapRect.y < bounds.bottom;
+
+      for (const text of allTexts(scene)) {
+        // Tile labels, the map title and the run-result line legitimately sit
+        // in the map section; everything else must stay clear of the ring.
+        if (insideSection(text, 'map')) continue;
+        expect(
+          touchesMap(text.getBounds()),
+          `text "${text.text.slice(0, 24)}" strays into the ring`,
+        ).toBe(false);
+      }
+    });
   });
 });

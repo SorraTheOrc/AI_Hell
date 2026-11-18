@@ -27,13 +27,17 @@ import {
 } from './defenceReport';
 import { createRingState, generateRing } from './hexRing';
 import {
+  CONTROLS_HEADING,
   HELD_TILE_MARKER,
+  LAST_SORTIE_HEADING,
+  SELECTED_HEX_HEADING,
   SPECIAL_MISSION_PANEL_HEADING,
   SPECIAL_MISSION_TILE_TAG,
   HEX_MAP_HANGAR_LABEL,
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
   UNHELD_TILE_MARKER,
+  WAR_STATUS_HEADING,
   buildHexIntel,
   buildHexMapModel,
   isHexDisplayed,
@@ -1397,5 +1401,43 @@ describe('hex map model — special-mission intel (AH-0MWF0CWB7002MG2F)', () => 
         .filter((hex) => hex.specialMission?.offeredNow)
         .map((hex) => hex.id),
     ).toEqual(['hex-r1-5']);
+  });
+});
+
+/**
+ * Shared section headings (AH-0MWL4QCVD007WOAM).
+ *
+ * The sectioned map is headed by these constants — one per rendered section —
+ * so the game, the parity gym and the renderer's published section registry
+ * can never disagree about what a region is called. Colour is never the
+ * distinction, so the headings must stay distinct, uppercase labels.
+ */
+describe('map section headings', () => {
+  it('publishes one distinct, uppercase heading per section', () => {
+    expect(WAR_STATUS_HEADING).toBe('WAR STATUS');
+    expect(LAST_SORTIE_HEADING).toBe('LAST SORTIE');
+    expect(SELECTED_HEX_HEADING).toBe('SELECTED HEX');
+    expect(CONTROLS_HEADING).toBe('CONTROLS');
+
+    const headings = [
+      WAR_STATUS_HEADING,
+      LAST_SORTIE_HEADING,
+      SELECTED_HEX_HEADING,
+      CONTROLS_HEADING,
+      HEX_MAP_TITLE,
+    ];
+    expect(new Set(headings).size).toBe(headings.length);
+    for (const heading of headings) {
+      expect(heading).toBe(heading.toUpperCase());
+      expect(heading.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('heads the map section with the map model’s own title', () => {
+    const payload = createDefaultPayload(11);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    const model = buildHexMapModel(payload, {});
+
+    expect(model.title).toBe(HEX_MAP_TITLE);
   });
 });
