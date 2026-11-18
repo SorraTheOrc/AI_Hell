@@ -3111,12 +3111,27 @@ expiring disarms it, so a stray Enter only ever arms the control and never wipes
 the war. The attract demo renders the row non-actionable and never resets or
 writes the war.
 - **`HexMapScene`** — the hangar at the centre and the current ring around it,
-with every hex's **known-ahead intel**: held/unheld and aggression on the tile
-(tile colour plus a readable `AGG n` badge), and — in the **detail panel for
-the focused hex** (tab/arrows move focus; read-only renders default to the
-model's first hex) — the boss that holds it, what that boss is **strong and
-weak against**, the weapon or upgrade the hex grants, the defending hull and
-any queued attack (AH-0MW3VG6WJ004HRI9). Every line of that overview carries
+laid out as **four content sections plus a controls footer**, each drawn as a
+**bordered, headed panel** so every group of information is distinguishable at
+a glance and by framing rather than by colour (AH-0MWL4QCVD007WOAM):
+
+  | Section | Holds |
+  |---|---|
+  | `WAR STATUS` | ring progress, frontier strength / beatable ceiling / in-reach count, hangar hull and banked minerals/cores |
+  | `LAST SORTIE` | the transient "what just happened" news — run result, banked win bonus, hangar-assault outcome — **only** when the landing carries one, never an empty box |
+  | `HANGAR WAR — HEX MAP` (the map) | the ring tiles, attack arrows and the hangar marker |
+  | `SELECTED HEX` | the focused hex's full intel **and** its `ATTACK — FOCUSED HEX` row (the attack row is hidden, never moved, when the hex is in no attack) |
+  | `CONTROLS` | the `READ THE MAP` legend, the keyboard hint line and the `◀ HANGAR` row |
+
+  The renderer publishes the same section registry (`sections`: one
+  `{ key, heading, rect }` per rendered section) to the game and to the parity
+  gym, so the two can never describe different regions of the screen. The
+  focused hex's **known-ahead intel** lives in `SELECTED HEX`: held/unheld and
+  aggression on the tile (tile colour plus a readable `AGG n` badge), and — for
+  the focused hex (tab/arrows move focus; read-only renders default to the
+  model's first hex) — the boss that holds it, what that boss is **strong and
+  weak against**, the weapon or upgrade the hex grants, the defending hull and
+  any queued attack (AH-0MW3VG6WJ004HRI9). Every line of that overview carries
 an explicit capitalised title (`ID:`, `STATE:`, `AGGRESSION:`, `BOSS:`,
 `STRENGTHS:`, `WEAKNESSES:`, `GRANT:`, `DEFENDER:`, `SKILL:`,
 `PENDING ATTACK:`) so the player never decodes an abbreviation, while the
@@ -3125,15 +3140,15 @@ CONTRACT / BONUS sections keep their titles (AH-0MWJ0XHWW009GTKK). It is also
 the **post-deployment surface**: a finished sortie hands over its frontier-tick
 record and the map
 draws the between-sortie report on the same view — one attack arrow per attack
-on the ring, plus a left-hand attack panel with that attack's numbers (there is
-no separate report screen). Activating an
+on the ring, plus that attack's numbers as the attack row of the `SELECTED HEX`
+section (there is no separate report screen). Activating an
 **unheld** hex deploys at it; the `◀ HANGAR` row is one click from what the
 player owns (the design's "map and hangar one click apart"); ESC returns to the
 menu.
 
 The **between-sortie defence report** is not a screen of its own: it is drawn on
-the map (attack arrows on the ring plus a left-hand attack panel) from the tick
-record a deployment hands over — see
+the map (attack arrows on the ring plus the `SELECTED HEX` section's attack row)
+from the tick record a deployment hands over — see
 § *[The defence report](#the-defence-report)* below.
 
 A deployment is still the **shipped run** (`PlayScene` + `src/scenes/core/`):
@@ -3151,9 +3166,10 @@ and never spawns the final boss, so taking a hex is a bounded sortie rather than
 the rest of the campaign. The mini-boss victory runs the capture cycle
 (below) and ends the run as a **victory**. On a win the player sees, in order,
 the mini-boss defeat → **`HexMapScene`**, which announces the **banked win
-bonus** and carries the between-sortie report on the map itself: the newly held
-hex, the tick's attack arrows and the left-hand attack panel are all one
-surface, and there is no separate screen to click through.
+bonus** (`WIN BONUS BANKED: +N MINERALS`, drawn in the `LAST SORTIE` section)
+and carries the between-sortie report on the map itself: the newly held hex,
+the tick's attack arrows and the `SELECTED HEX` section's attack row are all
+one surface, and there is no separate screen to click through.
 
 **No reward overlay on the win path** (parent **AH-0MWEVNBMM000QFO2**; producer
 decisions **Q1 = (c)**, **Q2 = (a)**, **Q3 = (b)**, recorded 2026-11-13 on
@@ -3644,7 +3660,8 @@ map renders it on its one integrated view without re-deriving a single figure:
 - **Attack arrows on the ring**: one arrow per attack in the record, drawn
   between the origin hex and the hex it struck, so the shape of the tick reads
   at a glance.
-- **A left-hand attack panel** for the inspected arrow endpoint. It names which
+- **The `SELECTED HEX` section's attack row** for the inspected arrow endpoint
+  (drawn in the same panel as that hex's intel). It names which
   hexes were attacked, whether each **held or fell**, and the numbers that
   decided it — defender rating, attacking force, aggression multiplier, jitter,
   attack strength and margin (the record's `buildDefenceReport` row, copied
@@ -3890,9 +3907,11 @@ and its gym (AGENTS.md gym↔game parity):
 - **`GymHexWar`** — renders the shipped hex map (`buildHexMapModel` +
   `renderHexMap`) — read-only, so the tile aggression badges and the detail
   panel defaulting to the model's first hex are what the game shows — including
-  the **rolled-in report**: the attack arrows and the left-hand attack panel
-  built from the **shipped** frontier tick's record (`runFrontierTick`, with the
-  panel rows copied from `buildDefenceReport`) — and exposes the
+  the **sectioned layout** (the same `sections` registry, `LAST SORTIE` news and
+  `SELECTED HEX` intel-plus-attack-row grouping) and the **rolled-in report**:
+  the attack arrows and the `SELECTED HEX` section's attack row built from the
+  **shipped** frontier tick's record (`runFrontierTick`, with the panel rows
+  copied from `buildDefenceReport`) — and exposes the
   `take hex → leave bot → tick` control surface through the documented
   deterministic harness double. It also drives the **ring-end hangar assault**
   (`resolveRingAssault`) over its payload and renders the game's own `RING WON` /

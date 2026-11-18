@@ -16,6 +16,30 @@
  * the gym shows exactly what the game shows and can never drift from it
  * (AGENTS.md gym↔game parity, `docs/GYM_PARITY.md`).
  *
+ * ## Sections (AH-0MWL4QCVD007WOAM)
+ *
+ * The screen is laid out as **four content sections plus a controls footer**,
+ * each drawn as a bordered, headed panel with a bounded rect, so every group of
+ * information is distinguishable at a glance and by framing rather than by
+ * colour (`docs/GYM_PARITY.md`, GDD §8.2):
+ *
+ * - `war-status` — ring progress, frontier strength and the hangar's hull and
+ *   banked resources (`WAR STATUS`).
+ * - `last-sortie` — the transient "what just happened" news: the run result,
+ *   the banked win bonus and the hangar-assault outcome. Present only when the
+ *   landing carries one of them, so there is never an empty headed box.
+ * - `map` — the model's own title, the ring tiles, the attack arrows and the
+ *   hangar marker.
+ * - `selected-hex` — the focused hex's full intel **and** its attack row, so
+ *   one hex is one story (`SELECTED HEX`).
+ * - `controls` — the `READ THE MAP` legend, the keyboard hint line and the
+ *   `◀ HANGAR` row (`CONTROLS`).
+ *
+ * The rects live in one table ({@link HEX_MAP_SECTION_RECTS}), the headings in
+ * shared constants (`src/core/hangarWar/hexIntel.ts`), and the view publishes
+ * the same list as {@link HexMapView.sections} — so the game and the parity gym
+ * describe identical regions and cannot drift.
+ *
  * ## Reveal, CVD-safe ownership and owned-hex selection
  * (renderer item AH-0MWEWYUAS002P7P9, parent AH-0MWDBI33V003QQ3U)
  *
@@ -43,12 +67,13 @@
  * navigation rule of its own, only the row-key → control-index mapping.
  *
  * Layout is a pointy-top axial grid: ring 2's twelve hexes fit around the
- * hangar without overlapping. Each tile leads with its aggression badge
- * (`AGG n`) and ownership marker at the readable tile size, with the axial
- * coordinates `(q,r)` on a separate line below them, drawn smaller (producer
- * review AH-0MWDBI33V003QQ3U, 2026-11-15) — guidance, not clutter; the focused
- * hex's full known-ahead intel renders in the right-hand detail panel — so
- * nothing has to be squinted at to be read (AH-0MW3VG6WJ004HRI9).
+ * hangar without overlapping, inside the `map` section's rect. Each tile leads
+ * with its aggression badge (`AGG n`) and ownership marker at the readable tile
+ * size, with the axial coordinates `(q,r)` on a separate line below them, drawn
+ * smaller (producer review AH-0MWDBI33V003QQ3U, 2026-11-15) — guidance, not
+ * clutter; the focused hex's full known-ahead intel renders in the
+ * `selected-hex` section — so nothing has to be squinted at to be read
+ * (AH-0MW3VG6WJ004HRI9).
  *
  * ## Rolled-in defence report (`AH-0MWDC3L9I008INDP`)
  *
@@ -60,11 +85,12 @@
  *   {@link axialToPixel} layout (the record only supplies the origin's axial
  *   coordinates; the target's come from its rendered tile, so the renderer
  *   never invents geometry for a hex the map does not show).
- * - **Left-hand attack panel** — the report model's own row for the focused
- *   hex whenever it is **either** arrow endpoint (the attacked hex *or* its
- *   attacker-origin hex), and hidden otherwise. It copies the row's text
- *   verbatim, so the map can never publish a second, drifting set of numbers
- *   (AGENTS.md gym↔game parity).
+ * - **Attack row of the `selected-hex` section** — the report model's own row
+ *   for the focused hex whenever it is **either** arrow endpoint (the attacked
+ *   hex *or* its attacker-origin hex), and hidden otherwise. It sits under that
+ *   hex's intel in the same panel (one hex, one story) and copies the row's
+ *   text verbatim, so the map can never publish a second, drifting set of
+ *   numbers (AGENTS.md gym↔game parity).
  *
  * Both are driven by the shipped model (`arrows` / `attackDetails`), never by
  * a scene-local rule, and both disappear when the transient record does.
@@ -72,8 +98,8 @@
  * ## The hangar assault announcement (`AH-0MWEZZA4E0081NJ5`)
  *
  * When the model carries a resolved ring-end hangar assault (`model.assault`),
- * the renderer draws its section in the left-hand column under the attack
- * panel: the outcome headline (`RING WON …` / `HANGAR FALLS …`), the arithmetic
+ * the renderer draws its block inside `last-sortie`, beside the run result and
+ * the banked win bonus: the outcome headline (`RING WON …` / `HANGAR FALLS …`), the arithmetic
  * that produced it and the consequence (the next ring opens / the full campaign
  * reset). The text is the report model's own `assaultLine`, copied verbatim,
  * so the map can never publish a second, drifting set of assault numbers — and
@@ -483,11 +509,11 @@ export interface HexMapView {
   /** The detail panel's current text (the full known-ahead intel). */
   getPanelText(): string;
   /**
-   * The left-hand attack panel's current text (the focused attack's row), or
-   * `''` when the focused hex is in no attack.
+   * The `selected-hex` section's attack-row text (the focused attack's row),
+   * or `''` when the focused hex is in no attack.
    */
   getLeftPanelText(): string;
-  /** Whether the left-hand attack panel is showing. */
+  /** Whether the `selected-hex` section's attack row is showing. */
   isLeftPanelVisible(): boolean;
   /**
    * The hangar-assault banner's current text (the report model's own

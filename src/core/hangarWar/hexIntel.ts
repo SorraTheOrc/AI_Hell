@@ -61,6 +61,12 @@
  * - **Grid columns.** `gridColumns` exposes the spatial arrow-navigation data
  *   over displayed hexes with the `◀ HANGAR` row folded in as a bottom row — a
  *   pure read model the renderer wires without a per-scene rule.
+ * - **Section headings.** `WAR_STATUS_HEADING`, `LAST_SORTIE_HEADING`,
+ *   `SELECTED_HEX_HEADING` and `CONTROLS_HEADING` (with `HEX_MAP_TITLE`
+ *   heading the map itself) name the sections the shared renderer draws, so
+ *   the game and the parity gym label the same regions identically and a
+ *   section is told apart by its frame and heading, never by colour
+ *   (AH-0MWL4QCVD007WOAM, GDD §8.2).
  *
  * ## Attack preview
  *
