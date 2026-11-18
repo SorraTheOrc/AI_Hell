@@ -78,10 +78,12 @@ import {
 } from '../core/hangarWar/hangarWarStore';
 import { createRingState } from '../core/hangarWar/hexRing';
 import {
+  CONTROLS_HEADING,
   HELD_TILE_MARKER,
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
   UNHELD_TILE_MARKER,
+  WAR_STATUS_HEADING,
   buildHexMapModel,
   pickAttractHex,
   type HexMapModel,
@@ -109,7 +111,7 @@ import {
 } from '../powerups/miniBossWheel';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
-import { HEX_MAP_HINT } from './hangarWar/hexMap';
+import { HEX_MAP_HINT, HEX_MAP_SECTION_RECTS } from './hangarWar/hexMap';
 import { MineralChoiceScene } from './MineralChoiceScene';
 import {
   MINI_BOSS_WHEEL_SCENE_KEY,
@@ -1367,5 +1369,132 @@ describe('HexMapScene', () => {
       () => booted!.game.scene.isActive('PlayScene'),
       900,
     );
+  });
+
+  /**
+   * Sectioned layout (AH-0MWL4QCVD007WOAM).
+   *
+   * The screen is four content sections plus a controls footer, each drawn as
+   * a bordered panel headed from a shared constant. This block pins the
+   * `war-status` / `map` / `controls` slices: every heading renders, every
+   * string still renders inside its own panel, the legend has left the intel
+   * column, and nothing shrinks below the map's existing type floor.
+   */
+  describe('sectioned layout (war-status, map, controls)', () => {
+    /** Every rendered text object, in draw order. */
+    function allTexts(scene: Phaser.Scene): Phaser.GameObjects.Text[] {
+      return scene.children.list.filter(
+        (child): child is Phaser.GameObjects.Text =>
+          child instanceof Phaser.GameObjects.Text,
+      );
+    }
+
+    /** Whether `text` is wholly inside the section rect `key`. */
+    function insideSection(
+      text: Phaser.GameObjects.Text,
+      key: keyof typeof HEX_MAP_SECTION_RECTS,
+    ): boolean {
+      const rect = HEX_MAP_SECTION_RECTS[key];
+      const bounds = text.getBounds();
+      return (
+        bounds.x >= rect.x &&
+        bounds.y >= rect.y &&
+        bounds.right <= rect.x + rect.width &&
+        bounds.bottom <= rect.y + rect.height
+      );
+    }
+
+    it('heads war-status, map and controls from shared constants', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      const warHeading = findTextStartingWith(scene, WAR_STATUS_HEADING);
+      const mapHeading = findTextStartingWith(scene, HEX_MAP_TITLE);
+      const controlsHeading = findTextStartingWith(scene, CONTROLS_HEADING);
+
+      // Every heading sits inside its section's rect (frame + heading
+      // convention), so the section is identifiable without colour.
+      expect(insideSection(warHeading, 'war-status')).toBe(true);
+      expect(insideSection(mapHeading, 'map')).toBe(true);
+      expect(insideSection(controlsHeading, 'controls')).toBe(true);
+      // Headings are at least 10px (the map's own title keeps its 20px).
+      expect(warHeading.style.fontSize).toBe('10px');
+      expect(controlsHeading.style.fontSize).toBe('10px');
+    });
+
+    it('keeps every war-status line inside the war-status panel', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+      const model = scene.getModel();
+
+      for (const line of [
+        model.ringLine,
+        model.frontierLine,
+        model.hangarLine,
+      ]) {
+        const text = findTextStartingWith(scene, line.slice(0, 12));
+        expect(text.text).toBe(line);
+        expect(insideSection(text, 'war-status')).toBe(true);
+      }
+      // The war status is no longer loose header text in the left column.
+      expect(insideSection(findTextStartingWith(scene, model.ringLine), 'map'))
+        .toBe(false);
+    });
+
+    it('moves the READ THE MAP legend into the controls footer', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+      const legendPrefixes = [
+        'READ THE MAP',
+        'blue ● — held',
+        '(q,r) — coordinates',
+        'arrows — spatial',
+        'enter/space — inspect or deploy',
+        'detail panel — full intel',
+      ];
+
+      for (const prefix of legendPrefixes) {
+        const text = findTextStartingWith(scene, prefix);
+        expect(insideSection(text, 'controls')).toBe(true);
+        // ...and out of the intel column it used to share.
+        expect(insideSection(text, 'selected-hex')).toBe(false);
+      }
+    });
+
+    it('keeps the hint line and the hangar row in the controls footer', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+      const hint = findTextStartingWith(scene, HEX_MAP_HINT);
+      const hangarRow = findTextStartingWith(
+        scene,
+        scene.getModel().hangarRow.label,
+      );
+
+      expect(insideSection(hint, 'controls')).toBe(true);
+      expect(insideSection(hangarRow, 'controls')).toBe(true);
+      expect(hangarRow.style.fontSize).toBe('12px');
+    });
+
+    it('renders no text smaller than 9px', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      for (const text of allTexts(scene)) {
+        const size = Number.parseInt(String(text.style.fontSize), 10);
+        expect(size, `text "${text.text.slice(0, 24)}" is ${size}px`).
+          toBeGreaterThanOrEqual(9);
+      }
+    });
+
+    it('wraps section body text instead of letting it leave its panel', async () => {
+      // A long frontier line is the widest war-status string; it must word-wrap
+      // inside the panel rather than run into the ring (no text overdraws a
+      // tile).
+      const scene = await bootMap({ payload: ringPayload(2), storage: null });
+      const frontier = findTextStartingWith(
+        scene,
+        scene.getModel().frontierLine.slice(0, 12),
+      );
+
+      expect(insideSection(frontier, 'war-status')).toBe(true);
+      expect(frontier.style.wordWrapWidth).toBe(
+        HEX_MAP_SECTION_RECTS['war-status'].width - 16,
+      );
+    });
   });
 });

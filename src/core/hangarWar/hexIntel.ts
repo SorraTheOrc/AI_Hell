@@ -169,6 +169,20 @@ import {
 /** Title rendered by the map screen (asserted by tests). */
 export const HEX_MAP_TITLE = 'HANGAR WAR — HEX MAP';
 
+/**
+ * Section headings of the sectioned map screen (AH-0MWL4QCVD007WOAM).
+ *
+ * Every region of the map is a bordered, headed panel, and each heading comes
+ * from one of these shared constants (the `map` section is headed by
+ * {@link HEX_MAP_TITLE}, the map's own title). The renderer draws them; the
+ * game and the parity gym therefore show exactly the same headings, and a
+ * section is distinguishable by its frame and heading rather than by colour.
+ */
+export const WAR_STATUS_HEADING = 'WAR STATUS';
+
+/** Heading of the map's controls footer (keyboard hint, legend, hangar row). */
+export const CONTROLS_HEADING = 'CONTROLS';
+
 /** Row key of the "◀ HANGAR" navigation row. */
 export const HEX_MAP_HANGAR_ROW_KEY = 'hangar';
 
