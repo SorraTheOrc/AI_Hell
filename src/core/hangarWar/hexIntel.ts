@@ -189,6 +189,14 @@ export const CONTROLS_HEADING = 'CONTROLS';
  */
 export const SELECTED_HEX_HEADING = 'SELECTED HEX';
 
+/**
+ * Heading of the map's `last-sortie` section: the transient "what just
+ * happened" news (run result, banked win bonus, hangar-assault outcome). The
+ * section is absent — heading included — when the landing carries none of the
+ * three.
+ */
+export const LAST_SORTIE_HEADING = 'LAST SORTIE';
+
 /** Row key of the "◀ HANGAR" navigation row. */
 export const HEX_MAP_HANGAR_ROW_KEY = 'hangar';
 

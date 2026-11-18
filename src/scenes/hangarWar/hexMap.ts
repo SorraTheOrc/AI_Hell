@@ -90,6 +90,7 @@ import { GAME_WIDTH } from '../../core/constants';
 import {
   CONTROLS_HEADING,
   HEX_MAP_HANGAR_ROW_KEY,
+  LAST_SORTIE_HEADING,
   SELECTED_HEX_HEADING,
   WAR_STATUS_HEADING,
   type HexIntel,
@@ -381,12 +382,9 @@ const SELECTED_HEX_ATTACK_GAP = 10;
 const ATTACK_PANEL_HEADING = 'ATTACK — FOCUSED HEX';
 
 /**
- * Hangar-assault banner (`AH-0MWEZZA4E0081NJ5`): the report model's own
- * `assaultLine`, word-wrapped inside the left band.
+ * Sub-heading of the hangar-assault outcome (`AH-0MWEZZA4E0081NJ5`) inside the
+ * `last-sortie` section: the report model's own `assaultLine` follows it.
  */
-const ASSAULT_BANNER_X = 24;
-const ASSAULT_BANNER_Y = 306;
-const ASSAULT_BANNER_WIDTH = 225;
 const ASSAULT_BANNER_HEADING = 'HANGAR ASSAULT';
 
 /** Attack-arrow styling (drawn between the tile fills and the tile labels). */
@@ -721,6 +719,69 @@ interface TileLabelTexts {
 }
 
 /**
+ * Draws the `last-sortie` section: the transient "what just happened" news.
+ *
+ * The deployment's run result, the banked win bonus and the hangar-assault
+ * outcome are gathered here instead of arriving in three corners of the
+ * screen. The section renders **only** when the landing carries at least one of
+ * them, so a later entry shows no empty headed box, and every string is the
+ * model's own (`options.runLine`, `model.winBonusLine`, `model.assaultLine`),
+ * copied verbatim.
+ *
+ * @returns the assault body text object (the `getAssaultText()` seam), or
+ * `null` when the landing carries no assault.
+ */
+function renderLastSortieSection(
+  scene: Phaser.Scene,
+  objects: Phaser.GameObjects.GameObject[],
+  model: HexMapModel,
+  options?: HexMapRenderOptions,
+): Phaser.GameObjects.Text | null {
+  const runLine = options?.runLine ?? null;
+  const winBonusLine = model.winBonusLine;
+  const assaultLine = model.assaultLine;
+  if (runLine === null && winBonusLine === null && assaultLine === null) {
+    return null;
+  }
+
+  const rect = HEX_MAP_SECTION_RECTS['last-sortie'];
+  drawSectionPanel(scene, objects, rect, LAST_SORTIE_HEADING);
+  const x = sectionBodyX(rect);
+  const wrap = sectionBodyWidth(rect);
+  let y = sectionBodyY(rect);
+
+  const addLine = (
+    text: string,
+    fontSize: string,
+    color: string,
+    gap: number,
+  ): Phaser.GameObjects.Text => {
+    const line = scene.add.text(x, y, text, {
+      fontFamily: 'monospace',
+      fontSize,
+      color,
+      lineSpacing: 2,
+      wordWrap: { width: wrap },
+    });
+    objects.push(line);
+    y += line.height + gap;
+    return line;
+  };
+
+  if (runLine !== null) addLine(runLine, '13px', TEXT_COLOR, 4);
+  if (winBonusLine !== null) addLine(winBonusLine, '11px', WON_COLOR, 4);
+  if (assaultLine === null) return null;
+
+  addLine(ASSAULT_BANNER_HEADING, SECTION_HEADING_SIZE, HEADING_COLOR, 2);
+  return addLine(
+    assaultLine,
+    '11px',
+    model.campaignReset ? FALLS_COLOR : WON_COLOR,
+    0,
+  );
+}
+
+/**
  * Draws and labels one hex tile.
  *
  * The label is split so the aggression badge (line 1) renders at the readable
@@ -813,21 +874,9 @@ export function renderHexMap(
   renderWarStatusSection(scene, objects, model);
   renderMapSection(scene, objects, model);
   renderControlsSection(scene, objects, options);
-
-  // The between-sortie run result line, centred under the title so it never
-  // collides with the left-hand header rows or the attack panel band.
-  const runLine = options?.runLine ?? null;
-  if (runLine) {
-    objects.push(
-      scene.add
-        .text(GAME_WIDTH / 2, 46, runLine, {
-          fontFamily: 'monospace',
-          fontSize: '13px',
-          color: TEXT_COLOR,
-        })
-        .setOrigin(0.5, 0),
-    );
-  }
+  // Transient news has one home: the run result, the banked win bonus and the
+  // assault outcome are all in `last-sortie` (or the section is absent).
+  const assaultBody = renderLastSortieSection(scene, objects, model, options);
 
   renderHangarMarker(scene, objects, model);
 
@@ -1083,35 +1132,6 @@ export function renderHexMap(
     attackPanelHeading.setVisible(detail !== undefined);
     attackPanelBody.setVisible(detail !== undefined);
   };
-
-  // ── The hangar-assault announcement (AH-0MWEZZA4E0081NJ5) ───────
-  // The report model's own section, copied verbatim: a repel announces the
-  // ring won, a fall announces the full campaign reset. Read-only, so the
-  // attract traversal keeps its one total next action and never stalls here.
-  const assaultLine = model.assaultLine;
-  let assaultBody: Phaser.GameObjects.Text | null = null;
-  if (assaultLine !== null) {
-    objects.push(
-      scene.add.text(ASSAULT_BANNER_X, ASSAULT_BANNER_Y, ASSAULT_BANNER_HEADING, {
-        fontFamily: 'monospace',
-        fontSize: '10px',
-        color: HEADING_COLOR,
-      }),
-    );
-    assaultBody = scene.add.text(
-      ASSAULT_BANNER_X,
-      ASSAULT_BANNER_Y + 16,
-      assaultLine,
-      {
-        fontFamily: 'monospace',
-        fontSize: '11px',
-        color: model.campaignReset ? FALLS_COLOR : WON_COLOR,
-        lineSpacing: 2,
-        wordWrap: { width: ASSAULT_BANNER_WIDTH },
-      },
-    );
-    objects.push(assaultBody);
-  }
 
   const updatePanel = (): void => {
     paintTiles();

@@ -82,6 +82,7 @@ import {
   HELD_TILE_MARKER,
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
+  LAST_SORTIE_HEADING,
   SELECTED_HEX_HEADING,
   UNHELD_TILE_MARKER,
   WAR_STATUS_HEADING,
@@ -1555,6 +1556,61 @@ describe('HexMapScene', () => {
       ).toBe(false);
       // No attack row was smuggled into another section.
       expect(screenText(scene)).not.toContain('retake: strike');
+    });
+
+    it('gathers the run result and the assault outcome into last-sortie', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+
+      const heading = findTextStartingWith(scene, LAST_SORTIE_HEADING);
+      const runLine = findTextStartingWith(scene, 'RUN: VICTORY');
+      const assaultHeading = findTextStartingWith(scene, 'HANGAR ASSAULT');
+      const assaultText = findTextStartingWith(scene, 'RING WON');
+
+      for (const text of [heading, runLine, assaultHeading, assaultText]) {
+        expect(insideSection(text, 'last-sortie')).toBe(true);
+      }
+      // One place for "what just happened": nothing is left over the map or in
+      // the selected-hex/intel column.
+      expect(insideSection(runLine, 'map')).toBe(false);
+      expect(insideSection(assaultText, 'selected-hex')).toBe(false);
+      // The seams still report the same content.
+      expect(scene.getAssaultText()).toContain('defender sum 12');
+      expect(scene.isAssaultVisible()).toBe(true);
+    });
+
+    it('draws the banked win bonus inside last-sortie (Q3 = a)', async () => {
+      const scene = await bootMap({
+        payload: ringPayload(1),
+        winBonusMinerals: 250,
+        storage: null,
+      });
+
+      const winBonus = findTextStartingWith(scene, 'WIN BONUS BANKED');
+      expect(winBonus.text).toBe('WIN BONUS BANKED: +250 MINERALS');
+      expect(insideSection(winBonus, 'last-sortie')).toBe(true);
+      expect(
+        insideSection(
+          findTextStartingWith(scene, LAST_SORTIE_HEADING),
+          'last-sortie',
+        ),
+      ).toBe(true);
+    });
+
+    it('omits the last-sortie section when the landing carries no news', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      expect(screenText(scene)).not.toContain(LAST_SORTIE_HEADING);
+      expect(screenText(scene)).not.toContain('RUN:');
+      expect(screenText(scene)).not.toContain('WIN BONUS');
+      expect(screenText(scene)).not.toContain('HANGAR ASSAULT');
+      expect(scene.getAssaultText()).toBe('');
     });
   });
 });
