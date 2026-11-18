@@ -367,6 +367,16 @@ see `src/test/wallClockWaitGuard.test.ts`). Its four 600-tick runs and full
 record-stream stringifications were already pinned GREEN and unchanged; the
 budget is the only change.
 
+`src/scenes/hangarWarTraversal.integration.test.ts` joined on 2026-11-18
+(AH-0MWMNFAHM006UOYF) with the same symptom: each test boots a full Phaser game
+and walks the whole attract surface (menu → map → deployment → map, plus the
+mini-boss win path), which is several seconds of scene-graph boot and simulated
+stepping. It declared no budget, so under full-suite parallel load it was
+killed at 5 s with no assertion failure — while the same test passed in 19.7 s
+of wall clock when run on its own. File-level budget `30_000`: the traversal's
+own bounds (`STEP_FRAMES`, the `until` helper) remain the behavioural contract,
+so the budget only stops a *slow* run being reported as a hang.
+
 ### Subprocess-spawn tests
 
 The same reasoning applies to tests whose work is a **real child process**

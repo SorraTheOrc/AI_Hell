@@ -24,7 +24,7 @@
  * end) fails here.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   advanceGame,
@@ -58,6 +58,18 @@ import {
 import { GameOverScene } from './GameOverScene';
 import { LeaderboardScene } from './LeaderboardScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
+
+// Every test here boots a full Phaser game and walks the whole attract
+// surface (menu → map → deployment → map, and the mini-boss win path), so the
+// per-test work is real scene-graph boot plus simulated stepping — several
+// seconds even on a quiet host. Under full-suite parallel load that work
+// drifts past the Vitest 5 s default and the test is killed with
+// `Test timed out in 5000ms` and no assertion failure (AH-0MWMNFAHM006UOYF,
+// environmental-saturation family AH-0MVSBEIVK003XAFB). The traversal bounds
+// below (`STEP_FRAMES`, `until`) stay the behavioural contract — this budget
+// is only the wall-clock bound, with headroom that still fails a genuine hang.
+// See docs/dev/test-suite-timing.md, "Per-file timing budgets".
+vi.setConfig({ testTimeout: 30000 });
 
 /** Short per-screen dwell so the traversal runs in test time, not wall time. */
 const DWELL_MS = 80;
