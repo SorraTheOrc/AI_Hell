@@ -183,6 +183,12 @@ export const WAR_STATUS_HEADING = 'WAR STATUS';
 /** Heading of the map's controls footer (keyboard hint, legend, hangar row). */
 export const CONTROLS_HEADING = 'CONTROLS';
 
+/**
+ * Heading of the map's `selected-hex` section, which holds the focused hex's
+ * full intel **and** its rolled-in attack row — one hex, one section.
+ */
+export const SELECTED_HEX_HEADING = 'SELECTED HEX';
+
 /** Row key of the "◀ HANGAR" navigation row. */
 export const HEX_MAP_HANGAR_ROW_KEY = 'hangar';
 

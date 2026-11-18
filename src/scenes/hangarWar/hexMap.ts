@@ -90,6 +90,7 @@ import { GAME_WIDTH } from '../../core/constants';
 import {
   CONTROLS_HEADING,
   HEX_MAP_HANGAR_ROW_KEY,
+  SELECTED_HEX_HEADING,
   WAR_STATUS_HEADING,
   type HexIntel,
   type HexMapModel,
@@ -361,26 +362,29 @@ function renderWarStatusSection(
   }
 }
 
-/** Right-hand detail panel: the focused hex's full intel. */
-const PANEL_X = HEX_MAP_SECTION_RECTS['selected-hex'].x + SECTION_PADDING;
-const PANEL_Y = HEX_MAP_SECTION_RECTS['selected-hex'].y + 24;
-const PANEL_HEADING = 'SELECTED HEX — FULL INTEL';
+/**
+ * The `selected-hex` section: the focused hex's full intel **and** its
+ * rolled-in attack row, in one bounded panel (one hex, one section).
+ */
+const SELECTED_HEX_RECT = HEX_MAP_SECTION_RECTS['selected-hex'];
+const SELECTED_HEX_BODY_X = sectionBodyX(SELECTED_HEX_RECT);
+const SELECTED_HEX_BODY_Y = sectionBodyY(SELECTED_HEX_RECT);
+const SELECTED_HEX_BODY_WIDTH = sectionBodyWidth(SELECTED_HEX_RECT);
+
+/** Gap between the intel body and the attack row's sub-heading below it. */
+const SELECTED_HEX_ATTACK_GAP = 10;
 
 /**
- * Left-hand attack panel (the rolled-in defence report).
- *
- * Hidden entirely when the focused hex is in no attack; long numbers
- * word-wrap inside the band rather than overdrawing a tile.
+ * Sub-heading of the focused hex's attack row (the rolled-in defence report).
+ * Hidden with the row itself when the focused hex is in no attack.
  */
-const ATTACK_PANEL_X = 24;
-const ATTACK_PANEL_Y = 158;
-const ATTACK_PANEL_WIDTH = 225;
 const ATTACK_PANEL_HEADING = 'ATTACK — FOCUSED HEX';
 
 /**
- * Left-hand hangar-assault banner (`AH-0MWEZZA4E0081NJ5`): the report model's
- * own `assaultLine`, word-wrapped inside the left band.
+ * Hangar-assault banner (`AH-0MWEZZA4E0081NJ5`): the report model's own
+ * `assaultLine`, word-wrapped inside the left band.
  */
+const ASSAULT_BANNER_X = 24;
 const ASSAULT_BANNER_Y = 306;
 const ASSAULT_BANNER_WIDTH = 225;
 const ASSAULT_BANNER_HEADING = 'HANGAR ASSAULT';
@@ -994,19 +998,25 @@ export function renderHexMap(
     columns: gridColumns,
   });
 
-  // ── Detail panel: the focused hex's full known-ahead intel ────
-  const panelHeading = scene.add.text(PANEL_X, PANEL_Y, PANEL_HEADING, {
-    fontFamily: 'monospace',
-    fontSize: '10px',
-    color: HEADING_COLOR,
-  });
-  objects.push(panelHeading);
-  const panelBody = scene.add.text(PANEL_X, PANEL_Y + 16, '', {
-    fontFamily: 'monospace',
-    fontSize: '12px',
-    color: TEXT_COLOR,
-    lineSpacing: 4,
-  });
+  // ── `selected-hex`: the focused hex's intel AND its attack row ────
+  // One hex, one section: the full known-ahead intel and the rolled-in defence
+  // report for the same hex render inside one bordered, headed panel, so
+  // reading a hex is one story rather than two panels on opposite sides of the
+  // screen. `attackDetails` is keyed by the attacked hex id AND its
+  // attacker-origin id, so either focus resolves the same row.
+  drawSectionPanel(scene, objects, SELECTED_HEX_RECT, SELECTED_HEX_HEADING);
+  const panelBody = scene.add.text(
+    SELECTED_HEX_BODY_X,
+    SELECTED_HEX_BODY_Y,
+    '',
+    {
+      fontFamily: 'monospace',
+      fontSize: SECTION_BODY_SIZE,
+      color: TEXT_COLOR,
+      lineSpacing: 4,
+      wordWrap: { width: SELECTED_HEX_BODY_WIDTH },
+    },
+  );
   objects.push(panelBody);
 
   let panelKey: string | null = null;
@@ -1029,26 +1039,31 @@ export function renderHexMap(
     return displayedHexes[0]?.key ?? null;
   };
 
-  // ── Left panel: the rolled-in defence report ────────────────────
-  // One attack, two endpoints: `attackDetails` is keyed by the attacked hex
-  // id AND its attacker-origin id, so either focus resolves the same row.
+  // The attack row of the same section, under the intel body: its own
+  // sub-heading plus the report model's row text, copied verbatim. Both are
+  // hidden (never moved to another section) when the focused hex is in no
+  // attack.
   const attackPanelHeading = scene.add.text(
-    ATTACK_PANEL_X,
-    ATTACK_PANEL_Y,
+    SELECTED_HEX_BODY_X,
+    SELECTED_HEX_BODY_Y,
     ATTACK_PANEL_HEADING,
-    { fontFamily: 'monospace', fontSize: '10px', color: HEADING_COLOR },
+    {
+      fontFamily: 'monospace',
+      fontSize: SECTION_HEADING_SIZE,
+      color: HEADING_COLOR,
+    },
   );
   objects.push(attackPanelHeading);
   const attackPanelBody = scene.add.text(
-    ATTACK_PANEL_X,
-    ATTACK_PANEL_Y + 16,
+    SELECTED_HEX_BODY_X,
+    SELECTED_HEX_BODY_Y + 14,
     '',
     {
       fontFamily: 'monospace',
-      fontSize: '12px',
+      fontSize: SECTION_BODY_SIZE,
       color: TEXT_COLOR,
       lineSpacing: 4,
-      wordWrap: { width: ATTACK_PANEL_WIDTH },
+      wordWrap: { width: SELECTED_HEX_BODY_WIDTH },
     },
   );
   objects.push(attackPanelBody);
@@ -1057,6 +1072,12 @@ export function renderHexMap(
   const updateAttackPanel = (): void => {
     const hex = hexByKey(displayedHexKey());
     const detail = hex ? model.attackDetails.get(hex.id) : undefined;
+    // The row follows the intel body, whose height depends on how much of the
+    // hex is known ahead, so the sub-block is positioned after the intel text
+    // is laid out — never at a fixed offset that could collide with it.
+    const top = panelBody.y + panelBody.height + SELECTED_HEX_ATTACK_GAP;
+    attackPanelHeading.setPosition(SELECTED_HEX_BODY_X, top);
+    attackPanelBody.setPosition(SELECTED_HEX_BODY_X, top + 14);
     attackPanelKey = detail ? hex!.id : null;
     attackPanelBody.setText(detail?.label ?? '');
     attackPanelHeading.setVisible(detail !== undefined);
@@ -1071,14 +1092,14 @@ export function renderHexMap(
   let assaultBody: Phaser.GameObjects.Text | null = null;
   if (assaultLine !== null) {
     objects.push(
-      scene.add.text(ATTACK_PANEL_X, ASSAULT_BANNER_Y, ASSAULT_BANNER_HEADING, {
+      scene.add.text(ASSAULT_BANNER_X, ASSAULT_BANNER_Y, ASSAULT_BANNER_HEADING, {
         fontFamily: 'monospace',
         fontSize: '10px',
         color: HEADING_COLOR,
       }),
     );
     assaultBody = scene.add.text(
-      ATTACK_PANEL_X,
+      ASSAULT_BANNER_X,
       ASSAULT_BANNER_Y + 16,
       assaultLine,
       {
@@ -1096,9 +1117,13 @@ export function renderHexMap(
     paintTiles();
     const hex = hexByKey(displayedHexKey());
     panelKey = hex?.key ?? null;
-    panelBody.setText(hex ? hex.label : '');
-    panelHeading.setText(
-      hex ? `SELECTED HEX — ${hex.id.toUpperCase()}` : PANEL_HEADING,
+    // The section heading is the shared `SELECTED HEX` constant; the focused
+    // hex's identity and its full known-ahead intel stay in the body, so no
+    // information the old titled panel carried is lost.
+    panelBody.setText(
+      hex
+        ? `FULL INTEL — ${hex.id.toUpperCase()}\n${hex.label}`
+        : 'FULL INTEL — no hex in view',
     );
     updateAttackPanel();
   };

@@ -82,6 +82,7 @@ import {
   HELD_TILE_MARKER,
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
+  SELECTED_HEX_HEADING,
   UNHELD_TILE_MARKER,
   WAR_STATUS_HEADING,
   buildHexMapModel,
@@ -905,7 +906,7 @@ describe('HexMapScene', () => {
   );
 
   it(
-    'shows the attack\'s details on the LEFT panel for both arrow endpoints',
+    'shows the attack\'s details in the selected-hex section for both arrow endpoints',
     async () => {
       const payload = attackPayload();
       const record = attackRecord();
@@ -1495,6 +1496,65 @@ describe('HexMapScene', () => {
       expect(frontier.style.wordWrapWidth).toBe(
         HEX_MAP_SECTION_RECTS['war-status'].width - 16,
       );
+    });
+
+    it('puts the focused hex intel and its attack row in one section', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        storage: null,
+      });
+
+      expect(scene.focusRow('hex:hex-held')).toBe(true);
+      const heading = findTextStartingWith(scene, SELECTED_HEX_HEADING);
+      const intel = findTextStartingWith(scene, 'FULL INTEL — HEX-HELD');
+      const attackRow = findTextStartingWith(
+        scene,
+        scene.getLeftPanelText().slice(0, 24),
+      );
+
+      // Heading, intel and the attack row are all inside the one
+      // `selected-hex` rect...
+      expect(insideSection(heading, 'selected-hex')).toBe(true);
+      expect(insideSection(intel, 'selected-hex')).toBe(true);
+      expect(insideSection(attackRow, 'selected-hex')).toBe(true);
+      // ...the attack row directly below the intel it belongs to...
+      expect(attackRow.y).toBeGreaterThan(intel.y + intel.height);
+      // ...and nowhere near the map or the old left-hand band.
+      expect(insideSection(attackRow, 'map')).toBe(false);
+      expect(attackRow.x).toBeGreaterThanOrEqual(
+        HEX_MAP_SECTION_RECTS['selected-hex'].x,
+      );
+
+      // The intel itself is unchanged in content, only re-homed.
+      expect(scene.getPanelText()).toContain('STATE:');
+      expect(scene.getPanelText()).toContain('STRENGTHS:');
+      expect(scene.getLeftPanelText()).toContain('hex-held — FELL');
+    });
+
+    it('hides the attack row inside the section when the hex is in no attack', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      expect(scene.focusRow('hex:hex-r1-1')).toBe(true);
+      // The section (and its intel) stays; the attack row is hidden, not moved.
+      expect(
+        insideSection(
+          findTextStartingWith(scene, 'FULL INTEL — HEX-R1-1'),
+          'selected-hex',
+        ),
+      ).toBe(true);
+      expect(scene.isLeftPanelVisible()).toBe(false);
+      expect(scene.getLeftPanelText()).toBe('');
+      expect(
+        scene.children.list.some(
+          (child) =>
+            child instanceof Phaser.GameObjects.Text &&
+            child.text.startsWith('ATTACK — FOCUSED HEX') &&
+            child.visible,
+        ),
+      ).toBe(false);
+      // No attack row was smuggled into another section.
+      expect(screenText(scene)).not.toContain('retake: strike');
     });
   });
 });
