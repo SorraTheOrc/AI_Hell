@@ -525,22 +525,51 @@ export function canBuy(
 }
 
 /**
+ * Options for {@link buy}.
+ *
+ * The default behaviour is the documented A5/A6 rule: **buying only grants
+ * ownership** — equipping the hull/loadout stays the deployment selector's job
+ * — so a purchase can never silently change what another caller deploys with.
+ * The hangar screen opts in (parent AH-0MWL5PAP2001XYYF, producer Q1 = C
+ * refined: "when an upgrade is purchased it is automatically enabled"), which
+ * supersedes A5/A6 **for that screen only**.
+ */
+export interface BuyOptions {
+  /**
+   * Equip a successful purchase as part of buying.
+   *
+   * A hull sets `activeHull`, a starting weapon joins
+   * `activeLoadout.startingWeapons` and a modifier joins
+   * `activeLoadout.modifiers`, each deduplicated. A refused purchase changes
+   * nothing, so an opt-in caller can never equip an entry it did not buy.
+   * Default `false` — every caller that does not opt in keeps A5/A6.
+   */
+  readonly equipOnPurchase?: boolean;
+}
+
+/**
  * Buys one catalogue entry, spending both currencies.
  *
  * Pure: the input hangar is never mutated, and a refused purchase returns a
- * copy with the balance and ownership unchanged. Buying only grants ownership
- * — equipping the hull/loadout stays the deployment selector's job (A5/A6), so
- * a purchase can never silently change what the player deploys with.
+ * copy with the balance and ownership unchanged. By default buying only grants
+ * ownership — equipping stays the deployment selector's job (A5/A6), so a
+ * purchase can never silently change what the player deploys with. A caller
+ * that passes `{ equipOnPurchase: true }` (the hangar screen) instead arms the
+ * purchase immediately (parent AH-0MWL5PAP2001XYYF): a hull becomes the active
+ * hull, a weapon joins the starting weapons, a modifier joins the active
+ * modifiers. Refusals change neither ownership nor the loadout either way.
  *
  * @param hangar — the persistent hangar (read only).
  * @param entry — the catalogue entry to buy.
  * @param context — the ring the fleet has reached (ring gating).
+ * @param options — `equipOnPurchase` to arm a successful purchase (default off).
  * @returns the purchase result, including the freshly owned hangar.
  */
 export function buy(
   hangar: HangarState,
   entry: HangarEntry,
   context: HangarPurchaseContext,
+  options: BuyOptions = {},
 ): PurchaseResult {
   const check = canBuy(hangar, entry, context);
   const next = cloneHangar(hangar);
@@ -555,7 +584,37 @@ export function buy(
   const owned = ownedIds(next, entry.kind);
   if (!owned.includes(entry.id)) owned.push(entry.id);
 
+  if (options.equipOnPurchase === true) {
+    equipPurchasedEntry(next, entry);
+  }
+
   return { ok: true, reason: null, spent: price, hangar: next };
+}
+
+/**
+ * Arms a just-purchased entry on the fresh hangar `buy` owns (mutates it).
+ *
+ * Deduplicates the loadout entries: a corrupt save that already lists the id
+ * cannot gain a duplicate slot. The starter kit is unaffected — a fresh save
+ * owns `hull-1`/`spread` but does not equip the starter weapon, which stays a
+ * deliberate player choice (AH-0MVZJ6V1J001DA9D).
+ */
+function equipPurchasedEntry(hangar: HangarState, entry: HangarEntry): void {
+  switch (entry.kind) {
+    case 'hull':
+      hangar.activeHull = entry.id;
+      return;
+    case 'weapon':
+      if (!hangar.activeLoadout.startingWeapons.includes(entry.id)) {
+        hangar.activeLoadout.startingWeapons.push(entry.id);
+      }
+      return;
+    case 'modifier':
+      if (!hangar.activeLoadout.modifiers.includes(entry.id)) {
+        hangar.activeLoadout.modifiers.push(entry.id);
+      }
+      return;
+  }
 }
 
 // ── Permanent upgrade rule (parent AH-0MWHW4ALS0039JFU) ──────────────────

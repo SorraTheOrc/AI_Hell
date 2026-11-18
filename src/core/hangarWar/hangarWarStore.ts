@@ -103,10 +103,13 @@ export const DEFAULT_HULL_ID = 'hull-1';
 /**
  * The starting weapon every fleet **owns** from the first deployment.
  *
- * Owning a starting weapon never equips it: the fleet's default loadout is
- * empty (`activeLoadout.startingWeapons: []`), so a fresh deployment starts
+ * Owning the *free starter* weapon never equips it: the fleet's default loadout
+ * is empty (`activeLoadout.startingWeapons: []`), so a fresh deployment starts
  * with only the ship's permanent cannon and any extra weapon is a deliberate
- * choice in the hangar (AH-0MVZJ6V1J001DA9D).
+ * choice in the hangar (AH-0MVZJ6V1J001DA9D). A weapon **bought** through the
+ * hangar screen is different: the screen opts in to auto-enable, so buying arms
+ * it immediately (parent AH-0MWL5PAP2001XYYF). The starter kit itself stays
+ * owned-but-not-equipped, so it is always available after a wipe.
  */
 export const DEFAULT_STARTING_WEAPON_ID = 'spread';
 

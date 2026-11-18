@@ -9,12 +9,11 @@
  * and the pure `buy` default stays non-equipping for every other caller
  * (the A5/A6 rule this item deliberately supersedes only for the screen).
  *
- * Written against the **existing** seams so it type-checks while red: today
- * `purchaseHangarEntry` buys ownership only, so every auto-enable assertion is
- * authored under Vitest's `it.fails` (the repo's red-before/green-after
- * convention). The auto-enable item **flips them back to `it`** when the option
- * lands; a leftover `it.fails` then fails the suite. The plain `it` cases
- * (refusals, the `buy` default) are guards that stay green throughout.
+ * Written against the public seams. The auto-enable assertions were authored
+ * red under Vitest's `it.fails` by the test-first child AH-0MWL9E7PH001VPG5 and
+ * are now plain `it`: the auto-enable item landed the `equipOnPurchase` option
+ * and opted the screen seam in. The refusal cases and the `buy` default
+ * (A5/A6) are guards that stayed green throughout.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -56,7 +55,7 @@ function clone(payload: HangarWarPayload): HangarWarPayload {
 }
 
 describe('a successful hangar purchase auto-enables the entry (AH-0MWL5PAP2001XYYF)', () => {
-  it.fails('equips a purchased hull (activeHull)', () => {
+  it('equips a purchased hull (activeHull)', () => {
     const payload = shoppingWar();
 
     const result = purchaseHangarEntry(payload, 'hull-2');
@@ -69,7 +68,7 @@ describe('a successful hangar purchase auto-enables the entry (AH-0MWL5PAP2001XY
     expect(result.payload.hangar.bankedCores).toBe(5 - 3);
   });
 
-  it.fails('adds a purchased starting weapon to the active loadout', () => {
+  it('adds a purchased starting weapon to the active loadout', () => {
     const payload = shoppingWar();
 
     const result = purchaseHangarEntry(payload, 'wave_laser');
@@ -81,7 +80,7 @@ describe('a successful hangar purchase auto-enables the entry (AH-0MWL5PAP2001XY
     );
   });
 
-  it.fails('adds a purchased modifier to the active loadout', () => {
+  it('adds a purchased modifier to the active loadout', () => {
     const payload = shoppingWar();
 
     const result = purchaseHangarEntry(payload, 'hardened_plating');
@@ -93,7 +92,7 @@ describe('a successful hangar purchase auto-enables the entry (AH-0MWL5PAP2001XY
     );
   });
 
-  it.fails('renders the auto-equipped part as equipped on the next screen model', () => {
+  it('renders the auto-equipped part as equipped on the next screen model', () => {
     const hull = purchaseHangarEntry(shoppingWar(), 'hull-2');
     const hullModel = buildHangarScreenModel(hull.payload);
     expect(hullModel.hullOptions.find((row) => row.id === 'hull-2')?.equipped).toBe(
@@ -114,7 +113,7 @@ describe('a successful hangar purchase auto-enables the entry (AH-0MWL5PAP2001XY
     ).toBe(true);
   });
 
-  it.fails('leaves an auto-equipped part un-equippable in one click (toggles stay)', () => {
+  it('leaves an auto-equipped part un-equippable in one click (toggles stay)', () => {
     const payload = purchaseHangarEntry(shoppingWar(), 'hull-2').payload;
     const withWeapon = purchaseHangarEntry(payload, 'wave_laser').payload;
     const withModifier = purchaseHangarEntry(withWeapon, 'hardened_plating').payload;

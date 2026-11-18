@@ -2002,3 +2002,90 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     expect('powerUpLevels' in consumed).toBe(false);
   });
 });
+
+/**
+ * Auto-enable on purchase (parent AH-0MWL5PAP2001XYYF, producer Q1 = C
+ * refined: "when an upgrade is purchased it is automatically enabled").
+ *
+ * The opt-in lives on the pure rule so the hangar screen's one call arms the
+ * part, while every other caller keeps the documented A5/A6 "buying only
+ * grants ownership" default.
+ */
+describe('buy — equipOnPurchase (AH-0MWL5PAP2001XYYF)', () => {
+  const context = { ringIndex: 1 };
+
+  /** A ring-1 hangar with enough salvage to buy the shipped tree. */
+  function richHangar(overrides: Partial<HangarState> = {}): HangarState {
+    return hangarWith({
+      bankedMinerals: 500,
+      bankedCores: 5,
+      ...overrides,
+    });
+  }
+
+  const OPT_IN = { equipOnPurchase: true } as const;
+
+  it('equips a purchased hull as the active hull', () => {
+    const result = buy(richHangar(), entry('hull-2'), context, OPT_IN);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.unlockedHulls).toContain('hull-2');
+    expect(result.hangar.activeHull).toBe('hull-2');
+    // The price is unchanged by the opt-in.
+    expect(result.spent).toEqual({ minerals: 220, cores: 3 });
+  });
+
+  it('adds a purchased starting weapon to the active loadout', () => {
+    const result = buy(richHangar(), entry('wave_laser'), context, OPT_IN);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.unlockedWeapons).toContain('wave_laser');
+    expect(result.hangar.activeLoadout.startingWeapons).toEqual(['wave_laser']);
+  });
+
+  it('adds a purchased modifier to the active loadout', () => {
+    const result = buy(richHangar(), entry('hardened_plating'), context, OPT_IN);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.ownedModifiers).toContain('hardened_plating');
+    expect(result.hangar.activeLoadout.modifiers).toEqual(['hardened_plating']);
+  });
+
+  it('deduplicates a loadout entry a corrupt save already lists', () => {
+    const hangar = richHangar({
+      // Owned set lacks the weapon, but the loadout already names it.
+      activeLoadout: { startingWeapons: ['wave_laser'], modifiers: [] },
+    });
+
+    const result = buy(hangar, entry('wave_laser'), context, OPT_IN);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.activeLoadout.startingWeapons).toEqual(['wave_laser']);
+  });
+
+  it('keeps A5/A6 for callers that do not opt in', () => {
+    const result = buy(richHangar(), entry('hull-2'), context);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.unlockedHulls).toContain('hull-2');
+    expect(result.hangar.activeHull).toBe('hull-1');
+  });
+
+  it('changes nothing on a refused purchase, even when opted in', () => {
+    const cases: Array<[string, HangarState]> = [
+      ['owned', richHangar()],
+      ['gated', richHangar()],
+      ['unaffordable', richHangar({ bankedMinerals: 0, bankedCores: 0 })],
+    ];
+    const ids = ['spread', 'hull-3', 'hull-2'];
+
+    cases.forEach(([reason, hangar], index) => {
+      const before = JSON.parse(JSON.stringify(hangar)) as HangarState;
+      const result = buy(hangar, entry(ids[index]!), context, OPT_IN);
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe(reason);
+      expect(result.hangar).toEqual(before);
+    });
+  });
+});

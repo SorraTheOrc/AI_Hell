@@ -782,8 +782,13 @@ export interface HangarUpgradeUpdateResult {
 /**
  * Buys one catalogue entry and returns the updated payload (pure).
  *
- * Delegates every rule to the economy's `buy`; the caller persists the result
- * through the hangar-war store.
+ * Delegates every rule to the economy's `buy`, opting in to
+ * `equipOnPurchase` so a hangar-screen purchase lands owned **and** armed in
+ * one payload (parent AH-0MWL5PAP2001XYYF, producer Q1 = C refined): a hull
+ * becomes the active hull, a starting weapon joins the loadout and a modifier
+ * is switched on. A refusal still changes neither ownership nor the loadout.
+ * The caller persists the result through the hangar-war store, so the spend and
+ * the auto-equip can never land separately.
  */
 export function purchaseHangarEntry(
   payload: HangarWarPayload,
@@ -794,9 +799,12 @@ export function purchaseHangarEntry(
   if (entry === null) {
     return { ok: false, reason: 'unknown', payload: clonePayload(payload) };
   }
-  const result = buy(payload.hangar, entry, {
-    ringIndex: payload.ring.ringIndex,
-  });
+  const result = buy(
+    payload.hangar,
+    entry,
+    { ringIndex: payload.ring.ringIndex },
+    { equipOnPurchase: true },
+  );
   const next = clonePayload(payload);
   next.hangar = result.hangar;
   return { ok: result.ok, reason: result.reason, payload: next };
