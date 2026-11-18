@@ -159,6 +159,7 @@ import {
   renderHexMap,
   type HexMapArrow,
   type HexMapRow,
+  type HexMapSection,
   type HexMapView,
 } from '../hangarWar/hexMap';
 
@@ -619,6 +620,15 @@ export class GymHexWar extends Phaser.Scene {
   /** Every rendered map row (read-only: none is actionable in the gym). */
   getMapRows(): readonly HexMapRow[] {
     return this.view?.rows ?? [];
+  }
+
+  /**
+   * The rendered section registry, read straight from the shared
+   * `renderHexMap` view (no gym-local layout exists): the gym describes exactly
+   * the sections the game shows.
+   */
+  getMapSections(): readonly HexMapSection[] {
+    return this.view?.sections ?? [];
   }
 
   /** The hex the read-only detail panel shows (defaults to the model's default/first hex). */

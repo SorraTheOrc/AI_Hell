@@ -89,6 +89,7 @@ import {
   renderHexMap,
   type HexMapArrow,
   type HexMapRow,
+  type HexMapSection,
   type HexMapView,
 } from './hangarWar/hexMap';
 
@@ -546,6 +547,17 @@ export class HexMapScene extends Phaser.Scene {
   /** Every drawn attack arrow (one per carried-attack entry), or none. */
   getArrows(): readonly HexMapArrow[] {
     return this.view?.arrows ?? [];
+  }
+
+  /**
+   * The rendered section registry: one `{ key, heading, rect }` per section,
+   * in reading order (`last-sortie` only when the landing carries news).
+   *
+   * Deterministic test seam and the query a caller uses to know the screen's
+   * regions; the layout itself lives only in the shared renderer.
+   */
+  getSections(): readonly HexMapSection[] {
+    return this.view?.sections ?? [];
   }
 
   /**

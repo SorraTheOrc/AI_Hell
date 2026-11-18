@@ -461,6 +461,17 @@ export interface HexMapArrow {
 export interface HexMapView {
   /** The model rendered. */
   readonly model: HexMapModel;
+  /**
+   * The section registry: one `{ key, heading, rect }` per rendered section,
+   * in reading order (`war-status`, `last-sortie` when the landing carries
+   * news, `map`, `selected-hex`, `controls`).
+   *
+   * Every rendered text object, tile and arrow lies inside exactly one of
+   * these rects, no two rects overlap and every rect lies inside the 960×540
+   * frame. Publishing it from the one shared renderer means the game and the
+   * parity gym describe the same screen regions (AGENTS.md gym↔game parity).
+   */
+  readonly sections: readonly HexMapSection[];
   /** Every rendered row (deployable hexes clockwise, then the hangar). */
   readonly rows: readonly HexMapRow[];
   /** Every attack arrow drawn (one per rendered `model.arrows` entry). */
@@ -719,6 +730,22 @@ interface TileLabelTexts {
 }
 
 /**
+ * Whether the landing carries any transient `last-sortie` news: a run result,
+ * a banked win bonus or a hangar-assault outcome. When it carries none, the
+ * section — and its registry entry — is absent.
+ */
+function hasLastSortieNews(
+  model: HexMapModel,
+  options?: HexMapRenderOptions,
+): boolean {
+  return (
+    (options?.runLine ?? null) !== null ||
+    model.winBonusLine !== null ||
+    model.assaultLine !== null
+  );
+}
+
+/**
  * Draws the `last-sortie` section: the transient "what just happened" news.
  *
  * The deployment's run result, the banked win bonus and the hangar-assault
@@ -740,7 +767,7 @@ function renderLastSortieSection(
   const runLine = options?.runLine ?? null;
   const winBonusLine = model.winBonusLine;
   const assaultLine = model.assaultLine;
-  if (runLine === null && winBonusLine === null && assaultLine === null) {
+  if (!hasLastSortieNews(model, options)) {
     return null;
   }
 
@@ -877,6 +904,38 @@ export function renderHexMap(
   // Transient news has one home: the run result, the banked win bonus and the
   // assault outcome are all in `last-sortie` (or the section is absent).
   const assaultBody = renderLastSortieSection(scene, objects, model, options);
+
+  // ── Section registry ────────────────────────────────────────
+  // One entry per rendered section, built from the same rect table the panels
+  // are drawn from, so the published regions can never drift from the drawn
+  // ones. `last-sortie` appears only when it rendered.
+  const sections: HexMapSection[] = [
+    {
+      key: 'war-status',
+      heading: WAR_STATUS_HEADING,
+      rect: HEX_MAP_SECTION_RECTS['war-status'],
+    },
+    ...(hasLastSortieNews(model, options)
+      ? [
+          {
+            key: 'last-sortie' as const,
+            heading: LAST_SORTIE_HEADING,
+            rect: HEX_MAP_SECTION_RECTS['last-sortie'],
+          },
+        ]
+      : []),
+    { key: 'map', heading: model.title, rect: HEX_MAP_SECTION_RECTS.map },
+    {
+      key: 'selected-hex',
+      heading: SELECTED_HEX_HEADING,
+      rect: HEX_MAP_SECTION_RECTS['selected-hex'],
+    },
+    {
+      key: 'controls',
+      heading: CONTROLS_HEADING,
+      rect: HEX_MAP_SECTION_RECTS.controls,
+    },
+  ];
 
   renderHangarMarker(scene, objects, model);
 
@@ -1154,6 +1213,7 @@ export function renderHexMap(
 
   return {
     model,
+    sections,
     rows,
     arrows,
     getFocusedKey(): string | null {

@@ -113,6 +113,7 @@ import {
 } from '../powerups/miniBossWheel';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
+import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { HEX_MAP_HINT, HEX_MAP_SECTION_RECTS } from './hangarWar/hexMap';
 import { MineralChoiceScene } from './MineralChoiceScene';
 import {
@@ -1611,6 +1612,133 @@ describe('HexMapScene', () => {
       expect(screenText(scene)).not.toContain('WIN BONUS');
       expect(screenText(scene)).not.toContain('HANGAR ASSAULT');
       expect(scene.getAssaultText()).toBe('');
+    });
+
+    it('publishes the section registry in reading order', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+
+      const sections = scene.getSections();
+      expect(sections.map((section) => section.key)).toEqual([
+        'war-status',
+        'last-sortie',
+        'map',
+        'selected-hex',
+        'controls',
+      ]);
+      expect(sections.map((section) => section.heading)).toEqual([
+        WAR_STATUS_HEADING,
+        LAST_SORTIE_HEADING,
+        scene.getModel().title,
+        SELECTED_HEX_HEADING,
+        CONTROLS_HEADING,
+      ]);
+      // The rects are the layout's own rect table — no second layout exists.
+      for (const section of sections) {
+        expect(section.rect).toBe(HEX_MAP_SECTION_RECTS[section.key]);
+      }
+    });
+
+    it('omits last-sortie from the registry when there is no news', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      expect(scene.getSections().map((section) => section.key)).toEqual([
+        'war-status',
+        'map',
+        'selected-hex',
+        'controls',
+      ]);
+    });
+
+    it('keeps every section rect in frame and free of overlaps', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+      const sections = scene.getSections();
+
+      for (const { key, rect } of sections) {
+        expect(rect.x, key).toBeGreaterThanOrEqual(0);
+        expect(rect.y, key).toBeGreaterThanOrEqual(0);
+        expect(rect.x + rect.width, key).toBeLessThanOrEqual(GAME_WIDTH);
+        expect(rect.y + rect.height, key).toBeLessThanOrEqual(GAME_HEIGHT);
+      }
+      for (let i = 0; i < sections.length; i += 1) {
+        for (let j = i + 1; j < sections.length; j += 1) {
+          const a = sections[i].rect;
+          const b = sections[j].rect;
+          const overlaps =
+            a.x < b.x + b.width &&
+            b.x < a.x + a.width &&
+            a.y < b.y + b.height &&
+            b.y < a.y + a.height;
+          expect(overlaps, `${sections[i].key} overlaps ${sections[j].key}`).
+            toBe(false);
+        }
+      }
+    });
+
+    it('puts every rendered text and arrow inside exactly one section', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+      const sections = scene.getSections();
+
+      /** Sections whose rect wholly contains `bounds`. */
+      const holdersOf = (bounds: {
+        x: number;
+        y: number;
+        right: number;
+        bottom: number;
+      }): string[] =>
+        sections
+          .filter(
+            ({ rect }) =>
+              bounds.x >= rect.x &&
+              bounds.y >= rect.y &&
+              bounds.right <= rect.x + rect.width &&
+              bounds.bottom <= rect.y + rect.height,
+          )
+          .map(({ key }) => key);
+
+      for (const text of allTexts(scene)) {
+        expect(
+          holdersOf(text.getBounds()),
+          `text "${text.text.slice(0, 24)}" is not in exactly one section`,
+        ).toHaveLength(1);
+      }
+      // Tiles are drawn at the model's axial positions; every arrow endpoint
+      // must therefore lie inside the map section.
+      const mapRect = HEX_MAP_SECTION_RECTS.map;
+      for (const arrow of scene.getArrows()) {
+        for (const point of [arrow.from, arrow.to]) {
+          expect(point.x).toBeGreaterThanOrEqual(mapRect.x);
+          expect(point.y).toBeGreaterThanOrEqual(mapRect.y);
+          expect(point.x).toBeLessThanOrEqual(mapRect.x + mapRect.width);
+          expect(point.y).toBeLessThanOrEqual(mapRect.y + mapRect.height);
+        }
+      }
+      // Every rendered row's text (the tile labels) is in the map section, so
+      // a tile can never be drawn outside the map region it belongs to.
+      for (const row of scene.getRows()) {
+        if (!row.key.startsWith('hex:')) continue;
+        expect(holdersOf(row.text.getBounds())).toEqual(['map']);
+      }
     });
   });
 });

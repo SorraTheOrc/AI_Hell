@@ -73,11 +73,15 @@ import {
 import { decideMapAction } from '../../ai/hangarWarTraversal';
 import { DEFENCE_REPORT_TITLE } from '../../core/hangarWar/defenceReport';
 import {
+  CONTROLS_HEADING,
   HELD_TILE_MARKER,
   HEX_MAP_HANGAR_ROW_KEY,
+  SELECTED_HEX_HEADING,
   UNHELD_TILE_MARKER,
+  WAR_STATUS_HEADING,
   type HexMapModel,
 } from '../../core/hangarWar/hexIntel';
+import { HEX_MAP_SECTION_RECTS } from '../hangarWar/hexMap';
 import {
   GymHexWar,
   GYM_HEX_WAR_DEFAULT_SEED,
@@ -1453,5 +1457,35 @@ describe('GymHexWar — hex variety surfaces (AH-0MWEW58WD003NFXS, AH-0MWEW5I1F0
     expect(after.hangar.unlockedWeapons).toEqual(fleetBefore.weapons);
     expect(after.hangar.ownedModifiers).toEqual(fleetBefore.modifiers);
     expect(after.hangar.bankedMinerals).toBe(before.hangar.bankedMinerals + 140);
+  });
+
+  /**
+   * Sectioned layout parity (AH-0MWL4QCVD007WOAM).
+   *
+   * The gym renders the game's map through the one shared `renderHexMap` call,
+   * so it must report exactly the same section registry — keys, headings and
+   * rects — as the game, and every row stays read-only.
+   */
+  it('reports the same section registry as the game, read-only', async () => {
+    const scene = await bootHexWar();
+
+    expect(scene.getMapSections().map((section) => section.key)).toEqual([
+      'war-status',
+      'map',
+      'selected-hex',
+      'controls',
+    ]);
+    expect(scene.getMapSections().map((section) => section.heading)).toEqual([
+      WAR_STATUS_HEADING,
+      scene.getMapModel()!.title,
+      SELECTED_HEX_HEADING,
+      CONTROLS_HEADING,
+    ]);
+    // The rects come from the shared layout table, not a gym-local copy.
+    for (const section of scene.getMapSections()) {
+      expect(section.rect).toBe(HEX_MAP_SECTION_RECTS[section.key]);
+    }
+    // Read-only: the gym never makes a row actionable.
+    expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);
   });
 });
