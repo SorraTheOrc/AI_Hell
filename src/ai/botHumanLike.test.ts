@@ -388,16 +388,20 @@ describe('BotInputGovernor — closed-loop aiming (rejection)', () => {
 
   it('re-resolves the held intent against the current facing each tick', () => {
     const governor = new BotInputGovernor({ reactionTimeMs: 1000 });
+    // An aim intent: holding the weapon axis stays a closed-loop, per-tick
+    // release (the turn press hold exempts aim intents;
+    // AH-0MWJ1680Z001QYV2 audit rejection).
+    const aimUp = { ...input('up'), aim: true };
 
     // Commit an "aim up" intent while the ship still faces right: turn left.
     expect(
-      governor.update(input('up'), 1 / 60, { scheme: 'asteroids', facing: 0 }),
+      governor.update(aimUp, 1 / 60, { scheme: 'asteroids', facing: 0 }),
     ).toEqual(asteroid('turnLeft'));
 
     // Within the same held window the ship has rotated to face up, so the
     // held intent now thrusts forward — closed-loop, not open-loop.
     expect(
-      governor.update(input('up'), 1 / 60, {
+      governor.update(aimUp, 1 / 60, {
         scheme: 'asteroids',
         facing: -Math.PI / 2,
       }),
@@ -1177,5 +1181,138 @@ describe('BotInputGovernor — skill aim error (AH-0MV1DUSM2005HL98 AC3)', () =>
       expect(governor.currentIntent().dirX).toBe(-1);
       expect(governor.currentIntent().dirY).toBe(0);
     }
+  });
+});
+
+// ── Smooth turning (AH-0MWJ1680Z001QYV2 audit rejection) ────────────
+
+describe('smooth turning — deadband, hysteresis and flip hold (AH-0MWJ1680Z001QYV2 audit rejection)', () => {
+  /** A precise steering intent aimed at `bearing` (thrusting by default). */
+  function intentAt(bearing: number, thrust = true) {
+    return {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+      thrust,
+    };
+  }
+
+  function asteroid(
+    ...controls: ('forward' | 'turnLeft' | 'turnRight')[]
+  ): AsteroidsInput {
+    return {
+      forward: controls.includes('forward'),
+      turnLeft: controls.includes('turnLeft'),
+      turnRight: controls.includes('turnRight'),
+      reverse: false,
+    };
+  }
+
+  it('ships a wider turning deadband (~9 degrees) so small heading error does not press a turn key', () => {
+    expect(BOT_HUMAN_INPUT_TUNABLES.alignmentToleranceRad).toBeGreaterThan(
+      0.15,
+    );
+    // 0.155 rad (~9 degrees) off the bearing: inside the shipped deadband, and
+    // outside the old 0.15 rad one — the bot now just flies on.
+    expect(toAsteroidsInput(intentAt(-0.155), 0)).toEqual(asteroid('forward'));
+    expect(toAsteroidsInput(intentAt(-0.155), 0, 0.15)).toEqual(
+      asteroid('turnLeft'),
+    );
+  });
+
+  it('releases an established turn inside the hysteresis margin instead of braking with the opposite key', () => {
+    // A 0.40 rad error (> the 0.30 rad deadband) with the bot already turning
+    // right: without hysteresis that would swing to the left key. With the
+    // shipped hysteresis the overshoot is allowed to coast out (released).
+    const held = toAsteroidsInput(intentAt(-0.4), 0, 0.3, false, 0, 60, {
+      turnDirection: 1,
+      hysteresisRad: BOT_HUMAN_INPUT_TUNABLES.turnHysteresisRad,
+    });
+    expect(held.turnLeft).toBe(false);
+    expect(held.turnRight).toBe(false);
+
+    // A reversal outside the margin is still commanded.
+    const reversing = toAsteroidsInput(intentAt(-0.8), 0, 0.3, false, 0, 60, {
+      turnDirection: 1,
+      hysteresisRad: BOT_HUMAN_INPUT_TUNABLES.turnHysteresisRad,
+    });
+    expect(reversing.turnLeft).toBe(true);
+    expect(reversing.turnRight).toBe(false);
+  });
+
+  it('reduces to the pre-change reversal rule when the hysteresis is zero', () => {
+    const out = toAsteroidsInput(intentAt(-0.4), 0, 0.3, false, 0, 60, {
+      turnDirection: 1,
+      hysteresisRad: 0,
+    });
+    expect(out.turnLeft).toBe(true);
+  });
+
+  it('holds an established turn press for turnPressMinMs so the key does not dither', () => {
+    const ticks = 60; // 1 s
+    const pressesOver = (...args: ConstructorParameters<typeof BotInputGovernor>) => {
+      const governor = new BotInputGovernor(...args);
+      let changes = 0;
+      let previous = 0;
+      for (let i = 0; i < ticks; i += 1) {
+        const decision = i % 2 === 0 ? intentAt(Math.PI / 2) : intentAt(-Math.PI / 2);
+        const out = governor.update(decision, 1 / 60, {
+          scheme: 'asteroids',
+          facing: 0,
+        }) as AsteroidsInput;
+        const direction = out.turnLeft ? -1 : out.turnRight ? 1 : 0;
+        if (direction !== 0 && previous !== 0 && direction !== previous) {
+          changes += 1;
+        }
+        if (direction !== 0) previous = direction;
+      }
+      return changes;
+    };
+
+    const free = pressesOver({
+      reactionTimeMs: 0,
+      turnPressMinMs: 0,
+      alignmentToleranceRad: 0.15,
+      turnHysteresisRad: 0,
+    });
+    const held = pressesOver({
+      reactionTimeMs: 0,
+      turnPressMinMs: 120,
+      alignmentToleranceRad: 0.15,
+      turnHysteresisRad: 0,
+    });
+    // Without the hold the key follows every alternating decision (a flip per
+    // tick); with it a flip inside the 120 ms press window is released, so the
+    // key changes direction far less often over the same second.
+    expect(free).toBeGreaterThan(10);
+    expect(held).toBeLessThan(free / 3);
+  });
+
+  it('finishes a press rather than releasing it inside the window, and never dithers to the opposite key', () => {
+    const governor = new BotInputGovernor({
+      reactionTimeMs: 0,
+      turnPressMinMs: 120,
+      alignmentToleranceRad: 0.15,
+      turnHysteresisRad: 0,
+    });
+    const context = { scheme: 'asteroids' as const, facing: 0 };
+    // Establish a right turn.
+    const turning = governor.update(intentAt(Math.PI / 2), 1 / 60, context) as AsteroidsInput;
+    expect(turning.turnRight).toBe(true);
+    // The next tick asks for no turn: the press is finished, not released.
+    const finishing = governor.update(intentAt(0), 1 / 60, context) as AsteroidsInput;
+    expect(finishing.turnRight).toBe(true);
+    expect(finishing.turnLeft).toBe(false);
+    // A flip request inside the window is released, never dithered.
+    const flipping = governor.update(intentAt(-Math.PI / 2), 1 / 60, context) as AsteroidsInput;
+    expect(flipping.turnLeft).toBe(false);
+    expect(flipping.turnRight).toBe(false);
+    // Once the window has expired the live request is followed again.
+    let out = flipping;
+    for (let i = 0; i < 10; i += 1) {
+      out = governor.update(intentAt(-Math.PI / 2), 1 / 60, context) as AsteroidsInput;
+    }
+    expect(out.turnLeft).toBe(true);
+    expect(out.turnRight).toBe(false);
   });
 });

@@ -57,6 +57,16 @@
  * (red over yellow) via `mineralValueWeight`, and the mineral diversion payoff
  * is the value of the surrounding cluster (`mineralDiversionPayoff`).
  *
+ * ## Overshoot is accepted (AH-0MWJ1680Z001QYV2 audit rejection)
+ *
+ * Collection targets the bot has just flown past are dropped from the target
+ * set ({@link withoutOvershot}): a pickup inside `collectOvershootMargin` that
+ * is behind the ship's velocity vector no longer keeps the collection goal
+ * alive, so the bot does not U-turn for it. The pickup is collected on contact
+ * or becomes a target again once it is ahead, so a passing sweep still picks
+ * things up — the bot simply stops trying to hold a precise position in a
+ * drifting ship.
+ *
  * The `engage-boss` band sits directly below `secure-life` and above every
  * collection band, and is only valid while a live boss is inside the enemy
  * seek range (AH-0MVBMESIE003YQ68 · AC2). Its target set is the boss **alone**,
@@ -78,6 +88,7 @@ import { BOSS_ENEMY_ID, SECURE_LIFE_DROP_ID } from './content';
 import type { CompetentBotTunables } from './tunables';
 import {
   botWrapWorld,
+  wrappedAxisDelta,
   wrappedDistance,
   type WrapWorld,
 } from '../wrapGeometry';
@@ -199,6 +210,58 @@ export function bestWeightedTarget<T extends ContentTarget>(
     }
   }
   return best;
+}
+
+/**
+ * Whether a collectable has just been **passed**
+ * (AH-0MWJ1680Z001QYV2 audit rejection).
+ *
+ * In a drifting ship, chasing a pickup the bot has just flown past means
+ * turning around and flying back — which is exactly the "back and forth with
+ * no purpose" the producer rejected. A target is treated as passed when it is
+ * inside `margin` and behind the ship's velocity vector; the bot then lets it
+ * go instead of turning back for it. A target ahead of the ship (or one the
+ * ship is barely moving relative to) is never treated as passed, so it stays
+ * collectable.
+ *
+ * @param player — the ship (position and velocity).
+ * @param target — the collectable.
+ * @param margin — the overshoot allowance in px (`collectOvershootMargin`).
+ * @param world — optional torus, so the delta follows the shortest route.
+ */
+export function isOvershot(
+  player: BotWorldPoint & { readonly vx?: number; readonly vy?: number },
+  target: BotWorldPoint,
+  margin: number,
+  world?: WrapWorld,
+): boolean {
+  if (!(margin > 0)) return false;
+  const dx = world
+    ? wrappedAxisDelta(player.x, target.x, world.width)
+    : target.x - player.x;
+  const dy = world
+    ? wrappedAxisDelta(player.y, target.y, world.height)
+    : target.y - player.y;
+  if (Math.hypot(dx, dy) > margin) return false;
+  // Positive while the ship is closing on the target, negative once past it.
+  return dx * (player.vx ?? 0) + dy * (player.vy ?? 0) < 0;
+}
+
+/**
+ * Drops collectables the ship has just passed (see {@link isOvershot}).
+ *
+ * Shared by the collection goals and the collect behaviour so the goal that is
+ * scored is the target the behaviour flies at: an overshot mineral neither
+ * keeps the goal alive by itself nor pulls the bot into a U-turn.
+ */
+export function withoutOvershot<T extends BotWorldPoint>(
+  targets: readonly T[],
+  player: BotWorldPoint & { readonly vx?: number; readonly vy?: number },
+  margin: number,
+  world?: WrapWorld,
+): readonly T[] {
+  if (!(margin > 0)) return targets;
+  return targets.filter((target) => !isOvershot(player, target, margin, world));
 }
 
 /**
@@ -630,13 +693,22 @@ export function createCompetentGoals(
       t,
       t.mineralBase,
       t.mineralSeekRange,
-      (world) =>
-        world.minerals.map((mineral) => ({
+      (world) => {
+        const minerals = world.minerals.map((mineral) => ({
           x: mineral.x,
           y: mineral.y,
           contentId: mineral.type,
           ...(mineral.value !== undefined ? { value: mineral.value } : {}),
-        })),
+        }));
+        return world.player
+          ? withoutOvershot(
+              minerals,
+              world.player,
+              t.collectOvershootMargin,
+              botWrapWorld(t),
+            )
+          : minerals;
+      },
       mineralValueWeight(t),
       {
         layer: 'secondary',
@@ -648,12 +720,21 @@ export function createCompetentGoals(
       t,
       t.powerUpBase,
       t.powerUpSeekRange,
-      (world) =>
-        world.drops.map((drop) => ({
+      (world) => {
+        const drops = world.drops.map((drop) => ({
           x: drop.x,
           y: drop.y,
           contentId: drop.type,
-        })),
+        }));
+        return world.player
+          ? withoutOvershot(
+              drops,
+              world.player,
+              t.collectOvershootMargin,
+              botWrapWorld(t),
+            )
+          : drops;
+      },
       dropValue,
       {
         layer: 'secondary',

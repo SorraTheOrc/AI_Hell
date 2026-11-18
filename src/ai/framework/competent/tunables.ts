@@ -135,6 +135,32 @@ export interface CompetentBotTunables {
   engagementRange: number;
   /** Distance within which a collection target counts as reached. */
   collectArrivalRadius: number;
+  /**
+   * Whether the bot may use the retro thruster to brake onto a collection
+   * target (AH-0MWJ1680Z001QYV2 audit rejection).
+   *
+   * Off by default: pickups are collected on contact, so braking to arrive at
+   * one is precisely the "trying to be very precise with its positioning"
+   * behaviour the producer rejected. The bot flies through the pickup and
+   * accepts the overshoot; turn it on to restore retro-brake collection.
+   */
+  collectReverseBrake: boolean;
+  /**
+   * Overshoot allowance (px) for collection (AH-0MWJ1680Z001QYV2 audit
+   * rejection). A mineral/power-up the ship has just passed — it is within
+   * this distance and behind the ship's velocity vector — drops out of the
+   * collection target set, so the bot lets it go instead of turning back for
+   * it. It becomes collectable again once it is ahead.
+   *
+   * **Opt-in (`0` = off)**: the producer asked for overshoot tolerance, but
+   * measurement showed that letting go of passed pickups costs the ring-2
+   * one-level economy half its captured sorties (a bot that stops sweeping
+   * picks up fewer minerals, so it upgrades more slowly). The pass-through
+   * collection (no retro-braking onto a pickup) and the reposition band stop
+   * deliver the "stop micro-positioning with thrusters" intent without that
+   * cost; this knob lets a producer try the stricter behaviour in the gym.
+   */
+  collectOvershootMargin: number;
   /** Distance (px) the bot keeps from a hazard (keep-away). */
   dangerMargin: number;
   /** Distance (px) within which the ship's centre is at risk from a shot. */
@@ -310,6 +336,8 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   asteroidSeekRange: 400,
   engagementRange: 140,
   collectArrivalRadius: 18,
+  collectReverseBrake: false,
+  collectOvershootMargin: 0,
   dangerMargin: 70,
   threatRadius: 55,
   longTravelDistance: 250,

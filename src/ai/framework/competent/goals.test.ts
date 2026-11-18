@@ -18,11 +18,13 @@ import {
   COMPETENT_GOAL_IDS,
   bestWeightedTarget,
   createCompetentGoals,
+  isOvershot,
   nearestTarget,
   survivalUrgency,
+  withoutOvershot,
 } from './goals';
 import { botWrapWorld } from '../wrapGeometry';
-import { COMPETENT_BOT_TUNABLES } from './tunables';
+import { COMPETENT_BOT_TUNABLES, resolveCompetentTunables } from './tunables';
 import type { CompetentBotTunables } from './tunables';
 import { createCompetentBotBrain } from './index';
 
@@ -588,5 +590,70 @@ describe('two-layer primary/secondary model (AH-0MWJ1680Z001QYV2)', () => {
       });
     };
     expect(run()).toEqual(run());
+  });
+});
+
+// ── Overshoot is accepted (AH-0MWJ1680Z001QYV2 audit rejection) ─────
+
+describe('overshoot filter (AH-0MWJ1680Z001QYV2 audit rejection)', () => {
+  const moving = { x: 480, y: 270, vx: 150, vy: 0 };
+
+  it('treats a target behind the velocity vector inside the margin as passed', () => {
+    expect(isOvershot(moving, { x: 450, y: 270 }, 60)).toBe(true);
+  });
+
+  it('does not treat a target still ahead as passed', () => {
+    expect(isOvershot(moving, { x: 510, y: 270 }, 60)).toBe(false);
+  });
+
+  it('does not treat a target beyond the margin as passed, even behind', () => {
+    expect(isOvershot(moving, { x: 300, y: 270 }, 60)).toBe(false);
+  });
+
+  it('does not treat a target as passed when the ship is not moving away from it', () => {
+    expect(
+      isOvershot({ x: 480, y: 270, vx: 0, vy: 0 }, { x: 450, y: 270 }, 60),
+    ).toBe(false);
+  });
+
+  it('measures the delta on the torus when a world is supplied', () => {
+    // Ship near the left edge moving left; the target is just across the left
+    // seam (so it is *ahead*, not behind) even though its raw x is far right.
+    const world = botWrapWorld(T);
+    expect(
+      isOvershot({ x: 20, y: 270, vx: -150, vy: 0 }, { x: 940, y: 270 }, 60, world),
+    ).toBe(false);
+    expect(
+      isOvershot({ x: 20, y: 270, vx: 150, vy: 0 }, { x: 940, y: 270 }, 60, world),
+    ).toBe(true);
+  });
+
+  it('drops a passed mineral from the collection goal so it does not keep the goal alive', () => {
+    const goals = createCompetentGoals(
+      resolveCompetentTunables({ collectOvershootMargin: 60 }),
+    );
+    const mineralGoal = goals.require(COMPETENT_GOAL_IDS.collectMineral);
+    const passed = viewOf(
+      makeSnapshot({
+        player: { x: 480, y: 270, vx: 150, vy: 0 },
+        minerals: [mineral(450, 270)],
+      }),
+    );
+    expect(mineralGoal.isValid!(passed)).toBe(false);
+    expect(mineralGoal.isAchieved!(passed)).toBe(true);
+
+    // The shipped default (margin 0 = off) keeps chasing a passed pickup.
+    const chase = createCompetentGoals(T).require(
+      COMPETENT_GOAL_IDS.collectMineral,
+    );
+    expect(T.collectOvershootMargin).toBe(0);
+    expect(chase.isValid!(passed)).toBe(true);
+  });
+
+  it('filters the passed targets and keeps the rest', () => {
+    const targets = [{ x: 450, y: 270 }, { x: 700, y: 270 }];
+    expect(withoutOvershot(targets, moving, 60)).toEqual([
+      { x: 700, y: 270 },
+    ]);
   });
 });

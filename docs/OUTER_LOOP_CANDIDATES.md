@@ -1002,14 +1002,14 @@ replace storage behind the same injectable interface (§6.6).
   a few lost attempts — and **ring 2 (12 hexes) lands at 60–180 minutes**.
   Measured with the ring-timing harness on the shipped one-level **five-wave
   sortie** (a captured hex's grant owned from the next deployment, ring 1's
-  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **48.7
-  minutes** — 12.4 of measured deployments, 24 between sorties and 12.4 of
-  modelled retries (it moved from 46.8 when the ring-1 special reward `hull-4`
-  entered the ring-2 loadout as the fastest 4-life hull,
-  AH-0MWJ51KUS005WQK6) — so ring 2 plays retry-dominated and reads
-  **within-tolerance** of its derived 60–180 window (±12 min, floor 48) with its
-  rebalancing ruling live on AH-0MWFDQCFV007BZE5; ring 1's **16.2 min**
-  still **misses** the derived 30–90 window (AH-0MWFDQ9EY004NO4X).
+  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **57.0
+  minutes** — 4.1 of measured deployments, 24 between sorties and 4.1 of
+  modelled retries (it moved 46.8 → 48.7 → 39.4 → 57.0 as the bot's control was
+  tuned; the last move is the AH-0MWJ1680Z001QYV2 audit follow-up) — so ring 2
+  plays retry-dominated and reads **within-tolerance** of its derived 60–180
+  window (±12 min, floor 48) with its rebalancing ruling live on
+  AH-0MWFDQCFV007BZE5; ring 1's **15.4 min** still **misses** the derived 30–90
+  window (AH-0MWFDQ9EY004NO4X).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.

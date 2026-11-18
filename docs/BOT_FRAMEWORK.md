@@ -562,7 +562,9 @@ bot-tuning gym fly identically.
   rotationDeceleration)` (`src/utils/movementModel.ts`) instead of the raw
   error: it keeps turning while the predicted stop is outside
   `alignmentToleranceRad`, and applies the **opposite** turn when the coast
-  would overshoot (braking the spin). The governor threads the ship's live
+  would overshoot (braking the spin) — except inside the reversal hysteresis
+  margin (§9.12), where the turn is released so a small overshoot coasts out.
+  The governor threads the ship's live
   `angularVelocity` and rotation config through `BotControlContext`, so no
   rotation constant is hard-coded in the bot layer. With `angularVelocity = 0`
   the predicted stop equals the current heading and the result is
@@ -722,6 +724,63 @@ is genuinely nearer and the four edges are no longer walls.
   aims hostile fire along the shortest wrapped path, so eval scores measure the
   same wrap-around world the bot faces in the game
   ([docs/EVALUATION.md](./EVALUATION.md#fidelity-boundary-and-limitations)).
+
+### 9.12 Smooth turning and overshoot tolerance (AH-0MWJ1680Z001QYV2 audit rejection)
+
+The producer's review of the two-layer objective model was
+**"still too much left/right turning ... trying to be very precise with its
+positioning ... it should allow for a little overshoot and not rely so much on
+thrusters for precise positioning"**. The objective layer was not the problem;
+the *control* layer was. The ship drifts in a frictionless arena, so chasing a
+bearing to a fraction of a degree with A/D — and braking onto every pickup
+with S — is both impossible and unwatchable. The governor and the collection
+behaviour now treat flying as a coarse, human action.
+
+- **Turning deadband.** `alignmentToleranceRad` defaults to **0.18 rad**
+  (~10°, up from 0.15): no turn key is pressed for a smaller heading error, so
+  the ship simply flies on.
+- **Reversal hysteresis.** `turnHysteresisRad` (**0.25 rad**) requires the
+  predicted error to exceed the deadband by that margin before an established
+  turn is **reversed**. Inside the margin the turn is released instead (the
+  small overshoot coasts out) rather than braked with the opposite key. It is
+  `0`-able and inert when the ship's live `angularVelocity` is unavailable
+  (no coast to predict).
+- **Turn-press hold.** `turnPressMinMs` (**40 ms**) holds an established turn
+  key for a human-like burst instead of toggling on and off within a reaction;
+  a flip requested inside the window is **released**, never dithered to the
+  opposite key. Thrust and reverse are untouched, so a safety brake is never
+  delayed. **Aim intents are exempt** — holding the weapon axis on a target is
+  a precision task the producer did not ask to change, so an `aim` intent
+  keeps the closed-loop per-tick release (§9.8).
+- **Pass-through collection.** Pickups are collected on **contact**, so the
+  collect behaviour no longer retro-brakes onto one (`collectReverseBrake`
+  defaults to `false`; the retro thruster is still available behind the
+  toggle). It flies through the pickup and accepts the overshoot.
+- **Overshoot is accepted, not chased.** A mineral/power-up inside
+  `collectOvershootMargin` (**60 px**) that is **behind the ship's velocity
+  vector** drops out of the collection target set (`isOvershot` /
+  `withoutOvershot` in `competent/goals.ts`), so the bot does not U-turn for a
+  pickup it has just passed; the pickup becomes collectable again once it is
+  ahead. Both the collection goals and the collect behaviour apply the same
+  filter, so the goal that is scored is the target that is flown at.
+- **Reposition stops at the band edge.** The idle `reposition` behaviour gives
+  the forward model `repositionRadius` as its arrival radius, so the ship
+  coasts to a stop near the edge of its idle band instead of thrusting at the
+  exact playfield centre, overshooting it and drifting back.
+- **Measurement.** `src/ai/eval/turnChurn.ts` summarises a per-tick input trace
+  (turn duty cycle, turn presses and mean press length, direct left/right
+  flips, reversals and course changes, forward toggles, retro presses) and
+  reads the arena's recorded input, so any seeded run is measurable.
+  `competentBot.integration.test.ts` A/Bs the pre-change and shipped control on
+  one seeded scenario; the smoother control halves the turn-key presses and
+  cuts the turn duty cycle by roughly a third while keeping the objective
+  score, and the bullet-free objective sweep still wins the large majority of
+  seeds.
+- **Live tuning.** All four knobs (`alignmentToleranceRad`,
+  `turnHysteresisRad`, `turnPressMinMs`, plus the `collectReverseBrake` toggle
+  and `collectOvershootMargin` slider) are in the bot-tuning surface
+  (`src/ai/tuningFields.ts`) and the bundled baseline
+  (`src/data/bot-tuning.json`).
 
 ## 10. Testing
 
@@ -892,11 +951,14 @@ and adjust its parameters in real time.
   `BOT_TUNING_NUMERIC_FIELDS` (`src/ai/tuningFields.ts`) plus boolean toggles:
   the utility bands, seek ranges, standoff/danger margins, prediction
   horizons and speeds, steering weights, commitment hysteresis, the world
-  model, the human-input reaction/press cadence, and the rotation-skill
-  knobs `skill` / `maxAimErrorRad` / `aimLeadAlignSeconds` /
-  `aimLeadIterations` (`aimLeadEnabled` toggle)
-  (AH-0MV1DUSM2005HL98 · AC4). Moving a slider rebuilds the live brain and
-  governor immediately. The `playerSpeed` / `frictionDeceleration` sliders
+  model, the human-input reaction/press cadence (including the smooth-turning
+  knobs `alignmentToleranceRad` / `turnHysteresisRad` / `turnPressMinMs`),
+  collection's `collectReverseBrake` toggle and `collectOvershootMargin`
+  slider, and the rotation-skill knobs `skill` / `maxAimErrorRad` /
+  `aimLeadAlignSeconds` / `aimLeadIterations` (`aimLeadEnabled` toggle)
+  (AH-0MV1DUSM2005HL98 · AC4; smooth turning:
+  AH-0MWJ1680Z001QYV2 audit rejection, [section 9.12](#912-smooth-turning-and-overshoot-tolerance-ah-0mwj1680z001qyv2-audit-rejection)).
+  Moving a slider rebuilds the live brain and governor immediately. The `playerSpeed` / `frictionDeceleration` sliders
   are **overrides**: moving one away from its default makes it win over the
   live ship config; left at the default it is a fallback and the ship's live
   config wins (the same precedence the shipped demo resolves —

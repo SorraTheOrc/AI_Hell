@@ -9,13 +9,13 @@
     ],
     "income": {
       "deployments": 18,
-      "captured": 9,
-      "captureRate": 0.5,
-      "mineralsPerDeployment": 9,
-      "coresPerDeployment": 0.5,
-      "mineralsPerCapturedDeployment": 18,
+      "captured": 8,
+      "captureRate": 0.4444444444444444,
+      "mineralsPerDeployment": 7.444444444444445,
+      "coresPerDeployment": 0.4444444444444444,
+      "mineralsPerCapturedDeployment": 16.75,
       "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 59
+      "mineralEquivalentPerDeployment": 51.888888888888886
     },
     "unlockPace": [
       {
@@ -27,9 +27,9 @@
           "cores": 3
         },
         "minRing": 1,
-        "mineralBoundDeployments": 25,
-        "coreBoundDeployments": 6,
-        "deploymentsToAfford": 25
+        "mineralBoundDeployments": 30,
+        "coreBoundDeployments": 7,
+        "deploymentsToAfford": 30
       },
       {
         "id": "hull-3",
@@ -40,9 +40,9 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": 36,
-        "coreBoundDeployments": 8,
-        "deploymentsToAfford": 36
+        "mineralBoundDeployments": 43,
+        "coreBoundDeployments": 9,
+        "deploymentsToAfford": 43
       },
       {
         "id": "wave_laser",
@@ -53,9 +53,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 14,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 14
+        "mineralBoundDeployments": 17,
+        "coreBoundDeployments": 3,
+        "deploymentsToAfford": 17
       },
       {
         "id": "ricochet",
@@ -66,9 +66,9 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 10,
-        "coreBoundDeployments": 4,
-        "deploymentsToAfford": 10
+        "mineralBoundDeployments": 13,
+        "coreBoundDeployments": 5,
+        "deploymentsToAfford": 13
       },
       {
         "id": "cluster",
@@ -79,9 +79,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 18,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 18
+        "mineralBoundDeployments": 22,
+        "coreBoundDeployments": 3,
+        "deploymentsToAfford": 22
       },
       {
         "id": "hardened_plating",
@@ -92,9 +92,22 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 9,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 9
+        "mineralBoundDeployments": 11,
+        "coreBoundDeployments": 3,
+        "deploymentsToAfford": 11
+      },
+      {
+        "id": "anti_maw_plating",
+        "name": "Anti-Maw Plating",
+        "kind": "modifier",
+        "price": {
+          "minerals": 110,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 15,
+        "coreBoundDeployments": 5,
+        "deploymentsToAfford": 15
       }
     ]
   },
@@ -194,6 +207,19 @@
         "mineralBoundDeployments": null,
         "coreBoundDeployments": null,
         "deploymentsToAfford": null
+      },
+      {
+        "id": "anti_maw_plating",
+        "name": "Anti-Maw Plating",
+        "kind": "modifier",
+        "price": {
+          "minerals": 110,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
       }
     ]
   },
@@ -209,11 +235,11 @@
       "deployments": 36,
       "captured": 12,
       "captureRate": 0.3333333333333333,
-      "mineralsPerDeployment": 6,
+      "mineralsPerDeployment": 2.6666666666666665,
       "coresPerDeployment": 0.3333333333333333,
-      "mineralsPerCapturedDeployment": 18,
+      "mineralsPerCapturedDeployment": 8,
       "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 39.33333333333333
+      "mineralEquivalentPerDeployment": 35.99999999999999
     },
     "unlockPace": [
       {
@@ -225,9 +251,9 @@
           "cores": 3
         },
         "minRing": 1,
-        "mineralBoundDeployments": 37,
+        "mineralBoundDeployments": 83,
         "coreBoundDeployments": 9,
-        "deploymentsToAfford": 37
+        "deploymentsToAfford": 83
       },
       {
         "id": "hull-3",
@@ -238,9 +264,9 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": 54,
+        "mineralBoundDeployments": 120,
         "coreBoundDeployments": 12,
-        "deploymentsToAfford": 54
+        "deploymentsToAfford": 120
       },
       {
         "id": "wave_laser",
@@ -251,9 +277,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 20,
+        "mineralBoundDeployments": 45,
         "coreBoundDeployments": 3,
-        "deploymentsToAfford": 20
+        "deploymentsToAfford": 45
       },
       {
         "id": "ricochet",
@@ -264,9 +290,9 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 15,
+        "mineralBoundDeployments": 34,
         "coreBoundDeployments": 6,
-        "deploymentsToAfford": 15
+        "deploymentsToAfford": 34
       },
       {
         "id": "cluster",
@@ -277,9 +303,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 27,
+        "mineralBoundDeployments": 60,
         "coreBoundDeployments": 3,
-        "deploymentsToAfford": 27
+        "deploymentsToAfford": 60
       },
       {
         "id": "hardened_plating",
@@ -290,9 +316,22 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 14,
+        "mineralBoundDeployments": 30,
         "coreBoundDeployments": 3,
-        "deploymentsToAfford": 14
+        "deploymentsToAfford": 30
+      },
+      {
+        "id": "anti_maw_plating",
+        "name": "Anti-Maw Plating",
+        "kind": "modifier",
+        "price": {
+          "minerals": 110,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 42,
+        "coreBoundDeployments": 6,
+        "deploymentsToAfford": 42
       }
     ]
   },
@@ -387,6 +426,19 @@
         "price": {
           "minerals": 80,
           "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "anti_maw_plating",
+        "name": "Anti-Maw Plating",
+        "kind": "modifier",
+        "price": {
+          "minerals": 110,
+          "cores": 2
         },
         "minRing": 1,
         "mineralBoundDeployments": null,
