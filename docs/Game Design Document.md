@@ -2951,10 +2951,16 @@ owns between deployments, never in stripping the run.
 decision): a fresh hangar-war payload carries `activeLoadout.startingWeapons: []`,
 so a run starts with **only the ship's permanent cannon**. The `spread` starter
 is **owned** from the first deployment and stays selectable in the deployment
-selector; owning or buying a starting weapon never auto-equips it — equipping is
-always a deliberate choice. This supersedes the earlier "one starting weapon"
-reading of Rule 1: the fleet still owns the starter, but the deployed loadout
-starts empty.
+selector; owning the **free starter** weapon never auto-equips it — equipping a
+starter is always a deliberate choice. This supersedes the earlier "one
+starting weapon" reading of Rule 1: the fleet still owns the starter, but the
+deployed loadout starts empty. **A *bought* part is different** (parent
+AH-0MWL5PAP2001XYYF, producer Q1 = C refined): a successful hangar purchase
+**auto-enables** the entry — a hull becomes the active hull, a starting weapon
+joins `activeLoadout.startingWeapons` and a modifier joins
+`activeLoadout.modifiers` — so re-fitting takes one action per part. The un-equip
+toggles stay available, and a refused purchase changes neither ownership nor
+the loadout.
 
 The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 (`src/core/hangarWar/hangarEconomy.ts`):
@@ -2975,11 +2981,15 @@ The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 Every phase-A entry is available at ring 1 (`minRing: 1`); ring gating is the
 field phase B's ring content uses. A purchase needs **both** currencies at
 once, ownership is tracked per kind (hulls / starting weapons / modifiers), and
-precedence for a refused purchase is `owned` → `gated` → `unaffordable`. The
-hangar screen's deployment selector equips an owned hull and toggles owned
-starting weapons — **every** owned weapon row is actionable, including the last
-equipped one — and modifiers; resolution drops unknown or unowned ids, so a
-corrupt save can never deploy an unowned ship or an unowned weapon. An empty
+precedence for a refused purchase is `owned` → `gated` → `unaffordable`. A
+successful purchase also **arms** the part immediately (parent
+AH-0MWL5PAP2001XYYF): `purchaseHangarEntry` opts in to the economy's
+`equipOnPurchase` option, while the other callers keep the ownership-only
+default. The hangar screen's deployment selector equips an owned hull and
+toggles owned starting weapons — **every** owned weapon row is actionable,
+including the last equipped one — and modifiers; resolution drops unknown or
+unowned ids, so a corrupt save can never deploy an unowned ship or an unowned
+weapon. An empty
 starting-weapon selection is a legal loadout that round-trips as empty (never
 silently replaced by `spread`), and the deployment then equips nothing, so the
 run begins with only the permanent cannon. The attract bot's "cheapest useful
@@ -3304,7 +3314,7 @@ generated. A fresh war materialises its ring from the definitions; a stored
 
 #### The capture cycle
 
-One captured hex is one deployment, resolved in four steps in a single payload
+One captured hex is one deployment, resolved in five steps in a single payload
 write:
 
 1. **Bank the salvage.** The run's cumulative salvage at the mini-boss moment is
@@ -3363,9 +3373,24 @@ write:
    ring-end hangar assault described next (a repel wins the ring and opens the
    next one; a fall resets the campaign); the **rush** line opens the next ring
    with **no assault at all**, exactly as it always has.
+5. **Spend the flown ship (parent AH-0MWL5PAP2001XYYF, producer Q2 = B).** The
+   ship the deployment flew is a **one-battle consumable** on **both** outcomes:
+   its hull (left behind as the defender on a win, destroyed on a loss), every
+   starting weapon and modifier on the active loadout, and those ids' bought
+   permanent `weaponLevels` / `powerUpLevels` rows are removed through the pure
+   `consumeDeployedShip` rule. Every owned item the player **did not fly**
+   survives, and the free starter kit (`hull-1` + `spread`) is always owned, so
+   a battle can never soft-lock the fleet. The hangar then resets to the starter
+   kit — `activeHull` is the starter hull and `activeLoadout` is empty, so the
+   next deployment carries only the permanent cannon until the player refits.
+   The banked balances are untouched by consumption; a win's fixed bonus is what
+   makes a win pay for the next ship. The ring-end fresh-campaign reset still
+   wins over consumption, and a refused capture (`unknown-hex` /
+   `defender-required`) is not a completed battle and spends nothing.
 
 A lost deployment is the mirror image: it forfeits **only** the salvage earned
-since the last bank and leaves the hangar and the ring untouched. Difficulty is
+since the last bank, spends the ship it flew (step 5), and otherwise leaves the
+hangar and the ring untouched. Difficulty is
 still the shipped curve data: a hex's aggression selects campaign level
 `1 + aggression` (clamped to the campaign maximum), and perturbs the mini-boss's
 hit pool with the same bounded formula the campaign's mini-bosses use.

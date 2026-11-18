@@ -849,7 +849,11 @@ hangar survives — that is what winning this hell looks like.
   loadout. From A: the **ring state** — which hexes are held, which hull plus bot
   defends each, each hex's **frontier aggression**, and the **ring depth**. A run's
   temporary in-run loadout still dies with the ship (middle-loop semantics
-  unchanged); the hangar and the ring never do.
+  unchanged), and — unlike B — the **ship that flew a hex battle is a
+  one-battle consumable** (parent AH-0MWL5PAP2001XYYF): its hull, the active
+  starting weapons and modifiers, and their bought permanent levels are spent
+  on **win or loss**, while every un-flown owned item and the free starter kit
+  survive. The hangar itself and the ring still never do.
 
 ### States
 
@@ -866,9 +870,10 @@ hangar survives — that is what winning this hell looks like.
   campaign reset**: the hangar (hulls, weapons, modifiers, banked salvage and
   cores) and the ring hexes are wiped together and a fresh deterministic
   campaign seed is issued, preserving only the best score. Losing a **run** or
-  a **hex battle** never does this: the run's unbanked salvage is forfeit, a hex
-  the frontier retakes is lost, but the hangar and the rest of the ring survive
-  (Candidate B's rule, preserved).
+  a **hex battle** never does this: the run's unbanked salvage is forfeit, the
+  ship that flew is spent (parent AH-0MWL5PAP2001XYYF), a hex the frontier
+  retakes is lost, but the hangar's other owned items and the rest of the ring
+  survive (Candidate B's rule, preserved).
 - **Partial progress:** a bad run still banks salvage from the checkpoints it
   reached, still **lowers that hex's aggression** (you killed defenders), and
   still leaves a bot defending what is already held.
@@ -1078,8 +1083,10 @@ trade has to stay live; see *Effort and risk*).
 ### Pillar impact
 
 - **Changes "no continue, game over is final" (GDD §4.6) at campaign level.** As
-  with B, a lost **run** is still final (ship and unbanked salvage gone), while
-  the hangar and the ring persist. **Additional cost unique to D:** hexes can be
+  with B, a lost **run** is still final (its unbanked salvage gone), and a
+  completed hex battle now spends the ship it flew (parent
+  AH-0MWL5PAP2001XYYF) while the rest of the hangar and the ring persist.
+  **Additional cost unique to D:** hexes can be
   *lost* between runs, so the campaign can move backwards — a deliberate,
   legible stake rather than an accident.
 - **Changes the "single final boss" pillar (GDD §3.1/§4.3).** Each hex ends on
