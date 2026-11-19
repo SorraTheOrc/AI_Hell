@@ -1173,13 +1173,51 @@ describe('HangarScene', () => {
     expect(scene.focusRow('buy:ricochet')).toBe(false);
     ricochet.text.emit('pointerdown');
 
-    expect(scene.getPayload()).toEqual(UNARMED_PAYLOAD);
+    // The hangar is untouched by the refused rows; the load's ring
+    // materialisation is the only change (AH-0MWNGYDIZ0037HGW).
+    expect(scene.getPayload().hangar).toEqual(UNARMED_PAYLOAD.hangar);
     expect(scene.getPayload().hangar.bankedMinerals).toBe(0);
-    // A refused/unavailable row never writes to storage (the deploy row writes
-    // nothing either, because it was never activated).
-    expect(storage.entries.get(HANGAR_WAR_STORAGE_KEY)).toBe(
-      JSON.stringify(UNARMED_PAYLOAD),
+    expect(scene.getPayload().ring.hexes.length).toBeGreaterThan(0);
+    // The load persisted the materialised ring; no refused row wrote on top
+    // of it (the deploy row writes nothing either, because it was never
+    // activated).
+    const persisted = parseHangarWarPayload(
+      JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
     );
+    expect(persisted!.hangar).toEqual(UNARMED_PAYLOAD.hangar);
+    expect(persisted!.ring.hexes).toEqual(scene.getPayload().ring.hexes);
+  });
+
+  it('materialises a fresh war’s ring on load, persists it and deploys at a real hex', async () => {
+    // A fresh war stores an empty ring (`createDefaultPayload`); only the hex
+    // map used to materialise it, so the hangar’s first ▶ DEPLOY was hexless
+    // and its first win could not bank its salvage + bonus
+    // (AH-0MWNGYDIZ0037HGW). The hangar now applies the same materialisation on
+    // load and persists it, so the first battle targets a real hex and pays
+    // through the normal capture cycle (producer Q2 = a).
+    const fresh = createDefaultPayload(4242);
+    expect(fresh.ring.hexes).toEqual([]);
+    const storage = memoryStorage(fresh);
+
+    booted = await bootScene([HangarScene, PlayScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, { storage });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+
+    const materialised = scene.getPayload().ring.hexes;
+    expect(materialised.length).toBeGreaterThan(0);
+    // Persisted through the one versioned store, so the ring survives leaving
+    // the screen (no re-materialisation churn on the next load).
+    const persisted = parseHangarWarPayload(
+      JSON.parse(storage.entries.get(HANGAR_WAR_STORAGE_KEY)!),
+    );
+    expect(persisted!.ring.hexes).toEqual(materialised);
+
+    // ▶ DEPLOY names a real hex, and the launched deployment targets it.
+    const deployHex = scene.getModel().deployRow.hexId;
+    expect(deployHex).not.toBeNull();
+    expect(materialised.map((hex) => hex.id)).toContain(deployHex);
+    expect(scene.deploy().hexId).toBe(deployHex);
   });
 
   it('launches a deployment into the shipped PlayScene with the hangar payload', async () => {
@@ -1441,8 +1479,12 @@ describe('HangarScene', () => {
         activeHull: DEFAULT_HULL_ID,
         activeLoadout: { startingWeapons: [], modifiers: [] },
       });
-      // Ring, attacks and the frontier clock are back to the start.
-      expect(reset.ring).toEqual({ ringIndex: 1, hexes: [] });
+      // Ring, attacks and the frontier clock are back to the start. A restarted
+      // war is a fresh war whose ring is materialised from the authored
+      // definitions (AH-0MWNGYDIZ0037HGW), so the new war's first deployment
+      // targets a real hex instead of banking nothing.
+      expect(reset.ring.ringIndex).toBe(1);
+      expect(reset.ring.hexes.length).toBeGreaterThan(0);
       expect(reset.pendingAttacks).toEqual([]);
       expect(reset.frontierTick).toBe(0);
       // A genuinely new war (fresh random seed) that keeps the best score.
@@ -1494,7 +1536,7 @@ describe('HangarScene', () => {
     expect(scene.isRestartArmed()).toBe(true);
     pressKey(scene, { key: ' ' }); // confirm
     expect(scene.getPayload().hangar.bankedMinerals).toBe(0);
-    expect(scene.getPayload().ring.hexes).toEqual([]);
+    expect(scene.getPayload().ring.hexes.length).toBeGreaterThan(0);
   });
 
   it('disarms after the confirm window times out', async () => {
@@ -1565,7 +1607,8 @@ describe('HangarScene', () => {
     for (const [key, value] of Object.entries(otherKeys)) {
       expect(entries.get(key)).toBe(value);
     }
-    expect(scene.getPayload().ring.hexes).toEqual([]);
+    // A restarted war's fresh ring is materialised (AH-0MWNGYDIZ0037HGW).
+    expect(scene.getPayload().ring.hexes.length).toBeGreaterThan(0);
   });
 
   it('does not act under the attract demo (no reset, no write, non-actionable row)', async () => {

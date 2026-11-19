@@ -66,12 +66,14 @@
 
 import Phaser from 'phaser';
 
+import { materialiseRing } from '../core/hangarWar/captureCycle';
 import { createDefaultPayload, loadHangarWarPayload, saveHangarWarPayload } from '../core/hangarWar/hangarWarStore';
 import { randomSeed } from '../core/rng';
 import type {
   HangarWarPayload,
   HangarWarStorage,
 } from '../core/hangarWar/types';
+import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import {
   HANGAR_CATALOGUE,
   type HangarEntry,
@@ -203,7 +205,25 @@ export class HangarScene extends Phaser.Scene {
     // visit's hex can never leak into a menu-entry visit.
     this.targetHexId = data?.targetHexId ?? null;
     const injected = data?.payload;
-    this.payload = injected ?? this.loadPayload();
+    if (injected !== undefined) {
+      // An injected payload is a caller's fixture (tests, and the map handing
+      // over its already-materialised war): it is shown as given and never
+      // written back. Materialising a ring is a **persisted** state change, so
+      // it belongs to the real load path below.
+      this.payload = injected;
+    } else {
+      const loaded = this.loadPayload();
+      // Materialise a fresh war's ring from the authored definitions — the same
+      // rule `HexMapScene.init()` applies to a stored war — so `▶ DEPLOY` names
+      // a real hex and the first battle runs the normal capture cycle that pays
+      // its salvage and bonus (AH-0MWNGYDIZ0037HGW, producer Q2 = (a)). A
+      // partial ring is never padded and an authored-empty ring is left as-is;
+      // the demo and in-memory guards live in `persist()`.
+      this.payload = materialiseRing(loaded, HEX_RING_DEFINITIONS);
+      if (this.payload.ring.hexes.length > loaded.ring.hexes.length) {
+        this.persist();
+      }
+    }
   }
 
   create(): void {
@@ -375,7 +395,13 @@ export class HangarScene extends Phaser.Scene {
       // Second activation inside the window: wipe the war to its starting
       // position with a fresh seed, keeping the all-time best score.
       this.disarmRestart();
-      this.payload = restartHangarWar(this.payload, randomSeed());
+      // A restarted war is a fresh war: materialise its ring from the authored
+      // definitions so the new war's first `▶ DEPLOY` also names a real hex and
+      // pays through the normal capture cycle (AH-0MWNGYDIZ0037HGW).
+      this.payload = materialiseRing(
+        restartHangarWar(this.payload, randomSeed()),
+        HEX_RING_DEFINITIONS,
+      );
       this.persist();
       this.rebuildKeepingFocus(RESTART_ROW_KEY);
       return true;

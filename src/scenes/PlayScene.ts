@@ -171,7 +171,6 @@ import {
   saveCheckpoint,
   type Checkpoint,
 } from '../core/checkpointStore';
-import { WIN_BONUS_MINERALS } from '../core/hangarWar/hangarEconomy';
 import {
   bankSalvage,
   bankWinBonus,
@@ -895,6 +894,16 @@ export class PlayScene extends CombatScene<
    * the scene's test/UI seam. `null` until a deployment's mini-boss is defeated.
    */
   private lastCapture: HexCaptureResult | null = null;
+
+  /**
+   * The minerals the win resolution actually banked as the fixed post-win
+   * bonus in this run (AH-0MWNGYDIZ0037HGW, producer Q3 = a). Read by
+   * `_finishRun` to announce the map's `WIN BONUS BANKED` line, so the
+   * announcement is derived from the same record that wrote the balance and
+   * can never over-claim. Zero until a win resolution pays it (and for the
+   * arcade run, which never pays it).
+   */
+  private winBonusBanked = 0;
 
   /** The checkpoint loaded in `init()`, applied once the run exists. */
   private pendingResumeCheckpoint: Checkpoint | null = null;
@@ -1736,6 +1745,7 @@ export class PlayScene extends CombatScene<
     this.miniBossSweepTargets = [];
     this.salvageBank = null;
     this.lastCapture = null;
+    this.winBonusBanked = 0;
     this.forfeitedSalvage = { minerals: 0, cores: 0 };
     this.driftX = 0;
     this.driftDir = 1;
@@ -4242,11 +4252,47 @@ export class PlayScene extends CombatScene<
    * balance the capture cycle returned and lands in that **same**
    * `ai_hell_hangar_war` payload write, so it can never be double-counted and
    * never disturbs the capture cycle's per-run watermark.
+   *
+   * **Hexless fallback** (AH-0MWNGYDIZ0037HGW, producer Q1 = (a)). A winning
+   * deployment with no target hex (`hexId: null`) cannot run the capture
+   * cycle, yet it is still a hangar battle that was won. Such a win banks the
+   * fixed bonus through {@link bankWinBonus} and persists it through the same
+   * payload write — minerals only, the capture watermark untouched and no hex
+   * state changed. The hangar now materialises the ring on load
+   * (AH-0MWNGYDIZ0037HGW Q2 = (a)), so this branch is the defensive path for
+   * an unauthored/ungeneratable ring rather than the first battle's route.
+   *
+   * **Exactly once.** The bonus is paid by whichever branch ran and recorded
+   * in {@link winBonusBanked}; the capture path and the hexless fallback are
+   * mutually exclusive (the fallback returns before the capture cycle runs),
+   * so no win can pay it twice.
    */
   private _resolveHangarWarCapture(): void {
     const deployment = this.hangarWarDeployment;
-    if (!deployment || !deployment.hexId) return;
+    if (!deployment) return;
     const payload = this._hangarWarPayload();
+    // A hexless win still pays: bank the fixed bonus alone, with no capture
+    // cycle to run and no hex state to touch (AH-0MWNGYDIZ0037HGW Q1 = a).
+    if (!deployment.hexId) {
+      const startBank =
+        this.salvageBank ?? bankedSalvageFromHangar(payload.hangar);
+      const banked = bankWinBonus(startBank);
+      this.salvageBank = banked;
+      // The announced amount is the delta this resolution actually banked, so
+      // the map can never claim a bonus the balance did not gain.
+      this.winBonusBanked = Math.max(0, banked.minerals - startBank.minerals);
+      // A new payload with only the two banked balances changed — the ring,
+      // the capture watermark and every other hangar field are untouched.
+      this._saveHangarWarPayload({
+        ...payload,
+        hangar: {
+          ...payload.hangar,
+          bankedMinerals: banked.minerals,
+          bankedCores: banked.cores,
+        },
+      });
+      return;
+    }
     const result = resolveHexCapture(payload, {
       hexId: deployment.hexId,
       defenderHullId: deployment.hullId,
@@ -4281,6 +4327,10 @@ export class PlayScene extends CombatScene<
     // topped up, and persisted in the same payload write below.
     const banked = bankWinBonus(result.banked);
     this.salvageBank = banked;
+    // Record exactly what this resolution banked as the bonus, so the map's
+    // announcement is derived from the win resolution's own record rather than
+    // a constant (AH-0MWNGYDIZ0037HGW Q3 = a).
+    this.winBonusBanked = Math.max(0, banked.minerals - result.banked.minerals);
     const captured = result.payload;
     captured.hangar.bankedMinerals = banked.minerals;
     captured.hangar.bankedCores = banked.cores;
@@ -4394,6 +4444,16 @@ export class PlayScene extends CombatScene<
       minerals: this.salvageBank?.minerals ?? 0,
       cores: this.salvageBank?.cores ?? 0,
     };
+  }
+
+  /**
+   * The minerals the win resolution actually banked as the fixed post-win
+   * bonus this run (the same value handed to the hex map's
+   * `winBonusMinerals`), or `0` when no bonus was paid. A test/UI seam for
+   * "announced ⇒ banked" (AH-0MWNGYDIZ0037HGW).
+   */
+  getWinBonusBanked(): number {
+    return this.winBonusBanked;
   }
 
   /** The salvage the last lost run forfeited (end-of-run summary seam). */
@@ -5745,7 +5805,13 @@ export class PlayScene extends CombatScene<
         score: this.gameState.score,
         reward,
         assault,
-        winBonusMinerals: won ? WIN_BONUS_MINERALS : 0,
+        // The bonus is read from the win resolution's own record — what it
+        // actually added to the hangar balance — never a constant, so the map
+        // can never announce a reward that was not banked
+        // (AH-0MWNGYDIZ0037HGW Q3 = a). `_resolveHangarWarCapture` pays it
+        // exactly once (capture path or hexless fallback) and a loss never
+        // pays it, so this is 0 on a loss and on the arcade run.
+        winBonusMinerals: won ? this.winBonusBanked : 0,
         demo: wasDemo,
         demoDwellMs: this.demoDwellMs,
       });

@@ -139,6 +139,19 @@ function deploymentFor(aggression: number): HangarWarDeployment {
 }
 
 /**
+ * A winning deployment with **no** target hex: a fresh war's empty ring, which
+ * `selectDeploymentHex()` cannot resolve (AH-0MWNGYDIZ0037HGW). The defect's
+ * fallback path — the hangar now materialises the ring on load, so this only
+ * happens for an unauthored/ungeneratable ring, but the win must still pay.
+ */
+function hexlessDeployment(): HangarWarDeployment {
+  return buildHangarDeployment(createDefaultPayload(4242), {
+    hexId: null,
+    seed: 7,
+  });
+}
+
+/**
  * Private scene seams this suite drives. `_clearWaveForScenario` and the
  * damage isolation hooks are the same test seams the capture-cycle and
  * mini-boss suites already use.
@@ -589,6 +602,85 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(
         Object.keys(localStorage).filter((key) => key.includes('hangar')),
       ).toEqual([HANGAR_WAR_STORAGE_KEY]);
+    },
+    30_000,
+  );
+
+  it(
+    'banks the fixed bonus and announces exactly it on a winning hexless deployment (Q1 = a)',
+    async () => {
+      // AH-0MWNGYDIZ0037HGW: a winning deployment with no target hex cannot run
+      // the capture cycle, but it is still a won hangar battle. It banks the
+      // fixed bonus through `bankWinBonus` (minerals only, no capture
+      // watermark, no hex state change) and the map announces exactly that.
+      const bonus = winBonusMinerals();
+      const deployment = hexlessDeployment();
+      expect(deployment.hexId).toBeNull();
+      const scene = await bootPlay(deployment);
+
+      // 25 minerals earned during the run, banked at the mini-boss checkpoint
+      // moment through the shared salvage seam (unchanged).
+      scene.getGameState().minerals = 25;
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+
+      // No capture cycle ran (no target hex), so no capture record is invented.
+      expect(scene.getLastCapture()).toBeNull();
+      // The win still banked the fixed bonus, exactly once.
+      expect(scene.getWinBonusBanked()).toBe(bonus);
+
+      // The checkpoint-banked salvage plus the bonus is the persisted balance;
+      // no hex was captured and no core was awarded by the bonus.
+      const stored = loadHangarWarPayload();
+      expect(stored).not.toBeNull();
+      expect(stored!.hangar.bankedMinerals).toBe(25 + bonus);
+      expect(stored!.hangar.bankedCores).toBe(1);
+      expect(stored!.ring.hexes).toEqual([]);
+
+      // The map announces exactly the number the resolution banked — never a
+      // constant that could over-claim (Q3 = a).
+      const map = await landOnMap(scene);
+      expect(map.getWinBonusLine()).toBe(
+        `WIN BONUS BANKED: +${bonus} MINERALS`,
+      );
+    },
+    30_000,
+  );
+
+  it(
+    'banks a real-hex win’s bonus exactly once (the fallback never runs too)',
+    async () => {
+      // AH-0MWNGYDIZ0037HGW, "exactly once": the capture path already pays the
+      // bonus, so the hexless fallback must not also run. The recorded bonus,
+      // the persisted balance and the announcement all agree on one payment.
+      const bonus = winBonusMinerals();
+      const scene = await bootPlay(deploymentFor(3), true);
+      scene.getGameState().minerals = 25;
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+
+      const capture = scene.getLastCapture();
+      expect(capture).not.toBeNull();
+      expect(capture!.ok).toBe(true);
+      // The capture path paid the bonus once; the fallback did not add a
+      // second one.
+      expect(scene.getWinBonusBanked()).toBe(bonus);
+
+      const stored = loadHangarWarPayload();
+      expect(stored).not.toBeNull();
+      expect(stored!.hangar.bankedMinerals).toBe(25 + bonus);
+      expect(stored!.hangar.bankedCores).toBe(1);
+
+      const map = await landOnMap(scene);
+      expect(map.getWinBonusLine()).toBe(
+        `WIN BONUS BANKED: +${bonus} MINERALS`,
+      );
     },
     30_000,
   );

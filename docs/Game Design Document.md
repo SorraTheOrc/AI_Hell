@@ -3261,6 +3261,25 @@ ten levels, a non-final level's mini-boss still advances, level 10's
 mini-boss still opens the final boss, and **every arcade mini-boss defeat still
 presents the wheel**.
 
+**The first battle's ring and the hexless fallback** (AH-0MWNGYDIZ0037HGW;
+producer **Q1 = (a)**, **Q2 = (a)**, **Q3 = (a)**, recorded 2026-11-19). A
+fresh war stores an **empty ring** and only the hex map used to materialise it,
+so a hangar `▶ DEPLOY` on the first battle (and the first battle after `⟲
+RESTART WAR`) targeted no hex: the win skipped the capture cycle, banked
+nothing, yet the map still claimed `WIN BONUS BANKED: +N MINERALS`. The hangar
+now **materialises the authored ring on load** — the same rule the map applies —
+and persists it through `saveHangarWarPayload()`, respecting the demo and
+in-memory guards, so the first deployment names a real hex and pays its salvage
+and bonus through the normal capture cycle; `⟲ RESTART WAR` materialises the new
+war's ring the same way. A ring that cannot be materialised still pays: a
+winning deployment with no target hex banks exactly `WIN_BONUS_MINERALS` through
+the **hexless fallback** in `PlayScene._resolveHangarWarCapture()` (minerals
+only, no capture watermark, no hex state change). The capture path and the
+fallback are **mutually exclusive**, so the bonus is paid exactly once, and the
+map announces the amount the win resolution **actually banked** (read from its
+own record, never a constant), so the announced line and the hangar's balance
+always agree.
+
 #### The hangar and its economy
 
 The economy, unlock tree, salvage banking and `ai_hell_hangar_war` payload are

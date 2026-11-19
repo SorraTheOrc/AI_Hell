@@ -116,6 +116,13 @@ export const CORE_MINERAL_EQUIVALENT = 100;
  * instead banks this fixed bonus into the persistent hangar war, and the
  * rolled-in defence report announces it before the map (`Q3 = (b)`).
  *
+ * **Paid on every winning deployment, including a hexless one.** The capture
+ * cycle banks it for a win with a target hex; a winning deployment with no
+ * target hex banks the same bonus through the hexless fallback in
+ * `PlayScene._resolveHangarWarCapture()` (AH-0MWNGYDIZ0037HGW, producer
+ * Q1 = (a)), so a won battle never announces a reward it did not pay. The two
+ * paths are mutually exclusive — the bonus is paid exactly once.
+ *
  * **Minerals only.** A capture already banks its one core through the capture
  * cycle, so granting a bonus core here would double-count cores.
  *
