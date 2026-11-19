@@ -33,6 +33,20 @@
  *   hands to `PlayScene` (`./hangarDeployment`), so the hull, starting
  *   weapons, modifiers and hex-aggression difficulty shown on the screen are
  *   exactly the ones a deployment carries (AH-0MVUXC2DD003HN0I).
+ * - **The screen is target-aware (AH-0MWMT4QXF0095CBN).** When the player
+ *   arrives from a chosen hex, an optional `targetHexId` is threaded into the
+ *   same deployment builder, so the `▶ DEPLOY` row and the published
+ *   {@link HangarBossIntel} describe **exactly** the hex the launch attacks.
+ *   The intel comes from the shared authored ring data
+ *   (`src/data/hexRingDefinitions.ts`, or an injectable `definitions`
+ *   override), never a scene-local copy; an unknown/unauthored hex publishes
+ *   an explicit unknown fallback instead of throwing. Every weapon row
+ *   (the loadout selector and the unlock tree's weapon entries) also carries
+ *   its {@link BossMatchup} against that boss, resolved by the F1 pure rule
+ *   (`src/core/hangarWar/weaponMatchup.ts`) — **display only**, never a combat
+ *   rule (parent assumption A7; AH-0MWL5376H001WJFZ owns the mechanics). The
+ *   verdict is always paired with a glyph tag (`▲ EFFECTIVE` / `▼ RESISTED`),
+ *   so it is readable without colour (repo CVD policy).
  * - **One screen code path.** {@link buildHangarScreenModel} and
  *   {@link renderHangarScreen} are used by the shipped `HangarScene` *and* by
  *   the `GymHangar` parity scene (which renders the same model read-only), so
@@ -94,6 +108,13 @@ import {
   type HangarWarDeployment,
 } from './hangarDeployment';
 import { FocusManager } from '../../utils/focusManager';
+import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
+import type { HexRingDefinition } from '../../core/hangarWar/hexRing';
+import {
+  resolveBossMatchup,
+  type BossMatchup,
+  type MatchupDefinition,
+} from '../../core/hangarWar/weaponMatchup';
 
 /** Title rendered by the hangar screen (asserted by tests). */
 export const HANGAR_SCREEN_TITLE = 'HANGAR WAR';
@@ -185,6 +206,12 @@ export interface HangarUnlockRow {
    * there is no next level to price (a `capped` row, or no upgrade at all).
    */
   upgradePriceLabel: string | null;
+  /**
+   * This weapon's display verdict against the target boss (`strong` when the
+   * boss is weak against it, `weak` when the boss resists it); `null` on every
+   * non-weapon row, which keeps its existing rendering (AH-0MWMT4QXF0095CBN).
+   */
+  matchup: BossMatchup | null;
 }
 
 /** One hull option in the deployment selector. */
@@ -217,6 +244,12 @@ export interface HangarWeaponOption {
   label: string;
   /** True when toggling this weapon would change the loadout. */
   actionable: boolean;
+  /**
+   * This weapon's display verdict against the target boss (AH-0MWMT4QXF0095CBN):
+   * `strong` when the boss's `weaknesses` name it, `weak` when its
+   * `strengths` do, otherwise `neutral`.
+   */
+  matchup: BossMatchup;
 }
 
 /** One permanent-modifier option in the deployment selector. */
@@ -313,6 +346,41 @@ export function buildHangarRestartRow(armed = false): HangarRestartRow {
   };
 }
 
+/**
+ * The target hex's authored boss intel, as the config screen publishes it
+ * (AH-0MWMT4QXF0095CBN).
+ *
+ * Read from the shared authored ring definitions, never a scene-local copy.
+ * Total: an empty ring (no target) or a stored hex with no authored definition
+ * publishes `known: false` and an explicit unknown fallback rather than
+ * throwing.
+ */
+export interface HangarBossIntel {
+  /** The resolved target hex (the hex `▶ DEPLOY` launches at), or `null`. */
+  readonly hexId: string | null;
+  /** The boss that holds the target hex, or `null` when it is not authored. */
+  readonly boss: string | null;
+  /** What that boss is strong against (empty when unknown). */
+  readonly strengths: readonly string[];
+  /** What that boss is weak against (empty when unknown). */
+  readonly weaknesses: readonly string[];
+  /** Whether an authored definition was found for the target hex. */
+  readonly known: boolean;
+}
+
+/** The non-colour tag a strong (countering) weapon row carries. */
+export const HANGAR_STRONG_MARKER = '▲ EFFECTIVE';
+
+/** The non-colour tag a weak (resisted) weapon row carries. */
+export const HANGAR_WEAK_MARKER = '▼ RESISTED';
+
+/** The visible mutation on a matchup-tagged label: neutral is unchanged. */
+function withMatchupMarker(label: string, matchup: BossMatchup | null): string {
+  if (matchup === 'strong') return `${label} — ${HANGAR_STRONG_MARKER}`;
+  if (matchup === 'weak') return `${label} — ${HANGAR_WEAK_MARKER}`;
+  return label;
+}
+
 /** The complete rendered state of the hangar screen (pure data). */
 export interface HangarScreenModel {
   /** Screen title. */
@@ -335,6 +403,12 @@ export interface HangarScreenModel {
   mapRow: HangarMapRow;
   /** The `⟲ RESTART WAR` reset row (two-step confirm, `bestScore` kept). */
   restartRow: HangarRestartRow;
+  /**
+   * The target hex's authored boss intel (AH-0MWMT4QXF0095CBN): the resolved
+   * target, its boss name and authored strengths/weaknesses lists, or an
+   * explicit unknown fallback for an unauthored/unknown hex.
+   */
+  bossIntel: HangarBossIntel;
   /**
    * Keys of the rows that can be activated, in reading order — exactly the
    * rows registered with the shared `FocusManager` (disabled rows are never
@@ -526,11 +600,14 @@ function buildUpgradeAffordance(
  *
  * @param payload — the payload whose hangar and ring are shown.
  * @param catalogue — the tree to present (injectable for tests/fixtures).
+ * @param target — the target boss's authored lists, or `null` for no target
+ *   (every weapon row then resolves `neutral`).
  * @returns the unlock rows, in catalogue order.
  */
 export function buildHangarUnlockRows(
   payload: HangarWarPayload,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  target: MatchupDefinition | null = null,
 ): HangarUnlockRow[] {
   const context = { ringIndex: payload.ring.ringIndex };
   return catalogue
@@ -546,6 +623,11 @@ export function buildHangarUnlockRows(
         state === 'owned' ? buildUpgradeAffordance(payload, entry) : null;
       const actionLabel = upgrade?.actionLabel
         ?? actionLabelFor(entry, state, check.shortfall);
+      // Only a weapon row can be strong or weak against the boss; every other
+      // kind keeps its existing rendering byte-for-byte (parent assumption A3).
+      const matchup = entry.kind === 'weapon'
+        ? resolveBossMatchup(entry.weaponId, target)
+        : null;
       return {
         key: `buy:${entry.id}`,
         id: entry.id,
@@ -554,12 +636,16 @@ export function buildHangarUnlockRows(
         priceLabel: formatPrice(entry),
         state: upgrade?.state ?? state,
         actionLabel,
-        label: upgrade?.label
-          ?? `${entry.name} — ${formatPrice(entry)} — ${actionLabel}`,
+        label: withMatchupMarker(
+          upgrade?.label
+            ?? `${entry.name} — ${formatPrice(entry)} — ${actionLabel}`,
+          matchup,
+        ),
         actionable: upgrade !== null ? upgrade.actionable === true : state === 'buyable',
         level: upgrade?.level ?? null,
         maxLevel: upgrade?.maxLevel ?? null,
         upgradePriceLabel: upgrade?.upgradePriceLabel ?? null,
+        matchup,
       };
     });
 }
@@ -591,6 +677,7 @@ export function buildHangarHullOptions(
 export function buildHangarWeaponOptions(
   payload: HangarWarPayload,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  target: MatchupDefinition | null = null,
 ): HangarWeaponOption[] {
   const loadout = resolveActiveLoadout(payload.hangar);
   const equippedIds = new Set(loadout.startingWeapons);
@@ -599,17 +686,24 @@ export function buildHangarWeaponOptions(
     const entry = findHangarEntry(id, catalogue);
     if (entry === null || entry.kind !== 'weapon') continue;
     const equipped = equippedIds.has(id);
+    // Resolved from the shipped weapon id through the F1 rule, so the
+    // ring-data (`waveLaser`) and catalogue (`wave_laser`) spellings agree.
+    const matchup = resolveBossMatchup(entry.weaponId, target);
     options.push({
       key: `weapon:${id}`,
       id,
       name: entry.name,
       equipped,
-      label: `LOADOUT ${entry.name}${equipped ? ' — EQUIPPED' : ''}`,
+      label: withMatchupMarker(
+        `LOADOUT ${entry.name}${equipped ? ' — EQUIPPED' : ''}`,
+        matchup,
+      ),
       // Every owned weapon is toggleable, including the last equipped one:
       // the player may deploy with no extra weapon at all, in which case the
       // run starts with only the ship's permanent cannon
       // (AH-0MVZJ6V1J001DA9D).
       actionable: true,
+      matchup,
     });
   }
   return options;
@@ -640,19 +734,32 @@ export function buildHangarModifierOptions(
   return options;
 }
 
+/** Optional target knobs for {@link buildHangarDeployRow}. */
+export interface BuildHangarDeployRowOptions {
+  /**
+   * The hex the player chose on the map. Omitted/`null` keeps the existing
+   * default (the weakest unheld hex, via `selectDeploymentHex`).
+   */
+  readonly targetHexId?: string | null;
+}
+
 /**
  * Builds the ▶ DEPLOY row from the pure deployment payload (pure).
  *
  * The label states the target and the difficulty it selects — the same
  * `startLevel` the run will actually begin at — so the player can read the
- * hex-aggression difficulty before committing to the deployment.
+ * hex-aggression difficulty before committing to the deployment. An explicit
+ * `targetHexId` is threaded into the **same** {@link buildHangarDeployment}
+ * call that launches the run, so the row and the launch can never disagree.
  */
 export function buildHangarDeployRow(
   payload: HangarWarPayload,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  options: BuildHangarDeployRowOptions = {},
 ): HangarDeployRow {
   const deployment: HangarWarDeployment = buildHangarDeployment(payload, {
     catalogue,
+    hexId: options.targetHexId ?? null,
   });
   const target = deployment.hexId === null ? 'no hex' : `hex ${deployment.hexId}`;
   return {
@@ -664,6 +771,34 @@ export function buildHangarDeployRow(
       `▶ DEPLOY — ${target} · aggression ${deployment.aggression}`
       + ` · level ${deployment.startLevel}`,
     actionable: true,
+  };
+}
+
+/**
+ * Resolves the authored boss intel for a target hex (pure and total).
+ *
+ * The definition comes from the shared authored ring data (or an injected
+ * {@link HangarScreenModelOptions.definitions} override), never a scene-local
+ * copy. A `null` target (an empty ring) or an unauthored/unknown hex publishes
+ * `known: false` with the explicit unknown fallback rather than throwing.
+ *
+ * @param hexId — the resolved target hex id, or `null`.
+ * @param definitions — the authored definitions to read (defaults to shipped).
+ * @returns the boss intel the screen publishes.
+ */
+export function buildHangarBossIntel(
+  hexId: string | null,
+  definitions: readonly HexRingDefinition[] = HEX_RING_DEFINITIONS,
+): HangarBossIntel {
+  const definition = hexId === null
+    ? undefined
+    : definitions.find((entry) => entry.id === hexId);
+  return {
+    hexId,
+    boss: definition?.boss ?? null,
+    strengths: definition ? [...definition.strengths] : [],
+    weaknesses: definition ? [...definition.weaknesses] : [],
+    known: definition !== undefined,
   };
 }
 
@@ -688,6 +823,7 @@ export function formatSalvageLine(payload: HangarWarPayload): string {
  *
  * @param payload — the payload to present (never mutated).
  * @param catalogue — the tree to present (injectable for tests/fixtures).
+ * @param options — target hex, authored definitions and restart state.
  * @returns the model rendered by the game and the gym.
  */
 export function buildHangarScreenModel(
@@ -695,11 +831,22 @@ export function buildHangarScreenModel(
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
   options: HangarScreenModelOptions = {},
 ): HangarScreenModel {
-  const unlockRows = buildHangarUnlockRows(payload, catalogue);
+  // One resolution for the whole screen: the deploy row resolves the target
+  // through the shared deployment builder, and the intel/matchups read that
+  // resolved hex — never a second `selectDeploymentHex` call that could
+  // disagree with what `▶ DEPLOY` launches at (AH-0MWMT4QXF0095CBN).
+  const deployRow = buildHangarDeployRow(payload, catalogue, {
+    targetHexId: options.targetHexId ?? null,
+  });
+  const definitions = options.definitions ?? HEX_RING_DEFINITIONS;
+  const target = deployRow.hexId === null
+    ? null
+    : definitions.find((entry) => entry.id === deployRow.hexId) ?? null;
+  const bossIntel = buildHangarBossIntel(deployRow.hexId, definitions);
+  const unlockRows = buildHangarUnlockRows(payload, catalogue, target);
   const hullOptions = buildHangarHullOptions(payload, catalogue);
-  const weaponOptions = buildHangarWeaponOptions(payload, catalogue);
+  const weaponOptions = buildHangarWeaponOptions(payload, catalogue, target);
   const modifierOptions = buildHangarModifierOptions(payload, catalogue);
-  const deployRow = buildHangarDeployRow(payload, catalogue);
   const mapRow = buildHangarMapRow();
   const restartRow = buildHangarRestartRow(options.restartArmed === true);
   const focusOrder = [
@@ -726,6 +873,7 @@ export function buildHangarScreenModel(
     deployRow,
     mapRow,
     restartRow,
+    bossIntel,
     focusOrder,
   };
 }
@@ -1055,6 +1203,18 @@ export interface HangarScreenModelOptions {
    * Defaults to `false` (idle).
    */
   readonly restartArmed?: boolean;
+  /**
+   * The hex the player chose on the map (transient launch data). When omitted
+   * the model describes the deployment's own default — the weakest unheld hex
+   * — so the intel always names the hex `▶ DEPLOY` would actually launch at.
+   */
+  readonly targetHexId?: string | null;
+  /**
+   * The authored ring definitions to read (injectable for tests/fixtures).
+   * Defaults to the shipped `HEX_RING_DEFINITIONS`, so the game and the gym
+   * can never present a scene-local copy of the intel.
+   */
+  readonly definitions?: readonly HexRingDefinition[];
 }
 
 /** One rendered row, exposed for tests and screen queries. */
@@ -1065,6 +1225,11 @@ export interface HangarScreenRow {
   label: string;
   /** Whether the row can be activated. */
   actionable: boolean;
+  /**
+   * The weapon's matchup verdict rendered for this row, or `null` for a
+   * non-weapon row (which keeps its existing rendering).
+   */
+  matchup: BossMatchup | null;
   /** The Phaser text object rendering the row. */
   text: Phaser.GameObjects.Text;
 }
@@ -1091,6 +1256,36 @@ const DISABLED_COLOR = '#555555';
 const HEADING_COLOR = '#00ffff';
 const TEXT_COLOR = '#88ffff';
 
+/**
+ * Matchup highlight colours (AH-0MWMT4QXF0095CBN).
+ *
+ * The glyph tag is the primary signal and these colours are the secondary one
+ * (repo CVD policy: never colour-only). Both are deliberately distinct from the
+ * ordinary actionable green ({@link ROW_COLOR}) and disabled grey
+ * ({@link DISABLED_COLOR}).
+ */
+export const HANGAR_STRONG_COLOR = '#aaff00';
+export const HANGAR_WEAK_COLOR = '#ff5577';
+
+/**
+ * Backing tints for the matchup rows, so a strong/weak row is still
+ * recognisable as a highlight without relying on the hue.
+ */
+export const HANGAR_STRONG_BACKGROUND = '#162600';
+export const HANGAR_WEAK_BACKGROUND = '#2a000c';
+
+/** The labelled target-intel section (AH-0MWMT4QXF0095CBN). */
+export const HANGAR_INTEL_HEADING = 'TARGET INTEL';
+export const HANGAR_INTEL_BOSS_LABEL = 'BOSS';
+export const HANGAR_INTEL_STRENGTHS_LABEL = 'STRENGTHS';
+export const HANGAR_INTEL_WEAKNESSES_LABEL = 'WEAKNESSES';
+/** The explicit fallback an unknown/unauthored hex renders. */
+export const HANGAR_INTEL_UNKNOWN = 'unknown';
+/** An authored list with no entries renders as this (not "unknown"). */
+export const HANGAR_INTEL_NONE = 'none';
+/** The heading suffix when the war has no target hex (an empty ring). */
+export const HANGAR_INTEL_NO_HEX = 'no hex';
+
 /** Layout constants (single-source so the game and the gym match). */
 const LEFT_X = 60;
 const RIGHT_X = 520;
@@ -1099,7 +1294,86 @@ const SALVAGE_Y = 70;
 const RING_Y = 90;
 const SECTION_Y = 118;
 const ROW_START_Y = 144;
-const ROW_STEP = 21;
+
+/** Vertical step between rows in either column. */
+export const HANGAR_ROW_STEP = 18;
+
+/**
+ * Y positions of the target-intel block (top-left, above the unlock tree).
+ * Exported so the layout assertion pins the same geometry the renderer draws.
+ */
+export const HANGAR_INTEL_HEADING_Y = 112;
+export const HANGAR_INTEL_FIRST_LINE_Y = 132;
+export const HANGAR_INTEL_LINE_STEP = 18;
+
+/** Y of the `UNLOCKS` heading and of the first unlock-tree row beneath it. */
+export const HANGAR_UNLOCKS_HEADING_Y = 190;
+export const HANGAR_UNLOCK_ROW_START_Y = 210;
+
+/** The Y of unlock-tree row `index` (single-sourced with the renderer). */
+export function hangarUnlockRowY(index: number): number {
+  return HANGAR_UNLOCK_ROW_START_Y + index * HANGAR_ROW_STEP;
+}
+
+/** The right-hand column's section and row geometry (single-sourced). */
+export interface HangarRightColumnLayout {
+  readonly hullRowY: readonly number[];
+  readonly loadoutHeadingY: number;
+  readonly weaponRowY: readonly number[];
+  readonly modifierHeadingY: number;
+  readonly modifierRowY: readonly number[];
+}
+
+/**
+ * Derives every Y in the right-hand column from the model's row counts, so the
+ * renderer and the layout test read one geometry and a new row cannot silently
+ * collide with the fixed bottom-row block.
+ */
+export function hangarRightColumnLayout(
+  model: Pick<
+    HangarScreenModel,
+    'hullOptions' | 'weaponOptions' | 'modifierOptions'
+  >,
+): HangarRightColumnLayout {
+  const hullRowY = model.hullOptions.map(
+    (_, index) => ROW_START_Y + index * HANGAR_ROW_STEP,
+  );
+  const loadoutHeadingY =
+    ROW_START_Y + model.hullOptions.length * HANGAR_ROW_STEP + 10;
+  const weaponRowY = model.weaponOptions.map(
+    (_, index) => loadoutHeadingY + 26 + index * HANGAR_ROW_STEP,
+  );
+  const modifierHeadingY =
+    loadoutHeadingY + 26 + model.weaponOptions.length * HANGAR_ROW_STEP + 10;
+  const modifierRowY = model.modifierOptions.map(
+    (_, index) => modifierHeadingY + 26 + index * HANGAR_ROW_STEP,
+  );
+  return {
+    hullRowY,
+    loadoutHeadingY,
+    weaponRowY,
+    modifierHeadingY,
+    modifierRowY,
+  };
+}
+
+/**
+ * The lowest row Y the model renders above the fixed bottom-row block.
+ *
+ * A layout assertion pins it below {@link HANGAR_RESTART_ROW_Y} (the top
+ * bottom-row slot), so the intel section and the marked rows can never collide
+ * with the deploy/map/restart rows.
+ */
+export function hangarLowestRowY(model: HangarScreenModel): number {
+  const right = hangarRightColumnLayout(model);
+  const ys = [
+    ...model.unlockRows.map((_, index) => hangarUnlockRowY(index)),
+    ...right.hullRowY,
+    ...right.weaponRowY,
+    ...right.modifierRowY,
+  ];
+  return ys.length === 0 ? 0 : Math.max(...ys);
+}
 
 /**
  * Y positions of the three bottom rows (bottom of the screen, above the
@@ -1138,6 +1412,20 @@ function heading(
   );
 }
 
+/** The row colour for a matchup verdict, falling back to the existing ones. */
+function rowColour(actionable: boolean, matchup: BossMatchup | null): string {
+  if (matchup === 'strong') return HANGAR_STRONG_COLOR;
+  if (matchup === 'weak') return HANGAR_WEAK_COLOR;
+  return actionable ? ROW_COLOR : DISABLED_COLOR;
+}
+
+/** The backing tint for a matchup row (`undefined` keeps the plain style). */
+function rowBackground(matchup: BossMatchup | null): string | undefined {
+  if (matchup === 'strong') return HANGAR_STRONG_BACKGROUND;
+  if (matchup === 'weak') return HANGAR_WEAK_BACKGROUND;
+  return undefined;
+}
+
 /** Renders one row and returns its text object. */
 function rowText(
   scene: Phaser.Scene,
@@ -1146,14 +1434,33 @@ function rowText(
   y: number,
   label: string,
   actionable: boolean,
+  matchup: BossMatchup | null,
 ): Phaser.GameObjects.Text {
-  const text = scene.add.text(x, y, label, {
+  const style: Phaser.Types.GameObjects.Text.TextStyle = {
     fontFamily: 'monospace',
     fontSize: '13px',
-    color: actionable ? ROW_COLOR : DISABLED_COLOR,
-  });
+    color: rowColour(actionable, matchup),
+  };
+  const background = rowBackground(matchup);
+  if (background !== undefined) style.backgroundColor = background;
+  const text = scene.add.text(x, y, label, style);
   objects.push(text);
   return text;
+}
+
+/** An authored intel list as rendered (`unknown` when the hex is unauthored). */
+function formatIntelList(list: readonly string[], known: boolean): string {
+  if (!known) return HANGAR_INTEL_UNKNOWN;
+  return list.length > 0 ? list.join(', ') : HANGAR_INTEL_NONE;
+}
+
+/** The three labelled intel lines the renderer draws under its heading. */
+function intelLines(intel: HangarBossIntel): string[] {
+  return [
+    `${HANGAR_INTEL_BOSS_LABEL}: ${intel.boss ?? HANGAR_INTEL_UNKNOWN}`,
+    `${HANGAR_INTEL_STRENGTHS_LABEL}: ${formatIntelList(intel.strengths, intel.known)}`,
+    `${HANGAR_INTEL_WEAKNESSES_LABEL}: ${formatIntelList(intel.weaknesses, intel.known)}`,
+  ];
 }
 
 /**
@@ -1209,33 +1516,67 @@ export function renderHangarScreen(
     }),
   );
 
+  // ── Target intel (top, above the tree; labelled and never colour-only) ──
+  heading(
+    scene,
+    objects,
+    LEFT_X,
+    HANGAR_INTEL_HEADING_Y,
+    `${HANGAR_INTEL_HEADING} — ${model.bossIntel.hexId ?? HANGAR_INTEL_NO_HEX}`,
+  );
+  intelLines(model.bossIntel).forEach((line, index) => {
+    objects.push(
+      scene.add.text(
+        LEFT_X,
+        HANGAR_INTEL_FIRST_LINE_Y + index * HANGAR_INTEL_LINE_STEP,
+        line,
+        {
+          fontFamily: 'monospace',
+          fontSize: '13px',
+          color: TEXT_COLOR,
+        },
+      ),
+    );
+  });
+
   const addRow = (
     x: number,
     y: number,
     key: string,
     label: string,
     actionable: boolean,
+    matchup: BossMatchup | null,
     action: (() => void) | undefined,
   ): void => {
     // A row is only *activatable* when the economy says it is AND this render
     // supplied a handler for it. A read-only render (the gym, a preview) shows
-    // the same state and colours but can activate nothing, so its rows report
-    // `actionable: false` and never enter the focus cycle.
+    // the same state, markers and colours but can activate nothing, so its rows
+    // report `actionable: false` and never enter the focus cycle.
     const interactive = actionable && action !== undefined;
-    const text = rowText(scene, objects, x, y, label, actionable);
-    const row: HangarScreenRow = { key, label, actionable: interactive, text };
+    const text = rowText(scene, objects, x, y, label, actionable, matchup);
+    const row: HangarScreenRow = {
+      key,
+      label,
+      actionable: interactive,
+      matchup,
+      text,
+    };
     rendered.rows.push(row);
     rendered.byKey.set(key, row);
     if (!interactive || !action) return;
     text.setInteractive({ useHandCursor: true });
     text.on('pointerover', () => text.setStyle({ color: '#ffffff' }));
-    text.on('pointerout', () => text.setStyle({ color: ROW_COLOR }));
+    // Restore the row's own colour, never the plain actionable green: a
+    // matchup-highlighted row must keep its highlight after the pointer leaves.
+    text.on('pointerout', () =>
+      text.setStyle({ color: rowColour(actionable, matchup) }),
+    );
     text.on('pointerdown', () => action());
     focusManager.register(text, action);
   };
 
   // ── Unlock tree (left column) ──────────────────────────────────
-  heading(scene, objects, LEFT_X, SECTION_Y, 'UNLOCKS');
+  heading(scene, objects, LEFT_X, HANGAR_UNLOCKS_HEADING_Y, 'UNLOCKS');
   model.unlockRows.forEach((row, index) => {
     // An owned level-bearing row is an **upgrade** row: it activates the
     // next-level purchase, not the (already-owned) unlock. Every other
@@ -1252,55 +1593,56 @@ export function renderHangarScreen(
         : undefined;
     addRow(
       LEFT_X,
-      ROW_START_Y + index * ROW_STEP,
+      hangarUnlockRowY(index),
       row.key,
       row.label,
       row.actionable,
+      row.matchup,
       action,
     );
   });
 
   // ── Deployment selector (right column) ─────────────────────────
+  const right = hangarRightColumnLayout(model);
   heading(scene, objects, RIGHT_X, SECTION_Y, 'HULLS');
   model.hullOptions.forEach((option, index) => {
     addRow(
       RIGHT_X,
-      ROW_START_Y + index * ROW_STEP,
+      right.hullRowY[index],
       option.key,
       option.label,
       option.actionable,
+      null,
       handlers?.onEquipHull
         ? () => handlers.onEquipHull!(option.id)
         : undefined,
     );
   });
 
-  const loadoutHeadingY =
-    ROW_START_Y + model.hullOptions.length * ROW_STEP + 10;
-  heading(scene, objects, RIGHT_X, loadoutHeadingY, 'LOADOUT');
+  heading(scene, objects, RIGHT_X, right.loadoutHeadingY, 'LOADOUT');
   model.weaponOptions.forEach((option, index) => {
     addRow(
       RIGHT_X,
-      loadoutHeadingY + 26 + index * ROW_STEP,
+      right.weaponRowY[index],
       option.key,
       option.label,
       option.actionable,
+      option.matchup,
       handlers?.onToggleWeapon
         ? () => handlers.onToggleWeapon!(option.id)
         : undefined,
     );
   });
 
-  const modifierHeadingY =
-    loadoutHeadingY + 26 + model.weaponOptions.length * ROW_STEP + 10;
-  heading(scene, objects, RIGHT_X, modifierHeadingY, 'MODIFIERS');
+  heading(scene, objects, RIGHT_X, right.modifierHeadingY, 'MODIFIERS');
   model.modifierOptions.forEach((option, index) => {
     addRow(
       RIGHT_X,
-      modifierHeadingY + 26 + index * ROW_STEP,
+      right.modifierRowY[index],
       option.key,
       option.label,
       option.actionable,
+      null,
       handlers?.onToggleModifier
         ? () => handlers.onToggleModifier!(option.id)
         : undefined,
@@ -1314,6 +1656,7 @@ export function renderHangarScreen(
     model.deployRow.key,
     model.deployRow.label,
     model.deployRow.actionable,
+    null,
     handlers?.onDeploy
       ? () => handlers.onDeploy!(model.deployRow.hexId)
       : undefined,
@@ -1326,6 +1669,7 @@ export function renderHangarScreen(
     model.mapRow.key,
     model.mapRow.label,
     model.mapRow.actionable,
+    null,
     handlers?.onOpenMap ? () => handlers.onOpenMap!() : undefined,
   );
 
@@ -1336,6 +1680,7 @@ export function renderHangarScreen(
     model.restartRow.key,
     model.restartRow.label,
     model.restartRow.actionable,
+    null,
     handlers?.onRestart ? () => handlers.onRestart!() : undefined,
   );
 

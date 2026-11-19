@@ -31,6 +31,8 @@ import type {
   HangarWarStorage,
 } from '../core/hangarWar/types';
 import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
+import { createRingState } from '../core/hangarWar/hexRing';
+import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import type { HangarEntry } from '../data/hangarCatalogue';
 import { HANGAR_CATALOGUE } from '../data/hangarCatalogue';
 import { MAX_PERMANENT_LEVEL } from '../core/hangarWar/hangarEconomy';
@@ -40,8 +42,19 @@ import { PlayScene } from './PlayScene';
 import {
   HANGAR_SCREEN_TITLE,
   HANGAR_DEPLOY_ROW_Y,
+  HANGAR_INTEL_FIRST_LINE_Y,
+  HANGAR_INTEL_LINE_STEP,
   HANGAR_MAP_ROW_Y,
   HANGAR_RESTART_ROW_Y,
+  HANGAR_ROW_STEP,
+  HANGAR_STRONG_BACKGROUND,
+  HANGAR_STRONG_COLOR,
+  HANGAR_STRONG_MARKER,
+  HANGAR_UNLOCKS_HEADING_Y,
+  HANGAR_UNLOCK_ROW_START_Y,
+  HANGAR_WEAK_BACKGROUND,
+  HANGAR_WEAK_COLOR,
+  HANGAR_WEAK_MARKER,
   RESTART_CONFIRM_TIMEOUT_MS,
   RESTART_ROW_KEY,
   advanceRestartConfirm,
@@ -52,7 +65,9 @@ import {
   equipHangarHull,
   formatRingLine,
   hangarAttractDecision,
+  hangarLowestRowY,
   purchaseHangarEntry,
+  renderHangarScreen,
   restartHangarWar,
   toggleHangarModifier,
   toggleHangarWeapon,
@@ -373,6 +388,313 @@ describe('hangar screen model (pure)', () => {
     if (broke.kind === 'deploy') {
       expect(broke.hullId).toBe('hull-1');
       expect(broke.loadout.startingWeapons).toEqual(['spread']);
+    }
+  });
+});
+
+// ── Target-aware intel and weapon matchups (AH-0MWMT4QXF0095CBN) ───────────
+//
+// The config screen shows the target hex's authored boss intel and marks every
+// weapon row with the F1 display verdict. The target is resolved **once** —
+// through the deploy row's own `buildHangarDeployment` call — so the intel and
+// `▶ DEPLOY` can never describe different hexes. A lack of a target/intel is a
+// total unknown fallback, never a throw.
+
+describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
+  let renderBooted: BootedGame | null = null;
+
+  afterEach(() => {
+    renderBooted?.game.destroy(true);
+    renderBooted = null;
+    window.localStorage.clear();
+  });
+
+  /** Boots the shipped scene, for tests that render an explicit-target model. */
+  async function bootHangarForRender(
+    payload: HangarWarPayload,
+  ): Promise<HangarScene> {
+    renderBooted = await bootScene([HangarScene]);
+    renderBooted.game.scene.start(HANGAR_SCENE_KEY, { payload, storage: null });
+    await advanceGame(renderBooted.game, 200);
+    return renderBooted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+  }
+
+  /** The authored ring 1, with every catalogue kind owned (worst-case rows). */
+  function authoredRingPayload(): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3', 'hull-4'];
+    payload.hangar.unlockedWeapons = [
+      'spread',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ];
+    payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+    payload.hangar.activeHull = 'hull-1';
+    payload.hangar.activeLoadout = {
+      startingWeapons: ['spread'],
+      modifiers: [],
+    };
+    payload.hangar.bankedMinerals = 0;
+    payload.hangar.bankedCores = 0;
+    return payload;
+  }
+
+  it('resolves one target: the deploy row and the intel name the same authored hex', () => {
+    const payload = authoredRingPayload();
+    const model = buildHangarScreenModel(payload, HANGAR_CATALOGUE, {
+      targetHexId: 'hex-r1-2',
+    });
+
+    expect(model.deployRow.hexId).toBe('hex-r1-2');
+    expect(model.deployRow.label).toContain('hex hex-r1-2');
+    expect(model.bossIntel).toEqual({
+      hexId: 'hex-r1-2',
+      boss: 'shroud-merchant',
+      strengths: ['spread'],
+      weaknesses: ['waveLaser'],
+      known: true,
+    });
+  });
+
+  it('defaults the intel to the weakest unheld hex, the hex ▶ DEPLOY launches at', () => {
+    const payload = authoredRingPayload();
+    const model = buildHangarScreenModel(payload);
+
+    // Each ring-1 hex is unheld, so the default is the lowest-aggression one
+    // (`hex-r1-2`, aggression 1) — exactly what `selectDeploymentHex` picks.
+    expect(model.deployRow.hexId).toBe('hex-r1-2');
+    expect(model.bossIntel.hexId).toBe(model.deployRow.hexId);
+    expect(model.bossIntel.boss).toBe('shroud-merchant');
+    expect(model.bossIntel.known).toBe(true);
+  });
+
+  it('lets an explicit target win even when a weaker hex is unheld', () => {
+    const payload = authoredRingPayload();
+    const model = buildHangarScreenModel(payload, HANGAR_CATALOGUE, {
+      targetHexId: 'hex-r1-3',
+    });
+
+    expect(model.deployRow.hexId).toBe('hex-r1-3');
+    expect(model.bossIntel).toMatchObject({
+      hexId: 'hex-r1-3',
+      boss: 'iron-crusher',
+      known: true,
+    });
+  });
+
+  it('marks every weapon row, normalising the ring-data waveLaser alias', () => {
+    const payload = authoredRingPayload();
+    const model = buildHangarScreenModel(payload, HANGAR_CATALOGUE, {
+      targetHexId: 'hex-r1-2',
+    });
+
+    // The boss resists `spread` (its `strengths`) and is weak to `waveLaser`
+    // (its `weaknesses`, authored in the ring spelling).
+    const spread = model.weaponOptions.find((option) => option.id === 'spread')!;
+    expect(spread.matchup).toBe('weak');
+    expect(spread.label).toContain(HANGAR_WEAK_MARKER);
+
+    const laser = model.weaponOptions.find(
+      (option) => option.id === 'wave_laser',
+    )!;
+    expect(laser.matchup).toBe('strong');
+    expect(laser.label).toContain(HANGAR_STRONG_MARKER);
+
+    // Every other owned weapon is neutral and keeps its old label.
+    const ricochet = model.weaponOptions.find(
+      (option) => option.id === 'ricochet',
+    )!;
+    expect(ricochet.matchup).toBe('neutral');
+    expect(ricochet.label).toBe('LOADOUT Ricochet');
+
+    // The unlock tree's weapon entries carry the same verdicts, including the
+    // owned `spread` upgrade row and the `wave_laser` purchase row.
+    const spreadUnlock = model.unlockRows.find((row) => row.id === 'spread')!;
+    expect(spreadUnlock.kind).toBe('weapon');
+    expect(spreadUnlock.matchup).toBe('weak');
+    expect(spreadUnlock.label).toContain(HANGAR_WEAK_MARKER);
+    const laserUnlock = model.unlockRows.find((row) => row.id === 'wave_laser')!;
+    expect(laserUnlock.matchup).toBe('strong');
+    expect(laserUnlock.label).toContain(HANGAR_STRONG_MARKER);
+
+    // A non-weapon unlock row carries no verdict and is byte-identical to
+    // before the matchup landed.
+    const hull = model.unlockRows.find((row) => row.id === 'hull-2')!;
+    expect(hull.matchup).toBeNull();
+    expect(hull.label).not.toContain(HANGAR_STRONG_MARKER);
+    expect(hull.label).not.toContain(HANGAR_WEAK_MARKER);
+    expect(model.modifierOptions.every((option) => !('matchup' in option))).toBe(
+      true,
+    );
+  });
+
+  it('matches an authored list whichever way it spells the wave laser', () => {
+    // Ring data authors `waveLaser`; a catalogue spelling in a definition must
+    // resolve to the same verdict through the shared alias mapping.
+    const catalogueSpelling = HEX_RING_DEFINITIONS.map((definition) =>
+      definition.id === 'hex-r1-2'
+        ? { ...definition, weaknesses: ['wave_laser'] }
+        : definition,
+    );
+    const payload = authoredRingPayload();
+
+    const fromAuthoredList = buildHangarScreenModel(
+      payload,
+      HANGAR_CATALOGUE,
+      { targetHexId: 'hex-r1-2' },
+    ).weaponOptions.find((option) => option.id === 'wave_laser')!;
+    const fromCatalogueList = buildHangarScreenModel(
+      payload,
+      HANGAR_CATALOGUE,
+      { targetHexId: 'hex-r1-2', definitions: catalogueSpelling },
+    ).weaponOptions.find((option) => option.id === 'wave_laser')!;
+
+    expect(fromAuthoredList.matchup).toBe('strong');
+    expect(fromCatalogueList.matchup).toBe('strong');
+  });
+
+  it('publishes an explicit unknown fallback for an unauthored hex', () => {
+    // `VALID_HANGAR_WAR_PAYLOAD`'s ring uses synthetic `hex-1`/`hex-2` ids that
+    // are not in the authored table; the default target (`hex-2`) is therefore
+    // unknown and the model must not throw.
+    const model = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
+
+    expect(model.deployRow.hexId).toBe('hex-2');
+    expect(model.bossIntel).toEqual({
+      hexId: 'hex-2',
+      boss: null,
+      strengths: [],
+      weaknesses: [],
+      known: false,
+    });
+    // The unknown target leaves every weapon neutral — never a fabricated list.
+    expect(model.weaponOptions.every((option) => option.matchup === 'neutral')).toBe(
+      true,
+    );
+    expect(model.unlockRows.every((row) => row.matchup === null)).toBe(false);
+    expect(
+      model.unlockRows
+        .filter((row) => row.kind === 'weapon')
+        .every((row) => row.matchup === 'neutral'),
+    ).toBe(true);
+  });
+
+  it('is total for an empty ring and for an unauthored definitions override', () => {
+    const empty = clonePayload(authoredRingPayload());
+    empty.ring = { ringIndex: 1, hexes: [] };
+    const emptyModel = buildHangarScreenModel(empty);
+    expect(emptyModel.deployRow.hexId).toBeNull();
+    expect(emptyModel.bossIntel).toEqual({
+      hexId: null,
+      boss: null,
+      strengths: [],
+      weaknesses: [],
+      known: false,
+    });
+
+    const unauthored = buildHangarScreenModel(
+      authoredRingPayload(),
+      HANGAR_CATALOGUE,
+      { targetHexId: 'hex-r1-2', definitions: [] },
+    );
+    expect(unauthored.deployRow.hexId).toBe('hex-r1-2');
+    expect(unauthored.bossIntel.known).toBe(false);
+  });
+
+  it('falls back to the default target when the requested hex is not in the ring', () => {
+    const model = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD, HANGAR_CATALOGUE, {
+      targetHexId: 'hex-r1-2',
+    });
+
+    // The ring only contains `hex-1`/`hex-2`, so the explicit target cannot be
+    // resolved and the shipped weakest-unheld default applies.
+    expect(model.deployRow.hexId).toBe('hex-2');
+    expect(model.bossIntel.hexId).toBe('hex-2');
+  });
+
+  it('renders the intel section, the glyph tags and the matchup colours', async () => {
+    const payload = authoredRingPayload();
+    const scene = await bootHangarForRender(payload);
+    const model = buildHangarScreenModel(payload, HANGAR_CATALOGUE, {
+      targetHexId: 'hex-r1-2',
+    });
+    const before = scene.children.list.length;
+    // No handlers: the read-only path the gym uses, with identical markers.
+    const view = renderHangarScreen(scene, model);
+    try {
+      const added = scene.children.list
+        .slice(before)
+        .filter(
+          (child): child is Phaser.GameObjects.Text =>
+            child instanceof Phaser.GameObjects.Text,
+        );
+      const textStartingWith = (prefix: string): string | undefined =>
+        added.find((text) => text.text.startsWith(prefix))?.text;
+
+      expect(textStartingWith('TARGET INTEL — hex-r1-2')).toBeDefined();
+      expect(textStartingWith('BOSS: ')).toBe('BOSS: shroud-merchant');
+      expect(textStartingWith('STRENGTHS: ')).toBe('STRENGTHS: spread');
+      expect(textStartingWith('WEAKNESSES: ')).toBe(
+        'WEAKNESSES: waveLaser',
+      );
+
+      const spread = view.rows.find((row) => row.key === 'weapon:spread')!;
+      expect(spread.label).toContain(HANGAR_WEAK_MARKER);
+      expect(spread.matchup).toBe('weak');
+      expect(spread.text.style.color).toBe(HANGAR_WEAK_COLOR);
+      expect(spread.text.style.backgroundColor).toBe(HANGAR_WEAK_BACKGROUND);
+      expect(spread.actionable).toBe(false);
+
+      const laser = view.rows.find((row) => row.key === 'weapon:wave_laser')!;
+      expect(laser.label).toContain(HANGAR_STRONG_MARKER);
+      expect(laser.matchup).toBe('strong');
+      expect(laser.text.style.color).toBe(HANGAR_STRONG_COLOR);
+      expect(laser.text.style.backgroundColor).toBe(HANGAR_STRONG_BACKGROUND);
+
+      const neutral = view.rows.find((row) => row.key === 'weapon:ricochet')!;
+      expect(neutral.matchup).toBe('neutral');
+      expect(neutral.label).not.toContain('▲');
+      expect(neutral.label).not.toContain('▼');
+      // The neutral row keeps the existing actionable green.
+      expect(neutral.text.style.color).toBe('#00ff88');
+
+      // The unlock tree's weapon rows are marked too, through the same model.
+      const spreadUnlock = view.rows.find((row) => row.key === 'buy:spread')!;
+      expect(spreadUnlock.label).toContain(HANGAR_WEAK_MARKER);
+      expect(spreadUnlock.text.style.color).toBe(HANGAR_WEAK_COLOR);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it('keeps the intel block and every row above the top bottom-row slot', async () => {
+    const payload = authoredRingPayload();
+    const model = buildHangarScreenModel(payload, HANGAR_CATALOGUE, {
+      targetHexId: 'hex-r1-6',
+    });
+
+    // The single-sourced geometry fits the worst-case (full catalogue) model.
+    expect(hangarLowestRowY(model)).toBeLessThan(HANGAR_RESTART_ROW_Y);
+    expect(HANGAR_ROW_STEP).toBeGreaterThan(0);
+    expect(HANGAR_INTEL_FIRST_LINE_Y + 2 * HANGAR_INTEL_LINE_STEP).toBeLessThan(
+      HANGAR_UNLOCKS_HEADING_Y,
+    );
+    expect(HANGAR_UNLOCKS_HEADING_Y).toBeLessThan(HANGAR_UNLOCK_ROW_START_Y);
+    expect(HANGAR_UNLOCK_ROW_START_Y).toBeLessThan(HANGAR_RESTART_ROW_Y);
+
+    const scene = await bootHangarForRender(payload);
+    const view = renderHangarScreen(scene, model);
+    try {
+      const regular = view.rows.filter(
+        (row) => row.key !== 'deploy' && row.key !== 'map' && row.key !== 'restart',
+      );
+      const lowest = Math.max(...regular.map((row) => row.text.y));
+      expect(lowest).toBe(hangarLowestRowY(model));
+      expect(lowest).toBeLessThan(HANGAR_RESTART_ROW_Y);
+    } finally {
+      view.destroy();
     }
   });
 });

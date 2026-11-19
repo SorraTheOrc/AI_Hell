@@ -110,6 +110,40 @@ describe('GymHangar', () => {
     expect(scene.getRows().every((row) => row.text.input === null)).toBe(true);
   });
 
+  it('publishes the target intel through the shared model, read-only (AH-0MWMT4QXF0095CBN)', async () => {
+    // The fixture ring's ids are not in the authored table, so the shared model
+    // publishes the explicit unknown fallback — the gym renders exactly that,
+    // and invents no intel of its own. A target-aware gym (the parity item)
+    // will exercise a known hex through the same `buildHangarScreenModel`.
+    const scene = await bootHangar({ payload: VALID_HANGAR_WAR_PAYLOAD });
+    const shipped = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
+
+    expect(scene.getModel()).toEqual(shipped);
+    expect(scene.getModel().bossIntel).toEqual({
+      hexId: 'hex-2',
+      boss: null,
+      strengths: [],
+      weaknesses: [],
+      known: false,
+    });
+    findTextStartingWith(scene, 'TARGET INTEL — hex-2');
+    expect(findTextStartingWith(scene, 'BOSS: ').text).toBe('BOSS: unknown');
+    expect(findTextStartingWith(scene, 'STRENGTHS: ').text).toBe(
+      'STRENGTHS: unknown',
+    );
+    expect(findTextStartingWith(scene, 'WEAKNESSES: ').text).toBe(
+      'WEAKNESSES: unknown',
+    );
+    // No row is marked strong/weak for an unknown boss, and the render stays
+    // read-only (no handlers), so the intel changes nothing it can activate.
+    expect(
+      scene
+        .getRows()
+        .every((row) => row.matchup !== 'strong' && row.matchup !== 'weak'),
+    ).toBe(true);
+    expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
+  });
+
   it('renders the owned-row upgrade affordance through the same shared model (parent AC3, AC6)', async () => {
     // A seeded permanent weapon level (the shape a hangar purchase writes
     // through `buyHangarUpgrade`) renders through the shipped model builder and
