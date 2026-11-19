@@ -39,9 +39,12 @@ import {
   DEFENDER_UPGRADE_WEIGHTS,
   MAX_PERMANENT_LEVEL,
   buy,
+  buyUpgrade,
   consumeDeployedShip,
   canBuy,
   cheapestUsefulUnlock,
+  costToUpgrade,
+  currentUpgradeLevel,
   defenderRatingFromUpgrades,
   defenderStatBuckets,
   deriveDefenderRating,
@@ -2087,5 +2090,201 @@ describe('buy — equipOnPurchase (AH-0MWL5PAP2001XYYF)', () => {
       expect(result.reason).toBe(reason);
       expect(result.hangar).toEqual(before);
     });
+  });
+});
+
+// ── Power-up ownership — the unlock-tree kind and the owned set ───────────
+//
+// Parent AH-0MWKT12BT001106T (red-first contract tests, child
+// AH-0MWKXPIWL007VB8E). The pure upgrade rule already exists (AH-0MWI5AAVO009UROY)
+// but treats a power-up as owned **only** when a `powerUpLevels` row exists —
+// and no shipped path ever writes one. Producer decisions: Q1 = (b) hangar
+// tree/shop entry, Q2 = (ii) explicit `unlockedPowerUps` owned set, Q3 = (1)
+// author the shipped content here.
+//
+// RED assertions (fail until the kind + owned set + purchase seeding land):
+// - `canBuy` sees a power-up entry at all, and reports it `owned` once its id
+//   is in `hangar.unlockedPowerUps`;
+// - a successful `buy` adds the id to `unlockedPowerUps` **and** seeds its
+//   `hangar.powerUpLevels` row at level 1;
+// - `costToUpgrade` treats an id in `unlockedPowerUps` as owned.
+//
+// "Pins unchanged behaviour" assertions (pass today and must stay green): an
+// unowned power-up is refused `unowned`, a persisted level row already implies
+// ownership, and consumables / the field-pickup-only kind stay
+// `non-upgradeable`.
+
+/** A power-up unlock entry read through a structural view (red-first). */
+interface PowerUpUnlockView {
+  readonly id: string;
+  readonly kind: string;
+  readonly powerUpId?: string;
+  readonly price: HangarPrice;
+  readonly minRing: number;
+  readonly starter: boolean;
+}
+
+/** The first authored power-up unlock (fails loudly when none is authored). */
+function firstPowerUpUnlock(): PowerUpUnlockView {
+  const unlocks = (HANGAR_CATALOGUE as unknown as readonly PowerUpUnlockView[]).filter(
+    (entry) => entry.kind === 'power-up',
+  );
+  expect(unlocks.length, 'authored power-up unlock entries').toBeGreaterThan(0);
+  return unlocks[0];
+}
+
+/** The shipped power-up id a power-up unlock owns. */
+function powerUpIdOf(entry: PowerUpUnlockView): PowerUpId {
+  return (entry.powerUpId ?? entry.id) as PowerUpId;
+}
+
+/** A hangar whose canonical power-up owned set is `ids`. */
+function withOwnedPowerUps(hangar: HangarState, ids: readonly string[]): HangarState {
+  return { ...hangar, unlockedPowerUps: [...ids] } as unknown as HangarState;
+}
+
+/** The hangar's canonical power-up owned set (absent reads as none). */
+function ownedPowerUps(hangar: HangarState): string[] {
+  return (hangar as unknown as { unlockedPowerUps?: string[] }).unlockedPowerUps ?? [];
+}
+
+/** The hangar's persisted power-up level rows (absent reads as none). */
+function powerUpLevelRows(
+  hangar: HangarState,
+): ReadonlyArray<{ id: string; level: number }> {
+  return (
+    hangar as unknown as {
+      powerUpLevels?: ReadonlyArray<{ id: string; level: number }>;
+    }
+  ).powerUpLevels ?? [];
+}
+
+describe('power-up ownership — purchase and ownership (AH-0MWKT12BT001106T)', () => {
+  const context: HangarPurchaseContext = { ringIndex: 2 };
+  const RICH = { bankedMinerals: 1_000_000, bankedCores: 10_000 };
+
+  it('finds a power-up entry and reports it buyable, gated or unaffordable', () => {
+    const entry = firstPowerUpUnlock() as unknown as HangarEntry;
+    const powerUpId = powerUpIdOf(entry as unknown as PowerUpUnlockView);
+
+    // Affordable and past the ring gate: the one purchasable state.
+    const buyable = canBuy(withOwnedPowerUps(hangarWith({ ...RICH }), []), entry, context);
+    expect(buyable).toMatchObject({ ok: true, reason: null });
+
+    // Below the entry's ring gate: `gated`, whatever the balance.
+    const ringBelow = Math.max(0, entry.minRing - 1);
+    expect(
+      canBuy(withOwnedPowerUps(hangarWith({ ...RICH }), []), entry, {
+        ringIndex: ringBelow,
+      }),
+    ).toMatchObject({ ok: false, reason: 'gated' });
+
+    // Too poor: `unaffordable` with the exact shortfall, nothing invented.
+    const broke = hangarWith({ bankedMinerals: 0, bankedCores: 0 });
+    const unaffordable = canBuy(withOwnedPowerUps(broke, []), entry, context);
+    expect(unaffordable.ok).toBe(false);
+    expect(unaffordable.reason).toBe('unaffordable');
+    expect(unaffordable.shortfall).toEqual({
+      minerals: entry.price.minerals,
+      cores: entry.price.cores,
+    });
+
+    // Already in the canonical owned set: `owned` (this is RED today — the set
+    // is ignored by `ownsEntry`).
+    expect(
+      canBuy(withOwnedPowerUps(hangarWith({ ...RICH }), [powerUpId]), entry, context),
+    ).toMatchObject({ ok: false, reason: 'owned' });
+  });
+
+  it('spends both currencies, records ownership and seeds the level-1 row', () => {
+    const entry = firstPowerUpUnlock() as unknown as HangarEntry;
+    const powerUpId = powerUpIdOf(entry as unknown as PowerUpUnlockView);
+    const hangar = withOwnedPowerUps(hangarWith({ ...RICH }), []);
+
+    const result = buy(hangar, entry, context);
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeNull();
+    // Both currencies are actually spent.
+    expect(result.spent).toEqual(entry.price);
+    expect(result.hangar.bankedMinerals).toBe(RICH.bankedMinerals - entry.price.minerals);
+    expect(result.hangar.bankedCores).toBe(RICH.bankedCores - entry.price.cores);
+    // Ownership lives in the canonical set (Q2 = (ii)) ...
+    expect(ownedPowerUps(result.hangar)).toContain(powerUpId);
+    // ... and the first permanent level row is seeded at level 1, in the same
+    // hangar write, so the upgrade rule and the deploy grant see it next sortie.
+    expect(powerUpLevelRows(result.hangar)).toEqual([{ id: powerUpId, level: 1 }]);
+    // The input is never mutated.
+    expect(ownedPowerUps(hangar)).toEqual([]);
+    expect(powerUpLevelRows(hangar)).toEqual([]);
+  });
+
+  it('changes neither field and spends nothing when the purchase is refused', () => {
+    const entry = firstPowerUpUnlock() as unknown as HangarEntry;
+    const broke = withOwnedPowerUps(hangarWith({ bankedMinerals: 0, bankedCores: 0 }), []);
+    const gated = withOwnedPowerUps(hangarWith({ ...RICH }), []);
+
+    const unaffordable = buy(broke, entry, context);
+    expect(unaffordable.ok).toBe(false);
+    expect(unaffordable.reason).toBe('unaffordable');
+    expect(ownedPowerUps(unaffordable.hangar)).toEqual([]);
+    expect(powerUpLevelRows(unaffordable.hangar)).toEqual([]);
+    expect(unaffordable.hangar.bankedMinerals).toBe(0);
+    expect(unaffordable.hangar.bankedCores).toBe(0);
+
+    const gatedResult = buy(gated, entry, { ringIndex: Math.max(0, entry.minRing - 1) });
+    expect(gatedResult.ok).toBe(false);
+    expect(gatedResult.reason).toBe('gated');
+    expect(ownedPowerUps(gatedResult.hangar)).toEqual([]);
+    expect(powerUpLevelRows(gatedResult.hangar)).toEqual([]);
+    expect(gatedResult.hangar.bankedMinerals).toBe(RICH.bankedMinerals);
+  });
+
+  it('reads power-up ownership from the owned set for the upgrade rule', () => {
+    const rich = hangarWith({ ...RICH });
+
+    // Unowned: no set entry and no level row (unchanged behaviour).
+    expect(costToUpgrade(rich, 'bomb', levelsOf(), context)).toMatchObject({
+      ok: false,
+      reason: 'unowned',
+    });
+
+    // Owned through the canonical set (this is RED today: the rule reads only
+    // a persisted level row).
+    const owned = withOwnedPowerUps(rich, ['bomb']);
+    const check = costToUpgrade(owned, 'bomb', levelsOf(), context);
+    expect(check.ok).toBe(true);
+    expect(check.reason).toBeNull();
+    // Level 1 is the seeded basis, so the next level is 2.
+    expect(currentUpgradeLevel(levelsOf(), 'bomb')).toBe(1);
+
+    // A persisted level row still implies ownership (no stored row is orphaned).
+    expect(
+      costToUpgrade(rich, 'bomb', levelsOf([], [['bomb', 2]]), context).ok,
+    ).toBe(true);
+
+    // buyUpgrade raises the owned power-up by exactly one through the store's
+    // vocabulary: base 1 → 2.
+    const upgraded = buyUpgrade(owned, 'bomb', levelsOf(), context);
+    expect(upgraded.ok).toBe(true);
+    expect(upgraded.levels.powerUps).toEqual([{ id: 'bomb', level: 2 }]);
+  });
+
+  it('still refuses consumables and the field-pickup-only kind as non-upgradeable, even when owned', () => {
+    const rich = hangarWith({ ...RICH });
+
+    for (const id of ['shield', 'extra_life'] as const) {
+      // Owned via the set *and* a row, unlimited salvage: the refusal is about
+      // the kind — there is no permanent level to raise (Q2 = (a)).
+      const check = costToUpgrade(
+        withOwnedPowerUps(rich, [id]),
+        id,
+        levelsOf([], [[id, 2]]),
+        context,
+      );
+      expect(check, id).toMatchObject({ ok: false, reason: 'non-upgradeable' });
+      expect(check.reason, id).not.toBe('unowned');
+      expect(check.reason, id).not.toBe('capped');
+    }
   });
 });

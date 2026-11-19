@@ -1449,3 +1449,159 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     ).toEqual(upgradedPayload());
   });
 });
+
+// ── The power-up unlock row (AH-0MWKT12BT001106T, red-first) ───────────────
+//
+// The tree's fourth purchasable kind renders through the **existing** shared
+// renderer (`buildHangarUnlockRows`) and the **existing**
+// `BUY`/`RING N`/`NEED N min` states — no new row state is invented. Buying one
+// through the scene persists the owned set and the seeded level-1 row in
+// exactly one `saveHangarWarPayload` write, so ownership and level cannot land
+// separately.
+//
+// RED until the `'power-up'` catalogue kind and `hangar.unlockedPowerUps` land.
+
+/** The shipped catalogue's power-up unlock entries, through a structural view. */
+interface ScreenPowerUpView {
+  readonly id: string;
+  readonly kind: string;
+  readonly powerUpId?: string;
+  readonly minRing: number;
+}
+
+function shippedPowerUpUnlocks(): ScreenPowerUpView[] {
+  return (HANGAR_CATALOGUE as unknown as readonly ScreenPowerUpView[]).filter(
+    (entry) => entry.kind === 'power-up',
+  );
+}
+
+/** The stored power-up owned set (absent reads as none). */
+function storedOwnedPowerUps(payload: HangarWarPayload): string[] {
+  return (
+    (payload.hangar as unknown as { unlockedPowerUps?: string[] })
+      .unlockedPowerUps ?? []
+  );
+}
+
+/** The stored power-up level rows (absent reads as none). */
+function storedPowerUpLevels(
+  payload: HangarWarPayload,
+): ReadonlyArray<{ id: string; level: number }> {
+  return (
+    (
+      payload.hangar as unknown as {
+        powerUpLevels?: ReadonlyArray<{ id: string; level: number }>;
+      }
+    ).powerUpLevels ?? []
+  );
+}
+
+describe('hangar power-up unlock row (AH-0MWKT12BT001106T, red-first)', () => {
+  let sceneBooted: BootedGame | null = null;
+
+  afterEach(() => {
+    sceneBooted?.game.destroy(true);
+    sceneBooted = null;
+    window.localStorage.clear();
+  });
+
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressSceneKey(scene: HangarScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  it('renders a power-up entry through the shared BUY/gated/unaffordable states', () => {
+    // An injected power-up entry, so the row states are exercised independently
+    // of which shipped power-up(s) the catalogue authors.
+    const entry = {
+      id: 'bomb',
+      kind: 'power-up',
+      name: 'Bomb Rack',
+      description: 'A periodic pulse that clears enemy fire around the ship.',
+      price: { minerals: 120, cores: 1 },
+      minRing: 2,
+      starter: false,
+      powerUpId: 'bomb',
+    } as unknown as HangarEntry;
+    const catalogue = [...HANGAR_CATALOGUE, entry];
+    const funded = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    funded.hangar.bankedMinerals = 1_000_000;
+    funded.hangar.bankedCores = 10_000;
+
+    // Below its ring gate → the existing `RING N` vocabulary.
+    const gated = buildHangarUnlockRows(funded, catalogue).find(
+      (row) => row.id === 'bomb',
+    )!;
+    expect(gated.state).toBe('gated');
+    expect(gated.label).toContain('RING 2');
+
+    // At its ring, affordable → the existing `BUY` vocabulary.
+    funded.ring = { ...funded.ring, ringIndex: 2 };
+    const buyable = buildHangarUnlockRows(funded, catalogue).find(
+      (row) => row.id === 'bomb',
+    )!;
+    expect(buyable.state).toBe('buyable');
+    expect(buyable.actionLabel).toBe('BUY');
+
+    // Too poor → the existing `NEED … min` vocabulary with the shortfall.
+    const broke = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    broke.ring = { ...broke.ring, ringIndex: 2 };
+    broke.hangar.bankedMinerals = 0;
+    broke.hangar.bankedCores = 0;
+    const unaffordable = buildHangarUnlockRows(broke, catalogue).find(
+      (row) => row.id === 'bomb',
+    )!;
+    expect(unaffordable.state).toBe('unaffordable');
+    expect(unaffordable.label).toContain('NEED 120 min / 1 cores');
+  });
+
+  it('buys an authored power-up through the scene and persists it in one write', async () => {
+    const unlocks = shippedPowerUpUnlocks();
+    expect(unlocks.length, 'authored power-up unlock entries').toBeGreaterThan(0);
+    const unlock = unlocks[0];
+    const powerUpId = unlock.powerUpId ?? unlock.id;
+
+    // A funded fleet past the entry's ring gate.
+    const funded = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    funded.hangar.bankedMinerals = 1_000_000;
+    funded.hangar.bankedCores = 10_000;
+    funded.ring = { ...funded.ring, ringIndex: Math.max(2, unlock.minRing) };
+
+    const entries = new Map<string, string>([
+      [HANGAR_WAR_STORAGE_KEY, JSON.stringify(funded)],
+    ]);
+    let writes = 0;
+    const storage: HangarWarStorage = {
+      getItem: (key) => entries.get(key) ?? null,
+      setItem: (key, value) => {
+        writes += 1;
+        entries.set(key, value);
+      },
+      removeItem: (key) => {
+        entries.delete(key);
+      },
+    };
+
+    sceneBooted = await bootScene([HangarScene]);
+    sceneBooted.game.scene.start(HANGAR_SCENE_KEY, { storage });
+    await advanceGame(sceneBooted.game, 200);
+    const scene = sceneBooted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+
+    expect(scene.focusRow(`buy:${unlock.id}`)).toBe(true);
+    pressSceneKey(scene, { key: 'Enter' });
+
+    // The purchase is persisted exactly once.
+    expect(writes).toBe(1);
+    const stored = parseHangarWarPayload(
+      JSON.parse(entries.get(HANGAR_WAR_STORAGE_KEY)!),
+    )!;
+    // Ownership lives in the canonical set ...
+    expect(storedOwnedPowerUps(stored)).toContain(powerUpId);
+    // ... and the first permanent level row is seeded in the same write.
+    expect(storedPowerUpLevels(stored)).toEqual([{ id: powerUpId, level: 1 }]);
+  });
+});

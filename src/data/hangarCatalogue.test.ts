@@ -35,12 +35,44 @@ import {
 } from '../core/hangarWar/hangarEconomy';
 import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
 import { HEX_RING_DEFINITIONS } from './hexRingDefinitions';
+import { POWER_UP_CATALOGUE, type PowerUpId } from '../powerups/types';
 import {
   GRANT_ONLY_MIN_RING,
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
+  type HangarEntry,
   type HullDefinition,
 } from './hangarCatalogue';
+
+/**
+ * The hangar's authored **power-up** unlock entries (parent AH-0MWKT12BT001106T).
+ *
+ * A power-up is the tree's fourth purchasable kind: buying one spends the
+ * two-currency price, records ownership in `hangar.unlockedPowerUps` and seeds
+ * its permanent level row, so the buy-to-upgrade rule finally works for a
+ * power-up in normal play. Read through a structural view because `kind`
+ * narrows to `'hull' | 'weapon' | 'modifier'` on `dev` until the feature
+ * lands — these specs run **red**, not crash (red-first contract tests).
+ */
+interface PowerUpUnlockView {
+  readonly id: string;
+  readonly kind: string;
+  readonly name: string;
+  readonly description: string;
+  readonly price: { readonly minerals: number; readonly cores: number };
+  readonly minRing: number;
+  readonly starter: boolean;
+  readonly powerUpId?: string;
+}
+
+/** Every authored power-up unlock, in catalogue order. */
+function powerUpUnlocks(
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): PowerUpUnlockView[] {
+  return (catalogue as unknown as readonly PowerUpUnlockView[]).filter(
+    (entry) => entry.kind === 'power-up',
+  );
+}
 
 /** The extra-hit-points hull under test (ring 2's special reward). */
 const SPECIAL_HULL_ID = 'hull-3';
@@ -265,5 +297,70 @@ describe('hangar catalogue — the ring-1 grant-only reward hull', () => {
     );
     // The caller's hangar is never mutated.
     expect(hangar.unlockedHulls).toEqual([STARTER_HULL_ID]);
+  });
+});
+
+/**
+ * The power-up unlock kind (parent AH-0MWKT12BT001106T, red-first).
+ *
+ * Power-ups become the tree's fourth purchasable kind, so a fresh save can own
+ * one in normal play (producer Q1 = (b), Q2 = (ii), Q3 = (1)). These specs pin
+ * the **data**: the entry exists, it points at a real level-bearing shipped
+ * power-up, it is priced and ring-gated, and it is never a consumable or the
+ * field-pickup-only kind (which carry no permanent level to raise).
+ *
+ * RED until the authored entry and the `'power-up'` kind land.
+ */
+describe('hangar catalogue — the authored power-up unlock (AH-0MWKT12BT001106T)', () => {
+  it('authors at least one buyable power-up entry', () => {
+    const unlocks = powerUpUnlocks();
+
+    // Producer Q3 = (1): author the shipped content here, not a seam nobody
+    // calls. At least one entry, and every one of them is a real sale.
+    expect(unlocks.length).toBeGreaterThanOrEqual(1);
+    for (const entry of unlocks) {
+      expect(entry.starter).toBe(false);
+      // A reachable ring gate (not the grant-only sentinel).
+      expect(entry.minRing).toBeGreaterThanOrEqual(1);
+      expect(entry.minRing).toBeLessThan(GRANT_ONLY_MIN_RING);
+    }
+  });
+
+  it('points every power-up entry at a level-bearing shipped power-up id', () => {
+    const unlocks = powerUpUnlocks();
+    expect(unlocks.length).toBeGreaterThan(0);
+
+    for (const entry of unlocks) {
+      const powerUpId = (entry.powerUpId ?? entry.id) as PowerUpId;
+      const shipped = POWER_UP_CATALOGUE[powerUpId];
+      // A real shipped power-up id, not a made-up string.
+      expect(shipped, `shipped power-up ${powerUpId}`).toBeDefined();
+      // A level-bearing permanent kind: never a consumable (charge pool) nor
+      // the field-pickup-only kind, which have no permanent level to raise
+      // (producer Q2 = (a), AC2).
+      expect(shipped.consumable, `${powerUpId} consumable`).not.toBe(true);
+      expect(
+        shipped.fieldPickupOnly,
+        `${powerUpId} field-pickup-only`,
+      ).not.toBe(true);
+    }
+  });
+
+  it('carries a name, a displayable description and a two-currency price', () => {
+    const unlocks = powerUpUnlocks();
+    expect(unlocks.length).toBeGreaterThan(0);
+
+    for (const entry of unlocks) {
+      expect(entry.name.trim().length).toBeGreaterThan(0);
+      // The hangar row needs a real sentence, not a placeholder.
+      expect(entry.description.trim().length).toBeGreaterThan(20);
+      // The existing two-currency convention: non-negative integer minerals + cores.
+      expect(Number.isInteger(entry.price.minerals)).toBe(true);
+      expect(Number.isInteger(entry.price.cores)).toBe(true);
+      expect(entry.price.minerals).toBeGreaterThanOrEqual(0);
+      expect(entry.price.cores).toBeGreaterThanOrEqual(0);
+      // A real purchase costs something (no free power-up, A2).
+      expect(purchaseWeight(entry.price)).toBeGreaterThan(0);
+    }
   });
 });

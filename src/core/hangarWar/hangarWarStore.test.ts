@@ -1403,3 +1403,115 @@ describe('hangar permanent levels through the store (AH-0MWI5AG1X0007XZH)', () =
     expect(outcome.payload.hangar).not.toBe(payload.hangar);
   });
 });
+
+// ── Power-up ownership through the store (AH-0MWKT12BT001106T) ────────────
+//
+// Parent AH-0MWKT12BT001106T (child AH-0MWKXPIWL007VB8E, red-first). The
+// hangar gains `unlockedPowerUps` as the **canonical** ownership record for the
+// new power-up unlock kind (producer Q2 = (ii)), persisted additively with no
+// schema bump. A purchase writes the owned id *and* seeds its level-1
+// `powerUpLevels` row in one payload write, so ownership and level can never
+// disagree.
+//
+// RED assertions: the default payload carries the owned set, a saved owned set
+// (+ its level row) round-trips, and a raw field collapses like
+// `unlockedWeapons`. "Pins unchanged" assertion: a pre-change save with no
+// owned-set field reads as "owns none" with no schema-version bump.
+
+/** The hangar's stored power-up owned set (raw, possibly absent). */
+function unlockedPowerUpsOf(
+  payload: HangarWarPayload,
+): string[] | undefined {
+  return (payload.hangar as unknown as { unlockedPowerUps?: string[] })
+    .unlockedPowerUps;
+}
+
+/** The hangar's stored power-up level rows (raw, possibly absent). */
+function storedPowerUpRows(
+  payload: HangarWarPayload,
+): ReadonlyArray<{ id: string; level: number }> | undefined {
+  return (
+    payload.hangar as unknown as {
+      powerUpLevels?: ReadonlyArray<{ id: string; level: number }>;
+    }
+  ).powerUpLevels;
+}
+
+describe('hangar power-up ownership through the store (AH-0MWKT12BT001106T)', () => {
+  it('starts a fresh war owning no power-ups', () => {
+    const payload = createDefaultPayload(7);
+
+    // AC3: empty in createDefaultPayload. RED today — the field does not exist.
+    expect(unlockedPowerUpsOf(payload)).toEqual([]);
+    expect(storedPowerUpRows(payload)).toBeUndefined();
+  });
+
+  it('round-trips the owned set together with its level row (AC3/AC4)', () => {
+    const storage = createInMemoryHangarWarStorage();
+    const payload: HangarWarPayload = {
+      ...createDefaultPayload(11),
+      hangar: {
+        ...createDefaultPayload(11).hangar,
+        unlockedPowerUps: ['bomb', 'magnet'],
+        powerUpLevels: [
+          { id: 'bomb', level: 1 },
+          { id: 'magnet', level: 3 },
+        ],
+      } as unknown as HangarWarPayload['hangar'],
+    };
+
+    saveHangarWarPayload(payload, storage);
+    const loaded = loadHangarWarPayload(storage)!;
+
+    expect(unlockedPowerUpsOf(loaded)).toEqual(['bomb', 'magnet']);
+    expect(storedPowerUpRows(loaded)).toEqual([
+      { id: 'bomb', level: 1 },
+      { id: 'magnet', level: 3 },
+    ]);
+  });
+
+  it('loads a pre-change save as owning no power-ups, with no version bump (AC3)', () => {
+    const loaded = parseHangarWarPayload(validRecord());
+
+    expect(loaded).not.toBeNull();
+    // A save written before the owned set landed has no field; absence reads as
+    // "owns none" and the schema version is unchanged (field-presence migration).
+    expect('unlockedPowerUps' in loaded!.hangar).toBe(false);
+    expect(unlockedPowerUpsOf(loaded!) ?? []).toEqual([]);
+    expect(storedPowerUpRows(loaded!)).toBeUndefined();
+    expect(loaded!.version).toBe(HANGAR_WAR_VERSION);
+  });
+
+  it('collapses a corrupt owned set exactly like unlockedWeapons (AC3)', () => {
+    const payload = validRecord();
+    // The same defects `toIdList` salvages for every owned set: non-list junk,
+    // duplicates, blanks, non-strings and a non-list whole value.
+    hangarRecord(payload).unlockedWeapons = [
+      'spread',
+      'spread',
+      '',
+      42,
+      null,
+      '  wave_laser  ',
+    ];
+    hangarRecord(payload).unlockedPowerUps = [
+      'bomb',
+      'bomb',
+      '',
+      42,
+      null,
+      '  magnet  ',
+    ];
+
+    const loaded = parseHangarWarPayload(payload);
+
+    expect(loaded).not.toBeNull();
+    expect(loaded!.hangar.unlockedWeapons).toEqual(['spread', 'wave_laser']);
+    expect(unlockedPowerUpsOf(loaded!)).toEqual(['bomb', 'magnet']);
+
+    // A non-list whole value collapses to an empty set, never throwing.
+    const nonList = validRecord();
+    hangarRecord(nonList).unlockedPowerUps = 'bomb';
+    expect(unlockedPowerUpsOf(parseHangarWarPayload(nonList)!)).toEqual([]);
+  });
+});

@@ -332,4 +332,33 @@ describe('GymHangar — the special-mission reward (AH-0MWF0CXR4004C9CN)', () =>
       scene.getModel().hullOptions.some((option) => option.id === 'hull-4'),
     ).toBe(true);
   });
+
+  it('lists the authored power-up unlock rows read-only (AH-0MWKT12BT001106T)', async () => {
+    // The tree's fourth purchasable kind flows through the **same** shared
+    // hangar screen model the game renders; the gym adds no purchase path and
+    // no second renderer, so it lists the identical power-up rows read-only.
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    const scene = await bootHangar({ payload });
+    const shipped = buildHangarScreenModel(payload);
+
+    expect(scene.getModel()).toEqual(shipped);
+
+    const powerUpRows = scene
+      .getModel()
+      .unlockRows.filter((row) => (row.kind as string) === 'power-up');
+    // The catalogue authors at least one power-up unlock (AC2/Q3 = (1)).
+    expect(powerUpRows.length).toBeGreaterThan(0);
+
+    for (const row of powerUpRows) {
+      const rendered = scene
+        .getRows()
+        .find((entry) => entry.key === `buy:${row.id}`);
+      expect(rendered, `power-up row buy:${row.id}`).toBeDefined();
+      // Read-only: the gym renders the row but never makes it actionable.
+      expect(rendered!.label).toBe(row.label);
+      expect(rendered!.actionable).toBe(false);
+      expect(rendered!.text.input).toBeNull();
+    }
+    expect(scene.getPayload()).toEqual(payload);
+  });
 });

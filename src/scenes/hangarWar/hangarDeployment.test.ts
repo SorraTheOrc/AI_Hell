@@ -16,6 +16,8 @@ import { VALID_HANGAR_WAR_PAYLOAD } from '../../core/hangarWar/fixtures';
 import type { HangarWarPayload } from '../../core/hangarWar/types';
 import { MAX_PERMANENT_LEVEL } from '../../core/hangarWar/hangarEconomy';
 import { createInMemoryHangarWarStorage } from '../../core/hangarWar/storage';
+import { HANGAR_CATALOGUE } from '../../data/hangarCatalogue';
+import { purchaseHangarEntry } from './hangarScreen';
 import {
   buyHangarUpgrade,
   createDefaultPayload,
@@ -788,5 +790,89 @@ describe('hangar deployment permanent levels (AH-0MWI5AG1X0007XZH)', () => {
     // exists, so the run is exactly today's.
     expect(deployment.weaponLevels.every((row) => row.level === 1)).toBe(true);
     expect(deployment.powerUpLevels).toEqual([]);
+  });
+});
+
+// ── Power-up ownership reaches the deployment (AH-0MWKT12BT001106T) ───────
+//
+// Parent AH-0MWKT12BT001106T (child AH-0MWKXPIWL007VB8E, red-first). Buying a
+// power-up seeds its level-1 row in one payload write, so the **existing**
+// deploy grant carries it onto the run `Player` on the very next deployment —
+// and a bought upgrade travels the same path.
+//
+// RED until the power-up unlock kind + owned set + purchase seeding land.
+
+interface DeploymentPowerUpView {
+  readonly id: string;
+  readonly kind: string;
+  readonly powerUpId?: string;
+  readonly minRing: number;
+}
+
+/** The first authored power-up unlock, read structurally (red-first). */
+function shippedPowerUpUnlock(): DeploymentPowerUpView {
+  const unlocks = (HANGAR_CATALOGUE as unknown as readonly DeploymentPowerUpView[]).filter(
+    (entry) => entry.kind === 'power-up',
+  );
+  expect(unlocks.length, 'authored power-up unlock entries').toBeGreaterThan(0);
+  return unlocks[0];
+}
+
+/** A funded fleet past every ring gate, so a purchase always succeeds. */
+function fundedPowerUpPayload(): HangarWarPayload {
+  const payload = fieldedPayload();
+  payload.hangar.bankedMinerals = 1_000_000;
+  payload.hangar.bankedCores = 10_000;
+  payload.ring = { ...payload.ring, ringIndex: 3 };
+  return payload;
+}
+
+describe('hangar deployment — power-up ownership (AH-0MWKT12BT001106T, red-first)', () => {
+  it('carries the seeded level-1 row of a bought power-up into the deployment', () => {
+    const unlock = shippedPowerUpUnlock();
+    const powerUpId = (unlock.powerUpId ?? unlock.id) as string;
+
+    const purchased = purchaseHangarEntry(fundedPowerUpPayload(), unlock.id);
+    expect(purchased.ok).toBe(true);
+
+    const deployment = buildHangarDeployment(purchased.payload);
+
+    // The first sortie after buying starts with the power-up at its base level.
+    expect(deployment.powerUpLevels).toEqual([{ id: powerUpId, level: 1 }]);
+  });
+
+  it('grants the raised level of a bought-then-upgraded power-up onto the run player', () => {
+    const unlock = shippedPowerUpUnlock();
+    const powerUpId = (unlock.powerUpId ?? unlock.id) as string;
+
+    const purchased = purchaseHangarEntry(fundedPowerUpPayload(), unlock.id);
+    expect(purchased.ok).toBe(true);
+
+    const upgraded = buyHangarUpgrade(purchased.payload, powerUpId, { ringIndex: 3 });
+    expect(upgraded.ok).toBe(true);
+    expect(upgraded.reason).toBeNull();
+
+    const deployment = buildHangarDeployment(upgraded.payload);
+    // One purchase step above the seeded base: level 1 → 2.
+    expect(deployment.powerUpLevels).toEqual([{ id: powerUpId, level: 2 }]);
+
+    const applyCollect = vi.fn();
+    applyHangarWarDeployment(
+      {
+        getPlayer: () => ({ equipWeapon: vi.fn(), collectPowerUp: vi.fn() }),
+        getEffectsRegistry: () => ({
+          applyWeapon: vi.fn().mockReturnValue(true),
+          applyCollect,
+        }),
+      },
+      deployment,
+    );
+
+    // One permanent grant per bought level — exactly what the run's
+    // `getPowerUpLevels()` reads when it starts.
+    expect(applyCollect.mock.calls).toEqual([
+      [powerUpId, true],
+      [powerUpId, true],
+    ]);
   });
 });
