@@ -114,7 +114,16 @@ import {
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
-import { HEX_MAP_HINT, HEX_MAP_SECTION_RECTS } from './hangarWar/hexMap';
+import {
+  HEX_MAP_HINT,
+  HEX_MAP_SECTION_RECTS,
+  LAST_SORTIE_HEIGHT,
+  LAST_SORTIE_LINE_BUDGET,
+  sectionBodyHeight,
+  sectionBodyWidth,
+  sectionBudgetHeight,
+  wrappedLineCount,
+} from './hangarWar/hexMap';
 import { MineralChoiceScene } from './MineralChoiceScene';
 import {
   MINI_BOSS_WHEEL_SCENE_KEY,
@@ -1602,6 +1611,61 @@ describe('HexMapScene', () => {
           'last-sortie',
         ),
       ).toBe(true);
+    });
+
+    it('sizes the last-sortie panel from its worst-case content budget', async () => {
+      const rect = HEX_MAP_SECTION_RECTS['last-sortie'];
+
+      // The panel is not a hand-picked pixel height: it is the budget plus the
+      // frame's padding and heading band, so a new line (or a wider string)
+      // either fits or fails the budget test below.
+      expect(rect.height).toBe(LAST_SORTIE_HEIGHT);
+      expect(sectionBudgetHeight(LAST_SORTIE_LINE_BUDGET)).toBeLessThanOrEqual(
+        sectionBodyHeight(rect),
+      );
+    });
+
+    it('holds the full win path inside the last-sortie panel', async () => {
+      // The landing the audit found spilling out of the panel
+      // (AH-0MWNEQRSI008DIY8): a win that banked a bonus AND repelled the
+      // massed assault, drawn with deliberately wide numbers.
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 999999,
+        winBonusMinerals: 999999,
+        assault: assaultResolution(9999, 9999),
+        storage: null,
+      });
+      const rect = HEX_MAP_SECTION_RECTS['last-sortie'];
+      const bodyWidth = sectionBodyWidth(rect);
+
+      // Every block the renderer draws, with the budget slot it lands in
+      // (`LAST_SORTIE_LINE_BUDGET` is in draw order: run result, win bonus,
+      // assault sub-heading, assault body).
+      const drawn = [
+        { label: 'run result', text: scene.getRunLine()!, fontSizePx: 13 },
+        { label: 'win bonus', text: scene.getWinBonusLine()!, fontSizePx: 11 },
+        { label: 'assault sub-heading', text: 'HANGAR ASSAULT', fontSizePx: 10 },
+        { label: 'assault body', text: scene.getAssaultText(), fontSizePx: 11 },
+      ];
+      expect(drawn).toHaveLength(LAST_SORTIE_LINE_BUDGET.length);
+      drawn.forEach((block, index) => {
+        const budget = LAST_SORTIE_LINE_BUDGET[index];
+        expect(budget.fontSizePx, block.label).toBe(block.fontSizePx);
+        expect(block.text, block.label).not.toBe('');
+        expect(
+          wrappedLineCount(block.text, bodyWidth, block.fontSizePx),
+          `${block.label} must fit the panel's ${budget.visualLines}-line budget`,
+        ).toBeLessThanOrEqual(budget.visualLines);
+      });
+
+      // The whole block budget still fits the panel's body area — the check the
+      // happy-dom `measureText` stub (0 width, so nothing wraps) cannot make.
+      expect(sectionBudgetHeight(LAST_SORTIE_LINE_BUDGET)).toBeLessThanOrEqual(
+        sectionBodyHeight(rect),
+      );
     });
 
     it('omits the last-sortie section when the landing carries no news', async () => {

@@ -260,6 +260,102 @@ const SECTION_BODY_SIZE = '12px';
 const SECTION_FILL = 0x03131c;
 const SECTION_LINE = 0x1f4a5a;
 
+/** Width of the map's left column (`war-status`, `last-sortie`). */
+const SECTION_COLUMN_WIDTH = 241;
+
+/**
+ * Advance of the panels' monospace face, as a fraction of the font size
+ * (0.6em — the metric a wrapped body line is budgeted with).
+ *
+ * The renderer itself lays text out from Phaser's measured metrics; this
+ * constant exists so a panel's height can be budgeted from its worst-case
+ * content without a live canvas (the test harness's canvas stub measures 0
+ * width, so nothing ever wraps there — AH-0MWNEQRSI008DIY8).
+ */
+const MONOSPACE_ADVANCE_EM = 0.6;
+
+/** Rendered line box of a body line, as a multiple of its font size. */
+const SECTION_LINE_HEIGHT_EM = 1.25;
+
+/**
+ * One body block of a panel, as its height budget sees it: the visual lines it
+ * may occupy, its type size and the spacing the layout puts around it.
+ */
+export interface SectionLineBudget {
+  /** Visual lines the block may occupy at the panel's body width. */
+  readonly visualLines: number;
+  /** The block's font size in px. */
+  readonly fontSizePx: number;
+  /** Extra px between the block's own lines (`Text.lineSpacing`). */
+  readonly lineSpacing: number;
+  /** Extra px below the block (the layout's `gap`). */
+  readonly gap: number;
+}
+
+/**
+ * Visual lines `text` wraps into inside `widthPx` at `fontSizePx`.
+ *
+ * A deterministic stand-in for the browser's text measurement, so a panel's
+ * worst-case content can be budgeted (and tested) without a real canvas.
+ */
+export function wrappedLineCount(
+  text: string,
+  widthPx: number,
+  fontSizePx: number,
+): number {
+  const columns = Math.max(
+    1,
+    Math.floor(widthPx / (fontSizePx * MONOSPACE_ADVANCE_EM)),
+  );
+  return text
+    .split('\n')
+    .reduce(
+      (lines, hardLine) => lines + Math.max(1, Math.ceil(hardLine.length / columns)),
+      0,
+    );
+}
+
+/** Height in px a panel's body blocks occupy at their budgeted line counts. */
+export function sectionBudgetHeight(
+  blocks: readonly SectionLineBudget[],
+): number {
+  return blocks.reduce(
+    (height, block) =>
+      height +
+      block.visualLines * (block.fontSizePx * SECTION_LINE_HEIGHT_EM + block.lineSpacing) +
+      block.gap,
+    0,
+  );
+}
+
+/**
+ * The `last-sortie` panel's worst-case content budget (AH-0MWNEQRSI008DIY8).
+ *
+ * A full win landing draws four blocks in the panel's 225px body column: the
+ * deployment's run result (`RUN: VICTORY · score N`, up to two visual lines),
+ * the banked win bonus (one), the `HANGAR ASSAULT` sub-heading (one) and the
+ * assault body — headline, numbers and consequence as three hard lines that
+ * wrap to at most seven visual lines. The panel is sized **from this budget**,
+ * so a longer line or a shorter panel fails the budget test instead of bleeding
+ * out of the frame.
+ */
+export const LAST_SORTIE_LINE_BUDGET: readonly SectionLineBudget[] = [
+  { visualLines: 2, fontSizePx: 13, lineSpacing: 2, gap: 4 },
+  { visualLines: 1, fontSizePx: 11, lineSpacing: 2, gap: 4 },
+  { visualLines: 1, fontSizePx: 10, lineSpacing: 2, gap: 2 },
+  { visualLines: 7, fontSizePx: 11, lineSpacing: 2, gap: 0 },
+];
+
+/**
+ * The `last-sortie` panel's height: its worst-case body budget plus the frame's
+ * own padding and heading band, rounded up to whole pixels.
+ */
+export const LAST_SORTIE_HEIGHT = Math.ceil(
+  SECTION_PADDING * 2 +
+    SECTION_HEADING_HEIGHT +
+    sectionBudgetHeight(LAST_SORTIE_LINE_BUDGET),
+);
+
 /**
  * The section layout at 960×540.
  *
@@ -267,12 +363,19 @@ const SECTION_LINE = 0x1f4a5a;
  * `last-sortie`; the centre is the `map` (its rect bounds the ring-2 tiles at
  * `HEX_SIZE = 50` exactly); the right column is `selected-hex`; the footer band
  * is `controls`. No two rects overlap and every rect lies inside the frame.
+ * `last-sortie` is sized from its worst-case content budget
+ * ({@link LAST_SORTIE_HEIGHT}) so the full win path cannot spill out of it.
  */
 export const HEX_MAP_SECTION_RECTS: Readonly<
   Record<HexMapSectionKey, HexMapSectionRect>
 > = {
-  'war-status': { x: 8, y: 8, width: 241, height: 140 },
-  'last-sortie': { x: 8, y: 154, width: 241, height: 150 },
+  'war-status': { x: 8, y: 8, width: SECTION_COLUMN_WIDTH, height: 140 },
+  'last-sortie': {
+    x: 8,
+    y: 154,
+    width: SECTION_COLUMN_WIDTH,
+    height: LAST_SORTIE_HEIGHT,
+  },
   map: { x: 253, y: 8, width: 454, height: 452 },
   'selected-hex': { x: 711, y: 8, width: 241, height: 452 },
   controls: { x: 8, y: 462, width: 944, height: 74 },
@@ -289,8 +392,13 @@ function sectionBodyY(rect: HexMapSectionRect): number {
 }
 
 /** Word-wrap width of a section's body text. */
-function sectionBodyWidth(rect: HexMapSectionRect): number {
+export function sectionBodyWidth(rect: HexMapSectionRect): number {
   return rect.width - SECTION_PADDING * 2;
+}
+
+/** Height available to a section's body text inside its rect. */
+export function sectionBodyHeight(rect: HexMapSectionRect): number {
+  return rect.height - SECTION_PADDING * 2 - SECTION_HEADING_HEIGHT;
 }
 
 /**
@@ -780,6 +888,13 @@ function hasLastSortieNews(
  * them, so a later entry shows no empty headed box, and every string is the
  * model's own (`options.runLine`, `model.winBonusLine`, `model.assaultLine`),
  * copied verbatim.
+ *
+ * The panel's height comes from {@link LAST_SORTIE_LINE_BUDGET}
+ * ({@link LAST_SORTIE_HEIGHT}), the worst case this function can draw — the
+ * run result, the banked bonus and the three hard-wrapped assault lines — so
+ * the full win path's text cannot spill below its own frame
+ * (AH-0MWNEQRSI008DIY8). The gaps and the `lineSpacing` below are the same
+ * numbers that budget uses.
  *
  * @returns the assault body text object (the `getAssaultText()` seam), or
  * `null` when the landing carries no assault.

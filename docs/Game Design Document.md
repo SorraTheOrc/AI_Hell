@@ -3135,7 +3135,12 @@ a glance and by framing rather than by colour (AH-0MWL4QCVD007WOAM):
 
   The renderer publishes the same section registry (`sections`: one
   `{ key, heading, rect }` per rendered section) to the game and to the parity
-  gym, so the two can never describe different regions of the screen. The
+  gym, so the two can never describe different regions of the screen. Each
+  panel's rect is the bound its own content must fit: `LAST SORTIE` is sized
+  from its **worst case** — the run result, the banked win bonus and the three
+  hard-wrapped hangar-assault lines drawn together — so a full win landing's
+  aftermath ends inside its panel instead of spilling past the frame
+  (AH-0MWNEQRSI008DIY8). The
   focused hex's **known-ahead intel** lives in `SELECTED HEX`: held/unheld and
   aggression on the tile (tile colour plus a readable `AGG n` badge), and — for
   the focused hex (tab/arrows move focus; read-only renders default to the
