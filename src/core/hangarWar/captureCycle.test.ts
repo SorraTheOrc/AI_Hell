@@ -45,6 +45,7 @@ import {
   materialiseRing,
   openNextRing,
   resolveDeploymentDefeat,
+  resolveGrantAlias,
   resolveHexCapture,
   resolveHexGrant,
   withGrantedEntry,
@@ -131,6 +132,39 @@ describe('resolveHexGrant', () => {
     expect(resolveHexGrant(null)).toBeNull();
     expect(resolveHexGrant('   ')).toBeNull();
     expect(resolveHexGrant(42)).toBeNull();
+  });
+});
+
+describe('resolveGrantAlias', () => {
+  // The alias table is shared: the display matchup resolver reads this same
+  // helper (AH-0MWMT4NJV001PX8Y), so the capture cycle and the screen cannot
+  // drift into two tables.
+  it('resolves the authored weapon spelling to its catalogue entry', () => {
+    expect(resolveGrantAlias('waveLaser')).toEqual({
+      entryId: 'wave_laser',
+      kind: 'weapon',
+      weaponId: 'wave_laser',
+    });
+  });
+
+  it('agrees with the grant resolver for every aliased spelling', () => {
+    for (const id of ['waveLaser', 'extra-life']) {
+      const alias = resolveGrantAlias(id);
+      const grant = resolveHexGrant(id);
+      expect(alias).not.toBeNull();
+      expect(grant).not.toBeNull();
+      expect(grant!.entryId).toBe(alias!.entryId);
+      expect(grant!.kind).toBe(alias!.kind);
+      expect(grant!.weaponId).toBe(alias!.weaponId ?? null);
+    }
+  });
+
+  it('has no alias for a canonical or unknown id', () => {
+    expect(resolveGrantAlias('wave_laser')).toBeNull();
+    expect(resolveGrantAlias('not-an-entry')).toBeNull();
+    expect(resolveGrantAlias(null)).toBeNull();
+    expect(resolveGrantAlias('   ')).toBeNull();
+    expect(resolveGrantAlias(7)).toBeNull();
   });
 });
 
