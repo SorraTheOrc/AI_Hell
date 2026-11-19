@@ -28,9 +28,17 @@
  *   it; no per-archetype entity code is involved.
  * - `PlayScene` is wired to the builder in a later child; this module does
  *   not import `PlayScene` (avoiding a scene → AI → scene import cycle).
+ * - Every enemy entry also carries its **movement class**
+ *   (`BotEnemy.movementClass`, AH-0MWM0C6OW006G5SE): the class is resolved
+ *   bot-side from the archetype by {@link resolveEnemyMovementClass}, the
+ *   frozen map mirroring `src/data/enemy-configs.csv`. Nothing consumes it
+ *   yet — it is additive plumbing for class-shaped hazard prediction.
  *
  * @module src/ai/botSnapshot
  */
+
+import type { EnemyMovementClass } from '../core/configTypes';
+import { resolveEnemyMovementClass } from './framework/enemyMovementClass';
 
 /** Discriminator stored on every snapshot mineral entry (AC1). */
 export const BOT_MINERAL_TYPE = 'mineral';
@@ -112,9 +120,14 @@ export interface BotEnemy {
    */
   readonly vx?: number;
   readonly vy?: number;
+  /**
+   * The enemy's movement class (AH-0MWM0C6OW006G5SE), resolved bot-side from
+   * its `archetype` by {@link resolveEnemyMovementClass} — never a config
+   * lookup on the decision path. Additive: hand-built fixtures may omit it and
+   * consumers resolve it themselves; the builder always populates it.
+   */
+  readonly movementClass?: EnemyMovementClass;
 }
-
-/** An in-flight projectile with position and velocity. */
 export interface BotBullet {
   readonly x: number;
   readonly y: number;
@@ -259,6 +272,14 @@ export interface BotEnemySource {
    */
   readonly vx?: number;
   readonly vy?: number;
+  /**
+   * An already-known movement class (AH-0MWM0C6OW006G5SE). Optional: no live
+   * entity exposes one today — the builder resolves the class from the
+   * `archetype` map — but a structural source (e.g. a gym-only hazard with no
+   * CSV row) may declare it explicitly, and an explicit value wins over the
+   * archetype lookup.
+   */
+  readonly movementClass?: EnemyMovementClass;
 }
 
 /** Minimal enemy-bullet source: position lives on the drawn `graphics`. */
@@ -401,6 +422,10 @@ export function buildBotSnapshot(
       ...(typeof enemy.vx === 'number' && typeof enemy.vy === 'number'
         ? { vx: enemy.vx, vy: enemy.vy }
         : {}),
+      // The movement class is resolved bot-side from the archetype
+      // (AH-0MWM0C6OW006G5SE); a source that already declares one keeps it.
+      movementClass:
+        enemy.movementClass ?? resolveEnemyMovementClass(enemy.archetype),
     })),
     enemyBullets: scene.getEnemyBullets().map((bullet) => ({
       x: bullet.graphics.x,

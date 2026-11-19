@@ -75,6 +75,12 @@ export {
 } from './worldModel';
 
 export {
+  DEFAULT_BOT_ENEMY_MOVEMENT_CLASS,
+  ENEMY_MOVEMENT_CLASS_BY_ARCHETYPE,
+  resolveEnemyMovementClass,
+} from './enemyMovementClass';
+
+export {
   BOT_IDLE_INTENT,
   BotBrain,
   createBotBrain,

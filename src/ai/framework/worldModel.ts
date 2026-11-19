@@ -9,7 +9,9 @@
  * - **positions / velocities** — the live enemy, asteroid, mineral, drop,
  *   bullet and boss sets, partitioned and filtered for dead entries;
  *   hazards also carry an optional **bot-side velocity estimate**
- *   (AH-0MVI4QDN90037DIN) supplied by the hazard-velocity tracker;
+ *   (AH-0MVI4QDN90037DIN) supplied by the hazard-velocity tracker, and the
+ *   enemy's **movement class** (AH-0MWM0C6OW006G5SE) so a consumer can
+ *   predict a curving/diving/patrolling hazard rather than a straight line;
  * - **incoming-fire prediction** — for every in-flight enemy bullet (and
  *   every enemy inside a fire *tell*, whose shot is not spawned yet) the
  *   predicted closest approach to the player: time-to-closest, closest
@@ -32,7 +34,9 @@ import type {
   BotPlayer,
   BotSnapshot,
 } from '../botSnapshot';
+import type { EnemyMovementClass } from '../../core/configTypes';
 import type { BotContent } from './content';
+import { resolveEnemyMovementClass } from './enemyMovementClass';
 import { BOSS_HAZARD_KEY, enemyHazardKey } from './hazardVelocity';
 import { wrappedAxisDelta } from '../../utils/wrapGeometry';
 
@@ -49,6 +53,11 @@ export interface BotWorldPoint {
  * `vx`/`vy` are absent when no estimate exists (the hazard is then treated as
  * stationary, reproducing today's positional behaviour); `id` is present on
  * enemy/asteroid hazards and absent on the boss.
+ *
+ * `movementClass` is present on **every** hazard (AH-0MWM0C6OW006G5SE): the
+ * class the snapshot resolved from the archetype, or `roamer` for an unknown
+ * one. The boss resolves to `formation` (its snapshot carries no archetype and
+ * the CSV ships it as a formation).
  */
 export interface BotHazardPoint extends BotWorldPoint {
   /** Stable bot-side enemy id (absent on the boss). */
@@ -56,6 +65,8 @@ export interface BotHazardPoint extends BotWorldPoint {
   /** Estimated velocity (px/s) from the bot-side tracker, when available. */
   readonly vx?: number;
   readonly vy?: number;
+  /** The hazard's movement class (AH-0MWM0C6OW006G5SE). */
+  readonly movementClass: EnemyMovementClass;
 }
 
 /** Tunables for the world model / predictor. */
@@ -202,12 +213,14 @@ export function buildBotWorld(
     x: number,
     y: number,
     key: string | null,
+    movementClass: EnemyMovementClass,
     id?: number,
   ): BotHazardPoint => {
     const velocity = key === null ? undefined : hazardVelocities?.get(key);
     return {
       x,
       y,
+      movementClass,
       ...(id !== undefined ? { id } : {}),
       ...(velocity && (velocity.x !== 0 || velocity.y !== 0)
         ? { vx: velocity.x, vy: velocity.y }
@@ -226,13 +239,20 @@ export function buildBotWorld(
         enemy.x,
         enemy.y,
         enemy.id !== undefined ? enemyHazardKey(enemy.id) : null,
+        enemy.movementClass ?? resolveEnemyMovementClass(enemy.archetype),
         enemy.id,
       ),
     );
   }
   const boss =
     snapshot.boss && snapshot.boss.alive ? snapshot.boss : null;
-  if (boss) hazards.push(hazardPoint(boss.x, boss.y, BOSS_HAZARD_KEY));
+  if (boss) {
+    // The boss snapshot carries no archetype; the CSV ships `boss` as a
+    // `formation` enemy, so its hazard is classed the same way.
+    hazards.push(
+      hazardPoint(boss.x, boss.y, BOSS_HAZARD_KEY, 'formation'),
+    );
+  }
 
   return {
     player,

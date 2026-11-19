@@ -798,7 +798,7 @@ describe('evaluateDirection — predictive hazard avoidance (AH-0MVI4QDN90037DIN
   // A hazard ahead-right of the ship, outside dangerMargin (180 px away),
   // crossing down-left. A rightward-thrusting ship and the hazard are predicted
   // to come within threatRadius (55) inside the 0.6 s horizon.
-  const HAZARD = { x: 580, y: 120 };
+  const HAZARD = { x: 580, y: 120, movementClass: 'roamer' as const };
   const CROSSING = { x: -50, y: 200 };
 
   it('rejects a bearing predicted to cross a moving hazard inside the horizon', () => {
@@ -840,15 +840,27 @@ describe('hazardThreatensPlayer (AH-0MVI4QDN90037DIN AC2)', () => {
     const player = { x: 480, y: 270, vx: 175, vy: 0 };
     // Predicted to cross the ship's rightward path inside threatRadius.
     expect(
-      hazardThreatensPlayer(player, { x: 580, y: 120, vx: -50, vy: 200 }, T),
+      hazardThreatensPlayer(
+        player,
+        { x: 580, y: 120, vx: -50, vy: 200, movementClass: 'roamer' },
+        T,
+      ),
     ).toBe(true);
     // The same stationary hazard is 180 px away — outside dangerMargin.
     expect(
-      hazardThreatensPlayer(player, { x: 580, y: 120, vx: 0, vy: 0 }, T),
+      hazardThreatensPlayer(
+        player,
+        { x: 580, y: 120, vx: 0, vy: 0, movementClass: 'roamer' },
+        T,
+      ),
     ).toBe(false);
     // A stationary hazard inside dangerMargin is still a threat.
     expect(
-      hazardThreatensPlayer(player, { x: 520, y: 270, vx: 0, vy: 0 }, T),
+      hazardThreatensPlayer(
+        player,
+        { x: 520, y: 270, vx: 0, vy: 0, movementClass: 'roamer' },
+        T,
+      ),
     ).toBe(true);
   });
 });
@@ -860,7 +872,11 @@ describe('seam-aware threat prediction (AH-0MVT2W2D9002BOHO)', () => {
     // raw line.
     const player = { x: 10, y: 300, vx: 0, vy: 0 };
     expect(
-      hazardThreatensPlayer(player, { x: 950, y: 300, vx: 100, vy: 0 }, T),
+      hazardThreatensPlayer(
+        player,
+        { x: 950, y: 300, vx: 100, vy: 0, movementClass: 'roamer' },
+        T,
+      ),
     ).toBe(true);
   });
 

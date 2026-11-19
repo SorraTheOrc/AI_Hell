@@ -46,7 +46,11 @@ describe('buildBotWorld', () => {
       boss: { x: 10, y: 20, alive: true, phase: 1 },
     });
     expect(buildBotWorld(snapshot).boss).toEqual(snapshot.boss);
-    expect(buildBotWorld(snapshot).hazards).toContainEqual({ x: 10, y: 20 });
+    expect(buildBotWorld(snapshot).hazards).toContainEqual({
+      x: 10,
+      y: 20,
+      movementClass: 'formation',
+    });
 
     const dead = makeSnapshot({
       boss: { x: 10, y: 20, alive: false, phase: 1 },
@@ -285,5 +289,53 @@ describe('predictIncomingFire', () => {
     expect(threat.velocity.x).toBeGreaterThan(0);
     expect(threat.closing).toBe(true);
     expect(threat.threatens).toBe(true);
+  });
+});
+
+describe('buildBotWorld — hazard movement class (AH-0MWM0C6OW006G5SE)', () => {
+  it('carries the resolved movement class on every enemy hazard', () => {
+    const world = buildBotWorld(
+      makeSnapshot({
+        enemies: [
+          enemy(100, 100, 'scout', true),
+          enemy(200, 200, 'diver', true),
+          enemy(300, 300, 'ghost-chase', true),
+          enemy(400, 400, 'raider', true),
+          enemy(500, 500, 'asteroid', true),
+        ],
+      }),
+    );
+
+    expect(world.hazards.map((hazard) => hazard.movementClass)).toEqual([
+      'formation',
+      'diver',
+      'chaser',
+      'patroller',
+      'roamer',
+    ]);
+  });
+
+  it('falls back to roamer for an unknown archetype', () => {
+    const world = buildBotWorld(
+      makeSnapshot({ enemies: [enemy(1, 2, 'brand-new-archetype', true)] }),
+    );
+    expect(world.hazards[0].movementClass).toBe('roamer');
+  });
+
+  it('carries the class the snapshot already resolved', () => {
+    const resolved = {
+      ...enemy(1, 2, 'gym-only-hazard', true),
+      movementClass: 'diver' as const,
+    };
+    const world = buildBotWorld(makeSnapshot({ enemies: [resolved] }));
+    expect(world.hazards[0].movementClass).toBe('diver');
+  });
+
+  it('resolves the boss hazard to formation', () => {
+    const world = buildBotWorld(
+      makeSnapshot({ boss: { x: 10, y: 20, alive: true, phase: 1 } }),
+    );
+    expect(world.hazards).toHaveLength(1);
+    expect(world.hazards[0].movementClass).toBe('formation');
   });
 });

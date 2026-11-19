@@ -61,10 +61,17 @@ world.nearestEnemyDistance; // or Infinity
 world.wavePressure;         // 0..1, 0 when no timed wave is running
 ```
 
-Hazards are `BotHazardPoint`s: each carries the entity's stable bot-side `id`
-and, when the caller supplies a velocity lookup, an estimated `vx`/`vy`
+Hazards are `BotHazardPoint`s: each carries the entity's stable bot-side `id`,
+its **movement class** (`formation` / `diver` / `chaser` / `patroller` /
+`roamer`) and, when the caller supplies a velocity lookup, an estimated
+`vx`/`vy`
 (the bot-side hazard-velocity tracker of
 [section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
+The class is resolved bot-side from the archetype by the frozen map in
+`src/ai/framework/enemyMovementClass.ts`, which mirrors the `movementClass`
+column of `src/data/enemy-configs.csv`; an unknown archetype resolves to
+`roamer` and the boss resolves to `formation`. Nothing consumes the class yet
+— it is additive plumbing for class-shaped hazard prediction.
 With no lookup — the default for direct callers — hazards stay stationary
 `{ x, y }` points, exactly as before.
 
