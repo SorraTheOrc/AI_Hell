@@ -3204,8 +3204,14 @@ on the ring, plus that attack's numbers as the attack row of the `SELECTED HEX`
 section (there is no separate report screen). Activating an
 **unheld** hex opens the **ship-config (hangar) screen pre-targeted at that
 hex** — its `▶ DEPLOY` row names the hex and launches the deployment there, so
-no hex battle begins without the config screen first (AH-0MWMT4S5U001EGDF,
-parent AH-0MWMRWCY2001HWGR). Activating a **held** hex only inspects it; the
+every hex battle is reached through the target-aware config screen
+(`map → config → deployment`) and none begins without it (AH-0MWMT4S5U001EGDF,
+parent AH-0MWMRWCY2001HWGR). The config screen repeats the known-ahead intel
+where the player commits: a `TARGET INTEL` block names the chosen hex's boss
+and its authored strengths/weaknesses, and every weapon row carries an
+`▲ EFFECTIVE` / `▼ RESISTED` matchup mark against that boss — display only, with
+the mechanical matchup owned by AH-0MWL5376H001WJFZ, and rendered read-only by
+`GymHangar` from the same model (AH-0MWMT4STK001PSK4). Activating a **held** hex only inspects it; the
 `◀ HANGAR` row is one click from what the player owns (the design's "map and
 hangar one click apart") and carries no target, so its `▶ DEPLOY` keeps the
 weakest-unheld default; ESC returns to the menu.

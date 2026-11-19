@@ -21,6 +21,14 @@
  * battle itself, introduces no second deployment rule and never touches the
  * arcade checkpoint (parent AH-0MWMRWCY2001HWGR AC1).
  *
+ * The config screen repeats this map's known-ahead intel where the player
+ * commits: a `TARGET INTEL` block names the chosen hex's boss and its authored
+ * strengths/weaknesses, and every weapon row carries an `▲ EFFECTIVE` /
+ * `▼ RESISTED` matchup mark against that boss. All of it is **display only**
+ * (AH-0MWMT4STK001PSK4) — the mechanical matchup is AH-0MWL5376H001WJFZ's — and
+ * `GymHangar` renders the same shared model read-only, so the two surfaces
+ * cannot drift.
+ *
  * Navigation: activating an **unheld** hex opens the config screen for it
  * (`openConfig`); the `◀ HANGAR` row opens `HangarScene` with no target (one
  * click, the design's "what I own" and "what I hold" one click apart); ESC

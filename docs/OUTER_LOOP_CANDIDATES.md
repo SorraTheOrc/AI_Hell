@@ -1062,7 +1062,12 @@ trade has to stay live; see *Effort and risk*).
   **focused hex** (AH-0MW3VG6WJ004HRI9).
 - The **hangar screen** (Candidate B's unlock tree) reachable from the map, so
   "what I own" and "what I hold" sit one click apart.
-- A **deployment / hull-and-loadout selector** on the way into a hex.
+- A **deployment / hull-and-loadout selector** on the way into a hex — the
+  **target-aware config screen** that sits between map and battle, so a hex is
+  reached through `map → config → deployment`: activating an unheld hex opens
+  the screen pre-targeted at it, its `TARGET INTEL` block names the target
+  boss and its authored strengths/weaknesses, and its `▶ DEPLOY` row launches
+  at that same hex (AH-0MWMT4S5U001EGDF, AH-0MWMT4STK001PSK4).
 - A **between-sortie defence report, rolled into the hex ring map** (no
   separate screen): the map draws one **attack arrow per attack** on the ring
   and a **left-hand attack panel** with that attack's numbers — which hexes
@@ -1160,6 +1165,15 @@ set of **strategic weapon grants** — "I need the weapon that is strong against
 the boss threatening my home hex, so I take *that* hex next" is a plan the player
 can form before spending a life — and the one-weapon hex becomes a real decision
 rather than a surprise.
+
+The intel is repeated where the player commits. The **target-aware config
+screen** sits between the map and the battle (`map → config → deployment`): it
+publishes the chosen hex's boss and its authored strengths/weaknesses as a
+`TARGET INTEL` block and marks each weapon row `▲ EFFECTIVE` or `▼ RESISTED`
+against that boss, **display only** — the mechanical matchup is
+AH-0MWL5376H001WJFZ's, never a second combat rule. Because the screen is the one
+shared model the game and `GymHangar` render (the gym read-only), the marks can
+never drift between them (AH-0MWMT4STK001PSK4).
 
 Going **beyond** strategic weapon grants is **out of scope for the MVP**. The
 ideas below are recorded so the loop has room to grow; one mitigation

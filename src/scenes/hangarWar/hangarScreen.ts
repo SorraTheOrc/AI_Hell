@@ -51,7 +51,10 @@
  *   {@link renderHangarScreen} are used by the shipped `HangarScene` *and* by
  *   the `GymHangar` parity scene (which renders the same model read-only), so
  *   the gym can never drift from the game (AGENTS.md gym↔game parity,
- *   `docs/GYM_PARITY.md`).
+ *   `docs/GYM_PARITY.md`). The target-aware intel and the matchup marks are
+ *   part of that model, so the gym renders the identical `TARGET INTEL` block
+ *   and `▲ EFFECTIVE` / `▼ RESISTED` marks read-only
+ *   (AH-0MWMT4STK001PSK4).
  *
  * The screen's two navigation/state rows — `⌗ HEX MAP` and the destructive
  * `⟲ RESTART WAR` reset — are built here too. The restart row is a two-step

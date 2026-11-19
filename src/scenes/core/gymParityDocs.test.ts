@@ -377,6 +377,19 @@ describe('docs/GYM_PARITY.md carries current Hangar War rows (AH-0MVUXCC5J0028OG
     expect(rowVerdict(cells)).toBe('intentional divergence');
   });
 
+  it('records the target intel and matchup marks on the GymHangar row (AH-0MWMT4STK001PSK4)', () => {
+    const cells = rowCells('GymHangar');
+    // AC6: the row records the target intel block and the per-row marks the
+    // read-only gym renders from the shared model.
+    expect(cells[3]).toContain('TARGET INTEL');
+    expect(cells[3]).toContain('▲ EFFECTIVE');
+    expect(cells[3]).toContain('▼ RESISTED');
+    expect(cells[3]).toMatch(/matchup/i);
+    // The marks are display-only, never a second combat rule.
+    expect(cells[7]).toContain('AH-0MWMT4STK001PSK4');
+    expect(cells[7]).toMatch(/display only/i);
+  });
+
   it('points GymHexWar at the shipped map, frontier tick and rolled-in report', () => {
     const cells = rowCells('GymHexWar');
     expect(cells.length).toBeGreaterThan(7);

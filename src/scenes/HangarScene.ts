@@ -46,6 +46,18 @@
  * deploys at the carried target, which is what makes the attract traversal walk
  * `map → config → deployment` without stalling.
  *
+ * ## Target intel is display only (AH-0MWMT4STK001PSK4)
+ *
+ * The screen publishes its target hex's authored boss intel as a `TARGET INTEL`
+ * block and marks every weapon row `▲ EFFECTIVE` / `▼ RESISTED` against that
+ * boss. Both come from the shared model builder (`buildHangarBossIntel` over
+ * the authored ring data, plus the pure `resolveBossMatchup`,
+ * `src/core/hangarWar/weaponMatchup.ts`) and are **display only**: they change
+ * nothing about the fight. The mechanical matchup is
+ * AH-0MWL5376H001WJFZ's `resolveHexMatchup`, never a second rule here, and
+ * `GymHangar` renders the identical intel and marks read-only from the same
+ * model (AGENTS.md gym↔game parity).
+ *
  * The `⟲ RESTART WAR` row (AH-0MW8F7NH1002PQE3) returns the war to its
  * documented starting position behind a two-step confirm. The scene owns the
  * arming bit and its 5 s timer (the screen is rebuilt on every change, so the

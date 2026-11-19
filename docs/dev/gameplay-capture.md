@@ -761,7 +761,9 @@ npm run capture -- --hangar --duration 30000 --output clips/hangar.webm
 
 The `--duration` window contains **the hangar screen** (the first 2.5 s, or
 half the window when that is shorter) followed by the **traversal**: the hex
-map, the **config screen** it opens pre-targeted at the weakest adjacent hex,
+map, the **target-aware config screen** it opens pre-targeted at the weakest
+adjacent hex (the `map → config → deployment` hop, whose `TARGET INTEL` block
+and `▲ EFFECTIVE` / `▼ RESISTED` marks are display-only),
 the deployment that screen's `▶ DEPLOY` launches, and — once that deployment
 ends — the same map again, now carrying the between-sortie report arrows and
 attack panel. Nothing about which hex to take, what to buy or when to continue

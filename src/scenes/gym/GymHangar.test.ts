@@ -38,7 +38,11 @@ import {
   GYM_HANGAR_TITLE,
   GYM_HANGAR_DEFAULT_SEED,
 } from './GymHangar';
-import { buildHangarScreenModel } from '../hangarWar/hangarScreen';
+import {
+  buildHangarScreenModel,
+  HANGAR_STRONG_MARKER,
+  HANGAR_WEAK_MARKER,
+} from '../hangarWar/hangarScreen';
 import { createRingState } from '../../core/hangarWar/hexRing';
 import { resolveHexCapture } from '../../core/hangarWar/captureCycle';
 import { bankedSalvageFromHangar, runSalvageFromRun } from '../../core/hangarWar/salvageBanking';
@@ -113,8 +117,7 @@ describe('GymHangar', () => {
   it('publishes the target intel through the shared model, read-only (AH-0MWMT4QXF0095CBN)', async () => {
     // The fixture ring's ids are not in the authored table, so the shared model
     // publishes the explicit unknown fallback — the gym renders exactly that,
-    // and invents no intel of its own. A target-aware gym (the parity item)
-    // will exercise a known hex through the same `buildHangarScreenModel`.
+    // and invents no intel of its own. The known-hex parity case lives below.
     const scene = await bootHangar({ payload: VALID_HANGAR_WAR_PAYLOAD });
     const shipped = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
 
@@ -142,6 +145,72 @@ describe('GymHangar', () => {
         .every((row) => row.matchup !== 'strong' && row.matchup !== 'weak'),
     ).toBe(true);
     expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
+  });
+
+  it('renders the known target intel and ▲/▼ matchup marks read-only (AH-0MWMT4STK001PSK4)', async () => {
+    // The authored ring makes the default target a hex the shipped definition
+    // table knows (`hex-r1-2`, the weakest unheld), so the intel is populated
+    // and every owned weapon row carries a matchup verdict. The gym must render
+    // the *identical* shared model — intel and marks included — with no
+    // handlers, so nothing on the screen can act on the advice.
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3', 'hull-4'];
+    payload.hangar.unlockedWeapons = [
+      'spread',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ];
+    payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+    payload.hangar.activeHull = 'hull-1';
+    payload.hangar.activeLoadout = { startingWeapons: ['spread'], modifiers: [] };
+    payload.hangar.bankedMinerals = 0;
+    payload.hangar.bankedCores = 0;
+
+    const scene = await bootHangar({ payload });
+    const shipped = buildHangarScreenModel(payload);
+
+    // One shared code path: the gym's model is the game's model, intel and all.
+    expect(scene.getModel()).toEqual(shipped);
+    expect(scene.getModel().bossIntel).toEqual({
+      hexId: 'hex-r1-2',
+      boss: 'shroud-merchant',
+      strengths: ['spread'],
+      weaknesses: ['waveLaser'],
+      known: true,
+    });
+
+    // The authored intel renders through the shared renderer.
+    findTextStartingWith(scene, 'TARGET INTEL — hex-r1-2');
+    expect(findTextStartingWith(scene, 'BOSS: ').text).toBe('BOSS: shroud-merchant');
+    expect(findTextStartingWith(scene, 'STRENGTHS: ').text).toBe(
+      'STRENGTHS: spread',
+    );
+    expect(findTextStartingWith(scene, 'WEAKNESSES: ').text).toBe(
+      'WEAKNESSES: waveLaser',
+    );
+
+    // `spread` is resisted by this boss, `wave_laser` counters it (via the
+    // `waveLaser` ring spelling) — the marks are on the rendered rows.
+    const weak = scene.getRows().find((row) => row.key === 'buy:spread')!;
+    expect(weak, 'spread unlock row').toBeDefined();
+    expect(weak.matchup).toBe('weak');
+    expect(weak.label).toContain(HANGAR_WEAK_MARKER);
+
+    const strong = scene.getRows().find((row) => row.key === 'buy:wave_laser')!;
+    expect(strong, 'wave_laser unlock row').toBeDefined();
+    expect(strong.matchup).toBe('strong');
+    expect(strong.label).toContain(HANGAR_STRONG_MARKER);
+
+    // The loadout selector carries the same verdicts.
+    const loadout = scene.getRows().find((row) => row.key === 'weapon:spread')!;
+    expect(loadout.matchup).toBe('weak');
+    expect(loadout.label).toContain(HANGAR_WEAK_MARKER);
+
+    // Read-only: the intel and marks change nothing the screen can activate.
+    expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
+    expect(scene.getRows().every((row) => row.text.input === null)).toBe(true);
   });
 
   it('renders the owned-row upgrade affordance through the same shared model (parent AC3, AC6)', async () => {
