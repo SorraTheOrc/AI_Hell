@@ -945,6 +945,7 @@ describe('HangarScene', () => {
     data?: Partial<{
       payload: HangarWarPayload;
       storage: HangarWarStorage | null;
+      targetHexId: string | null;
     }>,
   ): Promise<HangarScene> {
     booted = await bootScene([HangarScene]);
@@ -1217,6 +1218,123 @@ describe('HangarScene', () => {
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isHangarWarRun()).toBe(true);
     expect(play.getHangarWarDeployment()!.hexId).toBe('hex-2');
+  });
+
+  // ── Target-aware deploy (AH-0MWMT4RJC0095L4O) ─────────────────
+
+  /** A payload on the authored ring 1: real hex ids, real boss intel, no salvage. */
+  function ringOnePayload(): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    payload.hangar.bankedMinerals = 0;
+    payload.hangar.bankedCores = 0;
+    payload.pendingAttacks = [];
+    return payload;
+  }
+
+  it('carries the chosen hex into the deploy row and its target intel', async () => {
+    const payload = ringOnePayload();
+    const scene = await bootHangar({
+      payload,
+      storage: null,
+      targetHexId: 'hex-r1-3',
+    });
+
+    // The rendered model is the target-aware one: the DEPLOY row names the
+    // carried hex and the intel names that hex's boss, not the weakest unheld
+    // hex's (`hex-r1-2`).
+    expect(scene.getModel().deployRow.hexId).toBe('hex-r1-3');
+    expect(scene.getModel().bossIntel).toMatchObject({
+      hexId: 'hex-r1-3',
+      boss: 'iron-crusher',
+      known: true,
+    });
+    expect(rowFor(scene, 'deploy').label).toContain('hex hex-r1-3');
+    // Targeting is transient launch data: the payload the screen presents is
+    // byte-identical to the injected one (schema and version unchanged).
+    expect(scene.getPayload()).toEqual(payload);
+  });
+
+  it('launches the DEPLOY row at the carried target, not the weakest unheld hex', async () => {
+    booted = await bootScene([HangarScene, PlayScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: ringOnePayload(),
+      storage: null,
+      targetHexId: 'hex-r1-3',
+    });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+
+    rowFor(scene, 'deploy').text.emit('pointerdown');
+    await advanceGame(booted.game, 350);
+
+    expect(booted.game.scene.isActive('PlayScene')).toBe(true);
+    const play = booted.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isHangarWarRun()).toBe(true);
+    const deployment = play.getHangarWarDeployment()!;
+    expect(deployment.hexId).toBe('hex-r1-3');
+    // The launch really used the carried hex's aggression (3), not the
+    // weakest unheld hex's (1).
+    expect(deployment.aggression).toBe(3);
+  });
+
+  it('launches the no-argument deploy at the carried target', async () => {
+    const scene = await bootHangar({
+      payload: ringOnePayload(),
+      storage: null,
+      targetHexId: 'hex-r1-3',
+    });
+
+    // The demo path calls `deploy()` with no argument, so the scene's own
+    // carried target is the fallback (not the weakest-unheld default).
+    expect(scene.deploy().hexId).toBe('hex-r1-3');
+  });
+
+  it('deploys the attract traversal at the carried target with no argument', async () => {
+    booted = await bootScene([HangarScene, PlayScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: ringOnePayload(),
+      storage: null,
+      targetHexId: 'hex-r1-3',
+      demo: true,
+      demoDwellMs: 10,
+    });
+    await advanceGame(booted.game, 1000);
+
+    expect(booted.game.scene.isActive('PlayScene')).toBe(true);
+    const play = booted.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getHangarWarDeployment()!.hexId).toBe('hex-r1-3');
+  });
+
+  it('keeps the weakest-unheld default when no target is carried', async () => {
+    const payload = ringOnePayload();
+    const scene = await bootHangar({ payload, storage: null });
+
+    // Menu entry carries no hex: the shipped default (`selectDeploymentHex`)
+    // still picks the lowest-aggression unheld hex.
+    expect(scene.getModel().deployRow.hexId).toBe('hex-r1-2');
+    expect(rowFor(scene, 'deploy').label).toContain('hex hex-r1-2');
+    expect(scene.deploy().hexId).toBe('hex-r1-2');
+  });
+
+  it('resets the carried target on the next scene start', async () => {
+    const payload = ringOnePayload();
+    const scene = await bootHangar({
+      payload,
+      storage: null,
+      targetHexId: 'hex-r1-3',
+    });
+    expect(scene.getModel().deployRow.hexId).toBe('hex-r1-3');
+
+    // A later menu entry starts the same scene without a target: a stale
+    // target must never leak across visits.
+    booted!.game.scene.start(HANGAR_SCENE_KEY, { payload, storage: null });
+    await advanceGame(booted!.game, 200);
+    const revisited = booted!.game.scene.getScene(
+      HANGAR_SCENE_KEY,
+    ) as HangarScene;
+    expect(revisited.getModel().deployRow.hexId).toBe('hex-r1-2');
+    expect(revisited.deploy().hexId).toBe('hex-r1-2');
   });
 
   it('opens the hex map with this hangar payload from the HEX MAP row', async () => {

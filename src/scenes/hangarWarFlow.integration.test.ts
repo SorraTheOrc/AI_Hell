@@ -243,6 +243,41 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
   );
 
   it(
+    'deploys at the hex the config screen was entered for (target-aware hangar)',
+    async () => {
+      const menu = await bootShippedConfig();
+      hangarWarControl(menu).emit('pointerdown');
+      until('the hangar is shown', () => active(HANGAR_SCENE_KEY));
+      const hangar = sceneOf<HangarScene>(HANGAR_SCENE_KEY);
+
+      // The map enters the config screen for a chosen hex (transient launch
+      // data). Until the map route lands, enter the hangar exactly as it does
+      // — the shipped screen with a carried `targetHexId`.
+      booted!.game.scene.start(HANGAR_SCENE_KEY, { targetHexId: 'hex-r1-3' });
+      until(
+        'the hangar carries the chosen target',
+        () => hangar.getModel().deployRow.hexId === 'hex-r1-3',
+      );
+      expect(hangar.getModel().bossIntel).toMatchObject({
+        hexId: 'hex-r1-3',
+        boss: 'iron-crusher',
+        known: true,
+      });
+
+      hangar.getRows().find((row) => row.key === 'deploy')!
+        .text.emit('pointerdown');
+      until('the deployment starts', () => active('PlayScene'));
+
+      const play = sceneOf<PlayScene>('PlayScene');
+      expect(play.isHangarWarRun()).toBe(true);
+      // The launched run really attacks the carried hex (aggression 3), not the
+      // weakest unheld hex the menu entry would default to (`hex-r1-2`, 1).
+      expect(play.getHangarWarDeployment()!.hexId).toBe('hex-r1-3');
+      expect(play.getHangarWarDeployment()!.aggression).toBe(3);
+    },
+  );
+
+  it(
     'spends the flown ship when a deployment is lost end to end',
     async () => {
       // Seed a bought ship over the beforeEach starter-only war.

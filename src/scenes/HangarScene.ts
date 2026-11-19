@@ -30,7 +30,10 @@
  * target hex's aggression-selected difficulty) and starts the shipped
  * `PlayScene` with it. It never touches the arcade checkpoint: a hex
  * deployment is a separate session that neither clears nor overwrites the
- * arcade save.
+ * arcade save. The hex is the one carried from the map
+ * (`HangarSceneData.targetHexId`) — the same hex the intel names — and a menu
+ * entry with no carried hex keeps the shipped weakest-unheld default
+ * (AH-0MWMT4RJC0095L4O).
  *
  * The `⟲ RESTART WAR` row (AH-0MW8F7NH1002PQE3) returns the war to its
  * documented starting position behind a two-step confirm. The scene owns the
@@ -115,6 +118,13 @@ export interface HangarSceneData {
   demo?: boolean;
   /** Demo dwell override in milliseconds (tests use a short one). */
   demoDwellMs?: number;
+  /**
+   * The hex the player chose on the map (transient launch data). The scene
+   * carries it into the model — so the base intel and the `▶ DEPLOY` row name
+   * that hex — and into {@link deploy} as the fallback target. Omitted/`null`
+   * keeps the shipped default (the weakest unheld hex). Never persisted.
+   */
+  targetHexId?: string | null;
 }
 
 /**
@@ -149,6 +159,14 @@ export class HangarScene extends Phaser.Scene {
   private demoActions = 0;
 
   /**
+   * The hex this visit was launched for, or `null` for a menu entry
+   * (AH-0MWMT4RJC0095L4O). Transient launch data only: `init` resets it on
+   * every scene start, so a stale target can never leak between visits, and it
+   * is never persisted.
+   */
+  private targetHexId: string | null = null;
+
+  /**
    * Whether the `⟲ RESTART WAR` row is armed — the first step of the two-step
    * confirm has happened and the next activation wipes the war. The arming
    * state lives in the scene (not the row) because every change rebuilds the
@@ -170,6 +188,9 @@ export class HangarScene extends Phaser.Scene {
     this.demo = data?.demo === true;
     this.demoDwellMs = data?.demoDwellMs;
     this.demoActions = 0;
+    // `init` runs on every scene start: reset the carried target so a previous
+    // visit's hex can never leak into a menu-entry visit.
+    this.targetHexId = data?.targetHexId ?? null;
     const injected = data?.payload;
     this.payload = injected ?? this.loadPayload();
   }
@@ -212,6 +233,7 @@ export class HangarScene extends Phaser.Scene {
     this.view?.destroy();
     const model = buildHangarScreenModel(this.payload, this.catalogue, {
       restartArmed: this.restartArmed,
+      targetHexId: this.targetHexId,
     });
     const handlers: Partial<HangarScreenHandlers> = {
       onBuy: (entryId) => this.buy(entryId),
@@ -430,13 +452,14 @@ export class HangarScene extends Phaser.Scene {
    * the hex-aggression difficulty as inputs. The arcade checkpoint is neither
    * cleared nor written by this path.
    *
-   * @param hexId — the hex to attack (defaults to the weakest unheld hex).
+   * @param hexId — the hex to attack (defaults to the hex this visit was
+   * launched for, then the weakest unheld hex).
    * @returns the deployment payload that was launched (test seam).
    */
   deploy(hexId?: string | null): HangarWarDeployment {
     this.disarmRestart();
     const deployment = buildHangarDeployment(this.payload, {
-      hexId: hexId ?? null,
+      hexId: hexId ?? this.targetHexId ?? null,
       catalogue: this.catalogue,
     });
     this.scene.start('PlayScene', {
@@ -500,7 +523,12 @@ export class HangarScene extends Phaser.Scene {
 
   /** The rendered screen model. */
   getModel(): HangarScreenModel {
-    return this.view?.model ?? buildHangarScreenModel(this.payload, this.catalogue);
+    return (
+      this.view?.model
+      ?? buildHangarScreenModel(this.payload, this.catalogue, {
+        targetHexId: this.targetHexId,
+      })
+    );
   }
 
   /** Every rendered row, in reading order. */
