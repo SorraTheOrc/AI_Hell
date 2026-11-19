@@ -165,6 +165,7 @@ import {
   applyMineralScoop,
   type MovableMineral,
 } from '../../powerups/mineralScoop';
+import { GrazeTracker } from '../../core/graze';
 import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
@@ -293,6 +294,24 @@ export class CombatCoreScene<
 > extends Phaser.Scene {
   /** Player bullets in flight (auto-fired + test-injected). */
   protected playerBullets: PlayerBullet[] = [];
+
+  /**
+   * The run-scoped graze band / danger multiplier state machine
+   * (AH-0MWL7ORK8007LXJI). Declared once here and fed by the shared collision
+   * pipeline in `CombatScene._resolveGrazePass`, so the game and every gym
+   * resolve the identical band, tiers and decay (gym↔game parity,
+   * AH-0MUGZDTFX004RBD1). Score-only: nothing else in a run reads it.
+   */
+  protected readonly grazeTracker = new GrazeTracker();
+
+  /**
+   * The shared graze / danger-multiplier tracker for this run. Exposed so a
+   * scene (the campaign HUD) and the parity tests can read the same state the
+   * shared pass writes — never a scene-local copy.
+   */
+  getGrazeTracker(): GrazeTracker {
+    return this.grazeTracker;
+  }
   /**
    * Random source for shared-core gameplay decisions that are neither
    * enemy- nor drop-owned (currently the `'onRandom'` AOE detonation
@@ -926,6 +945,11 @@ export class CombatCoreScene<
    * no-op.
    */
   protected _tickPlayer(dt: number): void {
+    // Advance the danger-multiplier decay clock before anything else so the
+    // chain loses a tier exactly `GRAZE_DECAY_SECONDS` after the last graze —
+    // in the game and every gym, since this is the one shared player step
+    // (AH-0MWL7ORK8007LXJI AC4).
+    this.grazeTracker.update(dt);
     const player = this.getPlayer();
     if (!player) {
       // Collector drones keep flying even while the ship is respawning: they
@@ -2122,6 +2146,9 @@ export class CombatCoreScene<
     // (AH-0MV01G4NL009JK92): game and gyms pulse identically, and the reset
     // re-anchors the hum's beat to the new run start.
     setThrusterBeatClock(this.beatClock);
+    // A run starts at ×1 with no grazes and no stale per-object credit
+    // (AH-0MWL7ORK8007LXJI AC4/AC7).
+    this.grazeTracker.reset();
     // Bind the registry to this scene's live player store, then reset both
     // the timing state and the level store together (AC6). The dynamic
     // resolver means a player created later in `create()` is picked up with

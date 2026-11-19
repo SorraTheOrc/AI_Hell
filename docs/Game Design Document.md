@@ -1894,14 +1894,49 @@ parity tests.
 | Destroy Boss Phase 3 | 3000 |
 | Destroy Boss Phase 4 | 5000 |
 | Time bonus (per level) | 50 × seconds remaining |
+| Graze (near miss) | 0 points — tier progress only |
 
 - **Score display**: Neon-styled numeric display in the top-right corner.
 
-> **Proposed, not shipped (backlog §8.3):** a **graze-based danger
-> multiplier** — near misses stepping a `×1 → ×5` multiplier on kill score — is
-> proposed in §8.3 (Graze and Danger Multiplier, AH-0MWL7ORK8007LXJI). The table
-> above stays normative until that item lands; the proposal is score-only and
-> must leave every other experience metric unchanged.
+#### Danger multiplier (graze) — AH-0MWL7ORK8007LXJI
+
+Every value in the table above is the **base** award. The **danger multiplier**
+is applied to each kill award at the shared kill/score seam, then rounded half
+up (`3 × 1.5 = 4.5 → 5`). The time bonus and the graze itself are **not**
+multiplied — a graze awards no score of its own, only tier progress.
+
+- **Graze band**: a live enemy bullet or enemy body whose centre passes within
+  `contactRadius + GRAZE_BAND` (**12 px**) of the ship's collision centre and
+  **outside** the contact distance that would be a hit. Judged on the shared
+  collision centre and radii (`src/core/graze.ts`), never on sprite bounds — the
+  hull art (20 px) is wider than the collision footprint, and the band is
+  exactly the space between "hit" and "near miss". Asteroids and other contact
+  hazards graze too, because they can kill on contact.
+- **Once per pass**: each hostile is credited once, keyed by a stable per-object
+  id, and only becomes creditable again after it leaves the band by more than
+  `GRAZE_HYSTERESIS` (**4 px**), is destroyed or expires — a hostile hovering at
+  the band edge cannot farm score.
+- **Tiers**: five tiers, `×1 → ×1.5 → ×2 → ×3 → ×5`, entered at **0, 3, 6, 10
+  and 15** cumulative grazes (`GRAZE_TIER_PROGRESS` = 1 per graze). Values live
+  in one tunables record; retuning is a data change, never a code change.
+- **Decay**: one tier lost per `GRAZE_DECAY_SECONDS` (**2.0 s**) of inactivity;
+  a graze restarts the window.
+- **Reset**: a player hit (one that is **not** absorbed by a shield, thorn field
+  or force field) returns the multiplier to `×1`; a run starts at `×1`.
+- **Score-only**: the multiplier changes nothing else — no damage, movement,
+  lives, drops or wave pacing — so every balance baseline is untouched
+  (re-measured in [`docs/BALANCING.md`](./BALANCING.md)).
+- **Legibility**: a spark fan struck at the nearest point of the grazed hostile
+  whose **tick count, length and sweep grow with the tier** (shape, not colour
+  alone), a rising per-tier pitch cue through the shared SFX settings, and a HUD
+  `DANGER ×N` tacho beside the score showing the tier as filled pips plus a bar
+  that drains with the decay window. A tier gain or loss is announced with a
+  distinct `▲` / `▼` glyph, so the signal survives colour-blindness.
+- **Parity and determinism**: the whole rule lives in the pure
+  `src/core/graze.ts` and is fed by one pass in the shared combat core, so the
+  game and every gym resolve identical values; it consumes no RNG, so the same
+  seed and input trace reproduce the same graze count and score. See
+  [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
 
 > **Boss phase scoring (AH-0MUTV3J7T006MZ4K, scaled by AH-0MUWTS07L008KVP9):** The four `Destroy Boss Phase N` values above are **unchanged**. Because each phase now takes **50 hits** (`BOSS_HIT_POINTS_PER_PHASE`), a phase's points are awarded on the **depleting hit** — hits **50, 100, 150 and 200** — not on every hit. A partial-phase hit awards no score, summons no minions and does not advance the phase; it only reduces the visible health-bar fill. This keeps fully levelled weapons from trivialising the encounter: the Central AI still requires **200 player hits** regardless of weapon level.
 
@@ -4000,12 +4035,16 @@ rewrite. The **four rejected** candidates are recorded with their reasons in
 
 Every entry below states the mechanic, the gap it closes, the reward it pays,
 its legibility requirement and the measurement that gates it. **None of it is
-shipped, and none of it is scheduled.**
+scheduled**; an entry marked *shipped* has landed and its normative rules now
+live in §2–§4.
 
-#### Graze and Danger Multiplier — ranked 10 (highest), High priority
+#### Graze and Danger Multiplier — ranked 10 (highest), High priority — **shipped**
 
 **Work item:** Graze and Danger Multiplier: reward near-miss dodging with score
-(AH-0MWL7ORK8007LXJI).
+(AH-0MWL7ORK8007LXJI). **Landed:** the normative rules (band, once-per-pass
+credit, hysteresis, tier thresholds, decay, hit reset, rounding and the
+multiplier's score-only scope) are now §4.5 *Danger multiplier (graze)*; the
+text below is the original proposal, retained as rationale.
 
 - **Tier:** inner loop (seconds).
 - **Gap:** dodging is un-rewarded. §4.5 is a flat per-kill sum plus a per-level

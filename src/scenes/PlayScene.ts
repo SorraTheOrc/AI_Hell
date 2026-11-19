@@ -223,6 +223,7 @@ import {
 } from '../powerups/collectAnimation';
 import { type PowerUpSpawner } from '../powerups/spawner';
 import { HUD } from '../ui/HUD';
+import { DangerTacho, resolveDangerTacho } from '../ui/dangerTacho';
 import { combatHudOptions } from './core/hudWiring';
 import { type WeaponDefinition, type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
@@ -761,6 +762,13 @@ export class PlayScene extends CombatScene<
   private scoreText: Phaser.GameObjects.Text | null = null;
   private levelText: Phaser.GameObjects.Text | null = null;
   private bannerText: Phaser.GameObjects.Text | null = null;
+
+  /**
+   * The `DANGER ×N` tacho (AH-0MWL7ORK8007LXJI AC5): the danger multiplier,
+   * a pip per tier and the drain of the decay window. Renders the shared
+   * tracker's state; owns no scoring rule of its own.
+   */
+  private dangerTacho: DangerTacho | null = null;
 
   private spawned: SpawnedEnemy[] = [];
   private enemyBullets: PlayEnemyBullet[] = [];
@@ -1775,6 +1783,11 @@ export class PlayScene extends CombatScene<
         color: HUD_TEXT_COLOR,
       })
       .setOrigin(0.5, 0);
+
+    // The danger tacho sits directly under the score read-out, right-anchored
+    // to it, so the multiplier the player is holding is always beside the
+    // score it multiplies (AH-0MWL7ORK8007LXJI AC5).
+    this.dangerTacho = new DangerTacho(this, GAME_WIDTH - 10, 32);
   }
 
   /**
@@ -1818,6 +1831,8 @@ export class PlayScene extends CombatScene<
     this.miniBoss = null;
     this.bannerText?.destroy();
     this.bannerText = null;
+    this.dangerTacho?.destroy();
+    this.dangerTacho = null;
     this.waveTimerBar?.destroy();
     this.waveTimerBar = null;
 
@@ -1969,6 +1984,7 @@ export class PlayScene extends CombatScene<
     this._updatePhaseShiftJuice(dt);
     this._updateDrops(dt);
     this._refreshHudText();
+    this._refreshDangerTacho(dt);
     this._drawWaveTimer();
     // Per-tick telemetry last, so the recorded state matches the frame the
     // player actually saw (AH-0MUY08VVQ007HSSH). No-op when off.
@@ -3630,7 +3646,9 @@ export class PlayScene extends CombatScene<
       const deathX = boss.x;
       const deathY = boss.y;
       // Boss destroyed — award the final phase's points, then win.
-      this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+      this.gameState.addScore(
+        this.resolveKillScore(BOSS_PHASE_SCORES[previousPhase] ?? 0),
+      );
       this.waveManager.onBossDefeated();
       this.runTelemetry.bossDefeated();
       // The body's death VFX is intentional, but the health-bar box must not
@@ -3657,7 +3675,9 @@ export class PlayScene extends CombatScene<
     // Phase depleted: award the destroyed phase's points (GDD §4.5) and
     // summon the next phase's minions. Partial-phase hits do neither.
     if (result.phaseAdvanced) {
-      this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+      this.gameState.addScore(
+        this.resolveKillScore(BOSS_PHASE_SCORES[previousPhase] ?? 0),
+      );
       this.runTelemetry.bossPhase(boss.getPhaseNumber());
       this._spawnMinions(boss.getPhaseNumber());
     }
@@ -5068,17 +5088,24 @@ export class PlayScene extends CombatScene<
    * @param awardScore — false for collision kills (no points for ramming).
    */
   private _onEnemyKilled(s: SpawnedEnemy, awardScore = true): void {
+    // The danger multiplier is applied at this one shared kill/score seam
+    // (AH-0MWL7ORK8007LXJI AC3): kill score is multiplied by the current tier
+    // and rounded half up, and a graze never awards score on its own.
     if (s.enemyKey === 'asteroid') {
       // Asteroids: only the small tier awards points (50). Large and
       // medium asteroids award none (GDD §4.5 — E6 Asteroid).
       if (awardScore && (s.entity as Asteroid).getSizeTier() === 'small') {
-        this.gameState.addScore(SCORE_VALUES.asteroid ?? DEFAULT_SCORE_VALUE);
+        this.gameState.addScore(
+          this.resolveKillScore(SCORE_VALUES.asteroid ?? DEFAULT_SCORE_VALUE),
+        );
       }
       // A destroyed large/medium asteroid splits into two smaller rocks
       // that continue the wave (wave-child accounting via WaveManager).
       this._splitAsteroid(s);
     } else if (awardScore) {
-      this.gameState.addScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE);
+      this.gameState.addScore(
+        this.resolveKillScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE),
+      );
     }
     this.runTelemetry.enemyKilled(s.enemyKey, s.entity.x, s.entity.y);
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
@@ -5608,6 +5635,40 @@ export class PlayScene extends CombatScene<
   private _refreshHudText(): void {
     this.scoreText?.setText(`Score: ${this.gameState.score}`);
     this.levelText?.setText(this._progressLabel());
+  }
+
+  /**
+   * Paints the shared danger state into the tacho: the multiplier, its tier
+   * pips and the draining decay window (AH-0MWL7ORK8007LXJI AC5). Reads the
+   * one shared tracker, so the read-out can never disagree with the score the
+   * shared collision pass awards.
+   */
+  private _refreshDangerTacho(dt: number): void {
+    if (!this.dangerTacho) return;
+    const tracker = this.getGrazeTracker();
+    this.dangerTacho.updateState(
+      resolveDangerTacho(
+        tracker.multiplier,
+        tracker.tierIndex,
+        tracker.decayFraction,
+      ),
+      dt,
+    );
+  }
+
+  /**
+   * A graze landed: pop the tacho so the moment reads even when the tier does
+   * not change (AH-0MWL7ORK8007LXJI AC5). The spark and cue are dispatched by
+   * the shared graze pass; this only reflects it on the campaign HUD.
+   */
+  protected override onGrazeCredited(tierIndex: number): void {
+    void tierIndex;
+    this.dangerTacho?.confirmGraze();
+  }
+
+  /** The danger tacho read-out (null before create/after teardown). */
+  getDangerTacho(): DangerTacho | null {
+    return this.dangerTacho;
   }
 
   /** Transitions to GameOverScene with the final score. */

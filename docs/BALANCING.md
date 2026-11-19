@@ -1356,6 +1356,36 @@ all on the streaming path. Both are covered by tests in
 `src/ai/eval/cli.test.ts` (one sink chunk per run, in sweep order; streamed
 chunks byte-identical to the in-memory `runs.jsonl` artifact).
 
+## Graze and danger multiplier — balance evidence (AH-0MWL7ORK8007LXJI)
+
+The graze band and danger multiplier are **score-only**: grazes award no score
+of their own, and the multiplier only scales the existing kill awards at the
+shared kill/score seam (§4.5 of the GDD). Nothing else in a run reads it — not
+damage, movement, lives, drops, wave pacing or the bot's decisions — so the
+expected outcome is **no change** to any experience metric.
+
+Measured on a dev machine against the real balance CSVs, competent policy,
+seeds 1–100, full-campaign batch (18000-tick budget):
+
+```bash
+npm run evaluate -- --batch --games 100 --out eval-output
+npm run validate-experience -- eval-output/balance-report.json
+```
+
+- `validate-experience`: **PASS, 6/6 metrics in band.** `survival (s)`
+  300.00 (band 270–330), `minerals collected` 18.00 (16.20–19.80),
+  `upgrades selected / run` 2.00 (1.50–2.50), `avoidable hits` 0.00
+  (−0.50–0.50), `wave reached` 10.00 (1.91–13.75) and `level reached` 2.88
+  (0.12–3.50) — the two latter drifts are the pre-existing baseline drift of
+  other landed items, unchanged by this work.
+- The headless eval engine (`src/ai/eval/`) runs its own arena and does **not**
+  execute the scene collision pipeline, so it cannot observe a graze at all:
+  the batch is unchanged by construction as well as by measurement, which is
+  the strongest available confirmation that the mechanic moved no baseline.
+- Determinism of the mechanic itself is covered separately (AC7): a fixed seed
+  and input trace produce the same graze count and score, and the rule consumes
+  no RNG (`src/core/graze.test.ts`, `src/scenes/core/graze.parity.test.ts`).
+
 ## Weapon tuning CSV (AH-0MW0Q01VM004EPY7)
 
 The player-weapon catalogue is **data**. Every tunable value for the sixteen
