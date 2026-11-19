@@ -1387,6 +1387,13 @@ describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
     expect(byId.get('wave_laser')!.deploymentsToAfford).toBe(14);
     // cluster (160/1): 160/9 → 18.
     expect(byId.get('cluster')!.deploymentsToAfford).toBe(18);
+    // The authored power-ups gain explicit rows while every pre-existing row's
+    // number stays byte-identical (AH-0MWKT12BT001106T A6): bomb (130/1) →
+    // 130/9 → 15 deployments; magnet (200/2) → 200/9 → 23.
+    expect(byId.get('bomb')!.deploymentsToAfford).toBe(15);
+    expect(byId.get('bomb')!.price).toEqual({ minerals: 130, cores: 1 });
+    expect(byId.get('magnet')!.deploymentsToAfford).toBe(23);
+    expect(byId.get('magnet')!.minRing).toBe(2);
   });
 
   it('reports an infinite pace for a line that banks nothing', () => {
