@@ -44,7 +44,7 @@ npm run capture -- --scripted    # fallback: replay the fixed scripted plan
 npm run capture -- --scenario boss-four-hits
 
 # record the Hangar War screens through the normal menu (Tab → Enter)
-# (hangar → hex map → deployment, driven by the shipped attract traversal)
+# (hangar → hex map → config → deployment, driven by the shipped attract traversal)
 npm run capture -- --hangar --output clips/hangar.webm
 
 # discover every implemented dev scenario (no browser or server booted)
@@ -752,7 +752,7 @@ record them two ways
    [Multi-scene capture](#multi-scene-capture-capturescenes)).
 
 ```bash
-# hangar screen, then the shipped traversal (hex map → deployment), 15 s
+# hangar screen, then the shipped traversal (hex map → config → deployment), 15 s
 npm run capture -- --hangar
 
 # longer window, explicit output
@@ -761,11 +761,12 @@ npm run capture -- --hangar --duration 30000 --output clips/hangar.webm
 
 The `--duration` window contains **the hangar screen** (the first 2.5 s, or
 half the window when that is shorter) followed by the **traversal**: the hex
-map, the weakest-adjacent-hex deployment the map's bot picks, and — once that
-deployment ends — the same map again, now carrying the between-sortie report
-arrows and attack panel. Nothing about which hex to take, what to buy or when
-to continue is decided by the capture: it only starts the traversal hub in
-demo mode, exactly like
+map, the **config screen** it opens pre-targeted at the weakest adjacent hex,
+the deployment that screen's `▶ DEPLOY` launches, and — once that deployment
+ends — the same map again, now carrying the between-sortie report arrows and
+attack panel. Nothing about which hex to take, what to buy or when to continue
+is decided by the capture: it only starts the traversal hub in demo mode,
+exactly like
 `MenuScene.startHangarWarDemo()` (the screens apply
 `src/ai/hangarWarTraversal.ts` themselves). Lengthen `--duration` to see
 further into the loop.

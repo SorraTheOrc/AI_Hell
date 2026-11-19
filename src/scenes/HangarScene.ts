@@ -35,6 +35,17 @@
  * entry with no carried hex keeps the shipped weakest-unheld default
  * (AH-0MWMT4RJC0095L4O).
  *
+ * ## The map's config step (AH-0MWMT4S5U001EGDF)
+ *
+ * A hex activation on the map opens **this** screen pre-targeted at the hex
+ * (`HexMapScene.openConfig`) instead of starting `PlayScene`, so no hex battle
+ * begins without the config screen first (parent AH-0MWMRWCY2001HWGR AC1). The
+ * `▶ DEPLOY` row is the only launch: it names the carried hex and deploys there.
+ * The map's `◀ HANGAR` row carries no target, so a menu-style entry keeps the
+ * shipped default. This screen's own bounded demo advance (`decideHangarAction`)
+ * deploys at the carried target, which is what makes the attract traversal walk
+ * `map → config → deployment` without stalling.
+ *
  * The `⟲ RESTART WAR` row (AH-0MW8F7NH1002PQE3) returns the war to its
  * documented starting position behind a two-step confirm. The scene owns the
  * arming bit and its 5 s timer (the screen is rebuilt on every change, so the

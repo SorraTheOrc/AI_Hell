@@ -2,13 +2,14 @@
  * Hangar War attract-traversal integration test (AH-0MVUXCBBK004EJIP).
  *
  * Epic AC10 / this item's AC2–AC3: **attract mode never stalls.** This suite
- * drives the whole new surface with the bot — menu → map → (weakest hex)
- * deployment → map → hangar — and asserts that:
+ * drives the whole new surface with the bot — menu → map → **config** →
+ * (weakest hex) deployment → map → hangar — and asserts that:
  *
  * - every screen advances within a bounded time (the traversal dwell) with no
  *   player input;
- * - the map deploys at the weakest adjacent hex and the hangar buys the cheapest
- *   useful unlock before it deploys;
+ * - the map opens the **config screen** pre-targeted at the weakest adjacent
+ *   hex, the config buys the cheapest useful unlock, and then deploys at the
+ *   carried target (AH-0MWMT4S5U001EGDF: `map → config → deployment`);
  * - the between-sortie tick record is carried onto the hex map, so the numbers
  *   behind every hold/fall arrive on the map (the separate report screen is
  *   gone, AH-0MWEXHODJ0067PSJ);
@@ -161,7 +162,7 @@ const MINERAL_CHOICE_SCENE_KEY = 'MineralChoiceScene';
     stepGameUntil(booted!.game, label, predicate, STEP_FRAMES);
 
   it(
-    'drives menu → map → deployment → map → hangar without a report screen',
+    'drives menu → map → config → deployment → map → hangar without a report screen',
     async () => {
       const menu = await bootMenu();
       expect(menu.sys.isActive()).toBe(true);
@@ -171,14 +172,32 @@ const MINERAL_CHOICE_SCENE_KEY = 'MineralChoiceScene';
       until('the map is shown', () => active('HexMapScene'));
       expect(sceneOf<HexMapScene>('HexMapScene').isDemo()).toBe(true);
 
-      // ── map → deployment (the weakest adjacent hex) ───────────────
+      // ── map → config (the weakest adjacent hex is carried as the target) ──
+      until('the config screen is shown', () => active('HangarScene'));
+      const config = sceneOf<HangarScene>('HangarScene');
+      expect(config.isDemo()).toBe(true);
+      const targetHex = pickAttractHex(seeded);
+      expect(config.getModel().deployRow.hexId).toBe(targetHex);
+
+      // ── config: buy the cheapest useful unlock, then deploy there ──
+      until('the config buys the cheapest useful unlock', () =>
+        sceneOf<HangarScene>('HangarScene')
+          .getPayload()
+          .hangar.ownedModifiers.includes('hardened_plating'),
+      );
+      expect(
+        sceneOf<HangarScene>('HangarScene').getPayload().hangar.bankedMinerals,
+      ).toBe(20);
+
+      // The config screen's own bounded demo advance deploys at the carried
+      // target, so no hex battle starts without the config screen first.
       until('the deployment starts', () => active('PlayScene'));
       expect(active('PlayScene')).toBe(true);
       const play = sceneOf<PlayScene>('PlayScene');
       expect(play.isDemoMode()).toBe(true);
       expect(play.isHangarWarRun()).toBe(true);
       const deployment = play.getHangarWarDeployment()!;
-      expect(deployment.hexId).toBe(pickAttractHex(seeded));
+      expect(deployment.hexId).toBe(targetHex);
       // Nothing has simulated a defence: this is the normal bot-flown run.
 
       // ── deployment → map (the between-sortie report is rolled in) ─
@@ -197,18 +216,14 @@ const MINERAL_CHOICE_SCENE_KEY = 'MineralChoiceScene';
       const hangar = sceneOf<HangarScene>('HangarScene');
       expect(hangar.isDemo()).toBe(true);
 
-      // ── hangar: buy the cheapest useful unlock, then deploy ───────
-      until('the hangar buys the cheapest useful unlock', () =>
-        sceneOf<HangarScene>('HangarScene')
-          .getPayload()
-          .hangar.ownedModifiers.includes('hardened_plating'),
-      );
-      expect(active('HangarScene')).toBe(true);
-      const afterBuy = sceneOf<HangarScene>('HangarScene').getPayload();
-      expect(afterBuy.hangar.bankedMinerals).toBe(20);
-
+      // ── hangar: the config purchase already happened this cycle, so the
+      //    bounded shopping ends and it deploys at the shipped default ──
       until('the hangar deploys', () => active('PlayScene'));
       expect(sceneOf<PlayScene>('PlayScene').isHangarWarRun()).toBe(true);
+      // Entered with no carried hex, the hangar targets the weakest unheld hex.
+      expect(hangar.getModel().deployRow.hexId).toBe(
+        pickAttractHex(map.getPayload()),
+      );
 
       // ── and the loop keeps going: the next landing is tick 2 ──────
       killPlayer(sceneOf<PlayScene>('PlayScene'));

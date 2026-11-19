@@ -12,7 +12,7 @@
  * the player path the feature ships with, with the feature flag ON (its shipped
  * default):
  *
- *   menu entry → hangar → hex map → deployment → hex map
+ *   menu entry → hangar → hex map → config → deployment → hex map
  *
  * Every transition is a real `scene.start()` through the shipped config, so a
  * scene that is not registered — or a screen that cannot reach the next one —
@@ -186,6 +186,18 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
   const until = (label: string, predicate: () => boolean): void =>
     stepGameUntil(booted!.game, label, predicate, STEP_FRAMES);
 
+  /**
+   * Activates the config screen's `▶ DEPLOY` row. The map no longer starts the
+   * run itself: a hex activation opens this screen pre-targeted at the hex and
+   * the row launches the deployment at it (AH-0MWMT4S5U001EGDF).
+   */
+  function deployFromConfig(): void {
+    const hangar = sceneOf<HangarScene>(HANGAR_SCENE_KEY);
+    const deployRow = hangar.getRows().find((row) => row.key === 'deploy');
+    expect(deployRow, 'the config screen has no DEPLOY row').toBeDefined();
+    deployRow!.text.emit('pointerdown');
+  }
+
   /** Boots the **shipped** config (not a hand-picked scene list). */
   async function bootShippedConfig(): Promise<MenuScene> {
     booted = await bootScene(
@@ -195,7 +207,7 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
   }
 
   it(
-    'walks menu → hangar → map → deployment → map with the flag ON (no report hop)',
+    'walks menu → hangar → map → config → deployment → map with the flag ON (no report hop)',
     async () => {
       const menu = await bootShippedConfig();
       expect(menu.sys.isActive()).toBe(true);
@@ -216,10 +228,17 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
       // The map carries the same war the hangar was showing, ring materialised.
       expect(map.getPayload().ring.hexes.length).toBeGreaterThan(0);
 
-      // ── hex map → deployment ─────────────────────────────────────
+      // ── hex map → config → deployment ────────────────────────────
       const hexRow = map.getRows().find((row) => row.key.startsWith('hex:'));
       expect(hexRow, 'the map has no deployable hex row').toBeDefined();
       hexRow!.text.emit('pointerdown');
+      // The map opens the ship-config screen, pre-targeted at the hex; its
+      // own ▶ DEPLOY row launches the run at that same hex.
+      until('the config screen is shown', () => active(HANGAR_SCENE_KEY));
+      expect(
+        sceneOf<HangarScene>(HANGAR_SCENE_KEY).getModel().deployRow.hexId,
+      ).toBe(hexRow!.key.slice('hex:'.length));
+      deployFromConfig();
       until('the deployment starts', () => active('PlayScene'));
       const play = sceneOf<PlayScene>('PlayScene');
       expect(play.isHangarWarRun()).toBe(true);
@@ -248,24 +267,31 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
       const menu = await bootShippedConfig();
       hangarWarControl(menu).emit('pointerdown');
       until('the hangar is shown', () => active(HANGAR_SCENE_KEY));
-      const hangar = sceneOf<HangarScene>(HANGAR_SCENE_KEY);
+      sceneOf<HangarScene>(HANGAR_SCENE_KEY)
+        .getRows()
+        .find((row) => row.key === 'map')!
+        .text.emit('pointerdown');
+      until('the hex map is shown', () => active(HEX_MAP_SCENE_KEY));
 
-      // The map enters the config screen for a chosen hex (transient launch
-      // data). Until the map route lands, enter the hangar exactly as it does
-      // — the shipped screen with a carried `targetHexId`.
-      booted!.game.scene.start(HANGAR_SCENE_KEY, { targetHexId: 'hex-r1-3' });
-      until(
-        'the hangar carries the chosen target',
-        () => hangar.getModel().deployRow.hexId === 'hex-r1-3',
-      );
+      // Activating a hex on the map opens the config screen for **that** hex
+      // (transient launch data), so the player configures the ship against the
+      // battle they chose.
+      const hexRow = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY)
+        .getRows()
+        .find((row) => row.key === 'hex:hex-r1-3');
+      expect(hexRow, 'the map has no hex-r1-3 row').toBeDefined();
+      hexRow!.text.emit('pointerdown');
+      until('the config screen is shown', () => active(HANGAR_SCENE_KEY));
+
+      const hangar = sceneOf<HangarScene>(HANGAR_SCENE_KEY);
+      expect(hangar.getModel().deployRow.hexId).toBe('hex-r1-3');
       expect(hangar.getModel().bossIntel).toMatchObject({
         hexId: 'hex-r1-3',
         boss: 'iron-crusher',
         known: true,
       });
 
-      hangar.getRows().find((row) => row.key === 'deploy')!
-        .text.emit('pointerdown');
+      deployFromConfig();
       until('the deployment starts', () => active('PlayScene'));
 
       const play = sceneOf<PlayScene>('PlayScene');
@@ -297,6 +323,8 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
         .find((row) => row.key.startsWith('hex:'));
       expect(hexRow, 'the map has no deployable hex row').toBeDefined();
       hexRow!.text.emit('pointerdown');
+      until('the config screen is shown', () => active(HANGAR_SCENE_KEY));
+      deployFromConfig();
       until('the deployment starts', () => active('PlayScene'));
 
       const play = sceneOf<PlayScene>('PlayScene');
@@ -357,6 +385,8 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
       .find((row) => row.key.startsWith('hex:'));
     expect(hexRow, 'the map has no deployable hex row').toBeDefined();
     hexRow!.text.emit('pointerdown');
+    until('the config screen is shown', () => active(HANGAR_SCENE_KEY));
+    deployFromConfig();
     until('the deployment starts', () => active('PlayScene'));
 
     const play = sceneOf<PlayScene>('PlayScene');
@@ -464,6 +494,8 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
         .find((row) => row.key.startsWith('hex:') && row.actionable);
       expect(hexRow, 'the resumed map has deployable hex rows').toBeDefined();
       hexRow!.text.emit('pointerdown');
+      until('the config screen is shown again', () => active(HANGAR_SCENE_KEY));
+      deployFromConfig();
       until('a next deployment starts', () => active('PlayScene'));
     },
   );
@@ -485,6 +517,8 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
         .getRows()
         .find((row) => row.key.startsWith('hex:'));
       hexRow!.text.emit('pointerdown');
+      until('the config screen is shown', () => active(HANGAR_SCENE_KEY));
+      deployFromConfig();
       until('the deployment starts', () => active('PlayScene'));
 
       // A lost deployment lands on the map directly; the reward never shows.

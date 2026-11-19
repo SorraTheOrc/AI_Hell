@@ -3202,9 +3202,13 @@ record and the map
 draws the between-sortie report on the same view — one attack arrow per attack
 on the ring, plus that attack's numbers as the attack row of the `SELECTED HEX`
 section (there is no separate report screen). Activating an
-**unheld** hex deploys at it; the `◀ HANGAR` row is one click from what the
-player owns (the design's "map and hangar one click apart"); ESC returns to the
-menu.
+**unheld** hex opens the **ship-config (hangar) screen pre-targeted at that
+hex** — its `▶ DEPLOY` row names the hex and launches the deployment there, so
+no hex battle begins without the config screen first (AH-0MWMT4S5U001EGDF,
+parent AH-0MWMRWCY2001HWGR). Activating a **held** hex only inspects it; the
+`◀ HANGAR` row is one click from what the player owns (the design's "map and
+hangar one click apart") and carries no target, so its `▶ DEPLOY` keeps the
+weakest-unheld default; ESC returns to the menu.
 
 The **between-sortie defence report** is not a screen of its own: it is drawn on
 the map (attack arrows on the ring plus the `SELECTED HEX` section's attack row)
@@ -4010,11 +4014,12 @@ and its gym (AGENTS.md gym↔game parity):
 
 Both are in the capture registry (watchable, `docs/dev/gameplay-capture.md`) and
 carry current rows in the parity matrix [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
-The attract bot traverses the whole surface — `menu → map → deployment →
-map (with the rolled-in report) → hangar` — from pure decisions in
-`src/ai/hangarWarTraversal.ts`: it picks the **weakest adjacent unheld hex** on
-the map, buys the **cheapest useful unlock** (seeded tie-break) in the hangar
-and lands on the map after every sortie, where the report is read in place.
+The attract bot traverses the whole surface — `menu → map → config →
+deployment → map (with the rolled-in report) → hangar` — from pure decisions in
+`src/ai/hangarWarTraversal.ts`: it opens the config screen pre-targeted at the
+**weakest adjacent unheld hex** on the map, buys the **cheapest useful unlock**
+(seeded tie-break) on that screen or in the hangar, and lands on the map after
+every sortie, where the report is read in place.
 Every decision is total — there is no `wait` action and no live defence battle
 to stall in.
 

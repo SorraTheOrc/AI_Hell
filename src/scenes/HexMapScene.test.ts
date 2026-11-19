@@ -13,7 +13,8 @@
  * - the reveal is adjacency-only: ring 1 renders with zero held hexes and
  *   ring 2 appears progressively as its neighbours are held (hidden hexes are
  *   neither focusable nor deployable);
- * - focusing/activating a hex launches the shipped `PlayScene` at that hex;
+ * - focusing/activating an unheld hex opens the ship-config (hangar) screen
+ *   pre-targeted at it, whose `▶ DEPLOY` launches the shipped `PlayScene`;
  * - the hangar is one click away;
  * - an injected payload is never mutated, and a fresh war renders the
  *   generated ring.
@@ -53,7 +54,8 @@
  * - **Owned-hex selection.** Every displayed hex is selectable (focusable), a
  *   held hex included: focusing it shows its full intel in the detail panel
  *   and activating it performs **no** deployment. An unheld displayed hex
- *   still deploys through the shipped `PlayScene` path.
+ *   still opens the config screen pre-targeted at it (whose `▶ DEPLOY` then
+ *   launches the shipped `PlayScene` path).
  * - **Grid navigation.** Arrow keys move focus spatially through the model's
  *   `gridColumns` (left/right across columns with wrapping, up/down within a
  *   column with wrapping) and reach the `◀ HANGAR` row from every column,
@@ -397,6 +399,19 @@ describe('HexMapScene', () => {
     return booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
   }
 
+  /**
+   * Activates the config screen's `▶ DEPLOY` row — the step the map now hands
+   * off to instead of starting `PlayScene` itself (AH-0MWMT4S5U001EGDF).
+   */
+  function deployFromConfig(): void {
+    const hangar = booted!.game.scene.getScene(
+      HANGAR_SCENE_KEY,
+    ) as HangarScene;
+    const row = hangar.getRows().find((entry) => entry.key === 'deploy');
+    expect(row, 'the config screen has no ▶ DEPLOY row').toBeDefined();
+    row!.text.emit('pointerdown');
+  }
+
   it('boots with the hangar at the centre and the ring around it', async () => {
     const scene = await bootMap({ payload: ringPayload(1), storage: null });
 
@@ -547,13 +562,27 @@ describe('HexMapScene', () => {
     },
   );
 
-  it('deploys at the focused hex through the shipped PlayScene path', async () => {
+  it('opens the config screen pre-targeted at the focused hex, then deploys there', async () => {
     const payload = ringPayload(1);
     const scene = await bootMap({ payload, storage: null });
     const weakest = pickAttractHex(payload)!;
 
     expect(scene.focusRow(`hex:${weakest}`)).toBe(true);
     scene.activateFocused();
+    await advanceGame(booted!.game, 350);
+
+    // The map starts no battle: it opens the ship-config (hangar) screen for
+    // the chosen hex (AH-0MWMT4S5U001EGDF, parent AH-0MWMRWCY2001HWGR AC1).
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+    const hangar = booted!.game.scene.getScene(
+      HANGAR_SCENE_KEY,
+    ) as HangarScene;
+    expect(hangar.getModel().deployRow.hexId).toBe(weakest);
+
+    // The config screen's ▶ DEPLOY launches the shipped deployment at the
+    // carried target.
+    deployFromConfig();
     await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
@@ -566,19 +595,30 @@ describe('HexMapScene', () => {
     expect(deployment.startLevel).toBe(2);
   });
 
-  it('deploys from a pointer click on a hex tile', async () => {
+  it('opens the config screen from a pointer click on a hex tile', async () => {
     const scene = await bootMap({ payload: ringPayload(1), storage: null });
     const row = scene.getRows().find((entry) => entry.key === 'hex:hex-r1-3')!;
 
     row.text.emit('pointerdown');
     await advanceGame(booted!.game, 350);
 
+    // A hex activation is a target choice, not a launch: the config screen
+    // opens for that hex and carries it into its ▶ DEPLOY row.
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+    const hangar = booted!.game.scene.getScene(
+      HANGAR_SCENE_KEY,
+    ) as HangarScene;
+    expect(hangar.getModel().deployRow.hexId).toBe('hex-r1-3');
+
+    deployFromConfig();
+    await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.getHangarWarDeployment()!.hexId).toBe('hex-r1-3');
   });
 
-  it('keeps the hangar one click away', async () => {
+  it('keeps the hangar one click away with no carried target', async () => {
     const payload = ringPayload(1);
     const scene = await bootMap({ payload, storage: null });
 
@@ -590,6 +630,9 @@ describe('HexMapScene', () => {
     const hangar = booted!.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
     // The same war state the map showed is handed to the hangar.
     expect(hangar.getPayload()).toEqual(payload);
+    // The ◀ HANGAR row carries no target, so ▶ DEPLOY keeps the shipped
+    // default: the weakest unheld hex (AH-0MWMT4S5U001EGDF AC3).
+    expect(hangar.getModel().deployRow.hexId).toBe(pickAttractHex(payload));
   });
 
   it(
@@ -625,10 +668,12 @@ describe('HexMapScene', () => {
       expect(panel).toContain('HELD');
       expect(panel).toContain('the-dawnbreaker');
 
-      // Activating an owned hex performs no deployment: the map stays up.
+      // Activating an owned hex performs no deployment: the map stays up and
+      // the config screen does not open.
       scene.activateFocused();
       await advanceGame(booted!.game, 350);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+      expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(false);
       expect(scene.sys.isActive()).toBe(true);
     },
   );
@@ -783,15 +828,25 @@ describe('HexMapScene', () => {
       expect(panel).toContain('GRANT: extra-life');
       expect(panel).toContain('DEFENDER: hull-1');
 
-      // Activating an owned hex performs no deployment: the map stays up.
+      // Activating an owned hex performs no deployment: the map stays up and
+      // the config screen does not open.
       scene.activateFocused();
       await advanceGame(booted!.game, 350);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+      expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(false);
       expect(scene.sys.isActive()).toBe(true);
 
-      // An unheld displayed hex still deploys through the shipped path.
+      // An unheld displayed hex opens the config screen for it; its ▶ DEPLOY
+      // then launches the deployment at that hex.
       expect(scene.focusRow('hex:hex-r1-3')).toBe(true);
       scene.activateFocused();
+      await advanceGame(booted!.game, 350);
+      expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+      const hangar = booted!.game.scene.getScene(
+        HANGAR_SCENE_KEY,
+      ) as HangarScene;
+      expect(hangar.getModel().deployRow.hexId).toBe('hex-r1-3');
+      deployFromConfig();
       await advanceGame(booted!.game, 350);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
@@ -1185,6 +1240,10 @@ describe('HexMapScene', () => {
     const row = scene.getRows().find((entry) => entry.key.startsWith('hex:'));
     expect(row, 'the resumed map has deployable hex rows').toBeDefined();
     row!.text.emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+    // The resumed map still routes through the config screen before the run.
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+    deployFromConfig();
     await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
   });

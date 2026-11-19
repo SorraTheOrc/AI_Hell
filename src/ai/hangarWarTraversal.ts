@@ -27,15 +27,18 @@
  * | Screen | Decision |
  * |---|---|
  * | `menu` | open the map (the surface's hub) |
- * | `map` | deploy at the **weakest adjacent unheld hex**, or open the hangar when the ring is secured |
+ * | `map` | open the **config screen** pre-targeted at the **weakest adjacent unheld hex**, or open the hangar when the ring is secured |
  * | `deployment` | none — the run drives itself to its end (the bot flies it) |
- * | `hangar` | buy the **cheapest useful unlock** (seeded tie-break), or deploy the active loadout |
+ * | `hangar` (and the map's config screen) | buy the **cheapest useful unlock** (seeded tie-break), or deploy the active loadout at the carried hex (default: the weakest unheld hex) |
  *
  * The map's choice is `pickAttractHex` (`src/core/hangarWar/hexIntel.ts`) — the
  * same weakest-adjacent rule the map screen itself focuses — so the bot and the
- * player's default focus can never disagree. On alternate between-sortie visits
- * it shops first (see {@link decideMapAction}), so a full attract cycle also
- * demonstrates the hangar.
+ * player's default focus can never disagree. The map then opens the shared
+ * ship-config (hangar) screen pre-targeted at that hex, and the screen's own
+ * `decideHangarAction` shopping/deploy step walks `map → config → deployment`
+ * (AH-0MWMT4S5U001EGDF). On alternate between-sortie visits it shops first (see
+ * {@link decideMapAction}), so a full attract cycle also demonstrates the
+ * hangar.
  *
  * ## Seeded, not random
  *
@@ -51,8 +54,8 @@
  * Nothing in this module can start a battle: the defence is resolved by the
  * frontier tick (`src/core/hangarWar/hexDefence.ts`) and a finished deployment
  * lands directly on the map. A traversal therefore walks
- * `menu → map → deployment → map → hangar` with no screen that could wait on a
- * flown defender.
+ * `menu → map → config → deployment → map → hangar` with no screen that could
+ * wait on a flown defender.
  *
  * @module src/ai/hangarWarTraversal
  */
@@ -104,7 +107,9 @@ export type HangarWarTraversalScreen =
 export type HangarWarTraversalAction =
   /** Leave the menu for the hex map (the surface's hub). */
   | { readonly kind: 'openMap' }
-  /** Deploy at `hexId` (the weakest adjacent unheld hex), or `null` when none. */
+  /** Open the ship-config screen targeted at `hexId` (the weakest adjacent
+   * unheld hex), or `null` when none. Its `▶ DEPLOY` then launches the run at
+   * that hex, so the map starts no battle itself. */
   | { readonly kind: 'deploy'; readonly hexId: string | null }
   /** Open the hangar (the map is secured, so there is no hex left to attack). */
   | { readonly kind: 'openHangar' }
@@ -214,10 +219,11 @@ export function decideMenuAction(): HangarWarTraversalAction {
  *    the hangar as well as the deployment. The cadence is keyed on the war's
  *    own `frontierTick` so it survives the post-sortie map re-entry (the map
  *    carries the report) without any hidden demo state.
- * 2. **Weakest adjacent hex.** Otherwise it attacks `pickAttractHex` — the same
- *    rule the map's default focus uses. A secured ring has no hex left to
- *    attack, so the bot opens the hangar instead; either way the screen
- *    advances, so there is never a dead screen.
+ * 2. **Weakest adjacent hex.** Otherwise it opens the **config screen** for
+ *    `pickAttractHex` — the same rule the map's default focus uses, carried
+ *    into the screen as `targetHexId` so its `▶ DEPLOY` launches at that hex.
+ *    A secured ring has no hex left to attack, so the bot opens the hangar
+ *    instead; either way the screen advances, so there is never a dead screen.
  *
  * @param payload — the war payload (never mutated).
  * @param options — ring-definition override.
@@ -237,7 +243,9 @@ export function decideMapAction(
 }
 
 /**
- * The bot's move in the **hangar**: buy the cheapest useful unlock, else deploy.
+ * The bot's move in the **hangar** (and on the map's config screen, which *is*
+ * that screen): buy the cheapest useful unlock, else deploy at the carried
+ * target (or the shipped default when none was carried).
  *
  * Shopping is finite (the catalogue is), so repeated application reaches the
  * deploy branch in a bounded number of steps and the demo always leaves the
