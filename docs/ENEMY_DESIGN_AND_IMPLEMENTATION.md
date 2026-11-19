@@ -1017,6 +1017,11 @@ the first three enemy gym scenes duplicated:
   `GymFormationScene`, `GymWeapons` and `GymPowerUpsCombat` so the
   semantics cannot drift; bullets are never culled off-screen — they wrap
   across the seam and expire only by lifetime (AH-0MU960UTE001PTV0). The
+  helper also **fades an enemy bullet out over the last 20 % of its
+  lifetime** (AH-0MWJ9PMYF005N588): the sprite scales linearly from full
+  size to nothing so expiry reads as a smooth dissolve, and the collision
+  footprint tracks the shrinking sprite bounds (`getEnemyBulletRadius() ×
+  graphics.scale`) so the bullet stays dangerous until it vanishes. The
   single definition and the cross-scene equivalence are pinned by
   `src/scenes/core/CombatScene.equivalence.test.ts`.
 - **Shared enemy-fire dispatch** (AH-0MUII3BBW000XZ46, gap 2) — the

@@ -710,9 +710,10 @@ export abstract class CombatScene<
 
     if (aoe.clearsEnemyBullets) {
       const kept: TBullet[] = [];
-      const bulletRadius = this.getEnemyBulletRadius();
+      const baseBulletRadius = this.getEnemyBulletRadius();
       for (const bullet of this.getEnemyBullets()) {
         const { x: bx, y: by } = bullet.graphics;
+        const bulletRadius = baseBulletRadius * bullet.graphics.scale;
         if (this._overlaps(x, y, aoe.radius, bx, by, bulletRadius)) {
           // Shared interception feedback (cue + flash), then destroy.
           resolveBulletVsBulletImpact(this, bx, by, {
@@ -1520,7 +1521,7 @@ export abstract class CombatScene<
     this._resolvePlayerBulletsVsEnemies();
 
     // 2. Player bullets vs enemy bullets — both destroyed (shared AC5 path).
-    const bulletRadius = this.getEnemyBulletRadius();
+    const baseBulletRadius = this.getEnemyBulletRadius();
     // Recycled survivor buffer + the scene's owned bullet list: survivors keep
     // their original order, and the array this pass releases becomes next
     // frame's buffer (AH-0MVXV0F0Y004NENT). The loop bound is captured up
@@ -1553,6 +1554,7 @@ export abstract class CombatScene<
       const eb = enemyBullets[enemyIndex];
       const bulletX = eb.graphics.x;
       const bulletY = eb.graphics.y;
+      const bulletRadius = baseBulletRadius * eb.graphics.scale;
       let candidateCount: number;
       if (broadPhase) {
         candidateCount = broadPhase.query(
@@ -1657,6 +1659,7 @@ export abstract class CombatScene<
       const eb = playerPhaseBullets[enemyIndex];
       const bulletX = eb.graphics.x;
       const bulletY = eb.graphics.y;
+      const bulletRadius = baseBulletRadius * eb.graphics.scale;
       if (
         effects.isForceFieldActive() &&
         this._overlaps(
@@ -1831,11 +1834,12 @@ export abstract class CombatScene<
     if (this.drones.length === 0) return;
     const level = this.getDroneLevel();
     const field = this.getDroneMineralField();
-    const bulletRadius = this.getEnemyBulletRadius();
+    const baseBulletRadius = this.getEnemyBulletRadius();
 
     // Enemy bullets: an intercepted shot is consumed and the drone spills.
     const keptEnemy: TBullet[] = [];
     for (const eb of this.getEnemyBullets()) {
+      const bulletRadius = baseBulletRadius * eb.graphics.scale;
       let consumed = false;
       for (const drone of this.drones) {
         if (!drone.alive) continue;

@@ -44,7 +44,7 @@ async function makeScene(): Promise<Phaser.Scene> {
 
 /** Enemy bullet stub matching the `WrappingBullet` contract. */
 class StubEnemyBullet implements WrappingBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
+  readonly graphics: Phaser.GameObjects.Graphics & { scale: number };
   vx: number;
   vy: number;
   lifetime: number;
@@ -60,6 +60,7 @@ class StubEnemyBullet implements WrappingBullet {
   ) {
     this.graphics = scene.add.graphics();
     this.graphics.setPosition(x, y);
+    this.graphics.scale = 1;
     this.vx = vx;
     this.vy = vy;
     this.lifetime = lifetime;
@@ -143,6 +144,81 @@ describe('advanceWrappingBullets — four-edge wrap', () => {
 
     expect(bullet.graphics.x).toBeCloseTo(41, 5);
     expect(bullet.graphics.y).toBeCloseTo(31, 5);
+  });
+});
+
+describe('advanceWrappingBullets — fade window (AH-0MWJ9PMYF005N588)', () => {
+  it('scales down linearly over the last 20 % of lifetime', async () => {
+    const scene = await makeScene();
+    const bullet = new StubEnemyBullet(scene, 100, 100, 0, 0, 1.0);
+    // Advance to 0.79 s — still before the fade window (starts at 0.8 s)
+    for (let i = 0; i < 8; i++) advanceWrappingBullets([bullet], 0.1);
+    expect(bullet.graphics.scale).toBe(1);
+    // Fade window: 0.8 s → 1.0 s. At 0.81 s (5 % into fade) → scale = 0.95
+    advanceWrappingBullets([bullet], 0.01);
+    expect(bullet.graphics.scale).toBeCloseTo(0.95, 1);
+    // At 0.9 s (mid-fade) → scale = 0.5
+    advanceWrappingBullets([bullet], 0.09);
+    expect(bullet.graphics.scale).toBeCloseTo(0.5, 1);
+    // At 0.99 s → scale ≈ 0.1
+    advanceWrappingBullets([bullet], 0.08);
+    expect(bullet.graphics.scale).toBeCloseTo(0.1, 1);
+  });
+
+  it('keeps full scale before the fade window', async () => {
+    const scene = await makeScene();
+    const bullet = new StubEnemyBullet(scene, 100, 100, 50, 0, 2.0);
+    // 1.5 s elapsed — fade window starts at 1.6 s
+    for (let i = 0; i < 15; i++) {
+      advanceWrappingBullets([bullet], 0.1);
+      expect(bullet.graphics.scale).toBe(1);
+    }
+  });
+
+  it('destroys the bullet when lifetime elapses, even during fade', async () => {
+    const scene = await makeScene();
+    const bullet = new StubEnemyBullet(scene, 100, 100, 0, 0, 1.0);
+    const bullets = [bullet];
+
+    // Advance to 0.85 s (deep in fade window, scale ~0.75)
+    advanceWrappingBullets(bullets, 0.85);
+    expect(bullets).toContain(bullet);
+    expect(bullet.graphics.scale).toBeLessThan(1);
+
+    // Advance past expiry
+    advanceWrappingBullets(bullets, 0.15);
+    expect(bullets).toHaveLength(0);
+    expect(bullet.graphics.active).toBe(false);
+  });
+
+  it('fades an animated bullet (redraw hook fires, fade composes)', async () => {
+    const scene = await makeScene();
+    const redraw = vi.fn();
+    const pulsing = new StubEnemyBullet(scene, 100, 200, 50, 0, 2.0);
+    (pulsing as StubEnemyBullet & { redraw: (t: number) => void }).redraw =
+      redraw;
+
+    advanceWrappingBullets([pulsing], 1.7); // in fade window (starts at 1.6 s)
+    expect(redraw).toHaveBeenLastCalledWith(1.7);
+    expect(pulsing.graphics.scale).toBeLessThan(1);
+    expect(pulsing.graphics.scale).toBeGreaterThan(0);
+
+    advanceWrappingBullets([pulsing], 0.3); // past expiry (2.0 s total)
+    expect(redraw).toHaveBeenLastCalledWith(2.0);
+  });
+
+  it('scales to zero at the exact expiry boundary', async () => {
+    const scene = await makeScene();
+    const bullet = new StubEnemyBullet(scene, 100, 100, 0, 0, 1.0);
+    const bullets = [bullet];
+
+    advanceWrappingBullets(bullets, 0.999);
+    expect(bullets).toContain(bullet);
+    // 0.001 s remaining → scale ≈ 0.005
+    expect(bullet.graphics.scale).toBeLessThan(0.01);
+
+    advanceWrappingBullets(bullets, 0.001);
+    expect(bullets).toHaveLength(0);
   });
 });
 
