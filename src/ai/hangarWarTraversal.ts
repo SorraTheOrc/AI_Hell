@@ -67,7 +67,11 @@ import { pickAttractHex } from '../core/hangarWar/hexIntel';
 import type { HexRingDefinition } from '../core/hangarWar/hexRing';
 import { createHangarWarRng } from '../core/hangarWar/rng';
 import type { HangarLoadout, HangarWarPayload } from '../core/hangarWar/types';
-import { HANGAR_CATALOGUE, type HangarEntry } from '../data/hangarCatalogue';
+import {
+  HANGAR_CATALOGUE,
+  isBotPurchaseCandidate,
+  type HangarEntry,
+} from '../data/hangarCatalogue';
 
 /**
  * How long the demo leaves a Hangar War screen up before applying the bot's
@@ -164,6 +168,10 @@ export function cheapestSeededUnlock(
   let cheapestWeight = Number.POSITIVE_INFINITY;
   const tier: HangarEntry[] = [];
   for (const entry of catalogue) {
+    // The bot keeps its pre-power-up purchase kinds (parent AH-0MWKT12BT001106T
+    // assumption A1): one documented gate shared with `cheapestUsefulUnlock`,
+    // so seeded replays and the pinned unlock pace never drift.
+    if (!isBotPurchaseCandidate(entry)) continue;
     if (!canBuy(payload.hangar, entry, context).ok) continue;
     const weight = purchaseWeight(entry.price);
     if (weight < cheapestWeight) {

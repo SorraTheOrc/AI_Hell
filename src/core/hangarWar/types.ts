@@ -108,6 +108,24 @@ export interface HangarState {
   unlockedWeapons: string[];
   /** Permanent modifiers owned. */
   ownedModifiers: string[];
+  /**
+   * Owned **power-up** ids — the canonical ownership record for the power-up
+   * unlock kind (parent AH-0MWKT12BT001106T, producer Q2 = (ii)).
+   *
+   * Mirrors {@link unlockedWeapons}: the pure economy's `ownedIds`/
+   * `ownsEntry` read it, and buying a power-up adds its id here. A persisted
+   * `powerUpLevels` row still implies ownership (so no stored row is orphaned),
+   * but this set is the authority. It is the hangar's own id vocabulary — the
+   * same shipped `PowerUpId` the run path's `getPowerUpLevels()` rows use.
+   *
+   * **Additive and optional on purpose:** a save written before the power-up
+   * kind landed has no such field, and absence reads as "owns none" (every
+   * ownership read treats an absent set as empty), so the store migrates it by
+   * field presence without a schema version bump — the same pattern as
+   * `weaponLevels` / `powerUpLevels`. A fresh payload carries an explicit
+   * empty array.
+   */
+  unlockedPowerUps?: string[];
   /** The hull currently equipped for deployments. */
   activeHull: string;
   /** The resolved loadout the active hull deploys with. */
@@ -133,8 +151,10 @@ export interface HangarState {
    *
    * Additive and optional on purpose, exactly like `weaponLevels`: absence
    * means "no upgrade", the field is migrated by presence and it is omitted on
-   * write when empty. A power-up level row is also the hangar's record that the
-   * kind is owned (the economy (`costToUpgrade`) reads it as its ownership row).
+   * write when empty. **Ownership lives in `unlockedPowerUps`** (the canonical
+   * set); a level row records the bought level only. A persisted row still
+   * implies ownership (the economy's `costToUpgrade` reads the set ∪ a row), so
+   * no stored row is orphaned, but the set is the authority — never the row.
    */
   powerUpLevels?: HangarPowerUpLevelRow[];
 }

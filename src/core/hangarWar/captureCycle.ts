@@ -325,6 +325,11 @@ function ownedListFor(hangar: HangarState, kind: HangarEntryKind): string[] {
       return hangar.unlockedWeapons;
     case 'modifier':
       return hangar.ownedModifiers;
+    case 'power-up':
+      // The canonical power-up owned set (parent AH-0MWKT12BT001106T). Hex
+      // grants keep resolving to hulls/weapons/modifiers only; this case keeps
+      // the reverse switch exhaustive so the compiler enforces the kind.
+      return hangar.unlockedPowerUps ?? [];
   }
 }
 

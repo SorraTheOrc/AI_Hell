@@ -26,7 +26,7 @@
  *   non-upgradeable row (a hull, a modifier, a consumable, a field-pickup-only
  *   kind, and any row the fleet does not own) renders byte-identically to
  *   before. The renderer stays kind-agnostic, so a power-up level row renders
- *   the same affordance once one exists (power-up acquisition is deferred to
+ *   the same affordance once one exists (power-up purchases seed it —
  *   AH-0MWKT12BT001106T).
  * - **The deployment is a launch, not a loadout rule.** The ▶ DEPLOY row is
  *   built from the same pure deployment payload builder the game's scene
@@ -459,10 +459,9 @@ function actionLabelFor(
  * with no bought row as the base level `1` (AH-0MWI5AG1X0007XZH,
  * off-by-one fix AH-0MWKV6F26008X1T3), so the row never shows `LV 0` for a
  * weapon the fleet flies and advances on the first affordable purchase. The
- * renderer is kind-agnostic on purpose: a power-up level
- * row already present in state renders through exactly this path (AC5), and
- * only weapons are reachable in play today (power-up acquisition is deferred
- * to AH-0MWKT12BT001106T).
+ * renderer is kind-agnostic on purpose: an owned power-up level row renders
+ * through exactly this path too (a purchase seeds its level-1 row —
+ * AH-0MWKT12BT001106T), so no kind-specific affordance code exists.
  */
 function buildUpgradeAffordance(
   payload: HangarWarPayload,
@@ -518,7 +517,7 @@ function buildUpgradeAffordance(
  * `isPurchasableEntry`) is not for sale, so it appears only once the fleet has
  * been granted it — where it reads as `OWNED` like any other reward.
  *
- * An **owned level-bearing kind** (every owned weapon today) is not a dead
+ * An **owned level-bearing kind** (a weapon or a power-up) is not a dead
  * `OWNED` row: it shows its current permanent level and the priced upgrade
  * action, decided by the pure {@link buildUpgradeAffordance} branch over the
  * economy's `costToUpgrade`. Every non-upgradeable row — a consumable, a

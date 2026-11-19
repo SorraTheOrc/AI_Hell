@@ -16,8 +16,9 @@
  * - **Cost.** An entry has a two-currency price (banked minerals + mini-boss
  *   cores). A purchase needs both currencies at once.
  * - **Already owned.** Ownership is per kind: hulls live in
- *   `hangar.unlockedHulls`, starting weapons in `hangar.unlockedWeapons`, and
- *   modifiers in `hangar.ownedModifiers`. The starting kit is owned **by
+ *   `hangar.unlockedHulls`, starting weapons in `hangar.unlockedWeapons`,
+ *   modifiers in `hangar.ownedModifiers`, and power-ups in
+ *   `hangar.unlockedPowerUps`. The starting kit is owned **by
  *   definition** (`entry.starter`), so a save that lost a starter id can never
  *   be forced to buy its own basic hull or weapon back.
  * - **Ring gating.** An entry is buyable only once the fleet has reached its
@@ -48,9 +49,9 @@
  * - **Upgrade sources.** A permanent level has **two** sources, never one:
  *   the run's own hold-full rewards **and** the hangar's buy-to-upgrade
  *   purchase, which a deployment grants through the shared permanent-grant
- *   seam (weapons today; power-up purchases are deferred to
- *   AH-0MWKT12BT001106T). No code path may describe permanent levels as
- *   run-only.
+ *   seam (weapons **and** power-ups; a hangar power-up purchase seeds its
+ *   first permanent level row — AH-0MWKT12BT001106T). No code path may
+ *   describe permanent levels as run-only.
  * - **Defender rating.** One pure formula over a hull's hangar upgrades
  *   ({@link defenderRatingFromUpgrades}), so the ring resolver (B3) has no
  *   second source of truth for "how strong is the bot left in this hex". A
@@ -77,6 +78,7 @@ import {
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
   STARTER_WEAPON_ID,
+  isBotPurchaseCandidate,
   type HangarEntry,
   type HangarPrice,
   type HullUpgrades,
@@ -424,7 +426,7 @@ function normalisePrice(price: HangarPrice): HangarPrice {
 
 /** A detached copy of a hangar, so no rule can mutate its caller's state. */
 function cloneHangar(hangar: HangarState): HangarState {
-  return {
+  const next: HangarState = {
     ...hangar,
     bankedMinerals: toCount(hangar.bankedMinerals),
     bankedCores: toCount(hangar.bankedCores),
@@ -436,6 +438,12 @@ function cloneHangar(hangar: HangarState): HangarState {
       modifiers: [...hangar.activeLoadout.modifiers],
     },
   };
+  // Clone the power-up owned set only when it is present, so a pre-change
+  // hangar keeps its field-presence shape (absent stays absent).
+  if (hangar.unlockedPowerUps !== undefined) {
+    next.unlockedPowerUps = [...hangar.unlockedPowerUps];
+  }
+  return next;
 }
 
 /** The owned-set field an entry of `kind` lives in. */
@@ -447,6 +455,10 @@ function ownedIds(hangar: HangarState, kind: HangarEntry['kind']): string[] {
       return hangar.unlockedWeapons;
     case 'modifier':
       return hangar.ownedModifiers;
+    case 'power-up':
+      // The canonical ownership record (parent AH-0MWKT12BT001106T, Q2 =
+      // (ii)). An absent set reads as "owns none".
+      return hangar.unlockedPowerUps ?? [];
   }
 }
 
@@ -582,7 +594,26 @@ export function buy(
   next.bankedCores -= price.cores;
 
   const owned = ownedIds(next, entry.kind);
-  if (!owned.includes(entry.id)) owned.push(entry.id);
+  if (!owned.includes(entry.id)) {
+    if (entry.kind === 'power-up') {
+      // The set is the canonical ownership record; assign it back so a hangar
+      // that had no field gains exactly the bought id.
+      next.unlockedPowerUps = [...owned, entry.id];
+      // Seed the first permanent level row (level 1) in the **same** hangar
+      // write, so ownership and level can never land separately and the
+      // upgrade rule / deploy grant see it on the very next sortie
+      // (parent AH-0MWKT12BT001106T AC4).
+      const rows = next.powerUpLevels ?? [];
+      if (!rows.some((row) => row.id === entry.powerUpId)) {
+        next.powerUpLevels = [
+          ...rows.map((row) => ({ ...row })),
+          { id: entry.powerUpId, level: BASE_PERMANENT_LEVEL },
+        ];
+      }
+    } else {
+      owned.push(entry.id);
+    }
+  }
 
   if (options.equipOnPurchase === true) {
     equipPurchasedEntry(next, entry);
@@ -613,6 +644,10 @@ function equipPurchasedEntry(hangar: HangarState, entry: HangarEntry): void {
       if (!hangar.activeLoadout.modifiers.includes(entry.id)) {
         hangar.activeLoadout.modifiers.push(entry.id);
       }
+      return;
+    case 'power-up':
+      // A power-up is a permanent passive upgrade, not a flown loadout slot:
+      // buying it arms nothing, it just applies on every deployment.
       return;
   }
 }
@@ -767,8 +802,8 @@ function isNonUpgradeablePowerUp(id: string): boolean {
 
 /**
  * Whether the fleet owns a level-bearing kind: a hangar owned-set row for a
- * weapon, a `powerUps` levels row for a power-up (the only place the hangar
- * records a power-up level).
+ * weapon or power-up (the power-up set is canonical, with a persisted
+ * `powerUps` level row also implying ownership so no stored row is orphaned).
  */
 function ownsUpgradeableKind(
   hangar: HangarState,
@@ -777,7 +812,10 @@ function ownsUpgradeableKind(
   id: string,
 ): boolean {
   if (kind === 'weapon') return hangar.unlockedWeapons.includes(id);
-  return levels.powerUps.some((row) => row.id === id);
+  return (
+    (hangar.unlockedPowerUps ?? []).includes(id) ||
+    levels.powerUps.some((row) => row.id === id)
+  );
 }
 
 /** The current permanent level of a kind from its own row vocabulary (0 when absent/corrupt). */
@@ -874,10 +912,10 @@ function raisedLevels(
  *
  * The rule shares the purchase branch's two-currency `HangarPrice` and
  * `HangarPurchaseContext` conventions but is a separate branch beside
- * `canBuy`/`buy`: ownership is per kind (`unlockedWeapons` for a weapon, a
- * `powerUps` levels row for a power-up) and the refusal vocabulary reflects
- * the level model — `unknown` → `non-upgradeable` → `unowned` → `capped` →
- * `unaffordable`. Ring gating already applied at purchase, so the ring
+ * `canBuy`/`buy`: ownership is per kind (`unlockedWeapons` for a weapon;
+ * `unlockedPowerUps` — with a persisted level row also implying ownership —
+ * for a power-up) and the refusal vocabulary reflects the level model —
+ * `unknown` → `non-upgradeable` → `unowned` → `capped` → `unaffordable`. Ring gating already applied at purchase, so the ring
  * context is carried for signature parity and future growth, never read here.
  *
  * @param hangar — the persistent hangar (read only).
@@ -1380,6 +1418,9 @@ export function cheapestUsefulUnlock(
   let cheapestWeight = Number.POSITIVE_INFINITY;
 
   for (const entry of catalogue) {
+    // The attract/traversal bot keeps its pre-power-up purchase kinds (A1), so
+    // its demo decisions, seeded replays and pinned unlock pace never drift.
+    if (!isBotPurchaseCandidate(entry)) continue;
     if (!canBuy(hangar, entry, context).ok) continue;
     const weight = purchaseWeight(entry.price);
     if (weight < cheapestWeight) {

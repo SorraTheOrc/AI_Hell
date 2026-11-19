@@ -30,10 +30,18 @@
  */
 
 import type { DefenceSkill } from '../core/hangarWar/types';
+import type { PowerUpId } from '../powerups/types';
 import type { WeaponId } from '../utils/weapons';
 
-/** What kind of thing an unlock is (and which owned set it joins). */
-export type HangarEntryKind = 'hull' | 'weapon' | 'modifier';
+/**
+ * What kind of thing an unlock is (and which owned set it joins).
+ *
+ * `'power-up'` is the post-MVP fourth kind (parent AH-0MWKT12BT001106T): buying
+ * a power-up spends the two-currency price and records ownership in
+ * `hangar.unlockedPowerUps`, which is what finally gives the buy-to-upgrade
+ * rule a shipped source for a power-up's first permanent level row.
+ */
+export type HangarEntryKind = 'hull' | 'weapon' | 'modifier' | 'power-up';
 
 /** A two-currency salvage price: banked minerals and mini-boss cores. */
 export interface HangarPrice {
@@ -124,11 +132,32 @@ export interface ModifierDefinition extends HangarEntryBase {
   readonly effect: ModifierEffect;
 }
 
+/**
+ * A permanent power-up bought in the hangar (parent AH-0MWKT12BT001106T).
+ *
+ * Buying one records ownership in `hangar.unlockedPowerUps` and seeds its
+ * permanent level row at level `1`, so the shipped upgrade rule raises it and
+ * the deploy-time grant puts it on the run `Player`. Only **level-bearing**
+ * permanent power-ups are sold: a consumable (a charge pool) and the
+ * field-pickup-only kind carry no level to raise and are never authored here.
+ */
+export interface PowerUpUnlockDefinition extends HangarEntryBase {
+  readonly kind: 'power-up';
+  /**
+   * The shipped power-up this entry owns (`src/powerups/types.ts`).
+   *
+   * The entry id mirrors it (`id === powerUpId`) so the hangar's owned set and
+   * the run path's `getPowerUpLevels()` rows share one id vocabulary.
+   */
+  readonly powerUpId: PowerUpId;
+}
+
 /** One purchasable/owned entry of the hangar's unlock tree. */
 export type HangarEntry =
   | HullDefinition
   | StartingWeaponDefinition
-  | ModifierDefinition;
+  | ModifierDefinition
+  | PowerUpUnlockDefinition;
 
 /** The basic hull every fleet owns from the first deployment. */
 export const STARTER_HULL_ID = 'hull-1';
@@ -162,26 +191,54 @@ export function isPurchasableEntry(entry: HangarEntry): boolean {
 }
 
 /**
+ * Whether the attract/traversal **bot** may choose this entry (parent
+ * AH-0MWKT12BT001106T, assumption A1).
+ *
+ * The bot buys the *cheapest useful unlock* in a scripted demo. Keeping its
+ * purchase kinds unchanged when the power-up kind lands keeps the demo
+ * decisions, the seeded traversal replays and the pinned ring-timing unlock
+ * pace byte-identical — a power-up is a player choice, not a bot one. This is
+ * the **one** documented gate both bot consumers read
+ * ({@link cheapestUsefulUnlock} in `hangarEconomy` and
+ * `cheapestSeededUnlock` in `ai/hangarWarTraversal`), so the two rules can
+ * never drift; the unlock-pace *report* still measures power-up entries
+ * (`deriveUnlockPace`) because it is not the bot's choice.
+ *
+ * @param entry — a catalogue entry.
+ * @returns true when the bot may buy the entry.
+ */
+export function isBotPurchaseCandidate(entry: HangarEntry): boolean {
+  return entry.kind !== 'power-up';
+}
+
+/**
  * The hangar's unlock tree.
  *
- * Six buyable entries (two hulls, three starting weapons, one modifier) plus
- * the two starter entries that make up the minimal fleet. Costs are ordered so
- * the cheapest useful unlock is a real choice early on (a life is cheaper than
- * a new weapon) and the **extra hit points hull** is the long-term goal — first
- * as the ring-2 special-mission reward (granted free through `resolveHexGrant`)
- * and, for a fleet that never takes that hex, as a ring-2 purchase priced above
- * the Bulwark Hull (AH-0MWF0CUS3009M5SY).
+ * The buyable tree is the MVP hulls/weapons/modifiers plus the post-MVP
+ * additions: the special-reward hulls, a second defending-bot-skill modifier
+ * and (parent AH-0MWKT12BT001106T) **level-bearing power-ups**. Costs are
+ * ordered so the cheapest useful unlock is a real choice early on (a life is
+ * cheaper than a new weapon) and the **extra hit points hull** is the
+ * long-term goal — first as the ring-2 special-mission reward (granted free
+ * through `resolveHexGrant`) and, for a fleet that never takes that hex, as a
+ * ring-2 purchase priced above the Bulwark Hull (AH-0MWF0CUS3009M5SY).
  *
  * Ring 1's own special-mission reward (`hull-4`, AH-0MWJ51KUS005WQK6) is the
  * tree's first **grant-only** hull: it is in the catalogue so the ring data
  * validates and the grant resolves, but its gate is {@link GRANT_ONLY_MIN_RING}
  * and it is never sold.
  *
- * The tree now carries **two** buyable modifiers (AH-0MVWZYJ740037EZ1):
+ * The tree carries **two** buyable modifiers (AH-0MVWZYJ740037EZ1):
  * `hardened_plating` (the extra-life kit) and `anti_maw_plating` (a
  * **defending-bot skill** modifier — the second skill source beside the Bulwark
  * hull's own skill). The two are different rewarded choices rather than
  * duplicates: one keeps the pilot alive, the other keeps a hex.
+ *
+ * The tree carries **level-bearing power-ups** (parent AH-0MWKT12BT001106T):
+ * buying one is what creates its first permanent level row, so a fresh save
+ * can own a power-up between runs and then spend salvage raising it. Only
+ * permanent, level-bearing kinds are sold (never a consumable charge pool or
+ * the field-pickup-only kind).
  */
 export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
   {
@@ -339,5 +396,36 @@ export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
         bonus: 5,
       },
     },
+  },
+  {
+    // The first level-bearing power-up sold in the tree (parent
+    // AH-0MWKT12BT001106T, producer Q1 = (b), Q3 = (1)). Buying it records
+    // ownership in `hangar.unlockedPowerUps` and seeds its `powerUpLevels`
+    // row at level 1, so the shipped upgrade rule and the deploy grant finally
+    // have a power-up to work with in normal play. Priced above the cheapest
+    // modifier so the attract bot's kind set (A1) needs no price hack.
+    id: 'bomb',
+    kind: 'power-up',
+    name: 'Bomb Rack',
+    description:
+      'A rack of proximity charges that periodically sweeps enemy fire clear of the hull.',
+    price: { minerals: 130, cores: 1 },
+    minRing: 1,
+    starter: false,
+    powerUpId: 'bomb',
+  },
+  {
+    // A ring-2 power-up: a support kind that feeds a run's economy. The paired
+    // entry keeps the authored set small (two) while giving the tree a
+    // higher-ring power-up goal, mirroring how the hull/weapon lines ladder.
+    id: 'magnet',
+    kind: 'power-up',
+    name: 'Salvage Magnet',
+    description:
+      'A hull-field generator that pulls loose minerals toward the ship, banking more of every wave.',
+    price: { minerals: 200, cores: 2 },
+    minRing: 2,
+    starter: false,
+    powerUpId: 'magnet',
   },
 ];

@@ -157,6 +157,9 @@ describe('hangar screen model (pure)', () => {
       'cluster',
       'hardened_plating',
       'anti_maw_plating',
+      // The authored level-bearing power-ups (AH-0MWKT12BT001106T).
+      'bomb',
+      'magnet',
     ]);
     // Owned by the payload's unlocked hull (even though it is affordable).
     const ownedHull = rows.find((row) => row.id === 'hull-2')!;
@@ -271,6 +274,9 @@ describe('hangar screen model (pure)', () => {
       'buy:cluster',
       'buy:hardened_plating',
       'buy:anti_maw_plating',
+      // `bomb` is affordable at ring 1; `magnet` is ring-2 gated, so it is not
+      // an actionable row here (AH-0MWKT12BT001106T).
+      'buy:bomb',
       'hull:hull-2',
       'weapon:spread',
       'deploy',
@@ -476,6 +482,7 @@ describe('restartHangarWar (pure)', () => {
       unlockedHulls: [DEFAULT_HULL_ID],
       unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
       ownedModifiers: [],
+      unlockedPowerUps: [],
       activeHull: DEFAULT_HULL_ID,
       activeLoadout: { startingWeapons: [], modifiers: [] },
     });
@@ -665,6 +672,9 @@ describe('HangarScene', () => {
       'buy:cluster',
       'buy:hardened_plating',
       'buy:anti_maw_plating',
+      // The authored power-up unlock rows (AH-0MWKT12BT001106T).
+      'buy:bomb',
+      'buy:magnet',
       'hull:hull-1',
       'hull:hull-2',
       'weapon:spread',
@@ -987,6 +997,7 @@ describe('HangarScene', () => {
         unlockedHulls: [DEFAULT_HULL_ID],
         unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
         ownedModifiers: [],
+        unlockedPowerUps: [],
         activeHull: DEFAULT_HULL_ID,
         activeLoadout: { startingWeapons: [], modifiers: [] },
       });
@@ -1303,31 +1314,17 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
   });
 
   it('renders a power-up level row through the same generic affordance (AC5)', () => {
-    // The hangar catalogue has no power-up kind yet (power-up acquisition is
-    // deferred to AH-0MWKT12BT001106T), and the affordance is keyed on the
-    // **kind id** the economy classifies — never on the entry kind — so a
-    // seeded power-up level row renders exactly like a weapon's. This test
-    // creates no power-up acquisition surface: it only proves the genericity.
-    const bombEntry = {
-      id: 'bomb',
-      kind: 'weapon',
-      name: 'Bomb Rack',
-      description: 'A seeded power-up level row, rendered generically.',
-      price: { minerals: 50, cores: 0 },
-      minRing: 1,
-      starter: false,
-      // Never read by the affordance: the economy's own id tables classify the
-      // kind, and the seeded `powerUpLevels` row is what makes `bomb` owned.
-      weaponId: 'bomb',
-    } as unknown as HangarEntry;
+    // The affordance is keyed on the **kind id** the economy classifies — never
+    // on the entry kind — so an owned power-up level row renders exactly like a
+    // weapon's. The hangar now sells level-bearing power-ups
+    // (AH-0MWKT12BT001106T): a bought `bomb` is owned in `unlockedPowerUps` and
+    // carries a seeded level row, and the shared renderer prices its next level.
     const payload = upgradedPayload();
-    payload.hangar.unlockedWeapons = [...payload.hangar.unlockedWeapons, 'bomb'];
+    payload.hangar.unlockedPowerUps = ['bomb'];
     payload.hangar.powerUpLevels = [{ id: 'bomb', level: 2 }];
 
-    const row = buildHangarUnlockRows(payload, [
-      ...HANGAR_CATALOGUE,
-      bombEntry,
-    ]).find((entry) => entry.id === 'bomb')!;
+    const row = buildHangarUnlockRows(payload).find((entry) => entry.id === 'bomb')!;
+    expect(row.kind).toBe('power-up');
     expect(row.state).toBe('upgradable');
     expect(row.level).toBe(2);
     expect(row.actionLabel).toBe('UPGRADE · 200 min · 1 cores');
@@ -1515,17 +1512,18 @@ describe('hangar power-up unlock row (AH-0MWKT12BT001106T, red-first)', () => {
   }
 
   it('renders a power-up entry through the shared BUY/gated/unaffordable states', () => {
-    // An injected power-up entry, so the row states are exercised independently
-    // of which shipped power-up(s) the catalogue authors.
+    // An injected power-up entry (a real level-bearing shipped kind that the
+    // shipped tree does not sell), so the row states are exercised
+    // independently of which shipped power-up(s) the catalogue authors.
     const entry = {
-      id: 'bomb',
+      id: 'chrono',
       kind: 'power-up',
-      name: 'Bomb Rack',
-      description: 'A periodic pulse that clears enemy fire around the ship.',
+      name: 'Chrono Field',
+      description: 'A field that slows enemy bullets while it is active.',
       price: { minerals: 120, cores: 1 },
       minRing: 2,
       starter: false,
-      powerUpId: 'bomb',
+      powerUpId: 'chrono',
     } as unknown as HangarEntry;
     const catalogue = [...HANGAR_CATALOGUE, entry];
     const funded = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
@@ -1534,7 +1532,7 @@ describe('hangar power-up unlock row (AH-0MWKT12BT001106T, red-first)', () => {
 
     // Below its ring gate → the existing `RING N` vocabulary.
     const gated = buildHangarUnlockRows(funded, catalogue).find(
-      (row) => row.id === 'bomb',
+      (row) => row.id === 'chrono',
     )!;
     expect(gated.state).toBe('gated');
     expect(gated.label).toContain('RING 2');
@@ -1542,7 +1540,7 @@ describe('hangar power-up unlock row (AH-0MWKT12BT001106T, red-first)', () => {
     // At its ring, affordable → the existing `BUY` vocabulary.
     funded.ring = { ...funded.ring, ringIndex: 2 };
     const buyable = buildHangarUnlockRows(funded, catalogue).find(
-      (row) => row.id === 'bomb',
+      (row) => row.id === 'chrono',
     )!;
     expect(buyable.state).toBe('buyable');
     expect(buyable.actionLabel).toBe('BUY');
@@ -1553,7 +1551,7 @@ describe('hangar power-up unlock row (AH-0MWKT12BT001106T, red-first)', () => {
     broke.hangar.bankedMinerals = 0;
     broke.hangar.bankedCores = 0;
     const unaffordable = buildHangarUnlockRows(broke, catalogue).find(
-      (row) => row.id === 'bomb',
+      (row) => row.id === 'chrono',
     )!;
     expect(unaffordable.state).toBe('unaffordable');
     expect(unaffordable.label).toContain('NEED 120 min / 1 cores');

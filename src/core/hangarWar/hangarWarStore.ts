@@ -212,6 +212,20 @@ function parseHangar(raw: unknown): HangarState | null {
     activeLoadout: parseLoadout(raw.activeLoadout),
   };
 
+  // The canonical power-up owned set (parent AH-0MWKT12BT001106T, Q2 = (ii))
+  // is the fifth additive field family. It is migrated **by presence**: a save
+  // written before the power-up kind landed has no field and stays field-less
+  // (absent reads as "owns none"), so the payload round-trips byte-for-byte and
+  // no schema version bump is needed. A present but corrupt value collapses to
+  // `[]` through the same `toIdList` — duplicates, blanks and non-strings drop,
+  // exactly like `unlockedWeapons`.
+  if (
+    Object.prototype.hasOwnProperty.call(raw, 'unlockedPowerUps') &&
+    raw.unlockedPowerUps !== undefined
+  ) {
+    hangar.unlockedPowerUps = toIdList(raw.unlockedPowerUps);
+  }
+
   // The bought permanent levels (AH-0MWI5AG1X0007XZH) are the fourth additive
   // field family: a save written before buy-to-upgrade existed has none, so the
   // fields stay **absent** (never defaulted to `[]`) and absence reads as "no
@@ -541,6 +555,9 @@ export function createDefaultPayload(seed: number = 0): HangarWarPayload {
       unlockedHulls: [DEFAULT_HULL_ID],
       unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
       ownedModifiers: [],
+      // A fresh fleet owns no power-ups (parent AH-0MWKT12BT001106T): the
+      // canonical set is empty, so the first power-up comes from a purchase.
+      unlockedPowerUps: [],
       activeHull: DEFAULT_HULL_ID,
       activeLoadout: {
         startingWeapons: [],

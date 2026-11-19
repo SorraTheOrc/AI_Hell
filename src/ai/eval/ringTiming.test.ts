@@ -1346,6 +1346,10 @@ describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
     'hardened_plating',
     // The defending-bot skill modifier (AH-0MVWZYJ740037EZ1).
     'anti_maw_plating',
+    // The authored level-bearing power-ups (AH-0MWKT12BT001106T): the pace
+    // report measures every buyable entry, not the attract bot's choice.
+    'bomb',
+    'magnet',
   ];
 
   it('derives deployments-to-afford from both currency bounds', () => {

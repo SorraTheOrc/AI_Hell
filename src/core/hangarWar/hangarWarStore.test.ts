@@ -98,6 +98,8 @@ describe('hangar-war store surface (AH-0MVUXC0M5007LCGV)', () => {
         unlockedHulls: [DEFAULT_HULL_ID],
         unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
         ownedModifiers: [],
+        // The canonical power-up owned set is empty on a fresh war.
+        unlockedPowerUps: [],
         activeHull: DEFAULT_HULL_ID,
         activeLoadout: { startingWeapons: [], modifiers: [] },
       },
