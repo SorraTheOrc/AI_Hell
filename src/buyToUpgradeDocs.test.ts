@@ -8,10 +8,11 @@
  * rewards, whose permanent component dies with the run. Two producer decisions
  * shape the rule: one shared `MAX_PERMANENT_LEVEL` ceiling (Q1 = a) and
  * **level-bearing kinds only** (Q2 = a), so a consumable's charge pool and the
- * field-pickup-only kind are refused as `non-upgradeable`. Power-up ownership
- * and its upgrade path are **deferred** to AH-0MWKT12BT001106T — a hangar
- * power-up's first permanent level row has no shipped acquisition source — so
- * the design of record must not claim power-ups are upgradeable in play today.
+ * field-pickup-only kind are refused as `non-upgradeable`. Power-ups are the
+ * tree's fourth kind (AH-0MWKT12BT001106T): a bought power-up is owned in
+ * `hangar.unlockedPowerUps` and its first permanent level row is seeded on
+ * purchase, so the design of record must state that power-ups **are**
+ * upgradeable in play today.
  *
  * These are deliberate docs greps — structure and required terms only, never
  * prose wording — serving the same purpose as
@@ -118,13 +119,18 @@ describe('the design of record names the hangar buy-to-upgrade path (AH-0MWI5AQS
     expect(section).toMatch(/non-upgradeable/i);
   });
 
-  it('GDD §8.2 records the power-up deferral and does not claim power-ups are upgradeable in play', () => {
+  it('GDD §8.2 records that power-ups are bought from the unlock tree and upgradeable', () => {
     const section = gddBuyToUpgradeSection();
     expect(section).toMatch(/AH-0MWKT12BT001106T/);
-    expect(section).toMatch(/deferred/i);
     expect(section).toMatch(/power-up/i);
-    // The section is explicit that power-ups are not upgradeable in play today.
-    expect(section).toMatch(/(not|never)\b[^.]*\bupgradeable in play/i);
+    // The producer decision of record: bought from the tree, owned in the
+    // canonical set, seeded at level 1 and upgraded by the same rule.
+    expect(section).toMatch(/bought from the unlock tree/i);
+    expect(section).toMatch(/unlockedPowerUps/);
+    expect(section).toMatch(/level 1/i);
+    expect(section).toMatch(/MAX_PERMANENT_LEVEL/);
+    // The old "not upgradeable in play" deferral must be gone.
+    expect(section).not.toMatch(/(not|never)\b[^.]*\bupgradeable in play/i);
   });
 
   it('GDD §8.2 capture cycle records that a defender inherits hangar-bought weapon levels at capture time', () => {
@@ -146,8 +152,11 @@ describe('the design of record names the hangar buy-to-upgrade path (AH-0MWI5AQS
     expect(body).toMatch(/level-bearing/i);
     expect(body).toMatch(/Q2 = \(a\)/i);
     expect(body).toMatch(/AH-0MWKT12BT001106T/);
-    expect(body).toMatch(/deferred/i);
     expect(body).toMatch(/AH-0MWH42DWQ004SAOJ/);
+    // Power-up ownership is an explicit owned set, not a deferred capability.
+    expect(body).toMatch(/unlockedPowerUps/);
+    expect(body).toMatch(/four kinds|power-up/i);
+    expect(body).not.toMatch(/power-ups are deferred/i);
   });
 
   it('the weapon-level comment names the hangar path instead of hold-full rewards only', () => {
@@ -155,7 +164,7 @@ describe('the design of record names the hangar buy-to-upgrade path (AH-0MWI5AQS
     expect(PLAYER).toMatch(/permanent\*\*[^]{0,200}?component[^]{0,300}?hangar/i);
   });
 
-  it('the power-up level docs name the deferred hangar path beside the permanent-component rule', () => {
+  it('the power-up level docs name the hangar purchase path beside the permanent-component rule', () => {
     // Power-ups genuinely have no in-play purchase source yet, so the in-run
     // statement stays — but it must point at the deferred hangar path rather
     // than reading as the only path forever.

@@ -886,7 +886,7 @@ hangar survives — that is what winning this hell looks like.
 
 | System | What it does | Rough size |
 |--------|--------------|-----------|
-| **Hangar (Candidate B)** | Salvage spend, unlock tree (hulls, starting weapons, modifiers), **buy-to-upgrade** of an owned level-bearing weapon, active loadout | Medium |
+| **Hangar (Candidate B)** | Salvage spend, unlock tree (hulls, starting weapons, modifiers, **power-ups**), **buy-to-upgrade** of an owned level-bearing weapon **or power-up**, active loadout | Medium |
 | **Salvage banking (Candidate B)** | Convert run rewards to a persistent balance at checkpoint moments; unbanked is lost on death | Small–Medium |
 | **Hex ring map** | A hex grid whose first **ring** (6 hexes) surrounds the hangar; ring-by-ring growth for later expansions | Small–Medium — data + a map screen + a ring generator |
 | **Frontier aggression clock** | Each between-run tick **redistributes** the ring's aggression inside a budget sized from the player's fleet (a rise on one hex is paid for by a fall on another), guarantees at least one beatable hex, and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small–Medium — a deterministic per-tick rule over the pure strength/budget resolvers |
@@ -919,11 +919,18 @@ hangar survives — that is what winning this hell looks like.
 > field-pickup-only kind carry no permanent level and are refused
 > `non-upgradeable`. A captured defender inherits the bought levels at
 > **capture time** through the shared capture path (AH-0MWH42DWQ004SAOJ), and
-> no capture-side change is needed. **Power-ups are deferred
-> (AH-0MWKT12BT001106T):** a hangar power-up's first permanent level row has no
-> shipped acquisition source yet, so power-up ownership/upgrade is tracked
-> there and **power-ups are not upgradeable in play today** — neither a
-> power-up ring grant nor a catalogue purchase is shipped.
+> no capture-side change is needed. **Power-ups are bought from the unlock tree
+> (AH-0MWKT12BT001106T, producer Q1 = (b), Q2 = (ii), Q3 = (1)).** The unlock
+> tree therefore has **four kinds** — hull, weapon, modifier and power-up — and
+> a power-up's ownership is an **explicit owned set
+> (`hangar.unlockedPowerUps`)**, mirroring `hangar.unlockedWeapons`. Buying a
+> power-up spends its two-currency price, records the id in that set and seeds
+> its `hangar.powerUpLevels` row at **level 1** in one payload write, so the
+> buy-to-upgrade rule (ownership read from the set, with a persisted level row
+> still implying ownership) can price the next level toward the shared
+> `MAX_PERMANENT_LEVEL` exactly as it does for a weapon. Only level-bearing
+> kinds are sold; the hex boss still grants hulls/weapons/modifiers only (the
+> hex-grant and run-carry-over routes were deliberately not taken).
 
 ### Reuse of existing systems
 

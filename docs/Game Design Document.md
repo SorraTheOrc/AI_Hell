@@ -2942,10 +2942,10 @@ back to the unchanged arcade path). The checkpoint *moment* still banks salvage
 #### Hangar economy and unlock tree
 
 The **fleet** starts minimal — one basic hull (`hull-1`, 3 lives), its starting
-weapon (`spread`) **owned but not equipped**, and no modifiers — while a **run**
-keeps the shipped middle loop in full (the six shared loadout slots plus the
-slot-free **Extra Life** and **Mystery UFO**). Scarcity lives in what the hangar
-owns between deployments, never in stripping the run.
+weapon (`spread`) **owned but not equipped**, and no modifiers or power-ups —
+while a **run** keeps the shipped middle loop in full (the six shared loadout
+slots plus the slot-free **Extra Life** and **Mystery UFO**). Scarcity lives in
+what the hangar owns between deployments, never in stripping the run.
 
 > **The default deployment loadout is empty** (AH-0MVZJ6V1J001DA9D, producer
 decision): a fresh hangar-war payload carries `activeLoadout.startingWeapons: []`,
@@ -2977,15 +2977,20 @@ The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 | `cluster` Cluster Missile | weapon | 160 / 1 | `cluster` starting weapon |
 | `hardened_plating` Hardened Plating | modifier | 80 / 1 | +1 starting life per deployment |
 | `anti_maw_plating` Anti-Maw Plating | modifier | 110 / 2 | defending-bot skill *Maw-warded* (+5 vs `maw-of-ashes`) |
+| `bomb` Bomb Rack | power-up | 130 / 1 | permanent `bomb` — periodic enemy-fire clear; bought at level 1, upgradeable |
+| `magnet` Salvage Magnet | power-up | 200 / 2 (`minRing: 2`) | permanent `magnet` — attracts minerals; bought at level 1, upgradeable |
 
 Every phase-A entry is available at ring 1 (`minRing: 1`); ring gating is the
 field phase B's ring content uses. A purchase needs **both** currencies at
-once, ownership is tracked per kind (hulls / starting weapons / modifiers), and
+once, ownership is tracked per kind (hulls in `hangar.unlockedHulls`, starting
+weapons in `hangar.unlockedWeapons`, modifiers in `hangar.ownedModifiers`
+and **power-ups in `hangar.unlockedPowerUps`**), and
 precedence for a refused purchase is `owned` → `gated` → `unaffordable`. A
 successful purchase also **arms** the part immediately (parent
 AH-0MWL5PAP2001XYYF): `purchaseHangarEntry` opts in to the economy's
 `equipOnPurchase` option, while the other callers keep the ownership-only
-default. The hangar screen's deployment selector equips an owned hull and
+default. A power-up is a permanent passive upgrade, not a loadout slot, so
+buying one arms nothing — it simply applies on every deployment. The hangar screen's deployment selector equips an owned hull and
 toggles owned starting weapons — **every** owned weapon row is actionable,
 including the last equipped one — and modifiers; resolution drops unknown or
 unowned ids, so a corrupt save can never deploy an unowned ship or an unowned
@@ -2994,7 +2999,12 @@ starting-weapon selection is a legal loadout that round-trips as empty (never
 silently replaced by `spread`), and the deployment then equips nothing, so the
 run begins with only the permanent cannon. The attract bot's "cheapest useful
 unlock" rule (`purchaseWeight`,
-catalogue order as the deterministic tie-break) also lives here, and the
+catalogue order as the deterministic tie-break) also lives here. It excludes
+the power-up kind through the one documented `isBotPurchaseCandidate` helper,
+so the demo's shopping (and its seeded traversal replays and pinned unlock
+pace) is unchanged by the new kind; the unlock-pace *report* still measures
+the power-up entries because it is not the bot's choice.
+The
 defender-rating formula (`baseDefence + 3×armour + 2×firepower + 2×systems`)
 is defined once so phase B's defence resolver has no second source of truth.
 A captured run feeds the same formula (AH-0MWH42DWQ004SAOJ): the bot left
@@ -3234,7 +3244,8 @@ slice deferred:
 #### Buying permanent levels (buy-to-upgrade)
 
 **The hangar is the intended source of permanent upgrades** (AH-0MWHW4ALS0039JFU,
-shipped for **weapons**): a level-bearing weapon the fleet already **owns** is
+shipped for **weapons and power-ups**): a level-bearing weapon or power-up the
+fleet already **owns** is
 an upgrade row, not a dead `OWNED` one. The row shows its current permanent
 level and the priced next-level action (`UPGRADE · 150 min`), rendered
 **disabled** with its price and shortfall (`UPGRADE · 150 min — NEED 40 min`)
@@ -3243,7 +3254,8 @@ purchase spends the hangar's two currencies and raises the permanent level by
 exactly one; the rules are pure (`costToUpgrade` / `buyUpgrade` in
 `src/core/hangarWar/hangarEconomy.ts`, beside `canBuy`/`buy`) and the scene owns
 no purchase logic. Buying a level is player-action only: the attract booth still
-buys the cheapest useful **unlock**, never an upgrade.
+buys the cheapest useful **unlock**, never an upgrade (and never a power-up,
+see A1 above).
 
 **This is distinct from the run path.** A run also raises permanent levels —
 the hold-full reward and the shared permanent grant — but those are
@@ -3270,7 +3282,10 @@ run, and is carried into the next deployment.
 - **Persistence and the deploy grant.** Bought levels live in the same versioned
   `ai_hell_hangar_war` payload (`hangar.weaponLevels` / `hangar.powerUpLevels`),
   added by field presence so an older save reads as "no upgrade" and every kind
-  deploys at its base level. A deployment grants them through the **same shared
+  deploys at its base level. **Ownership is a separate set**: weapons in
+  `hangar.unlockedWeapons`, power-ups in `hangar.unlockedPowerUps` (a persisted
+  power-up level row still implies ownership, so no stored row is orphaned).
+  A deployment grants the bought levels through the **same shared
   permanent-grant seam** the hold-full reward and checkpoint resume use, so
   `Player.getWeaponLevels()` / `getPowerUpLevels()` read the bought levels and no
   temporary/timed stack is ever opened.
@@ -3281,15 +3296,20 @@ run, and is carried into the next deployment.
   (AH-0MWH42DWQ004SAOJ, § *The capture cycle* step 3) with **no capture-side
   change**.
 
-> **Power-up ownership and upgrade are deferred (AH-0MWKT12BT001106T).** The
-> renderer and the level model stay kind-agnostic, so a power-up level row would
-> show the same affordance and travel the same grant path — but a hangar
-> power-up's **first** permanent level row has no shipped acquisition source yet.
-> The shipped build therefore does **not** make power-ups upgradeable in play:
-> no power-up ownership set, ring grant or catalogue purchase is shipped, and the
-> deferral, its open producer questions and its own schedule live in
-> AH-0MWKT12BT001106T. Recording the capability without claiming it is live is
-> deliberate: the next item adds the source, not the pricing rule.
+> **Power-ups are bought from the unlock tree (AH-0MWKT12BT001106T, producer
+> Q1 = (b), Q2 = (ii), Q3 = (1)).** A hangar power-up is a normal unlock-tree
+> entry: buying one spends its two-currency price, records the id in the
+> canonical **`hangar.unlockedPowerUps`** owned set and, in the same payload
+> write, seeds its `hangar.powerUpLevels` row at **level 1**. That first row is
+> what makes a power-up upgradeable: the buy-to-upgrade rule now reads
+> ownership from the owned set (a persisted level row still implies ownership)
+> and prices the next level toward **`MAX_PERMANENT_LEVEL`** exactly as it does
+> for a weapon. The renderer and the deploy grant stay kind-agnostic, so an
+> owned power-up shows the same `UPGRADE` row and travels the same grant path.
+> Only **level-bearing** kinds are sold — a consumable charge pool and the
+> field-pickup-only Extra Life carry no level to raise and are refused
+> `non-upgradeable`. The hex-grant and run-carry-over routes were deliberately
+> **not** taken: the hex boss keeps granting hulls, weapons and modifiers only.
 
 #### The hex ring and ring growth
 

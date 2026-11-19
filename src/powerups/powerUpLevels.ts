@@ -16,10 +16,11 @@
  *   deterministic, monotonic non-decreasing and clamped to each variable's
  *   finite cap (AC4).
  * - {@link PowerUpLevelStore} — the run-scoped level model. It splits each
- *   power-up's level into a **permanent** component (hold-full rewards only in
- *   play: the hangar's buy-to-upgrade path reaches this same model, but
- *   power-up ownership and upgrade are deferred to AH-0MWKT12BT001106T, so no
- *   power-up purchase ships today) and a **temporary** component (field
+ *   power-up's level into a **permanent** component (hold-full rewards **and**
+ *   the hangar's buy-to-upgrade path, which reaches this same model: a
+ *   power-up is bought from the unlock tree and its first permanent level row
+ *   is seeded on purchase — shipped by AH-0MWKT12BT001106T) and a
+ *   **temporary** component (field
  *   pickups, tied to the item's timed
  *   window). The effective level is `permanent + temporary`; only the
  *   permanent component governs the hold-full choice. Both components are
@@ -75,8 +76,8 @@
  * *further* collection applies the next upgrade. The store holds the raw
  * collection counts and exposes {@link PowerUpLevelStore.getUpgradeLevel}
  * (effective) and {@link PowerUpLevelStore.getPermanentUpgradeLevel}
- * (hold-full rewards, plus the hangar's bought permanent levels once
- * buy-to-upgrade covers power-ups — deferred to AH-0MWKT12BT001106T) for the
+ * (hold-full rewards, plus the hangar's bought permanent levels — a power-up
+ * purchase seeds its level row, shipped by AH-0MWKT12BT001106T) for the
  * resolver.
  *
  * ## Temporary vs permanent (AH-0MUX802450085VZZ) and the per-upgrade TTL
