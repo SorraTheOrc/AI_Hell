@@ -66,8 +66,8 @@ npm run capture:scenes -- --config scenes.json             # capture-output/scen
 # write inside the repo root so a >32 MiB clip uses the streamed probe
 npm run capture -- --diagnostics --duration 420000 --output capture-output/soak.webm
 
-# compile the captured pool into a promo + showreel + highlight clips
-# (needs a full ffmpeg — see Compiling a promo package below)
+# compile the captured clips into a normalised MP4 with the vidc CLI
+# (needs vidc on PATH — see Compiling captured clips with vidc below)
 npm run capture:promo
 ```
 
@@ -195,306 +195,43 @@ previous prefix-only series for long runs can no longer occur. The accessor
 is installed only in a dev build, so a production bundle has no telemetry
 page global at all.
 
-## Pool inventory
+## Compiling captured clips with vidc
 
-`npm run list:pool` prints an inventory of the captured source pool
-(AH-0MVDV4SYG008X8TY): which runs are usable and which gameplay features
-(weapons, pickups, enemies, boss) each one actually shows. It is the
-evidence that the pool covers the editorial categories before compiling —
-the same `EDITORIAL_CONFIG` feature mapping the promo compiler uses, so the
-inventory cannot drift from the coverage manifest.
-
-A run is **retained** only when all three artefacts exist:
-`<run>.webm` + `<run>.action.jsonl` + `<run>.capture.json`. A WebM without
-its series/anchor (e.g. footage captured before the export landed) is
-**excluded and reported**, never silently counted as usable material. A
-header-only series is a valid partial run, but evidences no features.
+Video compilation is delegated to the `vidc` CLI from the sibling
+`video_compiler` repository (cloned at `../video_compiler`;
+AH-0MWOUY9IK004QWCU). AI_Hell owns capture; `vidc` owns video processing: it
+discovers the clips, orders them naturally, probes each with `ffprobe`, and
+renders one normalised MP4 with a single FFmpeg invocation. This repository
+contains no FFmpeg logic, edit planning or output validation of its own.
 
 ```bash
-# human-readable inventory of capture-output/
-npm run list:pool
+# one-off: build and link the CLI from the sibling repository
+(cd ../video_compiler && npm install && npm run build && npm link)
 
-# machine-readable manifest, kept next to the footage
-npm run list:pool -- --json > capture-output/pool-inventory.json
+# compile capture-output/ into capture-output/promo.mp4
+npm run capture:promo
 
-# scan a different directory, or limit to explicit run ids
-npm run list:pool -- --dir clips
-npm run list:pool -- --runs boss-2026-10-19T16-25-05-656Z
+# forward any vidc option: platform formats, resolution, frame rate,
+# a different pool or output, or a dry run of the FFmpeg argv
+node scripts/render-promo.mjs --format 16:9 --format 9:16 --overwrite
+node scripts/render-promo.mjs --dir clips --output out/promo.mp4 --dry-run
+node scripts/render-promo.mjs --help
 ```
 
-Features are recognised from the series breakdown (`playerBullets` →
-weapons, `drops` → pickups, `enemies` → enemies, `bosses` → boss) and each
-is reported with its sample count and first/last series time. The manifest
-also lists `missingFeatures`, so a gap is visible instead of being inferred.
-The lister is pure apart from a thin `node:fs` scan, and is unit-tested
-hermetically (`scripts/list-capture-pool.test.ts`) without footage, ffmpeg
-or a browser.
+`--dir` defaults to `capture-output/`, the output to `<dir>/promo.mp4`, and
+the clip pattern selects raw `<stem>.webm` runs only — the seek-index
+`<stem>.seekable.webm` and salvage `<stem>.partial.webm` files are not source
+footage. Everything else (resolution, fps, cross fade, presets, formats and
+profiles) stays vidc's own; see its README for the full option set. The `vidc`
+binary is resolved from `PATH`, or from `--vidc` / `VIDC_BIN`, and a missing
+binary fails with an install hint rather than an `ENOENT` stack.
 
-## Compiling a promo package (`npm run capture:promo`)
-
-`npm run capture:promo` turns the captured pool into shareable material —
-a short promo, a longer showreel and individual highlight clips — by
-trimming, reordering, dissolving and muxing the source WebMs with
-`ffmpeg` (AH-0MVDV50Z20071RF4; the driver itself is
-AH-0MVDV4PNZ004ZWOZ; the junctions became dissolves in AH-0MWLYWYGK004JR2A).
-Nothing is hand-edited: the edit plan, the cut
-selection and the manifests all come from the recorded
-`.action.jsonl` series, so the package is reproducible from the pool.
-
-```bash
-# one-off: install a full ffmpeg (VP9 + Opus) — see Prerequisites below
-npm run capture:promo                     # plan + compile + validate
-
-# plan only (no ffmpeg required at all): writes the edit plan JSON to stdout
-node scripts/compile-promo.mjs | less
-
-# limit the pool to specific runs, or choose the output directory
-npm run capture -- --count 5              # ... capture more peaks first
-node scripts/compile-promo.mjs --runs gameplay-2026-10-23T12-28-08-402Z-3,boss-2026-10-19T16-25-05-656Z
-node scripts/compile-promo.mjs --compile --out capture-output/compile-promo.plan.json --out-dir capture-output
-
-# everything the tool accepts, with the prerequisites restated
-node scripts/compile-promo.mjs --help
-```
-
-### Prerequisites
-
-The compiler itself is pure Node (no dependencies beyond the repo) unless
-`--compile` is passed. `--compile` needs a **full `ffmpeg` install** — one
-with the **VP9 encoder (`libvpx-vp9`)** and the **Opus encoder
-(`libopus`)** — plus `ffprobe`, both on `PATH`:
-
-```bash
-sudo apt-get install ffmpeg        # Debian/Ubuntu
-brew install ffmpeg                # macOS (Homebrew)
-# static builds: https://johnvansickle.com/ffmpeg/
-```
-
-`FFMPEG_BIN` / `FFPROBE_BIN` override the resolved binaries (e.g. a static
-build in `~/.local/bin`). Playwright's bundled minimal ffmpeg is **not**
-sufficient (VP8-only, no VP9/Opus encoder).
-
-The junction dissolve uses the `xfade` and `acrossfade` filters. Both ship
-with any full ffmpeg build (they are core `avfilter` filters, not optional
-`--enable-…` extras), so the VP9 + Opus requirement above is the only
-prerequisite — an older distro build that carries VP9/Opus carries these
-too.
-
-Detection is explicit and fails fast with an actionable message rather than
-an `ENOENT` stack: a missing `ffmpeg`/`ffprobe` exits non-zero and prints the
-install hints above plus `npm run capture:promo`. The output directory must
-already exist — a missing `--out-dir` is reported as such (with a `mkdir -p`
-suggestion) before any encoding starts.
-
-### Progress and output streams
-
-A full package is a few minutes of VP9 encoding, so `--compile` reports its
-progress on **stderr** — one `compile:` line for the plan summary, one per
-deliverable with its cut count and source, and one per deliverable when its
-encode finishes (`ok` or `FAIL` with the reason) — and only then prints the
-final validation summary on **stdout**:
-
-```text
-compile: plan ready: 13 promo cuts, 34 showreel cuts, 5 highlight clips → capture-output/compile-promo.plan.json
-compile: compiling 7 deliverables with /home/you/.local/bin/ffmpeg (26 sources)
-compile: [1/7] promo: 13 cuts → capture-output/promo.webm
-compile: [1/7] promo: ok — 57.9s
-compile: [2/7] showreel: 34 cuts → capture-output/showreel.webm
-...
-compile: verifying promo pace and deliverable sizing
-Compiled deliverables — all validated OK:
-  ok    capture-output/promo.webm  expected 53.2s / measured 57.9s  960x540 vp9 opus 2ch  (13 cuts, …)
-  transitions  400 ms video dissolve into 500 ms audio cross-fade at each cut (clamped to 25 % of the shorter neighbouring cut; the sound is compensated per junction; videoFadeMs: 0 restores hard cuts)
-...
-```
-
-Long silence between those lines is expected while `ffmpeg` encodes (a
-57 s promo is ~13 re-encoded cuts at 960×540/60 fps); watch stderr to
-confirm the run is progressing. stdout stays the machine-readable summary,
-so piping the command still yields only the report of record.
-
-### Transitions (dissolved junctions)
-
-Multi-cut deliverables — the promo and the showreel — **dissolve** from one
-cut into the next; single-cut highlight clips have no junction and are
-unchanged (AH-0MWLYWYGK004JR2A). Both junction steps live inside the one
-`-filter_complex` pass that already trims and re-encodes the cuts, so the
-edit costs no extra encode and no extra dependency.
-
-The knobs are frozen in `EDITORIAL_CONFIG.transitions`
-(`scripts/compile-promo.mjs`), and every timing below is read from there:
-
-| Knob | Value | Meaning |
-|---|---|---|
-| `videoFadeMs` | **400 ms** | The picture dissolve: `xfade=transition=fade` from the outgoing cut into the incoming one. Set it to `0` to restore hard cuts. |
-| `audioFadeMs` | **500 ms** | The sound cross-fade (`acrossfade`), deliberately slower than the picture so the junction blends rather than switches. |
-| `maxFadeRatio` | **0.25** | A fade is clamped to at most this fraction of the **shorter** of the two neighbouring cuts, so a 1 s cut beside a 6 s cut dissolves over 250 ms instead of being swallowed by its own transition. |
-
-**The dissolve is between the two cuts, never through black**, which is why
-the ≥ 0.90 non-black pace gate (§7.6 of
-[docs/dev/action-intensity.md](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo))
-still holds on a cross-faded promo.
-
-#### Audio compensation (why the sound is not 100 ms short)
-
-A 500 ms audio fade against a 400 ms picture fade removes 100 ms more audio
-than video at **every** junction — ~3.9 s of drift across a 40-cut promo,
-which is audible desync. The compiler therefore compensates **per junction**,
-arithmetically, from the plan and the probes only:
-
-1. the outgoing cut's audio tail is extended by the extra overlap
-   (100 ms) from the cut's **probed source headroom** (the source duration
-   beyond `videoOutMs`), so the audio chain loses only the picture's 400 ms;
-2. where the headroom is shorter than that — including a cut that ends at the
-   end of its source — no extension is invented: that junction's audio fade
-   is **clamped back to `videoFadeMs` + the available headroom** and it stays
-   aligned.
-
-The rule is deterministic (`videoInMs`/`videoOutMs` + probed durations, never
-wall-clock or encoder state), so an identical plan still produces a
-byte-identical command line. Audio and video therefore end together within a
-frame at any cut count.
-
-#### Duration accounting
-
-Each junction removes its dissolve from the delivered length, so a
-multi-cut deliverable's expected duration is
-**`Σ cut durations − Σ resolved video fades`**. The plan sizes the promo
-against that net figure (not the raw cut total), and the compile prints it
-back as `expected …s / measured …s` per deliverable, with a single
-`transitions` line naming the settings. Both are recorded in
-`compile-promo-report.json` (see [Outputs](#outputs)), so
-"sized to the 45–60 s band" is auditable against the file that was actually
-produced rather than against the plan's intent.
-
-### Inputs
-
-Per retained run under `capture-output/` (see
-[Action-intensity export](#action-intensity-export)):
-
-| Input | Required | Role |
-|---|---|---|
-| `<run>.webm` | yes | Source footage (960×540, VP9 + Opus, the game's own SFX). |
-| `<run>.action.jsonl` | yes | Recorded action-intensity series — drives the cut selection (§7.5 of [docs/dev/action-intensity.md](./action-intensity.md)). |
-| `<run>.capture.json` | no | Join anchor mapping series time to video time. Without it (or when flagged `approximate`) the mapping falls back to raw series time and the cut is approximate. |
-
-Runs missing the WebM or the series are excluded from the pool, and a missing
-**source** is a clear error (`missing source webm/series`); `npm run list:pool`
-lists what is usable before compiling (see [Pool inventory](#pool-inventory)).
-
-### Outputs
-
-Written into `--out-dir` (default `capture-output/`, gitignored — the
-deliverables are **never committed**):
-
-| File | Target | Notes |
-|---|---|---|
-| `promo.webm` | 45–60 s | Hook-first: opens on the strongest peak, dissolves across peaks. |
-| `showreel.webm` | > 2 min | Every surviving peak cut, in source-time order. |
-| `highlight-01.webm` … | 5 clips | One short clip per top-ranked peak. |
-| `compile-promo.plan.json` | — | The edit plan: the **selection manifest** and the **coverage manifest**. |
-| `compile-promo-report.json` | — | Per-deliverable validation, pace verification and target sizing. |
-
-All deliverables are encoded at the game's **native 960×540**, 60 fps,
-VP9 (`-crf 32`) + Opus 96 kb/s stereo, so they match what the game renders
-and keep the game's own SFX.
-
-### Manifests
-
-`compile-promo.plan.json` is the **selection manifest** plus the
-**coverage manifest**:
-
-```json
-{
-  "promo": [
-    {
-      "runId": "gameplay-2026-10-23T12-28-08-402Z-3",
-      "webm": "capture-output/gameplay-2026-10-23T12-28-08-402Z-3.webm",
-      "series": "capture-output/gameplay-2026-10-23T12-28-08-402Z-3.action.jsonl",
-      "videoInMs": 203017,
-      "videoOutMs": 205695,
-      "intensity": 0.852,
-      "burstiness": 0.0356,
-      "features": ["weapons", "enemies"]
-    }
-  ],
-  "coverage": [
-    {
-      "feature": "pickups",
-      "clips": [
-        { "runId": "gameplay-2026-10-23T12-52-04-638Z-5", "videoInMs": 5150, "videoOutMs": 7839 }
-      ]
-    }
-  ],
-  "uncoveredFeatures": []
-}
-```
-
-| Field | Meaning |
-|---|---|
-| `promo` / `showreel` / `highlights` | The ordered cuts per deliverable. Each carries the **source** (`runId`, `webm`, `series`), the **mapped video timestamps** (`videoInMs`/`videoOutMs` in the source WebM timeline, already clamped to the source duration), the **motivating recorded values** (`intensity`, `burstiness`) and the `features` visible in that cut. |
-| `coverage` | The coverage manifest: for each editorial feature (`weapons`, `pickups`, `enemies`, `boss`) the source clip(s) and timestamp ranges that show it. |
-| `uncoveredFeatures` | Features with **no** footage in the pool — a visible gap, never silently omitted. |
-
-Which feature is visible in a cut is decided from the series `breakdown`
-(`playerBullets` → weapons, `drops` → pickups, `enemies` → enemies,
-`bosses` → boss), the same mapping the pool inventory uses.
-
-`compile-promo-report.json` records the compiled result:
-
-| Field | Meaning |
-|---|---|
-| `deliverables[]` | One entry per output: `name`, `output`, `ok`, `issues`, `expectedDurationMs` (what the dissolve chain should deliver: `Σ cuts − Σ fades`), `probe` (codec, width/height, duration, audio codec/channels), `brightness`, `segments` (the same cut records as the plan, so the coverage claim can be checked **against the delivered clip**), `measuredMeanIntensity`. Expected-vs-measured durations sit side by side, so an edit that drifts is visible. |
-| `transitions` | The junction settings the package was built with (`videoFadeMs`, `audioFadeMs`, `maxFadeRatio`) — recorded once, top-level, so a report can never be read against the wrong editorial configuration. |
-| `pace` | The promo's pace verdict: `ok`, `issues`, `band` and `measured` (`openingNonBlackRatio`, `nonBlackRatio`, `meanIntensity`). Band and calibration: [docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo). |
-| `targets` | The deliverable sizing verdict: measured promo/showreel lengths and highlight count against the targets, with per-target issues. |
-| `errors` | Every blocking issue, so a failed run is diagnosable from the report alone. |
-
-### Validation
-
-Every output is validated before the run is reported as successful
-(`npm run capture:promo` exits non-zero if anything fails):
-
-- **decodable** — `ffprobe` returns usable streams;
-- **correct resolution** — 960×540 video;
-- **audio present** — an Opus track (the game's SFX);
-- **non-trivial pixels** — sampled luma (`signalstats` `YAVG`) shows the frame
-  is not blank, using the calibrated screen-render floor documented in
-  [docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo);
-- **pace** — the promo opens with action (first 5 s) and its cuts are
-  peak-sourced (mean recorded intensity), against the same documented band;
-- **target sizing** — the delivered promo/showreel lengths and highlight
-  count meet the targets above, so a thin pool fails loudly instead of
-  shipping a 5 s showreel.
-
-The gated end-to-end smoke test (`scripts/compile-promo.e2e.test.ts`, run with
-`/skill:test --type e2e`) compiles a deliberately short **synthetic** package
-with the real encoder, so it asserts the per-deliverable gates and the pace
-band strictly and asserts the size gate's **expected rejection** (its ~5 s
-fixture cannot meet the 45–60 s / > 2 min / 5-clip targets, and lengthening it
-is ruled out by the gated suite's cost budget). Editorial sizing on real
-footage is verified by `npm run capture:promo` against a real capture pool and
-by the `assessTargets` unit tests — see
-[docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo).
-
-The per-cut intensities and features are printed in the report, and the
-summary line names the measured duration, resolution, audio, cut count, mean
-intensity, pace verdict and target verdict — so a package can be reviewed
-without opening the manifests.
-
-### Practical notes
-
-- **Capture peaks, not just footage.** Only runs whose series contains §7.5
-  peaks contribute cuts; a full demo run is **minutes** of wall clock and
-  yields a handful of peak windows, so a 2-minute showreel needs a pool of
-  many runs. `npm run list:pool` shows which runs carry peaks before a long
-  compile.
-- **Wall clock.** Encoding is the slow step (VP9 at 60 fps): a 13-cut promo
-  plus a 34-cut showreel and 5 clips takes roughly **10 minutes** on the
-  reference host.
-- **Deliverables are gitignored.** `capture-output/` never enters the
-  repository; only the scripts, tests and documentation are committed.
-  Keep the produced files wherever you want to publish them.
+Deliverables are MP4 (vidc's native output) and remain git-ignored with the
+rest of `capture-output/`. The former in-repo compiler's automated highlight
+selection, selection/coverage manifests and output pace/size validation are
+removed with it; declarative trimming and transitions are tracked as
+high-priority work in the `video_compiler` project
+(`VC-0MWNOFIBI007J8UK`, `VC-0MWNW4SPX002J2SE`).
 
 ## Dev scenarios (`--scenario`)
 
@@ -2641,12 +2378,11 @@ encoder, no transcode (see
 the Playwright-bundled binary and degrades to delivering the unseekable clip
 with a warning, so `npm run capture` still works with no ffmpeg at all.
 
-A full `ffmpeg` is required only by the **promo compiler**
-(`npm run capture:promo`, see
-[Compiling a promo package](#compiling-a-promo-package-npm-run-capturepromo)),
-which is a post-processing step over already-captured WebMs — it never
-changes the capture path. If an MP4 is ever needed, transcode the compiled
-WebM the same way (`ffmpeg -i promo.webm -c:v libx264 promo.mp4`).
+A full `ffmpeg` is required only by `vidc`, which AI_Hell delegates video
+compilation to (`npm run capture:promo`, see
+[Compiling captured clips with vidc](#compiling-captured-clips-with-vidc)).
+That is a post-processing step over already-captured WebMs and never changes
+the capture path; vidc renders MP4 directly.
 
 ### Rejected fallback: offline WAV + external mux
 
@@ -2774,16 +2510,12 @@ full`) or `npm run build`.
 | `scripts/promo-scenarios.d.mts` | Types for the promo wave definitions (`PromoLevelDefinition` extends `LevelDefinition`) |
 | `scripts/promo-scenarios.test.ts` | Hermetic tests: WaveManager validation over every promo wave, archetype/formation/flag whitelists pinned to shipped content, per-seed determinism, editorial-category coverage, bare-Node import, and the authoring validator |
 | `scripts/capture-series.d.mts` | Types for the series/anchor module |
-| `scripts/compile-promo.mjs` | Promo compiler + ffmpeg driver: edit plan from the recorded series, cut cadence, deliverable sizing, manifests, output validation and pace verification |
-| `scripts/compile-promo.d.mts` | Types for the promo compiler |
-| `scripts/compile-promo.test.ts` | Hermetic tests for the plan/selection/cadence/validation logic (no ffmpeg, no browser) |
-| `scripts/compile-promo.e2e.test.ts` | Gated end-to-end smoke test that compiles synthetic footage with real `ffmpeg`/`ffprobe` (skipped when absent); asserts per-deliverable validation, the pace band and the *expected* size-gate rejection for its deliberately short fixture |
-| `scripts/list-capture-pool.mjs` | Capture-pool inventory: retains WebM + series + anchor triples, reports excluded runs and per-run feature evidence |
-| `scripts/list-capture-pool.d.mts` | Types for the pool inventory lister |
-| `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |
+| `scripts/render-promo.mjs` | Thin `vidc` driver: defaults the capture directory/output and clip pattern, builds `vidc render …`, forwards output and exit code |
+| `scripts/render-promo.d.mts` | Types for the `vidc` driver |
+| `scripts/render-promo.test.ts` | Hermetic tests for argument parsing, argv forwarding, exit-code propagation and missing-binary remediation |
 | `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap, progress helpers, the shared pipeline and the duplication guard |
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
-| `package.json` | `capture` / `capture:scenes` / `capture:install` / `list:pool` / `capture:promo` scripts; `playwright` devDependency |
+| `package.json` | `capture` / `capture:scenes` / `capture:install` / `capture:promo` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |
 
 #### The recorder must never be interrupted by a page reload

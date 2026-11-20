@@ -457,16 +457,12 @@ resolved statically).
 - **`integration`** — happy-dom, `src/test/setup.ts` and the Phaser inline
 transform: every Phaser/DOM-booting suite (`npm run test:integration`).
 - **`e2e`** — gated `*.e2e.test.ts` suites that drive **real binaries** (today:
-  the ffmpeg/ffprobe promo compile). Far too slow for the feedback loop, so it
-  is excluded from the default run entirely: `npx vitest run --project e2e` or
+  the capture seek-index remux). Far too slow for the feedback loop, so it is
+  excluded from the default run entirely: `npx vitest run --project e2e` or
   `/skill:test --type e2e`. Nothing in it is unique proof of behaviour — the
-  same command/probe/validation logic is covered by injected-subprocess tests in
-  the `scripts/` unit suites; `e2e` only proves a real encoder accepts the
-  command line and produces probe-able output. The promo compile smoke also
-  asserts its per-deliverable validation, the documented pace band and the
-  **expected** editorial size-gate rejection for its deliberately short (~5 s)
-  synthetic fixture — sizing on real footage is verified by
-  `npm run capture:promo` and the `assessTargets` unit tests, not by `e2e`.
+  same logic is covered by injected-subprocess tests in the `scripts/` unit
+  suites; `e2e` only proves a real binary accepts the command and produces
+  probe-able output.
 
 `npm --silent test` (and `/skill:test --type full`) executes the **`unit` and
 `integration`** projects only, so it remains the audit-accepted full-suite
@@ -762,22 +758,13 @@ added by AH-0MUWTNPYJ0031FQE):
   (`import.meta.env.DEV`), so production builds ignore the URL parameter.
   Every scenario, its effect, preset and editorial categories are listed in
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#promo-scenarios-kind-promo).
-- **Promo package (`npm run capture:promo`):** compiles the captured pool into
-  a publishable package — a **45–60 s promo**, a **> 2 min showreel** and
-  **5 highlight clips** — by trimming, reordering, dissolving and muxing the
-  source WebMs with a full `ffmpeg` (VP9 + Opus). The cuts are chosen from the
-  recorded action-intensity series, so the package is reproducible from the
-  pool. Consecutive cuts **dissolve** into each other (400 ms picture, a slower
-  500 ms sound cross-fade, clamped to 25 % of the shorter neighbouring cut), so
-  the result reads as one edited piece rather than a splice of separate
-  recordings; the sound is compensated per junction so it never drifts behind
-  the picture, and single-cut highlights are untouched. Every output is
-  validated (decodable, 960×540, audio present, non-black, pace band, target
-  sizing) and the compile exits non-zero if the package does not meet the
-  documented targets. See
-  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#compiling-a-promo-package-npm-run-capturepromo)
-  and
-  [docs/dev/action-intensity.md §7.6](./docs/dev/action-intensity.md#76-pace-reference-band-for-the-compiled-promo).
+- **Video compilation (`npm run capture:promo`):** delegates to the `vidc`
+  CLI from the sibling `video_compiler` repository — it discovers the captured
+  clips, orders them naturally, probes them and renders one normalised MP4
+  with a single FFmpeg invocation, optionally in several platform formats.
+  AI_Hell keeps no FFmpeg logic, edit planning or output validation of its
+  own. See
+  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#compiling-captured-clips-with-vidc).
 - **Hangar War screens (`--hangar`):** `npm run capture -- --hangar` drives the
   normal menu (**Tab** from the focused **Play Game** control to the adjacent
   **Hangar War** button, then **Enter**), records the `HangarScene` screen for a

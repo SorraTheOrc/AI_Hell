@@ -41,7 +41,7 @@
  *   `boss`, `boss-four-hits`, `defeat` → the original jump/defeat shortcuts
  *
  * Every promo entry declares the editorial `categories` it evidences, so the
- * catalogue as a whole covers all four `EDITORIAL_CONFIG.categories`
+ * catalogue as a whole covers all four `EDITORIAL_CATEGORIES`
  * (`weapons`, `pickups`, `enemies`, `boss`). The catalogue invariants (count,
  * category coverage, hook-first ordering, registry ↔ resolver and registry ↔
  * promo-level parity) are pinned by `scripts/capture-scenarios.test.ts`.
