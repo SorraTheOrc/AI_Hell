@@ -671,42 +671,61 @@ leading a target; this section covers the avoidance half.
   same thing in both places. With prediction off — or a stationary/untracked
   hazard — both paths reduce bit-for-bit to the positional rule.
 - **Class-shaped sampling (AH-0MWM0C9F9006HNXV; per-class horizon
-  AH-0MWM0CB2Q003Y6AB).** A single fixed-velocity solve predicts a curving
-  hazard where it *was*. `predictMinimumSeparation`
-  (`src/ai/framework/hazardMotionModel.ts`) instead advances the hazard's
-  **movement-class trajectory** over its class-scaled threat window in a fixed
-  sample count (`ceil(horizon / 0.05 s)`, capped at 64 — no clock, no RNG) and
-  returns the minimum separation over the sampled path with its time. The
-  class models are documented approximations built from the fitted velocity
-  and curvature: `chaser` a turn-rate-bounded homing arc (observed curvature
-  when the tracker fitted one), `diver` a committed straight dive vector
-  (aimed at the ship before the commit cone), `patroller` a straight patrol
-  that runs straight at the ship once in commit range or inside the commit
-  cone, `formation` a linear drift that reflects at the arena edges, and
+  AH-0MWM0CB2Q003Y6AB; reconciled and shipped on by AH-0MWOKL79Z0051ZXO).** A
+  single fixed-velocity solve predicts a curving hazard where it *was*.
+  `predictMinimumSeparation` (`src/ai/framework/hazardMotionModel.ts`) instead
+  advances the hazard's **movement-class trajectory** over its class-scaled
+  threat window in a fixed sample count (`ceil(horizon / 0.05 s)`, capped at
+  64 — no clock, no RNG) and returns the minimum separation over the sampled
+  path with its time. The class models are documented approximations built from
+  the fitted velocity: `chaser` **pure pursuit** (each sample re-aims at the
+  ship's predicted position — the shipped ghost steering's own rule, so the
+  fitted curvature is not used as a turn rate), `diver` a committed straight
+  dive vector (aimed at the ship before the commit cone), `patroller` a straight
+  patrol that runs straight at the ship once in commit range or inside the
+  commit cone, `formation` a linear drift that reflects at the arena edges, and
   `roamer` linear extrapolation.
+  **One trajectory definition:** `advanceHazardMotion` is the single
+  implementation of each class path. The evaluation arena's opt-in
+  moving-hostile mode advances its live bodies through the *same* call, so a
+  harness profile cannot describe a trajectory the predictor does not (an
+  unknown class throws). `src/ai/eval/arena.test.ts` pins that seam and
+  `src/ai/eval/hazardMotionSweep.test.ts` is the evidence.
   **One predictive test, every consumer:** `evaluateDirection`'s hazard
   rejection, `hazardThreatensPlayer` and the `engage` kiting gate all call the
   sampler, so a change to the models, the horizon or the toggle lands in all
   three at once. The window is `hazardPredictionHorizon` scaled per movement
-  class (`hazardClassHorizonScale`: `chaser` 1.6, `diver` 1.4, `patroller`
-  1.25, `formation` 1.15) and lifted by a bounded boost from the fitted
-  curvature (≤ 1.5×, saturating at `HAZARD_CURVATURE_SATURATION_RATE`), so a
-  class that can still turn onto the ship is judged further ahead; `roamer`
-  stays at exactly the configured horizon. An exempt engagement target keeps
-  only the positional `dangerMargin` rule, never the predictive test. A hazard
-  that cannot reach `threatRadius` inside the horizon is dismissed by a
-  triangle-inequality **early-out** without sampling (its reported separation
-  is a proven lower bound), and a stationary hazard, a disabled
-  `hazardMotionModelEnabled` or an unknown class reproduces the previous
-  positional / fixed-velocity result exactly — on the configured horizon. **The sampler ships dark:**
-  `hazardMotionModelEnabled` defaults to `false`, because enabling it for the
-  shipped pilot makes a homing chaser predict a threat everywhere in the ghost
-  wave, so the pilot over-dodges and `promo-ghost-hunt` no longer clears the
-  wave inside its 45 s survival target. The wiring, the per-class unit tests and
-  the disabled-path parity all ship; the per-class horizon tuning that has to
-  prove an improvement is AH-0MWM0CB2Q003Y6AB, and AH-0MWM0C5BN003PCDT flips
-  the default on with that evidence. `hazardMotionModel.test.ts` pins the
-  default so it cannot be switched on silently.
+  class (`hazardClassHorizonScale`): only a class whose threat is a **discrete
+  commit later in the window** is judged further ahead (`diver` 1.4,
+  `patroller` 1.25), while a continuous closing geometry (`chaser`) or a
+  straight line (`roamer`, `formation`) stays at exactly the configured horizon.
+  The **drift** classes also earn a bounded boost from the fitted curvature
+  (≤ 1.5×, saturating at `HAZARD_CURVATURE_SATURATION_RATE`), because their
+  model is straight and an observed turn is new information; an aiming class
+  already models its own turn, so boosting its window would only lengthen the
+  predicted chase and make the pilot over-dodge. An exempt engagement target
+  keeps only the positional `dangerMargin` rule, never the predictive test. A
+  hazard that cannot reach `threatRadius` inside the horizon is dismissed by a
+  triangle-inequality **early-out** without sampling (its reported separation is
+  a proven lower bound); a class path that stays on its fitted velocity for the
+  whole window (`roamer`, or a `formation` that does not reach a bound) returns
+  the fixed-velocity solve **bit-for-bit**, which is what makes the sweep's
+  straight-line controls provably unaffected; and a stationary hazard, a
+  disabled `hazardMotionModelEnabled` or an unknown class reproduces the
+  previous positional / fixed-velocity result exactly — on the configured
+  horizon.
+  **It ships on** (`hazardMotionModelEnabled` defaults to `true`) on the seeded
+  per-class sweep evidence in `src/ai/eval/hazardMotionSweep.test.ts`: the
+  curving classes record strictly fewer avoidable enemy-body contacts on a
+  strict majority of a documented 12-seed list, the chaser arm never regresses,
+  and the `roamer`/`formation` controls never increase. Two earlier dark
+  defaults' causes were real model errors, both fixed in this item: the chaser's
+  constant-turn-rate arc (fitted from the last two position deltas) predicted a
+  threat on *every* escape bearing, so the pilot hovered beside a pursuer
+  instead of fleeing it; and the chaser's 1.6 horizon made the pilot kite
+  instead of fight in `promo-ghost-hunt`. `hazardMotionModel.test.ts` pins the
+  default (and `promo-ghost-hunt`'s 45 s survival target stays green with the
+  model on) so neither can regress silently.
 - **Live tuning (AC3).** `hazardPredictionEnabled` (toggle, default **on**)
   and `hazardPredictionHorizon` (slider, default **0.6 s**) live in
   `COMPETENT_BOT_TUNABLES`, are registered in `src/ai/tuningFields.ts` with

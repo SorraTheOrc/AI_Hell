@@ -29,12 +29,20 @@
  * deterministic 60 Hz proof in the epic's sweep feature (Feature 7) is what
  * validates them.
  *
- * - **`chaser`** — bounded homing arc. The velocity direction turns toward the
- *   ship's predicted position at no more than {@link HAZARD_CHASER_TURN_RATE}
- *   rad/s, unless the tracker fitted an observed turn rate (curvature), which
- *   is used instead (also bounded). *Approximation:* the real ghost/grunt
- *   steering has its own acceleration limits and target selection; the arc
- *   only bounds the turn rate toward the ship.
+ * - **`chaser`** — pure pursuit. Each sample re-aims the hazard's velocity at
+ *   the ship's predicted position and travels at its observed speed — the
+ *   shipped ghost steering's own rule (`steerToward` re-aims every frame). The
+ *   fitted curvature is deliberately **not** used as a turn rate
+ *   (AH-0MWOKL79Z0051ZXO): a chaser re-aims at its target every tick, so a
+ *   constant-turn-rate arc taken from the last two position deltas predicts an
+ *   orbit the hazard will never fly — and, once close, such an orbit reads as a
+ *   threat on *every* escape bearing, which makes the ship hover beside the
+ *   hazard instead of fleeing it (the chaser over-dodge this item fixes).
+ *   Curvature no longer lengthens the chaser's window either: the turn it
+ *   measured is the pursuit the model already flies. *Approximation:* the
+ *   pursuit target is the ship's constant-velocity predicted position, and the
+ *   real personalities' offset targets (a flanker aims beside the ship) are not
+ *   modelled.
  * - **`diver`** — committed dive vector. While the hazard's current heading is
  *   within ~60° of the bearing to the ship (`HAZARD_DIVE_COMMIT_DOT`) it is
  *   treated as committed and flies **straight** along its observed vector; a
@@ -58,17 +66,32 @@
  *
  * ## Per-class prediction horizon (AH-0MWM0CB2Q003Y6AB)
  *
- * A hazard that can still turn onto the ship needs a longer threat window than
- * one that can only keep going, so the sampled horizon is
- * `hazardPredictionHorizon` × {@link hazardHorizonScale} for the hazard's
- * movement class: `roamer` is exactly the configured horizon (the control),
- * and the curving/threatening classes get a longer one — `chaser` (1.6),
- * `diver` (1.4), `patroller` (1.25), `formation` (1.15) at the shipped
- * defaults. An observed fitted curvature lengthens the window further, bounded
- * at {@link HAZARD_CURVATURE_SATURATION_RATE} with at most
+ * A hazard whose threat is a **discrete commit later in the window** needs a
+ * longer threat window than one that can only keep going, so the sampled
+ * horizon is `hazardPredictionHorizon` × {@link hazardHorizonScale} for the
+ * hazard's movement class: `diver` (1.4) and `patroller` (1.25) at the shipped
+ * defaults see further ahead, while `chaser` (pure pursuit), `formation` (drift)
+ * and `roamer` (linear, the control) stay at exactly the configured horizon
+ * (AH-0MWOKL79Z0051ZXO — a longer chaser window only made the pilot kite a
+ * pursuer instead of fighting it). An observed fitted curvature lengthens the
+ * window further for the **drift** classes (their model is straight, so the
+ * turn is new information), bounded at
+ * {@link HAZARD_CURVATURE_SATURATION_RATE} with at most
  * {@link HAZARD_CURVATURE_HORIZON_BOOST} extra scale. {@link hazardHorizonFor}
  * is the single definition every consumer shares, so aiming, kiting and the
  * steering fan never disagree about how far ahead a class is judged.
+ *
+ * ## One trajectory definition, every consumer (AH-0MWOKL79Z0051ZXO)
+ *
+ * {@link advanceHazardMotion} is the **single** implementation of a class
+ * trajectory. The sampler below walks it over the prediction horizon, and the
+ * evaluation arena's opt-in moving-hostile mode
+ * (`src/ai/eval/arena.ts`) advances its live bodies with the very same call, so
+ * a harness profile can never describe a trajectory the predictor does not
+ * model: an unknown class **throws** rather than silently falling back. The
+ * sweep in `src/ai/eval/hazardMotionSweep.test.ts` therefore measures the
+ * predictor against the exact semantics it implements, and
+ * `hazardMotionModel.test.ts` pins that shared seam.
  *
  * ## One predictive test, every consumer
  *
@@ -140,14 +163,6 @@ export const HAZARD_MOTION_SAMPLE_STEP = 0.05;
 export const HAZARD_MOTION_MAX_SAMPLES = 64;
 
 /**
- * Maximum turn rate (rad/s, ≈ 137°/s) the `chaser` homing arc may apply. A
- * bound, not a tuned replica of ghost/grunt steering: it stops the model
- * snapping onto the ship instantly while still predicting a genuine curve
- * inside a sub-second horizon.
- */
-export const HAZARD_CHASER_TURN_RATE = 2.4;
-
-/**
  * Distance (px) inside which a `patroller` is predicted to leave its patrol
  * and run straight at the ship. Mirrors the shipped raider's `commitRange`
  * (320 in `src/data/enemy-configs.csv`); the snapshot does not carry the
@@ -164,9 +179,9 @@ export const HAZARD_DIVE_COMMIT_DOT = 0.5;
 /**
  * Fitted turn rate (rad/s, ≈69°/s) at which a hazard counts as **fully
  * curving** for the horizon scale: at or above it the curvature boost
- * ({@link HAZARD_CURVATURE_HORIZON_BOOST}) is applied in full. Chosen to sit
- * inside the chaser arc's own turn-rate bound, so a genuinely homing hazard
- * reaches it while a nearly straight one is barely boosted.
+ * ({@link HAZARD_CURVATURE_HORIZON_BOOST}) is applied in full. Chosen so a
+ * genuinely orbiting hazard reaches it while a nearly straight one is barely
+ * boosted.
  */
 export const HAZARD_CURVATURE_SATURATION_RATE = 1.2;
 
@@ -279,6 +294,13 @@ export function hazardHorizonScale(
 ): number {
   const base = isKnownMovementClass(movementClass) ? scale[movementClass] : 1;
   if (!Number.isFinite(base) || base <= 0) return 1;
+  // Only the **drift** classes earn the curvature boost: their model is a
+  // straight line, so an observed turn rate is information the model lacks.
+  // The aiming classes already turn the hazard onto the ship every sample, so
+  // the same observation is already modelled — boosting their window on top of
+  // it just predicts a longer chase and makes the ship over-dodge
+  // (AH-0MWOKL79Z0051ZXO).
+  if (claimsPursuit(movementClass)) return base;
   const curveRate = Number.isFinite(curvature) ? Math.abs(curvature ?? 0) : 0;
   const curve = Math.min(1, curveRate / HAZARD_CURVATURE_SATURATION_RATE);
   return base * (1 + HAZARD_CURVATURE_HORIZON_BOOST * curve);
@@ -338,16 +360,17 @@ export function closestApproachFromDelta(
   return { t, distance: Math.hypot(cx, cy) };
 }
 
-/** Clamps `value` to `[min, max]`. */
-function clamp(value: number, min: number, max: number): number {
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
-}
-
 /** Signed shortest angular difference in (−π, π] (shared torus folding). */
 function shortestAngle(radians: number): number {
   return wrappedAxisDelta(0, radians, TWO_PI);
+}
+
+/**
+ * Whether the class model re-aims the hazard onto the ship every sample (the
+ * aiming classes) rather than drifting on its fitted velocity.
+ */
+function claimsPursuit(value: string): boolean {
+  return value === 'chaser' || value === 'diver' || value === 'patroller';
 }
 
 /** Whether a runtime value is one of the five sampled movement classes. */
@@ -359,6 +382,36 @@ function isKnownMovementClass(value: string): value is EnemyMovementClass {
     value === 'formation' ||
     value === 'roamer'
   );
+}
+
+/**
+ * Whether a class's published trajectory stays exactly on the hazard's fitted
+ * velocity for `horizon` seconds — i.e. whether sampling it would reproduce the
+ * fixed-velocity solve (AH-0MWOKL79Z0051ZXO).
+ *
+ * Only the straight-line classes can be decided without sampling: `roamer` is
+ * a linear extrapolation by definition, and `formation` is linear until it
+ * meets an arena bound (the one thing the model adds). Everything else re-aims
+ * or commits, so it always samples.
+ */
+function classPathIsStraightOver(
+  movementClass: EnemyMovementClass,
+  hazard: BotHazardPoint,
+  horizon: number,
+  world: WrapWorld,
+): boolean {
+  if (movementClass === 'roamer') return true;
+  if (movementClass !== 'formation') return false;
+  const vx = hazard.vx ?? 0;
+  const vy = hazard.vy ?? 0;
+  const reflects = (position: number, velocity: number, size: number): boolean => {
+    if (!Number.isFinite(size) || size <= 0) return false;
+    const end = position + velocity * horizon;
+    // Already outside the bound (the step clamps it back) or crossing it.
+    if (position < 0 || position > size) return true;
+    return velocity > 0 ? end > size : velocity < 0 ? end < 0 : false;
+  };
+  return !reflects(hazard.x, vx, world.width) && !reflects(hazard.y, vy, world.height);
 }
 
 /** The disabled/unknown fallback: the pre-existing fixed-velocity solve. */
@@ -427,10 +480,21 @@ function advanceStraight(
   state.y += state.vy * dt;
 }
 
-/** `chaser`: bounded homing arc toward the ship / observed curvature. */
+/**
+ * `chaser`: pure pursuit of the ship's predicted position.
+ *
+ * One `steerToward` step — exactly what the shipped ghost steering does every
+ * frame: point at the target and travel. Neither the fitted curvature nor a
+ * turn-rate bound is an input (AH-0MWOKL79Z0051ZXO). A pursuing hazard re-aims
+ * at its target every tick, so the arc it flew last says nothing about the next
+ * one; assuming it *keeps* turning at the measured rate predicts an orbit it
+ * will never fly — and once close, that orbit reads as a threat on every escape
+ * bearing, which is what made the ship hover beside a chaser instead of fleeing
+ * it (the over-dodge this item fixes). Pure pursuit keeps the prediction
+ * sensitive to the ship's escape bearing and matches the shipped behaviour.
+ */
 function stepChaser(
   state: HazardMotionScratch,
-  curvature: number,
   px: number,
   py: number,
   dt: number,
@@ -438,21 +502,12 @@ function stepChaser(
 ): void {
   const speed = Math.hypot(state.vx, state.vy);
   if (speed < EPS) return;
-  const heading = Math.atan2(state.vy, state.vx);
-  let turnRate: number;
-  if (Math.abs(curvature) > EPS) {
-    turnRate = clamp(curvature, -HAZARD_CHASER_TURN_RATE, HAZARD_CHASER_TURN_RATE);
-  } else {
-    // Cold-start chaser (no fitted curvature): home on the ship's predicted
-    // position, bounded by the same turn-rate limit.
-    const desired = bearingAngle(state.x, state.y, px, py, world);
-    turnRate = clamp(
-      shortestAngle(desired - heading) / dt,
-      -HAZARD_CHASER_TURN_RATE,
-      HAZARD_CHASER_TURN_RATE,
-    );
-  }
-  advanceStraight(state, speed, heading + turnRate * dt, dt);
+  advanceStraight(
+    state,
+    speed,
+    bearingAngle(state.x, state.y, px, py, world),
+    dt,
+  );
 }
 
 /** `diver`: committed straight dive vector, else the dive vector at the ship. */
@@ -522,29 +577,37 @@ function stepFormation(
 }
 
 /**
- * Advances one sample of the hazard's class model in place.
+ * Advances one sample of a hazard's class trajectory in place — the **single**
+ * definition of what each movement class does (AH-0MWOKL79Z0051ZXO).
  *
- * `px`/`py` are the ship's predicted position at the sample time and `dt` the
- * fixed sample interval (`> 0`).
+ * `state` is the hazard's position and velocity (px, px/s), `targetX`/`targetY`
+ * the ship's position at that sample time (the pursuit/commit target) and `dt`
+ * the step (`> 0`). The sampler below walks this function over the prediction
+ * horizon; the evaluation arena's opt-in moving-hostile mode advances its live
+ * bodies with the same call, so a harness profile and the predictor can never
+ * disagree about a class's trajectory.
+ *
+ * @throws TypeError for a movement class this model does not know — a profile
+ *   the predictor cannot describe must fail loudly, never silently fall back
+ *   (see `hazardMotionSweep.test.ts`).
  */
-function stepHazard(
+export function advanceHazardMotion(
   movementClass: EnemyMovementClass,
   state: HazardMotionScratch,
-  curvature: number,
-  px: number,
-  py: number,
+  targetX: number,
+  targetY: number,
   dt: number,
   world: WrapWorld,
 ): void {
   switch (movementClass) {
     case 'chaser':
-      stepChaser(state, curvature, px, py, dt, world);
+      stepChaser(state, targetX, targetY, dt, world);
       return;
     case 'diver':
-      stepDiver(state, px, py, dt, world);
+      stepDiver(state, targetX, targetY, dt, world);
       return;
     case 'patroller':
-      stepPatroller(state, px, py, dt, world);
+      stepPatroller(state, targetX, targetY, dt, world);
       return;
     case 'formation':
       stepFormation(state, dt, world);
@@ -553,6 +616,10 @@ function stepHazard(
       state.x += state.vx * dt;
       state.y += state.vy * dt;
       return;
+    default:
+      throw new TypeError(
+        `advanceHazardMotion: unsupported movement class '${String(movementClass)}'`,
+      );
   }
 }
 
@@ -561,12 +628,15 @@ function stepHazard(
  * prediction horizon, following the hazard's movement-class trajectory
  * (AH-0MWM0C9F9006HNXV; per-class horizon AH-0MWM0CB2Q003Y6AB).
  *
- * - With the motion model enabled (`tunables.hazardMotionModelEnabled`; the
- *   shipped default is **off** pending the horizon calibration in
- *   AH-0MWM0CB2Q003Y6AB) the class model is sampled at a fixed step count
- *   derived from {@link hazardHorizonFor} — `hazardPredictionHorizon` scaled by
- *   the hazard's movement class and observed curvature — and the minimum over
- *   the sampled path is returned with its time.
+ * - With the motion model enabled (`tunables.hazardMotionModelEnabled`; shipped
+ *   **on** since AH-0MWOKL79Z0051ZXO on the per-class sweep evidence) the class
+ *   model is sampled at a fixed step count derived from
+ *   {@link hazardHorizonFor} — `hazardPredictionHorizon` scaled by the hazard's
+ *   movement class (and, for the drift classes, its observed curvature) — and
+ *   the minimum over the sampled path is returned with its time. A class path
+ *   that stays on the hazard's fitted velocity for the whole window (a
+ *   `roamer`, or a `formation` that does not reach a bound) is the
+ *   fixed-velocity solve, and returns it exactly.
  * - A hazard far enough that it cannot reach `tunables.threatRadius` inside the
  *   (class-scaled) horizon is dismissed without sampling
  *   (`mode: 'early-out'`).
@@ -627,6 +697,17 @@ export function predictMinimumSeparation(
   // longer for a class that can still turn onto the ship.
   const horizon = hazardHorizonFor(hazard, tunables);
 
+  // A class path that stays on its fitted velocity over the whole window *is*
+  // the fixed-velocity closest-approach solve, so return that solve exactly
+  // instead of a 0.05 s sample of it (AH-0MWOKL79Z0051ZXO). The straight-line
+  // classes (`roamer` always, `formation` until it reflects at a bound) must be
+  // **bit-identical** to the disabled model: otherwise sampling granularity and
+  // the coarse early-out bound alone flip threat verdicts near the threshold,
+  // and the sweep's control arm reports noise as a regression.
+  if (classPathIsStraightOver(hazard.movementClass, hazard, horizon, world)) {
+    return fixedVelocityPrediction(player, hazard, horizon, world);
+  }
+
   // Cheap wide-separation early-out: neither body can travel more than
   // speed × horizon along any class path, so the separation can never drop
   // below this lower bound. Dismiss without sampling a single step.
@@ -637,14 +718,12 @@ export function predictMinimumSeparation(
   if (horizon <= 0) {
     return { separation: currentSeparation, time: 0, mode: 'sampled' };
   }
-
   // Fixed sample count derived from the horizon — deterministic and bounded.
   const steps = Math.min(
     HAZARD_MOTION_MAX_SAMPLES,
     Math.max(1, Math.ceil(horizon / HAZARD_MOTION_SAMPLE_STEP)),
   );
   const dt = horizon / steps;
-  const curvature = hazard.curvature ?? 0;
   // Reuse the caller's per-tick record when supplied: the fan samples every
   // hazard on every bearing, so a fresh object per call is pure churn.
   const state: HazardMotionScratch = options?.scratch ?? {
@@ -664,7 +743,14 @@ export function predictMinimumSeparation(
     const time = dt * i;
     const px = player.x + player.vx * time;
     const py = player.y + player.vy * time;
-    stepHazard(hazard.movementClass, state, curvature, px, py, dt, world);
+    advanceHazardMotion(
+      hazard.movementClass,
+      state,
+      px,
+      py,
+      dt,
+      world,
+    );
     const separation = separationBetween(state.x, state.y, px, py, world);
     if (separation < best) {
       best = separation;

@@ -915,7 +915,10 @@ describe('one shared predictive test in every hazard consumer (AH-0MWM0CB2Q003Y6
   const CHASER_ID = 7;
   const TARGET_ID = 8;
   const CHASER = { x: 600, y: 150 };
-  const CHASER_MOTION = { x: 0, y: 150 };
+  // Heading *toward* the ship's flight line: a pure-pursuit model turns onto the
+  // ship and closes well inside the fixed solve's straight-line miss, which is
+  // the difference these consumer tests separate on.
+  const CHASER_MOTION = { x: -150, y: 0 };
 
   /** The same hazard point the world derives from the chaser fixture. */
   const chaserPoint: BotHazardPoint = {

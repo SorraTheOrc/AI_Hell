@@ -51,9 +51,10 @@
  * (`src/ai/framework/hazardMotionModel.ts`) — there is no second
  * closest-approach copy in the decision path. With `hazardMotionModelEnabled`
  * on, that one test follows each hazard's movement-class trajectory over the
- * class-scaled horizon (`hazardClassHorizonScale`): a `roamer` over the
- * configured `hazardPredictionHorizon`, the curving/threatening classes over a
- * longer window. With the model off it reproduces the previous fixed-velocity
+ * class-scaled horizon (`hazardClassHorizonScale`): the classes whose threat is
+ * a discrete commit later in the window (`diver`, `patroller`) over a longer
+ * window, everything else — `chaser`, `roamer`, `formation` — over exactly the
+ * configured `hazardPredictionHorizon`. With the model off it reproduces the previous fixed-velocity
  * solve (and its configured horizon) bit-for-bit, and a hazard on the
  * {@link HazardExemption} list (the engagement target) keeps only the
  * positional rule.
@@ -235,10 +236,10 @@ export function interceptPoint(
  * come within `threatRadius` inside the hazard's threat window. Prediction runs
  * through {@link predictMinimumSeparation}, so with the motion model enabled
  * the hazard is followed along its **movement-class trajectory** (a chaser's
- * arc, a diver's dive, a patroller's attack run, a formation's edge reversal)
- * over the **class-scaled horizon** (`hazardClassHorizonScale`; `roamer` stays
- * at the configured `hazardPredictionHorizon`) and the minimum separation over
- * that sampled path decides the threat. With the motion model disabled or the
+ * pursuit, a diver's dive, a patroller's attack run, a formation's edge
+ * reversal) over the **class-scaled horizon** (`hazardClassHorizonScale`; the
+ * non-committing classes stay at the configured `hazardPredictionHorizon`) and
+ * the minimum separation over that sampled path decides the threat. With the motion model disabled or the
  * class unknown the solve is the previous fixed-velocity closest approach on
  * the configured horizon, bit-for-bit. Otherwise (prediction off, or the
  * hazard is stationary/untracked) it is a threat when it is inside

@@ -413,6 +413,19 @@ export interface ArenaConfig {
    * default path stays byte-identical to a pre-change baseline.
    */
   readonly movingHostiles?: boolean | ArenaMovingHostiles;
+  /**
+   * Explicit archetype list for the seeded skirmish's hostile reservoir
+   * (AH-0MWOKL79Z0051ZXO). Absent → the config-derived list
+   * ({@link ArenaConfig.balance} / `loadAllEnemyConfigs`, minus the
+   * spawner-delivered archetypes), which is what every existing caller gets.
+   *
+   * The moving-hostile sweep uses it to field **one movement class at a time**
+   * (`['ghost-chase']`, `['diver']`, …), so a per-class comparison is not
+   * diluted by unrelated bodies. It only chooses which archetypes the seeded
+   * reservoir spawns — their stats still come from the config store, exactly
+   * as the harness always resolves them.
+   */
+  readonly hostileArchetypes?: readonly string[];
 }
 
 /** The shaped result of one headless arena run. */
@@ -432,6 +445,16 @@ export interface ArenaRunResult {
    * separate again. `0` when the mode is off.
    */
   readonly enemyBodyContacts: number;
+  /**
+   * The subset of {@link ArenaRunResult.enemyBodyContacts} the ship could have
+   * avoided (AH-0MWOKL79Z0051ZXO): contacts for which, at some decision tick in
+   * the 0.25 s before the overlap, a 16-direction escape fan at the ship's live
+   * max speed would have kept the hull clear of the body for that whole window
+   * against the body's then-velocity. A contact no reaction could have
+   * prevented counts as unavoided but **not** avoidable, so the metric measures
+   * dodging rather than luck. `0` when the mode is off.
+   */
+  readonly avoidableEnemyBodyContacts: number;
 }
 
 /** Default spawn counts, sized for a representative single-level skirmish. */

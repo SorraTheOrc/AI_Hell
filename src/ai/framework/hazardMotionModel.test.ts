@@ -17,7 +17,6 @@ import { describe, expect, it } from 'vitest';
 import type { EnemyMovementClass } from '../../core/configTypes';
 import type { BotHazardPoint } from './worldModel';
 import {
-  HAZARD_CHASER_TURN_RATE,
   HAZARD_CURVATURE_HORIZON_BOOST,
   HAZARD_CURVATURE_SATURATION_RATE,
   closestApproachFromDelta,
@@ -70,82 +69,113 @@ function fixedControl(h: BotHazardPoint) {
 }
 
 describe('roamer — linear extrapolation', () => {
-  it('finds the crossing minimum along the straight sampled path', () => {
+  it('returns the fixed-velocity solve bit-for-bit (the straight-line control)', () => {
     // Hazard 100 px left of the ship, closing at 200 px/s: it reaches the ship
-    // at 0.5 s, inside the 0.6 s horizon. A straight-line extrapolation must
-    // find that zero-separation crossing.
+    // at 0.5 s, inside the 0.6 s horizon. A straight class path *is* the
+    // fixed-velocity closest approach, so the sampler returns that solve
+    // exactly (AH-0MWOKL79Z0051ZXO) — no 0.05 s sampling granularity, which
+    // keeps the sweep's `roamer` control arm bit-identical to the disabled
+    // model instead of reporting noise as a regression.
     const player = { x: 400, y: 100, vx: 0, vy: 0 };
-    const prediction = predictMinimumSeparation(
-      player,
-      hazard(300, 100, 200, 0, 'roamer'),
-      T,
-      WORLD,
+    const roamer = hazard(300, 100, 200, 0, 'roamer');
+    const prediction = predictMinimumSeparation(player, roamer, T, WORLD);
+    expect(prediction.mode).toBe('fixed-velocity');
+    expect(prediction).toEqual(
+      predictMinimumSeparation(
+        player,
+        roamer,
+        resolveCompetentTunables({ hazardMotionModelEnabled: false }),
+        WORLD,
+      ),
     );
-    expect(prediction.mode).toBe('sampled');
     expect(prediction.separation).toBeCloseTo(0, 6);
     expect(prediction.time).toBeCloseTo(0.5, 6);
   });
+
+  it('keeps a formation drift on the same exact solve until it reflects', () => {
+    // A formation drifting inboard never meets a bound inside the window, so its
+    // class path is straight too and it must be bit-identical to the control.
+    const inboard = hazard(200, 100, 40, 0, 'formation');
+    const player = { x: 400, y: 100, vx: 0, vy: 0 };
+    expect(predictMinimumSeparation(player, inboard, T, WORLD)).toEqual(
+      predictMinimumSeparation(
+        player,
+        inboard,
+        resolveCompetentTunables({ hazardMotionModelEnabled: false }),
+        WORLD,
+      ),
+    );
+  });
 });
 
-describe('chaser — bounded homing arc', () => {
+describe('chaser — pure pursuit', () => {
   // The ship is directly below a hazard whose velocity is perpendicular to the
-  // bearing. A fixed-velocity solve keeps the 100 px gap forever; a homing arc
-  // turns toward the ship and closes it.
+  // bearing. A fixed-velocity solve keeps the 100 px gap forever; a pursuing
+  // chaser re-aims at the ship every sample and closes it.
   const chaser = hazard(480, 170, 100, 0, 'chaser');
 
   it('predicts a closer approach than the fixed-velocity solve', () => {
-    const arc = predictMinimumSeparation(STILL_PLAYER, chaser, T, WORLD);
+    const pursuit = predictMinimumSeparation(STILL_PLAYER, chaser, T, WORLD);
     const straight = predictMinimumSeparation(
       STILL_PLAYER,
       chaser,
       resolveCompetentTunables({ hazardMotionModelEnabled: false }),
       WORLD,
     );
-    expect(arc.mode).toBe('sampled');
+    expect(pursuit.mode).toBe('sampled');
     expect(straight.mode).toBe('fixed-velocity');
-    expect(arc.separation).toBeLessThan(straight.separation);
+    expect(pursuit.separation).toBeLessThan(straight.separation);
     expect(straight.separation).toBeCloseTo(100, 6); // perpendicular pass
-    expect(arc.time).toBeGreaterThan(0);
+    expect(pursuit.time).toBeGreaterThan(0);
   });
 
-  it('uses a fitted curvature as the turn rate, bounded by the class limit', () => {
-    // A fitted turn toward the ship is *slower* than the cold-start homing
-    // clamp (the homing rate would be HAZARD_CHASER_TURN_RATE), so the
-    // observed-curvature arc must close less than the homing arc. The observed
-    // curvature also lengthens the window (HAZARD_CURVATURE_HORIZON_BOOST), so
-    // the homing arm is given the same window to isolate the turn rate.
-    const observed = predictMinimumSeparation(
+  it('ignores the fitted curvature: the next step is a re-aim, not a continued arc', () => {
+    // AH-0MWOKL79Z0051ZXO: a pursuing hazard re-aims at its target every tick
+    // (the shipped `steerToward`), so the last arc it flew does not predict the
+    // next one. An aiming class also gets no curvature horizon boost, so a
+    // large fitted curvature changes **nothing** about its prediction — it is
+    // the same pursuit, never a constant-rate spiral.
+    const homing = predictMinimumSeparation(STILL_PLAYER, chaser, T, WORLD);
+    const orbit = predictMinimumSeparation(
       STILL_PLAYER,
-      hazard(480, 170, 100, 0, 'chaser', 2),
+      hazard(480, 170, 100, 0, 'chaser', 3),
       T,
       WORLD,
     );
-    const homing = predictMinimumSeparation(
-      STILL_PLAYER,
-      hazard(480, 170, 100, 0, 'chaser'),
-      resolveCompetentTunables({
-        hazardMotionModelEnabled: true,
-        hazardPredictionHorizon:
-          T.hazardPredictionHorizon * (1 + HAZARD_CURVATURE_HORIZON_BOOST),
-      }),
-      WORLD,
-    );
-    expect(observed.separation).toBeGreaterThan(homing.separation);
-    // A nonsensical fitted curvature is clamped to the class turn-rate bound,
-    // so it predicts exactly the same arc as the bound itself.
-    const extreme = predictMinimumSeparation(
-      STILL_PLAYER,
-      hazard(480, 170, 100, 0, 'chaser', 100),
+    expect(orbit).toEqual(homing);
+    expect(homing.mode).toBe('sampled');
+  });
+
+  it('is sensitive to the escape bearing: fleeing predicts a growing gap', () => {
+    // The property the steering fan needs (and the reason the constant-rate arc
+    // over-dodged): a chaser 120 px away closing at 100 px/s is predicted to
+    // reach a stationary ship, but a ship fleeing at 175 px/s opens the gap on
+    // the very same hazard. Before the fix both bearings read as an identical
+    // threat, so the fan had no direction to prefer.
+    const chasing = hazard(600, 270, -100, 0, 'chaser');
+    const still = predictMinimumSeparation(STILL_PLAYER, chasing, T, WORLD);
+    // Fleeing is *away* from the hazard, which closes from the right: the ship
+    // moves left. Driving right closes on it instead.
+    const flee = predictMinimumSeparation(
+      { x: 480, y: 270, vx: -175, vy: 0 },
+      chasing,
       T,
       WORLD,
     );
-    const bounded = predictMinimumSeparation(
-      STILL_PLAYER,
-      hazard(480, 170, 100, 0, 'chaser', HAZARD_CHASER_TURN_RATE),
+    const approach = predictMinimumSeparation(
+      { x: 480, y: 270, vx: 175, vy: 0 },
+      chasing,
       T,
       WORLD,
     );
-    expect(extreme).toEqual(bounded);
+    // Closing at 100 px/s from 120 px away over the configured 0.6 s chaser
+    // window, the pursuit is left 60 px out against a still ship (pure pursuit
+    // of a stationary target *is* the straight solve), while fleeing opens the
+    // gap instead — the bearing sensitivity the steering fan needs.
+    expect(still.separation).toBeCloseTo(60, 6);
+    expect(flee.separation).toBeGreaterThan(100);
+    expect(approach.separation).toBeLessThan(still.separation);
+    expect(flee.separation).toBeGreaterThan(approach.separation);
   });
 });
 
@@ -330,8 +360,10 @@ describe('fallback parity', () => {
 describe('wide-separation early-out', () => {
   it('dismisses a hazard that cannot reach threatRadius without sampling', () => {
     // 432 px away closing at 10 px/s over 0.6 s: the separation can fall no
-    // lower than ~426 px, so the threat question is settled immediately.
-    const far = hazard(100, 100, 10, 0, 'roamer');
+    // lower than ~426 px, so the threat question is settled immediately. (A
+    // straight-line class returns the exact fixed-velocity solve instead — see
+    // the roamer tests — so the early-out is exercised on a curving class.)
+    const far = hazard(100, 100, 10, 0, 'chaser');
     const prediction = predictMinimumSeparation(STILL_PLAYER, far, T, WORLD);
     expect(prediction.mode).toBe('early-out');
     expect(prediction.time).toBe(0);
@@ -339,7 +371,7 @@ describe('wide-separation early-out', () => {
     // A hazard inside the reachable band is sampled instead.
     const near = predictMinimumSeparation(
       STILL_PLAYER,
-      hazard(520, 120, -50, 200, 'roamer'),
+      hazard(520, 120, -50, 200, 'chaser'),
       T,
       WORLD,
     );
@@ -347,40 +379,42 @@ describe('wide-separation early-out', () => {
   });
 });
 
-describe('shipped default is dark', () => {
-  it('keeps hazardMotionModelEnabled off until AH-0MWM0C5BN003PCDT flips it on', () => {
-    // Product decision (AH-0MWM0C9F9006HNXV): the class-shaped sampler ships
-    // implemented, wired into `hazardThreatensPlayer` and unit-tested, but
-    // **off**. Turning it on makes a homing chaser predict a threat everywhere
-    // in the ghost wave, the pilot over-dodges and `promo-ghost-hunt` stops
-    // clearing the wave inside the 45 s survival target. The per-class horizon
-    // tuning that has to prove an improvement is AH-0MWM0CB2Q003Y6AB; the
-    // default is flipped on by AH-0MWM0C5BN003PCDT once that evidence exists.
-    // Update this pin only with that evidence — never to make a test pass.
-    expect(COMPETENT_BOT_TUNABLES.hazardMotionModelEnabled).toBe(false);
-    expect(resolveCompetentTunables().hazardMotionModelEnabled).toBe(false);
+describe('shipped default is on, with the sweep evidence', () => {
+  it('ships hazardMotionModelEnabled on (AH-0MWOKL79Z0051ZXO)', () => {
+    // Flipped on by AH-0MWOKL79Z0051ZXO on the seeded per-class sweep evidence
+    // in `src/ai/eval/hazardMotionSweep.test.ts`: the curving classes record
+    // strictly fewer avoidable enemy-body contacts on a strict majority of the
+    // documented seed list, the chaser arm never regresses, and the
+    // straight-line `roamer`/`formation` controls are provably unaffected (a
+    // straight class path returns the fixed-velocity solve bit-for-bit). The
+    // earlier dark default (AH-0MWM0C9F9006HNXV) existed only because the chaser
+    // model — a constant-turn-rate arc fitted from the last two position deltas
+    // — predicted a threat on every escape bearing and made the pilot over-dodge
+    // a pursuer; the model is now pure pursuit.
+    //
+    // Change this pin only with fresh sweep evidence — never to make a test pass.
+    expect(COMPETENT_BOT_TUNABLES.hazardMotionModelEnabled).toBe(true);
+    expect(resolveCompetentTunables().hazardMotionModelEnabled).toBe(true);
   });
 
-  it('predicts the fixed-velocity solve and threat rule under the shipped defaults', () => {
-    // The dark default is behaviour-parity with an explicitly disabled model:
-    // same separation, same time, same threat verdict for a curving chaser.
+  it('explicitly disabling it reproduces the pre-change solve bit-for-bit', () => {
+    // The control arm must stay exactly the old behaviour: same separation, same
+    // time, same threat verdict as the pre-change fixed-velocity solve.
     const chaser = hazard(480, 170, 100, 0, 'chaser');
     const disabled = resolveCompetentTunables({
       hazardMotionModelEnabled: false,
     });
-    const shipped = predictMinimumSeparation(
-      STILL_PLAYER,
-      chaser,
-      COMPETENT_BOT_TUNABLES,
-      WORLD,
+    const off = predictMinimumSeparation(STILL_PLAYER, chaser, disabled, WORLD);
+    expect(off.mode).toBe('fixed-velocity');
+    expect(off.mode).not.toBe(
+      predictMinimumSeparation(STILL_PLAYER, chaser, COMPETENT_BOT_TUNABLES, WORLD)
+        .mode,
     );
-    expect(shipped.mode).toBe('fixed-velocity');
-    expect(shipped).toEqual(
-      predictMinimumSeparation(STILL_PLAYER, chaser, disabled, WORLD),
-    );
+    // ...and the two arms genuinely differ for a curving hazard, otherwise the
+    // sweep compares a model with itself.
     expect(
-      hazardThreatensPlayer(STILL_PLAYER, chaser, COMPETENT_BOT_TUNABLES),
-    ).toBe(hazardThreatensPlayer(STILL_PLAYER, chaser, disabled));
+      hazardThreatensPlayer(STILL_PLAYER, chaser, disabled),
+    ).not.toBe(hazardThreatensPlayer(STILL_PLAYER, chaser, T));
   });
 });
 
@@ -423,15 +457,19 @@ describe('hazardThreatensPlayer consumes the sampler', () => {
 describe('per-class prediction horizon (AH-0MWM0CB2Q003Y6AB)', () => {
   it('publishes a documented horizon scale per movement class', () => {
     const scale = COMPETENT_BOT_TUNABLES.hazardClassHorizonScale;
-    // `roamer` is the control: the configured horizon, unchanged.
+    // The classes whose threat is a *continuous* closing geometry (`chaser`) or
+    // a straight line (`roamer`, `formation`) keep exactly the configured
+    // horizon (AH-0MWOKL79Z0051ZXO): a longer chaser window only widens the
+    // "threatened" set and makes the pilot over-dodge a pursuer
+    // (`promo-ghost-hunt`), while a drift cannot turn onto the ship at all.
     expect(scale.roamer).toBe(1);
-    // The curving/threatening classes get progressively longer windows, in the
-    // documented order (a turning chaser can still reach the ship after the
-    // straight-line control has already missed).
-    expect(scale.chaser).toBeGreaterThan(scale.diver);
+    expect(scale.formation).toBe(1);
+    expect(scale.chaser).toBe(1);
+    // The classes whose threat is a **discrete commit later in the window**
+    // (`diver`, `patroller`) are judged further ahead, in the documented order:
+    // a dive arrives later than a patrol that breaks into an attack run.
     expect(scale.diver).toBeGreaterThan(scale.patroller);
-    expect(scale.patroller).toBeGreaterThan(scale.formation);
-    expect(scale.formation).toBeGreaterThan(scale.roamer);
+    expect(scale.patroller).toBeGreaterThan(scale.roamer);
   });
 
   it('leaves roamer at the configured horizon and lengthens the curving classes', () => {
@@ -441,27 +479,39 @@ describe('per-class prediction horizon (AH-0MWM0CB2Q003Y6AB)', () => {
     expect(
       hazardHorizonFor({ movementClass: 'chaser', curvature: 0 }, T),
     ).toBeCloseTo(T.hazardPredictionHorizon * T.hazardClassHorizonScale.chaser, 10);
-    // A fitted curvature lengthens the window further, bounded at saturation.
+    // A fitted curvature lengthens the window of a **drift** class further
+    // (its model is straight, so the observed turn is new information), bounded
+    // at saturation.
+    expect(
+      hazardHorizonFor(
+        { movementClass: 'formation', curvature: HAZARD_CURVATURE_SATURATION_RATE },
+        T,
+      ),
+    ).toBeCloseTo(
+      T.hazardPredictionHorizon *
+        (1 + HAZARD_CURVATURE_HORIZON_BOOST),
+      10,
+    );
+    expect(
+      hazardHorizonFor(
+        { movementClass: 'formation', curvature: HAZARD_CURVATURE_SATURATION_RATE * 10 },
+        T,
+      ),
+    ).toBeCloseTo(
+      T.hazardPredictionHorizon *
+        (1 + HAZARD_CURVATURE_HORIZON_BOOST),
+      10,
+    );
+    // An **aiming** class does not: it already turns onto the ship every sample,
+    // so boosting its window on a curvature it flies anyway only lengthens the
+    // predicted chase and makes the ship over-dodge (AH-0MWOKL79Z0051ZXO).
     expect(
       hazardHorizonFor(
         { movementClass: 'chaser', curvature: HAZARD_CURVATURE_SATURATION_RATE },
         T,
       ),
     ).toBeCloseTo(
-      T.hazardPredictionHorizon *
-        T.hazardClassHorizonScale.chaser *
-        (1 + HAZARD_CURVATURE_HORIZON_BOOST),
-      10,
-    );
-    expect(
-      hazardHorizonFor(
-        { movementClass: 'chaser', curvature: HAZARD_CURVATURE_SATURATION_RATE * 10 },
-        T,
-      ),
-    ).toBeCloseTo(
-      T.hazardPredictionHorizon *
-        T.hazardClassHorizonScale.chaser *
-        (1 + HAZARD_CURVATURE_HORIZON_BOOST),
+      T.hazardPredictionHorizon * T.hazardClassHorizonScale.chaser,
       10,
     );
   });
@@ -478,10 +528,10 @@ describe('per-class prediction horizon (AH-0MWM0CB2Q003Y6AB)', () => {
     ).toBe(T.hazardPredictionHorizon);
   });
 
-  it('lengthens the threat window for a closing chaser but not for a roamer', () => {
+  it('lengthens the threat window for a committing patroller but not for a roamer', () => {
     // A hazard 140 px above the ship closing at 120 px/s reaches contact after
     // 1.17 s. The configured 0.6 s window leaves it ~68 px away (outside
-    // threatRadius 55); the chaser's longer window sees the contact. The same
+    // threatRadius 55); the patroller's longer window sees the contact. The same
     // straight-line geometry under `roamer` keeps the configured window.
     const closing = (movementClass: EnemyMovementClass): BotHazardPoint => ({
       x: 480,
@@ -491,7 +541,7 @@ describe('per-class prediction horizon (AH-0MWM0CB2Q003Y6AB)', () => {
       movementClass,
       curvature: 0,
     });
-    expect(hazardThreatensPlayer(STILL_PLAYER, closing('chaser'), T)).toBe(true);
+    expect(hazardThreatensPlayer(STILL_PLAYER, closing('patroller'), T)).toBe(true);
     expect(hazardThreatensPlayer(STILL_PLAYER, closing('roamer'), T)).toBe(false);
     // The scale is what lengthens the window: pinning it to 1 removes the threat.
     const unscaled = resolveCompetentTunables({
@@ -504,7 +554,7 @@ describe('per-class prediction horizon (AH-0MWM0CB2Q003Y6AB)', () => {
         roamer: 1,
       },
     });
-    expect(hazardThreatensPlayer(STILL_PLAYER, closing('chaser'), unscaled)).toBe(
+    expect(hazardThreatensPlayer(STILL_PLAYER, closing('patroller'), unscaled)).toBe(
       false,
     );
   });

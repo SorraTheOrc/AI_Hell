@@ -33,33 +33,41 @@ import type { BotWorldTunables } from '../worldModel';
  * Per-movement-class multiplier applied to `hazardPredictionHorizon` by the
  * class-shaped sampler (AH-0MWM0CB2Q003Y6AB).
  *
- * A hazard that can still turn onto the ship needs a longer threat window than
- * one that can only keep going, so the curving/threatening classes get a
- * window longer than the configured horizon while `roamer` — the straight-line
- * control — is left at exactly `hazardPredictionHorizon`. The scale is only
- * applied when `hazardMotionModelEnabled` is on; the disabled path always uses
- * the configured horizon (bit-for-bit the pre-change solve).
+ * A hazard whose threat is a **discrete event later in the window** — a diver
+ * committing to its dive, a patroller switching from patrol to an attack run —
+ * needs a longer threat window than the configured horizon, otherwise the model
+ * never sees the event it exists to predict. The classes whose threat is a
+ * *continuous* closing geometry (`chaser`) or a straight line (`roamer`,
+ * `formation`) keep exactly `hazardPredictionHorizon`. The scale is only applied
+ * when `hazardMotionModelEnabled` is on; the disabled path always uses the
+ * configured horizon (bit-for-bit the pre-change solve).
  *
  * Each default is a deliberate choice, documented on
  * {@link COMPETENT_BOT_TUNABLES}:
  *
- * - `chaser` (1.6) — homes with bounded steering, so it can reach the ship
- *   after the straight-line control has already missed;
+ * - `chaser` (1.0) — pure pursuit: the pursuit geometry is fully visible inside
+ *   the configured horizon, and a longer window only widens the "threatened"
+ *   set (the chaser will still be behind you however you turn), which makes the
+ *   pilot kite instead of fight — the `promo-ghost-hunt` over-dodge this value
+ *   replays (AH-0MWOKL79Z0051ZXO);
  * - `diver` (1.4) — commits to a straight dive at the ship, arriving later than
  *   a crossing hazard;
  * - `patroller` (1.25) — straight patrol, then a straight attack run;
- * - `formation` (1.15) — linear drift with an arena-edge reversal, so it can
- *   re-approach after reflecting;
+ * - `formation` (1.0) — linear drift with an arena-edge reversal: it cannot
+ *   turn onto the ship, so it gets the configured horizon. (The earlier 1.15
+ *   encoded the arena harness's old *swaying* formation profile, which swung
+ *   back toward the ship; AH-0MWOKL79Z0051ZXO reconciled the harness with this
+ *   model, so the re-approach rationale no longer applies.)
  * - `roamer` (1.0) — linear extrapolation, the configured horizon unchanged.
  */
 export interface HazardClassHorizonScale {
-  /** Horizon multiplier for `chaser` hazards (default `1.6`). */
+  /** Horizon multiplier for `chaser` hazards (default `1`, the configured horizon). */
   readonly chaser: number;
   /** Horizon multiplier for `diver` hazards (default `1.4`). */
   readonly diver: number;
   /** Horizon multiplier for `patroller` hazards (default `1.25`). */
   readonly patroller: number;
-  /** Horizon multiplier for `formation` hazards (default `1.15`). */
+  /** Horizon multiplier for `formation` hazards (default `1`). */
   readonly formation: number;
   /** Horizon multiplier for `roamer` hazards — the control (default `1`). */
   readonly roamer: number;
@@ -274,15 +282,15 @@ export interface CompetentBotTunables {
    * insufficient history (cold start) falls back to the constant-velocity
    * estimate either way.
    *
-   * **Ships dark.** The enabled path is implemented, unit-tested and wired, but
-   * the default is `false`: turning the class-shaped sampler on for the shipped
-   * pilot makes a homing chaser predict a threat everywhere inside the ghost
-   * wave, so the pilot over-dodges and `promo-ghost-hunt` stops clearing the
-   * wave inside the 45 s survival target. The horizon calibration that has to
-   * prove the improvement first lives in AH-0MWM0CB2Q003Y6AB (sampled steering
-   * fan + per-class horizon), and AH-0MWM0C5BN003PCDT is the item that flips
-   * this default on once the sweep evidence shows the gain. Do not turn it on
-   * without that evidence — `hazardMotionModel.test.ts` pins the shipped default.
+   * **Ships on** since AH-0MWOKL79Z0051ZXO, on the seeded per-class sweep
+   * evidence (`src/ai/eval/hazardMotionSweep.test.ts`): the class-shaped model
+   * strictly reduces avoidable enemy-body contacts for the curving classes,
+   * never regresses the chaser, and is provably invisible for the straight-line
+   * controls. The earlier dark default existed because the chaser model (a
+   * constant-turn-rate arc fitted from the last two position deltas) predicted a
+   * threat on every escape bearing, making the pilot over-dodge a pursuer; that
+   * model is now pure pursuit. `hazardMotionModel.test.ts` pins the default —
+   * change it only with fresh sweep evidence.
    */
   hazardMotionModelEnabled: boolean;
   /**
@@ -436,25 +444,33 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   // look-ahead (AC2); a stationary hazard is unaffected either way.
   hazardPredictionEnabled: true,
   hazardPredictionHorizon: 0.6,
-  // Dark by default (AH-0MWM0C9F9006HNXV): the second-order (velocity +
-  // curvature) fit and the class-shaped trajectory sampler are fully wired and
-  // unit-tested, but enabling them for the shipped pilot is a behaviour change
-  // that has to be justified by the per-class horizon tuning in
-  // AH-0MWM0CB2Q003Y6AB; AH-0MWM0C5BN003PCDT flips this default on once that
-  // evidence exists. Off reproduces the single-difference estimate and the
-  // fixed-velocity solve bit-for-bit (AH-0MWM0C7ZR001YJRE · AC2, the sweep's
-  // control arm). Pinned by hazardMotionModel.test.ts — do not flip silently.
-  hazardMotionModelEnabled: false,
+  // **On** since AH-0MWOKL79Z0051ZXO, on the seeded per-class sweep evidence
+  // (`src/ai/eval/hazardMotionSweep.test.ts`): the second-order (velocity +
+  // curvature) hazard tracker and the class-shaped trajectory sampler strictly
+  // reduce avoidable enemy-body contacts for `chaser`/`diver`/`patroller`, never
+  // regress the chaser, and are provably invisible for the straight-line
+  // `roamer`/`formation` controls. The earlier dark default
+  // (AH-0MWM0C9F9006HNXV) existed because the chaser model — a constant-turn-rate
+  // arc taken from the last two position deltas — predicted a threat on every
+  // escape bearing, so the pilot hovered beside a pursuer instead of fleeing it;
+  // that model is now pure pursuit (the shipped ghost steering's own rule).
+  // Off still reproduces the single-difference estimate and the fixed-velocity
+  // solve bit-for-bit (AH-0MWM0C7ZR001YJRE · AC2, the sweep's control arm).
+  // Pinned by hazardMotionModel.test.ts — change only with fresh sweep evidence.
+  hazardMotionModelEnabled: true,
   // Per-class threat-window multipliers for the class-shaped sampler
-  // (AH-0MWM0CB2Q003Y6AB). A turning hazard needs a longer look-ahead than one
-  // that can only keep going; `roamer` is the straight-line control and stays
-  // at exactly `hazardPredictionHorizon`. Applied only with the motion model
-  // on, so the disabled path keeps the configured horizon bit-for-bit.
+  // (AH-0MWM0CB2Q003Y6AB). Only a class whose threat is a **discrete commit
+  // later in the window** needs a longer look-ahead (`diver`, `patroller`); a
+  // continuous closing geometry (`chaser`) or a straight line (`roamer`,
+  // `formation`) stays at exactly `hazardPredictionHorizon` — a longer chaser
+  // window only makes the pilot over-dodge a pursuer (AH-0MWOKL79Z0051ZXO,
+  // `promo-ghost-hunt`). Applied only with the motion model on, so the disabled
+  // path keeps the configured horizon bit-for-bit.
   hazardClassHorizonScale: Object.freeze({
-    chaser: 1.6,
+    chaser: 1,
     diver: 1.4,
     patroller: 1.25,
-    formation: 1.15,
+    formation: 1,
     roamer: 1,
   }),
 

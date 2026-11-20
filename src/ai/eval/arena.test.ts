@@ -39,6 +39,7 @@ import { loadAllEnemyConfigs, resetConfigStore, seedConfigStore } from '../../co
 import { createSeededRng } from '../../core/rng';
 import type { EnemyConfig, EnemyMovementClass } from '../../core/configTypes';
 import { createLegacyBotPolicy } from '../framework/legacyPolicy';
+import { advanceHazardMotion } from '../framework/hazardMotionModel';
 import {
   collectProductionSourceFiles,
   definesFunction,
@@ -46,6 +47,7 @@ import {
 import {
   HeadlessChoicePlayer,
   advanceBulletPosition,
+  escapeClearsContact,
   hostileAimVelocity,
   hostileMotionVelocity,
   resolveStartingLives,
@@ -1567,19 +1569,21 @@ describe('arena starting-loadout seam (AH-0MW9QA2YC009PSF5)', () => {
  * rising-edge contacts.
  */
 /**
- * A movement-class motion state with a fixed phase/heading, for the per-class
- * profile probes (AH-0MWM0C40V002ISCA).
+ * A movement-class motion state with a fixed initial heading, for the per-class
+ * profile probes (AH-0MWM0C40V002ISCA, reconciled by AH-0MWOKL79Z0051ZXO).
  */
 function motionState(
   movementClass: EnemyMovementClass,
-  overrides: Partial<{ phase: number; heading: number; elapsed: number; speed: number }> = {},
+  overrides: Partial<{ heading: number; speed: number }> = {},
 ) {
+  const speed = overrides.speed ?? 100;
+  const heading = overrides.heading ?? 0;
   return {
     movementClass,
-    speed: overrides.speed ?? 100,
-    heading: overrides.heading ?? 0,
-    phase: overrides.phase ?? 0,
-    elapsed: overrides.elapsed ?? 0,
+    speed,
+    heading,
+    vx: Math.cos(heading) * speed,
+    vy: Math.sin(heading) * speed,
   };
 }
 
@@ -1700,8 +1704,11 @@ describe('moving-hostile mode and enemy-body contacts (AH-0MWM0C40V002ISCA)', ()
 
     // Mode off: the metric exists and stays at zero (byte-identical default).
     expect(still.enemyBodyContacts).toBe(0);
-    // Mode on: the sustained overlap is one rising-edge contact.
+    expect(still.avoidableEnemyBodyContacts).toBe(0);
+    // Mode on: the sustained overlap is one rising-edge contact, and no escape
+    // fan can clear a 600 px body — it is counted but **not** avoidable.
     expect(moving.enemyBodyContacts).toBe(1);
+    expect(moving.avoidableEnemyBodyContacts).toBe(0);
     const contacts = moving.records.filter(
       (record) => record.kind === 'event' && record.event === 'enemy_body_contact',
     ) as TelemetryEventRecord[];
@@ -1710,7 +1717,31 @@ describe('moving-hostile mode and enemy-body contacts (AH-0MWM0C40V002ISCA)', ()
     expect(contacts[0].payload).toMatchObject({
       archetype: 'boss',
       movementClass: 'formation',
+      avoidable: false,
     });
+  });
+
+  it('classifies a contact as avoidable only when an escape bearing existed', () => {
+    // The escape-fan rule behind `avoidableEnemyBodyContacts`, exercised
+    // directly at the shipped geometry: a 16 px body (30 px contact radius) is
+    // escapable at 0.25 s out, while a body closing faster than the hull can
+    // slip aside is not. The fan is at the ship's live max speed and the body is
+    // extrapolated straight on its current velocity.
+    const ship = { x: 480, y: 270 };
+    const contactRadius = 14 + 16;
+    // A stationary body 80 px away leaves every bearing clear.
+    expect(
+      escapeClearsContact(ship, 175, { x: 560, y: 270 }, 0, 0, contactRadius, 960, 540),
+    ).toBe(true);
+    // A body closing at 400 px/s from 50 px cannot be escaped on any bearing:
+    // no quarter-second path clears the 30 px contact radius.
+    expect(
+      escapeClearsContact(ship, 175, { x: 530, y: 270 }, -400, 0, contactRadius, 960, 540),
+    ).toBe(false);
+    // A huge body covering the arena is never escapable, whatever its motion.
+    expect(
+      escapeClearsContact(ship, 175, { x: 480, y: 270 }, 0, 0, 614, 960, 540),
+    ).toBe(false);
   });
 
   it('animates only the requested classes', () => {
@@ -1749,11 +1780,59 @@ describe('moving-hostile mode and enemy-body contacts (AH-0MWM0C40V002ISCA)', ()
   });
 });
 
-describe('per-class motion profiles (AH-0MWM0C40V002ISCA)', () => {
+describe('per-class motion profiles are the predictor’s class models (AH-0MWOKL79Z0051ZXO)', () => {
   const player = { x: 500, y: 300 };
   const from = { x: 100, y: 300 };
 
-  it('chases along the shortest wrapped route to the ship', () => {
+  /**
+   * The parity assertion this suite exists for: the arena's profile for a
+   * class **is** the shared trajectory stepper the bot's hazard predictor walks
+   * (`advanceHazardMotion`), so a harness profile can never describe a
+   * trajectory the predictor does not model. A class the model does not know
+   * throws instead of silently falling back, which is what makes the sweep's
+   * on/off comparison a test of the predictor rather than of a second enemy AI.
+   */
+  it('steps each class through the shared trajectory model, bit-for-bit', () => {
+    const cases: Array<{ movementClass: EnemyMovementClass; heading: number }> = [
+      { movementClass: 'chaser', heading: Math.PI / 3 },
+      { movementClass: 'diver', heading: -Math.PI / 2 },
+      { movementClass: 'patroller', heading: Math.PI },
+      { movementClass: 'formation', heading: 0.2 },
+      { movementClass: 'roamer', heading: 1.9 },
+    ];
+    for (const { movementClass, heading } of cases) {
+      const motion = motionState(movementClass, { heading });
+      const dt = 1 / 60;
+      const shared = { x: from.x, y: from.y, vx: motion.vx, vy: motion.vy };
+      advanceHazardMotion(movementClass, shared, player.x, player.y, dt, {
+        width: 960,
+        height: 540,
+      });
+      const velocity = hostileMotionVelocity(motion, from, player, 960, 540);
+      // The arena's velocity probe is the shared step, derived — never a
+      // parallel profile that could drift.
+      expect(velocity.vx).toBeCloseTo((shared.x - from.x) / dt, 9);
+      expect(velocity.vy).toBeCloseTo((shared.y - from.y) / dt, 9);
+    }
+  });
+
+  it('rejects a class profile the predictor does not model', () => {
+    // A harness profile the class model cannot describe must fail loudly; a
+    // silent linear fallback would let the sweep "validate" a trajectory the
+    // predictor never predicted.
+    expect(() =>
+      advanceHazardMotion(
+        'teleporter' as unknown as EnemyMovementClass,
+        { x: 0, y: 0, vx: 100, vy: 0 },
+        player.x,
+        player.y,
+        1 / 60,
+        { width: 960, height: 540 },
+      ),
+    ).toThrow(/unsupported movement class 'teleporter'/);
+  });
+
+  it('chases: pure pursuit of the ship', () => {
     const velocity = hostileMotionVelocity(
       motionState('chaser'),
       from,
@@ -1761,9 +1840,11 @@ describe('per-class motion profiles (AH-0MWM0C40V002ISCA)', () => {
       960,
       540,
     );
-    expect(velocity.vx).toBeGreaterThan(0); // moves toward the ship
-    expect(Math.hypot(velocity.vx, velocity.vy)).toBeCloseTo(100, 9);
-    // Wrapped pursuit: a body just past the left edge chases left.
+    // Pointed at the ship and closing, at the class cruise speed.
+    expect(velocity.vx).toBeGreaterThan(0);
+    expect(Math.hypot(velocity.vx, velocity.vy)).toBeCloseTo(100, 6);
+    // Wrapped pursuit: a body just past the left edge chases left across the
+    // seam (the shortest route), exactly as the predictor's class model does.
     const wrapped = hostileMotionVelocity(
       motionState('chaser'),
       { x: 5, y: 300 },
@@ -1772,68 +1853,111 @@ describe('per-class motion profiles (AH-0MWM0C40V002ISCA)', () => {
       540,
     );
     expect(wrapped.vx).toBeLessThan(0);
-  });
-
-  it('dives in pulses: the pursuit speed eases in and out', () => {
-    const speeds = [0, 0.4, 0.8, 1.2, 1.6].map((elapsed) =>
-      Math.hypot(
-        ...Object.values(
-          hostileMotionVelocity(motionState('diver', { elapsed }), from, player, 960, 540),
-        ),
-      ),
-    );
-    expect(new Set(speeds.map((speed) => speed.toFixed(6))).size).toBeGreaterThan(1);
-    for (const speed of speeds) {
-      expect(speed).toBeGreaterThan(0);
-      expect(speed).toBeLessThanOrEqual(100 + 1e-9);
-    }
-  });
-
-  it('patrols across its seeded heading without tracking the ship', () => {
-    const a = hostileMotionVelocity(motionState('patroller', { heading: 0 }), from, player, 960, 540);
-    const b = hostileMotionVelocity(
-      motionState('patroller', { heading: 0 }),
-      from,
-      { x: 900, y: 500 }, // the ship moved; a patrol does not react
+    // A body crossing perpendicular turns straight onto the ship in one step:
+    // a pursuing hazard re-aims every tick instead of continuing its old arc.
+    const crossing = hostileMotionVelocity(
+      motionState('chaser', { heading: Math.PI / 2 }),
+      { x: 500, y: 100 },
+      { x: 500, y: 300 },
       960,
       540,
     );
-    expect(b).toEqual(a);
-    expect(Math.hypot(a.vx, a.vy)).toBeGreaterThan(0);
+    expect(crossing.vx).toBeCloseTo(0, 6);
+    expect(crossing.vy).toBeCloseTo(100, 6);
   });
 
-  it('keeps formation bodies in step: one shared phase, whatever their own', () => {
-    const one = hostileMotionVelocity(motionState('formation', { phase: 0 }), from, player, 960, 540);
-    const other = hostileMotionVelocity(
-      motionState('formation', { phase: Math.PI / 3 }),
+  it('dives: re-aims at the ship when outside the commit cone, then holds the line', () => {
+    // Heading +x, ship well off that bearing: the dive re-aims at the ship, so
+    // it leaves perpendicular to its seeded heading.
+    const reaimed = hostileMotionVelocity(
+      motionState('diver'),
       from,
       player,
       960,
       540,
     );
-    expect(other).toEqual(one);
-    // ...and the sway changes over time (it is not a static offset).
-    const later = hostileMotionVelocity(
-      motionState('formation', { elapsed: Math.PI / 3.2 }),
-      from,
-      player,
+    expect(reaimed.vx).toBeGreaterThan(0); // the ship is to the right
+    expect(Math.hypot(reaimed.vx, reaimed.vy)).toBeCloseTo(100, 6);
+    // Heading straight at the ship: inside the commit cone, so the dive holds
+    // its observed vector exactly (a straight, dodgeable line).
+    const committed = hostileMotionVelocity(
+      motionState('diver'),
+      { x: 100, y: 300 },
+      { x: 400, y: 300 },
       960,
       540,
     );
-    expect(later).not.toEqual(one);
+    expect(committed.vx).toBeCloseTo(100, 6);
+    expect(committed.vy).toBeCloseTo(0, 6);
   });
 
-  it('drifts a roamer on a fixed seeded heading, independent of the clock', () => {
-    const early = hostileMotionVelocity(motionState('roamer', { heading: 1 }), from, player, 960, 540);
-    const late = hostileMotionVelocity(
-      motionState('roamer', { heading: 1, elapsed: 12 }),
+  it('patrols straight, then commits to a straight attack run inside the range', () => {
+    // Far from the ship and heading away: a straight patrol that ignores the
+    // ship (the predictor's "patrol" phase).
+    const patrol = hostileMotionVelocity(
+      motionState('patroller', { heading: Math.PI }),
+      { x: 100, y: 300 },
+      { x: 900, y: 300 },
+      2000,
+      2000,
+    );
+    expect(patrol.vx).toBeCloseTo(-100, 6);
+    expect(patrol.vy).toBeCloseTo(0, 6);
+    // Inside the commit range: the patrol turns into a straight run at the
+    // ship, still on one line (no weave).
+    const attack = hostileMotionVelocity(
+      motionState('patroller', { heading: Math.PI / 2 }),
+      { x: 300, y: 300 },
+      { x: 450, y: 300 },
+      960,
+      540,
+    );
+    expect(attack.vx).toBeCloseTo(100, 6);
+    expect(attack.vy).toBeCloseTo(0, 6);
+  });
+
+  it('drifts a formation body and reflects it at the arena bound (not wrapping)', () => {
+    // Drifting right at the right edge: the reflection reverses the component
+    // instead of letting the body leave the field, exactly the predictor's
+    // class model. Checked on the state, because a reflected step is not one
+    // constant velocity.
+    const state = { x: 959.5, y: 300, vx: 100, vy: 0 };
+    advanceHazardMotion('formation', state, player.x, player.y, 1 / 60, {
+      width: 960,
+      height: 540,
+    });
+    expect(state.vx).toBe(-100);
+    expect(state.x).toBeGreaterThan(0);
+    expect(state.x).toBeLessThan(960);
+    // Inboard, the drift is the plain linear continuation of its velocity.
+    const drift = hostileMotionVelocity(
+      motionState('formation', { heading: Math.PI / 2 }),
+      { x: 400, y: 100 },
+      player,
+      960,
+      540,
+    );
+    expect(drift.vx).toBeCloseTo(0, 6);
+    expect(drift.vy).toBeCloseTo(100, 6);
+  });
+
+  it('drifts a roamer on a fixed seeded heading, independent of the ship', () => {
+    const early = hostileMotionVelocity(
+      motionState('roamer', { heading: 1 }),
       from,
       player,
       960,
       540,
     );
-    expect(late).toEqual(early);
-    expect(early.vx).toBeCloseTo(Math.cos(1) * 100, 9);
-    expect(early.vy).toBeCloseTo(Math.sin(1) * 100, 9);
+    const movedShip = hostileMotionVelocity(
+      motionState('roamer', { heading: 1 }),
+      from,
+      { x: 900, y: 500 },
+      960,
+      540,
+    );
+    expect(movedShip).toEqual(early);
+    expect(early.vx).toBeCloseTo(Math.cos(1) * 100, 6);
+    expect(early.vy).toBeCloseTo(Math.sin(1) * 100, 6);
   });
 });
