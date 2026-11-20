@@ -462,6 +462,10 @@ export interface DeliverableCommand {
   readonly output: string;
   /** Segments clamped to source durations. */
   readonly segments: readonly SelectionManifestEntry[];
+  /** The length the junction chain delivers: `Σ cuts − Σ video fades` (ms). */
+  readonly expectedDurationMs: number;
+  /** The junction settings this command was built with. */
+  readonly transitions: TransitionConfig;
   readonly argv: readonly string[];
 }
 
@@ -482,6 +486,8 @@ export interface CompiledDeliverable {
     readonly audioChannels: number | null;
   };
   readonly brightness: BrightnessSummary;
+  /** The plan's predicted length, beside the probe's measured duration. */
+  readonly expectedDurationMs?: number;
   readonly segments: readonly SelectionManifestEntry[];
   /** Mean motivating intensity of the cuts (parent AC4 measured band). */
   readonly measuredMeanIntensity: number | null;
@@ -498,6 +504,8 @@ export interface CompileResult {
     readonly ffmpeg: string;
     readonly ffprobe: string;
     readonly outDir: string;
+    /** The junction settings every deliverable was built with. */
+    readonly transitions: TransitionConfig;
     readonly deliverables: readonly CompiledDeliverable[];
     /** Promo pace verification (parent AC3/AC4); null when not measurable. */
     readonly pace: PaceVerdict | null;
@@ -678,4 +686,6 @@ export function formatCompileSummary(result: {
   ok: boolean;
   deliverables: readonly CompiledDeliverable[];
   errors: readonly string[];
+  /** Optional report tail: its `transitions` block is stated once. */
+  report?: { transitions?: TransitionConfig } | null;
 }): string;

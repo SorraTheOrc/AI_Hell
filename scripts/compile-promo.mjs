@@ -784,15 +784,19 @@ export function buildEditPlan(sources, targets = DEFAULT_TARGETS, options = DEFA
     reserved.add(strongest);
   }
   const promo = [];
-  let promoMs = 0;
   // Keep the measured concat/encode overhead free so the *delivered* promo —
-  // not just the nominal plan — lands inside the band (docs §7.6).
+  // not just the nominal plan — lands inside the band (docs §7.6). The budget
+  // is spent on the duration the viewer actually gets, i.e. the nominal cut
+  // total **minus the dissolves** every junction removes
+  // (AH-0MWM291MV005P336): a ~40-cut promo loses ~16 s of screen time to its
+  // transitions, which a raw-length budget would silently turn into an
+  // undersized promo below the 45 s floor.
   const promoBudgetMs = targets.promo.maxMs - (targets.promo.safetyMs ?? 0);
+  /** The promo's delivered length if it ended with `cuts` (net of dissolves). */
+  const deliveredMs = (cuts) => planJunctions(cuts).expectedDurationMs;
   for (const segment of globalRank) {
-    const lengthMs = segment.videoOutMs - segment.videoInMs;
-    if (reserved.has(segment) || promoMs + lengthMs <= promoBudgetMs) {
+    if (reserved.has(segment) || deliveredMs([...promo, segment]) <= promoBudgetMs) {
       promo.push(segment);
-      promoMs += lengthMs;
     }
   }
   promo.sort(rankCompare); // presented in rank order.
@@ -826,11 +830,29 @@ Promo compiler (AH-0MVDV4OKN001OT18 + AH-0MVDV4PNZ004ZWOZ). Two modes:
    manifests — as JSON. This pure step runs WITHOUT ffmpeg.
 
 2. Compile + validate (--compile, what \`npm run capture:promo\` runs):
-   builds the plan, then drives ffmpeg to trim, reorder, concatenate and
+   builds the plan, then drives ffmpeg to trim, reorder, dissolve and
    mux the source clips deterministically into the three deliverable types
    at the game's native 960x540 with the game's own SFX Opus track, and
    validates each output (decodable, non-trivial non-black pixels, audio
    track present, correct resolution).
+
+Junctions (multi-cut deliverables only — promo and showreel):
+  Consecutive cuts are joined by a dissolve, not a hard cut. Every junction
+  is a ${TRANSITIONS.videoFadeMs} ms video dissolve (\`xfade\`) into the incoming cut with a
+  slightly slower ${TRANSITIONS.audioFadeMs} ms audio cross-fade (\`acrossfade\`), so the package
+  reads as one edited piece rather than a splice of separate recordings.
+  Both fades are clamped to at most ${Math.round(TRANSITIONS.maxFadeRatio * 100)} % of the shorter neighbouring cut, so a
+  short cut is never swallowed by its own transition.
+  The sound is compensated per junction: because the audio blend overlaps
+  more than the picture, each outgoing cut's audio tail is extended from its
+  probed source headroom (and the fade is clamped back to the video duration
+  where there is none), so audio and video end together instead of drifting.
+  The delivered length is therefore Σ cuts − Σ dissolves; that expected
+  duration is what the promo is sized to, and it is reported next to the
+  measured length in compile-promo-report.json.
+  Single-cut highlights have no junction and are untouched. Setting
+  \`transitions.videoFadeMs: 0\` in EDITORIAL_CONFIG (or an argv builder's
+  \`transitions\` option) restores the previous hard-cut \`concat\` graph.
 
 Inputs (per run under ${CAPTURE_OUTPUT_DIR}/):
   <run-id>.action.jsonl  the recorded action-intensity series (§7.5)
@@ -1907,12 +1929,17 @@ export function buildDeliverableCommands(plan, opts = {}) {
         : 0;
       clamped.push({ ...segment, videoInMs, videoOutMs, audioHeadroomMs });
     }
+    const junctionPlan = planJunctions(clamped);
     commands.push({
       kind,
       index,
       name: kind === 'highlight' ? `highlight-${String(index).padStart(2, '0')}` : kind,
       output,
       segments: clamped,
+      /** The length the dissolve chain will deliver (`Σ cuts − Σ fades`). */
+      expectedDurationMs: junctionPlan.expectedDurationMs,
+      /** The junction settings this command was built with (report material). */
+      transitions: { ...TRANSITIONS },
       argv: buildDeliverableArgv(kind, index, clamped, {
         width, height, fps, vp9Crf, opusBitrateK, output,
       }),
@@ -2153,6 +2180,7 @@ export function compileDeliverables(plan, deps = {}) {
         output: command.output,
         ok: false,
         issues: [`ffmpeg failed: ${detail}`],
+        expectedDurationMs: command.expectedDurationMs,
         segments: command.segments,
       });
       errors.push(`${command.output}: ffmpeg failed: ${detail}`);
@@ -2172,6 +2200,8 @@ export function compileDeliverables(plan, deps = {}) {
       output: command.output,
       ok: verdict.ok,
       issues: verdict.issues,
+      /** The plan's predicted length, next to the probe's measured one. */
+      expectedDurationMs: command.expectedDurationMs,
       probe: summarizeProbe(probed),
       brightness: {
         sampledFrames: bright?.sampledFrames ?? 0,
@@ -2252,6 +2282,8 @@ export function compileDeliverables(plan, deps = {}) {
     ffmpeg,
     ffprobe,
     outDir,
+    /** The junction settings every deliverable above was built with. */
+    transitions: { ...TRANSITIONS },
     deliverables,
     pace,
     targets: targetVerdict,
@@ -2278,8 +2310,16 @@ export function formatCompileSummary(result) {
   for (const d of result?.deliverables ?? []) {
     const probe = d.probe ?? {};
     const bright = d.brightness ?? {};
+    // Expected (from the plan: Σ cuts − Σ dissolves) beside measured (probed
+    // from the delivered file), so the compile's own arithmetic is auditable
+    // (AH-0MWM291MV005P336).
+    const expectedSec =
+      d.expectedDurationMs != null ? `${(Number(d.expectedDurationMs) / 1000).toFixed(1)}s` : null;
+    const measuredSec = probe.durationSec != null ? `${probe.durationSec.toFixed(1)}s` : null;
     const duration =
-      probe.durationSec != null ? `${probe.durationSec.toFixed(1)}s` : 'unknown length';
+      expectedSec && measuredSec
+        ? `expected ${expectedSec} / measured ${measuredSec}`
+        : ((measuredSec ?? expectedSec) ?? 'unknown length');
     const video =
       probe.width && probe.height ? `${probe.width}x${probe.height}` : 'no video';
     const audio = probe.audioCodec
@@ -2302,9 +2342,17 @@ export function formatCompileSummary(result) {
       }`,
     );
   }
+  // The junction settings, stated once for the whole package.
+  const transitions = result?.report?.transitions ?? TRANSITIONS;
+  lines.push(
+    `  transitions  ${transitions.videoFadeMs} ms video dissolve into ` +
+      `${transitions.audioFadeMs} ms audio cross-fade at each cut ` +
+      `(clamped to ${Math.round(Number(transitions.maxFadeRatio) * 100)} % of the shorter ` +
+      `neighbouring cut; the sound is compensated per junction; ` +
+      `videoFadeMs: 0 restores hard cuts)`,
+  );
   if (result?.report?.pace) {
-    const pace = result.report.pace;
-    const measured = pace.measured ?? {};
+    const pace = result.report.pace;    const measured = pace.measured ?? {};
     const pct = (value) =>
       value === null || value === undefined ? 'n/a' : `${(value * 100).toFixed(1)}%`;
     const intensity =

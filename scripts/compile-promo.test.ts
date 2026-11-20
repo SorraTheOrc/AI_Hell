@@ -749,14 +749,8 @@ describe('splitWindowIntoCuts — editorial cut cadence (parent AC4)', () => {
 });
 
 describe('buildEditPlan — promo sizing keeps the encode safety margin (AC1)', () => {
-  it('fills the promo to the target ceiling minus the measured encode overhead', () => {
-    // A pool of many 6 s cuts at distinct intensities: without the safety
-    // margin the plan would fill to a nominal 60 s, which re-encodes to ~62.6 s
-    // and breaks the ~45–60 s band (measured in the label run, docs §7.6).
-    // 30 well-separated peaks whose motivating intensities differ by more than
-    // the dedupe tolerance and whose window lengths vary (2.5 / 2.9 / 3.3 s via
-    // a secondary peak inside the merge gap), so the pool yields ~90 s of
-    // distinct cuts — more than the promo can hold.
+  /** A pool of many distinct 6 s-scale cuts: far more footage than the promo holds. */
+  function oversizedPool() {
     const points = [];
     for (let i = 0; i < 30; i++) {
       const t = 5_000 + i * 8_000;
@@ -764,12 +758,29 @@ describe('buildEditPlan — promo sizing keeps the encode safety margin (AC1)', 
       points.push(pt(t, intensity, 0.2, { enemies: 1 }));
       if (i % 3) points.push(pt(t + (i % 3) * 400, intensity, 0.2, { enemies: 1 }));
     }
-    const plan = buildEditPlan([source('gameplay-run-BIG', points, { durationMs: 300_000 })]);
+    return buildEditPlan([source('gameplay-run-BIG', points, { durationMs: 300_000 })]);
+  }
+
+  it('fills the promo to the target ceiling minus the measured encode overhead, net of the dissolves', () => {
+    // A pool of many 6 s cuts at distinct intensities: without the safety
+    // margin the plan would fill to a nominal 60 s, which re-encodes to ~62.6 s
+    // and breaks the ~45–60 s band (measured in the label run, docs §7.6).
+    // Every junction also removes a dissolve from the delivered length, so the
+    // budget must be spent on the *net* duration (AH-0MWM291MV005P336).
+    const plan = oversizedPool();
+    const budgetMs = DEFAULT_TARGETS.promo.maxMs - (DEFAULT_TARGETS.promo.safetyMs ?? 0);
     const nominalMs = plan.promo.reduce((sum, seg) => sum + (seg.videoOutMs - seg.videoInMs), 0);
-    expect(nominalMs).toBeLessThanOrEqual(
-      DEFAULT_TARGETS.promo.maxMs - (DEFAULT_TARGETS.promo.safetyMs ?? 0),
-    );
-    expect(nominalMs).toBeGreaterThanOrEqual(DEFAULT_TARGETS.promo.minMs);
+    const fadeTotalMs = planJunctions(plan.promo).totalVideoFadeMs;
+    const netMs = nominalMs - fadeTotalMs;
+
+    // The delivered (net) duration is what the band applies to.
+    expect(netMs).toBeLessThanOrEqual(budgetMs);
+    expect(netMs).toBeGreaterThanOrEqual(DEFAULT_TARGETS.promo.minMs);
+    // Guard against a regression to raw-cut budgeting: with a pool this large
+    // a raw-length budget would leave the promo shorter than the ceiling.
+    expect(nominalMs).toBeGreaterThan(budgetMs);
+    expect(nominalMs - netMs).toBe(fadeTotalMs);
+    expect(fadeTotalMs).toBeGreaterThan(0);
     expect(DEFAULT_TARGETS.promo.safetyMs).toBeGreaterThan(0);
   });
 });
@@ -817,10 +828,15 @@ describe('buildEditPlan — sized to a rich pool (AH-0MVDV47VO0081VUK AC4)', () 
 
   it('sizes the promo between the reported ~45–60 s bounds', () => {
     const plan = buildEditPlan([richRun()]);
-    const promoMs = plan.promo.reduce((sum, s) => sum + s.videoOutMs - s.videoInMs, 0);
+    const nominalMs = plan.promo.reduce((sum, s) => sum + s.videoOutMs - s.videoInMs, 0);
+    const fadeTotalMs = planJunctions(plan.promo).totalVideoFadeMs;
+    const deliveredMs = nominalMs - fadeTotalMs;
 
-    expect(promoMs).toBeLessThanOrEqual(DEFAULT_TARGETS.promo.maxMs);
-    expect(promoMs).toBeGreaterThanOrEqual(DEFAULT_TARGETS.promo.minMs);
+    // The band applies to the delivered length: the dissolves are removed
+    // from the cut total before it is compared (AH-0MWM291MV005P336).
+    expect(deliveredMs).toBeLessThanOrEqual(DEFAULT_TARGETS.promo.maxMs);
+    expect(deliveredMs).toBeGreaterThanOrEqual(DEFAULT_TARGETS.promo.minMs);
+    expect(nominalMs - deliveredMs).toBe(fadeTotalMs);
     expect(plan.promo.length).toBeGreaterThan(5);
   });
 
@@ -2450,6 +2466,116 @@ describe('ffmpeg driver — audio alignment compensation (AH-0MWM28ZOT0067JQW)',
       cutWith('runC', 0, 4_000, 300),
     ];
     expect(graphOf(cuts())).toBe(graphOf(cuts()));
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Duration accounting in the plan, the commands, the report and the help
+// (AH-0MWM291MV005P336)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('duration accounting — expected length and transition settings (AH-0MWM291MV005P336)', () => {
+  it('puts expectedDurationMs and the transitions block on every deliverable command', () => {
+    const plan = fullPlan();
+    const { commands, errors } = buildDeliverableCommands(plan, { probeByPath: probeMap(plan) });
+    expect(errors).toEqual([]);
+    expect(commands.map((c) => c.name)).toEqual([
+      'promo',
+      'showreel',
+      'highlight-01',
+      'highlight-02',
+      'highlight-03',
+      'highlight-04',
+      'highlight-05',
+    ]);
+    for (const command of commands) {
+      // The same arithmetic the graph encodes: Σ cuts − Σ resolved video fades.
+      expect(command.expectedDurationMs).toBe(planJunctions(command.segments).expectedDurationMs);
+      expect(command.transitions).toEqual({
+        videoFadeMs: 400,
+        audioFadeMs: 500,
+        maxFadeRatio: 0.25,
+      });
+    }
+    const promo = commands.find((c) => c.kind === 'promo')!;
+    const nominalMs = promo.segments.reduce(
+      (sum, segment) => sum + (segment.videoOutMs - segment.videoInMs),
+      0,
+    );
+    expect(promo.expectedDurationMs).toBeLessThan(nominalMs);
+    // A single-cut highlight keeps its nominal length (nothing to dissolve).
+    const highlight = commands.find((c) => c.kind === 'highlight')!;
+    expect(highlight.expectedDurationMs).toBe(
+      highlight.segments[0].videoOutMs - highlight.segments[0].videoInMs,
+    );
+  });
+
+  it('records the expected duration next to the measured one in the compile report', () => {
+    const outDirFixture = `${CAPTURE_OUTPUT_DIR}/unit`;
+    const result = compileDeliverables(fullPlan(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir: outDirFixture,
+      probe: targetProbeOf,
+      brightness: brightFixture,
+      run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+    });
+    const report = result.report!;
+    // The configured junction settings are stated once, top-level.
+    expect(report.transitions).toEqual({
+      videoFadeMs: 400,
+      audioFadeMs: 500,
+      maxFadeRatio: 0.25,
+    });
+    for (const deliverable of report.deliverables) {
+      expect(Number.isInteger(deliverable.expectedDurationMs)).toBe(true);
+      expect(deliverable.expectedDurationMs).toBeGreaterThan(0);
+      // …and the measured probe duration is still recorded beside it.
+      expect(deliverable.probe?.durationSec).toBeGreaterThan(0);
+    }
+    const reportJson = JSON.stringify(report);
+    expect(reportJson).toContain('"expectedDurationMs"');
+    expect(reportJson).toContain('"transitions"');
+  });
+
+  it('states the transition settings once and prints expected vs measured duration', () => {
+    const summary = formatCompileSummary({
+      ok: true,
+      deliverables: [
+        {
+          kind: 'promo',
+          index: 0,
+          name: 'promo',
+          output: `${CAPTURE_OUTPUT_DIR}/promo.webm`,
+          ok: true,
+          issues: [],
+          expectedDurationMs: 48_400,
+          probe: { durationSec: 48.4, width: 960, height: 540, audioCodec: 'opus', audioChannels: 2 },
+          brightness: { sampledFrames: 10, maxYavg: 40, meanYavg: 20, nonBlackFrames: 10, nonBlackRatio: 1 },
+          segments: [seg('runA', 0, 1_000) as never],
+          measuredMeanIntensity: 0.5,
+        } as never,
+      ],
+      errors: [],
+      report: { transitions: { videoFadeMs: 400, audioFadeMs: 500, maxFadeRatio: 0.25 } },
+    });
+    const transitionLines = summary
+      .split('\n')
+      .filter((line) => line.includes('dissolve') || line.includes('cross-fade'));
+    expect(transitionLines).toHaveLength(1);
+    expect(transitionLines[0]).toContain('400 ms');
+    expect(transitionLines[0]).toContain('500 ms');
+    expect(summary).toContain('expected 48.4s');
+    expect(summary).toContain('measured 48.4s');
+  });
+
+  it('documents the dissolve, the clamp, the A/V compensation and the opt-out in --help', () => {
+    expect(USAGE_TEXT).toContain('dissolve');
+    expect(USAGE_TEXT).toContain(`${TRANSITIONS.videoFadeMs} ms`);
+    expect(USAGE_TEXT).toContain(`${TRANSITIONS.audioFadeMs} ms`);
+    expect(USAGE_TEXT).toContain('25 %');
+    expect(USAGE_TEXT).toContain('videoFadeMs: 0');
+    expect(USAGE_TEXT).toContain('compensat');
   });
 });
 
