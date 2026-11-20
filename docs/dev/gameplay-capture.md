@@ -234,9 +234,10 @@ or a browser.
 
 `npm run capture:promo` turns the captured pool into shareable material —
 a short promo, a longer showreel and individual highlight clips — by
-trimming, reordering, concatenating and muxing the source WebMs with
+trimming, reordering, dissolving and muxing the source WebMs with
 `ffmpeg` (AH-0MVDV50Z20071RF4; the driver itself is
-AH-0MVDV4PNZ004ZWOZ). Nothing is hand-edited: the edit plan, the cut
+AH-0MVDV4PNZ004ZWOZ; the junctions became dissolves in AH-0MWLYWYGK004JR2A).
+Nothing is hand-edited: the edit plan, the cut
 selection and the manifests all come from the recorded
 `.action.jsonl` series, so the package is reproducible from the pool.
 
@@ -273,6 +274,12 @@ brew install ffmpeg                # macOS (Homebrew)
 build in `~/.local/bin`). Playwright's bundled minimal ffmpeg is **not**
 sufficient (VP8-only, no VP9/Opus encoder).
 
+The junction dissolve uses the `xfade` and `acrossfade` filters. Both ship
+with any full ffmpeg build (they are core `avfilter` filters, not optional
+`--enable-…` extras), so the VP9 + Opus requirement above is the only
+prerequisite — an older distro build that carries VP9/Opus carries these
+too.
+
 Detection is explicit and fails fast with an actionable message rather than
 an `ENOENT` stack: a missing `ffmpeg`/`ffprobe` exits non-zero and prints the
 install hints above plus `npm run capture:promo`. The output directory must
@@ -296,6 +303,8 @@ compile: [2/7] showreel: 34 cuts → capture-output/showreel.webm
 ...
 compile: verifying promo pace and deliverable sizing
 Compiled deliverables — all validated OK:
+  ok    capture-output/promo.webm  expected 53.2s / measured 57.9s  960x540 vp9 opus 2ch  (13 cuts, …)
+  transitions  400 ms video dissolve into 500 ms audio cross-fade at each cut (clamped to 25 % of the shorter neighbouring cut; the sound is compensated per junction; videoFadeMs: 0 restores hard cuts)
 ...
 ```
 
@@ -303,6 +312,60 @@ Long silence between those lines is expected while `ffmpeg` encodes (a
 57 s promo is ~13 re-encoded cuts at 960×540/60 fps); watch stderr to
 confirm the run is progressing. stdout stays the machine-readable summary,
 so piping the command still yields only the report of record.
+
+### Transitions (dissolved junctions)
+
+Multi-cut deliverables — the promo and the showreel — **dissolve** from one
+cut into the next; single-cut highlight clips have no junction and are
+unchanged (AH-0MWLYWYGK004JR2A). Both junction steps live inside the one
+`-filter_complex` pass that already trims and re-encodes the cuts, so the
+edit costs no extra encode and no extra dependency.
+
+The knobs are frozen in `EDITORIAL_CONFIG.transitions`
+(`scripts/compile-promo.mjs`), and every timing below is read from there:
+
+| Knob | Value | Meaning |
+|---|---|---|
+| `videoFadeMs` | **400 ms** | The picture dissolve: `xfade=transition=fade` from the outgoing cut into the incoming one. Set it to `0` to restore hard cuts. |
+| `audioFadeMs` | **500 ms** | The sound cross-fade (`acrossfade`), deliberately slower than the picture so the junction blends rather than switches. |
+| `maxFadeRatio` | **0.25** | A fade is clamped to at most this fraction of the **shorter** of the two neighbouring cuts, so a 1 s cut beside a 6 s cut dissolves over 250 ms instead of being swallowed by its own transition. |
+
+**The dissolve is between the two cuts, never through black**, which is why
+the ≥ 0.90 non-black pace gate (§7.6 of
+[docs/dev/action-intensity.md](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo))
+still holds on a cross-faded promo.
+
+#### Audio compensation (why the sound is not 100 ms short)
+
+A 500 ms audio fade against a 400 ms picture fade removes 100 ms more audio
+than video at **every** junction — ~3.9 s of drift across a 40-cut promo,
+which is audible desync. The compiler therefore compensates **per junction**,
+arithmetically, from the plan and the probes only:
+
+1. the outgoing cut's audio tail is extended by the extra overlap
+   (100 ms) from the cut's **probed source headroom** (the source duration
+   beyond `videoOutMs`), so the audio chain loses only the picture's 400 ms;
+2. where the headroom is shorter than that — including a cut that ends at the
+   end of its source — no extension is invented: that junction's audio fade
+   is **clamped back to `videoFadeMs` + the available headroom** and it stays
+   aligned.
+
+The rule is deterministic (`videoInMs`/`videoOutMs` + probed durations, never
+wall-clock or encoder state), so an identical plan still produces a
+byte-identical command line. Audio and video therefore end together within a
+frame at any cut count.
+
+#### Duration accounting
+
+Each junction removes its dissolve from the delivered length, so a
+multi-cut deliverable's expected duration is
+**`Σ cut durations − Σ resolved video fades`**. The plan sizes the promo
+against that net figure (not the raw cut total), and the compile prints it
+back as `expected …s / measured …s` per deliverable, with a single
+`transitions` line naming the settings. Both are recorded in
+`compile-promo-report.json` (see [Outputs](#outputs)), so
+"sized to the 45–60 s band" is auditable against the file that was actually
+produced rather than against the plan's intent.
 
 ### Inputs
 
@@ -326,7 +389,7 @@ deliverables are **never committed**):
 
 | File | Target | Notes |
 |---|---|---|
-| `promo.webm` | 45–60 s | Hook-first: opens on the strongest peak, jump-cuts across peaks. |
+| `promo.webm` | 45–60 s | Hook-first: opens on the strongest peak, dissolves across peaks. |
 | `showreel.webm` | > 2 min | Every surviving peak cut, in source-time order. |
 | `highlight-01.webm` … | 5 clips | One short clip per top-ranked peak. |
 | `compile-promo.plan.json` | — | The edit plan: the **selection manifest** and the **coverage manifest**. |
@@ -381,7 +444,8 @@ Which feature is visible in a cut is decided from the series `breakdown`
 
 | Field | Meaning |
 |---|---|
-| `deliverables[]` | One entry per output: `name`, `output`, `ok`, `issues`, `probe` (codec, width/height, duration, audio codec/channels), `brightness`, `segments` (the same cut records as the plan, so the coverage claim can be checked **against the delivered clip**), `measuredMeanIntensity`. |
+| `deliverables[]` | One entry per output: `name`, `output`, `ok`, `issues`, `expectedDurationMs` (what the dissolve chain should deliver: `Σ cuts − Σ fades`), `probe` (codec, width/height, duration, audio codec/channels), `brightness`, `segments` (the same cut records as the plan, so the coverage claim can be checked **against the delivered clip**), `measuredMeanIntensity`. Expected-vs-measured durations sit side by side, so an edit that drifts is visible. |
+| `transitions` | The junction settings the package was built with (`videoFadeMs`, `audioFadeMs`, `maxFadeRatio`) — recorded once, top-level, so a report can never be read against the wrong editorial configuration. |
 | `pace` | The promo's pace verdict: `ok`, `issues`, `band` and `measured` (`openingNonBlackRatio`, `nonBlackRatio`, `meanIntensity`). Band and calibration: [docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo). |
 | `targets` | The deliverable sizing verdict: measured promo/showreel lengths and highlight count against the targets, with per-target issues. |
 | `errors` | Every blocking issue, so a failed run is diagnosable from the report alone. |
@@ -2579,7 +2643,7 @@ with a warning, so `npm run capture` still works with no ffmpeg at all.
 
 A full `ffmpeg` is required only by the **promo compiler**
 (`npm run capture:promo`, see
-[Compiling a promo package](#compiling-a-promo-package-npm-run-compilepromo)),
+[Compiling a promo package](#compiling-a-promo-package-npm-run-capturepromo)),
 which is a post-processing step over already-captured WebMs — it never
 changes the capture path. If an MP4 is ever needed, transcode the compiled
 WebM the same way (`ffmpeg -i promo.webm -c:v libx264 promo.mp4`).

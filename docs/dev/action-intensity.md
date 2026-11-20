@@ -483,7 +483,7 @@ compiler (`scripts/compile-promo.mjs`, `npm run capture:promo`): it reads
 recipe, splits each window into short cuts, and trims/joins/muxes them with
 `ffmpeg`. Inputs, outputs, the selection/coverage manifest formats and the
 validation gates are documented in
-[docs/dev/gameplay-capture.md](./gameplay-capture.md#compiling-a-promo-package-npm-run-compilepromo);
+[docs/dev/gameplay-capture.md](./gameplay-capture.md#compiling-a-promo-package-npm-run-capturepromo);
 the pace reference band its output is verified against is [§7.6](#76-pace-reference-band-for-the-compiled-promo).
 
 ### 7.6 Pace reference band for the compiled promo
@@ -546,12 +546,15 @@ Two conclusions drove the final band:
    `EDITORIAL_CONFIG.paceBand.blackYavgFloor` is that floor, and the compile
    pipeline passes it to both the pace measurement and the per-deliverable
    validation.
-2. **The promo is filled to `maxMs − safetyMs`.** Re-encoding each trimmed cut
-   lands slightly longer than its nominal length (≈0.2 s per cut: container and
-   frame granularity). A plan filled to a nominal 59.6 s produced a **62.6 s**
-   delivered promo — outside the ~45–60 s band — so the fill budget reserves
-   `safetyMs = 4000` (~0.2 s × 15 cuts + headroom). After calibration a 54.9 s
-   nominal plan delivered a **57.9 s** promo — inside the band.
+2. **The promo is filled to `maxMs − safetyMs`, net of the dissolves.**
+   Re-encoding each trimmed cut lands slightly longer than its nominal length
+   (≈0.2 s per cut: container and frame granularity). A plan filled to a
+   nominal 59.6 s produced a **62.6 s** delivered promo — outside the ~45–60 s
+   band — so the fill budget reserves `safetyMs = 4000` (~0.2 s × 15 cuts +
+   headroom). After calibration a 54.9 s nominal plan delivered a **57.9 s**
+   promo — inside the band. Since AH-0MWLYWYGK004JR2A the budget is spent on
+   the duration the viewer actually gets, `Σ cuts − Σ dissolves` (see
+   [Dissolves and the duration budget](#dissolves-and-the-duration-budget)).
 
 The intensity floor (`0.30`) is checked against the delivered package: the
 promo's cuts average **0.762** recorded intensity (band `≥ 0.30`) and the
@@ -567,12 +570,45 @@ from the first frame, no dead air.
 The pace is not only measured, it is **authored**. `EDITORIAL_CONFIG.cutCadence`
 (`maxCutMs = 6000`, `minCutMs = 1000`) splits each §7.5 peak window into
 successive cuts — a sustained busy stretch merges into one long window, and
-presenting that as a single take gives a slow scene rather than the jump-cut
-rhythm the hook needs. Cuts stay contiguous (no footage is lost) and a
+presenting that as a single take gives a slow scene rather than the short-cut
+rhythm the hook needs (the cuts are then joined by dissolves — the rhythm is
+in the cut lengths, not in hard junctions). Cuts stay contiguous (no footage is lost) and a
 remainder shorter than `minCutMs` is folded into its predecessor so no
 micro-cut is emitted. Each cut carries its own motivating intensity and
 feature set into the manifests, which is what makes the per-clip reporting in
 the selection manifest meaningful.
+
+#### Dissolves and the duration budget
+
+Every junction in a multi-cut deliverable is now a **dissolve**, not a hard
+cut: a 400 ms picture fade (`xfade`) with a slightly slower 500 ms sound
+cross-fade (`acrossfade`), both clamped to at most 25 % of the shorter
+neighbouring cut (AH-0MWLYWYGK004JR2A; the knobs and the audio compensation
+are documented in
+[docs/dev/gameplay-capture.md](./gameplay-capture.md#transitions-dissolved-junctions)).
+
+The pace arithmetic follows from that:
+
+- **Delivered length is `Σ cuts − Σ fades`.** Each junction removes its 400 ms
+  dissolve from the running time, so a ~40-cut promo loses ~16 s of screen
+  time to its own transitions. The promo fill budget is therefore applied to
+  the **net** figure (`Σ cuts − Σ fades ≤ maxMs − safetyMs`), not to the raw
+  cut total; budgeting the raw total would leave the delivered promo below the
+  45 s floor and `assessTargets` would (correctly) fail it.
+- **Expected-vs-measured is auditable.** The plan's expected duration and the
+  configured transition settings are written to
+  `capture-output/compile-promo-report.json` beside the probed duration of the
+  delivered file, and printed as `expected …s / measured …s` in the summary.
+- **The non-black ratio is untouched.** A dissolve blends the outgoing cut
+  into the incoming one; it never passes through black, so the ≥ 0.90 sampled
+  non-black ratio (and the 5 s hook window) still measures gameplay rather than
+  transition frames. A *dip to black* would not be equivalent and was
+  deliberately not implemented.
+- **The sound does not drift.** The 500 ms audio fade is compensated per
+  junction (audio tail extension from probed headroom, clamped back to the
+  picture duration where there is none), so the delivered audio ends within a
+  frame of the video instead of running `100 ms × (junctions − 1)` short —
+  ~3.9 s across a 40-cut promo, which would be audible.
 
 #### Failure behaviour
 

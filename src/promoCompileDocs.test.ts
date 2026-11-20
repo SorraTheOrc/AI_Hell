@@ -23,11 +23,13 @@ import * as path from 'node:path';
 import {
   DELIVERABLE_TARGETS,
   PACE_BAND,
+  TRANSITIONS,
   USAGE_TEXT,
 } from '../scripts/compile-promo.mjs';
 
 const CAPTURE_DOC_PATH = path.resolve(process.cwd(), 'docs/dev/gameplay-capture.md');
 const INTENSITY_DOC_PATH = path.resolve(process.cwd(), 'docs/dev/action-intensity.md');
+const README_PATH = path.resolve(process.cwd(), 'README.md');
 const PACKAGE_PATH = path.resolve(process.cwd(), 'package.json');
 
 const captureDoc = fs.existsSync(CAPTURE_DOC_PATH)
@@ -36,6 +38,7 @@ const captureDoc = fs.existsSync(CAPTURE_DOC_PATH)
 const intensityDoc = fs.existsSync(INTENSITY_DOC_PATH)
   ? fs.readFileSync(INTENSITY_DOC_PATH, 'utf8')
   : '';
+const readme = fs.existsSync(README_PATH) ? fs.readFileSync(README_PATH, 'utf8') : '';
 const pkg = JSON.parse(fs.readFileSync(PACKAGE_PATH, 'utf8')) as {
   scripts: Record<string, string>;
 };
@@ -124,6 +127,31 @@ describe('Promo compile pipeline is documented (AH-0MVDV53RA0079F8N)', () => {
     expect(captureDoc).toContain(promoMinutesSeconds);
     expect(captureDoc).toContain(`> ${DELIVERABLE_TARGETS.showreel.minMs / 60_000} min`);
     expect(captureDoc).toContain(`${DELIVERABLE_TARGETS.highlights.count} clips`);
+  });
+
+  it('documents the dissolve junctions, the clamp and the hard-cut opt-out (AH-0MWLYWYGK004JR2A)', () => {
+    expect(captureDoc).toMatch(/### Transitions \(dissolved junctions\)/);
+    // The documented timings are the configured ones, never hard-coded copies.
+    expect(captureDoc).toContain(`${TRANSITIONS.videoFadeMs} ms`);
+    expect(captureDoc).toContain(`${TRANSITIONS.audioFadeMs} ms`);
+    expect(captureDoc).toContain(`${Math.round(TRANSITIONS.maxFadeRatio * 100)} %`);
+    expect(captureDoc).toContain('videoFadeMs: 0');
+    // The audio compensation and its one documented fallback.
+    expect(captureDoc).toMatch(/probed source headroom/);
+    expect(captureDoc).toMatch(/clamped back to/);
+    expect(captureDoc).toMatch(/between the two cuts, never through black/);
+    // The old "hard concatenation" description must not come back.
+    expect(captureDoc).not.toContain('reordering, concatenating');
+  });
+
+  it('states the net-of-fade duration accounting in §7.6 and the README (AH-0MWLYWYGK004JR2A)', () => {
+    expect(intensityDoc).toContain('Σ cuts − Σ fades');
+    expect(intensityDoc).toMatch(/Dissolves and the duration budget/);
+    expect(intensityDoc).toMatch(/never passes through black/);
+    // A producer reading the README learns the package dissolves.
+    expect(readme).toMatch(/dissolve/);
+    expect(readme).toMatch(/cross-fade/);
+    expect(readme).toContain('capture:promo');
   });
 
   it('documents the validation gates a compiled package must pass (AC1)', () => {

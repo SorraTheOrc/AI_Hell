@@ -762,6 +762,22 @@ added by AH-0MUWTNPYJ0031FQE):
   (`import.meta.env.DEV`), so production builds ignore the URL parameter.
   Every scenario, its effect, preset and editorial categories are listed in
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#promo-scenarios-kind-promo).
+- **Promo package (`npm run capture:promo`):** compiles the captured pool into
+  a publishable package — a **45–60 s promo**, a **> 2 min showreel** and
+  **5 highlight clips** — by trimming, reordering, dissolving and muxing the
+  source WebMs with a full `ffmpeg` (VP9 + Opus). The cuts are chosen from the
+  recorded action-intensity series, so the package is reproducible from the
+  pool. Consecutive cuts **dissolve** into each other (400 ms picture, a slower
+  500 ms sound cross-fade, clamped to 25 % of the shorter neighbouring cut), so
+  the result reads as one edited piece rather than a splice of separate
+  recordings; the sound is compensated per junction so it never drifts behind
+  the picture, and single-cut highlights are untouched. Every output is
+  validated (decodable, 960×540, audio present, non-black, pace band, target
+  sizing) and the compile exits non-zero if the package does not meet the
+  documented targets. See
+  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#compiling-a-promo-package-npm-run-capturepromo)
+  and
+  [docs/dev/action-intensity.md §7.6](./docs/dev/action-intensity.md#76-pace-reference-band-for-the-compiled-promo).
 - **Hangar War screens (`--hangar`):** `npm run capture -- --hangar` drives the
   normal menu (**Tab** from the focused **Play Game** control to the adjacent
   **Hangar War** button, then **Enter**), records the `HangarScene` screen for a
