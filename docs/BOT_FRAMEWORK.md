@@ -670,10 +670,11 @@ leading a target; this section covers the avoidance half.
   `hazardThreatensPlayer` predicate, so "imminent hazard collision" means the
   same thing in both places. With prediction off — or a stationary/untracked
   hazard — both paths reduce bit-for-bit to the positional rule.
-- **Class-shaped sampling (AH-0MWM0C9F9006HNXV).** A single fixed-velocity
-  solve predicts a curving hazard where it *was*. `predictMinimumSeparation`
+- **Class-shaped sampling (AH-0MWM0C9F9006HNXV; per-class horizon
+  AH-0MWM0CB2Q003Y6AB).** A single fixed-velocity solve predicts a curving
+  hazard where it *was*. `predictMinimumSeparation`
   (`src/ai/framework/hazardMotionModel.ts`) instead advances the hazard's
-  **movement-class trajectory** over `hazardPredictionHorizon` in a fixed
+  **movement-class trajectory** over its class-scaled threat window in a fixed
   sample count (`ceil(horizon / 0.05 s)`, capped at 64 — no clock, no RNG) and
   returns the minimum separation over the sampled path with its time. The
   class models are documented approximations built from the fitted velocity
@@ -682,14 +683,22 @@ leading a target; this section covers the avoidance half.
   (aimed at the ship before the commit cone), `patroller` a straight patrol
   that runs straight at the ship once in commit range or inside the commit
   cone, `formation` a linear drift that reflects at the arena edges, and
-  `roamer` linear extrapolation. `hazardThreatensPlayer` consumes the sampler,
-  so the kiting gate sees the class-shaped prediction; the steering fan's
-  hazard rejection follows in the sampled-prediction feature. A hazard that
-  cannot reach `threatRadius` inside the horizon is dismissed by a
+  `roamer` linear extrapolation.
+  **One predictive test, every consumer:** `evaluateDirection`'s hazard
+  rejection, `hazardThreatensPlayer` and the `engage` kiting gate all call the
+  sampler, so a change to the models, the horizon or the toggle lands in all
+  three at once. The window is `hazardPredictionHorizon` scaled per movement
+  class (`hazardClassHorizonScale`: `chaser` 1.6, `diver` 1.4, `patroller`
+  1.25, `formation` 1.15) and lifted by a bounded boost from the fitted
+  curvature (≤ 1.5×, saturating at `HAZARD_CURVATURE_SATURATION_RATE`), so a
+  class that can still turn onto the ship is judged further ahead; `roamer`
+  stays at exactly the configured horizon. An exempt engagement target keeps
+  only the positional `dangerMargin` rule, never the predictive test. A hazard
+  that cannot reach `threatRadius` inside the horizon is dismissed by a
   triangle-inequality **early-out** without sampling (its reported separation
   is a proven lower bound), and a stationary hazard, a disabled
   `hazardMotionModelEnabled` or an unknown class reproduces the previous
-  positional / fixed-velocity result exactly. **The sampler ships dark:**
+  positional / fixed-velocity result exactly — on the configured horizon. **The sampler ships dark:**
   `hazardMotionModelEnabled` defaults to `false`, because enabling it for the
   shipped pilot makes a homing chaser predict a threat everywhere in the ghost
   wave, so the pilot over-dodges and `promo-ghost-hunt` no longer clears the

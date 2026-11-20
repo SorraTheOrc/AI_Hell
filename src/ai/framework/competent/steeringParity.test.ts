@@ -7,7 +7,9 @@
  * and each incoming shot's wrapped delta from the player and its distance. The
  * only acceptable outcome is **bit-identical** `DirectionSafety` (the `safe`
  * flag and the `clearance`) against the pre-change raw path, for every fan
- * bearing, with hazard prediction on and off.
+ * bearing, with hazard prediction on and off — and, with the motion model off,
+ * with the per-class horizon scales overridden too (AH-0MWM0CB2Q003Y6AB): the
+ * class scales must never leak into the disabled path.
  *
  * To make that a real property rather than a tautology, this suite carries an
  * independent **raw reference** (`rawEvaluateDirection`) — a faithful copy of
@@ -284,6 +286,35 @@ describe('derived steering geometry parity (AH-0MWGUN4P2003003P · AC1)', () => 
       }
     });
   }
+
+  it('is bit-identical with the motion model off and the per-class horizon scales overridden', () => {
+    // The per-class horizon scale must never leak into the disabled path: with
+    // `hazardMotionModelEnabled` off the sampler still runs the pre-change
+    // fixed-velocity solve on the configured horizon (AH-0MWM0CB2Q003Y6AB).
+    for (const seed of SEEDS.slice(0, 2)) {
+      const snapshot = seededSnapshot(seed);
+      const world = buildBotWorld(snapshot);
+      const tOff = resolveCompetentTunables({
+        hazardMotionModelEnabled: false,
+        hazardClassHorizonScale: {
+          chaser: 3,
+          diver: 2.5,
+          patroller: 2,
+          formation: 1.8,
+          roamer: 1,
+        },
+      });
+      const derived = buildSteeringDerived(world, tOff);
+      for (const offsetDeg of tOff.fanDegrees) {
+        const angle = (offsetDeg * Math.PI) / 180;
+        const dirX = Math.cos(angle);
+        const dirY = Math.sin(angle);
+        expect(evaluateDirection(dirX, dirY, world, tOff, undefined, derived)).toEqual(
+          rawEvaluateDirection(dirX, dirY, world, tOff),
+        );
+      }
+    }
+  });
 
   it('is bit-identical with predictive exemptions applied', () => {
     const snapshot = seededSnapshot(0x11);

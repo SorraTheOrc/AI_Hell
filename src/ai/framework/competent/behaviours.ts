@@ -25,7 +25,11 @@
  *   velocity is exposed is **led**: the aim objective is the iterated
  *   intercept, not the current position (AH-0MV1DUSM2005HL98 · AC2).  An
  *   archetype whose content profile declares `aim: 'none'` is closed on
- *   without aim reasoning.
+ *   without aim reasoning.  Its **kiting gate** asks the one shared predictive
+ *   test (`hazardThreatensPlayer`) whether any non-engagement-target hazard is
+ *   on a collision course — the same class-shaped, per-class-horizon
+ *   prediction the steering fan applies — and exempts the engagement target by
+ *   the shared `isHazardExempt` rule (AH-0MWM0CB2Q003Y6AB).
  * - `evade`: predictive path away from the threats (away from the weighted
  *   centroid of threatening shots), with the steering fan pathing around
  *   anything else in the way (AC2).
@@ -58,7 +62,7 @@ import {
   withoutOvershot,
   type ContentTarget,
 } from './goals';
-import { hazardThreatensPlayer, idleIntent, interceptPoint, mayReverse, mayThrust, planSteering } from './steering';
+import { hazardThreatensPlayer, idleIntent, interceptPoint, isHazardExempt, mayReverse, mayThrust, planSteering } from './steering';
 import type { CompetentBotTunables } from './tunables';
 import { botWrapWorld, wrappedAxisDelta, wrappedDelta } from '../wrapGeometry';
 
@@ -226,14 +230,16 @@ function engageBehaviour(
         (shot) => shot.threatens,
       );
       // A genuine imminent collision is a hazard **other than the engagement
-      // target** that threatens the ship — predicted to cross its path inside
-      // the hazard-prediction horizon when the bot has a velocity estimate for
-      // it (AH-0MVI4QDN90037DIN · AC2), else simply inside `dangerMargin`.  The
-      // target's own proximity is the kiting condition, not a threat, so calm
-      // close combat never triggers reverse on its own (AC3).
+      // target** that threatens the ship: the shared `hazardThreatensPlayer`
+      // predicate — the same sampled predictive test the steering fan applies
+      // (AH-0MVI4QDN90037DIN · AC2; AH-0MWM0CB2Q003Y6AB) — with the
+      // engagement target exempted by the shared identity rule. The target's
+      // own proximity is the kiting condition, not a threat, so calm close
+      // combat never triggers reverse on its own (AC3).
+      const engagementTarget = [best.point];
       const hasImminentHazard = view.world.hazards.some(
         (hazard) =>
-          (hazard.x !== best.point.x || hazard.y !== best.point.y) &&
+          !isHazardExempt(hazard, engagementTarget) &&
           hazardThreatensPlayer(player, hazard, t),
       );
       const kite =

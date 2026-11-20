@@ -1,6 +1,7 @@
 /**
  * Class-shaped hazard trajectory prediction
- * (AH-0MWM0C9F9006HNXV · Feature 3 of the hazard motion-model epic).
+ * (AH-0MWM0C9F9006HNXV · Feature 3; per-class horizon AH-0MWM0CB2Q003Y6AB ·
+ * Feature 4 of the hazard motion-model epic).
  *
  * A single fixed-velocity closest-approach solve predicts a **curving** hazard
  * where it was, not where it will be: a chaser homes, a diver commits to a
@@ -55,6 +56,27 @@
  * - **`roamer`** — linear extrapolation (the generic fit): straight along the
  *   observed velocity, the "assume it keeps going" control.
  *
+ * ## Per-class prediction horizon (AH-0MWM0CB2Q003Y6AB)
+ *
+ * A hazard that can still turn onto the ship needs a longer threat window than
+ * one that can only keep going, so the sampled horizon is
+ * `hazardPredictionHorizon` × {@link hazardHorizonScale} for the hazard's
+ * movement class: `roamer` is exactly the configured horizon (the control),
+ * and the curving/threatening classes get a longer one — `chaser` (1.6),
+ * `diver` (1.4), `patroller` (1.25), `formation` (1.15) at the shipped
+ * defaults. An observed fitted curvature lengthens the window further, bounded
+ * at {@link HAZARD_CURVATURE_SATURATION_RATE} with at most
+ * {@link HAZARD_CURVATURE_HORIZON_BOOST} extra scale. {@link hazardHorizonFor}
+ * is the single definition every consumer shares, so aiming, kiting and the
+ * steering fan never disagree about how far ahead a class is judged.
+ *
+ * ## One predictive test, every consumer
+ *
+ * `evaluateDirection`'s hazard rejection, `hazardThreatensPlayer` and the
+ * `engage` kiting gate all call {@link predictMinimumSeparation} — there is no
+ * second closest-approach copy in the decision path — so a change to the
+ * horizon, the class models or the model toggle lands in all three at once.
+ *
  * ## Fallbacks (exact parity)
  *
  * A hazard with **zero velocity** is treated as stationary and returns its
@@ -72,15 +94,26 @@
  * a single step**; the reported separation is then a proven lower bound, never
  * below the true minimum, so a `separation < threatRadius` test stays correct.
  *
+ * ## Allocation
+ *
+ * The steer fan calls the sampler once per hazard per bearing (17 × hazards per
+ * decision tick), so the caller may thread in the per-tick relative position
+ * (computed once by `buildSteeringDerived`) and a reusable
+ * {@link HazardMotionScratch}. With both supplied the sampler allocates
+ * nothing: every step advances the supplied record and measures distance with
+ * scalar wrapped deltas.
+ *
  * @module src/ai/framework/hazardMotionModel
  */
 
 import type { EnemyMovementClass } from '../../core/configTypes';
-import type { CompetentBotTunables } from './competent/tunables';
+import type {
+  CompetentBotTunables,
+  HazardClassHorizonScale,
+} from './competent/tunables';
 import type { BotHazardPoint } from './worldModel';
 import {
   wrappedAxisDelta,
-  wrappedBearing,
   wrappedDistance,
   type WrapWorld,
 } from '../../utils/wrapGeometry';
@@ -128,6 +161,24 @@ export const HAZARD_PATROL_COMMIT_RANGE = 320;
  */
 export const HAZARD_DIVE_COMMIT_DOT = 0.5;
 
+/**
+ * Fitted turn rate (rad/s, ≈69°/s) at which a hazard counts as **fully
+ * curving** for the horizon scale: at or above it the curvature boost
+ * ({@link HAZARD_CURVATURE_HORIZON_BOOST}) is applied in full. Chosen to sit
+ * inside the chaser arc's own turn-rate bound, so a genuinely homing hazard
+ * reaches it while a nearly straight one is barely boosted.
+ */
+export const HAZARD_CURVATURE_SATURATION_RATE = 1.2;
+
+/**
+ * Extra horizon scale earned by an observed curvature, as a fraction of the
+ * class scale (`0.5` → up to 1.5× the class scale at saturation). A curving
+ * hazard can come back around after the straight-line control has missed, so it
+ * is judged further ahead; the boost is bounded so a curved hazard cannot
+ * extend the window without limit.
+ */
+export const HAZARD_CURVATURE_HORIZON_BOOST = 0.5;
+
 /** The player motion the sampler advances at constant velocity. */
 export interface HazardPlayerMotion {
   readonly x: number;
@@ -165,12 +216,98 @@ export interface HazardSeparationPrediction {
   readonly mode: HazardPredictionMode;
 }
 
-/** Mutable state advanced by one class-model step. */
-interface MotionState {
+/**
+ * Mutable state advanced by one class-model step.
+ *
+ * Exported so a caller can reuse one record across a whole steering fan
+ * instead of allocating per prediction call (AH-0MWM0CB2Q003Y6AB); the sampler
+ * overwrites every field at the start of each run.
+ */
+export interface HazardMotionScratch {
   x: number;
   y: number;
   vx: number;
   vy: number;
+}
+
+/**
+ * Optional caller-supplied inputs for {@link predictMinimumSeparation}
+ * (AH-0MWM0CB2Q003Y6AB).
+ *
+ * Both fields are pure optimisations: omitting them yields the same numbers,
+ * only with the per-tick geometry recomputed and a state record allocated.
+ */
+export interface HazardPredictionOptions {
+  /**
+   * Wrapped x delta from the player to the hazard, as computed once per tick by
+   * the steering fan's derived geometry. Supplying it (with `ry`/`distance`)
+   * means the relative position is **not** recomputed per bearing.
+   */
+  readonly rx?: number;
+  /** Wrapped y delta from the player to the hazard. */
+  readonly ry?: number;
+  /** `Math.hypot(rx, ry)` — the current positional separation. */
+  readonly distance?: number;
+  /** Reusable class-model state; see {@link HazardMotionScratch}. */
+  readonly scratch?: HazardMotionScratch;
+}
+
+/** The sanitised configured hazard-prediction horizon (seconds). */
+function configuredHorizon(tunables: CompetentBotTunables): number {
+  return Number.isFinite(tunables.hazardPredictionHorizon) &&
+    tunables.hazardPredictionHorizon > 0
+    ? tunables.hazardPredictionHorizon
+    : 0;
+}
+
+/**
+ * How much longer than the configured horizon a hazard of `movementClass` (with
+ * the given fitted `curvature`) is judged, as a multiplier
+ * (AH-0MWM0CB2Q003Y6AB).
+ *
+ * The class scale comes from the tunables (`hazardClassHorizonScale`) and is
+ * lifted by a bounded curvature boost: at
+ * {@link HAZARD_CURVATURE_SATURATION_RATE} the scale is multiplied by
+ * `1 + HAZARD_CURVATURE_HORIZON_BOOST`. A non-finite/non-positive scale falls
+ * back to `1` (the configured horizon), so a bad knob can never disable the
+ * threat test.
+ */
+export function hazardHorizonScale(
+  movementClass: EnemyMovementClass,
+  curvature: number | undefined,
+  scale: HazardClassHorizonScale,
+): number {
+  const base = isKnownMovementClass(movementClass) ? scale[movementClass] : 1;
+  if (!Number.isFinite(base) || base <= 0) return 1;
+  const curveRate = Number.isFinite(curvature) ? Math.abs(curvature ?? 0) : 0;
+  const curve = Math.min(1, curveRate / HAZARD_CURVATURE_SATURATION_RATE);
+  return base * (1 + HAZARD_CURVATURE_HORIZON_BOOST * curve);
+}
+
+/**
+ * The threat window (seconds) a hazard is judged over: the configured
+ * `hazardPredictionHorizon` scaled by its class (and observed curvature) via
+ * {@link hazardHorizonScale}.
+ *
+ * This is the **single definition** every consumer shares, so the steering fan,
+ * `hazardThreatensPlayer` and the kiting gate can never disagree about how far
+ * ahead a class-shaped hazard is judged (AH-0MWM0CB2Q003Y6AB). An unknown class
+ * keeps exactly the configured horizon.
+ */
+export function hazardHorizonFor(
+  hazard: Pick<BotHazardPoint, 'movementClass' | 'curvature'>,
+  tunables: CompetentBotTunables,
+): number {
+  const configured = configuredHorizon(tunables);
+  if (!isKnownMovementClass(hazard.movementClass)) return configured;
+  return (
+    configured *
+    hazardHorizonScale(
+      hazard.movementClass,
+      hazard.curvature,
+      tunables.hazardClassHorizonScale,
+    )
+  );
 }
 
 /**
@@ -247,9 +384,39 @@ function fixedVelocityPrediction(
   };
 }
 
+/** Wrapped bearing **angle** (radians) from (x, y) to (tx, ty), no allocation. */
+function bearingAngle(
+  x: number,
+  y: number,
+  tx: number,
+  ty: number,
+  world: WrapWorld,
+): number {
+  const dx = wrappedAxisDelta(x, tx, world.width);
+  const dy = wrappedAxisDelta(y, ty, world.height);
+  // Mirror `wrappedBearing`'s zero-length guard: a coincident point has no
+  // bearing, and `atan2(0, 0)` is the `0` the shared helper yields.
+  if (Math.hypot(dx, dy) < EPS) return 0;
+  return Math.atan2(dy, dx);
+}
+
+/** Wrapped centre-to-centre separation between two points, no allocation. */
+function separationBetween(
+  x: number,
+  y: number,
+  tx: number,
+  ty: number,
+  world: WrapWorld,
+): number {
+  return Math.hypot(
+    wrappedAxisDelta(x, tx, world.width),
+    wrappedAxisDelta(y, ty, world.height),
+  );
+}
+
 /** Straight-line drift, used by `roamer` (and the straight class segments). */
 function advanceStraight(
-  state: MotionState,
+  state: HazardMotionScratch,
   speed: number,
   heading: number,
   dt: number,
@@ -262,7 +429,7 @@ function advanceStraight(
 
 /** `chaser`: bounded homing arc toward the ship / observed curvature. */
 function stepChaser(
-  state: MotionState,
+  state: HazardMotionScratch,
   curvature: number,
   px: number,
   py: number,
@@ -278,8 +445,7 @@ function stepChaser(
   } else {
     // Cold-start chaser (no fitted curvature): home on the ship's predicted
     // position, bounded by the same turn-rate limit.
-    const bearing = wrappedBearing(state, { x: px, y: py }, world);
-    const desired = Math.atan2(bearing.y, bearing.x);
+    const desired = bearingAngle(state.x, state.y, px, py, world);
     turnRate = clamp(
       shortestAngle(desired - heading) / dt,
       -HAZARD_CHASER_TURN_RATE,
@@ -291,7 +457,7 @@ function stepChaser(
 
 /** `diver`: committed straight dive vector, else the dive vector at the ship. */
 function stepDiver(
-  state: MotionState,
+  state: HazardMotionScratch,
   px: number,
   py: number,
   dt: number,
@@ -300,8 +466,7 @@ function stepDiver(
   const speed = Math.hypot(state.vx, state.vy);
   if (speed < EPS) return;
   const heading = Math.atan2(state.vy, state.vx);
-  const bearing = wrappedBearing(state, { x: px, y: py }, world);
-  const desired = Math.atan2(bearing.y, bearing.x);
+  const desired = bearingAngle(state.x, state.y, px, py, world);
   // Committed when the observed heading is already within ~60° of the ship.
   const committed =
     Math.cos(shortestAngle(desired - heading)) >= HAZARD_DIVE_COMMIT_DOT;
@@ -310,7 +475,7 @@ function stepDiver(
 
 /** `patroller`: straight patrol, then a straight attack run once committed. */
 function stepPatroller(
-  state: MotionState,
+  state: HazardMotionScratch,
   px: number,
   py: number,
   dt: number,
@@ -319,12 +484,8 @@ function stepPatroller(
   const speed = Math.hypot(state.vx, state.vy);
   if (speed < EPS) return;
   const heading = Math.atan2(state.vy, state.vx);
-  const bearing = wrappedBearing(state, { x: px, y: py }, world);
-  const desired = Math.atan2(bearing.y, bearing.x);
-  const separation = Math.hypot(
-    wrappedAxisDelta(state.x, px, world.width),
-    wrappedAxisDelta(state.y, py, world.height),
-  );
+  const desired = bearingAngle(state.x, state.y, px, py, world);
+  const separation = separationBetween(state.x, state.y, px, py, world);
   const committed =
     separation <= HAZARD_PATROL_COMMIT_RANGE ||
     Math.cos(shortestAngle(desired - heading)) >= HAZARD_DIVE_COMMIT_DOT;
@@ -333,7 +494,11 @@ function stepPatroller(
 }
 
 /** `formation`: linear drift plus a reflection at the arena bounds. */
-function stepFormation(state: MotionState, dt: number, world: WrapWorld): void {
+function stepFormation(
+  state: HazardMotionScratch,
+  dt: number,
+  world: WrapWorld,
+): void {
   state.x += state.vx * dt;
   state.y += state.vy * dt;
   if (world.width > 0) {
@@ -364,7 +529,7 @@ function stepFormation(state: MotionState, dt: number, world: WrapWorld): void {
  */
 function stepHazard(
   movementClass: EnemyMovementClass,
-  state: MotionState,
+  state: HazardMotionScratch,
   curvature: number,
   px: number,
   py: number,
@@ -394,62 +559,73 @@ function stepHazard(
 /**
  * Predicts the **minimum separation** between the ship and a hazard over the
  * prediction horizon, following the hazard's movement-class trajectory
- * (AH-0MWM0C9F9006HNXV).
+ * (AH-0MWM0C9F9006HNXV; per-class horizon AH-0MWM0CB2Q003Y6AB).
  *
  * - With the motion model enabled (`tunables.hazardMotionModelEnabled`; the
  *   shipped default is **off** pending the horizon calibration in
  *   AH-0MWM0CB2Q003Y6AB) the class model is sampled at a fixed step count
- *   derived from `tunables.hazardPredictionHorizon`; the minimum over the
- *   sampled path is returned with its time.
+ *   derived from {@link hazardHorizonFor} — `hazardPredictionHorizon` scaled by
+ *   the hazard's movement class and observed curvature — and the minimum over
+ *   the sampled path is returned with its time.
  * - A hazard far enough that it cannot reach `tunables.threatRadius` inside the
- *   horizon is dismissed without sampling (`mode: 'early-out'`).
+ *   (class-scaled) horizon is dismissed without sampling
+ *   (`mode: 'early-out'`).
  * - A stationary hazard (`vx === 0 && vy === 0`) returns the current
  *   positional separation (`mode: 'positional'`), and a disabled model or
- *   unknown class returns the pre-existing fixed-velocity solve
- *   (`mode: 'fixed-velocity'`) — both exactly as before this sampler existed.
+ *   unknown class returns the pre-existing fixed-velocity solve on the
+ *   **configured** horizon (`mode: 'fixed-velocity'`) — both exactly as before
+ *   this sampler existed.
  *
  * Pure and deterministic: no wall clock, no RNG, and the same inputs always
  * produce the same result. Bounded work: at most
- * {@link HAZARD_MOTION_MAX_SAMPLES} steps per call.
+ * {@link HAZARD_MOTION_MAX_SAMPLES} steps per call. Allocation-free when the
+ * caller supplies `options.scratch` (and `options.distance` to reuse the
+ * per-tick relative position), which the steering fan does.
  *
  * @param player — the ship's position and velocity (px, px/s).
  * @param hazard — the hazard point, including its movement class and fitted
  *   velocity/curvature.
- * @param tunables — the competent tunables (horizon, threat radius, model
- *   toggle).
+ * @param tunables — the competent tunables (horizon, per-class horizon scale,
+ *   threat radius, model toggle).
  * @param world — the playfield torus (its width/height also bound the
  *   `formation` edge reversal).
+ * @param options — optional precomputed relative geometry and reusable state
+ *   (see {@link HazardPredictionOptions}); omitting them changes no number.
  */
 export function predictMinimumSeparation(
   player: HazardPlayerMotion,
   hazard: BotHazardPoint,
   tunables: CompetentBotTunables,
   world: WrapWorld,
+  options?: HazardPredictionOptions,
 ): HazardSeparationPrediction {
-  const horizon =
-    Number.isFinite(tunables.hazardPredictionHorizon) &&
-    tunables.hazardPredictionHorizon > 0
-      ? tunables.hazardPredictionHorizon
-      : 0;
+  const configured = configuredHorizon(tunables);
   const hvx = hazard.vx ?? 0;
   const hvy = hazard.vy ?? 0;
   const hazardSpeed = Math.hypot(hvx, hvy);
   const playerSpeed = Math.hypot(player.vx, player.vy);
-  const currentSeparation = wrappedDistance(player, hazard, world);
+  // The steering fan already computed this per tick (AH-0MWGUN4P2003003P).
+  const currentSeparation =
+    options?.distance ?? wrappedDistance(player, hazard, world);
 
   // Stationary hazards reproduce today's positional behaviour exactly, whatever
   // the model toggle says (the pre-change code short-circuits the same way).
   if (hazardSpeed === 0) {
     return { separation: currentSeparation, time: 0, mode: 'positional' };
   }
-  // Disabled model / unknown class: the pre-existing fixed-velocity solve,
-  // bit-for-bit (the epic's control arm).
+  // Disabled model / unknown class: the pre-existing fixed-velocity solve on the
+  // configured horizon, bit-for-bit (the epic's control arm). The per-class
+  // horizon scale never applies here.
   if (
     !tunables.hazardMotionModelEnabled ||
     !isKnownMovementClass(hazard.movementClass)
   ) {
-    return fixedVelocityPrediction(player, hazard, horizon, world);
+    return fixedVelocityPrediction(player, hazard, configured, world);
   }
+
+  // The class-scaled threat window: the configured horizon for a roamer,
+  // longer for a class that can still turn onto the ship.
+  const horizon = hazardHorizonFor(hazard, tunables);
 
   // Cheap wide-separation early-out: neither body can travel more than
   // speed × horizon along any class path, so the separation can never drop
@@ -469,7 +645,18 @@ export function predictMinimumSeparation(
   );
   const dt = horizon / steps;
   const curvature = hazard.curvature ?? 0;
-  const state: MotionState = { x: hazard.x, y: hazard.y, vx: hvx, vy: hvy };
+  // Reuse the caller's per-tick record when supplied: the fan samples every
+  // hazard on every bearing, so a fresh object per call is pure churn.
+  const state: HazardMotionScratch = options?.scratch ?? {
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+  };
+  state.x = hazard.x;
+  state.y = hazard.y;
+  state.vx = hvx;
+  state.vy = hvy;
   let best = currentSeparation;
   let bestTime = 0;
 
@@ -478,7 +665,7 @@ export function predictMinimumSeparation(
     const px = player.x + player.vx * time;
     const py = player.y + player.vy * time;
     stepHazard(hazard.movementClass, state, curvature, px, py, dt, world);
-    const separation = wrappedDistance(state, { x: px, y: py }, world);
+    const separation = separationBetween(state.x, state.y, px, py, world);
     if (separation < best) {
       best = separation;
       bestTime = time;

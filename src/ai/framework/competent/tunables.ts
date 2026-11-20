@@ -16,11 +16,54 @@
  * solve bit-for-bit for the sweep's control arm. It **ships dark** until the
  * per-class horizon tuning proves an improvement — see the field docs.
  *
+ * The **per-class horizon scale** (`hazardClassHorizonScale`,
+ * AH-0MWM0CB2Q003Y6AB) is what makes that sampler usable: each movement class
+ * multiplies `hazardPredictionHorizon` by its own window — `roamer` exactly the
+ * configured horizon, the curving/threatening classes longer — so a hazard that
+ * can still turn onto the ship is judged over a window long enough to see the
+ * contact.
+ *
  * @module src/ai/framework/competent/tunables
  */
 
 import type { CommitmentTunables } from '../commitment';
 import type { BotWorldTunables } from '../worldModel';
+
+/**
+ * Per-movement-class multiplier applied to `hazardPredictionHorizon` by the
+ * class-shaped sampler (AH-0MWM0CB2Q003Y6AB).
+ *
+ * A hazard that can still turn onto the ship needs a longer threat window than
+ * one that can only keep going, so the curving/threatening classes get a
+ * window longer than the configured horizon while `roamer` — the straight-line
+ * control — is left at exactly `hazardPredictionHorizon`. The scale is only
+ * applied when `hazardMotionModelEnabled` is on; the disabled path always uses
+ * the configured horizon (bit-for-bit the pre-change solve).
+ *
+ * Each default is a deliberate choice, documented on
+ * {@link COMPETENT_BOT_TUNABLES}:
+ *
+ * - `chaser` (1.6) — homes with bounded steering, so it can reach the ship
+ *   after the straight-line control has already missed;
+ * - `diver` (1.4) — commits to a straight dive at the ship, arriving later than
+ *   a crossing hazard;
+ * - `patroller` (1.25) — straight patrol, then a straight attack run;
+ * - `formation` (1.15) — linear drift with an arena-edge reversal, so it can
+ *   re-approach after reflecting;
+ * - `roamer` (1.0) — linear extrapolation, the configured horizon unchanged.
+ */
+export interface HazardClassHorizonScale {
+  /** Horizon multiplier for `chaser` hazards (default `1.6`). */
+  readonly chaser: number;
+  /** Horizon multiplier for `diver` hazards (default `1.4`). */
+  readonly diver: number;
+  /** Horizon multiplier for `patroller` hazards (default `1.25`). */
+  readonly patroller: number;
+  /** Horizon multiplier for `formation` hazards (default `1.15`). */
+  readonly formation: number;
+  /** Horizon multiplier for `roamer` hazards — the control (default `1`). */
+  readonly roamer: number;
+}
 
 /** Tuning for the structured competent bot. */
 export interface CompetentBotTunables {
@@ -242,6 +285,17 @@ export interface CompetentBotTunables {
    * without that evidence — `hazardMotionModel.test.ts` pins the shipped default.
    */
   hazardMotionModelEnabled: boolean;
+  /**
+   * Per-movement-class horizon multiplier for the class-shaped sampler
+   * (AH-0MWM0CB2Q003Y6AB): `hazardPredictionHorizon` × the class's scale, plus
+   * a bounded curvature boost, is the threat window a class-shaped hazard is
+   * sampled over. `roamer` stays at exactly the configured horizon; the
+   * curving/threatening classes get a longer window (see
+   * {@link HazardClassHorizonScale} for each documented default). Consumed by
+   * every hazard consumer through the one sampled predictive test, and only
+   * when `hazardMotionModelEnabled` is on.
+   */
+  hazardClassHorizonScale: HazardClassHorizonScale;
 
   // ── Aim lead prediction (AH-0MV1DUSM2005HL98) ────────────────────
   /**
@@ -391,6 +445,18 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   // fixed-velocity solve bit-for-bit (AH-0MWM0C7ZR001YJRE · AC2, the sweep's
   // control arm). Pinned by hazardMotionModel.test.ts — do not flip silently.
   hazardMotionModelEnabled: false,
+  // Per-class threat-window multipliers for the class-shaped sampler
+  // (AH-0MWM0CB2Q003Y6AB). A turning hazard needs a longer look-ahead than one
+  // that can only keep going; `roamer` is the straight-line control and stays
+  // at exactly `hazardPredictionHorizon`. Applied only with the motion model
+  // on, so the disabled path keeps the configured horizon bit-for-bit.
+  hazardClassHorizonScale: Object.freeze({
+    chaser: 1.6,
+    diver: 1.4,
+    patroller: 1.25,
+    formation: 1.15,
+    roamer: 1,
+  }),
 
   aimLeadEnabled: true,
   aimLeadAlignSeconds: 0.25,
@@ -435,6 +501,10 @@ export function resolveCompetentTunables(
     commitment: {
       ...COMPETENT_BOT_TUNABLES.commitment,
       ...(overrides.commitment ?? {}),
+    },
+    hazardClassHorizonScale: {
+      ...COMPETENT_BOT_TUNABLES.hazardClassHorizonScale,
+      ...(overrides.hazardClassHorizonScale ?? {}),
     },
     world: {
       ...COMPETENT_BOT_TUNABLES.world,
