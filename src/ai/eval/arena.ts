@@ -116,6 +116,14 @@
  * the contact block entirely, so existing arena/eval baselines (positions,
  * `avoidableHits`, contact count) stay byte-identical.
  *
+ * **Live identity, only in this mode (AH-0MWM0C5BN003PCDT).** With the mode on
+ * the bot snapshot also carries each hostile's stable `id` and its resolved
+ * `movementClass`. The brain's hazard-motion tracker correlates a hazard across
+ * ticks by that id, so without it the predictor has no velocity to fit and the
+ * moving-hostile sweep would compare two arms in which prediction is inert.
+ * The fields are added only under the opt-in, so the default snapshot shape —
+ * and therefore the golden default-path digest — is unchanged.
+ *
  * ## Per-level campaign mode (AH-0MVLJFB1I0099X4Z)
  *
  * Setting {@link ArenaConfig.level} switches the arena to an **additive**
@@ -937,11 +945,21 @@ function createWorld(
   };
 }
 
-/** Copies the world into the opaque snapshot shape the bot consumes. */
+/**
+ * Copies the world into the opaque snapshot shape the bot consumes.
+ *
+ * `liveIdentity` is on only in the opt-in moving-hostile mode
+ * (AH-0MWM0C5BN003PCDT): it adds each hostile's stable bot-side `id` (and its
+ * resolved `movementClass`) to the snapshot, which is what lets the bot's
+ * hazard-motion tracker correlate a body across ticks. With the mode off the
+ * snapshot keeps its historic shape, so the default path stays byte-identical
+ * (the seam the sweep's control arm and the golden digest rely on).
+ */
 function snapshotOf(
   world: ArenaWorld,
   enemies: readonly Hostile[],
   seed: number,
+  liveIdentity = false,
 ): BotSnapshot {
   return {
     player: {
@@ -957,6 +975,14 @@ function snapshotOf(
         y: hostile.y,
         alive: true,
         archetype: hostile.archetype,
+        ...(liveIdentity
+          ? {
+              id: hostile.id,
+              movementClass:
+                hostile.motion?.movementClass ??
+                resolveEnemyMovementClass(hostile.archetype),
+            }
+          : {}),
       })),
     enemyBullets: world.enemyBullets.map((bullet) => ({
       x: bullet.x,
@@ -1822,7 +1848,12 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     }
 
     // 1. Decide + resolve input (the bot loop).
-    const snapshot = snapshotOf(world, world.hostiles, config.seed);
+    const snapshot = snapshotOf(
+      world,
+      world.hostiles,
+      config.seed,
+      movingHostiles !== null,
+    );
     const intent = policy.decide(snapshot, dt);
     const input = governor.update(intent, dt, {
       scheme: 'asteroids',
