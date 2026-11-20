@@ -1619,16 +1619,40 @@ function secondsOf(ms) {
  * expected duration is therefore `Σ cuts − Σ resolved video fades` — the
  * overlap is removed *before* the plan is filled, not measured afterwards.
  *
+ * **Audio alignment.** The sound cross-fade is deliberately longer than the
+ * picture dissolve, so an uncompensated chain would lose
+ * `audioFadeMs − videoFadeMs` of audio at every junction and drift
+ * progressively behind the picture. Compensation is per junction and purely
+ * arithmetic:
+ *
+ * 1. The outgoing cut's audio tail is extended by the extra overlap
+ *    (`audioFadeMs − videoFadeMs`) taken from that cut's probed source
+ *    headroom (`segment.audioHeadroomMs`, the tail beyond `videoOutMs`).
+ * 2. Where the headroom is shorter than the extra overlap — including a cut
+ *    that ends at EOF — the extension is only as long as the headroom and
+ *    the junction's sound cross-fade is clamped back to
+ *    `videoFadeMs + headroom`. That is the one documented fallback: no
+ *    extension is invented, the picture keeps its dissolve and the audio
+ *    never runs past its source.
+ *
+ * Because `Σ audio cuts = Σ cuts + Σ extensions` and
+ * `Σ audio fades = Σ video fades + Σ extensions`, the audio and video
+ * timelines end together exactly (`Σ cuts − Σ video fades`) at any cut count.
+ *
  * `transitions.videoFadeMs === 0` is the hard-cut opt-out: every junction
  * reports zero fades (audio included, because a dissolve-free graph has no
- * `acrossfade` either) and the expected duration is the plain cut total.
+ * `acrossfade` either), no audio tail is extended and the expected duration
+ * is the plain cut total.
  *
- * @param {readonly {videoInMs: number, videoOutMs: number}[]} [segments] -
- *   segments already clamped to their source durations.
+ * @param {readonly {videoInMs: number, videoOutMs: number,
+ *   audioHeadroomMs?: number}[]} [segments] - segments already clamped to
+ *   their source durations; `audioHeadroomMs` is the probed tail beyond
+ *   `videoOutMs` (absent ⇒ unbounded, as for a synthetic fixture).
  * @param {{ videoFadeMs: number, audioFadeMs: number, maxFadeRatio: number }}
  *   [transitions]
  * @returns {{ junctions: PlannedJunction[], cutMs: number[],
- *   totalCutMs: number, totalVideoFadeMs: number, expectedDurationMs: number,
+ *   totalCutMs: number, totalVideoFadeMs: number, totalAudioFadeMs: number,
+ *   totalAudioTailExtensionMs: number, expectedDurationMs: number,
  *   hasTransitions: boolean }}
  */
 export function planJunctions(segments = [], transitions = TRANSITIONS) {
@@ -1639,6 +1663,8 @@ export function planJunctions(segments = [], transitions = TRANSITIONS) {
   const junctions = [];
   let videoOffsetMs = 0;
   let totalVideoFadeMs = 0;
+  let totalAudioFadeMs = 0;
+  let totalAudioTailExtensionMs = 0;
   let hasTransitions = false;
   for (let index = 0; index + 1 < cutMs.length; index += 1) {
     const previousCutMs = cutMs[index];
@@ -1647,11 +1673,26 @@ export function planJunctions(segments = [], transitions = TRANSITIONS) {
     const videoFadeMs = hardCut
       ? 0
       : Math.floor(Math.min(Number(transitions.videoFadeMs), clampLimitMs));
-    const audioFadeMs = hardCut
+    const nominalAudioFadeMs = hardCut
       ? 0
       : Math.floor(Math.min(Number(transitions.audioFadeMs), clampLimitMs));
+    // The outgoing cut's probed tail beyond its out point; a caller with no
+    // probe (a synthetic fixture) is treated as having as much tail as the
+    // compensation could ever want.
+    const headroomRaw = Number(segments[index]?.audioHeadroomMs);
+    const audioHeadroomMs = Number.isFinite(headroomRaw)
+      ? Math.max(0, headroomRaw)
+      : Number.POSITIVE_INFINITY;
+    // Extend by the extra overlap the longer sound fade costs, and clamp the
+    // junction's fade back to `videoFadeMs + headroom` when it cannot be paid
+    // for (the documented fallback).
+    const extraOverlapMs = Math.max(0, nominalAudioFadeMs - videoFadeMs);
+    const audioTailExtensionMs = Math.floor(Math.min(extraOverlapMs, audioHeadroomMs));
+    const audioFadeMs = videoFadeMs + audioTailExtensionMs;
     videoOffsetMs += previousCutMs - videoFadeMs;
     totalVideoFadeMs += videoFadeMs;
+    totalAudioFadeMs += audioFadeMs;
+    totalAudioTailExtensionMs += audioTailExtensionMs;
     if (videoFadeMs > 0 || audioFadeMs > 0) hasTransitions = true;
     junctions.push({
       index,
@@ -1659,6 +1700,8 @@ export function planJunctions(segments = [], transitions = TRANSITIONS) {
       nextCutMs,
       videoFadeMs,
       audioFadeMs,
+      audioHeadroomMs,
+      audioTailExtensionMs,
       videoOffsetMs,
     });
   }
@@ -1668,6 +1711,8 @@ export function planJunctions(segments = [], transitions = TRANSITIONS) {
     cutMs,
     totalCutMs,
     totalVideoFadeMs,
+    totalAudioFadeMs,
+    totalAudioTailExtensionMs,
     expectedDurationMs: totalCutMs - totalVideoFadeMs,
     hasTransitions,
   };
@@ -1712,6 +1757,7 @@ export function buildDeliverableArgv(kind, index, segments, opts) {
   const args = ['-y', '-hide_banner', '-loglevel', 'error'];
   for (const segment of segments) args.push('-i', segment.webm);
 
+  const planned = planJunctions(segments, transitions);
   const inputs = segments.map((segment, i) => {
     const start = secondsOf(segment.videoInMs);
     const end = secondsOf(segment.videoOutMs);
@@ -1720,8 +1766,15 @@ export function buildDeliverableArgv(kind, index, segments, opts) {
       `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
       `fps=${fps},format=yuv420p,setsar=1[v${i}]`;
+    // The longer sound cross-fade is paid for by extending this cut's audio
+    // tail (AH-0MWM28ZOT0067JQW): its `atrim` end moves out by the extra
+    // overlap the junction actually resolved from the cut's source headroom.
+    // A cut that is nobody's outgoing side, and every hard-cut junction, add
+    // nothing — so the zero-transition graph stays byte-identical.
+    const audioTailMs = planned.junctions[i]?.audioTailExtensionMs ?? 0;
+    const audioEnd = secondsOf(segment.videoOutMs + audioTailMs);
     const audio =
-      `[${i}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS,` +
+      `[${i}:a]atrim=start=${start}:end=${audioEnd},asetpts=PTS-STARTPTS,` +
       `aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`;
     return { video, audio };
   });
@@ -1729,7 +1782,6 @@ export function buildDeliverableArgv(kind, index, segments, opts) {
   let graph;
   let mapVideo;
   let mapAudio;
-  const planned = planJunctions(segments, transitions);
   if (segments.length === 1) {
     graph = `${inputs[0].video};${inputs[0].audio}`;
     mapVideo = '[v0]';
@@ -1846,7 +1898,14 @@ export function buildDeliverableCommands(plan, opts = {}) {
         );
         return;
       }
-      clamped.push({ ...segment, videoInMs, videoOutMs });
+      // The probed tail beyond the cut's out point is the headroom the audio
+      // compensation may extend into (AH-0MWM28ZOT0067JQW). An unknown source
+      // duration yields no headroom: never invent an extension past a tail we
+      // could not measure.
+      const audioHeadroomMs = Number.isFinite(durationMs)
+        ? Math.max(0, durationMs - videoOutMs)
+        : 0;
+      clamped.push({ ...segment, videoInMs, videoOutMs, audioHeadroomMs });
     }
     commands.push({
       kind,

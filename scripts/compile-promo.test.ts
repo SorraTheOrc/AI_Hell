@@ -2319,6 +2319,140 @@ describe('ffmpeg driver — cross-faded junction graph (AH-0MWM28XOT005P6NR)', (
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// Audio alignment compensation (AH-0MWM28ZOT0067JQW)
+//
+// The sound cross-fade is 100 ms longer than the picture dissolve, so the
+// audio chain would otherwise lose 100 ms per junction and run short of the
+// picture. Each outgoing cut's audio tail is extended by the extra overlap
+// (from probed source headroom), and where the headroom is missing that
+// junction's audio fade is clamped back to `videoFadeMs + headroom`. The two
+// timelines then end together at any cut count.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('ffmpeg driver — audio alignment compensation (AH-0MWM28ZOT0067JQW)', () => {
+  const fadeOptsFor = (output: string) => ({
+    width: 960,
+    height: 540,
+    fps: 60,
+    vp9Crf: 32,
+    opusBitrateK: 96,
+    output,
+  });
+
+  /** A clamped cut with `headroomMs` of probed source tail beyond its out point. */
+  const cutWith = (id: string, inMs: number, outMs: number, headroomMs: number) => ({
+    ...seg(id, inMs, outMs),
+    audioHeadroomMs: headroomMs,
+  });
+
+  /** The graph of a built promo. */
+  const graphOf = (segments: ReturnType<typeof cutWith>[], kind: 'promo' | 'showreel' = 'promo') => {
+    const argv = buildDeliverableArgv(
+      kind,
+      0,
+      segments,
+      fadeOptsFor(deliverableOutputPath(kind, 1, CAPTURE_OUTPUT_DIR)),
+    );
+    return argv[argv.indexOf('-filter_complex') + 1];
+  };
+
+  /**
+   * The audio timeline the built graph actually describes: every per-input
+   * `atrim` length, minus every `acrossfade` overlap.
+   */
+  function audioTimelineMs(graph: string) {
+    const trims = [...graph.matchAll(/\[(\d+):a\]atrim=start=([\d.]+):end=([\d.]+)/g)].map(
+      (match) => Math.round((Number(match[3]) - Number(match[2])) * 1000),
+    );
+    const fades = [...graph.matchAll(/acrossfade=d=([\d.]+)/g)].map((match) =>
+      Math.round(Number(match[1]) * 1000),
+    );
+    return {
+      trims,
+      fades,
+      totalMs: trims.reduce((sum, ms) => sum + ms, 0) - fades.reduce((sum, ms) => sum + ms, 0),
+    };
+  }
+
+  it('extends the outgoing audio tail and keeps the full audio fade when headroom allows', () => {
+    const cuts = [
+      cutWith('runA', 0, 2_500, 300),
+      cutWith('runB', 0, 2_200, 300),
+      cutWith('runC', 0, 4_000, 300),
+    ];
+    const graph = graphOf(cuts);
+    // Outgoing cuts are extended by `audioFadeMs − videoFadeMs` = 100 ms…
+    expect(graph).toContain('[0:a]atrim=start=0:end=2.6,');
+    expect(graph).toContain('[1:a]atrim=start=0:end=2.3,');
+    // …the last cut is never extended (it has no outgoing junction)…
+    expect(graph).toContain('[2:a]atrim=start=0:end=4,');
+    // …and every junction keeps the full 500 ms sound cross-fade.
+    expect([...graph.matchAll(/acrossfade=d=([\d.]+)/g)].map((m) => m[1])).toEqual(['0.5', '0.5']);
+  });
+
+  it('aligns the audio and video totals for 2, 5 and 40 cuts (no drift)', () => {
+    for (const count of [2, 5, 40]) {
+      const cuts = Array.from({ length: count }, (_, i) => cutWith(`run${i}`, 0, 2_000, 300));
+      const planned = planJunctions(cuts);
+      const { totalMs } = audioTimelineMs(graphOf(cuts));
+      expect(totalMs).toBe(planned.expectedDurationMs);
+    }
+  });
+
+  it('clamps a headroom-less junction back to the video fade and keeps the rest compensated', () => {
+    const cuts = [
+      cutWith('runA', 0, 2_500, 300),
+      cutWith('runB', 0, 2_200, 0), // no tail beyond 2.2 s → this junction cannot extend
+      cutWith('runC', 0, 4_000, 300),
+    ];
+    const graph = graphOf(cuts);
+    const planned = planJunctions(cuts);
+    // Junction 1 is clamped to the picture duration; junction 0 stays full.
+    expect(planned.junctions.map((j) => j.audioFadeMs)).toEqual([500, 400]);
+    expect(planned.junctions.map((j) => j.audioTailExtensionMs)).toEqual([100, 0]);
+    expect([...graph.matchAll(/acrossfade=d=([\d.]+)/g)].map((m) => m[1])).toEqual(['0.5', '0.4']);
+    // No extension is emitted for the clamped junction's outgoing cut.
+    expect(graph).toContain('[1:a]atrim=start=0:end=2.2,');
+    expect(audioTimelineMs(graph).totalMs).toBe(planned.expectedDurationMs);
+  });
+
+  it('accumulates no drift on a mixed-headroom plan, whatever the cut count', () => {
+    const headrooms = [300, 0, 50, 300, 0];
+    for (const count of [2, 5]) {
+      const cuts = Array.from({ length: count }, (_, i) =>
+        cutWith(`run${i}`, 0, 2_000 + i * 100, headrooms[i % headrooms.length]),
+      );
+      const planned = planJunctions(cuts);
+      const { totalMs } = audioTimelineMs(graphOf(cuts));
+      // Exact alignment: the compensation absorbs every extra millisecond.
+      expect(Math.abs(totalMs - planned.expectedDurationMs)).toBeLessThanOrEqual(
+        Math.round(1000 / DELIVERABLE_FPS),
+      );
+    }
+  });
+
+  it('takes the headroom from the probed source in buildDeliverableCommands', () => {
+    const plan = planOf();
+    const probeByPath = probeMap(plan);
+    // runB is probed as 4 s long and its cut ends at 2.2 s → 1.8 s of tail.
+    probeByPath[sourceWebmPath('runB')] = probeOf({ duration: 4 });
+    const { commands, errors } = buildDeliverableCommands(plan, { probeByPath });
+    expect(errors).toEqual([]);
+    const promo = commands.find((c) => c.kind === 'promo')!;
+    expect(promo.segments[0].audioHeadroomMs).toBeGreaterThanOrEqual(100);
+  });
+
+  it('is deterministic — repeated builds emit identical trims and fades', () => {
+    const cuts = () => [
+      cutWith('runA', 0, 2_500, 300),
+      cutWith('runB', 0, 2_200, 0),
+      cutWith('runC', 0, 4_000, 300),
+    ];
+    expect(graphOf(cuts())).toBe(graphOf(cuts()));
+  });
+});
+
 describe('ffmpeg driver — validation verdict (AC3, pure)', () => {
   it('passes a decodable 960x540 + audio + non-black deliverable', () => {
     expect(

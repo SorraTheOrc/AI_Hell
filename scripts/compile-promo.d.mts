@@ -61,8 +61,12 @@ export interface PlannedJunction {
   readonly nextCutMs: number;
   /** The clamped picture dissolve (ms). */
   readonly videoFadeMs: number;
-  /** The clamped sound cross-fade (ms). */
+  /** The clamped sound cross-fade (ms), after headroom clamping. */
   readonly audioFadeMs: number;
+  /** Probed tail available on the outgoing cut (ms; `Infinity` if unprobed). */
+  readonly audioHeadroomMs: number;
+  /** Extra audio take on the outgoing cut: `audioFadeMs − videoFadeMs` (ms). */
+  readonly audioTailExtensionMs: number;
   /** Where the dissolve starts on the built timeline (`xfade` `offset`). */
   readonly videoOffsetMs: number;
 }
@@ -77,6 +81,10 @@ export interface JunctionPlan {
   readonly totalCutMs: number;
   /** `Σ resolved video fades`. */
   readonly totalVideoFadeMs: number;
+  /** `Σ resolved audio fades` (each `videoFadeMs + tail extension`). */
+  readonly totalAudioFadeMs: number;
+  /** `Σ audio tail extensions` (the extra take paid to the sound fades). */
+  readonly totalAudioTailExtensionMs: number;
   /** `Σ cutMs − Σ resolved video fades` (ms). */
   readonly expectedDurationMs: number;
   /** False when no junction fades (the hard-cut opt-out). */
@@ -173,6 +181,11 @@ export interface SelectionManifestEntry {
   readonly burstiness: number;
   /** Editorial categories this segment evidences. */
   readonly features: readonly string[];
+  /**
+   * Probed source tail beyond `videoOutMs` (ms): the headroom the audio
+   * alignment compensation may extend into. Absent ⇒ unbounded.
+   */
+  readonly audioHeadroomMs?: number;
 }
 
 /** A timestamp range inside one source that evidences a feature. */
@@ -221,7 +234,11 @@ export const TRANSITIONS: TransitionConfig;
  * deliverable's expected duration (`Σ cuts − Σ fades`).
  */
 export function planJunctions(
-  segments?: readonly { videoInMs: number; videoOutMs: number }[],
+  segments?: readonly {
+    videoInMs: number;
+    videoOutMs: number;
+    audioHeadroomMs?: number;
+  }[],
   transitions?: TransitionConfig,
 ): JunctionPlan;
 /** Deliverable length/count targets (parent AC1). */
