@@ -1626,3 +1626,205 @@ describe('shipped frontier tuning (AH-0MWBBUBZ90066H68)', () => {
     });
   });
 });
+
+describe('attackingNeighbour — origin exclusion (AH-0MWH3A87Z005LLOX)', () => {
+  it('skips the excluded origin and presses from the next neighbour', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 8);
+    setAggression(hexes, RING_ONE_IDS[1], 5);
+    setAggression(hexes, RING_ONE_IDS[5], 9);
+    const target = hexOf(payloadWith(hexes), RING_ONE_IDS[0]);
+
+    // The most aggressive neighbour wins first ...
+    expect(attackingNeighbour(target, hexes)?.id).toBe(RING_ONE_IDS[5]);
+    // ... and excluding it hands the origin to the neighbour named next.
+    expect(attackingNeighbour(target, hexes, [RING_ONE_IDS[5]])?.id).toBe(
+      RING_ONE_IDS[1],
+    );
+    // Excluding the next one too leaves no origin at all.
+    expect(
+      attackingNeighbour(target, hexes, [RING_ONE_IDS[5], RING_ONE_IDS[1]]),
+    ).toBeNull();
+  });
+
+  it('reports no origin when the attacked hex was the only neighbour', () => {
+    const hexes = ringOne();
+    for (const id of RING_ONE_IDS) hold(hexes, id, 8);
+    // Leave exactly one unheld neighbour of hex-r1-1: hex-r1-6.
+    const onlyOrigin = hexes.find((hex) => hex.id === RING_ONE_IDS[5])!;
+    onlyOrigin.held = false;
+    onlyOrigin.defender = null;
+    const target = hexOf(payloadWith(hexes), RING_ONE_IDS[0]);
+
+    expect(attackingNeighbour(target, hexes)?.id).toBe(RING_ONE_IDS[5]);
+    expect(attackingNeighbour(target, hexes, [RING_ONE_IDS[5]])).toBeNull();
+  });
+
+  it('excludes nothing when no exclusion is supplied', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 8);
+    const target = hexOf(payloadWith(hexes), RING_ONE_IDS[0]);
+
+    expect(attackingNeighbour(target, hexes, null)).toEqual(
+      attackingNeighbour(target, hexes),
+    );
+    expect(attackingNeighbour(target, hexes, [])).toEqual(
+      attackingNeighbour(target, hexes),
+    );
+  });
+});
+
+describe('runFrontierTick — the attacked hex defends (AH-0MWH3A87Z005LLOX)', () => {
+  /** Ring 1 with `hex-r1-1` held at `rating` and everything else unheld. */
+  function weakTargetPayload(rating = 0): HangarWarPayload {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], rating);
+    return payloadWith(hexes);
+  }
+
+  it('never records the player-attacking hex as an origin (frontier draw)', () => {
+    const payload = weakTargetPayload();
+    const clock = createFrontierClock(payload.seed, 7);
+
+    // The unexcluded tick names an origin the player can answer.
+    const baseline = runFrontierTick(payload, { clock, tuning: QUIET_RISE });
+    expect(baseline.record.attacks).toHaveLength(1);
+    const excludedOriginId = baseline.record.attacks[0].attackerOriginId;
+    // The excluded hex is still unheld at tick time: it qualifies today.
+    expect(hexOf(baseline.payload, excludedOriginId).held).toBe(false);
+
+    const { record } = runFrontierTick(payload, {
+      clock,
+      tuning: QUIET_RISE,
+      playerAttackingHexId: excludedOriginId,
+    });
+
+    for (const attack of record.attacks) {
+      expect(attack.attackerOriginId).not.toBe(excludedOriginId);
+    }
+  });
+
+  it('presses from the next neighbour, with that neighbour’s force and type', () => {
+    const payload = weakTargetPayload();
+    const clock = createFrontierClock(payload.seed, 7);
+    const baseline = runFrontierTick(payload, { clock, tuning: QUIET_RISE });
+    const excludedOriginId = baseline.record.attacks[0].attackerOriginId;
+
+    const { payload: next, record } = runFrontierTick(payload, {
+      clock,
+      tuning: QUIET_RISE,
+      playerAttackingHexId: excludedOriginId,
+    });
+
+    expect(record.attacks).toHaveLength(1);
+    const [attack] = record.attacks;
+    // The attack still happens: it rides from the neighbour the existing
+    // selection order names next (same redistributed aggression).
+    const expectedOrigin = attackingNeighbour(
+      hexOf(next, attack.hexId),
+      next.ring.hexes,
+      [excludedOriginId],
+    );
+    expect(expectedOrigin).not.toBeNull();
+    expect(attack.attackerOriginId).toBe(expectedOrigin!.id);
+    expect(attack.attackerOrigin).toEqual({
+      q: expectedOrigin!.q,
+      r: expectedOrigin!.r,
+    });
+    // Every recorded figure is the one that neighbour produces.
+    expect(attack.attackingForce).toBe(
+      QUIET_RISE.baseAttackingForce +
+        expectedOrigin!.aggression * QUIET_RISE.forcePerOriginAggression,
+    );
+    expect(attack.attackerType).toBe(
+      findHexRingDefinition(expectedOrigin!.id)?.boss ?? null,
+    );
+    // The strength/margin are the ones that force produces under the (jitter-free)
+    // tuning the test pins.
+    expect(attack.attackStrength).toBe(
+      Math.round(
+        (attack.attackingForce * attack.aggressionMultiplierPercent) / 100,
+      ),
+    );
+    expect(attack.margin).toBe(
+      attack.effectiveDefenderRating - attack.attackStrength,
+    );
+  });
+
+  it('draws no attack when the held target’s only origin is the attacked hex (queued)', () => {
+    const hexes = ringOne();
+    for (const id of RING_ONE_IDS) hold(hexes, id, 0);
+    // Leave one unheld hex, and make it the attacked hex. hex-r1-1 is then
+    // reachable only from hex-r1-6.
+    const excluded = hexes.find((hex) => hex.id === RING_ONE_IDS[5])!;
+    excluded.held = false;
+    excluded.defender = null;
+    const payload = payloadWith(hexes, {
+      pendingAttacks: [{ hexId: RING_ONE_IDS[0], force: 100 }],
+    });
+
+    const { payload: next, record } = runFrontierTick(payload, {
+      tuning: { ...QUIET_RISE, attackChancePercent: 0 },
+      playerAttackingHexId: RING_ONE_IDS[5],
+    });
+
+    // No record entry, no throw — and the queue is consumed, not retried.
+    expect(record.attacks).toEqual([]);
+    expect(next.pendingAttacks).toEqual([]);
+    expect(hexOf(next, RING_ONE_IDS[0]).held).toBe(true);
+  });
+
+  it('resolves that same queued attack from the attacked hex when it is not excluded', () => {
+    const hexes = ringOne();
+    for (const id of RING_ONE_IDS) hold(hexes, id, 0);
+    const onlyOrigin = hexes.find((hex) => hex.id === RING_ONE_IDS[5])!;
+    onlyOrigin.held = false;
+    onlyOrigin.defender = null;
+    const payload = payloadWith(hexes, {
+      pendingAttacks: [{ hexId: RING_ONE_IDS[0], force: 100 }],
+    });
+
+    const { record } = runFrontierTick(payload, {
+      tuning: { ...QUIET_RISE, attackChancePercent: 0 },
+    });
+
+    // Without the exclusion the same queued attack is launched from that hex:
+    // the rule suppresses the origin, it does not suppress the feature.
+    expect(record.attacks).toHaveLength(1);
+    expect(record.attacks[0].source).toBe('pending');
+    expect(record.attacks[0].attackerOriginId).toBe(RING_ONE_IDS[5]);
+  });
+
+  it('is byte-identical to today when no attacking hex is supplied', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 3);
+    hold(hexes, RING_ONE_IDS[1], 2);
+    const payload = payloadWith(hexes);
+    const clock = createFrontierClock(payload.seed, 5);
+
+    expect(runFrontierTick(payload, { clock })).toEqual(
+      runFrontierTick(payload, { clock, playerAttackingHexId: null }),
+    );
+  });
+
+  it('replays identically for the same payload, clock and attacking hex', () => {
+    const payload = weakTargetPayload();
+    const clock = createFrontierClock(payload.seed, 7);
+    const attacking = runFrontierTick(payload, { clock, tuning: QUIET_RISE })
+      .record.attacks[0].attackerOriginId;
+
+    expect(
+      runFrontierTick(payload, {
+        clock,
+        tuning: QUIET_RISE,
+        playerAttackingHexId: attacking,
+      }),
+    ).toEqual(
+      runFrontierTick(payload, {
+        clock,
+        tuning: QUIET_RISE,
+        playerAttackingHexId: attacking,
+      }),
+    );
+  });
+});

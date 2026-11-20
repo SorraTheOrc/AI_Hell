@@ -3726,12 +3726,20 @@ One **between-sortie frontier tick** runs when a deployment ends:
 
 An attack is always launched from an **unheld neighbouring hex of the same
 ring**, and the record names it: that is the design's answerability rule, since
-the player can go and defeat that neighbour to stop the pressure. A **secured
-ring has no unheld neighbour, so it draws no attacks** — the win state is quiet
-by construction. The transition is pure (the caller's payload is never mutated),
-the clock is **injected** (`seed` + `tick`, persisted as the payload's additive
-`frontierTick`), and ties between equally aggressive neighbours are settled by
-sorted id, so a reordered payload replays identically.
+the player can go and defeat that neighbour to stop the pressure. **An attacked
+hex defends, it does not attack** (AH-0MWH3A87Z005LLOX): the tick is told which
+hex the current deployment is attacking, and that hex is excluded as an attack
+origin — a hex fighting the player off is too busy defending to press a
+neighbouring player-held hex. Only the *origin* is suppressed: if the target has
+another unheld neighbour the attack still rides from it (the same selection
+order names it next), and a target whose only origin was the attacked hex draws
+no attack that tick (a queued entry is consumed, not retried). The exclusion is a
+per-tick input, never persisted, so afterwards the hex behaves as before. A
+**secured ring has no unheld neighbour, so it draws no attacks** — the win state
+is quiet by construction. The transition is pure (the caller's payload is never
+mutated), the clock is **injected** (`seed` + `tick`, persisted as the payload's
+additive `frontierTick`), and ties between equally aggressive neighbours are
+settled by sorted id, so a reordered payload replays identically.
 
 #### Defending-bot skills
 

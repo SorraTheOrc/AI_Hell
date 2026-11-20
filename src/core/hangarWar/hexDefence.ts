@@ -109,7 +109,21 @@
  * An attack is always launched from an **unheld neighbouring hex of the same
  * ring** ({@link attackingNeighbour}), and the record names it. That is the
  * design's answerability rule: the player can go and defeat that neighbour to
- * stop the pressure. Consequences, both deliberate:
+ * stop the pressure. Consequences, all deliberate:
+ *
+ * - **An attacked hex defends, it does not attack** (AH-0MWH3A87Z005LLOX). A
+ *   tick may be told which hex the player is currently attacking
+ *   ({@link FrontierTickOptions.playerAttackingHexId} — the deployment's
+ *   target). While supplied, that hex is **excluded from origin selection** on
+ *   both launch paths (the queued attack and the frontier draw): a hex that is
+ *   fighting the player off is too busy defending to press a neighbouring
+ *   player-held hex. Only the *origin* is suppressed — if the target still has
+ *   another unheld neighbour, the attack rides from it exactly as the selection
+ *   order names next. A target whose **only** origin is the excluded hex draws
+ *   no attack at all this tick (the same "unanswerable attacks are dropped"
+ *   rule as below, and a queued entry is consumed rather than retried). The
+ *   exclusion is a per-tick argument, never persisted, so it applies to that
+ *   sortie's single tick and the hex otherwise behaves as today.
  *
  * - A held hex with **no** unheld neighbour is not attacked this tick. Once
  *   every hex of the ring is held there is no neighbour left to strike from, so
@@ -408,6 +422,19 @@ export interface FrontierTickOptions {
    * player strength resolves (`beatableAggressionCeiling`).
    */
   readonly beatableCeiling?: number;
+  /**
+   * The hex the player is currently attacking (the deployment's target), or
+   * `null`/omitted for today's behaviour.
+   *
+   * A hex that is fighting the player off is **too busy defending to attack**:
+   * while supplied, this id is excluded from origin selection on both launch
+   * paths, so the tick never records it as an attack origin. Only the origin is
+   * suppressed — a target with another unheld neighbour is still attacked from
+   * that neighbour, and a target whose only origin was excluded draws no attack
+   * (a queued entry is consumed rather than retried). Never persisted: the
+   * caller derives it from the deployment, so no payload field is added.
+   */
+  readonly playerAttackingHexId?: string | null;
 }
 
 /** Multiplier applied to the attack per point of aggression (percent). */
@@ -827,18 +854,31 @@ export function redistributeAggression(
  * depends on array order. Neighbours are hexes of the **same payload ring**, so
  * the named origin is always a hex the player can deploy to.
  *
+ * An optional exclusion names origin ids that may **not** launch the attack —
+ * the hex the player is currently attacking (AH-0MWH3A87Z005LLOX). A tick that
+ * is told which hex the player is attacking passes it here, so a hex that is
+ * busy defending against the player cannot simultaneously press an attack on a
+ * neighbouring held hex. Everything else is unchanged: the best remaining
+ * unheld neighbour still wins, and `null` is reported when the attacked hex was
+ * the only candidate.
+ *
  * @param hex — the hex under pressure.
  * @param hexes — the ring's hexes.
+ * @param excludedOriginIds — further origin ids that may not launch this attack
+ *   (the player-attacking hex); `null`/omitted excludes nothing.
  * @returns the attacking neighbour, or `null` when the hex is unreachable this
- *   tick (no unheld neighbour in the ring — e.g. a fully secured ring).
+ *   tick (no unheld neighbour in the ring — e.g. a fully secured ring — or every
+ *   such neighbour is excluded).
  */
 export function attackingNeighbour(
   hex: HexState,
   hexes: readonly HexState[],
+  excludedOriginIds: readonly string[] | null = null,
 ): HexState | null {
   let origin: HexState | null = null;
   for (const candidate of hexes) {
     if (candidate.id === hex.id || candidate.held) continue;
+    if (excludedOriginIds?.includes(candidate.id)) continue;
     if (!areNeighbours(hex, candidate)) continue;
     if (
       origin === null ||
@@ -1133,6 +1173,8 @@ export function resolveHangarAssault(
  * @param source — whether the attack was queued or opened this tick.
  * @param clock — the tick being applied (its seed and index derive the jitter).
  * @param tuning — normalised balance knobs.
+ * @param excludedOriginIds — origin ids barred from launching this attack (the
+ *   hex the player is attacking), or `null` for no exclusion.
  * @returns the record, or `null` when the attack cannot be resolved.
  */
 function resolveAttack(
@@ -1142,11 +1184,12 @@ function resolveAttack(
   source: HexDefenceRecord['source'],
   clock: FrontierClock,
   tuning: FrontierTuning,
+  excludedOriginIds: readonly string[] | null = null,
 ): HexDefenceRecord | null {
   const hex = payload.ring.hexes.find((candidate) => candidate.id === hexId);
   if (!hex || !hex.held) return null;
 
-  const origin = attackingNeighbour(hex, payload.ring.hexes);
+  const origin = attackingNeighbour(hex, payload.ring.hexes, excludedOriginIds);
   if (origin === null) return null;
 
   // The attacker's type is the **authored boss identity of the origin hex** —
@@ -1231,6 +1274,18 @@ export function runFrontierTick(
   const next = clonePayload(payload);
   const tickRng = createHangarWarRng(tickSeed(clock.seed, clock.tick));
 
+  // An attacked hex defends, it does not attack (AH-0MWH3A87Z005LLOX): the hex
+  // the player is currently attacking is barred from being an attack origin on
+  // every path below. Derived purely from the argument, so the tick stays pure
+  // and replayable, and `null` reproduces today's behaviour exactly.
+  const playerAttackingHexId =
+    typeof options.playerAttackingHexId === 'string' &&
+    options.playerAttackingHexId !== ''
+      ? options.playerAttackingHexId
+      : null;
+  const excludedOriginIds =
+    playerAttackingHexId === null ? null : [playerAttackingHexId];
+
   // The frontier is sized from the fleet that will actually deploy: strength
   // comes from the already-persisted hangar, so no call site threads a new
   // parameter and no new payload field is needed.
@@ -1276,6 +1331,7 @@ export function runFrontierTick(
       'pending',
       clock,
       tuning,
+      excludedOriginIds,
     );
     if (record === null) continue;
     attacks.push(record);
@@ -1288,12 +1344,18 @@ export function runFrontierTick(
   if (attacks.length === 0 && tickRng.nextInt(100) < tuning.attackChancePercent) {
     const attackable = next.ring.hexes
       .filter(
-        (hex) => hex.held && attackingNeighbour(hex, next.ring.hexes) !== null,
+        (hex) =>
+          hex.held &&
+          attackingNeighbour(hex, next.ring.hexes, excludedOriginIds) !== null,
       )
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const target = tickRng.pick(attackable);
     if (target) {
-      const origin = attackingNeighbour(target, next.ring.hexes);
+      const origin = attackingNeighbour(
+        target,
+        next.ring.hexes,
+        excludedOriginIds,
+      );
       const force = origin
         ? tuning.baseAttackingForce +
           toCount(origin.aggression) * tuning.forcePerOriginAggression
@@ -1305,6 +1367,7 @@ export function runFrontierTick(
         'frontier',
         clock,
         tuning,
+        excludedOriginIds,
       );
       if (record !== null) {
         attacks.push(record);

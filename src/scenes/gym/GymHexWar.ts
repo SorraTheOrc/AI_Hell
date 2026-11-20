@@ -87,6 +87,17 @@
  * publishes each defender's skills through the shared intel model, and the
  * summary lines name them.
  *
+ * ## The attacked-hex rule (AH-0MWH3A87Z005LLOX)
+ *
+ * A hex the player is attacking defends, it does not attack. The gym can
+ * declare the sortie's target with `setPlayerAttackingHex(hexId)` (or a
+ * launch-data `playerAttackingHexId`), and the shipped `runFrontierTick` then
+ * bars it as an attack origin on **both** surfaces the harness shows: the
+ * rendered record (attack arrows + left attack panel) and the `tick()`
+ * control-surface transition (whose harness double mirrors the same exclusion
+ * with the shipped `attackingNeighbour` helper). The gym owns no copy of the
+ * rule; `null`/omitted reproduces today's behaviour.
+ *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention and
  * watchable by the capture tooling (`WATCHABLE_GYM_SCENE_KEYS`).
  *
@@ -219,6 +230,14 @@ export interface GymHexWarData extends SceneSetupState {
    * single mission.
    */
   definitions?: readonly HexRingDefinition[];
+  /**
+   * The hex the player is currently attacking, if the harness declares one
+   * (AH-0MWH3A87Z005LLOX). While supplied, that hex is barred as an attack
+   * origin on both the rendered shipped record and the `tick()` control
+   * surface — the game's "an attacked hex defends, it does not attack" rule.
+   * Omitted or `null` → today's behaviour.
+   */
+  playerAttackingHexId?: string | null;
 }
 
 /** One applied frontier tick, as reported by the control surface. */
@@ -411,6 +430,15 @@ export class GymHexWar extends Phaser.Scene {
   private lastCapture: HexCaptureResult | null = null;
 
   /**
+   * The hex the player is currently attacking, or `null` when the harness has
+   * declared none (AH-0MWH3A87Z005LLOX). Control-surface state only — never
+   * persisted; the shipped tick bars it as an attack origin while it is set, on
+   * both the rendered record and the harness `tick()`. `null` reproduces
+   * today's behaviour.
+   */
+  private playerAttackingHexId: string | null = null;
+
+  /**
    * The shipped between-sortie record the current map view draws (the same
    * record the game carries after a deployment), or `null` before the first
    * render.
@@ -446,6 +474,11 @@ export class GymHexWar extends Phaser.Scene {
     this.definitions =
       data?.definitions ?? hexRingDefinitionsFor(this.payload.ring.ringIndex);
     this.lastCapture = null;
+    this.playerAttackingHexId =
+      typeof data?.playerAttackingHexId === 'string' &&
+      data.playerAttackingHexId !== ''
+        ? data.playerAttackingHexId
+        : null;
   }
 
   create(): void {
@@ -513,6 +546,9 @@ export class GymHexWar extends Phaser.Scene {
   private shippedTickRecord(): FrontierTickRecord {
     return runFrontierTick(this.payload, {
       clock: frontierClockFor(this.payload),
+      // An attacked hex defends, it does not attack: the shipped tick bars the
+      // hex the player is attacking from being an origin (AH-0MWH3A87Z005LLOX).
+      playerAttackingHexId: this.playerAttackingHexId,
     }).record;
   }
 
@@ -652,6 +688,25 @@ export class GymHexWar extends Phaser.Scene {
     this.renderMap();
   }
 
+  /**
+   * Declares the hex the player is currently attacking (control surface: the
+   * sortie's target), or `null` to clear it. Both the rendered shipped record
+   * and the `tick()` control surface then honour the game's "an attacked hex
+   * defends, it does not attack" rule — the exclusion comes from the shipped
+   * `runFrontierTick` / `attackingNeighbour`, never a gym-local copy
+   * (AH-0MWH3A87Z005LLOX). Re-renders so the attack arrows reflect the rule.
+   */
+  setPlayerAttackingHex(hexId: string | null): void {
+    this.playerAttackingHexId =
+      typeof hexId === 'string' && hexId !== '' ? hexId : null;
+    this.renderMap();
+  }
+
+  /** The hex the player is currently attacking, or `null` (control-surface seam). */
+  getPlayerAttackingHex(): string | null {
+    return this.playerAttackingHexId;
+  }
+
   /** Leaves a bot defending `hexId` (control surface: leave bot). */
   leaveBot(
     hexId: string,
@@ -754,9 +809,11 @@ export class GymHexWar extends Phaser.Scene {
   /**
    * Runs `ticks` deterministic frontier ticks (control surface: tick → holds or
    * falls). The transition is the pure harness stand-in, so the scene owns no
-   * resolver logic. The map re-renders after the ticks, so the integrated view
-   * shows the shipped record for the resulting payload — exactly what the game
-   * would carry for it.
+   * resolver logic. While {@link setPlayerAttackingHex} names a hex, the harness
+   * tick bars it as an attack origin exactly as the shipped rule does
+   * (AH-0MWH3A87Z005LLOX). The map re-renders after the ticks, so the integrated
+   * view shows the shipped record for the resulting payload — exactly what the
+   * game would carry for it.
    *
    * @returns one result per applied tick, in order.
    */
@@ -765,7 +822,12 @@ export class GymHexWar extends Phaser.Scene {
     const results: GymTickResult[] = [];
 
     for (let i = 0; i < step; i += 1) {
-      const applied = applyFakeFrontierTick(this.payload, this.clock);
+      const applied = applyFakeFrontierTick(this.payload, this.clock, {
+        // Mirror the shipped "attacked hex defends" rule on the harness tick so
+        // the gym's control surface matches the game (AH-0MWH3A87Z005LLOX);
+        // the exclusion itself is the shipped `attackingNeighbour`.
+        playerAttackingHexId: this.playerAttackingHexId,
+      });
       this.payload = applied.payload;
       // The shipped between-sortie tick advances the payload's own sortie
       // counter (`frontierTick`); the harness double carries no payload

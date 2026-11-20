@@ -647,6 +647,97 @@ describe('GymHexWar', () => {
     expect(scene.getPayload().ring.hexes[0].defender).toBeNull();
   });
 
+  it('declares the attacked hex and bars it as an origin in the shipped record (AH-0MWH3A87Z005LLOX)', async () => {
+    const base = sixHexPayload();
+    const target = base.ring.hexes.find((hex) => hex.id === 'hex-r1-1')!;
+    target.held = true;
+    target.bossDefeated = true;
+    target.defender = { hullId: 'hull-1', defenceRating: 0, bankedMinerals: 0 };
+
+    // Pick the tick index whose shipped record attacks (deterministic).
+    let payload: HangarWarPayload = base;
+    let originId: string | null = null;
+    for (let tick = 0; tick < 64 && originId === null; tick += 1) {
+      const candidate = { ...base, frontierTick: tick };
+      const record = runFrontierTick(candidate, {
+        clock: frontierClockFor(candidate),
+      }).record;
+      if (record.attacks.length > 0) {
+        payload = candidate;
+        originId = record.attacks[0].attackerOriginId;
+      }
+    }
+    expect(originId).not.toBeNull();
+
+    const scene = await bootHexWar({ payload });
+    // Before the declaration the rendered shipped record names that origin …
+    expect(
+      scene
+        .getTickRecord()!
+        .attacks.some((attack) => attack.attackerOriginId === originId),
+    ).toBe(true);
+    expect(
+      scene.getMapArrows().some((arrow) => arrow.attackerOriginId === originId),
+    ).toBe(true);
+
+    // … and declaring it as the attacked hex excludes it from the shipped
+    // record and the arrows the shared renderer draws — no gym-local rule.
+    scene.setPlayerAttackingHex(originId);
+    expect(scene.getPlayerAttackingHex()).toBe(originId);
+    const record = scene.getTickRecord()!;
+    expect(record.attacks.length).toBeGreaterThan(0);
+    expect(
+      record.attacks.every((attack) => attack.attackerOriginId !== originId),
+    ).toBe(true);
+    expect(
+      scene
+        .getMapArrows()
+        .every((arrow) => arrow.attackerOriginId !== originId),
+    ).toBe(true);
+  });
+
+  it('bars the attacked hex as an origin on the tick() control surface (AH-0MWH3A87Z005LLOX)', async () => {
+    // Two adjacent hexes: the held target and the only hex an attack could be
+    // launched from. Declaring that origin bars the attack entirely.
+    const target: HexState = {
+      id: 'target',
+      q: 1,
+      r: 0,
+      held: true,
+      aggression: 0,
+      defender: { hullId: 'hull-1', defenceRating: 0, bankedMinerals: 0 },
+      bossDefeated: true,
+      grantedWeapon: null,
+    };
+    const origin: HexState = {
+      id: 'origin',
+      q: 0,
+      r: 1,
+      held: false,
+      aggression: 0,
+      defender: null,
+      bossDefeated: false,
+      grantedWeapon: null,
+    };
+    const payload = oneHexPayload(target);
+    payload.ring.hexes = [target, origin];
+
+    const excluded = await bootHexWar({ payload });
+    excluded.setPlayerAttackingHex('origin');
+    const results = excluded.tick(30);
+    expect(results.every((result) => result.attackedHexId === null)).toBe(true);
+    expect(
+      excluded.getPayload().ring.hexes.find((hex) => hex.id === 'target')!
+        .held,
+    ).toBe(true);
+
+    // Without the declaration the same harness tick does attack the target, so
+    // the exclusion — not an inert scenario — is what stops it.
+    const control = await bootHexWar({ payload });
+    const attacked = await tickUntilAttacked(control, 'target');
+    expect(attacked.attackedHexId).toBe('target');
+  });
+
   it('renders the shipped hex-map intel through the shared map renderer', async () => {
     const scene = await bootHexWar();
     const model = scene.getMapModel();

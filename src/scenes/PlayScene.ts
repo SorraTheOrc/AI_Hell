@@ -954,9 +954,12 @@ export class PlayScene extends CombatScene<
    * The tick is resolved **before** the capture at the mini-boss defeat, so a
    * hex the sortie just won can never be attacked (and flipped) by that same
    * tick before the player reaches the map — the newly held hex is what the
-   * map presents. The tick's record is still the map's carried record;
-   * `null` for the arcade run and for a lost deployment (which
-   * resolves its tick in `_finishRun` as before).
+   * map presents. Both the winning tick here and the losing tick in `_finishRun`
+   * are told **which hex the player is attacking** (the deployment's target), so
+   * an attacked hex defends instead of striking back (AH-0MWH3A87Z005LLOX). The
+   * tick's record is still the map's carried record; `null` for the arcade run
+   * and for a lost deployment (which resolves its tick in `_finishRun` as
+   * before).
    */
   private pendingBetweenSortieTick: FrontierTickResult | null = null;
 
@@ -4424,6 +4427,13 @@ export class PlayScene extends CombatScene<
    * advanced payload is persisted (outside demo mode) so the next run starts
    * from the risen frontier. The arcade run is a no-op.
    *
+   * The deployment's target hex is passed as `playerAttackingHexId`, so a hex the
+   * player is attacking that sortie is barred as an attack origin
+   * (AH-0MWH3A87Z005LLOX). It applies to **both** call sites — a win (tick before
+   * the capture) and a loss (tick at run end) — because the player was attacking
+   * that hex either way. `hexId` is `null` for a `null` target, which is exactly
+   * today's behaviour.
+   *
    * @returns the tick's payload/clock/record, or `null` for the arcade run.
    */
   private _resolveBetweenSortieTick(): FrontierTickResult | null {
@@ -4433,6 +4443,9 @@ export class PlayScene extends CombatScene<
       // The payload carries its own frontier position, so a tick always resumes
       // this war's clock.
       clock: frontierClockFor(payload),
+      // An attacked hex defends, it does not attack: the hex this sortie is
+      // attacking may not launch this tick's attack.
+      playerAttackingHexId: this.hangarWarDeployment?.hexId ?? null,
     });
     this._saveHangarWarPayload(result.payload);
     return result;

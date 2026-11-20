@@ -19,6 +19,10 @@ import { deriveDefenderRating } from '../core/hangarWar/hangarEconomy';
 import { createRingState } from '../core/hangarWar/hexRing';
 import { campaignResetSeed } from '../core/hangarWar/captureCycle';
 import {
+  frontierClockFor,
+  runFrontierTick,
+} from '../core/hangarWar/hexDefence';
+import {
   createDefaultPayload,
   loadHangarWarPayload,
   saveHangarWarPayload,
@@ -33,8 +37,9 @@ import {
 import { winBonusMinerals } from '../test/hangarWinBonusContract';
 import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
+import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { MenuScene } from './MenuScene';
-import { PlayScene } from './PlayScene';
+import { PlayScene, VICTORY_TRANSITION_HOLD_MS } from './PlayScene';
 import {
   buildHangarDeployment,
   type HangarWarDeployment,
@@ -73,6 +78,36 @@ interface CaptureSeams {
   spawnBoss(options?: object): void;
 }
 
+/**
+ * A payload whose between-sortie tick attacks, with the attack's origin known.
+ *
+ * Frontier ticks are scanned deterministically so the test can name exactly the
+ * hex the player will be attacking when the tick resolves
+ * (AH-0MWH3A87Z005LLOX): the deployment targets that origin, so the rule must
+ * bar it.
+ */
+function attackingTickPayload(): {
+  payload: HangarWarPayload;
+  originId: string;
+} {
+  const payload = ringPayload();
+  // One weakly defended held hex so the tick has a target it can attack.
+  const target = payload.ring.hexes[0];
+  target.held = true;
+  target.bossDefeated = true;
+  target.defender = { hullId: 'hull-1', defenceRating: 0, bankedMinerals: 0 };
+  for (let tick = 0; tick < 64; tick += 1) {
+    const candidate = { ...payload, frontierTick: tick };
+    const record = runFrontierTick(candidate, {
+      clock: frontierClockFor(candidate),
+    }).record;
+    if (record.attacks.length > 0) {
+      return { payload: candidate, originId: record.attacks[0].attackerOriginId };
+    }
+  }
+  throw new Error('the frontier never attacked within 64 ticks');
+}
+
 describe('PlayScene — capture cycle wiring (AH-0MVUXCAW0001VUM6)', () => {
   let booted: BootedGame | null = null;
 
@@ -89,7 +124,7 @@ describe('PlayScene — capture cycle wiring (AH-0MVUXCAW0001VUM6)', () => {
   async function bootPlay(
     hangarWar: HangarWarDeployment | null,
   ): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene, HexMapScene]);
     const scene = booted.scene as PlayScene;
     scene.setAsteroidSpawnerEnabled(false);
     scene.scene.restart({ demo: false, hangarWar });
@@ -285,6 +320,57 @@ describe('PlayScene — capture cycle wiring (AH-0MVUXCAW0001VUM6)', () => {
     expect(stored!.seed).toBe(campaignResetSeed(payload));
     expect(stored!.seed).not.toBe(payload.seed);
   });
+
+  it('bars the attacked hex as a tick origin on the winning path (AH-0MWH3A87Z005LLOX)', async () => {
+    const { payload, originId } = attackingTickPayload();
+    saveHangarWarPayload(payload);
+    const deployment = buildHangarDeployment(payload, { hexId: originId });
+    const scene = await bootPlay(deployment);
+
+    scene.startDevBossScenario(1);
+    window.__aiHellScenario?.resume();
+    hitBossOnce(scene);
+
+    // The between-sortie tick resolved at the mini-boss defeat (before the
+    // capture) reaches the map as its carried record.
+    await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
+    const map = scene.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene | null;
+    expect(map, 'the winning deployment must land on the hex map').not.toBeNull();
+    const record = map!.getRecord();
+    expect(record).not.toBeNull();
+    // The attack still happens — only its origin is suppressed — and it never
+    // names the hex this sortie is attacking.
+    expect(record!.attacks.length).toBeGreaterThan(0);
+    for (const attack of record!.attacks) {
+      expect(attack.attackerOriginId).not.toBe(originId);
+    }
+  }, 30_000);
+
+  it('bars the attacked hex as a tick origin on the losing path (AH-0MWH3A87Z005LLOX)', async () => {
+    const { payload, originId } = attackingTickPayload();
+    saveHangarWarPayload(payload);
+    const deployment = buildHangarDeployment(payload, { hexId: originId });
+    const scene = await bootPlay(deployment);
+
+    // A lost sortie resolves its tick at run end, before handing the map the
+    // same record — the player was attacking that hex up to the tick.
+    scene.startDevDefeatScenario();
+    window.__aiHellScenario?.resume();
+    await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
+
+    const map = scene.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene | null;
+    expect(map, 'the losing deployment must land on the hex map').not.toBeNull();
+    const record = map!.getRecord();
+    expect(record).not.toBeNull();
+    expect(record!.attacks.length).toBeGreaterThan(0);
+    for (const attack of record!.attacks) {
+      expect(attack.attackerOriginId).not.toBe(originId);
+    }
+  }, 30_000);
 
   it('leaves the arcade run’s victory free of capture state', async () => {
     const scene = await bootPlay(null);
