@@ -28,7 +28,7 @@
  * Constants (final, plain-asserted):
  * - `EDITORIAL_CONFIG` — top-level tunable config (AC1, AH-0MVDV4RJ300459ZF)
  *   with `categories`, `breakdownToCategory`, `targets`, `highlightKnobs`,
- *   and `dedupeTolerances` — all sub-configs frozen.
+ *   `dedupeTolerances` and `transitions` — all sub-configs frozen.
  * - `DEFAULT_HIGHLIGHT_OPTIONS` — derived from `EDITORIAL_CONFIG.highlightKnobs`.
  * - `CAPTURE_OUTPUT_DIR` — `'capture-output'`; `ACTION_SERIES_EXTENSION` —
  *   `'.action.jsonl'`.
@@ -37,6 +37,8 @@
  * - `BREAKDOWN_TO_EDITORIAL_CATEGORY` — derived from `EDITORIAL_CONFIG.breakdownToCategory`.
  * - `DEDUPE_INTENSITY_TOLERANCE` — derived from `EDITORIAL_CONFIG.dedupeTolerances.intensity`.
  * - `DEDUPE_DURATION_TOLERANCE_MS` — derived from `EDITORIAL_CONFIG.dedupeTolerances.durationMs`.
+ * - `TRANSITIONS` — derived from `EDITORIAL_CONFIG.transitions`.
+ * - `CUT_CADENCE` — derived from `EDITORIAL_CONFIG.cutCadence`.
  *
  * Pure functions (asserted via plain `it(...)`):
  * - `selectHighlightWindows(points, options?)` → `HighlightWindow[]` in
@@ -107,6 +109,7 @@ import {
   EDITORIAL_CONFIG,
   FFMPEG_INSTALL_HINTS,
   OPUS_BITRATE_K,
+  TRANSITIONS,
   USAGE_TEXT,
   VP9_CRF,
   assessDeliverable,
@@ -127,6 +130,7 @@ import {
   parseCompileArgs,
   parseProbeJson,
   parseSignalStatsOutput,
+  planJunctions,
   probeHasAudio,
   probeHasVideo,
   probeVideoDurationSec,
@@ -484,6 +488,19 @@ describe('EDITORIAL_CONFIG (AC1)', () => {
     expect(Object.isFrozen(EDITORIAL_CONFIG.dedupeTolerances)).toBe(true);
     expect(Object.isFrozen(EDITORIAL_CONFIG.paceBand)).toBe(true);
     expect(Object.isFrozen(EDITORIAL_CONFIG.cutCadence)).toBe(true);
+    expect(Object.isFrozen(EDITORIAL_CONFIG.transitions)).toBe(true);
+  });
+
+  it('TRANSITIONS derives from EDITORIAL_CONFIG.transitions', () => {
+    expect(TRANSITIONS).toBe(EDITORIAL_CONFIG.transitions);
+  });
+
+  it('exposes the frozen cross-fade knobs (400 ms picture / 500 ms sound, 25 % clamp)', () => {
+    expect(EDITORIAL_CONFIG.transitions).toEqual({
+      videoFadeMs: 400,
+      audioFadeMs: 500,
+      maxFadeRatio: 0.25,
+    });
   });
 
   it('exposes the exact tunable knobs that §7.5 specifies', () => {
@@ -1886,6 +1903,115 @@ describe('ffmpeg driver — deterministic command building (AC1/AC2, pure)', () 
     expect(empty.commands).toEqual([]);
     expect(empty.errors.length).toBe(2);
     expect(empty.errors[0]).toContain('no segments selected');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Cross-fade junction planner (AH-0MWM28VRU009SXMV)
+//
+// The pure arithmetic every later slice reads: resolved per-junction fades
+// (clamped by `maxFadeRatio` against both neighbours), chained `xfade`
+// offsets and the deliverable's expected duration. Nothing here encodes yet —
+// the graph slice consumes these records.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('planJunctions — cross-fade junction planner (AH-0MWM28VRU009SXMV)', () => {
+  /** A clamped cut of exactly `ms` (source 0 → ms). */
+  const cut = (id: string, ms: number) => seg(id, 0, ms);
+
+  it('returns n − 1 junction records for n cuts', () => {
+    for (const n of [2, 3, 40]) {
+      const cuts = Array.from({ length: n }, (_, i) => cut(`run${i}`, 3_000));
+      expect(planJunctions(cuts).junctions).toHaveLength(n - 1);
+    }
+    // A single cut has no junction to fade.
+    expect(planJunctions([cut('only', 4_000)]).junctions).toEqual([]);
+  });
+
+  it('resolves the full 400 ms video / 500 ms audio fade between two long cuts', () => {
+    const planned = planJunctions([cut('a', 6_000), cut('b', 6_000)]);
+    expect(planned.junctions[0]).toMatchObject({
+      index: 0,
+      previousCutMs: 6_000,
+      nextCutMs: 6_000,
+      videoFadeMs: 400,
+      audioFadeMs: 500,
+    });
+  });
+
+  it('clamps both fades to a quarter of the shorter neighbour (1 s beside 6 s → 250 ms)', () => {
+    const planned = planJunctions([cut('a', 1_000), cut('b', 6_000)]);
+    expect(planned.junctions[0].videoFadeMs).toBe(250);
+    expect(planned.junctions[0].audioFadeMs).toBe(250);
+  });
+
+  it('clamps per junction, so only the short-cut junctions shrink', () => {
+    const planned = planJunctions([cut('a', 6_000), cut('b', 1_000), cut('c', 6_000)]);
+    expect(planned.junctions.map((j) => j.videoFadeMs)).toEqual([250, 250]);
+    expect(planned.junctions.map((j) => j.audioFadeMs)).toEqual([250, 250]);
+  });
+
+  it('chains xfade offsets from cumulative cuts minus elapsed fades (2, 3 and 40 cuts)', () => {
+    /** Independent reference: offset_j = Σ_{k≤j} cuts − Σ_{k≤j} fades. */
+    const referenceOffsets = (durations: number[], fades: number[]) => {
+      let offset = 0;
+      return durations.slice(0, -1).map((ms, j) => {
+        offset += ms - fades[j];
+        return offset;
+      });
+    };
+
+    const fixtures = [
+      [3_000, 3_000],
+      [2_500, 2_200, 4_000],
+      Array.from({ length: 40 }, (_, i) => 1_000 + (i % 5) * 500),
+    ];
+    for (const durations of fixtures) {
+      const planned = planJunctions(durations.map((ms, i) => cut(`run${i}`, ms)));
+      const fades = planned.junctions.map((j) => j.videoFadeMs);
+      const expected = referenceOffsets(durations, fades);
+      expect(planned.junctions.map((j) => j.videoOffsetMs)).toEqual(expected);
+      // Strictly increasing: every junction starts after the previous one.
+      for (let j = 1; j < expected.length; j += 1) {
+        expect(expected[j]).toBeGreaterThan(expected[j - 1]);
+      }
+    }
+  });
+
+  it('reports expectedDurationMs as Σ cuts − Σ resolved video fades', () => {
+    const fixtures = [
+      [4_000],
+      [3_000, 3_000],
+      [1_000, 6_000],
+      [2_500, 2_200, 4_000],
+      Array.from({ length: 40 }, () => 1_500),
+    ];
+    for (const durations of fixtures) {
+      const planned = planJunctions(durations.map((ms, i) => cut(`run${i}`, ms)));
+      const totalCutMs = durations.reduce((sum, ms) => sum + ms, 0);
+      const totalFadeMs = planned.junctions.reduce((sum, j) => sum + j.videoFadeMs, 0);
+      expect(planned.totalCutMs).toBe(totalCutMs);
+      expect(planned.totalVideoFadeMs).toBe(totalFadeMs);
+      expect(planned.expectedDurationMs).toBe(totalCutMs - totalFadeMs);
+    }
+  });
+
+  it('is opt-outable: videoFadeMs 0 reports zero transitions and hard-cut arithmetic', () => {
+    const durations = [2_500, 2_200, 4_000];
+    const planned = planJunctions(
+      durations.map((ms, i) => cut(`run${i}`, ms)),
+      { ...TRANSITIONS, videoFadeMs: 0 },
+    );
+    expect(planned.hasTransitions).toBe(false);
+    expect(planned.junctions.every((j) => j.videoFadeMs === 0 && j.audioFadeMs === 0)).toBe(true);
+    expect(planned.expectedDurationMs).toBe(8_700);
+  });
+
+  it('never chains past the configured fades when the clamp allows them', () => {
+    const planned = planJunctions([cut('a', 6_000), cut('b', 6_000), cut('c', 6_000)]);
+    // 3 cuts × 6 s − 2 junctions × 400 ms.
+    expect(planned.expectedDurationMs).toBe(17_200);
+    expect(planned.junctions.map((j) => j.videoOffsetMs)).toEqual([5_600, 11_200]);
   });
 });
 

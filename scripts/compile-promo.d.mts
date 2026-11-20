@@ -31,8 +31,56 @@ export interface EditorialConfig {
   };
   /** Editorial cut cadence (parent AC4). */
   readonly cutCadence: CutCadence;
+  /** Junction style: the cross-fade knobs (parent AH-0MWLYWYGK004JR2A). */
+  readonly transitions: TransitionConfig;
   /** Pace reference band (parent AC3/AC4; doc §7.6). */
   readonly paceBand: PaceBand;
+}
+
+/**
+ * The junction style for multi-cut deliverables (parent AH-0MWLYWYGK004JR2A):
+ * a picture dissolve, a deliberately slower sound cross-fade, and the
+ * short-cut clamp both share.
+ */
+export interface TransitionConfig {
+  /** Picture dissolve per junction (ms); `0` opts out to hard cuts. */
+  readonly videoFadeMs: number;
+  /** Sound cross-fade per junction (ms); never longer than the clamp. */
+  readonly audioFadeMs: number;
+  /** A fade may not exceed this fraction of the shorter neighbouring cut. */
+  readonly maxFadeRatio: number;
+}
+
+/** One resolved junction between two adjacent cuts (pure planner output). */
+export interface PlannedJunction {
+  /** 0-based junction index: joins cut `index` to cut `index + 1`. */
+  readonly index: number;
+  /** Nominal duration of the outgoing cut (ms). */
+  readonly previousCutMs: number;
+  /** Nominal duration of the incoming cut (ms). */
+  readonly nextCutMs: number;
+  /** The clamped picture dissolve (ms). */
+  readonly videoFadeMs: number;
+  /** The clamped sound cross-fade (ms). */
+  readonly audioFadeMs: number;
+  /** Where the dissolve starts on the built timeline (`xfade` `offset`). */
+  readonly videoOffsetMs: number;
+}
+
+/** The junction plan for one deliverable (pure planner output). */
+export interface JunctionPlan {
+  /** Resolved junctions, one per pair of adjacent cuts. */
+  readonly junctions: readonly PlannedJunction[];
+  /** Nominal duration of every cut (ms). */
+  readonly cutMs: readonly number[];
+  /** `Σ cutMs`. */
+  readonly totalCutMs: number;
+  /** `Σ resolved video fades`. */
+  readonly totalVideoFadeMs: number;
+  /** `Σ cutMs − Σ resolved video fades` (ms). */
+  readonly expectedDurationMs: number;
+  /** False when no junction fades (the hard-cut opt-out). */
+  readonly hasTransitions: boolean;
 }
 
 /** The editorial cut cadence: the longest and shortest single cut. */
@@ -164,6 +212,18 @@ export const DEDUPE_DURATION_TOLERANCE_MS: number;
 export const PACE_BAND: PaceBand;
 /** The editorial cut cadence (parent AC4). */
 export const CUT_CADENCE: CutCadence;
+/** The junction style: picture dissolve + slower sound cross-fade. */
+export const TRANSITIONS: TransitionConfig;
+
+/**
+ * Plans every junction of a deliverable from its clamped cuts (pure):
+ * resolved fades clamped by `maxFadeRatio`, chained `xfade` offsets and the
+ * deliverable's expected duration (`Σ cuts − Σ fades`).
+ */
+export function planJunctions(
+  segments?: readonly { videoInMs: number; videoOutMs: number }[],
+  transitions?: TransitionConfig,
+): JunctionPlan;
 /** Deliverable length/count targets (parent AC1). */
 export const DELIVERABLE_TARGETS: CompileTargets;
 

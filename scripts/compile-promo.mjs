@@ -92,9 +92,10 @@ export const CAPTURE_ANCHOR_EXTENSION = '.capture.json';
  *    chronology so the sequence reads as a coherent run rather than random
  *    jump-cuts.
  * 4. *Cadence is explicit and tunable.* Section §7.5 knobs (thresholds,
- *    merge gap, lead/tail), the dedupe tolerances and the deliverable
- *    targets are all fields of this object; changing one value propagates
- *    through the whole pipeline.
+ *    merge gap, lead/tail), the dedupe tolerances, the deliverable targets
+ *    and the junction style (picture dissolve / sound cross-fade) are all
+ *    fields of this object; changing one value propagates through the whole
+ *    pipeline.
  *
  * Shared by the promo compiler (this module) and the ffmpeg driver.
  *
@@ -104,6 +105,7 @@ export const CAPTURE_ANCHOR_EXTENSION = '.capture.json';
  *   targets: CompileTargets,
  *   highlightKnobs: HighlightOptions,
  *   dedupeTolerances: { intensity: number, durationMs: number },
+ *   transitions: TransitionConfig,
  * }>}
  */
 export const EDITORIAL_CONFIG = Object.freeze({
@@ -164,6 +166,31 @@ export const EDITORIAL_CONFIG = Object.freeze({
   }),
 
   /**
+   * Junction style (parent AH-0MWLYWYGK004JR2A — cross-faded cuts).
+   *
+   * Every multi-cut deliverable dissolves from one cut into the next instead
+   * of hard-cutting: `xfade` on the picture, `acrossfade` on the sound. The
+   * audio blend is deliberately slower than the picture (500 ms against
+   * 400 ms) so the transition sounds like a mix rather than a switch; the
+   * extra 100 ms of audio overlap is compensated per junction when the graph
+   * is built, so the audio timeline is never shortened relative to the video.
+   *
+   * - `videoFadeMs` — the picture dissolve. Setting it to `0` opts out
+   *   entirely: the junction planner reports zero transitions and the driver
+   *   falls back to the hard-cut `concat` graph byte-for-byte.
+   * - `audioFadeMs` — the sound cross-fade (must not exceed the video fade's
+   *   own clamp).
+   * - `maxFadeRatio` — a fade may never exceed this fraction of the shorter
+   *   neighbouring cut, so a 1 s cut beside a 6 s cut dissolves over 250 ms
+   *   instead of being swallowed by its own transition.
+   */
+  transitions: Object.freeze({
+    videoFadeMs: 400,
+    audioFadeMs: 500,
+    maxFadeRatio: 0.25,
+  }),
+
+  /**
    * Pace reference band (parent AC3/AC4): the measured floors a delivered
    * promo must clear. Calibration basis and the measured values behind the
    * band are documented in `docs/dev/action-intensity.md` §7.6.
@@ -216,6 +243,12 @@ export const PACE_BAND = EDITORIAL_CONFIG.paceBand;
 
 /** The editorial cut cadence (parent AC4): the longest/shortest single cut. */
 export const CUT_CADENCE = EDITORIAL_CONFIG.cutCadence;
+
+/**
+ * The junction style (parent AH-0MWLYWYGK004JR2A): the video dissolve, the
+ * audio cross-fade and the short-cut clamp every junction reads.
+ */
+export const TRANSITIONS = EDITORIAL_CONFIG.transitions;
 
 /**
  * The deliverable length/count targets the produced package must meet
@@ -1555,6 +1588,89 @@ export function deliverableOutputPath(kind, index = 1, outDir = CAPTURE_OUTPUT_D
  * filter args. */
 function secondsOf(ms) {
   return Number((ms / 1000).toFixed(3));
+}
+
+/**
+ * The resolved transition for one junction between two adjacent cuts
+ * (parent AH-0MWLYWYGK004JR2A).
+ *
+ * @typedef {object} PlannedJunction
+ * @property {number} index - 0-based junction index (junction `i` joins cut
+ *   `i` to cut `i + 1`).
+ * @property {number} previousCutMs - Nominal duration of the outgoing cut.
+ * @property {number} nextCutMs - Nominal duration of the incoming cut.
+ * @property {number} videoFadeMs - The clamped picture dissolve.
+ * @property {number} audioFadeMs - The clamped sound cross-fade.
+ * @property {number} videoOffsetMs - Where the dissolve starts on the
+ *   partially-built video timeline (`xfade`'s `offset`): `Σ cuts so far −
+ *   Σ video fades so far`.
+ */
+
+/**
+ * Plans every junction of a deliverable from its clamped cuts (parent
+ * AH-0MWLYWYGK004JR2A). Pure: the result depends only on the segments' in/out
+ * points and the transition config, so the same plan + probes always produce
+ * the same graph (the determinism constraint).
+ *
+ * Each junction resolves a video dissolve and an audio cross-fade, both
+ * clamped to `maxFadeRatio` of the shorter neighbouring cut so a short cut is
+ * never swallowed by its own transition, and chains the `xfade` offset from
+ * the nominal cut durations minus the fades already elapsed. The deliverable's
+ * expected duration is therefore `Σ cuts − Σ resolved video fades` — the
+ * overlap is removed *before* the plan is filled, not measured afterwards.
+ *
+ * `transitions.videoFadeMs === 0` is the hard-cut opt-out: every junction
+ * reports zero fades (audio included, because a dissolve-free graph has no
+ * `acrossfade` either) and the expected duration is the plain cut total.
+ *
+ * @param {readonly {videoInMs: number, videoOutMs: number}[]} [segments] -
+ *   segments already clamped to their source durations.
+ * @param {{ videoFadeMs: number, audioFadeMs: number, maxFadeRatio: number }}
+ *   [transitions]
+ * @returns {{ junctions: PlannedJunction[], cutMs: number[],
+ *   totalCutMs: number, totalVideoFadeMs: number, expectedDurationMs: number,
+ *   hasTransitions: boolean }}
+ */
+export function planJunctions(segments = [], transitions = TRANSITIONS) {
+  const cutMs = (segments ?? []).map((segment) =>
+    Math.max(0, Number(segment.videoOutMs ?? 0) - Number(segment.videoInMs ?? 0)),
+  );
+  const hardCut = !(Number(transitions.videoFadeMs) > 0);
+  const junctions = [];
+  let videoOffsetMs = 0;
+  let totalVideoFadeMs = 0;
+  let hasTransitions = false;
+  for (let index = 0; index + 1 < cutMs.length; index += 1) {
+    const previousCutMs = cutMs[index];
+    const nextCutMs = cutMs[index + 1];
+    const clampLimitMs = Number(transitions.maxFadeRatio) * Math.min(previousCutMs, nextCutMs);
+    const videoFadeMs = hardCut
+      ? 0
+      : Math.floor(Math.min(Number(transitions.videoFadeMs), clampLimitMs));
+    const audioFadeMs = hardCut
+      ? 0
+      : Math.floor(Math.min(Number(transitions.audioFadeMs), clampLimitMs));
+    videoOffsetMs += previousCutMs - videoFadeMs;
+    totalVideoFadeMs += videoFadeMs;
+    if (videoFadeMs > 0 || audioFadeMs > 0) hasTransitions = true;
+    junctions.push({
+      index,
+      previousCutMs,
+      nextCutMs,
+      videoFadeMs,
+      audioFadeMs,
+      videoOffsetMs,
+    });
+  }
+  const totalCutMs = cutMs.reduce((sum, ms) => sum + ms, 0);
+  return {
+    junctions,
+    cutMs,
+    totalCutMs,
+    totalVideoFadeMs,
+    expectedDurationMs: totalCutMs - totalVideoFadeMs,
+    hasTransitions,
+  };
 }
 
 /**
