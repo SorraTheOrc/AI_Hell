@@ -88,6 +88,10 @@ import {
   wrappedDistance,
   type WrapWorld,
 } from '../../../utils/wrapGeometry';
+import {
+  closestApproachFromDelta,
+  predictMinimumSeparation,
+} from '../hazardMotionModel';
 
 /** Epsilon for float comparisons. */
 const EPS = 1e-6;
@@ -204,68 +208,20 @@ export function interceptPoint(
 }
 
 /**
- * Closest approach between the player (moving with velocity `pv`) and a body
- * (moving with velocity `qv`) over `horizon` seconds.
- *
- * With a {@link WrapWorld} the relative position is the shortest wrapped delta
- * (per axis), so a body arriving across a seam is predicted on the torus
- * instead of on a raw line that starts most of a playfield away
- * (AH-0MVT2W2D9002BOHO). Relative velocity is a rate, so it is not wrapped.
- */
-/**
- * Closest-approach core given the **wrapped relative position** (`rx`/`ry`)
- * and relative velocity (`rvx`/`rvy`). Split out so the steering fan can
- * reuse the direction-independent relative position it precomputes once per
- * tick (AH-0MWGUN4P2003003P), while a single call can still supply it inline.
- * The arithmetic is byte-for-byte the pre-change solve.
- */
-function closestApproachFromDelta(
-  rx: number,
-  ry: number,
-  rvx: number,
-  rvy: number,
-  horizon: number,
-): { t: number; distance: number } {
-  const denom = rvx * rvx + rvy * rvy;
-
-  let t = 0;
-  if (denom > EPS) {
-    t = -(rx * rvx + ry * rvy) / denom;
-    if (t < 0) t = 0;
-    if (t > horizon) t = horizon;
-  }
-  const cx = rx + rvx * t;
-  const cy = ry + rvy * t;
-  return { t, distance: Math.hypot(cx, cy) };
-}
-
-function closestApproach(
-  px: number,
-  py: number,
-  pvx: number,
-  pvy: number,
-  qx: number,
-  qy: number,
-  qvx: number,
-  qvy: number,
-  horizon: number,
-  world?: WrapWorld,
-): { t: number; distance: number } {
-  const rx = world ? wrappedAxisDelta(px, qx, world.width) : qx - px;
-  const ry = world ? wrappedAxisDelta(py, qy, world.height) : qy - py;
-  return closestApproachFromDelta(rx, ry, qvx - pvx, qvy - pvy, horizon);
-}
-
-/**
  * Whether a hazard threatens the player right now (AH-0MVI4QDN90037DIN ·
- * AC2).
+ * AC2; class-shaped sampling AH-0MWM0C9F9006HNXV).
  *
  * With prediction enabled and a non-zero velocity estimate, the hazard is a
  * threat when the player (moving at `vx`/`vy`) and the hazard are predicted to
- * come within `threatRadius` inside `hazardPredictionHorizon` — the same
- * closest-approach solve bullets use. Otherwise (prediction off, or the hazard
- * is stationary/untracked) it is a threat when it is inside `dangerMargin`,
- * exactly today's positional rule.
+ * come within `threatRadius` inside `hazardPredictionHorizon`. Prediction runs
+ * through {@link predictMinimumSeparation}, so with the motion model enabled
+ * the hazard is followed along its **movement-class trajectory** (a chaser's
+ * arc, a diver's dive, a patroller's attack run, a formation's edge reversal)
+ * and the minimum separation over that sampled path decides the threat. With
+ * the motion model disabled or the class unknown the solve is the previous
+ * fixed-velocity closest approach, bit-for-bit. Otherwise (prediction off, or
+ * the hazard is stationary/untracked) it is a threat when it is inside
+ * `dangerMargin`, exactly today's positional rule.
  *
  * Shared by {@link evaluateDirection} and the `engage` behaviour's kiting
  * gate so both apply one definition of an imminent hazard collision.
@@ -291,19 +247,12 @@ export function hazardThreatensPlayer(
     const dy = wrappedAxisDelta(player.y, hy, torus.height);
     return Math.hypot(dx, dy) < t.dangerMargin;
   }
-  const approach = closestApproach(
-    player.x,
-    player.y,
-    player.vx,
-    player.vy,
-    hx,
-    hy,
-    hvx,
-    hvy,
-    t.hazardPredictionHorizon,
-    torus,
+  // One sampled predictive test for every hazard class; the disabled and
+  // unknown-class paths inside it reproduce the fixed-velocity solve exactly.
+  return (
+    predictMinimumSeparation(player, hazard, t, torus).separation <
+    t.threatRadius
   );
-  return approach.distance < t.threatRadius;
 }
 
 /**

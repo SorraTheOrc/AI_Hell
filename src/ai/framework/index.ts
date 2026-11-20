@@ -81,6 +81,19 @@ export {
 } from './enemyMovementClass';
 
 export {
+  HAZARD_CHASER_TURN_RATE,
+  HAZARD_DIVE_COMMIT_DOT,
+  HAZARD_MOTION_MAX_SAMPLES,
+  HAZARD_MOTION_SAMPLE_STEP,
+  HAZARD_PATROL_COMMIT_RANGE,
+  closestApproachFromDelta,
+  predictMinimumSeparation,
+  type HazardPlayerMotion,
+  type HazardPredictionMode,
+  type HazardSeparationPrediction,
+} from './hazardMotionModel';
+
+export {
   BOT_IDLE_INTENT,
   BotBrain,
   createBotBrain,

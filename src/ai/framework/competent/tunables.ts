@@ -9,10 +9,12 @@
  * by the legacy decision layer.
  *
  * The predictive hazard knobs include the **second-order motion model**
- * toggle (`hazardMotionModelEnabled`, AH-0MWM0C7ZR001YJRE): on (the hybrid
- * default) the bot fits each hazard's velocity and curvature from a bounded
- * position history; off reproduces the pre-change constant-velocity estimate
- * bit-for-bit for the sweep's control arm.
+ * toggle (`hazardMotionModelEnabled`, AH-0MWM0C7ZR001YJRE): on, the bot fits
+ * each hazard's velocity and curvature from a bounded position history and the
+ * class-shaped sampler (AH-0MWM0C9F9006HNXV) predicts along the class path;
+ * off reproduces the pre-change constant-velocity estimate and fixed-velocity
+ * solve bit-for-bit for the sweep's control arm. It **ships dark** until the
+ * per-class horizon tuning proves an improvement — see the field docs.
  *
  * @module src/ai/framework/competent/tunables
  */
@@ -221,11 +223,23 @@ export interface CompetentBotTunables {
   hazardPredictionHorizon: number;
   /**
    * Whether the bot-side hazard tracker fits **velocity and curvature** from a
-   * bounded position history (the hybrid default on; AH-0MWM0C7ZR001YJRE ·
-   * AC1/AC2) instead of the single first difference. `false` reproduces the
-   * pre-change constant-velocity estimate bit-for-bit, which is the sweep's
-   * control arm. A hazard with insufficient history (cold start) falls back to
-   * the constant-velocity estimate either way.
+   * bounded position history (AH-0MWM0C7ZR001YJRE · AC1/AC2) instead of the
+   * single first difference, and whether steering predicts each hazard along
+   * its movement-class trajectory (AH-0MWM0C9F9006HNXV). `false` reproduces the
+   * pre-change constant-velocity estimate and fixed-velocity closest-approach
+   * solve bit-for-bit, which is the sweep's control arm. A hazard with
+   * insufficient history (cold start) falls back to the constant-velocity
+   * estimate either way.
+   *
+   * **Ships dark.** The enabled path is implemented, unit-tested and wired, but
+   * the default is `false`: turning the class-shaped sampler on for the shipped
+   * pilot makes a homing chaser predict a threat everywhere inside the ghost
+   * wave, so the pilot over-dodges and `promo-ghost-hunt` stops clearing the
+   * wave inside the 45 s survival target. The horizon calibration that has to
+   * prove the improvement first lives in AH-0MWM0CB2Q003Y6AB (sampled steering
+   * fan + per-class horizon), and AH-0MWM0C5BN003PCDT is the item that flips
+   * this default on once the sweep evidence shows the gain. Do not turn it on
+   * without that evidence — `hazardMotionModel.test.ts` pins the shipped default.
    */
   hazardMotionModelEnabled: boolean;
 
@@ -368,10 +382,15 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   // look-ahead (AC2); a stationary hazard is unaffected either way.
   hazardPredictionEnabled: true,
   hazardPredictionHorizon: 0.6,
-  // The second-order (velocity + curvature) motion fit is the hybrid default
-  // (AH-0MWM0C7ZR001YJRE · AC1); disabling it reproduces the single-difference
-  // estimate bit-for-bit for the sweep's control arm (AC2).
-  hazardMotionModelEnabled: true,
+  // Dark by default (AH-0MWM0C9F9006HNXV): the second-order (velocity +
+  // curvature) fit and the class-shaped trajectory sampler are fully wired and
+  // unit-tested, but enabling them for the shipped pilot is a behaviour change
+  // that has to be justified by the per-class horizon tuning in
+  // AH-0MWM0CB2Q003Y6AB; AH-0MWM0C5BN003PCDT flips this default on once that
+  // evidence exists. Off reproduces the single-difference estimate and the
+  // fixed-velocity solve bit-for-bit (AH-0MWM0C7ZR001YJRE · AC2, the sweep's
+  // control arm). Pinned by hazardMotionModel.test.ts — do not flip silently.
+  hazardMotionModelEnabled: false,
 
   aimLeadEnabled: true,
   aimLeadAlignSeconds: 0.25,

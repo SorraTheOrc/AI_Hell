@@ -70,8 +70,9 @@ its **movement class** (`formation` / `diver` / `chaser` / `patroller` /
 The class is resolved bot-side from the archetype by the frozen map in
 `src/ai/framework/enemyMovementClass.ts`, which mirrors the `movementClass`
 column of `src/data/enemy-configs.csv`; an unknown archetype resolves to
-`roamer` and the boss resolves to `formation`. Nothing consumes the class yet
-— it is additive plumbing for class-shaped hazard prediction.
+`roamer` and the boss resolves to `formation`. The class is consumed by the
+class-shaped trajectory sampler
+([section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
 With no lookup — the default for direct callers — hazards stay stationary
 `{ x, y }` points, exactly as before.
 
@@ -456,6 +457,7 @@ defaults behaves bit-for-bit as before (default-equivalence).
 |---|---|
 | `competent/tunables.ts` | Single source of tuning + `resolveCompetentTunables`. |
 | `hazardVelocity.ts` | Bot-side hazard-velocity tracker (position deltas → clamped velocity). |
+| `hazardMotionModel.ts` | Class-shaped trajectory sampler: per-movement-class path over the horizon → minimum separation (and the shared closest-approach primitive). |
 | `competent/steering.ts` | Pure bearing fan, safety evaluation, predictive hazard avoidance, forward model, intercept solve. |
 | `competent/goals.ts` | The registered goals (survival, boss-focus, collection, engagement, reposition) and their utility bands. |
 | `competent/behaviours.ts` | collect / engage / evade / reposition. |
@@ -668,6 +670,34 @@ leading a target; this section covers the avoidance half.
   `hazardThreatensPlayer` predicate, so "imminent hazard collision" means the
   same thing in both places. With prediction off — or a stationary/untracked
   hazard — both paths reduce bit-for-bit to the positional rule.
+- **Class-shaped sampling (AH-0MWM0C9F9006HNXV).** A single fixed-velocity
+  solve predicts a curving hazard where it *was*. `predictMinimumSeparation`
+  (`src/ai/framework/hazardMotionModel.ts`) instead advances the hazard's
+  **movement-class trajectory** over `hazardPredictionHorizon` in a fixed
+  sample count (`ceil(horizon / 0.05 s)`, capped at 64 — no clock, no RNG) and
+  returns the minimum separation over the sampled path with its time. The
+  class models are documented approximations built from the fitted velocity
+  and curvature: `chaser` a turn-rate-bounded homing arc (observed curvature
+  when the tracker fitted one), `diver` a committed straight dive vector
+  (aimed at the ship before the commit cone), `patroller` a straight patrol
+  that runs straight at the ship once in commit range or inside the commit
+  cone, `formation` a linear drift that reflects at the arena edges, and
+  `roamer` linear extrapolation. `hazardThreatensPlayer` consumes the sampler,
+  so the kiting gate sees the class-shaped prediction; the steering fan's
+  hazard rejection follows in the sampled-prediction feature. A hazard that
+  cannot reach `threatRadius` inside the horizon is dismissed by a
+  triangle-inequality **early-out** without sampling (its reported separation
+  is a proven lower bound), and a stationary hazard, a disabled
+  `hazardMotionModelEnabled` or an unknown class reproduces the previous
+  positional / fixed-velocity result exactly. **The sampler ships dark:**
+  `hazardMotionModelEnabled` defaults to `false`, because enabling it for the
+  shipped pilot makes a homing chaser predict a threat everywhere in the ghost
+  wave, so the pilot over-dodges and `promo-ghost-hunt` no longer clears the
+  wave inside its 45 s survival target. The wiring, the per-class unit tests and
+  the disabled-path parity all ship; the per-class horizon tuning that has to
+  prove an improvement is AH-0MWM0CB2Q003Y6AB, and AH-0MWM0C5BN003PCDT flips
+  the default on with that evidence. `hazardMotionModel.test.ts` pins the
+  default so it cannot be switched on silently.
 - **Live tuning (AC3).** `hazardPredictionEnabled` (toggle, default **on**)
   and `hazardPredictionHorizon` (slider, default **0.6 s**) live in
   `COMPETENT_BOT_TUNABLES`, are registered in `src/ai/tuningFields.ts` with
