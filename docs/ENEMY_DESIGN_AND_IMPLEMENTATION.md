@@ -438,6 +438,21 @@ The agreed mapping for all 18 CSV archetypes:
 | `lane-traffic` | `roamer` | `contact` |
 | `orbital-strike` | `roamer` | `area` |
 
+**The demo bot consumes the same classification (AH-0MWM0C6OW006G5SE).**
+`movementClass` is not only a wave-design field: the competent demo bot
+resolves each hazard's class from its archetype and predicts the hazard along
+that class's trajectory (`advanceHazardMotion` in
+`src/ai/framework/hazardMotionModel.ts`). `chaser` is pure pursuit, `diver` a
+committed straight dive, `patroller` a straight patrol that becomes a straight
+attack run, `formation` drift with an arena-edge reflection, and `roamer` (and
+any unknown archetype, via `DEFAULT_BOT_ENEMY_MOVEMENT_CLASS`) linear
+extrapolation. The bot-side map is a frozen mirror of this table, guarded in
+both directions by `src/ai/framework/enemyMovementClass.test.ts`, and the
+evaluation arena's opt-in moving-hostile mode advances its bodies through the
+same stepper, so a harness cannot describe a trajectory the predictor does not
+model (an unknown class throws). The class table, the per-class threat window
+and the disabled-path guarantee are in `docs/BOT_FRAMEWORK.md` §9.10.
+
 The `centipede` linked chain (AH-0MV01EJ92008ZZ86) is a dedicated entity, not
 a CSV row, so it carries no classification pair; it is a contact-only chaser.
 

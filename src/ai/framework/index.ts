@@ -15,6 +15,10 @@
  * - {@link BotBrain}/{@link BotPolicy} — the policy that maps a
  *   `BotSnapshot` (+ world model + memory) to a `BotSteeringIntent`, pure
  *   over an injected `dt` (AC5).
+ * - `predictMinimumSeparation` / `resolveEnemyMovementClass` — the one
+ *   class-shaped hazard predictor (and the bot-side archetype → movement-class
+ *   map it consumes), shared by the game, the bot-tuning gym and the
+ *   evaluation arena (AH-0MWLUIOH9001XBJ3).
  *
  * See `docs/BOT_FRAMEWORK.md` for an overview and how to register goals and
  * behaviours (AC7).

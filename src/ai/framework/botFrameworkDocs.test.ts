@@ -105,4 +105,30 @@ describe('Bot framework is documented (AH-0MUY08WKB002N1N6)', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
     expect(readme).toContain('docs/BOT_FRAMEWORK.md');
   });
+
+  it('documents the class-shaped hazard motion model (AH-0MWLUIOH9001XBJ3)', () => {
+    // The epic's user-facing contract: a reader can explain, per movement
+    // class, how the bot predicts a hazard, what the knobs do and what the
+    // disabled path guarantees. Pinned here so the model cannot be
+    // undocumented silently.
+    expect(doc).toContain('### 9.10 Predictive hazard avoidance');
+    for (const symbol of [
+      'advanceHazardMotion',
+      'predictMinimumSeparation',
+      'hazardMotionModelEnabled',
+      'hazardClassHorizonScale',
+      'hazardMotionSweep.test.ts',
+      'botSteering.integration.test.ts',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+    // One table row per implemented movement class.
+    for (const movementClass of ['`chaser`', '`diver`', '`patroller`', '`formation`', '`roamer`']) {
+      expect(doc).toContain(movementClass);
+    }
+    // The disabled/unknown/stationary fallbacks are bit-identical to the
+    // pre-motion-model predictor.
+    expect(doc).toMatch(/disabled-path guarantee/i);
+    expect(doc).toMatch(/bit-for-bit/);
+  });
 });

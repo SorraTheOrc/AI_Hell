@@ -63,4 +63,13 @@ describe('competent bot is documented (AH-0MUY08WX3000ZEVO)', () => {
   it('references the work item', () => {
     expect(doc).toContain(WORK_ITEM_ID);
   });
+
+  it('documents the shared class-shaped hazard prediction (AH-0MWLUIOH9001XBJ3)', () => {
+    // The competent bot's prediction half lives in section 9.10; the epic's
+    // motion model must stay documented there, including its disabled path.
+    expect(doc).toContain('### 9.10 Predictive hazard avoidance');
+    expect(doc).toContain('advanceHazardMotion');
+    expect(doc).toContain('predictMinimumSeparation');
+    expect(doc).toMatch(/disabled-path guarantee/i);
+  });
 });

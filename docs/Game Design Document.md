@@ -282,6 +282,21 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   behaviour exactly. Both knobs are live sliders/toggles in the bot-tuning
   gym and live in the shared `src/ai/` code
   ([docs/BOT_FRAMEWORK.md](BOT_FRAMEWORK.md#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
+- **Class-shaped hazard prediction (AH-0MWM0C9F9006HNXV, AH-0MWM0CB2Q003Y6AB,
+  AH-0MWOKL79Z0051ZXO):** the demo bot does not assume a hazard keeps its
+  current velocity. It fits each hazard's motion from a bounded position
+  history and predicts along its **movement class** — pure pursuit for a
+  chaser, a committed straight dive for a diver, a straight patrol that
+  becomes a straight attack run for a patroller, drift plus arena-edge
+  reflection for a formation, and linear extrapolation for a roamer and any
+  unknown path. The class sets the threat window too: a diver or patroller is
+  judged further ahead, because its danger is a discrete commit later in the
+  window (all the multipliers are `hazardClassHorizonScale` sliders in the
+  bot-tuning gym). The model ships **on**; with it off — and for an unknown
+  class or a stationary hazard — prediction is the previous
+  constant-velocity/positional behaviour **bit-for-bit**. The class table, the
+  knobs and the evidence are in
+  [docs/BOT_FRAMEWORK.md §9.10](BOT_FRAMEWORK.md#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din).
 - **Hold-full auto-select (AH-0MUXXQ1MN002RXGB):** when the mineral hold fills,
   the modal hold-full choice overlay auto-selects its first option after
   `BOT_MINERAL_CHOICE_DELAY_MS` (**900 ms**) and resumes play, so a demo run

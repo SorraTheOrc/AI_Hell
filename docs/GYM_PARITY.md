@@ -27,6 +27,7 @@ Governing rule: [`AGENTS.md` § Game Architecture Conventions](../AGENTS.md#game
 | Leave-bot upgrade parity by | AH-0MWHF7488009RTBS (the gym's leave-bot control surface takes the same run permanent-upgrade snapshot the game's boss-victory path reads and threads it into the shipped `resolveHexCapture`, and the harness summary reads the same `defenderUpgradeBreakdown` reducer the shared map model publishes — the stored armour/firepower/systems, upgrade contribution and total rating are the game's numbers) |
 | Saved ship configurations added by | AH-0MWL8C6FE008G1E7 (the hangar captures the equipped ship as a named build and re-applies it in one action): the `GymHangar` row now records the compact `SAVED BUILDS` surface (`＋ SAVE`, `◀ ▶` selector, `▶ FLY`, `✎ RENAME`, `✖ DELETE`) — built by the same `buildHangarSavedBuildRows`/`buildHangarScreenModel` model and rendered by the same `renderHangarScreen` the game's `HangarScene` runs, so the gym presents the identical rows read-only (no handler, no apply) and `GymHangar.test.ts` asserts the gym model equals the game's including `savedBuildRows` |
 | Attacked-hex rule added by | AH-0MWH3A87Z005LLOX (an attacked hex defends, it does not attack: the game passes the deployment's target as `playerAttackingHexId` to `runFrontierTick`, barring it as an attack origin on both the winning and losing tick): the `GymHexWar` row now records the `setPlayerAttackingHex(hexId)` control surface and launch-data `playerAttackingHexId`, threaded into the **shipped** `runFrontierTick` (rendered record + arrows) and mirrored by the harness tick double through the shipped `attackingNeighbour` exclusion — no gym-local copy of the rule, and `null` reproduces the previous behaviour |
+| Hazard motion model added by | AH-0MWLUIOH9001XBJ3 (the demo bot's class-shaped hazard prediction is shared `src/ai/` code): the bot-tuning gym only edits its `hazardMotionModelEnabled` toggle and per-class `hazardClassHorizonScale.*` sliders, and the evaluation arena advances live bodies through the same `advanceHazardMotion` stepper — see [Shared hazard motion model](#shared-hazard-motion-model-ah-0mwluioh9001xbj3) |
 | Scope | every production scene under `src/scenes/gym/` (21) plus the generic base `src/scenes/gym/core/GymFormationScene.ts` |
 | Automated guard | [`src/scenes/core/gymParityDocs.test.ts`](../src/scenes/core/gymParityDocs.test.ts) fails if a gym scene has no row here, if a row loses its verdict or evidence, or if this file contains a Git merge-conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`) |
 
@@ -769,6 +770,43 @@ never a divergent copy.
 graze count and danger multiplier (plus a deterministic two-run trace), so the
 formation gym's detection and tier growth demonstrably run through the game's
 own code path.
+
+## Shared hazard motion model (AH-0MWLUIOH9001XBJ3)
+
+The demo bot's predictive hazard handling is shared `src/ai/` code, not a
+scene behaviour: `PlayScene`'s attract/demo run and the bot-tuning gym
+(`GymBotTuning`) fly the same `createCompetentBotBrain` / governor pair, so the
+class-shaped motion model, its per-class horizon scale and the
+`hazardMotionModelEnabled` toggle resolve identically in both. The gym only
+**edits** the knobs — one toggle plus one `hazardClassHorizonScale.<class>`
+slider per movement class in `src/ai/tuningFields.ts`, applied live by
+`GymBotTuning` and carried in `src/data/bot-tuning.json`; it owns no predictor
+copy.
+
+| Layer | Shared seam (game + bot-tuning gym + evaluation harness) |
+|---|---|
+| Bot-side class map | `resolveEnemyMovementClass` (`src/ai/framework/enemyMovementClass.ts`) — a frozen mirror of the CSV `movementClass` column, guarded in both directions by `enemyMovementClass.test.ts` |
+| Trajectory definition | `advanceHazardMotion` (`src/ai/framework/hazardMotionModel.ts`) — the one per-class stepper |
+| Prediction | `predictMinimumSeparation` — the one sampled threat test every consumer (`evaluateDirection`, `hazardThreatensPlayer`, the `engage` kiting gate) calls |
+| Knobs + live tuning | `hazardMotionModelEnabled`, `hazardClassHorizonScale.*` in `COMPETENT_BOT_TUNABLES` / `src/ai/tuningFields.ts`, applied live by `GymBotTuning`, bundled in `src/data/bot-tuning.json` |
+| Eval harness | The arena's opt-in `movingHostiles` mode advances live bodies through the **same** `advanceHazardMotion`, so a harness profile cannot describe a trajectory the predictor does not (an unknown class throws) |
+
+No row above records a divergence for the model: it is shared AI code, and a
+gym that flies the bot inherits it. The only permitted difference is a
+**disabled** feature — a gym that does not run the bot never evaluates it.
+
+**The disabled path is exact.** With `hazardMotionModelEnabled` off — and for
+an unknown movement class or a zero-velocity hazard — the predictor reproduces
+the pre-existing constant-velocity/positional behaviour bit-for-bit on the
+configured horizon, and the per-class sliders are inert. The gym exercises that
+control arm exactly as the game does, through the same tunables.
+
+Pinned by `src/ai/framework/hazardMotionModel.test.ts` (the single
+`advanceHazardMotion` seam, the unknown-class throw and the disabled-path
+bit-for-bit equality), `src/ai/eval/arena.test.ts` (the arena's live bodies run
+the shared stepper), `src/ai/tuningFields.test.ts` (the knobs are registered
+with descriptions and bounds) and `src/scenes/gym/GymBotTuning.test.ts` (the
+gym applies them live).
 
 ## Maintenance contract
 

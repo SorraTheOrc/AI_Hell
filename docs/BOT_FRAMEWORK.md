@@ -748,6 +748,46 @@ leading a target; this section covers the avoidance half.
   straight crossing enemy collides with prediction off and is evaded (minimum
   ship–hazard distance ≥ `threatRadius` minus tolerance) with it on.
 
+**Movement classes at a glance.** `advanceHazardMotion`
+(`src/ai/framework/hazardMotionModel.ts`) is the single definition of each
+class path; the sampler walks it and the evaluation arena's opt-in
+moving-hostile mode advances its live bodies through the same call (an unknown
+class throws rather than diverging). The table pairs each class with the
+prediction that follows from it and how it changes the threat window. The
+shipped default values, slider bounds and plain-English descriptions live in
+the registry (`src/ai/tuningFields.ts`) and `COMPETENT_BOT_TUNABLES` — this
+document names the registry rather than duplicating them, and the bundled
+baseline is `src/data/bot-tuning.json`.
+
+| Movement class | Predicted path | Threat window (urgency) | Shipped archetypes |
+|---|---|---|---|
+| `chaser` | Pure pursuit: every sample re-aims at the ship's predicted position at its observed speed (the ghost steering's own `steerToward` rule); the fitted curvature is deliberately **not** a turn rate | `hazardPredictionHorizon` × the class scale (1), **no** curvature boost — the pursuit already turns the hazard onto the ship | `ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander`, `grunt` |
+| `diver` | Committed straight dive vector inside the ~60° commit cone; before commitment it flies the dive vector at the ship | Longer than configured (1.4) — the discrete dive commit later in the window must be seen early enough | `diver` |
+| `patroller` | Straight patrol, switching to a straight attack run inside `HAZARD_PATROL_COMMIT_RANGE` or once aimed at the ship | Longer than configured (1.25) — the patrol→attack switch is a discrete later event | `raider` |
+| `formation` | Linear drift plus a reflection at the arena bounds | Configured (1), plus the bounded curvature boost: its model is straight, so an observed turn is new information | the formation archetypes (`scout`, `tank`, `phaser`, `swarm`, `march`, …) |
+| `roamer` | Linear extrapolation — the “assume it keeps going” control | Configured (1), same bounded curvature boost | `asteroid`, `harvester`, `lane-traffic`, `orbital-strike` |
+
+**The disabled-path guarantee is exact.** With `hazardMotionModelEnabled` off,
+prediction is the pre-existing constant-velocity solve **bit-for-bit** on the
+configured `hazardPredictionHorizon` — the same separation, time and threat
+verdict as before the motion model existed. An **unknown movement class**
+(fixed-velocity solve) and a **zero-velocity hazard** (current positional
+separation) take the same pre-existing path, and even with the model on a class
+path that stays on its fitted velocity for the whole window — `roamer` always,
+`formation` until it reaches a bound — returns the fixed-velocity solve
+exactly. That exactness is what makes the sweep's straight-line controls
+provably neutral.
+
+**Evidence.** The seeded per-class sweep
+(`src/ai/eval/hazardMotionSweep.test.ts`) records, on its documented 12-seed
+list, strictly fewer avoidable enemy-body contacts with the model on for every
+curving class on a strict majority of seeds, a chaser arm that never regresses
+on any seed, and `roamer`/`formation` controls that never increase. The
+deterministic 60 Hz proof (`src/ai/botSteering.integration.test.ts`) flies a
+scripted curving chaser twice: the constant-velocity predictor's least
+separation is 25.7 px — 4.3 px inside the game's 30 px contact radius — while
+the class model stays clear at 38.8 px, and the test pins both margins.
+
 ### 9.11 Wrap-aware (torus) model (AH-0MVMISF0Q00314LG)
 
 The playfield is a **torus**: the ship, bullets, asteroids and wrap-aware
