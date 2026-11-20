@@ -86,6 +86,7 @@ function inBandAggregate(targets: ExperienceTargets): BalanceAggregate {
     powerUpsCollected: at(10),
     asteroidsDestroyed: at(12),
     avoidableHits: at(targets.bands.avoidableHits.centre),
+    enemyBodyContacts: at(0),
     survivalSeconds: at(targets.bands.survivalSeconds.centre),
     waveReached: at(targets.bands.waveReached.centre),
     levelReached: at(targets.bands.levelReached.centre),

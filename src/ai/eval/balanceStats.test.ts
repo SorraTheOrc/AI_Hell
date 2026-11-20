@@ -59,6 +59,10 @@ function synthRecords(): readonly TelemetryRecord[] {
     event(23, 'asteroid_destroyed', { archetype: 'asteroid', x: 4, y: 4 }),
     event(30, 'player_hit', { lives: 2 }),
     event(31, 'player_hit_absorbed', {}),
+    // Body contacts are measured, not applied: they never cost a life
+    // (AH-0MWM0C40V002ISCA).
+    event(32, 'enemy_body_contact', { archetype: 'diver', movementClass: 'diver' }),
+    event(33, 'enemy_body_contact', { archetype: 'scout', movementClass: 'formation' }),
     event(40, 'wave_cleared', { level: 1, waveNumber: 3 }),
     event(45, 'level_cleared', { level: 2 }),
     event(90, 'run_end', { won: false, score: 12 }),
@@ -78,6 +82,8 @@ describe('extractBalanceStats', () => {
     expect(stats.asteroidsDestroyed).toBe(2);
     expect(stats.powerUpsCollected).toBe(2);
     expect(stats.avoidableHits).toBe(1); // player_hit_absorbed excluded
+    // Body contacts are reported alongside — and never counted as hits.
+    expect(stats.enemyBodyContacts).toBe(2);
     // run_end sits on tick 90 → 91 ticks at 1/60 s.
     expect(stats.survivalSeconds).toBeCloseTo(91 / 60, 9);
     expect(stats.waveReached).toBe(3);
@@ -157,6 +163,7 @@ describe('extractBalanceStats', () => {
       asteroidsDestroyed: 0,
       powerUpsCollected: 0,
       avoidableHits: 0,
+      enemyBodyContacts: 0,
       survivalSeconds: 0,
       waveReached: 0,
       levelReached: 0,
@@ -217,6 +224,7 @@ describe('aggregateBalanceStats', () => {
     asteroidsDestroyed: 1,
     powerUpsCollected: 2,
     avoidableHits: 0,
+    enemyBodyContacts: 0,
     survivalSeconds: 30,
     waveReached: 1,
     levelReached: 1,
@@ -291,6 +299,7 @@ describe('aggregateBalanceStats', () => {
       'powerUpsCollected',
       'asteroidsDestroyed',
       'avoidableHits',
+      'enemyBodyContacts',
       'survivalSeconds',
       'waveReached',
       'levelReached',

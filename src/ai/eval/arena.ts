@@ -74,6 +74,48 @@
  * beat clock (an integer tick interval derived from the same `fireRateMs`
  * replaces it — see {@link fireRateTicks}).
  *
+ * ## Moving-hostile mode (AH-0MWM0C40V002ISCA)
+ *
+ * Hostiles are **stationary** by default. {@link ArenaConfig.movingHostiles}
+ * opts into a deterministic, seeded motion profile per **movement class** —
+ * the class is resolved from the archetype through the bot-side
+ * `resolveEnemyMovementClass` (`src/ai/framework/enemyMovementClass`), so the
+ * harness and the bot's hazard predictor never disagree about a class:
+ *
+ * - `chaser` — straight pursuit along the shortest wrapped route to the ship
+ *   (models the homing ghouls/grunts: `grunt`, `ghost-*`).
+ * - `diver` — a targeted lunge whose speed pulses in and out, i.e. commit,
+ *   ease off, re-commit (models `diver` formation break-offs).
+ * - `patroller` — a weaving patrol along a seeded heading (models `raider`
+ *   lane patrols).
+ * - `formation` — a sway **in step** with the wave: every formation-class
+ *   body shares one phase, so the group bumps together (models
+ *   `scout`/`tank`/`phaser`/`swarm` formation drift).
+ * - `roamer` — an independent drift on a fixed seeded heading (models
+ *   `asteroid`, `harvester` and `lane-traffic` hazards).
+ *
+ * **These profiles are an approximation of the shipped behaviours, not a copy
+ * of them.** They exist to exercise the bot's hazard predictor with plausible
+ * relative motion, so they deliberately do not reproduce the scene-owned
+ * enemy AI (formation slot offsets, dive commit/return, spawner behaviour) and
+ * their cruise speeds are harness tunables ({@link
+ * DEFAULT_ARENA_MOVING_HOSTILE_SPEEDS}) rather than enemy-config values. Every position
+ * is a pure function of the run seed and the tick clock — no wall clock, no
+ * `Math.random()` — and bodies wrap at all four edges through the same
+ * `wrapAxis` helper the bullets use.
+ *
+ * With the mode on, the harness also counts **enemy-body contacts**: rising
+ * edges where the ship hull (the game's contact radius, `PLAYER_HIT_RADIUS`)
+ * overlaps a live hostile body (its config `size`). The count is reported on
+ * {@link ArenaRunResult.enemyBodyContacts} and as `enemy_body_contact`
+ * telemetry events that the eval metric aggregation reads. Contacts are
+ * **measured, never applied as damage**, so the mode measures dodging without
+ * changing survivability or any other shipped metric.
+ *
+ * **Off by default.** An omitted `movingHostiles` skips both the motion and
+ * the contact block entirely, so existing arena/eval baselines (positions,
+ * `avoidableHits`, contact count) stay byte-identical.
+ *
  * ## Per-level campaign mode (AH-0MVLJFB1I0099X4Z)
  *
  * Setting {@link ArenaConfig.level} switches the arena to an **additive**
@@ -187,7 +229,7 @@ import { GHOST_ENEMY_KEYS } from '../../waves/GhostSpawner';
 import { GRUNT_ENEMY_KEY } from '../../waves/HordeSpawner';
 import { CENTIPEDE_ENEMY_KEY } from '../../waves/CentipedeSpawner';
 import { LANE_TRAFFIC_ENEMY_KEY } from '../../waves/LaneTrafficSpawner';
-import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
+import type { DifficultyCurveRow, EnemyConfig, EnemyMovementClass, ShipConfig } from '../../core/configTypes';
 import { MineralHold } from '../../core/mineralHold';
 import { PowerUpLevelStore } from '../../powerups/powerUpLevels';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -228,13 +270,16 @@ import type {
 } from '../../utils/movementModel';
 import type { BotSnapshot } from '../botSnapshot';
 import type { BotPolicy } from '../framework/botBrain';
+import { resolveEnemyMovementClass } from '../framework/enemyMovementClass';
 import { BotInputGovernor } from '../botHumanLike';
 import {
   DEFAULT_ARENA_SPAWNS,
+  DEFAULT_ARENA_MOVING_HOSTILE_SPEEDS,
   EVAL_TELEMETRY_SCHEMA_VERSION,
   type ArenaBalanceConfig,
   type ArenaConfig,
   type ArenaInput,
+  type ArenaMovingHostiles,
   type ArenaRunResult,
   type ArenaSpawns,
   type ArenaState,
@@ -320,6 +365,142 @@ interface Hostile {
    * a hostile when its edge intersects the effect area (AH-0MW5DVAME0062GQO).
    */
   getHitRadius(): number;
+  /**
+   * The seeded motion profile driving this body when the opt-in moving-hostile
+   * mode is on (AH-0MWM0C40V002ISCA); `null` in the default stationary mode
+   * and for any hostile whose class the caller did not enable.
+   */
+  motion: HostileMotion | null;
+  /**
+   * Whether the hull overlapped this body on the previous tick — the edge
+   * detector that makes a sustained overlap count as one enemy-body contact.
+   */
+  touching: boolean;
+}
+
+/**
+ * The seeded motion state of one moving hostile (AH-0MWM0C40V002ISCA).
+ *
+ * Everything here is drawn from the run's dedicated motion stream, and
+ * `elapsed` is the run clock in seconds (not a per-hostile accumulator), so a
+ * profile — and in particular the shared formation sway — is a pure function
+ * of the seed and the tick index.
+ */
+export interface HostileMotion {
+  /** The movement class whose profile drives this body. */
+  readonly movementClass: EnemyMovementClass;
+  /** Cruise speed (px/s) for the class, from the resolved mode settings. */
+  readonly speed: number;
+  /** Seeded heading (radians) — the drift/patrol axis. */
+  readonly heading: number;
+  /** Seeded phase offset (radians) that desynchronises like-class bodies. */
+  readonly phase: number;
+  /** Run clock in seconds, refreshed every tick. */
+  elapsed: number;
+}
+
+/**
+ * A velocity for one moving hostile at this instant, in px/s.
+ *
+ * Each movement class gets one deliberately simple profile (see the module
+ * header for what each models and that these are approximations of the
+ * shipped behaviours): `chaser` pursues along the shortest wrapped route,
+ * `diver` pulses its pursuit speed, `patroller` weaves along its seeded
+ * heading, `formation` sways in step with the shared clock, and `roamer`
+ * drifts on a fixed heading. Pure: a function of the motion state, the two
+ * positions and the field size only — no clock, no RNG, no allocation beyond
+ * the returned pair.
+ *
+ * @param motion - The hostile's seeded motion state.
+ * @param from - The hostile's current position.
+ * @param player - The ship's current position (the pursuit targets).
+ * @param width - Playfield width, for the wrapped pursuit route.
+ * @param height - Playfield height, for the wrapped pursuit route.
+ */
+export function hostileMotionVelocity(
+  motion: HostileMotion,
+  from: Vec,
+  player: Vec,
+  width: number,
+  height: number,
+): { vx: number; vy: number } {
+  switch (motion.movementClass) {
+    case 'chaser':
+      // Straight pursuit: the shortest wrapped route to the ship.
+      return hostileAimVelocity(from, player, motion.speed, width, height);
+    case 'diver': {
+      // A dive that commits in pulses: the pursuit speed eases in and out.
+      const pulse =
+        0.35 + 0.65 * (0.5 + 0.5 * Math.sin(motion.elapsed * 2 + motion.phase));
+      return hostileAimVelocity(from, player, motion.speed * pulse, width, height);
+    }
+    case 'patroller': {
+      // Weaves across its seeded heading rather than tracking the ship.
+      const weave = Math.sin(motion.elapsed * 2.2 + motion.phase);
+      const alongX = Math.cos(motion.heading);
+      const alongY = Math.sin(motion.heading);
+      return {
+        vx: (alongX - alongY * weave) * motion.speed,
+        vy: (alongY + alongX * weave) * motion.speed,
+      };
+    }
+    case 'formation': {
+      // In step with the wave: one shared phase, so the group bumps together.
+      const sway = motion.elapsed * 1.6;
+      return {
+        vx: Math.cos(sway) * motion.speed,
+        vy: Math.sin(sway) * motion.speed * 0.6,
+      };
+    }
+    case 'roamer':
+    default:
+      // An independent drift on a fixed seeded heading.
+      return {
+        vx: Math.cos(motion.heading) * motion.speed,
+        vy: Math.sin(motion.heading) * motion.speed,
+      };
+  }
+}
+
+/** The resolved settings of the opt-in moving-hostile mode, or `null` when off. */
+interface MovingHostileMode {
+  /** Classes to animate; `null` animates every class. */
+  readonly classes: ReadonlySet<EnemyMovementClass> | null;
+  /** Per-class cruise speed in px/s. */
+  readonly speeds: Readonly<Record<EnemyMovementClass, number>>;
+  /** Whether `movementClass` is animated under this mode. */
+  animates(movementClass: EnemyMovementClass): boolean;
+}
+
+/**
+ * Resolves {@link ArenaConfig.movingHostiles} into its run-scoped settings.
+ *
+ * `undefined`/`false` → `null` (the default stationary mode, byte-identical to
+ * the pre-change arena). `true` → every class at the default speeds. An
+ * object narrows the classes and overrides individual speeds; a non-finite or
+ * non-positive speed override degrades to that class's default, matching how
+ * the arena's other tunables handle bad input.
+ */
+function resolveMovingHostiles(
+  config: ArenaConfig,
+): MovingHostileMode | null {
+  const requested = config.movingHostiles;
+  if (requested === undefined || requested === false) return null;
+  const settings: ArenaMovingHostiles = requested === true ? {} : requested;
+  const classes =
+    settings.classes && settings.classes.length > 0
+      ? new Set(settings.classes)
+      : null;
+  const speeds = { ...DEFAULT_ARENA_MOVING_HOSTILE_SPEEDS };
+  for (const movementClass of Object.keys(speeds) as EnemyMovementClass[]) {
+    const override = positiveOr(settings.speeds?.[movementClass], 0);
+    if (override > 0) speeds[movementClass] = override;
+  }
+  return {
+    classes,
+    speeds,
+    animates: (movementClass) => classes === null || classes.has(movementClass),
+  };
 }
 
 interface Bullet extends Vec {
@@ -1004,6 +1185,16 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const sampleEvery = Math.max(1, Math.trunc(positiveOr(config.sampleEveryTicks, 1)));
   const build: EvalBuild = config.build ?? { appVersion: '0.0.0-eval', commit: 'eval' };
   const spawns = resolveSpawns(config.spawns);
+  // Opt-in moving-hostile mode (AH-0MWM0C40V002ISCA). `null` (the default)
+  // leaves every hostile stationary and the contact counter at zero, so the
+  // default path is byte-identical to a pre-change baseline (AC3).
+  const movingHostiles = resolveMovingHostiles(config);
+  // A dedicated seeded stream for the per-hostile motion draws (heading and
+  // phase), independent of the reservoir/governor/sim streams so it cannot
+  // perturb an existing draw sequence.
+  const motionRng = movingHostiles
+    ? createSeededRng((config.seed ^ 0x5eed1e55) >>> 0)
+    : null;
   // Config-driven (AH-0MV81YPBG0028WNM): consume the resolved balance config
   // (enemy archetypes, ship, difficulty curves) through the shared config
   // loaders — never a hardcoded copy of enemy/ship/wave stats.
@@ -1269,6 +1460,21 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
           enemy,
         )
       : 0;
+    // Movement class resolution goes through the **bot-side** map
+    // (AH-0MWM0C40V002ISCA): the harness and the bot's hazard predictor must
+    // never disagree about a hostile's class. Only an enabled class gets a
+    // seeded motion profile; everything else stays stationary.
+    const movementClass = resolveEnemyMovementClass(spec.archetype);
+    const motion: HostileMotion | null =
+      movingHostiles && motionRng && movingHostiles.animates(movementClass)
+        ? {
+            movementClass,
+            speed: movingHostiles.speeds[movementClass],
+            heading: motionRng() * Math.PI * 2,
+            phase: motionRng() * Math.PI * 2,
+            elapsed: 0,
+          }
+        : null;
     world.hostiles.push({
       id: index,
       x: spec.x,
@@ -1288,6 +1494,8 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       fireCooldown: HOSTILE_FIRE_WARMUP_TICKS + index * 7,
       bulletSpeed: positiveOr(enemy?.bulletSpeed, FALLBACK_ENEMY_BULLET_SPEED),
       shotProbability: shootEnabled ? clamp01(enemy?.shotProbability ?? 1) : 0,
+      motion,
+      touching: false,
     });
   };
 
@@ -1576,6 +1784,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
 
   let simulated = 0;
   let won = false;
+  let enemyBodyContacts = 0;
   const hostileSpawned = targetHostiles;
   let currentWave = 0;
   let allWavesCleared = false;
@@ -1636,6 +1845,49 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       angularVelocity: moved.angularVelocity ?? 0,
     };
     if (world.invulnerableTicks > 0) world.invulnerableTicks -= 1;
+
+    // 1b. Hostile motion and enemy-body contacts (opt-in, AH-0MWM0C40V002ISCA).
+    // With the mode off this whole block is skipped, so positions, hits and the
+    // contact count of the default path are untouched (AC3). With it on, every
+    // enabled body advances by its class profile (a pure function of the seed
+    // and the run clock) and then the hull overlap is measured on the game's
+    // contact-damage radius rule. Contacts are counted on the **rising edge**
+    // only — a sustained overlap is one contact — and are never applied as
+    // damage, so the mode measures dodging rather than changing survivability.
+    if (movingHostiles) {
+      const clockSeconds = tick * dt;
+      for (const hostile of world.hostiles) {
+        if (!hostile.alive || !hostile.motion) continue;
+        hostile.motion.elapsed = clockSeconds;
+        const velocity = hostileMotionVelocity(
+          hostile.motion,
+          hostile,
+          world.player,
+          width,
+          height,
+        );
+        hostile.x = wrapAxis(hostile.x + velocity.vx * dt, width);
+        hostile.y = wrapAxis(hostile.y + velocity.vy * dt, height);
+      }
+      for (const hostile of world.hostiles) {
+        const overlapping =
+          hostile.alive &&
+          distance(hostile, world.player) <= PLAYER_HIT_RADIUS + hostile.radius;
+        if (!overlapping) {
+          hostile.touching = false;
+          continue;
+        }
+        if (hostile.touching) continue;
+        hostile.touching = true;
+        enemyBodyContacts += 1;
+        pushEvent(tick, 'enemy_body_contact', {
+          x: hostile.x,
+          y: hostile.y,
+          archetype: hostile.archetype,
+          movementClass: hostile.motion?.movementClass ?? null,
+        });
+      }
+    }
 
     // 2. Auto-fire every owned weapon along the facing (AH-0MW5DV9I6001D4HN,
     // AH-0MW5DVAME0062GQO). The loadout comes from the run's ownership context
@@ -1864,5 +2116,11 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     payload: { won, score },
   });
 
-  return { seed: config.seed >>> 0, records, won, ticksSimulated: simulated };
+  return {
+    seed: config.seed >>> 0,
+    records,
+    won,
+    ticksSimulated: simulated,
+    enemyBodyContacts,
+  };
 }

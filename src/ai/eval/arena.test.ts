@@ -28,6 +28,7 @@ vi.setConfig({ testTimeout: 30000 });
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { importSpecifiers } from '../../../vitest.projects';
 
@@ -36,7 +37,7 @@ import { coerceEnemyConfig, parseCsvRows } from '../../core/csv';
 import { DEFAULT_CONFIG, DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
 import { loadAllEnemyConfigs, resetConfigStore, seedConfigStore } from '../../core/configStore';
 import { createSeededRng } from '../../core/rng';
-import type { EnemyConfig } from '../../core/configTypes';
+import type { EnemyConfig, EnemyMovementClass } from '../../core/configTypes';
 import { createLegacyBotPolicy } from '../framework/legacyPolicy';
 import {
   collectProductionSourceFiles,
@@ -46,6 +47,7 @@ import {
   HeadlessChoicePlayer,
   advanceBulletPosition,
   hostileAimVelocity,
+  hostileMotionVelocity,
   resolveStartingLives,
   resolveWeaponLoadout,
   runArena,
@@ -1548,5 +1550,290 @@ describe('arena starting-loadout seam (AH-0MW9QA2YC009PSF5)', () => {
     });
 
     expect(stream(armed)).not.toBe(stream(launch()));
+  });
+});
+
+/**
+ * Opt-in moving-hostile mode and the enemy-body contact counter
+ * (AH-0MWM0C40V002ISCA — verification infrastructure for the moving hostile
+ * arena harness).
+ *
+ * The mode is **additive and off by default**: with `movingHostiles` omitted
+ * every hostile stays stationary and no contact is counted, which the golden
+ * digest test below pins over a recorded seed set. With the mode on, each
+ * hostile follows the deterministic, seeded profile of its **movement class**
+ * (resolved through the bot-side `resolveEnemyMovementClass`, so the harness
+ * and the bot's hazard predictor agree) and the hull-overlap counter reports
+ * rising-edge contacts.
+ */
+/**
+ * A movement-class motion state with a fixed phase/heading, for the per-class
+ * profile probes (AH-0MWM0C40V002ISCA).
+ */
+function motionState(
+  movementClass: EnemyMovementClass,
+  overrides: Partial<{ phase: number; heading: number; elapsed: number; speed: number }> = {},
+) {
+  return {
+    movementClass,
+    speed: overrides.speed ?? 100,
+    heading: overrides.heading ?? 0,
+    phase: overrides.phase ?? 0,
+    elapsed: overrides.elapsed ?? 0,
+  };
+}
+
+describe('moving-hostile mode and enemy-body contacts (AH-0MWM0C40V002ISCA)', () => {
+  /** Every live hostile's sampled positions, keyed by archetype (in order). */
+  function positionsByArchetype(result: ArenaRunResult): Map<string, string[]> {
+    const positions = new Map<string, string[]>();
+    for (const record of result.records) {
+      if (record.kind !== 'tick') continue;
+      for (const enemy of record.state.enemies) {
+        const list = positions.get(enemy.archetype) ?? [];
+        list.push(`${enemy.x.toFixed(6)},${enemy.y.toFixed(6)}`);
+        positions.set(enemy.archetype, list);
+      }
+    }
+    return positions;
+  }
+
+  /** Rises for a body whose position changes over the run. */
+  function moves(result: ArenaRunResult, archetype: string): boolean {
+    const sampled = positionsByArchetype(result).get(archetype) ?? [];
+    return new Set(sampled).size > 1;
+  }
+
+  /**
+   * A digest of the default path: every sampled hostile position, the
+   * `avoidableHits` count and the enemy-body contact count. Pinned below so a
+   * change to the stationary default path cannot slip through unnoticed.
+   */
+  function defaultPathDigest(result: ArenaRunResult): string {
+    const hash = createHash('sha256');
+    for (const record of result.records) {
+      if (record.kind !== 'tick') continue;
+      hash.update(`${record.tick};`);
+      for (const enemy of record.state.enemies) {
+        hash.update(
+          `${enemy.archetype}:${enemy.x.toFixed(6)},${enemy.y.toFixed(6)};`,
+        );
+      }
+    }
+    const avoidableHits = result.records.filter(
+      (record) => record.kind === 'event' && record.event === 'player_hit',
+    ).length;
+    hash.update(`hits:${avoidableHits};contacts:${result.enemyBodyContacts}`);
+    return hash.digest('hex');
+  }
+
+  beforeEach(() => {
+    resetConfigStore();
+  });
+
+  it('is off by default: hostiles stay put and no contact is counted', () => {
+    const baseline = run(3, 120);
+    expect(baseline.enemyBodyContacts).toBe(0);
+    for (const [, sampled] of positionsByArchetype(baseline)) {
+      expect(new Set(sampled).size).toBe(1); // every body never moved
+    }
+    // No contact event reaches the telemetry stream either.
+    expect(
+      baseline.records.filter(
+        (record) => record.kind === 'event' && record.event === 'enemy_body_contact',
+      ),
+    ).toEqual([]);
+  });
+
+  it('moves hostiles of every enabled class from the seed alone', () => {
+    const moving = runArena(createLegacyBotPolicy(), {
+      seed: 0x51e2,
+      ticks: 120,
+      spawns: { minerals: 1, powerUps: 0, enemies: 2, asteroids: 1 },
+      movingHostiles: true,
+    });
+
+    // The seeded reservoir's archetypes cover chaser/formation and the
+    // asteroid shadow-hazard covers roamer; whatever shipped family they
+    // belong to, every body now moves.
+    const positions = positionsByArchetype(moving);
+    expect(positions.size).toBeGreaterThan(0);
+    for (const archetype of positions.keys()) {
+      expect(moves(moving, archetype)).toBe(true);
+    }
+  });
+
+  it('reproduces identical positions and contacts for the same seed (AC4)', () => {
+    const config: ArenaConfig = {
+      seed: 0xbeef,
+      ticks: 180,
+      spawns: { minerals: 1, powerUps: 0, enemies: 2, asteroids: 1 },
+      movingHostiles: { speeds: { patroller: 130 } },
+    };
+    const first = runArena(createLegacyBotPolicy(), config);
+    const second = runArena(createLegacyBotPolicy(), config);
+
+    expect([...positionsByArchetype(second)]).toEqual([...positionsByArchetype(first)]);
+    expect(second.enemyBodyContacts).toBe(first.enemyBodyContacts);
+    expect(stableStringify(second.records)).toBe(stableStringify(first.records));
+  });
+
+  it('counts one contact for a scripted overlap, and none with the mode off (AC2)', () => {
+    // A single huge body covers the ship's start position for the whole run,
+    // so the hull overlaps it from tick 0 — a scripted overlap that does not
+    // depend on the bot's flight.
+    seedConfigStore(
+      [{ ...DEFAULT_ENEMY_CONFIGS.boss, size: 600, shotProbability: 0 }],
+      DEFAULT_CONFIG,
+    );
+    const config: ArenaConfig = {
+      seed: 0x0c0,
+      ticks: 30,
+      spawns: { minerals: 0, powerUps: 0, enemies: 1, asteroids: 0 },
+      balance: loadBalanceConfig(),
+    };
+    const still = runArena(createLegacyBotPolicy(), config);
+    const moving = runArena(createLegacyBotPolicy(), {
+      ...config,
+      movingHostiles: true,
+    });
+
+    // Mode off: the metric exists and stays at zero (byte-identical default).
+    expect(still.enemyBodyContacts).toBe(0);
+    // Mode on: the sustained overlap is one rising-edge contact.
+    expect(moving.enemyBodyContacts).toBe(1);
+    const contacts = moving.records.filter(
+      (record) => record.kind === 'event' && record.event === 'enemy_body_contact',
+    ) as TelemetryEventRecord[];
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0].tick).toBe(0);
+    expect(contacts[0].payload).toMatchObject({
+      archetype: 'boss',
+      movementClass: 'formation',
+    });
+  });
+
+  it('animates only the requested classes', () => {
+    // One `diver` body from the reservoir plus the asteroid shadow-hazard (a
+    // `roamer`): enabling only `roamer` must move the asteroid and leave the
+    // diver stationary, proving the per-class assignment reaches the motion.
+    seedConfigStore([{ ...DEFAULT_ENEMY_CONFIGS.diver }], DEFAULT_CONFIG);
+    const result = runArena(createLegacyBotPolicy(), {
+      seed: 0x9a9,
+      ticks: 120,
+      spawns: { minerals: 0, powerUps: 0, enemies: 1, asteroids: 1 },
+      balance: loadBalanceConfig(),
+      movingHostiles: { classes: ['roamer'] },
+    });
+
+    expect(moves(result, 'asteroid')).toBe(true);
+    expect(moves(result, 'diver')).toBe(false);
+  });
+
+  it('pins the default path: positions, avoidableHits and contacts (AC3)', () => {
+    // Recorded over this seed set with the mode **off**. A change to the
+    // stationary path — a position, a hit or a contact — fails here.
+    const recorded: Record<number, string> = {
+      // Recorded from the pre-change arena (mode absent) and reproduced by the
+      // mode-off path: byte-identical record streams, `avoidableHits` and a
+      // zero contact count.
+      1: '57d2b13c79dbc804ffe40c1372adaff3eb7594f5fa1226b0cd98041de5edb795',
+      7: '32a65cd3a801bcb115f45f8d0f714a830c5154e031aa01c4c77497397e88b8cf',
+      42: 'aae7527f3d62a66bd1235ae53911db0ad067e70ce785ed0e42af82d36aec4d37',
+    };
+    for (const [seed, digest] of Object.entries(recorded)) {
+      expect(defaultPathDigest(run(Number(seed), 120))).toBe(digest);
+    }
+    // The metric is reported per run and stays zero without the opt-in.
+    expect(run(1, 120).enemyBodyContacts).toBe(0);
+  });
+});
+
+describe('per-class motion profiles (AH-0MWM0C40V002ISCA)', () => {
+  const player = { x: 500, y: 300 };
+  const from = { x: 100, y: 300 };
+
+  it('chases along the shortest wrapped route to the ship', () => {
+    const velocity = hostileMotionVelocity(
+      motionState('chaser'),
+      from,
+      player,
+      960,
+      540,
+    );
+    expect(velocity.vx).toBeGreaterThan(0); // moves toward the ship
+    expect(Math.hypot(velocity.vx, velocity.vy)).toBeCloseTo(100, 9);
+    // Wrapped pursuit: a body just past the left edge chases left.
+    const wrapped = hostileMotionVelocity(
+      motionState('chaser'),
+      { x: 5, y: 300 },
+      { x: 950, y: 300 },
+      960,
+      540,
+    );
+    expect(wrapped.vx).toBeLessThan(0);
+  });
+
+  it('dives in pulses: the pursuit speed eases in and out', () => {
+    const speeds = [0, 0.4, 0.8, 1.2, 1.6].map((elapsed) =>
+      Math.hypot(
+        ...Object.values(
+          hostileMotionVelocity(motionState('diver', { elapsed }), from, player, 960, 540),
+        ),
+      ),
+    );
+    expect(new Set(speeds.map((speed) => speed.toFixed(6))).size).toBeGreaterThan(1);
+    for (const speed of speeds) {
+      expect(speed).toBeGreaterThan(0);
+      expect(speed).toBeLessThanOrEqual(100 + 1e-9);
+    }
+  });
+
+  it('patrols across its seeded heading without tracking the ship', () => {
+    const a = hostileMotionVelocity(motionState('patroller', { heading: 0 }), from, player, 960, 540);
+    const b = hostileMotionVelocity(
+      motionState('patroller', { heading: 0 }),
+      from,
+      { x: 900, y: 500 }, // the ship moved; a patrol does not react
+      960,
+      540,
+    );
+    expect(b).toEqual(a);
+    expect(Math.hypot(a.vx, a.vy)).toBeGreaterThan(0);
+  });
+
+  it('keeps formation bodies in step: one shared phase, whatever their own', () => {
+    const one = hostileMotionVelocity(motionState('formation', { phase: 0 }), from, player, 960, 540);
+    const other = hostileMotionVelocity(
+      motionState('formation', { phase: Math.PI / 3 }),
+      from,
+      player,
+      960,
+      540,
+    );
+    expect(other).toEqual(one);
+    // ...and the sway changes over time (it is not a static offset).
+    const later = hostileMotionVelocity(
+      motionState('formation', { elapsed: Math.PI / 3.2 }),
+      from,
+      player,
+      960,
+      540,
+    );
+    expect(later).not.toEqual(one);
+  });
+
+  it('drifts a roamer on a fixed seeded heading, independent of the clock', () => {
+    const early = hostileMotionVelocity(motionState('roamer', { heading: 1 }), from, player, 960, 540);
+    const late = hostileMotionVelocity(
+      motionState('roamer', { heading: 1, elapsed: 12 }),
+      from,
+      player,
+      960,
+      540,
+    );
+    expect(late).toEqual(early);
+    expect(early.vx).toBeCloseTo(Math.cos(1) * 100, 9);
+    expect(early.vy).toBeCloseTo(Math.sin(1) * 100, 9);
   });
 });

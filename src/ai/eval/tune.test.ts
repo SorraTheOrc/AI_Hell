@@ -52,6 +52,7 @@ function runStats(overrides: Partial<BalanceRunStats> = {}): BalanceRunStats {
     asteroidsDestroyed: 0,
     powerUpsCollected: 0,
     avoidableHits: 0,
+    enemyBodyContacts: 0,
     survivalSeconds: 0,
     waveReached: 0,
     levelReached: 0,
