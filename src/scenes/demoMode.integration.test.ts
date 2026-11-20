@@ -240,11 +240,19 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     // resolved scheme input may still vary every tick — the closed-loop turn
     // tracks the held bearing and the forward-model throttle is a fast
     // braking reflex (AC10) — so we assert the committed intent here.
+    // `reverse` is the same fast braking reflex as `thrust`
+    // (`BotInputGovernor.update` re-evaluates both every tick, then applies
+    // its press hold), so a brake engaging inside the window is not a cadence
+    // failure (AH-0MWPD1IH8005GHSK).
     play.setDemoMode(true);
     const governor = (play as unknown as { botGovernor: BotInputGovernor })
       .botGovernor;
     const steering = (): unknown => {
-      const { thrust: _thrust, ...held } = governor.currentIntent();
+      const {
+        thrust: _thrust,
+        reverse: _reverse,
+        ...held
+      } = governor.currentIntent();
       return held;
     };
     const seen = new Set<string>();
