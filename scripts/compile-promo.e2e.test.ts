@@ -35,13 +35,21 @@
  * requirements from AH-0MVDV50Z20071RF4, never lowered for a test).
  *
  * So this test asserts exactly the contract the fixture can prove, strictly:
- * every deliverable validates (vp9 960×540 + Opus, non-black, expected
- * duration), the promo's pace band passes, and the size gate returns the
- * **expected rejection** for a deliberately short package — `targets.ok ===
- * false` with target-specific issues, and a non-zero exit whose *only* error
- * is that size verdict. Sizing on real footage is covered by the `assessTargets`
+ * every deliverable validates (vp9 960×540 + Opus, non-black, its expected
+ * `Σ cuts − Σ fades` duration), the promo's pace band passes, and the size
+ * gate returns the **expected rejection** for a deliberately short package —
+ * `targets.ok === false` with target-specific issues, and a non-zero exit
+ * whose *only* error is that size verdict. Sizing on real footage is covered
+ * by the `assessTargets`
  * unit tests in `compile-promo.test.ts` and by `npm run capture:promo` against
  * a real capture pool (see `docs/dev/action-intensity.md` §7.6).
+ *
+ * The cross-fade work (parent AH-0MWLYWYGK004JR2A) is proved here too: the
+ * promo's cut junction is a real `xfade`/`acrossfade` pair, so this file
+ * asserts the report's `transitions` settings, the expected (net-of-dissolve)
+ * duration, and that the demuxed audio and video streams end within one frame
+ * of each other after a real encode. No extra encode pass is added — the
+ * alignment check demuxes packet timestamps from the same single compile.
  *
  * Skipped when ffmpeg/ffprobe are unavailable.
  *
@@ -55,6 +63,7 @@ import type { CompileResult } from './compile-promo.mjs';
 import {
   BLACK_FRAME_YAVG_FLOOR,
   CAPTURE_OUTPUT_DIR,
+  DELIVERABLE_FPS,
   DELIVERABLE_HEIGHT,
   DELIVERABLE_TARGETS,
   DELIVERABLE_WIDTH,
@@ -84,6 +93,38 @@ const anchorJson = JSON.stringify({
   captureStartedAtEpochMs: 0,
   runStartedAtEpochMs: 0,
 });
+
+/**
+ * The end timestamp (s) of one stream, read from its **packets**.
+ *
+ * A WebM/Matroska container carries no per-stream `duration`, so the audio and
+ * video timelines cannot be compared from `ffprobe -show_streams`. Demuxing
+ * the packet timestamps is the cheap, encoder-free way to measure where each
+ * stream actually ends — which is exactly the audio-vs-picture alignment
+ * AH-0MWM28ZOT0067JQW has to guarantee.
+ */
+function streamEndSec(file: string, stream: 'v:0' | 'a:0') {
+  const out = execFileSync(
+    'ffprobe',
+    [
+      '-v', 'error',
+      '-select_streams', stream,
+      '-show_entries', 'packet=pts_time,duration_time',
+      '-of', 'csv=p=0',
+      file,
+    ],
+    { encoding: 'utf8' },
+  );
+  let end = 0;
+  for (const line of out.split('\n')) {
+    const [pts, length] = line.split(',');
+    const start = Number(pts);
+    if (!Number.isFinite(start)) continue;
+    const duration = Number(length);
+    end = Math.max(end, start + (Number.isFinite(duration) ? duration : 0));
+  }
+  return end;
+}
 
 /** A one-peak synthetic action-intensity series (video time ≈ series time). */
 function seriesFor(runId: string) {
@@ -210,18 +251,31 @@ describe.skipIf(!HAS_FFMPEG)(
         expect(deliverable.probe.height, why(`${label}: wrong height`)).toBe(DELIVERABLE_HEIGHT);
         expect(deliverable.probe.audioCodec, why(`${label}: no Opus audio track`)).toBe('opus');
         // Every synthetic deliverable is a non-empty clip bounded by the
-        // mapped fixture windows (the promo/showreel concatenate both runs,
-        // ~4.7 s) — an empty or absurdly long encode is drift, not a size
-        // verdict.
+        // mapped fixture windows (the promo/showreel dissolve both runs,
+        // ~4.7 s of cuts) — an empty or absurdly long encode is drift, not a
+        // size verdict.
         expect(deliverable.probe.durationSec, why(`${label}: no duration measured`)).not.toBeNull();
         expect(
           deliverable.probe.durationSec!,
           why(`${label}: unexpected duration`),
         ).toBeGreaterThan(1.0);
+        // The plan's expected length — `Σ cuts − Σ dissolves` — is recorded
+        // beside the measured one, and the real encoder must land on it. The
+        // tolerance covers container/frame granularity only (≈0.2 s per
+        // re-encoded cut, measured at label time, and a frame of transition
+        // rounding); a wrong fade total or a reverted hard cut moves far more
+        // than this.
         expect(
-          deliverable.probe.durationSec!,
-          why(`${label}: unexpected duration`),
-        ).toBeLessThan(5.6);
+          deliverable.expectedDurationMs,
+          why(`${label}: no expectedDurationMs in the report`),
+        ).toEqual(expect.any(Number));
+        expect(
+          Math.abs(deliverable.probe.durationSec! - deliverable.expectedDurationMs! / 1000),
+          why(
+            `${label}: measured duration is not the expected Σ cuts − Σ fades ` +
+              `(${deliverable.expectedDurationMs}ms)`,
+          ),
+        ).toBeLessThanOrEqual(0.5);
         expect(
           deliverable.brightness.sampledFrames,
           why(`${label}: no frames sampled for brightness`),
@@ -288,6 +342,21 @@ describe.skipIf(!HAS_FFMPEG)(
       expect(existsSync(deliverableOutputPath('showreel', 1, outDir)), diagnostics).toBe(true);
       expect(existsSync(deliverableOutputPath('highlight', 1, outDir)), diagnostics).toBe(true);
 
+      // ── The junction settings were actually applied (AH-0MWM295HP001X1ZU) ──
+      // A silent opt-out to hard cuts (or a reverted default) would leave the
+      // report without these values, or with `videoFadeMs: 0` — fail visibly.
+      expect(report.transitions, why('the report carries no transitions block')).toEqual({
+        videoFadeMs: 400,
+        audioFadeMs: 500,
+        maxFadeRatio: 0.25,
+      });
+      const promoDeliverable = report.deliverables.find((d) => d.name === 'promo')!;
+      // Two cuts → exactly one dissolve: Σ cuts (4.7 s) − 0.4 s.
+      expect(
+        promoDeliverable.expectedDurationMs,
+        why('the promo expected duration does not reflect the dissolve'),
+      ).toBe(4_300);
+
       // The real output must pass the AC3 checks through the production probe
       // path: vp9 960×540 + opus audio, non-trivial brightness, and the
       // expected 2-segment promo duration.
@@ -303,9 +372,32 @@ describe.skipIf(!HAS_FFMPEG)(
       // the production path, so the format-duration fallback is exercised.
       const durationSec = probeVideoDurationSec(probe);
       expect(durationSec, diagnostics).not.toBeNull();
-      // runA window [0.5s, 3.0s] + runB window [0s, 2.2s].
-      expect(durationSec!, diagnostics).toBeGreaterThan(4.0);
-      expect(durationSec!, diagnostics).toBeLessThan(5.6);
+      // runA window [0.5s, 3.0s] + runB window [0s, 2.2s] = 4.7 s of cuts,
+      // less the single 400 ms dissolve. The old "4.0 s–5.6 s" sanity bound is
+      // now the arithmetic expectation: the delivered promo must match it
+      // (within encode granularity), and its picture and sound must end
+      // together rather than the audio running 100 ms short.
+      expect(
+        Math.abs(durationSec! - 4.3),
+        why(`promo duration is not Σ cuts − Σ fades (4.3 s): ${durationSec}s`),
+      ).toBeLessThanOrEqual(0.5);
+
+      // Audio and picture end within one frame of each other (60 fps → 16.7 ms).
+      // The 500 ms audio cross-fade is compensated per junction precisely so a
+      // long deliverable cannot drift; on this single junction it must hold
+      // after a real encode, not just in the argv arithmetic.
+      const audioEndSec = streamEndSec(promoPath, 'a:0');
+      const videoEndSec = streamEndSec(promoPath, 'v:0');
+      expect(audioEndSec, why('no audio packets were demuxed from the promo')).toBeGreaterThan(0);
+      expect(videoEndSec, why('no video packets were demuxed from the promo')).toBeGreaterThan(0);
+      expect(
+        Math.abs(videoEndSec - audioEndSec),
+        why(
+          `audio ends ${(videoEndSec - audioEndSec).toFixed(3)}s away from the picture ` +
+            `(video ${videoEndSec.toFixed(3)}s, audio ${audioEndSec.toFixed(3)}s) — ` +
+            'the per-junction audio compensation did not hold',
+        ),
+      ).toBeLessThanOrEqual(1 / DELIVERABLE_FPS + 1e-6);
 
       const brightness = sampleBrightnessSync(promoPath, {});
       expect(brightness.sampledFrames, diagnostics).toBeGreaterThan(0);
