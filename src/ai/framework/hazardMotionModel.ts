@@ -104,10 +104,11 @@
  *
  * A hazard with **zero velocity** is treated as stationary and returns its
  * current positional separation with time `0`; a **disabled model**
- * (`hazardMotionModelEnabled: false`, the shipped default — see
- * `competent/tunables.ts`) or an **unknown movement class** returns the
- * pre-existing fixed-velocity closest-approach solve bit-for-bit. Those three
- * cases reproduce the pre-change behaviour exactly.
+ * (`hazardMotionModelEnabled: false` — the control arm of the per-class sweep,
+ * not the shipped default; see `competent/tunables.ts`) or an **unknown
+ * movement class** returns the pre-existing fixed-velocity closest-approach
+ * solve bit-for-bit. Those three cases reproduce the pre-change behaviour
+ * exactly.
  *
  * ## Bounded work
  *

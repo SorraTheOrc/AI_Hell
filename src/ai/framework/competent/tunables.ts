@@ -13,8 +13,8 @@
  * each hazard's velocity and curvature from a bounded position history and the
  * class-shaped sampler (AH-0MWM0C9F9006HNXV) predicts along the class path;
  * off reproduces the pre-change constant-velocity estimate and fixed-velocity
- * solve bit-for-bit for the sweep's control arm. It **ships dark** until the
- * per-class horizon tuning proves an improvement — see the field docs.
+ * solve bit-for-bit for the sweep's control arm. It **ships on**
+ * (AH-0MWOKL79Z0051ZXO) on that sweep's evidence — see the field docs.
  *
  * The **per-class horizon scale** (`hazardClassHorizonScale`,
  * AH-0MWM0CB2Q003Y6AB) is what makes that sampler usable: each movement class
@@ -270,6 +270,11 @@ export interface CompetentBotTunables {
    * Look-ahead window (seconds) for hazard-collision prediction (AC2): a
    * bearing is unsafe when the ship and a moving hazard are predicted to come
    * within `threatRadius` inside this window.
+   *
+   * This is the **base** window: with `hazardMotionModelEnabled` on, a hazard is
+   * judged over this × its class's `hazardClassHorizonScale` (plus a bounded
+   * curvature boost for the drift classes); the disabled path uses exactly this
+   * value for every hazard.
    */
   hazardPredictionHorizon: number;
   /**

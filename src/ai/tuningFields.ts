@@ -9,7 +9,8 @@
  *
  * The values it reads and writes are flat {@link BotTuningValues} maps keyed
  * by the parameter path — top-level keys (`mineralSeekRange`) and dotted
- * nested keys (`commitment.minCommitSeconds`, `world.horizon`). The
+ * nested keys (`commitment.minCommitSeconds`, `hazardClassHorizonScale.diver`,
+ * `world.horizon`). The
  * {@link toCompetentOverrides} / {@link toHumanOverrides} helpers reconstruct
  * the nested shapes `createCompetentBotBrain()` and `BotInputGovernor()`
  * expect.
@@ -109,6 +110,19 @@ export const BOT_TUNING_NUMERIC_FIELDS: readonly BotTuningFieldSpec[] = [
   { group: 'competent', key: 'playerSpeed', label: 'playerSpeed', min: 0, max: 600, step: 5, description: "Assumed player speed (px/s) used for candidate-direction prediction. A fallback default + tuning override, never the ship's truth: the live ship config's max speed wins while this stays at its default; an explicit value set here wins over the live config (AH-0MV85WGA9005B080)." },
   { group: 'competent', key: 'firePredictionHorizon', label: 'firePredictionHorizon', min: 0, max: 3, step: 0.05, description: 'Look-ahead window (seconds) for incoming-fire prediction.' },
   { group: 'competent', key: 'hazardPredictionHorizon', label: 'hazardPredictionHorizon', min: 0, max: 3, step: 0.05, description: 'Look-ahead window (seconds) for predictive hazard avoidance: a bearing is unsafe when the ship and a moving enemy, asteroid or the boss are predicted to come within threatRadius inside this window. A hazard with no velocity estimate is treated as stationary.' },
+
+  // Motion-model threat window (AH-0MWM0CCJE000AANE). Each per-class
+  // multiplier scales `hazardPredictionHorizon` for hazards of that movement
+  // class, so the class-shaped sampler judges a hazard that can still commit
+  // to a turn over a window long enough to see the contact. The bounds keep
+  // the scale positive (a non-positive value would silently fall back to the
+  // configured horizon) and below 3× so the window stays bounded
+  // (HAZARD_MOTION_MAX_SAMPLES caps the sampled work).
+  { group: 'competent', key: 'hazardClassHorizonScale.chaser', label: 'horizonScale.chaser', min: 0.25, max: 3, step: 0.05, description: 'Movement-class threat-window multiplier for chaser hazards (pure pursuit, e.g. ghosts): the window is hazardPredictionHorizon × this. 1 means exactly the configured horizon. It defaults to 1 because a chaser re-aims at the ship every sample, so the pursuit is already fully visible inside the configured window and a longer one only widens the threatened set (the pilot kites instead of fighting). Applies only while hazardMotionModelEnabled is on; the disabled model always uses the configured horizon. No curvature boost: the pursuit model already turns the hazard onto the ship.' },
+  { group: 'competent', key: 'hazardClassHorizonScale.diver', label: 'horizonScale.diver', min: 0.25, max: 3, step: 0.05, description: 'Movement-class threat-window multiplier for diver hazards: the window is hazardPredictionHorizon × this. Defaults to 1.4 because a diver commits to a straight dive later in the window, so it must be judged far enough ahead to see that arrival; 1 reproduces the configured horizon. Raise it to react to dives sooner (the bot keeps more distance), lower it to ignore distant divers. Applies only while hazardMotionModelEnabled is on; the disabled model always uses the configured horizon. No curvature boost: the dive model already aims at the ship.' },
+  { group: 'competent', key: 'hazardClassHorizonScale.patroller', label: 'horizonScale.patroller', min: 0.25, max: 3, step: 0.05, description: 'Movement-class threat-window multiplier for patroller hazards (raiders): the window is hazardPredictionHorizon × this. Defaults to 1.25 because a patroller flies a straight patrol and then switches to a straight attack run, a discrete event that happens later than a crossing hazard arrives; 1 reproduces the configured horizon. Applies only while hazardMotionModelEnabled is on; the disabled model always uses the configured horizon. No curvature boost: the model already re-aims at the ship once the attack run commits.' },
+  { group: 'competent', key: 'hazardClassHorizonScale.formation', label: 'horizonScale.formation', min: 0.25, max: 3, step: 0.05, description: 'Movement-class threat-window multiplier for formation hazards (linear drift with an arena-edge reversal): the window is hazardPredictionHorizon × this. Defaults to 1 because a drifting formation cannot turn onto the ship, so the configured horizon is the whole useful window; 1 reproduces the pre-motion-model window. Because the drift model is straight, an observed turn rate lifts the effective window further, by up to 1.5× at a fully curving hazard (saturating at 1.2 rad/s). Applies only while hazardMotionModelEnabled is on; the disabled model always uses the configured horizon.' },
+  { group: 'competent', key: 'hazardClassHorizonScale.roamer', label: 'horizonScale.roamer', min: 0.25, max: 3, step: 0.05, description: 'Movement-class threat-window multiplier for roamer hazards (linear extrapolation, the fallback class for an unknown archetype): the window is hazardPredictionHorizon × this. Defaults to 1, the control: a roamer is judged over exactly the configured horizon, the same window the disabled motion model uses for every hazard. It shares the drift classes’ bounded curvature boost (up to 1.5× at a fully curving hazard), since the linear model treats an observed turn as new information. Applies only while hazardMotionModelEnabled is on.' },
   { group: 'competent', key: 'assumedBulletSpeed', label: 'assumedBulletSpeed', min: 0, max: 800, step: 10, description: 'Assumed enemy-bullet speed (px/s) used for fire-tell shots.' },
   { group: 'competent', key: 'frictionDeceleration', label: 'frictionDeceleration', min: 0, max: 500, step: 5, description: "The ship's coasting deceleration (px/s²) used by the forward model. A fallback default + tuning override, never the ship's truth: the live ship config's friction deceleration wins while this stays at its default; an explicit value set here wins over the live config (AH-0MV85WGA9005B080)." },
   { group: 'competent', key: 'survivalUrgencyHorizon', label: 'survivalUrgencyHorizon', min: 0, max: 3, step: 0.05, description: 'Time window (seconds) within which a threatening shot counts as urgent.' },
@@ -162,6 +176,7 @@ export const BOT_TUNING_TOGGLES: readonly BotTuningToggleSpec[] = [
   { group: 'competent', key: 'collectReverseBrake', label: 'collectReverseBrake', description: 'Whether the bot may retro-brake onto a collection target. Off (default) makes collection pass-through: pickups are collected on contact, so the bot flies through them and accepts a small overshoot rather than micro-positioning with the reverse thruster.' },
   { group: 'competent', key: 'aimLeadEnabled', label: 'aimLeadEnabled', description: "Whether the engage behaviour leads a moving target. When enabled the aim objective is the iterated intercept point rather than the enemy's current position; a stationary enemy is unaffected either way, so it is safe to leave on." },
   { group: 'competent', key: 'hazardPredictionEnabled', label: 'hazardPredictionEnabled', description: 'Whether steering avoids moving hazards (enemies, asteroids, the boss) at their predicted positions rather than only where they are now. The bot estimates each hazard velocity itself from position deltas; disabled (or a stationary hazard) reproduces the positional keep-away behaviour exactly.' },
+  { group: 'competent', key: 'hazardMotionModelEnabled', label: 'hazardMotionModelEnabled', description: 'Whether prediction uses the second-order motion model: the bot fits each hazard’s velocity and curvature from a bounded position history and samples its movement class’s trajectory (chaser pursuit, diver dive, patroller commit, formation drift/reversal, roamer linear) over the threat window, instead of a single constant-velocity closest-approach solve. Enabled (default) evades a curving hazard where it will actually be. Disabled reproduces the pre-change constant-velocity estimate and fixed-velocity solve bit-for-bit on the configured hazardPredictionHorizon, ignoring the per-class horizonScale multipliers — the sweep’s control arm. A hazard with insufficient history (cold start) also uses the constant-velocity estimate.' },
   { group: 'human', key: 'allowDown', label: 'allowDown', description: 'Whether the bot may use the down (S) direction in four-directional mode. Humans drive with W/A/D only, so this defaults to false. In asteroids mode the reverse (S) control is gated on the reverse-thruster enable flag instead.' },
 ];
 
@@ -209,7 +224,8 @@ function writePath(
  * The committed default tuning, flattened to {@link BotTuningValues}.
  *
  * `commitment.*` reads from the competent tunables' own override (the value
- * `resolveCompetentTunables()` actually uses). `world.*` reads from
+ * `resolveCompetentTunables()` actually uses), as does
+ * `hazardClassHorizonScale.*`. `world.*` reads from
  * {@link BOT_WORLD_TUNABLES} because the competent tunables ship an empty
  * `world` override and fall back to the world-model defaults.
  */

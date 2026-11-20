@@ -731,6 +731,13 @@ leading a target; this section covers the avoidance half.
   `COMPETENT_BOT_TUNABLES`, are registered in `src/ai/tuningFields.ts` with
   documented bounds/descriptions, and are applied live by `GymBotTuning`
   exactly like the aim-lead knobs ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)).
+  The motion model's own knobs are designer-facing too (AH-0MWM0CCJE000AANE):
+  the `hazardMotionModelEnabled` toggle (default **on**; off reproduces the
+  constant-velocity control arm) and one `hazardClassHorizonScale.<class>`
+  slider per movement class (`chaser` 1, `diver` 1.4, `patroller` 1.25,
+  `formation` 1, `roamer` 1 — the multiplier on `hazardPredictionHorizon`; the
+  sliders are inert while the model toggle is off), applied live without a
+  scene restart and carried in `src/data/bot-tuning.json`.
 - **Validation (AC4).** `hazardVelocity.test.ts` covers the estimator
   (stable velocity, stationary zero, clamp, stale retention/pruning, reset,
   determinism); `steering.test.ts` and `behaviours.test.ts` cover the
