@@ -787,6 +787,10 @@ shipped build:
   against certain enemy or boss types: **AH-0MVWZYJ740037EZ1** — **implemented**
   as flat defence skills keyed by the attacker's authored boss identity (see
   *Known-ahead intel and anti-checklist mitigations → Defending-bot skills*).
+- **Strengthen a hex's defence** — spend banked salvage on hangar-catalogue
+  weapons, hulls and modifiers for the bot defending a held hex:
+  **AH-0MWH48IEG00929GQ** — **implemented** (see *Known-ahead intel and
+  anti-checklist mitigations → Strengthen a hex's defence*).
 - **Hex variety** — per-hex personalities, contracts and ring landmarks:
   **AH-0MVWZYQN8007SXIG** — **implemented** (GDD §8.2 *Hex variety*): authored
   `personality` (config-tunes plus the bounded set of two shared combat
@@ -1253,6 +1257,47 @@ GDD §8.2 (*Defending-bot skills*) and in the resolver's module docs
 The parity surface is unchanged: `GymHexWar` leaves a bot **with** its skills and
 resolves/renders through the shipped `runFrontierTick` / `resolveDefence` /
 `buildDefenceReport` code, so the gym shows the numbers the game shows.
+
+### Strengthen a hex's defence (post-MVP, implemented — AH-0MWH48IEG00929GQ)
+
+The second mitigation turns banked salvage into a real commitment: a held hex's
+defender can be **upgraded** from the hangar catalogue. Design of record for the
+shipped build:
+
+- **One action, one screen.** The held hex's `SELECTED HEX` detail panel shows
+  an `UPGRADE DEFENCES` action (an unheld hex never does; the read-only
+  `GymHexWar` render passes no handlers, so it offers nothing). Activating it
+  opens `BotUpgradeScene`, a hangar-screen-style surface whose pure model and one
+  renderer live in `src/scenes/hangarWar/botUpgradeScreen.ts` — the same
+  model/renderer split as the hangar screen.
+- **One pure fit rule.** `src/core/hangarWar/botUpgrade.ts` answers, per catalogue
+  entry and per defender: `upgrade-existing` (the bot already carries the weapon
+  → raise its level), `add-to-empty-slot` (a weapon kind it does not carry →
+  offered **only** when a free permanent slot exists), `re-hull` (a hull entry
+  swaps `hullId`, keeping the loadout), `train` (a `defence-skill` modifier adds
+  the skill), or a disabled reason (`not-sendable`, `gated`, `slot-full`,
+  `capped`, `already-equipped`, `unaffordable`). The bot's slot occupancy is
+  **derived** from its stored permanent kinds against the shared
+  `POWER_UP_SLOT_CAP`; no second counter or fit copy exists.
+- **Two prices, one table.** A new weapon kind pays the catalogue's purchase price
+  and enters at level 1; an already-carried weapon rises one level for the
+  separate, authored **per-level** upgrade price (`BOT_WEAPON_UPGRADE_PRICES`,
+  producer Q9 = B), so the two prices tune independently.
+- **Spend from the hangar wallet, never the fleet.** A purchase spends exactly
+  the displayed price from `HangarState.bankedMinerals`/`bankedCores`; the
+  bot gets the entry, the fleet does not (no owned-set change, no active
+  hull/loadout change).
+- **One rating formula.** The purchase recomputes the defender's stored
+  `defenceRating` through `defenderRatingFromSnapshot` / `UPGRADE_STAT_BUCKETS` —
+  never a second derivation.
+- **Persistent unless the hex falls.** The upgrade lives on the defender's
+  additive permanent-upgrade fields (field-presence parse, the `skills`
+  pattern), so it round-trips save→load and survives between sorties; a defence
+  tick that falls the hex destroys the bot and its upgrades through the existing
+  `applyDefence` path.
+- **Balance risk, accepted.** Spendable upgrades can push a well-defended hex
+  high; the single rating formula and one price table let a follow-up tuning item
+  rescale prices without touching saves.
 
 ### Minimal first slice
 

@@ -115,6 +115,7 @@ import {
 } from '../powerups/miniBossWheel';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
+import { BOT_UPGRADE_SCENE_KEY, BotUpgradeScene } from './BotUpgradeScene';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import {
   HEX_MAP_HINT,
@@ -393,7 +394,12 @@ describe('HexMapScene', () => {
 
   /** Boots the scene and re-starts it with `data` (Phaser launch data). */
   async function bootMap(data?: object): Promise<HexMapScene> {
-    booted = await reuse.boot([HexMapScene, PlayScene, HangarScene]);
+    booted = await reuse.boot([
+      HexMapScene,
+      PlayScene,
+      HangarScene,
+      BotUpgradeScene,
+    ]);
     booted.game.scene.start(HEX_MAP_SCENE_KEY, data);
     await advanceGame(booted.game, 200);
     return booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
@@ -636,7 +642,7 @@ describe('HexMapScene', () => {
   });
 
   it(
-    'keeps owned hexes selectable but never deployable once the ring is secured',
+    'keeps owned hexes selectable and opens the bot-upgrade screen on activation',
     async () => {
       const payload = ringPayload(1);
       for (const hex of payload.ring.hexes) {
@@ -668,13 +674,13 @@ describe('HexMapScene', () => {
       expect(panel).toContain('HELD');
       expect(panel).toContain('the-dawnbreaker');
 
-      // Activating an owned hex performs no deployment: the map stays up and
-      // the config screen does not open.
+      // Activating an owned hex never deploys. Now that a held defender can be
+      // strengthened (AH-0MWH48IEG00929GQ), it opens the bot-upgrade screen.
       scene.activateFocused();
       await advanceGame(booted!.game, 350);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
       expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(false);
-      expect(scene.sys.isActive()).toBe(true);
+      expect(booted!.game.scene.isActive(BOT_UPGRADE_SCENE_KEY)).toBe(true);
     },
   );
 
@@ -828,18 +834,24 @@ describe('HexMapScene', () => {
       expect(panel).toContain('GRANT: extra-life');
       expect(panel).toContain('DEFENDER: hull-1');
 
-      // Activating an owned hex performs no deployment: the map stays up and
-      // the config screen does not open.
+      // Activating an owned hex never deploys: it opens the bot-upgrade screen
+      // for the defender (AH-0MWH48IEG00929GQ).
       scene.activateFocused();
       await advanceGame(booted!.game, 350);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
       expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(false);
-      expect(scene.sys.isActive()).toBe(true);
+      expect(booted!.game.scene.isActive(BOT_UPGRADE_SCENE_KEY)).toBe(true);
 
-      // An unheld displayed hex opens the config screen for it; its ▶ DEPLOY
-      // then launches the deployment at that hex.
-      expect(scene.focusRow('hex:hex-r1-3')).toBe(true);
-      scene.activateFocused();
+      // Back to the map (the bot-upgrade screen's back row), then an unheld
+      // displayed hex opens the config screen for it; its ▶ DEPLOY then
+      // launches the deployment at that hex.
+      (booted!.game.scene.getScene(BOT_UPGRADE_SCENE_KEY) as BotUpgradeScene).openMap();
+      await advanceGame(booted!.game, 350);
+      const backOnMap = booted!.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as HexMapScene;
+      expect(backOnMap.focusRow('hex:hex-r1-3')).toBe(true);
+      backOnMap.activateFocused();
       await advanceGame(booted!.game, 350);
       expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
       const hangar = booted!.game.scene.getScene(

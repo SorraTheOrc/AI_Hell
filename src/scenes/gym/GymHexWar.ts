@@ -574,6 +574,22 @@ export class GymHexWar extends Phaser.Scene {
     return this.view?.model ?? null;
   }
 
+  /**
+   * The `UPGRADE DEFENCES` action's text, or `''` when none is shown.
+   *
+   * The gym renders the map read-only (no handlers), so this is always `''`:
+   * the bot-upgrade control surface exists only in the game
+   * (parent AH-0MWH48IEG00929GQ) — parity by construction.
+   */
+  getUpgradeText(): string {
+    return this.view?.getUpgradeText() ?? '';
+  }
+
+  /** Whether the held-hex `UPGRADE DEFENCES` action is showing (never here). */
+  isUpgradeVisible(): boolean {
+    return this.view?.isUpgradeVisible() ?? false;
+  }
+
   /** Every drawn attack arrow (one per carried-attack entry), or none. */
   getMapArrows(): readonly HexMapArrow[] {
     return this.view?.arrows ?? [];

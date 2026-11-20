@@ -90,6 +90,7 @@ import {
 } from '../ai/hangarWarTraversal';
 import type { MiniBossWinReward } from '../powerups/miniBossWheel';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
+import { BOT_UPGRADE_SCENE_KEY } from './BotUpgradeScene';
 import { HANGAR_SCENE_KEY } from './HangarScene';
 import { MINI_BOSS_WHEEL_SCENE_KEY } from './MiniBossWheelScene';
 import {
@@ -297,6 +298,13 @@ export class HexMapScene extends Phaser.Scene {
     this.view = renderHexMap(this, model, {
       onDeploy: (hexId) => this.openConfig(hexId),
       onOpenHangar: () => this.openHangar(),
+      // A demo is a demonstration, not progress: the attract traversal never
+      // triggers the upgrade action and it must never reach a persisting
+      // screen, so the handler is omitted under demo (the row renders
+      // non-actionable) — the same rule the hangar's restart/save rows follow.
+      ...(this.demo
+        ? {}
+        : { onUpgradeDefences: (hexId: string) => this.openBotUpgrade(hexId) }),
     }, { runLine: this.runLine() });
   }
 
@@ -330,6 +338,22 @@ export class HexMapScene extends Phaser.Scene {
       demo: this.demo,
       demoDwellMs: this.demoDwellMs,
       targetHexId: hexId,
+    });
+  }
+
+  /**
+   * Opens the bot-upgrade screen scoped to the defender of held `hexId`
+   * (parent AH-0MWH48IEG00929GQ). The map's payload is handed over, so both
+   * screens read and write one war state; a purchase persists from there and
+   * returns to this map.
+   *
+   * @param hexId — the held hex whose defending bot is upgraded.
+   */
+  openBotUpgrade(hexId: string): void {
+    this.scene.start(BOT_UPGRADE_SCENE_KEY, {
+      payload: this.payload,
+      storage: this.storage,
+      hexId,
     });
   }
 
@@ -608,5 +632,28 @@ export class HexMapScene extends Phaser.Scene {
   /** Activates the focused row (the Enter/Space path). */
   activateFocused(): void {
     this.view?.activateFocused();
+  }
+
+  /**
+   * The `UPGRADE DEFENCES` action's current text, or `''` when the focused hex
+   * offers none (parent AH-0MWH48IEG00929GQ).
+   */
+  getUpgradeText(): string {
+    return this.view?.getUpgradeText() ?? '';
+  }
+
+  /** Whether the held-hex `UPGRADE DEFENCES` action is showing. */
+  isUpgradeVisible(): boolean {
+    return this.view?.isUpgradeVisible() ?? false;
+  }
+
+  /** The held hex the `UPGRADE DEFENCES` action targets, or `null`. */
+  getUpgradeHexId(): string | null {
+    return this.view?.getUpgradeHexId() ?? null;
+  }
+
+  /** Activates the held-hex `UPGRADE DEFENCES` action (its pointer path). */
+  activateUpgrade(): void {
+    this.view?.activateUpgrade();
   }
 }

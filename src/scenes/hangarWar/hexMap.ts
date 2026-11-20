@@ -178,6 +178,13 @@ const SPECIAL_OFFER_TEXT_COLOR = '#ffe066';
 
 /** Focus highlight on a tile: a white stroke, never an ownership-colour swap. */
 const TILE_FOCUS_STROKE = '#ffffff';
+
+/**
+ * Colour of the held-hex `UPGRADE DEFENCES` action (parent
+ * AH-0MWH48IEG00929GQ): the actionable green, kept distinct from the intel
+ * body's blue and the attack row's own colours.
+ */
+const UPGRADE_ACTION_COLOR = '#00ff88';
 const TILE_FOCUS_STROKE_WIDTH = 2;
 
 /**
@@ -516,6 +523,16 @@ const SELECTED_HEX_ATTACK_GAP = 10;
 const ATTACK_PANEL_HEADING = 'ATTACK — FOCUSED HEX';
 
 /**
+ * The held-hex `UPGRADE DEFENCES` action (parent AH-0MWH48IEG00929GQ).
+ *
+ * Surfaced in the `selected-hex` section when the focused hex is **held** and
+ * has a defender (and the render was given an `onUpgradeDefences` handler).
+ * Activating it opens the bot-upgrade screen for that defender; an unheld hex
+ * (or the read-only gym render, which passes no handlers) never shows it.
+ */
+export const UPGRADE_DEFENCES_LABEL = '▲ UPGRADE DEFENCES';
+
+/**
  * Sub-heading of the hangar-assault outcome (`AH-0MWEZZA4E0081NJ5`) inside the
  * `last-sortie` section: the report model's own `assaultLine` follows it.
  */
@@ -557,6 +574,12 @@ export interface HexMapHandlers {
   onDeploy(hexId: string): void;
   /** Open the hangar screen (the `◀ HANGAR` row). */
   onOpenHangar(): void;
+  /**
+   * Open the bot-upgrade screen for the defender of held `hexId` (the
+   * `UPGRADE DEFENCES` action, parent AH-0MWH48IEG00929GQ). Omitted by the
+   * read-only `GymHexWar` render, so it offers no upgrade action.
+   */
+  onUpgradeDefences?(hexId: string): void;
 }
 
 /** One rendered row, exposed for tests and screen queries. */
@@ -634,6 +657,17 @@ export interface HexMapView {
   focusRow(key: string): boolean;
   /** Activates the focused row (what Enter/Space does). */
   activateFocused(): void;
+  /**
+   * The `UPGRADE DEFENCES` action's current text, or `''` when the focused hex
+   * offers none (an unheld/undefended hex, or a render with no handler).
+   */
+  getUpgradeText(): string;
+  /** Whether the `UPGRADE DEFENCES` action is showing. */
+  isUpgradeVisible(): boolean;
+  /** The held hex the `UPGRADE DEFENCES` action targets, or `null`. */
+  getUpgradeHexId(): string | null;
+  /** Activates the `UPGRADE DEFENCES` action (what its click does). */
+  activateUpgrade(): void;
   /** Destroys the rendered objects and detaches the keyboard listener. */
   destroy(): void;
 }
@@ -1134,6 +1168,13 @@ export function renderHexMap(
     const text = texts.head;
     tileTextByKey.set(intel.key, texts);
     const deployable = intel.actionable && handlers?.onDeploy !== undefined;
+    // A held hex with a defender offers the bot-upgrade action (parent
+    // AH-0MWH48IEG00929GQ); an unheld hex never does, and the read-only gym
+    // render (no handlers) offers nothing.
+    const upgradeable =
+      intel.held &&
+      intel.defender !== null &&
+      handlers?.onUpgradeDefences !== undefined;
     const row: HexMapRow = {
       key: intel.key,
       label: intel.tileLabel,
@@ -1143,11 +1184,13 @@ export function renderHexMap(
     rows.push(row);
     focusableRows.push(row);
 
-    // Every displayed hex is selectable. Activation deploys only at an unheld
-    // hex; on a held hex (or a read-only render) it is a no-op, so an owned hex
-    // can be inspected without risk of re-deploying (AC3).
+    // Every displayed hex is selectable. Activation deploys at an unheld hex;
+    // on a held hex with a defender it opens the bot-upgrade screen (the
+    // `UPGRADE DEFENCES` action); otherwise it is a no-op, so an owned hex can
+    // be inspected without risk of re-deploying (AC3).
     const activate = (): void => {
       if (deployable) handlers!.onDeploy!(intel.id);
+      else if (upgradeable) handlers!.onUpgradeDefences!(intel.id);
     };
 
     // Hovering either label half shows the headline's focus stroke; clicking
@@ -1333,6 +1376,53 @@ export function renderHexMap(
     attackPanelBody.setVisible(detail !== undefined);
   };
 
+  // ── `selected-hex`: the held-hex `UPGRADE DEFENCES` action ────────
+  // The one bot-upgrade control surface on the map (parent
+  // AH-0MWH48IEG00929GQ). Shown only for a held, defended hex and only when
+  // the render carries an `onUpgradeDefences` handler; the read-only gym render
+  // therefore offers nothing. It is positioned below the intel/attack block so
+  // it can never collide with a long intel label.
+  const upgradeText = scene.add.text(
+    SELECTED_HEX_BODY_X,
+    SELECTED_HEX_BODY_Y,
+    '',
+    {
+      fontFamily: 'monospace',
+      fontSize: SECTION_BODY_SIZE,
+      color: UPGRADE_ACTION_COLOR,
+      wordWrap: { width: SELECTED_HEX_BODY_WIDTH },
+    },
+  );
+  upgradeText.setInteractive({ useHandCursor: true });
+  objects.push(upgradeText);
+
+  let upgradeKey: string | null = null;
+  const updateUpgradeRow = (): void => {
+    const hex = hexByKey(displayedHexKey());
+    const shown =
+      hex !== undefined &&
+      hex.held === true &&
+      hex.defender !== null &&
+      handlers?.onUpgradeDefences !== undefined;
+    // Sit under whichever block last rendered (the attack row when present,
+    // otherwise the intel body).
+    const anchor = attackPanelBody.visible
+      ? attackPanelBody.y + attackPanelBody.height
+      : panelBody.y + panelBody.height;
+    upgradeText.setPosition(
+      SELECTED_HEX_BODY_X,
+      anchor + SELECTED_HEX_ATTACK_GAP,
+    );
+    upgradeKey = shown ? hex!.id : null;
+    upgradeText.setText(shown ? UPGRADE_DEFENCES_LABEL : '');
+    upgradeText.setVisible(shown);
+  };
+
+  const activateUpgrade = (): void => {
+    if (upgradeKey !== null) handlers?.onUpgradeDefences?.(upgradeKey);
+  };
+  upgradeText.on('pointerdown', activateUpgrade);
+
   const updatePanel = (): void => {
     paintTiles();
     const hex = hexByKey(displayedHexKey());
@@ -1346,6 +1436,7 @@ export function renderHexMap(
         : 'FULL INTEL — no hex in view',
     );
     updateAttackPanel();
+    updateUpgradeRow();
   };
 
   focusManager.setFocusChangeListener(updatePanel);
@@ -1376,6 +1467,16 @@ export function renderHexMap(
     isLeftPanelVisible(): boolean {
       return attackPanelKey !== null && attackPanelBody.visible;
     },
+    getUpgradeText(): string {
+      return upgradeText.text;
+    },
+    isUpgradeVisible(): boolean {
+      return upgradeKey !== null && upgradeText.visible;
+    },
+    getUpgradeHexId(): string | null {
+      return upgradeKey;
+    },
+    activateUpgrade,
     getAssaultText(): string {
       return assaultBody?.text ?? '';
     },
