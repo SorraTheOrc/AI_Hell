@@ -1889,6 +1889,171 @@ describe('ffmpeg driver — deterministic command building (AC1/AC2, pure)', () 
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// Hard-cut golden argv baseline (AH-0MWM28TXV004Z2EY)
+//
+// Captured **before** the cross-fade work (parent AH-0MWLYWYGK004JR2A, which
+// will make `buildDeliverableArgv` emit `xfade`/`acrossfade` junctions). These
+// goldens are the proof that the rewrite is opt-outable: the cross-fade change
+// MUST keep the multi-cut `concat` graph below reachable byte-for-byte through
+// `transitions.videoFadeMs = 0`, and MUST leave the single-segment
+// pass-through argv exactly as pinned here. Everything asserted is the public
+// argv contract — no test reaches into a private helper.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('ffmpeg driver — hard-cut golden argv baseline (AH-0MWM28TXV004Z2EY)', () => {
+  /** The pre-cross-fade encode options, spelled out so the goldens are literal. */
+  function hardCutOpts(output: string) {
+    return { width: 960, height: 540, fps: 60, vp9Crf: 32, opusBitrateK: 96, output };
+  }
+
+  // The exact `-filter_complex` graph for two cuts (2.5 s + 2.2 s): one
+  // normalised per-input trim/scale/fps/format/setsar chain each, then one
+  // hard `concat` of the video and audio streams.
+  const HARD_CUT_2_GRAPH = [
+    '[0:v]trim=start=0.5:end=3,setpts=PTS-STARTPTS,scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:color=black,fps=60,format=yuv420p,setsar=1[v0]',
+    '[0:a]atrim=start=0.5:end=3,asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a0]',
+    '[1:v]trim=start=0:end=2.2,setpts=PTS-STARTPTS,scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:color=black,fps=60,format=yuv420p,setsar=1[v1]',
+    '[1:a]atrim=start=0:end=2.2,asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a1]',
+    '[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]',
+  ].join(';');
+
+  // Three cuts with unequal durations (2.5 s + 2.2 s + 4.0 s), so the concat
+  // chain is pinned at a cut count other than the fixture default.
+  const HARD_CUT_3_GRAPH = [
+    '[0:v]trim=start=0.5:end=3,setpts=PTS-STARTPTS,scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:color=black,fps=60,format=yuv420p,setsar=1[v0]',
+    '[0:a]atrim=start=0.5:end=3,asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a0]',
+    '[1:v]trim=start=0:end=2.2,setpts=PTS-STARTPTS,scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:color=black,fps=60,format=yuv420p,setsar=1[v1]',
+    '[1:a]atrim=start=0:end=2.2,asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a1]',
+    '[2:v]trim=start=1.25:end=5.25,setpts=PTS-STARTPTS,scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:color=black,fps=60,format=yuv420p,setsar=1[v2]',
+    '[2:a]atrim=start=1.25:end=5.25,asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a2]',
+    '[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]',
+  ].join(';');
+
+  it('pins the 2-cut promo graph exactly (must stay reachable via transitions.videoFadeMs = 0)', () => {
+    const argv = buildDeliverableArgv(
+      'promo',
+      0,
+      [seg('runA', 500, 3_000), seg('runB', 0, 2_200)],
+      hardCutOpts('capture-output/promo.webm'),
+    );
+    const graph = argv[argv.indexOf('-filter_complex') + 1];
+    expect(graph).toBe(HARD_CUT_2_GRAPH);
+    // The hard cut maps the concat outputs, never xfade/acrossfade labels.
+    expect(argv[argv.indexOf('-map') + 1]).toBe('[v]');
+    expect(argv.slice(argv.indexOf('-map'))).toEqual([
+      '-map',
+      '[v]',
+      '-map',
+      '[a]',
+      '-c:v',
+      'libvpx-vp9',
+      '-b:v',
+      '0',
+      '-crf',
+      '32',
+      '-deadline',
+      'good',
+      '-cpu-used',
+      '4',
+      '-pix_fmt',
+      'yuv420p',
+      '-r',
+      '60',
+      '-c:a',
+      'libopus',
+      '-b:a',
+      '96k',
+      '-ar',
+      '48000',
+      '-metadata',
+      'title=promo',
+      'capture-output/promo.webm',
+    ]);
+  });
+
+  it('pins the 3-cut (unequal durations) promo graph exactly (must stay reachable via transitions.videoFadeMs = 0)', () => {
+    const argv = buildDeliverableArgv(
+      'promo',
+      0,
+      [seg('runA', 500, 3_000), seg('runB', 0, 2_200), seg('runC', 1_250, 5_250)],
+      hardCutOpts('capture-output/promo.webm'),
+    );
+    const graph = argv[argv.indexOf('-filter_complex') + 1];
+    expect(graph).toBe(HARD_CUT_3_GRAPH);
+  });
+
+  it('pins the single-segment pass-through argv exactly (must stay unchanged)', () => {
+    const argv = buildDeliverableArgv(
+      'highlight',
+      1,
+      [seg('runA', 1_234, 4_567)],
+      hardCutOpts('capture-output/highlight-01.webm'),
+    );
+    expect(argv).toEqual([
+      'ffmpeg',
+      '-y',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      'capture-output/runA.webm',
+      '-filter_complex',
+      '[0:v]trim=start=1.234:end=4.567,setpts=PTS-STARTPTS,scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2:color=black,fps=60,format=yuv420p,setsar=1[v0];' +
+        '[0:a]atrim=start=1.234:end=4.567,asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a0]',
+      '-map',
+      '[v0]',
+      '-map',
+      '[a0]',
+      '-c:v',
+      'libvpx-vp9',
+      '-b:v',
+      '0',
+      '-crf',
+      '32',
+      '-deadline',
+      'good',
+      '-cpu-used',
+      '4',
+      '-pix_fmt',
+      'yuv420p',
+      '-r',
+      '60',
+      '-c:a',
+      'libopus',
+      '-b:a',
+      '96k',
+      '-ar',
+      '48000',
+      '-metadata',
+      'title=highlight-01',
+      'capture-output/highlight-01.webm',
+    ]);
+  });
+
+  it('returns byte-identical argv for two calls given equal (non-identical) segment lists', () => {
+    const firstSegments = [seg('runA', 500, 3_000), seg('runB', 0, 2_200)];
+    const secondSegments = [seg('runA', 500, 3_000), seg('runB', 0, 2_200)];
+    expect(secondSegments).not.toBe(firstSegments);
+    expect(secondSegments[0]).not.toBe(firstSegments[0]);
+
+    const first = buildDeliverableArgv(
+      'promo',
+      0,
+      firstSegments,
+      hardCutOpts('capture-output/promo.webm'),
+    );
+    const second = buildDeliverableArgv(
+      'promo',
+      0,
+      secondSegments,
+      hardCutOpts('capture-output/promo.webm'),
+    );
+    expect(second).not.toBe(first);
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first));
+  });
+});
+
 describe('ffmpeg driver — validation verdict (AC3, pure)', () => {
   it('passes a decodable 960x540 + audio + non-black deliverable', () => {
     expect(
