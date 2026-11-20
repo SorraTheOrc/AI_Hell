@@ -586,6 +586,8 @@ export function buildDeliverableArgv(
     vp9Crf: number;
     opusBitrateK: number;
     output: string;
+    /** Junction style override (defaults to {@link TRANSITIONS}). */
+    transitions?: TransitionConfig;
   },
 ): string[];
 

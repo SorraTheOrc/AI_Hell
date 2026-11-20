@@ -1676,24 +1676,39 @@ export function planJunctions(segments = [], transitions = TRANSITIONS) {
 /**
  * The deterministic ffmpeg argv for one deliverable: trims each segment to
  * its mapped in/out points, reorders implicitly by input order, normalises
- * every input to width×height @ fps yuv420p + 48 kHz stereo, concatenates
- * video and audio, and muxes a single VP9 + Opus WebM (AC1, AC2, parent
- * AC5). Single segment → one trim chain; multi segment → one
- * filter_complex concat, so the output is one contiguous clip and the edit
- * decision (which segments, in which order, at which points) is exactly the
- * plan's. Same plan + segments ⇒ byte-identical argv.
+ * every input to width×height @ fps yuv420p + 48 kHz stereo, joins the cuts
+ * and muxes a single VP9 + Opus WebM (AC1, AC2, parent AC5).
+ *
+ * The junction style is `transitions` (parent AH-0MWLYWYGK004JR2A):
+ *
+ * - **One segment** — a single trim chain, mapped directly; no junction at
+ *   all.
+ * - **Many segments, transitions enabled** — a dissolve: the normalised
+ *   `[v0..vn]` fold through successive `xfade=transition=fade` steps and the
+ *   `[a0..an]` through successive `acrossfade` steps, both inside this same
+ *   `-filter_complex` pass (no extra encode). Each step's offset comes from
+ *   {@link planJunctions}, so the timing is a pure function of the cuts.
+ * - **Many segments, `transitions.videoFadeMs: 0`** — the historical hard
+ *   cut: one `concat` of all normalised streams. This path is byte-identical
+ *   to the pre-cross-fade argv, so the transition is fully opt-outable.
+ *
+ * Normalisation always precedes the first transition filter, because `xfade`
+ * requires matching timebase/format/fps across its inputs. Same plan +
+ * segments ⇒ byte-identical argv.
  *
  * @param {string} kind
  * @param {number} index
  * @param {readonly SelectionManifestEntry[]} segments - already clamped to
  *   source durations.
  * @param {{ width: number, height: number, fps: number, vp9Crf: number,
- *           opusBitrateK: number, output: string }} opts
+ *           opusBitrateK: number, output: string,
+ *           transitions?: TransitionConfig }} opts
  * @returns {string[]} - argv[0] is `ffmpeg`; the runner substitutes the
  *   resolved binary path.
  */
 export function buildDeliverableArgv(kind, index, segments, opts) {
   const { width, height, fps, vp9Crf, opusBitrateK, output } = opts;
+  const transitions = opts.transitions ?? TRANSITIONS;
   const args = ['-y', '-hide_banner', '-loglevel', 'error'];
   for (const segment of segments) args.push('-i', segment.webm);
 
@@ -1714,10 +1729,37 @@ export function buildDeliverableArgv(kind, index, segments, opts) {
   let graph;
   let mapVideo;
   let mapAudio;
+  const planned = planJunctions(segments, transitions);
   if (segments.length === 1) {
     graph = `${inputs[0].video};${inputs[0].audio}`;
     mapVideo = '[v0]';
     mapAudio = '[a0]';
+  } else if (planned.hasTransitions) {
+    // Dissolve: fold the normalised streams through chained `xfade` (picture)
+    // and `acrossfade` (sound). Junction `j` joins cut `j` to cut `j + 1`; the
+    // last step of each chain writes the final `[v]` / `[a]` label.
+    const last = planned.junctions.length - 1;
+    const videoSteps = planned.junctions.map((junction, j) => {
+      const left = j === 0 ? 'v0' : `vx${j}`;
+      const right = j === last ? 'v' : `vx${j + 1}`;
+      return (
+        `[${left}][v${j + 1}]xfade=transition=fade` +
+        `:duration=${secondsOf(junction.videoFadeMs)}` +
+        `:offset=${secondsOf(junction.videoOffsetMs)}[${right}]`
+      );
+    });
+    const audioSteps = planned.junctions.map((junction, j) => {
+      const left = j === 0 ? 'a0' : `ax${j}`;
+      const right = j === last ? 'a' : `ax${j + 1}`;
+      return (
+        `[${left}][a${j + 1}]acrossfade=d=${secondsOf(junction.audioFadeMs)}[${right}]`
+      );
+    });
+    graph =
+      inputs.map((c) => `${c.video};${c.audio}`).join(';') +
+      `;${videoSteps.join(';')};${audioSteps.join(';')}`;
+    mapVideo = '[v]';
+    mapAudio = '[a]';
   } else {
     graph =
       inputs.map((c) => `${c.video};${c.audio}`).join(';') +
