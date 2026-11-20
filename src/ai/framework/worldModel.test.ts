@@ -23,6 +23,8 @@ import {
   DEFAULT_THRUSTER_CONFIG,
   mineral,
 } from './testFixtures';
+import { enemyHazardKey, trackHazardVelocities } from './hazardVelocity';
+import { createBotMemory } from './memory';
 
 describe('buildBotWorld', () => {
   it('partitions live enemies from asteroids and excludes dead ones', () => {
@@ -50,6 +52,7 @@ describe('buildBotWorld', () => {
       x: 10,
       y: 20,
       movementClass: 'formation',
+      curvature: 0,
     });
 
     const dead = makeSnapshot({
@@ -337,5 +340,64 @@ describe('buildBotWorld — hazard movement class (AH-0MWM0C6OW006G5SE)', () => 
     );
     expect(world.hazards).toHaveLength(1);
     expect(world.hazards[0].movementClass).toBe('formation');
+  });
+});
+
+describe('hazard curvature (AH-0MWM0C7ZR001YJRE · AC3)', () => {
+  it('carries the fitted turn rate onto the hazard point', () => {
+    const snapshot = makeSnapshot({
+      enemies: [{ ...enemy(100, 100, 'ghost-chase'), id: 1 }],
+    });
+    const world = buildBotWorld(
+      snapshot,
+      undefined,
+      undefined,
+      new Map([[enemyHazardKey(1), { x: 120, y: 0, curvature: 1.5 }]]),
+    );
+    expect(world.hazards[0].curvature).toBe(1.5);
+    expect(world.hazards[0].vx).toBe(120);
+    expect(world.hazards[0].vy).toBe(0);
+  });
+
+  it('reports zero curvature for a straight-line hazard and without a motion estimate', () => {
+    const snapshot = makeSnapshot({
+      enemies: [{ ...enemy(1, 2), id: 1 }],
+    });
+    // No motion lookup at all: stationary/positional behaviour, curvature 0.
+    expect(buildBotWorld(snapshot).hazards[0].curvature).toBe(0);
+    // A straight-line estimate: velocity present, curvature exactly 0.
+    const straight = buildBotWorld(
+      snapshot,
+      undefined,
+      undefined,
+      new Map([[enemyHazardKey(1), { x: 120, y: 0, curvature: 0 }]]),
+    );
+    expect(straight.hazards[0].curvature).toBe(0);
+    expect(straight.hazards[0].vx).toBe(120);
+  });
+
+  it('reports zero curvature for a cold-start and a stationary hazard through the tracker', () => {
+    const memory = createBotMemory();
+    const snapshot = makeSnapshot({ enemies: [{ ...enemy(300, 200), id: 1 }] });
+    // Cold start: the tracker has no history yet.
+    const cold = buildBotWorld(
+      snapshot,
+      undefined,
+      undefined,
+      trackHazardVelocities(memory, snapshot, 1 / 60),
+    );
+    expect(cold.hazards[0].curvature).toBe(0);
+
+    // Two more stationary ticks: the window is full but there is no turn.
+    memory.ticks += 1;
+    trackHazardVelocities(memory, snapshot, 1 / 60);
+    memory.ticks += 1;
+    const stationary = buildBotWorld(
+      snapshot,
+      undefined,
+      undefined,
+      trackHazardVelocities(memory, snapshot, 1 / 60),
+    );
+    expect(stationary.hazards[0].curvature).toBe(0);
   });
 });

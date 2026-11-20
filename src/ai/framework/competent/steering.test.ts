@@ -842,7 +842,7 @@ describe('hazardThreatensPlayer (AH-0MVI4QDN90037DIN AC2)', () => {
     expect(
       hazardThreatensPlayer(
         player,
-        { x: 580, y: 120, vx: -50, vy: 200, movementClass: 'roamer' },
+        { x: 580, y: 120, vx: -50, vy: 200, movementClass: 'roamer', curvature: 0 },
         T,
       ),
     ).toBe(true);
@@ -850,7 +850,7 @@ describe('hazardThreatensPlayer (AH-0MVI4QDN90037DIN AC2)', () => {
     expect(
       hazardThreatensPlayer(
         player,
-        { x: 580, y: 120, vx: 0, vy: 0, movementClass: 'roamer' },
+        { x: 580, y: 120, vx: 0, vy: 0, movementClass: 'roamer', curvature: 0 },
         T,
       ),
     ).toBe(false);
@@ -858,7 +858,7 @@ describe('hazardThreatensPlayer (AH-0MVI4QDN90037DIN AC2)', () => {
     expect(
       hazardThreatensPlayer(
         player,
-        { x: 520, y: 270, vx: 0, vy: 0, movementClass: 'roamer' },
+        { x: 520, y: 270, vx: 0, vy: 0, movementClass: 'roamer', curvature: 0 },
         T,
       ),
     ).toBe(true);
@@ -874,7 +874,7 @@ describe('seam-aware threat prediction (AH-0MVT2W2D9002BOHO)', () => {
     expect(
       hazardThreatensPlayer(
         player,
-        { x: 950, y: 300, vx: 100, vy: 0, movementClass: 'roamer' },
+        { x: 950, y: 300, vx: 100, vy: 0, movementClass: 'roamer', curvature: 0 },
         T,
       ),
     ).toBe(true);

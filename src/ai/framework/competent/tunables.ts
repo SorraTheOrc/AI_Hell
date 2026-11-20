@@ -8,6 +8,12 @@
  * shipped ship config (`frictionDeceleration: 100`) and playfield size used
  * by the legacy decision layer.
  *
+ * The predictive hazard knobs include the **second-order motion model**
+ * toggle (`hazardMotionModelEnabled`, AH-0MWM0C7ZR001YJRE): on (the hybrid
+ * default) the bot fits each hazard's velocity and curvature from a bounded
+ * position history; off reproduces the pre-change constant-velocity estimate
+ * bit-for-bit for the sweep's control arm.
+ *
  * @module src/ai/framework/competent/tunables
  */
 
@@ -213,6 +219,15 @@ export interface CompetentBotTunables {
    * within `threatRadius` inside this window.
    */
   hazardPredictionHorizon: number;
+  /**
+   * Whether the bot-side hazard tracker fits **velocity and curvature** from a
+   * bounded position history (the hybrid default on; AH-0MWM0C7ZR001YJRE ·
+   * AC1/AC2) instead of the single first difference. `false` reproduces the
+   * pre-change constant-velocity estimate bit-for-bit, which is the sweep's
+   * control arm. A hazard with insufficient history (cold start) falls back to
+   * the constant-velocity estimate either way.
+   */
+  hazardMotionModelEnabled: boolean;
 
   // ── Aim lead prediction (AH-0MV1DUSM2005HL98) ────────────────────
   /**
@@ -353,6 +368,10 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   // look-ahead (AC2); a stationary hazard is unaffected either way.
   hazardPredictionEnabled: true,
   hazardPredictionHorizon: 0.6,
+  // The second-order (velocity + curvature) motion fit is the hybrid default
+  // (AH-0MWM0C7ZR001YJRE · AC1); disabling it reproduces the single-difference
+  // estimate bit-for-bit for the sweep's control arm (AC2).
+  hazardMotionModelEnabled: true,
 
   aimLeadEnabled: true,
   aimLeadAlignSeconds: 0.25,

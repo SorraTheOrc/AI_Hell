@@ -120,15 +120,23 @@ export function createCompetentBotBrain(
     },
     // The content registry is authoritative for the asteroid partition, so
     // the world model is built with both the tunables and the content. The
-    // memory/dt pair advances the deterministic bot-side hazard-velocity
-    // tracker first, so every hazard carries where it is heading
-    // (AH-0MVI4QDN90037DIN · AC1/AC2).
+    // memory/dt pair advances the deterministic bot-side hazard-motion tracker
+    // first, so every hazard carries where it is heading and how hard it is
+    // turning (AH-0MVI4QDN90037DIN · AC1/AC2, curvature
+    // AH-0MWM0C7ZR001YJRE · AC1/AC3). `hazardMotionModelEnabled` selects the
+    // second-order fit or the bit-identical single-difference control.
     worldModel: (snapshot, memory, dt) => {
       const hazardVelocities = memory
-        ? trackHazardVelocities(memory, snapshot, dt ?? 0, {
-            width: tunables.playfieldWidth,
-            height: tunables.playfieldHeight,
-          })
+        ? trackHazardVelocities(
+            memory,
+            snapshot,
+            dt ?? 0,
+            {
+              width: tunables.playfieldWidth,
+              height: tunables.playfieldHeight,
+            },
+            { motionModelEnabled: tunables.hazardMotionModelEnabled },
+          )
         : undefined;
       return buildBotWorld(
         snapshot,
