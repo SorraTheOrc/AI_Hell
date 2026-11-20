@@ -82,8 +82,10 @@ import {
   type HangarPrice,
 } from '../../data/hangarCatalogue';
 import {
+  applySavedBuild,
   buy,
   canBuy,
+  captureShipBuild,
   cheapestUsefulUnlock,
   costToUpgrade,
   currentUpgradeLevel,
@@ -92,9 +94,12 @@ import {
   findHangarEntry,
   hangarPermanentLevels,
   MAX_PERMANENT_LEVEL,
+  MAX_SAVED_BUILD_NAME_LENGTH,
   ownsEntry,
   resolveActiveHull,
   resolveActiveLoadout,
+  type SavedBuildRefusalReason,
+  type SavedBuildShortfall,
   type UpgradeRefusal,
 } from '../../core/hangarWar/hangarEconomy';
 import {
@@ -349,6 +354,101 @@ export function buildHangarRestartRow(armed = false): HangarRestartRow {
   };
 }
 
+/** Row key of the hangar's `SAVE CURRENT BUILD` row. */
+export const SAVE_BUILD_ROW_KEY = 'save-build';
+
+/** Row key of the saved-build selector (cycles the selected build). */
+export const CYCLE_BUILD_ROW_KEY = 'build:cycle';
+
+/** The row-key builder for the selected build's verb row. */
+export function savedBuildRowKey(verb: 'apply' | 'rename' | 'delete'): string {
+  return `build:${verb}`;
+}
+
+/**
+ * Builds the compact saved-build surface rows (pure, AH-0MWL8C6FE008G1E7).
+ *
+ * A **fixed** five rows regardless of how many builds exist, so an unbounded
+ * list never overflows the shipped screen and every entry stays reachable:
+ *
+ * - `save` — capture the currently equipped ship as a new saved build;
+ * - `cycle` — advance the selected index through the list (the drop-down);
+ * - `apply` — purchase and equip the selected build in one action;
+ * - `rename` — rename the selected build;
+ * - `delete` — delete the selected build.
+ *
+ * With no saved builds only the `save` row is actionable; the other four are
+ * rendered disabled so the affordance is discoverable. Because the selected
+ * index can be advanced to **any** entry, deleting is reachable for every
+ * saved build (AC5) without a per-build row.
+ *
+ * @param payload — the current payload (the hangar carries the saved builds).
+ * @param selectedIndex — the index of the currently selected build (clamped).
+ * @returns the rows in reading order (save, cycle, apply, rename, delete).
+ */
+export function buildHangarSavedBuildRows(
+  payload: HangarWarPayload,
+  selectedIndex = 0,
+): HangarSavedBuildRow[] {
+  const builds = payload.hangar.savedBuilds ?? [];
+  const hasBuilds = builds.length > 0;
+  const index = hasBuilds
+    ? Math.min(Math.max(0, Math.trunc(selectedIndex)), builds.length - 1)
+    : 0;
+  const selected = hasBuilds ? builds[index] : null;
+  const position = hasBuilds ? index + 1 : 0;
+  const name = selected?.name ?? null;
+
+  const saveRow: HangarSavedBuildRow = {
+    key: SAVE_BUILD_ROW_KEY,
+    verb: 'save',
+    buildId: null,
+    name: 'SAVE CURRENT BUILD',
+    label: '＋ SAVE CURRENT BUILD',
+    actionable: true,
+  };
+
+  // With no saved builds only the save row is shown, so a fresh hangar keeps
+  // its compact layout (and the always-present save affordance is discoverable).
+  if (!hasBuilds) return [saveRow];
+
+  return [
+    saveRow,
+    {
+      key: CYCLE_BUILD_ROW_KEY,
+      verb: 'cycle',
+      buildId: selected?.id ?? null,
+      name: name ?? 'SAVED BUILDS: none',
+      label: `◀ ▶ SAVED BUILD ${position}/${builds.length} — “${name}”`,
+      actionable: builds.length > 1,
+    },
+    {
+      key: savedBuildRowKey('apply'),
+      verb: 'apply',
+      buildId: selected?.id ?? null,
+      name: name ?? '',
+      label: `▶ FLY “${name}” — re-buy & equip`,
+      actionable: true,
+    },
+    {
+      key: savedBuildRowKey('rename'),
+      verb: 'rename',
+      buildId: selected?.id ?? null,
+      name: name ?? '',
+      label: `✎ RENAME “${name}”`,
+      actionable: true,
+    },
+    {
+      key: savedBuildRowKey('delete'),
+      verb: 'delete',
+      buildId: selected?.id ?? null,
+      name: name ?? '',
+      label: `✖ DELETE “${name}”`,
+      actionable: true,
+    },
+  ];
+}
+
 /**
  * The target hex's authored boss intel, as the config screen publishes it
  * (AH-0MWMT4QXF0095CBN).
@@ -385,6 +485,29 @@ function withMatchupMarker(label: string, matchup: BossMatchup | null): string {
 }
 
 /** The complete rendered state of the hangar screen (pure data). */
+/**
+ * One row of the saved-build surface (AH-0MWL8C6FE008G1E7).
+ *
+ * `save` captures the currently equipped ship; `apply` re-purchases and
+ * re-equips a saved build in one action; `rename` and `delete` manage an
+ * existing entry. The `key` is unique within the screen (`build:<id>:<verb>` or
+ * `save-build`) so the shared `FocusManager` can address each row.
+ */
+export interface HangarSavedBuildRow {
+  /** Unique row key (`save-build`, `build:saved:<verb>`). */
+  key: string;
+  /** What activating the row does. */
+  verb: 'save' | 'cycle' | 'apply' | 'rename' | 'delete';
+  /** The currently selected saved build's id (`null` when none selected). */
+  buildId: string | null;
+  /** The selected build's display name (or a fixed label). */
+  name: string;
+  /** Full row text as rendered. */
+  label: string;
+  /** Whether the row can be activated right now. */
+  actionable: boolean;
+}
+
 export interface HangarScreenModel {
   /** Screen title. */
   title: string;
@@ -406,6 +529,18 @@ export interface HangarScreenModel {
   mapRow: HangarMapRow;
   /** The `⟲ RESTART WAR` reset row (two-step confirm, `bestScore` kept). */
   restartRow: HangarRestartRow;
+  /**
+   * A transient saved-build message (an apply refusal's shortfall, or a save
+   * confirmation), rendered above the restart row. `null` when there is none.
+   */
+  savedBuildMessage: string | null;
+  /**
+   * The saved-build rows — the drop-down list plus the save/rename/delete
+   * affordances (AH-0MWL8C6FE008G1E7). One `save` row first, then an `apply`,
+   * `rename` and `delete` row for every saved build, so deletion is reachable
+   * for every entry.
+   */
+  savedBuildRows: HangarSavedBuildRow[];
   /**
    * The target hex's authored boss intel (AH-0MWMT4QXF0095CBN): the resolved
    * target, its boss name and authored strengths/weaknesses lists, or an
@@ -449,6 +584,17 @@ function clonePayload(payload: HangarWarPayload): HangarWarPayload {
         startingWeapons: [...payload.hangar.activeLoadout.startingWeapons],
         modifiers: [...payload.hangar.activeLoadout.modifiers],
       },
+      ...(payload.hangar.savedBuilds !== undefined
+        ? {
+            savedBuilds: payload.hangar.savedBuilds.map((build) => ({
+              ...build,
+              startingWeapons: [...build.startingWeapons],
+              modifiers: [...build.modifiers],
+              weaponLevels: build.weaponLevels?.map((row) => ({ ...row })),
+              powerUpLevels: build.powerUpLevels?.map((row) => ({ ...row })),
+            })),
+          }
+        : {}),
     },
     ring: { ...payload.ring, hexes: payload.ring.hexes.map((hex) => ({ ...hex })) },
     pendingAttacks: payload.pendingAttacks.map((attack) => ({ ...attack })),
@@ -852,11 +998,16 @@ export function buildHangarScreenModel(
   const modifierOptions = buildHangarModifierOptions(payload, catalogue);
   const mapRow = buildHangarMapRow();
   const restartRow = buildHangarRestartRow(options.restartArmed === true);
+  const savedBuildRows = buildHangarSavedBuildRows(
+    payload,
+    options.savedBuildIndex ?? 0,
+  );
   const focusOrder = [
     ...unlockRows.filter((row) => row.actionable),
     ...hullOptions.filter((row) => row.actionable),
     ...weaponOptions.filter((row) => row.actionable),
     ...modifierOptions.filter((row) => row.actionable),
+    ...savedBuildRows.filter((row) => row.actionable),
     deployRow,
     // The navigation row follows the primary action, mirroring `HexMapScene`'s
     // convention of placing its own navigation row last in the focus order.
@@ -876,6 +1027,8 @@ export function buildHangarScreenModel(
     deployRow,
     mapRow,
     restartRow,
+    savedBuildMessage: options.savedBuildMessage ?? null,
+    savedBuildRows,
     bossIntel,
     focusOrder,
   };
@@ -1101,10 +1254,219 @@ export function restartHangarWar(
   seed: number,
 ): HangarWarPayload {
   const fresh = createDefaultPayload(seed);
+  // Saved builds survive a war reset (AH-0MWL8C6FE008G1E7): they are a
+  // "what you own" meta-layer, not war progress, so thread them through
+  // beside `bestScore` while the rest of the hangar resets to starters.
   return {
     ...fresh,
+    hangar: {
+      ...fresh.hangar,
+      savedBuilds: payload.hangar.savedBuilds,
+    },
     bestScore: toCount(payload.bestScore),
   };
+}
+
+// ── Saved ship configurations (AH-0MWL8C6FE008G1E7) ───────────────────────
+//
+// Four pure payload updaters + the name-entry keystroke helpers. The screen
+// only presents and persists: capture (save), apply, rename and delete all
+// delegate the economy/payload work to the pure core and return a fresh
+// payload for the single `saveHangarWarPayload` write.
+
+/**
+ * The result of applying a saved build through the screen updater.
+ */
+export interface HangarBuildApplyResult {
+  /** Whether the whole build was purchased and equipped. */
+  readonly ok: boolean;
+  /** The first blocking reason, or `'unknown-build'` when the id is gone. */
+  readonly reason: SavedBuildRefusalReason | 'unknown-build' | null;
+  /** The exact shortfall (zeroes when ok). */
+  readonly shortfall: SavedBuildShortfall;
+  /** The payload after the update (fresh; the input is untouched). */
+  readonly payload: HangarWarPayload;
+}
+
+/** The empty shortfall the updater reports on success. */
+const EMPTY_SAVED_BUILD_SHORTFALL: SavedBuildShortfall = Object.freeze({
+  entries: [],
+  minerals: 0,
+  cores: 0,
+});
+
+/**
+ * Applies a saved build — purchases and equips every part atomically, or
+ * refuses with the exact shortfall and applies nothing (pure, AC2/AC3/AC6).
+ *
+ * Delegates the atomic apply to the economy's one `applySavedBuild` reducer
+ * with the war's ring context, then writes the fresh hangar into a fresh
+ * payload. An unknown build id (`'unknown-build'`) is the only refusal that
+ * is not the economy's — it means the id was deleted after the UI listed it.
+ * Persisting the result is the caller's one `saveHangarWarPayload` call.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param buildId — the saved build's id.
+ * @returns the apply outcome and the payload to persist.
+ */
+export function applyHangarBuild(
+  payload: HangarWarPayload,
+  buildId: string,
+): HangarBuildApplyResult {
+  const builds = payload.hangar.savedBuilds ?? [];
+  const build = builds.find((candidate) => candidate.id === buildId);
+  if (build === undefined) {
+    return {
+      ok: false,
+      reason: 'unknown-build',
+      shortfall: EMPTY_SAVED_BUILD_SHORTFALL,
+      payload: clonePayload(payload),
+    };
+  }
+  const result = applySavedBuild(payload.hangar, build, {
+    ringIndex: payload.ring.ringIndex,
+  });
+  const next = clonePayload(payload);
+  next.hangar = result.hangar;
+  return {
+    ok: result.ok,
+    reason: result.reason,
+    shortfall: result.shortfall,
+    payload: next,
+  };
+}
+
+/**
+ * Captures the currently equipped ship as a named saved build (pure, AC1).
+ *
+ * The id is the caller-supplied stable id (the pure core never invents one),
+ * so a scene can keep using the same id for an overwrite. Saving never spends
+ * currency. Persisting the result is the caller's one `saveHangarWarPayload`
+ * call.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param id — the stable build id for the new/overwritten entry.
+ * @param name — the display name (trimmed and length-bounded).
+ * @returns a fresh payload carrying the captured build.
+ */
+export function saveHangarBuild(
+  payload: HangarWarPayload,
+  id: string,
+  name: string,
+): HangarWarPayload {
+  const build = captureShipBuild(payload.hangar, { id, name });
+  const next = clonePayload(payload);
+  const builds = [...(next.hangar.savedBuilds ?? [])];
+  const index = builds.findIndex((candidate) => candidate.id === id);
+  if (index >= 0) builds[index] = build;
+  else builds.push(build);
+  next.hangar.savedBuilds = builds;
+  return next;
+}
+
+/**
+ * Renames a saved build, keeping its id stable (pure, AC4).
+ *
+ * An unknown id leaves the payload unchanged (a fresh, unmutated clone), so a
+ * stale UI selection can never resurrect a deleted build.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param buildId — the saved build's id.
+ * @param name — the new display name (trimmed and length-bounded).
+ * @returns a fresh payload with the renamed build, or unchanged for an unknown id.
+ */
+export function renameHangarBuild(
+  payload: HangarWarPayload,
+  buildId: string,
+  name: string,
+): HangarWarPayload {
+  const next = clonePayload(payload);
+  const builds = next.hangar.savedBuilds ?? [];
+  const index = builds.findIndex((candidate) => candidate.id === buildId);
+  if (index < 0) return next;
+  const trimmed = name.trim().slice(0, MAX_SAVED_BUILD_NAME_LENGTH);
+  if (trimmed === '') return next;
+  builds[index] = { ...builds[index], name: trimmed };
+  return next;
+}
+
+/**
+ * Deletes a saved build (pure, AC4/AC5).
+ *
+ * Deletion is reachable for every entry because every saved build gets its own
+ * delete row. An unknown id is a no-op. Persisting the result is the caller's
+ * one `saveHangarWarPayload` call.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param buildId — the saved build's id.
+ * @returns a fresh payload without the build.
+ */
+export function deleteHangarBuild(
+  payload: HangarWarPayload,
+  buildId: string,
+): HangarWarPayload {
+  const next = clonePayload(payload);
+  const builds = next.hangar.savedBuilds ?? [];
+  next.hangar.savedBuilds = builds.filter((candidate) => candidate.id !== buildId);
+  return next;
+}
+
+/**
+ * Whether a keystroke contributes a printable character to a build name
+ * (child AH-0MWLE95BV000MWGF).
+ *
+ * Printable letters/digits/space are accepted; everything else (arrows, Enter,
+ * Backspace, Escape, Tab) is a command the scene handles before this check.
+ */
+export function isNameEntryChar(key: string): boolean {
+  if (key.length !== 1) return false;
+  return (
+    (key >= 'a' && key <= 'z') ||
+    (key >= 'A' && key <= 'Z') ||
+    (key >= '0' && key <= '9') ||
+    key === ' '
+  );
+}
+
+/**
+ * Appends one printable character to a name-entry buffer (pure).
+ *
+ * Upper-cases the character (the game has no text cursor), and ignores the
+ * key once the buffer is at {@link MAX_SAVED_BUILD_NAME_LENGTH} so a name can
+ * never grow past the persisted bound.
+ */
+function appendNameEntryChar(buffer: string, key: string): string {
+  if (!isNameEntryChar(key)) return buffer;
+  if (buffer.length >= MAX_SAVED_BUILD_NAME_LENGTH) return buffer;
+  const upper = key === ' ' ? ' ' : key.toUpperCase();
+  return buffer + upper;
+}
+
+/** Backspace on a name-entry buffer (pure): drops the last character. */
+export function backspaceNameEntry(buffer: string): string {
+  return buffer.slice(0, -1);
+}
+
+/**
+ * The pure name-entry transition the scene feeds every captured key: a
+ * printable char appends, backspace drops, and anything else is a no-op.
+ *
+ * The scene owns the mode (save vs rename) and the submit keys (Enter
+ * commits, Esc cancels) — this helper only turns raw keys into buffer
+ * changes, so the keystroke rules are table-testable without a scene.
+ *
+ * @param buffer — the current name buffer.
+ * @param key — the captured key (Phaser/KeyboardEvent `key` value).
+ * @returns the next buffer.
+ */
+export function advanceNameEntry(buffer: string, key: string): string {
+  if (key === 'Backspace') return backspaceNameEntry(buffer);
+  return appendNameEntryChar(buffer, key);
+}
+
+/** Whether a non-empty trimmed name can be committed. */
+export function isCommitableNameEntry(buffer: string): boolean {
+  return buffer.trim() !== '';
 }
 
 /**
@@ -1197,6 +1559,16 @@ export interface HangarScreenHandlers {
   onOpenMap(): void;
   /** Reset the war to its starting position (the `⟲ RESTART WAR` row). */
   onRestart(): void;
+  /** Capture the current ship as a saved build (the `＋ SAVE` row). */
+  onSaveBuild?(): void;
+  /** Advance the selected saved build (the `◀ ▶ SAVED BUILD` row). */
+  onCycleBuild?(): void;
+  /** Purchase and equip the selected saved build (the `▶ FLY` row). */
+  onApplyBuild?(buildId: string): void;
+  /** Rename the selected saved build (the `✎ RENAME` row). */
+  onRenameBuild?(buildId: string): void;
+  /** Delete the selected saved build (the `✖ DELETE` row). */
+  onDeleteBuild?(buildId: string): void;
 }
 
 /** Optional model-building knobs for {@link buildHangarScreenModel}. */
@@ -1218,6 +1590,16 @@ export interface HangarScreenModelOptions {
    * can never present a scene-local copy of the intel.
    */
   readonly definitions?: readonly HexRingDefinition[];
+  /**
+   * The index of the currently selected saved build (the drop-down position).
+   * Clamped to the list; defaults to the first build (AH-0MWL8C6FE008G1E7).
+   */
+  readonly savedBuildIndex?: number;
+  /**
+   * A transient message to show above the restart row (e.g. an apply
+   * refusal's shortfall). `null`/omitted renders nothing.
+   */
+  readonly savedBuildMessage?: string | null;
 }
 
 /** One rendered row, exposed for tests and screen queries. */
@@ -1325,17 +1707,26 @@ export interface HangarRightColumnLayout {
   readonly weaponRowY: readonly number[];
   readonly modifierHeadingY: number;
   readonly modifierRowY: readonly number[];
+  /** Y of the `SAVED BUILDS` heading (below the modifiers). */
+  readonly savedBuildHeadingY: number;
+  /** Y of each saved-build row (below the heading). */
+  readonly savedBuildRowY: readonly number[];
 }
 
 /**
  * Derives every Y in the right-hand column from the model's row counts, so the
  * renderer and the layout test read one geometry and a new row cannot silently
  * collide with the fixed bottom-row block.
+ *
+ * The saved-build surface is **compact and fixed-height** (one save row plus a
+ * cycle/apply/rename/delete block for the selected build), so an unbounded
+ * saved-build list never grows this geometry: the selected index cycles
+ * instead of adding rows (AH-0MWL8C6FE008G1E7).
  */
 export function hangarRightColumnLayout(
   model: Pick<
     HangarScreenModel,
-    'hullOptions' | 'weaponOptions' | 'modifierOptions'
+    'hullOptions' | 'weaponOptions' | 'modifierOptions' | 'savedBuildRows'
   >,
 ): HangarRightColumnLayout {
   const hullRowY = model.hullOptions.map(
@@ -1351,12 +1742,19 @@ export function hangarRightColumnLayout(
   const modifierRowY = model.modifierOptions.map(
     (_, index) => modifierHeadingY + 26 + index * HANGAR_ROW_STEP,
   );
+  const savedBuildHeadingY =
+    modifierHeadingY + 26 + model.modifierOptions.length * HANGAR_ROW_STEP + 10;
+  const savedBuildRowY = model.savedBuildRows.map(
+    (_, index) => savedBuildHeadingY + 26 + index * HANGAR_ROW_STEP,
+  );
   return {
     hullRowY,
     loadoutHeadingY,
     weaponRowY,
     modifierHeadingY,
     modifierRowY,
+    savedBuildHeadingY,
+    savedBuildRowY,
   };
 }
 
@@ -1374,6 +1772,7 @@ export function hangarLowestRowY(model: HangarScreenModel): number {
     ...right.hullRowY,
     ...right.weaponRowY,
     ...right.modifierRowY,
+    ...right.savedBuildRowY,
   ];
   return ys.length === 0 ? 0 : Math.max(...ys);
 }
@@ -1652,6 +2051,54 @@ export function renderHangarScreen(
     );
   });
 
+  // ── Saved ship configurations (right column, below the modifiers) ──
+  // A compact, fixed-height surface: `＋ SAVE` plus (when at least one build
+  // exists) the cycle/apply/rename/delete rows for the selected build, so an
+  // unbounded list never grows the screen (AH-0MWL8C6FE008G1E7).
+  heading(scene, objects, RIGHT_X, right.savedBuildHeadingY, 'SAVED BUILDS');
+  model.savedBuildRows.forEach((row, index) => {
+    let action: (() => void) | undefined;
+    switch (row.verb) {
+      case 'save':
+        action = handlers?.onSaveBuild
+          ? () => handlers.onSaveBuild!()
+          : undefined;
+        break;
+      case 'cycle':
+        action = handlers?.onCycleBuild
+          ? () => handlers.onCycleBuild!()
+          : undefined;
+        break;
+      case 'apply':
+        action =
+          handlers?.onApplyBuild && row.buildId
+            ? () => handlers.onApplyBuild!(row.buildId!)
+            : undefined;
+        break;
+      case 'rename':
+        action =
+          handlers?.onRenameBuild && row.buildId
+            ? () => handlers.onRenameBuild!(row.buildId!)
+            : undefined;
+        break;
+      case 'delete':
+        action =
+          handlers?.onDeleteBuild && row.buildId
+            ? () => handlers.onDeleteBuild!(row.buildId!)
+            : undefined;
+        break;
+    }
+    addRow(
+      RIGHT_X,
+      right.savedBuildRowY[index],
+      row.key,
+      row.label,
+      row.actionable,
+      null,
+      action,
+    );
+  });
+
   // ── Deploy (bottom, the screen's primary action) ─────────────
   addRow(
     LEFT_X,
@@ -1686,6 +2133,17 @@ export function renderHangarScreen(
     null,
     handlers?.onRestart ? () => handlers.onRestart!() : undefined,
   );
+
+  // ── Transient saved-build message (an apply refusal's shortfall) ──
+  if (model.savedBuildMessage) {
+    objects.push(
+      scene.add.text(LEFT_X, HANGAR_RESTART_ROW_Y - 20, model.savedBuildMessage, {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#d98a2b',
+      }),
+    );
+  }
 
   objects.push(
     scene.add

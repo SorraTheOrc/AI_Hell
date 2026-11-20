@@ -77,6 +77,46 @@ export interface HangarLoadout {
 }
 
 /**
+ * A saved ship configuration — a named snapshot of the fleet's equipped hull,
+ * starting weapons, modifiers, and the permanent levels that build relies on
+ * (AH-0MWL8C6FE008G1E7).
+ *
+ * Saving captures the **currently equipped** set so re-applying it purchases
+ * and equips every missing part in one action. The build is immutable once
+ * saved: to change it the player deletes and re-saves with a new name.
+ *
+ * Level rows record the permanent levels this build **relies on** at save time;
+ * re-applying tops those levels up (never down) so the fleet deploys identically.
+ */
+export interface SavedShipBuild {
+  /** Stable build id (scene-supplied, survives rename, stable across saves). */
+  readonly id: string;
+  /** Display name the player chose (trimmed, non-empty, bounded length). */
+  readonly name: string;
+  /** The hull the build deploys with (the hangar's `activeHull` at save time). */
+  readonly hullId: string;
+  /** The starting weapons the build carries (at save time). */
+  readonly startingWeapons: readonly string[];
+  /** The permanent modifiers the build flies (at save time). */
+  readonly modifiers: readonly string[];
+  /**
+   * The permanent weapon levels the build relies on, captured at save time.
+   *
+   * Only the kinds this build uses appear here; re-applying tops those levels
+   * up (never down) so the fleet deploys identically. Absence means no weapon
+   * levels were bought — the build deploys at base.
+   */
+  readonly weaponLevels?: readonly { readonly id: string; readonly level: number }[];
+  /**
+   * The permanent power-up levels the build relies on, captured at save time.
+   *
+   * Same semantics as {@link weaponLevels}: only the kinds this build uses,
+   * topped up on apply, absent when none were bought.
+   */
+  readonly powerUpLevels?: readonly { readonly id: string; readonly level: number }[];
+}
+
+/**
  * The exact ship a deployment flew — the identity a battle's outcome spends
  * (parent AH-0MWL5PAP2001XYYF).
  *
@@ -157,6 +197,24 @@ export interface HangarState {
    * no stored row is orphaned, but the set is the authority — never the row.
    */
   powerUpLevels?: HangarPowerUpLevelRow[];
+  /**
+   * Named saved ship configurations the player can re-apply to purchase and
+   * equip every part in one action (AH-0MWL8C6FE008G1E7).
+   *
+   * **Additive and optional on purpose:** a save written before saved builds
+   * landed has no such field, and absence reads as an empty list, so the store
+   * migrates it by field presence without a schema version bump — the same
+   * pattern as `weaponLevels` / `powerUpLevels` / `frontierTick`. It is
+   * omitted on write when empty so a save round-trips byte-for-byte.
+   *
+   * **Survives a war reset** (producer decision): `restartHangarWar` threads
+   * `savedBuilds` through beside `bestScore`, because saved configurations are
+   * a "what you own" meta-layer rather than war progress.
+   *
+   * Unbounded in number — no cap, only a delete affordance to keep the list
+   * manageable.
+   */
+  savedBuilds?: SavedShipBuild[];
 }
 
 /**

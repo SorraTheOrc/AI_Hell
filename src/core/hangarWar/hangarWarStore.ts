@@ -56,8 +56,11 @@
  * AH-0MWHF6ZHW0058SMX. The hangar's bought **permanent levels**
  * (`hangar.weaponLevels` / `hangar.powerUpLevels`) are the fourth
  * (AH-0MWI5AG1X0007XZH): absence reads as "no upgrade", so every owned kind
- * deploys at its base level `1`. All four are omitted on write when they carry
- * nothing, so a save round-trips byte-for-byte rather than gaining empty
+ * deploys at its base level `1`. The hangar's **saved ship configurations**
+ * (`hangar.savedBuilds`) are the fifth (AH-0MWL8C6FE008G1E7): absent reads as
+ * no saved builds, omitted on write when empty. All five are omitted on write
+ * when they carry nothing, so a save round-trips byte-for-byte rather than
+ * gaining empty
  * fields.
  *
  * @module src/core/hangarWar/hangarWarStore
@@ -184,6 +187,78 @@ function parseLoadout(raw: unknown): HangarLoadout {
   };
 }
 
+/** One stored saved-build row, structurally validated but with raw level values. */
+interface StoredSavedBuild {
+  readonly id: string;
+  readonly name: string;
+  readonly hullId: string;
+  readonly startingWeapons: string[];
+  readonly modifiers: string[];
+  readonly weaponLevels?: readonly { readonly id: string; readonly level: unknown }[];
+  readonly powerUpLevels?: readonly { readonly id: string; readonly level: unknown }[];
+}
+
+/**
+ * Parses one saved-build entry, or `null` when it is not usable.
+ *
+ * A build needs a stable id, a display name, a hull, starting weapons and
+ * modifiers. Level rows are optional and structurally validated; numeric
+ * levels that are not finite or negative collapse to `1` (the base level).
+ */
+function parseSavedBuild(raw: unknown): StoredSavedBuild | null {
+  if (!isRecord(raw)) return null;
+  const id = toId(raw.id);
+  if (id === null) return null;
+  const name = toId(raw.name);
+  if (name === null) return null;
+  const hullId = toId(raw.hullId);
+  if (hullId === null) return null;
+  const startingWeapons = toIdList(raw.startingWeapons);
+  const modifiers = toIdList(raw.modifiers);
+
+  const weaponLevels = parseSavedBuildLevelRows(raw.weaponLevels);
+  const powerUpLevels = parseSavedBuildLevelRows(raw.powerUpLevels);
+
+  return { id, name, hullId, startingWeapons, modifiers, weaponLevels, powerUpLevels };
+}
+
+/** Parse one saved-build level row list, normalising levels to `[1, MAX_PERMANENT_LEVEL]`. */
+function parseSavedBuildLevelRows(
+  raw: unknown,
+): StoredSavedBuild['weaponLevels'] {
+  if (!Array.isArray(raw)) return undefined;
+  const rows: { id: string; level: number }[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const id = toId(entry.id);
+    if (id === null) continue;
+    const level = toNonNegativeInteger(entry.level);
+    if (level < 1) continue;
+    rows.push({ id, level: Math.min(level, 5) });
+  }
+  return rows.length > 0 ? rows : undefined;
+}
+
+/**
+ * Parses the hangar's saved builds, or `undefined` when absent/corrupt.
+ *
+ * Duplicate ids collapse to the first mention, unusable entries are dropped,
+ * and the field stays absent (never defaulted to `[]`) so a legacy save
+ * round-trips byte-for-byte.
+ */
+function parseSavedBuilds(raw: unknown): StoredSavedBuild[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const builds: StoredSavedBuild[] = [];
+  for (const entry of raw) {
+    const build = parseSavedBuild(entry);
+    if (build === null || seen.has(build.id)) continue;
+    seen.add(build.id);
+    builds.push(build);
+  }
+  return builds;
+}
+
 /**
  * Parses the hangar, or `null` when there is no usable hangar at all (the
  * payload cannot be a hangar-war save without one).
@@ -247,6 +322,37 @@ function parseHangar(raw: unknown): HangarState | null {
   }
   if (levels.powerUps.length > 0) {
     hangar.powerUpLevels = levels.powerUps.map((row) => ({ ...row }));
+  }
+
+  // The saved-build list (AH-0MWL8C6FE008G1E7) is the fifth additive field
+  // family: a save written before it landed has none, so the field stays
+  // absent (never defaulted to `[]`) and absence reads as no saved builds.
+  // Duplicate ids collapse to the first mention; unusable entries drop.
+  const savedBuilds = parseSavedBuilds(raw.savedBuilds);
+  if (savedBuilds.length > 0) {
+    hangar.savedBuilds = savedBuilds.map((b) => {
+      const weaponLevels = b.weaponLevels?.map((l) => ({
+        id: l.id,
+        level: l.level as number,
+      }));
+      const powerUpLevels = b.powerUpLevels?.map((l) => ({
+        id: l.id,
+        level: l.level as number,
+      }));
+      return {
+        id: b.id,
+        name: b.name,
+        hullId: b.hullId,
+        startingWeapons: [...b.startingWeapons],
+        modifiers: [...b.modifiers],
+        ...(weaponLevels && weaponLevels.length > 0
+          ? { weaponLevels: Object.freeze(weaponLevels) }
+          : {}),
+        ...(powerUpLevels && powerUpLevels.length > 0
+          ? { powerUpLevels: Object.freeze(powerUpLevels) }
+          : {}),
+      };
+    });
   }
 
   return hangar;
@@ -680,10 +786,18 @@ export function saveHangarWarPayload(
   storage: HangarWarStorage | null = defaultStorage(),
 ): boolean {
   if (!storage) return false;
+  // Omit an empty saved-build list on write (AH-0MWL8C6FE008G1E7): the field
+  // is additive and its absence reads as "no saved builds", so a save with
+  // nothing saved round-trips byte-for-byte rather than gaining an empty array.
+  const { savedBuilds, ...hangarWithoutBuilds } = payload.hangar;
+  const hangar =
+    savedBuilds !== undefined && savedBuilds.length > 0
+      ? { ...payload.hangar, savedBuilds }
+      : hangarWithoutBuilds;
   try {
     storage.setItem(
       HANGAR_WAR_STORAGE_KEY,
-      JSON.stringify({ ...payload, version: HANGAR_WAR_VERSION }),
+      JSON.stringify({ ...payload, hangar, version: HANGAR_WAR_VERSION }),
     );
     return true;
   } catch {

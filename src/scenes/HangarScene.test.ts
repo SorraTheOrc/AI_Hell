@@ -57,6 +57,7 @@ import {
   HANGAR_WEAK_MARKER,
   RESTART_CONFIRM_TIMEOUT_MS,
   RESTART_ROW_KEY,
+  SAVE_BUILD_ROW_KEY,
   advanceRestartConfirm,
   buildHangarModifierOptions,
   buildHangarRestartRow,
@@ -294,6 +295,7 @@ describe('hangar screen model (pure)', () => {
       'buy:bomb',
       'hull:hull-2',
       'weapon:spread',
+      'save-build',
       'deploy',
       'map',
       'restart',
@@ -318,7 +320,7 @@ describe('hangar screen model (pure)', () => {
     const model = buildHangarScreenModel(UNARMED_PAYLOAD);
     // A fleet can always deploy, even with nothing affordable, and the map is
     // always reachable. The restart row is always actionable too.
-    expect(model.focusOrder).toEqual(['deploy', 'map', 'restart']);
+    expect(model.focusOrder).toEqual(['save-build', 'deploy', 'map', 'restart']);
     expect(model.deployRow.actionable).toBe(true);
     expect(model.unlockRows.every((row) => !row.actionable)).toBe(true);
     expect(model.modifierOptions).toEqual([]);
@@ -359,6 +361,7 @@ describe('hangar screen model (pure)', () => {
     expect(model.focusOrder).toEqual([
       'weapon:spread',
       'modifier:hardened_plating',
+      'save-build',
       'deploy',
       'map',
       'restart',
@@ -1001,6 +1004,7 @@ describe('HangarScene', () => {
       'hull:hull-1',
       'hull:hull-2',
       'weapon:spread',
+      'save-build',
       'deploy',
       'map',
       'restart',
@@ -1155,15 +1159,17 @@ describe('HangarScene', () => {
     const storage = memoryStorage(UNARMED_PAYLOAD);
     const scene = await bootHangar({ storage });
 
-    // Only the deployment, the map and the restart row are focusable; no
-    // purchase/equip row can be reached.
+    // Only the saved-build save row, the deployment, the map and the restart
+    // row are focusable; no purchase/equip row can be reached.
+    expect(scene.getFocusedKey()).toBe(SAVE_BUILD_ROW_KEY);
+    pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedKey()).toBe('deploy');
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedKey()).toBe('map');
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedKey()).toBe('restart');
     pressKey(scene, { key: 'Tab' });
-    expect(scene.getFocusedKey()).toBe('deploy');
+    expect(scene.getFocusedKey()).toBe(SAVE_BUILD_ROW_KEY);
 
     // An unaffordable row is neither focusable nor interactive.
     const ricochet = rowFor(scene, 'buy:ricochet');

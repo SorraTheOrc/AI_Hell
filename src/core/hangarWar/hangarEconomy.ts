@@ -88,6 +88,7 @@ import type {
   HangarLoadout,
   HangarState,
   DefenderUpgradeSnapshot,
+  SavedShipBuild,
 } from './types';
 // Catalogue imports stay pure data (no Phaser, no storage): the two catalogues
 // are runtime-imported because the upgrade rule must classify a requested id
@@ -1541,4 +1542,366 @@ export function deriveDefenderRating(hullId: string): number {
   const hull = findHangarEntry(hullId);
   if (hull === null || hull.kind !== 'hull') return 0;
   return defenderRatingFromUpgrades(hull.baseDefence, hull.upgrades);
+}
+
+// ── Saved ship configurations (AH-0MWL8C6FE008G1E7) ───────────────────────
+//
+// A saved build captures the currently equipped hull/starting-weapons/
+// modifiers plus the permanent levels that configuration relies on. Re-applying
+// it validates every part through the existing purchase rule
+// (`owned → gated → unaffordable`) and then either purchases + equips the whole
+// build atomically or refuses with a structured shortfall and applies nothing.
+
+/** The longest display name a saved build may carry (bounded, trimmed). */
+export const MAX_SAVED_BUILD_NAME_LENGTH = 20;
+
+/** The options a caller supplies when capturing the current ship as a build. */
+export interface CaptureShipBuildOptions {
+  /** Stable build id (scene-supplied, so the pure core stays deterministic). */
+  readonly id: string;
+  /** Display name the player chose (trimmed and length-bounded). */
+  readonly name: string;
+}
+
+/** Deduplicates a list of ids, keeping first-seen order. */
+function uniqueIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (id === '' || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/** Why a saved build could not be applied (mirrors the purchase precedence). */
+export type SavedBuildRefusalReason = 'unknown' | 'gated' | 'unaffordable';
+
+/** One part of a saved build that cannot currently be applied. */
+export interface SavedBuildMissingEntry {
+  /** The catalogue/kind id the build references. */
+  readonly id: string;
+  /** The kind of part (`hull`, `weapon`, `modifier` or `power-up`). */
+  readonly kind: HangarEntry['kind'];
+  /** Why it cannot be applied. */
+  readonly reason: SavedBuildRefusalReason;
+}
+
+/** The structured shortfall a refused saved build reports. */
+export interface SavedBuildShortfall {
+  /** Every part the build needs but cannot currently apply (empty when ok). */
+  readonly entries: readonly SavedBuildMissingEntry[];
+  /** Minerals the fleet is missing to buy the whole build (0 when covered). */
+  readonly minerals: number;
+  /** Mini-boss cores the fleet is missing to buy the whole build (0 when covered). */
+  readonly cores: number;
+}
+
+/** The result of {@link applySavedBuild}: the fresh hangar, or the shortfall. */
+export interface SavedBuildApplyResult {
+  /** Whether the whole build was purchased and equipped. */
+  readonly ok: boolean;
+  /** The first blocking reason (`null` when {@link ok}). */
+  readonly reason: SavedBuildRefusalReason | null;
+  /** The exact shortfall (zeroes when {@link ok}). */
+  readonly shortfall: SavedBuildShortfall;
+  /** What was spent (the zero price on refusal). */
+  readonly spent: HangarPrice;
+  /** The hangar after the apply (a fresh object; the input is untouched). */
+  readonly hangar: HangarState;
+}
+
+/** The empty shortfall (also the result on success). */
+const EMPTY_SHORTFALL: SavedBuildShortfall = Object.freeze({
+  entries: [],
+  minerals: 0,
+  cores: 0,
+});
+
+/**
+ * Captures the currently equipped ship as a named saved build (AC1).
+ *
+ * The captured set is exactly what a deployment would fly — the resolved
+ * active hull, the resolved starting weapons and modifiers — plus the permanent
+ * level rows that configuration **relies on**:
+ *
+ * - **weapon levels** for the build's starting weapons that carry a bought
+ *   level above the base, and
+ * - **power-up levels** for every owned power-up that carries a bought level,
+ *   because a permanent power-up has no loadout slot and applies to every
+ *   deployment, so every build relies on it.
+ *
+ * Pure and total: the input hangar is never mutated, an unknown active hull
+ * falls back exactly as `resolveActiveHull` does, and the name is trimmed and
+ * bounded (an empty name falls back to the hull's display name). The id is the
+ * caller's (the pure core never invents one), so capture is deterministic.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param options — the caller-supplied build id and display name.
+ * @returns the captured build (a fresh object).
+ */
+export function captureShipBuild(
+  hangar: HangarState,
+  options: CaptureShipBuildOptions,
+): SavedShipBuild {
+  const loadout = resolveActiveLoadout(hangar);
+  const hullId = resolveActiveHull(hangar);
+
+  const levels = hangarPermanentLevels(hangar);
+  const weaponLevels = levels.weapons
+    .filter(
+      (row) =>
+        loadout.startingWeapons.includes(row.id) &&
+        row.level > BASE_PERMANENT_LEVEL &&
+        row.level <= MAX_PERMANENT_LEVEL,
+    )
+    .map((row) => ({ id: row.id, level: row.level }));
+  const powerUpLevels = levels.powerUps
+    .filter((row) => row.level > BASE_PERMANENT_LEVEL && row.level <= MAX_PERMANENT_LEVEL)
+    .map((row) => ({ id: row.id, level: row.level }));
+
+  const hullEntry = findHangarEntry(hullId);
+  const fallbackName = hullEntry?.name ?? 'SAVED BUILD';
+  const name =
+    options.name.trim().slice(0, MAX_SAVED_BUILD_NAME_LENGTH) || fallbackName;
+
+  return {
+    id: options.id,
+    name,
+    hullId,
+    startingWeapons: [...loadout.startingWeapons],
+    modifiers: [...loadout.modifiers],
+    ...(weaponLevels.length > 0 ? { weaponLevels } : {}),
+    ...(powerUpLevels.length > 0 ? { powerUpLevels } : {}),
+  };
+}
+
+/** One planned purchase of a not-yet-owned part of a build. */
+interface PlannedPurchase {
+  readonly entry: HangarEntry;
+  readonly price: HangarPrice;
+}
+
+/**
+ * Collects the not-yet-owned parts a build needs, in a deterministic order
+ * (hull → weapons → modifiers → power-ups), and the total cost of buying them.
+ *
+ * Only catalogue-known, ungated, not-owned entries become purchases; an
+ * unknown or gated part is recorded in `missing` and the caller refuses. An
+ * already-owned part is skipped (it only needs equipping).
+ */
+function planSavedBuildPurchases(
+  hangar: HangarState,
+  build: SavedShipBuild,
+  context: HangarPurchaseContext,
+  missing: SavedBuildMissingEntry[],
+): { purchases: PlannedPurchase[]; cost: HangarPrice } {
+  let minerals = 0;
+  let cores = 0;
+  const purchases: PlannedPurchase[] = [];
+
+  // Parts in acquisition order: the hull first (it sets security), then the
+  // flown weapons/modifiers, then any power-up a level row depends on.
+  const weaponIds = uniqueIds([
+    ...build.startingWeapons,
+    ...(build.weaponLevels ?? []).map((row) => row.id),
+  ]);
+  const powerUpIds = uniqueIds((build.powerUpLevels ?? []).map((row) => row.id));
+
+  const parts: Array<{ id: string; kind: HangarEntry['kind'] }> = [
+    { id: build.hullId, kind: 'hull' },
+    ...weaponIds.map((id) => ({ id, kind: 'weapon' as const })),
+    ...uniqueIds(build.modifiers).map((id) => ({ id, kind: 'modifier' as const })),
+    ...powerUpIds.map((id) => ({ id, kind: 'power-up' as const })),
+  ];
+
+  for (const part of parts) {
+    const entry = findHangarEntry(part.id);
+    if (entry === null || entry.kind !== part.kind) {
+      missing.push({ id: part.id, kind: part.kind, reason: 'unknown' });
+      continue;
+    }
+    if (ownsEntry(hangar, entry)) continue;
+    if (toCount(context.ringIndex) < toCount(entry.minRing)) {
+      missing.push({ id: part.id, kind: part.kind, reason: 'gated' });
+      continue;
+    }
+    const price = normalisePrice(entry.price);
+    minerals += price.minerals;
+    cores += price.cores;
+    purchases.push({ entry, price });
+  }
+
+  return { purchases, cost: { minerals, cores } };
+}
+
+/**
+ * The level-upgrade steps a build needs for one kind, each priced from its
+ * effective current level up to the build's captured level (capped at the
+ * shared ceiling — a build never asks for more than the run can fly).
+ */
+function plannedUpgradeCosts(
+  levels: PermanentUpgradeLevels,
+  id: string,
+  target: number,
+): HangarPrice[] {
+  const steps: HangarPrice[] = [];
+  let current = currentUpgradeLevel(levels, id);
+  const cappedTarget = Math.min(toCount(target), MAX_PERMANENT_LEVEL);
+  while (current < cappedTarget) {
+    steps.push(upgradePrice(current));
+    current += 1;
+  }
+  return steps;
+}
+
+/**
+ * Applies a saved build atomically — purchases and equips every part, then
+ * tops every relied-on permanent level up to the captured level — or refuses
+ * with a structured shortfall and changes nothing (AC2/AC3).
+ *
+ * Validation runs against the real purchase/upgrade rules
+ * (`owned → gated → unaffordable` precedence, the per-kind upgrade rules) and
+ * sums the whole build's cost **before** spending a coin, so an unaffordable
+ * build spends nothing and applies nothing. On success every purchase and
+ * level-up lands in one fresh hangar, which the caller persists through the
+ * single `saveHangarWarPayload` write.
+ *
+ * The loadout **joins** the build's starting weapons and modifiers (deduplicated
+ * against what is already equipped), while the hull becomes the build's hull —
+ * matching the parent AC, and meaning a re-fit after a battle (empty loadout)
+ * yields exactly the saved build.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param build — the saved build to apply.
+ * @param context — the purchase context (ring gating).
+ * @returns the fresh hangar on success, or the exact shortfall on refusal.
+ */
+export function applySavedBuild(
+  hangar: HangarState,
+  build: SavedShipBuild,
+  context: HangarPurchaseContext,
+): SavedBuildApplyResult {
+  const missing: SavedBuildMissingEntry[] = [];
+  const { purchases, cost } = planSavedBuildPurchases(hangar, build, context, missing);
+
+  // Structural refusals (unknown/gated parts) win over affordability: the build
+  // can never apply a stale part no matter how much salvage the fleet holds.
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      reason: missing[0].reason,
+      shortfall: { entries: missing, minerals: 0, cores: 0 },
+      spent: ZERO_PRICE,
+      hangar: cloneHangar(hangar),
+    };
+  }
+
+  // Sum the level top-ups on top of the purchases. A referenced kind that is
+  // neither shipped nor level-bearing can never be topped up, so it refuses.
+  const levels = hangarPermanentLevels(hangar);
+  let totalMinerals = cost.minerals;
+  let totalCores = cost.cores;
+  const upgrades: Array<{ id: string; steps: HangarPrice[] }> = [];
+  const levelRefusals: SavedBuildMissingEntry[] = [];
+
+  const levelRows: Array<{ id: string; level: number; kind: HangarEntry['kind'] }> = [
+    ...(build.weaponLevels ?? []).map((row) => ({
+      id: row.id,
+      level: row.level,
+      kind: 'weapon' as const,
+    })),
+    ...(build.powerUpLevels ?? []).map((row) => ({
+      id: row.id,
+      level: row.level,
+      kind: 'power-up' as const,
+    })),
+  ];
+  for (const row of levelRows) {
+    const kind = upgradeKind(row.id);
+    if (kind === null || (kind === 'power-up' && isNonUpgradeablePowerUp(row.id))) {
+      levelRefusals.push({ id: row.id, kind: row.kind, reason: 'unknown' });
+      continue;
+    }
+    const steps = plannedUpgradeCosts(levels, row.id, row.level);
+    for (const step of steps) {
+      totalMinerals += step.minerals;
+      totalCores += step.cores;
+    }
+    upgrades.push({ id: row.id, steps });
+  }
+
+  if (levelRefusals.length > 0) {
+    return {
+      ok: false,
+      reason: levelRefusals[0].reason,
+      shortfall: { entries: levelRefusals, minerals: 0, cores: 0 },
+      spent: ZERO_PRICE,
+      hangar: cloneHangar(hangar),
+    };
+  }
+
+  const missingMinerals = Math.max(0, totalMinerals - toCount(hangar.bankedMinerals));
+  const missingCores = Math.max(0, totalCores - toCount(hangar.bankedCores));
+  if (missingMinerals > 0 || missingCores > 0) {
+    // Every part that would have been bought is unaffordable as a whole; name
+    // them so the player knows exactly what to earn toward.
+    const entries = purchases.map((purchase) => ({
+      id: purchase.entry.id,
+      kind: purchase.entry.kind,
+      reason: 'unaffordable' as const,
+    }));
+    return {
+      ok: false,
+      reason: 'unaffordable',
+      shortfall: { entries, minerals: missingMinerals, cores: missingCores },
+      spent: ZERO_PRICE,
+      hangar: cloneHangar(hangar),
+    };
+  }
+
+  // ── Apply: everything is validated and affordable, so buy + equip + top up.
+  let next = cloneHangar(hangar);
+  let spentMinerals = 0;
+  let spentCores = 0;
+
+  for (const purchase of purchases) {
+    // Ownership only here; the build's exact loadout is equipped below so a
+    // weapon referenced solely by a level row is not silently slotted in.
+    const result = buy(next, purchase.entry, context);
+    next = result.hangar;
+    spentMinerals += result.spent.minerals;
+    spentCores += result.spent.cores;
+  }
+
+  // Equip the build's hull, then join its starting weapons and modifiers into
+  // the active loadout (only owned entries survive; all are owned by now).
+  next = equipHull(next, build.hullId);
+  next = equipLoadout(next, {
+    startingWeapons: uniqueIds([
+      ...next.activeLoadout.startingWeapons,
+      ...build.startingWeapons,
+    ]),
+    modifiers: uniqueIds([...next.activeLoadout.modifiers, ...build.modifiers]),
+  });
+
+  for (const upgrade of upgrades) {
+    for (let step = 0; step < upgrade.steps.length; step += 1) {
+      const current = hangarPermanentLevels(next);
+      const result = buyUpgrade(next, upgrade.id, current, context);
+      if (!result.ok) break; // Unreachable: validated above; defensive.
+      next = withPermanentLevels(result.hangar, result.levels);
+      spentMinerals += result.spent.minerals;
+      spentCores += result.spent.cores;
+    }
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    shortfall: EMPTY_SHORTFALL,
+    spent: { minerals: spentMinerals, cores: spentCores },
+    hangar: next,
+  };
 }

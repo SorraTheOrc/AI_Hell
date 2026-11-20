@@ -97,12 +97,21 @@ import {
 } from '../ai/hangarWarTraversal';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 import {
+  advanceNameEntry,
   advanceRestartConfirm,
+  applyHangarBuild,
   buildHangarScreenModel,
+  CYCLE_BUILD_ROW_KEY,
+  deleteHangarBuild,
   equipHangarHull,
+  isCommitableNameEntry,
   purchaseHangarEntry,
   renderHangarScreen,
+  renameHangarBuild,
   restartHangarWar,
+  saveHangarBuild,
+  savedBuildRowKey,
+  SAVE_BUILD_ROW_KEY,
   toggleHangarModifier,
   toggleHangarWeapon,
   upgradeHangarKind,
@@ -113,6 +122,7 @@ import {
   type HangarScreenRow,
   type HangarScreenView,
 } from './hangarWar/hangarScreen';
+import { MAX_SAVED_BUILD_NAME_LENGTH } from '../core/hangarWar/hangarEconomy';
 import {
   buildHangarDeployment,
   type HangarWarDeployment,
@@ -203,6 +213,25 @@ export class HangarScene extends Phaser.Scene {
   /** The pending confirm-window timer, cleared on disarm/shutdown. */
   private restartTimer: Phaser.Time.TimerEvent | null = null;
 
+  /** The index of the currently selected saved build (the drop-down position). */
+  private savedBuildIndex = 0;
+
+  /** A transient saved-build message (an apply refusal's shortfall). */
+  private savedBuildMessage: string | null = null;
+
+  /** The active name-entry mode, or `null` when not naming a build. */
+  private nameEntry: {
+    mode: 'save' | 'rename';
+    buildId: string | null;
+    buffer: string;
+  } | null = null;
+
+  /** The text objects the name-entry overlay owns (destroyed on exit). */
+  private nameEntryTexts: Phaser.GameObjects.Text[] = [];
+
+  /** The keydown listener the name-entry overlay owns, removed on exit. */
+  private nameEntryKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+
   constructor() {
     super(HANGAR_SCENE_KEY);
   }
@@ -213,6 +242,11 @@ export class HangarScene extends Phaser.Scene {
     this.demo = data?.demo === true;
     this.demoDwellMs = data?.demoDwellMs;
     this.demoActions = 0;
+    // A fresh visit starts on the first saved build and with no transient
+    // message or open name-entry overlay (AH-0MWL8C6FE008G1E7).
+    this.savedBuildIndex = 0;
+    this.savedBuildMessage = null;
+    this.closeNameEntry(false);
     // `init` runs on every scene start: reset the carried target so a previous
     // visit's hex can never leak into a menu-entry visit.
     this.targetHexId = data?.targetHexId ?? null;
@@ -244,7 +278,11 @@ export class HangarScene extends Phaser.Scene {
     if (this.demo) this.scheduleDemoAdvance();
     // Leaving the screen disarms the restart confirm, so re-entering the
     // hangar can never inherit a half-armed confirm (AH-0MW8F7NH1002PQE3).
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.disarmRestart());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.disarmRestart();
+      // Drop any open name-entry overlay's listener so it cannot outlive the scene.
+      this.closeNameEntry(false);
+    });
   }
 
   /** Loads the stored payload, or a fresh default war when there is none. */
@@ -277,6 +315,8 @@ export class HangarScene extends Phaser.Scene {
     const model = buildHangarScreenModel(this.payload, this.catalogue, {
       restartArmed: this.restartArmed,
       targetHexId: this.targetHexId,
+      savedBuildIndex: this.savedBuildIndex,
+      savedBuildMessage: this.savedBuildMessage,
     });
     const handlers: Partial<HangarScreenHandlers> = {
       onBuy: (entryId) => this.buy(entryId),
@@ -293,6 +333,15 @@ export class HangarScene extends Phaser.Scene {
     // nor write to the store (the same rule that keeps a demo off the
     // leaderboard). AH-0MW8F7NH1002PQE3.
     if (!this.demo) handlers.onRestart = () => this.restart();
+    // Saved-build actions are player actions: under `demo` they are omitted so
+    // the rows render non-actionable and a demo can never overwrite the war.
+    if (!this.demo) {
+      handlers.onSaveBuild = () => this.saveBuild();
+      handlers.onCycleBuild = () => this.cycleBuild();
+      handlers.onApplyBuild = (buildId) => this.applyBuild(buildId);
+      handlers.onRenameBuild = (buildId) => this.renameBuild(buildId);
+      handlers.onDeleteBuild = (buildId) => this.deleteBuild(buildId);
+    }
     this.view = renderHangarScreen(this, model, handlers, {
       onFocusChange: (key) => this.onRowFocusChange(key),
     });
@@ -423,6 +472,185 @@ export class HangarScene extends Phaser.Scene {
     this.startRestartTimer();
     this.rebuildKeepingFocus(RESTART_ROW_KEY);
     return false;
+  }
+
+  // ── Saved ship configurations (AH-0MWL8C6FE008G1E7) ───────────────────
+
+  /** The saved builds currently in the payload (empty when none). */
+  private savedBuilds() {
+    return this.payload.hangar.savedBuilds ?? [];
+  }
+
+  /** Clamps the selected saved-build index into the current list. */
+  private clampSavedBuildIndex(): void {
+    const count = this.savedBuilds().length;
+    if (count === 0) {
+      this.savedBuildIndex = 0;
+    } else if (this.savedBuildIndex >= count) {
+      this.savedBuildIndex = count - 1;
+    } else if (this.savedBuildIndex < 0) {
+      this.savedBuildIndex = 0;
+    }
+  }
+
+  /** The currently selected saved build, or `null` when there is none. */
+  /** Formats a refused build's exact shortfall for the transient message line. */
+  private formatShortfall(name: string, shortfall: { entries: readonly { id: string }[]; minerals: number; cores: number }, reason: string): string {
+    const parts: string[] = [];
+    if (shortfall.minerals > 0) parts.push(`${shortfall.minerals} more minerals`);
+    if (shortfall.cores > 0) parts.push(`${shortfall.cores} more cores`);
+    const entryIds = shortfall.entries.map((entry) => entry.id);
+    if (entryIds.length > 0) parts.push(`missing ${entryIds.join(', ')}`);
+    const detail = parts.length > 0 ? ` — ${parts.join(', ')}` : '';
+    return reason === 'unaffordable'
+      ? `Cannot afford “${name}”${detail}`
+      : `Cannot apply “${name}” (${reason})${detail}`;
+  }
+
+  /** Opens the name-entry overlay prefilled from the current configuration. */
+  private openNameEntry(mode: 'save' | 'rename', buildId: string | null, initial: string): void {
+    this.disarmRestart();
+    this.nameEntry = {
+      mode,
+      buildId,
+      buffer: initial.slice(0, MAX_SAVED_BUILD_NAME_LENGTH),
+    };
+    // Tear down the rendered screen so the shared FocusManager cannot consume
+    // Enter/Space while the player is typing a name (AH-0MWLE95BV000MWGF).
+    this.view?.destroy();
+    this.view = null;
+    this.renderNameEntry();
+    if (!this.nameEntryKeyHandler) {
+      this.nameEntryKeyHandler = (event: KeyboardEvent) =>
+        this.handleNameEntryKey(event);
+      this.input.keyboard?.on('keydown', this.nameEntryKeyHandler);
+    }
+  }
+
+  /** Renders (or re-renders) the name-entry overlay prompt and buffer. */
+  private renderNameEntry(): void {
+    for (const text of this.nameEntryTexts) text.destroy();
+    this.nameEntryTexts = [];
+    const entry = this.nameEntry;
+    if (!entry) return;
+    const prompt = entry.mode === 'save' ? 'SAVE BUILD — NAME' : 'RENAME BUILD — NAME';
+    this.nameEntryTexts.push(
+      this.add.text(60, 120, prompt, { fontFamily: 'monospace', fontSize: '18px', color: '#ffffff' }),
+      this.add.text(60, 150, `> ${entry.buffer}_`, { fontFamily: 'monospace', fontSize: '18px', color: '#88ff88' }),
+      this.add.text(60, 190, 'type a name · backspace deletes · enter saves · esc cancels', { fontFamily: 'monospace', fontSize: '12px', color: '#888888' }),
+    );
+  }
+
+  /** Feeds one key to the name-entry buffer. */
+  private handleNameEntryKey(event: KeyboardEvent): void {
+    const entry = this.nameEntry;
+    if (!entry) return;
+    if (event.key === 'Enter') {
+      this.commitNameEntry();
+      return;
+    }
+    if (event.key === 'Escape') {
+      this.closeNameEntry();
+      return;
+    }
+    const next = advanceNameEntry(entry.buffer, event.key);
+    if (next !== entry.buffer) {
+      entry.buffer = next;
+      this.renderNameEntry();
+    }
+  }
+
+  /** Commits the open name entry (save or rename) and persists it. */
+  private commitNameEntry(): void {
+    const entry = this.nameEntry;
+    if (!entry) return;
+    if (!isCommitableNameEntry(entry.buffer)) {
+      this.closeNameEntry();
+      return;
+    }
+    const name = entry.buffer.trim();
+    if (entry.mode === 'save') {
+      const id = `build-${randomSeed()}`;
+      this.payload = saveHangarBuild(this.payload, id, name);
+      this.clampSavedBuildIndex();
+      this.savedBuildMessage = `Saved build “${name}”`;
+    } else if (entry.buildId !== null) {
+      this.payload = renameHangarBuild(this.payload, entry.buildId, name);
+      this.savedBuildMessage = `Renamed build to “${name}”`;
+    }
+    this.persist();
+    this.closeNameEntry();
+  }
+
+  /** Closes the name-entry overlay and rebuilds the screen (optionally). */
+  private closeNameEntry(rebuild = true): void {
+    if (this.nameEntryKeyHandler) {
+      this.input.keyboard?.off('keydown', this.nameEntryKeyHandler);
+      this.nameEntryKeyHandler = null;
+    }
+    for (const text of this.nameEntryTexts) text.destroy();
+    this.nameEntryTexts = [];
+    this.nameEntry = null;
+    if (rebuild && this.scene.isActive()) this.build();
+  }
+
+  /** Handles the `＋ SAVE CURRENT BUILD` row. */
+  saveBuild(): void {
+    if (this.demo) return;
+    const hullId = this.payload.hangar.activeHull;
+    const hull = this.catalogue.find((entry) => entry.id === hullId);
+    this.openNameEntry('save', null, hull?.name ?? 'MY BUILD');
+  }
+
+  /** Handles the `◀ ▶ SAVED BUILD` cycle row (advances the selected index). */
+  cycleBuild(): boolean {
+    const count = this.savedBuilds().length;
+    if (count === 0) return false;
+    this.savedBuildIndex = (this.savedBuildIndex + 1) % count;
+    this.rebuildKeepingFocus(CYCLE_BUILD_ROW_KEY);
+    return true;
+  }
+
+  /** Handles the `▶ FLY` row: atomically applies the selected saved build. */
+  applyBuild(buildId: string): boolean {
+    if (this.demo) return false;
+    this.disarmRestart();
+    const build = this.savedBuilds().find((candidate) => candidate.id === buildId);
+    const result = applyHangarBuild(this.payload, buildId);
+    this.savedBuildMessage = result.ok
+      ? `Applied build “${build?.name ?? buildId}”`
+      : this.formatShortfall(
+          build?.name ?? buildId,
+          result.shortfall,
+          result.reason ?? 'unknown',
+        );
+    if (result.ok) {
+      this.payload = result.payload;
+      this.persist();
+    }
+    this.rebuildKeepingFocus(savedBuildRowKey('apply'));
+    return result.ok;
+  }
+
+  /** Handles the `✎ RENAME` row: opens the name entry prefilled. */
+  renameBuild(buildId: string): void {
+    if (this.demo) return;
+    const build = this.savedBuilds().find((candidate) => candidate.id === buildId);
+    if (!build) return;
+    this.openNameEntry('rename', buildId, build.name);
+  }
+
+  /** Handles the `✖ DELETE` row: removes the selected saved build. */
+  deleteBuild(buildId: string): boolean {
+    if (this.demo) return false;
+    this.disarmRestart();
+    const build = this.savedBuilds().find((candidate) => candidate.id === buildId);
+    this.payload = deleteHangarBuild(this.payload, buildId);
+    this.clampSavedBuildIndex();
+    this.savedBuildMessage = build ? `Deleted build “${build.name}”` : null;
+    this.persist();
+    this.rebuildKeepingFocus(SAVE_BUILD_ROW_KEY);
+    return true;
   }
 
   /** Starts (or restarts) the confirm window timer for the armed restart row. */
