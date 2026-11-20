@@ -63,11 +63,21 @@
  *
  * ## Reproducing
  *
- * `python3 ~/.pi/agent/skills/test/scripts/run_tests.py --scope changed`
- * (the sweep is a unit-project test: no DOM, no Phaser). Every position, draw
- * and choice is seeded, so the recorded table is deterministic; the table is
- * printed to the test output for the developer workflow and no artefact is
- * committed.
+ * `python3 ~/.pi/agent/skills/test/scripts/run_tests.py --type unit --json`
+ * (the sweep is a unit-project test: no DOM, no Phaser; a changed-scope run
+ * also selects it whenever this file or one of its inputs changes). Every
+ * position, draw and choice is seeded, so the recorded table is deterministic;
+ * the table is printed to the test output for the developer workflow and no
+ * artefact is committed.
+ *
+ * ## Self-checking the bar itself (AH-0MWM0C5BN003PCDT)
+ *
+ * The pass bar is a pure predicate over the measured rows
+ * (`evaluateSweepBar`). Two controls keep the *verdict* honest, not just the
+ * measurement: a negative control feeds it a synthetic table with a broken
+ * class and asserts the failure names that class and seed, and a frozen-pilot
+ * run asserts a ship that does nothing still accrues avoidable contacts in the
+ * same field (the metric cannot be won by freezing).
  */
 
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -75,6 +85,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
 import { resetConfigStore, seedConfigStore } from '../../core/configStore';
 import type { EnemyMovementClass } from '../../core/configTypes';
+import { BOT_IDLE_INTENT, type BotPolicy } from '../framework/botBrain';
 import { createCompetentBotBrain } from '../framework/competent';
 import { createBotContent, type BotContent } from '../framework/content';
 import { runArena } from './arena';
@@ -239,6 +250,8 @@ function runArm(
   movementClass: EnemyMovementClass,
   seed: number,
   hazardMotionModelEnabled: boolean,
+  /** Overrides the live brain — used only by the frozen-pilot control. */
+  policy?: BotPolicy,
 ): ArenaRunResult {
   const field = CLASS_FIELDS[movementClass];
   const archetype = CLASS_ARCHETYPES[movementClass];
@@ -257,10 +270,11 @@ function runArm(
     DEFAULT_CONFIG,
   );
   const result = runArena(
-    createCompetentBotBrain({
-      tunables: { hazardMotionModelEnabled },
-      content: hazardOnlyContent(archetype),
-    }),
+    policy
+      ?? createCompetentBotBrain({
+        tunables: { hazardMotionModelEnabled },
+        content: hazardOnlyContent(archetype),
+      }),
     {
       seed,
       ticks: SWEEP_TICKS,
@@ -313,39 +327,109 @@ function renderTable(rows: readonly ClassSweepRow[]): string {
   return [header, ...lines].join('\n');
 }
 
+/**
+ * Aggregates one class's per-seed measurements into the row the bar judges.
+ * Shared by the live sweep and by the negative control below, so a synthetic
+ * row is judged by exactly the code that judges a measured one.
+ */
+function summariseClass(
+  movementClass: EnemyMovementClass,
+  perSeed: ReadonlyArray<{ seed: number; off: number; on: number }>,
+): ClassSweepRow {
+  let offTotal = 0;
+  let onTotal = 0;
+  let better = 0;
+  let worse = 0;
+  let tied = 0;
+  for (const entry of perSeed) {
+    offTotal += entry.off;
+    onTotal += entry.on;
+    if (entry.on < entry.off) better += 1;
+    else if (entry.on > entry.off) worse += 1;
+    else tied += 1;
+  }
+  return { movementClass, perSeed, offTotal, onTotal, better, worse, tied };
+}
+
+/**
+ * The pass bar as a pure predicate over measured rows — the verdict half of the
+ * evidence, so the *rule* is testable independently of a 120-run measurement.
+ *
+ * Returns the human-readable violations; an empty array means the bar is met.
+ * Every violation names the movement class and, where the bar is judged per
+ * seed, the offending seed and both arms, so a failure is directly
+ * reproducible. The bar itself is never retuned here: a class that cannot meet
+ * it raises a work item instead.
+ */
+function evaluateSweepBar(
+  measured: readonly ClassSweepRow[],
+  seedCount: number,
+): string[] {
+  const majority = Math.floor(seedCount / 2) + 1;
+  const violations: string[] = [];
+  for (const row of measured) {
+    const { movementClass } = row;
+    if (CURVING_CLASSES.includes(movementClass) && row.better < majority) {
+      const nonImproving = row.perSeed.filter((entry) => entry.on >= entry.off);
+      violations.push(
+        `${movementClass}: strictly better on ${row.better}/${seedCount} seeds `
+          + `(bar: ${majority}); seeds not improved: `
+          + nonImproving
+            .map((entry) => `${entry.seed} (${entry.off}→${entry.on})`)
+            .join(', '),
+      );
+    }
+    if (NEVER_REGRESS_CLASSES.includes(movementClass)) {
+      for (const entry of row.perSeed) {
+        if (entry.on > entry.off) {
+          violations.push(
+            `${movementClass}: regressed on seed ${entry.seed} `
+              + `(${entry.off}→${entry.on} avoidable contacts)`,
+          );
+        }
+      }
+    }
+    if (CONTROL_CLASSES.includes(movementClass)) {
+      for (const entry of row.perSeed) {
+        if (entry.on > entry.off) {
+          violations.push(
+            `${movementClass}: control regressed on seed ${entry.seed} `
+              + `(${entry.off}→${entry.on} avoidable contacts)`,
+          );
+        }
+      }
+    }
+  }
+  return violations;
+}
+
+/**
+ * A pilot that never steers and never thrusts: the frozen control for the
+ * "cannot be gamed by doing nothing" check.
+ */
+const FROZEN_POLICY: BotPolicy = Object.freeze({
+  decide: () => ({ ...BOT_IDLE_INTENT }),
+});
+
 beforeAll(() => {
   resetConfigStore();
   const measured: ClassSweepRow[] = [];
   for (const movementClass of ALL_CLASSES) {
-    const perSeed = SWEEP_SEEDS.map((seed) => measureSeed(movementClass, seed));
-    let offTotal = 0;
-    let onTotal = 0;
-    let better = 0;
-    let worse = 0;
-    let tied = 0;
-    for (const entry of perSeed) {
-      offTotal += entry.off;
-      onTotal += entry.on;
-      if (entry.on < entry.off) better += 1;
-      else if (entry.on > entry.off) worse += 1;
-      else tied += 1;
-    }
-    measured.push({
-      movementClass,
-      perSeed,
-      offTotal,
-      onTotal,
-      better,
-      worse,
-      tied,
-    });
+    measured.push(
+      summariseClass(
+        movementClass,
+        SWEEP_SEEDS.map((seed) => measureSeed(movementClass, seed)),
+      ),
+    );
   }
   rows = measured;
   resetConfigStore();
   // The table is the developer-facing artefact of the sweep: it records what
-  // was measured alongside the pass/fail verdict.
-  // eslint-disable-next-line no-console
-  console.log(`\nper-class avoidance sweep\n${renderTable(rows)}\n`);
+  // was measured alongside the pass/fail verdict. Written straight to stdout
+  // because the quiet suite run does not surface captured `console` output, so
+  // a `console.log` would leave the developer with the verdict but not the
+  // numbers it was reached from.
+  process.stdout.write(`\nper-class avoidance sweep\n${renderTable(rows)}\n`);
   // 120 arena runs: the budget covers a busy shared host, not a hang.
 }, 900_000);
 
@@ -375,44 +459,66 @@ describe('seeded per-class avoidance sweep (AH-0MWM0C5BN003PCDT)', () => {
   });
 
   it('meets the pass bar: curving classes improve, controls never regress', () => {
-    const majority = Math.floor(SWEEP_SEEDS.length / 2) + 1;
-    const violations: string[] = [];
-    for (const row of rows) {
-      const { movementClass } = row;
-      // Named offender: a failure points at the seed, the class and both arms,
-      // so a regression is directly reproducible.
-      if (CURVING_CLASSES.includes(movementClass) && row.better < majority) {
-        const nonImproving = row.perSeed.filter((entry) => entry.on >= entry.off);
-        violations.push(
-          `${movementClass}: strictly better on ${row.better}/${SWEEP_SEEDS.length} seeds `
-            + `(bar: ${majority}); seeds not improved: `
-            + nonImproving
-              .map((entry) => `${entry.seed} (${entry.off}→${entry.on})`)
-              .join(', '),
+    // Named offender: a failure points at the class, the seed and both arms, so
+    // a regression is directly reproducible.
+    expect(evaluateSweepBar(rows, SWEEP_SEEDS.length), `\n${renderTable(rows)}\n`).toEqual(
+      [],
+    );
+  });
+
+  it('rejects a broken table and names the offending class and seed (negative control)', () => {
+    // The bar's *rule* is proven, not just its current verdict: a synthetic
+    // table derived from the measured one — a curving class that only ties, and
+    // a control that regresses on one seed — must be rejected with a message
+    // naming the class and the seed. Without this, "a failure names the seed
+    // and class" would only be observed the day the bar actually breaks.
+    const brokenSeed = SWEEP_SEEDS[2];
+    const broken = rows.map((row) => {
+      if (row.movementClass === 'diver') {
+        // Every seed ties: the strict-majority bar cannot be met.
+        return summariseClass(
+          'diver',
+          row.perSeed.map((entry) => ({ ...entry, on: entry.off })),
         );
       }
-      if (NEVER_REGRESS_CLASSES.includes(movementClass)) {
-        for (const entry of row.perSeed) {
-          if (entry.on > entry.off) {
-            violations.push(
-              `${movementClass}: regressed on seed ${entry.seed} `
-                + `(${entry.off}→${entry.on} avoidable contacts)`,
-            );
-          }
-        }
+      if (row.movementClass === 'roamer') {
+        // The straight-line control increases on exactly one seed.
+        return summariseClass(
+          'roamer',
+          row.perSeed.map((entry) =>
+            entry.seed === brokenSeed ? { ...entry, on: entry.off + 1 } : entry,
+          ),
+        );
       }
-      if (CONTROL_CLASSES.includes(movementClass)) {
-        for (const entry of row.perSeed) {
-          if (entry.on > entry.off) {
-            violations.push(
-              `${movementClass}: control regressed on seed ${entry.seed} `
-                + `(${entry.off}→${entry.on} avoidable contacts)`,
-            );
-          }
-        }
-      }
+      return row;
+    });
+
+    const violations = evaluateSweepBar(broken, SWEEP_SEEDS.length);
+    const diver = violations.find((entry) => entry.startsWith('diver:'));
+    expect(diver).toBeDefined();
+    expect(diver).toContain(`strictly better on 0/${SWEEP_SEEDS.length} seeds`);
+    expect(diver).toContain(`seeds not improved: ${SWEEP_SEEDS[0]}`);
+    const roamer = violations.find((entry) => entry.startsWith('roamer:'));
+    expect(roamer).toBeDefined();
+    expect(roamer).toContain('control regressed on seed');
+    expect(roamer).toContain(String(brokenSeed));
+    // Classes that meet the bar are never accused.
+    expect(violations.filter((entry) => entry.startsWith('chaser:'))).toEqual([]);
+    expect(violations.filter((entry) => entry.startsWith('patroller:'))).toEqual([]);
+  });
+
+  it('accrues avoidable contacts for a ship that does nothing (the metric is not gameable)', () => {
+    // "Fewer contacts" could be won by freezing, so the sweep's own fields must
+    // punish inaction: the same chaser field the live brain flies records
+    // avoidable contacts for a pilot that holds station.
+    const frozenArms = [SWEEP_SEEDS[0], SWEEP_SEEDS[3]].map((seed) =>
+      runArm('chaser', seed, true, FROZEN_POLICY),
+    );
+    for (const arm of frozenArms) {
+      expect(arm.avoidableEnemyBodyContacts).toBeGreaterThan(0);
+      // The classification still filters: never more avoidable than total.
+      expect(arm.avoidableEnemyBodyContacts).toBeLessThanOrEqual(arm.enemyBodyContacts);
     }
-    expect(violations, `\n${renderTable(rows)}\n`).toEqual([]);
   });
 
   it('holds the straight-line control bit-identical (the model is invisible)', () => {

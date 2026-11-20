@@ -416,9 +416,11 @@ describe('predictive hazard avoidance in the competent brain (AH-0MVI4QDN90037DI
  * radius minus a 1 px tolerance for the discrete step.
  *
  * (The seeding harness these numbers come from — the per-class contact sweep
- * over the headless arena — is tracked by AH-0MWM0C5BN003PCDT; its open part,
- * the live closed-loop contact bar, is blocked on the follow-up that
- * reconciles the arena's moving-hostile profiles with the class models.)
+ * over the headless arena in `eval/hazardMotionSweep.test.ts` — is tracked by
+ * AH-0MWM0C5BN003PCDT. Its live closed-loop contact bar is green: the arena
+ * advances every moving body through the same `advanceHazardMotion` trajectory
+ * the predictor walks, so the harness cannot validate a model against a path it
+ * cannot represent — see AH-0MWOKL79Z0051ZXO.)
  */
 describe('motion-model evasion of a scripted curving enemy (AH-0MWM0C5BN003PCDT)', () => {
   /** The game's player hull radius (`PLAYER_HIT_RADIUS` in the arena). */
@@ -522,6 +524,18 @@ describe('motion-model evasion of a scripted curving enemy (AH-0MWM0C5BN003PCDT)
     const off = runCurvingCrossing(false);
     const on = runCurvingCrossing(true);
 
+    // Recorded evidence: the two arms' least ship-to-enemy distance, so the run
+    // log carries the measurement the verdict was reached from (not just the
+    // pass/fail). Deterministic — the bounds below and the cross-run tie in the
+    // next test pin the numbers.
+    process.stdout.write(
+      `\nmotion-model evasion proof: contact radius ${CONTACT_RADIUS} px; `
+        + `constant-velocity ${off.minDistance.toFixed(1)} px `
+        + `(first overlap tick ${off.firstContactTick}); `
+        + `motion model ${on.minDistance.toFixed(1)} px `
+        + `(first overlap tick ${on.firstContactTick})\n`,
+    );
+
     // The control arm (today's predictor) is fooled by the curve: the hull
     // overlaps the chaser.
     expect(off.minDistance).toBeLessThanOrEqual(CONTACT_RADIUS);
@@ -533,6 +547,14 @@ describe('motion-model evasion of a scripted curving enemy (AH-0MWM0C5BN003PCDT)
     expect(on.firstContactTick).toBe(-1);
     // It still made progress toward its objective rather than freezing.
     expect(on.final.x).toBeGreaterThan(400);
+
+    // Pin the margins, not just the verdict. On the current tree the control's
+    // least distance is 25.7 px (4.3 px inside the 30 px radius) and the
+    // model's is 38.8 px (8.8 px clear); the run log prints both. A predictor
+    // regression that merely cleared the radius by a pixel would otherwise
+    // satisfy the inequalities above while silently giving the proof away.
+    expect(off.minDistance).toBeLessThan(CONTACT_RADIUS - 2);
+    expect(on.minDistance).toBeGreaterThan(CONTACT_RADIUS + 5);
   });
 
   it('is deterministic: two identical motion-model runs agree exactly', () => {
