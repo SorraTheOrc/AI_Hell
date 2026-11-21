@@ -34,6 +34,7 @@ import {
   resetBotTuningStore,
   serialiseBotTuningState,
 } from '../core/botTuningStore';
+import { COMPETENT_BOT_TUNABLES } from '../ai/framework/competent/tunables';
 import { parseBotTuningStateBlob } from '../core/botTuningSchema';
 
 /**
@@ -167,6 +168,52 @@ describe('bot-tuning.json bundled baseline (AH-0MV9LCWVI002TOK7)', () => {
 
   it('ends with a trailing newline', () => {
     expect(readBotTuningFile()).toMatch(/\n$/);
+  });
+});
+
+describe('motion-model knobs in the bundled baseline (AH-0MWM0CCJE000AANE)', () => {
+  const CLASSES = ['chaser', 'diver', 'patroller', 'formation', 'roamer'] as const;
+
+  /** The authored (not coerced) competent map of the `Default` config. */
+  function authoredDefaultCompetent(): Record<string, unknown> {
+    const raw = rawConfigs().find((config) => config.name === DEFAULT_BOT_TUNING_NAME);
+    if (raw === undefined) throw new Error('bundled baseline has no Default config');
+    return (raw.values as { competent: Record<string, unknown> }).competent;
+  }
+
+  it('authors the motion-model toggle and every per-class horizon multiplier at their shipped defaults', () => {
+    // Read the **authored** values, not the coerced ones: coerceTuningValues
+    // fills missing keys from the code defaults, so only an explicit entry
+    // proves the bundled file itself cannot drift from them.
+    const competent = authoredDefaultCompetent();
+    const scale = COMPETENT_BOT_TUNABLES.hazardClassHorizonScale;
+    for (const movementClass of CLASSES) {
+      const key = `hazardClassHorizonScale.${movementClass}`;
+      expect(competent[key], `Default must author ${key}`).toBe(scale[movementClass]);
+    }
+    expect(competent['hazardMotionModelEnabled']).toBe(
+      COMPETENT_BOT_TUNABLES.hazardMotionModelEnabled,
+    );
+  });
+
+  it('keeps every authored motion-model value inside the gym slider bounds', () => {
+    const competent = authoredDefaultCompetent();
+    const keys = [
+      ...CLASSES.map((movementClass) => `hazardClassHorizonScale.${movementClass}`),
+    ];
+    for (const key of keys) {
+      const field = BOT_TUNING_NUMERIC_FIELDS.find((candidate) => candidate.key === key);
+      expect(field, `${key} is not registered in the gym`).toBeDefined();
+      const value = competent[key];
+      expect(typeof value).toBe('number');
+      expect(value as number).toBeGreaterThanOrEqual(field!.min);
+      expect(value as number).toBeLessThanOrEqual(field!.max);
+    }
+    const toggle = BOT_TUNING_TOGGLES.find(
+      (candidate) => candidate.key === 'hazardMotionModelEnabled',
+    );
+    expect(toggle).toBeDefined();
+    expect(typeof competent['hazardMotionModelEnabled']).toBe('boolean');
   });
 });
 

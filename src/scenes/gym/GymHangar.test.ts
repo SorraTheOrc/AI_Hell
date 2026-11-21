@@ -38,7 +38,11 @@ import {
   GYM_HANGAR_TITLE,
   GYM_HANGAR_DEFAULT_SEED,
 } from './GymHangar';
-import { buildHangarScreenModel } from '../hangarWar/hangarScreen';
+import {
+  buildHangarScreenModel,
+  HANGAR_STRONG_MARKER,
+  HANGAR_WEAK_MARKER,
+} from '../hangarWar/hangarScreen';
 import { createRingState } from '../../core/hangarWar/hexRing';
 import { resolveHexCapture } from '../../core/hangarWar/captureCycle';
 import { bankedSalvageFromHangar, runSalvageFromRun } from '../../core/hangarWar/salvageBanking';
@@ -101,6 +105,7 @@ describe('GymHangar', () => {
       ...shipped.hullOptions.map((option) => option.key),
       ...shipped.weaponOptions.map((option) => option.key),
       ...shipped.modifierOptions.map((option) => option.key),
+      ...shipped.savedBuildRows.map((row) => row.key),
       shipped.deployRow.key,
       shipped.mapRow.key,
       shipped.restartRow.key,
@@ -108,6 +113,131 @@ describe('GymHangar', () => {
     // Read-only: no row is actionable, so none is interactive either.
     expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
     expect(scene.getRows().every((row) => row.text.input === null)).toBe(true);
+  });
+
+  it('publishes the target intel through the shared model, read-only (AH-0MWMT4QXF0095CBN)', async () => {
+    // The fixture ring's ids are not in the authored table, so the shared model
+    // publishes the explicit unknown fallback — the gym renders exactly that,
+    // and invents no intel of its own. The known-hex parity case lives below.
+    const scene = await bootHangar({ payload: VALID_HANGAR_WAR_PAYLOAD });
+    const shipped = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
+
+    expect(scene.getModel()).toEqual(shipped);
+    expect(scene.getModel().bossIntel).toEqual({
+      hexId: 'hex-2',
+      boss: null,
+      strengths: [],
+      weaknesses: [],
+      known: false,
+    });
+    findTextStartingWith(scene, 'TARGET INTEL — hex-2');
+    expect(findTextStartingWith(scene, 'BOSS: ').text).toBe('BOSS: unknown');
+    expect(findTextStartingWith(scene, 'STRENGTHS: ').text).toBe(
+      'STRENGTHS: unknown',
+    );
+    expect(findTextStartingWith(scene, 'WEAKNESSES: ').text).toBe(
+      'WEAKNESSES: unknown',
+    );
+    // No row is marked strong/weak for an unknown boss, and the render stays
+    // read-only (no handlers), so the intel changes nothing it can activate.
+    expect(
+      scene
+        .getRows()
+        .every((row) => row.matchup !== 'strong' && row.matchup !== 'weak'),
+    ).toBe(true);
+    expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
+  });
+
+  it('renders the known target intel and ▲/▼ matchup marks read-only (AH-0MWMT4STK001PSK4)', async () => {
+    // The authored ring makes the default target a hex the shipped definition
+    // table knows (`hex-r1-2`, the weakest unheld), so the intel is populated
+    // and every owned weapon row carries a matchup verdict. The gym must render
+    // the *identical* shared model — intel and marks included — with no
+    // handlers, so nothing on the screen can act on the advice.
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3', 'hull-4'];
+    payload.hangar.unlockedWeapons = [
+      'spread',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ];
+    payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+    payload.hangar.activeHull = 'hull-1';
+    payload.hangar.activeLoadout = { startingWeapons: ['spread'], modifiers: [] };
+    payload.hangar.bankedMinerals = 0;
+    payload.hangar.bankedCores = 0;
+
+    const scene = await bootHangar({ payload });
+    const shipped = buildHangarScreenModel(payload);
+
+    // One shared code path: the gym's model is the game's model, intel and all.
+    expect(scene.getModel()).toEqual(shipped);
+    expect(scene.getModel().bossIntel).toEqual({
+      hexId: 'hex-r1-2',
+      boss: 'shroud-merchant',
+      strengths: ['spread'],
+      weaknesses: ['waveLaser'],
+      known: true,
+    });
+
+    // The authored intel renders through the shared renderer.
+    findTextStartingWith(scene, 'TARGET INTEL — hex-r1-2');
+    expect(findTextStartingWith(scene, 'BOSS: ').text).toBe('BOSS: shroud-merchant');
+    expect(findTextStartingWith(scene, 'STRENGTHS: ').text).toBe(
+      'STRENGTHS: spread',
+    );
+    expect(findTextStartingWith(scene, 'WEAKNESSES: ').text).toBe(
+      'WEAKNESSES: waveLaser',
+    );
+
+    // `spread` is resisted by this boss, `wave_laser` counters it (via the
+    // `waveLaser` ring spelling) — the marks are on the rendered rows.
+    const weak = scene.getRows().find((row) => row.key === 'buy:spread')!;
+    expect(weak, 'spread unlock row').toBeDefined();
+    expect(weak.matchup).toBe('weak');
+    expect(weak.label).toContain(HANGAR_WEAK_MARKER);
+
+    const strong = scene.getRows().find((row) => row.key === 'buy:wave_laser')!;
+    expect(strong, 'wave_laser unlock row').toBeDefined();
+    expect(strong.matchup).toBe('strong');
+    expect(strong.label).toContain(HANGAR_STRONG_MARKER);
+
+    // The loadout selector carries the same verdicts.
+    const loadout = scene.getRows().find((row) => row.key === 'weapon:spread')!;
+    expect(loadout.matchup).toBe('weak');
+    expect(loadout.label).toContain(HANGAR_WEAK_MARKER);
+
+    // Read-only: the intel and marks change nothing the screen can activate.
+    expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
+    expect(scene.getRows().every((row) => row.text.input === null)).toBe(true);
+  });
+
+  it('renders the owned-row upgrade affordance through the same shared model (parent AC3, AC6)', async () => {
+    // A seeded permanent weapon level (the shape a hangar purchase writes
+    // through `buyHangarUpgrade`) renders through the shipped model builder and
+    // renderer — the gym owns no second upgrade path, and it stays read-only.
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.hangar.weaponLevels = [{ id: 'spread', level: 2 }];
+    const scene = await bootHangar({ payload });
+
+    const shipped = buildHangarScreenModel(payload);
+    expect(scene.getModel()).toEqual(shipped);
+    const row = scene
+      .getModel()
+      .unlockRows.find((entry) => entry.id === 'spread')!;
+    expect(row.state).toBe('upgradable');
+    expect(row.label).toBe('Spread Cannon — LV 2/5 — UPGRADE · 200 min · 1 cores');
+    // The model reports the row actionable, exactly as the game's does; the
+    // read-only render still activates nothing (no handlers), so a watcher can
+    // never buy or upgrade from the gym.
+    expect(row.actionable).toBe(true);
+    const rendered = scene.getRows().find((entry) => entry.key === 'buy:spread')!;
+    expect(rendered.label).toBe(row.label);
+    expect(rendered.actionable).toBe(false);
+    expect(rendered.text.input).toBeNull();
+    expect(scene.getPayload()).toEqual(payload);
   });
 
   it('renders the ⟲ RESTART WAR row non-actionable (same model, no handlers)', async () => {
@@ -254,5 +384,85 @@ describe('GymHangar — the special-mission reward (AH-0MWF0CXR4004C9CN)', () =>
 
     // Gym↔game parity: the gym renders the shipped model verbatim.
     expect(scene.getModel()).toEqual(buildHangarScreenModel(captured));
+  });
+
+  it('hides the ring-1 grant-only reward from the shop until it is granted', async () => {
+    // Before the ring-1 special mission is secured, `hull-4` is not for sale:
+    // no purchase row exists, so the hull can only arrive through the mission.
+    const scene = await bootHangar({ payload: VALID_HANGAR_WAR_PAYLOAD });
+    expect(
+      scene.getModel().unlockRows.some((entry) => entry.id === 'hull-4'),
+    ).toBe(false);
+    expect(
+      scene.getModel().hullOptions.some((option) => option.id === 'hull-4'),
+    ).toBe(false);
+  });
+
+  it('shows the granted Vanguard Hull as an owned unlock (AH-0MWJ51KUS005WQK6)', async () => {
+    // The ring-1 special sits on a fortress, so the shipped capture cycle
+    // needs its two passes; the hull lands in the owned set on the second.
+    const ringOne: HangarWarPayload = {
+      ...VALID_HANGAR_WAR_PAYLOAD,
+      ring: createRingState(1, HEX_RING_DEFINITIONS),
+    };
+    const capture = (payload: HangarWarPayload) =>
+      resolveHexCapture(payload, {
+        hexId: 'hex-r1-5',
+        defenderHullId: 'hull-1',
+        salvage: runSalvageFromRun({
+          runId: 'gym-hangar-r1',
+          checkpointId: 'boss-victory',
+          minerals: 0,
+          cores: 0,
+        }),
+        definitions: HEX_RING_DEFINITIONS,
+        banked: bankedSalvageFromHangar(payload.hangar),
+      });
+    const firstPass = capture(ringOne);
+    const secured = capture(firstPass.payload);
+    expect(secured.ok).toBe(true);
+    expect(secured.payload.hangar.unlockedHulls).toContain('hull-4');
+
+    const scene = await bootHangar({ payload: secured.payload });
+    const row = scene.getModel().unlockRows.find((entry) => entry.id === 'hull-4');
+
+    expect(row, 'hull-4 unlock row not rendered').toBeDefined();
+    expect(row!.name).toBe('Vanguard Hull');
+    // Owned, not buyable: it arrived through the special mission.
+    expect(row!.actionLabel).toBe('OWNED');
+    expect(row!.actionable).toBe(false);
+    // The reward is also a deployable hull option (it is a real ship).
+    expect(
+      scene.getModel().hullOptions.some((option) => option.id === 'hull-4'),
+    ).toBe(true);
+  });
+
+  it('lists the authored power-up unlock rows read-only (AH-0MWKT12BT001106T)', async () => {
+    // The tree's fourth purchasable kind flows through the **same** shared
+    // hangar screen model the game renders; the gym adds no purchase path and
+    // no second renderer, so it lists the identical power-up rows read-only.
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    const scene = await bootHangar({ payload });
+    const shipped = buildHangarScreenModel(payload);
+
+    expect(scene.getModel()).toEqual(shipped);
+
+    const powerUpRows = scene
+      .getModel()
+      .unlockRows.filter((row) => (row.kind as string) === 'power-up');
+    // The catalogue authors at least one power-up unlock (AC2/Q3 = (1)).
+    expect(powerUpRows.length).toBeGreaterThan(0);
+
+    for (const row of powerUpRows) {
+      const rendered = scene
+        .getRows()
+        .find((entry) => entry.key === `buy:${row.id}`);
+      expect(rendered, `power-up row buy:${row.id}`).toBeDefined();
+      // Read-only: the gym renders the row but never makes it actionable.
+      expect(rendered!.label).toBe(row.label);
+      expect(rendered!.actionable).toBe(false);
+      expect(rendered!.text.input).toBeNull();
+    }
+    expect(scene.getPayload()).toEqual(payload);
   });
 });

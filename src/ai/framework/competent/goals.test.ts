@@ -18,11 +18,13 @@ import {
   COMPETENT_GOAL_IDS,
   bestWeightedTarget,
   createCompetentGoals,
+  isOvershot,
   nearestTarget,
   survivalUrgency,
+  withoutOvershot,
 } from './goals';
 import { botWrapWorld } from '../wrapGeometry';
-import { COMPETENT_BOT_TUNABLES } from './tunables';
+import { COMPETENT_BOT_TUNABLES, resolveCompetentTunables } from './tunables';
 import type { CompetentBotTunables } from './tunables';
 import { createCompetentBotBrain } from './index';
 
@@ -191,7 +193,7 @@ describe('secure-life band (AH-0MV03GXZQ00801T4)', () => {
     expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.secureLife);
   });
 
-  it('does not commit secure-life at the cap', () => {
+  it('does not commit secure-life at the cap (the drop is not worth a diversion)', () => {
     const brain = createCompetentBotBrain({ fallback: null });
     brain.decide(
       makeSnapshot({
@@ -202,7 +204,16 @@ describe('secure-life band (AH-0MV03GXZQ00801T4)', () => {
       }),
       0.1,
     );
-    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectPowerUp);
+    // At the cap the Extra Life is worthless: the secure-life hard primary
+    // releases and, with no other objective, the bot idles (reposition)
+    // rather than diverting to an at-cap pickup (storey two-layer gate).
+    expect(brain.committedGoalId).not.toBe(COMPETENT_GOAL_IDS.secureLife);
+    expect(lifeGoal().isValid!(viewOf(makeSnapshot({
+      player: PLAYER,
+      lives: 5,
+      livesCap: 5,
+      drops: [drop(280, 270, 'extra_life')],
+    })))).toBe(false);
   });
 });
 
@@ -361,45 +372,53 @@ describe('goal lifecycle', () => {
 });
 
 describe('committed selection (AC1/AC7)', () => {
-  it('commits to the highest-priority goal available', () => {
+  it('holds the combat primary when only a lone gold mineral and an ordinary power-up are present', () => {
     const brain = createCompetentBotBrain({ fallback: null });
     brain.decide(
       makeSnapshot({
         player: PLAYER,
+        // A single gold mineral (value 1) and an ordinary power-up: neither
+        // clears the diversion threshold, so presence alone does not pull the
+        // bot off its wave-clear primary (AC3).
         minerals: EQUAL_DISTANCE_TARGETS.minerals,
         drops: EQUAL_DISTANCE_TARGETS.drops,
-        enemies: [
-          ...EQUAL_DISTANCE_TARGETS.enemies,
-          enemy(480, 470, 'asteroid'),
-        ],
+        enemies: [enemy(480, 70, 'scout'), enemy(200, 90, 'scout'), enemy(760, 110, 'scout')],
+      }),
+      0.1,
+    );
+    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.engageEnemy);
+  });
+
+  it('diverts to a red deposit because its payoff clears the threshold (AC4)', () => {
+    const brain = createCompetentBotBrain({ fallback: null });
+    brain.decide(
+      makeSnapshot({
+        player: PLAYER,
+        minerals: [mineral(680, 270, 10)],
+        enemies: [enemy(480, 70, 'scout'), enemy(200, 90, 'scout'), enemy(760, 110, 'scout')],
       }),
       0.1,
     );
     expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
   });
 
-  it('falls through the bands as targets disappear', () => {
-    const brain = createCompetentBotBrain({ fallback: null });
-    brain.decide(
+  it('falls through the goals as targets disappear', () => {
+    const primary = createCompetentBotBrain({ fallback: null });
+    primary.decide(
       makeSnapshot({
         player: PLAYER,
         drops: EQUAL_DISTANCE_TARGETS.drops,
-        enemies: [enemy(480, 70, 'scout')],
+        enemies: [enemy(480, 70, 'scout'), enemy(200, 90, 'scout'), enemy(760, 110, 'scout')],
       }),
       0.1,
     );
-    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectPowerUp);
+    expect(primary.committedGoalId).toBe(COMPETENT_GOAL_IDS.engageEnemy);
 
-    const fresh = createCompetentBotBrain({ fallback: null });
-    fresh.decide(
-      makeSnapshot({ player: PLAYER, enemies: [enemy(480, 70, 'scout')] }),
-      0.1,
-    );
-    expect(fresh.committedGoalId).toBe(COMPETENT_GOAL_IDS.engageEnemy);
-
+    // A collision-path asteroid (inside the danger margin) is a legitimate
+    // secondary diversion (AC2).
     const onlyAsteroid = createCompetentBotBrain({ fallback: null });
     onlyAsteroid.decide(
-      makeSnapshot({ player: PLAYER, enemies: [enemy(480, 470, 'asteroid')] }),
+      makeSnapshot({ player: PLAYER, enemies: [enemy(480, 320, 'asteroid')] }),
       0.1,
     );
     expect(onlyAsteroid.committedGoalId).toBe(
@@ -411,25 +430,25 @@ describe('committed selection (AC1/AC7)', () => {
     expect(empty.committedGoalId).toBe(COMPETENT_GOAL_IDS.reposition);
   });
 
-  it('releases a collection goal when it is achieved and commits the next band', () => {
+  it('returns to the primary when a diversion is achieved and releases it', () => {
     const brain = createCompetentBotBrain({ fallback: null });
     brain.decide(
       makeSnapshot({
         player: PLAYER,
-        minerals: [mineral(680, 270)],
-        drops: [drop(280, 270)],
+        minerals: [mineral(680, 270, 10)],
+        enemies: [enemy(480, 70, 'scout'), enemy(200, 90, 'scout'), enemy(760, 110, 'scout')],
       }),
-      0.1,
+      0.5,
     );
     expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
 
-    // The mineral is gone (collected): the goal is achieved and the committed
-    // selection immediately moves to the power-up.
+    // The red deposit is gone (collected): the bot returns to its suspended
+    // primary objective (AC2).
     brain.decide(
-      makeSnapshot({ player: PLAYER, drops: [drop(280, 270)] }),
+      makeSnapshot({ player: PLAYER, enemies: [enemy(480, 70, 'scout'), enemy(200, 90, 'scout'), enemy(760, 110, 'scout')] }),
       0.1,
     );
-    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectPowerUp);
+    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.engageEnemy);
   });
 });
 
@@ -479,5 +498,162 @@ describe('wrapped nearest-selection (AH-0MVT2W10L003VV1U)', () => {
     const nearest = nearestTarget([near, far], player, wrap);
     expect(nearest!.point).toBe(near);
     expect(nearest!.distance).toBeCloseTo(120, 6);
+  });
+});
+
+/**
+ * Two-layer primary/secondary objective model
+ * (AH-0MWJ1680Z001QYV2 · AC1–AC4, AC7).
+ *
+ * The primary is the sticky standing objective (combat, life, boss, survival,
+ * reposition); collection is opportunistic and only interrupts when its
+ * diversion payoff clears the threshold and the primary is not urgent.
+ */
+describe('two-layer primary/secondary model (AH-0MWJ1680Z001QYV2)', () => {
+  const enemyPrimary = (extra: Parameters<typeof makeSnapshot>[0]) =>
+    makeSnapshot({ player: PLAYER, enemies: [enemy(480, 70, 'scout'), enemy(200, 90, 'scout'), enemy(760, 110, 'scout')], ...extra });
+
+  it('a lone gold mineral does not divert; a clustered group does (AC3)', () => {
+    const lone = createCompetentBotBrain({ fallback: null });
+    lone.decide(enemyPrimary({ minerals: [mineral(680, 270)] }), 0.1);
+    expect(lone.committedGoalId).toBe(COMPETENT_GOAL_IDS.engageEnemy);
+
+    // Ten gold dots clustered within the cluster radius reach the payoff
+    // threshold and earn a diversion.
+    const cluster = Array.from({ length: 10 }, (_, i) =>
+      mineral(660 + i * 4, 270),
+    );
+    const grouped = createCompetentBotBrain({ fallback: null });
+    grouped.decide(enemyPrimary({ minerals: cluster }), 0.1);
+    expect(grouped.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
+  });
+
+  it('an ordinary power-up does not divert; a strong one does (AC3)', () => {
+    const ordinary = createCompetentBotBrain({ fallback: null });
+    ordinary.decide(enemyPrimary({ drops: [drop(280, 270, 'spread')] }), 0.1);
+    expect(ordinary.committedGoalId).toBe(COMPETENT_GOAL_IDS.engageEnemy);
+
+    const strong = createCompetentBotBrain({ fallback: null });
+    strong.decide(enemyPrimary({ drops: [drop(280, 270, 'smart_bomb')] }), 0.1);
+    expect(strong.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectPowerUp);
+  });
+
+  it('wave-pressure focus: late in a timed wave the bot stops diverting (AC2/AC3)', () => {
+    const red = [mineral(680, 270, 10)];
+    const early = createCompetentBotBrain({ fallback: null });
+    early.decide(
+      enemyPrimary({
+        minerals: red,
+        wave: { active: true, timeRemaining: 100, timeLimit: 100 },
+      }),
+      0.1,
+    );
+    expect(early.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
+
+    const late = createCompetentBotBrain({ fallback: null });
+    late.decide(
+      enemyPrimary({
+        minerals: red,
+        wave: { active: true, timeRemaining: 5, timeLimit: 100 },
+      }),
+      0.1,
+    );
+    expect(late.committedGoalId).toBe(COMPETENT_GOAL_IDS.engageEnemy);
+  });
+
+  it('prefers a red deposit over a closer gold dot within the mineral band (AC4)', () => {
+    const goals = createCompetentGoals(T);
+    const mineralGoal = goals.require(COMPETENT_GOAL_IDS.collectMineral);
+    const redFar = viewOf(
+      makeSnapshot({ player: PLAYER, minerals: [mineral(880, 270, 10)] }),
+    );
+    const goldNear = viewOf(
+      makeSnapshot({ player: PLAYER, minerals: [mineral(530, 270)] }),
+    );
+    expect(mineralGoal.utility(redFar)).toBeGreaterThan(
+      mineralGoal.utility(goldNear),
+    );
+  });
+
+  it('is deterministic: the same snapshot sequence yields the same decisions (AC7)', () => {
+    const seq = [
+      enemyPrimary({ minerals: [mineral(680, 270)] }),
+      enemyPrimary({ minerals: [mineral(680, 270, 10)] }),
+      enemyPrimary({ minerals: [mineral(680, 270, 10)] }),
+      makeSnapshot({ player: PLAYER }),
+    ];
+    const run = () => {
+      const brain = createCompetentBotBrain({ fallback: null });
+      return seq.map((snapshot) => {
+        brain.decide(snapshot, 0.2);
+        return brain.committedGoalId;
+      });
+    };
+    expect(run()).toEqual(run());
+  });
+});
+
+// ── Overshoot is accepted (AH-0MWJ1680Z001QYV2 audit rejection) ─────
+
+describe('overshoot filter (AH-0MWJ1680Z001QYV2 audit rejection)', () => {
+  const moving = { x: 480, y: 270, vx: 150, vy: 0 };
+
+  it('treats a target behind the velocity vector inside the margin as passed', () => {
+    expect(isOvershot(moving, { x: 450, y: 270 }, 60)).toBe(true);
+  });
+
+  it('does not treat a target still ahead as passed', () => {
+    expect(isOvershot(moving, { x: 510, y: 270 }, 60)).toBe(false);
+  });
+
+  it('does not treat a target beyond the margin as passed, even behind', () => {
+    expect(isOvershot(moving, { x: 300, y: 270 }, 60)).toBe(false);
+  });
+
+  it('does not treat a target as passed when the ship is not moving away from it', () => {
+    expect(
+      isOvershot({ x: 480, y: 270, vx: 0, vy: 0 }, { x: 450, y: 270 }, 60),
+    ).toBe(false);
+  });
+
+  it('measures the delta on the torus when a world is supplied', () => {
+    // Ship near the left edge moving left; the target is just across the left
+    // seam (so it is *ahead*, not behind) even though its raw x is far right.
+    const world = botWrapWorld(T);
+    expect(
+      isOvershot({ x: 20, y: 270, vx: -150, vy: 0 }, { x: 940, y: 270 }, 60, world),
+    ).toBe(false);
+    expect(
+      isOvershot({ x: 20, y: 270, vx: 150, vy: 0 }, { x: 940, y: 270 }, 60, world),
+    ).toBe(true);
+  });
+
+  it('drops a passed mineral from the collection goal so it does not keep the goal alive', () => {
+    const goals = createCompetentGoals(
+      resolveCompetentTunables({ collectOvershootMargin: 60 }),
+    );
+    const mineralGoal = goals.require(COMPETENT_GOAL_IDS.collectMineral);
+    const passed = viewOf(
+      makeSnapshot({
+        player: { x: 480, y: 270, vx: 150, vy: 0 },
+        minerals: [mineral(450, 270)],
+      }),
+    );
+    expect(mineralGoal.isValid!(passed)).toBe(false);
+    expect(mineralGoal.isAchieved!(passed)).toBe(true);
+
+    // The shipped default (margin 0 = off) keeps chasing a passed pickup.
+    const chase = createCompetentGoals(T).require(
+      COMPETENT_GOAL_IDS.collectMineral,
+    );
+    expect(T.collectOvershootMargin).toBe(0);
+    expect(chase.isValid!(passed)).toBe(true);
+  });
+
+  it('filters the passed targets and keeps the rest', () => {
+    const targets = [{ x: 450, y: 270 }, { x: 700, y: 270 }];
+    expect(withoutOvershot(targets, moving, 60)).toEqual([
+      { x: 700, y: 270 },
+    ]);
   });
 });

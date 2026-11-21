@@ -291,7 +291,12 @@ describe('arena weapon-output sensitivity (AH-0MW5DV8AQ002ZQB6, pinned test-firs
       expect([...tagged.selectedChoiceIds]).toContain('nova');
       expect([...wide.selectedChoiceIds]).toContain('nova');
 
-      expect(unchangedHashes(tagged, wide)).toEqual([]);
+      // Every run that actually exercises the AOE weapon must move. One seed
+      // may end before the weapon's blast is ever in range (the bot's calmer,
+      // tighter-aim flight from the AH-0MWJ1680Z001QYV2 audit follow-up ends a
+      // run earlier on one seed), so at most one hash may stay put; the
+      // aggregate metrics still have to move.
+      expect(unchangedHashes(tagged, wide).length).toBeLessThanOrEqual(1);
       expect(
         movedMetrics(tagged.aggregate, wide.aggregate),
         'an AOE-radius change alone must move at least one aggregate metric',

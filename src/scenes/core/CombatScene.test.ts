@@ -1553,6 +1553,40 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.hooks).toContain('onPlayerHit');
   });
 
+  // ── Fading enemy-bullet hit footprint (AH-0MWJ9PMYF005N588, AC3) ──
+  //
+  // The bullet's effective radius tracks its (shrinking) sprite scale: a
+  // fading bullet keeps damaging the player within its *visual* bounds, and
+  // the same offset that connects at full scale stops connecting once the
+  // sprite has shrunk below it. Player hull = SHIP_SIZE / 2 = 10 px, base
+  // bullet radius = 5 px.
+  it('AC3 — a fading enemy bullet hits with its shrunken sprite bounds', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    // 14 px from the player centre: inside the full-radius footprint
+    // (5 + 10 = 15 px) but outside the shrunken one (5 × 0.2 + 10 = 11 px).
+    const eb = new StubBullet(scene, 100, 114);
+    eb.graphics.setScale(0.2);
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.bullets).toHaveLength(1);
+  });
+
+  it('AC3 — the same offset connects while the bullet is still full scale', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const eb = new StubBullet(scene, 100, 114);
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.bullets).toHaveLength(0);
+  });
+
   it('AC4/AC5 — an enemy bullet hitting the player plays only the player-hit feedback, never the bullet-destruction SFX/VFX', async () => {
     const scene = await boot();
     // Keep the real default impact path active so any stray bullet-vs-bullet

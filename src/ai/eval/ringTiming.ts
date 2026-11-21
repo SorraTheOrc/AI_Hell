@@ -192,6 +192,7 @@ import {
 import {
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
+  isPurchasableEntry,
   type HangarEntry,
   type HangarPrice,
   type HullDefinition,
@@ -1475,6 +1476,9 @@ export function deriveUnlockPace(
   const pace: UnlockPaceEntry[] = [];
   for (const entry of catalogue) {
     if (entry.starter) continue;
+    // A grant-only entry (a special-mission reward) has no unlock pace: the
+    // mission pays it and the hangar never sells it, so it cannot be "afforded".
+    if (!isPurchasableEntry(entry)) continue;
     const price = entry.price;
     const mineralBound =
       income.mineralsPerDeployment > 0

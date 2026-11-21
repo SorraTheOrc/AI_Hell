@@ -166,6 +166,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playMysteryUfoRewardSound` | Rising A-minor arpeggio A4→E5→A5 + sine sparkle, ~0.9 s | Mystery UFO payout fanfare | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mystery-ufo-reward` |
 | `playMysteryUfoDestroySound` | Deep saw fall A3→A1 + low-passed noise blast + sine sub thump, ~0.55 s | Mystery UFO destruction explosion | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mystery-ufo-destroy` |
 | `playMineralTinkleSound` | Bright E7→A6 triangle chime + sine shimmer + noise tick, ~0.2 s | Dropped-mineral tinkle | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mineral-tinkle` |
+| `playGrazeSound` | **Alias** of `playPowerUpCollectSound` (the `card-token-earn` chime) played at a per-tier playback rate (`GRAZE_CUE_RATES` 1 → 1.6), vol 0.5 — a short bright tick that rises with the danger tier; no recipe of its own | Graze confirmation — a near miss credited a point of danger multiplier (AH-0MWL7ORK8007LXJI AC5) | shared graze pass in `scenes/core/CombatScene` (`_resolveGrazePass`) | alias (no new cue) | `card-token-earn` (shared) |
 
 ### Runtime mix trims (AH-0MVZVMZOQ00076QF)
 

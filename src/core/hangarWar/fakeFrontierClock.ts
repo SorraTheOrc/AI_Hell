@@ -21,7 +21,18 @@
  * contract: it gives the verification harness a deterministic tick source and a
  * deterministic stand-in transition, so `GymHexWar` can exercise its control
  * surface before the shipped resolver exists. B3 replaces `applyFakeFrontierTick`
- * at that seam; nothing in the game calls this module.
+ * at that seam; the gym's rendered record comes from the shipped clock.
+ *
+ * ## The "attacked hex defends" rule (AH-0MWH3A87Z005LLOX)
+ *
+ * The shipped tick can be told which hex the player is currently attacking and
+ * bars it from being an attack origin. This double mirrors that exclusion so
+ * the gym's `tick()` control surface stays consistent with the game rule: when a
+ * `playerAttackingHexId` is supplied, a held target is only attacked if it has
+ * an unheld neighbour that is **not** that hex. The candidate origin is found
+ * with the **shipped** `attackingNeighbour` helper (never a copy of the rule) so
+ * the exclusion is the shipped one. With no exclusion supplied the double keeps
+ * today's behaviour byte-for-byte (the one-hex fixture therefore still ticks).
  *
  * ## What is deterministic
  *
@@ -38,6 +49,7 @@
 
 import { normaliseSeed } from '../rng';
 import { createHangarWarRng } from './rng';
+import { attackingNeighbour } from './hexDefence';
 import type { HangarWarPayload, HexState } from './types';
 
 /** An immutable tick counter over the harness's deterministic stream. */
@@ -102,25 +114,59 @@ export interface FrontierTickEvent {
   readonly attack: FrontierAttackProposal | null;
 }
 
+/** Optional per-tick inputs (both default to the harness's own behaviour). */
+export interface FakeFrontierTickOptions {
+  /**
+   * The hex the player is currently attacking, or `null`/omitted.
+   *
+   * While supplied, that hex is barred as an attack origin — the ring's answer
+   * to "an attacked hex defends, it does not attack" (AH-0MWH3A87Z005LLOX),
+   * mirrored from the shipped tick. The exclusion is derived with the shipped
+   * `attackingNeighbour` helper, so the gym owns no copy of the rule.
+   */
+  readonly playerAttackingHexId?: string | null;
+}
+
 /**
  * The deterministic event for `clock.tick` against `hexes`.
  *
  * Pure and total: aggression rises by `0`–`3`, and when at least one hex is
  * held the AI may (deterministically) pressure one of them. It never attacks an
  * unheld hex, so a retaken hex stops drawing attacks until the player takes it
- * back.
+ * back. When a {@link FakeFrontierTickOptions.playerAttackingHexId} is supplied,
+ * a held hex whose only unheld neighbour is that hex is not attacked (see the
+ * module docs).
  */
 export function frontierTickEvent(
   clock: FakeFrontierClock,
   hexes: readonly HexState[],
+  options: FakeFrontierTickOptions = {},
 ): FrontierTickEvent {
   const rng = createHangarWarRng(tickSeed(clock.seed, clock.tick));
   const aggressionRise = rng.nextInt(4);
 
+  const playerAttackingHexId =
+    typeof options.playerAttackingHexId === 'string' &&
+    options.playerAttackingHexId !== ''
+      ? options.playerAttackingHexId
+      : null;
+  const excludedOriginIds =
+    playerAttackingHexId === null ? null : [playerAttackingHexId];
+
   const held = hexes.filter((hex) => hex.held);
+  // With no exclusion this is exactly today's candidate list, so the default
+  // path (and seed stream) is unchanged. With an exclusion a held hex is only
+  // attackable while a non-excluded origin remains — the shipped rule.
+  const candidates =
+    excludedOriginIds === null
+      ? held
+      : held.filter(
+          (hex) =>
+            attackingNeighbour(hex, hexes, excludedOriginIds) !== null,
+        );
   let attack: FrontierAttackProposal | null = null;
-  if (held.length > 0 && rng.next() < FAKE_ATTACK_CHANCE) {
-    const target = rng.pick(held)!;
+  if (candidates.length > 0 && rng.next() < FAKE_ATTACK_CHANCE) {
+    const target = rng.pick(candidates)!;
     // Bounded by the hex's stored aggression, so a harder frontier hits harder.
     attack = { hexId: target.id, force: 1 + rng.nextInt(target.aggression + 2) };
   }
@@ -154,12 +200,15 @@ function clonePayload(payload: HangarWarPayload): HangarWarPayload {
  *
  * @param payload — the ring payload to advance.
  * @param clock — the tick to apply; the returned clock is advanced by one.
+ * @param options — optional inputs; `playerAttackingHexId` bars the hex the
+ *   player is attacking from being an attack origin (AH-0MWH3A87Z005LLOX).
  */
 export function applyFakeFrontierTick(
   payload: HangarWarPayload,
   clock: FakeFrontierClock,
+  options: FakeFrontierTickOptions = {},
 ): AppliedFrontierTick {
-  const event = frontierTickEvent(clock, payload.ring.hexes);
+  const event = frontierTickEvent(clock, payload.ring.hexes, options);
   const next = clonePayload(payload);
 
   for (const hex of next.ring.hexes) {

@@ -29,6 +29,11 @@ import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
 import { CombatCoreScene } from '../core/CombatCoreScene';
 import * as hitscanBeamModule from '../../vfx/hitscanBeam';
+import {
+  drawnDestination,
+  drawnSource,
+  expectPoint,
+} from '../../test/vfxProbe';
 import { CombatScene } from '../core/CombatScene';
 import { GAME_WIDTH } from '../../core/constants';
 import { isOnGrid } from '../../utils/beat';
@@ -1466,6 +1471,32 @@ describe('GymWeapons — wave-laser hitscan beam (AH-0MVREBUJ5004HDRQ, AC1/AC2/A
     // 240 px down the uniform candidate ray, not 240 px along +x.
     expect(segments[0].x2).toBeCloseTo(400, 6);
     expect(segments[0].y2).toBeCloseTo(440, 6);
+  });
+
+  it('anchors the beam to the moving ship through the shared seam (AC5)', async () => {
+    const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
+    const scene = await bootWeapons();
+    // Pin the per-shot RNG so the aimed shot runs along +x at the near target.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    fireWaveLaser(scene, { x: 355, y: 205 }, 0);
+
+    expect(beamSpy).toHaveBeenCalledTimes(1);
+    const options = beamSpy.mock.calls[0][2]!;
+    // The gym passes the same live anchor the game does — it cannot fork it.
+    expect(typeof options.source).toBe('function');
+
+    const beam = beamSpy.mock.results[0].value as Phaser.GameObjects.Graphics;
+    const destination = drawnDestination(beam);
+    expectPoint(drawnSource(beam), { x: 355, y: 205 });
+
+    // Fly the ship on while the beam is alive: the source follows, the frozen
+    // intercept point does not.
+    scene.getPlayer()!.setPosition(395, 240);
+    scene.events.emit('update', 0, 16);
+
+    expectPoint(drawnSource(beam), { x: 395, y: 240 });
+    expectPoint(drawnDestination(beam), destination);
   });
 });
 

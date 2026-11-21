@@ -52,8 +52,11 @@
  *   through. Deliberately rare (weight 3, rarer than the standard 4).
  *
  * All of the above are additionally **levelled** and split into a permanent
- * component (hold-full rewards only) and a temporary component (field
- * pickups). **Every field pickup is temporary (parent AH-0MVSTKGC3003OMAC).**
+ * component (hold-full rewards, plus the hangar's bought levels: a power-up is
+ * bought from the unlock tree and its first permanent level row is seeded on
+ * purchase — shipped by AH-0MWKT12BT001106T) and a temporary component (field
+ * pickups). **Every field pickup is temporary
+ * (parent AH-0MVSTKGC3003OMAC).**
  * The temporary window (TTL) is a property of the item, never one global
  * constant: the timed kinds keep their level-resolved effect duration, and
  * every instant kind declares its own TTL as `temporaryWindow` below (Bomb /

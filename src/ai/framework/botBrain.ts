@@ -36,9 +36,12 @@ import type { BotSnapshot } from '../botSnapshot';
 import type { BotSteeringIntent } from '../botDecision';
 import {
   BOT_COMMITMENT_TUNABLES,
+  BOT_TWO_LAYER_TUNABLES,
   selectCommittedGoal,
+  selectTwoLayerGoal,
   type CommitmentTunables,
   type GoalCandidate,
+  type TwoLayerTunables,
 } from './commitment';
 import { createBotMemory, resetBotMemory, type BotMemory } from './memory';
 import {
@@ -86,6 +89,16 @@ export interface BotBrainOptions {
   readonly behaviours: BehaviourRegistry;
   /** Commitment/hysteresis tunables (partial override). */
   readonly commitment?: Partial<CommitmentTunables>;
+  /**
+   * Enable the two-layer primary/secondary objective model
+   * (AH-0MWJ1680Z001QYV2). Default `false` keeps the flat single-layer
+   * selection, so every consumer that predates the layering behaves exactly
+   * as before and the flat model stays available as the purposefulness
+   * baseline.
+   */
+  readonly twoLayer?: boolean;
+  /** Two-layer tunables (partial override); ignored when `twoLayer` is off. */
+  readonly twoLayerTunables?: Partial<TwoLayerTunables>;
   /** World-model tunables (partial override). */
   readonly worldTunables?: Partial<BotWorldTunables>;
   /**
@@ -124,12 +137,36 @@ export function resolveGoalCandidates(
 ): GoalCandidate[] {
   return goals.all().map((goal) => {
     const utility = goal.utility(view);
-    return {
+    const candidate: {
+      goalId: string;
+      utility: number;
+      valid: boolean;
+      achieved: boolean;
+      layer?: GoalCandidate['layer'];
+      hardPrimary?: boolean;
+      urgency?: number;
+      diversionPayoff?: number;
+      idle?: boolean;
+    } = {
       goalId: goal.id,
       utility: Number.isFinite(utility) ? utility : Number.NEGATIVE_INFINITY,
       valid: goal.isValid ? goal.isValid(view) : true,
       achieved: goal.isAchieved ? goal.isAchieved(view) : false,
     };
+    // Carry the two-layer fields only when a goal declares them, so the flat
+    // selection path sees exactly the shape it always did (AH-0MWJ1680Z001QYV2).
+    if (goal.layer !== undefined) candidate.layer = goal.layer;
+    if (goal.hardPrimary !== undefined) candidate.hardPrimary = goal.hardPrimary;
+    if (goal.idle !== undefined) candidate.idle = goal.idle;
+    if (goal.urgency) {
+      const urgency = goal.urgency(view);
+      candidate.urgency = Number.isFinite(urgency) ? urgency : 0;
+    }
+    if (goal.diversionPayoff) {
+      const payoff = goal.diversionPayoff(view);
+      candidate.diversionPayoff = Number.isFinite(payoff) ? payoff : 0;
+    }
+    return candidate;
   });
 }
 
@@ -147,6 +184,8 @@ export class BotBrain implements BotPolicy {
   private readonly goals: GoalRegistry;
   private readonly behaviours: BehaviourRegistry;
   private readonly commitment: CommitmentTunables;
+  private readonly twoLayer: boolean;
+  private readonly twoLayerTunables: TwoLayerTunables;
   private readonly worldModel: WorldModelFn;
   private readonly fallback: BotPolicy | null;
 
@@ -156,6 +195,11 @@ export class BotBrain implements BotPolicy {
     this.commitment = {
       ...BOT_COMMITMENT_TUNABLES,
       ...(options.commitment ?? {}),
+    };
+    this.twoLayer = options.twoLayer === true;
+    this.twoLayerTunables = {
+      ...BOT_TWO_LAYER_TUNABLES,
+      ...(options.twoLayerTunables ?? {}),
     };
     const worldTunables = options.worldTunables ?? {};
     this.worldModel =
@@ -186,17 +230,27 @@ export class BotBrain implements BotPolicy {
     const world = this.worldModel(snapshot, this.memory, dt);
     const view: BotGoalView = { snapshot, world, memory: this.memory, dt };
 
-    const decision = selectCommittedGoal(
-      resolveGoalCandidates(this.goals, view),
-      this.memory.commitment,
-      dt,
-      this.commitment,
-    );
+    const candidates = resolveGoalCandidates(this.goals, view);
+    const decision = this.twoLayer
+      ? selectTwoLayerGoal(
+          candidates,
+          this.memory.commitment,
+          dt,
+          this.twoLayerTunables,
+        )
+      : selectCommittedGoal(
+          candidates,
+          this.memory.commitment,
+          dt,
+          this.commitment,
+        );
     this.memory.commitment = {
       goalId: decision.goalId,
       heldSeconds: decision.heldSeconds,
       challengerId: decision.challengerId,
       challengerSeconds: decision.challengerSeconds,
+      layer: decision.layer ?? null,
+      suspendedPrimaryId: decision.suspendedPrimaryId ?? null,
     };
     this.memory.ticks += 1;
 

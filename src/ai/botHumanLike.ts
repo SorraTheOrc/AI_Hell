@@ -63,6 +63,33 @@
  * perturbed, so lowering skill degrades aim without degrading collision
  * avoidance.
  *
+ * ## Smooth turning — a deadband, not a precision controller
+ * (AH-0MWJ1680Z001QYV2 audit rejection)
+ *
+ * The ship drifts in space, so chasing a bearing to a fraction of a degree
+ * with the A/D keys is both impossible and unwatchable: it reads as constant
+ * left/right turning. The governor therefore treats turning as a coarse,
+ * human action:
+ *
+ * - **Deadband** — no turn key is pressed while the heading error is inside
+ *   `alignmentToleranceRad` (default 0.30 rad, ~17°).
+ * - **Reversal hysteresis** — an established turn is only reversed once the
+ *   error exceeds the deadband by `turnHysteresisRad`; inside that margin the
+ *   turn is released so a small overshoot simply coasts out rather than being
+ *   braked by the opposite key.
+ * - **Press hold** — an established turn is held for `turnPressMinMs`
+ *   (default 30 ms), mirroring the human thrust/reverse press cadence. A
+ *   flip requested inside the window is released rather than dithered to the
+ *   opposite key. Thrust and reverse are untouched, so a safety brake is
+ *   never delayed.
+ *
+ * **Aim intents are exempt**: holding the weapon axis on a target is a
+ * precision task the producer did not ask to change, so an `aim` intent keeps
+ * the closed-loop per-tick release (AH-0MV1DUSM2005HL98 · AC1).
+ *
+ * Setting `turnHysteresisRad` and `turnPressMinMs` to `0` restores the exact
+ * pre-change release rule.
+ *
  * ## Human-like thrust presses (AC15/AC16)
  *
  * The forward-model throttle can flip the thrust key every tick near the
@@ -135,11 +162,48 @@ export interface BotHumanInputTunables {
   allowDown: boolean;
   /**
    * Heading error (radians) within which the asteroids actuator stops
-   * turning and thrusts forward instead. Keeps the ship from oscillating
-   * around the target heading while still aiming close enough to travel
-   * toward it.
+   * turning and thrusts forward instead.  This is the bot's turning
+   * **deadband**: a human does not press a turn key for a couple of degrees of
+   * error, and doing so is what makes the ship twitch left/right.  Widened from
+   * the original 0.15 rad (~8°) to 0.30 rad (~17°) so small heading error is
+   * simply ignored (AH-0MWJ1680Z001QYV2 audit rejection).
    */
   alignmentToleranceRad: number;
+  /**
+   * Heading error (radians) within which an **aim** intent stops turning and
+   * holds its weapon axis (AH-0MWJ1680Z001QYV2 audit rejection).
+   *
+   * Aiming is a precision task — a shot fired 10° off a target 100 px away
+   * misses it, and a bot that settles that far off can deadlock on an enemy it
+   * cannot hit at the engagement standoff — so aim intents keep a much tighter
+   * deadband (0.05 rad) while travel/turn intents use the wider
+   * {@link alignmentToleranceRad}. The
+   * effective aim deadband is `min(alignmentToleranceRad,
+   * aimAlignmentToleranceRad)`, so a caller that tunes only
+   * `alignmentToleranceRad` (the original single knob) still tightens aim.
+   */
+  aimAlignmentToleranceRad: number;
+  /**
+   * Extra heading error (radians) required before the bot **reverses** an
+   * established turn (AH-0MWJ1680Z001QYV2 audit rejection).
+   *
+   * Turning one way and immediately turning the other is how the ship braked
+   * its spin, but at small overshoots it reads as left/right thrash. Inside
+   * `alignmentToleranceRad + turnHysteresisRad` an existing turn is released
+   * instead (the ship coasts through the small overshoot). `0` restores the
+   * pre-change always-brake rule.
+   */
+  turnHysteresisRad: number;
+  /**
+   * Minimum duration (ms) of a turn-key press (AH-0MWJ1680Z001QYV2 audit
+   * rejection). Mirroring the forward/reverse press cadence, an established
+   * turn is held for at least this long instead of toggling on and off within
+   * a reaction: a human presses A or D for a perceptible burst. A flip
+   * requested inside the window is released (never dithered to the opposite
+   * key), and the hold only ever affects a *turn* — thrust and reverse are
+   * untouched, so a safety brake is never delayed. `0` disables the hold.
+   */
+  turnPressMinMs: number;
   /**
    * Minimum duration (ms) of a forward-thrust press.  Each press is drawn
    * from `[thrustPressMinMs, thrustPressMaxMs]` so the bot holds the key in
@@ -206,7 +270,13 @@ export interface BotHumanInputTunables {
 export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   reactionTimeMs: 250,
   allowDown: false,
-  alignmentToleranceRad: 0.15,
+  // A generous deadband and a braking margin: the bot steers like a person
+  // with a keyboard in a drifting ship — it does not chase a bearing to a
+  // fraction of a degree (AH-0MWJ1680Z001QYV2 audit rejection).
+  alignmentToleranceRad: 0.16,
+  aimAlignmentToleranceRad: 0.05,
+  turnHysteresisRad: 0.25,
+  turnPressMinMs: 30,
   thrustPressMinMs: 200,
   thrustPressMaxMs: 225,
   thrustPressMaxMsLong: 400,
@@ -320,6 +390,21 @@ export interface BotControlContext {
 }
 
 /**
+ * Optional turn-release state for {@link toAsteroidsInput}: the direction the
+ * actuator is already turning, plus the hysteresis that must be exceeded
+ * before it will reverse (AH-0MWJ1680Z001QYV2 audit rejection).
+ *
+ * Omitting it (the default) reduces the release exactly to the pre-change
+ * instantaneous-error rule: no direction, no hysteresis.
+ */
+export interface TurnReleaseOptions {
+  /** The turn direction currently held: `-1` left, `0` released, `+1` right. */
+  readonly turnDirection?: -1 | 0 | 1;
+  /** Extra heading error (radians) required to reverse an established turn. */
+  readonly hysteresisRad?: number;
+}
+
+/**
  * Resolves a scheme-agnostic four-directional steering intent into the
  * ship's `AsteroidsInput` (W/A/D): rotate toward the desired direction until
  * the ship's **predicted stop heading** is within `toleranceRad` of it, then
@@ -352,6 +437,9 @@ export interface BotControlContext {
  *   disables the inertia prediction (AC1).
  * @param rotationDeceleration — the ship's live spin-down rate (rad/s²);
  *   defaults to the shared `DEFAULT_ROTATION_DECELERATION` (AC1).
+ * @param options — optional turn-release state (the held direction and the
+ *   reversal hysteresis); omitting it keeps the legacy release
+ *   (AH-0MWJ1680Z001QYV2 audit rejection).
  * @returns the `AsteroidsInput` for the current tick.
  */
 export function toAsteroidsInput(
@@ -361,6 +449,7 @@ export function toAsteroidsInput(
   reverseAllowed = true,
   angularVelocity = 0,
   rotationDeceleration: number = DEFAULT_ROTATION_DECELERATION,
+  options: TurnReleaseOptions = {},
 ): AsteroidsInput {
   const precise = preciseDirection(intent);
   const dx = precise ? precise.dx : (intent.right ? 1 : 0) - (intent.left ? 1 : 0);
@@ -376,8 +465,20 @@ export function toAsteroidsInput(
     Math.cos(desired - facing),
   );
 
+  const turnDirection = options.turnDirection ?? 0;
+  const hysteresisRad = Math.max(0, options.hysteresisRad ?? 0);
+
   if (intent.reverse === true && reverseAllowed) {
-    if (resolveTurn(error, angularVelocity, rotationDeceleration, toleranceRad) === 0) {
+    if (
+      resolveTurn(
+        error,
+        angularVelocity,
+        rotationDeceleration,
+        toleranceRad,
+        turnDirection,
+        hysteresisRad,
+      ) === 0
+    ) {
       // Nose already on the travel bearing: reverse decelerates / backs the
       // ship straight up (brake-assist / kiting).
       return {
@@ -398,6 +499,8 @@ export function toAsteroidsInput(
       angularVelocity,
       rotationDeceleration,
       toleranceRad,
+      turnDirection,
+      hysteresisRad,
     );
     if (reverseTurn === 0) {
       return {
@@ -420,6 +523,8 @@ export function toAsteroidsInput(
     angularVelocity,
     rotationDeceleration,
     toleranceRad,
+    turnDirection,
+    hysteresisRad,
   );
   if (turn === 0) {
     // Aimed at the target: thrust unless the forward model says coasting
@@ -448,8 +553,15 @@ export function toAsteroidsInput(
  * that predicted heading is within `toleranceRad` of the bearing, and the
  * direction is chosen to drive the *stop* heading onto the bearing (so a
  * coast that would overshoot commands the opposite turn, braking the spin).
- * With zero angular velocity the coast is zero and this is exactly the legacy
- * `sign(error)` release.
+ *
+ * ## Reversal hysteresis (AH-0MWJ1680Z001QYV2 audit rejection)
+ *
+ * Braking an overshoot by reversing the turn is correct, but at a small
+ * overshoot it produces left/right thrash. When `turnDirection` is already
+ * established, a reversal is only commanded once the predicted error exceeds
+ * `toleranceRad + hysteresisRad`; inside that margin the turn is **released**
+ * and the ship coasts through a small overshoot. With `turnDirection = 0` or
+ * `hysteresisRad = 0` this is exactly the pre-change rule.
  *
  * @returns `-1` (turn left), `0` (release) or `+1` (turn right).
  */
@@ -458,14 +570,21 @@ function resolveTurn(
   angularVelocity: number,
   rotationDeceleration: number,
   toleranceRad: number,
+  turnDirection: -1 | 0 | 1 = 0,
+  hysteresisRad = 0,
 ): -1 | 0 | 1 {
   const coast = angularStopDisplacement(angularVelocity, rotationDeceleration);
   const stopError = Math.atan2(
     Math.sin(error - coast),
     Math.cos(error - coast),
   );
-  if (Math.abs(stopError) <= toleranceRad) return 0;
-  return stopError > 0 ? 1 : -1;
+  const magnitude = Math.abs(stopError);
+  if (magnitude <= toleranceRad) return 0;
+  const direction = stopError > 0 ? 1 : -1;
+  const reversing =
+    turnDirection !== 0 && direction !== turnDirection;
+  if (reversing && magnitude <= toleranceRad + hysteresisRad) return 0;
+  return direction;
 }
 
 /** Cardinal booleans nearest to a unit bearing (matches `buildIntent`). */
@@ -544,6 +663,16 @@ export class BotInputGovernor {
   /** Milliseconds left in the current reverse-thrust press (0 = none). */
   private reversePressRemainingMs = 0;
 
+  /**
+   * The turn direction currently held (`-1` left, `0` released, `+1` right),
+   * tracked so the resolver can apply the reversal hysteresis and the flip
+   * hold (AH-0MWJ1680Z001QYV2 audit rejection).
+   */
+  private turnDirection: -1 | 0 | 1 = 0;
+
+  /** Milliseconds left in the current turn-key press hold (0 = none). */
+  private turnPressRemainingMs = 0;
+
   private readonly tunables: BotHumanInputTunables;
 
   constructor(
@@ -584,6 +713,8 @@ export class BotInputGovernor {
     this.sinceCommitMs = Number.POSITIVE_INFINITY;
     this.thrustPressRemainingMs = 0;
     this.reversePressRemainingMs = 0;
+    this.turnDirection = 0;
+    this.turnPressRemainingMs = 0;
   }
 
   /**
@@ -594,8 +725,9 @@ export class BotInputGovernor {
    * least `reactionTimeMs` has elapsed since the previous commit; otherwise
    * the previously committed intent is held.  The held intent is resolved to
    * the ship's scheme input **every tick** against the ship's current facing,
-   * so a rotational `asteroids` turn is closed-loop and aims precisely at the
-   * target rather than overshooting (an open-loop held turn key would).
+   * so a rotational `asteroids` turn is closed-loop — but the turn direction
+   * is smoothed by the reversal hysteresis and the flip hold, so the closed
+   * loop cannot dither left/right within a reaction.
    *
    * @param decision — the pure steering intent for this tick.
    * @param dtSeconds — elapsed time since the previous tick (seconds).
@@ -651,7 +783,69 @@ export class BotInputGovernor {
     };
 
     this.resolved = this.resolve(this.committed, context);
+    if (context.scheme === 'asteroids') {
+      this.resolved = this.applyTurnHold(
+        this.resolved as AsteroidsInput,
+        dtMs,
+        this.committed.aim === true,
+      );
+    }
     return this.current();
+  }
+
+  /**
+   * Applies the minimum turn-press hold (AH-0MWJ1680Z001QYV2 audit
+   * rejection): an established turn key is held for `turnPressMinMs`, so the
+   * A/D keys are pressed in human-like bursts instead of toggling on and off
+   * every few ticks. Inside the window a requested release finishes the press
+   * and a requested flip is released (never dithered to the opposite key).
+   * Thrust and reverse are untouched, so this never delays a safety brake.
+   *
+   * @param aim — the committed intent is an **aim** intent: holding the
+   *   weapon axis is a precision task, so the closed-loop per-tick release is
+   *   kept and no press is held.
+   */
+  private applyTurnHold(
+    input: AsteroidsInput,
+    dtMs: number,
+    aim: boolean,
+  ): AsteroidsInput {
+    const direction: -1 | 0 | 1 =
+      input.turnLeft === true ? -1 : input.turnRight === true ? 1 : 0;
+    if (aim) {
+      this.turnDirection = direction;
+      this.turnPressRemainingMs = 0;
+      return input;
+    }
+    if (this.turnPressRemainingMs > 0) {
+      this.turnPressRemainingMs = Math.max(0, this.turnPressRemainingMs - dtMs);
+      if (direction === 0) {
+        // Finish the press: keep the established key down for its window.
+        return {
+          forward: false,
+          reverse: false,
+          turnLeft: this.turnDirection < 0,
+          turnRight: this.turnDirection > 0,
+        };
+      }
+      if (direction !== this.turnDirection) {
+        // A flip inside the press window would dither: release instead.
+        return {
+          forward: false,
+          reverse: false,
+          turnLeft: false,
+          turnRight: false,
+        };
+      }
+      return input;
+    }
+    if (direction === 0) {
+      this.turnDirection = 0;
+      return input;
+    }
+    this.turnDirection = direction;
+    this.turnPressRemainingMs = Math.max(0, this.tunables.turnPressMinMs);
+    return input;
   }
 
   /**
@@ -790,10 +984,25 @@ export class BotInputGovernor {
       return toAsteroidsInput(
         decision,
         context.facing,
-        this.tunables.alignmentToleranceRad,
+        decision.aim === true
+          ? // The aim deadband is never wider than the travel deadband, so a
+            // caller that tunes only `alignmentToleranceRad` keeps one knob
+            // (AH-0MWJ1680Z001QYV2 audit rejection).
+            Math.min(
+              this.tunables.alignmentToleranceRad,
+              this.tunables.aimAlignmentToleranceRad,
+            )
+          : this.tunables.alignmentToleranceRad,
         context.reverseEnabled ?? false,
         context.angularVelocity ?? 0,
         context.rotationDeceleration,
+        {
+          turnDirection: this.turnDirection,
+          // Aiming keeps the legacy always-brake release: a hysteresis release
+          // would let the weapon axis settle up to the whole margin off target
+          // (AH-0MWJ1680Z001QYV2 audit rejection).
+          hysteresisRad: decision.aim === true ? 0 : this.tunables.turnHysteresisRad,
+        },
       );
     }
     if (decision.thrust === false) return { ...IDLE_INPUT };

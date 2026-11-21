@@ -288,6 +288,74 @@ function remainingBossHits(
 }
 
 /**
+ * Boss hits one player bullet lands: the shared damage path amplifies every
+ * bullet by the run's live Frenzy level (`1 + frenzyBonusHits()`, so two hits
+ * by default). A walk that assumes one hit per bullet is wrong on any run that
+ * carries a Frenzy level (AH-0MWN1M3IN005NKAO).
+ */
+function bossHitsPerBullet(play: PlayScene): number {
+  return 1 + play.getEffectsRegistry().frenzyBonusHits();
+}
+
+/**
+ * Whether the encounter still needs another bullet to be *one bullet from
+ * death*.
+ *
+ * The bound is `hitsPerBullet`, never `1`: with two hits per bullet a 6-hit
+ * pool used to step 6 → 4 → 2 → 0 and kill the encounter before the AC4
+ * hold-full scenario could force its edge. The pool is power-scaled by the
+ * walk, so its size (and parity) varied between runs — that overshoot was the
+ * flake's root cause (AH-0MWN1M3IN005NKAO).
+ */
+function bossNeedsAnotherBullet(
+  remainingHits: number,
+  hitsPerBullet: number,
+): boolean {
+  return remainingHits > hitsPerBullet;
+}
+
+/**
+ * Walks the live boss to exactly one bullet from death, deterministically.
+ *
+ * Isolation is part of the determinism: auto-fire is switched off and every
+ * player bullet already in flight is destroyed before the walk, so the shots
+ * this helper lands are the only damage the boss takes — an auto-fired bullet
+ * landing in the same tick would overshoot the window and kill the encounter.
+ * The step bound comes from {@link bossNeedsAnotherBullet}, so the walk cannot
+ * overshoot for any pool size or Frenzy level.
+ *
+ * @returns the hits one bullet lands, which the caller asserts its "the next
+ *   bullet is the lethal blow" window against.
+ */
+function leaveBossOneBulletFromDeath(play: PlayScene): number {
+  const boss = play.getBoss();
+  if (!boss) throw new Error('leaveBossOneBulletFromDeath: no active boss');
+  const isolated = play as unknown as { autoFireEnabled(): boolean };
+  const originalAutoFireEnabled = isolated.autoFireEnabled;
+  isolated.autoFireEnabled = () => false;
+  try {
+    // Drop the shots already in flight, then let the shared lifecycle cull
+    // them (a zero-length step resolves collisions without moving anything).
+    for (const bullet of play.getPlayerBullets()) bullet.destroy();
+    play.tick(0);
+
+    const hitsPerBullet = bossHitsPerBullet(play);
+    for (
+      let guard = 0;
+      guard < 400 &&
+      bossNeedsAnotherBullet(remainingBossHits(boss), hitsPerBullet);
+      guard++
+    ) {
+      play.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+      play.tick(0.016);
+    }
+    return hitsPerBullet;
+  } finally {
+    isolated.autoFireEnabled = originalAutoFireEnabled;
+  }
+}
+
+/**
  * Lands hits on the active boss until its hit pool is spent (the final boss in
  * the navigation walk).
  *
@@ -511,13 +579,19 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
       gs.mineralCapacity = 999;
       gs.minerals = 0;
 
-      // Leave the encounter one hit from death: the next hit is the lethal
-      // blow, so the hold-full choice below opens in the same window.
-      for (let guard = 0; guard < 400 && remainingBossHits(boss) > 1; guard++) {
-        play.spawnPlayerBullet(boss.x, boss.y, 0, 0);
-        play.tick(0.016);
-      }
-      expect(remainingBossHits(boss)).toBe(1);
+      // Leave the encounter one bullet from death: the next bullet is the
+      // lethal blow, so the hold-full choice below opens in the same window.
+      // The window is `1 .. hitsPerBullet` hits — a bullet lands 1 + Frenzy
+      // hits, and the pool is power-scaled by the walk, so a literal `1` was
+      // unreachable on even pools and the old walk killed the boss instead
+      // (AH-0MWN1M3IN005NKAO).
+      const hitsPerBullet = leaveBossOneBulletFromDeath(play);
+      const hitsLeft = remainingBossHits(boss);
+      expect(hitsLeft, 'the boss must survive the walk').toBeGreaterThan(0);
+      expect(
+        hitsLeft,
+        'the next bullet must be the lethal blow',
+      ).toBeLessThanOrEqual(hitsPerBullet);
 
       // Fill the hold in that window: one more mineral, collected by the ship,
       // opens the pausing hold-full choice.
@@ -548,6 +622,52 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     },
   );
 });
+
+/**
+ * The AC4 regression's "one bullet from death" walk (AH-0MWN1M3IN005NKAO).
+ *
+ * The walk's target window depends on two power-scaled numbers — the pool the
+ * run reached and the Frenzy level it carries — so the invariant is pinned for
+ * every combination rather than only the one a particular run happened to
+ * produce.
+ */
+describe('boss walk hit arithmetic (AH-0MWN1M3IN005NKAO)', () => {
+  it('leaves one bullet from death for every pool size and Frenzy level', () => {
+    for (let hitsPerBullet = 1; hitsPerBullet <= 3; hitsPerBullet++) {
+      for (let totalHp = 1; totalHp <= 48; totalHp++) {
+        let remaining = totalHp;
+        for (let guard = 0; guard < 400; guard++) {
+          if (!bossNeedsAnotherBullet(remaining, hitsPerBullet)) break;
+          remaining -= hitsPerBullet;
+        }
+        const label = `${totalHp}-hit pool at ${hitsPerBullet} hits per bullet`;
+        expect(remaining, label).toBeGreaterThan(0);
+        expect(remaining, label).toBeLessThanOrEqual(hitsPerBullet);
+      }
+    }
+  });
+
+  it('stops where the retired "> 1 hit" walk overshot into a dead boss', () => {
+    // The observed flake: a Frenzy run lands two hits per bullet, so the walk
+    // counted down 6 → 4 → 2 → 0 and `remainingBossHits` returned 0 with the
+    // encounter already destroyed.
+    const hitsPerBullet = 2;
+    const totalHp = 6;
+    let retired = totalHp;
+    for (let guard = 0; guard < 400 && retired > 1; guard++) {
+      retired -= hitsPerBullet;
+    }
+    expect(retired, 'the retired bound overshot').toBeLessThanOrEqual(0);
+
+    let remaining = totalHp;
+    for (let guard = 0; guard < 400; guard++) {
+      if (!bossNeedsAnotherBullet(remaining, hitsPerBullet)) break;
+      remaining -= hitsPerBullet;
+    }
+    expect(remaining).toBe(2);
+  });
+});
+
 describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () => {
   let game: Phaser.Game | null = null;
 

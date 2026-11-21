@@ -91,6 +91,36 @@ const ringTimingMean = (ringIndex: number, strategy: string): string => {
 };
 
 /**
+ * The derived budget verdict the GDD §8.2 prose must quote for a ring and
+ * line, read from the committed artifact's own `budget.verdict` so a
+ * re-measurement that changes the ruling fails this guard instead of silently
+ * drifting from the artefact.
+ */
+const ringTimingBudgetVerdict = (
+  ringIndex: number,
+  strategy: string,
+): string => {
+  const artifact = JSON.parse(
+    fs.readFileSync(RING_TIMING_BASELINE_PATH, 'utf8'),
+  ) as Array<{
+    ringIndex: number;
+    strategy: string;
+    budget: { verdict: string };
+  }>;
+  const entry = artifact.find(
+    (candidate) =>
+      candidate.ringIndex === ringIndex && candidate.strategy === strategy,
+  );
+  if (!entry) {
+    throw new Error(
+      `ring-timing baseline artifact ${RING_TIMING_BASELINE_PATH} has no ` +
+        `${ringIndex}-${strategy} entry`,
+    );
+  }
+  return entry.budget.verdict;
+};
+
+/**
  * The work item created to build the chosen loop (AC16).
  *
  * A stable id, asserted so the decision record and GDD §8 can never claim a
@@ -625,13 +655,22 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
     expect(spec).toMatch(/60\s*[–—-]\s*180/);
     expect(spec).toMatch(/±\s*6\s*min/i);
     expect(spec).toMatch(/±\s*12\s*min/i);
-    // The grind verdicts are re-rated against the derived windows: ring 1 is
-    // missed, ring 2 within-tolerance, with their linked rebalancing items.
+    // The grind verdicts are re-rated against the derived windows and derived
+    // from the artifacts' own budget rulings, with their linked rebalancing
+    // items: ring 1 reads `missed`; ring 2 read `within-tolerance` before the
+    // calmer, pass-through flying bot shortened every ring and now reads
+    // `missed`.
     expect(spec).toMatch(
-      new RegExp(`${escapeRegExp(ring1Grind)}[^\\n]*\\bmissed\\b`, 'i'),
+      new RegExp(
+        `${escapeRegExp(ring1Grind)}[^\\n]*\\b${ringTimingBudgetVerdict(1, 'grind')}\\b`,
+        'i',
+      ),
     );
     expect(spec).toMatch(
-      new RegExp(`${escapeRegExp(ring2Grind)}[^\\n]*\\bwithin-tolerance\\b`, 'i'),
+      new RegExp(
+        `${escapeRegExp(ring2Grind)}[^\\n]*\\b${ringTimingBudgetVerdict(2, 'grind').replace('-', '\\-')}\\b`,
+        'i',
+      ),
     );
     expect(spec).toContain('AH-0MWFDQ9EY004NO4X');
     expect(spec).toContain('AH-0MWFDQCFV007BZE5');
@@ -668,9 +707,10 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
         new RegExp(`${entry.id}[^\n]*\\*\\*${entry.deploymentsToAfford}\\*\\*`),
       );
     }
-    // Capture rate is stated as a percentage (50.0 % / 33.3 %).
-    expect(spec).toMatch(/50\.0\s*%/);
-    expect(spec).toMatch(/33\.3\s*%/);
+    // Capture rate is stated as a percentage, derived from the artifact
+    // (44.4 % / 33.3 % on the regenerated measurement).
+    expect(spec).toMatch(/\(44\.4\s*%\)/);
+    expect(spec).toMatch(/\(33\.3\s*%\)/);
     // The reproducible artifact and the producer's reward-value ruling.
     expect(spec).toContain('docs/dev/one-level-income-baseline.json');
     expect(spec).toContain('AH-0MWEVNBMM000QFO2');

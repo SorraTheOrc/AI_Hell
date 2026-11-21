@@ -40,10 +40,29 @@
  * Hazards are no longer treated as stationary points when the bot has a
  * velocity estimate for them: with `hazardPredictionEnabled` on, a bearing is
  * also unsafe when the ship and the moving hazard are predicted to come
- * within `threatRadius` inside `hazardPredictionHorizon` (the same
- * closest-approach primitive the incoming-fire prediction uses). A hazard with
- * no (or zero) estimate keeps exactly the positional `dangerMargin` rule, so
+ * within `threatRadius` inside the hazard's threat window. A hazard with no (or
+ * zero) estimate keeps exactly the positional `dangerMargin` rule, so
  * disabled/zero-velocity behaviour is bit-for-bit unchanged.
+ *
+ * ## One sampled predictive test for every hazard consumer (AH-0MWM0CB2Q003Y6AB)
+ *
+ * The fan's hazard rejection, {@link hazardThreatensPlayer} and the `engage`
+ * kiting gate all delegate to `predictMinimumSeparation`
+ * (`src/ai/framework/hazardMotionModel.ts`) — there is no second
+ * closest-approach copy in the decision path. With `hazardMotionModelEnabled`
+ * on, that one test follows each hazard's movement-class trajectory over the
+ * class-scaled horizon (`hazardClassHorizonScale`): the classes whose threat is
+ * a discrete commit later in the window (`diver`, `patroller`) over a longer
+ * window, everything else — `chaser`, `roamer`, `formation` — over exactly the
+ * configured `hazardPredictionHorizon`. With the model off it reproduces the previous fixed-velocity
+ * solve (and its configured horizon) bit-for-bit, and a hazard on the
+ * {@link HazardExemption} list (the engagement target) keeps only the
+ * positional rule.
+ *
+ * The fan still precomputes the direction-independent relative geometry once
+ * per tick and threads a reusable sampling record through it, so the sampled
+ * rejection adds no per-bearing `Map`/geometry churn (AH-0MWGUN4P2003003P
+ * precedent).
  *
  * ## Aim / fire reasoning (AC3)
  *
@@ -88,6 +107,11 @@ import {
   wrappedDistance,
   type WrapWorld,
 } from '../../../utils/wrapGeometry';
+import {
+  closestApproachFromDelta,
+  predictMinimumSeparation,
+  type HazardMotionScratch,
+} from '../hazardMotionModel';
 
 /** Epsilon for float comparisons. */
 const EPS = 1e-6;
@@ -204,71 +228,26 @@ export function interceptPoint(
 }
 
 /**
- * Closest approach between the player (moving with velocity `pv`) and a body
- * (moving with velocity `qv`) over `horizon` seconds.
- *
- * With a {@link WrapWorld} the relative position is the shortest wrapped delta
- * (per axis), so a body arriving across a seam is predicted on the torus
- * instead of on a raw line that starts most of a playfield away
- * (AH-0MVT2W2D9002BOHO). Relative velocity is a rate, so it is not wrapped.
- */
-/**
- * Closest-approach core given the **wrapped relative position** (`rx`/`ry`)
- * and relative velocity (`rvx`/`rvy`). Split out so the steering fan can
- * reuse the direction-independent relative position it precomputes once per
- * tick (AH-0MWGUN4P2003003P), while a single call can still supply it inline.
- * The arithmetic is byte-for-byte the pre-change solve.
- */
-function closestApproachFromDelta(
-  rx: number,
-  ry: number,
-  rvx: number,
-  rvy: number,
-  horizon: number,
-): { t: number; distance: number } {
-  const denom = rvx * rvx + rvy * rvy;
-
-  let t = 0;
-  if (denom > EPS) {
-    t = -(rx * rvx + ry * rvy) / denom;
-    if (t < 0) t = 0;
-    if (t > horizon) t = horizon;
-  }
-  const cx = rx + rvx * t;
-  const cy = ry + rvy * t;
-  return { t, distance: Math.hypot(cx, cy) };
-}
-
-function closestApproach(
-  px: number,
-  py: number,
-  pvx: number,
-  pvy: number,
-  qx: number,
-  qy: number,
-  qvx: number,
-  qvy: number,
-  horizon: number,
-  world?: WrapWorld,
-): { t: number; distance: number } {
-  const rx = world ? wrappedAxisDelta(px, qx, world.width) : qx - px;
-  const ry = world ? wrappedAxisDelta(py, qy, world.height) : qy - py;
-  return closestApproachFromDelta(rx, ry, qvx - pvx, qvy - pvy, horizon);
-}
-
-/**
  * Whether a hazard threatens the player right now (AH-0MVI4QDN90037DIN ·
- * AC2).
+ * AC2; class-shaped sampling AH-0MWM0C9F9006HNXV).
  *
  * With prediction enabled and a non-zero velocity estimate, the hazard is a
  * threat when the player (moving at `vx`/`vy`) and the hazard are predicted to
- * come within `threatRadius` inside `hazardPredictionHorizon` — the same
- * closest-approach solve bullets use. Otherwise (prediction off, or the hazard
- * is stationary/untracked) it is a threat when it is inside `dangerMargin`,
- * exactly today's positional rule.
+ * come within `threatRadius` inside the hazard's threat window. Prediction runs
+ * through {@link predictMinimumSeparation}, so with the motion model enabled
+ * the hazard is followed along its **movement-class trajectory** (a chaser's
+ * pursuit, a diver's dive, a patroller's attack run, a formation's edge
+ * reversal) over the **class-scaled horizon** (`hazardClassHorizonScale`; the
+ * non-committing classes stay at the configured `hazardPredictionHorizon`) and
+ * the minimum separation over that sampled path decides the threat. With the motion model disabled or the
+ * class unknown the solve is the previous fixed-velocity closest approach on
+ * the configured horizon, bit-for-bit. Otherwise (prediction off, or the
+ * hazard is stationary/untracked) it is a threat when it is inside
+ * `dangerMargin`, exactly today's positional rule.
  *
  * Shared by {@link evaluateDirection} and the `engage` behaviour's kiting
- * gate so both apply one definition of an imminent hazard collision.
+ * gate, which therefore apply one definition of an imminent hazard collision
+ * (AH-0MWM0CB2Q003Y6AB).
  */
 export function hazardThreatensPlayer(
   player: { readonly x: number; readonly y: number; readonly vx: number; readonly vy: number },
@@ -291,19 +270,12 @@ export function hazardThreatensPlayer(
     const dy = wrappedAxisDelta(player.y, hy, torus.height);
     return Math.hypot(dx, dy) < t.dangerMargin;
   }
-  const approach = closestApproach(
-    player.x,
-    player.y,
-    player.vx,
-    player.vy,
-    hx,
-    hy,
-    hvx,
-    hvy,
-    t.hazardPredictionHorizon,
-    torus,
+  // One sampled predictive test for every hazard class; the disabled and
+  // unknown-class paths inside it reproduce the fixed-velocity solve exactly.
+  return (
+    predictMinimumSeparation(player, hazard, t, torus).separation <
+    t.threatRadius
   );
-  return approach.distance < t.threatRadius;
 }
 
 /**
@@ -321,8 +293,15 @@ export interface HazardExemption {
   readonly id?: number;
 }
 
-/** Whether `hazard` is one of the callers' deliberately-targeted hazards. */
-function isHazardExempt(
+/**
+ * Whether `hazard` is one of the callers' deliberately-targeted hazards
+ * (AH-0MVI4QDN90037DIN · AC2).
+ *
+ * Shared so the steering fan and the `engage` kiting gate agree on which
+ * hazard is the engagement target rather than each carrying its own identity
+ * rule (AH-0MWM0CB2Q003Y6AB).
+ */
+export function isHazardExempt(
   hazard: BotHazardPoint,
   exemptions?: readonly HazardExemption[],
 ): boolean {
@@ -387,14 +366,26 @@ export function evaluateDirection(
   if (wall < clearance) clearance = wall;
 
   // Hazards (enemies, asteroids, boss): reactive keep-away plus, when the bot
-  // has a velocity estimate and prediction is on, a closest-approach solve
-  // against where the hazard will be (AH-0MVI4QDN90037DIN · AC2). Stationary
-  // or untracked hazards keep exactly the positional rule. The wrapped delta
-  // and distance are direction-independent, so the fan precomputes them once
-  // (`derived`); a single call recomputes them inline (bit-identical).
+  // has a velocity estimate and prediction is on, the **one sampled predictive
+  // test** against where the hazard will be (AH-0MVI4QDN90037DIN · AC2;
+  // sampled prediction AH-0MWM0CB2Q003Y6AB). Stationary or untracked hazards
+  // keep exactly the positional rule, as does an exempt (engagement-target)
+  // hazard. The wrapped delta and distance are direction-independent, so the
+  // fan precomputes them once (`derived`); a single call recomputes them inline
+  // (bit-identical).
   const hazardEntries = derived
     ? derived.hazards
     : deriveHazards(player, world.hazards, torus);
+  // Reused across every bearing of this call, so the sampled test allocates no
+  // per-hazard state (the fan supplies its own per-tick records).
+  const hazardScratch: HazardMotionScratch =
+    derived?.hazardScratch ?? { x: 0, y: 0, vx: 0, vy: 0 };
+  const candidateMotion =
+    derived?.candidateMotion ?? { x: 0, y: 0, vx: 0, vy: 0 };
+  candidateMotion.x = px;
+  candidateMotion.y = py;
+  candidateMotion.vx = pvx;
+  candidateMotion.vy = pvy;
   // The positional clearance min over every hazard is direction-independent, so
   // it is collapsed to one comparison when the fan supplies `derived`
   // (`min` is exact regardless of order).
@@ -417,15 +408,25 @@ export function evaluateDirection(
       (hvx !== 0 || hvy !== 0) &&
       !isHazardExempt(hazard, exemptHazards)
     ) {
-      const ca = closestApproachFromDelta(
-        hdx,
-        hdy,
-        hvx - pvx,
-        hvy - pvy,
-        t.hazardPredictionHorizon,
+      // The one shared predictive test: the same call the kiting gate makes
+      // through `hazardThreatensPlayer`. `hdx`/`hdy`/`d` are this tick's
+      // precomputed relative position, so nothing is re-derived per bearing.
+      const prediction = predictMinimumSeparation(
+        candidateMotion,
+        hazard,
+        t,
+        torus,
+        { rx: hdx, ry: hdy, distance: d, scratch: hazardScratch },
       );
-      if (ca.distance < clearance) clearance = ca.distance;
-      if (ca.t > EPS && ca.distance < t.threatRadius) safe = false;
+      // An early-out reports a proven lower bound; the positional distance is a
+      // tighter (and safe) clearance score for a hazard that cannot reach the
+      // ship inside the horizon.
+      const predictedClearance =
+        prediction.mode === 'early-out' ? d : prediction.separation;
+      if (predictedClearance < clearance) clearance = predictedClearance;
+      if (prediction.time > EPS && prediction.separation < t.threatRadius) {
+        safe = false;
+      }
     }
   }
 
@@ -463,6 +464,18 @@ export function evaluateDirection(
     safe,
     clearance: Number.isFinite(clearance) ? clearance : t.clearanceCap,
   };
+}
+
+/**
+ * The ship's motion at one candidate bearing, in the record the sampled
+ * predictive test consumes (AH-0MWM0CB2Q003Y6AB). Mutable by design: the fan
+ * overwrites one per-tick record per bearing instead of allocating per hazard.
+ */
+export interface SteeringCandidateMotion {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
 }
 
 /** One hazard with its **direction-independent** geometry from the player. */
@@ -504,6 +517,19 @@ export interface SteeringDerived {
   readonly hazards: readonly DerivedHazard[];
   /** Every predicted incoming shot, in world order, with its geometry. */
   readonly shots: readonly DerivedShot[];
+  /**
+   * Reused candidate-motion record for the sampled predictive test: the fan
+   * overwrites the ship's position/velocity once per bearing instead of
+   * allocating a player record for every hazard of every bearing
+   * (AH-0MWM0CB2Q003Y6AB).
+   */
+  readonly candidateMotion: SteeringCandidateMotion;
+  /**
+   * Reused class-model sampling state for the sampled predictive test: one
+   * record for the whole tick, never one per hazard or per bearing
+   * (AH-0MWM0CB2Q003Y6AB).
+   */
+  readonly hazardScratch: HazardMotionScratch;
   /**
    * `min` hazard distance for this tick (the collapsed positional clearance
    * contribution). `Infinity` when there are no hazards.
@@ -568,6 +594,8 @@ export function buildSteeringDerived(
       torus,
       hazards: [],
       shots: [],
+      candidateMotion: { x: 0, y: 0, vx: 0, vy: 0 },
+      hazardScratch: { x: 0, y: 0, vx: 0, vy: 0 },
       nearestHazardDistance: Number.POSITIVE_INFINITY,
       nearestShotDistance: Number.POSITIVE_INFINITY,
     };
@@ -587,6 +615,10 @@ export function buildSteeringDerived(
     torus,
     hazards,
     shots,
+    // One record per tick, reused for every bearing and every hazard
+    // (AH-0MWM0CB2Q003Y6AB).
+    candidateMotion: { x: player.x, y: player.y, vx: player.vx, vy: player.vy },
+    hazardScratch: { x: 0, y: 0, vx: 0, vy: 0 },
     nearestHazardDistance,
     nearestShotDistance,
   };

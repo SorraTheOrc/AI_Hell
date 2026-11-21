@@ -27,9 +27,14 @@ import {
   specialMissionRingView,
 } from './specialMission';
 
-/** The authored special-mission hex (ring 2's `the-void-marshall`). */
-const SPECIAL_HEX = HEX_RING_DEFINITIONS.find(
-  (definition) => definition.isSpecialMission === true,
+/** The authored ring-2 special-mission hex (`the-void-marshall`, `hull-3`). */
+const RING_TWO_SPECIAL_HEX = HEX_RING_DEFINITIONS.find(
+  (definition) => definition.id === 'hex-r2-3',
+);
+
+/** The authored ring-1 special-mission hex (`the-hollow-judge`, `hull-4`). */
+const RING_ONE_SPECIAL_HEX = HEX_RING_DEFINITIONS.find(
+  (definition) => definition.id === 'hex-r1-5',
 );
 
 /** A hand-built ordinary hex definition (never authored as special). */
@@ -51,33 +56,52 @@ function ordinaryHex(): HexRingDefinition {
 
 describe('special-mission reward resolution (AH-0MWF0CX0H004OJ2Y)', () => {
   it('recognises the authored special-mission hex and no ordinary hex', () => {
-    expect(SPECIAL_HEX).toBeDefined();
-    expect(isSpecialMissionHex(SPECIAL_HEX)).toBe(true);
+    expect(RING_TWO_SPECIAL_HEX).toBeDefined();
+    expect(RING_ONE_SPECIAL_HEX).toBeDefined();
+    expect(isSpecialMissionHex(RING_TWO_SPECIAL_HEX)).toBe(true);
+    expect(isSpecialMissionHex(RING_ONE_SPECIAL_HEX)).toBe(true);
     expect(isSpecialMissionHex(ordinaryHex())).toBe(false);
     // Total: an absent definition is an ordinary hex, never a throw.
     expect(isSpecialMissionHex(undefined)).toBe(false);
     expect(isSpecialMissionHex(null)).toBe(false);
   });
 
-  it('resolves the authored hex to the extra-hit-points hull it grants', () => {
-    const reward = specialMissionRewardFor(SPECIAL_HEX);
+  it('resolves the ring-2 hex to the extra-hit-points hull it grants', () => {
+    const reward = specialMissionRewardFor(RING_TWO_SPECIAL_HEX);
 
     expect(reward).not.toBeNull();
-    expect(reward?.hexId).toBe(SPECIAL_HEX?.id);
-    expect(reward?.boss).toBe(SPECIAL_HEX?.boss);
+    expect(reward?.hexId).toBe(RING_TWO_SPECIAL_HEX?.id);
+    expect(reward?.boss).toBe(RING_TWO_SPECIAL_HEX?.boss);
     // The reward IS the hex's authored grant — one derivation, no drift.
-    expect(reward?.hullId).toBe(SPECIAL_HEX?.grants);
+    expect(reward?.hullId).toBe(RING_TWO_SPECIAL_HEX?.grants);
     expect(reward?.hull.kind).toBe('hull');
     expect(reward?.hull.name).toBe('Juggernaut Hull');
     expect(reward?.baseDefence).toBe(5);
     expect(reward?.startingLives).toBe(5);
   });
 
+  it('resolves the ring-1 hex to the grant-only ring-1-tier hull it grants', () => {
+    const reward = specialMissionRewardFor(RING_ONE_SPECIAL_HEX);
+
+    expect(reward).not.toBeNull();
+    expect(reward?.hexId).toBe('hex-r1-5');
+    expect(reward?.boss).toBe('the-hollow-judge');
+    // One derivation: the offer's reward is the capture's reward.
+    expect(reward?.hullId).toBe(RING_ONE_SPECIAL_HEX?.grants);
+    expect(reward?.hullId).toBe('hull-4');
+    expect(reward?.hull.kind).toBe('hull');
+    expect(reward?.hull.name).toBe('Vanguard Hull');
+    expect(reward?.startingLives).toBe(4);
+    expect(reward?.baseDefence).toBe(3);
+    // The "extra hit points" over the starter Scrap Hull are one life.
+    expect(reward?.bonusStartingLives).toBe(1);
+  });
+
   it('reports the extra hit points over the starter hull as the special part', () => {
     const starter = HANGAR_CATALOGUE.find(
       (entry) => entry.id === STARTER_HULL_ID && entry.kind === 'hull',
     );
-    const reward = specialMissionRewardFor(SPECIAL_HEX);
+    const reward = specialMissionRewardFor(RING_TWO_SPECIAL_HEX);
 
     expect(starter?.kind).toBe('hull');
     if (starter?.kind !== 'hull' || !reward) throw new Error('fixtures missing');
@@ -199,9 +223,11 @@ describe('special-mission rotation (AH-0MWF0CVNH005CG9T)', () => {
 
     expect(ring).toHaveLength(payload.ring.hexes.length);
     // Authored kind comes from the definitions, ownership from the payload:
-    // ring 1 authors no special mission, so the composed view marks none.
+    // ring 1 authors exactly one special mission (`hex-r1-5`).
     expect(ring[0].held).toBe(true);
-    expect(ring.some((hex) => hex.isSpecialMission)).toBe(false);
+    expect(ring.filter((hex) => hex.isSpecialMission).map((hex) => hex.id)).toEqual([
+      'hex-r1-5',
+    ]);
     // The composed view carries the authored definition it was built from.
     expect(ring[0].definition.id).toBe(payload.ring.hexes[0].id);
   });
@@ -291,8 +317,31 @@ describe('special-mission rotation (AH-0MWF0CVNH005CG9T)', () => {
     expect(specialMissionOfferFor(held)).toBeNull();
   });
 
-  it('offers nothing on a ring that authors no special mission', () => {
-    // Ring 1 has no special-mission hex authored.
-    expect(specialMissionOfferFor(war(5))).toBeNull();
+  it('offers each ring its own authored special mission during its phase', () => {
+    // `resolveSpecialOffer` draws over the payload's ring only, so the ring-1
+    // special can never leak into the ring-2 phase (or vice versa).
+    const ringOneOffer = specialMissionOfferFor(war(5));
+    expect(ringOneOffer?.hexId).toBe('hex-r1-5');
+    expect(ringOneOffer?.reward.hullId).toBe('hull-4');
+
+    const ringTwoPayload: HangarWarPayload = {
+      ...createDefaultPayload(5),
+      ring: createRingState(2, HEX_RING_DEFINITIONS),
+    };
+    const ringTwoOffer = specialMissionOfferFor(ringTwoPayload);
+    expect(ringTwoOffer?.hexId).toBe('hex-r2-3');
+    expect(ringTwoOffer?.reward.hullId).toBe('hull-3');
+  });
+
+  it('offers nothing on a ring whose authored data has no special mission', () => {
+    const definitions = HEX_RING_DEFINITIONS.filter(
+      (definition) => definition.ringIndex === 1,
+    ).map((definition) => ({ ...definition, isSpecialMission: false }));
+    const payload: HangarWarPayload = {
+      ...createDefaultPayload(5),
+      ring: createRingState(1, definitions),
+    };
+
+    expect(specialMissionOfferFor(payload, definitions)).toBeNull();
   });
 });

@@ -10187,7 +10187,14 @@ describe('PlayScene — dev-gated startLevel seam (AH-0MVE01EY0008QEVX AC3)', ()
   });
 
   it('starts a fresh demo run at the supplied campaign level in a dev build', async () => {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    // Register `PlayScene` but keep it out of the auto-start slot. Phaser
+    // auto-starts the FIRST scene in the list, so listing `PlayScene` first
+    // launches a throwaway level-1 run that the explicit `start` below
+    // restarts mid-boot; a boot still in flight publishes its own
+    // (level 1, wave 1) progress *after* the restart, leaving the dev handle
+    // reporting the throwaway run (AH-0MWPBV6JN003MTJE). Listing it last keeps
+    // it registered and starts it exactly once, with the floor data.
+    booted = await bootScene([GameOverScene, MenuScene, PlayScene]);
     const manager = booted.game.scene;
     manager.start('PlayScene', { demo: true, startLevel: 4 });
     await advanceGame(booted.game, 200);
@@ -10199,7 +10206,9 @@ describe('PlayScene — dev-gated startLevel seam (AH-0MVE01EY0008QEVX AC3)', ()
   });
 
   it('clamps an out-of-range startLevel to the campaign', async () => {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    // Same single-start shape as the test above (AH-0MWPBV6JN003MTJE):
+    // `PlayScene` is registered last so the explicit `start` is the only run.
+    booted = await bootScene([GameOverScene, MenuScene, PlayScene]);
     const manager = booted.game.scene;
     manager.start('PlayScene', { demo: true, startLevel: 999 });
     await advanceGame(booted.game, 200);

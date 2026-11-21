@@ -17,7 +17,7 @@ import { advanceAndCull, type PlayerBullet } from '../../entities/PlayerBullet';
 
 /**
  * The minimal visual-object contract a bullet view must satisfy: the shared
- * lifecycle only reads its position and destroys it on expiry.
+ * lifecycle reads its position and scale, destroys it on expiry.
  *
  * Since AH-0MW2DAY2L004QSKF a bullet's view is a **sprite of a cached
  * texture**, not a Graphics object; the structural type keeps the lifecycle
@@ -28,6 +28,13 @@ export interface BulletView {
   x: number;
   /** World y position (px). */
   y: number;
+  /** Current scale factor; read by collision code to compute the hit radius.
+   *  The shared lifecycle sets this to 1.0 → ~0 during the last 20 % of
+   *  the bullet's lifetime (AH-0MWJ9PMYF005N588).
+   */
+  scale: number;
+  /** Set the sprite scale (both axes uniformly). */
+  setScale(x: number, y?: number): void;
   /** Removes the view from the scene. */
   destroy(fromScene?: boolean): void;
 }
@@ -98,6 +105,18 @@ export function advanceWrappingBullets<T extends WrappingBullet>(
     // so the pulse breathes identically in the game and every gym
     // (AH-0MV822CQL005R4MM).
     bullet.redraw?.(bullet.elapsed);
+    // Fade the bullet out during the last 20 % of its lifetime: scale
+    // linearly from full size (1.0) down to ~0 so the expiry reads as a
+    // smooth visual dissolve rather than a snap (AH-0MWJ9PMYF005N588).
+    // Applied after `redraw` so it takes precedence over any animation scale
+    // inside the fade window: the bullet shrinks away rather than pulsing.
+    // Full scale is restored-by-construction (the view is only scaled here).
+    const fadeWindow = bullet.lifetime * 0.2;
+    const remaining = bullet.lifetime - bullet.elapsed;
+    if (remaining < fadeWindow) {
+      const fadeScale = Math.max(0, remaining / fadeWindow);
+      bullet.graphics.setScale(fadeScale);
+    }
     if (bullet.elapsed >= bullet.lifetime) {
       // Defensive destruction: a Graphics object already removed from a
       // shutting-down scene must not throw (GymPowerUpsCombat precedent).

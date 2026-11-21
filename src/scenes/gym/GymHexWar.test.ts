@@ -73,11 +73,15 @@ import {
 import { decideMapAction } from '../../ai/hangarWarTraversal';
 import { DEFENCE_REPORT_TITLE } from '../../core/hangarWar/defenceReport';
 import {
+  CONTROLS_HEADING,
   HELD_TILE_MARKER,
   HEX_MAP_HANGAR_ROW_KEY,
+  SELECTED_HEX_HEADING,
   UNHELD_TILE_MARKER,
+  WAR_STATUS_HEADING,
   type HexMapModel,
 } from '../../core/hangarWar/hexIntel';
+import { HEX_MAP_SECTION_RECTS } from '../hangarWar/hexMap';
 import {
   GymHexWar,
   GYM_HEX_WAR_DEFAULT_SEED,
@@ -387,7 +391,7 @@ describe('GymHexWar', () => {
     expect(hex.skills).toEqual([
       { id: 'maw-warded', name: 'Maw-warded', bossType: 'maw-of-ashes', bonus: 5 },
     ]);
-    expect(hex.label).toContain('skill Maw-warded +5 vs maw-of-ashes');
+    expect(hex.label).toContain('SKILL: Maw-warded +5 vs maw-of-ashes');
     expect(
       scene.getSummaryLines().some((line) => line.includes('skill Maw-warded +5')),
     ).toBe(true);
@@ -643,6 +647,97 @@ describe('GymHexWar', () => {
     expect(scene.getPayload().ring.hexes[0].defender).toBeNull();
   });
 
+  it('declares the attacked hex and bars it as an origin in the shipped record (AH-0MWH3A87Z005LLOX)', async () => {
+    const base = sixHexPayload();
+    const target = base.ring.hexes.find((hex) => hex.id === 'hex-r1-1')!;
+    target.held = true;
+    target.bossDefeated = true;
+    target.defender = { hullId: 'hull-1', defenceRating: 0, bankedMinerals: 0 };
+
+    // Pick the tick index whose shipped record attacks (deterministic).
+    let payload: HangarWarPayload = base;
+    let originId: string | null = null;
+    for (let tick = 0; tick < 64 && originId === null; tick += 1) {
+      const candidate = { ...base, frontierTick: tick };
+      const record = runFrontierTick(candidate, {
+        clock: frontierClockFor(candidate),
+      }).record;
+      if (record.attacks.length > 0) {
+        payload = candidate;
+        originId = record.attacks[0].attackerOriginId;
+      }
+    }
+    expect(originId).not.toBeNull();
+
+    const scene = await bootHexWar({ payload });
+    // Before the declaration the rendered shipped record names that origin …
+    expect(
+      scene
+        .getTickRecord()!
+        .attacks.some((attack) => attack.attackerOriginId === originId),
+    ).toBe(true);
+    expect(
+      scene.getMapArrows().some((arrow) => arrow.attackerOriginId === originId),
+    ).toBe(true);
+
+    // … and declaring it as the attacked hex excludes it from the shipped
+    // record and the arrows the shared renderer draws — no gym-local rule.
+    scene.setPlayerAttackingHex(originId);
+    expect(scene.getPlayerAttackingHex()).toBe(originId);
+    const record = scene.getTickRecord()!;
+    expect(record.attacks.length).toBeGreaterThan(0);
+    expect(
+      record.attacks.every((attack) => attack.attackerOriginId !== originId),
+    ).toBe(true);
+    expect(
+      scene
+        .getMapArrows()
+        .every((arrow) => arrow.attackerOriginId !== originId),
+    ).toBe(true);
+  });
+
+  it('bars the attacked hex as an origin on the tick() control surface (AH-0MWH3A87Z005LLOX)', async () => {
+    // Two adjacent hexes: the held target and the only hex an attack could be
+    // launched from. Declaring that origin bars the attack entirely.
+    const target: HexState = {
+      id: 'target',
+      q: 1,
+      r: 0,
+      held: true,
+      aggression: 0,
+      defender: { hullId: 'hull-1', defenceRating: 0, bankedMinerals: 0 },
+      bossDefeated: true,
+      grantedWeapon: null,
+    };
+    const origin: HexState = {
+      id: 'origin',
+      q: 0,
+      r: 1,
+      held: false,
+      aggression: 0,
+      defender: null,
+      bossDefeated: false,
+      grantedWeapon: null,
+    };
+    const payload = oneHexPayload(target);
+    payload.ring.hexes = [target, origin];
+
+    const excluded = await bootHexWar({ payload });
+    excluded.setPlayerAttackingHex('origin');
+    const results = excluded.tick(30);
+    expect(results.every((result) => result.attackedHexId === null)).toBe(true);
+    expect(
+      excluded.getPayload().ring.hexes.find((hex) => hex.id === 'target')!
+        .held,
+    ).toBe(true);
+
+    // Without the declaration the same harness tick does attack the target, so
+    // the exclusion — not an inert scenario — is what stops it.
+    const control = await bootHexWar({ payload });
+    const attacked = await tickUntilAttacked(control, 'target');
+    expect(attacked.attackedHexId).toBe('target');
+  });
+
   it('renders the shipped hex-map intel through the shared map renderer', async () => {
     const scene = await bootHexWar();
     const model = scene.getMapModel();
@@ -658,11 +753,13 @@ describe('GymHexWar', () => {
       const row = scene.getMapRows().find((entry) => entry.key === `hex:${intel.id}`);
       expect(row, `no map tile for ${intel.id}`).toBeDefined();
       expect(row!.label).toBe(intel.tileLabel);
-      expect(row!.label).toBe(
+      // The badge + coordinates lead; authored variety tags may follow.
+      expect(row!.label.split('\n').slice(0, 2)).toEqual([
         `AGG ${intel.aggression} ${
           intel.held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
-        }\n(${intel.q},${intel.r})`,
-      );
+        }`,
+        `(${intel.q},${intel.r})`,
+      ]);
     }
     // The gym's render is read-only by construction.
     expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);
@@ -676,15 +773,15 @@ describe('GymHexWar', () => {
     )!;
     expect(panel).toContain(defaultHex.id);
     expect(panel).toContain(defaultHex.boss!);
-    expect(panel).toContain(`W:${defaultHex.weaknesses.join(',')}`);
-    expect(panel).toContain(`→${defaultHex.grants}`);
-    expect(panel).toContain(`AGG ${defaultHex.aggression}`);
+    expect(panel).toContain(`WEAKNESSES: ${defaultHex.weaknesses.join(',')}`);
+    expect(panel).toContain(`GRANT: ${defaultHex.grants}`);
+    expect(panel).toContain(`AGGRESSION: ${defaultHex.aggression}`);
     expect(
       scene.children.list.some(
         (child) =>
           child instanceof Phaser.GameObjects.Text &&
           child.text.includes(defaultHex.boss!) &&
-          child.text.includes(`→${defaultHex.grants}`),
+          child.text.includes(`GRANT: ${defaultHex.grants}`),
       ),
     ).toBe(true);
 
@@ -709,7 +806,7 @@ describe('GymHexWar', () => {
     );
     expect(hex).toBeDefined();
     expect(scene.getMapPanelText()).toContain(hex!.id);
-    expect(scene.getMapPanelText()).toContain(`AGG ${hex!.aggression}`);
+    expect(scene.getMapPanelText()).toContain(`AGGRESSION: ${hex!.aggression}`);
   });
 
   // ── Hangar Map UX renderer contract (AH-0MWEWYT79001D3A1) ──────────
@@ -1180,29 +1277,60 @@ describe('GymHexWar — the special mission (AH-0MWF0CSSI007P414)', () => {
     expect(scene.getPayload().hangar.unlockedHulls).not.toContain('hull-3');
   });
 
-  it('shows the reward in the detail panel before any capture', async () => {
-    // Ring 1 is always revealed, so its tiles are focusable; marking its first
-    // hex special (granting the same hull) exercises the shipped panel.
-    const definitions = HEX_RING_DEFINITIONS.filter(
-      (definition) => definition.ringIndex === 1,
-    ).map((definition, index) =>
-      index === 0
-        ? { ...definition, grants: 'hull-3', isSpecialMission: true }
-        : definition,
-    );
-    const scene = await bootHexWar({
-      payload: sixHexPayload(),
-      definitions,
-    });
-    const specialHexId = definitions[0].id;
+  it('shows ring 1\'s reward in the detail panel before any capture', async () => {
+    // Ring 1 authors its own special mission (`hex-r1-5`), so the shipped
+    // payload needs no harness override: focusing the hex shows the game's own
+    // known-ahead reward block.
+    const scene = await bootHexWar({ payload: sixHexPayload() });
+    const specialHexId = 'hex-r1-5';
 
     expect(scene.getSpecialOffer()?.hexId).toBe(specialHexId);
+    expect(scene.getSpecialOffer()?.reward.hull.name).toBe('Vanguard Hull');
+    expect(scene.getSpecialOffer()?.reward.bonusStartingLives).toBe(1);
     // Focusing the special hex shows its full offer in the shipped panel.
     expect(scene.focusMapRow(`hex:${specialHexId}`)).toBe(true);
     const panel = scene.getMapPanelText();
     expect(panel).toContain('SPECIAL MISSION');
-    expect(panel).toContain('Juggernaut Hull');
+    expect(panel).toContain('Vanguard Hull');
+    expect(panel).toContain('+1 LIVES');
+    expect(panel).toContain('DEF 3');
     expect(panel).toContain('OFFERED THIS SORTIE');
+    // Nothing was captured: the reward is published, not owned.
+    expect(scene.getPayload().hangar.unlockedHulls).not.toContain('hull-4');
+  });
+
+  it('grants the ring-1 reward hull when the special mission is secured', async () => {
+    const scene = await bootHexWar({ payload: sixHexPayload() });
+
+    // Ring 1's special sits on the authored fortress, so the shipped capture
+    // cycle takes its two passes; the hull is paid on the securing pass.
+    const firstPass = scene.captureHex('hex-r1-5', 'hull-1');
+    expect(firstPass.ok).toBe(false);
+    expect(firstPass.reason).toBe('fortress-incomplete');
+    expect(scene.getPayload().hangar.unlockedHulls).not.toContain('hull-4');
+
+    const result = scene.captureHex('hex-r1-5', 'hull-1');
+
+    expect(result.ok).toBe(true);
+    expect(result.specialReward?.hullId).toBe('hull-4');
+    // The ship lands in the hangar the gym renders (same owned set as the game).
+    expect(scene.getPayload().hangar.unlockedHulls).toContain('hull-4');
+    expect(scene.getLastCapture()?.specialReward?.hullId).toBe('hull-4');
+    // ... and the map stops offering it, because it is now captured.
+    expect(scene.getSpecialOffer()).toBeNull();
+    expect(scene.getMapModel()!.specialOffer).toBeNull();
+  });
+
+  it('persists the ring-1 reward through the store for the hangar gym', async () => {
+    const scene = await bootHexWar({ payload: sixHexPayload() });
+    scene.captureHex('hex-r1-5', 'hull-1');
+    scene.captureHex('hex-r1-5', 'hull-1');
+
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(scene.getPayload(), storage);
+    const loaded = loadHangarWarPayload(storage);
+
+    expect(loaded?.hangar.unlockedHulls).toContain('hull-4');
   });
 
   it('grants the extra-hit-points hull when the special mission is captured', async () => {
@@ -1420,5 +1548,35 @@ describe('GymHexWar — hex variety surfaces (AH-0MWEW58WD003NFXS, AH-0MWEW5I1F0
     expect(after.hangar.unlockedWeapons).toEqual(fleetBefore.weapons);
     expect(after.hangar.ownedModifiers).toEqual(fleetBefore.modifiers);
     expect(after.hangar.bankedMinerals).toBe(before.hangar.bankedMinerals + 140);
+  });
+
+  /**
+   * Sectioned layout parity (AH-0MWL4QCVD007WOAM).
+   *
+   * The gym renders the game's map through the one shared `renderHexMap` call,
+   * so it must report exactly the same section registry — keys, headings and
+   * rects — as the game, and every row stays read-only.
+   */
+  it('reports the same section registry as the game, read-only', async () => {
+    const scene = await bootHexWar();
+
+    expect(scene.getMapSections().map((section) => section.key)).toEqual([
+      'war-status',
+      'map',
+      'selected-hex',
+      'controls',
+    ]);
+    expect(scene.getMapSections().map((section) => section.heading)).toEqual([
+      WAR_STATUS_HEADING,
+      scene.getMapModel()!.title,
+      SELECTED_HEX_HEADING,
+      CONTROLS_HEADING,
+    ]);
+    // The rects come from the shared layout table, not a gym-local copy.
+    for (const section of scene.getMapSections()) {
+      expect(section.rect).toBe(HEX_MAP_SECTION_RECTS[section.key]);
+    }
+    // Read-only: the gym never makes a row actionable.
+    expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);
   });
 });

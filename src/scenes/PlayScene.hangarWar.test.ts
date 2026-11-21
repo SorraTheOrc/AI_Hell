@@ -28,6 +28,7 @@ import {
 } from '../core/checkpointStore';
 import {
   HANGAR_WAR_STORAGE_KEY,
+  buyHangarUpgrade,
   loadHangarWarPayload,
   saveHangarWarPayload,
 } from '../core/hangarWar/hangarWarStore';
@@ -528,4 +529,87 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(wm.waveNumber).toBe(5);
     expect(scene.getAliveCount()).toBe(0);
   }, 30_000);
+
+  // Parent AC2/AC4 (AH-0MWI5AG1X0007XZH): bought permanent levels survive the
+  // store, deploy onto the run player and land on the captured defender with
+  // no capture-side change — the victory-time snapshot reads the same
+  // `getWeaponLevels()`/`getPowerUpLevels()` accessors the deploy granted into.
+  it(
+    'AC — bought permanent levels deploy onto the run and land on the captured defender',
+    async () => {
+      const payload = fieldedPayload();
+      payload.hangar.bankedMinerals = 5_000;
+      payload.hangar.bankedCores = 20;
+      // Two purchases through the store's real purchase path: the first step
+      // is the first effective one (base 1 → 2), the second 2 → 3
+      // (AH-0MWKV6F26008X1T3)…
+      const first = buyHangarUpgrade(payload, 'wave_laser', { ringIndex: 1 });
+      const second = buyHangarUpgrade(first.payload, 'wave_laser', {
+        ringIndex: 1,
+      });
+      expect(second.ok).toBe(true);
+      // …plus persisted power-up levels (a power-up's level row is its owned
+      // record). The ring's final unheld hex is `hex-1`, so the same repelled
+      // ring-end assault setup as the capture test above is used.
+      const upgraded: HangarWarPayload = {
+        ...second.payload,
+        hangar: {
+          ...second.payload.hangar,
+          powerUpLevels: [{ id: 'bomb', level: 2 }],
+        },
+        ring: {
+          ...second.payload.ring,
+          hexes: [
+            {
+              id: 'hex-0',
+              q: 1,
+              r: -1,
+              held: true,
+              aggression: 3,
+              defender: { hullId: 'hull-2', defenceRating: 60, bankedMinerals: 0 },
+              bossDefeated: true,
+              grantedWeapon: null,
+            },
+            ...second.payload.ring.hexes,
+          ],
+        },
+      };
+      const deployment = buildHangarDeployment(upgraded, { seed: 97531 });
+      saveHangarWarPayload(upgraded);
+
+      const scene = await bootPlay({ hangarWar: deployment });
+      const player = scene.getPlayer()!;
+
+      // The run starts with the bought permanent levels (one grant per level),
+      // and no temporary/timed stack is ever created by a purchase or a grant.
+      expect(player.getWeaponLevels()).toEqual(
+        expect.arrayContaining([
+          { id: 'spread', level: 1 },
+          { id: 'wave_laser', level: 3 },
+        ]),
+      );
+      expect(
+        player.getPowerUpLevels().find((row) => row.id === 'bomb')?.level,
+      ).toBe(2);
+      expect(player.getTempWeaponIds()).toEqual([]);
+      expect(player.getTempPowerUpIds()).toEqual([]);
+
+      // Win the sortie; the capture snapshot reads those same accessors.
+      winLiveDeployment(scene);
+      const capture = scene.getLastCapture();
+      expect(capture).not.toBeNull();
+      expect(capture!.ok).toBe(true);
+      expect(capture!.defender).not.toBeNull();
+      expect(capture!.defender!.upgradeSnapshot?.weaponLevels).toEqual(
+        expect.arrayContaining([{ id: 'wave_laser', level: 3 }]),
+      );
+      expect(capture!.defender!.upgradeSnapshot?.powerUpLevels).toEqual(
+        expect.arrayContaining([{ id: 'bomb', level: 2 }]),
+      );
+      // Armour/systems come from the levels too, so the stored rating is the
+      // upgraded one rather than the hull-only baseline.
+      expect(capture!.defender!.defenceRating).toBeGreaterThan(0);
+    },
+    30_000,
+  );
 });

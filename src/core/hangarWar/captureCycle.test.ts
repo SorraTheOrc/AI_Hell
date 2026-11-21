@@ -13,9 +13,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { deriveDefenderRating } from './hangarEconomy';
+import { defenderRatingFromSnapshot, deriveDefenderRating } from './hangarEconomy';
 import * as hangarEconomyModule from './hangarEconomy';
-import { createDefaultPayload } from './hangarWarStore';
+import { buyHangarUpgrade, createDefaultPayload } from './hangarWarStore';
 import {
   HANGAR_WAR_VERSION,
   loadHangarWarPayload,
@@ -45,6 +45,7 @@ import {
   materialiseRing,
   openNextRing,
   resolveDeploymentDefeat,
+  resolveGrantAlias,
   resolveHexCapture,
   resolveHexGrant,
   withGrantedEntry,
@@ -131,6 +132,39 @@ describe('resolveHexGrant', () => {
     expect(resolveHexGrant(null)).toBeNull();
     expect(resolveHexGrant('   ')).toBeNull();
     expect(resolveHexGrant(42)).toBeNull();
+  });
+});
+
+describe('resolveGrantAlias', () => {
+  // The alias table is shared: the display matchup resolver reads this same
+  // helper (AH-0MWMT4NJV001PX8Y), so the capture cycle and the screen cannot
+  // drift into two tables.
+  it('resolves the authored weapon spelling to its catalogue entry', () => {
+    expect(resolveGrantAlias('waveLaser')).toEqual({
+      entryId: 'wave_laser',
+      kind: 'weapon',
+      weaponId: 'wave_laser',
+    });
+  });
+
+  it('agrees with the grant resolver for every aliased spelling', () => {
+    for (const id of ['waveLaser', 'extra-life']) {
+      const alias = resolveGrantAlias(id);
+      const grant = resolveHexGrant(id);
+      expect(alias).not.toBeNull();
+      expect(grant).not.toBeNull();
+      expect(grant!.entryId).toBe(alias!.entryId);
+      expect(grant!.kind).toBe(alias!.kind);
+      expect(grant!.weaponId).toBe(alias!.weaponId ?? null);
+    }
+  });
+
+  it('has no alias for a canonical or unknown id', () => {
+    expect(resolveGrantAlias('wave_laser')).toBeNull();
+    expect(resolveGrantAlias('not-an-entry')).toBeNull();
+    expect(resolveGrantAlias(null)).toBeNull();
+    expect(resolveGrantAlias('   ')).toBeNull();
+    expect(resolveGrantAlias(7)).toBeNull();
   });
 });
 
@@ -547,7 +581,7 @@ describe('ring securing', () => {
 });
 
 describe('resolveDeploymentDefeat — the loss path', () => {
-  it('forfeits only the unbanked salvage and leaves the payload untouched', () => {
+  it('forfeits only the unbanked salvage for a starter-kit fleet', () => {
     const payload = ringPayload();
     hex(payload, 'hex-r1-1').held = true;
     const before = JSON.parse(JSON.stringify(payload)) as HangarWarPayload;
@@ -563,9 +597,116 @@ describe('resolveDeploymentDefeat — the loss path', () => {
 
     // The run earns 60/1 and has banked nothing yet, so all of it is forfeit.
     expect(result.forfeited).toEqual({ minerals: 60, cores: 1 });
-    // The hangar and the ring survive a lost run.
+    // A starter-kit fleet has no bought ship to spend, so the payload is
+    // unchanged (the ring and banked balances always survive a loss).
     expect(result.payload).toEqual(before);
     expect(result.banked.minerals).toBe(0);
+  });
+
+  it('spends a bought ship on a loss (hull, weapon, modifier and level rows)', () => {
+    const payload = boughtShipPayload();
+
+    const result = resolveDeploymentDefeat(payload, {
+      salvage: runSalvageFromRun({
+        runId: 'run-7',
+        checkpointId: 'run-end',
+        minerals: 60,
+        cores: 1,
+      }),
+    });
+
+    expect(result.payload.hangar.unlockedHulls).not.toContain('hull-2');
+    expect(result.payload.hangar.unlockedWeapons).not.toContain('wave_laser');
+    expect(result.payload.hangar.ownedModifiers).not.toContain(
+      'hardened_plating',
+    );
+    expect(result.payload.hangar.activeHull).toBe('hull-1');
+    expect(result.payload.hangar.weaponLevels).toEqual([
+      { id: 'ricochet', level: 2 },
+    ]);
+    // The un-flown spare parts and both balances survive.
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-3');
+    expect(result.payload.hangar.unlockedWeapons).toContain('ricochet');
+    expect(result.payload.hangar.ownedModifiers).toContain('anti_maw_plating');
+    expect(result.payload.hangar.bankedMinerals).toBe(500);
+    expect(result.payload.hangar.bankedCores).toBe(5);
+  });
+});
+
+/**
+ * A ring-1 war with a bought, fully-equipped ship (the ship a deployment
+ * flies) plus un-flown spare parts and bought permanent levels.
+ */
+function boughtShipPayload(): HangarWarPayload {
+  const payload = ringPayload();
+  payload.hangar.bankedMinerals = 500;
+  payload.hangar.bankedCores = 5;
+  payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3'];
+  payload.hangar.unlockedWeapons = ['spread', 'wave_laser', 'ricochet'];
+  payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+  payload.hangar.activeHull = 'hull-2';
+  payload.hangar.activeLoadout = {
+    startingWeapons: ['wave_laser', 'spread'],
+    modifiers: ['hardened_plating'],
+  };
+  payload.hangar.weaponLevels = [
+    { id: 'wave_laser', level: 3 },
+    { id: 'ricochet', level: 2 },
+  ];
+  payload.hangar.powerUpLevels = [{ id: 'shield', level: 2 }];
+  return payload;
+}
+
+describe('the capture spends exactly the flown ship (AH-0MWL5PAP2001XYYF)', () => {
+  it('uses an explicit ship input rather than the hangar’s active ship', () => {
+    const payload = boughtShipPayload();
+    payload.hangar.activeHull = 'hull-3';
+    payload.hangar.activeLoadout = {
+      startingWeapons: ['ricochet'],
+      modifiers: ['anti_maw_plating'],
+    };
+
+    const result = resolveHexCapture(payload, {
+      hexId: 'hex-r1-3',
+      defenderHullId: 'hull-2',
+      ship: {
+        hullId: 'hull-2',
+        startingWeapons: ['wave_laser'],
+        modifiers: ['hardened_plating'],
+      },
+      salvage: victorySalvage(0, 0),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(true);
+    // The ship the battle actually flew is spent …
+    expect(result.payload.hangar.unlockedHulls).not.toContain('hull-2');
+    expect(result.payload.hangar.unlockedWeapons).not.toContain('wave_laser');
+    expect(result.payload.hangar.ownedModifiers).not.toContain(
+      'hardened_plating',
+    );
+    // … not the (different) ship the hangar had active.
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-3');
+    expect(result.payload.hangar.unlockedWeapons).toContain('ricochet');
+    expect(result.payload.hangar.ownedModifiers).toContain('anti_maw_plating');
+  });
+
+  it('spends nothing on a refused capture (no defender is not a completed battle)', () => {
+    const payload = boughtShipPayload();
+
+    const result = resolveHexCapture(payload, {
+      hexId: 'hex-r1-3',
+      defenderHullId: null,
+      salvage: victorySalvage(0, 0),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('defender-required');
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-2');
+    expect(result.payload.hangar.unlockedWeapons).toContain('wave_laser');
+    expect(result.payload.hangar.ownedModifiers).toContain('hardened_plating');
+    expect(result.payload.hangar.activeHull).toBe('hull-2');
   });
 });
 
@@ -1056,6 +1197,61 @@ describe('resolveHexCapture — the special-mission path', () => {
     // The reward trades manoeuvrability for hit points; it is not a free win.
     expect(withReward.speedMultiplier).toBeLessThan(withStarter.speedMultiplier);
   });
+
+  it('pays the ring-1 special mission\'s grant-only hull (AH-0MWJ51KUS005WQK6)', () => {
+    // Ring 1's special is a fortress, so the shipped set-piece needs its two
+    // capture passes; the hull is paid on the securing pass through the same
+    // `resolveHexGrant` path as ring 2's.
+    const firstPass = resolveHexCapture(ringPayload(1), {
+      hexId: 'hex-r1-5',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(30, 1),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+    expect(firstPass.ok).toBe(false);
+    expect(firstPass.reason).toBe('fortress-incomplete');
+    expect(firstPass.specialReward).toBeNull();
+    expect(firstPass.payload.hangar.unlockedHulls).not.toContain('hull-4');
+
+    const result = resolveHexCapture(firstPass.payload, {
+      hexId: 'hex-r1-5',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(0, 0),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(true);
+    // The reward lands in the same owned set an ordinary hull grant uses.
+    expect(result.payload.hangar.unlockedHulls).toContain('hull-4');
+    expect(hex(result.payload, 'hex-r1-5').held).toBe(true);
+    expect(hex(result.payload, 'hex-r1-5').grantedWeapon).toBe('hull-4');
+    expect(result.specialReward?.hexId).toBe('hex-r1-5');
+    expect(result.specialReward?.hullId).toBe('hull-4');
+    expect(result.specialReward?.startingLives).toBe(4);
+    expect(result.specialReward?.baseDefence).toBe(3);
+    expect(result.specialReward?.bonusStartingLives).toBe(1);
+
+    // It is a real ship: deploying it adds exactly the advertised extra life.
+    const withReward = buildHangarDeployment({
+      ...result.payload,
+      hangar: { ...result.payload.hangar, activeHull: 'hull-4' },
+    });
+    const withStarter = buildHangarDeployment({
+      ...result.payload,
+      hangar: { ...result.payload.hangar, activeHull: 'hull-1' },
+    });
+    expect(withReward.startingLives - withStarter.startingLives).toBe(
+      result.specialReward?.bonusStartingLives,
+    );
+
+    // No new storage key: the ring-1 reward persists under the same payload.
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(result.payload, storage);
+    const loaded = loadHangarWarPayload(storage);
+    expect(loaded?.version).toBe(HANGAR_WAR_VERSION);
+    expect(loaded?.hangar.unlockedHulls).toContain('hull-4');
+    expect(hex(loaded!, 'hex-r1-5').grantedWeapon).toBe('hull-4');
+  });
 });
 
 // ── Run upgrade snapshot — red-first guard tests (AH-0MWHF6X9N0082BRO) ─────
@@ -1235,5 +1431,148 @@ describe('leaveDefender / resolveHexCapture — run upgrade snapshot (AH-0MWHF6X
     expect(stored.defenceRating).toBeGreaterThanOrEqual(
       deriveDefenderRating('hull-1'),
     );
+  });
+});
+
+// ── Capture integration: upgraded levels on the defender ──────────────────
+// (AH-0MWI5AN6Y000NTR5, parent AH-0MWHW4ALS0039JFU AC4)
+//
+// The parent epic's other slices *sell* a permanent level (the pure economy
+// rule + the versioned store, `buyHangarUpgrade`) and *carry* it out on the
+// deployment (`buildHangarDeployment` → `applyHangarWarDeployment`, which
+// grants the levels the run's `getWeaponLevels()`/`getPowerUpLevels()` read).
+// This suite pins the join between them and the capture cycle: a hex taken
+// **after** the fleet bought upgrades leaves a defender whose
+// `upgradeSnapshot`/`defenceRating` reflect the higher permanent levels,
+// resolved through the one shared capture path the game and the gyms both run
+// (`resolveHexCapture` → `leaveDefender`).
+
+describe('capture integration — upgraded permanent levels on the defender (AH-0MWI5AN6Y000NTR5)', () => {
+  /** A ring-1 war whose fleet fields (and can afford to upgrade) its starting weapon. */
+  function fieldedWar(): HangarWarPayload {
+    const payload = ringPayload();
+    return {
+      ...payload,
+      hangar: {
+        ...payload.hangar,
+        bankedMinerals: 5_000,
+        bankedCores: 20,
+        activeLoadout: {
+          ...payload.hangar.activeLoadout,
+          // `spread` is the fresh save's unlocked starting weapon.
+          startingWeapons: ['spread'],
+        },
+      },
+    };
+  }
+
+  /**
+   * The victory snapshot a deployment's run reports: the rows
+   * `applyHangarWarDeployment` grants as permanent levels, so the accessors
+   * the capture reads return exactly these (no pickups in this sortie).
+   */
+  function victorySnapshot(
+    deployment: ReturnType<typeof buildHangarDeployment>,
+  ) {
+    return {
+      weaponLevels: deployment.weaponLevels,
+      powerUpLevels: deployment.powerUpLevels,
+      consumablePools: [],
+    };
+  }
+
+  it('leaves a defender carrying the levels a hangar purchase raised, through the shared capture path', () => {
+    const war = fieldedWar();
+
+    // The unupgraded fleet deploys its weapon at base level 1 (no bought rows).
+    const baseDeployment = buildHangarDeployment(war);
+    expect(baseDeployment.weaponLevels).toEqual([{ id: 'spread', level: 1 }]);
+    const baseCapture = resolveHexCapture(war, {
+      hexId: 'hex-r1-2',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(10, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      snapshot: victorySnapshot(baseDeployment),
+    });
+    expect(baseCapture.ok).toBe(true);
+    const baseDefender = hex(baseCapture.payload, 'hex-r1-2').defender!;
+
+    // Two purchases through the one economy rule the hangar screen uses: from
+    // the unupgraded base the fleet's persisted level becomes 3 (the first
+    // purchase raises base level 1 → 2, the second 2 → 3 — no inert step,
+    // AH-0MWKV6F26008X1T3).
+    const first = buyHangarUpgrade(war, 'spread', {
+      ringIndex: war.ring.ringIndex,
+    });
+    const second = buyHangarUpgrade(first.payload, 'spread', {
+      ringIndex: war.ring.ringIndex,
+    });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    const upgraded = second.payload;
+    expect(upgraded.hangar.weaponLevels).toEqual([{ id: 'spread', level: 3 }]);
+
+    // The launch data the hangar hands the run carries that higher level…
+    const upgradedDeployment = buildHangarDeployment(upgraded);
+    expect(upgradedDeployment.weaponLevels).toEqual([
+      { id: 'spread', level: 3 },
+    ]);
+    const snapshot = victorySnapshot(upgradedDeployment);
+
+    // …and the capture after the purchase resolves against it.
+    const captured = resolveHexCapture(upgraded, {
+      hexId: 'hex-r1-4',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(10, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      snapshot,
+    });
+    expect(captured.ok).toBe(true);
+
+    const defender = hex(captured.payload, 'hex-r1-4').defender!;
+    // The stored snapshot is the deployment's rows: the bought level survives.
+    expect(defender.upgradeSnapshot).toEqual(snapshot);
+    expect(defender.upgradeSnapshot!.weaponLevels).toEqual([
+      { id: 'spread', level: 3 },
+    ]);
+    // The rating is the hull rating plus the bought level's contribution,
+    // through the one snapshot-aware derivation (no second formula).
+    expect(defender.defenceRating).toBe(
+      defenderRatingFromSnapshot(deriveDefenderRating('hull-1'), snapshot),
+    );
+    // The higher permanent level is strictly stronger than the same fleet's
+    // base-level deployment, and than the bare hull.
+    expect(defender.defenceRating).toBeGreaterThan(baseDefender.defenceRating);
+    expect(defender.defenceRating).toBeGreaterThan(
+      deriveDefenderRating('hull-1'),
+    );
+  });
+
+  it('keeps the no-upgrades baseline byte-for-byte today’s defender and rating', () => {
+    // A fresh fleet buys nothing and deploys no extra weapons, so its
+    // deployment carries no permanent-level rows at all.
+    const war = ringPayload();
+    const deployment = buildHangarDeployment(war);
+    expect(deployment.weaponLevels).toEqual([]);
+    expect(deployment.powerUpLevels).toEqual([]);
+
+    const captured = resolveHexCapture(war, {
+      hexId: 'hex-r1-2',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(10, 0),
+      definitions: HEX_RING_DEFINITIONS,
+      // An empty snapshot normalises to nothing, exactly like the game's
+      // upgrade-free run (field-presence migration keeps today's payload).
+      snapshot: victorySnapshot(deployment),
+    });
+    expect(captured.ok).toBe(true);
+
+    const defender = hex(captured.payload, 'hex-r1-2').defender!;
+    expect('upgradeSnapshot' in defender).toBe(false);
+    expect(defender).toEqual({
+      hullId: 'hull-1',
+      defenceRating: deriveDefenderRating('hull-1'),
+      bankedMinerals: 10,
+    });
   });
 });

@@ -2705,6 +2705,15 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['stepBlockedDiscards', 'src/scenes/core/blockedDropDiscard.ts'],
   ['applyMineralScoop', 'src/powerups/mineralScoop.ts'],
   ['collectMinerals', 'src/scenes/core/mineralLayer.ts'],
+  // Graze band / danger multiplier (AH-0MWL7ORK8007LXJI AC1): the whole rule
+  // — band resolution, the nearest-band point the spark anchors on, and the
+  // rounded-half-up score multiplier — lives once in the pure
+  // `src/core/graze.ts`. A scene (or a gym) that re-introduces a copy of any
+  // of them fails this guard, so the game and every gym cannot drift.
+  ['resolveGrazeZone', 'src/core/graze.ts'],
+  ['grazeRadiusFor', 'src/core/graze.ts'],
+  ['nearestGrazePoint', 'src/core/graze.ts'],
+  ['applyGrazeMultiplier', 'src/core/graze.ts'],
   // The hold-full reward moved to the Phaser-free `powerups/choiceReward`
   // so the headless eval arena shares one reward path without importing
   // Phaser (AH-0MVD1RIH2008YCNV); `mineralLayer` re-exports it for scenes.
@@ -2793,6 +2802,14 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   // repo-wide duplicate-body guard (gym↔game parity, AGENTS.md).
   ['isMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
   ['selectMiningLaserTarget', 'src/scenes/core/miningLaserTargeting.ts'],
+  // Anchored beam VFX seam (AH-0MWJ8JUEF006XBLB): the per-frame source
+  // re-anchoring and the wrapped shortest-path geometry live once in
+  // `src/vfx/anchoredBeam.ts` and are consumed by both beam weapons (the Wave
+  // Laser and the Mining Laser), so the game and every gym render the identical
+  // ship-tracking beam. A beam module that re-introduces its own redraw or wrap
+  // maths fails the repo-wide duplicate-body guard (gym↔game parity, AGENTS.md).
+  ['spawnAnchoredBeam', 'src/vfx/anchoredBeam.ts'],
+  ['wrappedBeamSegments', 'src/vfx/anchoredBeam.ts'],
   // Hangar War hex map (AH-0MWEWYT79001D3A1, parent AH-0MWDBI33V003QQ3U): the
   // reveal rule, the spatial grid columns and the map renderer live once and
   // are consumed by `HexMapScene` and `GymHexWar`, so a scene (or gym) that
@@ -2834,6 +2851,10 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   // scene that re-introduces the old timer fails this guard.
   ['_updateDroneSpawning', 'src/scenes/core/CombatCoreScene.ts'],
   ['_handleCollisions', 'src/scenes/core/CombatScene.ts'],
+  // Graze pass (AH-0MWL7ORK8007LXJI AC1): one graze pass in the shared
+  // collision pipeline, consumed by the game and every combat gym. A scene
+  // that re-implements band detection, credit or hysteresis fails this guard.
+  ['_resolveGrazePass', 'src/scenes/core/CombatScene.ts'],
   ['_hitPlayer', 'src/scenes/core/CombatScene.ts'],
   ['_updateAutoDefence', 'src/scenes/core/CombatScene.ts'],
   ['triggerTeleport', 'src/scenes/core/CombatScene.ts'],

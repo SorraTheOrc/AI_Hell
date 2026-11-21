@@ -15,12 +15,13 @@
  * - `scratch` — a free-form, goal-keyed scratch space for behaviour state
  *   (e.g. a debounce counter). Keys are namespaced by the owning goal id so
  *   goals never collide.
- * - `hazardVelocities` — the bot-side hazard-velocity tracker
- *   (AH-0MVI4QDN90037DIN · AC1): for every live hazard (enemy/asteroid/boss)
- *   it records the last-seen position and an estimated velocity derived from
- *   the position delta across decision ticks. The estimate is bot-side only —
- *   the snapshot seam exposes no per-archetype velocity for most entities
- *   (see `./hazardVelocity`).
+ * - `hazardVelocities` — the bot-side hazard-motion tracker
+ *   (AH-0MVI4QDN90037DIN · AC1, extended to a second-order fit by
+ *   AH-0MWM0C7ZR001YJRE · AC1): for every live hazard (enemy/asteroid/boss)
+ *   it records the last-seen position, a **bounded** recent-position history
+ *   and the estimated velocity plus curvature (turn rate) fitted from that
+ *   window. The estimate is bot-side only — the snapshot seam exposes no
+ *   per-archetype velocity for most entities (see `./hazardVelocity`).
  *
  * @module src/ai/framework/memory
  */
@@ -31,8 +32,8 @@ import {
 } from './commitment';
 
 /**
- * One hazard's last-seen position and bot-side velocity estimate
- * (AH-0MVI4QDN90037DIN · AC1).
+ * One hazard's last-seen position and bot-side motion estimate
+ * (AH-0MVI4QDN90037DIN · AC1, second-order fit AH-0MWM0C7ZR001YJRE · AC1).
  */
 export interface HazardVelocityEstimate {
   /** The decision tick (`BotMemory.ticks`) at which the hazard was last seen. */
@@ -43,6 +44,37 @@ export interface HazardVelocityEstimate {
   /** Estimated velocity (px/s), clamped to a sane maximum; `0` when unknown. */
   vx: number;
   vy: number;
+  /**
+   * Fitted turn rate (rad/s) from the recent-position window; `0` when the
+   * history is insufficient (cold start, gap) or the hazard moves straight.
+   * Clamped to a sane maximum by the tracker.
+   */
+  curvature: number;
+  /**
+   * Bounded recent-position history the second-order fit reads
+   * (AH-0MWM0C7ZR001YJRE · AC4). Created lazily on the first fitted sample and
+   * then reused in place, so a steady-state tick allocates nothing per hazard.
+   * Absent while the motion model is disabled, keeping that path allocation-
+   * identical to the pre-change tracker.
+   */
+  history?: HazardHistoryRing;
+}
+
+/**
+ * Fixed-capacity ring of a hazard's recent positions, oldest sample first.
+ * Both arrays are allocated once (on the hazard's first fitted sample) and
+ * overwritten in place thereafter, so memory is bounded per hazard and no
+ * per-tick allocation happens in steady state.
+ */
+export interface HazardHistoryRing {
+  /** Sample x coordinates (px), indexed by the ring. */
+  readonly x: Float64Array;
+  /** Sample y coordinates (px), indexed by the ring. */
+  readonly y: Float64Array;
+  /** Number of valid samples (`≤ x.length`). */
+  count: number;
+  /** Ring index of the oldest valid sample. */
+  head: number;
 }
 
 /** Explicit, deterministic cross-tick state for a bot run. */
@@ -71,14 +103,27 @@ export interface BotMemory {
 /**
  * Reusable scratch buffers for {@link trackHazardVelocities}
  * (AH-0MWGUN4P2003003P). Holds the per-tick `seen` key set and the returned
- * key→velocity view, both of which are reused across ticks instead of being
+ * key→motion view, both of which are reused across ticks instead of being
  * reallocated.
  */
 export interface HazardTrackingScratch {
   /** Hazard keys recorded on the current tick (cleared each tick). */
   readonly seen: Set<string>;
-  /** The key→velocity map returned to the world model (mutated in place). */
-  readonly view: Map<string, { x: number; y: number }>;
+  /** The key→motion map returned to the world model (mutated in place). */
+  readonly view: Map<string, HazardMotionVector>;
+}
+
+/**
+ * A hazard's fitted motion, mutated in place each tick so the world model can
+ * carry it onto the hazard point without an allocation
+ * (AH-0MVI4QDN90037DIN, extension AH-0MWM0C7ZR001YJRE).
+ */
+export interface HazardMotionVector {
+  /** Velocity (px/s). */
+  x: number;
+  y: number;
+  /** Fitted turn rate (rad/s); `0` when unknown or straight. */
+  curvature: number;
 }
 
 /** Creates a fresh, uncommitted memory. */

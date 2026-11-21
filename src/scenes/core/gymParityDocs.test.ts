@@ -377,6 +377,19 @@ describe('docs/GYM_PARITY.md carries current Hangar War rows (AH-0MVUXCC5J0028OG
     expect(rowVerdict(cells)).toBe('intentional divergence');
   });
 
+  it('records the target intel and matchup marks on the GymHangar row (AH-0MWMT4STK001PSK4)', () => {
+    const cells = rowCells('GymHangar');
+    // AC6: the row records the target intel block and the per-row marks the
+    // read-only gym renders from the shared model.
+    expect(cells[3]).toContain('TARGET INTEL');
+    expect(cells[3]).toContain('▲ EFFECTIVE');
+    expect(cells[3]).toContain('▼ RESISTED');
+    expect(cells[3]).toMatch(/matchup/i);
+    // The marks are display-only, never a second combat rule.
+    expect(cells[7]).toContain('AH-0MWMT4STK001PSK4');
+    expect(cells[7]).toMatch(/display only/i);
+  });
+
   it('points GymHexWar at the shipped map, frontier tick and rolled-in report', () => {
     const cells = rowCells('GymHexWar');
     expect(cells.length).toBeGreaterThan(7);
@@ -384,10 +397,11 @@ describe('docs/GYM_PARITY.md carries current Hangar War rows (AH-0MVUXCC5J0028OG
     expect(cells[3]).toContain('renderHexMap');
     expect(cells[3]).toContain('runFrontierTick');
     expect(cells[3]).toContain('buildDefenceReport');
-    // The report is rolled into the map: arrows plus the left-hand attack
-    // panel, no standalone report screen (AH-0MWEXJ21W003M7RR).
+    // The report is rolled into the map: arrows plus the attack numbers as the
+    // `SELECTED HEX` section's attack row, no standalone report screen
+    // (AH-0MWEXJ21W003M7RR; sectioned map AH-0MWL4QCVD007WOAM).
     expect(cells[3]).toContain('attack arrow');
-    expect(cells[3]).toContain('left-hand attack panel');
+    expect(cells[3]).toMatch(/attack row of the same `SELECTED HEX` section/i);
     expect(cells[3]).not.toContain('renderDefenceReport');
     expect(cells[7]).toContain('HexMapScene');
     expect(cells[7]).not.toContain('DefenceReportScene');

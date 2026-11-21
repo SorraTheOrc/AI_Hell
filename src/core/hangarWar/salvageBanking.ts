@@ -202,6 +202,14 @@ export function bankSalvage(
  * once per landed deployment — not a stored marker. A lost deployment banks
  * nothing.
  *
+ * **Paid on a hexless win too.** `PlayScene._resolveHangarWarCapture()` calls
+ * this for a winning deployment with a target hex (on top of the capture
+ * cycle's balance) and, when there is no target hex, as the hexless fallback
+ * that pays the bonus alone — without a capture watermark or any hex state
+ * change (AH-0MWNGYDIZ0037HGW, producer Q1 = (a)). The two branches are
+ * mutually exclusive, so the bonus is paid exactly once and a later checkpoint
+ * cannot re-bank it.
+ *
  * **Minerals only** (Q2 = (a)): a captured deployment has already banked its
  * one core through `resolveHexCapture`, so a bonus core would double-count.
  *

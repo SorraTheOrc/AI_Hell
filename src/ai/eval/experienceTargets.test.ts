@@ -62,6 +62,7 @@ function aggregate(overrides: Partial<BalanceAggregate> = {}): BalanceAggregate 
     powerUpsCollected: dist(10, 1, 0.2),
     asteroidsDestroyed: dist(10, 2, 0.5),
     avoidableHits: dist(10, 1, 0.3),
+    enemyBodyContacts: dist(10, 0, 0),
     survivalSeconds: dist(10, 30, 5),
     waveReached: dist(10, 6, 2),
     levelReached: dist(10, 1.2, 0.4),

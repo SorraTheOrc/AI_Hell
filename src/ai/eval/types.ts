@@ -17,7 +17,12 @@
  */
 
 import type { BotHumanInputTunables } from '../botHumanLike';
-import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
+import type {
+  DifficultyCurveRow,
+  EnemyConfig,
+  EnemyMovementClass,
+  ShipConfig,
+} from '../../core/configTypes';
 import type { DropId } from '../../powerups/types';
 import type { LevelDefinition } from '../../waves/Formations';
 import type { WeaponId } from '../../utils/weapons';
@@ -214,6 +219,56 @@ export interface ArenaStartingLoadout {
 }
 
 /**
+ * Settings for the **opt-in** moving-hostile mode
+ * (AH-0MWM0C40V002ISCA, verification infrastructure for the moving hostile
+ * arena harness).
+ *
+ * The arena's hostiles are stationary by default; enabling this mode makes
+ * each live hostile follow a deterministic, seeded motion profile derived
+ * from its **movement class** (the same `EnemyMovementClass` the bot resolves
+ * from an archetype via `src/ai/framework/enemyMovementClass`), and turns on
+ * the enemy-body contact counter. See the `src/ai/eval/arena` module header
+ * for which class each profile models and how closely it approximates the
+ * shipped enemy behaviour.
+ *
+ * Every field is optional and the whole mode is **off by default**, so an
+ * existing arena/eval baseline is untouched unless a caller opts in.
+ */
+export interface ArenaMovingHostiles {
+  /**
+   * The movement classes to animate (default: every class). A hostile whose
+   * class is not listed keeps the arena's historic stationary behaviour, so a
+   * caller can field, say, only `chaser` bodies.
+   */
+  readonly classes?: readonly EnemyMovementClass[];
+  /**
+   * Per-class cruise speed in px/s (default
+   * {@link DEFAULT_ARENA_MOVING_HOSTILE_SPEEDS}). Omitted classes use their
+   * default; a non-finite or non-positive value falls back to the default in
+   * the same way the arena's other tunables degrade.
+   */
+  readonly speeds?: Partial<Record<EnemyMovementClass, number>>;
+}
+
+/**
+ * Default per-class cruise speeds (px/s) for the opt-in moving-hostile mode.
+ *
+ * These are harness tunables chosen to exercise the bot's hazard predictor at
+ * a plausible pace — they are deliberately **not** read from the shipped
+ * enemy config (whose movement is scene-owned), so the mode stays an
+ * approximation rather than a second enemy-AI implementation.
+ */
+export const DEFAULT_ARENA_MOVING_HOSTILE_SPEEDS: Readonly<
+  Record<EnemyMovementClass, number>
+> = Object.freeze({
+  chaser: 90,
+  diver: 110,
+  patroller: 70,
+  formation: 45,
+  roamer: 55,
+});
+
+/**
  * Config an evaluation harness can "play" a seeded arena run with
  * (AH-0MUY08XLD009K4W4). Every field is optional except the seed and the tick
  * budget, so a minimal consumer is `{ seed, ticks }`.
@@ -350,6 +405,27 @@ export interface ArenaConfig {
    * divergent option model is introduced in `src/ai/eval/`.
    */
   readonly choicePool?: readonly DropId[];
+  /**
+   * **Opt-in** moving-hostile mode (AH-0MWM0C40V002ISCA). `true` fields moving
+   * hostiles of every movement class with the default per-class speeds; an
+   * object narrows the classes/speeds. Omitted or `false` keeps every hostile
+   * stationary **and** leaves the enemy-body contact counter at zero, so the
+   * default path stays byte-identical to a pre-change baseline.
+   */
+  readonly movingHostiles?: boolean | ArenaMovingHostiles;
+  /**
+   * Explicit archetype list for the seeded skirmish's hostile reservoir
+   * (AH-0MWOKL79Z0051ZXO). Absent → the config-derived list
+   * ({@link ArenaConfig.balance} / `loadAllEnemyConfigs`, minus the
+   * spawner-delivered archetypes), which is what every existing caller gets.
+   *
+   * The moving-hostile sweep uses it to field **one movement class at a time**
+   * (`['ghost-chase']`, `['diver']`, …), so a per-class comparison is not
+   * diluted by unrelated bodies. It only chooses which archetypes the seeded
+   * reservoir spawns — their stats still come from the config store, exactly
+   * as the harness always resolves them.
+   */
+  readonly hostileArchetypes?: readonly string[];
 }
 
 /** The shaped result of one headless arena run. */
@@ -361,6 +437,24 @@ export interface ArenaRunResult {
   readonly won: boolean;
   /** Ticks actually simulated (may be less than `config.ticks` on death). */
   readonly ticksSimulated: number;
+  /**
+   * How many times the ship's hull overlapped a live hostile body during the
+   * run (AH-0MWM0C40V002ISCA). Counted only in the opt-in
+   * {@link ArenaConfig.movingHostiles} mode, where a contact is a **rising
+   * edge**: a continuous overlap counts once until the hull and the body
+   * separate again. `0` when the mode is off.
+   */
+  readonly enemyBodyContacts: number;
+  /**
+   * The subset of {@link ArenaRunResult.enemyBodyContacts} the ship could have
+   * avoided (AH-0MWOKL79Z0051ZXO): contacts for which, at some decision tick in
+   * the 0.25 s before the overlap, a 16-direction escape fan at the ship's live
+   * max speed would have kept the hull clear of the body for that whole window
+   * against the body's then-velocity. A contact no reaction could have
+   * prevented counts as unavoided but **not** avoidable, so the metric measures
+   * dodging rather than luck. `0` when the mode is off.
+   */
+  readonly avoidableEnemyBodyContacts: number;
 }
 
 /** Default spawn counts, sized for a representative single-level skirmish. */
@@ -457,6 +551,13 @@ export interface BalanceRunStats {
   readonly powerUpsCollected: number;
   /** Hits that cost a life (`player_hit`); absorbed hits are excluded. */
   readonly avoidableHits: number;
+  /**
+   * Enemy-body contacts (`enemy_body_contact`): how many times the ship's hull
+   * overlapped a live hostile body. Only the opt-in moving-hostile arena mode
+   * emits these events, so a run without the mode reports `0`
+   * (AH-0MWM0C40V002ISCA).
+   */
+  readonly enemyBodyContacts: number;
   /** Survival time in seconds (derived from the last recorded tick). */
   readonly survivalSeconds: number;
   /** Highest wave number reached (0 when the stream carries no wave events). */
@@ -481,6 +582,7 @@ export interface BalanceAggregate {
   readonly powerUpsCollected: DistributionStats;
   readonly asteroidsDestroyed: DistributionStats;
   readonly avoidableHits: DistributionStats;
+  readonly enemyBodyContacts: DistributionStats;
   readonly survivalSeconds: DistributionStats;
   readonly waveReached: DistributionStats;
   readonly levelReached: DistributionStats;

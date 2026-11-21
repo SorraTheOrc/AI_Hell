@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { decideBotIntent } from './botDecision';
+import { decideBotIntent, type BotSteeringIntent } from './botDecision';
 import { BotInputGovernor } from './botHumanLike';
 import { AsteroidsModel } from '../utils/movementModel';
 import type { AsteroidsInput } from '../utils/movementModel';
@@ -389,6 +389,179 @@ describe('predictive hazard avoidance in the competent brain (AH-0MVI4QDN90037DI
     const first = runCrossing(true);
     const second = runCrossing(true);
     expect(second.minDistance).toBe(first.minDistance);
+    expect(second.final.x).toBe(first.final.x);
+    expect(second.final.y).toBe(first.final.y);
+  });
+});
+
+// ── Motion-model evasion proof (AH-0MWM0C5BN003PCDT) ────────────────
+
+/**
+ * The 60 Hz evasion proof for the movement-class hazard motion model
+ * (AH-0MWM0C5BN003PCDT, the acceptance evidence for the epic
+ * AH-0MWLUIOH9001XBJ3).
+ *
+ * A **scripted curving chaser** crosses the ship's transit line: it homes on
+ * the ship with a bounded turn rate of 1.6 rad/s, so a predictor that assumes
+ * it keeps its current velocity sees it pass clear while it actually curves
+ * into the ship. The competent brain flies the identical scenario twice — the
+ * only difference is `hazardMotionModelEnabled` — on the kinematic actuator the
+ * existing predictive suite uses (the ship travels along the chosen bearing at
+ * `playerSpeed`, so the test isolates the prediction, not the ship's inertia).
+ *
+ * The pass bar is the contact geometry the shipped game uses: an enemy-body
+ * contact is a hull overlap within `PLAYER_HIT_RADIUS` (14 px) plus the
+ * enemy's contact size (16 px) — 30 px. The constant-velocity control **does**
+ * collide; the class-shaped model **evades**, staying outside the contact
+ * radius minus a 1 px tolerance for the discrete step.
+ *
+ * (The seeding harness these numbers come from — the per-class contact sweep
+ * over the headless arena in `eval/hazardMotionSweep.test.ts` — is tracked by
+ * AH-0MWM0C5BN003PCDT. Its live closed-loop contact bar is green: the arena
+ * advances every moving body through the same `advanceHazardMotion` trajectory
+ * the predictor walks, so the harness cannot validate a model against a path it
+ * cannot represent — see AH-0MWOKL79Z0051ZXO.)
+ */
+describe('motion-model evasion of a scripted curving enemy (AH-0MWM0C5BN003PCDT)', () => {
+  /** The game's player hull radius (`PLAYER_HIT_RADIUS` in the arena). */
+  const PLAYER_HIT_RADIUS = 14;
+  /** The scripted chaser's contact size (a 16 px enemy). */
+  const ENEMY_CONTACT_SIZE = 16;
+  const CONTACT_RADIUS = PLAYER_HIT_RADIUS + ENEMY_CONTACT_SIZE;
+  const SPEED = COMPETENT_BOT_TUNABLES.playerSpeed;
+  /** Bounded homing turn rate of the scripted chaser, rad/s. */
+  const TURN_RATE = 1.6;
+  const TICKS = 240;
+
+  interface EvasionResult {
+    /** Least ship-to-enemy centre distance over the whole run. */
+    minDistance: number;
+    /** Tick of the first hull overlap, or -1 when the ship stays clear. */
+    firstContactTick: number;
+    final: { x: number; y: number };
+  }
+
+  /**
+   * Flies the scripted crossing with the live competent brain. The enemy never
+   * exposes a velocity on the snapshot (it carries only a stable `id` and its
+   * archetype), so every lead the bot has comes from its own position-delta
+   * estimator — exactly the live game's seam.
+   */
+  function runCurvingCrossing(hazardMotionModelEnabled: boolean): EvasionResult {
+    const brain = createCompetentBotBrain({
+      tunables: { hazardMotionModelEnabled },
+    });
+    let state = { x: 200, y: 270, vx: SPEED, vy: 0 };
+    // The chaser enters from above the transit line, heading down-right, and
+    // curves onto the ship's route.
+    const enemyHeading = -Math.PI / 5;
+    const enemySpeed = 190;
+    let enemy = {
+      x: 480,
+      y: 20,
+      vx: Math.cos(enemyHeading) * enemySpeed,
+      vy: Math.sin(enemyHeading) * enemySpeed,
+    };
+    let minDistance = Number.POSITIVE_INFINITY;
+    let firstContactTick = -1;
+
+    for (let tick = 0; tick < TICKS; tick += 1) {
+      const snapshot: BotSnapshot = {
+        player: { x: state.x, y: state.y, vx: state.vx, vy: state.vy },
+        // Only the stable id and the archetype are exposed; the class is
+        // resolved bot-side from `ghost-chase`.
+        enemies: [
+          { id: 1, x: enemy.x, y: enemy.y, alive: true, archetype: 'ghost-chase' },
+        ],
+        enemyBullets: [],
+        playerBullets: [],
+        drops: [],
+        minerals: [{ x: 660, y: 270, type: 'mineral' }],
+        boss: null,
+        aliveCount: 1,
+        wave: null,
+        runSeed: 1,
+        lives: 3,
+        livesCap: 5,
+      };
+      const intent: BotSteeringIntent = brain.decide(snapshot, DT);
+      // Kinematic actuator: travel along the chosen bearing at the modelled
+      // speed (an idle intent holds station).
+      state = {
+        x: state.x + intent.dirX * SPEED * DT,
+        y: state.y + intent.dirY * SPEED * DT,
+        vx: intent.dirX * SPEED,
+        vy: intent.dirY * SPEED,
+      };
+
+      // Scripted homing: turn the enemy's velocity toward the ship at a
+      // bounded rate, then advance.
+      const desired = Math.atan2(state.y - enemy.y, state.x - enemy.x);
+      const current = Math.atan2(enemy.vy, enemy.vx);
+      const turn = Math.max(
+        -TURN_RATE * DT,
+        Math.min(TURN_RATE * DT, angleDiff(desired, current)),
+      );
+      const next = current + turn;
+      enemy = {
+        x: enemy.x + Math.cos(next) * enemySpeed * DT,
+        y: enemy.y + Math.sin(next) * enemySpeed * DT,
+        vx: Math.cos(next) * enemySpeed,
+        vy: Math.sin(next) * enemySpeed,
+      };
+
+      const distance = Math.hypot(state.x - enemy.x, state.y - enemy.y);
+      if (distance <= CONTACT_RADIUS && firstContactTick < 0) {
+        firstContactTick = tick;
+      }
+      minDistance = Math.min(minDistance, distance);
+    }
+
+    return { minDistance, firstContactTick, final: { x: state.x, y: state.y } };
+  }
+
+  it('collides on the constant-velocity predictor and evades with the motion model', () => {
+    const off = runCurvingCrossing(false);
+    const on = runCurvingCrossing(true);
+
+    // Recorded evidence: the two arms' least ship-to-enemy distance, so the run
+    // log carries the measurement the verdict was reached from (not just the
+    // pass/fail). Deterministic — the bounds below and the cross-run tie in the
+    // next test pin the numbers.
+    process.stdout.write(
+      `\nmotion-model evasion proof: contact radius ${CONTACT_RADIUS} px; `
+        + `constant-velocity ${off.minDistance.toFixed(1)} px `
+        + `(first overlap tick ${off.firstContactTick}); `
+        + `motion model ${on.minDistance.toFixed(1)} px `
+        + `(first overlap tick ${on.firstContactTick})\n`,
+    );
+
+    // The control arm (today's predictor) is fooled by the curve: the hull
+    // overlaps the chaser.
+    expect(off.minDistance).toBeLessThanOrEqual(CONTACT_RADIUS);
+    expect(off.firstContactTick).toBeGreaterThanOrEqual(0);
+
+    // The class-shaped model predicts the homing arc and keeps the hull
+    // outside the contact radius (minus a 1 px tolerance).
+    expect(on.minDistance).toBeGreaterThan(CONTACT_RADIUS - 1);
+    expect(on.firstContactTick).toBe(-1);
+    // It still made progress toward its objective rather than freezing.
+    expect(on.final.x).toBeGreaterThan(400);
+
+    // Pin the margins, not just the verdict. On the current tree the control's
+    // least distance is 25.7 px (4.3 px inside the 30 px radius) and the
+    // model's is 38.8 px (8.8 px clear); the run log prints both. A predictor
+    // regression that merely cleared the radius by a pixel would otherwise
+    // satisfy the inequalities above while silently giving the proof away.
+    expect(off.minDistance).toBeLessThan(CONTACT_RADIUS - 2);
+    expect(on.minDistance).toBeGreaterThan(CONTACT_RADIUS + 5);
+  });
+
+  it('is deterministic: two identical motion-model runs agree exactly', () => {
+    const first = runCurvingCrossing(true);
+    const second = runCurvingCrossing(true);
+    expect(second.minDistance).toBe(first.minDistance);
+    expect(second.firstContactTick).toBe(first.firstContactTick);
     expect(second.final.x).toBe(first.final.x);
     expect(second.final.y).toBe(first.final.y);
   });

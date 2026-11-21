@@ -15,12 +15,12 @@
             "hexId": "hex-r1-2",
             "aggression": 1,
             "level": 2,
-            "seconds": 14.366666666666667,
+            "seconds": 5.05,
             "captured": false,
-            "minerals": 3,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.4788888888888889,
+            "minutes": 0.16833333333333333,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -36,12 +36,12 @@
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 23.03333333333333,
+            "seconds": 13.65,
             "captured": false,
-            "minerals": 6,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.7677777777777777,
+            "minutes": 0.455,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -57,12 +57,12 @@
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 23.03333333333333,
+            "seconds": 13.65,
             "captured": false,
-            "minerals": 6,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.7677777777777777,
+            "minutes": 0.455,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -78,12 +78,12 @@
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 12.75,
+            "seconds": 9.233333333333333,
             "captured": false,
             "minerals": 1,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.425,
+            "minutes": 0.30777777777777776,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -99,12 +99,12 @@
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 20.666666666666668,
+            "seconds": 12.066666666666666,
             "captured": false,
-            "minerals": 4,
+            "minerals": 1,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.6888888888888889,
+            "minutes": 0.4022222222222222,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -120,12 +120,12 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 17.866666666666667,
+            "seconds": 4.7,
             "captured": false,
-            "minerals": 5,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.5955555555555556,
+            "minutes": 0.15666666666666668,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -138,18 +138,18 @@
             }
           }
         ],
-        "deploymentMinutes": 1.8619444444444442,
+        "deploymentMinutes": 0.9725,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 1.8619444444444442,
+        "retryMinutes": 0.9725,
         "retakeMinutes": 0,
-        "totalMinutes": 15.723888888888887,
+        "totalMinutes": 13.945,
         "captured": 0,
         "losses": 6,
         "expectedRetakes": 0,
         "expectedLosses": 6,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 25,
+        "salvageForfeited": 2,
         "salvageCores": 0,
         "ringSecured": true
       },
@@ -160,12 +160,12 @@
             "hexId": "hex-r1-2",
             "aggression": 1,
             "level": 2,
-            "seconds": 18.3,
+            "seconds": 5.783333333333333,
             "captured": false,
             "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.61,
+            "minutes": 0.19277777777777777,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -181,12 +181,12 @@
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 29.633333333333333,
+            "seconds": 23.666666666666668,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.9877777777777778,
+            "minutes": 0.788888888888889,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -202,12 +202,12 @@
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 29.633333333333333,
+            "seconds": 23.666666666666668,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.9877777777777778,
+            "minutes": 0.788888888888889,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -223,12 +223,12 @@
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 27.4,
+            "seconds": 9.266666666666666,
             "captured": false,
             "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.9133333333333333,
+            "minutes": 0.3088888888888889,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -244,12 +244,12 @@
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 25.983333333333334,
+            "seconds": 14.2,
             "captured": false,
-            "minerals": 2,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.8661111111111112,
+            "minutes": 0.47333333333333333,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -265,12 +265,12 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 8.2,
+            "seconds": 13.066666666666666,
             "captured": false,
             "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.2733333333333333,
+            "minutes": 0.43555555555555553,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -283,18 +283,18 @@
             }
           }
         ],
-        "deploymentMinutes": 2.319166666666667,
+        "deploymentMinutes": 1.4941666666666666,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 2.319166666666667,
+        "retryMinutes": 1.4941666666666666,
         "retakeMinutes": 0,
-        "totalMinutes": 16.638333333333335,
+        "totalMinutes": 14.988333333333333,
         "captured": 0,
         "losses": 6,
         "expectedRetakes": 0,
         "expectedLosses": 6,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 4,
+        "salvageForfeited": 0,
         "salvageCores": 0,
         "ringSecured": true
       },
@@ -305,12 +305,12 @@
             "hexId": "hex-r1-2",
             "aggression": 1,
             "level": 2,
-            "seconds": 35.6,
+            "seconds": 61.65,
             "captured": false,
-            "minerals": 5,
+            "minerals": 1,
             "hits": 3,
             "retries": 1,
-            "minutes": 1.1866666666666668,
+            "minutes": 2.055,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -326,12 +326,12 @@
             "hexId": "hex-r1-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 23.55,
+            "seconds": 28.5,
             "captured": false,
-            "minerals": 2,
+            "minerals": 1,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.785,
+            "minutes": 0.95,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -347,12 +347,12 @@
             "hexId": "hex-r1-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 23.55,
+            "seconds": 28.5,
             "captured": false,
-            "minerals": 2,
+            "minerals": 1,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.785,
+            "minutes": 0.95,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -368,12 +368,12 @@
             "hexId": "hex-r1-3",
             "aggression": 3,
             "level": 4,
-            "seconds": 29.3,
+            "seconds": 10.366666666666667,
             "captured": false,
-            "minerals": 2,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.9766666666666667,
+            "minutes": 0.34555555555555556,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -389,12 +389,12 @@
             "hexId": "hex-r1-5",
             "aggression": 4,
             "level": 5,
-            "seconds": 25.5,
+            "seconds": 8.483333333333333,
             "captured": false,
-            "minerals": 4,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.85,
+            "minutes": 0.28277777777777774,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -410,12 +410,12 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 9.933333333333334,
+            "seconds": 20.733333333333334,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.33111111111111113,
+            "minutes": 0.6911111111111111,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -428,18 +428,18 @@
             }
           }
         ],
-        "deploymentMinutes": 2.457222222222222,
+        "deploymentMinutes": 2.637222222222222,
         "betweenSortieMinutes": 12,
-        "retryMinutes": 2.457222222222222,
+        "retryMinutes": 2.637222222222222,
         "retakeMinutes": 0,
-        "totalMinutes": 16.914444444444445,
+        "totalMinutes": 17.274444444444445,
         "captured": 0,
         "losses": 6,
         "expectedRetakes": 0,
         "expectedLosses": 6,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 16,
+        "salvageForfeited": 3,
         "salvageCores": 0,
         "ringSecured": true
       }
@@ -447,15 +447,15 @@
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 16.425555555555558,
-        "min": 15.723888888888887,
-        "max": 16.914444444444445
+        "mean": 15.402592592592592,
+        "min": 13.945,
+        "max": 17.274444444444445
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 2.2127777777777777,
-        "min": 1.8619444444444442,
-        "max": 2.457222222222222
+        "mean": 1.7012962962962963,
+        "min": 0.9725,
+        "max": 2.637222222222222
       },
       "losses": {
         "count": 3,
@@ -497,7 +497,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 6,
-      "measuredMinutes": 16.425555555555558,
+      "measuredMinutes": 15.402592592592592,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "missed"
@@ -529,12 +529,12 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 17.866666666666667,
+            "seconds": 4.7,
             "captured": false,
-            "minerals": 5,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.5955555555555556,
+            "minutes": 0.15666666666666668,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -547,18 +547,18 @@
             }
           }
         ],
-        "deploymentMinutes": 0.2977777777777778,
+        "deploymentMinutes": 0.07833333333333334,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 0.2977777777777778,
-        "retakeMinutes": 8.042222222222222,
-        "totalMinutes": 10.637777777777778,
+        "retryMinutes": 0.07833333333333334,
+        "retakeMinutes": 7.274166666666666,
+        "totalMinutes": 9.430833333333332,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 5,
+        "salvageForfeited": 0,
         "salvageCores": 0,
         "ringSecured": false
       },
@@ -569,12 +569,12 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 8.2,
+            "seconds": 13.066666666666666,
             "captured": false,
             "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.2733333333333333,
+            "minutes": 0.43555555555555553,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -587,11 +587,11 @@
             }
           }
         ],
-        "deploymentMinutes": 0.13666666666666666,
+        "deploymentMinutes": 0.21777777777777776,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 0.13666666666666666,
-        "retakeMinutes": 7.4783333333333335,
-        "totalMinutes": 9.751666666666667,
+        "retryMinutes": 0.21777777777777776,
+        "retakeMinutes": 7.7622222222222215,
+        "totalMinutes": 10.197777777777777,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
@@ -609,12 +609,12 @@
             "hexId": "hex-r1-6",
             "aggression": 6,
             "level": 7,
-            "seconds": 9.933333333333334,
+            "seconds": 20.733333333333334,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 3,
             "retries": 1,
-            "minutes": 0.33111111111111113,
+            "minutes": 0.6911111111111111,
             "loadout": {
               "hullId": "hull-1",
               "lives": 3,
@@ -627,18 +627,18 @@
             }
           }
         ],
-        "deploymentMinutes": 0.16555555555555557,
+        "deploymentMinutes": 0.34555555555555556,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 0.16555555555555557,
-        "retakeMinutes": 7.579444444444444,
-        "totalMinutes": 9.910555555555556,
+        "retryMinutes": 0.34555555555555556,
+        "retakeMinutes": 8.209444444444443,
+        "totalMinutes": 10.900555555555554,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 3.5,
         "expectedLosses": 4.5,
         "exposedHexes": 5,
         "salvageBanked": 0,
-        "salvageForfeited": 1,
+        "salvageForfeited": 0,
         "salvageCores": 0,
         "ringSecured": false
       }
@@ -646,15 +646,15 @@
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 10.1,
-        "min": 9.751666666666667,
-        "max": 10.637777777777778
+        "mean": 10.176388888888887,
+        "min": 9.430833333333332,
+        "max": 10.900555555555554
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 0.20000000000000004,
-        "min": 0.13666666666666666,
-        "max": 0.2977777777777778
+        "mean": 0.21388888888888888,
+        "min": 0.07833333333333334,
+        "max": 0.34555555555555556
       },
       "losses": {
         "count": 3,
@@ -696,7 +696,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 6,
-      "measuredMinutes": 10.1,
+      "measuredMinutes": 10.176388888888887,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"
@@ -728,16 +728,16 @@
             "hexId": "hex-r2-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 104.13333333333333,
+            "seconds": 67.93333333333334,
             "captured": false,
-            "minerals": 15,
+            "minerals": 8,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.471111111111111,
+            "minutes": 2.2644444444444445,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -753,12 +753,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -766,16 +766,16 @@
             "hexId": "hex-r2-10",
             "aggression": 2,
             "level": 3,
-            "seconds": 104.13333333333333,
+            "seconds": 67.93333333333334,
             "captured": false,
-            "minerals": 15,
+            "minerals": 8,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.471111111111111,
+            "minutes": 2.2644444444444445,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -791,12 +791,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -804,16 +804,16 @@
             "hexId": "hex-r2-2",
             "aggression": 2,
             "level": 3,
-            "seconds": 104.13333333333333,
+            "seconds": 67.93333333333334,
             "captured": false,
-            "minerals": 15,
+            "minerals": 8,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.471111111111111,
+            "minutes": 2.2644444444444445,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -829,12 +829,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -842,16 +842,16 @@
             "hexId": "hex-r2-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 104.13333333333333,
+            "seconds": 67.93333333333334,
             "captured": false,
-            "minerals": 15,
+            "minerals": 8,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.471111111111111,
+            "minutes": 2.2644444444444445,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -867,12 +867,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -880,16 +880,16 @@
             "hexId": "hex-r2-6",
             "aggression": 2,
             "level": 3,
-            "seconds": 104.13333333333333,
+            "seconds": 67.93333333333334,
             "captured": false,
-            "minerals": 15,
+            "minerals": 8,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.471111111111111,
+            "minutes": 2.2644444444444445,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -905,12 +905,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -918,16 +918,16 @@
             "hexId": "hex-r2-7",
             "aggression": 2,
             "level": 3,
-            "seconds": 104.13333333333333,
+            "seconds": 67.93333333333334,
             "captured": false,
-            "minerals": 15,
+            "minerals": 8,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.471111111111111,
+            "minutes": 2.2644444444444445,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -943,12 +943,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -956,16 +956,16 @@
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 92.51666666666667,
+            "seconds": 17.566666666666666,
             "captured": false,
-            "minerals": 17,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.0838888888888887,
+            "minutes": 0.5855555555555555,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -981,12 +981,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -994,16 +994,16 @@
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 92.51666666666667,
+            "seconds": 17.566666666666666,
             "captured": false,
-            "minerals": 17,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.0838888888888887,
+            "minutes": 0.5855555555555555,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1019,12 +1019,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1032,16 +1032,16 @@
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 92.51666666666667,
+            "seconds": 17.566666666666666,
             "captured": false,
-            "minerals": 17,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.0838888888888887,
+            "minutes": 0.5855555555555555,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1057,12 +1057,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1070,16 +1070,16 @@
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 92.51666666666667,
+            "seconds": 17.566666666666666,
             "captured": false,
-            "minerals": 17,
+            "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 3.0838888888888887,
+            "minutes": 0.5855555555555555,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1095,12 +1095,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1108,16 +1108,16 @@
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 14.799999999999999,
+            "seconds": 134.53333333333333,
             "captured": false,
             "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 0.4933333333333333,
+            "minutes": 4.484444444444445,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1133,12 +1133,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1146,16 +1146,16 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 22.766666666666666,
+            "seconds": 46.38333333333333,
             "captured": false,
             "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 0.7588888888888888,
+            "minutes": 1.546111111111111,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1171,28 +1171,28 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           }
         ],
-        "deploymentMinutes": 17.20722222222222,
+        "deploymentMinutes": 10.97972222222222,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 17.20722222222222,
+        "retryMinutes": 10.97972222222222,
         "retakeMinutes": 0,
-        "totalMinutes": 58.41444444444444,
+        "totalMinutes": 45.95944444444444,
         "captured": 0,
         "losses": 12,
         "expectedRetakes": 0,
         "expectedLosses": 12,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 160,
+        "salvageForfeited": 54,
         "salvageCores": 0,
         "ringSecured": true
       },
@@ -1203,16 +1203,16 @@
             "hexId": "hex-r2-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 55.699999999999996,
+            "seconds": 47.333333333333336,
             "captured": false,
             "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.8566666666666665,
+            "minutes": 1.577777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1228,12 +1228,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1241,16 +1241,16 @@
             "hexId": "hex-r2-10",
             "aggression": 2,
             "level": 3,
-            "seconds": 55.699999999999996,
+            "seconds": 47.333333333333336,
             "captured": false,
             "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.8566666666666665,
+            "minutes": 1.577777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1266,12 +1266,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1279,16 +1279,16 @@
             "hexId": "hex-r2-2",
             "aggression": 2,
             "level": 3,
-            "seconds": 55.699999999999996,
+            "seconds": 47.333333333333336,
             "captured": false,
             "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.8566666666666665,
+            "minutes": 1.577777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1304,12 +1304,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1317,16 +1317,16 @@
             "hexId": "hex-r2-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 55.699999999999996,
+            "seconds": 47.333333333333336,
             "captured": false,
             "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.8566666666666665,
+            "minutes": 1.577777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1342,12 +1342,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1355,16 +1355,16 @@
             "hexId": "hex-r2-6",
             "aggression": 2,
             "level": 3,
-            "seconds": 55.699999999999996,
+            "seconds": 47.333333333333336,
             "captured": false,
             "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.8566666666666665,
+            "minutes": 1.577777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1380,12 +1380,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1393,16 +1393,16 @@
             "hexId": "hex-r2-7",
             "aggression": 2,
             "level": 3,
-            "seconds": 55.699999999999996,
+            "seconds": 47.333333333333336,
             "captured": false,
             "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.8566666666666665,
+            "minutes": 1.577777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1418,12 +1418,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1431,16 +1431,16 @@
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 35.65,
+            "seconds": 145.88333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.1883333333333332,
+            "minutes": 4.862777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1456,12 +1456,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1469,16 +1469,16 @@
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 35.65,
+            "seconds": 145.88333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.1883333333333332,
+            "minutes": 4.862777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1494,12 +1494,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1507,16 +1507,16 @@
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 35.65,
+            "seconds": 145.88333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.1883333333333332,
+            "minutes": 4.862777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1532,12 +1532,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1545,16 +1545,16 @@
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 35.65,
+            "seconds": 145.88333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.1883333333333332,
+            "minutes": 4.862777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1570,12 +1570,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1583,16 +1583,16 @@
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 88.86666666666666,
+            "seconds": 26.766666666666666,
             "captured": false,
-            "minerals": 3,
+            "minerals": 2,
             "hits": 5,
             "retries": 1,
-            "minutes": 2.962222222222222,
+            "minutes": 0.8922222222222221,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1608,12 +1608,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1621,16 +1621,16 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 18.4,
+            "seconds": 14.916666666666666,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 0.6133333333333333,
+            "minutes": 0.4972222222222222,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1646,28 +1646,28 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           }
         ],
-        "deploymentMinutes": 9.734444444444442,
+        "deploymentMinutes": 15.153611111111113,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 9.734444444444442,
+        "retryMinutes": 15.153611111111113,
         "retakeMinutes": 0,
-        "totalMinutes": 43.468888888888884,
+        "totalMinutes": 54.30722222222222,
         "captured": 0,
         "losses": 12,
         "expectedRetakes": 0,
         "expectedLosses": 12,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 8,
+        "salvageForfeited": 2,
         "salvageCores": 0,
         "ringSecured": true
       },
@@ -1678,16 +1678,16 @@
             "hexId": "hex-r2-1",
             "aggression": 2,
             "level": 3,
-            "seconds": 52.516666666666666,
+            "seconds": 29.433333333333334,
             "captured": false,
-            "minerals": 9,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.7505555555555554,
+            "minutes": 0.9811111111111112,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1703,12 +1703,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1716,16 +1716,16 @@
             "hexId": "hex-r2-10",
             "aggression": 2,
             "level": 3,
-            "seconds": 52.516666666666666,
+            "seconds": 29.433333333333334,
             "captured": false,
-            "minerals": 9,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.7505555555555554,
+            "minutes": 0.9811111111111112,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1741,12 +1741,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1754,16 +1754,16 @@
             "hexId": "hex-r2-2",
             "aggression": 2,
             "level": 3,
-            "seconds": 52.516666666666666,
+            "seconds": 29.433333333333334,
             "captured": false,
-            "minerals": 9,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.7505555555555554,
+            "minutes": 0.9811111111111112,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1779,12 +1779,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1792,16 +1792,16 @@
             "hexId": "hex-r2-4",
             "aggression": 2,
             "level": 3,
-            "seconds": 52.516666666666666,
+            "seconds": 29.433333333333334,
             "captured": false,
-            "minerals": 9,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.7505555555555554,
+            "minutes": 0.9811111111111112,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1817,12 +1817,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1830,16 +1830,16 @@
             "hexId": "hex-r2-6",
             "aggression": 2,
             "level": 3,
-            "seconds": 52.516666666666666,
+            "seconds": 29.433333333333334,
             "captured": false,
-            "minerals": 9,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.7505555555555554,
+            "minutes": 0.9811111111111112,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1855,12 +1855,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1868,16 +1868,16 @@
             "hexId": "hex-r2-7",
             "aggression": 2,
             "level": 3,
-            "seconds": 52.516666666666666,
+            "seconds": 29.433333333333334,
             "captured": false,
-            "minerals": 9,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.7505555555555554,
+            "minutes": 0.9811111111111112,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1893,12 +1893,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1906,16 +1906,16 @@
             "hexId": "hex-r2-11",
             "aggression": 5,
             "level": 6,
-            "seconds": 34.5,
+            "seconds": 299.98333333333335,
             "captured": false,
-            "minerals": 7,
-            "hits": 5,
+            "minerals": 0,
+            "hits": 3,
             "retries": 1,
-            "minutes": 1.15,
+            "minutes": 9.999444444444444,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1931,12 +1931,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1944,16 +1944,16 @@
             "hexId": "hex-r2-3",
             "aggression": 5,
             "level": 6,
-            "seconds": 34.5,
+            "seconds": 299.98333333333335,
             "captured": false,
-            "minerals": 7,
-            "hits": 5,
+            "minerals": 0,
+            "hits": 3,
             "retries": 1,
-            "minutes": 1.15,
+            "minutes": 9.999444444444444,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -1969,12 +1969,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -1982,16 +1982,16 @@
             "hexId": "hex-r2-5",
             "aggression": 5,
             "level": 6,
-            "seconds": 34.5,
+            "seconds": 299.98333333333335,
             "captured": false,
-            "minerals": 7,
-            "hits": 5,
+            "minerals": 0,
+            "hits": 3,
             "retries": 1,
-            "minutes": 1.15,
+            "minutes": 9.999444444444444,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -2007,12 +2007,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -2020,16 +2020,16 @@
             "hexId": "hex-r2-8",
             "aggression": 5,
             "level": 6,
-            "seconds": 34.5,
+            "seconds": 299.98333333333335,
             "captured": false,
-            "minerals": 7,
-            "hits": 5,
+            "minerals": 0,
+            "hits": 3,
             "retries": 1,
-            "minutes": 1.15,
+            "minutes": 9.999444444444444,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -2045,12 +2045,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -2058,16 +2058,16 @@
             "hexId": "hex-r2-9",
             "aggression": 6,
             "level": 7,
-            "seconds": 49.6,
+            "seconds": 11.416666666666666,
             "captured": false,
-            "minerals": 3,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.6533333333333333,
+            "minutes": 0.38055555555555554,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -2083,12 +2083,12 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           },
@@ -2096,16 +2096,16 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 49.5,
+            "seconds": 15.533333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.65,
+            "minutes": 0.5177777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -2121,28 +2121,28 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           }
         ],
-        "deploymentMinutes": 9.203333333333333,
+        "deploymentMinutes": 23.391388888888887,
         "betweenSortieMinutes": 24,
-        "retryMinutes": 9.203333333333333,
+        "retryMinutes": 23.391388888888887,
         "retakeMinutes": 0,
-        "totalMinutes": 42.406666666666666,
+        "totalMinutes": 70.78277777777777,
         "captured": 0,
         "losses": 12,
         "expectedRetakes": 0,
         "expectedLosses": 12,
         "exposedHexes": 0,
         "salvageBanked": 0,
-        "salvageForfeited": 86,
+        "salvageForfeited": 0,
         "salvageCores": 0,
         "ringSecured": true
       }
@@ -2150,15 +2150,15 @@
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 48.096666666666664,
-        "min": 42.406666666666666,
-        "max": 58.41444444444444
+        "mean": 57.01648148148147,
+        "min": 45.95944444444444,
+        "max": 70.78277777777777
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 12.048333333333332,
-        "min": 9.203333333333333,
-        "max": 17.20722222222222
+        "mean": 16.508240740740742,
+        "min": 10.97972222222222,
+        "max": 23.391388888888887
       },
       "losses": {
         "count": 3,
@@ -2200,15 +2200,15 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 12,
-      "measuredMinutes": 48.096666666666664,
+      "measuredMinutes": 57.01648148148147,
       "withinWindow": false,
       "withinTolerance": true,
       "verdict": "within-tolerance"
     },
     "entryLoadout": {
-      "hullId": "hull-2",
+      "hullId": "hull-4",
       "lives": 5,
-      "speedMultiplier": 0.85,
+      "speedMultiplier": 0.9,
       "weapons": [
         {
           "id": "ricochet",
@@ -2224,12 +2224,12 @@
         }
       ],
       "modifiers": [
-        "hardened_plating",
-        "core-bank"
+        "hardened_plating"
       ],
       "ownedHulls": [
         "hull-1",
-        "hull-2"
+        "hull-2",
+        "hull-4"
       ]
     }
   },
@@ -2249,16 +2249,16 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 22.766666666666666,
+            "seconds": 46.38333333333333,
             "captured": false,
             "minerals": 1,
             "hits": 5,
             "retries": 1,
-            "minutes": 0.7588888888888888,
+            "minutes": 1.546111111111111,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -2274,21 +2274,21 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           }
         ],
-        "deploymentMinutes": 0.3794444444444444,
+        "deploymentMinutes": 0.7730555555555555,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 0.3794444444444444,
-        "retakeMinutes": 18.32172222222222,
-        "totalMinutes": 21.08061111111111,
+        "retryMinutes": 0.7730555555555555,
+        "retakeMinutes": 21.352527777777777,
+        "totalMinutes": 24.89863888888889,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
@@ -2306,16 +2306,16 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 18.4,
+            "seconds": 14.916666666666666,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 0.6133333333333333,
+            "minutes": 0.4972222222222222,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -2331,28 +2331,28 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           }
         ],
-        "deploymentMinutes": 0.30666666666666664,
+        "deploymentMinutes": 0.2486111111111111,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 0.30666666666666664,
-        "retakeMinutes": 17.761333333333333,
-        "totalMinutes": 20.374666666666666,
+        "retryMinutes": 0.2486111111111111,
+        "retakeMinutes": 17.314305555555553,
+        "totalMinutes": 19.811527777777776,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
         "expectedLosses": 8.7,
         "exposedHexes": 11,
         "salvageBanked": 0,
-        "salvageForfeited": 1,
+        "salvageForfeited": 0,
         "salvageCores": 0,
         "ringSecured": false
       },
@@ -2363,16 +2363,16 @@
             "hexId": "hex-r2-12",
             "aggression": 8,
             "level": 9,
-            "seconds": 49.5,
+            "seconds": 15.533333333333333,
             "captured": false,
-            "minerals": 1,
+            "minerals": 0,
             "hits": 5,
             "retries": 1,
-            "minutes": 1.65,
+            "minutes": 0.5177777777777778,
             "loadout": {
-              "hullId": "hull-2",
+              "hullId": "hull-4",
               "lives": 5,
-              "speedMultiplier": 0.85,
+              "speedMultiplier": 0.9,
               "weapons": [
                 {
                   "id": "ricochet",
@@ -2388,28 +2388,28 @@
                 }
               ],
               "modifiers": [
-                "hardened_plating",
-                "core-bank"
+                "hardened_plating"
               ],
               "ownedHulls": [
                 "hull-1",
-                "hull-2"
+                "hull-2",
+                "hull-4"
               ]
             }
           }
         ],
-        "deploymentMinutes": 0.825,
+        "deploymentMinutes": 0.2588888888888889,
         "betweenSortieMinutes": 2,
-        "retryMinutes": 0.825,
-        "retakeMinutes": 21.752499999999998,
-        "totalMinutes": 25.402499999999996,
+        "retryMinutes": 0.2588888888888889,
+        "retakeMinutes": 17.393444444444444,
+        "totalMinutes": 19.91122222222222,
         "captured": 0,
         "losses": 1,
         "expectedRetakes": 7.699999999999999,
         "expectedLosses": 8.7,
         "exposedHexes": 11,
         "salvageBanked": 0,
-        "salvageForfeited": 1,
+        "salvageForfeited": 0,
         "salvageCores": 0,
         "ringSecured": false
       }
@@ -2417,15 +2417,15 @@
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 22.285925925925927,
-        "min": 20.374666666666666,
-        "max": 25.402499999999996
+        "mean": 21.540462962962962,
+        "min": 19.811527777777776,
+        "max": 24.89863888888889
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 0.5037037037037037,
-        "min": 0.30666666666666664,
-        "max": 0.825
+        "mean": 0.4268518518518518,
+        "min": 0.2486111111111111,
+        "max": 0.7730555555555555
       },
       "losses": {
         "count": 3,
@@ -2467,15 +2467,15 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 12,
-      "measuredMinutes": 22.285925925925927,
+      "measuredMinutes": 21.540462962962962,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "not-applicable"
     },
     "entryLoadout": {
-      "hullId": "hull-2",
+      "hullId": "hull-4",
       "lives": 5,
-      "speedMultiplier": 0.85,
+      "speedMultiplier": 0.9,
       "weapons": [
         {
           "id": "ricochet",
@@ -2491,12 +2491,12 @@
         }
       ],
       "modifiers": [
-        "hardened_plating",
-        "core-bank"
+        "hardened_plating"
       ],
       "ownedHulls": [
         "hull-1",
-        "hull-2"
+        "hull-2",
+        "hull-4"
       ]
     }
   }

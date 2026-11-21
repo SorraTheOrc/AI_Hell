@@ -26,11 +26,16 @@ import {
   type HangarWarTraversalAction,
 } from './hangarWarTraversal';
 import { buildHexMapModel, pickAttractHex } from '../core/hangarWar/hexIntel';
+import { cheapestUsefulUnlock } from '../core/hangarWar/hangarEconomy';
 import { createRingState } from '../core/hangarWar/hexRing';
 import { createDefaultPayload } from '../core/hangarWar/hangarWarStore';
 import type { HangarWarPayload, HexState } from '../core/hangarWar/types';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
-import { HANGAR_CATALOGUE, type HangarEntry } from '../data/hangarCatalogue';
+import {
+  HANGAR_CATALOGUE,
+  isBotPurchaseCandidate,
+  type HangarEntry,
+} from '../data/hangarCatalogue';
 
 /** Ring 1's authored hexes as a payload ring, unheld unless overridden. */
 function ringOnePayload(
@@ -393,5 +398,59 @@ describe('decideTraversalAction — one dispatch, no stalling', () => {
     // (which would still terminate, but silently stop demonstrating the shop).
     expect(cheapestSeededUnlock(richPayload())).not.toBeNull();
     expect(HANGAR_CATALOGUE.length).toBeGreaterThan(0);
+  });
+});
+
+// ── Power-ups are kept out of the bot's choice (AH-0MWKXQ073003ULDX) ────────
+//
+// Parent AH-0MWKT12BT001106T assumption A1: the attract/traversal bot keeps its
+// pre-power-up purchase kinds, so demo decisions, seeded replays and the pinned
+// ring-timing magic numbers stay put. One documented helper
+// (`isBotPurchaseCandidate`) gates **both** bot consumers
+// (`cheapestUsefulUnlock` and `cheapestSeededUnlock`); the unlock-pace *report*
+// still measures the new entries because it is not the bot's choice.
+describe("power-ups never enter the bot's shopping", () => {
+  it('excludes the power-up kind through the one documented helper', () => {
+    const powerUps = HANGAR_CATALOGUE.filter((entry) => entry.kind === 'power-up');
+    expect(powerUps.length).toBeGreaterThan(0);
+    for (const entry of powerUps) {
+      expect(isBotPurchaseCandidate(entry), entry.id).toBe(false);
+    }
+    // Every non-power-up kind stays a bot candidate, so the rule only ever
+    // narrows the new kind and cannot silently un-buy an existing one.
+    for (const entry of HANGAR_CATALOGUE.filter((item) => item.kind !== 'power-up')) {
+      expect(isBotPurchaseCandidate(entry), entry.id).toBe(true);
+    }
+  });
+
+  it('still buys a non-power-up even when a power-up is the cheapest entry', () => {
+    const shippedPowerUp = HANGAR_CATALOGUE.find(
+      (entry) => entry.kind === 'power-up',
+    )!;
+    // A power-up priced at almost nothing would win the cheapest-unlock rule
+    // outright; the exclusion must keep it out of both bot answers.
+    const cheapPowerUp = {
+      ...shippedPowerUp,
+      id: 'cheap-power-up',
+      name: 'Cheap Power-Up',
+      price: { minerals: 1, cores: 0 },
+      minRing: 1,
+    } as HangarEntry;
+    const catalogue = [
+      ...HANGAR_CATALOGUE.filter((entry) => entry.kind !== 'power-up'),
+      cheapPowerUp,
+    ];
+    const payload = richPayload();
+
+    const seeded = cheapestSeededUnlock(payload, { catalogue });
+    const useful = cheapestUsefulUnlock(payload.hangar, { ringIndex: 1 }, catalogue);
+
+    expect(seeded).not.toBeNull();
+    expect(useful).not.toBeNull();
+    // The bot buys a real weapon/hull/modifier, never the cheaper power-up.
+    expect(seeded!.kind).not.toBe('power-up');
+    expect(useful!.kind).not.toBe('power-up');
+    expect(seeded!.id).not.toBe('cheap-power-up');
+    expect(useful!.id).not.toBe('cheap-power-up');
   });
 });

@@ -16,8 +16,9 @@
  * - **Cost.** An entry has a two-currency price (banked minerals + mini-boss
  *   cores). A purchase needs both currencies at once.
  * - **Already owned.** Ownership is per kind: hulls live in
- *   `hangar.unlockedHulls`, starting weapons in `hangar.unlockedWeapons`, and
- *   modifiers in `hangar.ownedModifiers`. The starting kit is owned **by
+ *   `hangar.unlockedHulls`, starting weapons in `hangar.unlockedWeapons`,
+ *   modifiers in `hangar.ownedModifiers`, and power-ups in
+ *   `hangar.unlockedPowerUps`. The starting kit is owned **by
  *   definition** (`entry.starter`), so a save that lost a starter id can never
  *   be forced to buy its own basic hull or weapon back.
  * - **Ring gating.** An entry is buyable only once the fleet has reached its
@@ -38,10 +39,19 @@
  * - **Permanent upgrade.** {@link costToUpgrade} / {@link buyUpgrade} extend
  *   the purchase branch for an **owned level-bearing** kind: a deterministic
  *   next-level price that rises toward the shared {@link MAX_PERMANENT_LEVEL}
- *   ceiling, spent to raise the permanent level by exactly one (fresh hangar
- *   and level snapshot on success *and* refusal). Upgrades are player-action
- *   only — the attract booth still buys the cheapest useful unlock (parent
- *   AH-0MWHW4ALS0039JFU, pure rule AH-0MWI5AAVO009UROY).
+ *   ceiling, spent to raise the permanent level by exactly one **above the
+ *   base the run already flies** (`{@link BASE_PERMANENT_LEVEL}`, so the first
+ *   purchase is `1 → 2` and never buys an inert step)
+ *   (fresh hangar and level snapshot on success *and* refusal). Upgrades are
+ *   player-action only — the attract booth still buys the cheapest useful
+ *   unlock (parent AH-0MWHW4ALS0039JFU, pure rule AH-0MWI5AAVO009UROY,
+ *   off-by-one fix AH-0MWKV6F26008X1T3).
+ * - **Upgrade sources.** A permanent level has **two** sources, never one:
+ *   the run's own hold-full rewards **and** the hangar's buy-to-upgrade
+ *   purchase, which a deployment grants through the shared permanent-grant
+ *   seam (weapons **and** power-ups; a hangar power-up purchase seeds its
+ *   first permanent level row — AH-0MWKT12BT001106T). No code path may
+ *   describe permanent levels as run-only.
  * - **Defender rating.** One pure formula over a hull's hangar upgrades
  *   ({@link defenderRatingFromUpgrades}), so the ring resolver (B3) has no
  *   second source of truth for "how strong is the bot left in this hex". A
@@ -67,11 +77,19 @@
 import {
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
+  STARTER_WEAPON_ID,
+  isBotPurchaseCandidate,
   type HangarEntry,
   type HangarPrice,
   type HullUpgrades,
 } from '../../data/hangarCatalogue';
-import type { HangarLoadout, HangarState, DefenderUpgradeSnapshot } from './types';
+import type {
+  DeployedShip,
+  HangarLoadout,
+  HangarState,
+  DefenderUpgradeSnapshot,
+  SavedShipBuild,
+} from './types';
 // Catalogue imports stay pure data (no Phaser, no storage): the two catalogues
 // are runtime-imported because the upgrade rule must classify a requested id
 // (unknown vs non-upgradeable) from the one authored catalogue — the previous
@@ -98,6 +116,13 @@ export const CORE_MINERAL_EQUIVALENT = 100;
  * run-scoped permanent upgrades were spent on an already-finished run. The win
  * instead banks this fixed bonus into the persistent hangar war, and the
  * rolled-in defence report announces it before the map (`Q3 = (b)`).
+ *
+ * **Paid on every winning deployment, including a hexless one.** The capture
+ * cycle banks it for a win with a target hex; a winning deployment with no
+ * target hex banks the same bonus through the hexless fallback in
+ * `PlayScene._resolveHangarWarCapture()` (AH-0MWNGYDIZ0037HGW, producer
+ * Q1 = (a)), so a won battle never announces a reward it did not pay. The two
+ * paths are mutually exclusive — the bonus is paid exactly once.
  *
  * **Minerals only.** A capture already banks its one core through the capture
  * cycle, so granting a bonus core here would double-count cores.
@@ -409,7 +434,7 @@ function normalisePrice(price: HangarPrice): HangarPrice {
 
 /** A detached copy of a hangar, so no rule can mutate its caller's state. */
 function cloneHangar(hangar: HangarState): HangarState {
-  return {
+  const next: HangarState = {
     ...hangar,
     bankedMinerals: toCount(hangar.bankedMinerals),
     bankedCores: toCount(hangar.bankedCores),
@@ -421,6 +446,12 @@ function cloneHangar(hangar: HangarState): HangarState {
       modifiers: [...hangar.activeLoadout.modifiers],
     },
   };
+  // Clone the power-up owned set only when it is present, so a pre-change
+  // hangar keeps its field-presence shape (absent stays absent).
+  if (hangar.unlockedPowerUps !== undefined) {
+    next.unlockedPowerUps = [...hangar.unlockedPowerUps];
+  }
+  return next;
 }
 
 /** The owned-set field an entry of `kind` lives in. */
@@ -432,6 +463,10 @@ function ownedIds(hangar: HangarState, kind: HangarEntry['kind']): string[] {
       return hangar.unlockedWeapons;
     case 'modifier':
       return hangar.ownedModifiers;
+    case 'power-up':
+      // The canonical ownership record (parent AH-0MWKT12BT001106T, Q2 =
+      // (ii)). An absent set reads as "owns none".
+      return hangar.unlockedPowerUps ?? [];
   }
 }
 
@@ -510,22 +545,51 @@ export function canBuy(
 }
 
 /**
+ * Options for {@link buy}.
+ *
+ * The default behaviour is the documented A5/A6 rule: **buying only grants
+ * ownership** — equipping the hull/loadout stays the deployment selector's job
+ * — so a purchase can never silently change what another caller deploys with.
+ * The hangar screen opts in (parent AH-0MWL5PAP2001XYYF, producer Q1 = C
+ * refined: "when an upgrade is purchased it is automatically enabled"), which
+ * supersedes A5/A6 **for that screen only**.
+ */
+export interface BuyOptions {
+  /**
+   * Equip a successful purchase as part of buying.
+   *
+   * A hull sets `activeHull`, a starting weapon joins
+   * `activeLoadout.startingWeapons` and a modifier joins
+   * `activeLoadout.modifiers`, each deduplicated. A refused purchase changes
+   * nothing, so an opt-in caller can never equip an entry it did not buy.
+   * Default `false` — every caller that does not opt in keeps A5/A6.
+   */
+  readonly equipOnPurchase?: boolean;
+}
+
+/**
  * Buys one catalogue entry, spending both currencies.
  *
  * Pure: the input hangar is never mutated, and a refused purchase returns a
- * copy with the balance and ownership unchanged. Buying only grants ownership
- * — equipping the hull/loadout stays the deployment selector's job (A5/A6), so
- * a purchase can never silently change what the player deploys with.
+ * copy with the balance and ownership unchanged. By default buying only grants
+ * ownership — equipping stays the deployment selector's job (A5/A6), so a
+ * purchase can never silently change what the player deploys with. A caller
+ * that passes `{ equipOnPurchase: true }` (the hangar screen) instead arms the
+ * purchase immediately (parent AH-0MWL5PAP2001XYYF): a hull becomes the active
+ * hull, a weapon joins the starting weapons, a modifier joins the active
+ * modifiers. Refusals change neither ownership nor the loadout either way.
  *
  * @param hangar — the persistent hangar (read only).
  * @param entry — the catalogue entry to buy.
  * @param context — the ring the fleet has reached (ring gating).
+ * @param options — `equipOnPurchase` to arm a successful purchase (default off).
  * @returns the purchase result, including the freshly owned hangar.
  */
 export function buy(
   hangar: HangarState,
   entry: HangarEntry,
   context: HangarPurchaseContext,
+  options: BuyOptions = {},
 ): PurchaseResult {
   const check = canBuy(hangar, entry, context);
   const next = cloneHangar(hangar);
@@ -538,9 +602,62 @@ export function buy(
   next.bankedCores -= price.cores;
 
   const owned = ownedIds(next, entry.kind);
-  if (!owned.includes(entry.id)) owned.push(entry.id);
+  if (!owned.includes(entry.id)) {
+    if (entry.kind === 'power-up') {
+      // The set is the canonical ownership record; assign it back so a hangar
+      // that had no field gains exactly the bought id.
+      next.unlockedPowerUps = [...owned, entry.id];
+      // Seed the first permanent level row (level 1) in the **same** hangar
+      // write, so ownership and level can never land separately and the
+      // upgrade rule / deploy grant see it on the very next sortie
+      // (parent AH-0MWKT12BT001106T AC4).
+      const rows = next.powerUpLevels ?? [];
+      if (!rows.some((row) => row.id === entry.powerUpId)) {
+        next.powerUpLevels = [
+          ...rows.map((row) => ({ ...row })),
+          { id: entry.powerUpId, level: BASE_PERMANENT_LEVEL },
+        ];
+      }
+    } else {
+      owned.push(entry.id);
+    }
+  }
+
+  if (options.equipOnPurchase === true) {
+    equipPurchasedEntry(next, entry);
+  }
 
   return { ok: true, reason: null, spent: price, hangar: next };
+}
+
+/**
+ * Arms a just-purchased entry on the fresh hangar `buy` owns (mutates it).
+ *
+ * Deduplicates the loadout entries: a corrupt save that already lists the id
+ * cannot gain a duplicate slot. The starter kit is unaffected — a fresh save
+ * owns `hull-1`/`spread` but does not equip the starter weapon, which stays a
+ * deliberate player choice (AH-0MVZJ6V1J001DA9D).
+ */
+function equipPurchasedEntry(hangar: HangarState, entry: HangarEntry): void {
+  switch (entry.kind) {
+    case 'hull':
+      hangar.activeHull = entry.id;
+      return;
+    case 'weapon':
+      if (!hangar.activeLoadout.startingWeapons.includes(entry.id)) {
+        hangar.activeLoadout.startingWeapons.push(entry.id);
+      }
+      return;
+    case 'modifier':
+      if (!hangar.activeLoadout.modifiers.includes(entry.id)) {
+        hangar.activeLoadout.modifiers.push(entry.id);
+      }
+      return;
+    case 'power-up':
+      // A power-up is a permanent passive upgrade, not a flown loadout slot:
+      // buying it arms nothing, it just applies on every deployment.
+      return;
+  }
 }
 
 // ── Permanent upgrade rule (parent AH-0MWHW4ALS0039JFU) ──────────────────
@@ -564,8 +681,28 @@ export function buy(
  * balance choice (at least one purchasable step must exist, so a ceiling of
  * one would make buy-to-upgrade impossible): 5 matches the run path's own
  * per-kind caps (magnet/mineral-scoop stacks, lives).
+ *
+ * The ladder starts at {@link BASE_PERMANENT_LEVEL} (the run's own base level
+ * `1`), so every priced step raises the deployed level by exactly one and
+ * `MAX_PERMANENT_LEVEL - BASE_PERMANENT_LEVEL` purchases reach the cap
+ * (AH-0MWKV6F26008X1T3: before, the first purchase recorded the inert base).
+ *
+ * The ceiling applies to **level-bearing kinds only** (producer Q2 = (a)): a
+ * consumable (a charge pool) and the field-pickup-only kind have no permanent
+ * level to raise, so {@link costToUpgrade} refuses them as `non-upgradeable`
+ * and no level row is ever stored for them.
  */
 export const MAX_PERMANENT_LEVEL = 5;
+
+/**
+ * The level every owned kind is at **before** any purchase — the run path's
+ * own base level of a first collection. A kind with no persisted row deploys
+ * and captures at this level, so the price curve and the row display both
+ * floor their basis here: a priced step must move the level *above* the base
+ * or the player would pay for a step that changes nothing in the run
+ * (AH-0MWKV6F26008X1T3).
+ */
+const BASE_PERMANENT_LEVEL = 1;
 
 /** Why an upgrade was refused, or `null` when it is allowed. */
 export type UpgradeRefusal =
@@ -627,8 +764,9 @@ export interface UpgradeResult {
  * `UPGRADE_MINERALS_PER_LEVEL` per current level, gaining one mini-boss core
  * every `UPGRADE_CORE_EVERY_LEVELS` levels — so the price is always paid in
  * both currencies before the last step and its salvage weight strictly rises
- * per level toward {@link MAX_PERMANENT_LEVEL}. Cores are the rarer currency
- * ({@link CORE_MINERAL_EQUIVALENT}), so they only enter the curve late.
+ * per level above the base toward {@link MAX_PERMANENT_LEVEL}. Cores are the
+ * rarer currency ({@link CORE_MINERAL_EQUIVALENT}), so they only enter the
+ * curve late.
  */
 const UPGRADE_BASE_MINERALS = 100;
 
@@ -638,7 +776,13 @@ const UPGRADE_MINERALS_PER_LEVEL = 50;
 /** Every N current levels adds one core to the next-level price. */
 const UPGRADE_CORE_EVERY_LEVELS = 2;
 
-/** The deterministic two-currency price of the next level above `currentLevel`. */
+/**
+ * The deterministic two-currency price of the next level above `currentLevel`.
+ *
+ * `currentLevel` is always the effective basis (base level or the bought row,
+ * whichever is higher), so the first purchase is priced from the base the run
+ * already flies (AH-0MWKV6F26008X1T3).
+ */
 function upgradePrice(currentLevel: number): HangarPrice {
   const level = toCount(currentLevel);
   return {
@@ -666,8 +810,8 @@ function isNonUpgradeablePowerUp(id: string): boolean {
 
 /**
  * Whether the fleet owns a level-bearing kind: a hangar owned-set row for a
- * weapon, a `powerUps` levels row for a power-up (the only place the hangar
- * records a power-up level).
+ * weapon or power-up (the power-up set is canonical, with a persisted
+ * `powerUps` level row also implying ownership so no stored row is orphaned).
  */
 function ownsUpgradeableKind(
   hangar: HangarState,
@@ -676,7 +820,10 @@ function ownsUpgradeableKind(
   id: string,
 ): boolean {
   if (kind === 'weapon') return hangar.unlockedWeapons.includes(id);
-  return levels.powerUps.some((row) => row.id === id);
+  return (
+    (hangar.unlockedPowerUps ?? []).includes(id) ||
+    levels.powerUps.some((row) => row.id === id)
+  );
 }
 
 /** The current permanent level of a kind from its own row vocabulary (0 when absent/corrupt). */
@@ -690,6 +837,46 @@ function currentPermanentLevel(
   return row === undefined ? 0 : toCount(row.level);
 }
 
+/**
+ * The pricing/raising basis of a stored level: the persisted row floored at
+ * {@link BASE_PERMANENT_LEVEL}, so a kind with no row (or a legacy `1` row
+ * written before this fix) is priced and raised from the base rather than
+ * from an inert level.
+ *
+ * One helper serves both the price rule ({@link costToUpgrade}) and the
+ * display reader ({@link currentUpgradeLevel}) — there is no second copy of
+ * the basis.
+ */
+function upgradeLevelBasis(storedLevel: number): number {
+  return Math.max(toCount(storedLevel), BASE_PERMANENT_LEVEL);
+}
+
+/**
+ * The fleet's current permanent level of a kind, in the price curve's own
+ * basis — the number {@link costToUpgrade} prices the next level from.
+ *
+ * A kind the fleet has not bought a level for reads as the **base level
+ * {@link BASE_PERMANENT_LEVEL}** (the level the deployment already grants an
+ * unupgraded kind), never `0`: the first purchase therefore prices and
+ * records the first *effective* step (`1 → 2`), not an inert one
+ * (AH-0MWKV6F26008X1T3). Exposed so a presentation surface (the hangar
+ * screen's owned row) can show the level the rule prices from without
+ * re-deriving it — there is no second copy of the lookup.
+ *
+ * @param levels — the fleet's permanent levels (read only).
+ * @param id — the kind to read (a shipped weapon or power-up id).
+ * @returns the current permanent level in the pricing basis (`0` only when the
+ * id is neither shipped kind).
+ */
+export function currentUpgradeLevel(
+  levels: PermanentUpgradeLevels,
+  id: string,
+): number {
+  const kind = upgradeKind(id);
+  if (kind === null) return 0;
+  return upgradeLevelBasis(currentPermanentLevel(levels, kind, id));
+}
+
 /** A detached copy of a level snapshot, so no rule can mutate its caller's rows. */
 function cloneLevels(levels: PermanentUpgradeLevels): PermanentUpgradeLevels {
   return {
@@ -698,7 +885,12 @@ function cloneLevels(levels: PermanentUpgradeLevels): PermanentUpgradeLevels {
   };
 }
 
-/** The snapshot with the kind's permanent level raised by exactly one. */
+/**
+ * The snapshot with the kind's permanent level raised by exactly one above the
+ * **effective** level (`max(stored, base)`), so the first purchase records the
+ * base plus one and every bought row is a level the run actually flies
+ * (AH-0MWKV6F26008X1T3).
+ */
 function raisedLevels(
   levels: PermanentUpgradeLevels,
   kind: 'weapon' | 'power-up',
@@ -706,18 +898,18 @@ function raisedLevels(
 ): PermanentUpgradeLevels {
   if (kind === 'weapon') {
     const rows = levels.weapons.map((row) =>
-      row.id === id ? { ...row, level: toCount(row.level) + 1 } : { ...row },
+      row.id === id ? { ...row, level: upgradeLevelBasis(row.level) + 1 } : { ...row },
     );
     if (!levels.weapons.some((row) => row.id === id)) {
-      rows.push({ id: id as WeaponId, level: 1 });
+      rows.push({ id: id as WeaponId, level: BASE_PERMANENT_LEVEL + 1 });
     }
     return { ...levels, weapons: rows };
   }
   const rows = levels.powerUps.map((row) =>
-    row.id === id ? { ...row, level: toCount(row.level) + 1 } : { ...row },
+    row.id === id ? { ...row, level: upgradeLevelBasis(row.level) + 1 } : { ...row },
   );
   if (!levels.powerUps.some((row) => row.id === id)) {
-    rows.push({ id: id as PowerUpId, level: 1 });
+    rows.push({ id: id as PowerUpId, level: BASE_PERMANENT_LEVEL + 1 });
   }
   return { ...levels, powerUps: rows };
 }
@@ -728,10 +920,10 @@ function raisedLevels(
  *
  * The rule shares the purchase branch's two-currency `HangarPrice` and
  * `HangarPurchaseContext` conventions but is a separate branch beside
- * `canBuy`/`buy`: ownership is per kind (`unlockedWeapons` for a weapon, a
- * `powerUps` levels row for a power-up) and the refusal vocabulary reflects
- * the level model — `unknown` → `non-upgradeable` → `unowned` → `capped` →
- * `unaffordable`. Ring gating already applied at purchase, so the ring
+ * `canBuy`/`buy`: ownership is per kind (`unlockedWeapons` for a weapon;
+ * `unlockedPowerUps` — with a persisted level row also implying ownership —
+ * for a power-up) and the refusal vocabulary reflects the level model —
+ * `unknown` → `non-upgradeable` → `unowned` → `capped` → `unaffordable`. Ring gating already applied at purchase, so the ring
  * context is carried for signature parity and future growth, never read here.
  *
  * @param hangar — the persistent hangar (read only).
@@ -756,7 +948,9 @@ export function costToUpgrade(
   if (!ownsUpgradeableKind(hangar, levels, kind, id)) {
     return { ok: false, reason: 'unowned', price: ZERO_PRICE, shortfall: ZERO_PRICE };
   }
-  const current = currentPermanentLevel(levels, kind, id);
+  // The one pricing-basis reader the hangar screen also displays: a kind with
+  // no bought row is priced from the base the run already flies.
+  const current = currentUpgradeLevel(levels, id);
   if (current >= MAX_PERMANENT_LEVEL) {
     return { ok: false, reason: 'capped', price: ZERO_PRICE, shortfall: ZERO_PRICE };
   }
@@ -825,6 +1019,141 @@ export function buyUpgrade(
     hangar: nextHangar,
     levels: raisedLevels(nextLevels, kind, id),
   };
+}
+
+/**
+ * A level snapshot whose ids and levels may still be **raw** (unvalidated)
+ * input — the persisted/replay boundary (the store's parser and the
+ * deployment's launch-data reader) normalises through
+ * {@link normalisePermanentLevels} rather than trusting stored bytes.
+ *
+ * Typed {@link PermanentUpgradeLevels} is structurally assignable, so an
+ * already-clean snapshot passes straight through.
+ */
+export interface RawPermanentLevels {
+  /** Permanent weapon level rows (`{ id, level }`), possibly unvalidated. */
+  readonly weapons?: ReadonlyArray<{
+    readonly id: unknown;
+    readonly level: unknown;
+  }>;
+  /** Permanent power-up level rows (`{ id, level }`), possibly unvalidated. */
+  readonly powerUps?: ReadonlyArray<{
+    readonly id: unknown;
+    readonly level: unknown;
+  }>;
+}
+
+/** Whether `id` is a level-bearing **weapon** (every shipped weapon is). */
+function isUpgradeableWeaponId(id: string): boolean {
+  return upgradeKind(id) === 'weapon';
+}
+
+/**
+ * Whether `id` is a level-bearing **power-up**: a shipped power-up that is
+ * neither a consumable (a charge pool, never a level) nor the
+ * field-pickup-only kind (producer Q2 = (a), AC5).
+ */
+function isUpgradeablePowerUpId(id: string): boolean {
+  return upgradeKind(id) === 'power-up' && !isNonUpgradeablePowerUp(id);
+}
+
+/**
+ * The clean rows for one kind: usable, level-bearing ids only, each level
+ * clamped to `[1, MAX_PERMANENT_LEVEL]`, duplicates collapsed to the **highest**
+ * stored level (a corrupt duplicate never loses bought progress). Order is the
+ * first-seen order, so a save round-trips its row order unchanged.
+ */
+function normaliseLevelRows<TId extends string>(
+  rows: RawPermanentLevels['weapons'],
+  accepts: (id: string) => boolean,
+): Array<{ id: TId; level: number }> {
+  const levels = new Map<string, number>();
+  for (const row of rows ?? []) {
+    if (typeof row?.id !== 'string') continue;
+    const id = row.id.trim();
+    if (id === '' || !accepts(id)) continue;
+    const level = Math.min(toCount(row.level), MAX_PERMANENT_LEVEL);
+    if (level < 1) continue;
+    levels.set(id, Math.max(levels.get(id) ?? 0, level));
+  }
+  return [...levels].map(([id, level]) => ({ id: id as TId, level }));
+}
+
+/**
+ * The clean permanent-level snapshot of raw input: level-bearing kinds only,
+ * levels clamped to the shared {@link MAX_PERMANENT_LEVEL} ceiling, every
+ * unusable/consumable/field-pickup row dropped.
+ *
+ * This is the **one** normaliser both persistence boundaries use (the versioned
+ * store's parser and the deployment's launch-data reader), so a stored,
+ * injected or hand-built hangar can never expose a level the economy would
+ * refuse to raise (AC5: consumables and the field-pickup-only kind are never
+ * persisted as upgradeable levels).
+ *
+ * @param levels — raw (or already clean) weapon/power-up level rows.
+ * @returns fresh, typed rows; the input is never mutated.
+ */
+export function normalisePermanentLevels(
+  levels: RawPermanentLevels,
+): PermanentUpgradeLevels {
+  return {
+    weapons: normaliseLevelRows<WeaponId>(levels.weapons, isUpgradeableWeaponId),
+    powerUps: normaliseLevelRows<PowerUpId>(
+      levels.powerUps,
+      isUpgradeablePowerUpId,
+    ),
+  };
+}
+
+/**
+ * The fleet's persisted permanent levels, in the run path's own row vocabulary
+ * (parent AH-0MWHW4ALS0039JFU AC2).
+ *
+ * This is the bridge the upgrade rule, the deploy-time grant and the hangar
+ * screen share: they read the hangar's bought levels through it instead of
+ * reaching into the payload shape, and it normalises on read so a corrupt or
+ * hand-built hangar can never surface a non-upgradeable or out-of-range row.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @returns the clean permanent levels (empty snapshots when none were bought).
+ */
+export function hangarPermanentLevels(hangar: HangarState): PermanentUpgradeLevels {
+  return normalisePermanentLevels({
+    weapons: hangar.weaponLevels ?? [],
+    powerUps: hangar.powerUpLevels ?? [],
+  });
+}
+
+/**
+ * Writes a permanent-level snapshot into a fresh hangar (the persistence write
+ * path after {@link buyUpgrade}).
+ *
+ * The snapshot **replaces** the hangar's level state (it is the authority), so
+ * rows of kinds no longer present in it are dropped, non-upgradeable and
+ * out-of-range rows are filtered/clamped by {@link normalisePermanentLevels},
+ * and the level fields are **omitted when empty** — the field-presence rule the
+ * versioned store's migration relies on, so an upgrade-free hangar round-trips
+ * byte-for-byte.
+ *
+ * @param hangar — the hangar to write into (never mutated).
+ * @param levels — the level snapshot to persist.
+ * @returns a fresh hangar carrying `levels`.
+ */
+export function withPermanentLevels(
+  hangar: HangarState,
+  levels: RawPermanentLevels,
+): HangarState {
+  const next = cloneHangar(hangar);
+  const clean = normalisePermanentLevels(levels);
+  delete next.weaponLevels;
+  delete next.powerUpLevels;
+  if (clean.weapons.length > 0) {
+    next.weaponLevels = clean.weapons.map((row) => ({ ...row }));
+  }
+  if (clean.powerUps.length > 0) {
+    next.powerUpLevels = clean.powerUps.map((row) => ({ ...row }));
+  }
+  return next;
 }
 
 /**
@@ -926,6 +1255,92 @@ export function equipLoadout(
 }
 
 /**
+ * Spends the exact ship a deployment flew (parent AH-0MWL5PAP2001XYYF).
+ *
+ * A hex battle is a one-battle consumable sortie: on **win or loss** the flown
+ * hull, every starting weapon and every modifier on the active loadout — plus
+ * the consumed ids' bought permanent level rows — are removed. Everything the
+ * player did **not** fly survives, and the free starter kit (`hull-1` plus
+ * `spread`) is never removed, so a battle can never soft-lock the fleet
+ * (AH-0MVZJ6V1J001DA9D: an empty loadout is a legal deployment).
+ *
+ * The hangar is then reset to the starter kit — `activeHull` is the starter
+ * hull and `activeLoadout` is empty — so the next deployment uses only the
+ * ship's permanent cannon until the player re-purchases. Balances are
+ * deliberately untouched: spending the ship is not a salvage rule, so the
+ * caller's banking/win-bonus write stays the only thing that moves money.
+ *
+ * Pure and total: the input hangar is never mutated, unknown or already-stale
+ * ids are simply absent from the owned sets and therefore ignored, a repeated
+ * call on an already-consumed hangar returns the same hangar (idempotent), and
+ * a corrupt save can never make it throw.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param ship — the resolved hull + active loadout the deployment flew.
+ * @param _catalogue — the unlock tree (parity with the other economy rules;
+ *   consumption is role-based, so the shipped tree is not read here).
+ * @returns a fresh hangar with the flown ship spent and the starter kit active.
+ */
+export function consumeDeployedShip(
+  hangar: HangarState,
+  ship: DeployedShip,
+  _catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): HangarState {
+  const next = cloneHangar(hangar);
+
+  // The flown hull is spent unless it is the always-owned starter hull. The
+  // per-kind id sets keep a corrupt/unknown id from removing another kind's row.
+  const hullIds = new Set<string>();
+  const hullId = typeof ship?.hullId === 'string' ? ship.hullId.trim() : '';
+  if (hullId.length > 0 && hullId !== STARTER_HULL_ID) hullIds.add(hullId);
+
+  const weaponIds = new Set<string>();
+  for (const id of ship?.startingWeapons ?? []) {
+    if (typeof id !== 'string') continue;
+    const weaponId = id.trim();
+    // The starter weapon is the zero-cost floor of every fleet: it survives
+    // even when the player flew it.
+    if (weaponId.length > 0 && weaponId !== STARTER_WEAPON_ID) {
+      weaponIds.add(weaponId);
+    }
+  }
+
+  const modifierIds = new Set<string>();
+  for (const id of ship?.modifiers ?? []) {
+    if (typeof id !== 'string') continue;
+    const modifierId = id.trim();
+    if (modifierId.length > 0) modifierIds.add(modifierId);
+  }
+
+  next.unlockedHulls = next.unlockedHulls.filter((id) => !hullIds.has(id));
+  next.unlockedWeapons = next.unlockedWeapons.filter((id) => !weaponIds.has(id));
+  next.ownedModifiers = next.ownedModifiers.filter((id) => !modifierIds.has(id));
+
+  // Only the consumed ids lose their bought permanent levels. A row for any
+  // un-flown id — weapon or power-up — survives untouched.
+  const consumedIds = new Set<string>([
+    ...hullIds,
+    ...weaponIds,
+    ...modifierIds,
+  ]);
+  if (next.weaponLevels !== undefined) {
+    next.weaponLevels = next.weaponLevels.filter(
+      (row) => !consumedIds.has(row.id),
+    );
+  }
+  if (next.powerUpLevels !== undefined) {
+    next.powerUpLevels = next.powerUpLevels.filter(
+      (row) => !consumedIds.has(row.id),
+    );
+  }
+
+  // The next sortie starts from the free starter kit until the player refits.
+  next.activeHull = STARTER_HULL_ID;
+  next.activeLoadout = { startingWeapons: [], modifiers: [] };
+  return next;
+}
+
+/**
  * The strength of the minimal fleet — the starter hull with no upgrades and no
  * equipment. {@link resolvePlayerStrength} returns this for a fresh save.
  *
@@ -1011,6 +1426,9 @@ export function cheapestUsefulUnlock(
   let cheapestWeight = Number.POSITIVE_INFINITY;
 
   for (const entry of catalogue) {
+    // The attract/traversal bot keeps its pre-power-up purchase kinds (A1), so
+    // its demo decisions, seeded replays and pinned unlock pace never drift.
+    if (!isBotPurchaseCandidate(entry)) continue;
     if (!canBuy(hangar, entry, context).ok) continue;
     const weight = purchaseWeight(entry.price);
     if (weight < cheapestWeight) {
@@ -1124,4 +1542,366 @@ export function deriveDefenderRating(hullId: string): number {
   const hull = findHangarEntry(hullId);
   if (hull === null || hull.kind !== 'hull') return 0;
   return defenderRatingFromUpgrades(hull.baseDefence, hull.upgrades);
+}
+
+// ── Saved ship configurations (AH-0MWL8C6FE008G1E7) ───────────────────────
+//
+// A saved build captures the currently equipped hull/starting-weapons/
+// modifiers plus the permanent levels that configuration relies on. Re-applying
+// it validates every part through the existing purchase rule
+// (`owned → gated → unaffordable`) and then either purchases + equips the whole
+// build atomically or refuses with a structured shortfall and applies nothing.
+
+/** The longest display name a saved build may carry (bounded, trimmed). */
+export const MAX_SAVED_BUILD_NAME_LENGTH = 20;
+
+/** The options a caller supplies when capturing the current ship as a build. */
+export interface CaptureShipBuildOptions {
+  /** Stable build id (scene-supplied, so the pure core stays deterministic). */
+  readonly id: string;
+  /** Display name the player chose (trimmed and length-bounded). */
+  readonly name: string;
+}
+
+/** Deduplicates a list of ids, keeping first-seen order. */
+function uniqueIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (id === '' || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/** Why a saved build could not be applied (mirrors the purchase precedence). */
+export type SavedBuildRefusalReason = 'unknown' | 'gated' | 'unaffordable';
+
+/** One part of a saved build that cannot currently be applied. */
+export interface SavedBuildMissingEntry {
+  /** The catalogue/kind id the build references. */
+  readonly id: string;
+  /** The kind of part (`hull`, `weapon`, `modifier` or `power-up`). */
+  readonly kind: HangarEntry['kind'];
+  /** Why it cannot be applied. */
+  readonly reason: SavedBuildRefusalReason;
+}
+
+/** The structured shortfall a refused saved build reports. */
+export interface SavedBuildShortfall {
+  /** Every part the build needs but cannot currently apply (empty when ok). */
+  readonly entries: readonly SavedBuildMissingEntry[];
+  /** Minerals the fleet is missing to buy the whole build (0 when covered). */
+  readonly minerals: number;
+  /** Mini-boss cores the fleet is missing to buy the whole build (0 when covered). */
+  readonly cores: number;
+}
+
+/** The result of {@link applySavedBuild}: the fresh hangar, or the shortfall. */
+export interface SavedBuildApplyResult {
+  /** Whether the whole build was purchased and equipped. */
+  readonly ok: boolean;
+  /** The first blocking reason (`null` when {@link ok}). */
+  readonly reason: SavedBuildRefusalReason | null;
+  /** The exact shortfall (zeroes when {@link ok}). */
+  readonly shortfall: SavedBuildShortfall;
+  /** What was spent (the zero price on refusal). */
+  readonly spent: HangarPrice;
+  /** The hangar after the apply (a fresh object; the input is untouched). */
+  readonly hangar: HangarState;
+}
+
+/** The empty shortfall (also the result on success). */
+const EMPTY_SHORTFALL: SavedBuildShortfall = Object.freeze({
+  entries: [],
+  minerals: 0,
+  cores: 0,
+});
+
+/**
+ * Captures the currently equipped ship as a named saved build (AC1).
+ *
+ * The captured set is exactly what a deployment would fly — the resolved
+ * active hull, the resolved starting weapons and modifiers — plus the permanent
+ * level rows that configuration **relies on**:
+ *
+ * - **weapon levels** for the build's starting weapons that carry a bought
+ *   level above the base, and
+ * - **power-up levels** for every owned power-up that carries a bought level,
+ *   because a permanent power-up has no loadout slot and applies to every
+ *   deployment, so every build relies on it.
+ *
+ * Pure and total: the input hangar is never mutated, an unknown active hull
+ * falls back exactly as `resolveActiveHull` does, and the name is trimmed and
+ * bounded (an empty name falls back to the hull's display name). The id is the
+ * caller's (the pure core never invents one), so capture is deterministic.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param options — the caller-supplied build id and display name.
+ * @returns the captured build (a fresh object).
+ */
+export function captureShipBuild(
+  hangar: HangarState,
+  options: CaptureShipBuildOptions,
+): SavedShipBuild {
+  const loadout = resolveActiveLoadout(hangar);
+  const hullId = resolveActiveHull(hangar);
+
+  const levels = hangarPermanentLevels(hangar);
+  const weaponLevels = levels.weapons
+    .filter(
+      (row) =>
+        loadout.startingWeapons.includes(row.id) &&
+        row.level > BASE_PERMANENT_LEVEL &&
+        row.level <= MAX_PERMANENT_LEVEL,
+    )
+    .map((row) => ({ id: row.id, level: row.level }));
+  const powerUpLevels = levels.powerUps
+    .filter((row) => row.level > BASE_PERMANENT_LEVEL && row.level <= MAX_PERMANENT_LEVEL)
+    .map((row) => ({ id: row.id, level: row.level }));
+
+  const hullEntry = findHangarEntry(hullId);
+  const fallbackName = hullEntry?.name ?? 'SAVED BUILD';
+  const name =
+    options.name.trim().slice(0, MAX_SAVED_BUILD_NAME_LENGTH) || fallbackName;
+
+  return {
+    id: options.id,
+    name,
+    hullId,
+    startingWeapons: [...loadout.startingWeapons],
+    modifiers: [...loadout.modifiers],
+    ...(weaponLevels.length > 0 ? { weaponLevels } : {}),
+    ...(powerUpLevels.length > 0 ? { powerUpLevels } : {}),
+  };
+}
+
+/** One planned purchase of a not-yet-owned part of a build. */
+interface PlannedPurchase {
+  readonly entry: HangarEntry;
+  readonly price: HangarPrice;
+}
+
+/**
+ * Collects the not-yet-owned parts a build needs, in a deterministic order
+ * (hull → weapons → modifiers → power-ups), and the total cost of buying them.
+ *
+ * Only catalogue-known, ungated, not-owned entries become purchases; an
+ * unknown or gated part is recorded in `missing` and the caller refuses. An
+ * already-owned part is skipped (it only needs equipping).
+ */
+function planSavedBuildPurchases(
+  hangar: HangarState,
+  build: SavedShipBuild,
+  context: HangarPurchaseContext,
+  missing: SavedBuildMissingEntry[],
+): { purchases: PlannedPurchase[]; cost: HangarPrice } {
+  let minerals = 0;
+  let cores = 0;
+  const purchases: PlannedPurchase[] = [];
+
+  // Parts in acquisition order: the hull first (it sets security), then the
+  // flown weapons/modifiers, then any power-up a level row depends on.
+  const weaponIds = uniqueIds([
+    ...build.startingWeapons,
+    ...(build.weaponLevels ?? []).map((row) => row.id),
+  ]);
+  const powerUpIds = uniqueIds((build.powerUpLevels ?? []).map((row) => row.id));
+
+  const parts: Array<{ id: string; kind: HangarEntry['kind'] }> = [
+    { id: build.hullId, kind: 'hull' },
+    ...weaponIds.map((id) => ({ id, kind: 'weapon' as const })),
+    ...uniqueIds(build.modifiers).map((id) => ({ id, kind: 'modifier' as const })),
+    ...powerUpIds.map((id) => ({ id, kind: 'power-up' as const })),
+  ];
+
+  for (const part of parts) {
+    const entry = findHangarEntry(part.id);
+    if (entry === null || entry.kind !== part.kind) {
+      missing.push({ id: part.id, kind: part.kind, reason: 'unknown' });
+      continue;
+    }
+    if (ownsEntry(hangar, entry)) continue;
+    if (toCount(context.ringIndex) < toCount(entry.minRing)) {
+      missing.push({ id: part.id, kind: part.kind, reason: 'gated' });
+      continue;
+    }
+    const price = normalisePrice(entry.price);
+    minerals += price.minerals;
+    cores += price.cores;
+    purchases.push({ entry, price });
+  }
+
+  return { purchases, cost: { minerals, cores } };
+}
+
+/**
+ * The level-upgrade steps a build needs for one kind, each priced from its
+ * effective current level up to the build's captured level (capped at the
+ * shared ceiling — a build never asks for more than the run can fly).
+ */
+function plannedUpgradeCosts(
+  levels: PermanentUpgradeLevels,
+  id: string,
+  target: number,
+): HangarPrice[] {
+  const steps: HangarPrice[] = [];
+  let current = currentUpgradeLevel(levels, id);
+  const cappedTarget = Math.min(toCount(target), MAX_PERMANENT_LEVEL);
+  while (current < cappedTarget) {
+    steps.push(upgradePrice(current));
+    current += 1;
+  }
+  return steps;
+}
+
+/**
+ * Applies a saved build atomically — purchases and equips every part, then
+ * tops every relied-on permanent level up to the captured level — or refuses
+ * with a structured shortfall and changes nothing (AC2/AC3).
+ *
+ * Validation runs against the real purchase/upgrade rules
+ * (`owned → gated → unaffordable` precedence, the per-kind upgrade rules) and
+ * sums the whole build's cost **before** spending a coin, so an unaffordable
+ * build spends nothing and applies nothing. On success every purchase and
+ * level-up lands in one fresh hangar, which the caller persists through the
+ * single `saveHangarWarPayload` write.
+ *
+ * The loadout **joins** the build's starting weapons and modifiers (deduplicated
+ * against what is already equipped), while the hull becomes the build's hull —
+ * matching the parent AC, and meaning a re-fit after a battle (empty loadout)
+ * yields exactly the saved build.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param build — the saved build to apply.
+ * @param context — the purchase context (ring gating).
+ * @returns the fresh hangar on success, or the exact shortfall on refusal.
+ */
+export function applySavedBuild(
+  hangar: HangarState,
+  build: SavedShipBuild,
+  context: HangarPurchaseContext,
+): SavedBuildApplyResult {
+  const missing: SavedBuildMissingEntry[] = [];
+  const { purchases, cost } = planSavedBuildPurchases(hangar, build, context, missing);
+
+  // Structural refusals (unknown/gated parts) win over affordability: the build
+  // can never apply a stale part no matter how much salvage the fleet holds.
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      reason: missing[0].reason,
+      shortfall: { entries: missing, minerals: 0, cores: 0 },
+      spent: ZERO_PRICE,
+      hangar: cloneHangar(hangar),
+    };
+  }
+
+  // Sum the level top-ups on top of the purchases. A referenced kind that is
+  // neither shipped nor level-bearing can never be topped up, so it refuses.
+  const levels = hangarPermanentLevels(hangar);
+  let totalMinerals = cost.minerals;
+  let totalCores = cost.cores;
+  const upgrades: Array<{ id: string; steps: HangarPrice[] }> = [];
+  const levelRefusals: SavedBuildMissingEntry[] = [];
+
+  const levelRows: Array<{ id: string; level: number; kind: HangarEntry['kind'] }> = [
+    ...(build.weaponLevels ?? []).map((row) => ({
+      id: row.id,
+      level: row.level,
+      kind: 'weapon' as const,
+    })),
+    ...(build.powerUpLevels ?? []).map((row) => ({
+      id: row.id,
+      level: row.level,
+      kind: 'power-up' as const,
+    })),
+  ];
+  for (const row of levelRows) {
+    const kind = upgradeKind(row.id);
+    if (kind === null || (kind === 'power-up' && isNonUpgradeablePowerUp(row.id))) {
+      levelRefusals.push({ id: row.id, kind: row.kind, reason: 'unknown' });
+      continue;
+    }
+    const steps = plannedUpgradeCosts(levels, row.id, row.level);
+    for (const step of steps) {
+      totalMinerals += step.minerals;
+      totalCores += step.cores;
+    }
+    upgrades.push({ id: row.id, steps });
+  }
+
+  if (levelRefusals.length > 0) {
+    return {
+      ok: false,
+      reason: levelRefusals[0].reason,
+      shortfall: { entries: levelRefusals, minerals: 0, cores: 0 },
+      spent: ZERO_PRICE,
+      hangar: cloneHangar(hangar),
+    };
+  }
+
+  const missingMinerals = Math.max(0, totalMinerals - toCount(hangar.bankedMinerals));
+  const missingCores = Math.max(0, totalCores - toCount(hangar.bankedCores));
+  if (missingMinerals > 0 || missingCores > 0) {
+    // Every part that would have been bought is unaffordable as a whole; name
+    // them so the player knows exactly what to earn toward.
+    const entries = purchases.map((purchase) => ({
+      id: purchase.entry.id,
+      kind: purchase.entry.kind,
+      reason: 'unaffordable' as const,
+    }));
+    return {
+      ok: false,
+      reason: 'unaffordable',
+      shortfall: { entries, minerals: missingMinerals, cores: missingCores },
+      spent: ZERO_PRICE,
+      hangar: cloneHangar(hangar),
+    };
+  }
+
+  // ── Apply: everything is validated and affordable, so buy + equip + top up.
+  let next = cloneHangar(hangar);
+  let spentMinerals = 0;
+  let spentCores = 0;
+
+  for (const purchase of purchases) {
+    // Ownership only here; the build's exact loadout is equipped below so a
+    // weapon referenced solely by a level row is not silently slotted in.
+    const result = buy(next, purchase.entry, context);
+    next = result.hangar;
+    spentMinerals += result.spent.minerals;
+    spentCores += result.spent.cores;
+  }
+
+  // Equip the build's hull, then join its starting weapons and modifiers into
+  // the active loadout (only owned entries survive; all are owned by now).
+  next = equipHull(next, build.hullId);
+  next = equipLoadout(next, {
+    startingWeapons: uniqueIds([
+      ...next.activeLoadout.startingWeapons,
+      ...build.startingWeapons,
+    ]),
+    modifiers: uniqueIds([...next.activeLoadout.modifiers, ...build.modifiers]),
+  });
+
+  for (const upgrade of upgrades) {
+    for (let step = 0; step < upgrade.steps.length; step += 1) {
+      const current = hangarPermanentLevels(next);
+      const result = buyUpgrade(next, upgrade.id, current, context);
+      if (!result.ok) break; // Unreachable: validated above; defensive.
+      next = withPermanentLevels(result.hangar, result.levels);
+      spentMinerals += result.spent.minerals;
+      spentCores += result.spent.cores;
+    }
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    shortfall: EMPTY_SHORTFALL,
+    spent: { minerals: spentMinerals, cores: spentCores },
+    hangar: next,
+  };
 }

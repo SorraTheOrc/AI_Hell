@@ -161,6 +161,11 @@ export function drop(x: number, y: number, type = 'spread'): BotDrop {
 }
 
 /** Builds a mineral fixture. */
-export function mineral(x: number, y: number): BotMineral {
-  return { x, y, type: 'mineral' };
+export function mineral(x: number, y: number, value?: number): BotMineral {
+  return {
+    x,
+    y,
+    type: 'mineral',
+    ...(value !== undefined ? { value } : {}),
+  };
 }

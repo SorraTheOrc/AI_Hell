@@ -10,8 +10,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BOT_COMMITMENT_TUNABLES,
+  BOT_TWO_LAYER_TUNABLES,
   createCommitmentState,
   selectCommittedGoal,
+  selectTwoLayerGoal,
   type CommitmentDecision,
   type CommitmentState,
   type GoalCandidate,
@@ -208,5 +210,155 @@ describe('selectCommittedGoal', () => {
     };
 
     expect(run()).toEqual(run());
+  });
+});
+
+/**
+ * Two-layer primary/secondary selection
+ * (AH-0MWJ1680Z001QYV2 · AC1–AC3).
+ *
+ * These pin the suspend/resume contract: a primary is sticky, a secondary may
+ * only divert when its payoff clears the threshold and the primary is not
+ * urgent, and the bot returns to the primary afterwards.
+ */
+describe('selectTwoLayerGoal (AH-0MWJ1680Z001QYV2)', () => {
+  const T = BOT_TWO_LAYER_TUNABLES;
+  const primary = (
+    goalId: string,
+    utility: number,
+    extra: Partial<GoalCandidate> = {},
+  ): GoalCandidate => ({
+    goalId,
+    utility,
+    valid: true,
+    achieved: false,
+    layer: 'primary',
+    ...extra,
+  });
+  const secondary = (
+    goalId: string,
+    utility: number,
+    payoff: number,
+    extra: Partial<GoalCandidate> = {},
+  ): GoalCandidate => ({
+    goalId,
+    utility,
+    valid: true,
+    achieved: false,
+    layer: 'secondary',
+    diversionPayoff: payoff,
+    ...extra,
+  });
+
+  it('commits the best primary and never diverts below the threshold', () => {
+    const decision = selectTwoLayerGoal(
+      [primary('engage-enemy', 2.2), secondary('collect-mineral', 4.0, 0.1)],
+      createCommitmentState(),
+      0.1,
+      T,
+    );
+    expect(decision.goalId).toBe('engage-enemy');
+    expect(decision.layer).toBe('primary');
+  });
+
+  it('diverts to a secondary that clears the threshold, remembering the primary', () => {
+    const decision = selectTwoLayerGoal(
+      [primary('engage-enemy', 2.2), secondary('collect-mineral', 4.4, 1.0)],
+      createCommitmentState(),
+      0.1,
+      T,
+    );
+    expect(decision.goalId).toBe('collect-mineral');
+    expect(decision.layer).toBe('secondary');
+    expect(decision.suspendedPrimaryId).toBe('engage-enemy');
+  });
+
+  it('returns to the suspended primary once the secondary is achieved', () => {
+    // Committed to the diversion...
+    const divert = selectTwoLayerGoal(
+      [primary('engage-enemy', 2.2), secondary('collect-mineral', 4.4, 1.0)],
+      createCommitmentState(),
+      0.1,
+      T,
+    );
+    // ...then the mineral is collected (achieved) on the next tick.
+    const back = selectTwoLayerGoal(
+      [
+        primary('engage-enemy', 2.2),
+        secondary('collect-mineral', 4.4, 1.0, { achieved: true }),
+      ],
+      divert,
+      0.1,
+      T,
+    );
+    expect(back.goalId).toBe('engage-enemy');
+    expect(back.layer).toBe('primary');
+  });
+
+  it('a hard primary takes over a running secondary once its hold elapses', () => {
+    let state = selectTwoLayerGoal(
+      [primary('engage-enemy', 2.2), secondary('collect-mineral', 4.4, 1.0)],
+      createCommitmentState(),
+      0.1,
+      T,
+    );
+    expect(state.goalId).toBe('collect-mineral');
+    // A survival threat (hard primary) blocks further diversion and takes over
+    // once the secondary has had its minimum soak — it still respects the
+    // hysteresis hold (which keeps the bot's fire on target, so survivability
+    // is not reduced by reactively freezing into evade).
+    for (let i = 0; i < 10 && state.goalId !== 'survive'; i += 1) {
+      state = selectTwoLayerGoal(
+        [
+          primary('engage-enemy', 2.2),
+          primary('survive', 12, { hardPrimary: true }),
+          secondary('collect-mineral', 4.4, 1.0),
+        ],
+        state,
+        0.1,
+        T,
+      );
+    }
+    expect(state.goalId).toBe('survive');
+    expect(state.layer).toBe('primary');
+  });
+
+  it('blocks diversion when the primary is urgent (wave-pressure focus)', () => {
+    const decision = selectTwoLayerGoal(
+      [
+        primary('engage-enemy', 2.6, { urgency: 0.9 }),
+        secondary('collect-mineral', 4.4, 1.0),
+      ],
+      createCommitmentState(),
+      0.1,
+      T,
+    );
+    expect(decision.goalId).toBe('engage-enemy');
+  });
+
+  it('rate-limits secondary churn by keeping the running secondary', () => {
+    const divert = selectTwoLayerGoal(
+      [
+        primary('engage-enemy', 2.2),
+        secondary('collect-mineral', 4.6, 1.0),
+        secondary('collect-powerup', 4.5, 1.0),
+      ],
+      createCommitmentState(),
+      0.1,
+      T,
+    );
+    expect(divert.goalId).toBe('collect-mineral');
+    // A marginally-higher second secondary does not immediately steal control.
+    const next = selectTwoLayerGoal(
+      [
+        primary('engage-enemy', 2.2),
+        secondary('collect-mineral', 4.6, 1.0),
+        secondary('collect-powerup', 4.9, 1.0),
+      ],
+      divert,
+      0.1,
+      T,
+    );
+    expect(next.goalId).toBe('collect-mineral');
   });
 });

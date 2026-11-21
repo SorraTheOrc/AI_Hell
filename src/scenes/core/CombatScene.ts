@@ -41,6 +41,7 @@ import {
   playBulletDestructionSound,
   playDestructionSound,
   playForceFieldReflectSound,
+  playGrazeSound,
   playMortarDetonationSound,
   playMortarImpactSound,
   playPhaseShiftSound,
@@ -68,6 +69,8 @@ import type { HitscanTarget } from './hitscanBeam';
 import type { PerformanceCounts } from '../../core/perfProbe';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { resolveThornsAbsorb } from '../../vfx/thornsAbsorb';
+import { spawnGrazeSpark } from '../../vfx/grazeSpark';
+import { nearestGrazePoint } from '../../core/graze';
 import { EffectsRegistry } from '../../powerups/effects';
 import { isInDanger } from '../../powerups/dangerDetection';
 import {
@@ -181,6 +184,24 @@ export abstract class CombatScene<
    * burst.
    */
   protected thornsAbsorbEffects: Phaser.GameObjects.Graphics[] = [];
+
+  /**
+   * Live graze spark fans, tracked for observation and teardown on scene
+   * shutdown (AH-0MWL7ORK8007LXJI). Spawned by the shared graze pass, so the
+   * game and every gym fire the same cue.
+   */
+  protected grazeEffects: Phaser.GameObjects.Graphics[] = [];
+
+  /**
+   * Stable per-hostile ids for the graze credit (AH-0MWL7ORK8007LXJI AC2).
+   * A hostile's id never changes while it lives and is never reused, so a
+   * credit record can never be inherited by a different object; the WeakMap
+   * lets a destroyed hostile's id be collected with it.
+   */
+  private readonly grazeIds = new WeakMap<object, number>();
+
+  /** Monotonic source of {@link grazeIds}. */
+  private nextGrazeId = 1;
 
   /** Seconds of post-hit invulnerability remaining (blinks while > 0). */
   protected invulnerable = 0;
@@ -710,9 +731,10 @@ export abstract class CombatScene<
 
     if (aoe.clearsEnemyBullets) {
       const kept: TBullet[] = [];
-      const bulletRadius = this.getEnemyBulletRadius();
+      const baseBulletRadius = this.getEnemyBulletRadius();
       for (const bullet of this.getEnemyBullets()) {
         const { x: bx, y: by } = bullet.graphics;
+        const bulletRadius = baseBulletRadius * bullet.graphics.scale;
         if (this._overlaps(x, y, aoe.radius, bx, by, bulletRadius)) {
           // Shared interception feedback (cue + flash), then destroy.
           resolveBulletVsBulletImpact(this, bx, by, {
@@ -834,11 +856,14 @@ export abstract class CombatScene<
    * laser resolves as a hitscan rather than through the shared player-bullet
    * path (parent AC: it only ever fires at asteroids).
    *
-   * The shot's feedback is spawned first, from the ship's **current** position
-   * to the target's **current** position: `vfx/miningLaserBeam.spawnMiningLaserBeam`
-   * draws the thin amber beam (wrapped-aware, so a rock across the seam is cut
-   * through the edge rather than across the screen) and plays the laser's
-   * cutting tick. The module owns both the look and the cue
+   * The shot's feedback is spawned first, from the ship to the target's
+   * **fire-time** position: `vfx/miningLaserBeam.spawnMiningLaserBeam` draws the
+   * thin amber beam (wrapped-aware, so a rock across the seam is cut through the
+   * edge rather than across the screen) and plays the laser's cutting tick. The
+   * beam's source end **re-anchors each frame** to the ship's current position
+   * while its far end stays on the rock's fire-time position — the size of the
+   * shot is what got cut, so the beam does not follow a drifting asteroid
+   * (AH-0MWJ8JUEF006XBLB, AC6). The module owns both the look and the cue
    * (AH-0MW9QMQ7B005WFH9), so `PlayScene` and every gym get identical feedback
    * from this one shared path and no call site can forget the sound — the
    * `spawnOrbitalStrike` precedent.
@@ -848,9 +873,15 @@ export abstract class CombatScene<
   protected override onMiningLaserFire(target: TEnemy): void {
     const player = this.getPlayer();
     if (player) {
-      spawnMiningLaserBeam(this, player, target, {
-        registry: this.aoeEffects,
-      });
+      spawnMiningLaserBeam(
+        this,
+        // Source anchor: the ship's current position, read each frame.
+        () => this.getPlayer(),
+        // Destination: the rock's position at fire time, frozen inside the
+        // renderer so its later drift never drags the beam.
+        { x: target.x, y: target.y },
+        { registry: this.aoeEffects },
+      );
     }
     this.damageEnemyViaAoe(
       target,
@@ -1307,6 +1338,10 @@ export abstract class CombatScene<
     const player = this.getPlayer();
     if (!player) return;
     if (this.tryAbsorbPlayerHit(player)) return;
+    // A real hit ends the danger chain: the multiplier resets to ×1, so the
+    // reward is for *staying* clean (AH-0MWL7ORK8007LXJI AC4). An absorbed
+    // hit never reaches here, so a shield keeps the chain alive.
+    this.grazeTracker.onPlayerHit();
     this.onPlayerHit(player);
   }
 
@@ -1511,7 +1546,7 @@ export abstract class CombatScene<
     this._resolvePlayerBulletsVsEnemies();
 
     // 2. Player bullets vs enemy bullets — both destroyed (shared AC5 path).
-    const bulletRadius = this.getEnemyBulletRadius();
+    const baseBulletRadius = this.getEnemyBulletRadius();
     // Recycled survivor buffer + the scene's owned bullet list: survivors keep
     // their original order, and the array this pass releases becomes next
     // frame's buffer (AH-0MVXV0F0Y004NENT). The loop bound is captured up
@@ -1544,6 +1579,7 @@ export abstract class CombatScene<
       const eb = enemyBullets[enemyIndex];
       const bulletX = eb.graphics.x;
       const bulletY = eb.graphics.y;
+      const bulletRadius = baseBulletRadius * eb.graphics.scale;
       let candidateCount: number;
       if (broadPhase) {
         candidateCount = broadPhase.query(
@@ -1648,6 +1684,7 @@ export abstract class CombatScene<
       const eb = playerPhaseBullets[enemyIndex];
       const bulletX = eb.graphics.x;
       const bulletY = eb.graphics.y;
+      const bulletRadius = baseBulletRadius * eb.graphics.scale;
       if (
         effects.isForceFieldActive() &&
         this._overlaps(
@@ -1752,6 +1789,126 @@ export abstract class CombatScene<
         }
       }
     }
+
+    // 5. Graze band / danger multiplier (AH-0MWL7ORK8007LXJI) — runs last so
+    //    a hostile that hit the player (and was consumed above) never pays a
+    //    graze, and only surviving hostiles are banded.
+    this._resolveGrazePass(player, playerHull);
+  }
+
+  /**
+   * The shared graze pass (AH-0MWL7ORK8007LXJI AC1/AC2).
+   *
+   * Every live hostile — enemy bullets and enemy bodies alike, asteroids and
+   * lane traffic included, because they can kill on contact — is observed
+   * against the graze band: outside the contact distance the collision passes
+   * above use, inside `contactRadius + GRAZE_BAND`. The rule itself (credit,
+   * hysteresis, tiers, decay, multiplier) lives in the pure
+   * `src/core/graze.ts`; this method only feeds it and dispatches the cue, so
+   * the game and every gym resolve identical values (gym↔game parity,
+   * AH-0MUGZDTFX004RBD1).
+   *
+   * Judged on the shared collision centre and radii, never sprite bounds.
+   */
+  protected _resolveGrazePass(player: Player, playerHull: number): void {
+    const tracker = this.grazeTracker;
+    tracker.beginPass();
+
+    const baseBulletRadius = this.getEnemyBulletRadius();
+    for (const bullet of this.getEnemyBullets()) {
+      const x = bullet.graphics.x;
+      const y = bullet.graphics.y;
+      const radius = baseBulletRadius * bullet.graphics.scale;
+      const distance = Math.hypot(player.x - x, player.y - y);
+      const contactRadius = playerHull + radius;
+      if (tracker.observe(this._grazeIdOf(bullet), distance, contactRadius)) {
+        this._onGraze(x, y, radius);
+      }
+    }
+
+    for (const enemy of this.getEnemyEntities()) {
+      if (!enemy.alive) continue;
+      // A spawning enemy is still growing and cannot be collided with yet, so
+      // it cannot be grazed yet either — the same rule as every collision.
+      if ((enemy as unknown as { isSpawning?: boolean }).isSpawning) continue;
+      const radius = enemy.getHitRadius();
+      const distance = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+      const contactRadius = playerHull + radius;
+      if (tracker.observe(this._grazeIdOf(enemy), distance, contactRadius)) {
+        this._onGraze(enemy.x, enemy.y, radius);
+      }
+    }
+
+    // Drop the credit of any hostile that is gone (destroyed, expired or
+    // removed) so a later object can never inherit it (AC2).
+    tracker.endPass();
+  }
+
+  /**
+   * The stable per-hostile id the graze credit is keyed by: assigned once,
+   * never reused while the hostile lives (AC2).
+   */
+  private _grazeIdOf(target: object): number {
+    const existing = this.grazeIds.get(target);
+    if (existing !== undefined) return existing;
+    const id = this.nextGrazeId;
+    this.nextGrazeId += 1;
+    this.grazeIds.set(target, id);
+    return id;
+  }
+
+  /**
+   * Shared graze feedback (AC5): a spark fan struck at the nearest point of
+   * the grazed hostile plus the tier-pitched cue. Both live here so the game
+   * and every gym read a graze identically.
+   */
+  protected _onGraze(x: number, y: number, radius: number): void {
+    const player = this.getPlayer();
+    const tierIndex = this.grazeTracker.tierIndex;
+    const point = player
+      ? nearestGrazePoint(player.x, player.y, x, y, radius)
+      : { x, y };
+    const angle = player ? Math.atan2(y - player.y, x - player.x) : 0;
+    playGrazeSound(tierIndex);
+    spawnGrazeSpark(this, point.x, point.y, {
+      registry: this.grazeEffects,
+      tierIndex,
+      angle,
+    });
+    this.onGrazeCredited(tierIndex);
+  }
+
+  /**
+   * Scene hook fired after a graze is credited, with the tier the chain has
+   * reached. The campaign uses it to pulse the HUD tacho; the default is a
+   * no-op (the spark and cue are already dispatched by the shared pass).
+   */
+  protected onGrazeCredited(tierIndex: number): void {
+    void tierIndex;
+  }
+
+  /**
+   * Applies the danger multiplier to a kill-score award, rounded half up
+   * (AH-0MWL7ORK8007LXJI AC3). Called at the shared kill/score seam so the
+   * game's award and any future scoring scene can never disagree.
+   */
+  protected resolveKillScore(base: number): number {
+    return this.grazeTracker.applyScore(base);
+  }
+
+  /** Live graze spark fans (copy) — observable without pixel assertions. */
+  getGrazeEffects(): Phaser.GameObjects.Graphics[] {
+    return [...this.grazeEffects];
+  }
+
+  /** Grazes credited this run (the deterministic count of AC7). */
+  getGrazeCount(): number {
+    return this.grazeTracker.grazeCount;
+  }
+
+  /** Current danger multiplier (`×1` … `×5`). */
+  getDangerMultiplier(): number {
+    return this.grazeTracker.multiplier;
   }
 
   /**
@@ -1822,11 +1979,12 @@ export abstract class CombatScene<
     if (this.drones.length === 0) return;
     const level = this.getDroneLevel();
     const field = this.getDroneMineralField();
-    const bulletRadius = this.getEnemyBulletRadius();
+    const baseBulletRadius = this.getEnemyBulletRadius();
 
     // Enemy bullets: an intercepted shot is consumed and the drone spills.
     const keptEnemy: TBullet[] = [];
     for (const eb of this.getEnemyBullets()) {
+      const bulletRadius = baseBulletRadius * eb.graphics.scale;
       let consumed = false;
       for (const drone of this.drones) {
         if (!drone.alive) continue;
@@ -2210,6 +2368,8 @@ export abstract class CombatScene<
     this.aoeEffects = [];
     this.wormholeEffects = [];
     this.thornsAbsorbEffects = [];
+    this.grazeEffects = [];
+    this.nextGrazeId = 1;
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
@@ -2237,6 +2397,8 @@ export abstract class CombatScene<
     this.wormholeEffects = [];
     for (const effect of this.thornsAbsorbEffects) effect.destroy();
     this.thornsAbsorbEffects = [];
+    for (const effect of this.grazeEffects) effect.destroy();
+    this.grazeEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;

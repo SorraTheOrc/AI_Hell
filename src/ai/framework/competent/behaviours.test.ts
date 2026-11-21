@@ -230,6 +230,31 @@ describe('reposition behaviour (AC2)', () => {
     );
     expect(intent).toMatchObject({ dirX: 0, dirY: 0, thrust: false });
   });
+
+  it('coasts to a stop at the edge of the idle band instead of thrusting to the exact centre (AH-0MWJ1680Z001QYV2 audit rejection)', () => {
+    // 40 px from the centre, inside the 90 px idle band: no steering at all.
+    const intent = reposition.run(
+      context(
+        makeSnapshot({ player: { x: 440, y: 270, vx: 0, vy: 0 } }),
+        COMPETENT_GOAL_IDS.reposition,
+      ),
+    );
+    expect(intent).toMatchObject({ dirX: 0, dirY: 0, thrust: false });
+
+    // 130 px from the centre, i.e. 40 px outside the band, moving at 175 px/s:
+    // the friction stopping distance (153 px) far exceeds the gap to the band
+    // edge, so the ship coasts. Thrusting here would carry it past the centre
+    // and make it drift back — the back-and-forth the producer rejected.
+    const coasting = reposition.run(
+      context(
+        makeSnapshot({ player: { x: 350, y: 270, vx: 175, vy: 0 } }),
+        COMPETENT_GOAL_IDS.reposition,
+      ),
+    );
+    expect(coasting).not.toBeNull();
+    expect(coasting!.thrust).toBe(false);
+    expect(coasting!.dirX).toBeCloseTo(1, 3);
+  });
 });
 
 describe('survival is a hard steering constraint (AC4)', () => {
@@ -255,6 +280,12 @@ describe('survival is a hard steering constraint (AC4)', () => {
 // ── Reverse thruster (AH-0MV1J0OHP0072XA5) ──────────────────────────
 
 describe('collect behaviour — reverse brake-assist (AC1)', () => {
+  /** Collect behaviour with `collectReverseBrake` opted back in. */
+  const brakingBehaviours = createCompetentBehaviours(
+    resolveCompetentTunables({ collectReverseBrake: true }),
+  );
+  const brakingCollect = brakingBehaviours.require('collect');
+
   it('requests reverse instead of only coasting when the gap is within the imminent-overshoot threshold', () => {
     // Closing on a mineral at 50 px with v=100 px/s: gap=32, threshold=36
     // (2× collectArrivalRadius).  Friction-only stopping distance
@@ -266,13 +297,27 @@ describe('collect behaviour — reverse brake-assist (AC1)', () => {
       minerals: [mineral(530, 270)],
       reverseEnabled: true,
     });
-    const intent = collect.run(
+    const intent = brakingCollect.run(
       context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
     );
     expect(intent).not.toBeNull();
     expect(intent!.thrust).toBe(false);
     expect(intent!.reverse).toBe(true);
     expect(intent!.dirX).toBeCloseTo(1, 3);
+  });
+
+  it('is pass-through by default: no reverse press on a pickup even inside the overshoot threshold (AH-0MWJ1680Z001QYV2 audit rejection)', () => {
+    // The same geometry as above, with the shipped `collectReverseBrake: false`.
+    const snapshot = makeSnapshot({
+      player: { x: 480, y: 270, vx: 100, vy: 0 },
+      minerals: [mineral(530, 270)],
+      reverseEnabled: true,
+    });
+    const intent = collect.run(
+      context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.reverse).toBe(false);
   });
 
   it('does not brake with reverse during normal deceleration when gap is above the threshold', () => {
@@ -282,7 +327,7 @@ describe('collect behaviour — reverse brake-assist (AC1)', () => {
       minerals: [mineral(580, 270)],
       reverseEnabled: true,
     });
-    const intent = collect.run(
+    const intent = brakingCollect.run(
       context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
     );
     expect(intent).not.toBeNull();
@@ -295,10 +340,70 @@ describe('collect behaviour — reverse brake-assist (AC1)', () => {
       minerals: [mineral(560, 270)],
       reverseEnabled: false,
     });
-    const intent = collect.run(
+    const intent = brakingCollect.run(
       context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
     );
     expect(intent!.reverse).toBe(false);
+  });
+});
+
+describe('collect behaviour — overshoot is accepted (AH-0MWJ1680Z001QYV2 audit rejection)', () => {
+  /** Collect behaviour with the overshoot allowance opted in. */
+  const overshootBehaviours = createCompetentBehaviours(
+    resolveCompetentTunables({ collectOvershootMargin: 60 }),
+  );
+  const overshootCollect = overshootBehaviours.require('collect');
+
+  it('lets go of a pickup the ship has just flown past instead of turning back', () => {
+    // The ship is moving right at 150 px/s; the mineral sits 30 px to its
+    // left — behind the velocity vector and inside the 60 px overshoot margin.
+    // The only remaining target is that passed mineral, so the behaviour
+    // declines rather than U-turning for it.
+    const snapshot = makeSnapshot({
+      player: { x: 480, y: 270, vx: 150, vy: 0 },
+      minerals: [mineral(450, 270)],
+    });
+    const intent = overshootCollect.run(
+      context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
+    );
+    expect(intent).toBeNull();
+  });
+
+  it('still targets a pickup ahead of the ship', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 480, y: 270, vx: 150, vy: 0 },
+      minerals: [mineral(520, 270)],
+    });
+    const intent = overshootCollect.run(
+      context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.dirX).toBeCloseTo(1, 3);
+  });
+
+  it('picks the next target when a nearer pickup has been passed', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 480, y: 270, vx: 150, vy: 0 },
+      minerals: [mineral(450, 270), mineral(700, 270)],
+    });
+    const intent = overshootCollect.run(
+      context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.dirX).toBeCloseTo(1, 3);
+  });
+
+  it('is opt-in: the shipped default still chases a passed pickup', () => {
+    expect(T.collectOvershootMargin).toBe(0);
+    const snapshot = makeSnapshot({
+      player: { x: 480, y: 270, vx: 150, vy: 0 },
+      minerals: [mineral(450, 270)],
+    });
+    const intent = collect.run(
+      context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.dirX).toBeCloseTo(-1, 3);
   });
 });
 

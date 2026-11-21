@@ -13,18 +13,48 @@
  *   module (`src/core/hangarWar/hangarEconomy.ts`) and the catalogue
  *   (`src/data/hangarCatalogue.ts`). This module only *presents* those
  *   decisions and applies them through the shared pure updaters
- *   ({@link purchaseHangarEntry}, {@link equipHangarHull},
- *   {@link toggleHangarWeapon}), which return a fresh payload.
+ *   ({@link purchaseHangarEntry}, {@link upgradeHangarKind},
+ *   {@link equipHangarHull}, {@link toggleHangarWeapon}), which return a fresh
+ *   payload.
+ * - **An owned level-bearing row is an upgrade row, not a dead `OWNED` one.**
+ *   A weapon the fleet owns shows its current permanent level and the priced
+ *   next-level action (`UPGRADE · 100 min`), visibly disabled with its price
+ *   and shortfall when the fleet cannot pay and `MAX` at the shared
+ *   `MAX_PERMANENT_LEVEL` ceiling. The price, cap and affordability verdicts
+ *   are the economy's own pure upgrade rule (`costToUpgrade`/`buyUpgrade`,
+ *   parent AH-0MWHW4ALS0039JFU — this item AH-0MWI5AK1E008HDHH); every
+ *   non-upgradeable row (a hull, a modifier, a consumable, a field-pickup-only
+ *   kind, and any row the fleet does not own) renders byte-identically to
+ *   before. The renderer stays kind-agnostic, so a power-up level row renders
+ *   the same affordance once one exists (power-up purchases seed it —
+ *   AH-0MWKT12BT001106T).
  * - **The deployment is a launch, not a loadout rule.** The ▶ DEPLOY row is
  *   built from the same pure deployment payload builder the game's scene
  *   hands to `PlayScene` (`./hangarDeployment`), so the hull, starting
  *   weapons, modifiers and hex-aggression difficulty shown on the screen are
  *   exactly the ones a deployment carries (AH-0MVUXC2DD003HN0I).
+ * - **The screen is target-aware (AH-0MWMT4QXF0095CBN).** When the player
+ *   arrives from a chosen hex, an optional `targetHexId` is threaded into the
+ *   same deployment builder, so the `▶ DEPLOY` row and the published
+ *   {@link HangarBossIntel} describe **exactly** the hex the launch attacks.
+ *   The intel comes from the shared authored ring data
+ *   (`src/data/hexRingDefinitions.ts`, or an injectable `definitions`
+ *   override), never a scene-local copy; an unknown/unauthored hex publishes
+ *   an explicit unknown fallback instead of throwing. Every weapon row
+ *   (the loadout selector and the unlock tree's weapon entries) also carries
+ *   its {@link BossMatchup} against that boss, resolved by the F1 pure rule
+ *   (`src/core/hangarWar/weaponMatchup.ts`) — **display only**, never a combat
+ *   rule (parent assumption A7; AH-0MWL5376H001WJFZ owns the mechanics). The
+ *   verdict is always paired with a glyph tag (`▲ EFFECTIVE` / `▼ RESISTED`),
+ *   so it is readable without colour (repo CVD policy).
  * - **One screen code path.** {@link buildHangarScreenModel} and
  *   {@link renderHangarScreen} are used by the shipped `HangarScene` *and* by
  *   the `GymHangar` parity scene (which renders the same model read-only), so
  *   the gym can never drift from the game (AGENTS.md gym↔game parity,
- *   `docs/GYM_PARITY.md`).
+ *   `docs/GYM_PARITY.md`). The target-aware intel and the matchup marks are
+ *   part of that model, so the gym renders the identical `TARGET INTEL` block
+ *   and `▲ EFFECTIVE` / `▼ RESISTED` marks read-only
+ *   (AH-0MWMT4STK001PSK4).
  *
  * The screen's two navigation/state rows — `⌗ HEX MAP` and the destructive
  * `⟲ RESTART WAR` reset — are built here too. The restart row is a two-step
@@ -46,21 +76,36 @@ import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import {
   HANGAR_CATALOGUE,
   STARTER_WEAPON_ID,
+  isPurchasableEntry,
   type HangarEntry,
   type HangarEntryKind,
+  type HangarPrice,
 } from '../../data/hangarCatalogue';
 import {
+  applySavedBuild,
   buy,
   canBuy,
+  captureShipBuild,
   cheapestUsefulUnlock,
+  costToUpgrade,
+  currentUpgradeLevel,
   equipHull,
   equipLoadout,
   findHangarEntry,
+  hangarPermanentLevels,
+  MAX_PERMANENT_LEVEL,
+  MAX_SAVED_BUILD_NAME_LENGTH,
   ownsEntry,
   resolveActiveHull,
   resolveActiveLoadout,
+  type SavedBuildRefusalReason,
+  type SavedBuildShortfall,
+  type UpgradeRefusal,
 } from '../../core/hangarWar/hangarEconomy';
-import { createDefaultPayload } from '../../core/hangarWar/hangarWarStore';
+import {
+  buyHangarUpgrade,
+  createDefaultPayload,
+} from '../../core/hangarWar/hangarWarStore';
 import type {
   HangarLoadout,
   HangarWarPayload,
@@ -71,6 +116,13 @@ import {
   type HangarWarDeployment,
 } from './hangarDeployment';
 import { FocusManager } from '../../utils/focusManager';
+import { HEX_RING_DEFINITIONS } from '../../data/hexRingDefinitions';
+import type { HexRingDefinition } from '../../core/hangarWar/hexRing';
+import {
+  resolveBossMatchup,
+  type BossMatchup,
+  type MatchupDefinition,
+} from '../../core/hangarWar/weaponMatchup';
 
 /** Title rendered by the hangar screen (asserted by tests). */
 export const HANGAR_SCREEN_TITLE = 'HANGAR WAR';
@@ -79,8 +131,24 @@ export const HANGAR_SCREEN_TITLE = 'HANGAR WAR';
 export const HANGAR_SCREEN_HINT =
   'tab/arrows move · enter/space select · ESC returns to the menu';
 
-/** A hangar row's state — the economy's verdict, presented. */
-export type HangarUnlockState = 'owned' | 'gated' | 'unaffordable' | 'buyable';
+/**
+ * A hangar row's state — the economy's verdict, presented.
+ *
+ * The first four are the purchase branch's verdicts (`canBuy`), unchanged. The
+ * last three are the **owned-row upgrade affordance** (parent
+ * AH-0MWHW4ALS0039JFU AC3): an owned level-bearing kind shows its current
+ * permanent level and the price of the next one, and the same three-way
+ * disabled vocabulary the purchase rows use — buyable (`upgradable`),
+ * cannot-afford-it (`upgrade-unaffordable`) and no-further-level (`capped`).
+ */
+export type HangarUnlockState =
+  | 'owned'
+  | 'gated'
+  | 'unaffordable'
+  | 'buyable'
+  | 'upgradable'
+  | 'upgrade-unaffordable'
+  | 'capped';
 
 /**
  * The `⟲ RESTART WAR` confirmation row: the player-facing restart control.
@@ -125,12 +193,33 @@ export interface HangarUnlockRow {
   priceLabel: string;
   /** The economy's verdict for this entry right now. */
   state: HangarUnlockState;
-  /** Shown verb/state (`BUY`, `OWNED`, `RING 2`, `NEED 40 min`). */
+  /**
+   * Shown verb/state (`BUY`, `OWNED`, `RING 2`, `NEED 40 min`, `UPGRADE ·
+   * 100 min`, `MAX`).
+   */
   actionLabel: string;
   /** Full row text as rendered. */
   label: string;
-  /** True only when the row can be bought right now. */
+  /** True only when the row can be activated right now (buy **or** upgrade). */
   actionable: boolean;
+  /**
+   * The kind's current permanent level, for an owned level-bearing row (the
+   * upgrade affordance); `null` on every other row.
+   */
+  level: number | null;
+  /** The shared permanent-level ceiling on an upgrade row; `null` elsewhere. */
+  maxLevel: number | null;
+  /**
+   * The rendered price of the next permanent level (`100 min`), or `null` when
+   * there is no next level to price (a `capped` row, or no upgrade at all).
+   */
+  upgradePriceLabel: string | null;
+  /**
+   * This weapon's display verdict against the target boss (`strong` when the
+   * boss is weak against it, `weak` when the boss resists it); `null` on every
+   * non-weapon row, which keeps its existing rendering (AH-0MWMT4QXF0095CBN).
+   */
+  matchup: BossMatchup | null;
 }
 
 /** One hull option in the deployment selector. */
@@ -163,6 +252,12 @@ export interface HangarWeaponOption {
   label: string;
   /** True when toggling this weapon would change the loadout. */
   actionable: boolean;
+  /**
+   * This weapon's display verdict against the target boss (AH-0MWMT4QXF0095CBN):
+   * `strong` when the boss's `weaknesses` name it, `weak` when its
+   * `strengths` do, otherwise `neutral`.
+   */
+  matchup: BossMatchup;
 }
 
 /** One permanent-modifier option in the deployment selector. */
@@ -259,7 +354,160 @@ export function buildHangarRestartRow(armed = false): HangarRestartRow {
   };
 }
 
+/** Row key of the hangar's `SAVE CURRENT BUILD` row. */
+export const SAVE_BUILD_ROW_KEY = 'save-build';
+
+/** Row key of the saved-build selector (cycles the selected build). */
+export const CYCLE_BUILD_ROW_KEY = 'build:cycle';
+
+/** The row-key builder for the selected build's verb row. */
+export function savedBuildRowKey(verb: 'apply' | 'rename' | 'delete'): string {
+  return `build:${verb}`;
+}
+
+/**
+ * Builds the compact saved-build surface rows (pure, AH-0MWL8C6FE008G1E7).
+ *
+ * A **fixed** five rows regardless of how many builds exist, so an unbounded
+ * list never overflows the shipped screen and every entry stays reachable:
+ *
+ * - `save` — capture the currently equipped ship as a new saved build;
+ * - `cycle` — advance the selected index through the list (the drop-down);
+ * - `apply` — purchase and equip the selected build in one action;
+ * - `rename` — rename the selected build;
+ * - `delete` — delete the selected build.
+ *
+ * With no saved builds only the `save` row is actionable; the other four are
+ * rendered disabled so the affordance is discoverable. Because the selected
+ * index can be advanced to **any** entry, deleting is reachable for every
+ * saved build (AC5) without a per-build row.
+ *
+ * @param payload — the current payload (the hangar carries the saved builds).
+ * @param selectedIndex — the index of the currently selected build (clamped).
+ * @returns the rows in reading order (save, cycle, apply, rename, delete).
+ */
+export function buildHangarSavedBuildRows(
+  payload: HangarWarPayload,
+  selectedIndex = 0,
+): HangarSavedBuildRow[] {
+  const builds = payload.hangar.savedBuilds ?? [];
+  const hasBuilds = builds.length > 0;
+  const index = hasBuilds
+    ? Math.min(Math.max(0, Math.trunc(selectedIndex)), builds.length - 1)
+    : 0;
+  const selected = hasBuilds ? builds[index] : null;
+  const position = hasBuilds ? index + 1 : 0;
+  const name = selected?.name ?? null;
+
+  const saveRow: HangarSavedBuildRow = {
+    key: SAVE_BUILD_ROW_KEY,
+    verb: 'save',
+    buildId: null,
+    name: 'SAVE CURRENT BUILD',
+    label: '＋ SAVE CURRENT BUILD',
+    actionable: true,
+  };
+
+  // With no saved builds only the save row is shown, so a fresh hangar keeps
+  // its compact layout (and the always-present save affordance is discoverable).
+  if (!hasBuilds) return [saveRow];
+
+  return [
+    saveRow,
+    {
+      key: CYCLE_BUILD_ROW_KEY,
+      verb: 'cycle',
+      buildId: selected?.id ?? null,
+      name: name ?? 'SAVED BUILDS: none',
+      label: `◀ ▶ SAVED BUILD ${position}/${builds.length} — “${name}”`,
+      actionable: builds.length > 1,
+    },
+    {
+      key: savedBuildRowKey('apply'),
+      verb: 'apply',
+      buildId: selected?.id ?? null,
+      name: name ?? '',
+      label: `▶ FLY “${name}” — re-buy & equip`,
+      actionable: true,
+    },
+    {
+      key: savedBuildRowKey('rename'),
+      verb: 'rename',
+      buildId: selected?.id ?? null,
+      name: name ?? '',
+      label: `✎ RENAME “${name}”`,
+      actionable: true,
+    },
+    {
+      key: savedBuildRowKey('delete'),
+      verb: 'delete',
+      buildId: selected?.id ?? null,
+      name: name ?? '',
+      label: `✖ DELETE “${name}”`,
+      actionable: true,
+    },
+  ];
+}
+
+/**
+ * The target hex's authored boss intel, as the config screen publishes it
+ * (AH-0MWMT4QXF0095CBN).
+ *
+ * Read from the shared authored ring definitions, never a scene-local copy.
+ * Total: an empty ring (no target) or a stored hex with no authored definition
+ * publishes `known: false` and an explicit unknown fallback rather than
+ * throwing.
+ */
+export interface HangarBossIntel {
+  /** The resolved target hex (the hex `▶ DEPLOY` launches at), or `null`. */
+  readonly hexId: string | null;
+  /** The boss that holds the target hex, or `null` when it is not authored. */
+  readonly boss: string | null;
+  /** What that boss is strong against (empty when unknown). */
+  readonly strengths: readonly string[];
+  /** What that boss is weak against (empty when unknown). */
+  readonly weaknesses: readonly string[];
+  /** Whether an authored definition was found for the target hex. */
+  readonly known: boolean;
+}
+
+/** The non-colour tag a strong (countering) weapon row carries. */
+export const HANGAR_STRONG_MARKER = '▲ EFFECTIVE';
+
+/** The non-colour tag a weak (resisted) weapon row carries. */
+export const HANGAR_WEAK_MARKER = '▼ RESISTED';
+
+/** The visible mutation on a matchup-tagged label: neutral is unchanged. */
+function withMatchupMarker(label: string, matchup: BossMatchup | null): string {
+  if (matchup === 'strong') return `${label} — ${HANGAR_STRONG_MARKER}`;
+  if (matchup === 'weak') return `${label} — ${HANGAR_WEAK_MARKER}`;
+  return label;
+}
+
 /** The complete rendered state of the hangar screen (pure data). */
+/**
+ * One row of the saved-build surface (AH-0MWL8C6FE008G1E7).
+ *
+ * `save` captures the currently equipped ship; `apply` re-purchases and
+ * re-equips a saved build in one action; `rename` and `delete` manage an
+ * existing entry. The `key` is unique within the screen (`build:<id>:<verb>` or
+ * `save-build`) so the shared `FocusManager` can address each row.
+ */
+export interface HangarSavedBuildRow {
+  /** Unique row key (`save-build`, `build:saved:<verb>`). */
+  key: string;
+  /** What activating the row does. */
+  verb: 'save' | 'cycle' | 'apply' | 'rename' | 'delete';
+  /** The currently selected saved build's id (`null` when none selected). */
+  buildId: string | null;
+  /** The selected build's display name (or a fixed label). */
+  name: string;
+  /** Full row text as rendered. */
+  label: string;
+  /** Whether the row can be activated right now. */
+  actionable: boolean;
+}
+
 export interface HangarScreenModel {
   /** Screen title. */
   title: string;
@@ -281,6 +529,24 @@ export interface HangarScreenModel {
   mapRow: HangarMapRow;
   /** The `⟲ RESTART WAR` reset row (two-step confirm, `bestScore` kept). */
   restartRow: HangarRestartRow;
+  /**
+   * A transient saved-build message (an apply refusal's shortfall, or a save
+   * confirmation), rendered above the restart row. `null` when there is none.
+   */
+  savedBuildMessage: string | null;
+  /**
+   * The saved-build rows — the drop-down list plus the save/rename/delete
+   * affordances (AH-0MWL8C6FE008G1E7). One `save` row first, then an `apply`,
+   * `rename` and `delete` row for every saved build, so deletion is reachable
+   * for every entry.
+   */
+  savedBuildRows: HangarSavedBuildRow[];
+  /**
+   * The target hex's authored boss intel (AH-0MWMT4QXF0095CBN): the resolved
+   * target, its boss name and authored strengths/weaknesses lists, or an
+   * explicit unknown fallback for an unauthored/unknown hex.
+   */
+  bossIntel: HangarBossIntel;
   /**
    * Keys of the rows that can be activated, in reading order — exactly the
    * rows registered with the shared `FocusManager` (disabled rows are never
@@ -318,18 +584,56 @@ function clonePayload(payload: HangarWarPayload): HangarWarPayload {
         startingWeapons: [...payload.hangar.activeLoadout.startingWeapons],
         modifiers: [...payload.hangar.activeLoadout.modifiers],
       },
+      ...(payload.hangar.savedBuilds !== undefined
+        ? {
+            savedBuilds: payload.hangar.savedBuilds.map((build) => ({
+              ...build,
+              startingWeapons: [...build.startingWeapons],
+              modifiers: [...build.modifiers],
+              weaponLevels: build.weaponLevels?.map((row) => ({ ...row })),
+              powerUpLevels: build.powerUpLevels?.map((row) => ({ ...row })),
+            })),
+          }
+        : {}),
     },
     ring: { ...payload.ring, hexes: payload.ring.hexes.map((hex) => ({ ...hex })) },
     pendingAttacks: payload.pendingAttacks.map((attack) => ({ ...attack })),
   };
 }
 
+/**
+ * A two-currency price as rendered (`100 min`, `150 min · 1 cores`).
+ *
+ * Single-homed so the purchase rows and the owned-row upgrade affordance
+ * spell a price the same way: only the currency pair is ever shown, never a
+ * currency the price does not spend.
+ */
+function formatHangarPrice(price: HangarPrice): string {
+  const minerals = toCount(price.minerals);
+  const cores = toCount(price.cores);
+  return cores > 0 ? `${minerals} min · ${cores} cores` : `${minerals} min`;
+}
+
 /** The price of an entry as rendered (`FREE` for the starting kit). */
 function formatPrice(entry: HangarEntry): string {
   if (entry.starter) return 'FREE';
-  const minerals = toCount(entry.price.minerals);
-  const cores = toCount(entry.price.cores);
-  return cores > 0 ? `${minerals} min · ${cores} cores` : `${minerals} min`;
+  return formatHangarPrice(entry.price);
+}
+
+/**
+ * What the fleet is missing, as rendered (`90 min / 2 cores`).
+ *
+ * The one spelling of a shortfall, shared by the purchase rows
+ * (`NEED 90 min / 2 cores`) and the upgrade rows (`UPGRADE · 150 min — NEED
+ * 150 min`), so a disabled row always reads the same way.
+ */
+function formatShortfall(shortfall: { minerals: number; cores: number }): string {
+  const minerals = toCount(shortfall.minerals);
+  const cores = toCount(shortfall.cores);
+  const parts: string[] = [];
+  if (minerals > 0) parts.push(`${minerals} min`);
+  if (cores > 0) parts.push(`${cores} cores`);
+  return parts.join(' / ');
 }
 
 /** The state verb/needed-salvage text for an unlock row. */
@@ -343,53 +647,156 @@ function actionLabelFor(
       return 'OWNED';
     case 'gated':
       return `RING ${toCount(entry.minRing)}`;
-    case 'unaffordable': {
-      const minerals = toCount(shortfall.minerals);
-      const cores = toCount(shortfall.cores);
-      const parts: string[] = [];
-      if (minerals > 0) parts.push(`${minerals} min`);
-      if (cores > 0) parts.push(`${cores} cores`);
-      return `NEED ${parts.join(' / ')}`;
-    }
+    case 'unaffordable':
+      return `NEED ${formatShortfall(shortfall)}`;
     case 'buyable':
       return 'BUY';
+    case 'upgradable':
+      return 'UPGRADE';
+    case 'upgrade-unaffordable':
+      return 'UPGRADE';
+    case 'capped':
+      return 'MAX';
   }
+}
+
+/**
+ * The owned-row upgrade affordance for one catalogue entry, or `null` when the
+ * entry has no permanent level to raise (so its row stays exactly as before).
+ *
+ * The purchase branch (`canBuy`) only ever says *owned* about a kind the fleet
+ * has, so this branch answers the next question: **is there a further level to
+ * sell?** It asks the one pure economy rule (`costToUpgrade`) — no price, cap
+ * or ownership decision is re-derived here — and returns `null` for the two
+ * refusal classes that mean "this kind is not upgradeable at all":
+ *
+ * - `unknown` — a hull or modifier id (no permanent level), and
+ * - `non-upgradeable` — a consumable or field-pickup-only power-up (producer
+ *   Q2 = (a): a charge pool or a pickup rule has no level to raise).
+ *
+ * Those rows keep today's `OWNED` rendering byte-for-byte (AC3), and so does an
+ * `unowned` refusal (unreachable from an *owned* purchase verdict, but a
+ * refusal the screen must never dress up as an upgrade).
+ *
+ * The level shown is the run's own permanent level: the economy reads a kind
+ * with no bought row as the base level `1` (AH-0MWI5AG1X0007XZH,
+ * off-by-one fix AH-0MWKV6F26008X1T3), so the row never shows `LV 0` for a
+ * weapon the fleet flies and advances on the first affordable purchase. The
+ * renderer is kind-agnostic on purpose: an owned power-up level row renders
+ * through exactly this path too (a purchase seeds its level-1 row —
+ * AH-0MWKT12BT001106T), so no kind-specific affordance code exists.
+ */
+function buildUpgradeAffordance(
+  payload: HangarWarPayload,
+  entry: HangarEntry,
+): Partial<HangarUnlockRow> | null {
+  const levels = hangarPermanentLevels(payload.hangar);
+  const check = costToUpgrade(payload.hangar, entry.id, levels, {
+    ringIndex: payload.ring.ringIndex,
+  });
+  const refusal: UpgradeRefusal | null = check.reason;
+  if (
+    refusal === 'unknown'
+    || refusal === 'non-upgradeable'
+    || refusal === 'unowned'
+  ) {
+    return null;
+  }
+
+  // The economy's one pricing-basis reader floors the level at the base the
+  // run already flies, so the row shows the level the next step raises from.
+  const level = currentUpgradeLevel(levels, entry.id);
+  const state: HangarUnlockState =
+    refusal === 'capped'
+      ? 'capped'
+      : refusal === null
+        ? 'upgradable'
+        : 'upgrade-unaffordable';
+  const priceLabel = state === 'capped' ? null : formatHangarPrice(check.price);
+  const actionLabel =
+    state === 'capped'
+      ? 'MAX'
+      : state === 'upgradable'
+        ? `UPGRADE · ${priceLabel}`
+        : `UPGRADE · ${priceLabel} — NEED ${formatShortfall(check.shortfall)}`;
+  return {
+    state,
+    actionable: state === 'upgradable',
+    level,
+    maxLevel: MAX_PERMANENT_LEVEL,
+    upgradePriceLabel: priceLabel,
+    actionLabel,
+    label: `${entry.name} — LV ${level}/${MAX_PERMANENT_LEVEL} — ${actionLabel}`,
+  };
 }
 
 /**
  * Builds the unlock-tree rows for a hangar at a given ring.
  *
- * Every catalogue entry is presented, including the starter kit, so the tree
- * reads as a tree ("what I own and what is next"); the economy decides each
- * row's state with `owned` → `gated` → `unaffordable` precedence.
+ * Every **purchasable** catalogue entry is presented, including the starter
+ * kit, so the tree reads as a tree ("what I own and what is next"); the
+ * economy decides each row's state with `owned` → `gated` → `unaffordable`
+ * precedence. A **grant-only** entry (a special-mission reward, see
+ * `isPurchasableEntry`) is not for sale, so it appears only once the fleet has
+ * been granted it — where it reads as `OWNED` like any other reward.
+ *
+ * An **owned level-bearing kind** (a weapon or a power-up) is not a dead
+ * `OWNED` row: it shows its current permanent level and the priced upgrade
+ * action, decided by the pure {@link buildUpgradeAffordance} branch over the
+ * economy's `costToUpgrade`. Every non-upgradeable row — a consumable, a
+ * field-pickup-only kind, a hull, a modifier, and any row the fleet does not
+ * own (gated/unaffordable) — renders byte-identically to before.
  *
  * @param payload — the payload whose hangar and ring are shown.
  * @param catalogue — the tree to present (injectable for tests/fixtures).
+ * @param target — the target boss's authored lists, or `null` for no target
+ *   (every weapon row then resolves `neutral`).
  * @returns the unlock rows, in catalogue order.
  */
 export function buildHangarUnlockRows(
   payload: HangarWarPayload,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  target: MatchupDefinition | null = null,
 ): HangarUnlockRow[] {
   const context = { ringIndex: payload.ring.ringIndex };
-  return catalogue.map((entry) => {
-    const check = canBuy(payload.hangar, entry, context);
-    const state: HangarUnlockState = check.ok
-      ? 'buyable'
-      : (check.reason ?? 'owned');
-    const actionLabel = actionLabelFor(entry, state, check.shortfall);
-    return {
-      key: `buy:${entry.id}`,
-      id: entry.id,
-      kind: entry.kind,
-      name: entry.name,
-      priceLabel: formatPrice(entry),
-      state,
-      actionLabel,
-      label: `${entry.name} — ${formatPrice(entry)} — ${actionLabel}`,
-      actionable: state === 'buyable',
-    };
-  });
+  return catalogue
+    .filter(
+      (entry) => isPurchasableEntry(entry) || ownsEntry(payload.hangar, entry),
+    )
+    .map((entry) => {
+      const check = canBuy(payload.hangar, entry, context);
+      const state: HangarUnlockState = check.ok
+        ? 'buyable'
+        : (check.reason ?? 'owned');
+      const upgrade =
+        state === 'owned' ? buildUpgradeAffordance(payload, entry) : null;
+      const actionLabel = upgrade?.actionLabel
+        ?? actionLabelFor(entry, state, check.shortfall);
+      // Only a weapon row can be strong or weak against the boss; every other
+      // kind keeps its existing rendering byte-for-byte (parent assumption A3).
+      const matchup = entry.kind === 'weapon'
+        ? resolveBossMatchup(entry.weaponId, target)
+        : null;
+      return {
+        key: `buy:${entry.id}`,
+        id: entry.id,
+        kind: entry.kind,
+        name: entry.name,
+        priceLabel: formatPrice(entry),
+        state: upgrade?.state ?? state,
+        actionLabel,
+        label: withMatchupMarker(
+          upgrade?.label
+            ?? `${entry.name} — ${formatPrice(entry)} — ${actionLabel}`,
+          matchup,
+        ),
+        actionable: upgrade !== null ? upgrade.actionable === true : state === 'buyable',
+        level: upgrade?.level ?? null,
+        maxLevel: upgrade?.maxLevel ?? null,
+        upgradePriceLabel: upgrade?.upgradePriceLabel ?? null,
+        matchup,
+      };
+    });
 }
 
 /** The hull options for the deployment selector (owned hulls only). */
@@ -419,6 +826,7 @@ export function buildHangarHullOptions(
 export function buildHangarWeaponOptions(
   payload: HangarWarPayload,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  target: MatchupDefinition | null = null,
 ): HangarWeaponOption[] {
   const loadout = resolveActiveLoadout(payload.hangar);
   const equippedIds = new Set(loadout.startingWeapons);
@@ -427,17 +835,24 @@ export function buildHangarWeaponOptions(
     const entry = findHangarEntry(id, catalogue);
     if (entry === null || entry.kind !== 'weapon') continue;
     const equipped = equippedIds.has(id);
+    // Resolved from the shipped weapon id through the F1 rule, so the
+    // ring-data (`waveLaser`) and catalogue (`wave_laser`) spellings agree.
+    const matchup = resolveBossMatchup(entry.weaponId, target);
     options.push({
       key: `weapon:${id}`,
       id,
       name: entry.name,
       equipped,
-      label: `LOADOUT ${entry.name}${equipped ? ' — EQUIPPED' : ''}`,
+      label: withMatchupMarker(
+        `LOADOUT ${entry.name}${equipped ? ' — EQUIPPED' : ''}`,
+        matchup,
+      ),
       // Every owned weapon is toggleable, including the last equipped one:
       // the player may deploy with no extra weapon at all, in which case the
       // run starts with only the ship's permanent cannon
       // (AH-0MVZJ6V1J001DA9D).
       actionable: true,
+      matchup,
     });
   }
   return options;
@@ -468,19 +883,32 @@ export function buildHangarModifierOptions(
   return options;
 }
 
+/** Optional target knobs for {@link buildHangarDeployRow}. */
+export interface BuildHangarDeployRowOptions {
+  /**
+   * The hex the player chose on the map. Omitted/`null` keeps the existing
+   * default (the weakest unheld hex, via `selectDeploymentHex`).
+   */
+  readonly targetHexId?: string | null;
+}
+
 /**
  * Builds the ▶ DEPLOY row from the pure deployment payload (pure).
  *
  * The label states the target and the difficulty it selects — the same
  * `startLevel` the run will actually begin at — so the player can read the
- * hex-aggression difficulty before committing to the deployment.
+ * hex-aggression difficulty before committing to the deployment. An explicit
+ * `targetHexId` is threaded into the **same** {@link buildHangarDeployment}
+ * call that launches the run, so the row and the launch can never disagree.
  */
 export function buildHangarDeployRow(
   payload: HangarWarPayload,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  options: BuildHangarDeployRowOptions = {},
 ): HangarDeployRow {
   const deployment: HangarWarDeployment = buildHangarDeployment(payload, {
     catalogue,
+    hexId: options.targetHexId ?? null,
   });
   const target = deployment.hexId === null ? 'no hex' : `hex ${deployment.hexId}`;
   return {
@@ -492,6 +920,34 @@ export function buildHangarDeployRow(
       `▶ DEPLOY — ${target} · aggression ${deployment.aggression}`
       + ` · level ${deployment.startLevel}`,
     actionable: true,
+  };
+}
+
+/**
+ * Resolves the authored boss intel for a target hex (pure and total).
+ *
+ * The definition comes from the shared authored ring data (or an injected
+ * {@link HangarScreenModelOptions.definitions} override), never a scene-local
+ * copy. A `null` target (an empty ring) or an unauthored/unknown hex publishes
+ * `known: false` with the explicit unknown fallback rather than throwing.
+ *
+ * @param hexId — the resolved target hex id, or `null`.
+ * @param definitions — the authored definitions to read (defaults to shipped).
+ * @returns the boss intel the screen publishes.
+ */
+export function buildHangarBossIntel(
+  hexId: string | null,
+  definitions: readonly HexRingDefinition[] = HEX_RING_DEFINITIONS,
+): HangarBossIntel {
+  const definition = hexId === null
+    ? undefined
+    : definitions.find((entry) => entry.id === hexId);
+  return {
+    hexId,
+    boss: definition?.boss ?? null,
+    strengths: definition ? [...definition.strengths] : [],
+    weaknesses: definition ? [...definition.weaknesses] : [],
+    known: definition !== undefined,
   };
 }
 
@@ -516,6 +972,7 @@ export function formatSalvageLine(payload: HangarWarPayload): string {
  *
  * @param payload — the payload to present (never mutated).
  * @param catalogue — the tree to present (injectable for tests/fixtures).
+ * @param options — target hex, authored definitions and restart state.
  * @returns the model rendered by the game and the gym.
  */
 export function buildHangarScreenModel(
@@ -523,18 +980,34 @@ export function buildHangarScreenModel(
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
   options: HangarScreenModelOptions = {},
 ): HangarScreenModel {
-  const unlockRows = buildHangarUnlockRows(payload, catalogue);
+  // One resolution for the whole screen: the deploy row resolves the target
+  // through the shared deployment builder, and the intel/matchups read that
+  // resolved hex — never a second `selectDeploymentHex` call that could
+  // disagree with what `▶ DEPLOY` launches at (AH-0MWMT4QXF0095CBN).
+  const deployRow = buildHangarDeployRow(payload, catalogue, {
+    targetHexId: options.targetHexId ?? null,
+  });
+  const definitions = options.definitions ?? HEX_RING_DEFINITIONS;
+  const target = deployRow.hexId === null
+    ? null
+    : definitions.find((entry) => entry.id === deployRow.hexId) ?? null;
+  const bossIntel = buildHangarBossIntel(deployRow.hexId, definitions);
+  const unlockRows = buildHangarUnlockRows(payload, catalogue, target);
   const hullOptions = buildHangarHullOptions(payload, catalogue);
-  const weaponOptions = buildHangarWeaponOptions(payload, catalogue);
+  const weaponOptions = buildHangarWeaponOptions(payload, catalogue, target);
   const modifierOptions = buildHangarModifierOptions(payload, catalogue);
-  const deployRow = buildHangarDeployRow(payload, catalogue);
   const mapRow = buildHangarMapRow();
   const restartRow = buildHangarRestartRow(options.restartArmed === true);
+  const savedBuildRows = buildHangarSavedBuildRows(
+    payload,
+    options.savedBuildIndex ?? 0,
+  );
   const focusOrder = [
     ...unlockRows.filter((row) => row.actionable),
     ...hullOptions.filter((row) => row.actionable),
     ...weaponOptions.filter((row) => row.actionable),
     ...modifierOptions.filter((row) => row.actionable),
+    ...savedBuildRows.filter((row) => row.actionable),
     deployRow,
     // The navigation row follows the primary action, mirroring `HexMapScene`'s
     // convention of placing its own navigation row last in the focus order.
@@ -554,6 +1027,9 @@ export function buildHangarScreenModel(
     deployRow,
     mapRow,
     restartRow,
+    savedBuildMessage: options.savedBuildMessage ?? null,
+    savedBuildRows,
+    bossIntel,
     focusOrder,
   };
 }
@@ -594,11 +1070,28 @@ export interface HangarUpdateResult {
   readonly payload: HangarWarPayload;
 }
 
+/** The result of a pure upgrade update: a fresh payload, or a refusal. */
+export interface HangarUpgradeUpdateResult {
+  /** Whether the upgrade happened. */
+  readonly ok: boolean;
+  /** Why the upgrade was refused (`null` when it happened). */
+  readonly reason: UpgradeRefusal | null;
+  /** What was spent (the zero price on refusal). */
+  readonly spent: HangarPrice;
+  /** The payload after the upgrade (always fresh; the input is untouched). */
+  readonly payload: HangarWarPayload;
+}
+
 /**
  * Buys one catalogue entry and returns the updated payload (pure).
  *
- * Delegates every rule to the economy's `buy`; the caller persists the result
- * through the hangar-war store.
+ * Delegates every rule to the economy's `buy`, opting in to
+ * `equipOnPurchase` so a hangar-screen purchase lands owned **and** armed in
+ * one payload (parent AH-0MWL5PAP2001XYYF, producer Q1 = C refined): a hull
+ * becomes the active hull, a starting weapon joins the loadout and a modifier
+ * is switched on. A refusal still changes neither ownership nor the loadout.
+ * The caller persists the result through the hangar-war store, so the spend and
+ * the auto-equip can never land separately.
  */
 export function purchaseHangarEntry(
   payload: HangarWarPayload,
@@ -609,17 +1102,55 @@ export function purchaseHangarEntry(
   if (entry === null) {
     return { ok: false, reason: 'unknown', payload: clonePayload(payload) };
   }
-  const result = buy(payload.hangar, entry, {
-    ringIndex: payload.ring.ringIndex,
-  });
+  const result = buy(
+    payload.hangar,
+    entry,
+    { ringIndex: payload.ring.ringIndex },
+    { equipOnPurchase: true },
+  );
   const next = clonePayload(payload);
   next.hangar = result.hangar;
   return { ok: result.ok, reason: result.reason, payload: next };
 }
 
 /**
- * Equips an owned hull and returns the updated payload (pure).
+ * Buys the next permanent level of an owned level-bearing kind and returns the
+ * updated payload (pure).
  *
+ * Delegates every rule to the hangar-war store's `buyHangarUpgrade` (which
+ * feeds the **one** pure economy rule, `buyUpgrade`, the fleet's persisted
+ * levels and writes the raised snapshot back into the payload); this updater
+ * only carries the war's ring context, exactly as {@link purchaseHangarEntry}
+ * does for {@link buy}. The caller persists the result through
+ * `hangarWarStore.saveHangarWarPayload`, so the spent currency and the raised
+ * level can never land separately.
+ *
+ * A refusal (`unknown` / `non-upgradeable` / `unowned` / `capped` /
+ * `unaffordable`) spends nothing and raises no level, so a stale UI can never
+ * buy a level the economy did not authorise.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param kindId — the owned weapon/power-up id to upgrade.
+ * @returns the upgrade outcome and the payload to persist.
+ */
+export function upgradeHangarKind(
+  payload: HangarWarPayload,
+  kindId: string,
+): HangarUpgradeUpdateResult {
+  const outcome = buyHangarUpgrade(payload, kindId, {
+    ringIndex: payload.ring.ringIndex,
+  });
+  return {
+    ok: outcome.ok,
+    reason: outcome.reason,
+    spent: outcome.spent,
+    payload: outcome.payload,
+  };
+}
+
+/**
+ * Equips an owned hull and returns the updated payload (pure).
+ * *
  * An unowned/unknown hull leaves the payload unchanged (the economy refuses
  * it), so a corrupt UI selection can never deploy an unowned ship.
  */
@@ -723,10 +1254,219 @@ export function restartHangarWar(
   seed: number,
 ): HangarWarPayload {
   const fresh = createDefaultPayload(seed);
+  // Saved builds survive a war reset (AH-0MWL8C6FE008G1E7): they are a
+  // "what you own" meta-layer, not war progress, so thread them through
+  // beside `bestScore` while the rest of the hangar resets to starters.
   return {
     ...fresh,
+    hangar: {
+      ...fresh.hangar,
+      savedBuilds: payload.hangar.savedBuilds,
+    },
     bestScore: toCount(payload.bestScore),
   };
+}
+
+// ── Saved ship configurations (AH-0MWL8C6FE008G1E7) ───────────────────────
+//
+// Four pure payload updaters + the name-entry keystroke helpers. The screen
+// only presents and persists: capture (save), apply, rename and delete all
+// delegate the economy/payload work to the pure core and return a fresh
+// payload for the single `saveHangarWarPayload` write.
+
+/**
+ * The result of applying a saved build through the screen updater.
+ */
+export interface HangarBuildApplyResult {
+  /** Whether the whole build was purchased and equipped. */
+  readonly ok: boolean;
+  /** The first blocking reason, or `'unknown-build'` when the id is gone. */
+  readonly reason: SavedBuildRefusalReason | 'unknown-build' | null;
+  /** The exact shortfall (zeroes when ok). */
+  readonly shortfall: SavedBuildShortfall;
+  /** The payload after the update (fresh; the input is untouched). */
+  readonly payload: HangarWarPayload;
+}
+
+/** The empty shortfall the updater reports on success. */
+const EMPTY_SAVED_BUILD_SHORTFALL: SavedBuildShortfall = Object.freeze({
+  entries: [],
+  minerals: 0,
+  cores: 0,
+});
+
+/**
+ * Applies a saved build — purchases and equips every part atomically, or
+ * refuses with the exact shortfall and applies nothing (pure, AC2/AC3/AC6).
+ *
+ * Delegates the atomic apply to the economy's one `applySavedBuild` reducer
+ * with the war's ring context, then writes the fresh hangar into a fresh
+ * payload. An unknown build id (`'unknown-build'`) is the only refusal that
+ * is not the economy's — it means the id was deleted after the UI listed it.
+ * Persisting the result is the caller's one `saveHangarWarPayload` call.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param buildId — the saved build's id.
+ * @returns the apply outcome and the payload to persist.
+ */
+export function applyHangarBuild(
+  payload: HangarWarPayload,
+  buildId: string,
+): HangarBuildApplyResult {
+  const builds = payload.hangar.savedBuilds ?? [];
+  const build = builds.find((candidate) => candidate.id === buildId);
+  if (build === undefined) {
+    return {
+      ok: false,
+      reason: 'unknown-build',
+      shortfall: EMPTY_SAVED_BUILD_SHORTFALL,
+      payload: clonePayload(payload),
+    };
+  }
+  const result = applySavedBuild(payload.hangar, build, {
+    ringIndex: payload.ring.ringIndex,
+  });
+  const next = clonePayload(payload);
+  next.hangar = result.hangar;
+  return {
+    ok: result.ok,
+    reason: result.reason,
+    shortfall: result.shortfall,
+    payload: next,
+  };
+}
+
+/**
+ * Captures the currently equipped ship as a named saved build (pure, AC1).
+ *
+ * The id is the caller-supplied stable id (the pure core never invents one),
+ * so a scene can keep using the same id for an overwrite. Saving never spends
+ * currency. Persisting the result is the caller's one `saveHangarWarPayload`
+ * call.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param id — the stable build id for the new/overwritten entry.
+ * @param name — the display name (trimmed and length-bounded).
+ * @returns a fresh payload carrying the captured build.
+ */
+export function saveHangarBuild(
+  payload: HangarWarPayload,
+  id: string,
+  name: string,
+): HangarWarPayload {
+  const build = captureShipBuild(payload.hangar, { id, name });
+  const next = clonePayload(payload);
+  const builds = [...(next.hangar.savedBuilds ?? [])];
+  const index = builds.findIndex((candidate) => candidate.id === id);
+  if (index >= 0) builds[index] = build;
+  else builds.push(build);
+  next.hangar.savedBuilds = builds;
+  return next;
+}
+
+/**
+ * Renames a saved build, keeping its id stable (pure, AC4).
+ *
+ * An unknown id leaves the payload unchanged (a fresh, unmutated clone), so a
+ * stale UI selection can never resurrect a deleted build.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param buildId — the saved build's id.
+ * @param name — the new display name (trimmed and length-bounded).
+ * @returns a fresh payload with the renamed build, or unchanged for an unknown id.
+ */
+export function renameHangarBuild(
+  payload: HangarWarPayload,
+  buildId: string,
+  name: string,
+): HangarWarPayload {
+  const next = clonePayload(payload);
+  const builds = next.hangar.savedBuilds ?? [];
+  const index = builds.findIndex((candidate) => candidate.id === buildId);
+  if (index < 0) return next;
+  const trimmed = name.trim().slice(0, MAX_SAVED_BUILD_NAME_LENGTH);
+  if (trimmed === '') return next;
+  builds[index] = { ...builds[index], name: trimmed };
+  return next;
+}
+
+/**
+ * Deletes a saved build (pure, AC4/AC5).
+ *
+ * Deletion is reachable for every entry because every saved build gets its own
+ * delete row. An unknown id is a no-op. Persisting the result is the caller's
+ * one `saveHangarWarPayload` call.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param buildId — the saved build's id.
+ * @returns a fresh payload without the build.
+ */
+export function deleteHangarBuild(
+  payload: HangarWarPayload,
+  buildId: string,
+): HangarWarPayload {
+  const next = clonePayload(payload);
+  const builds = next.hangar.savedBuilds ?? [];
+  next.hangar.savedBuilds = builds.filter((candidate) => candidate.id !== buildId);
+  return next;
+}
+
+/**
+ * Whether a keystroke contributes a printable character to a build name
+ * (child AH-0MWLE95BV000MWGF).
+ *
+ * Printable letters/digits/space are accepted; everything else (arrows, Enter,
+ * Backspace, Escape, Tab) is a command the scene handles before this check.
+ */
+export function isNameEntryChar(key: string): boolean {
+  if (key.length !== 1) return false;
+  return (
+    (key >= 'a' && key <= 'z') ||
+    (key >= 'A' && key <= 'Z') ||
+    (key >= '0' && key <= '9') ||
+    key === ' '
+  );
+}
+
+/**
+ * Appends one printable character to a name-entry buffer (pure).
+ *
+ * Upper-cases the character (the game has no text cursor), and ignores the
+ * key once the buffer is at {@link MAX_SAVED_BUILD_NAME_LENGTH} so a name can
+ * never grow past the persisted bound.
+ */
+function appendNameEntryChar(buffer: string, key: string): string {
+  if (!isNameEntryChar(key)) return buffer;
+  if (buffer.length >= MAX_SAVED_BUILD_NAME_LENGTH) return buffer;
+  const upper = key === ' ' ? ' ' : key.toUpperCase();
+  return buffer + upper;
+}
+
+/** Backspace on a name-entry buffer (pure): drops the last character. */
+export function backspaceNameEntry(buffer: string): string {
+  return buffer.slice(0, -1);
+}
+
+/**
+ * The pure name-entry transition the scene feeds every captured key: a
+ * printable char appends, backspace drops, and anything else is a no-op.
+ *
+ * The scene owns the mode (save vs rename) and the submit keys (Enter
+ * commits, Esc cancels) — this helper only turns raw keys into buffer
+ * changes, so the keystroke rules are table-testable without a scene.
+ *
+ * @param buffer — the current name buffer.
+ * @param key — the captured key (Phaser/KeyboardEvent `key` value).
+ * @returns the next buffer.
+ */
+export function advanceNameEntry(buffer: string, key: string): string {
+  if (key === 'Backspace') return backspaceNameEntry(buffer);
+  return appendNameEntryChar(buffer, key);
+}
+
+/** Whether a non-empty trimmed name can be committed. */
+export function isCommitableNameEntry(buffer: string): boolean {
+  return buffer.trim() !== '';
 }
 
 /**
@@ -805,6 +1545,8 @@ export interface HangarScreenRenderOptions {
 export interface HangarScreenHandlers {
   /** Buy an unlock (`BUY` rows only). */
   onBuy(entryId: string): void;
+  /** Buy the next permanent level of an owned kind (`UPGRADE` rows only). */
+  onUpgrade(kindId: string): void;
   /** Equip an owned hull. */
   onEquipHull(hullId: string): void;
   /** Toggle an owned starting weapon in the loadout. */
@@ -817,6 +1559,16 @@ export interface HangarScreenHandlers {
   onOpenMap(): void;
   /** Reset the war to its starting position (the `⟲ RESTART WAR` row). */
   onRestart(): void;
+  /** Capture the current ship as a saved build (the `＋ SAVE` row). */
+  onSaveBuild?(): void;
+  /** Advance the selected saved build (the `◀ ▶ SAVED BUILD` row). */
+  onCycleBuild?(): void;
+  /** Purchase and equip the selected saved build (the `▶ FLY` row). */
+  onApplyBuild?(buildId: string): void;
+  /** Rename the selected saved build (the `✎ RENAME` row). */
+  onRenameBuild?(buildId: string): void;
+  /** Delete the selected saved build (the `✖ DELETE` row). */
+  onDeleteBuild?(buildId: string): void;
 }
 
 /** Optional model-building knobs for {@link buildHangarScreenModel}. */
@@ -826,6 +1578,28 @@ export interface HangarScreenModelOptions {
    * Defaults to `false` (idle).
    */
   readonly restartArmed?: boolean;
+  /**
+   * The hex the player chose on the map (transient launch data). When omitted
+   * the model describes the deployment's own default — the weakest unheld hex
+   * — so the intel always names the hex `▶ DEPLOY` would actually launch at.
+   */
+  readonly targetHexId?: string | null;
+  /**
+   * The authored ring definitions to read (injectable for tests/fixtures).
+   * Defaults to the shipped `HEX_RING_DEFINITIONS`, so the game and the gym
+   * can never present a scene-local copy of the intel.
+   */
+  readonly definitions?: readonly HexRingDefinition[];
+  /**
+   * The index of the currently selected saved build (the drop-down position).
+   * Clamped to the list; defaults to the first build (AH-0MWL8C6FE008G1E7).
+   */
+  readonly savedBuildIndex?: number;
+  /**
+   * A transient message to show above the restart row (e.g. an apply
+   * refusal's shortfall). `null`/omitted renders nothing.
+   */
+  readonly savedBuildMessage?: string | null;
 }
 
 /** One rendered row, exposed for tests and screen queries. */
@@ -836,6 +1610,11 @@ export interface HangarScreenRow {
   label: string;
   /** Whether the row can be activated. */
   actionable: boolean;
+  /**
+   * The weapon's matchup verdict rendered for this row, or `null` for a
+   * non-weapon row (which keeps its existing rendering).
+   */
+  matchup: BossMatchup | null;
   /** The Phaser text object rendering the row. */
   text: Phaser.GameObjects.Text;
 }
@@ -862,6 +1641,36 @@ const DISABLED_COLOR = '#555555';
 const HEADING_COLOR = '#00ffff';
 const TEXT_COLOR = '#88ffff';
 
+/**
+ * Matchup highlight colours (AH-0MWMT4QXF0095CBN).
+ *
+ * The glyph tag is the primary signal and these colours are the secondary one
+ * (repo CVD policy: never colour-only). Both are deliberately distinct from the
+ * ordinary actionable green ({@link ROW_COLOR}) and disabled grey
+ * ({@link DISABLED_COLOR}).
+ */
+export const HANGAR_STRONG_COLOR = '#aaff00';
+export const HANGAR_WEAK_COLOR = '#ff5577';
+
+/**
+ * Backing tints for the matchup rows, so a strong/weak row is still
+ * recognisable as a highlight without relying on the hue.
+ */
+export const HANGAR_STRONG_BACKGROUND = '#162600';
+export const HANGAR_WEAK_BACKGROUND = '#2a000c';
+
+/** The labelled target-intel section (AH-0MWMT4QXF0095CBN). */
+export const HANGAR_INTEL_HEADING = 'TARGET INTEL';
+export const HANGAR_INTEL_BOSS_LABEL = 'BOSS';
+export const HANGAR_INTEL_STRENGTHS_LABEL = 'STRENGTHS';
+export const HANGAR_INTEL_WEAKNESSES_LABEL = 'WEAKNESSES';
+/** The explicit fallback an unknown/unauthored hex renders. */
+export const HANGAR_INTEL_UNKNOWN = 'unknown';
+/** An authored list with no entries renders as this (not "unknown"). */
+export const HANGAR_INTEL_NONE = 'none';
+/** The heading suffix when the war has no target hex (an empty ring). */
+export const HANGAR_INTEL_NO_HEX = 'no hex';
+
 /** Layout constants (single-source so the game and the gym match). */
 const LEFT_X = 60;
 const RIGHT_X = 520;
@@ -870,7 +1679,103 @@ const SALVAGE_Y = 70;
 const RING_Y = 90;
 const SECTION_Y = 118;
 const ROW_START_Y = 144;
-const ROW_STEP = 21;
+
+/** Vertical step between rows in either column. */
+export const HANGAR_ROW_STEP = 18;
+
+/**
+ * Y positions of the target-intel block (top-left, above the unlock tree).
+ * Exported so the layout assertion pins the same geometry the renderer draws.
+ */
+export const HANGAR_INTEL_HEADING_Y = 112;
+export const HANGAR_INTEL_FIRST_LINE_Y = 132;
+export const HANGAR_INTEL_LINE_STEP = 18;
+
+/** Y of the `UNLOCKS` heading and of the first unlock-tree row beneath it. */
+export const HANGAR_UNLOCKS_HEADING_Y = 190;
+export const HANGAR_UNLOCK_ROW_START_Y = 210;
+
+/** The Y of unlock-tree row `index` (single-sourced with the renderer). */
+export function hangarUnlockRowY(index: number): number {
+  return HANGAR_UNLOCK_ROW_START_Y + index * HANGAR_ROW_STEP;
+}
+
+/** The right-hand column's section and row geometry (single-sourced). */
+export interface HangarRightColumnLayout {
+  readonly hullRowY: readonly number[];
+  readonly loadoutHeadingY: number;
+  readonly weaponRowY: readonly number[];
+  readonly modifierHeadingY: number;
+  readonly modifierRowY: readonly number[];
+  /** Y of the `SAVED BUILDS` heading (below the modifiers). */
+  readonly savedBuildHeadingY: number;
+  /** Y of each saved-build row (below the heading). */
+  readonly savedBuildRowY: readonly number[];
+}
+
+/**
+ * Derives every Y in the right-hand column from the model's row counts, so the
+ * renderer and the layout test read one geometry and a new row cannot silently
+ * collide with the fixed bottom-row block.
+ *
+ * The saved-build surface is **compact and fixed-height** (one save row plus a
+ * cycle/apply/rename/delete block for the selected build), so an unbounded
+ * saved-build list never grows this geometry: the selected index cycles
+ * instead of adding rows (AH-0MWL8C6FE008G1E7).
+ */
+export function hangarRightColumnLayout(
+  model: Pick<
+    HangarScreenModel,
+    'hullOptions' | 'weaponOptions' | 'modifierOptions' | 'savedBuildRows'
+  >,
+): HangarRightColumnLayout {
+  const hullRowY = model.hullOptions.map(
+    (_, index) => ROW_START_Y + index * HANGAR_ROW_STEP,
+  );
+  const loadoutHeadingY =
+    ROW_START_Y + model.hullOptions.length * HANGAR_ROW_STEP + 10;
+  const weaponRowY = model.weaponOptions.map(
+    (_, index) => loadoutHeadingY + 26 + index * HANGAR_ROW_STEP,
+  );
+  const modifierHeadingY =
+    loadoutHeadingY + 26 + model.weaponOptions.length * HANGAR_ROW_STEP + 10;
+  const modifierRowY = model.modifierOptions.map(
+    (_, index) => modifierHeadingY + 26 + index * HANGAR_ROW_STEP,
+  );
+  const savedBuildHeadingY =
+    modifierHeadingY + 26 + model.modifierOptions.length * HANGAR_ROW_STEP + 10;
+  const savedBuildRowY = model.savedBuildRows.map(
+    (_, index) => savedBuildHeadingY + 26 + index * HANGAR_ROW_STEP,
+  );
+  return {
+    hullRowY,
+    loadoutHeadingY,
+    weaponRowY,
+    modifierHeadingY,
+    modifierRowY,
+    savedBuildHeadingY,
+    savedBuildRowY,
+  };
+}
+
+/**
+ * The lowest row Y the model renders above the fixed bottom-row block.
+ *
+ * A layout assertion pins it below {@link HANGAR_RESTART_ROW_Y} (the top
+ * bottom-row slot), so the intel section and the marked rows can never collide
+ * with the deploy/map/restart rows.
+ */
+export function hangarLowestRowY(model: HangarScreenModel): number {
+  const right = hangarRightColumnLayout(model);
+  const ys = [
+    ...model.unlockRows.map((_, index) => hangarUnlockRowY(index)),
+    ...right.hullRowY,
+    ...right.weaponRowY,
+    ...right.modifierRowY,
+    ...right.savedBuildRowY,
+  ];
+  return ys.length === 0 ? 0 : Math.max(...ys);
+}
 
 /**
  * Y positions of the three bottom rows (bottom of the screen, above the
@@ -909,6 +1814,20 @@ function heading(
   );
 }
 
+/** The row colour for a matchup verdict, falling back to the existing ones. */
+function rowColour(actionable: boolean, matchup: BossMatchup | null): string {
+  if (matchup === 'strong') return HANGAR_STRONG_COLOR;
+  if (matchup === 'weak') return HANGAR_WEAK_COLOR;
+  return actionable ? ROW_COLOR : DISABLED_COLOR;
+}
+
+/** The backing tint for a matchup row (`undefined` keeps the plain style). */
+function rowBackground(matchup: BossMatchup | null): string | undefined {
+  if (matchup === 'strong') return HANGAR_STRONG_BACKGROUND;
+  if (matchup === 'weak') return HANGAR_WEAK_BACKGROUND;
+  return undefined;
+}
+
 /** Renders one row and returns its text object. */
 function rowText(
   scene: Phaser.Scene,
@@ -917,14 +1836,33 @@ function rowText(
   y: number,
   label: string,
   actionable: boolean,
+  matchup: BossMatchup | null,
 ): Phaser.GameObjects.Text {
-  const text = scene.add.text(x, y, label, {
+  const style: Phaser.Types.GameObjects.Text.TextStyle = {
     fontFamily: 'monospace',
     fontSize: '13px',
-    color: actionable ? ROW_COLOR : DISABLED_COLOR,
-  });
+    color: rowColour(actionable, matchup),
+  };
+  const background = rowBackground(matchup);
+  if (background !== undefined) style.backgroundColor = background;
+  const text = scene.add.text(x, y, label, style);
   objects.push(text);
   return text;
+}
+
+/** An authored intel list as rendered (`unknown` when the hex is unauthored). */
+function formatIntelList(list: readonly string[], known: boolean): string {
+  if (!known) return HANGAR_INTEL_UNKNOWN;
+  return list.length > 0 ? list.join(', ') : HANGAR_INTEL_NONE;
+}
+
+/** The three labelled intel lines the renderer draws under its heading. */
+function intelLines(intel: HangarBossIntel): string[] {
+  return [
+    `${HANGAR_INTEL_BOSS_LABEL}: ${intel.boss ?? HANGAR_INTEL_UNKNOWN}`,
+    `${HANGAR_INTEL_STRENGTHS_LABEL}: ${formatIntelList(intel.strengths, intel.known)}`,
+    `${HANGAR_INTEL_WEAKNESSES_LABEL}: ${formatIntelList(intel.weaknesses, intel.known)}`,
+  ];
 }
 
 /**
@@ -980,88 +1918,184 @@ export function renderHangarScreen(
     }),
   );
 
+  // ── Target intel (top, above the tree; labelled and never colour-only) ──
+  heading(
+    scene,
+    objects,
+    LEFT_X,
+    HANGAR_INTEL_HEADING_Y,
+    `${HANGAR_INTEL_HEADING} — ${model.bossIntel.hexId ?? HANGAR_INTEL_NO_HEX}`,
+  );
+  intelLines(model.bossIntel).forEach((line, index) => {
+    objects.push(
+      scene.add.text(
+        LEFT_X,
+        HANGAR_INTEL_FIRST_LINE_Y + index * HANGAR_INTEL_LINE_STEP,
+        line,
+        {
+          fontFamily: 'monospace',
+          fontSize: '13px',
+          color: TEXT_COLOR,
+        },
+      ),
+    );
+  });
+
   const addRow = (
     x: number,
     y: number,
     key: string,
     label: string,
     actionable: boolean,
+    matchup: BossMatchup | null,
     action: (() => void) | undefined,
   ): void => {
     // A row is only *activatable* when the economy says it is AND this render
     // supplied a handler for it. A read-only render (the gym, a preview) shows
-    // the same state and colours but can activate nothing, so its rows report
-    // `actionable: false` and never enter the focus cycle.
+    // the same state, markers and colours but can activate nothing, so its rows
+    // report `actionable: false` and never enter the focus cycle.
     const interactive = actionable && action !== undefined;
-    const text = rowText(scene, objects, x, y, label, actionable);
-    const row: HangarScreenRow = { key, label, actionable: interactive, text };
+    const text = rowText(scene, objects, x, y, label, actionable, matchup);
+    const row: HangarScreenRow = {
+      key,
+      label,
+      actionable: interactive,
+      matchup,
+      text,
+    };
     rendered.rows.push(row);
     rendered.byKey.set(key, row);
     if (!interactive || !action) return;
     text.setInteractive({ useHandCursor: true });
     text.on('pointerover', () => text.setStyle({ color: '#ffffff' }));
-    text.on('pointerout', () => text.setStyle({ color: ROW_COLOR }));
+    // Restore the row's own colour, never the plain actionable green: a
+    // matchup-highlighted row must keep its highlight after the pointer leaves.
+    text.on('pointerout', () =>
+      text.setStyle({ color: rowColour(actionable, matchup) }),
+    );
     text.on('pointerdown', () => action());
     focusManager.register(text, action);
   };
 
   // ── Unlock tree (left column) ──────────────────────────────────
-  heading(scene, objects, LEFT_X, SECTION_Y, 'UNLOCKS');
+  heading(scene, objects, LEFT_X, HANGAR_UNLOCKS_HEADING_Y, 'UNLOCKS');
   model.unlockRows.forEach((row, index) => {
+    // An owned level-bearing row is an **upgrade** row: it activates the
+    // next-level purchase, not the (already-owned) unlock. Every other
+    // actionable row stays on the purchase handler, so the two branches never
+    // cross over.
+    const isUpgradeRow =
+      row.state === 'upgradable' || row.state === 'upgrade-unaffordable';
+    const action = isUpgradeRow
+      ? handlers?.onUpgrade
+        ? () => handlers.onUpgrade!(row.id)
+        : undefined
+      : handlers?.onBuy
+        ? () => handlers.onBuy!(row.id)
+        : undefined;
     addRow(
       LEFT_X,
-      ROW_START_Y + index * ROW_STEP,
+      hangarUnlockRowY(index),
       row.key,
       row.label,
       row.actionable,
-      handlers?.onBuy ? () => handlers.onBuy!(row.id) : undefined,
+      row.matchup,
+      action,
     );
   });
 
   // ── Deployment selector (right column) ─────────────────────────
+  const right = hangarRightColumnLayout(model);
   heading(scene, objects, RIGHT_X, SECTION_Y, 'HULLS');
   model.hullOptions.forEach((option, index) => {
     addRow(
       RIGHT_X,
-      ROW_START_Y + index * ROW_STEP,
+      right.hullRowY[index],
       option.key,
       option.label,
       option.actionable,
+      null,
       handlers?.onEquipHull
         ? () => handlers.onEquipHull!(option.id)
         : undefined,
     );
   });
 
-  const loadoutHeadingY =
-    ROW_START_Y + model.hullOptions.length * ROW_STEP + 10;
-  heading(scene, objects, RIGHT_X, loadoutHeadingY, 'LOADOUT');
+  heading(scene, objects, RIGHT_X, right.loadoutHeadingY, 'LOADOUT');
   model.weaponOptions.forEach((option, index) => {
     addRow(
       RIGHT_X,
-      loadoutHeadingY + 26 + index * ROW_STEP,
+      right.weaponRowY[index],
       option.key,
       option.label,
       option.actionable,
+      option.matchup,
       handlers?.onToggleWeapon
         ? () => handlers.onToggleWeapon!(option.id)
         : undefined,
     );
   });
 
-  const modifierHeadingY =
-    loadoutHeadingY + 26 + model.weaponOptions.length * ROW_STEP + 10;
-  heading(scene, objects, RIGHT_X, modifierHeadingY, 'MODIFIERS');
+  heading(scene, objects, RIGHT_X, right.modifierHeadingY, 'MODIFIERS');
   model.modifierOptions.forEach((option, index) => {
     addRow(
       RIGHT_X,
-      modifierHeadingY + 26 + index * ROW_STEP,
+      right.modifierRowY[index],
       option.key,
       option.label,
       option.actionable,
+      null,
       handlers?.onToggleModifier
         ? () => handlers.onToggleModifier!(option.id)
         : undefined,
+    );
+  });
+
+  // ── Saved ship configurations (right column, below the modifiers) ──
+  // A compact, fixed-height surface: `＋ SAVE` plus (when at least one build
+  // exists) the cycle/apply/rename/delete rows for the selected build, so an
+  // unbounded list never grows the screen (AH-0MWL8C6FE008G1E7).
+  heading(scene, objects, RIGHT_X, right.savedBuildHeadingY, 'SAVED BUILDS');
+  model.savedBuildRows.forEach((row, index) => {
+    let action: (() => void) | undefined;
+    switch (row.verb) {
+      case 'save':
+        action = handlers?.onSaveBuild
+          ? () => handlers.onSaveBuild!()
+          : undefined;
+        break;
+      case 'cycle':
+        action = handlers?.onCycleBuild
+          ? () => handlers.onCycleBuild!()
+          : undefined;
+        break;
+      case 'apply':
+        action =
+          handlers?.onApplyBuild && row.buildId
+            ? () => handlers.onApplyBuild!(row.buildId!)
+            : undefined;
+        break;
+      case 'rename':
+        action =
+          handlers?.onRenameBuild && row.buildId
+            ? () => handlers.onRenameBuild!(row.buildId!)
+            : undefined;
+        break;
+      case 'delete':
+        action =
+          handlers?.onDeleteBuild && row.buildId
+            ? () => handlers.onDeleteBuild!(row.buildId!)
+            : undefined;
+        break;
+    }
+    addRow(
+      RIGHT_X,
+      right.savedBuildRowY[index],
+      row.key,
+      row.label,
+      row.actionable,
+      null,
+      action,
     );
   });
 
@@ -1072,6 +2106,7 @@ export function renderHangarScreen(
     model.deployRow.key,
     model.deployRow.label,
     model.deployRow.actionable,
+    null,
     handlers?.onDeploy
       ? () => handlers.onDeploy!(model.deployRow.hexId)
       : undefined,
@@ -1084,6 +2119,7 @@ export function renderHangarScreen(
     model.mapRow.key,
     model.mapRow.label,
     model.mapRow.actionable,
+    null,
     handlers?.onOpenMap ? () => handlers.onOpenMap!() : undefined,
   );
 
@@ -1094,8 +2130,20 @@ export function renderHangarScreen(
     model.restartRow.key,
     model.restartRow.label,
     model.restartRow.actionable,
+    null,
     handlers?.onRestart ? () => handlers.onRestart!() : undefined,
   );
+
+  // ── Transient saved-build message (an apply refusal's shortfall) ──
+  if (model.savedBuildMessage) {
+    objects.push(
+      scene.add.text(LEFT_X, HANGAR_RESTART_ROW_Y - 20, model.savedBuildMessage, {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#d98a2b',
+      }),
+    );
+  }
 
   objects.push(
     scene.add

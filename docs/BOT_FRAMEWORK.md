@@ -61,10 +61,18 @@ world.nearestEnemyDistance; // or Infinity
 world.wavePressure;         // 0..1, 0 when no timed wave is running
 ```
 
-Hazards are `BotHazardPoint`s: each carries the entity's stable bot-side `id`
-and, when the caller supplies a velocity lookup, an estimated `vx`/`vy`
+Hazards are `BotHazardPoint`s: each carries the entity's stable bot-side `id`,
+its **movement class** (`formation` / `diver` / `chaser` / `patroller` /
+`roamer`) and, when the caller supplies a velocity lookup, an estimated
+`vx`/`vy`
 (the bot-side hazard-velocity tracker of
 [section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
+The class is resolved bot-side from the archetype by the frozen map in
+`src/ai/framework/enemyMovementClass.ts`, which mirrors the `movementClass`
+column of `src/data/enemy-configs.csv`; an unknown archetype resolves to
+`roamer` and the boss resolves to `formation`. The class is consumed by the
+class-shaped trajectory sampler
+([section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
 With no lookup — the default for direct callers — hazards stay stationary
 `{ x, y }` points, exactly as before.
 
@@ -323,6 +331,46 @@ dominates, so the bot never trades its life for a life
 (AH-0MV03GXZQ00801T4). The life count and cap come from the scene's run state
 via the read-only snapshot — the bot introduces no cap constant of its own.
 
+#### Two-layer primary/secondary objective model (AH-0MWJ1680Z001QYV2)
+
+The bands above are the **ordering**; on top of them the live competent brain
+runs a **two-layer** objective model that keeps the bot from oscillating:
+
+- **Primary** — a sticky, standing objective: survival, `secure-life`, `boss`,
+  `engage-enemy`, or `reposition`. It changes only when it is achieved,
+  invalidated, or a genuinely higher-value primary takes over. `survive`,
+  `secure-life` and `engage-boss` are **hard** primaries: they pre-empt
+  everything and block diversion while valid.
+- **Secondary** — an opportunistic diversion: `collect-mineral`,
+  `collect-powerup`, or `engage-asteroid`. A secondary may preempt the primary
+  **only** when its diversion payoff clears `diversionThreshold` and the
+  primary's urgency is at or below `secondaryUrgencyCap`. When it completes or
+  is abandoned the bot returns to the suspended primary.
+
+The payoff is deliberately **not** the raw band utility (a lone gold mineral
+still bands high), so **presence alone never pulls the bot off its course**:
+
+- a mineral's payoff is the value of the cluster around the nearest mineral,
+  normalised by `mineralDepositValue` — a red deposit (value 10) or ~10
+  clustered gold reaches the threshold, a lone gold dot does not;
+- a power-up's payoff normalises its content value above neutral, so a strong
+  drop (smart bomb, force field) diverts and an ordinary drop does not;
+- an asteroid diverts only when it is within `dangerMargin` (a collision-path
+  asteroid).
+
+Mineral utility is **value-aware** (`mineralValueWeight`): a red deposit is
+weighted fully and an ordinary gold dot a tenth, so a red deposit outranks a
+closer gold dot within the mineral band (**red over yellow**) without ever
+leaving the band's span. Engagement's **urgency** is the wave pressure, so late
+in a timed wave the bot stops diverting and focuses fire.
+
+All layering thresholds are `CompetentBotTunables` and surfaced in the
+bot-tuning gym: `layeringEnabled`, `primaryMinHoldSeconds`,
+`secondaryMinHoldSeconds`, `diversionThreshold`, `secondaryUrgencyCap`,
+`mineralDepositValue` and `mineralClusterRadius`. Disabling `layeringEnabled`
+restores the flat single-layer selection, which is the purposefulness
+**baseline** the AC5 metric compares against.
+
 ### 9.2 Behaviours
 
 - **`collect`** (mineral/power-up/secure-life): approach and scoop, braking
@@ -409,6 +457,7 @@ defaults behaves bit-for-bit as before (default-equivalence).
 |---|---|
 | `competent/tunables.ts` | Single source of tuning + `resolveCompetentTunables`. |
 | `hazardVelocity.ts` | Bot-side hazard-velocity tracker (position deltas → clamped velocity). |
+| `hazardMotionModel.ts` | Class-shaped trajectory sampler: per-movement-class path over the horizon → minimum separation (and the shared closest-approach primitive). |
 | `competent/steering.ts` | Pure bearing fan, safety evaluation, predictive hazard avoidance, forward model, intercept solve. |
 | `competent/goals.ts` | The registered goals (survival, boss-focus, collection, engagement, reposition) and their utility bands. |
 | `competent/behaviours.ts` | collect / engage / evade / reposition. |
@@ -522,7 +571,9 @@ bot-tuning gym fly identically.
   rotationDeceleration)` (`src/utils/movementModel.ts`) instead of the raw
   error: it keeps turning while the predicted stop is outside
   `alignmentToleranceRad`, and applies the **opposite** turn when the coast
-  would overshoot (braking the spin). The governor threads the ship's live
+  would overshoot (braking the spin) — except inside the reversal hysteresis
+  margin (§9.12), where the turn is released so a small overshoot coasts out.
+  The governor threads the ship's live
   `angularVelocity` and rotation config through `BotControlContext`, so no
   rotation constant is hard-coded in the bot layer. With `angularVelocity = 0`
   the predicted stop equals the current heading and the result is
@@ -619,11 +670,74 @@ leading a target; this section covers the avoidance half.
   `hazardThreatensPlayer` predicate, so "imminent hazard collision" means the
   same thing in both places. With prediction off — or a stationary/untracked
   hazard — both paths reduce bit-for-bit to the positional rule.
+- **Class-shaped sampling (AH-0MWM0C9F9006HNXV; per-class horizon
+  AH-0MWM0CB2Q003Y6AB; reconciled and shipped on by AH-0MWOKL79Z0051ZXO).** A
+  single fixed-velocity solve predicts a curving hazard where it *was*.
+  `predictMinimumSeparation` (`src/ai/framework/hazardMotionModel.ts`) instead
+  advances the hazard's **movement-class trajectory** over its class-scaled
+  threat window in a fixed sample count (`ceil(horizon / 0.05 s)`, capped at
+  64 — no clock, no RNG) and returns the minimum separation over the sampled
+  path with its time. The class models are documented approximations built from
+  the fitted velocity: `chaser` **pure pursuit** (each sample re-aims at the
+  ship's predicted position — the shipped ghost steering's own rule, so the
+  fitted curvature is not used as a turn rate), `diver` a committed straight
+  dive vector (aimed at the ship before the commit cone), `patroller` a straight
+  patrol that runs straight at the ship once in commit range or inside the
+  commit cone, `formation` a linear drift that reflects at the arena edges, and
+  `roamer` linear extrapolation.
+  **One trajectory definition:** `advanceHazardMotion` is the single
+  implementation of each class path. The evaluation arena's opt-in
+  moving-hostile mode advances its live bodies through the *same* call, so a
+  harness profile cannot describe a trajectory the predictor does not (an
+  unknown class throws). `src/ai/eval/arena.test.ts` pins that seam and
+  `src/ai/eval/hazardMotionSweep.test.ts` is the evidence.
+  **One predictive test, every consumer:** `evaluateDirection`'s hazard
+  rejection, `hazardThreatensPlayer` and the `engage` kiting gate all call the
+  sampler, so a change to the models, the horizon or the toggle lands in all
+  three at once. The window is `hazardPredictionHorizon` scaled per movement
+  class (`hazardClassHorizonScale`): only a class whose threat is a **discrete
+  commit later in the window** is judged further ahead (`diver` 1.4,
+  `patroller` 1.25), while a continuous closing geometry (`chaser`) or a
+  straight line (`roamer`, `formation`) stays at exactly the configured horizon.
+  The **drift** classes also earn a bounded boost from the fitted curvature
+  (≤ 1.5×, saturating at `HAZARD_CURVATURE_SATURATION_RATE`), because their
+  model is straight and an observed turn is new information; an aiming class
+  already models its own turn, so boosting its window would only lengthen the
+  predicted chase and make the pilot over-dodge. An exempt engagement target
+  keeps only the positional `dangerMargin` rule, never the predictive test. A
+  hazard that cannot reach `threatRadius` inside the horizon is dismissed by a
+  triangle-inequality **early-out** without sampling (its reported separation is
+  a proven lower bound); a class path that stays on its fitted velocity for the
+  whole window (`roamer`, or a `formation` that does not reach a bound) returns
+  the fixed-velocity solve **bit-for-bit**, which is what makes the sweep's
+  straight-line controls provably unaffected; and a stationary hazard, a
+  disabled `hazardMotionModelEnabled` or an unknown class reproduces the
+  previous positional / fixed-velocity result exactly — on the configured
+  horizon.
+  **It ships on** (`hazardMotionModelEnabled` defaults to `true`) on the seeded
+  per-class sweep evidence in `src/ai/eval/hazardMotionSweep.test.ts`: the
+  curving classes record strictly fewer avoidable enemy-body contacts on a
+  strict majority of a documented 12-seed list, the chaser arm never regresses,
+  and the `roamer`/`formation` controls never increase. Two earlier dark
+  defaults' causes were real model errors, both fixed in this item: the chaser's
+  constant-turn-rate arc (fitted from the last two position deltas) predicted a
+  threat on *every* escape bearing, so the pilot hovered beside a pursuer
+  instead of fleeing it; and the chaser's 1.6 horizon made the pilot kite
+  instead of fight in `promo-ghost-hunt`. `hazardMotionModel.test.ts` pins the
+  default (and `promo-ghost-hunt`'s 45 s survival target stays green with the
+  model on) so neither can regress silently.
 - **Live tuning (AC3).** `hazardPredictionEnabled` (toggle, default **on**)
   and `hazardPredictionHorizon` (slider, default **0.6 s**) live in
   `COMPETENT_BOT_TUNABLES`, are registered in `src/ai/tuningFields.ts` with
   documented bounds/descriptions, and are applied live by `GymBotTuning`
   exactly like the aim-lead knobs ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)).
+  The motion model's own knobs are designer-facing too (AH-0MWM0CCJE000AANE):
+  the `hazardMotionModelEnabled` toggle (default **on**; off reproduces the
+  constant-velocity control arm) and one `hazardClassHorizonScale.<class>`
+  slider per movement class (`chaser` 1, `diver` 1.4, `patroller` 1.25,
+  `formation` 1, `roamer` 1 — the multiplier on `hazardPredictionHorizon`; the
+  sliders are inert while the model toggle is off), applied live without a
+  scene restart and carried in `src/data/bot-tuning.json`.
 - **Validation (AC4).** `hazardVelocity.test.ts` covers the estimator
   (stable velocity, stationary zero, clamp, stale retention/pruning, reset,
   determinism); `steering.test.ts` and `behaviours.test.ts` cover the
@@ -633,6 +747,46 @@ leading a target; this section covers the avoidance half.
   model's own assumption, isolating the prediction from ship inertia) where a
   straight crossing enemy collides with prediction off and is evaded (minimum
   ship–hazard distance ≥ `threatRadius` minus tolerance) with it on.
+
+**Movement classes at a glance.** `advanceHazardMotion`
+(`src/ai/framework/hazardMotionModel.ts`) is the single definition of each
+class path; the sampler walks it and the evaluation arena's opt-in
+moving-hostile mode advances its live bodies through the same call (an unknown
+class throws rather than diverging). The table pairs each class with the
+prediction that follows from it and how it changes the threat window. The
+shipped default values, slider bounds and plain-English descriptions live in
+the registry (`src/ai/tuningFields.ts`) and `COMPETENT_BOT_TUNABLES` — this
+document names the registry rather than duplicating them, and the bundled
+baseline is `src/data/bot-tuning.json`.
+
+| Movement class | Predicted path | Threat window (urgency) | Shipped archetypes |
+|---|---|---|---|
+| `chaser` | Pure pursuit: every sample re-aims at the ship's predicted position at its observed speed (the ghost steering's own `steerToward` rule); the fitted curvature is deliberately **not** a turn rate | `hazardPredictionHorizon` × the class scale (1), **no** curvature boost — the pursuit already turns the hazard onto the ship | `ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander`, `grunt` |
+| `diver` | Committed straight dive vector inside the ~60° commit cone; before commitment it flies the dive vector at the ship | Longer than configured (1.4) — the discrete dive commit later in the window must be seen early enough | `diver` |
+| `patroller` | Straight patrol, switching to a straight attack run inside `HAZARD_PATROL_COMMIT_RANGE` or once aimed at the ship | Longer than configured (1.25) — the patrol→attack switch is a discrete later event | `raider` |
+| `formation` | Linear drift plus a reflection at the arena bounds | Configured (1), plus the bounded curvature boost: its model is straight, so an observed turn is new information | the formation archetypes (`scout`, `tank`, `phaser`, `swarm`, `march`, …) |
+| `roamer` | Linear extrapolation — the “assume it keeps going” control | Configured (1), same bounded curvature boost | `asteroid`, `harvester`, `lane-traffic`, `orbital-strike` |
+
+**The disabled-path guarantee is exact.** With `hazardMotionModelEnabled` off,
+prediction is the pre-existing constant-velocity solve **bit-for-bit** on the
+configured `hazardPredictionHorizon` — the same separation, time and threat
+verdict as before the motion model existed. An **unknown movement class**
+(fixed-velocity solve) and a **zero-velocity hazard** (current positional
+separation) take the same pre-existing path, and even with the model on a class
+path that stays on its fitted velocity for the whole window — `roamer` always,
+`formation` until it reaches a bound — returns the fixed-velocity solve
+exactly. That exactness is what makes the sweep's straight-line controls
+provably neutral.
+
+**Evidence.** The seeded per-class sweep
+(`src/ai/eval/hazardMotionSweep.test.ts`) records, on its documented 12-seed
+list, strictly fewer avoidable enemy-body contacts with the model on for every
+curving class on a strict majority of seeds, a chaser arm that never regresses
+on any seed, and `roamer`/`formation` controls that never increase. The
+deterministic 60 Hz proof (`src/ai/botSteering.integration.test.ts`) flies a
+scripted curving chaser twice: the constant-velocity predictor's least
+separation is 25.7 px — 4.3 px inside the game's 30 px contact radius — while
+the class model stays clear at 38.8 px, and the test pins both margins.
 
 ### 9.11 Wrap-aware (torus) model (AH-0MVMISF0Q00314LG)
 
@@ -682,6 +836,63 @@ is genuinely nearer and the four edges are no longer walls.
   aims hostile fire along the shortest wrapped path, so eval scores measure the
   same wrap-around world the bot faces in the game
   ([docs/EVALUATION.md](./EVALUATION.md#fidelity-boundary-and-limitations)).
+
+### 9.12 Smooth turning and overshoot tolerance (AH-0MWJ1680Z001QYV2 audit rejection)
+
+The producer's review of the two-layer objective model was
+**"still too much left/right turning ... trying to be very precise with its
+positioning ... it should allow for a little overshoot and not rely so much on
+thrusters for precise positioning"**. The objective layer was not the problem;
+the *control* layer was. The ship drifts in a frictionless arena, so chasing a
+bearing to a fraction of a degree with A/D — and braking onto every pickup
+with S — is both impossible and unwatchable. The governor and the collection
+behaviour now treat flying as a coarse, human action.
+
+- **Turning deadband.** `alignmentToleranceRad` defaults to **0.18 rad**
+  (~10°, up from 0.15): no turn key is pressed for a smaller heading error, so
+  the ship simply flies on.
+- **Reversal hysteresis.** `turnHysteresisRad` (**0.25 rad**) requires the
+  predicted error to exceed the deadband by that margin before an established
+  turn is **reversed**. Inside the margin the turn is released instead (the
+  small overshoot coasts out) rather than braked with the opposite key. It is
+  `0`-able and inert when the ship's live `angularVelocity` is unavailable
+  (no coast to predict).
+- **Turn-press hold.** `turnPressMinMs` (**40 ms**) holds an established turn
+  key for a human-like burst instead of toggling on and off within a reaction;
+  a flip requested inside the window is **released**, never dithered to the
+  opposite key. Thrust and reverse are untouched, so a safety brake is never
+  delayed. **Aim intents are exempt** — holding the weapon axis on a target is
+  a precision task the producer did not ask to change, so an `aim` intent
+  keeps the closed-loop per-tick release (§9.8).
+- **Pass-through collection.** Pickups are collected on **contact**, so the
+  collect behaviour no longer retro-brakes onto one (`collectReverseBrake`
+  defaults to `false`; the retro thruster is still available behind the
+  toggle). It flies through the pickup and accepts the overshoot.
+- **Overshoot is accepted, not chased.** A mineral/power-up inside
+  `collectOvershootMargin` (**60 px**) that is **behind the ship's velocity
+  vector** drops out of the collection target set (`isOvershot` /
+  `withoutOvershot` in `competent/goals.ts`), so the bot does not U-turn for a
+  pickup it has just passed; the pickup becomes collectable again once it is
+  ahead. Both the collection goals and the collect behaviour apply the same
+  filter, so the goal that is scored is the target that is flown at.
+- **Reposition stops at the band edge.** The idle `reposition` behaviour gives
+  the forward model `repositionRadius` as its arrival radius, so the ship
+  coasts to a stop near the edge of its idle band instead of thrusting at the
+  exact playfield centre, overshooting it and drifting back.
+- **Measurement.** `src/ai/eval/turnChurn.ts` summarises a per-tick input trace
+  (turn duty cycle, turn presses and mean press length, direct left/right
+  flips, reversals and course changes, forward toggles, retro presses) and
+  reads the arena's recorded input, so any seeded run is measurable.
+  `competentBot.integration.test.ts` A/Bs the pre-change and shipped control on
+  one seeded scenario; the smoother control halves the turn-key presses and
+  cuts the turn duty cycle by roughly a third while keeping the objective
+  score, and the bullet-free objective sweep still wins the large majority of
+  seeds.
+- **Live tuning.** All four knobs (`alignmentToleranceRad`,
+  `turnHysteresisRad`, `turnPressMinMs`, plus the `collectReverseBrake` toggle
+  and `collectOvershootMargin` slider) are in the bot-tuning surface
+  (`src/ai/tuningFields.ts`) and the bundled baseline
+  (`src/data/bot-tuning.json`).
 
 ## 10. Testing
 
@@ -852,11 +1063,14 @@ and adjust its parameters in real time.
   `BOT_TUNING_NUMERIC_FIELDS` (`src/ai/tuningFields.ts`) plus boolean toggles:
   the utility bands, seek ranges, standoff/danger margins, prediction
   horizons and speeds, steering weights, commitment hysteresis, the world
-  model, the human-input reaction/press cadence, and the rotation-skill
-  knobs `skill` / `maxAimErrorRad` / `aimLeadAlignSeconds` /
-  `aimLeadIterations` (`aimLeadEnabled` toggle)
-  (AH-0MV1DUSM2005HL98 · AC4). Moving a slider rebuilds the live brain and
-  governor immediately. The `playerSpeed` / `frictionDeceleration` sliders
+  model, the human-input reaction/press cadence (including the smooth-turning
+  knobs `alignmentToleranceRad` / `turnHysteresisRad` / `turnPressMinMs`),
+  collection's `collectReverseBrake` toggle and `collectOvershootMargin`
+  slider, and the rotation-skill knobs `skill` / `maxAimErrorRad` /
+  `aimLeadAlignSeconds` / `aimLeadIterations` (`aimLeadEnabled` toggle)
+  (AH-0MV1DUSM2005HL98 · AC4; smooth turning:
+  AH-0MWJ1680Z001QYV2 audit rejection, [section 9.12](#912-smooth-turning-and-overshoot-tolerance-ah-0mwj1680z001qyv2-audit-rejection)).
+  Moving a slider rebuilds the live brain and governor immediately. The `playerSpeed` / `frictionDeceleration` sliders
   are **overrides**: moving one away from its default makes it win over the
   live ship config; left at the default it is a fallback and the ship's live
   config wins (the same precedence the shipped demo resolves —

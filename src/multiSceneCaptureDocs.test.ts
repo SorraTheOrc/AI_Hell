@@ -8,8 +8,8 @@
  * if that documentation is removed or weakened, or if the documented scene
  * registry / fade duration drifts from `scripts/capture-scenes.mjs`.
  *
- * Like the sibling `promoCompileDocs.test.ts` / `actionIntensityDocs.test.ts`,
- * this is a deliberate docs grep: it asserts the canonical documentation text,
+ * Like the sibling `actionIntensityDocs.test.ts`, this is a deliberate docs
+ * grep: it asserts the canonical documentation text,
  * and the numbers/keys are imported from the module rather than hard-coded so
  * a code change fails the doc instead of silently diverging.
  */

@@ -5,12 +5,21 @@
  * These assert observable steering behaviour (safe vs unsafe bearings, the
  * chosen path-around, aim alignment, forward-model braking) through the
  * public helpers — not implementation details.
+ *
+ * The sampled-prediction block (AH-0MWM0CB2Q003Y6AB) proves that the fan, the
+ * `hazardThreatensPlayer` predicate and the `engage` kiting gate all consume
+ * the **same** predictive test (one tunable flips all three), that the
+ * engagement-target exemption survives it, and that the fan reuses its
+ * per-tick geometry instead of allocating per bearing.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { buildBotWorld } from '../worldModel';
+import { buildBotWorld, type BotHazardPoint } from '../worldModel';
 import { enemyHazardKey } from '../hazardVelocity';
+import { createBotMemory } from '../memory';
+import type { BotBehaviourContext } from '../registry';
+import { predictMinimumSeparation } from '../hazardMotionModel';
 import {
   bullet,
   DEFAULT_THRUSTER_CONFIG,
@@ -26,6 +35,7 @@ import {
 import {
   bearingTo,
   buildIntent,
+  buildSteeringDerived,
   chooseSteeringDirection,
   evaluateDirection,
   hazardThreatensPlayer,
@@ -37,6 +47,8 @@ import {
 } from './steering';
 import { COMPETENT_BOT_TUNABLES } from './tunables';
 import { resolveCompetentTunables } from './tunables';
+import { createCompetentBehaviours } from './behaviours';
+import { COMPETENT_GOAL_IDS, createCompetentGoals } from './goals';
 
 const T = COMPETENT_BOT_TUNABLES;
 const PLAYER = { x: 480, y: 270, vx: 0, vy: 0 };
@@ -798,7 +810,7 @@ describe('evaluateDirection — predictive hazard avoidance (AH-0MVI4QDN90037DIN
   // A hazard ahead-right of the ship, outside dangerMargin (180 px away),
   // crossing down-left. A rightward-thrusting ship and the hazard are predicted
   // to come within threatRadius (55) inside the 0.6 s horizon.
-  const HAZARD = { x: 580, y: 120 };
+  const HAZARD = { x: 580, y: 120, movementClass: 'roamer' as const };
   const CROSSING = { x: -50, y: 200 };
 
   it('rejects a bearing predicted to cross a moving hazard inside the horizon', () => {
@@ -840,15 +852,27 @@ describe('hazardThreatensPlayer (AH-0MVI4QDN90037DIN AC2)', () => {
     const player = { x: 480, y: 270, vx: 175, vy: 0 };
     // Predicted to cross the ship's rightward path inside threatRadius.
     expect(
-      hazardThreatensPlayer(player, { x: 580, y: 120, vx: -50, vy: 200 }, T),
+      hazardThreatensPlayer(
+        player,
+        { x: 580, y: 120, vx: -50, vy: 200, movementClass: 'roamer', curvature: 0 },
+        T,
+      ),
     ).toBe(true);
     // The same stationary hazard is 180 px away — outside dangerMargin.
     expect(
-      hazardThreatensPlayer(player, { x: 580, y: 120, vx: 0, vy: 0 }, T),
+      hazardThreatensPlayer(
+        player,
+        { x: 580, y: 120, vx: 0, vy: 0, movementClass: 'roamer', curvature: 0 },
+        T,
+      ),
     ).toBe(false);
     // A stationary hazard inside dangerMargin is still a threat.
     expect(
-      hazardThreatensPlayer(player, { x: 520, y: 270, vx: 0, vy: 0 }, T),
+      hazardThreatensPlayer(
+        player,
+        { x: 520, y: 270, vx: 0, vy: 0, movementClass: 'roamer', curvature: 0 },
+        T,
+      ),
     ).toBe(true);
   });
 });
@@ -860,7 +884,11 @@ describe('seam-aware threat prediction (AH-0MVT2W2D9002BOHO)', () => {
     // raw line.
     const player = { x: 10, y: 300, vx: 0, vy: 0 };
     expect(
-      hazardThreatensPlayer(player, { x: 950, y: 300, vx: 100, vy: 0 }, T),
+      hazardThreatensPlayer(
+        player,
+        { x: 950, y: 300, vx: 100, vy: 0, movementClass: 'roamer', curvature: 0 },
+        T,
+      ),
     ).toBe(true);
   });
 
@@ -874,5 +902,156 @@ describe('seam-aware threat prediction (AH-0MVT2W2D9002BOHO)', () => {
     // opens the range.
     expect(evaluateDirection(-1, 0, world, T).safe).toBe(false);
     expect(evaluateDirection(1, 0, world, T).safe).toBe(true);
+  });
+});
+
+// ── Sampled prediction in the fan and the kiting gate ────────────────
+// (AH-0MWM0CB2Q003Y6AB: one sampled predictive test in every hazard consumer)
+
+describe('one shared predictive test in every hazard consumer (AH-0MWM0CB2Q003Y6AB)', () => {
+  const WORLD: WrapWorld = { width: 960, height: 540 };
+  /** The ship flying right at the candidate bearing's speed (175 px/s). */
+  const SHIP = { x: 480, y: 270, vx: 175, vy: 0 };
+  const CHASER_ID = 7;
+  const TARGET_ID = 8;
+  const CHASER = { x: 600, y: 150 };
+  // Heading *toward* the ship's flight line: a pure-pursuit model turns onto the
+  // ship and closes well inside the fixed solve's straight-line miss, which is
+  // the difference these consumer tests separate on.
+  const CHASER_MOTION = { x: -150, y: 0 };
+
+  /** The same hazard point the world derives from the chaser fixture. */
+  const chaserPoint: BotHazardPoint = {
+    x: CHASER.x,
+    y: CHASER.y,
+    vx: CHASER_MOTION.x,
+    vy: CHASER_MOTION.y,
+    movementClass: 'chaser',
+    curvature: 0,
+  };
+
+  /**
+   * The threat radius that separates the two models for this geometry: the
+   * class model's homing arc closes to `arc`, the fixed-velocity control stays
+   * at `straight`. Deriving it from the shared sampler keeps the test about the
+   * wiring rather than a hand-computed number.
+   */
+  const arc = predictMinimumSeparation(
+    SHIP,
+    chaserPoint,
+    resolveCompetentTunables({ hazardMotionModelEnabled: true }),
+    WORLD,
+  ).separation;
+  const straight = predictMinimumSeparation(
+    SHIP,
+    chaserPoint,
+    resolveCompetentTunables({ hazardMotionModelEnabled: false }),
+    WORLD,
+  ).separation;
+  const threatRadius = (arc + straight) / 2;
+  const on = resolveCompetentTunables({
+    hazardMotionModelEnabled: true,
+    threatRadius,
+  });
+  const off = resolveCompetentTunables({
+    hazardMotionModelEnabled: false,
+    threatRadius,
+  });
+
+  /** The engage scenario: the moving chaser plus (optionally) the target. */
+  function chaserSnapshot(withTarget: boolean) {
+    return makeSnapshot({
+      player: SHIP,
+      enemies: [
+        { ...enemy(CHASER.x, CHASER.y, 'ghost-chase'), id: CHASER_ID },
+        ...(withTarget ? [{ ...enemy(520, 270, 'scout'), id: TARGET_ID }] : []),
+      ],
+      reverseEnabled: true,
+    });
+  }
+
+  function chaserWorld(withTarget: boolean): ReturnType<typeof buildBotWorld> {
+    return buildBotWorld(
+      chaserSnapshot(withTarget),
+      undefined,
+      undefined,
+      new Map([[enemyHazardKey(CHASER_ID), CHASER_MOTION]]),
+    );
+  }
+
+  it('the class model closes and the fixed solve does not (fixture sanity)', () => {
+    expect(arc).toBeLessThan(straight);
+  });
+
+  it('evaluateDirection consumes the shared sampled test', () => {
+    const world = chaserWorld(false);
+    expect(evaluateDirection(1, 0, world, on).safe).toBe(false);
+    expect(evaluateDirection(1, 0, world, off).safe).toBe(true);
+  });
+
+  it('hazardThreatensPlayer consumes the same sampled test', () => {
+    expect(hazardThreatensPlayer(SHIP, chaserPoint, on)).toBe(true);
+    expect(hazardThreatensPlayer(SHIP, chaserPoint, off)).toBe(false);
+  });
+
+  it('the engage kiting gate consumes the same sampled test', () => {
+    const snapshot = chaserSnapshot(true);
+    const world = chaserWorld(true);
+    const reverseWith = (t: typeof on): boolean => {
+      const goal = createCompetentGoals(t).require(
+        COMPETENT_GOAL_IDS.engageEnemy,
+      );
+      const context: BotBehaviourContext = {
+        snapshot,
+        world,
+        memory: createBotMemory(),
+        dt: 0.1,
+        goal,
+      };
+      const intent = createCompetentBehaviours(t)
+        .require('engage')
+        .run(context);
+      expect(intent).not.toBeNull();
+      return intent!.reverse === true;
+    };
+    // The kiting condition (a target inside the standoff) holds either way; only
+    // the shared predictive verdict decides whether it retreats.
+    expect(reverseWith(on)).toBe(true);
+    expect(reverseWith(off)).toBe(false);
+  });
+
+  it('keeps the engagement-target exemption inside the shared predictive test', () => {
+    const world = chaserWorld(false);
+    const hazard = world.hazards[0];
+    // The chaser is a real threat at its predicted position…
+    expect(evaluateDirection(1, 0, world, on).safe).toBe(false);
+    // …but the hazard the bot is deliberately engaging keeps only the
+    // positional rule, so aiming at it is never rejected by its own motion.
+    expect(
+      evaluateDirection(1, 0, world, on, [
+        { x: hazard.x, y: hazard.y, id: CHASER_ID },
+      ]).safe,
+    ).toBe(true);
+  });
+
+  it('reuses one per-tick geometry and sampler scratch across the whole fan', () => {
+    const world = chaserWorld(true);
+    const derived = buildSteeringDerived(world, on);
+    const scratch = derived.hazardScratch;
+    const candidateMotion = derived.candidateMotion;
+    const hazards = derived.hazards;
+    for (const offsetDeg of on.fanDegrees) {
+      const angle = (offsetDeg * Math.PI) / 180;
+      const dirX = Math.cos(angle);
+      const dirY = Math.sin(angle);
+      const cached = evaluateDirection(dirX, dirY, world, on, undefined, derived);
+      // The derived path reuses the per-tick relative position and sampler
+      // state instead of allocating per bearing…
+      expect(derived.hazardScratch).toBe(scratch);
+      expect(derived.candidateMotion).toBe(candidateMotion);
+      expect(derived.hazards).toBe(hazards);
+      // …and is identical to the inline path (AH-0MWGUN4P2003003P precedent).
+      expect(cached).toEqual(evaluateDirection(dirX, dirY, world, on));
+    }
   });
 });

@@ -1500,3 +1500,59 @@ describe('playMiniBossSweepSound — reuse-only sweep dispatcher', () => {
     ).not.toThrow();
   });
 });
+
+// ── 9. Graze / danger multiplier cue (AH-0MWL7ORK8007LXJI) ─────────
+//
+// The per-cue voice limiter caps one cue at four voices per 150 ms window, so
+// each tier is dispatched in its own case (a fresh limiter per test) rather
+// than in a loop — the ladder itself is asserted from the exported constant.
+
+describe('graze cue (AH-0MWL7ORK8007LXJI AC5)', () => {
+  it('exposes a strictly rising per-tier rate ladder starting at unity', () => {
+    expect(effects.GRAZE_CUE_RATES[0]).toBe(1);
+    expect(effects.GRAZE_CUE_RATES.length).toBeGreaterThan(1);
+    for (let i = 1; i < effects.GRAZE_CUE_RATES.length; i += 1) {
+      expect(effects.GRAZE_CUE_RATES[i]).toBeGreaterThan(
+        effects.GRAZE_CUE_RATES[i - 1],
+      );
+    }
+  });
+
+  it.each([0, 1, 2, 3, 4])('plays tier %i at its own pitch step', (tier) => {
+    effects.playGrazeSound(tier);
+    expect(recording.plays.length).toBe(1);
+    expect(recording.plays[0].rate).toBe(effects.GRAZE_CUE_RATES[tier]);
+    // An alias of an existing baked cue: no new WAV, no new recipe.
+    expect(recording.plays[0].url).toBe(
+      cueAssetUrl('playPowerUpCollectSound'),
+    );
+    expect(recording.plays[0].volume).toBe(effects.GRAZE_CUE_VOLUME_SCALE);
+  });
+
+  it.each([-3, 99, Number.NaN, Number.POSITIVE_INFINITY])(
+    'clamps an out-of-range tier (%s) instead of throwing',
+    (tier) => {
+      expect(() => effects.playGrazeSound(tier)).not.toThrow();
+      expect(recording.plays.length).toBe(1);
+      expect(effects.GRAZE_CUE_RATES).toContain(recording.plays[0].rate);
+    },
+  );
+
+  it('respects the shared master mute/volume', () => {
+    expect(() => {
+      effects.setSfxMuted(true);
+      effects.setSfxVolume(0);
+      effects.playGrazeSound(4);
+    }).not.toThrow();
+    expect(recording.mutes).toContain(true);
+    expect(recording.volumes).toContain(0);
+  });
+
+  it('degrades to a safe no-op without an AudioContext', () => {
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+    delete (window as unknown as { webkitAudioContext?: unknown }).webkitAudioContext;
+    effects._resetAudioContextForTests();
+    expect(() => effects.playGrazeSound(3)).not.toThrow();
+    expect(effects.getAudioContext()).toBeNull();
+  });
+});

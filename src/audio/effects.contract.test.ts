@@ -92,6 +92,12 @@ KNOWN_CUE_SET.add('playEnemyForceFieldBreakSound');
 // to the baked cue in the manifest, so like the other dispatchers it ships no
 // recipe of its own and is known to the coverage check.
 KNOWN_CUE_SET.add('playMiniBossSweepSound');
+// `playGrazeSound` is an alias of the power-up collect chime, played at a
+// per-tier playback rate for graze confirmation (AH-0MWL7ORK8007LXJI). It
+// ships no ToneForge recipe of its own, so it is known to the coverage check
+// without a manifest entry — the underlying cue is mapped and verified like
+// every other, exactly like `playEnemyForceFieldBreakSound` above.
+KNOWN_CUE_SET.add('playGrazeSound');
 
 function resolveCue(name: string): CueFn | undefined {
   const fromEffects = (effects as unknown as Record<string, unknown>)[name];
