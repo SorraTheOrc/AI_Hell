@@ -787,6 +787,10 @@ shipped build:
   against certain enemy or boss types: **AH-0MVWZYJ740037EZ1** — **implemented**
   as flat defence skills keyed by the attacker's authored boss identity (see
   *Known-ahead intel and anti-checklist mitigations → Defending-bot skills*).
+- **Strengthen a hex's defence** — spend banked salvage on hangar-catalogue
+  weapons, hulls and modifiers for the bot defending a held hex:
+  **AH-0MWH48IEG00929GQ** — **implemented** (see *Known-ahead intel and
+  anti-checklist mitigations → Strengthen a hex's defence*).
 - **Hex variety** — per-hex personalities, contracts and ring landmarks:
   **AH-0MVWZYQN8007SXIG** — **implemented** (GDD §8.2 *Hex variety*): authored
   `personality` (config-tunes plus the bounded set of two shared combat
@@ -797,6 +801,16 @@ shipped build:
   published in the known-ahead intel and validated loudly. Each axis passes the
   anti-checklist test — it adds a **choice** (which fight, which optional
   objective, which set-piece to take next) rather than one more box to tick.
+  **Shipped content:** ring 2 authors one hex per axis at its aggression-2
+  survivable floor — `hex-r2-1` (a `nebula` personality on the `arc`-granting
+  hex), `hex-r2-6` (a "Break the siege line then hold the hex" contract paying
+  +100 salvage / +1 core) and `hex-r2-7` (a `fortress` landmark keeping its
+  `extra-life` grant). Ring 1 also authors one landmark and one contract
+  (AH-0MWJ4ZDXO007VDJS): `hex-r1-5` a `fortress` and `hex-r1-4` a "Crack the
+  ember nest and hold the hex" contract paying +60 salvage / +1 core, with the
+  ring's aggression band and `hex-r1-6`'s weapon-hex peak unchanged. The
+  fortress's grant became ring 1's special reward (`hull-4`, below), paid on its
+  securing pass.
 
 ### Fantasy / pitch
 
@@ -834,11 +848,16 @@ hangar survives — that is what winning this hell looks like.
   hangar → **leave a bot** (flying a hull of yours) in the hex, where it attempts
   to **defend** it.
 - **What carries between runs — explicitly:** **both axes**. From B: **banked
-  salvage**, unlocked **hulls / starting weapons / modifiers** and the active
+  salvage**, unlocked **hulls / starting weapons / modifiers**, the **bought
+  permanent weapon levels** (the hangar's buy-to-upgrade path) and the active
   loadout. From A: the **ring state** — which hexes are held, which hull plus bot
   defends each, each hex's **frontier aggression**, and the **ring depth**. A run's
   temporary in-run loadout still dies with the ship (middle-loop semantics
-  unchanged); the hangar and the ring never do.
+  unchanged), and — unlike B — the **ship that flew a hex battle is a
+  one-battle consumable** (parent AH-0MWL5PAP2001XYYF): its hull, the active
+  starting weapons and modifiers, and their bought permanent levels are spent
+  on **win or loss**, while every un-flown owned item and the free starter kit
+  survive. The hangar itself and the ring still never do.
 
 ### States
 
@@ -855,9 +874,10 @@ hangar survives — that is what winning this hell looks like.
   campaign reset**: the hangar (hulls, weapons, modifiers, banked salvage and
   cores) and the ring hexes are wiped together and a fresh deterministic
   campaign seed is issued, preserving only the best score. Losing a **run** or
-  a **hex battle** never does this: the run's unbanked salvage is forfeit, a hex
-  the frontier retakes is lost, but the hangar and the rest of the ring survive
-  (Candidate B's rule, preserved).
+  a **hex battle** never does this: the run's unbanked salvage is forfeit, the
+  ship that flew is spent (parent AH-0MWL5PAP2001XYYF), a hex the frontier
+  retakes is lost, but the hangar's other owned items and the rest of the ring
+  survive (Candidate B's rule, preserved).
 - **Partial progress:** a bad run still banks salvage from the checkpoints it
   reached, still **lowers that hex's aggression** (you killed defenders), and
   still leaves a bot defending what is already held.
@@ -870,7 +890,7 @@ hangar survives — that is what winning this hell looks like.
 
 | System | What it does | Rough size |
 |--------|--------------|-----------|
-| **Hangar (Candidate B)** | Salvage spend, unlock tree (hulls, starting weapons, modifiers), active loadout | Medium |
+| **Hangar (Candidate B)** | Salvage spend, unlock tree (hulls, starting weapons, modifiers, **power-ups**), **buy-to-upgrade** of an owned level-bearing weapon **or power-up**, active loadout | Medium |
 | **Salvage banking (Candidate B)** | Convert run rewards to a persistent balance at checkpoint moments; unbanked is lost on death | Small–Medium |
 | **Hex ring map** | A hex grid whose first **ring** (6 hexes) surrounds the hangar; ring-by-ring growth for later expansions | Small–Medium — data + a map screen + a ring generator |
 | **Frontier aggression clock** | Each between-run tick **redistributes** the ring's aggression inside a budget sized from the player's fleet (a rise on one hex is paid for by a fall on another), guarantees at least one beatable hex, and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small–Medium — a deterministic per-tick rule over the pure strength/budget resolvers |
@@ -889,6 +909,32 @@ hangar survives — that is what winning this hell looks like.
 > and added to the hull rating (`hull rating + 3 × armour + 2 × firepower +
 > 2 × systems`). The frontier aggression budget is **unchanged** (producer
 > decision Q3 = A), so defence simply gets easier — an **accepted consequence**, not a bug.
+
+> **Design of record — the hangar is the permanent-upgrade source (AH-0MWHW4ALS0039JFU).**
+> An already-owned **level-bearing weapon** can be bought up one permanent level
+> at a time with banked minerals/cores (`costToUpgrade`/`buyUpgrade` in
+> `src/core/hangarWar/hangarEconomy.ts`; GDD §8.2 *Buying permanent levels*).
+> This is the fleet's **persistent** upgrade path and it is distinct from the
+> run's **in-run** pickup/hold-full path, whose permanent component dies with
+> the ship. Two producer decisions fix the rule: the ceiling is the **one
+> shared `MAX_PERMANENT_LEVEL`** (`5`; **Q1 = (a)**) read by both the hangar
+> economy and the run-path level-up offer, and **only level-bearing kinds**
+> are upgradeable (**Q2 = (a)**) — a consumable's charge pool and the
+> field-pickup-only kind carry no permanent level and are refused
+> `non-upgradeable`. A captured defender inherits the bought levels at
+> **capture time** through the shared capture path (AH-0MWH42DWQ004SAOJ), and
+> no capture-side change is needed. **Power-ups are bought from the unlock tree
+> (AH-0MWKT12BT001106T, producer Q1 = (b), Q2 = (ii), Q3 = (1)).** The unlock
+> tree therefore has **four kinds** — hull, weapon, modifier and power-up — and
+> a power-up's ownership is an **explicit owned set
+> (`hangar.unlockedPowerUps`)**, mirroring `hangar.unlockedWeapons`. Buying a
+> power-up spends its two-currency price, records the id in that set and seeds
+> its `hangar.powerUpLevels` row at **level 1** in one payload write, so the
+> buy-to-upgrade rule (ownership read from the set, with a persisted level row
+> still implying ownership) can price the next level toward the shared
+> `MAX_PERMANENT_LEVEL` exactly as it does for a weapon. Only level-bearing
+> kinds are sold; the hex boss still grants hulls/weapons/modifiers only (the
+> hex-grant and run-carry-over routes were deliberately not taken).
 
 ### Reuse of existing systems
 
@@ -972,12 +1018,14 @@ replace storage behind the same injectable interface (§6.6).
   a few lost attempts — and **ring 2 (12 hexes) lands at 60–180 minutes**.
   Measured with the ring-timing harness on the shipped one-level **five-wave
   sortie** (a captured hex's grant owned from the next deployment, ring 1's
-  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **48.1
-  minutes** — 12.0 of measured deployments, 24 between sorties and 12.0 of
-  modelled retries — so ring 2 still plays retry-dominated but now reads
-  **within-tolerance** of its derived 60–180 window (±12 min, floor 48) and its
-  rebalancing ruling stays live on AH-0MWFDQCFV007BZE5; ring 1's **16.4 min**
-  still **misses** the derived 30–90 window (AH-0MWFDQ9EY004NO4X).
+  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **57.0
+  minutes** — 4.1 of measured deployments, 24 between sorties and 4.1 of
+  modelled retries (it moved 46.8 → 48.7 → 39.4 → 57.0 as the bot's control was
+  tuned; the last move is the AH-0MWJ1680Z001QYV2 audit follow-up) — so ring 2
+  plays retry-dominated and reads **within-tolerance** of its derived 60–180
+  window (±12 min, floor 48) with its rebalancing ruling live on
+  AH-0MWFDQCFV007BZE5; ring 1's **15.4 min** still **misses** the derived 30–90
+  window (AH-0MWFDQ9EY004NO4X).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.
@@ -1018,7 +1066,12 @@ trade has to stay live; see *Effort and risk*).
   **focused hex** (AH-0MW3VG6WJ004HRI9).
 - The **hangar screen** (Candidate B's unlock tree) reachable from the map, so
   "what I own" and "what I hold" sit one click apart.
-- A **deployment / hull-and-loadout selector** on the way into a hex.
+- A **deployment / hull-and-loadout selector** on the way into a hex — the
+  **target-aware config screen** that sits between map and battle, so a hex is
+  reached through `map → config → deployment`: activating an unheld hex opens
+  the screen pre-targeted at it, its `TARGET INTEL` block names the target
+  boss and its authored strengths/weaknesses, and its `▶ DEPLOY` row launches
+  at that same hex (AH-0MWMT4S5U001EGDF, AH-0MWMT4STK001PSK4).
 - A **between-sortie defence report, rolled into the hex ring map** (no
   separate screen): the map draws one **attack arrow per attack** on the ring
   and a **left-hand attack panel** with that attack's numbers — which hexes
@@ -1046,8 +1099,10 @@ trade has to stay live; see *Effort and risk*).
 ### Pillar impact
 
 - **Changes "no continue, game over is final" (GDD §4.6) at campaign level.** As
-  with B, a lost **run** is still final (ship and unbanked salvage gone), while
-  the hangar and the ring persist. **Additional cost unique to D:** hexes can be
+  with B, a lost **run** is still final (its unbanked salvage gone), and a
+  completed hex battle now spends the ship it flew (parent
+  AH-0MWL5PAP2001XYYF) while the rest of the hangar and the ring persist.
+  **Additional cost unique to D:** hexes can be
   *lost* between runs, so the campaign can move backwards — a deliberate,
   legible stake rather than an accident.
 - **Changes the "single final boss" pillar (GDD §3.1/§4.3).** Each hex ends on
@@ -1115,23 +1170,39 @@ the boss threatening my home hex, so I take *that* hex next" is a plan the playe
 can form before spending a life — and the one-weapon hex becomes a real decision
 rather than a surprise.
 
+The intel is repeated where the player commits. The **target-aware config
+screen** sits between the map and the battle (`map → config → deployment`): it
+publishes the chosen hex's boss and its authored strengths/weaknesses as a
+`TARGET INTEL` block and marks each weapon row `▲ EFFECTIVE` or `▼ RESISTED`
+against that boss, **display only** — the mechanical matchup is
+AH-0MWL5376H001WJFZ's, never a second combat rule. Because the screen is the one
+shared model the game and `GymHangar` render (the gym read-only), the marks can
+never drift between them (AH-0MWMT4STK001PSK4).
+
 Going **beyond** strategic weapon grants is **out of scope for the MVP**. The
 ideas below are recorded so the loop has room to grow; one mitigation
 (**defending-bot skills**, AH-0MVWZYJ740037EZ1) has since been **implemented** as
 a post-MVP addition, the rest remain **design only**:
 
 - **Special missions — SHIPPED (AH-0MVWZYIWX0008C55).** A special-mission hex
-  authored in the ring (`isSpecialMission` on `HexRingDefinition`, ring 2's
-  `hex-r2-3`) whose ordinary one-level capture pays a **special reward** instead
-  of salvage: the `hull-3` **Juggernaut Hull** with **extra hit points**
-  (`5` starting lives, defence `15`) granted through `resolveHexGrant` into the
-  hangar's owned set. The offer **rotates between sorties** through the shared
-  seeded RNG (`specialMissionOfferFor`, deterministic for the payload seed) and
-  is **known ahead**: the map's detail panel publishes the reward — hull,
-  description, extra lives — before the player commits a life, with a short
-  `★ SPECIAL` tag on the tile. Upgrade-bay rewards remain out of scope
-  (AH-0MWEUSVJ1007EXJY). Gym coverage: `GymHexWar` + `GymHangar`
-  (`docs/GYM_PARITY.md`), specification in GDD §8.2 § *Special missions*.
+  authored in the ring (`isSpecialMission` on `HexRingDefinition`) whose
+  ordinary one-level capture pays a **special reward** instead of salvage.
+  Ring 2's is `hex-r2-3`: the `hull-3` **Juggernaut Hull** with **extra hit
+  points** (`5` starting lives, defence `15`) granted through
+  `resolveHexGrant` into the hangar's owned set. **Ring 1 has its own since
+  AH-0MWJ51KUS005WQK6:** `hex-r1-5` (`the-hollow-judge`, also the ring's
+  `fortress`) converts its `core-bank` grant to `hull-4` **Vanguard Hull** —
+  **4 starting lives**, `baseDefence` **3** — a survivability step over the
+  Scrap Hull that stays below the Bulwark. `hull-4` is **grant-only**: its ring
+  gate is beyond every authored ring, so `canBuy` always reports `gated` and the
+  special mission is its only source. The offer **rotates between sorties**
+  through the shared seeded RNG (`specialMissionOfferFor`, deterministic for the
+  payload seed) over the **current ring's** uncaptured specials, and is **known
+  ahead**: the map's detail panel publishes the reward — hull, description,
+  extra lives — before the player commits a life, with a short `★ SPECIAL` tag
+  on the tile. Upgrade-bay rewards remain out of scope (AH-0MWEUSVJ1007EXJY).
+  Gym coverage: `GymHexWar` + `GymHangar` (`docs/GYM_PARITY.md`), specification
+  in GDD §8.2 § *Special missions*.
 - **Upgraded bots with special skills.** Defending bots that are **more effective
   against certain enemy or boss types** — an anti-swarm bot, an anti-armour bot,
   a bot that repairs a neighbour's defence rating — so what the player leaves
@@ -1186,6 +1257,47 @@ GDD §8.2 (*Defending-bot skills*) and in the resolver's module docs
 The parity surface is unchanged: `GymHexWar` leaves a bot **with** its skills and
 resolves/renders through the shipped `runFrontierTick` / `resolveDefence` /
 `buildDefenceReport` code, so the gym shows the numbers the game shows.
+
+### Strengthen a hex's defence (post-MVP, implemented — AH-0MWH48IEG00929GQ)
+
+The second mitigation turns banked salvage into a real commitment: a held hex's
+defender can be **upgraded** from the hangar catalogue. Design of record for the
+shipped build:
+
+- **One action, one screen.** The held hex's `SELECTED HEX` detail panel shows
+  an `UPGRADE DEFENCES` action (an unheld hex never does; the read-only
+  `GymHexWar` render passes no handlers, so it offers nothing). Activating it
+  opens `BotUpgradeScene`, a hangar-screen-style surface whose pure model and one
+  renderer live in `src/scenes/hangarWar/botUpgradeScreen.ts` — the same
+  model/renderer split as the hangar screen.
+- **One pure fit rule.** `src/core/hangarWar/botUpgrade.ts` answers, per catalogue
+  entry and per defender: `upgrade-existing` (the bot already carries the weapon
+  → raise its level), `add-to-empty-slot` (a weapon kind it does not carry →
+  offered **only** when a free permanent slot exists), `re-hull` (a hull entry
+  swaps `hullId`, keeping the loadout), `train` (a `defence-skill` modifier adds
+  the skill), or a disabled reason (`not-sendable`, `gated`, `slot-full`,
+  `capped`, `already-equipped`, `unaffordable`). The bot's slot occupancy is
+  **derived** from its stored permanent kinds against the shared
+  `POWER_UP_SLOT_CAP`; no second counter or fit copy exists.
+- **Two prices, one table.** A new weapon kind pays the catalogue's purchase price
+  and enters at level 1; an already-carried weapon rises one level for the
+  separate, authored **per-level** upgrade price (`BOT_WEAPON_UPGRADE_PRICES`,
+  producer Q9 = B), so the two prices tune independently.
+- **Spend from the hangar wallet, never the fleet.** A purchase spends exactly
+  the displayed price from `HangarState.bankedMinerals`/`bankedCores`; the
+  bot gets the entry, the fleet does not (no owned-set change, no active
+  hull/loadout change).
+- **One rating formula.** The purchase recomputes the defender's stored
+  `defenceRating` through `defenderRatingFromSnapshot` / `UPGRADE_STAT_BUCKETS` —
+  never a second derivation.
+- **Persistent unless the hex falls.** The upgrade lives on the defender's
+  additive permanent-upgrade fields (field-presence parse, the `skills`
+  pattern), so it round-trips save→load and survives between sorties; a defence
+  tick that falls the hex destroys the bot and its upgrades through the existing
+  `applyDefence` path.
+- **Balance risk, accepted.** Spendable upgrades can push a well-defended hex
+  high; the single rating formula and one price table let a follow-up tuning item
+  rescale prices without touching saves.
 
 ### Minimal first slice
 

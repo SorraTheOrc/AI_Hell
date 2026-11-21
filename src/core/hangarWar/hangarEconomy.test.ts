@@ -33,26 +33,34 @@ import {
   createDefaultPayload,
 } from './hangarWarStore';
 import * as hangarEconomyModule from './hangarEconomy';
-import type { HangarState } from './types';
+import type { DeployedShip, HangarState } from './types';
 import {
   CORE_MINERAL_EQUIVALENT,
   DEFENDER_UPGRADE_WEIGHTS,
-  cheapestUsefulUnlock,
+  MAX_PERMANENT_LEVEL,
+  buy,
+  buyUpgrade,
+  consumeDeployedShip,
   canBuy,
+  cheapestUsefulUnlock,
+  costToUpgrade,
+  currentUpgradeLevel,
+  defenderRatingFromUpgrades,
   defenderStatBuckets,
   deriveDefenderRating,
-  defenderRatingFromUpgrades,
   equipHull,
   equipLoadout,
   findHangarEntry,
+  hangarPermanentLevels,
   MINIMUM_PLAYER_STRENGTH,
-  STARTING_WEAPON_STRENGTH_WEIGHT,
+  normalisePermanentLevels,
   purchaseWeight,
   resolveActiveHull,
   resolveActiveLoadout,
   resolvePlayerStrength,
   snapshotDefenderUpgrades,
-  buy,
+  STARTING_WEAPON_STRENGTH_WEIGHT,
+  withPermanentLevels,
   type HangarPurchaseContext,
 } from './hangarEconomy';
 import {
@@ -96,14 +104,15 @@ function gatedWeapon(minRing: number): StartingWeaponDefinition {
 }
 
 describe('hangar catalogue — the unlock tree is data of record', () => {
-  it('offers two extra hulls, three starting weapons and two modifiers', () => {
+  it('offers three extra hulls, three starting weapons and two modifiers', () => {
     const buyable = HANGAR_CATALOGUE.filter((item) => !item.starter);
 
-    // Two non-starter hulls since AH-0MWF0CUS3009M5SY: the ring-1 Bulwark and
-    // the ring-2 extra-hit-points hull the special mission grants (`hull-3`).
-    // The epic's "one extra hull" pin (AH-0MVU3VNJI00066YE) still describes the
-    // MVP tree; the special reward is the deliberate post-MVP addition.
-    expect(buyable.filter((item) => item.kind === 'hull')).toHaveLength(2);
+    // Three non-starter hulls: the ring-1 Bulwark, ring 2's extra-hit-points
+    // `hull-3` and ring 1's grant-only `hull-4` (AH-0MWJ51KUS005WQK6). The
+    // epic's "one extra hull" pin (AH-0MVU3VNJI00066YE) still describes the
+    // MVP tree; the special rewards are the deliberate post-MVP additions, and
+    // `hull-4` is never sold (it is a resolution target only).
+    expect(buyable.filter((item) => item.kind === 'hull')).toHaveLength(3);
     expect(buyable.filter((item) => item.kind === 'weapon')).toHaveLength(3);
     // Two modifiers since AH-0MVWZYJ740037EZ1: the extra-life kit and the
     // defending-bot skill modifier (a different rewarded choice, not a copy).
@@ -1146,6 +1155,10 @@ describe('snapshotDefenderUpgrades — clean rows for storage', () => {
 // - **Buy.** `buyUpgrade` spends the reported price and raises the kind's
 //   permanent level by **exactly one** (C2 AC4), returning a fresh hangar and
 //   a fresh level snapshot.
+// - **Basis (off-by-one fix AH-0MWKV6F26008X1T3).** A kind's current level is
+//   `max(stored row, 1)` — the base level the run already flies — so the first
+//   purchase records `2` and is priced from the base. No priced step leaves a
+//   deployment unchanged.
 // - **Attract booth.** `cheapestUsefulUnlock`/`decideHangarAction` stay
 //   byte-identical (C2 AC5): upgrades are player-action only, so the attract
 //   bot still buys the cheapest useful unlock and no upgrade vocabulary leaks
@@ -1325,22 +1338,80 @@ describe('economy upgrade rule — costToUpgrade and buyUpgrade (AH-0MWI5A6ZH009
     const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL!;
     const hangar = hangarWith({ ...RICH });
 
+    // The ladder starts at the base level the run already flies: a kind with
+    // no bought row is priced from `1`, so the steps are `1 → 2 … 4 → 5`
+    // (AH-0MWKV6F26008X1T3).
     const prices: HangarPrice[] = [];
-    for (let level = 0; level < ceiling; level += 1) {
+    for (let level = 1; level < ceiling; level += 1) {
       const check = costToUpgrade!(hangar, 'spread', levelsOf([['spread', level]]), context);
       expect(check.ok, `level ${level}`).toBe(true);
       prices.push(check.price);
     }
 
     // "Rising per level toward the shared max-permanent-level ceiling": every
-    // step from level 0 to the ceiling's last purchasable level costs more in
+    // step from the base to the ceiling's last purchasable level costs more in
     // salvage weight than the one before it.
     for (let level = 1; level < prices.length; level += 1) {
       expect(
         purchaseWeight(prices[level]),
-        `price for level ${level}`,
+        `price for level ${level + 1}`,
       ).toBeGreaterThan(purchaseWeight(prices[level - 1]));
     }
+  });
+
+  it('prices the first purchase of an unupgraded kind from the base the run already flies (AC2)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    const hangar = hangarWith({ ...RICH });
+
+    // No bought row still deploys and captures at base level 1, so the first
+    // priced step must be *above* it — the curve's base step, never a free
+    // level that changes nothing in the run (AH-0MWKV6F26008X1T3).
+    const fromNothing = costToUpgrade!(hangar, 'spread', levelsOf(), context);
+    const fromBaseRow = costToUpgrade!(hangar, 'spread', levelsOf([['spread', 1]]), context);
+
+    expect(fromNothing.ok).toBe(true);
+    expect(fromBaseRow.ok).toBe(true);
+    // One basis: a legacy base row and no row at all price the same step.
+    expect(fromNothing.price).toEqual(fromBaseRow.price);
+    // The base step is priced strictly above zero — it is the first *effective*
+    // step, not a re-grant of the level the run already has.
+    expect(purchaseWeight(fromNothing.price)).toBeGreaterThan(0);
+  });
+
+  it('raises the level by exactly one from every unupgraded basis (AC1/AC2 ladder)', () => {
+    const costToUpgrade = pendingUpgradeRuleContract.costToUpgrade;
+    const buyUpgrade = pendingUpgradeRuleContract.buyUpgrade;
+    expect(costToUpgrade).toBeDefined();
+    expect(buyUpgrade).toBeDefined();
+    const ceiling = pendingUpgradeRuleContract.MAX_PERMANENT_LEVEL!;
+    const hangar = hangarWith({ ...RICH });
+
+    // The first purchase records base + 1, so the deployment's grant (one per
+    // recorded level) rises by exactly one above the unupgraded base.
+    const first = buyUpgrade!(hangar, 'spread', levelsOf(), context);
+    expect(first.ok).toBe(true);
+    expect(first.levels.weapons).toEqual([{ id: 'spread', level: 2 }]);
+
+    // Every subsequent priced step raises the recorded level by exactly one,
+    // so no priced step can leave the deployed run unchanged (AC2).
+    let rowLevel = 2;
+    while (rowLevel < ceiling) {
+      const steps = levelsOf([['spread', rowLevel]]);
+      const check = costToUpgrade!(hangar, 'spread', steps, context);
+      expect(check.ok, `level ${rowLevel}`).toBe(true);
+      const bought = buyUpgrade!(hangar, 'spread', steps, context);
+      expect(bought.ok, `level ${rowLevel}`).toBe(true);
+      expect(bought.levels.weapons, `level ${rowLevel}`).toEqual([
+        { id: 'spread', level: rowLevel + 1 },
+      ]);
+      rowLevel += 1;
+    }
+
+    // At the ceiling there is no step left to price at all.
+    expect(
+      costToUpgrade!(hangar, 'spread', levelsOf([['spread', ceiling]]), context),
+    ).toMatchObject({ ok: false, reason: 'capped' });
   });
 
   it('buys the final level at the ceiling minus one up to the cap (AC2 capped boundary, AC4)', () => {
@@ -1623,5 +1694,597 @@ describe('economy upgrade rule — costToUpgrade and buyUpgrade (AH-0MWI5A6ZH009
     // describe block above).
     const body = cheapestUsefulUnlockSource();
     expect(body).not.toMatch(/costToUpgrade|buyUpgrade|MAX_PERMANENT_LEVEL/);
+  });
+});
+
+// ── The hangar's persisted permanent levels (AH-0MWI5AG1X0007XZH) ─────────
+//
+// The hangar records the **bought** permanent levels beside the owned sets, in
+// the run path's own row vocabulary (`Player.getWeaponLevels()` /
+// `getPowerUpLevels()`). One normaliser (`normalisePermanentLevels`) is the
+// authority for every boundary — the versioned store's parser, the deployment's
+// launch-data reader and the purchase write path — so no scene can persist or
+// grant a level the economy would refuse to raise (parent AC2/AC5).
+
+describe('hangar permanent-level state (AH-0MWI5AG1X0007XZH)', () => {
+  it('reads no levels from a hangar written before buy-to-upgrade existed', () => {
+    expect(hangarPermanentLevels(hangarWith())).toEqual({
+      weapons: [],
+      powerUps: [],
+    });
+  });
+
+  it('reads the hangar rows in the run path′s row vocabulary', () => {
+    const hangar = hangarWith({
+      weaponLevels: [{ id: 'spread', level: 3 }],
+      powerUpLevels: [{ id: 'bomb', level: 2 }],
+    });
+
+    expect(hangarPermanentLevels(hangar)).toEqual({
+      weapons: [{ id: 'spread', level: 3 }],
+      powerUps: [{ id: 'bomb', level: 2 }],
+    });
+  });
+
+  it('writes a snapshot into a fresh hangar and omits the fields when empty', () => {
+    const hangar = hangarWith();
+    const upgraded = withPermanentLevels(
+      hangar,
+      levelsOf([['spread', 2]], [['bomb', 4]]),
+    );
+
+    expect(upgraded.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
+    expect(upgraded.powerUpLevels).toEqual([{ id: 'bomb', level: 4 }]);
+    // The input hangar is never mutated.
+    expect(hangar.weaponLevels).toBeUndefined();
+    expect(hangar.powerUpLevels).toBeUndefined();
+
+    // Replacing the state with an empty snapshot drops the fields entirely
+    // (the store's field-presence migration relies on this).
+    const cleared = withPermanentLevels(upgraded, { weapons: [], powerUps: [] });
+    expect('weaponLevels' in cleared).toBe(false);
+    expect('powerUpLevels' in cleared).toBe(false);
+  });
+
+  it('never persists a consumable or field-pickup-only kind as an upgradeable level (AC5)', () => {
+    const upgraded = withPermanentLevels(hangarWith(), {
+      weapons: [{ id: 'spread', level: 2 }],
+      powerUps: [
+        { id: 'shield', level: 3 },
+        { id: 'phase_shift', level: 2 },
+        { id: 'extra_life', level: 2 },
+        { id: 'magnet', level: 2 },
+      ],
+    });
+
+    // Only the level-bearing kinds survive: the consumables and the
+    // field-pickup-only kind carry no permanent level to raise.
+    expect(upgraded.powerUpLevels).toEqual([{ id: 'magnet', level: 2 }]);
+    expect(upgraded.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
+  });
+
+  it('clamps to the shared ceiling, collapses duplicates to the highest and drops junk', () => {
+    // The junk rows are deliberately outside the row contract — a corrupt save
+    // hands them over exactly like this.
+    type RawRows = Parameters<typeof normalisePermanentLevels>[0];
+    const levels = normalisePermanentLevels({
+      weapons: [
+        { id: 'spread', level: 99 },
+        { id: 'rapid', level: 2 },
+        { id: 'rapid', level: 4 },
+        { id: 'not-a-weapon', level: 2 },
+        { id: '', level: 2 },
+        { id: 'wave_laser' },
+        null,
+        7,
+      ] as unknown as RawRows['weapons'],
+      powerUps: [
+        { id: 'bomb', level: 0 },
+        { id: 'magnet', level: -3 },
+        { id: 'extra_life', level: 2 },
+      ],
+    });
+
+    expect(levels.weapons).toEqual([
+      { id: 'spread', level: MAX_PERMANENT_LEVEL },
+      { id: 'rapid', level: 4 },
+    ]);
+    expect(levels.powerUps).toEqual([]);
+  });
+
+  it('keeps weapon rows and power-up rows in their own buckets', () => {
+    const levels = normalisePermanentLevels({
+      weapons: [{ id: 'bomb', level: 2 }],
+      powerUps: [{ id: 'spread', level: 2 }],
+    });
+
+    expect(levels).toEqual({ weapons: [], powerUps: [] });
+  });
+
+  it('is pure: the snapshot rows it returns are fresh objects', () => {
+    const rows = [{ id: 'spread' as WeaponId, level: 2 }];
+    const levels = normalisePermanentLevels({ weapons: rows });
+
+    expect(levels.weapons[0]).not.toBe(rows[0]);
+    expect(rows[0]).toEqual({ id: 'spread', level: 2 });
+  });
+});
+
+/**
+ * Spending the flown ship on battle completion (parent AH-0MWL5PAP2001XYYF).
+ *
+ * The reducer is the **one** rule that turns "a battle happened" into what the
+ * fleet keeps: only the deployed hull/starting weapons/modifiers and their
+ * bought permanent levels are spent; un-flown items and the free starter kit
+ * survive; the hangar resets to the starter kit with an empty loadout.
+ */
+describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MWL5PAP2001XYYF)', () => {
+  /** A fleet with a bought, fully-equipped ship plus un-flown spare parts. */
+  function stockedHangar(): HangarState {
+    return hangarWith({
+      bankedMinerals: 900,
+      bankedCores: 12,
+      unlockedHulls: ['hull-1', 'hull-2', 'hull-3'],
+      unlockedWeapons: ['spread', 'wave_laser', 'ricochet'],
+      ownedModifiers: ['hardened_plating', 'anti_maw_plating'],
+      activeHull: 'hull-2',
+      activeLoadout: {
+        startingWeapons: ['wave_laser', 'spread'],
+        modifiers: ['hardened_plating'],
+      },
+      weaponLevels: [
+        { id: 'wave_laser', level: 3 },
+        { id: 'spread', level: 2 },
+        { id: 'ricochet', level: 2 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 2 },
+        { id: 'magnet', level: 3 },
+      ],
+    });
+  }
+
+  /** The ship that flew in {@link stockedHangar}. */
+  const FLOWN_SHIP: DeployedShip = {
+    hullId: 'hull-2',
+    startingWeapons: ['wave_laser', 'spread'],
+    modifiers: ['hardened_plating'],
+  };
+
+  it('removes the flown hull, weapon and modifier, keeping un-flown and starter items', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+
+    expect(consumed.unlockedHulls).toEqual(['hull-1', 'hull-3']);
+    expect(consumed.unlockedWeapons).toEqual(['spread', 'ricochet']);
+    expect(consumed.ownedModifiers).toEqual(['anti_maw_plating']);
+  });
+
+  it('deletes only the consumed ids’ permanent level rows', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+
+    // The flown weapon's row is gone; the starter and un-flown weapon rows stay.
+    expect(consumed.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+      { id: 'ricochet', level: 2 },
+    ]);
+    // No un-flown power-up row is collateral damage.
+    expect(consumed.powerUpLevels).toEqual([
+      { id: 'shield', level: 2 },
+      { id: 'magnet', level: 3 },
+    ]);
+  });
+
+  it('prunes both level-row kinds for a consumed id', () => {
+    // A ship whose modifier id also has a power-up level row: the reducer is
+    // role-agnostic about level rows, so the consumed id loses **both** kinds.
+    const hangar = hangarWith({
+      unlockedHulls: ['hull-1', 'hull-2'],
+      ownedModifiers: ['shield'],
+      activeHull: 'hull-2',
+      activeLoadout: { startingWeapons: [], modifiers: ['shield'] },
+      weaponLevels: [
+        { id: 'spread', level: 2 },
+        { id: 'wave_laser', level: 3 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 2 },
+        { id: 'magnet', level: 3 },
+      ],
+    });
+
+    const consumed = consumeDeployedShip(hangar, {
+      hullId: 'hull-2',
+      startingWeapons: ['wave_laser'],
+      modifiers: ['shield'],
+    });
+
+    expect(consumed.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
+    expect(consumed.powerUpLevels).toEqual([{ id: 'magnet', level: 3 }]);
+  });
+
+  it('never removes the free starter kit, even when it was flown', () => {
+    const hangar = hangarWith({
+      unlockedHulls: ['hull-1', 'hull-2'],
+      unlockedWeapons: ['spread', 'wave_laser'],
+      activeHull: 'hull-1',
+      activeLoadout: {
+        startingWeapons: ['spread'],
+        modifiers: [],
+      },
+      weaponLevels: [
+        { id: 'spread', level: 2 },
+        { id: 'wave_laser', level: 2 },
+      ],
+    });
+
+    const consumed = consumeDeployedShip(hangar, {
+      hullId: 'hull-1',
+      startingWeapons: ['spread'],
+      modifiers: [],
+    });
+
+    expect(consumed.unlockedHulls).toEqual(['hull-1', 'hull-2']);
+    expect(consumed.unlockedWeapons).toEqual(['spread', 'wave_laser']);
+    expect(consumed.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+      { id: 'wave_laser', level: 2 },
+    ]);
+  });
+
+  it('resets to the starter hull with an empty (still deployable) loadout', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+
+    expect(consumed.activeHull).toBe(DEFAULT_HULL_ID);
+    expect(consumed.activeLoadout).toEqual({ startingWeapons: [], modifiers: [] });
+    // The exact inputs a deployment resolves from: starter hull, no equipment.
+    expect(resolveActiveHull(consumed)).toBe(DEFAULT_HULL_ID);
+    expect(resolveActiveLoadout(consumed)).toEqual({
+      startingWeapons: [],
+      modifiers: [],
+    });
+    expect(resolvePlayerStrength(consumed)).toBeGreaterThanOrEqual(
+      MINIMUM_PLAYER_STRENGTH,
+    );
+  });
+
+  it('leaves both banked balances untouched', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+
+    expect(consumed.bankedMinerals).toBe(900);
+    expect(consumed.bankedCores).toBe(12);
+  });
+
+  it('is idempotent and never mutates its caller’s hangar', () => {
+    const hangar = stockedHangar();
+    const before = JSON.parse(JSON.stringify(hangar)) as HangarState;
+
+    const once = consumeDeployedShip(hangar, FLOWN_SHIP);
+    const twice = consumeDeployedShip(once, FLOWN_SHIP);
+
+    expect(twice).toEqual(once);
+    expect(hangar).toEqual(before);
+  });
+
+  it('ignores unknown/stale ids and never throws on a corrupt save', () => {
+    const hangar = stockedHangar();
+
+    const consumed = consumeDeployedShip(hangar, {
+      hullId: 'hull-does-not-exist',
+      startingWeapons: ['weapon-does-not-exist', 'wave_laser'],
+      modifiers: ['modifier-does-not-exist'],
+    });
+
+    expect(consumed.unlockedWeapons).toContain('ricochet');
+    expect(consumed.unlockedWeapons).not.toContain('wave_laser');
+    // An unknown hull/modifier id matches nothing, so the owned sets keep
+    // every real hull (including the one the fleet did not fly).
+    expect(consumed.unlockedHulls).toEqual(['hull-1', 'hull-2', 'hull-3']);
+    expect(consumed.ownedModifiers).toEqual([
+      'hardened_plating',
+      'anti_maw_plating',
+    ]);
+  });
+
+  it('tolerates missing level-row fields entirely (no rows to prune)', () => {
+    const hangar = hangarWith({
+      unlockedHulls: ['hull-1', 'hull-2'],
+      unlockedWeapons: ['spread', 'wave_laser'],
+      activeHull: 'hull-2',
+      activeLoadout: { startingWeapons: ['wave_laser'], modifiers: [] },
+    });
+    delete hangar.weaponLevels;
+    delete hangar.powerUpLevels;
+
+    const consumed = consumeDeployedShip(hangar, {
+      hullId: 'hull-2',
+      startingWeapons: ['wave_laser'],
+      modifiers: [],
+    });
+
+    expect('weaponLevels' in consumed).toBe(false);
+    expect('powerUpLevels' in consumed).toBe(false);
+  });
+});
+
+/**
+ * Auto-enable on purchase (parent AH-0MWL5PAP2001XYYF, producer Q1 = C
+ * refined: "when an upgrade is purchased it is automatically enabled").
+ *
+ * The opt-in lives on the pure rule so the hangar screen's one call arms the
+ * part, while every other caller keeps the documented A5/A6 "buying only
+ * grants ownership" default.
+ */
+describe('buy — equipOnPurchase (AH-0MWL5PAP2001XYYF)', () => {
+  const context = { ringIndex: 1 };
+
+  /** A ring-1 hangar with enough salvage to buy the shipped tree. */
+  function richHangar(overrides: Partial<HangarState> = {}): HangarState {
+    return hangarWith({
+      bankedMinerals: 500,
+      bankedCores: 5,
+      ...overrides,
+    });
+  }
+
+  const OPT_IN = { equipOnPurchase: true } as const;
+
+  it('equips a purchased hull as the active hull', () => {
+    const result = buy(richHangar(), entry('hull-2'), context, OPT_IN);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.unlockedHulls).toContain('hull-2');
+    expect(result.hangar.activeHull).toBe('hull-2');
+    // The price is unchanged by the opt-in.
+    expect(result.spent).toEqual({ minerals: 220, cores: 3 });
+  });
+
+  it('adds a purchased starting weapon to the active loadout', () => {
+    const result = buy(richHangar(), entry('wave_laser'), context, OPT_IN);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.unlockedWeapons).toContain('wave_laser');
+    expect(result.hangar.activeLoadout.startingWeapons).toEqual(['wave_laser']);
+  });
+
+  it('adds a purchased modifier to the active loadout', () => {
+    const result = buy(richHangar(), entry('hardened_plating'), context, OPT_IN);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.ownedModifiers).toContain('hardened_plating');
+    expect(result.hangar.activeLoadout.modifiers).toEqual(['hardened_plating']);
+  });
+
+  it('deduplicates a loadout entry a corrupt save already lists', () => {
+    const hangar = richHangar({
+      // Owned set lacks the weapon, but the loadout already names it.
+      activeLoadout: { startingWeapons: ['wave_laser'], modifiers: [] },
+    });
+
+    const result = buy(hangar, entry('wave_laser'), context, OPT_IN);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.activeLoadout.startingWeapons).toEqual(['wave_laser']);
+  });
+
+  it('keeps A5/A6 for callers that do not opt in', () => {
+    const result = buy(richHangar(), entry('hull-2'), context);
+
+    expect(result.ok).toBe(true);
+    expect(result.hangar.unlockedHulls).toContain('hull-2');
+    expect(result.hangar.activeHull).toBe('hull-1');
+  });
+
+  it('changes nothing on a refused purchase, even when opted in', () => {
+    const cases: Array<[string, HangarState]> = [
+      ['owned', richHangar()],
+      ['gated', richHangar()],
+      ['unaffordable', richHangar({ bankedMinerals: 0, bankedCores: 0 })],
+    ];
+    const ids = ['spread', 'hull-3', 'hull-2'];
+
+    cases.forEach(([reason, hangar], index) => {
+      const before = JSON.parse(JSON.stringify(hangar)) as HangarState;
+      const result = buy(hangar, entry(ids[index]!), context, OPT_IN);
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe(reason);
+      expect(result.hangar).toEqual(before);
+    });
+  });
+});
+
+// ── Power-up ownership — the unlock-tree kind and the owned set ───────────
+//
+// Parent AH-0MWKT12BT001106T (red-first contract tests, child
+// AH-0MWKXPIWL007VB8E). The pure upgrade rule already exists (AH-0MWI5AAVO009UROY)
+// but treats a power-up as owned **only** when a `powerUpLevels` row exists —
+// and no shipped path ever writes one. Producer decisions: Q1 = (b) hangar
+// tree/shop entry, Q2 = (ii) explicit `unlockedPowerUps` owned set, Q3 = (1)
+// author the shipped content here.
+//
+// RED assertions (fail until the kind + owned set + purchase seeding land):
+// - `canBuy` sees a power-up entry at all, and reports it `owned` once its id
+//   is in `hangar.unlockedPowerUps`;
+// - a successful `buy` adds the id to `unlockedPowerUps` **and** seeds its
+//   `hangar.powerUpLevels` row at level 1;
+// - `costToUpgrade` treats an id in `unlockedPowerUps` as owned.
+//
+// "Pins unchanged behaviour" assertions (pass today and must stay green): an
+// unowned power-up is refused `unowned`, a persisted level row already implies
+// ownership, and consumables / the field-pickup-only kind stay
+// `non-upgradeable`.
+
+/** A power-up unlock entry read through a structural view (red-first). */
+interface PowerUpUnlockView {
+  readonly id: string;
+  readonly kind: string;
+  readonly powerUpId?: string;
+  readonly price: HangarPrice;
+  readonly minRing: number;
+  readonly starter: boolean;
+}
+
+/** The first authored power-up unlock (fails loudly when none is authored). */
+function firstPowerUpUnlock(): PowerUpUnlockView {
+  const unlocks = (HANGAR_CATALOGUE as unknown as readonly PowerUpUnlockView[]).filter(
+    (entry) => entry.kind === 'power-up',
+  );
+  expect(unlocks.length, 'authored power-up unlock entries').toBeGreaterThan(0);
+  return unlocks[0];
+}
+
+/** The shipped power-up id a power-up unlock owns. */
+function powerUpIdOf(entry: PowerUpUnlockView): PowerUpId {
+  return (entry.powerUpId ?? entry.id) as PowerUpId;
+}
+
+/** A hangar whose canonical power-up owned set is `ids`. */
+function withOwnedPowerUps(hangar: HangarState, ids: readonly string[]): HangarState {
+  return { ...hangar, unlockedPowerUps: [...ids] } as unknown as HangarState;
+}
+
+/** The hangar's canonical power-up owned set (absent reads as none). */
+function ownedPowerUps(hangar: HangarState): string[] {
+  return (hangar as unknown as { unlockedPowerUps?: string[] }).unlockedPowerUps ?? [];
+}
+
+/** The hangar's persisted power-up level rows (absent reads as none). */
+function powerUpLevelRows(
+  hangar: HangarState,
+): ReadonlyArray<{ id: string; level: number }> {
+  return (
+    hangar as unknown as {
+      powerUpLevels?: ReadonlyArray<{ id: string; level: number }>;
+    }
+  ).powerUpLevels ?? [];
+}
+
+describe('power-up ownership — purchase and ownership (AH-0MWKT12BT001106T)', () => {
+  const context: HangarPurchaseContext = { ringIndex: 2 };
+  const RICH = { bankedMinerals: 1_000_000, bankedCores: 10_000 };
+
+  it('finds a power-up entry and reports it buyable, gated or unaffordable', () => {
+    const entry = firstPowerUpUnlock() as unknown as HangarEntry;
+    const powerUpId = powerUpIdOf(entry as unknown as PowerUpUnlockView);
+
+    // Affordable and past the ring gate: the one purchasable state.
+    const buyable = canBuy(withOwnedPowerUps(hangarWith({ ...RICH }), []), entry, context);
+    expect(buyable).toMatchObject({ ok: true, reason: null });
+
+    // Below the entry's ring gate: `gated`, whatever the balance.
+    const ringBelow = Math.max(0, entry.minRing - 1);
+    expect(
+      canBuy(withOwnedPowerUps(hangarWith({ ...RICH }), []), entry, {
+        ringIndex: ringBelow,
+      }),
+    ).toMatchObject({ ok: false, reason: 'gated' });
+
+    // Too poor: `unaffordable` with the exact shortfall, nothing invented.
+    const broke = hangarWith({ bankedMinerals: 0, bankedCores: 0 });
+    const unaffordable = canBuy(withOwnedPowerUps(broke, []), entry, context);
+    expect(unaffordable.ok).toBe(false);
+    expect(unaffordable.reason).toBe('unaffordable');
+    expect(unaffordable.shortfall).toEqual({
+      minerals: entry.price.minerals,
+      cores: entry.price.cores,
+    });
+
+    // Already in the canonical owned set: `owned` (this is RED today — the set
+    // is ignored by `ownsEntry`).
+    expect(
+      canBuy(withOwnedPowerUps(hangarWith({ ...RICH }), [powerUpId]), entry, context),
+    ).toMatchObject({ ok: false, reason: 'owned' });
+  });
+
+  it('spends both currencies, records ownership and seeds the level-1 row', () => {
+    const entry = firstPowerUpUnlock() as unknown as HangarEntry;
+    const powerUpId = powerUpIdOf(entry as unknown as PowerUpUnlockView);
+    const hangar = withOwnedPowerUps(hangarWith({ ...RICH }), []);
+
+    const result = buy(hangar, entry, context);
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeNull();
+    // Both currencies are actually spent.
+    expect(result.spent).toEqual(entry.price);
+    expect(result.hangar.bankedMinerals).toBe(RICH.bankedMinerals - entry.price.minerals);
+    expect(result.hangar.bankedCores).toBe(RICH.bankedCores - entry.price.cores);
+    // Ownership lives in the canonical set (Q2 = (ii)) ...
+    expect(ownedPowerUps(result.hangar)).toContain(powerUpId);
+    // ... and the first permanent level row is seeded at level 1, in the same
+    // hangar write, so the upgrade rule and the deploy grant see it next sortie.
+    expect(powerUpLevelRows(result.hangar)).toEqual([{ id: powerUpId, level: 1 }]);
+    // The input is never mutated.
+    expect(ownedPowerUps(hangar)).toEqual([]);
+    expect(powerUpLevelRows(hangar)).toEqual([]);
+  });
+
+  it('changes neither field and spends nothing when the purchase is refused', () => {
+    const entry = firstPowerUpUnlock() as unknown as HangarEntry;
+    const broke = withOwnedPowerUps(hangarWith({ bankedMinerals: 0, bankedCores: 0 }), []);
+    const gated = withOwnedPowerUps(hangarWith({ ...RICH }), []);
+
+    const unaffordable = buy(broke, entry, context);
+    expect(unaffordable.ok).toBe(false);
+    expect(unaffordable.reason).toBe('unaffordable');
+    expect(ownedPowerUps(unaffordable.hangar)).toEqual([]);
+    expect(powerUpLevelRows(unaffordable.hangar)).toEqual([]);
+    expect(unaffordable.hangar.bankedMinerals).toBe(0);
+    expect(unaffordable.hangar.bankedCores).toBe(0);
+
+    const gatedResult = buy(gated, entry, { ringIndex: Math.max(0, entry.minRing - 1) });
+    expect(gatedResult.ok).toBe(false);
+    expect(gatedResult.reason).toBe('gated');
+    expect(ownedPowerUps(gatedResult.hangar)).toEqual([]);
+    expect(powerUpLevelRows(gatedResult.hangar)).toEqual([]);
+    expect(gatedResult.hangar.bankedMinerals).toBe(RICH.bankedMinerals);
+  });
+
+  it('reads power-up ownership from the owned set for the upgrade rule', () => {
+    const rich = hangarWith({ ...RICH });
+
+    // Unowned: no set entry and no level row (unchanged behaviour).
+    expect(costToUpgrade(rich, 'bomb', levelsOf(), context)).toMatchObject({
+      ok: false,
+      reason: 'unowned',
+    });
+
+    // Owned through the canonical set (this is RED today: the rule reads only
+    // a persisted level row).
+    const owned = withOwnedPowerUps(rich, ['bomb']);
+    const check = costToUpgrade(owned, 'bomb', levelsOf(), context);
+    expect(check.ok).toBe(true);
+    expect(check.reason).toBeNull();
+    // Level 1 is the seeded basis, so the next level is 2.
+    expect(currentUpgradeLevel(levelsOf(), 'bomb')).toBe(1);
+
+    // A persisted level row still implies ownership (no stored row is orphaned).
+    expect(
+      costToUpgrade(rich, 'bomb', levelsOf([], [['bomb', 2]]), context).ok,
+    ).toBe(true);
+
+    // buyUpgrade raises the owned power-up by exactly one through the store's
+    // vocabulary: base 1 → 2.
+    const upgraded = buyUpgrade(owned, 'bomb', levelsOf(), context);
+    expect(upgraded.ok).toBe(true);
+    expect(upgraded.levels.powerUps).toEqual([{ id: 'bomb', level: 2 }]);
+  });
+
+  it('still refuses consumables and the field-pickup-only kind as non-upgradeable, even when owned', () => {
+    const rich = hangarWith({ ...RICH });
+
+    for (const id of ['shield', 'extra_life'] as const) {
+      // Owned via the set *and* a row, unlimited salvage: the refusal is about
+      // the kind — there is no permanent level to raise (Q2 = (a)).
+      const check = costToUpgrade(
+        withOwnedPowerUps(rich, [id]),
+        id,
+        levelsOf([], [[id, 2]]),
+        context,
+      );
+      expect(check, id).toMatchObject({ ok: false, reason: 'non-upgradeable' });
+      expect(check.reason, id).not.toBe('unowned');
+      expect(check.reason, id).not.toBe('capped');
+    }
   });
 });

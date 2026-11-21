@@ -10,13 +10,11 @@
  * scenario whose promo metadata is missing, so the entry vocabulary and its
  * validation live here once instead of being copied into each consumer.
  *
- * Why not derive the vocabulary from `EDITORIAL_CONFIG` in
- * `scripts/compile-promo.mjs`? That module imports `node:fs` /
- * `node:child_process`, so it cannot be imported by anything the browser
- * bundle reaches — which includes this schema and the registry. The list is
- * therefore restated here and pinned to `EDITORIAL_CONFIG.categories` by the
- * registry contract test (`scripts/capture-scenarios.test.ts`), so the two
- * cannot drift without failing the suite.
+ * The entry vocabulary and its validation live here once instead of being
+ * copied into each consumer. The editorial category list is the schema's own
+ * single source of truth: the legacy promo compiler that previously owned it
+ * was removed in AH-0MWOUY9IK004QWCU, so the registry, the authored promo
+ * levels and the tests all consume `EDITORIAL_CATEGORIES` from here.
  *
  * Plain ESM with **no Node APIs and no DOM/types**, so bare Node (the capture
  * CLI) and the Vite game build can both import it untouched;
@@ -46,9 +44,9 @@ export const CAPTURE_SCENARIO_KINDS = Object.freeze([
  * Editorial feature categories a promo scenario may evidence, in the promo
  * compiler's manifest order.
  *
- * Mirrors `EDITORIAL_CONFIG.categories` in `scripts/compile-promo.mjs` (the
- * promo pipeline's single source of truth); the registry contract test pins
- * the two lists to each other, so tuning one without the other fails fast.
+ * Mirrors no external module: this list is the single source of truth for the
+ * vocabulary consumed by the scenario registry, the authored promo levels and
+ * the docs (the legacy promo compiler was removed in AH-0MWOUY9IK004QWCU).
  */
 export const EDITORIAL_CATEGORIES = Object.freeze([
   'weapons',

@@ -51,8 +51,8 @@ const repoRoot = path.dirname(fileURLToPath(import.meta.url));
  *   (ffmpeg/ffprobe) that is far too slow for the feedback loop. Selected by
  *   the `e2e` project **only**, so it never runs in `npm --silent test` /
  *   `--type full`. Run on demand with `npx vitest run --project e2e` or
- *   `/skill:test --type e2e` (AH-0MVFSNO0G00035AP moved the real-ffmpeg promo
- *   smoke here; it was the full suite's ~140 s floor).
+ *   `/skill:test --type e2e` (AH-0MVFSNO0G00035AP moved the real-ffmpeg
+ *   seek-index remux here; it was the full suite's ~140 s floor).
  *
  * `npm --silent test` is the audit-accepted full-suite entry point for
  * `/skill:test --type full`: it runs `vitest run --project unit --project

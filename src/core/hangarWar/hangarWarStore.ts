@@ -53,15 +53,29 @@
  * applies no bonus) — AH-0MVUXCBBK004EJIP and AH-0MVWZYJ740037EZ1 respectively.
  * The run's **upgrade snapshot** on a defending bot is the third such field
  * (absent reads as "no upgrades", so the resolver adds nothing) —
- * AH-0MWHF6ZHW0058SMX. All three are omitted on write when they carry
- * nothing, so a save round-trips byte-for-byte rather than gaining empty
+ * AH-0MWHF6ZHW0058SMX. The hangar's bought **permanent levels**
+ * (`hangar.weaponLevels` / `hangar.powerUpLevels`) are the fourth
+ * (AH-0MWI5AG1X0007XZH): absence reads as "no upgrade", so every owned kind
+ * deploys at its base level `1`. The hangar's **saved ship configurations**
+ * (`hangar.savedBuilds`) are the fifth (AH-0MWL8C6FE008G1E7): absent reads as
+ * no saved builds, omitted on write when empty. All five are omitted on write
+ * when they carry nothing, so a save round-trips byte-for-byte rather than
+ * gaining empty
  * fields.
  *
  * @module src/core/hangarWar/hangarWarStore
  */
 
 import { normaliseSeed } from '../rng';
-import { snapshotDefenderUpgrades } from './hangarEconomy';
+import {
+  buyUpgrade,
+  hangarPermanentLevels,
+  normalisePermanentLevels,
+  snapshotDefenderUpgrades,
+  withPermanentLevels,
+} from './hangarEconomy';
+import type { HangarPrice } from '../../data/hangarCatalogue';
+import type { HangarPurchaseContext, UpgradeRefusal } from './hangarEconomy';
 import type {
   DefenceSkill,
   DefenderUpgradeSnapshot,
@@ -92,10 +106,13 @@ export const DEFAULT_HULL_ID = 'hull-1';
 /**
  * The starting weapon every fleet **owns** from the first deployment.
  *
- * Owning a starting weapon never equips it: the fleet's default loadout is
- * empty (`activeLoadout.startingWeapons: []`), so a fresh deployment starts
+ * Owning the *free starter* weapon never equips it: the fleet's default loadout
+ * is empty (`activeLoadout.startingWeapons: []`), so a fresh deployment starts
  * with only the ship's permanent cannon and any extra weapon is a deliberate
- * choice in the hangar (AH-0MVZJ6V1J001DA9D).
+ * choice in the hangar (AH-0MVZJ6V1J001DA9D). A weapon **bought** through the
+ * hangar screen is different: the screen opts in to auto-enable, so buying arms
+ * it immediately (parent AH-0MWL5PAP2001XYYF). The starter kit itself stays
+ * owned-but-not-equipped, so it is always available after a wipe.
  */
 export const DEFAULT_STARTING_WEAPON_ID = 'spread';
 
@@ -170,6 +187,78 @@ function parseLoadout(raw: unknown): HangarLoadout {
   };
 }
 
+/** One stored saved-build row, structurally validated but with raw level values. */
+interface StoredSavedBuild {
+  readonly id: string;
+  readonly name: string;
+  readonly hullId: string;
+  readonly startingWeapons: string[];
+  readonly modifiers: string[];
+  readonly weaponLevels?: readonly { readonly id: string; readonly level: unknown }[];
+  readonly powerUpLevels?: readonly { readonly id: string; readonly level: unknown }[];
+}
+
+/**
+ * Parses one saved-build entry, or `null` when it is not usable.
+ *
+ * A build needs a stable id, a display name, a hull, starting weapons and
+ * modifiers. Level rows are optional and structurally validated; numeric
+ * levels that are not finite or negative collapse to `1` (the base level).
+ */
+function parseSavedBuild(raw: unknown): StoredSavedBuild | null {
+  if (!isRecord(raw)) return null;
+  const id = toId(raw.id);
+  if (id === null) return null;
+  const name = toId(raw.name);
+  if (name === null) return null;
+  const hullId = toId(raw.hullId);
+  if (hullId === null) return null;
+  const startingWeapons = toIdList(raw.startingWeapons);
+  const modifiers = toIdList(raw.modifiers);
+
+  const weaponLevels = parseSavedBuildLevelRows(raw.weaponLevels);
+  const powerUpLevels = parseSavedBuildLevelRows(raw.powerUpLevels);
+
+  return { id, name, hullId, startingWeapons, modifiers, weaponLevels, powerUpLevels };
+}
+
+/** Parse one saved-build level row list, normalising levels to `[1, MAX_PERMANENT_LEVEL]`. */
+function parseSavedBuildLevelRows(
+  raw: unknown,
+): StoredSavedBuild['weaponLevels'] {
+  if (!Array.isArray(raw)) return undefined;
+  const rows: { id: string; level: number }[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const id = toId(entry.id);
+    if (id === null) continue;
+    const level = toNonNegativeInteger(entry.level);
+    if (level < 1) continue;
+    rows.push({ id, level: Math.min(level, 5) });
+  }
+  return rows.length > 0 ? rows : undefined;
+}
+
+/**
+ * Parses the hangar's saved builds, or `undefined` when absent/corrupt.
+ *
+ * Duplicate ids collapse to the first mention, unusable entries are dropped,
+ * and the field stays absent (never defaulted to `[]`) so a legacy save
+ * round-trips byte-for-byte.
+ */
+function parseSavedBuilds(raw: unknown): StoredSavedBuild[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const builds: StoredSavedBuild[] = [];
+  for (const entry of raw) {
+    const build = parseSavedBuild(entry);
+    if (build === null || seen.has(build.id)) continue;
+    seen.add(build.id);
+    builds.push(build);
+  }
+  return builds;
+}
+
 /**
  * Parses the hangar, or `null` when there is no usable hangar at all (the
  * payload cannot be a hangar-war save without one).
@@ -188,7 +277,7 @@ function parseHangar(raw: unknown): HangarState | null {
       ? requestedHull
       : unlockedHulls[0];
 
-  return {
+  const hangar: HangarState = {
     bankedMinerals: toNonNegativeInteger(raw.bankedMinerals),
     bankedCores: toNonNegativeInteger(raw.bankedCores),
     unlockedHulls,
@@ -197,6 +286,76 @@ function parseHangar(raw: unknown): HangarState | null {
     activeHull,
     activeLoadout: parseLoadout(raw.activeLoadout),
   };
+
+  // The canonical power-up owned set (parent AH-0MWKT12BT001106T, Q2 = (ii))
+  // is the fifth additive field family. It is migrated **by presence**: a save
+  // written before the power-up kind landed has no field and stays field-less
+  // (absent reads as "owns none"), so the payload round-trips byte-for-byte and
+  // no schema version bump is needed. A present but corrupt value collapses to
+  // `[]` through the same `toIdList` — duplicates, blanks and non-strings drop,
+  // exactly like `unlockedWeapons`.
+  if (
+    Object.prototype.hasOwnProperty.call(raw, 'unlockedPowerUps') &&
+    raw.unlockedPowerUps !== undefined
+  ) {
+    hangar.unlockedPowerUps = toIdList(raw.unlockedPowerUps);
+  }
+
+  // The bought permanent levels (AH-0MWI5AG1X0007XZH) are the fourth additive
+  // field family: a save written before buy-to-upgrade existed has none, so the
+  // fields stay **absent** (never defaulted to `[]`) and absence reads as "no
+  // upgrade". The shared economy normaliser owns count semantics and the
+  // level-bearing-only rule, so the store can never persist a consumable or
+  // field-pickup-only row as an upgradeable level (AC5).
+  const levels = normalisePermanentLevels({
+    weapons: parseUpgradeRows(raw.weaponLevels, 'level').map((row) => ({
+      id: row.id,
+      level: row.count,
+    })),
+    powerUps: parseUpgradeRows(raw.powerUpLevels, 'level').map((row) => ({
+      id: row.id,
+      level: row.count,
+    })),
+  });
+  if (levels.weapons.length > 0) {
+    hangar.weaponLevels = levels.weapons.map((row) => ({ ...row }));
+  }
+  if (levels.powerUps.length > 0) {
+    hangar.powerUpLevels = levels.powerUps.map((row) => ({ ...row }));
+  }
+
+  // The saved-build list (AH-0MWL8C6FE008G1E7) is the fifth additive field
+  // family: a save written before it landed has none, so the field stays
+  // absent (never defaulted to `[]`) and absence reads as no saved builds.
+  // Duplicate ids collapse to the first mention; unusable entries drop.
+  const savedBuilds = parseSavedBuilds(raw.savedBuilds);
+  if (savedBuilds.length > 0) {
+    hangar.savedBuilds = savedBuilds.map((b) => {
+      const weaponLevels = b.weaponLevels?.map((l) => ({
+        id: l.id,
+        level: l.level as number,
+      }));
+      const powerUpLevels = b.powerUpLevels?.map((l) => ({
+        id: l.id,
+        level: l.level as number,
+      }));
+      return {
+        id: b.id,
+        name: b.name,
+        hullId: b.hullId,
+        startingWeapons: [...b.startingWeapons],
+        modifiers: [...b.modifiers],
+        ...(weaponLevels && weaponLevels.length > 0
+          ? { weaponLevels: Object.freeze(weaponLevels) }
+          : {}),
+        ...(powerUpLevels && powerUpLevels.length > 0
+          ? { powerUpLevels: Object.freeze(powerUpLevels) }
+          : {}),
+      };
+    });
+  }
+
+  return hangar;
 }
 
 /**
@@ -502,6 +661,9 @@ export function createDefaultPayload(seed: number = 0): HangarWarPayload {
       unlockedHulls: [DEFAULT_HULL_ID],
       unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID],
       ownedModifiers: [],
+      // A fresh fleet owns no power-ups (parent AH-0MWKT12BT001106T): the
+      // canonical set is empty, so the first power-up comes from a purchase.
+      unlockedPowerUps: [],
       activeHull: DEFAULT_HULL_ID,
       activeLoadout: {
         startingWeapons: [],
@@ -513,6 +675,73 @@ export function createDefaultPayload(seed: number = 0): HangarWarPayload {
     bestScore: 0,
     // A fresh war has not been ticked yet (AH-0MVUXCBBK004EJIP).
     frontierTick: 0,
+  };
+}
+
+/**
+ * The outcome of buying one permanent level through the versioned store's
+ * write path (AH-0MWI5AG1X0007XZH).
+ *
+ * Deliberately payload-shaped rather than hangar-shaped: the raised level and
+ * the spent currency land in **one** payload, so a screen persists the upgrade
+ * with the store's existing `saveHangarWarPayload` and can never save the
+ * levels without the purchase (or the reverse).
+ */
+export interface HangarUpgradeOutcome {
+  /** Whether the upgrade happened. */
+  readonly ok: boolean;
+  /** The first blocking reason (`null` when {@link ok}). */
+  readonly reason: UpgradeRefusal | null;
+  /** What was spent (the zero price on refusal). */
+  readonly spent: HangarPrice;
+  /**
+   * The war after the upgrade — a fresh object; the input payload is never
+   * mutated. On refusal the hangar is still a fresh, normalised copy carrying
+   * the same state, so a caller can always render {@link reason}.
+   */
+  readonly payload: HangarWarPayload;
+}
+
+/**
+ * Buys the next permanent level of an owned level-bearing weapon or power-up
+ * and returns the war carrying it (parent AH-0MWHW4ALS0039JFU AC2).
+ *
+ * The purchase rule itself stays the **one** pure economy rule
+ * (`buyUpgrade` in `./hangarEconomy`): this function only feeds it the fleet's
+ * persisted levels ({@link hangarPermanentLevels}) and writes the raised
+ * snapshot back through {@link withPermanentLevels}, so the hangar's saved
+ * state is exactly what the run path's `getWeaponLevels()`/`getPowerUpLevels()`
+ * read at deploy time. Buying never touches temporary/timed stacks — those are
+ * run-scoped field-pickup state and no hangar rule can reach them (AC2).
+ *
+ * Pure and total: the input payload is never mutated, a refusal spends nothing,
+ * and a refused/unknown id changes no level. Persisting the result is the
+ * caller's one `saveHangarWarPayload` call.
+ *
+ * @param payload — the persistent war payload (read only).
+ * @param id — the owned weapon/power-up id to upgrade.
+ * @param context — the purchase context (ring parity with `buy`).
+ * @returns the purchase outcome and the payload to persist.
+ */
+export function buyHangarUpgrade(
+  payload: HangarWarPayload,
+  id: string,
+  context: HangarPurchaseContext,
+): HangarUpgradeOutcome {
+  const result = buyUpgrade(
+    payload.hangar,
+    id,
+    hangarPermanentLevels(payload.hangar),
+    context,
+  );
+  return {
+    ok: result.ok,
+    reason: result.reason,
+    spent: result.spent,
+    payload: {
+      ...payload,
+      hangar: withPermanentLevels(result.hangar, result.levels),
+    },
   };
 }
 
@@ -557,10 +786,18 @@ export function saveHangarWarPayload(
   storage: HangarWarStorage | null = defaultStorage(),
 ): boolean {
   if (!storage) return false;
+  // Omit an empty saved-build list on write (AH-0MWL8C6FE008G1E7): the field
+  // is additive and its absence reads as "no saved builds", so a save with
+  // nothing saved round-trips byte-for-byte rather than gaining an empty array.
+  const { savedBuilds, ...hangarWithoutBuilds } = payload.hangar;
+  const hangar =
+    savedBuilds !== undefined && savedBuilds.length > 0
+      ? { ...payload.hangar, savedBuilds }
+      : hangarWithoutBuilds;
   try {
     storage.setItem(
       HANGAR_WAR_STORAGE_KEY,
-      JSON.stringify({ ...payload, version: HANGAR_WAR_VERSION }),
+      JSON.stringify({ ...payload, hangar, version: HANGAR_WAR_VERSION }),
     );
     return true;
   } catch {

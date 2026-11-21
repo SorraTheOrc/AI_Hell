@@ -33,7 +33,7 @@
  * plus promo metadata: `level`, `name` and `waves` are what `WaveManager`
  * consumes; `promoLevel` is the reference the scenario registry stores and
  * `categories` is the editorial coverage the level is authored to evidence
- * (the `scripts/compile-promo.mjs` `EDITORIAL_CONFIG.categories` vocabulary).
+ * (the `scripts/capture-scenario-schema.mjs` `EDITORIAL_CATEGORIES` vocabulary).
  * `scripts/promo-scenarios.d.mts` supplies the TypeScript types; the
  * validation below re-checks the contract as this module loads, so a broken
  * authored level fails the capture CLI and the game build immediately.
@@ -263,7 +263,7 @@ export function assertPromoLevelDefinition(level, label = 'promo level') {
     if (!isEditorialCategory(category)) {
       throw new Error(
         `promo-scenarios: ${where} declares an unknown editorial category `
-          + `"${String(category)}" (from scripts/compile-promo.mjs EDITORIAL_CONFIG)`,
+          + `"${String(category)}" (from scripts/capture-scenario-schema.mjs EDITORIAL_CATEGORIES)`,
       );
     }
   }

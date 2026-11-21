@@ -21,7 +21,7 @@ import {
   writeTuningBoolean,
   writeTuningNumber,
 } from './tuningFields';
-import { COMPETENT_BOT_TUNABLES } from './framework/competent/tunables';
+import { COMPETENT_BOT_TUNABLES, resolveCompetentTunables } from './framework/competent/tunables';
 import { createCompetentBotBrain } from './framework/competent';
 import { makeSnapshot } from './framework/testFixtures';
 import { BOT_HUMAN_INPUT_TUNABLES } from './botHumanLike';
@@ -211,5 +211,129 @@ describe('retired wallMargin tolerance (AH-0MVT2W3RS009ZB2X)', () => {
         0.1,
       ),
     ).not.toThrow();
+  });
+});
+
+describe('motion-model knobs (AH-0MWM0CCJE000AANE)', () => {
+  const CLASSES = ['chaser', 'diver', 'patroller', 'formation', 'roamer'] as const;
+  const scaleKey = (movementClass: string) => `hazardClassHorizonScale.${movementClass}`;
+
+  function modelToggle() {
+    const toggle = BOT_TUNING_TOGGLES.find(
+      (candidate) => candidate.key === 'hazardMotionModelEnabled',
+    );
+    if (!toggle) throw new Error('missing toggle hazardMotionModelEnabled');
+    return toggle;
+  }
+
+  it('exposes one horizon-scale slider per movement class and the model toggle', () => {
+    for (const movementClass of CLASSES) {
+      const field = numericField(scaleKey(movementClass));
+      expect(field.group).toBe('competent');
+    }
+    expect(modelToggle().group).toBe('competent');
+    // No per-class multiplier can be missed: every shipped class scale must be
+    // designer-tunable, so the registry cannot drift from the tunables.
+    expect(Object.keys(COMPETENT_BOT_TUNABLES.hazardClassHorizonScale).sort()).toEqual(
+      [...CLASSES].sort(),
+    );
+  });
+
+  it('seeds every motion-model knob from the shipped tunables defaults', () => {
+    const values = defaultBotTuningValues();
+    for (const movementClass of CLASSES) {
+      expect(readTuningNumber(values, numericField(scaleKey(movementClass)))).toBe(
+        COMPETENT_BOT_TUNABLES.hazardClassHorizonScale[movementClass],
+      );
+    }
+    expect(readTuningBoolean(values, modelToggle())).toBe(
+      COMPETENT_BOT_TUNABLES.hazardMotionModelEnabled,
+    );
+    // The shipped model is on, so the gym opens on the live motion model.
+    expect(readTuningBoolean(values, modelToggle())).toBe(true);
+  });
+
+  it('round-trips every motion-model knob into the brain overrides', () => {
+    const values = defaultBotTuningValues();
+    writeTuningBoolean(values, modelToggle(), false);
+    writeTuningNumber(values, numericField(scaleKey('diver')), 2.1);
+
+    const overrides = toCompetentOverrides(values);
+    expect(overrides.hazardMotionModelEnabled).toBe(false);
+    expect(overrides.hazardClassHorizonScale?.diver).toBe(2.1);
+
+    // The brain resolves the nested override and keeps every untouched class
+    // at its shipped default (no partial-object hole).
+    const resolved = resolveCompetentTunables(overrides);
+    expect(resolved.hazardMotionModelEnabled).toBe(false);
+    expect(resolved.hazardClassHorizonScale.diver).toBe(2.1);
+    expect(resolved.hazardClassHorizonScale.patroller).toBe(
+      COMPETENT_BOT_TUNABLES.hazardClassHorizonScale.patroller,
+    );
+  });
+
+  it('round-trips every motion-model knob through coerceTuningValues', () => {
+    const coerced = coerceTuningValues({
+      competent: {
+        'hazardMotionModelEnabled': false,
+        'hazardClassHorizonScale.chaser': 1.2,
+        'hazardClassHorizonScale.diver': 1.9,
+        'hazardClassHorizonScale.patroller': 1.6,
+        'hazardClassHorizonScale.formation': 1.4,
+        'hazardClassHorizonScale.roamer': 1.35,
+      },
+      human: {},
+    });
+
+    expect(coerced.competent['hazardMotionModelEnabled']).toBe(false);
+    expect(coerced.competent['hazardClassHorizonScale.chaser']).toBe(1.2);
+    expect(coerced.competent['hazardClassHorizonScale.diver']).toBe(1.9);
+    expect(coerced.competent['hazardClassHorizonScale.patroller']).toBe(1.6);
+    expect(coerced.competent['hazardClassHorizonScale.formation']).toBe(1.4);
+    expect(coerced.competent['hazardClassHorizonScale.roamer']).toBe(1.35);
+    // The coerced map reconstructs the very same nested tunables.
+    expect(toCompetentOverrides(coerced).hazardClassHorizonScale?.diver).toBe(1.9);
+  });
+
+  it('enforces the documented bounds for every horizon-scale slider', () => {
+    const values = defaultBotTuningValues();
+    for (const movementClass of CLASSES) {
+      const field = numericField(scaleKey(movementClass));
+      // Invariants that make the bounds safe rather than arbitrary: a
+      // non-positive scale would silently fall back to the configured horizon
+      // (hazardHorizonScale returns 1), so it is not offered; the upper bound
+      // keeps the sampled window bounded (HAZARD_MOTION_MAX_SAMPLES).
+      expect(field.min).toBeGreaterThan(0);
+      expect(field.max).toBeLessThanOrEqual(3);
+      expect(field.step).toBeGreaterThan(0);
+
+      const shipped = COMPETENT_BOT_TUNABLES.hazardClassHorizonScale[movementClass];
+      expect(shipped).toBeGreaterThanOrEqual(field.min);
+      expect(shipped).toBeLessThanOrEqual(field.max);
+
+      writeTuningNumber(values, field, field.max + 10);
+      expect(readTuningNumber(values, field)).toBe(field.max);
+      writeTuningNumber(values, field, field.min - 10);
+      expect(readTuningNumber(values, field)).toBe(field.min);
+      writeTuningNumber(values, field, 1.5);
+      expect(readTuningNumber(values, field)).toBe(1.5);
+    }
+  });
+
+  it('documents what each motion-model knob does and what disabled/default means', () => {
+    const toggle = modelToggle();
+    // The toggle must say what it does and what off reproduces.
+    expect(toggle.description).toMatch(/curvature/i);
+    expect(toggle.description).toMatch(/disabled/i);
+    expect(toggle.description).toMatch(/constant-velocity/i);
+
+    for (const movementClass of CLASSES) {
+      const description = numericField(scaleKey(movementClass)).description;
+      // What it multiplies, that it only applies with the model on, and what
+      // the shipped/default value means.
+      expect(description).toMatch(/hazardPredictionHorizon/);
+      expect(description).toMatch(/hazardMotionModelEnabled/);
+      expect(description).toMatch(/defaults? to/i);
+    }
   });
 });

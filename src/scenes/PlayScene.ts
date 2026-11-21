@@ -171,11 +171,11 @@ import {
   saveCheckpoint,
   type Checkpoint,
 } from '../core/checkpointStore';
-import { WIN_BONUS_MINERALS } from '../core/hangarWar/hangarEconomy';
 import {
   bankSalvage,
   bankWinBonus,
   bankedSalvageFromHangar,
+  forfeitUnbankedSalvage,
   runSalvageFromRun,
   type BankedSalvage,
   type RunSalvage,
@@ -222,6 +222,7 @@ import {
 } from '../powerups/collectAnimation';
 import { type PowerUpSpawner } from '../powerups/spawner';
 import { HUD } from '../ui/HUD';
+import { DangerTacho, resolveDangerTacho } from '../ui/dangerTacho';
 import { combatHudOptions } from './core/hudWiring';
 import { type WeaponDefinition, type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
@@ -761,6 +762,13 @@ export class PlayScene extends CombatScene<
   private levelText: Phaser.GameObjects.Text | null = null;
   private bannerText: Phaser.GameObjects.Text | null = null;
 
+  /**
+   * The `DANGER ×N` tacho (AH-0MWL7ORK8007LXJI AC5): the danger multiplier,
+   * a pip per tier and the drain of the decay window. Renders the shared
+   * tracker's state; owns no scoring rule of its own.
+   */
+  private dangerTacho: DangerTacho | null = null;
+
   private spawned: SpawnedEnemy[] = [];
   private enemyBullets: PlayEnemyBullet[] = [];
   private drops: PlayDrop[] = [];
@@ -887,6 +895,16 @@ export class PlayScene extends CombatScene<
    */
   private lastCapture: HexCaptureResult | null = null;
 
+  /**
+   * The minerals the win resolution actually banked as the fixed post-win
+   * bonus in this run (AH-0MWNGYDIZ0037HGW, producer Q3 = a). Read by
+   * `_finishRun` to announce the map's `WIN BONUS BANKED` line, so the
+   * announcement is derived from the same record that wrote the balance and
+   * can never over-claim. Zero until a win resolution pays it (and for the
+   * arcade run, which never pays it).
+   */
+  private winBonusBanked = 0;
+
   /** The checkpoint loaded in `init()`, applied once the run exists. */
   private pendingResumeCheckpoint: Checkpoint | null = null;
 
@@ -936,9 +954,12 @@ export class PlayScene extends CombatScene<
    * The tick is resolved **before** the capture at the mini-boss defeat, so a
    * hex the sortie just won can never be attacked (and flipped) by that same
    * tick before the player reaches the map — the newly held hex is what the
-   * map presents. The tick's record is still the map's carried record;
-   * `null` for the arcade run and for a lost deployment (which
-   * resolves its tick in `_finishRun` as before).
+   * map presents. Both the winning tick here and the losing tick in `_finishRun`
+   * are told **which hex the player is attacking** (the deployment's target), so
+   * an attacked hex defends instead of striking back (AH-0MWH3A87Z005LLOX). The
+   * tick's record is still the map's carried record; `null` for the arcade run
+   * and for a lost deployment (which resolves its tick in `_finishRun` as
+   * before).
    */
   private pendingBetweenSortieTick: FrontierTickResult | null = null;
 
@@ -1727,6 +1748,7 @@ export class PlayScene extends CombatScene<
     this.miniBossSweepTargets = [];
     this.salvageBank = null;
     this.lastCapture = null;
+    this.winBonusBanked = 0;
     this.forfeitedSalvage = { minerals: 0, cores: 0 };
     this.driftX = 0;
     this.driftDir = 1;
@@ -1774,6 +1796,11 @@ export class PlayScene extends CombatScene<
         color: HUD_TEXT_COLOR,
       })
       .setOrigin(0.5, 0);
+
+    // The danger tacho sits directly under the score read-out, right-anchored
+    // to it, so the multiplier the player is holding is always beside the
+    // score it multiplies (AH-0MWL7ORK8007LXJI AC5).
+    this.dangerTacho = new DangerTacho(this, GAME_WIDTH - 10, 32);
   }
 
   /**
@@ -1817,6 +1844,8 @@ export class PlayScene extends CombatScene<
     this.miniBoss = null;
     this.bannerText?.destroy();
     this.bannerText = null;
+    this.dangerTacho?.destroy();
+    this.dangerTacho = null;
     this.waveTimerBar?.destroy();
     this.waveTimerBar = null;
 
@@ -1968,6 +1997,7 @@ export class PlayScene extends CombatScene<
     this._updatePhaseShiftJuice(dt);
     this._updateDrops(dt);
     this._refreshHudText();
+    this._refreshDangerTacho(dt);
     this._drawWaveTimer();
     // Per-tick telemetry last, so the recorded state matches the frame the
     // player actually saw (AH-0MUY08VVQ007HSSH). No-op when off.
@@ -3629,7 +3659,9 @@ export class PlayScene extends CombatScene<
       const deathX = boss.x;
       const deathY = boss.y;
       // Boss destroyed — award the final phase's points, then win.
-      this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+      this.gameState.addScore(
+        this.resolveKillScore(BOSS_PHASE_SCORES[previousPhase] ?? 0),
+      );
       this.waveManager.onBossDefeated();
       this.runTelemetry.bossDefeated();
       // The body's death VFX is intentional, but the health-bar box must not
@@ -3656,7 +3688,9 @@ export class PlayScene extends CombatScene<
     // Phase depleted: award the destroyed phase's points (GDD §4.5) and
     // summon the next phase's minions. Partial-phase hits do neither.
     if (result.phaseAdvanced) {
-      this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+      this.gameState.addScore(
+        this.resolveKillScore(BOSS_PHASE_SCORES[previousPhase] ?? 0),
+      );
       this.runTelemetry.bossPhase(boss.getPhaseNumber());
       this._spawnMinions(boss.getPhaseNumber());
     }
@@ -4221,14 +4255,57 @@ export class PlayScene extends CombatScene<
    * balance the capture cycle returned and lands in that **same**
    * `ai_hell_hangar_war` payload write, so it can never be double-counted and
    * never disturbs the capture cycle's per-run watermark.
+   *
+   * **Hexless fallback** (AH-0MWNGYDIZ0037HGW, producer Q1 = (a)). A winning
+   * deployment with no target hex (`hexId: null`) cannot run the capture
+   * cycle, yet it is still a hangar battle that was won. Such a win banks the
+   * fixed bonus through {@link bankWinBonus} and persists it through the same
+   * payload write — minerals only, the capture watermark untouched and no hex
+   * state changed. The hangar now materialises the ring on load
+   * (AH-0MWNGYDIZ0037HGW Q2 = (a)), so this branch is the defensive path for
+   * an unauthored/ungeneratable ring rather than the first battle's route.
+   *
+   * **Exactly once.** The bonus is paid by whichever branch ran and recorded
+   * in {@link winBonusBanked}; the capture path and the hexless fallback are
+   * mutually exclusive (the fallback returns before the capture cycle runs),
+   * so no win can pay it twice.
    */
   private _resolveHangarWarCapture(): void {
     const deployment = this.hangarWarDeployment;
-    if (!deployment || !deployment.hexId) return;
+    if (!deployment) return;
     const payload = this._hangarWarPayload();
+    // A hexless win still pays: bank the fixed bonus alone, with no capture
+    // cycle to run and no hex state to touch (AH-0MWNGYDIZ0037HGW Q1 = a).
+    if (!deployment.hexId) {
+      const startBank =
+        this.salvageBank ?? bankedSalvageFromHangar(payload.hangar);
+      const banked = bankWinBonus(startBank);
+      this.salvageBank = banked;
+      // The announced amount is the delta this resolution actually banked, so
+      // the map can never claim a bonus the balance did not gain.
+      this.winBonusBanked = Math.max(0, banked.minerals - startBank.minerals);
+      // A new payload with only the two banked balances changed — the ring,
+      // the capture watermark and every other hangar field are untouched.
+      this._saveHangarWarPayload({
+        ...payload,
+        hangar: {
+          ...payload.hangar,
+          bankedMinerals: banked.minerals,
+          bankedCores: banked.cores,
+        },
+      });
+      return;
+    }
     const result = resolveHexCapture(payload, {
       hexId: deployment.hexId,
       defenderHullId: deployment.hullId,
+      // The ship this sortie flew — spent by the capture on a win
+      // (parent AH-0MWL5PAP2001XYYF).
+      ship: {
+        hullId: deployment.hullId,
+        startingWeapons: deployment.startingWeapons,
+        modifiers: deployment.modifiers,
+      },
       salvage: this._salvageSnapshot('boss-victory'),
       // The run's permanent-upgrade snapshot is read **once**, inside the
       // same argument expression that feeds the capture write, so the stored
@@ -4253,6 +4330,10 @@ export class PlayScene extends CombatScene<
     // topped up, and persisted in the same payload write below.
     const banked = bankWinBonus(result.banked);
     this.salvageBank = banked;
+    // Record exactly what this resolution banked as the bonus, so the map's
+    // announcement is derived from the win resolution's own record rather than
+    // a constant (AH-0MWNGYDIZ0037HGW Q3 = a).
+    this.winBonusBanked = Math.max(0, banked.minerals - result.banked.minerals);
     const captured = result.payload;
     captured.hangar.bankedMinerals = banked.minerals;
     captured.hangar.bankedCores = banked.cores;
@@ -4262,22 +4343,49 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Settles a lost run (AH-0MVUXC118004B4OX AC2): the run forfeits only the
-   * salvage it earned after its last bank, and the persistent balance (and the
-   * ring it lives beside) is left untouched. Recorded for the end-of-run
-   * summary; nothing is written.
+   * Settles a lost run (AH-0MVUXC118004B4OX AC2).
    *
-   * Delegates to the capture cycle's loss path
+   * A **hex deployment** loss forfeits only the salvage it earned after its
+   * last bank and spends the ship it flew (parent AH-0MWL5PAP2001XYYF): the
+   * consumed payload is persisted once through the demo-guarded
+   * {@link _saveHangarWarPayload}, so ownership and the forfeit land together.
+   * An **arcade** run never deployed a hangar ship, so it only forfeits its
+   * unbanked salvage and writes nothing, exactly as shipped.
+   *
+   * Delegates the deployment rules to the capture cycle's loss path
    * (AH-0MVUXCAW0001VUM6) so the win and loss rules live in one module.
    */
   private _forfeitUnbankedSalvage(): void {
     const payload = this._hangarWarPayload();
+    const bank = this.salvageBank ?? bankedSalvageFromHangar(payload.hangar);
+    const salvage = this._salvageSnapshot('run-end');
+    const deployment = this.hangarWarDeployment;
+    if (!deployment) {
+      // The arcade run never deployed a hangar ship: it forfeits its unbanked
+      // salvage and writes nothing, exactly as shipped. Spending a hangar ship
+      // here would charge the player for a run it never flew.
+      const outcome = forfeitUnbankedSalvage(bank, salvage);
+      this.salvageBank = outcome.banked;
+      this.forfeitedSalvage = outcome.forfeited;
+      return;
+    }
+
     const outcome = resolveDeploymentDefeat(payload, {
-      salvage: this._salvageSnapshot('run-end'),
-      banked: this.salvageBank ?? bankedSalvageFromHangar(payload.hangar),
+      salvage,
+      banked: bank,
+      // A lost deployment spends the same ship a win does
+      // (parent AH-0MWL5PAP2001XYYF).
+      ship: {
+        hullId: deployment.hullId,
+        startingWeapons: deployment.startingWeapons,
+        modifiers: deployment.modifiers,
+      },
     });
     this.salvageBank = outcome.banked;
     this.forfeitedSalvage = outcome.forfeited;
+    // The loss path now persists the consumed payload through the one
+    // demo-guarded write, so an attract run never overwrites the player's war.
+    this._saveHangarWarPayload(outcome.payload);
   }
 
   /**
@@ -4319,6 +4427,13 @@ export class PlayScene extends CombatScene<
    * advanced payload is persisted (outside demo mode) so the next run starts
    * from the risen frontier. The arcade run is a no-op.
    *
+   * The deployment's target hex is passed as `playerAttackingHexId`, so a hex the
+   * player is attacking that sortie is barred as an attack origin
+   * (AH-0MWH3A87Z005LLOX). It applies to **both** call sites — a win (tick before
+   * the capture) and a loss (tick at run end) — because the player was attacking
+   * that hex either way. `hexId` is `null` for a `null` target, which is exactly
+   * today's behaviour.
+   *
    * @returns the tick's payload/clock/record, or `null` for the arcade run.
    */
   private _resolveBetweenSortieTick(): FrontierTickResult | null {
@@ -4328,6 +4443,9 @@ export class PlayScene extends CombatScene<
       // The payload carries its own frontier position, so a tick always resumes
       // this war's clock.
       clock: frontierClockFor(payload),
+      // An attacked hex defends, it does not attack: the hex this sortie is
+      // attacking may not launch this tick's attack.
+      playerAttackingHexId: this.hangarWarDeployment?.hexId ?? null,
     });
     this._saveHangarWarPayload(result.payload);
     return result;
@@ -4339,6 +4457,16 @@ export class PlayScene extends CombatScene<
       minerals: this.salvageBank?.minerals ?? 0,
       cores: this.salvageBank?.cores ?? 0,
     };
+  }
+
+  /**
+   * The minerals the win resolution actually banked as the fixed post-win
+   * bonus this run (the same value handed to the hex map's
+   * `winBonusMinerals`), or `0` when no bonus was paid. A test/UI seam for
+   * "announced ⇒ banked" (AH-0MWNGYDIZ0037HGW).
+   */
+  getWinBonusBanked(): number {
+    return this.winBonusBanked;
   }
 
   /** The salvage the last lost run forfeited (end-of-run summary seam). */
@@ -5033,17 +5161,24 @@ export class PlayScene extends CombatScene<
    * @param awardScore — false for collision kills (no points for ramming).
    */
   private _onEnemyKilled(s: SpawnedEnemy, awardScore = true): void {
+    // The danger multiplier is applied at this one shared kill/score seam
+    // (AH-0MWL7ORK8007LXJI AC3): kill score is multiplied by the current tier
+    // and rounded half up, and a graze never awards score on its own.
     if (s.enemyKey === 'asteroid') {
       // Asteroids: only the small tier awards points (50). Large and
       // medium asteroids award none (GDD §4.5 — E6 Asteroid).
       if (awardScore && (s.entity as Asteroid).getSizeTier() === 'small') {
-        this.gameState.addScore(SCORE_VALUES.asteroid ?? DEFAULT_SCORE_VALUE);
+        this.gameState.addScore(
+          this.resolveKillScore(SCORE_VALUES.asteroid ?? DEFAULT_SCORE_VALUE),
+        );
       }
       // A destroyed large/medium asteroid splits into two smaller rocks
       // that continue the wave (wave-child accounting via WaveManager).
       this._splitAsteroid(s);
     } else if (awardScore) {
-      this.gameState.addScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE);
+      this.gameState.addScore(
+        this.resolveKillScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE),
+      );
     }
     this.runTelemetry.enemyKilled(s.enemyKey, s.entity.x, s.entity.y);
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
@@ -5575,6 +5710,40 @@ export class PlayScene extends CombatScene<
     this.levelText?.setText(this._progressLabel());
   }
 
+  /**
+   * Paints the shared danger state into the tacho: the multiplier, its tier
+   * pips and the draining decay window (AH-0MWL7ORK8007LXJI AC5). Reads the
+   * one shared tracker, so the read-out can never disagree with the score the
+   * shared collision pass awards.
+   */
+  private _refreshDangerTacho(dt: number): void {
+    if (!this.dangerTacho) return;
+    const tracker = this.getGrazeTracker();
+    this.dangerTacho.updateState(
+      resolveDangerTacho(
+        tracker.multiplier,
+        tracker.tierIndex,
+        tracker.decayFraction,
+      ),
+      dt,
+    );
+  }
+
+  /**
+   * A graze landed: pop the tacho so the moment reads even when the tier does
+   * not change (AH-0MWL7ORK8007LXJI AC5). The spark and cue are dispatched by
+   * the shared graze pass; this only reflects it on the campaign HUD.
+   */
+  protected override onGrazeCredited(tierIndex: number): void {
+    void tierIndex;
+    this.dangerTacho?.confirmGraze();
+  }
+
+  /** The danger tacho read-out (null before create/after teardown). */
+  getDangerTacho(): DangerTacho | null {
+    return this.dangerTacho;
+  }
+
   /** Transitions to GameOverScene with the final score. */
   /**
    * Publishes the live run position to the dev-gated page handle
@@ -5649,7 +5818,13 @@ export class PlayScene extends CombatScene<
         score: this.gameState.score,
         reward,
         assault,
-        winBonusMinerals: won ? WIN_BONUS_MINERALS : 0,
+        // The bonus is read from the win resolution's own record — what it
+        // actually added to the hangar balance — never a constant, so the map
+        // can never announce a reward that was not banked
+        // (AH-0MWNGYDIZ0037HGW Q3 = a). `_resolveHangarWarCapture` pays it
+        // exactly once (capture path or hexless fallback) and a loss never
+        // pays it, so this is 0 on a loss and on the arcade run.
+        winBonusMinerals: won ? this.winBonusBanked : 0,
         demo: wasDemo,
         demoDwellMs: this.demoDwellMs,
       });

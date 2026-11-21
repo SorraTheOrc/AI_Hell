@@ -32,6 +32,11 @@ import {
 } from './CombatCoreScene';
 import * as muzzleFlashModule from '../../vfx/muzzleFlash';
 import * as hitscanBeamModule from '../../vfx/hitscanBeam';
+import {
+  drawnDestination,
+  drawnSource,
+  expectPoint,
+} from '../../test/vfxProbe';
 import * as effectsModule from '../../audio/effects';
 import type { PowerUpId } from '../../powerups/types';
 import { isDiscarding, startBlockedStick, type BlockedDiscardState } from './blockedDropDiscard';
@@ -1803,5 +1808,43 @@ describe('wave laser — hitscan dispatch from the shared fire path (AH-0MVREBUJ
     );
     expect(waveFlash).toBeDefined();
     expect(waveFlash![3]).toBeCloseTo(Math.PI, 6);
+  });
+
+  it('anchors the beam to the moving ship without re-resolving the hit (AC1/AC2)', async () => {
+    const scene = await boot();
+    const beamSpy = vi.spyOn(hitscanBeamModule, 'spawnHitscanBeam');
+    beamSpy.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 200 });
+    player.setDefaultHeading(Math.PI); // the ship faces away from the target
+    scene.addTarget(300, 200);
+    player.equipWeapon('wave_laser', true);
+    // Aimed shot: the beam intercepts the target 12 px short of its centre.
+    setShotDraws(scene, 0.5, 0);
+
+    scene.runAutoFire(10);
+
+    // One beam, one hit — the ray resolved exactly once at launch.
+    expect(beamSpy).toHaveBeenCalledTimes(1);
+    expect(scene.hits).toHaveLength(1);
+    const options = beamSpy.mock.calls[0][2]!;
+    // The source is a live provider, not the fire-time muzzle.
+    expect(typeof options.source).toBe('function');
+    // The destination is the launch-resolved intercept point.
+    expect(options.destination).toEqual({ x: 288, y: 200 });
+
+    const beam = beamSpy.mock.results[0].value as Phaser.GameObjects.Graphics;
+    expectPoint(drawnSource(beam), { x: 100, y: 200 });
+
+    // The ship keeps flying during the beam's 0.3 s life.
+    player.setPosition(180, 260);
+    scene.events.emit('update', 0, 16);
+
+    // The beam now starts at the ship's current position …
+    expectPoint(drawnSource(beam), { x: 180, y: 260 });
+    // … while its far end is still the fire-time intercept point.
+    expectPoint(drawnDestination(beam), { x: 288, y: 200 });
+    // Re-anchoring is visual only: no second hit, no second damage.
+    expect(scene.hits).toHaveLength(1);
+    expect(scene.appliedDefs).toEqual(['wave_laser']);
   });
 });

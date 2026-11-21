@@ -16,6 +16,30 @@
  * the gym shows exactly what the game shows and can never drift from it
  * (AGENTS.md gym↔game parity, `docs/GYM_PARITY.md`).
  *
+ * ## Sections (AH-0MWL4QCVD007WOAM)
+ *
+ * The screen is laid out as **four content sections plus a controls footer**,
+ * each drawn as a bordered, headed panel with a bounded rect, so every group of
+ * information is distinguishable at a glance and by framing rather than by
+ * colour (`docs/GYM_PARITY.md`, GDD §8.2):
+ *
+ * - `war-status` — ring progress, frontier strength and the hangar's hull and
+ *   banked resources (`WAR STATUS`).
+ * - `last-sortie` — the transient "what just happened" news: the run result,
+ *   the banked win bonus and the hangar-assault outcome. Present only when the
+ *   landing carries one of them, so there is never an empty headed box.
+ * - `map` — the model's own title, the ring tiles, the attack arrows and the
+ *   hangar marker.
+ * - `selected-hex` — the focused hex's full intel **and** its attack row, so
+ *   one hex is one story (`SELECTED HEX`).
+ * - `controls` — the `READ THE MAP` legend, the keyboard hint line and the
+ *   `◀ HANGAR` row (`CONTROLS`).
+ *
+ * The rects live in one table ({@link HEX_MAP_SECTION_RECTS}), the headings in
+ * shared constants (`src/core/hangarWar/hexIntel.ts`), and the view publishes
+ * the same list as {@link HexMapView.sections} — so the game and the parity gym
+ * describe identical regions and cannot drift.
+ *
  * ## Reveal, CVD-safe ownership and owned-hex selection
  * (renderer item AH-0MWEWYUAS002P7P9, parent AH-0MWDBI33V003QQ3U)
  *
@@ -43,12 +67,13 @@
  * navigation rule of its own, only the row-key → control-index mapping.
  *
  * Layout is a pointy-top axial grid: ring 2's twelve hexes fit around the
- * hangar without overlapping. Each tile leads with its aggression badge
- * (`AGG n`) and ownership marker at the readable tile size, with the axial
- * coordinates `(q,r)` on a separate line below them, drawn smaller (producer
- * review AH-0MWDBI33V003QQ3U, 2026-11-15) — guidance, not clutter; the focused
- * hex's full known-ahead intel renders in the right-hand detail panel — so
- * nothing has to be squinted at to be read (AH-0MW3VG6WJ004HRI9).
+ * hangar without overlapping, inside the `map` section's rect. Each tile leads
+ * with its aggression badge (`AGG n`) and ownership marker at the readable tile
+ * size, with the axial coordinates `(q,r)` on a separate line below them, drawn
+ * smaller (producer review AH-0MWDBI33V003QQ3U, 2026-11-15) — guidance, not
+ * clutter; the focused hex's full known-ahead intel renders in the
+ * `selected-hex` section — so nothing has to be squinted at to be read
+ * (AH-0MW3VG6WJ004HRI9).
  *
  * ## Rolled-in defence report (`AH-0MWDC3L9I008INDP`)
  *
@@ -60,11 +85,12 @@
  *   {@link axialToPixel} layout (the record only supplies the origin's axial
  *   coordinates; the target's come from its rendered tile, so the renderer
  *   never invents geometry for a hex the map does not show).
- * - **Left-hand attack panel** — the report model's own row for the focused
- *   hex whenever it is **either** arrow endpoint (the attacked hex *or* its
- *   attacker-origin hex), and hidden otherwise. It copies the row's text
- *   verbatim, so the map can never publish a second, drifting set of numbers
- *   (AGENTS.md gym↔game parity).
+ * - **Attack row of the `selected-hex` section** — the report model's own row
+ *   for the focused hex whenever it is **either** arrow endpoint (the attacked
+ *   hex *or* its attacker-origin hex), and hidden otherwise. It sits under that
+ *   hex's intel in the same panel (one hex, one story) and copies the row's
+ *   text verbatim, so the map can never publish a second, drifting set of
+ *   numbers (AGENTS.md gym↔game parity).
  *
  * Both are driven by the shipped model (`arrows` / `attackDetails`), never by
  * a scene-local rule, and both disappear when the transient record does.
@@ -72,8 +98,8 @@
  * ## The hangar assault announcement (`AH-0MWEZZA4E0081NJ5`)
  *
  * When the model carries a resolved ring-end hangar assault (`model.assault`),
- * the renderer draws its section in the left-hand column under the attack
- * panel: the outcome headline (`RING WON …` / `HANGAR FALLS …`), the arithmetic
+ * the renderer draws its block inside `last-sortie`, beside the run result and
+ * the banked win bonus: the outcome headline (`RING WON …` / `HANGAR FALLS …`), the arithmetic
  * that produced it and the consequence (the next ring opens / the full campaign
  * reset). The text is the report model's own `assaultLine`, copied verbatim,
  * so the map can never publish a second, drifting set of assault numbers — and
@@ -86,9 +112,13 @@
 
 import Phaser from 'phaser';
 
-import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
+import { GAME_WIDTH } from '../../core/constants';
 import {
+  CONTROLS_HEADING,
   HEX_MAP_HANGAR_ROW_KEY,
+  LAST_SORTIE_HEADING,
+  SELECTED_HEX_HEADING,
+  WAR_STATUS_HEADING,
   type HexIntel,
   type HexMapModel,
 } from '../../core/hangarWar/hexIntel';
@@ -148,6 +178,13 @@ const SPECIAL_OFFER_TEXT_COLOR = '#ffe066';
 
 /** Focus highlight on a tile: a white stroke, never an ownership-colour swap. */
 const TILE_FOCUS_STROKE = '#ffffff';
+
+/**
+ * Colour of the held-hex `UPGRADE DEFENCES` action (parent
+ * AH-0MWH48IEG00929GQ): the actionable green, kept distinct from the intel
+ * body's blue and the attack row's own colours.
+ */
+const UPGRADE_ACTION_COLOR = '#00ff88';
 const TILE_FOCUS_STROKE_WIDTH = 2;
 
 /**
@@ -169,33 +206,336 @@ const COORD_FONT_SIZE = '10px';
  */
 const TILE_BODY_OFFSET_Y = 15;
 
-/** Right-hand detail panel: the focused hex's full intel. */
-const PANEL_X = GAME_WIDTH - 260;
-const PANEL_Y = 200;
-const PANEL_HEADING = 'SELECTED HEX — FULL INTEL';
+/**
+ * ## Sections (AH-0MWL4QCVD007WOAM)
+ *
+ * Every group of information on the screen lives in one **bordered, headed
+ * panel** with a bounded rect, so the groupings are distinguishable by frame
+ * and heading rather than by colour:
+ *
+ * | Key | Holds |
+ * |---|---|
+ * | `war-status` | ring progress, frontier strength, hangar hull + banked resources |
+ * | `last-sortie` | the transient run result, banked win bonus and assault outcome |
+ * | `map` | the title, ring tiles, attack arrows and hangar marker |
+ * | `selected-hex` | the focused hex's intel **and** its attack row |
+ * | `controls` | the keyboard hint, the `READ THE MAP` legend and the hangar row |
+ *
+ * The rects are one table ({@link HEX_MAP_SECTION_RECTS}) so the layout cannot
+ * drift between sections, and every section heading comes from a shared
+ * constant in `hexIntel.ts` (the `map` section is headed by the model's own
+ * title).
+ */
+
+/** The five sections the map screen is laid out in. */
+export type HexMapSectionKey =
+  | 'war-status'
+  | 'last-sortie'
+  | 'map'
+  | 'selected-hex'
+  | 'controls';
+
+/** A bounded screen region, in 960×540 frame coordinates. */
+export interface HexMapSectionRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** One rendered section: its identity, heading and bounded rect. */
+export interface HexMapSection {
+  /** Section key (`war-status`, `last-sortie`, `map`, `selected-hex`, `controls`). */
+  readonly key: HexMapSectionKey;
+  /** The section's heading (from a shared constant; the map uses the model title). */
+  readonly heading: string;
+  /** The bounded region the section draws inside. */
+  readonly rect: HexMapSectionRect;
+}
+
+/** Padding from a section's frame to its heading and body text. */
+const SECTION_PADDING = 8;
+
+/** Vertical space a section heading occupies above the body text. */
+const SECTION_HEADING_HEIGHT = 18;
+
+/** Section body font sizes: never below the map's existing 9px floor. */
+const SECTION_HEADING_SIZE = '10px';
+const SECTION_BODY_SIZE = '12px';
+
+/** Section frame fill/stroke: a faint tint and one hairline, colour-independent. */
+const SECTION_FILL = 0x03131c;
+const SECTION_LINE = 0x1f4a5a;
+
+/** Width of the map's left column (`war-status`, `last-sortie`). */
+const SECTION_COLUMN_WIDTH = 241;
 
 /**
- * Left-hand attack panel (the rolled-in defence report).
+ * Advance of the panels' monospace face, as a fraction of the font size
+ * (0.6em — the metric a wrapped body line is budgeted with).
  *
- * Sits in the left band under the ring/frontier/hangar header rows and above
- * the `◀ HANGAR` row, at a width that stays clear of the ring-2 tiles at
- * 960×540 (long numbers word-wrap inside the band rather than overdrawing a
- * tile), and hidden entirely when the focused hex is in no attack.
+ * The renderer itself lays text out from Phaser's measured metrics; this
+ * constant exists so a panel's height can be budgeted from its worst-case
+ * content without a live canvas (the test harness's canvas stub measures 0
+ * width, so nothing ever wraps there — AH-0MWNEQRSI008DIY8).
  */
-const ATTACK_PANEL_X = 24;
-const ATTACK_PANEL_Y = 118;
-const ATTACK_PANEL_WIDTH = 270;
+const MONOSPACE_ADVANCE_EM = 0.6;
+
+/** Rendered line box of a body line, as a multiple of its font size. */
+const SECTION_LINE_HEIGHT_EM = 1.25;
+
+/**
+ * One body block of a panel, as its height budget sees it: the visual lines it
+ * may occupy, its type size and the spacing the layout puts around it.
+ */
+export interface SectionLineBudget {
+  /** Visual lines the block may occupy at the panel's body width. */
+  readonly visualLines: number;
+  /** The block's font size in px. */
+  readonly fontSizePx: number;
+  /** Extra px between the block's own lines (`Text.lineSpacing`). */
+  readonly lineSpacing: number;
+  /** Extra px below the block (the layout's `gap`). */
+  readonly gap: number;
+}
+
+/**
+ * Visual lines `text` wraps into inside `widthPx` at `fontSizePx`.
+ *
+ * A deterministic stand-in for the browser's text measurement, so a panel's
+ * worst-case content can be budgeted (and tested) without a real canvas.
+ */
+export function wrappedLineCount(
+  text: string,
+  widthPx: number,
+  fontSizePx: number,
+): number {
+  const columns = Math.max(
+    1,
+    Math.floor(widthPx / (fontSizePx * MONOSPACE_ADVANCE_EM)),
+  );
+  return text
+    .split('\n')
+    .reduce(
+      (lines, hardLine) => lines + Math.max(1, Math.ceil(hardLine.length / columns)),
+      0,
+    );
+}
+
+/** Height in px a panel's body blocks occupy at their budgeted line counts. */
+export function sectionBudgetHeight(
+  blocks: readonly SectionLineBudget[],
+): number {
+  return blocks.reduce(
+    (height, block) =>
+      height +
+      block.visualLines * (block.fontSizePx * SECTION_LINE_HEIGHT_EM + block.lineSpacing) +
+      block.gap,
+    0,
+  );
+}
+
+/**
+ * The `last-sortie` panel's worst-case content budget (AH-0MWNEQRSI008DIY8).
+ *
+ * A full win landing draws four blocks in the panel's 225px body column: the
+ * deployment's run result (`RUN: VICTORY · score N`, up to two visual lines),
+ * the banked win bonus (one), the `HANGAR ASSAULT` sub-heading (one) and the
+ * assault body — headline, numbers and consequence as three hard lines that
+ * wrap to at most seven visual lines. The panel is sized **from this budget**,
+ * so a longer line or a shorter panel fails the budget test instead of bleeding
+ * out of the frame.
+ */
+export const LAST_SORTIE_LINE_BUDGET: readonly SectionLineBudget[] = [
+  { visualLines: 2, fontSizePx: 13, lineSpacing: 2, gap: 4 },
+  { visualLines: 1, fontSizePx: 11, lineSpacing: 2, gap: 4 },
+  { visualLines: 1, fontSizePx: 10, lineSpacing: 2, gap: 2 },
+  { visualLines: 7, fontSizePx: 11, lineSpacing: 2, gap: 0 },
+];
+
+/**
+ * The `last-sortie` panel's height: its worst-case body budget plus the frame's
+ * own padding and heading band, rounded up to whole pixels.
+ */
+export const LAST_SORTIE_HEIGHT = Math.ceil(
+  SECTION_PADDING * 2 +
+    SECTION_HEADING_HEIGHT +
+    sectionBudgetHeight(LAST_SORTIE_LINE_BUDGET),
+);
+
+/**
+ * The section layout at 960×540.
+ *
+ * The left column carries `war-status` and (when there is news)
+ * `last-sortie`; the centre is the `map` (its rect bounds the ring-2 tiles at
+ * `HEX_SIZE = 50` exactly); the right column is `selected-hex`; the footer band
+ * is `controls`. No two rects overlap and every rect lies inside the frame.
+ * `last-sortie` is sized from its worst-case content budget
+ * ({@link LAST_SORTIE_HEIGHT}) so the full win path cannot spill out of it.
+ */
+export const HEX_MAP_SECTION_RECTS: Readonly<
+  Record<HexMapSectionKey, HexMapSectionRect>
+> = {
+  'war-status': { x: 8, y: 8, width: SECTION_COLUMN_WIDTH, height: 140 },
+  'last-sortie': {
+    x: 8,
+    y: 154,
+    width: SECTION_COLUMN_WIDTH,
+    height: LAST_SORTIE_HEIGHT,
+  },
+  map: { x: 253, y: 8, width: 454, height: 452 },
+  'selected-hex': { x: 711, y: 8, width: 241, height: 452 },
+  controls: { x: 8, y: 462, width: 944, height: 74 },
+};
+
+/** Left edge of a section's body text. */
+function sectionBodyX(rect: HexMapSectionRect): number {
+  return rect.x + SECTION_PADDING;
+}
+
+/** Top edge of a section's body text (below its heading). */
+function sectionBodyY(rect: HexMapSectionRect): number {
+  return rect.y + SECTION_PADDING + SECTION_HEADING_HEIGHT;
+}
+
+/** Word-wrap width of a section's body text. */
+export function sectionBodyWidth(rect: HexMapSectionRect): number {
+  return rect.width - SECTION_PADDING * 2;
+}
+
+/** Height available to a section's body text inside its rect. */
+export function sectionBodyHeight(rect: HexMapSectionRect): number {
+  return rect.height - SECTION_PADDING * 2 - SECTION_HEADING_HEIGHT;
+}
+
+/**
+ * Draws one section's frame and heading, and returns the heading text object.
+ *
+ * One style for every section: a rounded, hairline-framed panel with a faint
+ * fill and a monospace heading in the existing heading colour. The 20px map
+ * title is the one exception — it is the map's own heading and stays centred
+ * over the ring ({@link renderMapSection}).
+ */
+function drawSectionPanel(
+  scene: Phaser.Scene,
+  objects: Phaser.GameObjects.GameObject[],
+  rect: HexMapSectionRect,
+  heading: string,
+): Phaser.GameObjects.Text {
+  const frame = scene.add.graphics();
+  frame.fillStyle(SECTION_FILL, 0.35);
+  frame.lineStyle(1, SECTION_LINE, 0.9);
+  frame.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, 4);
+  frame.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, 4);
+  objects.push(frame);
+
+  const text = scene.add.text(
+    sectionBodyX(rect),
+    rect.y + SECTION_PADDING - 2,
+    heading,
+    {
+      fontFamily: 'monospace',
+      fontSize: SECTION_HEADING_SIZE,
+      color: HEADING_COLOR,
+    },
+  );
+  objects.push(text);
+  return text;
+}
+
+/**
+ * Draws the `map` section: its frame and the model's own title, centred over
+ * the ring. The tiles, arrows and hangar marker are drawn by their own
+ * renderers inside this rect.
+ */
+function renderMapSection(
+  scene: Phaser.Scene,
+  objects: Phaser.GameObjects.GameObject[],
+  model: HexMapModel,
+): void {
+  const rect = HEX_MAP_SECTION_RECTS.map;
+  const frame = scene.add.graphics();
+  frame.fillStyle(SECTION_FILL, 0.25);
+  frame.lineStyle(1, SECTION_LINE, 0.9);
+  frame.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, 4);
+  frame.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, 4);
+  objects.push(frame);
+  objects.push(
+    scene.add
+      .text(GAME_WIDTH / 2, rect.y + 10, model.title, {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: HEADING_COLOR,
+      })
+      .setOrigin(0.5, 0),
+  );
+}
+
+/**
+ * Draws the `war-status` section: ring progress, frontier strength and the
+ * hangar's hull/banked resources. Body lines word-wrap inside the panel so a
+ * long frontier line never overdraws the ring.
+ */
+function renderWarStatusSection(
+  scene: Phaser.Scene,
+  objects: Phaser.GameObjects.GameObject[],
+  model: HexMapModel,
+): void {
+  const rect = HEX_MAP_SECTION_RECTS['war-status'];
+  drawSectionPanel(scene, objects, rect, WAR_STATUS_HEADING);
+  const x = sectionBodyX(rect);
+  const wrap = sectionBodyWidth(rect);
+  let y = sectionBodyY(rect);
+  const lines = [
+    { text: model.ringLine, fontSize: '13px' },
+    { text: model.frontierLine, fontSize: SECTION_BODY_SIZE },
+    { text: model.hangarLine, fontSize: SECTION_BODY_SIZE },
+  ];
+  for (const line of lines) {
+    const body = scene.add.text(x, y, line.text, {
+      fontFamily: 'monospace',
+      fontSize: line.fontSize,
+      color: TEXT_COLOR,
+      lineSpacing: 2,
+      wordWrap: { width: wrap },
+    });
+    objects.push(body);
+    y += body.height + 4;
+  }
+}
+
+/**
+ * The `selected-hex` section: the focused hex's full intel **and** its
+ * rolled-in attack row, in one bounded panel (one hex, one section).
+ */
+const SELECTED_HEX_RECT = HEX_MAP_SECTION_RECTS['selected-hex'];
+const SELECTED_HEX_BODY_X = sectionBodyX(SELECTED_HEX_RECT);
+const SELECTED_HEX_BODY_Y = sectionBodyY(SELECTED_HEX_RECT);
+const SELECTED_HEX_BODY_WIDTH = sectionBodyWidth(SELECTED_HEX_RECT);
+
+/** Gap between the intel body and the attack row's sub-heading below it. */
+const SELECTED_HEX_ATTACK_GAP = 10;
+
+/**
+ * Sub-heading of the focused hex's attack row (the rolled-in defence report).
+ * Hidden with the row itself when the focused hex is in no attack.
+ */
 const ATTACK_PANEL_HEADING = 'ATTACK — FOCUSED HEX';
 
 /**
- * Left-hand hangar-assault banner (`AH-0MWEZZA4E0081NJ5`).
+ * The held-hex `UPGRADE DEFENCES` action (parent AH-0MWH48IEG00929GQ).
  *
- * Sits below the attack panel and above the `◀ HANGAR` row, in the same clear
- * left band: the report model's own `assaultLine` word-wraps inside it rather
- * than overdrawing a tile.
+ * Surfaced in the `selected-hex` section when the focused hex is **held** and
+ * has a defender (and the render was given an `onUpgradeDefences` handler).
+ * Activating it opens the bot-upgrade screen for that defender; an unheld hex
+ * (or the read-only gym render, which passes no handlers) never shows it.
  */
-const ASSAULT_BANNER_Y = 300;
-const ASSAULT_BANNER_WIDTH = 270;
+export const UPGRADE_DEFENCES_LABEL = '▲ UPGRADE DEFENCES';
+
+/**
+ * Sub-heading of the hangar-assault outcome (`AH-0MWEZZA4E0081NJ5`) inside the
+ * `last-sortie` section: the report model's own `assaultLine` follows it.
+ */
 const ASSAULT_BANNER_HEADING = 'HANGAR ASSAULT';
 
 /** Attack-arrow styling (drawn between the tile fills and the tile labels). */
@@ -234,6 +574,12 @@ export interface HexMapHandlers {
   onDeploy(hexId: string): void;
   /** Open the hangar screen (the `◀ HANGAR` row). */
   onOpenHangar(): void;
+  /**
+   * Open the bot-upgrade screen for the defender of held `hexId` (the
+   * `UPGRADE DEFENCES` action, parent AH-0MWH48IEG00929GQ). Omitted by the
+   * read-only `GymHexWar` render, so it offers no upgrade action.
+   */
+  onUpgradeDefences?(hexId: string): void;
 }
 
 /** One rendered row, exposed for tests and screen queries. */
@@ -272,6 +618,17 @@ export interface HexMapArrow {
 export interface HexMapView {
   /** The model rendered. */
   readonly model: HexMapModel;
+  /**
+   * The section registry: one `{ key, heading, rect }` per rendered section,
+   * in reading order (`war-status`, `last-sortie` when the landing carries
+   * news, `map`, `selected-hex`, `controls`).
+   *
+   * Every rendered text object, tile and arrow lies inside exactly one of
+   * these rects, no two rects overlap and every rect lies inside the 960×540
+   * frame. Publishing it from the one shared renderer means the game and the
+   * parity gym describe the same screen regions (AGENTS.md gym↔game parity).
+   */
+  readonly sections: readonly HexMapSection[];
   /** Every rendered row (deployable hexes clockwise, then the hangar). */
   readonly rows: readonly HexMapRow[];
   /** Every attack arrow drawn (one per rendered `model.arrows` entry). */
@@ -283,11 +640,11 @@ export interface HexMapView {
   /** The detail panel's current text (the full known-ahead intel). */
   getPanelText(): string;
   /**
-   * The left-hand attack panel's current text (the focused attack's row), or
-   * `''` when the focused hex is in no attack.
+   * The `selected-hex` section's attack-row text (the focused attack's row),
+   * or `''` when the focused hex is in no attack.
    */
   getLeftPanelText(): string;
-  /** Whether the left-hand attack panel is showing. */
+  /** Whether the `selected-hex` section's attack row is showing. */
   isLeftPanelVisible(): boolean;
   /**
    * The hangar-assault banner's current text (the report model's own
@@ -300,6 +657,17 @@ export interface HexMapView {
   focusRow(key: string): boolean;
   /** Activates the focused row (what Enter/Space does). */
   activateFocused(): void;
+  /**
+   * The `UPGRADE DEFENCES` action's current text, or `''` when the focused hex
+   * offers none (an unheld/undefended hex, or a render with no handler).
+   */
+  getUpgradeText(): string;
+  /** Whether the `UPGRADE DEFENCES` action is showing. */
+  isUpgradeVisible(): boolean;
+  /** The held hex the `UPGRADE DEFENCES` action targets, or `null`. */
+  getUpgradeHexId(): string | null;
+  /** Activates the `UPGRADE DEFENCES` action (what its click does). */
+  activateUpgrade(): void;
   /** Destroys the rendered objects and detaches the keyboard listener. */
   destroy(): void;
 }
@@ -450,7 +818,7 @@ function renderHangarMarker(
     scene.add
       .text(CENTRE_X, CENTRE_Y, `HANGAR\nR${model.ringIndex}`, {
         fontFamily: 'monospace',
-        fontSize: '8px',
+        fontSize: '9px',
         color: HEADING_COLOR,
         align: 'center',
       })
@@ -458,12 +826,20 @@ function renderHangarMarker(
   );
 }
 
-/** Renders the small "how to read this map" legend. */
-function renderLegend(
+/**
+ * Draws the `controls` footer: the `READ THE MAP` legend and the keyboard hint
+ * line, inside the footer panel. The legend keeps every line it had, laid out
+ * in two columns so it fits the band; help no longer competes with the
+ * selected-hex intel for the right-hand column.
+ */
+function renderControlsSection(
   scene: Phaser.Scene,
   objects: Phaser.GameObjects.GameObject[],
+  options?: HexMapRenderOptions,
 ): void {
-  const x = GAME_WIDTH - 260;
+  const rect = HEX_MAP_SECTION_RECTS.controls;
+  drawSectionPanel(scene, objects, rect, CONTROLS_HEADING);
+
   const lines = [
     'READ THE MAP',
     'blue ● — held · orange ○ — unheld',
@@ -472,15 +848,38 @@ function renderLegend(
     'enter/space — inspect or deploy',
     'detail panel — full intel',
   ];
+  const columnWidth = rect.width / 4;
   lines.forEach((line, index) => {
+    const column = index % 2;
+    const row = Math.floor(index / 2);
     objects.push(
-      scene.add.text(x, 112 + index * 14, line, {
-        fontFamily: 'monospace',
-        fontSize: index === 0 ? '10px' : '9px',
-        color: index === 0 ? HEADING_COLOR : MUTED_COLOR,
-      }),
+      scene.add.text(
+        sectionBodyX(rect) + column * columnWidth,
+        rect.y + 20 + row * 11,
+        line,
+        {
+          fontFamily: 'monospace',
+          fontSize: index === 0 ? '10px' : '9px',
+          color: index === 0 ? HEADING_COLOR : MUTED_COLOR,
+        },
+      ),
     );
   });
+
+  objects.push(
+    scene.add
+      .text(
+        GAME_WIDTH / 2,
+        rect.y + rect.height - 4,
+        options?.hint ?? HEX_MAP_HINT,
+        {
+          fontFamily: 'monospace',
+          fontSize: '11px',
+          color: MUTED_COLOR,
+        },
+      )
+      .setOrigin(0.5, 1),
+  );
 }
 
 /** The two rendered halves of one hex tile's label. */
@@ -496,6 +895,92 @@ interface TileLabelTexts {
    * line.
    */
   readonly body: Phaser.GameObjects.Text | null;
+}
+
+/**
+ * Whether the landing carries any transient `last-sortie` news: a run result,
+ * a banked win bonus or a hangar-assault outcome. When it carries none, the
+ * section — and its registry entry — is absent.
+ */
+function hasLastSortieNews(
+  model: HexMapModel,
+  options?: HexMapRenderOptions,
+): boolean {
+  return (
+    (options?.runLine ?? null) !== null ||
+    model.winBonusLine !== null ||
+    model.assaultLine !== null
+  );
+}
+
+/**
+ * Draws the `last-sortie` section: the transient "what just happened" news.
+ *
+ * The deployment's run result, the banked win bonus and the hangar-assault
+ * outcome are gathered here instead of arriving in three corners of the
+ * screen. The section renders **only** when the landing carries at least one of
+ * them, so a later entry shows no empty headed box, and every string is the
+ * model's own (`options.runLine`, `model.winBonusLine`, `model.assaultLine`),
+ * copied verbatim.
+ *
+ * The panel's height comes from {@link LAST_SORTIE_LINE_BUDGET}
+ * ({@link LAST_SORTIE_HEIGHT}), the worst case this function can draw — the
+ * run result, the banked bonus and the three hard-wrapped assault lines — so
+ * the full win path's text cannot spill below its own frame
+ * (AH-0MWNEQRSI008DIY8). The gaps and the `lineSpacing` below are the same
+ * numbers that budget uses.
+ *
+ * @returns the assault body text object (the `getAssaultText()` seam), or
+ * `null` when the landing carries no assault.
+ */
+function renderLastSortieSection(
+  scene: Phaser.Scene,
+  objects: Phaser.GameObjects.GameObject[],
+  model: HexMapModel,
+  options?: HexMapRenderOptions,
+): Phaser.GameObjects.Text | null {
+  const runLine = options?.runLine ?? null;
+  const winBonusLine = model.winBonusLine;
+  const assaultLine = model.assaultLine;
+  if (!hasLastSortieNews(model, options)) {
+    return null;
+  }
+
+  const rect = HEX_MAP_SECTION_RECTS['last-sortie'];
+  drawSectionPanel(scene, objects, rect, LAST_SORTIE_HEADING);
+  const x = sectionBodyX(rect);
+  const wrap = sectionBodyWidth(rect);
+  let y = sectionBodyY(rect);
+
+  const addLine = (
+    text: string,
+    fontSize: string,
+    color: string,
+    gap: number,
+  ): Phaser.GameObjects.Text => {
+    const line = scene.add.text(x, y, text, {
+      fontFamily: 'monospace',
+      fontSize,
+      color,
+      lineSpacing: 2,
+      wordWrap: { width: wrap },
+    });
+    objects.push(line);
+    y += line.height + gap;
+    return line;
+  };
+
+  if (runLine !== null) addLine(runLine, '13px', TEXT_COLOR, 4);
+  if (winBonusLine !== null) addLine(winBonusLine, '11px', WON_COLOR, 4);
+  if (assaultLine === null) return null;
+
+  addLine(ASSAULT_BANNER_HEADING, SECTION_HEADING_SIZE, HEADING_COLOR, 2);
+  return addLine(
+    assaultLine,
+    '11px',
+    model.campaignReset ? FALLS_COLOR : WON_COLOR,
+    0,
+  );
 }
 
 /**
@@ -585,53 +1070,49 @@ export function renderHexMap(
   const rows: HexMapRow[] = [];
   const focusManager = new FocusManager();
 
-  objects.push(
-    scene.add
-      .text(GAME_WIDTH / 2, 18, model.title, {
-        fontFamily: 'monospace',
-        fontSize: '20px',
-        color: HEADING_COLOR,
-      })
-      .setOrigin(0.5, 0),
-  );
-  // The between-sortie run result line, centred under the title so it never
-  // collides with the left-hand header rows or the attack panel band.
-  const runLine = options?.runLine ?? null;
-  if (runLine) {
-    objects.push(
-      scene.add
-        .text(GAME_WIDTH / 2, 46, runLine, {
-          fontFamily: 'monospace',
-          fontSize: '13px',
-          color: TEXT_COLOR,
-        })
-        .setOrigin(0.5, 0),
-    );
-  }
-  objects.push(
-    scene.add.text(24, 62, model.ringLine, {
-      fontFamily: 'monospace',
-      fontSize: '13px',
-      color: TEXT_COLOR,
-    }),
-  );
-  objects.push(
-    scene.add.text(24, 82, model.frontierLine, {
-      fontFamily: 'monospace',
-      fontSize: '12px',
-      color: TEXT_COLOR,
-    }),
-  );
-  objects.push(
-    scene.add.text(24, 102, model.hangarLine, {
-      fontFamily: 'monospace',
-      fontSize: '12px',
-      color: TEXT_COLOR,
-    }),
-  );
+  // ── Sections: war-status (left), map (centre) and controls (footer) ──
+  // Section panels are drawn first so every tile, arrow and label renders
+  // above its panel's frame and faint fill.
+  renderWarStatusSection(scene, objects, model);
+  renderMapSection(scene, objects, model);
+  renderControlsSection(scene, objects, options);
+  // Transient news has one home: the run result, the banked win bonus and the
+  // assault outcome are all in `last-sortie` (or the section is absent).
+  const assaultBody = renderLastSortieSection(scene, objects, model, options);
+
+  // ── Section registry ────────────────────────────────────────
+  // One entry per rendered section, built from the same rect table the panels
+  // are drawn from, so the published regions can never drift from the drawn
+  // ones. `last-sortie` appears only when it rendered.
+  const sections: HexMapSection[] = [
+    {
+      key: 'war-status',
+      heading: WAR_STATUS_HEADING,
+      rect: HEX_MAP_SECTION_RECTS['war-status'],
+    },
+    ...(hasLastSortieNews(model, options)
+      ? [
+          {
+            key: 'last-sortie' as const,
+            heading: LAST_SORTIE_HEADING,
+            rect: HEX_MAP_SECTION_RECTS['last-sortie'],
+          },
+        ]
+      : []),
+    { key: 'map', heading: model.title, rect: HEX_MAP_SECTION_RECTS.map },
+    {
+      key: 'selected-hex',
+      heading: SELECTED_HEX_HEADING,
+      rect: HEX_MAP_SECTION_RECTS['selected-hex'],
+    },
+    {
+      key: 'controls',
+      heading: CONTROLS_HEADING,
+      rect: HEX_MAP_SECTION_RECTS.controls,
+    },
+  ];
 
   renderHangarMarker(scene, objects, model);
-  renderLegend(scene, objects);
 
   // Arrows sit above the tile fills but below the tile labels (depths set in
   // `renderAttackArrows` / `renderHexTile`), so they never hide a tile's text.
@@ -687,6 +1168,13 @@ export function renderHexMap(
     const text = texts.head;
     tileTextByKey.set(intel.key, texts);
     const deployable = intel.actionable && handlers?.onDeploy !== undefined;
+    // A held hex with a defender offers the bot-upgrade action (parent
+    // AH-0MWH48IEG00929GQ); an unheld hex never does, and the read-only gym
+    // render (no handlers) offers nothing.
+    const upgradeable =
+      intel.held &&
+      intel.defender !== null &&
+      handlers?.onUpgradeDefences !== undefined;
     const row: HexMapRow = {
       key: intel.key,
       label: intel.tileLabel,
@@ -696,11 +1184,13 @@ export function renderHexMap(
     rows.push(row);
     focusableRows.push(row);
 
-    // Every displayed hex is selectable. Activation deploys only at an unheld
-    // hex; on a held hex (or a read-only render) it is a no-op, so an owned hex
-    // can be inspected without risk of re-deploying (AC3).
+    // Every displayed hex is selectable. Activation deploys at an unheld hex;
+    // on a held hex with a defender it opens the bot-upgrade screen (the
+    // `UPGRADE DEFENCES` action); otherwise it is a no-op, so an owned hex can
+    // be inspected without risk of re-deploying (AC3).
     const activate = (): void => {
       if (deployable) handlers!.onDeploy!(intel.id);
+      else if (upgradeable) handlers!.onUpgradeDefences!(intel.id);
     };
 
     // Hovering either label half shows the headline's focus stroke; clicking
@@ -744,11 +1234,23 @@ export function renderHexMap(
     focusManager.register(text, activate);
   }
 
-  const hangarText = scene.add.text(24, 468, model.hangarRow.label, {
-    fontFamily: 'monospace',
-    fontSize: '12px',
-    color: TEXT_COLOR,
-  });
+  // The `◀ HANGAR` row is the map's one-click hangar action. It lives at the
+  // right-hand end of the controls footer (always on screen, always
+  // actionable) and the model folds it into every navigation column, so the
+  // arrows reach it from anywhere on the map.
+  const controlsRect = HEX_MAP_SECTION_RECTS.controls;
+  const hangarText = scene.add
+    .text(
+      controlsRect.x + controlsRect.width - SECTION_PADDING,
+      controlsRect.y + 16,
+      model.hangarRow.label,
+      {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: TEXT_COLOR,
+      },
+    )
+    .setOrigin(1, 0);
   objects.push(hangarText);
   const hangarRow: HexMapRow = {
     key: HEX_MAP_HANGAR_ROW_KEY,
@@ -771,16 +1273,6 @@ export function renderHexMap(
   }
   focusManager.register(hangarText, () => handlers?.onOpenHangar?.());
 
-  objects.push(
-    scene.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT - 10, options?.hint ?? HEX_MAP_HINT, {
-        fontFamily: 'monospace',
-        fontSize: '11px',
-        color: MUTED_COLOR,
-      })
-      .setOrigin(0.5, 1),
-  );
-
   // Grid navigation (AH-0MWEWYVD7008PPQT): the pure model owns the spatial
   // columns; the renderer only maps their row keys onto the registered control
   // indices. The `◀ HANGAR` row is folded into every column by the model, so
@@ -798,19 +1290,25 @@ export function renderHexMap(
     columns: gridColumns,
   });
 
-  // ── Detail panel: the focused hex's full known-ahead intel ────
-  const panelHeading = scene.add.text(PANEL_X, PANEL_Y, PANEL_HEADING, {
-    fontFamily: 'monospace',
-    fontSize: '10px',
-    color: HEADING_COLOR,
-  });
-  objects.push(panelHeading);
-  const panelBody = scene.add.text(PANEL_X, PANEL_Y + 16, '', {
-    fontFamily: 'monospace',
-    fontSize: '12px',
-    color: TEXT_COLOR,
-    lineSpacing: 4,
-  });
+  // ── `selected-hex`: the focused hex's intel AND its attack row ────
+  // One hex, one section: the full known-ahead intel and the rolled-in defence
+  // report for the same hex render inside one bordered, headed panel, so
+  // reading a hex is one story rather than two panels on opposite sides of the
+  // screen. `attackDetails` is keyed by the attacked hex id AND its
+  // attacker-origin id, so either focus resolves the same row.
+  drawSectionPanel(scene, objects, SELECTED_HEX_RECT, SELECTED_HEX_HEADING);
+  const panelBody = scene.add.text(
+    SELECTED_HEX_BODY_X,
+    SELECTED_HEX_BODY_Y,
+    '',
+    {
+      fontFamily: 'monospace',
+      fontSize: SECTION_BODY_SIZE,
+      color: TEXT_COLOR,
+      lineSpacing: 4,
+      wordWrap: { width: SELECTED_HEX_BODY_WIDTH },
+    },
+  );
   objects.push(panelBody);
 
   let panelKey: string | null = null;
@@ -833,26 +1331,31 @@ export function renderHexMap(
     return displayedHexes[0]?.key ?? null;
   };
 
-  // ── Left panel: the rolled-in defence report ────────────────────
-  // One attack, two endpoints: `attackDetails` is keyed by the attacked hex
-  // id AND its attacker-origin id, so either focus resolves the same row.
+  // The attack row of the same section, under the intel body: its own
+  // sub-heading plus the report model's row text, copied verbatim. Both are
+  // hidden (never moved to another section) when the focused hex is in no
+  // attack.
   const attackPanelHeading = scene.add.text(
-    ATTACK_PANEL_X,
-    ATTACK_PANEL_Y,
+    SELECTED_HEX_BODY_X,
+    SELECTED_HEX_BODY_Y,
     ATTACK_PANEL_HEADING,
-    { fontFamily: 'monospace', fontSize: '10px', color: HEADING_COLOR },
+    {
+      fontFamily: 'monospace',
+      fontSize: SECTION_HEADING_SIZE,
+      color: HEADING_COLOR,
+    },
   );
   objects.push(attackPanelHeading);
   const attackPanelBody = scene.add.text(
-    ATTACK_PANEL_X,
-    ATTACK_PANEL_Y + 16,
+    SELECTED_HEX_BODY_X,
+    SELECTED_HEX_BODY_Y + 14,
     '',
     {
       fontFamily: 'monospace',
-      fontSize: '12px',
+      fontSize: SECTION_BODY_SIZE,
       color: TEXT_COLOR,
       lineSpacing: 4,
-      wordWrap: { width: ATTACK_PANEL_WIDTH },
+      wordWrap: { width: SELECTED_HEX_BODY_WIDTH },
     },
   );
   objects.push(attackPanelBody);
@@ -861,50 +1364,79 @@ export function renderHexMap(
   const updateAttackPanel = (): void => {
     const hex = hexByKey(displayedHexKey());
     const detail = hex ? model.attackDetails.get(hex.id) : undefined;
+    // The row follows the intel body, whose height depends on how much of the
+    // hex is known ahead, so the sub-block is positioned after the intel text
+    // is laid out — never at a fixed offset that could collide with it.
+    const top = panelBody.y + panelBody.height + SELECTED_HEX_ATTACK_GAP;
+    attackPanelHeading.setPosition(SELECTED_HEX_BODY_X, top);
+    attackPanelBody.setPosition(SELECTED_HEX_BODY_X, top + 14);
     attackPanelKey = detail ? hex!.id : null;
     attackPanelBody.setText(detail?.label ?? '');
     attackPanelHeading.setVisible(detail !== undefined);
     attackPanelBody.setVisible(detail !== undefined);
   };
 
-  // ── The hangar-assault announcement (AH-0MWEZZA4E0081NJ5) ───────
-  // The report model's own section, copied verbatim: a repel announces the
-  // ring won, a fall announces the full campaign reset. Read-only, so the
-  // attract traversal keeps its one total next action and never stalls here.
-  const assaultLine = model.assaultLine;
-  let assaultBody: Phaser.GameObjects.Text | null = null;
-  if (assaultLine !== null) {
-    objects.push(
-      scene.add.text(ATTACK_PANEL_X, ASSAULT_BANNER_Y, ASSAULT_BANNER_HEADING, {
-        fontFamily: 'monospace',
-        fontSize: '10px',
-        color: HEADING_COLOR,
-      }),
+  // ── `selected-hex`: the held-hex `UPGRADE DEFENCES` action ────────
+  // The one bot-upgrade control surface on the map (parent
+  // AH-0MWH48IEG00929GQ). Shown only for a held, defended hex and only when
+  // the render carries an `onUpgradeDefences` handler; the read-only gym render
+  // therefore offers nothing. It is positioned below the intel/attack block so
+  // it can never collide with a long intel label.
+  const upgradeText = scene.add.text(
+    SELECTED_HEX_BODY_X,
+    SELECTED_HEX_BODY_Y,
+    '',
+    {
+      fontFamily: 'monospace',
+      fontSize: SECTION_BODY_SIZE,
+      color: UPGRADE_ACTION_COLOR,
+      wordWrap: { width: SELECTED_HEX_BODY_WIDTH },
+    },
+  );
+  upgradeText.setInteractive({ useHandCursor: true });
+  objects.push(upgradeText);
+
+  let upgradeKey: string | null = null;
+  const updateUpgradeRow = (): void => {
+    const hex = hexByKey(displayedHexKey());
+    const shown =
+      hex !== undefined &&
+      hex.held === true &&
+      hex.defender !== null &&
+      handlers?.onUpgradeDefences !== undefined;
+    // Sit under whichever block last rendered (the attack row when present,
+    // otherwise the intel body).
+    const anchor = attackPanelBody.visible
+      ? attackPanelBody.y + attackPanelBody.height
+      : panelBody.y + panelBody.height;
+    upgradeText.setPosition(
+      SELECTED_HEX_BODY_X,
+      anchor + SELECTED_HEX_ATTACK_GAP,
     );
-    assaultBody = scene.add.text(
-      ATTACK_PANEL_X,
-      ASSAULT_BANNER_Y + 16,
-      assaultLine,
-      {
-        fontFamily: 'monospace',
-        fontSize: '11px',
-        color: model.campaignReset ? FALLS_COLOR : WON_COLOR,
-        lineSpacing: 2,
-        wordWrap: { width: ASSAULT_BANNER_WIDTH },
-      },
-    );
-    objects.push(assaultBody);
-  }
+    upgradeKey = shown ? hex!.id : null;
+    upgradeText.setText(shown ? UPGRADE_DEFENCES_LABEL : '');
+    upgradeText.setVisible(shown);
+  };
+
+  const activateUpgrade = (): void => {
+    if (upgradeKey !== null) handlers?.onUpgradeDefences?.(upgradeKey);
+  };
+  upgradeText.on('pointerdown', activateUpgrade);
 
   const updatePanel = (): void => {
     paintTiles();
     const hex = hexByKey(displayedHexKey());
     panelKey = hex?.key ?? null;
-    panelBody.setText(hex ? hex.label : '');
-    panelHeading.setText(
-      hex ? `SELECTED HEX — ${hex.id.toUpperCase()}` : PANEL_HEADING,
+    // The section heading is the shared `SELECTED HEX` constant; the focused
+    // hex's identity and its full known-ahead intel stay in the body, so no
+    // information the old titled panel carried is lost.
+    panelBody.setText(
+      hex
+        ? `FULL INTEL — ${hex.id.toUpperCase()}\n${hex.label}`
+        : 'FULL INTEL — no hex in view',
     );
     updateAttackPanel();
+    updateUpgradeRow();
   };
 
   focusManager.setFocusChangeListener(updatePanel);
@@ -913,6 +1445,7 @@ export function renderHexMap(
 
   return {
     model,
+    sections,
     rows,
     arrows,
     getFocusedKey(): string | null {
@@ -934,6 +1467,16 @@ export function renderHexMap(
     isLeftPanelVisible(): boolean {
       return attackPanelKey !== null && attackPanelBody.visible;
     },
+    getUpgradeText(): string {
+      return upgradeText.text;
+    },
+    isUpgradeVisible(): boolean {
+      return upgradeKey !== null && upgradeText.visible;
+    },
+    getUpgradeHexId(): string | null {
+      return upgradeKey;
+    },
+    activateUpgrade,
     getAssaultText(): string {
       return assaultBody?.text ?? '';
     },

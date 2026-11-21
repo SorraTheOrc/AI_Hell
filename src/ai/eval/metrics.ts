@@ -315,6 +315,7 @@ export function extractBalanceStats(
   let asteroidsDestroyed = 0;
   let powerUpsCollected = 0;
   let avoidableHits = 0;
+  let enemyBodyContacts = 0;
   let waveReached = 0;
   let levelReached = 0;
   let maxTick = -1;
@@ -368,6 +369,12 @@ export function extractBalanceStats(
       case 'player_hit':
         avoidableHits += 1;
         break;
+      case 'enemy_body_contact':
+        // Emitted only by the opt-in moving-hostile arena mode
+        // (AH-0MWM0C40V002ISCA); absent from every other stream, where the
+        // count therefore stays 0.
+        enemyBodyContacts += 1;
+        break;
       case 'wave_start':
       case 'wave_cleared':
         waveReached = Math.max(waveReached, payloadNumber(payload, 'waveNumber'));
@@ -397,6 +404,7 @@ export function extractBalanceStats(
     asteroidsDestroyed,
     powerUpsCollected,
     avoidableHits,
+    enemyBodyContacts,
     survivalSeconds: maxTick < 0 ? 0 : (maxTick + 1) * dtSeconds,
     waveReached,
     levelReached,
@@ -436,6 +444,9 @@ export function aggregateBalanceStats(
     powerUpsCollected: distributionStats(points.map((point) => point.powerUpsCollected)),
     asteroidsDestroyed: distributionStats(points.map((point) => point.asteroidsDestroyed)),
     avoidableHits: distributionStats(points.map((point) => point.avoidableHits)),
+    enemyBodyContacts: distributionStats(
+      points.map((point) => point.enemyBodyContacts),
+    ),
     survivalSeconds: distributionStats(points.map((point) => point.survivalSeconds)),
     waveReached: distributionStats(points.map((point) => point.waveReached)),
     levelReached: distributionStats(points.map((point) => point.levelReached)),

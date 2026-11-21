@@ -845,7 +845,11 @@ Map/Set and mutates estimates in place instead of allocating every tick. It
 changed no arithmetic (bit-identical `DirectionSafety`, pinned by
 `src/ai/framework/competent/steeringParity.test.ts`) and no observable flight
 behaviour (seeded closed-loop determinism, pinned by
-`src/ai/botSteeringLateGameDeterminism.test.ts`).
+`src/ai/botSteeringLateGameDeterminism.test.ts`). The vehicle measures its
+three seeded runs once per suite in a `beforeAll` with a deliberately
+generous wall-clock budget (the loop length is fixed, so the work is
+bounded), so the determinism check stays green on a busy shared host without
+weakening the two-independent-runs comparison (AH-0MWP7R2C9004XE9H).
 
 The identical harness command as the before-baseline (seed `1`, `--seconds 60
 --warmup 3`, throttle 1×):

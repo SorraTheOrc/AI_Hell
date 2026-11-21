@@ -168,6 +168,21 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   5. **Idle** — nothing to do: hold station.
   All tunables live in one place (`BOT_DECISION_TUNABLES` in
   `src/ai/botDecision.ts`).
+
+  > **Live brain (AH-0MWJ1680Z001QYV2):** the shipping demo, the recording
+  > tools and every collection gym fly the framework's **competent brain**
+  > (`createCompetentBotBrain`), not the legacy ladders. It runs a **two-layer
+  > primary/secondary objective model**: the standing primary (survive →
+  > secure an offered Extra Life → focus the boss → hunt the wave → reposition)
+  > is **sticky** and changes only when achieved, invalidated, or a genuinely
+  > higher-value primary takes over. Collection is opportunistic: a mineral,
+  > power-up or collision-path asteroid is a **secondary** that may interrupt
+  > the primary only when its payoff clears a diversion threshold and the wave
+  > is not already at pressure. A **lone gold mineral or ordinary power-up
+  > never diverts** the bot, and a **red deposit** (value 10) outranks a gold
+  > dot — **red over yellow**. The willingness model above is the legacy
+  > ladder's equivalent, retained for the evaluation harness. See
+  > [docs/BOT_FRAMEWORK.md §9.1](BOT_FRAMEWORK.md#91-goals-and-priorities).
 - **Predictive braking (AC10):** the ship is Newtonian and has no brakes, so
   the bot models its own **stopping distance** (`v² / 2a`, where `a` is the
   ship's friction deceleration) and stops thrusting when continuing would
@@ -217,6 +232,21 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
     rotation config, so it stays closed-loop and never hard-codes a rotation
     constant; with no angular velocity it reduces exactly to the previous
     release.
+  - **Smooth turning (AH-0MWJ1680Z001QYV2 audit rejection):** the bot treats
+    turning as a coarse human action — a **deadband** (`alignmentToleranceRad`,
+    ~10°) means small heading error presses no key at all, a **reversal
+    hysteresis** (`turnHysteresisRad`) releases an established turn instead of
+    braking a small overshoot with the opposite key, and a **turn-press hold**
+    (`turnPressMinMs`, ~40 ms) presses A/D in human bursts rather than
+    toggling within a reaction. Aim intents are exempt: holding the weapon axis
+    on a target stays closed-loop and precise.
+  - **Overshoot is accepted (AH-0MWJ1680Z001QYV2 audit rejection):** the ship
+    drifts in space, so the bot no longer tries to hold a precise position. It
+    flies **through** a pickup (collection is on contact) instead of
+    retro-braking onto it, lets go of a mineral/power-up it has just passed
+    (inside `collectOvershootMargin` and behind its velocity) rather than
+    U-turning for it, and coasts to a stop at the edge of its idle band rather
+    than chasing the exact playfield centre.
   - **Lead prediction (AC2):** when engaging a target whose velocity is
     known, the aim objective is the **iterated intercept** — the enemy's
     position advanced by its velocity over the estimated turn time plus the
@@ -252,6 +282,21 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   behaviour exactly. Both knobs are live sliders/toggles in the bot-tuning
   gym and live in the shared `src/ai/` code
   ([docs/BOT_FRAMEWORK.md](BOT_FRAMEWORK.md#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
+- **Class-shaped hazard prediction (AH-0MWM0C9F9006HNXV, AH-0MWM0CB2Q003Y6AB,
+  AH-0MWOKL79Z0051ZXO):** the demo bot does not assume a hazard keeps its
+  current velocity. It fits each hazard's motion from a bounded position
+  history and predicts along its **movement class** — pure pursuit for a
+  chaser, a committed straight dive for a diver, a straight patrol that
+  becomes a straight attack run for a patroller, drift plus arena-edge
+  reflection for a formation, and linear extrapolation for a roamer and any
+  unknown path. The class sets the threat window too: a diver or patroller is
+  judged further ahead, because its danger is a discrete commit later in the
+  window (all the multipliers are `hazardClassHorizonScale` sliders in the
+  bot-tuning gym). The model ships **on**; with it off — and for an unknown
+  class or a stationary hazard — prediction is the previous
+  constant-velocity/positional behaviour **bit-for-bit**. The class table, the
+  knobs and the evidence are in
+  [docs/BOT_FRAMEWORK.md §9.10](BOT_FRAMEWORK.md#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din).
 - **Hold-full auto-select (AH-0MUXXQ1MN002RXGB):** when the mineral hold fills,
   the modal hold-full choice overlay auto-selects its first option after
   `BOT_MINERAL_CHOICE_DELAY_MS` (**900 ms**) and resumes play, so a demo run
@@ -311,7 +356,7 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
 
 - **Auto-fire**: The player ship fires continuously without any input (GDD §2.3; implemented in the GymWeapons gym, `src/scenes/gym/GymWeapons.ts`). Bullets fire in the direction of travel — the current velocity heading — falling back to the **most recent** non-zero heading when the ship is stationary (default before any movement: right / 0°). Fire follows each weapon's **deterministic Euclidean onset pattern** on a silent shared lattice (AH-0MUAYB8EH005RJ8B, AH-0MVYA1V8Z009SHMR): a weapon fires only on the onset ticks of the `(k, n, rotation)` rhythm its upgrade ladder resolves for its level, so its cadence is irregular by design while every shot is an exact tick of the shared 16th-note grid and all simultaneously active weapons stay phase-locked. A weapon collected mid-bar fires on its pattern's next onset, and an upgrade **morphs the pattern only on a bar downbeat** — never mid-bar. The lattice tempo is the configurable `beatBpm` (default **80**, 187.5 ms steps, 16 steps per bar); the legacy `weaponSubdivisions` rule no longer gates firing and survives only as the nominal interval reported for the hold-full ghost metronome (`src/core/rules.ts`). The catalogue's level-0 cadences are governed by the **weapon strength budget** (§4.4.2): every non-cannon weapon fires at **≤ 60 %** of its pre-change level-0 output (and no non-cannon weapon above 1.5× the cannon) on that same shared grid, while the cannon's level-0 cadence is frozen. Weapon power-ups (Spread/Dual/Rapid) are **cumulative and timed** — each collected power-up is **added** to the active set for **10 seconds** (independent countdown per weapon) and all active weapons fire on the shared grid before the timed ones silently expire (Reset clears them instantly, leaving only the Cannon).
 - **Auto-fire stops when the run is over** (AH-0MVCB6LBE007I6R8): the moment the Central AI boss is destroyed the ship is no longer fighting, so from the next tick it spawns **no new player bullets, muzzle flashes or shoot cues** for the rest of the in-run victory hold (`VICTORY_TRANSITION_HOLD_MS`, §7.2). This is the **run-end only** — mini-boss defeats, wave/level transitions and the transition pause keep full auto-fire (the player stays in control), and shots already in flight keep flying to their normal lifetime. The gate is a single shared hook (`CombatCoreScene.playerFireSuppressed`, default `false`, overridden by `PlayScene` with its per-run "run finished" flag) next to `autoFireEnabled()` / `isCaptureDisabled()`, and the shared beat clock keeps advancing while fire is suppressed so the beat-modulated thruster hum (§7.3) does not stall. Combat gyms keep firing after their own boss dies — the documented gym divergence in §7.2.
-- **Bullet range and wrap-around**: Every bullet — player and enemy — **wraps across all four screen edges** using the same classic Asteroids model as the player ship and asteroids (leave left → reappear right, etc.). A bullet is **never** removed merely for leaving the screen. Instead, each bullet type has its own **lifetime in seconds** (effective range = `bulletSpeed × lifetime`, §4.4); a bullet is destroyed only once its lifetime elapses. Wrapping is **positional only** — like the ship and asteroids, bullets do not collide across the seam.
+- **Bullet range and wrap-around**: Every bullet — player and enemy — **wraps across all four screen edges** using the same classic Asteroids model as the player ship and asteroids (leave left → reappear right, etc.). A bullet is **never** removed merely for leaving the screen. Instead, each bullet type has its own **lifetime in seconds** (effective range = `bulletSpeed × lifetime`, §4.4); a bullet is destroyed only once its lifetime elapses. Wrapping is **positional only** — like the ship and asteroids, bullets do not collide across the seam. **Enemy bullets fade out over their last 20 % of lifetime** (AH-0MWJ9PMYF005N588): the shared enemy-bullet lifecycle (`advanceWrappingBullets`, `src/scenes/core/bulletLifecycle.ts`) shrinks the sprite linearly from full size to nothing across that window, so expiry reads as a smooth dissolve rather than a snap. The bullet stays dangerous throughout — its collision footprint tracks the shrinking sprite bounds — and player bullets are unaffected (they keep their existing expiry behaviour).
 - **Collision model**: The player loses **one life** when hit by **any** object — an enemy body or an enemy-fired bullet. Hits never deal partial damage; there is **no player health bar**. The player starts with 3 lives (§3.1); collecting **Extra Life – Extra Life** grants +1 life (up to a maximum of 5). A hit costs one life and the run continues until the lives run out.
   - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
@@ -1185,6 +1230,12 @@ on entry (AH-0MUJM746P000QAEO).
 
 ### 4.4 Power-Ups
 
+> **Proposed, not shipped (backlog §8.3):** **weapon evolutions** — pairings of
+> two active/owned weapon kinds fusing into a named evolved weapon (pattern and
+> coverage only, never damage per tick) — are proposed in §8.3 (Weapon
+> evolutions, AH-0MWL7OWPF003E4TP). The catalogue below stays normative until
+> that item lands.
+
 The player collects power-ups dropped by destroyed enemies through the shared weighted-random drop pool (§6.4). There are **17 distinct types** — including the three **area-of-effect weapons** (Nova, Mortar, Arc) documented in the table below; the shipped defaults encode rarity as **relative weights** — standard power-ups (Shield–Teleport, Magnet, Mineral Scoop, Force Field) at **4**, **Extra Life** and the **Mystery UFO** at **3**, the **Smart Bomb**, the **Orbital Strike** and the **Mining Laser** at **2**, and each weapon drop at **2** (the `~15–20 %` / `~5 %` per-enemy figures below are conceptual guidance, not a directly coded per-enemy chance). Extra Life therefore takes ≈ **5.0 % of power-up draws** (weight 3 of the 60 total power-up weight) — still rarer than standard drops, and only from the **field** (it is a field-pickup-only kind, §4.4.1):
 
 > **Per-kill drop chance scales with the campaign level (AH-0MVHT1M6O003PU7P),
@@ -1236,7 +1287,7 @@ The player collects power-ups dropped by destroyed enemies through the shared we
 | A1 | **Nova** | **AOE (onFire ring).** An expanding ring centred on the ship damages every enemy and clears enemy bullets within **34 px**, every **4 beats** (3000 ms at 80 BPM). The radius is the AOE family's output lever, so the level-0 trim cut it 45 → 34 px (57.1 % of the old coverage, the largest whole pixel inside the ≤ 60 % bound, AH-0MVWAVKS0005P9VN). The ring shot is a **bright expanding ring shockwave** from the ship — a `ring`-shape bullet identity with a bright pale-cyan muzzle flash launch cue and a baked expanding-ring impact cue played through the shared AOE VFX seam (AH-0MV822BPT002GF17). Collected as a timed 10 s drop. | Concentric neon rings |
 | A2 | **Mortar** | **AOE (onRandom blast).** Detonates **immediately at a random point** within its effective range (180 px = projectile speed 180 px/s × 1 s lifetime) of the ship — no travelling shell, no forward bias — damaging every enemy and clearing enemy bullets within **27 px**, every **2 beats** (1500 ms at 80 BPM). The radius was trimmed 35 → 27 px (59.5 % of the old coverage) by the level-0 output trim (AH-0MVWAVKS0005P9VN). The shell reads as an **arcing shell**: a hot deep-orange launch flash at the ship and a wispy inbound arcing shell trail into a bright blast flash through the shared AOE detonation seam, the blast playing the baked **mortar impact crack** layered under the heavy detonation boom (AH-0MV822C250051OVN). The audio cue always fires; VFX is culled when the sampled point falls off-screen. Collected as a timed 10 s drop. | Random blast burst |
 | A3 | **Arc** | **AOE (onFire chain).** Strikes the nearest enemy, then chains to **2 additional nearby** targets within **46 px**, damaging each and clearing enemy bullets along the bolt path, every **1 beat** (750 ms at 80 BPM). The reach was trimmed 60 → 46 px (58.8 % of the old coverage) by the level-0 output trim (AH-0MVWAVKS0005P9VN). Asteroids are **never** Arc targets: every hop applies the shared `isEligibleAutoTarget` predicate (`src/utils/targetEligibility.ts`), so the chain skips the inert `asteroid` world hazard without consuming a link, and the 3-target budget and the 46 px reach are unchanged by that eligibility rule. The shot renders as a **jagged lightning bolt** between the chained targets (the shared `spawnArcChain` bolt VFX) with an electric-purple launch flash at the ship, and a baked electric impact crack + purple impact flash at every connected target through the shared impact seam (AH-0MV822CE7004MQ14). Collected as a timed 10 s drop. | Jagged lightning bolt |
-| P3 | **Wave Laser** | **Single short, chaotic red hitscan beam (AH-0MVREBUJ5004HDRQ; retuned by AH-0MW10J31B0053E56; supersedes the bounded R-Type beam AH-0MV1BIUSJ0090W92 / AH-0MV97RISJ002WR2S).** Fires **one red laser beam** per shot (**0.5/beat** = 1500 ms at 80 BPM, so a 0.3 s beam never overlaps the next shot) that resolves instantly through the shared ray seam (`src/scenes/core/hitscanBeam.ts`). Its direction is **drawn per shot from the run-seeded RNG** (`src/scenes/core/hitscanAim.ts`): with probability `aimBias` it aims at the **nearest living enemy** (using the wrapped bearing, so a target across a seam is aimed at correctly), otherwise it is uniform over 360°; with no living enemy it is always uniform. The **aim bias is data** (`hitscanAimBias` in `src/data/weapons.csv`, 0.5 at level 0) and **grows with weapon level** through the Homing curve (`0.5 → ≈0.95`), so accuracy improves as the weapon levels. The beam deals **exactly 1 damage to the first enemy (or boss) it intercepts and stops there** — it never pierces and there is **no damage budget** at any level (the retired `maxHitPoints` growth is gone). With nothing in its path it runs its **short 240 px level-0 extent** (a quarter of the 960 px arena width), **wrapping at the arena edges**; the **Beam Extent** upgrade lengthens that run on the same Range ladder (≈528 px at the top). The launch muzzle flash points along the actual beam, it is **visible for 0.3 s** and does not clear enemy bullets. Collected as a timed 10 s drop. | Short chaotic red beam that stops at the first hit |
+| P3 | **Wave Laser** | **Single short, chaotic red hitscan beam (AH-0MVREBUJ5004HDRQ; retuned by AH-0MW10J31B0053E56; supersedes the bounded R-Type beam AH-0MV1BIUSJ0090W92 / AH-0MV97RISJ002WR2S).** Fires **one red laser beam** per shot (**0.5/beat** = 1500 ms at 80 BPM, so a 0.3 s beam never overlaps the next shot) that resolves instantly through the shared ray seam (`src/scenes/core/hitscanBeam.ts`). Its direction is **drawn per shot from the run-seeded RNG** (`src/scenes/core/hitscanAim.ts`): with probability `aimBias` it aims at the **nearest living enemy** (using the wrapped bearing, so a target across a seam is aimed at correctly), otherwise it is uniform over 360°; with no living enemy it is always uniform. The **aim bias is data** (`hitscanAimBias` in `src/data/weapons.csv`, 0.5 at level 0) and **grows with weapon level** through the Homing curve (`0.5 → ≈0.95`), so accuracy improves as the weapon levels. The beam's **source end re-anchors to the ship every frame** (its far end stays frozen at the launch-resolved intercept point, drawn through the shared `src/vfx/anchoredBeam.ts` seam, AH-0MWJ8JUEF006XBLB). The beam deals **exactly 1 damage to the first enemy (or boss) it intercepts and stops there** — it never pierces and there is **no damage budget** at any level (the retired `maxHitPoints` growth is gone). With nothing in its path it runs its **short 240 px level-0 extent** (a quarter of the 960 px arena width), **wrapping at the arena edges**; the **Beam Extent** upgrade lengthens that run on the same Range ladder (≈528 px at the top). The launch muzzle flash points along the actual beam, it is **visible for 0.3 s** and does not clear enemy bullets. Collected as a timed 10 s drop. | Short chaotic red beam that stops at the first hit |
 | P4 | **Ricochet** | **Edge-bouncing shot (Centipede homage, AH-0MV1BIV5L005NJAI).** Fires a single neon **teardrop/streak pellet with a short fading trail** (visual metadata on `WeaponDefinition`, drawn through the shared bullet-shape seam) (**0.5/beat** = 1500 ms at 80 BPM, 1.6 s lifetime) along the ship's heading. Instead of wrapping, the pellet **reflects off the arena edges** while it has **bounce budget** left — a base budget of **2**, grown by the **Bounce** weapon-level variable toward its cap of **4** — and expires on the wall contact once the budget is spent, so a missed shot can still bank into an enemy. Each wall bounce plays a brief green edge-flash + the baked ricochet impact cue through the shared impact seam (AH-0MV822AP1006W2F9), so the bounce lands audibly and visually even when it misses. It does not pierce and does not clear enemy bullets. Collected as a timed 10 s drop. | Zig-zag bank-shot path between two walls |
 | P5 | **Cluster Missile** | **Splitting/MIRV missile (Missile Command homage, AH-0MV1BIVIJ007KYXU).** Fires a single small missile shell (**1 shot every 4 beats** = 3000 ms at 80 BPM, 0.9 s lifetime) along the ship's heading, rendered as a neon **missile with a flickering exhaust flame, a white-hot rim and a short fading smoke trail**, launching with a low whoosh + magenta launch puff (AH-0MV822B1B0048UZT). On its first impact or on expiry it **splits once** into a radial cluster of **warheads** — a base count of **2**, grown by the **Split** weapon-level variable toward its cap of **3**, fanned **evenly around the full 360° circle** with a constant +90° phase offset from the heading (the base two fly at **90°/270°**, perpendicular to the direction of travel — never straight ahead or 180° backwards) — each an ordinary short-lived **small disc** bullet that damages enemies on contact, playing the baked cluster detonation cue + hot-pink flash through the shared impact seam when a warhead connects. It uses a neutral `splits` projectile seam, **not** an `AoEDescriptor`: the warheads are points, not an area, so it is the offensive counterpart of the Mortar. It does not pierce, bounce or clear enemy bullets. Collected as a timed 10 s drop. | Central shell bursting into a radial cluster of warheads |
 | P6 | **Options** | **Orbiting satellite escort (Gradius homage, AH-0MV1BIVVK0043TEM).** Adds **two neon satellite pods** that orbit the ship and each fire a bullet **radially outward along its own orbit direction** — in the direction of the orb, not the ship's heading (**0.5/beat** = 1500 ms at 80 BPM) — on the shared beat grid. The 2000 ms orbit is deliberately not a whole multiple of the 1500 ms fire interval (0.75 revolutions per trigger), so consecutive volleys aim in different directions and the escort fans into a rotating spike pattern (`isOptionsOrbitTriggerAligned`, AH-0MV5DFBVW002J2XO). The pod count grows with the **Projectiles** weapon-level variable (one extra pod per point, capped at **6** so the orbit stays legible); each pod bullet is smaller and slower than the cannon's, so the escort multiplies firepower without eclipsing the main gun. Each pod shot is a **small pod dart with a pale-aqua rim tint and a short faint fading trail**, firing with a bright soft-tone cue + aqua launch flash and popping with a soft-aqua hit pop + impact flash on connect (AH-0MV822BDN008IYL6). The pods are decorative satellites only — they never block bullets and never collide. It uses a new shared `orbit` companion-entity seam, **not** an `AoEDescriptor`. Collected as a timed 10 s drop. | Ship ringed by orbiting satellite pods |
@@ -1858,8 +1909,49 @@ parity tests.
 | Destroy Boss Phase 3 | 3000 |
 | Destroy Boss Phase 4 | 5000 |
 | Time bonus (per level) | 50 × seconds remaining |
+| Graze (near miss) | 0 points — tier progress only |
 
 - **Score display**: Neon-styled numeric display in the top-right corner.
+
+#### Danger multiplier (graze) — AH-0MWL7ORK8007LXJI
+
+Every value in the table above is the **base** award. The **danger multiplier**
+is applied to each kill award at the shared kill/score seam, then rounded half
+up (`3 × 1.5 = 4.5 → 5`). The time bonus and the graze itself are **not**
+multiplied — a graze awards no score of its own, only tier progress.
+
+- **Graze band**: a live enemy bullet or enemy body whose centre passes within
+  `contactRadius + GRAZE_BAND` (**12 px**) of the ship's collision centre and
+  **outside** the contact distance that would be a hit. Judged on the shared
+  collision centre and radii (`src/core/graze.ts`), never on sprite bounds — the
+  hull art (20 px) is wider than the collision footprint, and the band is
+  exactly the space between "hit" and "near miss". Asteroids and other contact
+  hazards graze too, because they can kill on contact.
+- **Once per pass**: each hostile is credited once, keyed by a stable per-object
+  id, and only becomes creditable again after it leaves the band by more than
+  `GRAZE_HYSTERESIS` (**4 px**), is destroyed or expires — a hostile hovering at
+  the band edge cannot farm score.
+- **Tiers**: five tiers, `×1 → ×1.5 → ×2 → ×3 → ×5`, entered at **0, 3, 6, 10
+  and 15** cumulative grazes (`GRAZE_TIER_PROGRESS` = 1 per graze). Values live
+  in one tunables record; retuning is a data change, never a code change.
+- **Decay**: one tier lost per `GRAZE_DECAY_SECONDS` (**2.0 s**) of inactivity;
+  a graze restarts the window.
+- **Reset**: a player hit (one that is **not** absorbed by a shield, thorn field
+  or force field) returns the multiplier to `×1`; a run starts at `×1`.
+- **Score-only**: the multiplier changes nothing else — no damage, movement,
+  lives, drops or wave pacing — so every balance baseline is untouched
+  (re-measured in [`docs/BALANCING.md`](./BALANCING.md)).
+- **Legibility**: a spark fan struck at the nearest point of the grazed hostile
+  whose **tick count, length and sweep grow with the tier** (shape, not colour
+  alone), a rising per-tier pitch cue through the shared SFX settings, and a HUD
+  `DANGER ×N` tacho beside the score showing the tier as filled pips plus a bar
+  that drains with the decay window. A tier gain or loss is announced with a
+  distinct `▲` / `▼` glyph, so the signal survives colour-blindness.
+- **Parity and determinism**: the whole rule lives in the pure
+  `src/core/graze.ts` and is fed by one pass in the shared combat core, so the
+  game and every gym resolve identical values; it consumes no RNG, so the same
+  seed and input trace reproduce the same graze count and score. See
+  [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
 
 > **Boss phase scoring (AH-0MUTV3J7T006MZ4K, scaled by AH-0MUWTS07L008KVP9):** The four `Destroy Boss Phase N` values above are **unchanged**. Because each phase now takes **50 hits** (`BOSS_HIT_POINTS_PER_PHASE`), a phase's points are awarded on the **depleting hit** — hits **50, 100, 150 and 200** — not on every hit. A partial-phase hit awards no score, summons no minions and does not advance the phase; it only reduces the visible health-bar fill. This keeps fully levelled weapons from trivialising the encounter: the Central AI still requires **200 player hits** regardless of weapon level.
 
@@ -1882,6 +1974,12 @@ parity tests.
   so the opening calibration is unchanged. The scaling table, the documented
   formation-gym divergence and the same-seed before/after bot-batch evidence
   live in [`docs/BALANCING.md`](./BALANCING.md) (AH-0MVHT1M6O003PU7P).
+
+  > **Proposed, not shipped (backlog §8.3):** a third, *content* axis —
+  > **anomaly (elite) variants** of counted archetypes, each with one bounded
+  > extra behaviour and a guaranteed reward, level-1 exempt — is proposed in
+  > §8.3 (Anomaly (elite) enemies and wave twists, AH-0MWL7P1AO003LKXT). The two
+  > axes above stay normative until that item lands.
 - If the player runs out of lives (3 starting; up to 5 with Extra Life power-up), the game ends and the **final score** is submitted to the local leaderboard.
 - There is **no continue** mechanic. Game over is final.
 - Players may restart from Level 1 at any time after a game over.
@@ -2894,19 +2992,25 @@ back to the unchanged arcade path). The checkpoint *moment* still banks salvage
 #### Hangar economy and unlock tree
 
 The **fleet** starts minimal — one basic hull (`hull-1`, 3 lives), its starting
-weapon (`spread`) **owned but not equipped**, and no modifiers — while a **run**
-keeps the shipped middle loop in full (the six shared loadout slots plus the
-slot-free **Extra Life** and **Mystery UFO**). Scarcity lives in what the hangar
-owns between deployments, never in stripping the run.
+weapon (`spread`) **owned but not equipped**, and no modifiers or power-ups —
+while a **run** keeps the shipped middle loop in full (the six shared loadout
+slots plus the slot-free **Extra Life** and **Mystery UFO**). Scarcity lives in
+what the hangar owns between deployments, never in stripping the run.
 
 > **The default deployment loadout is empty** (AH-0MVZJ6V1J001DA9D, producer
 decision): a fresh hangar-war payload carries `activeLoadout.startingWeapons: []`,
 so a run starts with **only the ship's permanent cannon**. The `spread` starter
 is **owned** from the first deployment and stays selectable in the deployment
-selector; owning or buying a starting weapon never auto-equips it — equipping is
-always a deliberate choice. This supersedes the earlier "one starting weapon"
-reading of Rule 1: the fleet still owns the starter, but the deployed loadout
-starts empty.
+selector; owning the **free starter** weapon never auto-equips it — equipping a
+starter is always a deliberate choice. This supersedes the earlier "one
+starting weapon" reading of Rule 1: the fleet still owns the starter, but the
+deployed loadout starts empty. **A *bought* part is different** (parent
+AH-0MWL5PAP2001XYYF, producer Q1 = C refined): a successful hangar purchase
+**auto-enables** the entry — a hull becomes the active hull, a starting weapon
+joins `activeLoadout.startingWeapons` and a modifier joins
+`activeLoadout.modifiers` — so re-fitting takes one action per part. The un-equip
+toggles stay available, and a refused purchase changes neither ownership nor
+the loadout.
 
 The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 (`src/core/hangarWar/hangarEconomy.ts`):
@@ -2916,26 +3020,41 @@ The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 | `hull-1` Scrap Hull | hull | 0 / 0 (starter) | 3 lives, speed ×1.0, defence 2 |
 | `hull-2` Bulwark Hull | hull | 220 / 3 | 4 lives, speed ×0.85, defence 14, defending-bot skill *Line-breaker* (+4 vs `the-dawnbreaker`) |
 | `hull-3` Juggernaut Hull | hull | 320 / 4 (`minRing: 2`) | 5 lives, speed ×0.8, defence 15 — the ring-2 special-mission reward (`hex-r2-3` grants it through `resolveHexGrant`), priced above the Bulwark for a fleet that never takes that hex (AH-0MWF0CUS3009M5SY) |
+| `hull-4` Vanguard Hull | hull | grant-only — never sold | 4 lives, speed ×0.9, defence 3 — the ring-1 special-mission reward (`hex-r1-5` grants it through `resolveHexGrant`): a survivability step over the Scrap Hull that stays clearly below the Bulwark, with no purchase path (AH-0MWJ51KUS005WQK6) |
 | `spread` Spread Cannon | weapon | 0 / 0 (starter) | `spread` starting weapon (owned by default, **not equipped**) |
 | `wave_laser` Wave Laser | weapon | 120 / 1 | `wave_laser` starting weapon |
 | `ricochet` Ricochet | weapon | 90 / 2 | `ricochet` starting weapon |
 | `cluster` Cluster Missile | weapon | 160 / 1 | `cluster` starting weapon |
 | `hardened_plating` Hardened Plating | modifier | 80 / 1 | +1 starting life per deployment |
 | `anti_maw_plating` Anti-Maw Plating | modifier | 110 / 2 | defending-bot skill *Maw-warded* (+5 vs `maw-of-ashes`) |
+| `bomb` Bomb Rack | power-up | 130 / 1 | permanent `bomb` — periodic enemy-fire clear; bought at level 1, upgradeable |
+| `magnet` Salvage Magnet | power-up | 200 / 2 (`minRing: 2`) | permanent `magnet` — attracts minerals; bought at level 1, upgradeable |
 
 Every phase-A entry is available at ring 1 (`minRing: 1`); ring gating is the
 field phase B's ring content uses. A purchase needs **both** currencies at
-once, ownership is tracked per kind (hulls / starting weapons / modifiers), and
-precedence for a refused purchase is `owned` → `gated` → `unaffordable`. The
-hangar screen's deployment selector equips an owned hull and toggles owned
-starting weapons — **every** owned weapon row is actionable, including the last
-equipped one — and modifiers; resolution drops unknown or unowned ids, so a
-corrupt save can never deploy an unowned ship or an unowned weapon. An empty
+once, ownership is tracked per kind (hulls in `hangar.unlockedHulls`, starting
+weapons in `hangar.unlockedWeapons`, modifiers in `hangar.ownedModifiers`
+and **power-ups in `hangar.unlockedPowerUps`**), and
+precedence for a refused purchase is `owned` → `gated` → `unaffordable`. A
+successful purchase also **arms** the part immediately (parent
+AH-0MWL5PAP2001XYYF): `purchaseHangarEntry` opts in to the economy's
+`equipOnPurchase` option, while the other callers keep the ownership-only
+default. A power-up is a permanent passive upgrade, not a loadout slot, so
+buying one arms nothing — it simply applies on every deployment. The hangar screen's deployment selector equips an owned hull and
+toggles owned starting weapons — **every** owned weapon row is actionable,
+including the last equipped one — and modifiers; resolution drops unknown or
+unowned ids, so a corrupt save can never deploy an unowned ship or an unowned
+weapon. An empty
 starting-weapon selection is a legal loadout that round-trips as empty (never
 silently replaced by `spread`), and the deployment then equips nothing, so the
 run begins with only the permanent cannon. The attract bot's "cheapest useful
 unlock" rule (`purchaseWeight`,
-catalogue order as the deterministic tie-break) also lives here, and the
+catalogue order as the deterministic tie-break) also lives here. It excludes
+the power-up kind through the one documented `isBotPurchaseCandidate` helper,
+so the demo's shopping (and its seeded traversal replays and pinned unlock
+pace) is unchanged by the new kind; the unlock-pace *report* still measures
+the power-up entries because it is not the bot's choice.
+The
 defender-rating formula (`baseDefence + 3×armour + 2×firepower + 2×systems`)
 is defined once so phase B's defence resolver has no second source of truth.
 A captured run feeds the same formula (AH-0MWH42DWQ004SAOJ): the bot left
@@ -3062,23 +3181,59 @@ expiring disarms it, so a stray Enter only ever arms the control and never wipes
 the war. The attract demo renders the row non-actionable and never resets or
 writes the war.
 - **`HexMapScene`** — the hangar at the centre and the current ring around it,
-with every hex's **known-ahead intel**: held/unheld and aggression on the tile
-(tile colour plus a readable `AGG n` badge), and — in the **detail panel for
-the focused hex** (tab/arrows move focus; read-only renders default to the
-model's first hex) — the boss that holds it, what that boss is **strong and
-weak against**, the weapon or upgrade the hex grants, the defending hull and
-any queued attack (AH-0MW3VG6WJ004HRI9). It is also the **post-deployment
-surface**: a finished sortie hands over its frontier-tick record and the map
+laid out as **four content sections plus a controls footer**, each drawn as a
+**bordered, headed panel** so every group of information is distinguishable at
+a glance and by framing rather than by colour (AH-0MWL4QCVD007WOAM):
+
+  | Section | Holds |
+  |---|---|
+  | `WAR STATUS` | ring progress, frontier strength / beatable ceiling / in-reach count, hangar hull and banked minerals/cores |
+  | `LAST SORTIE` | the transient "what just happened" news — run result, banked win bonus, hangar-assault outcome — **only** when the landing carries one, never an empty box |
+  | `HANGAR WAR — HEX MAP` (the map) | the ring tiles, attack arrows and the hangar marker |
+  | `SELECTED HEX` | the focused hex's full intel **and** its `ATTACK — FOCUSED HEX` row (the attack row is hidden, never moved, when the hex is in no attack) |
+  | `CONTROLS` | the `READ THE MAP` legend, the keyboard hint line and the `◀ HANGAR` row |
+
+  The renderer publishes the same section registry (`sections`: one
+  `{ key, heading, rect }` per rendered section) to the game and to the parity
+  gym, so the two can never describe different regions of the screen. Each
+  panel's rect is the bound its own content must fit: `LAST SORTIE` is sized
+  from its **worst case** — the run result, the banked win bonus and the three
+  hard-wrapped hangar-assault lines drawn together — so a full win landing's
+  aftermath ends inside its panel instead of spilling past the frame
+  (AH-0MWNEQRSI008DIY8). The
+  focused hex's **known-ahead intel** lives in `SELECTED HEX`: held/unheld and
+  aggression on the tile (tile colour plus a readable `AGG n` badge), and — for
+  the focused hex (tab/arrows move focus; read-only renders default to the
+  model's first hex) — the boss that holds it, what that boss is **strong and
+  weak against**, the weapon or upgrade the hex grants, the defending hull and
+  any queued attack (AH-0MW3VG6WJ004HRI9). Every line of that overview carries
+an explicit capitalised title (`ID:`, `STATE:`, `AGGRESSION:`, `BOSS:`,
+`STRENGTHS:`, `WEAKNESSES:`, `GRANT:`, `DEFENDER:`, `SKILL:`,
+`PENDING ATTACK:`) so the player never decodes an abbreviation, while the
+already-headed SPECIAL MISSION / REWARD / PERSONALITY / MECHANIC / LANDMARK /
+CONTRACT / BONUS sections keep their titles (AH-0MWJ0XHWW009GTKK). It is also
+the **post-deployment surface**: a finished sortie hands over its frontier-tick
+record and the map
 draws the between-sortie report on the same view — one attack arrow per attack
-on the ring, plus a left-hand attack panel with that attack's numbers (there is
-no separate report screen). Activating an
-**unheld** hex deploys at it; the `◀ HANGAR` row is one click from what the
-player owns (the design's "map and hangar one click apart"); ESC returns to the
-menu.
+on the ring, plus that attack's numbers as the attack row of the `SELECTED HEX`
+section (there is no separate report screen). Activating an
+**unheld** hex opens the **ship-config (hangar) screen pre-targeted at that
+hex** — its `▶ DEPLOY` row names the hex and launches the deployment there, so
+every hex battle is reached through the target-aware config screen
+(`map → config → deployment`) and none begins without it (AH-0MWMT4S5U001EGDF,
+parent AH-0MWMRWCY2001HWGR). The config screen repeats the known-ahead intel
+where the player commits: a `TARGET INTEL` block names the chosen hex's boss
+and its authored strengths/weaknesses, and every weapon row carries an
+`▲ EFFECTIVE` / `▼ RESISTED` matchup mark against that boss — display only, with
+the mechanical matchup owned by AH-0MWL5376H001WJFZ, and rendered read-only by
+`GymHangar` from the same model (AH-0MWMT4STK001PSK4). Activating a **held** hex only inspects it; the
+`◀ HANGAR` row is one click from what the player owns (the design's "map and
+hangar one click apart") and carries no target, so its `▶ DEPLOY` keeps the
+weakest-unheld default; ESC returns to the menu.
 
 The **between-sortie defence report** is not a screen of its own: it is drawn on
-the map (attack arrows on the ring plus a left-hand attack panel) from the tick
-record a deployment hands over — see
+the map (attack arrows on the ring plus the `SELECTED HEX` section's attack row)
+from the tick record a deployment hands over — see
 § *[The defence report](#the-defence-report)* below.
 
 A deployment is still the **shipped run** (`PlayScene` + `src/scenes/core/`):
@@ -3096,9 +3251,10 @@ and never spawns the final boss, so taking a hex is a bounded sortie rather than
 the rest of the campaign. The mini-boss victory runs the capture cycle
 (below) and ends the run as a **victory**. On a win the player sees, in order,
 the mini-boss defeat → **`HexMapScene`**, which announces the **banked win
-bonus** and carries the between-sortie report on the map itself: the newly held
-hex, the tick's attack arrows and the left-hand attack panel are all one
-surface, and there is no separate screen to click through.
+bonus** (`WIN BONUS BANKED: +N MINERALS`, drawn in the `LAST SORTIE` section)
+and carries the between-sortie report on the map itself: the newly held hex,
+the tick's attack arrows and the `SELECTED HEX` section's attack row are all
+one surface, and there is no separate screen to click through.
 
 **No reward overlay on the win path** (parent **AH-0MWEVNBMM000QFO2**; producer
 decisions **Q1 = (c)**, **Q2 = (a)**, **Q3 = (b)**, recorded 2026-11-13 on
@@ -3126,6 +3282,25 @@ ten levels, a non-final level's mini-boss still advances, level 10's
 mini-boss still opens the final boss, and **every arcade mini-boss defeat still
 presents the wheel**.
 
+**The first battle's ring and the hexless fallback** (AH-0MWNGYDIZ0037HGW;
+producer **Q1 = (a)**, **Q2 = (a)**, **Q3 = (a)**, recorded 2026-11-19). A
+fresh war stores an **empty ring** and only the hex map used to materialise it,
+so a hangar `▶ DEPLOY` on the first battle (and the first battle after `⟲
+RESTART WAR`) targeted no hex: the win skipped the capture cycle, banked
+nothing, yet the map still claimed `WIN BONUS BANKED: +N MINERALS`. The hangar
+now **materialises the authored ring on load** — the same rule the map applies —
+and persists it through `saveHangarWarPayload()`, respecting the demo and
+in-memory guards, so the first deployment names a real hex and pays its salvage
+and bonus through the normal capture cycle; `⟲ RESTART WAR` materialises the new
+war's ring the same way. A ring that cannot be materialised still pays: a
+winning deployment with no target hex banks exactly `WIN_BONUS_MINERALS` through
+the **hexless fallback** in `PlayScene._resolveHangarWarCapture()` (minerals
+only, no capture watermark, no hex state change). The capture path and the
+fallback are **mutually exclusive**, so the bonus is paid exactly once, and the
+map announces the amount the win resolution **actually banked** (read from its
+own record, never a constant), so the announced line and the hangar's balance
+always agree.
+
 #### The hangar and its economy
 
 The economy, unlock tree, salvage banking and `ai_hell_hangar_war` payload are
@@ -3139,10 +3314,81 @@ slice deferred:
   owned sets by one alias/catalogue mapping (`waveLaser` → `wave_laser`,
   `extra-life` → `hardened_plating`, shipped weapon ids, `hull-…` ids, and any
   other id as an upgrade). Ring 1 grants the Bulwark hull, the Wave Laser and
-  Ricochet starting weapons, the `rapid` strength entry, Extra Life and a
-  `core-bank` upgrade; ring 2 grants further hulls (`hull-2`, `hull-3`), weapons
+  Ricochet starting weapons, the `rapid` strength entry, Extra Life and —
+  through its special mission — the grant-only `hull-4`; ring 2 grants further
+  hulls (`hull-2`, `hull-3`), weapons
   (`arc`, `broadside`, `dual`, `nova`, `rapid`, `ricochet`), Extra Life and the
   `armour-plating` / `firepower-up` / `systems-upgrade` strength entries.
+
+#### Buying permanent levels (buy-to-upgrade)
+
+**The hangar is the intended source of permanent upgrades** (AH-0MWHW4ALS0039JFU,
+shipped for **weapons and power-ups**): a level-bearing weapon or power-up the
+fleet already **owns** is
+an upgrade row, not a dead `OWNED` one. The row shows its current permanent
+level and the priced next-level action (`UPGRADE · 150 min`), rendered
+**disabled** with its price and shortfall (`UPGRADE · 150 min — NEED 40 min`)
+when the fleet cannot pay, and `MAX` once it reaches the shared ceiling. A
+purchase spends the hangar's two currencies and raises the permanent level by
+exactly one; the rules are pure (`costToUpgrade` / `buyUpgrade` in
+`src/core/hangarWar/hangarEconomy.ts`, beside `canBuy`/`buy`) and the scene owns
+no purchase logic. Buying a level is player-action only: the attract booth still
+buys the cheapest useful **unlock**, never an upgrade (and never a power-up,
+see A1 above).
+
+**This is distinct from the run path.** A run also raises permanent levels —
+the hold-full reward and the shared permanent grant — but those are
+**run-scoped** and die with the ship. The hangar purchase is the **persistent**
+economy: it is paid for with banked minerals/cores between sorties, survives the
+run, and is carried into the next deployment.
+
+- **One shared ceiling (producer Q1 = (a), 2026-11-15).**
+  `MAX_PERMANENT_LEVEL` is the **one authored number** (5) read by both the
+  hangar economy's cap refusal and the run-path level-up offer, so there is no
+  parallel maximum. The ladder starts at the run's own base level `1`, so the
+  first purchase is `1 → 2` and `MAX_PERMANENT_LEVEL - 1` purchases reach the
+  cap; a kind at the ceiling is refused `capped` and its row shows `MAX`.
+- **Level-bearing kinds only (producer Q2 = (a), 2026-11-15).** Only kinds with
+  a permanent level to raise are upgradeable: **weapons** and the non-consumable
+  power-ups. A consumable (a charge pool — Shield, Thorn Field, Phase Shift,
+  Teleport, Force Field, Mystery UFO) and the field-pickup-only kind (Extra
+  Life) have no permanent level, so they are refused `non-upgradeable` and their
+  rows render exactly as before; charge purchases stay out of scope.
+- **Deterministic price.** The next level costs `100` minerals plus `50` per
+  current level, plus one core every two levels — both currencies at once, on
+  the shipped two-currency `HangarPrice`. Ring gating already applied at
+  purchase, so the upgrade branch does not re-gate.
+- **Persistence and the deploy grant.** Bought levels live in the same versioned
+  `ai_hell_hangar_war` payload (`hangar.weaponLevels` / `hangar.powerUpLevels`),
+  added by field presence so an older save reads as "no upgrade" and every kind
+  deploys at its base level. **Ownership is a separate set**: weapons in
+  `hangar.unlockedWeapons`, power-ups in `hangar.unlockedPowerUps` (a persisted
+  power-up level row still implies ownership, so no stored row is orphaned).
+  A deployment grants the bought levels through the **same shared
+  permanent-grant seam** the hold-full reward and checkpoint resume use, so
+  `Player.getWeaponLevels()` / `getPowerUpLevels()` read the bought levels and no
+  temporary/timed stack is ever opened.
+- **The captured defender inherits them.** Because the capture snapshot reads
+  those same accessors at the victory moment, a hex captured **after** an upgrade
+  stores the higher permanent levels: a defender left behind inherits the
+  hangar-bought weapon levels at capture time through the shared capture path
+  (AH-0MWH42DWQ004SAOJ, § *The capture cycle* step 3) with **no capture-side
+  change**.
+
+> **Power-ups are bought from the unlock tree (AH-0MWKT12BT001106T, producer
+> Q1 = (b), Q2 = (ii), Q3 = (1)).** A hangar power-up is a normal unlock-tree
+> entry: buying one spends its two-currency price, records the id in the
+> canonical **`hangar.unlockedPowerUps`** owned set and, in the same payload
+> write, seeds its `hangar.powerUpLevels` row at **level 1**. That first row is
+> what makes a power-up upgradeable: the buy-to-upgrade rule now reads
+> ownership from the owned set (a persisted level row still implies ownership)
+> and prices the next level toward **`MAX_PERMANENT_LEVEL`** exactly as it does
+> for a weapon. The renderer and the deploy grant stay kind-agnostic, so an
+> owned power-up shows the same `UPGRADE` row and travels the same grant path.
+> Only **level-bearing** kinds are sold — a consumable charge pool and the
+> field-pickup-only Extra Life carry no level to raise and are refused
+> `non-upgradeable`. The hex-grant and run-carry-over routes were deliberately
+> **not** taken: the hex boss keeps granting hulls, weapons and modifiers only.
 
 #### The hex ring and ring growth
 
@@ -3172,7 +3418,7 @@ generated. A fresh war materialises its ring from the definitions; a stored
 
 #### The capture cycle
 
-One captured hex is one deployment, resolved in four steps in a single payload
+One captured hex is one deployment, resolved in five steps in a single payload
 write:
 
 1. **Bank the salvage.** The run's cumulative salvage at the mini-boss moment is
@@ -3195,7 +3441,8 @@ write:
    flying a hull the fleet owns; no defender means no hold
    (`defender-required`). The defender's stored rating is the hangar economy's
    single formula — `baseDefence + 3 × armour + 2 × firepower + 2 × systems`
-   (Scrap Hull `2`, Bulwark Hull `14`, Juggernaut Hull `15`) — never a flown
+   (Scrap Hull `2`, Vanguard Hull `3`, Bulwark Hull `14`, Juggernaut Hull `15`)
+   — never a flown
    battle. **The rating carries the run's permanent upgrades at capture time
    (AH-0MWH42DWQ004SAOJ):** the stored total is the **hull rating plus the
    contribution** of the victory-moment snapshot — every permanent weapon level
@@ -3206,7 +3453,12 @@ write:
    and a held other consumable charge (Mystery UFO) as **systems**, at the
    shipped **armour 3 / firepower 2 / systems 2** weights (§8.1's one mapping
    table) — so a bot left without upgrades stores no snapshot and rates exactly
-   as before. **Accepted balance consequence (producer decision Q3 = A):** the
+   as before. **Hangar-bought weapon levels travel the same path:** a level
+   bought in the hangar (§ *Buying permanent levels*) is granted at deployment
+   through the shared permanent-grant seam, so the victory-moment snapshot
+   already reads it — a hex captured after an upgrade stores the higher level,
+   with no capture-side change.
+   **Accepted balance consequence (producer decision Q3 = A):** the
    frontier aggression budget is unchanged, so **defence simply gets easier** —
    a late run's upgrade contribution can exceed the maximum possible attack
    strength, making a well-defended hex effectively unretakeable. That is an
@@ -3225,9 +3477,24 @@ write:
    ring-end hangar assault described next (a repel wins the ring and opens the
    next one; a fall resets the campaign); the **rush** line opens the next ring
    with **no assault at all**, exactly as it always has.
+5. **Spend the flown ship (parent AH-0MWL5PAP2001XYYF, producer Q2 = B).** The
+   ship the deployment flew is a **one-battle consumable** on **both** outcomes:
+   its hull (left behind as the defender on a win, destroyed on a loss), every
+   starting weapon and modifier on the active loadout, and those ids' bought
+   permanent `weaponLevels` / `powerUpLevels` rows are removed through the pure
+   `consumeDeployedShip` rule. Every owned item the player **did not fly**
+   survives, and the free starter kit (`hull-1` + `spread`) is always owned, so
+   a battle can never soft-lock the fleet. The hangar then resets to the starter
+   kit — `activeHull` is the starter hull and `activeLoadout` is empty, so the
+   next deployment carries only the permanent cannon until the player refits.
+   The banked balances are untouched by consumption; a win's fixed bonus is what
+   makes a win pay for the next ship. The ring-end fresh-campaign reset still
+   wins over consumption, and a refused capture (`unknown-hex` /
+   `defender-required`) is not a completed battle and spends nothing.
 
 A lost deployment is the mirror image: it forfeits **only** the salvage earned
-since the last bank and leaves the hangar and the ring untouched. Difficulty is
+since the last bank, spends the ship it flew (step 5), and otherwise leaves the
+hangar and the ring untouched. Difficulty is
 still the shipped curve data: a hex's aggression selects campaign level
 `1 + aggression` (clamped to the campaign maximum), and perturbs the mini-boss's
 hit pool with the same bounded formula the campaign's mini-bosses use.
@@ -3244,12 +3511,13 @@ implementation.
 - **Authored, not scripted (producer answer Q1 = a).** The special mission is
   **authored ring data**: `isSpecialMission` on `HexRingDefinition`
   (`src/data/hexRingDefinitions.ts`, mirrored in the `hex-ring-*.csv` seeds).
-  Ring 2 authors exactly one — `hex-r2-3`, *the-void-marshall*. Its deployment
-  is the ordinary one-level capture above (deploy → beat the wave-5 mini-boss →
-  bank → grant → leave a bot); the *special* part is only the reward. The ring
-  validator rejects a special mission whose grant is not a hull catalogue entry
-  (`HexRingDefinitionError`), so malformed authored data fails loudly rather
-  than silently becoming an ordinary hex.
+  Each ring authors exactly one — ring 1's is `hex-r1-5`,
+  *the-hollow-judge*, and ring 2's is `hex-r2-3`, *the-void-marshall*. Its
+  deployment is the ordinary one-level capture above (deploy → beat the
+  wave-5 mini-boss → bank → grant → leave a bot); the *special* part is only
+  the reward. The ring validator rejects a special mission whose grant is not
+  a hull catalogue entry (`HexRingDefinitionError`), so malformed authored data
+  fails loudly rather than silently becoming an ordinary hex.
 - **The reward is a real ship (producer answer Q2 = a).** The granted hull is
   `hull-3` **Juggernaut Hull** (§8.1's catalogue): **5 starting lives** (two more
   than the Scrap Hull, one more than the Bulwark), defence `15`, speed ×0.8 — a
@@ -3258,6 +3526,22 @@ implementation.
   `resolveHexGrant`/`resolveHexCapture` path and persists under the one
   `ai_hell_hangar_war` payload (field-presence migration; no new storage key).
   Upgrade bays remain out of scope (AH-0MWEUSVJ1007EXJY).
+- **Ring 1's own special (AH-0MWJ51KUS005WQK6).** The opening ring now offers a
+  special mission from its first frontier: `hex-r1-5` (*the-hollow-judge*)
+  converts its `core-bank` grant to `hull-4` **Vanguard Hull** — **4 starting
+  lives**, `baseDefence` **3**, speed ×0.9. That is a real survivability step
+  over the starter Scrap Hull (3 lives / DEF 2) while staying clearly below the
+  Bulwark (4 lives / DEF 4), so the Bulwark keeps its value as both the free
+  `hex-r1-1` grant and the ring-1 purchase. The hull is **grant-only** (producer
+  answer Q3 = b): a catalogue entry so `isHullGrant` / `resolveHexGrant` accept
+  the authored grant, with a ring gate beyond every authored ring so `canBuy`
+  always reports `gated` — the special mission is its only source, and the
+  hangar lists it only once granted. Ring 1 stays exactly six hexes (the special
+  is a conversion, not a seventh hex) and `hex-r1-6` stays its sole weapon hex.
+  The hex keeps its `fortress` landmark, so securing it takes the shipped two
+  capture passes and the hull is paid on the securing pass. The rotation draws
+  only from the **current ring's** uncaptured specials, so the ring-1 offer
+  never leaks into ring 2.
 - **The offer rotates (producer answer Q3 = b).** Which special mission the ring
   presents changes **between sorties**: `specialMissionOfferFor` draws from a
   per-sortie stream of the shared seeded RNG (`resolveSpecialOffer` in
@@ -3267,8 +3551,8 @@ implementation.
   never ad-hoc randomness in a scene — and a captured offer is never re-offered.
 - **Known ahead.** The map publishes the offer **before** the player commits a
   life: the tile carries a short `★ SPECIAL` tag and the detail panel shows the
-  offered reward (hull name, its description, `+2 LIVES`, defence) and whether
-  it is offered *now*. The panel is built from the same reward derivation the
+  offered reward (hull name, its description, the extra lives, defence) and
+  whether it is offered *now*. The panel is built from the same reward derivation the
   capture pays (`src/core/hangarWar/specialMission.ts`), so the map can never
   advertise a hull the capture would not grant.
 
@@ -3321,6 +3605,40 @@ known-ahead intel **before** the player commits a life.
   optional fields parsed by presence, so a save written before the axes landed
   loads safely with no version bump and no second storage key.
 
+**The shipped variety (AH-0MWH4F375000X08G).** Ring 2 is the first ring to
+author the axes — one hex per axis, all at its aggression-2 survivable floor,
+with no `baseAggression`, grant, boss or weakness changed on any row:
+
+- **`hex-r2-1`** (*the-siege-leviathan*) authors the **`nebula` personality**.
+  It grants `arc`, so the boss's demonstrated volley genuinely drifts at the
+  shared drag factor (`NEBULA_PROJECTILE_DRAG = 1.65`, ≈ 61 % speed) with no
+  new code path.
+- **`hex-r2-6`** (*cobalt-siege*) authors a **contract** — *"Break the siege
+  line then hold the hex"* — paying **+100 salvage / +1 core** banked through
+  `bankSalvage` on capture (below the 140-salvage cache payout).
+- **`hex-r2-7`** (*the-static-prophet*) authors the **`fortress` landmark** —
+  two capture passes (`FORTRESS_CAPTURE_PASSES = 2`) while keeping its
+  `extra-life` grant.
+
+Ring 1 also authors the axes (AH-0MWJ4ZDXO007VDJS), so the opening ring
+demonstrates the variety rather than reading as six identical chores:
+
+- **`hex-r1-5`** (*the-hollow-judge*) authors the **`fortress` landmark** — two
+  capture passes. It is also the ring-1 **special mission** (AH-0MWJ51KUS005WQK6),
+  so its grant is the grant-only `hull-4` Vanguard Hull paid on the securing
+  pass (the `core-bank` upgrade it used to grant was the least disruptive one
+  to convert). The hex is the ring's last hex before the weapon hex, so the
+  set-piece adds a choice at the tail of the ring instead of slowing the opener.
+- **`hex-r1-4`** (*ember-reaver*) authors a **contract** — *"Crack the ember
+  nest and hold the hex"* — paying **+60 salvage / +1 core** banked through
+  `bankSalvage` on capture (below ring 2's +100/+1 and far below the
+  140-salvage cache payout).
+
+No ring-1 row's `baseAggression`, grant, boss or weakness changed by the
+variety pass, so `hex-r1-6` remains the ring's hardest hex and the
+aggression-ordered recommended path is unaltered. (The only later grant change
+is the special-mission conversion above.) Each authored axis is published in
+the known-ahead intel before the player commits a life.
 The axes are exercised by the gyms (§ *Gym coverage and parity*): `GymHexWar`
 publishes the personality/contract/landmark intel and `GymMiniBoss`'s HEX mode
 applies the two mechanics through the same shared mapping the game runs.
@@ -3378,6 +3696,13 @@ margin               = defenderSum − attackStrength
 
 #### The defence resolver and the frontier tick
 
+> **Proposed, not shipped (backlog §8.3):** a **pre-emptive counter-push** —
+> publishing a queued attack before the player deploys, and defusing it by
+> winning a deployment at its origin — is proposed in §8.3 (Pre-emptive
+> counter-push, AH-0MWL7P5T50030229). It depends on the planned defence
+> reinforcement (AH-0MWH48IEG00929GQ) and fair-origin rule
+> (AH-0MWH3A87Z005LLOX). The resolver below stays normative until it lands.
+
 The defence is **arithmetic over stored numbers**, never a simulated battle:
 
 ```
@@ -3416,12 +3741,20 @@ One **between-sortie frontier tick** runs when a deployment ends:
 
 An attack is always launched from an **unheld neighbouring hex of the same
 ring**, and the record names it: that is the design's answerability rule, since
-the player can go and defeat that neighbour to stop the pressure. A **secured
-ring has no unheld neighbour, so it draws no attacks** — the win state is quiet
-by construction. The transition is pure (the caller's payload is never mutated),
-the clock is **injected** (`seed` + `tick`, persisted as the payload's additive
-`frontierTick`), and ties between equally aggressive neighbours are settled by
-sorted id, so a reordered payload replays identically.
+the player can go and defeat that neighbour to stop the pressure. **An attacked
+hex defends, it does not attack** (AH-0MWH3A87Z005LLOX): the tick is told which
+hex the current deployment is attacking, and that hex is excluded as an attack
+origin — a hex fighting the player off is too busy defending to press a
+neighbouring player-held hex. Only the *origin* is suppressed: if the target has
+another unheld neighbour the attack still rides from it (the same selection
+order names it next), and a target whose only origin was the attacked hex draws
+no attack that tick (a queued entry is consumed, not retried). The exclusion is a
+per-tick input, never persisted, so afterwards the hex behaves as before. A
+**secured ring has no unheld neighbour, so it draws no attacks** — the win state
+is quiet by construction. The transition is pure (the caller's payload is never
+mutated), the clock is **injected** (`seed` + `tick`, persisted as the payload's
+additive `frontierTick`), and ties between equally aggressive neighbours are
+settled by sorted id, so a reordered payload replays identically.
 
 #### Defending-bot skills
 
@@ -3464,7 +3797,8 @@ map renders it on its one integrated view without re-deriving a single figure:
 - **Attack arrows on the ring**: one arrow per attack in the record, drawn
   between the origin hex and the hex it struck, so the shape of the tick reads
   at a glance.
-- **A left-hand attack panel** for the inspected arrow endpoint. It names which
+- **The `SELECTED HEX` section's attack row** for the inspected arrow endpoint
+  (drawn in the same panel as that hex's intel). It names which
   hexes were attacked, whether each **held or fell**, and the numbers that
   decided it — defender rating, attacking force, aggression multiplier, jitter,
   attack strength and margin (the record's `buildDefenceReport` row, copied
@@ -3530,10 +3864,10 @@ Measured baseline (seeds 1–3, competent bot; artifact
 
 | Ring | Line | Total mean (min–max) | Losses | Budget |
 |---|---|---|---|---|
-| 1 (6 hexes) | grind | **16.4 min** (15.7–16.9) | 6.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
-| 1 (6 hexes) | rush | **10.1 min** (9.8–10.6) | 1.0 | ring not secured |
-| 2 (12 hexes) | grind | **48.1 min** (42.4–58.4) | 12.0 | 60–180 · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
-| 2 (12 hexes) | rush | **22.3 min** (20.4–25.4) | 1.0 | ring not secured |
+| 1 (6 hexes) | grind | **15.4 min** (13.9–17.3) | 6.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | rush | **10.2 min** (9.4–10.9) | 1.0 | ring not secured |
+| 2 (12 hexes) | grind | **57.0 min** (46.0–70.8) | 12.0 | 60–180 · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | rush | **21.5 min** (19.8–24.9) | 1.0 | ring not secured |
 
 The per-hex budget **5–15 minutes per deployment** (AH-0MWHU5AV800969NA)
 derives each ring's window from its hex count — ring 1, six hexes → **30–90 min**;
@@ -3541,11 +3875,14 @@ ring 2, twelve → **60–180 min** — and the budget assertion states a **10 %
 tolerance** of each window's width: **±6 min** for ring 1 (30–90) and **±12 min**
 for ring 2 (60–180). The measured figures are **not** re-worded. With the
 one-level sortie the competent bot loses every sortie to enemy fire before the
-wave-5 clear: ring 1 grind **16.4 min** against its derived 30–90 window reads
-**`missed`**, while ring 2 grind **48.1 min** against 60–180 reads
-**`within-tolerance`** (48.1 ≥ the 48-minute tolerance floor) — a verdict
-change that is a consequence of the producer's new per-hex budget, computed by
-the harness, never a re-word of the old window. Each ruling is recorded with
+wave-5 clear: ring 1 grind **15.4 min** against its derived 30–90 window reads
+**`missed`**, and ring 2 grind **57.0 min** against 60–180 reads
+**`within-tolerance`** (57.0 is inside the 48-minute tolerance floor) —
+verdicts computed by the harness from the producer's per-hex budget, never a
+re-word of the old window. Both figures were re-measured after the
+AH-0MWJ1680Z001QYV2 audit follow-up (the calmer, pass-through flying bot with a
+tighter aim hold). Each
+ruling is recorded with
 its measured figure and re-ruled by its linked rebalancing item
 (**AH-0MWFDQ9EY004NO4X** ring 1, **AH-0MWFDQCFV007BZE5** ring 2). The headless
 arena is the recorded evidence (intake assumption A1 and Q4); a human playtest
@@ -3576,11 +3913,11 @@ and ~0.11 (ring 2, 1.33 of 12). The after-figures below are **measured**.
 | Ring · line | Captures | Deposit per deployment (minerals / cores) | At the mini-boss checkpoint (per captured) | Mineral-eq per deployment |
 |---|---|---|---|---|
 | 1 grind (before) | 1.33 of 6 (22.2 %) | 4.0 / 0.22* | 18.0 / 1* | 26.2 |
-| 1 grind (after) | 9 of 18 (50.0 %) | **9.0 / 0.5** | **18.0 / 1.0** | **59.0** |
+| 1 grind (after) | 8 of 18 (44.4 %) | **7.4 / 0.4** | **16.8 / 1.0** | **51.9** |
 | 1 rush (before) | 0 of 1 | 0 / 0 | — | 0 |
 | 1 rush (after) | 0 of 3 | 0 / 0 | — | 0 |
 | 2 grind (before) | 1.33 of 12 (11.1 %) | 1.86 / 0.11* | 16.75 / 1* | 13.0 |
-| 2 grind (after) | 12 of 36 (33.3 %) | **6.0 / 0.33** | **18.0 / 1.0** | **39.3** |
+| 2 grind (after) | 12 of 36 (33.3 %) | **2.7 / 0.3** | **8.0 / 1.0** | **36.0** |
 | 2 rush (before) | 0.33 of 1 | 6.0 / 0.33* | 18.0 / 1* | 39.3 |
 | 2 rush (after) | 0 of 3 | 0 / 0 | — | 0 |
 
@@ -3588,23 +3925,29 @@ and ~0.11 (ring 2, 1.33 of 12). The after-figures below are **measured**.
 weights each core at `CORE_MINERAL_EQUIVALENT` = 100 minerals for comparison
 only — the unlock tree spends **both** currencies.
 
-The **verdict**: per-deployment income rose, it did not drop. The shorter
-sortie is easy enough for the competent bot to wipe, so capture rate (and with
-it the cores + banked minerals that flow per deployment) climbs well above the
-campaign-slice figure (ring-1 grind 22.2 % → 50.0 %; ring-2 grind 11.1 % →
-33.3 %); the minerals held at a captured sortie's checkpoint stay at the
-arena's ~18-mineral per-run supply. The unlock pace therefore **shortens** for
-every rings-1–2 entry:
+The **verdict**: capture rate still beats the campaign slice (ring-1 grind
+22.2 % → 44.4 %; ring-2 grind 11.1 % → 33.3 %), so per-deployment **cores** rose.
+Per-deployment **minerals** fell (ring 1 9.0 → 7.4, ring 2 6.0 → 2.7) after the
+AH-0MWJ1680Z001QYV2 audit follow-up made collection **pass-through** — the bot
+flies through a pickup instead of retro-braking onto it and sweeps fewer of
+them up — and a captured sortie now banks 16.8 (ring 1) / 8.0 (ring 2)
+minerals at its mini-boss checkpoint. The unlock pace therefore still
+**shortens** for every rings-1–2 entry versus the campaign slice, but it is
+longer than the pre-follow-up measurement:
 
 | Entry (price) | Before (ring-1 grind) | After (ring-1 grind) | After (ring-2 grind) |
 |---|---|---|---|
-| Bulwark Hull `hull-2` (220 minerals / 3 cores) | 55 deployments | **25** | 37 |
-| Juggernaut Hull `hull-3` (320 / 4) | — | **36** | 54 |
-| Wave Laser `wave_laser` (120 / 1) | 30 | **14** | 20 |
-| Ricochet `ricochet` (90 / 2) | 23 | **10** | 15 |
-| Cluster Missile `cluster` (160 / 1) | 40 | **18** | 27 |
-| Hardened Plating `hardened_plating` (80 / 1) | 20 | **9** | 14 |
-| Anti-Maw Plating `anti_maw_plating` (110 / 2) — added by AH-0MVWZYJ740037EZ1 | — | **13**† | 20† |
+| Bulwark Hull `hull-2` (220 minerals / 3 cores) | 55 deployments | **30** | 83 |
+| Juggernaut Hull `hull-3` (320 / 4) | — | **43** | 120 |
+| Wave Laser `wave_laser` (120 / 1) | 30 | **17** | 45 |
+| Ricochet `ricochet` (90 / 2) | 23 | **13** | 34 |
+| Cluster Missile `cluster` (160 / 1) | 40 | **22** | 60 |
+| Hardened Plating `hardened_plating` (80 / 1) | 20 | **11** | 30 |
+| Anti-Maw Plating `anti_maw_plating` (110 / 2) — added by AH-0MVWZYJ740037EZ1 | — | **15**† | 42† |
+
+The ring-1 reward `hull-4` Vanguard Hull is **grant-only** (no purchase path),
+so it has no unlock-pace row: the special mission pays it and the hangar never
+sells it (AH-0MWJ51KUS005WQK6).
 
 † The entry post-dates the original measurement, so it is **derived** from the
 rows above rather than re-measured: `hardened_plating`'s 9 (ring-1) and 14
@@ -3649,10 +3992,10 @@ hand-edited.
 Two lines are measured, and both are viable:
 
 - **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
-  secured: **16.4 min** for ring 1 and **48.1 min** for ring 2, banking salvage
+  secured: **15.4 min** for ring 1 and **57.0 min** for ring 2, banking salvage
   and ending with a held ring.
-- **Rush** — the weapon hex first, then straight into the next ring: **10.1 min**
-  and **22.3 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
+- **Rush** — the weapon hex first, then straight into the next ring: **10.2 min**
+  and **21.5 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
 expected retakes and forfeiting the salvage of any failed attempt.
 
 **Neither line dominates**: the rush is faster but riskier and ends with an
@@ -3661,9 +4004,10 @@ and banks the salvage. Both lines are playable in the shipped capture cycle —
 the captured weapon hex is the ring's capstone, so holding it opens the next
 ring (`isRingOpenable`) while the skipped hexes are carried with their own
 aggression and defenders for the frontier tick. The re-measured grind totals
-are re-rated against the per-hex budget's derived windows: ring 1 **16.4 min**
-vs 30–90 reads **`missed`**, ring 2 **48.1 min** vs 60–180 reads
-**`within-tolerance`** — each is recorded with its new measurement and re-ruled
+are re-rated against the per-hex budget's derived windows: ring 1 **15.4 min**
+vs 30–90 reads **`missed`**, ring 2 **57.0 min** vs 60–180 reads
+**`within-tolerance`** (inside the 48-minute floor) — each is recorded with its
+new measurement and re-ruled
 by its own linked rebalancing item (**AH-0MWFDQ9EY004NO4X** ring 1,
 **AH-0MWFDQCFV007BZE5** ring 2) rather than re-worded; the per-hex budget
 itself stays authored.
@@ -3694,13 +4038,17 @@ and its gym (AGENTS.md gym↔game parity):
   banked salvage, ring progress, the unlock tree and the deployment selector,
   with no handlers, so it is read-only by construction. Fed the payload a
   special-mission capture wrote, it shows the `Juggernaut Hull` as an owned
-  unlock — the reward as the player sees it in the hangar.
+  unlock — the reward as the player sees it in the hangar. The ring-1 reward
+  (`hull-4` Vanguard Hull) is exercised the same way, and is absent from the
+  unlock tree until the special mission has granted it (it is never for sale).
 - **`GymHexWar`** — renders the shipped hex map (`buildHexMapModel` +
   `renderHexMap`) — read-only, so the tile aggression badges and the detail
   panel defaulting to the model's first hex are what the game shows — including
-  the **rolled-in report**: the attack arrows and the left-hand attack panel
-  built from the **shipped** frontier tick's record (`runFrontierTick`, with the
-  panel rows copied from `buildDefenceReport`) — and exposes the
+  the **sectioned layout** (the same `sections` registry, `LAST SORTIE` news and
+  `SELECTED HEX` intel-plus-attack-row grouping) and the **rolled-in report**:
+  the attack arrows and the `SELECTED HEX` section's attack row built from the
+  **shipped** frontier tick's record (`runFrontierTick`, with the panel rows
+  copied from `buildDefenceReport`) — and exposes the
   `take hex → leave bot → tick` control surface through the documented
   deterministic harness double. It also drives the **ring-end hangar assault**
   (`resolveRingAssault`) over its payload and renders the game's own `RING WON` /
@@ -3708,18 +4056,193 @@ and its gym (AGENTS.md gym↔game parity):
   model/renderer pair the game uses. It also exercises the **special mission**:
   the map's own `★ SPECIAL` tile tag, offered-now marker and reward block in the
   detail panel, a capture through the shipped `resolveHexCapture` (granting
-  `hull-3` into the owned set) and the between-sortie rotation
+  `hull-3` into the owned set, and ring 1's `hull-4` through its fortressed
+  special) and the between-sortie rotation
   (`specialMissionOfferFor`), all through the game's own code.
 
 Both are in the capture registry (watchable, `docs/dev/gameplay-capture.md`) and
 carry current rows in the parity matrix [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
-The attract bot traverses the whole surface — `menu → map → deployment →
-map (with the rolled-in report) → hangar` — from pure decisions in
-`src/ai/hangarWarTraversal.ts`: it picks the **weakest adjacent unheld hex** on
-the map, buys the **cheapest useful unlock** (seeded tie-break) in the hangar
-and lands on the map after every sortie, where the report is read in place.
+The attract bot traverses the whole surface — `menu → map → config →
+deployment → map (with the rolled-in report) → hangar` — from pure decisions in
+`src/ai/hangarWarTraversal.ts`: it opens the config screen pre-targeted at the
+**weakest adjacent unheld hex** on the map, buys the **cheapest useful unlock**
+(seeded tie-break) on that screen or in the hangar, and lands on the map after
+every sortie, where the report is read in place.
 Every decision is total — there is no `wait` action and no live defence battle
 to stall in.
+
+---
+
+### 8.3 Proposed gameplay mechanics (backlog — recorded 2026-11-17)
+
+A gameplay-mechanics review on **2026-11-17** read this document, the outer-loop
+candidate catalogue ([`OUTER_LOOP_CANDIDATES.md`](./OUTER_LOOP_CANDIDATES.md))
+and every open work item, then ranked ten candidate mechanics by expected player
+enjoyment. This subsection records the **accepted six**. Two of them (matchup
+combat and the music system) were already planned; the other four are new work
+items created by the review. Each entry's authoritative, testable specification
+is its work item: this document's normative sections (§2–§4, §7) change only
+when an item lands, and a *proposed* pointer marks each place a landed item will
+rewrite. The **four rejected** candidates are recorded with their reasons in
+**§11**.
+
+Every entry below states the mechanic, the gap it closes, the reward it pays,
+its legibility requirement and the measurement that gates it. **None of it is
+scheduled**; an entry marked *shipped* has landed and its normative rules now
+live in §2–§4.
+
+#### Graze and Danger Multiplier — ranked 10 (highest), High priority — **shipped**
+
+**Work item:** Graze and Danger Multiplier: reward near-miss dodging with score
+(AH-0MWL7ORK8007LXJI). **Landed:** the normative rules (band, once-per-pass
+credit, hysteresis, tier thresholds, decay, hit reset, rounding and the
+multiplier's score-only scope) are now §4.5 *Danger multiplier (graze)*; the
+text below is the original proposal, retained as rationale.
+
+- **Tier:** inner loop (seconds).
+- **Gap:** dodging is un-rewarded. §4.5 is a flat per-kill sum plus a per-level
+  time bonus, and no multiplier, combo or graze rule exists anywhere in the
+  build, so the most skilful thing a player does is unpaid.
+- **Mechanic:** a live enemy bullet or enemy body passing within
+  `playerHitRadius + GRAZE_BAND` (initial **12 px**) and **outside** the hit
+  radius records **one graze per object per pass** — with a 4 px hysteresis so a
+  bullet hovering at the band edge cannot farm score. Grazes step a five-tier
+  **danger multiplier** (`×1 → ×1.5 → ×2 → ×3 → ×5`) applied to kill score,
+  decaying one tier every **2 s** of inactivity and reset to `×1` by a player
+  hit.
+- **Legibility:** a spark arc at the grazed object, a rising pitch cue per tier,
+  a HUD `DANGER ×N` tacho that drains with the decay timer, and a shape/pulse
+  difference per tier so the signal is never carried by colour alone.
+- **Why it pleases:** it rewards the exact behaviour the game is about, turns
+  close flying from an accident into a deliberate choice, and gives the
+  leaderboard a gap that grinding cannot close.
+- **Gating measurement:** a same-seed bot batch must show survival, minerals,
+  upgrades and avoidable hits **unchanged** inside the
+  [`src/data/experience-targets.json`](../src/data/experience-targets.json)
+  bands — the mechanic is score-only and must move no other metric.
+
+#### Weapon evolutions — ranked 8, Medium priority
+
+**Work item:** Weapon evolutions: fuse two active weapon kinds into an evolved
+weapon (AH-0MWL7OWPF003E4TP).
+
+- **Tier:** middle loop (a run).
+- **Gap:** the weapon catalogue never interacts with itself, and a run takes
+  only about **two** upgrades (§2.7), so a build rarely reads as more than
+  "Cannon plus Spread".
+- **Mechanic:** pairings are **catalogue data** — `ricochet` + `arc` → **Chain
+  Ricochet**, `cluster` + `mortar` → **Cluster Barrage**, `spread` + `options` →
+  **Fan Escort**. Two tiers, both earned in play with no new economy and no new
+  slot: a **field evolution** fires the evolved pattern while both halves of a
+  pairing are active simultaneously, and a **permanent evolution** persists for
+  the run once both halves are permanently owned at level ≥ 2.
+- **Parity guard:** an evolution changes **pattern, coverage and behaviour
+  only** — never the number of damage instances per cadence tick — so the boss's
+  200-hit pool (§4.3) and the level-0 output budget (§4.4.2) keep their meaning.
+  Every evolved cadence stays on the shared 16th-note lattice and morphs only on
+  a bar downbeat. An evolved weapon resolves to its **base** id for hex matchup
+  purposes, so a fusion can never bypass a hex's authored strengths and
+  weaknesses.
+- **Legibility:** a fusion cue on collecting the second half, a HUD badge naming
+  the evolved weapon with its icon, and a matching downbeat cue on expiry — so
+  the pairings can be learned from play.
+- **Gating measurement:** the same-seed bot batch inside the experience-target
+  bands, plus a ring-timing re-measure.
+
+#### Anomaly (elite) enemies and wave twists — ranked 7, Medium priority
+
+**Work item:** Anomaly (elite) enemies and wave twists (AH-0MWL7P1AO003LKXT).
+
+- **Tier:** inner loop (a wave).
+- **Gap:** the campaign's 100 waves are built from one fixed archetype roster
+  with difficulty rising on two axes only — enemy count and a falling per-kill
+  drop chance (§4.6) — so after the classic-arcade debut novelty is carried by
+  density alone.
+- **Mechanic:** a wave may author **one elite** (or a seeded budget grants one on
+  about **15 %** of waves): a variant of a **counted** archetype with a distinct
+  aura, **1–3 bonus HP** and **one** bounded extra behaviour — `splitter`
+  (releases two ordinary children on death), `reinforced` (one extra force-field
+  hit through the shipped field rule) or `volatile` (a short radial burst on
+  death). Each behaviour reuses a shipped seam, and **level 1 never spawns an
+  elite**, so onboarding and the baseline are untouched.
+- **Reward:** an elite always drops from the shared pool and pays a level-scaled
+  guaranteed mineral bump, announced by a distinct death cue.
+- **Legibility:** the wave's opening cue names the elite and a tag tracks its hull
+  while it lives, so prioritising it is a decision the player can make.
+- **Gating measurement:** the same-seed bot batch inside the experience-target
+  bands, and a re-measured `docs/BALANCING.md` level-scaling table recorded on the
+  item before the shipped default rises above zero.
+
+#### Beat-locked soundtrack and intensity mix — ranked 6, already planned
+
+**Work items:** Implement the Music System from the Audio Design Chapter
+(AH-0MVKXT7O70061FXU); Music contract mapping and traceability guard
+(AH-0MVMH2OPY001X6M3).
+
+- **Tier:** presentation (every loop).
+- **Gap:** the game has no music, yet every weapon already fires on a **silent**
+  80 BPM shared lattice (§2.3). The rhythm exists; the player cannot hear it.
+- **Mechanic:** the music tempo **is** the run's `beatBpm` (default **80**, 187.5
+  ms per 16th-note step), so bars, phrases and transitions align to the same
+  lattice the weapons fire on. One continuous musical bed whose **stems gate on a
+  pure intensity parameter** — menu/attract, wave combat, boss, low-lives
+  tension, run end — with layer entry and exit on **bar boundaries only**, plus
+  the stinger and ducking rules the Audio Design Chapter defines. Music volume is
+  independent of the shipped SFX volume/mute settings, and every path degrades to
+  a safe no-op without an `AudioContext`.
+- **Why it pleases:** the cheapest large step in perceived production value and
+  tension, and it makes the existing on-grid fire cadence read as deliberate
+  mastery rather than a technical detail.
+- **Status:** recorded as an addendum on the two work items above (with addendum
+  acceptance criteria AC-M1–AC-M3 on the implement item and the contract rows on
+  the guard item). Those items remain the specification; §7.3 stays authoritative
+  for SFX.
+
+#### Matchup combat from hex intel — ranked 5, already planned
+
+**Work item:** Make hex strengths and weaknesses matter in combat
+(AH-0MWL5376H001WJFZ).
+
+- **Tier:** middle loop / outer loop (a deployment, a ring).
+- **Gap:** the authored `strengths` / `weaknesses` lines on the ring's hexes are
+  **inert display text** — no runtime rule reads them — so the strategist
+  affordance the design of record promises is unkept.
+- **Mechanic:** the authored lists become rules at the **single** player-damage
+  seam: a boss's `weaknesses` weapon lands **2 hit points per connected shot**, its
+  `strengths` weapon **1 per two shots** (resisted, never immune), neutral 1 —
+  with a deflect clang, spark shower and ricochet for resisted hits and a distinct
+  critical burst for effective ones.
+- **Legibility:** the boss's **opening cue** names the effective and resisted
+  weapons in the same demonstration vocabulary the hex grants already use, and the
+  hex detail panel keeps publishing the authored lists.
+- **Gating measurement:** both ring-timing lines re-measured with matchups live —
+  ring 1's measured 16.2 min against its 30–90 window
+  (AH-0MWFDQ9EY004NO4X) and ring 2's 48.7 min against 60–180
+  (AH-0MWFDQCFV007BZE5) — plus a same-seed bot batch, with the numbers recorded
+  on the item before it advances to `in_review`.
+
+#### Pre-emptive counter-push — ranked 2, Low priority
+
+**Work item:** Pre-emptive counter-push: defuse a pending frontier attack by
+deploying at its origin (AH-0MWL7P5T50030229).
+
+- **Tier:** outer loop (between sorties).
+- **Gap:** the frontier tick resolves **at** the player. `pendingAttacks` is
+  published only after it lands, so defence is read, never played. The
+  *reinforce* half (Strengthen a hexes defence, AH-0MWH48IEG00929GQ) and the
+  *fairness* half (Do not attack a hex from a hex the player is attacking,
+  AH-0MWH3A87Z005LLOX) are already planned; the **tempo choice** is not.
+- **Mechanic:** the map publishes a queued or imminent attack **before** the
+  player commits a deployment — origin, target, attacking force, defender rating
+  and margin — and a **winning** deployment at the origin **defuses** that queued
+  attack in the same payload write. A lost pre-emption costs the run and the
+  attack lands as normal, so striking first is a real risk.
+- **Invariants:** arithmetic only (no simulated battle), no new persisted field
+  (`HangarWarDeployment.hexId` plus the existing `pendingAttacks` are the inputs),
+  and the tick stays a pure function of `(payload, seed, tick, attackingHex)` so
+  a replay is identical.
+- **Gating measurement:** both ring-timing lines re-measured, because a cheaper
+  counter-play changes the measured line.
 
 ---
 
@@ -3754,6 +4277,89 @@ All clarifying questions and their answers from the intake process are captured 
 | **AC4** — MVP content (10 levels, 1 boss, 3 lives, 9+ power-ups, local leaderboard, no difficulty scaling) | ✅ | §3 |
 | **AC5** — Content catalogs (enemies, waves, boss, power-ups, scoring, progression) | ✅ | §4 |
 | **AC6** — Technical architecture (selected engine, module breakdown, data model, save design, risks) | ✅ | §6 |
+
+---
+
+## 11. Appendix: Gameplay mechanics considered but not implemented
+
+The 2026-11-17 gameplay-mechanics review proposed ten mechanics and ranked them
+by expected player enjoyment. Six were accepted and are recorded in **§8.3** (two
+of those were already planned). The **four below were rejected** and are
+deliberately not scheduled; they are recorded here so the reasoning is auditable
+and a future review can revisit them with its eyes open. Rejected does not mean
+bad — it means "not now, and here is what would change that".
+
+### Manual Overdrive: a player-triggered panic button (ranked 9)
+
+- **What it was:** one charge, armed by a pickup or hold-full grant, spent on an
+  in-run key to fire a ship-centred pulse that clears enemy bullets and damages
+  every enemy once — a *manual* counterpart to the automatic Bomb and Smart Bomb,
+  leaving Phase Shift and Teleport untouched.
+- **Why rejected:** the automatic defence model is a **deliberate cognitive-load
+  decision** (§2.3 records the automatic-teleport ruling, AH-0MUZE4AIP009HZWC),
+  and a manual pulse adds a sixth in-run input, a new armed-charge HUD state and
+  a key-binding decision on two already-remapped control schemes, for a gain the
+  automatic defences largely already deliver.
+- **What would revive it:** playtest evidence that players want a clutch action
+  they choose; or a run-grade/medal objective that specifically rewards an
+  unspent charge, which would give the charge a *strategic* rather than tactical
+  purpose.
+
+### Focus (precision) mode with a visible hit core (ranked 4)
+
+- **What it was:** a held key that halves thrust/turn and reveals the ship's true
+  collision footprint as a bright pip, giving a mastery dial on dense patterns —
+  with the enemy-bullet fade-out (Fade bullets out, AH-0MWJ9PMYF005N588) folded in
+  as the readability half.
+- **Why rejected:** it duplicates a mastery dial the two control schemes already
+  provide (the Asteroids turn ramp versus 4-directional movement), costs another
+  per-scheme binding, and the readability half is already separately scheduled as
+  the bullet fade.
+- **What would revive it:** evidence from human sessions that later-level patterns
+  are lost to hitbox misreads rather than to movement; the fade-out alone may be
+  enough.
+
+### Extraction banking: cash out mid-sortie (ranked 3)
+
+- **What it was:** at wave boundaries, choose **BANK NOW** (lock in the run's
+  unbanked minerals and cores) or **PUSH ON** (a rising carry multiplier on the
+  eventual bank, with death forfeiting the whole pot) — tension in place of the
+  single wave-5 mini-boss banking cliff (§8.2 capture cycle step 1).
+- **Why rejected:** it re-opens the salvage economy and both ring-timing budgets
+  while they are already under re-baseline (AH-0MWFDQ9EY004NO4X,
+  AH-0MWFDQCFV007BZE5), and it softens the arcade stakes the design of record
+  deliberately protects — a lost run is still meant to be final (§4.6).
+- **What would revive it:** the ring-timing re-baseline landing *and* evidence that
+  losses are concentrated in early-run deaths (where there is nothing to bank), so
+  the choice would add tension without trivialising the economy.
+
+### Run grade and medals (ranked 1)
+
+- **What it was:** an end-of-run letter grade (S–D) derived from an explicit
+  rubric — survival depth, graze average, lives lost, mini-bosses cleared — plus
+  three to five unlocking medals, all persisted beside the leaderboard score.
+- **Why rejected:** as a pure meta layer it adds **no new play**, and its most
+  interesting rubric input (graze average) does not exist until the Graze and
+  Danger Multiplier item lands. Building the grade first would mean inventing
+  telemetry that the review already schedules elsewhere.
+- **What would revive it:** Graze and Danger Multiplier (AH-0MWL7ORK8007LXJI)
+  landing — after which the grade is a cheap read of data the run already
+  produces.
+
+### Disposition of all ten proposals
+
+| Rank | Mechanic | Disposition | Destination |
+|-----:|----------|-------------|-------------|
+| 10 | Graze and Danger Multiplier | **accepted — High** | AH-0MWL7ORK8007LXJI |
+| 9 | Manual Overdrive (panic button) | rejected | this appendix |
+| 8 | Weapon evolutions | **accepted — Medium** | AH-0MWL7OWPF003E4TP |
+| 7 | Anomaly (elite) enemies | **accepted — Medium** | AH-0MWL7P1AO003LKXT |
+| 6 | Beat-locked soundtrack and intensity mix | already planned | AH-0MVKXT7O70061FXU, AH-0MVMH2OPY001X6M3 |
+| 5 | Matchup combat from hex intel | already planned | AH-0MWL5376H001WJFZ |
+| 4 | Focus mode and visible hit core | rejected | this appendix |
+| 3 | Extraction banking | rejected | this appendix |
+| 2 | Pre-emptive counter-push | **accepted — Low** | AH-0MWL7P5T50030229 |
+| 1 | Run grade and medals | rejected | this appendix |
 
 ---
 

@@ -8,11 +8,70 @@
  * shipped ship config (`frictionDeceleration: 100`) and playfield size used
  * by the legacy decision layer.
  *
+ * The predictive hazard knobs include the **second-order motion model**
+ * toggle (`hazardMotionModelEnabled`, AH-0MWM0C7ZR001YJRE): on, the bot fits
+ * each hazard's velocity and curvature from a bounded position history and the
+ * class-shaped sampler (AH-0MWM0C9F9006HNXV) predicts along the class path;
+ * off reproduces the pre-change constant-velocity estimate and fixed-velocity
+ * solve bit-for-bit for the sweep's control arm. It **ships on**
+ * (AH-0MWOKL79Z0051ZXO) on that sweep's evidence — see the field docs.
+ *
+ * The **per-class horizon scale** (`hazardClassHorizonScale`,
+ * AH-0MWM0CB2Q003Y6AB) is what makes that sampler usable: each movement class
+ * multiplies `hazardPredictionHorizon` by its own window — `roamer` exactly the
+ * configured horizon, the curving/threatening classes longer — so a hazard that
+ * can still turn onto the ship is judged over a window long enough to see the
+ * contact.
+ *
  * @module src/ai/framework/competent/tunables
  */
 
 import type { CommitmentTunables } from '../commitment';
 import type { BotWorldTunables } from '../worldModel';
+
+/**
+ * Per-movement-class multiplier applied to `hazardPredictionHorizon` by the
+ * class-shaped sampler (AH-0MWM0CB2Q003Y6AB).
+ *
+ * A hazard whose threat is a **discrete event later in the window** — a diver
+ * committing to its dive, a patroller switching from patrol to an attack run —
+ * needs a longer threat window than the configured horizon, otherwise the model
+ * never sees the event it exists to predict. The classes whose threat is a
+ * *continuous* closing geometry (`chaser`) or a straight line (`roamer`,
+ * `formation`) keep exactly `hazardPredictionHorizon`. The scale is only applied
+ * when `hazardMotionModelEnabled` is on; the disabled path always uses the
+ * configured horizon (bit-for-bit the pre-change solve).
+ *
+ * Each default is a deliberate choice, documented on
+ * {@link COMPETENT_BOT_TUNABLES}:
+ *
+ * - `chaser` (1.0) — pure pursuit: the pursuit geometry is fully visible inside
+ *   the configured horizon, and a longer window only widens the "threatened"
+ *   set (the chaser will still be behind you however you turn), which makes the
+ *   pilot kite instead of fight — the `promo-ghost-hunt` over-dodge this value
+ *   replays (AH-0MWOKL79Z0051ZXO);
+ * - `diver` (1.4) — commits to a straight dive at the ship, arriving later than
+ *   a crossing hazard;
+ * - `patroller` (1.25) — straight patrol, then a straight attack run;
+ * - `formation` (1.0) — linear drift with an arena-edge reversal: it cannot
+ *   turn onto the ship, so it gets the configured horizon. (The earlier 1.15
+ *   encoded the arena harness's old *swaying* formation profile, which swung
+ *   back toward the ship; AH-0MWOKL79Z0051ZXO reconciled the harness with this
+ *   model, so the re-approach rationale no longer applies.)
+ * - `roamer` (1.0) — linear extrapolation, the configured horizon unchanged.
+ */
+export interface HazardClassHorizonScale {
+  /** Horizon multiplier for `chaser` hazards (default `1`, the configured horizon). */
+  readonly chaser: number;
+  /** Horizon multiplier for `diver` hazards (default `1.4`). */
+  readonly diver: number;
+  /** Horizon multiplier for `patroller` hazards (default `1.25`). */
+  readonly patroller: number;
+  /** Horizon multiplier for `formation` hazards (default `1`). */
+  readonly formation: number;
+  /** Horizon multiplier for `roamer` hazards — the control (default `1`). */
+  readonly roamer: number;
+}
 
 /** Tuning for the structured competent bot. */
 export interface CompetentBotTunables {
@@ -64,6 +123,59 @@ export interface CompetentBotTunables {
   /** Extra enemy-band utility at full wave pressure (focus fire late). */
   enemyWavePressurePort: number;
 
+  // ── Two-layer objective model (AH-0MWJ1680Z001QYV2) ─────────────
+  /**
+   * Whether the competent brain runs the two-layer primary/secondary model.
+   * `false` restores the pre-change flat single-layer selection, which is the
+   * purposefulness baseline the metric compares against (AC5).
+   */
+  layeringEnabled: boolean;
+  /**
+   * Minimum soak (seconds) of a primary objective before a secondary may
+   * divert from it. Longer = stickier primary courses (AC1).
+   */
+  primaryMinHoldSeconds: number;
+  /**
+   * Minimum soak (seconds) of a secondary diversion before the bot swaps to a
+   * different secondary — rate-limits secondary churn (AC2).
+   */
+  secondaryMinHoldSeconds: number;
+  /**
+   * Diversion payoff (`[0, 1]`) a secondary must clear before it may preempt
+   * the primary. A lone gold mineral or ordinary power-up sits below it, so
+   * presence alone never displaces the primary (AC3).
+   */
+  diversionThreshold: number;
+  /**
+   * Highest primary urgency (`[0, 1]`) at which a diversion is still allowed;
+   * above it (late in a timed wave) the bot holds its course and finishes the
+   * wave (AC2/AC3 wave-pressure focus).
+   */
+  secondaryUrgencyCap: number;
+  /**
+   * Mineral value a single red **deposit** is worth (`MINERAL_DEPOSIT_VALUE`).
+   * Normalises the mineral goal's value-aware weight and the mineral cluster
+   * diversion payoff to `[0, 1]`, so a red deposit is the strongest mineral
+   * opportunity and the mineral band stays inside its utility span (AC4).
+   */
+  mineralDepositValue: number;
+  /** Radius (px) within which co-located minerals count as a cluster (AC3). */
+  mineralClusterRadius: number;
+  /**
+   * Dynamic prioritisation: at or above this many live non-asteroid enemies a
+   * secondary's payoff earns no relaxation. Below it the payoff is relaxed
+   * toward 1 as the screen clears, so the bot sweeps up minerals/power-ups
+   * once the threat thins out (producer guidance, AH-0MWJ1680Z001QYV2).
+   */
+  diversionRelaxEnemyCount: number;
+  /**
+   * Dynamic prioritisation: how much a wave with plenty of time left
+   * (low wave pressure) relaxes a secondary's payoff toward collecting, in
+   * `[0, 1]`. `0` disables the time signal; `1` makes a fresh wave fully
+   * opportunistic.
+   */
+  diversionOpportunityWeight: number;
+
   // ── Ranges (px) ─────────────────────────────────────────────────
   /** Radius within which a live Extra Life drop is pursued. */
   lifeSeekRange: number;
@@ -82,6 +194,32 @@ export interface CompetentBotTunables {
   engagementRange: number;
   /** Distance within which a collection target counts as reached. */
   collectArrivalRadius: number;
+  /**
+   * Whether the bot may use the retro thruster to brake onto a collection
+   * target (AH-0MWJ1680Z001QYV2 audit rejection).
+   *
+   * Off by default: pickups are collected on contact, so braking to arrive at
+   * one is precisely the "trying to be very precise with its positioning"
+   * behaviour the producer rejected. The bot flies through the pickup and
+   * accepts the overshoot; turn it on to restore retro-brake collection.
+   */
+  collectReverseBrake: boolean;
+  /**
+   * Overshoot allowance (px) for collection (AH-0MWJ1680Z001QYV2 audit
+   * rejection). A mineral/power-up the ship has just passed — it is within
+   * this distance and behind the ship's velocity vector — drops out of the
+   * collection target set, so the bot lets it go instead of turning back for
+   * it. It becomes collectable again once it is ahead.
+   *
+   * **Opt-in (`0` = off)**: the producer asked for overshoot tolerance, but
+   * measurement showed that letting go of passed pickups costs the ring-2
+   * one-level economy half its captured sorties (a bot that stops sweeping
+   * picks up fewer minerals, so it upgrades more slowly). The pass-through
+   * collection (no retro-braking onto a pickup) and the reposition band stop
+   * deliver the "stop micro-positioning with thrusters" intent without that
+   * cost; this knob lets a producer try the stricter behaviour in the gym.
+   */
+  collectOvershootMargin: number;
   /** Distance (px) the bot keeps from a hazard (keep-away). */
   dangerMargin: number;
   /** Distance (px) within which the ship's centre is at risk from a shot. */
@@ -132,8 +270,45 @@ export interface CompetentBotTunables {
    * Look-ahead window (seconds) for hazard-collision prediction (AC2): a
    * bearing is unsafe when the ship and a moving hazard are predicted to come
    * within `threatRadius` inside this window.
+   *
+   * This is the **base** window: with `hazardMotionModelEnabled` on, a hazard is
+   * judged over this × its class's `hazardClassHorizonScale` (plus a bounded
+   * curvature boost for the drift classes); the disabled path uses exactly this
+   * value for every hazard.
    */
   hazardPredictionHorizon: number;
+  /**
+   * Whether the bot-side hazard tracker fits **velocity and curvature** from a
+   * bounded position history (AH-0MWM0C7ZR001YJRE · AC1/AC2) instead of the
+   * single first difference, and whether steering predicts each hazard along
+   * its movement-class trajectory (AH-0MWM0C9F9006HNXV). `false` reproduces the
+   * pre-change constant-velocity estimate and fixed-velocity closest-approach
+   * solve bit-for-bit, which is the sweep's control arm. A hazard with
+   * insufficient history (cold start) falls back to the constant-velocity
+   * estimate either way.
+   *
+   * **Ships on** since AH-0MWOKL79Z0051ZXO, on the seeded per-class sweep
+   * evidence (`src/ai/eval/hazardMotionSweep.test.ts`): the class-shaped model
+   * strictly reduces avoidable enemy-body contacts for the curving classes,
+   * never regresses the chaser, and is provably invisible for the straight-line
+   * controls. The earlier dark default existed because the chaser model (a
+   * constant-turn-rate arc fitted from the last two position deltas) predicted a
+   * threat on every escape bearing, making the pilot over-dodge a pursuer; that
+   * model is now pure pursuit. `hazardMotionModel.test.ts` pins the default —
+   * change it only with fresh sweep evidence.
+   */
+  hazardMotionModelEnabled: boolean;
+  /**
+   * Per-movement-class horizon multiplier for the class-shaped sampler
+   * (AH-0MWM0CB2Q003Y6AB): `hazardPredictionHorizon` × the class's scale, plus
+   * a bounded curvature boost, is the threat window a class-shaped hazard is
+   * sampled over. `roamer` stays at exactly the configured horizon; the
+   * curving/threatening classes get a longer window (see
+   * {@link HazardClassHorizonScale} for each documented default). Consumed by
+   * every hazard consumer through the one sampled predictive test, and only
+   * when `hazardMotionModelEnabled` is on.
+   */
+  hazardClassHorizonScale: HazardClassHorizonScale;
 
   // ── Aim lead prediction (AH-0MV1DUSM2005HL98) ────────────────────
   /**
@@ -240,6 +415,16 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   prioritySpan: 0.5,
   enemyWavePressurePort: 0.4,
 
+  layeringEnabled: true,
+  primaryMinHoldSeconds: 0.6,
+  secondaryMinHoldSeconds: 0.35,
+  diversionThreshold: 0.5,
+  secondaryUrgencyCap: 0.75,
+  mineralDepositValue: 10,
+  mineralClusterRadius: 120,
+  diversionRelaxEnemyCount: 3,
+  diversionOpportunityWeight: 0.7,
+
   lifeSeekRange: 600,
   mineralSeekRange: 600,
   powerUpSeekRange: 600,
@@ -247,6 +432,8 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   asteroidSeekRange: 400,
   engagementRange: 140,
   collectArrivalRadius: 18,
+  collectReverseBrake: false,
+  collectOvershootMargin: 0,
   dangerMargin: 70,
   threatRadius: 55,
   longTravelDistance: 250,
@@ -262,6 +449,35 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   // look-ahead (AC2); a stationary hazard is unaffected either way.
   hazardPredictionEnabled: true,
   hazardPredictionHorizon: 0.6,
+  // **On** since AH-0MWOKL79Z0051ZXO, on the seeded per-class sweep evidence
+  // (`src/ai/eval/hazardMotionSweep.test.ts`): the second-order (velocity +
+  // curvature) hazard tracker and the class-shaped trajectory sampler strictly
+  // reduce avoidable enemy-body contacts for `chaser`/`diver`/`patroller`, never
+  // regress the chaser, and are provably invisible for the straight-line
+  // `roamer`/`formation` controls. The earlier dark default
+  // (AH-0MWM0C9F9006HNXV) existed because the chaser model — a constant-turn-rate
+  // arc taken from the last two position deltas — predicted a threat on every
+  // escape bearing, so the pilot hovered beside a pursuer instead of fleeing it;
+  // that model is now pure pursuit (the shipped ghost steering's own rule).
+  // Off still reproduces the single-difference estimate and the fixed-velocity
+  // solve bit-for-bit (AH-0MWM0C7ZR001YJRE · AC2, the sweep's control arm).
+  // Pinned by hazardMotionModel.test.ts — change only with fresh sweep evidence.
+  hazardMotionModelEnabled: true,
+  // Per-class threat-window multipliers for the class-shaped sampler
+  // (AH-0MWM0CB2Q003Y6AB). Only a class whose threat is a **discrete commit
+  // later in the window** needs a longer look-ahead (`diver`, `patroller`); a
+  // continuous closing geometry (`chaser`) or a straight line (`roamer`,
+  // `formation`) stays at exactly `hazardPredictionHorizon` — a longer chaser
+  // window only makes the pilot over-dodge a pursuer (AH-0MWOKL79Z0051ZXO,
+  // `promo-ghost-hunt`). Applied only with the motion model on, so the disabled
+  // path keeps the configured horizon bit-for-bit.
+  hazardClassHorizonScale: Object.freeze({
+    chaser: 1,
+    diver: 1.4,
+    patroller: 1.25,
+    formation: 1,
+    roamer: 1,
+  }),
 
   aimLeadEnabled: true,
   aimLeadAlignSeconds: 0.25,
@@ -306,6 +522,10 @@ export function resolveCompetentTunables(
     commitment: {
       ...COMPETENT_BOT_TUNABLES.commitment,
       ...(overrides.commitment ?? {}),
+    },
+    hazardClassHorizonScale: {
+      ...COMPETENT_BOT_TUNABLES.hazardClassHorizonScale,
+      ...(overrides.hazardClassHorizonScale ?? {}),
     },
     world: {
       ...COMPETENT_BOT_TUNABLES.world,

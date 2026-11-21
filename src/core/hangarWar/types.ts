@@ -33,12 +33,107 @@ export interface HangarWarStorage {
   removeItem(key: string): void;
 }
 
+/**
+ * One purchased permanent level of a level-bearing weapon or power-up
+ * (parent AH-0MWHW4ALS0039JFU, AC2).
+ *
+ * The row vocabulary is the run path's own (`Player.getWeaponLevels()` /
+ * `getPowerUpLevels()`), so the hangar's persisted state and the run's
+ * permanent-level model can never drift apart. Only level-bearing permanent
+ * kinds appear here: a consumable (a charge pool) and the field-pickup-only
+ * kind have no permanent level to raise and are never stored as one
+ * (producer Q2 = (a), AC5).
+ */
+export interface HangarWeaponLevelRow {
+  /** The shipped weapon whose permanent level was bought. */
+  readonly id: WeaponId;
+  /**
+   * The bought permanent level, in the run path's absolute vocabulary:
+   * `2`..`MAX_PERMANENT_LEVEL` for a row this build wrote (the first purchase
+   * raises the base `1` → `2`). A legacy `1` row is still accepted, but it is
+   * the unupgraded base and grants nothing extra (AH-0MWKV6F26008X1T3).
+   */
+  readonly level: number;
+}
+
+/** One purchased permanent power-up level ({@link HangarWeaponLevelRow} twin). */
+export interface HangarPowerUpLevelRow {
+  /** The shipped power-up whose permanent level was bought. */
+  readonly id: PowerUpId;
+  /**
+   * The bought permanent level, in the run path's absolute vocabulary:
+   * `2`..`MAX_PERMANENT_LEVEL` for a row this build wrote; `1` is the
+   * unupgraded base (accepted from an older save).
+   */
+  readonly level: number;
+}
+
 /** The starting loadout the fleet deploys with (resolved from unlocks). */
 export interface HangarLoadout {
   /** Starting weapon ids carried into a deployment. */
   startingWeapons: string[];
   /** Permanent modifier ids applied to the hull. */
   modifiers: string[];
+}
+
+/**
+ * A saved ship configuration — a named snapshot of the fleet's equipped hull,
+ * starting weapons, modifiers, and the permanent levels that build relies on
+ * (AH-0MWL8C6FE008G1E7).
+ *
+ * Saving captures the **currently equipped** set so re-applying it purchases
+ * and equips every missing part in one action. The build is immutable once
+ * saved: to change it the player deletes and re-saves with a new name.
+ *
+ * Level rows record the permanent levels this build **relies on** at save time;
+ * re-applying tops those levels up (never down) so the fleet deploys identically.
+ */
+export interface SavedShipBuild {
+  /** Stable build id (scene-supplied, survives rename, stable across saves). */
+  readonly id: string;
+  /** Display name the player chose (trimmed, non-empty, bounded length). */
+  readonly name: string;
+  /** The hull the build deploys with (the hangar's `activeHull` at save time). */
+  readonly hullId: string;
+  /** The starting weapons the build carries (at save time). */
+  readonly startingWeapons: readonly string[];
+  /** The permanent modifiers the build flies (at save time). */
+  readonly modifiers: readonly string[];
+  /**
+   * The permanent weapon levels the build relies on, captured at save time.
+   *
+   * Only the kinds this build uses appear here; re-applying tops those levels
+   * up (never down) so the fleet deploys identically. Absence means no weapon
+   * levels were bought — the build deploys at base.
+   */
+  readonly weaponLevels?: readonly { readonly id: string; readonly level: number }[];
+  /**
+   * The permanent power-up levels the build relies on, captured at save time.
+   *
+   * Same semantics as {@link weaponLevels}: only the kinds this build uses,
+   * topped up on apply, absent when none were bought.
+   */
+  readonly powerUpLevels?: readonly { readonly id: string; readonly level: number }[];
+}
+
+/**
+ * The exact ship a deployment flew — the identity a battle's outcome spends
+ * (parent AH-0MWL5PAP2001XYYF).
+ *
+ * The hull plus the **resolved** active loadout is what a deployment launches
+ * with, so it is also what consumption removes on win or loss. It is a
+ * structural record (not a class) because it crosses the pure core/scene seam:
+ * `PlayScene`, the gym's `captureHex` and the capture cycle all pass the same
+ * shape. The free starter hull and starter weapon are always owned and are
+ * never removed, however they appear here.
+ */
+export interface DeployedShip {
+  /** The hull that flew (the hangar's resolved `activeHull`). */
+  readonly hullId: string;
+  /** The resolved starting weapons the ship deployed with. */
+  readonly startingWeapons: readonly string[];
+  /** The resolved permanent modifiers the ship deployed with. */
+  readonly modifiers: readonly string[];
 }
 
 /** The persistent hangar: banked salvage and everything the player owns. */
@@ -53,10 +148,73 @@ export interface HangarState {
   unlockedWeapons: string[];
   /** Permanent modifiers owned. */
   ownedModifiers: string[];
+  /**
+   * Owned **power-up** ids — the canonical ownership record for the power-up
+   * unlock kind (parent AH-0MWKT12BT001106T, producer Q2 = (ii)).
+   *
+   * Mirrors {@link unlockedWeapons}: the pure economy's `ownedIds`/
+   * `ownsEntry` read it, and buying a power-up adds its id here. A persisted
+   * `powerUpLevels` row still implies ownership (so no stored row is orphaned),
+   * but this set is the authority. It is the hangar's own id vocabulary — the
+   * same shipped `PowerUpId` the run path's `getPowerUpLevels()` rows use.
+   *
+   * **Additive and optional on purpose:** a save written before the power-up
+   * kind landed has no such field, and absence reads as "owns none" (every
+   * ownership read treats an absent set as empty), so the store migrates it by
+   * field presence without a schema version bump — the same pattern as
+   * `weaponLevels` / `powerUpLevels`. A fresh payload carries an explicit
+   * empty array.
+   */
+  unlockedPowerUps?: string[];
   /** The hull currently equipped for deployments. */
   activeHull: string;
   /** The resolved loadout the active hull deploys with. */
   activeLoadout: HangarLoadout;
+  /**
+   * Purchased permanent **weapon** levels, the hangar's own copy of the run
+   * path's `Player.getWeaponLevels()` rows (parent AH-0MWHW4ALS0039JFU AC2).
+   *
+   * **Additive and optional on purpose:** a save written before buy-to-upgrade
+   * landed has no such field, and absence reads as "no upgrade" (every owned
+   * weapon deploys at its base level `1`), so the store migrates it by field
+   * presence without a schema version bump — the same pattern as
+   * `HexDefender.skills` and `HangarWarPayload.frontierTick`. The rows are
+   * omitted on write when they carry nothing, so a save round-trips
+   * byte-for-byte rather than gaining empty fields. A written row is always an
+   * **effective** level above the base (the first purchase records `2`,
+   * AH-0MWKV6F26008X1T3).
+   */
+  weaponLevels?: HangarWeaponLevelRow[];
+  /**
+   * Purchased permanent **power-up** levels, the `getPowerUpLevels()` twin of
+   * {@link weaponLevels}.
+   *
+   * Additive and optional on purpose, exactly like `weaponLevels`: absence
+   * means "no upgrade", the field is migrated by presence and it is omitted on
+   * write when empty. **Ownership lives in `unlockedPowerUps`** (the canonical
+   * set); a level row records the bought level only. A persisted row still
+   * implies ownership (the economy's `costToUpgrade` reads the set ∪ a row), so
+   * no stored row is orphaned, but the set is the authority — never the row.
+   */
+  powerUpLevels?: HangarPowerUpLevelRow[];
+  /**
+   * Named saved ship configurations the player can re-apply to purchase and
+   * equip every part in one action (AH-0MWL8C6FE008G1E7).
+   *
+   * **Additive and optional on purpose:** a save written before saved builds
+   * landed has no such field, and absence reads as an empty list, so the store
+   * migrates it by field presence without a schema version bump — the same
+   * pattern as `weaponLevels` / `powerUpLevels` / `frontierTick`. It is
+   * omitted on write when empty so a save round-trips byte-for-byte.
+   *
+   * **Survives a war reset** (producer decision): `restartHangarWar` threads
+   * `savedBuilds` through beside `bestScore`, because saved configurations are
+   * a "what you own" meta-layer rather than war progress.
+   *
+   * Unbounded in number — no cap, only a delete affordance to keep the list
+   * manageable.
+   */
+  savedBuilds?: SavedShipBuild[];
 }
 
 /**

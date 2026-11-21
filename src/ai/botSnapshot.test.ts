@@ -539,3 +539,61 @@ describe('thruster-config test harness (AH-0MV85WFHQ0016FTA)', () => {
     expect(player.thruster).toBeUndefined();
   });
 });
+
+describe('buildBotSnapshot — enemy movement class (AH-0MWM0C6OW006G5SE)', () => {
+  it('resolves every archetype to its movement class', () => {
+    const scene = makeScene({
+      getEnemies: () => [
+        { x: 100, y: 200, alive: true, archetype: 'scout' },
+        { x: 120, y: 220, alive: true, archetype: 'diver' },
+        { x: 140, y: 240, alive: true, archetype: 'ghost-chase' },
+        { x: 160, y: 260, alive: true, archetype: 'raider' },
+        { x: 180, y: 280, alive: true, archetype: 'asteroid' },
+      ],
+    });
+
+    expect(
+      buildBotSnapshot(scene).enemies.map((entry) => entry.movementClass),
+    ).toEqual(['formation', 'diver', 'chaser', 'patroller', 'roamer']);
+  });
+
+  it('falls back to roamer for an unknown archetype', () => {
+    const scene = makeScene({
+      getEnemies: () => [
+        { x: 1, y: 2, alive: true, archetype: 'brand-new-archetype' },
+      ],
+    });
+
+    expect(buildBotSnapshot(scene).enemies[0].movementClass).toBe('roamer');
+  });
+
+  it('honours a movement class the source already exposes', () => {
+    const scene = makeScene({
+      getEnemies: () => [
+        {
+          x: 1,
+          y: 2,
+          alive: true,
+          archetype: 'gym-only-hazard',
+          movementClass: 'diver',
+        },
+      ],
+    });
+
+    expect(buildBotSnapshot(scene).enemies[0].movementClass).toBe('diver');
+  });
+
+  it('keeps the stable id across ticks while adding movementClass', () => {
+    const scout = { x: 100, y: 200, alive: true, archetype: 'scout' };
+    const scene = makeScene({ getEnemies: () => [scout] });
+
+    const first = buildBotSnapshot(scene);
+    const second = buildBotSnapshot(scene);
+
+    expect(typeof first.enemies[0].id).toBe('number');
+    expect(second.enemies[0].id).toBe(first.enemies[0].id);
+    expect(first.enemies[0].movementClass).toBe('formation');
+    expect(second.enemies[0].movementClass).toBe('formation');
+  });
+
+});

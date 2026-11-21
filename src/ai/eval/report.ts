@@ -355,6 +355,7 @@ export function formatBalanceReport(report: BalanceReport): string {
   lines.push(distributionLine('power-ups collected', agg.powerUpsCollected));
   lines.push(distributionLine('asteroids destroyed', agg.asteroidsDestroyed));
   lines.push(distributionLine('avoidable hits', agg.avoidableHits));
+  lines.push(distributionLine('enemy-body contacts', agg.enemyBodyContacts));
   lines.push(distributionLine('survival (s)', agg.survivalSeconds));
   lines.push(distributionLine('wave reached', agg.waveReached));
   lines.push(distributionLine('level reached', agg.levelReached));

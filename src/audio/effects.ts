@@ -592,6 +592,51 @@ export function playMineralTinkleSound(): void {
   playCue('playMineralTinkleSound');
 }
 
+// ── Graze / danger multiplier (AH-0MWL7ORK8007LXJI) ──────────────────
+//
+// A graze is a near miss worth points, so it needs a cue that is audible
+// against a dense firefight yet never louder than the player's own fire, and
+// one that rises with the danger tier so the chain is audible without looking
+// at the HUD. Like `playEnemyForceFieldBreakSound`, it is an **alias** of an
+// existing baked cue — it dispatches the power-up collect chime at a per-tier
+// playback rate — so it ships no ToneForge recipe of its own: the mix, the
+// checksum/amplitude guards and the baked assets are untouched, and the
+// asset→cue inverse used by the audio test doubles stays unambiguous.
+
+/**
+ * Per-tier playback-rate ladder for {@link playGrazeSound}: one step per
+ * danger tier, so the cue rises as the chain climbs (AC5). Retune here.
+ */
+export const GRAZE_CUE_RATES: readonly number[] = [1, 1.12, 1.26, 1.42, 1.6];
+
+/**
+ * Linear gain for the graze cue. Deliberately quiet: a graze is frequent and
+ * must sit under weapon fire, never on top of it.
+ */
+export const GRAZE_CUE_VOLUME_SCALE = 0.5;
+
+/**
+ * Graze confirmation cue — a short bright tick, pitched by the danger tier
+ * (AH-0MWL7ORK8007LXJI AC5). Played from the shared graze pass, so the game
+ * and every gym sound identical.
+ *
+ * Respects the shared SFX volume/mute settings through the one cue funnel and
+ * degrades to a silent no-op when there is no `AudioContext` (or no baked
+ * asset), like every other cue here.
+ *
+ * @param tierIndex — the danger tier the graze reached (0 = `×1`).
+ */
+export function playGrazeSound(tierIndex = 0): void {
+  const index = Math.max(
+    0,
+    Math.min(GRAZE_CUE_RATES.length - 1, Math.floor(tierIndex)),
+  );
+  playCue('playPowerUpCollectSound', {
+    rate: GRAZE_CUE_RATES[index],
+    volume: GRAZE_CUE_VOLUME_SCALE,
+  });
+}
+
 /** Deep resonant boom — Boss fire cue. */
 export function playBossFireSound(): void {
   playCue('playBossFireSound', { volume: ENEMY_WEAPON_FIRE_VOLUME_SCALE });

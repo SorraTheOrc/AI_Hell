@@ -15,8 +15,10 @@
  * through {@link EffectsRegistry.setStore}/{@link EffectsRegistry.setStoreResolver},
  * and {@link EffectsRegistry.applyCollect} calls `store.collect(...)` as the
  * single mutation point. Since AH-0MUX802450085VZZ the store splits each
- * item's level into a **permanent** component (hold-full rewards only) and a
- * **temporary** component (field pickups); the registry clears the temporary
+ * item's level into a **permanent** component (hold-full rewards, plus the
+ * hangar's bought levels: a power-up purchase seeds its first permanent level
+ * row — shipped by AH-0MWKT12BT001106T) and a **temporary** component (field
+ * pickups); the registry clears the temporary
  * component when the item's timed window expires, so a field pickup's level
  * reverts to the permanent level (or the item becomes inactive). Effect strengths (durations, the Speed Boost multiplier,
  * caps) are resolved from the catalogue via `store.stats(...)` rather than

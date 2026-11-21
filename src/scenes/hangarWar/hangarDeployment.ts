@@ -52,13 +52,21 @@ import { parseHangarWarPayload } from '../../core/hangarWar/hangarWarStore';
 import type { LevelDefinition } from '../../waves/Formations';
 import {
   findHangarEntry,
+  hangarPermanentLevels,
+  normalisePermanentLevels,
   resolveActiveHull,
   resolveActiveLoadout,
+  type PermanentUpgradeLevels,
 } from '../../core/hangarWar/hangarEconomy';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
 import { hexAggressionLevel } from '../../core/hangarWar/hexDifficulty';
 import { capDropIdsToSlotPool } from '../../powerups/slots';
-import { grantPermanentWeapon } from '../../powerups/choiceReward';
+import {
+  grantPermanentPowerUp,
+  grantPermanentWeapon,
+  type PermanentPowerUpRegistry,
+} from '../../powerups/choiceReward';
+import type { PowerUpId } from '../../powerups/types';
 import { normaliseSeed } from '../../core/rng';
 import {
   HANGAR_CATALOGUE,
@@ -146,6 +154,31 @@ export interface HangarWarDeployment {
   readonly speedMultiplier: number;
   /** Shipped weapon ids the deployment starts armed with. */
   readonly startingWeapons: readonly WeaponId[];
+  /**
+   * The **permanent weapon levels** the deployment grants at run start, one row
+   * per carried weapon (row vocabulary of `Player.getWeaponLevels()`).
+   *
+   * A weapon the hangar never upgraded carries level `1` — the base level of a
+   * first collection — so the rows describe exactly what the run is armed with
+   * (AH-0MWI5AG1X0007XZH AC3). Weapons outside the loadout are absent: a level
+   * for a weapon the run never carries has nothing to strengthen.
+   */
+  readonly weaponLevels: readonly {
+    readonly id: WeaponId;
+    readonly level: number;
+  }[];
+  /**
+   * The **permanent power-up levels** the deployment grants at run start (the
+   * `Player.getPowerUpLevels()` twin of {@link weaponLevels}).
+   *
+   * Only level-bearing kinds appear: a consumable's charge pool and the
+   * field-pickup-only kind carry no permanent level (AC5) and are never granted
+   * as one.
+   */
+  readonly powerUpLevels: readonly {
+    readonly id: PowerUpId;
+    readonly level: number;
+  }[];
   /** Permanent modifier ids applied to this deployment. */
   readonly modifiers: readonly string[];
   /**
@@ -290,6 +323,25 @@ function resolveStartingWeapons(
 }
 
 /**
+ * The carried weapons with their hangar-bought permanent level.
+ *
+ * A weapon the hangar never upgraded carries level `1` (the base level of a
+ * first collection, the level the run starts at before any grant), so a
+ * deployment always describes the exact permanent weapon levels the run starts
+ * with (AH-0MWI5AG1X0007XZH AC3). A **bought** row is the absolute permanent
+ * level and always exceeds the base: the economy's first purchase records
+ * `2`, so the grant loop below raises the run's level by exactly one per
+ * purchase (AH-0MWKV6F26008X1T3).
+ */
+function carriedWeaponLevels(
+  startingWeapons: readonly WeaponId[],
+  levels: PermanentUpgradeLevels,
+): Array<{ id: WeaponId; level: number }> {
+  const byId = new Map(levels.weapons.map((row) => [row.id as string, row.level]));
+  return startingWeapons.map((id) => ({ id, level: byId.get(id) ?? 1 }));
+}
+
+/**
  * Builds the launch data for one hex deployment (pure).
  *
  * Resolution order follows the economy: the active hull/loadout come from
@@ -298,6 +350,13 @@ function resolveStartingWeapons(
  * the target hex (see {@link selectDeploymentHex}). An empty loadout resolves
  * to `startingWeapons: []`: the run then starts with only the ship's permanent
  * cannon (AH-0MVZJ6V1J001DA9D).
+ *
+ * The hangar's bought **permanent levels** (AH-0MWI5AG1X0007XZH) travel with
+ * the loadout: `weaponLevels` names one row per carried weapon (base `1` when
+ * the hangar never upgraded it, the bought absolute level otherwise) and
+ * `powerUpLevels` carries every persisted
+ * level-bearing power-up level, so {@link applyHangarWarDeployment} can grant
+ * exactly the levels the player bought.
  *
  * @param payload — the persistent war payload (never mutated).
  * @param options — target hex, catalogue and seed overrides.
@@ -314,6 +373,8 @@ export function buildHangarDeployment(
   const hullId = resolveActiveHull(payload.hangar);
   const hull = resolveHullDefinition(hullId, catalogue);
   const loadout = resolveActiveLoadout(payload.hangar);
+  const startingWeapons = resolveStartingWeapons(loadout.startingWeapons, catalogue);
+  const levels = hangarPermanentLevels(payload.hangar);
   const seed = normaliseSeed(
     options.seed
       ?? payload.seed + aggression * 104729 + payload.ring.ringIndex,
@@ -327,7 +388,9 @@ export function buildHangarDeployment(
     hullId: hull?.id ?? STARTER_HULL_ID,
     startingLives: resolveStartingLives(hull, loadout.modifiers, catalogue),
     speedMultiplier: hull?.runStats.speedMultiplier ?? 1,
-    startingWeapons: resolveStartingWeapons(loadout.startingWeapons, catalogue),
+    startingWeapons,
+    weaponLevels: carriedWeaponLevels(startingWeapons, levels),
+    powerUpLevels: levels.powerUps.map((row) => ({ ...row })),
     modifiers: [...loadout.modifiers],
     // A detached copy: the run resolves captures/ticks against this war, and a
     // caller must never see its own payload mutated by a deployment.
@@ -344,6 +407,22 @@ function toStringList(value: unknown): string[] {
 }
 
 /**
+ * One stored level list as raw rows, or `[]` when the list is not a list.
+ *
+ * Only the row *shape* is read here; ids and levels stay unvalidated so the
+ * shared economy normaliser is the one authority on which rows survive and how
+ * a level is clamped (a `null` entry must never reach `row.level`).
+ */
+function toRawLevelRows(value: unknown): Array<{ id: unknown; level: unknown }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is Record<string, unknown> =>
+      typeof entry === 'object' && entry !== null && !Array.isArray(entry),
+    )
+    .map((entry) => ({ id: entry.id, level: entry.level }));
+}
+
+/**
  * Reads launch data passed to `PlayScene`, returning `null` unless it is a
  * usable hangar-war deployment.
  *
@@ -352,6 +431,11 @@ function toStringList(value: unknown): string[] {
  * caller is not (or not usefully) deploying, so the scene runs the shipped
  * arcade path unchanged. Usable values are normalised (clamped level/lives,
  * positive speed multiplier) rather than trusted blindly.
+ *
+ * The permanent-level rows are normalised through the shared economy
+ * normaliser, so launch data can never grant a consumable/field-pickup-only or
+ * out-of-range level even when it was produced by another build
+ * (AH-0MWI5AG1X0007XZH AC3/AC5).
  *
  * @param value — the raw `hangarWar` scene-start value.
  * @returns the normalised deployment, or `null` for the arcade run.
@@ -371,6 +455,10 @@ export function readHangarWarDeployment(
     && raw.speedMultiplier > 0
       ? raw.speedMultiplier
       : 1;
+  const levels = normalisePermanentLevels({
+    weapons: toRawLevelRows(raw.weaponLevels),
+    powerUps: toRawLevelRows(raw.powerUpLevels),
+  });
   return {
     kind: HANGAR_WAR_DEPLOYMENT_KIND,
     hexId: typeof raw.hexId === 'string' ? raw.hexId : null,
@@ -389,6 +477,8 @@ export function readHangarWarDeployment(
     ),
     speedMultiplier: speed,
     startingWeapons: toStringList(raw.startingWeapons) as WeaponId[],
+    weaponLevels: levels.weapons,
+    powerUpLevels: levels.powerUps,
     modifiers: toStringList(raw.modifiers),
     // The carried war payload is parsed with the store's own defensive parser,
     // so a corrupt one degrades to "no payload" (the run then falls back to the
@@ -401,11 +491,19 @@ export function readHangarWarDeployment(
 export interface HangarWarDeploymentPlayer {
   /** Grants (`permanent`) a weapon through the shipped player seam. */
   equipWeapon(id: WeaponId, permanent?: boolean): void;
+  /**
+   * Grants (`permanent`) a power-up level through the player's own store.
+   *
+   * Optional: it is only the **no-registry** fallback (a pure caller that has
+   * no HUD/effect seam). The shipped player always has it, and the game always
+   * supplies a registry, so this is never a silent gap in play.
+   */
+  collectPowerUp?(id: PowerUpId, permanent?: boolean): number;
 }
 
 /**
- * The narrow effect-registry surface a deployment grants weapons through
- * (kept structural, so this module stays Phaser-free).
+ * The narrow effect-registry surface a deployment grants through (kept
+ * structural, so this module stays Phaser-free).
  *
  * Structurally satisfied by the scene's `EffectsRegistry`: registering the
  * grant is what makes the HUD render a weapon row, exactly as a hold-full
@@ -414,6 +512,14 @@ export interface HangarWarDeploymentPlayer {
 export interface HangarWarDeploymentRegistry {
   /** Registers (`permanent`) a weapon in the run's effect state. */
   applyWeapon(id: WeaponId, permanent?: boolean): boolean;
+  /**
+   * Registers (`permanent`) a power-up level in the run's effect state.
+   *
+   * Optional so a weapon-only harness (or launch data from a build without
+   * power-up upgrades) stays valid; without it a deployment's power-up levels
+   * are not granted, exactly as before this seam existed.
+   */
+  applyCollect?(id: PowerUpId, permanent?: boolean): void;
 }
 
 /** The seams a deployment is applied through (no scene internals leak out). */
@@ -459,22 +565,36 @@ export function applyHullSpeedToShipConfig(
 
 /**
  * Applies a deployment to play state through existing shared seams: the
- * hull's starting lives and its starting weapons. When the scene supplies an
- * effect registry, every starting weapon is granted through the **one shared
- * permanent-grant seam** (`grantPermanentWeapon`), the same helper the
- * hold-full reward and the checkpoint-resume replay use, so the HUD upgrade
- * list, the player's run-scoped levels and the effect state can never drift
- * apart (AH-0MWCFKHWD002RKX9, precedent AH-0MVSHI07B003BZIP). Without a
- * registry seam the grant stays player-only (today's behaviour for pure
- * callers), so no caller breaks. The hull's speed scales the ship config at
- * spawn ({@link applyHullSpeedToShipConfig}). Total: a scene without a player
- * still applies the lives.
+ * hull's starting lives, the carried weapons and the hangar's bought
+ * **permanent levels**.
+ *
+ * When the scene supplies an effect registry, every grant goes through the
+ * **one shared permanent-grant seam** (`grantPermanentWeapon` /
+ * `grantPermanentPowerUp`), the same helpers the hold-full reward and the
+ * checkpoint-resume replay use, so the HUD upgrade list, the player's
+ * run-scoped levels and the effect state can never drift apart
+ * (AH-0MWCFKHWD002RKX9, precedent AH-0MVSHI07B003BZIP). Without a registry
+ * seam the grant stays player-only (today's behaviour for pure callers), so no
+ * caller breaks. The hull's speed scales the ship config at spawn
+ * ({@link applyHullSpeedToShipConfig}). Total: a scene without a player still
+ * applies the lives.
+ *
+ * **Permanent levels (AH-0MWI5AG1X0007XZH AC3).** A carried weapon is granted
+ * its `weaponLevels` row (base `1`, higher when the hangar sold an upgrade) and
+ * every `powerUpLevels` row is granted, each by applying the permanent-grant
+ * seam once per level — the same way a run earns a level. So
+ * `Player.getWeaponLevels()` / `getPowerUpLevels()` read the bought levels and
+ * the victory-time capture snapshot (which reads those accessors) carries them
+ * onto the defending bot with **no capture-side change**. Only permanent grants
+ * are made: no temporary/timed stack is ever opened, so
+ * `getTempWeaponIds()`/`getTempPowerUpIds()` stay empty.
  *
  * **The six-slot cap holds here too (AH-0MVVF0POV001JNKX).** A hangar loadout
- * may contain more owned weapons than the run can hold, so the list is trimmed
- * through the shared `capDropIdsToSlotPool` predicate before granting: a
- * deployment can never start a run above `POWER_UP_SLOT_CAP` distinct counted
- * kinds, however many weapons the fleet owns (parent AH-0MVLIJT3M005HPHF).
+ * may contain more owned weapons than the run can hold, so the combined list
+ * (weapons then power-ups) is trimmed through the shared
+ * `capDropIdsToSlotPool` predicate before granting: a deployment can never
+ * start a run above `POWER_UP_SLOT_CAP` distinct counted kinds, however many
+ * weapons and upgraded power-ups the fleet owns (parent AH-0MVLIJT3M005HPHF).
  *
  * @param seams — the scene's player, lives and (optional) effect-registry
  *   seams.
@@ -487,18 +607,58 @@ export function applyHangarWarDeployment(
   seams.setStartingLives?.(deployment.startingLives);
   const player = seams.getPlayer();
   // Lives apply first, and a scene with no player still applies them; the
-  // weapon grants follow only once the player exists.
+  // grants follow only once the player exists.
   if (!player) return;
   const registry = seams.getEffectsRegistry?.() ?? null;
-  for (const weaponId of capDropIdsToSlotPool(deployment.startingWeapons)) {
-    if (registry) {
-      // One permanent-grant seam: the registry supplies the HUD row and the
-      // player raises the run-scoped level (AH-0MWCFKHWD002RKX9).
-      grantPermanentWeapon(weaponId, registry, player);
-    } else {
-      // No registry seam (pure caller / older launch data): today's
-      // player-only grant, so the function stays total.
-      player.equipWeapon(weaponId, true);
+  // The power-up half of the seam is optional, so bind it once and hand the
+  // shared grant helper a structural registry (no concrete scene type leaks
+  // into this Phaser-free module).
+  const powerUpRegistry: PermanentPowerUpRegistry | null = registry?.applyCollect
+    ? { applyCollect: registry.applyCollect.bind(registry) }
+    : null;
+
+  const weaponLevels = new Map<string, number>(
+    deployment.weaponLevels.map((row) => [row.id, row.level]),
+  );
+  const carried = new Set<string>(deployment.startingWeapons);
+  const powerUpLevels = new Map<string, number>(
+    deployment.powerUpLevels.map((row) => [row.id, row.level]),
+  );
+
+  // One cap for the whole pre-grant list: the six slots are shared between
+  // weapon and power-up kinds, so a deployment can never start a run over the
+  // cap. Weapons come first, preserving today's trimming order.
+  const admitted = capDropIdsToSlotPool([
+    ...deployment.startingWeapons,
+    ...deployment.powerUpLevels.map((row) => row.id),
+  ]);
+
+  for (const id of admitted) {
+    if (carried.has(id)) {
+      const level = weaponLevels.get(id) ?? 1;
+      for (let step = 0; step < level; step += 1) {
+        if (registry) {
+          // One permanent-grant seam: the registry supplies the HUD row and the
+          // player raises the run-scoped level (AH-0MWCFKHWD002RKX9).
+          grantPermanentWeapon(id as WeaponId, registry, player);
+        } else {
+          // No registry seam (pure caller / older launch data): today's
+          // player-only grant, so the function stays total.
+          player.equipWeapon(id as WeaponId, true);
+        }
+      }
+      continue;
+    }
+    const level = powerUpLevels.get(id) ?? 0;
+    if (level < 1) continue;
+    for (let step = 0; step < level; step += 1) {
+      if (powerUpRegistry) {
+        grantPermanentPowerUp(id as PowerUpId, powerUpRegistry);
+      } else {
+        // No effect seam: the player's own store still records the permanent
+        // level (the shipped player always exposes it).
+        player.collectPowerUp?.(id as PowerUpId, true);
+      }
     }
   }
 }

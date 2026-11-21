@@ -27,13 +27,17 @@ import {
 } from './defenceReport';
 import { createRingState, generateRing } from './hexRing';
 import {
+  CONTROLS_HEADING,
   HELD_TILE_MARKER,
+  LAST_SORTIE_HEADING,
+  SELECTED_HEX_HEADING,
   SPECIAL_MISSION_PANEL_HEADING,
   SPECIAL_MISSION_TILE_TAG,
   HEX_MAP_HANGAR_LABEL,
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
   UNHELD_TILE_MARKER,
+  WAR_STATUS_HEADING,
   buildHexIntel,
   buildHexMapModel,
   isHexDisplayed,
@@ -265,13 +269,22 @@ describe('hex map model — tile label (AC3)', () => {
       // The aggression badge + ownership marker lead the tile label; the axial
       // coordinates sit on their own second line, so the renderer can draw
       // them smaller below the badge (producer review AH-0MWDBI33V003QQ3U).
-      expect(intel.tileLabel).toBe(
-        `AGG ${intel.aggression} ${UNHELD_TILE_MARKER}\n(${intel.q},${intel.r})`,
-      );
-      expect(intel.tileLabel).toContain(`(${intel.q},${intel.r})`);
+      // Authored variety tags (SPECIAL / CONTRACT / FORTRESS / NEBULA /
+      // SUMMONER) follow on their own lines and never displace the badge or
+      // the coordinates.
+      const [badge, coordinates, ...varietyTags] = intel.tileLabel.split('\n');
+      expect(badge).toBe(`AGG ${intel.aggression} ${UNHELD_TILE_MARKER}`);
+      expect(coordinates).toBe(`(${intel.q},${intel.r})`);
+      const expectedTags =
+        (intel.specialMission !== null ? 1 : 0) +
+        (intel.contract !== null ? 1 : 0) +
+        (intel.landmark !== null ? 1 : 0) +
+        (intel.personality === 'nebula' || intel.personality === 'summoner'
+          ? 1
+          : 0);
+      expect(varietyTags).toHaveLength(expectedTags);
       expect(intel.tileLabel).toContain(`AGG ${intel.aggression}`);
       expect(intel.tileLabel).toContain(UNHELD_TILE_MARKER);
-      expect(intel.tileLabel.split('\n')).toHaveLength(2);
     }
 
     // A held tile is distinguishable without colour: the filled marker
@@ -283,18 +296,25 @@ describe('hex map model — tile label (AC3)', () => {
     expect(held.tileLabel).not.toContain(UNHELD_TILE_MARKER);
   });
 
-  it('the full intel label block is unchanged', () => {
+  it('titles every line of the full intel label block (AH-0MWJ0XHWW009GTKK)', () => {
     const model = buildHexMapModel(ringPayload(1));
 
     for (const intel of model.hexes) {
       const definition = findHexRingDefinition(intel.id)!;
-      expect(intel.label).toContain(intel.id);
-      expect(intel.label).toContain('UNHELD');
-      expect(intel.label).toContain(`AGG ${definition.baseAggression}`);
-      expect(intel.label).toContain(definition.boss);
-      expect(intel.label).toContain(`S:${definition.strengths.join(',')}`);
-      expect(intel.label).toContain(`W:${definition.weaknesses.join(',')}`);
-      expect(intel.label).toContain(`→${definition.grants}`);
+      // Every overview line is explicitly titled, never a bare value or an
+      // abbreviation the player must decode.
+      expect(intel.label).toContain(`ID: ${intel.id}`);
+      expect(intel.label).toContain('STATE: UNHELD');
+      expect(intel.label).toContain(`AGGRESSION: ${definition.baseAggression}`);
+      expect(intel.label).toContain(`BOSS: ${definition.boss}`);
+      expect(intel.label).toContain(`STRENGTHS: ${definition.strengths.join(',')}`);
+      expect(intel.label).toContain(`WEAKNESSES: ${definition.weaknesses.join(',')}`);
+      expect(intel.label).toContain(`GRANT: ${definition.grants}`);
+
+      // The cryptic prefixes the titles replaced are gone.
+      expect(intel.label).not.toMatch(/^S:/m);
+      expect(intel.label).not.toMatch(/^W:/m);
+      expect(intel.label).not.toContain('\u2192');
     }
   });
 
@@ -330,7 +350,7 @@ describe('hex map model — tile label (AC3)', () => {
         bonus: 4,
       },
     ]);
-    expect(held.label).toContain('skill Line-breaker +4 vs the-dawnbreaker');
+    expect(held.label).toContain('SKILL: Line-breaker +4 vs the-dawnbreaker');
   });
 
   it('publishes no skills for a bot that has none (and no skill line)', () => {
@@ -345,7 +365,7 @@ describe('hex map model — tile label (AC3)', () => {
     )!;
 
     expect(held.skills).toEqual([]);
-    expect(held.label).not.toContain('skill ');
+    expect(held.label).not.toContain('SKILL:');
   });
 
   // ── Run-upgrade breakdown (AH-0MWH42DWQ004SAOJ, C6) ────────────────
@@ -389,7 +409,7 @@ describe('hex map model — tile label (AC3)', () => {
     });
     // The panel renders the breakdown beside the bot line: buckets, the
     // upgrade contribution and the total rating already on the bot line.
-    expect(held.label).toContain('bot hull-2 (14)');
+    expect(held.label).toContain('DEFENDER: hull-2 (14)');
     expect(held.label).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
   });
 
@@ -508,15 +528,17 @@ describe('hex map model — tile label (AC3)', () => {
     // below; the full block is panel text.
     expect(held.tileLabel).toBe(`AGG 1 ${HELD_TILE_MARKER}\n(1,-1)`);
     expect(other.tileLabel).toBe(`AGG 2 ${UNHELD_TILE_MARKER}\n(1,0)`);
-    expect(held.label).toContain('HELD · AGG 1 · !9');
-    expect(held.label).toContain('bot hull-1 (2)');
-    expect(held.label).toContain('atk 10 vs 2 · FALLS');
+    expect(held.label).toContain('STATE: HELD');
+    expect(held.label).toContain('AGGRESSION: 1 · !9');
+    expect(held.label).toContain('DEFENDER: hull-1 (2)');
+    expect(held.label).toContain('PENDING ATTACK: 10 vs 2 · FALLS');
 
     // A queued attack on an unheld (undefended) hex is shown as a force only:
     // there is nothing to resolve until a bot holds it.
     expect(other.pendingAttack?.force).toBe(9);
     expect(other.pendingAttack?.resolution).toBeNull();
-    expect(other.label).toContain('UNHELD · AGG 2 · !9');
+    expect(other.label).toContain('STATE: UNHELD');
+    expect(other.label).toContain('AGGRESSION: 2 · !9');
 
     expect(model.heldCount).toBe(1);
     expect(model.ringLine).toContain('1/6');
@@ -708,8 +730,8 @@ describe('hex map model — generated ring, partial ring and unknown definitions
     expect(held.boss).toBeNull();
     expect(held.strengths).toEqual([]);
     expect(held.grants).toBeNull();
-    expect(held.label).toContain('boss unknown');
-    expect(held.label).toContain('→waveLaser');
+    expect(held.label).toContain('BOSS: unknown');
+    expect(held.label).toContain('GRANT: waveLaser');
     expect(held.selectable).toBe(true);
     expect(held.actionable).toBe(false);
 
@@ -743,7 +765,8 @@ describe('hex map model — generated ring, partial ring and unknown definitions
     expect(intel.selectable).toBe(true);
     expect(intel.actionable).toBe(false);
     expect(intel.tileLabel).toBe(`AGG 0 ${HELD_TILE_MARKER}\n(1,0)`);
-    expect(intel.label).toContain('HELD · AGG 0');
+    expect(intel.label).toContain('STATE: HELD');
+    expect(intel.label).toContain('AGGRESSION: 0');
     expect(intel.label).toContain(definition.boss);
   });
 });
@@ -760,11 +783,14 @@ describe('buildHexMapModel — the redistributed frontier (AH-0MWBBUAUQ0038GFL)'
       );
       expect(stored).toBeDefined();
       expect(hex.aggression).toBe(stored?.aggression);
-      expect(hex.tileLabel).toBe(
+      // The aggression badge and coordinates are always the first two lines;
+      // authored variety tags (`✦ CONTRACT`, `⚡ FORTRESS`, …) follow below.
+      expect(hex.tileLabel.split('\n').slice(0, 2)).toEqual([
         `AGG ${stored?.aggression} ${
           hex.held ? HELD_TILE_MARKER : UNHELD_TILE_MARKER
-        }\n(${hex.q},${hex.r})`,
-      );
+        }`,
+        `(${hex.q},${hex.r})`,
+      ]);
     }
   });
 
@@ -1335,10 +1361,83 @@ describe('hex map model — special-mission intel (AH-0MWF0CWB7002MG2F)', () => 
     expect(intel.label).toContain('NOT OFFERED NOW');
   });
 
-  it('offers nothing on a ring that authors no special mission', () => {
-    const model = buildHexMapModel(ringPayload(1));
+  it('offers nothing on a ring whose authored data has no special mission', () => {
+    const definitions = HEX_RING_DEFINITIONS.filter(
+      (definition) => definition.ringIndex === 1,
+    ).map((definition) => ({ ...definition, isSpecialMission: false }));
+    const payload: HangarWarPayload = {
+      ...createDefaultPayload(7),
+      ring: createRingState(1, definitions),
+    };
+    const model = buildHexMapModel(payload, { definitions });
 
     expect(model.specialOffer).toBeNull();
     expect(model.hexes.every((hex) => hex.specialMission === null)).toBe(true);
+  });
+
+  it('publishes ring 1\'s own special mission known-ahead (AH-0MWJ51KUS005WQK6)', () => {
+    // The ring-1 phase now publishes its own offer: same tile tag, same reward
+    // block, same `offeredNow` mechanics as ring 2's, from the shipped rotation.
+    const model = buildHexMapModel(ringPayload(1));
+    const intel = model.hexes.find((hex) => hex.id === 'hex-r1-5')!;
+
+    expect(intel.isSpecialMission).toBe(true);
+    expect(intel.tileLabel).toContain(SPECIAL_MISSION_TILE_TAG);
+    expect(intel.specialMission?.hullId).toBe('hull-4');
+    expect(intel.specialMission?.hullName).toBe('Vanguard Hull');
+    expect(intel.specialMission?.startingLives).toBe(4);
+    expect(intel.specialMission?.baseDefence).toBe(3);
+    expect(intel.specialMission?.bonusStartingLives).toBe(1);
+    expect(intel.specialMission?.offeredNow).toBe(true);
+    expect(intel.label).toContain(SPECIAL_MISSION_PANEL_HEADING);
+    expect(intel.label).toContain('Vanguard Hull');
+    expect(intel.label).toContain('+1 LIVES');
+    expect(intel.label).toContain('DEF 3');
+    expect(intel.label).toContain('OFFERED THIS SORTIE');
+    // Ring 2's special is not offered during the ring-1 phase.
+    expect(model.specialOffer?.hexId).toBe('hex-r1-5');
+    expect(
+      model.hexes
+        .filter((hex) => hex.specialMission?.offeredNow)
+        .map((hex) => hex.id),
+    ).toEqual(['hex-r1-5']);
+  });
+});
+
+/**
+ * Shared section headings (AH-0MWL4QCVD007WOAM).
+ *
+ * The sectioned map is headed by these constants — one per rendered section —
+ * so the game, the parity gym and the renderer's published section registry
+ * can never disagree about what a region is called. Colour is never the
+ * distinction, so the headings must stay distinct, uppercase labels.
+ */
+describe('map section headings', () => {
+  it('publishes one distinct, uppercase heading per section', () => {
+    expect(WAR_STATUS_HEADING).toBe('WAR STATUS');
+    expect(LAST_SORTIE_HEADING).toBe('LAST SORTIE');
+    expect(SELECTED_HEX_HEADING).toBe('SELECTED HEX');
+    expect(CONTROLS_HEADING).toBe('CONTROLS');
+
+    const headings = [
+      WAR_STATUS_HEADING,
+      LAST_SORTIE_HEADING,
+      SELECTED_HEX_HEADING,
+      CONTROLS_HEADING,
+      HEX_MAP_TITLE,
+    ];
+    expect(new Set(headings).size).toBe(headings.length);
+    for (const heading of headings) {
+      expect(heading).toBe(heading.toUpperCase());
+      expect(heading.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('heads the map section with the map model’s own title', () => {
+    const payload = createDefaultPayload(11);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    const model = buildHexMapModel(payload, {});
+
+    expect(model.title).toBe(HEX_MAP_TITLE);
   });
 });

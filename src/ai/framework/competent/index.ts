@@ -106,17 +106,37 @@ export function createCompetentBotBrain(
     goals: createCompetentGoals(tunables, content),
     behaviours: createCompetentBehaviours(tunables, content),
     commitment: tunables.commitment,
+    // Two-layer primary/secondary objective model (AH-0MWJ1680Z001QYV2). The
+    // layering tunables are surfaced on `CompetentBotTunables` so a producer
+    // can retune the balance without a code change; disabling layering
+    // restores the flat selection as the purposefulness baseline (AC5).
+    twoLayer: tunables.layeringEnabled,
+    twoLayerTunables: {
+      ...tunables.commitment,
+      primaryMinHoldSeconds: tunables.primaryMinHoldSeconds,
+      secondaryMinHoldSeconds: tunables.secondaryMinHoldSeconds,
+      diversionThreshold: tunables.diversionThreshold,
+      secondaryUrgencyCap: tunables.secondaryUrgencyCap,
+    },
     // The content registry is authoritative for the asteroid partition, so
     // the world model is built with both the tunables and the content. The
-    // memory/dt pair advances the deterministic bot-side hazard-velocity
-    // tracker first, so every hazard carries where it is heading
-    // (AH-0MVI4QDN90037DIN · AC1/AC2).
+    // memory/dt pair advances the deterministic bot-side hazard-motion tracker
+    // first, so every hazard carries where it is heading and how hard it is
+    // turning (AH-0MVI4QDN90037DIN · AC1/AC2, curvature
+    // AH-0MWM0C7ZR001YJRE · AC1/AC3). `hazardMotionModelEnabled` selects the
+    // second-order fit or the bit-identical single-difference control.
     worldModel: (snapshot, memory, dt) => {
       const hazardVelocities = memory
-        ? trackHazardVelocities(memory, snapshot, dt ?? 0, {
-            width: tunables.playfieldWidth,
-            height: tunables.playfieldHeight,
-          })
+        ? trackHazardVelocities(
+            memory,
+            snapshot,
+            dt ?? 0,
+            {
+              width: tunables.playfieldWidth,
+              height: tunables.playfieldHeight,
+            },
+            { motionModelEnabled: tunables.hazardMotionModelEnabled },
+          )
         : undefined;
       return buildBotWorld(
         snapshot,

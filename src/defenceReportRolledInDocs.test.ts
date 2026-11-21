@@ -1,6 +1,7 @@
 /**
  * Docs guard: the between-sortie defence report is documented as **rolled into
- * the hex map** (attack arrows + left-hand attack panel), never as a standalone
+ * the hex map** (attack arrows + the `SELECTED HEX` section's attack row),
+ * never as a standalone
  * screen (AH-0MWEXJ7VJ007XTCQ, parent AH-0MWDC3L9I008INDP).
  *
  * The report screen was removed from the shipped scene array and its content
@@ -77,11 +78,13 @@ describe('the between-sortie report is documented as rolled into the map (AH-0MW
   it('GDD §8.2 describes the map-integrated report surface', () => {
     const section = gddDefenceReportSection();
     expect(section.trim().length).toBeGreaterThan(0);
-    // The surface: rolled into the map, arrows on the ring, a left-hand panel.
+    // The surface: rolled into the map, arrows on the ring, and the attack
+    // numbers as the `SELECTED HEX` section's attack row — the panel is no
+    // longer a separate left-hand band (sectioned map AH-0MWL4QCVD007WOAM).
     expect(section).toMatch(/rolled into the hex map/i);
     expect(section).toContain('HexMapScene');
     expect(section).toMatch(/attack arrow/i);
-    expect(section).toMatch(/left-hand attack panel/i);
+    expect(section).toMatch(/`SELECTED HEX` section's attack row/i);
     // The record is carried as transient launch data, not persisted.
     expect(section).toMatch(/transient launch data/i);
     // The no-battle rule survives the move.

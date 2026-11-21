@@ -14,7 +14,7 @@
  *   parity and duplicate-body guards are never triggered (AC2);
  * - a promo run is a pure function of its seed: the same seed plans identical
  *   spawns, a different seed moves the deployment (AC3);
- * - every level declares editorial categories from the compile-promo
+ * - every level declares editorial categories from the shared schema
  *   vocabulary and the set covers all four (AC4);
  * - the module imports under bare Node (the capture CLI path) as well as in
  *   the Vite/vitest module graph (AC5);
@@ -34,7 +34,7 @@ import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { cliSpawnEnv } from './cliChildEnv';
-import { EDITORIAL_CONFIG } from './compile-promo.mjs';
+import { EDITORIAL_CATEGORIES } from './capture-scenario-schema.mjs';
 import {
   PROMO_ARENA_DEFAULTS,
   PROMO_FORMATIONS,
@@ -232,12 +232,12 @@ describe('promo wave definitions: authored content', () => {
     }
   });
 
-  it('declares editorial categories from the compile-promo vocabulary and covers all four', () => {
+  it('declares editorial categories from the shared schema vocabulary and covers all four', () => {
     const covered = new Set<string>();
     for (const level of listPromoLevels()) {
       expect(level.categories.length).toBeGreaterThanOrEqual(1);
       for (const category of level.categories) {
-        expect(EDITORIAL_CONFIG.categories).toContain(category);
+        expect(EDITORIAL_CATEGORIES).toContain(category);
         covered.add(category);
       }
       // A level that claims boss footage must actually stage the mini-boss as
@@ -247,7 +247,7 @@ describe('promo wave definitions: authored content', () => {
       }
     }
     // Parent AC3: every editorial category is evidenced by ≥1 promo level.
-    expect([...covered].sort()).toEqual([...EDITORIAL_CONFIG.categories].sort());
+    expect([...covered].sort()).toEqual([...EDITORIAL_CATEGORIES].sort());
   });
 
   it('loads under bare Node (the capture CLI path)', () => {

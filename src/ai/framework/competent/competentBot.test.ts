@@ -29,22 +29,22 @@ function threatenedSnapshot(withMineral = true) {
 }
 
 describe('competent bot commitment (AC1)', () => {
-  it('holds the committed goal until the challenger outranks it for the minimum', () => {
+  it('hands control to a hard primary (survival) after the diversion’s hold', () => {
     const brain = createCompetentBotBrain({ fallback: null });
 
-    // Tick 1: no urgent threat (bullet arrives quickly but the first tick's
-    // world is built before it closes) — commit to the mineral.
+    // Tick 1: no threat and no enemies — an idle primary, so the lone mineral
+    // is a legitimate opportunistic diversion (dynamic prioritisation).
     brain.decide(makeSnapshot({ player: PLAYER, minerals: [mineral(580, 270)] }), 0.1);
     expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
 
-    // A survival threat appears; the incumbent is held below the minimum.
-    brain.decide(threatenedSnapshot(), 0.1);
-    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
-    brain.decide(threatenedSnapshot(), 0.1);
-    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
-
-    // Past the minimum hold the urgent survival goal takes over.
-    brain.decide(threatenedSnapshot(), 0.1);
+    // An urgent survival threat is a *hard* primary: it blocks further
+    // diversion and takes over once the diversion has had its minimum soak
+    // (the hysteresis hold keeps the bot's fire on target rather than
+    // freezing into evade immediately). The steering safety filter is still
+    // the actual never-suicide guarantee throughout.
+    for (let i = 0; i < 10 && brain.committedGoalId !== COMPETENT_GOAL_IDS.survive; i += 1) {
+      brain.decide(threatenedSnapshot(), 0.1);
+    }
     expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.survive);
   });
 

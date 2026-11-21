@@ -238,7 +238,7 @@ describe('cross-path equivalence with the bot batch path (no divergent copy)', (
     // campaign through the shared sequencer…
     const bot = runArena(createCompetentBotBrain(), {
       seed: 21,
-      ticks: 1_800,
+      ticks: 6_000,
       campaign: true,
       spawns: { asteroids: 0 },
     });

@@ -28,6 +28,7 @@ vi.setConfig({ testTimeout: 30000 });
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { importSpecifiers } from '../../../vitest.projects';
 
@@ -36,8 +37,9 @@ import { coerceEnemyConfig, parseCsvRows } from '../../core/csv';
 import { DEFAULT_CONFIG, DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
 import { loadAllEnemyConfigs, resetConfigStore, seedConfigStore } from '../../core/configStore';
 import { createSeededRng } from '../../core/rng';
-import type { EnemyConfig } from '../../core/configTypes';
+import type { EnemyConfig, EnemyMovementClass } from '../../core/configTypes';
 import { createLegacyBotPolicy } from '../framework/legacyPolicy';
+import { advanceHazardMotion } from '../framework/hazardMotionModel';
 import {
   collectProductionSourceFiles,
   definesFunction,
@@ -45,7 +47,9 @@ import {
 import {
   HeadlessChoicePlayer,
   advanceBulletPosition,
+  escapeClearsContact,
   hostileAimVelocity,
+  hostileMotionVelocity,
   resolveStartingLives,
   resolveWeaponLoadout,
   runArena,
@@ -489,7 +493,13 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     expect(sortie.waves).toHaveLength(DEPLOYMENT_WAVE_COUNT);
     const base = {
       seed: 11,
-      ticks: 18_000,
+      // A generous budget: the assertion is about *which* wave set is played,
+      // not about how quickly the competent bot sweeps it. The calmer,
+      // pass-through flying bot of the AH-0MWJ1680Z001QYV2 audit follow-up
+      // clears this fire-free sortie in ~2.5 simulated minutes, but its
+      // collection detours can stretch a run, so the budget keeps ample
+      // headroom instead of pinning the test to the bot's pace.
+      ticks: 60_000,
       dt: 1 / 60,
       level: 1,
       balance: noFire,
@@ -1542,5 +1552,412 @@ describe('arena starting-loadout seam (AH-0MW9QA2YC009PSF5)', () => {
     });
 
     expect(stream(armed)).not.toBe(stream(launch()));
+  });
+});
+
+/**
+ * Opt-in moving-hostile mode and the enemy-body contact counter
+ * (AH-0MWM0C40V002ISCA — verification infrastructure for the moving hostile
+ * arena harness).
+ *
+ * The mode is **additive and off by default**: with `movingHostiles` omitted
+ * every hostile stays stationary and no contact is counted, which the golden
+ * digest test below pins over a recorded seed set. With the mode on, each
+ * hostile follows the deterministic, seeded profile of its **movement class**
+ * (resolved through the bot-side `resolveEnemyMovementClass`, so the harness
+ * and the bot's hazard predictor agree) and the hull-overlap counter reports
+ * rising-edge contacts.
+ */
+/**
+ * A movement-class motion state with a fixed initial heading, for the per-class
+ * profile probes (AH-0MWM0C40V002ISCA, reconciled by AH-0MWOKL79Z0051ZXO).
+ */
+function motionState(
+  movementClass: EnemyMovementClass,
+  overrides: Partial<{ heading: number; speed: number }> = {},
+) {
+  const speed = overrides.speed ?? 100;
+  const heading = overrides.heading ?? 0;
+  return {
+    movementClass,
+    speed,
+    heading,
+    vx: Math.cos(heading) * speed,
+    vy: Math.sin(heading) * speed,
+  };
+}
+
+describe('moving-hostile mode and enemy-body contacts (AH-0MWM0C40V002ISCA)', () => {
+  /** Every live hostile's sampled positions, keyed by archetype (in order). */
+  function positionsByArchetype(result: ArenaRunResult): Map<string, string[]> {
+    const positions = new Map<string, string[]>();
+    for (const record of result.records) {
+      if (record.kind !== 'tick') continue;
+      for (const enemy of record.state.enemies) {
+        const list = positions.get(enemy.archetype) ?? [];
+        list.push(`${enemy.x.toFixed(6)},${enemy.y.toFixed(6)}`);
+        positions.set(enemy.archetype, list);
+      }
+    }
+    return positions;
+  }
+
+  /** Rises for a body whose position changes over the run. */
+  function moves(result: ArenaRunResult, archetype: string): boolean {
+    const sampled = positionsByArchetype(result).get(archetype) ?? [];
+    return new Set(sampled).size > 1;
+  }
+
+  /**
+   * A digest of the default path: every sampled hostile position, the
+   * `avoidableHits` count and the enemy-body contact count. Pinned below so a
+   * change to the stationary default path cannot slip through unnoticed.
+   */
+  function defaultPathDigest(result: ArenaRunResult): string {
+    const hash = createHash('sha256');
+    for (const record of result.records) {
+      if (record.kind !== 'tick') continue;
+      hash.update(`${record.tick};`);
+      for (const enemy of record.state.enemies) {
+        hash.update(
+          `${enemy.archetype}:${enemy.x.toFixed(6)},${enemy.y.toFixed(6)};`,
+        );
+      }
+    }
+    const avoidableHits = result.records.filter(
+      (record) => record.kind === 'event' && record.event === 'player_hit',
+    ).length;
+    hash.update(`hits:${avoidableHits};contacts:${result.enemyBodyContacts}`);
+    return hash.digest('hex');
+  }
+
+  beforeEach(() => {
+    resetConfigStore();
+  });
+
+  it('is off by default: hostiles stay put and no contact is counted', () => {
+    const baseline = run(3, 120);
+    expect(baseline.enemyBodyContacts).toBe(0);
+    for (const [, sampled] of positionsByArchetype(baseline)) {
+      expect(new Set(sampled).size).toBe(1); // every body never moved
+    }
+    // No contact event reaches the telemetry stream either.
+    expect(
+      baseline.records.filter(
+        (record) => record.kind === 'event' && record.event === 'enemy_body_contact',
+      ),
+    ).toEqual([]);
+  });
+
+  it('moves hostiles of every enabled class from the seed alone', () => {
+    const moving = runArena(createLegacyBotPolicy(), {
+      seed: 0x51e2,
+      ticks: 120,
+      spawns: { minerals: 1, powerUps: 0, enemies: 2, asteroids: 1 },
+      movingHostiles: true,
+    });
+
+    // The seeded reservoir's archetypes cover chaser/formation and the
+    // asteroid shadow-hazard covers roamer; whatever shipped family they
+    // belong to, every body now moves.
+    const positions = positionsByArchetype(moving);
+    expect(positions.size).toBeGreaterThan(0);
+    for (const archetype of positions.keys()) {
+      expect(moves(moving, archetype)).toBe(true);
+    }
+  });
+
+  it('reproduces identical positions and contacts for the same seed (AC4)', () => {
+    const config: ArenaConfig = {
+      seed: 0xbeef,
+      ticks: 180,
+      spawns: { minerals: 1, powerUps: 0, enemies: 2, asteroids: 1 },
+      movingHostiles: { speeds: { patroller: 130 } },
+    };
+    const first = runArena(createLegacyBotPolicy(), config);
+    const second = runArena(createLegacyBotPolicy(), config);
+
+    expect([...positionsByArchetype(second)]).toEqual([...positionsByArchetype(first)]);
+    expect(second.enemyBodyContacts).toBe(first.enemyBodyContacts);
+    expect(stableStringify(second.records)).toBe(stableStringify(first.records));
+  });
+
+  it('counts one contact for a scripted overlap, and none with the mode off (AC2)', () => {
+    // A single huge body covers the ship's start position for the whole run,
+    // so the hull overlaps it from tick 0 — a scripted overlap that does not
+    // depend on the bot's flight.
+    seedConfigStore(
+      [{ ...DEFAULT_ENEMY_CONFIGS.boss, size: 600, shotProbability: 0 }],
+      DEFAULT_CONFIG,
+    );
+    const config: ArenaConfig = {
+      seed: 0x0c0,
+      ticks: 30,
+      spawns: { minerals: 0, powerUps: 0, enemies: 1, asteroids: 0 },
+      balance: loadBalanceConfig(),
+    };
+    const still = runArena(createLegacyBotPolicy(), config);
+    const moving = runArena(createLegacyBotPolicy(), {
+      ...config,
+      movingHostiles: true,
+    });
+
+    // Mode off: the metric exists and stays at zero (byte-identical default).
+    expect(still.enemyBodyContacts).toBe(0);
+    expect(still.avoidableEnemyBodyContacts).toBe(0);
+    // Mode on: the sustained overlap is one rising-edge contact, and no escape
+    // fan can clear a 600 px body — it is counted but **not** avoidable.
+    expect(moving.enemyBodyContacts).toBe(1);
+    expect(moving.avoidableEnemyBodyContacts).toBe(0);
+    const contacts = moving.records.filter(
+      (record) => record.kind === 'event' && record.event === 'enemy_body_contact',
+    ) as TelemetryEventRecord[];
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0].tick).toBe(0);
+    expect(contacts[0].payload).toMatchObject({
+      archetype: 'boss',
+      movementClass: 'formation',
+      avoidable: false,
+    });
+  });
+
+  it('classifies a contact as avoidable only when an escape bearing existed', () => {
+    // The escape-fan rule behind `avoidableEnemyBodyContacts`, exercised
+    // directly at the shipped geometry: a 16 px body (30 px contact radius) is
+    // escapable at 0.25 s out, while a body closing faster than the hull can
+    // slip aside is not. The fan is at the ship's live max speed and the body is
+    // extrapolated straight on its current velocity.
+    const ship = { x: 480, y: 270 };
+    const contactRadius = 14 + 16;
+    // A stationary body 80 px away leaves every bearing clear.
+    expect(
+      escapeClearsContact(ship, 175, { x: 560, y: 270 }, 0, 0, contactRadius, 960, 540),
+    ).toBe(true);
+    // A body closing at 400 px/s from 50 px cannot be escaped on any bearing:
+    // no quarter-second path clears the 30 px contact radius.
+    expect(
+      escapeClearsContact(ship, 175, { x: 530, y: 270 }, -400, 0, contactRadius, 960, 540),
+    ).toBe(false);
+    // A huge body covering the arena is never escapable, whatever its motion.
+    expect(
+      escapeClearsContact(ship, 175, { x: 480, y: 270 }, 0, 0, 614, 960, 540),
+    ).toBe(false);
+  });
+
+  it('animates only the requested classes', () => {
+    // One `diver` body from the reservoir plus the asteroid shadow-hazard (a
+    // `roamer`): enabling only `roamer` must move the asteroid and leave the
+    // diver stationary, proving the per-class assignment reaches the motion.
+    seedConfigStore([{ ...DEFAULT_ENEMY_CONFIGS.diver }], DEFAULT_CONFIG);
+    const result = runArena(createLegacyBotPolicy(), {
+      seed: 0x9a9,
+      ticks: 120,
+      spawns: { minerals: 0, powerUps: 0, enemies: 1, asteroids: 1 },
+      balance: loadBalanceConfig(),
+      movingHostiles: { classes: ['roamer'] },
+    });
+
+    expect(moves(result, 'asteroid')).toBe(true);
+    expect(moves(result, 'diver')).toBe(false);
+  });
+
+  it('pins the default path: positions, avoidableHits and contacts (AC3)', () => {
+    // Recorded over this seed set with the mode **off**. A change to the
+    // stationary path — a position, a hit or a contact — fails here.
+    const recorded: Record<number, string> = {
+      // Recorded from the pre-change arena (mode absent) and reproduced by the
+      // mode-off path: byte-identical record streams, `avoidableHits` and a
+      // zero contact count.
+      1: '57d2b13c79dbc804ffe40c1372adaff3eb7594f5fa1226b0cd98041de5edb795',
+      7: '32a65cd3a801bcb115f45f8d0f714a830c5154e031aa01c4c77497397e88b8cf',
+      42: 'aae7527f3d62a66bd1235ae53911db0ad067e70ce785ed0e42af82d36aec4d37',
+    };
+    for (const [seed, digest] of Object.entries(recorded)) {
+      expect(defaultPathDigest(run(Number(seed), 120))).toBe(digest);
+    }
+    // The metric is reported per run and stays zero without the opt-in.
+    expect(run(1, 120).enemyBodyContacts).toBe(0);
+  });
+});
+
+describe('per-class motion profiles are the predictor’s class models (AH-0MWOKL79Z0051ZXO)', () => {
+  const player = { x: 500, y: 300 };
+  const from = { x: 100, y: 300 };
+
+  /**
+   * The parity assertion this suite exists for: the arena's profile for a
+   * class **is** the shared trajectory stepper the bot's hazard predictor walks
+   * (`advanceHazardMotion`), so a harness profile can never describe a
+   * trajectory the predictor does not model. A class the model does not know
+   * throws instead of silently falling back, which is what makes the sweep's
+   * on/off comparison a test of the predictor rather than of a second enemy AI.
+   */
+  it('steps each class through the shared trajectory model, bit-for-bit', () => {
+    const cases: Array<{ movementClass: EnemyMovementClass; heading: number }> = [
+      { movementClass: 'chaser', heading: Math.PI / 3 },
+      { movementClass: 'diver', heading: -Math.PI / 2 },
+      { movementClass: 'patroller', heading: Math.PI },
+      { movementClass: 'formation', heading: 0.2 },
+      { movementClass: 'roamer', heading: 1.9 },
+    ];
+    for (const { movementClass, heading } of cases) {
+      const motion = motionState(movementClass, { heading });
+      const dt = 1 / 60;
+      const shared = { x: from.x, y: from.y, vx: motion.vx, vy: motion.vy };
+      advanceHazardMotion(movementClass, shared, player.x, player.y, dt, {
+        width: 960,
+        height: 540,
+      });
+      const velocity = hostileMotionVelocity(motion, from, player, 960, 540);
+      // The arena's velocity probe is the shared step, derived — never a
+      // parallel profile that could drift.
+      expect(velocity.vx).toBeCloseTo((shared.x - from.x) / dt, 9);
+      expect(velocity.vy).toBeCloseTo((shared.y - from.y) / dt, 9);
+    }
+  });
+
+  it('rejects a class profile the predictor does not model', () => {
+    // A harness profile the class model cannot describe must fail loudly; a
+    // silent linear fallback would let the sweep "validate" a trajectory the
+    // predictor never predicted.
+    expect(() =>
+      advanceHazardMotion(
+        'teleporter' as unknown as EnemyMovementClass,
+        { x: 0, y: 0, vx: 100, vy: 0 },
+        player.x,
+        player.y,
+        1 / 60,
+        { width: 960, height: 540 },
+      ),
+    ).toThrow(/unsupported movement class 'teleporter'/);
+  });
+
+  it('chases: pure pursuit of the ship', () => {
+    const velocity = hostileMotionVelocity(
+      motionState('chaser'),
+      from,
+      player,
+      960,
+      540,
+    );
+    // Pointed at the ship and closing, at the class cruise speed.
+    expect(velocity.vx).toBeGreaterThan(0);
+    expect(Math.hypot(velocity.vx, velocity.vy)).toBeCloseTo(100, 6);
+    // Wrapped pursuit: a body just past the left edge chases left across the
+    // seam (the shortest route), exactly as the predictor's class model does.
+    const wrapped = hostileMotionVelocity(
+      motionState('chaser'),
+      { x: 5, y: 300 },
+      { x: 950, y: 300 },
+      960,
+      540,
+    );
+    expect(wrapped.vx).toBeLessThan(0);
+    // A body crossing perpendicular turns straight onto the ship in one step:
+    // a pursuing hazard re-aims every tick instead of continuing its old arc.
+    const crossing = hostileMotionVelocity(
+      motionState('chaser', { heading: Math.PI / 2 }),
+      { x: 500, y: 100 },
+      { x: 500, y: 300 },
+      960,
+      540,
+    );
+    expect(crossing.vx).toBeCloseTo(0, 6);
+    expect(crossing.vy).toBeCloseTo(100, 6);
+  });
+
+  it('dives: re-aims at the ship when outside the commit cone, then holds the line', () => {
+    // Heading +x, ship well off that bearing: the dive re-aims at the ship, so
+    // it leaves perpendicular to its seeded heading.
+    const reaimed = hostileMotionVelocity(
+      motionState('diver'),
+      from,
+      player,
+      960,
+      540,
+    );
+    expect(reaimed.vx).toBeGreaterThan(0); // the ship is to the right
+    expect(Math.hypot(reaimed.vx, reaimed.vy)).toBeCloseTo(100, 6);
+    // Heading straight at the ship: inside the commit cone, so the dive holds
+    // its observed vector exactly (a straight, dodgeable line).
+    const committed = hostileMotionVelocity(
+      motionState('diver'),
+      { x: 100, y: 300 },
+      { x: 400, y: 300 },
+      960,
+      540,
+    );
+    expect(committed.vx).toBeCloseTo(100, 6);
+    expect(committed.vy).toBeCloseTo(0, 6);
+  });
+
+  it('patrols straight, then commits to a straight attack run inside the range', () => {
+    // Far from the ship and heading away: a straight patrol that ignores the
+    // ship (the predictor's "patrol" phase).
+    const patrol = hostileMotionVelocity(
+      motionState('patroller', { heading: Math.PI }),
+      { x: 100, y: 300 },
+      { x: 900, y: 300 },
+      2000,
+      2000,
+    );
+    expect(patrol.vx).toBeCloseTo(-100, 6);
+    expect(patrol.vy).toBeCloseTo(0, 6);
+    // Inside the commit range: the patrol turns into a straight run at the
+    // ship, still on one line (no weave).
+    const attack = hostileMotionVelocity(
+      motionState('patroller', { heading: Math.PI / 2 }),
+      { x: 300, y: 300 },
+      { x: 450, y: 300 },
+      960,
+      540,
+    );
+    expect(attack.vx).toBeCloseTo(100, 6);
+    expect(attack.vy).toBeCloseTo(0, 6);
+  });
+
+  it('drifts a formation body and reflects it at the arena bound (not wrapping)', () => {
+    // Drifting right at the right edge: the reflection reverses the component
+    // instead of letting the body leave the field, exactly the predictor's
+    // class model. Checked on the state, because a reflected step is not one
+    // constant velocity.
+    const state = { x: 959.5, y: 300, vx: 100, vy: 0 };
+    advanceHazardMotion('formation', state, player.x, player.y, 1 / 60, {
+      width: 960,
+      height: 540,
+    });
+    expect(state.vx).toBe(-100);
+    expect(state.x).toBeGreaterThan(0);
+    expect(state.x).toBeLessThan(960);
+    // Inboard, the drift is the plain linear continuation of its velocity.
+    const drift = hostileMotionVelocity(
+      motionState('formation', { heading: Math.PI / 2 }),
+      { x: 400, y: 100 },
+      player,
+      960,
+      540,
+    );
+    expect(drift.vx).toBeCloseTo(0, 6);
+    expect(drift.vy).toBeCloseTo(100, 6);
+  });
+
+  it('drifts a roamer on a fixed seeded heading, independent of the ship', () => {
+    const early = hostileMotionVelocity(
+      motionState('roamer', { heading: 1 }),
+      from,
+      player,
+      960,
+      540,
+    );
+    const movedShip = hostileMotionVelocity(
+      motionState('roamer', { heading: 1 }),
+      from,
+      { x: 900, y: 500 },
+      960,
+      540,
+    );
+    expect(movedShip).toEqual(early);
+    expect(early.vx).toBeCloseTo(Math.cos(1) * 100, 6);
+    expect(early.vy).toBeCloseTo(Math.sin(1) * 100, 6);
   });
 });

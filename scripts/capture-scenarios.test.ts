@@ -30,7 +30,6 @@ import { cliSpawnEnv } from './cliChildEnv';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { EDITORIAL_CONFIG } from './compile-promo.mjs';
 import {
   CAPTURE_SCENARIO_KINDS,
   EDITORIAL_CATEGORIES as SCHEMA_EDITORIAL_CATEGORIES,
@@ -523,16 +522,15 @@ describe('promo dev gating (AH-0MVSDM30G0092WYC, AC3)', () => {
 //
 // The entry schema lives in `scripts/capture-scenario-schema.mjs` so the
 // registry (authored entries) and the resolver (a substituted registry) share
-// one contract. The editorial category vocabulary is restated there rather
-// than imported from `scripts/compile-promo.mjs` — that module imports
-// `node:fs`, which the browser bundle cannot reach — so these two tests pin
-// the restated list to the promo compiler's `EDITORIAL_CONFIG`, the promo
-// pipeline's single source of truth (AH-0MVDV4RJ300459ZF).
+// one contract. The schema's `EDITORIAL_CATEGORIES` is the single source of
+// truth for the vocabulary (the legacy promo compiler that previously owned it
+// was removed in AH-0MWOUY9IK004QWCU); this test pins the documented name-only
+// list above to that export.
 
 describe('shared scenario schema vocabulary (AH-0MVSDM4ED003C8ZC, AC2)', () => {
-  it('keeps the editorial category vocabulary in step with EDITORIAL_CONFIG', () => {
+  it('matches the restated editorial category vocabulary', () => {
     expect([...SCHEMA_EDITORIAL_CATEGORIES]).toEqual([
-      ...EDITORIAL_CONFIG.categories,
+      ...EDITORIAL_CATEGORIES,
     ]);
   });
 
@@ -643,15 +641,15 @@ describe('promo catalogue (AH-0MVSDMBU60018JOE)', () => {
     const evidenced = new Set<string>(
       PROMO_SCENARIOS.flatMap((scenario) => [...scenario.categories]),
     );
-    for (const category of EDITORIAL_CONFIG.categories) {
+    for (const category of SCHEMA_EDITORIAL_CATEGORIES) {
       expect(
         evidenced.has(category),
         `editorial category "${category}" is not evidenced`,
       ).toBe(true);
     }
-    // No stray category outside the compiler's vocabulary.
+    // No stray category outside the schema's vocabulary.
     expect([...evidenced].sort()).toEqual(
-      [...EDITORIAL_CONFIG.categories].sort(),
+      [...SCHEMA_EDITORIAL_CATEGORIES].sort(),
     );
   });
 

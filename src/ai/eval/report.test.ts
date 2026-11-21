@@ -78,6 +78,7 @@ describe('buildBalanceReport (AH-0MV81YY2T0069W19: versioned, deterministic)', (
     asteroidsDestroyed: 2,
     powerUpsCollected: 1,
     avoidableHits: 4,
+    enemyBodyContacts: 0,
     survivalSeconds: 30,
     waveReached: 2,
     levelReached: 1,
@@ -157,7 +158,7 @@ describe('buildBalanceReport (AH-0MV81YY2T0069W19: versioned, deterministic)', (
     // skirmish opt-out keeps the historic zero wave/level distributions.
     const campaign = runBatch({
       seeds: [1],
-      ticks: 1_800,
+      ticks: 6_000,
       sampleEveryTicks: 120,
       spawns: { asteroids: 0 },
     });
@@ -190,6 +191,7 @@ describe('formatBalanceReport (AH-0MV81YY2T0069W19: human-readable summary)', ()
     asteroidsDestroyed: 2,
     powerUpsCollected: 1,
     avoidableHits: 4,
+    enemyBodyContacts: 0,
     survivalSeconds: 30,
     waveReached: 2,
     levelReached: 1,
@@ -249,6 +251,7 @@ describe('formatTuneSummary (AH-0MVBNLM2V008XC8T: per-key moves are surfaced)', 
     asteroidsDestroyed: 0,
     powerUpsCollected: 0,
     avoidableHits: 0,
+    enemyBodyContacts: 0,
     survivalSeconds: 0,
     waveReached: 0,
     levelReached: 0,

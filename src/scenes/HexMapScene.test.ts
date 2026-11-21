@@ -13,7 +13,8 @@
  * - the reveal is adjacency-only: ring 1 renders with zero held hexes and
  *   ring 2 appears progressively as its neighbours are held (hidden hexes are
  *   neither focusable nor deployable);
- * - focusing/activating a hex launches the shipped `PlayScene` at that hex;
+ * - focusing/activating an unheld hex opens the ship-config (hangar) screen
+ *   pre-targeted at it, whose `▶ DEPLOY` launches the shipped `PlayScene`;
  * - the hangar is one click away;
  * - an injected payload is never mutated, and a fresh war renders the
  *   generated ring.
@@ -53,7 +54,8 @@
  * - **Owned-hex selection.** Every displayed hex is selectable (focusable), a
  *   held hex included: focusing it shows its full intel in the detail panel
  *   and activating it performs **no** deployment. An unheld displayed hex
- *   still deploys through the shipped `PlayScene` path.
+ *   still opens the config screen pre-targeted at it (whose `▶ DEPLOY` then
+ *   launches the shipped `PlayScene` path).
  * - **Grid navigation.** Arrow keys move focus spatially through the model's
  *   `gridColumns` (left/right across columns with wrapping, up/down within a
  *   column with wrapping) and reach the `◀ HANGAR` row from every column,
@@ -78,10 +80,14 @@ import {
 } from '../core/hangarWar/hangarWarStore';
 import { createRingState } from '../core/hangarWar/hexRing';
 import {
+  CONTROLS_HEADING,
   HELD_TILE_MARKER,
   HEX_MAP_HANGAR_ROW_KEY,
   HEX_MAP_TITLE,
+  LAST_SORTIE_HEADING,
+  SELECTED_HEX_HEADING,
   UNHELD_TILE_MARKER,
+  WAR_STATUS_HEADING,
   buildHexMapModel,
   pickAttractHex,
   type HexMapModel,
@@ -109,7 +115,18 @@ import {
 } from '../powerups/miniBossWheel';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
-import { HEX_MAP_HINT } from './hangarWar/hexMap';
+import { BOT_UPGRADE_SCENE_KEY, BotUpgradeScene } from './BotUpgradeScene';
+import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import {
+  HEX_MAP_HINT,
+  HEX_MAP_SECTION_RECTS,
+  LAST_SORTIE_HEIGHT,
+  LAST_SORTIE_LINE_BUDGET,
+  sectionBodyHeight,
+  sectionBodyWidth,
+  sectionBudgetHeight,
+  wrappedLineCount,
+} from './hangarWar/hexMap';
 import { MineralChoiceScene } from './MineralChoiceScene';
 import {
   MINI_BOSS_WHEEL_SCENE_KEY,
@@ -377,10 +394,28 @@ describe('HexMapScene', () => {
 
   /** Boots the scene and re-starts it with `data` (Phaser launch data). */
   async function bootMap(data?: object): Promise<HexMapScene> {
-    booted = await reuse.boot([HexMapScene, PlayScene, HangarScene]);
+    booted = await reuse.boot([
+      HexMapScene,
+      PlayScene,
+      HangarScene,
+      BotUpgradeScene,
+    ]);
     booted.game.scene.start(HEX_MAP_SCENE_KEY, data);
     await advanceGame(booted.game, 200);
     return booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
+  }
+
+  /**
+   * Activates the config screen's `▶ DEPLOY` row — the step the map now hands
+   * off to instead of starting `PlayScene` itself (AH-0MWMT4S5U001EGDF).
+   */
+  function deployFromConfig(): void {
+    const hangar = booted!.game.scene.getScene(
+      HANGAR_SCENE_KEY,
+    ) as HangarScene;
+    const row = hangar.getRows().find((entry) => entry.key === 'deploy');
+    expect(row, 'the config screen has no ▶ DEPLOY row').toBeDefined();
+    row!.text.emit('pointerdown');
   }
 
   it('boots with the hangar at the centre and the ring around it', async () => {
@@ -410,9 +445,11 @@ describe('HexMapScene', () => {
       const row = scene.getRows().find((entry) => entry.key === intel.key)!;
       // The tile carries aggression + ownership marker first, coordinates on
       // their own second line; ownership is also readable without colour.
-      expect(row.label).toBe(
-        `AGG ${intel.aggression} ${UNHELD_TILE_MARKER}\n(${intel.q},${intel.r})`,
-      );
+      // Authored variety tags (`✦ CONTRACT`, `⚡ FORTRESS`) may follow below.
+      expect(row.label.split('\n').slice(0, 2)).toEqual([
+        `AGG ${intel.aggression} ${UNHELD_TILE_MARKER}`,
+        `(${intel.q},${intel.r})`,
+      ]);
       // The rendered text object is the label's first line (the aggression
       // badge); the coordinates render as the smaller line below it.
       expect(row.text.text).toBe(row.label.split('\n')[0]);
@@ -428,9 +465,9 @@ describe('HexMapScene', () => {
     const panel = scene.getPanelText();
     expect(panel).toContain(panelHex.id);
     expect(panel).toContain(panelHex.boss!);
-    expect(panel).toContain(`W:${panelHex.weaknesses.join(',')}`);
-    expect(panel).toContain(`→${panelHex.grants}`);
-    expect(panel).toContain(`AGG ${panelHex.aggression}`);
+    expect(panel).toContain(`WEAKNESSES: ${panelHex.weaknesses.join(',')}`);
+    expect(panel).toContain(`GRANT: ${panelHex.grants}`);
+    expect(panel).toContain(`AGGRESSION: ${panelHex.aggression}`);
 
     // A concrete authored hex: ring 1's easiest (the default focus), its boss
     // and its grant all reachable through the panel.
@@ -439,8 +476,8 @@ describe('HexMapScene', () => {
       .find((row) => row.key === 'hex:hex-r1-2')!;
     expect(easiest.label).toBe(`AGG 1 ${UNHELD_TILE_MARKER}\n(1,-1)`);
     expect(panel).toContain('shroud-merchant');
-    expect(panel).toContain('W:waveLaser');
-    expect(panel).toContain('→extra-life');
+    expect(panel).toContain('WEAKNESSES: waveLaser');
+    expect(panel).toContain('GRANT: extra-life');
   });
 
   it(
@@ -531,13 +568,27 @@ describe('HexMapScene', () => {
     },
   );
 
-  it('deploys at the focused hex through the shipped PlayScene path', async () => {
+  it('opens the config screen pre-targeted at the focused hex, then deploys there', async () => {
     const payload = ringPayload(1);
     const scene = await bootMap({ payload, storage: null });
     const weakest = pickAttractHex(payload)!;
 
     expect(scene.focusRow(`hex:${weakest}`)).toBe(true);
     scene.activateFocused();
+    await advanceGame(booted!.game, 350);
+
+    // The map starts no battle: it opens the ship-config (hangar) screen for
+    // the chosen hex (AH-0MWMT4S5U001EGDF, parent AH-0MWMRWCY2001HWGR AC1).
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+    const hangar = booted!.game.scene.getScene(
+      HANGAR_SCENE_KEY,
+    ) as HangarScene;
+    expect(hangar.getModel().deployRow.hexId).toBe(weakest);
+
+    // The config screen's ▶ DEPLOY launches the shipped deployment at the
+    // carried target.
+    deployFromConfig();
     await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
@@ -550,19 +601,30 @@ describe('HexMapScene', () => {
     expect(deployment.startLevel).toBe(2);
   });
 
-  it('deploys from a pointer click on a hex tile', async () => {
+  it('opens the config screen from a pointer click on a hex tile', async () => {
     const scene = await bootMap({ payload: ringPayload(1), storage: null });
     const row = scene.getRows().find((entry) => entry.key === 'hex:hex-r1-3')!;
 
     row.text.emit('pointerdown');
     await advanceGame(booted!.game, 350);
 
+    // A hex activation is a target choice, not a launch: the config screen
+    // opens for that hex and carries it into its ▶ DEPLOY row.
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+    const hangar = booted!.game.scene.getScene(
+      HANGAR_SCENE_KEY,
+    ) as HangarScene;
+    expect(hangar.getModel().deployRow.hexId).toBe('hex-r1-3');
+
+    deployFromConfig();
+    await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.getHangarWarDeployment()!.hexId).toBe('hex-r1-3');
   });
 
-  it('keeps the hangar one click away', async () => {
+  it('keeps the hangar one click away with no carried target', async () => {
     const payload = ringPayload(1);
     const scene = await bootMap({ payload, storage: null });
 
@@ -574,10 +636,13 @@ describe('HexMapScene', () => {
     const hangar = booted!.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
     // The same war state the map showed is handed to the hangar.
     expect(hangar.getPayload()).toEqual(payload);
+    // The ◀ HANGAR row carries no target, so ▶ DEPLOY keeps the shipped
+    // default: the weakest unheld hex (AH-0MWMT4S5U001EGDF AC3).
+    expect(hangar.getModel().deployRow.hexId).toBe(pickAttractHex(payload));
   });
 
   it(
-    'keeps owned hexes selectable but never deployable once the ring is secured',
+    'keeps owned hexes selectable and opens the bot-upgrade screen on activation',
     async () => {
       const payload = ringPayload(1);
       for (const hex of payload.ring.hexes) {
@@ -609,11 +674,13 @@ describe('HexMapScene', () => {
       expect(panel).toContain('HELD');
       expect(panel).toContain('the-dawnbreaker');
 
-      // Activating an owned hex performs no deployment: the map stays up.
+      // Activating an owned hex never deploys. Now that a held defender can be
+      // strengthened (AH-0MWH48IEG00929GQ), it opens the bot-upgrade screen.
       scene.activateFocused();
       await advanceGame(booted!.game, 350);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
-      expect(scene.sys.isActive()).toBe(true);
+      expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(false);
+      expect(booted!.game.scene.isActive(BOT_UPGRADE_SCENE_KEY)).toBe(true);
     },
   );
 
@@ -625,7 +692,7 @@ describe('HexMapScene', () => {
     // Beside the existing hull line, the panel shows the derived
     // armour/firepower/systems and the upgrade rating contribution — the same
     // numbers the report and the gym render through the shared model.
-    expect(panel).toContain('bot hull-2 (14)');
+    expect(panel).toContain('DEFENDER: hull-2 (14)');
     expect(panel).toContain('upgrade armour 2 · firepower 1 · systems 0 (+8)');
   });
 
@@ -763,19 +830,35 @@ describe('HexMapScene', () => {
       expect(panel).toContain('hex-r1-2');
       expect(panel).toContain('HELD');
       expect(panel).toContain('shroud-merchant');
-      expect(panel).toContain('W:waveLaser');
-      expect(panel).toContain('→extra-life');
-      expect(panel).toContain('bot hull-1');
+      expect(panel).toContain('WEAKNESSES: waveLaser');
+      expect(panel).toContain('GRANT: extra-life');
+      expect(panel).toContain('DEFENDER: hull-1');
 
-      // Activating an owned hex performs no deployment: the map stays up.
+      // Activating an owned hex never deploys: it opens the bot-upgrade screen
+      // for the defender (AH-0MWH48IEG00929GQ).
       scene.activateFocused();
       await advanceGame(booted!.game, 350);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
-      expect(scene.sys.isActive()).toBe(true);
+      expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(false);
+      expect(booted!.game.scene.isActive(BOT_UPGRADE_SCENE_KEY)).toBe(true);
 
-      // An unheld displayed hex still deploys through the shipped path.
-      expect(scene.focusRow('hex:hex-r1-3')).toBe(true);
-      scene.activateFocused();
+      // Back to the map (the bot-upgrade screen's back row), then an unheld
+      // displayed hex opens the config screen for it; its ▶ DEPLOY then
+      // launches the deployment at that hex.
+      (booted!.game.scene.getScene(BOT_UPGRADE_SCENE_KEY) as BotUpgradeScene).openMap();
+      await advanceGame(booted!.game, 350);
+      const backOnMap = booted!.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as HexMapScene;
+      expect(backOnMap.focusRow('hex:hex-r1-3')).toBe(true);
+      backOnMap.activateFocused();
+      await advanceGame(booted!.game, 350);
+      expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+      const hangar = booted!.game.scene.getScene(
+        HANGAR_SCENE_KEY,
+      ) as HangarScene;
+      expect(hangar.getModel().deployRow.hexId).toBe('hex-r1-3');
+      deployFromConfig();
       await advanceGame(booted!.game, 350);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
@@ -901,7 +984,7 @@ describe('HexMapScene', () => {
   );
 
   it(
-    'shows the attack\'s details on the LEFT panel for both arrow endpoints',
+    'shows the attack\'s details in the selected-hex section for both arrow endpoints',
     async () => {
       const payload = attackPayload();
       const record = attackRecord();
@@ -995,7 +1078,7 @@ describe('HexMapScene', () => {
       const rightWith = withRecord.getPanelText();
       expect(withRecord.getPanelKey()).toBe('hex:hex-idle');
       expect(rightWith).toContain('hex-idle');
-      expect(rightWith).toContain('AGG 1');
+      expect(rightWith).toContain('AGGRESSION: 1');
 
       // The right-hand intel panel is not a function of the record: entering
       // the map without one shows exactly the same intel for the same hex.
@@ -1169,6 +1252,10 @@ describe('HexMapScene', () => {
     const row = scene.getRows().find((entry) => entry.key.startsWith('hex:'));
     expect(row, 'the resumed map has deployable hex rows').toBeDefined();
     row!.text.emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+    // The resumed map still routes through the config screen before the run.
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+    deployFromConfig();
     await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
   });
@@ -1365,5 +1452,512 @@ describe('HexMapScene', () => {
       () => booted!.game.scene.isActive('PlayScene'),
       900,
     );
+  });
+
+  /**
+   * Sectioned layout (AH-0MWL4QCVD007WOAM).
+   *
+   * The screen is four content sections plus a controls footer, each drawn as
+   * a bordered panel headed from a shared constant. This block pins the
+   * `war-status` / `map` / `controls` slices: every heading renders, every
+   * string still renders inside its own panel, the legend has left the intel
+   * column, and nothing shrinks below the map's existing type floor.
+   */
+  describe('sectioned layout (war-status, map, controls)', () => {
+    /** Every rendered text object, in draw order. */
+    function allTexts(scene: Phaser.Scene): Phaser.GameObjects.Text[] {
+      return scene.children.list.filter(
+        (child): child is Phaser.GameObjects.Text =>
+          child instanceof Phaser.GameObjects.Text,
+      );
+    }
+
+    /** Whether `text` is wholly inside the section rect `key`. */
+    function insideSection(
+      text: Phaser.GameObjects.Text,
+      key: keyof typeof HEX_MAP_SECTION_RECTS,
+    ): boolean {
+      const rect = HEX_MAP_SECTION_RECTS[key];
+      const bounds = text.getBounds();
+      return (
+        bounds.x >= rect.x &&
+        bounds.y >= rect.y &&
+        bounds.right <= rect.x + rect.width &&
+        bounds.bottom <= rect.y + rect.height
+      );
+    }
+
+    it('heads war-status, map and controls from shared constants', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      const warHeading = findTextStartingWith(scene, WAR_STATUS_HEADING);
+      const mapHeading = findTextStartingWith(scene, HEX_MAP_TITLE);
+      const controlsHeading = findTextStartingWith(scene, CONTROLS_HEADING);
+
+      // Every heading sits inside its section's rect (frame + heading
+      // convention), so the section is identifiable without colour.
+      expect(insideSection(warHeading, 'war-status')).toBe(true);
+      expect(insideSection(mapHeading, 'map')).toBe(true);
+      expect(insideSection(controlsHeading, 'controls')).toBe(true);
+      // Headings are at least 10px (the map's own title keeps its 20px).
+      expect(warHeading.style.fontSize).toBe('10px');
+      expect(controlsHeading.style.fontSize).toBe('10px');
+    });
+
+    it('keeps every war-status line inside the war-status panel', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+      const model = scene.getModel();
+
+      for (const line of [
+        model.ringLine,
+        model.frontierLine,
+        model.hangarLine,
+      ]) {
+        const text = findTextStartingWith(scene, line.slice(0, 12));
+        expect(text.text).toBe(line);
+        expect(insideSection(text, 'war-status')).toBe(true);
+      }
+      // The war status is no longer loose header text in the left column.
+      expect(insideSection(findTextStartingWith(scene, model.ringLine), 'map'))
+        .toBe(false);
+    });
+
+    it('moves the READ THE MAP legend into the controls footer', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+      const legendPrefixes = [
+        'READ THE MAP',
+        'blue ● — held',
+        '(q,r) — coordinates',
+        'arrows — spatial',
+        'enter/space — inspect or deploy',
+        'detail panel — full intel',
+      ];
+
+      for (const prefix of legendPrefixes) {
+        const text = findTextStartingWith(scene, prefix);
+        expect(insideSection(text, 'controls')).toBe(true);
+        // ...and out of the intel column it used to share.
+        expect(insideSection(text, 'selected-hex')).toBe(false);
+      }
+    });
+
+    it('keeps the hint line and the hangar row in the controls footer', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+      const hint = findTextStartingWith(scene, HEX_MAP_HINT);
+      const hangarRow = findTextStartingWith(
+        scene,
+        scene.getModel().hangarRow.label,
+      );
+
+      expect(insideSection(hint, 'controls')).toBe(true);
+      expect(insideSection(hangarRow, 'controls')).toBe(true);
+      expect(hangarRow.style.fontSize).toBe('12px');
+    });
+
+    it('renders no text smaller than 9px', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      for (const text of allTexts(scene)) {
+        const size = Number.parseInt(String(text.style.fontSize), 10);
+        expect(size, `text "${text.text.slice(0, 24)}" is ${size}px`).
+          toBeGreaterThanOrEqual(9);
+      }
+    });
+
+    it('wraps section body text instead of letting it leave its panel', async () => {
+      // A long frontier line is the widest war-status string; it must word-wrap
+      // inside the panel rather than run into the ring (no text overdraws a
+      // tile).
+      const scene = await bootMap({ payload: ringPayload(2), storage: null });
+      const frontier = findTextStartingWith(
+        scene,
+        scene.getModel().frontierLine.slice(0, 12),
+      );
+
+      expect(insideSection(frontier, 'war-status')).toBe(true);
+      expect(frontier.style.wordWrapWidth).toBe(
+        HEX_MAP_SECTION_RECTS['war-status'].width - 16,
+      );
+    });
+
+    it('puts the focused hex intel and its attack row in one section', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        storage: null,
+      });
+
+      expect(scene.focusRow('hex:hex-held')).toBe(true);
+      const heading = findTextStartingWith(scene, SELECTED_HEX_HEADING);
+      const intel = findTextStartingWith(scene, 'FULL INTEL — HEX-HELD');
+      const attackRow = findTextStartingWith(
+        scene,
+        scene.getLeftPanelText().slice(0, 24),
+      );
+
+      // Heading, intel and the attack row are all inside the one
+      // `selected-hex` rect...
+      expect(insideSection(heading, 'selected-hex')).toBe(true);
+      expect(insideSection(intel, 'selected-hex')).toBe(true);
+      expect(insideSection(attackRow, 'selected-hex')).toBe(true);
+      // ...the attack row directly below the intel it belongs to...
+      expect(attackRow.y).toBeGreaterThan(intel.y + intel.height);
+      // ...and nowhere near the map or the old left-hand band.
+      expect(insideSection(attackRow, 'map')).toBe(false);
+      expect(attackRow.x).toBeGreaterThanOrEqual(
+        HEX_MAP_SECTION_RECTS['selected-hex'].x,
+      );
+
+      // The intel itself is unchanged in content, only re-homed.
+      expect(scene.getPanelText()).toContain('STATE:');
+      expect(scene.getPanelText()).toContain('STRENGTHS:');
+      expect(scene.getLeftPanelText()).toContain('hex-held — FELL');
+    });
+
+    it('hides the attack row inside the section when the hex is in no attack', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      expect(scene.focusRow('hex:hex-r1-1')).toBe(true);
+      // The section (and its intel) stays; the attack row is hidden, not moved.
+      expect(
+        insideSection(
+          findTextStartingWith(scene, 'FULL INTEL — HEX-R1-1'),
+          'selected-hex',
+        ),
+      ).toBe(true);
+      expect(scene.isLeftPanelVisible()).toBe(false);
+      expect(scene.getLeftPanelText()).toBe('');
+      expect(
+        scene.children.list.some(
+          (child) =>
+            child instanceof Phaser.GameObjects.Text &&
+            child.text.startsWith('ATTACK — FOCUSED HEX') &&
+            child.visible,
+        ),
+      ).toBe(false);
+      // No attack row was smuggled into another section.
+      expect(screenText(scene)).not.toContain('retake: strike');
+    });
+
+    it('gathers the run result and the assault outcome into last-sortie', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+
+      const heading = findTextStartingWith(scene, LAST_SORTIE_HEADING);
+      const runLine = findTextStartingWith(scene, 'RUN: VICTORY');
+      const assaultHeading = findTextStartingWith(scene, 'HANGAR ASSAULT');
+      const assaultText = findTextStartingWith(scene, 'RING WON');
+
+      for (const text of [heading, runLine, assaultHeading, assaultText]) {
+        expect(insideSection(text, 'last-sortie')).toBe(true);
+      }
+      // One place for "what just happened": nothing is left over the map or in
+      // the selected-hex/intel column.
+      expect(insideSection(runLine, 'map')).toBe(false);
+      expect(insideSection(assaultText, 'selected-hex')).toBe(false);
+      // The seams still report the same content.
+      expect(scene.getAssaultText()).toContain('defender sum 12');
+      expect(scene.isAssaultVisible()).toBe(true);
+    });
+
+    it('draws the banked win bonus inside last-sortie (Q3 = a)', async () => {
+      const scene = await bootMap({
+        payload: ringPayload(1),
+        winBonusMinerals: 250,
+        storage: null,
+      });
+
+      const winBonus = findTextStartingWith(scene, 'WIN BONUS BANKED');
+      expect(winBonus.text).toBe('WIN BONUS BANKED: +250 MINERALS');
+      expect(insideSection(winBonus, 'last-sortie')).toBe(true);
+      expect(
+        insideSection(
+          findTextStartingWith(scene, LAST_SORTIE_HEADING),
+          'last-sortie',
+        ),
+      ).toBe(true);
+    });
+
+    it('sizes the last-sortie panel from its worst-case content budget', async () => {
+      const rect = HEX_MAP_SECTION_RECTS['last-sortie'];
+
+      // The panel is not a hand-picked pixel height: it is the budget plus the
+      // frame's padding and heading band, so a new line (or a wider string)
+      // either fits or fails the budget test below.
+      expect(rect.height).toBe(LAST_SORTIE_HEIGHT);
+      expect(sectionBudgetHeight(LAST_SORTIE_LINE_BUDGET)).toBeLessThanOrEqual(
+        sectionBodyHeight(rect),
+      );
+    });
+
+    it('holds the full win path inside the last-sortie panel', async () => {
+      // The landing the audit found spilling out of the panel
+      // (AH-0MWNEQRSI008DIY8): a win that banked a bonus AND repelled the
+      // massed assault, drawn with deliberately wide numbers.
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 999999,
+        winBonusMinerals: 999999,
+        assault: assaultResolution(9999, 9999),
+        storage: null,
+      });
+      const rect = HEX_MAP_SECTION_RECTS['last-sortie'];
+      const bodyWidth = sectionBodyWidth(rect);
+
+      // Every block the renderer draws, with the budget slot it lands in
+      // (`LAST_SORTIE_LINE_BUDGET` is in draw order: run result, win bonus,
+      // assault sub-heading, assault body).
+      const drawn = [
+        { label: 'run result', text: scene.getRunLine()!, fontSizePx: 13 },
+        { label: 'win bonus', text: scene.getWinBonusLine()!, fontSizePx: 11 },
+        { label: 'assault sub-heading', text: 'HANGAR ASSAULT', fontSizePx: 10 },
+        { label: 'assault body', text: scene.getAssaultText(), fontSizePx: 11 },
+      ];
+      expect(drawn).toHaveLength(LAST_SORTIE_LINE_BUDGET.length);
+      drawn.forEach((block, index) => {
+        const budget = LAST_SORTIE_LINE_BUDGET[index];
+        expect(budget.fontSizePx, block.label).toBe(block.fontSizePx);
+        expect(block.text, block.label).not.toBe('');
+        expect(
+          wrappedLineCount(block.text, bodyWidth, block.fontSizePx),
+          `${block.label} must fit the panel's ${budget.visualLines}-line budget`,
+        ).toBeLessThanOrEqual(budget.visualLines);
+      });
+
+      // The whole block budget still fits the panel's body area — the check the
+      // happy-dom `measureText` stub (0 width, so nothing wraps) cannot make.
+      expect(sectionBudgetHeight(LAST_SORTIE_LINE_BUDGET)).toBeLessThanOrEqual(
+        sectionBodyHeight(rect),
+      );
+    });
+
+    it('omits the last-sortie section when the landing carries no news', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      expect(screenText(scene)).not.toContain(LAST_SORTIE_HEADING);
+      expect(screenText(scene)).not.toContain('RUN:');
+      expect(screenText(scene)).not.toContain('WIN BONUS');
+      expect(screenText(scene)).not.toContain('HANGAR ASSAULT');
+      expect(scene.getAssaultText()).toBe('');
+    });
+
+    it('publishes the section registry in reading order', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+
+      const sections = scene.getSections();
+      expect(sections.map((section) => section.key)).toEqual([
+        'war-status',
+        'last-sortie',
+        'map',
+        'selected-hex',
+        'controls',
+      ]);
+      expect(sections.map((section) => section.heading)).toEqual([
+        WAR_STATUS_HEADING,
+        LAST_SORTIE_HEADING,
+        scene.getModel().title,
+        SELECTED_HEX_HEADING,
+        CONTROLS_HEADING,
+      ]);
+      // The rects are the layout's own rect table — no second layout exists.
+      for (const section of sections) {
+        expect(section.rect).toBe(HEX_MAP_SECTION_RECTS[section.key]);
+      }
+    });
+
+    it('omits last-sortie from the registry when there is no news', async () => {
+      const scene = await bootMap({ payload: ringPayload(1), storage: null });
+
+      expect(scene.getSections().map((section) => section.key)).toEqual([
+        'war-status',
+        'map',
+        'selected-hex',
+        'controls',
+      ]);
+    });
+
+    it('keeps every section rect in frame and free of overlaps', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+      const sections = scene.getSections();
+
+      for (const { key, rect } of sections) {
+        expect(rect.x, key).toBeGreaterThanOrEqual(0);
+        expect(rect.y, key).toBeGreaterThanOrEqual(0);
+        expect(rect.x + rect.width, key).toBeLessThanOrEqual(GAME_WIDTH);
+        expect(rect.y + rect.height, key).toBeLessThanOrEqual(GAME_HEIGHT);
+      }
+      for (let i = 0; i < sections.length; i += 1) {
+        for (let j = i + 1; j < sections.length; j += 1) {
+          const a = sections[i].rect;
+          const b = sections[j].rect;
+          const overlaps =
+            a.x < b.x + b.width &&
+            b.x < a.x + a.width &&
+            a.y < b.y + b.height &&
+            b.y < a.y + a.height;
+          expect(overlaps, `${sections[i].key} overlaps ${sections[j].key}`).
+            toBe(false);
+        }
+      }
+    });
+
+    it('puts every rendered text and arrow inside exactly one section', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+      const sections = scene.getSections();
+
+      /** Sections whose rect wholly contains `bounds`. */
+      const holdersOf = (bounds: {
+        x: number;
+        y: number;
+        right: number;
+        bottom: number;
+      }): string[] =>
+        sections
+          .filter(
+            ({ rect }) =>
+              bounds.x >= rect.x &&
+              bounds.y >= rect.y &&
+              bounds.right <= rect.x + rect.width &&
+              bounds.bottom <= rect.y + rect.height,
+          )
+          .map(({ key }) => key);
+
+      for (const text of allTexts(scene)) {
+        expect(
+          holdersOf(text.getBounds()),
+          `text "${text.text.slice(0, 24)}" is not in exactly one section`,
+        ).toHaveLength(1);
+      }
+      // Tiles are drawn at the model's axial positions; every arrow endpoint
+      // must therefore lie inside the map section.
+      const mapRect = HEX_MAP_SECTION_RECTS.map;
+      for (const arrow of scene.getArrows()) {
+        for (const point of [arrow.from, arrow.to]) {
+          expect(point.x).toBeGreaterThanOrEqual(mapRect.x);
+          expect(point.y).toBeGreaterThanOrEqual(mapRect.y);
+          expect(point.x).toBeLessThanOrEqual(mapRect.x + mapRect.width);
+          expect(point.y).toBeLessThanOrEqual(mapRect.y + mapRect.height);
+        }
+      }
+      // Every rendered row's text (the tile labels) is in the map section, so
+      // a tile can never be drawn outside the map region it belongs to.
+      for (const row of scene.getRows()) {
+        if (!row.key.startsWith('hex:')) continue;
+        expect(holdersOf(row.text.getBounds())).toEqual(['map']);
+      }
+    });
+
+    it('drops last-sortie from the registry on a later entry without news', async () => {
+      // The transient news is launch data only: a later menu/hangar landing
+      // carries none, so the section and its registry entry are both absent.
+      const payload = ringPayload(1);
+      const scene = await bootMap({
+        payload,
+        won: true,
+        score: 500,
+        winBonusMinerals: 100,
+        storage: null,
+      });
+      expect(scene.getSections().map((section) => section.key)).toContain(
+        'last-sortie',
+      );
+
+      booted!.game.scene.start(HEX_MAP_SCENE_KEY, { payload, storage: null });
+      await advanceGame(booted!.game, 200);
+      const reentered = booted!.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as HexMapScene;
+
+      expect(reentered.getSections().map((section) => section.key)).toEqual([
+        'war-status',
+        'map',
+        'selected-hex',
+        'controls',
+      ]);
+      expect(screenText(reentered)).not.toContain(LAST_SORTIE_HEADING);
+      expect(screenText(reentered)).not.toContain('RUN:');
+      expect(screenText(reentered)).not.toContain('WIN BONUS');
+    });
+
+    it('draws every registry heading inside its own section', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+
+      // Registry ↔ drawing: the published heading for a section is the
+      // heading actually rendered inside that section's rect.
+      for (const section of scene.getSections()) {
+        const heading = findTextStartingWith(scene, section.heading);
+        expect(insideSection(heading, section.key)).toBe(true);
+      }
+    });
+
+    it('never lets another section’s text overdraw the ring', async () => {
+      const scene = await bootMap({
+        payload: attackPayload(),
+        record: attackRecord(),
+        won: true,
+        score: 900,
+        assault: assaultResolution(12, 5),
+        storage: null,
+      });
+      const mapRect = HEX_MAP_SECTION_RECTS.map;
+
+      /** Whether the bounds intersect the map section at all. */
+      const touchesMap = (bounds: {
+        x: number;
+        y: number;
+        right: number;
+        bottom: number;
+      }): boolean =>
+        bounds.x < mapRect.x + mapRect.width &&
+        mapRect.x < bounds.right &&
+        bounds.y < mapRect.y + mapRect.height &&
+        mapRect.y < bounds.bottom;
+
+      for (const text of allTexts(scene)) {
+        // Tile labels, the map title and the run-result line legitimately sit
+        // in the map section; everything else must stay clear of the ring.
+        if (insideSection(text, 'map')) continue;
+        expect(
+          touchesMap(text.getBounds()),
+          `text "${text.text.slice(0, 24)}" strays into the ring`,
+        ).toBe(false);
+      }
+    });
   });
 });

@@ -93,6 +93,18 @@ export function grantPermanentWeapon(
 }
 
 /**
+ * The narrow registry surface a permanent power-up grant needs.
+ *
+ * Structurally satisfied by {@link EffectsRegistry}. Kept minimal, exactly like
+ * {@link PermanentWeaponRegistry}, so a Phaser-free applier — the hangar-war
+ * deployment applier (`src/scenes/hangarWar/hangarDeployment.ts`) — can consume
+ * the one permanent-grant seam without importing the concrete registry.
+ */
+export interface PermanentPowerUpRegistry {
+  applyCollect(id: PowerUpId, permanent?: boolean): void;
+}
+
+/**
  * Grants one **permanent power-up level** for the current run.
  *
  * The registry applies the hold-full effect **and** advances the single
@@ -115,7 +127,7 @@ export function grantPermanentWeapon(
  */
 export function grantPermanentPowerUp(
   powerUpId: PowerUpId,
-  effectsRegistry: EffectsRegistry,
+  effectsRegistry: PermanentPowerUpRegistry,
 ): void {
   effectsRegistry.applyCollect(powerUpId, true);
 }

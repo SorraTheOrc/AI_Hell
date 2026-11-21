@@ -55,6 +55,7 @@ import {
   buildBotWorld,
   createCompetentBotBrain,
 } from '../../ai/framework';
+import { hazardHorizonFor } from '../../ai/framework/hazardMotionModel';
 import { buildBotSnapshot } from '../../ai/botSnapshot';
 import { createSeededRng } from '../../core/rng';
 import { computeSpawns } from '../../waves/AsteroidSpawner';
@@ -310,6 +311,59 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     )!;
     expect(output.textContent).toBe('900');
     // The scene keeps running after the live rebuild.
+    expect(scene.getShip()).not.toBeNull();
+    expect(() => scene.tick(1 / 60)).not.toThrow();
+  });
+
+  it('applies the motion-model toggle and per-class horizon knobs live, without a restart (AH-0MWM0CCJE000AANE)', async () => {
+    const scene = await bootTuning({ seed: 7 });
+
+    // The gym opens on the shipped motion model with the shipped class scales.
+    const initial = scene.getAppliedBotTunables();
+    expect(initial.hazardMotionModelEnabled).toBe(true);
+    expect(initial.hazardClassHorizonScale.diver).toBe(
+      COMPETENT_BOT_TUNABLES.hazardClassHorizonScale.diver,
+    );
+
+    // Flip the toggle on the live panel (no scene restart).
+    const toggle = document.querySelector<HTMLInputElement>(
+      `input[${BOT_TUNING_TOGGLE_ATTR}="hazardMotionModelEnabled"]`,
+    )!;
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change'));
+    expect(scene.getAppliedBotTunables().hazardMotionModelEnabled).toBe(false);
+
+    // Move a per-class multiplier on the live panel (no scene restart).
+    const diver = document.querySelector<HTMLInputElement>(
+      `input[${BOT_TUNING_SLIDER_ATTR}="hazardClassHorizonScale.diver"]`,
+    )!;
+    diver.value = '2.1';
+    diver.dispatchEvent(new Event('input'));
+
+    const applied = scene.getAppliedBotTunables();
+    expect(applied.hazardClassHorizonScale.diver).toBeCloseTo(2.1, 10);
+    // Only the moved class changes: the rest keep their shipped scales.
+    expect(applied.hazardClassHorizonScale.chaser).toBe(
+      COMPETENT_BOT_TUNABLES.hazardClassHorizonScale.chaser,
+    );
+    expect(applied.hazardClassHorizonScale.roamer).toBe(
+      COMPETENT_BOT_TUNABLES.hazardClassHorizonScale.roamer,
+    );
+    // The changed multiplier really reaches the shared threat-window
+    // definition the steering fan and kiting gate consume.
+    expect(
+      hazardHorizonFor(
+        { movementClass: 'diver', curvature: 0 },
+        applied,
+      ),
+    ).toBeCloseTo(applied.hazardPredictionHorizon * 2.1, 10);
+
+    // Re-enabling the model from the panel restores the live prediction path.
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    expect(scene.getAppliedBotTunables().hazardMotionModelEnabled).toBe(true);
+
+    // The scene keeps running after every live rebuild.
     expect(scene.getShip()).not.toBeNull();
     expect(() => scene.tick(1 / 60)).not.toThrow();
   });

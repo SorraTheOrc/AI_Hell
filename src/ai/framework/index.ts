@@ -15,6 +15,10 @@
  * - {@link BotBrain}/{@link BotPolicy} — the policy that maps a
  *   `BotSnapshot` (+ world model + memory) to a `BotSteeringIntent`, pure
  *   over an injected `dt` (AC5).
+ * - `predictMinimumSeparation` / `resolveEnemyMovementClass` — the one
+ *   class-shaped hazard predictor (and the bot-side archetype → movement-class
+ *   map it consumes), shared by the game, the bot-tuning gym and the
+ *   evaluation arena (AH-0MWLUIOH9001XBJ3).
  *
  * See `docs/BOT_FRAMEWORK.md` for an overview and how to register goals and
  * behaviours (AC7).
@@ -73,6 +77,24 @@ export {
   type BotWorldTunables,
   type IncomingFireThreat,
 } from './worldModel';
+
+export {
+  DEFAULT_BOT_ENEMY_MOVEMENT_CLASS,
+  ENEMY_MOVEMENT_CLASS_BY_ARCHETYPE,
+  resolveEnemyMovementClass,
+} from './enemyMovementClass';
+
+export {
+  HAZARD_DIVE_COMMIT_DOT,
+  HAZARD_MOTION_MAX_SAMPLES,
+  HAZARD_MOTION_SAMPLE_STEP,
+  HAZARD_PATROL_COMMIT_RANGE,
+  closestApproachFromDelta,
+  predictMinimumSeparation,
+  type HazardPlayerMotion,
+  type HazardPredictionMode,
+  type HazardSeparationPrediction,
+} from './hazardMotionModel';
 
 export {
   BOT_IDLE_INTENT,

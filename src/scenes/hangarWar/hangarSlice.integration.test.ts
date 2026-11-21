@@ -81,10 +81,7 @@ import {
   type HangarWarDeployment,
 } from './hangarDeployment';
 import {
-  equipHangarHull,
   purchaseHangarEntry,
-  toggleHangarModifier,
-  toggleHangarWeapon,
 } from './hangarScreen';
 
 /** The war seed every scenario derives from (deterministic runs). */
@@ -270,14 +267,11 @@ describe('Hangar slice — end to end (AH-0MVUXC2T0009Y42G)', () => {
       bankedCores: 1,
     });
     expect(afterWeapon.payload.hangar.unlockedWeapons).toContain('wave_laser');
-    payload = afterWeapon.payload;
-
-    const equippedWeapon = toggleHangarWeapon(payload, 'wave_laser');
-    expect(equippedWeapon.ok).toBe(true);
+    // A purchase arms the part immediately (parent AH-0MWL5PAP2001XYYF).
     expect(
-      equippedWeapon.payload.hangar.activeLoadout.startingWeapons,
+      afterWeapon.payload.hangar.activeLoadout.startingWeapons,
     ).toEqual(['wave_laser']);
-    payload = equippedWeapon.payload;
+    payload = afterWeapon.payload;
 
     const afterModifier = purchaseHangarEntry(payload, 'hardened_plating');
     expect(afterModifier.ok).toBe(true);
@@ -285,14 +279,10 @@ describe('Hangar slice — end to end (AH-0MVUXC2T0009Y42G)', () => {
       bankedMinerals: 60,
       bankedCores: 0,
     });
-    payload = afterModifier.payload;
-
-    const equippedModifier = toggleHangarModifier(payload, 'hardened_plating');
-    expect(equippedModifier.ok).toBe(true);
-    expect(equippedModifier.payload.hangar.activeLoadout.modifiers).toEqual([
+    expect(afterModifier.payload.hangar.activeLoadout.modifiers).toEqual([
       'hardened_plating',
     ]);
-    payload = equippedModifier.payload;
+    payload = afterModifier.payload;
 
     // The extra hull is a real, still-unaffordable choice: 220/3 > 60/0.
     const refusedHull = purchaseHangarEntry(payload, 'hull-2');
@@ -335,9 +325,9 @@ describe('Hangar slice — end to end (AH-0MVUXC2T0009Y42G)', () => {
       DEFAULT_HULL_ID,
       'hull-2',
     ]);
-    const equippedHull = equipHangarHull(boughtHull.payload, 'hull-2');
-    expect(equippedHull.ok).toBe(true);
-    saveHangarWarPayload(equippedHull.payload, storage);
+    // The hull purchase equips itself (parent AH-0MWL5PAP2001XYYF).
+    expect(boughtHull.payload.hangar.activeHull).toBe('hull-2');
+    saveHangarWarPayload(boughtHull.payload, storage);
 
     const thirdDeployment = buildHangarDeployment(
       loadHangarWarPayload(storage)!,

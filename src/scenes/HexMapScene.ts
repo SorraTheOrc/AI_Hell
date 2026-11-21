@@ -14,16 +14,27 @@
  * `src/core/hangarWar/hexIntel.ts` (payload + authored hex definitions +
  * resolver preview) and is drawn by the shared `./hangarWar/hexMap` renderer,
  * which `GymHexWar` renders too (AGENTS.md gym↔game parity). Deploying a hex
- * reuses the shipped deployment path (`./hangarWar/hangarDeployment` →
- * `PlayScene` with the hangar loadout and the hex-aggression difficulty), so the
- * map introduces no second deployment rule and never touches the arcade
- * checkpoint.
+ * goes **through the ship-config screen**: activating an unheld hex opens
+ * `HangarScene` pre-targeted at it, and that screen's `▶ DEPLOY` launches the
+ * shipped deployment path (`./hangarWar/hangarDeployment` → `PlayScene` with
+ * the hangar loadout and the hex-aggression difficulty). So the map starts no
+ * battle itself, introduces no second deployment rule and never touches the
+ * arcade checkpoint (parent AH-0MWMRWCY2001HWGR AC1).
  *
- * Navigation: activating an **unheld** hex deploys at it; the `◀ HANGAR` row
- * opens `HangarScene` (one click, the design's "what I own" and "what I hold"
- * one click apart); ESC returns to the main menu. The payload can be injected
- * as launch data (`{ payload, storage, definitions }`) so tests and the capture
- * tooling boot a deterministic war without touching `localStorage`.
+ * The config screen repeats this map's known-ahead intel where the player
+ * commits: a `TARGET INTEL` block names the chosen hex's boss and its authored
+ * strengths/weaknesses, and every weapon row carries an `▲ EFFECTIVE` /
+ * `▼ RESISTED` matchup mark against that boss. All of it is **display only**
+ * (AH-0MWMT4STK001PSK4) — the mechanical matchup is AH-0MWL5376H001WJFZ's — and
+ * `GymHangar` renders the same shared model read-only, so the two surfaces
+ * cannot drift.
+ *
+ * Navigation: activating an **unheld** hex opens the config screen for it
+ * (`openConfig`); the `◀ HANGAR` row opens `HangarScene` with no target (one
+ * click, the design's "what I own" and "what I hold" one click apart); ESC
+ * returns to the main menu. The payload can be injected as launch data
+ * (`{ payload, storage, definitions }`) so tests and the capture tooling boot a
+ * deterministic war without touching `localStorage`.
  *
  * ## Deployment landing surface (`AH-0MWDC3L9I008INDP`)
  *
@@ -79,16 +90,14 @@ import {
 } from '../ai/hangarWarTraversal';
 import type { MiniBossWinReward } from '../powerups/miniBossWheel';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
+import { BOT_UPGRADE_SCENE_KEY } from './BotUpgradeScene';
 import { HANGAR_SCENE_KEY } from './HangarScene';
 import { MINI_BOSS_WHEEL_SCENE_KEY } from './MiniBossWheelScene';
-import {
-  buildHangarDeployment,
-  type HangarWarDeployment,
-} from './hangarWar/hangarDeployment';
 import {
   renderHexMap,
   type HexMapArrow,
   type HexMapRow,
+  type HexMapSection,
   type HexMapView,
 } from './hangarWar/hexMap';
 
@@ -287,8 +296,15 @@ export class HexMapScene extends Phaser.Scene {
       winBonusMinerals: this.winBonusMinerals,
     });
     this.view = renderHexMap(this, model, {
-      onDeploy: (hexId) => this.deploy(hexId),
+      onDeploy: (hexId) => this.openConfig(hexId),
       onOpenHangar: () => this.openHangar(),
+      // A demo is a demonstration, not progress: the attract traversal never
+      // triggers the upgrade action and it must never reach a persisting
+      // screen, so the handler is omitted under demo (the row renders
+      // non-actionable) — the same rule the hangar's restart/save rows follow.
+      ...(this.demo
+        ? {}
+        : { onUpgradeDefences: (hexId: string) => this.openBotUpgrade(hexId) }),
     }, { runLine: this.runLine() });
   }
 
@@ -302,33 +318,51 @@ export class HexMapScene extends Phaser.Scene {
   }
 
   /**
-   * Launches a deployment at `hexId` through the shipped deployment path.
+   * Opens the ship-config (hangar) screen **pre-targeted at `hexId`**
+   * (parent AH-0MWMRWCY2001HWGR AC1; this item AH-0MWMT4S5U001EGDF).
    *
-   * The payload is the map's current war state, so the deployment carries the
-   * hangar-resolved hull/loadout and the hex's aggression-selected difficulty.
-   * Nothing is written to the arcade checkpoint.
+   * The map's hex activation (and the attract traversal's `deploy` decision)
+   * route through here instead of starting `PlayScene`, so **no hex battle can
+   * begin without the config screen first**: the player reads the target boss's
+   * intel, picks a loadout, and that screen's `▶ DEPLOY` row launches the
+   * deployment at the same hex. The map's current war state is handed over, so
+   * both screens show one payload — including one injected by a test or the
+   * attract traversal, which the versioned store never sees.
    *
-   * @param hexId — the hex to attack.
-   * @returns the deployment payload that was launched (test seam).
+   * @param hexId — the hex the config screen targets and deploys at.
    */
-  deploy(hexId: string): HangarWarDeployment {
-    const deployment = buildHangarDeployment(this.payload, { hexId });
-    // The deployment carries this map's payload, so the run resolves its
-    // capture and its between-sortie tick against exactly the war on screen —
-    // including a payload injected by a test or the attract traversal, which
-    // the versioned store never sees.
-    this.scene.start('PlayScene', {
+  openConfig(hexId: string): void {
+    this.scene.start(HANGAR_SCENE_KEY, {
+      payload: this.payload,
+      storage: this.storage,
       demo: this.demo,
       demoDwellMs: this.demoDwellMs,
-      resume: false,
-      hangarWar: deployment,
+      targetHexId: hexId,
     });
-    return deployment;
   }
 
   /**
-   * Opens the hangar screen, carrying the map's payload so what the player
-   * sees on both screens is one war state.
+   * Opens the bot-upgrade screen scoped to the defender of held `hexId`
+   * (parent AH-0MWH48IEG00929GQ). The map's payload is handed over, so both
+   * screens read and write one war state; a purchase persists from there and
+   * returns to this map.
+   *
+   * @param hexId — the held hex whose defending bot is upgraded.
+   */
+  openBotUpgrade(hexId: string): void {
+    this.scene.start(BOT_UPGRADE_SCENE_KEY, {
+      payload: this.payload,
+      storage: this.storage,
+      hexId,
+    });
+  }
+
+  /**
+   * Opens the hangar screen with **no** carried target (the `◀ HANGAR` row),
+   * carrying the map's payload so what the player sees on both screens is one
+   * war state. Its `▶ DEPLOY` therefore keeps the shipped default — the
+   * weakest unheld hex via `selectDeploymentHex` — so a menu/hangar entry
+   * targets exactly what it would have launched before the config hop.
    */
   openHangar(): void {
     this.scene.start(HANGAR_SCENE_KEY, {
@@ -434,7 +468,10 @@ export class HexMapScene extends Phaser.Scene {
         definitions: this.definitions,
       });
       if (action.kind === 'deploy' && action.hexId !== null) {
-        this.deploy(action.hexId);
+        // The bot opens the config screen for the chosen hex; that screen's
+        // own bounded demo advance deploys at the carried target, so the
+        // traversal walks map → config → deployment without stalling.
+        this.openConfig(action.hexId);
         return;
       }
       // A secured ring has nothing left to attack: skip to the hangar.
@@ -549,6 +586,17 @@ export class HexMapScene extends Phaser.Scene {
   }
 
   /**
+   * The rendered section registry: one `{ key, heading, rect }` per section,
+   * in reading order (`last-sortie` only when the landing carries news).
+   *
+   * Deterministic test seam and the query a caller uses to know the screen's
+   * regions; the layout itself lives only in the shared renderer.
+   */
+  getSections(): readonly HexMapSection[] {
+    return this.view?.sections ?? [];
+  }
+
+  /**
    * The left-hand attack panel's text (the focused attack's row), or `''`
    * when the focused hex is in no attack.
    */
@@ -584,5 +632,28 @@ export class HexMapScene extends Phaser.Scene {
   /** Activates the focused row (the Enter/Space path). */
   activateFocused(): void {
     this.view?.activateFocused();
+  }
+
+  /**
+   * The `UPGRADE DEFENCES` action's current text, or `''` when the focused hex
+   * offers none (parent AH-0MWH48IEG00929GQ).
+   */
+  getUpgradeText(): string {
+    return this.view?.getUpgradeText() ?? '';
+  }
+
+  /** Whether the held-hex `UPGRADE DEFENCES` action is showing. */
+  isUpgradeVisible(): boolean {
+    return this.view?.isUpgradeVisible() ?? false;
+  }
+
+  /** The held hex the `UPGRADE DEFENCES` action targets, or `null`. */
+  getUpgradeHexId(): string | null {
+    return this.view?.getUpgradeHexId() ?? null;
+  }
+
+  /** Activates the held-hex `UPGRADE DEFENCES` action (its pointer path). */
+  activateUpgrade(): void {
+    this.view?.activateUpgrade();
   }
 }

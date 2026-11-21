@@ -77,11 +77,11 @@ describe('unit/integration project membership (AH-0MVF6XV87001NSEJ)', () => {
       expect(classified.unit, file).not.toContain(file);
       expect(classified.integration, file).not.toContain(file);
     }
-    // The real-ffmpeg promo smoke is the gated suite this split was made for
-    // (AH-0MVFSNO0G00035AP).
-    expect(classified.e2e).toContain('scripts/compile-promo.e2e.test.ts');
-    expect(classified.unit).not.toContain('scripts/compile-promo.e2e.test.ts');
-    expect(classified.integration).not.toContain('scripts/compile-promo.e2e.test.ts');
+    // The real-ffmpeg seek-index remux is the gated suite this split was made
+    // for (AH-0MVFSNO0G00035AP).
+    expect(classified.e2e).toContain('scripts/capture-seekable.e2e.test.ts');
+    expect(classified.unit).not.toContain('scripts/capture-seekable.e2e.test.ts');
+    expect(classified.integration).not.toContain('scripts/capture-seekable.e2e.test.ts');
   });
 
   it('has a non-empty fast project and a non-empty heavy project', () => {

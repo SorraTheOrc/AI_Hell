@@ -25,6 +25,15 @@
  * `Math.random`), so the comparison is exact and the suite is fast: it never
  * boots Phaser.
  *
+ * ## Cost and timeout budget
+ *
+ * The loop is deliberately heavy — 240 decisions over 320 live hazards, and
+ * the suite's evidence comes from three independent runs — so the runs are
+ * measured once in a `beforeAll` with a generous wall-clock budget instead of
+ * the 5 s Vitest default. The budget covers a busy shared host, not a hang:
+ * the loop length is fixed by `TICKS`, so the work itself is bounded
+ * (AH-0MWP7R2C9004XE9H).
+ *
  * ## Why the load shape matters
  *
  * The pre-optimisation `evaluateDirection` rescans every hazard once per fan
@@ -37,7 +46,7 @@
  * @module src/ai/botSteeringLateGameDeterminism.test
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { BotInputGovernor } from './botHumanLike';
 import type { BotBullet, BotEnemy, BotSnapshot } from './botSnapshot';
@@ -337,6 +346,38 @@ function runLateGame(seed: number): RunTrace {
   return { ticks, final: ship };
 }
 
+/**
+ * Wall-clock budget for the shared late-game runs.
+ *
+ * One run is 240 closed-loop decisions over 320 live hazards through the
+ * 17-bearing steering fan; the suite evaluates three of them. On an idle host
+ * that is a couple of seconds, but the shared build hosts run several suites
+ * in parallel and the wall clock moves with host load, so the budget is
+ * deliberately generous — it covers a busy shared host, not a hang (the loop
+ * length is fixed by {@link TICKS}, so the work is bounded). AH-0MWP7R2C9004XE9H.
+ */
+const LATE_GAME_RUN_TIMEOUT_MS = 120_000;
+
+/**
+ * The shared traces, measured once for the whole suite: each run is a
+ * deterministic headless simulation, so measuring once keeps the suite fast
+ * while every assertion reads the same evidence — the pattern
+ * `src/waves/promoScenario.survival.test.ts` uses for its measured catalogue.
+ *
+ * `first` and `second` are two **independent** runs of the same seed: the
+ * determinism assertion compares them, so they must never be collapsed into a
+ * single run.
+ */
+let first: RunTrace;
+let second: RunTrace;
+let other: RunTrace;
+
+beforeAll(() => {
+  first = runLateGame(SAME_SEED);
+  second = runLateGame(SAME_SEED);
+  other = runLateGame(OTHER_SEED);
+}, LATE_GAME_RUN_TIMEOUT_MS);
+
 describe('late-game-load demo-bot steering determinism (AH-0MWGUMSIT0033I3Z)', () => {
   it('runs at genuinely late-game scale (hundreds of hazards, dozens of live shots)', () => {
     // Guards the vehicle itself: if the generated load ever stopped being
@@ -351,8 +392,6 @@ describe('late-game-load demo-bot steering determinism (AH-0MWGUMSIT0033I3Z)', (
   });
 
   it('produces a byte-identical trace for two identical seeded late-game runs', () => {
-    const first = runLateGame(SAME_SEED);
-    const second = runLateGame(SAME_SEED);
     expect(JSON.stringify(second)).toBe(JSON.stringify(first));
   });
 
@@ -360,23 +399,20 @@ describe('late-game-load demo-bot steering determinism (AH-0MWGUMSIT0033I3Z)', (
     // A trace identical across *different* seeds would mean the load or the
     // decisions never actually varied, so the determinism assertion above
     // would prove nothing. The traces must differ.
-    const a = runLateGame(SAME_SEED);
-    const b = runLateGame(OTHER_SEED);
-    expect(JSON.stringify(b)).not.toBe(JSON.stringify(a));
+    expect(JSON.stringify(other)).not.toBe(JSON.stringify(first));
   });
 
   it('exercises the steering fan (the ship actually flies)', () => {
     // Confirms the loop reaches decisions that move the ship, so the fan (the
     // hot function this vehicle protects) is genuinely exercised rather than
     // short-circuited by an idle state.
-    const trace = runLateGame(SAME_SEED);
-    expect(trace.ticks.length).toBe(TICKS);
-    const moved = trace.ticks.some(
+    expect(first.ticks.length).toBe(TICKS);
+    const moved = first.ticks.some(
       (tick) =>
         tick.ship.x !== WIDTH / 2 || tick.ship.y !== HEIGHT / 2,
     );
     expect(moved).toBe(true);
-    const forwardTicks = trace.ticks.filter((tick) => tick.committed.forward).length;
+    const forwardTicks = first.ticks.filter((tick) => tick.committed.forward).length;
     expect(forwardTicks).toBeGreaterThan(0);
   });
 });

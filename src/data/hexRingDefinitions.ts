@@ -19,20 +19,30 @@
  * - **Every grant is distinct within its ring**, so each hex is a real
  *   strategic choice rather than a duplicate reward.
  * - **Every row states `isSpecialMission`.** It is `false` for ordinary hexes
- *   and `true` for a **special-mission hex**, of which ring 2 authors exactly
- *   one: `hex-r2-3` (`the-void-marshall`), whose grant is the extra-hit-points
- *   `hull-3` (AH-0MWF0CTQB001XFE1, post-MVP Hangar War). The deployment of a
- *   special hex is the **ordinary one-level capture** — the "special" part is
- *   the hull it pays, never a second run shape — and the marker is validated
- *   loudly by `validateRingDefinitions` (a `true` row must grant a hull
- *   catalogue entry). The CSV seeds carry the same column, so the parity test
- *   keeps the marker from drifting.
+ *   and `true` for a **special-mission hex**, of which each ring authors
+ *   exactly one: ring 1's is `hex-r1-5` (`the-hollow-judge`), whose grant is
+ *   the ring-1-tier grant-only `hull-4` (AH-0MWJ51KUS005WQK6, post-MVP Hangar
+ *   War), and ring 2's is `hex-r2-3` (`the-void-marshall`), whose grant is the
+ *   extra-hit-points `hull-3` (AH-0MWF0CTQB001XFE1, post-MVP Hangar War). The
+ *   deployment of a special hex is the **ordinary one-level capture** — the
+ *   "special" part is the hull it pays, never a second run shape — and the
+ *   marker is validated loudly by `validateRingDefinitions` (a `true` row must
+ *   grant a hull catalogue entry). The CSV seeds carry the same column, so the
+ *   parity test keeps the marker from drifting.
  * - **Hex variety is optional authored data** (post-MVP,
  *   AH-0MVWZYQN8007SXIG foundation AH-0MWEW4ANW009GGX7): a row may carry a
  *   `personality`, an optional `contract` and a `landmark` (`fortress`/`cache`).
- *   No authored row states one yet — the vocabulary and its loud validation
- *   land before the axes' content does — and every field is optional, so rings
- *   1 and 2 stay valid and older saves stay field-presence migratable. The CSV
+ *   Ring 2 authors the first shipped examples (AH-0MWH4F375000X08G) —
+ *   `hex-r2-1` a `nebula` personality, `hex-r2-6` a contract and `hex-r2-7` a
+ *   `fortress` landmark — all at the ring's aggression-2 survivable floor.
+ *   Ring 1 authors one landmark and one contract (AH-0MWJ4ZDXO007VDJS): a
+ *   `fortress` on `hex-r1-5` (the last hex before the weapon hex) and a
+ *   +60-salvage/+1-core contract on `hex-r1-4`, so the opening ring
+ *   demonstrates both choices without touching its aggression band; ring 1
+ *   authors no personality, so the tutorial ring's bosses stay default-tuned.
+ *   The fortress sits on the ring-1 special mission, so securing that hex takes
+ *   the shipped two capture passes and the hull is paid on the second. Every
+ *   field is optional, so older saves stay field-presence migratable. The CSV
  *   seeds carry the matching columns so the parity test covers them too.
  * - **Ring 2 is the harder frontier**: its hardest hex outranks ring 1's, and
  *   its aggression floor is above the opening ring's.
@@ -110,6 +120,15 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaponHex: false,
     isSpecialMission: false,
     baseAggression: 2,
+    // Shipped variety (AH-0MWJ4ZDXO007VDJS): an optional contract banked on
+    // capture through the existing `bankSalvage` rule (+60 salvage / +1 core —
+    // below ring 2's +100/+1 and far below the 140-salvage cache payout). The
+    // objective has no comma, so the CSV seed needs no quoting.
+    contract: Object.freeze({
+      objective: 'Crack the ember nest and hold the hex',
+      bonusSalvage: 60,
+      bonusCores: 1,
+    }),
   }),
   Object.freeze({
     id: 'hex-r1-5',
@@ -119,10 +138,20 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     boss: 'the-hollow-judge',
     strengths: Object.freeze(['nova']),
     weaknesses: Object.freeze(['waveLaser']),
-    grants: 'core-bank',
+    grants: 'hull-4',
     weaponHex: false,
-    isSpecialMission: false,
+    // The ring-1 special mission (AH-0MWJ51KUS005WQK6): an ordinary capture
+    // that pays the ring-1-tier grant-only Vanguard Hull (`hull-4`) instead of
+    // the currency bank it used to grant. Known ahead in the map intel. The
+    // fortress set-piece stays, so securing the hex takes the shipped two
+    // capture passes and the hull is paid on the second.
+    isSpecialMission: true,
     baseAggression: 4,
+    // Shipped variety (AH-0MWJ4ZDXO007VDJS): a fortress set-piece needing two
+    // capture passes. It is the ring's last hex before the weapon hex, so the
+    // set-piece adds a decision at the tail of the ring rather than slowing
+    // the opener.
+    landmark: 'fortress',
   }),
   Object.freeze({
     id: 'hex-r1-6',
@@ -151,6 +180,11 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaponHex: false,
     isSpecialMission: false,
     baseAggression: 2,
+    // Shipped variety (AH-0MWH4F375000X08G): the siege leviathan's demonstrated
+    // volley drifts slowly through nebula gas. The hex grants `arc`, so the
+    // mechanic is genuinely felt through the shared drag factor (no new code
+    // path).
+    personality: 'nebula',
   }),
   Object.freeze({
     id: 'hex-r2-2',
@@ -219,6 +253,15 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaponHex: false,
     isSpecialMission: false,
     baseAggression: 2,
+    // Shipped variety (AH-0MWH4F375000X08G): an optional contract banked on
+    // capture through the existing `bankSalvage` rule (+100 salvage / +1 core,
+    // below the 140-salvage cache payout). The objective has no comma, so the
+    // CSV seed needs no quoting.
+    contract: Object.freeze({
+      objective: 'Break the siege line then hold the hex',
+      bonusSalvage: 100,
+      bonusCores: 1,
+    }),
   }),
   Object.freeze({
     id: 'hex-r2-7',
@@ -232,6 +275,9 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     weaponHex: false,
     isSpecialMission: false,
     baseAggression: 2,
+    // Shipped variety (AH-0MWH4F375000X08G): a fortress set-piece needing two
+    // capture passes; it keeps its `extra-life` grant (no reward removed).
+    landmark: 'fortress',
   }),
   Object.freeze({
     id: 'hex-r2-8',
