@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.23 (2026-11-21)
+> **Release focus:** This release focuses on deepening the hex-map strategy layer with unique Ring 2 personalities, a Ring 1 landmark and special mission, and clearer hex intel and war status displays. It also overhauls battle preparation and progression through per-battle loadout selection, instant ship purchases, saveable builds, and permanent weapon and bot upgrades.
+### Features
+- Ring 2 hexes now have unique personalities, bonus contracts, and fortresses to capture. (AH-0MWH4F375000X08G)
+- Ring 1 now offers a landmark set-piece and an optional contract, so the opening ring has real strategic choices. (AH-0MWJ4ZDXO007VDJS)
+- Your flown ship is now spent after each battle, but purchases equip instantly for quick refits. (AH-0MWL5PAP2001XYYF)
+- Pick your loadout before every hex battle, with the boss's strengths and weaknesses shown and your weapons marked effective or resisted. (AH-0MWMRWCY2001HWGR)
+- Enemy bullets now shrink away smoothly at the end of their range instead of popping. (AH-0MWJ9PMYF005N588)
+- Near-miss dodges now build a DANGER multiplier that boosts your score. (AH-0MWL7ORK8007LXJI)
+- The hex map is now neatly sectioned, so you can find your war status, last sortie results, and hex intel at a glance. (AH-0MWL4QCVD007WOAM)
+- You can now buy power-ups in the hangar and keep them between runs. (AH-0MWKT12BT001106T)
+- The demo bot now flies with clear purpose instead of wandering aimlessly. (AH-0MWJ1680Z001QYV2)
+- Hexes you're attacking now defend instead of striking back, so your sorties can't be punished by the hex you're pushing. (AH-0MWH3A87Z005LLOX)
+- The hex intel panel now clearly labels every item, so you can read it at a glance. (AH-0MWJ0XHWW009GTKK)
+- Ring 1 now has its own special mission, rewarding a tougher hull you can't buy. (AH-0MWJ51KUS005WQK6)
+- Spend banked minerals and cores in the hangar to permanently upgrade weapons you already own. (AH-0MWHW4ALS0039JFU)
+- Save your favorite ship builds and re-buy and re-equip them in one click after battle. (AH-0MWL8C6FE008G1E7)
+- Spend banked salvage to upgrade the bot defending your hexes and boost their defence rating. (AH-0MWH48IEG00929GQ)
+### Bug Fixes
+- Your first battle now targets a real hex, and any minerals promised are actually banked. (AH-0MWNGYDIZ0037HGW)
+- Laser beams now stay attached to your ship as you fly, instead of floating behind. (AH-0MWJ8JUEF006XBLB)
+- The demo bot now dodges chasing, diving and patrolling enemies instead of flying into them. (AH-0MWLUIOH9001XBJ3)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.22 (2026-11-16)
 > **Release focus:** This release focuses on deepening the hex-map campaign with reachable-hex navigation, shorter battles, attack visibility, and a final hangar defense to secure each ring. It also adds unique later-ring content, boss-specialized defending bots, and special missions, alongside live tuning tools and numerous stability and tooling fixes.
 ### Features
