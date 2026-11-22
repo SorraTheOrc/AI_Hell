@@ -430,7 +430,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
-    play.openMineralChoice();
+    const offered = play.openMineralChoice();
     await wait(booted!.game, 80);
 
     const overlay = booted!.game.scene.getScene(
@@ -438,25 +438,43 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     ) as MineralChoiceScene;
     expect(overlay).toBeTruthy();
 
-    // The bot auto-selects after the human-like delay: the choice is made but
-    // NOT yet applied — the beat-locked 3-2-1 countdown is running ("3"
-    // shown), and play stays paused.
+    // The bot auto-selects the first option after the human-like delay: the
+    // choice is made but NOT yet applied — the beat-locked 3-2-1 countdown is
+    // running ("3" shown), and play stays paused.
     await wait(booted!.game, BOT_MINERAL_CHOICE_DELAY_MS + 120);
     expect(overlay.getCountdownText()).toBe('3');
     expect(play.isMineralChoiceOpen()).toBe(true);
     expect(play.isPaused()).toBe(true);
 
-    // After one beat the countdown advances to "2", still not applied.
+    // AC2 — the chosen title is rendered under the numeral for the life of
+    // the countdown (the title-readout contract lands with
+    // AH-0MWLCME4100655UR).
+    const overlayWithTitle = overlay as MineralChoiceScene & {
+      getCountdownTitle(): string | null;
+    };
+    expect(
+      typeof overlayWithTitle.getCountdownTitle,
+      'MineralChoiceScene must expose getCountdownTitle() (AH-0MWLCME4100655UR)',
+    ).toBe('function');
+    expect(overlayWithTitle.getCountdownTitle()).toBe(offered[0].name);
+    const titleText = findText(overlay, offered[0].name);
+    expect(titleText.visible).toBe(true);
+
+    // After one beat the countdown advances to "2", still not applied; the
+    // title stays up with it.
     await wait(booted!.game, 800);
     expect(overlay.getCountdownText()).toBe('2');
     expect(play.isMineralChoiceOpen()).toBe(true);
+    expect(overlayWithTitle.getCountdownTitle()).toBe(offered[0].name);
 
     // The countdown completes and the run resumes on the beat after "1" —
-    // same selection → countdown → resume path as a human choice.
+    // same selection → countdown → resume path as a human choice — and the
+    // title goes with the numeral.
     await wait(booted!.game, HOLD_FULL_COUNTDOWN_DURATION_MS);
     expect(play.isMineralChoiceOpen()).toBe(false);
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
     expect(play.isPaused()).toBe(false);
+    expect(overlayWithTitle.getCountdownTitle()).toBeNull();
   });
 
   it('AC1 — the demo bot takes the first option even when an Extra Life is offered', async () => {
