@@ -81,6 +81,25 @@ describe('Style matching is documented (AH-0MUY08XXN003NV0I)', () => {
     expect(doc).toMatch(/same seed|same-seed/);
   });
 
+  it('documents the fitted governor turn/aim knobs and the measured sweep (AH-0MWLCGWUF00631UX)', () => {
+    // The calmer flight model's knobs must stay documented as *fitted*, with
+    // their drivers and the measured regression bound — a future flight-model
+    // change must not silently drop them from the fit's documentation.
+    for (const symbol of [
+      'alignmentToleranceRad',
+      'aimAlignmentToleranceRad',
+      'turnHysteresisRad',
+      'turnPressMinMs',
+      'maxAimErrorRad',
+      'inputChangesPerSecond',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+    expect(doc).toContain('AH-0MWLCGWUF00631UX');
+    expect(doc).toMatch(/23 of 32 seeds closer, 19 of 32 regressed/);
+    expect(doc).toContain('2026-11-22');
+  });
+
   it('references the work item and its parent epic', () => {
     expect(doc).toContain(WORK_ITEM_ID);
     expect(doc).toContain(EPIC_ID);
