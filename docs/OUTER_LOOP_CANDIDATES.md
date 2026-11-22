@@ -940,6 +940,30 @@ hangar survives — that is what winning this hell looks like.
 > kinds are sold; the hex boss still grants hulls/weapons/modifiers only (the
 > hex-grant and run-carry-over routes were deliberately not taken).
 
+### Held-hex income — the per-tick economy rule
+
+The between-run economy stays **algorithmic over stored numbers**, exactly as
+Candidate A's *Stationed-ship mineral accrual* requires ("a per-tick arithmetic
+rule over the region's holdings"): every between-sortie frontier tick pays the
+player for the hexes they still **hold**:
+
+```
+hexIncome = Σ over ring.hexes where held: 10 × that hex's aggression
+```
+
+(AH-0MWL8CDGN005878A.) The payout is read from the ring **after** the tick's
+redistribution and attacks, so a hex lost that tick pays nothing, and it banks
+into the same `hangar.bankedMinerals` balance as checkpoint salvage and the fixed
+win bonus — the third persistent-mineral source. It is a single pure function
+(`hexIncome`, called at the end of `runFrontierTick`) with **no simulated
+economy, no wall clock and no new RNG draw**, so a replay reproduces it exactly
+and no new persisted field is needed (it derives from the already-stored `held`
+and `aggression`). The landing map announces a non-zero payout as
+`HEX INCOME BANKED: +N MINERALS` beside the win bonus. **`10 × aggression` is a
+balance knob**: at `10` a fully held ring 1 (`Σ aggression = 18`) pays `180`/tick,
+well above the win bonus and the measured ~24-minerals-per-deployment anchor, so
+retuning it (a one-line change) is a separate balance follow-up.
+
 ### Reuse of existing systems
 
 - **Checkpoint store (`src/core/checkpointStore.ts`)** — one payload holds the

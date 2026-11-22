@@ -937,6 +937,7 @@ function recordAttack(
 /** A tick record over the given attacks. */
 function recordWith(
   attacks: readonly HexDefenceRecord[],
+  overrides: Partial<FrontierTickRecord> = {},
 ): FrontierTickRecord {
   return {
     tick: 7,
@@ -946,7 +947,9 @@ function recordWith(
     deltas: [],
     rose: 0,
     fell: 0,
+    hexIncome: 0,
     attacks,
+    ...overrides,
   };
 }
 
@@ -1106,6 +1109,32 @@ describe('hex map model — per-attack details keyed by hex id', () => {
     expect(detail.outcome).toBe('held');
     expect(detail.label).toContain('atk 11 × AGG 9 (210%');
     expect(detail.label).toContain('= 31 vs bot 40');
+  });
+});
+
+describe('hex map model — the banked held-hex income line (AH-0MWL8CDGN005878A)', () => {
+  it('publishes the income announcement from the record\'s own hexIncome', () => {
+    const model = buildAttackModel(
+      attackPayload(),
+      recordWith([recordAttack()], { hexIncome: 180 }),
+    );
+
+    expect(model.hexIncomeLine).toBe('HEX INCOME BANKED: +180 MINERALS');
+  });
+
+  it('carries no income line when the tick banked nothing', () => {
+    const model = buildAttackModel(
+      attackPayload(),
+      recordWith([recordAttack()], { hexIncome: 0 }),
+    );
+
+    expect(model.hexIncomeLine).toBeNull();
+  });
+
+  it('is absent on a map entered without a tick record', () => {
+    const model = buildAttackModel(attackPayload());
+
+    expect(model.hexIncomeLine).toBeNull();
   });
 });
 

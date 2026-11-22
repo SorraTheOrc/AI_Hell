@@ -377,6 +377,7 @@ function attackRecord(
     deltas: [],
     rose: 0,
     fell: 0,
+    hexIncome: 0,
     attacks: [
       recordAttack(),
       recordAttack({
@@ -1702,7 +1703,7 @@ describe('HexMapScene', () => {
       // massed assault, drawn with deliberately wide numbers.
       const scene = await bootMap({
         payload: attackPayload(),
-        record: attackRecord(),
+        record: attackRecord({ hexIncome: 999999 }),
         won: true,
         score: 999999,
         winBonusMinerals: 999999,
@@ -1714,10 +1715,11 @@ describe('HexMapScene', () => {
 
       // Every block the renderer draws, with the budget slot it lands in
       // (`LAST_SORTIE_LINE_BUDGET` is in draw order: run result, win bonus,
-      // assault sub-heading, assault body).
+      // hex income, assault sub-heading, assault body).
       const drawn = [
         { label: 'run result', text: scene.getRunLine()!, fontSizePx: 13 },
         { label: 'win bonus', text: scene.getWinBonusLine()!, fontSizePx: 11 },
+        { label: 'hex income', text: scene.getHexIncomeLine()!, fontSizePx: 11 },
         { label: 'assault sub-heading', text: 'HANGAR ASSAULT', fontSizePx: 10 },
         { label: 'assault body', text: scene.getAssaultText(), fontSizePx: 11 },
       ];

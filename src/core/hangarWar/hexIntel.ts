@@ -569,6 +569,14 @@ export interface HexMapModel {
    */
   readonly winBonusLine: string | null;
   /**
+   * The banked held-hex income announcement
+   * (`HEX INCOME BANKED: +N MINERALS`) this landing carries, copied straight
+   * from the report model's own `hexIncomeLine`; `null` when the tick banked
+   * nothing (no hex held). The third persistent-mineral source's announcement
+   * (AH-0MWL8CDGN005878A), sibling to {@link winBonusLine}.
+   */
+  readonly hexIncomeLine: string | null;
+  /**
    * The special mission the rotation is offering on this sortie
    * (`AH-0MWF0CWB7002MG2F`), or `null` when the ring offers none (no special
    * hex authored, or every one already captured). Resolved through the shared
@@ -679,6 +687,7 @@ const QUIET_TICK_RECORD: FrontierTickRecord = Object.freeze({
   deltas: [],
   rose: 0,
   fell: 0,
+  hexIncome: 0,
   attacks: [],
 });
 
@@ -691,6 +700,7 @@ interface HexMapAttackOverlay {
   readonly ringWon: boolean;
   readonly campaignReset: boolean;
   readonly winBonusLine: string | null;
+  readonly hexIncomeLine: string | null;
 }
 
 /**
@@ -750,6 +760,7 @@ function buildAttackOverlay(
     ringWon: report.ringWon,
     campaignReset: report.campaignReset,
     winBonusLine: report.winBonusLine,
+    hexIncomeLine: report.hexIncomeLine,
   };
 }
 
@@ -1266,6 +1277,7 @@ export function buildHexMapModel(
     ringWon,
     campaignReset,
     winBonusLine,
+    hexIncomeLine,
   } = buildAttackOverlay(
     payload,
     options.record,
@@ -1306,6 +1318,7 @@ export function buildHexMapModel(
     assault,
     assaultLine,
     winBonusLine,
+    hexIncomeLine,
     specialOffer,
     ringWon,
     campaignReset,

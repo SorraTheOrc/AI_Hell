@@ -338,17 +338,19 @@ export function sectionBudgetHeight(
 /**
  * The `last-sortie` panel's worst-case content budget (AH-0MWNEQRSI008DIY8).
  *
- * A full win landing draws four blocks in the panel's 225px body column: the
+ * A full win landing draws five blocks in the panel's 225px body column: the
  * deployment's run result (`RUN: VICTORY · score N`, up to two visual lines),
- * the banked win bonus (one), the `HANGAR ASSAULT` sub-heading (one) and the
- * assault body — headline, numbers and consequence as three hard lines that
- * wrap to at most seven visual lines. The panel is sized **from this budget**,
- * so a longer line or a shorter panel fails the budget test instead of bleeding
- * out of the frame.
+ * the banked win bonus (one), the banked held-hex income (up to two, its amount
+ * can run wide — AH-0MWL8CDGN005878A), the `HANGAR ASSAULT` sub-heading (one)
+ * and the assault body — headline, numbers and consequence as three hard lines
+ * that wrap to at most seven visual lines. The panel is sized **from this
+ * budget**, so a longer line or a shorter panel fails the budget test instead
+ * of bleeding out of the frame.
  */
 export const LAST_SORTIE_LINE_BUDGET: readonly SectionLineBudget[] = [
   { visualLines: 2, fontSizePx: 13, lineSpacing: 2, gap: 4 },
   { visualLines: 1, fontSizePx: 11, lineSpacing: 2, gap: 4 },
+  { visualLines: 2, fontSizePx: 11, lineSpacing: 2, gap: 4 },
   { visualLines: 1, fontSizePx: 10, lineSpacing: 2, gap: 2 },
   { visualLines: 7, fontSizePx: 11, lineSpacing: 2, gap: 0 },
 ];
@@ -909,6 +911,7 @@ function hasLastSortieNews(
   return (
     (options?.runLine ?? null) !== null ||
     model.winBonusLine !== null ||
+    model.hexIncomeLine !== null ||
     model.assaultLine !== null
   );
 }
@@ -916,17 +919,17 @@ function hasLastSortieNews(
 /**
  * Draws the `last-sortie` section: the transient "what just happened" news.
  *
- * The deployment's run result, the banked win bonus and the hangar-assault
- * outcome are gathered here instead of arriving in three corners of the
- * screen. The section renders **only** when the landing carries at least one of
- * them, so a later entry shows no empty headed box, and every string is the
- * model's own (`options.runLine`, `model.winBonusLine`, `model.assaultLine`),
- * copied verbatim.
+ * The deployment's run result, the banked win bonus, the banked held-hex income
+ * and the hangar-assault outcome are gathered here instead of arriving in three
+ * corners of the screen. The section renders **only** when the landing carries
+ * at least one of them, so a later entry shows no empty headed box, and every
+ * string is the model's own (`options.runLine`, `model.winBonusLine`,
+ * `model.hexIncomeLine`, `model.assaultLine`), copied verbatim.
  *
  * The panel's height comes from {@link LAST_SORTIE_LINE_BUDGET}
  * ({@link LAST_SORTIE_HEIGHT}), the worst case this function can draw — the
- * run result, the banked bonus and the three hard-wrapped assault lines — so
- * the full win path's text cannot spill below its own frame
+ * run result, the banked bonus, the banked income and the three hard-wrapped
+ * assault lines — so the full win path's text cannot spill below its own frame
  * (AH-0MWNEQRSI008DIY8). The gaps and the `lineSpacing` below are the same
  * numbers that budget uses.
  *
@@ -941,6 +944,7 @@ function renderLastSortieSection(
 ): Phaser.GameObjects.Text | null {
   const runLine = options?.runLine ?? null;
   const winBonusLine = model.winBonusLine;
+  const hexIncomeLine = model.hexIncomeLine;
   const assaultLine = model.assaultLine;
   if (!hasLastSortieNews(model, options)) {
     return null;
@@ -972,6 +976,7 @@ function renderLastSortieSection(
 
   if (runLine !== null) addLine(runLine, '13px', TEXT_COLOR, 4);
   if (winBonusLine !== null) addLine(winBonusLine, '11px', WON_COLOR, 4);
+  if (hexIncomeLine !== null) addLine(hexIncomeLine, '11px', WON_COLOR, 4);
   if (assaultLine === null) return null;
 
   addLine(ASSAULT_BANNER_HEADING, SECTION_HEADING_SIZE, HEADING_COLOR, 2);

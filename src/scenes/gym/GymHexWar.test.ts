@@ -1558,7 +1558,11 @@ describe('GymHexWar — hex variety surfaces (AH-0MWEW58WD003NFXS, AH-0MWEW5I1F0
    * rects — as the game, and every row stays read-only.
    */
   it('reports the same section registry as the game, read-only', async () => {
-    const scene = await bootHexWar();
+    // A landing with no news (nothing held → no income, no assault), so the
+    // registry is the base four content sections plus the controls footer. A
+    // held-hex income landing adds the `last-sortie` section, which the shared
+    // renderer adds for the game and the gym alike (AH-0MWL8CDGN005878A).
+    const scene = await bootHexWar({ payload: ringTwoPayload() });
 
     expect(scene.getMapSections().map((section) => section.key)).toEqual([
       'war-status',
@@ -1578,5 +1582,33 @@ describe('GymHexWar — hex variety surfaces (AH-0MWEW58WD003NFXS, AH-0MWEW5I1F0
     }
     // Read-only: the gym never makes a row actionable.
     expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);
+  });
+
+  /**
+   * Owned-hex income parity (AH-0MWL8CDGN005878A, AC5).
+   *
+   * `GymHexWar` runs the **shipped** `runFrontierTick` for its map record, so a
+   * held ring banks the same income the game would and publishes it on the same
+   * record field and map line — no gym-local re-derivation, so the two can never
+   * drift.
+   */
+  it('publishes the same held-hex income as the game for the same payload (AC5)', async () => {
+    const payload = heldRingPayload(99, 2); // fully held: 6 hexes × AGG 2
+    const scene = await bootHexWar({ payload });
+
+    // The game's own record for the same payload/clock.
+    const direct = runFrontierTick(payload, {
+      clock: frontierClockFor(payload),
+    });
+
+    // A secured ring draws no attack, so every held hex pays.
+    expect(direct.record.attacks).toEqual([]);
+    expect(direct.record.hexIncome).toBeGreaterThan(0);
+    // The gym's record is that record — income included.
+    expect(scene.getTickRecord()!.hexIncome).toBe(direct.record.hexIncome);
+    // And the shared map model renders the same announcement.
+    expect(scene.getMapModel()!.hexIncomeLine).toBe(
+      `HEX INCOME BANKED: +${direct.record.hexIncome} MINERALS`,
+    );
   });
 });

@@ -3395,6 +3395,39 @@ slice deferred:
   (`arc`, `broadside`, `dual`, `nova`, `rapid`, `ricochet`), Extra Life and the
   `armour-plating` / `firepower-up` / `systems-upgrade` strength entries.
 
+#### Owned hexes provide minerals (per-tick income)
+
+Holding territory pays **every between-sortie frontier tick**, so the ring is an
+asset and not just a boss list (AH-0MWL8CDGN005878A). After each tick's
+aggression redistribution and after the AI's attacks resolve, every hex the
+player still **holds** pays into the persistent hangar balance
+(`hangar.bankedMinerals`) alongside the run's banked salvage and the fixed win
+bonus:
+
+```
+hexIncome = Σ over ring.hexes where held: 10 × that hex's aggression
+```
+
+The rule is a single pure, tunable arithmetic function (`hexIncome` in
+`src/core/hangarWar/hexDefence.ts`, called at the end of `runFrontierTick`) —
+**no simulated economy, no wall clock and no new RNG draw**, so the seeded
+frontier stream is byte-identical for the same payload/seed/tick and a replay
+reproduces the payout exactly. Because it reads the **post-tick** ring, a hex
+lost to an attack this tick pays nothing (producer **Q2 = b**); a `0` payout
+(no hex held) carries no announcement, and a non-zero one is announced on the
+landing map as `HEX INCOME BANKED: +N MINERALS` beside `WIN BONUS BANKED`
+(producer **Q3 = a**). No new persisted field is required: income is derived
+from the already-stored `held` and `aggression`, so older saves tick as soon as
+they load.
+
+**`10 × aggression` is a balance knob** (producer **Q1**, 2026-11-17). At that
+rate a fully held ring 1 (aggression total `18`) pays `180`/tick — well above
+the `WIN_BONUS_MINERALS` bonus and the measured ~24-minerals-per-deployment
+anchor (see *Measured per-deployment income* below). The multiplier is the
+single constant `HEX_INCOME_MINERALS_PER_AGGRESSION`; retuning it is a one-line
+balance change with no migration, and any re-baselining against the measured
+income is its own follow-up.
+
 #### Buying permanent levels (buy-to-upgrade)
 
 **The hangar is the intended source of permanent upgrades** (AH-0MWHW4ALS0039JFU,
@@ -4054,6 +4087,16 @@ balance number), and re-baselining it from the measurement is a one-line change
 because every test reads the constant. No price, banking or ring change is
 implied by the measurement — the unlock tree reads faster, not harder; any
 rebalance nevertheless stays its own linked item.
+
+**A second, larger mineral stream: held-hex income.** The per-deployment figures
+above measure what a *single sortie's* salvage banks. On top of that, every hex
+the player **holds** pays `10 × aggression` on each between-sortie frontier tick
+(AH-0MWL8CDGN005878A, §8.2 *Owned hexes provide minerals*), announced on the
+landing map as `HEX INCOME BANKED: +N MINERALS` beside the win bonus. That income
+is the third persistent-mineral source (after checkpoint salvage and the win
+bonus); the `10 × aggression` rate is a balance knob well above this measured
+anchor, so re-baselining it against these numbers is tracked as its own item
+rather than folded in here.
 
 **Fidelity and reproducibility.** The numbers are the competent bot's headless
 arena runs — the same evidence standard as the timing baseline (a human

@@ -4452,6 +4452,19 @@ export class PlayScene extends CombatScene<
       playerAttackingHexId: this.hangarWarDeployment?.hexId ?? null,
     });
     this._saveHangarWarPayload(result.payload);
+    // The tick banks the held-hex mineral income into the persistent balance
+    // (`result.payload.hangar.bankedMinerals`, AH-0MWL8CDGN005878A). Mirror it
+    // onto the run's in-memory bank so the win resolution's capture arithmetic
+    // derives from the same, income-inclusive balance instead of overwriting it
+    // with a pre-tick snapshot. Only `minerals` moves — the run watermark is
+    // untouched, exactly like `bankWinBonus`, because the income is neither
+    // cumulative run salvage nor re-derivable from a run snapshot.
+    if (this.salvageBank) {
+      this.salvageBank = {
+        ...this.salvageBank,
+        minerals: result.payload.hangar.bankedMinerals,
+      };
+    }
     return result;
   }
 

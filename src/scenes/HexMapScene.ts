@@ -575,6 +575,23 @@ export class HexMapScene extends Phaser.Scene {
     );
   }
 
+  /**
+   * The banked held-hex income announcement this landing shows
+   * (`HEX INCOME BANKED: +N MINERALS`), or `null` when the tick banked nothing
+   * (no hex held). Read from the tick record's own `hexIncome` through the map
+   * model (AH-0MWL8CDGN005878A), so the map and the report cannot drift.
+   */
+  getHexIncomeLine(): string | null {
+    return (
+      buildHexMapModel(this.payload, {
+        definitions: this.definitions,
+        record: this.record,
+        assault: this.assault,
+        winBonusMinerals: this.winBonusMinerals,
+      }).hexIncomeLine
+    );
+  }
+
   /** Every rendered row, in reading order. */
   getRows(): readonly HexMapRow[] {
     return this.view?.rows ?? [];

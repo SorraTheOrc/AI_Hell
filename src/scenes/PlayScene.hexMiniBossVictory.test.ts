@@ -36,6 +36,7 @@ import {
   defenderRatingFromSnapshot,
   deriveDefenderRating,
 } from '../core/hangarWar/hangarEconomy';
+import { HEX_INCOME_MINERALS_PER_AGGRESSION } from '../core/hangarWar/hexDefence';
 import { createRingState } from '../core/hangarWar/hexRing';
 import {
   HANGAR_WAR_STORAGE_KEY,
@@ -730,6 +731,99 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(scene.getBankedSalvage()).toEqual({ minerals: 0, cores: 0 });
       expect(loadHangarWarPayload()!.hangar.bankedMinerals).toBe(0);
       expect(loadHangarWarPayload()!.hangar.bankedCores).toBe(0);
+    },
+    30_000,
+  );
+
+  /**
+   * Owned-hex income on a winning sortie (AH-0MWL8CDGN005878A).
+   *
+   * A winning deployment resolves **one** between-sortie tick — the win path
+   * caches it in `pendingBetweenSortieTick` and `_finishRun` reuses it — so the
+   * held-hex income is banked exactly once. The income must survive the
+   * capture, which derives from the run's in-memory bank; a pre-held hex keeps
+   * the amount non-zero.
+   */
+  it(
+    'banks one held-hex income amount on a winning sortie (no double-bank)',
+    async () => {
+      const payload = warPayload(3);
+      const heldHex = payload.ring.hexes.find((hex) => hex.id !== TARGET_HEX)!;
+      heldHex.held = true;
+      heldHex.bossDefeated = true;
+      // A strong defender guarantees the pre-held hex survives this tick.
+      heldHex.defender = {
+        hullId: 'hull-1',
+        defenceRating: 99,
+        bankedMinerals: 0,
+      };
+      const scene = await bootPlay(
+        buildHangarDeployment(payload, { hexId: TARGET_HEX, seed: 7 }),
+      );
+      scene.getGameState().minerals = 25;
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+      await landOnMap(scene);
+
+      const stored = loadHangarWarPayload()!;
+      // Exactly one tick resolved for the whole sortie (win path reused).
+      expect(stored.frontierTick).toBe(1);
+      const heldAfter = stored.ring.hexes.find(
+        (hex) => hex.id === heldHex.id,
+      )!;
+      expect(heldAfter.held).toBe(true);
+      const income =
+        HEX_INCOME_MINERALS_PER_AGGRESSION * heldAfter.aggression;
+      expect(income).toBeGreaterThan(0);
+      // Salvage (25) + one win bonus + exactly ONE tick's income (double-banking
+      // would add `income` twice).
+      expect(stored.hangar.bankedMinerals).toBe(
+        25 + winBonusMinerals() + income,
+      );
+      expect(stored.hangar.bankedCores).toBe(1);
+    },
+    30_000,
+  );
+
+  /**
+   * A demo sortie never persists its income (AH-0MWL8CDGN005878A, AC2).
+   *
+   * `_saveHangarWarPayload` returns before writing the versioned store in demo
+   * mode, so the tick's banked income reaches the in-memory run and the map but
+   * never the player's saved war — the same guard that keeps a demo off the
+   * leaderboard.
+   */
+  it(
+    'never persists a demo sortie\'s held-hex income',
+    async () => {
+      // The player's saved war: a clean balance, nothing held, never ticked.
+      saveHangarWarPayload(warPayload());
+
+      const payload = warPayload(3);
+      const heldHex = payload.ring.hexes.find((hex) => hex.id !== TARGET_HEX)!;
+      heldHex.held = true;
+      heldHex.bossDefeated = true;
+      heldHex.defender = {
+        hullId: 'hull-1',
+        defenceRating: 99,
+        bankedMinerals: 0,
+      };
+      const scene = await bootPlay(
+        buildHangarDeployment(payload, { hexId: TARGET_HEX, seed: 7 }),
+      );
+      scene.setDemoMode(true);
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+      await landOnMap(scene);
+
+      // The demo banked income in memory but wrote nothing to the store.
+      const saved = loadHangarWarPayload()!;
+      expect(saved.hangar.bankedMinerals).toBe(0);
+      expect(saved.frontierTick).toBe(0);
     },
     30_000,
   );
