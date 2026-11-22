@@ -138,6 +138,26 @@
  * The fields are added only under the opt-in, so the default snapshot shape —
  * and therefore the golden default-path digest — is unchanged.
  *
+ * ## Aim-shot measurement (AH-0MWR04UJ5008H5WQ)
+ *
+ * {@link ArenaConfig.measureAimShots} opts into a per-shot record of the
+ * ship's **aim**, reported as a typed
+ * {@link ArenaRunResult.aimShots} table (no telemetry event kinds are added).
+ * Each travelling player projectile is attributed at the muzzle to the live
+ * hostile nearest its line (see {@link selectAimTarget}), then resolved on its
+ * lifecycle end as a hit on the aimed target, a hit on a different body, or a
+ * lifetime expiry, carrying the perpendicular offset of the aimed target from
+ * the shot's line at the shot's closest approach. Attribution is a property of
+ * the shot the pilot fired, so a bullet that connects with a different body is
+ * a miss for the body it was aimed at — splash, a stray or a ram can never
+ * inflate the hit count.
+ *
+ * The measurement is **pure observation**: it reads the same state the run
+ * already advances and changes no position, draw, decision or record, so the
+ * same seed + config + policy is byte-identical with the option on and off. It
+ * is **off by default**, so the historic result shape and every existing
+ * baseline are untouched.
+ *
  * ## Per-level campaign mode (AH-0MVLJFB1I0099X4Z)
  *
  * Setting {@link ArenaConfig.level} switches the arena to an **additive**
@@ -302,6 +322,7 @@ import {
   DEFAULT_ARENA_SPAWNS,
   DEFAULT_ARENA_MOVING_HOSTILE_SPEEDS,
   EVAL_TELEMETRY_SCHEMA_VERSION,
+  type ArenaAimShot,
   type ArenaBalanceConfig,
   type ArenaConfig,
   type ArenaInput,
@@ -565,6 +586,94 @@ interface PlayerBullet extends Bullet {
    * weapon's `damage` multiplier (1 at the base level).
    */
   damage: number;
+  /**
+   * Opt-in aim-shot tracking (AH-0MWR04UJ5008H5WQ); absent unless
+   * {@link ArenaConfig.measureAimShots} is on, so the default path allocates
+   * nothing extra. Retained as a live reference to the aimed-at `Hostile`
+   * (never removed from `world.hostiles`, only flagged dead), so sampling the
+   * miss distance costs no hostile search.
+   */
+  shot?: ShotTracking;
+}
+
+/** The per-projectile state of the opt-in aim-shot measurement. */
+interface ShotTracking {
+  /** Run-scoped shot index, assigned at the muzzle. */
+  shotId: number;
+  /** The weapon that fired the projectile. */
+  weaponId: string;
+  /** Tick the projectile was fired on. */
+  tick: number;
+  /** Muzzle position, the origin of the shot's line. */
+  originX: number;
+  originY: number;
+  /** Unit heading of the projectile (the shot's line direction). */
+  ux: number;
+  uy: number;
+  /** The live hostile the shot was aimed at. */
+  target: Hostile;
+  /** Smallest projectile-to-target separation seen so far (px). */
+  minSeparation: number;
+  /** Perpendicular target offset from the shot's line at that closest approach. */
+  missDistance: number;
+}
+
+/** A hostile body a shot can be aimed at. */
+export interface AimTargetCandidate {
+  readonly id: number;
+  readonly x: number;
+  readonly y: number;
+  readonly alive: boolean;
+}
+
+/**
+ * Resolves the **aimed target** of one shot from its muzzle and heading
+ * (AH-0MWR04UJ5008H5WQ).
+ *
+ * A shot is aimed at the live hostile whose centre is nearest the shot's line
+ * (the perpendicular offset, in px) among the bodies **ahead** of the muzzle
+ * — a body behind the muzzle can never be what a forward-firing weapon was
+ * pointed at. Ties break on the nearer body (smaller along-track distance),
+ * then on the lower id, so the choice is a pure deterministic function of the
+ * scene. Returns `null` when no live body is ahead: that shot has no target it
+ * could honestly be attributed to.
+ *
+ * This is deliberately a geometric property of the shot, not of the brain's
+ * internal choice: the ship auto-fires along its committed facing, so the
+ * line it fired is the aim. A bullet that later touches a different body is
+ * therefore a miss for the body it was aimed at.
+ */
+export function selectAimTarget<T extends AimTargetCandidate>(
+  origin: { readonly x: number; readonly y: number },
+  ux: number,
+  uy: number,
+  hostiles: readonly T[],
+  width: number,
+  height: number,
+): T | null {
+  let best: T | null = null;
+  let bestOffset = Number.POSITIVE_INFINITY;
+  let bestAlong = Number.POSITIVE_INFINITY;
+  for (const hostile of hostiles) {
+    if (!hostile.alive) continue;
+    const dx = wrappedAxisDelta(origin.x, hostile.x, width);
+    const dy = wrappedAxisDelta(origin.y, hostile.y, height);
+    const along = dx * ux + dy * uy;
+    if (!(along > 0)) continue; // behind the muzzle: never the aim
+    const offset = Math.abs(dx * uy - dy * ux);
+    const better =
+      offset < bestOffset - 1e-9
+      || (Math.abs(offset - bestOffset) <= 1e-9
+        && (along < bestAlong - 1e-9
+          || (Math.abs(along - bestAlong) <= 1e-9
+            && (best === null || hostile.id < best.id))));
+    if (better) {
+      best = hostile;
+      bestOffset = offset;
+      bestAlong = along;
+    }
+  }
+  return best;
 }
 
 /** A seed-derived hostile spec held in the spawn reservoir. */
@@ -1820,6 +1929,90 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   };
 
   /**
+   * Opt-in aim-shot measurement (AH-0MWR04UJ5008H5WQ). Off unless the caller
+   * asked for it, so the default run neither tracks nor reports a shot and the
+   * per-tick path is exactly what it was.
+   */
+  const measureAimShots = config.measureAimShots === true;
+  const aimShots: ArenaAimShot[] = [];
+  let nextShotId = 0;
+
+  /**
+   * Attributes one freshly spawned projectile to the body it was aimed at and
+   * starts tracking its miss distance. A shot with no live body ahead of the
+   * muzzle is left untracked: it has no target it could honestly be measured
+   * against (see {@link ArenaAimShot}).
+   */
+  const tagShot = (bullet: PlayerBullet, weaponId: string, tick: number): void => {
+    const speed = Math.hypot(bullet.vx, bullet.vy);
+    if (!(speed > 0)) return;
+    const ux = bullet.vx / speed;
+    const uy = bullet.vy / speed;
+    const target = selectAimTarget(bullet, ux, uy, world.hostiles, width, height);
+    if (!target) return;
+    bullet.shot = {
+      shotId: nextShotId,
+      weaponId,
+      tick,
+      originX: bullet.x,
+      originY: bullet.y,
+      ux,
+      uy,
+      target,
+      minSeparation: Number.POSITIVE_INFINITY,
+      missDistance: 0,
+    };
+    nextShotId += 1;
+  };
+
+  /**
+   * Samples one live projectile's separation from its aimed target and keeps
+   * the perpendicular offset at the closest approach. Wrapped deltas make this
+   * torus-aware; the line through the projectile is the line it was fired
+   * along (same direction, translated), so the offset is the shot's miss
+   * distance for that instant.
+   */
+  const sampleShot = (bullet: PlayerBullet): void => {
+    const shot = bullet.shot;
+    if (!shot || !shot.target.alive) return;
+    const dx = wrappedAxisDelta(bullet.x, shot.target.x, width);
+    const dy = wrappedAxisDelta(bullet.y, shot.target.y, height);
+    const separation = Math.hypot(dx, dy);
+    if (separation >= shot.minSeparation) return;
+    shot.minSeparation = separation;
+    shot.missDistance = Math.abs(dx * shot.uy - dy * shot.ux);
+  };
+
+  /**
+   * Closes one projectile's record: `hit` is the body it connected with, or
+   * `null` for a lifetime expiry. Only a hit on the aimed target counts as a
+   * hit; hitting a different body is a miss for the body the shot was aimed
+   * at, so the metric cannot be inflated by a stray or a splash.
+   */
+  const resolveShot = (
+    bullet: PlayerBullet,
+    hit: Hostile | null,
+    tick: number,
+  ): void => {
+    const shot = bullet.shot;
+    if (!shot) return;
+    bullet.shot = undefined;
+    aimShots.push({
+      shotId: shot.shotId,
+      tick: shot.tick,
+      weaponId: shot.weaponId,
+      x: shot.originX,
+      y: shot.originY,
+      aimedTargetId: shot.target.id,
+      aimedTargetArchetype: shot.target.archetype,
+      hitAimedTarget: hit !== null && hit.id === shot.target.id,
+      hitOtherHostile: hit !== null && hit.id !== shot.target.id,
+      missDistance: Number.isFinite(shot.minSeparation) ? shot.missDistance : 0,
+      flightTicks: tick - shot.tick,
+    });
+  };
+
+  /**
    * Fires one resolved weapon (AH-0MW5DVAME0062GQO): an AOE weapon resolves
    * its blast at fire time through {@link applyAoeBlast} (no travelling
    * projectile, exactly like the game's shared combat core), every other
@@ -1868,7 +2061,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       world.player.y,
     )) {
       const headingRad = (shot.angleDeg * Math.PI) / 180;
-      world.playerBullets.push({
+      const bullet: PlayerBullet = {
         x: shot.x,
         y: shot.y,
         vx: Math.cos(headingRad) * PLAYER_BULLET_SPEED,
@@ -1878,7 +2071,9 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         radius:
           PLAYER_BULLET_RADIUS * (weapon.definition.levelBulletSize ?? 1),
         damage: weapon.stats.damage,
-      });
+      };
+      world.playerBullets.push(bullet);
+      if (measureAimShots) tagShot(bullet, weapon.id, tick);
     }
   };
 
@@ -2110,10 +2305,19 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     for (const bullet of world.playerBullets) {
       advanceBulletPosition(bullet, bullet.vx, bullet.vy, dt, width, height);
       bullet.elapsed += dt;
+      if (measureAimShots) sampleShot(bullet);
     }
     for (const bullet of world.enemyBullets) {
       advanceBulletPosition(bullet, bullet.vx, bullet.vy, dt, width, height);
       bullet.elapsed += dt;
+    }
+    // Opt-in aim-shot measurement: a projectile that runs out its lifetime
+    // missed whatever it was aimed at (no new telemetry record is emitted —
+    // the shot table rides on the typed run result).
+    if (measureAimShots) {
+      for (const bullet of world.playerBullets) {
+        if (bullet.elapsed >= bullet.lifetime) resolveShot(bullet, null, tick);
+      }
     }
     world.playerBullets = world.playerBullets.filter(
       (bullet) => bullet.elapsed < bullet.lifetime,
@@ -2129,6 +2333,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         if (!hostile.alive) continue;
         if (distance(bullet, hostile) > hostile.radius + bullet.radius) continue;
         bullet.x = Number.NaN; // retired below (one bullet never passes through)
+        if (measureAimShots) resolveShot(bullet, hostile, tick);
         if (hostile.fieldHits > 0) {
           // Barrier first (epic AH-0MVJ8W4GE007OMNT AC2): the force field
           // absorbs the hit, the hull is untouched, and the bullet is still
@@ -2277,5 +2482,8 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     ticksSimulated: simulated,
     enemyBodyContacts,
     avoidableEnemyBodyContacts,
+    // Present only under the opt-in, so the default result shape (and every
+    // existing deep-equal baseline) is unchanged.
+    ...(measureAimShots ? { aimShots } : {}),
   };
 }

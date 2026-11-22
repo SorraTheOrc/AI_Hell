@@ -414,6 +414,19 @@ export interface ArenaConfig {
    */
   readonly movingHostiles?: boolean | ArenaMovingHostiles;
   /**
+   * **Opt-in** aim-shot measurement (AH-0MWR04UJ5008H5WQ). When `true`, the
+   * run records one {@link ArenaAimShot} per travelling player projectile
+   * (cannon/pattern fire; an AOE weapon spawns none) and reports them on
+   * {@link ArenaRunResult.aimShots}.
+   *
+   * The measurement is **observation only**: it never changes a position, a
+   * draw, a decision or a record, so the same seed + config + policy produces
+   * byte-identical telemetry with the option on and off (pinned by
+   * `aimAccuracy.test.ts`). Omitted/`false` keeps the historic result shape
+   * and adds no per-tick work, so existing harness baselines are untouched.
+   */
+  readonly measureAimShots?: boolean;
+  /**
    * Explicit archetype list for the seeded skirmish's hostile reservoir
    * (AH-0MWOKL79Z0051ZXO). Absent → the config-derived list
    * ({@link ArenaConfig.balance} / `loadAllEnemyConfigs`, minus the
@@ -455,6 +468,60 @@ export interface ArenaRunResult {
    * dodging rather than luck. `0` when the mode is off.
    */
   readonly avoidableEnemyBodyContacts: number;
+  /**
+   * One record per measured player shot, in fire order (AH-0MWR04UJ5008H5WQ).
+   * Present **only** when {@link ArenaConfig.measureAimShots} is `true`, so the
+   * default result shape and every existing baseline stay unchanged.
+   *
+   * A shot whose muzzle has no live hostile ahead of it has no target it could
+   * be attributed to, so it is omitted here rather than counted as an
+   * unaimed miss.
+   */
+  readonly aimShots?: readonly ArenaAimShot[];
+}
+
+/**
+ * One measured player shot (AH-0MWR04UJ5008H5WQ) — the raw evidence the
+ * aim-accuracy harness folds into shots-fired / shots-hit / miss-distance.
+ *
+ * The **aimed target** is resolved at the muzzle from the shot's own line: of
+ * the live hostile bodies ahead of the muzzle, the one whose centre is nearest
+ * that line. Attribution is therefore a property of the shot the pilot
+ * actually fired (the ship auto-fires along its committed facing), not of
+ * whatever body the bullet later happens to touch — so a shot that hits a
+ * different body is recorded as a miss for the body it was aimed at.
+ */
+export interface ArenaAimShot {
+  /** Run-scoped shot index, in fire order from `0`. */
+  readonly shotId: number;
+  /** Tick the shot was fired on. */
+  readonly tick: number;
+  /** The resolved weapon that fired it (`cannon` for the baseline). */
+  readonly weaponId: string;
+  /** Muzzle position (px), the origin of the shot's line. */
+  readonly x: number;
+  readonly y: number;
+  /** The live hostile the shot was aimed at. */
+  readonly aimedTargetId: number;
+  /** That hostile's archetype (the movement class is the harness's scenario). */
+  readonly aimedTargetArchetype: string;
+  /**
+   * Whether the projectile connected with the **aimed target** (including a
+   * force-field hit, which consumes the shot on the target it was aimed at).
+   */
+  readonly hitAimedTarget: boolean;
+  /** Whether it instead connected with a different hostile body. */
+  readonly hitOtherHostile: boolean;
+  /**
+   * Miss distance (px): the perpendicular offset of the aimed target's centre
+   * from the shot's line, sampled at the shot's closest approach to that
+   * target. `0` for a perfectly on-line pass; small values still count as a
+   * hit when inside the collision radius, so consumers normally average this
+   * over **misses** only (the harness does).
+   */
+  readonly missDistance: number;
+  /** Ticks the projectile flew before resolving (hit or lifetime expiry). */
+  readonly flightTicks: number;
 }
 
 /** Default spawn counts, sized for a representative single-level skirmish. */
