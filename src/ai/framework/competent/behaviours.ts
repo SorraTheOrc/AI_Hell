@@ -23,9 +23,14 @@
  *   restricts the target set to the boss alone, so a committed boss fight
  *   cannot divert to a nearer minion (AH-0MVBMESIE003YQ68).  A target whose
  *   velocity is exposed is **led**: the aim objective is the iterated
- *   intercept, not the current position (AH-0MV1DUSM2005HL98 · AC2).  An
- *   archetype whose content profile declares `aim: 'none'` is closed on
- *   without aim reasoning.  Its **kiting gate** asks the one shared predictive
+ *   intercept, not the current position (AH-0MV1DUSM2005HL98 · AC2).  The
+ *   lead velocity comes from the bot-side hazard tracker first — the *same*
+ *   estimate the predictive avoidance uses — so a scripted-motion target
+ *   that exposes no snapshot velocity is still led, falling back to the
+ *   snapshot field and then the current position (AH-0MWR04X10002VNDG ·
+ *   AC1).  An archetype whose content profile declares `aim: 'none'` is
+ *   closed on without aim reasoning.  Its **kiting gate** asks the one shared
+ *   predictive
  *   test (`hazardThreatensPlayer`) whether any non-engagement-target hazard is
  *   on a collision course — the same class-shaped, per-class-horizon
  *   prediction the steering fan applies — and exempts the engagement target by
@@ -47,7 +52,7 @@ import type {
   BotBehaviourContext,
 } from '../registry';
 import { createBehaviourRegistry } from '../registry';
-import type { BotWorld } from '../worldModel';
+import type { BotHazardPoint, BotWorld } from '../worldModel';
 import type { BotContent } from '../content';
 import { createBotContent } from '../content';
 import {
@@ -161,11 +166,98 @@ function collectBehaviour(
   };
 }
 
+/**
+ * The motion the `engage` aim solve leads its target by.
+ *
+ * A mutable record so the per-tick resolve allocates nothing
+ * (AH-0MWR04X10002VNDG · AC1). Create one per aim solve with
+ * {@link createAimTargetMotion} and consume the returned record **before**
+ * the next resolve: every field is overwritten in place.
+ */
+export interface AimTargetMotion {
+  /** Lead velocity (px/s) the intercept solve advances the target by. */
+  vx: number;
+  vy: number;
+  /** The tracked hazard the estimate came from; absent on a fallback. */
+  hazard?: BotHazardPoint;
+}
+
+/** Creates a reusable {@link AimTargetMotion} record (zero velocity). */
+export function createAimTargetMotion(): AimTargetMotion {
+  return { vx: 0, vy: 0 };
+}
+
+/**
+ * Resolves the velocity the aim solve leads `target` by, preferring the
+ * bot-side hazard tracker's estimate over the snapshot's raw `vx`/`vy`
+ * (AH-0MWR04X10002VNDG · AC1).
+ *
+ * Precedence is explicit and total:
+ *
+ * 1. **Tracked estimate** — the hazard on `view.world.hazards[]` with the
+ *    target's stable `id` (the `trackHazardVelocities` estimate the hazard
+ *    predictor consumes). This is the only motion a scripted formation/
+ *    `chaser`/`diver`/`patroller` target exposes, so it is what makes those
+ *    targets leadable.
+ * 2. **Snapshot velocity** — the target's own `vx`/`vy`, when the source has
+ *    a physics body (asteroid, lane traffic). Used when the tracker holds no
+ *    estimate yet.
+ * 3. **Current position** — both absent or zero, so the caller aims at the
+ *    target's current position exactly as before the lead existed.
+ *
+ * One estimate serves both prediction and aim: the same tracker figure that
+ * the hazard predictor advances a target with also leads the shot, so the two
+ * consumers cannot drift apart (parent AC1/AC6). The lookup is a plain scan
+ * of the hazard list into a reused record — no allocation on the per-tick
+ * path, and no state carried between ticks (the record is fully overwritten).
+ *
+ * @param target — the engagement target chosen by `bestWeightedTarget`.
+ * @param hazards — the world's tracked hazards (`BotWorld.hazards`).
+ * @param out — the reusable record to write the result into.
+ * @param useTracker — whether the tracked estimate is consulted at all
+ *   (`aimLeadFromTracker`); `false` skips straight to the snapshot velocity,
+ *   reproducing the pre-change lead bit-for-bit (the harness control arm).
+ * @returns `out`, with `hazard` set only when the tracked estimate won.
+ */
+export function resolveAimTargetMotion(
+  target: ContentTarget,
+  hazards: readonly BotHazardPoint[],
+  out: AimTargetMotion,
+  useTracker = true,
+): AimTargetMotion {
+  out.hazard = undefined;
+  const id = target.id;
+  if (useTracker && id !== undefined) {
+    for (const hazard of hazards) {
+      if (hazard.id !== id) continue;
+      const vx = hazard.vx ?? 0;
+      const vy = hazard.vy ?? 0;
+      // A cold-start/stale estimate carries no velocity (the world model omits
+      // a zero vector), so it is not an estimate yet: fall through to the
+      // snapshot field, which reduces to the current position for a scripted
+      // enemy. That keeps the first engagement tick byte-for-byte the old shot.
+      if (vx !== 0 || vy !== 0) {
+        out.vx = vx;
+        out.vy = vy;
+        out.hazard = hazard;
+        return out;
+      }
+      break;
+    }
+  }
+  out.vx = target.vx ?? 0;
+  out.vy = target.vy ?? 0;
+  return out;
+}
+
 /** Engages the committed target: the boss alone, or the best enemy/asteroid. */
 function engageBehaviour(
   t: CompetentBotTunables,
   content: BotContent,
 ): BotBehaviour {
+  // One reused motion record for the aim solve, allocated with the behaviour
+  // (not per tick).
+  const aimMotion = createAimTargetMotion();
   return {
     id: COMPETENT_BEHAVIOUR_IDS.engage,
     run: (view: BotBehaviourContext) => {
@@ -199,21 +291,27 @@ function engageBehaviour(
       // Lead prediction (AC2): aim at where a moving target will be when the
       // forward-firing shot arrives, accounting for the ship's estimated turn
       // time plus the shot's time of flight, iterated to a stable intercept.
-      // A target that exposes no (or zero) velocity falls back to its current
-      // position — exactly the pre-lead behaviour.
+      // The velocity is resolved tracker-estimate first, then the snapshot
+      // field, then the current position (AH-0MWR04X10002VNDG · AC1) — the
+      // same estimate the hazard predictor consumes, so a scripted-motion
+      // target with no snapshot velocity is still led.
       //
       // Seam-aware aim (AH-0MVT2VZR7000GS15): both the lead solve and the
       // route to the aim point run on the torus, so a target whose shortest
       // path crosses an edge is led and aimed at through that edge.
-      const targetVx = best.point.vx ?? 0;
-      const targetVy = best.point.vy ?? 0;
+      const motion = resolveAimTargetMotion(
+        best.point,
+        view.world.hazards,
+        aimMotion,
+        t.aimLeadFromTracker,
+      );
       const wrapWorld = botWrapWorld(t);
       const aimPoint =
-        t.aimLeadEnabled && (targetVx !== 0 || targetVy !== 0)
+        t.aimLeadEnabled && (motion.vx !== 0 || motion.vy !== 0)
           ? interceptPoint(
               player,
               best.point,
-              { x: targetVx, y: targetVy },
+              { x: motion.vx, y: motion.vy },
               t.assumedBulletSpeed,
               t.aimLeadAlignSeconds,
               t.aimLeadIterations,

@@ -60,8 +60,12 @@ vi.setConfig({ testTimeout: 900_000 });
 /** The measured report, computed once for every assertion in the file. */
 let report: AimAccuracyReport;
 
+/** The measured **pre-change** solve (tracker lead off), once per file. */
+let baselineReport: AimAccuracyReport;
+
 beforeAll(() => {
   report = runAimAccuracy();
+  baselineReport = runAimAccuracy({ aimLeadFromTracker: false });
   // The report is the evidence, not just the failures: printed straight to
   // stdout because the quiet suite does not surface captured `console` output.
   process.stdout.write(
@@ -134,8 +138,20 @@ describe('aim-accuracy harness (AH-0MWR04UJ5008H5WQ)', () => {
 
   it('reproduces the pinned pre-change baseline exactly', () => {
     // A later feature must beat these numbers, never re-snap them to pass: the
-    // fixture is a recorded observation of the pre-change solve.
-    expect(report).toEqual(pinnedBaseline);
+    // fixture is a recorded observation of the pre-change solve. The pre-change
+    // solve is flown with the tracker-derived lead switched off
+    // (AH-0MWR04X10002VNDG); the shipped defaults measure the current solve
+    // that later features compare against this fixture.
+    expect(baselineReport).toEqual(pinnedBaseline);
+  });
+
+  it('measures the shipped solve separately from the pinned baseline', () => {
+    // The baseline control must not be the default: the shipped brain leads
+    // from the tracker, so the live report is a different (and, after the
+    // feature, better) observation of the same matrix.
+    expect(report).not.toEqual(baselineReport);
+    expect(report.seeds).toEqual(baselineReport.seeds);
+    expect(report.classes).toEqual(baselineReport.classes);
   });
 
   it('records the pinned baseline in the harness module documentation', () => {

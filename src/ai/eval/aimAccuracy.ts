@@ -56,6 +56,15 @@
  * assertion (a later feature) must be *strictly better than* these numbers,
  * and re-snapping the fixture is never a way to pass a regression.
  *
+ * The pre-change solve is reproduced with `aimLeadFromTracker: false` — the
+ * control for the tracker-derived lead (AH-0MWR04X10002VNDG), which is the
+ * first feature to move the shipped aim numbers. The fixture, the seeds, the
+ * scenario and the metric stay untouched; the harness keeps a documented way
+ * to fly the pre-change solve rather than pinning the *live* solve to a
+ * number that every later aim feature would have to re-snap. The live solve
+ * (the compiled defaults, tracker lead on) is what the later comparison
+ * measures against this fixture.
+ *
  * | scenario     | shots fired | shots hit | hit rate | mean miss distance (px) |
  * |--------------|-------------|-----------|----------|-------------------------|
  * | chaser       | 182         | 84        | 0.4615   | 2.2828                  |
@@ -224,7 +233,16 @@ export function tallyAimShots(shots: readonly ArenaAimShot[]): AimAccuracyTally 
 export function runAimAccuracyScenario(
   movementClass: EnemyMovementClass,
   seed: number,
-  options: { readonly measureAimShots?: boolean } = {},
+  options: {
+    readonly measureAimShots?: boolean;
+    /**
+     * Whether the brain leads from the bot-side tracker
+     * (`aimLeadFromTracker`), overriding the compiled default of `true`.
+     * `false` flies the pre-change solve the pinned baseline was recorded
+     * from (AH-0MWR04X10002VNDG); omit it to measure the shipped defaults.
+     */
+    readonly aimLeadFromTracker?: boolean;
+  } = {},
 ): ArenaRunResult {
   const archetype = AIM_ACCURACY_ARCHETYPES[movementClass];
   // A single archetype in the seeded config store makes the arena's reservoir
@@ -243,7 +261,15 @@ export function runAimAccuracyScenario(
     DEFAULT_CONFIG,
   );
   try {
-    return runArena(createCompetentBotBrain(), {
+    // The compiled defaults are the measured solve; the only override is the
+    // documented tracker-lead control that reproduces the pinned baseline.
+    const brain =
+      options.aimLeadFromTracker === undefined
+        ? createCompetentBotBrain()
+        : createCompetentBotBrain({
+            tunables: { aimLeadFromTracker: options.aimLeadFromTracker },
+          });
+    return runArena(brain, {
       seed,
       ticks: AIM_ACCURACY_TICKS,
       width: AIM_ACCURACY_SCENARIO.width,
@@ -276,14 +302,20 @@ export function runAimAccuracyScenario(
  * Exported so a later feature can measure the same matrix against the pinned
  * baseline with the same code (`strictly better than` the fixture), rather
  * than re-implementing the measurement.
+ *
+ * @param options — `aimLeadFromTracker: false` measures the pre-change solve
+ *   the pinned baseline was recorded from; omit it to measure the shipped
+ *   defaults.
  */
-export function runAimAccuracy(): AimAccuracyReport {
+export function runAimAccuracy(
+  options: { readonly aimLeadFromTracker?: boolean } = {},
+): AimAccuracyReport {
   const shotsByClass = new Map<EnemyMovementClass, ArenaAimShot[]>();
   const allShots: ArenaAimShot[] = [];
   for (const movementClass of AIM_ACCURACY_CLASSES) {
     const shots: ArenaAimShot[] = [];
     for (const seed of AIM_ACCURACY_SEEDS) {
-      const result = runAimAccuracyScenario(movementClass, seed);
+      const result = runAimAccuracyScenario(movementClass, seed, options);
       shots.push(...(result.aimShots ?? []));
     }
     shotsByClass.set(movementClass, shots);

@@ -578,14 +578,22 @@ bot-tuning gym fly identically.
   rotation constant is hard-coded in the bot layer. With `angularVelocity = 0`
   the predicted stop equals the current heading and the result is
   byte-for-byte the legacy release.
-- **Lead prediction (AC2).** The `BotSnapshot` enemy seam carries optional
+- **Lead prediction (AC2).** `engage` solves the **iterated intercept** with the
+  pure `interceptPoint` helper: the target advances over the estimated
+  `aimLeadAlignSeconds` plus the projectile's time of flight
+  (`assumedBulletSpeed`), refined for `aimLeadIterations` passes. The lead
+  velocity is resolved with an explicit precedence — the **bot-side tracker's**
+  estimate for the target's stable id (`BotWorld.hazards[].vx/vy`, the same
+  estimate the hazard predictor consumes), then the snapshot's optional
   `vx`/`vy` (sourced from entities that expose a physics body — `Asteroid`,
-  `LaneTraffic` — and defaulting to zero for formation-positioned enemies).
-  `enemyTargets` threads it into the `ContentTarget`, and `engage` solves the
-  **iterated intercept** with the pure `interceptPoint` helper: the target
-  advances over the estimated `aimLeadAlignSeconds` plus the projectile's
-  time of flight (`assumedBulletSpeed`), refined for `aimLeadIterations`
-  passes. A zero/absent velocity reduces exactly to the current position.
+  `LaneTraffic`), then the current position
+  (AH-0MWR04X10002VNDG · AC1). The first step is what leads scripted
+  formation/`chaser`/`diver`/`patroller` enemies, whose motion the snapshot
+  seam does not carry. A zero/absent estimate falls through the list, so a
+  cold start reduces exactly to the current position. The source is held at
+  the pre-change snapshot fallback in the avoidance sweep and in the pinned
+  aim-accuracy baseline (`aimLeadFromTracker: false`), so neither comparison
+  is moved by an aim feature.
 - **`skill` aim error (AC3).** A single normalised `skill` tunable in
   `BOT_HUMAN_INPUT_TUNABLES` (default **1.0**) perturbs the committed aim
   bearing by a seeded error whose bound is

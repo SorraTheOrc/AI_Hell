@@ -319,6 +319,22 @@ export interface CompetentBotTunables {
    */
   aimLeadEnabled: boolean;
   /**
+   * Whether the lead velocity comes from the bot-side hazard tracker
+   * (AH-0MWR04X10002VNDG · AC1).
+   *
+   * On (the default), `engage` resolves its target's velocity from the tracked
+   * hazard estimate (`BotWorld.hazards[].vx/vy`, matched by the target's stable
+   * `id`) — the same estimate the hazard predictor consumes — before the raw
+   * snapshot velocity. That is the only motion a scripted formation/`chaser`/
+   * `diver`/`patroller` target exposes, so those targets are led.
+   *
+   * Off reproduces the pre-change snapshot-velocity-only lead bit-for-bit: the
+   * aim-accuracy harness's pinned baseline is measured that way, so the fixture
+   * remains a recorded observation of the pre-change solve even after this
+   * feature ships. It is a control, not a designer knob.
+   */
+  aimLeadFromTracker: boolean;
+  /**
    * Estimated time (seconds) for the ship to finish its turn onto the target
    * bearing, used as the alignment term in the intercept solve (AC2).
    */
@@ -480,6 +496,7 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   }),
 
   aimLeadEnabled: true,
+  aimLeadFromTracker: true,
   aimLeadAlignSeconds: 0.25,
   aimLeadIterations: 3,
 

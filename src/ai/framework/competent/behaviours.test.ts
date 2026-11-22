@@ -14,7 +14,9 @@ import type { BotBehaviourContext } from '../registry';
 import { buildBotWorld } from '../worldModel';
 import { enemyHazardKey } from '../hazardVelocity';
 import { boss, bullet, drop, enemy, makeSnapshot, mineral } from '../testFixtures';
-import { createCompetentBehaviours } from './behaviours';
+import { createAimTargetMotion, createCompetentBehaviours, resolveAimTargetMotion } from './behaviours';
+import type { ContentTarget } from './goals';
+import type { BotHazardPoint } from '../worldModel';
 import { COMPETENT_GOAL_IDS, createCompetentGoals } from './goals';
 import { evaluateDirection } from './steering';
 import { COMPETENT_BOT_TUNABLES, resolveCompetentTunables } from './tunables';
@@ -536,6 +538,233 @@ describe('engage behaviour — lead prediction (AH-0MV1DUSM2005HL98 AC2)', () =>
       context(snapshot, COMPETENT_GOAL_IDS.engageEnemy),
     );
     expect(intent!.dirY).toBeCloseTo(0, 6);
+  });
+});
+
+// ── Tracker-derived aim velocity (AH-0MWR04X10002VNDG · AC1) ────────
+
+describe('engage behaviour — tracker-derived aim velocity (AH-0MWR04X10002VNDG AC1)', () => {
+  /** Builds an engage context whose world carries bot-side hazard estimates. */
+  function contextWithTracker(
+    snapshot: ReturnType<typeof makeSnapshot>,
+    velocities: Map<string, { x: number; y: number }>,
+    tunables = T,
+  ): BotBehaviourContext {
+    const goal = createCompetentGoals(tunables).require(
+      COMPETENT_GOAL_IDS.engageEnemy,
+    );
+    return {
+      snapshot,
+      world: buildBotWorld(snapshot, undefined, undefined, velocities),
+      memory: createBotMemory(),
+      dt: 0.1,
+      goal,
+    };
+  }
+
+  it('leads a scripted formation enemy that exposes no snapshot velocity', () => {
+    // The snapshot seam carries no velocity for a formation enemy, so before
+    // this change the aim was the current position. The tracker estimate is
+    // the only motion available and must lead the shot.
+    const tracked = { ...enemy(620, 270, 'scout'), id: 7 };
+    const intent = engage.run(
+      contextWithTracker(
+        makeSnapshot({ player: PLAYER, enemies: [tracked] }),
+        new Map([[enemyHazardKey(7), { x: 0, y: -90 }]]),
+      ),
+    );
+    expect(intent).not.toBeNull();
+    // Led upward, not straight at the current position.
+    expect(intent!.dirY).toBeLessThan(-0.1);
+    expect(intent!.aim).toBe(true);
+  });
+
+  it('prefers the tracked estimate over a conflicting snapshot velocity', () => {
+    // Snapshot says the target descends; the tracker says it climbs. The
+    // tracked estimate is the one estimate prediction and aim share, so the
+    // aim must follow it.
+    const target = {
+      ...enemy(620, 270, 'scout'),
+      id: 7,
+      vx: 0,
+      vy: 90,
+    };
+    const intent = engage.run(
+      contextWithTracker(
+        makeSnapshot({ player: PLAYER, enemies: [target] }),
+        new Map([[enemyHazardKey(7), { x: 0, y: -90 }]]),
+      ),
+    );
+    expect(intent!.dirY).toBeLessThan(-0.1);
+  });
+
+  it('falls back to the snapshot velocity when the id has no estimate', () => {
+    const target = {
+      ...enemy(620, 270, 'scout'),
+      id: 7,
+      vx: 0,
+      vy: -90,
+    };
+    const intent = engage.run(
+      contextWithTracker(
+        makeSnapshot({ player: PLAYER, enemies: [target] }),
+        new Map([[enemyHazardKey(9), { x: 0, y: 90 }]]),
+      ),
+    );
+    expect(intent!.dirY).toBeLessThan(-0.1);
+  });
+
+  it('aims at the current position on a cold-start zero-vector estimate', () => {
+    // A tracker entry that has not seen two samples yet carries no velocity.
+    // The first engagement tick must be exactly today's shot.
+    const cold = { ...enemy(620, 270, 'scout'), id: 7 };
+    const intent = engage.run(
+      contextWithTracker(
+        makeSnapshot({ player: PLAYER, enemies: [cold] }),
+        new Map([[enemyHazardKey(7), { x: 0, y: 0 }]]),
+      ),
+    );
+    expect(intent!.dirX).toBeCloseTo(1, 6);
+    expect(intent!.dirY).toBeCloseTo(0, 6);
+  });
+
+  it('aims at the current position for an id-less target (the boss)', () => {
+    // The boss carries no bot-side id, so it can never match a tracked
+    // hazard; the aim is unchanged even with unrelated estimates present.
+    const snapshot = makeSnapshot({ player: PLAYER, boss: boss(620, 270) });
+    const goal = createCompetentGoals(T).require(COMPETENT_GOAL_IDS.engageBoss);
+    const intent = engage.run({
+      snapshot,
+      world: buildBotWorld(
+        snapshot,
+        undefined,
+        undefined,
+        new Map([[enemyHazardKey(7), { x: 0, y: -90 }]]),
+      ),
+      memory: createBotMemory(),
+      dt: 0.1,
+      goal,
+    });
+    expect(intent!.dirX).toBeCloseTo(1, 6);
+    expect(intent!.dirY).toBeCloseTo(0, 6);
+  });
+
+  it('ignores the tracked estimate when the tracker control is off', () => {
+    // The control (`aimLeadFromTracker: false`) flies the pre-change lead:
+    // tracker estimates are ignored, so a target with no snapshot velocity is
+    // aimed at its current position even though an estimate exists.
+    const tracked = { ...enemy(620, 270, 'scout'), id: 7 };
+    const engage = createCompetentBehaviours({
+      ...T,
+      aimLeadFromTracker: false,
+    }).require('engage');
+    const intent = engage.run(
+      contextWithTracker(
+        makeSnapshot({ player: PLAYER, enemies: [tracked] }),
+        new Map([[enemyHazardKey(7), { x: 0, y: -90 }]]),
+      ),
+    );
+    expect(intent!.dirX).toBeCloseTo(1, 6);
+    expect(intent!.dirY).toBeCloseTo(0, 6);
+  });
+
+  it('leads a tracked target across the seam on the torus', () => {
+    // The target sits across the left seam with a tracker estimate climbing:
+    // the led point must be aimed at through the seam and upward.
+    const tracked = { ...enemy(900, 270, 'scout'), id: 7 };
+    const intent = engage.run(
+      contextWithTracker(
+        makeSnapshot({
+          player: { x: 100, y: 270, vx: 0, vy: 0 },
+          enemies: [tracked],
+        }),
+        new Map([[enemyHazardKey(7), { x: 0, y: -100 }]]),
+      ),
+    );
+    expect(intent!.dirX).toBeLessThan(-0.1);
+    expect(intent!.dirY).toBeLessThan(0);
+  });
+});
+
+describe('resolveAimTargetMotion (AH-0MWR04X10002VNDG AC1)', () => {
+  /** Builds a tracked hazard point fixture. */
+  function hazard(
+    id: number | undefined,
+    vx?: number,
+    vy?: number,
+  ): BotHazardPoint {
+    return {
+      x: 620,
+      y: 270,
+      movementClass: 'formation',
+      curvature: 0,
+      ...(id !== undefined ? { id } : {}),
+      ...(vx !== undefined && vy !== undefined ? { vx, vy } : {}),
+    };
+  }
+
+  const target = (overrides: Partial<ContentTarget> = {}): ContentTarget => ({
+    x: 620,
+    y: 270,
+    contentId: 'scout',
+    ...overrides,
+  });
+
+  it('prefers the tracked estimate and names its hazard', () => {
+    const out = createAimTargetMotion();
+    const tracked = hazard(7, 12, -34);
+    const motion = resolveAimTargetMotion(
+      target({ id: 7, vx: -99, vy: 99 }),
+      [hazard(3, 1, 1), tracked],
+      out,
+    );
+    expect(motion).toBe(out);
+    expect(motion.vx).toBe(12);
+    expect(motion.vy).toBe(-34);
+    expect(motion.hazard).toBe(tracked);
+  });
+
+  it('falls back to the snapshot velocity for an unmatched id', () => {
+    const motion = resolveAimTargetMotion(
+      target({ id: 7, vx: 5, vy: -6 }),
+      [hazard(8, 1, 1)],
+      createAimTargetMotion(),
+    );
+    expect({ vx: motion.vx, vy: motion.vy }).toEqual({ vx: 5, vy: -6 });
+    expect(motion.hazard).toBeUndefined();
+  });
+
+  it('falls through a zero-vector estimate to the snapshot velocity', () => {
+    const motion = resolveAimTargetMotion(
+      target({ id: 7, vx: 5, vy: -6 }),
+      [hazard(7, 0, 0)],
+      createAimTargetMotion(),
+    );
+    expect({ vx: motion.vx, vy: motion.vy }).toEqual({ vx: 5, vy: -6 });
+    expect(motion.hazard).toBeUndefined();
+  });
+
+  it('resolves to a stationary result when nothing reports motion', () => {
+    const motion = resolveAimTargetMotion(
+      target({ id: 7 }),
+      [],
+      createAimTargetMotion(),
+    );
+    expect({ vx: motion.vx, vy: motion.vy }).toEqual({ vx: 0, vy: 0 });
+    expect(motion.hazard).toBeUndefined();
+  });
+
+  it('reuses one record with no per-tick allocation (AC1)', () => {
+    // The aim solve runs on every engage tick: the lookup must write into the
+    // caller's reused record instead of allocating a result object, and it
+    // must not leak the previous tick's hazard into a fallback result.
+    const out = createAimTargetMotion();
+    const tracked = hazard(7, 12, -34);
+    const first = resolveAimTargetMotion(target({ id: 7 }), [tracked], out);
+    const second = resolveAimTargetMotion(target({ id: 7 }), [], out);
+    expect(first).toBe(out);
+    expect(second).toBe(out);
+    expect(second.hazard).toBeUndefined();
   });
 });
 
