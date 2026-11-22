@@ -77,6 +77,9 @@
           "turnPressMinMs": 30,
           "skill": 1,
           "maxAimErrorRad": 0.07,
+          "aimErrorRad": 0.02,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60,
           "thrustPressMinMs": 80,
           "thrustPressMaxMs": 640,
           "thrustPressMaxMsLong": 945,
@@ -109,7 +112,10 @@
           "survivalUrgencyHorizon": 1.2
         },
         "human": {
-          "reactionTimeMs": 200
+          "reactionTimeMs": 200,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -132,7 +138,11 @@
           "hazardPredictionHorizon": 2.6,
           "reverseRetreatRange": 180
         },
-        "human": {}
+        "human": {
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
+        }
       }
     },
     {
@@ -150,7 +160,10 @@
           "survivalUrgencyHorizon": 1.5
         },
         "human": {
-          "reactionTimeMs": 220
+          "reactionTimeMs": 220,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -169,6 +182,9 @@
         },
         "human": {
           "maxAimErrorRad": 0.02,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60,
           "reactionTimeMs": 170
         }
       }
@@ -195,7 +211,10 @@
         },
         "human": {
           "reactionTimeMs": 282,
-          "maxAimErrorRad": 0.042
+          "maxAimErrorRad": 0.042,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -218,7 +237,10 @@
         },
         "human": {
           "reactionTimeMs": 207,
-          "maxAimErrorRad": 0.0653
+          "maxAimErrorRad": 0.0653,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -241,7 +263,10 @@
         },
         "human": {
           "reactionTimeMs": 200,
-          "maxAimErrorRad": 0.0579
+          "maxAimErrorRad": 0.0579,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -267,7 +292,10 @@
         },
         "human": {
           "reactionTimeMs": 121,
-          "maxAimErrorRad": 0.0694
+          "maxAimErrorRad": 0.0694,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     }

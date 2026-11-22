@@ -52,7 +52,7 @@ import type {
   BotBehaviourContext,
 } from '../registry';
 import { createBehaviourRegistry } from '../registry';
-import type { BotHazardPoint, BotWorld } from '../worldModel';
+import type { BotHazardPoint, BotWorld, BotWorldPoint } from '../worldModel';
 import type { HazardMotionScratch } from '../hazardMotionModel';
 import type { BotContent } from '../content';
 import { createBotContent } from '../content';
@@ -68,7 +68,8 @@ import {
   withoutOvershot,
   type ContentTarget,
 } from './goals';
-import { hazardThreatensPlayer, idleIntent, interceptPointClassAware, isHazardExempt, mayReverse, mayThrust, planSteering } from './steering';
+import { hazardThreatensPlayer, idleIntent, interceptPointClassAware, isHazardExempt, mayReverse, mayThrust, planSteering, type SteerPlanOptions } from './steering';
+import type { BotSteeringIntent } from '../../botDecision';
 import { resolveAimAlignSeconds, resolveShotSpeed, type CompetentBotTunables } from './tunables';
 import { botWrapWorld, wrappedAxisDelta, wrappedDelta } from '../wrapGeometry';
 
@@ -257,6 +258,24 @@ export function resolveAimTargetMotion(
   return out;
 }
 
+/**
+ * Plans a steering intent and stamps the engaged target's bot-side id onto an
+ * aim plan (AH-0MWR057Q8004PBOD · AC4), so the governor can decay the adaptive
+ * aim error on confirmed hits and re-arm it on a target change. Non-aim plans
+ * carry no identity.
+ */
+function planSteeringWithTarget(
+  objective: BotWorldPoint,
+  world: BotWorld,
+  t: CompetentBotTunables,
+  options: SteerPlanOptions,
+  targetId: number | undefined,
+): BotSteeringIntent {
+  const planned = planSteering(objective, world, t, options);
+  if (targetId === undefined || planned.aim !== true) return planned;
+  return { ...planned, targetId };
+}
+
 /** Engages the committed target: the boss alone, or the best enemy/asteroid. */
 function engageBehaviour(
   t: CompetentBotTunables,
@@ -381,23 +400,32 @@ function engageBehaviour(
         !kite &&
         view.world.reverseEnabled &&
         mayReverse(view.snapshot, t, distance, engagementRange);
-      return planSteering(objective, view.world, t, {
-        // Inside the standoff, keep the hull aimed at the target and coast so
-        // the forward-firing weapon stays on it (AC3). Outside, close while
-        // the forward model allows. An archetype with `aim: 'none'` never
-        // holds the axis.
-        thrust,
-        longTravel: distance >= t.longTravelDistance,
-        reverse: kite || brake,
-        // The engagement target is exempt from the *predictive* hazard test:
-        // the bot deliberately aims at it, so predicting a collision with it
-        // would reject the aim bearing and break engagement. It still keeps
-        // the positional danger-margin rule (AH-0MVI4QDN90037DIN · AC2).
-        exemptHazards: [best.point],
-        // Mark the intent as an aim intent so the governor's `skill` error can
-        // perturb it (and only it) when the designer lowers skill (AC3).
-        aim: holdAim,
-      });
+      return planSteeringWithTarget(
+        objective,
+        view.world,
+        t,
+        {
+          // Inside the standoff, keep the hull aimed at the target and coast so
+          // the forward-firing weapon stays on it (AC3). Outside, close while
+          // the forward model allows. An archetype with `aim: 'none'` never
+          // holds the axis.
+          thrust,
+          longTravel: distance >= t.longTravelDistance,
+          reverse: kite || brake,
+          // The engagement target is exempt from the *predictive* hazard test:
+          // the bot deliberately aims at it, so predicting a collision with it
+          // would reject the aim bearing and break engagement. It still keeps
+          // the positional danger-margin rule (AH-0MVI4QDN90037DIN · AC2).
+          exemptHazards: [best.point],
+          // Mark the intent as an aim intent so the governor's `skill` error can
+          // perturb it (and only it) when the designer lowers skill (AC3).
+          aim: holdAim,
+        },
+        // The engaged target's bot-side identity, so the governor can decay the
+        // adaptive aim error on confirmed hits and re-arm it on a target
+        // change (AH-0MWR057Q8004PBOD · AC4). Non-aim plans carry none.
+        holdAim ? best.point.id : undefined,
+      );
     },
   };
 }

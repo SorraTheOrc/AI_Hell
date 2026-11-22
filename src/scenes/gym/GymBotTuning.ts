@@ -97,6 +97,7 @@ import { makeCollapsible } from '../../utils/gymPanel';
 import { attachTooltip } from '../../utils/gymTooltip';
 import { generateRandomLevel } from '../../utils/randomLevel';
 import type { ControlInput } from '../../utils/movementModel';
+import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import type { SceneSetupState } from '../core/sceneSetup';
 import type { EnemyEntity } from '../../entities/enemyFactory';
 import type { LevelDefinition } from '../../waves/Formations';
@@ -290,6 +291,11 @@ export class GymBotTuning extends GymLevel {
         rotationAcceleration: rotation.rotationAcceleration,
         rotationDeceleration: rotation.rotationDeceleration,
         reverseEnabled: player.isReverseEnabled() ?? true,
+        // The adaptive aim error re-arms after a repositioning move
+        // (AH-0MWR057Q8004PBOD · AC4): the same live position and arena the
+        // shipped demo feeds, so the gym and the game decay/re-arm identically.
+        position: { x: movement.x, y: movement.y },
+        world: { width: GAME_WIDTH, height: GAME_HEIGHT },
       },
     );
   }

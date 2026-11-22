@@ -26,6 +26,7 @@ import {
   BOT_TUNING_NUMERIC_FIELDS,
   BOT_TUNING_TOGGLES,
   coerceTuningValues,
+  defaultBotTuningValues,
   type BotTuningValues,
 } from '../ai/tuningFields';
 import {
@@ -35,6 +36,7 @@ import {
   serialiseBotTuningState,
 } from '../core/botTuningStore';
 import { COMPETENT_BOT_TUNABLES } from '../ai/framework/competent/tunables';
+import { BOT_HUMAN_INPUT_TUNABLES } from '../ai/botHumanLike';
 import { parseBotTuningStateBlob } from '../core/botTuningSchema';
 
 /**
@@ -214,6 +216,45 @@ describe('motion-model knobs in the bundled baseline (AH-0MWM0CCJE000AANE)', () 
     );
     expect(toggle).toBeDefined();
     expect(typeof competent['hazardMotionModelEnabled']).toBe('boolean');
+  });
+});
+
+describe('adaptive aim error knobs in the bundled baseline (AH-0MWR057Q8004PBOD AC4)', () => {
+  it('authors the three adaptive aim-error knobs in every shipped config', () => {
+    // Every config is seeded explicitly, not left to the code defaults, so a
+    // shipped preset cannot silently open with a different learn-to-aim feel.
+    const defaults = defaultBotTuningValues();
+    for (const config of rawConfigs()) {
+      const human = (config.values as { human: Record<string, unknown> }).human;
+      expect(human, `${config.name} has no human block`).toBeDefined();
+      expect(typeof human['aimErrorRad'], `${config.name}.aimErrorRad`).toBe(
+        'number',
+      );
+      expect(human['aimErrorDecay'], `${config.name}.aimErrorDecay`).toBe(
+        BOT_HUMAN_INPUT_TUNABLES.aimErrorDecay,
+      );
+      expect(
+        human['aimErrorResetDistance'],
+        `${config.name}.aimErrorResetDistance`,
+      ).toBe(BOT_HUMAN_INPUT_TUNABLES.aimErrorResetDistance);
+      const rad = human['aimErrorRad'] as number;
+      expect(rad).toBeGreaterThanOrEqual(0);
+      expect(rad).toBeLessThanOrEqual(0.5);
+      // The curated recording presets pin the adaptive error off so their
+      // seed-tuned promo runs stay byte-identical to the pre-adaptive
+      // behaviour (no draw at 0); only the shipped gameplay Default carries
+      // the live error.
+      if (config.name !== 'Default') {
+        expect(rad, `${config.name} must pin aimErrorRad off`).toBe(0);
+      }
+    }
+    // The shipped game config carries the live, deliberately imperfect error.
+    const def = rawConfigs().find((config) => config.name === 'Default');
+    const human = (def!.values as { human: Record<string, unknown> }).human;
+    expect(human['aimErrorRad']).toBe(BOT_HUMAN_INPUT_TUNABLES.aimErrorRad);
+    expect(defaults.human['aimErrorRad']).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.aimErrorRad,
+    );
   });
 });
 

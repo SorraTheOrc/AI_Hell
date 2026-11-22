@@ -426,7 +426,8 @@ cadence itself is the governor's `reactionTimeMs`
 ([section 5](#5-brain--policy)); the competent tunables set a compatible
 `minCommitSeconds` so a goal cannot be re-picked faster than a human can
 change input. The rotation-skill knobs — `skill`, `maxAimErrorRad`,
-`aimLeadEnabled`, `aimLeadAlignSeconds`, `aimLeadIterations` — live in the
+`aimErrorRad`, `aimErrorDecay`, `aimErrorResetDistance`, `aimLeadEnabled`,
+`aimLeadAlignSeconds`, `aimLeadIterations` — live in the
 same two sources ([section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)),
 as do the predictive-hazard-avoidance knobs `hazardPredictionEnabled` /
 `hazardPredictionHorizon`
@@ -603,18 +604,37 @@ bot-tuning gym fly identically.
   intents flagged as **aim** (`SteeredIntent.aim`, set by `engage` when it
   holds its weapon axis) are perturbed, so the survival/evade tier is never
   degraded.
-- **Live tuning (AC4).** `skill`, `maxAimErrorRad`, `aimLeadAlignSeconds` and
+- **Adaptive aim error (AH-0MWR057Q8004PBOD · AC4).** `aimErrorRad`
+  (default **0.02 rad**) is a live, *learning* aim error, independent of
+  `skill`: only **aim** intents that carry the engaged target's bot-side id
+  (`SteeredIntent.targetId`, set by `engage`) are perturbed, from a sibling
+  seeded stream (`seed + 5`) so the `skill` and press sequences are unchanged.
+  Every confirmed hit on that target — delivered through the shared
+  `notifyAimHit` seam (`CombatScene.onPlayerBulletHitEnemy` →
+  `src/ai/aimHit.ts`) — multiplies the live error by `aimErrorDecay` (default
+  **0.5**), floored at 0. The full error returns after a **repositioning
+  move**: the ship having moved `aimErrorResetDistance` px (default **60**,
+  torus-aware, measured from its position at the last hit) or changing
+  engagement target. `aimErrorRad = 0` consumes no draw and is byte-for-byte
+  the pre-adaptive behaviour. All three knobs are live sliders; the boss has
+  no bot-side id in the hit seam, so it keeps the fixed `skill` error only.
+  The curated promo presets pin `aimErrorRad = 0` so their seed-tuned
+  recordings stay byte-identical to the pre-adaptive baseline (no draw at 0);
+  the shipped gameplay `Default` config carries the live 0.02 rad error.
+- **Live tuning (AC4).** `skill`, `maxAimErrorRad`, `aimErrorRad`,
+  `aimErrorDecay`, `aimErrorResetDistance`, `aimLeadAlignSeconds` and
   `aimLeadIterations` are sliders and `aimLeadEnabled` a toggle in
   `BOT_TUNING_NUMERIC_FIELDS` / `BOT_TUNING_TOGGLES`
   ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)), applied live by
   `GymBotTuning` exactly like the existing knobs.
-- **Validation (AC5).** `src/ai/botHumanLike.test.ts` covers the turn hold and
-  the skill error, `src/ai/framework/competent/steering.test.ts` and
-  `behaviours.test.ts` cover the intercept solve and the engage aim, and
+- **Validation (AC5).** `src/ai/botHumanLike.test.ts` covers the turn hold,
+  the skill error and the adaptive decay/re-arm/determinism,
+  `src/ai/framework/competent/steering.test.ts` and `behaviours.test.ts` cover
+  the intercept solve and the engage aim/target id, and
   `src/ai/botRotationSkills.integration.test.ts` wires the shared
   competent brain + governor + shipped `AsteroidsModel` into a deterministic
   60 Hz run that tracks an off-axis moving enemy with a settled bearing error
-  ≤ **0.05 rad**.
+  ≤ **0.05 rad**, and zeroes the live adaptive error in under repeated hits.
 
 ### 9.9 Live thruster config carried in the snapshot (AH-0MV85WFWD0029DL7)
 
@@ -1075,6 +1095,7 @@ and adjust its parameters in real time.
   knobs `alignmentToleranceRad` / `turnHysteresisRad` / `turnPressMinMs`),
   collection's `collectReverseBrake` toggle and `collectOvershootMargin`
   slider, and the rotation-skill knobs `skill` / `maxAimErrorRad` /
+  `aimErrorRad` / `aimErrorDecay` / `aimErrorResetDistance` /
   `aimLeadAlignSeconds` / `aimLeadIterations` (`aimLeadEnabled` toggle)
   (AH-0MV1DUSM2005HL98 · AC4; smooth turning:
   AH-0MWJ1680Z001QYV2 audit rejection, [section 9.12](#912-smooth-turning-and-overshoot-tolerance-ah-0mwj1680z001qyv2-audit-rejection)).

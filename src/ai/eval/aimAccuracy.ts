@@ -293,6 +293,13 @@ export function runAimAccuracyScenario(
       balance: loadBalanceConfig(),
       movingHostiles: true,
       measureAimShots: options.measureAimShots ?? true,
+      // The pinned pre-change baseline predates the adaptive aim error
+      // (AH-0MWR057Q8004PBOD), so the control run must disable it to reproduce
+      // the recorded fixture byte-for-byte. The shipped-default report leaves
+      // it live, measuring today's solve.
+      ...(options.aimLeadFromTracker === false
+        ? { humanInput: { aimErrorRad: 0 } }
+        : {}),
     });
   } finally {
     resetConfigStore();

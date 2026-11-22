@@ -4832,6 +4832,13 @@ export class PlayScene extends CombatScene<
         // player switched it off, the demo bot emits `reverse: false` on
         // every input (AH-0MV1J0OHP0072XA5 · AC4).
         reverseEnabled: player?.isReverseEnabled() ?? true,
+        // The adaptive aim error re-arms after a repositioning move
+        // (AH-0MWR057Q8004PBOD · AC4): the governor needs the ship's live
+        // position and the arena it wraps on to measure the distance.
+        ...(movement
+          ? { position: { x: movement.x, y: movement.y } }
+          : {}),
+        world: { width: GAME_WIDTH, height: GAME_HEIGHT },
       },
     );
   }

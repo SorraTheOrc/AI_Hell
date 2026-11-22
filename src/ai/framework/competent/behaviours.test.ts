@@ -154,6 +154,20 @@ describe('engage behaviour (AC3 aim/fire reasoning)', () => {
     );
     expect(intent!.dirX).toBeCloseTo(1, 3);
   });
+
+  it('carries the engaged target\'s bot-side id so the adaptive aim error can decay on hits (AH-0MWR057Q8004PBOD · AC4)', () => {
+    const intent = engage.run(
+      context(
+        makeSnapshot({
+          player: PLAYER,
+          enemies: [{ ...enemy(600, 270, 'scout'), id: 42 }],
+        }),
+        COMPETENT_GOAL_IDS.engageEnemy,
+      ),
+    );
+    expect(intent!.aim).toBe(true);
+    expect(intent!.targetId).toBe(42);
+  });
 });
 
 /**
