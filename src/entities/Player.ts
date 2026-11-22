@@ -131,7 +131,7 @@ import {
   nextTick,
 } from '../utils/beat';
 import { loadRules, type GameRules } from '../core/rules';
-import { WEAPON_TIMEOUT_MS } from '../core/constants';
+import { PLAYER_BULLET_SPEED, WEAPON_TIMEOUT_MS } from '../core/constants';
 import { type PowerUpId } from '../powerups/types';
 import { PowerUpLevelStore } from '../powerups/powerUpLevels';
 
@@ -819,6 +819,18 @@ export class Player extends Phaser.GameObjects.Graphics {
       reverseAcceleration,
       reverseMaxSpeed,
     };
+  }
+
+  /**
+   * The speed (px/s) of the ship's **primary travelling shot** — the shared
+   * `PLAYER_BULLET_SPEED` every travelling player projectile flies at. Exposed
+   * so the demo-bot snapshot can carry the ship's live projectile speed into
+   * the aim solve's time of flight instead of the bot's enemy-bullet
+   * assumption (AH-0MWR04ZDU0005O8J · AC2). Pod (orbit) weapons fire slower
+   * (300 px/s) and are accepted as within the aim error of this primary shot.
+   */
+  getProjectileSpeed(): number {
+    return PLAYER_BULLET_SPEED;
   }
 
   private _applySpeedMultiplier(): void {

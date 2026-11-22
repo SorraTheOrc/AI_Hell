@@ -310,7 +310,7 @@ import type {
   BaseMovementConfig,
   RotatingMovementState,
 } from '../../utils/movementModel';
-import type { BotSnapshot } from '../botSnapshot';
+import type { BotRotationConfig, BotSnapshot } from '../botSnapshot';
 import type { BotPolicy } from '../framework/botBrain';
 import { resolveEnemyMovementClass } from '../framework/enemyMovementClass';
 import {
@@ -1139,6 +1139,10 @@ function snapshotOf(
   enemies: readonly Hostile[],
   seed: number,
   liveIdentity = false,
+  livePhysics?: {
+    readonly rotation: BotRotationConfig;
+    readonly shotSpeed: number;
+  },
 ): BotSnapshot {
   return {
     player: {
@@ -1146,6 +1150,11 @@ function snapshotOf(
       y: world.player.y,
       vx: world.player.vx,
       vy: world.player.vy,
+      // The live-physics seam (AH-0MWR04ZDU0005O8J · AC2): the harness flies
+      // the same rotation model and primary shot speed as the shipped ship, so
+      // its measured aim solve uses the derivation, not a bot-layer constant.
+      ...(livePhysics ? { rotation: livePhysics.rotation } : {}),
+      ...(livePhysics ? { shotSpeed: livePhysics.shotSpeed } : {}),
     },
     enemies: enemies
       .filter((hostile) => hostile.alive)
@@ -2146,6 +2155,15 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       world.hostiles,
       config.seed,
       movingHostiles !== null,
+      // Same live ship physics the arena flies (AH-0MWR04ZDU0005O8J · AC2).
+      {
+        rotation: {
+          rotationSpeed: shipAsteroids.rotationSpeed ?? 0,
+          rotationAcceleration: shipAsteroids.rotationAcceleration ?? 0,
+          rotationDeceleration: shipAsteroids.rotationDeceleration ?? 0,
+        },
+        shotSpeed: PLAYER_BULLET_SPEED,
+      },
     );
     const intent = policy.decide(snapshot, dt);
     const input = governor.update(intent, dt, {

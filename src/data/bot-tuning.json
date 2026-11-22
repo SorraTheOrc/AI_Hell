@@ -31,6 +31,7 @@
           "longTravelDistance": 550,
           "repositionRadius": 90,
           "playerSpeed": 175,
+          "shotSpeed": 350,
           "firePredictionHorizon": 1.35,
           "hazardPredictionHorizon": 2.2,
           "hazardClassHorizonScale.chaser": 1,
@@ -41,7 +42,7 @@
           "assumedBulletSpeed": 200,
           "frictionDeceleration": 75,
           "survivalUrgencyHorizon": 0.9,
-          "aimLeadAlignSeconds": 0.35,
+          "aimLeadAlignSeconds": 0.25,
           "aimLeadIterations": 6,
           "reverseImminentOvershootGap": 186,
           "reverseRetreatRange": 105,
@@ -164,8 +165,7 @@
           "dangerMargin": 50,
           "survivalBase": 8,
           "survivalUrgencyPort": 5,
-          "aimLeadIterations": 8,
-          "aimLeadAlignSeconds": 0.2
+          "aimLeadIterations": 8
         },
         "human": {
           "maxAimErrorRad": 0.02,

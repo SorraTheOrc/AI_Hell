@@ -26,6 +26,7 @@ import { createCompetentBotBrain } from './framework/competent';
 import { makeSnapshot } from './framework/testFixtures';
 import { BOT_HUMAN_INPUT_TUNABLES } from './botHumanLike';
 import { BOT_WORLD_TUNABLES } from './framework/worldModel';
+import { PLAYER_BULLET_SPEED } from '../core/constants';
 
 /** Looks a spec up by its flat key. */
 function numericField(key: string) {
@@ -107,6 +108,38 @@ describe('bot tuning fields (AH-0MV4D7LAD009XYR0)', () => {
     expect(values.human['reactionTimeMs']).toBe(999);
     // Missing fields keep their defaults.
     expect(values.competent['engagementRange']).toBe(COMPETENT_BOT_TUNABLES.engagementRange);
+  });
+});
+
+describe('aim solve live physics fields (AH-0MWR04ZDU0005O8J AC2)', () => {
+  it('exposes the ship shot-speed knob seeded at the compiled shot speed', () => {
+    const values = defaultBotTuningValues();
+    expect(readTuningNumber(values, numericField('shotSpeed'))).toBe(
+      COMPETENT_BOT_TUNABLES.shotSpeed,
+    );
+    // The compiled default is the ship's own travelling-shot speed, not the
+    // enemy-bullet tell constant.
+    expect(COMPETENT_BOT_TUNABLES.shotSpeed).toBe(PLAYER_BULLET_SPEED);
+    expect(COMPETENT_BOT_TUNABLES.shotSpeed).not.toBe(
+      COMPETENT_BOT_TUNABLES.assumedBulletSpeed,
+    );
+  });
+
+  it('describes assumedBulletSpeed as the enemy-bullet tell constant only', () => {
+    const description = numericField('assumedBulletSpeed').description.toLowerCase();
+    expect(description).toContain('enemy');
+    expect(description).toContain('tell');
+    // It is described as the enemy-fire tell constant, pointing the aim solve
+    // at the ship's own live shot speed instead.
+    expect(description).toContain('enemy-fire tell constant');
+    expect(description).toContain('shotspeed');
+  });
+
+  it('documents the alignment term as live-derived with the constant as fallback', () => {
+    const description = numericField('aimLeadAlignSeconds').description;
+    expect(description).toContain('rotation model');
+    expect(description).toContain('fallback');
+    expect(description).toContain('AH-0MWR04ZDU0005O8J');
   });
 });
 

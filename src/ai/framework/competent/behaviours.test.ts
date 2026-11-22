@@ -19,7 +19,8 @@ import type { ContentTarget } from './goals';
 import type { BotHazardPoint } from '../worldModel';
 import { COMPETENT_GOAL_IDS, createCompetentGoals } from './goals';
 import { evaluateDirection } from './steering';
-import { COMPETENT_BOT_TUNABLES, resolveCompetentTunables } from './tunables';
+import { COMPETENT_BOT_TUNABLES, deriveTurnAlignSeconds, resolveAimAlignSeconds, resolveCompetentTunables, resolveShotSpeed } from './tunables';
+import { PLAYER_BULLET_SPEED } from '../../../core/constants';
 
 const T = COMPETENT_BOT_TUNABLES;
 const PLAYER = { x: 480, y: 270, vx: 0, vy: 0 };
@@ -541,7 +542,97 @@ describe('engage behaviour — lead prediction (AH-0MV1DUSM2005HL98 AC2)', () =>
   });
 });
 
-// ── Tracker-derived aim velocity (AH-0MWR04X10002VNDG · AC1) ────────
+// ── Live physics inputs in the aim solve (AH-0MWR04ZDU0005O8J · AC2) ──
+
+describe('aim solve live physics inputs (AH-0MWR04ZDU0005O8J AC2)', () => {
+  /** A crossing target due right of the ship, climbing at 90 px/s. */
+  const crossing = { x: 620, y: 270, alive: true, archetype: 'scout', vx: 0, vy: -90 };
+
+  /** Runs engage with one live-physics snapshot player against the tunables. */
+  function aimDirection(
+    player: Record<string, unknown>,
+    tunables: typeof T = T,
+  ): number {
+    const intent = createCompetentBehaviours(tunables)
+      .require('engage')
+      .run(
+        context(
+          makeSnapshot({ player: { ...PLAYER, ...player }, enemies: [crossing] }),
+          COMPETENT_GOAL_IDS.engageEnemy,
+        ),
+      );
+    expect(intent).not.toBeNull();
+    return intent!.dirY;
+  }
+
+  it('resolveShotSpeed prefers an explicit override, then the live ship, then the compiled shot speed', () => {
+    // Shipped defaults: the compiled default is the ship's own travelling-shot
+    // speed (PLAYER_BULLET_SPEED), never the enemy-bullet tell constant.
+    expect(resolveShotSpeed(T)).toBe(PLAYER_BULLET_SPEED);
+    expect(resolveShotSpeed(T)).not.toBe(T.assumedBulletSpeed);
+    // The live ship wins while the tunable stays at its default.
+    expect(resolveShotSpeed(T, 420)).toBe(420);
+    // An explicit override wins over the live value.
+    expect(resolveShotSpeed({ ...T, shotSpeed: 260 }, 420)).toBe(260);
+    // A missing or non-physical live value falls back to the compiled default.
+    expect(resolveShotSpeed(T, Number.NaN)).toBe(PLAYER_BULLET_SPEED);
+    expect(resolveShotSpeed(T, 0)).toBe(PLAYER_BULLET_SPEED);
+  });
+
+  it('fed 350 px/s, not the enemy tell constant: the lead is the shorter one', () => {
+    // With the alignment term pinned to zero so the shot speed is the only
+    // difference, the ship's own 350 px/s shot arrives sooner than the 200 px/s
+    // enemy-tell assumption, so the solve leads the target less.
+    const withLive = aimDirection({ shotSpeed: PLAYER_BULLET_SPEED }, { ...T, aimLeadAlignSeconds: 0 });
+    const withOld = aimDirection({ shotSpeed: T.assumedBulletSpeed }, { ...T, aimLeadAlignSeconds: 0 });
+    // Both lead the climbing target (negative Y)...
+    expect(withLive).toBeLessThan(0);
+    expect(withOld).toBeLessThan(0);
+    // ...and the live shot speed leads by strictly less (200 → 350).
+    expect(withLive).toBeGreaterThan(withOld);
+    expect(withLive).toBeCloseTo(-0.257108, 5);
+    expect(withOld).toBeCloseTo(-0.448505, 5);
+  });
+
+  it('derives the alignment term from the live rotation model', () => {
+    const shipped = { rotationSpeed: 3, rotationAcceleration: 12, rotationDeceleration: 60 };
+    // Spin up to the live top rate, then coast it back to rest.
+    expect(deriveTurnAlignSeconds(shipped)).toBeCloseTo(0.3, 12);
+    // A higher top rate takes longer to spin up and stop; a slower spin-up too.
+    expect(deriveTurnAlignSeconds({ ...shipped, rotationSpeed: 6 })).toBeCloseTo(0.6, 12);
+    expect(deriveTurnAlignSeconds({ ...shipped, rotationAcceleration: 6 })).toBeCloseTo(0.55, 12);
+    // Precedence: explicit override > live rotation model > compiled constant.
+    expect(resolveAimAlignSeconds(T, shipped)).toBeCloseTo(0.3, 12);
+    expect(resolveAimAlignSeconds({ ...T, aimLeadAlignSeconds: 0.35 }, shipped)).toBe(0.35);
+    // No rotation config (or a non-physical one) reproduces the constant.
+    expect(resolveAimAlignSeconds(T)).toBe(T.aimLeadAlignSeconds);
+    expect(
+      resolveAimAlignSeconds(T, { rotationSpeed: 0, rotationAcceleration: 12, rotationDeceleration: 60 }),
+    ).toBe(T.aimLeadAlignSeconds);
+  });
+
+  it('feeds the derived turn time into the solve', () => {
+    // The same 350 px/s shot: a slower-turning ship spends longer aligning, so
+    // the solve leads the crossing target further above its current position.
+    const noConfig = aimDirection({ shotSpeed: PLAYER_BULLET_SPEED });
+    const shipped = aimDirection({
+      shotSpeed: PLAYER_BULLET_SPEED,
+      rotation: { rotationSpeed: 3, rotationAcceleration: 12, rotationDeceleration: 60 },
+    });
+    const sluggish = aimDirection({
+      shotSpeed: PLAYER_BULLET_SPEED,
+      rotation: { rotationSpeed: 6, rotationAcceleration: 12, rotationDeceleration: 60 },
+    });
+    // No config reproduces the compiled constant (0.25 s), exactly as before.
+    expect(noConfig).toBeCloseTo(-0.40398, 5);
+    // The live derivation is used (0.30 s) rather than the constant.
+    expect(shipped).toBeCloseTo(-0.43095, 5);
+    expect(shipped).toBeLessThan(noConfig);
+    // A slower re-orientation leads further still.
+    expect(sluggish).toBeCloseTo(-0.572755, 5);
+    expect(sluggish).toBeLessThan(shipped);
+  });
+});
 
 describe('engage behaviour — tracker-derived aim velocity (AH-0MWR04X10002VNDG AC1)', () => {
   /** Builds an engage context whose world carries bot-side hazard estimates. */

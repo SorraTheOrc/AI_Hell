@@ -68,7 +68,7 @@ import {
   type ContentTarget,
 } from './goals';
 import { hazardThreatensPlayer, idleIntent, interceptPoint, isHazardExempt, mayReverse, mayThrust, planSteering } from './steering';
-import type { CompetentBotTunables } from './tunables';
+import { resolveAimAlignSeconds, resolveShotSpeed, type CompetentBotTunables } from './tunables';
 import { botWrapWorld, wrappedAxisDelta, wrappedDelta } from '../wrapGeometry';
 
 /** The collect targets for a goal: minerals or power-ups as content targets. */
@@ -306,14 +306,22 @@ function engageBehaviour(
         t.aimLeadFromTracker,
       );
       const wrapWorld = botWrapWorld(t);
+      // Solve inputs from the ship's live physics through the snapshot seam
+      // (AH-0MWR04ZDU0005O8J · AC2): the primary travelling shot's speed is
+      // the ship's (350 px/s by default), never the enemy-bullet tell
+      // constant, and the turn time is derived from the live rotation model.
+      // Both keep the explicit-tuning-override > live > compiled-default
+      // precedence, so a snapshot carrying neither keeps the fallbacks.
+      const shotSpeed = resolveShotSpeed(t, player.shotSpeed);
+      const alignSeconds = resolveAimAlignSeconds(t, player.rotation);
       const aimPoint =
         t.aimLeadEnabled && (motion.vx !== 0 || motion.vy !== 0)
           ? interceptPoint(
               player,
               best.point,
               { x: motion.vx, y: motion.vy },
-              t.assumedBulletSpeed,
-              t.aimLeadAlignSeconds,
+              shotSpeed,
+              alignSeconds,
               t.aimLeadIterations,
               wrapWorld,
             )

@@ -77,8 +77,12 @@
  * The table is exactly the fixture's contents (the test regenerates and prints
  * it), measured with the compiled defaults: `aimLeadEnabled` on,
  * `aimLeadIterations` 3, `assumedBulletSpeed` 200 px/s (the enemy-bullet tell
- * constant currently misused as the ship's time of flight) and
- * `aimLeadAlignSeconds` 0.25 s — the pre-change solve in full. The cross-
+ * constant, which the pre-change solve also — wrongly — used as the ship's
+ * time of flight) and `aimLeadAlignSeconds` 0.25 s — the pre-change solve in
+ * full. AH-0MWR04ZDU0005O8J replaced both aim inputs with the ship's live
+ * physics (its projectile speed and a rotation-derived turn time); the fixture
+ * stays a recorded observation of the solve *before* that change, flown with
+ * `aimLeadFromTracker: false`. The cross-
  * class shape is the diagnosis in numbers: a pursuing chaser that flies
  * straight at the ship is led adequately by aiming at its current position
  * (46 %), while the drifting `formation`/`roamer` bodies cross the aim line and

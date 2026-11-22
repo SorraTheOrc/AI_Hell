@@ -15,7 +15,7 @@ import Phaser from 'phaser';
 import { advanceGame, bootScene, BootedGame } from '../test/gameHarness';
 import { ShipConfig, DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
-import { WEAPON_TIMEOUT_MS } from '../core/constants';
+import { PLAYER_BULLET_SPEED, WEAPON_TIMEOUT_MS } from '../core/constants';
 import { DEFAULT_RULES, RULES_STORAGE_KEY, saveRules } from '../core/rules';
 import { createBeatClock, isOnGrid } from '../utils/beat';
 import { euclidPattern, isOnset } from '../utils/euclid';
@@ -459,6 +459,16 @@ describe('Player ship entity', () => {
       reverseAcceleration: 90,
       reverseMaxSpeed: 60,
     });
+  });
+
+  // ── Live aim physics seam (AH-0MWR04ZDU0005O8J) ────────────────
+
+  it("getProjectileSpeed reports the ship's primary travelling-shot speed", async () => {
+    const player = await freshPlayer();
+
+    // The aim solve's time of flight is the ship's own travelling shot, not the
+    // enemy-bullet tell constant (AH-0MWR04ZDU0005O8J · AC2).
+    expect(player.getProjectileSpeed()).toBe(PLAYER_BULLET_SPEED);
   });
 
   // ── Thrust flame animation ───────────────────────────────────────

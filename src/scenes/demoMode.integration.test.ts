@@ -50,6 +50,11 @@ import {
   mayThrust,
   resolveCompetentTunables,
 } from '../ai/framework/competent';
+import {
+  deriveTurnAlignSeconds,
+  resolveAimAlignSeconds,
+} from '../ai/framework/competent/tunables';
+import { PLAYER_BULLET_SPEED } from '../core/constants';
 import type { ShipConfig } from '../core/configTypes';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
@@ -1193,6 +1198,88 @@ describe('Demo live-thruster config (AH-0MV268RXJ007M7A9)', () => {
     // parity invariant the test exists for.
     expect(storeTunables.playerSpeed).toBe(COMPETENT_BOT_TUNABLES.playerSpeed);
     expect(storeTunables.frictionDeceleration).toBe(getCurrentBotTuningConfig().values.competent['frictionDeceleration']);
+  });
+});
+
+describe('Demo live aim physics (AH-0MWR04ZDU0005O8J)', () => {
+  let booted: BootedGame | null = null;
+
+  /** Boots a live PlayScene demo (asteroids scheme, the shipped default). */
+  async function bootDemo(): Promise<PlayScene> {
+    seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene, GymBotTuning]);
+    booted.game.scene.start('PlayScene', { demo: true, seed: 42 });
+    await wait(booted!.game, 150);
+    return booted.game.scene.getScene('PlayScene') as PlayScene;
+  }
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("AC2 — the demo snapshot carries the ship's live rotation config and shot speed", async () => {
+    const play = await bootDemo();
+    const player = play.getPlayer()!;
+    const snapshot = buildBotSnapshot(play as unknown as BotSnapshotScene);
+    // The aim solve's inputs arrive through the snapshot seam from the live
+    // ship, never a bot-layer constant (AH-0MWR04ZDU0005O8J · AC2).
+    expect(snapshot.player?.rotation).toEqual(player.getRotationConfig());
+    expect(snapshot.player?.shotSpeed).toBe(player.getProjectileSpeed());
+    expect(player.getProjectileSpeed()).toBe(PLAYER_BULLET_SPEED);
+  });
+
+  it('AC2 — the demo derives the alignment term from the live rotation model (live wins)', async () => {
+    const play = await bootDemo();
+    // The bundled tuning leaves the alignment constant at its compiled default,
+    // so the live rotation model supplies the turn time for the shipped demo.
+    const tunables = resolveCompetentTunables(
+      toCompetentOverrides(defaultBotTuningValues()),
+    );
+    expect(tunables.aimLeadAlignSeconds).toBe(
+      COMPETENT_BOT_TUNABLES.aimLeadAlignSeconds,
+    );
+    const player = play.getPlayer()!;
+    const shipped = resolveAimAlignSeconds(tunables, player.getRotationConfig());
+    expect(shipped).toBeCloseTo(
+      deriveTurnAlignSeconds(player.getRotationConfig()),
+      12,
+    );
+    // ...which is not the constant: the live value is genuinely in use.
+    expect(shipped).not.toBe(COMPETENT_BOT_TUNABLES.aimLeadAlignSeconds);
+
+    // Re-tune the live ship to a faster top rate: the derived turn time grows
+    // with no wiring beyond the snapshot seam (explicit override > live >
+    // compiled default).
+    const custom: ShipConfig = {
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      asteroidsRotationSpeed: 6,
+    };
+    player.setConfig(custom);
+    play.tick(1 / 60);
+    const after = buildBotSnapshot(play as unknown as BotSnapshotScene);
+    expect(after.player?.rotation).toEqual(player.getRotationConfig());
+    const slower = resolveAimAlignSeconds(tunables, after.player?.rotation);
+    expect(slower).toBeCloseTo(
+      deriveTurnAlignSeconds(player.getRotationConfig()),
+      12,
+    );
+    expect(slower).toBeGreaterThan(shipped);
+  });
+
+  it('AC2 — the tuning gym supplies the same live values as the game (parity)', async () => {
+    await bootDemo();
+    booted!.game.scene.start(GYM_BOT_TUNING_SCENE_KEY, { seed: 42 });
+    await wait(booted!.game, 150);
+    const gym = booted!.game.scene.getScene(GYM_BOT_TUNING_SCENE_KEY) as GymBotTuning;
+    const gymPlayer = gym.getShip()!;
+    const gymSnapshot = gym.getBotSnapshot();
+    // No per-scene derivation: the gym reads the same live seam the game does.
+    expect(gymSnapshot.player?.rotation).toEqual(gymPlayer.getRotationConfig());
+    expect(gymSnapshot.player?.shotSpeed).toBe(gymPlayer.getProjectileSpeed());
   });
 });
 
