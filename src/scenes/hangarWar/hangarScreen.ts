@@ -55,6 +55,17 @@
  *   part of that model, so the gym renders the identical `TARGET INTEL` block
  *   and `▲ EFFECTIVE` / `▼ RESISTED` marks read-only
  *   (AH-0MWMT4STK001PSK4).
+ * - **An empty loadout is auto-fitted on open; the button is the explicit
+ *   path** (AH-0MWOWEPO2004B0MR, documented by AH-0MWOWEYZQ006IR9T). The
+ *   shared boss-aware selector (`selectAutoLoadout` via `applyAutoLoadout`)
+ *   is the one selection rule, consumed here and by `GymHangar`. The
+ *   `HangarScene` auto-fits it when the loadout is at its shipped default —
+ *   exactly an empty `activeLoadout.startingWeapons`
+ *   (`isDefaultHangarLoadout`), never "the selector found no strong weapon" —
+ *   so a hand-picked loadout is never silently rewritten; the
+ *   `⚡ APPLY SUGGESTED BUILDOUT` row (`buildHangarBuildoutRow`) is the one
+ *   control that replaces it, on demand. The gym renders that same row
+ *   read-only from the same model.
  *
  * The screen's two navigation/state rows — `⌗ HEX MAP` and the destructive
  * `⟲ RESTART WAR` reset — are built here too. The restart row is a two-step

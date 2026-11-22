@@ -34,6 +34,16 @@
  * `POWER_UP_SLOT_CAP` / `capDropIdsToSlotPool`, and behaviour families from the
  * shipped `WEAPON_CATALOGUE`. This module restates none of them.
  *
+ * ## Where it runs (AH-0MWOWEYZQ006IR9T)
+ *
+ * The hangar screen **auto-fits** this suggestion when it opens on an empty
+ * loadout (`isDefaultHangarLoadout` — the raw `activeLoadout.startingWeapons`
+ * list, never a matchup verdict) and offers one explicit
+ * `⚡ APPLY SUGGESTED BUILDOUT` row that applies it on demand for any loadout.
+ * The game's `HangarScene` and the read-only `GymHangar` parity scene consume
+ * the same suggestion through the shared screen model, so neither owns a
+ * second selection rule.
+ *
  * ## Pure, total, deterministic
  *
  * No Phaser, scene or DOM import, no mutation, no throwing, no wall-clock and

@@ -2997,14 +2997,21 @@ while a **run** keeps the shipped middle loop in full (the six shared loadout
 slots plus the slot-free **Extra Life** and **Mystery UFO**). Scarcity lives in
 what the hangar owns between deployments, never in stripping the run.
 
-> **The default deployment loadout is empty** (AH-0MVZJ6V1J001DA9D, producer
-decision): a fresh hangar-war payload carries `activeLoadout.startingWeapons: []`,
-so a run starts with **only the ship's permanent cannon**. The `spread` starter
-is **owned** from the first deployment and stays selectable in the deployment
-selector; owning the **free starter** weapon never auto-equips it — equipping a
-starter is always a deliberate choice. This supersedes the earlier "one
-starting weapon" reading of Rule 1: the fleet still owns the starter, but the
-deployed loadout starts empty. **A *bought* part is different** (parent
+> **The stored deployment loadout defaults to empty** (AH-0MVZJ6V1J001DA9D,
+> producer decision): a fresh hangar-war payload carries
+> `activeLoadout.startingWeapons: []`, and an empty starting-weapon selection
+> is a legal loadout that round-trips as empty, so a payload that carries one
+> deploys with **only the ship's permanent cannon**. The hangar screen no
+> longer leaves that list empty for the player, though: opening the hangar on
+> exactly that empty list auto-fits a boss-aware suggestion
+> (AH-0MWOWEPO2004B0MR; § *The auto-fit loadout rule* below). The `spread`
+> starter is **owned** from the first deployment and stays selectable in the
+> deployment selector; owning the **free starter** weapon never auto-equips it
+> — equipping a starter is always a deliberate choice (the auto-fit is an
+> emptiness-triggered loadout rule, never an ownership one). This supersedes
+> the earlier "one starting weapon" reading of Rule 1: the fleet still owns
+> the starter, but the stored loadout starts empty. **A *bought* part is
+> different** (parent
 AH-0MWL5PAP2001XYYF, producer Q1 = C refined): a successful hangar purchase
 **auto-enables** the entry — a hull becomes the active hull, a starting weapon
 joins `activeLoadout.startingWeapons` and a modifier joins
@@ -3045,9 +3052,12 @@ toggles owned starting weapons — **every** owned weapon row is actionable,
 including the last equipped one — and modifiers; resolution drops unknown or
 unowned ids, so a corrupt save can never deploy an unowned ship or an unowned
 weapon. An empty
-starting-weapon selection is a legal loadout that round-trips as empty (never
-silently replaced by `spread`), and the deployment then equips nothing, so the
-run begins with only the permanent cannon. The attract bot's "cheapest useful
+starting-weapon selection is a legal loadout that round-trips as empty — never
+silently replaced by `spread` when a payload is saved or resolved — and a
+deployment that carries one equips nothing, so a run launched from it begins
+with only the permanent cannon; the hangar screen's documented auto-fit rule
+(§ *The auto-fit loadout rule*) is the one place that fills an empty list, and
+it does so on open, never on resolve. The attract bot's "cheapest useful
 unlock" rule (`purchaseWeight`,
 catalogue order as the deterministic tie-break) also lives here. It excludes
 the power-up kind through the one documented `isBotPurchaseCandidate` helper,
@@ -3079,6 +3089,63 @@ keeps a hex — and a hull-granted skill and a modifier-granted skill may sit on
 the same defending bot, where their bonuses **add**. Only modifiers on the
 **active loadout** contribute, so owning one never silently changes what the
 fleet's bots are trained against.
+
+#### The auto-fit loadout rule
+
+An empty loadout is **fitted for the player when the hangar opens**, and only
+then (AH-0MWOWEPO2004B0MR, parent AH-0MWOROJYT004WPSD, producer Q1 = B; this
+section is the design record — AH-0MWOWEYZQ006IR9T). The trigger is the raw
+persisted list, `isDefaultHangarLoadout` — exactly
+`activeLoadout.startingWeapons.length === 0` — never "the selector found no strong weapon". The rule therefore has three states:
+
+- **Empty is auto-fitted on open.** The screen asks the shared boss-aware
+  selector for a suggestion and equips it before the player sees the loadout,
+  persisting through the same single store write as every other change.
+- **A deliberate loadout is preserved.** Any non-empty starting-weapon list —
+  including one whose weapons are all neutral or resisted against the target
+  boss — is a player choice and is never silently rewritten.
+- **The explicit button applies on demand.** The
+  **⚡ APPLY SUGGESTED BUILDOUT** row (its label carries the suggested weapon
+  count, e.g. `⚡ APPLY SUGGESTED BUILDOUT — 3 weapons`) equips the published
+  suggestion as a full replacement whenever the player activates it, for any
+  loadout. It is the **only** path that replaces a hand-picked loadout, so a
+  suggestion can never overwrite a choice without a deliberate activation.
+
+This supersedes the bare "default-empty" reading of AH-0MVZJ6V1J001DA9D: the
+stored default is still empty and an empty selection remains a legal loadout,
+but the hangar screen no longer leaves the player with only the permanent
+cannon on open. The **starter-never-auto-equips** rule is unchanged and
+complementary: owning the free `spread` starter never auto-equips it —
+ownership stays inert until the player toggles a row, the auto-fit runs on an
+empty loadout, or the explicit button applies a suggestion. Under `demo` nothing is
+auto-fitted and the button is rendered non-actionable, so a demonstration can
+never overwrite the war.
+
+The suggestion is one shared, pure rule (`selectAutoLoadout` in
+`src/core/hangarWar/hangarAutoLoadout.ts`, applied through
+`applyAutoLoadout`) consumed by the game's hangar and by the read-only
+`GymHangar`, and never re-derived in scene code:
+
+1. **Strong weapons first** — owned weapons the target boss is weak to come
+   before every neutral one, in catalogue order.
+2. **Weak weapons are never selected** — a `resolveBossMatchup` verdict of
+   `weak` is dropped from every step, and the fill step never forces one back
+   in.
+3. **At most one weapon per behaviour family** — the variety cap keys on the
+   shipped weapon descriptors (`aoe`, `orbit`, `splits`, `bounce`, `hitscan`,
+   two or more distinct offset angles), with no second taxonomy.
+4. **Then at least one defensive power-up** — the owned level-bearing power-up
+   rows the deployment auto-grants, defensives (the shipped
+   `UPGRADE_STAT_BUCKETS` `armour` classification) first.
+5. **Then the highest permanent level** — the remaining neutral owned weapons
+   fill by descending permanent level, catalogue order breaking ties.
+6. **Bounded by the shared six-slot cap** — every granted power-up row consumes
+   a slot, so the weapon budget is `POWER_UP_SLOT_CAP - grantedPowerUps` and
+   the suggestion never presents more counted kinds than a run can hold.
+
+The rule is a full replacement derived only from ownership, permanent levels
+and the target hex — never from the current loadout — so re-applying it is
+idempotent and cannot duplicate or oscillate entries.
 
 #### Salvage banking at the existing checkpoint moments
 
@@ -3485,8 +3552,11 @@ write:
    `consumeDeployedShip` rule. Every owned item the player **did not fly**
    survives, and the free starter kit (`hull-1` + `spread`) is always owned, so
    a battle can never soft-lock the fleet. The hangar then resets to the starter
-   kit — `activeHull` is the starter hull and `activeLoadout` is empty, so the
-   next deployment carries only the permanent cannon until the player refits.
+   kit — `activeHull` is the starter hull and `activeLoadout` is empty — so an
+   unfitted deployment carries only the permanent cannon until the player
+   refits; the next hangar open auto-fits a suggestion from the weapons the
+   fleet still owns (GDD § *The auto-fit loadout rule*), and the explicit
+   **⚡ APPLY SUGGESTED BUILDOUT** row refits a hand-picked loadout on demand.
    The banked balances are untouched by consumption; a win's fixed bonus is what
    makes a win pay for the next ship. The ring-end fresh-campaign reset still
    wins over consumption, and a refused capture (`unknown-hex` /

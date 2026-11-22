@@ -556,10 +556,14 @@ fix it.
 
 - **Rule 1 — reduced starting kit.** The hangar starts with **one basic hull and
   one starting weapon** and no modifiers; every other hull, weapon and modifier
-  is earned. The starting weapon is **owned**, not equipped: the default
-  deployment loadout is empty, so a run starts with only the ship's permanent
-  cannon and equipping the starter is the player's choice (producer decision,
-  AH-0MVZJ6V1J001DA9D). The shipped 10-level campaign therefore opens with a
+  is earned. The starting weapon is **owned**, not equipped: the stored
+  deployment loadout is empty, so an unfitted deployment carries only the
+  ship's permanent cannon and equipping the starter is the player's choice
+  (producer decision, AH-0MVZJ6V1J001DA9D) — the shipped hangar now auto-fits a
+  boss-aware suggestion when it opens on exactly that empty list and offers the
+  explicit **⚡ APPLY SUGGESTED BUILDOUT** row for every other case
+  (AH-0MWOWEPO2004B0MR; GDD § *The auto-fit loadout rule*). The shipped 10-level
+  campaign therefore opens with a
   deliberately thin loadout, and the run's own mineral/power-up economy does the
   rest.
 - **Rule 2 — the boss wields it first.** A new weapon or upgrade is **not** in
