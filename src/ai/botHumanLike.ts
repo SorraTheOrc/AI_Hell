@@ -307,10 +307,26 @@ function mulberry32(seed: number): () => number {
 
 /**
  * Delay (ms) before the demo bot picks an upgrade on the hold-full overlay
- * (AC4) — long enough for the choice to be visible, short enough that the
- * demo keeps moving.
+ * (AC4). Raised from 900 ms to 2500 ms so an attract/demo viewer has time to
+ * read the three offers before the bot chooses (AH-0MWL7SU2Q009GEJ2 · AC1).
+ * Once chosen, the option's title is shown beneath the 3-2-1 countdown so the
+ * pick is legible through the countdown. This dwell applies to the upgrade
+ * selection overlay only (hold-full choice and the hold-full-style mini-boss
+ * fallback); the mini-boss reward wheel keeps its own faster spin pace via
+ * {@link BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS}.
  */
-export const BOT_MINERAL_CHOICE_DELAY_MS = 900;
+export const BOT_MINERAL_CHOICE_DELAY_MS = 2500;
+
+/**
+ * Delay (ms) before the demo bot spins the mini-boss reward wheel.
+ *
+ * Deliberately kept at the previous demo pace (900 ms): the wheel has no
+ * titled options to read and no selection, so it is out of scope for the
+ * “slower upgrade selection” change (AH-0MWL7SU2Q009GEJ2 · AC4). Splitting it
+ * from {@link BOT_MINERAL_CHOICE_DELAY_MS} keeps only the upgrade-selection
+ * pause slower while every other demo surface keeps its timing.
+ */
+export const BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS = 900;
 
 // ── Asteroids scheme adapter ─────────────────────────────────────────
 

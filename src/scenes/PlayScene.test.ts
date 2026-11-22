@@ -88,7 +88,7 @@ import {
   MiniBossWheelScene,
 } from './MiniBossWheelScene';
 import { RunTelemetry } from './core/runTelemetry';
-import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
+import { BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS } from '../ai/botHumanLike';
 import {
   BANNER_BACKGROUND_ALPHA,
   BANNER_DURATION_SECONDS,
@@ -9230,7 +9230,7 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     // landed wedge — the attract run never stalls behind the new sweep.
     await advanceGame(
       scene.game,
-      BOT_MINERAL_CHOICE_DELAY_MS +
+      BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS +
         MINI_BOSS_WHEEL_SPIN_DURATION_MS +
         MINI_BOSS_WHEEL_REVEAL_HOLD_MS +
         400,

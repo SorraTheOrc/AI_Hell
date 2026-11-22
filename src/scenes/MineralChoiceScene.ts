@@ -30,6 +30,12 @@
  * `GymFormationScene`, …): the only selection contract is the `onSelect`
  * callback, so the game and every gym drive it identically.
  *
+ * Once an option is chosen the choice screen is torn down and the beat-locked
+ * 3-2-1 countdown takes over. The chosen option's catalogue **title** is drawn
+ * beneath the countdown numeral for the whole countdown and destroyed with it
+ * when the selection completes, so the pick stays legible through the count
+ * for bot and human alike (AH-0MWL7SU2Q009GEJ2 · AC2).
+ *
  * The strategy is pluggable (see `powerups/choice`): when a launcher omits
  * `options`, the scene draws its own defaults from the strategy, so swapping
  * the policy needs no scene change.
@@ -140,6 +146,22 @@ const COUNTDOWN_COLOR = '#00ffff';
 const COUNTDOWN_Y = 270;
 /** Font size (px) of the large 3-2-1 countdown numeral. */
 const COUNTDOWN_FONT_SIZE = '96px';
+/** Neon-gold colour of the chosen-title readout beneath the countdown. */
+const COUNTDOWN_TITLE_COLOR = '#ffdd44';
+/** Font size (px) of the chosen-title readout beneath the countdown. */
+const COUNTDOWN_TITLE_FONT_SIZE = '28px';
+/**
+ * Vertical centre (px) of the chosen-title readout. Sits below the 96 px
+ * countdown numeral (centred at {@link COUNTDOWN_Y}) without colliding with
+ * it and stays inside the 720 px playfield (AH-0MWL7SU2Q009GEJ2 · AC2).
+ */
+const COUNTDOWN_TITLE_Y = 360;
+/**
+ * Fallback title line height (px) used for layout when a headless harness
+ * cannot measure canvas font metrics (`text.height` collapses to 0 there),
+ * mirroring the `CHOICE_*_LINE_HEIGHT` fallbacks above.
+ */
+const COUNTDOWN_TITLE_LINE_HEIGHT = 28;
 
 /** Rendered extent (px) of one element inside a choice row. */
 export interface ChoiceRowElementBounds {
@@ -269,6 +291,13 @@ export class MineralChoiceScene extends Phaser.Scene {
   private countdown: ReturnType<typeof createHoldFullCountdown> | null = null;
   /** The large on-screen countdown numeral ("3"/"2"/"1"). */
   private countdownText: Phaser.GameObjects.Text | null = null;
+  /**
+   * The chosen option's catalogue title, drawn beneath the countdown numeral
+   * for the life of the countdown and destroyed with it
+   * (AH-0MWL7SU2Q009GEJ2 · AC2). Null until an option is chosen and again
+   * once the selection completes.
+   */
+  private countdownTitle: Phaser.GameObjects.Text | null = null;
   /** Total overlay elapsed time (ms) — used to re-base the beat clock on resume. */
   private overlayElapsedMs = 0;
 
@@ -486,9 +515,16 @@ export class MineralChoiceScene extends Phaser.Scene {
     // Belt and braces for AC6: the tween manager also clears its tweens on
     // shutdown, but stopping them here guarantees no pulse outlives the
     // scene however it is closed.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () =>
-      this._teardownNewBadges(),
-    );
+    // Defensive teardown on shutdown so a stray countdown numeral or title
+    // text object can never outlive the overlay however it is closed
+    // (AH-0MWL7SU2Q009GEJ2 · AC2).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this._teardownNewBadges();
+      this.countdownText?.destroy();
+      this.countdownText = null;
+      this.countdownTitle?.destroy();
+      this.countdownTitle = null;
+    });
 
     // Number keys 1..n select the matching option. The handler is stored so
     // it can be removed when the countdown starts.
@@ -563,6 +599,34 @@ export class MineralChoiceScene extends Phaser.Scene {
   }
 
   /**
+   * Renders (or replaces) the chosen option's catalogue title beneath the
+   * countdown numeral, e.g. `Spread Shot Lv.3`. Purely additive presentation:
+   * it never delays or alters selection, application or resume timing
+   * (AH-0MWL7SU2Q009GEJ2 · AC2/AC3).
+   */
+  private showCountdownTitle(title: string): void {
+    if (this.countdownTitle === null) {
+      this.countdownTitle = this.add
+        .text(GAME_WIDTH / 2, COUNTDOWN_TITLE_Y, '', {
+          fontFamily: 'monospace',
+          fontSize: COUNTDOWN_TITLE_FONT_SIZE,
+          color: COUNTDOWN_TITLE_COLOR,
+        })
+        .setOrigin(0.5);
+    }
+    this.countdownTitle.setText(title);
+    // Keep the layout measurable under headless metrics (text.height = 0):
+    // mirror the choice-row fallback so the readout is never a zero-height
+    // object in tests.
+    if (this.countdownTitle.height === 0) {
+      this.countdownTitle.setFixedSize(
+        this.countdownTitle.width,
+        COUNTDOWN_TITLE_LINE_HEIGHT,
+      );
+    }
+  }
+
+  /**
    * Applies the pending selection when the 3-2-1 countdown completes: the
    * metronomic ghost fire stops, the single `onSelect` contract hands the
    * choice to the launcher (which applies it, resumes play and resets the
@@ -576,6 +640,8 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.countdown = null;
     this.countdownText?.destroy();
     this.countdownText = null;
+    this.countdownTitle?.destroy();
+    this.countdownTitle = null;
     this.metronome = null;
     this.autoSelectTimer?.remove(false);
     this.autoSelectTimer = null;
@@ -755,6 +821,9 @@ export class MineralChoiceScene extends Phaser.Scene {
       this.fireSchedule?.bpm ?? loadRules().beatBpm,
     );
     this.showCountdownNumeral(3);
+    // Draw the chosen option's catalogue title beneath the numeral so the
+    // pick stays legible for the whole countdown (AH-0MWL7SU2Q009GEJ2 · AC2).
+    this.showCountdownTitle(option.name);
     // First count "3": the base (step 0) pitch of the rising tick.
     playCountdownTickSound(0);
     return option;
@@ -882,6 +951,17 @@ export class MineralChoiceScene extends Phaser.Scene {
    */
   getCountdownText(): string | null {
     return this.countdownText?.text ?? null;
+  }
+
+  /**
+   * The chosen option's catalogue title currently shown beneath the countdown
+   * numeral (e.g. `Spread Shot Lv.3`), or null when no option has been chosen
+   * yet or the countdown has completed and the overlay closed
+   * (AH-0MWL7SU2Q009GEJ2 · AC2). Exposed so tests can assert the readout is
+   * present for the life of the countdown and gone afterwards.
+   */
+  getCountdownTitle(): string | null {
+    return this.countdownTitle?.text ?? null;
   }
 
   /** True while the beat-locked 3-2-1 countdown is running. */

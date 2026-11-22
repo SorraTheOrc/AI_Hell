@@ -231,6 +231,7 @@ import { createCompetentBotBrain } from '../ai/framework';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
   BOT_MINERAL_CHOICE_DELAY_MS,
+  BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS,
   BotInputGovernor,
 } from '../ai/botHumanLike';
 import {
@@ -4047,10 +4048,13 @@ export class PlayScene extends CombatScene<
       // Frozen player-fire schedule: the reduced-volume ghost fire continues
       // on the same beat grid while play is paused (AH-0MV55O9R5005W6J0).
       fireSchedule: buildHoldFullFireSchedule(this.player),
-      // Demo mode auto-spins after the human-like delay so the attract bot
+      // Demo mode auto-spins after the demo wheel delay so the attract bot
       // never stalls (AH-0MVJ8U79V0056I2F · AC1/AC2); normal play waits for
-      // the player (AC3).
-      ...(this.demoMode ? { autoSpinMs: BOT_MINERAL_CHOICE_DELAY_MS } : {}),
+      // the player (AC3). The wheel keeps its faster pace, separate from the
+      // slower upgrade-selection dwell (AH-0MWL7SU2Q009GEJ2 · AC4).
+      ...(this.demoMode
+        ? { autoSpinMs: BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS }
+        : {}),
       // Single overlay contract: the launcher supplies one result callback;
       // the wheel never reaches back into `PlayScene` by key.
       onResult: (resolved: MiniBossWheelOutcome) =>
