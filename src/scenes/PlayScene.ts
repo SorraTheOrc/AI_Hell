@@ -228,6 +228,7 @@ import { type WeaponDefinition, type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
 import { createCompetentBotBrain } from '../ai/framework';
+import { notifyAimHit } from '../ai/aimHit';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
   BOT_MINERAL_CHOICE_DELAY_MS,
@@ -4990,6 +4991,20 @@ export class PlayScene extends CombatScene<
   protected override onEnemyDestroyed(enemy: EnemyEntity): void {
     const s = this.spawned.find((candidate) => candidate.entity === enemy);
     if (s) this._onEnemyKilled(s);
+  }
+
+  /**
+   * A player-damage point landed on an enemy (AH-0MWR054VE006YSLN): forward
+   * the struck entity's bot-side id to the demo governor through the shared
+   * aim-hit helper. Only the demo runs a bot, so outside it the seam is inert
+   * (the governor is not advanced and would discard the signal); the governor
+   * itself is rebuilt when demo mode starts, so a hit can never leak across a
+   * run. The game and the bot-bearing gyms consume the identical helper, so
+   * no scene owns identity or delivery logic of its own.
+   */
+  protected override onPlayerBulletHitEnemy(enemy: EnemyEntity): void {
+    if (!this.demoMode) return;
+    notifyAimHit(this.botGovernor, enemy);
   }
 
   /**

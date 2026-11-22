@@ -60,6 +60,7 @@
  * @module src/scenes/gym/GymBotTuning
  */
 
+import { notifyAimHit } from '../../ai/aimHit';
 import { BotInputGovernor } from '../../ai/botHumanLike';
 import { buildBotSnapshot, type BotSnapshot, type BotSnapshotScene } from '../../ai/botSnapshot';
 import {
@@ -97,6 +98,7 @@ import { attachTooltip } from '../../utils/gymTooltip';
 import { generateRandomLevel } from '../../utils/randomLevel';
 import type { ControlInput } from '../../utils/movementModel';
 import type { SceneSetupState } from '../core/sceneSetup';
+import type { EnemyEntity } from '../../entities/enemyFactory';
 import type { LevelDefinition } from '../../waves/Formations';
 import { GymLevel } from './GymLevel';
 
@@ -232,6 +234,17 @@ export class GymBotTuning extends GymLevel {
   /** Shared demo seam: the bot's committed input wins over the keyboard. */
   protected override getBotInput(): ControlInput | null {
     return this.botGovernor.current();
+  }
+
+  /**
+   * A player-damage point landed on an enemy (AH-0MWR054VE006YSLN): forward
+   * the struck entity's bot-side id to this gym's governor through the shared
+   * aim-hit helper. The gym always runs the bot, so it always forwards — the
+   * identical helper `PlayScene` uses, so the game and the gym resolve the
+   * same id and cannot diverge.
+   */
+  protected override onPlayerBulletHitEnemy(enemy: EnemyEntity): void {
+    notifyAimHit(this.botGovernor, enemy);
   }
 
   /** Rebuilds the brain and governor from the current panel values. */

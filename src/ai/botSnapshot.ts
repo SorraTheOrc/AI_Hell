@@ -465,7 +465,7 @@ export function buildBotSnapshot(
   const snapshot = {
     player,
     enemies: scene.getEnemies().map((enemy) => ({
-      id: stableEnemyId(enemy),
+      id: botEntityId(enemy),
       x: enemy.x,
       y: enemy.y,
       alive: enemy.alive,
@@ -522,21 +522,27 @@ export function buildBotSnapshot(
   return freeze ? deepFreeze(snapshot) : (snapshot as BotSnapshot);
 }
 
-/**
- * Allocates (or returns) the stable bot-side id for an enemy source
- * (AH-0MVI4QDN90037DIN · AC1).
- *
- * A source that already exposes a numeric `id` keeps it; otherwise the builder
- * assigns one from a module-local `WeakMap` and counter. The map is keyed by
- * object identity, so the same live entity keeps its id across every snapshot
- * (and the id is released with the entity) — no per-archetype entity changes
- * and no snapshot-seam mutation of the source.
- */
+/** Module-local identity map: the source object -> its stable bot-side id. */
 const enemyIds = new WeakMap<object, number>();
 let nextEnemyId = 1;
 
-function stableEnemyId(source: BotEnemySource): number {
-  if (typeof source.id === 'number') return source.id;
+/**
+ * Allocates (or returns) the stable bot-side id for an entity source
+ * (AH-0MVI4QDN90037DIN · AC1).
+ *
+ * A source that already exposes a numeric `id` keeps it; otherwise the builder
+ * assigns one from the module-local `WeakMap` and counter above. The map is
+ * keyed by object identity, so the same live entity keeps its id across every
+ * snapshot (and the id is released with the entity) — no per-archetype entity
+ * changes and no snapshot-seam mutation of the source.
+ *
+ * Exported so the shared aim-hit seam resolves identity through the **same**
+ * map the snapshot builder uses (AH-0MWR054VE006YSLN): the id a hit reports is
+ * exactly the id the governor aimed at, never a parallel identity scheme.
+ */
+export function botEntityId(source: object): number {
+  const declaredId = (source as { readonly id?: unknown }).id;
+  if (typeof declaredId === 'number') return declaredId;
   const existing = enemyIds.get(source);
   if (existing !== undefined) return existing;
   const id = nextEnemyId;

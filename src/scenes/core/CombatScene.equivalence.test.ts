@@ -21,6 +21,7 @@ import { GymPowerUpsCombat } from '../gym/GymPowerUpsCombat';
 import { GymFodderEnemies } from '../gym/GymFodderEnemies';
 import { GymPowerUpsUtility } from '../gym/GymPowerUpsUtility';
 import { GymWeapons } from '../gym/GymWeapons';
+import { GymBotTuning } from '../gym/GymBotTuning';
 import {
   GymFormationScene,
   type EnemyFormationConfig,
@@ -4955,5 +4956,92 @@ describe('shared asteroid render path — game/gym equivalence (AC4)', () => {
         ASTEROID_ATLAS_KEY,
       );
     }
+  });
+});
+
+// ── Shared aim-hit seam (AH-0MWR054VE006YSLN, parent AC6) ───────────
+
+/**
+ * The aim-hit seam must be single-sourced in the shared combat core, with the
+ * game and the bot-bearing gym delivering through **one** helper. These
+ * source/prototype assertions keep a scene from re-implementing the hook body,
+ * the bot-side identity resolution or the delivery logic (parent AC6).
+ */
+describe('shared aim-hit seam — single-sourced and gym-parity clean (AH-0MWR054VE006YSLN)', () => {
+  const HOOK = 'onPlayerBulletHitEnemy';
+  const SRC_ROOT = path.resolve(process.cwd(), 'src');
+
+  it('resolves the shared default hook on both bot-bearing scenes', () => {
+    expect(
+      typeof (CombatScene.prototype as unknown as Record<string, unknown>)[HOOK],
+    ).toBe('function');
+
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymBotTuning', GymBotTuning.prototype],
+    ] as const) {
+      // Each override is its own one-line forward to the shared helper, so
+      // neither scene owns identity or delivery logic.
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, HOOK),
+        `${name}.prototype must override ${HOOK}`,
+      ).toBe(true);
+      expect(
+        (prototype as unknown as Record<string, unknown>)[HOOK],
+      ).not.toBe(
+        (CombatScene.prototype as unknown as Record<string, unknown>)[HOOK],
+      );
+    }
+  });
+
+  it('defines the hook only in the shared core and the bot-bearing scenes', () => {
+    const definers = productionSceneFiles()
+      .filter((file) => definesMethod(fs.readFileSync(file, 'utf8'), HOOK))
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+
+    expect(definers).toEqual([
+      'src/scenes/PlayScene.ts',
+      'src/scenes/core/CombatScene.ts',
+      'src/scenes/gym/GymBotTuning.ts',
+    ]);
+  });
+
+  it('both scenes deliver through the shared notifyAimHit helper, with no local identity resolver', () => {
+    for (const file of [
+      'src/scenes/PlayScene.ts',
+      'src/scenes/gym/GymBotTuning.ts',
+    ]) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      expect(source, `${file} must consume notifyAimHit`).toContain(
+        'notifyAimHit(',
+      );
+      expect(
+        source,
+        `${file} must not resolve bot identity itself`,
+      ).not.toContain('botEntityId(');
+    }
+  });
+
+  it('defines the delivery helper and the shared id resolver exactly once', () => {
+    const allSource = collectProductionSourceFiles(SRC_ROOT);
+    const relative = (files: string[]) =>
+      files.map((file) => path.relative(process.cwd(), file)).sort();
+
+    expect(
+      relative(
+        allSource.filter((file) =>
+          definesFunction(fs.readFileSync(file, 'utf8'), 'notifyAimHit'),
+        ),
+      ),
+    ).toEqual(['src/ai/aimHit.ts']);
+
+    expect(
+      relative(
+        allSource.filter((file) =>
+          definesFunction(fs.readFileSync(file, 'utf8'), 'botEntityId'),
+        ),
+      ),
+    ).toEqual(['src/ai/botSnapshot.ts']);
   });
 });

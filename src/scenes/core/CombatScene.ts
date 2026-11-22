@@ -596,11 +596,13 @@ export abstract class CombatScene<
         for (let hit = 0; hit <= extraHits && enemy.alive; hit += 1) {
           enemy.takeDamage();
           applied += 1;
+          this.reportPlayerDamageApplied(enemy);
         }
       } else {
         while (applied < points && enemy.alive) {
           enemy.takeDamage();
           applied += 1;
+          this.reportPlayerDamageApplied(enemy);
         }
       }
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
@@ -617,9 +619,10 @@ export abstract class CombatScene<
       }
     } else {
       enemy.destroySelf();
-      this.finaliseEnemyKill(enemy);
       // A single-hit entity counts as 1 HP regardless of the offered damage.
       applied = points > 0 ? 1 : 0;
+      if (applied > 0) this.reportPlayerDamageApplied(enemy);
+      this.finaliseEnemyKill(enemy);
     }
     return applied;
   }
@@ -762,10 +765,14 @@ export abstract class CombatScene<
     if (!enemy.alive) return;
     if (enemy.takeDamage) {
       const hits = Math.max(1, Math.floor(damage));
-      for (let i = 0; i < hits && enemy.alive; i++) enemy.takeDamage();
+      for (let i = 0; i < hits && enemy.alive; i++) {
+        enemy.takeDamage();
+        this.reportPlayerDamageApplied(enemy);
+      }
       if (!enemy.alive) this.finaliseEnemyKill(enemy);
     } else {
       enemy.destroySelf();
+      this.reportPlayerDamageApplied(enemy);
       this.finaliseEnemyKill(enemy);
     }
   }
@@ -1193,6 +1200,38 @@ export abstract class CombatScene<
    * no-op; the gym forwards to `config.onEntityDestroyed`.
    */
   protected onEnemyDestroyed(_enemy: TEnemy): void {}
+
+  /**
+   * Publishes one confirmed player-damage point on an enemy. Default no-op.
+   *
+   * The shared `damageEnemyWithBullet` and `damageEnemyViaAoe` seams call this
+   * once per damage point that actually landed on the enemy's hull (a force
+   * field absorbing the hit reports nothing), so the game and every
+   * bot-bearing gym receive the same aim-hit signal from the one shared
+   * collision path — never a per-scene counter (AH-0MWR054VE006YSLN, parent
+   * AC6). `PlayScene` and `GymBotTuning` override it to forward the struck
+   * enemy to their bot governor via `notifyAimHit`; with no bot present the
+   * no-op leaves every existing behaviour byte-for-byte unchanged.
+   */
+  protected onPlayerBulletHitEnemy(_enemy: TEnemy): void {}
+
+  /**
+   * Forwards one applied hull-damage point to
+   * {@link CombatScene.onPlayerBulletHitEnemy}, skipping a hit a force field
+   * absorbed: the field is a durability layer in front of the hull, so no
+   * damage reached the enemy and the aim-hit seam must not report it. The
+   * entity sets `lastHitAbsorbed` on its own `takeDamage()` seam, so this
+   * reads the production result rather than re-deriving the field rule.
+   */
+  private reportPlayerDamageApplied(enemy: TEnemy): void {
+    if (
+      (enemy as unknown as { lastHitAbsorbed?: boolean }).lastHitAbsorbed ===
+      true
+    ) {
+      return;
+    }
+    this.onPlayerBulletHitEnemy(enemy);
+  }
 
   /**
    * Player-body ram destroys an enemy. Default (generic gym): destroy

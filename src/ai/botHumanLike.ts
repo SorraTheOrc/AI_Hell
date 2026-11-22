@@ -734,6 +734,20 @@ export class BotInputGovernor {
   }
 
   /**
+   * Records one confirmed player-bullet hit on an enemy, keyed by the
+   * bot-side id the snapshot assigned it (AH-0MWR054VE006YSLN).
+   *
+   * The shared combat core publishes the hit once per applied damage point
+   * through `CombatScene.onPlayerBulletHitEnemy`; the scene forwards the
+   * struck enemy's resolved id here via `notifyAimHit`. The adaptive
+   * aim-error state that consumes this lives in a later feature
+   * (AH-0MWR057Q8004PBOD), which compares `id` against the committed aim
+   * intent's target; this entry point is the stable seam so the shared hit
+   * path and the governor never disagree on identity. A no-op today.
+   */
+  noteAimHit(_id: number): void {}
+
+  /**
    * Advances by `dtSeconds`, samples `decision`, and returns the input the
    * bot actually holds this tick.
    *
