@@ -40,6 +40,7 @@ import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene } from './PlayScene';
 import {
+  BUILDOUT_ROW_KEY,
   HANGAR_SCREEN_TITLE,
   HANGAR_DEPLOY_ROW_Y,
   HANGAR_INTEL_FIRST_LINE_Y,
@@ -1176,9 +1177,12 @@ describe('HangarScene', () => {
     const storage = memoryStorage(UNARMED_PAYLOAD);
     const scene = await bootHangar({ storage });
 
-    // Only the saved-build save row, the deployment, the map and the restart
-    // row are focusable; no purchase/equip row can be reached.
+    // Only the saved-build save row, the apply-suggested-buildout row, the
+    // deployment, the map and the restart row are focusable; no
+    // purchase/equip row can be reached.
     expect(scene.getFocusedKey()).toBe(SAVE_BUILD_ROW_KEY);
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedKey()).toBe(BUILDOUT_ROW_KEY);
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedKey()).toBe('deploy');
     pressKey(scene, { key: 'Tab' });

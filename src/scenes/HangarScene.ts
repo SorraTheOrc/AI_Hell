@@ -68,10 +68,28 @@
  * control. Under `demo` the row is rendered non-actionable and nothing is
  * written — a demo is not progress.
  *
+ * ## Auto-fit on open and the apply-suggested-buildout row
+ * (AH-0MWOWEPO2004B0MR, parent AH-0MWOROJYT004WPSD)
+ *
+ * Opening the screen **auto-fits** the boss-aware suggestion when the loadout
+ * is at its shipped default — exactly an empty `activeLoadout.startingWeapons`
+ * (`isDefaultHangarLoadout`), never "the selector found no strong weapon". A
+ * hand-picked loadout is therefore never silently rewritten; the
+ * `⚡ APPLY SUGGESTED BUILDOUT` row is the one path that replaces it, for any
+ * loadout, and both paths persist through the same single
+ * `saveHangarWarPayload` write as every other change. The selection itself
+ * (`selectAutoLoadout` via `applyAutoLoadout`) and the row (`buildoutRow`) live
+ * in the shared model — this scene owns no selection rule. Under `demo` the row
+ * is rendered non-actionable and never wired, and nothing is auto-fitted, so a
+ * demonstration can never overwrite the war (matching the saved-build and
+ * restart rows).
+ *
  * The payload can be injected as launch data (`{ payload, storage }`) so tests
  * (and later the attract traversal) boot a deterministic war without touching
  * `localStorage`; production callers pass nothing and the versioned store is
- * used.
+ * used. The on-open auto-fit is the one exception to "an injected payload is
+ * shown as given": it is derived purely from that payload, and it is persisted
+ * only through the caller's store (`storage: null` keeps it in memory).
  *
  * @module src/scenes/HangarScene
  */
@@ -99,12 +117,15 @@ import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 import {
   advanceNameEntry,
   advanceRestartConfirm,
+  applyAutoLoadout,
   applyHangarBuild,
+  BUILDOUT_ROW_KEY,
   buildHangarScreenModel,
   CYCLE_BUILD_ROW_KEY,
   deleteHangarBuild,
   equipHangarHull,
   isCommitableNameEntry,
+  isDefaultHangarLoadout,
   purchaseHangarEntry,
   renderHangarScreen,
   renameHangarBuild,
@@ -270,6 +291,11 @@ export class HangarScene extends Phaser.Scene {
         this.persist();
       }
     }
+    // A fresh (default/empty) loadout is fitted against this visit's target
+    // before the first model build, so the screen — and the deployment it
+    // feeds — open with the boss-aware suggestion already equipped
+    // (AH-0MWOWEPO2004B0MR).
+    this.autoFitLoadout();
   }
 
   create(): void {
@@ -333,9 +359,11 @@ export class HangarScene extends Phaser.Scene {
     // nor write to the store (the same rule that keeps a demo off the
     // leaderboard). AH-0MW8F7NH1002PQE3.
     if (!this.demo) handlers.onRestart = () => this.restart();
-    // Saved-build actions are player actions: under `demo` they are omitted so
-    // the rows render non-actionable and a demo can never overwrite the war.
+    // Saved-build and buildout actions are player actions: under `demo` they
+    // are omitted so the rows render non-actionable and a demo can never
+    // overwrite the war.
     if (!this.demo) {
+      handlers.onApplyBuildout = () => this.applyBuildout();
       handlers.onSaveBuild = () => this.saveBuild();
       handlers.onCycleBuild = () => this.cycleBuild();
       handlers.onApplyBuild = (buildId) => this.applyBuild(buildId);
@@ -421,6 +449,60 @@ export class HangarScene extends Phaser.Scene {
     }
     this.rebuildKeepingFocus(`weapon:${weaponId}`);
     return result.ok;
+  }
+
+  /**
+   * Auto-fits the published suggestion on open, only for a default/empty
+   * loadout (AH-0MWOWEPO2004B0MR, parent AH-0MWOROJYT004WPSD AC4).
+   *
+   * A hand-picked (non-empty) loadout is never rewritten: it is preserved until
+   * the player activates the `⚡ APPLY SUGGESTED BUILDOUT` row. The fit uses the
+   * model's published `bossIntel` (one target resolution, shared with the intel
+   * block and `▶ DEPLOY`) and persists through the same single store write as
+   * every other change; an unchanged fit (the selector's fixed point) writes
+   * nothing. Under `demo` nothing is fitted and nothing is written.
+   */
+  private autoFitLoadout(): void {
+    // A demo is a demonstration, not the player's war.
+    if (this.demo) return;
+    if (!isDefaultHangarLoadout(this.payload)) return;
+    const model = buildHangarScreenModel(this.payload, this.catalogue, {
+      targetHexId: this.targetHexId,
+    });
+    const result = applyAutoLoadout(
+      this.payload,
+      this.catalogue,
+      model.bossIntel,
+    );
+    if (!result.changed) return;
+    this.payload = result.payload;
+    this.persist();
+  }
+
+  /**
+   * Handles the `⚡ APPLY SUGGESTED BUILDOUT` row: equips the model's published
+   * suggestion — a full replacement, the one explicit path that overwrites a
+   * hand-picked loadout — persists it and keeps focus on the row
+   * (AH-0MWOWEPO2004B0MR).
+   *
+   * @returns true when the loadout changed (and was persisted).
+   */
+  applyBuildout(): boolean {
+    // Belt and braces: under `demo` the row is never wired.
+    if (this.demo) return false;
+    this.disarmRestart();
+    const model = this.getModel();
+    const result = applyAutoLoadout(
+      this.payload,
+      this.catalogue,
+      model.bossIntel,
+    );
+    if (result.changed) {
+      this.payload = result.payload;
+      this.persist();
+    }
+    this.rebuildKeepingFocus(BUILDOUT_ROW_KEY);
+    return result.changed;
   }
 
   /** Toggles an owned permanent modifier on the loadout and persists it. */
