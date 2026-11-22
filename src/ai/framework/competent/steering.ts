@@ -82,6 +82,18 @@
  * implementation — this module adds no second seam model. Omitting the world
  * keeps the legacy raw Euclidean result, bit-for-bit.
  *
+ * ## Class-sampled aim (AH-0MWR051U6003BDB9)
+ *
+ * {@link interceptPoint} is a constant-velocity lead.
+ * {@link interceptPointClassAware} is its sibling that advances the target along
+ * its **movement-class** trajectory (`advanceHazardMotion`, the predictor's
+ * single definition of each class's motion) and re-estimates the time of flight
+ * from the sampled point, so a homing chaser, a committed diver, an attacking
+ * patroller or a reversing formation is led where it will actually fly. It
+ * reduces to {@link interceptPoint} bit-for-bit for `roamer`, an unknown class,
+ * a disabled motion model or a stationary target, and shares the sampler's
+ * bounded step budget and reusable scratch.
+ *
  * @module src/ai/framework/competent/steering
  */
 
@@ -108,13 +120,25 @@ import {
   type WrapWorld,
 } from '../../../utils/wrapGeometry';
 import {
+  HAZARD_MOTION_MAX_SAMPLES,
+  HAZARD_MOTION_SAMPLE_STEP,
+  advanceHazardMotion,
   closestApproachFromDelta,
+  isKnownMovementClass,
   predictMinimumSeparation,
   type HazardMotionScratch,
 } from '../hazardMotionModel';
+import type { EnemyMovementClass } from '../../../core/configTypes';
 
 /** Epsilon for float comparisons. */
 const EPS = 1e-6;
+
+/**
+ * The "no wrap model" world: a non-positive axis means the wrap helpers pass
+ * coordinates through and a formation never reflects (see `wrapGeometry`).
+ * Used by the sampled intercept when the caller supplies no torus.
+ */
+const NO_WRAP_WORLD: WrapWorld = { width: 0, height: 0 };
 
 /** A clearance evaluation for one candidate bearing. */
 export interface DirectionSafety {
@@ -225,6 +249,295 @@ export function interceptPoint(
     t = align + flight;
   }
   return predict(t);
+}
+
+/**
+ * Walks a target's **movement-class trajectory** from its current position for
+ * `t` seconds, advancing at most `maxSteps` samples over at most `horizon`
+ * seconds of class motion, and leaves the sampled state in `state` (reused,
+ * never replaced).
+ *
+ * The class model is trusted only for the predictor's horizon: past
+ * `horizon` the target is extrapolated at the velocity the sampled path ended
+ * with, so a long shot at a reversing formation cannot be over-led by a
+ * speculative bounce (AH-0MWR051U6003BDB9 · AC3). The step size is the
+ * predictor's nominal `HAZARD_MOTION_SAMPLE_STEP`, stretched to cover the
+ * window when the step cap binds — the same discipline
+ * `predictMinimumSeparation` applies to its horizon. No allocation and no wall
+ * clock.
+ *
+ * @returns whether a `formation` path reflected at an arena bound (the only
+ *   class whose sampled path can stay on its fitted velocity: a formation that
+ *   does not reflect **is** the legacy straight-line lead).
+ */
+function walkHazardClass(
+  movementClass: EnemyMovementClass,
+  state: HazardMotionScratch,
+  target: BotWorldPoint,
+  velocity: BotWorldPoint,
+  shooter: BotWorldPoint,
+  t: number,
+  horizon: number,
+  maxSteps: number,
+  world: WrapWorld,
+): boolean {
+  state.x = target.x;
+  state.y = target.y;
+  state.vx = velocity.x;
+  state.vy = velocity.y;
+  const window = Math.max(0, Math.min(t, horizon));
+  const wanted = Math.max(1, Math.ceil(window / HAZARD_MOTION_SAMPLE_STEP));
+  const steps = Math.min(maxSteps, wanted);
+  const dt = window > 0 ? window / steps : 0;
+  const tracksReflection = movementClass === 'formation';
+  let reflected = false;
+  for (let i = 0; i < steps; i += 1) {
+    const vx = state.vx;
+    const vy = state.vy;
+    advanceHazardMotion(movementClass, state, shooter.x, shooter.y, dt, world);
+    if (
+      tracksReflection &&
+      (Math.sign(state.vx) !== Math.sign(vx) ||
+        Math.sign(state.vy) !== Math.sign(vy))
+    ) {
+      reflected = true;
+    }
+  }
+  // Beyond the trust window the model contributes nothing new: continue along
+  // the heading it ended on (the fitted velocity for a straight class).
+  const remainder = Math.max(0, t - window);
+  if (remainder > 0) {
+    state.x += state.vx * remainder;
+    state.y += state.vy * remainder;
+  }
+  return reflected;
+}
+
+/** A sampled class-state point, wrapped onto the torus when one is supplied. */
+function classStatePoint(
+  state: HazardMotionScratch,
+  world?: WrapWorld,
+): BotWorldPoint {
+  return world ? wrapPosition(state.x, state.y, world) : { x: state.x, y: state.y };
+}
+
+/**
+ * The legacy {@link interceptPoint} solve, with an optional torus — the exact
+ * fallback every unsupported case delegates to (AH-0MWR051U6003BDB9 · AC3).
+ */
+function legacyInterceptPoint(
+  shooter: BotWorldPoint,
+  target: BotWorldPoint,
+  targetVelocity: BotWorldPoint,
+  projectileSpeed: number,
+  alignSeconds: number,
+  iterations: number,
+  world?: WrapWorld,
+): BotWorldPoint {
+  return world
+    ? interceptPoint(
+        shooter,
+        target,
+        targetVelocity,
+        projectileSpeed,
+        alignSeconds,
+        iterations,
+        world,
+      )
+    : interceptPoint(
+        shooter,
+        target,
+        targetVelocity,
+        projectileSpeed,
+        alignSeconds,
+        iterations,
+      );
+}
+
+/**
+ * Solves the **class-aware intercept point**: the lead target is advanced along
+ * its movement-class trajectory instead of a straight line
+ * (AH-0MWR051U6003BDB9 · AC3).
+ *
+ * `interceptPoint` is a constant-velocity lead: it never consults the movement
+ * class, so a curving chaser, a committed diver, an attacking patroller or a
+ * reversing formation is led along a line it will not fly. This sibling solve
+ * advances the target with {@link advanceHazardMotion} — the predictor's
+ * single definition of each class's motion — re-estimating the time of flight
+ * from the sampled point on every pass, so the shot is aimed where a curving
+ * target will actually be.
+ *
+ * ## Exact fallbacks
+ *
+ * There is no behavioural change unless the target has a **moving estimate**
+ * and a **sampled class**: `roamer`, an unknown/absent class, a disabled
+ * motion model (`tunables.hazardMotionModelEnabled = false`), no positive
+ * `hazardPredictionHorizon` trust window, a `formation` whose path never
+ * reaches an arena bound (it flew exactly its fitted velocity, the same rule
+ * the predictor applies to a straight class path) or a stationary target all
+ * delegate to {@link interceptPoint}, so their result is bit-for-bit the legacy
+ * solve (including the wrapped stationary aim).
+ *
+ * ## Bounded, allocation-free sampling
+ *
+ * The sampler reuses the predictor's step grid and scratch discipline: at
+ * most `HAZARD_MOTION_MAX_SAMPLES` class steps in total, split across the
+ * (clamped) iteration passes, so raising `iterations` can never multiply the
+ * per-tick budget beyond the predictor's own worst case. The class model is
+ * trusted only for the predictor's configured
+ * `hazardPredictionHorizon` of lead time; beyond it the target continues on
+ * the heading the sampled path ended with, so a long shot at a reversing
+ * formation is never over-led by a speculative bounce. Callers on the per-tick
+ * path pass a reusable {@link HazardMotionScratch} to avoid allocating sampler
+ * state. No wall clock, no RNG: repeated calls on the same inputs return
+ * identical points.
+ *
+ * ## Seam-aware
+ *
+ * With a {@link WrapWorld} the sampled trajectory pursues the ship on the
+ * wrapped shortest route, the shot's time of flight is measured wrapped, and
+ * the returned point is wrapped onto the torus (AH-0MVT2VZR7000GS15
+ * preserved).
+ *
+ * @param shooter — the firing ship's position.
+ * @param target — the target's current position.
+ * @param targetVelocity — the target's fitted velocity (px/s).
+ * @param movementClass — the target's movement class, when known.
+ * @param projectileSpeed — the projectile's speed (px/s).
+ * @param alignSeconds — estimated time for the ship to finish its turn.
+ * @param iterations — refinement passes; clamped to `[1, HAZARD_MOTION_MAX_SAMPLES]`.
+ * @param tunables — the competent tunables (motion-model toggle and the
+ *   predictor's trust horizon).
+ * @param world — optional torus; omit for the legacy raw solve.
+ * @param scratch — optional reusable sampler state (allocation-free per tick).
+ */
+export function interceptPointClassAware(
+  shooter: BotWorldPoint,
+  target: BotWorldPoint,
+  targetVelocity: BotWorldPoint,
+  movementClass: EnemyMovementClass | undefined,
+  projectileSpeed: number,
+  alignSeconds: number,
+  iterations: number,
+  tunables: Pick<
+    CompetentBotTunables,
+    'hazardMotionModelEnabled' | 'hazardPredictionHorizon'
+  >,
+  world?: WrapWorld,
+  scratch?: HazardMotionScratch,
+): BotWorldPoint {
+  // The class model is trusted for the predictor's configured horizon: past
+  // it the target continues straight (see `walkHazardClass`). A missing or
+  // non-physical horizon leaves no trust window, so the legacy solve stands.
+  const classHorizon =
+    Number.isFinite(tunables.hazardPredictionHorizon) &&
+    tunables.hazardPredictionHorizon > 0
+      ? tunables.hazardPredictionHorizon
+      : 0;
+  // Exact fallbacks: the legacy solve, bit-for-bit.
+  if (
+    !tunables.hazardMotionModelEnabled ||
+    classHorizon <= 0 ||
+    !isKnownMovementClass(movementClass) ||
+    movementClass === 'roamer' ||
+    (targetVelocity.x === 0 && targetVelocity.y === 0)
+  ) {
+    return legacyInterceptPoint(
+      shooter,
+      target,
+      targetVelocity,
+      projectileSpeed,
+      alignSeconds,
+      iterations,
+      world,
+    );
+  }
+  const align = Math.max(0, Number.isFinite(alignSeconds) ? alignSeconds : 0);
+  // Clamp the pass count so `passes × steps-per-pass` can never exceed the
+  // predictor's total sample budget (bounded work per decision tick).
+  const passes = Math.min(
+    HAZARD_MOTION_MAX_SAMPLES,
+    Math.max(1, Math.floor(iterations)),
+  );
+  const stepsPerPass = Math.max(1, Math.floor(HAZARD_MOTION_MAX_SAMPLES / passes));
+  const hasSpeed = Number.isFinite(projectileSpeed) && projectileSpeed > EPS;
+  const modelWorld = world ?? NO_WRAP_WORLD;
+  // Reuse the caller's per-tick state when supplied: a fresh record per engage
+  // tick is pure churn on the hot path.
+  const state: HazardMotionScratch = scratch ?? { x: 0, y: 0, vx: 0, vy: 0 };
+
+  // `projectileSpeed <= 0` (unknown) matches the legacy solve: the target
+  // advances only by the alignment term and stops.
+  if (!hasSpeed) {
+    const reflected = walkHazardClass(
+      movementClass,
+      state,
+      target,
+      targetVelocity,
+      shooter,
+      align,
+      classHorizon,
+      stepsPerPass,
+      modelWorld,
+    );
+    // A formation that never reaches a bound flew exactly its fitted velocity
+    // over the lead window — the legacy straight-line solve, bit-for-bit (the
+    // same rule the predictor applies to a straight class path).
+    return movementClass === 'formation' && !reflected
+      ? legacyInterceptPoint(
+          shooter,
+          target,
+          targetVelocity,
+          projectileSpeed,
+          alignSeconds,
+          iterations,
+          world,
+        )
+      : classStatePoint(state, world);
+  }
+
+  let t = align;
+  for (let pass = 0; pass < passes; pass += 1) {
+    walkHazardClass(
+      movementClass,
+      state,
+      target,
+      targetVelocity,
+      shooter,
+      t,
+      classHorizon,
+      stepsPerPass,
+      modelWorld,
+    );
+    const flight = world
+      ? wrappedDistance(shooter, state, world) / projectileSpeed
+      : Math.hypot(state.x - shooter.x, state.y - shooter.y) / projectileSpeed;
+    t = align + flight;
+  }
+  const reflected = walkHazardClass(
+    movementClass,
+    state,
+    target,
+    targetVelocity,
+    shooter,
+    t,
+    classHorizon,
+    stepsPerPass,
+    modelWorld,
+  );
+  // A formation that never reaches a bound flew exactly its fitted velocity
+  // over the lead window — the legacy straight-line solve, bit-for-bit.
+  return movementClass === 'formation' && !reflected
+    ? legacyInterceptPoint(
+        shooter,
+        target,
+        targetVelocity,
+        projectileSpeed,
+        alignSeconds,
+        iterations,
+        world,
+      )
+    : classStatePoint(state, world);
 }
 
 /**

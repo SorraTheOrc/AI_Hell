@@ -62,6 +62,7 @@ export {
   hazardThreatensPlayer,
   idleIntent,
   interceptPoint,
+  interceptPointClassAware,
   mayThrust,
   normalise,
   planSteering,

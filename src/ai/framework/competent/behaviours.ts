@@ -53,6 +53,7 @@ import type {
 } from '../registry';
 import { createBehaviourRegistry } from '../registry';
 import type { BotHazardPoint, BotWorld } from '../worldModel';
+import type { HazardMotionScratch } from '../hazardMotionModel';
 import type { BotContent } from '../content';
 import { createBotContent } from '../content';
 import {
@@ -67,7 +68,7 @@ import {
   withoutOvershot,
   type ContentTarget,
 } from './goals';
-import { hazardThreatensPlayer, idleIntent, interceptPoint, isHazardExempt, mayReverse, mayThrust, planSteering } from './steering';
+import { hazardThreatensPlayer, idleIntent, interceptPointClassAware, isHazardExempt, mayReverse, mayThrust, planSteering } from './steering';
 import { resolveAimAlignSeconds, resolveShotSpeed, type CompetentBotTunables } from './tunables';
 import { botWrapWorld, wrappedAxisDelta, wrappedDelta } from '../wrapGeometry';
 
@@ -180,11 +181,17 @@ export interface AimTargetMotion {
   vy: number;
   /** The tracked hazard the estimate came from; absent on a fallback. */
   hazard?: BotHazardPoint;
+  /**
+   * Reused class-trajectory sampler state for the class-aware intercept solve
+   * (AH-0MWR051U6003BDB9 · AC3). Owned by the behaviour closure, so the
+   * per-tick aim solve allocates no sampler state.
+   */
+  readonly scratch: HazardMotionScratch;
 }
 
 /** Creates a reusable {@link AimTargetMotion} record (zero velocity). */
 export function createAimTargetMotion(): AimTargetMotion {
-  return { vx: 0, vy: 0 };
+  return { vx: 0, vy: 0, scratch: { x: 0, y: 0, vx: 0, vy: 0 } };
 }
 
 /**
@@ -299,6 +306,14 @@ function engageBehaviour(
       // Seam-aware aim (AH-0MVT2VZR7000GS15): both the lead solve and the
       // route to the aim point run on the torus, so a target whose shortest
       // path crosses an edge is led and aimed at through that edge.
+      //
+      // Class-sampled solve (AH-0MWR051U6003BDB9 · AC3): when the tracked
+      // estimate names a real movement class, the lead advances the target
+      // along its sampled class trajectory (`advanceHazardMotion`) instead of a
+      // straight line; a roamer, an unknown/absent class, a disabled motion
+      // model or a stationary target falls back to `interceptPoint`
+      // bit-for-bit inside the helper. The reusable sampler scratch lives on
+      // `aimMotion`, so the per-tick solve allocates none.
       const motion = resolveAimTargetMotion(
         best.point,
         view.world.hazards,
@@ -316,14 +331,17 @@ function engageBehaviour(
       const alignSeconds = resolveAimAlignSeconds(t, player.rotation);
       const aimPoint =
         t.aimLeadEnabled && (motion.vx !== 0 || motion.vy !== 0)
-          ? interceptPoint(
+          ? interceptPointClassAware(
               player,
               best.point,
               { x: motion.vx, y: motion.vy },
+              motion.hazard?.movementClass,
               shotSpeed,
               alignSeconds,
               t.aimLeadIterations,
+              t,
               wrapWorld,
+              motion.scratch,
             )
           : { x: best.point.x, y: best.point.y };
       const objective = wrappedDelta(player, aimPoint, wrapWorld);

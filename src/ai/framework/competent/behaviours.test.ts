@@ -634,6 +634,105 @@ describe('aim solve live physics inputs (AH-0MWR04ZDU0005O8J AC2)', () => {
   });
 });
 
+// ── Class-sampled intercept (AH-0MWR051U6003BDB9 · AC3) ─────────────
+
+describe('engage behaviour — class-sampled intercept (AH-0MWR051U6003BDB9 AC3)', () => {
+  /** Builds an engage context whose world carries bot-side hazard estimates. */
+  function contextWithTracker(
+    snapshot: ReturnType<typeof makeSnapshot>,
+    velocities: Map<string, { x: number; y: number }>,
+    tunables = T,
+  ): BotBehaviourContext {
+    const goal = createCompetentGoals(tunables).require(
+      COMPETENT_GOAL_IDS.engageEnemy,
+    );
+    return {
+      snapshot,
+      world: buildBotWorld(snapshot, undefined, undefined, velocities),
+      memory: createBotMemory(),
+      dt: 0.1,
+      goal,
+    };
+  }
+
+  /** Runs engage for one target under `tunables` and returns its intent. */
+  function engageIntent(
+    target: ReturnType<typeof enemy> & { id: number; vx?: number; vy?: number },
+    velocities: Map<string, { x: number; y: number }>,
+    tunables = T,
+  ) {
+    const intent = createCompetentBehaviours(tunables)
+      .require('engage')
+      .run(
+        contextWithTracker(
+          makeSnapshot({ player: PLAYER, enemies: [target] }),
+          velocities,
+          tunables,
+        ),
+      );
+    expect(intent).not.toBeNull();
+    return intent!;
+  }
+
+  // The motion-model OFF tunables are the straight-line control arm: the aim
+  // is exactly `interceptPoint`, so any difference is the sampled class solve.
+  const STRAIGHT = { ...T, hazardMotionModelEnabled: false };
+
+  it('aims a tracked chaser along its homing arc, not the straight-line lead', () => {
+    // The chaser is due right but climbing (0, -90): the straight lead aims
+    // well above it, while a chaser pursues the ship and turns down-left, so
+    // the sampled aim loses the upward lead.
+    const tracked = { ...enemy(620, 270, 'ghost-chase'), id: 7 };
+    const estimates = new Map([[enemyHazardKey(7), { x: 0, y: -90 }]]);
+    const sampled = engageIntent(tracked, estimates);
+    const straight = engageIntent(tracked, estimates, STRAIGHT);
+    // The control arm really is the straight-line lead (0.25 s compiled
+    // alignment term: the fixture carries no rotation config)…
+    expect(straight.dirY).toBeCloseTo(-0.40398, 5);
+    // …and the class solve points essentially along the ship's bearing to the
+    // chaser (its arc homes onto the ship).
+    expect(sampled.dirY).toBeGreaterThan(straight.dirY + 0.2);
+    expect(sampled.dirY).toBeCloseTo(0, 3);
+    expect(sampled.dirX).toBeGreaterThan(straight.dirX);
+    expect(sampled.aim).toBe(true);
+  });
+
+  it('falls back to the straight-line lead for a roamer estimate', () => {
+    // `harvester` resolves to the `roamer` class: its model is the fitted
+    // velocity, so the class solve is the legacy solve bit-for-bit.
+    const tracked = { ...enemy(620, 270, 'harvester'), id: 7 };
+    const estimates = new Map([[enemyHazardKey(7), { x: 0, y: -90 }]]);
+    const sampled = engageIntent(tracked, estimates);
+    const straight = engageIntent(tracked, estimates, STRAIGHT);
+    expect(sampled.dirX).toBe(straight.dirX);
+    expect(sampled.dirY).toBe(straight.dirY);
+  });
+
+  it('falls back to the straight-line lead for an untracked target', () => {
+    // A snapshot-velocity target (no stable id, so no hazard class) keeps the
+    // legacy solve exactly, even though the motion model is on.
+    const physicsBody = {
+      ...enemy(620, 270, 'scout'),
+      id: 7,
+      vx: 0,
+      vy: -90,
+    };
+    const sampled = engageIntent(physicsBody, new Map());
+    const straight = engageIntent(physicsBody, new Map(), STRAIGHT);
+    expect(sampled.dirX).toBe(straight.dirX);
+    expect(sampled.dirY).toBe(straight.dirY);
+  });
+
+  it('falls back to the straight-line lead when the motion model is disabled', () => {
+    // The designer's motion-model off-switch leaves the aim solve alone.
+    const tracked = { ...enemy(620, 270, 'ghost-chase'), id: 7 };
+    const estimates = new Map([[enemyHazardKey(7), { x: 0, y: -90 }]]);
+    const disabled = engageIntent(tracked, estimates, STRAIGHT);
+    expect(disabled.dirY).toBeCloseTo(-0.40398, 5);
+    expect(disabled.dirX).toBeCloseTo(0.914768, 5);
+  });
+});
+
 describe('engage behaviour — tracker-derived aim velocity (AH-0MWR04X10002VNDG AC1)', () => {
   /** Builds an engage context whose world carries bot-side hazard estimates. */
   function contextWithTracker(

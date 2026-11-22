@@ -737,11 +737,19 @@ const AUTHORED_PROMO_LEVELS = [
     // 44 enemies alive) against the ≥45 s target. The opening wave is thinned
     // (the later waves and the mini-boss cordon are unchanged) so the widest
     // coverage survives the leaner economy.
+    //
+    // Re-thinned for the class-sampled aim solve (AH-0MWR051U6003BDB9): the
+    // bot now leads a curved target along its movement-class trajectory, which
+    // is a real (and intended) change to how it flies the opening melee. On the
+    // previous counts it lost wave 1 at 7.0 s with 37 enemies alive against the
+    // ≥45 s target; the opening wave is thinned again so the catalogue's widest
+    // coverage still yields sustained promo footage. The later waves and the
+    // mini-boss cordon are unchanged.
     waves: [
       firing([
-        group('tank', 'rect', 7, { spacingX: 48, spacingY: 42, startXMin: 140, startXMax: 240 }),
-        group('diver', 'diver', 7, { spacingY: 26 }),
-        group('swarm', 'swarm', 9, { startX: ESCORT_X + 160, spacingX: 24 }),
+        group('tank', 'rect', 5, { spacingX: 48, spacingY: 42, startXMin: 140, startXMax: 240 }),
+        group('diver', 'diver', 5, { spacingY: 26 }),
+        group('swarm', 'swarm', 7, { startX: ESCORT_X + 160, spacingX: 24 }),
       ], { ghosts: true, horde: true }),
       firing([
         group('tank', 'rect', 10, { spacingX: 46, spacingY: 40, startXMin: 130, startXMax: 230 }),
