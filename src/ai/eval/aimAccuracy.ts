@@ -200,12 +200,86 @@ export interface AimAccuracyReport {
   readonly pooled: AimAccuracyTally;
 }
 
-/** Precision of the reported rates/distances: 4 decimal places. */
+/**
+ * The minimal shape {@link formatAimAccuracyComparison} reads. A structural
+ * subset of {@link AimAccuracyReport} so both the measured report and the
+ * JSON-imported baseline fixture (whose `classes` is a plain `string[]`) are
+ * accepted without a cast.
+ */
+export interface AimAccuracyComparisonRow extends AimAccuracyTally {
+  readonly movementClass: string;
+}
+
+/** The comparison inputs: per-class rows plus the pooled tally. */
+export interface AimAccuracyComparison {
+  readonly perClass: readonly AimAccuracyComparisonRow[];
+  readonly pooled: AimAccuracyTally;
+}
+
+/** Precision of the reported rates/distances: 4 decimal places.
+ */
 const REPORT_PRECISION = 1e4;
 
 /** Rounds a reported metric to the documented precision. */
 function roundReported(value: number): number {
   return Math.round(value * REPORT_PRECISION) / REPORT_PRECISION;
+}
+
+/**
+ * Formats a before/after accuracy comparison table for the report
+ * (AH-0MWR05EZE0044Z01 · AC5).
+ *
+ * Printed on assertion failure so triage is immediate: the caller sees the
+ * per-class breakdown alongside the pooled verdict, with the **current** solve
+ * and the **pinned baseline** side by side in each cell (`current/baseline`).
+ * The table names every class so a chaser/diver/patroller regression is
+ * visible even when the pooled total improves.
+ *
+ * @param current  — the newly measured report (the "after").
+ * @param baseline — the pinned baseline report (the "before").
+ */
+export function formatAimAccuracyComparison(
+  current: AimAccuracyComparison,
+  baseline: AimAccuracyComparison,
+): string {
+  const columns = [
+    'movement class',
+    'shotsFired',
+    'shotsHit',
+    'hitRate',
+    'meanMissDistance',
+  ];
+  const header = [
+    `| ${columns.join(' | ')} |`,
+    `|${columns.map((c) => '-'.repeat(c.length + 2)).join('|')}|`,
+  ];
+  const row = (
+    label: string,
+    c: { shotsFired: number; shotsHit: number; hitRate: number; meanMissDistance: number },
+    b: { shotsFired: number; shotsHit: number; hitRate: number; meanMissDistance: number },
+    bold: boolean,
+  ): string => {
+    const cells = [
+      `${label}`,
+      `${c.shotsFired}/${b.shotsFired}`,
+      `${c.shotsHit}/${b.shotsHit}`,
+      `${c.hitRate}/${b.hitRate}`,
+      `${c.meanMissDistance}/${b.meanMissDistance}`,
+    ].map((cell) => (bold ? `**${cell}**` : cell));
+    return `| ${cells.join(' | ')} |`;
+  };
+
+  const body: string[] = current.perClass.map((c, i) =>
+    row(c.movementClass, c, baseline.perClass[i], false),
+  );
+  body.push(row('pooled', current.pooled, baseline.pooled, true));
+
+  return [
+    '| accuracy (current/baseline) |',
+    '',
+    ...header,
+    ...body,
+  ].join('\n');
 }
 
 /**
@@ -246,6 +320,14 @@ export function runAimAccuracyScenario(
      * from (AH-0MWR04X10002VNDG); omit it to measure the shipped defaults.
      */
     readonly aimLeadFromTracker?: boolean;
+    /**
+     * Overrides the governor's adaptive `aimErrorRad` for the measured solve
+     * (AH-0MWR05EZE0044Z01 · AC5). The regression proof measures the **solve**,
+     * not the fallibility knob, so it passes `0`; omit it to leave the shipped
+     * fallibility live. The pre-change baseline control always forces `0`
+     * because it predates the adaptive error, independent of this option.
+     */
+    readonly aimErrorRad?: number;
   } = {},
 ): ArenaRunResult {
   const archetype = AIM_ACCURACY_ARCHETYPES[movementClass];
@@ -296,9 +378,17 @@ export function runAimAccuracyScenario(
       // The pinned pre-change baseline predates the adaptive aim error
       // (AH-0MWR057Q8004PBOD), so the control run must disable it to reproduce
       // the recorded fixture byte-for-byte. The shipped-default report leaves
-      // it live, measuring today's solve.
-      ...(options.aimLeadFromTracker === false
-        ? { humanInput: { aimErrorRad: 0 } }
+      // it live, measuring today's solve. An explicit `aimErrorRad` overrides
+      // the shipped fallibility for the measured solve (the regression proof
+      // passes `0`, measuring the solve rather than the error knob).
+      ...(options.aimLeadFromTracker === false || options.aimErrorRad !== undefined
+        ? {
+            humanInput: {
+              aimErrorRad: options.aimLeadFromTracker === false
+                ? 0
+                : (options.aimErrorRad as number),
+            },
+          }
         : {}),
     });
   } finally {
@@ -316,10 +406,14 @@ export function runAimAccuracyScenario(
  *
  * @param options — `aimLeadFromTracker: false` measures the pre-change solve
  *   the pinned baseline was recorded from; omit it to measure the shipped
- *   defaults.
+ *   defaults. `aimErrorRad` overrides the governor's adaptive aim error for
+ *   the measured solve (pass `0` to measure the solve, not the fallibility).
  */
 export function runAimAccuracy(
-  options: { readonly aimLeadFromTracker?: boolean } = {},
+  options: {
+    readonly aimLeadFromTracker?: boolean;
+    readonly aimErrorRad?: number;
+  } = {},
 ): AimAccuracyReport {
   const shotsByClass = new Map<EnemyMovementClass, ArenaAimShot[]>();
   const allShots: ArenaAimShot[] = [];

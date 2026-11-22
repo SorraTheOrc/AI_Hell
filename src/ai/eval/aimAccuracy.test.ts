@@ -42,6 +42,7 @@ import {
   AIM_ACCURACY_DT,
   AIM_ACCURACY_SEEDS,
   AIM_ACCURACY_TICKS,
+  formatAimAccuracyComparison,
   runAimAccuracy,
   runAimAccuracyScenario,
   tallyAimShots,
@@ -63,13 +64,25 @@ let report: AimAccuracyReport;
 /** The measured **pre-change** solve (tracker lead off), once per file. */
 let baselineReport: AimAccuracyReport;
 
+/**
+ * The measured **current solve with the fallibility knob off**
+ * (`aimErrorRad = 0`), once per file. AC5 measures the solve, not the
+ * adaptive aim error, so the regression proof compares this report against
+ * the pinned baseline (AH-0MWR05EZE0044Z01).
+ */
+let solvedReport: AimAccuracyReport;
+
 beforeAll(() => {
   report = runAimAccuracy();
   baselineReport = runAimAccuracy({ aimLeadFromTracker: false });
+  solvedReport = runAimAccuracy({ aimErrorRad: 0 });
   // The report is the evidence, not just the failures: printed straight to
   // stdout because the quiet suite does not surface captured `console` output.
   process.stdout.write(
     `\naim-accuracy pre-change baseline\n${JSON.stringify(report, null, 2)}\n`,
+  );
+  process.stdout.write(
+    `\naim-accuracy current solve (aimErrorRad = 0)\n${JSON.stringify(solvedReport, null, 2)}\n`,
   );
 }, 900_000);
 
@@ -184,6 +197,59 @@ describe('aim-accuracy harness (AH-0MWR04UJ5008H5WQ)', () => {
       documented(row, `| ${row.movementClass}`);
     }
     documented(pinnedBaseline.pooled, '| **pooled**');
+  });
+});
+
+describe('aim-accuracy regression proof (AH-0MWR05EZE0044Z01)', () => {
+  /**
+   * The parent AC5 proof: the shipped solve, measured with the adaptive aim
+   * error switched off (`aimErrorRad = 0`) so the comparison is of the solve
+   * rather than of the fallibility knob, must beat the pinned pre-change
+   * baseline — a **strictly higher** pooled hit rate and a **strictly lower**
+   * pooled mean miss distance. The comparison table is printed on failure so a
+   * per-class regression is immediately visible even when the pooled total
+   * improves.
+   */
+  it('beats the pinned pre-change baseline, pooled, with aimErrorRad = 0', () => {
+    const table = formatAimAccuracyComparison(solvedReport, pinnedBaseline);
+
+    // Pooled hit rate: strictly higher than the recorded pre-change baseline.
+    expect(
+      solvedReport.pooled.hitRate,
+      `pooled hit rate must strictly improve on the baseline\n${table}`,
+    ).toBeGreaterThan(pinnedBaseline.pooled.hitRate);
+
+    // Pooled mean miss distance: strictly lower than the pre-change baseline.
+    expect(
+      solvedReport.pooled.meanMissDistance,
+      `pooled mean miss distance must strictly improve (fall) over the baseline\n${table}`,
+    ).toBeLessThan(pinnedBaseline.pooled.meanMissDistance);
+  });
+
+  it('measures the same matrix as the pinned baseline', () => {
+    // A fair comparison: identical seeds, classes, tick budget and step.
+    expect(solvedReport.seeds).toEqual(pinnedBaseline.seeds);
+    expect(solvedReport.classes).toEqual(pinnedBaseline.classes);
+    expect(solvedReport.ticks).toBe(pinnedBaseline.ticks);
+    expect(solvedReport.dt).toBe(pinnedBaseline.dt);
+  });
+
+  it('formats a per-class before/after comparison table', () => {
+    // The failure message helper names every class and the pooled row, with the
+    // baseline alongside the current solve, so triage is one read.
+    const table = formatAimAccuracyComparison(solvedReport, pinnedBaseline);
+    for (const row of AIM_ACCURACY_CLASSES) {
+      expect(table).toContain(`| ${row}`);
+    }
+    expect(table).toContain('| **pooled**');
+    // Each per-class row carries the current/baseline pair for fired/hit.
+    const chaser = solvedReport.perClass.find((r) => r.movementClass === 'chaser');
+    const chaserBase = pinnedBaseline.perClass.find(
+      (r) => r.movementClass === 'chaser',
+    );
+    expect(table).toContain(
+      `${chaser?.shotsFired}/${chaserBase?.shotsFired}`,
+    );
   });
 });
 
