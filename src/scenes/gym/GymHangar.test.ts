@@ -466,3 +466,99 @@ describe('GymHangar — the special-mission reward (AH-0MWF0CXR4004C9CN)', () =>
     expect(scene.getPayload()).toEqual(payload);
   });
 });
+
+/**
+ * The apply-suggested-buildout row the auto-loadout epic adds to the shared
+ * model (AH-0MWOWDWAG007MBY1, parent AH-0MWOROJYT004WPSD).
+ *
+ * RED until the model slice (AH-0MWOWEF3Q008BO5J) publishes the row and the
+ * screen slice (AH-0MWOWEPO2004B0MR) renders it. The gym must render the
+ * **identical** model read-only: the row is present, carries the same label,
+ * activates nothing and is absent from the gym's interactive focus order.
+ * The new export is loaded through a non-literal specifier so `tsc --noEmit`
+ * stays clean while `BUILDOUT_ROW_KEY` does not exist yet.
+ */
+interface HangarBuildoutRowRenderContract {
+  readonly key: string;
+  readonly label: string;
+  readonly actionable: boolean;
+}
+
+interface HangarModelWithBuildout {
+  readonly suggestedLoadout: { readonly startingWeapons: readonly string[] };
+  readonly buildoutRow: HangarBuildoutRowRenderContract;
+}
+
+/** Non-literal specifier: TypeScript never resolves the absent export. */
+const HANGAR_SCREEN_MODULE = '../hangarWar/hangarScreen';
+
+interface HangarScreenBuildoutExport {
+  readonly BUILDOUT_ROW_KEY?: string;
+}
+
+describe('GymHangar — apply suggested buildout row is rendered read-only (AH-0MWOWDWAG007MBY1)', () => {
+  let booted: BootedGame | null = null;
+
+  async function bootHangar(data?: object): Promise<GymHangar> {
+    booted = await reuse.boot([GymHangar]);
+    booted.game.scene.start(GYM_HANGAR_SCENE_KEY, data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene(GYM_HANGAR_SCENE_KEY) as GymHangar;
+  }
+
+  /** The authored ring 1 with every catalogue kind owned and `spread` picked. */
+  function authoredPayload(): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3', 'hull-4'];
+    payload.hangar.unlockedWeapons = [
+      'spread',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ];
+    payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+    payload.hangar.activeHull = 'hull-1';
+    payload.hangar.activeLoadout = {
+      startingWeapons: ['spread'],
+      modifiers: [],
+    };
+    payload.hangar.bankedMinerals = 0;
+    payload.hangar.bankedCores = 0;
+    return payload;
+  }
+
+  it('renders the identical model with the buildout row present but non-actionable', async () => {
+    const { BUILDOUT_ROW_KEY } = (await import(
+      HANGAR_SCREEN_MODULE
+    )) as HangarScreenBuildoutExport;
+    expect(typeof BUILDOUT_ROW_KEY).toBe('string');
+
+    const payload = authoredPayload();
+    const scene = await bootHangar({ payload });
+
+    // One shared model: the gym is the game's model, buildout row included.
+    expect(scene.getModel()).toEqual(buildHangarScreenModel(payload));
+    const model = scene.getModel() as unknown as HangarModelWithBuildout;
+    expect(model.suggestedLoadout.startingWeapons.length).toBeGreaterThan(0);
+    expect(model.buildoutRow.key).toBe(BUILDOUT_ROW_KEY);
+
+    const rendered = scene
+      .getRows()
+      .find((row) => row.key === BUILDOUT_ROW_KEY);
+    expect(rendered, 'buildout row not rendered').toBeDefined();
+    expect(rendered!.label).toBe(model.buildoutRow.label);
+    expect(rendered!.label).toContain('APPLY SUGGESTED BUILDOUT');
+
+    // Read-only: the gym can never apply the suggestion.
+    expect(rendered!.actionable).toBe(false);
+    expect(rendered!.text.input).toBeNull();
+    // The row is absent from the gym's interactive focus order: a read-only
+    // render makes no row focusable, so the key can never be reached.
+    const focusableKeys = scene
+      .getRows()
+      .filter((row) => row.actionable)
+      .map((row) => row.key);
+    expect(focusableKeys).not.toContain(BUILDOUT_ROW_KEY);
+  });
+});
