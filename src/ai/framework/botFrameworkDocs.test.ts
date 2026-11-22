@@ -131,4 +131,37 @@ describe('Bot framework is documented (AH-0MUY08WKB002N1N6)', () => {
     expect(doc).toMatch(/disabled-path guarantee/i);
     expect(doc).toMatch(/bit-for-bit/);
   });
+
+  it('documents the aim solve, the adaptive aim-error knobs and the accuracy harness (AH-0MWR05J320041SAA · AC7)', () => {
+    // Section 9.8 must describe the shipped solve: the tracked-estimate
+    // precedence, the class-sampled intercept and the adaptive aim error.
+    expect(doc).toContain('### 9.8 Rotation skills (AH-0MV1DUSM2005HL98)');
+    for (const symbol of [
+      'interceptPoint',
+      'aimLeadFromTracker',
+      'advanceHazardMotion',
+      'aimErrorRad',
+      'aimErrorDecay',
+      'aimErrorResetDistance',
+      'aimErrorRad = 0',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+    // The tracked → snapshot → current-position precedence is named.
+    expect(doc).toMatch(/bot-side tracker/i);
+    expect(doc).toMatch(/repositioning move/i);
+    // The accuracy harness is documented with its location, seeds and metrics.
+    for (const symbol of [
+      'src/ai/eval/aimAccuracy.test.ts',
+      'src/ai/eval/aimAccuracy.baseline.json',
+      'aimErrorRad = 0',
+      'mean miss distance',
+      'aimLeadFromTracker: false',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+    // The recorded before/after pooled numbers are in the document.
+    expect(doc).toContain('0.5624');
+    expect(doc).toContain('0.5099');
+  });
 });

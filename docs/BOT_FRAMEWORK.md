@@ -579,22 +579,46 @@ bot-tuning gym fly identically.
   rotation constant is hard-coded in the bot layer. With `angularVelocity = 0`
   the predicted stop equals the current heading and the result is
   byte-for-byte the legacy release.
-- **Lead prediction (AC2).** `engage` solves the **iterated intercept** with the
-  pure `interceptPoint` helper: the target advances over the estimated
-  `aimLeadAlignSeconds` plus the projectile's time of flight
-  (`assumedBulletSpeed`), refined for `aimLeadIterations` passes. The lead
-  velocity is resolved with an explicit precedence — the **bot-side tracker's**
-  estimate for the target's stable id (`BotWorld.hazards[].vx/vy`, the same
-  estimate the hazard predictor consumes), then the snapshot's optional
-  `vx`/`vy` (sourced from entities that expose a physics body — `Asteroid`,
-  `LaneTraffic`), then the current position
-  (AH-0MWR04X10002VNDG · AC1). The first step is what leads scripted
-  formation/`chaser`/`diver`/`patroller` enemies, whose motion the snapshot
-  seam does not carry. A zero/absent estimate falls through the list, so a
-  cold start reduces exactly to the current position. The source is held at
-  the pre-change snapshot fallback in the avoidance sweep and in the pinned
-  aim-accuracy baseline (`aimLeadFromTracker: false`), so neither comparison
-  is moved by an aim feature.
+- **Lead prediction (AC2; AH-0MWR04X10002VNDG, AH-0MWR04ZDU0005O8J,
+  AH-0MWR051U6003BDB9).** `engage` solves the **iterated intercept**: the
+  target advances over the ship's estimated time-to-align plus the shot's time
+  of flight, refined for `aimLeadIterations` passes.
+  - **Velocity source (tracked → snapshot → current).** The lead velocity is
+    resolved with an explicit precedence — the **bot-side tracker's** estimate
+    for the target's stable id (`BotWorld.hazards[].vx/vy`, the same estimate
+    the hazard predictor consumes), then the snapshot's optional `vx`/`vy`
+    (sourced from entities that expose a physics body — `Asteroid`,
+    `LaneTraffic`), then the current position (AH-0MWR04X10002VNDG · AC1). The
+    first step is what leads scripted formation/`chaser`/`diver`/`patroller`
+    enemies, whose motion the snapshot seam does not carry. A zero/absent
+    estimate falls through the list, so a cold start reduces exactly to the
+    current position. The source is held at the pre-change snapshot fallback
+    in the avoidance sweep and in the pinned aim-accuracy baseline
+    (`aimLeadFromTracker: false`), so neither comparison is moved by an aim
+    feature.
+  - **Live shot speed (AC2).** The time-of-flight speed is the **ship's own**
+    travelling-shot speed (`resolveShotSpeed`: explicit tuning override > live
+    ship speed > the compiled `shotSpeed` default, `PLAYER_BULLET_SPEED` =
+    **350 px/s**). It replaces the enemy-bullet tell constant
+    (`assumedBulletSpeed`, 200 px/s) that was reused here before this feature;
+    `assumedBulletSpeed` now models **enemy fire tells only** and is never the
+    ship's time of flight.
+  - **Live turn time (AC2).** The alignment term is derived from the ship's
+    live rotation model (`resolveAimAlignSeconds` → `deriveTurnAlignSeconds`,
+    acceleration/deceleration + `angularStopDisplacement`), with the fixed
+    `aimLeadAlignSeconds` retained only as the no-config fallback.
+  - **Class-sampled intercept (AC3).** When the tracked estimate names a real
+    movement class, the lead advances the target along its **sampled class
+    trajectory** (`advanceHazardMotion`, the same definition the hazard
+    predictor uses in
+    [section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)) and
+    re-estimates time of flight each iteration; a `roamer`, an unknown/absent
+    class, a disabled motion model or a stationary target falls back to the
+    pure `interceptPoint` constant-velocity solve **bit-for-bit**. The reusable
+    sampler scratch lives on `aimMotion`, so the per-tick solve allocates none.
+  - **Seam-aware (torus).** Both the lead solve and the route to the aim point
+    run on the torus (AH-0MVT2VZR7000GS15), so a target whose shortest path
+    crosses an edge is led and aimed at through that edge.
 - **`skill` aim error (AC3).** A single normalised `skill` tunable in
   `BOT_HUMAN_INPUT_TUNABLES` (default **1.0**) perturbs the committed aim
   bearing by a seeded error whose bound is
@@ -635,6 +659,27 @@ bot-tuning gym fly identically.
   competent brain + governor + shipped `AsteroidsModel` into a deterministic
   60 Hz run that tracks an off-axis moving enemy with a settled bearing error
   ≤ **0.05 rad**, and zeroes the live adaptive error in under repeated hits.
+- **Accuracy harness (AH-0MWR05EZE0044Z01 · AC5).** The proof that the solve
+  is more accurate is a number, not an opinion:
+  `src/ai/eval/aimAccuracy.test.ts` measures the **shipped** aim path in the
+  headless arena over a fixed seed list (`AIM_ACCURACY_SEEDS` = `[1, 7, 42]`),
+  `AIM_ACCURACY_TICKS` = 1 800 ticks at `AIM_ACCURACY_DT` = 1/60 s, one
+  scenario per movement class (`chaser` / `diver` / `patroller` / `formation` /
+  `roamer`). Each shot is graded by `tallyAimShots`: **hit rate** =
+  `shotsHit / shotsFired` and **mean miss distance** = the mean of
+  `ArenaAimShot.missDistance` over shots that did not connect with the aimed
+  target. The current solve is measured with `aimErrorRad = 0`
+  (`runAimAccuracy({ aimErrorRad: 0 })`) so the comparison is of the solve, not
+  of the fallibility knob; the pre-change baseline is reproduced with
+  `aimLeadFromTracker: false` and pinned in `src/ai/eval/aimAccuracy.baseline.json`.
+  The regression test `beats the pinned pre-change baseline, pooled, with
+  aimErrorRad = 0` asserts the **pooled hit rate** is strictly higher and the
+  **pooled mean miss distance** strictly lower, printing the per-class
+  before/after table (`formatAimAccuracyComparison`) on failure. Recorded
+  pooled reached **0.5624 vs 0.5099** hit rate and **22.3498 vs 23.6664** px
+  mean miss distance (current vs baseline). The fixture is a recorded
+  observation: a future deliberate tuning change must re-baseline on purpose,
+  never silently re-snap it to pass.
 
 ### 9.9 Live thruster config carried in the snapshot (AH-0MV85WFWD0029DL7)
 
@@ -1104,6 +1149,25 @@ and adjust its parameters in real time.
   live ship config; left at the default it is a fallback and the ship's live
   config wins (the same precedence the shipped demo resolves —
   [section 9.4](#94-single-sourced-tuning-ac5)).
+- **Adaptive aim-error knobs (AH-0MWR057Q8004PBOD · AH-0MWR05J320041SAA).**
+  Three live sliders drive the learning aim error described in
+  [section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98):
+  - **`aimErrorRad`** (default **0.02** rad) — the live aim-error magnitude.
+    It starts at this value and only perturbs intents flagged as **aim**
+    (never survival/evade/travel). At **`0`** the governor consumes no draw and
+    the committed decision is byte-for-byte the pre-adaptive aim.
+  - **`aimErrorDecay`** (default **0.5**) — the multiplier applied to the live
+    error on every confirmed hit on the engaged target (`notifyAimHit` seam),
+    floored at **0**, so a bot that keeps connecting zeroes in. At **`1`** the
+    error never decays (a fixed aim error); at **`0`** a single hit removes it.
+  - **`aimErrorResetDistance`** (default **60** px, torus-aware) — the ship
+    travel, measured from its position at the last hit, after which the error
+    is restored to `aimErrorRad` (a **repositioning move**). Changing the
+    engagement target also re-arms it. At **`0`** any movement re-arms
+    immediately (the error never stays reduced).
+  All three are ordinary `BOT_TUNING_NUMERIC_FIELDS` sliders (live-rebuild,
+  persisted in `src/data/bot-tuning.json`), and the boss — which has no
+  bot-side id in the hit seam — keeps the fixed `skill` error only.
 - **Per-parameter tooltips.** Every slider and toggle carries a plain-English
   `description` in its `BotTuningFieldSpec`/`BotTuningToggleSpec`
   (`src/ai/tuningFields.ts`), authored in lockstep with the tunables' JSDoc.
