@@ -296,6 +296,9 @@ describe('hangar screen model (pure)', () => {
       'hull:hull-2',
       'weapon:spread',
       'save-build',
+      // The apply-suggested-buildout row sits directly above the deployment
+      // it feeds (AH-0MWOWEF3Q008BO5J).
+      'buildout',
       'deploy',
       'map',
       'restart',
@@ -320,7 +323,13 @@ describe('hangar screen model (pure)', () => {
     const model = buildHangarScreenModel(UNARMED_PAYLOAD);
     // A fleet can always deploy, even with nothing affordable, and the map is
     // always reachable. The restart row is always actionable too.
-    expect(model.focusOrder).toEqual(['save-build', 'deploy', 'map', 'restart']);
+    expect(model.focusOrder).toEqual([
+      'save-build',
+      'buildout',
+      'deploy',
+      'map',
+      'restart',
+    ]);
     expect(model.deployRow.actionable).toBe(true);
     expect(model.unlockRows.every((row) => !row.actionable)).toBe(true);
     expect(model.modifierOptions).toEqual([]);
@@ -362,6 +371,7 @@ describe('hangar screen model (pure)', () => {
       'weapon:spread',
       'modifier:hardened_plating',
       'save-build',
+      'buildout',
       'deploy',
       'map',
       'restart',
@@ -690,8 +700,14 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
     const scene = await bootHangarForRender(payload);
     const view = renderHangarScreen(scene, model);
     try {
+      // The fixed bottom-row block (buildout/deploy/map/restart) is excluded:
+      // those rows are pinned by their own geometry, not the column layout.
       const regular = view.rows.filter(
-        (row) => row.key !== 'deploy' && row.key !== 'map' && row.key !== 'restart',
+        (row) =>
+          row.key !== 'deploy'
+          && row.key !== 'map'
+          && row.key !== 'restart'
+          && row.key !== 'buildout',
       );
       const lowest = Math.max(...regular.map((row) => row.text.y));
       expect(lowest).toBe(hangarLowestRowY(model));
@@ -1005,6 +1021,7 @@ describe('HangarScene', () => {
       'hull:hull-2',
       'weapon:spread',
       'save-build',
+      'buildout',
       'deploy',
       'map',
       'restart',

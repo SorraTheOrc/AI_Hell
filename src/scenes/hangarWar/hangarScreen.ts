@@ -82,6 +82,10 @@ import {
   type HangarPrice,
 } from '../../data/hangarCatalogue';
 import {
+  selectAutoLoadout,
+  type AutoLoadoutSuggestion,
+} from '../../core/hangarWar/hangarAutoLoadout';
+import {
   applySavedBuild,
   buy,
   canBuy,
@@ -354,6 +358,73 @@ export function buildHangarRestartRow(armed = false): HangarRestartRow {
   };
 }
 
+/**
+ * Row key of the `⚡ APPLY SUGGESTED BUILDOUT` row — the one explicit action
+ * that equips the boss-aware suggestion (parent AH-0MWOROJYT004WPSD).
+ *
+ * Exported as a stable key so the game, the gym and the tests can address the
+ * row without spelling a string literal, exactly as the map/restart rows do.
+ */
+export const BUILDOUT_ROW_KEY = 'buildout';
+
+/**
+ * The `⚡ APPLY SUGGESTED BUILDOUT` row: the player-facing action that equips
+ * the selector's suggestion (`suggestedLoadout`) on demand.
+ *
+ * The row is actionable whenever a suggestion exists — which is always, since
+ * the selector is total — so a hand-picked loadout can be replaced only by a
+ * deliberate activation, never silently by opening the screen
+ * (producer Q1 = B). It sits in the fixed bottom-row block, directly above the
+ * deployment it feeds.
+ */
+export interface HangarBuildoutRow {
+  /** Stable row key ({@link BUILDOUT_ROW_KEY}). */
+  key: string;
+  /** Full row text as rendered (`⚡ APPLY SUGGESTED BUILDOUT — 3 weapons`). */
+  label: string;
+  /** True whenever a suggestion exists (always, for a total selector). */
+  actionable: boolean;
+}
+
+/**
+ * Builds the apply-suggested-buildout row (pure).
+ *
+ * The label states **what** it will equip (the suggested weapon count) and is
+ * paired with a non-colour glyph (`⚡`), so the affordance is readable without
+ * colour (repo CVD policy). The count comes from the one selector result the
+ * model publishes, so the row and the applied buildout can never disagree.
+ *
+ * @param suggestion — the selector's published suggestion.
+ * @returns the row the screen renders and focuses.
+ */
+export function buildHangarBuildoutRow(
+  suggestion: AutoLoadoutSuggestion,
+): HangarBuildoutRow {
+  const count = suggestion.startingWeapons.length;
+  return {
+    key: BUILDOUT_ROW_KEY,
+    label: `⚡ APPLY SUGGESTED BUILDOUT — ${count} weapon${count === 1 ? '' : 's'}`,
+    actionable: true,
+  };
+}
+
+/**
+ * Whether the loadout is at its shipped default — an **empty** starting-weapon
+ * selection (AH-0MWOWEF3Q008BO5J, producer Q1 = B).
+ *
+ * The rule is deliberately the raw persisted list, not `resolveActiveLoadout`
+ * and not "the selector found no strong weapon": a hand-picked loadout whose
+ * weapons are all neutral (or even resisted) is still a deliberate choice and
+ * must never be auto-fitted. A modifier alone does not make a loadout
+ * non-default — only starting weapons count.
+ *
+ * @param payload — the payload whose active loadout is inspected.
+ * @returns true only when `activeLoadout.startingWeapons` is empty.
+ */
+export function isDefaultHangarLoadout(payload: HangarWarPayload): boolean {
+  return payload.hangar.activeLoadout.startingWeapons.length === 0;
+}
+
 /** Row key of the hangar's `SAVE CURRENT BUILD` row. */
 export const SAVE_BUILD_ROW_KEY = 'save-build';
 
@@ -525,6 +596,16 @@ export interface HangarScreenModel {
   modifierOptions: HangarModifierOption[];
   /** The ▶ DEPLOY row (the deployment this loadout launches). */
   deployRow: HangarDeployRow;
+  /**
+   * The boss-aware selector's suggestion for this payload and target
+   * (AH-0MWOWEF3Q008BO5J) — a full replacement derived from ownership, levels
+   * and the target, never from the current loadout. Published separately from
+   * the equipped rows, so a hand-picked loadout is shown unchanged beside the
+   * suggestion until the player explicitly applies it.
+   */
+  suggestedLoadout: AutoLoadoutSuggestion;
+  /** The `⚡ APPLY SUGGESTED BUILDOUT` row (the explicit apply action). */
+  buildoutRow: HangarBuildoutRow;
   /** The `⌗ HEX MAP` navigation row (one click to what the player holds). */
   mapRow: HangarMapRow;
   /** The `⟲ RESTART WAR` reset row (two-step confirm, `bestScore` kept). */
@@ -967,8 +1048,11 @@ export function formatSalvageLine(payload: HangarWarPayload): string {
 /**
  * Builds the complete hangar-screen model (pure).
  *
- * Reading order is the focus order: the unlock tree first, then hulls, then
- * the starting-weapon loadout. Only actionable rows enter the focus order.
+ * Reading order is the focus order: the unlock tree first, then hulls, the
+ * starting-weapon loadout, the modifiers and the saved builds, then the
+ * `⚡ APPLY SUGGESTED BUILDOUT` row, the deployment, the map and the restart
+ * rows. Only actionable rows enter the focus order (the buildout row always
+ * is).
  *
  * @param payload — the payload to present (never mutated).
  * @param catalogue — the tree to present (injectable for tests/fixtures).
@@ -995,6 +1079,11 @@ export function buildHangarScreenModel(
   const unlockRows = buildHangarUnlockRows(payload, catalogue, target);
   const hullOptions = buildHangarHullOptions(payload, catalogue);
   const weaponOptions = buildHangarWeaponOptions(payload, catalogue, target);
+  // The suggestion is fitted against exactly the intel the screen publishes
+  // (`bossIntel`), never a second target resolution, so the row's count and
+  // the deployed loadout agree with the TARGET INTEL block above them.
+  const suggestedLoadout = selectAutoLoadout(payload, bossIntel, catalogue);
+  const buildoutRow = buildHangarBuildoutRow(suggestedLoadout);
   const modifierOptions = buildHangarModifierOptions(payload, catalogue);
   const mapRow = buildHangarMapRow();
   const restartRow = buildHangarRestartRow(options.restartArmed === true);
@@ -1008,6 +1097,10 @@ export function buildHangarScreenModel(
     ...weaponOptions.filter((row) => row.actionable),
     ...modifierOptions.filter((row) => row.actionable),
     ...savedBuildRows.filter((row) => row.actionable),
+    // The apply-suggested-buildout row sits with the loadout it replaces and
+    // immediately before the deployment it feeds, so keyboard reach matches
+    // the screen's reading order (AH-0MWOWEF3Q008BO5J).
+    buildoutRow,
     deployRow,
     // The navigation row follows the primary action, mirroring `HexMapScene`'s
     // convention of placing its own navigation row last in the focus order.
@@ -1025,6 +1118,8 @@ export function buildHangarScreenModel(
     weaponOptions,
     modifierOptions,
     deployRow,
+    suggestedLoadout,
+    buildoutRow,
     mapRow,
     restartRow,
     savedBuildMessage: options.savedBuildMessage ?? null,
@@ -1161,6 +1256,66 @@ export function equipHangarHull(
   const next = clonePayload(payload);
   next.hangar = equipHull(payload.hangar, hullId);
   return { ok: next.hangar.activeHull === hullId, reason: null, payload: next };
+}
+
+/** The result of applying the boss-aware suggestion: a fresh payload.
+ *
+ * `changed` is what the scene branches on: an already-suggested loadout needs
+ * no further `saveHangarWarPayload` write, so re-applying cannot churn the
+ * persisted payload.
+ */
+export interface HangarBuildoutApplyResult {
+  /** Whether the loadout actually changed (false when it already matched). */
+  readonly changed: boolean;
+  /** The selector result that was applied (the model publishes the same one). */
+  readonly suggestion: AutoLoadoutSuggestion;
+  /** The payload after the update (always fresh; the input is untouched). */
+  readonly payload: HangarWarPayload;
+}
+
+/**
+ * Equips the boss-aware suggestion as a full replacement loadout (pure).
+ *
+ * The one updater behind the `⚡ APPLY SUGGESTED BUILDOUT` row: it asks the
+ * shared selector for its result, then writes it through the economy's
+ * `equipLoadout` path — no selection, matchup or ownership rule is re-derived
+ * here, and the equipped list is filtered to owned entries by the economy
+ * exactly as every manual toggle is. Modifiers are carried across untouched
+ * (the suggestion only ever selects starting weapons).
+ *
+ * The selector ignores the current loadout by design (it is a stable fixed
+ * point), so a second apply reports `changed: false` and re-applying cannot
+ * duplicate or oscillate entries. An explicit apply is the **only** path that
+ * replaces a hand-picked loadout; building the model never mutates payload
+ * (producer Q1 = B).
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param catalogue — the tree ownership is resolved against (defaults shipped).
+ * @param target — the target hex's authored lists (the model's `bossIntel`),
+ *   or `null` for an unauthored/unknown target (every weapon neutral).
+ * @returns whether anything changed, the applied suggestion and the fresh
+ *   payload to persist.
+ */
+export function applyAutoLoadout(
+  payload: HangarWarPayload,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  target: MatchupDefinition | null = null,
+): HangarBuildoutApplyResult {
+  const suggestion = selectAutoLoadout(payload, target, catalogue);
+  const current = resolveActiveLoadout(payload.hangar, catalogue).startingWeapons;
+  const next = clonePayload(payload);
+  next.hangar = equipLoadout(payload.hangar, {
+    startingWeapons: [...suggestion.startingWeapons],
+    modifiers: payload.hangar.activeLoadout.modifiers,
+  });
+  const applied = resolveActiveLoadout(next.hangar, catalogue).startingWeapons;
+  return {
+    changed:
+      applied.length !== current.length
+      || applied.some((id, index) => id !== current[index]),
+    suggestion,
+    payload: next,
+  };
 }
 
 /**
@@ -1553,6 +1708,14 @@ export interface HangarScreenHandlers {
   onToggleWeapon(weaponId: string): void;
   /** Toggle an owned permanent modifier on the loadout. */
   onToggleModifier(modifierId: string): void;
+  /**
+   * Equip the suggested buildout (the `⚡ APPLY SUGGESTED BUILDOUT` row).
+   *
+   * Optional so a read-only render — the gym, a preview — can present the row
+   * with the identical label while activating nothing
+   * (AH-0MWOWEF3Q008BO5J). The screen wires it to `applyAutoLoadout`.
+   */
+  onApplyBuildout?(): void;
   /** Launch a deployment at `hexId` (the ▶ DEPLOY row). */
   onDeploy(hexId: string | null): void;
   /** Open the hex map (the `⌗ HEX MAP` row). */
@@ -1778,17 +1941,26 @@ export function hangarLowestRowY(model: HangarScreenModel): number {
 }
 
 /**
- * Y positions of the three bottom rows (bottom of the screen, above the
+ * Y positions of the fixed bottom-row block (bottom of the screen, above the
  * hint line). Exported so a layout assertion can pin the spacing and so no
- * row silently collides when a fourth bottom row is ever added.
+ * row silently collides as the block grows.
  *
- * Reading order on screen is restart → map → deploy, each 22 px apart, with
- * the primary deployment action closest to the hint line
- * (AH-0MW8F7NH1002PQE3).
+ * Reading order on screen is buildout → restart → map → deploy, each 22 px
+ * apart, with the primary deployment action closest to the hint line
+ * (AH-0MW8F7NH1002PQE3; the buildout row joined the block in
+ * AH-0MWOWEF3Q008BO5J).
  */
 export const HANGAR_DEPLOY_ROW_Y = GAME_HEIGHT - 52;
 export const HANGAR_MAP_ROW_Y = GAME_HEIGHT - 74;
 export const HANGAR_RESTART_ROW_Y = GAME_HEIGHT - 96;
+/**
+ * Y of the `⚡ APPLY SUGGESTED BUILDOUT` row — the top slot of the fixed
+ * bottom-row block, above the destructive restart row (AH-0MWOWEF3Q008BO5J).
+ *
+ * Keeping it in the fixed block means the row can never collide with a growing
+ * unlock tree or loadout list; it sits directly above the deployment it feeds.
+ */
+export const HANGAR_BUILDOUT_ROW_Y = GAME_HEIGHT - 118;
 
 /** Scene-level objects created by the renderer (destroyed together). */
 interface RenderedRows {
@@ -2098,6 +2270,21 @@ export function renderHangarScreen(
       action,
     );
   });
+
+  // ── Apply suggested buildout (the loadout action, above DEPLOY) ──
+  // Rendered from the model's published row, so the game and the gym show the
+  // identical label; only the game supplies a handler (AH-0MWOWEF3Q008BO5J).
+  addRow(
+    LEFT_X,
+    HANGAR_BUILDOUT_ROW_Y,
+    model.buildoutRow.key,
+    model.buildoutRow.label,
+    model.buildoutRow.actionable,
+    null,
+    handlers?.onApplyBuildout
+      ? () => handlers.onApplyBuildout!()
+      : undefined,
+  );
 
   // ── Deploy (bottom, the screen's primary action) ─────────────
   addRow(

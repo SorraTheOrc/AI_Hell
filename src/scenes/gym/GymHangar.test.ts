@@ -106,6 +106,7 @@ describe('GymHangar', () => {
       ...shipped.weaponOptions.map((option) => option.key),
       ...shipped.modifierOptions.map((option) => option.key),
       ...shipped.savedBuildRows.map((row) => row.key),
+      shipped.buildoutRow.key,
       shipped.deployRow.key,
       shipped.mapRow.key,
       shipped.restartRow.key,
