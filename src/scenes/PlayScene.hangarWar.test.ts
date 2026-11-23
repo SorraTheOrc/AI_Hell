@@ -660,7 +660,7 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
       : null;
   }
 
-  it.fails(
+  it(
     'AC — a winning deployment hands the capture record to the hex map',
     async () => {
       // The same ring-end setup as the capture test above: `hex-1` is the ring's
@@ -710,7 +710,7 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     30_000,
   );
 
-  it.fails(
+  it(
     'AC — a losing deployment hands the forfeited salvage to the hex map',
     async () => {
       const scene = await bootPlay({ hangarWar: DEPLOYMENT });

@@ -106,6 +106,7 @@ import type {
   HangarWarPayload,
   HangarWarStorage,
 } from '../core/hangarWar/types';
+import type { SortieResultRecord } from '../core/hangarWar/sortieResult';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import { buildLevelUpOption } from '../powerups/choice';
 import {
@@ -1803,6 +1804,105 @@ describe('HexMapScene', () => {
       expect(seams(scene).isResultsVisible?.() ?? false).toBe(false);
       expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
       expect(screenText(scene)).not.toContain('SORTIE RESULTS');
+    });
+  });
+
+  /**
+   * The deployment→map **sortie result** handoff (AH-0MWMGPS9R008SMEG).
+   *
+   * The finished deployment's record is transient launch data: the map holds
+   * it for this landing only, exposes it through a detached-copy seam, and
+   * never persists it, so a later menu/hangar re-entry shows no result. The
+   * dialog presentation itself is a later child (AH-0MWMGPV420013MGB); these
+   * assertions pin the carry, the detached copy and the launch-data-only rule
+   * without depending on it.
+   */
+  describe('sortie result handoff (AH-0MWMGPS9R008SMEG)', () => {
+    /** A winning sortie record carrying the capture cycle's own fields. */
+    function winningRecord(): SortieResultRecord {
+      return {
+        hexId: 'hex-r1-1',
+        won: true,
+        score: 1200,
+        winBonusMinerals: 250,
+        capture: {
+          bankedDelta: { minerals: 120, cores: 1 },
+          grant: null,
+          specialReward: null,
+          contractBonus: null,
+          cachePayout: null,
+          ringSecured: false,
+          ringAdvanced: false,
+        },
+        forfeited: null,
+      };
+    }
+
+    it('holds the carried sortie result and returns a detached copy', async () => {
+      const record = winningRecord();
+      const scene = await bootMap({
+        payload: ringPayload(1),
+        sortieResult: record,
+        storage: null,
+      });
+
+      expect(scene.getSortieResult()).toEqual(record);
+
+      // A detached copy: mutating what a caller reads cannot change the map's
+      // own carried record.
+      const copy = scene.getSortieResult() as unknown as {
+        score: number;
+        capture: { bankedDelta: { minerals: number } } | null;
+      };
+      copy.score = 1;
+      copy.capture!.bankedDelta.minerals = 0;
+      expect(scene.getSortieResult()).toEqual(record);
+    });
+
+    it('carries a defeat landing with the forfeited salvage and no capture', async () => {
+      const scene = await bootMap({
+        payload: ringPayload(1),
+        sortieResult: {
+          hexId: 'hex-r1-3',
+          won: false,
+          score: 42,
+          winBonusMinerals: 0,
+          capture: null,
+          forfeited: { minerals: 30, cores: 2 },
+        },
+        storage: null,
+      });
+
+      expect(scene.getSortieResult()).toEqual({
+        hexId: 'hex-r1-3',
+        won: false,
+        score: 42,
+        winBonusMinerals: 0,
+        capture: null,
+        forfeited: { minerals: 30, cores: 2 },
+      });
+    });
+
+    it('never persists the sortie result, so a re-entry shows none', async () => {
+      // A landing that carries a sortie result…
+      const carried = await bootMap({
+        payload: ringPayload(1),
+        sortieResult: winningRecord(),
+        storage: null,
+      });
+      expect(carried.getSortieResult()).not.toBeNull();
+
+      // …then a later re-entry with no `sortieResult` carries none, because
+      // the record is transient launch data and was never persisted into the
+      // payload.
+      const reentered = await bootMap({
+        payload: ringPayload(1),
+        storage: null,
+      });
+      expect(reentered.getSortieResult()).toBeNull();
+      expect(JSON.stringify(reentered.getPayload())).not.toContain(
+        'sortieResult',
+      );
     });
   });
 

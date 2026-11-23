@@ -83,6 +83,7 @@ import {
   buildHexMapModel,
   type HexMapModel,
 } from '../core/hangarWar/hexIntel';
+import type { SortieResultRecord } from '../core/hangarWar/sortieResult';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import {
   decideMapAction,
@@ -159,6 +160,13 @@ export interface HexMapSceneData {
    */
   reward?: MiniBossWinReward | null;
   /**
+   * The finished deployment's sortie result record (the target hex id plus
+   * the win path's capture fields or the loss path's forfeited salvage).
+   * Transient launch data: never persisted, so a later menu/hangar entry
+   * carries none.
+   */
+  sortieResult?: SortieResultRecord | null;
+  /**
    * Bot-driven attract traversal (AH-0MVUXCBBK004EJIP): the pure
    * `decideMapAction` picks the weakest adjacent hex and deploys, so the demo
    * never stalls on the map.
@@ -209,6 +217,13 @@ export class HexMapScene extends Phaser.Scene {
    */
   private reward: MiniBossWinReward | null = null;
 
+  /**
+   * The sortie result carried by this landing, or `null` when none was
+   * supplied (a plain entry, or after the results dialog has been dismissed).
+   * Transient launch data only: never persisted.
+   */
+  private sortieResult: SortieResultRecord | null = null;
+
   /** The rendered map (rebuilt after every change). */
   private view: HexMapView | null = null;
 
@@ -234,6 +249,7 @@ export class HexMapScene extends Phaser.Scene {
     this.assault = data?.assault ?? null;
     this.winBonusMinerals = data?.winBonusMinerals ?? 0;
     this.reward = data?.reward ?? null;
+    this.sortieResult = data?.sortieResult ?? null;
     this.demo = data?.demo === true;
     this.demoDwellMs = data?.demoDwellMs;
     const injected = data?.payload;
@@ -262,6 +278,17 @@ export class HexMapScene extends Phaser.Scene {
       return;
     }
     if (this.demo) this.scheduleDemoAdvance();
+  }
+
+  /**
+   * Returns a detached copy of the carried sortie result, or `null` when none
+   * was supplied (a plain menu/hangar entry). Never returns the live internal
+   * reference.
+   */
+  getSortieResult(): SortieResultRecord | null {
+    return this.sortieResult
+      ? (JSON.parse(JSON.stringify(this.sortieResult)) as SortieResultRecord)
+      : null;
   }
 
   /** Loads the stored payload, or a fresh default war when there is none. */

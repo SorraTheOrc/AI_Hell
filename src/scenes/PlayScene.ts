@@ -195,6 +195,7 @@ import {
   runFrontierTick,
   type FrontierTickResult,
 } from '../core/hangarWar/hexDefence';
+import type { SortieResultRecord } from '../core/hangarWar/sortieResult';
 import type { HangarWarPayload } from '../core/hangarWar/types';
 import { HEX_MAP_SCENE_KEY } from './HexMapScene';
 import {
@@ -5850,6 +5851,22 @@ export class PlayScene extends CombatScene<
       // assault figure is re-derived on the map. `null` for a mid-ring capture
       // or the rush line (no assault fired).
       const assault = this.lastCapture?.assault ?? null;
+      // The compact sortie result the map carries
+      // (AH-0MWMGPS9R008SMEG, parent AH-0MWMFGXD6005WTMN). On a victory it
+      // carries the capture cycle's **own** `HexCaptureResult` (never a
+      // hand-copied subset of its reward fields, so a reward kind added to the
+      // capture cycle reaches the map without a second copy edit); on a defeat
+      // it carries the `forfeited` salvage `resolveDeploymentDefeat` settled
+      // at the top of `_finishRun`. Transient launch data only — never
+      // persisted, so a later menu/hangar re-entry shows no result.
+      const sortieResult: SortieResultRecord = {
+        hexId: this.hangarWarDeployment.hexId,
+        won,
+        score: this.gameState.score,
+        winBonusMinerals: won ? this.winBonusBanked : 0,
+        capture: won ? this.lastCapture : null,
+        forfeited: won ? null : this.forfeitedSalvage,
+      };
       this.scene.start(HEX_MAP_SCENE_KEY, {
         payload: this._hangarWarPayload(),
         record: tick?.record,
@@ -5857,6 +5874,7 @@ export class PlayScene extends CombatScene<
         score: this.gameState.score,
         reward,
         assault,
+        sortieResult,
         // The bonus is read from the win resolution's own record — what it
         // actually added to the hangar balance — never a constant, so the map
         // can never announce a reward that was not banked
