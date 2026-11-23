@@ -386,30 +386,39 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     }
   });
 
-  it('P5 boost yields the same speed/fire-rate outcome in the game and a gym', async () => {    const { play, gym } = await bootBoth();
+  it('P5 boost yields the same fire-rate outcome and leaves movement identical in the game and a gym', async () => {
+    const { play, gym } = await bootBoth();
+
+    const playPlayer = play.getPlayer()!;
+    const gymPlayer = gym.getPlayer()!;
+    // Movement baselines before the boost (movement must never change).
+    const playBase = playPlayer.getMovementConfig();
+    const gymBase = gymPlayer.getMovementConfig();
+
     play.getEffectsRegistry().applyCollect('speed_boost');
     gym.getEffectsRegistry().applyCollect('speed_boost');
 
     play.tick(0.5);
     gym.tick(0.5);
 
-    const playPlayer = play.getPlayer()!;
-    const gymPlayer = gym.getPlayer()!;
-    // The shared step reads the live multipliers from each scene's own
-    // effects registry; the Speed Boost outcome must be identical.
+    // Speed Boost is weapons-only (AH-0MWLU8A7P001O391): both scenes fire at
+    // 1.5× while the ship movement stays exactly at the pre-boost values.
+    expect(playPlayer.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
+    expect(gymPlayer.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
     expect(playPlayer.getFireRateMultiplier()).toBeCloseTo(
       gymPlayer.getFireRateMultiplier(),
       10,
     );
-    expect(playPlayer.getMovementConfig().thrust).toBeCloseTo(
-      gymPlayer.getMovementConfig().thrust,
-      10,
-    );
+    expect(playPlayer.getMovementConfig().thrust).toBeCloseTo(playBase.thrust, 10);
+    expect(gymPlayer.getMovementConfig().thrust).toBeCloseTo(gymBase.thrust, 10);
     expect(playPlayer.getMovementConfig().maxSpeed).toBeCloseTo(
-      gymPlayer.getMovementConfig().maxSpeed,
+      playBase.maxSpeed,
       10,
     );
-    expect(playPlayer.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
+    expect(gymPlayer.getMovementConfig().maxSpeed).toBeCloseTo(
+      gymBase.maxSpeed,
+      10,
+    );
   });
 
   it('a field pickup advances the single player store identically in the game and a gym (AC5)', async () => {
@@ -425,8 +434,8 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
 
     expect(playPlayer.getPowerUpLevel('speed_boost')).toBe(1);
     expect(gymPlayer.getPowerUpLevel('speed_boost')).toBe(1);
-    expect(play.getEffectsRegistry().speedMultiplier()).toBeCloseTo(
-      gym.getEffectsRegistry().speedMultiplier(),
+    expect(play.getEffectsRegistry().fireRateMultiplier()).toBeCloseTo(
+      gym.getEffectsRegistry().fireRateMultiplier(),
       10,
     );
   });

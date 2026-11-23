@@ -972,9 +972,9 @@ export class CombatCoreScene<
     // Advance timed-weapon countdowns before auto-fire so an expired
     // weapon stops firing this frame.
     player.tickWeaponTimers(dt * 1000);
-    // Speed Boost live boost: scale thrust/max-speed and fire rate each frame.
+    // Speed Boost live boost: a weapons-only fire-rate boost. Ship movement
+    // is untouched, so the movement config is never rescaled (AC1).
     const registry = this.getEffectsRegistry();
-    player.setSpeedMultiplier(registry.speedMultiplier());
     player.setFireRateMultiplier(registry.fireRateMultiplier());
     const input = this._readPlayerInput();
     if (input) player.setInput(input);

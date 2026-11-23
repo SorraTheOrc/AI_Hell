@@ -33,7 +33,7 @@ describe('EffectsRegistry permanent effects', () => {
     registry.applyCollect('speed_boost', true);
     registry.tick(1000);
     expect(registry.isActive('speed_boost')).toBe(true);
-    expect(registry.speedMultiplier()).toBe(1.5);
+    expect(registry.fireRateMultiplier()).toBe(1.5);
   });
 
   it('a normal weapon drop expires', () => {

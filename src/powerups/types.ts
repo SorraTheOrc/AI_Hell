@@ -7,7 +7,7 @@
  * AH-0MV14SO0G0095IJ4), which records each concept's source game, adaptation,
  * catalogue seam and gym.
  *
- * - **Speed Boost** — +50% movement speed and +50% rate of fire for 10 s (timed)
+ * - **Speed Boost** — +50% rate of fire for 10 s (timed, weapons-only)
  * - **Extra Life** — +1 life immediately (start 3, cap 5)
  * - **Magnet** — attracts nearby drops toward the ship; a 15 s
  *   refreshing field pickup or a permanent stacking upgrade (cap 5)
@@ -371,7 +371,7 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   speed_boost: {
     id: 'speed_boost',
     name: 'Speed Boost',
-    description: '+50% movement speed and rate of fire.',
+    description: '+50% rate of fire (weapons only).',
     duration: 10,
   },
   phase_shift: {

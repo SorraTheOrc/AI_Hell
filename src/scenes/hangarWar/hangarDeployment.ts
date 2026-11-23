@@ -543,10 +543,11 @@ export interface HangarWarDeploymentSeams {
 /**
  * Scales the shared ship config by the deployment hull's speed multiplier.
  *
- * The hull's run stat is applied to the **base** tuning the shared speed-boost
- * seam multiplies about (`Player.setSpeedMultiplier` composes on top of it
- * every frame from the effects registry), so a slower hull stays slower with
- * and without a Speed Boost instead of having its hull stat overwritten.
+ * The hull's run stat is applied to the **base** tuning the ship flies with.
+ * Because Speed Boost is weapons-only and no longer scales movement
+ * (AH-0MWLU8A7P001O391), the hull stat is the ship's movement tuning for the
+ * whole run: a slower hull stays slower regardless of any active power-up
+ * instead of having its hull stat overwritten.
  *
  * The arithmetic itself is the shared {@link scaleShipConfigForHull} helper, so
  * the headless ring-timing harness applies a hull exactly as a shipped

@@ -936,7 +936,7 @@ describe('CombatCoreScene — shared base class', () => {
     expect(scene.getPlayerBullets()).toEqual([]);
   });
 
-  it('AC1 — _tickPlayer applies the live P5 multipliers and advances physics from dt', async () => {
+  it('AC1 — _tickPlayer applies the live P5 fire-rate (movement untouched) and advances physics from dt', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });
     const baseMaxSpeed = player.getMovementConfig().maxSpeed;
@@ -946,12 +946,10 @@ describe('CombatCoreScene — shared base class', () => {
     scene.runTickPlayer(0.5);
     scene.pressRight(false);
 
-    // Speed Boost is 1.5× speed and fire rate, applied live by the shared step.
+    // Speed Boost is a weapons-only 1.5× fire-rate boost applied live by the
+    // shared step; ship movement never scales (AH-0MWLU8A7P001O391 AC1/AC2).
     expect(player.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
-    expect(player.getMovementConfig().maxSpeed).toBeCloseTo(
-      baseMaxSpeed * 1.5,
-      5,
-    );
+    expect(player.getMovementConfig().maxSpeed).toBeCloseTo(baseMaxSpeed, 5);
     // Physics advanced from the supplied dt and auto-fire produced a volley.
     expect(player.x).toBeGreaterThan(beforeX);
     expect(scene.getPlayerBullets().length).toBeGreaterThan(0);

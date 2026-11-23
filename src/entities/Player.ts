@@ -293,13 +293,12 @@ export class Player extends Phaser.GameObjects.Graphics {
   private _config: PlayerMovementConfig;
 
   /**
-   * Nominal movement config (pre-multiplier). Speed Boost scales
-   * thrust + max-speed about these values via {@link setSpeedMultiplier}.
+   * Nominal movement config (the ship's tuned physics). The live `_config`
+   * mirrors these values; there is no run-time movement scaling any more
+   * (Speed Boost is weapons-only — AH-0MWLU8A7P001O391).
    */
   private _baseConfig: PlayerMovementConfig;
 
-  /** Current live speed multiplier (1 = normal, 1.5 = Speed Boost boosted). */
-  private _speedMultiplier = 1;
   /** Current live fire-rate multiplier (1 = normal, 1.5 = Speed Boost boosted). */
   private _fireRateMultiplier = 1;
 
@@ -682,7 +681,7 @@ export class Player extends Phaser.GameObjects.Graphics {
       reverseAcceleration: config.asteroidsReverseThrustAcceleration,
       reverseMaxSpeed: config.asteroidsReverseMaxSpeed,
     };
-    this._applySpeedMultiplier();
+    this._applyBaseConfig();
     // Loading a saved config restores its control scheme (AC4). If the
     // scheme changed, setScheme already redrew with the new engine
     // layout; otherwise we redraw here for the tuning changes.
@@ -691,17 +690,6 @@ export class Player extends Phaser.GameObjects.Graphics {
     if (!schemeChanged) {
       this._redraw();
     }
-  }
-
-  /**
-   * Applies a live movement multiplier (Speed Boost: +50%): thrust and
-   * max-speed scale by `multiplier` about the nominal config; friction and
-   * rendering are untouched. 1 = normal speed. Applied to physics only.
-   */
-  setSpeedMultiplier(multiplier: number): void {
-    if (this._speedMultiplier === multiplier) return;
-    this._speedMultiplier = multiplier;
-    this._applySpeedMultiplier();
   }
 
   /**
@@ -752,7 +740,7 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Current effective movement config (multiplier applied). Exposed for
+   * Current effective movement config (the nominal ship tuning). Exposed for
    * tests and the scene's magnet/speed integrations.
    */
   getMovementConfig(): MovementConfig {
@@ -791,7 +779,7 @@ export class Player extends Phaser.GameObjects.Graphics {
    * (`reverseEnabled` / `reverseAcceleration` / `reverseMaxSpeed`). Exposed so
    * the demo-bot snapshot can carry the player's actual tuning instead of
    * hard-coded physics (AH-0MV85WFWD0029DL7 · AC1). Reads the live/effective
-   * `_config` (speed multiplier applied) like {@link getRotationConfig}, and
+   * `_config` like {@link getRotationConfig}, and
    * uses the `ShipConfig`-term field names so the snapshot shape matches the
    * player's tuning UI.
    */
@@ -833,20 +821,13 @@ export class Player extends Phaser.GameObjects.Graphics {
     return PLAYER_BULLET_SPEED;
   }
 
-  private _applySpeedMultiplier(): void {
-    this._config = {
-      thrust: this._baseConfig.thrust * this._speedMultiplier,
-      maxSpeed: this._baseConfig.maxSpeed * this._speedMultiplier,
-      friction: this._baseConfig.friction,
-      rotationSpeed: this._baseConfig.rotationSpeed,
-      rotationAcceleration: this._baseConfig.rotationAcceleration,
-      rotationDeceleration: this._baseConfig.rotationDeceleration,
-      // Reverse tunables are carried through unscaled: they are the
-      // player's independent reverse settings (AH-0MV13LY0R006ZO6D).
-      reverseEnabled: this._baseConfig.reverseEnabled,
-      reverseAcceleration: this._baseConfig.reverseAcceleration,
-      reverseMaxSpeed: this._baseConfig.reverseMaxSpeed,
-    };
+  /**
+   * Copies the nominal config into the live config. There is no run-time
+   * movement scaling any more (Speed Boost is weapons-only), so this is a
+   * plain assignment rather than a multiplier application.
+   */
+  private _applyBaseConfig(): void {
+    this._config = { ...this._baseConfig };
   }
 
   // ── Heading ──────────────────────────────────────────────────────
