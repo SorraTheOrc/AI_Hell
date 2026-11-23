@@ -2,18 +2,16 @@
  * The post-battle **sortie results** view contract (TEST-FIRST,
  * AH-0MWMGPPIR009DOKR, parent AH-0MWMFGXD6005WTMN).
  *
- * **TEST-FIRST.** This suite pins the pure "result for view" builder **before**
- * it exists: the builder item (child 2) creates `src/core/hangarWar/sortieResult.ts`
- * and flips every `it.fails` here back to `it`, so a leftover `it.fails` after
- * that lands fails loudly (the repo's red-before/green-after convention — see
+ * **TEST-FIRST.** This suite pinned the pure "result for view" builder
+ * **before** it existed (AH-0MWMGPPIR009DOKR). The builder item
+ * (AH-0MWMGPQUE0064AFH, child 2) created
+ * `src/core/hangarWar/sortieResult.ts` and flipped every `it.fails` here back
+ * to `it` (the repo's red-before/green-after convention — see
  * `src/core/levelScaling.test.ts` and the TEST-FIRST block in
- * `src/scenes/HexMapScene.test.ts`).
- *
- * The module is loaded through a **non-literal** dynamic import on purpose: a
- * static `import './sortieResult'` would fail `tsc --noEmit` (and therefore the
- * build) on pre-change HEAD, when the module does not exist yet. The local
- * interfaces below are the contract the implementation must satisfy; the real
- * module's types are structurally compatible with them.
+ * `src/scenes/HexMapScene.test.ts`). The suite deliberately keeps its own
+ * structural interfaces and a non-literal dynamic import, so it stays a
+ * **contract** the module must satisfy rather than a mirror of its exported
+ * types: a builder that drifts from this shape fails here.
  *
  * ## Pinned contract (child 2 must match exactly)
  *
@@ -237,7 +235,7 @@ function rowText(view: SortieResultViewLike, key: SortieResultRowKey): string {
 describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () => {
   // ── The victory view ──────────────────────────────────────────────
 
-  it.fails('puts the outcome and score row first', async () => {
+  it('puts the outcome and score row first', async () => {
     const { buildSortieResultView } = await sortieResult();
     const view = buildSortieResultView(winningRecord());
 
@@ -249,7 +247,7 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     expect(view.rows[0].text).toBe('VICTORY · SCORE 1200');
   });
 
-  it.fails('itemises every reward that was actually paid, in draw order', async () => {
+  it('itemises every reward that was actually paid, in draw order', async () => {
     const { buildSortieResultView } = await sortieResult();
     const view = buildSortieResultView(winningRecord());
 
@@ -276,7 +274,7 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     );
   });
 
-  it.fails('emits no row for a reward that was not paid', async () => {
+  it('emits no row for a reward that was not paid', async () => {
     const { buildSortieResultView } = await sortieResult();
 
     // Nothing banked and no optional reward: only the outcome row remains.
@@ -299,7 +297,7 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     expect(view.rows[0].text).toBe('VICTORY · SCORE 1200');
   });
 
-  it.fails('pays the win bonus its own row even with no capture record at all', async () => {
+  it('pays the win bonus its own row even with no capture record at all', async () => {
     // A hexless victory banks the fixed bonus with no capture cycle to run
     // (`PlayScene._resolveHangarWarCapture`), so the view must still announce
     // what was paid and nothing more.
@@ -318,7 +316,7 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
 
   // ── The defeat view ───────────────────────────────────────────────
 
-  it.fails('shows the target hex boss intel, the unclaimed grant and the forfeited salvage', async () => {
+  it('shows the target hex boss intel, the unclaimed grant and the forfeited salvage', async () => {
     const { buildSortieResultView } = await sortieResult();
     const view = buildSortieResultView(losingRecord());
 
@@ -343,7 +341,7 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     );
   });
 
-  it.fails('omits the forfeited row when the loss forfeited nothing', async () => {
+  it('omits the forfeited row when the loss forfeited nothing', async () => {
     const { buildSortieResultView } = await sortieResult();
     const view = buildSortieResultView(
       losingRecord({ forfeited: { minerals: 0, cores: 0 } }),
@@ -357,7 +355,7 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     ]);
   });
 
-  it.fails('carries no intel rows for a hex the authored table does not name', async () => {
+  it('carries no intel rows for a hex the authored table does not name', async () => {
     const { buildSortieResultView } = await sortieResult();
     const view = buildSortieResultView(
       losingRecord({ hexId: 'hex-not-authored' }),
@@ -368,7 +366,33 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     expect(rowKeys(view)).toEqual(['outcome', 'forfeited']);
   });
 
-  it.fails('reads the target hex from the injected definitions, never a hard-coded table', async () => {
+  it('copies every authored strength and weakness, in order', async () => {
+    const { buildSortieResultView } = await sortieResult();
+    const authored = HEX_RING_DEFINITIONS.find((row) => row.id === 'hex-r1-3')!;
+    const view = buildSortieResultView(losingRecord(), [
+      {
+        ...authored,
+        strengths: ['rapid', 'arc'],
+        weaknesses: ['mortar', 'nova'],
+      },
+    ]);
+
+    expect(rowText(view, 'strengths')).toBe('STRONG AGAINST: rapid, arc');
+    expect(rowText(view, 'weaknesses')).toBe('WEAK AGAINST: mortar, nova');
+  });
+
+  it('invents no intel for an authored hex with no strengths or weaknesses', async () => {
+    // A defenceless hex is authored, not unknown: still no row is fabricated.
+    const { buildSortieResultView } = await sortieResult();
+    const authored = HEX_RING_DEFINITIONS.find((row) => row.id === 'hex-r1-3')!;
+    const view = buildSortieResultView(losingRecord(), [
+      { ...authored, strengths: [], weaknesses: [], grants: '' },
+    ]);
+
+    expect(rowKeys(view)).toEqual(['outcome', 'forfeited']);
+  });
+
+  it('reads the target hex from the injected definitions, never a hard-coded table', async () => {
     const { buildSortieResultView } = await sortieResult();
     const authored = HEX_RING_DEFINITIONS.find((row) => row.id === 'hex-r1-3')!;
     const view = buildSortieResultView(losingRecord(), [
@@ -389,5 +413,146 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     expect(rowText(view, 'grant-missed')).toBe(
       'GRANT NOT CLAIMED: injected-grant',
     );
+  });
+
+  // ── Every reward kind, present and absent ─────────────────────────
+
+  /** A capture record that paid nothing at all. */
+  function emptyCapture(): SortieCaptureLike {
+    return {
+      bankedDelta: { minerals: 0, cores: 0 },
+      grant: null,
+      specialReward: null,
+      contractBonus: null,
+      cachePayout: null,
+      ringSecured: false,
+      ringAdvanced: false,
+    };
+  }
+
+  it('draws each victory reward on its own only when it was actually paid', async () => {
+    const { buildSortieResultView } = await sortieResult();
+    const paidEvery = fullCapture();
+
+    const cases: Array<{
+      name: string;
+      capture: SortieCaptureLike;
+      expected: string[];
+    }> = [
+      {
+        name: 'salvage',
+        capture: { ...emptyCapture(), bankedDelta: { minerals: 5, cores: 0 } },
+        expected: ['salvage'],
+      },
+      {
+        name: 'grant',
+        capture: { ...emptyCapture(), grant: paidEvery.grant },
+        expected: ['grant'],
+      },
+      {
+        name: 'special',
+        capture: { ...emptyCapture(), specialReward: paidEvery.specialReward },
+        expected: ['special'],
+      },
+      {
+        name: 'contract',
+        capture: {
+          ...emptyCapture(),
+          contractBonus: { minerals: 60, cores: 0 },
+        },
+        expected: ['contract'],
+      },
+      {
+        name: 'cache',
+        capture: { ...emptyCapture(), cachePayout: { minerals: 0, cores: 2 } },
+        expected: ['cache'],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const view = buildSortieResultView(
+        winningRecord({ capture: testCase.capture, winBonusMinerals: 0 }),
+      );
+      expect(rowKeys(view), testCase.name).toEqual([
+        'outcome',
+        ...testCase.expected,
+      ]);
+    }
+
+    // …and each one drops out on its own once it was not paid.
+    const unpayable: Array<{ name: string; drop: string }> = [
+      { name: 'salvage', drop: 'salvage' },
+      { name: 'grant', drop: 'grant' },
+      { name: 'special', drop: 'special' },
+      { name: 'contract', drop: 'contract' },
+      { name: 'cache', drop: 'cache' },
+      { name: 'win bonus', drop: 'win-bonus' },
+    ];
+    for (const testCase of unpayable) {
+      const capture = { ...fullCapture() };
+      if (testCase.drop === 'salvage') capture.bankedDelta = { minerals: 0, cores: 0 };
+      if (testCase.drop === 'grant') capture.grant = null;
+      if (testCase.drop === 'special') capture.specialReward = null;
+      if (testCase.drop === 'contract') capture.contractBonus = null;
+      if (testCase.drop === 'cache') capture.cachePayout = null;
+      const view = buildSortieResultView(
+        winningRecord({
+          capture,
+          winBonusMinerals: testCase.drop === 'win-bonus' ? 0 : 250,
+        }),
+      );
+      expect(rowKeys(view), testCase.name).not.toContain(testCase.drop);
+    }
+  });
+
+  // ── Purity ────────────────────────────────────────────────────────
+
+  /** Recursively freezes `value` (and everything it holds). */
+  function deepFreeze<T>(value: T): T {
+    if (value && typeof value === 'object') {
+      for (const key of Object.keys(value as object)) {
+        deepFreeze((value as Record<string, unknown>)[key]);
+      }
+      Object.freeze(value);
+    }
+    return value;
+  }
+
+  it('never mutates its inputs — a frozen record and table render normally', async () => {
+    const { buildSortieResultView } = await sortieResult();
+    const record = deepFreeze(winningRecord());
+    const definitions = deepFreeze([...HEX_RING_DEFINITIONS]);
+
+    // Strict mode throws on a write to a frozen object, so this also proves
+    // the builder assigns nothing back to its arguments.
+    const view = buildSortieResultView(record, definitions);
+
+    expect(rowKeys(view)).toEqual([
+      'outcome',
+      'salvage',
+      'grant',
+      'special',
+      'contract',
+      'cache',
+      'win-bonus',
+    ]);
+    expect(record).toEqual(winningRecord());
+  });
+
+  it('renders a frozen defeat record and table without mutating them', async () => {
+    const { buildSortieResultView } = await sortieResult();
+    const record = deepFreeze(losingRecord());
+    const definitions = deepFreeze([...HEX_RING_DEFINITIONS]);
+
+    const view = buildSortieResultView(record, definitions);
+
+    expect(rowKeys(view)).toEqual([
+      'outcome',
+      'strengths',
+      'weaknesses',
+      'grant-missed',
+      'forfeited',
+    ]);
+    expect(record).toEqual(losingRecord());
   });
 });
