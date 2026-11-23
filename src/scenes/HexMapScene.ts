@@ -48,6 +48,26 @@
  * All three are **transient launch data**: nothing is persisted, so a later
  * menu/hangar re-entry renders no arrows, no run line and no reward.
  *
+ * ## The post-battle results dialog (`AH-0MWMGPV420013MGB`)
+ *
+ * A deployment landing also carries a compact **sortie result**
+ * (`sortieResult`: the target hex id, `won`/`score`, the win path's own
+ * `HexCaptureResult` fields and the loss path's `forfeited` salvage). When one
+ * is carried the map presents the **results dialog** (`HexCombatResultScene`)
+ * over the paused map as its very first act — before any carried mini-boss
+ * reward and before the demo dwell is scheduled — so neither the reward nor the
+ * attract traversal can skip past it. The dialog's title and rows are the pure
+ * `buildSortieResultView` output (`src/core/hangarWar/sortieResult.ts`); the
+ * scene derives no reward, score or weakness of its own.
+ *
+ * One confirm input dismisses it (the overlay owns the input contract); the map
+ * resumes and then hands over to any carried reward and, once that resolves, to
+ * the demo dwell. While a sortie result is carried the thin run line and the
+ * banked win-bonus line are **folded into the dialog** rather than drawn twice
+ * (parent assumption A1): the outcome, score and every paid reward — the win
+ * bonus included — are dialog rows. The `RING WON` / `HANGAR FALLS` assault
+ * banner is a distinct surface and is unchanged.
+ *
  * ## The hangar assault announcement (`AH-0MWEZZA4E0081NJ5`)
  *
  * A landing may also carry the **resolved ring-end hangar assault** the
@@ -84,6 +104,7 @@ import {
   type HexMapModel,
 } from '../core/hangarWar/hexIntel';
 import type { SortieResultRecord } from '../core/hangarWar/sortieResult';
+import { buildSortieResultView } from '../core/hangarWar/sortieResult';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import {
   decideMapAction,
@@ -92,6 +113,7 @@ import {
 import type { MiniBossWinReward } from '../powerups/miniBossWheel';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 import { BOT_UPGRADE_SCENE_KEY } from './BotUpgradeScene';
+import { HEX_COMBAT_RESULT_SCENE_KEY } from './HexCombatResultScene';
 import { HANGAR_SCENE_KEY } from './HangarScene';
 import { MINI_BOSS_WHEEL_SCENE_KEY } from './MiniBossWheelScene';
 import {
@@ -224,6 +246,13 @@ export class HexMapScene extends Phaser.Scene {
    */
   private sortieResult: SortieResultRecord | null = null;
 
+  /**
+   * True once the carried sortie result has been presented. The result is
+   * presented exactly once, so no second presentation path can re-show it
+   * (the shipped `presentReward()` consume-once rule).
+   */
+  private resultsPresented = false;
+
   /** The rendered map (rebuilt after every change). */
   private view: HexMapView | null = null;
 
@@ -250,6 +279,7 @@ export class HexMapScene extends Phaser.Scene {
     this.winBonusMinerals = data?.winBonusMinerals ?? 0;
     this.reward = data?.reward ?? null;
     this.sortieResult = data?.sortieResult ?? null;
+    this.resultsPresented = false;
     this.demo = data?.demo === true;
     this.demoDwellMs = data?.demoDwellMs;
     const injected = data?.payload;
@@ -270,6 +300,13 @@ export class HexMapScene extends Phaser.Scene {
   create(): void {
     this.build();
     addBackToMenuOnEsc(this);
+    // The post-battle results dialog goes first (AH-0MWMGPV420013MGB): it
+    // summarises the finished deployment over the paused map before any
+    // carried mini-boss reward and before the demo dwell is scheduled, so
+    // neither the reward overlay nor the attract traversal can skip past it.
+    // A boot without the overlay registered keeps the map live and falls
+    // through to the shipped reward/dwell rules.
+    if (this.presentResults()) return;
     // A carried mini-boss reward is presented over the paused map first; the
     // demo dwell (which would deploy from the map) only starts once it is
     // resolved, so the traversal cannot skip past the reward.
@@ -320,7 +357,7 @@ export class HexMapScene extends Phaser.Scene {
       definitions: this.definitions,
       record: this.record,
       assault: this.assault,
-      winBonusMinerals: this.winBonusMinerals,
+      winBonusMinerals: this.displayWinBonus(),
     });
     this.view = renderHexMap(this, model, {
       onDeploy: (hexId) => this.openConfig(hexId),
@@ -337,11 +374,29 @@ export class HexMapScene extends Phaser.Scene {
 
   /**
    * The finished deployment's result line, or `null` when this landing carried
-   * no result (a plain menu/hangar entry). Transient launch data.
+   * no result (a plain menu/hangar entry) or when the results dialog is
+   * carrying it. Transient launch data.
+   *
+   * On a deployment landing the sortie result is drawn by the results dialog —
+   * the outcome and score are its first row — so the thin run line is **folded
+   * into the dialog** rather than drawn a second time (parent assumption A1).
    */
   private runLine(): string | null {
+    if (this.sortieResult !== null) return null;
     if (this.won === null) return null;
     return `${this.won ? 'RUN: VICTORY' : 'RUN: DEFEAT'} · score ${this.score}`;
+  }
+
+  /**
+   * The win bonus the map's model announces, or `0` when the results dialog is
+   * carrying it.
+   *
+   * The dialog lists every paid reward, the banked win bonus included
+   * (parent assumption A1), so drawing the model's own `WIN BONUS BANKED` line
+   * as well would show the same fact twice on one landing.
+   */
+  private displayWinBonus(): number {
+    return this.sortieResult === null ? this.winBonusMinerals : 0;
   }
 
   /**
@@ -480,6 +535,99 @@ export class HexMapScene extends Phaser.Scene {
   }
 
   /**
+   * Presents the carried sortie result as the post-battle **results dialog**
+   * over the paused map, or does nothing when none is pending
+   * (AH-0MWMGPV420013MGB, child of AH-0MWMFGXD6005WTMN).
+   *
+   * The dialog's title and rows are the pure `buildSortieResultView` output
+   * (the target hex's authored boss intel is read there, never here), so this
+   * scene derives no reward, score, weakness or rule — it pauses itself at the
+   * `SceneManager` level and hands the view over, exactly like the shipped
+   * `presentReward()` overlay. Dismissal resumes the map and hands over to any
+   * carried mini-boss reward and then the demo dwell.
+   *
+   * The result is consumed (presented) exactly once, so a second presentation
+   * path cannot re-show it. A boot without the overlay registered (headless
+   * test, misconfiguration) must not stall on a surface it can never show: the
+   * result is consumed and the map stays interactive.
+   *
+   * @returns whether a pending sortie result was consumed by this call.
+   */
+  presentResults(): boolean {
+    const record = this.sortieResult;
+    if (record === null || this.resultsPresented) return false;
+    // Consume the result: it is presented exactly once.
+    this.resultsPresented = true;
+    if (!this.scene.manager.getScene(HEX_COMBAT_RESULT_SCENE_KEY)) {
+      // Nothing to present the results with: keep the map live (and the demo
+      // traversal moving) rather than pausing on a screen that cannot exist.
+      return false;
+    }
+
+    // The demo dwell is suspended while the dialog waits, so the attract
+    // traversal cannot act behind it; the overlay auto-confirms after that
+    // same dwell so the traversal cannot stall on it either.
+    this.demoTimer?.remove(false);
+    this.demoTimer = null;
+    const autoMs = this.demo
+      ? this.demoDwellMs ?? HANGAR_WAR_TRAVERSAL_DWELL_MS
+      : 0;
+
+    const view = buildSortieResultView(record, this.definitions);
+    this.scene.pause();
+    this.scene.launch(HEX_COMBAT_RESULT_SCENE_KEY, {
+      origin: 'HexMapScene-sortieResult',
+      view,
+      onDismiss: () => this.afterResults(),
+      ...(autoMs > 0 ? { autoDismissMs: autoMs } : {}),
+    });
+    return true;
+  }
+
+  /**
+   * Resumes the map after the results dialog resolved, then hands over to any
+   * carried mini-boss reward — the results dialog always comes first, so the
+   * order is deterministic — and finally to the demo dwell (so the attract
+   * traversal continues from the map rather than stalling).
+   */
+  private afterResults(): void {
+    this.scene.resume();
+    if (this.reward !== null) {
+      this.presentReward();
+      return;
+    }
+    if (this.demo) this.scheduleDemoAdvance();
+  }
+
+  /**
+   * Whether the results dialog is on screen (its scene is running above this
+   * paused map).
+   */
+  isResultsVisible(): boolean {
+    const dialog = this.scene.manager.getScene(HEX_COMBAT_RESULT_SCENE_KEY);
+    return dialog !== null && dialog !== undefined && dialog.sys.isActive();
+  }
+
+  /**
+   * The results dialog's rendered text — its heading plus every row, in draw
+   * order — or `''` when the dialog is not on screen. A test/inspection seam
+   * over the dialog's own report, never a second rendering rule.
+   */
+  getResultsText(): string {
+    if (!this.isResultsVisible()) return '';
+    const dialog = this.scene.manager.getScene(HEX_COMBAT_RESULT_SCENE_KEY) as
+      | (Phaser.Scene & {
+          getTitle?: () => string;
+          getRows?: () => string[];
+        })
+      | null;
+    if (dialog === null) return '';
+    const title = typeof dialog.getTitle === 'function' ? dialog.getTitle() : '';
+    const rows = typeof dialog.getRows === 'function' ? dialog.getRows() : [];
+    return [title, ...rows].filter((line) => line.length > 0).join('\n');
+  }
+
+  /**
    * Schedules the attract traversal's single step on the map.
    *
    * The decision is the pure, tested `decideMapAction` (the weakest adjacent
@@ -526,7 +674,7 @@ export class HexMapScene extends Phaser.Scene {
         definitions: this.definitions,
         record: this.record,
         assault: this.assault,
-        winBonusMinerals: this.winBonusMinerals,
+        winBonusMinerals: this.displayWinBonus(),
       })
     );
   }
@@ -597,7 +745,7 @@ export class HexMapScene extends Phaser.Scene {
         definitions: this.definitions,
         record: this.record,
         assault: this.assault,
-        winBonusMinerals: this.winBonusMinerals,
+        winBonusMinerals: this.displayWinBonus(),
       }).winBonusLine
     );
   }
@@ -614,7 +762,7 @@ export class HexMapScene extends Phaser.Scene {
         definitions: this.definitions,
         record: this.record,
         assault: this.assault,
-        winBonusMinerals: this.winBonusMinerals,
+        winBonusMinerals: this.displayWinBonus(),
       }).hexIncomeLine
     );
   }

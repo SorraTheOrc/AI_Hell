@@ -51,6 +51,7 @@ import {
   VICTORY_TRANSITION_HOLD_MS,
 } from './PlayScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
+import { HexCombatResultScene } from './HexCombatResultScene';
 import {
   buildHangarDeployment,
   type HangarWarDeployment,
@@ -145,7 +146,14 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     resume?: boolean;
     hangarWar?: HangarWarDeployment | null;
   }): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene, HexMapScene]);
+    booted = await bootScene([
+      PlayScene,
+      GameOverScene,
+      MenuScene,
+      HexMapScene,
+      // The landing's post-battle results dialog (AH-0MWMGPV420013MGB).
+      HexCombatResultScene,
+    ]);
     const scene = booted.scene as PlayScene;
     scene.setAsteroidSpawnerEnabled(false);
     if (data) {
@@ -523,9 +531,17 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(landedAssault).toEqual(capture!.assault);
     expect(map!.isAssaultVisible()).toBe(true);
     expect(map!.getAssaultText()).toContain('RING WON');
-    // The landing's run line and the tick's own report are unchanged.
-    expect(map!.getRunLine()).toContain('RUN: VICTORY');
+    // The landing carries the tick's own report and — over the paused map —
+    // the post-battle results dialog naming the outcome, the score and the paid
+    // rewards (AH-0MWMGPV420013MGB). The thin run line is folded into it.
     expect(map!.getRecord()).not.toBeNull();
+    expect(map!.getSortieResult()).not.toBeNull();
+    expect(map!.isResultsVisible()).toBe(true);
+    expect(map!.getResultsText()).toContain('VICTORY');
+    // A reward this sortie actually paid — never a zero line, so the banked
+    // salvage appears only when the run earned some.
+    expect(map!.getResultsText()).toContain('WIN BONUS BANKED');
+    expect(map!.getRunLine()).toBeNull();
     expect(wm.waveNumber).toBe(5);
     expect(scene.getAliveCount()).toBe(0);
   }, 30_000);

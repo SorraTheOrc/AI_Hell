@@ -1460,20 +1460,22 @@ describe('HexMapScene', () => {
   // **TEST-FIRST** (AH-0MWMGPPIR009DOKR, parent AH-0MWMFGXD6005WTMN)
 
   /**
-   * The post-battle results dialog contract, pinned before it lands.
+   * The post-battle results dialog contract.
    *
-   * **TEST-FIRST.** This block pins the landing surface **before** the
-   * results-view builder (`src/core/hangarWar/sortieResult.ts`, child 2), the
-   * overlay scene (`src/scenes/HexCombatResultScene.ts`, child 4) and the map
-   * wiring (child 5) exist. Every new-behaviour assertion is authored under
-   * Vitest's `it.fails` (the repo's red-before/green-after convention — see
-   * `src/core/levelScaling.test.ts`) so this suite stays green on pre-change
-   * HEAD; those implementation items flip them back to `it`, and a leftover
-   * `it.fails` then fails loudly.
+   * **TEST-FIRST, now landed.** This block pinned the landing surface **before**
+   * the results-view builder (`src/core/hangarWar/sortieResult.ts`, child 2),
+   * the overlay scene (`src/scenes/HexCombatResultScene.ts`, child 4) and the
+   * map wiring (child 5) existed; the assertions were authored under Vitest's
+   * `it.fails` (the repo's red-before/green-after convention — see
+   * `src/core/levelScaling.test.ts`). The map-wiring item
+   * (AH-0MWMGPV420013MGB) flipped them back to `it`, so a regression now fails
+   * the suite rather than a leftover `it.fails`.
    *
    * The dialog scene module is loaded through a **non-literal** dynamic import
-   * on purpose: a static import would fail `tsc --noEmit` (and therefore the
-   * build) while the module does not exist yet.
+   * on purpose: a static import would have failed `tsc --noEmit` (and therefore
+   * the build) while the module did not exist yet. It is left lazy so the
+   * contract keeps asserting on the module's own exports rather than on a
+   * fixture.
    *
    * ## Pinned contract (the implementation items must match exactly)
    *
@@ -1633,7 +1635,7 @@ describe('HexMapScene', () => {
       } as KeyboardEvent);
     }
 
-    it.fails(
+    it(
       'presents the victory results over the paused map and one confirm resumes it',
       async () => {
         const record = winningRecord();
@@ -1665,6 +1667,13 @@ describe('HexMapScene', () => {
         expect(text).toContain('WIN BONUS BANKED: +250 MINERALS');
         expect(seams(map).getResultsText?.()).toContain('VICTORY');
 
+        // The thin run line and the banked win-bonus line are folded into the
+        // dialog (parent assumption A1): the landing shows each fact once.
+        expect(map.getRunLine()).toBeNull();
+        expect(map.getWinBonusLine()).toBeNull();
+        expect(screenText(map)).not.toContain('RUN: VICTORY');
+        expect(screenText(map)).not.toContain('WIN BONUS BANKED');
+
         // One confirm dismisses it and the map resumes normal interaction.
         confirmWithKey(dialog, 'Enter');
         await advanceGame(booted!.game, 200);
@@ -1678,7 +1687,7 @@ describe('HexMapScene', () => {
       },
     );
 
-    it.fails(
+    it(
       'dismisses the results dialog from a pointer press on its confirm row',
       async () => {
         const { dialog, dialogKey } = await bootResultsMap({
@@ -1704,7 +1713,7 @@ describe('HexMapScene', () => {
       },
     );
 
-    it.fails(
+    it(
       'presents the defeat results with the boss intel and the forfeited salvage',
       async () => {
         const { dialog } = await bootResultsMap({
@@ -1726,7 +1735,7 @@ describe('HexMapScene', () => {
       },
     );
 
-    it.fails(
+    it(
       'carries the sortie result as transient launch data and never persists it',
       async () => {
         const record = winningRecord();
@@ -1762,7 +1771,7 @@ describe('HexMapScene', () => {
       },
     );
 
-    it.fails(
+    it(
       'auto-dismisses in demo mode so the traversal still deploys',
       async () => {
         await bootResultsMap({
@@ -1804,6 +1813,88 @@ describe('HexMapScene', () => {
       expect(seams(scene).isResultsVisible?.() ?? false).toBe(false);
       expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
       expect(screenText(scene)).not.toContain('SORTIE RESULTS');
+    });
+
+    it('goes straight to the map when the results overlay is not registered', async () => {
+      // A headless boot (or a misconfiguration) without the dialog scene must
+      // not stall on a surface it can never show: the map stays live and the
+      // attract traversal still advances (the `presentReward()` no-stall rule).
+      booted = await reuse.boot([HexMapScene, PlayScene, HangarScene]);
+      booted.game.scene.start(HEX_MAP_SCENE_KEY, {
+        payload: ringPayload(1),
+        won: true,
+        score: 700,
+        sortieResult: winningRecord({ score: 700 }),
+        demo: true,
+        demoDwellMs: 300,
+        storage: null,
+      });
+      await advanceGame(booted.game, 200);
+      const scene = booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
+
+      expect(booted.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+      expect(scene.isResultsVisible()).toBe(false);
+      // The traversal is not stalled: the map deploys (via the config screen)
+      // on its own dwell.
+      stepGameUntil(
+        booted!.game,
+        'the demo traverses past the missing results overlay',
+        () => booted!.game.scene.isActive('PlayScene'),
+        900,
+      );
+    });
+
+    it('presents the results dialog before a carried mini-boss reward', async () => {
+      // The order is deterministic (documented on `HexMapScene.presentResults`):
+      // the sortie dialog first, then any carried reward, then the map.
+      const reward = spreadWheelReward();
+      const record = winningRecord();
+      const { HexCombatResultScene, HEX_COMBAT_RESULT_SCENE_KEY } =
+        await resultScene();
+      booted = await reuse.boot([
+        HexMapScene,
+        PlayScene,
+        HangarScene,
+        MiniBossWheelScene,
+        MineralChoiceScene,
+        HexCombatResultScene,
+      ]);
+      booted.game.scene.start(HEX_MAP_SCENE_KEY, {
+        payload: ringPayload(1),
+        won: true,
+        score: 1200,
+        reward,
+        sortieResult: record,
+        storage: null,
+      });
+      await advanceGame(booted.game, 200);
+      const map = booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
+
+      // The dialog owns the paused map; the reward has not been presented yet.
+      expect(booted.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isActive(HEX_COMBAT_RESULT_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(false);
+      expect(map.getReward()).toEqual(reward);
+
+      // One confirm hands over to the reward overlay over the still-paused map.
+      const dialog = booted.game.scene.getScene(
+        HEX_COMBAT_RESULT_SCENE_KEY,
+      ) as Phaser.Scene;
+      confirmWithKey(dialog, 'Enter');
+      await advanceGame(booted.game, 200);
+      expect(booted.game.scene.isActive(HEX_COMBAT_RESULT_SCENE_KEY)).toBe(false);
+      expect(booted.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+
+      // Resolving the reward finally makes the map interactive again.
+      const wheel = booted.game.scene.getScene(
+        MINI_BOSS_WHEEL_SCENE_KEY,
+      ) as MiniBossWheelScene;
+      expect(wheel.spin()).toBe(true);
+      await advanceGame(booted.game, 3000);
+      expect(booted.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
     });
   });
 
