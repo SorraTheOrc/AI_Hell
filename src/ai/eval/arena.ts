@@ -325,6 +325,7 @@ import {
   type ArenaAimShot,
   type ArenaBalanceConfig,
   type ArenaConfig,
+  type ArenaControlSample,
   type ArenaInput,
   type ArenaMovingHostiles,
   type ArenaRunResult,
@@ -823,7 +824,7 @@ export function escapeClearsContact(
  * thruster (AH-0MV13LXOR001X15X) is carried through so the governor's
  * reverse input behaves like the shipped ship.
  */
-function shipToAsteroidsConfig(ship: ShipConfig): AsteroidsConfig {
+export function shipToAsteroidsConfig(ship: ShipConfig): AsteroidsConfig {
   return {
     thrust: ship.thrustAcceleration,
     maxSpeed: ship.maxSpeed,
@@ -1143,6 +1144,7 @@ function snapshotOf(
     readonly rotation: BotRotationConfig;
     readonly shotSpeed: number;
   },
+  liveReverseEnabled = false,
 ): BotSnapshot {
   return {
     player: {
@@ -1156,6 +1158,11 @@ function snapshotOf(
       ...(livePhysics ? { rotation: livePhysics.rotation } : {}),
       ...(livePhysics ? { shotSpeed: livePhysics.shotSpeed } : {}),
     },
+    // The reverse-thruster flag the world model gates kiting/brake on
+    // (AH-0MWT4BBYO0085CN8 · RAC3): only the opt-in live control context
+    // supplies it, so every historic arena baseline keeps the retro thruster
+    // disabled and is byte-identical.
+    ...(liveReverseEnabled ? { reverseEnabled: true } : {}),
     enemies: enemies
       .filter((hostile) => hostile.alive)
       .map((hostile) => ({
@@ -1947,6 +1954,14 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   let nextShotId = 0;
 
   /**
+   * Opt-in control-input trace (AH-0MWT4BBYO0085CN8). Off unless the caller
+   * asked for it, so the default run neither records nor allocates and its
+   * telemetry is byte-identical to a pre-change baseline.
+   */
+  const measureControlInputs = config.measureControlInputs === true;
+  const controlInputs: ArenaControlSample[] = [];
+
+  /**
    * Attributes one freshly spawned projectile to the body it was aimed at and
    * starts tracking its miss distance. A shot with no live body ahead of the
    * muzzle is left untracked: it has no target it could honestly be measured
@@ -2164,12 +2179,40 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         },
         shotSpeed: PLAYER_BULLET_SPEED,
       },
+      // The live control context also supplies the reverse-thruster flag
+      // (AH-0MWT4BBYO0085CN8 · RAC3).
+      config.liveControlContext === true &&
+        shipAsteroids.reverseEnabled === true,
     );
     const intent = policy.decide(snapshot, dt);
+    const liveContext = config.liveControlContext === true;
     const input = governor.update(intent, dt, {
       scheme: 'asteroids',
       facing: world.player.facing,
+      // The live control context (AH-0MWT4BBYO0085CN8 · RAC3) supplies the
+      // same ship inputs the game and gyms do. The historic reduced context
+      // (facing only) is the default so every recorded arena baseline is
+      // untouched.
+      ...(liveContext
+        ? {
+            angularVelocity: world.player.angularVelocity,
+            rotationSpeed: shipAsteroids.rotationSpeed ?? 0,
+            rotationAcceleration: shipAsteroids.rotationAcceleration ?? 0,
+            rotationDeceleration: shipAsteroids.rotationDeceleration,
+            reverseEnabled: shipAsteroids.reverseEnabled === true,
+            position: { x: world.player.x, y: world.player.y },
+            world: { width, height },
+          }
+        : {}),
     }) as AsteroidsInput;
+    if (measureControlInputs) {
+      controlInputs.push({
+        tick,
+        turn: input.turnLeft ? -1 : input.turnRight ? 1 : 0,
+        thrust: input.forward === true,
+        reverse: input.reverse === true,
+      });
+    }
     const moved = asteroidModel.tick(
       world.player as unknown as RotatingMovementState,
       input,
@@ -2503,5 +2546,6 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // Present only under the opt-in, so the default result shape (and every
     // existing deep-equal baseline) is unchanged.
     ...(measureAimShots ? { aimShots } : {}),
+    ...(measureControlInputs ? { controlInputs } : {}),
   };
 }

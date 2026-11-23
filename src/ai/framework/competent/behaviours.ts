@@ -73,6 +73,35 @@ import type { BotSteeringIntent } from '../../botDecision';
 import { resolveAimAlignSeconds, resolveShotSpeed, type CompetentBotTunables } from './tunables';
 import { botWrapWorld, wrappedAxisDelta, wrappedDelta } from '../wrapGeometry';
 
+/**
+ * Cross-tick standoff-hysteresis state (AH-0MWT4BBYO0085CN8 · RAC2). Kept on
+ * the run's {@link BotBehaviourContext.memory} (not in a closure) so a run
+ * restart resets it with every other piece of bot memory.
+ */
+interface StandoffScratch {
+  /** Sticky in/out-of-standoff state; `null` until the first decision. */
+  inStandoff: boolean | null;
+}
+
+/**
+ * Resolves the engage behaviour's standoff scratch, creating it on first use.
+ * The key is namespaced under the behaviour id so it can never collide with a
+ * goal's own scratch.
+ */
+function standoffScratch(
+  view: BotBehaviourContext,
+  key: string,
+): StandoffScratch {
+  const scratchKey = `${key}:standoff`;
+  const existing = view.memory.scratch[scratchKey] as
+    | StandoffScratch
+    | undefined;
+  if (existing) return existing;
+  const created: StandoffScratch = { inStandoff: null };
+  view.memory.scratch[scratchKey] = created;
+  return created;
+}
+
 /** The collect targets for a goal: minerals or power-ups as content targets. */
 function collectTargets(
   world: BotWorld,
@@ -312,7 +341,21 @@ function engageBehaviour(
       const profile = content.resolveEnemy(best.point.contentId);
       const engagementRange = profile.engagementRange ?? t.engagementRange;
       const distance = best.distance;
-      const inRange = distance <= engagementRange;
+      // Standoff hysteresis (AH-0MWT4BBYO0085CN8 · RAC2): the in/out decision
+      // is sticky, so crossing the engagement-range boundary once does not
+      // flip the forward/brake decision on the very next tick. Inside the
+      // standoff the ship stays inside until the target is the whole band
+      // beyond it; outside it keeps closing until it is back inside the range.
+      // The forward model still aims at the true `engagementRange`, so the
+      // only behaviour the band changes is the toggle itself. A zero band
+      // reproduces the pre-change single-boundary rule.
+      const band = Math.max(0, t.engagementRangeHysteresis);
+      const standoff = standoffScratch(view, COMPETENT_BEHAVIOUR_IDS.engage);
+      const inRange =
+        standoff.inStandoff === true
+          ? distance <= engagementRange + band
+          : distance <= engagementRange;
+      standoff.inStandoff = inRange;
       const holdAim = profile.aim !== 'none';
       // Lead prediction (AC2): aim at where a moving target will be when the
       // forward-firing shot arrives, accounting for the ship's estimated turn
@@ -395,7 +438,12 @@ function engageBehaviour(
           ? false
           : mayThrust(view.snapshot, t, distance, engagementRange);
       // Brake-assist (AC1) while closing when forward thrust would overshoot.
+      // Only **outside** the standoff band: inside it the ship holds the
+      // standoff and coasts, so the retro thruster never fires back-and-forth
+      // with the forward press across the boundary
+      // (AH-0MWT4BBYO0085CN8 · RAC2).
       const brake =
+        !inRange &&
         !thrust &&
         !kite &&
         view.world.reverseEnabled &&

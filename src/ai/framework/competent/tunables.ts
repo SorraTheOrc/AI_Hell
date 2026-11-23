@@ -195,6 +195,18 @@ export interface CompetentBotTunables {
    * holds its fire axis (aims and coasts) rather than closing further.
    */
   engagementRange: number;
+  /**
+   * Hysteresis band (px) around {@link engagementRange}
+   * (AH-0MWT4BBYO0085CN8 · RAC2).
+   *
+   * Once the engage behaviour is inside its standoff it stays inside until the
+   * target is `engagementRange + engagementRangeHysteresis` away; once outside
+   * it keeps closing until it is back inside `engagementRange`. A `0` band is
+   * the pre-change single-boundary rule — thrust and reverse toggle every time
+   * the distance crosses the boundary, which is the forward/backward lunge the
+   * producer saw.
+   */
+  engagementRangeHysteresis: number;
   /** Distance within which a collection target counts as reached. */
   collectArrivalRadius: number;
   /**
@@ -481,6 +493,10 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   enemySeekRange: 800,
   asteroidSeekRange: 400,
   engagementRange: 140,
+  // Factory default is off; the shipped `Default` bot-tuning preset enables it
+  // (AH-0MWT4BBYO0085CN8), so pre-existing arena/harness baselines that fly the
+  // compiled defaults stay byte-identical while the game gets the damping.
+  engagementRangeHysteresis: 0,
   collectArrivalRadius: 18,
   collectReverseBrake: false,
   collectOvershootMargin: 0,

@@ -357,3 +357,51 @@ describe('curated promo bot-tuning presets (AH-0MVSDM5T1007KBB8)', () => {
     expect(names.has('no-such-preset')).toBe(false);
   });
 });
+
+describe('oscillation-damping knobs in the bundled baseline (AH-0MWT4BBYO0085CN8)', () => {
+  it('turns the aim damping on in the shipped Default preset, off elsewhere', () => {
+    const configs = rawConfigs();
+    const def = configs.find((config) => config.name === DEFAULT_BOT_TUNING_NAME);
+    expect(def).toBeDefined();
+    const defaults = defaultBotTuningValues();
+    // The compiled factory defaults are off, so every harness that flies them
+    // is byte-identical to its pre-change baseline.
+    expect(defaults.human['aimDampingEnabled']).toBe(false);
+    expect(defaults.competent['engagementRangeHysteresis']).toBe(0);
+    // The shipped gameplay preset is the configuration the producer plays: it
+    // carries the damping and the standoff hysteresis.
+    const defHuman = (def!.values as { human: Record<string, unknown> }).human;
+    const defCompetent = (
+      def!.values as { competent: Record<string, unknown> }
+    ).competent;
+    expect(defHuman['aimDampingEnabled']).toBe(true);
+    expect(defHuman['aimTurnHoldMs']).toBeTypeOf('number');
+    expect(defHuman['aimTurnHoldMs'] as number).toBeGreaterThan(0);
+    expect(defCompetent['engagementRangeHysteresis']).toBeTypeOf('number');
+    expect(defCompetent['engagementRangeHysteresis'] as number).toBeGreaterThan(0);
+    // The curated recording presets stay damping-off so their seed-tuned
+    // recordings are unchanged.
+    for (const config of configs) {
+      if (config.name === DEFAULT_BOT_TUNING_NAME) continue;
+      const human = (config.values as { human?: Record<string, unknown> }).human;
+      if (!human) continue;
+      expect(
+        human['aimDampingEnabled'] ?? false,
+        `${config.name} must not silently enable aim damping`,
+      ).toBe(false);
+    }
+  });
+
+  it('keeps the new knobs inside their gym bounds', () => {
+    const bounds = [...BOT_TUNING_NUMERIC_FIELDS];
+    const def = rawConfigs().find((c) => c.name === DEFAULT_BOT_TUNING_NAME)!;
+    const coerced = coerceTuningValues(def.values);
+    for (const field of bounds) {
+      const value = coerced[field.group][field.key];
+      if (value === undefined) continue;
+      expect(typeof value).toBe('number');
+      expect(value as number).toBeGreaterThanOrEqual(field.min);
+      expect(value as number).toBeLessThanOrEqual(field.max);
+    }
+  });
+});

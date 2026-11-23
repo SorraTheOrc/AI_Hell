@@ -427,6 +427,38 @@ export interface ArenaConfig {
    */
   readonly measureAimShots?: boolean;
   /**
+   * **Opt-in** control-input trace (AH-0MWT4BBYO0085CN8). When `true`, the run
+   * records one {@link ArenaControlSample} per simulated tick — the resolved
+   * `AsteroidsInput` the governor emitted that tick — and reports them on
+   * {@link ArenaRunResult.controlInputs}. The oscillation harness folds the
+   * trace into turn sign flips and thrust/reverse transitions so a dithering
+   * actuator is a measurable number rather than an opinion.
+   *
+   * Like {@link ArenaConfig.measureAimShots} this is **observation only**: it
+   * changes no position, draw, decision or telemetry record, so the same seed +
+   * config + policy produces byte-identical telemetry with the option on and
+   * off. Omitted/`false` keeps the historic result shape and adds no per-tick
+   * work.
+   */
+  readonly measureControlInputs?: boolean;
+  /**
+   * **Opt-in** live control context (AH-0MWT4BBYO0085CN8 · RAC3). When `true`,
+   * the governor is handed the same ship context the live game and the gyms
+   * hand it — the ship's signed angular velocity and live rotation model, its
+   * reverse-thruster enable flag, its position and the torus size — instead of
+   * only the facing.
+   *
+   * The reduced context is the historic one every existing arena baseline was
+   * recorded with, so it stays the default and those baselines are unchanged.
+   * The oscillation harness turns this on because the live wobble it measures
+   * comes from exactly those inputs: without the angular velocity there is no
+   * coast to brake, and without the reverse flag the retro thruster never
+   * fires. It is observation-only in the same sense as the other measurement
+   * flags — it feeds the governor's real inputs, it does not change the
+   * simulation.
+   */
+  readonly liveControlContext?: boolean;
+  /**
    * Explicit archetype list for the seeded skirmish's hostile reservoir
    * (AH-0MWOKL79Z0051ZXO). Absent → the config-derived list
    * ({@link ArenaConfig.balance} / `loadAllEnemyConfigs`, minus the
@@ -478,6 +510,33 @@ export interface ArenaRunResult {
    * unaimed miss.
    */
   readonly aimShots?: readonly ArenaAimShot[];
+  /**
+   * One record per simulated tick, in tick order (AH-0MWT4BBYO0085CN8).
+   * Present **only** when {@link ArenaConfig.measureControlInputs} is `true`,
+   * so the default result shape and every existing baseline stay unchanged.
+   */
+  readonly controlInputs?: readonly ArenaControlSample[];
+}
+
+/**
+ * One tick of resolved actuator input (AH-0MWT4BBYO0085CN8) — the raw evidence
+ * the oscillation harness folds into turn sign flips and thrust/reverse
+ * transitions.
+ *
+ * `turn` is the **command** the governor emitted for the ship's rotational
+ * actuator this tick: `-1` turn left, `+1` turn right, `0` released. It is
+ * derived from the resolved input, not from the committed intent, so it is
+ * exactly what the ship's physics consumed.
+ */
+export interface ArenaControlSample {
+  /** The simulated tick the sample was taken on. */
+  readonly tick: number;
+  /** The rotational command: `-1` left, `0` released, `+1` right. */
+  readonly turn: -1 | 0 | 1;
+  /** Whether forward thrust was commanded. */
+  readonly thrust: boolean;
+  /** Whether reverse thrust was commanded. */
+  readonly reverse: boolean;
 }
 
 /**

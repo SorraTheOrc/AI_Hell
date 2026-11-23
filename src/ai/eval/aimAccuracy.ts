@@ -48,8 +48,7 @@
  * draw or a decision (`aimAccuracy.test.ts` pins that parity).
  *
  * ## The pinned pre-change baseline
- *
- * Recorded from the pre-change solve on 2026-11-22 and committed as
+ * * Recorded from the pre-change solve on 2026-11-22 and committed as
  * `aimAccuracy.baseline.json`; `aimAccuracy.test.ts` asserts the harness still
  * reproduces it exactly, so a later behaviour change cannot quietly redefine
  * "baseline". The fixture is a **recorded observation**: the improvement
@@ -100,16 +99,39 @@
  * predictor itself uses (`advanceHazardMotion`), which is the single
  * trajectory definition the aim solve is measured against.
  *
+ * ## Oscillation measurement (AH-0MWT4BBYO0085CN8 · RAC3)
+ *
+ * The accuracy half of the harness answers "does a shot land?"; it cannot see
+ * the actuator dithering the producer observed. Two opt-in arena features fix
+ * that without moving a single existing baseline: `measureControlInputs`
+ * records the resolved `AsteroidsInput` per tick, and `liveControlContext`
+ * hands the governor the same ship context the game does (angular velocity,
+ * rotation model, reverse flag, position and torus). `runAimOscillation` folds
+ * the trace into turn sign flips, thrust/reverse transitions and forward↔reverse
+ * "drive sign flips", beside the same shots/hits/miss-distance numbers, per
+ * movement class and seed. Both features default off, so a pre-existing
+ * accuracy or sweep baseline is byte-identical. The clean, scripted
+ * control-loop proof of the damping lives in `./oscillation`.
+ *
  * @module src/ai/eval/aimAccuracy
  */
 
 import { DEFAULT_CONFIG, DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
 import { resetConfigStore, seedConfigStore } from '../../core/configStore';
 import type { EnemyMovementClass } from '../../core/configTypes';
+import botTuningJson from '../../data/bot-tuning.json';
+import type { BotHumanInputTunables } from '../botHumanLike';
+import type { CompetentBotTunables } from '../framework/competent/tunables';
+import {
+  coerceTuningValues,
+  toCompetentOverrides,
+  toHumanOverrides,
+  type BotTuningValues,
+} from '../tuningFields';
 import { createCompetentBotBrain } from '../framework/competent';
 import { runArena } from './arena';
 import { loadBalanceConfig } from './balanceConfig';
-import type { ArenaAimShot, ArenaRunResult } from './types';
+import type { ArenaAimShot, ArenaControlSample, ArenaRunResult } from './types';
 
 /**
  * The documented seed list: three seeds, fixed once and never adjusted to make
@@ -149,6 +171,22 @@ export const AIM_ACCURACY_ARCHETYPES: Readonly<Record<EnemyMovementClass, string
     formation: 'scout',
     roamer: 'lane-traffic',
   });
+
+/**
+ * The shipped gameplay bot-tuning preset (`Default` in `src/data/bot-tuning.json`).
+ *
+ * The oscillation harness flies this preset rather than the compiled defaults
+ * (AH-0MWT4BBYO0085CN8 · RAC3): the producer plays the game with this preset,
+ * and its longer press holds and wider reverse-brake window are part of the
+ * behaviour being measured. Reading it here — instead of pinning a copy — means
+ * retuning the shipped preset also retunes the oscillation measurement. The
+ * accuracy baseline keeps the compiled defaults, so its pinned fixture is
+ * unaffected.
+ */
+export const AIM_OSCILLATION_TUNING: BotTuningValues = coerceTuningValues(
+  (botTuningJson as { configs?: readonly { name?: string; values?: unknown }[] })
+    .configs?.find((config) => config.name === 'Default')?.values,
+);
 
 /**
  * The shared scenario geometry and density.
@@ -328,6 +366,45 @@ export function runAimAccuracyScenario(
      * because it predates the adaptive error, independent of this option.
      */
     readonly aimErrorRad?: number;
+    /**
+     * Whether to record the resolved control-input trace
+     * (AH-0MWT4BBYO0085CN8 · RAC3). Passed straight through to the arena's
+     * opt-in `measureControlInputs`, so the oscillation harness can fold it
+     * into turn/thrust/reverse counts.
+     */
+    readonly measureControlInputs?: boolean;
+    /**
+     * Hands the governor the live control context
+     * (AH-0MWT4BBYO0085CN8 · RAC3): the arena's opt-in `liveControlContext`.
+     * The oscillation harness turns it on so the live wobble it measures is
+     * produced by the same ship inputs the game supplies.
+     */
+    readonly liveControlContext?: boolean;
+    /**
+     * Flies the **pre-fix actuator** (AH-0MWT4BBYO0085CN8 · RAC1/RAC2): the aim
+     * reversal hysteresis and the standoff hysteresis are switched off, so the
+     * damping knobs are reduced exactly to the pre-change rules. Every other
+     * compiled default stays live, so a pre-fix run and a shipped run differ
+     * in the damping alone.
+     */
+    readonly preFixDamping?: boolean;
+    /**
+     * Explicit tunable overrides for an experimental arm
+     * (AH-0MWT4BBYO0085CN8). Applied **after** the documented controls, so a
+     * probe can vary one knob while everything else stays shipped. Not used by
+     * the pinned reports themselves.
+     */
+    readonly overrides?: {
+      readonly human?: Partial<BotHumanInputTunables>;
+      readonly competent?: Partial<CompetentBotTunables>;
+    };
+    /**
+     * Shipped tuning preset to fly (AH-0MWT4BBYO0085CN8 · RAC3). Omit to fly
+     * the compiled defaults (the accuracy reports do). The oscillation harness
+     * passes {@link AIM_OSCILLATION_TUNING}, the preset the game actually
+     * plays.
+     */
+    readonly tuning?: BotTuningValues;
   } = {},
 ): ArenaRunResult {
   const archetype = AIM_ACCURACY_ARCHETYPES[movementClass];
@@ -347,14 +424,52 @@ export function runAimAccuracyScenario(
     DEFAULT_CONFIG,
   );
   try {
-    // The compiled defaults are the measured solve; the only override is the
-    // documented tracker-lead control that reproduces the pinned baseline.
+    // The compiled defaults are the measured solve; the documented controls
+    // only switch off the tracker lead, the damping and the adaptive error so
+    // the recorded pre-change observations can be reproduced exactly.
+    const competenceOverrides: Partial<CompetentBotTunables> = {
+      ...(options.tuning ? toCompetentOverrides(options.tuning) : {}),
+    };
+    if (options.aimLeadFromTracker !== undefined) {
+      competenceOverrides.aimLeadFromTracker = options.aimLeadFromTracker;
+    }
+    if (options.preFixDamping === true || options.aimLeadFromTracker === false) {
+      competenceOverrides.engagementRangeHysteresis = 0;
+    }
+    Object.assign(competenceOverrides, options.overrides?.competent);
     const brain =
-      options.aimLeadFromTracker === undefined
-        ? createCompetentBotBrain()
-        : createCompetentBotBrain({
-            tunables: { aimLeadFromTracker: options.aimLeadFromTracker },
-          });
+      Object.keys(competenceOverrides).length > 0
+        ? createCompetentBotBrain({ tunables: competenceOverrides })
+        : createCompetentBotBrain();
+    // The pinned pre-change baseline predates the adaptive aim error
+    // (AH-0MWR057Q8004PBOD) and the oscillation damping
+    // (AH-0MWT4BBYO0085CN8), so the control run must disable both to reproduce
+    // the recorded fixtures byte-for-byte. The shipped-default report leaves
+    // them live, measuring today's solve. An explicit `aimErrorRad` overrides
+    // the shipped fallibility for the measured solve (the regression proof
+    // passes `0`, measuring the solve rather than the error knob).
+    const humanInput: Partial<BotHumanInputTunables> = {
+      ...(options.tuning ? toHumanOverrides(options.tuning) : {}),
+    };
+    let hasHumanOverride = options.tuning !== undefined;
+    if (options.aimLeadFromTracker === false) {
+      humanInput.aimErrorRad = 0;
+      humanInput.aimDampingEnabled = false;
+      humanInput.aimTurnHoldMs = 0;
+      hasHumanOverride = true;
+    } else if (options.aimErrorRad !== undefined) {
+      humanInput.aimErrorRad = options.aimErrorRad;
+      hasHumanOverride = true;
+    }
+    if (options.preFixDamping === true) {
+      humanInput.aimDampingEnabled = false;
+      humanInput.aimTurnHoldMs = 0;
+      hasHumanOverride = true;
+    }
+    if (options.overrides?.human) {
+      Object.assign(humanInput, options.overrides.human);
+      hasHumanOverride = true;
+    }
     return runArena(brain, {
       seed,
       ticks: AIM_ACCURACY_TICKS,
@@ -375,21 +490,13 @@ export function runAimAccuracyScenario(
       balance: loadBalanceConfig(),
       movingHostiles: true,
       measureAimShots: options.measureAimShots ?? true,
-      // The pinned pre-change baseline predates the adaptive aim error
-      // (AH-0MWR057Q8004PBOD), so the control run must disable it to reproduce
-      // the recorded fixture byte-for-byte. The shipped-default report leaves
-      // it live, measuring today's solve. An explicit `aimErrorRad` overrides
-      // the shipped fallibility for the measured solve (the regression proof
-      // passes `0`, measuring the solve rather than the error knob).
-      ...(options.aimLeadFromTracker === false || options.aimErrorRad !== undefined
-        ? {
-            humanInput: {
-              aimErrorRad: options.aimLeadFromTracker === false
-                ? 0
-                : (options.aimErrorRad as number),
-            },
-          }
+      ...(options.measureControlInputs === true
+        ? { measureControlInputs: true }
         : {}),
+      ...(options.liveControlContext === true
+        ? { liveControlContext: true }
+        : {}),
+      ...(hasHumanOverride ? { humanInput } : {}),
     });
   } finally {
     resetConfigStore();
@@ -436,5 +543,277 @@ export function runAimAccuracy(
       ...tallyAimShots(shotsByClass.get(movementClass) ?? []),
     })),
     pooled: tallyAimShots(allShots),
+  };
+}
+
+// ── Oscillation measurement (AH-0MWT4BBYO0085CN8 · RAC3) ─────────────
+//
+// The accuracy harness above answers "does a shot land?"; it cannot see the
+// actuator dithering that the producer observed in live play. This half of the
+// harness folds the arena's opt-in control-input trace into the two counts
+// that make oscillation a number:
+//
+// - **turn sign flips** — the rotational command changing from left to right
+//   (or back) between successive non-released ticks, per second. Releases in
+//   between do not reset the "established direction", so `left → off → right`
+//   counts as one flip; a bot that re-brakes the same overshoot repeatedly
+//   accumulates them.
+// - **thrust / reverse transitions** — every on↔off edge of the forward and
+//   reverse commands, per second. A bot lunging forward and backing off across
+//   the engagement-range boundary toggles these every tick or two.
+//
+// The metrics sit beside the same shots/hits/hit-rate/miss-distance numbers,
+// per class and per seed, so a damping change cannot appear to reduce
+// oscillation by simply missing (or by not engaging).
+
+/** Raw actuator counts over one measured window. */
+export interface AimOscillationCounts {
+  /** Measured ticks (one control sample per tick). */
+  readonly ticks: number;
+  /** Left↔right command changes between successive non-released ticks. */
+  readonly turnSignFlips: number;
+  /** Forward on↔off edges. */
+  readonly thrustTransitions: number;
+  /** Reverse on↔off edges. */
+  readonly reverseTransitions: number;
+  /**
+   * Forward↔reverse command sign changes, ignoring released ticks. This is the
+   * "lunge" count: one forward burst followed by one retro burst counts once,
+   * however many press gaps lie between them.
+   */
+  readonly driveSignFlips: number;
+}
+
+/**
+ * One window's oscillation and accuracy metrics. `preFixDamping` runs and
+ * shipped runs share this shape, so the two arms are directly comparable.
+ */
+export interface AimOscillationTally extends AimAccuracyTally {
+  /** Measured ticks (one control sample per tick). */
+  readonly ticks: number;
+  /** Turn sign flips over the window. */
+  readonly turnSignFlips: number;
+  /** Turn sign flips per simulated second. */
+  readonly turnSignFlipsPerSecond: number;
+  /** Forward-thrust on↔off edges over the window. */
+  readonly thrustTransitions: number;
+  /** Forward-thrust transitions per simulated second. */
+  readonly thrustTransitionsPerSecond: number;
+  /** Reverse-thrust on↔off edges over the window. */
+  readonly reverseTransitions: number;
+  /** Reverse-thrust transitions per simulated second. */
+  readonly reverseTransitionsPerSecond: number;
+  /** Forward↔reverse command sign changes (the "lunge" count). */
+  readonly driveSignFlips: number;
+  /** Forward↔reverse command sign changes per simulated second. */
+  readonly driveSignFlipsPerSecond: number;
+}
+
+/** One class + seed's measured row (RAC3: "per movement class and seed"). */
+export interface AimOscillationRunRow extends AimOscillationTally {
+  readonly movementClass: EnemyMovementClass;
+  readonly seed: number;
+}
+
+/** One class's pooled row (all documented seeds). */
+export interface AimOscillationClassRow extends AimOscillationTally {
+  readonly movementClass: EnemyMovementClass;
+}
+
+/** The whole oscillation report — the shape the pre-fix fixture pins. */
+export interface AimOscillationReport {
+  /** The documented seed list the report was measured over. */
+  readonly seeds: readonly number[];
+  /** The measured scenarios, in documented order. */
+  readonly classes: readonly EnemyMovementClass[];
+  /** Ticks per run. */
+  readonly ticks: number;
+  /** Fixed simulation step, seconds. */
+  readonly dt: number;
+  /** Per class + seed rows, in class-then-seed order. */
+  readonly runs: readonly AimOscillationRunRow[];
+  /** Per-class metrics, pooled over every seed. */
+  readonly perClass: readonly AimOscillationClassRow[];
+  /** Every class and seed pooled into one tally. */
+  readonly pooled: AimOscillationTally;
+}
+
+/**
+ * Counts the raw actuator events in a control-input trace.
+ *
+ * Exported so the counting rule itself is testable on a synthetic trace,
+ * independently of a live arena run.
+ */
+export function countControlOscillation(
+  samples: readonly ArenaControlSample[],
+): AimOscillationCounts {
+  let turnSignFlips = 0;
+  let lastTurn: -1 | 0 | 1 = 0;
+  let thrustTransitions = 0;
+  let reverseTransitions = 0;
+  let driveSignFlips = 0;
+  let previousThrust: boolean | null = null;
+  let previousReverse: boolean | null = null;
+  let lastDrive = 0;
+  for (const sample of samples) {
+    if (sample.turn !== 0) {
+      if (lastTurn !== 0 && sample.turn !== lastTurn) turnSignFlips += 1;
+      lastTurn = sample.turn;
+    }
+    if (previousThrust !== null && sample.thrust !== previousThrust) {
+      thrustTransitions += 1;
+    }
+    if (previousReverse !== null && sample.reverse !== previousReverse) {
+      reverseTransitions += 1;
+    }
+    const drive = sample.reverse ? -1 : sample.thrust ? 1 : 0;
+    if (drive !== 0) {
+      if (lastDrive !== 0 && drive !== lastDrive) driveSignFlips += 1;
+      lastDrive = drive;
+    }
+    previousThrust = sample.thrust;
+    previousReverse = sample.reverse;
+  }
+  return {
+    ticks: samples.length,
+    turnSignFlips,
+    thrustTransitions,
+    reverseTransitions,
+    driveSignFlips,
+  };
+}
+
+/** Rounds a per-second rate to the harness's reported precision. */
+function roundRate(count: number, seconds: number): number {
+  return roundReported(seconds > 0 ? count / seconds : 0);
+}
+
+/** Folds one window's control trace and shot table into a reported tally. */
+export function tallyOscillation(
+  samples: readonly ArenaControlSample[],
+  shots: readonly ArenaAimShot[],
+  dt: number = AIM_ACCURACY_DT,
+): AimOscillationTally {
+  const counts = countControlOscillation(samples);
+  const seconds = counts.ticks * dt;
+  return {
+    ticks: counts.ticks,
+    turnSignFlips: counts.turnSignFlips,
+    turnSignFlipsPerSecond: roundRate(counts.turnSignFlips, seconds),
+    thrustTransitions: counts.thrustTransitions,
+    thrustTransitionsPerSecond: roundRate(counts.thrustTransitions, seconds),
+    reverseTransitions: counts.reverseTransitions,
+    reverseTransitionsPerSecond: roundRate(counts.reverseTransitions, seconds),
+    driveSignFlips: counts.driveSignFlips,
+    driveSignFlipsPerSecond: roundRate(counts.driveSignFlips, seconds),
+    ...tallyAimShots(shots),
+  };
+}
+
+/** Sums raw actuator counts across windows, recomputing the per-second rates. */
+function foldOscillationCounts(
+  rows: readonly AimOscillationTally[],
+  dt: number = AIM_ACCURACY_DT,
+): Pick<
+  AimOscillationTally,
+  | 'ticks'
+  | 'turnSignFlips'
+  | 'turnSignFlipsPerSecond'
+  | 'thrustTransitions'
+  | 'thrustTransitionsPerSecond'
+  | 'reverseTransitions'
+  | 'reverseTransitionsPerSecond'
+  | 'driveSignFlips'
+  | 'driveSignFlipsPerSecond'
+> {
+  let ticks = 0;
+  let turnSignFlips = 0;
+  let thrustTransitions = 0;
+  let reverseTransitions = 0;
+  let driveSignFlips = 0;
+  for (const row of rows) {
+    ticks += row.ticks;
+    turnSignFlips += row.turnSignFlips;
+    thrustTransitions += row.thrustTransitions;
+    reverseTransitions += row.reverseTransitions;
+    driveSignFlips += row.driveSignFlips;
+  }
+  const seconds = ticks * dt;
+  return {
+    ticks,
+    turnSignFlips,
+    turnSignFlipsPerSecond: roundRate(turnSignFlips, seconds),
+    thrustTransitions,
+    thrustTransitionsPerSecond: roundRate(thrustTransitions, seconds),
+    reverseTransitions,
+    reverseTransitionsPerSecond: roundRate(reverseTransitions, seconds),
+    driveSignFlips,
+    driveSignFlipsPerSecond: roundRate(driveSignFlips, seconds),
+  };
+}
+
+/** Sums actuator counts and folds the shot tables exactly into one tally. */
+function foldOscillation(
+  rows: readonly AimOscillationTally[],
+  shots: readonly ArenaAimShot[],
+  dt: number = AIM_ACCURACY_DT,
+): AimOscillationTally {
+  return { ...foldOscillationCounts(rows, dt), ...tallyAimShots(shots) };
+}
+
+/**
+ * Runs the whole documented matrix with the control-input trace and the shot
+ * table on, and folds both into the oscillation report.
+ *
+ * @param options — omit for the shipped actuator. `preFixDamping: true` flies
+ *   the **pre-fix actuator** (no aim reversal hysteresis, no standoff
+ *   hysteresis) so the pinned `aimOscillation.baseline.json` fixture can be
+ *   reproduced exactly; every other compiled default stays live, so the two
+ *   arms differ in the damping alone.
+ */
+export function runAimOscillation(
+  options: { readonly preFixDamping?: boolean } = {},
+): AimOscillationReport {
+  const runs: AimOscillationRunRow[] = [];
+  const rowsByClass = new Map<EnemyMovementClass, AimOscillationTally[]>();
+  const shotsByClass = new Map<EnemyMovementClass, ArenaAimShot[]>();
+  const allShots: ArenaAimShot[] = [];
+  for (const movementClass of AIM_ACCURACY_CLASSES) {
+    const classRows: AimOscillationTally[] = [];
+    const classShots: ArenaAimShot[] = [];
+    for (const seed of AIM_ACCURACY_SEEDS) {
+      const result = runAimAccuracyScenario(movementClass, seed, {
+        measureControlInputs: true,
+        measureAimShots: true,
+        liveControlContext: true,
+        tuning: AIM_OSCILLATION_TUNING,
+        ...(options.preFixDamping === true ? { preFixDamping: true } : {}),
+      });
+      const tally = tallyOscillation(
+        result.controlInputs ?? [],
+        result.aimShots ?? [],
+      );
+      runs.push({ movementClass, seed, ...tally });
+      classRows.push(tally);
+      classShots.push(...(result.aimShots ?? []));
+    }
+    rowsByClass.set(movementClass, classRows);
+    shotsByClass.set(movementClass, classShots);
+    allShots.push(...classShots);
+  }
+  return {
+    seeds: [...AIM_ACCURACY_SEEDS],
+    classes: [...AIM_ACCURACY_CLASSES],
+    ticks: AIM_ACCURACY_TICKS,
+    dt: AIM_ACCURACY_DT,
+    runs,
+    perClass: AIM_ACCURACY_CLASSES.map((movementClass) => ({
+      movementClass,
+      ...foldOscillation(
+        rowsByClass.get(movementClass) ?? [],
+        shotsByClass.get(movementClass) ?? [],
+      ),
+    })),
+    pooled: foldOscillation(runs, allShots),
   };
 }

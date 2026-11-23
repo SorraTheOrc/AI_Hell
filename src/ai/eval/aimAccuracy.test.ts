@@ -326,3 +326,43 @@ describe('aim measurement is observation only (AH-0MWR04UJ5008H5WQ)', () => {
     expect(on.aimShots?.length).toBeGreaterThan(0);
   });
 });
+
+describe('control-input trace is observation only (AH-0MWT4BBYO0085CN8)', () => {
+  it('records one control sample per tick without moving the run', () => {
+    const seed = AIM_ACCURACY_SEEDS[0];
+    const off = runAimAccuracyScenario('roamer', seed, {
+      measureControlInputs: false,
+    });
+    const on = runAimAccuracyScenario('roamer', seed, {
+      measureControlInputs: true,
+    });
+    expect(JSON.stringify(on.records)).toBe(JSON.stringify(off.records));
+    expect(off.controlInputs).toBeUndefined();
+    expect(on.controlInputs?.length).toBe(on.ticksSimulated);
+    for (const sample of on.controlInputs ?? []) {
+      expect(sample.turn === -1 || sample.turn === 0 || sample.turn === 1).toBe(
+        true,
+      );
+      expect(typeof sample.thrust).toBe('boolean');
+      expect(typeof sample.reverse).toBe('boolean');
+    }
+  });
+
+  it('the live control context changes the actuator inputs, not the record schema', () => {
+    const seed = AIM_ACCURACY_SEEDS[0];
+    const reduced = runAimAccuracyScenario('diver', seed, {
+      measureControlInputs: true,
+      liveControlContext: false,
+    });
+    const live = runAimAccuracyScenario('diver', seed, {
+      measureControlInputs: true,
+      liveControlContext: true,
+    });
+    // The reduced context never enables the retro thruster, so no reverse
+    // sample can appear there; the live context can fire it.
+    expect(reduced.controlInputs?.some((sample) => sample.reverse)).toBe(false);
+    expect(live.controlInputs?.some((sample) => sample.reverse)).toBe(true);
+    // Both are still the same telemetry record shape (observation only).
+    expect(live.records[0].kind).toBe(reduced.records[0].kind);
+  });
+});

@@ -645,6 +645,51 @@ bot-tuning gym fly identically.
   The curated promo presets pin `aimErrorRad = 0` so their seed-tuned
   recordings stay byte-identical to the pre-adaptive baseline (no draw at 0);
   the shipped gameplay `Default` config carries the live 0.02 rad error.
+  When **aim damping** is on (§9.12), the error *angle* is drawn once per
+  magnitude (arm, decay, reposition re-arm or target change) and held between
+  hits, so the fallibility biases the aim instead of jittering the bearing
+  every reaction; with damping off it is redrawn every commit, as before.
+- **Aim damping (AH-0MWT4BBYO0085CN8 · RAC1).** The producer's play-test of
+  the aim-accuracy epic showed the bot **oscillating again in both the turn
+  actuator and the forward/backward control**. Two damping knobs, both live
+  and both switched on in the shipped `Default` preset; the factory defaults
+  stay off, so every pre-change harness baseline is byte-identical:
+  - **`aimDampingEnabled`** (toggle, factory **off**, shipped preset **on**)
+    is the master switch. With it on, an established **aim** turn direction
+    cannot flip for `aimTurnHoldMs`, and the adaptive aim-error angle is held
+    between hits (above). With it off the governor is exactly the pre-change
+    code.
+  - **`aimTurnHoldMs`** (default **300 ms**, the reaction window) releases a
+    requested aim reversal inside the window instead of pressing the opposite
+    key, so the closed-loop turn coasts through an overshoot rather than
+    dithering left/right. The per-tick *release* is untouched — aim precision
+    is unchanged, and `0` disables only the flip hold.
+- **Standoff hysteresis (AH-0MWT4BBYO0085CN8 · RAC2).**
+  `engagementRangeHysteresis` (default **40 px** in the shipped preset, **0**
+  factory) makes the engage behaviour's in/out-of-standoff decision sticky:
+  once inside `engagementRange` it stays inside until the target is
+  `engagementRange + band` away, and outside it keeps closing until it is back
+  inside. The same state gates the reverse brake, so thrust and reverse cannot
+  chase each other across the boundary. A `0` band is the pre-change
+  single-boundary rule.
+- **Oscillation measurement (RAC3).** Two deterministic harnesses, both
+  folded by the same `countControlOscillation` rule (turn sign flips,
+  thrust/reverse on↔off transitions, and forward↔reverse **drive sign flips**
+  — the "lunge" count):
+  - `src/ai/eval/oscillation.ts` drives the shipped competent brain, the
+    shipped `BotInputGovernor` and the shipped `AsteroidsModel` against a
+    scripted target that breathes across the standoff boundary while its
+    bearing sweeps (the two live symptoms). Both arms see the identical
+    script, so a change in the counts is attributable to the damping.
+    `src/ai/eval/oscillation.test.ts` asserts the shipped arm is strictly
+    below the pinned pre-fix baseline (`src/ai/eval/oscillation.baseline.json`)
+    and below the documented caps.
+  - `runAimOscillation` in `src/ai/eval/aimAccuracy.ts` runs the **live
+    arena fight** with the arena's opt-in `measureControlInputs` trace and
+    `liveControlContext` (the ship's angular velocity, rotation model and
+    reverse flag, as the game supplies them), reporting the same counts beside
+    shots/hits/hit-rate/miss-distance per movement class and seed. Its pre-fix
+    observation is pinned in `src/ai/eval/aimOscillation.baseline.json`.
 - **Live tuning (AC4).** `skill`, `maxAimErrorRad`, `aimErrorRad`,
   `aimErrorDecay`, `aimErrorResetDistance`, `aimLeadAlignSeconds` and
   `aimLeadIterations` are sliders and `aimLeadEnabled` a toggle in
@@ -934,9 +979,12 @@ behaviour now treat flying as a coarse, human action.
   key for a human-like burst instead of toggling on and off within a reaction;
   a flip requested inside the window is **released**, never dithered to the
   opposite key. Thrust and reverse are untouched, so a safety brake is never
-  delayed. **Aim intents are exempt** — holding the weapon axis on a target is
-  a precision task the producer did not ask to change, so an `aim` intent
-  keeps the closed-loop per-tick release (§9.8).
+  delayed. **Aim intents are exempt from this hold** — holding the weapon axis
+  on a target is a precision task, so an `aim` intent keeps the closed-loop
+  per-tick release (§9.8). Aim intents instead get their own, narrower
+  anti-dither guard: with `aimDampingEnabled` on, an established aim turn
+  cannot flip for `aimTurnHoldMs` while releases stay immediate
+  (AH-0MWT4BBYO0085CN8 · RAC1, §9.8).
 - **Pass-through collection.** Pickups are collected on **contact**, so the
   collect behaviour no longer retro-brakes onto one (`collectReverseBrake`
   defaults to `false`; the retro thruster is still available behind the
@@ -1168,6 +1216,24 @@ and adjust its parameters in real time.
   All three are ordinary `BOT_TUNING_NUMERIC_FIELDS` sliders (live-rebuild,
   persisted in `src/data/bot-tuning.json`), and the boss — which has no
   bot-side id in the hit seam — keeps the fixed `skill` error only.
+- **Oscillation-damping knobs (AH-0MWT4BBYO0085CN8 · RAC5).** Three controls
+  complete the anti-oscillation surface described in
+  [section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98):
+  - **`aimDampingEnabled`** (toggle, factory **off**, shipped `Default` preset
+    **on**) — damps the aim actuator: an established aim turn cannot flip for
+    `aimTurnHoldMs`, and the adaptive aim-error angle is held between confirmed
+    hits instead of being redrawn every reaction. Off restores the exact
+    pre-change actuator.
+  - **`aimTurnHoldMs`** (default **300 ms**) — the aim flip-hold window. A
+    requested reversal inside it is released (the ship coasts); a release is
+    still honoured immediately, so aim precision is unchanged. At **`0`** only
+    the flip hold is disabled.
+  - **`engagementRangeHysteresis`** (default **40 px** in the shipped preset,
+    **0** factory) — the sticky band around `engagementRange`. Inside the
+    standoff the bot stays inside until the target is this much farther away,
+    and the band also suppresses the reverse brake, so the forward and retro
+    thrusters cannot toggle across the boundary. At **`0`** the pre-change
+    single-boundary rule is restored.
 - **Per-parameter tooltips.** Every slider and toggle carries a plain-English
   `description` in its `BotTuningFieldSpec`/`BotTuningToggleSpec`
   (`src/ai/tuningFields.ts`), authored in lockstep with the tunables' JSDoc.

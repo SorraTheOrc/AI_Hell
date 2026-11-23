@@ -1591,3 +1591,121 @@ describe('smooth turning — deadband, hysteresis and flip hold (AH-0MWJ1680Z001
     expect(out.turnRight).toBe(false);
   });
 });
+
+// ── Aim damping (AH-0MWT4BBYO0085CN8 · RAC1) ────────────────────────
+
+describe('aim damping — reversal hold and stable aim bias (AH-0MWT4BBYO0085CN8 RAC1)', () => {
+  const CONTEXT = { scheme: 'asteroids' as const, facing: 0 };
+
+  /** A precise aim intent at `bearing`, engaged with target `7`. */
+  function aimAt(bearing: number) {
+    return {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+      thrust: false,
+      aim: true,
+      targetId: 7,
+    };
+  }
+
+  function turnOf(governor: BotInputGovernor, bearing: number): -1 | 0 | 1 {
+    const out = governor.update(aimAt(bearing), 1 / 60, CONTEXT) as AsteroidsInput;
+    return out.turnLeft ? -1 : out.turnRight ? 1 : 0;
+  }
+
+  it('ships the damping off in the compiled factory defaults', () => {
+    // Off in the factory defaults so every pre-existing harness that flies them
+    // stays byte-identical; the shipped `Default` preset turns it on (see
+    // src/data/bot-tuning.test.ts).
+    expect(BOT_HUMAN_INPUT_TUNABLES.aimDampingEnabled).toBe(false);
+    expect(BOT_HUMAN_INPUT_TUNABLES.aimTurnHoldMs).toBeGreaterThan(0);
+  });
+
+  it('releases, rather than flips, an established aim turn inside aimTurnHoldMs', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimDampingEnabled: true, aimTurnHoldMs: 120 },
+      1,
+    );
+    // Establish a right turn.
+    expect(turnOf(governor, Math.PI / 2)).toBe(1);
+    // The very next tick asks for the opposite turn: released, not flipped.
+    expect(turnOf(governor, -Math.PI / 2)).toBe(0);
+    expect(turnOf(governor, -Math.PI / 2)).toBe(0);
+    // Once the hold has elapsed the live request is followed again.
+    let direction: -1 | 0 | 1 = 0;
+    for (let i = 0; i < 10; i += 1) {
+      direction = turnOf(governor, -Math.PI / 2);
+    }
+    expect(direction).toBe(-1);
+  });
+
+  it('flips immediately when the damping is off (pre-change behaviour)', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimDampingEnabled: false, aimTurnHoldMs: 120 },
+      1,
+    );
+    expect(turnOf(governor, Math.PI / 2)).toBe(1);
+    expect(turnOf(governor, -Math.PI / 2)).toBe(-1);
+  });
+
+  it('honours an immediate release inside the hold, so aim precision is kept', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimDampingEnabled: true, aimTurnHoldMs: 120 },
+      1,
+    );
+    expect(turnOf(governor, Math.PI / 2)).toBe(1);
+    // The ship is now aligned: the turn key must be released at once, not held
+    // for the rest of the window.
+    const aligned = governor.update(aimAt(0), 1 / 60, {
+      scheme: 'asteroids',
+      facing: Math.PI / 2,
+    }) as AsteroidsInput;
+    expect(aligned.turnLeft).toBe(false);
+    expect(aligned.turnRight).toBe(false);
+  });
+
+  it('holds the adaptive aim-error angle between commits and redraws it on a hit', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4, aimDampingEnabled: true },
+      3,
+    );
+    const bearing = (): number => {
+      const intent = governor.currentIntent();
+      return Math.atan2(intent.dirY ?? 0, intent.dirX ?? 0);
+    };
+    for (let i = 0; i < 5; i += 1) {
+      governor.update(aimAt(0), 1 / 60, CONTEXT);
+    }
+    const held = bearing();
+    // Same magnitude, same angle: the error is a bias, not per-reaction jitter.
+    for (let i = 0; i < 5; i += 1) {
+      governor.update(aimAt(0), 1 / 60, CONTEXT);
+      expect(bearing()).toBeCloseTo(held, 12);
+    }
+    expect(Math.abs(held)).toBeGreaterThan(0);
+
+    // A confirmed hit halves the magnitude and draws a fresh angle.
+    governor.noteAimHit(7);
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.2, 12);
+    governor.update(aimAt(0), 1 / 60, CONTEXT);
+    expect(Math.abs(bearing())).toBeLessThanOrEqual(0.2 + 1e-9);
+    const afterHit = bearing();
+    governor.update(aimAt(0), 1 / 60, CONTEXT);
+    expect(bearing()).toBeCloseTo(afterHit, 12);
+  });
+
+  it('redraws the adaptive error every reaction when the damping is off', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4, aimDampingEnabled: false },
+      3,
+    );
+    const bearings: number[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      governor.update(aimAt(0), 1 / 60, CONTEXT);
+      const intent = governor.currentIntent();
+      bearings.push(Math.atan2(intent.dirY ?? 0, intent.dirX ?? 0));
+    }
+    expect(new Set(bearings.map((b) => b.toFixed(9))).size).toBeGreaterThan(1);
+  });
+});

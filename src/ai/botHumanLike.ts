@@ -214,6 +214,36 @@ export interface BotHumanInputTunables {
    */
   turnHysteresisRad: number;
   /**
+   * Whether the aim actuator is **damped** (AH-0MWT4BBYO0085CN8 · RAC1).
+   *
+   * Off in the compiled factory defaults so every pre-existing harness that
+   * flies them stays byte-identical; the shipped `Default` bot-tuning preset
+   * turns it on, which is the configuration the game plays. When on:
+   *
+   * - an established **aim** turn direction cannot flip for
+   *   {@link aimTurnHoldMs} — the reversal is released (the ship coasts) instead
+   *   of pressing the opposite key, so the closed-loop aim turn cannot dither;
+   * - the adaptive aim-error angle is held between confirmed hits / target
+   *   changes instead of being redrawn every reaction, so the fallibility
+   *   biases the aim rather than jittering the bearing.
+   *
+   * `false` reduces the governor exactly to the pre-change behaviour.
+   */
+  aimDampingEnabled: boolean;
+  /**
+   * Minimum time (ms) an established **aim** turn direction is held before it
+   * may flip to the opposite key (AH-0MWT4BBYO0085CN8 · RAC1). Used only when
+   * {@link aimDampingEnabled} is on.
+   *
+   * Aim intents keep their precise per-tick release (aiming is a precision
+   * task), but a direction flip is the one move that reads as left/right
+   * thrash: the closed-loop turn brakes an overshoot by reversing, and near the
+   * bearing it reverses again a few ticks later. Inside this window a flip
+   * request is released (the ship coasts) instead of pressing the opposite key,
+   * so the aim actuator cannot dither. `0` disables only the flip hold.
+   */
+  aimTurnHoldMs: number;
+  /**
    * Minimum duration (ms) of a turn-key press (AH-0MWJ1680Z001QYV2 audit
    * rejection). Mirroring the forward/reverse press cadence, an established
    * turn is held for at least this long instead of toggling on and off within
@@ -318,6 +348,11 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   alignmentToleranceRad: 0.16,
   aimAlignmentToleranceRad: 0.05,
   turnHysteresisRad: 0.25,
+  // Factory default off; the shipped `Default` bot-tuning preset enables it
+  // (AH-0MWT4BBYO0085CN8), so pre-existing arena/harness baselines that fly the
+  // compiled defaults stay byte-identical while the game gets the damping.
+  aimDampingEnabled: false,
+  aimTurnHoldMs: 300,
   turnPressMinMs: 30,
   thrustPressMinMs: 200,
   thrustPressMaxMs: 225,
@@ -780,6 +815,24 @@ export class BotInputGovernor {
   /** Milliseconds left in the current turn-key press hold (0 = none). */
   private turnPressRemainingMs = 0;
 
+  /**
+   * Milliseconds left before an established **aim** turn may flip to the
+   * opposite key (AH-0MWT4BBYO0085CN8 · RAC1). Aim intents keep their precise
+   * per-tick release, but a reversal inside this window is released instead of
+   * pressed, so the closed-loop aim turn cannot dither left/right.
+   */
+  private aimTurnHoldRemainingMs = 0;
+
+  /**
+   * The held adaptive aim-error angle (radians), and the magnitude it was
+   * drawn at (AH-0MWT4BBYO0085CN8 · RAC1). The angle is held constant between
+   * confirmed hits / target changes instead of being redrawn every reaction,
+   * so the error biases the aim rather than jittering the bearing and driving
+   * the turn actuator. `-1` forces a fresh draw on the next commit.
+   */
+  private adaptiveAimErrorAngle = 0;
+  private adaptiveAimErrorAngleForRad = -1;
+
   private readonly tunables: BotHumanInputTunables;
 
   constructor(
@@ -825,9 +878,11 @@ export class BotInputGovernor {
     this.reversePressRemainingMs = 0;
     this.turnDirection = 0;
     this.turnPressRemainingMs = 0;
+    this.aimTurnHoldRemainingMs = 0;
     // A new run re-arms the adaptive aim error and forgets the previous run's
     // positions (AH-0MWR057Q8004PBOD · AC4).
     this.adaptiveAimErrorRad = this.tunables.aimErrorRad;
+    this.adaptiveAimErrorAngleForRad = -1;
     this.aimErrorOrigin = null;
     this.lastShipPosition = null;
   }
@@ -975,6 +1030,38 @@ export class BotInputGovernor {
     const direction: -1 | 0 | 1 =
       input.turnLeft === true ? -1 : input.turnRight === true ? 1 : 0;
     if (aim) {
+      // Aim intents keep the precise per-tick release, but when aim damping is
+      // on an established direction cannot flip inside `aimTurnHoldMs`
+      // (AH-0MWT4BBYO0085CN8 · RAC1): the flip is released so the closed loop
+      // coasts rather than braking with the opposite key every few ticks. A
+      // release (direction 0) is honoured immediately, so aim precision is
+      // unchanged.
+      if (this.tunables.aimDampingEnabled !== true) {
+        this.turnDirection = direction;
+        this.turnPressRemainingMs = 0;
+        return input;
+      }
+      if (this.aimTurnHoldRemainingMs > 0) {
+        this.aimTurnHoldRemainingMs = Math.max(
+          0,
+          this.aimTurnHoldRemainingMs - dtMs,
+        );
+        if (
+          direction !== 0 &&
+          this.turnDirection !== 0 &&
+          direction !== this.turnDirection
+        ) {
+          return {
+            forward: false,
+            reverse: false,
+            turnLeft: false,
+            turnRight: false,
+          };
+        }
+      }
+      if (direction !== 0 && direction !== this.turnDirection) {
+        this.aimTurnHoldRemainingMs = Math.max(0, this.tunables.aimTurnHoldMs);
+      }
       this.turnDirection = direction;
       this.turnPressRemainingMs = 0;
       return input;
@@ -1141,6 +1228,9 @@ export class BotInputGovernor {
       this.committed.aim === true ? this.committed.targetId : undefined;
     if (nextTarget === previousTarget) return;
     this.adaptiveAimErrorRad = this.tunables.aimErrorRad;
+    // A new target draws a fresh bias angle rather than reusing the previous
+    // engagement's (AH-0MWT4BBYO0085CN8 · RAC1).
+    this.adaptiveAimErrorAngleForRad = -1;
     this.aimErrorOrigin = this.lastShipPosition
       ? { ...this.lastShipPosition }
       : this.aimErrorOrigin;
@@ -1160,9 +1250,12 @@ export class BotInputGovernor {
    * Applies the live adaptive aim error to an aim intent that carries a target
    * identity (AH-0MWR057Q8004PBOD · AC4).
    *
-   * The error is drawn from its own seeded stream, uniformly from
-   * `[-aimErrorRad, +aimErrorRad]` at the **current** (decayed/re-armed)
-   * magnitude. At a zero magnitude — including every intent with no target
+   * The error is held at the **current** (decayed/re-armed) magnitude and is
+   * drawn once for that magnitude from its own seeded stream
+   * (AH-0MWT4BBYO0085CN8 · RAC1). Holding the angle between hits keeps the
+   * fallibility as a bias rather than a per-reaction jitter that drives the
+   * turn actuator; a decay, a reposition re-arm or a target change draws a
+   * fresh angle. At a zero magnitude — including every intent with no target
    * id, no usable bearing or `aim !== true` — no draw is consumed and the
    * decision is returned unchanged.
    */
@@ -1180,7 +1273,18 @@ export class BotInputGovernor {
     if (!Number.isFinite(len) || len < 1e-9) return decision;
     const unitX = rawX / len;
     const unitY = rawY / len;
-    const error = (this.adaptiveAimRandom() * 2 - 1) * errorMag;
+    if (
+      this.tunables.aimDampingEnabled !== true ||
+      this.adaptiveAimErrorAngleForRad !== errorMag
+    ) {
+      // Damping on: draw once per magnitude (arm/decay/re-arm). Damping off:
+      // the pre-change behaviour, a fresh draw every reaction, which moves the
+      // bearing between commits and drives the turn actuator.
+      this.adaptiveAimErrorAngle =
+        (this.adaptiveAimRandom() * 2 - 1) * errorMag;
+      this.adaptiveAimErrorAngleForRad = errorMag;
+    }
+    const error = this.adaptiveAimErrorAngle;
     const cos = Math.cos(error);
     const sin = Math.sin(error);
     const dx = unitX * cos - unitY * sin;
@@ -1249,7 +1353,9 @@ export class BotInputGovernor {
           turnDirection: this.turnDirection,
           // Aiming keeps the legacy always-brake release: a hysteresis release
           // would let the weapon axis settle up to the whole margin off target
-          // (AH-0MWJ1680Z001QYV2 audit rejection).
+          // (AH-0MWJ1680Z001QYV2 audit rejection). The anti-dither damping for
+          // aim intents is the flip hold in `applyTurnHold`
+          // (AH-0MWT4BBYO0085CN8 · RAC1).
           hysteresisRad: decision.aim === true ? 0 : this.tunables.turnHysteresisRad,
         },
       );

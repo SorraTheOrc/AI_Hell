@@ -1147,3 +1147,116 @@ describe('wrapped distances in behaviours (AH-0MVT2W10L003VV1U)', () => {
     expect(intent!.dirX).toBeGreaterThan(0);
   });
 });
+
+// ── Standoff hysteresis (AH-0MWT4BBYO0085CN8 · RAC2) ────────────────
+
+describe('engage standoff hysteresis (AH-0MWT4BBYO0085CN8 RAC2)', () => {
+  /**
+   * A context that **reuses** the run's memory, so the engage behaviour's
+   * sticky in/out-of-standoff state survives between calls (the shared
+   * `context()` helper starts a fresh memory per call, which is exactly what
+   * a hysteresis test must not do).
+   */
+  function ctx(
+    snapshot: ReturnType<typeof makeSnapshot>,
+    memory: ReturnType<typeof createBotMemory>,
+  ): BotBehaviourContext {
+    return {
+      snapshot,
+      world: buildBotWorld(snapshot),
+      memory,
+      dt: 0.1,
+      goal: createCompetentGoals(T).require(COMPETENT_GOAL_IDS.engageEnemy),
+    };
+  }
+
+  const banded = createCompetentBehaviours(
+    resolveCompetentTunables({ engagementRangeHysteresis: 40 }),
+  ).require('engage');
+  const unbanded = createCompetentBehaviours(
+    resolveCompetentTunables({ engagementRangeHysteresis: 0 }),
+  ).require('engage');
+
+  /** Scout's content profile keeps the 140 px standoff. */
+  const scoutAt = (x: number) => [enemy(x, 270, 'scout')];
+
+  it('stays in the standoff across the hysteresis band instead of re-thrusting', () => {
+    const memory = createBotMemory();
+    // 130 px: inside the 140 px standoff → coast.
+    expect(
+      banded.run(ctx(makeSnapshot({ player: PLAYER, enemies: scoutAt(610) }), memory))!
+        .thrust,
+    ).toBe(false);
+    // 160 px: outside the standoff but inside the 40 px band → still coasting.
+    expect(
+      banded.run(ctx(makeSnapshot({ player: PLAYER, enemies: scoutAt(640) }), memory))!
+        .thrust,
+    ).toBe(false);
+    // 220 px: clearly outside the band → close again.
+    expect(
+      banded.run(ctx(makeSnapshot({ player: PLAYER, enemies: scoutAt(700) }), memory))!
+        .thrust,
+    ).toBe(true);
+  });
+
+  it('reduces to the single-boundary rule with a zero band', () => {
+    const memory = createBotMemory();
+    // The same 160 px reading is outside 140 with no band, so the bot closes.
+    expect(
+      unbanded.run(ctx(makeSnapshot({ player: PLAYER, enemies: scoutAt(640) }), memory))!
+        .thrust,
+    ).toBe(true);
+  });
+
+  it('does not re-enter the standoff until the ship is actually back inside it', () => {
+    const memory = createBotMemory();
+    // Start outside (160 px) → out of range.
+    expect(
+      banded.run(ctx(makeSnapshot({ player: PLAYER, enemies: scoutAt(640) }), memory))!
+        .thrust,
+    ).toBe(true);
+    // Back inside the 140 px standoff (130 px) → in range, coast.
+    expect(
+      banded.run(ctx(makeSnapshot({ player: PLAYER, enemies: scoutAt(610) }), memory))!
+        .thrust,
+    ).toBe(false);
+    // Drifting out to 160 px must not flip straight back to thrust: the state
+    // is sticky until the band's outer edge (180 px).
+    expect(
+      banded.run(ctx(makeSnapshot({ player: PLAYER, enemies: scoutAt(640) }), memory))!
+        .thrust,
+    ).toBe(false);
+  });
+
+  it('never brake-reverses inside the standoff band', () => {
+    // Closing at 100 px/s toward a target 170 px away: the friction stop
+    // distance (100²/(2·friction)) exceeds the 30 px gap, so the forward model
+    // would coast, and the reverse-assisted stop fits — the pre-change brake
+    // fires here.
+    const closing = makeSnapshot({
+      player: { x: 480, y: 270, vx: 100, vy: 0 },
+      enemies: scoutAt(650),
+      reverseEnabled: true,
+    });
+    // Establish the in-standoff state first (one reading inside 140 px).
+    const memory = createBotMemory();
+    banded.run(
+      ctx(
+        makeSnapshot({
+          player: { x: 480, y: 270, vx: 100, vy: 0 },
+          enemies: scoutAt(610),
+          reverseEnabled: true,
+        }),
+        memory,
+      ),
+    );
+    const heldIntent = banded.run(ctx(closing, memory))!;
+    expect(heldIntent.thrust).toBe(false);
+    expect(heldIntent.reverse).toBe(false);
+
+    // The zero-band control keeps the pre-change brake, proving the assertion
+    // above is about the hysteresis rather than a geometry that never fired.
+    const unbandedIntent = unbanded.run(ctx(closing, createBotMemory()))!;
+    expect(unbandedIntent.reverse).toBe(true);
+  });
+});
