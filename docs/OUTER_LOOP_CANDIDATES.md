@@ -1106,6 +1106,21 @@ trade has to stay live; see *Effort and risk*).
   and a **left-hand attack panel** with that attack's numbers — which hexes
   were attacked, which held, which fell, and what it would take to retake them
   — from the frontier-tick record the finished deployment hands over.
+- A **post-battle results dialog** over the paused map on every deployment
+  landing (parent AH-0MWMFGXD6005WTMN): it names the outcome
+  (`VICTORY`/`DEFEAT`) and the run's final score and, on a victory, itemises
+  every reward that was **actually paid** — salvage banked, any granted
+  weapon/upgrade, any special-mission reward, any contract and/or cache bonus
+  and the banked win bonus, each only when paid; on a defeat it summarises the
+  target hex boss's authored **strengths and weaknesses**, the grant the player
+  did not claim and the unbanked salvage that was **forfeited**. The single
+  source of the dialog text is the pure builder `buildSortieResultView`
+  (`src/core/hangarWar/sortieResult.ts`) and the overlay that draws it is
+  `HexCombatResultScene` (launch → pause → `onDismiss` → resume, the shipped
+  `MineralChoiceScene` contract): no scene derives a reward or a weakness. One
+  confirm dismisses it, the attract traversal auto-dismisses it after the
+  shared dwell, and the thin run result / banked win-bonus lines are folded
+  into it on a deployment landing (parent assumption A1).
 - In-run play reuses `PlayScene` and every existing in-run screen unchanged.
 
 ### Gym testability and the bot
@@ -1121,7 +1136,9 @@ trade has to stay live; see *Effort and risk*).
   auto-picks the **weakest** adjacent hex and, after a sortie, lands back on the
   map where the rolled-in report (arrows plus the left-hand attack panel) is
   read in place; in the hangar it auto-buys the cheapest useful unlock (seeded).
-  There is no report step to auto-advance because there is no report screen.
+  There is no report step to auto-advance because there is no report screen,
+  and the post-battle **results dialog** auto-confirms after the shared dwell,
+  so the traversal cannot stall on it either.
   Because defence is **resolved algorithmically**, there is no live defence
   battle for the demo to stall in — the defending bot never needs to be flown.
 

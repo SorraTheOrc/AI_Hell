@@ -635,6 +635,24 @@ scenes, not gyms). A finished deployment now lands on `HexMapScene` with its
 tick record, which is why the map — not a report screen — is the capture
 target after a sortie.
 
+The map's launch data now carries a **sortie result** (`sortieResult`): the
+target hex id, `won`, the run's final `score`, `winBonusMinerals`, the win
+path's own capture record and the defeat path's `forfeited` salvage. When one
+is present the map opens the **post-battle results dialog**
+(`HexCombatResultScene`) over the paused map — the outcome and final score,
+every reward actually paid and, on a defeat, the target boss's authored
+strengths/weaknesses, the unclaimed grant and the forfeited salvage. A capture
+that targets `HexMapScene` therefore records the map *with* that dialog on a
+deployment landing; dismiss it (`Enter`, `Space` or a pointer press) or let the
+demo dwell auto-dismiss it to reach the map itself.
+
+`HexCombatResultScene` is **boot-registered but not capturable**
+(`NON_CAPTURABLE_SCENE_KEYS`, AH-0MWMGPTNF004EX3T): it renders the caller's
+title and rows and has nothing meaningful to show standalone, exactly like
+`MineralChoiceScene` and `MiniBossWheelScene`. `scripts/capture-scenes.test.ts`
+pins that classification against the shipped boot list, so a capture config can
+never target the overlay directly.
+
 Each screen accepts an optional `setup` carrying only its own launch data:
 
 | Field | Type | Default | Meaning |

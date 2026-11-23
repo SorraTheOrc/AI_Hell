@@ -3263,7 +3263,7 @@ a glance and by framing rather than by colour (AH-0MWL4QCVD007WOAM):
   | Section | Holds |
   |---|---|
   | `WAR STATUS` | ring progress, frontier strength / beatable ceiling / in-reach count, hangar hull and banked minerals/cores |
-  | `LAST SORTIE` | the transient "what just happened" news — run result, banked win bonus, hangar-assault outcome — **only** when the landing carries one, never an empty box |
+  | `LAST SORTIE` | the transient "what just happened" news — hangar-assault outcome and banked hex income, plus the thin run result / banked win bonus only on a landing with **no** sortie result (those two are folded into the results dialog when one is carried) — **only** when the landing carries news, never an empty box |
   | `HANGAR WAR — HEX MAP` (the map) | the ring tiles, attack arrows and the hangar marker |
   | `SELECTED HEX` | the focused hex's full intel **and** its `ATTACK — FOCUSED HEX` row (the attack row is hidden, never moved, when the hex is in no attack) |
   | `CONTROLS` | the `READ THE MAP` legend, the keyboard hint line and the `◀ HANGAR` row |
@@ -3296,7 +3296,41 @@ section (there is no separate report screen). Activating an
 hex** — its `▶ DEPLOY` row names the hex and launches the deployment there, so
 every hex battle is reached through the target-aware config screen
 (`map → config → deployment`) and none begins without it (AH-0MWMT4S5U001EGDF,
-parent AH-0MWMRWCY2001HWGR). The config screen repeats the known-ahead intel
+parent AH-0MWMRWCY2001HWGR).
+
+**The post-battle results dialog** (parent **AH-0MWMFGXD6005WTMN**). A landing
+that carries a **sortie result** — the target hex id, `won`, the run's final
+`score`, the win path's own capture record (`HexCaptureResult`: banked salvage,
+granted weapon/upgrade, special-mission reward, contract bonus, cache payout)
+and, on a defeat, the `forfeited` unbanked salvage — presents one modal dialog
+over the **paused** map before anything else happens on it. Its title and rows
+come from the single pure builder `buildSortieResultView`
+(`src/core/hangarWar/sortieResult.ts`): the scene derives no reward, score,
+weakness or rule of its own, so a reward kind added to the capture cycle reaches
+the dialog without a second copy edit. The overlay itself is
+`HexCombatResultScene` (launch → pause → optional `onDismiss` → resume, the
+same single-overlay contract as `MineralChoiceScene`), with one confirm input
+(`Enter`, `Space` or a pointer press) dismissing it.
+
+- **On a victory** the dialog states the outcome and the run's final score and
+  itemises every reward that was **actually paid** — salvage banked
+  (minerals/cores), any granted weapon/upgrade, any special-mission reward, any
+  contract and/or cache bonus and the banked win bonus — and draws **no** line
+  for a reward that was not paid (never a zero row).
+- **On a defeat** it states the outcome and score, the target hex's authored
+  **strengths** and **weaknesses** and the grant the player did not claim (from
+  `HEX_RING_DEFINITIONS`), and the unbanked salvage that was **forfeited**.
+- Because the dialog carries the outcome, score and win bonus, the thin
+  `RUN: VICTORY|DEFEAT · score N` line and the `WIN BONUS BANKED` line are
+  **folded into it** on a deployment landing rather than drawn twice (parent
+  assumption A1). The `RING WON` / `HANGAR FALLS` assault banner is a distinct
+  surface and is unchanged.
+- **Ordering is deterministic:** results dialog → any carried mini-boss reward
+  → the demo dwell. In attract/demo mode the dialog auto-dismisses after the
+  shared dwell, so the traversal cannot stall on it; a boot without the overlay
+  registered keeps the map live and still starts the dwell.
+- The sortie result is **transient launch data**: never persisted, so a later
+  menu/hangar re-entry shows no dialog. The config screen repeats the known-ahead intel
 where the player commits: a `TARGET INTEL` block names the chosen hex's boss
 and its authored strengths/weaknesses, and every weapon row carries an
 `▲ EFFECTIVE` / `▼ RESISTED` matchup mark against that boss — display only, with
@@ -3325,11 +3359,12 @@ it never advances to the next level
 and never spawns the final boss, so taking a hex is a bounded sortie rather than
 the rest of the campaign. The mini-boss victory runs the capture cycle
 (below) and ends the run as a **victory**. On a win the player sees, in order,
-the mini-boss defeat → **`HexMapScene`**, which announces the **banked win
-bonus** (`WIN BONUS BANKED: +N MINERALS`, drawn in the `LAST SORTIE` section)
-and carries the between-sortie report on the map itself: the newly held hex,
-the tick's attack arrows and the `SELECTED HEX` section's attack row are all
-one surface, and there is no separate screen to click through.
+the mini-boss defeat → **`HexMapScene`** with the **post-battle results dialog**
+open over the paused map (§ *The post-battle results dialog* below), and — once
+it is dismissed with one confirm — the map itself carrying the between-sortie
+report: the newly held hex, the tick's attack arrows and the `SELECTED HEX`
+section's attack row are all one surface, and there is no separate screen to
+click through.
 
 **No reward overlay on the win path** (parent **AH-0MWEVNBMM000QFO2**; producer
 decisions **Q1 = (c)**, **Q2 = (a)**, **Q3 = (b)**, recorded 2026-11-13 on
