@@ -20,12 +20,16 @@
  * its numbers) is the contract.
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   createMineralChime,
   MINERAL_CHIME_RESET_GAP_MS,
   MINERAL_CHIME_SEMITONES,
+  mineralChimeRate,
+  mineralChimeStep,
+  noteMineralCollected,
+  resetMineralChimeStreak,
 } from './mineralChime';
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -63,6 +67,44 @@ describe('MINERAL_CHIME_SEMITONES', () => {
 describe('MINERAL_CHIME_RESET_GAP_MS', () => {
   it('is 1500 (1.5 s)', () => {
     expect(MINERAL_CHIME_RESET_GAP_MS).toBe(1500);
+  });
+});
+
+// ── Pure rate helper ──────────────────────────────────────────────────
+
+/**
+ * `mineralChimeRate` is the only place a ladder degree becomes a playback
+ * rate, so its clamping contract is pinned here (the wiring passes it the
+ * `mineralChimeStep()` value, and a bad index must never produce a silent
+ * `undefined`/`NaN` rate).
+ */
+describe('mineralChimeRate', () => {
+  it('returns base rate for step 0', () => {
+    expect(mineralChimeRate(0)).toBe(1.0);
+  });
+
+  it('returns the ladder degree rate for an in-range step', () => {
+    expect(mineralChimeRate(1)).toBe(rateFor(MINERAL_CHIME_SEMITONES[1]));
+    expect(mineralChimeRate(3)).toBe(rateFor(MINERAL_CHIME_SEMITONES[3]));
+  });
+
+  it('clamps a step above the ladder to the last degree (octave ceiling)', () => {
+    const last = MINERAL_CHIME_SEMITONES.length - 1;
+    const octaveRate = rateFor(MINERAL_CHIME_SEMITONES[last]);
+
+    expect(mineralChimeRate(last)).toBe(octaveRate);
+    expect(mineralChimeRate(last + 1)).toBe(octaveRate);
+    expect(mineralChimeRate(1000)).toBe(octaveRate);
+  });
+
+  it('clamps a negative or non-finite step to base', () => {
+    expect(mineralChimeRate(-1)).toBe(1.0);
+    expect(mineralChimeRate(Number.NaN)).toBe(1.0);
+    expect(mineralChimeRate(Number.POSITIVE_INFINITY)).toBe(1.0);
+  });
+
+  it('floors a fractional step', () => {
+    expect(mineralChimeRate(1.9)).toBe(rateFor(MINERAL_CHIME_SEMITONES[1]));
   });
 });
 
@@ -204,6 +246,90 @@ describe('explicit reset', () => {
   });
 });
 
+// ── Shared module-level singleton (game/gym dispatch seam) ────────────
+
+/**
+ * The module exports a shared singleton plus the module-level functions the
+ * shared combat core calls (`noteMineralCollected` / `mineralChimeStep` /
+ * `resetMineralChimeStreak`). These cases pin the same ladder rules through
+ * that surface, because that — not the factory — is what the game plays.
+ */
+describe('shared singleton', () => {
+  beforeEach(() => {
+    resetMineralChimeStreak();
+  });
+
+  it('starts at base step before any pickup', () => {
+    expect(mineralChimeStep()).toBe(0);
+    expect(mineralChimeRate(mineralChimeStep())).toBe(1.0);
+  });
+
+  it('advances one ladder degree per pickup inside the gap', () => {
+    let clock = 100;
+
+    expect(noteMineralCollected(clock)).toBe(1.0);
+    expect(mineralChimeStep()).toBe(0);
+
+    clock = 200;
+    expect(noteMineralCollected(clock)).toBe(rateFor(MINERAL_CHIME_SEMITONES[1]));
+    expect(mineralChimeStep()).toBe(1);
+
+    clock = 300;
+    expect(noteMineralCollected(clock)).toBe(rateFor(MINERAL_CHIME_SEMITONES[2]));
+    expect(mineralChimeStep()).toBe(2);
+  });
+
+  it('holds the step at the last ladder degree for a long streak', () => {
+    let clock = 0;
+    const last = MINERAL_CHIME_SEMITONES.length - 1;
+
+    for (let i = 0; i < 50; i++) {
+      clock = 100 + i * 100;
+      noteMineralCollected(clock);
+    }
+
+    expect(mineralChimeStep()).toBe(last);
+    expect(mineralChimeRate(mineralChimeStep())).toBe(
+      rateFor(MINERAL_CHIME_SEMITONES[last])
+    );
+  });
+
+  it('resets to base after the reset gap elapses', () => {
+    noteMineralCollected(0);
+    noteMineralCollected(100);
+    expect(mineralChimeStep()).toBe(1);
+
+    const rate = noteMineralCollected(100 + MINERAL_CHIME_RESET_GAP_MS);
+
+    expect(rate).toBe(1.0);
+    expect(mineralChimeStep()).toBe(0);
+  });
+
+  it('resetMineralChimeStreak returns the streak to base', () => {
+    noteMineralCollected(0);
+    noteMineralCollected(100);
+
+    resetMineralChimeStreak();
+
+    expect(mineralChimeStep()).toBe(0);
+    expect(noteMineralCollected(200)).toBe(1.0);
+  });
+
+  it('shares no state with isolated factory instances', () => {
+    const isolated = makeChime();
+
+    noteMineralCollected(0);
+    noteMineralCollected(100);
+    expect(mineralChimeStep()).toBe(1);
+
+    // The isolated instance still starts from base …
+    expect(isolated.noteMineralCollected(200)).toBe(1.0);
+    // … and its streaks never leak into the shared singleton.
+    isolated.noteMineralCollected(300);
+    expect(mineralChimeStep()).toBe(1);
+  });
+});
+
 // ── Sequential streak independence ────────────────────────────────────
 
 describe('sequential streak independence', () => {
@@ -250,5 +376,22 @@ describe('sequential streak independence', () => {
 
     expect(rate1).toBe(1.0);
     expect(rate2).toBe(rateFor(2));
+  });
+
+  it('the factory reports its own current step', () => {
+    let clock = 0;
+    const chime = makeChime();
+
+    expect(chime.step()).toBe(0);
+
+    clock = 100;
+    chime.noteMineralCollected(clock);
+    clock = 200;
+    chime.noteMineralCollected(clock);
+
+    expect(chime.step()).toBe(1);
+
+    chime.reset();
+    expect(chime.step()).toBe(0);
   });
 });

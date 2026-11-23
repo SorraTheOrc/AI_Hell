@@ -1,27 +1,52 @@
 /**
- * Pure pitch-escalation state machine for mineral pickups (AH-0MWNMRBO4000T5F8).
+ * Pure pitch-escalation state machine for mineral pickups (AH-0MWNMRCEW006N0EH).
  *
  * A Phaser-free module that owns the streak counter, the game-clock gap check
  * and the reset seam.  Callers pass the game time in, so tests drive time
  * deterministically and a paused scene cannot expire a streak mid-run.
  *
- * The pitch ladder follows an A-minor scale: one degree per pickup, capped at
- * an octave (the last degree in {@link MINERAL_CHIME_SEMITONES}).
+ * ## Why an A-minor scale
+ *
+ * The ladder is the A-minor diatonic scale rather than a mechanical semitone
+ * step: every pickup climbs one **scale degree**, so any prefix of a streak is
+ * a consonant interval (root, major second, minor third, perfect fourth,
+ * perfect fifth …) and a fast cluster of pickups sounds musical instead of
+ * detuned.  The ladder names the scale degrees, so retuning the chime is a
+ * one-line change here and nowhere else.
+ *
+ * ## Why the cap is one octave
+ *
+ * A streak has to stay a reward, never a shrill noise.  The ladder stops at
+ * the major seventh (10 semitones) — as high as the scale goes before the
+ * octave repeat — so a long streak settles into a bright but controlled pitch
+ * instead of climbing without bound.  The ceiling is therefore "one scale
+ * degree per pickup, capped at one octave".
+ *
+ * ## Why the gap is game time
+ *
+ * {@link MINERAL_CHIME_RESET_GAP_MS} is measured on the **scene clock** (game
+ * time), never wall time.  A paused scene freezes its clock, so pausing
+ * mid-run can never expire a live streak: the player resumes and the climb
+ * continues from where they left it.  A wall clock would silently reset the
+ * streak during any pause, menu or tab stall.
  *
  * ## Rules
  *
  * 1. **Base step** — the first pickup (or the first pickup after a reset/gap)
- *    returns playback rate `1.0` (0 semitones above base).
- * 2. **Ladder advance** — each successive pickup inside the reset gap advances
- *    exactly one step up the semitone ladder.
+ *    sounds step 0 (`1.0` playback rate).
+ * 2. **Ladder advance** — each successive pickup inside the reset gap climbs
+ *    exactly one step up {@link MINERAL_CHIME_SEMITONES}.
  * 3. **Octave clamp** — a long streak clamps at the last ladder degree; the
- *    playback rate never exceeds the octave rate.
+ *    playback rate never exceeds the octave ceiling.
  * 4. **Gap reset** — a gap of exactly {@link MINERAL_CHIME_RESET_GAP_MS} resets
  *    the streak to base; a gap 1 ms shorter does not.
- * 5. **Explicit reset** — {@link MineralChime.reset} returns the streak to base.
- * 6. **Sequential independence** — two streaks after a reset are independent.
+ * 5. **Explicit reset** — {@link MineralChime.reset} /
+ *    {@link resetMineralChimeStreak} return the streak to base.
+ * 6. **Sequential independence** — isolated factory instances share no state
+ *    with each other or with the shared singleton.
  *
- * Playback rates are computed as `2 ** (semitones / 12)`.
+ * Playback rates come from {@link mineralChimeRate}, the single place a ladder
+ * step becomes `2 ** (semitones / 12)`.
  *
  * @module audio/mineralChime
  */
@@ -29,22 +54,42 @@
 // ── Constants ─────────────────────────────────────────────────────────
 
 /**
- * A-minor semitone ladder: one degree per pickup, capped at one octave.
+ * A-minor semitone ladder: one scale degree per pickup, capped at one octave.
  *
- * `[0, 2, 3, 5, 7, 8, 10]` — root, major second, major third, perfect
- * fourth, perfect fifth, major sixth, major seventh (the A-minor diatonic
- * scale up to but not including the octave).  Tunable in one place.
+ * `[0, 2, 3, 5, 7, 8, 10]` — root, major second, minor third, perfect fourth,
+ * perfect fifth, major sixth, major seventh (the A-minor diatonic scale up to
+ * but not including the octave).  Tunable in one place only.
  */
 export const MINERAL_CHIME_SEMITONES = [0, 2, 3, 5, 7, 8, 10] as const;
 
 /**
- * Reset gap in milliseconds.  After a streak-free interval of this
- * duration (or longer), the next pickup resets to base pitch.
+ * Reset gap in milliseconds.  After a streak-free interval of this duration
+ * (or longer), the next pickup resets to base pitch.
  *
- * Measured on game time (not wall clock), so a paused scene cannot expire
- * a streak mid-run.
+ * Measured on **game time** (the scene clock), not wall clock, so a paused
+ * scene cannot expire a streak mid-run.
  */
 export const MINERAL_CHIME_RESET_GAP_MS = 1500;
+
+// ── Rate helper ───────────────────────────────────────────────────────
+
+/**
+ * Playback rate for ladder `step`: `2^(semitones/12)` from
+ * {@link MINERAL_CHIME_SEMITONES} (precedent: `countdownTickRate` in
+ * `audio/effects.ts`).
+ *
+ * A negative or non-finite step clamps to the base degree (so a bad index can
+ * never produce `undefined`/`NaN`); a step past the ladder clamps to the last
+ * degree (the octave ceiling); a fractional step floors.
+ *
+ * @param step - 0-based ladder step.
+ */
+export function mineralChimeRate(step: number): number {
+  const index = Number.isFinite(step)
+    ? Math.min(Math.max(Math.floor(step), 0), MINERAL_CHIME_SEMITONES.length - 1)
+    : 0;
+  return 2 ** (MINERAL_CHIME_SEMITONES[index] / 12);
+}
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -60,8 +105,8 @@ export interface MineralChime {
    * Called on every mineral pickup.
    *
    * Returns the playback rate for this pickup: `2^(semitones/12)` where
-   * `semitones` is the current streak position in
-   * {@link MINERAL_CHIME_SEMITONES}, clamped to the ladder length.
+   * `semitones` is the ladder degree of this pickup, clamped to the ladder
+   * length.
    *
    * @param nowMs - Current game time in milliseconds (from the injected clock).
    */
@@ -74,6 +119,12 @@ export interface MineralChime {
    * rate of `1.0` (0 semitones).
    */
   reset(): void;
+
+  /**
+   * The ladder step of the **most recent** pickup (0 = base degree), for
+   * observability and tests.  Before any pickup it reports 0.
+   */
+  step(): number;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────
@@ -86,30 +137,76 @@ export interface MineralChime {
  * paused scene cannot expire a streak mid-run and the machine stays pure.
  */
 export function createMineralChime(): MineralChime {
-  let streak = 0;
-  // `null` until the first pickup, so the very first call can never be read
-  // as the end of a streak.
+  // Ladder degree of the most recent pickup; the next pickup reports this one
+  // (advanced) or resets to base when the gap expired.
+  let step = 0;
+  // `null` until the first pickup (and after an explicit reset), so a first
+  // pickup can never be read as the end of a streak.
   let lastPickupMs: number | null = null;
 
   return {
     noteMineralCollected(nowMs: number): number {
-      // Gap reset: check if enough time has passed since the last pickup.
-      if (lastPickupMs !== null && nowMs - lastPickupMs >= MINERAL_CHIME_RESET_GAP_MS) {
-        streak = 0;
+      if (lastPickupMs !== null) {
+        // Gap reset: a gap of at least the reset interval restarts at base;
+        // anything shorter continues the climb.
+        if (nowMs - lastPickupMs >= MINERAL_CHIME_RESET_GAP_MS) {
+          step = 0;
+        } else {
+          // One scale degree per pickup, capped at the ladder's last degree.
+          step = Math.min(step + 1, MINERAL_CHIME_SEMITONES.length - 1);
+        }
       }
 
       lastPickupMs = nowMs;
 
-      // Return the rate for the current streak position, then advance.
-      const rate = 2 ** (MINERAL_CHIME_SEMITONES[streak] / 12);
-      streak = Math.min(streak + 1, MINERAL_CHIME_SEMITONES.length - 1);
-
-      return rate;
+      return mineralChimeRate(step);
     },
 
     reset(): void {
-      streak = 0;
+      step = 0;
       lastPickupMs = null;
     },
+
+    step(): number {
+      return step;
+    },
   };
+}
+
+// ── Shared singleton (game + every gym) ───────────────────────────────
+
+/**
+ * The shared mineral-chime state used by the single dispatch point in
+ * `CombatCoreScene`, so the game and every gym climb the same streak.
+ */
+export const mineralChime = createMineralChime();
+
+/**
+ * Called on every **player** mineral pickup via the shared dispatch.
+ *
+ * Advances the shared streak (restarting it when the gap expired) and returns
+ * the playback rate to play.
+ *
+ * @param nowMs - Current game time in milliseconds (the scene clock).
+ */
+export function noteMineralCollected(nowMs: number): number {
+  return mineralChime.noteMineralCollected(nowMs);
+}
+
+/**
+ * Reset the shared streak to base — the run-restart / scene-teardown seam.
+ *
+ * Both seams must call this so a restarted run and a scene shutdown always
+ * start from the base pitch (the scene instance is reused across restarts).
+ */
+export function resetMineralChimeStreak(): void {
+  mineralChime.reset();
+}
+
+/**
+ * The shared streak's current ladder step (the step of the most recent
+ * pickup, 0 = base) — for the cue dispatch and for observability/tests.
+ */
+export function mineralChimeStep(): number {
+  return mineralChime.step();
 }
