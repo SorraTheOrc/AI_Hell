@@ -612,4 +612,132 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     },
     30_000,
   );
+
+  // ── The sortie result handoff ────────────────────────────────
+  /**
+   * The deployment→map **sortie result** handoff (TEST-FIRST,
+   * AH-0MWMGPPIR009DOKR, parent AH-0MWMFGXD6005WTMN).
+   *
+   * **TEST-FIRST.** `PlayScene` must hand the finished deployment's record to
+   * `HEX_MAP_SCENE_KEY` in its launch data as `sortieResult`: the target hex id
+   * plus the capture cycle's own reward fields on a win, or the loss path's
+   * forfeited salvage on a loss. The assertions are authored under Vitest's
+   * `it.fails` (the repo's red-before/green-after convention — see
+   * `src/core/levelScaling.test.ts`) so this suite stays green on pre-change
+   * HEAD; the handoff item flips them back to `it`, and a leftover `it.fails`
+   * then fails loudly. The map's seam is read structurally because it lands in
+   * a later child.
+   */
+  interface SalvageAmountsLike {
+    minerals: number;
+    cores: number;
+  }
+
+  interface SortieRecordLike {
+    hexId: string | null;
+    won: boolean;
+    score: number;
+    winBonusMinerals: number;
+    capture: {
+      bankedDelta: SalvageAmountsLike;
+      grant: unknown;
+      specialReward: unknown;
+      contractBonus: SalvageAmountsLike | null;
+      cachePayout: SalvageAmountsLike | null;
+      ringSecured: boolean;
+      ringAdvanced: boolean;
+    } | null;
+    forfeited: SalvageAmountsLike | null;
+  }
+
+  /** Reads the landed map's carried sortie result, or `null` pre-change. */
+  function sortieResultOf(map: HexMapScene): SortieRecordLike | null {
+    const seam = map as unknown as {
+      getSortieResult?(): SortieRecordLike | null;
+    };
+    return typeof seam.getSortieResult === 'function'
+      ? seam.getSortieResult()
+      : null;
+  }
+
+  it.fails(
+    'AC — a winning deployment hands the capture record to the hex map',
+    async () => {
+      // The same ring-end setup as the capture test above: `hex-1` is the ring's
+      // final unheld hex, so the victory runs the whole capture cycle.
+      const payload = fieldedPayload();
+      payload.ring.hexes.unshift({
+        id: 'hex-0',
+        q: 1,
+        r: -1,
+        held: true,
+        aggression: 3,
+        defender: { hullId: 'hull-2', defenceRating: 60, bankedMinerals: 0 },
+        bossDefeated: true,
+        grantedWeapon: null,
+      });
+      const deployment = buildHangarDeployment(payload, { seed: 24680 });
+      saveHangarWarPayload(payload);
+      const scene = await bootPlay({ hangarWar: deployment });
+      winLiveDeployment(scene);
+      const capture = scene.getLastCapture();
+      expect(capture).not.toBeNull();
+
+      await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
+      const map = scene.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as HexMapScene | null;
+      expect(map, 'the deployment must land on the hex map').not.toBeNull();
+
+      const result = sortieResultOf(map!);
+      expect(result, 'the landing carries the sortie result').not.toBeNull();
+      expect(result!.hexId).toBe(deployment.hexId);
+      expect(result!.won).toBe(true);
+      expect(result!.score).toBe(scene.getGameState().score);
+      expect(result!.winBonusMinerals).toBe(scene.getWinBonusBanked());
+      expect(result!.forfeited).toBeNull();
+
+      // The capture cycle's **own** record, not a hand-copied subset.
+      expect(result!.capture).not.toBeNull();
+      expect(result!.capture!.bankedDelta).toEqual(capture!.bankedDelta);
+      expect(result!.capture!.grant).toEqual(capture!.grant);
+      expect(result!.capture!.specialReward).toEqual(capture!.specialReward);
+      expect(result!.capture!.contractBonus).toEqual(capture!.contractBonus);
+      expect(result!.capture!.cachePayout).toEqual(capture!.cachePayout);
+      expect(result!.capture!.ringSecured).toBe(capture!.ringSecured);
+      expect(result!.capture!.ringAdvanced).toBe(capture!.ringAdvanced);
+    },
+    30_000,
+  );
+
+  it.fails(
+    'AC — a losing deployment hands the forfeited salvage to the hex map',
+    async () => {
+      const scene = await bootPlay({ hangarWar: DEPLOYMENT });
+      // Salvage earned since the last bank is forfeited by the loss.
+      scene.getGameState().minerals = 7;
+      (scene as unknown as { _finishRun(won: boolean): void })._finishRun(false);
+      await advanceGame(scene.game, 200);
+
+      const map = scene.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as HexMapScene | null;
+      expect(map, 'the loss must land on the hex map').not.toBeNull();
+
+      const forfeited = scene.getForfeitedSalvage();
+      expect(forfeited.minerals).toBeGreaterThan(0);
+
+      const result = sortieResultOf(map!);
+      expect(result, 'the landing carries the sortie result').not.toBeNull();
+      expect(result).toEqual({
+        hexId: DEPLOYMENT.hexId,
+        won: false,
+        score: scene.getGameState().score,
+        winBonusMinerals: 0,
+        // A loss resolves no capture: the forfeit is the loss path's record.
+        capture: null,
+        forfeited,
+      });
+    },
+  );
 });
