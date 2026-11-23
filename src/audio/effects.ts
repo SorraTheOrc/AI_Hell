@@ -35,6 +35,7 @@ import {
   cueSeeds,
 } from './cueManifest';
 import { cueVoiceLimiter } from './cueVoiceLimiter';
+import { mineralChimeRate } from './mineralChime';
 import {
   WebAudioSfxProvider,
   webAudioSfxProvider,
@@ -590,6 +591,29 @@ export function playMysteryUfoDestroySound(): void {
  */
 export function playMineralTinkleSound(): void {
   playCue('playMineralTinkleSound');
+}
+
+/**
+ * Player mineral pickup chime — a quiet, steady chime played on every
+ * **player** mineral collection (AH-0MWNMRD6I002CCVT). The chime rises through
+ * the A-minor ladder as a streak continues, so a fast scatter reads as rising
+ * musical momentum.
+ *
+ * The pitch comes from the pure escalation state machine
+ * (`mineralChime.noteMineralCollected`), which also owns the game-clock reset
+ * gap; this wrapper only turns the resulting ladder `step` into a playback
+ * rate. Dispatched through the one `playCue` funnel, so it inherits the shared
+ * per-cue voice limiter, the master gain and `setSfxVolume`/`setSfxMuted`, and
+ * degrades to a silent no-op with no `AudioContext` (or no baked asset).
+ *
+ * Deliberately distinct from {@link playMineralTinkleSound} (the Mystery UFO
+ * spill cue): a pickup must never read as a spill.
+ *
+ * @param step - 0-based ladder step from the escalation state machine
+ *   (0 = the baked base note); out-of-range steps clamp to the ladder.
+ */
+export function playMineralCollectChimeSound(step = 0): void {
+  playCue('playMineralCollectChimeSound', { rate: mineralChimeRate(step) });
 }
 
 // ── Graze / danger multiplier (AH-0MWL7ORK8007LXJI) ──────────────────

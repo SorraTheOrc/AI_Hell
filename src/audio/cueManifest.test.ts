@@ -216,3 +216,36 @@ describe('cueManifest — dedicated Mining Laser fire cue (AH-0MW9QMQ7B005WFH9)'
     );
   });
 });
+
+// ── Player mineral pickup chime (AH-0MWNMRD6I002CCVT) ───────────────
+//
+// The pickup chime is the audible half of the mineral-chime feature. It owns
+// a dedicated baked recipe rather than reusing the Mystery UFO spill tinkle,
+// so a mineral pickup can never read as a spill.
+
+describe('cueManifest — player mineral pickup chime (AH-0MWNMRD6I002CCVT)', () => {
+  it('maps playMineralCollectChimeSound to the baked aihell-mineral-chime recipe at seed 32292', () => {
+    const entry = getCueAsset('playMineralCollectChimeSound');
+    expect(entry).toBeDefined();
+    expect(entry!.delivery).toBe('baked');
+    expect(entry!.recipe).toBe('aihell-mineral-chime');
+    expect(entry!.seeds).toEqual([32292]);
+    expect(cueAssetUrl('playMineralCollectChimeSound')).toBe(
+      'audio/sfx/aihell-mineral-chime.32292.wav',
+    );
+    // The preloader actually fetches the baked pickup asset.
+    expect(allSfxAssetUrls()).toContain(
+      'audio/sfx/aihell-mineral-chime.32292.wav',
+    );
+  });
+
+  it('never aliases the Mystery UFO spill tinkle', () => {
+    const chime = getCueAsset('playMineralCollectChimeSound')!;
+    const tinkle = getCueAsset('playMineralTinkleSound')!;
+    expect(chime.recipe).not.toBe(tinkle.recipe);
+    expect(tinkle.seeds).not.toContain(32292);
+    expect(cueAssetUrl('playMineralCollectChimeSound')).not.toBe(
+      cueAssetUrl('playMineralTinkleSound'),
+    );
+  });
+});

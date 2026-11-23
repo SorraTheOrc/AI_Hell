@@ -687,6 +687,14 @@
       ]
     },
     {
+      "cue": "playMineralCollectChimeSound",
+      "recipe": "aihell-mineral-chime",
+      "delivery": "baked",
+      "seeds": [
+        32292
+      ]
+    },
+    {
       "cue": "playMiningLaserFireSound",
       "recipe": "aihell-mining-laser-fire",
       "delivery": "baked",

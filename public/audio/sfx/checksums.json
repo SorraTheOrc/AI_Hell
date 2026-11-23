@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32299",
-  "inputs": "88079fcecd290ac7eb417c3e311c843b51b6f22402acb8145926eb0dd45adad2",
+  "inputs": "677da5cce60c76da5b28cc06c02dab18c03ecb1c5226a92d1c857c1b593987b0",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",
@@ -39,6 +39,7 @@
     "audio/sfx/aihell-forcefield-reflect.32276.wav": "0a0c0f90a6d9c5d2a8a24316b98a62ad82f84f223a7fff7744a61af6871b18a5",
     "audio/sfx/aihell-heavy-slug-fire.32285.wav": "fc64c1714ca2ac8fc67aaa8903e4f020b7a3af5dd207d9a93f927ec0065eb47d",
     "audio/sfx/aihell-heavy-slug-impact.32286.wav": "e17a68c0bab701940a0f33b1bc00e0e389231ed482cbe7494b74ce2ab1a2725e",
+    "audio/sfx/aihell-mineral-chime.32292.wav": "aefec80ffed79c67696bab7a8c7e85e2bc551909f42d59aa0e938ea2e9fc4ed4",
     "audio/sfx/aihell-mineral-tinkle.32290.wav": "f3d62609016a7dc3385e7393c76ec65dfb43c19f259eb2de56d5f664cdeb7510",
     "audio/sfx/aihell-mining-laser-fire.32291.wav": "00c868a1f6987a187e999042ba68f1ad3c54464df1716a5604050ad1159dc1ab",
     "audio/sfx/aihell-mortar-detonation.32216.wav": "bc23f74f42ef85512815efefad21cb032a7bf4753c20e7d9cafcca7962e504cd",

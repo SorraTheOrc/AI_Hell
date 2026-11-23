@@ -31,6 +31,7 @@ import {
   beatSubdivisionMs,
   createBeatClock,
 } from '../utils/beat';
+import { mineralChimeRate } from './mineralChime';
 import {
   RecordingAudioContext,
   RecordingSfxProvider,
@@ -103,6 +104,25 @@ describe('cue → baked asset mapping', () => {
     expect(recording.plays[0].url).toBe(
       'audio/sfx/aihell-countdown-tick.32264.wav',
     );
+  });
+
+  it('playMineralCollectChimeSound resolves the baked chime at the ladder rate (AH-0MWNMRD6I002CCVT)', () => {
+    effects.playMineralCollectChimeSound(0);
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-mineral-chime.32292.wav',
+    );
+    expect(recording.plays[0].rate).toBe(mineralChimeRate(0));
+
+    // The chime climbs the A-minor ladder with the streak step.
+    recording.plays.length = 0;
+    effects.playMineralCollectChimeSound(3);
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-mineral-chime.32292.wav',
+    );
+    expect(recording.plays[0].rate).toBe(mineralChimeRate(3));
+    expect(recording.plays[0].rate).toBeGreaterThan(mineralChimeRate(0));
   });
 
   it('playCannonImpactSound resolves to the baked cannon-impact asset (AH-0MV8228YW0050IXS)', () => {
