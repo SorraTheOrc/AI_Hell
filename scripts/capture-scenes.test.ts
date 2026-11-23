@@ -57,6 +57,7 @@ import {
   HANGAR_WAR_SCENE_KEYS,
   HANGAR_WAR_SCENE_SETUP_FIELDS,
   MAX_CAPTURE_MULTIPLIER,
+  NON_CAPTURABLE_SCENE_KEYS,
   PARAMETERISED_GYM_SCENE_KEYS,
   SCENE_CONFIG_ERROR_CODES,
   SCENE_FADE_CONTRAST_LUMA,
@@ -386,6 +387,83 @@ describe('Hangar War scene registry (AH-0MVWMUQUC003WXF5)', () => {
       'HangarScene',
       'HexMapScene',
     ]);
+  });
+});
+
+/**
+ * Every boot-registered scene is classified explicitly as capturable or not
+ * (AH-0MWMGPTNF004EX3T). The boot list is read from the shipped game config
+ * source rather than through a Phaser import, so this stays a hermetic node
+ * test while still failing when a newly registered scene goes unclassified.
+ */
+describe('boot-registered scene capturability (AH-0MWMGPTNF004EX3T)', () => {
+  /** Scene keys in `buildGameConfig().scene`, in registration order. */
+  function bootSceneKeys(): string[] {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/core/gameConfig.ts'),
+      'utf8',
+    );
+    const match = /scene:\s*\[([^\]]*)\]/.exec(source);
+    expect(match, 'the shipped `scene: [...]` boot list').not.toBeNull();
+    return (match as RegExpExecArray)[1]
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  it('classifies every boot-registered scene exactly once', () => {
+    const boot = bootSceneKeys();
+    expect(boot.length).toBeGreaterThanOrEqual(14);
+
+    // `PlayScene` is the generated-level capture target, so it is capturable
+    // alongside the gym/Hangar War registry.
+    const capturable = new Set([...CAPTURABLE_SCENE_KEYS, GENERATED_LEVEL_SCENE_KEY]);
+    const nonCapturable = new Set(NON_CAPTURABLE_SCENE_KEYS);
+
+    for (const key of boot) {
+      const isCapturable = capturable.has(key);
+      const isNonCapturable = nonCapturable.has(key);
+      expect(
+        isCapturable !== isNonCapturable,
+        `${key} must be in exactly one of the capturable / non-capturable registries`,
+      ).toBe(true);
+    }
+    // The non-capturable list names only real boot scenes (no phantom keys).
+    for (const key of NON_CAPTURABLE_SCENE_KEYS) {
+      expect(boot, `${key} is not boot-registered`).toContain(key);
+    }
+  });
+
+  it('decides the results dialog explicitly: boot-registered, not capturable', () => {
+    const boot = bootSceneKeys();
+    // Registered in the boot list so `scene.start` can resolve it …
+    expect(boot).toContain('HexCombatResultScene');
+    // … and explicitly decided as not capturable: it renders only the
+    // caller-supplied rows of a finished sortie, so a standalone capture
+    // would record an empty overlay.
+    expect(NON_CAPTURABLE_SCENE_KEYS).toContain('HexCombatResultScene');
+    expect(CAPTURABLE_SCENE_KEYS).not.toContain('HexCombatResultScene');
+    expect(HANGAR_WAR_SCENE_KEYS).not.toContain('HexCombatResultScene');
+    expect(WATCHABLE_GYM_SCENE_KEYS).not.toContain('HexCombatResultScene');
+    expect(isHangarWarSceneKey('HexCombatResultScene')).toBe(false);
+    expect(isWatchableGymSceneKey('HexCombatResultScene')).toBe(false);
+    expectConfigError(
+      () => resolveCapturableSceneKey('HexCombatResultScene'),
+      ERROR.unknownTarget,
+    );
+  });
+
+  it('exposes a frozen, sorted, deduplicated non-capturable list', () => {
+    expect(Object.isFrozen(NON_CAPTURABLE_SCENE_KEYS)).toBe(true);
+    expect([...NON_CAPTURABLE_SCENE_KEYS]).toEqual(
+      [...NON_CAPTURABLE_SCENE_KEYS].sort(),
+    );
+    expect(new Set(NON_CAPTURABLE_SCENE_KEYS).size).toBe(
+      NON_CAPTURABLE_SCENE_KEYS.length,
+    );
+    for (const key of NON_CAPTURABLE_SCENE_KEYS) {
+      expect(CAPTURABLE_SCENE_KEYS).not.toContain(key);
+    }
   });
 });
 
