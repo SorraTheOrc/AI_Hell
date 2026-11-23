@@ -55,6 +55,7 @@ const DOC_PATH = path.resolve(
 
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const README_PATH = path.resolve(process.cwd(), 'README.md');
+const EVALUATION_PATH = path.resolve(process.cwd(), 'docs/EVALUATION.md');
 
 /** The committed ring-timing baseline artifact — the guard's source of truth. */
 const RING_TIMING_BASELINE_PATH = path.resolve(
@@ -118,6 +119,40 @@ const ringTimingBudgetVerdict = (
     );
   }
   return entry.budget.verdict;
+};
+
+/**
+ * The measured per-deployment mean (`summary.deploymentMinutes.mean`) the docs
+ * restate for a ring and line, formatted from the committed artifact
+ * (AH-0MWFDQCFV007BZE5). The EVALUATION.md "Per-deployment (mean)" column and
+ * the OUTER_LOOP_CANDIDATES.md § Session shape split quote this value, so
+ * deriving it at test runtime keeps the docs and the artifact in step: a
+ * re-measurement that moves the mean fails the guard instead of leaving stale
+ * prose behind.
+ */
+const ringTimingDeploymentMean = (
+  ringIndex: number,
+  strategy: string,
+  decimals = 1,
+): string => {
+  const artifact = JSON.parse(
+    fs.readFileSync(RING_TIMING_BASELINE_PATH, 'utf8'),
+  ) as Array<{
+    ringIndex: number;
+    strategy: string;
+    summary: { deploymentMinutes: { mean: number } };
+  }>;
+  const entry = artifact.find(
+    (candidate) =>
+      candidate.ringIndex === ringIndex && candidate.strategy === strategy,
+  );
+  if (!entry) {
+    throw new Error(
+      `ring-timing baseline artifact ${RING_TIMING_BASELINE_PATH} has no ` +
+        `${ringIndex}-${strategy} entry`,
+    );
+  }
+  return entry.summary.deploymentMinutes.mean.toFixed(decimals);
 };
 
 /**
@@ -291,6 +326,29 @@ describe('Outer-loop candidates are documented (AH-0MVRNIWHG0099ZS3)', () => {
       expect(body).toMatch(/30\s*[–—-]\s*90/i);
       expect(body).toMatch(/12\s+hexes/i);
       expect(body).toMatch(/ring/i);
+    });
+
+    it('states a ring-2 grind split whose terms sum to the measured total (AH-0MWFDQCFV007BZE5)', () => {
+      // Pin the spend split to the committed artifact: a docs split that does
+      // not sum to the measured total (it once stated 4.1 + 24 + 4.1 = 32.2
+      // against a 57.0 total) fails here instead of silently drifting.
+      const sessionShape =
+        /###\s+Session shape\s*\n([\s\S]*?)(?=\n###\s|$)/i.exec(body)?.[1] ?? '';
+      expect(sessionShape).not.toBe('');
+      // Collapse Markdown's hard line-wrapping so a phrase that spans a line
+      // break still matches its stated terms.
+      const flat = sessionShape.replace(/\s+/g, ' ');
+      const deploy = ringTimingDeploymentMean(2, 'grind'); // "16.5"
+      const total = ringTimingMean(2, 'grind'); // "57.0"
+      // The four split terms, each restated from the artifact.
+      expect(flat).toContain(`${deploy} of measured deployments`);
+      expect(flat).toContain('24 between sorties');
+      expect(flat).toContain(`${deploy} of modelled retries`);
+      expect(flat).toContain('0.0 of re-capture');
+      // The section states the total as the artifact measures it, and shows the
+      // four terms summing to that total.
+      expect(flat).toContain(total);
+      expect(flat).toContain('16.5 + 24 + 16.5 + 0.0 = 57.0');
     });
 
     it('makes boss and weapon strength known ahead of a deployment (AC16)', () => {
@@ -735,5 +793,40 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
   it('keeps the producer decision record', () => {
     expect(gddFutureScope()).toMatch(/producer/i);
     expect(gddFutureScope()).toMatch(/2026-10-2\d/);
+  });
+});
+
+describe('EVALUATION.md quotes the committed per-deployment means (AH-0MWFDQCFV007BZE5)', () => {
+  const evaluation = fs.existsSync(EVALUATION_PATH)
+    ? fs.readFileSync(EVALUATION_PATH, 'utf8')
+    : '';
+
+  it('exists', () => {
+    expect(evaluation).not.toBe('');
+  });
+
+  it('reconciles every ring/line "Per-deployment (mean)" cell with the artifact', () => {
+    // The table's per-deployment column once quoted 2.1 / 0.1 / 4.1 / 0.2, which
+    // do not reconcile with the artifact's deployment means (1.70 / 0.21 /
+    // 16.51 / 0.43). Derive each cell from the artifact so a re-measurement
+    // that moves a deployment mean fails here rather than leaving stale prose.
+    const lines = evaluation.split('\n');
+    for (const ringIndex of [1, 2] as const) {
+      for (const strategy of ['grind', 'rush'] as const) {
+        const row = lines.find(
+          (line) =>
+            new RegExp(
+              `^\\|\\s*${ringIndex}\\s*\\(.*\\)\\s*\\|\\s*${strategy}\\s*\\|`,
+            ).test(line),
+        );
+        expect(row, `${ringIndex}-${strategy} row`).toBeDefined();
+        // Two decimals, exactly as the artifact-derived cell is formatted.
+        expect(row).toContain(`${ringTimingDeploymentMean(ringIndex, strategy, 2)} min`);
+      }
+    }
+    // The header says what the column measures, rather than implying a ring
+    // total (the next column already states that).
+    expect(evaluation).toMatch(/\|\s*Per-deployment \(mean\)\s*\|/i);
+    expect(evaluation).not.toMatch(/\|\s*Measured runs\s*\|/i);
   });
 });

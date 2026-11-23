@@ -139,8 +139,9 @@
  *
  * Re-rated against the derived windows (AH-0MWHU5AV800969NA), the shipped
  * one-level deployment measures ring 1 grind as **`missed`** (16.4 min against
- * 30–90) and ring 2 grind as **`within-tolerance`** (48.1 min against 60–180,
- * at the ±12-minute floor — seeds 1–3 in `docs/dev/ring-timing-baseline.json`).
+ * 30–90) and ring 2 grind as **`within-tolerance`** (57.0 min against 60–180:
+ * 3.0 min under the window floor, inside the ±12-minute tolerance whose floor
+ * is 48 — seeds 1–3 in `docs/dev/ring-timing-baseline.json`).
  * The measured figures are recorded, never re-worded; the ruling is tracked by
  * two linked rebalancing items — ring 1 AH-0MWFDQ9EY004NO4X, ring 2
  * AH-0MWFDQCFV007BZE5.
@@ -311,12 +312,13 @@ export function deriveRingTimingTarget(
  *
  * Re-rated against these derived windows (AH-0MWHU5AV800969NA), the shipped
  * one-level sortie measures ring 1 grind at **16.4 minutes** (`missed`) and
- * ring 2 grind at **48.1 minutes** (`within-tolerance` of 60–180: the ±12-min
- * tolerance floor is 48). The measured figures were **superseded** by the
- * shipped one-level five-wave sortie (AH-0MWCOWSVN003X81A); the windows are
- * never re-worded to match a measurement — each ruling is tracked by the
- * linked rebalancing items **AH-0MWFDQ9EY004NO4X** (ring 1) and
- * **AH-0MWFDQCFV007BZE5** (ring 2), not silently changed here.
+ * ring 2 grind at **57.0 minutes** (`within-tolerance` of 60–180: 3.0 min under
+ * the window floor, inside the ±12-min tolerance whose floor is 48). The
+ * measured figures were **superseded** by the shipped one-level five-wave
+ * sortie (AH-0MWCOWSVN003X81A); the windows are never re-worded to match a
+ * measurement — each ruling is tracked by the linked rebalancing items
+ * **AH-0MWFDQ9EY004NO4X** (ring 1) and **AH-0MWFDQCFV007BZE5** (ring 2), not
+ * silently changed here.
  */
 export const RING_TIMING_TARGETS: Readonly<Record<number, RingTimingTarget>> =
   Object.freeze({

@@ -657,6 +657,7 @@ type CommittedBaselineReport = {
   }>;
   summary: {
     totalMinutes: { mean: number; min: number; max: number };
+    deploymentMinutes: { mean: number; min: number; max: number };
   };
   budget: {
     verdict: string;
@@ -686,6 +687,20 @@ function committedGrindReport(ringIndex: number): CommittedBaselineReport {
     (entry) => entry.ringIndex === ringIndex && entry.strategy === 'grind',
   );
   if (!report) throw new Error(`no committed grind report for ring ${ringIndex}`);
+  return report;
+}
+
+/** Any committed ring/line report (`grind` or `rush`). */
+function committedReport(
+  ringIndex: number,
+  strategy: 'grind' | 'rush',
+): CommittedBaselineReport {
+  const report = readCommittedBaseline().find(
+    (entry) => entry.ringIndex === ringIndex && entry.strategy === strategy,
+  );
+  if (!report) {
+    throw new Error(`no committed ${strategy} report for ring ${ringIndex}`);
+  }
   return report;
 }
 
@@ -1097,6 +1112,40 @@ describe('ring timing: committed baseline evidence', () => {
     }
   });
 
+
+  it('pins the per-deployment means the docs restate (AH-0MWFDQCFV007BZE5)', () => {
+    // The docs' "Per-deployment (mean)" column and § Session shape split are
+    // restated from the artifact's measured deployment length; pin those means
+    // here so a re-measurement that moves them fails the docs guard instead of
+    // letting prose silently drift. Ring 2 grind 16.5082 and ring 1 grind
+    // 1.7013 are the values whose 2-dp forms the docs quote (16.51 / 1.70);
+    // the rush lines quote 0.21 / 0.43.
+    expect(committedReport(1, 'grind').summary.deploymentMinutes.mean).toBeCloseTo(
+      1.7013,
+      4,
+    );
+    expect(committedReport(1, 'rush').summary.deploymentMinutes.mean).toBeCloseTo(
+      0.2139,
+      4,
+    );
+    expect(committedReport(2, 'grind').summary.deploymentMinutes.mean).toBeCloseTo(
+      16.5082,
+      4,
+    );
+    expect(committedReport(2, 'rush').summary.deploymentMinutes.mean).toBeCloseTo(
+      0.4269,
+      4,
+    );
+    // Ring 2 grind's split, stated term by term, sums to the measured total:
+    // 16.5082 measured deployments + 24 modelled between-sortie visits +
+    // 16.5082 modelled retries + 0.0 re-capture = 57.0165 min.
+    const ring2 = committedReport(2, 'grind');
+    expect(ring2.summary.deploymentMinutes.mean * 2 + 24).toBeCloseTo(
+      ring2.summary.totalMinutes.mean,
+      3,
+    );
+    expect(ring2.runs.every((run) => run.retakeMinutes === 0)).toBe(true);
+  });
 
   it('records the rush line as faster and not ring-securing on both rings', () => {
     for (const ringIndex of [1, 2]) {

@@ -448,12 +448,20 @@ Committed evidence:
 [`docs/dev/ring-timing-baseline.json`](./dev/ring-timing-baseline.json)
 (seeds 1–3, competent bot, regeneration command above).
 
-| Ring | Line | Measured runs | Total (mean, min–max) | Losses | Expected losses | Budget |
+| Ring | Line | Per-deployment (mean) | Total (mean, min–max) | Losses | Expected losses | Budget |
 |---|---|---|---|---|---|---|
-| 1 (6 hexes) | grind | 2.1 min | **15.4 min** (13.9–17.3) | 6.0 | 6.0 | 30–90 min · **missed** (AH-0MWFDQ9EY004NO4X) |
-| 1 (6 hexes) | rush | 0.1 min | **10.2 min** (9.4–10.9) | 1.0 | 4.5 | not applicable (ring not secured) |
-| 2 (12 hexes) | grind | 4.1 min | **57.0 min** (46.0–70.8) | 12.0 | 12.0 | 60–180 min · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
-| 2 (12 hexes) | rush | 0.2 min | **21.5 min** (19.8–24.9) | 1.0 | 8.7 | not applicable (ring not secured) |
+| 1 (6 hexes) | grind | 1.70 min | **15.4 min** (13.9–17.3) | 6.0 | 6.0 | 30–90 min · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | rush | 0.21 min | **10.2 min** (9.4–10.9) | 1.0 | 4.5 | not applicable (ring not secured) |
+| 2 (12 hexes) | grind | 16.51 min | **57.0 min** (46.0–70.8) | 12.0 | 12.0 | 60–180 min · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | rush | 0.43 min | **21.5 min** (19.8–24.9) | 1.0 | 8.7 | not applicable (ring not secured) |
+
+The **Per-deployment (mean)** column is the artifact's
+`summary.deploymentMinutes.mean` for that ring and line — the measured arena
+time of a single one-level deployment, which is what the retry term replays and
+what the grind totals are built from. It is deliberately **not** the ring total
+(that is the next column): ring 2 grind is 16.51 min of measured deployments
+plus 24 min of modelled between-sortie visits plus 16.51 min of modelled retries
+plus 0.0 min of re-capture, which sums to the 57.0 min total.
 
 Reading the baseline:
 

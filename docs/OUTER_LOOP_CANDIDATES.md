@@ -1047,8 +1047,9 @@ replace storage behind the same injectable interface (§6.6).
   Measured with the ring-timing harness on the shipped one-level **five-wave
   sortie** (a captured hex's grant owned from the next deployment, ring 1's
   grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **57.0
-  minutes** — 4.1 of measured deployments, 24 between sorties and 4.1 of
-  modelled retries (it moved 46.8 → 48.7 → 39.4 → 57.0 as the bot's control was
+  minutes** — 16.5 of measured deployments, 24 between sorties, 16.5 of
+  modelled retries and 0.0 of re-capture (16.5 + 24 + 16.5 + 0.0 = 57.0; it
+  moved 46.8 → 48.7 → 39.4 → 57.0 as the bot's control was
   tuned; the last move is the AH-0MWJ1680Z001QYV2 audit follow-up) — so ring 2
   plays retry-dominated and reads **within-tolerance** of its derived 60–180
   window (±12 min, floor 48) with its rebalancing ruling live on
