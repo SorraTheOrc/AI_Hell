@@ -104,6 +104,13 @@ KNOWN_CUE_SET.add('playGrazeSound');
 // `playMatchupResistedImpactSound`), so like the other dispatchers it ships no
 // recipe of its own and is known to the coverage check.
 KNOWN_CUE_SET.add('playMatchupImpactStateCue');
+// `playEvolutionFusionCue` / `playEvolutionExpiryCue` are the weapon-evolution
+// legibility **dispatchers** (epic AH-0MWL7OWPF003E4TP AC7): they route the
+// fusion/expiry moment to the existing baked collect/despawn cues, so they
+// ship no recipe of their own and are known to the coverage check exactly like
+// the other reuse-only dispatchers above.
+KNOWN_CUE_SET.add('playEvolutionFusionCue');
+KNOWN_CUE_SET.add('playEvolutionExpiryCue');
 
 function resolveCue(name: string): CueFn | undefined {
   const fromEffects = (effects as unknown as Record<string, unknown>)[name];

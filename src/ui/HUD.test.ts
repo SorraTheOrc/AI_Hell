@@ -8,6 +8,7 @@ import {
   HUD,
   HUD_DEPTH,
   HUD_ROW_HEIGHT,
+  EVOLUTION_BADGE_NAME,
   NON_SLOT_SECTION_LABEL,
   NON_SLOT_SECTION_NAME,
   PERMANENT_VALUE,
@@ -16,6 +17,7 @@ import {
   SLOT_MARKER_CHARGES_ONLY,
   buildHUDLabel,
   formatHUDValue,
+  type EvolutionBadgeState,
   type HUDEntry,
   type HUDOptions,
 } from './HUD';
@@ -2686,6 +2688,67 @@ describe('AH-0MW2AVRNL008F9FX AC5: layout invariants', () => {
     const icon = rowIcon(hud, row.label)!;
     expect(firstStrokeColour(icon)).toBe(POWER_UP_GREY_COLOUR);
     expect(ringColour(icon)).toBe(POWER_UP_GREY_COLOUR);
+    destroy(game);
+  });
+});
+
+// ── Evolution badge (AH-0MWU7BC8E007SOI2) ───────────────────────────
+
+describe('evolution badge (AH-0MWU7BC8E007SOI2)', () => {
+  function badgeText(hud: HUD): Phaser.GameObjects.Text | undefined {
+    return (
+      hud as unknown as { list: Phaser.GameObjects.GameObject[] }
+    ).list.find(
+      (child): child is Phaser.GameObjects.Text =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.name === EVOLUTION_BADGE_NAME,
+    );
+  }
+
+  it('renders the evolved weapon name + icon for a fusion badge', async () => {
+    const badge: EvolutionBadgeState = {
+      kind: 'fusion',
+      evolvedId: 'chain_ricochet',
+    };
+    const { game, hud } = await bootWithHUD(undefined, {
+      getEvolutionBadge: () => badge,
+    });
+    hud.refresh();
+
+    expect(hud.getEvolutionBadgeState()).toEqual(badge);
+    expect(badgeText(hud)?.text).toBe('Chain Ricochet');
+    expect(badgeText(hud)?.visible).toBe(true);
+    destroy(game);
+  });
+
+  it('renders an expiry badge with the expired text suffix (text difference, not colour)', async () => {
+    const { game, hud } = await bootWithHUD(undefined, {
+      getEvolutionBadge: () => ({
+        kind: 'expiry',
+        evolvedId: 'cluster_barrage',
+      }),
+    });
+    hud.refresh();
+
+    expect(hud.getEvolutionBadgeState()).toEqual({
+      kind: 'expiry',
+      evolvedId: 'cluster_barrage',
+    });
+    expect(badgeText(hud)?.text).toBe('Cluster Barrage expired');
+    // The expiry label never collides with the bare fusion label: the text
+    // difference is what distinguishes the two without relying on colour.
+    expect(badgeText(hud)?.text).not.toBe('Cluster Barrage');
+    destroy(game);
+  });
+
+  it('hides the badge when no state is provided', async () => {
+    const { game, hud } = await bootWithHUD(undefined, {
+      getEvolutionBadge: () => null,
+    });
+    hud.refresh();
+
+    expect(hud.getEvolutionBadgeState()).toBeNull();
+    expect(badgeText(hud)?.visible).toBe(false);
     destroy(game);
   });
 });

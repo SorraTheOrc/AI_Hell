@@ -118,6 +118,25 @@ export const EVOLVED_WEAPON_IDS: readonly EvolvedWeaponId[] = [
  */
 export type EvolvedWeaponIcon = 'chain' | 'barrage' | 'fan';
 
+/**
+ * The two legibility transitions a fusion surfaces to the player (epic AC7):
+ * `'fusion'` when an evolved weapon becomes live, and `'expiry'` when a
+ * field-tier fusion reverts to its halves on the bar downbeat. Consumed by
+ * the shared fire path and the HUD badge, so the game and every gym agree on
+ * what counts as a fusion vs an expiry.
+ */
+export type EvolutionTransitionKind = 'fusion' | 'expiry';
+
+/**
+ * One latched fusion/expiry event, delivered to the scene exactly once through
+ * {@link Player.consumeEvolutionTransition}. The evolved id is the weapon that
+ * became live (`'fusion'`) or reverted (`'expiry'`).
+ */
+export interface EvolutionTransition {
+  readonly kind: EvolutionTransitionKind;
+  readonly evolvedId: EvolvedWeaponId;
+}
+
 // ── Authored pairing table ──────────────────────────────────────────
 
 /**

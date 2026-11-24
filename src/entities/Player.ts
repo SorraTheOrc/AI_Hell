@@ -128,6 +128,7 @@ import {
   resolveEvolvedWeaponPattern,
   resolveWeaponEvolution,
   type EvolvedWeaponId,
+  type EvolutionTransition,
   type WeaponEvolutionReason,
 } from '../utils/weaponEvolutions';
 import {
@@ -411,6 +412,18 @@ export class Player extends Phaser.GameObjects.Graphics {
   private _evolutionPending: PendingEvolution | null = null;
   /** The evolved weapon that fired during the most recent `tryFire` call. */
   private _evolutionFiredThisFrame: EvolvedWeaponId | null = null;
+  /**
+   * Latched fusion event (an evolved weapon became live), consumed once by
+   * {@link Player.consumeEvolutionTransition}. Latched — never reset by
+   * `tryFire` — so a fusion completed by a weapon collection (`_readyFire`)
+   * survives until the shared fire path reads it.
+   */
+  private _evolutionFused: EvolvedWeaponId | null = null;
+  /**
+   * Latched expiry event (a field-tier fusion reverted on the bar downbeat),
+   * consumed once by {@link Player.consumeEvolutionTransition}.
+   */
+  private _evolutionExpired: EvolvedWeaponId | null = null;
   /**
    * Live game rules — the tempo of the shared beat grid (defaults to the
    * persisted rules) and the legacy per-weapon subdivisions. The Euclidean
@@ -1495,6 +1508,31 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Consumes and clears one latched fusion/expiry transition, if any. The
+   * shared fire path calls this after {@link Player.tryFire} to deliver each
+   * transition exactly once (epic AC7): a `'fusion'` when an evolved weapon
+   * became live, an `'expiry'` when a field-tier fusion reverted on the bar
+   * downbeat. A fusion latched by a weapon collection survives until this is
+   * read, so no transition is lost to `tryFire`'s per-frame reset.
+   *
+   * The fusion slot is consumed before the expiry slot, so a same-frame
+   * revert-then-fuse reports the new weapon first.
+   */
+  consumeEvolutionTransition(): EvolutionTransition | null {
+    if (this._evolutionFused !== null) {
+      const evolvedId = this._evolutionFused;
+      this._evolutionFused = null;
+      return { kind: 'fusion', evolvedId };
+    }
+    if (this._evolutionExpired !== null) {
+      const evolvedId = this._evolutionExpired;
+      this._evolutionExpired = null;
+      return { kind: 'expiry', evolvedId };
+    }
+    return null;
+  }
+
+  /**
    * The catalogue definition an evolved weapon fires through the shared fire
    * path: the primary half's projectile with the evolved name/colour and a
    * **single** forward shot, so a fusion never raises damage instances per
@@ -1879,7 +1917,17 @@ export class Player extends Phaser.GameObjects.Graphics {
     const due = this._evolutionPending;
     if (due && now + BEAT_EPSILON_MS >= due.effectiveAtMs) {
       this._evolutionPending = null;
+      const wasSounding = this._evolutionSounding;
       this._commitEvolution(due.target, due.effectiveAtMs);
+      if (due.target === null) {
+        // A field-tier fusion reverted to its halves on the bar downbeat:
+        // latch the expiry for the shared fire path (epic AC7).
+        if (wasSounding) this._evolutionExpired = wasSounding.evolvedId;
+      } else if (wasSounding?.evolvedId !== due.target.evolvedId) {
+        // A different evolved weapon became live (a swap): latch the new
+        // fusion so the old one is never reported as a plain revert.
+        this._evolutionFused = due.target.evolvedId;
+      }
     }
 
     const desired = this._resolveEvolutionSchedule();
@@ -1929,6 +1977,9 @@ export class Player extends Phaser.GameObjects.Graphics {
     }
 
     if (current === null && desired !== null) {
+      // A fusion became live this frame (not waiting for a downbeat): latch
+      // it so the shared fire path can fire the distinct fusion cue.
+      this._evolutionFused = desired.evolvedId;
       this._setEvolutionActive(desired, now);
       return;
     }
@@ -2039,6 +2090,10 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._evolutionLastShot = undefined;
     this._evolutionPending = null;
     this._evolutionFiredThisFrame = null;
+    // Drop any latched fusion/expiry transition too: a grid swap / run
+    // restart must never deliver a stale cue to the new run (epic AC7).
+    this._evolutionFused = null;
+    this._evolutionExpired = null;
   }
 
   /**

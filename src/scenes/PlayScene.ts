@@ -81,6 +81,8 @@ import {
 } from './core/sceneSetup';
 import {
   playDestructionSound,
+  playEvolutionExpiryCue,
+  playEvolutionFusionCue,
   playSpawnSound,
   playVictoryFanfareSound,
   playWeaponFireSound,
@@ -223,10 +225,14 @@ import {
   type CollectAnimationHandle,
 } from '../powerups/collectAnimation';
 import { type PowerUpSpawner } from '../powerups/spawner';
-import { HUD } from '../ui/HUD';
+import { HUD, type EvolutionBadgeState } from '../ui/HUD';
 import { DangerTacho, resolveDangerTacho } from '../ui/dangerTacho';
 import { combatHudOptions } from './core/hudWiring';
 import { type WeaponDefinition, type WeaponId } from '../utils/weapons';
+import type {
+  EvolvedWeaponId,
+  EvolutionTransitionKind,
+} from '../utils/weaponEvolutions';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
 import { createCompetentBotBrain } from '../ai/framework';
@@ -527,6 +533,14 @@ export const VICTORY_FIREWORK_DEPTH = 300;
 /** Neon-cyan level/score text colour. */
 const HUD_TEXT_COLOR = '#00ffff';
 
+/**
+ * How long the expiry badge stays on screen after a field-tier fusion reverts
+ * (ms). Long enough to read the evolved weapon's name, short enough that the
+ * persistent fusion badge (while fused) is the primary legibility signal
+ * (epic AH-0MWL7OWPF003E4TP AC7).
+ */
+const EXPIRY_BADGE_HOLD_MS = 1200;
+
 /** Level-transition banner style. */
 const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   fontFamily: 'monospace',
@@ -761,6 +775,8 @@ export class PlayScene extends CombatScene<
 
   private player: Player | null = null;
   private hud: HUD | null = null;
+  /** Transient expiry badge shown for {@link EXPIRY_BADGE_HOLD_MS} after a revert. */
+  private _expiryBadge: EvolutionBadgeState | null = null;
 
   private scoreText: Phaser.GameObjects.Text | null = null;
   private levelText: Phaser.GameObjects.Text | null = null;
@@ -1476,7 +1492,10 @@ export class PlayScene extends CombatScene<
     this.hud = new HUD(
       this,
       this.effectsRegistry,
-      combatHudOptions(() => this.player, { showLives: true }),
+      combatHudOptions(() => this.player, {
+        showLives: true,
+        getEvolutionBadge: () => this._evolutionBadge(),
+      }),
     );
 
     this._buildHudText();
@@ -1833,6 +1852,9 @@ export class PlayScene extends CombatScene<
     this.thornsAura?.destroy();
     this.thornsAura = null;
     this.thornsAuraDrawn = false;
+    // Drop any held expiry badge; the scene timer is cleared by Phaser on
+    // shutdown, so only the state needs releasing (epic AC7).
+    this._expiryBadge = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -4941,6 +4963,43 @@ export class PlayScene extends CombatScene<
     // Shared player-fire path: the metronomic hold-full ghost fire and live
     // fire play the same cue through the same switch (AH-0MV55O9R5005W6J0).
     playWeaponFireSound(weaponId);
+  }
+
+  /**
+   * Plays the distinct fusion/expiry cue and drives the HUD badge when an
+   * evolution transitions (epic AH-0MWL7OWPF003E4TP AC7). A fusion plays the
+   * cheerful chime and lets the badge read the live evolution; an expiry plays
+   * the descending blip and shows the transient `'expired'` badge for
+   * {@link EXPIRY_BADGE_HOLD_MS}.
+   */
+  protected override onEvolutionTransition(
+    kind: EvolutionTransitionKind,
+    evolvedId: EvolvedWeaponId,
+  ): void {
+    if (kind === 'fusion') {
+      playEvolutionFusionCue();
+      // A new fusion supersedes any still-held expiry badge.
+      this._expiryBadge = null;
+      return;
+    }
+    playEvolutionExpiryCue();
+    this._expiryBadge = { kind: 'expiry', evolvedId };
+    this.time.delayedCall(EXPIRY_BADGE_HOLD_MS, () => {
+      if (this._expiryBadge?.evolvedId === evolvedId) {
+        this._expiryBadge = null;
+      }
+    });
+  }
+
+  /**
+   * The evolution badge the HUD renders: the transient expiry badge while it
+   * is held, otherwise the live fusion badge while an evolution is sounding
+   * (its name + icon, with the merge glyph). `null` when neither is active.
+   */
+  private _evolutionBadge(): EvolutionBadgeState | null {
+    if (this._expiryBadge) return this._expiryBadge;
+    const active = this.player?.getActiveEvolution();
+    return active ? { kind: 'fusion', evolvedId: active.evolvedId } : null;
   }
 
   /**

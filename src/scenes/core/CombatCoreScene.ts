@@ -100,7 +100,10 @@ import {
   type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
-import type { EvolvedWeaponId } from '../../utils/weaponEvolutions';
+import type {
+  EvolvedWeaponId,
+  EvolutionTransitionKind,
+} from '../../utils/weaponEvolutions';
 import {
   advanceOrbitPhase,
   optionsPodFireDirections,
@@ -709,6 +712,24 @@ export class CombatCoreScene<
   ): void {}
 
   /**
+   * Plays the distinct fusion/expiry cue when an evolution transitions (epic
+   * AH-0MWL7OWPF003E4TP, legibility child). Called by
+   * {@link CombatCoreScene._autoFire} once per latched transition — a
+   * `'fusion'` when an evolved weapon becomes live, an `'expiry'` when a
+   * field-tier fusion reverts to its halves on the bar downbeat — through the
+   * same shared seam as {@link CombatCoreScene.onEvolvedWeaponFired}, so the
+   * game and every gym see the same events. Default no-op; the legibility
+   * child overrides it with the dedicated cue + HUD badge.
+   *
+   * @param _kind - `'fusion'` (became live) or `'expiry'` (reverted).
+   * @param _evolvedId - The evolved weapon that transitioned.
+   */
+  protected onEvolutionTransition(
+    _kind: EvolutionTransitionKind,
+    _evolvedId: EvolvedWeaponId,
+  ): void {}
+
+  /**
    * Shared AOE dispatch hook (parent AH-0MUOOB3OR001V8CD): called by
    * {@link CombatCoreScene._autoFire} once for every AOE weapon that fires,
    * with the firing weapon and the ship position. Default no-op; the shared
@@ -1086,6 +1107,18 @@ export class CombatCoreScene<
       player.setBeatClock(this.beatClock);
     }
     const fired = player.tryFire(dt);
+    // Deliver every latched fusion/expiry transition exactly once, even when
+    // no weapon fired this frame (the expiry lands on a bar downbeat that may
+    // not coincide with an evolved shot). The latch is consumed here, so a
+    // transition latched by a weapon collection is delivered on the next
+    // auto-fire tick without being duplicated (epic AC7).
+    for (
+      let transition = player.consumeEvolutionTransition();
+      transition !== null;
+      transition = player.consumeEvolutionTransition()
+    ) {
+      this.onEvolutionTransition(transition.kind, transition.evolvedId);
+    }
     // A live evolution consumes its two halves and fires the evolved pattern
     // instead. It dispatches through this same shared spawn path, so the game
     // and every gym spawn an identical evolved shot (epic AC3).

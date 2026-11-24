@@ -1319,6 +1319,31 @@ export function playWeaponFireSound(
   }
 }
 
+// ── Weapon evolution legibility cues (epic AH-0MWL7OWPF003E4TP AC7) ──
+
+/**
+ * Fusion cue — the cheerful two-tone chime when two weapons fuse into an
+ * evolved weapon (epic AC7). Routed through the existing baked
+ * {@link playPowerUpCollectSound} via the shared cue funnel, so it respects
+ * the shared SFX mute/volume exactly like every other cue and ships no new
+ * ToneForge recipe of its own.
+ */
+export function playEvolutionFusionCue(): void {
+  playPowerUpCollectSound();
+}
+
+/**
+ * Expiry cue — the quick descending blip when a field-tier fusion reverts to
+ * its halves on the bar downbeat (epic AC7). Routed through the existing
+ * baked {@link playPowerUpDespawnSound} via the shared cue funnel, so it
+ * respects the shared SFX mute/volume exactly like every other cue and is
+ * audibly distinct from the ascending fusion chime (a shape/text/feel
+ * difference that never relies on colour).
+ */
+export function playEvolutionExpiryCue(): void {
+  playPowerUpDespawnSound();
+}
+
 /**
  * Short bright two-note blip — one beat of the 3-2-1 restart countdown
  * (AH-0MV55OA93008OUL1). Each count of the hold-full restart plays one

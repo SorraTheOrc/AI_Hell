@@ -2452,6 +2452,51 @@ describe('Player — field-tier weapon evolution (AH-0MWU7BAXI003HBP3)', () => {
     expect(def.name).toBe('Chain Ricochet');
     expect(def.id).toBe('ricochet');
   });
+
+  it('latches a fusion transition when the pairing completes, consumed exactly once', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    expect(player.consumeEvolutionTransition()).toBeNull();
+
+    // The second half completes the pairing: the fusion transition is latched
+    // (even though it was triggered by a collection, not a `tryFire` tick).
+    player.equipWeapon('arc');
+    expect(player.consumeEvolutionTransition()).toEqual({
+      kind: 'fusion',
+      evolvedId: 'chain_ricochet',
+    });
+    // Consumed exactly once.
+    expect(player.consumeEvolutionTransition()).toBeNull();
+  });
+
+  it('latches an expiry transition on the bar downbeat when the field tier reverts', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    player.tickWeaponTimers(1000); // ricochet has 9 s left
+    player.equipWeapon('arc'); // arc is fresh at 10 s
+    expect(player.consumeEvolutionTransition()).toEqual({
+      kind: 'fusion',
+      evolvedId: 'chain_ricochet',
+    });
+
+    player.tryFire(1.0); // t = 1000 ms; the fusion is sounding
+    player.tickWeaponTimers(9000); // expire the ricochet half
+    expect(player.getPendingEvolution()).toEqual({
+      evolvedId: null,
+      effectiveAtMs: 3000,
+    });
+
+    // Still firing before the boundary, then the revert commits on the bar
+    // downbeat (t = 3000 ms), latching the expiry exactly once.
+    player.tryFire(0.5); // t = 1500 ms
+    player.tryFire(1.5); // t = 3000 ms
+    expect(player.getActiveEvolution()).toBeNull();
+    expect(player.consumeEvolutionTransition()).toEqual({
+      kind: 'expiry',
+      evolvedId: 'chain_ricochet',
+    });
+    expect(player.consumeEvolutionTransition()).toBeNull();
+  });
 });
 
 describe('Player — owned-tier weapon evolution (AH-0MWU7BBLP0018UZ7)', () => {
