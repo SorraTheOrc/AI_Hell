@@ -1236,11 +1236,28 @@ on entry (AH-0MUJM746P000QAEO).
 
 ### 4.4 Power-Ups
 
-> **Proposed, not shipped (backlog §8.3):** **weapon evolutions** — pairings of
-> two active/owned weapon kinds fusing into a named evolved weapon (pattern and
-> coverage only, never damage per tick) — are proposed in §8.3 (Weapon
-> evolutions, AH-0MWL7OWPF003E4TP). The catalogue below stays normative until
-> that item lands.
+> **Weapon evolutions — shipped (AH-0MWL7OWPF003E4TP):** two active/owned weapon
+> kinds can now **fuse** into a named evolved weapon (pattern and coverage only,
+> never damage instances per cadence tick). The pairings are catalogue data in
+> `src/utils/weaponEvolutions.ts`, resolved by the one pure resolver
+> `resolveWeaponEvolution`, and fired through the same shared fire path the game
+> and `GymWeapons` run. The shipped pairings:
+>
+> | Evolved weapon | Pairing | Effect | Tiers |
+> |----------------|---------|--------|-------|
+> | Chain Ricochet | `ricochet` + `arc` | Banking pellets that hop to a second nearby target on every bounce. | field / owned |
+> | Cluster Barrage | `cluster` + `mortar` | MIRV warheads that leave a short lingering blast at each burst point. | field / owned |
+> | Fan Escort | `spread` + `options` | Orbiting pods that fire along the ship's heading instead of radially. | field / owned |
+>
+> A **field evolution** fires while both halves of a pairing are active
+> simultaneously; a **permanent evolution** persists for the rest of the run
+> once both halves are permanently owned at level ≥ 2. An evolution changes
+> pattern, coverage and behaviour only — never the number of damage instances
+> per cadence tick — so the boss's 200-hit pool (§4.3) and the level-0 output
+> budget (§4.4.2) keep their meaning, and every evolved cadence stays on the
+> shared 16th-note lattice (§2.3) with morphs on bar downbeats only. An evolved
+> weapon resolves to its **base** ids for hex-matchup purposes
+> (AH-0MWL5376H001WJFZ).
 
 The player collects power-ups dropped by destroyed enemies through the shared weighted-random drop pool (§6.4). There are **17 distinct types** — including the three **area-of-effect weapons** (Nova, Mortar, Arc) documented in the table below; the shipped defaults encode rarity as **relative weights** — standard power-ups (Shield–Teleport, Magnet, Mineral Scoop, Force Field) at **4**, **Extra Life** and the **Mystery UFO** at **3**, the **Smart Bomb**, the **Orbital Strike** and the **Mining Laser** at **2**, and each weapon drop at **2** (the `~15–20 %` / `~5 %` per-enemy figures below are conceptual guidance, not a directly coded per-enemy chance). Extra Life therefore takes ≈ **5.0 % of power-up draws** (weight 3 of the 60 total power-up weight) — still rarer than standard drops, and only from the **field** (it is a field-pickup-only kind, §4.4.1):
 
@@ -4280,10 +4297,15 @@ text below is the original proposal, retained as rationale.
   [`src/data/experience-targets.json`](../src/data/experience-targets.json)
   bands — the mechanic is score-only and must move no other metric.
 
-#### Weapon evolutions — ranked 8, Medium priority
+#### Weapon evolutions — ranked 8, Medium priority — **shipped**
 
 **Work item:** Weapon evolutions: fuse two active weapon kinds into an evolved
-weapon (AH-0MWL7OWPF003E4TP).
+weapon (AH-0MWL7OWPF003E4TP). **Landed:** the pairing table, the one pure
+resolver (`src/utils/weaponEvolutions.ts`) and the field/owned tiers are now
+§4.4 *Power-Ups* (the pairing table and the shipped note), the evolved cadences
+stay on the shared 16th-note lattice of §4.4.2, and `GymWeapons` fires every
+pairing through the shared fire path (`docs/GYM_PARITY.md`). The text below is
+retained as the original proposal.
 
 - **Tier:** middle loop (a run).
 - **Gap:** the weapon catalogue never interacts with itself, and a run takes
