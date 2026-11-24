@@ -48,6 +48,7 @@ import {
   HANGAR_MAP_ROW_Y,
   HANGAR_RESTART_ROW_Y,
   HANGAR_ROW_STEP,
+  HANGAR_NEUTRAL_MARKER,
   HANGAR_STRONG_BACKGROUND,
   HANGAR_STRONG_COLOR,
   HANGAR_STRONG_MARKER,
@@ -523,7 +524,8 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
       (option) => option.id === 'ricochet',
     )!;
     expect(ricochet.matchup).toBe('neutral');
-    expect(ricochet.label).toBe('LOADOUT Ricochet');
+    expect(ricochet.label).toBe(`LOADOUT Ricochet — ${HANGAR_NEUTRAL_MARKER}`);
+    expect(ricochet.matchupGlyph.glyph).toBe('●');
 
     // The unlock tree's weapon entries carry the same verdicts, including the
     // owned `spread` upgrade row and the `wave_laser` purchase row.

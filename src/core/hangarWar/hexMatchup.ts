@@ -52,6 +52,62 @@ import { resolveGrantAlias } from './grantAliases';
 export type HexMatchupVerdict = 'effective' | 'neutral' | 'resisted';
 
 /**
+ * One verdict's published display vocabulary (AH-0MWL8965R008K588).
+ *
+ * The **one** vocabulary every surface draws: the hex detail panel's
+ * `STRENGTHS:`/`WEAKNESSES:` lines, the deployment selector's weapon rows and
+ * the in-run combat feedback all read these entries, so the pre-commitment
+ * intel and the fight can never speak different languages. Each state pairs a
+ * distinct **symbol** (shape, readable with colour vision deficiency) with a
+ * short word (readable by a screen reader) — never colour alone.
+ */
+export interface MatchupGlyph {
+  /** The single symbol the surfaces draw (e.g. `▲`). */
+  readonly glyph: string;
+  /** The short uppercase word that names the state (e.g. `EFFECTIVE`). */
+  readonly label: string;
+  /** The full drawn tag: exactly `` `${glyph} ${label}` ``. */
+  readonly marker: string;
+}
+
+/**
+ * The published verdict → glyph vocabulary (AH-0MWL8965R008K588).
+ *
+ * `neutral` carries its **own** glyph rather than a blank mark: "unmarked"
+ * would be indistinguishable from "no data" for a player reading without
+ * colour. The keys are exactly {@link HexMatchupVerdict}, so a verdict and its
+ * glyph cannot drift apart.
+ */
+export const MATCHUP_GLYPHS: Readonly<
+  Record<HexMatchupVerdict, MatchupGlyph>
+> = {
+  effective: { glyph: '▲', label: 'EFFECTIVE', marker: '▲ EFFECTIVE' },
+  neutral: { glyph: '●', label: 'NEUTRAL', marker: '● NEUTRAL' },
+  resisted: { glyph: '▼', label: 'RESISTED', marker: '▼ RESISTED' },
+};
+
+/**
+ * The glyph entry for a verdict — total, so an unknown input is neutral.
+ *
+ * A corrupt save, an older vocabulary value or a non-verdict never throws and
+ * never renders blank: it resolves the neutral entry, mirroring
+ * {@link resolveHexMatchup}'s totality.
+ *
+ * @param verdict — the verdict to render (any value).
+ * @returns the published glyph entry for the verdict, or the neutral entry.
+ */
+export function matchupGlyphFor(verdict: unknown): MatchupGlyph {
+  if (
+    verdict === 'effective' ||
+    verdict === 'neutral' ||
+    verdict === 'resisted'
+  ) {
+    return MATCHUP_GLYPHS[verdict];
+  }
+  return MATCHUP_GLYPHS.neutral;
+}
+
+/**
  * The injectable verdict lookup: canonical weapon id → verdict.
  *
  * It is **data, not behaviour** (parent AC14): a caller may pass the authored

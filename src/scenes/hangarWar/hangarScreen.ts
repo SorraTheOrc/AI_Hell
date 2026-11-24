@@ -138,6 +138,13 @@ import {
   type BossMatchup,
   type MatchupDefinition,
 } from '../../core/hangarWar/weaponMatchup';
+import {
+  MATCHUP_GLYPHS,
+  buildAuthoredVerdictLookup,
+  matchupGlyphFor,
+  resolveHexMatchup,
+  type MatchupGlyph,
+} from '../../core/hangarWar/hexMatchup';
 
 /** Title rendered by the hangar screen (asserted by tests). */
 export const HANGAR_SCREEN_TITLE = 'HANGAR WAR';
@@ -273,6 +280,13 @@ export interface HangarWeaponOption {
    * `strengths` do, otherwise `neutral`.
    */
   matchup: BossMatchup;
+  /**
+   * The shared matchup glyph for this weapon against the selected hex
+   * (AH-0MWL8965R008K588): the **same** vocabulary entry the fight draws, so
+   * the selector and combat cannot drift. Resolved by the one matchup rule
+   * (`resolveHexMatchup` over the hex's authored lookup), never re-derived.
+   */
+  matchupGlyph: MatchupGlyph;
 }
 
 /** One permanent-modifier option in the deployment selector. */
@@ -554,15 +568,37 @@ export interface HangarBossIntel {
 }
 
 /** The non-colour tag a strong (countering) weapon row carries. */
-export const HANGAR_STRONG_MARKER = '▲ EFFECTIVE';
+export const HANGAR_STRONG_MARKER = MATCHUP_GLYPHS.effective.marker;
 
 /** The non-colour tag a weak (resisted) weapon row carries. */
-export const HANGAR_WEAK_MARKER = '▼ RESISTED';
+export const HANGAR_WEAK_MARKER = MATCHUP_GLYPHS.resisted.marker;
 
-/** The visible mutation on a matchup-tagged label: neutral is unchanged. */
-function withMatchupMarker(label: string, matchup: BossMatchup | null): string {
+/** The non-colour tag a neutral weapon row carries (never a blank mark). */
+export const HANGAR_NEUTRAL_MARKER = MATCHUP_GLYPHS.neutral.marker;
+
+/**
+ * The visible mutation on a matchup-tagged label.
+ *
+ * Every state is marked on the **loadout selector** — neutral included:
+ * "unmarked" would be indistinguishable from "no data" for a player reading
+ * without colour (AH-0MWL8965R008K588). The markers are the shared
+ * vocabulary's, so the selector cannot drift from the combat feedback.
+ *
+ * `markNeutral` is off for the unlock-tree rows, which keep their historical
+ * rendering for a neutral entry (their own byte-identical contract, AC3 of
+ * AH-0MWI5AK1E008HDHH) — the glyph vocabulary they draw is still the shared
+ * one.
+ */
+function withMatchupMarker(
+  label: string,
+  matchup: BossMatchup | null,
+  markNeutral = false,
+): string {
   if (matchup === 'strong') return `${label} — ${HANGAR_STRONG_MARKER}`;
   if (matchup === 'weak') return `${label} — ${HANGAR_WEAK_MARKER}`;
+  if (matchup === 'neutral' && markNeutral) {
+    return `${label} — ${HANGAR_NEUTRAL_MARKER}`;
+  }
   return label;
 }
 
@@ -922,6 +958,11 @@ export function buildHangarWeaponOptions(
 ): HangarWeaponOption[] {
   const loadout = resolveActiveLoadout(payload.hangar);
   const equippedIds = new Set(loadout.startingWeapons);
+  // The verdict comes from the **one** matchup rule over the hex's authored
+  // lookup — the selector never re-derives it (AH-0MWL8965R008K588).
+  const lookup = target
+    ? buildAuthoredVerdictLookup(target.strengths, target.weaknesses)
+    : null;
   const options: HangarWeaponOption[] = [];
   for (const id of payload.hangar.unlockedWeapons) {
     const entry = findHangarEntry(id, catalogue);
@@ -929,7 +970,13 @@ export function buildHangarWeaponOptions(
     const equipped = equippedIds.has(id);
     // Resolved from the shipped weapon id through the F1 rule, so the
     // ring-data (`waveLaser`) and catalogue (`wave_laser`) spellings agree.
-    const matchup = resolveBossMatchup(entry.weaponId, target);
+    const verdict = resolveHexMatchup(entry.weaponId, lookup);
+    const matchup: BossMatchup =
+      verdict === 'effective'
+        ? 'strong'
+        : verdict === 'resisted'
+          ? 'weak'
+          : 'neutral';
     options.push({
       key: `weapon:${id}`,
       id,
@@ -938,6 +985,7 @@ export function buildHangarWeaponOptions(
       label: withMatchupMarker(
         `LOADOUT ${entry.name}${equipped ? ' — EQUIPPED' : ''}`,
         matchup,
+        true,
       ),
       // Every owned weapon is toggleable, including the last equipped one:
       // the player may deploy with no extra weapon at all, in which case the
@@ -945,6 +993,7 @@ export function buildHangarWeaponOptions(
       // (AH-0MVZJ6V1J001DA9D).
       actionable: true,
       matchup,
+      matchupGlyph: matchupGlyphFor(verdict),
     });
   }
   return options;

@@ -202,7 +202,7 @@ describe('matchup glyph vocabulary (AH-0MWL893J6006IFU9)', () => {
   // ── AC10 — shipped-data readability ─────────────────────────────
   // ────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'AC10 — every hex publishes the verdict and glyph each listed weapon will show in combat',
     () => {
       const glyphs = requireGlyphs();
@@ -245,7 +245,7 @@ describe('matchup glyph vocabulary (AH-0MWL893J6006IFU9)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC10 — the detail panel marks every listed weapon with its combat glyph',
     () => {
       const glyphs = requireGlyphs();
@@ -304,7 +304,7 @@ describe('matchup glyph vocabulary (AH-0MWL893J6006IFU9)', () => {
   // ── AC10 — distinguishable without colour ──────────────────────
   // ────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'AC10 — the three glyphs are distinct symbols, so the vocabulary survives colour-vision deficiency',
     () => {
       const glyphs = requireGlyphs();
@@ -331,7 +331,7 @@ describe('matchup glyph vocabulary (AH-0MWL893J6006IFU9)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC10 — the vocabulary is keyed by the states the combat presentation already publishes',
     () => {
       const glyphs = requireGlyphs();
@@ -352,7 +352,7 @@ describe('matchup glyph vocabulary (AH-0MWL893J6006IFU9)', () => {
   // ── AC10 — the neutral fallback ────────────────────────────────
   // ────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'AC10 — an unknown weapon and an unauthored hex both resolve the neutral glyph',
     () => {
       const glyphs = requireGlyphs();
@@ -382,7 +382,7 @@ describe('matchup glyph vocabulary (AH-0MWL893J6006IFU9)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC10 — an unauthored hex publishes no matchup rows and draws no non-neutral glyph',
     () => {
       const glyphs = requireGlyphs();

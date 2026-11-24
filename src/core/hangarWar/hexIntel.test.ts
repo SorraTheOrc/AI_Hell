@@ -26,6 +26,7 @@ import {
   buildDefenceReport,
 } from './defenceReport';
 import { createRingState, generateRing } from './hexRing';
+import { MATCHUP_GLYPHS } from './hexMatchup';
 import {
   CONTROLS_HEADING,
   HELD_TILE_MARKER,
@@ -307,8 +308,20 @@ describe('hex map model — tile label (AC3)', () => {
       expect(intel.label).toContain('STATE: UNHELD');
       expect(intel.label).toContain(`AGGRESSION: ${definition.baseAggression}`);
       expect(intel.label).toContain(`BOSS: ${definition.boss}`);
-      expect(intel.label).toContain(`STRENGTHS: ${definition.strengths.join(',')}`);
-      expect(intel.label).toContain(`WEAKNESSES: ${definition.weaknesses.join(',')}`);
+      // Each authored weapon carries the combat glyph for its verdict
+      // (AH-0MWL8965R008K588): strengths resist, weaknesses are effective.
+      const resisted = MATCHUP_GLYPHS.resisted.glyph;
+      const effective = MATCHUP_GLYPHS.effective.glyph;
+      expect(intel.label).toContain(
+        `STRENGTHS: ${definition.strengths
+          .map((w) => `${w} ${resisted}`)
+          .join(',')}`,
+      );
+      expect(intel.label).toContain(
+        `WEAKNESSES: ${definition.weaknesses
+          .map((w) => `${w} ${effective}`)
+          .join(',')}`,
+      );
       expect(intel.label).toContain(`GRANT: ${definition.grants}`);
 
       // The cryptic prefixes the titles replaced are gone.

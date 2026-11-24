@@ -724,12 +724,6 @@ export abstract class CombatScene<
     bullet: PlayerBullet,
     damage = 1,
   ): number {
-    // Per-weapon hit feedback (cannon's distinct flash + hit cue) plays on
-    // every connect through the shared impact seam — including the lethal
-    // blow, which layers the shot's hit cue under the destruction audio
-    // (AH-0MV8228YW0050IXS AC4). The hex matchup state selects a distinct
-    // impact spec and cue at the same seam (AH-0MWL88YYO0053DWH).
-    this.resolveWeaponImpactFx(bullet, enemy);
     const points = Math.max(0, Math.floor(damage));
     // The matchup charge applies to every shot through the one shared seam:
     // `effective` offers two hit points, `resisted` one per two connected
@@ -759,8 +753,8 @@ export abstract class CombatScene<
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
       // (the entity's `takeDamage()` has already run `destroySelf()` and
       // cleared `alive`). A non-lethal hit flashes at the impact point so the
-      // player can read that the hit registered — unless the per-weapon
-      // impact already laid down its distinct flash above.
+      // player can read that the hit registered — the per-weapon impact
+      // (drawn below) layers its distinct flash on top.
       if (!enemy.alive) {
         this.finaliseEnemyKill(enemy);
       } else if (!bullet.impactFx) {
@@ -775,6 +769,17 @@ export abstract class CombatScene<
       if (applied > 0) this.reportPlayerDamageApplied(enemy);
       this.finaliseEnemyKill(enemy);
     }
+    // Per-weapon hit feedback (cannon's distinct flash + hit cue) plays on
+    // every connect through the shared impact seam — including the lethal
+    // blow, which layers the shot's hit cue under the destruction audio
+    // (AH-0MV8228YW0050IXS AC4). The hex matchup state selects a distinct
+    // impact spec and cue at the same seam (AH-0MWL88YYO0053DWH).
+    //
+    // Drawn **after** the hit points land: a boss-style target spawns its own
+    // generic hit flash inside `takeDamage()`, so the shot's own spec must be
+    // the last (topmost) flash or the gym and the game would read differently
+    // for the same verdict (AH-0MWL8965R008K588, gym↔game parity).
+    this.resolveWeaponImpactFx(bullet, enemy);
     return applied;
   }
 

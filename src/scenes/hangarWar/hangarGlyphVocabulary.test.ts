@@ -129,7 +129,7 @@ function weaponOptionsFor(hexId: string): WeaponOptionView[] {
 }
 
 describe('deployment-selector matchup glyphs (AH-0MWL893J6006IFU9)', () => {
-  it.fails(
+  it(
     'AC10 — every owned weapon row publishes the combat glyph for the selected hex',
     () => {
       const glyphs = requireGlyphs();
@@ -170,7 +170,7 @@ describe('deployment-selector matchup glyphs (AH-0MWL893J6006IFU9)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC10 — the same owned weapon flips glyph when the selected hex changes',
     () => {
       const glyphs = requireGlyphs();
@@ -202,7 +202,7 @@ describe('deployment-selector matchup glyphs (AH-0MWL893J6006IFU9)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC10 — only weapon rows carry a glyph (hulls and modifiers stay unmarked)',
     () => {
       requireGlyphs();

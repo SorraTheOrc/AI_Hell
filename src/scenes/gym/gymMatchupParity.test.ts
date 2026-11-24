@@ -334,7 +334,7 @@ describe('gym ↔ game matchup parity (AH-0MWL893J6006IFU9)', () => {
   // ── AC11 — identical damage / cue / spec for every verdict ──────
   // ────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'AC11 — the game and the gym produce identical damage, cue and spec for all three verdicts',
     async () => {
       const hexId = MINI_BOSS_GYM_HEX_ID;
@@ -476,7 +476,7 @@ describe('gym ↔ game matchup parity (AH-0MWL893J6006IFU9)', () => {
   // ── AC11 — the gym's three-state toggle ─────────────────────────
   // ────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'AC11 — the gym toggles effective / neutral / resisted and shows the shared mapping',
     async () => {
       const toggle = requireToggle();
