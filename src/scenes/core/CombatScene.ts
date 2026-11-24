@@ -65,6 +65,7 @@ import type {
   WeaponDefinition,
   WeaponId,
 } from '../../utils/weapons';
+import { resolveImpactStateFx } from '../../utils/weapons';
 import type { HitscanTarget } from './hitscanBeam';
 import type { PerformanceCounts } from '../../core/perfProbe';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
@@ -99,6 +100,7 @@ import {
   creditResistedHit,
   forgetTarget,
   resolveHexMatchup,
+  type HexMatchupVerdict,
   type MatchupLedger,
   type WeaponVerdictLookup,
 } from '../../core/hangarWar/hexMatchup';
@@ -561,6 +563,26 @@ export abstract class CombatScene<
   }
 
   /**
+   * The resolved matchup verdict for one connected shot at `target`.
+   *
+   * The single verdict lookup shared by the hit charge
+   * ({@link resolveHitCharge}) and the presentation seams (impact FX for a
+   * bullet / hitscan, and the boss flinch reaction), so damage and feedback
+   * can never disagree about the state (AH-0MWL88YYO0053DWH). Chaff
+   * (`health` = 1) is never charged, so it resolves `'neutral'` by design.
+   *
+   * @param target — the target the shot connected with.
+   * @param weaponId — the shot's weapon id, or `null`/`undefined` (neutral).
+   */
+  protected resolveMatchupImpactState(
+    target: object,
+    weaponId: string | null | undefined,
+  ): HexMatchupVerdict {
+    if (!this.isMatchupEligible(target)) return 'neutral';
+    return resolveHexMatchup(weaponId, this.getMatchupLookup());
+  }
+
+  /**
    * The shared hit-charge seam — the **only** place a matchup verdict becomes
    * hit points (AH-0MWL88REU009MO5G AC2). Every player damage source
    * (ordinary bullet, damage-budget beam, AOE detonation, boss/mini-boss
@@ -587,8 +609,7 @@ export abstract class CombatScene<
   ): number {
     const base = Math.max(0, Math.floor(points));
     if (base === 0) return 0;
-    if (!this.isMatchupEligible(target)) return base;
-    const verdict = resolveHexMatchup(weaponId, this.getMatchupLookup());
+    const verdict = this.resolveMatchupImpactState(target, weaponId);
     if (verdict === 'effective') return base * 2;
     if (verdict === 'resisted') {
       const targetId = this.matchupTargetIdOf(target);
@@ -706,8 +727,9 @@ export abstract class CombatScene<
     // Per-weapon hit feedback (cannon's distinct flash + hit cue) plays on
     // every connect through the shared impact seam — including the lethal
     // blow, which layers the shot's hit cue under the destruction audio
-    // (AH-0MV8228YW0050IXS AC4).
-    this.resolveWeaponImpactFx(bullet);
+    // (AH-0MV8228YW0050IXS AC4). The hex matchup state selects a distinct
+    // impact spec and cue at the same seam (AH-0MWL88YYO0053DWH).
+    this.resolveWeaponImpactFx(bullet, enemy);
     const points = Math.max(0, Math.floor(damage));
     // The matchup charge applies to every shot through the one shared seam:
     // `effective` offers two hit points, `resisted` one per two connected
@@ -762,9 +784,21 @@ export abstract class CombatScene<
    * spawns its distinct impact flash at the hit point, so the game and every
    * gym show the identical hit feedback. Bullets without `impactFx` metadata
    * are a no-op — they keep the generic bullet-impact flash only.
+   *
+   * When the shot's `target` is supplied the hex matchup verdict selects the
+   * state's own impact spec (bright shard burst / dull spall ring) and its
+   * dedicated baked cue through the same seam (AH-0MWL88YYO0053DWH). Neutral
+   * resolves the weapon's own spec unchanged.
    */
-  protected resolveWeaponImpactFx(bullet: PlayerBullet): void {
-    this.resolveImpactFx(bullet.impactFx, bullet.x, bullet.y);
+  protected resolveWeaponImpactFx(
+    bullet: PlayerBullet,
+    target?: object,
+  ): void {
+    const state =
+      target === undefined
+        ? 'neutral'
+        : this.resolveMatchupImpactState(target, bullet.weaponId);
+    this.resolveImpactFx(bullet.impactFx, bullet.x, bullet.y, state);
   }
 
   /**
@@ -774,6 +808,10 @@ export abstract class CombatScene<
    * all resolve their feedback here, so the game and every gym show the
    * identical hit response (AH-0MV8228YW0050IXS, AH-0MVREBUJ5004HDRQ).
    *
+   * `state` layers the hex matchup presentation on top: `effective`/`resisted`
+   * resolve their published spec (colour **and** shape) and dedicated cue;
+   * `neutral` (the default) is byte-for-byte today's per-weapon feedback.
+   *
    * A spec-less hit is a no-op — the generic bullet-impact flash is the
    * caller's fallback.
    */
@@ -781,14 +819,17 @@ export abstract class CombatScene<
     fx: ImpactFxSpec | undefined,
     x: number,
     y: number,
+    state: HexMatchupVerdict = 'neutral',
   ): void {
-    if (!fx) return;
-    playWeaponImpactCue(fx.cue);
+    const resolved = resolveImpactStateFx(fx, state);
+    if (!resolved) return;
+    playWeaponImpactCue(resolved.cue);
     spawnBulletImpact(this, x, y, {
       registry: this.bulletImpactEffects,
-      color: fx.color,
-      radius: fx.radius,
-      duration: fx.duration,
+      color: resolved.color,
+      radius: resolved.radius,
+      duration: resolved.duration,
+      shape: resolved.shape,
     });
   }
 
@@ -951,8 +992,15 @@ export abstract class CombatScene<
     y: number,
   ): void {
     // Per-weapon intercept feedback (the wave laser's red flash + baked cue)
-    // at the point where the beam stops, through the shared impact seam.
-    this.resolveImpactFx(def.impactFx, x, y);
+    // at the point where the beam stops, through the shared impact seam. The
+    // matchup state layers its own spec/cue on the same seam
+    // (AH-0MWL88YYO0053DWH).
+    this.resolveImpactFx(
+      def.impactFx,
+      x,
+      y,
+      this.resolveMatchupImpactState(target as unknown as object, def.id),
+    );
     const damage = 1 + this.getEffectsRegistry().frenzyBonusHits();
     this.damageEnemyViaAoe(target as unknown as TEnemy, damage, def.id);
   }

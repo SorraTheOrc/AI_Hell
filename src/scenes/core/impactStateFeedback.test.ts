@@ -208,7 +208,7 @@ describe('matchup impact-state encounter feedback (AC9)', () => {
   // AC9 — the flinch asymmetry
   // ────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'AC9 — an effective hit makes the mini-boss react (flinch)',
     async () => {
       const scene = await bootIsolated(HEX_ID);
@@ -221,7 +221,7 @@ describe('matchup impact-state encounter feedback (AC9)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC9 — a resisted hit shows no reaction (never a flinch)',
     async () => {
       const scene = await bootIsolated(HEX_ID);
@@ -234,7 +234,7 @@ describe('matchup impact-state encounter feedback (AC9)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC9 — the final boss inherits the same effective/resisted flinch asymmetry',
     async () => {
       const effectiveScene = await bootIsolated(HEX_ID);
@@ -269,7 +269,7 @@ describe('matchup impact-state encounter feedback (AC9)', () => {
   // The one-shot RESISTED tag
   // ────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'AC9 — the RESISTED tag fires once per encounter, then a bar pip thereafter',
     async () => {
       const scene = await bootIsolated(HEX_ID);
@@ -289,7 +289,7 @@ describe('matchup impact-state encounter feedback (AC9)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC9 — a neutral hit neither raises the RESISTED tag nor changes it',
     async () => {
       const scene = await bootIsolated(HEX_ID);

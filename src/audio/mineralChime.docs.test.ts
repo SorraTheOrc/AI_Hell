@@ -90,8 +90,9 @@ describe('mineral pickup chime documentation (AH-0MWNMRER0009385Y)', () => {
         `\\| \`${RECIPE}\` \\| \`${CUE}\`[^\\n]*\\| ${SEED} \\|`,
       ),
     );
-    // The seed block prose must not claim a maximum below the new seed.
-    expect(doc).toMatch(/live game seeds now run to \*\*32292\*\*/);
+    // The seed block prose must not claim a maximum below the newest seed
+    // (bumped to 32294 by the hex-matchup impact pair, AH-0MWL88YYO0053DWH).
+    expect(doc).toMatch(/live game seeds now run to \*\*32294\*\*/);
   });
 
   it('GDD §7.3 lists the quiet chime with its ladder and reset gap', () => {

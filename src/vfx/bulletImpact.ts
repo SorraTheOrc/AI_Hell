@@ -18,6 +18,7 @@
 import Phaser from 'phaser';
 
 import { playBulletDestructionSound } from '../audio/effects';
+import type { ImpactFxShape } from '../utils/weapons';
 
 /** Default flash radius (px) — small, sized for a ~3 px bullet. */
 export const BULLET_IMPACT_RADIUS = 7;
@@ -41,6 +42,13 @@ export interface BulletImpactOptions {
   duration?: number;
   /** Flash colour (number). Defaults to {@link BULLET_IMPACT_COLOR}. */
   color?: number;
+  /**
+   * Flash shape (AH-0MWL88YYO0053DWH). Absent → `'circle'`, today's generic /
+   * per-weapon flash. `'shard'` draws a bright radial shard burst (effective
+   * matchup state) and `'spall'` a dull ring with armour chips (resisted), so
+   * the state reads with colour removed.
+   */
+  shape?: ImpactFxShape;
 }
 
 /**
@@ -58,11 +66,11 @@ export function spawnBulletImpact(
   const duration = options.duration ?? BULLET_IMPACT_DURATION;
   const registry = options.registry;
   const color = options.color ?? BULLET_IMPACT_COLOR;
+  const shape = options.shape ?? 'circle';
 
   const flash = scene.add.graphics();
   flash.setPosition(x, y);
-  flash.fillStyle(color, 0.9);
-  flash.fillCircle(0, 0, radius);
+  drawImpactShape(flash, shape, radius, color);
   registry?.push(flash);
 
   scene.tweens.add({
@@ -81,6 +89,65 @@ export function spawnBulletImpact(
   });
 
   return flash;
+}
+
+/**
+ * Draws one impact flash in the requested shape (AH-0MWL88YYO0053DWH).
+ *
+ * `'circle'` is the original single filled disc, unchanged for every existing
+ * caller. `'shard'` adds a hot core plus a radial burst of triangular shards;
+ * `'spall'` draws a dull hollow ring with a few armour chips. Shape carries
+ * the matchup state for a colour-blind player, so it is never colour-only.
+ */
+function drawImpactShape(
+  flash: Phaser.GameObjects.Graphics,
+  shape: ImpactFxShape,
+  radius: number,
+  color: number,
+): void {
+  if (shape === 'shard') {
+    flash.fillStyle(color, 0.9);
+    flash.fillCircle(0, 0, radius * 0.45);
+    // Six shards flung outward — a bright, sharp critical burst.
+    const shards = 6;
+    for (let i = 0; i < shards; i += 1) {
+      const angle = (Math.PI * 2 * i) / shards;
+      const inner = radius * 0.35;
+      const tip = radius * (i % 2 === 0 ? 1.35 : 1.05);
+      const spread = Math.PI / shards;
+      flash.fillStyle(color, 0.85);
+      flash.beginPath();
+      flash.moveTo(Math.cos(angle) * tip, Math.sin(angle) * tip);
+      flash.lineTo(
+        Math.cos(angle - spread) * inner,
+        Math.sin(angle - spread) * inner,
+      );
+      flash.lineTo(
+        Math.cos(angle + spread) * inner,
+        Math.sin(angle + spread) * inner,
+      );
+      flash.closePath();
+      flash.fillPath();
+    }
+    return;
+  }
+  if (shape === 'spall') {
+    // A dull hollow ring — no bright filled core, so it reads as a clang
+    // rather than a hit — plus four small chips spalling off the rim.
+    flash.lineStyle(Math.max(2, radius * 0.25), color, 0.8);
+    flash.strokeCircle(0, 0, radius);
+    flash.fillStyle(color, 0.7);
+    for (let i = 0; i < 4; i += 1) {
+      const angle = Math.PI / 4 + (Math.PI / 2) * i;
+      const chipX = Math.cos(angle) * radius * 1.05;
+      const chipY = Math.sin(angle) * radius * 1.05;
+      flash.fillRect(chipX - 1, chipY - 1, 2.5, 2.5);
+    }
+    return;
+  }
+  // Default: today's single filled disc.
+  flash.fillStyle(color, 0.9);
+  flash.fillCircle(0, 0, radius);
 }
 
 /**

@@ -98,6 +98,12 @@ KNOWN_CUE_SET.add('playMiniBossSweepSound');
 // without a manifest entry — the underlying cue is mapped and verified like
 // every other, exactly like `playEnemyForceFieldBreakSound` above.
 KNOWN_CUE_SET.add('playGrazeSound');
+// `playMatchupImpactStateCue` is the hex-matchup state **dispatcher**
+// (AH-0MWL88YYO0053DWH): it routes an `effective`/`resisted` verdict to the
+// state's baked cue (`playMatchupEffectiveImpactSound` /
+// `playMatchupResistedImpactSound`), so like the other dispatchers it ships no
+// recipe of its own and is known to the coverage check.
+KNOWN_CUE_SET.add('playMatchupImpactStateCue');
 
 function resolveCue(name: string): CueFn | undefined {
   const fromEffects = (effects as unknown as Record<string, unknown>)[name];

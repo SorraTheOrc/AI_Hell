@@ -47,6 +47,7 @@ import {
   playBossPhaseCue,
   playBossPhaseTransitionSound,
   playBossSpawnSound,
+  playMatchupImpactStateCue,
 } from '../audio/effects';
 import {
   resolvePatterns,
@@ -85,6 +86,43 @@ export const BOSS_PULSE_WAVE_STROKE_WIDTH = 3;
 export const PULSE_WAVE_NAME = 'boss-pulse-wave';
 /** Hot yellow colour for per-hit boss impact VFX. */
 export const BOSS_IMPACT_COLOR = 0xffee44;
+
+// ── Hex matchup flinch presentation (AH-0MWL88YYO0053DWH) ──────────
+
+/** The three matchup presentation states (mirrors `HexMatchupVerdict`). */
+export type BossImpactFeedbackState = 'neutral' | 'effective' | 'resisted';
+
+/**
+ * The encounter-scoped `RESISTED` tag state (AH-0MWL88YYO0053DWH): `'none'`
+ * before any resisted hit, `'tag'` on the **first** resisted hit (the one-shot
+ * banner) and `'pip'` on every resisted hit after it.
+ */
+export type BossResistedTagState = 'none' | 'tag' | 'pip';
+
+/** The published reaction to the most recent connected shot. */
+export interface BossHitReaction {
+  /** The matchup verdict the shot resolved to. */
+  state: BossImpactFeedbackState;
+  /** Whether the encounter visibly flinched (effective only). */
+  reacted: boolean;
+  /** The RESISTED tag state after this shot. */
+  tag: BossResistedTagState;
+}
+
+/**
+ * Maximum positional kick the effective-hit flinch applies (px, downward —
+ * away from the player). Bounded so dense fire can never stutter or shake the
+ * encounter off its anchor.
+ */
+export const BOSS_FLINCH_KICK_PX = 8;
+/** Flinch decay time (ms); a fresh effective hit restarts it at the same bound. */
+export const BOSS_FLINCH_DURATION_MS = 140;
+/** Peak alpha of the white silhouette flash on an effective hit. */
+export const BOSS_FLINCH_FLASH_ALPHA = 0.85;
+/** How long the one-shot `RESISTED` tag stays visible (ms). */
+export const BOSS_RESISTED_TAG_DURATION_MS = 1200;
+/** Maximum number of `RESISTED` pips drawn on the health bar. */
+export const BOSS_RESISTED_PIP_CAP = 6;
 
 // ── Figure-of-eight movement tuning (GDD §4.3, AH-0MUZMTS8J0029FSS) ──
 
@@ -404,6 +442,23 @@ export class Boss extends Phaser.GameObjects.Container {
   // and the array is cleared in `destroy()` to prevent leaks.
   private _hitEffects: Phaser.GameObjects.Graphics[] = [];
 
+  // ── Hex matchup reaction state (AH-0MWL88YYO0053DWH) ─────────────
+  // Published on the encounter so the flinch/tag asymmetry is observable
+  // without a pixel diff. The state is encounter-scoped (never per-frame):
+  // `_resistedTagState` flips once to `'tag'` and then to `'pip'` forever.
+  private _lastHitReaction: BossHitReaction | null = null;
+  private _resistedTagState: BossResistedTagState = 'none';
+  private _resistedPips = 0;
+  /** Remaining flinch decay in ms (0 = not flinching). */
+  private _flinchRemainingMs = 0;
+  /** Current bounded positional kick (px) applied on top of the lemniscate. */
+  private _flinchOffsetY = 0;
+  /** White silhouette overlay drawn on an effective hit. */
+  private readonly _flinchFlashGraphics: Phaser.GameObjects.Graphics;
+  /** The one-shot `RESISTED` banner (scene-level, not a container child). */
+  private _resistedTagText: Phaser.GameObjects.Text | null = null;
+  private _resistedTagTimer: Phaser.Time.TimerEvent | null = null;
+
   // ── Construction ────────────────────────────────────────────────
 
   constructor(scene: Phaser.Scene, config: BossConfig) {
@@ -443,6 +498,13 @@ export class Boss extends Phaser.GameObjects.Container {
     this.explosionGraphics = scene.add.graphics();
     this.explosionGraphics.setDepth(3);
     this.add(this.explosionGraphics);
+
+    // White silhouette flash for an effective-hit flinch (AH-0MWL88YYO0053DWH).
+    // A container child just above the body so the rim reads as the boss
+    // flashing white, cleared on flinch end and on destruction.
+    this._flinchFlashGraphics = scene.add.graphics();
+    this._flinchFlashGraphics.setDepth(1.5);
+    this.add(this._flinchFlashGraphics);
 
     // Health bar — a SCENE child (NOT a boss-container child) so it renders
     // at the absolute screen coordinates drawn by `_drawHealthBar()` and is
@@ -566,6 +628,23 @@ export class Boss extends Phaser.GameObjects.Container {
 
     this.healthBarGraphics.lineStyle(1, 0xcccccc, 0.3);
     this.healthBarGraphics.strokeRect(x, y - 2, w, h + 4);
+
+    // RESISTED pips (AH-0MWL88YYO0053DWH): a small grey pip per resisted hit
+    // after the one-shot banner, so the state stays visible at a glance
+    // without per-hit text cluttering a bullet-hell screen.
+    if (this._resistedPips > 0) {
+      const pipWidth = 5;
+      const pipGap = 3;
+      this.healthBarGraphics.fillStyle(0xb9bec7, 0.9);
+      for (let i = 0; i < this._resistedPips; i += 1) {
+        this.healthBarGraphics.fillRect(
+          x + 3 + i * (pipWidth + pipGap),
+          y + 2,
+          pipWidth,
+          h - 4,
+        );
+      }
+    }
 
     this.healthBarGraphics.setDepth(100);
   }
@@ -1128,6 +1207,143 @@ export class Boss extends Phaser.GameObjects.Container {
     return { destroyed: false, phaseAdvanced, phase: this._currentPhaseNumber, hpRemaining: this._currentHp };
   }
 
+  // ── Hex matchup reaction (AH-0MWL88YYO0053DWH) ────────────────
+
+  /**
+   * Records one **connected shot's** matchup verdict on the encounter and
+   * plays its presentation:
+   *
+   * - `effective` → the encounter **flinches** (a bounded positional kick plus
+   *   a white silhouette flash) and plays the bright shard cue;
+   * - `resisted` → **no flinch**, the dull armour clang plays, and the
+   *   encounter raises its one-shot `RESISTED` tag on the first resisted hit
+   *   (a health-bar pip on every resisted hit after it);
+   * - `neutral` → nothing changes, so today's per-hit feedback is
+   *   byte-for-byte unchanged.
+   *
+   * Keyed on the connected shot, not on a damage instance: the resisted
+   * ledger pays one hit point per **two** shots, so the first resisted shot
+   * deals zero damage and must still raise the tag.
+   *
+   * @param state — the resolved hex matchup verdict for the shot.
+   * @returns the published reaction (see {@link getLastHitReaction}).
+   */
+  applyMatchupImpact(state: BossImpactFeedbackState): BossHitReaction {
+    let tag = this._resistedTagState;
+    if (state === 'resisted') {
+      if (this._resistedTagState === 'none') {
+        tag = 'tag';
+        this._showResistedTag();
+      } else {
+        tag = 'pip';
+        this._resistedPips = Math.min(
+          BOSS_RESISTED_PIP_CAP,
+          this._resistedPips + 1,
+        );
+      }
+      this._resistedTagState = tag;
+      this._drawHealthBar();
+    }
+    const reacted = state === 'effective';
+    const reaction: BossHitReaction = { state, reacted, tag };
+    this._lastHitReaction = reaction;
+    if (reacted) this._startFlinch();
+    if (state !== 'neutral') playMatchupImpactStateCue(state);
+    return reaction;
+  }
+
+  /** The most recent connected shot's reaction, or `null` before any hit. */
+  getLastHitReaction(): BossHitReaction | null {
+    return this._lastHitReaction === null ? null : { ...this._lastHitReaction };
+  }
+
+  /** The encounter-scoped `RESISTED` tag state (never per-frame). */
+  getResistedTagState(): BossResistedTagState {
+    return this._resistedTagState;
+  }
+
+  /** Current bounded flinch kick in px (test seam; 0 when not flinching). */
+  getFlinchOffsetY(): number {
+    return this._flinchOffsetY;
+  }
+
+  /** Live `RESISTED` pips drawn on the health bar (test seam). */
+  getResistedPipCount(): number {
+    return this._resistedPips;
+  }
+
+  /** Starts (or restarts) the bounded flinch and its white silhouette flash. */
+  private _startFlinch(): void {
+    if (!this._alive) return;
+    this._flinchRemainingMs = BOSS_FLINCH_DURATION_MS;
+    this._flinchOffsetY = BOSS_FLINCH_KICK_PX;
+    this._drawFlinchFlash(BOSS_FLINCH_FLASH_ALPHA);
+  }
+
+  /**
+   * Decays the flinch each frame, bounded at {@link BOSS_FLINCH_KICK_PX} so
+   * dense fire can never stutter the encounter. A new effective hit restarts
+   * the decay at the same bound, never beyond it.
+   */
+  private _advanceFlinch(deltaMs: number): void {
+    if (this._flinchRemainingMs <= 0) return;
+    this._flinchRemainingMs = Math.max(0, this._flinchRemainingMs - deltaMs);
+    const decay = this._flinchRemainingMs / BOSS_FLINCH_DURATION_MS;
+    this._flinchOffsetY = BOSS_FLINCH_KICK_PX * decay;
+    this._drawFlinchFlash(BOSS_FLINCH_FLASH_ALPHA * decay);
+    if (this._flinchRemainingMs === 0) {
+      this._flinchOffsetY = 0;
+      this._flinchFlashGraphics.clear();
+    }
+  }
+
+  /** Draws the white body silhouette at `alpha` (cleared at zero). */
+  private _drawFlinchFlash(alpha: number): void {
+    const g = this._flinchFlashGraphics;
+    g.clear();
+    if (alpha <= 0) return;
+    g.lineStyle(3, 0xffffff, alpha);
+    g.fillStyle(0xffffff, alpha * 0.45);
+    g.beginPath();
+    for (let i = 0; i < 6; i += 1) {
+      const angle = (Math.PI / 3) * i - Math.PI / 6;
+      const px = Math.cos(angle) * BOSS_RADIUS;
+      const py = Math.sin(angle) * BOSS_RADIUS;
+      if (i === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.closePath();
+    g.fillPath();
+    g.strokePath();
+  }
+
+  /** Raises the one-shot `RESISTED` banner above the health bar. */
+  private _showResistedTag(): void {
+    if (this._resistedTagText !== null) return;
+    const scene = this.scene as Phaser.Scene;
+    this._resistedTagText = scene.add
+      .text(scene.scale.width / 2, BOSS_HEALTH_BAR_Y + 24, 'RESISTED', {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#b9bec7',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(101);
+    this._resistedTagTimer = scene.time.delayedCall(
+      BOSS_RESISTED_TAG_DURATION_MS,
+      () => this._destroyResistedTag(),
+    );
+  }
+
+  /** Releases the one-shot banner and its timer (idempotent). */
+  private _destroyResistedTag(): void {
+    this._resistedTagTimer?.remove(false);
+    this._resistedTagTimer = null;
+    this._resistedTagText?.destroy();
+    this._resistedTagText = null;
+  }
+
 
   /**
    * Returns the encounter's **effective** hits per phase (the configured,
@@ -1261,6 +1477,10 @@ export class Boss extends Phaser.GameObjects.Container {
     this.bodyGraphics.setAlpha(0);
     this.coreGraphics.setAlpha(0);
     this.coreGlowGraphics.setAlpha(0);
+    this._flinchFlashGraphics.clear();
+    this._flinchOffsetY = 0;
+    this._flinchRemainingMs = 0;
+    this._destroyResistedTag();
     this._playExplosion();
     this._drawHealthBar(); // health bar goes dark
     // Note: destruction audio is played by the caller (takeDamage or the
@@ -1304,7 +1524,10 @@ export class Boss extends Phaser.GameObjects.Container {
     this._moveElapsedMs += deltaMs;
     const theta = (2 * Math.PI * this._moveElapsedMs) / BOSS_MOVE_PERIOD_MS;
     const x = this._anchorX + BOSS_MOVE_AMPLITUDE_X * Math.sin(theta);
-    const y = this._anchorY + BOSS_MOVE_AMPLITUDE_Y * Math.sin(2 * theta);
+    const y =
+      this._anchorY +
+      BOSS_MOVE_AMPLITUDE_Y * Math.sin(2 * theta) +
+      this._flinchOffsetY;
     this.setPosition(
       this._clampToPlayfield(x, sceneWidth),
       this._clampToPlayfield(y, sceneHeight),
@@ -1384,7 +1607,9 @@ export class Boss extends Phaser.GameObjects.Container {
 
     // Figure-of-eight movement (shared core): advance and reposition before
     // drawing/attacking so the live `x`/`y` is used by firing and hit
-    // detection in both scenes (AH-0MUZMTS8J0029FSS).
+    // detection in both scenes (AH-0MUZMTS8J0029FSS). An effective-hit flinch
+    // decays first so its bounded kick is added to this frame's position.
+    this._advanceFlinch(delta);
     this._advanceFigureEight(delta, sceneWidth, sceneHeight);
 
     // Update core pulse.
@@ -1474,6 +1699,8 @@ export class Boss extends Phaser.GameObjects.Container {
     this.coreGraphics.destroy();
     this.coreGlowGraphics.destroy();
     this.explosionGraphics.destroy();
+    this._flinchFlashGraphics.destroy();
+    this._destroyResistedTag();
     this.healthBarGraphics.destroy();
     if (this._pulseWaveGraphics) {
       this._pulseWaveGraphics.destroy();

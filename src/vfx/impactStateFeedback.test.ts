@@ -203,7 +203,7 @@ describe('matchup state → impact cue (AC7)', () => {
     effectsModule._resetAudioContextForTests();
   });
 
-  it.fails(
+  it(
     'AC7 — effective and resisted map to a different cue at a different playback rate than neutral',
     () => {
       const mapping = requireStateCueMapping();
@@ -229,7 +229,7 @@ describe('matchup state → impact cue (AC7)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC7 — every mapped state cue is registered in PLAYER_WEAPON_IMPACT_CUES',
     () => {
       for (const state of ['effective', 'resisted'] as const) {
@@ -247,7 +247,7 @@ describe('matchup state → impact cue (AC7)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC7 — every mapped state cue is documented in the ToneForge cue map',
     () => {
       const doc = readDoc(CUE_MAPPING_DOC);
@@ -261,7 +261,7 @@ describe('matchup state → impact cue (AC7)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC7 — no state is silent: every state dispatches a playable baked cue',
     () => {
       // The three states resolve to three *playable* cues; a resolved cue that
@@ -278,7 +278,7 @@ describe('matchup state → impact cue (AC7)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC7 — the three states stay distinguishable with colour removed (distinct pitch)',
     () => {
       const neutral = resolveStateCue('neutral');
@@ -319,7 +319,7 @@ describe('matchup state → impact cue (AC7)', () => {
 // ── State → impact spec (AC8) ────────────────────────────────────────
 
 describe('matchup state → impact spec (AC8)', () => {
-  it.fails(
+  it(
     'AC8 — effective and resisted map to different specs differing in shape as well as colour',
     () => {
       expect(
@@ -349,7 +349,7 @@ describe('matchup state → impact spec (AC8)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC8 — the neutral spec is byte-identical to today’s per-weapon impactFx',
     () => {
       const ids = [
@@ -371,7 +371,7 @@ describe('matchup state → impact spec (AC8)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC8 — the three states stay distinguishable with colour removed (distinct shape)',
     () => {
       const neutral = resolveStateFx('neutral');
@@ -387,7 +387,7 @@ describe('matchup state → impact spec (AC8)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC8 — the state spec carries the same cue the state→cue mapping resolves',
     () => {
       // No drift between the two halves: the spec's cue is exactly the cue the

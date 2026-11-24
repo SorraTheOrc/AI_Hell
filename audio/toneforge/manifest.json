@@ -703,6 +703,22 @@
       ]
     },
     {
+      "cue": "playMatchupEffectiveImpactSound",
+      "recipe": "aihell-matchup-effective-impact",
+      "delivery": "baked",
+      "seeds": [
+        32293
+      ]
+    },
+    {
+      "cue": "playMatchupResistedImpactSound",
+      "recipe": "aihell-matchup-resisted-impact",
+      "delivery": "baked",
+      "seeds": [
+        32294
+      ]
+    },
+    {
       "cue": "updateThrusterSound",
       "recipe": "aihell-thruster-hum",
       "delivery": "runtime-shim",

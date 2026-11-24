@@ -54,15 +54,15 @@ card-game oriented. Three cues are retired.
 | Disposition | Count | Notes |
 |-------------|-------|-------|
 | `existing-recipe` | 2 | Power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
-| `new-recipe` | 78 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA, the Shard Swarm launch/hit pair since AH-0MVV0WMTE0007NGS, the Rear Guard launch/hit pair since AH-0MVV0WN96007TU9J, the Broadside launch/hit pair since AH-0MVV0WNOX0078G9G, the Heavy Slug launch/hit pair since AH-0MVV0WO4M001KEDG, the four Mystery UFO feel cues since AH-0MVSAJMLL00835T8, and the mineral pickup chime since AH-0MWNMRD6I002CCVT), plus the thruster hum |
+| `new-recipe` | 80 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA, the Shard Swarm launch/hit pair since AH-0MVV0WMTE0007NGS, the Rear Guard launch/hit pair since AH-0MVV0WN96007TU9J, the Broadside launch/hit pair since AH-0MVV0WNOX0078G9G, the Heavy Slug launch/hit pair since AH-0MVV0WO4M001KEDG, the four Mystery UFO feel cues since AH-0MVSAJMLL00835T8, the mineral pickup chime since AH-0MWNMRD6I002CCVT, and the hex-matchup effective/resisted impact pair since AH-0MWL88YYO0053DWH), plus the thruster hum |
 | `new-recipe` (outside `effects.ts`) | 4 | `Boss.ts` inline cues using `blip()` — see the Boss.ts section |
 | `retired` | 3 | `playMajorExplosionSound`, `playTankDestructionSound`, `playWeaponChangeSound` |
 | control companion (in cue table) | 3 | `stopDiveSound`, `stopThrusterSound`, `stopMysteryUfoWarbleSound` — start/stop lifetime mapping |
 | alias (no new cue) | 1 | `playGrazeSound` — dispatches the existing `card-token-earn` chime at a per-tier rate, so it ships no recipe of its own |
 
 > **Count reconciliation (AH-0MVV0WP0P004YNJU).** The cue-to-recipe table has
-> **87 rows**, and the summary above partitions them exactly:
-> 78 `new` + 3 `retired` + 2 `existing` + 3 control + 1 alias = **87**. The count
+> **89 rows**, and the summary above partitions them exactly:
+> 80 `new` + 3 `retired` + 2 `existing` + 3 control + 1 alias = **89**. The count
 > is of distinct cue rows in that table (one row per cue), so it can be
 > re-derived mechanically; the four `Boss.ts` inline cues are counted separately
 > in the `new-recipe` (outside `effects.ts`) row because they live in their own
@@ -137,6 +137,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playBroadsideImpactSound` | Short teal dart tick — triangle 2400→1600 Hz + quiet 3600 Hz sine overtone + 3000 Hz HP noise contact tick, no square click, ~0.10 s | Player Broadside dart connects | shared impact seam in `CombatScene` (AH-0MVV0WNOX0078G9G) | new | `aihell-broadside-impact` |
 | `playHeavySlugFireSound` | Heaviest single shot — low saw boom 110→55 Hz + metallic square clank 1800→900 Hz transient + LP noise air, ~0.26 s (deepest fundamental of the player fire cues, below the Cannon's 800 Hz and the Mortar's 220 Hz; shorter sustain than the `aihell-mortar-detonation` 0.32 s boom, never aliasing it) | Player Heavy Slug fire (one huge slow deep-red shell) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`, incl. the hold-full metronome) | new | `aihell-heavy-slug-fire` |
 | `playHeavySlugImpactSound` | Dull red thud with debris — low triangle 220→60 Hz + quiet 110 Hz sine + 700 Hz LP noise debris burst, no square edge, ~0.15 s (duller and lower than the Mortar's dry shell crack) | Player Heavy Slug shell connects | shared impact seam in `CombatScene` (AH-0MVV0WO4M001KEDG) | new | `aihell-heavy-slug-impact` |
+| `playMatchupEffectiveImpactSound` | Bright, sharp critical shatter — hot triangle 3200→2400 Hz + glassy 4800 Hz sine overtone + high-passed (5200 Hz) noise shard crack, ~0.12 s; played at the raised matchup state rate (×1.5) | Counter weapon connects on a hex boss/mini-boss (hex matchup `effective`) | shared impact seam in `CombatScene`, and the boss flinch path in `entities/Boss` (AH-0MWL88YYO0053DWH) | new | `aihell-matchup-effective-impact` |
+| `playMatchupResistedImpactSound` | Dull, low armour clang — low-passed (900 Hz) square 300→110 Hz + quiet 120 Hz sine body + low-passed (700 Hz) noise scuff, ~0.16 s; played at the lowered matchup state rate (×0.75) | Boss-strength weapon connects on a hex boss/mini-boss (hex matchup `resisted`) | shared impact seam in `CombatScene`, and the boss non-flinch path in `entities/Boss` (AH-0MWL88YYO0053DWH) | new | `aihell-matchup-resisted-impact` |
 | `playWaveLaserFireSound` | Sci-fi laser "pew": sawtooth sweep 2400→320 Hz with a square harmonic 1200→240 Hz and a band-passed noise sizzle, ~0.16 s; runtime volume ×1.5 (`WAVE_LASER_VOLUME_SCALE`, AH-0MW10K39E006CG0A) composed with the caller volume on the dispatcher path (hold-full metronome 0.3 → 0.45) | Player wave-laser fire (the single short chaotic red beam) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
 | `playWaveLaserImpactSound` | Sharp neon snap — saw 800→200 Hz + square click + BP noise crack, ~0.12 s; runtime volume ×1.5 (`WAVE_LASER_VOLUME_SCALE`, AH-0MW10K39E006CG0A) | Player wave-laser hit (when the beam connects) | shared impact seam in `CombatScene` (AH-0MV822ACO007CEZF) | new | `aihell-wave-laser-impact` |
 | `playRicochetFireSound` | Bright springy ping — triangle 1400→500 Hz + square tick, ~0.1 s | Player ricochet fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-ricochet-fire` |
@@ -331,9 +333,10 @@ as part of `npm run build-audio:verify` (AC5).
 
 Seed block **32100–32299** is reserved for game-specific recipes to keep them
 clear of ToneForge's existing card/impact seeds. (The block was originally
-declared as `32100–32199`; live game seeds now run to **32292** — the mineral
-pickup chime, after the net-new weapon packages and the Mystery UFO /
-mining-laser cues — so the reservation was widened to cover them, matching
+declared as `32100–32199`; live game seeds now run to **32294** — the hex
+matchup effective/resisted impact pair, after the mineral pickup chime, the net-new
+weapon packages and the Mystery UFO / mining-laser cues — so the reservation was
+widened to cover them, matching
 `manifest.json`'s `seedBlock` field. No shipped seed was renumbered.) One-shots are rendered at a
 single seed; cues whose original character used per-invocation jitter
 (`EXPLOSION_PITCH_JITTER` ±15 %) are baked as a **3-variant seed range** so
@@ -392,6 +395,8 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-broadside-impact` | `playBroadsideImpactSound` | Short teal dart tick — triangle 2400→1600 Hz + quiet 3600 Hz sine + 3000 Hz HP noise contact tick, no square click, ~0.10 s (AH-0MVV0WNOX0078G9G) | 32284 |
 | `aihell-heavy-slug-fire` | `playHeavySlugFireSound` | Heaviest single shot — low saw boom 110→55 Hz + metallic square clank 1800→900 Hz + 60→40 Hz sine sub + LP noise air, ~0.26 s (deepest fundamental, longest decay; never aliases `aihell-mortar-detonation`) (AH-0MVV0WO4M001KEDG) | 32285 |
 | `aihell-heavy-slug-impact` | `playHeavySlugImpactSound` | Dull red thud — low triangle 220→60 Hz + quiet 110 Hz sine + 700 Hz LP noise debris burst, no square edge, ~0.15 s (duller/lower than the `aihell-mortar-impact` dry crack) (AH-0MVV0WO4M001KEDG) | 32286 |
+| `aihell-matchup-effective-impact` | `playMatchupEffectiveImpactSound` | Bright critical shatter — hot triangle 3200→2400 Hz + glassy 4800 Hz sine overtone + high-passed (5200 Hz) noise shard crack, ~0.12 s, played at the raised matchup state rate (AH-0MWL88YYO0053DWH) | 32293 |
+| `aihell-matchup-resisted-impact` | `playMatchupResistedImpactSound` | Dull armour clang — low-passed (900 Hz) square 300→110 Hz + quiet 120 Hz sine body + low-passed (700 Hz) noise scuff, ~0.16 s, played at the lowered matchup state rate (AH-0MWL88YYO0053DWH) | 32294 |
 | `aihell-wave-laser-fire` | `playWaveLaserFireSound` | Sci-fi laser "pew": sawtooth sweep 2400→320 Hz + square harmonic 1200→240 Hz + band-passed noise sizzle, ~0.16 s | 32219 |
 | `aihell-wave-laser-impact` | `playWaveLaserImpactSound` | Sharp neon snap 800→200 Hz + square click + BP noise crack, ~0.12 s | 32231 |
 | `aihell-ricochet-fire` | `playRicochetFireSound` | Bright springy ping 1400→500 Hz + square tick, ~0.1 s | 32267 |

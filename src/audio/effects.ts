@@ -836,6 +836,98 @@ export function playHeavySlugImpactSound(): void {
   playCue('playHeavySlugImpactSound');
 }
 
+// ── Hex matchup impact-state cues (AH-0MWL88YYO0053DWH) ─────────────
+
+/**
+ * The three matchup presentation states (mirrors `HexMatchupVerdict`).
+ * Neutral is the weapon's own baked cue at unity rate; the other two are the
+ * dedicated state cues below.
+ */
+export type ImpactFeedbackState = 'neutral' | 'effective' | 'resisted';
+
+/** One state's resolved cue name and playback rate. */
+export interface ImpactStateCue {
+  /** Cue name dispatched through {@link playWeaponImpactCue}. */
+  cue: string;
+  /** Playback-rate multiplier (neutral is unity; > 1 bright, < 1 dull). */
+  rate: number;
+}
+
+/**
+ * The published **state → cue** mapping for the two non-neutral matchup states
+ * (AH-0MWL88YYO0053DWH, parent AC7).
+ *
+ * Each state carries its **own** baked cue (a bright shard shatter for
+ * effective, a dull armour clang for resisted) and plays it at a **different
+ * playback rate** from neutral and from each other — so the state is audible
+ * with the sound alone, even when the flash colour is invisible to the player
+ * (colour-vision-deficiency policy). The per-weapon cues are never re-baked;
+ * the states layer a dedicated family on top of them.
+ */
+export const MATCHUP_IMPACT_STATE_CUES: Readonly<
+  Record<'effective' | 'resisted', ImpactStateCue>
+> = {
+  effective: { cue: 'playMatchupEffectiveImpactSound', rate: 1.5 },
+  resisted: { cue: 'playMatchupResistedImpactSound', rate: 0.75 },
+};
+
+/**
+ * Bright, sharp shatter — the counter weapon connects on a boss
+ * (AH-0MWL88YYO0053DWH). Baked via the ToneForge pipeline
+ * (`aihell-matchup-effective-impact`, seed 32293) and played at the raised
+ * state rate so it reads as *critical* above the weapon's own hit cue.
+ */
+export function playMatchupEffectiveImpactSound(): void {
+  playCue('playMatchupEffectiveImpactSound', {
+    rate: MATCHUP_IMPACT_STATE_CUES.effective.rate,
+  });
+}
+
+/**
+ * Dull, low armour clang — a resisted shot bounces off the boss
+ * (AH-0MWL88YYO0053DWH). Baked via the ToneForge pipeline
+ * (`aihell-matchup-resisted-impact`, seed 32294) and played at the lowered
+ * state rate so it reads as *wrong tool*, never as a silent gun.
+ */
+export function playMatchupResistedImpactSound(): void {
+  playCue('playMatchupResistedImpactSound', {
+    rate: MATCHUP_IMPACT_STATE_CUES.resisted.rate,
+  });
+}
+
+/**
+ * Resolves a matchup state to the cue the shared impact seam must play
+ * (AH-0MWL88YYO0053DWH).
+ *
+ * `neutral` returns the weapon's own cue at unity rate, so neutral feedback is
+ * byte-for-byte today's behaviour; `effective`/`resisted` return their
+ * published state cue and rate.
+ *
+ * @param state — the resolved hex matchup verdict for the shot.
+ * @param weaponCue — the weapon's own `impactFx.cue` (neutral only).
+ */
+export function resolveImpactStateCue(
+  state: ImpactFeedbackState,
+  weaponCue: string,
+): ImpactStateCue {
+  if (state === 'effective') return { ...MATCHUP_IMPACT_STATE_CUES.effective };
+  if (state === 'resisted') return { ...MATCHUP_IMPACT_STATE_CUES.resisted };
+  return { cue: weaponCue, rate: 1 };
+}
+
+/**
+ * Dispatches the baked cue for a non-neutral matchup state through the one
+ * shared impact dispatcher (AH-0MWL88YYO0053DWH). A neutral state is a no-op:
+ * the caller's own per-weapon cue already played.
+ */
+export function playMatchupImpactStateCue(
+  state: ImpactFeedbackState,
+  weaponCue = '',
+): void {
+  if (state === 'neutral') return;
+  playWeaponImpactCue(resolveImpactStateCue(state, weaponCue).cue);
+}
+
 /**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
@@ -864,6 +956,8 @@ export const PLAYER_WEAPON_IMPACT_CUES: Readonly<Record<string, () => void>> = {
   playRearGuardImpactSound,
   playBroadsideImpactSound,
   playHeavySlugImpactSound,
+  playMatchupEffectiveImpactSound,
+  playMatchupResistedImpactSound,
 };
 
 /**

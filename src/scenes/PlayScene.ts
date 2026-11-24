@@ -3661,6 +3661,14 @@ export class PlayScene extends CombatScene<
   ): void {
     const boss = this.boss;
     if (!boss || !boss.alive) return;
+    // Record this connected shot's verdict on the encounter **before** the
+    // charge loop: the resisted ledger pays zero on the first of each pair, so
+    // the shot that raises the one-shot RESISTED tag may apply no damage at
+    // all. The reaction (effective flinch / resisted non-flinch) is keyed on
+    // the connected shot, never on a damage instance (AH-0MWL88YYO0053DWH).
+    boss.applyMatchupImpact(
+      this.resolveMatchupImpactState(boss, weaponId),
+    );
     const charged = this.resolveHitCharge(boss, weaponId, 1);
     const hits = charged + this.effectsRegistry.frenzyBonusHits();
     for (let hit = 0; hit < hits && boss.alive; hit += 1) {
@@ -3749,6 +3757,12 @@ export class PlayScene extends CombatScene<
   ): void {
     const miniBoss = this.miniBoss;
     if (!miniBoss || !miniBoss.alive) return;
+    // Record the connected shot's verdict before the charge loop (the first
+    // resisted shot of a pair applies no damage but must still raise the tag
+    // and show no flinch) — AH-0MWL88YYO0053DWH.
+    miniBoss.applyMatchupImpact(
+      this.resolveMatchupImpactState(miniBoss, weaponId),
+    );
     const charged = this.resolveHitCharge(miniBoss, weaponId, 1);
     const hits = charged + this.effectsRegistry.frenzyBonusHits();
     for (let hit = 0; hit < hits && miniBoss.alive; hit += 1) {
