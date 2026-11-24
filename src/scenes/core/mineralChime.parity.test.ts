@@ -105,13 +105,23 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
     for (const game of games.splice(0)) game.game.destroy(true);
   });
 
-  /** Boots a scene class list and tracks the game for teardown. */
+  /**
+   * Boots a scene class list and tracks the game for teardown.
+   *
+   * The gym scenes seed a random mineral field in `create()`, so the
+   * deterministic boot steps can legitimately collect a seeded mineral on the
+   * player's spawn point and play a chime before a case sets up its own field.
+   * Every case measures the chimes its *own* frame produces, so the recorded
+   * plays and the shared streak are cleared once the boot settles.
+   */
   async function boot<T extends Phaser.Scene>(
     sceneClasses: (typeof Phaser.Scene)[],
     parent: string,
   ): Promise<T> {
     const booted = await bootScene(sceneClasses, parent);
     games.push(booted);
+    recording.plays.length = 0;
+    resetMineralChimeStreak();
     return booted.scene as T;
   }
 
@@ -119,11 +129,11 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
 
   describe('every player collection path plays exactly one chime per mineral', () => {
     it('PlayScene._collectMineral', async () => {
-      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const play = await boot<PlayScene>(
         [PlayScene, GameOverScene, MenuScene],
         'chime-play',
       );
+      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const player = play.getPlayer()!;
       replaceMineralField(play, []);
       play.spawnMineralAt(player.x, player.y);
@@ -133,11 +143,11 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
     });
 
     it('GymFormationScene._collectMineral (through a real formation gym)', async () => {
-      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const gym = await boot<GymFodderEnemies>(
         [GymFodderEnemies],
         'chime-formation',
       );
+      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const player = gym.getPlayer()!;
       replaceMineralField(gym, [
         new Mineral(gym, { x: player.x, y: player.y }),
@@ -148,8 +158,8 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
     });
 
     it('GymLevel._collectMineral', async () => {
-      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const gym = await boot<GymLevel>([GymLevel], 'chime-level');
+      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const player = gym.getPlayer()!;
       replaceMineralField(gym, [
         new Mineral(gym, { x: player.x, y: player.y }),
@@ -160,11 +170,11 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
     });
 
     it('GymPowerUpsUtility._collectGymMineral', async () => {
-      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const gym = await boot<GymPowerUpsUtility>(
         [GymPowerUpsUtility],
         'chime-utility',
       );
+      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const player = gym.getPlayer()!;
       replaceMineralField(gym, []);
       gym.spawnMineral(player.x, player.y);
@@ -174,11 +184,11 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
     });
 
     it('GymWeaponLeveling._collectMineralsOverlapping', async () => {
-      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const gym = await boot<GymWeaponLeveling>(
         [GymWeaponLeveling, MineralChoiceScene],
         'chime-weapon-leveling',
       );
+      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const player = gym.getPlayer()!;
       replaceMineralField(gym, []);
       gym.spawnMineral(player.x, player.y);
@@ -188,11 +198,11 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
     });
 
     it('GymPowerUpLeveling._collectMineralsOverlapping', async () => {
-      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const gym = await boot<GymPowerUpLeveling>(
         [GymPowerUpLeveling, MineralChoiceScene],
         'chime-power-up-leveling',
       );
+      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const player = gym.getPlayer()!;
       replaceMineralField(gym, []);
       gym.spawnMineral(player.x, player.y);
@@ -206,11 +216,11 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
 
   describe('enemy absorption plays no chime', () => {
     it('an enemy absorbing a mineral in the game stays silent', async () => {
-      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const play = await boot<PlayScene>(
         [PlayScene, GameOverScene, MenuScene],
         'chime-absorb-play',
       );
+      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const harvester = new Harvester(play, {
         x: 280,
         y: 100,
@@ -227,11 +237,11 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
     });
 
     it('an enemy absorbing a mineral in a gym stays silent', async () => {
-      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const gym = await boot<GymFodderEnemies>(
         [GymFodderEnemies],
         'chime-absorb-gym',
       );
+      const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
       const harvester = new Harvester(gym, {
         x: 280,
         y: 100,
@@ -251,11 +261,11 @@ describe('shared mineral-chime dispatch (AH-0MWNMRDY60005Z4K)', () => {
   // ── Run reset and scene teardown return the streak to base ────────
 
   it('resetRunState and teardownRunState reset the streak to base', async () => {
-    const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
     const play = await boot<PlayScene>(
       [PlayScene, GameOverScene, MenuScene],
       'chime-reset',
     );
+    const spy = vi.spyOn(effectsModule, 'playMineralCollectChimeSound');
     const player = play.getPlayer()!;
     replaceMineralField(play, []);
 
