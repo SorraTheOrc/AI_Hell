@@ -35,6 +35,11 @@ import {
   type WeaponId,
 } from '../../utils/weapons';
 import { resolveWeaponDefinition } from '../../utils/weaponLevels';
+import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../../entities/Boss';
+import {
+  checkBossHitBudget,
+  createSeededFiringInputTrace,
+} from '../../test/weaponEvolutionHarness';
 
 // These hook-contract tests exercise the fourDirectional input mapping; the
 // app default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -1776,7 +1781,6 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
 });
 
 // ── R-Type wave-laser damage budget (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S) ─
-
 describe('damage-budget player bullets — Wave Laser maxHitPoints (AH-0MV97RISJ002WR2S)', () => {
   let booted: BootedGame | null = null;
 
@@ -3060,5 +3064,107 @@ describe('CombatScene — Force Field reflect feedback (AH-0MVRDMMYO002SC5V)', (
     expect(scene.hooks).toContain('onPlayerHit');
     expect(scene.getBulletImpactEffects()).toHaveLength(0);
     expect(cue).not.toHaveBeenCalled();
+  });
+});
+
+// ── Weapon-evolution verification harness (AH-0MWU7BAA0009X1MN) ─────
+
+describe('CombatScene — weapon-evolution verification harness (AH-0MWU7BAA0009X1MN)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** One fired weapon, attributed to the beat tick the shot landed on. */
+  interface FiringTraceEntry {
+    readonly weaponId: WeaponId;
+    readonly tickMs: number;
+  }
+
+  /**
+   * Drives the real shared fire path with one seeded input trace and records
+   * the resulting firing trace: which weapon fired, on which beat tick.
+   *
+   * The scene is freshly booted and the shared beat clock reset to a t=0
+   * anchor, so two runs differ only in the seed — exactly the epic's
+   * "same seed and input trace ⇒ same firing trace" contract. The trace is
+   * recorded from the shared `onWeaponFired` hook, i.e. from the same seam the
+   * game and every gym use, so an evolved weapon's fire will appear here once
+   * the field-tier child wires it in.
+   */
+  async function recordFiringTrace(
+    seed: number,
+    frames = 120,
+  ): Promise<readonly FiringTraceEntry[]> {
+    booted = await bootScene([StubCombatScene]);
+    const scene = booted.scene as StubCombatScene;
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+
+    const input = createSeededFiringInputTrace(seed, { frames });
+    const trace: FiringTraceEntry[] = [];
+
+    // Guarantee a fused field state in every run: both halves of the first
+    // pairing are active from t=0, so the evolved cadence is part of the
+    // firing trace once the field-tier child wires it in.
+    player.equipWeapon('ricochet');
+    player.equipWeapon('arc');
+
+    for (const step of input.steps) {
+      for (const weaponId of step.equipWeaponIds) {
+        player.equipWeapon(weaponId);
+      }
+      const before = scene.hooks.length;
+      scene.runAutoFire(step.frameMs / 1000);
+      const fired = scene.hooks
+        .slice(before)
+        .filter((hook) => hook.startsWith('onWeaponFired:'))
+        .map((hook) => hook.slice('onWeaponFired:'.length) as WeaponId);
+      for (const weaponId of fired) {
+        trace.push({
+          weaponId,
+          tickMs: player.getLastShotTime(weaponId)!,
+        });
+      }
+    }
+
+    booted.game.destroy(true);
+    booted = null;
+    return trace;
+  }
+
+  it('AC9/determinism — the same seed and input trace produce the same firing trace', async () => {
+    const first = await recordFiringTrace(11);
+    const second = await recordFiringTrace(11);
+    const otherSeed = await recordFiringTrace(12);
+
+    expect(first.length).toBeGreaterThan(0);
+    // Same seed ⇒ byte-identical firing trace, with no wall-clock or RNG leak.
+    expect(second).toEqual(first);
+    // Different seed ⇒ a different input trace, so the assertion above is not
+    // comparing two constant runs.
+    expect(otherSeed).not.toEqual(first);
+    // Every recorded shot is attributed to a whole 16th-note tick.
+    for (const entry of first) {
+      expect(entry.tickMs % 187.5).toBe(0);
+    }
+  });
+
+  it('AC5/boss — the boss still requires 200 hits at every weapon level', () => {
+    const hitPool = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
+    expect(hitPool).toBe(200);
+
+    // Levelling a weapon (evolved or not) never buys extra damage per
+    // instance, so the 200-hit pool is unchanged at every level.
+    const result = checkBossHitBudget(hitPool);
+    expect(result.violations).toEqual([]);
+    expect(result.holds).toBe(true);
+    for (const row of result.rows) {
+      expect(row.hitsRequired).toBe(200);
+    }
   });
 });

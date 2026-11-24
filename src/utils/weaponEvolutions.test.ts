@@ -38,6 +38,13 @@ import {
   type WeaponPairing,
 } from './weaponEvolutions';
 import { WEAPON_IDS, type WeaponId } from './weapons';
+import {
+  DAMAGE_PARITY_LEVELS,
+  LATTICE_BPMS,
+  checkBarDownbeatMorphs,
+  checkDamageParity,
+  checkLatticeConformance,
+} from '../test/weaponEvolutionHarness';
 
 /** A valid definition reused as the base for malformed-table tests. */
 const CHAIN_DEFINITION = getEvolvedWeaponDefinition('chain_ricochet');
@@ -475,6 +482,68 @@ describe('evolved cadence', () => {
     expect(WEAPON_EVOLUTION_TABLE.pairings).toBe(WEAPON_PAIRINGS);
     expect(WEAPON_EVOLUTION_TABLE.definitions).toBe(
       EVOLVED_WEAPON_DEFINITIONS,
+    );
+  });
+});
+
+// ── Cross-cutting verification harness (AH-0MWU7BAA0009X1MN) ────────
+
+describe('cross-cutting verification harness (AH-0MWU7BAA0009X1MN)', () => {
+  it('shows an evolved weapon never emits more damage instances per cadence tick than the halves it replaces', () => {
+    const result = checkDamageParity();
+
+    expect(result.violations).toEqual([]);
+    expect(result.holds).toBe(true);
+    // Every shipped pairing is measured at every evolution level, so a future
+    // pairing or a retuned rung cannot skip the comparison.
+    expect(result.rows).toHaveLength(
+      WEAPON_PAIRINGS.length * DAMAGE_PARITY_LEVELS.length,
+    );
+    for (const row of result.rows) {
+      // The fusion never out-fires the two halves it replaces together.
+      expect(row.evolvedInstancesPerBeat).toBeLessThanOrEqual(
+        row.halfSumInstancesPerBeat + 1e-9,
+      );
+    }
+  });
+
+  it('resolves every evolved cadence to whole 16th-note onsets at every tempo', () => {
+    const result = checkLatticeConformance();
+
+    expect(result.violations).toEqual([]);
+    expect(result.holds).toBe(true);
+    expect(result.rows).toHaveLength(
+      EVOLVED_WEAPON_IDS.length *
+        DAMAGE_PARITY_LEVELS.length *
+        LATTICE_BPMS.length,
+    );
+  });
+
+  it('morphs evolved patterns only on a bar downbeat', () => {
+    const result = checkBarDownbeatMorphs();
+
+    expect(result.violations).toEqual([]);
+    expect(result.holds).toBe(true);
+  });
+
+  it('goes red against a rule-breaking evolved cadence (red-first gate)', () => {
+    // A fusion that out-fires both halves fails the damage-parity rule...
+    const denser = checkDamageParity({
+      evolvedPatternFor: () => ({ k: 16, n: 16, rotation: 0, stepMs: 187.5 }),
+    });
+    expect(denser.holds).toBe(false);
+    expect(denser.violations[0]?.rule).toBe(
+      'damage-parity/evolved-exceeds-halves',
+    );
+
+    // ...and a cadence that leaves the 16th-note lattice fails the grid rule.
+    const offLattice = checkLatticeConformance({
+      evolvedIds: ['chain_ricochet'],
+      evolvedPatternFor: () => ({ k: 2, n: 15, rotation: 0, stepMs: 200 }),
+    });
+    expect(offLattice.holds).toBe(false);
+    expect(offLattice.violations.map((violation) => violation.rule)).toContain(
+      'lattice/step-off-16th',
     );
   });
 });
