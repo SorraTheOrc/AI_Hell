@@ -1386,6 +1386,52 @@ npm run validate-experience -- eval-output/balance-report.json
   and input trace produce the same graze count and score, and the rule consumes
   no RNG (`src/core/graze.test.ts`, `src/scenes/core/graze.parity.test.ts`).
 
+## Weapon evolutions — balance evidence (AH-0MWL7OWPF003E4TP AC10)
+
+An evolution changes **pattern, coverage and behaviour only** — never the
+number of damage instances per cadence tick (epic AC5) — so the expected
+outcome is **no change** to any experience metric, and the ring-timing harness
+should measure the same ring clear times. Both were re-measured against the
+real balance CSVs, competent policy, seeds 1–100, full-campaign batch
+(18000-tick budget):
+
+```bash
+npm run evaluate -- --batch --games 100 --sample-every 5 --out eval-output
+npm run validate-experience -- eval-output/balance-report.json
+npm run ring-timing -- --json --out /tmp/ring-timing-new.json
+```
+
+- `validate-experience`: **PASS, 6/6 metrics in band, no drifted metrics.**
+  `survival (s)` 300.00 (band 270–330), `minerals collected` 18.00
+  (16.20–19.80), `upgrades selected / run` 2.00 (1.50–2.50), `avoidable hits`
+  0.00 (−0.50–0.50), `wave reached` 10.00 (1.91–13.75) and `level reached`
+  2.88 (0.12–3.50) — identical to the numbers recorded by the immediately-prior
+  no-change item (Graze and danger multiplier, above). The arena reads the
+  same `resolveWeaponEvolution` resolver the game's `Player` reads
+  (`src/ai/eval/arena.ts`), so the batch genuinely exercises the fusions and
+  they moved no experience metric.
+- **Degenerate-baseline caveat.** Three of these bands are degenerate for a
+  green bot — `survivalSeconds` sits at the 300 s tick budget and
+  `avoidableHits` at 0 for all 100 games (`docs/EXPERIENCE_VALIDATION.md`), so
+  a green batch only proves the baseline has not moved, never that coverage
+  stayed flat. Coverage power creep is pinned elsewhere: epic AC5's
+  damage-instance comparison (an evolved weapon produces no more damage
+  instances per cadence tick than the two halves it replaces) and the level-0
+  output budget below.
+- **Ring timing**: the re-measured artifact is **byte-identical** to the
+  committed `docs/dev/ring-timing-baseline.json` (rings 1–2 × grind/rush ×
+  seeds 1–3), including ring 2's loadouts that carry both `ricochet` and
+  `arc` (a live pairing) — no ring clear time moved, so the "fusion shortens
+  ring 1 below its window" risk did not materialise and no tuning follow-up is
+  needed.
+- **Level-0 output budget (GDD §4.4.2)**: still holds — every non-cannon
+  weapon's resolved level-0 output stays at or below **60 %** of its pre-change
+  baseline and at most **1.5×** the cannon, pinned by
+  `src/utils/weaponStrength.test.ts` and `src/weaponBalanceDocs.test.ts`. The
+  evolved cadences are resolved output, not new catalogue rows, so the budget
+  is unchanged by construction as well as by measurement.
+- **Full suite** (`/skill:test`): green at the implementing commit.
+
 ## Weapon tuning CSV (AH-0MW0Q01VM004EPY7)
 
 The player-weapon catalogue is **data**. Every tunable value for the sixteen
