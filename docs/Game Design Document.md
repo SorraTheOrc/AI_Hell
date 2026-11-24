@@ -2937,11 +2937,19 @@ hexes) is targeted at 30–90 minutes** for a semi-skilled player (six
 5–15-minute deployments plus builds, salvage and a few losses), **ring 2 (12
 hexes) at 60–180 minutes**, and ring *n* holds 6*n* hexes, so later rings take
 progressively longer. The campaign is therefore extendable rather than finite.
-- **Boss and weapon strength are known ahead.** Before committing, the player sees
-each hex's boss, its strengths and weaknesses, its aggression and exactly which
-weapon or upgrade it grants, so the ring supports **strategy** ("take that hex for
-the weapon that counters the boss threatening my home hex") instead of being a
-checklist.
+- **Boss and weapon strength are known ahead — and it decides the fight.** Before
+committing, the player sees each hex's boss, its strengths and weaknesses, its
+aggression and exactly which weapon or upgrade it grants, so the ring supports
+**strategy** ("take that hex for the weapon that counters the boss threatening my
+home hex") instead of being a checklist. The lists are **rules, not labels**
+(AH-0MWL5376H001WJFZ): a weapon the boss is **weak** against lands **2 hit points
+per connected shot**, a weapon it is **strong** against lands **1 hit point per
+two connected shots** (resisted, never immune — a wrong loadout is slow and
+legible, not a wall), and everything else is neutral (1). The panel marks each
+listed weapon with the glyph it will show in combat (`▲ EFFECTIVE` /
+`▼ RESISTED`), and the in-run feedback carries the same vocabulary: an effective
+hit flashes a bright shard burst with a pitched-up cue and a boss flinch, while a
+resisted hit clangs off the armour rim as a dull spall ring with no flinch.
 - **Different playstyles are all viable.** Every hex has a boss, but **only one of
 the six grants the ring's new weapon and it is the hardest hex**: players may take
 it early and push into the next ring, risking losses and an exposed rear, or
@@ -3303,7 +3311,11 @@ a glance and by framing rather than by colour (AH-0MWL4QCVD007WOAM):
   any queued attack (AH-0MW3VG6WJ004HRI9). Every line of that overview carries
 an explicit capitalised title (`ID:`, `STATE:`, `AGGRESSION:`, `BOSS:`,
 `STRENGTHS:`, `WEAKNESSES:`, `GRANT:`, `DEFENDER:`, `SKILL:`,
-`PENDING ATTACK:`) so the player never decodes an abbreviation, while the
+`PENDING ATTACK:`) so the player never decodes an abbreviation. Each listed
+weapon also carries the **combat glyph** it will show when it connects
+(`▲ EFFECTIVE` on the `WEAKNESSES:` line, `▼ RESISTED` on the `STRENGTHS:`
+line — one vocabulary, shape first, never colour alone; AH-0MWL5376H001WJFZ),
+while the
 already-headed SPECIAL MISSION / REWARD / PERSONALITY / MECHANIC / LANDMARK /
 CONTRACT / BONUS sections keep their titles (AH-0MWJ0XHWW009GTKK). It is also
 the **post-deployment surface**: a finished sortie hands over its frontier-tick
@@ -4383,6 +4395,13 @@ retained as the original proposal.
 
 **Work item:** Make hex strengths and weaknesses matter in combat
 (AH-0MWL5376H001WJFZ).
+
+**Status (shipped, AH-0MWL898RM009X9B8):** the rule below is live — the authored
+lists are resolved once per hex and applied at the shared player-damage seam,
+with the glyph vocabulary, the deflect/critical feedback and the gym toggle.
+Ring timing re-measured with the rule in play: ring 1 grind 23.74 min (window
+30–90, still the in-flight rebalance's scope) and ring 2 grind 51.68 min
+(within tolerance); the numbers live in `docs/BALANCING.md`.
 
 - **Tier:** middle loop / outer loop (a deployment, a ring).
 - **Gap:** the authored `strengths` / `weaknesses` lines on the ring's hexes are

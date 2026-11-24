@@ -1177,6 +1177,29 @@ balance report.
   mean deployment plus the 2-minute visit) rather than a flat window. The
   budgets measured under this model, and the budget verdicts that follow, are
   recorded on the parent item (AH-0MWCOWSVN003X81A) for re-rule.
+- **The matchup rule is in the measurement of record**
+  (AH-0MWL5376H001WJFZ). The authored hex `strengths`/`weaknesses` are now
+  **rules, not labels**: a weapon a boss is weak to lands **2 hit points per
+  connected shot**, a weapon it is strong to lands **1 hit point per two
+  connected shots** (resisted, never immune), neutral 1 — resolved once per
+  hex (`resolveHexMatchup`) and applied at the single shared player-damage
+  seam (`resolveHitCharge`), so every source shares it. The magnitudes are
+  **not** scene constants and no per-hex override exists; tuning them is a
+  follow-up. Ring timing re-measured through `npm run ring-timing` (seeds
+  1–3, grind line, five-wave one-level deployment) **with the rule live**:
+
+  | line | before (no matchup) | after (matchup live) | window | verdict |
+  |---|---|---|---|---|
+  | ring 1 grind | 16.2 min | **23.74 min** (23.52–23.92) | 30–90 | missed (below) |
+  | ring 2 grind | 48.7 min | **51.68 min** (50.84–52.49) | 60–180 | within tolerance |
+  | ring 1 rush | 10.2 min | 10.18 min (9.43–10.90) | 30–90 | not applicable (rush line) |
+  | ring 2 rush | 21.5 min | 21.54 min (19.81–24.90) | 60–180 | not applicable (rush line) |
+
+  The rule moved both grind lines **towards** their windows (ring 1 +7.5 min,
+  ring 2 +3.0 min) and neither left one; both were already below their lower
+  bound before this change and remain the scope of the in-flight grind-budget
+  rebalances (ring 1: AH-0MWFDQ9EY004NO4X; ring 2: AH-0MWFDQCFV007BZE5), which
+  this measurement is attached to. No tuned constant changed here.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 

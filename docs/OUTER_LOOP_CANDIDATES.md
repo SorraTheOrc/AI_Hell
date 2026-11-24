@@ -1069,7 +1069,12 @@ The loop must reward different ways of playing rather than one correct route:
   hex grants are **known ahead** of a deployment (see *Known-ahead intel and
   anti-checklist mitigations*), so the player can plan "take that hex → I get the
   weapon that counters the boss threatening my home hex" instead of learning the
-  map by losing to it.
+  map by losing to it. The intel is **mechanically load-bearing**
+  (AH-0MWL5376H001WJFZ): a weakness weapon lands **2 hit points per connected
+  shot**, a strength weapon **1 per two shots** (resisted, never immune), neutral
+  1 — resolved once per hex and applied at the shared player-damage seam, with
+  the hex panel, the loadout selector and the in-run feedback sharing one glyph
+  vocabulary (`▲ EFFECTIVE` / `▼ RESISTED`).
 - **The grinder.** Five of the six hexes grant strength — salvage, hull
   upgrades, better bots — so grinding the weaker hexes first makes the ring's
   hard hex safer. A player can spend as long as they like growing the fleet
