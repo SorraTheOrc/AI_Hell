@@ -54,17 +54,19 @@ card-game oriented. Three cues are retired.
 | Disposition | Count | Notes |
 |-------------|-------|-------|
 | `existing-recipe` | 2 | Power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
-| `new-recipe` | 75 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA, the Shard Swarm launch/hit pair since AH-0MVV0WMTE0007NGS, the Rear Guard launch/hit pair since AH-0MVV0WN96007TU9J, the Broadside launch/hit pair since AH-0MVV0WNOX0078G9G, the Heavy Slug launch/hit pair since AH-0MVV0WO4M001KEDG, and the four Mystery UFO feel cues since AH-0MVSAJMLL00835T8), plus the thruster hum |
+| `new-recipe` | 78 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA, the Shard Swarm launch/hit pair since AH-0MVV0WMTE0007NGS, the Rear Guard launch/hit pair since AH-0MVV0WN96007TU9J, the Broadside launch/hit pair since AH-0MVV0WNOX0078G9G, the Heavy Slug launch/hit pair since AH-0MVV0WO4M001KEDG, the four Mystery UFO feel cues since AH-0MVSAJMLL00835T8, and the mineral pickup chime since AH-0MWNMRD6I002CCVT), plus the thruster hum |
 | `new-recipe` (outside `effects.ts`) | 4 | `Boss.ts` inline cues using `blip()` — see the Boss.ts section |
 | `retired` | 3 | `playMajorExplosionSound`, `playTankDestructionSound`, `playWeaponChangeSound` |
 | control companion (in cue table) | 3 | `stopDiveSound`, `stopThrusterSound`, `stopMysteryUfoWarbleSound` — start/stop lifetime mapping |
+| alias (no new cue) | 1 | `playGrazeSound` — dispatches the existing `card-token-earn` chime at a per-tier rate, so it ships no recipe of its own |
 
 > **Count reconciliation (AH-0MVV0WP0P004YNJU).** The cue-to-recipe table has
-> **83 rows**, and the summary above partitions them exactly:
-> 75 `new` + 3 `retired` + 2 `existing` + 3 control = **83**. The count is of
-> distinct cue rows in that table (one row per cue), so it can be re-derived
-> mechanically; the four `Boss.ts` inline cues are counted separately in the
-> `new-recipe` (outside `effects.ts`) row because they live in their own table.
+> **87 rows**, and the summary above partitions them exactly:
+> 78 `new` + 3 `retired` + 2 `existing` + 3 control + 1 alias = **87**. The count
+> is of distinct cue rows in that table (one row per cue), so it can be
+> re-derived mechanically; the four `Boss.ts` inline cues are counted separately
+> in the `new-recipe` (outside `effects.ts`) row because they live in their own
+> table.
 
 > `blip`, `explosionPitchFactor`, `setSfxVolume`, `setSfxMuted`,
 > `getAudioContext` and the test accessors are **not cues** and are handled in
@@ -166,6 +168,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playMysteryUfoRewardSound` | Rising A-minor arpeggio A4→E5→A5 + sine sparkle, ~0.9 s | Mystery UFO payout fanfare | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mystery-ufo-reward` |
 | `playMysteryUfoDestroySound` | Deep saw fall A3→A1 + low-passed noise blast + sine sub thump, ~0.55 s | Mystery UFO destruction explosion | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mystery-ufo-destroy` |
 | `playMineralTinkleSound` | Bright E7→A6 triangle chime + sine shimmer + noise tick, ~0.2 s | Dropped-mineral tinkle | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mineral-tinkle` |
+| `playMineralCollectChimeSound` | Player pickup chime — steady A5 triangle + quiet A6 sine shimmer, gentle decay, ~0.2 s, ≤ 0.2 peak; played at the A-minor ladder rate `MINERAL_CHIME_SEMITONES = [0, 2, 3, 5, 7, 8, 10]` (one scale degree per pickup, capped at one octave) and reset after a `MINERAL_CHIME_RESET_GAP_MS` (1.5 s **game-time**) gap | Player mineral pickup — one chime per collected mineral, silent on enemy absorption | one shared `CombatCoreScene.noteMineralCollected()` dispatch, consumed by `PlayScene`, every formation gym, `GymLevel`, `GymPowerUpsUtility` and the leveling gyms (AH-0MWNMRDY60005Z4K) | new | `aihell-mineral-chime` |
 | `playGrazeSound` | **Alias** of `playPowerUpCollectSound` (the `card-token-earn` chime) played at a per-tier playback rate (`GRAZE_CUE_RATES` 1 → 1.6), vol 0.5 — a short bright tick that rises with the danger tier; no recipe of its own | Graze confirmation — a near miss credited a point of danger multiplier (AH-0MWL7ORK8007LXJI AC5) | shared graze pass in `scenes/core/CombatScene` (`_resolveGrazePass`) | alias (no new cue) | `card-token-earn` (shared) |
 
 ### Runtime mix trims (AH-0MVZVMZOQ00076QF)
@@ -328,10 +331,10 @@ as part of `npm run build-audio:verify` (AC5).
 
 Seed block **32100–32299** is reserved for game-specific recipes to keep them
 clear of ToneForge's existing card/impact seeds. (The block was originally
-declared as `32100–32199`; live game seeds now run to **32286** — the end of the
-net-new weapon packages — so the reservation was widened to cover
-them, matching `manifest.json`'s `seedBlock` field. No shipped seed was
-renumbered.) One-shots are rendered at a
+declared as `32100–32199`; live game seeds now run to **32292** — the mineral
+pickup chime, after the net-new weapon packages and the Mystery UFO /
+mining-laser cues — so the reservation was widened to cover them, matching
+`manifest.json`'s `seedBlock` field. No shipped seed was renumbered.) One-shots are rendered at a
 single seed; cues whose original character used per-invocation jitter
 (`EXPLOSION_PITCH_JITTER` ±15 %) are baked as a **3-variant seed range** so
 repeated kills still vary. Under **A-minor scale conformance (AC3,
@@ -419,6 +422,7 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-mystery-ufo-destroy` | `playMysteryUfoDestroySound` | Deep saw fall A3→A1 + low-passed noise blast + 110→55 Hz sine sub thump, ~0.55 s (AH-0MVSAJMLL00835T8) | 32289 |
 | `aihell-mineral-tinkle` | `playMineralTinkleSound` | Bright E7→A6 triangle chime + 3520 Hz sine shimmer + high-passed noise tick, ~0.2 s (AH-0MVSAJMLL00835T8) | 32290 |
 | `aihell-mining-laser-fire` | `playMiningLaserFireSound` | Short amber cutting tick — saw chirp 1320→660 Hz + high-passed (4.2 kHz) noise bite, ~0.07 s, peak 0.12 / RMS 0.032; played ×0.6 by `MINING_LASER_FIRE_VOLUME_SCALE` (AH-0MW9QMQ7B005WFH9) | 32291 |
+| `aihell-mineral-chime` | `playMineralCollectChimeSound` | Quiet bright player pickup chime: steady A5 triangle + quiet A6 sine shimmer, gentle decay, ~0.2 s, ≤ 0.2 peak; played at a rising A-minor ladder rate (one scale degree per pickup, capped at one octave) and reset after 1.5 s of game time without a pickup (AH-0MWNMRD6I002CCVT) | 32292 |
 
 ### New recipes outside `effects.ts` (Boss.ts surface)
 

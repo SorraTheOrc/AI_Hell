@@ -30,6 +30,16 @@
  * continues from where they left it.  A wall clock would silently reset the
  * streak during any pause, menu or tab stall.
  *
+ * ## Why a dedicated cue, not the tinkle
+ *
+ * The shipped `aihell-mineral-tinkle` is the Mystery UFO **spill** cue: it
+ * fires once when the drone's wreck scatters its dropped minerals. Reusing it
+ * for a pickup would make a collection indistinguishable from a spill and
+ * would stop the pickup being gain-staged on its own, so the chime is a
+ * dedicated `aihell-mineral-chime` recipe at seed 32292
+ * (AH-0MWNMRD6I002CCVT) — a steady A5 triangle with a quiet A6 shimmer and
+ * no falling sweep or noise tick.
+ *
  * ## Rules
  *
  * 1. **Base step** — the first pickup (or the first pickup after a reset/gap)
