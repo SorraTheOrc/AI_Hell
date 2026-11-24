@@ -6,9 +6,10 @@
  *
  * - the three pilot pairings exist **exactly as named**, and every evolved
  *   definition carries a name, icon, colour and a 16th-lattice cadence;
- * - the resolver answers `owned` before `field` before `none`, republishes its
- *   `baseIds` for hex-matchup classification (AC11), and a catalogue without
- *   pairing data always resolves `none` — today's behaviour (AC2);
+ * - the resolver answers `owned` before `field` before `none` for a pairing
+ *   whose **both halves are active**, republishes its `baseIds` for
+ *   hex-matchup classification (AC11), and a catalogue without pairing data
+ *   always resolves `none` — today's behaviour (AC2);
  * - an unknown weapon id in a pairing **fails loudly** at validation time
  *   (and, through the module-load assertion, at import time);
  * - evolved cadence rungs stay on the shared 16th-note lattice and rung 0's
@@ -39,6 +40,7 @@ import {
   type WeaponPairing,
 } from './weaponEvolutions';
 import { WEAPON_IDS, type WeaponId } from './weapons';
+import { MAX_PERMANENT_LEVEL } from '../core/hangarWar/hangarEconomy';
 import {
   DAMAGE_PARITY_LEVELS,
   LATTICE_BPMS,
@@ -164,14 +166,80 @@ describe('resolveWeaponEvolution', () => {
     expect(resolution.reason).toBe('owned');
   });
 
-  it('keeps the owned tier live without the halves in the active snapshot', () => {
+  it('keeps the owned tier live when a timed pickup window expires', () => {
+    // Both halves are permanently owned at level ≥ 2, so neither can expire;
+    // a temporary stack on one half only adds a timed window on top. When it
+    // ends, the half stays active (permanent) and the fusion is still owned —
+    // the field tier would have stopped with the window (epic AC4).
+    const activeWeaponIds: WeaponId[] = ['cannon', 'ricochet', 'arc'];
+    const permanentWeaponLevels = [owned('ricochet', 2), owned('arc', 2)];
+
+    expect(
+      resolveWeaponEvolution({ activeWeaponIds, permanentWeaponLevels })
+        .reason,
+    ).toBe('owned');
+    // A field-only pair at the same levels would be `field`; the owned pair is
+    // the stronger reason and must not be shadowed by it.
+    expect(
+      resolveWeaponEvolution({
+        activeWeaponIds,
+        permanentWeaponLevels: [owned('ricochet', 1), owned('arc', 1)],
+      }).reason,
+    ).toBe('field');
+  });
+
+  it('ends the owned tier once a Reset drops the halves from the active set (epic AC4)', () => {
+    // `Player.resetWeapon()` (the Reset power-up) drops permanently granted
+    // weapons from the active set while keeping their permanent levels, so a
+    // fusion must never outlive the weapons it fuses.
     const resolution = resolveWeaponEvolution({
       activeWeaponIds: ['cannon'],
-      permanentWeaponLevels: [owned('cluster', 5), owned('mortar', 2)],
+      permanentWeaponLevels: [
+        owned('cluster', 5),
+        owned('mortar', 2),
+      ],
     });
 
-    expect(resolution.evolvedId).toBe('cluster_barrage');
-    expect(resolution.reason).toBe('owned');
+    expect(resolution).toEqual({ evolvedId: null, baseIds: [], reason: 'none' });
+  });
+
+  it('ends a level-1 pair once a half leaves the active set', () => {
+    const retired = resolveWeaponEvolution({
+      activeWeaponIds: ['cannon', 'cluster'],
+      permanentWeaponLevels: [owned('cluster', 1), owned('mortar', 1)],
+    });
+
+    expect(retired).toEqual({ evolvedId: null, baseIds: [], reason: 'none' });
+  });
+
+  it('keeps the owned tier live at MAX_PERMANENT_LEVEL (the cap hides no pairing)', () => {
+    // The hangar ladder tops out at `MAX_PERMANENT_LEVEL = 5` with base 1, so
+    // an owned pairing bought to the cap must still resolve — the cap can
+    // never hide a pairing or drop it below the owned threshold (epic AC4).
+    const atCap = resolveWeaponEvolution({
+      activeWeaponIds: ['cannon', 'spread', 'options'],
+      permanentWeaponLevels: [
+        owned('spread', MAX_PERMANENT_LEVEL),
+        owned('options', MAX_PERMANENT_LEVEL),
+      ],
+    });
+
+    expect(atCap.evolvedId).toBe('fan_escort');
+    expect(atCap.reason).toBe('owned');
+    expect(MAX_PERMANENT_LEVEL).toBeGreaterThanOrEqual(
+      OWNED_EVOLUTION_MIN_LEVEL,
+    );
+
+    // A paired cap on one half and the threshold on the other still owns.
+    expect(
+      resolveWeaponEvolution({
+        activeWeaponIds: ['cannon', 'spread', 'options'],
+        permanentWeaponLevels: [
+          owned('spread', MAX_PERMANENT_LEVEL),
+          owned('options', OWNED_EVOLUTION_MIN_LEVEL),
+        ],
+      }),
+    ).toMatchObject({ evolvedId: 'fan_escort', reason: 'owned' });
   });
 
   it('treats a level-1 owned pair as the field tier, not the owned tier', () => {

@@ -296,6 +296,7 @@ import {
   type WeaponLevelStats,
 } from '../../utils/weaponLevels';
 import {
+  OWNED_EVOLUTION_MIN_LEVEL,
   resolveEvolvedWeaponDefinition,
   resolveWeaponEvolution,
   type EvolvedWeaponId,
@@ -1430,12 +1431,16 @@ export interface ArenaEvolution {
  * same** {@link resolveWeaponEvolution} resolver the game's `Player` reads, so
  * the bot arena never derives a second pairing answer (epic AC1).
  *
- * The arena models **permanent ownership only** (timed field pickups never
- * enter its loadout), so it passes an empty timed active set: the resolver's
- * *field* tier is a timed overlap the arena cannot represent, leaving the
- * *owned* tier (`both halves owned at level ≥ 2`) as the only live fusion it
- * models. While a fusion is live its two halves do not also fire: the evolved
- * weapon replaces them.
+ * The arena models the **owned tier only**: its loadout carries permanent
+ * grants and has no timed field-pickup windows, so a *field*-tier overlap (two
+ * live halves below the owned threshold) is outside what it can represent. The
+ * live set it models is therefore the halves the hangar has permanently
+ * upgraded to {@link OWNED_EVOLUTION_MIN_LEVEL}; a level-1 grant is left
+ * unfused, the pre-existing fidelity boundary of this harness. The resolver
+ * still answers which pairing (if any) is live — the arena never derives its
+ * own answer (epic AC1) — and a live fusion replaces its two halves. Page
+ * cadence parity with the game's `Player` is the owned tier the run actually
+ * reaches once both halves are upgraded.
  *
  * Pure and deterministic. Returns `null` when no pairing is live.
  *
@@ -1445,10 +1450,12 @@ export function resolveArenaEvolution(
   loadout: readonly ArenaWeaponLoadout[],
 ): ArenaEvolution | null {
   const resolution = resolveWeaponEvolution({
-    // No timed field-pickup windows exist in the arena, so the resolver's
-    // *field* tier is not modelled; permanent levels are the only ownership
-    // state the arena carries.
-    activeWeaponIds: [],
+    // Only the permanently upgraded halves are modelled as live: the arena has
+    // no timed windows, so a field-tier overlap below the owned threshold is
+    // not represented here (fidelity boundary, not a second pairing answer).
+    activeWeaponIds: loadout
+      .filter((weapon) => weapon.ownedLevel >= OWNED_EVOLUTION_MIN_LEVEL)
+      .map((weapon) => weapon.id),
     permanentWeaponLevels: loadout
       .filter((weapon) => weapon.ownedLevel > 0)
       .map((weapon) => ({ id: weapon.id, level: weapon.ownedLevel })),

@@ -1869,6 +1869,11 @@ export class Player extends Phaser.GameObjects.Graphics {
    *   the lattice; the sounding pattern keeps firing until then (epic AC3/AC6).
    * - A **tempo / Speed Boost** change only rescales the step and re-anchors
    *   immediately — a tempo change is not a morph.
+   * - A **stronger claim on the same rhythm** (a second hold-full grant turns a
+   *   field overlap into an owned pair, or a run restart hands the owned pair
+   *   back to the field tier) is adopted in place: the pattern does not morph,
+   *   so there is nothing to wait a bar downbeat for, and the reported `reason`
+   *   never lags the ownership that earned it (epic AC4).
    */
   private _refreshEvolution(now: number): void {
     const due = this._evolutionPending;
@@ -1912,12 +1917,13 @@ export class Player extends Phaser.GameObjects.Graphics {
     }
 
     if (this._sameEvolution(current, desired)) {
-      if (
-        current &&
-        desired &&
-        current.pattern.stepMs !== desired.pattern.stepMs
-      ) {
-        this._setEvolutionActive(desired, now);
+      if (current && desired) {
+        // Same evolved weapon and same rhythm: keep firing, but adopt the
+        // schedule so `reason` / `level` track the ownership in force now.
+        this._evolutionSounding = desired;
+        if (current.pattern.stepMs !== desired.pattern.stepMs) {
+          this._setEvolutionActive(desired, now);
+        }
       }
       return;
     }

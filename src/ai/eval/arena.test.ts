@@ -2038,9 +2038,10 @@ describe('arena weapon evolution (AH-0MWU7BAXI003HBP3)', () => {
   });
 
   it('does not model the timed field tier — a level-1 pair is not fused (fidelity boundary)', () => {
-    // The arena models permanent ownership only: it has no timed field-pickup
-    // windows, so two level-1 grants do not form a field overlap here. The
-    // owned tier (level ≥ 2) is the only fusion the arena represents.
+    // The arena models the owned tier only: a permanent grant never opens a
+    // *timed* window, and the arena has no field-pickup windows at all, so a
+    // level-1 pair (which the game reports as a field overlap) is left unfused
+    // here. The owned tier (level ≥ 2) is the fusion this harness represents.
     expect(
       resolveArenaEvolution(
         resolveWeaponLoadout([

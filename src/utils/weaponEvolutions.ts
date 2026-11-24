@@ -31,19 +31,26 @@
  * ## Two tiers, field ∈ owned ∈ none
  *
  * - **Owned tier** — both halves are permanently owned at level ≥
- *   {@link OWNED_EVOLUTION_MIN_LEVEL}. The evolution persists for the rest of
- *   the run; permanent levels are the snapshot `Player.getWeaponLevels()`
- *   already exposes (run hold-full grants and hangar buy-to-upgrade levels
- *   converge on it), so no new persisted state is added.
+ *   {@link OWNED_EVOLUTION_MIN_LEVEL} **and** both are live in the active set.
+ *   The evolution persists for the rest of the run: permanent levels are the
+ *   snapshot `Player.getWeaponLevels()` already exposes (run hold-full grants
+ *   and hangar buy-to-upgrade levels converge on it), so no new persisted
+ *   state is added, and a permanent grant never opens a timed window that can
+ *   expire. A Reset power-up drops permanently granted weapons from the active
+ *   set but keeps their levels, so requiring the halves to be live is what
+ *   makes a Reset clear the fusion exactly as it clears the weapons themselves
+ *   (epic AC4).
  * - **Field tier** — both halves are active in the timed/active weapon set
- *   (`Player.getActiveWeapons()`). The evolution lives only while the overlap
- *   does.
+ *   (`Player.getActiveWeapons()`) but not both permanently owned at level ≥
+ *   {@link OWNED_EVOLUTION_MIN_LEVEL}. The evolution lives only while the
+ *   overlap does.
  *
- * The owned tier is resolved **before** the field tier: a permanently owned
- * pair is always active too, so checking the field overlap first would shadow
- * the stronger, persistent reason forever. When several pairings are live at
- * the same tier, the first in authored table order wins, so the answer is
- * deterministic for a given active set.
+ * Both tiers require the two halves to be **live**; the tier only names why
+ * the overlap survives. The owned tier is resolved **before** the field tier:
+ * a permanently owned pair is always active too, so checking the field overlap
+ * first would shadow the stronger, persistent reason forever. When several
+ * pairings are live at the same tier, the first in authored table order wins,
+ * so the answer is deterministic for a given active set.
  *
  * ## Evolved ids are resolved output, not catalogue rows
  *
@@ -301,7 +308,10 @@ export const OWNED_EVOLUTION_MIN_LEVEL = 2;
 
 /** The active + permanently owned weapon sets the resolver reads. */
 export interface WeaponEvolutionInput {
-  /** Currently active weapon ids (`Player.getActiveWeapons()`). */
+  /**
+   * Currently active weapon ids (`Player.getActiveWeapons()`). A pairing is
+   * live only while both of its halves appear here.
+   */
   readonly activeWeaponIds: readonly WeaponId[];
   /**
    * Permanently owned weapon levels (`Player.getWeaponLevels()`). Absent/
@@ -336,12 +346,19 @@ export interface WeaponEvolutionResolution {
  * weapon set — the **one** pure pairing resolver (epic AC1).
  *
  * Precedence:
- * 1. **Owned** — a pairing whose halves are both permanently owned at
- *    level ≥ {@link OWNED_EVOLUTION_MIN_LEVEL}. It survives expiry of a timed
- *    overlap, so it is reported even when a half is absent from the active
- *    list.
- * 2. **Field** — a pairing whose halves are both in `activeWeaponIds`.
- * 3. **None** — no pairing is live: `evolvedId` is `null` and `baseIds` is
+ * 1. **Both halves live** — a pairing is only a candidate while both of its
+ *    halves are in `activeWeaponIds`. Nothing fuses two weapons the ship is
+ *    not currently flying, so a Reset (which drops permanently granted
+ *    weapons from the active set) clears the fusion exactly as it clears the
+ *    weapons themselves (epic AC4).
+ * 2. **Owned** — a live pairing whose halves are both permanently owned at
+ *    level ≥ {@link OWNED_EVOLUTION_MIN_LEVEL}. No timed window can end a
+ *    permanent grant, so the fusion survives the expiry of a timed overlap
+ *    and persists for the rest of the run.
+ * 3. **Field** — a live pairing that is not fully owned at level ≥
+ *    {@link OWNED_EVOLUTION_MIN_LEVEL}. It lives only while the timed overlap
+ *    does.
+ * 4. **None** — no pairing is live: `evolvedId` is `null` and `baseIds` is
  *    empty. With no pairing table (or an empty one) this is always the answer
  *    and no behaviour changes (epic AC2).
  *
@@ -370,8 +387,15 @@ export function resolveWeaponEvolution(
   for (const pairing of pairings) {
     const [firstBase, secondBase] = pairing.baseIds;
 
-    // Owned tier first: a permanently owned pair is always active too, so the
-    // owned reason must win or it could never be reported (module header).
+    // Both halves must be live for either tier: a pairing fuses two weapons
+    // the ship is flying right now. A Reset keeps the permanent *levels* but
+    // drops the weapons from the active set, so this gate is what clears the
+    // owned fusion with them (epic AC4).
+    if (!active.has(firstBase) || !active.has(secondBase)) continue;
+
+    // Owned tier before field: a permanently owned pair is always active too,
+    // so the owned reason must win or it could never be reported (module
+    // header).
     if (
       (permanentLevels.get(firstBase) ?? 0) >= OWNED_EVOLUTION_MIN_LEVEL &&
       (permanentLevels.get(secondBase) ?? 0) >= OWNED_EVOLUTION_MIN_LEVEL
@@ -383,11 +407,7 @@ export function resolveWeaponEvolution(
       };
     }
 
-    if (
-      fieldResolution === null &&
-      active.has(firstBase) &&
-      active.has(secondBase)
-    ) {
+    if (fieldResolution === null) {
       fieldResolution = {
         evolvedId: pairing.evolvedId,
         baseIds: [...pairing.baseIds],
