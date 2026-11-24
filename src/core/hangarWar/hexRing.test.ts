@@ -334,25 +334,22 @@ describe('validateRingDefinitions', () => {
 });
 
 /**
- * Matchup-list validation (AH-0MWL88F1G0025IQ1, **TEST-FIRST** — Phase 1 of 5
- * of AH-0MWL5376H001WJFZ).
+ * Matchup-list validation (AH-0MWL88F1G0025IQ1 tests, guard landed by
+ * AH-0MWL88JJM004ORZS — Phase 1 of 5 of AH-0MWL5376H001WJFZ).
  *
- * The authored `strengths`/`weaknesses` lists become mechanically
- * load-bearing, so `validateRingDefinitions` must reject the two ways a
- * hand-authored list can silently break the rule at load time (parent AC3):
+ * The authored `strengths`/`weaknesses` lists are mechanically load-bearing, so
+ * `validateRingDefinitions` must reject the two ways a hand-authored list can
+ * silently break the rule at load time (parent AC3):
  *
  * - an entry that resolves to **no catalogue weapon** (after the shared
  *   `waveLaser` → `wave_laser` alias normalisation), and
- * - a weapon that appears in **both** lists of the **same** hex (the rule can
- *   no longer say unambiguously whether the boss resists or is weak to it).
+ * - a weapon that appears in **both** lists of the **same** hex (the rule can no
+ *   longer say unambiguously whether the boss resists or is weak to it).
  *
- * Each test is wrapped in `it.fails` (the repo's red-before/green-after
- * convention; see `src/core/levelScaling.test.ts`): on pre-change HEAD the
- * validator only checks that each list is a non-empty array of non-empty
- * strings, so both bad rings currently validate clean and the assertions fail.
- * The implementation item (AH-0MWL88JJM004ORZS) adds the checks and flips every
- * `it.fails` below back to `it`. Each failure names the offending hex id **and**
- * the offending entry, so a bad edit is actionable without re-reading the data.
+ * The tests were authored red-first under the repo's `it.fails` convention (see
+ * `src/core/levelScaling.test.ts`) and flipped back to `it` when the guard
+ * landed. Each failure names the offending hex id **and** the offending entry,
+ * so a bad edit is actionable without re-reading the data.
  */
 describe('matchup-list validation (AH-0MWL88F1G0025IQ1, TEST-FIRST)', () => {
   /**
@@ -366,8 +363,8 @@ describe('matchup-list validation (AH-0MWL88F1G0025IQ1, TEST-FIRST)', () => {
     return issues.find((issue) => issue.hexId === hexId);
   }
 
-  it.fails(
-    'rejects an authored matchup id that resolves to no catalogue weapon, naming the hex id and entry (RED-first: flips to `it` once AH-0MWL88JJM004ORZS adds the check)',
+  it(
+    'rejects an authored matchup id that resolves to no catalogue weapon, naming the hex id and entry',
     () => {
       const definitions = definitionsFor(1);
       const offender = definitions[0].id;
@@ -389,8 +386,8 @@ describe('matchup-list validation (AH-0MWL88F1G0025IQ1, TEST-FIRST)', () => {
     },
   );
 
-  it.fails(
-    'rejects a weapon authored in both lists of the same hex, naming the hex id and entry (RED-first: flips to `it` once AH-0MWL88JJM004ORZS adds the check)',
+  it(
+    'rejects a weapon authored in both lists of the same hex, naming the hex id and entry',
     () => {
       const definitions = definitionsFor(1);
       const offender = definitions[0].id;

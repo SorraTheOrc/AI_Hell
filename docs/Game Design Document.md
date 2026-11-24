@@ -3747,8 +3747,10 @@ known-ahead intel **before** the player commits a life.
   one `ai_hell_hangar_war` payload.
 - **Loud validation (AC3).** `validateRingDefinitions` rejects unknown
   personality or landmark ids, malformed contracts (no objective, or a bonus
-  that pays nothing), a cache on the weapon hex, and a second set-piece of the
-  same kind on one ring — mirroring `HexRingDefinitionError`.
+  that pays nothing), a cache on the weapon hex, a second set-piece of the
+  same kind on one ring, and (AH-0MWL5376H001WJFZ) a `strengths`/
+  `weaknesses` entry that resolves to no catalogue weapon id or a weapon named
+  in both lists of one hex — mirroring `HexRingDefinitionError`.
 - **One payload, field presence.** `contractFulfilled` and `capturePasses` are
   optional fields parsed by presence, so a save written before the axes landed
   loads safely with no version bump and no second storage key.

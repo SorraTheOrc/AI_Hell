@@ -7,13 +7,13 @@
  * decisions Q1 = A + B, Q3 = ×2 / ×0.5, Q4 = the authored lists stay
  * authoritative behind an injectable lookup).
  *
- * The module under test (`./hexMatchup`) does **not exist yet**: this is the
- * red half of the tracer bullet, and the implementation item
- * (AH-0MWL88JJM004ORZS) lands it and flips every `it.fails` below back to a
- * plain `it` (the repo's red-before/green-after convention — see
- * `src/core/levelScaling.test.ts`). Loading the module through a **non-literal**
- * dynamic import keeps the suite compiling on pre-change HEAD: a static
- * `import './hexMatchup'` would fail `tsc --noEmit` and therefore the build.
+ * The module under test (`./hexMatchup`) landed with AH-0MWL88JJM004ORZS, so
+ * this suite is green: it was authored red-first (AH-0MWL88F1G0025IQ1, the
+ * repo's red-before/green-after convention — see `src/core/levelScaling.test.ts`)
+ * and every `it.fails` has been flipped back to a plain `it`. The module is
+ * still loaded through a **non-literal** dynamic import against the local
+ * {@link HexMatchupContract} surface below, so this file pins the contract the
+ * consumers rely on rather than restating the implementation's own types.
  *
  * ## Pinned contract (AH-0MWL88JJM004ORZS must match exactly)
  *
@@ -25,7 +25,7 @@
  *   data, not behaviour, so a later damage-type table can back it without
  *   editing the combat seam (parent AC14).
  * - `normaliseMatchupWeaponId(id)` — resolves an authored or catalogue spelling
- *   to its canonical catalogue id through the shared capture-cycle alias
+ *   to its canonical catalogue id through the shared alias
  *   (`resolveGrantAlias`, so `waveLaser` → `wave_laser`); a blank/non-string id
  *   resolves to `null`. **One** alias table, never two.
  * - `resolveHexMatchup(weaponId, lookup)` — the **only** place the
@@ -100,30 +100,30 @@ interface HexMatchupContract {
  */
 const HEX_MATCHUP_MODULE = './hexMatchup';
 
-/** Loads the module under test; throws (⇒ expected red) on pre-change HEAD. */
+/** Loads the module under test (the contract above is pinned by hand). */
 async function hexMatchup(): Promise<HexMatchupContract> {
   return (await import(HEX_MATCHUP_MODULE)) as unknown as HexMatchupContract;
 }
 
 describe('normaliseMatchupWeaponId', () => {
-  it.fails(
-    'normalises the ring spelling waveLaser to the catalogue id wave_laser (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'normalises the ring spelling waveLaser to the catalogue id wave_laser',
     async () => {
       const { normaliseMatchupWeaponId } = await hexMatchup();
       expect(normaliseMatchupWeaponId('waveLaser')).toBe('wave_laser');
     },
   );
 
-  it.fails(
-    'leaves an already-canonical catalogue id unchanged (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'leaves an already-canonical catalogue id unchanged',
     async () => {
       const { normaliseMatchupWeaponId } = await hexMatchup();
       expect(normaliseMatchupWeaponId('nova')).toBe('nova');
     },
   );
 
-  it.fails(
-    'resolves a blank, null, undefined or non-string id to null (total) (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'resolves a blank, null, undefined or non-string id to null (total)',
     async () => {
       const { normaliseMatchupWeaponId } = await hexMatchup();
       expect(normaliseMatchupWeaponId('   ')).toBeNull();
@@ -136,8 +136,8 @@ describe('normaliseMatchupWeaponId', () => {
 });
 
 describe('resolveHexMatchup', () => {
-  it.fails(
-    'returns effective for a weapon the supplied lookup marks effective (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'returns effective for a weapon the supplied lookup marks effective',
     async () => {
       const { resolveHexMatchup } = await hexMatchup();
       expect(
@@ -146,8 +146,8 @@ describe('resolveHexMatchup', () => {
     },
   );
 
-  it.fails(
-    'returns resisted for a weapon the supplied lookup marks resisted (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'returns resisted for a weapon the supplied lookup marks resisted',
     async () => {
       const { resolveHexMatchup } = await hexMatchup();
       expect(
@@ -156,8 +156,8 @@ describe('resolveHexMatchup', () => {
     },
   );
 
-  it.fails(
-    'returns neutral for a weapon absent from the lookup (an unknown weapon id) (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'returns neutral for a weapon absent from the lookup (an unknown weapon id)',
     async () => {
       const { resolveHexMatchup } = await hexMatchup();
       expect(
@@ -166,8 +166,8 @@ describe('resolveHexMatchup', () => {
     },
   );
 
-  it.fails(
-    'returns neutral for null and undefined weapon ids (total) (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'returns neutral for null and undefined weapon ids (total)',
     async () => {
       const { resolveHexMatchup } = await hexMatchup();
       const lookup: WeaponVerdictLookup = { nova: 'effective' };
@@ -176,8 +176,8 @@ describe('resolveHexMatchup', () => {
     },
   );
 
-  it.fails(
-    'returns neutral for a null, undefined or empty lookup (an unauthored hex) (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'returns neutral for a null, undefined or empty lookup (an unauthored hex)',
     async () => {
       const { resolveHexMatchup } = await hexMatchup();
       expect(resolveHexMatchup('nova', undefined)).toBe('neutral');
@@ -186,8 +186,8 @@ describe('resolveHexMatchup', () => {
     },
   );
 
-  it.fails(
-    'normalises the queried weapon id through the shared alias before looking it up (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'normalises the queried weapon id through the shared alias before looking it up',
     async () => {
       const { resolveHexMatchup } = await hexMatchup();
       expect(
@@ -196,8 +196,8 @@ describe('resolveHexMatchup', () => {
     },
   );
 
-  it.fails(
-    'resolves a fully synthetic lookup with no authored data (AC14: the rule is decoupled from the lists storage) (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'resolves a fully synthetic lookup with no authored data (AC14: the rule is decoupled from the lists storage)',
     async () => {
       const { resolveHexMatchup } = await hexMatchup();
       // Synthetic ids that exist in no catalogue and no authored list: the
@@ -218,8 +218,8 @@ describe('resolveHexMatchup', () => {
 });
 
 describe('buildAuthoredVerdictLookup', () => {
-  it.fails(
-    'maps a weakness entry to effective and a strength entry to resisted (player-centric) (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'maps a weakness entry to effective and a strength entry to resisted (player-centric)',
     async () => {
       const { buildAuthoredVerdictLookup } = await hexMatchup();
       const lookup = buildAuthoredVerdictLookup(['cannon', 'dual'], ['nova']);
@@ -227,8 +227,8 @@ describe('buildAuthoredVerdictLookup', () => {
     },
   );
 
-  it.fails(
-    'normalises authored spellings to catalogue ids (waveLaser → wave_laser) (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'normalises authored spellings to catalogue ids (waveLaser → wave_laser)',
     async () => {
       const { buildAuthoredVerdictLookup } = await hexMatchup();
       const lookup = buildAuthoredVerdictLookup([], ['waveLaser']);
@@ -236,8 +236,8 @@ describe('buildAuthoredVerdictLookup', () => {
     },
   );
 
-  it.fails(
-    'is tolerant of missing or malformed lists (empty lookup) (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'is tolerant of missing or malformed lists (empty lookup)',
     async () => {
       const { buildAuthoredVerdictLookup } = await hexMatchup();
       expect(buildAuthoredVerdictLookup(null, undefined)).toEqual({});
@@ -252,8 +252,8 @@ describe('buildAuthoredVerdictLookup', () => {
 });
 
 describe('resisted-credit ledger (the ×0.5 tie rule)', () => {
-  it.fails(
-    'grants one hit point per two connected shots, credited to the second of each pair (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'grants one hit point per two connected shots, credited to the second of each pair',
     async () => {
       const { createMatchupLedger, creditResistedHit } = await hexMatchup();
       const ledger = createMatchupLedger();
@@ -264,8 +264,8 @@ describe('resisted-credit ledger (the ×0.5 tie rule)', () => {
     },
   );
 
-  it.fails(
-    'tracks each weapon independently, so weapons never share a pair (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'tracks each weapon independently, so weapons never share a pair',
     async () => {
       const { createMatchupLedger, creditResistedHit } = await hexMatchup();
       const ledger = createMatchupLedger();
@@ -277,8 +277,8 @@ describe('resisted-credit ledger (the ×0.5 tie rule)', () => {
     },
   );
 
-  it.fails(
-    'tracks each target independently, so targets never share a pair (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'tracks each target independently, so targets never share a pair',
     async () => {
       const { createMatchupLedger, creditResistedHit } = await hexMatchup();
       const ledger = createMatchupLedger();
@@ -289,8 +289,8 @@ describe('resisted-credit ledger (the ×0.5 tie rule)', () => {
     },
   );
 
-  it.fails(
-    'resets a target\'s credit when it dies, so the next target starts a fresh pair (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'resets a target\'s credit when it dies, so the next target starts a fresh pair',
     async () => {
       const { createMatchupLedger, creditResistedHit, forgetTarget } =
         await hexMatchup();
@@ -303,8 +303,8 @@ describe('resisted-credit ledger (the ×0.5 tie rule)', () => {
     },
   );
 
-  it.fails(
-    'is deterministic: two independent ledgers with the same hits agree (no RNG) (RED-first: flips to `it` once AH-0MWL88JJM004ORZS lands hexMatchup)',
+  it(
+    'is deterministic: two independent ledgers with the same hits agree (no RNG)',
     async () => {
       const { createMatchupLedger, creditResistedHit } = await hexMatchup();
       const run = (): number[] => {
