@@ -165,6 +165,20 @@ describe('Bot framework is documented (AH-0MUY08WKB002N1N6)', () => {
     expect(doc).toContain('0.5099');
   });
 
+  it('documents the reverse reflex-vs-cadence split (AH-0MWPD1IH8005GHSK)', () => {
+    // Section 9.7 records that the reverse *request* is a per-tick reflex (like
+    // forward thrust) while the press duration and the committed bearing are
+    // the human-like elements. A cadence assertion therefore projects out both
+    // fast-reflex fields, not just `thrust`.
+    expect(doc).toContain('### 9.7 Reverse thrust');
+    expect(doc).toMatch(/Reflex vs\. cadence/);
+    expect(doc).toMatch(/reverse \*request\* is a fast/i);
+    expect(doc).toMatch(/same `else if \(typeof/i);
+    for (const symbol of ['`thrust`', '`reverse`', '`reactionTimeMs`', '`dirX`/`dirY`']) {
+      expect(doc).toContain(symbol);
+    }
+  });
+
   it('documents the oscillation damping and its harnesses (AH-0MWT4BBYO0085CN8 · RAC5)', () => {
     // The three damping controls and what `0`/off restores.
     for (const symbol of [

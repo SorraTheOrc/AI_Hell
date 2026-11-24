@@ -511,13 +511,29 @@ often:
   factor), using separate seeded RNG streams so the forward press sequence is
   unchanged. The bot never toggles reverse every frame.
 
+**Reflex vs. cadence (AH-0MWPD1IH8005GHSK).** The reverse *request* is a fast
+braking reflex, exactly like forward thrust: while the chosen bearing stays
+committed for the human reaction window, `BotInputGovernor.update`
+re-evaluates `decision.reverse` every tick (the same `else if (typeof
+decision.thrust === 'boolean')` branch) so a brake engages on time instead of
+overshooting inside a held pulse. The human-like element is the *press
+duration* hold (`reversePressMinMs`/`reversePressMaxMs`), which keeps the key
+down for a perceptible burst rather than toggling it frame by frame. The
+committed target *bearing* (`dirX`/`dirY` plus the cardinal booleans,
+`longTravel` and `aim`) is what the reaction cadence governs: it is held for
+`reactionTimeMs` and only re-chosen at a commit. So a cadence assertion must
+project out both fast-reflex fields (`thrust` **and** `reverse`) and compare
+the held bearing — otherwise an in-window brake reads as a cadence failure.
+
 The relevant tunables are single-sourced in `COMPETENT_BOT_TUNABLES`
 (`reverseBrakeEnabled`, `reverseImminentOvershootGap`, `reverseRetreatRange`)
 and `BOT_HUMAN_INPUT_TUNABLES` (`reversePressMinMs`, `reversePressMaxMs`,
-`reversePressGentleMinPct`, `reversePressGentleMaxPct`).  A deterministic
-seeded run pins the regression: the restricted model cuts reverse presses over
-an integration demo window from 38 to 9 (528 → 138 reverse ticks) versus the
-pre-change baseline.
+`reversePressGentleMinPct`, `reversePressGentleMaxPct`).  The reverse *request*
+is re-evaluated every tick like forward thrust; only the press duration is
+humanised, and the committed bearing is held for `reactionTimeMs`.  A
+deterministic seeded run pins the regression: the restricted model cuts
+reverse presses over an integration demo window from 38 to 9
+(528 → 138 reverse ticks) versus the pre-change baseline.
 
 **The reverse forward model consumes the live reverse physics
 (AH-0MV85WGOO0066I9X).** The `collect`/`engage` brake-assist does not just ask
