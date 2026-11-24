@@ -32,6 +32,7 @@ import {
   OPTIONS_MAX_PODS,
   OPTIONS_ORBIT_RADIUS,
   OPTIONS_POD_BULLET_SPEED,
+  type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
 import { resolveWeaponDefinition } from '../../utils/weaponLevels';
@@ -214,6 +215,12 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   // ── Hooks ────────────────────────────────────────────────────────
   protected override onWeaponFired(weaponId: string): void {
     this.hooks.push(`onWeaponFired:${weaponId}`);
+  }
+  protected override onEvolvedWeaponFired(
+    evolvedId: string,
+    _def: WeaponDefinition,
+  ): void {
+    this.hooks.push(`onEvolvedWeaponFired:${evolvedId}`);
   }
   protected override onPlayerBulletHitsEnemy(
     enemy: StubEnemy,
@@ -3166,5 +3173,45 @@ describe('CombatScene — weapon-evolution verification harness (AH-0MWU7BAA0009
     for (const row of result.rows) {
       expect(row.hitsRequired).toBe(200);
     }
+  });
+});
+
+// ── Field-tier evolution through the shared fire path (AH-0MWU7BAXI003HBP3) ─
+
+describe('CombatScene — field-tier evolution through the shared fire path (AH-0MWU7BAXI003HBP3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  it('dispatches the evolved weapon through the shared spawn path, one instance per onset', async () => {
+    booted = await bootScene([StubCombatScene]);
+    const scene = booted.scene as StubCombatScene;
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+    player.equipWeapon('ricochet');
+    player.equipWeapon('arc');
+
+    const before = scene.hooks.length;
+    scene.runAutoFire(0.01); // t = 10 ms, the fusion's first onset at t = 0
+
+    const newHooks = scene.hooks.slice(before);
+    // The evolved weapon fires through its own hook, and neither half fires
+    // its own pattern while the fusion is live.
+    expect(newHooks).toContain('onEvolvedWeaponFired:chain_ricochet');
+    expect(newHooks).not.toContain('onWeaponFired:ricochet');
+    expect(newHooks).not.toContain('onWeaponFired:arc');
+
+    // The fused definition spawns exactly one bullet per onset (damage
+    // parity, epic AC5) and it carries the primary half's base weapon id so
+    // hex matchup classification stays a base id (epic AC11).
+    const evolvedBullets = scene
+      .getPlayerBullets()
+      .filter((bullet) => bullet.weaponId === 'ricochet');
+    expect(evolvedBullets).toHaveLength(1);
   });
 });

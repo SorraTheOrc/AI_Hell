@@ -21,6 +21,7 @@ import { createBeatClock, isOnGrid } from '../utils/beat';
 import { euclidPattern, isOnset } from '../utils/euclid';
 import { isOnBeatGrid, WEAPON_CATALOGUE, type WeaponId } from '../utils/weapons';
 import { resolveWeaponAtLevel } from '../utils/weaponLevels';
+import { resolveEvolvedWeaponPattern } from '../utils/weaponEvolutions';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
 import * as effects from '../audio/effects';
@@ -2333,5 +2334,117 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
     expect(player.tryFire(0.3)).toEqual(['cannon']); // onset at 250 ms
     expect(player.getLastShotTime('cannon')).toBe(250);
     expect(isOnset(250, euclidPattern(9, 16), 125, 0)).toBe(true);
+  });
+});
+describe('Player — field-tier weapon evolution (AH-0MWU7BAXI003HBP3)', () => {
+  let booted: BootedGame | null = null;
+  const tick = () => advanceGame(booted!.game, 200);
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    seedConfigStore([], { ...FOUR_DIR_CONFIG, controlScheme: 'fourDirectional' });
+    window.localStorage.removeItem(RULES_STORAGE_KEY);
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.removeItem(RULES_STORAGE_KEY);
+    document.body.innerHTML = '';
+  });
+
+  /** Boots the player and re-anchors the shared beat clock at t = 0. */
+  async function bootEvolutionPlayer(): Promise<Player> {
+    booted = await bootScene([GymPlayer]);
+    await tick();
+    const children = booted!.scene.sys.displayList.getChildren();
+    const player = children.find((c) => c instanceof Player) as
+      | Player
+      | undefined;
+    expect(player).toBeDefined();
+    player!.getBeatClock().reset();
+    player!.setBeatClock(player!.getBeatClock());
+    return player!;
+  }
+
+  it('reports a field fusion only while both halves are active', async () => {
+    const player = await bootEvolutionPlayer();
+
+    player.equipWeapon('ricochet');
+    expect(player.getActiveEvolution()).toBeNull();
+
+    player.equipWeapon('arc');
+    expect(player.getActiveEvolution()).toEqual({
+      evolvedId: 'chain_ricochet',
+      baseIds: ['ricochet', 'arc'],
+      reason: 'field',
+    });
+
+    // The evolved cadence is the authored ladder on the live lattice.
+    const expected = resolveEvolvedWeaponPattern('chain_ricochet', 0, 80);
+    expect(player.getEvolutionFirePattern()).toEqual(expected);
+    expect(player.getEvolutionNextShotTime()).toBe(0);
+  });
+
+  it('fires the evolved weapon instead of the two halves', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    player.equipWeapon('arc');
+
+    const fired = player.tryFire(0.01);
+    expect(player.getEvolutionFired()).toBe('chain_ricochet');
+    expect(fired).not.toContain('ricochet');
+    expect(fired).not.toContain('arc');
+
+    // Every evolved shot lands on a whole 16th-note tick and the evolved
+    // pattern's onsets, never on a bespoke interval.
+    expect(player.getEvolutionLastShotTime()).toBe(0);
+    player.tryFire(1.49); // t = 1500 ms, the rhythm's second onset
+    expect(player.getEvolutionFired()).toBe('chain_ricochet');
+    const shot = player.getEvolutionLastShotTime()!;
+    expect(shot % 187.5).toBe(0);
+    expect(isOnset(shot, euclidPattern(2, 16), 187.5, 0)).toBe(true);
+  });
+
+  it('stops the evolved weapon on the next bar downbeat when a half expires, then reverts the survivor', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    player.tickWeaponTimers(1000); // ricochet has 9 s left
+    player.equipWeapon('arc'); // arc is fresh at 10 s
+
+    player.tryFire(1.0); // t = 1000 ms; the fusion is sounding
+    expect(player.getEvolutionFired()).toBe('chain_ricochet');
+
+    // Expire the ricochet half: the fusion is queued to stop on the next bar
+    // downbeat (3000 ms), not immediately.
+    player.tickWeaponTimers(9000);
+    expect(player.getActiveEvolution()?.evolvedId).toBe('chain_ricochet');
+    expect(player.getPendingEvolution()).toEqual({
+      evolvedId: null,
+      effectiveAtMs: 3000,
+    });
+
+    // Still firing before the boundary…
+    player.tryFire(0.5); // t = 1500 ms
+    expect(player.getEvolutionFired()).toBe('chain_ricochet');
+
+    // …then stops on the downbeat and the surviving arc half reverts.
+    const fired = player.tryFire(1.5); // t = 3000 ms, a bar downbeat
+    expect(player.getActiveEvolution()).toBeNull();
+    expect(player.getEvolutionFired()).toBeNull();
+    expect(player.getPendingEvolution()).toBeUndefined();
+    expect(fired).toContain('arc');
+    expect(player.getLastShotTime('arc')).toBe(3000);
+  });
+
+  it('fires the fused definition as a single forward shot (damage parity contract)', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    player.equipWeapon('arc');
+
+    const def = player.getEvolvedWeaponDef('chain_ricochet');
+    expect(def.offsets).toEqual([0]);
+    expect(def.name).toBe('Chain Ricochet');
+    expect(def.id).toBe('ricochet');
   });
 });

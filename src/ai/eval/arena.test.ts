@@ -50,6 +50,7 @@ import {
   escapeClearsContact,
   hostileAimVelocity,
   hostileMotionVelocity,
+  resolveArenaEvolution,
   resolveStartingLives,
   resolveWeaponLoadout,
   runArena,
@@ -1441,6 +1442,11 @@ describe('shared weapon seam guard (AH-0MW5DV9I6001D4HN AC4)', () => {
     expect(bindings('../../utils/weapons')).toContain('createBulletsFromHeading');
     expect(bindings('../../utils/weaponLevels')).toContain('resolveWeaponAtLevel');
     expect(bindings('../../utils/weaponLevels')).toContain('resolveWeaponDefinition');
+    // The arena reads the one weapon-evolution resolver the game's Player also
+    // reads, never a second pairing answer (epic AH-0MWL7OWPF003E4TP AC1).
+    expect(bindings('../../utils/weaponEvolutions')).toContain(
+      'resolveWeaponEvolution',
+    );
   });
 });
 
@@ -2011,5 +2017,66 @@ describe('per-class motion profiles are the predictor’s class models (AH-0MWOK
     expect(movedShip).toEqual(early);
     expect(early.vx).toBeCloseTo(Math.cos(1) * 100, 6);
     expect(early.vy).toBeCloseTo(Math.sin(1) * 100, 6);
+  });
+});
+
+// ── Arena weapon evolution (AH-0MWU7BAXI003HBP3) ────────────────────
+
+describe('arena weapon evolution (AH-0MWU7BAXI003HBP3)', () => {
+  it('resolves no evolution for a lone half or an unpaired loadout', () => {
+    expect(
+      resolveArenaEvolution(resolveWeaponLoadout([{ id: 'ricochet', level: 2 }])),
+    ).toBeNull();
+    expect(
+      resolveArenaEvolution(
+        resolveWeaponLoadout([
+          { id: 'ricochet', level: 2 },
+          { id: 'rapid', level: 2 },
+        ]),
+      ),
+    ).toBeNull();
+  });
+
+  it('does not model the timed field tier — a level-1 pair is not fused (fidelity boundary)', () => {
+    // The arena models permanent ownership only: it has no timed field-pickup
+    // windows, so two level-1 grants do not form a field overlap here. The
+    // owned tier (level ≥ 2) is the only fusion the arena represents.
+    expect(
+      resolveArenaEvolution(
+        resolveWeaponLoadout([
+          { id: 'ricochet', level: 1 },
+          { id: 'arc', level: 1 },
+        ]),
+      ),
+    ).toBeNull();
+  });
+
+  it('resolves the evolved weapon once both halves are permanently owned at level ≥ 2', () => {
+    const evolution = resolveArenaEvolution(
+      resolveWeaponLoadout([
+        { id: 'ricochet', level: 2 },
+        { id: 'arc', level: 2 },
+      ]),
+    );
+
+    expect(evolution).not.toBeNull();
+    expect(evolution!.evolvedId).toBe('chain_ricochet');
+    expect(evolution!.baseIds).toEqual(['ricochet', 'arc']);
+    // Owned level 2 = upgrade index 1; the weaker half sets the fusion level.
+    expect(evolution!.level).toBe(1);
+    // The fused definition fires one forward shot and keeps the base identity.
+    expect(evolution!.definition.offsets).toEqual([0]);
+    expect(evolution!.definition.id).toBe('ricochet');
+    expect(evolution!.stats).toEqual(resolveWeaponAtLevel('ricochet', 1));
+  });
+
+  it('reads the shared resolver, so the arena and the game cannot disagree', () => {
+    // Two halves at level 2 is the owned tier; the resolver the Player reads
+    // reports the same pairing (no second pairing answer in the arena).
+    const loadout = resolveWeaponLoadout([
+      { id: 'cluster', level: 2 },
+      { id: 'mortar', level: 2 },
+    ]);
+    expect(resolveArenaEvolution(loadout)?.evolvedId).toBe('cluster_barrage');
   });
 });

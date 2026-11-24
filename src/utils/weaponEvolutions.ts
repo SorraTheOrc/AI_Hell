@@ -79,8 +79,11 @@ import {
   SIXTEENTH_NOTE_SUBDIVISIONS,
   beatSubdivisionMs,
 } from './beat';
-import { WEAPON_IDS, type WeaponId } from './weapons';
-import type { EuclideanPattern } from './weaponLevels';
+import { WEAPON_IDS, type WeaponDefinition, type WeaponId } from './weapons';
+import {
+  resolveWeaponDefinition,
+  type EuclideanPattern,
+} from './weaponLevels';
 
 // ── Evolved weapon ids and presentation ─────────────────────────────
 
@@ -399,6 +402,69 @@ export function resolveWeaponEvolution(
 }
 
 // ── Evolved cadence ─────────────────────────────────────────────────
+
+/**
+ * Resolves the catalogue definition an evolved weapon fires through the shared
+ * fire path.
+ *
+ * An evolved weapon is **resolved output, not a catalogue row**, so it borrows
+ * the primary half's catalogue definition (its first {@link WeaponPairing.baseIds}
+ * entry) for projectile visuals, lifetime, bounce and downstream behaviour, and
+ * overrides the parts a fusion owns:
+ *
+ * - `name` / `description` / `bulletColor` come from the evolved definition;
+ * - `offsets` is reduced to a **single forward shot**, so a fusion emits exactly
+ *   one damage instance per onset (epic AC5 — the child-2 verification harness
+ *   pins this) instead of multiplying both halves' volleys;
+ * - `aoe` / `orbit` / `hitscan` are cleared: an evolved weapon is a travelling
+ *   pattern, never the base's area effect, escort or beam;
+ * - `fireRateMs` is the evolved rhythm's **average** onset interval, so the
+ *   tick-based bot arena fires it at the fused cadence.
+ *
+ * `id` stays the primary base id on purpose: a shot's weapon identity is what
+ * the hex-matchup classification reads, and an evolved weapon always classifies
+ * as its **base** id(s) (epic AC11).
+ *
+ * Pure and deterministic. The shipped table is validated at module load, so a
+ * shipped evolved id always resolves.
+ *
+ * @param evolvedId - The evolved weapon to resolve.
+ * @param level - Evolution level used to resolve the primary half's stats
+ *   (0 = base; negative/fractional values are clamped).
+ * @param bpm - Tempo for the nominal cadence (default 80).
+ * @throws Error when `evolvedId` is not an authored evolved weapon.
+ */
+export function resolveEvolvedWeaponDefinition(
+  evolvedId: EvolvedWeaponId,
+  level = 0,
+  bpm: number = DEFAULT_BPM,
+): WeaponDefinition {
+  const definition = getEvolvedWeaponDefinition(evolvedId);
+  const pairing = WEAPON_PAIRINGS.find(
+    (candidate) => candidate.evolvedId === evolvedId,
+  );
+  if (!pairing) {
+    // The table validator makes this unreachable for a shipped id.
+    throw new Error(
+      `Evolved weapon ${String(evolvedId)} has no authored pairing`,
+    );
+  }
+  const primaryId = pairing.baseIds[0];
+  const base = resolveWeaponDefinition(primaryId, level);
+  const pattern = resolveEvolvedWeaponPattern(evolvedId, level, bpm);
+  return {
+    ...base,
+    name: definition.name,
+    description: definition.description,
+    bulletColor: definition.colour,
+    offsets: [0],
+    sideOffsets: undefined,
+    aoe: undefined,
+    orbit: undefined,
+    hitscan: undefined,
+    fireRateMs: (pattern.stepMs * pattern.n) / pattern.k,
+  };
+}
 
 /**
  * Resolves the Euclidean rhythm an evolved weapon plays at `level` — the

@@ -100,6 +100,7 @@ import {
   type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
+import type { EvolvedWeaponId } from '../../utils/weaponEvolutions';
 import {
   advanceOrbitPhase,
   optionsPodFireDirections,
@@ -692,6 +693,22 @@ export class CombatCoreScene<
   protected onWeaponFired(_weaponId: WeaponId): void {}
 
   /**
+   * Plays the firing cue for a live weapon evolution (epic
+   * AH-0MWL7OWPF003E4TP, field tier). Called by
+   * {@link CombatCoreScene._autoFire} once per evolved volley, through the same
+   * shared spawn path as a catalogue weapon, so the game and every gym fire an
+   * identical evolved shot. Default no-op; the fusion feedback child overrides
+   * it with the dedicated cue.
+   *
+   * @param _evolvedId - The evolved weapon that fired.
+   * @param _def - The evolved weapon's resolved definition.
+   */
+  protected onEvolvedWeaponFired(
+    _evolvedId: EvolvedWeaponId,
+    _def: WeaponDefinition,
+  ): void {}
+
+  /**
    * Shared AOE dispatch hook (parent AH-0MUOOB3OR001V8CD): called by
    * {@link CombatCoreScene._autoFire} once for every AOE weapon that fires,
    * with the firing weapon and the ship position. Default no-op; the shared
@@ -1069,11 +1086,35 @@ export class CombatCoreScene<
       player.setBeatClock(this.beatClock);
     }
     const fired = player.tryFire(dt);
-    if (fired.length === 0) return;
+    // A live evolution consumes its two halves and fires the evolved pattern
+    // instead. It dispatches through this same shared spawn path, so the game
+    // and every gym spawn an identical evolved shot (epic AC3).
+    const evolvedId = player.getEvolutionFired();
+    if (fired.length === 0 && !evolvedId) return;
+    const shots: Array<{
+      weaponId: WeaponId;
+      def: WeaponDefinition;
+      evolvedId: EvolvedWeaponId | null;
+    }> = fired.map((weaponId) => ({
+      weaponId,
+      def: player.getWeaponDef(weaponId),
+      evolvedId: null,
+    }));
+    if (evolvedId) {
+      const def = player.getEvolvedWeaponDef(evolvedId);
+      shots.push({ weaponId: def.id, def, evolvedId });
+    }
     const headingDeg = (player.getHeading() * 180) / Math.PI;
-    for (const weaponId of fired) {
-      this.onWeaponFired(weaponId);
-      const def = player.getWeaponDef(weaponId);
+    for (const {
+      weaponId,
+      def,
+      evolvedId: shotEvolution,
+    } of shots) {
+      if (shotEvolution) {
+        this.onEvolvedWeaponFired(shotEvolution, def);
+      } else {
+        this.onWeaponFired(weaponId);
+      }
       // The shot's heading is resolved **once per shot, before** any VFX is
       // spawned. Hitscan weapons (the wave laser) draw a random direction from
       // the scene's seeded RNG, biased toward the nearest living enemy

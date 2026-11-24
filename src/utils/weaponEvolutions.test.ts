@@ -29,6 +29,7 @@ import {
   WEAPON_PAIRINGS,
   assertValidWeaponEvolutionTable,
   getEvolvedWeaponDefinition,
+  resolveEvolvedWeaponDefinition,
   resolveEvolvedWeaponPattern,
   resolveWeaponEvolution,
   validateWeaponEvolutionTable,
@@ -545,5 +546,55 @@ describe('cross-cutting verification harness (AH-0MWU7BAA0009X1MN)', () => {
     expect(offLattice.violations.map((violation) => violation.rule)).toContain(
       'lattice/step-off-16th',
     );
+  });
+});
+
+// ── Fused fire definition (field tier, AH-0MWU7BAXI003HBP3) ─────────
+
+describe('resolveEvolvedWeaponDefinition — the fused fire definition', () => {
+  it('fires exactly one forward shot per onset, so a fusion is never a damage multiplier', () => {
+    for (const pairing of WEAPON_PAIRINGS) {
+      const def = resolveEvolvedWeaponDefinition(pairing.evolvedId);
+      // One offset = one damage instance per cadence tick (harness AC5).
+      expect(def.offsets).toEqual([0]);
+      expect(def.sideOffsets).toBeUndefined();
+      // An evolved weapon is a travelling pattern, never the base response.
+      expect(def.aoe).toBeUndefined();
+      expect(def.orbit).toBeUndefined();
+      expect(def.hitscan).toBeUndefined();
+    }
+  });
+
+  it('carries the evolved name, description and palette colour', () => {
+    const def = resolveEvolvedWeaponDefinition('chain_ricochet');
+    const evolved = getEvolvedWeaponDefinition('chain_ricochet');
+
+    expect(def.name).toBe(evolved.name);
+    expect(def.description).toBe(evolved.description);
+    expect(def.bulletColor).toBe(evolved.colour);
+    // The shot keeps the primary half's catalogue identity, so hex matchup
+    // classification still reads a base id (epic AC11).
+    expect(def.id).toBe('ricochet');
+  });
+
+  it('uses the evolved rhythm average as its nominal fire interval', () => {
+    for (const pairing of WEAPON_PAIRINGS) {
+      const def = resolveEvolvedWeaponDefinition(pairing.evolvedId, 0, 80);
+      const pattern = resolveEvolvedWeaponPattern(pairing.evolvedId, 0, 80);
+      expect(def.fireRateMs).toBeCloseTo(
+        (pattern.stepMs * pattern.n) / pattern.k,
+        9,
+      );
+    }
+  });
+
+  it('is deterministic and level-clamped', () => {
+    const first = resolveEvolvedWeaponDefinition('cluster_barrage', 3);
+    const second = resolveEvolvedWeaponDefinition('cluster_barrage', 3);
+    expect(second).toEqual(first);
+    // Fractional / non-finite levels clamp without throwing.
+    expect(() =>
+      resolveEvolvedWeaponDefinition('cluster_barrage', Number.NaN),
+    ).not.toThrow();
   });
 });

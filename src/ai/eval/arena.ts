@@ -296,6 +296,11 @@ import {
   type WeaponLevelStats,
 } from '../../utils/weaponLevels';
 import {
+  resolveEvolvedWeaponDefinition,
+  resolveWeaponEvolution,
+  type EvolvedWeaponId,
+} from '../../utils/weaponEvolutions';
+import {
   isInAoEArea,
   selectAoETargets,
   selectRandomPoint,
@@ -1406,6 +1411,64 @@ export function resolveWeaponLoadout(
   });
 }
 
+/** The live evolution the arena fires, resolved from its loadout. */
+export interface ArenaEvolution {
+  /** The evolved weapon the one resolver reported live. */
+  readonly evolvedId: EvolvedWeaponId;
+  /** The two catalogue halves the evolved weapon replaces. */
+  readonly baseIds: readonly WeaponId[];
+  /** Evolution level: the weaker half's upgrade index. */
+  readonly level: number;
+  /** The fused definition fired through the shared `fireWeapon` path. */
+  readonly definition: WeaponDefinition;
+  /** The level-resolved stats of the fired definition's primary half. */
+  readonly stats: WeaponLevelStats;
+}
+
+/**
+ * Resolves the arena's live weapon evolution from its fire loadout — **the
+ * same** {@link resolveWeaponEvolution} resolver the game's `Player` reads, so
+ * the bot arena never derives a second pairing answer (epic AC1).
+ *
+ * The arena models **permanent ownership only** (timed field pickups never
+ * enter its loadout), so it passes an empty timed active set: the resolver's
+ * *field* tier is a timed overlap the arena cannot represent, leaving the
+ * *owned* tier (`both halves owned at level ≥ 2`) as the only live fusion it
+ * models. While a fusion is live its two halves do not also fire: the evolved
+ * weapon replaces them.
+ *
+ * Pure and deterministic. Returns `null` when no pairing is live.
+ *
+ * @param loadout - The resolved fire loadout (cannon + permanent grants).
+ */
+export function resolveArenaEvolution(
+  loadout: readonly ArenaWeaponLoadout[],
+): ArenaEvolution | null {
+  const resolution = resolveWeaponEvolution({
+    // No timed field-pickup windows exist in the arena, so the resolver's
+    // *field* tier is not modelled; permanent levels are the only ownership
+    // state the arena carries.
+    activeWeaponIds: [],
+    permanentWeaponLevels: loadout
+      .filter((weapon) => weapon.ownedLevel > 0)
+      .map((weapon) => ({ id: weapon.id, level: weapon.ownedLevel })),
+  });
+  if (!resolution.evolvedId) return null;
+  const halfLevels = resolution.baseIds.map(
+    (baseId) => loadout.find((weapon) => weapon.id === baseId)?.level ?? 0,
+  );
+  const level =
+    halfLevels.length > 0 ? Math.min(...halfLevels) : 0;
+  const definition = resolveEvolvedWeaponDefinition(resolution.evolvedId, level);
+  return {
+    evolvedId: resolution.evolvedId,
+    baseIds: resolution.baseIds,
+    level,
+    definition,
+    stats: resolveWeaponAtLevel(definition.id, level),
+  };
+}
+
 /**
  * Runs one headless arena run for `policy` (AC1).
  *
@@ -2126,6 +2189,12 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
    * weapon fires on its own cadence instead of sharing one global counter.
    */
   const weaponCooldowns = new Map<WeaponId, number>();
+  /**
+   * Ticks until the live evolution (if any) fires again. The arena's
+   * tick-based cadence replaces the game's Euclidean scheduling, so the fused
+   * definition's nominal rate drives it exactly as a catalogue weapon's does.
+   */
+  let evolutionCooldown = 0;
   /** Memoises the shared `(id, level)` resolution for the length of the run. */
   const weaponCache = new Map<string, ResolvedWeapon>();
 
@@ -2331,10 +2400,17 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     //
     // Cadence divergence: the game's beat clock is replaced by an integer tick
     // interval derived from the resolved `fireRateMs` (see `fireRateTicks`).
-    for (const weapon of resolveWeaponLoadout(
+    const loadout = resolveWeaponLoadout(
       holdChoice.getWeaponLevels(),
       weaponCache,
-    )) {
+    );
+    // The same one resolver the game's `Player` reads: a live fusion fires the
+    // evolved weapon instead of its two halves — no second pairing answer is
+    // derived here (epic AC1).
+    const evolution = resolveArenaEvolution(loadout);
+    const fusedBases = new Set<WeaponId>(evolution?.baseIds ?? []);
+    for (const weapon of loadout) {
+      if (fusedBases.has(weapon.id)) continue;
       const cooldown = weaponCooldowns.get(weapon.id) ?? 0;
       if (cooldown > 0) {
         weaponCooldowns.set(weapon.id, cooldown - 1);
@@ -2346,6 +2422,24 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       );
       fireWeapon(weapon, tick);
       if (campaignFinished) break;
+    }
+    if (campaignFinished) break;
+    if (evolution) {
+      if (evolutionCooldown > 0) {
+        evolutionCooldown -= 1;
+      } else {
+        evolutionCooldown = fireRateTicks(evolution.definition.fireRateMs, dt);
+        fireWeapon(
+          {
+            id: evolution.definition.id,
+            ownedLevel: evolution.level + 1,
+            level: evolution.level,
+            definition: evolution.definition,
+            stats: evolution.stats,
+          },
+          tick,
+        );
+      }
     }
     if (campaignFinished) break;
 
