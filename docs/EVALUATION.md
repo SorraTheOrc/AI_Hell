@@ -450,44 +450,45 @@ Committed evidence:
 
 | Ring | Line | Per-deployment (mean) | Total (mean, min–max) | Losses | Expected losses | Budget |
 |---|---|---|---|---|---|---|
-| 1 (6 hexes) | grind | 1.70 min | **15.4 min** (13.9–17.3) | 6.0 | 6.0 | 30–90 min · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | grind | 10.42 min | **23.7 min** (23.5–23.9) | 3.0 | 3.0 | 30–90 min · **missed** (AH-0MWFDQ9EY004NO4X) |
 | 1 (6 hexes) | rush | 0.21 min | **10.2 min** (9.4–10.9) | 1.0 | 4.5 | not applicable (ring not secured) |
-| 2 (12 hexes) | grind | 16.51 min | **57.0 min** (46.0–70.8) | 12.0 | 12.0 | 60–180 min · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | grind | 22.18 min | **51.7 min** (50.8–52.5) | 6.0 | 6.0 | 60–180 min · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
 | 2 (12 hexes) | rush | 0.43 min | **21.5 min** (19.8–24.9) | 1.0 | 8.7 | not applicable (ring not secured) |
 
 The **Per-deployment (mean)** column is the artifact's
 `summary.deploymentMinutes.mean` for that ring and line — the measured arena
 time of a single one-level deployment, which is what the retry term replays and
 what the grind totals are built from. It is deliberately **not** the ring total
-(that is the next column): ring 2 grind is 16.51 min of measured deployments
-plus 24 min of modelled between-sortie visits plus 16.51 min of modelled retries
-plus 0.0 min of re-capture, which sums to the 57.0 min total.
+(that is the next column): ring 2 grind is 22.18 min of measured deployments
+plus 24 min of modelled between-sortie visits plus 5.50 min of modelled retries
+(six losses replaying their own measured length) plus 0.0 min of re-capture,
+which sums to the 51.7 min total.
 
 Reading the baseline:
 
-- **The verdicts are re-rated against the per-hex budget.** The one-level
-sortie is quick enough that the competent bot dies to enemy fire before the
-wave-5 clear on every deployment: ring 1 grind measures **15.4 min** and
-**misses** the derived 30–90 window, while ring 2 grind **57.0 min** sits
-**within-tolerance** of the derived 60–180 window (the ±12-minute tolerance
-floor is 48 min). Both figures were re-measured after the AH-0MWJ1680Z001QYV2
-audit follow-up (calmer flight, pass-through collection, a tighter aim hold).
+- **The verdicts are re-rated against the per-hex budget.** The per-level arena
+honours each wave's `shootEnabled` gate (AH-0MWFDQ9EY004NO4X), so the levels
+1–3 opening is the no-fire sortie it is in the game: the weaker hexes are
+captured and the firing tail is lost. Ring 1 grind measures **23.7 min** and
+**misses** the derived 30–90 window (0.3 min under the 24-minute tolerance
+floor), while ring 2 grind **51.7 min** sits **within-tolerance** of the
+derived 60–180 window (the ±12-minute tolerance floor is 48 min).
 The budget assertion states a **10 %
 tolerance** of each window's width (±6 min for ring 1, ±12 min for ring 2).
 Each verdict is re-computed by the harness and re-ruled by its own linked
 rebalancing item — **AH-0MWFDQ9EY004NO4X** (ring 1) and
 **AH-0MWFDQCFV007BZE5** (ring 2) — never re-worded.
-- **The playstyle trade is real.** The rush line is **faster** (10.2 vs 15.4 min
-for ring 1; 21.5 vs 57.0 min for ring 2) but **riskier** — it leaves five (ring
+- **The playstyle trade is real.** The rush line is **faster** (10.2 vs 23.7 min
+for ring 1; 21.5 vs 51.7 min for ring 2) but **riskier** — it leaves five (ring
 1) / eleven (ring 2) hexes exposed (≈3.5 / 7.7 expected retakes), forfeits the
 salvage of its failed attempts and does not secure the ring, while the grind
 secures it. Neither line dominates.
-- **The retry allowance is large because every sortie is a loss.** With no
-first-attempt captures, the loss-charged retry replays each deployment at its
-own measured length, so a ring's total is mostly deployment time plus the
-between-sortie visits plus the replayed set. The rush line adds the exposed-hex
-re-capture bill (measured mean deployment + the 2-minute visit) at the shipped
-70 % frontier attack chance.
+- **The retry allowance prices only the lost attempts.** A captured sortie is
+not retried, so a ring's total is its measured deployment time plus the
+between-sortie visits plus the replay of the *lost* half (three of six on ring
+1, six of twelve on ring 2). The rush line adds the exposed-hex re-capture bill
+(measured mean deployment + the 2-minute visit) at the shipped 70 % frontier
+attack chance.
 
 ### Confidence and fidelity boundary
 
@@ -513,10 +514,13 @@ re-capture bill (measured mean deployment + the 2-minute visit) at the shipped
   strongest owned hull) and pins it per ring, so a reader can see which
   assumption a budget verdict rests on (AH-0MW9QA2YC009PSF5).
 - **Aggression growth.** Each ring is measured from its **authored base
-  aggressions** — the numbers the map publishes and the design's budget
-  arithmetic uses. The frontier's between-sortie rise is a separate risk
-  mechanic; `aggressionRisePerSortie` is an explicit sensitivity knob (default
-  `0`) rather than a hidden assumption.
+  aggressions** — the numbers the map publishes — plus its **capture-progress
+  ramp** (`deploymentAggressionFor`, AH-0MWFDQ9EY004NO4X): a fresh ring deploys
+  at its authored aggression and every hex taken in the ring raises the later
+  deployments, by up to `HEX_AGGRESSION_RAMP_PER_RING` (two aggression points)
+  across the whole ring. It is the same rule the game's deployment builder
+  applies, not a harness-only assumption; ring 2's own ruling is tracked by
+  AH-0MWFDQCFV007BZE5.
 
 ## Testing
 

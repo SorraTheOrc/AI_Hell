@@ -987,8 +987,19 @@ function buildSpawnPlan(
   return { mineralReservoir, powerUpReservoir, hostileReservoir };
 }
 
-/** A per-level campaign wave plan: one `HostileSpec[]` per wave, in play order. */
-type LevelWavePlan = readonly (readonly HostileSpec[])[];
+/**
+ * One planned per-level campaign wave: the hostiles it spawns and the wave's
+ * authored `shootEnabled` gate (GDD §2.4: levels 1–3 do not fire; §2.5:
+ * levels 4–10 do).
+ */
+interface LevelWave {
+  readonly members: readonly HostileSpec[];
+  /** The wave's `shootEnabled` gate, passed to every member it spawns. */
+  readonly shootEnabled: boolean;
+}
+
+/** A per-level campaign wave plan: one {@link LevelWave} per wave, in play order. */
+type LevelWavePlan = readonly LevelWave[];
 
 /**
  * A seeded field position drawn from a stream, inset from the playfield edge
@@ -1067,7 +1078,11 @@ function buildLevelWavePlan(
       pushGroup(members, group.enemyKey, Math.max(1, Math.trunc(group.count)));
     }
     for (const key of waveSpawnerExtras(wave)) pushGroup(members, key, 1);
-    return members;
+    // The wave's fire gate travels WITH the plan: the per-level path honours
+    // the same `shootEnabled` the shared WaveManager tells the game, so a
+    // levels-1–3 sortie faces "enemies are the bullets" and nothing shoots
+    // (AH-0MWFDQ9EY004NO4X; GDD §2.4/§2.5).
+    return { members, shootEnabled: wave.shootEnabled !== false };
   });
 }
 
@@ -1665,9 +1680,11 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // Hostile behaviour comes from the archetype's shared EnemyConfig:
     // radius (size), hit points (health), fire cadence (fireInterval in ms),
     // projectile speed (bulletSpeed) and fire chance (shotProbability).
-    // Asteroids carry their own config and never fire. The full-campaign
-    // path honours the wave's `shootEnabled` gate (GDD §2.4/§2.5: Levels
-    // 1–3 do not fire), exactly as the shared manager tells the game.
+    // Asteroids carry their own config and never fire. Both campaign paths
+    // (per-level and full) honour the wave's `shootEnabled` gate (GDD
+    // §2.4/§2.5: Levels 1–3 do not fire), exactly as the shared manager tells
+    // the game — the per-level plan carries each wave's gate
+    // (AH-0MWFDQ9EY004NO4X).
     const enemy = enemyByKey.get(spec.archetype);
     const health = Math.max(1, Math.trunc(positiveOr(enemy?.health, 1)));
     const radius = positiveOr(enemy?.size, FALLBACK_HOSTILE_RADIUS);
@@ -1744,10 +1761,12 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   /** Set when the shared manager triggers the final boss (run ends). */
   let campaignFinished = false;
 
-  /** Spawns every member of one per-level campaign wave. */
+  /** Spawns every member of one per-level campaign wave, under its fire gate. */
   const spawnWave = (waveIndex: number): void => {
-    for (const member of wavePlan[waveIndex] ?? []) {
-      spawnHostile(member, nextHostileId(), waveIndex);
+    const wave = wavePlan[waveIndex];
+    if (!wave) return;
+    for (const member of wave.members) {
+      spawnHostile(member, nextHostileId(), waveIndex, wave.shootEnabled);
     }
   };
 

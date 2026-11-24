@@ -59,7 +59,7 @@ import {
   type PermanentUpgradeLevels,
 } from '../../core/hangarWar/hangarEconomy';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
-import { hexAggressionLevel } from '../../core/hangarWar/hexDifficulty';
+import { deploymentAggressionFor, hexAggressionLevel } from '../../core/hangarWar/hexDifficulty';
 import { capDropIdsToSlotPool } from '../../powerups/slots';
 import {
   grantPermanentPowerUp,
@@ -347,7 +347,12 @@ function carriedWeaponLevels(
  * Resolution order follows the economy: the active hull/loadout come from
  * `resolveActiveHull`/`resolveActiveLoadout`, so corrupt saves can never
  * deploy an unowned ship or an unowned weapon, and the aggression comes from
- * the target hex (see {@link selectDeploymentHex}). An empty loadout resolves
+ * the target hex **plus the ring's own capture-progress ramp** (see
+ * {@link selectDeploymentHex} and {@link deploymentAggressionFor}): a fresh
+ * ring deploys at its authored aggression, and every hex the player already
+ * holds in that ring raises it, by up to `HEX_AGGRESSION_RAMP_PER_RING` across
+ * the whole ring and bounded by the frontier ceiling
+ * (AH-0MWFDQ9EY004NO4X). An empty loadout resolves
  * to `startingWeapons: []`: the run then starts with only the ship's permanent
  * cannon (AH-0MVZJ6V1J001DA9D).
  *
@@ -368,7 +373,16 @@ export function buildHangarDeployment(
 ): HangarWarDeployment {
   const catalogue = options.catalogue ?? HANGAR_CATALOGUE;
   const hex = selectDeploymentHex(payload, options.hexId);
-  const aggression = toCount(hex?.aggression ?? DEFAULT_DEPLOYMENT_AGGRESSION);
+  // The ring's progress ramp (AH-0MWFDQ9EY004NO4X): the target hex's authored
+  // aggression plus one point per hex already held in the same ring. The rule
+  // lives in the shared difficulty module, so the game and the ring-timing
+  // harness resolve a deployment's aggression identically.
+  const heldInRing = payload.ring.hexes.filter((entry) => entry.held).length;
+  const aggression = deploymentAggressionFor(
+    toCount(hex?.aggression ?? DEFAULT_DEPLOYMENT_AGGRESSION),
+    heldInRing,
+    payload.ring.hexes.length,
+  );
   const startLevel = deploymentLevelForAggression(aggression);
   const hullId = resolveActiveHull(payload.hangar);
   const hull = resolveHullDefinition(hullId, catalogue);

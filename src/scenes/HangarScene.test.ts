@@ -338,18 +338,20 @@ describe('hangar screen model (pure)', () => {
 
   it('builds the deployment row from the pure deployment payload', () => {
     const model = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
-    // hex-1 is held; the weakest *unheld* hex is hex-2 (aggression 3), which
-    // selects campaign level 4 through the shipped difficulty curves.
+    // hex-1 is held; the weakest *unheld* hex is hex-2 (authored aggression 3).
+    // The ring's capture-progress ramp raises it (one of two hexes held = one
+    // of the two-point ramp, AH-0MWFDQ9EY004NO4X), so the row shows aggression
+    // 4 and campaign level 5 — the number the deployment actually launches at.
     expect(model.deployRow).toMatchObject({
       key: 'deploy',
       hexId: 'hex-2',
-      aggression: 3,
-      startLevel: 4,
+      aggression: 4,
+      startLevel: 5,
       actionable: true,
     });
     expect(model.deployRow.label).toContain('hex hex-2');
-    expect(model.deployRow.label).toContain('aggression 3');
-    expect(model.deployRow.label).toContain('level 4');
+    expect(model.deployRow.label).toContain('aggression 4');
+    expect(model.deployRow.label).toContain('level 5');
   });
 
   it('lists owned modifiers in the deployment selector', () => {
@@ -1263,8 +1265,9 @@ describe('HangarScene', () => {
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isHangarWarRun()).toBe(true);
     expect(play.getHangarWarDeployment()).toEqual(deployment);
-    // hex-2 (unheld, aggression 3) selects campaign level 4.
-    expect(play.getWaveManager().level).toBe(4);
+    // hex-2 (unheld, authored aggression 3, ramped to 4 by the ring's
+    // capture progress — AH-0MWFDQ9EY004NO4X) selects campaign level 5.
+    expect(play.getWaveManager().level).toBe(5);
   });
 
   it('launches the deployment from the DEPLOY row on a pointer click', async () => {

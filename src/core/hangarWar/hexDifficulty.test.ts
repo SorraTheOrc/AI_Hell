@@ -18,8 +18,10 @@ import { LEVEL_SCALING_MAX_LEVEL, enemyCountMultiplier } from '../levelScaling';
 import { MIN_LEVEL } from '../GameState';
 import {
   HEX_AGGRESSION_BASELINE,
+  HEX_AGGRESSION_RAMP_PER_RING,
   MAX_HEX_AGGRESSION,
   beatableAggressionCeiling,
+  deploymentAggressionFor,
   hexAggressionLevel,
   hexBossHpMultiplier,
   hexDifficultyProfile,
@@ -199,5 +201,67 @@ describe('beatableAggressionCeiling — the shared definition of beatable', () =
     expect(beatableAggressionCeiling(Number.NaN)).toBe(0);
     expect(beatableAggressionCeiling(Number.POSITIVE_INFINITY)).toBe(0);
     expect(beatableAggressionCeiling(-5)).toBe(0);
+  });
+});
+
+/**
+ * The ring's capture-progress ramp (AH-0MWFDQ9EY004NO4X): a deployment's
+ * aggression is the target hex's authored aggression plus a bounded ramp that
+ * grows with the fraction of the ring already held — the producer's ruling that
+ * a ring gets harder "a little" as the player takes hexes in it.
+ */
+describe('deploymentAggressionFor', () => {
+  it('leaves a fresh ring at its authored aggression', () => {
+    // 0 held = the authored value: nothing has been earned yet, so nothing
+    // ramps (the ruling's "if they own 0 hexes aggression is relatively low").
+    expect(deploymentAggressionFor(2, 0, 6)).toBe(2);
+    expect(deploymentAggressionFor(6, 0, 12)).toBe(6);
+  });
+
+  it('ramps proportionally to in-ring progress, up to the authored ramp', () => {
+    // The authored ramp is stated per ring, so a six-hex ring gains a point
+    // every third capture and reaches the full ramp when every hex is held.
+    expect(HEX_AGGRESSION_RAMP_PER_RING).toBe(2);
+    expect(deploymentAggressionFor(2, 1, 6)).toBe(2);
+    expect(deploymentAggressionFor(2, 2, 6)).toBe(2);
+    expect(deploymentAggressionFor(2, 3, 6)).toBe(3);
+    expect(deploymentAggressionFor(2, 5, 6)).toBe(3);
+    expect(deploymentAggressionFor(2, 6, 6)).toBe(4);
+  });
+
+  it('ramps a longer ring more gently per hex', () => {
+    // Twelve hexes: the first point arrives at six captures, not three.
+    expect(deploymentAggressionFor(5, 5, 12)).toBe(5);
+    expect(deploymentAggressionFor(5, 6, 12)).toBe(6);
+    expect(deploymentAggressionFor(5, 12, 12)).toBe(7);
+  });
+
+  it('resolves through the shipped level mapping', () => {
+    // One aggression point is one campaign level, so the ramp is a level ramp.
+    for (const held of [0, 3, 6]) {
+      const aggression = deploymentAggressionFor(1, held, 6);
+      expect(hexAggressionLevel(aggression)).toBe(1 + aggression);
+    }
+  });
+
+  it('never exceeds the frontier aggression ceiling', () => {
+    expect(deploymentAggressionFor(MAX_HEX_AGGRESSION, 6, 6)).toBe(
+      MAX_HEX_AGGRESSION,
+    );
+  });
+
+  it('honours an explicit ramp and treats an empty ring as un-ramped', () => {
+    expect(deploymentAggressionFor(2, 6, 6, 0)).toBe(2);
+    expect(deploymentAggressionFor(2, 6, 6, 6)).toBe(8);
+    // No ring to progress through (a fresh hangar): the authored value stands.
+    expect(deploymentAggressionFor(3, 4, 0)).toBe(3);
+  });
+
+  it('totalises unusable inputs instead of throwing', () => {
+    expect(deploymentAggressionFor(Number.NaN, 3, 6)).toBe(1);
+    expect(deploymentAggressionFor(-4, 3, 6)).toBe(1);
+    expect(deploymentAggressionFor(2, -3, 6)).toBe(2);
+    expect(deploymentAggressionFor(2, 3, 6, Number.NaN)).toBe(2);
+    expect(deploymentAggressionFor(Number.POSITIVE_INFINITY, 3, 6)).toBe(1);
   });
 });

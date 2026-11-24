@@ -422,6 +422,58 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     }
   });
 
+  /** The most enemy bullets ever in flight during a run (state samples). */
+  function peakEnemyBullets(result: ArenaRunResult): number {
+    let peak = 0;
+    for (const record of result.records) {
+      if (record.kind === 'tick') {
+        peak = Math.max(peak, record.state.enemyBullets.length);
+      }
+    }
+    return peak;
+  }
+
+  // GREEN since AH-0MWFDQ9EY004NO4X (the per-level fire gate).
+  it('honours the wave shootEnabled gate: the levels-1-3 opening never fires', () => {
+    // GDD §2.4: levels 1–3 are "enemies are the bullets" — no enemy fires a
+    // projectile. The per-level campaign path must read each wave's gate, or a
+    // no-fire sortie faces fire it never faces in the game (the fidelity gap
+    // that cost the ring-timing harness every first-attempt capture).
+    for (const level of [1, 2, 3]) {
+      const result = runArena(
+        createLegacyBotPolicy(),
+        perLevel(level, { sampleEveryTicks: 10 }),
+      );
+      expect(peakEnemyBullets(result), `level ${level}`).toBe(0);
+    }
+    // The gate is a gate, not a muzzle: a firing level still fires.
+    const firing = runArena(
+      createLegacyBotPolicy(),
+      perLevel(10, { sampleEveryTicks: 10 }),
+    );
+    expect(peakEnemyBullets(firing)).toBeGreaterThan(0);
+  });
+
+  // GREEN since AH-0MWFDQ9EY004NO4X (the per-level fire gate).
+  it('honours the fire gate of the truncated deployment sortie', () => {
+    // A hex deployment plays the level's first five waves through the
+    // `levelDefinition` seam. The gate travels with those waves, so a low
+    // aggression deployment (levels 1–3) is a no-fire sortie exactly as it is
+    // in the game, and a mid-ring deployment (level 5+) is not.
+    const sortie = (level: number): LevelDefinition =>
+      truncateCampaignForDeployment([getLevelDefinition(level)!])[0];
+    const quiet = runArena(createLegacyBotPolicy(), {
+      ...perLevel(2, { sampleEveryTicks: 10 }),
+      levelDefinition: sortie(2),
+    });
+    expect(peakEnemyBullets(quiet)).toBe(0);
+    const loud = runArena(createLegacyBotPolicy(), {
+      ...perLevel(5, { sampleEveryTicks: 10 }),
+      levelDefinition: sortie(5),
+    });
+    expect(peakEnemyBullets(loud)).toBeGreaterThan(0);
+  });
+
   // GREEN since AH-0MVLJFB1I0099X4Z (level selection).
   it('selects the level: levels differ from each other and from the seeded skirmish', () => {
     const run = (level: number): string =>

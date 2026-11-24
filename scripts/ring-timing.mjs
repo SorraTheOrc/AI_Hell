@@ -53,6 +53,7 @@ export function parseRingTimingArgs(argv = process.argv.slice(2)) {
     out: null,
     oneLevel: false,
     incomeOut: null,
+    aggressionRamp: null,
     help: false,
   };
   const rings = [];
@@ -98,6 +99,14 @@ export function parseRingTimingArgs(argv = process.argv.slice(2)) {
       case '--income-out':
         options.incomeOut = next();
         break;
+      case '--aggression-ramp': {
+        const value = Number(next());
+        if (!Number.isFinite(value) || value < 0) {
+          throw new Error(`--aggression-ramp must be a non-negative number (got ${argv[i]})`);
+        }
+        options.aggressionRamp = value;
+        break;
+      }
       case '--json':
         options.json = true;
         break;
@@ -136,6 +145,7 @@ function printHelp() {
       '  --out <file>          Write the JSON report to <file>.',
       '  --one-level           Measure the income view of the five-wave sortie (full-campaign mode, honouring the wave shootEnabled gate).',
       '  --income-out <file>   Write the per-deployment income + unlock-pace JSON (requires --one-level).',
+      '  --aggression-ramp <n> Aggression a ring gains across all its captures (default the authored ramp).',
       '  -h, --help            Show this help.',
       '',
       'Exit codes: 0 measured, 2 usage error, 1 an applicable budget was missed (never in --one-level mode).',
@@ -185,6 +195,9 @@ async function main(argv = process.argv.slice(2)) {
             ringIndex,
             strategy,
             seeds: options.seeds,
+            ...(options.aggressionRamp === null
+              ? {}
+              : { aggressionRampPerRing: options.aggressionRamp }),
             ...(options.oneLevel
               ? { runDeployment: core.createOneLevelArenaDeploymentRunner() }
               : {}),

@@ -1046,15 +1046,17 @@ replace storage behind the same injectable interface (§6.6).
   a few lost attempts — and **ring 2 (12 hexes) lands at 60–180 minutes**.
   Measured with the ring-timing harness on the shipped one-level **five-wave
   sortie** (a captured hex's grant owned from the next deployment, ring 1's
-  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **57.0
-  minutes** — 16.5 of measured deployments, 24 between sorties, 16.5 of
-  modelled retries and 0.0 of re-capture (16.5 + 24 + 16.5 + 0.0 = 57.0; it
-  moved 46.8 → 48.7 → 39.4 → 57.0 as the bot's control was
-  tuned; the last move is the AH-0MWJ1680Z001QYV2 audit follow-up) — so ring 2
-  plays retry-dominated and reads **within-tolerance** of its derived 60–180
-  window (±12 min, floor 48) with its rebalancing ruling live on
-  AH-0MWFDQCFV007BZE5; ring 1's **15.4 min** still **misses** the derived 30–90
-  window (AH-0MWFDQ9EY004NO4X).
+  grants entering ring 2; AH-0MW9QA2YC009PSF5), each ring's deployments ramp in
+  aggression as the ring's hexes are captured and the no-fire levels 1–3 play
+  as authored. The ring-2 grind is **51.7 minutes** — 22.2 of measured
+  deployments, 24 between sorties, 5.5 of modelled retries (the six lost
+  attempts replaying their own measured length) and 0.0 of re-capture
+  (22.2 + 24 + 5.5 + 0.0 = 51.7) — so ring 2 reads **within-tolerance** of its
+  derived 60–180 window (±12 min, floor 48) with its rebalancing ruling live on
+  AH-0MWFDQCFV007BZE5; ring 1 measures **23.7 minutes** (10.4 of measured
+  deployments + 12 between sorties + 1.3 of modelled retries + 0.0 of
+  re-capture) and still **misses** the derived 30–90 window, 0.3 minutes under
+  its 24-minute tolerance floor (AH-0MWFDQ9EY004NO4X).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.

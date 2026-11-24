@@ -156,6 +156,41 @@ const ringTimingDeploymentMean = (
 };
 
 /**
+ * The modelled **retry** mean (`retryMinutes` averaged over the seeds) the docs
+ * restate for a ring and line, formatted from the committed artifact
+ * (AH-0MWFDQ9EY004NO4X). Only lost deployments are retried, so this is no
+ * longer the per-deployment mean once captures exist; deriving it keeps the
+ * § Session shape split honest when the capture/loss mix moves.
+ */
+const ringTimingRetryMean = (
+  ringIndex: number,
+  strategy: string,
+  decimals = 1,
+): string => {
+  const artifact = JSON.parse(
+    fs.readFileSync(RING_TIMING_BASELINE_PATH, 'utf8'),
+  ) as Array<{
+    ringIndex: number;
+    strategy: string;
+    runs: Array<{ retryMinutes: number }>;
+  }>;
+  const entry = artifact.find(
+    (candidate) =>
+      candidate.ringIndex === ringIndex && candidate.strategy === strategy,
+  );
+  if (!entry || entry.runs.length === 0) {
+    throw new Error(
+      `ring-timing baseline artifact ${RING_TIMING_BASELINE_PATH} has no ` +
+        `${ringIndex}-${strategy} runs`,
+    );
+  }
+  const mean =
+    entry.runs.reduce((sum, run) => sum + run.retryMinutes, 0) /
+    entry.runs.length;
+  return mean.toFixed(decimals);
+};
+
+/**
  * The work item created to build the chosen loop (AC16).
  *
  * A stable id, asserted so the decision record and GDD §8 can never claim a
@@ -338,17 +373,20 @@ describe('Outer-loop candidates are documented (AH-0MVRNIWHG0099ZS3)', () => {
       // Collapse Markdown's hard line-wrapping so a phrase that spans a line
       // break still matches its stated terms.
       const flat = sessionShape.replace(/\s+/g, ' ');
-      const deploy = ringTimingDeploymentMean(2, 'grind'); // "16.5"
-      const total = ringTimingMean(2, 'grind'); // "57.0"
-      // The four split terms, each restated from the artifact.
+      const deploy = ringTimingDeploymentMean(2, 'grind'); // "22.2"
+      const retry = ringTimingRetryMean(2, 'grind'); // "5.5"
+      const total = ringTimingMean(2, 'grind'); // "51.7"
+      // The four split terms, each restated from the artifact. The retry term
+      // prices the LOST attempts only, so it is its own figure once the ring
+      // captures half its hexes (AH-0MWFDQ9EY004NO4X).
       expect(flat).toContain(`${deploy} of measured deployments`);
       expect(flat).toContain('24 between sorties');
-      expect(flat).toContain(`${deploy} of modelled retries`);
+      expect(flat).toContain(`${retry} of modelled retries`);
       expect(flat).toContain('0.0 of re-capture');
       // The section states the total as the artifact measures it, and shows the
       // four terms summing to that total.
       expect(flat).toContain(total);
-      expect(flat).toContain('16.5 + 24 + 16.5 + 0.0 = 57.0');
+      expect(flat).toContain(`${deploy} + 24 + ${retry} + 0.0 = ${total}`);
     });
 
     it('makes boss and weapon strength known ahead of a deployment (AC16)', () => {
@@ -750,6 +788,7 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
         mineralsPerDeployment: number;
         coresPerDeployment: number;
         mineralsPerCapturedDeployment: number;
+        captureRate: number;
       };
       unlockPace: Array<{ id: string; deploymentsToAfford: number }>;
     }>;
@@ -765,10 +804,15 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
         new RegExp(`${entry.id}[^\n]*\\*\\*${entry.deploymentsToAfford}\\*\\*`),
       );
     }
-    // Capture rate is stated as a percentage, derived from the artifact
-    // (44.4 % / 33.3 % on the regenerated measurement).
-    expect(spec).toMatch(/\(44\.4\s*%\)/);
-    expect(spec).toMatch(/\(33\.3\s*%\)/);
+    // Capture rate is stated as a percentage, derived from the artifact so the
+    // prose cannot drift from a re-measurement (50.0 % on both rings after the
+    // wave fire gate and the capture-progress ramp, AH-0MWFDQ9EY004NO4X); the
+    // campaign-slice "before" rates stay as measured.
+    const percent = (rate: number): string => `${(rate * 100).toFixed(1)} %`;
+    expect(spec).toContain(`(${percent(r1g.income.captureRate)})`);
+    expect(spec).toContain(`(${percent(r2g.income.captureRate)})`);
+    expect(spec).toMatch(/\(22\.2\s*%\)/);
+    expect(spec).toMatch(/\(11\.1\s*%\)/);
     // The reproducible artifact and the producer's reward-value ruling.
     expect(spec).toContain('docs/dev/one-level-income-baseline.json');
     expect(spec).toContain('AH-0MWEVNBMM000QFO2');
