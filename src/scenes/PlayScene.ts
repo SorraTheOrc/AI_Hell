@@ -190,6 +190,7 @@ import {
   buildHexBossProfile,
   type HexBossProfile,
 } from '../core/hangarWar/hexBoss';
+import type { WeaponVerdictLookup } from '../core/hangarWar/hexMatchup';
 import {
   frontierClockFor,
   runFrontierTick,
@@ -3639,18 +3640,46 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Handles a single player hit on the boss (bullet or AOE). Applies one
-   * hit; score and minions are gated on phase depletion via
-   * `Boss.takeDamage()`'s `phaseAdvanced` signal (AH-0MUUJEB1D000GPX0):
-   * only a depleting hit awards the phase score and summons the next
-   * phase's minions. The run is completed as a victory when the boss dies
-   * (GDD §4.5).
+   * Applies one connected shot's damage to the boss, honouring the hex
+   * matchup charge. The shot offers one hit point; the shared charge helper
+   * (`CombatScene.resolveHitCharge`) is the only place a verdict becomes hit
+   * points, so an effective weapon lands two and a resisted weapon one per two
+   * shots (AH-0MWL88REU009MO5G AC2). Frenzy's bonus hits are added on top of
+   * the charged hits, exactly as the old per-entry-point loop did. Each hit
+   * runs the full single-hit lifecycle in {@link _applyBossHit}, so phase
+   * scores and minion summons stay identical.
+   *
+   * @param hitX — optional world-space X of the hit, forwarded to
+   *   `Boss.takeDamage()` so the per-hit impact VFX appears at the hit point.
+   * @param hitY — optional world-space Y of the hit.
+   * @param weaponId — the firing weapon's catalogue id (absent ⇒ neutral).
+   */
+  private _damageBoss(
+    hitX?: number,
+    hitY?: number,
+    weaponId?: string | null,
+  ): void {
+    const boss = this.boss;
+    if (!boss || !boss.alive) return;
+    const charged = this.resolveHitCharge(boss, weaponId, 1);
+    const hits = charged + this.effectsRegistry.frenzyBonusHits();
+    for (let hit = 0; hit < hits && boss.alive; hit += 1) {
+      this._applyBossHit(hitX, hitY);
+    }
+  }
+
+  /**
+   * Applies exactly one hit to the boss (bullet or AOE). Score and minions are
+   * gated on phase depletion via `Boss.takeDamage()`'s `phaseAdvanced` signal
+   * (AH-0MUUJEB1D000GPX0): only a depleting hit awards the phase score and
+   * summons the next phase's minions. The run is completed as a victory when
+   * the boss dies (GDD §4.5).
    *
    * @param hitX — optional world-space X of the hit, forwarded to
    *   `Boss.takeDamage()` so the per-hit impact VFX appears at the hit point.
    * @param hitY — optional world-space Y of the hit.
    */
-  private _damageBoss(hitX?: number, hitY?: number): void {
+  private _applyBossHit(hitX?: number, hitY?: number): void {
     const boss = this.boss;
     if (!boss || !boss.alive) return;
 
@@ -3671,6 +3700,7 @@ export class PlayScene extends CombatScene<
       // linger as a dark rectangle through the victory celebration
       // (AH-0MVH85XXZ008INE2).
       boss.getHealthBarGraphics().setVisible(false);
+      this.forgetMatchupTarget(boss);
       // The run is over: stop the ship's auto-fire from the next tick so it
       // spawns no bullets, muzzle flashes or shoot cues under the victory
       // celebration (AH-0MVCB6LBE007I6R8, AC1). Shots already in flight keep
@@ -3700,6 +3730,33 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Applies one connected shot's damage to the active level's mini-boss,
+   * honouring the hex matchup charge (AH-0MWL88REU009MO5G). The shot offers
+   * one hit point; the shared `CombatScene.resolveHitCharge` helper is the only
+   * place the verdict becomes hit points. Frenzy's bonus hits are added on top
+   * of the charged hits, and each hit runs the full single-hit lifecycle in
+   * {@link _applyMiniBossHit}, so phase pacing and the defeat sweep stay
+   * identical.
+   *
+   * @param hitX — optional world-space X of the hit.
+   * @param hitY — optional world-space Y of the hit.
+   * @param weaponId — the firing weapon's catalogue id (absent ⇒ neutral).
+   */
+  private _damageMiniBoss(
+    hitX?: number,
+    hitY?: number,
+    weaponId?: string | null,
+  ): void {
+    const miniBoss = this.miniBoss;
+    if (!miniBoss || !miniBoss.alive) return;
+    const charged = this.resolveHitCharge(miniBoss, weaponId, 1);
+    const hits = charged + this.effectsRegistry.frenzyBonusHits();
+    for (let hit = 0; hit < hits && miniBoss.alive; hit += 1) {
+      this._applyMiniBossHit(hitX, hitY);
+    }
+  }
+
+  /**
    * Handles one player hit on the active level's mini-boss (epic
    * AH-0MVCC8XSS007P01Z, AH-0MVCRBISU006NUN5). The shared `takeDamage()`
    * contract drives phases/patterns; on the lethal blow the encounter is
@@ -3718,7 +3775,7 @@ export class PlayScene extends CombatScene<
    *    shared wave state machine, which advances the level (or triggers the
    *    final boss on the final level) exactly once — AC4.
    */
-  private _damageMiniBoss(hitX?: number, hitY?: number): void {
+  private _applyMiniBossHit(hitX?: number, hitY?: number): void {
     const miniBoss = this.miniBoss;
     if (!miniBoss || !miniBoss.alive) return;
 
@@ -3735,6 +3792,9 @@ export class PlayScene extends CombatScene<
 
     const result = miniBoss.takeDamage(hitX, hitY);
     if (!result.destroyed) return;
+    // Drop the dead encounter's half-pair so it never pays out on a future
+    // target (AH-0MWL88REU009MO5G).
+    this.forgetMatchupTarget(miniBoss);
 
     // AC4 (AH-0MW8178ZR0090CNY): every mini-boss defeat leaves **exactly one**
     // Extra Life field pickup at/near the death position, in addition to the
@@ -4526,6 +4586,16 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * The hex matchup verdict lookup this run fights under — the profile value
+   * published by `buildHexBossProfile`, read straight from the run's one
+   * `hexBossProfile` rather than re-derived from the authored ring data
+   * (AH-0MWL88REU009MO5G AC4). `null` for the arcade run (neutral).
+   */
+  protected override getMatchupLookup(): WeaponVerdictLookup | null {
+    return this.hexBossProfile?.matchup ?? null;
+  }
+
+  /**
    * The last capture-cycle resolution for this deployment, or `null` before the
    * boss is defeated. The payload itself is persisted through the store; this
    * seam exposes the outcome (grant, defender, ring secured/advanced).
@@ -5044,15 +5114,11 @@ export class PlayScene extends CombatScene<
     y: number,
   ): void {
     if (target === this.boss) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageBoss(x, y);
-      }
+      this._damageBoss(x, y, def.id);
       return;
     }
     if (target === this.miniBoss) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageMiniBoss(x, y);
-      }
+      this._damageMiniBoss(x, y, def.id);
       return;
     }
     super.applyHitscanHit(target, def, x, y);
@@ -5064,19 +5130,16 @@ export class PlayScene extends CombatScene<
    */
   protected override onPlayerBulletHitsBoss(pb: PlayerBullet): boolean {
     if (this._playerBulletHitsEntity(pb, this.boss)) {
-      // Frenzy amplifies each bullet into `1 + bonus` phase hits
-      // (AH-0MVH80ZJ7009W18Z); the damage path stops once the boss dies.
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageBoss(pb.x, pb.y);
-      }
+      // The shot's weapon identity rides into the shared matchup charge; the
+      // damage path adds Frenzy's bonus hits and stops once the boss dies
+      // (AH-0MVH80ZJ7009W18Z, AH-0MWL88REU009MO5G).
+      this._damageBoss(pb.x, pb.y, pb.weaponId);
       pb.destroy();
       return true;
     }
     // Mini-boss encounter (the final boss is not spawned at the same time).
     if (this._playerBulletHitsEntity(pb, this.miniBoss)) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageMiniBoss(pb.x, pb.y);
-      }
+      this._damageMiniBoss(pb.x, pb.y, pb.weaponId);
       pb.destroy();
       return true;
     }
@@ -5101,22 +5164,21 @@ export class PlayScene extends CombatScene<
    * AOE effect hits the boss (final boss or mini-boss): routes through the
    * same damage path a player bullet uses, so multi-phase pacing, phase scores
    * and minion summons are identical (parent AH-0MUOOB3OR001V8CD AC5).
+   * `weaponId` is the firing weapon's catalogue id (absent for a power-up
+   * pulse), carried into the shared matchup charge (AH-0MWL88REU009MO5G).
    */
   protected override onAoeHitsBoss(
     x: number,
     y: number,
     radius: number,
+    weaponId?: string | null,
   ): boolean {
     if (this._aoeHitsEntity(x, y, radius, this.boss)) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageBoss(x, y);
-      }
+      this._damageBoss(x, y, weaponId);
       return true;
     }
     if (this._aoeHitsEntity(x, y, radius, this.miniBoss)) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageMiniBoss(x, y);
-      }
+      this._damageMiniBoss(x, y, weaponId);
       return true;
     }
     return false;

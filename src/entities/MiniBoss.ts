@@ -40,6 +40,7 @@ import { fireForEnemy } from './enemyFire';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { enemyForceFieldHits } from '../core/enemyForceField';
 import type { FormationOffset } from '../utils/formations';
+import type { WeaponVerdictLookup } from '../core/hangarWar/hexMatchup';
 import { planGroupSpawns, type EnemySpawn } from '../waves/WaveManager';
 import type { WaveGroup } from '../waves/Formations';
 
@@ -130,6 +131,13 @@ export interface MiniBossConfig {
   initialHp?: number;
   /** Optional starting phase (dev/testing shortcut, clamped to the phase count). */
   initialPhase?: number;
+  /**
+   * The fought hex's authored matchup verdict lookup, carried from the
+   * `HexBossProfile` by `hexMiniBossConfigForLevel` (AH-0MWL88REU009MO5G).
+   * The run reads this one value at its hit seam instead of re-deriving it;
+   * absent for an arcade run or an unauthored hex (neutral).
+   */
+  matchup?: WeaponVerdictLookup;
 }
 
 /** A fully populated mini-boss config (defaults applied, validation passed). */
@@ -149,6 +157,7 @@ export interface ResolvedMiniBossConfig {
   rng?: () => number;
   initialHp?: number;
   initialPhase?: number;
+  matchup?: WeaponVerdictLookup;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -247,6 +256,7 @@ export function resolveMiniBossConfig(
     rng: config.rng,
     initialHp: config.initialHp,
     initialPhase: config.initialPhase,
+    matchup: config.matchup,
   };
   assertValidResolvedConfig(resolved);
   return resolved;

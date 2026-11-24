@@ -57,6 +57,7 @@ import {
   buildHexBossProfile,
   type HexBossProfile,
 } from '../../core/hangarWar/hexBoss';
+import type { WeaponVerdictLookup } from '../../core/hangarWar/hexMatchup';
 import { findHexRingDefinition } from '../../data/hexRingDefinitions';
 import type { BossBullet } from '../../entities/Boss';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
@@ -377,6 +378,17 @@ export class GymMiniBoss extends GymFormationScene<
   /** The single mini-boss entity for the shared `_advanceBoss` tick. */
   protected override getBoss(): MiniBoss | null {
     return (this.entities[0] as MiniBoss | undefined) ?? null;
+  }
+
+  /**
+   * The matchup verdict lookup the gym's encounters fight under. With HEX mode
+   * on the gym runs the same authored profile `PlayScene` builds for a
+   * deployment, so the charge it applies is the game's — one value, never
+   * re-derived (AH-0MWL88REU009MO5G, gym↔game parity). With it off (the arcade
+   * design row) there is no fought hex, so the shared core resolves neutral.
+   */
+  protected override getMatchupLookup(): WeaponVerdictLookup | null {
+    return hexProfileEnabled ? MINI_BOSS_GYM_HEX_PROFILE.matchup : null;
   }
 
   /**

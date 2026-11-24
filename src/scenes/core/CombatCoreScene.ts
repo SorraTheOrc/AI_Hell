@@ -1179,6 +1179,9 @@ export class CombatCoreScene<
         // resolved by the shared impact seam when the shot connects
         // (AH-0MV8228YW0050IXS). Absent → generic impact behaviour.
         bullet.impactFx = def.impactFx;
+        // The shot's weapon identity, carried to the hit seam so the hex
+        // matchup rule can resolve this weapon's verdict (AH-0MWL88REU009MO5G).
+        bullet.weaponId = def.id;
         // Wall-bounce feedback for ricochet: play impact VFX/SFX on each
         // edge reflection (AH-0MV822AP1006W2F9).
         if (def.bounce !== undefined) {
@@ -1431,6 +1434,10 @@ export class CombatCoreScene<
       // (AH-0MV822B1B0048UZT). The parent shell only ever splits, never
       // deals a direct hit, so it never reaches the impact seam itself.
       warhead.impactFx = def.impactFx;
+      // The warhead inherits the firing weapon's identity so a split shot
+      // still honours the hex matchup rule at the hit seam
+      // (AH-0MWL88REU009MO5G).
+      warhead.weaponId = def.id;
       this._pendingSplitWarheads.push(warhead);
     }
     this.spawnSplitBurst(bullet.x, bullet.y, count);
@@ -1556,6 +1563,9 @@ export class CombatCoreScene<
       // baked hit cue), resolved by the shared impact seam when the shot
       // connects — identical in the game and every gym (AH-0MV822BDN008IYL6).
       bullet.impactFx = def.impactFx;
+      // The pod shot inherits the firing weapon's identity for the hex
+      // matchup rule (AH-0MWL88REU009MO5G).
+      bullet.weaponId = def.id;
     }
   }
 

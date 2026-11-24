@@ -201,6 +201,15 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   protected _health: number;
 
   /**
+   * The configured hit pool this hull spawned with (`config.health`, default
+   * `1`). Read-only after construction, unlike {@link _health}: the hex
+   * matchup charge uses it to tell a multi-hit elite from chaff, so a
+   * resisted weapon still kills a one-hit chaff on its first shot (Q2 scope
+   * guard). Never decremented.
+   */
+  protected readonly _maxHealth: number;
+
+  /**
    * Remaining force-field hits (epic AH-0MVJ8W4GE007OMNT AC2). Absorbed
    * before the hull: {@link takeDamage} decrements this while it is above
    * zero and only then touches {@link _health}. Initialised from
@@ -284,6 +293,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._fireInterval = config.fireInterval ?? 1000;
     this._shotProbability = config.shotProbability ?? 1.0;
     this._health = config.health ?? 1;
+    this._maxHealth = this._health;
     this._forceFieldHits = sanitiseForceFieldHits(config.forceFieldHits);
     this._forceFieldMaxHits = this._forceFieldHits;
     this._wrapAware = config.wrapAware ?? true;
@@ -576,6 +586,15 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Remaining hit points before destruction. */
   get health(): number {
     return this._health;
+  }
+
+  /**
+   * The configured hit pool this hull spawned with (read-only). Used by the
+   * shared hex-matchup charge to leave chaff (`health` = 1) at today's damage
+   * under every verdict.
+   */
+  get maxHealth(): number {
+    return this._maxHealth;
   }
 
   /**

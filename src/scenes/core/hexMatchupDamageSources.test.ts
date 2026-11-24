@@ -340,7 +340,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
   // AC5 — every player damage source honours the one rule
   // ──────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'AC5 — ordinary bullet: effective 2/shot, neutral 1/shot, resisted 1 per 2 shots',
     async () => {
       const effective = await bootIsolated(HEXES.bulletEffective);
@@ -366,7 +366,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC5 — damage-budget beam (wave laser): effective 2/shot, neutral 1/shot, resisted 1 per 2 shots',
     async () => {
       const effective = await bootIsolated(HEXES.beamEffective);
@@ -407,7 +407,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC5 — AOE detonation: effective 2/shot, neutral 1/shot, resisted 1 per 2 shots',
     async () => {
       const effective = await bootIsolated(HEXES.aoeEffective);
@@ -433,7 +433,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC5 — mini-boss bullet: effective 2/shot, neutral 1/shot, resisted 1 per 2 shots',
     async () => {
       const effective = await bootIsolated(HEXES.bulletEffective);
@@ -459,7 +459,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
     },
   );
 
-  it.fails(
+  it(
     'AC5 — mini-boss AOE: effective 2/shot, neutral 1/shot, resisted 1 per 2 shots',
     async () => {
       const effective = await bootIsolated(HEXES.aoeEffective);
@@ -487,7 +487,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
 
   // ── Final-boss AOE (the deliverables ask for the boss AOE path too) ──
 
-  it.fails(
+  it(
     'AC5 — boss AOE: effective 2/shot, neutral 1/shot, resisted 1 per 2 shots',
     async () => {
       const cases = [
@@ -534,7 +534,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
     return shots;
   }
 
-  it.fails(
+  it(
     'AC6 — the effective weapon clears a mini-boss phase ≥1.8× faster and the resisted ≥1.8× slower than neutral',
     async () => {
       // All three runs fight the same hex (hex-r1-4), so the mini-boss carries
@@ -599,7 +599,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
   // The resisted ledger, observed at the seam
   // ──────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'ledger — never charges more than one hit point per two connected resisted shots',
     async () => {
       const scene = await bootIsolated(HEXES.bulletResisted);
@@ -611,7 +611,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
     },
   );
 
-  it.fails(
+  it(
     'ledger — is per-target: two targets never share a resisted pair',
     async () => {
       const scene = await bootIsolated(HEXES.bulletResisted);
@@ -629,7 +629,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
     },
   );
 
-  it.fails(
+  it(
     'ledger — is per-weapon: two resisted weapons never share a pair',
     async () => {
       // hex-r1-1 resists both cannon and dual.
@@ -645,7 +645,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
     },
   );
 
-  it.fails(
+  it(
     'ledger — drops a target killed mid-pair so a recycled hull starts a fresh pair',
     async () => {
       const scene = await bootIsolated(HEXES.bulletResisted);
@@ -672,7 +672,7 @@ describe('Hex matchup hit-charge (AH-0MWL88NDS003H2JW)', () => {
   // Determinism — the charge adds no randomness
   // ──────────────────────────────────────────────────────────────────
 
-  it.fails(
+  it(
     'determinism — a replay of the same resisted sequence lands an identical hit count (no new RNG)',
     async () => {
       const run = async (): Promise<number> => {

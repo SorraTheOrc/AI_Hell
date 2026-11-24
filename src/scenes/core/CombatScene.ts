@@ -94,6 +94,14 @@ import {
 } from './waveTimeout';
 import { Asteroid } from '../../entities/Asteroid';
 import { hitDrone } from './combatDrone';
+import {
+  createMatchupLedger,
+  creditResistedHit,
+  forgetTarget,
+  resolveHexMatchup,
+  type MatchupLedger,
+  type WeaponVerdictLookup,
+} from '../../core/hangarWar/hexMatchup';
 
 // Re-export the shared contracts so existing `from './CombatScene'`
 // imports keep working after they moved to the narrower base.
@@ -202,6 +210,23 @@ export abstract class CombatScene<
 
   /** Monotonic source of {@link grazeIds}. */
   private nextGrazeId = 1;
+
+  /**
+   * The run's hex-matchup resisted-credit ledger (AH-0MWL88REU009MO5G).
+   * Created once per run and reset with the rest of the run state, so a
+   * resisted weapon's odd unpaired shot never carries across a restart.
+   */
+  private matchupLedger: MatchupLedger = createMatchupLedger();
+
+  /**
+   * Stable per-target ids for the matchup ledger (AH-0MWL88REU009MO5G). Like
+   * {@link grazeIds}, an id is assigned once per object instance and never
+   * reused, so a recycled hull can never inherit a dead target's half-pair.
+   */
+  private matchupTargetIds = new WeakMap<object, number>();
+
+  /** Monotonic source of {@link matchupTargetIds}. */
+  private nextMatchupTargetId = 1;
 
   /** Seconds of post-hit invulnerability remaining (blinks while > 0). */
   protected invulnerable = 0;
@@ -491,6 +516,106 @@ export abstract class CombatScene<
    */
   protected onBossAdvanced(_dt: number): void {}
 
+  // ── Hex matchup hit charge (AH-0MWL88REU009MO5G) ─────────────────
+
+  /**
+   * The hex matchup verdict lookup this run fights under, or `null` when the
+   * run has no fought hex (the arcade run and every default gym).
+   *
+   * The lookup is published once on the run's {@link HexBossProfile} (built
+   * from the hex's authored `strengths`/`weaknesses`) and carried onto the
+   * mini-boss config through `hexMiniBossConfigForLevel`, so the game, the
+   * attract run and every gym read one value rather than re-deriving it
+   * (parent AC4). Default `null` — an unauthored run resolves every weapon as
+   * `'neutral'`, byte-for-byte today's damage.
+   */
+  protected getMatchupLookup(): WeaponVerdictLookup | null {
+    return null;
+  }
+
+  /**
+   * Whether `target` is a multi-hit hull the matchup charge applies to.
+   *
+   * The Q2 scope guard: the rule serves elites and bosses, and chaff
+   * (`health` = 1) must take exactly today's damage under every verdict — a
+   * resisted weapon still kills a one-hit chaff on its first shot. Boss-style
+   * encounters (below the generic enemy list) are always multi-hit.
+   */
+  protected isMatchupEligible(target: object): boolean {
+    const pool = (target as { maxHealth?: unknown }).maxHealth;
+    if (typeof pool === 'number' && Number.isFinite(pool)) return pool > 1;
+    return (
+      typeof (target as { getHitPointsPerPhase?: unknown })
+        .getHitPointsPerPhase === 'function'
+    );
+  }
+
+  /** The stable per-target id the matchup ledger is keyed by. */
+  private matchupTargetIdOf(target: object): string {
+    const existing = this.matchupTargetIds.get(target);
+    if (existing !== undefined) return String(existing);
+    const id = this.nextMatchupTargetId;
+    this.nextMatchupTargetId += 1;
+    this.matchupTargetIds.set(target, id);
+    return String(id);
+  }
+
+  /**
+   * The shared hit-charge seam — the **only** place a matchup verdict becomes
+   * hit points (AH-0MWL88REU009MO5G AC2). Every player damage source
+   * (ordinary bullet, damage-budget beam, AOE detonation, boss/mini-boss
+   * bullet and AOE) calls this through its damage method, so the rule cannot
+   * fork between sources.
+   *
+   * `effective` doubles the offered hit points, `resisted` pays one hit point
+   * per **two** connected shots through the per-target, per-weapon ledger, and
+   * `neutral` (including an unauthored hex or a blank weapon id) leaves them
+   * unchanged. Chaff (`health` = 1) is never charged.
+   *
+   * Deterministic and RNG-free: the ledger is a toggle, so a replay of the
+   * same payload/seed lands the same hits (AC: no new randomness).
+   *
+   * @param target — the target the shot connected with (ledger identity).
+   * @param weaponId — the shot's weapon id, or `null`/`undefined` (neutral).
+   * @param points — the offered hit points (1 for an ordinary shot).
+   * @returns the hit points to apply at the seam.
+   */
+  protected resolveHitCharge(
+    target: object,
+    weaponId: string | null | undefined,
+    points: number,
+  ): number {
+    const base = Math.max(0, Math.floor(points));
+    if (base === 0) return 0;
+    if (!this.isMatchupEligible(target)) return base;
+    const verdict = resolveHexMatchup(weaponId, this.getMatchupLookup());
+    if (verdict === 'effective') return base * 2;
+    if (verdict === 'resisted') {
+      const targetId = this.matchupTargetIdOf(target);
+      let charged = 0;
+      for (let i = 0; i < base; i += 1) {
+        charged += creditResistedHit(
+          this.matchupLedger,
+          targetId,
+          weaponId ?? '',
+        );
+      }
+      return charged;
+    }
+    return base;
+  }
+
+  /**
+   * Drops a target's pending resisted-credit rows when it dies, so a long run
+   * does not accumulate dead-target rows and a recycled hull starts a fresh
+   * pair (AC4). Safe for a target that never held a pair.
+   */
+  protected forgetMatchupTarget(target: object): void {
+    const id = this.matchupTargetIds.get(target);
+    if (id === undefined) return;
+    forgetTarget(this.matchupLedger, String(id));
+  }
+
   /**
    * Player bullet hits an enemy. Default (generic gym) behaviour:
    * multi-hit entities receive `takeDamage()`; single-hit entities are
@@ -584,6 +709,10 @@ export abstract class CombatScene<
     // (AH-0MV8228YW0050IXS AC4).
     this.resolveWeaponImpactFx(bullet);
     const points = Math.max(0, Math.floor(damage));
+    // The matchup charge applies to every shot through the one shared seam:
+    // `effective` offers two hit points, `resisted` one per two connected
+    // shots (ledger), `neutral` the offered points (AH-0MWL88REU009MO5G).
+    const charged = this.resolveHitCharge(enemy, bullet.weaponId, points);
     let applied = 0;
     if (enemy.takeDamage) {
       // Frenzy (AH-0MVH80ZJ7009W18Z): while its window is active a single
@@ -593,13 +722,13 @@ export abstract class CombatScene<
       // point instead, bounded by the enemy's remaining HP.
       const extraHits = this.getEffectsRegistry().frenzyBonusHits();
       if (points === 1) {
-        for (let hit = 0; hit <= extraHits && enemy.alive; hit += 1) {
+        for (let hit = 0; hit < charged + extraHits && enemy.alive; hit += 1) {
           enemy.takeDamage();
           applied += 1;
           this.reportPlayerDamageApplied(enemy);
         }
       } else {
-        while (applied < points && enemy.alive) {
+        while (applied < charged && enemy.alive) {
           enemy.takeDamage();
           applied += 1;
           this.reportPlayerDamageApplied(enemy);
@@ -620,7 +749,7 @@ export abstract class CombatScene<
     } else {
       enemy.destroySelf();
       // A single-hit entity counts as 1 HP regardless of the offered damage.
-      applied = points > 0 ? 1 : 0;
+      applied = charged > 0 ? 1 : 0;
       if (applied > 0) this.reportPlayerDamageApplied(enemy);
       this.finaliseEnemyKill(enemy);
     }
@@ -675,6 +804,9 @@ export abstract class CombatScene<
     } else {
       playDestructionSound();
     }
+    // Drop any half-pair the dead hull held so it never pays out on a
+    // recycled target (AH-0MWL88REU009MO5G).
+    this.forgetMatchupTarget(enemy);
     this.onEnemyDestroyed(enemy);
   }
 
@@ -698,7 +830,9 @@ export abstract class CombatScene<
   protected applyAoeEffect(def: WeaponDefinition, x: number, y: number): void {
     const aoe = def.aoe;
     if (!aoe) return;
-    this.applyAoEDescriptor(aoe, x, y);
+    // The firing weapon's identity rides into the AOE seam so the hex matchup
+    // charge can resolve its verdict (AH-0MWL88REU009MO5G).
+    this.applyAoEDescriptor(aoe, x, y, def.id);
   }
 
   /**
@@ -716,7 +850,12 @@ export abstract class CombatScene<
    * Keeping this the single implementation means the Smart Bomb cannot fork
    * the area-effect behaviour away from Nova/Mortar/Arc (AC5).
    */
-  protected applyAoEDescriptor(aoe: AoEDescriptor, x: number, y: number): void {
+  protected applyAoEDescriptor(
+    aoe: AoEDescriptor,
+    x: number,
+    y: number,
+    weaponId?: string | null,
+  ): void {
     if (aoe.damagesEnemies) {
       // Pure target selection (utils/aoe) keeps the game and gyms identical.
       const targets = selectAoETargets(
@@ -729,7 +868,9 @@ export abstract class CombatScene<
       const damage =
         Math.max(1, Math.floor(aoe.damage ?? 1)) +
         this.getEffectsRegistry().frenzyBonusHits();
-      for (const enemy of targets) this.damageEnemyViaAoe(enemy, damage);
+      for (const enemy of targets) {
+        this.damageEnemyViaAoe(enemy, damage, weaponId);
+      }
     }
 
     if (aoe.clearsEnemyBullets) {
@@ -751,7 +892,7 @@ export abstract class CombatScene<
       this.setEnemyBullets(kept);
     }
 
-    this.onAoeHitsBoss(x, y, aoe.radius);
+    this.onAoeHitsBoss(x, y, aoe.radius, weaponId);
   }
 
   /**
@@ -760,11 +901,23 @@ export abstract class CombatScene<
    * blow); single-hit entities are destroyed and finalised outright. AOE
    * weapons pass the default of one hit; the Smart Bomb passes its
    * level-resolved damage (AH-0MV1BIWP9003EHRQ).
+   *
+   * The offered hit points pass through the shared matchup charge, so an AOE
+   * detonation honours the same rule as every other source
+   * (AH-0MWL88REU009MO5G).
    */
-  protected damageEnemyViaAoe(enemy: TEnemy, damage = 1): void {
+  protected damageEnemyViaAoe(
+    enemy: TEnemy,
+    damage = 1,
+    weaponId?: string | null,
+  ): void {
     if (!enemy.alive) return;
     if (enemy.takeDamage) {
-      const hits = Math.max(1, Math.floor(damage));
+      const hits = this.resolveHitCharge(
+        enemy,
+        weaponId,
+        Math.max(1, Math.floor(damage)),
+      );
       for (let i = 0; i < hits && enemy.alive; i++) {
         enemy.takeDamage();
         this.reportPlayerDamageApplied(enemy);
@@ -801,7 +954,7 @@ export abstract class CombatScene<
     // at the point where the beam stops, through the shared impact seam.
     this.resolveImpactFx(def.impactFx, x, y);
     const damage = 1 + this.getEffectsRegistry().frenzyBonusHits();
-    this.damageEnemyViaAoe(target as unknown as TEnemy, damage);
+    this.damageEnemyViaAoe(target as unknown as TEnemy, damage, def.id);
   }
 
   /**
@@ -921,8 +1074,17 @@ export abstract class CombatScene<
    * boss); the game overrides it to damage its multi-phase boss through the
    * same path a player bullet would use. Returning true means the boss was
    * hit.
+   *
+   * `weaponId` is the firing weapon's catalogue id (absent for a power-up
+   * pulse such as the Smart Bomb) so the boss damage can honour the hex
+   * matchup rule (AH-0MWL88REU009MO5G).
    */
-  protected onAoeHitsBoss(_x: number, _y: number, _radius: number): boolean {
+  protected onAoeHitsBoss(
+    _x: number,
+    _y: number,
+    _radius: number,
+    _weaponId?: string | null,
+  ): boolean {
     return false;
   }
 
@@ -965,7 +1127,7 @@ export abstract class CombatScene<
         { x, y },
         ...chain.map((enemy) => ({ x: enemy.x, y: enemy.y })),
       ];
-      this.applyArcChainEffect(aoe, x, y, chain, path);
+      this.applyArcChainEffect(aoe, x, y, chain, path, def.id);
       this.spawnArcChainVfx(path);
       // The connect feedback (impact flash at each chained target + baked hit
       // cue) rides the same shared chain seam, so the game and every gym
@@ -999,12 +1161,13 @@ export abstract class CombatScene<
     y: number,
     chain: readonly TEnemy[],
     path: readonly ArcChainPoint[],
+    weaponId: string,
   ): void {
     if (aoe.damagesEnemies) {
-      for (const enemy of chain) this.damageEnemyViaAoe(enemy);
+      for (const enemy of chain) this.damageEnemyViaAoe(enemy, 1, weaponId);
     }
     if (aoe.clearsEnemyBullets) this.clearEnemyBulletsAlongPath(path);
-    this.onAoeHitsBoss(x, y, aoe.radius);
+    this.onAoeHitsBoss(x, y, aoe.radius, weaponId);
   }
 
   /**
@@ -2409,6 +2572,9 @@ export abstract class CombatScene<
     this.thornsAbsorbEffects = [];
     this.grazeEffects = [];
     this.nextGrazeId = 1;
+    this.matchupLedger = createMatchupLedger();
+    this.matchupTargetIds = new WeakMap();
+    this.nextMatchupTargetId = 1;
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
