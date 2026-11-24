@@ -365,6 +365,9 @@ export class GymPowerUpsUtility extends CombatCoreScene<
    * AH-0MVJ79739008396I).
    */
   private _collectGymMineral(mineral: Mineral): void {
+    // One chime per player pickup through the single shared dispatch
+    // (AH-0MWNMRDY60005Z4K).
+    this.noteMineralCollected();
     this.mineralHold.collect(mineral.value);
     this._syncMineralHud();
   }

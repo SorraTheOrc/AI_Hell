@@ -170,11 +170,17 @@ import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import {
+  playMineralCollectChimeSound,
   playPowerUpBlockedSound,
   setExplosionBeatClock,
   setThrusterBeatClock,
   updateThrusterSound,
 } from '../../audio/effects';
+import {
+  mineralChimeStep,
+  noteMineralCollected as advanceMineralChime,
+  resetMineralChimeStreak,
+} from '../../audio/mineralChime';
 import { BeatClock, createBeatClock } from '../../utils/beat';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
@@ -736,6 +742,30 @@ export class CombatCoreScene<
    */
   protected _playPickupCue(drop: TDrop): void {
     playDropPickupCue(drop);
+  }
+
+  /**
+   * The single shared **player** mineral-pickup dispatcher
+   * (AH-0MWNMRDY60005Z4K).
+   *
+   * Every player collection path in the game and the gyms calls this exactly
+   * once per collected mineral. It reads the **scene clock** (`this.time.now`,
+   * game time — it pauses with the scene, never wall time), advances the one
+   * shared A-minor escalation state machine and plays the baked chime at the
+   * resulting ladder step. The escalation rule, ladder and reset gap live in
+   * `audio/mineralChime.ts`, so no scene ever re-implements them
+   * (AGENTS.md gym↔game parity).
+   *
+   * **Enemy absorption never calls this** — the feedback is player-only, so a
+   * mineral hoovered up by an enemy stays silent.
+   *
+   * Defined exactly once here; no scene calls
+   * `playMineralCollectChimeSound` directly. The repo-wide guard in
+   * `mineralChime.parity.test.ts` enforces both rules.
+   */
+  protected noteMineralCollected(): void {
+    advanceMineralChime(this.time.now);
+    playMineralCollectChimeSound(mineralChimeStep());
   }
 
   /**
@@ -2188,6 +2218,11 @@ export class CombatCoreScene<
     // clean (Galaga capturer, AH-0MV01EFII008298D).
     this._captureHoldMs = 0;
     this._captureDisabledMs = 0;
+    // The mineral-chime streak is run-scoped: a restarted run starts from the
+    // base pitch on its first pickup (AH-0MWNMRDY60005Z4K). The scene
+    // instance is reused across restarts, so the shared singleton must be
+    // reset here as well as on teardown.
+    resetMineralChimeStreak();
   }
 
   /**
@@ -2242,6 +2277,10 @@ export class CombatCoreScene<
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();
+    // A scene shutdown returns the shared mineral-chime streak to base, so a
+    // restarted run never inherits the previous run's pitch
+    // (AH-0MWNMRDY60005Z4K).
+    resetMineralChimeStreak();
     // Detach the beat-synced explosion schedule so a stopped scene cannot
     // leak its clock into the next one (AH-0MV01HNLU008S5E3).
     setExplosionBeatClock(null);

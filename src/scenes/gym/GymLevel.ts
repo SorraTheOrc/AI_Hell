@@ -1687,6 +1687,9 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
    * AH-0MVJ79739008396I), and resolves it when full.
    */
   private _collectMineral(mineral: Mineral): void {
+    // One chime per player pickup through the single shared dispatch
+    // (AH-0MWNMRDY60005Z4K).
+    this.noteMineralCollected();
     this.mineralHold.collect(mineral.value);
     if (this.mineralHold.isFull) this._resolveMineralHold();
   }

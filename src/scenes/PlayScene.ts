@@ -6551,6 +6551,9 @@ export class PlayScene extends CombatScene<
    * @param mineral — the collected mineral whose `value` is credited.
    */
   private _collectMineral(mineral: Mineral): void {
+    // Every player pickup plays the one shared chime, exactly once per
+    // collected mineral (AH-0MWNMRDY60005Z4K).
+    this.noteMineralCollected();
     this.gameState.addMinerals(mineral.value);
     this.runTelemetry.mineralCollected(this.gameState.minerals);
     this._syncMineralHud();

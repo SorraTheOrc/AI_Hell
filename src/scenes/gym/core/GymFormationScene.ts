@@ -1523,6 +1523,9 @@ export class GymFormationScene<
    * one pickup — AH-0MVJ79739008396I); opens the choice when full.
    */
   private _collectMineral(mineral: Mineral): void {
+    // One chime per player pickup through the single shared dispatch
+    // (AH-0MWNMRDY60005Z4K).
+    this.noteMineralCollected();
     this.mineralHoldModel.collect(mineral.value);
     this._syncMineralHud();
     if (this.mineralHoldModel.isFull) this.openMineralChoice();

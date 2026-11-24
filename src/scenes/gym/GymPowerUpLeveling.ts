@@ -532,6 +532,9 @@ export class GymPowerUpLeveling extends CombatScene<
         // dot) — the same rule the game and the other gyms apply, so one red
         // pickup fills ten minerals' worth of the hold (AH-0MW6OGSJP007K9W6).
         this.hold.collect(mineral.entity.value);
+        // One chime per mineral collected by this bespoke overlap loop, via
+        // the single shared dispatch (AH-0MWNMRDY60005Z4K).
+        this.noteMineralCollected();
         mineral.destroy();
       } else {
         remaining.push(mineral);
