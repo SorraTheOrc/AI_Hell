@@ -463,17 +463,50 @@ consumer clamps at 0. If the marker is absent (e.g. an older capture, or the
 anchor flags itself `approximate`), fall back to the telemetry `startedAt`
 plus the known `--warmup` value, and flag the join as approximate.
 
-**Highlight selection is no longer done in this repository.** The former
-in-repo promo compiler consumed this anchor to pick and trim highlight
-windows with `ffmpeg`; it was removed in AH-0MWOUY9IK004QWCU and video
-compilation is now delegated to the `vidc` CLI (the sibling
-`video_compiler` project). The anchor and the `<run>.action.jsonl` series
-remain recorded artefacts, so a future vidc-based editor — or any external
-tool — can still join series time to video time. The selection/coverage
-manifests, the output pace/size validation and the pace reference band that
-the compiler enforced were removed with it; declarative trimming and
-transitions are tracked as high-priority work in the `video_compiler`
-project (`VC-0MWNOFIBI007J8UK`, `VC-0MWNW4SPX002J2SE`).
+### 7.5.1 The promo edit consumes the series (current consumer)
+
+**`npm run capture:promo` plans a promo edit from the series and the anchor.**
+The tooling lives in this repository (`scripts/render-promo.mjs` →
+`scripts/intensity-arc.mjs` → `scripts/otio-write.mjs`); **rendering** is
+delegated to the `vidc` CLI in the sibling `video_compiler` project
+(AH-0MWOUY9IK004QWCU, AH-0MWPCLYYG007NUJY).
+
+The planner:
+
+1. reads `<stem>.action.jsonl` + `<stem>.capture.json` for every candidate
+   capture in `--dir` and joins series time to video time with the anchor
+   above (`videoTimeMs(t) = t − offsetMs`; samples recorded **before**
+   `capture_started` have no footage and are excluded, not clamped);
+2. selects the **intensity arc** the promo is cut to — 10 s high → 7 s medium
+   → 7 s medium+ → 10 s very high — as the fewest non-overlapping windows that
+   reach each band's target, drawn longest-first across the pooled captures,
+   with every edge nudged (≤ 0.25 s) onto a local `smoothed` minimum so a cut
+   never lands mid-spike;
+3. compensates the inter-cut cross fade, so the **rendered** timeline totals
+   34 s rather than 34 s minus the overlaps; and
+4. writes the edit as an OpenTimelineIO 0.16.0 document,
+   `<dir>/promo.otio`, which `vidc render --timeline` compiles.
+
+The arc is the command's **only** behaviour — there is no flag that selects,
+tunes or disables it. The bands, thresholds and targets live in one config
+object, `DEFAULT_INTENSITY_ARC_CONFIG` in `scripts/intensity-arc.mjs`, and are
+retuned by editing that object (a plain Node script, no rebuild).
+
+The artefacts and the join are unchanged; what matters here is that the series
+and anchor are **live inputs** again, not retained history. Two consequences
+are deliberate and documented on the CLI and in
+[gameplay-capture.md](./gameplay-capture.md): a capture with no usable series
+(or an `approximate`/missing anchor) cannot appear in the promo and is skipped
+with one warning, and clip order is arc order rather than filename order. A
+plain whole-clip concat remains available from `vidc` itself
+(`vidc render --dir … --output …`).
+
+**Still external.** Declarative trimming and document-level transitions are
+tracked as high-priority work in the `video_compiler` project
+(`VC-0MWNOFIBI007J8UK`, `VC-0MWNW4SPX002J2SE`). Until `VC-0MWNOFIBI007J8UK`
+lands, `vidc` renders each source file whole: the in points and durations are
+recorded in the document (and are unit-tested) but not yet applied to the
+footage, so the rendered arc is gated on that item.
 
 ## 8. Telemetry integration & gym↔game parity
 

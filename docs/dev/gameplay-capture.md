@@ -218,26 +218,79 @@ node scripts/render-promo.mjs --dir clips --output out/promo.mp4 --dry-run
 node scripts/render-promo.mjs --help
 ```
 
-`--dir` defaults to `capture-output/`, the output to `<dir>/promo.mp4`, and
-the clip pattern selects raw `<stem>.webm` runs only — the seek-index
-`<stem>.seekable.webm` and salvage `<stem>.partial.webm` files are not source
-footage. `capture:promo` forwards an **explicit `--fade-duration 400`** by
-default, so consecutive clips cross-fade at a reproducible 400 ms rather than
-inheriting whichever fade default the installed `vidc` happens to carry;
-override it with `--fade-duration <ms>`. `vidc` applies that single duration to
-both the video dissolve (`xfade=transition=fade`) and the audio cross fade
-(`acrossfade`), so there is no separate, slower audio fade. The remaining
-options (resolution, fps, presets, formats and profiles) stay vidc's own; see
-its README for the full option set. The `vidc` binary is resolved from `PATH`,
-or from `--vidc` / `VIDC_BIN`, and a missing binary fails with an install hint
-rather than an `ENOENT` stack.
+### The promo edit is cut to the recorded action
 
-Deliverables are MP4 (vidc's native output) and remain git-ignored with the
+`capture:promo` does **not** concatenate every clip any more. It reads each
+capture's recorded action-intensity series (`<stem>.action.jsonl`) and its join
+anchor (`<stem>.capture.json`), plans an **intensity arc** — 10 s high → 7 s
+medium → 7 s medium+ → 10 s very high, a 34 s rendered promo — and writes that
+edit as an editable OpenTimelineIO document, `<dir>/promo.otio`
+(`scripts/intensity-arc.mjs` plans; `scripts/otio-write.mjs` emits). The
+document is then handed to `vidc render` as its **explicit** `--timeline`
+source, and the same stem names the MP4, so `capture-output/promo.otio` pairs
+with `capture-output/promo.mp4`.
+
+This is the command's **only** behaviour: there is no flag that selects,
+tunes or disables the arc (an opt-in flag would be pointless — cut-to-the-action
+is what the command is for). The arc's bands, thresholds and targets live in one
+config object, `DEFAULT_INTENSITY_ARC_CONFIG` in `scripts/intensity-arc.mjs`,
+and are retuned by editing it. The metric itself, its thresholds and the
+calibration behind them are documented in
+[action-intensity.md](./action-intensity.md) §2–§7.
+
+| Band | Threshold | Target |
+|---|---|---|
+| `high` | `0.65 ≤ I < 0.75` | 10 s |
+| `medium` | `0.40 ≤ I < 0.55` | 7 s |
+| `medium+` | `0.55 ≤ I < 0.65` | 7 s |
+| `very high` | `I ≥ 0.75` | 10 s |
+
+Because the windows are joined with `vidc`'s cross fade, the planner adds
+`(cuts − 1) × fade` of footage so the **rendered** timeline still totals 34 s.
+Cuts land on local `smoothed` minima within 0.25 s of the planned edge, so a cut
+never falls mid-spike, and no footage is used twice.
+
+**What drops out.** Only captures with a usable series take part: a capture with
+no `<stem>.action.jsonl`, a header-only or sample-less series, or a missing or
+`approximate` `<stem>.capture.json` is skipped with **one warning** each. A run
+in which nothing usable remains fails with an actionable error, and a band the
+footage cannot fill (a shortfall) fails naming the band, the required seconds
+and the longest window available — never a silently shorter arc. Clip order is
+arc order, never filename order, and the promo is shorter than the summed
+footage by design.
+
+**Options.** `--dir` names the directory of captures to plan **from** and
+defaults to `capture-output/`; the output defaults to `<dir>/promo.mp4`; the
+clip pattern filters **which captures feed the arc** (default: raw
+`<stem>.webm` runs only — the seek-index `<stem>.seekable.webm` and salvage
+`<stem>.partial.webm` files are not source footage). `--fade-duration <ms>`
+(default 300 ms, derived from the planner's own `fadeSeconds`, which mirrors
+`vidc`'s default) is forwarded to `vidc` **and** used to compensate the arc, so
+the footage the planner adds matches the overlap the renderer applies; `vidc`
+applies that one duration to both the video dissolve (`xfade`) and the audio
+cross fade (`acrossfade`). `--format`, `--resolution`, `--fps`, `--overwrite`,
+`--json` and `--vidc` keep forwarding to `vidc render` (its README lists the full
+option set). `--dry-run` prints the arc plan — per-band cuts with their in points
+and the achieved seconds — plus the `vidc` argv, writing nothing and spawning
+nothing, so it works on a machine without `vidc`. The `vidc` binary is resolved
+from `PATH`, or from `--vidc` / `VIDC_BIN`, and a missing binary fails with an
+install hint (exit 127) rather than an `ENOENT` stack.
+
+**A plain whole-clip concat is still available** — from `vidc` itself, where
+that escape hatch belongs:
+
+```bash
+vidc render --dir capture-output --output capture-output/concat.mp4
+```
+
+Deliverables are MP4 plus the `.otio` edit, and remain git-ignored with the
 rest of `capture-output/`. The former in-repo compiler's automated highlight
 selection, selection/coverage manifests and output pace/size validation are
 removed with it; declarative trimming and transitions are tracked as
 high-priority work in the `video_compiler` project
-(`VC-0MWNOFIBI007J8UK`, `VC-0MWNW4SPX002J2SE`).
+(`VC-0MWNOFIBI007J8UK`, `VC-0MWNW4SPX002J2SE`). Until `VC-0MWNOFIBI007J8UK`
+lands, `vidc` renders each source file whole, so the arc's in points and
+durations are recorded in the document but not yet applied to the footage.
 
 ## Dev scenarios (`--scenario`)
 

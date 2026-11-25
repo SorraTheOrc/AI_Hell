@@ -759,15 +759,24 @@ added by AH-0MUWTNPYJ0031FQE):
   (`import.meta.env.DEV`), so production builds ignore the URL parameter.
   Every scenario, its effect, preset and editorial categories are listed in
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#promo-scenarios-kind-promo).
-- **Video compilation (`npm run capture:promo`):** delegates to the `vidc`
-  CLI from the sibling `video_compiler` repository — it discovers the captured
-  clips, orders them naturally, probes them and renders one normalised MP4
-  with a single FFmpeg invocation, optionally in several platform formats.
-  `capture:promo` cross-fades consecutive clips at an explicit **400 ms**
-  (`--fade-duration 400`, overridable), which vidc applies to both the picture
-  and the audio. AI_Hell keeps no FFmpeg logic, edit planning or output
-  validation of its own. See
-  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#compiling-captured-clips-with-vidc).
+- **Promo compilation (`npm run capture:promo`):** plans an edit from the
+  recorded action and renders it with the `vidc` CLI from the sibling
+  `video_compiler` repository. The planner reads each capture's action-intensity
+  series, cuts an **intensity arc** — 10 s high → 7 s medium → 7 s medium+ →
+  10 s very high, 34 s rendered — writes it as an editable `.otio` timeline
+  (`capture-output/promo.otio`), and hands that document to `vidc render`, which
+  probes and compiles one normalised MP4 (optionally in several platform
+  formats). The arc is the command's only behaviour: there is no flag to select
+  or disable it, and its bands/thresholds live in one config object
+  (`scripts/intensity-arc.mjs`). Cuts cross-fade at an explicit **300 ms**
+  (`--fade-duration`, overridable) — the planner compensates that overlap so the
+  rendered timeline still totals 34 s. Captures with no usable series are
+  skipped with a warning; `--dry-run` prints the plan and the `vidc` argv without
+  writing or rendering. AI_Hell keeps no FFmpeg logic and no output validation
+  of its own. See
+  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#compiling-captured-clips-with-vidc)
+  and
+  [docs/dev/action-intensity.md](./docs/dev/action-intensity.md#751-the-promo-edit-consumes-the-series-current-consumer).
 - **Hangar War screens (`--hangar`):** `npm run capture -- --hangar` drives the
   normal menu (**Tab** from the focused **Play Game** control to the adjacent
   **Hangar War** button, then **Enter**), records the `HangarScene` screen for a
