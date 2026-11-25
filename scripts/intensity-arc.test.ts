@@ -35,6 +35,21 @@ import {
   buildFixtureCorpus,
   parseSeriesFixture,
 } from './intensity-arc-fixtures.mjs';
+import {
+  DEFAULT_INTENSITY_ARC_CONFIG,
+  INTENSITY_ARC_BAND_ORDER,
+  IntensityArcConfigError,
+  IntensityArcIngestError,
+  IntensityArcShortfallError,
+  assertArcBandsSatisfiable,
+  bandAvailability,
+  bandContains,
+  loadIntensityCorpus,
+  longestWindowSeconds,
+  parseActionIntensitySeries,
+  validateIntensityArcConfig,
+  videoTimeMs,
+} from './intensity-arc.mjs';
 
 /** Repository root, resolved from this test file rather than `cwd`. */
 const REPO_ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -307,5 +322,321 @@ describe('intensity-arc fixture location contract (AH-0MWPD4OZH001M74F)', () => 
     for (const fileName of PLATEAU_FIXTURES) {
       expect(existsSync(fixturePath(`${fileName}.action.jsonl`)), fileName).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Planner primitives (AH-0MWPD4QRO007WMJ1)
+// ---------------------------------------------------------------------------
+
+/** The committed corpus directory, resolved from the repository root. */
+const FIXTURE_DIR = `${REPO_ROOT}${INTENSITY_ARC_FIXTURE_DIR}`;
+
+/** Load candidate captures from the committed corpus, collecting warnings. */
+function loadFixtures(candidates: string[]) {
+  const warnings: string[] = [];
+  const corpus = loadIntensityCorpus(candidates, {
+    dir: FIXTURE_DIR,
+    warn: (message) => warnings.push(message),
+  });
+  return { corpus, warnings };
+}
+
+/** Load one capture from the committed corpus. */
+function fixtureCapture(stem: string) {
+  return loadFixtures([stem]).corpus.captures[0]!;
+}
+
+/** One band of the default config by name. */
+function findBand(name: string) {
+  const band = DEFAULT_INTENSITY_ARC_CONFIG.bands.find((entry) => entry.name === name);
+  if (!band) throw new Error(`no band ${name}`);
+  return band;
+}
+
+/** A mutable deep clone of the default config (for malformed-retune tests). */
+function cloneConfig(): any {
+  return JSON.parse(JSON.stringify(DEFAULT_INTENSITY_ARC_CONFIG));
+}
+
+describe('intensity arc config defaults (AH-0MWPD4QRO007WMJ1)', () => {
+  it('defines the four bands in arc order with the documented thresholds and 7/7/10/10 s targets', () => {
+    const config = DEFAULT_INTENSITY_ARC_CONFIG;
+    expect(config.bands.map((band) => band.name)).toEqual([...INTENSITY_ARC_BAND_ORDER]);
+    expect(config.bands.map((band) => band.targetSeconds)).toEqual([10, 7, 7, 10]);
+    expect(findBand('high')).toMatchObject({ min: 0.65, max: 0.75 });
+    expect(findBand('medium')).toMatchObject({ min: 0.4, max: 0.55 });
+    expect(findBand('medium+')).toMatchObject({ min: 0.55, max: 0.65 });
+    expect(findBand('very high')).toMatchObject({ min: 0.75, max: null });
+    expect(config.minWindowSeconds).toBe(1.0);
+    expect(config.fadeSeconds).toBe(0.3);
+    expect(config.sampleRateHz).toBe(10);
+  });
+
+  it('is the only arc definition: deeply frozen with no override/CLI surface', () => {
+    const config = DEFAULT_INTENSITY_ARC_CONFIG;
+    expect(Object.isFrozen(config)).toBe(true);
+    expect(Object.isFrozen(config.bands)).toBe(true);
+    for (const band of config.bands) {
+      expect(Object.isFrozen(band)).toBe(true);
+      expect(Object.keys(band).sort()).toEqual(['max', 'min', 'name', 'targetSeconds']);
+    }
+    expect(Object.keys(config).sort()).toEqual([
+      'bands',
+      'fadeSeconds',
+      'minWindowSeconds',
+      'sampleRateHz',
+    ]);
+  });
+
+  it('accepts the default config', () => {
+    expect(validateIntensityArcConfig(DEFAULT_INTENSITY_ARC_CONFIG)).toBe(
+      DEFAULT_INTENSITY_ARC_CONFIG,
+    );
+  });
+});
+
+describe('intensity arc config validation rejects a broken retune (AH-0MWPD4QRO007WMJ1)', () => {
+  it('rejects an unknown band name with an actionable message', () => {
+    const config = cloneConfig();
+    config.bands[0].name = 'extreme';
+    expect(() => validateIntensityArcConfig(config)).toThrow(IntensityArcConfigError);
+    expect(() => validateIntensityArcConfig(config)).toThrow(/Unknown intensity band name/);
+    expect(() => validateIntensityArcConfig(config)).toThrow(/extreme/);
+  });
+
+  it('rejects a non-positive duration', () => {
+    const zeroTarget = cloneConfig();
+    zeroTarget.bands[0].targetSeconds = 0;
+    expect(() => validateIntensityArcConfig(zeroTarget)).toThrow(/targetSeconds/);
+
+    const negativeTarget = cloneConfig();
+    negativeTarget.bands[2].targetSeconds = -7;
+    expect(() => validateIntensityArcConfig(negativeTarget)).toThrow(/targetSeconds/);
+
+    const zeroWindow = cloneConfig();
+    zeroWindow.minWindowSeconds = 0;
+    expect(() => validateIntensityArcConfig(zeroWindow)).toThrow(/minWindowSeconds/);
+  });
+
+  it('rejects an unordered arc (bands out of arc order)', () => {
+    const config = cloneConfig();
+    const [first, second] = config.bands;
+    config.bands[0] = second;
+    config.bands[1] = first;
+    expect(() => validateIntensityArcConfig(config)).toThrow(IntensityArcConfigError);
+    expect(() => validateIntensityArcConfig(config)).toThrow(/Unordered arc/);
+  });
+
+  it('rejects a non-contiguous threshold partition', () => {
+    const config = cloneConfig();
+    config.bands.find((band: { name: string }) => band.name === 'high').max = 0.8;
+    expect(() => validateIntensityArcConfig(config)).toThrow(/contiguous threshold partition/);
+  });
+
+  it('rejects a top band that is not unbounded', () => {
+    const config = cloneConfig();
+    config.bands.find((band: { name: string }) => band.name === 'very high').max = 1;
+    expect(() => validateIntensityArcConfig(config)).toThrow(/unbounded/);
+  });
+});
+
+describe('intensity arc series ingest (AH-0MWPD4QRO007WMJ1)', () => {
+  it('parses a committed series into a header and sample lines', () => {
+    const parsed = parseActionIntensitySeries(
+      readFileSync(fixturePath('plateaus.action.jsonl'), 'utf8'),
+    );
+    expect(parsed.header.sampleRateHz).toBe(FIXTURE_SAMPLE_RATE_HZ);
+    expect(parsed.samples.length).toBe(380);
+  });
+
+  it('loads the series and join anchor for each usable capture', () => {
+    const { corpus, warnings } = loadFixtures(['plateaus', 'short-band']);
+    expect(warnings).toEqual([]);
+    expect(corpus.skipped).toEqual([]);
+    expect(corpus.captures.map((capture) => capture.stem)).toEqual(['plateaus', 'short-band']);
+
+    const plateaus = corpus.captures[0]!;
+    expect(plateaus.seriesFileName).toBe('plateaus.action.jsonl');
+    expect(plateaus.anchorFileName).toBe('plateaus.capture.json');
+    expect(plateaus.header.sampleRateHz).toBe(FIXTURE_SAMPLE_RATE_HZ);
+    expect(plateaus.samples.length).toBeGreaterThan(0);
+    expect(plateaus.offsetMs).toBe(2000);
+    expect(plateaus.anchor.approximate).toBe(false);
+  });
+
+  it('skips header-only, sample-less, missing-anchor and approximate captures with exactly one warning each', () => {
+    const { corpus, warnings } = loadFixtures([
+      'plateaus',
+      'header-only',
+      'no-samples',
+      'missing-anchor',
+      'approx',
+    ]);
+    expect(corpus.captures.map((capture) => capture.stem)).toEqual(['plateaus']);
+    expect(corpus.skipped.map((entry) => entry.reason)).toEqual([
+      'header-only',
+      'sample-less',
+      'missing-anchor',
+      'approximate-anchor',
+    ]);
+    expect(warnings).toHaveLength(4);
+    for (const warning of warnings) expect(warning).toMatch(/^Intensity arc: skipping "/);
+    const joined = warnings.join('\n');
+    expect(joined).toMatch(/header-only/);
+    expect(joined).toMatch(/no sample with a usable intensity/);
+    expect(joined).toMatch(/is missing/);
+    expect(joined).toMatch(/approximate/);
+  });
+
+  it('warns exactly once per skipped capture even when several checks would fail', () => {
+    const warnings: string[] = [];
+    const headerOnly = readFileSync(fixturePath('header-only.action.jsonl'), 'utf8');
+    expect(() =>
+      loadIntensityCorpus(['broken'], {
+        readFile: (filePath) => {
+          if (filePath === 'broken.action.jsonl') return headerOnly;
+          throw new Error('ENOENT');
+        },
+        warn: (message) => warnings.push(message),
+      }),
+    ).toThrow(IntensityArcIngestError);
+    // Header-only series AND a missing anchor, but only one warning.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/header-only/);
+  });
+
+  it('fails with an actionable error when no usable capture remains', () => {
+    expect(() => loadFixtures(['header-only', 'missing-anchor'])).toThrow(
+      IntensityArcIngestError,
+    );
+    try {
+      loadFixtures(['header-only', 'missing-anchor']);
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toMatch(/No usable capture remains/);
+      expect(message).toMatch(/capture\.json/);
+      expect(message).toMatch(/action\.jsonl/);
+    }
+  });
+
+  it('reports skipped captures without throwing when at least one is usable', () => {
+    const { corpus, warnings } = loadFixtures(['plateaus', 'no-samples']);
+    expect(corpus.captures).toHaveLength(1);
+    expect(corpus.skipped).toHaveLength(1);
+    expect(corpus.skipped[0]).toMatchObject({ stem: 'no-samples', reason: 'sample-less' });
+    expect(warnings).toHaveLength(1);
+  });
+});
+
+describe('intensity arc series-time to video-time join (AH-0MWPD4QRO007WMJ1)', () => {
+  it('maps series time with the anchor offset and clamps at 0', () => {
+    expect(videoTimeMs(8000, 2000)).toBe(6000);
+    expect(videoTimeMs(27000, 2000)).toBe(25000);
+    expect(videoTimeMs(2000, 2000)).toBe(0);
+    expect(videoTimeMs(100, 2000)).toBe(0);
+  });
+
+  it('exposes the join on the loaded capture so known plateau boundaries map as documented', () => {
+    const capture = fixtureCapture('plateaus');
+    expect(capture.offsetMs).toBe(2000);
+    // plateaus.action.jsonl plateau boundaries: 0, 8000, 16000, 27000, 38000 (t, ms).
+    expect(capture.videoTimeMs(8000)).toBe(6000);
+    expect(capture.videoTimeMs(16000)).toBe(14000);
+    expect(capture.videoTimeMs(27000)).toBe(25000);
+    // Warm-up: the first recorded sample predates capture_started -> clamped.
+    expect(capture.videoTimeMs(0)).toBe(0);
+    expect(capture.videoTimeMs(1999)).toBe(0);
+  });
+
+  it('rejects a non-finite offset rather than silently producing NaN', () => {
+    expect(() => videoTimeMs(1000, Number.NaN)).toThrow(/offsetMs/);
+  });
+});
+
+describe('intensity arc band membership and run lengths (AH-0MWPD4QRO007WMJ1)', () => {
+  it('uses inclusive min and exclusive max, with the top band unbounded', () => {
+    const medium = findBand('medium');
+    expect(bandContains(medium, 0.4)).toBe(true);
+    expect(bandContains(medium, 0.54)).toBe(true);
+    expect(bandContains(medium, 0.55)).toBe(false);
+    expect(bandContains(medium, 0.39)).toBe(false);
+
+    const veryHigh = findBand('very high');
+    expect(bandContains(veryHigh, 0.75)).toBe(true);
+    expect(bandContains(veryHigh, 0.99)).toBe(true);
+    expect(bandContains(veryHigh, 0.749)).toBe(false);
+  });
+
+  it('measures the longest contiguous run per band from the known plateau fixture', () => {
+    const plateaus = fixtureCapture('plateaus');
+    const options = { sampleRateHz: FIXTURE_SAMPLE_RATE_HZ };
+    expect(longestWindowSeconds(findBand('medium'), plateaus.samples, options)).toBe(8);
+    expect(longestWindowSeconds(findBand('medium+'), plateaus.samples, options)).toBe(8);
+    expect(longestWindowSeconds(findBand('high'), plateaus.samples, options)).toBe(11);
+    expect(longestWindowSeconds(findBand('very high'), plateaus.samples, options)).toBe(11);
+  });
+
+  it('breaks a run at an out-of-band sample and at a gap', () => {
+    const high = findBand('high');
+    const inBand = (t: number) => ({ t, intensity: 0.7 });
+
+    expect(
+      longestWindowSeconds(high, [inBand(0), inBand(100), inBand(200)], {
+        sampleRateHz: FIXTURE_SAMPLE_RATE_HZ,
+      }),
+    ).toBeCloseTo(0.3);
+
+    // An out-of-band sample splits one run into two single-sample runs.
+    expect(
+      longestWindowSeconds(high, [inBand(0), { t: 100, intensity: 0.5 }, inBand(200)], {
+        sampleRateHz: FIXTURE_SAMPLE_RATE_HZ,
+      }),
+    ).toBeCloseTo(0.1);
+
+    // A gap larger than 1.5 sample intervals splits the run rather than bridging it.
+    expect(
+      longestWindowSeconds(high, [inBand(0), inBand(100), inBand(1000), inBand(1100)], {
+        sampleRateHz: FIXTURE_SAMPLE_RATE_HZ,
+      }),
+    ).toBeCloseTo(0.2);
+  });
+
+  it('reports per-band availability from the pooled corpus', () => {
+    const { corpus } = loadFixtures(['plateaus']);
+    const availability = bandAvailability(corpus.captures, DEFAULT_INTENSITY_ARC_CONFIG);
+    expect(availability.map((entry) => entry.band)).toEqual([...INTENSITY_ARC_BAND_ORDER]);
+    for (const entry of availability) {
+      expect(entry.satisfiable, entry.band).toBe(true);
+      expect(entry.longestAvailableSeconds, entry.band).toBeGreaterThanOrEqual(
+        entry.requiredSeconds,
+      );
+    }
+  });
+
+  it('passes the satisfiable corpus without throwing', () => {
+    const { corpus } = loadFixtures(['plateaus']);
+    expect(() => assertArcBandsSatisfiable(corpus.captures)).not.toThrow();
+  });
+
+  it('fails a shortfall naming band, required seconds and the longest available window', () => {
+    const { corpus } = loadFixtures(['short-band']);
+    let captured: unknown;
+    try {
+      assertArcBandsSatisfiable(corpus.captures);
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).toBeInstanceOf(IntensityArcShortfallError);
+    const error = captured as IntensityArcShortfallError;
+    expect(error.message).toMatch(/very high/);
+    expect(error.message).toMatch(/needs 10s/);
+    expect(error.message).toMatch(/longest available 5s/);
+    expect(error.shortfalls.map((entry) => entry.band)).toEqual(['very high']);
+    expect(error.shortfalls[0]).toMatchObject({
+      requiredSeconds: 10,
+      longestAvailableSeconds: 5,
+      satisfiable: false,
+    });
   });
 });
