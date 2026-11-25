@@ -64,9 +64,11 @@ import {
   type HangarPurchaseContext,
 } from './hangarEconomy';
 import {
+  GRANT_ONLY_MIN_RING,
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
   STARTER_WEAPON_ID,
+  isPurchasableEntry,
   type HangarEntry,
   type HangarPrice,
   type HullUpgrades,
@@ -113,7 +115,14 @@ describe('hangar catalogue — the unlock tree is data of record', () => {
     // MVP tree; the special rewards are the deliberate post-MVP additions, and
     // `hull-4` is never sold (it is a resolution target only).
     expect(buyable.filter((item) => item.kind === 'hull')).toHaveLength(3);
-    expect(buyable.filter((item) => item.kind === 'weapon')).toHaveLength(3);
+    // Only the three shipped purchasable weapons: the eleven newly derived
+    // weapons are grant-only (minRing `GRANT_ONLY_MIN_RING`), so they are not
+    // for sale and must not inflate this pin (AH-0MWWI3KIO001DY5C).
+    expect(
+      buyable.filter(
+        (item) => item.kind === 'weapon' && isPurchasableEntry(item),
+      ),
+    ).toHaveLength(3);
     // Two modifiers since AH-0MVWZYJ740037EZ1: the extra-life kit and the
     // defending-bot skill modifier (a different rewarded choice, not a copy).
     expect(buyable.filter((item) => item.kind === 'modifier')).toHaveLength(2);
@@ -189,8 +198,12 @@ describe('hangar catalogue — the unlock tree is data of record', () => {
       if (item.starter) {
         // The basic kit is owned from the first deployment, never bought.
         expect(item.price).toEqual({ minerals: 0, cores: 0 });
-      } else {
+      } else if (isPurchasableEntry(item)) {
         expect(purchaseWeight(item.price)).toBeGreaterThan(0);
+      } else {
+        // A grant-only entry is a resolution target, never sold (`hull-4`
+        // posture): the gate is the sentinel, so it has no purchase path.
+        expect(item.minRing).toBeGreaterThanOrEqual(GRANT_ONLY_MIN_RING);
       }
     }
   });

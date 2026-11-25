@@ -256,7 +256,7 @@ describe('GymHangar', () => {
       .getModel()
       .unlockRows.find((entry) => entry.id === 'spread')!;
     expect(row.state).toBe('upgradable');
-    expect(row.label).toBe('Spread Cannon — LV 2/5 — UPGRADE · 200 min · 1 cores');
+    expect(row.label).toBe('Spread — LV 2/5 — UPGRADE · 200 min · 1 cores');
     // The model reports the row actionable, exactly as the game's does; the
     // read-only render still activates nothing (no handlers), so a watcher can
     // never buy or upgrade from the gym.

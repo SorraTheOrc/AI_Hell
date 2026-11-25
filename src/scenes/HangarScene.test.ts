@@ -169,15 +169,18 @@ describe('hangar screen model (pure)', () => {
       'hull-1',
       'hull-2',
       'hull-3',
-      'spread',
-      'wave_laser',
-      'ricochet',
-      'cluster',
       'hardened_plating',
       'anti_maw_plating',
       // The authored level-bearing power-ups (AH-0MWKT12BT001106T).
       'bomb',
       'magnet',
+      // The purchasable weapon entries, derived from the runtime catalogue and
+      // appended after the authored set (AH-0MWWI3KIO001DY5C). The eleven
+      // grant-only derived weapons are absent until granted.
+      'spread',
+      'wave_laser',
+      'ricochet',
+      'cluster',
     ]);
     // Owned by the payload's unlocked hull (even though it is affordable).
     const ownedHull = rows.find((row) => row.id === 'hull-2')!;
@@ -284,17 +287,19 @@ describe('hangar screen model (pure)', () => {
     expect(model.weaponOptions[0].actionable).toBe(true);
 
     expect(model.focusOrder).toEqual([
-      // The owned starter weapon is an affordable upgrade, so it is the first
-      // actionable row (it sits fourth in catalogue order).
-      'buy:spread',
-      'buy:wave_laser',
-      'buy:ricochet',
-      'buy:cluster',
+      // The purchasable weapons are derived entries appended after the
+      // authored hulls/modifiers/power-ups, so the affordable weapon upgrades
+      // now follow them (AH-0MWWI3KIO001DY5C). The owned starter weapon is an
+      // affordable upgrade, so it stays in the actionable rows.
       'buy:hardened_plating',
       'buy:anti_maw_plating',
       // `bomb` is affordable at ring 1; `magnet` is ring-2 gated, so it is not
       // an actionable row here (AH-0MWKT12BT001106T).
       'buy:bomb',
+      'buy:spread',
+      'buy:wave_laser',
+      'buy:ricochet',
+      'buy:cluster',
       'hull:hull-2',
       'weapon:spread',
       'save-build',
@@ -1013,15 +1018,17 @@ describe('HangarScene', () => {
       'buy:hull-1',
       'buy:hull-2',
       'buy:hull-3',
-      'buy:spread',
-      'buy:wave_laser',
-      'buy:ricochet',
-      'buy:cluster',
       'buy:hardened_plating',
       'buy:anti_maw_plating',
       // The authored power-up unlock rows (AH-0MWKT12BT001106T).
       'buy:bomb',
       'buy:magnet',
+      // The purchasable weapon rows, derived and appended after the authored
+      // set (AH-0MWWI3KIO001DY5C).
+      'buy:spread',
+      'buy:wave_laser',
+      'buy:ricochet',
+      'buy:cluster',
       'hull:hull-1',
       'hull:hull-2',
       'weapon:spread',
@@ -1735,7 +1742,7 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.maxLevel).toBe(MAX_PERMANENT_LEVEL);
     expect(row.upgradePriceLabel).toBe('150 min');
     expect(row.actionLabel).toBe('UPGRADE · 150 min');
-    expect(row.label).toBe('Spread Cannon — LV 1/5 — UPGRADE · 150 min');
+    expect(row.label).toBe('Spread — LV 1/5 — UPGRADE · 150 min');
     expect(row.actionable).toBe(true);
   });
 
@@ -1746,7 +1753,7 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.level).toBe(2);
     expect(row.upgradePriceLabel).toBe('200 min · 1 cores');
     expect(row.actionLabel).toBe('UPGRADE · 200 min · 1 cores');
-    expect(row.label).toBe('Spread Cannon — LV 2/5 — UPGRADE · 200 min · 1 cores');
+    expect(row.label).toBe('Spread — LV 2/5 — UPGRADE · 200 min · 1 cores');
     expect(row.actionable).toBe(true);
   });
 
@@ -1759,7 +1766,7 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.upgradePriceLabel).toBe('150 min');
     expect(row.actionLabel).toBe('UPGRADE · 150 min — NEED 150 min');
     expect(row.label).toBe(
-      'Spread Cannon — LV 1/5 — UPGRADE · 150 min — NEED 150 min',
+      'Spread — LV 1/5 — UPGRADE · 150 min — NEED 150 min',
     );
   });
 
@@ -1792,7 +1799,7 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.upgradePriceLabel).toBeNull();
     expect(row.actionLabel).toBe('MAX');
     expect(row.label).toBe(
-      `Spread Cannon — LV ${MAX_PERMANENT_LEVEL}/${MAX_PERMANENT_LEVEL} — MAX`,
+      `Spread — LV ${MAX_PERMANENT_LEVEL}/${MAX_PERMANENT_LEVEL} — MAX`,
     );
   });
 

@@ -120,7 +120,7 @@ describe('resolveHexGrant', () => {
   // `it.fails(...)` (the repo's red-before/green-after convention) so `dev`
   // stays green while the body is a genuine red witness — `rapid` has no
   // catalogue entry today. The derivation item flips it to a plain `it(...)`.
-  it.fails('resolves every authored hex grant through the catalogue, never the unknown fallback', () => {
+  it('resolves every authored hex grant through the catalogue, never the unknown fallback', () => {
     // The documented effect-free allowlist (AC5(e), owned by
     // AH-0MWWARIW6003F7OV): three ring-2 modifier grants that intentionally
     // have no catalogue entry yet. Everything else the authored rings grant

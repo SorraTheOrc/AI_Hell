@@ -44,6 +44,7 @@ import {
   GRANT_ONLY_MIN_RING,
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
+  isPurchasableEntry,
   type HangarEntry,
   type HullDefinition,
   type StartingWeaponDefinition,
@@ -448,6 +449,9 @@ interface DerivedCatalogueApi {
     Partial<Record<string, WeaponUnlockEconomyRowView>>
   >;
   readonly deriveWeaponEntry?: (weapon: unknown) => HangarEntry;
+  readonly buildHangarCatalogue?: (
+    weapons?: Readonly<Record<string, unknown>>,
+  ) => readonly HangarEntry[];
   readonly validateHangarCatalogue?: (
     input?: HangarCatalogueGuardInputView,
   ) => HangarCatalogueValidationView;
@@ -486,6 +490,20 @@ function deriveWeaponEntry(weapon: unknown): HangarEntry {
     throw new Error('deriveWeaponEntry is not exported yet (red-first spec)');
   }
   return derive(weapon);
+}
+
+function buildHangarCatalogue(
+  weapons?: Readonly<Record<string, unknown>>,
+): readonly HangarEntry[] {
+  const build = catalogueApi.buildHangarCatalogue;
+  expect(
+    build,
+    'hangarCatalogue must export buildHangarCatalogue',
+  ).toBeTypeOf('function');
+  if (build === undefined) {
+    throw new Error('buildHangarCatalogue is not exported yet');
+  }
+  return build(weapons);
 }
 
 function validateHangarCatalogue(
@@ -535,7 +553,7 @@ describe('hangar catalogue — derived weapon coverage (parent AC2)', () => {
       .map((line) => line.slice(0, line.indexOf(',')));
   }
 
-  it.fails('documents `cannon` as the one weapon exclusion', () => {
+  it('documents `cannon` as the one weapon exclusion', () => {
     const excluded = excludedWeaponIds();
     expect(excluded).toEqual(['cannon']);
     // The exclusion is a real shipped weapon: the always-mounted permanent
@@ -543,7 +561,7 @@ describe('hangar catalogue — derived weapon coverage (parent AC2)', () => {
     expect(Object.keys(WEAPON_CATALOGUE)).toContain('cannon');
   });
 
-  it.fails('itemises every shipped weapon except the documented exclusions exactly once', () => {
+  it('itemises every shipped weapon except the documented exclusions exactly once', () => {
     const excluded = excludedWeaponIds();
     const itemised = HANGAR_CATALOGUE.filter(
       (entry): entry is StartingWeaponDefinition => entry.kind === 'weapon',
@@ -562,7 +580,7 @@ describe('hangar catalogue — derived weapon coverage (parent AC2)', () => {
     }
   });
 
-  it.fails('honours the 16-CSV-weapon minus exclusion count rule', () => {
+  it('honours the 16-CSV-weapon minus exclusion count rule', () => {
     const csvIds = csvWeaponIds();
     expect(csvIds, 'src/data/weapons.csv rows').toHaveLength(16);
 
@@ -571,6 +589,72 @@ describe('hangar catalogue — derived weapon coverage (parent AC2)', () => {
     expect(itemised, 'weapon entries in HANGAR_CATALOGUE').toHaveLength(
       csvIds.length - excluded.length,
     );
+  });
+
+  it('derives from the guarded runtime catalogue, never the raw CSV parse', () => {
+    // The derivation iterates the **guarded** runtime catalogue, which holds
+    // one id per weapon: a row the weapon guard rejected runs its code-default
+    // id, so it can never appear as a second id the derivation would itemise
+    // twice (parent AC2). Ids line up exactly, and stay unique.
+    const excluded = excludedWeaponIds();
+    const expected = Object.keys(WEAPON_CATALOGUE).filter(
+      (id) => !excluded.includes(id),
+    );
+    const itemised = HANGAR_CATALOGUE.filter(
+      (entry): entry is StartingWeaponDefinition => entry.kind === 'weapon',
+    ).map((entry) => entry.weaponId);
+
+    expect([...itemised].sort()).toEqual([...expected].sort());
+    expect(new Set(itemised).size).toBe(itemised.length);
+
+    // A shipped entry's display copy comes straight from the runtime weapon
+    // definition (the CSV row), so the hangar and the game cannot drift.
+    const spread = HANGAR_CATALOGUE.find(
+      (entry): entry is StartingWeaponDefinition =>
+        entry.kind === 'weapon' && entry.weaponId === 'spread',
+    );
+    expect(spread).toMatchObject({
+      name: WEAPON_CATALOGUE.spread.name,
+      description: WEAPON_CATALOGUE.spread.description,
+    });
+  });
+
+  it('passes its build-time guards on the shipped tree', () => {
+    // The guard runs at catalogue build time (the module throws otherwise);
+    // this proves the shipped tree is clean.
+    const result = validateHangarCatalogue();
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+  });
+
+  it('derives a matching entry for an injected catalogue with an extra id (AC1)', () => {
+    // No code change is needed for a new weapon row: the derivation reads the
+    // injected catalogue, not a hand-authored list.
+    const ghostId = 'ghost_weapon' as WeaponId;
+    const ghost = {
+      ...WEAPON_CATALOGUE.rapid,
+      id: ghostId,
+      name: 'Ghost Weapon',
+      description: 'A ghost weapon that exists only in this fixture.',
+    };
+    const entries = buildHangarCatalogue({
+      ...WEAPON_CATALOGUE,
+      ghost_weapon: ghost,
+    });
+    const derived = entries.find(
+      (entry): entry is StartingWeaponDefinition =>
+        entry.kind === 'weapon' && entry.weaponId === ghostId,
+    );
+
+    expect(derived, 'derived entry for the injected weapon').toBeDefined();
+    expect(derived).toMatchObject({
+      id: 'ghost_weapon',
+      kind: 'weapon',
+      weaponId: 'ghost_weapon',
+      name: 'Ghost Weapon',
+      description: 'A ghost weapon that exists only in this fixture.',
+    });
+    // A weapon with no authored economy row is grant-only (the `hull-4` posture).
+    expect(isPurchasableEntry(derived!)).toBe(false);
   });
 });
 
@@ -645,7 +729,7 @@ describe('hangar catalogue — WEAPON_UNLOCK_ECONOMY (parent AC3)', () => {
  * was missing: `rapid` fails it today. RED until the guards land.
  */
 describe('hangar catalogue — fail-closed build guards', () => {
-  it.fails('(a) full coverage: a weapon with no entry fails loudly', () => {
+  it('(a) full coverage: a weapon with no entry fails loudly', () => {
     const ghostId = 'ghost_weapon';
     const weapons = {
       ...WEAPON_CATALOGUE,
@@ -660,7 +744,7 @@ describe('hangar catalogue — fail-closed build guards', () => {
     ).toBeGreaterThan(0);
   });
 
-  it.fails('(b) no duplicate entry ids across authored + derived', () => {
+  it('(b) no duplicate entry ids across authored + derived', () => {
     const base = HANGAR_CATALOGUE.find(
       (entry): entry is StartingWeaponDefinition => entry.kind === 'weapon',
     );
@@ -704,7 +788,7 @@ describe('hangar catalogue — fail-closed build guards', () => {
     ).toBeGreaterThan(0);
   });
 
-  it.fails('(d) every entry weaponId resolves in the runtime weapon catalogue', () => {
+  it('(d) every entry weaponId resolves in the runtime weapon catalogue', () => {
     const base = HANGAR_CATALOGUE.find(
       (entry): entry is StartingWeaponDefinition => entry.kind === 'weapon',
     );

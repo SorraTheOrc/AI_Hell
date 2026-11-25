@@ -1456,9 +1456,6 @@ describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
   const BUYABLE = [
     'hull-2',
     'hull-3',
-    'wave_laser',
-    'ricochet',
-    'cluster',
     'hardened_plating',
     // The defending-bot skill modifier (AH-0MVWZYJ740037EZ1).
     'anti_maw_plating',
@@ -1466,6 +1463,11 @@ describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
     // report measures every buyable entry, not the attract bot's choice.
     'bomb',
     'magnet',
+    // The purchasable weapon rows are derived and appended after the authored
+    // set (AH-0MWWI3KIO001DY5C); grant-only derived weapons are not buyable.
+    'wave_laser',
+    'ricochet',
+    'cluster',
   ];
 
   it('derives deployments-to-afford from both currency bounds', () => {
