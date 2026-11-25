@@ -235,7 +235,7 @@ import type {
 } from '../utils/weaponEvolutions';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
-import { createCompetentBotBrain } from '../ai/framework';
+import { createCompetentBotBrain, hasFireLine } from '../ai/framework';
 import { notifyAimHit } from '../ai/aimHit';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
@@ -4993,6 +4993,32 @@ export class PlayScene extends CombatScene<
   protected override getBotInput(): ControlInput | null {
     if (!this.demoMode) return null;
     return this.botGovernor.current();
+  }
+
+  /**
+   * Fire discipline for the demo bot (AH-0MWPOET5A002IPTP · fire-discipline
+   * remediation). The shared auto-fire fires along the committed facing with
+   * no aim gate, so a bot that is collecting, evading or repositioning would
+   * keep shooting into empty space. The gate asks the **one** shared
+   * {@link hasFireLine} predicate whether a live target lies inside the active
+   * weapon's reach on the ship's firing line; only then may it fire.
+   *
+   * Targets are the same set the shared hitscan path may intercept
+   * ({@link getHitscanTargets}: enemies, asteroids, boss, mini-boss), measured
+   * on the torus the ship wraps on. Human sessions and non-demo runs return
+   * `true`, so the real-input game is byte-for-byte unchanged.
+   */
+  protected override botFireAllowed(): boolean {
+    if (!this.demoMode) return true;
+    const player = this.getPlayer();
+    if (!player) return true;
+    return hasFireLine({
+      origin: { x: player.x, y: player.y },
+      heading: player.getHeading(),
+      weaponRange: player.getEffectiveWeaponRange(),
+      targets: this.getHitscanTargets(),
+      world: { width: GAME_WIDTH, height: GAME_HEIGHT },
+    });
   }
 
   /**

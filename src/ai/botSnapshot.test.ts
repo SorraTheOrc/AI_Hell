@@ -545,6 +545,40 @@ describe('buildBotSnapshot — live aim physics (AH-0MWR04ZDU0005O8J AC2)', () =
     expect(buildBotSnapshot(scene).player?.shotSpeed).toBeUndefined();
   });
 
+  it('carries the source effective weapon range (fire discipline)', () => {
+    const scene = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+        getEffectiveWeaponRange: () => 262.5,
+      }),
+    });
+
+    expect(buildBotSnapshot(scene).player?.weaponRange).toBe(262.5);
+  });
+
+  it('omits and rejects an absent or non-finite weapon range', () => {
+    const withoutGetter = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+      }),
+    });
+    expect(buildBotSnapshot(withoutGetter).player?.weaponRange).toBeUndefined();
+
+    const nonFinite = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+        getEffectiveWeaponRange: () => Number.NaN,
+      }),
+    });
+    expect(buildBotSnapshot(nonFinite).player?.weaponRange).toBeUndefined();
+  });
+
   it('deep-freezes the carried rotation config and shot speed', () => {
     const scene = makeScene({
       getPlayer: () => ({

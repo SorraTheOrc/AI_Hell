@@ -116,6 +116,15 @@ export interface BotPlayer {
    * applies.
    */
   readonly shotSpeed?: number;
+  /**
+   * The ship's live **effective weapon reach** (px), sourced through the same
+   * structural seam (AH-0MWPOET5A002IPTP · fire-discipline remediation). The
+   * aim fire solution uses it to tell a target that can be hit from one that
+   * is simply too far away, and the bot's fire gate uses it to only fire when
+   * a shot has a target. Absent on snapshots whose source does not expose it,
+   * where the range gate is disabled (today's behaviour exactly).
+   */
+  readonly weaponRange?: number;
 }
 
 /** A single enemy (or asteroid) and its threat-relevant state. */
@@ -292,6 +301,13 @@ export interface BotPlayerSource {
    * `PLAYER_BULLET_SPEED` as the fallback.
    */
   getProjectileSpeed?(): number;
+  /**
+   * The ship's live **effective weapon reach** (px)
+   * (AH-0MWPOET5A002IPTP · fire-discipline remediation). Optional so older
+   * structural sources remain valid; an absent getter omits the `weaponRange`
+   * field, leaving the range gate disabled (the pre-change behaviour).
+   */
+  getEffectiveWeaponRange?(): number;
 }
 
 /** Minimal enemy source (a `BaseEnemy`/`EnemyEntity` satisfies this). */
@@ -430,6 +446,8 @@ export function buildBotSnapshot(
   const bossSource = scene.getBoss();
   // Read the live shot speed once: the getter may be stateful in a source.
   const liveShotSpeed = playerSource?.getProjectileSpeed?.();
+  // Read the live weapon reach once, on the same structural seam.
+  const liveWeaponRange = playerSource?.getEffectiveWeaponRange?.();
 
   const player: BotPlayer | null = playerSource
     ? {
@@ -449,6 +467,14 @@ export function buildBotSnapshot(
           : {}),
         ...(typeof liveShotSpeed === 'number' && Number.isFinite(liveShotSpeed)
           ? { shotSpeed: liveShotSpeed }
+          : {}),
+        // The ship's effective weapon reach (AH-0MWPOET5A002IPTP): carried the
+        // same way as the shot speed, so the aim/fire solve can tell an
+        // in-reach target from a firing-at-nothing one through the snapshot
+        // seam rather than a bot-layer weapon constant.
+        ...(typeof liveWeaponRange === 'number' &&
+        Number.isFinite(liveWeaponRange)
+          ? { weaponRange: liveWeaponRange }
           : {}),
       }
     : null;

@@ -896,6 +896,48 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * The ship's **effective weapon reach** (px) — the farthest a shot from the
+   * current active loadout can still connect (AH-0MWPOET5A002IPTP ·
+   * fire-discipline remediation).
+   *
+   * The demo bot uses it to be aware of the range of its weapons: a target
+   * beyond this reach cannot be hit, so holding station and firing at it is
+   * firing at nothing. The value is the **maximum** reach among the active
+   * weapons, because the ship auto-fires every active weapon together:
+   *
+   * - a travelling shot reaches `PLAYER_BULLET_SPEED × bulletLifetime`
+   *   (every travelling player projectile flies at the shared speed);
+   * - a hitscan beam reaches its authored `hitscan.length`;
+   * - a random-detonation AOE (mortar) reaches
+   *   `aoe.projectileSpeed × bulletLifetime`;
+   * - an instant `'onFire'` AOE (nova/arc) resolves at the ship, so its reach
+   *   is its effect radius.
+   *
+   * A level-resolved definition already carries the level multipliers through
+   * {@link getWeaponDef}, so levelling a weapon extends its reach here too.
+   * Exposed through the structural `BotPlayerSource` seam so `src/ai` never
+   * hard-codes a weapon constant.
+   */
+  getEffectiveWeaponRange(): number {
+    let reach = 0;
+    for (const weaponId of this.getActiveWeapons()) {
+      const def = this.getWeaponDef(weaponId);
+      const weaponReach = def.hitscan
+        ? def.hitscan.length
+        : def.aoe
+          ? def.aoe.trigger === 'onRandom'
+            ? (def.aoe.projectileSpeed ?? PLAYER_BULLET_SPEED) *
+              def.bulletLifetime
+            : def.aoe.radius
+          : PLAYER_BULLET_SPEED * def.bulletLifetime;
+      if (Number.isFinite(weaponReach) && weaponReach > reach) {
+        reach = weaponReach;
+      }
+    }
+    return reach;
+  }
+
+  /**
    * Copies the nominal config into the live config. There is no run-time
    * movement scaling any more (Speed Boost is weapons-only), so this is a
    * plain assignment rather than a multiplier application.

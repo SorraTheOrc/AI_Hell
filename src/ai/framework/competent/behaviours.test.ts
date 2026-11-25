@@ -1325,6 +1325,26 @@ describe('engage behaviour — hold-station posture (AH-0MWW2PFU8001J0PM)', () =
     expect(intentFor(snapshot, T).thrust).toBe(true);
   });
 
+  it('closes the distance when the target is beyond the weapon reach', () => {
+    // The same 220 px geometry that holds station above, but the active weapon
+    // only reaches 200 px: the shot can never connect, so holding station and
+    // firing would be firing at nothing (AH-0MWPOET5A002IPTP). The range-aware
+    // solution degrades the posture to closing the distance.
+    const outOfReach = makeSnapshot({
+      player: { ...PLAYER, weaponRange: 200 },
+      enemies: [enemy(700, 270, 'scout')],
+    });
+    expect(intentFor(outOfReach, HOLD).thrust).toBe(true);
+
+    // Control: with the reach the ship actually has, the identical geometry
+    // still holds station.
+    const inReach = makeSnapshot({
+      player: { ...PLAYER, weaponRange: 300 },
+      enemies: [enemy(700, 270, 'scout')],
+    });
+    expect(intentFor(inReach, HOLD).thrust).toBe(false);
+  });
+
   it('moves when nothing is hittable inside the horizon', () => {
     // 420 px away is 1.2 s of flight alone — outside the producer's 1 s — so
     // the bot closes the distance instead of standing still and wasting shots.

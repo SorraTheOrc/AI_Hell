@@ -477,6 +477,29 @@ describe('Player ship entity', () => {
     expect(player.getProjectileSpeed()).toBe(PLAYER_BULLET_SPEED);
   });
 
+  it('getEffectiveWeaponRange reports the reach of the active loadout', async () => {
+    const player = await freshPlayer();
+    const cannon = player.getWeaponDef('cannon');
+    // Travelling shots fly at PLAYER_BULLET_SPEED and expire after the
+    // weapon's lifetime, so the reach is their product
+    // (AH-0MWPOET5A002IPTP · fire-discipline remediation).
+    expect(player.getEffectiveWeaponRange()).toBeCloseTo(
+      PLAYER_BULLET_SPEED * cannon.bulletLifetime,
+      6,
+    );
+  });
+
+  it('getEffectiveWeaponRange takes the farthest reach in the loadout', async () => {
+    const player = await freshPlayer();
+    const before = player.getEffectiveWeaponRange();
+    player.equipWeapon('railgun', true);
+    const railgun = player.getWeaponDef('railgun');
+    expect(player.getEffectiveWeaponRange()).toBeCloseTo(
+      Math.max(before, PLAYER_BULLET_SPEED * railgun.bulletLifetime),
+      6,
+    );
+  });
+
   // ── Thrust flame animation ───────────────────────────────────────
 
   it('starts with no flame (length 0), and idle frames do not animate it', async () => {

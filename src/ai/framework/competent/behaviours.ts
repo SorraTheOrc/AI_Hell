@@ -356,6 +356,7 @@ function preferHittableTarget(
   t: CompetentBotTunables,
   shotSpeed: number,
   alignSeconds: number,
+  weaponRange: number,
   motion: AimTargetMotion,
   probe: FireTarget,
 ): NearestTarget<ContentTarget> | null {
@@ -379,6 +380,9 @@ function preferHittableTarget(
       shotSpeed,
       alignSeconds,
       horizon: t.holdFireHorizonSeconds,
+      // A candidate beyond the weapon's reach is not hittable, so the posture
+      // prefers a reachable target (AH-0MWPOET5A002IPTP).
+      weaponRange,
       iterations: t.aimLeadIterations,
       tunables: t,
       world: wrapWorld,
@@ -444,6 +448,11 @@ function engageBehaviour(
       // judges candidates with them (AH-0MWW2PFU8001J0PM · RAC4).
       const shotSpeed = resolveShotSpeed(t, player.shotSpeed);
       const alignSeconds = resolveAimAlignSeconds(t, player.rotation);
+      // The ship's effective weapon reach (AH-0MWPOET5A002IPTP): a target
+      // farther than this can never be hit, so the bot must close distance
+      // rather than hold station and fire at nothing. `0`/absent keeps the
+      // pre-change time-of-flight-only judgement (range gate disabled).
+      const weaponRange = player.weaponRange ?? 0;
       const threatWeight = (target: ContentTarget): number =>
         content.resolveEnemy(target.contentId).threat;
       // Line-of-fire preference (AH-0MWW2PFU8001J0PM · RAC4): when the
@@ -461,6 +470,7 @@ function engageBehaviour(
               t,
               shotSpeed,
               alignSeconds,
+              weaponRange,
               scanMotion,
               scanProbe,
             )
@@ -570,6 +580,7 @@ function engageBehaviour(
                 shotSpeed,
                 alignSeconds,
                 horizon: t.holdFireHorizonSeconds,
+                weaponRange,
               },
               wrapWorld,
             )

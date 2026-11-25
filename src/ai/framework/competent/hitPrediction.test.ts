@@ -99,6 +99,51 @@ describe('evaluateFireSolution — turn time plus flight time against the horizo
     expect(solution.hit).toBe(true);
   });
 
+  it('rejects a shot beyond the weapon reach even inside the horizon (fire discipline)', () => {
+    // 200 px is 0.571 s of flight plus the 0.2 s turn = 0.771 s, comfortably
+    // inside the 1 s horizon — but a 150 px weapon cannot reach it.
+    const solution = evaluateFireSolution(
+      { x: 0, y: 0 },
+      { x: 200, y: 0 },
+      { shotSpeed: 350, alignSeconds: 0.2, horizon: 1, weaponRange: 150 },
+    );
+    expect(solution.timeToHit).toBeLessThan(1);
+    expect(solution.inRange).toBe(false);
+    expect(solution.hit).toBe(false);
+  });
+
+  it('accepts a shot inside the weapon reach', () => {
+    const solution = evaluateFireSolution(
+      { x: 0, y: 0 },
+      { x: 200, y: 0 },
+      { shotSpeed: 350, alignSeconds: 0.2, horizon: 1, weaponRange: 250 },
+    );
+    expect(solution.inRange).toBe(true);
+    expect(solution.hit).toBe(true);
+  });
+
+  it('treats the weapon reach boundary as inclusive', () => {
+    const solution = evaluateFireSolution(
+      { x: 0, y: 0 },
+      { x: 250, y: 0 },
+      { shotSpeed: 350, alignSeconds: 0.2, horizon: 1, weaponRange: 250 },
+    );
+    expect(solution.inRange).toBe(true);
+    expect(solution.hit).toBe(true);
+  });
+
+  it('disables the range gate when the reach is unknown', () => {
+    for (const weaponRange of [undefined, 0, -1, Number.NaN]) {
+      const solution = evaluateFireSolution(
+        { x: 0, y: 0 },
+        { x: 5_000, y: 0 },
+        { shotSpeed: 350, alignSeconds: 0, horizon: 100, weaponRange },
+      );
+      expect(solution.inRange).toBe(true);
+      expect(solution.hit).toBe(true);
+    }
+  });
+
   it('reports the alignment wait alone when the projectile speed is unknown', () => {
     for (const shotSpeed of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       const solution = evaluateFireSolution(

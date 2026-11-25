@@ -65,6 +65,7 @@ import { BotInputGovernor } from '../../ai/botHumanLike';
 import { buildBotSnapshot, type BotSnapshot, type BotSnapshotScene } from '../../ai/botSnapshot';
 import {
   createCompetentBotBrain,
+  hasFireLine,
   resolveCompetentTunables,
   type BotBrain,
   type CompetentBotTunables,
@@ -235,6 +236,24 @@ export class GymBotTuning extends GymLevel {
   /** Shared demo seam: the bot's committed input wins over the keyboard. */
   protected override getBotInput(): ControlInput | null {
     return this.botGovernor.current();
+  }
+
+  /**
+   * Fire discipline for the tuning gym's bot (AH-0MWPOET5A002IPTP ·
+   * fire-discipline remediation): the **same** shared {@link hasFireLine}
+   * predicate and target set `PlayScene` uses, so the gym shows the shipped
+   * demo bot's weapon discipline and cannot diverge from the game.
+   */
+  protected override botFireAllowed(): boolean {
+    const player = this.getPlayer();
+    if (!player) return true;
+    return hasFireLine({
+      origin: { x: player.x, y: player.y },
+      heading: player.getHeading(),
+      weaponRange: player.getEffectiveWeaponRange(),
+      targets: this.getHitscanTargets(),
+      world: { width: GAME_WIDTH, height: GAME_HEIGHT },
+    });
   }
 
   /**

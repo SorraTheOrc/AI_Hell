@@ -389,6 +389,13 @@ export function runAimAccuracyScenario(
      */
     readonly preFixDamping?: boolean;
     /**
+     * Opt into the bot fire gate (AH-0MWPOET5A002IPTP): the arena models the
+     * shipped `botFireAllowed` discipline — a range-aware snapshot and no shot
+     * unless a target is in reach on the firing line. Off by default so every
+     * recorded baseline stays byte-identical.
+     */
+    readonly botFireGate?: boolean;
+    /**
      * Explicit tunable overrides for an experimental arm
      * (AH-0MWT4BBYO0085CN8). Applied **after** the documented controls, so a
      * probe can vary one knob while everything else stays shipped. Not used by
@@ -495,6 +502,7 @@ export function runAimAccuracyScenario(
       balance: loadBalanceConfig(),
       movingHostiles: true,
       measureAimShots: options.measureAimShots ?? true,
+      ...(options.botFireGate === true ? { botFireGate: true } : {}),
       ...(options.measureControlInputs === true
         ? { measureControlInputs: true }
         : {}),
@@ -820,5 +828,126 @@ export function runAimOscillation(
       ),
     })),
     pooled: foldOscillation(runs, allShots),
+  };
+}
+
+// ── Fire discipline measurement (AH-0MWPOET5A002IPTP) ────────────────
+//
+// The aim-accuracy half answers "does a shot land?"; it never asks whether a
+// shot should have been fired at all. The producer's rejection is that the bot
+// "will sometimes appear to be firing at nothing": while it collects, evades
+// or repositions its nose points away from every target and the unconditional
+// auto-fire keeps shooting into empty space. This A/B measures the fix: the
+// same scenario matrix flown twice, once with the shipped unconditional trigger
+// (`ungated`) and once with the range-aware fire gate on (`gated`), reporting
+// shots fired, hits, hit rate and shots-fired-at-nothing for each arm.
+
+/** One arm's fire-discipline tally. */
+export interface FireDisciplineArm {
+  /** Player projectiles fired in the window. */
+  readonly shotsFired: number;
+  /** Projectiles that connected with the body they were aimed at. */
+  readonly shotsHit: number;
+  /** `shotsHit / shotsFired`, 4 dp (`0` when nothing was fired). */
+  readonly hitRate: number;
+  /** Projectiles fired with no live body in reach on their line. */
+  readonly shotsAtNothing: number;
+}
+
+/** One class's gate-off vs gate-on row. */
+export interface FireDisciplineRow {
+  readonly movementClass: EnemyMovementClass;
+  readonly gated: FireDisciplineArm;
+  readonly ungated: FireDisciplineArm;
+}
+
+/** The whole fire-discipline report. */
+export interface FireDisciplineReport {
+  readonly seeds: readonly number[];
+  readonly classes: readonly EnemyMovementClass[];
+  readonly ticks: number;
+  readonly dt: number;
+  /** Per class, pooled over the documented seeds. */
+  readonly rows: readonly FireDisciplineRow[];
+  /** Every class and seed pooled into one tally per arm. */
+  readonly gated: FireDisciplineArm;
+  readonly ungated: FireDisciplineArm;
+}
+
+/** Folds one run into an arm tally. */
+function fireDisciplineArm(result: ArenaRunResult): FireDisciplineArm {
+  const tally = tallyAimShots(result.aimShots ?? []);
+  return {
+    shotsFired: tally.shotsFired,
+    shotsHit: tally.shotsHit,
+    hitRate: tally.hitRate,
+    shotsAtNothing: result.shotsAtNothing ?? 0,
+  };
+}
+
+/** Sums arm tallies, recomputing the pooled hit rate. */
+function foldFireDisciplineArms(
+  arms: readonly FireDisciplineArm[],
+): FireDisciplineArm {
+  let shotsFired = 0;
+  let shotsHit = 0;
+  let shotsAtNothing = 0;
+  for (const arm of arms) {
+    shotsFired += arm.shotsFired;
+    shotsHit += arm.shotsHit;
+    shotsAtNothing += arm.shotsAtNothing;
+  }
+  return {
+    shotsFired,
+    shotsHit,
+    hitRate: roundReported(shotsFired > 0 ? shotsHit / shotsFired : 0),
+    shotsAtNothing,
+  };
+}
+
+/**
+ * Runs the documented scenario matrix twice — gate off (the shipped
+ * unconditional trigger) and gate on (the fire discipline) — and folds each
+ * arm's shots into the accuracy and "fired at nothing" counts.
+ *
+ * Everything else is identical between the arms (same seeds, classes, ticks,
+ * compiled-default brain and governor), so the comparison isolates the gate.
+ */
+export function runFireDiscipline(): FireDisciplineReport {
+  const rows: FireDisciplineRow[] = [];
+  for (const movementClass of AIM_ACCURACY_CLASSES) {
+    const gatedRuns: FireDisciplineArm[] = [];
+    const ungatedRuns: FireDisciplineArm[] = [];
+    for (const seed of AIM_ACCURACY_SEEDS) {
+      gatedRuns.push(
+        fireDisciplineArm(
+          runAimAccuracyScenario(movementClass, seed, {
+            measureAimShots: true,
+            botFireGate: true,
+          }),
+        ),
+      );
+      ungatedRuns.push(
+        fireDisciplineArm(
+          runAimAccuracyScenario(movementClass, seed, {
+            measureAimShots: true,
+          }),
+        ),
+      );
+    }
+    rows.push({
+      movementClass,
+      gated: foldFireDisciplineArms(gatedRuns),
+      ungated: foldFireDisciplineArms(ungatedRuns),
+    });
+  }
+  return {
+    seeds: [...AIM_ACCURACY_SEEDS],
+    classes: [...AIM_ACCURACY_CLASSES],
+    ticks: AIM_ACCURACY_TICKS,
+    dt: AIM_ACCURACY_DT,
+    rows,
+    gated: foldFireDisciplineArms(rows.map((row) => row.gated)),
+    ungated: foldFireDisciplineArms(rows.map((row) => row.ungated)),
   };
 }

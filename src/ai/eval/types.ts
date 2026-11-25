@@ -473,6 +473,23 @@ export interface ArenaConfig {
    */
   readonly liveControlContext?: boolean;
   /**
+   * **Opt-in** bot fire discipline (AH-0MWPOET5A002IPTP · fire-discipline
+   * remediation). When `true`, the arena:
+   *
+   * - puts the ship's effective weapon reach on the bot snapshot it hands the
+   *   brain (`BotPlayer.weaponRange`), so the aim/fire solve is range-aware; and
+   * - holds the auto-fire unless the shared `hasFireLine` predicate finds a
+   *   live hostile inside that reach on the committed firing line, mirroring
+   *   the scene's `botFireAllowed` gate.
+   *
+   * Omitted/`false` keeps the historic unconditional auto-fire and the
+   * snapshot shape, so every recorded accuracy/oscillation baseline is
+   * byte-identical. Turning it on is a **behaviour** change (the modelling of
+   * the shipped gate), not an observation, and is meant for the explicit
+   * gate-on arm of the fire-discipline A/B.
+   */
+  readonly botFireGate?: boolean;
+  /**
    * Explicit archetype list for the seeded skirmish's hostile reservoir
    * (AH-0MWOKL79Z0051ZXO). Absent → the config-derived list
    * ({@link ArenaConfig.balance} / `loadAllEnemyConfigs`, minus the
@@ -524,6 +541,15 @@ export interface ArenaRunResult {
    * unaimed miss.
    */
   readonly aimShots?: readonly ArenaAimShot[];
+  /**
+   * How many player projectiles were fired with no live body inside the ship's
+   * effective reach on their firing line — the producer's "firing at nothing"
+   * (AH-0MWPOET5A002IPTP · fire-discipline remediation). Present **only** when
+   * {@link ArenaConfig.measureAimShots} is `true`, so the default result shape
+   * and every existing baseline stay unchanged. `0` under
+   * {@link ArenaConfig.botFireGate} by construction.
+   */
+  readonly shotsAtNothing?: number;
   /**
    * One record per simulated tick, in tick order (AH-0MWT4BBYO0085CN8).
    * Present **only** when {@link ArenaConfig.measureControlInputs} is `true`,
@@ -609,6 +635,13 @@ export interface ArenaAimShot {
   readonly missDistance: number;
   /** Ticks the projectile flew before resolving (hit or lifetime expiry). */
   readonly flightTicks: number;
+  /**
+   * Whether the shot was fired with **no live body** inside the weapon's reach
+   * on its line — the producer's "firing at nothing"
+   * (AH-0MWPOET5A002IPTP). Populated by the shared `hasFireLine` predicate at
+   * the muzzle. Optional so hand-built synthetic shot fixtures stay valid.
+   */
+  readonly firedAtNothing?: boolean;
 }
 
 /** Default spawn counts, sized for a representative single-level skirmish. */

@@ -1102,6 +1102,67 @@ The posture is therefore a **prediction**, not a tuning preference.
   `holdFireLineRadiusPx` are ordinary live sliders
   ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)).
 
+### 9.14 Fire discipline: never fire at nothing (AH-0MWPOET5A002IPTP)
+
+The hold-station posture (§9.13) stopped the bot driving while it engaged, but
+a later play-test rejected the result from the other side of the same problem:
+
+> "The bot will sometimes appear to be firing at nothing. It should be aware of
+> the range of its weapons … The ship should never be firing away from targets,
+> unless maneuvering for a defined purpose." — producer audit rejection,
+> 2026-11-25
+
+The cause is structural. The player **auto-fires along its committed facing**
+(`CombatCoreScene._autoFire` → `player.tryFire`) with no aim gate, which is the
+intended "hold the trigger" feel for a human. A bot that is collecting,
+evading or repositioning points its nose away from every target for much of a
+run, so the unconditional trigger keeps shooting into empty space. Separately,
+the fire solution judged a shot only by **time** against the horizon, never by
+the active weapon's **reach**, so the hold-station posture could hold at
+`engagementRange` (140 px) with a short-reach weapon (Rapid ≈ 131 px) and fire
+at nothing.
+
+- **Weapon-range awareness.** `Player.getEffectiveWeaponRange()` derives the
+  ship's reach from the live active loadout — `PLAYER_BULLET_SPEED ×
+  bulletLifetime` for a travelling shot, `hitscan.length` for a beam,
+  `aoe.projectileSpeed × bulletLifetime` for a random-detonation AOE and the
+  effect radius for an instant AOE — and takes the **farthest** active weapon
+  (the ship fires them all together). It is carried on the snapshot seam as
+  `BotPlayer.weaponRange` (the `shotSpeed` precedent), so `src/ai` never
+  hard-codes a weapon constant. `evaluateFireSolution` / `resolveFireSolution`
+  report `inRange` and only count a shot as a hit inside that reach; the
+  hold-station posture and the line-of-fire target preference require it. A
+  snapshot **without** a range (`0`/absent) disables the gate and reproduces
+  the pre-change time-of-flight-only judgement byte-for-byte, which is what
+  keeps the pinned accuracy/oscillation fixtures unchanged.
+- **The fire-line gate (`src/ai/framework/competent/fireLine.ts`).**
+  `hasFireLine` is the single definition of "this shot has a target": a live
+  body lies **ahead of the muzzle**, inside the weapon's reach, and close
+  enough to the shot's ray that the body and the bullet would meet
+  (perpendicular offset ≤ the body's hit radius + `BOT_FIRE_LINE_RADIUS_PX`,
+  the shared bullet radius). It is torus-aware and pure.
+- **One shared scene hook.** `CombatCoreScene.botFireAllowed()` defaults to
+  `true` (a scene with no bot, and every human session, is unchanged). A
+  bot-bearing scene overrides it with `hasFireLine` over the same targets the
+  shared hitscan path intercepts — `PlayScene` in demo mode and `GymBotTuning`
+  — so the game and the bot gym cannot diverge. When it returns `false` the
+  shared player step spawns no bullets, muzzle flashes or fire cues, exactly
+  like the run-end suppression, and the beat clock keeps advancing so the
+  beat-modulated hum and explosion grid do not stall. A held shot resumes on
+  the first tick the nose finds a target in reach.
+- **Measurement.** `src/ai/eval/fireDiscipline.test.ts` flies the documented
+  accuracy matrix (5 movement classes × seeds 1/7/42 × 1 800 ticks) twice —
+  gate off (the shipped unconditional trigger) and gate on — and reports
+  shots fired / hits / hit rate / **shots-at-nothing** per arm. The gate arm
+  fires nothing at nothing, never fires more shots than the ungated arm and
+  keeps at least the ungated hit rate. The arena models the same gate behind
+  the opt-in `ArenaConfig.botFireGate`, so the measurement drives the real
+  predicate rather than a harness-only copy.
+- **Scope boundary.** The gate applies to the demo/attract bot only. A human
+  holding fire keeps the unconditional trigger; a level-resolved loadout can
+  extend the reach, and `hasFireLine` reports `true` when the reach is unknown
+  so an older snapshot or fixture can never be silently silenced.
+
 ## 10. Testing
 
 The framework's unit tests live beside it:

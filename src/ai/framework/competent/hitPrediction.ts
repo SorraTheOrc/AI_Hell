@@ -63,6 +63,12 @@ const HORIZON_EPSILON = 1e-9;
 export interface FireSolution {
   /** Whether the shot connects inside the horizon (align + flight). */
   readonly hit: boolean;
+  /**
+   * Whether the aim point is inside the firing weapon's reach
+   * (AH-0MWPOET5A002IPTP). `true` when no range was supplied (the gate is
+   * disabled and the pre-change judgement stands).
+   */
+  readonly inRange: boolean;
   /** Turn time plus flight time (seconds). `Infinity` when unreachable. */
   readonly timeToHit: number;
   /** Shot flight time from the ship to the aim point (seconds). */
@@ -98,6 +104,14 @@ export interface FireSolutionTuning {
   readonly alignSeconds: number;
   /** Horizon (seconds) inside which the shot must connect to count as a hit. */
   readonly horizon: number;
+  /**
+   * The firing weapon's effective reach (px) (AH-0MWPOET5A002IPTP). A shot at
+   * an aim point farther than this can never connect, however quickly the ship
+   * turns onto it, so `hit` is `false`. Non-finite/`<= 0` means "reach
+   * unknown": the range gate is disabled and the pre-change time-of-flight
+   * judgement stands exactly.
+   */
+  readonly weaponRange?: number;
 }
 
 /**
@@ -135,8 +149,15 @@ export function evaluateFireSolution(
   const flightSeconds = hasSpeed ? distance / speed : 0;
   const timeToHit = align + flightSeconds;
   const horizon = Number.isFinite(tuning.horizon) ? tuning.horizon : 0;
+  // Weapon reach (AH-0MWPOET5A002IPTP): a target beyond the active weapon's
+  // reach can never be hit, so it is not a firing solution. An unknown reach
+  // (`0`/absent/non-finite) disables the gate and keeps the old judgement.
+  const range = tuning.weaponRange;
+  const hasRange = typeof range === 'number' && Number.isFinite(range) && range > 0;
+  const inRange = !hasRange || distance <= range;
   return {
-    hit: timeToHit <= horizon + HORIZON_EPSILON,
+    hit: inRange && timeToHit <= horizon + HORIZON_EPSILON,
+    inRange,
     timeToHit,
     flightSeconds,
     point: aimPoint,
@@ -209,6 +230,9 @@ export function resolveFireSolution(
       shotSpeed: options.shotSpeed,
       alignSeconds: options.alignSeconds,
       horizon: options.horizon,
+      ...(options.weaponRange !== undefined
+        ? { weaponRange: options.weaponRange }
+        : {}),
     },
     options.world,
   );

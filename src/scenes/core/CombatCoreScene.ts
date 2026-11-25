@@ -1031,6 +1031,31 @@ export class CombatCoreScene<
   }
 
   /**
+   * Whether the demo/attract **bot** may auto-fire this frame
+   * (AH-0MWPOET5A002IPTP · fire-discipline remediation). Default `true` — a
+   * scene with no bot (and every human session) keeps firing exactly as
+   * before. A bot-bearing scene overrides this with the shared fire-line
+   * predicate (`hasFireLine`), so the ship only fires when a live target lies
+   * within the active weapon's reach on its firing line, and never "fires at
+   * nothing" while it collects, evades or repositions.
+   *
+   * This is deliberately a **separate** hook from
+   * {@link CombatCoreScene.playerFireSuppressed}: that one models a finished
+   * run (no new shots, beat clock keeps advancing), whereas this one is a
+   * per-frame weapon-discipline decision. It shares the same suppression
+   * outcome — no bullets, muzzle flashes or fire cues, while the shared beat
+   * clock still advances so the beat-modulated hum and explosion grid do not
+   * stall — so a held shot never desynchronises the beat.
+   *
+   * Gym↔game parity: `PlayScene` (demo mode) and `GymBotTuning` override this
+   * with the **same** shared predicate, so the game and the bot gym cannot
+   * diverge. Scenes without a bot leave it at the default.
+   */
+  protected botFireAllowed(): boolean {
+    return true;
+  }
+
+  /**
    * Shared screen-wide Phase Shift juice step (parent AH-0MUIYX1EE008FVS8).
    *
    * This is the **single** place the player treatment is advanced: the game
@@ -1113,13 +1138,13 @@ export class CombatCoreScene<
     // capture on this frame suppresses fire on this frame. Runs after physics
     // so the drag is applied to the ship's current position.
     this._updateCaptureBeams(dt);
-    if (this.playerFireSuppressed()) {
-      // Run-end suppression (AH-0MVCB6LBE007I6R8): spawn no bullets, muzzle
-      // flashes or fire cues, but keep the shared beat clock advancing so the
-      // beat-modulated thruster hum (GDD §7.3) and the explosion grid do not
-      // stall through the victory hold (AC4). Normal fire resumes with the
-      // next run, because a scene restart re-anchors this clock and clears the
-      // scene's per-run flag (AC6).
+    if (this.playerFireSuppressed() || !this.botFireAllowed()) {
+      // Run-end suppression (AH-0MVCB6LBE007I6R8) and the bot's fire
+      // discipline (AH-0MWPOET5A002IPTP) share one outcome: spawn no bullets,
+      // muzzle flashes or fire cues, but keep the shared beat clock advancing
+      // so the beat-modulated thruster hum (GDD §7.3) and the explosion grid
+      // do not stall. Normal fire resumes with the next run (run-end) or the
+      // next tick the bot has a target in reach on its line (fire gate).
       this.beatClock.advance(dt * 1000);
       if (player.getBeatClock() !== this.beatClock) {
         player.setBeatClock(this.beatClock);

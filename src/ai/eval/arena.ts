@@ -328,6 +328,7 @@ import type {
 } from '../../utils/movementModel';
 import type { BotRotationConfig, BotSnapshot } from '../botSnapshot';
 import type { BotPolicy } from '../framework/botBrain';
+import { hasFireLine } from '../framework/competent/fireLine';
 import { resolveEnemyMovementClass } from '../framework/enemyMovementClass';
 import {
   advanceHazardMotion,
@@ -698,6 +699,23 @@ export function selectAimTarget<T extends AimTargetCandidate>(
     }
   }
   return best;
+}
+
+/**
+ * The effective reach (px) of one resolved weapon definition — the same
+ * per-weapon rule `Player.getEffectiveWeaponRange()` applies, derived here for
+ * the headless arena's own loadout so its fire gate and `firedAtNothing`
+ * measurement use the ship's real reach rather than a harness constant
+ * (AH-0MWPOET5A002IPTP · fire-discipline remediation).
+ */
+function weaponReach(def: WeaponDefinition): number {
+  if (def.hitscan) return def.hitscan.length;
+  if (def.aoe) {
+    return def.aoe.trigger === 'onRandom'
+      ? (def.aoe.projectileSpeed ?? PLAYER_BULLET_SPEED) * def.bulletLifetime
+      : def.aoe.radius;
+  }
+  return PLAYER_BULLET_SPEED * def.bulletLifetime;
 }
 
 /** A seed-derived hostile spec held in the spawn reservoir. */
@@ -1183,6 +1201,8 @@ function snapshotOf(
   livePhysics?: {
     readonly rotation: BotRotationConfig;
     readonly shotSpeed: number;
+    /** Effective weapon reach (px), present only under the fire gate. */
+    readonly weaponRange?: number;
   },
   liveReverseEnabled = false,
 ): BotSnapshot {
@@ -1197,6 +1217,12 @@ function snapshotOf(
       // its measured aim solve uses the derivation, not a bot-layer constant.
       ...(livePhysics ? { rotation: livePhysics.rotation } : {}),
       ...(livePhysics ? { shotSpeed: livePhysics.shotSpeed } : {}),
+      // The range seam (AH-0MWPOET5A002IPTP): only the opt-in fire-gate arm
+      // supplies it, so every historic baseline keeps the pre-change
+      // time-of-flight-only solve byte-for-byte.
+      ...(livePhysics?.weaponRange !== undefined
+        ? { weaponRange: livePhysics.weaponRange }
+        : {}),
     },
     // The reverse-thruster flag the world model gates kiting/brake on
     // (AH-0MWT4BBYO0085CN8 · RAC3): only the opt-in live control context
@@ -2197,6 +2223,18 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const measureAimShots = config.measureAimShots === true;
   const aimShots: ArenaAimShot[] = [];
   let nextShotId = 0;
+  /**
+   * Shots fired with no live body inside the ship's effective reach on its
+   * firing line — the producer's "firing at nothing"
+   * (AH-0MWPOET5A002IPTP · fire-discipline remediation). Measured whenever
+   * {@link ArenaConfig.measureAimShots} is on, so the ungated arm makes the
+   * defect a number and the gated arm is provably quiet.
+   */
+  let shotsAtNothing = 0;
+  /** The ship's effective weapon reach (px) for the current tick's volley. */
+  let botFireRange = 0;
+  /** Whether the opt-in bot fire gate is on (AH-0MWPOET5A002IPTP). */
+  const fireGate = config.botFireGate === true;
 
   /**
    * Opt-in control-input trace (AH-0MWT4BBYO0085CN8). Off unless the caller
@@ -2341,6 +2379,20 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
           PLAYER_BULLET_RADIUS * (weapon.definition.levelBulletSize ?? 1),
         damage: weapon.stats.damage,
       };
+      if (measureAimShots) {
+        // "Firing at nothing" (AH-0MWPOET5A002IPTP): a projectile spawned with
+        // no live body inside the ship's reach on its line. Uses the one shared
+        // fire-line predicate the scene gate applies, so the measurement and
+        // the gate can never disagree about what a target is.
+        const noTarget = !hasFireLine({
+          origin: { x: bullet.x, y: bullet.y },
+          heading: headingRad,
+          weaponRange: botFireRange,
+          targets: world.hostiles,
+          world: { width, height },
+        });
+        if (noTarget) shotsAtNothing += 1;
+      }
       world.playerBullets.push(bullet);
       if (measureAimShots) tagShot(bullet, weapon.id, tick);
     }
@@ -2416,6 +2468,22 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     }
 
     // 1. Decide + resolve input (the bot loop).
+    // The ship's effective reach for this tick (AH-0MWPOET5A002IPTP): resolved
+    // from the same shared loadout the fire step uses, so the range-aware aim
+    // solve and the fire gate agree. Only the opt-in arms compute it, so the
+    // default per-tick path is untouched.
+    if (fireGate || measureAimShots) {
+      botFireRange = 0;
+      for (const weapon of resolveWeaponLoadout(
+        holdChoice.getWeaponLevels(),
+        weaponCache,
+      )) {
+        botFireRange = Math.max(
+          botFireRange,
+          weaponReach(weapon.definition),
+        );
+      }
+    }
     const snapshot = snapshotOf(
       world,
       world.hostiles,
@@ -2429,6 +2497,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
           rotationDeceleration: shipAsteroids.rotationDeceleration ?? 0,
         },
         shotSpeed: PLAYER_BULLET_SPEED,
+        ...(fireGate ? { weaponRange: botFireRange } : {}),
       },
       // The live control context also supplies the reverse-thruster flag
       // (AH-0MWT4BBYO0085CN8 · RAC3).
@@ -2577,8 +2646,22 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // derived here (epic AC1).
     const evolution = resolveArenaEvolution(loadout);
     const fusedBases = new Set<WeaponId>(evolution?.baseIds ?? []);
+    // Fire gate (AH-0MWPOET5A002IPTP): hold the trigger unless the ship has a
+    // target inside its reach on its firing line. Cooldowns do not advance
+    // while the trigger is held, mirroring the scene's suppressed auto-fire
+    // (a held shot resumes the instant the nose finds a target).
+    const mayFire =
+      !fireGate ||
+      hasFireLine({
+        origin: { x: world.player.x, y: world.player.y },
+        heading: world.player.facing,
+        weaponRange: botFireRange,
+        targets: world.hostiles,
+        world: { width, height },
+      });
     for (const weapon of loadout) {
       if (fusedBases.has(weapon.id)) continue;
+      if (!mayFire) continue;
       const cooldown = weaponCooldowns.get(weapon.id) ?? 0;
       if (cooldown > 0) {
         weaponCooldowns.set(weapon.id, cooldown - 1);
@@ -2592,7 +2675,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       if (campaignFinished) break;
     }
     if (campaignFinished) break;
-    if (evolution) {
+    if (evolution && mayFire) {
       if (evolutionCooldown > 0) {
         evolutionCooldown -= 1;
       } else {
@@ -2827,6 +2910,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // Present only under the opt-in, so the default result shape (and every
     // existing deep-equal baseline) is unchanged.
     ...(measureAimShots ? { aimShots } : {}),
+    ...(measureAimShots ? { shotsAtNothing } : {}),
     ...(measureControlInputs ? { controlInputs } : {}),
   };
 }
