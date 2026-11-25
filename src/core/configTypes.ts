@@ -1,10 +1,14 @@
 /**
  * Shared configuration types (AH-0MTZWZ9TE009CVUA).
  *
- * Leaf module (no imports) so the CSV codec and the Vite plugin can use the
- * config shapes without pulling in `configStore.ts` (whose `?raw` CSV imports
- * would break the Vite config loader).
+ * Leaf module (type-only imports; no runtime imports) so the CSV codec and the
+ * Vite plugin can use the config shapes without pulling in `configStore.ts`
+ * (whose `?raw` CSV imports would break the Vite config loader).
  */
+
+// Type-only import: `eliteVocabulary.ts` is itself a leaf module (it imports
+// nothing at runtime), so this introduces no module cycle.
+import type { EliteBehaviour } from './eliteVocabulary';
 
 // ── Enemy shot-pattern / formation-kind enums ──────────────────────
 
@@ -270,6 +274,24 @@ export interface EnemyConfig {
    * `projectile`); see {@link EnemyAttackClass}.
    */
   attackClass: EnemyAttackClass;
+
+  // Elite (anomaly) variant axis (AH-0MWU664T300140IL)
+  /**
+   * Elite behaviour id — one of the bounded
+   * `ELITE_BEHAVIOURS` in `src/core/eliteVocabulary.ts`
+   * (`splitter | reinforced | volatile`). Optional: an absent or blank CSV
+   * cell is **neutral**, so an ordinary enemy keeps today's behaviour
+   * byte-for-byte. An unknown id, or an elite declared on an uncounted
+   * hazard archetype, fails loudly when the config is loaded
+   * (`configStore.loadEnemyConfig`), never later at spawn.
+   */
+  eliteBehaviour?: EliteBehaviour;
+  /**
+   * Extra hit points an elite carries on top of its ordinary `health`
+   * (AH-0MWU664T300140IL). Optional and neutral when absent; a present
+   * value must be a positive integer in `[1, 3]`, validated loudly at load.
+   */
+  eliteBonusHp?: number;
 
   /**
    * Extensible passthrough — future tuning axes can be added here without

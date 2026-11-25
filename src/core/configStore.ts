@@ -31,6 +31,7 @@ import type {
   ShipConfig,
 } from './configTypes';
 import { levelDifficulty } from './enemyDifficulty';
+import { assertEliteArchetype } from './eliteVocabulary';
 import { LEVELS } from '../waves/Formations';
 import {
   parseCsvRows,
@@ -559,17 +560,28 @@ export async function loadConfigs(): Promise<void> {
 export function loadEnemyConfig(key: string): EnemyConfig {
   const stored = getRegistry().enemies.get(key);
   const seed = DEFAULT_ENEMY_CONFIGS[key];
+  let resolved: EnemyConfig;
   if (stored) {
     // The seed displayName is authoritative for seed keys: a stale persisted
     // label (e.g. an older "Boss" for the renamed `boss` seed) must not
     // shadow a rename, or the gym index would show two identical labels
     // (AH-0MTV8OV9V002D8B7). Non-seed (Save As) keys keep their own label.
-    return seed
+    resolved = seed
       ? { ...stored, displayName: seed.displayName }
       : { ...stored };
+  } else if (seed) {
+    resolved = { ...seed };
+  } else {
+    resolved = genericEnemyDefault(key);
   }
-  if (seed) return { ...seed };
-  return genericEnemyDefault(key);
+
+  // Elite (anomaly) variant load-time validation (AH-0MWU664T300140IL AC3):
+  // an unknown `eliteBehaviour`, an out-of-range `eliteBonusHp`, or an elite
+  // declared on an uncounted hazard archetype fails **here, at load**, never
+  // later at spawn. The underlying vocabulary/rule lives once in
+  // `eliteVocabulary.ts`.
+  assertEliteArchetype(resolved);
+  return resolved;
 }
 
 /** Synchronous ship-config lookup from the in-memory registry. */
