@@ -21,6 +21,7 @@ import {
   HIT_RADIUS_BUFFER_PX,
   MINERAL_DROP_MULTIPLIER,
 } from '../core/constants';
+import type { EliteBehaviour } from '../core/eliteVocabulary';
 import { loadRules } from '../core/rules';
 import { playEnemyForceFieldBreakSound } from '../audio/effects';
 import {
@@ -255,6 +256,14 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    * {@link wrapAware} accessor — no duplicated parsing anywhere else.
    */
   protected readonly _wrapAware: boolean;
+
+  /**
+   * The elite behaviour this spawn carries (AH-0MWU665XK000ZT4S), resolved
+   * from `config.eliteBehaviour`; `undefined` for an ordinary enemy. The
+   * shared kill finalisation reads it through the {@link eliteBehaviour}
+   * accessor to dispatch the one bounded death behaviour.
+   */
+  protected _eliteBehaviour: EliteBehaviour | undefined = undefined;
 
   // ── Abstract method: pattern name for explosion VFX ────────────────
 
@@ -589,6 +598,28 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   }
 
   /**
+   * The elite behaviour this spawn carries (AH-0MWU665XK000ZT4S), or
+   * `undefined` for an ordinary enemy. A per-spawn elevation: the shared
+   * spawn seam sets it only for the wave's elite, so the shared kill
+   * finalisation can dispatch exactly one bounded death behaviour.
+   */
+  get eliteBehaviour(): EliteBehaviour | undefined {
+    return this._eliteBehaviour;
+  }
+
+  /**
+   * Marks this spawn as the wave's elite, once, through the shared spawn seam
+   * (`createEnemyFromConfig`) — never by a scene writing the field directly.
+   * The shared kill finalisation reads the resolved value and dispatches the
+   * one bounded death behaviour (`_applyEliteDeathBehaviour`).
+   *
+   * @param behaviour — the authored behaviour the spawn carries.
+   */
+  setEliteBehaviour(behaviour: EliteBehaviour): void {
+    this._eliteBehaviour = behaviour;
+  }
+
+  /**
    * The configured hit pool this hull spawned with (read-only). Used by the
    * shared hex-matchup charge to leave chaff (`health` = 1) at today's damage
    * under every verdict.
@@ -635,6 +666,15 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Hit radius for collision detection. */
   getHitRadius(): number {
     return Math.ceil(this._size / 2 + HIT_RADIUS_BUFFER_PX);
+  }
+
+  /**
+   * The archetype's bullet colour. Read by shared behaviours that fire through
+   * the scene's enemy-bullet seam (the volatile elite death burst,
+   * AH-0MWU665XK000ZT4S) so their shots carry the hull's own identity.
+   */
+  get bulletColor(): number {
+    return this._bulletColor;
   }
 
   /** Whether the body graphics is currently visible. */

@@ -853,6 +853,12 @@ export abstract class CombatScene<
     // Drop any half-pair the dead hull held so it never pays out on a
     // recycled target (AH-0MWL88REU009MO5G).
     this.forgetMatchupTarget(enemy);
+    // Elite death behaviour (AH-0MWU665XK000ZT4S): a `splitter`'s children
+    // are spawned and wave-registered *before* `onEnemyDestroyed` accounts
+    // the parent's death, so the alive count never dips to zero in the gap
+    // (the wave cannot clear between the parent and its children). A blank
+    // behaviour is a no-op, so an ordinary kill is unchanged.
+    this._applyEliteDeathBehaviour(enemy);
     this.onEnemyDestroyed(enemy);
   }
 

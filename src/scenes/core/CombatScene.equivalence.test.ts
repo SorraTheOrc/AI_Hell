@@ -2832,6 +2832,20 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['axialToPixel', 'src/scenes/hangarWar/hexMap.ts'],
   ['hexCorners', 'src/scenes/hangarWar/hexMap.ts'],
   ['drawHexagon', 'src/scenes/hangarWar/hexMap.ts'],
+  // Elite (anomaly) mechanics (AH-0MWU665XK000ZT4S): the bounded behaviour
+  // descriptors, the splitter/volatile per-death decisions, the reinforced
+  // field-hit wrapper over `enemyForceFieldHits` and the bounded bonus hit
+  // point application live once in `src/scenes/core/eliteMechanics.ts`. The
+  // shared spawn seam and the shared kill finalisation consume them, so a
+  // scene or gym that re-introduces a behaviour body fails this guard rather
+  // than drifting from the game.
+  ['eliteMechanicsFor', 'src/scenes/core/eliteMechanics.ts'],
+  ['eliteSplitChildCount', 'src/scenes/core/eliteMechanics.ts'],
+  ['eliteSplitChildOffset', 'src/scenes/core/eliteMechanics.ts'],
+  ['eliteForceFieldHits', 'src/scenes/core/eliteMechanics.ts'],
+  ['eliteBonusHealth', 'src/scenes/core/eliteMechanics.ts'],
+  ['eliteVolatileBurstShots', 'src/scenes/core/eliteMechanics.ts'],
+  ['applyEliteDeathBehaviour', 'src/scenes/core/eliteMechanics.ts'],
 ];
 
 /**
@@ -2888,6 +2902,12 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['getEngineActivity', 'src/utils/movementModel.ts'],
   ['setPlayerEnabled', 'src/scenes/gym/core/GymFormationScene.ts'],
   ['registerDynamicEntity', 'src/scenes/gym/core/GymFormationScene.ts'],
+  // Elite death-behaviour dispatch (AH-0MWU665XK000ZT4S): the one bounded
+  // behaviour of a dead elite is applied once in the shared core — before
+  // `onEnemyDestroyed`, so a splitter's children are wave-registered while
+  // the parent is still counted. A scene or gym that re-implements the
+  // dispatch (instead of overriding the spawn seams) fails this guard.
+  ['_applyEliteDeathBehaviour', 'src/scenes/core/CombatCoreScene.ts'],
 ];
 
 /** Relative paths of production files satisfying `predicate`, sorted. */

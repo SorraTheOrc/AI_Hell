@@ -115,6 +115,12 @@ import {
 } from '../../utils/movementModel';
 import type { WasdKeysLike } from '../../utils/input';
 import { createSeededRng } from '../../core/rng';
+import type { EliteBehaviour } from '../../core/eliteVocabulary';
+import {
+  applyEliteDeathBehaviour,
+  type EliteBurstShot,
+  type EliteSplitOffset,
+} from './eliteMechanics';
 import { EffectsRegistry } from '../../powerups/effects';
 import { stopMysteryUfoWarbleSound } from '../../audio/effects';
 import { PowerUp } from '../../powerups/PowerUp';
@@ -231,6 +237,14 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
    * player-bearing gym. Entities that do not beam omit it.
    */
   getCaptureBeam?(): CaptureBeamState | null;
+  /**
+   * The elite behaviour this spawn carries (AH-0MWU665XK000ZT4S), or absent
+   * for an ordinary enemy. `BaseEnemy` resolves it once at spawn through the
+   * shared factory, and the shared kill finalisation
+   * ({@link CombatScene.finaliseEnemyKill}) reads it to dispatch the one
+   * bounded death behaviour — so no scene re-implements the decision.
+   */
+  readonly eliteBehaviour?: EliteBehaviour;
   /**
    * Called by the shared capture step when this entity's beam completed a
    * capture, so the entity can withdraw and re-form (Galaga capturer).
@@ -591,6 +605,53 @@ export class CombatCoreScene<
 
   /** Replaces the enemy-bullet collection after a collision pass. */
   protected setEnemyBullets(_bullets: TBullet[]): void {}
+
+  // ── Elite death behaviours (AH-0MWU665XK000ZT4S) ────────────────
+
+  /**
+   * Scene seam: spawns one ordinary `splitter` child at `offset` from the
+   * dead elite's wreck.
+   *
+   * A scene implements it with its **shipped spawn path** — the game uses
+   * `createEnemyFromConfig` + `registerDynamicSpawn`, a gym registers the
+   * child in its live formation list — so the child construction is never
+   * re-implemented inside the shared decision. The default is a no-op, so a
+   * scene that never fields an elite (or has not wired the seam yet) is
+   * unchanged. The shared `_applyEliteDeathBehaviour` owns *how many* and
+   * *where*; only the spawn mechanics live here.
+   */
+  protected spawnEliteSplitChild(
+    _enemy: TEnemy,
+    _offset: EliteSplitOffset,
+  ): void {}
+
+  /**
+   * Scene seam: spawns one `volatile` death-burst bullet through the scene's
+   * shared enemy-bullet seam (the game's `spawnEnemyBullet`; a gym's live
+   * bullet list). The shared dispatcher owns the fan; the bullet identity and
+   * lifetime are the scene's shipped seam. Default no-op.
+   */
+  protected spawnEliteVolatileBullet(
+    _enemy: TEnemy,
+    _shot: EliteBurstShot,
+  ): void {}
+
+  /**
+   * Applies a dead elite's one bounded behaviour through the shared
+   * `eliteMechanics` dispatcher.
+   *
+   * Called exactly once per kill from the shared finalisation seam *before*
+   * `onEnemyDestroyed`, so a `splitter`'s children are wave-registered while
+   * the parent is still counted (the wave can never clear in the gap). A
+   * blank/absent behaviour is a total no-op — today's kill, byte-for-byte.
+   */
+  protected _applyEliteDeathBehaviour(enemy: TEnemy): void {
+    applyEliteDeathBehaviour(enemy.eliteBehaviour, {
+      spawnSplitChild: (offset) => this.spawnEliteSplitChild(enemy, offset),
+      spawnVolatileBullet: (shot) =>
+        this.spawnEliteVolatileBullet(enemy, shot),
+    });
+  }
 
   // ── Collector drones (Mystery UFO reward) ─────────────────────────
 

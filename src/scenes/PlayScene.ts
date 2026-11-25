@@ -96,7 +96,7 @@ import {
   PLAYFIELD_WORLD,
   type WrapAwareBody,
 } from './core/enemyWrap';
-import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
+import { createEnemyFromConfig, type EliteSpawnModifiers, type EnemyEntity } from '../entities/enemyFactory';
 import {
   FormationReanchorController,
   type FormationReanchorCandidate,
@@ -254,6 +254,12 @@ import {
 } from '../core/botTuningStore';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { enemyForceFieldHits } from '../core/enemyForceField';
+import {
+  ELITE_VOLATILE_BURST_LIFETIME,
+  eliteForceFieldHits,
+  type EliteBurstShot,
+  type EliteSplitOffset,
+} from './core/eliteMechanics';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import { isRunProgressEnabled, publishRunProgress } from '../core/runProgress';
 import type { HitscanTarget } from './core/hitscanBeam';
@@ -2284,6 +2290,14 @@ export class PlayScene extends CombatScene<
    */
   private _spawnEnemy(spawn: EnemySpawn, origin?: { x: number; y: number }): void {
     const cfg = loadEnemyConfig(spawn.enemyKey);
+    // Elite elevation (AH-0MWU665XK000ZT4S): a plan-flagged spawn carries its
+    // archetype's one bounded behaviour and authored bonus hit points. An
+    // ordinary spawn of an elite-capable archetype stays neutral — the
+    // elevation is per spawn, never per archetype.
+    const elite: EliteSpawnModifiers | undefined =
+      spawn.elite && cfg.eliteBehaviour
+        ? { behaviour: cfg.eliteBehaviour, bonusHp: cfg.eliteBonusHp }
+        : undefined;
     const entity = createEnemyFromConfig(
       this,
       cfg,
@@ -2295,8 +2309,11 @@ export class PlayScene extends CombatScene<
       // level through the shared pure curve (epic AH-0MVJ8W4GE007OMNT AC4,
       // AH-0MVM8GXEF009883O) — never a hard-coded value and never the raw
       // config column. The level gym resolves the same curve at its launched
-      // level (see `src/scenes/gym/GymLevel.ts`).
-      enemyForceFieldHits(this.waveManager.level, cfg),
+      // level (see `src/scenes/gym/GymLevel.ts`). An elite asks the shared
+      // elite wrapper, which evaluates that identical curve and adds the
+      // reinforced bonus (AH-0MWU665XK000ZT4S AC3).
+      eliteForceFieldHits(elite?.behaviour, this.waveManager.level, cfg),
+      elite,
     );
     entity.shootEnabled = spawn.shootEnabled;
 
@@ -2357,6 +2374,79 @@ export class PlayScene extends CombatScene<
       spacingY: spawn.spacingY,
       march: cfg.formationKind === 'march',
     });
+  }
+
+  /**
+   * Elite death behaviour — `splitter` children (AH-0MWU665XK000ZT4S AC2).
+   *
+   * The shared `eliteMechanics` dispatcher has already decided *how many* and
+   * *where*; this seam only performs the shipped spawn: the child is built by
+   * the same `createEnemyFromConfig` factory the wave and every dynamic
+   * spawner (Harvester, ghost, horde, lane traffic) use, then appended to the
+   * live list and registered with the `WaveManager` so it gates the wave. The
+   * registration happens before the parent's death is accounted (the shared
+   * finalisation dispatches us first), so the alive count never dips to zero
+   * in the gap and the wave cannot clear early.
+   *
+   * Children are ordinary: no elite behaviour and no bonus hit points — their
+   * field strength is the archetype's normal level curve.
+   */
+  protected override spawnEliteSplitChild(
+    enemy: EnemyEntity,
+    offset: EliteSplitOffset,
+  ): void {
+    const parent = this.spawned.find(
+      (candidate) => candidate.entity === enemy,
+    );
+    const enemyKey = parent?.enemyKey ?? enemy.archetype;
+    const cfg = loadEnemyConfig(enemyKey);
+    const x = enemy.x + offset.x;
+    const y = enemy.y + offset.y;
+    const child = createEnemyFromConfig(
+      this,
+      cfg,
+      x,
+      y,
+      { row: 0, col: 0 },
+      this.rng,
+      enemyForceFieldHits(this.waveManager.level, cfg),
+    );
+    child.shootEnabled = enemy.shootEnabled;
+    this.add.existing(child);
+    this.spawned.push({
+      entity: child,
+      enemyKey,
+      startX: x,
+      startY: y,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    // Counted wave enemy (parent AC3): registered before the parent's death
+    // reaches `WaveManager.onEnemyDestroyed`.
+    this.waveManager.registerDynamicSpawn(1);
+  }
+
+  /**
+   * Elite death behaviour — `volatile` radial burst (AH-0MWU665XK000ZT4S AC4).
+   *
+   * The shared dispatcher owns the fan; this seam creates each shot through
+   * the scene's shared enemy-bullet path (`spawnEnemyBullet` → `createBullet`),
+   * so the burst is an ordinary player-damaging enemy bullet handled by the
+   * shared collision pass — never a VFX-only copy. The shots carry the hull's
+   * own bullet colour and the module's short lethal lifetime.
+   */
+  protected override spawnEliteVolatileBullet(
+    enemy: EnemyEntity,
+    shot: EliteBurstShot,
+  ): void {
+    this.spawnEnemyBullet(
+      enemy.x,
+      enemy.y,
+      shot.vx,
+      shot.vy,
+      enemy.bulletColor,
+      ELITE_VOLATILE_BURST_LIFETIME,
+    );
   }
 
   /**
