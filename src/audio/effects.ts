@@ -692,6 +692,26 @@ export function playEnemyForceFieldBreakSound(): void {
 }
 
 /**
+ * Heavier layered elite (anomaly) hull-destruction boom
+ * (AH-0MWU666IS008JOR3 AC3).
+ *
+ * Decision (recorded here so the audio knowledge stays in the audio layer):
+ * an elite's death must read as **distinct** from an ordinary kill, so this is
+ * an alias of the existing baked boss-destruction cue rather than a new
+ * ToneForge recipe. It is deliberately heavier than
+ * {@link playDestructionSound}, so killing an anomaly never sounds like
+ * clearing chaff, and it ships no unrendered asset.
+ *
+ * Dispatched through {@link playBossDestructionSound} (not `playCue`
+ * directly) so the explosion family trim is applied exactly once on this
+ * alias path, and so it honours the shared SFX master volume/mute exactly
+ * like every other cue.
+ */
+export function playEliteDeathSound(): void {
+  playBossDestructionSound();
+}
+
+/**
  * Bright rising bounce — the player Force Field **reflects** an enemy bullet
  * (AH-0MVRDMMYO002SC5V, producer decision Q2 = c on AH-0MVBKT2WO001AR14).
  *

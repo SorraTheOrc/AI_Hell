@@ -44,6 +44,47 @@ import {
 import { Mineral, scatterDoubledMineralDrops } from './Mineral';
 
 /**
+ * Ring count of the elite's aura + rim treatment
+ * (AH-0MWU666IS008JOR3 AC5). Two concentric rings give the elite a shape cue
+ * that survives a grayscale render — the treatment never relies on colour
+ * alone.
+ */
+export const ELITE_AURA_RING_COUNT = 2;
+
+/** Inner (rim) ring radius as a multiple of the hull size. */
+export const ELITE_AURA_INNER_RADIUS_FACTOR = 0.95;
+
+/** Outer (aura) ring radius as a multiple of the hull size. */
+export const ELITE_AURA_OUTER_RADIUS_FACTOR = 1.35;
+
+/** Warm aura colour: distinct from every archetype body hue. */
+export const ELITE_AURA_COLOR = 0xffe066;
+
+/** The short-lived hull tag an elite carries while it lives (AC4/AC5). */
+export const ELITE_TAG_TEXT = 'ELITE';
+
+/** The elite tag's text colour (white on a black badge, legible desaturated). */
+export const ELITE_TAG_TEXT_COLOR = '#ffffff';
+
+/** The elite tag's badge background (a filled shape, not hue, carries it). */
+export const ELITE_TAG_BACKGROUND_COLOR = '#000000';
+
+/** The tag's vertical offset above the hull centre (px), scaled by size. */
+export const ELITE_TAG_OFFSET_FACTOR = 1.35;
+
+/** Read-only structural view of a live elite decoration (test/telemetry seam). */
+export interface EliteDecorationState {
+  /** Aura + rim rings currently drawn (`0` once the elite dies). */
+  readonly rings: number;
+  /** Tag text (`''` before an elite is decorated). */
+  readonly tagText: string;
+  /** Whether the tag is currently visible. */
+  readonly tagVisible: boolean;
+  /** Tag offset above the hull centre (px); `0` before it exists. */
+  readonly tagOffsetY: number;
+}
+
+/**
  * A body rendered from a **pre-baked shared frame** (a texture atlas).
  *
  * Returned by {@link BaseEnemy.bakedBodyFrame} by subclasses that render from a
@@ -264,6 +305,23 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    * accessor to dispatch the one bounded death behaviour.
    */
   protected _eliteBehaviour: EliteBehaviour | undefined = undefined;
+
+  /**
+   * The elite aura + rim layer (AH-0MWU666IS008JOR3 AC5). Created lazily when
+   * the shared spawn seam elevates this hull; drawn as two concentric rings so
+   * the treatment reads in a grayscale render, never by colour alone.
+   */
+  protected _eliteGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  /**
+   * The short-lived `ELITE` tag that tracks the hull (AC4). A container child,
+   * so it follows the enemy's position automatically and is hidden with the
+   * body the instant the elite dies.
+   */
+  protected _eliteTag: Phaser.GameObjects.Text | null = null;
+
+  /** Whether the elite aura/tag are currently drawn. */
+  protected _eliteDecorationActive = false;
 
   // ── Abstract method: pattern name for explosion VFX ────────────────
 
@@ -496,6 +554,9 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     if (!this._alive) return;
     this._alive = false;
     this.hideBody();
+    // The elite's aura and tag are part of the hull's read: they disappear on
+    // the lethal hit, exactly when the enemy dies (AH-0MWU666IS008JOR3 AC4).
+    this._hideEliteDecoration();
     // A destroyed enemy never leaves its barrier hovering in the arena —
     // cleared here so every subclass (including those overriding hideBody) is
     // covered.
@@ -617,6 +678,72 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    */
   setEliteBehaviour(behaviour: EliteBehaviour): void {
     this._eliteBehaviour = behaviour;
+    this._attachEliteDecoration();
+  }
+
+  /**
+   * Structural view of the elite decoration (AH-0MWU666IS008JOR3 AC4/AC5).
+   *
+   * Exposed so tests and telemetry can read the legibility cues without pixel
+   * sampling: the ring count is the shape cue that survives a grayscale
+   * render, and the tag's text/offset prove it tracks the hull.
+   */
+  get eliteDecoration(): EliteDecorationState {
+    return {
+      rings: this._eliteDecorationActive ? ELITE_AURA_RING_COUNT : 0,
+      tagText: this._eliteTag?.text ?? '',
+      tagVisible: this._eliteTag?.visible ?? false,
+      tagOffsetY: this._eliteTag?.y ?? 0,
+    };
+  }
+
+  /**
+   * Draws the elite aura + rim and creates the hull-tracking `ELITE` tag once
+   * (AH-0MWU666IS008JOR3 AC4/AC5). Idempotent: a second elevation (never
+   * expected through the shared spawn seam) does not stack layers.
+   */
+  protected _attachEliteDecoration(): void {
+    if (this._eliteDecorationActive) return;
+    const scene = this.scene as Phaser.Scene | undefined;
+    if (!scene) return;
+
+    const graphics = scene.add.graphics();
+    graphics.setDepth(0.5);
+    graphics.lineStyle(2, ELITE_AURA_COLOR, 0.9);
+    const ringCount: number = ELITE_AURA_RING_COUNT;
+    for (let ring = 0; ring < ringCount; ring += 1) {
+      const span = ELITE_AURA_OUTER_RADIUS_FACTOR - ELITE_AURA_INNER_RADIUS_FACTOR;
+      const factor =
+        ringCount <= 1
+          ? ELITE_AURA_OUTER_RADIUS_FACTOR
+          : ELITE_AURA_INNER_RADIUS_FACTOR + (span * ring) / (ringCount - 1);
+      graphics.strokeCircle(0, 0, this._size * factor);
+    }
+    this.add(graphics);
+    this._eliteGraphics = graphics;
+
+    const tag = scene.add
+      .text(0, -this._size * ELITE_TAG_OFFSET_FACTOR - 8, ELITE_TAG_TEXT, {
+        fontFamily: 'monospace',
+        fontSize: '10px',
+        color: ELITE_TAG_TEXT_COLOR,
+        backgroundColor: ELITE_TAG_BACKGROUND_COLOR,
+        padding: { x: 3, y: 1 },
+      })
+      .setOrigin(0.5);
+    tag.setDepth(3);
+    this.add(tag);
+    this._eliteTag = tag;
+    this._eliteDecorationActive = true;
+  }
+
+  /** Hides the elite decoration the instant the hull dies (AC4). */
+  protected _hideEliteDecoration(): void {
+    if (!this._eliteDecorationActive) return;
+    this._eliteDecorationActive = false;
+    this._eliteGraphics?.clear();
+    this._eliteGraphics?.setVisible(false);
+    this._eliteTag?.setVisible(false);
   }
 
   /**
@@ -814,6 +941,11 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this.destroyGraphics();
     this.explosionGraphics.destroy();
     this.forceFieldGraphics.destroy();
+    this._hideEliteDecoration();
+    this._eliteGraphics?.destroy();
+    this._eliteGraphics = null;
+    this._eliteTag?.destroy();
+    this._eliteTag = null;
     for (const handle of this.explosionHandles) handle.destroy();
     this.explosionHandles.length = 0;
     super.destroy(fromScene);

@@ -86,6 +86,11 @@ KNOWN_CUE_SET.add('playWeaponImpactCue');
 // recipe, so it is known to the coverage check without a manifest entry of its
 // own — the underlying cue it plays is mapped and verified like every other.
 KNOWN_CUE_SET.add('playEnemyForceFieldBreakSound');
+// `playEliteDeathSound` is a semantic **alias** of the existing baked
+// boss-destruction cue for the elite's distinct death cue (AH-0MWU666IS008JOR3
+// AC3). Like the force-field alias it ships no new ToneForge recipe, so it is
+// known to the coverage check without a manifest entry of its own.
+KNOWN_CUE_SET.add('playEliteDeathSound');
 // `playMiniBossSweepSound` is the mini-boss death sweep's **dispatcher** over
 // the reuse-only palette (AH-0MVVEI7FD004TR2M): it routes a sweep cue name
 // (`playDestructionSound` / `playVictoryExplosionSound` / `playBossDestructionSound`)

@@ -20,6 +20,10 @@ import { resetConfigStore, seedConfigStore } from '../core/configStore';
 import type { EnemyConfig } from '../core/configTypes';
 import { DEFAULT_ENEMY_CONFIGS, loadEnemyConfig } from '../core/enemyConfig';
 import { enemyForceFieldHits } from '../core/enemyForceField';
+import { setSfxSoundProvider } from '../audio/effects';
+import { RecordingSfxProvider } from '../test/audioTestDouble';
+import { eliteMineralBump } from '../core/eliteReward';
+import { ELITE_AURA_RING_COUNT, ELITE_TAG_TEXT } from '../entities/BaseEnemy';
 import { RULES_STORAGE_KEY } from '../core/rules';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { Scout } from '../entities/Scout';
@@ -129,6 +133,7 @@ describe('PlayScene — elite behaviours (AH-0MWU665XK000ZT4S)', () => {
     booted?.destroy(true);
     booted = null;
     resetConfigStore();
+    setSfxSoundProvider(null);
     localStorage.clear();
   });
 
@@ -308,5 +313,75 @@ describe('PlayScene — elite behaviours (AH-0MWU665XK000ZT4S)', () => {
     );
     expect(scene.getEnemyBullets().length).toBe(bulletsBefore);
     expect(wm.enemiesAlive).toBe(1);
+  });
+
+  it('AC1–AC3 — an elite always drops, pays its level-scaled bump and plays its distinct cue', async () => {
+    seedConfigStore([scoutConfig({ eliteBehaviour: 'splitter' })]);
+    const { scene, spawned } = await bootEliteWave(scoutWave(2, true));
+    const recording = new RecordingSfxProvider();
+    setSfxSoundProvider(recording);
+
+    const elite = spawned.find((enemy) => enemy.eliteBehaviour);
+    const ordinary = spawned.find((enemy) => enemy !== elite);
+    expect(elite).toBeDefined();
+    expect(ordinary).toBeDefined();
+
+    // Force the ordinary per-kill chance roll to fail (`rng() > chance`), so a
+    // drop can only come from the elite's guarantee.
+    (scene as unknown as { rng: () => number }).rng = () => 1;
+
+    const dropsBeforeOrdinary = scene.getDrops().length;
+    killWithPlayerBullets(scene, ordinary!);
+    expect(scene.getDrops()).toHaveLength(dropsBeforeOrdinary);
+
+    const mineralsBefore = scene.getMinerals().length;
+    const playsBefore = recording.plays.length;
+    killWithPlayerBullets(scene, elite!);
+
+    // AC1: one guaranteed draw from the shared pool despite the failed roll.
+    expect(scene.getDrops()).toHaveLength(dropsBeforeOrdinary + 1);
+    // AC2: the guaranteed bump is paid on top of the ordinary re-drop. With
+    // rng = 1 that re-drop is 2 × round(0 + 1.25) = 2 minerals.
+    expect(scene.getMinerals().length).toBe(
+      mineralsBefore + eliteMineralBump(ELITE_LEVEL) + 2,
+    );
+    // AC3: the elite's distinct death cue is the heavier boss-destruction asset.
+    const eliteCues = recording.plays
+      .slice(playsBefore)
+      .filter((play) => play.url.includes('aihell-boss-destruction'));
+    expect(eliteCues).toHaveLength(1);
+  });
+
+  it('AC4/AC5 — the spawned elite carries the aura + tag and they vanish on death', async () => {
+    seedConfigStore([scoutConfig({ eliteBehaviour: 'splitter' })]);
+    const { scene, spawned } = await bootEliteWave(scoutWave(1, true));
+
+    expect(spawned).toHaveLength(1);
+    const elite = spawned[0];
+    expect(elite.eliteDecoration.rings).toBe(ELITE_AURA_RING_COUNT);
+    expect(elite.eliteDecoration.tagText).toBe(ELITE_TAG_TEXT);
+    expect(elite.eliteDecoration.tagVisible).toBe(true);
+
+    killWithPlayerBullets(scene, elite);
+
+    expect(elite.eliteDecoration.rings).toBe(0);
+    expect(elite.eliteDecoration.tagVisible).toBe(false);
+  });
+
+  it('AC6 — the opening wave cue names the elite', async () => {
+    seedConfigStore([scoutConfig({ eliteBehaviour: 'splitter' })]);
+    const { scene } = await bootEliteWave(scoutWave(1, true));
+
+    const banner = scene.getBannerText();
+    expect(banner).toContain('ELITE');
+    expect(banner).toContain('Scout');
+    expect(banner).toContain('splitter');
+  });
+
+  it('AC6 — an elite-free wave keeps the plain opening cue', async () => {
+    seedConfigStore([scoutConfig({ eliteBehaviour: 'splitter' })]);
+    const { scene } = await bootEliteWave(scoutWave(1, false));
+
+    expect(scene.getBannerText()).not.toContain('ELITE');
   });
 });

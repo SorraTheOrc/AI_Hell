@@ -260,6 +260,12 @@ import {
   type EliteBurstShot,
   type EliteSplitOffset,
 } from './core/eliteMechanics';
+import { playEliteDeathCue, resolveEliteReward } from '../core/eliteReward';
+import {
+  composeWaveAnnouncement,
+  resolveEliteWaveAnnouncement,
+  type EliteWaveAnnouncement,
+} from '../waves/eliteAnnounce';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import { isRunProgressEnabled, publishRunProgress } from '../core/runProgress';
 import type { HitscanTarget } from './core/hitscanBeam';
@@ -365,6 +371,7 @@ import {
 import {
   createMineralDeposit,
   resolveMineralKillPayout,
+  scatterMineralDrops,
 } from './core/mineralKillDrops';
 import {
   rollAsteroidExtraLife,
@@ -787,6 +794,15 @@ export class PlayScene extends CombatScene<
   private scoreText: Phaser.GameObjects.Text | null = null;
   private levelText: Phaser.GameObjects.Text | null = null;
   private bannerText: Phaser.GameObjects.Text | null = null;
+
+  /**
+   * The current wave's elite announcement (AH-0MWU666IS008JOR3 AC6), resolved
+   * from the shared spawn plan when the wave spawns and cleared at transition
+   * start. The banner composes it onto the ordinary progress label so the
+   * opening cue names the elite; `null` for every elite-free wave (the label
+   * is byte-for-byte unchanged).
+   */
+  private waveEliteAnnouncement: EliteWaveAnnouncement | null = null;
 
   /**
    * The `DANGER ×N` tacho (AH-0MWL7ORK8007LXJI AC5): the danger multiplier,
@@ -2113,6 +2129,10 @@ export class PlayScene extends CombatScene<
     // a non-blocking world hazard (the Asteroid accounting).
     this.planLaneTrafficSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
+    // Name the wave's elite in its opening cue (AH-0MWU666IS008JOR3 AC6).
+    // Resolved from the authoritative spawn plan, so the announcement always
+    // names the hull that actually spawns.
+    this.waveEliteAnnouncement = resolveEliteWaveAnnouncement(spawns);
     // The formation is anchored relative to the wave portal; without a live
     // portal (no planned enemies) the plan is used unchanged.
     let anchoredSpawns: EnemySpawn[] = spawns;
@@ -2180,6 +2200,8 @@ export class PlayScene extends CombatScene<
       this.waveManager.waveNumber,
       this.waveManager.waveCount,
     );
+    // The opening banner names the elite when this wave fields one (AC6).
+    if (this.waveEliteAnnouncement) this._updateTransitionBanner();
   }
 
   /**
@@ -3300,6 +3322,10 @@ export class PlayScene extends CombatScene<
    * {@link WaveManager.level} names the incoming level during the transition.
    */
   private _startTransition(levelChanged = false): void {
+    // The completed wave's elite is gone; drop its announcement so the
+    // transition banner names only the incoming wave. The incoming wave's own
+    // announcement is resolved when it actually spawns (AC6).
+    this.waveEliteAnnouncement = null;
     // Close any wormhole still open (e.g. a timeout/carry-over began
     // mid-spawn): the normal close tick is gated behind the non-transition
     // branch, so the close must happen at transition start (AC4 —
@@ -3405,12 +3431,20 @@ export class PlayScene extends CombatScene<
 
   /** Shows/updates the centred transition banner. */
   private _updateTransitionBanner(): void {
-    this._showBanner(this._progressLabel());
+    this._showBanner(this._waveBannerLabel());
   }
 
   /** Shows the level announcement banner at level start. */
   private _announceLevel(): void {
-    this._showBanner(this._progressLabel());
+    this._showBanner(this._waveBannerLabel());
+  }
+
+  /**
+   * The banner label for the current wave: the ordinary progress label plus
+   * the elite phrase when the wave fields one (AH-0MWU666IS008JOR3 AC6).
+   */
+  private _waveBannerLabel(): string {
+    return composeWaveAnnouncement(this._progressLabel(), this.waveEliteAnnouncement);
   }
 
   /**
@@ -5451,7 +5485,15 @@ export class PlayScene extends CombatScene<
       );
     }
     this.runTelemetry.enemyKilled(s.enemyKey, s.entity.x, s.entity.y);
-    this._maybeDropPowerUp(s.entity.x, s.entity.y);
+    // An elite's reward replaces the ordinary falling per-kill roll with a
+    // guaranteed draw from the same shared pool, pays its level-scaled
+    // mineral bump and plays its distinct death cue (AH-0MWU666IS008JOR3
+    // AC1–AC3). An ordinary enemy keeps today's chance roll untouched.
+    if (s.entity.eliteBehaviour) {
+      this._applyEliteReward(s.entity, this._resolveDropLevel());
+    } else {
+      this._maybeDropPowerUp(s.entity.x, s.entity.y);
+    }
     // Extra Life kill reward (AH-0MV6M2M9P0078N4S): a fully destroyed small
     // asteroid additionally rolls the configurable Extra Life drop. The
     // shared rule tier-gates first, so large/medium rocks (which split) and
@@ -5646,11 +5688,19 @@ export class PlayScene extends CombatScene<
    * (`powerUpDropChance`, AH-0MVLJF5P0005KF8X): the level is read from the
    * live campaign at kill time, so the supply per enemy falls as the
    * campaign progresses. Level 1 keeps today's flat `POWER_UP_DROP_CHANCE`
-   * (0.18) exactly; all per-level values come from the shared module.
+   * (0.09) exactly; all per-level values come from the shared module.
+   *
+   * `guaranteed` bypasses the chance draw (never consuming it) for an elite's
+   * guaranteed reward (AH-0MWU666IS008JOR3 AC1). The **pool draw is the same**
+   * path either way: one shared, slot-gated `_drawNextDrop`, so an elite can
+   * never leave the shared pool or skip the slot gate.
    */
-  private _maybeDropPowerUp(x: number, y: number): void {
+  private _maybeDropPowerUp(x: number, y: number, guaranteed = false): void {
     if (!this.dropSpawner) return;
-    if (this.rng() > powerUpDropChance(this._resolveDropLevel(), this.rules)) {
+    if (
+      !guaranteed &&
+      this.rng() > powerUpDropChance(this._resolveDropLevel(), this.rules)
+    ) {
       return;
     }
     // One shared, eligibility-filtered draw through the six-slot gate (parent
@@ -5673,6 +5723,35 @@ export class PlayScene extends CombatScene<
       x,
       y,
     );
+  }
+
+  /**
+   * Applies a dead elite's reward (AH-0MWU666IS008JOR3 AC1–AC3).
+   *
+   * 1. **Guaranteed drop** — the ordinary per-kill chance roll is bypassed and
+   *    the shared pool is drawn once (still slot-gated), so an elite always
+   *    pays a power-up.
+   * 2. **Mineral bump** — the level-scaled guaranteed minerals are scattered
+   *    at the wreck on top of the ordinary re-drop. The count is a pure
+   *    function of the level, so the same seed + wave pays the same bump.
+   * 3. **Distinct death cue** — the shared SFX-gated elite cue, dispatched on
+   *    top of the ordinary hull-destruction boom so the kill reads differently.
+   */
+  private _applyEliteReward(entity: EnemyEntity, level: number): void {
+    const reward = resolveEliteReward(level, this.rules);
+    this._maybeDropPowerUp(entity.x, entity.y, reward.guaranteedDrop);
+    if (reward.mineralBump > 0) {
+      this.minerals.push(
+        ...scatterMineralDrops(
+          this,
+          entity.x,
+          entity.y,
+          reward.mineralBump,
+          this.rng,
+        ),
+      );
+    }
+    playEliteDeathCue();
   }
 
   /**
