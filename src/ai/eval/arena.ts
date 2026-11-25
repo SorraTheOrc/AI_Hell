@@ -1580,6 +1580,11 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
           : buildArenaCampaign(config.seed, balance),
       )
     : null;
+  // The seeded elite budget (AH-0MWU665DM00669U0) derives its per-wave
+  // streams from the same run seed, so a re-run of a seed replays the same
+  // elite decisions. Ships off (`ELITE_WAVE_CHANCE = 0`); the balance harness
+  // raises it through `setEliteWaveChance` once the evidence gate clears.
+  campaignManager?.setRunSeed(config.seed);
   // A dedicated seeded stream for campaign formation/spawner positioning
   // (independent of the reservoir, governor and sim streams).
   const campaignRng = campaignEnabled ? createSeededRng(config.seed) : null;

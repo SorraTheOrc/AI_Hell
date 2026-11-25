@@ -1411,6 +1411,11 @@ export class PlayScene extends CombatScene<
     // (AH-0MUY08V6W001SJJN). Must run before the player/drop spawner/enemies
     // are created so every gameplay draw comes from the seeded stream.
     this._initRunSeed();
+    // The seeded elite budget (AH-0MWU665DM00669U0) derives its per-wave
+    // streams from the same run seed, so an elite is reproducible for a given
+    // seed. Ships off (`ELITE_WAVE_CHANCE = 0`); the seam keeps the decision a
+    // pure function of the seed when the balance gate raises it.
+    this.waveManager.setRunSeed(this.getRunSeed());
     // Seed the bot's per-press jitter from the run seed so demo press
     // lengths are reproducible per run (AC15).
     this.botGovernor.seed(this.getRunSeed());
