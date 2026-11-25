@@ -2,13 +2,14 @@
  * Pure intensity-arc planner primitives for the `capture:promo` pipeline
  * (AH-0MWPD4QRO007WMJ1, first slice of AH-0MWPCLYYG007NUJY).
  *
- * This module is the **first slice** of the planner: it ingests every
- * capture's recorded action-intensity series, joins series time to video time
- * through the §7.5 anchor, and owns the **single** band/target config object
- * the promo arc is planned from. Window selection, fade compensation and
- * `.otio` emission are the follow-up slices; they consume the primitives here
- * (in particular the shared `longestWindowSeconds` run-length helper) rather
- * than re-deriving anything.
+ * This module owns two slices of the planner: it ingests every capture's
+ * recorded action-intensity series, joins series time to video time through the
+ * §7.5 anchor, owns the **single** band/target config object the promo arc is
+ * planned from, and turns that corpus into the ordered, non-overlapping
+ * footage windows of the arc (`planIntensityArc`) with the inter-window fade
+ * overlap compensated so the **rendered** timeline delivers the 34 s arc.
+ * `.otio` emission is the following slice; it consumes the plan and the totals
+ * here (in particular `planTotals`) rather than re-deriving anything.
  *
  * ## Inputs (reused, never re-derived)
  *
@@ -102,6 +103,11 @@ export const INTENSITY_ARC_BAND_ORDER = Object.freeze([
  * rendered yet: VC-0MWNW4SPX002J2SE / VC-0MWNW4T81005YFBJ). `sampleRateHz: 10`
  * matches the recorded series cadence (§6.5).
  *
+ * `edgeNudgeSeconds: 0.25` bounds the cut-placement nudge: a window edge may
+ * move at most this far (2.5 samples at 10 Hz) to land on a local `smoothed`
+ * minimum instead of cutting mid-spike (parent item assumption 2). The bound
+ * is small enough that a cut never strays into another band's footage.
+ *
  * @type {IntensityArcConfig}
  */
 export const DEFAULT_INTENSITY_ARC_CONFIG = Object.freeze({
@@ -114,6 +120,7 @@ export const DEFAULT_INTENSITY_ARC_CONFIG = Object.freeze({
   minWindowSeconds: 1.0,
   fadeSeconds: 0.3,
   sampleRateHz: 10,
+  edgeNudgeSeconds: 0.25,
 });
 
 /**
@@ -321,6 +328,12 @@ export function validateIntensityArcConfig(config) {
   if (!Number.isFinite(sampleRateHz) || sampleRateHz <= 0) {
     throw new IntensityArcConfigError(
       `Intensity arc config.sampleRateHz must be a positive, finite number (got ${JSON.stringify(sampleRateHz)}).`,
+    );
+  }
+  const edgeNudgeSeconds = /** @type {IntensityArcConfig} */ (config).edgeNudgeSeconds;
+  if (!Number.isFinite(edgeNudgeSeconds) || edgeNudgeSeconds < 0) {
+    throw new IntensityArcConfigError(
+      `Intensity arc config.edgeNudgeSeconds must be a non-negative, finite number (got ${JSON.stringify(edgeNudgeSeconds)}).`,
     );
   }
 
@@ -610,6 +623,656 @@ export function longestWindowSeconds(band, samples, options = {}) {
   closeRun();
 
   return best;
+}
+
+// ── Window selection and fade compensation (AH-0MWPD4SGJ005LAPR) ──────────
+
+/**
+ * Float tolerance for sample-grid arithmetic, in seconds.
+ *
+ * Windows are built from **sample indices** rather than float times, so this
+ * only absorbs the rounding of a duration derived from a sample count.
+ */
+const TIME_EPSILON = 1e-9;
+
+/**
+ * Firewall on the fade-compensation distribution loop. Each window can only
+ * grow into its own run's slack, so the loop converges in at most one pass per
+ * window; the bound exists so a future bug can never spin forever.
+ */
+const FADE_COMPENSATION_MAX_PASSES = 64;
+
+/**
+ * Locale-independent natural ordering for clip names.
+ *
+ * `gameplay-2.webm` sorts before `gameplay-10.webm` (digit runs compare
+ * numerically, everything else compares by code unit, so the result never
+ * depends on the host's ICU data). This is the "clip natural order" the plan's
+ * tie-breaks are defined on, and it makes the plan independent of the
+ * filesystem's iteration order.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function compareClipNaturalOrder(a, b) {
+  const left = String(a ?? '');
+  const right = String(b ?? '');
+  const chunk = /\d+|\D+/g;
+  const leftParts = left.match(chunk) ?? [];
+  const rightParts = right.match(chunk) ?? [];
+  const shared = Math.min(leftParts.length, rightParts.length);
+  for (let index = 0; index < shared; index += 1) {
+    const x = leftParts[index];
+    const y = rightParts[index];
+    const xNumeric = /^\d+$/.test(x);
+    const yNumeric = /^\d+$/.test(y);
+    if (xNumeric && yNumeric) {
+      const delta = Number(x) - Number(y);
+      if (delta !== 0) return delta < 0 ? -1 : 1;
+      continue;
+    }
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  if (leftParts.length !== rightParts.length) {
+    return leftParts.length < rightParts.length ? -1 : 1;
+  }
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+/**
+ * The maximal contiguous in-band runs of one capture, in **video** time.
+ *
+ * A run is the same primitive `longestWindowSeconds` measures — the same
+ * cadence step and the same `1.5 × step` gap tolerance — but it keeps the
+ * samples, so window edges can be nudged onto a local `smoothed` minimum and
+ * growth can snap to real sample times instead of accumulating float drift.
+ * Every sample in a run is in-band, so a window that stays inside its run can
+ * never wander into another band.
+ *
+ * @param {IntensityArcCapture} capture
+ * @param {IntensityArcBand} band
+ * @param {number} sampleRateHz
+ * @returns {Array<{ samples: Array<{ seconds: number, smoothed: number }>, durationSeconds: number }>}
+ */
+function captureBandRuns(capture, band, sampleRateHz) {
+  const stepSeconds = 1 / sampleRateHz;
+  const gapToleranceSeconds = stepSeconds * 1.5;
+  const offsetMs = Number(capture?.offsetMs);
+  const toVideoSeconds = (seriesMs) => {
+    // Deliberately **unclamped**: a sample recorded before `capture_started`
+    // maps to a negative video time, and that footage does not exist. Clamping
+    // it to 0 (as `videoTimeMs` does) would pile those samples onto the first
+    // frame and make a run look longer than the video really is.
+    if (Number.isFinite(offsetMs)) return (seriesMs - offsetMs) / 1000;
+    if (typeof capture?.videoTimeMs === 'function') {
+      return capture.videoTimeMs(seriesMs) / 1000;
+    }
+    return seriesMs / 1000;
+  };
+
+  const samples = (Array.isArray(capture?.samples) ? capture.samples : [])
+    .map((sample) => ({
+      seriesMs: Number(sample?.t),
+      intensity: Number(sample?.intensity),
+      smoothed: Number.isFinite(Number(sample?.smoothed))
+        ? Number(sample?.smoothed)
+        : Number(sample?.intensity),
+    }))
+    .filter((sample) => Number.isFinite(sample.seriesMs))
+    .sort((left, right) => left.seriesMs - right.seriesMs);
+
+  /** @type {Array<{ samples: Array<{ seconds: number, smoothed: number }>, durationSeconds: number }>} */
+  const runs = [];
+  /** @type {Array<{ seconds: number, smoothed: number }>} */
+  let current = [];
+
+  const closeRun = () => {
+    if (current.length === 0) return;
+    const first = current[0].seconds;
+    const last = current[current.length - 1].seconds;
+    runs.push({ samples: current, durationSeconds: roundSeconds(last - first + stepSeconds) });
+    current = [];
+  };
+
+  for (const sample of samples) {
+    if (!bandContains(band, sample.intensity)) {
+      closeRun();
+      continue;
+    }
+    const seconds = toVideoSeconds(sample.seriesMs);
+    if (seconds < 0) {
+      // Recorded before the capture started: there is no footage for it, so it
+      // can never be part of a window (the planner measures *video* time).
+      closeRun();
+      continue;
+    }
+    const previous = current[current.length - 1];
+    if (previous !== undefined && seconds - previous.seconds > gapToleranceSeconds) {
+      // A gap between samples means the band was not continuously present.
+      closeRun();
+    }
+    current.push({ seconds, smoothed: sample.smoothed });
+  }
+  closeRun();
+
+  return runs;
+}
+
+/**
+ * The sample-index intervals of `run` that no already-planned window occupies.
+ *
+ * A window occupies `[startIndex, endIndex]` inclusive, so a run that an
+ * earlier band (or an earlier window of the same band) consumed is split into
+ * the pieces that are still free — the mechanism that makes "no footage is
+ * reused" structural rather than a post-hoc check.
+ *
+ * @param {{ samples: ReadonlyArray<{ seconds: number }> }} run
+ * @param {ReadonlyArray<[number, number]>} consumed — inclusive index pairs.
+ * @returns {Array<[number, number]>} inclusive, ascending, non-overlapping.
+ */
+function freeIndexPieces(run, consumed) {
+  const last = run.samples.length - 1;
+  /** @type {Array<[number, number]>} */
+  const pieces = [];
+  let cursor = 0;
+  const sorted = [...consumed].sort((left, right) => left[0] - right[0]);
+  for (const [startIndex, endIndex] of sorted) {
+    if (endIndex < cursor) continue;
+    if (startIndex > cursor && startIndex <= last) {
+      pieces.push([cursor, Math.min(startIndex - 1, last)]);
+    }
+    cursor = Math.max(cursor, endIndex + 1);
+    if (cursor > last) break;
+  }
+  if (cursor <= last) pieces.push([cursor, last]);
+  return pieces;
+}
+
+/**
+ * Picks the sample a cut should land on: the lowest `smoothed` value in range,
+ * with ties resolved by distance to the original edge and then by the earlier
+ * sample. A cut therefore lands on (at worst) a local `smoothed` minimum, never
+ * mid-spike (parent item assumption 2).
+ *
+ * @param {ReadonlyArray<{ seconds: number, smoothed: number }>} samples
+ * @param {ReadonlyArray<number>} indices
+ * @param {number} originalSeconds
+ * @returns {number} the chosen index.
+ */
+function pickSmoothedMinimum(samples, indices, originalSeconds) {
+  let best = indices[0];
+  for (const index of indices) {
+    const candidate = samples[index];
+    const incumbent = samples[best];
+    if (candidate.smoothed < incumbent.smoothed - TIME_EPSILON) {
+      best = index;
+      continue;
+    }
+    if (Math.abs(candidate.smoothed - incumbent.smoothed) > TIME_EPSILON) continue;
+    const candidateDistance = Math.abs(candidate.seconds - originalSeconds);
+    const incumbentDistance = Math.abs(incumbent.seconds - originalSeconds);
+    if (candidateDistance < incumbentDistance - TIME_EPSILON) {
+      best = index;
+      continue;
+    }
+    if (Math.abs(candidateDistance - incumbentDistance) <= TIME_EPSILON && index < best) {
+      best = index;
+    }
+  }
+  return best;
+}
+
+/**
+ * Moves one window's edges onto local `smoothed` minima within
+ * `config.edgeNudgeSeconds`, keeping the window inside its own run piece and no
+ * shorter than `config.minWindowSeconds`.
+ *
+ * The nudge is bounded to the same contiguous in-band run, so it can never
+ * overlap another window, leave the band, or change the window's source clip.
+ *
+ * @param {{
+ *   run: { samples: ReadonlyArray<{ seconds: number, smoothed: number }> },
+ *   pieceStartIndex: number,
+ *   pieceEndIndex: number,
+ *   startIndex: number,
+ *   endIndex: number,
+ * }} window
+ * @param {IntensityArcConfig} config
+ * @returns {{ startIndex: number, endIndex: number }}
+ */
+function nudgeWindowEdges(window, config) {
+  const { samples } = window.run;
+  const nudgeSamples = Math.max(
+    0,
+    Math.round(config.edgeNudgeSeconds * config.sampleRateHz),
+  );
+  const minSamples = Math.max(
+    1,
+    Math.round(config.minWindowSeconds * config.sampleRateHz),
+  );
+
+  let startIndex = window.startIndex;
+  let endIndex = window.endIndex;
+
+  const startCandidates = [];
+  const latestStart = Math.min(
+    startIndex + nudgeSamples,
+    endIndex - (minSamples - 1),
+    window.pieceEndIndex,
+  );
+  for (
+    let index = Math.max(window.pieceStartIndex, startIndex - nudgeSamples);
+    index <= latestStart;
+    index += 1
+  ) {
+    startCandidates.push(index);
+  }
+  if (startCandidates.length > 0) {
+    startIndex = pickSmoothedMinimum(samples, startCandidates, samples[window.startIndex].seconds);
+  }
+
+  const endCandidates = [];
+  const earliestEnd = Math.max(
+    endIndex - nudgeSamples,
+    startIndex + (minSamples - 1),
+    window.pieceStartIndex,
+  );
+  const latestEnd = Math.min(endIndex + nudgeSamples, window.pieceEndIndex);
+  for (let index = earliestEnd; index <= latestEnd; index += 1) {
+    endCandidates.push(index);
+  }
+  if (endCandidates.length > 0) {
+    endIndex = pickSmoothedMinimum(samples, endCandidates, samples[window.endIndex].seconds);
+  }
+
+  return { startIndex, endIndex };
+}
+
+/**
+ * Selects the footage windows for **one** band: the fewest windows reaching the
+ * band's target, drawn from the longest free runs first, each window at least
+ * `config.minWindowSeconds` long.
+ *
+ * Runs come from every capture in the corpus (pooling), in clip natural order,
+ * and whatever a window occupies is recorded in `consumedByKey`, so no later
+ * band can reuse that footage. When the free footage cannot reach the target
+ * the band is reported as a **shortfall** with the required seconds and the
+ * longest single window any capture offers — computed from this real selection
+ * pass, never an estimate.
+ *
+ * @param {IntensityArcBand} band
+ * @param {ReadonlyArray<{ key: string, capture: IntensityArcCapture }>} orderedCorpus
+ * @param {Map<string, Array<[number, number]>>} consumedByKey — inclusive index pairs per capture key.
+ * @param {IntensityArcConfig} config
+ * @returns {{ windows: Array<any>, shortfall: BandAvailability | null }}
+ */
+function selectBandWindows(band, orderedCorpus, consumedByKey, config) {
+  const stepSeconds = 1 / config.sampleRateHz;
+  const minSamples = Math.max(1, Math.round(config.minWindowSeconds * config.sampleRateHz));
+
+  /** @type {Array<{ key: string, capture: IntensityArcCapture, run: any, pieceStartIndex: number, pieceEndIndex: number, durationSeconds: number }>} */
+  const candidates = [];
+  let longestAvailableSeconds = 0;
+
+  for (const entry of orderedCorpus) {
+    const runs = captureBandRuns(entry.capture, band, config.sampleRateHz);
+    for (const run of runs) {
+      longestAvailableSeconds = Math.max(longestAvailableSeconds, run.durationSeconds);
+      // Sample indices are run-local, so consumption is tracked per
+      // (capture, band) — the only scope in which a run can be split.
+      const consumed = consumedByKey.get(`${entry.key}|${band.name}`) ?? [];
+      for (const [pieceStartIndex, pieceEndIndex] of freeIndexPieces(run, consumed)) {
+        const durationSeconds = roundSeconds(
+          run.samples[pieceEndIndex].seconds - run.samples[pieceStartIndex].seconds + stepSeconds,
+        );
+        if (durationSeconds + TIME_EPSILON < config.minWindowSeconds) continue;
+        candidates.push({
+          key: entry.key,
+          capture: entry.capture,
+          run,
+          pieceStartIndex,
+          pieceEndIndex,
+          durationSeconds,
+        });
+      }
+    }
+  }
+
+  const totalAvailableSeconds = candidates.reduce(
+    (total, candidate) => total + candidate.durationSeconds,
+    0,
+  );
+  const shortfall = {
+    band: band.name,
+    requiredSeconds: band.targetSeconds,
+    longestAvailableSeconds,
+    satisfiable: false,
+  };
+  if (totalAvailableSeconds + TIME_EPSILON < band.targetSeconds) {
+    return { windows: [], shortfall };
+  }
+
+  // Fewest windows: longest free piece first; ties by clip natural order then
+  // earliest start. `candidates` is built in natural order, so the index in
+  // that array is the deterministic tie-breaker.
+  const ordered = candidates
+    .map((candidate, order) => ({ candidate, order }))
+    .sort((left, right) => {
+      const delta = right.candidate.durationSeconds - left.candidate.durationSeconds;
+      if (Math.abs(delta) > TIME_EPSILON) return delta;
+      return left.order - right.order;
+    })
+    .map((entry) => entry.candidate);
+
+  /** @type {Array<any>} */
+  const windows = [];
+  let remainingSeconds = band.targetSeconds;
+  for (const candidate of ordered) {
+    if (remainingSeconds <= TIME_EPSILON) break;
+    const availableSamples = candidate.pieceEndIndex - candidate.pieceStartIndex + 1;
+    const wantedSamples = Math.max(1, Math.round(remainingSeconds * config.sampleRateHz));
+    let takeSamples = Math.min(availableSamples, wantedSamples);
+    if (takeSamples < minSamples) {
+      // A short remainder cannot stand alone: over-deliver to the minimum
+      // window length from this piece instead of emitting a stub window.
+      takeSamples = Math.min(availableSamples, minSamples);
+    }
+    const startIndex = candidate.pieceStartIndex;
+    const endIndex = startIndex + takeSamples - 1;
+    windows.push({
+      band: band.name,
+      key: candidate.key,
+      capture: candidate.capture,
+      run: candidate.run,
+      pieceStartIndex: candidate.pieceStartIndex,
+      pieceEndIndex: candidate.pieceEndIndex,
+      startIndex,
+      endIndex,
+    });
+    remainingSeconds -=
+      candidate.run.samples[endIndex].seconds -
+      candidate.run.samples[startIndex].seconds +
+      stepSeconds;
+    const consumedKey = `${candidate.key}|${band.name}`;
+    const consumed = consumedByKey.get(consumedKey) ?? [];
+    consumed.push([startIndex, endIndex]);
+    consumedByKey.set(consumedKey, consumed);
+  }
+
+  if (remainingSeconds > TIME_EPSILON) {
+    // Defensive: the feasibility check above guarantees this cannot happen, so
+    // a residual means the selection pass and the availability sum disagree.
+    return { windows: [], shortfall };
+  }
+  return { windows, shortfall: null };
+}
+
+/** One window's footage length, in seconds, from its sample indices. */
+function windowDurationSeconds(window, stepSeconds) {
+  return (
+    window.run.samples[window.endIndex].seconds -
+    window.run.samples[window.startIndex].seconds +
+    stepSeconds
+  );
+}
+
+/**
+ * Grows one window by up to `amountSeconds` of extra footage, **end edge
+ * first**, staying inside its own run piece (so it can never overlap another
+ * window or leave the band).
+ *
+ * @returns {number} the footage actually added, in seconds.
+ */
+function growWindowBy(window, amountSeconds, sampleRateHz) {
+  const stepSeconds = 1 / sampleRateHz;
+  let remaining = amountSeconds;
+  let grew = 0;
+
+  const endRoomSamples = window.pieceEndIndex - window.endIndex;
+  if (endRoomSamples > 0 && remaining > TIME_EPSILON) {
+    const takeSamples = Math.min(
+      endRoomSamples,
+      Math.max(0, Math.floor((remaining + TIME_EPSILON) / stepSeconds)),
+    );
+    if (takeSamples > 0) {
+      const before = window.run.samples[window.endIndex].seconds;
+      window.endIndex += takeSamples;
+      const added = window.run.samples[window.endIndex].seconds - before;
+      grew += added;
+      remaining -= added;
+    }
+  }
+
+  const startRoomSamples = window.startIndex - window.pieceStartIndex;
+  if (startRoomSamples > 0 && remaining > TIME_EPSILON) {
+    const takeSamples = Math.min(
+      startRoomSamples,
+      Math.max(0, Math.floor((remaining + TIME_EPSILON) / stepSeconds)),
+    );
+    if (takeSamples > 0) {
+      const before = window.run.samples[window.startIndex].seconds;
+      window.startIndex -= takeSamples;
+      const added = before - window.run.samples[window.startIndex].seconds;
+      grew += added;
+      remaining -= added;
+    }
+  }
+
+  return grew;
+}
+
+/**
+ * Distributes the inter-window fade overlap across the planned windows so the
+ * **rendered** timeline delivers the arc's targets.
+ *
+ * `vidc` cross-fades consecutive clips, so `n` windows render
+ * `Σ durations − (n − 1) × fadeSeconds` seconds (parent item assumption 3).
+ * The planner therefore adds exactly `(n − 1) × fadeSeconds` of footage: the
+ * extra is shared evenly, in arc order, by growing each window into the slack
+ * of its own contiguous in-band run (end edge first).
+ *
+ * @returns {number} the extra footage the plan could not accommodate (0 when
+ *   the compensation was applied in full).
+ */
+function compensateFadeOverlap(windows, config) {
+  const extraSeconds = Math.max(0, (windows.length - 1) * config.fadeSeconds);
+  if (extraSeconds <= TIME_EPSILON) return 0;
+
+  const stepSeconds = 1 / config.sampleRateHz;
+  let remaining = extraSeconds;
+  // One sample per window per pass, so the extra footage is shared evenly in
+  // arc order (an uneven remainder lands on the earlier bands). The pass bound
+  // is the sample count needed plus a window's worth of no-progress passes.
+  const maxPasses = Math.ceil(extraSeconds / stepSeconds) + windows.length + 8;
+  let passes = 0;
+  while (remaining > TIME_EPSILON && passes < maxPasses) {
+    passes += 1;
+    let progressed = false;
+    for (const window of windows) {
+      if (remaining <= TIME_EPSILON) break;
+      const added = growWindowBy(
+        window,
+        Math.min(remaining, stepSeconds),
+        config.sampleRateHz,
+      );
+      if (added > TIME_EPSILON) {
+        remaining -= added;
+        progressed = true;
+      }
+    }
+    if (!progressed) break;
+  }
+  return remaining > TIME_EPSILON ? remaining : 0;
+}
+
+/** The arc's rendered total, in seconds: the sum of every band target. */
+function planTargetSeconds(config) {
+  return config.bands.reduce((total, band) => total + band.targetSeconds, 0);
+}
+
+/**
+ * Rounds a seconds value to microseconds.
+ *
+ * Sample-grid arithmetic accumulates binary rounding (`10.299999999999999`).
+ * Six decimals is far below a video frame (33.3 ms at 30 fps) and keeps the
+ * emitted plan, its metadata and the `.otio` numbers readable while staying
+ * deterministic.
+ */
+function roundSeconds(value) {
+  return Math.round(Number(value) * 1e6) / 1e6;
+}
+
+/** Round-trip formatting used only in shortfall messages. */
+function formatSeconds(value) {
+  return `${Number(value).toFixed(3)}s`;
+}
+
+/**
+ * Plans the promo's intensity arc: the ordered, non-overlapping footage windows
+ * that deliver **10 s high → 7 s medium → 7 s medium+ → 10 s very high** on the
+ * rendered timeline.
+ *
+ * Selection rules (parent item AC3):
+ *
+ * - arc order comes from `config.bands` (high → medium → medium+ → very high);
+ * - windows are never reused and never overlap inside one source clip —
+ *   consumption is tracked per capture as inclusive sample-index intervals;
+ * - each band uses the **fewest** windows that reach its target, the longest
+ *   free runs first, every window at least `config.minWindowSeconds`;
+ * - footage is pooled across captures, but one window always comes from one
+ *   capture (an `.otio` `source_range` is per clip);
+ * - window edges are nudged to local `smoothed` minima within
+ *   `config.edgeNudgeSeconds`;
+ * - the fade overlap is compensated so the rendered total is the arc's 34 s,
+ *   not 34 s minus the overlaps;
+ * - ties resolve by clip natural order, then earliest `t`, so the plan is
+ *   reproducible byte-for-byte from the same inputs.
+ *
+ * A band that cannot be filled throws {@link IntensityArcShortfallError} naming
+ * the band, the required seconds and the longest window available — never a
+ * silently shorter arc.
+ *
+ * @param {ReadonlyArray<IntensityArcCapture>} captures — the ingest corpus.
+ * @param {IntensityArcConfig} [config]
+ * @returns {IntensityArcPlanWindow[]} windows in arc order, each with its in
+ *   point (`inSeconds` / `videoTimeSeconds`, seconds on the source clip's video
+ *   timeline) and its duration (`durationSeconds`).
+ * @throws {IntensityArcShortfallError}
+ */
+export function planIntensityArc(captures, config = DEFAULT_INTENSITY_ARC_CONFIG) {
+  const orderedCorpus = (Array.isArray(captures) ? captures : [])
+    .map((capture, index) => ({
+      key: `${capture?.stem ?? capture?.clip ?? ''}#${index}`,
+      capture,
+      index,
+      clip: String(capture?.clip ?? capture?.stem ?? ''),
+    }))
+    .sort((left, right) => {
+      const byName = compareClipNaturalOrder(left.clip, right.clip);
+      return byName !== 0 ? byName : left.index - right.index;
+    });
+
+  /** @type {Map<string, Array<[number, number]>>} */
+  const consumedByKey = new Map();
+  /** @type {Array<any>} */
+  const chosen = [];
+  /** @type {BandAvailability[]} */
+  const shortfalls = [];
+
+  for (const band of config.bands) {
+    const selection = selectBandWindows(band, orderedCorpus, consumedByKey, config);
+    if (selection.shortfall !== null) {
+      shortfalls.push(selection.shortfall);
+      continue;
+    }
+    chosen.push(...selection.windows);
+  }
+
+  if (shortfalls.length > 0) {
+    const detail = shortfalls
+      .map(
+        (entry) =>
+          `${entry.band}: needs ${entry.requiredSeconds}s, longest available ${entry.longestAvailableSeconds}s`,
+      )
+      .join('; ');
+    throw new IntensityArcShortfallError(
+      `Intensity arc cannot be filled from the available footage — ${detail}. ` +
+        'Re-capture footage with longer stretches of that band, pool more runs, or retune DEFAULT_INTENSITY_ARC_CONFIG (scripts/intensity-arc.mjs).',
+      shortfalls,
+    );
+  }
+
+  // Nudge every cut onto a local smoothed minimum before any compensation
+  // growth: the nudge is inward-biased by the target window, and the fade
+  // compensation pass below tops the plan back up to the arc length.
+  const nudged = chosen.map((window) => ({
+    ...window,
+    ...nudgeWindowEdges(window, config),
+  }));
+
+  const uncompensated = compensateFadeOverlap(nudged, config);
+  const stepSeconds = 1 / config.sampleRateHz;
+  if (uncompensated > TIME_EPSILON) {
+    const footageSeconds = nudged.reduce(
+      (total, window) => total + windowDurationSeconds(window, stepSeconds),
+      0,
+    );
+    throw new IntensityArcShortfallError(
+      `Intensity arc cannot deliver the ${planTargetSeconds(config)}s rendered arc: ` +
+        `the selected windows leave only ${formatSeconds(footageSeconds)} of footage, ` +
+        `which cannot absorb the ${formatSeconds(uncompensated)} inter-window fade compensation that remains. ` +
+        'Re-capture longer runs of the arc bands, or lower DEFAULT_INTENSITY_ARC_CONFIG.fadeSeconds.',
+      [],
+    );
+  }
+
+  return nudged.map((window) => {
+    const startSeconds = roundSeconds(window.run.samples[window.startIndex].seconds);
+    return Object.freeze({
+      band: /** @type {IntensityArcBandName} */ (window.band),
+      sourceStem: String(window.capture?.stem ?? ''),
+      inSeconds: startSeconds,
+      durationSeconds: roundSeconds(windowDurationSeconds(window, stepSeconds)),
+      videoTimeSeconds: startSeconds,
+    });
+  });
+}
+
+/**
+ * Summarises a plan: delivered footage, the rendered total (footage minus the
+ * inter-window fade overlaps) and the per-band delivered seconds.
+ *
+ * The planner's own totals, not a re-derivation: the CLI's `--dry-run` output
+ * and the `.otio` metadata both quote this, so the numbers a producer reads are
+ * the numbers the plan actually contains.
+ *
+ * @param {ReadonlyArray<IntensityArcPlanWindow>} plan
+ * @param {IntensityArcConfig} [config]
+ * @returns {IntensityArcPlanTotals}
+ */
+export function planTotals(plan, config = DEFAULT_INTENSITY_ARC_CONFIG) {
+  const windows = Array.isArray(plan) ? plan : [];
+  /** @type {Record<string, number>} */
+  const byBand = {};
+  for (const band of config.bands) byBand[band.name] = 0;
+  let footageSeconds = 0;
+  for (const window of windows) {
+    const duration = Number(window?.durationSeconds) || 0;
+    footageSeconds += duration;
+    if (window?.band !== undefined) {
+      byBand[window.band] = (byBand[window.band] ?? 0) + duration;
+    }
+  }
+  const fadeSeconds = windows.length > 0 ? (windows.length - 1) * config.fadeSeconds : 0;
+  return {
+    windows: windows.length,
+    footageSeconds,
+    fadeSeconds,
+    renderedSeconds: footageSeconds - fadeSeconds,
+    byBand,
+  };
 }
 
 /**

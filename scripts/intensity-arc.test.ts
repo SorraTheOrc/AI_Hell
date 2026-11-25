@@ -29,11 +29,15 @@ import {
   CAPTURE_ANCHOR_KIND,
 } from './capture-series.mjs';
 import {
+  FIXTURE_RUN_STARTED_AT_EPOCH_MS,
   FIXTURE_SAMPLE_RATE_HZ,
   FixtureSchemaError,
   INTENSITY_ARC_FIXTURE_DIR,
+  buildFixtureAnchor,
   buildFixtureCorpus,
   parseSeriesFixture,
+  serialiseCaptureAnchor,
+  serialisePlateauSeries,
 } from './intensity-arc-fixtures.mjs';
 import {
   DEFAULT_INTENSITY_ARC_CONFIG,
@@ -47,8 +51,15 @@ import {
   loadIntensityCorpus,
   longestWindowSeconds,
   parseActionIntensitySeries,
+  planIntensityArc,
+  planTotals,
   validateIntensityArcConfig,
   videoTimeMs,
+} from './intensity-arc.mjs';
+import type {
+  IntensityArcCapture,
+  IntensityArcConfig,
+  IntensityArcPlanWindow,
 } from './intensity-arc.mjs';
 
 /** Repository root, resolved from this test file rather than `cwd`. */
@@ -383,6 +394,9 @@ describe('intensity arc config defaults (AH-0MWPD4QRO007WMJ1)', () => {
     }
     expect(Object.keys(config).sort()).toEqual([
       'bands',
+      // Added by AH-0MWPD4SGJ005LAPR: the cut-placement nudge bound is part of
+      // the same single config object (no second knob surface).
+      'edgeNudgeSeconds',
       'fadeSeconds',
       'minWindowSeconds',
       'sampleRateHz',
@@ -638,5 +652,452 @@ describe('intensity arc band membership and run lengths (AH-0MWPD4QRO007WMJ1)', 
       longestAvailableSeconds: 5,
       satisfiable: false,
     });
+  });
+});
+
+// ── Plan: window selection and fade compensation (AH-0MWPD4SGJ005LAPR) ──
+//
+// Naming note: the plan's segments are called `cut` in *code* here, never
+// `window`. `vitest.projects.ts` classifies a file as `integration` when its
+// code mentions a DOM global — and a loop variable named `window` is exactly
+// that match — which would drag this pure-Node suite into the happy-dom
+// project (where its `import.meta.url` is not a file URL). Comments and
+// strings are stripped before that check, so the prose can say "window"
+// (AH-0MWPD4SGJ005LAPR).
+
+/** One half-open, constant-intensity stretch of a synthetic series. */
+type Plateau = { fromT: number; toT: number; intensity: number };
+
+/** One capture in a synthetic planner corpus. */
+type SyntheticCaptureSpec = {
+  stem: string;
+  plateaus: Plateau[];
+  /** `capture_started − runStartedAt`, in ms (default 0). */
+  offsetMs?: number;
+};
+
+/**
+ * The reference "everything is available" series: one plateau per band, each
+ * comfortably above its 7/7/10/10 s target (8/8/11/11 s).
+ */
+const FULL_ARC_PLATEAUS: Plateau[] = [
+  { fromT: 0, toT: 8000, intensity: 0.46 },
+  { fromT: 8000, toT: 16000, intensity: 0.6 },
+  { fromT: 16000, toT: 27000, intensity: 0.7 },
+  { fromT: 27000, toT: 38000, intensity: 0.82 },
+];
+
+/**
+ * Builds the corpus the planner tests plan **from**.
+ *
+ * The committed fixtures (`scripts/fixtures/intensity-arc/`) deliberately
+ * anchor their captures a couple of seconds *after* the run started so the
+ * join can be asserted, and the planner measures usable **video** time — so
+ * those seconds are footage the capture never recorded. The planner tests
+ * therefore synthesise their corpora through the same canonical builders
+ * (`serialisePlateauSeries`, `buildFixtureAnchor`, `serialiseCaptureAnchor`)
+ * with a zero (or explicit) join offset, which keeps them hermetic — no
+ * browser, no footage, no network — while letting the arc be satisfiable. The
+ * committed `short-band` fixture is still used for the shortfall case, which
+ * does not depend on the offset.
+ */
+function syntheticCorpus(specs: ReadonlyArray<SyntheticCaptureSpec>): IntensityArcCapture[] {
+  const files = new Map<string, string>();
+  for (const spec of specs) {
+    const offsetMs = spec.offsetMs ?? 0;
+    files.set(`${spec.stem}.action.jsonl`, serialisePlateauSeries(spec.plateaus));
+    files.set(
+      `${spec.stem}.capture.json`,
+      serialiseCaptureAnchor(
+        buildFixtureAnchor({
+          runStartedAtEpochMs: FIXTURE_RUN_STARTED_AT_EPOCH_MS,
+          captureStartedAtEpochMs: FIXTURE_RUN_STARTED_AT_EPOCH_MS + offsetMs,
+        }),
+      ),
+    );
+  }
+  const { captures } = loadIntensityCorpus(
+    specs.map((spec) => spec.stem),
+    {
+      readFile: (fileName) => {
+        const text = files.get(fileName);
+        if (text === undefined) throw new Error(`synthetic corpus has no ${fileName}`);
+        return text;
+      },
+      warn: () => {},
+    },
+  );
+  return captures;
+}
+
+/** Rewrites a capture's `smoothed` series (the edge-nudging fixture). */
+function withSmoothed(
+  capture: IntensityArcCapture,
+  smoothed: (t: number) => number,
+): IntensityArcCapture {
+  return {
+    ...capture,
+    samples: capture.samples.map((sample) => ({ ...sample, smoothed: smoothed(sample.t) })),
+  };
+}
+
+/** The default config with one field overridden, for a focused planner test. */
+function configWith(overrides: Partial<IntensityArcConfig>): IntensityArcConfig {
+  return { ...DEFAULT_INTENSITY_ARC_CONFIG, ...overrides };
+}
+
+/** The arc's rendered total from the shipped band targets. */
+const ARC_RENDERED_TOTAL_SECONDS = 34;
+
+/** Every window's rendered-timeline contribution: durations minus the fades. */
+function renderedSeconds(plan: ReadonlyArray<IntensityArcPlanWindow>): number {
+  return planTotals(plan).renderedSeconds;
+}
+
+/** The capture a planned window was cut from, by stem. */
+function captureOf(captures: IntensityArcCapture[], cut: IntensityArcPlanWindow) {
+  const capture = captures.find((entry) => entry.stem === cut.sourceStem);
+  if (capture === undefined) throw new Error(`no capture for ${cut.sourceStem}`);
+  return capture;
+}
+
+/**
+ * The samples of `capture` inside a planned window (video-time seconds), with
+ * their band membership — the input to the "stays in band" property.
+ */
+function samplesInWindow(capture: IntensityArcCapture, cut: IntensityArcPlanWindow) {
+  const stepSeconds = 1 / DEFAULT_INTENSITY_ARC_CONFIG.sampleRateHz;
+  const from = cut.inSeconds - 1e-6;
+  // Half-open: the sample *at* `in + duration` belongs to the next stretch of
+  // footage, not to this cut.
+  const to = cut.inSeconds + cut.durationSeconds - stepSeconds + 1e-6;
+  return capture.samples
+    .map((sample) => ({
+      intensity: Number(sample.intensity),
+      seconds: (typeof capture.videoTimeMs === 'function'
+        ? capture.videoTimeMs(Number(sample.t))
+        : Number(sample.t)) / 1000,
+      smoothed: Number(sample.smoothed),
+    }))
+    .filter((sample) => sample.seconds >= from && sample.seconds <= to);
+}
+
+/** Every pair of planned windows is disjoint within its own source clip. */
+function expectNoFootageReused(
+  captures: IntensityArcCapture[],
+  plan: ReadonlyArray<IntensityArcPlanWindow>,
+): void {
+  for (let left = 0; left < plan.length; left += 1) {
+    for (let right = left + 1; right < plan.length; right += 1) {
+      if (plan[left].sourceStem !== plan[right].sourceStem) continue;
+      const leftEnd = plan[left].inSeconds + plan[left].durationSeconds;
+      const rightEnd = plan[right].inSeconds + plan[right].durationSeconds;
+      const overlaps = plan[left].inSeconds < rightEnd - 1e-6 && plan[right].inSeconds < leftEnd - 1e-6;
+      expect(
+        overlaps,
+        `windows ${left} (${plan[left].band} @ ${plan[left].inSeconds}) and ${right} ` +
+          `(${plan[right].band} @ ${plan[right].inSeconds}) reuse footage in ${plan[left].sourceStem}`,
+      ).toBe(false);
+    }
+  }
+  // ...and each window really carries footage: at least one in-band sample.
+  for (const cut of plan) {
+    const capture = captureOf(captures, cut);
+    expect(samplesInWindow(capture, cut).length).toBeGreaterThan(0);
+  }
+}
+
+describe('intensity arc planning (AH-0MWPD4SGJ005LAPR)', () => {
+  it('plans one window per band in arc order, each meeting its target', () => {
+    const captures = syntheticCorpus([{ stem: 'clip-a', plateaus: FULL_ARC_PLATEAUS }]);
+    const plan = planIntensityArc(captures);
+
+    expect(plan.map((cut) => cut.band)).toEqual([
+      'high',
+      'medium',
+      'medium+',
+      'very high',
+    ]);
+    // The full-plateau capture can fill every band from one contiguous run, so
+    // the fewest-windows rule yields exactly one cut per band.
+    for (const cut of plan) {
+      const band = findBand(cut.band);
+      expect(cut.sourceStem).toBe('clip-a');
+      expect(cut.durationSeconds).toBeGreaterThanOrEqual(band.targetSeconds);
+      expect(cut.inSeconds).toBe(cut.videoTimeSeconds);
+    }
+    // The in points are the plateau starts: 16 s high, 0 s medium, 8 s medium+,
+    // 27 s very high (video time == series time at a zero join offset).
+    expect(plan.map((cut) => cut.inSeconds)).toEqual([16, 0, 8, 27]);
+  });
+
+  it('compensates the fade overlap so the rendered timeline totals 34 s', () => {
+    const captures = syntheticCorpus([{ stem: 'clip-a', plateaus: FULL_ARC_PLATEAUS }]);
+    const plan = planIntensityArc(captures);
+    const totals = planTotals(plan);
+
+    const expectedFadeSeconds = (plan.length - 1) * DEFAULT_INTENSITY_ARC_CONFIG.fadeSeconds;
+    expect(totals.fadeSeconds).toBeCloseTo(expectedFadeSeconds, 9);
+    // The formula the module documents: footage − (windows − 1) × fade.
+    expect(totals.footageSeconds).toBeCloseTo(
+      ARC_RENDERED_TOTAL_SECONDS + expectedFadeSeconds,
+      6,
+    );
+    expect(totals.renderedSeconds).toBeCloseTo(ARC_RENDERED_TOTAL_SECONDS, 6);
+    // Every band's own target still survives the distribution.
+    for (const band of DEFAULT_INTENSITY_ARC_CONFIG.bands) {
+      expect(totals.byBand[band.name]).toBeGreaterThanOrEqual(band.targetSeconds);
+    }
+  });
+
+  it('never reuses footage and never lets a cut leave its band', () => {
+    // Two captures with different runs: medium must pool across both, so the
+    // plan carries several windows from different clips.
+    const captures = syntheticCorpus([
+      {
+        stem: 'clip-a',
+        plateaus: [
+          { fromT: 0, toT: 4000, intensity: 0.46 },
+          { fromT: 4000, toT: 15000, intensity: 0.7 },
+        ],
+      },
+      {
+        stem: 'clip-b',
+        plateaus: [
+          { fromT: 0, toT: 5000, intensity: 0.46 },
+          { fromT: 5000, toT: 13000, intensity: 0.6 },
+          { fromT: 13000, toT: 24000, intensity: 0.82 },
+        ],
+      },
+    ]);
+    const plan = planIntensityArc(captures);
+
+    expectNoFootageReused(captures, plan);
+    for (const cut of plan) {
+      const band = findBand(cut.band);
+      const inBand = samplesInWindow(captureOf(captures, cut), cut).filter((sample) =>
+        bandContains(band, sample.intensity),
+      );
+      // Every sample the window covers belongs to the window's own band.
+      expect(inBand.length).toBe(samplesInWindow(captureOf(captures, cut), cut).length);
+    }
+    expect(renderedSeconds(plan)).toBeCloseTo(ARC_RENDERED_TOTAL_SECONDS, 6);
+  });
+
+  it('uses the fewest windows, pooling captures only when one clip cannot fill the band', () => {
+    const captures = syntheticCorpus([
+      {
+        stem: 'clip-a',
+        plateaus: [
+          { fromT: 0, toT: 4000, intensity: 0.46 },
+          { fromT: 4000, toT: 15000, intensity: 0.7 },
+        ],
+      },
+      {
+        stem: 'clip-b',
+        plateaus: [
+          { fromT: 0, toT: 5000, intensity: 0.46 },
+          { fromT: 5000, toT: 13000, intensity: 0.6 },
+          { fromT: 13000, toT: 24000, intensity: 0.82 },
+        ],
+      },
+    ]);
+    const plan = planIntensityArc(captures);
+    const byBand = (name: string) => plan.filter((cut) => cut.band === name);
+
+    // medium is 4 s in clip-a and 5 s in clip-b: the 7 s target needs exactly
+    // two windows, and they must come from different captures.
+    const medium = byBand('medium');
+    expect(medium).toHaveLength(2);
+    expect(new Set(medium.map((cut) => cut.sourceStem)).size).toBe(2);
+    expect(medium.reduce((total, cut) => total + cut.durationSeconds, 0)).toBeGreaterThanOrEqual(7);
+    // The longest run wins first (clip-b's 5 s before clip-a's 4 s).
+    expect(medium[0].sourceStem).toBe('clip-b');
+
+    // Every other band fits in one contiguous run, so it uses one cut.
+    expect(byBand('high')).toHaveLength(1);
+    expect(byBand('medium+')).toHaveLength(1);
+    expect(byBand('very high')).toHaveLength(1);
+  });
+
+  it('never emits a cut shorter than the 1 s minimum, over-delivering instead', () => {
+    const captures = syntheticCorpus([
+      {
+        stem: 'clip-a',
+        plateaus: [
+          { fromT: 0, toT: 6200, intensity: 0.46 },
+          { fromT: 6200, toT: 14000, intensity: 0.6 },
+          { fromT: 14000, toT: 25000, intensity: 0.7 },
+          { fromT: 25000, toT: 36000, intensity: 0.82 },
+        ],
+      },
+      { stem: 'clip-b', plateaus: [{ fromT: 0, toT: 1500, intensity: 0.46 }] },
+    ]);
+    const plan = planIntensityArc(captures);
+
+    // clip-a supplies 6.2 s, leaving an 0.8 s remainder that is below the 1 s
+    // minimum — the planner takes a full 1 s cut instead of a stub.
+    const medium = plan.filter((cut) => cut.band === 'medium');
+    expect(medium).toHaveLength(2);
+    expect(medium[1].sourceStem).toBe('clip-b');
+    expect(medium[1].durationSeconds).toBeGreaterThanOrEqual(
+      DEFAULT_INTENSITY_ARC_CONFIG.minWindowSeconds,
+    );
+    for (const cut of plan) {
+      expect(cut.durationSeconds).toBeGreaterThanOrEqual(
+        DEFAULT_INTENSITY_ARC_CONFIG.minWindowSeconds,
+      );
+    }
+  });
+
+  it('reports a shortfall from the real selection pass, naming band, target and longest cut', () => {
+    // The committed fixture is genuinely short of "very high" footage (5 s).
+    const { corpus } = loadFixtures(['short-band']);
+    let captured: unknown;
+    try {
+      planIntensityArc(corpus.captures);
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).toBeInstanceOf(IntensityArcShortfallError);
+    const error = captured as IntensityArcShortfallError;
+    const veryHigh = error.shortfalls.find((entry) => entry.band === 'very high');
+    expect(veryHigh).toMatchObject({
+      requiredSeconds: 10,
+      longestAvailableSeconds: 5,
+      satisfiable: false,
+    });
+    expect(error.message).toMatch(/very high: needs 10s, longest available 5s/);
+  });
+
+  it('nudges every cut edge onto a local smoothed minimum, never leaving the band', () => {
+    const spikeSeconds = 0.2;
+    // A smoothed spike at the start of every plateau: an edge left on the
+    // plateau boundary would cut mid-spike.
+    const captures = syntheticCorpus([{ stem: 'clip-a', plateaus: FULL_ARC_PLATEAUS }]).map(
+      (capture) =>
+        withSmoothed(capture, (t) => {
+          const intraPlateau = FULL_ARC_PLATEAUS.reduce(
+            (offset, plateau) => (t >= plateau.fromT ? t - plateau.fromT : offset),
+            0,
+          );
+          return intraPlateau < spikeSeconds * 1000 ? 1 : 0;
+        }),
+    );
+    const plan = planIntensityArc(captures);
+    const capture = captures[0]!;
+    const nudgeSamples = Math.round(
+      DEFAULT_INTENSITY_ARC_CONFIG.edgeNudgeSeconds * DEFAULT_INTENSITY_ARC_CONFIG.sampleRateHz,
+    );
+
+    /** True when the sample at `edgeSeconds` is a local smoothed minimum. */
+    const isLocalSmoothedMinimum = (edgeSeconds: number): boolean => {
+      const ordered = capture.samples
+        .map((sample) => ({
+          seconds: capture.videoTimeMs(Number(sample.t)) / 1000,
+          smoothed: Number(sample.smoothed),
+        }))
+        .sort((left, right) => left.seconds - right.seconds);
+      const index = ordered.findIndex((sample) => Math.abs(sample.seconds - edgeSeconds) < 1e-6);
+      if (index < 0) return false;
+      const current = ordered[index].smoothed;
+      const before = index > 0 ? ordered[index - 1].smoothed : Number.POSITIVE_INFINITY;
+      const after = index < ordered.length - 1 ? ordered[index + 1].smoothed : Number.POSITIVE_INFINITY;
+      return current <= before && current <= after;
+    };
+
+    for (const cut of plan) {
+      const start = cut.inSeconds;
+      const end = cut.inSeconds + cut.durationSeconds - 1 / DEFAULT_INTENSITY_ARC_CONFIG.sampleRateHz;
+      for (const edge of [start, end]) {
+        const nearMinima = capture.samples.some((sample) => {
+          const seconds = capture.videoTimeMs(Number(sample.t)) / 1000;
+          return Math.abs(seconds - edge) <= nudgeSamples / DEFAULT_INTENSITY_ARC_CONFIG.sampleRateHz + 1e-6;
+        });
+        expect(nearMinima, `edge ${edge} has no sample within the nudge bound`).toBe(true);
+        expect(isLocalSmoothedMinimum(edge), `edge ${edge} is not a local smoothed minimum`).toBe(true);
+      }
+    }
+    // The spike at the start of the medium plateau really moved that cut.
+    const medium = plan.find((cut) => cut.band === 'medium')!;
+    expect(medium.inSeconds).toBeCloseTo(spikeSeconds, 6);
+  });
+
+  it('is deterministic: the same corpus twice, and in any input order', () => {
+    const specs: SyntheticCaptureSpec[] = [
+      { stem: 'clip-10', plateaus: FULL_ARC_PLATEAUS },
+      { stem: 'clip-2', plateaus: FULL_ARC_PLATEAUS },
+    ];
+    const forward = syntheticCorpus(specs);
+    const reversed = syntheticCorpus([...specs].reverse());
+
+    const first = planIntensityArc(forward);
+    const second = planIntensityArc(forward);
+    expect(second).toEqual(first);
+    expect(planIntensityArc(reversed)).toEqual(first);
+    // Clip natural order (clip-2 before clip-10), not the supplied order.
+    expect(first[0].sourceStem).toBe('clip-2');
+  });
+
+  it('joins series time to video time through the capture anchor and ignores pre-capture samples', () => {
+    const captures = syntheticCorpus([
+      { stem: 'clip-a', plateaus: FULL_ARC_PLATEAUS, offsetMs: 1000 },
+    ]);
+    const plan = planIntensityArc(captures);
+    const capture = captures[0]!;
+    const videoTimes = new Set(
+      capture.samples.map(
+        (sample) => Math.round((capture.videoTimeMs(Number(sample.t)) / 1000) * 1e6) / 1e6,
+      ),
+    );
+
+    for (const cut of plan) {
+      // Every in point is a real sample time on the *video* timeline, so the
+      // 1 s of run footage the capture missed can never appear in the cut.
+      expect(videoTimes.has(Math.round(cut.inSeconds * 1e6) / 1e6)).toBe(true);
+      expect(cut.inSeconds).toBeGreaterThanOrEqual(0);
+      expect(capture.videoTimeMs(0)).toBe(0);
+    }
+    // The capture starts 1 s into the run, so the medium plateau begins at 0 s.
+    expect(plan.find((cut) => cut.band === 'medium')!.inSeconds).toBe(0);
+    expect(plan.find((cut) => cut.band === 'high')!.inSeconds).toBe(15);
+    expect(renderedSeconds(plan)).toBeCloseTo(ARC_RENDERED_TOTAL_SECONDS, 6);
+  });
+
+  it('summarises the plan in planTotals', () => {
+    const captures = syntheticCorpus([{ stem: 'clip-a', plateaus: FULL_ARC_PLATEAUS }]);
+    const plan = planIntensityArc(captures);
+    const totals = planTotals(plan);
+
+    expect(totals.windows).toBe(plan.length);
+    expect(totals.footageSeconds).toBeCloseTo(
+      plan.reduce((total, cut) => total + cut.durationSeconds, 0),
+      6,
+    );
+    for (const band of DEFAULT_INTENSITY_ARC_CONFIG.bands) {
+      const expected = plan
+        .filter((cut) => cut.band === band.name)
+        .reduce((total, cut) => total + cut.durationSeconds, 0);
+      expect(totals.byBand[band.name]).toBeCloseTo(expected, 6);
+    }
+    // Empty plan: no windows, no fade, nothing rendered.
+    expect(planTotals([])).toMatchObject({
+      windows: 0,
+      footageSeconds: 0,
+      fadeSeconds: 0,
+      renderedSeconds: 0,
+    });
+  });
+
+  it('honours a retuned fade length, sample rate and nudge bound from the one config object', () => {
+    const captures = syntheticCorpus([{ stem: 'clip-a', plateaus: FULL_ARC_PLATEAUS }]);
+    const config = configWith({ fadeSeconds: 0.5, edgeNudgeSeconds: 0 });
+    const plan = planIntensityArc(captures, config);
+    const totals = planTotals(plan, config);
+
+    expect(totals.fadeSeconds).toBeCloseTo((plan.length - 1) * 0.5, 9);
+    expect(totals.renderedSeconds).toBeCloseTo(ARC_RENDERED_TOTAL_SECONDS, 6);
+    // A zero nudge leaves the cuts on the plateau boundaries.
+    expect(plan.find((cut) => cut.band === 'medium')!.inSeconds).toBe(0);
   });
 });

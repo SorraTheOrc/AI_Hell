@@ -36,6 +36,11 @@ export interface IntensityArcConfig {
   fadeSeconds: number;
   /** The recorded series cadence, in Hz. */
   sampleRateHz: number;
+  /**
+   * How far a window edge may move to land on a local `smoothed` minimum,
+   * in seconds (0.25 s = 2.5 samples at 10 Hz).
+   */
+  edgeNudgeSeconds: number;
 }
 
 /** One parsed series sample line (`docs/dev/action-intensity.md` §7.2). */
@@ -106,6 +111,42 @@ export interface IntensityArcSkippedCapture {
 export interface IntensityArcCorpus {
   captures: IntensityArcCapture[];
   skipped: IntensityArcSkippedCapture[];
+}
+
+/**
+ * One planned footage window: a contiguous in-band stretch of **one** capture.
+ *
+ * `inSeconds` and `videoTimeSeconds` are the same value under two names: the in
+ * point in seconds on the source clip's video timeline (the series time joined
+ * through the capture's anchor). The `.otio` writer emits it as
+ * `source_range.start_time`; the CLI's `--dry-run` prints it next to the
+ * window's duration.
+ */
+export interface IntensityArcPlanWindow {
+  /** The band this window belongs to. */
+  band: IntensityArcBandName;
+  /** The capture stem the window is cut from (`.otio` `target_url` basename). */
+  sourceStem: string;
+  /** In point, in seconds on the source clip's video timeline. */
+  inSeconds: number;
+  /** Window length, in seconds. */
+  durationSeconds: number;
+  /** In point, in seconds on the source clip's video timeline (alias of `inSeconds`). */
+  videoTimeSeconds: number;
+}
+
+/** The planner's own totals for a plan (footage, overlaps, rendered, per band). */
+export interface IntensityArcPlanTotals {
+  /** Number of windows in the plan. */
+  windows: number;
+  /** Summed window durations, in seconds. */
+  footageSeconds: number;
+  /** Total inter-window fade overlap `(windows − 1) × fadeSeconds`, in seconds. */
+  fadeSeconds: number;
+  /** What the rendered timeline delivers: `footageSeconds − fadeSeconds`. */
+  renderedSeconds: number;
+  /** Delivered seconds per band, in arc order. */
+  byBand: Record<string, number>;
 }
 
 /** Per-band coverage: target, longest available window and satisfiability. */
@@ -190,3 +231,20 @@ export function assertArcBandsSatisfiable(
   captures: ReadonlyArray<IntensityArcCapture>,
   config?: IntensityArcConfig,
 ): BandAvailability[];
+
+/**
+ * Plan the arc: the ordered, non-overlapping windows delivering 10/7/7/10 s on
+ * the rendered timeline (fade overlap compensated).
+ *
+ * Throws `IntensityArcShortfallError` when a band cannot be filled.
+ */
+export function planIntensityArc(
+  captures: ReadonlyArray<IntensityArcCapture>,
+  config?: IntensityArcConfig,
+): IntensityArcPlanWindow[];
+
+/** The planner's own totals for a plan. */
+export function planTotals(
+  plan: ReadonlyArray<IntensityArcPlanWindow>,
+  config?: IntensityArcConfig,
+): IntensityArcPlanTotals;
