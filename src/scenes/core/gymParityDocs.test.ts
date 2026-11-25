@@ -724,3 +724,36 @@ describe('docs/GYM_PARITY.md is free of merge-conflict markers (AH-0MWFKE1IX0097
     );
   });
 });
+
+// ── Elite (anomaly) parity row (AH-0MWU6673N008FO1D) ──────────────
+//
+// The gym must exercise every elite behaviour through the same shared code the
+// game runs. The matrix row and the elite section are the human-readable
+// evidence; these assertions keep them from silently rotting.
+
+describe('docs/GYM_PARITY.md records elite (anomaly) parity (AH-0MWU6673N008FO1D)', () => {
+  const matrix = fs.readFileSync(GYM_PARITY_MATRIX, 'utf8');
+  const fodderRow =
+    matrix
+      .split('\n')
+      .find((line) => line.startsWith('| `GymFodderEnemies`')) ?? '';
+
+  it('records all three bounded behaviours on the GymFodderEnemies row', () => {
+    expect(fodderRow).toContain('splitter');
+    expect(fodderRow).toContain('reinforced');
+    expect(fodderRow).toContain('volatile');
+    expect(fodderRow).toContain('applyEliteDeathBehaviour');
+    expect(fodderRow).toContain('resolveSpawnTransitTarget');
+    expect(fodderRow).toContain('src/scenes/gym/GymFodderEnemies.elite.test.ts');
+  });
+
+  it('records the gym scenario that exercises each behaviour', () => {
+    expect(matrix).toContain(
+      '## Elite (anomaly) parity (AH-0MWU6673N008FO1D)',
+    );
+    for (const behaviour of ['splitter', 'reinforced', 'volatile']) {
+      expect(matrix).toMatch(new RegExp(`\\| \`${behaviour}\` \\|`));
+    }
+    expect(matrix).toContain('GymFodderEnemies` → `elite`');
+  });
+});

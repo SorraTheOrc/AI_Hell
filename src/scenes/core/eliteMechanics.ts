@@ -188,11 +188,31 @@ export function eliteSplitChildOffset(index: number): EliteSplitOffset {
 }
 
 /**
+ * Extra force-field hits a behaviour adds on top of an archetype's ordinary
+ * field strength.
+ *
+ * This is the bounded part of the `reinforced` rule, kept separate so a spawn
+ * site that resolves the *base* through a documented divergence (the formation
+ * gym's direct slider hits, AH-0MVM8GXEF009883O) still applies the identical
+ * elite bonus — never a second copy of the number.
+ *
+ * @param behaviour — the authored behaviour (or `null`/`undefined`).
+ * @returns {@link ELITE_REINFORCED_FIELD_BONUS} for `reinforced`, `0`
+ *   otherwise.
+ */
+export function eliteForceFieldBonus(
+  behaviour: EliteBehaviour | null | undefined,
+): number {
+  return behaviour === 'reinforced' ? ELITE_REINFORCED_FIELD_BONUS : 0;
+}
+
+/**
  * Force-field hits an elite of `behaviour` carries at `level`.
  *
  * The ordinary curve is always evaluated once through the shipped
  * {@link enemyForceFieldHits} resolver (never re-derived here); a `reinforced`
- * elite adds exactly one hit on top of it.
+ * elite adds exactly one hit on top of it through
+ * {@link eliteForceFieldBonus}.
  *
  * @param behaviour — the authored behaviour (or `null`/`undefined`).
  * @param level — the live campaign level, resolved by the shared curve.
@@ -203,10 +223,7 @@ export function eliteForceFieldHits(
   level: number,
   config: ForceFieldConfig,
 ): number {
-  const base = enemyForceFieldHits(level, config);
-  return behaviour === 'reinforced'
-    ? base + ELITE_REINFORCED_FIELD_BONUS
-    : base;
+  return enemyForceFieldHits(level, config) + eliteForceFieldBonus(behaviour);
 }
 
 /**

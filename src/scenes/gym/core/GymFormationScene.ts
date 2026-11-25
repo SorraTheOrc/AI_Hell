@@ -165,6 +165,8 @@ import {
 import { buildOwnedLoadout } from '../../../powerups/ownedLoadout';
 import { applySceneSetup, resolveSetupSeed, type SceneSetupState } from '../../core/sceneSetup';
 import { createSeededRng } from '../../../core/rng';
+import type { EliteBehaviour } from '../../../core/eliteVocabulary';
+import type { EliteSpawnModifiers } from '../../../entities/enemyFactory';
 import {
   WORMHOLE_OPEN_DURATION,
   WormholeController,
@@ -460,6 +462,22 @@ export interface EnemyFormationConfig<
    * `PowerUpSpawner` and the position through a `PowerUpPlacement`.
    */
   powerUps?: PowerUpLayerConfig;
+  /**
+   * Optional elite elevation for this formation (AH-0MWU6673N008FO1D). The
+   * gym scenario harness selects one bounded behaviour and elevates **one**
+   * spawn — the game elevates exactly one spawn per wave, so the gym mirrors
+   * that shape instead of making a whole archetype elite. The spawn keeps its
+   * ordinary identity, transit and slot; only the shared `eliteMechanics`
+   * modifiers differ. Absent ⇒ every spawn is ordinary (today's behaviour).
+   */
+  eliteSpawn?: {
+    /** Zero-based spawn index in formation order that is the elite. */
+    readonly slotIndex: number;
+    /** The elite's one bounded behaviour. */
+    readonly behaviour: EliteBehaviour;
+    /** Authored bonus hit points on top of the archetype's `health` (1–3). */
+    readonly bonusHp?: number;
+  };
   /** Creates one enemy at the given absolute position with its offset. */
   createEntity(
     scene: Phaser.Scene,
@@ -475,6 +493,13 @@ export interface EnemyFormationConfig<
      * spawn path that could drift from it.
      */
     setup?: SceneSetupState | null,
+    /**
+     * The elite elevation for this spawn (AH-0MWU6673N008FO1D), resolved by
+     * the base from {@link EnemyFormationConfig.eliteSpawn}. Absent for every
+     * ordinary spawn, so a scene's factory call stays byte-for-byte today's
+     * behaviour unless its formation authored an elite.
+     */
+    elite?: EliteSpawnModifiers,
   ): TEntity;
   /** Collects any bullets the entity fires this frame (empty if none). */
   collectBullets(entity: TEntity, now: number): TBullet[];
@@ -1009,6 +1034,12 @@ export class GymFormationScene<
     } else {
       playDestructionSound();
     }
+    // Elite death behaviour (AH-0MWU6673N008FO1D): this gym-only EXPLODE control
+    // bypasses the shared kill finalisation, so it dispatches the same
+    // `eliteMechanics` decision before the destruction hooks — a splitter
+    // still releases its children and a volatile still bursts, exactly as a
+    // player-bullet kill does.
+    this._applyEliteDeathBehaviour(victim);
     // Shared mineral kill-drop rule (GDD §4.5) — the EXPLODE path bypasses
     // `onEnemyDestroyed`, so it must drop here too (no double-drop: the two
     // paths are mutually exclusive).
@@ -1918,6 +1949,9 @@ export class GymFormationScene<
    * `respawnWithCarriedSurvivors()` so the fresh-spawn path cannot drift.
    */
   private _spawnFormation(offsets: readonly FormationOffset[]): void {
+    // Spawn order index, so an authored elite elevation lands on exactly one
+    // slot (mirrors the game's per-spawn plan flag).
+    let spawnIndex = 0;
     // Shared portal placement (AH-0MV8BR9Y70079TKC, AC5): with no player
     // ship the portal stays at the formation base and the formation is laid
     // out relative to it — the same `placeWavePortal` code path `PlayScene`
@@ -1945,12 +1979,23 @@ export class GymFormationScene<
         this.config.spacingX,
         this.config.spacingY,
       );
+      // One spawn is elevated when the scenario authored an elite
+      // (AH-0MWU6673N008FO1D): the spawn keeps its ordinary slot/transit and
+      // only the shared elite modifiers differ — the same shape the game's
+      // per-spawn plan flag produces, never a whole-archetype variant.
+      const eliteSpawn = this.config.eliteSpawn;
+      const elite: EliteSpawnModifiers | undefined =
+        eliteSpawn && spawnIndex === eliteSpawn.slotIndex
+          ? { behaviour: eliteSpawn.behaviour, bonusHp: eliteSpawn.bonusHp }
+          : undefined;
+      spawnIndex += 1;
       const entity = this.config.createEntity(
         this,
         portal.x,
         portal.y,
         offset,
         this.pendingSetup,
+        elite,
       );
       // Wormhole-entry transit (AH-0MV8BSMXC0097KLW): spawning-capable
       // entities emerge at the portal (where the wormhole opens) and traverse
