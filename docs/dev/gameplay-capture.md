@@ -221,10 +221,16 @@ node scripts/render-promo.mjs --help
 `--dir` defaults to `capture-output/`, the output to `<dir>/promo.mp4`, and
 the clip pattern selects raw `<stem>.webm` runs only — the seek-index
 `<stem>.seekable.webm` and salvage `<stem>.partial.webm` files are not source
-footage. Everything else (resolution, fps, cross fade, presets, formats and
-profiles) stays vidc's own; see its README for the full option set. The `vidc`
-binary is resolved from `PATH`, or from `--vidc` / `VIDC_BIN`, and a missing
-binary fails with an install hint rather than an `ENOENT` stack.
+footage. `capture:promo` forwards an **explicit `--fade-duration 400`** by
+default, so consecutive clips cross-fade at a reproducible 400 ms rather than
+inheriting whichever fade default the installed `vidc` happens to carry;
+override it with `--fade-duration <ms>`. `vidc` applies that single duration to
+both the video dissolve (`xfade=transition=fade`) and the audio cross fade
+(`acrossfade`), so there is no separate, slower audio fade. The remaining
+options (resolution, fps, presets, formats and profiles) stay vidc's own; see
+its README for the full option set. The `vidc` binary is resolved from `PATH`,
+or from `--vidc` / `VIDC_BIN`, and a missing binary fails with an install hint
+rather than an `ENOENT` stack.
 
 Deliverables are MP4 (vidc's native output) and remain git-ignored with the
 rest of `capture-output/`. The former in-repo compiler's automated highlight

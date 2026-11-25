@@ -763,8 +763,10 @@ added by AH-0MUWTNPYJ0031FQE):
   CLI from the sibling `video_compiler` repository — it discovers the captured
   clips, orders them naturally, probes them and renders one normalised MP4
   with a single FFmpeg invocation, optionally in several platform formats.
-  AI_Hell keeps no FFmpeg logic, edit planning or output validation of its
-  own. See
+  `capture:promo` cross-fades consecutive clips at an explicit **400 ms**
+  (`--fade-duration 400`, overridable), which vidc applies to both the picture
+  and the audio. AI_Hell keeps no FFmpeg logic, edit planning or output
+  validation of its own. See
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#compiling-captured-clips-with-vidc).
 - **Hangar War screens (`--hangar`):** `npm run capture -- --hangar` drives the
   normal menu (**Tab** from the focused **Play Game** control to the adjacent
