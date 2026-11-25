@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_CAPTURE_DIR,
+  DEFAULT_FADE_DURATION,
   DEFAULT_PROMO_PATTERN,
   UsageError,
   buildVidcArgv,
@@ -38,6 +39,7 @@ describe('render-promo argument parsing (AH-0MWOUY9IK004QWCU)', () => {
     expect(options.output).toBeNull();
     expect(options.pattern).toBeNull();
     expect(options.formats).toEqual([]);
+    expect(options.fadeDuration).toBe(DEFAULT_FADE_DURATION);
     expect(options.vidc).toBe(process.env.VIDC_BIN || 'vidc');
     expect(options.help).toBe(false);
   });
@@ -93,6 +95,7 @@ describe('render-promo argv construction (AH-0MWOUY9IK004QWCU)', () => {
       '--dir', 'capture-output',
       '--output', 'capture-output/promo.mp4',
       '--pattern', DEFAULT_PROMO_PATTERN,
+      '--fade-duration', '400',
     ]);
     // The default pattern must not pick up the seek-index remux or salvage file.
     const pattern = new RegExp(DEFAULT_PROMO_PATTERN);
@@ -134,11 +137,21 @@ describe('render-promo argv construction (AH-0MWOUY9IK004QWCU)', () => {
     ]);
   });
 
-  it('does not invent vidc defaults the caller did not select', () => {
+  it('forwards the explicit 400 ms fade by default but leaves the other vidc defaults alone', () => {
     const argv = buildVidcArgv(parseArgs([]));
-    for (const flag of ['--format', '--resolution', '--fps', '--fade-duration']) {
+    // The cross fade is AI_Hell's explicit editorial default, not vidc's.
+    expect(argv).toContain('--fade-duration');
+    expect(argv[argv.indexOf('--fade-duration') + 1]).toBe(DEFAULT_FADE_DURATION);
+    // The remaining vidc defaults (resolution, fps, preset) stay vidc's own.
+    for (const flag of ['--format', '--resolution', '--fps']) {
       expect(argv).not.toContain(flag);
     }
+  });
+
+  it('lets an explicit --fade-duration override the 400 ms default', () => {
+    const argv = buildVidcArgv(parseArgs(['--fade-duration', '500']));
+    expect(argv[argv.indexOf('--fade-duration') + 1]).toBe('500');
+    expect(argv).not.toContain('400');
   });
 });
 
@@ -202,7 +215,7 @@ describe('render-promo CLI (AH-0MWOUY9IK004QWCU)', () => {
     expect(code).toBe(0);
     expect(spawnSyncImpl).toHaveBeenCalledWith(
       'vidc',
-      ['render', '--dir', 'clips', '--output', 'out/promo.mp4', '--pattern', DEFAULT_PROMO_PATTERN, '--dry-run', '--json'],
+      ['render', '--dir', 'clips', '--output', 'out/promo.mp4', '--pattern', DEFAULT_PROMO_PATTERN, '--fade-duration', '400', '--dry-run', '--json'],
       { stdio: 'inherit' }
     );
   });

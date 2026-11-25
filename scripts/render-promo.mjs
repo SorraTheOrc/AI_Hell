@@ -8,7 +8,8 @@
  * normalised MP4 with a single FFmpeg invocation. This module only:
  *
  * 1. defaults the arguments that make sense for AI_Hell's capture output
- *    (`capture-output/` and its raw `<stem>.webm` runs);
+ *    (`capture-output/`, its raw `<stem>.webm` runs, and an explicit 400 ms
+ *    cross fade);
  * 2. turns them into a `vidc render …` argv; and
  * 3. forwards the subprocess output and exit code unchanged.
  *
@@ -41,6 +42,19 @@ export const DEFAULT_CAPTURE_DIR = 'capture-output';
  */
 export const DEFAULT_PROMO_PATTERN = '^(?!.*\\.(?:seekable|partial)\\.webm$).*\\.webm$';
 
+/**
+ * Default cross-fade duration, in whole milliseconds, forwarded to vidc.
+ *
+ * vidc always cross fades consecutive clips (`xfade` for the picture,
+ * `acrossfade` for the audio) but falls back to its own built-in default when
+ * `--fade-duration` is omitted. AI_Hell pins the editorial choice explicitly at
+ * 400 ms so a recompile is reproducible regardless of the installed vidc
+ * version; `--fade-duration <ms>` overrides it. vidc applies this one duration
+ * to both the video dissolve and the audio cross fade, so there is no separate
+ * (slower) audio fade.
+ */
+export const DEFAULT_FADE_DURATION = '400';
+
 /** Usage text printed by `--help` and on a usage error. */
 export const USAGE_TEXT = `Usage: node scripts/render-promo.mjs [options]
 
@@ -55,7 +69,7 @@ Options:
                           shorts, instagram, mobile-ads)
   --resolution <WxH>      target resolution (vidc default: 1920x1080)
   --fps <number>          target frame rate (vidc default: 30)
-  --fade-duration <ms>    cross fade between clips in milliseconds
+  --fade-duration <ms>    cross fade between clips in milliseconds (default: 400)
   --recursive             descend into subdirectories when discovering clips
   --overwrite             overwrite the output when it already exists
   --dry-run               print the vidc FFmpeg argv without rendering
@@ -78,7 +92,7 @@ export function parseArgs(argv = []) {
     formats: [],
     resolution: null,
     fps: null,
-    fadeDuration: null,
+    fadeDuration: DEFAULT_FADE_DURATION,
     recursive: false,
     overwrite: false,
     dryRun: false,
@@ -159,8 +173,10 @@ export class UsageError extends Error {}
 /**
  * Build the `vidc render` argv for *options*.
  *
- * Only the flags the caller selected are added, so the defaults stay vidc's
- * own (one source of truth for resolution/fps/fade/preset).
+ * The cross fade is always forwarded (defaulting to {@link
+ * DEFAULT_FADE_DURATION}, 400 ms) so `capture:promo` does not inherit vidc's
+ * implicit fade default; every other default (resolution, fps, preset) stays
+ * vidc's own — only the flags the caller selected are added.
  *
  * @param {ReturnType<typeof parseArgs>} options
  * @returns {string[]}

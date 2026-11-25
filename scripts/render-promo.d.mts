@@ -2,6 +2,7 @@
 
 export const DEFAULT_CAPTURE_DIR: string;
 export const DEFAULT_PROMO_PATTERN: string;
+export const DEFAULT_FADE_DURATION: string;
 export const USAGE_TEXT: string;
 
 export interface PromoOptions {
