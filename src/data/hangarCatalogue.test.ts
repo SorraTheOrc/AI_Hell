@@ -664,10 +664,11 @@ describe('hangar catalogue — derived weapon coverage (parent AC2)', () => {
  * Promotion to a purchasable unlock is an explicit authored decision, never a
  * derivation: the four shipped rows must survive byte-for-byte and every
  * newly derived weapon ships **grant-only** (absent from the table — the
- * `hull-4` posture). RED today: the export does not exist.
+ * `hull-4` posture). Landed: the table is exported and every key is validated
+ * by guard (c) at catalogue build time.
  */
 describe('hangar catalogue — WEAPON_UNLOCK_ECONOMY (parent AC3)', () => {
-  it.fails('is authored data carrying only the four shipped rows', () => {
+  it('is authored data carrying only the four shipped rows', () => {
     const economy = weaponUnlockEconomy();
     expect(Object.keys(economy).sort()).toEqual([
       'cluster',
@@ -677,7 +678,7 @@ describe('hangar catalogue — WEAPON_UNLOCK_ECONOMY (parent AC3)', () => {
     ]);
   });
 
-  it.fails('preserves the four shipped prices byte-for-byte', () => {
+  it('preserves the four shipped prices byte-for-byte', () => {
     const economy = weaponUnlockEconomy();
 
     // `spread` is the starter: free and owned from the first deployment.
@@ -699,7 +700,7 @@ describe('hangar catalogue — WEAPON_UNLOCK_ECONOMY (parent AC3)', () => {
     expect(economy.cluster!.minRing).toBe(1);
   });
 
-  it.fails('ships every newly derived weapon grant-only (no economy row)', () => {
+  it('ships every newly derived weapon grant-only (no economy row)', () => {
     const economy = weaponUnlockEconomy();
     const grantOnly = [
       'dual',
@@ -714,8 +715,19 @@ describe('hangar catalogue — WEAPON_UNLOCK_ECONOMY (parent AC3)', () => {
       'shard_swarm',
       'heavy_slug',
     ];
+    const itemised = HANGAR_CATALOGUE.filter(
+      (entry): entry is StartingWeaponDefinition => entry.kind === 'weapon',
+    );
     for (const id of grantOnly) {
       expect(economy[id], `${id} must be grant-only (no economy row)`).toBeUndefined();
+      // Absence from the table yields the `hull-4` grant-only posture on the
+      // derived entry itself: sentinel ring gate, zero price, never sold.
+      const entry = itemised.find((candidate) => candidate.weaponId === id);
+      expect(entry, `${id} must have a derived hangar entry`).toBeDefined();
+      expect(entry!.minRing, `${id} minRing`).toBe(GRANT_ONLY_MIN_RING);
+      expect(purchaseWeight(entry!.price), `${id} price`).toBe(0);
+      expect(isPurchasableEntry(entry!), `${id} purchasable`).toBe(false);
+      expect(entry!.starter, `${id} starter`).toBe(false);
     }
   });
 });
@@ -761,7 +773,7 @@ describe('hangar catalogue — fail-closed build guards', () => {
     ).toBeGreaterThan(0);
   });
 
-  it.fails('(c) every economy key is a shipped, non-excluded weapon id', () => {
+  it('(c) every economy key is a shipped, non-excluded weapon id', () => {
     const stale = validateHangarCatalogue({
       economy: {
         ...weaponUnlockEconomy(),
@@ -844,11 +856,11 @@ describe('hangar catalogue — fail-closed build guards', () => {
  * rules this out explicitly ("Baselines are frozen history — they are never
  * re-derived from the shipped data"). A designer editing a CSV row's
  * `subdivisions`/`bulletLifetime` must not silently change a price or ring
- * gate. RED today: `WEAPON_UNLOCK_ECONOMY` and `deriveWeaponEntry` do not
- * exist.
+ * gate. The retune spec is green now that `WEAPON_UNLOCK_ECONOMY` and
+ * `deriveWeaponEntry` exist and the economy is never read from tuning.
  */
 describe('hangar catalogue — retuning never reprices', () => {
-  it.fails('a CSV tuning edit changes no price, minRing or starter value', () => {
+  it('a CSV tuning edit changes no price, minRing or starter value', () => {
     const economy = weaponUnlockEconomy();
     const shipped = WEAPON_CATALOGUE.wave_laser;
     const authored = economy.wave_laser;

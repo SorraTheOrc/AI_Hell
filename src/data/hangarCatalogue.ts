@@ -40,9 +40,14 @@
  * {@link HANGAR_EXCLUDED_WEAPON_IDS} is the **only** documented way a shipped
  * weapon is not itemised (`cannon` — the always-mounted permanent default,
  * which must never be sellable). Price and ring gate are **authored**, never
- * derived from tuning: a weapon with no authored economy row is grant-only (the
- * existing `GRANT_ONLY_MIN_RING` posture), so a rebalance can never reprice the
- * tree.
+ * derived from tuning: {@link WEAPON_UNLOCK_ECONOMY} promotes a derived entry to
+ * a purchasable unlock and its **absence means grant-only** (the existing
+ * `GRANT_ONLY_MIN_RING` posture), so a rebalance can never reprice the tree.
+ * `src/utils/weapons.ts` rules out deriving prices from the shipped data:
+ * "Baselines are frozen history — they are never re-derived from the shipped
+ * data, or a regression in the catalogue would be invisible". Guard (c) in
+ * {@link validateHangarCatalogue} fails the build on a stale/typo'd economy key
+ * rather than letting a promotion silently vanish.
  *
  * ## Import direction (no cycle — AC12)
  *
@@ -441,7 +446,7 @@ export const AUTHORED_ENTRIES: readonly HangarEntry[] = [
 export const HANGAR_EXCLUDED_WEAPON_IDS: readonly WeaponId[] = ['cannon'];
 
 /** One authored weapon economy row — a price and ring gate, never derived. */
-interface WeaponUnlockEconomyRow {
+export interface WeaponUnlockEconomyRow {
   /** Salvage cost of the unlock. */
   readonly price: HangarPrice;
   /** Lowest ring index at which the weapon may be bought. */
@@ -451,21 +456,31 @@ interface WeaponUnlockEconomyRow {
 }
 
 /**
- * The authored weapon economy rows — **data, never derived**.
+ * The authored weapon economy rows — **data, never derived**
+ * (AH-0MWWI3L3Z006LX3Z, parent AC3).
  *
  * A row promotes a derived weapon entry to a purchasable unlock; a weapon
  * absent from the table is **grant-only** (zero price, {@link
- * GRANT_ONLY_MIN_RING}), exactly as `hull-4` already expresses the posture.
+ * GRANT_ONLY_MIN_RING}, {@link isPurchasableEntry} false), exactly as `hull-4`
+ * already expresses the posture. Promotion is therefore an explicit authored
+ * decision, never a derivation: adding a CSV row makes a weapon *ownable*, but
+ * it is never *sellable* until a designer authors an economy row here.
+ *
  * Prices are authored deliberately, never derived from shipped tuning:
  * `src/utils/weapons.ts` rules that out ("Baselines are frozen history — they
  * are never re-derived from the shipped data, or a regression in the catalogue
- * would be invisible").
+ * would be invisible"). A designer retuning a CSV `subdivisions`/`lifetime`
+ * must not silently reprice the tree.
  *
  * This slice carries only the four shipped rows so their prices survive the
- * derivation byte-for-byte; the eleven newly derived weapons are grant-only.
- * The following item promotes this table to an export with its own guard.
+ * derivation byte-for-byte; the eleven newly derived weapons (`dual`, `rapid`,
+ * `options`, `nova`, `mortar`, `arc`, `rear_guard`, `broadside`, `railgun`,
+ * `shard_swarm`, `heavy_slug`) are deliberately absent and ship grant-only.
+ * Their price ladder is AH-0MWWGFDE1001FW4J. Every key is validated at build
+ * time by guard (c) in {@link validateHangarCatalogue}: a stale or typo'd row
+ * fails closed rather than silently promoting nothing.
  */
-const WEAPON_UNLOCK_ECONOMY: Readonly<
+export const WEAPON_UNLOCK_ECONOMY: Readonly<
   Partial<Record<WeaponId, WeaponUnlockEconomyRow>>
 > = {
   spread: { price: { minerals: 0, cores: 0 }, minRing: 1, starter: true },
@@ -562,6 +577,15 @@ export interface HangarCatalogueGuardInput {
   readonly weapons?: Readonly<Record<string, { readonly id: string }>>;
   /** The catalogue entries to check; defaults to {@link HANGAR_CATALOGUE}. */
   readonly entries?: readonly HangarEntry[];
+  /**
+   * The authored economy table; defaults to {@link WEAPON_UNLOCK_ECONOMY}.
+   *
+   * Typed over plain string keys (not just `WeaponId`) so a fixture can inject
+   * a typo'd or stale id and prove guard (c) rejects it.
+   */
+  readonly economy?: Readonly<
+    Record<string, WeaponUnlockEconomyRow | undefined>
+  >;
   /** Weapon ids deliberately not itemised; defaults to the shipped list. */
   readonly exclusions?: readonly string[];
 }
@@ -593,11 +617,14 @@ function hangarDiagnostic(
  * - **(a) full coverage** — every non-excluded weapon has exactly one entry and
  *   no excluded weapon is itemised;
  * - **(b) unique entry ids** — no duplicate id across authored + derived;
+ * - **(c) economy keys resolve** — every {@link WEAPON_UNLOCK_ECONOMY} key is a
+ *   shipped, non-excluded weapon id, so a stale/typo'd row fails closed rather
+ *   than silently promoting nothing;
  * - **(d) weapon id resolves** — every weapon entry's `weaponId` is a shipped
  *   runtime weapon.
  *
- * Guards (c) (economy keys) and (e) (authored hex grants) land with the economy
- * and grant items; this guard deliberately ignores those inputs for now.
+ * Guard (e) (authored hex grants) lands with the grant item; this guard
+ * deliberately ignores that input for now.
  *
  * @param input — optional injected fixtures (defaults to the shipped data).
  */
@@ -610,6 +637,7 @@ export function validateHangarCatalogue(
       Record<string, { readonly id: string }>
     >);
   const entries = input.entries ?? HANGAR_CATALOGUE;
+  const economy = input.economy ?? WEAPON_UNLOCK_ECONOMY;
   const excluded = new Set(input.exclusions ?? HANGAR_EXCLUDED_WEAPON_IDS);
   const diagnostics: HangarCatalogueDiagnostic[] = [];
 
@@ -668,6 +696,31 @@ export function validateHangarCatalogue(
           'authored and derived entry needs a unique id',
       ),
     );
+  }
+
+  // (c) Every WEAPON_UNLOCK_ECONOMY key is a shipped, non-excluded weapon id.
+  // A stale or typo'd row promotes nothing (there is no derived entry to
+  // promote), so it fails closed instead of being silently ignored.
+  for (const id of Object.keys(economy)) {
+    if (weapons[id] === undefined) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [id],
+          'economy',
+          `WEAPON_UNLOCK_ECONOMY has a row for ${id}, which is not a shipped ` +
+            'weapon id — remove the stale row or fix the typo',
+        ),
+      );
+    } else if (excluded.has(id)) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [id],
+          'economy',
+          `WEAPON_UNLOCK_ECONOMY prices the excluded weapon ${id}, which can ` +
+            'never be sold — remove the row or fix HANGAR_EXCLUDED_WEAPON_IDS',
+        ),
+      );
+    }
   }
 
   // (d) Every weapon entry's weaponId resolves in the runtime weapon catalogue.
