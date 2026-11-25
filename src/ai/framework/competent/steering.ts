@@ -1128,6 +1128,16 @@ export interface SteerPlanOptions {
    * to `false`.
    */
   readonly aim?: boolean;
+  /**
+   * Whether the plan is **holding station** (AH-0MWW2PFU8001J0PM · RAC2).
+   *
+   * Normally an off-objective bearing forces the throttle on while the ship
+   * turns, so a path-around actually moves. A holding ship must not move at
+   * all, so `hold` suppresses that rule: the intent never presses a throttle,
+   * whatever bearing the fan chose, and the hull only rotates. Defaults to
+   * `false` (the pre-posture rule).
+   */
+  readonly hold?: boolean;
 }
 
 /**
@@ -1155,10 +1165,14 @@ export function planSteering(
   );
   const aligned =
     chosen.x * objectiveUnit.x + chosen.y * objectiveUnit.y >= 0.98;
+  // A holding ship never presses a throttle, even when the safety fan offsets
+  // the bearing (AH-0MWW2PFU8001J0PM · RAC2) — otherwise the path-around rule
+  // would drive it off station as soon as its nose reached the offset bearing.
+  const thrust = options.hold === true ? false : options.thrust || !aligned;
   return buildIntent(
     chosen.x,
     chosen.y,
-    options.thrust || !aligned,
+    thrust,
     options.longTravel,
     options.reverse === true,
     options.aim === true,

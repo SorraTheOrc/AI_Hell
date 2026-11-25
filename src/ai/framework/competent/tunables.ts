@@ -388,6 +388,48 @@ export interface CompetentBotTunables {
   /** Iteration count for the intercept solve (AC2); ≥1. */
   aimLeadIterations: number;
 
+  // ── Hold-station posture (AH-0MWW2PFU8001J0PM · RAC2–RAC4) ───────
+  /**
+   * Whether the engage behaviour holds station while it has a firing solution
+   * (AH-0MWW2PFU8001J0PM · RAC2).
+   *
+   * On, the ship stops driving around the standoff: while it is calm (nothing
+   * threatening the hull) and a shot from where it is would connect with a
+   * hazard inside {@link holdFireHorizonSeconds}, `engage` requests **no**
+   * forward or reverse thrust — it only rotates onto the solved aim bearing.
+   * It moves again only when it has no firing solution (RAC3) or when a threat
+   * overrides the posture.
+   *
+   * Off in the compiled factory defaults, so every pre-change measurement
+   * (aim-accuracy, oscillation, arena and gym parity fixtures) is byte-for-byte
+   * unchanged; the shipped `Default` preset turns it on. It is the posture
+   * counterpart of the damping toggle, deliberately opt-in for the same
+   * baseline-preservation reason.
+   */
+  holdFireEnabled: boolean;
+  /**
+   * Horizon (seconds) inside which a shot must connect for the bot to hold
+   * station (AH-0MWW2PFU8001J0PM · RAC2).
+   *
+   * The producer's rule: "only move if there is no likely hit within the next
+   * 1 s". The comparison covers the time to finish the turn (derived from the
+   * live rotation model) plus the shot's time of flight to the class-sampled
+   * intercept point, so a distant or fast target that the shot would reach too
+   * late does not justify holding.
+   */
+  holdFireHorizonSeconds: number;
+  /**
+   * Corridor half-width (px) of the shot line used for the line-of-fire target
+   * preference (AH-0MWW2PFU8001J0PM · RAC4).
+   *
+   * A hazard whose centre comes within this distance of the solved shot line is
+   * "on the line": among hittable candidates the behaviour prefers the line
+   * that covers more hazards, so a shot that sweeps a formation is valued over
+   * a shot at a single nearer body. `0` disables the preference (hittability
+   * only).
+   */
+  holdFireLineRadiusPx: number;
+
   // ── Reverse thruster (AH-0MV1J0OHP0072XA5) ──────────────────────
   /** Whether the bot may use reverse thrust to brake (AC1). */
   reverseBrakeEnabled: boolean;
@@ -553,6 +595,13 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   aimLeadFromTracker: true,
   aimLeadAlignSeconds: 0.25,
   aimLeadIterations: 3,
+
+  // Off in the compiled defaults so every pre-change measurement stays
+  // byte-identical; the shipped `Default` preset enables the posture
+  // (AH-0MWW2PFU8001J0PM · RAC2/RAC7).
+  holdFireEnabled: false,
+  holdFireHorizonSeconds: 1,
+  holdFireLineRadiusPx: 14,
 
   reverseBrakeEnabled: true,
   reverseImminentOvershootGap: 36, // 2 × collectArrivalRadius (18)

@@ -551,6 +551,20 @@ export interface ArenaControlSample {
   readonly thrust: boolean;
   /** Whether reverse thrust was commanded. */
   readonly reverse: boolean;
+  /**
+   * The hull's x position (px) **after** the tick's motion, when the source
+   * records it (AH-0MWW2PFU8001J0PM · RAC5). The hold-station harness folds
+   * consecutive samples into the distance the hull travelled, so "the bot is
+   * moving when it does not need to" is a measured number rather than an
+   * opinion.
+   *
+   * Optional so every trace recorded before the posture work — and every
+   * hand-built fixture — keeps its existing shape; a trace without positions
+   * simply reports no drift.
+   */
+  readonly x?: number;
+  /** The hull's y position (px) after the tick, when recorded. */
+  readonly y?: number;
 }
 
 /**

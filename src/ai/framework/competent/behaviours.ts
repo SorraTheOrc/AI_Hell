@@ -19,7 +19,13 @@
  * - `engage` (enemy / asteroid / boss): pick the best target (nearest,
  *   weighted by each archetype's registered threat), line it up inside its
  *   preferred engagement range, then hold the aim axis and coast so the
- *   forward-firing weapon stays on target (AC3).  The `engage-boss` goal
+ *   forward-firing weapon stays on target (AC3).  With `holdFireEnabled` the
+ *   posture is stronger still (AH-0MWW2PFU8001J0PM · RAC2–RAC4): while the
+ *   hull is calm and a shot from where it is would connect inside
+ *   `holdFireHorizonSeconds`, the bot requests **no** thrust at all and only
+ *   rotates to aim; it moves only when it has no firing solution, and it
+ *   prefers a target its shot can actually reach (and whose line sweeps other
+ *   bodies) over the merely nearest one.  The `engage-boss` goal
  *   restricts the target set to the boss alone, so a committed boss fight
  *   cannot divert to a nearer minion (AH-0MVBMESIE003YQ68).  A target whose
  *   velocity is exposed is **led**: the aim objective is the iterated
@@ -67,11 +73,18 @@ import {
   nearestTarget,
   withoutOvershot,
   type ContentTarget,
+  type NearestTarget,
 } from './goals';
 import { hazardThreatensPlayer, idleIntent, interceptPointClassAware, isHazardExempt, mayReverse, mayThrust, planSteering, type SteerPlanOptions } from './steering';
+import {
+  countShotLineTargets,
+  evaluateFireSolution,
+  resolveFireSolution,
+  type FireTarget,
+} from './hitPrediction';
 import type { BotSteeringIntent } from '../../botDecision';
 import { resolveAimAlignSeconds, resolveShotSpeed, type CompetentBotTunables } from './tunables';
-import { botWrapWorld, wrappedAxisDelta, wrappedDelta } from '../wrapGeometry';
+import { botWrapWorld, wrappedAxisDelta, wrappedDelta, wrappedDistance } from '../wrapGeometry';
 
 /**
  * Cross-tick standoff-hysteresis state (AH-0MWT4BBYO0085CN8 · RAC2). Kept on
@@ -305,6 +318,92 @@ function planSteeringWithTarget(
   return { ...planned, targetId };
 }
 
+/**
+ * Picks the target to engage under the hold-station posture
+ * (AH-0MWW2PFU8001J0PM · RAC4).
+ *
+ * The producer's rule is that the bot "should not necessarily aim at the
+ * nearest item": a shot that sweeps a line of bodies, or a target that is
+ * about to drift into the line of fire, is worth more than a nearer body the
+ * ship cannot hit. So the weighted choice is replaced — only when at least one
+ * candidate is actually hittable — by the hittable candidate whose shot line
+ * covers the most other hazards, then by the usual weighted score.
+ *
+ * The screen is cheap on purpose: each candidate is judged with the **legacy
+ * constant-velocity lead** (`classSampling: false`), so a scan over the whole
+ * target set costs one bounded intercept each (no per-class sampling). The
+ * committed target's class-aware solve still runs once, in `engage` itself.
+ *
+ * Returns `null` when no candidate is hittable inside the posture horizon, so
+ * the caller keeps the ordinary weighted choice and simply closes the distance
+ * (RAC3).
+ *
+ * @param targets — the goal's candidate set.
+ * @param player — the firing ship.
+ * @param weight — the goal's content weight (threat).
+ * @param view — the behaviour context (hazards carry the tracked estimates).
+ * @param t — competent tunables.
+ * @param shotSpeed — the ship's live projectile speed.
+ * @param alignSeconds — the ship's live turn time.
+ * @param motion — reused tracker-estimate record (never retains state).
+ * @param probe — reused fire-target record (never retains state).
+ */
+function preferHittableTarget(
+  targets: readonly ContentTarget[],
+  player: BotWorldPoint,
+  weight: (target: ContentTarget) => number,
+  view: BotBehaviourContext,
+  t: CompetentBotTunables,
+  shotSpeed: number,
+  alignSeconds: number,
+  motion: AimTargetMotion,
+  probe: FireTarget,
+): NearestTarget<ContentTarget> | null {
+  const wrapWorld = botWrapWorld(t);
+  const hazards = view.world.hazards;
+  let best: NearestTarget<ContentTarget> | null = null;
+  let bestLineHits = -1;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const candidate of targets) {
+    const tracked = resolveAimTargetMotion(
+      candidate,
+      hazards,
+      motion,
+      t.aimLeadFromTracker,
+    );
+    probe.x = candidate.x;
+    probe.y = candidate.y;
+    probe.vx = tracked.vx;
+    probe.vy = tracked.vy;
+    const solution = resolveFireSolution(player, probe, {
+      shotSpeed,
+      alignSeconds,
+      horizon: t.holdFireHorizonSeconds,
+      iterations: t.aimLeadIterations,
+      tunables: t,
+      world: wrapWorld,
+      classSampling: false,
+    });
+    if (!solution.hit) continue;
+    const lineHits = countShotLineTargets(
+      player,
+      solution.point,
+      hazards,
+      t.holdFireLineRadiusPx,
+      wrapWorld,
+      candidate.id,
+    );
+    const distance = wrappedDistance(player, candidate, wrapWorld);
+    const score = weight(candidate) / (1 + distance);
+    if (lineHits > bestLineHits || (lineHits === bestLineHits && score > bestScore)) {
+      best = { point: candidate, distance };
+      bestLineHits = lineHits;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 /** Engages the committed target: the boss alone, or the best enemy/asteroid. */
 function engageBehaviour(
   t: CompetentBotTunables,
@@ -313,6 +412,11 @@ function engageBehaviour(
   // One reused motion record for the aim solve, allocated with the behaviour
   // (not per tick).
   const aimMotion = createAimTargetMotion();
+  // Reused records for the line-of-fire target scan (AH-0MWW2PFU8001J0PM ·
+  // RAC4): the tracker estimate and the fire-solution probe are refilled per
+  // candidate, so the scan allocates nothing.
+  const scanMotion = createAimTargetMotion();
+  const scanProbe: FireTarget = { x: 0, y: 0, vx: 0, vy: 0 };
   return {
     id: COMPETENT_BEHAVIOUR_IDS.engage,
     run: (view: BotBehaviourContext) => {
@@ -329,13 +433,41 @@ function engageBehaviour(
         : isEnemy
           ? enemyTargets(view.world)
           : asteroidTargets(view.world);
-      const best = bestWeightedTarget(
-        targets,
-        player,
-        (target: ContentTarget) =>
-          content.resolveEnemy(target.contentId).threat,
-        botWrapWorld(t),
-      );
+      const wrapWorld = botWrapWorld(t);
+      // Solve inputs from the ship's live physics through the snapshot seam
+      // (AH-0MWR04ZDU0005O8J · AC2): the primary travelling shot's speed is
+      // the ship's (350 px/s by default), never the enemy-bullet tell
+      // constant, and the turn time is derived from the live rotation model.
+      // Both keep the explicit-tuning-override > live > compiled-default
+      // precedence, so a snapshot carrying neither keeps the fallbacks.
+      // Hoisted above the target choice because the line-of-fire preference
+      // judges candidates with them (AH-0MWW2PFU8001J0PM · RAC4).
+      const shotSpeed = resolveShotSpeed(t, player.shotSpeed);
+      const alignSeconds = resolveAimAlignSeconds(t, player.rotation);
+      const threatWeight = (target: ContentTarget): number =>
+        content.resolveEnemy(target.contentId).threat;
+      // Line-of-fire preference (AH-0MWW2PFU8001J0PM · RAC4): when the
+      // posture is enabled, prefer a target the ship can actually hit — and,
+      // among those, the shot line that also sweeps other bodies — over the
+      // merely nearest one. With no hittable candidate the ordinary weighted
+      // choice stands and the bot closes the distance (RAC3).
+      const hittable =
+        t.holdFireEnabled && targets.length > 1
+          ? preferHittableTarget(
+              targets,
+              player,
+              threatWeight,
+              view,
+              t,
+              shotSpeed,
+              alignSeconds,
+              scanMotion,
+              scanProbe,
+            )
+          : null;
+      const best =
+        hittable ??
+        bestWeightedTarget(targets, player, threatWeight, wrapWorld);
       if (!best) return null;
 
       const profile = content.resolveEnemy(best.point.contentId);
@@ -382,15 +514,6 @@ function engageBehaviour(
         aimMotion,
         t.aimLeadFromTracker,
       );
-      const wrapWorld = botWrapWorld(t);
-      // Solve inputs from the ship's live physics through the snapshot seam
-      // (AH-0MWR04ZDU0005O8J · AC2): the primary travelling shot's speed is
-      // the ship's (350 px/s by default), never the enemy-bullet tell
-      // constant, and the turn time is derived from the live rotation model.
-      // Both keep the explicit-tuning-override > live > compiled-default
-      // precedence, so a snapshot carrying neither keeps the fallbacks.
-      const shotSpeed = resolveShotSpeed(t, player.shotSpeed);
-      const alignSeconds = resolveAimAlignSeconds(t, player.rotation);
       const aimPoint =
         t.aimLeadEnabled && (motion.vx !== 0 || motion.vy !== 0)
           ? interceptPointClassAware(
@@ -428,13 +551,43 @@ function engageBehaviour(
           !isHazardExempt(hazard, engagementTarget) &&
           hazardThreatensPlayer(player, hazard, t),
       );
+      // Hold-station posture (AH-0MWW2PFU8001J0PM · RAC2/RAC3): while the
+      // hull is **calm** — nothing incoming threatens it and nothing is on a
+      // collision course — and a shot from where it is would connect inside
+      // `holdFireHorizonSeconds`, the bot stops driving. It requests no
+      // forward and no reverse thrust whatever the distance, and only rotates
+      // onto the solved aim bearing, so the weapon axis is held still instead
+      // of the hull chasing a standoff. When no shot is likely inside the
+      // horizon the ordinary approach/standoff policy runs and the ship moves
+      // to where it can hit. Danger always overrides the posture: a
+      // threatening shot or an imminent collision keeps the evade/kite paths.
+      const solution =
+        t.holdFireEnabled && holdAim
+          ? evaluateFireSolution(
+              player,
+              aimPoint,
+              {
+                shotSpeed,
+                alignSeconds,
+                horizon: t.holdFireHorizonSeconds,
+              },
+              wrapWorld,
+            )
+          : null;
+      const holdStation =
+        solution !== null &&
+        solution.hit &&
+        !hasThreateningShot &&
+        !hasImminentHazard;
       const kite =
+        !holdStation &&
         holdAim &&
         view.world.reverseEnabled &&
         distance <= t.reverseRetreatRange &&
         (hasThreateningShot || hasImminentHazard);
-      const thrust =
-        inRange && holdAim
+      const thrust = holdStation
+        ? false
+        : inRange && holdAim
           ? false
           : mayThrust(view.snapshot, t, distance, engagementRange);
       // Brake-assist (AC1) while closing when forward thrust would overshoot.
@@ -443,6 +596,7 @@ function engageBehaviour(
       // with the forward press across the boundary
       // (AH-0MWT4BBYO0085CN8 · RAC2).
       const brake =
+        !holdStation &&
         !inRange &&
         !thrust &&
         !kite &&
@@ -468,6 +622,10 @@ function engageBehaviour(
           // Mark the intent as an aim intent so the governor's `skill` error can
           // perturb it (and only it) when the designer lowers skill (AC3).
           aim: holdAim,
+          // Holding station: no throttle press at all, whatever bearing the
+          // safety fan chooses (AH-0MWW2PFU8001J0PM · RAC2). The hull only
+          // rotates onto the solved aim bearing.
+          hold: holdStation,
         },
         // The engaged target's bot-side identity, so the governor can decay the
         // adaptive aim error on confirmed hits and re-arm it on a target

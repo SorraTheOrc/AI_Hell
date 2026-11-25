@@ -2456,14 +2456,6 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
           }
         : {}),
     }) as AsteroidsInput;
-    if (measureControlInputs) {
-      controlInputs.push({
-        tick,
-        turn: input.turnLeft ? -1 : input.turnRight ? 1 : 0,
-        thrust: input.forward === true,
-        reverse: input.reverse === true,
-      });
-    }
     const moved = asteroidModel.tick(
       world.player as unknown as RotatingMovementState,
       input,
@@ -2472,6 +2464,19 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       height,
       shipAsteroids as BaseMovementConfig,
     ) as unknown as RotatingMovementState;
+    if (measureControlInputs) {
+      // Recorded after the tick's motion so the trace carries the hull's path
+      // (AH-0MWW2PFU8001J0PM · RAC5): the hold-station harness folds these
+      // positions into the distance travelled.
+      controlInputs.push({
+        tick,
+        turn: input.turnLeft ? -1 : input.turnRight ? 1 : 0,
+        thrust: input.forward === true,
+        reverse: input.reverse === true,
+        x: moved.x,
+        y: moved.y,
+      });
+    }
     world.player = {
       x: moved.x,
       y: moved.y,

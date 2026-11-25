@@ -19,7 +19,7 @@ import type { ContentTarget } from './goals';
 import type { BotHazardPoint } from '../worldModel';
 import { COMPETENT_GOAL_IDS, createCompetentGoals } from './goals';
 import { evaluateDirection } from './steering';
-import { COMPETENT_BOT_TUNABLES, deriveTurnAlignSeconds, resolveAimAlignSeconds, resolveCompetentTunables, resolveShotSpeed } from './tunables';
+import { COMPETENT_BOT_TUNABLES, deriveTurnAlignSeconds, resolveAimAlignSeconds, resolveCompetentTunables, resolveShotSpeed, type CompetentBotTunables } from './tunables';
 import { PLAYER_BULLET_SPEED } from '../../../core/constants';
 
 const T = COMPETENT_BOT_TUNABLES;
@@ -1258,5 +1258,169 @@ describe('engage standoff hysteresis (AH-0MWT4BBYO0085CN8 RAC2)', () => {
     // above is about the hysteresis rather than a geometry that never fired.
     const unbandedIntent = unbanded.run(ctx(closing, createBotMemory()))!;
     expect(unbandedIntent.reverse).toBe(true);
+  });
+});
+
+// ── Hold-station posture (AH-0MWW2PFU8001J0PM · RAC2–RAC4) ──────────
+
+/**
+ * The producer's posture rule: *"When it is not under threat from an incoming
+ * bullet, enemy or asteroid and it is not collecting powerups or minerals it
+ * should stay still using only the left and right thrusters to aim … the bot
+ * should predict future hits and only move if there is no likely hit within
+ * the next 1s."*
+ *
+ * These tests pin the decision at the behaviour's public seam: the same
+ * geometry flown with the posture on and off, so the only difference is the
+ * rule under test.
+ */
+describe('engage behaviour — hold-station posture (AH-0MWW2PFU8001J0PM)', () => {
+  /** The shipped posture: the factory defaults with the posture switched on. */
+  const HOLD = resolveCompetentTunables({ holdFireEnabled: true });
+
+  /** Builds an engage context, optionally with bot-side hazard estimates. */
+  function contextFor(
+    snapshot: ReturnType<typeof makeSnapshot>,
+    tunables: CompetentBotTunables = T,
+    velocities?: Map<string, { x: number; y: number }>,
+    goalId: string = COMPETENT_GOAL_IDS.engageEnemy,
+  ): BotBehaviourContext {
+    const goal = createCompetentGoals(tunables).require(goalId);
+    return {
+      snapshot,
+      world: buildBotWorld(snapshot, undefined, undefined, velocities),
+      memory: createBotMemory(),
+      dt: 0.1,
+      goal,
+    };
+  }
+
+  /** Runs engage for a snapshot under `tunables` and returns its intent. */
+  function intentFor(
+    snapshot: ReturnType<typeof makeSnapshot>,
+    tunables: CompetentBotTunables = T,
+    velocities?: Map<string, { x: number; y: number }>,
+  ) {
+    const intent = createCompetentBehaviours(tunables)
+      .require('engage')
+      .run(contextFor(snapshot, tunables, velocities));
+    expect(intent).not.toBeNull();
+    return intent!;
+  }
+
+  it('holds station with a firing solution even outside the standoff', () => {
+    // 220 px away: 0.63 s of flight plus a 0.25 s turn fits inside the 1 s
+    // horizon, so the ship stays put and only holds the aim bearing.
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [enemy(700, 270, 'scout')],
+    });
+    const held = intentFor(snapshot, HOLD);
+    expect(held.thrust).toBe(false);
+    expect(held.reverse).toBe(false);
+    expect(held.aim).toBe(true);
+    expect(held.dirX).toBeCloseTo(1, 3);
+    // The pre-posture behaviour closes on that same geometry: the standoff is
+    // 140 px in the factory defaults, so the ship drives.
+    expect(intentFor(snapshot, T).thrust).toBe(true);
+  });
+
+  it('moves when nothing is hittable inside the horizon', () => {
+    // 420 px away is 1.2 s of flight alone — outside the producer's 1 s — so
+    // the bot closes the distance instead of standing still and wasting shots.
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [enemy(900, 270, 'scout')],
+    });
+    const intent = intentFor(snapshot, HOLD);
+    expect(intent.thrust).toBe(true);
+    expect(intent.dirX).toBeCloseTo(1, 3);
+  });
+
+  it('breaks station when an incoming shot threatens the hull', () => {
+    const calm = makeSnapshot({
+      player: PLAYER,
+      enemies: [enemy(700, 270, 'scout')],
+    });
+    // A shot already on a collision course with the ship.
+    const threatened = makeSnapshot({
+      player: PLAYER,
+      enemies: [enemy(700, 270, 'scout')],
+      enemyBullets: [bullet(760, 270, -260, 0)],
+    });
+    expect(intentFor(calm, HOLD).thrust).toBe(false);
+    const moveIntent = intentFor(threatened, HOLD);
+    expect(moveIntent.thrust || moveIntent.reverse).toBe(true);
+  });
+
+  it('breaks station when a hazard is on a collision course', () => {
+    // A stationary asteroid 70 px off the hull is inside the danger margin —
+    // the producer's "under threat from … asteroid".
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [enemy(700, 270, 'scout'), enemy(480, 326, 'asteroid')],
+    });
+    const intent = intentFor(snapshot, HOLD);
+    expect(intent.thrust || intent.reverse).toBe(true);
+  });
+
+  it('prefers a hittable target over a nearer one it cannot hit', () => {
+    // The near scout (100 px) crosses at 300 px/s, so its solved lead lands
+    // ~0.97 s out; the farther scout (143 px) is a clean 0.66 s shot. With a
+    // 0.8 s horizon the near target cannot be hit in time and the posture must
+    // engage the one it can actually hit.
+    const shortHorizon = resolveCompetentTunables({
+      holdFireEnabled: true,
+      holdFireHorizonSeconds: 0.8,
+    });
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [
+        { ...enemy(580, 270, 'scout'), id: 1 },
+        { ...enemy(620, 300, 'scout'), id: 2 },
+      ],
+    });
+    const estimates = new Map([[enemyHazardKey(1), { x: 0, y: -300 }]]);
+    const held = intentFor(snapshot, shortHorizon, estimates);
+    // It engaged the farther target (id 2) — the one it can hit…
+    expect(held.aim).toBe(true);
+    expect(held.targetId).toBe(2);
+    // …while the pre-posture behaviour chases the nearer crossing one (id 1),
+    // whose solved lead points steeply up the field.
+    const chased = intentFor(snapshot, T, estimates);
+    expect(chased.targetId).toBe(1);
+    expect(chased.dirY).toBeGreaterThan(0.5);
+  });
+
+  it('prefers the shot line that sweeps more bodies', () => {
+    // Three stationary scouts: A is nearest, B is farther but sits on a line
+    // that also sweeps C. The posture takes the shot that covers two bodies.
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [
+        { ...enemy(620, 270, 'scout'), id: 1 }, // A — nearest
+        { ...enemy(700, 330, 'scout'), id: 2 }, // B — the line target
+        { ...enemy(640, 314, 'scout'), id: 3 }, // C — on B's line
+      ],
+    });
+    const held = intentFor(snapshot, HOLD);
+    expect(held.aim).toBe(true);
+    expect(held.targetId).toBe(2);
+    // Without the posture the nearest target wins, as it always did.
+    expect(intentFor(snapshot, T).targetId).toBe(1);
+  });
+
+  it('still engages the boss alone when the posture is on', () => {
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [enemy(480, 120, 'scout')],
+      boss: boss(900, 270, 2),
+    });
+    const intent = createCompetentBehaviours(HOLD)
+      .require('engage')
+      .run(contextFor(snapshot, HOLD, undefined, COMPETENT_GOAL_IDS.engageBoss));
+    expect(intent).not.toBeNull();
+    expect(intent!.dirX).toBeCloseTo(1, 3);
+    expect(intent!.dirY).toBeCloseTo(0, 3);
   });
 });

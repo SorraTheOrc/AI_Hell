@@ -711,7 +711,10 @@ bot-tuning gym fly identically.
   `aimLeadIterations` are sliders and `aimLeadEnabled` a toggle in
   `BOT_TUNING_NUMERIC_FIELDS` / `BOT_TUNING_TOGGLES`
   ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)), applied live by
-  `GymBotTuning` exactly like the existing knobs.
+  `GymBotTuning` exactly like the existing knobs. The posture knobs
+  `holdFireEnabled` (toggle), `holdFireHorizonSeconds` and
+  `holdFireLineRadiusPx` (sliders) sit on the same surface — see
+  [section 9.13](#913-hold-station-posture-stay-still-and-shoot-ah-0mww2pfu8001j0pm).
 - **Validation (AC5).** `src/ai/botHumanLike.test.ts` covers the turn hold,
   the skill error and the adaptive decay/re-arm/determinism,
   `src/ai/framework/competent/steering.test.ts` and `behaviours.test.ts` cover
@@ -1031,6 +1034,74 @@ behaviour now treat flying as a coarse, human action.
   (`src/ai/tuningFields.ts`) and the bundled baseline
   (`src/data/bot-tuning.json`).
 
+### 9.13 Hold-station posture: stay still and shoot (AH-0MWW2PFU8001J0PM)
+
+The aim solve (§9.8) made the bot *able* to hit a moving target, but a
+play-test rejected the result for the opposite reason: **the bot kept driving
+while it engaged**, and the movement spoiled the aim.
+
+> "It is still moving when it doesn't need to and this movement means it is
+> inaccurate. When it is not under threat from an incoming bullet, enemy or
+> asteroid and it is not collecting powerups or minerals it should stay still
+> using only the left and right thrusters to aim. … In short the bot should
+> predict future hits and only move if there is no likely hit within the next
+> 1s" — producer audit rejection, 2026-11-25
+
+The posture is therefore a **prediction**, not a tuning preference.
+
+- **Fire solution (`src/ai/framework/competent/hitPrediction.ts`).**
+  `evaluateFireSolution` judges a shot aimed at a solved lead point: the
+  horizon covers **the time to finish the turn** (derived from the live
+  rotation model, §9.8) **plus the shot's time of flight** on the torus, so a
+  distant or fast target the shot would reach too late does not justify
+  holding. `resolveFireSolution` solves the lead first — the same
+  `interceptPointClassAware` solve the aim uses, advancing the target along
+  `advanceHazardMotion` (no second trajectory model) — and `classSampling:
+  false` is its documented bit-for-bit fallback to the legacy
+  constant-velocity lead, which is the cheap screen the target scan uses.
+  `countShotLineTargets` is the producer's "line of targets": how many other
+  hazards the shot line sweeps, on the torus.
+- **Hold station while a hit is likely (`holdFireEnabled`).** While `engage`
+  is **calm** — nothing incoming threatens the hull (`threatens` shots) and no
+  hazard other than the engagement target is on a collision course
+  (`hazardThreatensPlayer`, the class-shaped predictive test) — and a solution
+  exists inside `holdFireHorizonSeconds` (**1 s**), the intent requests **no
+  forward and no reverse thrust**, whatever the distance to the target, and
+  `planSteering`'s `hold` option suppresses the fan's "force the throttle on
+  while turning" rule. The hull only rotates onto the solved lead, so the
+  weapon axis stays still instead of the ship chasing a standoff.
+- **Move only when nothing can be hit.** With no solution inside the horizon
+  the ordinary approach/standoff policy runs unchanged and the ship closes to
+  where its shot lands in time. Danger still overrides everything: a
+  threatening shot keeps diverting to `evade`, and the kiting / retro-brake
+  paths still fire on a genuine threat.
+- **Line-of-fire target preference (`holdFireLineRadiusPx`, default 14 px).**
+  With the posture on, the engaged target is chosen from the candidates the
+  ship can **actually hit** — and, among those, the one whose line also sweeps
+  more bodies (`countShotLineTargets`) — instead of the merely nearest body.
+  With no hittable candidate the ordinary weighted choice stands. The
+  preference lives entirely inside the behaviour: goal utilities and the hard
+  priority bands are untouched, and the boss goal keeps its boss-only target
+  set.
+- **Measurement (AC5).** `src/ai/eval/holdStation.ts` folds the scripted
+  control-loop trace (§9.12's calm scenario: nothing fires, nothing dies, no
+  other hazard or pickup) into **drive duty** (ticks with forward or reverse
+  held) and **drift** (the distance the hull travelled), because a steady
+  pointless throttle never shows up in a transition count. Measured over the
+  documented matrix (5 movement classes × seeds 1/7/42 × 1 800 ticks):
+  - **drive duty 9.33 % → 0.24 %** and **drift 6 087.94 px → 67.26 px**
+    (forward-held ticks 2 247 → 49, reverse-held 272 → 16);
+  - live accuracy on the same seeded fights (chaser/diver/patroller × the same
+    seeds) **63.50 % → 71.68 %** hit rate (395/622 → 453/632 hits) — standing
+    still does not cost hits.
+- **Factory default off, shipped preset on.** `holdFireEnabled` is `false` in
+  the compiled defaults, so every pre-change measurement (aim accuracy,
+  oscillation, arena telemetry and the gym-parity fixtures) stays byte-for-
+  byte identical; the shipped `Default` preset turns it on, exactly like the
+  oscillation damping (AH-0MWT4BBYO0085CN8). `holdFireHorizonSeconds` and
+  `holdFireLineRadiusPx` are ordinary live sliders
+  ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)).
+
 ## 10. Testing
 
 The framework's unit tests live beside it:
@@ -1203,10 +1274,14 @@ and adjust its parameters in real time.
   model, the human-input reaction/press cadence (including the smooth-turning
   knobs `alignmentToleranceRad` / `turnHysteresisRad` / `turnPressMinMs`),
   collection's `collectReverseBrake` toggle and `collectOvershootMargin`
-  slider, and the rotation-skill knobs `skill` / `maxAimErrorRad` /
+  slider, the rotation-skill knobs `skill` / `maxAimErrorRad` /
   `aimErrorRad` / `aimErrorDecay` / `aimErrorResetDistance` /
-  `aimLeadAlignSeconds` / `aimLeadIterations` (`aimLeadEnabled` toggle)
-  (AH-0MV1DUSM2005HL98 · AC4; smooth turning:
+  `aimLeadAlignSeconds` / `aimLeadIterations` (`aimLeadEnabled` toggle), and
+  the hold-station posture `holdFireEnabled` (toggle) /
+  `holdFireHorizonSeconds` / `holdFireLineRadiusPx` (sliders)
+  (AH-0MV1DUSM2005HL98 · AC4; posture: AH-0MWW2PFU8001J0PM,
+  [section 9.13](#913-hold-station-posture-stay-still-and-shoot-ah-0mww2pfu8001j0pm);
+  smooth turning:
   AH-0MWJ1680Z001QYV2 audit rejection, [section 9.12](#912-smooth-turning-and-overshoot-tolerance-ah-0mwj1680z001qyv2-audit-rejection)).
   Moving a slider rebuilds the live brain and governor immediately. The `playerSpeed` / `frictionDeceleration` sliders
   are **overrides**: moving one away from its default makes it win over the

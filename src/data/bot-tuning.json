@@ -68,7 +68,10 @@
           "mineralDepositValue": 10,
           "mineralClusterRadius": 120,
           "diversionRelaxEnemyCount": 3,
-          "diversionOpportunityWeight": 0.7
+          "diversionOpportunityWeight": 0.7,
+          "holdFireEnabled": true,
+          "holdFireHorizonSeconds": 1,
+          "holdFireLineRadiusPx": 14
         },
         "human": {
           "reactionTimeMs": 260,

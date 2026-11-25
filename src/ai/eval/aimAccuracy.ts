@@ -435,6 +435,11 @@ export function runAimAccuracyScenario(
     }
     if (options.preFixDamping === true || options.aimLeadFromTracker === false) {
       competenceOverrides.engagementRangeHysteresis = 0;
+      // The hold-station posture (AH-0MWW2PFU8001J0PM) post-dates both pinned
+      // fixtures, so the pre-fix control arms fly without it — otherwise the
+      // shipped `Default` preset's `holdFireEnabled: true` would redefine the
+      // recorded baselines.
+      competenceOverrides.holdFireEnabled = false;
     }
     Object.assign(competenceOverrides, options.overrides?.competent);
     const brain =

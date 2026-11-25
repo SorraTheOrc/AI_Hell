@@ -208,6 +208,10 @@ function armTunables(
   const human = toHumanOverrides(AIM_OSCILLATION_TUNING);
   if (arm === 'preFixDamping') {
     competent.engagementRangeHysteresis = 0;
+    // The pinned pre-fix fixture predates the hold-station posture
+    // (AH-0MWW2PFU8001J0PM) as well, and the shipped preset now enables it, so
+    // the control arm flies without it.
+    competent.holdFireEnabled = false;
     human.aimDampingEnabled = false;
     human.aimTurnHoldMs = 0;
   }
@@ -293,12 +297,6 @@ export function runOscillationScenario(
       position: { x: ship.x, y: ship.y },
       world: { width: FIELD_WIDTH, height: FIELD_HEIGHT },
     }) as AsteroidsInput;
-    samples.push({
-      tick,
-      turn: input.turnLeft ? -1 : input.turnRight ? 1 : 0,
-      thrust: input.forward === true,
-      reverse: input.reverse === true,
-    });
     ship = model.tick(
       ship,
       input,
@@ -307,6 +305,17 @@ export function runOscillationScenario(
       FIELD_HEIGHT,
       shipConfig,
     ) as typeof ship;
+    // The hull's post-tick position rides on the sample so the hold-station
+    // harness can measure how far the ship travelled
+    // (AH-0MWW2PFU8001J0PM · RAC5).
+    samples.push({
+      tick,
+      turn: input.turnLeft ? -1 : input.turnRight ? 1 : 0,
+      thrust: input.forward === true,
+      reverse: input.reverse === true,
+      x: ship.x,
+      y: ship.y,
+    });
   }
   return samples;
 }
