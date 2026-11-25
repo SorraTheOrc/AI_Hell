@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "kind": "capture-join-anchor",
+  "captureStartedAtEpochMs": 1736899263500,
+  "runStartedAtEpochMs": 1736899260000,
+  "offsetMs": 3500,
+  "approximate": false
+}
